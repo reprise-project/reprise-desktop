@@ -1,0 +1,6 @@
+[Desktop Entry]
+Type=Application
+Name=Safely Remove Hardware
+Exec=reprise-drives
+OnlyShowIn=reprise;
+NoDisplay=true

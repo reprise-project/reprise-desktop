@@ -1,0 +1,24 @@
+[package]
+name = "reprise-notepad"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Notepad: a plain text editor"
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "reprise-notepad"
+path = "src/main.rs"
+
+[dependencies]
+repriseapp = { path = "../../repriseapp" }
+reprisekit = { path = "../../reprisekit" }
+reprisefs = { path = "../../reprisefs" }
+log.workspace = true
+env_logger.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

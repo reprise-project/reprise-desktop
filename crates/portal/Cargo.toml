@@ -1,0 +1,45 @@
+[package]
+name = "reprise-portal"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Reprise's xdg-desktop-portal backend: ScreenCast and Screenshot over ext-image-copy-capture and PipeWire, RemoteDesktop and InputCapture over libei, GlobalShortcuts kept in config.toml, the Access prompt, the file and app choosers, and Notification and Inhibit passed on to the compositor"
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "reprise-portal"
+path = "src/main.rs"
+
+[dependencies]
+repriseapp = { path = "../repriseapp" }
+reprisekit = { path = "../reprisekit" }
+reprisefs = { path = "../reprisefs" }
+repriseconf = { path = "../repriseconf" }
+toml_edit.workspace = true
+zbus.workspace = true
+serde = { workspace = true, features = ["derive"] }
+toml.workspace = true
+blocking.workspace = true
+async-io = "2"
+log.workspace = true
+env_logger.workspace = true
+libc.workspace = true
+png.workspace = true
+image.workspace = true
+reprisebus = { path = "../reprisebus" }
+pipewire = { workspace = true, features = ["v0_3_33"] }
+wayland-client.workspace = true
+wayland-scanner = "0.31"
+wayland-backend = "0.3"
+async-channel.workspace = true
+futures-lite.workspace = true
+wayland-protocols = { version = "0.32", features = ["client", "staging", "unstable"] }
+# No default features: their import-wayland links libwayland-server into
+# every binary built alongside the portal.
+gbm = { version = "0.18", default-features = false }
+
+[dev-dependencies]
+tempfile.workspace = true

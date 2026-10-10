@@ -1,0 +1,24 @@
+[package]
+name = "reprise-accounts"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "User Accounts: the Reprise program for people's accounts, their pictures and passwords"
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "reprise-accounts"
+path = "src/main.rs"
+
+[dependencies]
+repriseapp = { path = "../../repriseapp" }
+reprisekit = { path = "../../reprisekit" }
+reprisefs = { path = "../../reprisefs" }
+zbus.workspace = true
+serde.workspace = true
+libc.workspace = true
+log.workspace = true
+env_logger.workspace = true

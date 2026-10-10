@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=About Reprise
+Comment=Displays version information for Reprise.
+Exec=reprise-about
+Icon=reprise
+Categories=System;
+StartupWMClass=reprise.about
+Terminal=false

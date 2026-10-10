@@ -1,0 +1,143 @@
+[workspace]
+members = [
+    "crates/reprisekit",
+    "crates/reprisekit-pins",
+    "crates/repriseapp",
+    "crates/reprisefs",
+    "crates/reprisetray",
+    "crates/reprisebus",
+    "crates/repriseconf",
+    "crates/repriseaudio",
+    "crates/reprisescene",
+    "crates/reprisefx",
+    "crates/apps/notepad",
+    "crates/apps/about",
+    "crates/apps/explorer",
+    "crates/apps/sound",
+    "crates/apps/volume",
+    "crates/apps/settings",
+    "crates/apps/power",
+    "crates/apps/datetime",
+    "crates/apps/accounts",
+    "crates/apps/network",
+    "crates/apps/bluetooth",
+    "crates/apps/drives",
+    "crates/apps/polkit",
+    "crates/apps/updates",
+    "crates/apps/printers",
+    "crates/portal",
+]
+
+[workspace.package]
+edition = "2024"
+license = "GPL-3.0-or-later"
+repository = "https://github.com/reprise-project/reprise-desktop"
+
+[workspace.dependencies]
+accesskit_unix = "0.24"
+async-channel = "2"
+blocking = "1"
+env_logger = "0.11"
+futures-lite = "2"
+futures-util = "0.3"
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "bmp"] }
+inotify = { version = "0.11", default-features = false }
+libc = "0.2"
+log = "0.4"
+pipewire = "0.10"
+png = "0.18"
+serde = "1"
+# Pinned to a commit on our fork: master 118e34ff (far ahead of the last
+# release) plus a fix to `Rectangle::subtract_rects_many_in_place`, without
+# which the damage tracker redraws overlapping windows on every frame. Back
+# to upstream once the fix is merged there.
+smithay = { git = "https://github.com/reprise-project/smithay.git", rev = "d7165f2da2b34434108b23796eff5a45fd70e4cc", default-features = false }
+smithay-drm-extras = { git = "https://github.com/reprise-project/smithay.git", rev = "d7165f2da2b34434108b23796eff5a45fd70e4cc" }
+tempfile = "3"
+toml = "1"
+toml_edit = "0.25"
+wayland-client = "0.31"
+zbus = "5"
+zeroize = "1"
+
+[workspace.lints.rust]
+unsafe_op_in_unsafe_fn = "deny"
+
+[workspace.lints.clippy]
+undocumented_unsafe_blocks = "warn"
+
+[package]
+name = "reprise"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+smithay = { workspace = true, features = [
+    "backend_drm",
+    "backend_egl",
+    "backend_gbm",
+    "backend_libinput",
+    "backend_session_libseat",
+    "backend_udev",
+    "desktop",
+    "renderer_gl",
+    "wayland_frontend",
+    "xwayland",
+] }
+smithay-drm-extras.workspace = true
+tracing = { version = "0.1", default-features = false, features = ["std"] }
+xcursor = "0.3"
+# focus, `_NET_WM_ICON` and counting the X11 programs (X-Resource) to stop
+# an idle server (`xwayland`). Smithay's xwayland still pulls in 0.13; no
+# types cross between the two connections, so both versions build.
+x11rb = { version = "0.14", default-features = false, features = ["res"] }
+reprisekit = { path = "crates/reprisekit" }
+reprisescene = { path = "crates/reprisescene" }
+reprisefx = { path = "crates/reprisefx" }
+reprisefs = { path = "crates/reprisefs" }
+repriseconf = { path = "crates/repriseconf" }
+reprisebus = { path = "crates/reprisebus" }
+accesskit_unix.workspace = true
+toml_edit.workspace = true
+libc.workspace = true
+log.workspace = true
+env_logger.workspace = true
+clap = { version = "4", features = ["derive"] }
+serde = { workspace = true, features = ["derive"] }
+toml.workspace = true
+inotify.workspace = true
+zeroize.workspace = true
+zbus.workspace = true
+async-channel.workspace = true
+async-io = "2"
+futures-lite.workspace = true
+async-process = "2"
+futures-util.workspace = true
+image.workspace = true
+pipewire.workspace = true
+reis = { version = "0.7", default-features = false }
+rustix = { version = "1", features = ["net"] }
+wayland-scanner = "0.31"
+
+[dev-dependencies]
+zbus = { workspace = true, features = ["p2p"] }
+wayland-client.workspace = true
+wayland-protocols = { version = "0.32", features = ["client", "staging"] }
+
+# Backtraces keep file and line; full debug info made the binaries three
+# times as large.
+[profile.dev]
+debug = "line-tables-only"
+split-debuginfo = "unpacked"
+
+# Test VM builds: release code, built incrementally, so a rebuild after an
+# edit takes seconds. Packages still build with `--release`.
+[profile.vm]
+inherits = "release"
+incremental = true
+codegen-units = 256

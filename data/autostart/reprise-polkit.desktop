@@ -1,0 +1,6 @@
+[Desktop Entry]
+Type=Application
+Name=Run As
+Exec=reprise-polkit
+OnlyShowIn=reprise;
+NoDisplay=true

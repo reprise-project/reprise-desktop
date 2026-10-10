@@ -1,0 +1,1005 @@
+//! Launch child processes with the compositor's display sockets exported.
+
+use std::os::unix::process::CommandExt;
+use std::sync::Mutex;
+
+/// Children started here and still to be reaped, by pid and log name.
+///
+/// Not a `SIGCHLD`/`SIG_IGN` disposition: it is inherited across exec, and Xwayland waits on
+/// `xkbcomp`, which fails with `ECHILD` when children are auto-reaped. `reap_children` reaps
+/// our own pids instead.
+static CHILDREN: Mutex<Vec<(libc::pid_t, String)>> = Mutex::new(Vec::new());
+
+const TERM_SIGNALS: [libc::c_int; 2] = [libc::SIGTERM, libc::SIGINT];
+
+/// Block `SIGCHLD`, `SIGTERM` and `SIGINT` before any thread exists so only the loop's
+/// signalfds see them; `start` clears the mask in children.
+pub fn block_signals() {
+    // SAFETY: `set` is a local sigset_t, all-zero is a valid value for it,
+    // and every call gets a pointer to it or null.
+    unsafe {
+        let mut set: libc::sigset_t = std::mem::zeroed();
+        libc::sigemptyset(&mut set);
+        for s in std::iter::once(libc::SIGCHLD).chain(TERM_SIGNALS) {
+            libc::sigaddset(&mut set, s);
+        }
+        libc::pthread_sigmask(libc::SIG_BLOCK, &set, std::ptr::null_mut());
+    }
+}
+
+/// Run `f` with the `block_signals` signals unblocked on this thread, for a child another crate
+/// forks (Xwayland): it must not inherit them blocked. A `SIGCHLD` meanwhile is reaped on the
+/// next one; a `SIGTERM` or `SIGINT` meanwhile ends the compositor without its signalfd.
+pub fn with_signals_unblocked<T>(f: impl FnOnce() -> T) -> T {
+    // SAFETY: as in `block_signals`.
+    let mask = |how| unsafe {
+        let mut set: libc::sigset_t = std::mem::zeroed();
+        libc::sigemptyset(&mut set);
+        for s in std::iter::once(libc::SIGCHLD).chain(TERM_SIGNALS) {
+            libc::sigaddset(&mut set, s);
+        }
+        libc::pthread_sigmask(how, &set, std::ptr::null_mut());
+    };
+    mask(libc::SIG_UNBLOCK);
+    let r = f();
+    mask(libc::SIG_BLOCK);
+    r
+}
+
+/// A signalfd readable on SIGCHLD (blocked by `block_signals`).
+pub fn sigchld_fd() -> std::io::Result<std::os::fd::OwnedFd> {
+    signal_fd(&[libc::SIGCHLD])
+}
+
+/// A signalfd readable on SIGTERM or SIGINT (`read_signal` names which).
+pub fn term_fd() -> std::io::Result<std::os::fd::OwnedFd> {
+    signal_fd(&TERM_SIGNALS)
+}
+
+pub fn read_signal(fd: &std::os::fd::OwnedFd) -> Option<u32> {
+    use std::os::fd::AsRawFd;
+    let mut info = std::mem::MaybeUninit::<libc::signalfd_siginfo>::uninit();
+    let size = std::mem::size_of::<libc::signalfd_siginfo>();
+    // SAFETY: `info` is a writable buffer of `size` bytes and `fd` is a
+    // live non-blocking signalfd; a full read initialises it.
+    let n = unsafe { libc::read(fd.as_raw_fd(), info.as_mut_ptr().cast(), size) };
+    // SAFETY: the kernel wrote a whole `signalfd_siginfo`.
+    (n == size as isize).then(|| unsafe { info.assume_init() }.ssi_signo)
+}
+
+fn signal_fd(signals: &[libc::c_int]) -> std::io::Result<std::os::fd::OwnedFd> {
+    use std::os::fd::FromRawFd;
+    // SAFETY: `set` is a local sigset_t, all-zero is a valid value for it;
+    // signalfd gets a pointer to it and returns a new fd or -1.
+    let fd = unsafe {
+        let mut set: libc::sigset_t = std::mem::zeroed();
+        libc::sigemptyset(&mut set);
+        for &s in signals {
+            libc::sigaddset(&mut set, s);
+        }
+        libc::signalfd(-1, &set, libc::SFD_NONBLOCK | libc::SFD_CLOEXEC)
+    };
+    if fd < 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    // SAFETY: `fd` is a fresh descriptor nothing else owns.
+    Ok(unsafe { std::os::fd::OwnedFd::from_raw_fd(fd) })
+}
+
+/// Read every pending signal off a signalfd so it stops being readable.
+pub fn drain_signalfd(fd: &std::os::fd::OwnedFd) {
+    use std::os::fd::AsRawFd;
+    let mut info = std::mem::MaybeUninit::<libc::signalfd_siginfo>::uninit();
+    let size = std::mem::size_of::<libc::signalfd_siginfo>();
+    // SAFETY: `info` is a writable buffer of `size` bytes and `fd` is a
+    // live non-blocking signalfd; the loop ends on EAGAIN or a short read.
+    while unsafe { libc::read(fd.as_raw_fd(), info.as_mut_ptr().cast(), size) } == size as isize {}
+}
+
+/// What every child and the activation environment get. Kept out of the process environment:
+/// worker threads read `getenv` and `setenv` is not synchronised against them.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct SessionEnv {
+    pub wayland_display: String,
+    pub x11_display: Option<String>,
+    /// `XDG_CURRENT_DESKTOP`: xdg-desktop-portal's `<desktop>-portals.conf` key and the
+    /// autostart filter. A TTY start leaves it unset, so it is filled in at startup.
+    pub desktop: String,
+    pub colors: String,
+    pub interface: reprisekit::interface::Interface,
+    pub blue_variant: reprisekit::blue::Variant,
+    pub glass_mode: reprisekit::glass::Mode,
+    pub icons: String,
+    /// `XCURSOR_THEME` and `XCURSOR_SIZE`: the `[cursor]` theme and size, so clients draw the
+    /// same pointer.
+    pub cursor: (String, u32),
+    /// `[toolkits] qt_platform_theme`, resolved per launch against the colours
+    /// (`crate::config::resolve_qt`). Children only: a switch back to light leaves nothing to
+    /// unset in the activation environment.
+    pub qt_platform_theme: String,
+    /// The Qt tool that took the generated palette (`crate::toolkits`), which "reprise"
+    /// resolves to.
+    pub qt_generated: Option<&'static str>,
+    pub renderer: &'static str,
+    pub login: Vec<(&'static str, String)>,
+    /// Nested in another session (`WAYLAND_DISPLAY` or `DISPLAY` set at startup): that
+    /// session's values of the published variables, put back at the end. Empty otherwise.
+    pub parent: Vec<(&'static str, String)>,
+    /// The logind session a display manager started Reprise as, which ends with it. None for a
+    /// TTY start or nested run.
+    pub logind_session: Option<String>,
+}
+
+/// What the login manager and pam_systemd set that services outside our process tree still need.
+const FORWARDED: [&str; 3] = ["XDG_SESSION_DESKTOP", "XDG_SEAT", "XDG_SEAT_PATH"];
+
+impl SessionEnv {
+    /// Read at startup, before any worker thread exists.
+    pub fn new(
+        wayland_display: String,
+        colors: &reprisekit::theme::ColorScheme,
+        interface: reprisekit::interface::Interface,
+        blue_variant: reprisekit::blue::Variant,
+        glass_mode: reprisekit::glass::Mode,
+        icons: &str,
+        cursor: (String, u32),
+    ) -> SessionEnv {
+        SessionEnv {
+            wayland_display,
+            x11_display: None,
+            desktop: std::env::var("XDG_CURRENT_DESKTOP")
+                .ok()
+                .filter(|v| !v.is_empty())
+                .unwrap_or_else(|| "reprise".into()),
+            colors: colors.to_env(),
+            interface,
+            blue_variant,
+            glass_mode,
+            icons: icons.into(),
+            cursor,
+            qt_platform_theme: crate::config::TOOLKIT_AUTO.into(),
+            qt_generated: None,
+            renderer: "",
+            login: FORWARDED
+                .into_iter()
+                .filter_map(|k| Some((k, std::env::var(k).ok().filter(|v| !v.is_empty())?)))
+                .collect(),
+            parent: parent_session(|k| std::env::var(k).ok().filter(|v| !v.is_empty())),
+            logind_session: own_session(|k| std::env::var(k).ok().filter(|v| !v.is_empty())),
+        }
+    }
+
+    /// Take the look that launched programs read. Returns whether any changed, so the session
+    /// bus needs them.
+    pub fn set_look(
+        &mut self,
+        colors: String,
+        interface: reprisekit::interface::Interface,
+        blue_variant: reprisekit::blue::Variant,
+        glass_mode: reprisekit::glass::Mode,
+        icons: &str,
+        cursor: (String, u32),
+    ) -> bool {
+        if colors == self.colors
+            && interface == self.interface
+            && blue_variant == self.blue_variant
+            && glass_mode == self.glass_mode
+            && icons == self.icons
+            && cursor == self.cursor
+        {
+            return false;
+        }
+        self.colors = colors;
+        self.interface = interface;
+        self.blue_variant = blue_variant;
+        self.glass_mode = glass_mode;
+        self.icons = icons.into();
+        self.cursor = cursor;
+        true
+    }
+
+    fn pairs(&self) -> Vec<(&'static str, String)> {
+        let mut v = vec![
+            ("WAYLAND_DISPLAY", self.wayland_display.clone()),
+            ("XDG_CURRENT_DESKTOP", self.desktop.clone()),
+            // Always Wayland: a TTY start has pam_systemd set "tty".
+            ("XDG_SESSION_TYPE", "wayland".into()),
+            (reprisekit::theme::COLORS_ENV, self.colors.clone()),
+            (reprisekit::interface::ENV, self.interface.as_str().into()),
+            (reprisekit::blue::ENV, self.blue_variant.as_str().into()),
+            (reprisekit::glass::MODE_ENV, self.glass_mode.as_str().into()),
+            (reprisekit::icontheme::ENV, self.icons.clone()),
+            ("XCURSOR_THEME", self.cursor.0.clone()),
+            ("XCURSOR_SIZE", self.cursor.1.to_string()),
+            (reprisefs::sysinfo::RENDERER_ENV, self.renderer.into()),
+            // GTK3 opens its file dialogs through the portal.
+            ("GTK_USE_PORTAL", "1".into()),
+        ];
+        if let Some(d) = &self.x11_display {
+            v.push(("DISPLAY", d.clone()));
+        }
+        v.extend(self.login.iter().cloned());
+        v
+    }
+
+    fn dark(&self) -> bool {
+        reprisekit::theme::ColorScheme::from_env(&self.colors).is_some_and(|c| c.is_dark())
+    }
+
+    fn qt_platform_theme(&self) -> Option<&str> {
+        crate::config::resolve_qt(&self.qt_platform_theme, self.dark(), self.qt_generated)
+    }
+}
+
+/// Publish the display sockets to the systemd user manager and D-Bus activation environment, so
+/// bus-activated services find the compositor. Called once the socket exists, when `DISPLAY` is
+/// known and when colours change. Best effort.
+pub fn export_session_env(env: &SessionEnv) {
+    let mut c = std::process::Command::new("dbus-update-activation-environment");
+    c.arg("--systemd");
+    for (k, v) in env.pairs() {
+        c.arg(format!("{k}={v}"));
+    }
+    // Not waited on: the tool round-trips the bus, and colour changes call this from the event
+    // loop.
+    if let Err(e) = start(c, "dbus-update-activation-environment") {
+        log::warn!("dbus-update-activation-environment: {e}; portals may not find the display");
+    }
+}
+
+/// The GTK portal backend's unit; it draws GTK3's print dialog (`Print=gtk` in
+/// reprise-portals.conf).
+const PORTAL_GTK_UNIT: &str = "xdg-desktop-portal-gtk.service";
+
+/// Hand xdg-desktop-portal-gtk `theme` so its print dialog looks like the program. The backend
+/// reads GSettings, which Reprise leaves alone; `GTK_THEME` outranks that, via a drop-in under
+/// `$XDG_RUNTIME_DIR`. A running backend restarts to read it. No-op when the drop-in already
+/// says `theme` or on a nested run.
+pub fn theme_portal_gtk(env: &SessionEnv, theme: &str) {
+    if !env.parent.is_empty() {
+        return;
+    }
+    let Some(runtime) = std::env::var_os("XDG_RUNTIME_DIR") else {
+        return;
+    };
+    match write_portal_gtk_drop_in(std::path::Path::new(&runtime), theme) {
+        Ok(false) => {}
+        Ok(true) => {
+            let mut c = std::process::Command::new("sh");
+            c.arg("-c").arg(format!(
+                "systemctl --user daemon-reload && systemctl --user --no-block try-restart {PORTAL_GTK_UNIT}"
+            ));
+            if let Err(e) = start(c, "restart xdg-desktop-portal-gtk") {
+                log::warn!("{PORTAL_GTK_UNIT}: {e}; the print dialog keeps its theme");
+            }
+        }
+        Err(e) => log::warn!("{PORTAL_GTK_UNIT} drop-in: {e}; the print dialog keeps its theme"),
+    }
+}
+
+/// Write the `GTK_THEME` drop-in for the GTK portal backend under `runtime`. Returns whether
+/// the file changed.
+fn write_portal_gtk_drop_in(runtime: &std::path::Path, theme: &str) -> std::io::Result<bool> {
+    let dir = runtime
+        .join("systemd/user")
+        .join(format!("{PORTAL_GTK_UNIT}.d"));
+    let path = dir.join("reprise.conf");
+    // systemd unquotes quoted assignments and expands % specifiers.
+    let value = theme
+        .replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace('%', "%%");
+    let text = format!("[Service]\nEnvironment=\"GTK_THEME={value}\"\n");
+    if std::fs::read_to_string(&path).is_ok_and(|t| t == text) {
+        return Ok(false);
+    }
+    std::fs::create_dir_all(&dir)?;
+    std::fs::write(&path, text)?;
+    Ok(true)
+}
+
+/// Every variable `export_session_env` can publish.
+fn exported_names() -> Vec<&'static str> {
+    let every = SessionEnv {
+        x11_display: Some(String::new()),
+        login: FORWARDED.map(|k| (k, String::new())).to_vec(),
+        ..SessionEnv::default()
+    };
+    every.pairs().into_iter().map(|(k, _)| k).collect()
+}
+
+/// The published variables `get` has, when it describes a nested session (one with a display of
+/// its own); empty otherwise.
+fn parent_session(get: impl Fn(&str) -> Option<String>) -> Vec<(&'static str, String)> {
+    if get("WAYLAND_DISPLAY").is_none() && get("DISPLAY").is_none() {
+        return Vec::new();
+    }
+    exported_names()
+        .into_iter()
+        .filter_map(|k| Some((k, get(k)?)))
+        .collect()
+}
+
+/// `XDG_SESSION_ID` when `get` describes a session a display manager started for Reprise (typed
+/// "wayland", no other display). A TTY login is typed "tty" and ends with its shell.
+fn own_session(get: impl Fn(&str) -> Option<String>) -> Option<String> {
+    let own =
+        get("XDG_SESSION_TYPE").as_deref() == Some("wayland") && parent_session(&get).is_empty();
+    own.then(|| get("XDG_SESSION_ID")).flatten()
+}
+
+/// Reprise's portal backend unit and the portal frontend that routes to it.
+const PORTAL_UNITS: [&str; 2] = ["reprise-portal.service", "xdg-desktop-portal.service"];
+
+/// The commands that end the session `env` published, in order: unset (or restore the parent's)
+/// variables in the systemd user manager, stop the portal backend, and the frontend too unless
+/// nested (it reads `XDG_CURRENT_DESKTOP` once, so a survivor would route the next desktop's
+/// dialogs here). dbus-broker defers to systemd, so that is all to undo. Last, a session of our
+/// own is terminated: logind leaves its processes running without `KillUserProcesses`, e.g. a
+/// windowless Deskflow server.
+pub fn end_commands(env: &SessionEnv) -> Vec<Vec<String>> {
+    let user = |verb: &str| vec!["systemctl".to_string(), "--user".into(), verb.into()];
+    let mut out = Vec::new();
+    if !env.parent.is_empty() {
+        let mut c = user("set-environment");
+        c.extend(env.parent.iter().map(|(k, v)| format!("{k}={v}")));
+        out.push(c);
+    }
+    let unset: Vec<String> = exported_names()
+        .into_iter()
+        .filter(|k| !env.parent.iter().any(|(p, _)| p == k))
+        .map(String::from)
+        .collect();
+    if !unset.is_empty() {
+        let mut c = user("unset-environment");
+        c.extend(unset);
+        out.push(c);
+    }
+    let mut stop = user("stop");
+    stop.insert(2, "--no-block".into());
+    let units = if env.parent.is_empty() {
+        &PORTAL_UNITS[..]
+    } else {
+        &PORTAL_UNITS[..1]
+    };
+    stop.extend(units.iter().map(|u| u.to_string()));
+    out.push(stop);
+    if let Some(id) = &env.logind_session {
+        out.push(vec![
+            "loginctl".into(),
+            "terminate-session".into(),
+            id.clone(),
+        ]);
+    }
+    out
+}
+
+/// Run `end_commands` as the compositor exits, giving all of them `END_WAIT` together. Best
+/// effort: failures are logged, never waited on past the deadline.
+pub fn end_session_env(env: &SessionEnv) {
+    const END_WAIT: std::time::Duration = std::time::Duration::from_secs(2);
+    let deadline = std::time::Instant::now() + END_WAIT;
+    for argv in end_commands(env) {
+        let mut c = std::process::Command::new(&argv[0]);
+        c.args(&argv[1..]);
+        detach(&mut c);
+        let mut child = match c.spawn() {
+            Ok(child) => child,
+            Err(e) => {
+                log::warn!("{argv:?}: {e}; the session's variables stay published");
+                return;
+            }
+        };
+        loop {
+            match child.try_wait() {
+                Ok(Some(st)) if !st.success() => {
+                    log::warn!("{argv:?} exited with {st}");
+                    break;
+                }
+                Ok(Some(_)) => break,
+                Ok(None) if std::time::Instant::now() < deadline => {
+                    std::thread::sleep(std::time::Duration::from_millis(10));
+                }
+                Ok(None) | Err(_) => {
+                    log::warn!("{argv:?} still running at exit; not waiting for it");
+                    return;
+                }
+            }
+        }
+    }
+}
+
+/// `cmd` as a `sh -c` process with the session's variables exported. `token` becomes
+/// `XDG_ACTIVATION_TOKEN`; without one the variable is removed so an inherited token never
+/// reaches a client. `DESKTOP_STARTUP_ID` is always removed.
+pub fn command(cmd: &str, env: &SessionEnv, token: Option<&str>) -> std::process::Command {
+    let mut c = std::process::Command::new("sh");
+    c.arg("-c").arg(cmd);
+    with_session_env(&mut c, env, token);
+    c
+}
+
+/// `program` with `args` as a process of its own, no shell: a desktop entry's `Exec`
+/// (`reprisefs::apps::exec_argv`).
+fn command_argv<S: AsRef<std::ffi::OsStr>>(
+    program: &S,
+    args: &[S],
+    env: &SessionEnv,
+    token: Option<&str>,
+) -> std::process::Command {
+    let mut c = std::process::Command::new(program);
+    c.args(args);
+    with_session_env(&mut c, env, token);
+    c
+}
+
+fn with_session_env(c: &mut std::process::Command, env: &SessionEnv, token: Option<&str>) {
+    for (k, v) in env.pairs() {
+        c.env(k, v);
+    }
+    if let Some(qt) = env.qt_platform_theme() {
+        c.env("QT_QPA_PLATFORMTHEME", qt);
+    }
+    if env.x11_display.is_none() {
+        c.env_remove("DISPLAY");
+    }
+    c.env_remove("DESKTOP_STARTUP_ID");
+    match token {
+        Some(t) => {
+            c.env("XDG_ACTIVATION_TOKEN", t);
+        }
+        None => {
+            c.env_remove("XDG_ACTIVATION_TOKEN");
+        }
+    }
+}
+
+/// Returns whether the shell started; what it runs may still fail.
+pub fn spawn(cmd: &str, env: &SessionEnv, token: Option<&str>) -> bool {
+    match start(command(cmd, env, token), cmd) {
+        Ok(()) => true,
+        Err(e) => {
+            log::error!("spawn {cmd:?}: {e}");
+            false
+        }
+    }
+}
+
+/// `spawn` for an argument vector; an empty one is logged and skipped.
+pub fn spawn_argv<S: AsRef<std::ffi::OsStr> + std::fmt::Debug>(
+    argv: &[S],
+    env: &SessionEnv,
+    token: Option<&str>,
+) {
+    spawn_argv_in(argv, None, env, token);
+}
+
+/// `spawn_argv` in working directory `dir`, or reprise's own when `None`.
+pub fn spawn_argv_in<S: AsRef<std::ffi::OsStr> + std::fmt::Debug>(
+    argv: &[S],
+    dir: Option<&std::path::Path>,
+    env: &SessionEnv,
+    token: Option<&str>,
+) {
+    let Some((program, args)) = argv.split_first() else {
+        log::error!("spawn: empty command line");
+        return;
+    };
+    let what = program.as_ref().to_string_lossy();
+    let mut c = command_argv(program, args, env, token);
+    if let Some(dir) = dir {
+        c.current_dir(dir);
+    }
+    if let Err(e) = start(c, &what) {
+        log::error!("spawn {argv:?}: {e}");
+    }
+}
+
+/// Start `c` detached, hand its pid to `reap_children` and record the launch for `mapfocus`;
+/// `what` names it in the log.
+fn start(mut c: std::process::Command, what: &str) -> std::io::Result<()> {
+    detach(&mut c);
+    // Dropping the `Child` does not reap.
+    let child = c.spawn()?;
+    CHILDREN
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .push((child.id() as libc::pid_t, what.to_string()));
+    crate::mapfocus::grant(child.id() as i32);
+    log::info!("spawned {what:?}");
+    Ok(())
+}
+
+/// Make `c` a child of its own: new session with no controlling terminal, stdin on `/dev/null`,
+/// an empty signal mask (the `block_signals` mask survives exec) and SIGINT at its default (an
+/// ignored one survives exec, as when started with `&`).
+fn detach(c: &mut std::process::Command) {
+    c.stdin(std::process::Stdio::null());
+    // SAFETY: the closure runs between fork and exec; sigemptyset,
+    // pthread_sigmask, signal and setsid are async-signal-safe and nothing
+    // allocates.
+    unsafe {
+        c.pre_exec(|| {
+            let mut set: libc::sigset_t = std::mem::zeroed();
+            libc::sigemptyset(&mut set);
+            libc::pthread_sigmask(libc::SIG_SETMASK, &set, std::ptr::null_mut());
+            libc::signal(libc::SIGINT, libc::SIG_DFL);
+            // Fails only for a process group leader.
+            libc::setsid();
+            Ok(())
+        });
+    }
+}
+
+/// Reap the children we spawned, when the SIGCHLD signalfd fires. Only our own pids: Xwayland
+/// is reaped through a pidfd, so `waitpid(-1, ..)` would steal its status.
+pub fn reap_children() {
+    let mut children = CHILDREN.lock().unwrap_or_else(|e| e.into_inner());
+    children.retain(|(pid, what)| {
+        let mut status = 0;
+        // SAFETY: `status` is a valid out-param; `pid` is a child we spawned.
+        match unsafe { libc::waitpid(*pid, &mut status, libc::WNOHANG) } {
+            0 => true,
+            r if r > 0 => {
+                if libc::WIFEXITED(status) && libc::WEXITSTATUS(status) != 0 {
+                    log::warn!(
+                        "child {pid} ({what:?}) exited with {}",
+                        libc::WEXITSTATUS(status)
+                    );
+                } else if libc::WIFSIGNALED(status) {
+                    log::warn!(
+                        "child {pid} ({what:?}) killed by signal {}",
+                        libc::WTERMSIG(status)
+                    );
+                } else {
+                    log::info!("reaped child {pid}");
+                }
+                false
+            }
+            // ECHILD or similar: nothing left to wait for.
+            _ => false,
+        }
+    });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::ffi::OsStr;
+
+    fn env_of(c: &std::process::Command, key: &str) -> Option<Option<String>> {
+        c.get_envs()
+            .find(|(k, _)| *k == OsStr::new(key))
+            .map(|(_, v)| v.map(|v| v.to_string_lossy().into_owned()))
+    }
+
+    fn env(x11: Option<&str>) -> SessionEnv {
+        SessionEnv {
+            wayland_display: "wayland-9".into(),
+            x11_display: x11.map(str::to_string),
+            desktop: "reprise".into(),
+            colors: "k=v".into(),
+            interface: reprisekit::interface::Interface::Classic,
+            blue_variant: reprisekit::blue::Variant::Blue,
+            glass_mode: Default::default(),
+            icons: "retro-icons".into(),
+            cursor: ("default".into(), 24),
+            qt_platform_theme: "auto".into(),
+            qt_generated: None,
+            renderer: "vulkan",
+            login: vec![("XDG_SEAT", "seat0".into())],
+            parent: Vec::new(),
+            logind_session: None,
+        }
+    }
+
+    fn argv(v: &[&str]) -> Vec<String> {
+        v.iter().map(|s| s.to_string()).collect()
+    }
+
+    /// A session of its own unsets every variable it can publish, set or
+    /// not, then stops the portal backend and frontend.
+    #[test]
+    fn a_login_session_ends_by_unsetting_and_stopping_the_portals() {
+        let every = [
+            "WAYLAND_DISPLAY",
+            "XDG_CURRENT_DESKTOP",
+            "XDG_SESSION_TYPE",
+            reprisekit::theme::COLORS_ENV,
+            reprisekit::interface::ENV,
+            reprisekit::blue::ENV,
+            reprisekit::glass::MODE_ENV,
+            reprisekit::icontheme::ENV,
+            "XCURSOR_THEME",
+            "XCURSOR_SIZE",
+            reprisefs::sysinfo::RENDERER_ENV,
+            "GTK_USE_PORTAL",
+            "DISPLAY",
+            "XDG_SESSION_DESKTOP",
+            "XDG_SEAT",
+            "XDG_SEAT_PATH",
+        ];
+        let mut unset = argv(&["systemctl", "--user", "unset-environment"]);
+        unset.extend(every.iter().map(|s| s.to_string()));
+        assert_eq!(
+            end_commands(&env(None)),
+            vec![
+                unset,
+                argv(&[
+                    "systemctl",
+                    "--user",
+                    "--no-block",
+                    "stop",
+                    "reprise-portal.service",
+                    "xdg-desktop-portal.service",
+                ]),
+            ]
+        );
+        // Whatever a session published is among them.
+        for (k, _) in env(Some(":1")).pairs() {
+            assert!(every.contains(&k), "{k} is unset at the end");
+        }
+    }
+
+    /// A display manager's session ends with its own processes after the
+    /// portals stop; a TTY login or a nested run leaves its session alone.
+    #[test]
+    fn only_a_display_manager_session_is_terminated_at_the_end() {
+        let dm = |k: &str| match k {
+            "XDG_SESSION_TYPE" => Some("wayland".to_string()),
+            "XDG_SESSION_ID" => Some("3".into()),
+            _ => None,
+        };
+        assert_eq!(own_session(dm), Some("3".into()));
+        let e = SessionEnv {
+            logind_session: own_session(dm),
+            ..env(None)
+        };
+        assert_eq!(
+            end_commands(&e).last(),
+            Some(&argv(&["loginctl", "terminate-session", "3"]))
+        );
+        let tty = |k: &str| match k {
+            "XDG_SESSION_TYPE" => Some("tty".to_string()),
+            _ => dm(k),
+        };
+        assert_eq!(own_session(tty), None);
+        let nested = |k: &str| match k {
+            "WAYLAND_DISPLAY" => Some("wayland-0".to_string()),
+            _ => dm(k),
+        };
+        assert_eq!(own_session(nested), None);
+        assert!(
+            !end_commands(&env(None)).iter().any(|c| c[0] == "loginctl"),
+            "no session, nothing terminated"
+        );
+    }
+
+    /// A nested run puts the parent session's values back, unsets what the
+    /// parent did not have, and leaves the parent's frontend running.
+    #[test]
+    fn a_nested_session_ends_by_restoring_its_parent() {
+        let parent = parent_session(|k| match k {
+            "WAYLAND_DISPLAY" => Some("wayland-0".into()),
+            "XDG_CURRENT_DESKTOP" => Some("KDE".into()),
+            _ => None,
+        });
+        assert_eq!(
+            parent,
+            vec![
+                ("WAYLAND_DISPLAY", "wayland-0".to_string()),
+                ("XDG_CURRENT_DESKTOP", "KDE".to_string()),
+            ]
+        );
+        let e = SessionEnv {
+            parent,
+            ..env(None)
+        };
+        let cmds = end_commands(&e);
+        assert_eq!(
+            cmds[0],
+            argv(&[
+                "systemctl",
+                "--user",
+                "set-environment",
+                "WAYLAND_DISPLAY=wayland-0",
+                "XDG_CURRENT_DESKTOP=KDE",
+            ])
+        );
+        assert_eq!(
+            &cmds[1][..3],
+            &argv(&["systemctl", "--user", "unset-environment"])[..]
+        );
+        assert!(!cmds[1].contains(&"WAYLAND_DISPLAY".to_string()));
+        assert!(cmds[1].contains(&"XDG_SESSION_TYPE".to_string()));
+        assert_eq!(
+            cmds[2],
+            argv(&[
+                "systemctl",
+                "--user",
+                "--no-block",
+                "stop",
+                "reprise-portal.service"
+            ])
+        );
+        // A login session has no parent to restore.
+        assert!(
+            parent_session(|k| (k == "XDG_CURRENT_DESKTOP").then(|| "reprise".into())).is_empty()
+        );
+    }
+
+    #[test]
+    fn only_a_new_look_is_exported() {
+        let mut e = env(None);
+        let classic = reprisekit::interface::Interface::Classic;
+        let navy = reprisekit::blue::Variant::Blue;
+        let light = reprisekit::glass::Mode::Light;
+        let arrow = || ("default".to_string(), 24);
+        assert!(
+            !e.set_look("k=v".into(), classic, navy, light, "retro-icons", arrow()),
+            "unchanged"
+        );
+        assert!(
+            e.set_look("k=w".into(), classic, navy, light, "retro-icons", arrow()),
+            "new colours"
+        );
+        assert_eq!(e.colors, "k=w");
+        assert!(
+            !e.set_look("k=w".into(), classic, navy, light, "retro-icons", arrow()),
+            "and then unchanged"
+        );
+        assert!(
+            e.set_look("k=w".into(), classic, navy, light, "hicolor", arrow()),
+            "a new icon theme"
+        );
+        assert_eq!(e.icons, "hicolor");
+        assert!(
+            e.set_look(
+                "k=w".into(),
+                classic,
+                navy,
+                light,
+                "hicolor",
+                ("Adwaita".into(), 32)
+            ),
+            "a new cursor"
+        );
+        assert!(e.pairs().contains(&("XCURSOR_THEME", "Adwaita".into())));
+        assert!(e.pairs().contains(&("XCURSOR_SIZE", "32".into())));
+        let blue = reprisekit::interface::Interface::Blue;
+        assert!(
+            e.set_look(
+                "k=w".into(),
+                blue,
+                navy,
+                light,
+                "hicolor",
+                ("Adwaita".into(), 32)
+            ),
+            "a new interface"
+        );
+        let silver = reprisekit::blue::Variant::Silver;
+        assert!(
+            e.set_look(
+                "k=w".into(),
+                blue,
+                silver,
+                light,
+                "hicolor",
+                ("Adwaita".into(), 32)
+            ),
+            "a new Blue variant"
+        );
+        assert!(
+            e.pairs()
+                .contains(&(reprisekit::blue::ENV, "silver".into()))
+        );
+    }
+
+    #[test]
+    fn the_glass_mode_is_exported_and_a_change_republishes() {
+        let mut e = env(None);
+        assert!(
+            e.pairs()
+                .contains(&(reprisekit::glass::MODE_ENV, "light".into()))
+        );
+        let (colors, cursor) = (e.colors.clone(), e.cursor.clone());
+        let icons = e.icons.clone();
+        assert!(e.set_look(
+            colors,
+            e.interface,
+            e.blue_variant,
+            reprisekit::glass::Mode::Dark,
+            &icons,
+            cursor
+        ));
+        assert!(
+            e.pairs()
+                .contains(&(reprisekit::glass::MODE_ENV, "dark".into()))
+        );
+    }
+
+    #[test]
+    fn command_exports_token_when_given() {
+        let c = command("true", &env(None), Some("tok-1"));
+        assert_eq!(
+            env_of(&c, "XDG_ACTIVATION_TOKEN"),
+            Some(Some("tok-1".into()))
+        );
+        assert_eq!(
+            env_of(&c, "WAYLAND_DISPLAY"),
+            Some(Some("wayland-9".into()))
+        );
+        // No X11 display: DISPLAY is removed rather than inherited.
+        assert_eq!(env_of(&c, "DISPLAY"), Some(None));
+    }
+
+    #[test]
+    fn command_removes_stale_token_without_one() {
+        // A token inherited from the environment that launched reprise, of
+        // either kind, must not leak into children: the compositor is the
+        // only source of valid tokens for its own clients.
+        let c = command("true", &env(Some(":1")), None);
+        assert_eq!(env_of(&c, "XDG_ACTIVATION_TOKEN"), Some(None));
+        assert_eq!(env_of(&c, "DESKTOP_STARTUP_ID"), Some(None));
+        assert_eq!(env_of(&c, "DISPLAY"), Some(Some(":1".into())));
+    }
+
+    /// The desktop name, the colours, the interface, Blue's variant and
+    /// the icon theme reach a child through the command, not the process
+    /// environment.
+    #[test]
+    fn command_carries_the_desktop_and_colours() {
+        let c = command("true", &env(None), None);
+        assert_eq!(
+            env_of(&c, "XDG_CURRENT_DESKTOP"),
+            Some(Some("reprise".into()))
+        );
+        assert_eq!(
+            env_of(&c, reprisekit::theme::COLORS_ENV),
+            Some(Some("k=v".into()))
+        );
+        assert_eq!(
+            env_of(&c, reprisekit::interface::ENV),
+            Some(Some("classic".into()))
+        );
+        assert_eq!(env_of(&c, reprisekit::blue::ENV), Some(Some("blue".into())));
+        assert_eq!(
+            env_of(&c, reprisekit::icontheme::ENV),
+            Some(Some("retro-icons".into())),
+            "the child reads the configured icon theme"
+        );
+    }
+
+    /// "auto" points Qt at the portal under a dark scheme and leaves it
+    /// alone under a light one; a named platform theme always stands. Never
+    /// in the activation environment.
+    #[test]
+    fn qt_takes_the_portal_under_a_dark_look_or_the_configured_theme() {
+        use reprisekit::theme::{Color, ColorScheme};
+        let light = command("true", &env(None), None);
+        assert_eq!(env_of(&light, "QT_QPA_PLATFORMTHEME"), None);
+        let dark_scheme = ColorScheme {
+            window: Color::rgb(32, 32, 32),
+            ..ColorScheme::default()
+        };
+        let e = SessionEnv {
+            colors: dark_scheme.to_env(),
+            ..env(None)
+        };
+        let dark = command("true", &e, None);
+        assert_eq!(
+            env_of(&dark, "QT_QPA_PLATFORMTHEME"),
+            Some(Some("xdgdesktopportal".into()))
+        );
+        assert!(!e.pairs().iter().any(|(k, _)| *k == "QT_QPA_PLATFORMTHEME"));
+        let qt6ct = SessionEnv {
+            qt_platform_theme: "qt6ct".into(),
+            ..env(None)
+        };
+        assert_eq!(
+            env_of(&command("true", &qt6ct, None), "QT_QPA_PLATFORMTHEME"),
+            Some(Some("qt6ct".into()))
+        );
+        let reprise = SessionEnv {
+            qt_platform_theme: "reprise".into(),
+            qt_generated: Some("qt5ct"),
+            ..env(None)
+        };
+        assert_eq!(
+            env_of(&command("true", &reprise, None), "QT_QPA_PLATFORMTHEME"),
+            Some(Some("qt5ct".into())),
+            "\"reprise\" takes the tool holding the generated palette"
+        );
+    }
+
+    /// The GTK portal backend's drop-in sets `GTK_THEME`, quoted for
+    /// systemd, and reports a change only when its text moves.
+    #[test]
+    fn the_gtk_portal_backend_takes_the_theme_through_a_drop_in() {
+        let runtime =
+            std::env::temp_dir().join(format!("reprise-portal-gtk-{}", std::process::id()));
+        let file = runtime.join("systemd/user/xdg-desktop-portal-gtk.service.d/reprise.conf");
+        let read = || std::fs::read_to_string(&file).unwrap();
+        assert!(write_portal_gtk_drop_in(&runtime, "Adwaita-dark").unwrap());
+        assert_eq!(
+            read(),
+            "[Service]\nEnvironment=\"GTK_THEME=Adwaita-dark\"\n"
+        );
+        assert!(
+            !write_portal_gtk_drop_in(&runtime, "Adwaita-dark").unwrap(),
+            "the same theme leaves the backend running"
+        );
+        assert!(write_portal_gtk_drop_in(&runtime, "Adwaita").unwrap());
+        assert_eq!(read(), "[Service]\nEnvironment=\"GTK_THEME=Adwaita\"\n");
+        assert!(write_portal_gtk_drop_in(&runtime, r#"My "50%" \theme"#).unwrap());
+        assert_eq!(
+            read(),
+            "[Service]\nEnvironment=\"GTK_THEME=My \\\"50%%\\\" \\\\theme\"\n",
+            "quotes and backslashes escaped, % doubled"
+        );
+        std::fs::remove_dir_all(&runtime).unwrap();
+    }
+
+    /// A spawned child leads a session of its own and reads stdin from
+    /// `/dev/null`.
+    #[test]
+    fn detached_child_has_its_own_session_and_no_stdin() {
+        let mut c = command_argv(
+            &"sh",
+            &[
+                "-c",
+                "cut -d' ' -f6 /proc/self/stat; readlink /proc/self/fd/0",
+            ],
+            &env(None),
+            None,
+        );
+        c.stdout(std::process::Stdio::piped());
+        detach(&mut c);
+        let out = c.spawn().unwrap().wait_with_output().unwrap();
+        let out = String::from_utf8(out.stdout).unwrap();
+        let mut lines = out.lines();
+        let sid: libc::pid_t = lines.next().unwrap().parse().unwrap();
+        // SAFETY: getsid(0) only reads the calling process's session id.
+        let ours = unsafe { libc::getsid(0) };
+        assert_ne!(sid, ours, "the child's session is not the test's");
+        assert_eq!(lines.next(), Some("/dev/null"), "stdin is /dev/null");
+    }
+
+    /// A child of a compositor that ignores SIGINT still gets SIGINT's
+    /// default action.
+    #[test]
+    fn detached_child_does_not_inherit_an_ignored_interrupt() {
+        let mut c = command_argv(
+            &"sh",
+            &["-c", "grep SigIgn /proc/self/status"],
+            &env(None),
+            None,
+        );
+        c.stdout(std::process::Stdio::piped());
+        // SAFETY: runs between fork and exec, before `detach`'s own closure;
+        // signal is async-signal-safe. It ignores SIGINT in the child only,
+        // as a compositor started with `&` would.
+        unsafe {
+            c.pre_exec(|| {
+                libc::signal(libc::SIGINT, libc::SIG_IGN);
+                Ok(())
+            });
+        }
+        detach(&mut c);
+        let out = c.spawn().unwrap().wait_with_output().unwrap();
+        let out = String::from_utf8(out.stdout).unwrap();
+        let mask =
+            u64::from_str_radix(out.trim().trim_start_matches("SigIgn:").trim(), 16).unwrap();
+        assert_eq!(mask & (1 << (libc::SIGINT - 1)), 0, "SIGINT is not ignored");
+    }
+
+    /// The activation environment carries the session type and the
+    /// login's seat, alongside the display.
+    #[test]
+    fn pairs_carry_session_type_and_seat() {
+        let p = env(None).pairs();
+        assert!(p.contains(&("XDG_SESSION_TYPE", "wayland".into())));
+        assert!(p.contains(&("XDG_SEAT", "seat0".into())));
+    }
+}

@@ -1,0 +1,767 @@
+//! The compositor's host for `reprisekit::controls::filedlg`: the Browse
+//! dialog for Run or Open With (see `Purpose`). The picker
+//! owns the `FileDlg` model, the `reprisefs::folders::FolderTable` its
+//! `FolderId`s resolve through, and the icons the host looked up; a places
+//! tile resolves through `place_dirs`. `dialog.rs` frames it, routes keys
+//! and clicks to it and draws it into the frame's client area.
+//!
+//! The picker never touches the file system itself: a folder read or a
+//! typed name's lookup can block for good on a dead network mount. It
+//! queues a [`Request`] instead; the host runs it off the loop and hands
+//! the [`Reply`] back through [`FilePicker::reply`].
+
+use crate::dialog::Outcome;
+use crate::raster::{Canvas, Rect};
+use reprisefs::listing::Row;
+use reprisekit::controls::filedlg::{self, Crumb, Event, Fields, FileDlg, Folder, FolderId};
+use reprisekit::controls::form::Key;
+use reprisekit::controls::placesbar::Place;
+use reprisekit::controls::shellview::Entry;
+use reprisekit::frame::Edges;
+use reprisekit::selection::Mods;
+use reprisekit::textedit::EditKey;
+use std::path::{Path, PathBuf};
+
+pub const TOOLBAR: [&str; 4] = ["go-previous", "go-up", "folder-new", "view-list"];
+
+/// What the picker is for: which filters it offers, which files it lists,
+/// and where the pick goes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Purpose {
+    /// Run's Browse...: programs (and every file behind the
+    /// second filter); the pick lands quoted in Run's field.
+    RunCommand,
+    /// The Open With chooser's Browse...: the same listing, the pick
+    /// joining the chooser's list.
+    Program,
+}
+
+impl Purpose {
+    fn fields(self) -> Fields {
+        let filters = vec!["Programs".into(), "All Files".into()];
+        Fields {
+            title: "Browse".into(),
+            accept_label: "Open".into(),
+            filters,
+            mode: filedlg::DlgMode::Open,
+            multiple: false,
+        }
+    }
+
+    /// The files the current filter lists: None is everything.
+    fn exts(self, filter: usize) -> Option<&'static [&'static str]> {
+        match (self, filter) {
+            // "Programs" is what the shell would run: executable files, judged by
+            // mode rather than by extension (`listing::Item::exec`).
+            (Purpose::RunCommand | Purpose::Program, 0) => Some(&[]),
+            (Purpose::RunCommand | Purpose::Program, _) => None,
+        }
+    }
+}
+
+/// Icons the dialog draws, fetched by the host: the places tiles at 32 px
+/// in `reprisefs::places::dialog_places`' order, the toolbar's buttons at 16 in `TOOLBAR`'s, and the
+/// 16 px row icons for the listing.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Icons {
+    pub places: Vec<Option<Canvas>>,
+    pub toolbar: Vec<Option<Canvas>>,
+    pub folder: Option<Canvas>,
+    /// The icon for a file the filter is for (a picture, a program).
+    pub file: Option<Canvas>,
+    /// Any other file, behind an "All Files" filter.
+    pub document: Option<Canvas>,
+}
+
+/// The icons every picker shares: the places tiles, the toolbar and the
+/// folder. `file` and `document` are the purpose's own.
+pub fn common_icons(cache: &mut reprisekit::icontheme::IconCache) -> Icons {
+    Icons {
+        places: reprisefs::places::dialog_places(true)
+            .iter()
+            .map(|p| cache.get(p.icon, 32))
+            .collect(),
+        toolbar: TOOLBAR.iter().map(|i| cache.get(i, 16)).collect(),
+        folder: cache.get("folder", 16),
+        file: None,
+        document: None,
+    }
+}
+
+/// The Browse dialog: the dialog, its folder table and icons.
+#[derive(Clone, Debug, PartialEq)]
+pub struct FilePicker {
+    pub dlg: FileDlg,
+    purpose: Purpose,
+    /// Where each places tile points; None is a greyed tile.
+    place_dirs: Vec<Option<PathBuf>>,
+    folders: reprisefs::folders::FolderTable,
+    icons: Icons,
+    /// The Files of type filter the listing was built for; a change
+    /// relists the folder.
+    filter: usize,
+    /// Requests made since the host last took them.
+    requests: Vec<Request>,
+    /// The last request's number: every request takes the next.
+    seq: u64,
+    /// The folder listing still wanted and the typed name still being
+    /// looked up, by request number. A reply for anything else is stale.
+    listing: Option<u64>,
+    opening: Option<u64>,
+    /// My Recent Documents' files by the name each is listed as, while
+    /// that listing is on screen.
+    recent: std::collections::HashMap<String, PathBuf>,
+}
+
+/// File system work the picker is waiting on, for the host to run off
+/// the loop with [`Request::run`].
+#[derive(Clone, Debug, PartialEq)]
+pub struct Request {
+    seq: u64,
+    /// The folder to list, or None to look `path` up first: a typed name
+    /// is a folder to enter, a file to pick, or nothing.
+    id: Option<FolderId>,
+    path: PathBuf,
+    exts: Option<&'static [&'static str]>,
+    /// The pattern typed into File name, which lists in place of `exts`.
+    pattern: Option<String>,
+    /// The lookup is a typed pattern's folder part: a folder is entered
+    /// and the dialog takes `pattern`; anything else is no pick.
+    folder_only: bool,
+}
+
+impl Request {
+    /// Reads the folder or looks the name up. Blocks for as long as the
+    /// file system does.
+    pub fn run(self) -> Reply {
+        let pattern = self.pattern.as_deref();
+        let found = if self.id.is_some() {
+            Found::Folder(read_folder(&self.path, self.exts, pattern))
+        } else {
+            match std::fs::metadata(&self.path) {
+                Ok(m) if m.is_dir() => Found::Folder(read_folder(&self.path, self.exts, pattern)),
+                Ok(m) if m.is_file() && !self.folder_only => Found::File,
+                _ => Found::Missing,
+            }
+        };
+        Reply {
+            seq: self.seq,
+            id: self.id,
+            path: self.path,
+            pattern: self.folder_only.then_some(self.pattern).flatten(),
+            found,
+        }
+    }
+}
+
+/// What a [`Request`] found, for [`FilePicker::reply`].
+#[derive(Debug)]
+pub struct Reply {
+    seq: u64,
+    id: Option<FolderId>,
+    path: PathBuf,
+    /// The typed pattern whose folder part was looked up, which the
+    /// dialog takes once that is a folder.
+    pattern: Option<String>,
+    found: Found,
+}
+
+#[derive(Debug)]
+enum Found {
+    /// `listing::Row` rather than `Entry`, which holds `Rc` icons and so
+    /// cannot come back from the thread that read the folder.
+    Folder(Vec<Row>),
+    File,
+    Missing,
+}
+
+impl FilePicker {
+    /// Run's Browse..., listing `start` (the home folder). Its Open puts
+    /// the file in Run's field.
+    pub fn run_command(start: &Path, icons: Icons, recent: bool) -> FilePicker {
+        FilePicker::new(Purpose::RunCommand, start, icons, recent)
+    }
+
+    /// The Open With chooser's Browse..., listing `start` (`/usr/bin`).
+    /// Its Open adds the program to the chooser.
+    pub fn program(start: &Path, icons: Icons, recent: bool) -> FilePicker {
+        FilePicker::new(Purpose::Program, start, icons, recent)
+    }
+
+    /// `recent` is `[privacy] recent_files`: without it the My Recent
+    /// Documents tile is greyed.
+    fn new(purpose: Purpose, start: &Path, icons: Icons, recent: bool) -> FilePicker {
+        let tiles = reprisefs::places::dialog_places(recent);
+        let places = tiles
+            .iter()
+            .enumerate()
+            .map(|(i, p)| Place {
+                enabled: p.dir.is_some(),
+                label: p.label.clone(),
+                icon: icons.places.get(i).cloned().flatten(),
+            })
+            .collect();
+        let mut dlg = FileDlg::new(purpose.fields(), places);
+        let tb = |i: usize| icons.toolbar.get(i).cloned().flatten();
+        dlg.set_toolbar_icons(tb(0), tb(1), tb(2), tb(3));
+        let mut picker = FilePicker {
+            dlg,
+            purpose,
+            place_dirs: tiles.into_iter().map(|p| p.dir).collect(),
+            folders: reprisefs::folders::FolderTable::default(),
+            icons,
+            filter: 0,
+            requests: Vec::new(),
+            seq: 0,
+            listing: None,
+            opening: None,
+            recent: Default::default(),
+        };
+        let id = picker.folders.id(start);
+        picker.list(id);
+        picker
+    }
+
+    /// The file system work queued since the last call, for the host to
+    /// run off the loop.
+    pub fn take_requests(&mut self) -> Vec<Request> {
+        std::mem::take(&mut self.requests)
+    }
+
+    /// Queue a listing of `id`, or a lookup of `path`. `typed` is a
+    /// typed pattern whose folder part `path` is, listed through in place
+    /// of the dialog's own filter.
+    fn request(&mut self, id: Option<FolderId>, path: PathBuf, typed: Option<&str>) -> u64 {
+        self.seq += 1;
+        self.requests.push(Request {
+            seq: self.seq,
+            id,
+            path,
+            exts: self.purpose.exts(self.filter),
+            pattern: typed.or(self.dlg.wildcard()).map(str::to_string),
+            folder_only: typed.is_some(),
+        });
+        self.seq
+    }
+
+    /// A finished [`Request`]: the listing lands, or a typed name enters
+    /// its folder or is the pick. A reply that a later navigation made
+    /// stale changes nothing.
+    pub fn reply(&mut self, r: Reply) -> Outcome {
+        if r.id.is_some() {
+            if self.listing != Some(r.seq) {
+                return Outcome::Nothing;
+            }
+            self.listing = None;
+        } else {
+            if self.opening != Some(r.seq) {
+                return Outcome::Nothing;
+            }
+            self.opening = None;
+        }
+        match r.found {
+            Found::Folder(rows) => {
+                // A typed folder is newer than any listing still pending.
+                self.listing = None;
+                let id = r.id.unwrap_or_else(|| self.folders.id(&r.path));
+                self.recent = if reprisefs::places::is_recent(&r.path) {
+                    rows.iter()
+                        .map(|r| (r.name.clone(), r.path.clone()))
+                        .collect()
+                } else {
+                    Default::default()
+                };
+                let entries = self.entries(rows);
+                self.show(id, &r.path, entries);
+                match (&r.pattern, r.id) {
+                    (Some(p), _) => self.dlg.apply_wildcard(p),
+                    // The field empties once the folder is entered.
+                    (None, None) => self.dlg.set_file_name(""),
+                    (None, Some(_)) => {}
+                }
+                Outcome::Redraw
+            }
+            Found::File => match self.purpose {
+                Purpose::RunCommand => Outcome::RunPick(r.path),
+                Purpose::Program => Outcome::ProgramPick(r.path),
+            },
+            Found::Missing => {
+                log::warn!("browse: {} is not a file", r.path.display());
+                Outcome::Nothing
+            }
+        }
+    }
+
+    pub fn current(&self) -> Option<&Path> {
+        self.dlg.folder().and_then(|id| self.folders.path(id))
+    }
+
+    /// Enters `id`'s folder, empty until its listing arrives.
+    fn list(&mut self, id: FolderId) {
+        let Some(path) = self.folders.path(id).map(Path::to_path_buf) else {
+            return;
+        };
+        self.show(id, &path, Vec::new());
+        self.listing = Some(self.request(Some(id), path, None));
+        // A folder picked after a name was typed wins over the name.
+        self.opening = None;
+    }
+
+    /// `rows` as the dialog's entries: the host's icons, and a `folders`
+    /// handle on every subfolder so entering one resolves.
+    fn entries(&mut self, rows: Vec<Row>) -> Vec<Entry> {
+        rows.into_iter()
+            .map(|r| Entry {
+                id: if r.is_dir {
+                    self.folders.id(&r.path)
+                } else {
+                    0
+                },
+                icon: if r.is_dir {
+                    self.icons.folder.clone()
+                } else if !r.exec {
+                    self.icons.document.clone()
+                } else {
+                    self.icons.file.clone()
+                }
+                .map(std::rc::Rc::new),
+                name: r.name,
+                is_dir: r.is_dir,
+                link: r.is_link,
+                size: r.size,
+                kind: r.kind,
+                modified: r.modified,
+                mtime: r.mtime,
+                ..Default::default()
+            })
+            .collect()
+    }
+
+    /// Hands folder `id` at `path` to the dialog with `entries`.
+    fn show(&mut self, id: FolderId, path: &Path, entries: Vec<Entry>) {
+        let parent = reprisefs::places::dialog_parent(path).map(|p| self.folders.id(p));
+        let label = reprisefs::places::dialog_label(path);
+        self.dlg.set_listing(Folder {
+            id,
+            parent,
+            crumbs: vec![Crumb {
+                id,
+                label,
+                depth: 0,
+                icon: self.icons.folder.clone(),
+            }],
+            entries,
+        });
+    }
+
+    /// A key from the dialog view. Typed text goes in as an edit so the
+    /// File name field takes it, and its first character doubles as the
+    /// shell view's type-ahead. The file dialog has no access keys of
+    /// its own yet. `client` is the dialog's page rect, where `draw`
+    /// laid it out.
+    pub fn key(&mut self, client: Rect, key: Key) -> Outcome {
+        let k = match key {
+            Key::Backspace => Key::Edit(EditKey::Backspace { word: false }),
+            Key::Access(_) => return Outcome::Nothing,
+            k => k,
+        };
+        let ch = match &k {
+            Key::Edit(EditKey::Insert(t)) => t.chars().next(),
+            Key::Char(c) => Some(*c),
+            _ => None,
+        };
+        let ev = self.dlg.key(client, k, ch, Mods::default());
+        self.event(ev)
+    }
+
+    /// A mouse's thumb button: Back or Forward through the folders shown.
+    pub fn nav(&mut self, nav: reprisekit::pointer::Nav) -> Outcome {
+        let ev = self.dlg.nav(nav);
+        self.event(ev)
+    }
+
+    pub fn click(&mut self, client: Rect, hit: Option<filedlg::Hit>) -> Outcome {
+        let ev = self.dlg.click(client, hit, Mods::default());
+        self.event(ev)
+    }
+
+    /// The wheel turned `rows` rows (down is positive) over `hit`.
+    pub fn wheel(&mut self, client: Rect, hit: Option<filedlg::Hit>, rows: i32) -> Outcome {
+        let ev = self.dlg.wheel(client, hit, rows);
+        self.event(ev)
+    }
+
+    /// The second press of a double click: a folder is entered, a file
+    /// picked; anywhere but an entry it is one more click.
+    pub fn double_click(&mut self, client: Rect, hit: Option<filedlg::Hit>) -> Outcome {
+        let ev = self.dlg.double_click(client, hit);
+        self.event(ev)
+    }
+
+    /// A changed Files of type filter relists the folder for it.
+    fn sync_filter(&mut self) {
+        let filter = self.dlg.filter();
+        if filter != self.filter {
+            self.filter = filter;
+            if let Some(id) = self.dlg.folder() {
+                self.list(id);
+            }
+        }
+    }
+
+    pub fn release(&mut self) -> Outcome {
+        let ev = self.dlg.release();
+        self.event(ev)
+    }
+
+    /// The pointer rests on `hit`, or drags a held column title there: a
+    /// Details column title lights or follows. True when that redraws.
+    pub fn hover(&mut self, hit: Option<filedlg::Hit>) -> bool {
+        !matches!(self.dlg.hover(hit), Event::None)
+    }
+
+    /// The pointer left the dialog: no column title stays lit. True when
+    /// that redraws.
+    pub fn leave(&mut self) -> bool {
+        !matches!(self.dlg.leave(), Event::None)
+    }
+
+    /// What the dialog asked for. Open on a name looks it up off the loop:
+    /// a folder is entered, a file is the pick, anything else ignored.
+    fn event(&mut self, ev: Event) -> Outcome {
+        self.sync_filter();
+        let ev = match ev {
+            Event::NeedPlace(i) => match self.place_dirs.get(i).cloned().flatten() {
+                Some(dir) => Event::NeedListing(self.folders.id(&dir)),
+                None => Event::None,
+            },
+            ev => ev,
+        };
+        match ev {
+            Event::None => Outcome::Nothing,
+            Event::Redraw => Outcome::Redraw,
+            Event::NeedPlace(_) => Outcome::Nothing,
+            Event::NeedListing(id) => {
+                // Entering a folder by its typed name empties the field;
+                // a name typed for something else stays.
+                let typed = self.dlg.file_name().to_string();
+                let names_dir = self
+                    .dlg
+                    .entries()
+                    .iter()
+                    .any(|e| e.is_dir && e.name == typed);
+                self.list(id);
+                if names_dir {
+                    self.dlg.set_file_name("");
+                }
+                Outcome::Redraw
+            }
+            Event::CreateFolder(_) => Outcome::Nothing,
+            Event::Resize => Outcome::Size(Edges::BOTTOM | Edges::RIGHT),
+            Event::FilterChanged(_) => Outcome::Redraw,
+            // A typed pattern lists the open folder, or looks its folder
+            // part up and enters it, through the pattern. The dialog
+            // takes the pattern only once there is a folder to list.
+            Event::Wildcard { dir, name } => {
+                if dir.is_empty() {
+                    if let Some(id) = self.dlg.folder() {
+                        self.dlg.apply_wildcard(&name);
+                        self.list(id);
+                    }
+                    return Outcome::Redraw;
+                }
+                let Some(path) = self.typed_path(&dir) else {
+                    return Outcome::Nothing;
+                };
+                let pattern = &name[dir.len()..];
+                self.opening = Some(self.request(None, path, Some(pattern)));
+                Outcome::Nothing
+            }
+            Event::Cancel => Outcome::Close,
+            Event::Accept(names) => {
+                let Some(name) = names.into_iter().next() else {
+                    return Outcome::Nothing;
+                };
+                let Some(path) = self.typed_path(&name) else {
+                    return Outcome::Nothing;
+                };
+                self.opening = Some(self.request(None, path, None));
+                Outcome::Nothing
+            }
+        }
+    }
+
+    /// Where a typed `name` points from the open folder. Lexical, so a
+    /// typed ".." gets the same folder handle as Up and its parent is the
+    /// one above it. None for a relative name in My Recent Documents,
+    /// which is no folder to look a new name up in.
+    fn typed_path(&self, name: &str) -> Option<PathBuf> {
+        Some(match self.current() {
+            Some(dir) if reprisefs::places::is_recent(dir) => match self.recent.get(name) {
+                Some(p) => p.clone(),
+                None if name.starts_with('/') => reprisefs::ops::lexical(Path::new(name)),
+                None => return None,
+            },
+            Some(dir) => reprisefs::ops::lexical(&dir.join(name)),
+            None => reprisefs::ops::lexical(Path::new(name)),
+        })
+    }
+}
+
+/// The shared-mime-info globs every listing's Type column reads, parsed
+/// on the first listing and kept with their description memo for the
+/// session.
+static GLOBS: std::sync::LazyLock<reprisefs::apps::MimeDb> =
+    std::sync::LazyLock::new(reprisefs::apps::mime_globs);
+
+/// `dir`'s subfolders and its files: those a typed `pattern` keeps,
+/// else those with an extension in `exts`, the executable ones for an
+/// empty `exts`, all of them for `None`, as `listing::dialog_rows` orders
+/// them.
+fn read_folder(dir: &Path, exts: Option<&[&str]>, pattern: Option<&str>) -> Vec<Row> {
+    reprisefs::listing::dialog_rows(dir, &GLOBS, |i| {
+        i.is_dir
+            || match (pattern, exts) {
+                (Some(p), _) => filedlg::pattern_keeps(p, &i.name),
+                (None, None) => true,
+                (None, Some([])) => i.exec,
+                (None, Some(exts)) => has_ext(&i.path, exts),
+            }
+    })
+}
+
+fn has_ext(p: &Path, exts: &[&str]) -> bool {
+    p.extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| exts.iter().any(|x| x.eq_ignore_ascii_case(e)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::os::unix::fs::PermissionsExt;
+
+    const R: Rect = Rect::new(0, 0, filedlg::CLIENT.0, filedlg::CLIENT.1);
+
+    /// Runs the picker's queued requests the way the host's thread would,
+    /// returning the last outcome that did something.
+    fn settle(p: &mut FilePicker) -> Outcome {
+        let mut out = Outcome::Nothing;
+        for r in p.take_requests() {
+            match p.reply(r.run()) {
+                Outcome::Nothing => {}
+                o => out = o,
+            }
+        }
+        out
+    }
+
+    fn names(p: &FilePicker) -> Vec<&str> {
+        p.dlg.entries().iter().map(|e| e.name.as_str()).collect()
+    }
+
+    fn sandbox(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("reprise-filepick-{name}"));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("Pictures")).expect("mkdir");
+        for f in ["dunes", ".hidden", "Pictures/meadow"] {
+            std::fs::write(dir.join(f), "#!/bin/sh\n").expect("write");
+            std::fs::set_permissions(dir.join(f), std::fs::Permissions::from_mode(0o755))
+                .expect("chmod");
+        }
+        std::fs::write(dir.join("notes.txt"), "x").expect("write");
+        std::fs::set_permissions(
+            dir.join("notes.txt"),
+            std::fs::Permissions::from_mode(0o644),
+        )
+        .expect("chmod");
+        dir
+    }
+
+    /// A typed ".." or "a/../b" enters the folder it names, whose Up is
+    /// the folder above it.
+    #[test]
+    fn a_typed_dot_dot_enters_the_folder_above() {
+        let dir = sandbox("dotdot");
+        let mut p = FilePicker::run_command(&dir.join("Pictures"), Icons::default(), true);
+        settle(&mut p);
+        p.dlg.set_file_name("..");
+        p.key(R, Key::Enter);
+        assert_eq!(settle(&mut p), Outcome::Redraw);
+        assert_eq!(p.current(), Some(dir.as_path()));
+        assert_eq!(names(&p), ["Pictures", "dunes"]);
+        p.click(R, Some(filedlg::Hit::ToolBar(1)));
+        assert_eq!(p.current(), dir.parent());
+
+        p.dlg
+            .set_file_name(&format!("{}/Pictures/../Pictures", dir.display()));
+        p.key(R, Key::Enter);
+        settle(&mut p);
+        assert_eq!(p.current(), Some(dir.join("Pictures").as_path()));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn typing_fills_the_file_name() {
+        let dir = sandbox("type");
+        let mut p = FilePicker::run_command(&dir, Icons::default(), true);
+        p.key(R, Key::Edit(EditKey::Insert("D".into())));
+        p.key(R, Key::Edit(EditKey::Insert("u".into())));
+        assert_eq!(p.dlg.file_name(), "Du");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Run's Browse lists executables under "Programs", everything under
+    /// "All Files", and hands the pick to Run.
+    #[test]
+    fn run_browse_lists_programs_and_hands_the_pick_to_run() {
+        let dir = sandbox("run");
+        std::fs::write(dir.join("tool"), "#!/bin/sh\n").unwrap();
+        std::fs::set_permissions(dir.join("tool"), std::fs::Permissions::from_mode(0o755)).unwrap();
+        let mut p = FilePicker::run_command(&dir, Icons::default(), true);
+        settle(&mut p);
+        assert_eq!(names(&p), ["Pictures", "dunes", "tool"]);
+        // Files of type -> All Files: Down on the focused combo picks it.
+        p.key(R, Key::Tab { back: false });
+        p.key(R, Key::Down);
+        settle(&mut p);
+        assert_eq!(names(&p), ["Pictures", "dunes", "notes.txt", "tool"]);
+        p.dlg.set_file_name("tool");
+        p.key(R, Key::Enter);
+        assert_eq!(settle(&mut p), Outcome::RunPick(dir.join("tool")));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A typed pattern lists what it matches and every folder; one with
+    /// a folder part enters that folder, the field keeping the pattern.
+    /// One whose folder part is no folder leaves the dialog as it was.
+    #[test]
+    fn a_typed_pattern_filters_the_listing() {
+        let dir = sandbox("wildcard");
+        let mut p = FilePicker::run_command(&dir, Icons::default(), true);
+        settle(&mut p);
+        p.dlg.set_file_name("*.txt");
+        p.key(R, Key::Enter);
+        assert_eq!(settle(&mut p), Outcome::Redraw);
+        assert_eq!(names(&p), ["Pictures", "notes.txt"]);
+        p.dlg.set_file_name("Pictures/m*");
+        p.key(R, Key::Enter);
+        assert_eq!(settle(&mut p), Outcome::Redraw);
+        assert_eq!(p.current(), Some(dir.join("Pictures").as_path()));
+        assert_eq!(names(&p), ["meadow"]);
+        assert_eq!(p.dlg.file_name(), "m*");
+        p.dlg.set_file_name("../dunes/*");
+        p.key(R, Key::Enter);
+        assert_eq!(
+            settle(&mut p),
+            Outcome::Nothing,
+            "a file is no folder to list"
+        );
+        assert_eq!(p.dlg.file_name(), "../dunes/*", "the field as typed");
+        assert_eq!(p.dlg.wildcard(), Some("m*"), "the filter stays");
+        assert_eq!(names(&p), ["meadow"], "the listing stays");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A places tile enters the folder `place_dirs` gives it; a tile
+    /// index with none leaves the folder on screen.
+    #[test]
+    fn a_places_tile_enters_its_folder() {
+        let dir = sandbox("place");
+        let mut p = FilePicker::run_command(&dir, Icons::default(), true);
+        assert_eq!(p.event(Event::NeedPlace(6)), Outcome::Nothing);
+        assert_eq!(p.current(), Some(dir.as_path()));
+        assert_eq!(p.event(Event::NeedPlace(5)), Outcome::Redraw);
+        assert_eq!(p.current(), Some(Path::new("/")));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A file picked in My Recent Documents is the file at its own path.
+    #[test]
+    fn a_recent_file_picks_its_own_path() {
+        let dir = sandbox("recent");
+        let mut p = FilePicker::run_command(&dir, Icons::default(), true);
+        settle(&mut p);
+        let recent = p.folders.id(Path::new(reprisefs::places::RECENT));
+        p.list(recent);
+        p.take_requests();
+        let file = dir.join("dunes");
+        p.reply(Reply {
+            seq: p.listing.unwrap(),
+            id: Some(recent),
+            path: PathBuf::from(reprisefs::places::RECENT),
+            pattern: None,
+            found: Found::Folder(read_folder(&dir, Some(&[]), None)),
+        });
+        assert!(!p.dlg.can_go_up(), "Recent has no folder above it");
+        p.dlg.set_file_name("nope");
+        p.key(R, Key::Enter);
+        assert!(
+            p.take_requests().is_empty(),
+            "a name not listed goes nowhere"
+        );
+        p.dlg.set_file_name("dunes");
+        p.key(R, Key::Enter);
+        let reqs = p.take_requests();
+        assert_eq!(reqs[0].path, file);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_double_click_enters_a_folder() {
+        let dir = sandbox("double");
+        let mut p = FilePicker::run_command(&dir, Icons::default(), true);
+        settle(&mut p);
+        let hit = Some(filedlg::Hit::Shell(
+            reprisekit::controls::shellview::Hit::Entry(0),
+        ));
+        p.double_click(R, hit);
+        settle(&mut p);
+        assert_eq!(p.current(), Some(dir.join("Pictures").as_path()));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Entering a folder shows it empty at once and reads it only when
+    /// the host runs the request, so a folder that never answers leaves
+    /// the dialog working.
+    #[test]
+    fn a_folder_shows_empty_until_its_listing_lands() {
+        let dir = sandbox("pending");
+        let mut p = FilePicker::run_command(&dir, Icons::default(), true);
+        assert_eq!(p.current(), Some(dir.as_path()));
+        assert_eq!(names(&p), Vec::<&str>::new());
+        assert_eq!(settle(&mut p), Outcome::Redraw);
+        assert_eq!(names(&p), ["Pictures", "dunes"]);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A listing that lands after the user moved on is dropped: the
+    /// folder picked last stays on screen.
+    #[test]
+    fn a_stale_listing_is_dropped() {
+        let dir = sandbox("stale");
+        let mut p = FilePicker::run_command(&dir, Icons::default(), true);
+        settle(&mut p);
+        p.dlg.set_file_name("Pictures");
+        p.key(R, Key::Enter);
+        settle(&mut p);
+        // Back to `dir`, then into Pictures again before `dir`'s listing
+        // lands.
+        let back = p.dlg.nav(reprisekit::pointer::Nav::Back);
+        p.event(back);
+        let slow = p.take_requests();
+        let pictures = p.folders.id(&dir.join("Pictures"));
+        p.event(Event::NeedListing(pictures));
+        assert_eq!(settle(&mut p), Outcome::Redraw);
+        for r in slow {
+            assert_eq!(
+                p.reply(r.run()),
+                Outcome::Nothing,
+                "stale reply changes nothing"
+            );
+        }
+        assert_eq!(p.current(), Some(dir.join("Pictures").as_path()));
+        assert_eq!(names(&p), ["meadow"]);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}

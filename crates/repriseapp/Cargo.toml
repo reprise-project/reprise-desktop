@@ -1,0 +1,28 @@
+[package]
+name = "repriseapp"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Run a reprisekit-drawn program as a Wayland client: an shm-backed xdg toplevel, keys and pointer events mapped to the toolkit's, the caret blink, the clipboard, drag and drop."
+
+[lints]
+workspace = true
+
+[dependencies]
+reprisekit = { path = "../reprisekit" }
+reprisefs = { path = "../reprisefs" }
+repriseconf = { path = "../repriseconf" }
+smithay-client-toolkit = "0.21"
+wayland-client.workspace = true
+log.workspace = true
+zeroize.workspace = true
+# in pure Rust. Left out: AVIF (decoding needs the system dav1d), TGA and
+# farbfeld (no magic `guess_format` can sniff, or too rare to carry).
+image = { workspace = true, features = ["gif", "webp", "tiff", "ico", "qoi", "pnm", "hdr", "exr", "dds"] }
+accesskit_unix.workspace = true
+reprisebus = { path = "../reprisebus" }
+
+[dev-dependencies]
+env_logger.workspace = true
+png.workspace = true

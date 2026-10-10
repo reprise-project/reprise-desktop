@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Sounds and Audio Devices
+Comment=Configure your speakers and recording devices, and the volume of each program playing sound.
+Exec=reprise-sound
+Icon=multimedia-volume-control
+Categories=Settings;
+StartupWMClass=reprise.sound
+Terminal=false

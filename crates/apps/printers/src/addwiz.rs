@@ -1,0 +1,862 @@
+//! The Add Printer Wizard. Nothing here talks to cupsd: the host feeds it the devices and
+//! drivers it reads and turns the [`Outcome`]s into commands.
+
+use std::path::PathBuf;
+
+use reprisekit::access::{ROOT, Tree};
+use reprisekit::classic::widgets::BUTTON_H;
+use reprisekit::controls::form::{self, Control, Form, Item};
+use reprisekit::controls::listbox::ListBox;
+use reprisekit::controls::wizard::{self, INTERIOR_BODY, Style, Wizard};
+use reprisekit::look::Paint;
+use reprisekit::raster::{Canvas, Rect};
+
+use crate::cups::{self, Device, Driver, NewPrinter, Ppd, Snapshot};
+use crate::folder::check_name;
+
+const FOUND: &str = "found";
+const DEVICES: &str = "devices";
+const STATUS: &str = "status";
+const AGAIN: &str = "again";
+const TYPED: &str = "typed";
+const ADDRESS: &str = "address";
+const SEARCH: &str = "search";
+const DRIVERS: &str = "drivers";
+const DISK: &str = "disk";
+const NAME: &str = "name";
+const LOCATION: &str = "location";
+const DEFAULT: &str = "default";
+const TEST: &str = "test";
+const ERROR: &str = "error";
+
+const MAX_DRIVERS: usize = 400;
+
+const B: Rect = INTERIOR_BODY;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Step {
+    Choose,
+    Driver,
+    Name,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Outcome {
+    None,
+    Redraw,
+    Search,
+    Drivers,
+    HaveDisk,
+    Add {
+        printer: NewPrinter,
+        default: bool,
+        test_page: bool,
+    },
+    Close,
+}
+
+pub struct AddWizard {
+    pub step: Step,
+    pub page: Wizard,
+    icon: Option<Canvas>,
+    /// `None` while a search runs.
+    devices: Option<Result<Vec<Device>, String>>,
+    device: Option<usize>,
+    typed: bool,
+    address: String,
+    /// `None` until read.
+    ppds: Option<Result<Vec<Ppd>, String>>,
+    asked_ppds: bool,
+    search: String,
+    shown: Vec<usize>,
+    ppd: Option<String>,
+    file: Option<PathBuf>,
+    name: String,
+    location: String,
+    make_default: bool,
+    test_page: bool,
+    pub adding: bool,
+    error: String,
+}
+
+fn para(id: &'static str, y: i32, s: &str) -> Item {
+    Item::label_at(id, B.x, y, B.width, s)
+}
+
+fn edit_text(form: &Form, id: &str) -> String {
+    match form.item(id).map(|i| &i.control) {
+        Some(Control::Edit { edit, .. }) => edit.text.clone(),
+        _ => String::new(),
+    }
+}
+
+fn list_selected(form: &Form, id: &str) -> Option<usize> {
+    match form.item(id).map(|i| &i.control) {
+        Some(Control::ListBox { list, .. }) => list.selected,
+        _ => None,
+    }
+}
+
+/// The URI a typed address stands for: a bare host or IP is a
+/// driverless IPP printer at its usual path.
+pub fn address_uri(typed: &str) -> Option<String> {
+    let t = typed.trim();
+    if t.is_empty() || t.contains(char::is_whitespace) {
+        return None;
+    }
+    if t.contains("://") {
+        return Some(t.to_string());
+    }
+    Some(format!("ipp://{t}/ipp/print"))
+}
+
+/// A queue name from what the printer calls itself, without the characters cupsd refuses.
+pub fn suggest_name(from: &str) -> String {
+    let words: Vec<String> = from
+        .split(|c: char| !(c.is_alphanumeric() || c == '-' || c == '.'))
+        .filter(|w| !w.is_empty())
+        .map(str::to_string)
+        .collect();
+    let name = words.join("_");
+    let name: String = name.chars().take(60).collect();
+    if name.is_empty() {
+        "Printer".into()
+    } else {
+        name
+    }
+}
+
+fn free_name(base: &str, s: &Snapshot) -> String {
+    let taken = |n: &str| s.printers.iter().any(|p| p.name.eq_ignore_ascii_case(n));
+    if !taken(base) {
+        return base.into();
+    }
+    (2..)
+        .map(|i| format!("{base}_{i}"))
+        .find(|n| !taken(n))
+        .unwrap_or_else(|| base.into())
+}
+
+impl AddWizard {
+    pub fn new(s: &Snapshot, icon: Option<Canvas>) -> AddWizard {
+        let mut w = AddWizard {
+            step: Step::Choose,
+            icon,
+            page: Wizard::new(
+                Style::Exterior {
+                    title: String::new(),
+                },
+                vec![],
+                true,
+                false,
+            ),
+            devices: None,
+            device: None,
+            typed: false,
+            address: String::new(),
+            ppds: None,
+            asked_ppds: false,
+            search: String::new(),
+            shown: Vec::new(),
+            ppd: None,
+            file: None,
+            name: String::new(),
+            location: String::new(),
+            make_default: s.printers.is_empty(),
+            test_page: false,
+            adding: false,
+            error: String::new(),
+        };
+        w.go(Step::Choose, s);
+        w
+    }
+
+    fn uri(&self) -> Option<String> {
+        if self.typed {
+            return address_uri(&self.address);
+        }
+        let d = self.devices.as_ref()?.as_ref().ok()?.get(self.device?)?;
+        Some(d.uri.clone())
+    }
+
+    fn chosen_device(&self) -> Option<&Device> {
+        if self.typed {
+            return None;
+        }
+        self.devices.as_ref()?.as_ref().ok()?.get(self.device?)
+    }
+
+    fn needs_driver(&self) -> bool {
+        !self.uri().is_some_and(|u| cups::driverless_uri(&u))
+    }
+
+    fn driver(&self) -> Driver {
+        if !self.needs_driver() {
+            return Driver::Everywhere;
+        }
+        match (&self.file, &self.ppd) {
+            (Some(f), _) => Driver::File(f.clone()),
+            (None, Some(p)) => Driver::Ppd(p.clone()),
+            (None, None) => Driver::Everywhere,
+        }
+    }
+
+    fn interior(
+        &self,
+        title: &str,
+        subtitle: &str,
+        items: Vec<Item>,
+        first: bool,
+        last: bool,
+    ) -> Wizard {
+        Wizard::new(
+            Style::Interior {
+                title: title.into(),
+                subtitle: subtitle.into(),
+                icon: self.icon.clone(),
+            },
+            items,
+            first,
+            last,
+        )
+    }
+
+    fn go(&mut self, step: Step, s: &Snapshot) {
+        self.step = step;
+        self.page = match step {
+            Step::Choose => self.choose_page(),
+            Step::Driver => self.driver_page(),
+            Step::Name => self.name_page(s),
+        };
+        self.sync_next();
+    }
+
+    fn choose_page(&self) -> Wizard {
+        let labels: Vec<String> = match &self.devices {
+            Some(Ok(d)) => d.iter().map(Device::label).collect(),
+            _ => Vec::new(),
+        };
+        let status = match &self.devices {
+            None => "Searching for printers...".to_string(),
+            Some(Ok(d)) if d.is_empty() => "No printers were found.".into(),
+            Some(Ok(d)) if d.len() == 1 => "1 printer was found.".into(),
+            Some(Ok(d)) => format!("{} printers were found.", d.len()),
+            Some(Err(why)) => why.clone(),
+        };
+        let list_h = 104;
+        let y_status = B.y + 20 + list_h + 6;
+        let y_typed = y_status + BUTTON_H + 8;
+        let items = vec![
+            Item::radio(FOUND, B.x, B.y, "A printer &found by this computer:", "how")
+                .checked(!self.typed),
+            Item::new(
+                DEVICES,
+                Rect::new(B.x + 18, B.y + 20, B.width - 18, list_h),
+                Control::ListBox {
+                    list: ListBox::new(labels, if self.typed { None } else { self.device }),
+                    icons: Vec::new(),
+                },
+            ),
+            Item::label_at(STATUS, B.x + 18, y_status + 4, B.width - 18 - 100, &status),
+            Item::button_at(
+                AGAIN,
+                B.right() - 96,
+                y_status,
+                96,
+                "&Search Again",
+                self.devices.is_some(),
+            ),
+            Item::radio(
+                TYPED,
+                B.x,
+                y_typed,
+                "The printer is not listed. Its &address:",
+                "how",
+            )
+            .checked(self.typed),
+            Item::edit(
+                ADDRESS,
+                Rect::new(B.x + 18, y_typed + 18, B.width - 18, 21),
+                &self.address,
+                true,
+            ),
+            Item::label_at(
+                "hint",
+                B.x + 18,
+                y_typed + 44,
+                B.width - 18,
+                "A host name, an IP address or a URI (socket://host:9100)",
+            )
+            .enabled(false),
+        ];
+        let mut w = self.interior(
+            "Choose a printer",
+            "Pick a printer Reprise found, or type its address.",
+            items,
+            true,
+            false,
+        );
+        if self.typed {
+            w.form.focus_id(ADDRESS);
+        } else {
+            w.form.focus_id(DEVICES);
+        }
+        w
+    }
+
+    fn filter(&mut self) {
+        let words: Vec<String> = self
+            .search
+            .split_whitespace()
+            .map(str::to_lowercase)
+            .collect();
+        self.shown = match &self.ppds {
+            Some(Ok(p)) => p
+                .iter()
+                .enumerate()
+                .filter(|(_, d)| {
+                    let mm = d.make_model.to_lowercase();
+                    words.iter().all(|w| mm.contains(w.as_str()))
+                })
+                .map(|(i, _)| i)
+                .take(MAX_DRIVERS)
+                .collect(),
+            _ => Vec::new(),
+        };
+    }
+
+    fn driver_rows(&self) -> (Vec<String>, Option<usize>) {
+        let Some(Ok(p)) = &self.ppds else {
+            return (Vec::new(), None);
+        };
+        let rows = self
+            .shown
+            .iter()
+            .map(|&i| p[i].make_model.clone())
+            .collect();
+        let at = self
+            .ppd
+            .as_ref()
+            .and_then(|n| self.shown.iter().position(|&i| p[i].name == *n));
+        (rows, at)
+    }
+
+    fn driver_status(&self) -> String {
+        if let Some(f) = &self.file {
+            return format!("Driver file: {}", f.display());
+        }
+        match &self.ppds {
+            None => "Reading the list of drivers...".into(),
+            Some(Err(why)) => why.clone(),
+            Some(Ok(_)) if self.shown.is_empty() => "No driver matches the search.".into(),
+            Some(Ok(_)) => String::new(),
+        }
+    }
+
+    fn driver_page(&mut self) -> Wizard {
+        if self.search.is_empty()
+            && let Some(d) = self.chosen_device()
+        {
+            self.search = d.maker();
+        }
+        self.filter();
+        let (rows, at) = self.driver_rows();
+        let file = self.driver_status();
+        let items = vec![
+            Item::label_at("search_label", B.x, B.y + 4, 50, "Sea&rch:"),
+            Item::edit(
+                SEARCH,
+                Rect::new(B.x + 52, B.y, B.width - 52, 21),
+                &self.search,
+                true,
+            ),
+            Item::new(
+                DRIVERS,
+                Rect::new(B.x, B.y + 28, B.width, 150),
+                Control::ListBox {
+                    list: ListBox::new(rows, at),
+                    icons: Vec::new(),
+                },
+            ),
+            Item::label_at(STATUS, B.x, B.y + 188, B.width - 106, &file),
+            Item::button_at(DISK, B.right() - 96, B.y + 184, 96, "&Have Disk...", true),
+        ];
+        let mut w = self.interior(
+            "Install printer software",
+            "Pick the printer's maker and model, or a driver file.",
+            items,
+            false,
+            false,
+        );
+        w.form.focus_id(SEARCH);
+        w
+    }
+
+    fn name_page(&mut self, s: &Snapshot) -> Wizard {
+        if self.name.is_empty() {
+            let from = match self.chosen_device() {
+                Some(d) if !d.info.is_empty() => d.info.clone(),
+                Some(d) => d.make_model.clone(),
+                None => self
+                    .address
+                    .split("://")
+                    .last()
+                    .unwrap_or_default()
+                    .split(['/', ':'])
+                    .next()
+                    .unwrap_or_default()
+                    .to_string(),
+            };
+            self.name = free_name(&suggest_name(&from), s);
+        }
+        let items = vec![
+            Item::label_at("name_label", B.x, B.y + 4, 90, "Printer &name:"),
+            Item::edit(
+                NAME,
+                Rect::new(B.x + 92, B.y, B.width - 92, 21),
+                &self.name,
+                true,
+            ),
+            Item::label_at("location_label", B.x, B.y + 34, 90, "&Location:"),
+            Item::edit(
+                LOCATION,
+                Rect::new(B.x + 92, B.y + 30, B.width - 92, 21),
+                &self.location,
+                true,
+            ),
+            para("hint", B.y + 58, "Spaces in the name become underscores.").enabled(false),
+            Item::check(DEFAULT, B.x, B.y + 90, "Set as the &default printer")
+                .checked(self.make_default),
+            Item::check(TEST, B.x, B.y + 114, "Print a &test page").checked(self.test_page),
+            Item::label_at(ERROR, B.x, B.y + 146, B.width, &self.error),
+        ];
+        let mut w = self.interior(
+            "Name your printer",
+            "Programs show this name when you print.",
+            items,
+            false,
+            true,
+        );
+        w.form.focus_id(NAME);
+        w
+    }
+
+    fn can_next(&self) -> bool {
+        match self.step {
+            Step::Choose => self.uri().is_some(),
+            Step::Driver => self.file.is_some() || self.ppd.is_some(),
+            Step::Name => !self.name.trim().is_empty() && !self.adding,
+        }
+    }
+
+    fn sync_next(&mut self) {
+        let ok = self.can_next();
+        self.page.set_next_enabled(ok);
+        self.page
+            .set_back_enabled(self.step != Step::Choose && !self.adding);
+        self.page.set_cancel_enabled(!self.adding);
+    }
+
+    pub fn devices_in(&mut self, r: cups::Result<Vec<Device>>, s: &Snapshot) {
+        let found = r.map_err(|e| e.text());
+        let had = self.device.and_then(|i| {
+            self.devices
+                .as_ref()
+                .and_then(|d| d.as_ref().ok())
+                .and_then(|d| d.get(i))
+                .map(|d| d.uri.clone())
+        });
+        self.device = match (&found, had) {
+            (Ok(d), Some(uri)) => d.iter().position(|x| x.uri == uri),
+            (Ok(d), None) if !d.is_empty() && !self.typed => Some(0),
+            _ => None,
+        };
+        self.devices = Some(found);
+        if self.step == Step::Choose {
+            self.go(Step::Choose, s);
+        }
+    }
+
+    pub fn ppds_in(&mut self, r: cups::Result<Vec<Ppd>>, s: &Snapshot) {
+        self.ppds = Some(r.map_err(|e| e.text()));
+        if self.step == Step::Driver {
+            self.go(Step::Driver, s);
+        }
+    }
+
+    pub fn file_in(&mut self, path: PathBuf, s: &Snapshot) {
+        self.file = Some(path);
+        self.ppd = None;
+        self.go(Step::Driver, s);
+    }
+
+    /// cupsd refused the printer: the Name page says why, and Finish is
+    /// live again.
+    pub fn add_failed(&mut self, why: &str, s: &Snapshot) {
+        self.adding = false;
+        self.error = why.into();
+        self.go(Step::Name, s);
+    }
+
+    fn read(&mut self, id: &str) -> Outcome {
+        let f = &self.page.form;
+        match id {
+            FOUND => self.typed = false,
+            TYPED => self.typed = true,
+            DEVICES => {
+                self.device = list_selected(f, DEVICES);
+                self.typed = false;
+                self.page.form.set_check(FOUND, true);
+                self.page.form.set_check(TYPED, false);
+            }
+            ADDRESS => {
+                self.address = edit_text(f, ADDRESS);
+                self.typed = !self.address.trim().is_empty() || self.typed;
+                self.page.form.set_check(TYPED, self.typed);
+                self.page.form.set_check(FOUND, !self.typed);
+            }
+            SEARCH => {
+                self.search = edit_text(f, SEARCH);
+                self.filter();
+                let (rows, at) = self.driver_rows();
+                if let Some(Control::ListBox { list, .. }) =
+                    self.page.form.item_mut(DRIVERS).map(|i| &mut i.control)
+                {
+                    *list = ListBox::new(rows, at);
+                }
+                let status = self.driver_status();
+                self.page.form.set_text(STATUS, &status);
+            }
+            DRIVERS => {
+                let at = list_selected(f, DRIVERS);
+                if let (Some(Ok(p)), Some(i)) = (&self.ppds, at.and_then(|i| self.shown.get(i))) {
+                    self.ppd = Some(p[*i].name.clone());
+                    self.file = None;
+                    self.page.form.set_text(STATUS, "");
+                }
+            }
+            NAME => self.name = edit_text(f, NAME),
+            LOCATION => self.location = edit_text(f, LOCATION),
+            DEFAULT => self.make_default = f.checked(DEFAULT).unwrap_or(false),
+            TEST => self.test_page = f.checked(TEST).unwrap_or(false),
+            _ => {}
+        }
+        self.sync_next();
+        Outcome::Redraw
+    }
+
+    fn finish(&mut self, s: &Snapshot) -> Outcome {
+        let Some(uri) = self.uri() else {
+            return Outcome::None;
+        };
+        let name = match check_name("", &self.name, s) {
+            Ok(Some(n)) => n,
+            Ok(None) => return Outcome::None,
+            Err(why) => {
+                self.error = why;
+                self.page.form.set_text(ERROR, &self.error);
+                return Outcome::Redraw;
+            }
+        };
+        self.adding = true;
+        self.error = "Adding the printer...".into();
+        self.page.form.set_text(ERROR, &self.error);
+        self.sync_next();
+        let info = match self.chosen_device() {
+            Some(d) if !d.info.is_empty() => d.info.clone(),
+            Some(d) => d.make_model.clone(),
+            None => String::new(),
+        };
+        Outcome::Add {
+            printer: NewPrinter {
+                name,
+                device_uri: uri,
+                driver: self.driver(),
+                info,
+                location: self.location.trim().to_string(),
+            },
+            default: self.make_default,
+            test_page: self.test_page,
+        }
+    }
+
+    pub fn event(&mut self, ev: form::Event, s: &Snapshot) -> Outcome {
+        if self.adding && !matches!(ev, form::Event::Redraw) {
+            return Outcome::None;
+        }
+        match self.page.event(ev) {
+            wizard::Event::None => Outcome::None,
+            wizard::Event::Redraw => Outcome::Redraw,
+            wizard::Event::Cancel => Outcome::Close,
+            wizard::Event::Back => {
+                let to = match self.step {
+                    Step::Name if self.needs_driver() => Step::Driver,
+                    _ => Step::Choose,
+                };
+                self.error.clear();
+                self.go(to, s);
+                Outcome::Redraw
+            }
+            wizard::Event::Next | wizard::Event::Finish if !self.can_next() => Outcome::None,
+            wizard::Event::Next => match self.step {
+                Step::Choose if self.needs_driver() => {
+                    self.go(Step::Driver, s);
+                    if self.asked_ppds {
+                        Outcome::Redraw
+                    } else {
+                        self.asked_ppds = true;
+                        Outcome::Drivers
+                    }
+                }
+                Step::Choose | Step::Driver => {
+                    self.go(Step::Name, s);
+                    Outcome::Redraw
+                }
+                Step::Name => Outcome::None,
+            },
+            wizard::Event::Finish => self.finish(s),
+            wizard::Event::Page(form::Event::Pressed(AGAIN)) => {
+                self.devices = None;
+                self.go(Step::Choose, s);
+                Outcome::Search
+            }
+            wizard::Event::Page(form::Event::Pressed(DISK)) => Outcome::HaveDisk,
+            wizard::Event::Page(form::Event::Changed(id)) => self.read(id),
+            wizard::Event::Page(_) => Outcome::Redraw,
+        }
+    }
+
+    pub fn draw(&self, c: &mut Canvas, p: &Paint, text: &reprisekit::text::TextRenderer, px: u32) {
+        wizard::draw(c, text, p, &self.page, true, px);
+    }
+
+    pub fn access(&self, tree: &mut Tree, text: &reprisekit::text::TextRenderer, px: u32) {
+        if let Some(f) = self.page.access(tree, ROOT, text, px) {
+            tree.set_focus(f);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use reprisekit::textedit::TextEdit;
+
+    fn type_into(w: &mut AddWizard, id: &'static str, s: &str, snap: &Snapshot) -> Outcome {
+        if let Some(Control::Edit { edit, .. }) = w.page.form.item_mut(id).map(|i| &mut i.control) {
+            *edit = TextEdit::new(s, false);
+        }
+        w.event(form::Event::Changed(id), snap)
+    }
+    use crate::cups::Printer;
+
+    fn snap() -> Snapshot {
+        Snapshot {
+            running: true,
+            printers: vec![Printer {
+                name: "Office_Jet".into(),
+                ..Default::default()
+            }],
+            ..Default::default()
+        }
+    }
+
+    fn found() -> Vec<Device> {
+        vec![
+            Device {
+                uri: "dnssd://Office%20Jet._ipp._tcp.local/?uuid=1".into(),
+                info: "Office Jet".into(),
+                make_model: "HP OfficeJet 5200".into(),
+                class: "network".into(),
+                device_id: String::new(),
+            },
+            Device {
+                uri: "usb://Brother/HL-1110?serial=9".into(),
+                info: "Brother HL-1110".into(),
+                make_model: "Generic HL-1110 series".into(),
+                class: "direct".into(),
+                device_id: "MFG:Brother;MDL:HL-1110 series;".into(),
+            },
+        ]
+    }
+
+    fn ppds() -> Vec<Ppd> {
+        vec![
+            Ppd {
+                name: "drv:///brlaser.drv/br1110.ppd".into(),
+                make: "Brother".into(),
+                make_model: "Brother HL-1110 series, using brlaser".into(),
+            },
+            Ppd {
+                name: "lsb/usr/hp/hp-laserjet.ppd".into(),
+                make: "HP".into(),
+                make_model: "HP LaserJet".into(),
+            },
+        ]
+    }
+
+    fn pick_device(w: &mut AddWizard, i: usize, s: &Snapshot) {
+        if let Some(Control::ListBox { list, .. }) =
+            w.page.form.item_mut(DEVICES).map(|it| &mut it.control)
+        {
+            list.selected = Some(i);
+        }
+        w.event(form::Event::Changed(DEVICES), s);
+    }
+
+    #[test]
+    fn a_driverless_printer_skips_the_driver_page() {
+        let s = snap();
+        let mut w = AddWizard::new(&s, None);
+        assert_eq!(w.step, Step::Choose);
+        w.devices_in(Ok(found()), &s);
+        assert_eq!(w.device, Some(0), "the first found printer is picked");
+        assert_eq!(
+            w.event(form::Event::Pressed(wizard::NEXT), &s),
+            Outcome::Redraw
+        );
+        assert_eq!(w.step, Step::Name);
+        assert_eq!(w.name, "Office_Jet_2");
+        match w.event(form::Event::Pressed(wizard::NEXT), &s) {
+            Outcome::Add {
+                printer,
+                default,
+                test_page,
+            } => {
+                assert_eq!(printer.driver, Driver::Everywhere);
+                assert_eq!(printer.device_uri, found()[0].uri);
+                assert_eq!(printer.info, "Office Jet");
+                assert!(!default, "there is a printer already");
+                assert!(!test_page);
+            }
+            other => panic!("{other:?}"),
+        }
+        assert!(w.adding);
+        assert_eq!(
+            w.event(form::Event::Pressed(wizard::BACK), &s),
+            Outcome::None
+        );
+        w.add_failed("Bad driver.", &s);
+        assert!(!w.adding);
+        assert_eq!(w.error, "Bad driver.");
+    }
+
+    #[test]
+    fn a_usb_printer_picks_a_driver_from_the_search() {
+        let s = snap();
+        let mut w = AddWizard::new(&s, None);
+        w.devices_in(Ok(found()), &s);
+        pick_device(&mut w, 1, &s);
+        assert_eq!(
+            w.event(form::Event::Pressed(wizard::NEXT), &s),
+            Outcome::Drivers,
+            "the first visit reads the drivers"
+        );
+        assert_eq!(w.step, Step::Driver);
+        assert_eq!(w.search, "Brother", "the search starts on the make");
+        w.ppds_in(Ok(ppds()), &s);
+        assert_eq!(w.shown, [0]);
+        assert!(
+            matches!(
+                w.event(form::Event::Pressed(wizard::NEXT), &s),
+                Outcome::None
+            ),
+            "Next waits for a driver"
+        );
+        if let Some(Control::ListBox { list, .. }) =
+            w.page.form.item_mut(DRIVERS).map(|it| &mut it.control)
+        {
+            list.selected = Some(0);
+        }
+        w.event(form::Event::Changed(DRIVERS), &s);
+        assert_eq!(w.ppd.as_deref(), Some("drv:///brlaser.drv/br1110.ppd"));
+        type_into(&mut w, SEARCH, "laserjet", &s);
+        assert_eq!(w.shown, [1]);
+        w.event(form::Event::Pressed(wizard::NEXT), &s);
+        assert_eq!(w.step, Step::Name);
+        assert_eq!(
+            w.driver(),
+            Driver::Ppd("drv:///brlaser.drv/br1110.ppd".into())
+        );
+        w.event(form::Event::Pressed(wizard::BACK), &s);
+        assert_eq!(w.step, Step::Driver);
+        assert_eq!(w.event(form::Event::Pressed(DISK), &s), Outcome::HaveDisk);
+        w.file_in("/tmp/x.ppd".into(), &s);
+        assert_eq!(w.driver(), Driver::File("/tmp/x.ppd".into()));
+    }
+
+    #[test]
+    fn a_typed_address_is_a_uri() {
+        assert_eq!(
+            address_uri("10.0.0.7").as_deref(),
+            Some("ipp://10.0.0.7/ipp/print")
+        );
+        assert_eq!(
+            address_uri(" socket://10.0.0.7:9100 ").as_deref(),
+            Some("socket://10.0.0.7:9100")
+        );
+        assert_eq!(address_uri(""), None);
+        assert_eq!(address_uri("a b"), None);
+        let s = snap();
+        let mut w = AddWizard::new(&s, None);
+        w.devices_in(Ok(Vec::new()), &s);
+        type_into(&mut w, ADDRESS, "printer.lan", &s);
+        assert!(w.typed);
+        w.event(form::Event::Pressed(wizard::NEXT), &s);
+        assert_eq!(w.step, Step::Name);
+        assert_eq!(w.name, "printer.lan");
+        type_into(&mut w, NAME, "a/b", &s);
+        assert_eq!(
+            w.event(form::Event::Pressed(wizard::NEXT), &s),
+            Outcome::Redraw
+        );
+        assert!(!w.adding);
+        assert!(w.error.contains("cannot contain"));
+    }
+
+    #[test]
+    fn names_come_from_what_the_printer_calls_itself() {
+        assert_eq!(
+            suggest_name("HP LaserJet 400 (M401)"),
+            "HP_LaserJet_400_M401"
+        );
+        assert_eq!(suggest_name("  "), "Printer");
+        let s = snap();
+        assert_eq!(free_name("office_jet", &s), "office_jet_2");
+        assert_eq!(free_name("Laser", &s), "Laser");
+    }
+
+    #[test]
+    #[ignore]
+    fn render_wizard() {
+        use reprisekit::text::TextRenderer;
+        use reprisekit::theme::{FontConfig, Theme};
+        let theme = Theme::default();
+        let text = TextRenderer::load(&FontConfig::default());
+        let paint = Paint {
+            s: 1,
+            ..theme.paint()
+        };
+        let s = snap();
+        let mut w = AddWizard::new(&s, None);
+        w.devices_in(Ok(found()), &s);
+        pick_device(&mut w, 1, &s);
+        let mut shots = Vec::new();
+        let mut shot = |w: &AddWizard| {
+            let (cw, ch) = wizard::CLIENT;
+            let mut c = Canvas::new(cw as u32, ch as u32);
+            w.draw(&mut c, &paint, &text, theme.fonts.size_px);
+            shots.push(c);
+        };
+        shot(&w);
+        w.event(form::Event::Pressed(wizard::NEXT), &s);
+        w.ppds_in(Ok(ppds()), &s);
+        shot(&w);
+        w.file_in("/tmp/brother.ppd".into(), &s);
+        w.event(form::Event::Pressed(wizard::NEXT), &s);
+        shot(&w);
+        for (i, c) in shots.iter().enumerate() {
+            reprisekit::raster::write_preview(c, &format!("printers-wizard-{i}.png"));
+        }
+    }
+}

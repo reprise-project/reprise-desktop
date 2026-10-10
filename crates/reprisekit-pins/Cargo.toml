@@ -1,0 +1,40 @@
+[package]
+name = "reprisekit-pins"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "No code: turns on, for every build, the union of features the workspace asks of reprisekit's dependencies."
+publish = false
+
+# One shared reprisekit across `cargo build/test -p`: ask for the union of features
+# here. After a dependency change, rerun `scripts/kit-units`.
+[dependencies]
+bitflags = { version = "2", default-features = false, features = ["std"] }
+bytemuck = { version = "1", default-features = false, features = ["aarch64_simd", "derive", "extern_crate_alloc", "wasm_simd"] }
+getrandom = { version = "0.4", features = ["std", "sys_rng"] }
+libc.workspace = true
+libm = { version = "0.2" }
+log = { workspace = true, features = ["std"] }
+memchr = { version = "2" }
+phf_shared = { version = "0.14", default-features = false, features = ["std"] }
+proc-macro2 = { version = "1" }
+quote = { version = "1" }
+serde_core = { version = "1", default-features = false, features = ["alloc", "result", "std"] }
+smallvec = { version = "1", default-features = false, features = ["const_new", "union"] }
+syn = { version = "3", features = ["extra-traits", "fold", "full", "visit-mut"] }
+uuid = { version = "1", features = ["serde", "v4"] }
+
+# Host side (proc macros, build scripts) resolves features separately.
+[build-dependencies]
+bitflags = { version = "2", default-features = false, features = ["std"] }
+libc.workspace = true
+log = { workspace = true, features = ["std"] }
+memchr = { version = "2" }
+phf_shared = { version = "0.14", default-features = false, features = ["std"] }
+proc-macro2 = { version = "1" }
+quote = { version = "1" }
+serde_core = { version = "1", default-features = false, features = ["alloc", "result", "std"] }
+smallvec = { version = "1", default-features = false, features = ["const_new", "union"] }
+syn = { version = "3", features = ["extra-traits", "fold", "full", "visit-mut"] }
+syn2 = { package = "syn", version = "2", features = ["extra-traits", "full", "visit-mut"] }

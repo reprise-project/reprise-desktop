@@ -1,0 +1,23 @@
+[package]
+name = "reprise-datetime"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Date and Time Properties: the Reprise date, time and time zone sheet"
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "reprise-datetime"
+path = "src/main.rs"
+
+[dependencies]
+repriseapp = { path = "../../repriseapp" }
+reprisekit = { path = "../../reprisekit" }
+reprisefs = { path = "../../reprisefs" }
+zbus.workspace = true
+serde.workspace = true
+log.workspace = true
+env_logger.workspace = true

@@ -1,0 +1,14 @@
+target/
+/tmp
+/tmp/
+
+# makepkg's scratch directories and output, from packaging/arch/local/
+packaging/arch/local/src/
+packaging/arch/local/pkg/
+*.pkg.tar.zst
+
+.claude
+.serena
+docs/superpowers
+*.local.md
+

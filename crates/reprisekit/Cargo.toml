@@ -1,0 +1,33 @@
+[package]
+name = "reprisekit"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Reprise's widget toolkit: a CPU canvas, text, colour schemes, icon themes and the Classic controls. No compositor or display dependency."
+
+[lints]
+workspace = true
+
+[dependencies]
+# Features only: one reprisekit for every build and test command.
+reprisekit-pins = { path = "../reprisekit-pins" }
+libc.workspace = true
+log.workspace = true
+fontdb = "0.24"
+freetype-rs = "0.38"
+# The fallback face for a char the UI face lacks (e.g. CJK).
+yeslogic-fontconfig-sys = "6"
+png.workspace = true
+# No svgz: a gzipped file would inflate past the decoder's SVG byte cap.
+resvg = { version = "0.48", default-features = false }
+zeroize.workspace = true
+accesskit = "0.25"
+emojis = "0.9"
+rustybuzz = "0.20"
+serde = { workspace = true, features = ["derive"] }
+
+[dev-dependencies]
+# tests/layers.rs parses src; these features are already on through
+# reprisekit-pins, so the test adds no second syn build.
+syn = { version = "3", features = ["full", "visit-mut"] }

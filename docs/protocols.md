@@ -1,0 +1,94 @@
+# Protocols and portals
+
+Reprise is built on Smithay and draws with OpenGL ES. It follows the
+freedesktop conventions for the tray, notifications, screen saver
+inhibition, autostart, the trash and `.desktop` files, and it speaks the
+usual `wlr` and `ext` protocols, so third-party tools work.
+
+Windows that ask for server-side decorations get Reprise's frames in the
+current interface. Programs that draw their own title bars may look
+different. They've brought their own furniture.
+
+## Tools that work
+
+| Tool | Through |
+| --- | --- |
+| Panels and docks | layer-shell, foreign-toplevel, ext-workspace |
+| Lockers (swaylock, hyprlock, gtklock) | ext-session-lock; `[power] locker` runs one |
+| Idle daemons (swayidle) | ext-idle-notify |
+| Display configurators (wlr-randr, kanshi) | wlr-output-management |
+| wlopm | wlr-output-power-management |
+| Gamma tools (wlsunset, gammastep) | wlr-gamma-control; they take precedence over the night light |
+| Clipboard managers | ext-data-control, wlr-data-control |
+| Screenshot tools (grim) | wlr-screencopy, ext-image-copy-capture |
+| Virtual input (wtype, wlrctl) | virtual-keyboard, wlr-virtual-pointer |
+| Input methods (fcitx5, ibus) | input-method-v2, text-input-v3 |
+
+Sandboxed programs, identified through `security-context-v1` or as Flatpaks,
+don't see the privileged protocols: layer-shell, session lock,
+foreign-toplevel, workspaces, output management, gamma, screen capture,
+data control, virtual input and input methods. A Flatpak you trust can be
+given the clipboard protocols with `[clipboard] trusted_apps`; see
+[flatpak-clipboard.md](flatpak-clipboard.md).
+
+## Wayland globals
+
+- **Core and shell:** `wl_compositor`, `wl_subcompositor`, `wl_shm`,
+  `wl_seat`, `wl_output`, `zxdg_output_manager_v1`, `wl_data_device_manager`,
+  `zwp_linux_dmabuf_v1`, `xdg_wm_base`, `zxdg_decoration_manager_v1`,
+  `org_kde_kwin_server_decoration_manager`, `xdg_activation_v1`,
+  `xdg_wm_dialog_v1`, `xdg_toplevel_tag_manager_v1`,
+  `xdg_toplevel_icon_manager_v1`, `zxdg_exporter_v1`/`zxdg_importer_v1`,
+  `zxdg_exporter_v2`/`zxdg_importer_v2`, `xwayland_shell_v1`
+- **Selection:** `zwp_primary_selection_device_manager_v1`,
+  `ext_data_control_manager_v1`, `zwlr_data_control_manager_v1`
+- **Surfaces:** `wp_viewporter`, `wp_fractional_scale_manager_v1`,
+  `wp_single_pixel_buffer_manager_v1`, `wp_content_type_manager_v1`,
+  `wp_alpha_modifier_v1`, `wp_presentation`, `wp_linux_drm_syncobj_manager_v1`
+  (when the GPU supports it)
+- **Input:** `zwp_pointer_constraints_v1`, `zwp_relative_pointer_manager_v1`,
+  `zwp_pointer_gestures_v1`, `wp_cursor_shape_manager_v1`,
+  `zwp_tablet_manager_v2`, `zwp_keyboard_shortcuts_inhibit_manager_v1`,
+  `zwp_text_input_manager_v3`, `zwp_input_method_manager_v2`,
+  `zwp_virtual_keyboard_manager_v1`, `zwlr_virtual_pointer_manager_v1`
+- **Desktop tools:** `zwlr_layer_shell_v1`, `ext_session_lock_manager_v1`,
+  `ext_foreign_toplevel_list_v1`, `zwlr_foreign_toplevel_manager_v1`,
+  `ext_workspace_manager_v1`, `zwlr_output_manager_v1`,
+  `zwlr_output_power_manager_v1`, `zwlr_gamma_control_manager_v1`
+- **Idle:** `ext_idle_notifier_v1`, `zwp_idle_inhibit_manager_v1`
+- **Capture:** `zwlr_screencopy_manager_v1`, `ext_image_copy_capture_manager_v1`,
+  `ext_output_image_capture_source_manager_v1`,
+  `ext_foreign_toplevel_image_capture_source_manager_v1`
+- **Security:** `wp_security_context_manager_v1`
+
+## Portals
+
+`reprise-portal` is the xdg-desktop-portal backend:
+
+- **ScreenCast:** a screen or a single window, zero-copy where the GPU
+  allows, with an optional Remember
+- **Screenshot**, including the colour picker
+- **RemoteDesktop:** keyboard and pointer
+- **InputCapture**, for Deskflow
+- **GlobalShortcuts**
+- **Access**, the generic permission prompt
+- **FileChooser** and **AppChooser:** Reprise's own Open, Save and Open With
+  dialogs
+- **Notification**
+- **Inhibit:** idle, suspend and log off
+
+The compositor serves **Settings** (the light or dark look, contrast, fonts
+and icons). `reprise-portals.conf` hands **Secret** to gnome-keyring,
+**Print** to the GTK backend, and falls back to the wlr backend for screen
+sharing.
+
+Reprise also hosts `org.freedesktop.Notifications`, the
+StatusNotifierWatcher for the tray, `org.freedesktop.ScreenSaver` and the
+GeoClue2 agent.
+
+## The session
+
+Reprise publishes its session to the systemd user manager and the D-Bus
+activation environment, and takes it back out when it exits, so the next
+desktop you log into starts clean. `loginctl lock-session` locks the screen.
+XDG autostart honours `OnlyShowIn`, `NotShowIn`, `Hidden` and `TryExec`.

@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Printers
+Comment=Add, remove and set up printers, and see what is printing.
+Exec=reprise-printers
+Icon=printer
+Categories=Settings;HardwareSettings;Printing;
+StartupWMClass=reprise.printers
+Terminal=false

@@ -1,0 +1,495 @@
+//! Where the Start panel's parts go in each mode, and which spot a point falls on. Panel coordinates: the glass's top-left is (0, 0); the user picture stands above it, so the canvas starts above 0.
+//! The panel stands 411x476. With both pinned and frequent programs the rule between them adds 4 px and everything from All Programs down moves with it; program rows that do not fit above the All Programs rule are not shown.
+
+use super::{Mode, Spot, StartPanel};
+use crate::raster::Rect;
+
+pub const W: i32 = 411;
+pub const H: i32 = 476;
+pub const JUMP_W: i32 = 491;
+pub const OVERHANG: i32 = 26;
+const PICTURE_FRAME: Rect = Rect::new(304, -OVERHANG, 64, 62);
+
+// The white left pane: wider in Search mode and while a jump list shows. Its last 45 rows are the band the field stands on.
+const PANE: Rect = Rect::new(9, 9, 250, 458);
+const SEARCH_PANE_W: i32 = 393;
+const JUMP_PANE_W: i32 = 473;
+
+const ROW_X: i32 = 11;
+const ROW_W: i32 = 246;
+const PROGRAM_TOP: i32 = 10;
+const PROGRAM_H: i32 = 38;
+const PIN_RULE_H: i32 = 4;
+const PIN_RULE_DOWN: i32 = 2;
+const LEFT_RULE_X: i32 = 20;
+const LEFT_RULE_W: i32 = 232;
+const RULE_H: i32 = 1;
+
+// From the bottom up: the rule over All Programs, the All Programs row, the search field and its clear button, Shut down and its arrow.
+const ALL_RULE_Y: i32 = 391;
+const ALL_PROGRAMS: Rect = Rect::new(ROW_X, 395, ROW_W, 23);
+const SEARCH: Rect = Rect::new(21, 434, super::search::FIELD.0, super::search::FIELD.1);
+const CLEAR: Rect = Rect::new(220, 435, 21, 20);
+const SHUTDOWN: Rect = Rect::new(267, 434, 72, 22);
+const SHUTDOWN_ARROW: Rect = Rect::new(339, 434, 22, 22);
+
+const TREE_TOP: i32 = 10;
+pub const TREE_ROW_H: i32 = 19;
+pub const TREE_INDENT: i32 = 19;
+const TREE_BAR_X: i32 = 242;
+const TREE_BAR_W: i32 = 16;
+
+// Search results: group headers, then rows, down to the bottom of the All Programs row.
+const RESULTS_TOP: i32 = 26;
+const HEADER_X: i32 = 17;
+const HEADER_W: i32 = 375;
+pub const HEADER_H: i32 = 21;
+const RESULT_X: i32 = 25;
+const RESULT_W: i32 = 371;
+pub const RESULT_H: i32 = 21;
+pub const GROUP_GAP: i32 = 11;
+
+const JUMP_PANE: Rect = Rect::new(259, 9, 223, 413);
+const JUMP_X: i32 = 274;
+const JUMP_ROW_W: i32 = 204;
+const JUMP_HEADER_Y: i32 = 12;
+const JUMP_ROW_H: i32 = 22;
+
+const PLACE_X: i32 = 266;
+const PLACE_W: i32 = 138;
+const PLACE_TOP: i32 = 44;
+const PLACE_H: i32 = 33;
+const PLACE_PITCH: i32 = 35;
+const PLACE_RULE_H: i32 = 3;
+const PLACE_RULE_X: i32 = 274;
+const PLACE_RULE_W: i32 = 124;
+const PLACE_RULE_LINE: i32 = 2;
+
+/// Where the parts go, in the layout's pixels (`scale` device pixels per
+/// logical one). `spots` lists every spot shown, the clear button before
+/// the field it sits in; `headers` are the result group headers (the
+/// group's index) in Search mode, the jump list's header (0) in Jump mode.
+/// `pane` is the white left pane, `jump_pane` the jump list's light one.
+/// `rules` are the left pane's 1 px rules and the places' 2 px ones.
+/// `picture` is the user picture's frame, in the modes that show it.
+/// `tree_bar` is the tree's scroll bar when its rows overflow.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Layout {
+    pub panel: Rect,
+    pub canvas: Rect,
+    pub pane: Rect,
+    pub jump_pane: Option<Rect>,
+    pub spots: Vec<(Spot, Rect)>,
+    pub rules: Vec<Rect>,
+    pub headers: Vec<(usize, Rect)>,
+    pub picture: Option<Rect>,
+    pub tree_bar: Option<Rect>,
+    pub scale: i32,
+}
+
+impl Layout {
+    pub fn scaled(&self, s: i32) -> Layout {
+        let s = s.max(1);
+        Layout {
+            panel: self.panel.scaled(s),
+            canvas: self.canvas.scaled(s),
+            pane: self.pane.scaled(s),
+            jump_pane: self.jump_pane.map(|r| r.scaled(s)),
+            spots: self.spots.iter().map(|&(k, r)| (k, r.scaled(s))).collect(),
+            rules: self.rules.iter().map(|r| r.scaled(s)).collect(),
+            headers: self
+                .headers
+                .iter()
+                .map(|&(g, r)| (g, r.scaled(s)))
+                .collect(),
+            picture: self.picture.map(|r| r.scaled(s)),
+            tree_bar: self.tree_bar.map(|r| r.scaled(s)),
+            scale: self.scale * s,
+        }
+    }
+
+    pub fn rect(&self, s: Spot) -> Option<Rect> {
+        self.spots.iter().find(|(k, _)| *k == s).map(|&(_, r)| r)
+    }
+}
+
+pub fn hit(l: &Layout, x: i32, y: i32) -> Option<Spot> {
+    l.spots
+        .iter()
+        .find(|(_, r)| r.contains(x, y))
+        .map(|&(s, _)| s)
+}
+
+/// How far the parts from All Programs down sit below their place in a
+/// 476 tall panel: the pinned rows' rule, when there is one.
+fn grow(p: &StartPanel) -> i32 {
+    if p.pinned.is_empty() || p.frequent.is_empty() {
+        0
+    } else {
+        PIN_RULE_H
+    }
+}
+
+fn down(r: Rect, by: i32) -> Rect {
+    Rect::new(r.x, r.y + by, r.width, r.height)
+}
+
+fn program_rows(p: &StartPanel) -> (Vec<Rect>, Option<Rect>) {
+    let g = grow(p);
+    let bottom = ALL_RULE_Y + g;
+    let mut y = PROGRAM_TOP;
+    let mut rows = Vec::new();
+    let mut rule = None;
+    for i in 0..p.pinned.len() + p.frequent.len() {
+        if i == p.pinned.len() && g > 0 {
+            rule = Some(Rect::new(
+                LEFT_RULE_X,
+                y + PIN_RULE_DOWN,
+                LEFT_RULE_W,
+                RULE_H,
+            ));
+            y += PIN_RULE_H;
+        }
+        if y + PROGRAM_H > bottom {
+            break;
+        }
+        rows.push(Rect::new(ROW_X, y, ROW_W, PROGRAM_H));
+        y += PROGRAM_H;
+    }
+    (rows, rule)
+}
+
+pub fn programs_shown(p: &StartPanel) -> usize {
+    program_rows(p).0.len()
+}
+
+pub fn tree_capacity(p: &StartPanel) -> usize {
+    ((ALL_RULE_Y + grow(p) - TREE_TOP) / TREE_ROW_H).max(0) as usize
+}
+
+fn jump_pane(p: &StartPanel) -> Rect {
+    Rect::new(
+        JUMP_PANE.x,
+        JUMP_PANE.y,
+        JUMP_PANE.width,
+        JUMP_PANE.height + grow(p),
+    )
+}
+
+pub fn jumps_shown(p: &StartPanel) -> usize {
+    let room = jump_pane(p).bottom() - (JUMP_HEADER_Y + JUMP_ROW_H);
+    p.jump.len().min((room / JUMP_ROW_H).max(0) as usize)
+}
+
+pub fn layout(p: &StartPanel) -> Layout {
+    let g = grow(p);
+    let mode = p.mode();
+    let panel = Rect::new(
+        0,
+        0,
+        if let Mode::Jump(_) = mode { JUMP_W } else { W },
+        H + g,
+    );
+    let pane_w = match mode {
+        Mode::Search => SEARCH_PANE_W,
+        Mode::Jump(_) => JUMP_PANE_W,
+        Mode::Home | Mode::Programs => PANE.width,
+    };
+    let pane = Rect::new(PANE.x, PANE.y, pane_w, PANE.height + g);
+    let mut spots = Vec::new();
+    let mut rules = Vec::new();
+    let mut headers = Vec::new();
+    let mut tree_bar = None;
+    let all_rule = Rect::new(LEFT_RULE_X, ALL_RULE_Y + g, LEFT_RULE_W, RULE_H);
+
+    match mode {
+        Mode::Home | Mode::Jump(_) => {
+            let (rows, rule) = program_rows(p);
+            spots.extend(
+                rows.into_iter()
+                    .enumerate()
+                    .map(|(i, r)| (Spot::Program(i), r)),
+            );
+            rules.extend(rule);
+            rules.push(all_rule);
+            spots.push((Spot::AllPrograms, down(ALL_PROGRAMS, g)));
+        }
+        Mode::Programs => {
+            let rows = p.tree_rows();
+            let cap = tree_capacity(p);
+            let w = if rows.len() > cap {
+                tree_bar = Some(Rect::new(
+                    TREE_BAR_X,
+                    TREE_TOP,
+                    TREE_BAR_W,
+                    cap as i32 * TREE_ROW_H,
+                ));
+                TREE_BAR_X - ROW_X
+            } else {
+                ROW_W
+            };
+            let shown = rows.iter().skip(p.tree_top).take(cap);
+            spots.extend(shown.enumerate().map(|(k, &i)| {
+                let y = TREE_TOP + k as i32 * TREE_ROW_H;
+                (Spot::Tree(i), Rect::new(ROW_X, y, w, TREE_ROW_H))
+            }));
+            rules.push(all_rule);
+            spots.push((Spot::AllPrograms, down(ALL_PROGRAMS, g)));
+        }
+        Mode::Search => {
+            let bottom = ALL_PROGRAMS.bottom() + g;
+            let mut y = RESULTS_TOP;
+            'groups: for (gi, grp) in p.results.iter().enumerate() {
+                if grp.rows.is_empty() {
+                    continue;
+                }
+                if y + HEADER_H > bottom {
+                    break;
+                }
+                headers.push((gi, Rect::new(HEADER_X, y, HEADER_W, HEADER_H)));
+                y += HEADER_H;
+                for ri in 0..grp.rows.len() {
+                    if y + RESULT_H > bottom {
+                        break 'groups;
+                    }
+                    let r = Rect::new(RESULT_X, y, RESULT_W, RESULT_H);
+                    spots.push((Spot::Result(gi, ri), r));
+                    y += RESULT_H;
+                }
+                y += GROUP_GAP;
+            }
+        }
+    }
+
+    if !p.query().is_empty() {
+        spots.push((Spot::Clear, down(CLEAR, g)));
+    }
+    spots.push((Spot::Search, down(SEARCH, g)));
+
+    let mut picture = None;
+    let mut jump = None;
+    match mode {
+        Mode::Home | Mode::Programs => {
+            let mut y = PLACE_TOP;
+            for (i, place) in p.places.iter().enumerate() {
+                let rule = place.rule_before && i > 0;
+                let top = if rule { y + PLACE_RULE_H } else { y };
+                if top + PLACE_H > SHUTDOWN.y + g {
+                    break;
+                }
+                if rule {
+                    rules.push(Rect::new(PLACE_RULE_X, y, PLACE_RULE_W, PLACE_RULE_LINE));
+                }
+                spots.push((Spot::Place(i), Rect::new(PLACE_X, top, PLACE_W, PLACE_H)));
+                y = top + PLACE_PITCH;
+            }
+            picture = Some(PICTURE_FRAME);
+            spots.push((Spot::Picture, PICTURE_FRAME));
+        }
+        Mode::Jump(_) => {
+            let jp = jump_pane(p);
+            jump = Some(jp);
+            headers.push((0, Rect::new(JUMP_X, JUMP_HEADER_Y, JUMP_ROW_W, JUMP_ROW_H)));
+            let top = JUMP_HEADER_Y + JUMP_ROW_H;
+            spots.extend((0..jumps_shown(p)).map(|k| {
+                let y = top + k as i32 * JUMP_ROW_H;
+                (Spot::Jump(k), Rect::new(JUMP_X, y, JUMP_ROW_W, JUMP_ROW_H))
+            }));
+        }
+        Mode::Search => {}
+    }
+    spots.push((Spot::Shutdown, down(SHUTDOWN, g)));
+    spots.push((Spot::ShutdownArrow, down(SHUTDOWN_ARROW, g)));
+
+    let canvas = picture.map_or(panel, |r| panel.union(&r));
+    Layout {
+        panel,
+        canvas,
+        pane,
+        jump_pane: jump,
+        spots,
+        rules,
+        headers,
+        picture,
+        tree_bar,
+        scale: 1,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::startpanel::tests::{place, prow, row};
+    use crate::startpanel::{Key, ResultGroup, TreeRow};
+    use crate::textedit::EditKey;
+
+    #[test]
+    fn home_puts_the_pane_rows_and_buttons_where_the_design_says() {
+        let mut p = StartPanel::new();
+        p.frequent = (0..9).map(|k| prow(&format!("App {k}"), false)).collect();
+        let l = layout(&p);
+        assert_eq!(l.panel, Rect::new(0, 0, W, H));
+        assert_eq!(l.pane, Rect::new(9, 9, 250, 458));
+        assert_eq!(l.rect(Spot::Program(0)), Some(Rect::new(11, 10, 246, 38)));
+        assert_eq!(l.rect(Spot::Program(1)), Some(Rect::new(11, 48, 246, 38)));
+        assert_eq!(l.rect(Spot::AllPrograms), Some(Rect::new(11, 395, 246, 23)));
+        assert_eq!(l.rect(Spot::Search), Some(Rect::new(21, 434, 222, 22)));
+        assert_eq!(
+            l.rect(Spot::Clear),
+            None,
+            "no clear button on an empty field"
+        );
+        assert_eq!(l.rect(Spot::Shutdown), Some(Rect::new(267, 434, 72, 22)));
+        assert_eq!(
+            l.rect(Spot::ShutdownArrow),
+            Some(Rect::new(339, 434, 22, 22))
+        );
+        assert_eq!(
+            l.rules,
+            [Rect::new(20, 391, 232, 1)],
+            "the rule over All Programs"
+        );
+        let pic = l.picture.expect("Home shows the picture");
+        assert_eq!(pic, Rect::new(304, -OVERHANG, 64, 62));
+        assert_eq!(
+            l.canvas,
+            Rect::new(0, -OVERHANG, W, H + OVERHANG),
+            "the canvas is the panel and the picture above it: no shadow"
+        );
+    }
+
+    #[test]
+    fn ten_program_rows_fit_and_a_pinned_rule_grows_the_panel_by_four() {
+        let mut p = StartPanel::new();
+        p.frequent = (0..12).map(|k| prow(&format!("App {k}"), false)).collect();
+        assert_eq!(programs_shown(&p), 10);
+        assert_eq!(layout(&p).rect(Spot::Program(10)), None);
+        p.pinned = vec![prow("Explorer", false)];
+        let l = layout(&p);
+        assert_eq!(l.panel.height, H + 4);
+        assert_eq!(l.rect(Spot::Program(1)), Some(Rect::new(11, 52, 246, 38)));
+        assert_eq!(l.rules[0], Rect::new(20, 50, 232, 1), "the pinned rule");
+        assert_eq!(l.rect(Spot::Search), Some(Rect::new(21, 438, 222, 22)));
+        assert_eq!(l.rect(Spot::AllPrograms), Some(Rect::new(11, 399, 246, 23)));
+        assert_eq!(l.pane.bottom(), 471, "the pane grows with the panel");
+        assert_eq!(programs_shown(&p), 10);
+    }
+
+    #[test]
+    fn places_stack_at_a_35_px_pitch_with_3_px_for_a_rule() {
+        let mut p = StartPanel::new();
+        p.places = ["user", "Documents", "Pictures", "Music", "Computer"]
+            .map(place)
+            .to_vec();
+        p.places[4].rule_before = true;
+        let l = layout(&p);
+        assert_eq!(l.rect(Spot::Place(0)), Some(Rect::new(266, 44, 138, 33)));
+        assert_eq!(l.rect(Spot::Place(3)), Some(Rect::new(266, 149, 138, 33)));
+        assert_eq!(l.rect(Spot::Place(4)), Some(Rect::new(266, 187, 138, 33)));
+        assert!(l.rules.contains(&Rect::new(274, 184, 124, 2)));
+    }
+
+    #[test]
+    fn search_mode_widens_the_pane_and_hides_the_places() {
+        let mut p = StartPanel::new();
+        p.places = vec![place("Documents")];
+        p.key(Key::Char(EditKey::Insert("x".into())));
+        p.set_results(vec![
+            ResultGroup {
+                title: "Programs (2)".into(),
+                rows: vec![row("Xterm"), row("Xed")],
+            },
+            ResultGroup {
+                title: "Files (1)".into(),
+                rows: vec![row("x.txt")],
+            },
+        ]);
+        let l = layout(&p);
+        assert_eq!(l.pane.right(), 402);
+        assert_eq!(l.rect(Spot::Place(0)), None);
+        assert_eq!(l.picture, None);
+        assert_eq!(l.rect(Spot::AllPrograms), None);
+        assert_eq!(l.headers[0], (0, Rect::new(17, 26, 375, 21)));
+        assert_eq!(l.rect(Spot::Result(0, 0)), Some(Rect::new(25, 47, 371, 21)));
+        assert_eq!(l.headers[1], (1, Rect::new(17, 100, 375, 21)));
+        assert_eq!(
+            l.rect(Spot::Result(1, 0)),
+            Some(Rect::new(25, 121, 371, 21))
+        );
+        let clear = l.rect(Spot::Clear).expect("a clear button once typed");
+        assert_eq!(hit(&l, clear.x + 2, clear.y + 2), Some(Spot::Clear));
+        assert_eq!(l.rect(Spot::Shutdown), Some(Rect::new(267, 434, 72, 22)));
+    }
+
+    #[test]
+    fn two_full_groups_of_results_fit() {
+        let mut p = StartPanel::new();
+        p.key(Key::Char(EditKey::Insert("a".into())));
+        let full = || ResultGroup {
+            title: "G".into(),
+            rows: (0..8).map(|k| row(&format!("r{k}"))).collect(),
+        };
+        p.set_results(vec![full(), full()]);
+        let l = layout(&p);
+        let last = l.rect(Spot::Result(1, 7)).expect("the last row shows");
+        assert!(last.bottom() <= 418, "above the All Programs row's bottom");
+    }
+
+    #[test]
+    fn jump_mode_widens_the_panel_and_lists_the_jump_rows_in_their_pane() {
+        let mut p = StartPanel::new();
+        p.frequent = vec![prow("Notepad", true)];
+        p.places = vec![place("Documents")];
+        p.jump = vec![row("a.txt"), row("b.txt")];
+        p.set_mode(Mode::Jump(0));
+        let l = layout(&p);
+        assert_eq!(l.panel.width, JUMP_W);
+        assert_eq!(l.pane, Rect::new(9, 9, 473, 458));
+        assert_eq!(l.jump_pane, Some(Rect::new(259, 9, 223, 413)));
+        assert_eq!(l.headers, [(0, Rect::new(274, 12, 204, 22))]);
+        assert_eq!(l.rect(Spot::Jump(1)), Some(Rect::new(274, 56, 204, 22)));
+        assert_eq!(l.rect(Spot::Place(0)), None);
+        assert_eq!(l.picture, None);
+        assert!(l.rect(Spot::Program(0)).is_some(), "the programs stay");
+        assert!(l.rect(Spot::Shutdown).is_some());
+    }
+
+    #[test]
+    fn the_tree_shows_a_window_of_19_px_rows_with_a_bar_when_long() {
+        let mut p = StartPanel::new();
+        p.tree = (0..25)
+            .map(|k| TreeRow::App {
+                name: format!("App {k}"),
+                icon: None,
+                depth: 0,
+            })
+            .collect();
+        p.set_mode(Mode::Programs);
+        assert_eq!(tree_capacity(&p), 20);
+        p.tree_top = 3;
+        let l = layout(&p);
+        assert_eq!(l.rect(Spot::Tree(3)), Some(Rect::new(11, 10, 231, 19)));
+        assert_eq!(l.rect(Spot::Tree(22)), Some(Rect::new(11, 371, 231, 19)));
+        assert_eq!(l.rect(Spot::Tree(2)), None);
+        assert_eq!(l.rect(Spot::Tree(23)), None);
+        assert_eq!(l.tree_bar, Some(Rect::new(242, 10, 16, 380)));
+        assert!(l.rect(Spot::Program(0)).is_none());
+        assert!(l.rect(Spot::AllPrograms).is_some(), "Back");
+    }
+
+    #[test]
+    fn scaled_doubles_every_rect_and_hit_finds_spots() {
+        let mut p = StartPanel::new();
+        p.frequent = vec![prow("Notepad", false)];
+        let l = layout(&p);
+        let s = l.scaled(2);
+        assert_eq!(s.scale, 2);
+        assert_eq!(s.panel, l.panel.scaled(2));
+        assert_eq!(s.canvas, l.canvas.scaled(2));
+        assert_eq!(s.rect(Spot::Program(0)), Some(Rect::new(22, 20, 492, 76)));
+        assert_eq!(hit(&s, 30, 30), Some(Spot::Program(0)));
+        assert_eq!(hit(&l, 30, 30), Some(Spot::Program(0)));
+        assert_eq!(hit(&l, 330, 0), Some(Spot::Picture));
+        assert_eq!(hit(&l, 2, 2), None, "the glass edge");
+    }
+}

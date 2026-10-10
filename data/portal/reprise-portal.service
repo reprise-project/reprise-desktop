@@ -1,0 +1,11 @@
+[Unit]
+Description=Portal service (reprise implementation)
+PartOf=graphical-session.target
+After=graphical-session.target
+ConditionEnvironment=WAYLAND_DISPLAY
+
+[Service]
+Type=dbus
+BusName=org.freedesktop.impl.portal.desktop.reprise
+ExecStart=/usr/bin/reprise-portal
+Restart=on-failure

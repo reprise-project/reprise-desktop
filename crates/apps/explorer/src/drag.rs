@@ -1,0 +1,716 @@
+//! Dragging files out of the file manager and dropping files and links into it,
+//! all through the seat's drag and drop: a drag inside one window,
+//! between two, and to or from any other program take the same path.
+
+use crate::commands::Command;
+use crate::place::Place;
+use crate::window::Popup;
+use crate::{BTN_LEFT, DRAG_SLOP, Explorer};
+use repriseapp::Reply;
+use repriseapp::{Accept, Actions, Ctx, DragAction, DragOut, DropKind, Dropped, Offered, Uri};
+use reprisefs::ops::DropOp;
+use reprisekit::controls::iconview::{self, Ghost};
+use reprisekit::controls::shellview::{self, Mode};
+use reprisekit::controls::treeview;
+use reprisekit::raster::{Canvas, Rect};
+use reprisekit::selection::Mods;
+use std::path::{Path, PathBuf};
+
+pub const THRESHOLD: i32 = DRAG_SLOP;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Target {
+    ViewEntry(usize),
+    TreeRow(usize),
+    Background,
+}
+
+pub struct Drag {
+    pub button: u32,
+    pub origin: (i32, i32),
+    pub started: bool,
+    pub items: Vec<usize>,
+    pub paths: Vec<PathBuf>,
+    pub pending_click: Option<(usize, Mods)>,
+}
+
+pub struct Incoming {
+    pub offered: Offered,
+    pub own: bool,
+    pub paths: Option<Vec<PathBuf>>,
+    pub at: (i32, i32),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PendingDrop {
+    pub paths: Vec<PathBuf>,
+    pub links: Vec<WebLink>,
+    pub dir: PathBuf,
+    pub source: Actions,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WebLink {
+    pub url: String,
+    pub title: Option<String>,
+}
+
+pub fn drop_kind(offered: Offered) -> Option<DropKind> {
+    (offered.files || offered.link).then_some(DropKind::Uris)
+}
+
+pub fn accept_for(offered: Offered, paths: Option<&[PathBuf]>, dir: &Path) -> Accept {
+    let copy = Actions {
+        copy: true,
+        move_: false,
+        ask: false,
+    };
+    let actions = match paths {
+        _ if offered.link => copy,
+        Some([]) => copy,
+        Some(_) => Actions::ALL,
+        None => Actions { ask: true, ..copy },
+    };
+    let moves = actions.move_ && paths.is_some_and(|p| all_on_device(p, dir));
+    Accept {
+        kind: DropKind::Uris,
+        actions,
+        preferred: Some(if moves {
+            DragAction::Move
+        } else {
+            DragAction::Copy
+        }),
+    }
+}
+
+pub fn all_on_device(paths: &[PathBuf], dir: &Path) -> bool {
+    !paths.is_empty() && paths.iter().all(|p| reprisefs::ops::same_device(p, dir))
+}
+
+pub fn lands_in_place(paths: &[PathBuf], dir: &Path) -> bool {
+    !paths.is_empty() && paths.iter().all(|p| reprisefs::ops::same_folder(p, dir))
+}
+
+pub fn ask_default(shortcut: bool, on_device: bool) -> DropOp {
+    if shortcut {
+        DropOp::Shortcut
+    } else if on_device {
+        DropOp::Move
+    } else {
+        DropOp::Copy
+    }
+}
+
+pub fn answer_for(op: DropOp, source: Actions) -> Option<DragAction> {
+    let want = match op {
+        DropOp::Move => DragAction::Move,
+        DropOp::Copy | DropOp::Shortcut => DragAction::Copy,
+    };
+    let other = match want {
+        DragAction::Copy => DragAction::Move,
+        _ => DragAction::Copy,
+    };
+    if source.has(want) {
+        Some(want)
+    } else if op == DropOp::Shortcut && source.has(other) {
+        Some(other)
+    } else {
+        None
+    }
+}
+
+pub fn split_drop(data: Dropped) -> (Vec<PathBuf>, Vec<WebLink>) {
+    match data {
+        Dropped::Files(p) => (p, Vec::new()),
+        Dropped::Uris(items) => {
+            let mut paths = Vec::new();
+            let mut links = Vec::new();
+            for it in items {
+                match it {
+                    Uri::File(p) => paths.push(p),
+                    Uri::Url { url, title } => links.push(WebLink { url, title }),
+                }
+            }
+            (paths, links)
+        }
+        Dropped::Text(_) => (Vec::new(), Vec::new()),
+    }
+}
+
+pub fn write_links(links: &[WebLink], dir: &Path) -> Result<(), String> {
+    use std::io::Write;
+    let mut failed = None;
+    for link in links {
+        let label = reprisefs::dropdata::link_name(&link.url, link.title.as_deref());
+        let name = format!("{label}.desktop");
+        let Some(text) = reprisefs::apps::link_text(&label, &link.url) else {
+            continue;
+        };
+        let written = reprisefs::names::numbered(name.as_ref(), reprisefs::names::paren)
+            .take(1000)
+            .map(|n| {
+                std::fs::OpenOptions::new()
+                    .write(true)
+                    .create_new(true)
+                    .open(dir.join(&n))
+                    .and_then(|mut f| f.write_all(text.as_bytes()))
+            })
+            .find(|r| !matches!(r, Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists));
+        match written {
+            Some(Ok(())) => {}
+            Some(Err(e)) => {
+                failed.get_or_insert(format!("Cannot create {name}: {e}"));
+            }
+            None => {
+                failed.get_or_insert(format!("Cannot create {name}: every name is taken"));
+            }
+        }
+    }
+    failed.map_or(Ok(()), Err)
+}
+
+impl Explorer {
+    /// The selection change is held back when the press lands on an
+    /// entry that is already selected: the press arms a drag of the
+    /// selection as it stands, so dragging one of several carries all
+    /// of them, and only a release that never became a drag applies the
+    /// click: collapsing a multi-selection to the one pressed, or
+    /// toggling it out under Ctrl. A press outside the selection
+    /// selects (or Ctrl-adds) at once and drags that.
+    pub(crate) fn press_entry(
+        &mut self,
+        i: usize,
+        at: (i32, i32),
+        time: u32,
+        mods: repriseapp::Mods,
+        cell: Option<Rect>,
+        ctx: &mut Ctx,
+    ) -> Reply {
+        let (x, y) = at;
+        let double = self
+            .last_press
+            .is_some_and(|(t, j)| j == i && time.wrapping_sub(t) < crate::DOUBLE_MS);
+        self.last_press = if double { None } else { Some((time, i)) };
+        if double {
+            self.sv.selection.set_only(Some(i));
+            return self.open_selected(ctx);
+        }
+        let click = Mods {
+            ctrl: mods.ctrl,
+            shift: mods.shift,
+        };
+        let held_back = self.sv.selection.set.contains(&i);
+        if !held_back {
+            self.sv.selection.click(i, click);
+        }
+        self.sv.focus_ring = true;
+        match cell {
+            Some(_) => {
+                self.arm_drag(i, BTN_LEFT, x, y);
+                if let Some(d) = self.drag.as_mut() {
+                    d.pending_click = held_back.then_some((i, click));
+                }
+            }
+            None if held_back => self.sv.selection.click(i, click),
+            None => {}
+        }
+        self.refresh_chrome(ctx);
+        Reply::redraw()
+    }
+
+    /// A read-only place arms nothing: the drives under Computer and the
+    /// bin's contents are not files to move, and every operation behind
+    /// a drop ([`Explorer::put_all`]) refuses them anyway.
+    pub(crate) fn arm_drag(&mut self, i: usize, button: u32, x: i32, y: i32) {
+        if self.place.read_only() {
+            return;
+        }
+        let items: Vec<usize> = self.sv.selection.set.iter().copied().collect();
+        let items = if items.contains(&i) { items } else { vec![i] };
+        let paths: Vec<PathBuf> = items
+            .iter()
+            .filter_map(|&i| self.items.get(i).map(|it| it.path.clone()))
+            .collect();
+        if paths.is_empty() {
+            return;
+        }
+        self.drag = Some(Drag {
+            button,
+            origin: (x, y),
+            started: false,
+            items,
+            paths,
+            pending_click: None,
+        });
+    }
+
+    pub(crate) fn drag_motion(&mut self, x: i32, y: i32, ctx: &mut Ctx) -> Reply {
+        let Some(d) = self.drag.as_ref().filter(|d| !d.started) else {
+            return Reply::none();
+        };
+        let (ox, oy) = d.origin;
+        if (x - ox).abs() < THRESHOLD && (y - oy).abs() < THRESHOLD {
+            return Reply::none();
+        }
+        let (image, grab) = self
+            .drag_image(ctx)
+            .unwrap_or_else(|| (Canvas::new(0, 0), (0, 0)));
+        let d = self.drag.as_mut().expect("still armed");
+        d.started = true;
+        Reply::start_drag(DragOut {
+            paths: d.paths.clone(),
+            image,
+            grab,
+        })
+    }
+
+    pub(crate) fn drag_image(&self, ctx: &Ctx) -> Option<(Canvas, (i32, i32))> {
+        let d = self.drag.as_ref()?;
+        let lay = self.layout(ctx);
+        let sl = self.view_layout(lay.view, ctx);
+        let icon_of = |e: &shellview::Entry| match self.sv.mode {
+            Mode::Tiles => e.icon48.clone(),
+            Mode::Thumbnails | Mode::Icons => e.icon32.clone(),
+            Mode::List | Mode::Details => e.icon.clone(),
+        };
+        let half = iconview::CELL / 2;
+        let flat = matches!(self.sv.mode, Mode::List | Mode::Details);
+        let shown: Vec<(usize, (i32, i32))> = if flat {
+            let (ox, oy) = d.origin;
+            let pressed = match shellview::hit(&self.sv, &sl, ox, oy) {
+                shellview::Hit::Entry(i) => i,
+                _ => *d.items.first()?,
+            };
+            vec![(pressed, (ox - half, oy - half))]
+        } else {
+            d.items
+                .iter()
+                .filter_map(|&i| sl.cells.get(i).map(|c| (i, (c.x, c.y))))
+                .collect()
+        };
+        let icons: Vec<_> = shown
+            .iter()
+            .map(|&(i, _)| self.sv.entries.get(i).and_then(icon_of))
+            .collect();
+        let ghosts: Vec<Ghost> = shown
+            .iter()
+            .zip(&icons)
+            .filter_map(|(&(i, at), icon)| {
+                let e = self.sv.entries.get(i)?;
+                Some(Ghost {
+                    at,
+                    name: &e.name,
+                    icon: icon.as_deref(),
+                    shortcut: e.link,
+                })
+            })
+            .collect();
+        // `draw_cell`'s unselected label is drawn for the desktop, where
+        // the text is white; in the view it sits on white, so the colour
+        // is swapped the way `shellgrid` swaps it for the same call.
+        let mut theme = ctx.theme.clone();
+        theme.colors.desktop_text = theme.colors.window_text;
+        iconview::drag_image(&theme, &ctx.text, &ghosts, d.origin)
+    }
+
+    pub(crate) fn drag_release(&mut self, x: i32, y: i32, ctx: &mut Ctx) -> Reply {
+        let Some(d) = self.drag.take() else {
+            return Reply::none();
+        };
+        // A started drag is the compositor's, so this release is one it
+        // refused to start; nothing is left to do.
+        if d.started {
+            return Reply::none();
+        }
+        if d.button != BTN_LEFT {
+            return self.item_menu_at(x, y, ctx);
+        }
+        if let Some((i, click)) = d.pending_click {
+            self.sv.selection.click(i, click);
+            self.sv.focus_ring = true;
+            self.refresh_chrome(ctx);
+        }
+        Reply::redraw()
+    }
+
+    pub(crate) fn drag_ended(&mut self) -> Reply {
+        self.drag = None;
+        Reply::none()
+    }
+
+    pub(crate) fn item_menu_at(&mut self, x: i32, y: i32, ctx: &mut Ctx) -> Reply {
+        let lay = self.layout(ctx);
+        let sl = self.view_layout(lay.view, ctx);
+        match shellview::hit(&self.sv, &sl, x, y) {
+            shellview::Hit::Entry(i) => self.entry_menu_at(i, (x, y), ctx),
+            _ => {
+                let menu = crate::menus::background_menu(&self.menu_state());
+                self.popup = Some(Popup::new((x, y), menu, lay.client, ctx));
+                Reply::redraw()
+            }
+        }
+    }
+
+    pub(crate) fn entry_menu_at(&mut self, i: usize, at: (i32, i32), ctx: &mut Ctx) -> Reply {
+        let lay = self.layout(ctx);
+        if !self.sv.selection.set.contains(&i) {
+            self.sv.selection.set_only(Some(i));
+        }
+        let is_dir = self.items.get(i).is_some_and(|it| it.is_dir);
+        let open_with = if is_dir {
+            Vec::new()
+        } else {
+            self.build_open_with(i, ctx)
+        };
+        let send_to = self.build_send_to(ctx);
+        let eject = self.ejectable(i);
+        let menu = crate::menus::item_menu(&self.menu_state(), is_dir, eject, &open_with, &send_to);
+        self.popup = Some(Popup::new(at, menu, lay.client, ctx));
+        Reply::redraw()
+    }
+
+    pub(crate) fn cancel_item_drag(&mut self) -> bool {
+        if self.drag.as_ref().is_some_and(|d| !d.started) {
+            self.drag = None;
+            return true;
+        }
+        false
+    }
+
+    pub(crate) fn drag_enter(
+        &mut self,
+        x: i32,
+        y: i32,
+        offered: Offered,
+        own: bool,
+        ctx: &Ctx,
+    ) -> Reply {
+        let paths = self
+            .drag
+            .as_ref()
+            .filter(|d| own && d.started)
+            .map(|d| d.paths.clone());
+        self.incoming = Some(Incoming {
+            offered,
+            own,
+            paths,
+            at: (x, y),
+        });
+        self.drag_answer(x, y, ctx)
+    }
+
+    pub(crate) fn drag_files(&mut self, paths: Vec<PathBuf>, ctx: &Ctx) -> Reply {
+        let Some(inc) = self.incoming.as_mut() else {
+            return Reply::none();
+        };
+        if inc.paths.is_none() {
+            inc.paths = Some(paths);
+        }
+        let (x, y) = inc.at;
+        self.drag_answer(x, y, ctx)
+    }
+
+    pub(crate) fn drag_over(&mut self, x: i32, y: i32, ctx: &Ctx) -> Reply {
+        let Some(inc) = self.incoming.as_mut() else {
+            return Reply::none();
+        };
+        inc.at = (x, y);
+        self.drag_answer(x, y, ctx)
+    }
+
+    pub(crate) fn drag_leave(&mut self) -> Reply {
+        self.incoming = None;
+        self.sv.drop_target = None;
+        self.tree.drop_hilight = None;
+        Reply::redraw()
+    }
+
+    fn drag_answer(&mut self, x: i32, y: i32, ctx: &Ctx) -> Reply {
+        let Some(inc) = self.incoming.as_ref() else {
+            return Reply::none();
+        };
+        let paths = inc.paths.clone();
+        let offered = inc.offered;
+        let over = drop_kind(offered)
+            .and_then(|_| self.drag_target(x, y, paths.as_deref().unwrap_or(&[]), ctx));
+        let dir = over.and_then(|t| self.target_dir(&t));
+        let accept = dir
+            .as_deref()
+            .map(|dir| accept_for(offered, paths.as_deref(), dir));
+        let (entry, row) = match over.filter(|_| accept.is_some()) {
+            Some(Target::ViewEntry(i)) => (Some(i), None),
+            Some(Target::TreeRow(i)) => (None, Some(i)),
+            _ => (None, None),
+        };
+        let redraw = self.sv.drop_target != entry || self.tree.drop_hilight != row;
+        self.sv.drop_target = entry;
+        self.tree.drop_hilight = row;
+        Reply {
+            redraw,
+            ..Reply::drag_accept(accept)
+        }
+    }
+
+    pub(crate) fn drag_drop(
+        &mut self,
+        (x, y): (i32, i32),
+        data: Dropped,
+        action: DragAction,
+        source: Actions,
+        ctx: &mut Ctx,
+    ) -> Reply {
+        let (link, own) = self
+            .incoming
+            .as_ref()
+            .map_or((false, false), |i| (i.offered.link, i.own));
+        let (action, source) = match link {
+            true => (
+                match action {
+                    DragAction::Move => DragAction::Copy,
+                    a => a,
+                },
+                Actions {
+                    move_: false,
+                    ..source
+                },
+            ),
+            false => (action, source),
+        };
+        self.drag_leave();
+        let (paths, links) = split_drop(data);
+        let dir = self
+            .drag_target(x, y, &paths, ctx)
+            .and_then(|t| self.target_dir(&t));
+        let asks = action == DragAction::Ask;
+        let Some(dir) = dir else {
+            return nothing(asks);
+        };
+        let links = if source.copy { links } else { Vec::new() };
+        if paths.is_empty() {
+            if links.is_empty() {
+                return nothing(asks);
+            }
+            let reply = self.drop_links(links, &dir, ctx);
+            return match asks {
+                true => Reply {
+                    answer_drop: Some(Some(DragAction::Copy)),
+                    ..reply
+                },
+                false => reply,
+            };
+        }
+        let op = match action {
+            DragAction::Move => DropOp::Move,
+            DragAction::Copy => DropOp::Copy,
+            DragAction::Ask => {
+                // Our own drag asks with the left button only for a
+                // shortcut; the compositor asks for the right one too.
+                let shortcut = own && self.drag.as_ref().is_some_and(|d| d.button == BTN_LEFT);
+                let default = ask_default(shortcut, source.move_ && all_on_device(&paths, &dir));
+                let menu = crate::menus::drop_menu(default, source);
+                let client = self.layout(ctx).client;
+                self.pending_drop = Some(PendingDrop {
+                    paths,
+                    links,
+                    dir,
+                    source,
+                });
+                self.popup = Some(Popup::new((x, y), menu, client, ctx));
+                return Reply::redraw();
+            }
+        };
+        self.land(paths, links, &dir, op, ctx)
+    }
+
+    fn land(
+        &mut self,
+        paths: Vec<PathBuf>,
+        links: Vec<WebLink>,
+        dir: &Path,
+        op: DropOp,
+        ctx: &mut Ctx,
+    ) -> Reply {
+        let mut reply = Reply::redraw();
+        if !links.is_empty() {
+            reply = self.drop_links(links, dir, ctx);
+        }
+        if op == DropOp::Move && lands_in_place(&paths, dir) {
+            return reply;
+        }
+        let put = self.drop_into(&paths, dir, op, ctx);
+        Reply {
+            redraw: reply.redraw || put.redraw,
+            ..put
+        }
+    }
+
+    pub(crate) fn drop_pending(&mut self, op: DropOp, ctx: &mut Ctx) -> Reply {
+        let Some(p) = self.pending_drop.take() else {
+            return Reply::none();
+        };
+        let in_place = op == DropOp::Move && lands_in_place(&p.paths, &p.dir);
+        let answer = if in_place {
+            answer_for(DropOp::Copy, p.source)
+        } else {
+            answer_for(op, p.source)
+        };
+        let Some(answer) = answer else {
+            return Reply::answer_drop(None);
+        };
+        Reply {
+            answer_drop: Some(Some(answer)),
+            ..self.land(p.paths, p.links, &p.dir, op, ctx)
+        }
+    }
+
+    pub(crate) fn cancel_pending_drop(&mut self) -> Reply {
+        match self.pending_drop.take() {
+            Some(_) => Reply::answer_drop(None),
+            None => Reply::none(),
+        }
+    }
+
+    pub(crate) fn drop_cancelled(&mut self) -> Reply {
+        self.pending_drop = None;
+        if self.drop_menu_up() {
+            self.popup = None;
+        }
+        Reply::redraw()
+    }
+
+    /// The pointer left the window or the keyboard went elsewhere: a drop
+    /// menu up closes, and [`Explorer::settle_drop`] cancels its drop.
+    /// After a drop from another program the keyboard stays with that
+    /// program, so Escape cannot reach the menu.
+    pub(crate) fn close_drop_menu(&mut self) -> bool {
+        if self.drop_menu_up() {
+            self.popup = None;
+            return true;
+        }
+        false
+    }
+
+    fn drop_menu_up(&self) -> bool {
+        self.popup
+            .as_ref()
+            .is_some_and(|p| matches!(p.command(&[0]), Command::Drop(_)))
+    }
+
+    pub(crate) fn settle_drop(&mut self, reply: Reply) -> Reply {
+        if self.pending_drop.is_none() || self.drop_menu_up() {
+            return reply;
+        }
+        self.pending_drop = None;
+        Reply {
+            answer_drop: Some(None),
+            ..reply
+        }
+    }
+
+    pub(crate) fn drop_into(
+        &mut self,
+        paths: &[PathBuf],
+        dir: &Path,
+        op: DropOp,
+        ctx: &mut Ctx,
+    ) -> Reply {
+        let select = self.place.path().as_deref() == Some(dir);
+        self.put_all(paths, dir, &|_| Some(op), select, ctx)
+    }
+
+    fn drop_links(&mut self, links: Vec<WebLink>, dir: &Path, ctx: &mut Ctx) -> Reply {
+        let dir = dir.to_path_buf();
+        self.spawn_job(ctx, move || {
+            let result = write_links(&links, &dir);
+            Box::new(move |ex: &mut Explorer, ctx: &mut Ctx| {
+                let reply = if ex.place.path().as_deref() == Some(&*dir) {
+                    ex.refresh(ctx)
+                } else {
+                    Reply::redraw()
+                };
+                match result {
+                    Ok(()) => reply,
+                    Err(text) => ex.message_box("Error Creating Shortcut", text, ctx),
+                }
+            })
+        });
+        Reply::redraw()
+    }
+
+    pub(crate) fn drag_target(
+        &self,
+        x: i32,
+        y: i32,
+        paths: &[PathBuf],
+        ctx: &Ctx,
+    ) -> Option<Target> {
+        let lay = self.layout(ctx);
+        let px = ctx.theme.fonts.size_px;
+        if lay.view.contains(x, y) {
+            // A read-only place's entries take no drop: a drive under
+            // Computer is a directory with a mount path, and a drop there
+            // would write into the mount. The tree branch checks the same
+            // through `writable_dir`.
+            let here = writable_dir(&self.place)?;
+            let sl = self.view_layout(lay.view, ctx);
+            let shellview::Hit::Entry(i) = shellview::hit(&self.sv, &sl, x, y) else {
+                return (!covers(paths, &here)).then_some(Target::Background);
+            };
+            let it = self.items.get(i)?;
+            let ok = it.is_dir && !it.is_link && !covers(paths, &it.path);
+            return ok.then_some(Target::ViewEntry(i));
+        }
+        let (Some(bl), Some(frame)) = (&lay.bar, lay.tree) else {
+            return None;
+        };
+        if !bl.body.contains(x, y) {
+            return None;
+        }
+        let tl = treeview::layout(&self.tree, &ctx.text, px, frame, &ctx.theme.look.controls());
+        let treeview::Hit::Row(i) = self.tree.hit(&tl, x, y) else {
+            return None;
+        };
+        let place = self
+            .tree
+            .visible()
+            .get(i)
+            .and_then(|r| self.place_of(&r.path))?;
+        let dir = writable_dir(&place)?;
+        // A folder cannot be dropped into itself or into its own tree.
+        (!covers(paths, &dir)).then_some(Target::TreeRow(i))
+    }
+
+    fn target_dir(&self, t: &Target) -> Option<PathBuf> {
+        match *t {
+            Target::ViewEntry(i) => self.items.get(i).map(|it| it.path.clone()),
+            Target::TreeRow(i) => self
+                .tree
+                .visible()
+                .get(i)
+                .and_then(|r| self.place_of(&r.path))
+                .as_ref()
+                .and_then(writable_dir),
+            Target::Background => writable_dir(&self.place),
+        }
+    }
+}
+
+fn nothing(asks: bool) -> Reply {
+    if asks {
+        Reply::answer_drop(None)
+    } else {
+        Reply::redraw()
+    }
+}
+
+fn covers(paths: &[PathBuf], path: &Path) -> bool {
+    paths.iter().any(|p| path.starts_with(p))
+}
+
+fn writable_dir(place: &Place) -> Option<PathBuf> {
+    (!place.read_only()).then(|| place.path()).flatten()
+}
+
+#[cfg(test)]
+#[path = "drag_tests.rs"]
+mod tests;

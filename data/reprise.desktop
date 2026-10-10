@@ -1,0 +1,7 @@
+[Desktop Entry]
+Name=Reprise
+Comment=Wayland desktop with a classic retro look
+Exec=reprise
+Icon=reprise
+Type=Application
+DesktopNames=reprise

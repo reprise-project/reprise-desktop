@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Power Options
+Comment=Configure energy-saving settings for your computer.
+Exec=reprise-power
+Icon=preferences-system-power-management
+Categories=Settings;
+StartupWMClass=reprise.power
+Terminal=false

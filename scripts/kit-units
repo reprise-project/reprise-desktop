@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+# Usage: scripts/kit-units [TREE]   (default: the checkout holding this script)
+# Builds and test-builds every workspace member, one command at a time, and
+# lists the reprisekit rlib hash each one links. Exit 0 when every command
+# shares one reprisekit, 1 otherwise. Run it after a dependency change; a
+# second hash means crates/reprisekit-pins needs the new feature. Take the
+# missing features from `cargo tree -e features -i <crate>` under the
+# command that differs. It builds every member twice, so it takes a while.
+tree=${1:-$(cd "$(dirname "$0")/.." && pwd)}
+cd "$tree" || exit 2
+members=$(cargo metadata --format-version 1 --no-deps |
+  python3 -c 'import json,sys; print(" ".join(p["name"] for p in json.load(sys.stdin)["packages"]))')
+unit() {
+  "$@" --message-format=json 2>/dev/null | python3 -c '
+import json, sys
+for l in sys.stdin:
+    try: m = json.loads(l)
+    except Exception: continue
+    if (m.get("reason") == "compiler-artifact" and m["target"]["name"] == "reprisekit"
+            and "lib" in m["target"]["kind"] and not m["profile"]["test"]):
+        f = [f for f in m["filenames"] if "/deps/" in f][0]
+        print(f.rsplit("-", 1)[-1].split(".")[0]); break'
+}
+out=$(
+  for m in $members; do
+    printf 'build -p %s\t%s\n' "$m" "$(unit cargo build -p "$m")"
+    printf 'test -p %s\t%s\n' "$m" "$(unit cargo test -p "$m" --no-run)"
+  done
+  printf 'build --workspace\t%s\n' "$(unit cargo build --workspace)"
+  printf 'test --workspace\t%s\n' "$(unit cargo test --workspace --no-run)"
+)
+echo "$out" | awk -F'\t' '$2 != ""'
+n=$(echo "$out" | awk -F'\t' '$2 != "" {print $2}' | sort -u | wc -l)
+echo "$n distinct reprisekit units"
+[ "$n" -eq 1 ]

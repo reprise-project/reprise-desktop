@@ -1,0 +1,133 @@
+//! A wallpaper on a screen: Center at its own size, Tile from the top-left or Stretch to fill, composed over the desktop colour. The compositor composes each output with it, Reprise Settings its monitor preview.
+
+use crate::raster::Canvas;
+use crate::theme::Color;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum Position {
+    Center,
+    Tile,
+    #[default]
+    Stretch,
+}
+
+impl Position {
+    pub fn parse(s: &str) -> Option<Position> {
+        match s.to_ascii_lowercase().as_str() {
+            "center" => Some(Position::Center),
+            "tile" => Some(Position::Tile),
+            "stretch" => Some(Position::Stretch),
+            _ => None,
+        }
+    }
+}
+
+/// `img` placed on a `w` x `h` canvas of `bg` by `position`. `scale` is the image's draw size relative to its own for Center and Tile; Stretch ignores it.
+pub fn compose(img: &Canvas, w: u32, h: u32, position: Position, bg: Color, scale: f32) -> Canvas {
+    let mut out = Canvas::new(w, h);
+    out.fill_rect(out.bounds(), bg);
+    if img.width == 0 || img.height == 0 || w == 0 || h == 0 {
+        return out;
+    }
+    match position {
+        Position::Stretch => {
+            let fitted = img.resample_box(w, h);
+            out.blit_over(0, 0, &fitted);
+        }
+        Position::Center | Position::Tile => {
+            let (sw, sh) = (
+                ((img.width as f32 * scale).round() as u32).max(1),
+                ((img.height as f32 * scale).round() as u32).max(1),
+            );
+            let scaled = if (sw, sh) == (img.width, img.height) {
+                None
+            } else {
+                Some(img.resample_box(sw, sh))
+            };
+            let tile = scaled.as_ref().unwrap_or(img);
+            if position == Position::Center {
+                out.blit_over((w as i32 - sw as i32) / 2, (h as i32 - sh as i32) / 2, tile);
+            } else {
+                // One band of tiles across the width, then its rows copied down: every band blends over the same colour.
+                let mut band = Canvas::new(w, sh.min(h));
+                band.fill_rect(band.bounds(), bg);
+                for x in (0..w).step_by(sw as usize) {
+                    band.blit_over(x as i32, 0, tile);
+                }
+                let (w, bh) = (w as usize, band.height as usize);
+                for (y, row) in out.pixels.chunks_exact_mut(w).enumerate() {
+                    let src = y % bh * w;
+                    row.copy_from_slice(&band.pixels[src..src + w]);
+                }
+            }
+        }
+    }
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::raster::Rect;
+
+    fn img() -> Canvas {
+        let mut c = Canvas::new(4, 2);
+        c.fill_rect(Rect::new(0, 0, 4, 2), Color::rgb(255, 0, 0));
+        c
+    }
+
+    fn numbered() -> Canvas {
+        let mut c = Canvas::new(11, 9);
+        for (i, p) in c.pixels.iter_mut().enumerate() {
+            *p = 0xFF00_0000 | (i as u32 * 2_000);
+        }
+        c
+    }
+
+    #[test]
+    fn a_position_parses_in_any_case() {
+        assert_eq!(Position::parse("Center"), Some(Position::Center));
+        assert_eq!(Position::parse("tile"), Some(Position::Tile));
+        assert_eq!(Position::parse("STRETCH"), Some(Position::Stretch));
+        assert_eq!(Position::parse("fill"), None);
+        assert_eq!(Position::default(), Position::Stretch);
+    }
+
+    #[test]
+    fn tile_repeats_a_translucent_picture_over_the_colour() {
+        let bg = Color::rgb(0, 0, 255);
+        let mut tile = numbered();
+        tile.pixels[0] = 0x8040_0000;
+        let t = compose(&tile, 25, 20, Position::Tile, bg, 1.0);
+        let mut one = Canvas::new(11, 9);
+        one.fill_rect(one.bounds(), bg);
+        one.blit_over(0, 0, &tile);
+        for y in 0..20 {
+            for x in 0..25 {
+                assert_eq!(
+                    t.get(x, y),
+                    one.get(x % 11, y % 9),
+                    "tile pixel at ({x}, {y})"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn positions_place_the_image() {
+        let bg = Color::rgb(0, 0, 255);
+        let red = Color::rgb(255, 0, 0).argb();
+        let s = compose(&img(), 8, 8, Position::Stretch, bg, 1.0);
+        assert_eq!(s.get(0, 0), red);
+        assert_eq!(s.get(7, 7), red);
+        let c = compose(&img(), 8, 8, Position::Center, bg, 1.0);
+        assert_eq!(c.get(0, 0), bg.argb());
+        assert_eq!(c.get(2, 3), red);
+        assert_eq!(c.get(6, 3), bg.argb());
+        let t = compose(&img(), 8, 8, Position::Tile, bg, 1.0);
+        assert_eq!(t.get(7, 7), red);
+        let half = compose(&img(), 8, 8, Position::Center, bg, 0.5);
+        assert_eq!(half.get(3, 3), red);
+        assert_eq!(half.get(2, 3), bg.argb());
+    }
+}

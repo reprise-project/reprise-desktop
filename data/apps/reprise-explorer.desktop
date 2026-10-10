@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Explorer
+Comment=Displays the files and folders on your computer.
+Exec=reprise-explorer %f
+Icon=system-file-manager
+Categories=Utility;FileManager;
+MimeType=inode/directory;
+StartupWMClass=reprise.explorer
+Terminal=false

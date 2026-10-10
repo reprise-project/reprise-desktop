@@ -1,0 +1,39 @@
+name: ci
+on: [push, pull_request]
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container: archlinux:latest
+    # Incremental state buys nothing on a fresh runner and doubles the cache.
+    env:
+      CARGO_INCREMENTAL: 0
+    steps:
+      # PKGBUILD depends, plus the fallback font and the MIME database the tests read.
+      - name: Install dependencies
+        run: |
+          pacman -Syu --noconfirm
+          pacman -S --noconfirm --needed rust clang pkgconf git seatd systemd-libs libinput libdrm mesa libglvnd libdisplay-info libxkbcommon xorg-xwayland freetype2 fontconfig pam libxcrypt dbus pipewire ttf-dejavu shared-mime-info
+      - uses: actions/checkout@v7
+      # Tests that assert a read-only directory refuses a write only mean
+      # something as an unprivileged user; the container runs as root.
+      - name: Create the build user
+        run: useradd -m builder
+      - name: Read the toolchain version
+        id: rustc
+        run: echo "version=$(rustc -V | cut -d' ' -f2)" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@v6
+        with:
+          path: |
+            /home/builder/.cargo/registry
+            /home/builder/.cargo/git
+            target
+          key: cargo-${{ steps.rustc.outputs.version }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: cargo-${{ steps.rustc.outputs.version }}-
+      # The checkout and the cache come back owned by root.
+      - run: chown -R builder "$GITHUB_WORKSPACE" /home/builder
+      - run: runuser -u builder -- env HOME=/home/builder cargo fmt --check
+      - run: runuser -u builder -- env HOME=/home/builder cargo clippy --workspace --all-targets -- -D warnings
+      - run: runuser -u builder -- env HOME=/home/builder cargo test --workspace --no-fail-fast

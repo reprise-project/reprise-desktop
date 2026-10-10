@@ -1,0 +1,6 @@
+[Desktop Entry]
+Type=Application
+Name=Bluetooth
+Exec=reprise-bluetooth --tray
+OnlyShowIn=reprise;
+NoDisplay=true

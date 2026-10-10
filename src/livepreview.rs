@@ -1,0 +1,461 @@
+//! A live picture of one window for the task button panel (`taskpreview`),
+//! Alt+Tab and the 3D switcher (`flipview`).
+//!
+//! Each thumb is a texture of its own (`offscreen::Target`) that the
+//! window's `content` subtree is rendered into at thumbnail size: the
+//! client surface and its popups without the frame, drawn even while the
+//! window is covered, minimized or on another desktop (the subtree's own
+//! and its ancestors' enabled flags are ignored). A scene buffer in the
+//! host's tree shows the texture, which later renders update in place: no
+//! pixels pass through the CPU.
+//!
+//! A whole-window thumb ([`State::whole_thumb_create`]) renders the
+//! window's whole tree over its frame rect instead (frame art, client,
+//! popups; the frame's glass left out, as `windowstill` does, and the
+//! shadow outside the rect) at a pixel size the host picks, and hands the
+//! texture to the host's [`TextureSlot`] instead of a scene buffer.
+//!
+//! The pictures follow the window's commits at `[previews] fps` at most
+//! (100 ms by default): a commit marks the window's thumbs (a new focus
+//! or title marks its whole-window ones, `thumbs_frame`), and one timer
+//! draws every marked thumb a period after the last draw. A render draws
+//! only what changed since the thumb's last (the target's damage
+//! tracker), so a busy window costs its changed pixels and an idle one
+//! nothing. Each draw sends the window's frame callbacks, which keeps a
+//! minimized client, or one on another desktop, drawing while shown.
+//!
+//! Hosts keep a [`ThumbId`] and drop it with [`State::thumb_drop`] before
+//! the tree it lives in goes.
+
+use std::cell::RefCell;
+use std::rc::Rc;
+use std::time::{Duration, Instant};
+
+use reprisekit::controls::taskpreview::fit;
+use reprisescene::{BufferId, TreeId, View};
+use smithay::{
+    backend::renderer::{gles::GlesTexture, utils::with_renderer_surface_state},
+    reexports::calloop::{
+        RegistrationToken,
+        timer::{TimeoutAction, Timer},
+    },
+    utils::Rectangle,
+};
+
+use crate::{
+    compositor::State, config::PREVIEW_FPS_MAX, offscreen::Target, raster::Rect, window::WindowId,
+};
+
+/// Where a whole-window thumb puts its texture for the host to draw: the
+/// same texture, drawn into again by every later render, until a new
+/// size makes a new one.
+pub type TextureSlot = Rc<RefCell<Option<GlesTexture>>>;
+
+/// Names a live picture for as long as its host keeps it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ThumbId(u64);
+
+/// Every live picture, and the timer that draws them.
+#[derive(Default)]
+pub struct LivePreviews {
+    thumbs: Vec<Thumb>,
+    next: u64,
+    /// Fires a period after the last draw while a thumb waits for one.
+    timer: Option<RegistrationToken>,
+    /// When the marked thumbs were last drawn.
+    drawn: Option<Instant>,
+}
+
+/// One live picture: where it shows and the texture behind.
+struct Thumb {
+    id: ThumbId,
+    window: WindowId,
+    show: Show,
+    /// The texture, sized to `mode`; None until the first draw or after
+    /// one failed.
+    target: Option<Target>,
+    /// The picture's size in device pixels and the size it maps.
+    mode: (i32, i32, i32, i32),
+    /// The window committed since the last draw.
+    marked: bool,
+}
+
+/// What a thumb pictures and where the picture goes.
+enum Show {
+    /// The client, fitted to `well` (logical, relative to the buffer's
+    /// parent) at `scale` device pixels per logical pixel, in `buffer`.
+    Well {
+        buffer: BufferId,
+        well: Rect,
+        scale: i32,
+    },
+    /// The whole window, `px` device pixels large, into `slot`, with
+    /// mipmaps (the 3D switcher draws it smaller).
+    Whole { px: (i32, i32), slot: TextureSlot },
+}
+
+/// What a draw needs of the thumb's window: the tree rendered and the
+/// layout rect it covers (the client's for `content`, the frame's for the
+/// whole window).
+struct Shot {
+    tree: TreeId,
+    rect: Rect,
+    surface: smithay::reexports::wayland_server::protocol::wl_surface::WlSurface,
+}
+
+impl State {
+    /// Whether `w` has something to show: a mapped surface with a buffer
+    /// and a size.
+    pub fn has_picture(&self, w: WindowId) -> bool {
+        self.win(w).is_some_and(|x| {
+            x.mapped
+                && x.client_w > 0
+                && x.client_h > 0
+                && with_renderer_surface_state(x.wl_surface(), |s| s.buffer().is_some())
+                    .unwrap_or(false)
+        })
+    }
+
+    /// Show `w` live in `well` (logical, relative to `parent`), at `scale`
+    /// device pixels per logical pixel, and draw its first picture now.
+    /// None when the window has nothing to show.
+    pub fn thumb_create(
+        &mut self,
+        w: WindowId,
+        parent: TreeId,
+        well: Rect,
+        scale: i32,
+    ) -> Option<ThumbId> {
+        if !self.has_picture(w) {
+            return None;
+        }
+        let buffer = self.scene.buffer_create(parent);
+        let show = Show::Well {
+            buffer,
+            well,
+            scale: scale.max(1),
+        };
+        Some(self.thumb_push(w, show))
+    }
+
+    /// Show the whole of `w` live, `px` device pixels large, in `slot`,
+    /// and draw its first picture now. None when the window has nothing to
+    /// show.
+    pub fn whole_thumb_create(
+        &mut self,
+        w: WindowId,
+        px: (i32, i32),
+        slot: TextureSlot,
+    ) -> Option<ThumbId> {
+        if !self.has_picture(w) {
+            return None;
+        }
+        Some(self.thumb_push(w, Show::Whole { px, slot }))
+    }
+
+    fn thumb_push(&mut self, w: WindowId, show: Show) -> ThumbId {
+        let p = &mut self.live_previews;
+        let id = ThumbId(p.next);
+        p.next += 1;
+        p.thumbs.push(Thumb {
+            id,
+            window: w,
+            show,
+            target: None,
+            mode: (0, 0, 0, 0),
+            marked: false,
+        });
+        self.draw_thumbs(Some(id));
+        id
+    }
+
+    pub fn thumb_drop(&mut self, id: ThumbId) {
+        let p = &mut self.live_previews;
+        let Some(i) = p.thumbs.iter().position(|t| t.id == id) else {
+            return;
+        };
+        let t = p.thumbs.remove(i);
+        if !p.thumbs.iter().any(|t| t.marked)
+            && let Some(token) = p.timer.take()
+        {
+            self.handle.remove(token);
+        }
+        if let Show::Well { buffer, .. } = t.show {
+            self.scene.destroy(buffer);
+        }
+    }
+
+    pub fn thumb_shows(&self, id: ThumbId, w: WindowId, well: Rect, scale: i32) -> bool {
+        self.live_previews.thumbs.iter().any(|t| {
+            t.id == id
+                && t.window == w
+                && matches!(t.show, Show::Well { well: at, scale: s, .. }
+                    if at == well && s == scale.max(1))
+        })
+    }
+
+    /// The shortest time between two draws of a live picture: one frame
+    /// of `[previews] fps`.
+    pub fn preview_period(&self) -> Duration {
+        let fps = self.config.previews.fps.clamp(1, PREVIEW_FPS_MAX);
+        Duration::from_millis(1000 / u64::from(fps))
+    }
+
+    /// `w` committed: its pictures draw again within `[previews] fps`.
+    pub fn thumbs_commit(&mut self, w: WindowId) {
+        self.thumbs_mark(w, false);
+    }
+
+    /// `w`'s frame changed (focus, title): its whole-window pictures draw
+    /// again within `[previews] fps`.
+    pub fn thumbs_frame(&mut self, w: WindowId) {
+        self.thumbs_mark(w, true);
+    }
+
+    /// Mark `w`'s thumbs, only the whole-window ones with `whole`, and
+    /// arm the timer that draws them.
+    fn thumbs_mark(&mut self, w: WindowId, whole: bool) {
+        let p = &mut self.live_previews;
+        let mut any = false;
+        for t in p.thumbs.iter_mut().filter(|t| t.window == w) {
+            if whole && !matches!(t.show, Show::Whole { .. }) {
+                continue;
+            }
+            t.marked = true;
+            any = true;
+        }
+        if !any || p.timer.is_some() {
+            return;
+        }
+        let wait = preview_wait(p.drawn, Instant::now(), self.preview_period());
+        let token = self
+            .handle
+            .insert_source(Timer::from_duration(wait), |_, _, state| {
+                state.live_previews.timer = None;
+                state.draw_thumbs(None);
+                TimeoutAction::Drop
+            });
+        match token {
+            Ok(t) => self.live_previews.timer = Some(t),
+            Err(e) => log::warn!("live preview timer: {}", e.error),
+        }
+    }
+
+    /// Draw thumb `only`, or every marked thumb for None: fit the client's
+    /// current size, render what changed and send the window's frame
+    /// callbacks.
+    fn draw_thumbs(&mut self, only: Option<ThumbId>) {
+        let jobs: Vec<(usize, Shot)> = self
+            .live_previews
+            .thumbs
+            .iter()
+            .enumerate()
+            .filter(|(_, t)| only.map_or(t.marked, |id| t.id == id))
+            .filter_map(|(i, t)| {
+                let x = self.win(t.window)?;
+                let (tree, rect) = match t.show {
+                    Show::Well { .. } => (x.content, Rect::new(0, 0, x.client_w, x.client_h)),
+                    Show::Whole { .. } => (x.tree, x.frame_rect()),
+                };
+                Some((
+                    i,
+                    Shot {
+                        tree,
+                        rect,
+                        surface: x.wl_surface().clone(),
+                    },
+                ))
+            })
+            .collect();
+        if only.is_none() {
+            self.live_previews.drawn = Some(Instant::now());
+        }
+        let now = self.now();
+        let output = self.scene.outputs().first().cloned();
+        let State {
+            backend,
+            scene,
+            live_previews,
+            glass,
+            config,
+            ..
+        } = self;
+        let Some(renderer) = backend.as_mut().map(|b| &mut b.renderer) else {
+            return;
+        };
+        // No glass in a whole-window picture: it would blur the
+        // transparency it is drawn over. The next screen frame begins its
+        // own pass.
+        let whole = jobs
+            .iter()
+            .any(|(i, _)| matches!(live_previews.thumbs[*i].show, Show::Whole { .. }));
+        if whole && let Some(o) = &output {
+            let settings = reprisekit::glass::Settings {
+                transparency: false,
+                ..config.glass
+            };
+            glass.begin(o, settings, reprisefx::Quality::default(), false);
+        }
+        let mut drew = false;
+        for (i, shot) in jobs {
+            let t = &mut live_previews.thumbs[i];
+            t.marked = false;
+            drew |= draw(renderer, scene, t, &shot);
+            // Wanted or not, the picture is the client's frame: a hidden
+            // window's surface gets no other.
+            if let Some(o) = &output {
+                smithay::desktop::utils::send_frames_surface_tree(
+                    &shot.surface,
+                    o,
+                    now,
+                    None,
+                    |_, _| Some(o.clone()),
+                );
+            }
+        }
+        if drew {
+            // A picture over glass changes nothing the glass blurs.
+            self.redraw_content();
+        }
+    }
+}
+
+/// How long after `now` a live picture last drawn at `drawn` (None for
+/// never) may draw again, `period` apart: zero when it may draw now.
+pub fn preview_wait(drawn: Option<Instant>, now: Instant, period: Duration) -> Duration {
+    drawn.map_or(Duration::ZERO, |d| {
+        period.saturating_sub(now.saturating_duration_since(d))
+    })
+}
+
+/// Render `shot` into `t`'s texture and show it in `t`'s buffer or slot.
+/// True when what shows changed.
+fn draw(
+    renderer: &mut smithay::backend::renderer::gles::GlesRenderer,
+    scene: &mut crate::compositor::DeskScene,
+    t: &mut Thumb,
+    shot: &Shot,
+) -> bool {
+    let (cw, ch) = (shot.rect.width, shot.rect.height);
+    if cw <= 0 || ch <= 0 {
+        return false;
+    }
+    let (size, pic) = match &t.show {
+        Show::Well { well, scale, .. } => {
+            let pic = fit(cw, ch, *well, 1);
+            ((pic.width * scale, pic.height * scale), Some(pic))
+        }
+        Show::Whole { px, .. } => (*px, None),
+    };
+    if size.0 <= 0 || size.1 <= 0 {
+        return false;
+    }
+    let mode = (size.0, size.1, cw, ch);
+    // The window drawn straight at the picture's size.
+    let scale = cover_scale(size, (cw, ch));
+    let fresh = mode != t.mode || t.target.is_none();
+    if fresh {
+        t.target = match Target::new(renderer, size.into(), scale) {
+            Ok(target) => Some(target),
+            Err(e) => {
+                log::warn!("live preview: could not size the picture to {size:?}: {e}");
+                None
+            }
+        };
+        t.mode = mode;
+        if let (Show::Well { buffer, .. }, Some(pic)) = (&t.show, pic) {
+            scene.set_position(*buffer, pic.x, pic.y);
+            scene.buffer_set_dest_size(*buffer, Some((pic.width, pic.height).into()));
+        }
+    }
+    let Some(target) = t.target.as_mut() else {
+        return false;
+    };
+    // The content subtree's rect is its own; the frame rect is the
+    // window's, in layout coordinates.
+    let origin = match t.show {
+        Show::Well { .. } => match scene.coords(shot.tree) {
+            Some((origin, _)) => origin,
+            None => return false,
+        },
+        Show::Whole { .. } => (shot.rect.x, shot.rect.y).into(),
+    };
+    let view = View::new(Rectangle::new(origin, (cw, ch).into()), scale);
+    let elements = scene.render_elements_of(renderer, shot.tree, &view);
+    let damage = match target.render(renderer, &elements) {
+        Ok(d) => d,
+        Err(e) => {
+            log::warn!("live preview: {e}");
+            return false;
+        }
+    };
+    match &t.show {
+        Show::Whole { slot, .. } => {
+            if fresh {
+                *slot.borrow_mut() = Some(target.texture().clone());
+            }
+            let changed = fresh || !damage.is_empty();
+            // The 3D switcher draws the picture smaller, from its mipmaps.
+            if changed && let Err(e) = reprisefx::mipmaps(renderer, target.texture()) {
+                log::warn!("live preview: no mipmaps: {e}");
+            }
+            changed
+        }
+        Show::Well { buffer, .. } if fresh => {
+            scene.buffer_set_texture(*buffer, renderer, target.texture().clone());
+            true
+        }
+        Show::Well { buffer, .. } if !damage.is_empty() => {
+            scene.buffer_set_texture_with_damage(
+                *buffer,
+                renderer,
+                target.texture().clone(),
+                &damage,
+            );
+            true
+        }
+        Show::Well { .. } => false,
+    }
+}
+
+/// The scale that draws a `client` (w, h) onto a `size` picture with no
+/// empty row or column: `fit` floors the picture's shorter side, so the
+/// larger of the two ratios fills both and crops under a pixel.
+fn cover_scale(size: (i32, i32), client: (i32, i32)) -> f64 {
+    let sx = f64::from(size.0) / f64::from(client.0);
+    let sy = f64::from(size.1) / f64::from(client.1);
+    sx.max(sy)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use reprisekit::raster::Rect;
+
+    #[test]
+    fn the_picture_fills_both_sides_of_its_box() {
+        // A 696x496 terminal in a well whose inside is 106 rows high: the
+        // box is 148x106, and 496 rows at 148/696 would cover only 105.47.
+        let well = Rect::new(0, 0, 200, 110);
+        let pic = fit(696, 496, well, 1);
+        assert_eq!((pic.width, pic.height), (148, 106));
+        let s = cover_scale((pic.width, pic.height), (696, 496));
+        assert!(696.0 * s >= 148.0, "width covered: {}", 696.0 * s);
+        assert!(496.0 * s >= 106.0, "height covered: {}", 496.0 * s);
+    }
+
+    #[test]
+    fn a_picture_draws_again_a_period_after_its_last_draw() {
+        let t0 = Instant::now();
+        let period = Duration::from_millis(100);
+        let ms = Duration::from_millis;
+        assert_eq!(
+            preview_wait(None, t0, period),
+            Duration::ZERO,
+            "never drawn"
+        );
+        assert_eq!(preview_wait(Some(t0), t0 + ms(30), period), ms(70));
+        assert_eq!(preview_wait(Some(t0), t0 + ms(100), period), Duration::ZERO);
+        assert_eq!(preview_wait(Some(t0), t0 + ms(250), period), Duration::ZERO);
+    }
+}

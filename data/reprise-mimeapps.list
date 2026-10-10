@@ -1,0 +1,8 @@
+# The desktop's own defaults (mime-apps spec: $XDG_CURRENT_DESKTOP-mimeapps.list).
+# xdg-open, gio and the desktop's Open verb read this after the user's
+# ~/.config/mimeapps.list and before mimeinfo.cache, so a double-click on
+# a text file lands in Notepad unless the user picked something else in
+# Open With.
+[Default Applications]
+text/plain=reprise-notepad.desktop
+inode/directory=reprise-explorer.desktop

@@ -1,0 +1,196 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<protocol name="reprise_input_v1">
+  <copyright>
+    reprise private protocol: input injection and capture for reprise-portal.
+  </copyright>
+
+  <interface name="reprise_input_v1" version="4">
+    <description summary="EIS sockets and pointer barriers for the portal">
+      One global. connect_eis hands the compositor one end of a socketpair
+      to run libei's EIS side on; create_capture makes an object that owns
+      pointer barriers and reports when the pointer crosses one.
+      create_shortcuts makes an object that receives one program's global
+      shortcuts. create_keys makes an object that presses keys for one
+      RemoteDesktop session.
+    </description>
+
+    <enum name="kind">
+      <entry name="sender" value="1" summary="the client emulates input (RemoteDesktop)"/>
+      <entry name="receiver" value="2" summary="the client receives captured input (InputCapture)"/>
+    </enum>
+
+    <enum name="error">
+      <entry name="invalid_kind" value="0" summary="kind is not sender or receiver"/>
+      <entry name="capture_required" value="1" summary="a receiver needs a capture object"/>
+      <entry name="capture_forbidden" value="2" summary="a sender must not pass a capture object"/>
+      <entry name="too_many" value="3" summary="more captures, barriers or shortcut objects than the compositor keeps"/>
+    </enum>
+
+    <enum name="device">
+      <description summary="what an EIS client may be given">
+        Bits of connect_eis's devices mask: the RemoteDesktop portal's
+        device types, so a client granted the pointer alone is never
+        offered a keyboard.
+      </description>
+      <entry name="keyboard" value="1"/>
+      <entry name="pointer" value="2" summary="relative and absolute pointer, buttons, scroll"/>
+    </enum>
+
+    <request name="connect_eis">
+      <description summary="run an EIS server on this socket">
+        The fd is one end of a SOCK_STREAM socketpair; the other end goes
+        to the libei client. A receiver must pass the capture it belongs
+        to; a sender passes null. Only the devices in the mask are
+        advertised to the client and bound for it.
+      </description>
+      <arg name="id" type="new_id" interface="reprise_eis_client_v1"/>
+      <arg name="fd" type="fd"/>
+      <arg name="kind" type="uint" enum="kind"/>
+      <arg name="capture" type="object" interface="reprise_input_capture_v1" allow-null="true"/>
+      <arg name="devices" type="uint" summary="a mask of device bits"/>
+    </request>
+
+    <request name="create_capture">
+      <arg name="id" type="new_id" interface="reprise_input_capture_v1"/>
+    </request>
+
+    <request name="destroy" type="destructor"/>
+
+    <request name="create_shortcuts" since="3">
+      <description summary="receive one program's global shortcuts">
+        The compositor takes the chords of the [[global_shortcuts]]
+        entries whose app is app_id for as long as at least one object
+        for that app exists, and reports their presses and releases here.
+      </description>
+      <arg name="id" type="new_id" interface="reprise_shortcuts_v1"/>
+      <arg name="app_id" type="string"/>
+    </request>
+
+    <request name="create_keys" since="4">
+      <description summary="press keys for one RemoteDesktop session">
+        The portal makes one for a session granted the keyboard, and sends
+        the session's NotifyKeyboardKeycode and NotifyKeyboardKeysym calls
+        through it.
+      </description>
+      <arg name="id" type="new_id" interface="reprise_keys_v1"/>
+    </request>
+  </interface>
+
+  <interface name="reprise_eis_client_v1" version="1">
+    <description summary="one EIS client">
+      Destroying it disconnects the libei client and releases every key
+      and button it holds.
+    </description>
+    <request name="destroy" type="destructor"/>
+  </interface>
+
+  <interface name="reprise_keys_v1" version="1">
+    <description summary="one session's keyboard, without libei">
+      Keys go to this desktop the way a sender's libei keys do. Destroying
+      it releases every key it holds.
+    </description>
+
+    <enum name="key_state">
+      <entry name="released" value="0"/>
+      <entry name="pressed" value="1"/>
+    </enum>
+
+    <request name="key">
+      <arg name="key" type="uint" summary="an evdev key code"/>
+      <arg name="state" type="uint" enum="key_state"/>
+    </request>
+
+    <request name="keysym">
+      <description summary="press or release the key that types a keysym">
+        The key is the lowest keycode giving the keysym at the first level
+        of the current layout, else at the lowest level any key gives it
+        at. No modifier is pressed for a higher level. A keysym no key gives is dropped. A release
+        lets go of the key its press went down on.
+      </description>
+      <arg name="keysym" type="uint"/>
+      <arg name="state" type="uint" enum="key_state"/>
+    </request>
+
+    <request name="destroy" type="destructor"/>
+  </interface>
+
+  <interface name="reprise_input_capture_v1" version="1">
+    <description summary="pointer barriers and the captured state">
+      Barriers are lines in layout coordinates, axis aligned, on the
+      outer edge of the union of the outputs (the portal checks that; the
+      compositor drops anything that is not axis aligned). While enabled,
+      a physical pointer motion that would cross
+      a barrier stops there, activated is sent, and physical input goes to
+      the receiver EIS client bound to this capture until release.
+    </description>
+
+    <request name="clear_barriers"/>
+
+    <request name="add_barrier">
+      <arg name="id" type="uint"/>
+      <arg name="x1" type="int"/>
+      <arg name="y1" type="int"/>
+      <arg name="x2" type="int"/>
+      <arg name="y2" type="int"/>
+    </request>
+
+    <request name="enable"/>
+    <request name="disable"/>
+
+    <request name="release">
+      <description summary="end the active capture">
+        With has_position nonzero the cursor is warped to (x, y) first.
+        A stale activation_id is ignored; activation_id 0 means the
+        current activation, whatever it is.
+      </description>
+      <arg name="activation_id" type="uint"/>
+      <arg name="has_position" type="uint"/>
+      <arg name="x" type="fixed"/>
+      <arg name="y" type="fixed"/>
+    </request>
+
+    <request name="destroy" type="destructor"/>
+
+    <event name="activated">
+      <arg name="activation_id" type="uint"/>
+      <arg name="barrier_id" type="uint"/>
+      <arg name="x" type="fixed" summary="where the pointer would have gone, unclamped"/>
+      <arg name="y" type="fixed"/>
+    </event>
+
+    <event name="deactivated">
+      <arg name="activation_id" type="uint"/>
+    </event>
+
+    <event name="zones_changed">
+      <description summary="the output layout changed">
+        The barrier set was cleared and the capture disabled; the portal
+        re-reads the zones and sets barriers again.
+      </description>
+    </event>
+  </interface>
+
+  <interface name="reprise_shortcuts_v1" version="1">
+    <description summary="one program's global shortcuts">
+      A press of a bound chord goes to no window: activated is sent, and
+      deactivated when that key comes up, whatever the modifiers are by
+      then. The release reaches no window either.
+    </description>
+
+    <request name="destroy" type="destructor"/>
+
+    <event name="activated">
+      <arg name="id" type="string" summary="the entry's id"/>
+      <arg name="time_msec" type="uint"/>
+    </event>
+
+    <event name="deactivated">
+      <arg name="id" type="string"/>
+      <arg name="time_msec" type="uint"/>
+    </event>
+
+    <event name="changed">
+      <description summary="this app's entries changed in the config"/>
+    </event>
+  </interface>
+</protocol>

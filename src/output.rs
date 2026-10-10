@@ -1,0 +1,709 @@
+//! Outputs: which mode, scale and transform a connector runs, whether it
+//! is in the layout, where it sits, and what the shell redoes when that
+//! changes (`State::update_layout`). `backend` drives the connectors; this
+//! module decides what they run.
+//!
+//! Outputs line up left to right in the order they came, at y 0, unless
+//! `[[outputs]] position` or output management placed them: placed outputs
+//! keep their position and the others follow right of the rightmost placed
+//! one (`place`).
+
+use std::cell::Cell;
+
+use reprisescene::BufferId;
+use smithay::{
+    backend::input::InputTime,
+    output::{Output, Scale},
+    utils::{Logical, Point, Rectangle, Transform},
+};
+
+use crate::{
+    compositor::{DeskScene, State},
+    config::OutputMode,
+    raster::{Canvas, Rect},
+    window::WindowId,
+};
+
+/// The integer scale chrome is drawn at on an output of `scale`: rounded
+/// up (a hair above a whole number still draws at it) and clamped to
+/// 1..=4, so the scene only ever scales a canvas down.
+pub(crate) fn draw_scale(scale: f32) -> i32 {
+    if scale.is_finite() {
+        ((scale - 1e-3).ceil() as i32).clamp(1, 4)
+    } else {
+        1
+    }
+}
+
+pub fn upload_scaled(scene: &mut DeskScene, sb: BufferId, canvas: &Canvas, scale: i32) {
+    let scale = scale.max(1);
+    let (w, h) = (canvas.width as i32, canvas.height as i32);
+    scene.buffer_set_canvas(sb, &canvas.pixels, w, h);
+    scene.buffer_set_dest_size(sb, Some((w / scale, h / scale).into()));
+}
+
+/// Where output management placed an output, in its user data; None when automatic.
+struct Placement(Cell<Option<Point<i32, Logical>>>);
+
+fn placement(output: &Output) -> &Placement {
+    output
+        .user_data()
+        .insert_if_missing(|| Placement(Cell::new(None)));
+    output
+        .user_data()
+        .get::<Placement>()
+        .expect("inserted above")
+}
+
+/// Put `output` at layout `pos` for good, or back to automatic placement with None.
+pub fn set_placement(output: &Output, pos: Option<Point<i32, Logical>>) {
+    placement(output).0.set(pos);
+}
+
+/// One output as `place` sees it: its fixed position (None for automatic) and logical size.
+pub type Slot = (Option<(i32, i32)>, (i32, i32));
+
+/// The layout position of each output, in the order they came: fixed ones
+/// where they asked, the automatic ones left to right from the right edge
+/// of the rightmost fixed one at its y ((0, 0) when none is fixed).
+pub fn place(outputs: &[Slot]) -> Vec<(i32, i32)> {
+    let mut right: Option<(i32, i32)> = None;
+    for &(fixed, (w, _)) in outputs {
+        if let Some((x, y)) = fixed
+            && right.is_none_or(|(r, _)| x + w > r)
+        {
+            right = Some((x + w, y));
+        }
+    }
+    let (mut x, y) = right.unwrap_or((0, 0));
+    outputs
+        .iter()
+        .map(|&(fixed, (w, _))| {
+            fixed.unwrap_or_else(|| {
+                let at = (x, y);
+                x += w;
+                at
+            })
+        })
+        .collect()
+}
+
+/// The point of `rects` nearest to `pos`: `pos` itself inside one, else
+/// the closest point on an edge (right and bottom excluded). None without a rect.
+pub fn closest_point(rects: &[Rect], pos: (f64, f64)) -> Option<(f64, f64)> {
+    rects
+        .iter()
+        .filter(|r| r.width > 0 && r.height > 0)
+        .map(|r| {
+            let max_x = f64::from(r.x + r.width - 1);
+            let max_y = f64::from(r.y + r.height - 1);
+            let p = (
+                pos.0.clamp(f64::from(r.x), max_x),
+                pos.1.clamp(f64::from(r.y), max_y),
+            );
+            let d = (p.0 - pos.0).powi(2) + (p.1 - pos.1).powi(2);
+            (d, p)
+        })
+        .min_by(|a, b| a.0.total_cmp(&b.0))
+        .map(|(_, p)| p)
+}
+
+pub fn transform(t: crate::config::Transform) -> Transform {
+    use crate::config::Transform as T;
+    match t {
+        T::Normal => Transform::Normal,
+        T::Rotate90 => Transform::_90,
+        T::Rotate180 => Transform::_180,
+        T::Rotate270 => Transform::_270,
+        T::Flipped => Transform::Flipped,
+        T::Flipped90 => Transform::Flipped90,
+        T::Flipped180 => Transform::Flipped180,
+        T::Flipped270 => Transform::Flipped270,
+    }
+}
+
+/// What one head of an output-management configuration asks for (`outputmgmt`).
+#[derive(Clone, Debug, PartialEq)]
+pub struct HeadRequest {
+    pub enabled: bool,
+    /// The connector's mode to run; None keeps the current one (or picks
+    /// the configured one for an output coming back).
+    pub mode: Option<usize>,
+    /// None places it automatically.
+    pub position: Option<(i32, i32)>,
+    pub transform: Transform,
+    pub scale: f64,
+    pub adaptive_sync: bool,
+}
+
+impl State {
+    pub fn output_added(&mut self, _output: &Output) {
+        self.cancel_switch_anim();
+        self.close_overview();
+        self.finish_window_anims();
+        self.update_layout();
+    }
+
+    pub fn output_removed(&mut self, output: &Output) {
+        self.cancel_switch_anim();
+        self.close_overview();
+        self.finish_window_anims();
+        self.magnifier.retain(self.scene.outputs());
+        let bar = self
+            .bars
+            .iter()
+            .find(|b| &b.output == output)
+            .map(|b| b.tree);
+        let on_it = match self.interaction {
+            crate::input::Interaction::TaskPress { bar: b, .. }
+            | crate::input::Interaction::QuickPress { bar: b, .. }
+            | crate::input::Interaction::ArrowPress { bar: b }
+            | crate::input::Interaction::BarMove { bar: b, .. }
+            | crate::input::Interaction::BarWidth { bar: b, .. } => Some(b) == bar,
+            _ => false,
+        };
+        if on_it {
+            if matches!(
+                self.interaction,
+                crate::input::Interaction::BarMove { .. }
+                    | crate::input::Interaction::BarWidth { .. }
+            ) {
+                self.cancel_bar_drag();
+            }
+            self.interaction = crate::input::Interaction::Idle;
+            self.set_cursor("default");
+        }
+        self.close_menus_off_scene();
+        self.close_start_panel_off_scene();
+        self.update_layout();
+    }
+
+    /// Put `output` in the layout with its `[[outputs]]` settings, or take
+    /// it out. Each way ends in `output_added` or `output_removed`.
+    pub fn set_in_layout(&mut self, output: &Output, on: bool) {
+        let name = output.name();
+        if !on {
+            log::info!("output {name}: leaving the layout");
+            self.leave_layout(output);
+            return;
+        }
+        if self.scene.outputs().contains(output) {
+            return;
+        }
+        let at = self.config.position_for_output_name(&name);
+        set_placement(output, at.map(Point::from));
+        if !self.enable_configured(output) {
+            log::error!("output {name}: no output state accepted, leaving it out");
+            return;
+        }
+        log::info!("output {name}: in the layout");
+        self.output_added(output);
+    }
+
+    pub fn leave_layout(&mut self, output: &Output) {
+        if crate::backend::disable(self, output) {
+            self.output_removed(output);
+        }
+    }
+
+    /// Drive the parked `output` with the config's mode, scale, transform
+    /// and adaptive sync; falls back to the preferred mode at scale 1
+    /// untransformed when refused. Returns whether either went through.
+    fn enable_configured(&mut self, output: &Output) -> bool {
+        let name = output.name();
+        let Some(head) = crate::backend::heads(self)
+            .into_iter()
+            .find(|h| &h.output == output)
+        else {
+            return false;
+        };
+        let want = self.config.mode_for_output_name(&name);
+        let Some(index) = pick_mode(&head.modes, want.as_ref()) else {
+            return false;
+        };
+        if let Some(want) = want
+            && !want_matches(&head.modes[index], &want)
+        {
+            log::warn!(
+                "{name}: no {}x{} mode, using the preferred one",
+                want.width,
+                want.height
+            );
+        }
+        let scale = quarter_scale(self.config.scale_for_output_name(&name));
+        let t = transform(self.config.transform_for_output_name(&name));
+        output.change_current_state(
+            None,
+            Some(t),
+            Some(Scale::Fractional(f64::from(scale))),
+            None,
+        );
+        if !crate::backend::enable(self, output, index) {
+            log::warn!(
+                "output {name}: the configured output state was refused, trying the preferred mode"
+            );
+            let Some(preferred) = pick_mode(&head.modes, None) else {
+                return false;
+            };
+            output.change_current_state(
+                None,
+                Some(Transform::Normal),
+                Some(Scale::Fractional(1.0)),
+                None,
+            );
+            if !crate::backend::enable(self, output, preferred) {
+                return false;
+            }
+        }
+        if self.config.adaptive_sync_for_output_name(&name) {
+            crate::backend::set_vrr(self, output, true);
+        }
+        true
+    }
+
+    /// Run one head of an output-management configuration. Returns whether
+    /// it took; the caller lays out once at the end.
+    pub fn apply_head(&mut self, output: &Output, req: &HeadRequest) -> bool {
+        let name = output.name();
+        let driven = self.scene.outputs().contains(output);
+        if !req.enabled {
+            if driven {
+                log::info!("output {name}: leaving the layout");
+                self.leave_layout(output);
+            }
+            return true;
+        }
+        let scale = Scale::Fractional(f64::from(quarter_scale(req.scale as f32)));
+        if output.current_transform() != req.transform
+            || output.current_scale().fractional_scale() != scale.fractional_scale()
+        {
+            output.change_current_state(None, Some(req.transform), Some(scale), None);
+        }
+        set_placement(output, req.position.map(Point::from));
+        if driven {
+            if let Some(i) = req.mode
+                && !crate::backend::set_mode(self, output, i)
+            {
+                return false;
+            }
+            return crate::backend::set_vrr(self, output, req.adaptive_sync) || !req.adaptive_sync;
+        }
+        let ok = match req.mode {
+            Some(i) => crate::backend::enable(self, output, i),
+            None => {
+                let heads = crate::backend::heads(self);
+                let want = self.config.mode_for_output_name(&name);
+                heads
+                    .iter()
+                    .find(|h| &h.output == output)
+                    .and_then(|h| pick_mode(&h.modes, want.as_ref()))
+                    .is_some_and(|i| crate::backend::enable(self, output, i))
+            }
+        };
+        if !ok {
+            return false;
+        }
+        if req.adaptive_sync {
+            crate::backend::set_vrr(self, output, true);
+        }
+        log::info!("output {name}: back in the layout");
+        self.output_added(output);
+        true
+    }
+
+    /// Commit, on each driven output, the config keys that differ from
+    /// `old`'s and from what it runs; runs when the config file changes. An
+    /// unchanged key is left alone, so what output management set stays. A
+    /// missing mode keeps the current one, and turning adaptive sync off is
+    /// always accepted. Returns whether any output's geometry changed.
+    pub fn apply_output_config(&mut self, old: &crate::config::Config) -> bool {
+        let mut geometry_changed = false;
+        for head in crate::backend::heads(self) {
+            if !head.enabled {
+                continue;
+            }
+            let output = head.output;
+            let name = output.name();
+            let change = crate::configwatch::output_change(old, &self.config, &name);
+            if !change.any() {
+                continue;
+            }
+            if change.mode
+                && let Some(want) = self.config.mode_for_output_name(&name)
+                && let Some(i) = pick_mode(&head.modes, Some(&want))
+                && head.current != Some(i)
+            {
+                if crate::backend::set_mode(self, &output, i) {
+                    geometry_changed = true;
+                } else {
+                    log::warn!("output {name}: the configured mode was refused");
+                }
+            }
+            if change.transform {
+                let t = transform(self.config.transform_for_output_name(&name));
+                if t != output.current_transform() {
+                    output.change_current_state(None, Some(t), None, None);
+                    geometry_changed = true;
+                }
+            }
+            if change.scale {
+                let want = f64::from(quarter_scale(self.config.scale_for_output_name(&name)));
+                if want != output.current_scale().fractional_scale() {
+                    output.change_current_state(None, None, Some(Scale::Fractional(want)), None);
+                    geometry_changed = true;
+                }
+            }
+            if change.adaptive_sync {
+                let want = self.config.adaptive_sync_for_output_name(&name);
+                if want != head.vrr_on {
+                    crate::backend::set_vrr(self, &output, want);
+                }
+            }
+            if change.position {
+                let at = self.config.position_for_output_name(&name);
+                set_placement(&output, at.map(Point::from));
+                geometry_changed = true;
+            }
+        }
+        geometry_changed
+    }
+
+    /// The layout changed: place the outputs, then refit the desktop to
+    /// them (windows, taskbars, menus, wallpaper, icons, output management
+    /// clients, pointer).
+    pub fn update_layout(&mut self) {
+        self.place_outputs();
+        self.settle_moves();
+        crate::layer::outputs_changed(self);
+        self.refit_maximized();
+        self.rescue_offscreen();
+        self.snap_outputs_changed();
+        self.close_dialogs_off_scene();
+        self.keep_dialogs_inside();
+        crate::tray::forget_output(self);
+        crate::trayflyout::output_gone(self);
+        crate::calendarview::output_gone(self);
+        crate::taskpreview::output_gone(self);
+        crate::snappickerview::output_gone(self);
+        crate::tooltip::output_gone(self);
+        self.relayout_desktop();
+        // An output's scale can change under a window (wlr-randr --scale).
+        // X11 menus and tooltips keep the client's own placement.
+        let mapped: Vec<WindowId> = self
+            .windows
+            .iter()
+            .filter(|w| w.mapped && !w.override_redirect)
+            .map(|w| w.id)
+            .collect();
+        for w in mapped {
+            self.refit_scale(w);
+        }
+        self.sync_bars();
+        for depth in 0..self.menus.len() {
+            self.redraw_menu(depth);
+        }
+        self.refit_wallpaper();
+        crate::outputmgmt::publish(self);
+        let pos = self.pointer_location();
+        let rects: Vec<Rect> = self
+            .scene
+            .outputs()
+            .iter()
+            .map(|o| self.layout_box(Some(o)))
+            .collect();
+        if let Some(p) = closest_point(&rects, (pos.x, pos.y))
+            && p != (pos.x, pos.y)
+        {
+            self.repoint(p.into(), InputTime::now());
+        }
+        self.redraw_switcher();
+        // The 3D switcher was laid out for an output that may have moved or gone.
+        if self.switcher.stack.is_some() || self.switcher.leaving.is_some() {
+            self.switcher_cancel();
+        }
+        self.input_layout_changed();
+        self.redraw_all();
+        // Last: the lid may take a panel in or out, which runs this again.
+        crate::idle::outputs_changed(self);
+    }
+
+    fn place_outputs(&mut self) {
+        let outputs = self.scene.outputs().to_vec();
+        let asked: Vec<Slot> = outputs
+            .iter()
+            .map(|o| {
+                let size = reprisescene::output_rect(o).map_or((0, 0), |r| (r.size.w, r.size.h));
+                (placement(o).0.get().map(|p| (p.x, p.y)), size)
+            })
+            .collect();
+        for (o, (x, y)) in outputs.iter().zip(place(&asked)) {
+            if o.current_location() != Point::from((x, y)) {
+                o.change_current_state(None, None, None, Some((x, y).into()));
+            }
+        }
+    }
+
+    /// Centre every ordinary window whose frame centre is on no output on
+    /// the output under the pointer. Maximized and fullscreen windows are
+    /// `refit_maximized`'s.
+    pub fn rescue_offscreen(&mut self) {
+        let pos = self.pointer_location();
+        let Some(target) = self.output_at(pos.x, pos.y) else {
+            return;
+        };
+        let rects: Vec<Rect> = self
+            .scene
+            .outputs()
+            .iter()
+            .map(|o| self.layout_box(Some(o)))
+            .collect();
+        let lost: Vec<WindowId> = self
+            .windows
+            .iter()
+            .filter(|w| w.mapped && !w.maximized && !w.fullscreen && !w.override_redirect)
+            .filter(|w| {
+                let r = w.frame_rect();
+                let (cx, cy) = (r.x + r.width / 2, r.y + r.height / 2);
+                !rects.iter().any(|o| o.contains(cx, cy))
+            })
+            .map(|w| w.id)
+            .collect();
+        for w in lost {
+            self.centre_window(w, Some(&target));
+        }
+    }
+
+    /// Box of one output in layout coordinates, or of the whole layout for None.
+    pub fn layout_box(&self, output: Option<&Output>) -> Rect {
+        let rect = match output {
+            Some(o) => reprisescene::output_rect(o),
+            None => self
+                .scene
+                .outputs()
+                .iter()
+                .filter_map(reprisescene::output_rect)
+                .reduce(|a, b| a.merge(b)),
+        };
+        rect.map_or_else(Rect::default, |b| {
+            Rect::new(b.loc.x, b.loc.y, b.size.w, b.size.h)
+        })
+    }
+
+    /// The pointer's position held on the outputs: itself on one, else the
+    /// nearest point of any (a 1x1 box at 0,0 with none).
+    pub fn clamp_to_layout(&self, pos: Point<f64, Logical>) -> Point<f64, Logical> {
+        let rects: Vec<Rect> = self
+            .scene
+            .outputs()
+            .iter()
+            .map(|o| self.layout_box(Some(o)))
+            .collect();
+        closest_point(&rects, (pos.x, pos.y)).map_or_else(
+            || crate::input::clamp_to(pos, Rectangle::from_size((1, 1).into())),
+            Point::from,
+        )
+    }
+
+    /// Output under a layout point, falling back to the first output.
+    pub fn output_at(&self, lx: f64, ly: f64) -> Option<Output> {
+        let outputs = self.scene.outputs();
+        outputs
+            .iter()
+            .find(|o| reprisescene::output_rect(o).is_some_and(|r| r.to_f64().contains((lx, ly))))
+            .or_else(|| outputs.iter().find(|o| self.layout_box(Some(o)).width > 0))
+            .cloned()
+    }
+
+    /// What is left of an output for ordinary windows: what `layer::arrange`
+    /// last recorded, else its box without the taskbar's strip. An empty
+    /// result is a real answer, so a full-height exclusive zone is honoured.
+    pub fn usable_area(&self, output: Option<&Output>) -> Rect {
+        let b = self.layout_box(output);
+        if b.width <= 0 {
+            return b;
+        }
+        output
+            .and_then(|o| self.layers_shell.usable(o, b))
+            .unwrap_or_else(|| {
+                let (theme, tb) = (&self.config.theme, &self.config.taskbar);
+                let t = crate::barplace::thickness(
+                    tb.position,
+                    &theme.metrics,
+                    &theme.taskbar_shape(),
+                    tb.side_width,
+                    b,
+                );
+                let p =
+                    crate::barplace::place_hiding(b, tb.position, t, tb.auto_hide.then_some(0.0));
+                crate::barplace::usable(b, &p)
+            })
+    }
+
+    pub fn draw_scale_at(&self, output: Option<&Output>) -> i32 {
+        output.map_or(1, |o| {
+            draw_scale(o.current_scale().fractional_scale() as f32)
+        })
+    }
+}
+
+/// An output scale as the compositor runs it: the nearest quarter step,
+/// clamped to 1..=4, 1 for anything that is not a number.
+pub(crate) fn quarter_scale(scale: f32) -> f32 {
+    if scale.is_finite() {
+        ((scale * 4.0).round() / 4.0).clamp(1.0, 4.0)
+    } else {
+        1.0
+    }
+}
+
+/// A connector mode as `pick_mode` weighs it: size, refresh in mHz, preferred.
+pub type ModeInfo = crate::config::OfferedMode;
+
+/// Whether `mode` is the size `want` asks for.
+fn want_matches(mode: &ModeInfo, want: &OutputMode) -> bool {
+    mode.width == want.width && mode.height == want.height
+}
+
+/// The index of the mode to run among `modes`: the `[[outputs]]` mode when
+/// the connector has it (`OutputMode::pick`), else the preferred mode,
+/// else the first. None for an empty list.
+pub fn pick_mode(modes: &[ModeInfo], want: Option<&OutputMode>) -> Option<usize> {
+    if let Some(i) = want.and_then(|w| w.pick(modes)) {
+        return Some(i);
+    }
+    modes
+        .iter()
+        .position(|m| m.preferred)
+        .or((!modes.is_empty()).then_some(0))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn chrome_draws_at_the_scale_rounded_up() {
+        assert_eq!(draw_scale(1.0), 1);
+        assert_eq!(draw_scale(1.25), 2);
+        assert_eq!(draw_scale(1.5), 2);
+        assert_eq!(draw_scale(2.0), 2);
+        assert_eq!(
+            draw_scale(2.000_000_2),
+            2,
+            "float noise over a whole number"
+        );
+        assert_eq!(draw_scale(2.25), 3);
+        assert_eq!(draw_scale(0.5), 1);
+        assert_eq!(draw_scale(9.0), 4);
+        assert_eq!(draw_scale(f32::NAN), 1);
+    }
+
+    fn mode(width: i32, height: i32, hz: i32, preferred: bool) -> ModeInfo {
+        ModeInfo {
+            width,
+            height,
+            refresh_mhz: hz * 1000,
+            preferred,
+        }
+    }
+
+    fn want(width: i32, height: i32, hz: Option<i32>) -> OutputMode {
+        OutputMode {
+            width,
+            height,
+            refresh_mhz: hz.map(|hz| hz * 1000),
+        }
+    }
+
+    #[test]
+    fn the_configured_mode_wins_over_the_preferred_one() {
+        let modes = [
+            mode(1024, 768, 60, true),
+            mode(1920, 1080, 30, false),
+            mode(1920, 1080, 60, false),
+        ];
+        assert_eq!(
+            pick_mode(&modes, Some(&want(1920, 1080, Some(60)))),
+            Some(2)
+        );
+        assert_eq!(
+            pick_mode(&modes, Some(&want(1920, 1080, Some(29)))),
+            Some(1)
+        );
+        assert_eq!(
+            pick_mode(&modes, Some(&want(1920, 1080, None))),
+            Some(2),
+            "no refresh asked takes the highest"
+        );
+    }
+
+    #[test]
+    fn a_missing_mode_falls_back_to_the_preferred_then_the_first() {
+        let modes = [mode(800, 600, 60, false), mode(1024, 768, 60, true)];
+        assert_eq!(pick_mode(&modes, Some(&want(1920, 1080, None))), Some(1));
+        assert_eq!(pick_mode(&modes, None), Some(1));
+        assert_eq!(pick_mode(&modes[..1], None), Some(0));
+        assert_eq!(pick_mode(&[], None), None);
+    }
+
+    #[test]
+    fn scale_rounds_to_a_quarter_within_one_to_four() {
+        assert_eq!(quarter_scale(1.0), 1.0);
+        assert_eq!(quarter_scale(1.3), 1.25);
+        assert_eq!(quarter_scale(1.5), 1.5);
+        assert_eq!(quarter_scale(1.875), 2.0);
+        assert_eq!(quarter_scale(0.5), 1.0);
+        assert_eq!(quarter_scale(9.0), 4.0);
+        assert_eq!(quarter_scale(f32::NAN), 1.0);
+    }
+
+    #[test]
+    fn outputs_line_up_left_to_right_in_the_order_they_came() {
+        assert_eq!(
+            place(&[
+                (None, (1920, 1080)),
+                (None, (1280, 1024)),
+                (None, (800, 600))
+            ]),
+            vec![(0, 0), (1920, 0), (3200, 0)]
+        );
+        assert_eq!(place(&[]), Vec::<(i32, i32)>::new());
+    }
+
+    #[test]
+    fn placed_outputs_stay_and_the_rest_follow_the_rightmost() {
+        assert_eq!(
+            place(&[(None, (1920, 1080)), (Some((-1280, -200)), (1280, 1024))]),
+            vec![(0, -200), (-1280, -200)],
+            "an automatic output follows the placed one's right edge, at its y"
+        );
+        assert_eq!(
+            place(&[
+                (Some((0, 0)), (1920, 1080)),
+                (Some((1920, 100)), (1280, 1024)),
+                (None, (800, 600)),
+            ]),
+            vec![(0, 0), (1920, 100), (3200, 100)],
+            "after the rightmost placed one"
+        );
+    }
+
+    #[test]
+    fn the_pointer_stays_on_the_union_of_the_outputs() {
+        // A tall output left, a short one right, bottoms not aligned: the
+        // corner under the short one belongs to neither.
+        let rects = [Rect::new(0, 0, 1000, 1000), Rect::new(1000, 0, 800, 600)];
+        assert_eq!(
+            closest_point(&rects, (1500.0, 300.0)),
+            Some((1500.0, 300.0))
+        );
+        assert_eq!(
+            closest_point(&rects, (1500.0, 900.0)),
+            Some((1500.0, 599.0)),
+            "below the short output: up onto its bottom row"
+        );
+        assert_eq!(closest_point(&rects, (-5.0, 2000.0)), Some((0.0, 999.0)));
+        assert_eq!(closest_point(&rects, (5000.0, 10.0)), Some((1799.0, 10.0)));
+        assert_eq!(closest_point(&[], (1.0, 1.0)), None);
+    }
+}

@@ -1,0 +1,566 @@
+//! The glass render element and the handle a host keeps per piece of glass.
+
+use std::cell::{Cell, RefCell};
+use std::hash::{Hash, Hasher};
+use std::rc::Rc;
+
+use reprisekit::glass::tint::Surface;
+use reprisekit::glass::{Settings, streak};
+use smithay::backend::allocator::Fourcc;
+use smithay::backend::renderer::element::{Element, Id, Kind, RenderElement, UnderlyingStorage};
+use smithay::backend::renderer::gles::{
+    GlesError, GlesFrame, GlesRenderer, GlesTexProgram, GlesTexture, Uniform,
+};
+use smithay::backend::renderer::utils::{
+    CommitCounter, DamageBag, DamageSet, DamageSnapshot, OpaqueRegions,
+};
+use smithay::backend::renderer::{Frame, FrameContext, ImportMem, Texture};
+use smithay::utils::user_data::UserDataMap;
+use smithay::utils::{Buffer, Physical, Rectangle, Scale, Size, Transform};
+
+use crate::blur::{self, Capture, Levels, Plan, Quality, Streaks};
+use crate::lens::Lens;
+use crate::picture::Source;
+use crate::shaders::Programs;
+use crate::space::Space;
+use crate::tint::Tint;
+
+/// The programs and streak textures shared by every glass element of one renderer. Make it once per `GlesRenderer`; cloning shares it.
+#[derive(Clone, Debug)]
+pub struct GlassFx(Rc<Shared>);
+
+#[derive(Debug)]
+struct Shared {
+    programs: Programs,
+    /// The streak textures last made, newest first, one per output size, scale and gain.
+    streaks: RefCell<Vec<(StreakKey, GlesTexture)>>,
+}
+
+type StreakKey = (Size<i32, Physical>, u64);
+
+const STREAK_TEXTURES: usize = 4;
+
+impl GlassFx {
+    /// Compile the shaders on `renderer`; elements made from this draw only with that renderer.
+    pub fn new(renderer: &mut GlesRenderer) -> Result<GlassFx, GlesError> {
+        Ok(GlassFx(Rc::new(Shared {
+            programs: Programs::compile(renderer)?,
+            streaks: RefCell::new(Vec::new()),
+        })))
+    }
+
+    pub(crate) fn blur_program(&self) -> &GlesTexProgram {
+        &self.0.programs.blur
+    }
+
+    /// The streaks over an output of `output` physical pixels at `scale`, at half resolution
+    /// (`streak::pixels`); made on first use and kept. None when `s` shows none.
+    pub(crate) fn streaks(
+        &self,
+        renderer: &mut GlesRenderer,
+        s: &Settings,
+        output: Size<i32, Physical>,
+        scale: f64,
+    ) -> Result<Option<GlesTexture>, GlesError> {
+        if !streak::shown(s) {
+            return Ok(None);
+        }
+        let key = (output, scale.to_bits());
+        let mut cache = self.0.streaks.borrow_mut();
+        if let Some(i) = cache.iter().position(|(k, _)| *k == key) {
+            let hit = cache.remove(i);
+            let t = hit.1.clone();
+            cache.insert(0, hit);
+            return Ok(Some(t));
+        }
+        let px = ((output.w + 1) / 2, (output.h + 1) / 2);
+        let Some(pixels) = streak::pixels(s, px, (scale / 2.0) as f32) else {
+            return Ok(None);
+        };
+        let bytes: Vec<u8> = pixels.iter().flat_map(|p| p.to_le_bytes()).collect();
+        let t = renderer.import_memory(&bytes, Fourcc::Argb8888, px.into(), false)?;
+        cache.insert(0, (key, t.clone()));
+        cache.truncate(STREAK_TEXTURES);
+        Ok(Some(t))
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Shape {
+    pub rect: Rectangle<i32, Physical>,
+    /// Corner radii in physical pixels: top-left, top-right, bottom-right, bottom-left.
+    pub radii: [f32; 4],
+}
+
+impl Shape {
+    pub fn rect(rect: Rectangle<i32, Physical>) -> Shape {
+        Shape {
+            rect,
+            radii: [0.0; 4],
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct GlassFrame<'a> {
+    /// The glass, output-local physical pixels. Shapes should not overlap: each draws on its own.
+    pub shapes: &'a [Shape],
+    pub holes: &'a [Rectangle<i32, Physical>],
+    pub settings: &'a Settings,
+    /// Which tint: a focused or unfocused frame, or the taskbar. None draws the blurred backdrop alone, for chrome that lays its own glass over it.
+    pub surface: Option<Surface>,
+    /// The output's size in physical pixels and its scale (the streaks are fixed to it).
+    pub output: Size<i32, Physical>,
+    pub scale: f64,
+    pub alpha: f32,
+    pub quality: Quality,
+    /// Keep the last blur although what lies under the glass changed: `[glass] blur_rate`'s cap is up
+    /// ([`Glass::is_stale`]). A move, resize or new blur draws anyway. Only for glass that copies the frame.
+    pub hold: bool,
+    /// The output's blurred backdrop to draw from (`Picture::source`); None copies and blurs the frame.
+    /// With one the shapes must be output-local.
+    pub source: Option<&'a Source>,
+}
+
+/// The handle a host keeps for one piece of glass (a window's frame, the taskbar). Its element keeps
+/// one Id, so the damage tracker keeps its blur from frame to frame.
+#[derive(Debug)]
+pub struct Glass {
+    id: Id,
+    /// What changed in the element, local to its geometry: a new [`key`] or a refresh resets it (whole
+    /// element), a source's changes under the glass add to it.
+    damage: RefCell<DamageBag<i32, Physical>>,
+    /// How far this glass caught up with each source's changes: the source's id and its commit.
+    seen: RefCell<Vec<(u64, CommitCounter)>>,
+    key: Cell<Option<u64>>,
+    stale: Rc<Cell<bool>>,
+    /// [`Glass::refresh`] asked for a new blur: the next element does not hold.
+    refresh: Cell<bool>,
+}
+
+impl Default for Glass {
+    fn default() -> Glass {
+        Glass::new()
+    }
+}
+
+impl Glass {
+    pub fn new() -> Glass {
+        Glass {
+            id: Id::new(),
+            damage: RefCell::new(DamageBag::new(DAMAGE_AGE)),
+            seen: RefCell::new(Vec::new()),
+            key: Cell::new(None),
+            stale: Rc::new(Cell::new(false)),
+            refresh: Cell::new(false),
+        }
+    }
+
+    /// The element for this frame; None when the glass is opaque or has no shapes.
+    pub fn element(&self, fx: &GlassFx, f: &GlassFrame<'_>) -> Option<GlassElement> {
+        if !f.settings.transparency || f.shapes.is_empty() {
+            return None;
+        }
+        let material = f.settings.material;
+        let lenses: Vec<Option<Lens>> = f
+            .shapes
+            .iter()
+            .map(|s| Lens::new(material, s.rect, f.output, f.scale))
+            .collect();
+        let bend = lenses.iter().flatten().map(Lens::reach).max().unwrap_or(0);
+        // Glass that blurs the frame reaches past its shapes so the frame there is drawn before it is
+        // copied; glass over a source draws only its shapes.
+        let reach = match f.source {
+            Some(_) => 0,
+            None => blur::reach(f.settings.blur, material, f.quality) + bend,
+        };
+        let bounds = f.shapes.iter().map(|s| s.rect).reduce(|a, b| a.merge(b))?;
+        if bounds.is_empty() {
+            return None;
+        }
+        let geometry = Rectangle::new(
+            (bounds.loc.x - reach, bounds.loc.y - reach).into(),
+            (bounds.size.w + 2 * reach, bounds.size.h + 2 * reach).into(),
+        );
+        let plan = Plan::new(f.settings.blur, material, f.quality);
+        let tint = f.surface.map(|s| Tint::new(f.settings, s));
+        let k = key(f, geometry, plan, tint, &lenses);
+        let hold = f.hold && !self.refresh.replace(false);
+        let caught_up = f.source.map(|s| self.catch_up(s, geometry, bend));
+        if self.key.get() != Some(k) {
+            if self.key.get().is_some() {
+                self.bump();
+            }
+            self.key.set(Some(k));
+        } else if let Some(Some(changed)) = caught_up {
+            self.damage.borrow_mut().add(changed);
+        } else if let Some(None) = caught_up {
+            self.bump();
+        }
+        Some(GlassElement {
+            fx: fx.clone(),
+            id: self.id.clone(),
+            damage: self.damage.borrow().snapshot(),
+            key: k,
+            geometry,
+            shapes: f.shapes.to_vec(),
+            lenses,
+            holes: f.holes.to_vec(),
+            tint,
+            plan,
+            settings: *f.settings,
+            output: f.output,
+            scale: f.scale,
+            alpha: f.alpha,
+            hold,
+            stale: self.stale.clone(),
+            source: f.source.cloned(),
+        })
+    }
+
+    /// Where `source` changed under glass at `geometry` (whose lens reads `bend` past its shapes) since
+    /// this glass last drew from it, local to the geometry; None when too far behind to say.
+    fn catch_up(
+        &self,
+        source: &Source,
+        geometry: Rectangle<i32, Physical>,
+        bend: i32,
+    ) -> Option<Vec<Rectangle<i32, Physical>>> {
+        let now = source.damage.current_commit();
+        let mut seen = self.seen.borrow_mut();
+        let last = match seen.iter_mut().find(|(id, _)| *id == source.id) {
+            Some((_, c)) => std::mem::replace(c, now),
+            None => {
+                // First drawn from this picture: the element is new to the output's tracker, which draws it whole.
+                seen.push((source.id, now));
+                return Some(Vec::new());
+            }
+        };
+        let changed = source.damage.damage_since(Some(last))?;
+        Some(
+            changed
+                .iter()
+                .filter_map(|r| {
+                    let grown = Rectangle::new(
+                        (r.loc.x - bend, r.loc.y - bend).into(),
+                        (r.size.w + 2 * bend, r.size.h + 2 * bend).into(),
+                    );
+                    grown.intersection(geometry)
+                })
+                .map(|r| Rectangle::new(r.loc - geometry.loc, r.size))
+                .collect(),
+        )
+    }
+
+    fn bump(&self) {
+        self.damage.borrow_mut().reset();
+    }
+
+    /// Blur again in the next frame, held or not: called when `blur_rate`'s cap lets a held glass catch
+    /// up. Schedule a frame on the glass's outputs after it.
+    pub fn refresh(&self) {
+        self.bump();
+        self.refresh.set(true);
+    }
+
+    pub fn is_stale(&self) -> bool {
+        self.stale.get()
+    }
+}
+
+/// How many changes a damage tracker can catch up on; one further behind draws the element whole.
+const DAMAGE_AGE: usize = 8;
+
+/// Everything about a frame's glass that changes its pixels, except where it is: shapes and holes from
+/// the element's corner, the lenses (edges on the output's border do not bend), tint, blur, streaks and
+/// which source (or the frame) is blurred. The damage tracker sees moves itself.
+fn key(
+    f: &GlassFrame<'_>,
+    geometry: Rectangle<i32, Physical>,
+    plan: Plan,
+    tint: Option<Tint>,
+    lenses: &[Option<Lens>],
+) -> u64 {
+    let mut h = std::hash::DefaultHasher::new();
+    let local = |r: Rectangle<i32, Physical>| {
+        let at = r.loc - geometry.loc;
+        [at.x, at.y, r.size.w, r.size.h]
+    };
+    for s in f.shapes {
+        local(s.rect).hash(&mut h);
+        s.radii.map(f32::to_bits).hash(&mut h);
+    }
+    for l in lenses.iter().flatten() {
+        [l.band, l.strength, l.rim].map(f32::to_bits).hash(&mut h);
+        l.area.map(f32::to_bits).hash(&mut h);
+    }
+    0xFFu8.hash(&mut h);
+    for r in f.holes {
+        local(*r).hash(&mut h);
+    }
+    if let Some(t) = tint {
+        t.colour.map(f32::to_bits).hash(&mut h);
+        t.balance.map(f32::to_bits).hash(&mut h);
+        t.strength.to_bits().hash(&mut h);
+        t.material_index().to_bits().hash(&mut h);
+    }
+    (plan.factor, plan.sigma.to_bits(), plan.pairs.to_bits()).hash(&mut h);
+    let s = f.settings;
+    (
+        s.streaks,
+        s.material,
+        f.output.w,
+        f.output.h,
+        f.scale.to_bits(),
+        f.source.map(|s| s.id),
+    )
+        .hash(&mut h);
+    h.finish()
+}
+
+/// Glass over one piece of chrome on one output: a framebuffer effect that copies what the frame holds
+/// under it, blurs it and draws it, tinted, into its shapes.
+#[derive(Debug, Clone)]
+pub struct GlassElement {
+    fx: GlassFx,
+    id: Id,
+    damage: DamageSnapshot<i32, Physical>,
+    key: u64,
+    /// The shapes' bounds, grown by the blur's reach and the lens's when the glass blurs the frame.
+    geometry: Rectangle<i32, Physical>,
+    shapes: Vec<Shape>,
+    lenses: Vec<Option<Lens>>,
+    holes: Vec<Rectangle<i32, Physical>>,
+    tint: Option<Tint>,
+    plan: Plan,
+    settings: Settings,
+    output: Size<i32, Physical>,
+    scale: f64,
+    alpha: f32,
+    hold: bool,
+    stale: Rc<Cell<bool>>,
+    source: Option<Source>,
+}
+
+impl Element for GlassElement {
+    fn id(&self) -> &Id {
+        &self.id
+    }
+
+    fn current_commit(&self) -> CommitCounter {
+        self.damage.current_commit()
+    }
+
+    fn src(&self) -> Rectangle<f64, Buffer> {
+        Rectangle::from_size(
+            (
+                f64::from(self.geometry.size.w),
+                f64::from(self.geometry.size.h),
+            )
+                .into(),
+        )
+    }
+
+    fn geometry(&self, _scale: Scale<f64>) -> Rectangle<i32, Physical> {
+        self.geometry
+    }
+
+    fn damage_since(
+        &self,
+        scale: Scale<f64>,
+        commit: Option<CommitCounter>,
+    ) -> DamageSet<i32, Physical> {
+        self.damage.damage_since(commit).unwrap_or_else(|| {
+            DamageSet::from_slice(&[Rectangle::from_size(self.geometry(scale).size)])
+        })
+    }
+
+    fn opaque_regions(&self, _scale: Scale<f64>) -> OpaqueRegions<i32, Physical> {
+        OpaqueRegions::default()
+    }
+
+    fn alpha(&self) -> f32 {
+        self.alpha
+    }
+
+    fn kind(&self) -> Kind {
+        Kind::Unspecified
+    }
+
+    /// Glass over a source draws from its picture like any texture; without one it copies the frame beneath it.
+    fn is_framebuffer_effect(&self) -> bool {
+        self.source.is_none()
+    }
+}
+
+impl RenderElement<GlesRenderer> for GlassElement {
+    fn capture_framebuffer(
+        &self,
+        frame: &mut GlesFrame<'_, '_>,
+        _src: Rectangle<f64, Buffer>,
+        dst: Rectangle<i32, Physical>,
+        cache: &UserDataMap,
+    ) -> Result<(), GlesError> {
+        // The element may be drawn away from where it was made (a region capture shifts everything):
+        // `dst` is where it is in this frame, the shapes keep their place relative to it. The frame lies turned.
+        if self.source.is_some() {
+            return Ok(());
+        }
+        let space = Space::new(frame.transformation(), frame.output_size());
+        let Some(region) = blur::capture_rect(space.in_fb(dst), space.fb_size(), self.plan.factor)
+        else {
+            return Ok(());
+        };
+        let levels = cache.get_or_insert::<RefCell<Levels>, _>(Default::default);
+        let mut levels = levels.borrow_mut();
+        let drawn = (self.key, self.plan, space);
+        if self.hold
+            && levels.picture.is_some()
+            && levels.region == region
+            && levels.drawn == Some(drawn)
+        {
+            self.stale.set(true);
+            return Ok(());
+        }
+        let streaks = {
+            let mut guard = frame.renderer();
+            let renderer: &mut GlesRenderer = guard.as_mut();
+            let streaks = self
+                .fx
+                .streaks(renderer, &self.settings, self.output, self.scale)?;
+            levels.prepare(renderer, region, self.plan)?;
+            streaks
+        };
+        // The streaks are fixed to the output: the part the capture shows, from where the element was made.
+        let shown = space.in_frame(region);
+        let on_output = Rectangle::new(shown.loc - dst.loc + self.geometry.loc, shown.size);
+        let c = Capture {
+            region,
+            plan: self.plan,
+            blur: &self.fx.0.programs.blur,
+            streaks: streaks.as_ref().map(|t| Streaks {
+                texture: t,
+                output: self.output,
+                shown: on_output,
+                transform: space.toward_fb(),
+            }),
+        };
+        levels.drawn = None;
+        levels.capture(frame, &c)?;
+        levels.drawn = Some(drawn);
+        self.stale.set(false);
+        Ok(())
+    }
+
+    fn draw(
+        &self,
+        frame: &mut GlesFrame<'_, '_>,
+        _src: Rectangle<f64, Buffer>,
+        dst: Rectangle<i32, Physical>,
+        damage: &[Rectangle<i32, Physical>],
+        _opaque_regions: &[Rectangle<i32, Physical>],
+        cache: Option<&UserDataMap>,
+    ) -> Result<(), GlesError> {
+        // The picture and the output pixels it lies over (`c`): a source's upright over the whole output,
+        // a capture's in framebuffer orientation.
+        let levels = cache.and_then(|c| c.get::<RefCell<Levels>>());
+        let levels = levels.map(RefCell::borrow);
+        let (picture, c) = match (&self.source, &levels) {
+            (Some(s), _) => (&s.picture, s.extent()),
+            (None, Some(l)) => match (&l.picture, l.drawn) {
+                (Some(p), Some(_)) => (p, l.region),
+                _ => return Ok(()),
+            },
+            (None, None) => return Ok(()),
+        };
+        let space = Space::new(frame.transformation(), frame.output_size());
+        let offset = dst.loc - self.geometry.loc;
+        let tex = picture.size();
+        let kx = f64::from(tex.w) / f64::from(c.size.w);
+        let ky = f64::from(tex.h) / f64::from(c.size.h);
+        let tint = self.tint.unwrap_or(Tint {
+            colour: [0.0; 3],
+            balance: [0.0, 0.0, 1.0],
+            strength: 0.0,
+            material: self.settings.material,
+        });
+        let holes = self
+            .holes
+            .iter()
+            .map(|h| Rectangle::new(h.loc + offset, h.size));
+        for (shape, lens) in self.shapes.iter().zip(&self.lenses) {
+            let s = Rectangle::new(shape.rect.loc + offset, shape.rect.size);
+            let parts: Vec<Rectangle<i32, Physical>> = damage
+                .iter()
+                .filter_map(|d| Rectangle::new(d.loc + dst.loc, d.size).intersection(s))
+                .collect();
+            let parts = Rectangle::subtract_rects_many_in_place(parts, holes.clone());
+            let parts: Vec<Rectangle<i32, Physical>> = parts
+                .into_iter()
+                .filter(|r| !r.is_empty())
+                .map(|r| Rectangle::new(r.loc - s.loc, r.size))
+                .collect();
+            if parts.is_empty() {
+                continue;
+            }
+            // The shape where the picture holds it, and the space its distance field runs in (the
+            // shader's coordinates run along the picture).
+            let (b, turn, radii) = match self.source {
+                Some(_) => (shape.rect, Transform::Normal, shape.radii),
+                None => (
+                    space.in_fb(s),
+                    space.upright(),
+                    space.radii_in_fb(shape.radii),
+                ),
+            };
+            let src = Rectangle::new(
+                (
+                    f64::from(b.loc.x - c.loc.x) * kx,
+                    f64::from(b.loc.y - c.loc.y) * ky,
+                )
+                    .into(),
+                (f64::from(b.size.w) * kx, f64::from(b.size.h) * ky).into(),
+            );
+            let uniforms = [
+                Uniform::new(
+                    "cap",
+                    [
+                        (c.loc.x - b.loc.x) as f32,
+                        (c.loc.y - b.loc.y) as f32,
+                        c.size.w as f32,
+                        c.size.h as f32,
+                    ],
+                ),
+                Uniform::new("size", [b.size.w as f32, b.size.h as f32]),
+                Uniform::new("radii", radii),
+                Uniform::new("colour", tint.colour),
+                Uniform::new("balance", tint.balance),
+                Uniform::new("strength", tint.strength),
+                Uniform::new("material", tint.material_index()),
+                Uniform::new(
+                    "lens",
+                    lens.map_or([0.0, 0.0, 0.0, 1.0], |l| {
+                        [l.band, l.strength, l.rim, l.scale]
+                    }),
+                ),
+                Uniform::new("lens_box", lens.map_or([0.0; 4], |l| l.area)),
+            ];
+            frame.render_texture_from_to(
+                picture,
+                src,
+                s,
+                &parts,
+                &[],
+                turn,
+                self.alpha,
+                Some(&self.fx.0.programs.glass),
+                &uniforms,
+            )?;
+        }
+        Ok(())
+    }
+
+    fn underlying_storage(&self, _renderer: &mut GlesRenderer) -> Option<UnderlyingStorage<'_>> {
+        None
+    }
+}

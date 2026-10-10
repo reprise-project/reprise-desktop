@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=User Accounts
+Comment=Change your name, picture and password, and manage the accounts on this computer.
+Exec=reprise-accounts
+Icon=system-users
+Categories=Settings;
+StartupWMClass=reprise.accounts
+NoDisplay=true
+Terminal=false

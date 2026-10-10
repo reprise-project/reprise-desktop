@@ -1,0 +1,4 @@
+[portal]
+DBusName=org.freedesktop.impl.portal.desktop.reprise-settings
+Interfaces=org.freedesktop.impl.portal.Settings;
+UseIn=reprise;

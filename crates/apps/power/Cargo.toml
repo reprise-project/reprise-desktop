@@ -1,0 +1,26 @@
+[package]
+name = "reprise-power"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Power Options: the Reprise battery icon and power settings"
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "reprise-power"
+path = "src/main.rs"
+
+[dependencies]
+repriseapp = { path = "../../repriseapp" }
+reprisekit = { path = "../../reprisekit" }
+reprisetray = { path = "../../reprisetray" }
+reprisebus = { path = "../../reprisebus" }
+zbus.workspace = true
+futures-util.workspace = true
+repriseconf = { path = "../../repriseconf" }
+toml_edit.workspace = true
+log.workspace = true
+env_logger.workspace = true

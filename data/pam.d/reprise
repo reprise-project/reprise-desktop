@@ -1,0 +1,10 @@
+#%PAM-1.0
+# system-auth rather than login: login runs pam_nologin in auth, which
+# would keep the user out of a live session while /run/nologin exists.
+# pam_gnome_keyring takes the password that unlocks the screen and unlocks
+# the running daemon's login keyring with it, so a keyring left locked by
+# autologin, a fingerprint login or a manual lock opens with the session.
+# The leading "-" keeps a missing gnome-keyring out of the log.
+auth     include   system-auth
+-auth    optional  pam_gnome_keyring.so
+account  include   system-auth

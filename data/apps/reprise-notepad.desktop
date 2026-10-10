@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Notepad
+Comment=Creates and edits text files using basic text formatting.
+Exec=reprise-notepad %f
+Icon=accessories-text-editor
+Categories=Utility;TextEditor;
+MimeType=text/plain;
+StartupWMClass=reprise.notepad
+Terminal=false

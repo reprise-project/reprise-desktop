@@ -1,0 +1,394 @@
+use std::cell::Cell;
+
+use reprisekit::classic::widgets::{BUTTON_GAP, BUTTON_H, BUTTON_W};
+use reprisekit::controls::form::{self, Control, Form, Item};
+use reprisekit::raster::Rect;
+use reprisekit::textedit::TextEdit;
+
+use crate::nm::{Psk, Security, Ssid};
+
+pub const CLIENT: (i32, i32) = (380, 220);
+
+const MARGIN: i32 = 12;
+const INTRO_Y: i32 = MARGIN;
+const INTRO_W: i32 = CLIENT.0 - 2 * MARGIN;
+const INTRO_COLS: usize = 62;
+
+const LABEL_X: i32 = MARGIN;
+const LABEL_W: i32 = 124;
+const FIELD_X: i32 = 140;
+const FIELD_W: i32 = CLIENT.0 - MARGIN - FIELD_X;
+const FIELD_H: i32 = 20;
+const ROW_Y: [i32; 2] = [112, 140];
+const LABEL_DY: i32 = 4;
+
+const BTN_Y: i32 = CLIENT.1 - MARGIN - BUTTON_H;
+const CANCEL_X: i32 = CLIENT.0 - MARGIN - BUTTON_W;
+const CONNECT_X: i32 = CANCEL_X - BUTTON_GAP - BUTTON_W;
+
+/// The shortest and longest WPA-PSK passphrase in bytes, the unit
+/// NetworkManager checks `psk` in.
+const KEY_LEN: std::ops::RangeInclusive<usize> = 8..=63;
+
+fn key_ok(key: &str, security: Security) -> bool {
+    match security {
+        Security::Sae => !key.is_empty(),
+        _ => {
+            let n = key.len();
+            // 64 hex digits is a raw PSK rather than a passphrase.
+            KEY_LEN.contains(&n) || (n == 64 && key.chars().all(|c| c.is_ascii_hexdigit()))
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Outcome {
+    None,
+    Redraw,
+    Connect(Psk),
+    Cancel,
+}
+
+pub struct KeyDialog {
+    pub ssid: Ssid,
+    pub ap: String,
+    security: Security,
+    pub form: Form,
+}
+
+impl KeyDialog {
+    pub fn new(ssid: &Ssid, ap: &str, security: Security) -> KeyDialog {
+        let intro = intro_lines(&ssid.to_string());
+        let refs: Vec<&str> = intro.iter().map(|s| s.as_str()).collect();
+        let items = vec![
+            Item::lines_at("intro", MARGIN, INTRO_Y, INTRO_W, &refs),
+            Item::label_at(
+                "key_l",
+                LABEL_X,
+                ROW_Y[0] + LABEL_DY,
+                LABEL_W,
+                "Network &key:",
+            ),
+            field("key", ROW_Y[0]),
+            Item::label_at(
+                "confirm_l",
+                LABEL_X,
+                ROW_Y[1] + LABEL_DY,
+                LABEL_W,
+                "C&onfirm network key:",
+            ),
+            field("confirm", ROW_Y[1]),
+            connect_button(false),
+            Item::button_at("cancel", CANCEL_X, BTN_Y, BUTTON_W, "Cancel", true),
+        ];
+        KeyDialog {
+            ssid: ssid.clone(),
+            ap: ap.into(),
+            security,
+            form: Form::new(items),
+        }
+    }
+
+    pub fn event(&mut self, ev: form::Event) -> Outcome {
+        match ev {
+            form::Event::Changed(_) => {
+                self.sync_button();
+                Outcome::Redraw
+            }
+            form::Event::Pressed("connect") | form::Event::Default => {
+                if self.valid() {
+                    Outcome::Connect(Psk::new(self.field("key")))
+                } else {
+                    Outcome::None
+                }
+            }
+            form::Event::Pressed("cancel") | form::Event::Cancel => Outcome::Cancel,
+            form::Event::Redraw => Outcome::Redraw,
+            _ => Outcome::None,
+        }
+    }
+
+    pub fn valid(&self) -> bool {
+        let key = self.field("key");
+        key == self.field("confirm") && key_ok(key, self.security)
+    }
+
+    pub fn sync_button(&mut self) {
+        let valid = self.valid();
+        let focused = self.form.focus() == self.form.index_of("connect");
+        if let Some(Control::Button { enabled, .. }) =
+            self.form.item_mut("connect").map(|i| &mut i.control)
+        {
+            *enabled = valid;
+        }
+        // A greyed button is no tab stop, so the focus cannot stay on it.
+        if focused && !valid {
+            self.form.focus_edge(false);
+        }
+    }
+
+    pub fn wipe(&mut self) {
+        for id in ["key", "confirm"] {
+            if let Some(Control::Edit { edit, .. }) = self.form.item_mut(id).map(|i| &mut i.control)
+            {
+                edit.wipe();
+            }
+        }
+    }
+
+    fn field(&self, id: &str) -> &str {
+        match self.form.item(id).map(|i| &i.control) {
+            Some(Control::Edit { edit, .. }) => &edit.text,
+            _ => "",
+        }
+    }
+
+    pub fn window_title() -> String {
+        "Wireless Network Connection".into()
+    }
+}
+
+// Wipes both key fields however the dialog closes.
+impl Drop for KeyDialog {
+    fn drop(&mut self) {
+        self.wipe();
+    }
+}
+
+pub fn intro_lines(ssid: &str) -> Vec<String> {
+    let mut out = reprisekit::text::wrap_chars(
+        &format!(
+            "The network '{ssid}' requires a network key (also called a WEP key or WPA key). \
+             A network key helps prevent unknown intruders from connecting to this network."
+        ),
+        INTRO_COLS,
+    );
+    out.push(String::new());
+    out.push("Type the key, and then click Connect.".into());
+    out
+}
+
+fn field(id: &'static str, y: i32) -> Item {
+    Item::new(
+        id,
+        Rect::new(FIELD_X, y, FIELD_W, FIELD_H),
+        Control::Edit {
+            edit: TextEdit::secret(),
+            first: Cell::new(0),
+            enabled: true,
+        },
+    )
+}
+
+fn connect_button(enabled: bool) -> Item {
+    Item::new(
+        "connect",
+        Rect::new(CONNECT_X, BTN_Y, BUTTON_W, BUTTON_H),
+        Control::Button {
+            label: "&Connect".into(),
+            enabled,
+            default: true,
+        },
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use reprisekit::classic::widgets::LINE_H;
+    use reprisekit::raster::Canvas;
+
+    fn dialog() -> KeyDialog {
+        KeyDialog::new(&"Neighbour".into(), "/ap/5", Security::Psk)
+    }
+
+    /// Type `s` into the field called `id`, as the form's own key
+    /// handling would.
+    fn type_into(d: &mut KeyDialog, id: &str, s: &str) {
+        d.form.focus_id(id);
+        for ch in s.chars() {
+            let ev = d.form.key(form::Key::Char(ch));
+            d.event(ev);
+        }
+    }
+
+    fn rect(d: &KeyDialog, id: &str) -> Rect {
+        d.form.item(id).unwrap_or_else(|| panic!("no {id}")).rect
+    }
+
+    fn enabled(d: &KeyDialog, id: &str) -> bool {
+        match d.form.item(id).unwrap().control {
+            Control::Button { enabled, .. } => enabled,
+            _ => panic!("{id} is no button"),
+        }
+    }
+
+    #[test]
+    fn key_dialog_validates() {
+        let mut d = dialog();
+        assert!(!d.valid(), "empty");
+        assert!(!enabled(&d, "connect"));
+        assert_eq!(d.event(form::Event::Pressed("connect")), Outcome::None);
+        type_into(&mut d, "key", "12345678");
+        assert!(!d.valid(), "the confirmation is still empty");
+        type_into(&mut d, "confirm", "1234567");
+        assert!(!d.valid(), "the two do not match");
+        assert!(!enabled(&d, "connect"));
+        type_into(&mut d, "confirm", "8");
+        assert!(d.valid());
+        assert!(enabled(&d, "connect"));
+        assert_eq!(
+            d.event(form::Event::Pressed("connect")),
+            Outcome::Connect(Psk::new("12345678"))
+        );
+        assert_eq!(
+            d.event(form::Event::Default),
+            Outcome::Connect(Psk::new("12345678"))
+        );
+        let mut short = dialog();
+        type_into(&mut short, "key", "1234567");
+        type_into(&mut short, "confirm", "1234567");
+        assert!(!short.valid());
+        let long = "x".repeat(64);
+        let mut over = dialog();
+        type_into(&mut over, "key", &long);
+        type_into(&mut over, "confirm", &long);
+        assert!(!over.valid());
+        assert!(!enabled(&over, "connect"));
+        let mut edge = dialog();
+        let max = "x".repeat(63);
+        type_into(&mut edge, "key", &max);
+        type_into(&mut edge, "confirm", &max);
+        assert!(edge.valid());
+        let raw = "0123456789abcdef".repeat(4);
+        let mut hex = dialog();
+        type_into(&mut hex, "key", &raw);
+        type_into(&mut hex, "confirm", &raw);
+        assert!(hex.valid());
+        assert!(enabled(&hex, "connect"));
+        let mut upper = dialog();
+        type_into(&mut upper, "key", &raw.to_uppercase());
+        type_into(&mut upper, "confirm", &raw.to_uppercase());
+        assert!(upper.valid());
+    }
+
+    #[test]
+    fn a_passphrase_is_measured_in_bytes() {
+        let wide = "é".repeat(32);
+        let mut d = dialog();
+        type_into(&mut d, "key", &wide);
+        type_into(&mut d, "confirm", &wide);
+        assert!(!d.valid(), "64 bytes is one past the limit");
+        let short = "éééé";
+        let mut d = dialog();
+        type_into(&mut d, "key", short);
+        type_into(&mut d, "confirm", short);
+        assert!(d.valid(), "8 bytes is the minimum");
+    }
+
+    #[test]
+    fn an_sae_password_takes_any_nonzero_length() {
+        let mut d = KeyDialog::new(&"Lab".into(), "/ap/7", Security::Sae);
+        assert!(!d.valid(), "an empty password is refused");
+        type_into(&mut d, "key", "abc");
+        type_into(&mut d, "confirm", "abc");
+        assert!(d.valid());
+        let long = "x".repeat(100);
+        let mut d = KeyDialog::new(&"Lab".into(), "/ap/7", Security::Sae);
+        type_into(&mut d, "key", &long);
+        type_into(&mut d, "confirm", &long);
+        assert!(d.valid());
+    }
+
+    #[test]
+    fn a_paste_into_both_fields_enables_connect() {
+        let mut d = dialog();
+        for id in ["key", "confirm"] {
+            d.form.focus_id(id);
+            let ev = d.form.paste("correct horse\n".into());
+            d.event(ev);
+        }
+        assert!(d.valid());
+        assert_eq!(d.field("key"), "correct horse");
+        assert!(enabled(&d, "connect"));
+    }
+
+    #[test]
+    fn wipe_empties_both_key_fields_in_place() {
+        let mut d = dialog();
+        type_into(&mut d, "key", "hunter22");
+        type_into(&mut d, "confirm", "hunter22");
+        d.wipe();
+        assert_eq!(d.field("key"), "");
+        assert_eq!(d.field("confirm"), "");
+    }
+
+    #[test]
+    fn cancel_and_redraw_pass_through() {
+        let mut d = dialog();
+        assert_eq!(d.event(form::Event::Pressed("cancel")), Outcome::Cancel);
+        assert_eq!(d.event(form::Event::Cancel), Outcome::Cancel);
+        assert_eq!(d.event(form::Event::Redraw), Outcome::Redraw);
+        assert_eq!(d.event(form::Event::None), Outcome::None);
+        assert_eq!(d.event(form::Event::Changed("key")), Outcome::Redraw);
+        assert_eq!(d.ssid, "Neighbour".into());
+        assert_eq!(d.ap, "/ap/5");
+        assert_eq!(KeyDialog::window_title(), "Wireless Network Connection");
+    }
+
+    #[test]
+    fn the_form_fits_the_client() {
+        let d = dialog();
+        for id in ["key", "confirm"] {
+            assert!(matches!(
+                &d.form.item(id).unwrap().control,
+                Control::Edit { edit, .. } if edit.is_secret()
+            ));
+            let r = rect(&d, id);
+            assert_eq!(r.right(), CLIENT.0 - MARGIN);
+            assert!(r.x > rect(&d, "key_l").right());
+        }
+        assert!(rect(&d, "confirm").y > rect(&d, "key").bottom());
+        assert!(
+            rect(&d, "key").y > rect(&d, "intro").bottom(),
+            "the fields clear the paragraphs"
+        );
+        for id in ["connect", "cancel"] {
+            let r = rect(&d, id);
+            assert!(r.right() <= CLIENT.0 && r.bottom() <= CLIENT.1);
+            assert!(r.y > rect(&d, "confirm").bottom());
+        }
+        assert_eq!(rect(&d, "cancel").right(), CLIENT.0 - MARGIN);
+        assert!(rect(&d, "connect").right() < rect(&d, "cancel").x);
+        let intro = intro_lines("Neighbour");
+        assert!(intro[0].starts_with("The network 'Neighbour' requires"));
+        assert!(intro.iter().all(|l| l.chars().count() <= INTRO_COLS));
+        assert_eq!(intro[intro.len() - 2], "");
+        assert_eq!(
+            intro[intro.len() - 1],
+            "Type the key, and then click Connect."
+        );
+        assert_eq!(rect(&d, "intro").height, intro.len() as i32 * LINE_H);
+    }
+
+    #[test]
+    #[ignore]
+    fn render_keydlg() {
+        let theme = reprisekit::theme::Theme::default();
+        let text = reprisekit::text::TextRenderer::load(&reprisekit::theme::FontConfig::default());
+        let mut d = dialog();
+        type_into(&mut d, "key", "hunter22");
+        type_into(&mut d, "confirm", "hunter22");
+        let mut c = Canvas::new(CLIENT.0 as u32, CLIENT.1 as u32);
+        c.fill_rect(c.bounds(), theme.colors.button_face);
+        form::draw(
+            &mut c,
+            &text,
+            &theme.paint(),
+            &d.form,
+            false,
+            theme.fonts.size_px,
+        );
+        reprisekit::raster::write_preview(&c, "wireless-key.png");
+    }
+}

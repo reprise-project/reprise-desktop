@@ -1,0 +1,2135 @@
+//! A property sheet: a [`TabStrip`] over one [`Form`] per tab, with the OK /
+//! Cancel / Apply row along the bottom. The sheet appends the three buttons to
+//! every page, so a host builds only a page's own controls.
+//!
+//! For a client area of 398x424: the strip's top-left is (6, 8), the page runs
+//! from (6, 28) to 6 px off each side and 36 px off the bottom, and the 75x23
+//! buttons sit with their bottoms 7 px above the client's, 6 px apart, the last
+//! 6 px from the right edge. Every sheet uses the same margins at its own size.
+//!
+//! [`PropSheet::with_list`] picks the page from a list ([`pagelist`]) instead.
+//! For pages built for a 398x424 client the sheet is 544x424: the list's frame
+//! runs from (6, 8), 140 px wide, down to the page's bottom; pages sit 146 px
+//! right of where they were built; the open page's name is drawn in bold where
+//! the tabs would be. The list is a tab stop like the strip. Up, Down, Home and
+//! End on it open pages, and a page opened any way scrolls its row into view
+//! ([`PropSheet::reveal_open`]). Ctrl+Tab, Ctrl+Page Down and their reverses step
+//! pages in either mode ([`page_step`]).
+//!
+//! Tabs that wrap onto more rows push the page down 18 px a row; a host calls
+//! [`PropSheet::fit_tabs`] to grow the sheet by as much.
+//!
+//! Pages are built in the client's coordinates (outer minus the 3 px frame and
+//! 21 px caption). A host that draws the sheet inside a frame of its own places
+//! the client with [`PropSheet::place`]; from then on the pages,
+//! [`PropSheet::layout`] and [`PropSheet::hit`] are in that surface's coordinates.
+//!
+//! The buttons are items on each page's [`Form`], so they get its Tab order and
+//! access keys: Tab runs off the page's last control onto OK, Cancel and a live
+//! Apply, then onto the tab strip and back into the page ([`strip_key`]). Alt+A
+//! presses Apply.
+
+use crate::access::{self, Tree, accesskit};
+use crate::classic::widgets::{BUTTON_H, BUTTON_W, BarHit};
+use crate::controls::form::{self, Control, Form, Item};
+use crate::controls::pagelist::{self, PageList};
+use crate::controls::tabstrip::{self, TabStrip};
+use crate::look::Paint;
+use crate::look::widgets::{draw_page, group_label_ink};
+use crate::raster::{Canvas, Rect};
+use crate::text::{Align, DialogFont, TextRenderer};
+use accesskit::{NodeId, Role};
+
+pub const OK: &str = "ok";
+pub const CANCEL: &str = "cancel";
+pub const APPLY: &str = "apply";
+
+const STRIP: (i32, i32) = (6, 8);
+const MARGIN: i32 = 6;
+/// The page's top with one row of tabs; each further row adds `tabstrip::ROW_H`.
+const PAGE_TOP: i32 = 28;
+const PAGE_BOTTOM: i32 = 36;
+const BUTTON_BOTTOM: i32 = 7;
+const BUTTON_PITCH: i32 = BUTTON_W + 6;
+
+/// Which buttons the sheet's row holds. Each set fills the slots from the right,
+/// so OK / Cancel sit where Cancel and Apply would.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Buttons {
+    OkCancelApply,
+    OkCancel,
+    Close,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Nav {
+    Tabs,
+    List(PageList),
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct PropSheet {
+    pub tabs: TabStrip,
+    pub pages: Vec<Form>,
+    pub size: (i32, i32),
+    /// The buttons on every page; [`Layout`] reports an empty rect for a slot the
+    /// set leaves out.
+    pub buttons: Buttons,
+    /// The client's top-left on the surface the sheet is drawn on.
+    origin: (i32, i32),
+    page_dy: i32,
+    /// The dialog font the whole sheet is set in: its first page's.
+    pub font: DialogFont,
+    pub nav: Nav,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Event {
+    None,
+    Redraw,
+    Page(usize, form::Event),
+    Ok,
+    Cancel,
+    Apply,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Hit {
+    Tab(usize),
+    ListBar(BarHit),
+    List,
+    Control(form::Hit),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Layout {
+    pub strip: (i32, i32),
+    pub page: Rect,
+    pub tabs: Vec<Rect>,
+    pub list: Option<pagelist::Layout>,
+    pub title: Rect,
+    pub ok: Rect,
+    pub cancel: Rect,
+    pub apply: Rect,
+}
+
+fn buttons(size: (i32, i32)) -> (Rect, Rect, Rect) {
+    let (w, h) = size;
+    let y = h - BUTTON_BOTTOM - BUTTON_H;
+    let x = w - MARGIN - BUTTON_W;
+    let at = |k: i32| Rect::new(x - k * BUTTON_PITCH, y, BUTTON_W, BUTTON_H);
+    (at(2), at(1), at(0))
+}
+
+fn shift(page: &mut Form, dx: i32, dy: i32) {
+    for item in &mut page.items {
+        item.rect.x += dx;
+        item.rect.y += dy;
+    }
+}
+
+impl PropSheet {
+    /// A sheet of `pages`, one per label, at client `size`. Each page gains the
+    /// sheet's buttons; Apply starts greyed. Panics unless there is one page per
+    /// label.
+    pub fn new(labels: &[&str], pages: Vec<Form>, size: (i32, i32)) -> PropSheet {
+        PropSheet::with_buttons(labels, pages, size, Buttons::OkCancelApply)
+    }
+
+    pub fn with_buttons(
+        labels: &[&str],
+        pages: Vec<Form>,
+        size: (i32, i32),
+        buttons: Buttons,
+    ) -> PropSheet {
+        assert_eq!(labels.len(), pages.len(), "one page per tab");
+        let mut sheet = PropSheet {
+            tabs: TabStrip::new(labels, 0),
+            pages: Vec::new(),
+            size,
+            buttons,
+            origin: (0, 0),
+            page_dy: 0,
+            font: pages.first().map(|p| p.font).unwrap_or_default(),
+            nav: Nav::Tabs,
+        };
+        sheet.pages = pages.into_iter().map(|p| sheet.dress(p, false)).collect();
+        sheet
+    }
+
+    /// A sheet whose pages are picked from a list down its left side ([`pagelist`]):
+    /// `groups` are the headings, each with its pages' labels, and `pages` one per
+    /// label in that order, built for a `client` sized sheet. The sheet is
+    /// [`pagelist::ADVANCE`] wider. Labels carry no `&` access key. Panics unless
+    /// there is one page per label.
+    pub fn with_list(
+        groups: &[(&str, &[&str])],
+        pages: Vec<Form>,
+        client: (i32, i32),
+    ) -> PropSheet {
+        let labels: Vec<&str> = groups.iter().flat_map(|(_, l)| l.iter().copied()).collect();
+        assert_eq!(labels.len(), pages.len(), "one page per tab");
+        let mut sheet = PropSheet {
+            tabs: TabStrip::new(&labels, 0),
+            pages: Vec::new(),
+            size: (client.0 + pagelist::ADVANCE, client.1),
+            buttons: Buttons::OkCancelApply,
+            origin: (0, 0),
+            page_dy: 0,
+            font: pages.first().map(|p| p.font).unwrap_or_default(),
+            nav: Nav::List(PageList::new(groups)),
+        };
+        sheet.pages = pages.into_iter().map(|p| sheet.dress(p, false)).collect();
+        sheet
+    }
+
+    fn is_list(&self) -> bool {
+        matches!(self.nav, Nav::List(_))
+    }
+
+    fn page_dx(&self) -> i32 {
+        if self.is_list() { pagelist::ADVANCE } else { 0 }
+    }
+
+    /// How far every page has moved from where it was built: the origin, the list's
+    /// advance and the rows of tabs.
+    pub fn page_offset(&self) -> (i32, i32) {
+        (self.origin.0 + self.page_dx(), self.origin.1 + self.page_dy)
+    }
+
+    fn dress(&self, mut page: Form, apply: bool) -> Form {
+        page.font = self.font;
+        let (ox, oy) = self.origin;
+        shift(&mut page, ox + self.page_dx(), oy + self.page_dy);
+        let at = |r: Rect| Rect::new(r.x + ox, r.y + oy, r.width, r.height);
+        let (ok, cancel, apply_r) = buttons(self.size);
+        let row = match self.buttons {
+            Buttons::OkCancelApply => vec![
+                Item::button(OK, at(ok), "OK", true, true),
+                Item::button(CANCEL, at(cancel), "Cancel", true, false),
+                Item::button(APPLY, at(apply_r), "&Apply", apply, false),
+            ],
+            Buttons::OkCancel => vec![
+                Item::button(OK, at(cancel), "OK", true, true),
+                Item::button(CANCEL, at(apply_r), "Cancel", true, false),
+            ],
+            Buttons::Close => vec![Item::button(OK, at(apply_r), "Close", true, true)],
+        };
+        page.items.extend(row);
+        // A page with no controls of its own starts on OK.
+        if page.focus().is_none() {
+            page.focus_id(OK);
+        }
+        page
+    }
+
+    /// Replace page `i` with `page`, built in client coordinates: it gains the
+    /// sheet's buttons, Apply as it stood on the page it replaces. The focus is
+    /// `page`'s own, none while the strip holds it.
+    pub fn set_page(&mut self, i: usize, page: Form) {
+        let Some(old) = self.pages.get(i) else {
+            return;
+        };
+        let apply = matches!(
+            old.item(APPLY).map(|it| &it.control),
+            Some(Control::Button { enabled: true, .. })
+        );
+        self.pages[i] = self.dress(page, apply);
+        if self.tabs.focused && i == self.tabs.open {
+            self.pages[i].set_focus(None);
+        }
+    }
+
+    pub fn set_pages(&mut self, pages: Vec<Form>) {
+        assert_eq!(pages.len(), self.pages.len(), "one page per tab");
+        for (i, page) in pages.into_iter().enumerate() {
+            self.set_page(i, page);
+        }
+    }
+
+    /// Put the client's top-left at `origin` on the surface the sheet is drawn on,
+    /// moving every control with it. Idempotent.
+    pub fn place(&mut self, origin: (i32, i32)) {
+        let (dx, dy) = (origin.0 - self.origin.0, origin.1 - self.origin.1);
+        for page in &mut self.pages {
+            shift(page, dx, dy);
+        }
+        self.origin = origin;
+    }
+
+    fn rows_below(&self, text: &TextRenderer, px: u32) -> i32 {
+        if self.is_list() {
+            return 0;
+        }
+        let text = text.dialog(self.font);
+        let rows = tabstrip::row_count(text, px, &self.tabs, self.size.0 - 2 * MARGIN);
+        tabstrip::ROW_H * (rows as i32 - 1)
+    }
+
+    /// Make room for tabs that wrap onto more rows: the sheet grows by the extra
+    /// rows' height and every control, buttons included, moves down. Call with the
+    /// renderer the sheet is drawn with, before sizing the window from
+    /// [`PropSheet::size`]. Idempotent. Returns how far the controls moved.
+    pub fn fit_tabs(&mut self, text: &TextRenderer, px: u32) -> i32 {
+        let dy = self.rows_below(text, px) - self.page_dy;
+        if dy != 0 {
+            self.size.1 += dy;
+            self.page_dy += dy;
+            for page in &mut self.pages {
+                shift(page, 0, dy);
+            }
+        }
+        dy
+    }
+
+    /// Make the client `size`, as a resizable window does: the button row keeps to
+    /// the bottom-right corner and the page (and list) reach the new edges. The
+    /// pages' own controls stay; a host lays them out ([`Form::take_layout`]).
+    pub fn resize(&mut self, size: (i32, i32)) {
+        let (dx, dy) = (size.0 - self.size.0, size.1 - self.size.1);
+        if (dx, dy) == (0, 0) {
+            return;
+        }
+        self.size = size;
+        for page in &mut self.pages {
+            for it in &mut page.items {
+                if matches!(it.id, OK | CANCEL | APPLY) {
+                    it.rect.x += dx;
+                    it.rect.y += dy;
+                }
+            }
+        }
+    }
+
+    fn page(&self, top: i32) -> Rect {
+        let (w, h) = self.size;
+        let (ox, oy) = self.origin;
+        let dx = self.page_dx();
+        Rect::new(
+            MARGIN + dx + ox,
+            top + oy,
+            w - 2 * MARGIN - dx,
+            h - top - PAGE_BOTTOM,
+        )
+    }
+
+    fn strip(&self) -> (i32, i32) {
+        (STRIP.0 + self.origin.0, STRIP.1 + self.origin.1)
+    }
+
+    /// The strip's top-left and the page under one row of tabs: the part of
+    /// [`PropSheet::layout`] that needs no text.
+    pub fn frame(&self) -> ((i32, i32), Rect) {
+        (self.strip(), self.page(PAGE_TOP))
+    }
+
+    pub fn layout(&self, text: &TextRenderer, px: u32) -> Layout {
+        let page = self.page(PAGE_TOP + self.rows_below(text, px));
+        let (ox, oy) = self.origin;
+        let at = |r: Rect| Rect::new(r.x + ox, r.y + oy, r.width, r.height);
+        let (ok, cancel, apply) = buttons(self.size);
+        // A shorter set fills the rightmost slots; the empty rects are unreachable by
+        // `draw` and `hit`.
+        let none = Rect::new(0, 0, 0, 0);
+        let (ok, cancel, apply) = match self.buttons {
+            Buttons::OkCancelApply => (at(ok), at(cancel), at(apply)),
+            Buttons::OkCancel => (at(cancel), at(apply), none),
+            Buttons::Close => (at(apply), none, none),
+        };
+        let strip = self.strip();
+        let (tabs, list, title) = match &self.nav {
+            Nav::Tabs => (
+                tabstrip::layout(
+                    text.dialog(self.font),
+                    px,
+                    &self.tabs,
+                    strip.0,
+                    strip.1,
+                    page.width,
+                ),
+                None,
+                none,
+            ),
+            Nav::List(_) => {
+                let title = Rect::new(page.x, STRIP.1 + 2 + oy, page.width, pagelist::ROW_H);
+                (Vec::new(), self.list_layout(), title)
+            }
+        };
+        Layout {
+            strip,
+            page,
+            tabs,
+            list,
+            title,
+            ok,
+            cancel,
+            apply,
+        }
+    }
+
+    /// The page list's rects in list mode, which need no text; its scrollbar has the
+    /// width of the look the open page was last drawn in.
+    fn list_layout(&self) -> Option<pagelist::Layout> {
+        let Nav::List(rows) = &self.nav else {
+            return None;
+        };
+        let (ox, oy) = self.origin;
+        let h = self.size.1 - STRIP.1 - PAGE_BOTTOM;
+        let frame = Rect::new(MARGIN + ox, STRIP.1 + oy, pagelist::WIDTH, h);
+        Some(pagelist::layout(rows, frame, &self.open().controls()))
+    }
+
+    /// Scroll the open page's row fully into view in list mode. Opening a page
+    /// through the sheet does this itself; a host that sets `tabs.open` calls it
+    /// after. True when the rows moved.
+    pub fn reveal_open(&mut self) -> bool {
+        let open = self.tabs.open;
+        self.on_list(|list, lay| list.reveal(open, lay))
+    }
+
+    pub fn open(&self) -> &Form {
+        &self.pages[self.tabs.open]
+    }
+
+    pub fn open_mut(&mut self) -> &mut Form {
+        &mut self.pages[self.tabs.open]
+    }
+
+    /// Grey or ungrey Apply on every page (the sheet shares one button row).
+    pub fn set_apply_enabled(&mut self, on: bool) {
+        for page in &mut self.pages {
+            if let Some(Item {
+                control: Control::Button { enabled, .. },
+                ..
+            }) = page.item_mut(APPLY)
+            {
+                *enabled = on;
+            }
+        }
+    }
+
+    /// Open the next tab, or the previous when `back` (Ctrl+Tab, Ctrl+Shift+Tab).
+    /// True when another page opened.
+    pub fn cycle_tab(&mut self, back: bool) -> bool {
+        self.strip_key(&form::Key::Tab { back }, Some(back)) == StripKey::Turned
+    }
+
+    /// Open tab `i` from the host, as a click does. True when another page opened.
+    pub fn open_tab(&mut self, i: usize) -> bool {
+        i != self.tabs.open && self.tab_click(i) == StripKey::Turned
+    }
+
+    /// The strip's part of a key, before the open page's: see [`strip_key`], and in
+    /// list mode `nav_key`. For a host that routes the page's keys itself.
+    pub fn strip_key(&mut self, key: &form::Key, ctrl_tab: Option<bool>) -> StripKey {
+        let list = self.is_list();
+        let r = nav_key(&mut self.tabs, &mut self.pages, key, ctrl_tab, list);
+        if r == StripKey::Turned {
+            self.reveal_open();
+        }
+        r
+    }
+
+    pub fn tab_click(&mut self, i: usize) -> StripKey {
+        let list = self.is_list();
+        let r = nav_click(&mut self.tabs, &mut self.pages, i, list);
+        if r == StripKey::Turned {
+            self.reveal_open();
+        }
+        r
+    }
+
+    pub fn page_clicked(&mut self) {
+        let i = self.tabs.open;
+        page_clicked(&mut self.tabs, &self.pages[i]);
+    }
+
+    /// A key for the sheet: the strip's keys ([`strip_key`]) first, the open page's
+    /// after. `ctrl_tab` is `Some(back)` for Ctrl+Tab and Ctrl+Shift+Tab, which turn
+    /// the tabs; `key` is then ignored.
+    pub fn key(&mut self, key: form::Key, ctrl_tab: Option<bool>) -> Event {
+        match self.strip_key(&key, ctrl_tab) {
+            StripKey::Pass => {}
+            StripKey::None => return Event::None,
+            StripKey::Moved | StripKey::Turned => return Event::Redraw,
+        }
+        let i = self.tabs.open;
+        let ev = self.pages[i].key(key);
+        self.event(i, ev)
+    }
+
+    pub fn paste(&mut self, text: String) -> Event {
+        let i = self.tabs.open;
+        let ev = self.pages[i].paste(text);
+        self.event(i, ev)
+    }
+
+    pub fn hit(&self, x: i32, y: i32, text: &TextRenderer, px: u32) -> Option<Hit> {
+        let l = self.layout(text, px);
+        if let (Nav::List(list), Some(lay)) = (&self.nav, &l.list)
+            && lay.frame.contains(x, y)
+        {
+            if let Some(b) = pagelist::hit_bar(lay, x, y) {
+                return Some(Hit::ListBar(b));
+            }
+            return Some(pagelist::hit(list, lay, x, y).map_or(Hit::List, Hit::Tab));
+        }
+        if let Some(i) = tabstrip::hit(&l.tabs, x, y) {
+            return Some(Hit::Tab(i));
+        }
+        self.open().hit(x, y, text, px).map(Hit::Control)
+    }
+
+    pub fn click(&mut self, hit: Option<Hit>) -> Event {
+        match hit {
+            Some(Hit::Tab(i)) => {
+                return match self.tab_click(i) {
+                    StripKey::None | StripKey::Pass => Event::None,
+                    StripKey::Moved | StripKey::Turned => Event::Redraw,
+                };
+            }
+            Some(Hit::ListBar(b)) => {
+                self.on_list(|list, lay| list.bar_press(b, lay));
+                return Event::Redraw;
+            }
+            Some(Hit::List) => return Event::None,
+            _ => {}
+        }
+        let i = self.tabs.open;
+        let ev = self.pages[i].click(control(hit));
+        self.page_clicked();
+        self.event(i, ev)
+    }
+
+    /// The pointer moved to (`x`, `y`) over `hit`: the closed tab under it lights,
+    /// unless a part of the page is held; the page tracks the rest.
+    pub fn motion(&mut self, x: i32, y: i32, hit: Option<Hit>) -> Event {
+        let bar = match hit {
+            Some(Hit::ListBar(b)) => Some(b),
+            _ => None,
+        };
+        let lit = self.on_list(|list, _| list.bar_hover(bar));
+        if let Some(moved) = self.on_list(|list, lay| list.bar_drag(x, y, lay)) {
+            return if moved || lit {
+                Event::Redraw
+            } else {
+                Event::None
+            };
+        }
+        let i = self.tabs.open;
+        let tab = match hit {
+            Some(Hit::Tab(t)) if !self.pages[i].holding() && !self.is_list() => Some(t),
+            _ => None,
+        };
+        let lit = (self.tabs.hover(tab) && self.pages[i].styled()) || lit;
+        let ev = self.pages[i].motion(x, y, control(hit));
+        match self.event(i, ev) {
+            Event::None if lit => Event::Redraw,
+            ev => ev,
+        }
+    }
+
+    /// The wheel over the page list scrolls it a row per row; elsewhere it is the
+    /// open page's ([`Form::wheel`]).
+    pub fn wheel(&mut self, hit: Option<Hit>, rows: i32) -> Event {
+        if self.is_list() && matches!(hit, Some(Hit::Tab(_) | Hit::List | Hit::ListBar(_))) {
+            let moved = self.on_list(|list, lay| list.scroll(rows * pagelist::ROW_H, lay));
+            return if moved { Event::Redraw } else { Event::None };
+        }
+        let i = self.tabs.open;
+        let ev = self.pages[i].wheel(control(hit), rows);
+        self.event(i, ev)
+    }
+
+    pub fn leave(&mut self) -> Event {
+        let bar = self.on_list(|list, _| list.bar_leave());
+        let i = self.tabs.open;
+        let lit = (self.tabs.hover(None) && self.pages[i].styled()) || bar;
+        let ev = self.pages[i].leave();
+        match self.event(i, ev) {
+            Event::None if lit => Event::Redraw,
+            ev => ev,
+        }
+    }
+
+    pub fn release(&mut self) -> Event {
+        let bar = match &mut self.nav {
+            Nav::List(list) => list.bar_release(),
+            Nav::Tabs => false,
+        };
+        let i = self.tabs.open;
+        let ev = self.pages[i].release();
+        match self.event(i, ev) {
+            Event::None if bar => Event::Redraw,
+            ev => ev,
+        }
+    }
+
+    /// Whether the page list has an arrow held: the host sends [`PropSheet::tick`]
+    /// until it lets go.
+    pub fn ticking(&self) -> bool {
+        matches!(&self.nav, Nav::List(list) if list.repeating())
+    }
+
+    pub fn tick(&mut self, now: std::time::Instant) -> Event {
+        if self.on_list(|list, lay| list.bar_tick(now, lay)) {
+            Event::Redraw
+        } else {
+            Event::None
+        }
+    }
+
+    fn on_list<T: Default>(&mut self, f: impl FnOnce(&mut PageList, &pagelist::Layout) -> T) -> T {
+        let Some(lay) = self.list_layout() else {
+            return T::default();
+        };
+        match &mut self.nav {
+            Nav::List(list) => f(list, &lay),
+            Nav::Tabs => T::default(),
+        }
+    }
+
+    /// The open page's event as the sheet's: its buttons (and the Enter and Escape
+    /// that stand for them) are the sheet's, the rest the page's.
+    fn event(&self, page: usize, ev: form::Event) -> Event {
+        match ev {
+            form::Event::Pressed(OK) | form::Event::Default => Event::Ok,
+            form::Event::Pressed(CANCEL) | form::Event::Cancel => Event::Cancel,
+            form::Event::Pressed(APPLY) => Event::Apply,
+            form::Event::None => Event::None,
+            form::Event::Redraw => Event::Redraw,
+            ev => Event::Page(page, ev),
+        }
+    }
+}
+
+/// A status window: a sheet whose only button is Close, in the rightmost slot,
+/// flush with the page's right edge. It carries the [`OK`] id, so Enter, Escape
+/// and the button come back as [`Event::Ok`] or [`Event::Cancel`], treated alike.
+/// Panics unless there is one page per label.
+pub fn close_only(labels: &[&str], pages: Vec<Form>, size: (i32, i32)) -> PropSheet {
+    PropSheet::with_buttons(labels, pages, size, Buttons::Close)
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StripKey {
+    Pass,
+    None,
+    Moved,
+    Turned,
+}
+
+/// The strip's part of a sheet's keys, for any host of a [`TabStrip`] over one
+/// [`Form`] per tab. The strip is a tab stop between the page's last control
+/// (the buttons come last) and its first:
+///
+/// - Tab off the page's last tab stop, or Shift+Tab off its first, puts the focus
+///   on the strip; the page holds none meanwhile.
+/// - Tab on the strip goes to the page's first tab stop, Shift+Tab to its last.
+/// - Left and Right open the neighbouring tab, stopping at the ends; the strip
+///   keeps the focus. Up and Down do nothing.
+/// - `ctrl_tab` (`Some(back)`) opens the next or previous tab wherever the focus is.
+///
+/// A tab opened with the focus on the strip keeps it there; one opened from the
+/// page focuses the new page's first tab stop. Everything else, Enter and Escape
+/// included, is [`StripKey::Pass`]: the page's default button or Cancel answers.
+pub fn strip_key(
+    tabs: &mut TabStrip,
+    pages: &mut [Form],
+    key: &form::Key,
+    ctrl_tab: Option<bool>,
+) -> StripKey {
+    nav_key(tabs, pages, key, ctrl_tab, false)
+}
+
+/// [`strip_key`] for either way of picking the page. With `list` the focused
+/// list takes Up, Down, Home and End ([`pagelist::target`]); Left and Right do
+/// nothing; Page Up and Down go to the page.
+fn nav_key(
+    tabs: &mut TabStrip,
+    pages: &mut [Form],
+    key: &form::Key,
+    ctrl_tab: Option<bool>,
+    list: bool,
+) -> StripKey {
+    let was = tabs.open;
+    if let Some(back) = ctrl_tab {
+        return if tabs.cycle(back) {
+            turned(tabs, pages, was);
+            StripKey::Turned
+        } else {
+            StripKey::None
+        };
+    }
+    let Some(page) = pages.get_mut(was) else {
+        return StripKey::Pass;
+    };
+    // Hosts fold the arrows into editing keys for a focused field; on the
+    // strip they are its own.
+    let flat = match key {
+        form::Key::Edit(k) if tabs.focused => form::flat_key(k),
+        k => Some(k.clone()),
+    };
+    let Some(key) = flat else {
+        return StripKey::Pass;
+    };
+    match key {
+        form::Key::Tab { back } if tabs.focused => {
+            if page.focus_edge(back) {
+                tabs.focused = false;
+                StripKey::Moved
+            } else {
+                StripKey::None
+            }
+        }
+        // An open list takes Tab to close itself.
+        form::Key::Tab { .. } if page.popup_open() => StripKey::Pass,
+        form::Key::Tab { back } => {
+            if !page.tab_no_wrap(back) {
+                page.set_focus(None);
+                tabs.focused = true;
+            }
+            StripKey::Moved
+        }
+        form::Key::Up | form::Key::Down | form::Key::Home | form::Key::End
+            if tabs.focused && list =>
+        {
+            let to = pagelist::target(was, tabs.labels.len(), &key).unwrap_or(was);
+            if to == was {
+                return StripKey::None;
+            }
+            tabs.open = to;
+            turned(tabs, pages, was);
+            StripKey::Turned
+        }
+        form::Key::Left | form::Key::Right if tabs.focused && !list => {
+            if tabs.step(key == form::Key::Right) {
+                turned(tabs, pages, was);
+                StripKey::Turned
+            } else {
+                StripKey::None
+            }
+        }
+        form::Key::Left | form::Key::Right | form::Key::Up | form::Key::Down if tabs.focused => {
+            StripKey::None
+        }
+        _ => StripKey::Pass,
+    }
+}
+
+/// A press on tab `i`: a closed tab opens (see [`strip_key`]); the open one takes
+/// the focus onto the strip.
+pub fn tab_click(tabs: &mut TabStrip, pages: &mut [Form], i: usize) -> StripKey {
+    nav_click(tabs, pages, i, false)
+}
+
+/// [`tab_click`] for either way of picking the page. With `list`, a press on a
+/// closed page's row also focuses the list.
+fn nav_click(tabs: &mut TabStrip, pages: &mut [Form], i: usize, list: bool) -> StripKey {
+    if i >= tabs.labels.len() {
+        return StripKey::None;
+    }
+    if i != tabs.open {
+        let was = tabs.open;
+        tabs.open = i;
+        tabs.focused |= list;
+        turned(tabs, pages, was);
+        return StripKey::Turned;
+    }
+    if tabs.focused {
+        return StripKey::None;
+    }
+    tabs.focused = true;
+    if let Some(page) = pages.get_mut(i) {
+        page.set_focus(None);
+    }
+    StripKey::Moved
+}
+
+/// Whether a key press steps the sheet's pages, as `ctrl_tab` for
+/// [`PropSheet::key`]: `Some(false)` for Ctrl+Tab and Ctrl+Page Down,
+/// `Some(true)` for Ctrl+Shift+Tab and Ctrl+Page Up.
+pub fn page_step(sym: u32, ctrl: bool, shift: bool) -> Option<bool> {
+    use crate::textedit::keysym;
+    if !ctrl {
+        return None;
+    }
+    match sym {
+        keysym::TAB => Some(shift),
+        // Shift+Tab arrives as its own keysym.
+        keysym::ISO_LEFT_TAB => Some(true),
+        keysym::PAGE_DOWN | keysym::KP_PAGE_DOWN => Some(false),
+        keysym::PAGE_UP | keysym::KP_PAGE_UP => Some(true),
+        _ => None,
+    }
+}
+
+/// After a press on the open `page`: a control that took the focus takes it from
+/// the strip.
+pub fn page_clicked(tabs: &mut TabStrip, page: &Form) {
+    if page.focus().is_some() {
+        tabs.focused = false;
+    }
+}
+
+/// The open tab changed from `was`: the page left behind releases the pointer,
+/// the new tab is no longer lit, and the new page's first tab stop takes the
+/// focus unless the strip holds it.
+fn turned(tabs: &mut TabStrip, pages: &mut [Form], was: usize) {
+    if let Some(old) = pages.get_mut(was) {
+        old.cancel_pointer();
+    }
+    tabs.hot = None;
+    if let Some(page) = pages.get_mut(tabs.open) {
+        if tabs.focused {
+            page.set_focus(None);
+        } else {
+            page.focus_edge(false);
+        }
+    }
+}
+
+fn control(hit: Option<Hit>) -> Option<form::Hit> {
+    match hit {
+        Some(Hit::Control(h)) => Some(h),
+        _ => None,
+    }
+}
+
+/// Draw the sheet onto a canvas already filled with face: the page, the tabs (or
+/// the list and the open page's name), then the open page's controls and buttons.
+pub fn draw(
+    c: &mut Canvas,
+    text: &TextRenderer,
+    p: &Paint,
+    sheet: &PropSheet,
+    cues: bool,
+    px: u32,
+) {
+    let s = p.s;
+    // The list's scrollbar is the look's width, which the layout reads from the
+    // open page: keep the look on every page so a page opened next lays the list
+    // out as drawn.
+    for page in &sheet.pages {
+        page.drawn_with(p);
+    }
+    let l = sheet.layout(text, px);
+    let page = l.page.scaled(s);
+    draw_page(c, p, page);
+    let nav_text = text.dialog(sheet.font);
+    match (&sheet.nav, &l.list) {
+        (Nav::List(list), Some(lay)) => {
+            pagelist::draw(c, nav_text, p, list, &sheet.tabs, lay, cues, px);
+            if let Some(name) = sheet.tabs.labels.get(sheet.tabs.open) {
+                let ink = group_label_ink(p);
+                nav_text.draw(c, l.title.scaled(s), name, true, ink, Align::Left, px);
+            }
+        }
+        _ => tabstrip::draw(c, nav_text, p, &sheet.tabs, &l.tabs, l.page, cues, px),
+    }
+    form::draw(c, text, &p.on_page(page), sheet.open(), cues, px);
+}
+
+pub fn draw_popups(c: &mut Canvas, text: &TextRenderer, p: &Paint, sheet: &PropSheet, px: u32) {
+    let page = sheet.layout(text, px).page.scaled(p.s);
+    form::draw_popups(c, text, &p.on_page(page), sheet.open(), px);
+}
+
+impl PropSheet {
+    /// The sheet's `access` part: the tab list (list mode), then the open page as a
+    /// panel labelled by its tab or item. Returns the panel, for a host that draws
+    /// controls of its own on the page, and the focused node.
+    pub fn access(
+        &self,
+        tree: &mut Tree,
+        parent: NodeId,
+        text: &TextRenderer,
+        px: u32,
+    ) -> (NodeId, Option<NodeId>) {
+        let l = self.layout(text, px);
+        let (items, role) = match (&self.nav, &l.list) {
+            (Nav::List(list), Some(lay)) => (
+                pagelist::access(list, &self.tabs, lay, tree, parent, "pages"),
+                Role::Group,
+            ),
+            _ => (
+                tabstrip::access(&self.tabs, &l.tabs, tree, parent, "tabs"),
+                Role::TabPanel,
+            ),
+        };
+        let mut panel = access::node(role, l.page);
+        if let Some(t) = items.get(self.tabs.open) {
+            panel.push_labelled_by(*t);
+        }
+        // Keyed by the page, so a switch replaces the panel whole.
+        let panel = tree.push(parent, ("page", self.tabs.open), panel);
+        let focus = self.open().access(tree, panel, text, px);
+        let nav = items.get(self.tabs.open).filter(|_| self.tabs.focused);
+        (panel, nav.copied().or(focus))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::look::classic_paint;
+    use crate::text::Align;
+    use crate::theme::{FontConfig, Theme};
+
+    fn sheet(labels: &[&str], size: (i32, i32)) -> PropSheet {
+        let pages = labels
+            .iter()
+            .map(|l| {
+                Form::new(vec![Item::new(
+                    "check",
+                    Rect::new(20, 50, 13, 13),
+                    Control::Check {
+                        label: (*l).into(),
+                        checked: false,
+                        enabled: true,
+                        mixed: None,
+                    },
+                )])
+            })
+            .collect();
+        PropSheet::new(labels, pages, size)
+    }
+
+    fn check_page(label: &str) -> Form {
+        Form::new(vec![Item::new(
+            "check",
+            Rect::new(20, 50, 13, 13),
+            Control::Check {
+                label: label.into(),
+                checked: false,
+                enabled: true,
+                mixed: None,
+            },
+        )])
+    }
+
+    const LIST_GROUPS: &[(&str, &[&str])] =
+        &[("Look", &["Night Light", "Effects"]), ("Input", &["Mouse"])];
+
+    fn list_sheet() -> PropSheet {
+        let pages = ["Night Light", "Effects", "Mouse"]
+            .into_iter()
+            .map(check_page)
+            .collect();
+        PropSheet::with_list(LIST_GROUPS, pages, (398, 424))
+    }
+
+    /// A list sheet of 30 pages under one heading: 527 px of rows in the
+    /// list's 376 px inside.
+    fn long_list_sheet() -> PropSheet {
+        let labels: Vec<String> = (0..30).map(|i| format!("Page {i}")).collect();
+        let labels: Vec<&str> = labels.iter().map(String::as_str).collect();
+        let pages = labels.iter().map(|l| check_page(l)).collect();
+        PropSheet::with_list(&[("All", &labels)], pages, (398, 424))
+    }
+
+    fn list_top(s: &PropSheet) -> i32 {
+        match &s.nav {
+            Nav::List(l) => l.top,
+            Nav::Tabs => unreachable!(),
+        }
+    }
+
+    /// A resized list sheet keeps its buttons in the bottom-right corner
+    /// and its page and list to the new edges; a page takes a template's
+    /// rects by id, moved to where the pages sit, and keeps its state.
+    #[test]
+    fn a_resized_sheet_moves_its_buttons_and_pages_take_a_layout() {
+        let text = TextRenderer::load(&FontConfig::default());
+        let px = Theme::default().fonts.size_px;
+        let mut s = list_sheet();
+        let before = s.layout(&text, px);
+        s.pages[0].set_check("check", true);
+        s.resize((s.size.0 + 100, s.size.1 + 60));
+        let after = s.layout(&text, px);
+        assert_eq!(after.page.width, before.page.width + 100);
+        assert_eq!(after.page.height, before.page.height + 60);
+        assert_eq!(
+            after.list.unwrap().frame.height,
+            before.list.unwrap().frame.height + 60
+        );
+        for (b, a) in [
+            (before.ok, after.ok),
+            (before.cancel, after.cancel),
+            (before.apply, after.apply),
+        ] {
+            assert_eq!((a.x, a.y), (b.x + 100, b.y + 60));
+        }
+        assert_eq!(s.pages[1].item(OK).unwrap().rect, after.ok);
+
+        let template = Form::new(vec![Item::check("check", 40, 70, "")]);
+        let offset = s.page_offset();
+        s.pages[0].take_layout(&template, offset);
+        let it = s.pages[0].item("check").unwrap();
+        assert_eq!((it.rect.x, it.rect.y), (40 + offset.0, 70 + offset.1));
+        assert_eq!(s.pages[0].checked("check"), Some(true), "the state stays");
+        assert_eq!(
+            s.pages[0].item(OK).unwrap().rect,
+            after.ok,
+            "no template item"
+        );
+    }
+
+    /// The list's down arrow held: the sheet asks for ticks, repeats on
+    /// them after the pause, lights the arrow under the pointer and stops
+    /// at the release.
+    #[test]
+    fn a_held_list_arrow_repeats_on_the_hosts_ticks() {
+        use crate::classic::widgets::BarHit;
+        use crate::controls::pagelist::REPEAT_AFTER;
+        let mut s = long_list_sheet();
+        let down = Some(Hit::ListBar(BarHit::Forward));
+        assert_eq!(s.motion(135, 380, down), Event::Redraw, "lit");
+        assert!(!s.ticking());
+        assert_eq!(s.click(down), Event::Redraw);
+        assert_eq!(list_top(&s), 17);
+        assert!(s.ticking());
+        let t0 = std::time::Instant::now();
+        assert_eq!(s.tick(t0), Event::None, "the pause starts");
+        assert_eq!(s.tick(t0 + REPEAT_AFTER), Event::Redraw);
+        assert_eq!(list_top(&s), 34);
+        assert_eq!(s.release(), Event::Redraw, "pressed back to lit");
+        assert!(!s.ticking());
+        assert_eq!(s.leave(), Event::Redraw, "lit back to rest");
+    }
+
+    /// The overflowing list scrolls under the wheel and its bar, and a
+    /// page opened from the keys or by the host comes into view.
+    #[test]
+    fn a_long_page_list_scrolls_to_the_open_page() {
+        use crate::classic::widgets::BarHit;
+        let text = TextRenderer::load(&FontConfig::default());
+        let px = Theme::default().fonts.size_px;
+        let mut s = long_list_sheet();
+        let lay = s.layout(&text, px).list.unwrap();
+        assert_eq!((lay.total, lay.inner.height), (527, 376));
+        assert_eq!(lay.scrollbar, Some(Rect::new(128, 10, 16, 376)));
+        assert_eq!(s.hit(30, 30, &text, px), Some(Hit::Tab(0)));
+        assert_eq!(s.hit(30, 12, &text, px), Some(Hit::List), "the heading");
+        assert_eq!(s.hit(135, 12, &text, px), Some(Hit::ListBar(BarHit::Back)));
+
+        // The keys: End brings the last row's bottom to the inside's.
+        assert_eq!(s.click(Some(Hit::Tab(0))), Event::Redraw);
+        assert!(s.tabs.focused);
+        assert_eq!(s.key(form::Key::End, None), Event::Redraw);
+        assert_eq!((s.tabs.open, list_top(&s)), (29, 151));
+        assert_eq!(s.hit(30, 380, &text, px), Some(Hit::Tab(29)));
+        assert_eq!(s.key(form::Key::Home, None), Event::Redraw);
+        assert_eq!(list_top(&s), 0);
+
+        // The wheel over the list scrolls it a row per row; over the
+        // page it is the page's.
+        assert_eq!(s.wheel(Some(Hit::List), 3), Event::Redraw);
+        assert_eq!(list_top(&s), 51);
+        assert_eq!(s.wheel(None, 3), Event::None);
+        assert_eq!(list_top(&s), 51);
+        assert_eq!(s.click(Some(Hit::ListBar(BarHit::Back))), Event::Redraw);
+        assert_eq!(list_top(&s), 34);
+
+        // The thumb, grabbed and dragged to the bottom.
+        let lay = s.layout(&text, px).list.unwrap();
+        let thumb = pagelist::bar_parts(&lay).unwrap().thumb.unwrap();
+        let Some(Hit::ListBar(grab)) = s.hit(135, thumb.y + 2, &text, px) else {
+            panic!("the thumb is at {thumb:?}");
+        };
+        assert!(matches!(grab, BarHit::Thumb(_)));
+        assert_eq!(
+            s.click(Some(Hit::ListBar(grab))),
+            Event::Redraw,
+            "the thumb draws pressed"
+        );
+        assert_eq!(s.motion(135, 900, None), Event::Redraw);
+        assert_eq!(list_top(&s), 151);
+        assert_eq!(s.release(), Event::Redraw, "and at rest once let go");
+        assert_eq!(s.motion(135, thumb.y, None), Event::None, "let go");
+        assert_eq!(list_top(&s), 151);
+
+        // A host opening a page itself reveals it after.
+        s.tabs.open = 0;
+        assert!(s.reveal_open());
+        assert_eq!(list_top(&s), 0, "the first page brings its heading");
+    }
+
+    /// A list sheet is its pages' client plus the list: 146 px wider, the
+    /// list from the strip's top-left down to the page's bottom, the page
+    /// and its controls 146 px right of where they were built, the
+    /// buttons in the whole sheet's bottom-right corner.
+    #[test]
+    fn a_list_sheets_geometry() {
+        let text = TextRenderer::load(&FontConfig::default());
+        let px = Theme::default().fonts.size_px;
+        let mut s = list_sheet();
+        assert_eq!(s.size, (544, 424));
+        assert_eq!(s.fit_tabs(&text, px), 0);
+        assert_eq!(s.size, (544, 424), "no tabs to wrap");
+        let l = s.layout(&text, px);
+        assert_eq!(l.page, Rect::new(152, 28, 386, 360));
+        assert_eq!(
+            l.list.as_ref().map(|l| l.frame),
+            Some(Rect::new(6, 8, 140, 380))
+        );
+        assert_eq!(l.title, Rect::new(152, 10, 386, 17));
+        assert!(l.tabs.is_empty());
+        assert_eq!(
+            (l.ok.x, l.cancel.x, l.apply.x, l.ok.y),
+            (301, 382, 463, 394)
+        );
+        assert_eq!(s.page_offset(), (146, 0));
+        assert_eq!(
+            s.open().item("check").unwrap().rect,
+            Rect::new(166, 50, 13, 13)
+        );
+        s.place((3, 21));
+        assert_eq!(s.page_offset(), (149, 21));
+        let l = s.layout(&text, px);
+        assert_eq!(l.list.map(|l| l.frame), Some(Rect::new(9, 29, 140, 380)));
+        assert_eq!(
+            s.open().item("check").unwrap().rect,
+            Rect::new(169, 71, 13, 13)
+        );
+        s.set_page(2, check_page("New"));
+        assert_eq!(
+            s.pages[2].item("check").unwrap().rect,
+            Rect::new(169, 71, 13, 13)
+        );
+        // A tab sheet's pages have not moved.
+        assert_eq!(sheet(&["General"], (398, 424)).page_offset(), (0, 0));
+    }
+
+    #[test]
+    #[should_panic(expected = "one page per tab")]
+    fn a_list_row_without_a_page_is_refused() {
+        PropSheet::with_list(LIST_GROUPS, vec![check_page("Night Light")], (398, 424));
+    }
+
+    /// The list is the tab stop the strip was: Shift+Tab off the page's
+    /// first control reaches it, Up and Down open the page above or below
+    /// across a heading and stop at the ends, Home and End open the first
+    /// and the last, Left and Right do nothing, Ctrl+Tab still wraps, and
+    /// Tab goes into the open page.
+    #[test]
+    fn the_lists_keys_step_the_pages() {
+        use crate::textedit::EditKey;
+        let mut s = list_sheet();
+        let key = |s: &mut PropSheet, k| s.key(k, None);
+        assert_eq!(key(&mut s, form::Key::Tab { back: true }), Event::Redraw);
+        assert!(s.tabs.focused);
+        assert_eq!(key(&mut s, form::Key::Down), Event::Redraw);
+        assert_eq!((s.tabs.open, s.tabs.focused), (1, true));
+        assert_eq!(s.open().focus(), None, "the list keeps the focus");
+        assert_eq!(key(&mut s, form::Key::Down), Event::Redraw);
+        assert_eq!(s.tabs.open, 2, "past the Input heading");
+        assert_eq!(key(&mut s, form::Key::Down), Event::None, "the last page");
+        assert_eq!(key(&mut s, form::Key::Up), Event::Redraw);
+        assert_eq!(s.tabs.open, 1);
+        // Home and End reach a host as editing keys.
+        assert_eq!(
+            key(&mut s, form::Key::Edit(EditKey::Home { select: false })),
+            Event::Redraw
+        );
+        assert_eq!(s.tabs.open, 0);
+        assert_eq!(
+            key(&mut s, form::Key::Edit(EditKey::End { select: false })),
+            Event::Redraw
+        );
+        assert_eq!(s.tabs.open, 2);
+        assert_eq!(key(&mut s, form::Key::Left), Event::None);
+        assert_eq!(key(&mut s, form::Key::Right), Event::None);
+        assert_eq!(s.tabs.open, 2);
+        assert_eq!(
+            s.key(form::Key::Tab { back: false }, Some(false)),
+            Event::Redraw
+        );
+        assert_eq!(
+            (s.tabs.open, s.tabs.focused),
+            (0, true),
+            "Ctrl+Tab wraps round"
+        );
+        assert_eq!(key(&mut s, form::Key::Tab { back: false }), Event::Redraw);
+        assert!(!s.tabs.focused);
+        assert_eq!(s.open().focus(), Some(0), "Tab goes into the page");
+        key(&mut s, form::Key::Down);
+        assert_eq!(s.tabs.open, 0, "the page's own control takes the arrows");
+    }
+
+    /// A press on a page's row opens that page and gives the list the
+    /// focus; a press on a heading opens nothing; a row under the pointer
+    /// lights nothing.
+    #[test]
+    fn a_press_on_a_row_opens_its_page_and_focuses_the_list() {
+        let text = TextRenderer::load(&FontConfig::default());
+        let px = Theme::default().fonts.size_px;
+        let mut s = list_sheet();
+        let rows = s.layout(&text, px).list.unwrap().rows;
+        let at = |r: Rect| (r.x + 20, r.y + 5);
+        let (x, y) = at(rows[2]);
+        let hit = s.hit(x, y, &text, px);
+        assert_eq!(hit, Some(Hit::Tab(1)), "row 2 is Effects, page 1");
+        assert_eq!(s.click(hit), Event::Redraw);
+        assert_eq!((s.tabs.open, s.tabs.focused), (1, true));
+        assert_eq!(s.open().focus(), None);
+        assert_eq!(s.click(hit), Event::None, "open and focused already");
+        let (x, y) = at(rows[3]);
+        let heading = s.hit(x, y, &text, px);
+        assert_eq!(heading, Some(Hit::List), "the Input heading");
+        assert_eq!(s.click(heading), Event::None, "opens nothing");
+        assert_eq!((s.tabs.open, s.tabs.focused), (1, true));
+        let check = s.hit(170, 55, &text, px);
+        s.click(check);
+        assert!(!s.tabs.focused, "the page's control takes the focus back");
+        let (x, y) = at(rows[4]);
+        s.motion(x, y, s.hit(x, y, &text, px));
+        assert_eq!(s.tabs.hot, None);
+    }
+
+    /// In each look: the list exactly as `pagelist::draw` draws it at the
+    /// sheet's layout, the open page's name over the page in the look's
+    /// group label ink, the page's edges as `draw_page` draws them with no
+    /// tab over the top edge, and on Classic OK's black default ring.
+    #[test]
+    fn a_list_sheet_draws_in_every_look() {
+        use crate::interface::Interface;
+        use crate::look::widgets::group_label_ink;
+        for i in [Interface::Classic, Interface::Blue, Interface::Glass] {
+            let theme = crate::interfaces::theme_for(i);
+            let text = TextRenderer::load(&theme.fonts);
+            let (p, px) = (theme.paint(), theme.fonts.size_px);
+            let mut s = list_sheet();
+            s.tabs.open = 1;
+            let c = drawn(&s, &theme);
+            let l = s.layout(&text, px);
+            let lay = l.list.clone().unwrap();
+            let Nav::List(list) = &s.nav else {
+                unreachable!("a list sheet")
+            };
+            let mut want = Canvas::new(544, 424);
+            want.fill_rect(want.bounds(), theme.colors.button_face);
+            pagelist::draw(
+                &mut want,
+                text.dialog(s.font),
+                &p,
+                list,
+                &s.tabs,
+                &lay,
+                false,
+                px,
+            );
+            for y in lay.frame.y..lay.frame.bottom() {
+                for x in lay.frame.x..lay.frame.right() {
+                    assert_eq!(c.get(x, y), want.get(x, y), "{i:?}: the list at ({x}, {y})");
+                }
+            }
+            let ink = group_label_ink(&p).argb();
+            let t = l.title;
+            assert!(
+                (t.y..t.bottom()).any(|y| (t.x..t.x + 60).any(|x| c.get(x, y) == ink)),
+                "{i:?}: the title in the group label ink"
+            );
+            assert_eq!(
+                c.get(t.right() - 5, t.y + 8),
+                theme.colors.button_face.argb()
+            );
+            let mut bare = Canvas::new(544, 424);
+            bare.fill_rect(bare.bounds(), theme.colors.button_face);
+            draw_page(&mut bare, &p, l.page);
+            let (left, top) = ((l.page.x, l.page.y + 40), (l.page.x + 200, l.page.y));
+            assert_eq!(
+                c.get(left.0, left.1),
+                bare.get(left.0, left.1),
+                "{i:?}: the page's left edge"
+            );
+            assert_eq!(
+                c.get(top.0, top.1),
+                bare.get(top.0, top.1),
+                "{i:?}: its top edge, bare"
+            );
+            if i == Interface::Classic {
+                assert_eq!(
+                    c.get(301, 394),
+                    theme.colors.button_text.argb(),
+                    "OK's default ring"
+                );
+            }
+        }
+    }
+
+    /// The open page's item names the page's panel, which holds its
+    /// controls; with the list focused, the item has the focus.
+    #[test]
+    fn a_list_sheets_open_item_names_the_page_it_holds() {
+        use crate::access::{ROOT, Tree, accesskit::Role};
+        let text = TextRenderer::load(&FontConfig::default());
+        let mut s = list_sheet();
+        s.tabs.open = 1;
+        let mut tree = Tree::window("T", s.size);
+        let (panel, focus) = s.access(&mut tree, ROOT, &text, 11);
+        let item = tree.find(Role::ListItem, "Effects").unwrap();
+        assert_eq!(tree.get(item).unwrap().is_selected(), Some(true));
+        assert_eq!(tree.get(panel).unwrap().role(), Role::Group);
+        assert_eq!(tree.get(panel).unwrap().labelled_by(), &[item]);
+        let check = tree.find(Role::CheckBox, "Effects").unwrap();
+        assert!(tree.get(panel).unwrap().children().contains(&check));
+        assert_eq!(focus, Some(check));
+        assert!(!tree.nodes().any(|(_, n)| n.role() == Role::TabList));
+        s.tabs.focused = true;
+        s.pages[1].set_focus(None);
+        let mut tree = Tree::window("T", s.size);
+        let (_, focus) = s.access(&mut tree, ROOT, &text, 11);
+        assert_eq!(focus, tree.find(Role::ListItem, "Effects"));
+    }
+
+    #[test]
+    fn ctrl_tab_and_ctrl_page_keys_step_the_pages() {
+        use crate::textedit::keysym;
+        assert_eq!(page_step(keysym::TAB, true, false), Some(false));
+        assert_eq!(page_step(keysym::TAB, true, true), Some(true));
+        assert_eq!(page_step(keysym::ISO_LEFT_TAB, true, true), Some(true));
+        assert_eq!(page_step(keysym::PAGE_DOWN, true, false), Some(false));
+        assert_eq!(page_step(keysym::KP_PAGE_DOWN, true, false), Some(false));
+        assert_eq!(page_step(keysym::PAGE_UP, true, false), Some(true));
+        assert_eq!(page_step(keysym::KP_PAGE_UP, true, true), Some(true));
+        assert_eq!(
+            page_step(keysym::PAGE_DOWN, false, false),
+            None,
+            "the page's own"
+        );
+        assert_eq!(page_step(keysym::TAB, false, false), None);
+        assert_eq!(page_step(u32::from(b'a'), true, false), None);
+    }
+
+    /// A Blue sheet hands its page to the controls on it: the blank that
+    /// breaks the Recycle Bin Global page's group line (156x2 at 30,70 on
+    /// a 338x376 sheet) shows the page there, and the group's line runs
+    /// on past it.
+    #[test]
+    fn a_blank_on_a_blue_page_shows_the_page() {
+        let theme = crate::interfaces::theme_for(crate::interface::Interface::Blue);
+        let text = TextRenderer::load(&theme.fonts);
+        let px = theme.fonts.size_px;
+        let blank = Rect::new(30, 70, 156, 2);
+        let form = Form::new(vec![
+            Item::group("group", Rect::new(21, 70, 296, 161), ""),
+            Item::new("gap", blank, Control::Blank),
+        ]);
+        let sheet = PropSheet::new(&["Global"], vec![form], (338, 376));
+        let p = theme.paint();
+        let face = theme.colors.button_face;
+        let mut c = Canvas::new(338, 376);
+        c.fill_rect(c.bounds(), face);
+        let mut bare = c.clone();
+        draw(&mut c, &text, &p, &sheet, false, px);
+        draw_page(&mut bare, &p, sheet.layout(&text, px).page);
+        for y in blank.y..blank.bottom() {
+            for x in blank.x..blank.right() {
+                assert_eq!(c.get(x, y), bare.get(x, y), "({x}, {y}) is the page");
+            }
+        }
+        assert_eq!(c.get(40, 70), 0xFFFA_FCFA, "the page's row 70");
+        let line = crate::blue::Variant::Blue
+            .scheme()
+            .group_box
+            .normal
+            .rim
+            .argb();
+        assert_eq!(c.get(200, 70), line, "the group line past the blank");
+    }
+
+    /// Tabs on two rows grow the sheet by one row: the page keeps its size
+    /// 18 px lower, and the controls and buttons move down with it.
+    #[test]
+    fn a_second_row_of_tabs_grows_the_sheet_by_a_row() {
+        let text = TextRenderer::load(&FontConfig::default());
+        let px = Theme::default().fonts.size_px;
+        let labels = [
+            "General",
+            "Sharing",
+            "Customize",
+            "Security",
+            "Previous Versions",
+            "Summary",
+            "Compatibility",
+        ];
+        let mut s = sheet(&labels, (361, 424));
+        let before = s.layout(&text, px);
+        assert_eq!(s.fit_tabs(&text, px), 18);
+        assert_eq!(s.size, (361, 442));
+        let l = s.layout(&text, px);
+        assert_eq!(l.page, Rect::new(6, 46, 349, 360));
+        assert_eq!(l.ok, Rect::new(before.ok.x, before.ok.y + 18, 75, 23));
+        assert_eq!(
+            s.open().item("check").unwrap().rect,
+            Rect::new(20, 68, 13, 13)
+        );
+        let mut one = sheet(&["Themes", "Desktop"], (398, 424));
+        assert_eq!(one.fit_tabs(&text, px), 0);
+        assert_eq!(one.size, (398, 424));
+    }
+
+    /// A sheet is set in its first page's font, every page and the tabs
+    /// with it, and a page put in later takes it too.
+    #[test]
+    fn a_sheet_takes_its_first_pages_font() {
+        let text = TextRenderer::load(&FontConfig::default())
+            .with_shell_dlg(TextRenderer::stub(11, |_| 9));
+        let second = text.dialog(DialogFont::ShellDlg);
+        let pages = vec![
+            Form::new(vec![]).set_in(DialogFont::ShellDlg),
+            Form::new(vec![]),
+        ];
+        let mut s = PropSheet::new(&["General", "Web"], pages, (371, 424));
+        assert_eq!(s.font, DialogFont::ShellDlg);
+        s.set_page(1, Form::new(vec![]));
+        assert!(s.pages.iter().all(|p| p.font == DialogFont::ShellDlg));
+        let l = s.layout(&text, 11);
+        let want = tabstrip::layout(second, 11, &s.tabs, l.strip.0, l.strip.1, l.page.width);
+        assert_eq!(l.tabs, want);
+        let ui = sheet(&["General", "Web"], (371, 424));
+        assert_eq!(ui.font, DialogFont::Ui);
+        assert_ne!(ui.layout(&text, 11).tabs, want, "the UI font's tabs");
+    }
+
+    #[test]
+    fn display_properties_geometry() {
+        let text = TextRenderer::load(&FontConfig::default());
+        let px = Theme::default().fonts.size_px;
+        let s = sheet(&["Themes", "Desktop", "Screen Saver"], (398, 424));
+        let l = s.layout(&text, px);
+        // The sheet's margins at a 398x424 client.
+        assert_eq!(l.strip, (6, 8));
+        assert_eq!(l.page, Rect::new(6, 28, 386, 360));
+        assert_eq!(l.ok, Rect::new(155, 394, BUTTON_W, BUTTON_H));
+        assert_eq!(l.cancel, Rect::new(236, 394, BUTTON_W, BUTTON_H));
+        assert_eq!(l.apply, Rect::new(317, 394, BUTTON_W, BUTTON_H));
+        // The open tab's bottom runs into the page's top edge.
+        assert_eq!(l.tabs[0].y, 8);
+        assert_eq!(l.tabs[0].bottom(), l.page.y);
+    }
+
+    #[test]
+    fn the_audio_sheets_geometry() {
+        let text = TextRenderer::load(&FontConfig::default());
+        let px = Theme::default().fonts.size_px;
+        let s = sheet(&["Volume", "Sounds", "Audio"], (361, 292));
+        let l = s.layout(&text, px);
+        assert_eq!(l.page, Rect::new(6, 28, 349, 228));
+        assert_eq!(l.ok, Rect::new(118, 262, BUTTON_W, BUTTON_H));
+        assert_eq!(l.cancel, Rect::new(199, 262, BUTTON_W, BUTTON_H));
+        assert_eq!(l.apply, Rect::new(280, 262, BUTTON_W, BUTTON_H));
+    }
+
+    #[test]
+    fn every_page_gets_the_buttons_and_apply_greys_together() {
+        let mut s = sheet(&["Volume", "Sounds"], (361, 292));
+        let (ok, _, apply) = buttons(s.size);
+        for page in &s.pages {
+            assert_eq!(page.item(OK).map(|i| i.rect), Some(ok));
+            assert_eq!(page.item(APPLY).map(|i| i.rect), Some(apply));
+            assert_eq!(
+                page.item(APPLY).map(|i| i.control.clone()),
+                Some(Control::Button {
+                    label: "&Apply".into(),
+                    enabled: false,
+                    default: false,
+                }),
+                "a sheet opens with nothing to apply"
+            );
+        }
+        s.set_apply_enabled(true);
+        assert!(s.pages.iter().all(|p| matches!(
+            p.item(APPLY).map(|i| &i.control),
+            Some(Control::Button { enabled: true, .. })
+        )));
+    }
+
+    #[test]
+    fn close_only_lays_out_one_button() {
+        let pages = vec![Form::new(vec![]), Form::new(vec![])];
+        let s = close_only(&["General", "Support"], pages, (361, 419));
+        let text = TextRenderer::load(&FontConfig::default());
+        let px = Theme::default().fonts.size_px;
+        for page in &s.pages {
+            let buttons: Vec<&Item> = page
+                .items
+                .iter()
+                .filter(|i| matches!(i.control, Control::Button { .. }))
+                .collect();
+            assert_eq!(buttons.len(), 1, "one button per page");
+            assert_eq!(buttons[0].id, OK);
+            assert_eq!(
+                buttons[0].control,
+                Control::Button {
+                    label: "Close".into(),
+                    enabled: true,
+                    default: true,
+                }
+            );
+        }
+        // At a 361x419 client, the Apply slot flush with the page's right
+        // edge.
+        let l = s.layout(&text, px);
+        assert_eq!(l.ok, Rect::new(280, 389, BUTTON_W, BUTTON_H));
+        assert_eq!(l.ok.right(), 361 - MARGIN);
+        assert_eq!(l.cancel.width, 0);
+        assert_eq!(l.apply.width, 0);
+    }
+
+    /// A placed sheet reports its rects and holds its controls at the
+    /// origin; fitting and placing again move nothing.
+    #[test]
+    fn a_placed_sheet_moves_with_its_origin() {
+        let text = TextRenderer::load(&FontConfig::default());
+        let px = Theme::default().fonts.size_px;
+        let mut s = sheet(&["General", "Advanced"], (338, 376));
+        let before = s.layout(&text, px);
+        s.place((3, 21));
+        s.fit_tabs(&text, px);
+        s.place((3, 21));
+        assert_eq!(s.fit_tabs(&text, px), 0);
+        let l = s.layout(&text, px);
+        assert_eq!(l.strip, (9, 29));
+        assert_eq!(l.page, Rect::new(9, 49, 326, 312));
+        assert_eq!(l.ok, Rect::new(98, 367, BUTTON_W, BUTTON_H));
+        assert_eq!(l.tabs[0].x, before.tabs[0].x + 3);
+        assert_eq!(s.open().item(OK).unwrap().rect, l.ok);
+        assert_eq!(
+            s.open().item("check").unwrap().rect,
+            Rect::new(23, 71, 13, 13)
+        );
+        assert!(matches!(
+            s.hit(24, 72, &text, px),
+            Some(Hit::Control(form::Hit { item: 0, .. }))
+        ));
+    }
+
+    /// A page set anew lands where the pages sit, under the sheet's
+    /// buttons, and keeps Apply as it stood.
+    #[test]
+    fn a_page_set_anew_joins_the_sheet() {
+        let mut s = sheet(&["General", "Advanced"], (338, 376));
+        s.place((3, 21));
+        s.set_apply_enabled(true);
+        let page = Form::new(vec![Item::new(
+            "new",
+            Rect::new(20, 50, 13, 13),
+            Control::Check {
+                label: "New".into(),
+                checked: false,
+                enabled: true,
+                mixed: None,
+            },
+        )]);
+        s.set_page(1, page);
+        let p = &s.pages[1];
+        assert_eq!(p.item("new").unwrap().rect, Rect::new(23, 71, 13, 13));
+        assert_eq!(p.item(OK).unwrap().rect, s.pages[0].item(OK).unwrap().rect);
+        assert!(matches!(
+            p.item(APPLY).unwrap().control,
+            Control::Button { enabled: true, .. }
+        ));
+    }
+
+    /// OK and Cancel alone take the row's two right slots.
+    #[test]
+    fn ok_cancel_fills_the_right_slots() {
+        let text = TextRenderer::load(&FontConfig::default());
+        let px = Theme::default().fonts.size_px;
+        let pages = vec![Form::new(vec![]), Form::new(vec![])];
+        let s = PropSheet::with_buttons(&["General", "Web"], pages, (371, 424), Buttons::OkCancel);
+        let l = s.layout(&text, px);
+        assert_eq!(l.ok, Rect::new(209, 394, BUTTON_W, BUTTON_H));
+        assert_eq!(l.cancel, Rect::new(290, 394, BUTTON_W, BUTTON_H));
+        assert_eq!(l.apply.width, 0);
+        for page in &s.pages {
+            assert_eq!(page.items.len(), 2);
+            assert_eq!(page.item(OK).unwrap().rect, l.ok);
+            assert_eq!(page.item(CANCEL).unwrap().rect, l.cancel);
+            assert_eq!(page.focus(), page.index_of(OK));
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "one page per tab")]
+    fn a_tab_without_a_page_is_refused() {
+        PropSheet::new(&["General", "Sharing"], vec![Form::new(vec![])], (361, 424));
+    }
+
+    #[test]
+    #[should_panic(expected = "one page per tab")]
+    fn a_close_only_tab_without_a_page_is_refused() {
+        close_only(&["General", "Support"], vec![Form::new(vec![])], (361, 419));
+    }
+
+    #[test]
+    fn ctrl_tab_cycles_the_pages() {
+        let mut s = sheet(&["Volume", "Sounds", "Audio"], (361, 292));
+        assert_eq!(s.tabs.open, 0);
+        assert_eq!(
+            s.key(form::Key::Tab { back: false }, Some(false)),
+            Event::Redraw
+        );
+        assert_eq!(s.tabs.open, 1);
+        assert!(
+            matches!(&s.open().item("check").unwrap().control,
+                Control::Check { label, .. } if label == "Sounds"),
+            "the open page followed the tab"
+        );
+        assert_eq!(
+            s.key(form::Key::Tab { back: true }, Some(true)),
+            Event::Redraw
+        );
+        assert_eq!(s.tabs.open, 0);
+        assert_eq!(
+            s.key(form::Key::Tab { back: true }, Some(true)),
+            Event::Redraw
+        );
+        assert_eq!(s.tabs.open, 2, "wraps");
+        // Without the Ctrl flag Tab walks the page's controls instead.
+        let before = s.tabs.open;
+        assert_eq!(s.key(form::Key::Tab { back: false }, None), Event::Redraw);
+        assert_eq!(s.tabs.open, before);
+    }
+
+    #[test]
+    fn the_sheets_buttons_become_sheet_events() {
+        let text = TextRenderer::load(&FontConfig::default());
+        let px = Theme::default().fonts.size_px;
+        let mut s = sheet(&["Volume", "Sounds"], (361, 292));
+        s.set_apply_enabled(true);
+        let l = s.layout(&text, px);
+        // Enter with the page's own control focused is the default button.
+        assert_eq!(s.key(form::Key::Enter, None), Event::Ok);
+        assert_eq!(s.key(form::Key::Escape, None), Event::Cancel);
+        // Press and release Apply.
+        let hit = s.hit(l.apply.x + 5, l.apply.y + 5, &text, px);
+        assert_eq!(s.click(hit), Event::Redraw, "the button goes down");
+        assert_eq!(s.release(), Event::Apply);
+        // A control of the page's own stays the page's.
+        let check = s.open().index_of("check").unwrap();
+        let hit = s.hit(
+            s.open().items[check].rect.x + 3,
+            s.open().items[check].rect.y + 3,
+            &text,
+            px,
+        );
+        assert!(matches!(hit, Some(Hit::Control(_))));
+        assert_eq!(s.click(hit), Event::Redraw, "the box goes down");
+        assert_eq!(s.release(), Event::Page(0, form::Event::Changed("check")));
+    }
+
+    #[test]
+    fn a_tab_hit_opens_its_page() {
+        let text = TextRenderer::load(&FontConfig::default());
+        let px = Theme::default().fonts.size_px;
+        let mut s = sheet(&["Volume", "Sounds"], (361, 292));
+        let l = s.layout(&text, px);
+        let hit = s.hit(l.tabs[1].x + 4, l.tabs[1].y + 10, &text, px);
+        assert_eq!(hit, Some(Hit::Tab(1)));
+        assert_eq!(s.click(hit), Event::Redraw);
+        assert_eq!(s.tabs.open, 1);
+        assert!(!s.tabs.focused, "a closed tab opens its page");
+        assert_eq!(s.open().focus(), Some(0), "on its first control");
+        assert_eq!(s.click(hit), Event::Redraw, "the open tab takes the focus");
+        assert!(s.tabs.focused);
+        assert_eq!(s.open().focus(), None);
+        assert_eq!(s.click(hit), Event::None, "already focused");
+        // A control pressed on the page takes the focus back.
+        let check = s.hit(25, 55, &text, px);
+        s.click(check);
+        assert!(!s.tabs.focused);
+        assert_eq!(s.open().focus(), Some(0));
+    }
+
+    /// Around the strip and back: Shift+Tab off the page's first control
+    /// reaches the strip, Right and Left turn the tabs with the focus kept
+    /// there, Up and Down do nothing, Ctrl+Tab turns them too, and Tab
+    /// goes into the open page.
+    #[test]
+    fn the_strip_is_a_tab_stop_its_arrows_turn_the_tabs() {
+        let mut s = sheet(&["Volume", "Sounds", "Audio"], (361, 292));
+        let tab = |s: &mut PropSheet, back| s.key(form::Key::Tab { back }, None);
+        assert_eq!(s.open().focus(), Some(0));
+        assert_eq!(tab(&mut s, true), Event::Redraw);
+        assert!(s.tabs.focused);
+        assert_eq!(s.open().focus(), None);
+        assert_eq!(s.key(form::Key::Left, None), Event::None, "first tab");
+        // The arrow as a host folds it for a field: an editing key.
+        let right = form::Key::Edit(crate::textedit::EditKey::Right {
+            select: false,
+            word: false,
+        });
+        assert_eq!(s.key(right, None), Event::Redraw);
+        assert_eq!((s.tabs.open, s.tabs.focused), (1, true));
+        assert_eq!(s.open().focus(), None, "the new page holds no focus");
+        assert_eq!(s.key(form::Key::Down, None), Event::None);
+        assert_eq!(s.key(form::Key::Up, None), Event::None);
+        assert_eq!(s.tabs.open, 1);
+        assert_eq!(
+            s.key(form::Key::Tab { back: false }, Some(false)),
+            Event::Redraw
+        );
+        assert_eq!((s.tabs.open, s.tabs.focused), (2, true));
+        assert_eq!(s.key(form::Key::Right, None), Event::None, "last tab");
+        // Enter on the strip is the default button, Escape Cancel.
+        assert_eq!(s.key(form::Key::Enter, None), Event::Ok);
+        assert_eq!(s.key(form::Key::Escape, None), Event::Cancel);
+        // Shift+Tab leaves for the page's last tab stop: Cancel, the
+        // greyed Apply skipped.
+        assert_eq!(tab(&mut s, true), Event::Redraw);
+        assert!(!s.tabs.focused);
+        assert_eq!(s.open().focus(), s.open().index_of(CANCEL));
+        tab(&mut s, false);
+        tab(&mut s, false);
+        assert_eq!(s.open().focus(), Some(0), "Tab from the strip");
+        // Ctrl+Tab from the page lands on the new page's first control,
+        // whatever that page last had focused.
+        s.pages[0].focus_id(OK);
+        s.key(form::Key::Tab { back: false }, Some(false));
+        assert_eq!((s.tabs.open, s.tabs.focused), (0, false));
+        assert_eq!(s.open().focus(), Some(0));
+    }
+
+    // A folder Properties sheet at a 361x424 client and the pixel each
+    // part of it lands on.
+    /// 361x424 client (367x448 outer less the 3 px frame and 21 px caption).
+    const FOLDER_SIZE: (i32, i32) = (361, 424);
+    /// The open tab's white top ring.
+    const FOLDER_STRIP_Y: i32 = 8;
+    /// Right of the last tab: the page's white top ring, and its
+    /// shadow/dk_shadow bottom.
+    const FOLDER_PAGE_TOP: i32 = 28;
+    const FOLDER_PAGE_BOTTOM: i32 = 387;
+    /// The page's white left ring and its shadow/dk_shadow right.
+    const FOLDER_PAGE_LEFT: i32 = 6;
+    const FOLDER_PAGE_RIGHT: i32 = 354;
+    /// OK's black default ring, then Cancel's and Apply's white ones.
+    const FOLDER_OK_X: i32 = 118;
+    const FOLDER_CANCEL_X: i32 = 199;
+    const FOLDER_APPLY_X: i32 = 280;
+    /// The button rings' top row; they run 23 rows.
+    const FOLDER_BUTTON_Y: i32 = 394;
+
+    /// Two of the compositor's sheets, in client coordinates: Recycle Bin
+    /// Properties (344x400 outer) and a 404x448 outer sheet.
+    const BIN: (i32, i32) = (338, 376);
+    const BIN_PAGE: Rect = Rect::new(6, 28, 326, 312);
+    const BIN_BUTTONS: (i32, i32, i32, i32) = (95, 176, 257, 346);
+    const DISPLAY: (i32, i32) = (398, 424);
+    const DISPLAY_PAGE: Rect = Rect::new(6, 28, 386, 360);
+    const DISPLAY_BUTTONS: (i32, i32, i32, i32) = (155, 236, 317, 394);
+
+    /// A folder-Properties-shaped page: a label, a check and a button of
+    /// the page's own, so the Tab order has somewhere to start.
+    fn folder_page(id: &'static str) -> Form {
+        Form::new(vec![
+            Item::new(
+                "label",
+                Rect::new(20, 50, 100, 13),
+                Control::Label {
+                    text: "Type:".into(),
+                    enabled: true,
+                    align: Align::Left,
+                },
+            ),
+            Item::new(
+                id,
+                Rect::new(20, 70, 13, 13),
+                Control::Check {
+                    label: "&Read-only".into(),
+                    checked: false,
+                    enabled: true,
+                    mixed: None,
+                },
+            ),
+            Item::new(
+                "adv",
+                Rect::new(250, 70, BUTTON_W, BUTTON_H),
+                Control::Button {
+                    label: "Ad&vanced...".into(),
+                    enabled: true,
+                    default: false,
+                },
+            ),
+        ])
+    }
+
+    fn folder_sheet() -> PropSheet {
+        PropSheet::new(
+            &["General", "Sharing", "Customize"],
+            vec![
+                folder_page("ro"),
+                folder_page("share"),
+                folder_page("custom"),
+            ],
+            FOLDER_SIZE,
+        )
+    }
+
+    #[test]
+    fn folder_properties_geometry() {
+        let text = TextRenderer::load(&FontConfig::default());
+        let px = Theme::default().fonts.size_px;
+        let l = folder_sheet().layout(&text, px);
+        assert_eq!(l.tabs[0].y, FOLDER_STRIP_Y);
+        assert_eq!(
+            l.tabs[0].x, FOLDER_PAGE_LEFT,
+            "the open tab starts at the margin"
+        );
+        assert_eq!((l.page.x, l.page.y), (FOLDER_PAGE_LEFT, FOLDER_PAGE_TOP));
+        assert_eq!(l.page.right() - 1, FOLDER_PAGE_RIGHT);
+        assert_eq!(l.page.bottom() - 1, FOLDER_PAGE_BOTTOM);
+        for r in [l.ok, l.cancel, l.apply] {
+            assert_eq!(
+                (r.width, r.height, r.y),
+                (BUTTON_W, BUTTON_H, FOLDER_BUTTON_Y)
+            );
+        }
+        assert_eq!(
+            (l.ok.x, l.cancel.x, l.apply.x),
+            (FOLDER_OK_X, FOLDER_CANCEL_X, FOLDER_APPLY_X)
+        );
+        assert_eq!(l.apply.right(), FOLDER_SIZE.0 - MARGIN);
+        assert_eq!(l.cancel.x - l.ok.right(), BUTTON_PITCH - BUTTON_W);
+    }
+
+    #[test]
+    fn the_same_rule_gives_the_compositors_sheets() {
+        let text = TextRenderer::load(&FontConfig::default());
+        let px = Theme::default().fonts.size_px;
+        for (size, want_page, want_buttons) in [
+            (BIN, BIN_PAGE, BIN_BUTTONS),
+            (DISPLAY, DISPLAY_PAGE, DISPLAY_BUTTONS),
+        ] {
+            let mut s = folder_sheet();
+            s.size = size;
+            let l = s.layout(&text, px);
+            assert_eq!(l.page, want_page, "page of {size:?}");
+            let (ok, cancel, apply, y) = want_buttons;
+            assert_eq!(
+                (l.ok.x, l.cancel.x, l.apply.x, l.ok.y),
+                (ok, cancel, apply, y),
+                "buttons of {size:?}"
+            );
+            assert_eq!(l.strip, STRIP);
+        }
+    }
+
+    #[test]
+    fn tab_runs_off_the_page_onto_the_buttons_and_back() {
+        let mut s = folder_sheet();
+        let tab = |s: &mut PropSheet, back| s.key(form::Key::Tab { back }, None);
+        let focus_id = |s: &PropSheet| s.open().focus().map(|i| s.open().items[i].id);
+        // "adv" is the page's own last tab stop; Tab off it lands on OK.
+        s.open_mut().focus_id("adv");
+        assert_eq!(tab(&mut s, false), Event::Redraw);
+        assert_eq!(focus_id(&s), Some(OK));
+        assert_eq!(s.key(form::Key::Enter, None), Event::Ok);
+        assert_eq!(s.key(form::Key::Space, None), Event::Ok);
+        // Shift+Tab off OK goes back to the page's last control.
+        assert_eq!(tab(&mut s, true), Event::Redraw);
+        assert_eq!(focus_id(&s), Some("adv"));
+        // Forward: OK, Cancel, then the tab strip and round to the page's
+        // first control: a greyed Apply is not a tab stop.
+        tab(&mut s, false);
+        tab(&mut s, false);
+        assert_eq!(focus_id(&s), Some(CANCEL));
+        assert_eq!(s.key(form::Key::Enter, None), Event::Cancel);
+        tab(&mut s, false);
+        assert!(s.tabs.focused, "skipped the greyed Apply onto the strip");
+        assert_eq!(focus_id(&s), None, "the page holds no focus meanwhile");
+        tab(&mut s, false);
+        assert!(!s.tabs.focused);
+        assert_eq!(focus_id(&s), Some("ro"));
+        // Live, Apply joins the order after Cancel.
+        s.set_apply_enabled(true);
+        s.open_mut().focus_id("adv");
+        tab(&mut s, false);
+        tab(&mut s, false);
+        tab(&mut s, false);
+        assert_eq!(focus_id(&s), Some(APPLY));
+        assert_eq!(s.key(form::Key::Enter, None), Event::Apply);
+    }
+
+    #[test]
+    fn arrows_on_the_sheet_buttons_move_between_them() {
+        let mut s = folder_sheet();
+        let focus_id = |s: &PropSheet| s.open().focus().map(|i| s.open().items[i].id);
+        s.open_mut().focus_id(OK);
+        assert_eq!(s.key(form::Key::Right, None), Event::Redraw);
+        assert_eq!(focus_id(&s), Some(CANCEL), "Right moves from OK to Cancel");
+        assert_eq!(s.key(form::Key::Right, None), Event::None);
+        assert_eq!(focus_id(&s), Some(CANCEL), "a greyed Apply is passed over");
+        assert_eq!(s.key(form::Key::Enter, None), Event::Cancel);
+        assert_eq!(s.key(form::Key::Left, None), Event::Redraw);
+        assert_eq!(focus_id(&s), Some(OK), "Left moves back to OK");
+        assert!(!s.tabs.focused, "the strip keeps out of it");
+    }
+
+    #[test]
+    fn alt_a_presses_apply_only_when_it_is_live() {
+        let mut s = folder_sheet();
+        // Greyed, nothing answers the access key the button still draws.
+        assert_eq!(s.key(form::Key::Char('a'), None), Event::None);
+        s.set_apply_enabled(true);
+        assert_eq!(s.key(form::Key::Char('A'), None), Event::Apply);
+        assert_eq!(s.key(form::Key::Char('a'), None), Event::Apply);
+        // A letter the page wants still goes to the page: "&Read-only".
+        assert_eq!(
+            s.key(form::Key::Char('r'), None),
+            Event::Page(0, form::Event::Changed("ro"))
+        );
+        assert_eq!(s.key(form::Key::Char('z'), None), Event::None);
+    }
+
+    #[test]
+    fn draws_the_folder_sheets_frames_and_buttons() {
+        let theme = Theme::default();
+        let text = TextRenderer::load(&FontConfig::default());
+        let cs = &theme.colors;
+        let px = theme.fonts.size_px;
+        let s = folder_sheet();
+        let mut c = Canvas::new(FOLDER_SIZE.0 as u32, FOLDER_SIZE.1 as u32);
+        c.fill_rect(c.bounds(), cs.button_face);
+        draw(&mut c, &text, &classic_paint(cs, 1), &s, false, px);
+        // The page's rings.
+        assert_eq!(
+            c.get(FOLDER_PAGE_LEFT, FOLDER_PAGE_TOP + 40),
+            cs.button_hilight.argb()
+        );
+        assert_eq!(
+            c.get(FOLDER_PAGE_RIGHT, FOLDER_PAGE_TOP + 40),
+            cs.button_dk_shadow.argb()
+        );
+        assert_eq!(
+            c.get(FOLDER_PAGE_LEFT + 40, FOLDER_PAGE_BOTTOM),
+            cs.button_dk_shadow.argb()
+        );
+        // The open tab's left ring, and the page's top ring surviving to
+        // the right of the last tab.
+        assert_eq!(
+            c.get(FOLDER_PAGE_LEFT, FOLDER_STRIP_Y + 12),
+            cs.button_hilight.argb()
+        );
+        assert_eq!(
+            c.get(FOLDER_PAGE_RIGHT - 20, FOLDER_PAGE_TOP),
+            cs.button_hilight.argb()
+        );
+        // OK wears the black default ring; Cancel and the greyed Apply
+        // are plain raised buttons.
+        assert_eq!(c.get(FOLDER_OK_X, FOLDER_BUTTON_Y), cs.button_text.argb());
+        assert_eq!(
+            c.get(FOLDER_CANCEL_X, FOLDER_BUTTON_Y),
+            cs.button_hilight.argb()
+        );
+        assert_eq!(
+            c.get(FOLDER_APPLY_X, FOLDER_BUTTON_Y),
+            cs.button_hilight.argb()
+        );
+        assert_eq!(
+            c.get(FOLDER_APPLY_X + BUTTON_W - 1, FOLDER_BUTTON_Y),
+            cs.button_dk_shadow.argb()
+        );
+    }
+
+    /// Writes target/propsheet-folder.png.
+    #[test]
+    #[ignore]
+    fn render_propsheet_folder() {
+        let theme = Theme::default();
+        let text = TextRenderer::load(&FontConfig::default());
+        let mut s = folder_sheet();
+        s.set_apply_enabled(true);
+        let (w, h) = s.size;
+        let mut c = Canvas::new(w as u32, h as u32);
+        c.fill_rect(c.bounds(), theme.colors.button_face);
+        draw(
+            &mut c,
+            &text,
+            &classic_paint(&theme.colors, 1),
+            &s,
+            true,
+            theme.fonts.size_px,
+        );
+        crate::raster::write_preview(&c, "propsheet-folder.png");
+    }
+
+    #[test]
+    #[ignore]
+    fn render_propsheet() {
+        let theme = Theme::default();
+        let text = TextRenderer::load(&FontConfig::default());
+        let s = preview_sheet();
+        let (w, h) = s.size;
+        let mut c = Canvas::new(w as u32, h as u32);
+        c.fill_rect(c.bounds(), theme.colors.button_face);
+        draw(
+            &mut c,
+            &text,
+            &classic_paint(&theme.colors, 1),
+            &s,
+            true,
+            theme.fonts.size_px,
+        );
+        crate::raster::write_preview(&c, "propsheet.png");
+    }
+
+    /// A Volume page like the audio sheet's, at its 361x292 client.
+    fn preview_sheet() -> PropSheet {
+        let page = Form::new(vec![
+            Item::new(
+                "device_group",
+                Rect::new(14, 40, 321, 60),
+                Control::Group("Device volume".into()),
+            ),
+            Item::new(
+                "volume",
+                Rect::new(28, 62, 180, crate::trackbar::HEIGHT),
+                Control::TrackBar(crate::trackbar::TrackBar::new(10, 6)),
+            ),
+            Item::new(
+                "mute",
+                Rect::new(224, 66, 13, 13),
+                Control::Check {
+                    label: "&Mute".into(),
+                    checked: false,
+                    enabled: true,
+                    mixed: None,
+                },
+            ),
+            Item::new(
+                "hint",
+                Rect::new(14, 112, 321, 14),
+                Control::Label {
+                    text: "Move the slider to set the speaker volume.".into(),
+                    enabled: true,
+                    align: Align::Left,
+                },
+            ),
+        ]);
+        let blank = Form::new(vec![]);
+        PropSheet::new(
+            &["Volume", "Sounds", "Audio"],
+            vec![page, blank.clone(), blank],
+            (361, 292),
+        )
+    }
+
+    /// The open tab is the selected one and names the page's panel, which
+    /// holds the page's controls; switching tabs replaces the panel.
+    #[test]
+    fn the_open_tab_names_the_panel_it_holds() {
+        use crate::access::{ROOT, Tree, accesskit::Role};
+        let text = TextRenderer::load(&FontConfig::default());
+        let mut s = sheet(&["General", "Advanced"], (398, 424));
+        let access = |s: &PropSheet| {
+            let mut tree = Tree::window("T", s.size);
+            let (panel, focus) = s.access(&mut tree, ROOT, &text, 11);
+            (tree, panel, focus)
+        };
+        let (tree, panel, focus) = access(&s);
+        let tab = tree.find(Role::Tab, "General").unwrap();
+        assert_eq!(tree.get(tab).unwrap().is_selected(), Some(true));
+        assert_eq!(tree.get(panel).unwrap().labelled_by(), &[tab]);
+        let check = tree.find(Role::CheckBox, "General").unwrap();
+        assert!(tree.get(panel).unwrap().children().contains(&check));
+        assert_eq!(focus, Some(check));
+        s.tabs.open = 1;
+        let (_, other, _) = access(&s);
+        assert_ne!(panel, other);
+    }
+
+    /// A sheet drawn under `theme`, which tells its pages whether the look
+    /// lights parts under the pointer.
+    fn drawn(s: &PropSheet, theme: &Theme) -> Canvas {
+        let text = TextRenderer::load(&theme.fonts);
+        let mut c = Canvas::new(s.size.0 as u32, s.size.1 as u32);
+        c.fill_rect(c.bounds(), theme.colors.button_face);
+        draw(&mut c, &text, &theme.paint(), s, false, theme.fonts.size_px);
+        c
+    }
+
+    /// Under Blue a closed tab lights under the pointer and draws its Hot
+    /// frame; the open tab never lights, and a leave clears the lit tab.
+    #[test]
+    fn a_blue_sheet_lights_the_closed_tab_under_the_pointer() {
+        let theme = crate::interfaces::theme_for(crate::interface::Interface::Blue);
+        let (text, px) = (TextRenderer::load(&theme.fonts), theme.fonts.size_px);
+        let mut s = sheet(&["General", "Advanced"], (398, 424));
+        drawn(&s, &theme);
+        let t = s.layout(&text, px).tabs[1];
+        let (x, y) = (t.x + 5, t.y + 5);
+        assert_eq!(s.motion(x, y, s.hit(x, y, &text, px)), Event::Redraw);
+        assert_eq!(s.tabs.hot, Some(1));
+        let c = drawn(&s, &theme);
+        let hot = &crate::blue::Variant::Blue.scheme().tab_item.hot;
+        assert_eq!(
+            c.get(t.x + 20, t.y),
+            hot.mark.unwrap().argb(),
+            "the hot tab's lit outline"
+        );
+        assert_eq!(
+            c.get(t.x + 20, t.y + 1),
+            hot.down[0].1.argb(),
+            "the hot tab's light band"
+        );
+        let open = s.layout(&text, px).tabs[0];
+        let (ox, oy) = (open.x + 5, open.y + 5);
+        assert_eq!(s.motion(ox, oy, s.hit(ox, oy, &text, px)), Event::Redraw);
+        assert_eq!(s.tabs.hot, None, "the open tab does not light");
+        s.motion(x, y, s.hit(x, y, &text, px));
+        assert_eq!(s.leave(), Event::Redraw);
+        assert_eq!(s.tabs.hot, None);
+        assert_eq!(s.leave(), Event::None);
+    }
+
+    /// A motion over a page's control lights it, a leave clears it, and a
+    /// switch to another tab leaves the old page and the tab unlit.
+    #[test]
+    fn a_blue_sheet_lights_its_page_and_a_tab_switch_leaves_it() {
+        let theme = crate::interfaces::theme_for(crate::interface::Interface::Blue);
+        let (text, px) = (TextRenderer::load(&theme.fonts), theme.fonts.size_px);
+        let mut s = sheet(&["General", "Advanced"], (398, 424));
+        drawn(&s, &theme);
+        let lit = |s: &PropSheet| s.pages[0].lit(0, form::Light::Body);
+        assert_eq!(s.motion(25, 55, s.hit(25, 55, &text, px)), Event::Redraw);
+        assert_eq!(lit(&s), crate::pointer::Interaction::Hot);
+        assert_eq!(s.leave(), Event::Redraw);
+        assert_eq!(lit(&s), crate::pointer::Interaction::Idle);
+        s.motion(25, 55, s.hit(25, 55, &text, px));
+        let t = s.layout(&text, px).tabs[1];
+        let hit = s.hit(t.x + 5, t.y + 5, &text, px);
+        assert_eq!(s.click(hit), Event::Redraw);
+        assert_eq!(s.tabs.open, 1);
+        assert_eq!(s.tabs.hot, None, "the tab just opened is not lit");
+        assert_eq!(
+            lit(&s),
+            crate::pointer::Interaction::Idle,
+            "the page left behind"
+        );
+        // Ctrl+Tab with a button held lets the page left behind go of it.
+        let ok = s.pages[1].index_of(OK).unwrap();
+        let r = s.pages[1].items[ok].rect;
+        s.click(s.hit(r.x + 5, r.y + 5, &text, px));
+        assert!(s.pages[1].holding());
+        s.key(form::Key::Tab { back: false }, Some(false));
+        assert!(!s.pages[1].holding(), "the button is let go");
+    }
+
+    /// Classic has no hot tab: the strip tracks the pointer but asks for no
+    /// redraw.
+    #[test]
+    fn a_classic_sheet_asks_no_redraw_for_a_tab_under_the_pointer() {
+        let theme = Theme::default();
+        let (text, px) = (TextRenderer::load(&theme.fonts), theme.fonts.size_px);
+        let mut s = sheet(&["General", "Advanced"], (398, 424));
+        let rest = drawn(&s, &theme);
+        let t = s.layout(&text, px).tabs[1];
+        let (x, y) = (t.x + 5, t.y + 5);
+        assert_eq!(s.motion(x, y, s.hit(x, y, &text, px)), Event::None);
+        assert!(drawn(&s, &theme) == rest, "a Classic tab draws the same");
+    }
+}

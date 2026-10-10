@@ -1,0 +1,528 @@
+/* The rules laid over Adwaita: every colour comes from a named colour the
+ * generator defines above, so one sheet serves every scheme. Each group
+ * repeats the state selectors Adwaita styles (:backdrop, :disabled, ...),
+ * which outrank a plain selector. An unfocused window keeps its colours. */
+
+/* Window backgrounds, views and text */
+.background, .background:backdrop, .gtkstyle-fallback {
+  color: @theme_fg_color;
+  background-color: @theme_bg_color;
+}
+label:disabled, label:disabled:backdrop { color: @insensitive_fg_color; }
+.view, iconview, .view text, iconview text, textview text,
+.view:backdrop, iconview:backdrop, .view text:backdrop, iconview text:backdrop, textview text:backdrop {
+  color: @theme_text_color;
+  caret-color: @theme_text_color;
+  background-color: @theme_base_color;
+}
+.view:disabled, iconview:disabled, .view text:disabled, iconview text:disabled, textview text:disabled,
+.view:backdrop:disabled, iconview:backdrop:disabled, .view text:backdrop:disabled, iconview text:backdrop:disabled, textview text:backdrop:disabled {
+  color: @insensitive_fg_color;
+  background-color: @insensitive_base_color;
+}
+textview border { background-color: @theme_bg_color; }
+.content-view, .content-view:backdrop { background-color: @theme_base_color; }
+
+/* Selection */
+.view:selected:focus, .view:selected, .view text:selected:focus, textview text:selected:focus,
+.view text:selected, textview text:selected, .view text selection:focus, .view text selection,
+textview text selection:focus, textview text selection, iconview:selected:focus, iconview:selected,
+iconview text selection:focus, iconview text selection, flowbox flowboxchild:selected,
+spinbutton:not(.vertical) selection, entry selection, modelbutton.flat:selected,
+.menuitem.button.flat:selected, row:selected, calendar:selected, label selection,
+treeview.view:selected, treeview.view:selected:backdrop,
+.view:selected:backdrop, .view text:selected:backdrop, textview text:selected:backdrop,
+.view text selection:backdrop, textview text selection:backdrop, iconview:selected:backdrop,
+row:selected:backdrop, label:backdrop selection, label:backdrop:selected,
+entry selection:backdrop, spinbutton:not(.vertical) selection:backdrop {
+  color: @theme_selected_fg_color;
+  background-color: @theme_selected_bg_color;
+}
+row.activatable:selected:backdrop { background-color: @theme_selected_bg_color; }
+row.activatable:selected:hover, row.activatable:selected.has-open-popup {
+  background-color: shade(@theme_selected_bg_color, 0.95);
+}
+row.activatable:hover, row.activatable.has-open-popup {
+  background-color: alpha(@theme_selected_bg_color, 0.12);
+}
+.rubberband, rubberband, .content-view rubberband, .content-view .rubberband,
+treeview.view rubberband, flowbox rubberband {
+  border: 1px solid @theme_selected_bg_color;
+  background-color: alpha(@theme_selected_bg_color, 0.2);
+}
+
+/* Links */
+button:link > label, button:visited > label, button:link, button:visited, *:link,
+button:link > label:visited, button:visited > label:visited, button:visited, *:link:visited,
+button:link > label:active, button:visited > label:active, button:active:link, button:active:visited, *:link:active,
+button:link > label:backdrop, button:visited > label:backdrop, button:backdrop:link, button:backdrop:visited, *:link:backdrop {
+  color: @link_color;
+}
+button:link > label:hover, button:visited > label:hover, button:hover:link, button:hover:visited, *:link:hover {
+  color: shade(@link_color, 1.2);
+}
+*:selected button:link > label, *:selected *:link { color: @theme_selected_fg_color; }
+
+/* Buttons */
+button, button:hover, button:active, button:checked,
+notebook > header > tabs > arrow, notebook > header > tabs > arrow:hover {
+  color: @theme_fg_color;
+  outline-color: alpha(@theme_fg_color, 0.3);
+  border-color: @borders;
+  text-shadow: none;
+  -gtk-icon-shadow: none;
+}
+button, notebook > header > tabs > arrow {
+  background-image: linear-gradient(to top, shade(@theme_bg_color, 0.96) 2px, @theme_bg_color);
+  box-shadow: inset 0 1px alpha(@reprise_hilight, 0.6);
+}
+button:hover, notebook > header > tabs > arrow:hover {
+  background-image: linear-gradient(to top, @theme_bg_color, shade(@theme_bg_color, 1.03) 1px);
+  box-shadow: inset 0 1px alpha(@reprise_hilight, 0.8);
+}
+button:active, button:checked,
+notebook > header > tabs > arrow:active, notebook > header > tabs > arrow:checked {
+  background-image: image(shade(@theme_bg_color, 0.88));
+  box-shadow: none;
+}
+button:backdrop, button:backdrop.flat:hover {
+  color: @theme_fg_color;
+  border-color: @borders;
+  background-image: image(@theme_bg_color);
+  box-shadow: none;
+}
+button:backdrop:active, button:backdrop:checked,
+button:backdrop.flat:active, button:backdrop.flat:checked {
+  color: @theme_fg_color;
+  border-color: @borders;
+  background-image: image(shade(@theme_bg_color, 0.88));
+}
+button:disabled, button:backdrop:disabled, button.flat:disabled, button:backdrop.flat:disabled,
+notebook > header > tabs > arrow:disabled {
+  color: @insensitive_fg_color;
+  border-color: @borders;
+  background-image: image(@insensitive_bg_color);
+  box-shadow: none;
+}
+button:disabled:active, button:disabled:checked, button:backdrop:disabled:active, button:backdrop:disabled:checked {
+  color: @insensitive_fg_color;
+  background-image: image(shade(@insensitive_bg_color, 0.92));
+}
+button.flat, button.flat:backdrop, button.flat:disabled, button.flat:backdrop:disabled,
+button.titlebutton, button.titlebutton:backdrop, button.sidebar-button, notebook > header > tabs > arrow.flat {
+  border-color: transparent;
+  background-image: none;
+  box-shadow: none;
+}
+.inline-toolbar toolbutton > button, .inline-toolbar toolbutton > button:backdrop {
+  color: @theme_fg_color;
+  border-color: @borders;
+  background-image: image(@theme_bg_color);
+  box-shadow: none;
+  text-shadow: none;
+}
+button.suggested-action, button.suggested-action:hover, button.suggested-action:backdrop {
+  color: @theme_selected_fg_color;
+  border-color: shade(@theme_selected_bg_color, 0.8);
+  background-image: image(@theme_selected_bg_color);
+  box-shadow: none;
+}
+button.suggested-action:hover { background-image: image(shade(@theme_selected_bg_color, 1.1)); }
+button.suggested-action:active, button.suggested-action:checked {
+  background-image: image(shade(@theme_selected_bg_color, 0.85));
+}
+button.suggested-action:disabled, button.suggested-action:backdrop:disabled {
+  color: @insensitive_fg_color;
+  border-color: @borders;
+  background-image: image(@insensitive_bg_color);
+}
+spinbutton:not(.vertical) button, spinbutton:not(.vertical) button:backdrop {
+  color: @theme_text_color;
+  border-color: alpha(@borders, 0.3);
+  background-image: none;
+  box-shadow: none;
+}
+spinbutton:not(.vertical) button:hover { background-color: alpha(@theme_text_color, 0.06); }
+spinbutton:not(.vertical) button:disabled, spinbutton:not(.vertical) button:backdrop:disabled {
+  color: @insensitive_fg_color;
+}
+row:selected button { border-color: shade(@theme_selected_bg_color, 0.8); }
+
+/* Entries */
+spinbutton:not(.vertical), entry, spinbutton:backdrop:not(.vertical), entry:backdrop {
+  color: @theme_text_color;
+  border-color: @borders;
+  background-color: @theme_base_color;
+  box-shadow: none;
+}
+spinbutton:focus:not(.vertical), entry:focus {
+  border-color: @theme_selected_bg_color;
+  box-shadow: inset 0 0 0 1px @theme_selected_bg_color;
+}
+spinbutton:disabled:not(.vertical), entry:disabled,
+spinbutton:backdrop:disabled:not(.vertical), entry:backdrop:disabled {
+  color: @insensitive_fg_color;
+  border-color: @borders;
+  background-color: @insensitive_base_color;
+}
+spinbutton:not(.vertical) image, entry image, spinbutton:not(.vertical) image:backdrop, entry image:backdrop {
+  color: alpha(@theme_text_color, 0.7);
+}
+spinbutton:not(.vertical) image:hover, entry image:hover { color: @theme_text_color; }
+spinbutton:not(.vertical) progress, entry progress { border-color: @theme_selected_bg_color; }
+treeview entry.flat, treeview entry, treeview entry:focus { background-color: @theme_base_color; }
+
+/* Header bars carry the caption's colours */
+.titlebar:not(headerbar), headerbar {
+  color: @reprise_caption_text;
+  border-color: @borders;
+  background: @reprise_caption;
+  box-shadow: none;
+}
+.titlebar:backdrop:not(headerbar), headerbar:backdrop {
+  color: @reprise_inactive_caption_text;
+  border-color: @borders;
+  background: @reprise_inactive_caption;
+  box-shadow: none;
+}
+headerbar .title, .titlebar .title, headerbar .subtitle, .titlebar .subtitle,
+headerbar label, .titlebar label { color: @reprise_caption_text; }
+headerbar:backdrop .title, .titlebar:backdrop .title, headerbar:backdrop .subtitle,
+.titlebar:backdrop .subtitle, headerbar:backdrop label, .titlebar:backdrop label {
+  color: @reprise_inactive_caption_text;
+}
+headerbar button label, .titlebar button label,
+headerbar:backdrop button label, .titlebar:backdrop button label { color: @theme_fg_color; }
+headerbar button:disabled label, .titlebar button:disabled label { color: @insensitive_fg_color; }
+headerbar button.titlebutton, .titlebar button.titlebutton { color: @reprise_caption_text; }
+headerbar:backdrop button.titlebutton, .titlebar:backdrop button.titlebutton {
+  color: @reprise_inactive_caption_text;
+}
+headerbar button.titlebutton:hover, .titlebar button.titlebutton:hover,
+headerbar button.titlebutton:active, .titlebar button.titlebutton:active {
+  color: @theme_fg_color;
+  border-color: @borders;
+  background-image: image(@theme_bg_color);
+}
+.titlebar:not(headerbar) stackswitcher button:checked, .titlebar:not(headerbar) button.toggle:checked,
+headerbar stackswitcher button:checked, headerbar button.toggle:checked,
+.titlebar:not(headerbar) stackswitcher button:checked:backdrop, .titlebar:not(headerbar) button.toggle:checked:backdrop,
+headerbar stackswitcher button:checked:backdrop, headerbar button.toggle:checked:backdrop {
+  color: @theme_fg_color;
+  border-color: @borders;
+  background: image(shade(@theme_bg_color, 0.88));
+  box-shadow: none;
+}
+.titlebar:not(headerbar) separator, headerbar separator { background-color: alpha(@reprise_caption_text, 0.3); }
+messagedialog .titlebar { background-color: @theme_bg_color; background-image: none; }
+
+/* Menus */
+menubar, .menubar, menubar:backdrop, .menubar:backdrop {
+  color: @reprise_menu_text;
+  background-color: @reprise_menu_bar;
+  box-shadow: none;
+}
+menubar > menuitem:hover, .menubar > menuitem:hover {
+  color: @reprise_menu_hilight_text;
+  background-color: @reprise_menu_hilight;
+  box-shadow: none;
+}
+menubar > menuitem:disabled, .menubar > menuitem:disabled { color: @insensitive_fg_color; }
+menu, .menu, .context-menu, menu:backdrop, .menu:backdrop, .context-menu:backdrop {
+  color: @reprise_menu_text;
+  background-color: @reprise_menu;
+  border: 1px solid @reprise_dk_shadow;
+}
+menu menuitem, .menu menuitem, .context-menu menuitem,
+menu menuitem:backdrop, .menu menuitem:backdrop, .context-menu menuitem:backdrop { color: @reprise_menu_text; }
+menu menuitem:hover, .menu menuitem:hover, .context-menu menuitem:hover,
+menu menuitem:backdrop:hover, .menu menuitem:backdrop:hover, .context-menu menuitem:backdrop:hover {
+  color: @reprise_menu_hilight_text;
+  background-color: @reprise_menu_hilight;
+}
+menu menuitem:disabled, .menu menuitem:disabled, .context-menu menuitem:disabled,
+menu menuitem:disabled:backdrop, .menu menuitem:disabled:backdrop, .context-menu menuitem:disabled:backdrop {
+  color: @insensitive_fg_color;
+}
+menu > arrow, .menu > arrow, .context-menu > arrow,
+menu > arrow:backdrop, .menu > arrow:backdrop, .context-menu > arrow:backdrop {
+  color: @reprise_menu_text;
+  background-color: @reprise_menu;
+  border-color: @borders;
+}
+menu > arrow:hover, .menu > arrow:hover, .context-menu > arrow:hover {
+  background-color: shade(@reprise_menu, 0.92);
+}
+menu separator, .menu separator { background-color: @borders; }
+popover.background, popover.background:backdrop {
+  color: @theme_fg_color;
+  background-color: @theme_bg_color;
+  border-color: @reprise_dk_shadow;
+}
+modelbutton.flat:hover, .menuitem.button.flat:hover {
+  color: @reprise_menu_hilight_text;
+  background-color: @reprise_menu_hilight;
+}
+
+/* Tooltips */
+tooltip, tooltip.background, .csd tooltip.background {
+  color: @reprise_tooltip_text;
+  background-color: @reprise_tooltip;
+  border: 1px solid @reprise_tooltip_text;
+  text-shadow: none;
+}
+tooltip *, tooltip.background * { color: @reprise_tooltip_text; }
+
+/* Notebooks */
+notebook > header, notebook > header:backdrop {
+  border-color: @borders;
+  background-color: @theme_bg_color;
+}
+notebook > header tab, notebook > header tab:hover, notebook > header tab:checked,
+notebook > header tab:backdrop, notebook > header tab:backdrop:checked { color: @theme_fg_color; }
+notebook > header tab:hover { background-color: shade(@theme_bg_color, 0.95); }
+notebook > header.top > tabs > tab:hover { box-shadow: inset 0 -4px @borders; }
+notebook > header.top > tabs > tab:checked { box-shadow: inset 0 -4px @theme_selected_bg_color; }
+notebook > header.bottom > tabs > tab:hover { box-shadow: inset 0 4px @borders; }
+notebook > header.bottom > tabs > tab:checked { box-shadow: inset 0 4px @theme_selected_bg_color; }
+notebook > header.left > tabs > tab:hover { box-shadow: inset -4px 0 @borders; }
+notebook > header.left > tabs > tab:checked { box-shadow: inset -4px 0 @theme_selected_bg_color; }
+notebook > header.right > tabs > tab:hover { box-shadow: inset 4px 0 @borders; }
+notebook > header.right > tabs > tab:checked { box-shadow: inset 4px 0 @theme_selected_bg_color; }
+notebook > stack:not(:only-child), notebook > stack:not(:only-child):backdrop {
+  background-color: @theme_bg_color;
+}
+
+/* Scrollbars */
+scrollbar, scrollbar:backdrop {
+  background-color: mix(@theme_bg_color, @reprise_hilight, 0.5);
+  border-color: @borders;
+}
+scrollbar.top { border-bottom-color: @borders; }
+scrollbar.bottom { border-top-color: @borders; }
+scrollbar.left { border-right-color: @borders; }
+scrollbar.right { border-left-color: @borders; }
+scrollbar slider, scrollbar slider:backdrop { background-color: @reprise_shadow; }
+scrollbar slider:hover { background-color: @reprise_dk_shadow; }
+scrollbar slider:hover:active { background-color: @theme_selected_bg_color; }
+scrollbar button, scrollbar button:backdrop { color: @reprise_shadow; }
+scrollbar button:hover { color: @reprise_dk_shadow; }
+scrollbar button:active, scrollbar button:checked { color: @theme_selected_bg_color; }
+scrollbar button:disabled, scrollbar button:backdrop:disabled { color: alpha(@reprise_shadow, 0.3); }
+scrollbar.overlay-indicator:not(.dragging):not(.hovering) slider {
+  background-color: @theme_fg_color;
+  border-color: alpha(@theme_bg_color, 0.6);
+}
+treeview ~ scrollbar.vertical { border-top-color: @borders; }
+
+/* Check boxes, radios and switches */
+check, radio, check:backdrop, radio:backdrop {
+  color: @theme_text_color;
+  border-color: @reprise_shadow;
+  background-image: image(@theme_base_color);
+  box-shadow: none;
+}
+check:hover, radio:hover { background-image: image(shade(@theme_base_color, 0.95)); }
+check:disabled, radio:disabled, check:backdrop:disabled, radio:backdrop:disabled {
+  color: @insensitive_fg_color;
+  background-image: image(@insensitive_base_color);
+}
+check:checked, radio:checked, check:indeterminate, radio:indeterminate,
+check:checked:backdrop, radio:checked:backdrop, check:indeterminate:backdrop, radio:indeterminate:backdrop {
+  color: @theme_selected_fg_color;
+  border-color: @theme_selected_bg_color;
+  background-image: image(@theme_selected_bg_color);
+  box-shadow: none;
+}
+check:checked:hover, radio:checked:hover, check:indeterminate:hover, radio:indeterminate:hover {
+  background-image: image(shade(@theme_selected_bg_color, 1.1));
+}
+check:checked:disabled, radio:checked:disabled, check:indeterminate:disabled, radio:indeterminate:disabled,
+check:checked:backdrop:disabled, radio:checked:backdrop:disabled {
+  color: @insensitive_bg_color;
+  border-color: @insensitive_fg_color;
+  background-image: image(@insensitive_fg_color);
+}
+row:selected check, row:selected radio { border-color: @theme_selected_fg_color; }
+treeview.view check:selected, treeview.view radio:selected,
+treeview.view check:selected:focus, treeview.view radio:selected:focus {
+  color: @theme_selected_fg_color;
+  border-color: @theme_selected_fg_color;
+}
+switch, switch:backdrop {
+  color: @theme_fg_color;
+  border-color: @borders;
+  background-color: shade(@theme_bg_color, 0.92);
+  text-shadow: none;
+}
+switch:checked, switch:backdrop:checked {
+  color: @theme_selected_fg_color;
+  border-color: shade(@theme_selected_bg_color, 0.8);
+  background-color: @theme_selected_bg_color;
+  text-shadow: none;
+}
+switch:disabled, switch:backdrop:disabled {
+  color: @insensitive_fg_color;
+  border-color: @borders;
+  background-color: @insensitive_bg_color;
+}
+switch slider, switch:hover slider, switch:backdrop slider {
+  color: @theme_fg_color;
+  border-color: @borders;
+  background-image: image(@theme_bg_color);
+  box-shadow: inset 0 1px alpha(@reprise_hilight, 0.6);
+  text-shadow: none;
+  -gtk-icon-shadow: none;
+}
+switch:checked > slider, switch:backdrop:checked > slider { border-color: shade(@theme_selected_bg_color, 0.8); }
+switch:disabled slider, switch:backdrop:disabled slider {
+  border-color: @borders;
+  background-image: image(@insensitive_bg_color);
+}
+
+/* Scales, progress and level bars */
+progressbar trough, scale fill, scale trough,
+progressbar trough:backdrop, scale fill:backdrop, scale trough:backdrop {
+  border-color: @borders;
+  background-color: shade(@theme_bg_color, 0.92);
+}
+progressbar trough:disabled, scale trough:disabled,
+progressbar trough:backdrop:disabled, scale trough:backdrop:disabled { background-color: @insensitive_bg_color; }
+scale fill, scale fill:backdrop { background-color: @borders; }
+progressbar progress, scale highlight, progressbar progress:backdrop, scale highlight:backdrop {
+  border-color: shade(@theme_selected_bg_color, 0.8);
+  background-color: @theme_selected_bg_color;
+}
+scale slider, scale slider:hover, scale slider:backdrop {
+  color: @theme_fg_color;
+  border-color: @reprise_shadow;
+  background-image: image(@theme_bg_color);
+  box-shadow: inset 0 1px alpha(@reprise_hilight, 0.6);
+}
+scale slider:active { border-color: @theme_selected_bg_color; }
+scale slider:disabled, scale slider:backdrop:disabled {
+  border-color: @borders;
+  background-image: image(@insensitive_bg_color);
+  box-shadow: none;
+}
+/* A scale with marks on one side: Adwaita draws its knob from art in fixed
+ * colours, so it takes the round knob above. The selectors are Adwaita's
+ * own, which outrank the plain ones. */
+scale.horizontal.marks-before:not(.marks-after) slider, scale.horizontal.marks-after:not(.marks-before) slider,
+scale.vertical.marks-before:not(.marks-after) slider, scale.vertical.marks-after:not(.marks-before) slider,
+scale.horizontal.marks-before:not(.marks-after) slider:hover, scale.horizontal.marks-after:not(.marks-before) slider:hover,
+scale.vertical.marks-before:not(.marks-after) slider:hover, scale.vertical.marks-after:not(.marks-before) slider:hover,
+scale.horizontal.marks-before:not(.marks-after) slider:active, scale.horizontal.marks-after:not(.marks-before) slider:active,
+scale.vertical.marks-before:not(.marks-after) slider:active, scale.vertical.marks-after:not(.marks-before) slider:active,
+scale.horizontal.marks-before:not(.marks-after) slider:backdrop, scale.horizontal.marks-after:not(.marks-before) slider:backdrop,
+scale.vertical.marks-before:not(.marks-after) slider:backdrop, scale.vertical.marks-after:not(.marks-before) slider:backdrop {
+  margin: -9px;
+  min-height: 18px;
+  min-width: 18px;
+  border: 1px solid @reprise_shadow;
+  border-radius: 100%;
+  background-color: transparent;
+  background-image: image(@theme_bg_color);
+  box-shadow: inset 0 1px alpha(@reprise_hilight, 0.6);
+}
+scale.horizontal.marks-before:not(.marks-after) slider:active, scale.horizontal.marks-after:not(.marks-before) slider:active,
+scale.vertical.marks-before:not(.marks-after) slider:active, scale.vertical.marks-after:not(.marks-before) slider:active {
+  border-color: @theme_selected_bg_color;
+}
+scale.horizontal.marks-before:not(.marks-after) slider:disabled, scale.horizontal.marks-after:not(.marks-before) slider:disabled,
+scale.vertical.marks-before:not(.marks-after) slider:disabled, scale.vertical.marks-after:not(.marks-before) slider:disabled,
+scale.horizontal.marks-before:not(.marks-after) slider:backdrop:disabled, scale.horizontal.marks-after:not(.marks-before) slider:backdrop:disabled,
+scale.vertical.marks-before:not(.marks-after) slider:backdrop:disabled, scale.vertical.marks-after:not(.marks-before) slider:backdrop:disabled {
+  margin: -9px;
+  min-height: 18px;
+  min-width: 18px;
+  border: 1px solid @borders;
+  border-radius: 100%;
+  background-color: transparent;
+  background-image: image(@insensitive_bg_color);
+  box-shadow: none;
+}
+scale.horizontal.marks-before:not(.marks-after).fine-tune slider, scale.horizontal.marks-after:not(.marks-before).fine-tune slider,
+scale.vertical.marks-before:not(.marks-after).fine-tune slider, scale.vertical.marks-after:not(.marks-before).fine-tune slider {
+  margin: -6px;
+}
+levelbar trough, levelbar trough:backdrop {
+  color: @theme_text_color;
+  border-color: @borders;
+  background-color: @theme_base_color;
+}
+levelbar block.high, levelbar block:not(.empty) {
+  border-color: shade(@theme_selected_bg_color, 0.8);
+  background-color: @theme_selected_bg_color;
+}
+levelbar block.empty { border-color: alpha(@theme_fg_color, 0.2); }
+
+/* Lists, trees and their headers */
+list, list:backdrop {
+  color: @theme_text_color;
+  background-color: @theme_base_color;
+  border-color: @borders;
+}
+treeview.view, treeview.view:backdrop { border-left-color: @borders; border-top-color: @theme_bg_color; }
+treeview.view:disabled, treeview.view:disabled:backdrop { color: @insensitive_fg_color; }
+treeview.view.expander, treeview.view.expander:backdrop { color: alpha(@theme_text_color, 0.7); }
+treeview.view.expander:hover { color: @theme_text_color; }
+treeview.view.expander:selected, treeview.view.expander:selected:backdrop { color: @theme_selected_fg_color; }
+treeview.view.progressbar, treeview.view.progressbar:backdrop {
+  color: @theme_selected_fg_color;
+  background-color: @theme_selected_bg_color;
+  background-image: image(@theme_selected_bg_color);
+}
+treeview.view.trough { background-color: alpha(@theme_text_color, 0.1); }
+treeview.view header button, treeview.view header button:hover, treeview.view header button:active,
+treeview.view header button:backdrop {
+  color: @theme_fg_color;
+  border-color: @borders;
+  background-color: @theme_bg_color;
+  background-image: none;
+}
+treeview.view header button:hover { background-color: shade(@theme_bg_color, 1.04); }
+
+/* Frames, separators, side bars, tool and info bars */
+frame > border, .frame, frame > border:backdrop, .frame:backdrop { border-color: @borders; }
+actionbar > revealer > box, actionbar > revealer > box:backdrop { border-color: @borders; }
+separator { background: alpha(@reprise_shadow, 0.6); }
+paned > separator, paned > separator:backdrop { background-image: image(@borders); }
+paned > separator.wide, paned > separator.wide:backdrop {
+  background-color: @theme_bg_color;
+  background-image: image(@borders), image(@borders);
+}
+.sidebar, .sidebar:backdrop { background-color: @theme_base_color; border-color: @borders; }
+separator.sidebar, separator.sidebar:backdrop { background-color: @borders; }
+placessidebar row:selected, placessidebar row:backdrop:selected { color: @theme_selected_fg_color; }
+placessidebar row:backdrop { color: @theme_fg_color; }
+placessidebar row:disabled, placessidebar row:backdrop:disabled { color: @insensitive_fg_color; }
+.inline-toolbar, searchbar > revealer > box, .location-bar,
+.inline-toolbar:backdrop, searchbar > revealer > box:backdrop, .location-bar:backdrop {
+  border-color: @borders;
+  background-color: @theme_bg_color;
+}
+infobar.info > revealer > box, infobar.question > revealer > box,
+infobar.info:backdrop > revealer > box, infobar.question:backdrop > revealer > box {
+  color: @reprise_tooltip_text;
+  background-color: @reprise_tooltip;
+  border-bottom-color: @borders;
+}
+infobar.info > revealer > box label, infobar.question > revealer > box label,
+infobar.info button label, infobar.question button label { color: @reprise_tooltip_text; }
+expander title > arrow:hover { color: @theme_fg_color; }
+calendar, calendar:backdrop { color: @theme_text_color; border-color: @borders; }
+calendar.button { color: alpha(@theme_fg_color, 0.45); }
+calendar.button:hover { color: @theme_fg_color; }
+calendar.highlight, calendar.highlight:backdrop { color: @theme_fg_color; }
+filechooser .dialog-action-box, filechooser .dialog-action-box:backdrop { border-top-color: @borders; }
+filechooser #pathbarbox { border-bottom-color: @theme_bg_color; }
+.keycap, .keycap:backdrop {
+  color: @theme_text_color;
+  background-color: @theme_base_color;
+  border-color: @borders;
+  box-shadow: inset 0 -3px @theme_bg_color;
+}
+
+/* Client-side window edges */
+.solid-csd decoration { background-color: @borders; border-color: @borders; }

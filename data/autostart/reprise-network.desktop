@@ -1,0 +1,6 @@
+[Desktop Entry]
+Type=Application
+Name=Network
+Exec=reprise-network --tray
+OnlyShowIn=reprise;
+NoDisplay=true

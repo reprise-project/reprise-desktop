@@ -1,0 +1,12 @@
+#%PAM-1.0
+# The lock screen's fingerprint conversation, run beside the password one.
+# pam_faillock's preauth runs before the reader and again after the finger
+# matches: an account locked by wrong passwords typed while the reader
+# waited stays locked for the finger too. The leading "-" keeps a missing
+# pam_fprintd out of the log; the stack still fails without it.
+# timeout=-1: the reader waits for as long as the screen is locked;
+# max-tries (default 3) is the number of fingers it takes.
+auth     requisite  pam_faillock.so preauth
+-auth    required   pam_fprintd.so timeout=-1
+auth     requisite  pam_faillock.so preauth
+account  include    system-auth

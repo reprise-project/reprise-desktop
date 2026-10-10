@@ -1,0 +1,6 @@
+[Desktop Entry]
+Type=Application
+Name=Volume
+Exec=reprise-sound --tray
+OnlyShowIn=reprise;
+NoDisplay=true

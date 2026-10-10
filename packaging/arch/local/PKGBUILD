@@ -1,0 +1,112 @@
+# Maintainer: reprise-project
+
+# Local install of this checkout: packaging/arch/local/build.sh -si
+# build.sh runs makepkg on a copy from a scratch startdir, since makepkg writes
+# pkgver() back and puts src/ and pkg/ beside the PKGBUILD. pkgver is a placeholder.
+pkgname=reprise
+pkgver=0.1.0
+pkgrel=1
+pkgdesc="Wayland desktop with a classic retro look, with Notepad, Explorer and a settings sheet"
+arch=('x86_64')
+url="https://github.com/reprise-project/reprise-desktop"
+license=('GPL-3.0-or-later')
+depends=('seatd' 'systemd-libs' 'libinput' 'libdrm' 'mesa' 'libglvnd' 'libdisplay-info' 'libxkbcommon' 'xorg-xwayland' 'freetype2' 'fontconfig' 'pam' 'libxcrypt' 'dbus' 'pipewire')
+makedepends=('cargo' 'clang' 'pkgconf' 'git')
+optdepends=('ttf-tahoma: the Tahoma UI font'
+            'ttf-dejavu: fallback font' 'noto-fonts-cjk: Chinese, Japanese and Korean text'
+            'wqy-bitmapfont: crisp Chinese text in Reprise'\''s own text with antialias = false'
+            'noto-fonts-emoji: the colour emoji in the Super+. picker'
+            'xdg-utils: open a file with no default program, the Start menu Internet and Help rows, the Edit File... button in Reprise Settings, and a network'\''s sign-in page'
+            'shared-mime-info: file kinds and icons on the desktop, in Explorer and on Properties'
+            'libarchive: bsdtar, which Send To > Compressed (zipped) Folder shells out to'
+            'wireplumber: wpctl, which reprise-sound, reprise-volume and the volume keys set the default device, volume and mute with'
+            'upower: the battery behind the reprise-power tray icon and the on-battery idle timeouts'
+            'power-profiles-daemon: the power profile in Power Options and the battery icon menu'
+            'xdg-desktop-portal: screen sharing, screenshots, and Deskflow through the portals (reprise-portal is the backend), and file drags into Flatpak programs'
+            'xdg-desktop-portal-wlr: the ScreenCast and Screenshot fallback reprise-portals.conf names after reprise-portal'
+            'xdg-desktop-portal-gtk: printing from GTK3 programs, the Print portal reprise-portals.conf names'
+            'gnome-themes-extra: the dark theme GTK3 programs take under a dark look'
+            'qt6ct: Qt 6 programs in the colours of the look ([toolkits] qt_platform_theme = "reprise")'
+            'qt5ct: Qt 5 programs in the colours of the look ([toolkits] qt_platform_theme = "reprise")'
+            'pipewire-pulse: desktop and microphone audio in OBS and browsers'
+            'networkmanager: reprise-network, the network tray icon and Network Connections'
+            'dnsmasq: sharing the connection from a hotspot in Network Connections'
+            'networkmanager-openvpn: OpenVPN connections, and importing .ovpn files in Network Connections'
+            'bluez: reprise-bluetooth, the Bluetooth tray icon and Bluetooth Devices'
+            'udisks2: reprise-drives (drives mounted as they are plugged in, Safely Remove Hardware), and unmounted drives and Eject in Computer'
+            'packagekit: reprise-updates, the updates tray icon and Software Updates'
+            'flatpak: Flatpak application and runtime updates in Software Updates'
+            'fwupd: firmware updates in Software Updates (curl, which pacman needs too, downloads them)'
+            'accountsservice: reprise-accounts (User Accounts)'
+            'cups: reprise-printers, Printers, print queues and the printing tray icon'
+            'cups-filters: driverless IPP Everywhere and AirPrint printers, and the test page, in Printers'
+            'cups-pk-helper: changing printers in Printers with an administrator password, for accounts outside the CUPS admin group'
+            'polkit: the password prompt behind pkexec, udisks and NetworkManager system actions (reprise-polkit)'
+            'gnome-keyring: saved passwords for browsers and other programs, unlocked through PAM (pam_gnome_keyring) at login and by the lock screen password, and the Secret portal for sandboxed programs'
+            'fprintd: fingerprint unlock on the lock screen, and in the admin password prompt when the polkit-1 PAM stack has pam_fprintd'
+            'ddcutil: the brightness keys on an external monitor, over DDC/CI'
+            'at-spi2-core: screen readers (Orca) in Reprise and its programs'
+            'libx11: the Compose files behind dead keys and the Compose key in the lock screen password'
+            'hwdata: graphics card names in About Reprise (pci.ids)'
+            'geoclue: the location prompt and the location indicator (Reprise is the geoclue agent)')
+provides=('reprise')
+conflicts=('reprise-git')
+backup=('etc/pam.d/reprise' 'etc/pam.d/reprise-fingerprint')
+# makepkg's lto turns the C shim in libspa-sys into GCC bitcode that rustc's
+# lld cannot link (undefined *_libspa_rs symbols in reprise-portal).
+options=(!lto)
+source=()
+
+_repo() {
+  printf '%s' "${REPRISE_REPO:-$startdir/../../..}"
+}
+
+pkgver() {
+  cd "$(_repo)"
+  local ver
+  ver="$(awk -F'"' '/^version = /{print $2; exit}' Cargo.toml)"
+  if git rev-parse --git-dir >/dev/null 2>&1; then
+    printf '%s.r%s.%s' "$ver" "$(git rev-list --count HEAD)" "$(git rev-parse --short HEAD)"
+  else
+    printf '%s' "$ver"
+  fi
+}
+
+build() {
+  cd "$(_repo)"
+  export RUSTUP_TOOLCHAIN=stable
+  # Keeps packaging out of the working tree's target/.
+  export CARGO_TARGET_DIR="$srcdir/target"
+  # Named explicitly: the workspace has a root package, so a bare build
+  # would build only that.
+  cargo build --release --locked -p reprise -p reprise-portal \
+    -p reprise-notepad -p reprise-explorer -p reprise-about -p reprise-sound -p reprise-volume -p reprise-settings -p reprise-power -p reprise-datetime -p reprise-accounts -p reprise-network -p reprise-bluetooth -p reprise-drives -p reprise-polkit -p reprise-updates -p reprise-printers
+}
+
+package() {
+  cd "$(_repo)"
+  install -Dm755 "$srcdir/target/release/reprise" "$pkgdir/usr/bin/reprise"
+  for app in reprise-notepad reprise-explorer reprise-about reprise-sound reprise-volume reprise-settings reprise-power reprise-datetime reprise-accounts reprise-network reprise-bluetooth reprise-drives reprise-polkit reprise-updates reprise-printers; do
+    install -Dm755 "$srcdir/target/release/$app" "$pkgdir/usr/bin/$app"
+    install -Dm644 "data/apps/$app.desktop" "$pkgdir/usr/share/applications/$app.desktop"
+  done
+  for app in reprise-sound reprise-power reprise-network reprise-bluetooth reprise-drives reprise-polkit reprise-updates reprise-printers; do
+    install -Dm644 "data/autostart/$app.desktop" "$pkgdir/etc/xdg/autostart/$app.desktop"
+  done
+  install -Dm755 "$srcdir/target/release/reprise-portal" "$pkgdir/usr/bin/reprise-portal"
+  install -Dm644 data/portal/reprise.portal "$pkgdir/usr/share/xdg-desktop-portal/portals/reprise.portal"
+  install -Dm644 data/portal/reprise-settings.portal "$pkgdir/usr/share/xdg-desktop-portal/portals/reprise-settings.portal"
+  install -Dm644 data/portal/org.freedesktop.impl.portal.desktop.reprise.service "$pkgdir/usr/share/dbus-1/services/org.freedesktop.impl.portal.desktop.reprise.service"
+  install -Dm644 data/portal/reprise-portal.service "$pkgdir/usr/lib/systemd/user/reprise-portal.service"
+  install -Dm644 data/reprise.desktop "$pkgdir/usr/share/wayland-sessions/reprise.desktop"
+  for size in 16x16 24x24 32x32 48x48; do
+    install -Dm644 "data/icons/hicolor/$size/apps/reprise.png" "$pkgdir/usr/share/icons/hicolor/$size/apps/reprise.png"
+  done
+  install -Dm644 data/icons/hicolor/scalable/apps/reprise.svg "$pkgdir/usr/share/icons/hicolor/scalable/apps/reprise.svg"
+  install -Dm644 data/reprise-portals.conf "$pkgdir/usr/share/xdg-desktop-portal/reprise-portals.conf"
+  install -Dm644 data/reprise-mimeapps.list "$pkgdir/usr/share/applications/reprise-mimeapps.list"
+  install -Dm644 data/pam.d/reprise "$pkgdir/etc/pam.d/reprise"
+  install -Dm644 data/pam.d/reprise-fingerprint "$pkgdir/etc/pam.d/reprise-fingerprint"
+  install -Dm644 data/geoclue/90-reprise.conf "$pkgdir/etc/geoclue/conf.d/90-reprise.conf"
+  install -Dm644 config.example.toml "$pkgdir/usr/share/doc/reprise/config.example.toml"
+}

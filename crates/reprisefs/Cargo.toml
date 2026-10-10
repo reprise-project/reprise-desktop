@@ -1,0 +1,26 @@
+[package]
+name = "reprisefs"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "The file-system side of the shell: .desktop entries and MIME, naming rules, copy/move/shortcut, freedesktop trash, folder listings, the freedesktop thumbnail cache. No display dependency. UDisks2 over zbus for drives."
+
+[lints]
+workspace = true
+
+[dependencies]
+libc.workspace = true
+log.workspace = true
+# The thumbnail cache: entry names are the MD5 of a file URI, and
+# entries are PNGs with text chunks.
+md5 = "0.8"
+png.workspace = true
+serde.workspace = true
+# `[recycle_bin]` in config.toml, which every host's Delete reads.
+toml_edit.workspace = true
+zbus.workspace = true
+zeroize.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

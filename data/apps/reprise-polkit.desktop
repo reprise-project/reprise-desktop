@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Run As
+Comment=Asks for a password when a program needs one (the polkit agent).
+Exec=reprise-polkit
+Icon=polkit-gnome-authorization
+Categories=Settings;
+StartupWMClass=reprise.polkit
+NoDisplay=true
+Terminal=false

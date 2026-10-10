@@ -1,0 +1,6 @@
+[Desktop Entry]
+Type=Application
+Name=Printers
+Exec=reprise-printers --tray
+OnlyShowIn=reprise;
+NoDisplay=true

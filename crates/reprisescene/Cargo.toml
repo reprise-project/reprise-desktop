@@ -1,0 +1,21 @@
+[package]
+name = "reprisescene"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "A retained scene tree for the compositor: trees, rects, buffers and client surfaces, turned into Smithay render elements per output"
+
+[lints]
+workspace = true
+
+[dependencies]
+smithay = { workspace = true, features = ["wayland_frontend", "desktop"] }
+log.workspace = true
+
+[dev-dependencies]
+# DummyRenderer stands in for the renderer in the surface tests.
+smithay = { workspace = true, features = ["wayland_frontend", "desktop", "renderer_test"] }
+# The surface tests run a client in-process against a small server.
+tempfile.workspace = true
+wayland-client.workspace = true

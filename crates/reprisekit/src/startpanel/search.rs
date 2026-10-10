@@ -1,0 +1,346 @@
+//! The Start panel's search mode, piece by piece, through a style's `Part::Start*` parts: the search
+//! field, a result row and a group's header. The Glass Start panel and the launcher (under a look with
+//! glass) draw with them. Every rect is in device pixels at scale `s`; the offsets in [`at`] are design pixels.
+
+use std::cell::RefCell;
+use std::rc::Rc;
+
+use super::SEARCH_CUE;
+use crate::raster::{Canvas, Rect};
+use crate::style::{Part, State, Style};
+use crate::text::TextRenderer;
+use crate::textedit::{TextEdit, edit_first_visible};
+use crate::theme::{Color, FontConfig};
+
+pub const TEXT_PX: u32 = 12;
+/// A search group's header, a size up: its capitals stand 11 rows tall.
+pub const HEADER_PX: u32 = 15;
+
+pub const FIELD: (i32, i32) = (222, 22);
+
+/// All Programs, Back, the programs tree, search results, and Shut down on the light button, 0xRRGGBB.
+pub const INK_STRONG: u32 = 0x000000;
+pub const INK_CUE: u32 = 0x6D6D6D;
+pub const INK_GREYED: u32 = 0x6D6D6D;
+pub const INK_GROUP: u32 = 0x1E3287;
+
+pub fn ink(rgb: u32) -> Color {
+    Color::rgb((rgb >> 16) as u8, (rgb >> 8) as u8, rgb as u8)
+}
+
+/// Where things sit inside the field, a header and a result, in design pixels from the rect's
+/// top-left: (x, y) of an icon or glyph, the pen x of a line and its baseline (one row under its capitals).
+pub mod at {
+    /// The search field's box: the cue, typed text and caret, magnifier and clear glyph. The magnifier,
+    /// clear glyph and the text's right edge are given in the 222 px box and keep their distance from its right edge in a wider one.
+    pub const CUE_PEN: i32 = 9;
+    pub const CUE_BASE: i32 = 15;
+    pub const TYPED_PEN: i32 = 6;
+    pub const CARET: (i32, i32, i32) = (6, 3, 15);
+    pub const MAGNIFIER: (i32, i32) = (203, 5);
+    pub const CLEAR: (i32, i32) = (206, 8);
+    pub const TEXT_RIGHT: i32 = 200;
+    /// A search group's header (from its capitals' top) and rule; a result's 22 px box, icon and name.
+    pub const HEAD_BASE: i32 = 11;
+    pub const HEAD_RULE_Y: i32 = 6;
+    pub const HEAD_RULE_GAP: i32 = 8;
+    pub const RESULT_BOX_H: i32 = 22;
+    pub const RESULT_ICON: (i32, i32) = (4, 2);
+    pub const RESULT_PEN: i32 = 24;
+    pub const RESULT_BASE: i32 = 15;
+}
+
+/// `font`'s italic, for the search field's cue; loaded once per thread and kept while `font` stays the same.
+pub fn italic(font: &FontConfig) -> Rc<TextRenderer> {
+    thread_local! {
+        static LOADED: RefCell<Option<(FontConfig, Rc<TextRenderer>)>> =
+            const { RefCell::new(None) };
+    }
+    let font = FontConfig {
+        italic: true,
+        ..font.clone()
+    };
+    LOADED.with_borrow_mut(|slot| match slot {
+        Some((f, t)) if *f == font => t.clone(),
+        _ => {
+            let t = Rc::new(TextRenderer::load(&font));
+            *slot = Some((font, t.clone()));
+            t
+        }
+    })
+}
+
+/// `line` in `face` from pen `x` on baseline `y`, ellipsized to what is left of `clip` and laid over what is there; its width.
+#[expect(clippy::too_many_arguments)]
+pub fn line(
+    canvas: &mut Canvas,
+    face: &TextRenderer,
+    x: i32,
+    y: i32,
+    clip: Rect,
+    line: &str,
+    color: Color,
+    size: u32,
+) -> i32 {
+    let room = clip.right() - x;
+    let shown = face.ellipsize(line, room, false, size);
+    face.draw_run_over(canvas, x, y, clip, &shown, false, color, size);
+    face.measure(&shown, false, size)
+}
+
+pub fn glyph(canvas: &mut Canvas, style: &Style, (x, y): (i32, i32), part: Part, s: i32) {
+    let Some(img) = style.part(part) else {
+        return;
+    };
+    let f = img.frame(State::Normal);
+    let (w, h) = (f.width / img.scale, f.height / img.scale);
+    style.draw(
+        canvas,
+        Rect::new(x, y, w * s, h * s),
+        part,
+        State::Normal,
+        s,
+    );
+}
+
+/// The search field in its box `r` holding `edit`, its lines in `text` and the cue in `cue`
+/// ([`italic`]): the box and halo, then the cue in italic grey while empty, else the text, scrolled by
+/// whole characters to keep the caret in the field, its selection on the style's selection colour while
+/// `focused`; the caret while `focused` and `caret` (the blink) is on; the magnifier, or the clear
+/// glyph once there is text, at the box's right.
+///
+/// While `focused` it also shows the canvas' preedit at the caret, underlined under the baseline with
+/// the caret inside it, and reports its [`crate::textedit::TextSpot`] on the canvas, as `draw_edit` does.
+#[expect(clippy::too_many_arguments)]
+pub fn field(
+    canvas: &mut Canvas,
+    style: &Style,
+    text: &TextRenderer,
+    cue: &TextRenderer,
+    r: Rect,
+    edit: &TextEdit,
+    focused: bool,
+    caret: bool,
+    s: i32,
+) {
+    let size = TEXT_PX * s as u32;
+    let from_right = |x: i32| r.width - (FIELD.0 - x) * s;
+    style.draw(
+        canvas,
+        r.inset(-s),
+        Part::StartSearchField,
+        State::Normal,
+        s,
+    );
+    let clip = Rect::new(
+        r.x + s,
+        r.y + s,
+        from_right(at::TEXT_RIGHT),
+        r.height - 2 * s,
+    );
+    let own = edit;
+    let preedit = canvas.preedit().filter(|_| focused).cloned();
+    let composed;
+    let (edit, run, bar_on) = match &preedit {
+        Some(p) => {
+            let (e, run, bar_on) = p.compose(own);
+            composed = e;
+            (&composed, Some(run), bar_on)
+        }
+        None => (own, None, true),
+    };
+    let caret = caret && bar_on;
+    let query = edit.text.as_str();
+    let (cx, cy, ch) = at::CARET;
+    let row = Rect::new(r.x, r.y + cy * s, r.width, ch * s);
+    let mut bar = Rect::new(r.x + cx * s, row.y, s, row.height);
+    if query.is_empty() {
+        let (x, y) = (r.x + at::CUE_PEN * s, r.y + at::CUE_BASE * s);
+        line(canvas, cue, x, y, clip, SEARCH_CUE, ink(INK_CUE), size);
+        if caret && focused {
+            canvas.fill_rect(bar, ink(INK_STRONG));
+        }
+    } else {
+        let (pen, y) = (r.x + at::TYPED_PEN * s, r.y + at::CUE_BASE * s);
+        let room = clip.right() - pen - s;
+        let first = edit_first_visible(text, edit, room, size, 0);
+        let x_of = |i: usize| pen + text.measure(&query[first..i.max(first)], false, size);
+        text.draw_run_over(
+            canvas,
+            pen,
+            y,
+            clip,
+            &query[first..],
+            false,
+            ink(INK_STRONG),
+            size,
+        );
+        let sel = edit.selection();
+        if focused && sel.end > first && !sel.is_empty() {
+            let start = sel.start.max(first);
+            let (x0, x1) = (x_of(start), x_of(sel.end).min(clip.right()));
+            let run = Rect::new(x0, row.y, x1 - x0, row.height).intersect(&clip);
+            let cs = &style.colors;
+            canvas.fill_rect(run, cs.hilight);
+            text.draw_run_over(
+                canvas,
+                x0,
+                y,
+                run,
+                &query[start..sel.end],
+                false,
+                cs.hilight_text,
+                size,
+            );
+        }
+        if let Some(run) = run {
+            let (x0, x1) = (x_of(run.start), x_of(run.end).min(clip.right()));
+            let ul = Rect::new(x0, y + s, x1 - x0, s).intersect(&clip);
+            canvas.fill_rect(ul, ink(INK_STRONG));
+        }
+        let x = x_of(edit.caret().min(query.len())) + (cx - at::TYPED_PEN) * s;
+        bar.x = x.min(clip.right() - s);
+        if caret && focused && x < clip.right() {
+            canvas.fill_rect(Rect::new(x, row.y, s, row.height), ink(INK_STRONG));
+        }
+    }
+    if focused {
+        canvas.report_spot(own.spot(clip, bar));
+    }
+    let (part, (gx, gy)) = if query.is_empty() {
+        (Part::StartMagnifier, at::MAGNIFIER)
+    } else {
+        (Part::StartClear, at::CLEAR)
+    };
+    glyph(canvas, style, (r.x + from_right(gx), r.y + gy * s), part, s);
+}
+
+/// A result row `r`: [`Part::StartLitResult`]'s 22 px box across it when `lit`, the 16 px `icon` and
+/// `name` in `text`, cut short of `r`'s right by 2 px. Returns the pen x past the name.
+#[expect(clippy::too_many_arguments)]
+pub fn result(
+    canvas: &mut Canvas,
+    style: &Style,
+    text: &TextRenderer,
+    r: Rect,
+    icon: Option<&Canvas>,
+    name: &str,
+    lit: bool,
+    s: i32,
+) -> i32 {
+    if lit {
+        let b = Rect::new(r.x, r.y, r.width, at::RESULT_BOX_H * s);
+        style.draw(canvas, b, Part::StartLitResult, State::Normal, s);
+    }
+    if let Some(icon) = icon {
+        let (x, y) = at::RESULT_ICON;
+        canvas.blit_over(r.x + x * s, r.y + y * s, icon);
+    }
+    let clip = Rect::new(r.x, r.y, r.width - 2 * s, r.height);
+    let (x, y) = (r.x + at::RESULT_PEN * s, r.y + at::RESULT_BASE * s);
+    let size = TEXT_PX * s as u32;
+    x + line(canvas, text, x, y, clip, name, ink(INK_STRONG), size)
+}
+
+/// A group's header `r` (its top on the capitals' top): `title` in [`INK_GROUP`] a size up, cut to
+/// `clip`, then [`Part::StartSearchRule`] from past it to a pixel beyond `r`'s right.
+pub fn header(
+    canvas: &mut Canvas,
+    style: &Style,
+    text: &TextRenderer,
+    r: Rect,
+    clip: Rect,
+    title: &str,
+    s: i32,
+) {
+    let (x, y) = (r.x, r.y + at::HEAD_BASE * s);
+    let px = HEADER_PX * s as u32;
+    let w = line(canvas, text, x, y, clip, title, ink(INK_GROUP), px);
+    let x0 = x + w + at::HEAD_RULE_GAP * s;
+    let x1 = r.right() + s;
+    let ry = r.y + at::HEAD_RULE_Y * s;
+    style.draw(
+        canvas,
+        Rect::new(x0, ry, x1 - x0, s),
+        Part::StartSearchRule,
+        State::Normal,
+        s,
+    );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::textedit::Preedit;
+
+    /// The Glass field composing "ni" after "ab": the preedit after the text, underlined a row under
+    /// the baseline, the caret after it, and the spot reporting the field's own text.
+    #[test]
+    fn a_focused_field_shows_the_preedit_underlined_and_reports_its_spot() {
+        let st = crate::glass::style(&crate::glass::Settings::default());
+        let text = TextRenderer::load(&FontConfig::default());
+        let r = Rect::new(4, 4, FIELD.0, FIELD.1);
+        let edit = TextEdit::new("ab", false);
+        let draw = |preedit: Option<Preedit>, focused: bool| {
+            let mut c = Canvas::new(240, 32);
+            c.set_preedit(preedit);
+            field(&mut c, &st, &text, &text, r, &edit, focused, true, 1);
+            c
+        };
+        let mut plain = draw(None, true);
+        let mut composing = draw(Preedit::new("ni".into(), 2, 2), true);
+        let spot = composing.take_spot().expect("a focused field reports");
+        let before = plain.take_spot().expect("a focused field reports");
+        assert_eq!(
+            spot.surrounding, before.surrounding,
+            "the preedit is no text yet"
+        );
+        let (ab, ni) = (
+            text.measure("ab", false, TEXT_PX),
+            text.measure("ni", false, TEXT_PX),
+        );
+        assert_eq!(
+            spot.caret.x,
+            before.caret.x + ni,
+            "the caret after the preedit"
+        );
+        let pen = r.x + at::TYPED_PEN + ab;
+        let y = r.y + at::CUE_BASE + 1;
+        for x in pen..pen + ni {
+            assert_eq!(composing.get(x, y), 0xFF00_0000, "underline at ({x}, {y})");
+        }
+        assert_ne!(
+            plain.get(pen + 2, y),
+            0xFF00_0000,
+            "no underline without a preedit"
+        );
+        let mut away = draw(Preedit::new("ni".into(), 2, 2), false);
+        assert_eq!(away.take_spot(), None, "an unfocused field reports nothing");
+        assert_eq!(away.pixels, draw(None, false).pixels, "nor shows a preedit");
+    }
+
+    /// A preedit marking its whole run (0..2) draws it on the hilight colour with the caret at its end.
+    #[test]
+    fn a_preedit_range_draws_selected_in_the_field() {
+        let st = crate::glass::style(&crate::glass::Settings::default());
+        let text = TextRenderer::load(&FontConfig::default());
+        let r = Rect::new(4, 4, FIELD.0, FIELD.1);
+        let edit = TextEdit::new("ab", false);
+        let mut c = Canvas::new(240, 32);
+        c.set_preedit(Preedit::new("ni".into(), 0, 2));
+        field(&mut c, &st, &text, &text, r, &edit, true, true, 1);
+        let (ab, ni) = (
+            text.measure("ab", false, TEXT_PX),
+            text.measure("ni", false, TEXT_PX),
+        );
+        let pen = r.x + at::TYPED_PEN + ab;
+        let row = r.y + at::CARET.1;
+        let hl = st.colors.hilight.argb();
+        assert_eq!(c.get(pen, row), hl, "the range starts on hilight");
+        assert_eq!(c.get(pen + ni - 1, row), hl, "and ends on it");
+        assert_ne!(c.get(pen - 1, row), hl, "ab is not selected");
+        let spot = c.take_spot().expect("a focused field reports");
+        let caret = r.x + at::CARET.0 + ab + ni;
+        assert_eq!(spot.caret.x, caret, "the caret ends the range");
+    }
+}

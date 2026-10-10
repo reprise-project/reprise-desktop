@@ -1,0 +1,433 @@
+//! Tooltip glue: the show delay, hide timer and scene node for taskbar, tray, Welcome, Start menu
+//! and desktop tips. A tip sits in `layers.overlay` with no owner tag, so the pointer passes through.
+
+use std::time::Duration;
+
+use reprisekit::controls::tooltip::{
+    INFO_BELOW_POINTER, INFO_BELOW_ROW, SHOW_MS, balloon_size, draw_balloon_tip, draw_info_tip,
+    draw_tip, info_size, place, place_balloon, place_below, place_beside, task_tip, tip_size,
+};
+use reprisekit::startpanel::Spot;
+use reprisescene::{Input, TreeId};
+use smithay::output::Output;
+use smithay::reexports::calloop::{
+    RegistrationToken,
+    timer::{TimeoutAction, Timer},
+};
+
+use crate::compositor::State;
+use crate::output::upload_scaled;
+use crate::raster::Rect;
+use crate::taskbar::TaskbarHit;
+
+const HIDE_MS: u64 = 5000;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Target {
+    Taskbar { bar: TreeId, hit: TaskbarHit },
+    Dialog(usize, usize),
+    Menu { depth: usize, row: usize },
+    Desktop(usize),
+    StartPanel(Spot),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum Tip {
+    Label(String),
+    Balloon { title: String, body: String },
+    Info(String),
+    Icon(Vec<String>),
+}
+
+#[derive(Default)]
+pub struct TooltipView {
+    timer: Option<RegistrationToken>,
+    pending: Option<(Target, Tip)>,
+    shown: Option<(Target, TreeId)>,
+    resting: Option<Target>,
+    /// The target a press landed on: it gets no tip again until the
+    /// pointer rests on another, so a click whose target moves or changes
+    /// its text (the tray arrow) leaves no stale tip behind.
+    pressed: Option<Target>,
+}
+
+impl TooltipView {
+    fn note_press(&mut self) {
+        self.pressed = self.resting;
+    }
+
+    fn holds_back(&mut self, target: Target) -> bool {
+        if self.pressed == Some(target) {
+            return true;
+        }
+        self.pressed = None;
+        false
+    }
+
+    fn any(&self, f: impl Fn(&Target) -> bool) -> bool {
+        self.shown.as_ref().is_some_and(|(t, _)| f(t))
+            || self.pending.as_ref().is_some_and(|(t, _)| f(t))
+    }
+}
+
+fn arm(state: &mut State, ms: u64) {
+    if let Some(t) = state.tooltip.timer.take() {
+        state.handle.remove(t);
+    }
+    if ms == 0 {
+        return;
+    }
+    let timer = Timer::from_duration(Duration::from_millis(ms));
+    match state.handle.insert_source(timer, |_, _, state| {
+        state.tooltip.timer = None;
+        fired(state);
+        TimeoutAction::Drop
+    }) {
+        Ok(t) => state.tooltip.timer = Some(t),
+        Err(e) => log::warn!("tooltip timer: {}", e.error),
+    }
+}
+
+/// The pointer is over `hit` on bar `bar`. A new target with a tip
+/// replaces whatever is showing or waiting and starts the show delay; the
+/// same target as before changes nothing, so the tip stays up while the
+/// pointer wanders within one button.
+pub fn hover(state: &mut State, bar: TreeId, hit: TaskbarHit) {
+    rest_on(state, Target::Taskbar { bar, hit }, |s| {
+        label_for(s, bar, hit).map(Tip::Label)
+    });
+}
+
+pub fn hover_dialog(state: &mut State, d: usize, i: Option<usize>) {
+    let Some(i) = i else {
+        hide(state);
+        return;
+    };
+    rest_on(state, Target::Dialog(d, i), |s| {
+        s.dialogs
+            .views
+            .get(d)
+            .and_then(|v| v.dialog.tip(i))
+            .map(|(title, body)| Tip::Balloon { title, body })
+    });
+}
+
+pub fn hover_desktop(state: &mut State, index: Option<usize>) {
+    let Some(i) = index else {
+        if state.tooltip.any(|t| matches!(t, Target::Desktop(_))) {
+            hide(state);
+        }
+        return;
+    };
+    rest_on(state, Target::Desktop(i), |s| {
+        let view = s.desktop.as_ref()?;
+        let place = crate::desktop::shell_place(&view.entries.get(i)?.kind)?;
+        Some(Tip::Icon(vec![place.tip().to_string()]))
+    });
+}
+
+pub fn hover_menu(state: &mut State, depth: usize, row: Option<usize>) {
+    let Some(row) = row else {
+        if state
+            .tooltip
+            .any(|t| matches!(t, Target::Menu { depth: d, .. } if *d == depth))
+        {
+            hide(state);
+        }
+        return;
+    };
+    rest_on(state, Target::Menu { depth, row }, |s| {
+        s.menus.get(depth)?.kind.tip(row).map(Tip::Info)
+    });
+}
+
+pub fn hover_start_panel(state: &mut State, spot: Option<Spot>) {
+    let Some(spot) = spot else {
+        if state.tooltip.any(|t| matches!(t, Target::StartPanel(_))) {
+            hide(state);
+        }
+        return;
+    };
+    rest_on(state, Target::StartPanel(spot), |s| {
+        s.start_panel_tip(spot).map(Tip::Info)
+    });
+}
+
+pub fn menus_closed_above(state: &mut State, depth: usize) {
+    if state
+        .tooltip
+        .any(|t| matches!(t, Target::Menu { depth: d, .. } if *d > depth))
+    {
+        hide(state);
+    }
+}
+
+pub fn menus_closed(state: &mut State) {
+    if state.tooltip.any(|t| matches!(t, Target::Menu { .. })) {
+        hide(state);
+    }
+}
+
+pub fn output_gone(state: &mut State) {
+    let bars: Vec<TreeId> = state.bars.iter().map(|b| b.tree).collect();
+    if state
+        .tooltip
+        .any(|t| matches!(t, Target::Taskbar { bar, .. } if !bars.contains(bar)))
+    {
+        hide(state);
+    }
+}
+
+fn rest_on(state: &mut State, target: Target, tip: impl FnOnce(&State) -> Option<Tip>) {
+    if state.tooltip.any(|t| *t == target) {
+        return;
+    }
+    hide(state);
+    state.tooltip.resting = Some(target);
+    if state.tooltip.holds_back(target) {
+        return;
+    }
+    if let Some(tip) = tip(state) {
+        state.tooltip.pending = Some((target, tip));
+        arm(state, u64::from(SHOW_MS));
+    }
+}
+
+pub fn press(state: &mut State) {
+    state.tooltip.note_press();
+    take_down(state);
+}
+
+pub fn hide(state: &mut State) {
+    state.tooltip.resting = None;
+    take_down(state);
+}
+
+fn take_down(state: &mut State) {
+    if state.tooltip.pending.is_none() && state.tooltip.shown.is_none() {
+        return;
+    }
+    state.tooltip.pending = None;
+    if let Some((_, tree)) = state.tooltip.shown.take() {
+        state.scene.destroy(tree);
+        state.redraw_all();
+    }
+    arm(state, 0);
+}
+
+fn fired(state: &mut State) {
+    if state.tooltip.shown.is_some() {
+        take_down(state);
+        return;
+    }
+    let Some((target, tip)) = state.tooltip.pending.take() else {
+        return;
+    };
+    let cursor = state.pointer_location();
+    let output = match target {
+        Target::Taskbar { bar, .. } => state.bar(bar).map(|b| b.output.clone()),
+        Target::Dialog(d, _) => state.dialogs.views.get(d).map(|v| v.output.clone()),
+        Target::Menu { depth, .. } => state.menus.get(depth).map(|m| m.output.clone()),
+        Target::Desktop(_) => state.output_at(cursor.x, cursor.y),
+        Target::StartPanel(_) => state.start_panel_output(),
+    };
+    let Some(output) = output else {
+        return;
+    };
+    show_tip(
+        state,
+        target,
+        &tip,
+        &output,
+        (cursor.x as i32, cursor.y as i32),
+    );
+    arm(state, HIDE_MS);
+}
+
+fn show_tip(state: &mut State, target: Target, tip: &Tip, output: &Output, cursor: (i32, i32)) {
+    let scale = state.draw_scale_at(Some(output)).max(1);
+    let base = &state.config.theme;
+    let theme = base.scaled(scale);
+    let text = &state.text;
+    let screen = state.layout_box(Some(output));
+    // A taskbar tip opens on the screen side of the bar: above the
+    // pointer over a bottom bar, under it below a top bar, beside a side
+    // bar level with the pointer.
+    let p = state.bar_placement(output);
+    let below = p.edge == reprisekit::taskbar::Edge::Top;
+    let beside = matches!(target, Target::Taskbar { .. }) && p.edge.is_side();
+    let (canvas, (x, y)) = match tip {
+        Tip::Label(label) => {
+            let size = tip_size(text, base, label);
+            let at = if beside {
+                let right = p.edge == reprisekit::taskbar::Edge::Left;
+                place_beside(cursor, p.screen_side(), right, size, screen)
+            } else {
+                place(cursor, size, screen, below)
+            };
+            (draw_tip(&theme, text, label), at)
+        }
+        Tip::Balloon { title, body } => (
+            draw_balloon_tip(&theme, text, title, body),
+            place_balloon(cursor, balloon_size(text, base, title, body), screen),
+        ),
+        Tip::Info(body) => {
+            let row = match target {
+                Target::Menu { depth, row } => menu_row_rect(state, depth, row),
+                _ => None,
+            };
+            // A menu row's tip hangs under the row unless the pointer is
+            // on it; every other infotip hangs under the pointer.
+            let anchor = match row {
+                Some(r) if !r.contains(cursor.0, cursor.1) => {
+                    (r.x + INFO_BELOW_ROW.0, r.bottom() + INFO_BELOW_ROW.1)
+                }
+                _ => (cursor.0, cursor.1 + INFO_BELOW_POINTER),
+            };
+            (
+                draw_info_tip(&theme, text, body),
+                place_below(anchor, info_size(text, base, body), screen),
+            )
+        }
+        Tip::Icon(lines) => {
+            use reprisekit::controls::infotip;
+            (
+                infotip::draw(&theme, text, lines, scale),
+                infotip::place(cursor, infotip::size(text, base, lines), screen),
+            )
+        }
+    };
+    let scene = &mut state.scene;
+    let tree = scene.tree_create(state.layers.overlay);
+    crate::glass::leave_out(scene, tree);
+    let buffer = scene.buffer_create(tree);
+    scene.set_input(buffer, Input::Passthrough);
+    scene.set_position(tree, x, y);
+    upload_scaled(scene, buffer, &canvas, scale);
+    state.tooltip.shown = Some((target, tree));
+    state.redraw_all();
+}
+
+fn menu_row_rect(state: &State, depth: usize, row: usize) -> Option<Rect> {
+    let m = state.menus.get(depth)?;
+    let r = *m.layout.rows.get(row)?;
+    Some(Rect::new(m.x + r.x, m.y + r.y, r.width, r.height))
+}
+
+fn chevron_tip(arrow: bool, open: bool) -> &'static str {
+    if arrow && open {
+        "Hide"
+    } else {
+        "Show hidden icons"
+    }
+}
+
+pub(crate) fn label_for(state: &State, bar: TreeId, hit: TaskbarHit) -> Option<String> {
+    match hit {
+        TaskbarHit::Start => Some("Click here to begin".to_string()),
+        TaskbarHit::Quick(i) => state.quicklaunch.get(i).map(|q| q.entry.label.clone()),
+        TaskbarHit::Clock => Some(crate::taskbar::date_text()),
+        TaskbarHit::Pager(i) => Some(format!("Desktop {}", i + 1)),
+        TaskbarHit::ShowDesktop => Some("Show desktop".to_string()),
+        TaskbarHit::Chevron => {
+            let open = state.bar(bar).is_some_and(|b| b.tray_open);
+            Some(chevron_tip(crate::trayreveal::arrow_look(state), open).to_string())
+        }
+        TaskbarHit::More => Some("Show more windows".to_string()),
+        TaskbarHit::Tray(i) => match crate::tray::cell_at(state, bar, i) {
+            crate::tray::Cell::Hidden(_) => {
+                let revealed = state.bar(bar).map_or(0, |b| b.layout.tray_hidden);
+                (state.tray.as_ref())
+                    .and_then(|t| t.item_at(revealed, 0, i))
+                    .map(|it| it.tooltip.clone())
+                    .filter(|s| !s.is_empty())
+            }
+            crate::tray::Cell::Item(i) => state
+                .tray
+                .as_ref()
+                .and_then(|t| t.items.get(i))
+                .map(|it| it.tooltip.clone())
+                .filter(|s| !s.is_empty()),
+            crate::tray::Cell::Builtin(b) => crate::tray::builtin::shown(state)
+                .get(b)
+                .and_then(|&b| crate::tray::builtin::label(state, b)),
+        },
+        TaskbarHit::Task(i) => {
+            let b = state.bar(bar)?;
+            // The preview panel (`taskpreview`) names the windows instead;
+            // a pinned app with none has no panel, so it keeps its tip.
+            if state.config.previews.taskbar && b.buttons.get(i).is_some_and(|w| !w.is_empty()) {
+                return None;
+            }
+            let rect = *b.layout.tasks.get(i)?;
+            let (title, bold) = task_button_title(state, bar, i)?;
+            let size = state.config.theme.fonts.size_px;
+            task_tip(&state.text, size, &title, bold, rect.width)
+        }
+        TaskbarHit::Grip(_) | TaskbarHit::Resize | TaskbarHit::Nothing => None,
+    }
+}
+
+fn task_button_title(state: &State, bar: TreeId, i: usize) -> Option<(String, bool)> {
+    let b = state.bar(bar)?;
+    if let Some(id) = b.dialogs.get(i).copied().flatten() {
+        let v = state.dialogs.views.iter().find(|v| v.id == id)?;
+        return Some((v.dialog.title.clone(), state.active_dialog_id() == Some(id)));
+    }
+    let live = |w: &crate::window::Window| state.focused == Some(w.id) && !w.minimized;
+    let wins: Vec<&crate::window::Window> = b
+        .buttons
+        .get(i)?
+        .iter()
+        .filter_map(|&w| state.win(w))
+        .collect();
+    match wins.as_slice() {
+        [] => {
+            let k = b.pins.get(i).copied().flatten()?;
+            state
+                .quicklaunch
+                .get(k)
+                .map(|q| (q.entry.label.clone(), false))
+        }
+        [w] => Some((w.title(), live(w))),
+        many => {
+            let name = crate::taskbar::group_name(&many[0].app_id());
+            let active = many.iter().any(|w| live(w));
+            Some((format!("{name} ({})", many.len()), active))
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_arrows_tip_follows_its_run() {
+        assert_eq!(chevron_tip(true, false), "Show hidden icons");
+        assert_eq!(chevron_tip(true, true), "Hide");
+    }
+
+    #[test]
+    fn a_pressed_target_gets_no_tip_until_the_pointer_moves_on() {
+        let (arrow, icon) = (Target::Desktop(0), Target::Desktop(1));
+        let mut v = TooltipView {
+            resting: Some(arrow),
+            ..TooltipView::default()
+        };
+        v.note_press();
+        assert!(v.holds_back(arrow), "the pressed target stays quiet");
+        assert!(
+            v.holds_back(arrow),
+            "for as long as the pointer stays on it"
+        );
+        assert!(!v.holds_back(icon), "another target gets its tip");
+        assert!(!v.holds_back(arrow), "and the pressed one again after that");
+    }
+
+    #[test]
+    fn the_flyouts_tip_stays_put() {
+        assert_eq!(chevron_tip(false, false), "Show hidden icons");
+        assert_eq!(chevron_tip(false, true), "Show hidden icons");
+    }
+}

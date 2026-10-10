@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Network Connections
+Comment=Wired, wireless and VPN connections
+Exec=reprise-network
+Icon=preferences-system-network
+Categories=Settings;
+StartupWMClass=reprise.network
+Terminal=false

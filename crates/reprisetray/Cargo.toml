@@ -1,0 +1,22 @@
+[package]
+name = "reprisetray"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "A StatusNotifierItem with a dbusmenu on its own D-Bus thread, for the applets"
+
+[lints]
+workspace = true
+
+[dependencies]
+reprisebus = { path = "../reprisebus" }
+zbus.workspace = true
+async-channel.workspace = true
+futures-util.workspace = true
+log.workspace = true
+
+[dev-dependencies]
+
+# The bus-loop test serves over a peer-to-peer connection.
+zbus = { workspace = true, features = ["p2p"] }

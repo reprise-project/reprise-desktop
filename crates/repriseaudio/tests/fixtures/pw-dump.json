@@ -1,0 +1,2139 @@
+[
+  {
+    "id": 0,
+    "type": "PipeWire:Interface:Core",
+    "version": 4,
+    "permissions": [ "r", "x", "m" ],
+    "info": {
+      "cookie": 561882641,
+      "user-name": "user",
+      "host-name": "reprise",
+      "version": "1.6.8",
+      "name": "pipewire-0",
+      "change-mask": [ "props" ],
+      "props": {
+        "application.language": "en_US.UTF-8",
+        "application.name": "pipewire",
+        "application.process.binary": "pipewire",
+        "application.process.host": "reprise",
+        "application.process.id": 733,
+        "application.process.user": "user",
+        "clock.power-of-two-quantum": true,
+        "config.name": "pipewire.conf",
+        "core.daemon": true,
+        "core.name": "pipewire-0",
+        "cpu.max-align": 32,
+        "default.clock.max-quantum": 2048,
+        "default.clock.min-quantum": 1024,
+        "default.clock.quantum": 1024,
+        "default.clock.quantum-floor": 4,
+        "default.clock.quantum-limit": 8192,
+        "default.clock.rate": 48000,
+        "default.video.height": 480,
+        "default.video.rate.denom": 1,
+        "default.video.rate.num": 25,
+        "default.video.width": 640,
+        "link.max-buffers": 16,
+        "log.level": 2,
+        "mem.allow-mlock": true,
+        "mem.warn-mlock": false,
+        "object.id": 0,
+        "object.serial": 0,
+        "settings.check-quantum": false,
+        "settings.check-rate": false
+      }
+    }
+  },
+  {
+    "id": 1,
+    "type": "PipeWire:Interface:Module",
+    "version": 3,
+    "permissions": [ "r", "m" ],
+    "info": {
+      "name": "libpipewire-module-rt",
+      "filename": "/usr/lib/pipewire-0.3/libpipewire-module-rt.so",
+      "args": "{\n            nice.level    = -11\n            rt.prio       = 88\n            #rt.time.soft = -1\n            #rt.time.hard = -1\n            #rlimits.enabled = true\n            rtportal.enabled = false\n            #rtkit.enabled = true\n            #uclamp.min = 0\n            #uclamp.max = 1024\n        }",
+      "change-mask": [ "props" ],
+      "props": {
+        "module.author": "Wim Taymans <wim.taymans@gmail.com>",
+        "module.description": "Use realtime thread scheduling, falling back to RTKit",
+        "module.name": "libpipewire-module-rt",
+        "module.usage": "( nice.level=<priority: default 20(don't change)> ) ( rt.prio=<priority: default 83> ) ( rt.time.soft=<in usec: default -1> ) ( rt.time.hard=<in usec: default -1> ) ( rlimits.enabled=<default true> ) ( rtportal.enabled=<default true> ) ( rtkit.enabled=<default true> ) ( uclamp.min=<default 0> ) ( uclamp.max=<default 1024> )",
+        "module.version": "1.6.8",
+        "nice.level": -11,
+        "object.id": 1,
+        "object.serial": 1,
+        "rt.prio": 88,
+        "rtportal.enabled": false
+      }
+    }
+  },
+  {
+    "id": 3,
+    "type": "PipeWire:Interface:SecurityContext",
+    "version": 3,
+    "permissions": [ "r", "w", "x" ],
+    "props": {
+      "object.serial": 3
+    }
+  },
+  {
+    "id": 2,
+    "type": "PipeWire:Interface:Module",
+    "version": 3,
+    "permissions": [ "r", "m" ],
+    "info": {
+      "name": "libpipewire-module-protocol-native",
+      "filename": "/usr/lib/pipewire-0.3/libpipewire-module-protocol-native.so",
+      "args": "{\n            # List of server Unix sockets, and optionally permissions\n            #sockets = [ { name = \"pipewire-0\" }, { name = \"pipewire-0-manager\" } ]\n        }",
+      "change-mask": [ "props" ],
+      "props": {
+        "module.author": "Wim Taymans <wim.taymans@gmail.com>",
+        "module.description": "Native protocol using unix sockets",
+        "module.name": "libpipewire-module-protocol-native",
+        "module.version": "1.6.8",
+        "object.id": 2,
+        "object.serial": 2
+      }
+    }
+  },
+  {
+    "id": 5,
+    "type": "PipeWire:Interface:Profiler",
+    "version": 3,
+    "permissions": [ "r" ],
+    "props": {
+      "object.serial": 5
+    }
+  },
+  {
+    "id": 4,
+    "type": "PipeWire:Interface:Module",
+    "version": 3,
+    "permissions": [ "r", "m" ],
+    "info": {
+      "name": "libpipewire-module-profiler",
+      "filename": "/usr/lib/pipewire-0.3/libpipewire-module-profiler.so",
+      "args": "{\n            #profile.interval.ms = 0\n        }",
+      "change-mask": [ "props" ],
+      "props": {
+        "module.author": "Wim Taymans <wim.taymans@gmail.com>",
+        "module.description": "Generate Profiling data",
+        "module.name": "libpipewire-module-profiler",
+        "module.usage": "( profile.interval.ms=<minimum interval for sampling data (in ms) ) ",
+        "module.version": "1.6.8",
+        "object.id": 4,
+        "object.serial": 4
+      }
+    }
+  },
+  {
+    "id": 6,
+    "type": "PipeWire:Interface:Module",
+    "version": 3,
+    "permissions": [ "r", "m" ],
+    "info": {
+      "name": "libpipewire-module-metadata",
+      "filename": "/usr/lib/pipewire-0.3/libpipewire-module-metadata.so",
+      "args": null,
+      "change-mask": [ "props" ],
+      "props": {
+        "module.author": "Wim Taymans <wim.taymans@gmail.com>",
+        "module.description": "Allow clients to create metadata store",
+        "module.name": "libpipewire-module-metadata",
+        "module.version": "1.6.8",
+        "object.id": 6,
+        "object.serial": 6
+      }
+    }
+  },
+  {
+    "id": 7,
+    "type": "PipeWire:Interface:Factory",
+    "version": 3,
+    "permissions": [ "r", "m" ],
+    "info": {
+      "name": "metadata",
+      "type": "PipeWire:Interface:Metadata",
+      "version": 3,
+      "change-mask": [ "props" ],
+      "props": {
+        "factory.name": "metadata",
+        "factory.type.name": "PipeWire:Interface:Metadata",
+        "factory.type.version": 3,
+        "factory.usage": "(metadata.name = <name> ) (metadata.values = [    { ( id = <int> ) key = <string> ( type = <string> ) value = <json> }    ...  ] )",
+        "module.id": 6,
+        "object.id": 7,
+        "object.serial": 7
+      }
+    }
+  },
+  {
+    "id": 8,
+    "type": "PipeWire:Interface:Module",
+    "version": 3,
+    "permissions": [ "r", "m" ],
+    "info": {
+      "name": "libpipewire-module-spa-device-factory",
+      "filename": "/usr/lib/pipewire-0.3/libpipewire-module-spa-device-factory.so",
+      "args": null,
+      "change-mask": [ "props" ],
+      "props": {
+        "module.author": "Wim Taymans <wim.taymans@gmail.com>",
+        "module.description": "Provide a factory to make SPA devices",
+        "module.name": "libpipewire-module-spa-device-factory",
+        "module.version": "1.6.8",
+        "object.id": 8,
+        "object.serial": 8
+      }
+    }
+  },
+  {
+    "id": 9,
+    "type": "PipeWire:Interface:Factory",
+    "version": 3,
+    "permissions": [ "r", "m" ],
+    "info": {
+      "name": "spa-device-factory",
+      "type": "PipeWire:Interface:Device",
+      "version": 3,
+      "change-mask": [ "props" ],
+      "props": {
+        "factory.name": "spa-device-factory",
+        "factory.type.name": "PipeWire:Interface:Device",
+        "factory.type.version": 3,
+        "module.id": 8,
+        "object.id": 9,
+        "object.serial": 9
+      }
+    }
+  },
+  {
+    "id": 10,
+    "type": "PipeWire:Interface:Module",
+    "version": 3,
+    "permissions": [ "r", "m" ],
+    "info": {
+      "name": "libpipewire-module-spa-node-factory",
+      "filename": "/usr/lib/pipewire-0.3/libpipewire-module-spa-node-factory.so",
+      "args": null,
+      "change-mask": [ "props" ],
+      "props": {
+        "module.author": "Wim Taymans <wim.taymans@gmail.com>",
+        "module.description": "Provide a factory to make SPA nodes",
+        "module.name": "libpipewire-module-spa-node-factory",
+        "module.version": "1.6.8",
+        "object.id": 10,
+        "object.serial": 10
+      }
+    }
+  },
+  {
+    "id": 11,
+    "type": "PipeWire:Interface:Factory",
+    "version": 3,
+    "permissions": [ "r", "m" ],
+    "info": {
+      "name": "spa-node-factory",
+      "type": "PipeWire:Interface:Node",
+      "version": 3,
+      "change-mask": [ "props" ],
+      "props": {
+        "factory.name": "spa-node-factory",
+        "factory.type.name": "PipeWire:Interface:Node",
+        "factory.type.version": 3,
+        "module.id": 10,
+        "object.id": 11,
+        "object.serial": 11
+      }
+    }
+  },
+  {
+    "id": 12,
+    "type": "PipeWire:Interface:Module",
+    "version": 3,
+    "permissions": [ "r", "m" ],
+    "info": {
+      "name": "libpipewire-module-client-node",
+      "filename": "/usr/lib/pipewire-0.3/libpipewire-module-client-node.so",
+      "args": null,
+      "change-mask": [ "props" ],
+      "props": {
+        "module.author": "Wim Taymans <wim.taymans@gmail.com>",
+        "module.description": "Allow clients to create and control remote nodes",
+        "module.name": "libpipewire-module-client-node",
+        "module.version": "1.6.8",
+        "object.id": 12,
+        "object.serial": 12
+      }
+    }
+  },
+  {
+    "id": 13,
+    "type": "PipeWire:Interface:Factory",
+    "version": 3,
+    "permissions": [ "r", "m" ],
+    "info": {
+      "name": "client-node",
+      "type": "PipeWire:Interface:ClientNode",
+      "version": 6,
+      "change-mask": [ "props" ],
+      "props": {
+        "factory.name": "client-node",
+        "factory.type.name": "PipeWire:Interface:ClientNode",
+        "factory.type.version": 6,
+        "module.id": 12,
+        "object.id": 13,
+        "object.serial": 13
+      }
+    }
+  },
+  {
+    "id": 14,
+    "type": "PipeWire:Interface:Module",
+    "version": 3,
+    "permissions": [ "r", "m" ],
+    "info": {
+      "name": "libpipewire-module-client-device",
+      "filename": "/usr/lib/pipewire-0.3/libpipewire-module-client-device.so",
+      "args": null,
+      "change-mask": [ "props" ],
+      "props": {
+        "module.author": "Wim Taymans <wim.taymans@gmail.com>",
+        "module.description": "Allow clients to create and control remote devices",
+        "module.name": "libpipewire-module-client-device",
+        "module.version": "1.6.8",
+        "object.id": 14,
+        "object.serial": 14
+      }
+    }
+  },
+  {
+    "id": 15,
+    "type": "PipeWire:Interface:Factory",
+    "version": 3,
+    "permissions": [ "r", "m" ],
+    "info": {
+      "name": "client-device",
+      "type": "Spa:Pointer:Interface:Device",
+      "version": 0,
+      "change-mask": [ "props" ],
+      "props": {
+        "factory.name": "client-device",
+        "factory.type.name": "Spa:Pointer:Interface:Device",
+        "factory.type.version": 0,
+        "factory.usage": "[device.name=<string>]",
+        "module.id": 14,
+        "object.id": 15,
+        "object.serial": 15
+      }
+    }
+  },
+  {
+    "id": 16,
+    "type": "PipeWire:Interface:Module",
+    "version": 3,
+    "permissions": [ "r", "m" ],
+    "info": {
+      "name": "libpipewire-module-portal",
+      "filename": "/usr/lib/pipewire-0.3/libpipewire-module-portal.so",
+      "args": null,
+      "change-mask": [ "props" ],
+      "props": {
+        "module.name": "libpipewire-module-portal",
+        "object.id": 16,
+        "object.serial": 16
+      }
+    }
+  },
+  {
+    "id": 17,
+    "type": "PipeWire:Interface:Module",
+    "version": 3,
+    "permissions": [ "r", "m" ],
+    "info": {
+      "name": "libpipewire-module-access",
+      "filename": "/usr/lib/pipewire-0.3/libpipewire-module-access.so",
+      "args": "{\n            # Socket-specific access permissions\n            #access.socket = { pipewire-0 = \"default\", pipewire-0-manager = \"unrestricted\" }\n\n            # Deprecated legacy mode (not socket-based),\n            # for now enabled by default if access.socket is not specified\n            #access.legacy = true\n        }",
+      "change-mask": [ "props" ],
+      "props": {
+        "module.author": "Wim Taymans <wim.taymans@gmail.com>",
+        "module.description": "Perform access check",
+        "module.name": "libpipewire-module-access",
+        "module.usage": "( access.socket={ <socket>=<access>, ... } ) ( access.legacy=true ) ",
+        "module.version": "1.6.8",
+        "object.id": 17,
+        "object.serial": 17
+      }
+    }
+  },
+  {
+    "id": 18,
+    "type": "PipeWire:Interface:Module",
+    "version": 3,
+    "permissions": [ "r", "m" ],
+    "info": {
+      "name": "libpipewire-module-adapter",
+      "filename": "/usr/lib/pipewire-0.3/libpipewire-module-adapter.so",
+      "args": null,
+      "change-mask": [ "props" ],
+      "props": {
+        "module.author": "Wim Taymans <wim.taymans@gmail.com>",
+        "module.description": "Manage adapter nodes",
+        "module.name": "libpipewire-module-adapter",
+        "module.version": "1.6.8",
+        "object.id": 18,
+        "object.serial": 18
+      }
+    }
+  },
+  {
+    "id": 19,
+    "type": "PipeWire:Interface:Factory",
+    "version": 3,
+    "permissions": [ "r", "m" ],
+    "info": {
+      "name": "adapter",
+      "type": "PipeWire:Interface:Node",
+      "version": 3,
+      "change-mask": [ "props" ],
+      "props": {
+        "factory.name": "adapter",
+        "factory.type.name": "PipeWire:Interface:Node",
+        "factory.type.version": 3,
+        "factory.usage": "factory.name=<factory-name> (library.name=<library-name>) node.name=<string> ",
+        "module.id": 18,
+        "object.id": 19,
+        "object.serial": 19
+      }
+    }
+  },
+  {
+    "id": 20,
+    "type": "PipeWire:Interface:Module",
+    "version": 3,
+    "permissions": [ "r", "m" ],
+    "info": {
+      "name": "libpipewire-module-link-factory",
+      "filename": "/usr/lib/pipewire-0.3/libpipewire-module-link-factory.so",
+      "args": "{\n            #allow.link.passive = false\n\t}",
+      "change-mask": [ "props" ],
+      "props": {
+        "module.author": "Wim Taymans <wim.taymans@gmail.com>",
+        "module.description": "Allow clients to create links",
+        "module.name": "libpipewire-module-link-factory",
+        "module.usage": "( allow.link.passive=<bool, default false> ) ",
+        "module.version": "1.6.8",
+        "object.id": 20,
+        "object.serial": 20
+      }
+    }
+  },
+  {
+    "id": 21,
+    "type": "PipeWire:Interface:Factory",
+    "version": 3,
+    "permissions": [ "r", "m" ],
+    "info": {
+      "name": "link-factory",
+      "type": "PipeWire:Interface:Link",
+      "version": 3,
+      "change-mask": [ "props" ],
+      "props": {
+        "factory.name": "link-factory",
+        "factory.type.name": "PipeWire:Interface:Link",
+        "factory.type.version": 3,
+        "factory.usage": "(link.output.node=<output-node>) (link.output.port=<output-port>) (link.input.node=<input-node>) (link.input.port=<input-port>) (object.linger=<bool>) (link.passive=<bool>)",
+        "module.id": 20,
+        "object.id": 21,
+        "object.serial": 21
+      }
+    }
+  },
+  {
+    "id": 22,
+    "type": "PipeWire:Interface:Module",
+    "version": 3,
+    "permissions": [ "r", "m" ],
+    "info": {
+      "name": "libpipewire-module-session-manager",
+      "filename": "/usr/lib/pipewire-0.3/libpipewire-module-session-manager.so",
+      "args": null,
+      "change-mask": [ "props" ],
+      "props": {
+        "module.author": "George Kiagiadakis <george.kiagiadakis@collabora.com>",
+        "module.description": "Implements objects for session management",
+        "module.name": "libpipewire-module-session-manager",
+        "module.version": "1.6.8",
+        "object.id": 22,
+        "object.serial": 22
+      }
+    }
+  },
+  {
+    "id": 23,
+    "type": "PipeWire:Interface:Factory",
+    "version": 3,
+    "permissions": [ "r", "m" ],
+    "info": {
+      "name": "client-endpoint",
+      "type": "PipeWire:Interface:ClientEndpoint",
+      "version": 0,
+      "change-mask": [ "props" ],
+      "props": {
+        "factory.name": "client-endpoint",
+        "factory.type.name": "PipeWire:Interface:ClientEndpoint",
+        "factory.type.version": 0,
+        "module.id": 22,
+        "object.id": 23,
+        "object.serial": 23
+      }
+    }
+  },
+  {
+    "id": 24,
+    "type": "PipeWire:Interface:Factory",
+    "version": 3,
+    "permissions": [ "r", "m" ],
+    "info": {
+      "name": "client-session",
+      "type": "PipeWire:Interface:ClientSession",
+      "version": 0,
+      "change-mask": [ "props" ],
+      "props": {
+        "factory.name": "client-session",
+        "factory.type.name": "PipeWire:Interface:ClientSession",
+        "factory.type.version": 0,
+        "module.id": 22,
+        "object.id": 24,
+        "object.serial": 24
+      }
+    }
+  },
+  {
+    "id": 25,
+    "type": "PipeWire:Interface:Factory",
+    "version": 3,
+    "permissions": [ "r", "m" ],
+    "info": {
+      "name": "session",
+      "type": "PipeWire:Interface:Session",
+      "version": 0,
+      "change-mask": [ "props" ],
+      "props": {
+        "factory.name": "session",
+        "factory.type.name": "PipeWire:Interface:Session",
+        "factory.type.version": 0,
+        "module.id": 22,
+        "object.id": 25,
+        "object.serial": 25
+      }
+    }
+  },
+  {
+    "id": 26,
+    "type": "PipeWire:Interface:Factory",
+    "version": 3,
+    "permissions": [ "r", "m" ],
+    "info": {
+      "name": "endpoint",
+      "type": "PipeWire:Interface:Endpoint",
+      "version": 0,
+      "change-mask": [ "props" ],
+      "props": {
+        "factory.name": "endpoint",
+        "factory.type.name": "PipeWire:Interface:Endpoint",
+        "factory.type.version": 0,
+        "module.id": 22,
+        "object.id": 26,
+        "object.serial": 26
+      }
+    }
+  },
+  {
+    "id": 27,
+    "type": "PipeWire:Interface:Factory",
+    "version": 3,
+    "permissions": [ "r", "m" ],
+    "info": {
+      "name": "endpoint-stream",
+      "type": "PipeWire:Interface:EndpointStream",
+      "version": 0,
+      "change-mask": [ "props" ],
+      "props": {
+        "factory.name": "endpoint-stream",
+        "factory.type.name": "PipeWire:Interface:EndpointStream",
+        "factory.type.version": 0,
+        "module.id": 22,
+        "object.id": 27,
+        "object.serial": 27
+      }
+    }
+  },
+  {
+    "id": 28,
+    "type": "PipeWire:Interface:Factory",
+    "version": 3,
+    "permissions": [ "r", "m" ],
+    "info": {
+      "name": "endpoint-link",
+      "type": "PipeWire:Interface:EndpointLink",
+      "version": 0,
+      "change-mask": [ "props" ],
+      "props": {
+        "factory.name": "endpoint-link",
+        "factory.type.name": "PipeWire:Interface:EndpointLink",
+        "factory.type.version": 0,
+        "module.id": 22,
+        "object.id": 28,
+        "object.serial": 28
+      }
+    }
+  },
+  {
+    "id": 29,
+    "type": "PipeWire:Interface:Node",
+    "version": 3,
+    "permissions": [ "r", "w", "x", "m" ],
+    "info": {
+      "max-input-ports": 0,
+      "max-output-ports": 0,
+      "change-mask": [ "input-ports", "output-ports", "state", "props", "params" ],
+      "n-input-ports": 0,
+      "n-output-ports": 0,
+      "state": "suspended",
+      "error": null,
+      "props": {
+        "clock.id": "monotonic",
+        "clock.name": "clock.system.monotonic",
+        "clock.quantum-limit": 8192,
+        "factory.id": 11,
+        "factory.name": "support.node.driver",
+        "node.driver": true,
+        "node.group": "pipewire.dummy",
+        "node.loop.name": "data-loop.0",
+        "node.name": "Dummy-Driver",
+        "node.sync-group": "sync.dummy",
+        "object.id": 29,
+        "object.serial": 29,
+        "priority.driver": 200000
+      },
+      "params": {
+        "PropInfo": [
+          {
+            "id": "clockId",
+            "description": "The clock id (monotonic, realtime, etc.)",
+            "type": "monotonic"
+          },
+          {
+            "id": "clockDevice",
+            "description": "The clock device (eg. /dev/ptp0)",
+            "type": ""
+          },
+          {
+            "id": "clockInterface",
+            "description": "The clock network interface (eg. eth0)",
+            "type": ""
+          }
+        ],
+        "Props": [
+          {
+            "clockId": "monotonic"
+          },
+          {
+            "clockDevice": ""
+          },
+          {
+            "clockInterface": ""
+          }
+        ]
+      }
+    }
+  },
+  {
+    "id": 30,
+    "type": "PipeWire:Interface:Node",
+    "version": 3,
+    "permissions": [ "r", "w", "x", "m" ],
+    "info": {
+      "max-input-ports": 0,
+      "max-output-ports": 0,
+      "change-mask": [ "input-ports", "output-ports", "state", "props", "params" ],
+      "n-input-ports": 0,
+      "n-output-ports": 0,
+      "state": "suspended",
+      "error": null,
+      "props": {
+        "clock.id": "monotonic",
+        "clock.name": "clock.system.monotonic",
+        "clock.quantum-limit": 8192,
+        "factory.id": 11,
+        "factory.name": "support.node.driver",
+        "node.driver": true,
+        "node.freewheel": true,
+        "node.group": "pipewire.freewheel",
+        "node.loop.name": "data-loop.0",
+        "node.name": "Freewheel-Driver",
+        "node.sync-group": "sync.dummy",
+        "object.id": 30,
+        "object.serial": 30,
+        "priority.driver": 190000
+      },
+      "params": {
+        "PropInfo": [
+          {
+            "id": "clockId",
+            "description": "The clock id (monotonic, realtime, etc.)",
+            "type": "monotonic"
+          },
+          {
+            "id": "clockDevice",
+            "description": "The clock device (eg. /dev/ptp0)",
+            "type": ""
+          },
+          {
+            "id": "clockInterface",
+            "description": "The clock network interface (eg. eth0)",
+            "type": ""
+          }
+        ],
+        "Props": [
+          {
+            "clockId": "monotonic"
+          },
+          {
+            "clockDevice": ""
+          },
+          {
+            "clockInterface": ""
+          }
+        ]
+      }
+    }
+  },
+  {
+    "id": 31,
+    "type": "PipeWire:Interface:Metadata",
+    "version": 3,
+    "permissions": [ "r", "w", "x" ],
+    "props": {
+      "metadata.name": "settings",
+      "object.serial": 31
+    },
+    "metadata": [
+      { "subject": 0, "key": "log.level", "type": "", "value": 2 },
+      { "subject": 0, "key": "clock.rate", "type": "", "value": 48000 },
+      { "subject": 0, "key": "clock.allowed-rates", "type": "", "value": "[ 48000 ]" },
+      { "subject": 0, "key": "clock.quantum", "type": "", "value": 1024 },
+      { "subject": 0, "key": "clock.min-quantum", "type": "", "value": 1024 },
+      { "subject": 0, "key": "clock.max-quantum", "type": "", "value": 2048 },
+      { "subject": 0, "key": "clock.force-quantum", "type": "", "value": 0 },
+      { "subject": 0, "key": "clock.force-rate", "type": "", "value": 0 }
+    ]
+  },
+  {
+    "id": 33,
+    "type": "PipeWire:Interface:Client",
+    "version": 3,
+    "permissions": [ "r", "w", "x", "m" ],
+    "info": {
+      "change-mask": [ "props" ],
+      "props": {
+        "application.language": "en_US.UTF-8",
+        "application.name": "WirePlumber",
+        "application.process.binary": "wireplumber",
+        "application.process.host": "reprise",
+        "application.process.id": 734,
+        "application.process.user": "user",
+        "application.version": "0.5.17",
+        "clock.power-of-two-quantum": true,
+        "config.name": "null",
+        "context.modules.allow-empty": true,
+        "core.name": "pipewire-user-734",
+        "core.version": "1.6.8",
+        "cpu.max-align": 32,
+        "default.clock.max-quantum": 2048,
+        "default.clock.min-quantum": 32,
+        "default.clock.quantum": 1024,
+        "default.clock.quantum-floor": 4,
+        "default.clock.quantum-limit": 8192,
+        "default.clock.rate": 48000,
+        "default.video.height": 480,
+        "default.video.rate.denom": 1,
+        "default.video.rate.num": 25,
+        "default.video.width": 640,
+        "link.max-buffers": 64,
+        "log.level": 2,
+        "mem.allow-mlock": true,
+        "mem.warn-mlock": false,
+        "module.id": 2,
+        "object.id": 33,
+        "object.serial": 33,
+        "pipewire.access": "unrestricted",
+        "pipewire.access.effective": "unrestricted",
+        "pipewire.access.portal.gate-supported": true,
+        "pipewire.protocol": "protocol-native",
+        "pipewire.sec.gid": 1000,
+        "pipewire.sec.pid": 734,
+        "pipewire.sec.socket": "pipewire-0-manager",
+        "pipewire.sec.uid": 1000,
+        "remote.name": "[pipewire-0-manager,pipewire-0]",
+        "session.services": "[video-capture, audio, policy.linking.standard, policy.linking.role-based, policy.device.profile, bluetooth.midi, api.alsa, policy.device.routes, bluetooth.audio, policy.default-nodes, midi, api.v4l2, api.bluez, api.alsa-seq, api.libcamera]",
+        "settings.check-quantum": false,
+        "settings.check-rate": false,
+        "wireplumber.daemon": true,
+        "wireplumber.profile": "main"
+      }
+    }
+  },
+  {
+    "id": 34,
+    "type": "PipeWire:Interface:Metadata",
+    "version": 3,
+    "permissions": [ "r", "w", "x" ],
+    "props": {
+      "client.id": 33,
+      "factory.id": 7,
+      "metadata.name": "schema-sm-settings",
+      "module.id": 6,
+      "object.serial": 34
+    },
+    "metadata": [
+      { "subject": 0, "key": "bluetooth.use-persistent-storage", "type": "Spa:String:JSON", "value": { "name": "Persistent storage", "description": "Remember and restore Bluetooth headset mode status", "type": "bool", "default": true } },
+      { "subject": 0, "key": "bluetooth.autoswitch-to-headset-profile", "type": "Spa:String:JSON", "value": { "name": "Auto-switch to headset profile", "description": "Always show microphone for Bluetooth headsets, and switch to headset mode when recording", "type": "bool", "default": true } },
+      { "subject": 0, "key": "bluetooth.profile-preference", "type": "Spa:String:JSON", "value": { "name": "Bluetooth profile preference", "description": "Prefer better quality or better latency when auto-selecting profiles (only 'quality' or 'latency' values are accepted)", "type": "string", "default": "quality" } },
+      { "subject": 0, "key": "device.restore-profile", "type": "Spa:String:JSON", "value": { "name": "Restore profile", "description": "Remember and restore device profiles", "type": "bool", "default": true } },
+      { "subject": 0, "key": "device.restore-routes", "type": "Spa:String:JSON", "value": { "name": "Restore routes", "description": "Remember and restore device routes", "type": "bool", "default": true } },
+      { "subject": 0, "key": "device.routes.default-sink-volume", "type": "Spa:String:JSON", "value": { "name": "Default sink volume", "description": "The default volume for audio sinks", "type": "float", "default": 0.064000, "min": 0.000000, "max": 1.000000 } },
+      { "subject": 0, "key": "device.routes.default-source-volume", "type": "Spa:String:JSON", "value": { "name": "Default source volume", "description": "The default volume for audio sources", "type": "float", "default": 1.000000, "min": 0.000000, "max": 1.000000 } },
+      { "subject": 0, "key": "device.routes.mute-on-alsa-playback-removed", "type": "Spa:String:JSON", "value": { "name": "Auto-mute on wired audio disconnect", "description": "Automatically mute all audio devices when active wired headphones/speakers are disconnected to prevent unintended sound output", "type": "bool", "default": false } },
+      { "subject": 0, "key": "device.routes.mute-on-bluetooth-playback-removed", "type": "Spa:String:JSON", "value": { "name": "Auto-mute on Bluetooth audio disconnect", "description": "Automatically mute all audio devices when active Bluetooth headphones/speakers are disconnected to prevent unintended sound output", "type": "bool", "default": false } },
+      { "subject": 0, "key": "linking.role-based.duck-level", "type": "Spa:String:JSON", "value": { "name": "Ducking level", "description": "The volume level to apply when ducking (= reducing volume for a higher priority stream to be audible) in the role-based linking policy", "type": "float", "default": 0.300000, "min": 0.000000, "max": 1.000000 } },
+      { "subject": 0, "key": "linking.allow-moving-streams", "type": "Spa:String:JSON", "value": { "name": "Allow moving streams", "description": "Streams may be moved by adding PipeWire metadata at runtime", "type": "bool", "default": true } },
+      { "subject": 0, "key": "linking.follow-default-target", "type": "Spa:String:JSON", "value": { "name": "Follow default target", "description": "Streams connected to the default device follow when default changes", "type": "bool", "default": true } },
+      { "subject": 0, "key": "linking.pause-playback", "type": "Spa:String:JSON", "value": { "name": "Pause playback if output removed", "description": "Pause media players if their target sink is removed", "type": "bool", "default": true } },
+      { "subject": 0, "key": "monitor.camera-discovery-timeout", "type": "Spa:String:JSON", "value": { "name": "Discovery timeout", "description": "The camera discovery timeout in milliseconds", "type": "int", "default": 1000, "min": 0, "max": 60000 } },
+      { "subject": 0, "key": "monitor.alsa.autodetect-hdmi-channels", "type": "Spa:String:JSON", "value": { "name": "Automatically detect HDMI channels (experimental)", "description": "Automatically detect channel count and positions for HDMI devices (experimental)", "type": "bool", "default": false } },
+      { "subject": 0, "key": "node.features.audio.no-dsp", "type": "Spa:String:JSON", "value": { "name": "No DSP", "description": "Do not convert audio to F32 format", "type": "bool", "default": false } },
+      { "subject": 0, "key": "node.features.audio.monitor-ports", "type": "Spa:String:JSON", "value": { "name": "Monitor ports", "description": "Enable monitor ports on audio nodes", "type": "bool", "default": true } },
+      { "subject": 0, "key": "node.features.audio.control-port", "type": "Spa:String:JSON", "value": { "name": "Control ports", "description": "Enable control ports on audio nodes", "type": "bool", "default": false } },
+      { "subject": 0, "key": "node.features.audio.mono", "type": "Spa:String:JSON", "value": { "name": "Mono", "description": "Configure all audio device sink nodes in MONO", "type": "bool", "default": false } },
+      { "subject": 0, "key": "node.stream.restore-props", "type": "Spa:String:JSON", "value": { "name": "Restore properties", "description": "Remember and restore properties of streams", "type": "bool", "default": true } },
+      { "subject": 0, "key": "node.stream.restore-target", "type": "Spa:String:JSON", "value": { "name": "Restore target", "description": "Remember and restore stream targets", "type": "bool", "default": true } },
+      { "subject": 0, "key": "node.stream.default-playback-volume", "type": "Spa:String:JSON", "value": { "name": "Default playback volume", "description": "The default volume for playback nodes", "type": "float", "default": 1.000000, "min": 0.000000, "max": 1.000000 } },
+      { "subject": 0, "key": "node.stream.default-capture-volume", "type": "Spa:String:JSON", "value": { "name": "Default capture volume", "description": "The default volume for capture nodes", "type": "float", "default": 1.000000, "min": 0.000000, "max": 1.000000 } },
+      { "subject": 0, "key": "node.stream.default-media-role", "type": "Spa:String:JSON", "value": { "name": "Default media role", "description": "Default media.role to assign on streams that do not specify it", "type": "string", "default": "null" } },
+      { "subject": 0, "key": "node.restore-default-targets", "type": "Spa:String:JSON", "value": { "name": "Restore default target", "description": "Remember and restore default audio/video input/output devices", "type": "bool", "default": true } }
+    ]
+  },
+  {
+    "id": 36,
+    "type": "PipeWire:Interface:Metadata",
+    "version": 3,
+    "permissions": [ "r", "w", "x" ],
+    "props": {
+      "client.id": 33,
+      "factory.id": 7,
+      "metadata.name": "sm-settings",
+      "module.id": 6,
+      "object.serial": 36
+    },
+    "metadata": [
+      { "subject": 0, "key": "bluetooth.use-persistent-storage", "type": "Spa:String:JSON", "value": true },
+      { "subject": 0, "key": "bluetooth.autoswitch-to-headset-profile", "type": "Spa:String:JSON", "value": true },
+      { "subject": 0, "key": "bluetooth.profile-preference", "type": "Spa:String:JSON", "value": "quality" },
+      { "subject": 0, "key": "device.restore-profile", "type": "Spa:String:JSON", "value": true },
+      { "subject": 0, "key": "device.restore-routes", "type": "Spa:String:JSON", "value": true },
+      { "subject": 0, "key": "device.routes.default-sink-volume", "type": "Spa:String:JSON", "value": 0.064000 },
+      { "subject": 0, "key": "device.routes.default-source-volume", "type": "Spa:String:JSON", "value": 1.000000 },
+      { "subject": 0, "key": "device.routes.mute-on-alsa-playback-removed", "type": "Spa:String:JSON", "value": false },
+      { "subject": 0, "key": "device.routes.mute-on-bluetooth-playback-removed", "type": "Spa:String:JSON", "value": false },
+      { "subject": 0, "key": "linking.role-based.duck-level", "type": "Spa:String:JSON", "value": 0.300000 },
+      { "subject": 0, "key": "linking.allow-moving-streams", "type": "Spa:String:JSON", "value": true },
+      { "subject": 0, "key": "linking.follow-default-target", "type": "Spa:String:JSON", "value": true },
+      { "subject": 0, "key": "linking.pause-playback", "type": "Spa:String:JSON", "value": true },
+      { "subject": 0, "key": "monitor.camera-discovery-timeout", "type": "Spa:String:JSON", "value": 1000 },
+      { "subject": 0, "key": "monitor.alsa.autodetect-hdmi-channels", "type": "Spa:String:JSON", "value": false },
+      { "subject": 0, "key": "node.features.audio.no-dsp", "type": "Spa:String:JSON", "value": false },
+      { "subject": 0, "key": "node.features.audio.monitor-ports", "type": "Spa:String:JSON", "value": true },
+      { "subject": 0, "key": "node.features.audio.control-port", "type": "Spa:String:JSON", "value": false },
+      { "subject": 0, "key": "node.features.audio.mono", "type": "Spa:String:JSON", "value": false },
+      { "subject": 0, "key": "node.stream.restore-props", "type": "Spa:String:JSON", "value": true },
+      { "subject": 0, "key": "node.stream.restore-target", "type": "Spa:String:JSON", "value": true },
+      { "subject": 0, "key": "node.stream.default-playback-volume", "type": "Spa:String:JSON", "value": 1.000000 },
+      { "subject": 0, "key": "node.stream.default-capture-volume", "type": "Spa:String:JSON", "value": 1.000000 },
+      { "subject": 0, "key": "node.stream.default-media-role", "type": "Spa:String:JSON", "value": "null" },
+      { "subject": 0, "key": "node.restore-default-targets", "type": "Spa:String:JSON", "value": true }
+    ]
+  },
+  {
+    "id": 39,
+    "type": "PipeWire:Interface:Metadata",
+    "version": 3,
+    "permissions": [ "r", "w", "x" ],
+    "props": {
+      "client.id": 33,
+      "factory.id": 7,
+      "metadata.name": "default",
+      "module.id": 6,
+      "object.serial": 39
+    },
+    "metadata": [
+      { "subject": 0, "key": "default.audio.sink", "type": "Spa:String:JSON", "value": { "name": "auto_null" } }
+    ]
+  },
+  {
+    "id": 42,
+    "type": "PipeWire:Interface:Client",
+    "version": 3,
+    "permissions": [ "r", "w", "x", "m" ],
+    "info": {
+      "change-mask": [ "props" ],
+      "props": {
+        "application.language": "en_US.UTF-8",
+        "application.name": "WirePlumber [client]",
+        "application.process.binary": "wireplumber",
+        "application.process.host": "reprise",
+        "application.process.id": 734,
+        "application.process.user": "user",
+        "application.version": "0.5.17",
+        "clock.power-of-two-quantum": true,
+        "config.name": "null",
+        "context.modules.allow-empty": true,
+        "core.name": "pipewire-user-734",
+        "core.version": "1.6.8",
+        "cpu.max-align": 32,
+        "default.clock.max-quantum": 2048,
+        "default.clock.min-quantum": 32,
+        "default.clock.quantum": 1024,
+        "default.clock.quantum-floor": 4,
+        "default.clock.quantum-limit": 8192,
+        "default.clock.rate": 48000,
+        "default.video.height": 480,
+        "default.video.rate.denom": 1,
+        "default.video.rate.num": 25,
+        "default.video.width": 640,
+        "link.max-buffers": 64,
+        "log.level": 2,
+        "mem.allow-mlock": true,
+        "mem.warn-mlock": false,
+        "module.id": 2,
+        "object.id": 42,
+        "object.serial": 42,
+        "pipewire.access": "unrestricted",
+        "pipewire.access.effective": "unrestricted",
+        "pipewire.access.portal.gate-supported": true,
+        "pipewire.protocol": "protocol-native",
+        "pipewire.sec.gid": 1000,
+        "pipewire.sec.pid": 734,
+        "pipewire.sec.socket": "pipewire-0-manager",
+        "pipewire.sec.uid": 1000,
+        "remote.name": "[pipewire-0-manager,pipewire-0]",
+        "settings.check-quantum": false,
+        "settings.check-rate": false,
+        "wireplumber.client-context": true,
+        "wireplumber.daemon": true,
+        "wireplumber.profile": "main"
+      }
+    }
+  },
+  {
+    "id": 43,
+    "type": "PipeWire:Interface:Node",
+    "version": 3,
+    "permissions": [ "r", "w", "x", "m" ],
+    "info": {
+      "max-input-ports": 256,
+      "max-output-ports": 256,
+      "change-mask": [ "input-ports", "output-ports", "state", "props", "params" ],
+      "n-input-ports": 1,
+      "n-output-ports": 1,
+      "state": "suspended",
+      "error": null,
+      "props": {
+        "client.id": 33,
+        "clock.quantum-limit": 8192,
+        "device.api": "alsa",
+        "factory.id": 11,
+        "factory.name": "api.alsa.seq.bridge",
+        "media.class": "Midi/Bridge",
+        "node.driver": true,
+        "node.loop.name": "data-loop.0",
+        "node.name": "Midi-Bridge",
+        "object.id": 43,
+        "object.serial": 43,
+        "priority.driver": 1,
+        "priority.session": 100
+      },
+      "params": {
+        "PropInfo": [
+          {
+            "id": "device",
+            "description": "The ALSA device",
+            "type": "default"
+          }
+        ],
+        "Props": [
+          {
+            "device": "default"
+          }
+        ],
+        "IO": [
+          {
+            "id": "Clock",
+            "size": 160
+          },
+          {
+            "id": "Position",
+            "size": 1688
+          }
+        ]
+      }
+    }
+  },
+  {
+    "id": 44,
+    "type": "PipeWire:Interface:Port",
+    "version": 3,
+    "permissions": [ "r", "x", "m" ],
+    "info": {
+      "direction": "input",
+      "change-mask": [ "props", "params" ],
+      "props": {
+        "format.dsp": "8 bit raw midi",
+        "node.id": 43,
+        "object.id": 44,
+        "object.path": "alsa:seq:default:client_14:playback_0",
+        "object.serial": 44,
+        "port.alias": "Midi Through:Midi Through Port-0",
+        "port.direction": "in",
+        "port.group": "client_14",
+        "port.id": 0,
+        "port.name": "Midi Through: Port-0 (playback)",
+        "port.physical": true,
+        "port.terminal": true
+      },
+      "params": {
+        "EnumFormat": [
+          {
+            "mediaType": "application",
+            "mediaSubtype": "control"
+          }
+        ],
+        "Meta": [
+          {
+            "type": "Header",
+            "size": 32
+          }
+        ],
+        "IO": [
+          {
+            "id": "Buffers",
+            "size": 8
+          },
+          {
+            "id": "AsyncBuffers",
+            "size": 8
+          }
+        ],
+        "Format": [ ],
+        "Buffers": [ ],
+        "Latency": [
+          {
+            "direction": "Input",
+            "minQuantum": 1.000000,
+            "maxQuantum": 1.000000,
+            "minRate": 0,
+            "maxRate": 0,
+            "minNs": 0,
+            "maxNs": 0
+          },
+          {
+            "direction": "Output",
+            "minQuantum": 0.000000,
+            "maxQuantum": 0.000000,
+            "minRate": 0,
+            "maxRate": 0,
+            "minNs": 0,
+            "maxNs": 0
+          }
+        ]
+      }
+    }
+  },
+  {
+    "id": 45,
+    "type": "PipeWire:Interface:Port",
+    "version": 3,
+    "permissions": [ "r", "x", "m" ],
+    "info": {
+      "direction": "output",
+      "change-mask": [ "props", "params" ],
+      "props": {
+        "format.dsp": "8 bit raw midi",
+        "node.id": 43,
+        "object.id": 45,
+        "object.path": "alsa:seq:default:client_14:capture_0",
+        "object.serial": 45,
+        "port.alias": "Midi Through:Midi Through Port-0",
+        "port.direction": "out",
+        "port.group": "client_14",
+        "port.id": 0,
+        "port.name": "Midi Through: Port-0 (capture)",
+        "port.physical": true,
+        "port.terminal": true
+      },
+      "params": {
+        "EnumFormat": [
+          {
+            "mediaType": "application",
+            "mediaSubtype": "control"
+          }
+        ],
+        "Meta": [
+          {
+            "type": "Header",
+            "size": 32
+          }
+        ],
+        "IO": [
+          {
+            "id": "Buffers",
+            "size": 8
+          },
+          {
+            "id": "AsyncBuffers",
+            "size": 8
+          }
+        ],
+        "Format": [ ],
+        "Buffers": [ ],
+        "Latency": [
+          {
+            "direction": "Input",
+            "minQuantum": 0.000000,
+            "maxQuantum": 0.000000,
+            "minRate": 0,
+            "maxRate": 0,
+            "minNs": 0,
+            "maxNs": 0
+          },
+          {
+            "direction": "Output",
+            "minQuantum": 1.000000,
+            "maxQuantum": 1.000000,
+            "minRate": 0,
+            "maxRate": 0,
+            "minNs": 0,
+            "maxNs": 0
+          }
+        ]
+      }
+    }
+  },
+  {
+    "id": 49,
+    "type": "PipeWire:Interface:Client",
+    "version": 3,
+    "permissions": [ "r", "w", "x", "m" ],
+    "info": {
+      "change-mask": [ "props" ],
+      "props": {
+        "application.language": "en_US.UTF-8",
+        "application.name": "pipewire",
+        "application.process.binary": "pipewire",
+        "application.process.host": "reprise",
+        "application.process.id": 4609,
+        "application.process.user": "user",
+        "clock.power-of-two-quantum": true,
+        "config.name": "pipewire-pulse.conf",
+        "core.name": "pipewire-user-4609",
+        "core.version": "1.6.8",
+        "cpu.max-align": 32,
+        "default.clock.max-quantum": 2048,
+        "default.clock.min-quantum": 32,
+        "default.clock.quantum": 1024,
+        "default.clock.quantum-floor": 4,
+        "default.clock.quantum-limit": 8192,
+        "default.clock.rate": 48000,
+        "default.video.height": 480,
+        "default.video.rate.denom": 1,
+        "default.video.rate.num": 25,
+        "default.video.width": 640,
+        "link.max-buffers": 64,
+        "log.level": 2,
+        "mem.allow-mlock": true,
+        "mem.warn-mlock": false,
+        "module.id": 2,
+        "object.id": 49,
+        "object.serial": 49,
+        "pipewire.access": "unrestricted",
+        "pipewire.access.effective": "unrestricted",
+        "pipewire.protocol": "protocol-native",
+        "pipewire.sec.gid": 1000,
+        "pipewire.sec.pid": 4609,
+        "pipewire.sec.socket": "pipewire-0",
+        "pipewire.sec.uid": 1000,
+        "settings.check-quantum": false,
+        "settings.check-rate": false
+      }
+    }
+  },
+  {
+    "id": 51,
+    "type": "PipeWire:Interface:Node",
+    "version": 3,
+    "permissions": [ "r", "w", "x", "m" ],
+    "info": {
+      "max-input-ports": 129,
+      "max-output-ports": 0,
+      "change-mask": [ "input-ports", "output-ports", "state", "props", "params" ],
+      "n-input-ports": 2,
+      "n-output-ports": 2,
+      "state": "suspended",
+      "error": null,
+      "props": {
+        "audio.channels": 2,
+        "audio.position": "FL,FR",
+        "audio.rate": 48000,
+        "client.id": 49,
+        "clock.quantum-limit": 8192,
+        "factory.id": 19,
+        "factory.name": "support.null-audio-sink",
+        "library.name": "audioconvert/libspa-audioconvert",
+        "media.class": "Audio/Sink",
+        "monitor.channel-volumes": true,
+        "node.description": "Dummy Output",
+        "node.driver": true,
+        "node.loop.name": "data-loop.0",
+        "node.name": "auto_null",
+        "node.virtual": true,
+        "object.id": 51,
+        "object.serial": 51,
+        "port.group": "stream.0"
+      },
+      "params": {
+        "EnumFormat": [
+          {
+            "mediaType": "audio",
+            "mediaSubtype": "raw",
+            "format": {
+              "default": "F32P",
+              "alt1": "F32P",
+              "alt2": "F32LE"
+            },
+            "rate": 48000,
+            "channels": 2,
+            "position": [ "FL", "FR" ]
+          }
+        ],
+        "PropInfo": [
+          {
+            "id": "volume",
+            "description": "Volume",
+            "type": { "default": 1.000000, "min": 0.000000, "max": 10.000000 }
+          },
+          {
+            "id": "mute",
+            "description": "Mute",
+            "type": {
+              "default": false,
+              "alt1": false,
+              "alt2": true
+            }
+          },
+          {
+            "id": "channelVolumes",
+            "description": "Channel Volumes",
+            "type": { "default": 1.000000, "min": 0.000000, "max": 10.000000 },
+            "container": "Array"
+          },
+          {
+            "id": "channelMap",
+            "description": "Channel Map",
+            "type": "",
+            "container": "Array"
+          },
+          {
+            "id": "monitorMute",
+            "description": "Monitor Mute",
+            "type": {
+              "default": false,
+              "alt1": false,
+              "alt2": true
+            }
+          },
+          {
+            "id": "monitorVolumes",
+            "description": "Monitor Volumes",
+            "type": { "default": 1.000000, "min": 0.000000, "max": 10.000000 },
+            "container": "Array"
+          },
+          {
+            "id": "softMute",
+            "description": "Soft Mute",
+            "type": {
+              "default": false,
+              "alt1": false,
+              "alt2": true
+            }
+          },
+          {
+            "id": "softVolumes",
+            "description": "Soft Volumes",
+            "type": { "default": 1.000000, "min": 0.000000, "max": 10.000000 },
+            "container": "Array"
+          },
+          {
+            "name": "monitor.channel-volumes",
+            "description": "Monitor channel volume",
+            "type": {
+              "default": true,
+              "alt1": true,
+              "alt2": false
+            },
+            "params": true
+          },
+          {
+            "name": "channelmix.disable",
+            "description": "Disable Channel mixing",
+            "type": {
+              "default": false,
+              "alt1": false,
+              "alt2": true
+            },
+            "params": true
+          },
+          {
+            "name": "channelmix.min-volume",
+            "description": "Minimum volume level",
+            "type": { "default": 0.000000, "min": 0.000000, "max": 10.000000 },
+            "params": true
+          },
+          {
+            "name": "channelmix.max-volume",
+            "description": "Maximum volume level",
+            "type": { "default": 10.000000, "min": 0.000000, "max": 10.000000 },
+            "params": true
+          },
+          {
+            "name": "channelmix.normalize",
+            "description": "Normalize Volumes",
+            "type": {
+              "default": false,
+              "alt1": false,
+              "alt2": true
+            },
+            "params": true
+          },
+          {
+            "name": "channelmix.mix-lfe",
+            "description": "Mix LFE into channels",
+            "type": {
+              "default": true,
+              "alt1": true,
+              "alt2": false
+            },
+            "params": true
+          },
+          {
+            "name": "channelmix.upmix",
+            "description": "Enable upmixing",
+            "type": {
+              "default": true,
+              "alt1": true,
+              "alt2": false
+            },
+            "params": true
+          },
+          {
+            "name": "channelmix.lfe-cutoff",
+            "description": "LFE cutoff frequency",
+            "type": { "default": 0.000000, "min": 0.000000, "max": 1000.000000 },
+            "params": true
+          },
+          {
+            "name": "channelmix.fc-cutoff",
+            "description": "FC cutoff frequency (Hz)",
+            "type": { "default": 0.000000, "min": 0.000000, "max": 48000.000000 },
+            "params": true
+          },
+          {
+            "name": "channelmix.rear-delay",
+            "description": "Rear channels delay (ms)",
+            "type": { "default": 0.000000, "min": 0.000000, "max": 1000.000000 },
+            "params": true
+          },
+          {
+            "name": "channelmix.stereo-widen",
+            "description": "Stereo widen",
+            "type": { "default": 0.000000, "min": 0.000000, "max": 1.000000 },
+            "params": true
+          },
+          {
+            "name": "channelmix.hilbert-taps",
+            "description": "Taps for phase shift of rear",
+            "type": { "default": 0, "min": 0, "max": 255 },
+            "params": true
+          },
+          {
+            "name": "channelmix.upmix-method",
+            "description": "Upmix method to use",
+            "type": "none",
+            "params": true,
+            "labels": [
+              "none",
+              "Disabled",
+              "simple",
+              "Simple upmixing",
+              "psd",
+              "Passive Surround Decoding"
+            ]
+          },
+          {
+            "id": "rate",
+            "description": "Rate scaler",
+            "type": { "default": 1.000000, "min": 0.000000, "max": 10.000000 }
+          },
+          {
+            "id": "quality",
+            "name": "resample.quality",
+            "description": "Resample Quality",
+            "type": { "default": 4, "min": 0, "max": 14 },
+            "params": true
+          },
+          {
+            "name": "resample.disable",
+            "description": "Disable Resampling",
+            "type": {
+              "default": false,
+              "alt1": false,
+              "alt2": true
+            },
+            "params": true
+          },
+          {
+            "name": "dither.noise",
+            "description": "Add noise bits",
+            "type": { "default": 0, "min": 0, "max": 16 },
+            "params": true
+          },
+          {
+            "name": "dither.method",
+            "description": "The dithering method",
+            "type": "none",
+            "params": true,
+            "labels": [
+              "none",
+              "Disabled",
+              "rectangular",
+              "Rectangular dithering",
+              "triangular",
+              "Triangular dithering",
+              "triangular-hf",
+              "Sloped Triangular dithering",
+              "wannamaker3",
+              "Wannamaker 3 dithering",
+              "shaped5",
+              "Lipshitz 5 dithering"
+            ]
+          },
+          {
+            "name": "debug.wav-path",
+            "description": "Path to WAV file",
+            "type": "",
+            "params": true
+          },
+          {
+            "name": "channelmix.lock-volumes",
+            "description": "Disable volume updates",
+            "type": {
+              "default": false,
+              "alt1": false,
+              "alt2": true
+            },
+            "params": true
+          },
+          {
+            "name": "audioconvert.filter-graph.disable",
+            "description": "Disable Filter graph updates",
+            "type": {
+              "default": false,
+              "alt1": false,
+              "alt2": true
+            },
+            "params": true
+          },
+          {
+            "name": "audioconvert.filter-graph.N",
+            "description": "A filter graph to load",
+            "type": "",
+            "params": true
+          }
+        ],
+        "Props": [
+          {
+            "volume": 1.000000,
+            "mute": false,
+            "channelVolumes": [ 1.000000, 1.000000 ],
+            "channelMap": [ "FL", "FR" ],
+            "softMute": false,
+            "softVolumes": [ 1.000000, 1.000000 ],
+            "monitorMute": false,
+            "monitorVolumes": [ 1.000000, 1.000000 ],
+            "params": [
+              "monitor.channel-volumes",
+              true,
+              "channelmix.disable",
+              false,
+              "channelmix.min-volume",
+              0.000000,
+              "channelmix.max-volume",
+              10.000000,
+              "channelmix.normalize",
+              false,
+              "channelmix.mix-lfe",
+              true,
+              "channelmix.upmix",
+              true,
+              "channelmix.lfe-cutoff",
+              0.000000,
+              "channelmix.fc-cutoff",
+              0.000000,
+              "channelmix.rear-delay",
+              0.000000,
+              "channelmix.stereo-widen",
+              0.000000,
+              "channelmix.hilbert-taps",
+              0,
+              "channelmix.upmix-method",
+              "none",
+              "resample.quality",
+              4,
+              "resample.disable",
+              false,
+              "dither.noise",
+              0,
+              "dither.method",
+              "none",
+              "debug.wav-path",
+              "",
+              "channelmix.lock-volumes",
+              false,
+              "audioconvert.filter-graph.disable",
+              false,
+              "audioconvert.filter-graph",
+              ""
+            ]
+          }
+        ],
+        "Format": [ ],
+        "EnumPortConfig": [
+          {
+            "direction": "Input",
+            "mode": {
+              "default": "none",
+              "alt1": "none",
+              "alt2": "dsp",
+              "alt3": "convert"
+            },
+            "monitor": {
+              "default": false,
+              "alt1": false,
+              "alt2": true
+            },
+            "control": {
+              "default": false,
+              "alt1": false,
+              "alt2": true
+            }
+          }
+        ],
+        "PortConfig": [
+          {
+            "direction": "Input",
+            "mode": "dsp",
+            "monitor": true,
+            "control": false,
+            "format": {
+              "mediaType": "audio",
+              "mediaSubtype": "raw",
+              "format": "F32P",
+              "channels": 2,
+              "position": [ "FL", "FR" ]
+            }
+          }
+        ],
+        "Latency": [
+        ],
+        "ProcessLatency": [
+        ],
+        "Tag": [
+        ]
+      }
+    }
+  },
+  {
+    "id": 52,
+    "type": "PipeWire:Interface:Port",
+    "version": 3,
+    "permissions": [ "r", "x", "m" ],
+    "info": {
+      "direction": "input",
+      "change-mask": [ "props", "params" ],
+      "props": {
+        "audio.channel": "FL",
+        "format.dsp": "32 bit float mono audio",
+        "node.id": 51,
+        "object.id": 52,
+        "object.path": "auto_null:playback_0",
+        "object.serial": 52,
+        "port.alias": "Dummy Output:playback_FL",
+        "port.direction": "in",
+        "port.group": "stream.0",
+        "port.id": 0,
+        "port.name": "playback_FL"
+      },
+      "params": {
+        "EnumFormat": [
+          {
+            "mediaType": "audio",
+            "mediaSubtype": "dsp",
+            "format": "F32P"
+          }
+        ],
+        "Meta": [
+          {
+            "type": "Header",
+            "size": 32
+          }
+        ],
+        "IO": [
+          {
+            "id": "Buffers",
+            "size": 8
+          },
+          {
+            "id": "AsyncBuffers",
+            "size": 16
+          }
+        ],
+        "Format": [ ],
+        "Buffers": [ ],
+        "Latency": [
+          {
+            "direction": "Input",
+            "minQuantum": 0.000000,
+            "maxQuantum": 0.000000,
+            "minRate": 0,
+            "maxRate": 0,
+            "minNs": 0,
+            "maxNs": 0
+          },
+          {
+            "direction": "Output",
+            "minQuantum": 0.000000,
+            "maxQuantum": 0.000000,
+            "minRate": 0,
+            "maxRate": 0,
+            "minNs": 0,
+            "maxNs": 0
+          }
+        ],
+        "Tag": [
+        ]
+      }
+    }
+  },
+  {
+    "id": 53,
+    "type": "PipeWire:Interface:Port",
+    "version": 3,
+    "permissions": [ "r", "x", "m" ],
+    "info": {
+      "direction": "input",
+      "change-mask": [ "props", "params" ],
+      "props": {
+        "audio.channel": "FR",
+        "format.dsp": "32 bit float mono audio",
+        "node.id": 51,
+        "object.id": 53,
+        "object.path": "auto_null:playback_1",
+        "object.serial": 53,
+        "port.alias": "Dummy Output:playback_FR",
+        "port.direction": "in",
+        "port.group": "stream.0",
+        "port.id": 1,
+        "port.name": "playback_FR"
+      },
+      "params": {
+        "EnumFormat": [
+          {
+            "mediaType": "audio",
+            "mediaSubtype": "dsp",
+            "format": "F32P"
+          }
+        ],
+        "Meta": [
+          {
+            "type": "Header",
+            "size": 32
+          }
+        ],
+        "IO": [
+          {
+            "id": "Buffers",
+            "size": 8
+          },
+          {
+            "id": "AsyncBuffers",
+            "size": 16
+          }
+        ],
+        "Format": [ ],
+        "Buffers": [ ],
+        "Latency": [
+          {
+            "direction": "Input",
+            "minQuantum": 0.000000,
+            "maxQuantum": 0.000000,
+            "minRate": 0,
+            "maxRate": 0,
+            "minNs": 0,
+            "maxNs": 0
+          },
+          {
+            "direction": "Output",
+            "minQuantum": 0.000000,
+            "maxQuantum": 0.000000,
+            "minRate": 0,
+            "maxRate": 0,
+            "minNs": 0,
+            "maxNs": 0
+          }
+        ],
+        "Tag": [
+        ]
+      }
+    }
+  },
+  {
+    "id": 54,
+    "type": "PipeWire:Interface:Port",
+    "version": 3,
+    "permissions": [ "r", "x", "m" ],
+    "info": {
+      "direction": "output",
+      "change-mask": [ "props", "params" ],
+      "props": {
+        "audio.channel": "FL",
+        "format.dsp": "32 bit float mono audio",
+        "node.id": 51,
+        "object.id": 54,
+        "object.path": "auto_null:monitor_0",
+        "object.serial": 54,
+        "port.alias": "Dummy Output:monitor_FL",
+        "port.direction": "out",
+        "port.group": "stream.0",
+        "port.id": 0,
+        "port.monitor": true,
+        "port.name": "monitor_FL"
+      },
+      "params": {
+        "EnumFormat": [
+          {
+            "mediaType": "audio",
+            "mediaSubtype": "dsp",
+            "format": "F32P"
+          }
+        ],
+        "Meta": [
+          {
+            "type": "Header",
+            "size": 32
+          }
+        ],
+        "IO": [
+          {
+            "id": "Buffers",
+            "size": 8
+          },
+          {
+            "id": "AsyncBuffers",
+            "size": 8
+          }
+        ],
+        "Format": [ ],
+        "Buffers": [ ],
+        "Latency": [
+          {
+            "direction": "Input",
+            "minQuantum": 0.000000,
+            "maxQuantum": 0.000000,
+            "minRate": 0,
+            "maxRate": 0,
+            "minNs": 0,
+            "maxNs": 0
+          },
+          {
+            "direction": "Output",
+            "minQuantum": 0.000000,
+            "maxQuantum": 0.000000,
+            "minRate": 0,
+            "maxRate": 0,
+            "minNs": 0,
+            "maxNs": 0
+          }
+        ],
+        "Tag": [
+        ]
+      }
+    }
+  },
+  {
+    "id": 55,
+    "type": "PipeWire:Interface:Port",
+    "version": 3,
+    "permissions": [ "r", "x", "m" ],
+    "info": {
+      "direction": "output",
+      "change-mask": [ "props", "params" ],
+      "props": {
+        "audio.channel": "FR",
+        "format.dsp": "32 bit float mono audio",
+        "node.id": 51,
+        "object.id": 55,
+        "object.path": "auto_null:monitor_1",
+        "object.serial": 55,
+        "port.alias": "Dummy Output:monitor_FR",
+        "port.direction": "out",
+        "port.group": "stream.0",
+        "port.id": 1,
+        "port.monitor": true,
+        "port.name": "monitor_FR"
+      },
+      "params": {
+        "EnumFormat": [
+          {
+            "mediaType": "audio",
+            "mediaSubtype": "dsp",
+            "format": "F32P"
+          }
+        ],
+        "Meta": [
+          {
+            "type": "Header",
+            "size": 32
+          }
+        ],
+        "IO": [
+          {
+            "id": "Buffers",
+            "size": 8
+          },
+          {
+            "id": "AsyncBuffers",
+            "size": 8
+          }
+        ],
+        "Format": [ ],
+        "Buffers": [ ],
+        "Latency": [
+          {
+            "direction": "Input",
+            "minQuantum": 0.000000,
+            "maxQuantum": 0.000000,
+            "minRate": 0,
+            "maxRate": 0,
+            "minNs": 0,
+            "maxNs": 0
+          },
+          {
+            "direction": "Output",
+            "minQuantum": 0.000000,
+            "maxQuantum": 0.000000,
+            "minRate": 0,
+            "maxRate": 0,
+            "minNs": 0,
+            "maxNs": 0
+          }
+        ],
+        "Tag": [
+        ]
+      }
+    }
+  },
+  {
+    "id": 57,
+    "type": "PipeWire:Interface:Client",
+    "version": 3,
+    "permissions": [ "r", "w", "x", "m" ],
+    "info": {
+      "change-mask": [ "props" ],
+      "props": {
+        "application.language": "en_US.UTF-8",
+        "application.name": "xdg-desktop-portal",
+        "application.process.binary": "xdg-desktop-portal",
+        "application.process.host": "reprise",
+        "application.process.id": 41234,
+        "application.process.user": "user",
+        "clock.power-of-two-quantum": true,
+        "core.name": "pipewire-user-41234",
+        "core.version": "1.6.8",
+        "cpu.max-align": 32,
+        "default.clock.max-quantum": 2048,
+        "default.clock.min-quantum": 32,
+        "default.clock.quantum": 1024,
+        "default.clock.quantum-floor": 4,
+        "default.clock.quantum-limit": 8192,
+        "default.clock.rate": 48000,
+        "default.video.height": 480,
+        "default.video.rate.denom": 1,
+        "default.video.rate.num": 25,
+        "default.video.width": 640,
+        "link.max-buffers": 64,
+        "log.level": 0,
+        "mem.allow-mlock": true,
+        "mem.warn-mlock": false,
+        "module.id": 2,
+        "module.rt": false,
+        "object.id": 57,
+        "object.serial": 216,
+        "pipewire.access": "unrestricted",
+        "pipewire.access.effective": "unrestricted",
+        "pipewire.access.portal.is_portal": true,
+        "pipewire.protocol": "protocol-native",
+        "pipewire.sec.gid": 1000,
+        "pipewire.sec.pid": 41234,
+        "pipewire.sec.socket": "pipewire-0",
+        "pipewire.sec.uid": 1000,
+        "portal.monitor": "Camera",
+        "settings.check-quantum": false,
+        "settings.check-rate": false
+      }
+    }
+  },
+  {
+    "id": 46,
+    "type": "PipeWire:Interface:Node",
+    "version": 3,
+    "permissions": [ "r", "w", "x", "m" ],
+    "info": {
+      "max-input-ports": 1,
+      "max-output-ports": 1,
+      "change-mask": [ "input-ports", "output-ports", "state", "props", "params" ],
+      "n-input-ports": 1,
+      "n-output-ports": 1,
+      "state": "suspended",
+      "error": null,
+      "props": {
+        "api.bluez5.role": "server",
+        "api.glib.mainloop": true,
+        "client.id": 42,
+        "clock.quantum-limit": 8192,
+        "device.api": "bluez5",
+        "factory.id": 12,
+        "factory.name": "api.bluez5.midi.node",
+        "media.class": "Midi/Bridge",
+        "node.description": "BLE MIDI 1",
+        "node.loop.name": "data-loop.0",
+        "node.name": "bluez_midi.server",
+        "object.id": 46,
+        "object.serial": 243
+      },
+      "params": {
+        "PropInfo": [
+          {
+            "id": "latencyOffsetNsec",
+            "description": "Latency offset (ns)",
+            "type": { "default": 0, "min": -9223372036854775808, "max": 9223372036854775807 }
+          },
+          {
+            "id": "deviceName",
+            "description": "Device name",
+            "type": "BLE MIDI 1"
+          }
+        ],
+        "Props": [
+          {
+            "latencyOffsetNsec": 0,
+            "deviceName": "BLE MIDI 1"
+          }
+        ],
+        "IO": [
+        ]
+      }
+    }
+  },
+  {
+    "id": 48,
+    "type": "PipeWire:Interface:Port",
+    "version": 3,
+    "permissions": [ "r", "x", "m" ],
+    "info": {
+      "direction": "input",
+      "change-mask": [ "props", "params" ],
+      "props": {
+        "format.dsp": "8 bit raw midi",
+        "node.id": 46,
+        "object.id": 48,
+        "object.path": "bluez_midi.server:input_0",
+        "object.serial": 244,
+        "port.alias": "in",
+        "port.direction": "in",
+        "port.group": "group.0",
+        "port.id": 0,
+        "port.name": "in",
+        "port.physical": true,
+        "port.terminal": true
+      },
+      "params": {
+        "EnumFormat": [
+          {
+            "mediaType": "application",
+            "mediaSubtype": "control"
+          }
+        ],
+        "Meta": [
+          {
+            "type": "Header",
+            "size": 32
+          }
+        ],
+        "IO": [
+          {
+            "id": "Buffers",
+            "size": 8
+          },
+          {
+            "id": "AsyncBuffers",
+            "size": 8
+          }
+        ],
+        "Format": [ ],
+        "Buffers": [ ],
+        "Latency": [
+          {
+            "direction": "Input",
+            "minQuantum": 1.000000,
+            "maxQuantum": 1.000000,
+            "minRate": 0,
+            "maxRate": 0,
+            "minNs": 0,
+            "maxNs": 0
+          }
+        ]
+      }
+    }
+  },
+  {
+    "id": 47,
+    "type": "PipeWire:Interface:Port",
+    "version": 3,
+    "permissions": [ "r", "x", "m" ],
+    "info": {
+      "direction": "output",
+      "change-mask": [ "props", "params" ],
+      "props": {
+        "format.dsp": "8 bit raw midi",
+        "node.id": 46,
+        "object.id": 47,
+        "object.path": "bluez_midi.server:output_0",
+        "object.serial": 245,
+        "port.alias": "out",
+        "port.direction": "out",
+        "port.group": "group.0",
+        "port.id": 0,
+        "port.name": "out",
+        "port.physical": true,
+        "port.terminal": true
+      },
+      "params": {
+        "EnumFormat": [
+          {
+            "mediaType": "application",
+            "mediaSubtype": "control"
+          }
+        ],
+        "Meta": [
+          {
+            "type": "Header",
+            "size": 32
+          }
+        ],
+        "IO": [
+          {
+            "id": "Buffers",
+            "size": 8
+          },
+          {
+            "id": "AsyncBuffers",
+            "size": 8
+          }
+        ],
+        "Format": [ ],
+        "Buffers": [ ],
+        "Latency": [
+          {
+            "direction": "Output",
+            "minQuantum": 1.000000,
+            "maxQuantum": 1.000000,
+            "minRate": 0,
+            "maxRate": 0,
+            "minNs": 0,
+            "maxNs": 0
+          }
+        ]
+      }
+    }
+  },
+  {
+    "id": 32,
+    "type": "PipeWire:Interface:Client",
+    "version": 3,
+    "permissions": [ "r", "w", "x", "m" ],
+    "info": {
+      "change-mask": [ "props" ],
+      "props": {
+        "application.language": "en_US.UTF-8",
+        "application.name": "pw-dump",
+        "application.process.binary": "pw-dump",
+        "application.process.host": "reprise",
+        "application.process.id": 47873,
+        "application.process.session-id": 241,
+        "application.process.user": "user",
+        "clock.power-of-two-quantum": true,
+        "core.name": "pipewire-user-47873",
+        "core.version": "1.6.8",
+        "cpu.max-align": 32,
+        "default.clock.max-quantum": 2048,
+        "default.clock.min-quantum": 32,
+        "default.clock.quantum": 1024,
+        "default.clock.quantum-floor": 4,
+        "default.clock.quantum-limit": 8192,
+        "default.clock.rate": 48000,
+        "default.video.height": 480,
+        "default.video.rate.denom": 1,
+        "default.video.rate.num": 25,
+        "default.video.width": 640,
+        "link.max-buffers": 64,
+        "log.level": 0,
+        "mem.allow-mlock": true,
+        "mem.warn-mlock": false,
+        "module.id": 2,
+        "object.id": 32,
+        "object.serial": 246,
+        "pipewire.access": "unrestricted",
+        "pipewire.access.effective": "unrestricted",
+        "pipewire.protocol": "protocol-native",
+        "pipewire.sec.gid": 1000,
+        "pipewire.sec.pid": 47873,
+        "pipewire.sec.socket": "pipewire-0-manager",
+        "pipewire.sec.uid": 1000,
+        "remote.intention": "manager",
+        "settings.check-quantum": false,
+        "settings.check-rate": false
+      }
+    }
+  }
+]

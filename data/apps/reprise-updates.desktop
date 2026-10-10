@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Software Updates
+Comment=Check for, download and install updates for your computer.
+Exec=reprise-updates
+Icon=system-software-update
+Categories=Settings;System;
+StartupWMClass=reprise.updates
+Terminal=false

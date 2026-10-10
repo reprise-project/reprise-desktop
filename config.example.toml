@@ -1,0 +1,714 @@
+# Reprise configuration. Every key is optional.
+
+terminal = "alacritty"
+# task_manager = "gnome-system-monitor"   # the taskbar menu's Task Manager row; default: top in the terminal
+startmenu_banner = "Reprise Desktop"   # text of the vertical band on the Start menu's left edge
+# startmenu_style = "glass"   # the Start menu: "classic" (the band and the [[startmenu]] entries) or "glass" (programs, search and places in two columns); default: glass under the Glass interface, else classic
+desktop_icons = true          # icons for the files in ~/Desktop (XDG_DESKTOP_DIR); false hides them and the desktop takes no files, the system icons stay
+start_icon = false            # the Start button's logo: the icon theme's start-here (true) or the Reprise mark (false)
+adaptive_sync = false         # variable refresh rate on every output that supports it; an [[outputs]] entry overrides it, and the Display page of Reprise Settings sets that one
+system_icons = ["documents", "computer", "home", "recycle-bin"]   # the desktop's system icons, in order; home is your home folder
+
+[colors]                     # "#RRGGBB" or "r g b"; a key set here overrides
+                              # the interface's own colour, so every line
+                              # below is commented out: each already equals
+                              # Classic's default scheme, Reprise Standard
+# active_title = "10 36 106"
+# gradient_active_title = "166 202 240"
+# inactive_title = "128 128 128"
+# gradient_inactive_title = "192 192 192"
+# background = "#3A6EA5"      # the desktop colour, behind [wallpaper]'s picture; the Background page sets it
+# button_face = "212 208 200"
+# desktop_text = "255 255 255"
+# info_bk = "255 255 225"      # tooltips and balloons
+# info_text = "0 0 0"
+# hot_light = "0 0 128"       # links
+
+[metrics]                    # pixels, except where noted; a key set here
+                              # overrides the interface's own metric, so
+                              # every line below is commented out: each
+                              # already equals Reprise Classic's built-in
+                              # default
+# frame_width = 4
+# caption_height = 18
+# taskbar_height = 28
+# caption_button_gap = 0       # extra space between minimize and maximize; Blue's own default is 2
+# cascade_origin = 32
+# cascade_step = 24
+# menu_shadow = 4               # drop shadow under menus, 0 for none
+# double_click_ms = 500         # milliseconds, not scaled on HiDPI outputs
+# menu_hover_ms = 400           # milliseconds a hovered row waits before its submenu opens or closes
+# menu_fade_ms = 150            # milliseconds a menu takes to fade in, 0 for none
+
+[fonts]
+family = ["Tahoma", "DejaVu Sans"]
+size_px = 11
+antialias = false             # Reprise's own text; false: hinted monochrome; true: hinted grayscale
+#                             # programs' text follows [toolkits] font_smoothing
+# shell_dlg = ""              # second dialog font, a family or a .ttf path, for End Program,
+#                             # Power Options, a folder's Properties and the other dialogs
+#                             # docs/assets.md lists; unset, they use family
+
+[icons]
+theme = "hicolor"            # freedesktop icon theme for menus, taskbar, captions and the programs Reprise starts
+
+[cursor]                     # the pointer; programs started from Reprise get it too
+# theme = ""                 # an XCursor theme from ~/.icons or /usr/share/icons; empty
+#                            # keeps XCURSOR_THEME, or the "default" theme without it
+# size = 0                   # pixels, up to 256; 0 keeps XCURSOR_SIZE, or 24 without it
+
+[toolkits]                   # how GTK and Qt programs look
+# gtk_theme = "auto"         # a GTK theme's name, handed to GTK3 and GTK4 through the
+#                            # portal; "auto" is Adwaita, Adwaita-dark under a dark look;
+#                            # "reprise" is Adwaita in the look's colours, written to
+#                            # ~/.local/share/themes/Reprise and Reprise-alt and
+#                            # rewritten when the look changes
+# qt_platform_theme = "auto" # QT_QPA_PLATFORMTHEME for programs Reprise starts
+#                            # (xdgdesktopportal, qt6ct, qt5ct, kde, gtk3); "auto" is
+#                            # xdgdesktopportal under a dark look, else the session's own;
+#                            # "reprise" is qt6ct or qt5ct with Fusion in the look's
+#                            # colours (needs one of them; Reprise writes qt6ct.conf and
+#                            # qt5ct.conf only when they are absent or its own)
+# gtk4_colors = false        # true: GTK4 and libadwaita programs take the look's colours
+#                            # from ~/.config/gtk-4.0/gtk.css, which Reprise writes when it
+#                            # is absent or its own and rewrites when the look changes;
+#                            # programs already running keep theirs until they restart;
+#                            # false removes the file if Reprise wrote it
+# font_smoothing = "grayscale" # grayscale | subpixel | none: how GTK and the browsers
+#                            # smooth their text; none is fully hinted monochrome
+
+[appearance]
+interface = "classic"        # classic | blue | glass; an unknown value falls back to classic
+# color_scheme = "Brick"     # Classic: a scheme name (Reprise Settings' Appearance page lists them); Blue: "Blue", "Olive Green", "Silver", "Slate", "Sapphire", "Obsidian" or "Ember"; Glass has none, see [glass] color
+#                            # a name from another interface falls back to that interface's default and logs a warning; Glass ignores the key
+
+# [wallpaper]                # the picture under the desktop icons, drawn over [colors] background
+# image = "/usr/share/backgrounds/picture.jpg"   # bmp, gif, jpg, png or dib; "" or a file that does not decode shows the colour alone
+# image = "reprise:tarn/dusk"   # a built-in drawn picture, see below; unset, classic shows the colour alone, blue tarn/blue, glass flow/glass
+#                            # built-ins: caustic, reeded, panes (sky ruby green violet dark), ridges, tarn (dawn day dusk night blue),
+#                            # terraces (spring harvest dusk frost blue), fold (teal steel sand night), contour (teal night paper dusk),
+#                            # flow (night ink teal ember). caustic, reeded, panes and flow also take glass (tinted from [glass] color; flow is night in dark mode),
+#                            # hue-<0..359> and hue-<0..359>-dark. A built-in always fills the screen; position does not apply
+# position = "stretch"       # center | tile | stretch
+# lock_screen = false        # the picture behind the lock screen's dialog too; off under classic, on under blue and glass
+# slideshow = "~/Pictures/Wallpapers"   # a folder whose pictures take turns in place of image, each fading into the next
+# interval = 30              # minutes each slideshow picture shows, 1 to 1440; the desktop menu's Next desktop background skips ahead
+# shuffle = false            # true: the slideshow picks at random instead of by file name
+# water = "off"              # off | calm | lively | rain: ripples on the wallpaper that follow the pointer, the icons and the windows; rain adds a drop every second or so
+# water_rate = "refresh"     # "refresh" | 30 to 240: steps a second; refresh steps once a frame at each output's own refresh. The ripples settle and travel alike at any rate, but below 60 they travel slower, at rate/60 of their speed
+
+# [glass]                    # Reprise Glass only
+# color = "sky"              # sky twilight sea leaf lime sun pumpkin ruby fuchsia blush
+#                            # violet lavender taupe chocolate slate frost, or "#RRGGBB"
+# intensity = 42             # 0 to 100: how much of the colour shows
+# transparency = true        # false: opaque glass, no blur, least GPU work
+# blur = 2                   # 1 (lightest, least GPU work) to 5 (strongest)
+# streaks = true             # false: no reflection streaks over the glass
+# fast_drag = true           # while a window is dragged or sized: a lighter blur,
+#                            # a frame behind; the full one again once let go
+# blur_frames = true         # glass over another window's frame, a dialog's or the
+#                            # taskbar shows it blurred; false: one blur less per such glass
+# blur_rate = 30             # at most this many times a second a program drawing
+#                            # next to the glass (a video) blurs into it again; 0: every frame
+# mode = "light"             # light | dark
+# material = "frosted"       # frosted | smoked (darker, white titles) | molten (bent edges)
+# frame = "rounded"          # rounded | square (flat, separate caption buttons)
+# orb_glow = 100             # 0 to 100: how strongly the Start button's icon glows; 0: none
+
+# [taskbar]                  # a key left out follows the interface: Glass's
+#                            # defaults are shown; Classic and Blue use
+#                            # buttons = "when_full" and false for pinned,
+#                            # show_desktop_button and peek
+# position = "bottom"        # bottom | top | left | right: the output edge
+#                            # every bar sits on, under every interface
+# side_width = 0             # a left or right bar's width; 0: the
+#                            # interface's own (Start's width, or one icon
+#                            # in Glass), one icon to a third of the output
+#                            # dragging an unlocked side bar's edge sets it
+# buttons = "combine"        # combine: one icon-only button per app;
+#                            # when_full: one labelled button per window, an
+#                            # app's windows grouped once the row is full;
+#                            # never: one labelled button per window, always;
+#                            # group: as never, an app's buttons side by side
+# pinned = true              # the Quick Launch programs share the task row;
+#                            # a right click opens a button's jump list,
+#                            # a left click on a group its last active window
+# small_icons = false        # a 30 px Glass bar with 44 px task buttons
+# show_desktop_button = true # a Show desktop strip at the bar's right end
+# peek = true                # hovering the strip or a window picture shows
+#                            # the desktop or that window alone
+# tray_overflow = true       # Passive tray items wait behind an arrow (a ^
+#                            # flyout in Glass); Customize... sets single items apart
+# auto_hide = false          # the bar slides off its edge when unused, leaving
+#                            # a 2 px line; windows take the rest of the screen
+# reveal_on_edge = true      # it comes back when the pointer rests on that
+#                            # line, clicks it or drags onto it
+# reveal_on_keys = true      # ... for the Start key, Ctrl+Esc and Alt+Tab
+# reveal_on_attention = true # ... while a window asks for attention, and for
+#                            # a new balloon
+
+[keyboard]                   # xkb rules/model/layout/variant/options
+# rules = ""                 # empty means the system default
+# model = ""                 # empty means the system default
+# layout = ""                # empty means the system default; "us,hu" gives
+#                            # two layouts (four at most), a tray indicator and
+#                            # the next-layout chord between them
+# variant = ""               # empty means no variant once layout is set; per
+#                            # layout, comma separated (",qwerty" with "us,hu")
+# options = ""               # empty uses the xkb/XKB_DEFAULT_OPTIONS default
+# repeat_rate = 25           # keys per second
+# repeat_delay = 600         # milliseconds before repeat starts
+
+[mouse]                      # every libinput pointer that cannot tap
+# speed = 0.0                # -1.0 (slowest) to 1.0 (fastest)
+# acceleration = true        # false is libinput's flat profile: raw motion
+# natural_scroll = false     # true reverses the wheel: content follows it
+
+[touchpad]                   # every libinput pointer that can tap
+# speed = 0.0
+# acceleration = true
+# natural_scroll = false     # true reverses scrolling: content follows the fingers
+# tap_to_click = true        # a one-finger tap clicks, a double tap double-clicks
+# two_finger_scroll = true   # both axes; false scrolls along the pad's edges
+# two_finger_tap_right_click = true  # false: two fingers middle, three right
+# disable_while_typing = true  # ignore the pad (and a clickpad's click) right after a key
+
+# [gestures]                 # touchpad swipes Reprise keeps; other finger counts, pinches
+#                            # and holds go to the program under the pointer
+# enabled = true
+# fingers = 3                # 3 or 4: left/right slide the desktops with the fingers,
+#                            # up fades the window overview in, down fades it out
+
+[touchscreen]                # a finger on an app that takes touch is touch; anywhere else it clicks and drags
+# output = "eDP-1"           # the output it covers; default: what udev says, else the laptop's own panel
+
+# [[tablet_pads]]            # a drawing tablet's pad: the first entry whose name matches a pad maps it
+# name = "Wacom Intuos* Pad" # glob over the device name (* and ?); left out, every pad
+# buttons = { 1 = "zoom-in", 2 = "ctrl+z", 3 = "mode" }  # 1 is the first button
+# ring_up = "ctrl+plus"      # each 15 degrees clockwise; ring_down counter-clockwise
+# ring_down = "ctrl+minus"
+# strip_up = "volume-up"     # each tenth of the strip towards its top; strip_down away from it
+#                            # a value is a [[keybinds]] action name, "mode" (the next mode),
+#                            # "none", or keys as [[keybinds]] spell them, sent to the app in front;
+#                            # a button's keys stay down while it does
+# [[tablet_pads.modes]]      # optional, one per mode, the first mode first: what that mode binds
+# ring_up = "volume-up"      # over the entry's own keys. Pads with mode buttons and LEDs count
+#                            # their own modes; others move on with a button bound to "mode"
+
+[power]                      # what the Turn Off dialog's buttons run
+standby = "systemctl suspend"
+poweroff = "systemctl poweroff"
+reboot = "systemctl reboot"
+hibernate = "systemctl hibernate"
+# The lid and the buttons (reprise-power's Power Options edits these):
+# nothing | screen_off | lock | standby | hibernate | turnoff | ask (the Turn Off dialog)
+lid_close = "standby"
+power_button = "ask"
+sleep_button = "standby"
+lock_on_sleep = true         # lock before the machine sleeps, whoever asked (logind's PrepareForSleep)
+# locker = "swaylock"        # an ext-session-lock-v1 locker to draw the lock screen; the dialog is the fallback
+battery_low = 10             # percent; reprise-power shows a balloon
+battery_critical = 3         # percent; a balloon, then critical_action
+critical_action = "hibernate"   # nothing | standby | hibernate | turnoff; a sleep logind cannot do shuts down
+always_show_icon = false     # reprise-power's tray icon on a machine without a battery too
+
+[idle]                       # seconds of no input; 0 disables the step
+blank_after = 0              # start the [screensaver] over every output until input
+lock_after = 600             # lock the screen
+lock_fade = 0                # dim the desktop to grey over this many seconds before the lock
+screen_off_after = 900       # power every output off; any input turns them back on
+suspend_after = 0            # run [power] standby
+
+# [screensaver]              # what [idle] blank_after starts; Reprise Settings' Screen Saver page edits it
+# name = "blank"             # blank | starfield | mystify | logo | photos
+# speed = 5                  # 1 to 10: how fast starfield, mystify and logo move
+# stars = 200                # starfield: 10 to 1000 stars
+# shapes = 2                 # mystify: 1 to 4 shapes
+# cycle_colors = true        # mystify and logo change colour as they go
+# folder = "~/Pictures"      # photos: the folder shown; unset is the Pictures folder
+# photo_seconds = 10         # photos: 3 to 600 seconds per picture
+
+# [idle.battery]             # the same keys while on battery (UPower says so);
+# screen_off_after = 300     # a missing key keeps the [idle] value
+# suspend_after = 1200
+
+# [[outputs]]                # per-output settings, matched by connector name; the Display page of Reprise Settings writes mode, transform, scale, position and adaptive_sync here after you keep the change
+# name = "DP-1"
+# position = [1920, 0]       # top-left in the layout, in logical pixels; outputs without one line up right of the rightmost placed one
+# primary = true             # the desktop icons, notification balloons and the media keys' panel go here; the first output when none is marked
+# scale = 1.5                # 1 to 4 in steps of 0.25; drawn at the next whole scale, then scaled down
+# mode = "2560x1440@59.95"   # WIDTHxHEIGHT[@HZ]; the preferred mode when left out or not offered
+# transform = "90"           # normal, 90, 180, 270, flipped, flipped-90, flipped-180, flipped-270
+# adaptive_sync = true       # overrides the top-level adaptive_sync for this output
+
+# [screenshot]               # every screenshot goes to the clipboard
+# save = true                # and to Pictures/Screenshots (or ~/Screenshots) as a PNG
+
+# [previews]                 # live pictures of windows, redrawn while they change
+# taskbar = true             # pointing at a task button shows its windows; false keeps the text tip
+# fps = 10                   # how often a changing picture is redrawn, 1 to 60; more costs more GPU
+
+# [switcher]                 # Alt+Tab; a key left out follows the interface:
+#                            # Glass's defaults are shown; Classic and Blue use
+#                            # style = "icons", desktop = false, peek = false,
+#                            # flip = false
+# style = "thumbnails"       # icons: a grid of icons; thumbnails: a live
+#                            # picture of every window, its icon bottom-right
+# size = "small"             # thumbnails only: "medium" draws the pictures 1.5
+#                            # times as large, "large" twice, "huge" three times
+# preview = true             # icons only: the selected window live above them
+# desktop = true             # the desktop is the last entry; picking it shows it
+# peek = true                # resting on an entry shows that window alone
+# flip = true                # Super+Tab tilts the windows into a 3D stack; false opens the panel
+
+# [overview]                 # every window of this desktop side by side (Super+W)
+# hot_corner = "none"        # or "top-left", "top-right", "bottom-left", "bottom-right":
+#                            # pushing the pointer into that screen corner opens it
+
+# [clipboard]                # the last 25 things copied, in memory only, for Super+V
+# history = true             # false records nothing and turns the Super+V popup off
+# terminal_apps = ["foot", "kitty", "Alacritty", "org.wezfurlong.wezterm", "com.mitchellh.ghostty", "org.gnome.Console", "konsole", "xterm"]
+#                            # app ids a pick pastes into with Ctrl+Shift+V instead of Ctrl+V
+# trusted_apps = []          # Flatpak app ids given the clipboard managers' protocols, e.g.
+#                            # ["me.proton.Pass"] so its copy buttons work; they can read the clipboard too.
+#                            # See docs/flatpak-clipboard.md
+
+# [privacy]
+# recent_files = true        # false hides the recently used files GTK and KDE apps record
+#                            # (recently-used.xbel) from the Start menu's Documents, the
+#                            # jump lists and the file dialogs' My Recent Documents
+# location = true            # false refuses every program that asks geoclue for the
+#                            # location, without the prompt
+
+# [debug]                    # Settings > Advanced also sets these
+# overlay = false            # true shows frame rate, render times, damage, clients
+#                            # and memory in each screen's top-right corner
+# overlay_in_captures = false  # true shows it in screenshots and screen sharing too
+
+# [recycle_bin]              # what Delete does, in the desktop and Explorer alike;
+#                            # Recycle Bin Properties writes this table
+# confirm = true             # false deletes without asking (an erase on a drive with no
+#                            # Recycle Bin, and Empty Recycle Bin, still ask)
+# independent = false        # true: each drive follows its [recycle_bin.drives] entry
+# remove_immediately = false # true erases instead of moving files to the Recycle Bin
+# max_percent = 10           # 0 to 100: how much of its drive a Recycle Bin may fill; past it
+#                            # the oldest items go first, and an item bigger than the
+#                            # whole of it asks to be deleted for good
+# [recycle_bin.drives.home]  # the drive the home folder's Recycle Bin is on; another
+# max_percent = 5            # drive by its file system UUID, else its mount point
+
+# [launcher]                 # the Super+Space launcher
+# search_files = true        # false finds programs only; true also lists files and folders
+#                            # in the home folder from two typed characters on
+
+# [night_light]              # warm the screen by night; a client that sets the gamma takes precedence
+# enabled = false
+# temperature = 4000         # kelvin at night, 1000 to 6500 (6500 is no change)
+# schedule = "sun"           # "sun": sunset to sunrise; "fixed": from and to
+# from = "21:00"             # local times for "fixed"; each edge fades over 30 minutes
+# to = "07:00"
+# latitude = 47.5            # where sunset is worked out for, both or neither;
+# longitude = 19.08          # unset uses the time zone's city (tzdata's zone1970.tab)
+
+# [workspaces]               # virtual desktops, shared by every screen; the taskbar's pager switches
+# count = 4                  # 1 to 16; 1 turns them off
+# animation = "none"         # how a switch moves the screen: "none" (it just happens), "slide"
+#                            # (sideways, a later desktop comes in from the right), "slide-vertical"
+#                            # (a later one comes up from below), "fade", "zoom" (the old desktop
+#                            # shrinks as it fades) or "wipe" (an edge sweeps the old one away)
+# animation_ms = 200         # 0 to 2000; 0 is no animation
+# pager = "light"           # how the Glass taskbar marks the current desktop: "light" (a light
+#                            # under its number) or "tile" (a glass tile behind it); other
+#                            # interfaces ignore it
+
+# [effects]                  # motion, for every interface; a key left out
+#                            # follows the interface: Glass's defaults are
+#                            # shown, Classic and Blue use false for the switches
+# window_animation = true    # windows fade and grow as they open, shrink as they close
+# window_open_ms = 250       # 0 to 2000; 0 is no animation
+# window_close_ms = 200      # 0 to 2000; 0 is no animation
+# window_scale = 0.95        # 0.8 to 1.0: the size an opening window starts at
+# hover_fade = true          # caption buttons and Start fade their highlight
+# hover_in_ms = 120          # 0 to 2000; 0 lights at once
+# hover_out_ms = 250         # 0 to 2000; 0 goes dark at once
+# taskbar_slide = true       # task buttons slide aside as a drag reorders them, and the
+#                            # dropped one glides into its slot
+# taskbar_hide_ms = 200      # 0 to 2000: an auto-hidden taskbar's slide; 0 hides
+#                            # and shows it at once
+
+# [accessibility]            # keyboard and pointer aids, for every program and the desktop's own keys
+# sticky_keys = false        # a tap of Shift, Ctrl, Alt or Super holds it for the next key
+# sticky_lock = true         # a second tap locks the modifier, a third lets it go
+# sticky_two_keys_off = true # a key pressed while a modifier is held turns StickyKeys off
+# slow_keys = false          # a key counts only once it has been held down for the delay
+# slow_keys_delay = 1.0      # seconds, 0.3 to 2.0
+# shortcuts = true           # Shift five times toggles StickyKeys, right Shift held 8 s SlowKeys,
+#                            # left Alt+left Shift+Num Lock MouseKeys
+# mouse_keys = false         # the numeric keypad moves the pointer: 1-9 move, 5 clicks,
+#                            # + double-clicks, / * - pick left, middle, right, 0 holds, . lets go
+# mouse_keys_speed = 400     # top speed in pixels a second, 50 to 2000
+# mouse_keys_acceleration = 1.0  # seconds a held key takes to reach it, 0 to 5
+# mouse_keys_num_lock = true # only while Num Lock is on; false: always
+# text_size = 100            # percent, 100 to 200 in steps of 25: the taskbar, Start menu,
+#                            # menus, captions and tooltips, the heights that hold them,
+#                            # Notepad's text, and GTK's and Qt's text (text-scaling-factor,
+#                            # the qt6ct font). Dialogs and desktop icons keep their size.
+# color_filter = "none"      # the whole screen through a filter: "grayscale", "invert", or a
+#                            # correction for "deuteranopia", "protanopia" or "tritanopia";
+#                            # screenshots and screen sharing stay unfiltered
+# color_filter_intensity = 100  # percent, how strongly a correction applies
+# magnifier_follow = "pointer+focus"  # "pointer": a zoomed view follows the pointer alone;
+#                            # "pointer+focus": also the text cursor and keyboard focus
+
+# [windows]
+# remember = true            # an app's next window opens where its last one closed (size, place,
+#                            # screen, maximized); its further windows cascade from it
+# tabs = true                # a window dragged onto another's title bar joins its tab group;
+#                            # false: no tab groups, and turning it off splits the open ones
+
+# [session]
+# restore = false            # true: the apps open at Log Off, Turn Off or Restart start again at
+#                            # the next login, each on its old desktop; only apps with a Start menu entry
+# exclude = ["foot"]         # app ids never started again. Globs: * and ?. X11: the class.
+# end_processes = true       # Log Off ends every program left in the login session, windowless ones
+#                            # too; false leaves them running (a display manager login only)
+
+# [[window_rules]]           # every rule that matches applies, in file order; later ones win,
+# app_id = "foot"            # and a rule beats the remembered place. Globs: * and ?. X11: the class.
+# title = "*build*"          # optional; matched once, when the window opens
+# size = [800, 600]          # outer size, frame included
+# position = [40, 40]        # frame's top-left from the screen's top-left, kept inside the work area
+# output = "DP-1"            # the screen by connector name; the one under the pointer when absent
+# state = "maximized"        # normal, maximized, minimized or fullscreen
+# desktop = 2                # 1 to [workspaces] count
+# always_on_top = true
+# sticky = true              # on every desktop
+#                            # dialogs keep centring on their owner; fixed-size windows ignore size
+
+# [window_snapping]          # snap a window to the screen's edges and the zones of its layout
+# enabled = true             # drag snapping; the Super+arrow binds always work
+# picker = true              # resting on a maximize button shows the snap layouts; Super+z always does
+# bar = true                 # with enabled, dragging a title bar toward the top shows the snap layouts in a bar there
+# layouts = ["1|1", "2|1", "1|1:2"]  # the flyout's and the bar's layouts, up to 6; unset gives six built-in ones.
+#                            # Columns' weights joined by |, or rows' by -; weight:n cuts that one
+#                            # into n: "2|1" is two thirds and a third, "1-1:2" a top half over two
+#                            # quarters. After a layout is picked, holding Shift while dragging
+#                            # shows its zones. After a snap, the other zones offer the desktop's
+#                            # other windows to fill them.
+
+[[keybinds]]
+keys = "Super+Return"
+action = "terminal"
+
+[[keybinds]]
+keys = "Super+q"
+action = "close"
+
+[[keybinds]]
+keys = "Alt+F4"
+action = "close"
+
+[[keybinds]]
+keys = "Alt+Tab"
+action = "cycle"
+
+[[keybinds]]                 # the 3D switcher under Glass ([switcher] flip), else as Alt+Tab;
+                             # a [[keybinds]] list replaces every default bind, so an older
+                             # config gets no Super+Tab until it adds this one
+keys = "Super+Tab"
+action = "flip"
+
+[[keybinds]]
+keys = "Super+Shift+e"
+action = "exit"
+
+[[keybinds]]
+keys = "Super+l"
+action = "lock"
+
+[[keybinds]]                 # a tap on Super alone does the same
+keys = "Ctrl+Escape"
+action = "startmenu"
+
+[[keybinds]]
+keys = "Super+r"
+action = "run"
+
+[[keybinds]]                 # the focused window's menu
+keys = "Alt+space"
+action = "windowmenu"
+
+[[keybinds]]                 # hide or show the focused window's border and caption
+keys = "Super+Shift+b"
+action = "toggleframe"
+
+[[keybinds]]                 # the application launcher: type to find, Enter to start
+keys = "Super+space"
+action = "launcher"
+
+[[keybinds]]                 # centre the focused window on the screen under the pointer
+keys = "Super+c"
+action = "center"
+
+# Super and an arrow move the focused window across its screen's snap
+# layout: halves until a layout is picked, then the picked one, at the
+# splits a shared edge was dragged to. Left and Right step to the next
+# zone and on to the next screen; Up steps up or maximizes; Down steps
+# down, restores a maximized window, then gives it its size from before
+# the snap back.
+[[keybinds]]
+keys = "Super+Left"
+action = "snap-left"
+
+[[keybinds]]
+keys = "Super+Right"
+action = "snap-right"
+
+[[keybinds]]
+keys = "Super+Up"
+action = "snap-up"
+
+[[keybinds]]
+keys = "Super+Down"
+action = "snap-down"
+
+# Super+Ctrl and an arrow show the desktop before or after this one
+# ([workspaces]); there is nothing past the first or the last. With Shift
+# too, the focused window comes along.
+[[keybinds]]
+keys = "Super+Ctrl+Left"
+action = "desktop-prev"
+
+[[keybinds]]
+keys = "Super+Ctrl+Right"
+action = "desktop-next"
+
+[[keybinds]]
+keys = "Super+Ctrl+Shift+Left"
+action = "desktop-carry-prev"
+
+[[keybinds]]
+keys = "Super+Ctrl+Shift+Right"
+action = "desktop-carry-next"
+
+# Show the focused window on every desktop, or only on this one; the window
+# menu's Show on All Desktops row does the same. Not bound by default.
+#[[keybinds]]
+#keys = "Super+Ctrl+a"
+#action = "all-desktops"
+
+# Keep the focused window above the others, or stop; the window menu's
+# Always on Top row does the same. Not bound by default.
+#[[keybinds]]
+#keys = "Super+t"
+#action = "alwaysontop"
+
+# Turn Do Not Disturb on or off: only critical notifications raise a
+# balloon, the rest still go into the history behind the tray's bell. The
+# history's check box does the same. Not bound by default.
+#[[keybinds]]
+#keys = "Super+n"
+#action = "do-not-disturb"
+
+[[keybinds]]                 # copy the whole screen to the clipboard as a PNG
+keys = "Print"
+action = "screenshot"
+
+[[keybinds]]                 # copy the focused window, frame and all; Alt+PrtSc reads as Sys_Req
+keys = "Alt+Sys_Req"
+action = "screenshot-window"
+
+[[keybinds]]                 # the same, for keyboards without PrtSc
+keys = "Super+Shift+w"
+action = "screenshot-window"
+
+[[keybinds]]                 # drag out a rectangle, or click a window; Esc cancels
+keys = "Shift+Print"
+action = "screenshot-region"
+
+[[keybinds]]                 # the focused window's content, without its frame
+keys = "Ctrl+Alt+Sys_Req"
+action = "screenshot-content"
+
+[[keybinds]]                 # the clipboard history: type to filter, Enter pastes, Del forgets
+keys = "Super+v"
+action = "clipboard-history"
+
+[[keybinds]]                 # the emoji picker: type to search, arrows move, Enter types it
+keys = "Super+period"
+action = "emoji-picker"
+
+# The magnifier zooms the screen under the pointer from 1x to 8x in steps
+# of 0.5x; the view pans when the pointer pushes against its edge, and
+# to the text cursor or keyboard focus when typing moves it
+# ([accessibility] magnifier_follow). The cursor keeps its size, and
+# screenshots and screen sharing see the screen unzoomed.
+[[keybinds]]
+keys = "Super+equal"
+action = "zoom-in"
+
+[[keybinds]]
+keys = "Super+minus"
+action = "zoom-out"
+
+[[keybinds]]
+keys = "Super+0"
+action = "zoom-reset"
+
+[[keybinds]]                 # turn [accessibility] color_filter off, and back on
+keys = "Super+Ctrl+c"
+action = "color-filter"
+
+[[keybinds]]                 # every window of this desktop side by side: arrows pick, Enter shows,
+keys = "Super+w"             # typing searches the launcher; [overview] hot_corner opens it too
+action = "overview"
+
+[[keybinds]]                 # the snap layouts under the focused window's maximize button:
+keys = "Super+z"             # arrows pick a zone, Enter snaps the window there
+action = "snap-layouts"
+
+[[keybinds]]                 # the keyboard to the taskbar, on Start: arrows walk it, Enter
+keys = "Super+t"             # clicks, the Menu key or Shift+F10 opens a menu, Esc goes back
+action = "focus-taskbar"
+
+[[keybinds]]                 # the same, on the notification area
+keys = "Super+b"
+action = "focus-tray"
+
+# A bind whose key is itself a modifier (Alt_L, Shift_R, Control_L,
+# Super_L, ...) is a modifier-only chord: it fires when one of its keys is
+# released and nothing else was pressed in between, in either order. This
+# one is the left Alt with either Shift: the next [keyboard] layout.
+[[keybinds]]
+keys = "Shift+Alt_L"
+action = "next-layout"
+
+# A window dragged by its title bar and held on another's title bar until a
+# ghost tab shows there joins that window's tab group on the release; the
+# window menu's "Add to Tabs of" does the same. These show the focused
+# group's next tab and the one before (Ctrl+Tab stays the program's own).
+[[keybinds]]
+keys = "Super+grave"
+action = "tab-next"
+
+[[keybinds]]
+keys = "Super+Page_Down"
+action = "tab-next"
+
+[[keybinds]]
+keys = "Super+Page_Up"
+action = "tab-prev"
+
+# The media keys (volume, mute, brightness, play/pause, ...) act on their
+# own, ahead of the lock screen. A bind on one of them replaces its
+# built-in action and makes it an ordinary bind, so it no longer works
+# while the screen is locked; the actions
+# volume-up, volume-down, mute, mic-mute, brightness-up, brightness-down,
+# kbd-brightness-up, kbd-brightness-down, play-pause, next, prev, stop and
+# wifi bind to any key.
+#[[keybinds]]
+#keys = "Super+F10"
+#action = "mute"
+
+# What the Quick Launch folder (~/.config/reprise/quicklaunch/, one .desktop
+# file per button) is seeded with the first time it is missing; afterwards
+# the folder is what counts. Each runs a `command` or `action`; `label` is
+# the tooltip. A `command` becomes the file's Exec line, so it runs split
+# into arguments the way a .desktop file's is, with no shell.
+# `quicklaunch = []` seeds nothing. Leaving the block out gives exactly
+# these three.
+[[quicklaunch]]
+label = "Launch Web Browser"
+icon = "web-browser"
+command = "xdg-open https://duckduckgo.com/"
+
+[[quicklaunch]]
+label = "Show Desktop"
+icon = "user-desktop"
+action = "showdesktop"       # minimize every window, or bring them back
+
+[[quicklaunch]]
+label = "Terminal"
+icon = "utilities-terminal"
+action = "terminal"
+
+# The Start menu, top to bottom. An entry runs a `command` or `action`, or
+# opens a submenu: `submenu = "programs"` (installed applications),
+# "settings" (applications in the Settings category), "documents" (the XDG
+# user directories that exist, opened in Explorer), or nested
+# `[[startmenu.items]]`; an entry with none of these (or `items = []`) is an
+# empty folder. `icon` is an icon theme name or absolute path.
+# `&` before a letter in a label makes it the access key (underlined when
+# navigating by keyboard); `&&` is a literal ampersand. Leaving the whole
+# block out gives exactly this menu. reprise-settings' Start Menu tab
+# edits this block and writes it back whole, without comments inside it.
+[[startmenu]]
+label = "&Programs"
+icon = "applications-other"
+submenu = "programs"
+
+[[startmenu]]
+label = "&Documents"
+icon = "folder-documents"
+submenu = "documents"
+
+[[startmenu]]
+label = "&Settings"
+icon = "preferences-system"
+[[startmenu.items]]
+label = "&Control Panel"
+icon = "preferences-other"
+submenu = "settings"
+tip = "Provides options for you to customize the appearance and functionality of your computer, add or remove programs, and set up network connections and user accounts."
+[[startmenu.items]]
+separator = true
+[[startmenu.items]]
+label = "&Network Connections"
+icon = "network-workgroup"
+command = "nm-connection-editor"
+tip = "Displays existing network connections on this computer and helps you create new ones"
+[[startmenu.items]]
+label = "&Printers"
+icon = "printer"
+command = "reprise-printers"
+tip = "Add, remove, and configure local and network printers, and see what is printing."
+[[startmenu.items]]
+label = "&Taskbar and Start Menu"
+icon = "preferences-desktop"
+command = "reprise-settings --page taskbar" # Reprise Settings on its Taskbar page; its Advanced page's Edit File... button opens this file
+tip = "Customize the Start Menu and the taskbar, such as the types of items to be displayed and how they should appear."
+
+[[startmenu]]
+label = "Sear&ch"
+icon = "system-search"
+[[startmenu.items]]
+label = "&For Files or Folders..."
+icon = "system-search"
+command = 'reprise-explorer "$HOME"'
+[[startmenu.items]]
+label = "On the &Internet..."
+icon = "web-browser"
+command = "xdg-open https://duckduckgo.com/"
+
+[[startmenu]]
+label = "&Help and Support"
+icon = "help-browser"
+command = "xdg-open https://github.com/reprise-project/reprise-desktop"
+
+[[startmenu]]
+label = "&Run..."
+icon = "system-run"
+action = "run"               # the Run dialog; also on Super+r
+
+[[startmenu]]
+separator = true
+
+[[startmenu]]
+label = "&Log Off {user}..."   # {user} is the login name
+icon = "gnome-session-logout"
+action = "logoff"            # asks first, then exits the compositor
+
+[[startmenu]]
+label = "T&urn Off Computer..."
+icon = "system-shutdown"
+action = "turnoff"           # Stand By / Turn Off / Restart, running the [power] commands

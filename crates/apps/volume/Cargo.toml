@@ -1,0 +1,27 @@
+[package]
+name = "reprise-volume"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Volume Control: the Reprise mixer window"
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "reprise-volume"
+path = "src/main.rs"
+
+[dependencies]
+repriseapp = { path = "../../repriseapp" }
+repriseaudio = { path = "../../repriseaudio" }
+repriseconf = { path = "../../repriseconf" }
+reprisekit = { path = "../../reprisekit" }
+serde = { workspace = true, features = ["derive"] }
+toml.workspace = true
+log.workspace = true
+env_logger.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

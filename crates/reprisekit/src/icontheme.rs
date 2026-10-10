@@ -1,0 +1,1641 @@
+//! freedesktop icon theme lookup: `index.theme` parsing, the inherits chain
+//! and the size-matching rules from the Icon Theme Specification.
+
+use crate::icon::premultiply;
+use crate::raster::Canvas;
+use std::cell::RefCell;
+use std::collections::{HashMap, HashSet};
+use std::ffi::OsString;
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, OnceLock};
+
+/// Env var carrying the icon theme name from the compositor; clients without it load `hicolor`.
+pub const ENV: &str = "REPRISE_ICONS";
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DirKind {
+    Fixed,
+    Scalable,
+    Threshold,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DirEntry {
+    pub path: PathBuf,
+    pub size: i32,
+    pub scale: i32,
+    pub kind: DirKind,
+    pub min: i32,
+    pub max: i32,
+    pub threshold: i32,
+}
+
+impl DirEntry {
+    pub fn matches(&self, size: i32, scale: i32) -> bool {
+        if self.scale != scale {
+            return false;
+        }
+        match self.kind {
+            DirKind::Fixed => self.size == size,
+            DirKind::Scalable => self.min <= size && size <= self.max,
+            DirKind::Threshold => {
+                (self.size - self.threshold) <= size && size <= (self.size + self.threshold)
+            }
+        }
+    }
+
+    /// Whether the biggest icon here is smaller than `size` at `scale`, so it would be scaled up.
+    pub fn upscales(&self, size: i32, scale: i32) -> bool {
+        let biggest = match self.kind {
+            DirKind::Fixed => self.size,
+            DirKind::Scalable => self.max,
+            DirKind::Threshold => self.size + self.threshold,
+        };
+        biggest * self.scale < size * scale
+    }
+
+    /// `DirectorySizeDistance` from the spec, in pixels.
+    pub fn distance(&self, size: i32, scale: i32) -> i32 {
+        let want = size * scale;
+        match self.kind {
+            DirKind::Fixed => (self.size * self.scale - want).abs(),
+            DirKind::Scalable => {
+                if want < self.min * self.scale {
+                    self.min * self.scale - want
+                } else if want > self.max * self.scale {
+                    want - self.max * self.scale
+                } else {
+                    0
+                }
+            }
+            DirKind::Threshold => {
+                let lo = (self.size - self.threshold) * self.scale;
+                let hi = (self.size + self.threshold) * self.scale;
+                if want < lo {
+                    lo - want
+                } else if want > hi {
+                    want - hi
+                } else {
+                    0
+                }
+            }
+        }
+    }
+}
+
+const EXTENSIONS: [&str; 3] = ["png", "svg", "xpm"];
+
+pub struct IconTheme {
+    /// Theme names in lookup order: configured, its inherits, `hicolor`, then breeze and
+    /// Adwaita when installed.
+    pub chain: Vec<String>,
+    pub dirs: Vec<DirEntry>,
+    /// Range into `dirs` per theme in `chain`, so the exact-then-closest pass runs one theme at
+    /// a time.
+    groups: Vec<std::ops::Range<usize>>,
+    roots: Vec<PathBuf>,
+    /// File names per entry of `dirs`, then `roots`, listed on first visit so a miss costs a
+    /// hash probe instead of a stat. `extra` directories are not cached.
+    listings: Vec<OnceLock<HashSet<OsString>>>,
+}
+
+fn ini_lines(text: &str) -> Vec<(String, String, String)> {
+    let mut out = Vec::new();
+    let mut section = String::new();
+    for line in text.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        if let Some(s) = line.strip_prefix('[').and_then(|l| l.strip_suffix(']')) {
+            section = s.to_string();
+            continue;
+        }
+        if let Some((k, v)) = line.split_once('=') {
+            out.push((section.clone(), k.trim().to_string(), v.trim().to_string()));
+        }
+    }
+    out
+}
+
+/// Parse a theme directory's `index.theme` into `Inherits` and directory entries; missing or
+/// malformed files yield nothing.
+fn parse_index(theme_dir: &Path) -> (Vec<String>, Vec<DirEntry>) {
+    let Ok(text) = std::fs::read_to_string(theme_dir.join("index.theme")) else {
+        return (Vec::new(), Vec::new());
+    };
+    let lines = ini_lines(&text);
+    let get = |section: &str, key: &str| -> Option<&str> {
+        lines
+            .iter()
+            .find(|(s, k, _)| s == section && k == key)
+            .map(|(_, _, v)| v.as_str())
+    };
+    let inherits: Vec<String> = get("Icon Theme", "Inherits")
+        .map(|v| {
+            v.split(',')
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect()
+        })
+        .unwrap_or_default();
+    let mut names: Vec<String> = get("Icon Theme", "Directories")
+        .map(|v| {
+            v.split(',')
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect()
+        })
+        .unwrap_or_default();
+    if let Some(scaled) = get("Icon Theme", "ScaledDirectories") {
+        names.extend(
+            scaled
+                .split(',')
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty()),
+        );
+    }
+    let mut dirs = Vec::with_capacity(names.len());
+    for name in names {
+        let num = |key: &str| get(&name, key).and_then(|v| v.parse::<i32>().ok());
+        let Some(size) = num("Size") else {
+            continue;
+        };
+        let scale = num("Scale").unwrap_or(1).max(1);
+        let kind = match get(&name, "Type") {
+            Some("Fixed") => DirKind::Fixed,
+            Some("Scalable") => DirKind::Scalable,
+            _ => DirKind::Threshold,
+        };
+        let threshold = num("Threshold").unwrap_or(2);
+        let (min, max) = match kind {
+            DirKind::Scalable => (
+                num("MinSize").unwrap_or(size),
+                num("MaxSize").unwrap_or(size),
+            ),
+            DirKind::Threshold => (size - threshold, size + threshold),
+            DirKind::Fixed => (size, size),
+        };
+        dirs.push(DirEntry {
+            path: theme_dir.join(&name),
+            size,
+            scale,
+            kind,
+            min,
+            max,
+            threshold,
+        });
+    }
+    (inherits, dirs)
+}
+
+impl IconTheme {
+    /// `$XDG_DATA_HOME/icons`, `~/.icons`, each `$XDG_DATA_DIRS/icons`, then `/usr/share/pixmaps`.
+    pub fn default_roots() -> Vec<PathBuf> {
+        let mut roots = Vec::new();
+        let home = std::env::var_os("HOME").map(PathBuf::from);
+        let data_home = std::env::var_os("XDG_DATA_HOME")
+            .map(PathBuf::from)
+            .or_else(|| home.clone().map(|h| h.join(".local/share")));
+        if let Some(d) = data_home {
+            roots.push(d.join("icons"));
+        }
+        if let Some(h) = home {
+            roots.push(h.join(".icons"));
+        }
+        // An empty XDG_DATA_DIRS counts as unset.
+        let data_dirs = std::env::var("XDG_DATA_DIRS")
+            .ok()
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| "/usr/local/share:/usr/share".into());
+        for d in data_dirs.split(':').filter(|s| !s.is_empty()) {
+            roots.push(PathBuf::from(d).join("icons"));
+        }
+        roots.push(PathBuf::from("/usr/share/pixmaps"));
+        roots
+    }
+
+    /// Load `name`, its inherits (depth first, de-duplicated), then `hicolor`, breeze and
+    /// Adwaita. Directories merge across roots, so a user override still sees the system copy's
+    /// dirs.
+    pub fn load(name: &str, roots: &[PathBuf]) -> IconTheme {
+        let mut chain: Vec<String> = Vec::new();
+        let mut dirs: Vec<DirEntry> = Vec::new();
+        let mut groups: Vec<std::ops::Range<usize>> = Vec::new();
+        Self::walk(name, roots, &mut chain, &mut dirs, &mut groups);
+        // Fallbacks beyond `hicolor` so standard names (`system-run`, ...) resolve with a bare
+        // `hicolor`; only added when a root has their index, with their parents.
+        for fallback in ["hicolor", "breeze", "Adwaita"] {
+            let installed = roots
+                .iter()
+                .any(|r| r.join(fallback).join("index.theme").is_file());
+            if fallback == "hicolor" || installed {
+                Self::walk(fallback, roots, &mut chain, &mut dirs, &mut groups);
+            }
+        }
+        let listings = (0..dirs.len() + roots.len())
+            .map(|_| OnceLock::new())
+            .collect();
+        IconTheme {
+            chain,
+            dirs,
+            groups,
+            roots: roots.to_vec(),
+            listings,
+        }
+    }
+
+    /// Append `name` and its `Inherits` chain (depth first, skipping known themes) to
+    /// `chain`/`dirs`/`groups`.
+    fn walk(
+        name: &str,
+        roots: &[PathBuf],
+        chain: &mut Vec<String>,
+        dirs: &mut Vec<DirEntry>,
+        groups: &mut Vec<std::ops::Range<usize>>,
+    ) {
+        let mut pending: Vec<String> = vec![name.to_string()];
+        while let Some(theme) = pending.pop() {
+            if chain.contains(&theme) {
+                continue;
+            }
+            chain.push(theme.clone());
+            let start = dirs.len();
+            let mut inherits_all: Vec<String> = Vec::new();
+            // Every subdirectory any root's index names: a theme's directories count in every
+            // root, with or without an `index.theme` there.
+            let mut subdirs: Vec<(PathBuf, DirEntry)> = Vec::new();
+            for root in roots {
+                let base = root.join(&theme);
+                let (inherits, d) = parse_index(&base);
+                for e in d {
+                    let rel = e.path.strip_prefix(&base).unwrap_or(&e.path).to_path_buf();
+                    if !subdirs.iter().any(|(r, _)| *r == rel) {
+                        subdirs.push((rel, e));
+                    }
+                }
+                inherits_all.extend(inherits);
+            }
+            for root in roots {
+                let base = root.join(&theme);
+                dirs.extend(subdirs.iter().map(|(rel, e)| DirEntry {
+                    path: base.join(rel),
+                    ..e.clone()
+                }));
+            }
+            groups.push(start..dirs.len());
+            // Reversed so the first `Inherits` entry pops first.
+            for parent in inherits_all.into_iter().rev() {
+                if !chain.contains(&parent) {
+                    pending.push(parent);
+                }
+            }
+        }
+    }
+
+    /// The first of `files` that is a file directly in `dir`, by stat.
+    fn file_in(dir: &Path, files: &[OsString]) -> Option<PathBuf> {
+        files.iter().map(|f| dir.join(f)).find(|p| p.is_file())
+    }
+
+    /// The same through `listings[i]`, read on first use.
+    fn file_in_listed(&self, i: usize, dir: &Path, files: &[OsString]) -> Option<PathBuf> {
+        let listing = self.listings[i].get_or_init(|| list_files(dir));
+        files
+            .iter()
+            .find(|f| listing.contains(*f))
+            .map(|f| dir.join(f))
+    }
+
+    pub fn lookup(&self, name: &str, size: i32, scale: i32) -> Option<PathBuf> {
+        self.lookup_with_extra(name, size, scale, &[])
+    }
+
+    /// `FindIconHelper` plus fallback from the spec. `extra` directories are searched flat
+    /// before the chain.
+    pub fn lookup_with_extra(
+        &self,
+        name: &str,
+        size: i32,
+        scale: i32,
+        extra: &[PathBuf],
+    ) -> Option<PathBuf> {
+        let files = EXTENSIONS.map(|ext| OsString::from(format!("{name}.{ext}")));
+        for dir in extra {
+            if let Some(p) = Self::file_in(dir, &files) {
+                return Some(p);
+            }
+        }
+        // One theme at a time in chain order: a themed icon, even a size mismatch, beats an
+        // inherited exact one.
+        for group in &self.groups {
+            for (d, i) in self.dirs[group.clone()].iter().zip(group.clone()) {
+                if d.matches(size, scale)
+                    && let Some(p) = self.file_in_listed(i, &d.path, &files)
+                {
+                    return Some(p);
+                }
+            }
+            // Closest size, but a bigger icon scaled down beats a smaller one scaled up:
+            // upscaled bitmaps blur.
+            let mut best: Option<((bool, i32), PathBuf)> = None;
+            for (d, i) in self.dirs[group.clone()].iter().zip(group.clone()) {
+                let dist = (d.upscales(size, scale), d.distance(size, scale));
+                if best.as_ref().is_some_and(|(b, _)| dist >= *b) {
+                    continue;
+                }
+                if let Some(p) = self.file_in_listed(i, &d.path, &files) {
+                    best = Some((dist, p));
+                }
+            }
+            if let Some((_, p)) = best {
+                return Some(p);
+            }
+        }
+        // Fallback: a bare file directly in a root.
+        for (i, root) in self.roots.iter().enumerate() {
+            if let Some(p) = self.file_in_listed(self.dirs.len() + i, root, &files) {
+                return Some(p);
+            }
+        }
+        None
+    }
+}
+
+/// File names directly in `dir` other than directories; empty if unreadable. Symlinks are not
+/// followed (a theme is thousands of links); `decode` refuses non-regular files.
+fn list_files(dir: &Path) -> HashSet<OsString> {
+    std::fs::read_dir(dir)
+        .map(|rd| {
+            rd.filter_map(Result::ok)
+                .filter(|e| !e.file_type().is_ok_and(|t| t.is_dir()))
+                .map(|e| e.file_name())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Largest icon side accepted from a file or peer; bounds decode buffers at 4 MiB.
+pub const MAX_ICON_DIMENSION: u32 = 1024;
+
+/// RGBA8 straight-alpha to a premultiplied canvas; None if `rgba` is shorter than `w * h` pixels.
+pub fn canvas_from_rgba(w: u32, h: u32, rgba: &[u8]) -> Option<Canvas> {
+    if rgba.len() < w as usize * h as usize * 4 {
+        return None;
+    }
+    let mut c = Canvas::new(w, h);
+    for (i, px) in rgba
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .take((w * h) as usize)
+        .enumerate()
+    {
+        let straight =
+            (px[3] as u32) << 24 | (px[0] as u32) << 16 | (px[1] as u32) << 8 | px[2] as u32;
+        c.pixels[i] = premultiply(straight);
+    }
+    Some(c)
+}
+
+/// Decode a PNG of any colour type into a premultiplied canvas, refusing a side past `max_side`
+/// before sizing the buffer.
+pub fn png_to_canvas(bytes: &[u8], max_side: u32) -> Result<Canvas, String> {
+    let mut decoder = png::Decoder::new(std::io::Cursor::new(bytes));
+    decoder.set_transformations(png::Transformations::EXPAND | png::Transformations::STRIP_16);
+    let mut reader = decoder
+        .read_info()
+        .map_err(|e| format!("bad png header: {e}"))?;
+    // Checked before the buffer is sized, so a lying header costs nothing.
+    let (hw, hh) = (reader.info().width, reader.info().height);
+    if hw == 0 || hh == 0 || hw > max_side || hh > max_side {
+        return Err(format!("refusing a {hw}x{hh} png"));
+    }
+    let size = reader
+        .output_buffer_size()
+        .ok_or("png output buffer overflows")?;
+    let mut buf = vec![0u8; size];
+    let info = reader
+        .next_frame(&mut buf)
+        .map_err(|e| format!("png data: {e}"))?;
+    let (w, h) = (info.width, info.height);
+    // RGBA passes through; other layouts are widened into a copy.
+    let rgba: std::borrow::Cow<[u8]> = match info.color_type {
+        png::ColorType::Rgba => std::borrow::Cow::Borrowed(&buf[..info.buffer_size()]),
+        png::ColorType::Rgb => buf[..info.buffer_size()]
+            .as_chunks::<3>()
+            .0
+            .iter()
+            .flat_map(|p| [p[0], p[1], p[2], 255])
+            .collect::<Vec<u8>>()
+            .into(),
+        png::ColorType::GrayscaleAlpha => buf[..info.buffer_size()]
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .flat_map(|p| [p[0], p[0], p[0], p[1]])
+            .collect::<Vec<u8>>()
+            .into(),
+        png::ColorType::Grayscale => buf[..info.buffer_size()]
+            .iter()
+            .flat_map(|&g| [g, g, g, 255])
+            .collect::<Vec<u8>>()
+            .into(),
+        // EXPAND turns indexed into RGB/RGBA; anything else is unsupported.
+        png::ColorType::Indexed => return Err("unsupported png color type".into()),
+    };
+    canvas_from_rgba(w, h, &rgba).ok_or_else(|| "png data shorter than its header".into())
+}
+
+fn decode_png(path: &Path, bytes: &[u8], px: u32) -> Option<Canvas> {
+    let c = match png_to_canvas(bytes, MAX_ICON_DIMENSION) {
+        Ok(c) => c,
+        Err(e) => {
+            log::warn!("icon {}: {e}", path.display());
+            return None;
+        }
+    };
+    let (w, h) = (c.width, c.height);
+    Some(if (w, h) == (px, px) {
+        c
+    } else if w > px || h > px {
+        shrink_to_ink(&c, px)
+    } else {
+        c.resample_box(px, px)
+    })
+}
+
+/// Alpha below which a pixel is not ink: a faint halo must not defeat the crop.
+const INK_ALPHA: u32 = 16;
+
+/// Scale a bigger bitmap to `px` square around its ink bounding box (aspect kept, centred), so
+/// a padded 128 px icon is not smaller than its neighbours.
+fn shrink_to_ink(c: &Canvas, px: u32) -> Canvas {
+    let (mut x0, mut y0, mut x1, mut y1) = (u32::MAX, u32::MAX, 0, 0);
+    for y in 0..c.height {
+        for x in 0..c.width {
+            if c.get(x as i32, y as i32) >> 24 >= INK_ALPHA {
+                x0 = x0.min(x);
+                y0 = y0.min(y);
+                x1 = x1.max(x + 1);
+                y1 = y1.max(y + 1);
+            }
+        }
+    }
+    if x0 >= x1 || y0 >= y1 {
+        return c.resample_box(px, px);
+    }
+    let (bw, bh) = (x1 - x0, y1 - y0);
+    let mut ink = Canvas::new(bw, bh);
+    for y in 0..bh {
+        for x in 0..bw {
+            ink.pixels[(y * bw + x) as usize] = c.get((x0 + x) as i32, (y0 + y) as i32);
+        }
+    }
+    // Longer side to `px`, the other in proportion (at least 1).
+    let (tw, th) = if bw >= bh {
+        (px, ((bh * px + bw / 2) / bw).max(1))
+    } else {
+        (((bw * px + bh / 2) / bh).max(1), px)
+    };
+    let scaled = ink.resample_box(tw, th);
+    let mut out = Canvas::new(px, px);
+    out.blit_over(((px - tw) / 2) as i32, ((px - th) / 2) as i32, &scaled);
+    out
+}
+
+/// Render cost limits for an SVG icon: resvg has none, and a peer-named file can ask for
+/// seconds of work in a few hundred bytes. Stock theme icons fit well inside.
+const SVG_MAX_BYTES: usize = 1 << 20;
+/// Nodes drawn, counting a mask or clip path once per element using it.
+const SVG_MAX_NODES: usize = 10_000;
+/// Groups drawn through an offscreen layer.
+const SVG_MAX_LAYERS: usize = 1_000;
+/// Filter primitives applied, each over a layer up to 4x the canvas.
+const SVG_MAX_PRIMITIVES: usize = 256;
+/// Path segments stroked or filled, dashes included.
+const SVG_MAX_SEGMENTS: f32 = 100_000.0;
+
+/// Why `tree` is refused, or `None` within the limits. The walk stops at the first limit passed.
+fn svg_over_budget(tree: &resvg::usvg::Tree) -> Option<&'static str> {
+    use resvg::usvg::{Group, Node, Path, filter::Kind};
+    #[derive(Default)]
+    struct Cost {
+        nodes: usize,
+        layers: usize,
+        primitives: usize,
+        segments: f32,
+        over: Option<&'static str>,
+    }
+    impl Cost {
+        fn check(&mut self) {
+            if self.segments > SVG_MAX_SEGMENTS {
+                self.over = Some("too many path segments");
+            } else if self.nodes > SVG_MAX_NODES {
+                self.over = Some("too many nodes");
+            } else if self.layers > SVG_MAX_LAYERS {
+                self.over = Some("too many layers");
+            } else if self.primitives > SVG_MAX_PRIMITIVES {
+                self.over = Some("too many filter primitives");
+            }
+        }
+    }
+    /// The segments `p` draws, plus dashes counted along the control polygon (never shorter
+    /// than the curve).
+    fn segments(p: &Path) -> f32 {
+        let data = p.data();
+        let mut n = data.verbs().len() as f32;
+        if let Some(dash) = p.stroke().and_then(|s| s.dasharray()) {
+            let period: f32 = dash.iter().sum();
+            let length: f32 = data.points().windows(2).map(|w| w[0].distance(w[1])).sum();
+            n += length / period.max(f32::MIN_POSITIVE) * dash.len() as f32;
+        }
+        n
+    }
+    fn walk(g: &Group, c: &mut Cost) {
+        c.nodes += 1;
+        if g.opacity().get() < 1.0
+            || g.mask().is_some()
+            || g.clip_path().is_some()
+            || !g.filters().is_empty()
+        {
+            c.layers += 1;
+        }
+        for p in g.filters().iter().flat_map(|f| f.primitives()) {
+            c.primitives += 1;
+            // Per-pixel cost that grows with an attribute or a nested image; no stock theme
+            // uses them.
+            if matches!(
+                p.kind(),
+                Kind::ConvolveMatrix(_)
+                    | Kind::Morphology(_)
+                    | Kind::Turbulence(_)
+                    | Kind::DiffuseLighting(_)
+                    | Kind::SpecularLighting(_)
+                    | Kind::DisplacementMap(_)
+                    | Kind::Image(_)
+            ) {
+                c.over = Some("an unbounded filter primitive");
+            }
+        }
+        c.check();
+        for n in g.children() {
+            if c.over.is_some() {
+                return;
+            }
+            match n {
+                Node::Group(child) => walk(child, c),
+                other => {
+                    c.nodes += 1;
+                    if let Node::Path(p) = other {
+                        c.segments += segments(p);
+                    }
+                    c.check();
+                }
+            }
+            n.subroots(|root| {
+                if c.over.is_none() {
+                    walk(root, c)
+                }
+            });
+        }
+    }
+    let mut cost = Cost::default();
+    walk(tree.root(), &mut cost);
+    cost.over
+}
+
+fn decode_svg(path: &Path, bytes: &[u8], px: u32) -> Option<Canvas> {
+    use resvg::tiny_skia;
+    use resvg::usvg;
+    // No file references: the name comes from a peer, and usvg's default resolver would read
+    // any `<image href>` path. Data URIs stay.
+    let options = usvg::Options {
+        image_href_resolver: usvg::ImageHrefResolver {
+            resolve_string: Box::new(|_, _| None),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    if bytes.len() > SVG_MAX_BYTES {
+        log::warn!("icon {}: svg larger than an icon", path.display());
+        return None;
+    }
+    let tree = match usvg::Tree::from_data(bytes, &options) {
+        Ok(t) => t,
+        Err(e) => {
+            log::warn!("icon {}: bad svg: {e}", path.display());
+            return None;
+        }
+    };
+    if let Some(why) = svg_over_budget(&tree) {
+        log::warn!("icon {}: refusing an svg with {why}", path.display());
+        return None;
+    }
+    let size = tree.size();
+    let bound = MAX_ICON_DIMENSION as f32;
+    if size.width() <= 0.0 || size.height() <= 0.0 || size.width() > bound || size.height() > bound
+    {
+        log::warn!(
+            "icon {}: refusing a {}x{} svg",
+            path.display(),
+            size.width(),
+            size.height()
+        );
+        return None;
+    }
+    let mut pixmap = tiny_skia::Pixmap::new(px, px)?;
+    let sx = px as f32 / size.width();
+    let sy = px as f32 / size.height();
+    resvg::render(
+        &tree,
+        tiny_skia::Transform::from_scale(sx, sy),
+        &mut pixmap.as_mut(),
+    );
+    let mut c = Canvas::new(px, px);
+    for (i, p) in pixmap.pixels().iter().enumerate() {
+        c.pixels[i] = (p.alpha() as u32) << 24
+            | (p.red() as u32) << 16
+            | (p.green() as u32) << 8
+            | p.blue() as u32;
+    }
+    Some(c)
+}
+
+/// Decode a PNG or SVG and resample to `px` square. XPM is not decoded. Sizes past
+/// `MAX_ICON_DIMENSION` are refused.
+pub fn decode(path: &Path, px: u32) -> Option<Canvas> {
+    if px == 0 || px > MAX_ICON_DIMENSION {
+        return None;
+    }
+    // Decide on the extension before opening: a client-supplied path like `/dev/zero` must not
+    // be read.
+    let svg = match path.extension().and_then(|e| e.to_str()) {
+        Some(e) if e.eq_ignore_ascii_case("png") => false,
+        Some(e) if e.eq_ignore_ascii_case("svg") => true,
+        _ => {
+            log::debug!("icon {}: unsupported file type", path.display());
+            return None;
+        }
+    };
+    let bytes = match read_icon_file(path) {
+        Ok(b) => b,
+        Err(e) => {
+            log::warn!("icon {}: {e}", path.display());
+            return None;
+        }
+    };
+    if svg {
+        decode_svg(path, &bytes, px)
+    } else {
+        decode_png(path, &bytes, px)
+    }
+}
+
+const MAX_ICON_BYTES: u64 = 8 << 20;
+
+/// Read an icon file without stalling on a peer-chosen path: non-blocking open (FIFO), regular
+/// files only, read capped at `MAX_ICON_BYTES`.
+fn read_icon_file(path: &Path) -> std::io::Result<Vec<u8>> {
+    use std::io::{Error, ErrorKind, Read};
+    use std::os::unix::fs::OpenOptionsExt;
+    let f = std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NONBLOCK | libc::O_NOCTTY)
+        .open(path)?;
+    let meta = f.metadata()?;
+    if !meta.file_type().is_file() {
+        return Err(Error::new(ErrorKind::InvalidInput, "not a regular file"));
+    }
+    if meta.len() > MAX_ICON_BYTES {
+        return Err(Error::new(ErrorKind::InvalidData, "larger than an icon"));
+    }
+    let mut bytes = Vec::with_capacity(meta.len() as usize);
+    f.take(MAX_ICON_BYTES).read_to_end(&mut bytes)?;
+    Ok(bytes)
+}
+
+/// Cache key for one lookup; extra directories are part of it, since the same name from
+/// different `IconThemePath`s is a different icon.
+fn cache_key(name: &str, extra: &[PathBuf]) -> String {
+    if extra.is_empty() {
+        return name.to_string();
+    }
+    let mut key = String::from(name);
+    for dir in extra {
+        key.push('\0');
+        key.push_str(&dir.to_string_lossy());
+    }
+    key
+}
+
+/// Decoded icons by `(name, px, scale)`. Misses are cached as `None`. `get_shared` costs a
+/// refcount; `get` copies.
+pub struct IconCache {
+    theme: IconTheme,
+    cache: HashMap<(String, i32, i32), Option<Arc<Canvas>>>,
+    /// The canvas scale icons come back at; see [`IconCache::set_scale`].
+    scale: i32,
+    /// `has` answers by name: folder scans ask per candidate name per file.
+    known: RefCell<HashMap<String, bool>>,
+    /// Entries of `cache` that are hits and misses, kept for the caps.
+    hits: usize,
+    misses: usize,
+}
+
+/// Names come from peers, so both sets are bounded: past the cap the set is dropped and
+/// rebuilt. Misses are counted apart so made-up names never evict the icons on screen.
+const HIT_CAP: usize = 2048;
+const MISS_CAP: usize = 512;
+
+impl IconCache {
+    pub fn new(theme: IconTheme) -> IconCache {
+        IconCache {
+            theme,
+            cache: HashMap::new(),
+            scale: 1,
+            known: RefCell::new(HashMap::new()),
+            hits: 0,
+            misses: 0,
+        }
+    }
+
+    pub fn len(&self) -> usize {
+        self.cache.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.cache.is_empty()
+    }
+
+    /// Make every later `get` return a canvas at `scale` (at least 1): a `px` icon loads at `px
+    /// * scale` device pixels and keeps its logical `px`. The compositor keeps 1.
+    pub fn set_scale(&mut self, scale: i32) {
+        self.scale = scale.max(1);
+    }
+
+    /// Device pixels per logical pixel the program's windows draw at.
+    pub fn scale(&self) -> i32 {
+        self.scale
+    }
+
+    fn insert(&mut self, key: (String, i32, i32), canvas: Option<Arc<Canvas>>) {
+        let miss = canvas.is_none();
+        let (count, cap) = if miss {
+            (&mut self.misses, MISS_CAP)
+        } else {
+            (&mut self.hits, HIT_CAP)
+        };
+        if *count >= cap {
+            self.cache.retain(|_, v| v.is_none() != miss);
+            *count = 0;
+        }
+        *count += 1;
+        match self.cache.insert(key, canvas) {
+            Some(None) => self.misses -= 1,
+            Some(Some(_)) => self.hits -= 1,
+            None => {}
+        }
+    }
+
+    pub fn get(&mut self, name: &str, px: i32) -> Option<Canvas> {
+        self.get_with_extra(name, px, &[])
+    }
+
+    /// `get` without the copy.
+    pub fn get_shared(&mut self, name: &str, px: i32) -> Option<Arc<Canvas>> {
+        self.shared(name, px, &[])
+    }
+
+    pub fn theme_name(&self) -> String {
+        self.theme.chain.first().cloned().unwrap_or_default()
+    }
+
+    /// Whether the theme chain has `name` at all (looked up at 32 px, which the spec's fallback
+    /// widens to any size).
+    pub fn has(&self, name: &str) -> bool {
+        if let Some(&known) = self.known.borrow().get(name) {
+            return known;
+        }
+        let found = self.theme.lookup(name, 32, 1).is_some();
+        let mut known = self.known.borrow_mut();
+        // Peer-driven names: bounded like the cache's misses, dropped whole at the cap.
+        if known.len() >= HIT_CAP {
+            known.clear();
+        }
+        known.insert(name.to_string(), found);
+        found
+    }
+
+    /// `name` is an icon name or an absolute path. `extra` directories are searched first (tray
+    /// `IconThemePath`) and are part of the cache key.
+    pub fn get_with_extra(&mut self, name: &str, px: i32, extra: &[PathBuf]) -> Option<Canvas> {
+        self.shared(name, px, extra).map(Arc::unwrap_or_clone)
+    }
+
+    fn shared(&mut self, name: &str, px: i32, extra: &[PathBuf]) -> Option<Arc<Canvas>> {
+        if name.is_empty() || px <= 0 {
+            return None;
+        }
+        // A theme icon name has no path separator; a relative path would resolve against the
+        // compositor's working directory.
+        if name.contains('/') && !name.starts_with('/') {
+            return None;
+        }
+        let key = (cache_key(name, extra), px, self.scale);
+        if let Some(hit) = self.cache.get(&key) {
+            return hit.clone();
+        }
+        let dpx = px * self.scale;
+        let path = if name.starts_with('/') {
+            Some(PathBuf::from(name))
+        } else {
+            // Some `.desktop` files carry an extension in `Icon=`; the spec says to strip it.
+            let bare = name
+                .strip_suffix(".png")
+                .or_else(|| name.strip_suffix(".svg"))
+                .or_else(|| name.strip_suffix(".xpm"))
+                .unwrap_or(name);
+            // Theme lookup is in device pixels at scale 1: a 32 px request at 2x and a 32 px
+            // icon at 1x want the same file.
+            let found = self.theme.lookup_with_extra(bare, dpx, 1, extra);
+            if found.is_none() {
+                log::debug!("no icon named \"{bare}\" at {dpx} px");
+            }
+            found
+        };
+        let canvas = path
+            .and_then(|p| decode(&p, dpx as u32))
+            .map(|c| Arc::new(c.at_scale(self.scale)));
+        self.insert(key, canvas.clone());
+        canvas
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+
+    /// A throwaway icon root with one theme; the caller removes it.
+    fn fixture(tag: &str, theme: &str, index: &str, files: &[&str]) -> PathBuf {
+        // `tag` keeps parallel tests apart.
+        let root = std::env::temp_dir().join(format!(
+            "reprise-icons-{}-{tag}-{theme}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        let dir = root.join(theme);
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("index.theme"), index).unwrap();
+        for f in files {
+            let p = dir.join(f);
+            fs::create_dir_all(p.parent().unwrap()).unwrap();
+            fs::write(&p, b"").unwrap();
+        }
+        root
+    }
+
+    const INDEX: &str = "[Icon Theme]\nName=Test\nInherits=hicolor\nDirectories=16x16/apps,32x32/apps,scalable/apps\n\n[16x16/apps]\nSize=16\nType=Fixed\nContext=Applications\n\n[32x32/apps]\nSize=32\nType=Fixed\n\n[scalable/apps]\nSize=48\nMinSize=8\nMaxSize=512\nType=Scalable\n";
+
+    /// A lookup lists each directory once and probes the listing after: a file that appears
+    /// later is not seen until reload (the cache remembers misses anyway).
+    #[test]
+    fn lookups_probe_cached_listings() {
+        let root = fixture("t16", "test", INDEX, &["16x16/apps/present.png"]);
+        let t = IconTheme::load("test", std::slice::from_ref(&root));
+        assert!(t.lookup("absent", 16, 1).is_none());
+        let listed = || t.listings.iter().filter(|l| l.get().is_some()).count();
+        assert_eq!(listed(), t.dirs.len() + t.roots.len(), "every dir and root");
+        assert_eq!(
+            t.lookup("present", 16, 1),
+            Some(root.join("test/16x16/apps/present.png"))
+        );
+        fs::write(root.join("test/16x16/apps/late.png"), b"").unwrap();
+        assert!(
+            t.lookup("late", 16, 1).is_none(),
+            "listed before it existed"
+        );
+        let extra = root.join("extra");
+        fs::create_dir_all(&extra).unwrap();
+        assert!(
+            t.lookup_with_extra("fresh", 16, 1, std::slice::from_ref(&extra))
+                .is_none()
+        );
+        fs::write(extra.join("fresh.png"), b"").unwrap();
+        assert_eq!(
+            t.lookup_with_extra("fresh", 16, 1, std::slice::from_ref(&extra)),
+            Some(extra.join("fresh.png"))
+        );
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// A listing names every entry but a directory and never stats one: a symlink is taken by
+    /// name even when its target is gone.
+    #[test]
+    fn listing_skips_directories_without_following_symlinks() {
+        let root = fixture("t17", "test", INDEX, &["16x16/apps/plain.png"]);
+        let dir = root.join("test/16x16/apps");
+        std::os::unix::fs::symlink("plain.png", dir.join("link.png")).unwrap();
+        std::os::unix::fs::symlink("gone.png", dir.join("dangling.png")).unwrap();
+        fs::create_dir(dir.join("sub.png")).unwrap();
+        let mut names: Vec<OsString> = list_files(&dir).into_iter().collect();
+        names.sort();
+        assert_eq!(names, ["dangling.png", "link.png", "plain.png"]);
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// A root without the theme's `index.theme` still serves the directories another root's
+    /// index names, ahead of later roots.
+    #[test]
+    fn a_root_without_the_index_serves_the_themes_directories() {
+        let system = fixture("t18", "test", INDEX, &["16x16/apps/both.png"]);
+        let user =
+            std::env::temp_dir().join(format!("reprise-icons-{}-t18-user", std::process::id()));
+        let _ = fs::remove_dir_all(&user);
+        for f in ["test/16x16/apps/mine.png", "test/16x16/apps/both.png"] {
+            let p = user.join(f);
+            fs::create_dir_all(p.parent().unwrap()).unwrap();
+            fs::write(&p, b"").unwrap();
+        }
+        let t = IconTheme::load("test", &[user.clone(), system.clone()]);
+        assert_eq!(
+            t.lookup("mine", 16, 1),
+            Some(user.join("test/16x16/apps/mine.png"))
+        );
+        assert_eq!(
+            t.lookup("both", 16, 1),
+            Some(user.join("test/16x16/apps/both.png"))
+        );
+        fs::remove_dir_all(&user).unwrap();
+        fs::remove_dir_all(&system).unwrap();
+    }
+
+    #[test]
+    fn parses_directories_and_inherits() {
+        let root = fixture("t1", "test", INDEX, &[]);
+        let t = IconTheme::load("test", std::slice::from_ref(&root));
+        assert_eq!(t.chain, vec!["test".to_string(), "hicolor".to_string()]);
+        assert_eq!(t.dirs.len(), 3);
+        let d = &t.dirs[0];
+        assert_eq!(d.size, 16);
+        assert_eq!(d.scale, 1);
+        assert_eq!(d.kind, DirKind::Fixed);
+        let s = &t.dirs[2];
+        assert_eq!(s.kind, DirKind::Scalable);
+        assert_eq!((s.min, s.max), (8, 512));
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn exact_size_beats_closest_size() {
+        let root = fixture(
+            "t11",
+            "test",
+            INDEX,
+            &["16x16/apps/firefox.png", "32x32/apps/firefox.png"],
+        );
+        let t = IconTheme::load("test", std::slice::from_ref(&root));
+        assert_eq!(
+            t.lookup("firefox", 16, 1),
+            Some(root.join("test/16x16/apps/firefox.png"))
+        );
+        assert_eq!(
+            t.lookup("firefox", 32, 1),
+            Some(root.join("test/32x32/apps/firefox.png"))
+        );
+        // Both the 16 and 32 directories are at distance 8; 32x32 wins because it scales down.
+        assert_eq!(
+            t.lookup("firefox", 24, 1),
+            Some(root.join("test/32x32/apps/firefox.png"))
+        );
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn a_far_bigger_icon_beats_a_near_smaller_one() {
+        let root = fixture(
+            "t12",
+            "test",
+            "[Icon Theme]\nName=Test\nDirectories=16x16/apps,128x128/apps\n\n[16x16/apps]\nSize=16\nType=Fixed\n\n[128x128/apps]\nSize=128\nType=Fixed\n",
+            &["16x16/apps/net.png", "128x128/apps/net.png"],
+        );
+        let t = IconTheme::load("test", std::slice::from_ref(&root));
+        assert_eq!(
+            t.lookup("net", 32, 1),
+            Some(root.join("test/128x128/apps/net.png"))
+        );
+        // Nothing bigger: the nearest smaller one still serves.
+        assert_eq!(
+            t.lookup("net", 200, 1),
+            Some(root.join("test/128x128/apps/net.png"))
+        );
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn scalable_dir_matches_any_size_in_range() {
+        let root = fixture("t2", "test", INDEX, &["scalable/apps/gimp.svg"]);
+        let t = IconTheme::load("test", std::slice::from_ref(&root));
+        assert_eq!(
+            t.lookup("gimp", 16, 1),
+            Some(root.join("test/scalable/apps/gimp.svg"))
+        );
+        assert_eq!(
+            t.lookup("gimp", 512, 1),
+            Some(root.join("test/scalable/apps/gimp.svg"))
+        );
+        assert_eq!(t.lookup("nope", 16, 1), None);
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn png_beats_svg_in_the_same_directory() {
+        let root = fixture(
+            "t12",
+            "test",
+            INDEX,
+            &["16x16/apps/a.svg", "16x16/apps/a.png"],
+        );
+        let t = IconTheme::load("test", std::slice::from_ref(&root));
+        assert_eq!(
+            t.lookup("a", 16, 1),
+            Some(root.join("test/16x16/apps/a.png"))
+        );
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn scale_two_prefers_scaled_directory() {
+        let index = "[Icon Theme]\nName=T\nDirectories=16x16/apps,16x16@2/apps\n\n[16x16/apps]\nSize=16\nType=Fixed\n\n[16x16@2/apps]\nSize=16\nScale=2\nType=Fixed\n";
+        let root = fixture(
+            "t13",
+            "test",
+            index,
+            &["16x16/apps/x.png", "16x16@2/apps/x.png"],
+        );
+        let t = IconTheme::load("test", std::slice::from_ref(&root));
+        assert_eq!(
+            t.lookup("x", 16, 2),
+            Some(root.join("test/16x16@2/apps/x.png"))
+        );
+        assert_eq!(
+            t.lookup("x", 16, 1),
+            Some(root.join("test/16x16/apps/x.png"))
+        );
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn themed_larger_icon_beats_inherited_exact_size() {
+        // "test" has only a 22x22 dir but inherits "hicolor" with an exact 16x16 dir: the pass
+        // finishes in "test" first, so 22x22 wins.
+        let root =
+            std::env::temp_dir().join(format!("reprise-icons-t14-{}-multi", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        let test_index = "[Icon Theme]\nName=Test\nInherits=hicolor\nDirectories=22x22/apps\n\n[22x22/apps]\nSize=22\nType=Fixed\n";
+        let hicolor_index = "[Icon Theme]\nName=Hicolor\nDirectories=16x16/apps\n\n[16x16/apps]\nSize=16\nType=Fixed\n";
+        for (theme, index, file) in [
+            ("test", test_index, "22x22/apps/foo.png"),
+            ("hicolor", hicolor_index, "16x16/apps/foo.png"),
+        ] {
+            let dir = root.join(theme);
+            fs::create_dir_all(&dir).unwrap();
+            fs::write(dir.join("index.theme"), index).unwrap();
+            let p = dir.join(file);
+            fs::create_dir_all(p.parent().unwrap()).unwrap();
+            fs::write(&p, b"").unwrap();
+        }
+        let t = IconTheme::load("test", std::slice::from_ref(&root));
+        assert_eq!(
+            t.lookup("foo", 16, 1),
+            Some(root.join("test/22x22/apps/foo.png"))
+        );
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn fallback_theme_inherits_are_followed() {
+        // The configured theme is a bare "hicolor"; "Adwaita" only inherits from "Legacy", so
+        // the fallback pass must walk that Inherits line.
+        let root =
+            std::env::temp_dir().join(format!("reprise-icons-t15-{}-legacy", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        let hicolor_index = "[Icon Theme]\nName=Hicolor\nDirectories=16x16/apps\n\n[16x16/apps]\nSize=16\nType=Fixed\n";
+        let adwaita_index = "[Icon Theme]\nName=Adwaita\nInherits=Legacy,hicolor\nDirectories=symbolic/apps\n\n[symbolic/apps]\nSize=16\nType=Fixed\n";
+        let legacy_index = "[Icon Theme]\nName=Legacy\nInherits=hicolor\nDirectories=16x16/apps\n\n[16x16/apps]\nSize=16\nType=Fixed\n";
+        for (theme, index, file) in [
+            ("hicolor", hicolor_index, None),
+            ("Adwaita", adwaita_index, None),
+            ("Legacy", legacy_index, Some("16x16/apps/system-run.png")),
+        ] {
+            let dir = root.join(theme);
+            fs::create_dir_all(&dir).unwrap();
+            fs::write(dir.join("index.theme"), index).unwrap();
+            if let Some(file) = file {
+                let p = dir.join(file);
+                fs::create_dir_all(p.parent().unwrap()).unwrap();
+                fs::write(&p, b"").unwrap();
+            }
+        }
+        let t = IconTheme::load("hicolor", std::slice::from_ref(&root));
+        assert_eq!(
+            t.chain,
+            vec![
+                "hicolor".to_string(),
+                "Adwaita".to_string(),
+                "Legacy".to_string()
+            ]
+        );
+        assert_eq!(
+            t.lookup("system-run", 16, 1),
+            Some(root.join("Legacy/16x16/apps/system-run.png"))
+        );
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn falls_back_to_bare_file_in_root() {
+        let root = fixture("t3", "test", INDEX, &[]);
+        fs::write(root.join("bare.png"), b"").unwrap();
+        let t = IconTheme::load("test", std::slice::from_ref(&root));
+        assert_eq!(t.lookup("bare", 16, 1), Some(root.join("bare.png")));
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn extra_roots_are_consulted_first() {
+        let root = fixture("t4", "test", INDEX, &["16x16/apps/tray.png"]);
+        let extra = root.join("extra");
+        fs::create_dir_all(&extra).unwrap();
+        fs::write(extra.join("tray.png"), b"").unwrap();
+        let t = IconTheme::load("test", std::slice::from_ref(&root));
+        assert_eq!(
+            t.lookup_with_extra("tray", 16, 1, std::slice::from_ref(&extra)),
+            Some(extra.join("tray.png"))
+        );
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn missing_theme_still_has_hicolor_in_chain() {
+        let root = std::env::temp_dir().join(format!("reprise-icons-none-{}", std::process::id()));
+        let t = IconTheme::load("does-not-exist", &[root]);
+        assert_eq!(
+            t.chain,
+            vec!["does-not-exist".to_string(), "hicolor".to_string()]
+        );
+        assert!(t.dirs.is_empty());
+    }
+
+    #[test]
+    fn size_matching_rules() {
+        let fixed = DirEntry {
+            path: PathBuf::new(),
+            size: 16,
+            scale: 1,
+            kind: DirKind::Fixed,
+            min: 16,
+            max: 16,
+            threshold: 2,
+        };
+        assert!(fixed.matches(16, 1));
+        assert!(!fixed.matches(17, 1));
+        assert!(!fixed.matches(16, 2));
+        assert_eq!(fixed.distance(20, 1), 4);
+        let thr = DirEntry {
+            kind: DirKind::Threshold,
+            ..fixed.clone()
+        };
+        assert!(thr.matches(18, 1));
+        assert!(!thr.matches(19, 1));
+        assert_eq!(thr.distance(19, 1), 1);
+        let scalable = DirEntry {
+            kind: DirKind::Scalable,
+            min: 8,
+            max: 64,
+            ..fixed.clone()
+        };
+        assert!(scalable.matches(8, 1));
+        assert!(scalable.matches(64, 1));
+        assert!(!scalable.matches(65, 1));
+        assert_eq!(scalable.distance(4, 1), 4);
+        assert_eq!(scalable.distance(100, 1), 36);
+    }
+
+    fn write_png(path: &Path, w: u32, h: u32, rgba: &[u8]) {
+        let file = fs::File::create(path).unwrap();
+        let mut enc = png::Encoder::new(file, w, h);
+        enc.set_color(png::ColorType::Rgba);
+        enc.set_depth(png::BitDepth::Eight);
+        let mut writer = enc.write_header().unwrap();
+        writer.write_image_data(rgba).unwrap();
+    }
+
+    fn tmp(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("reprise-decode-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        dir.join(name)
+    }
+
+    #[test]
+    fn decodes_png_and_premultiplies() {
+        let p = tmp("two.png");
+        // Opaque red, half-transparent green, transparent, opaque blue.
+        write_png(
+            &p,
+            2,
+            2,
+            &[255, 0, 0, 255, 0, 255, 0, 128, 9, 9, 9, 0, 0, 0, 255, 255],
+        );
+        let c = decode(&p, 2).unwrap();
+        assert_eq!((c.width, c.height), (2, 2));
+        assert_eq!(c.get(0, 0), 0xFFFF_0000);
+        assert_eq!(c.get(1, 0), 0x8000_8000);
+        assert_eq!(c.get(0, 1), 0x0000_0000);
+        assert_eq!(c.get(1, 1), 0xFF00_00FF);
+        fs::remove_file(&p).unwrap();
+    }
+
+    #[test]
+    fn decodes_png_and_resamples_to_requested_size() {
+        let p = tmp("four.png");
+        let mut rgba = Vec::new();
+        for _ in 0..16 {
+            rgba.extend_from_slice(&[0, 0, 255, 255]);
+        }
+        write_png(&p, 4, 4, &rgba);
+        let c = decode(&p, 2).unwrap();
+        assert_eq!((c.width, c.height), (2, 2));
+        assert_eq!(c.get(1, 1), 0xFF00_00FF);
+        fs::remove_file(&p).unwrap();
+    }
+
+    #[test]
+    fn downscaling_crops_to_the_ink_first() {
+        // 8x8 with a 4x4 opaque blue square in the middle: at 4 px the
+        // square fills the whole icon instead of its centre 2x2.
+        let p = tmp("ink-padded.png");
+        let mut rgba = Vec::new();
+        for y in 0..8 {
+            for x in 0..8 {
+                let ink = (2..6).contains(&x) && (2..6).contains(&y);
+                rgba.extend_from_slice(if ink {
+                    &[0, 0, 255, 255]
+                } else {
+                    &[0, 0, 0, 0]
+                });
+            }
+        }
+        write_png(&p, 8, 8, &rgba);
+        let c = decode(&p, 4).unwrap();
+        assert_eq!((c.width, c.height), (4, 4));
+        assert!((0..4).all(|y| (0..4).all(|x| c.get(x, y) == 0xFF00_00FF)));
+        fs::remove_file(&p).unwrap();
+
+        // A wide ink (8x2 at the top of 8x8) keeps its shape: 4x1, centred.
+        let p = tmp("ink-wide.png");
+        let mut rgba = Vec::new();
+        for y in 0..8 {
+            for _ in 0..8 {
+                rgba.extend_from_slice(if y < 2 {
+                    &[255, 0, 0, 255]
+                } else {
+                    &[0, 0, 0, 0]
+                });
+            }
+        }
+        write_png(&p, 8, 8, &rgba);
+        let c = decode(&p, 4).unwrap();
+        let red_rows: Vec<i32> = (0..4).filter(|&y| c.get(0, y) == 0xFFFF_0000).collect();
+        assert_eq!(red_rows, vec![1]);
+        assert_eq!(c.get(3, 1), 0xFFFF_0000);
+        fs::remove_file(&p).unwrap();
+    }
+
+    #[test]
+    fn decodes_svg_at_requested_size() {
+        let p = tmp("rect.svg");
+        fs::write(
+            &p,
+            r##"<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16"><rect width="16" height="16" fill="#ff0000"/></svg>"##,
+        )
+        .unwrap();
+        let c = decode(&p, 4).unwrap();
+        assert_eq!((c.width, c.height), (4, 4));
+        assert_eq!(c.get(2, 2), 0xFFFF_0000);
+        fs::remove_file(&p).unwrap();
+    }
+
+    /// Each renders in well under a millisecond at 48 px once its cost is cut, and takes
+    /// seconds without.
+    #[test]
+    fn an_svg_past_the_render_budget_is_refused() {
+        let svg = |body: &str| {
+            let text = format!(
+                r##"<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48">{body}</svg>"##
+            );
+            resvg::usvg::Tree::from_data(text.as_bytes(), &Default::default()).unwrap()
+        };
+        let blur = r##"<defs><filter id="f"><feGaussianBlur stdDeviation="2"/></filter></defs>"##;
+        let shape = r##"<rect width="40" height="40" fill="#f00"/>"##;
+        let icon = svg(&format!(
+            r##"{blur}<g filter="url(#f)">{shape}</g><g opacity=".5">{shape}</g>"##
+        ));
+        assert_eq!(svg_over_budget(&icon), None);
+
+        let wide = svg(&format!(
+            r##"<defs><filter id="f"><feMorphology radius="40"/></filter></defs><g filter="url(#f)">{shape}</g>"##
+        ));
+        assert_eq!(
+            svg_over_budget(&wide),
+            Some("an unbounded filter primitive")
+        );
+        let layers = svg(&format!(r##"<g opacity=".5">{shape}</g>"##).repeat(SVG_MAX_LAYERS + 1));
+        assert_eq!(svg_over_budget(&layers), Some("too many layers"));
+        let blurs = svg(&format!(
+            r##"{blur}{}"##,
+            format!(r##"<g filter="url(#f)">{shape}</g>"##).repeat(SVG_MAX_PRIMITIVES + 1)
+        ));
+        assert_eq!(svg_over_budget(&blurs), Some("too many filter primitives"));
+        // 0.01 units of dash on a 1000-unit line: 100 000 dashes.
+        let dashes = svg(r##"<path d="M0 0H1000" stroke="#000" stroke-dasharray="0.005 0.005"/>"##);
+        assert_eq!(svg_over_budget(&dashes), Some("too many path segments"));
+        // A mask is drawn once per element using it.
+        let masked = svg(&format!(
+            r##"<defs><mask id="m">{}</mask></defs>{}"##,
+            shape.repeat(100),
+            r##"<rect mask="url(#m)" width="4" height="4"/>"##.repeat(SVG_MAX_NODES / 100)
+        ));
+        assert_eq!(svg_over_budget(&masked), Some("too many nodes"));
+
+        // Past the byte cap, a file is refused before it is parsed.
+        let p = tmp("padded.svg");
+        let head = r##"<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16"><rect width="16" height="16"/>"##;
+        fs::write(&p, format!("{head}</svg>")).unwrap();
+        assert!(decode(&p, 16).is_some());
+        fs::write(&p, format!("{head}{}</svg>", " ".repeat(SVG_MAX_BYTES))).unwrap();
+        assert!(decode(&p, 16).is_none());
+        fs::remove_file(&p).unwrap();
+    }
+
+    /// An `<image href>` naming a file on disk is not followed: the SVG renders without it.
+    #[test]
+    fn an_svg_does_not_read_the_files_it_names() {
+        let png = tmp("secret.png");
+        write_png(&png, 2, 2, &[0, 0, 255, 255].repeat(4));
+        let p = tmp("leak.svg");
+        fs::write(
+            &p,
+            format!(
+                r##"<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="4" height="4"><image xlink:href="{}" width="4" height="4"/></svg>"##,
+                png.display()
+            ),
+        )
+        .unwrap();
+        let c = decode(&p, 4).unwrap();
+        assert!(
+            c.pixels.iter().all(|&px| px == 0),
+            "the file's pixels leaked in"
+        );
+        fs::remove_file(&p).unwrap();
+        fs::remove_file(&png).unwrap();
+    }
+
+    #[test]
+    fn decode_rejects_missing_and_garbage() {
+        assert!(decode(Path::new("/nonexistent/x.png"), 16).is_none());
+        let p = tmp("garbage.png");
+        fs::write(&p, b"not a png").unwrap();
+        assert!(decode(&p, 16).is_none());
+        let s = tmp("garbage.svg");
+        fs::write(&s, b"<not xml").unwrap();
+        assert!(decode(&s, 16).is_none());
+        fs::remove_file(&p).unwrap();
+        fs::remove_file(&s).unwrap();
+    }
+
+    #[test]
+    fn cache_resolves_by_name_and_absolute_path_and_caches_misses() {
+        let root = fixture("t5", "test", INDEX, &[]);
+        let icon = root.join("test/16x16/apps/cached.png");
+        fs::create_dir_all(icon.parent().unwrap()).unwrap();
+        write_png(&icon, 1, 1, &[0, 255, 0, 255]);
+        let mut cache = IconCache::new(IconTheme::load("test", std::slice::from_ref(&root)));
+        // By name through the theme.
+        let c = cache.get("cached", 16).unwrap();
+        assert_eq!((c.width, c.height), (16, 16));
+        assert_eq!(c.get(8, 8), 0xFF00_FF00);
+        // By absolute path.
+        let c = cache.get(icon.to_str().unwrap(), 8).unwrap();
+        assert_eq!(c.width, 8);
+        // A miss is remembered: creating the file afterwards does not change the answer.
+        assert!(cache.get("late", 16).is_none());
+        write_png(
+            &root.join("test/16x16/apps/late.png"),
+            1,
+            1,
+            &[0, 0, 0, 255],
+        );
+        assert!(cache.get("late", 16).is_none());
+        // A hit is remembered too: deleting the file keeps the decoded icon.
+        fs::remove_file(&icon).unwrap();
+        assert!(cache.get("cached", 16).is_some());
+        // Different size is a different key.
+        assert!(cache.get("cached", 32).is_none());
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn a_scaled_cache_loads_the_device_size_and_keeps_the_logical_one() {
+        let root = fixture("t5s", "test", INDEX, &[]);
+        let dir = root.join("test");
+        fs::create_dir_all(dir.join("16x16/apps")).unwrap();
+        fs::create_dir_all(dir.join("32x32/apps")).unwrap();
+        write_png(&dir.join("16x16/apps/app.png"), 1, 1, &[255, 0, 0, 255]);
+        write_png(&dir.join("32x32/apps/app.png"), 1, 1, &[0, 255, 0, 255]);
+        let mut cache = IconCache::new(IconTheme::load("test", std::slice::from_ref(&root)));
+        let one = cache.get("app", 16).unwrap();
+        assert_eq!(
+            (one.width, one.scale(), one.get(0, 0)),
+            (16, 1, 0xFFFF_0000)
+        );
+        cache.set_scale(2);
+        let two = cache.get("app", 16).unwrap();
+        assert_eq!((two.width, two.height, two.scale()), (16, 16, 2));
+        assert_eq!(two.device_size(), (32, 32));
+        assert_eq!(two.get(0, 0), 0xFF00_FF00, "the 32 px file");
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    fn crc32(bytes: &[u8]) -> u32 {
+        let mut crc = 0xFFFF_FFFFu32;
+        for &b in bytes {
+            crc ^= b as u32;
+            for _ in 0..8 {
+                crc = if crc & 1 != 0 {
+                    (crc >> 1) ^ 0xEDB8_8320
+                } else {
+                    crc >> 1
+                };
+            }
+        }
+        !crc
+    }
+
+    #[test]
+    fn png_to_canvas_names_the_size_it_refuses() {
+        let p = tmp("bound.png");
+        write_png(&p, 3, 2, &[0u8; 24]);
+        let bytes = fs::read(&p).unwrap();
+        fs::remove_file(&p).unwrap();
+        assert_eq!(png_to_canvas(&bytes, 2).unwrap_err(), "refusing a 3x2 png");
+        assert_eq!(png_to_canvas(&bytes, 3).unwrap().width, 3);
+        assert!(
+            png_to_canvas(b"not a png", 16)
+                .unwrap_err()
+                .starts_with("bad png header")
+        );
+    }
+
+    #[test]
+    fn decode_rejects_oversized_images() {
+        // A real, well-formed image past the bound.
+        let wide = tmp("wide.png");
+        let past = MAX_ICON_DIMENSION as usize + 1;
+        write_png(&wide, past as u32, 1, &vec![255u8; past * 4]);
+        assert!(decode(&wide, 16).is_none());
+        fs::remove_file(&wide).unwrap();
+        // A valid 1x1 file whose IHDR claims 60000x60000: rejected before a 13 GiB buffer is
+        // allocated.
+        let p = tmp("huge.png");
+        write_png(&p, 1, 1, &[255, 0, 0, 255]);
+        let mut bytes = fs::read(&p).unwrap();
+        // 8 byte signature, 4 byte length, 4 byte "IHDR", then width, height.
+        bytes[16..20].copy_from_slice(&60000u32.to_be_bytes());
+        bytes[20..24].copy_from_slice(&60000u32.to_be_bytes());
+        let crc = crc32(&bytes[12..29]);
+        bytes[29..33].copy_from_slice(&crc.to_be_bytes());
+        fs::write(&p, &bytes).unwrap();
+        assert!(decode(&p, 16).is_none());
+        fs::remove_file(&p).unwrap();
+    }
+
+    #[test]
+    fn decodes_paletted_png() {
+        let p = tmp("indexed.png");
+        let file = fs::File::create(&p).unwrap();
+        let mut enc = png::Encoder::new(file, 1, 1);
+        enc.set_color(png::ColorType::Indexed);
+        enc.set_depth(png::BitDepth::Eight);
+        enc.set_palette(vec![0, 0, 255]);
+        let mut writer = enc.write_header().unwrap();
+        writer.write_image_data(&[0]).unwrap();
+        drop(writer);
+        let c = decode(&p, 1).unwrap();
+        assert_eq!(c.get(0, 0), 0xFF00_00FF);
+        fs::remove_file(&p).unwrap();
+    }
+
+    #[test]
+    fn cache_rejects_paths_that_are_not_decodable_icons() {
+        let root = fixture("t7", "test", INDEX, &[]);
+        let mut cache = IconCache::new(IconTheme::load("test", std::slice::from_ref(&root)));
+        // An absolute path without an icon extension is refused before opening; reading
+        // /dev/zero would never end.
+        assert!(cache.get("/dev/zero", 16).is_none());
+        // A relative path is not a theme icon name.
+        assert!(cache.get("../../dev/zero", 16).is_none());
+        assert!(cache.get("apps/cached.png", 16).is_none());
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// A FIFO or device with an icon extension is opened but not read.
+    #[test]
+    fn decode_refuses_files_that_are_not_regular() {
+        let dir = std::env::temp_dir().join("reprisekit-icontheme-fifo");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let fifo = dir.join("x.png");
+        let c = std::ffi::CString::new(fifo.to_str().unwrap()).unwrap();
+        // SAFETY: `c` is a NUL-terminated path that outlives the call.
+        assert_eq!(unsafe { libc::mkfifo(c.as_ptr(), 0o600) }, 0);
+        assert!(decode(&fifo, 16).is_none());
+        let zero = dir.join("zero.png");
+        std::os::unix::fs::symlink("/dev/zero", &zero).unwrap();
+        assert!(decode(&zero, 16).is_none());
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// Peer-chosen names that miss are remembered up to a cap, then dropped together; hits stay.
+    #[test]
+    fn misses_are_bounded_and_never_evict_hits() {
+        let root = fixture("t7", "test", INDEX, &["32x32/apps/app.png"]);
+        write_png(
+            &root.join("test/32x32/apps/app.png"),
+            1,
+            1,
+            &[255, 0, 0, 255],
+        );
+        let mut cache = IconCache::new(IconTheme::load("test", std::slice::from_ref(&root)));
+        assert!(cache.get("app", 32).is_some());
+        for i in 0..(MISS_CAP * 3) {
+            assert!(cache.get(&format!("nope-{i}"), 32).is_none());
+        }
+        assert!(cache.len() <= MISS_CAP + 1, "{} entries", cache.len());
+        assert_eq!(cache.hits + cache.misses, cache.len());
+        assert!(cache.get("app", 32).is_some());
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// `has` walks the theme once per name; the answer stays if the root vanishes.
+    #[test]
+    fn has_remembers_its_answer_per_name() {
+        let root = fixture("t8", "test", INDEX, &["32x32/apps/app.png"]);
+        let cache = IconCache::new(IconTheme::load("test", std::slice::from_ref(&root)));
+        assert!(cache.has("app"));
+        assert!(!cache.has("nope"));
+        fs::remove_dir_all(&root).unwrap();
+        assert!(cache.has("app"), "answered from memory, not the disk");
+        assert!(!cache.has("nope"));
+    }
+
+    #[test]
+    fn a_shared_hit_is_the_cached_canvas_itself() {
+        let root = fixture("t9", "test", INDEX, &["32x32/apps/app.png"]);
+        write_png(
+            &root.join("test/32x32/apps/app.png"),
+            1,
+            1,
+            &[255, 0, 0, 255],
+        );
+        let mut cache = IconCache::new(IconTheme::load("test", std::slice::from_ref(&root)));
+        let a = cache.get_shared("app", 32).unwrap();
+        let b = cache.get_shared("app", 32).unwrap();
+        assert!(Arc::ptr_eq(&a, &b));
+        assert_eq!(cache.get("app", 32).unwrap().get(0, 0), 0xFFFF_0000);
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn cache_keys_on_the_extra_roots_too() {
+        // Two tray items publishing "app" from different IconThemePath directories must not
+        // share an entry.
+        let root = fixture("t6", "test", INDEX, &[]);
+        let (a, b) = (root.join("a"), root.join("b"));
+        fs::create_dir_all(&a).unwrap();
+        fs::create_dir_all(&b).unwrap();
+        write_png(&a.join("app.png"), 1, 1, &[255, 0, 0, 255]);
+        write_png(&b.join("app.png"), 1, 1, &[0, 0, 255, 255]);
+        let mut cache = IconCache::new(IconTheme::load("test", std::slice::from_ref(&root)));
+        let ca = cache
+            .get_with_extra("app", 8, std::slice::from_ref(&a))
+            .unwrap();
+        let cb = cache
+            .get_with_extra("app", 8, std::slice::from_ref(&b))
+            .unwrap();
+        assert_eq!(ca.get(4, 4), 0xFFFF_0000);
+        assert_eq!(cb.get(4, 4), 0xFF00_00FF);
+        fs::remove_dir_all(&root).unwrap();
+    }
+}

@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Safely Remove Hardware
+Comment=Mounts drives as they are plugged in and takes them off safely.
+Exec=reprise-drives
+Icon=media-eject
+Categories=Settings;
+StartupWMClass=reprise.drives
+NoDisplay=true
+Terminal=false

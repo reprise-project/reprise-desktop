@@ -1,0 +1,27 @@
+[package]
+name = "reprise-polkit"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "The polkit authentication agent: a Run As dialog for actions that need a password"
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "reprise-polkit"
+path = "src/main.rs"
+
+[dependencies]
+repriseapp = { path = "../../repriseapp" }
+reprisebus = { path = "../../reprisebus" }
+reprisekit = { path = "../../reprisekit" }
+zbus.workspace = true
+zbus_polkit = "5"
+async-channel.workspace = true
+blocking.workspace = true
+zeroize.workspace = true
+libc.workspace = true
+log.workspace = true
+env_logger.workspace = true

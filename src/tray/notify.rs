@@ -1,0 +1,413 @@
+//! What a `Notify` call carries beyond its summary: action pairs, honoured hints, body markup
+//! reduced to plain text and the `image-data` icon. Pure, so the D-Bus handler only glues these
+//! together.
+
+use crate::raster::Canvas;
+use reprisekit::icon::IconSource;
+use serde::de::{self, Deserialize, Deserializer, IgnoredAny, SeqAccess, Visitor};
+use std::collections::HashMap;
+use zbus::zvariant::{Signature, Type};
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Urgency {
+    Low,
+    #[default]
+    Normal,
+    Critical,
+}
+
+/// Action pairs kept per notification and the label length shown; keys are sent back as given, so a
+/// longer one is dropped rather than cut.
+pub const MAX_ACTIONS: usize = 16;
+pub const ACTION_LABEL_CHARS: usize = 63;
+const ACTION_KEY_BYTES: usize = 255;
+
+pub const DEFAULT_ACTION: &str = "default";
+
+pub const INLINE_REPLY: &str = "inline-reply";
+
+pub fn actions(raw: &[String]) -> Vec<(String, String)> {
+    let mut out: Vec<(String, String)> = Vec::new();
+    for [key, label] in raw.as_chunks::<2>().0 {
+        if key.is_empty() || key.len() > ACTION_KEY_BYTES || out.iter().any(|(k, _)| k == key) {
+            continue;
+        }
+        out.push((key.clone(), super::clip(label.clone(), ACTION_LABEL_CHARS)));
+        if out.len() == MAX_ACTIONS {
+            break;
+        }
+    }
+    out
+}
+
+#[derive(Debug, PartialEq)]
+pub enum Hint<'a> {
+    Str(String),
+    Bool(bool),
+    Int(i64),
+    Image(ImageData<'a>),
+    Other,
+}
+
+#[derive(Debug, PartialEq)]
+pub struct ImageData<'a> {
+    pub width: i32,
+    pub height: i32,
+    pub stride: i32,
+    pub alpha: bool,
+    pub bits: i32,
+    pub channels: i32,
+    pub data: &'a [u8],
+}
+
+impl Type for Hint<'_> {
+    const SIGNATURE: &'static Signature = &Signature::Variant;
+}
+
+impl<'de> Deserialize<'de> for Hint<'de> {
+    fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        d.deserialize_any(HintVisitor)
+    }
+}
+
+struct HintVisitor;
+
+impl<'de> Visitor<'de> for HintVisitor {
+    type Value = Hint<'de>;
+
+    fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        f.write_str("a notification hint variant")
+    }
+
+    fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<Hint<'de>, A::Error> {
+        let sig: Signature = seq
+            .next_element()?
+            .ok_or_else(|| de::Error::invalid_length(0, &self))?;
+        let missing = || de::Error::invalid_length(1, &HintVisitor);
+        Ok(match sig {
+            Signature::Str => Hint::Str(seq.next_element()?.ok_or_else(missing)?),
+            Signature::Bool => Hint::Bool(seq.next_element()?.ok_or_else(missing)?),
+            Signature::U8 => Hint::Int(seq.next_element::<u8>()?.ok_or_else(missing)?.into()),
+            Signature::I32 => Hint::Int(seq.next_element::<i32>()?.ok_or_else(missing)?.into()),
+            Signature::U32 => Hint::Int(seq.next_element::<u32>()?.ok_or_else(missing)?.into()),
+            s if s == *<(i32, i32, i32, bool, i32, i32, &[u8])>::SIGNATURE => {
+                let (width, height, stride, alpha, bits, channels, data): (
+                    i32,
+                    i32,
+                    i32,
+                    bool,
+                    i32,
+                    i32,
+                    &'de [u8],
+                ) = seq.next_element()?.ok_or_else(missing)?;
+                Hint::Image(ImageData {
+                    width,
+                    height,
+                    stride,
+                    alpha,
+                    bits,
+                    channels,
+                    data,
+                })
+            }
+            _ => {
+                seq.next_element::<IgnoredAny>()?;
+                Hint::Other
+            }
+        })
+    }
+}
+
+#[derive(Debug, Default, PartialEq)]
+pub struct Hints<'a> {
+    pub urgency: Urgency,
+    pub transient: bool,
+    pub resident: bool,
+    pub image: Option<ImageData<'a>>,
+    pub image_path: Option<String>,
+    pub desktop_entry: Option<String>,
+    pub reply_placeholder: Option<String>,
+    pub reply_send: Option<String>,
+}
+
+pub fn hints(mut raw: HashMap<String, Hint<'_>>) -> Hints<'_> {
+    let mut take = |names: &[&str]| names.iter().find_map(|n| raw.remove(*n));
+    let urgency = match take(&["urgency"]) {
+        Some(Hint::Int(0)) => Urgency::Low,
+        Some(Hint::Int(2)) => Urgency::Critical,
+        _ => Urgency::Normal,
+    };
+    let flag = |h: Option<Hint>| matches!(h, Some(Hint::Bool(true)) | Some(Hint::Int(1)));
+    let text = |h: Option<Hint>| match h {
+        Some(Hint::Str(s)) if !s.is_empty() => Some(s),
+        _ => None,
+    };
+    let transient = flag(take(&["transient"]));
+    let resident = flag(take(&["resident"]));
+    let image = match take(&["image-data", "image_data", "icon_data"]) {
+        Some(Hint::Image(i)) => Some(i),
+        _ => None,
+    };
+    let image_path = text(take(&["image-path", "image_path"]));
+    let desktop_entry = text(take(&["desktop-entry"]));
+    let reply_placeholder = text(take(&["x-kde-reply-placeholder-text"]));
+    let reply_send = text(take(&["x-kde-reply-submit-button-text"]));
+    Hints {
+        urgency,
+        transient,
+        resident,
+        image,
+        image_path,
+        desktop_entry,
+        reply_placeholder,
+        reply_send,
+    }
+}
+
+const MAX_IMAGE_SIDE: i32 = 8192;
+
+const IMAGE_SIZES: [i32; 2] = [16, 32];
+
+pub fn image_sources(img: &ImageData) -> Vec<IconSource> {
+    let ok = (1..=MAX_IMAGE_SIDE).contains(&img.width)
+        && (1..=MAX_IMAGE_SIDE).contains(&img.height)
+        && img.bits == 8
+        && (img.channels == 3 || img.channels == 4)
+        && (img.channels == 4) == img.alpha;
+    if !ok {
+        return Vec::new();
+    }
+    let (w, h, ch) = (
+        img.width as usize,
+        img.height as usize,
+        img.channels as usize,
+    );
+    let stride = img.stride.max(0) as usize;
+    if stride < w * ch || img.data.len() < stride * (h - 1) + w * ch {
+        return Vec::new();
+    }
+    let pixel = |x: u32, y: u32| {
+        let o = y as usize * stride + x as usize * ch;
+        let p = &img.data[o..o + ch];
+        let a = if ch == 4 { p[3] } else { 0xFF };
+        reprisekit::icon::premultiply(u32::from_be_bytes([a, p[0], p[1], p[2]]))
+    };
+    IMAGE_SIZES
+        .iter()
+        .map(|&px| {
+            let c: Canvas =
+                Canvas::resample_box_from(w as u32, h as u32, px as u32, px as u32, pixel);
+            IconSource {
+                width: c.width,
+                height: c.height,
+                pixels: c.pixels,
+            }
+        })
+        .collect()
+}
+
+pub fn desktop_id(hint: &str) -> Option<String> {
+    let ok = !hint.is_empty() && hint.len() <= 255 && !hint.contains('/') && !hint.starts_with('.');
+    ok.then(|| format!("{}.desktop", hint.trim_end_matches(".desktop")))
+}
+
+pub fn plain_text(markup: &str) -> String {
+    let mut out = String::with_capacity(markup.len());
+    let mut rest = markup;
+    while let Some(i) = rest.find(['<', '&']) {
+        out.push_str(&rest[..i]);
+        rest = &rest[i..];
+        if rest.starts_with('<') {
+            let Some(end) = rest.find('>') else {
+                out.push_str(rest);
+                return out;
+            };
+            let tag = rest[1..end].trim();
+            let name = tag
+                .trim_start_matches('/')
+                .split(|c: char| c.is_whitespace() || c == '/')
+                .next()
+                .unwrap_or("")
+                .to_ascii_lowercase();
+            match name.as_str() {
+                "br" => out.push('\n'),
+                "img" => out.push_str(&plain_text(&attribute(tag, "alt").unwrap_or_default())),
+                _ => {}
+            }
+            rest = &rest[end + 1..];
+        } else {
+            let (ch, used) = entity(rest).unwrap_or(('&', 1));
+            out.push(ch);
+            rest = &rest[used..];
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
+fn entity(s: &str) -> Option<(char, usize)> {
+    // A byte search: the first 12 bytes may end inside a character.
+    let end = s.bytes().take(12).position(|b| b == b';')?;
+    let name = &s[1..end];
+    let ch = match name {
+        "amp" => '&',
+        "lt" => '<',
+        "gt" => '>',
+        "quot" => '"',
+        "apos" => '\'',
+        _ => {
+            let num = name.strip_prefix('#')?;
+            let code = match num.strip_prefix(['x', 'X']) {
+                Some(hex) => u32::from_str_radix(hex, 16).ok()?,
+                None => num.parse().ok()?,
+            };
+            char::from_u32(code)?
+        }
+    };
+    Some((ch, end + 1))
+}
+
+fn attribute(tag: &str, name: &str) -> Option<String> {
+    let at = tag.find(&format!("{name}="))? + name.len() + 1;
+    let rest = &tag[at..];
+    let quote = rest.chars().next().filter(|c| *c == '"' || *c == '\'')?;
+    let body = &rest[1..];
+    Some(body[..body.find(quote)?].to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use zbus::zvariant::{LE, Value, serialized::Context, to_bytes};
+
+    #[test]
+    fn markup_becomes_plain_text() {
+        assert_eq!(plain_text("<b>Bold</b> and <i>it</i>"), "Bold and it");
+        assert_eq!(
+            plain_text("See <a href=\"https://x.org/?a=1&amp;b=2\">the site</a>"),
+            "See the site"
+        );
+        assert_eq!(plain_text("a &lt; b &amp;&amp; c &gt; d"), "a < b && c > d");
+        assert_eq!(plain_text("&quot;q&quot; &apos;&#65;&#x42;"), "\"q\" 'AB");
+        assert_eq!(plain_text("one<br/>two<BR>three"), "one\ntwo\nthree");
+        assert_eq!(plain_text("<img src=\"x.png\" alt=\"a cat\"/>!"), "a cat!");
+        assert_eq!(plain_text("x < y"), "x < y");
+        assert_eq!(plain_text("fish & chips &bogus;"), "fish & chips &bogus;");
+        assert_eq!(
+            plain_text("&\u{e9}\u{e9}\u{e9}\u{e9}\u{e9}\u{e9}\u{e9}"),
+            "&\u{e9}\u{e9}\u{e9}\u{e9}\u{e9}\u{e9}\u{e9}"
+        );
+    }
+
+    #[test]
+    fn actions_pair_up_and_drop_what_cannot_come_back() {
+        let raw: Vec<String> = [
+            "default", "", "open", "Open", "open", "Again", "", "Blank", "odd",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+        assert_eq!(
+            actions(&raw),
+            vec![
+                ("default".to_string(), String::new()),
+                ("open".to_string(), "Open".to_string())
+            ]
+        );
+        let many: Vec<String> = (0..100)
+            .flat_map(|i| [format!("k{i}"), "L".into()])
+            .collect();
+        assert_eq!(actions(&many).len(), MAX_ACTIONS);
+        let long = vec!["k".repeat(300), "Label".into()];
+        assert!(actions(&long).is_empty());
+    }
+
+    fn round_trip(map: HashMap<&str, Value<'_>>) -> Vec<u8> {
+        let ctxt = Context::new_dbus(LE, 0);
+        to_bytes(ctxt, &map).unwrap().to_vec()
+    }
+
+    #[test]
+    fn hints_read_urgency_flags_names_and_image_data() {
+        let pixels: Vec<u8> = vec![255, 0, 0, 255, 0, 0, 255, 128];
+        let mut map: HashMap<&str, Value> = HashMap::new();
+        map.insert("urgency", Value::U8(2));
+        map.insert("transient", Value::Bool(true));
+        map.insert("resident", Value::Bool(false));
+        map.insert("desktop-entry", Value::from("org.example.Mail"));
+        map.insert("image-path", Value::from("/tmp/x.png"));
+        map.insert(
+            "image-data",
+            Value::from((2i32, 1i32, 8i32, true, 8i32, 4i32, pixels.clone())),
+        );
+        map.insert("x-other", Value::from(vec![1u32, 2, 3]));
+        let bytes = round_trip(map);
+        let data = zbus::zvariant::serialized::Data::new(&bytes[..], Context::new_dbus(LE, 0));
+        let (raw, _): (HashMap<String, Hint>, _) = data.deserialize().unwrap();
+        assert_eq!(raw.get("x-other"), Some(&Hint::Other));
+        let h = hints(raw);
+        assert_eq!(h.urgency, Urgency::Critical);
+        assert!(h.transient && !h.resident);
+        assert_eq!(h.desktop_entry.as_deref(), Some("org.example.Mail"));
+        assert_eq!(h.image_path.as_deref(), Some("/tmp/x.png"));
+        let img = h.image.expect("image-data");
+        assert_eq!((img.width, img.height, img.channels), (2, 1, 4));
+        assert_eq!(img.data, &pixels[..]);
+        let src = image_sources(&img);
+        assert_eq!(src.iter().map(|s| s.width).collect::<Vec<_>>(), [16, 32]);
+        assert_eq!(src[0].pixels[0], 0xFFFF_0000);
+        assert_eq!(
+            src[0].pixels[15],
+            reprisekit::icon::premultiply(0x8000_00FF)
+        );
+    }
+
+    #[test]
+    fn older_hint_names_and_integer_flags_still_count() {
+        let mut map: HashMap<&str, Value> = HashMap::new();
+        map.insert("urgency", Value::U8(0));
+        map.insert("transient", Value::I32(1));
+        map.insert("image_path", Value::from("dialog-information"));
+        let bytes = round_trip(map);
+        let data = zbus::zvariant::serialized::Data::new(&bytes[..], Context::new_dbus(LE, 0));
+        let (raw, _): (HashMap<String, Hint>, _) = data.deserialize().unwrap();
+        let h = hints(raw);
+        assert_eq!(h.urgency, Urgency::Low);
+        assert!(h.transient);
+        assert_eq!(h.image_path.as_deref(), Some("dialog-information"));
+    }
+
+    #[test]
+    fn image_data_that_does_not_fit_its_bytes_is_refused() {
+        let data = [0u8; 12];
+        let img = |w, h, stride, ch| ImageData {
+            width: w,
+            height: h,
+            stride,
+            alpha: ch == 4,
+            bits: 8,
+            channels: ch,
+            data: &data,
+        };
+        assert_eq!(image_sources(&img(2, 1, 8, 4)).len(), 2);
+        assert!(image_sources(&img(2, 2, 8, 4)).is_empty(), "short by a row");
+        assert!(
+            image_sources(&img(2, 1, 4, 4)).is_empty(),
+            "stride under a row"
+        );
+        assert!(image_sources(&img(0, 1, 8, 4)).is_empty());
+        assert!(image_sources(&img(1_000_000, 1, 8, 4)).is_empty());
+        assert_eq!(image_sources(&img(2, 2, 6, 3)).len(), 2, "RGB rows of 6");
+    }
+
+    #[test]
+    fn a_desktop_entry_hint_names_a_file_in_the_data_dirs() {
+        assert_eq!(desktop_id("firefox").as_deref(), Some("firefox.desktop"));
+        assert_eq!(
+            desktop_id("org.gnome.Nautilus.desktop").as_deref(),
+            Some("org.gnome.Nautilus.desktop")
+        );
+        assert_eq!(desktop_id("../etc/passwd"), None);
+        assert_eq!(desktop_id(""), None);
+    }
+}

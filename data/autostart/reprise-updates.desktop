@@ -1,0 +1,6 @@
+[Desktop Entry]
+Type=Application
+Name=Software Updates
+Exec=reprise-updates --tray
+OnlyShowIn=reprise;
+NoDisplay=true

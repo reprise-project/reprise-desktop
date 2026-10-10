@@ -1,0 +1,6 @@
+[Desktop Entry]
+Type=Application
+Name=Power
+Exec=reprise-power --tray
+OnlyShowIn=reprise;
+NoDisplay=true
