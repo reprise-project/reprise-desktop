@@ -162,6 +162,6 @@ network time.
 - **Run As.** The admin password prompt. It takes a fingerprint too, when
   polkit is set up for one.
 - **About Reprise.** Version, operating system, kernel, model, processor,
-  graphics, memory, disk, displays and uptime, with a Copy button for bug
-  reports. The programs' own Help > About boxes give your memory in
-  kilobytes.
+  graphics, memory (in kilobytes, total and available), disk, displays and
+  uptime, with a Copy button for bug reports. The programs' own Help > About
+  boxes give your memory in kilobytes too.

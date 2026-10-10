@@ -757,7 +757,7 @@ mod tests {
                     &["Version 0.1.0 (build a1b2c3d)", "Classic interface"],
                 ),
                 g("Empty:", &[]),
-                g("Memory:", &["15.0 GB (9.1 GB available)"]),
+                g("Memory:", &["15,728,640 KB"]),
                 g(
                     "Graphics:",
                     &[
