@@ -1,0 +1,56 @@
+name: Bug report
+description: Something in Reprise is broken or looks wrong.
+labels: [bug]
+body:
+  - type: textarea
+    id: about
+    attributes:
+      label: About Reprise
+      description: Open About Reprise, click Copy and paste the text here. It includes your host name and user name; edit them out if you like.
+      render: text
+    validations:
+      required: true
+  - type: dropdown
+    id: interface
+    attributes:
+      label: Interface
+      options:
+        - Classic
+        - Blue
+        - Glass
+    validations:
+      required: true
+  - type: input
+    id: scheme
+    attributes:
+      label: Colour scheme
+      description: The scheme picked on the Appearance page of Reprise Settings, or `color_scheme` in the config. Leave empty for the default.
+      placeholder: Reprise Standard
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Open ...
+        2. Click ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected
+      description: What you expected to happen.
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual
+      description: What happened instead. Paste any error lines from the session log here.
+    validations:
+      required: true
+  - type: textarea
+    id: screenshot
+    attributes:
+      label: Screenshot
+      description: Drag an image or a recording in here, if the bug shows on screen.

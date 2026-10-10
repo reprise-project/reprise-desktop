@@ -1,0 +1,27 @@
+name: Feature request
+description: Suggest something Reprise should do.
+labels: [enhancement]
+body:
+  - type: textarea
+    id: idea
+    attributes:
+      label: What should Reprise do?
+    validations:
+      required: true
+  - type: textarea
+    id: why
+    attributes:
+      label: Why
+      description: What you are trying to get done, and how you work around it today.
+    validations:
+      required: true
+  - type: dropdown
+    id: interface
+    attributes:
+      label: Interface
+      description: Which interfaces it applies to.
+      multiple: true
+      options:
+        - Classic
+        - Blue
+        - Glass
