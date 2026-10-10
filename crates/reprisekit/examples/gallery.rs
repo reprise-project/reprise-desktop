@@ -384,7 +384,7 @@ fn render_about_system(with_blue: bool) -> Canvas {
                 ],
             ),
             g("Graphics:", &["Red Hat Virtio 1.0 GPU"]),
-            g("Memory:", &["16.0 GB (9.1 GB available)"]),
+            g("Memory:", &["16,777,216 KB", "9,542,041 KB available"]),
             g("Disk (/):", &["500.0 GB (120.0 GB free)"]),
             g("Display:", &["1920x1080 at 60 Hz"]),
             g("Session:", &["Jo Doe (jo)", "Up 3 hours, 12 minutes"]),

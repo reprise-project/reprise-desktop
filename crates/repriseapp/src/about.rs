@@ -33,7 +33,7 @@ impl Machine {
             .map(|(_, b)| format!("Free space on /:  {}", format_gb(b)))
             .unwrap_or_default();
         let memory = mem_total_kb(&read("/proc/meminfo"))
-            .map(|kb| format!("{} KB", reprisefs::props::thousands(kb)))
+            .map(|kb| format_kb(kb * 1024))
             .unwrap_or_default();
         Machine {
             version: version_line(
@@ -159,10 +159,12 @@ impl SystemFacts {
             self.model.clone(),
         ];
         let processor = [self.cpu.as_deref().map(cpu_name), self.cpu_line()];
-        let memory = self.ram.map(|t| match self.ram_free {
-            Some(f) => format!("{} ({} available)", format_gb(t), format_gb(f)),
-            None => format_gb(t),
-        });
+        let memory = [
+            self.ram.map(format_kb),
+            self.ram
+                .and(self.ram_free)
+                .map(|f| format!("{} available", format_kb(f))),
+        ];
         let disk = self
             .disk
             .map(|(t, f)| format!("{} ({} free)", format_gb(t), format_gb(f)));
@@ -181,7 +183,7 @@ impl SystemFacts {
             ("Computer:", computer.into_iter().flatten().collect()),
             ("Processor:", processor.into_iter().flatten().collect()),
             ("Graphics:", self.gpus.clone()),
-            ("Memory:", memory.into_iter().collect()),
+            ("Memory:", memory.into_iter().flatten().collect()),
             ("Disk (/):", disk.into_iter().collect()),
             (
                 if self.displays.len() > 1 {
@@ -331,6 +333,11 @@ pub fn drm_driver(uevent: &str) -> Option<String> {
         .filter(|v| !v.is_empty())
 }
 
+/// Memory in whole kilobytes with thousands separators: "16,384,000 KB".
+pub fn format_kb(bytes: u64) -> String {
+    format!("{} KB", reprisefs::props::thousands(bytes / 1024))
+}
+
 pub fn format_gb(bytes: u64) -> String {
     format!("{:.1} GB", bytes as f64 / 1_073_741_824.0)
 }
@@ -390,6 +397,8 @@ mod tests {
     fn formats_free_space() {
         assert_eq!(format_gb(41_000_000_000), "38.2 GB");
         assert_eq!(format_gb(0), "0.0 GB");
+        assert_eq!(format_kb(16 * 1_073_741_824), "16,777,216 KB");
+        assert_eq!(format_kb(1023), "0 KB");
     }
 
     #[test]
@@ -478,7 +487,7 @@ mod tests {
                 ],
             ),
             ("Graphics:", vec!["Red Hat Virtio 1.0 GPU"]),
-            ("Memory:", vec!["16.0 GB (9.1 GB available)"]),
+            ("Memory:", vec!["16,777,216 KB", "9,542,041 KB available"]),
             ("Disk (/):", vec!["500.0 GB (120.0 GB free)"]),
             ("Display:", vec!["1920x1080 at 60 Hz"]),
             ("Session:", vec!["Jo Doe (jo)", "Up 3 hours, 12 minutes"]),
