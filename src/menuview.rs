@@ -1083,7 +1083,7 @@ impl State {
                 self.set_all_desktops(w, on);
             }
             WindowMenuRow::MoveTo(n) => self.move_to_desktop(&[w], n),
-            WindowMenuRow::TabsOf(target) => self.join_tabs(w, target, false),
+            WindowMenuRow::TabsOf(target) => self.join_tabs(w, target, usize::MAX, false),
             WindowMenuRow::LeaveTabs => self.leave_tabs(w),
             WindowMenuRow::MoveToMenu | WindowMenuRow::TabsOfMenu => {}
         }

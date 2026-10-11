@@ -95,6 +95,12 @@ impl<T: Copy + Eq> Groups<T> {
     }
 
     pub fn join(&mut self, w: T, target: T) {
+        self.join_at(w, target, usize::MAX);
+    }
+
+    /// Put `w`, with its own group, into `target`'s at `slot` (past the
+    /// end appends) and show it.
+    pub fn join_at(&mut self, w: T, target: T, slot: usize) {
         if w == target
             || self.index_of(target).is_some() && self.index_of(target) == self.index_of(w)
         {
@@ -115,7 +121,8 @@ impl<T: Copy + Eq> Groups<T> {
             }
         };
         let g = &mut self.groups[gi];
-        g.members.extend(incoming);
+        let slot = slot.min(g.members.len());
+        g.members.splice(slot..slot, incoming);
         g.shown = g.members.iter().position(|&m| m == w).unwrap_or(0);
     }
 
@@ -191,6 +198,21 @@ mod tests {
         assert_eq!(g.hidden_behind(2), vec![1, 3]);
         assert!(g.hidden_behind(1).is_empty(), "a hidden tab leads none");
         assert!(g.hidden_behind(4).is_empty(), "a window in no group");
+    }
+
+    #[test]
+    fn joining_at_a_slot_inserts_there_and_shows_the_newcomer() {
+        let mut g = groups(&[(&[1, 2], 0)]);
+        g.join_at(3, 1, 1);
+        assert_eq!(g.members_of(1), vec![1, 3, 2]);
+        assert_eq!(g.shown_of(1), 3);
+        let mut g = groups(&[(&[1, 2], 1), (&[3, 4], 0)]);
+        g.join_at(4, 2, 0);
+        assert_eq!(g.members_of(1), vec![3, 4, 1, 2], "a whole group in order");
+        assert_eq!(g.shown_of(1), 4);
+        let mut g = Groups::default();
+        g.join_at(2, 1, 0);
+        assert_eq!(g.members_of(1), vec![2, 1], "before a lone window");
     }
 
     #[test]

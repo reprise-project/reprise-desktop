@@ -35,6 +35,8 @@ pub struct Drop {
     pub dragged: WindowId,
     /// The shown window whose caption the pointer is over.
     pub target: WindowId,
+    /// Where in `target`'s tabs a release puts `dragged`.
+    pub slot: usize,
     pub since: Instant,
     /// The delay is up: the caption shows the ghost tab, and the release
     /// joins the group.
@@ -103,7 +105,7 @@ pub struct StripTab {
 pub struct Strip {
     pub tabs: Vec<StripTab>,
     pub selected: usize,
-    pub ghost: bool,
+    pub ghost: Option<usize>,
     pub hot: Option<TabHit>,
     pub held: Option<TabHit>,
 }
@@ -120,26 +122,27 @@ impl State {
     }
 
     /// The tab windows `w`'s caption shows: its group's, and the ghost of
-    /// a window held over it. None for a window in no group with nothing
-    /// held over it.
-    fn strip_windows(&self, w: WindowId) -> Option<(Vec<WindowId>, usize, bool)> {
+    /// a window held over it at its slot. None for a window in no group
+    /// with nothing held over it.
+    fn strip_windows(&self, w: WindowId) -> Option<(Vec<WindowId>, usize, Option<usize>)> {
         let group = self.tabs.groups.group_of(w).filter(|g| g.shown() == w);
-        let ghost = self
-            .tabs
-            .drop
-            .filter(|d| d.armed && d.target == w)
-            .map(|d| d.dragged);
-        if group.is_none() && ghost.is_none() {
+        let held = self.tabs.drop.filter(|d| d.armed && d.target == w);
+        if group.is_none() && held.is_none() {
             return None;
         }
-        let (mut members, selected) = match group {
+        let (mut members, mut selected) = match group {
             Some(g) => (g.members.clone(), g.shown),
             None => (vec![w], 0),
         };
-        if let Some(d) = ghost {
-            members.push(d);
-        }
-        Some((members, selected, ghost.is_some()))
+        let ghost = held.map(|d| {
+            let slot = d.slot.min(members.len());
+            members.insert(slot, d.dragged);
+            if slot <= selected {
+                selected += 1;
+            }
+            slot
+        });
+        Some((members, selected, ghost))
     }
 
     /// The tabs `w`'s caption draws, with icons `px` px square.
@@ -190,11 +193,26 @@ impl State {
     /// What on `w`'s tab strip layout point (`x`, `y`) is over, and the
     /// window of that tab.
     pub fn tab_at(&self, w: WindowId, x: f64, y: f64) -> Option<(TabHit, WindowId)> {
-        let g = self.tabs.groups.group_of(w).filter(|g| g.shown() == w)?;
+        self.tabs.groups.group_of(w).filter(|g| g.shown() == w)?;
+        let (members, _, ghost) = self.strip_windows(w)?;
         let win = self.win(w)?;
         let l = self.strip_layout(w)?;
         let hit = captiontabs::hit(&l, x as i32 - win.x, y as i32 - win.y)?;
-        Some((hit, *g.members.get(hit.tab)?))
+        if ghost == Some(hit.tab) {
+            return None;
+        }
+        Some((hit, *members.get(hit.tab)?))
+    }
+
+    /// The slot in `target`'s tabs a window dropped at layout x `x` takes:
+    /// the one its ghost tab would stand in under the pointer.
+    fn drop_slot(&self, target: WindowId, x: f64) -> usize {
+        let Some(win) = self.win(target) else {
+            return usize::MAX;
+        };
+        let n = self.tabs.groups.members_of(target).len() + 1;
+        let l = captiontabs::layout(&self.config.theme, &win.geom, n);
+        captiontabs::slot_at(&l, x as i32 - win.x)
     }
 
     /// Light the tab the pointer is on: `over` is the frame the pointer
@@ -417,10 +435,10 @@ impl State {
         }
     }
 
-    /// Put `w` into `target`'s group, after its last tab, and show it
-    /// there: with `whole`, `w`'s own group comes along; otherwise `w`
-    /// leaves it alone. Either must be [`State::tabbable`].
-    pub fn join_tabs(&mut self, w: WindowId, target: WindowId, whole: bool) {
+    /// Put `w` into `target`'s group at `slot` (past the end appends) and
+    /// show it there: with `whole`, `w`'s own group comes along; otherwise
+    /// `w` leaves it alone. Either must be [`State::tabbable`].
+    pub fn join_tabs(&mut self, w: WindowId, target: WindowId, slot: usize, whole: bool) {
         if !self.tabbable(w) || !self.tabbable(target) {
             return;
         }
@@ -432,7 +450,7 @@ impl State {
             self.leave_tabs_quiet(w);
         }
         let lead = self.tabs.groups.shown_of(target);
-        self.tabs.groups.join(w, target);
+        self.tabs.groups.join_at(w, target, slot);
         let members = self.tabs.groups.members_of(w);
         self.retab(&members, Some(lead));
         self.focus_window(w);
@@ -595,8 +613,14 @@ impl State {
         };
         match (self.tabs.drop, target) {
             (Some(d), Some(t)) if d.target == t && d.dragged == w => {
+                let slot = self.drop_slot(t, pos.x);
+                if let Some(d) = self.tabs.drop.as_mut() {
+                    d.slot = slot;
+                }
                 if !d.armed && d.since.elapsed() >= DROP_DELAY {
                     self.arm_tab_drop();
+                } else if d.armed && d.slot != slot {
+                    self.redraw_caption(t);
                 }
             }
             (_, Some(t)) => {
@@ -604,6 +628,7 @@ impl State {
                 self.tabs.drop = Some(Drop {
                     dragged: w,
                     target: t,
+                    slot: self.drop_slot(t, pos.x),
                     since: Instant::now(),
                     armed: false,
                 });
@@ -682,7 +707,7 @@ impl State {
         let Some(d) = d else {
             return false;
         };
-        self.join_tabs(d.dragged, d.target, true);
+        self.join_tabs(d.dragged, d.target, d.slot, true);
         true
     }
 

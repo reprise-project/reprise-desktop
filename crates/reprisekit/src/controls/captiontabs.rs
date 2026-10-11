@@ -32,23 +32,31 @@ pub struct CaptionTabs<'a> {
     pub selected: usize,
     pub hot: Option<TabHit>,
     pub held: Option<TabHit>,
-    pub ghost: bool,
+    /// The tab standing in for a window held over the caption, at the slot
+    /// a release puts it in.
+    pub ghost: Option<usize>,
 }
 
 impl CaptionTabs<'_> {
     /// The tab after the selected one, round to the first after the last;
     /// with `backwards` the one before it. The ghost is never a step.
     pub fn step(&self, backwards: bool) -> usize {
-        let n = self.tabs.len() - usize::from(self.ghost);
+        let real: Vec<usize> = (0..self.tabs.len())
+            .filter(|&i| !self.is_ghost(i))
+            .collect();
+        let n = real.len();
         if n == 0 {
             return 0;
         }
-        let at = self.selected.min(n - 1);
-        if backwards {
+        let at = real
+            .iter()
+            .position(|&i| i >= self.selected)
+            .unwrap_or(n - 1);
+        real[if backwards {
             (at + n - 1) % n
         } else {
             (at + 1) % n
-        }
+        }]
     }
 
     pub fn hover(&mut self, hit: Option<TabHit>) -> bool {
@@ -58,7 +66,7 @@ impl CaptionTabs<'_> {
     }
 
     fn is_ghost(&self, i: usize) -> bool {
-        self.ghost && i + 1 == self.tabs.len()
+        self.ghost == Some(i)
     }
 
     fn tab(&self, i: usize, close: Option<Rect>) -> CaptionTab<'_> {
@@ -148,6 +156,8 @@ pub fn hit(l: &Layout, x: i32, y: i32) -> Option<TabHit> {
     Some(TabHit { tab, close })
 }
 
+/// The tab at `x`, the first or last beyond either end. Laid out with a
+/// ghost tab, the slot the ghost takes under the pointer.
 pub fn slot_at(l: &Layout, x: i32) -> usize {
     let n = l.tabs.len();
     if n == 0 {
@@ -347,9 +357,13 @@ mod tests {
         let mut t = tabs(3, 2);
         assert_eq!(t.step(false), 0);
         assert_eq!(t.step(true), 1);
-        t.ghost = true;
+        t.ghost = Some(2);
         t.selected = 1;
         assert_eq!(t.step(false), 0, "the third tab is a ghost");
+        t.ghost = Some(1);
+        t.selected = 2;
+        assert_eq!(t.step(true), 0, "the ghost between them is no step");
+        assert_eq!(t.step(false), 0);
         let lit = Some(TabHit {
             tab: 0,
             close: false,
@@ -398,12 +412,17 @@ mod tests {
     fn classic_rings_the_ghost_in_the_caption_ink_and_doubles_at_scale_2() {
         let theme = Theme::default();
         let mut t = tabs(3, 0);
-        t.ghost = true;
+        t.ghost = Some(2);
         let (c, l) = draw_over(&theme, 600, &t, true);
         let g = l.tabs[2];
         let ink = theme.colors.title_text.argb();
         assert_eq!(c.get(g.x, g.y), ink, "the ghost's dotted ring");
         assert_ne!(c.get(g.x + 1, g.y), ink);
+        t.ghost = Some(1);
+        let (c, l) = draw_over(&theme, 600, &t, true);
+        let (g, last) = (l.tabs[1], l.tabs[2]);
+        assert_eq!(c.get(g.x, g.y), ink, "a ghost between two tabs rings there");
+        assert_ne!(c.get(last.x, last.y), ink, "the tab after it is a real one");
         let two = Theme {
             scale: 2,
             ..Theme::default()
@@ -488,7 +507,7 @@ mod tests {
         let theme = Theme::default();
         let g = geom(&theme, 600);
         let mut t = tabs(3, 1);
-        t.ghost = true;
+        t.ghost = Some(2);
         let l = layout(&theme, &g, 3);
         let mut tree = Tree::window("w", (600, 60));
         let ids = access(&t, &l, &mut tree, crate::access::ROOT, "tabs");

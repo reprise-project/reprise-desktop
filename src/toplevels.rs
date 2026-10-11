@@ -262,7 +262,7 @@ impl State {
                     app_id: w.app_id(),
                     states: wlr_states(
                         w.maximized,
-                        w.minimized,
+                        w.hidden(),
                         self.focused == Some(w.id),
                         w.fullscreen,
                     ),
@@ -314,11 +314,13 @@ impl State {
             R::SetMaximized => self.set_maximized(w, true),
             R::UnsetMaximized => self.set_maximized(w, false),
             R::SetMinimized => self.set_minimized(w, true),
-            R::UnsetMinimized => self.set_minimized(w, false),
+            R::UnsetMinimized if !self.tabs.groups.is_hidden(w) => self.set_minimized(w, false),
             R::SetFullscreen { .. } => self.set_fullscreen(w, true),
             R::UnsetFullscreen => self.set_fullscreen(w, false),
-            R::Activate { .. } => {
-                if self.win(w).is_some_and(|x| x.minimized) {
+            // A hidden tab reads as minimized; bringing it back shows it in
+            // its group's frame.
+            R::Activate { .. } | R::UnsetMinimized => {
+                if self.win(w).is_some_and(|x| x.minimized && !x.tab_hidden) {
                     self.set_minimized(w, false);
                 } else {
                     self.focus_window(w);
