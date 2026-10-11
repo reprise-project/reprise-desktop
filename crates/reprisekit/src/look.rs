@@ -323,15 +323,23 @@ mod tests {
                     right - left
                 }
             };
-            let need = match &theme.look {
+            let (need, face) = match &theme.look {
                 Look::Classic => {
-                    loaded(theme.fonts.clone()).measure(title, true, theme.fonts.size_px)
+                    let t = loaded(theme.fonts.clone());
+                    let need = t.measure(title, true, theme.fonts.size_px);
+                    (need, t.has_face(&theme.fonts.family[0]))
                 }
                 Look::Styled(s) => {
-                    caption_text(s).measure(title, s.caption_text.bold, s.caption_text.size_px)
+                    let font = s.caption_text.font();
+                    let t = caption_text(s);
+                    let need = t.measure(title, s.caption_text.bold, s.caption_text.size_px);
+                    (need, t.has_face(&font.family[0]))
                 }
             };
             assert_eq!(room, need, "{i:?}: the title fills its room at the fit");
+            if !face {
+                continue;
+            }
             assert_eq!(fit, dialog, "{i:?} dialog caption");
             assert_eq!(
                 caption_fit(&theme, title, Chrome::PROMPT),

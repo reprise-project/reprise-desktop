@@ -179,27 +179,36 @@ mod tests {
             min_text_h: None,
             min_w: 0,
         };
-        assert_eq!(msgbox::client(&short(), &text, px).0, 162);
-        for (i, w) in [
-            (Interface::Classic, 162),
-            (Interface::Blue, 179),
-            (Interface::Glass, 201),
-        ] {
-            crate::publish_theme(&reprisekit::interfaces::theme_for(i));
+        // Widths per look are pinned by look::caption_fit's own test.
+        let plain = msgbox::client(&short(), &text, px).0;
+        if text.has_face("Tahoma") {
+            assert_eq!(plain, 162);
+        }
+        let mut glass = 0;
+        for i in [Interface::Classic, Interface::Blue, Interface::Glass] {
+            let theme = reprisekit::interfaces::theme_for(i);
+            crate::publish_theme(&theme);
             let b = MsgBox::new("User Accounts", short());
-            assert_eq!(b.child("box", &text, px).size.0, w, "{i:?}");
+            let w = b.child("box", &text, px).size.0;
+            let fit = reprisekit::look::caption_fit(
+                &theme,
+                "User Accounts",
+                reprisekit::frame::Chrome::DIALOG,
+            );
+            assert_eq!(w, plain.max(fit), "{i:?}: the wider of text and title");
             let ok = msgbox::form(&b.fields, &text, px)
                 .item(msgbox::OK)
                 .unwrap()
                 .rect;
             assert_eq!(ok.x, (w - ok.width) / 2, "{i:?}: OK centres in the box");
+            glass = w;
         }
         crate::CAPTION_FIT.with_borrow_mut(|(_, out)| *out = Some(180));
         let b = MsgBox::new("User Accounts", short());
         assert_eq!(
             b.child("box", &text, px).size.0,
-            180 - 2 * 8,
-            "a 180 px output less the Glass dialog border"
+            glass.min(180 - 2 * 8),
+            "capped to a 180 px output less the Glass dialog border"
         );
     }
 
