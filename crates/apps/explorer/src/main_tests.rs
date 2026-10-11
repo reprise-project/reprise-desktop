@@ -1860,3 +1860,42 @@ fn under_glass_the_closing_line_sits_above_the_list_header() {
     assert_eq!(header.y, lay.etch_y + 1, "the header starts under the line");
     assert_ne!(c.get(x, header.y), line, "the header's top row");
 }
+
+#[test]
+fn computer_gains_and_loses_a_locked_stick_as_udisks_reports_it() {
+    use reprisefs::udisks::{Disk, Snapshot, Volume};
+    let mut ctx = test_ctx();
+    let mut ex = test_explorer(Place::Computer, &mut ctx);
+    let stick = PathBuf::from("/dev/sdx");
+    let listed = |ex: &Explorer| ex.items.iter().any(|it| it.path == stick);
+    let plugged = Snapshot {
+        disks: vec![Disk {
+            path: "/drives/stick".into(),
+            removable: true,
+            ..Default::default()
+        }],
+        volumes: vec![Volume {
+            path: "/block/sdx".into(),
+            device: "/dev/sdx".into(),
+            disk: Some("/drives/stick".into()),
+            label: Some("VAULT".into()),
+            fs_type: "crypto_LUKS".into(),
+            encrypted: true,
+            ..Default::default()
+        }],
+    };
+
+    let reply = ex.volumes_changed(plugged.clone(), &mut ctx);
+    assert!(reply.redraw);
+    assert!(listed(&ex), "the locked stick is listed once plugged in");
+
+    let reply = ex.volumes_changed(plugged, &mut ctx);
+    assert_eq!(
+        reply,
+        Reply::none(),
+        "an unchanged snapshot re-lists nothing"
+    );
+
+    ex.volumes_changed(Snapshot::default(), &mut ctx);
+    assert!(!listed(&ex), "the stick's row goes once it is pulled out");
+}

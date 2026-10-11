@@ -2,8 +2,8 @@
 //! unlock and safely remove them. [`fold`] reads the map
 //! `GetManagedObjects` returns without a bus, so it is testable; [`Udisks`]
 //! is a blocking client over the system bus for callers without an
-//! executor of their own. Polkit decides every call; the session's agent
-//! prompts when it has to.
+//! executor of their own; [`follow`] posts a fresh [`Snapshot`] after each
+//! change. Polkit decides every call; the session's agent prompts when it has to.
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -337,6 +337,80 @@ impl From<zbus::Error> for Error {
 /// options itself.
 fn no_options() -> HashMap<&'static str, Value<'static>> {
     HashMap::new()
+}
+
+/// The signals that mean a drive, volume or mount changed.
+const SIGNALS: &[&str] = &["InterfacesAdded", "InterfacesRemoved", "PropertiesChanged"];
+
+/// A mount point appears a moment after the signal that announced the
+/// device; a burst of signals costs one read after this pause.
+const SETTLE: Duration = Duration::from_millis(150);
+
+/// Follow UDisks2 on a thread of its own: `post` gets a whole [`Snapshot`]
+/// at once and again after every burst of changes. Without a system bus it
+/// gets one empty snapshot.
+pub fn follow(post: impl FnMut(Snapshot) + Send + 'static) {
+    if let Err(e) = std::thread::Builder::new()
+        .name("udisks".into())
+        .spawn(move || zbus::block_on(run(post)))
+    {
+        log::warn!("could not start the UDisks2 thread: {e}");
+    }
+}
+
+async fn run(mut post: impl FnMut(Snapshot)) {
+    use futures_util::FutureExt;
+    use futures_util::stream::StreamExt;
+
+    let conn = match zbus::Connection::system().await {
+        Ok(c) => c,
+        Err(e) => {
+            log::info!("no system bus ({e}); no drives to follow");
+            post(Snapshot::default());
+            return;
+        }
+    };
+    let mut rules = Vec::new();
+    for member in SIGNALS {
+        match zbus::MatchRule::builder()
+            .msg_type(zbus::message::Type::Signal)
+            .sender(NAME)
+            .and_then(|b| b.member(*member))
+        {
+            Ok(b) => rules.push(b.build().into()),
+            Err(e) => log::warn!("no match rule for {member}: {e}"),
+        }
+    }
+    // Subscribed before the first read, so no change slips between.
+    let mut signals = reprisebus::signals(&conn, NAME, rules).await;
+    loop {
+        post(read(&conn).await);
+        if signals.next().await.is_none() {
+            log::warn!("the UDisks2 signal streams all ended");
+            return;
+        }
+        async_io::Timer::after(SETTLE).await;
+        while let Some(Some(_)) = signals.next().now_or_never() {}
+    }
+}
+
+async fn read(conn: &zbus::Connection) -> Snapshot {
+    let reply = conn
+        .call_method(
+            Some(NAME),
+            ROOT,
+            Some(OBJECT_MANAGER),
+            "GetManagedObjects",
+            &(),
+        )
+        .await;
+    match reply.and_then(|m| m.body().deserialize::<Objects>()) {
+        Ok(objects) => fold(&objects),
+        Err(e) => {
+            log::info!("no UDisks2 objects ({e})");
+            Snapshot::default()
+        }
+    }
 }
 
 #[derive(Clone)]

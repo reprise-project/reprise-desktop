@@ -10,12 +10,15 @@ description = "The file-system side of the shell: .desktop entries and MIME, nam
 workspace = true
 
 [dependencies]
+async-io = "2"
+futures-util.workspace = true
 libc.workspace = true
 log.workspace = true
 # The thumbnail cache: entry names are the MD5 of a file URI, and
 # entries are PNGs with text chunks.
 md5 = "0.8"
 png.workspace = true
+reprisebus = { path = "../reprisebus" }
 serde.workspace = true
 # `[recycle_bin]` in config.toml, which every host's Delete reads.
 toml_edit.workspace = true
