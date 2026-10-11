@@ -78,10 +78,13 @@ the Super tap, Super+Shift+Esc and the VT switch keys can be rebound.
   Move, Size, Minimize, Maximize, Always on Top, Show on All Desktops, Move to
   Desktop, the tab commands and Close. Move and Size work from the keyboard.
 - **Window tabs.** Drag a window by its caption onto another window's caption
-  and hold it there: the two share one frame, their titles as tabs. Click a
+  and hold it there: the two share one frame, their titles as tabs. A ghost
+  tab shows where it lands, between two tabs or at either end. Click a
   tab to switch, drag it along to reorder or off to make it a window again.
   Super+\` and Super+Page Down show the next tab, Super+Page Up the one
-  before. Each tab keeps its own taskbar button and Alt+Tab entry.
+  before. Each tab keeps its own taskbar button and Alt+Tab entry. Other
+  taskbars and docks see a hidden tab as minimized; activating it there
+  shows it in its group.
 - **Window memory.** A program opens where its last window closed: same
   screen, same size, maximized if it was.
 - **Window rules** in the config match windows by app id and title, with
