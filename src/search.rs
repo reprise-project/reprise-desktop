@@ -34,23 +34,23 @@ pub fn rank_apps(query: &str, apps: &[AppEntry], max: usize) -> Vec<usize> {
         .collect()
 }
 
-/// Whether a word of `name` starts with `query`, the rest of `query` running on
-/// from there ("sticky no" fits "Sticky Notes"). The Start menu lists only such names.
+/// Whether a word of `name` (split by `fuzzy::is_word_start`) starts with
+/// `query`, the rest of `query` running on from there ("sticky no" fits
+/// "Sticky Notes"). The Start menu lists only such names.
 pub fn word_starts(query: &str, name: &str) -> bool {
     let query = query.trim().to_lowercase();
     if query.is_empty() {
         return false;
     }
-    let name = name.to_lowercase();
-    let split = |c: char| matches!(c, ' ' | '-' | '_' | '.');
-    let mut word_start = true;
-    for (i, c) in name.char_indices() {
-        if word_start && !split(c) && name[i..].starts_with(&query) {
-            return true;
-        }
-        word_start = split(c);
-    }
-    false
+    let name: Vec<char> = name.chars().collect();
+    (0..name.len()).any(|i| {
+        reprisekit::fuzzy::is_word_start(&name, i)
+            && name[i..]
+                .iter()
+                .flat_map(|c| c.to_lowercase())
+                .collect::<String>()
+                .starts_with(&query)
+    })
 }
 
 const SETTINGS_MIN_CHARS: usize = 2;
@@ -360,6 +360,10 @@ mod tests {
         }
         assert!(word_starts("NO", "Notepad"), "case-insensitive");
         assert!(word_starts("sticky no", "Sticky Notes"));
+        assert!(
+            word_starts("calc", "KCalc"),
+            "an uppercase run ends before its last capital"
+        );
         assert!(!word_starts("", "Notepad"));
     }
 
