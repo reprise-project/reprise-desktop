@@ -327,7 +327,7 @@ mod tests {
                 Look::Classic => {
                     let t = loaded(theme.fonts.clone());
                     let need = t.measure(title, true, theme.fonts.size_px);
-                    (need, t.has_face(&theme.fonts.family[0]))
+                    (need, crate::text::test_tahoma())
                 }
                 Look::Styled(s) => {
                     let font = s.caption_text.font();

@@ -2050,7 +2050,7 @@ mod tests {
         assert_eq!(c.get(246, 307), cs.button_hilight.argb());
         assert_eq!(c.get(338, 329), cs.button_dk_shadow.argb());
         assert_eq!(c.get(183, 359), cs.window_frame.argb(), "default ring");
-        if !crate::text::tahoma_installed() {
+        if !crate::text::test_tahoma() {
             return;
         }
         let intro = ink(&c, Rect::new(9, 0, 330, 30), face).unwrap();
@@ -2114,14 +2114,14 @@ mod tests {
 
     #[test]
     fn the_glass_page_pixels_sit_where_the_page_draws_them() {
-        if !crate::text::tahoma_installed() {
+        if !crate::text::test_tahoma() {
             return;
         }
         let (c, _, theme) = page_pixels(&sample(Wording::Glass));
         let inks = theme.look.style().and_then(|st| st.page).unwrap();
         let (cs, white) = (&theme.colors, theme.colors.window.argb());
         let at = |r: Rect, bg: u32| ink(&c, r, bg).map(|(x, y, ..)| (x, y));
-        assert_eq!(at(Rect::new(80, 10, 900, 30), white), Some((92, 23)));
+        assert_eq!(at(Rect::new(80, 10, 900, 30), white), Some((93, 23)));
         assert!(any(&c, Rect::new(80, 10, 900, 30), inks.heading.argb()));
         assert_eq!(at(Rect::new(80, 45, 1000, 25), white), Some((92, 57)));
         assert_eq!(c.get(92, 84), inks.list_frame.argb());

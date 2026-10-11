@@ -181,7 +181,7 @@ mod tests {
         };
         // Widths per look are pinned by look::caption_fit's own test.
         let plain = msgbox::client(&short(), &text, px).0;
-        if text.has_face("Tahoma") {
+        if reprisekit::text::test_tahoma() {
             assert_eq!(plain, 162);
         }
         let mut glass = 0;

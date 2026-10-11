@@ -4693,7 +4693,7 @@ mod tests {
     /// default UI face; None (the test skips) without it.
     fn tahoma() -> Option<TextRenderer> {
         let text = TextRenderer::load(&FontConfig::default());
-        text.has_face("Tahoma").then_some(text)
+        reprisekit::text::test_tahoma().then_some(text)
     }
 
     fn power() -> PowerConfig {
@@ -6033,7 +6033,7 @@ mod tests {
         let plain = drawn(Cues::NONE);
         assert_eq!(
             ink(&plain, label(1), &white),
-            (Some(135), Some(122), Some(179), Some(130)),
+            (Some(133), Some(122), Some(179), Some(130)),
             "Turn Off without its underline"
         );
         assert_eq!(
@@ -6044,7 +6044,7 @@ mod tests {
         let cued = drawn(Cues::ALL);
         assert_eq!(
             ink(&cued, label(1), &white),
-            (Some(135), Some(122), Some(179), Some(132)),
+            (Some(133), Some(122), Some(179), Some(132)),
             "Turn Off with the u underlined on row 132"
         );
         let is_red = |p: u32| p == red.argb();

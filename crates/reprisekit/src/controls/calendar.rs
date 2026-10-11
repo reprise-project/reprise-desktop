@@ -499,7 +499,7 @@ mod tests {
     /// Blue's weekday band is the scheme's inactive title colour edge to edge under its letters, in use and greyed alike; the "S" starts 5 px into the band, 6 rows down.
     #[test]
     fn a_blue_calendar_band_is_blue_with_pale_letters_greyed_or_not() {
-        if !crate::text::tahoma_installed() {
+        if !crate::text::test_tahoma() {
             return;
         }
         let theme = crate::interfaces::theme_for(crate::interface::Interface::Blue);

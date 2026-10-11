@@ -391,7 +391,7 @@ mod tests {
     /// x 29 and on from x 186 in every look.
     #[test]
     fn the_do_not_move_second_line_follows_the_label_in_every_look() {
-        if !reprisekit::text::tahoma_installed() {
+        if !reprisekit::text::test_tahoma() {
             return;
         }
         use reprisekit::interface::Interface;
@@ -437,7 +437,7 @@ mod tests {
     /// greyed with its group, in the shadow colour.
     #[test]
     fn the_trackbar_and_its_percentage_follow_the_policy() {
-        if !reprisekit::text::tahoma_installed() {
+        if !reprisekit::text::test_tahoma() {
             return;
         }
         let text = TextRenderer::load(&FontConfig::default());

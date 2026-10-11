@@ -4016,7 +4016,7 @@ mod tests {
 
     #[test]
     fn blue_sets_the_clock_in_its_48_px_box_12_px_from_the_end() {
-        if !crate::text::tahoma_installed() {
+        if !crate::text::test_tahoma() {
             return;
         }
         for (clock, x0, x1) in [

@@ -140,7 +140,7 @@ mod tests {
     fn a_blue_group_box_breaks_its_top_line_behind_a_blue_label() {
         let theme = theme_for(Interface::Blue);
         let text = TextRenderer::load(&theme.fonts);
-        if !text.has_face("Tahoma") {
+        if !crate::text::test_tahoma() {
             return;
         }
         let px = theme.fonts.size_px;
@@ -182,7 +182,7 @@ mod tests {
     fn a_blue_group_box_breaks_its_line_3_px_before_and_2_px_past_the_label() {
         let theme = theme_for(Interface::Blue);
         let text = TextRenderer::load(&theme.fonts);
-        if !text.has_face("Tahoma") {
+        if !crate::text::test_tahoma() {
             return;
         }
         let px = theme.fonts.size_px;

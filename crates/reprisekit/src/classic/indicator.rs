@@ -197,7 +197,7 @@ mod tests {
 
     #[test]
     fn the_layout_square_carries_its_short_name() {
-        if !crate::text::tahoma_installed() {
+        if !crate::text::test_tahoma() {
             return;
         }
         let text = TextRenderer::load(&crate::theme::FontConfig::default());

@@ -1891,7 +1891,7 @@ mod tests {
     #[test]
     fn a_sets_page_inks_on_its_grid() {
         let t = text();
-        if !t.has_face("Tahoma") {
+        if !crate::text::test_tahoma() {
             return;
         }
         let theme = Theme::default();
@@ -2324,7 +2324,7 @@ mod tests {
         assert_eq!(at(150, 120), cs.button_hilight.argb(), "URL's frame bottom");
         assert_eq!(at(340, 110), cs.button_hilight.argb(), "URL's frame right");
         assert_eq!(at(260, 194), cs.button_hilight.argb(), "Change Icon's top");
-        if !crate::text::tahoma_installed() {
+        if !crate::text::test_tahoma() {
             return;
         }
         let ink = cs.button_text.argb();
@@ -2449,7 +2449,7 @@ mod tests {
             cs.button_hilight.argb(),
             "Find Target's top edge"
         );
-        if !crate::text::tahoma_installed() {
+        if !crate::text::test_tahoma() {
             return;
         }
         let ink_top = |x0: i32, x1: i32, y0: i32| {
@@ -2599,7 +2599,7 @@ mod tests {
 
     fn lines_fit(p: &Form) {
         let t = text();
-        if !t.has_face("Tahoma") {
+        if !crate::text::test_tahoma() {
             return;
         }
         for it in &p.items {
@@ -2742,7 +2742,7 @@ mod tests {
     #[test]
     fn an_advanced_group_title_breaks_its_top_line() {
         let t = text();
-        if !t.has_face("Tahoma") {
+        if !crate::text::test_tahoma() {
             return;
         }
         let theme = Theme::default();
@@ -2832,7 +2832,7 @@ mod tests {
     #[test]
     fn a_bin_items_page_inks_on_its_grid() {
         let t = text();
-        if !t.has_face("Tahoma") {
+        if !crate::text::test_tahoma() {
             return;
         }
         let theme = Theme::default();
@@ -2914,7 +2914,7 @@ mod tests {
     #[test]
     fn a_blue_advanced_group_title_inks_like_a_group_box() {
         let t = text();
-        if !t.has_face("Tahoma") {
+        if !crate::text::test_tahoma() {
             return;
         }
         let blue = crate::interfaces::theme_for(crate::interface::Interface::Blue);

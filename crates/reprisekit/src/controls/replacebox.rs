@@ -350,7 +350,7 @@ mod tests {
     /// 80 px wide and 7 apart, 11 px in from the right and the bottom.
     #[test]
     fn the_file_prompt_lays_out_on_its_grid() {
-        if !crate::text::tahoma_installed() {
+        if !crate::text::test_tahoma() {
             return;
         }
         let (text, px) = rend();
@@ -416,7 +416,7 @@ mod tests {
     /// under the buttons.
     #[test]
     fn the_prompt_draws_its_buttons_and_facts() {
-        if !crate::text::tahoma_installed() {
+        if !crate::text::test_tahoma() {
             return;
         }
         let (text, px) = rend();

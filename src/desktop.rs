@@ -385,7 +385,7 @@ mod tests {
         ] {
             assert_eq!(shell_place(&Kind::Place(p)), Some(want));
         }
-        if !reprisekit::text::tahoma_installed() {
+        if !reprisekit::text::test_tahoma() {
             return;
         }
         let theme = reprisekit::theme::Theme::default();

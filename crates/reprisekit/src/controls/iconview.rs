@@ -920,7 +920,7 @@ mod tests {
 
     #[test]
     fn draw_cell_selected_highlights_label_with_rect_and_ring() {
-        if !crate::text::tahoma_installed() {
+        if !crate::text::test_tahoma() {
             return;
         }
         let theme = Theme::default();

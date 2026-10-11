@@ -1845,7 +1845,7 @@ mod tests {
         assert_eq!(l.rows[0].height, 24);
         assert_eq!(l.rows[1].height, 9, "separators keep their size");
         assert_eq!(l.height, 2 * BORDER + 24 + 9 + 24);
-        if !crate::text::tahoma_installed() {
+        if !crate::text::test_tahoma() {
             return;
         }
         let text = TextRenderer::load(&theme.fonts);
@@ -1853,7 +1853,7 @@ mod tests {
         let mut c = Canvas::new(l.width as u32, l.height as u32);
         draw_menu(&mut c, &theme, &text, &l, &items, None, "", false);
         let ink = theme.colors.menu_text.argb();
-        for (i, want) in [(0, (7, 21)), (2, (7, 18))] {
+        for (i, want) in [(0, (6, 22)), (2, (6, 18))] {
             let r = l.rows[i];
             let rows: Vec<i32> = (r.y - 3..r.bottom() + 3)
                 .filter(|&y| (r.x..r.right()).any(|x| c.get(x, y) == ink))
@@ -2307,7 +2307,7 @@ mod tests {
 
     #[test]
     fn context_menus_fit_their_labels() {
-        if !crate::text::tahoma_installed() {
+        if !crate::text::test_tahoma() {
             return;
         }
         let theme = Theme::default();
@@ -2377,7 +2377,7 @@ mod tests {
     #[test]
     fn a_context_rows_label_inks_17_px_in() {
         const EXPECTED_INK_X: i32 = 17;
-        if !crate::text::tahoma_installed() {
+        if !crate::text::test_tahoma() {
             return;
         }
         let theme = wide_theme();
@@ -2863,7 +2863,7 @@ mod tests {
 
     #[test]
     fn a_flat_menus_greyed_label_has_no_etched_copy() {
-        if !crate::text::tahoma_installed() {
+        if !crate::text::test_tahoma() {
             return;
         }
         let theme = flat_theme(crate::blue::Variant::Blue);

@@ -463,7 +463,7 @@ mod tests {
     #[test]
     fn the_label_sits_a_pixel_below_the_middle() {
         let theme = blue();
-        if !TextRenderer::load(&theme.fonts).has_face("Tahoma") {
+        if !crate::text::test_tahoma() {
             return;
         }
         let black = theme.colors.button_text;
@@ -518,7 +518,7 @@ mod tests {
     fn a_75_px_button_shows_a_67_px_label_whole_and_clips_a_wider_one() {
         let theme = blue();
         let text = TextRenderer::load(&theme.fonts);
-        if !text.has_face("Tahoma") {
+        if !crate::text::test_tahoma() {
             return;
         }
         let px = theme.fonts.size_px;

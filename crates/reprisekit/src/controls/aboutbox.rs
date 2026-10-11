@@ -430,7 +430,7 @@ mod tests {
     /// also checked on the banner.
     #[test]
     fn copyright_ink_tops_land_on_rows_49_and_60() {
-        if !crate::text::tahoma_installed() {
+        if !crate::text::test_tahoma() {
             return;
         }
         const INK_TOP: [i32; 2] = [49, 60];

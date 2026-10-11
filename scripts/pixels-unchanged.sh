@@ -15,8 +15,9 @@
 # holding this script's sha256; --no-cache renders BASE afresh.
 set -euo pipefail
 
-# A caller's environment must not make a render vacuous.
-unset REPRISE_SCHEME REPRISE_GALLERY_LOOK
+# A caller's environment must not make a render vacuous. Both sides render
+# with the system fonts: a BASE that predates REPRISE_TEST_FONTS ignores it.
+unset REPRISE_SCHEME REPRISE_GALLERY_LOOK REPRISE_TEST_FONTS
 
 with_blue=0
 use_cache=1

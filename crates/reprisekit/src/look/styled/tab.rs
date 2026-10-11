@@ -236,7 +236,7 @@ mod tests {
     fn a_blue_open_tab_label_sits_where_the_closed_one_did_raised_2_px() {
         let theme = theme_for(Interface::Blue);
         let text = TextRenderer::load(&theme.fonts);
-        if !text.has_face("Tahoma") {
+        if !crate::text::test_tahoma() {
             return;
         }
         let closed = Rect::new(7, 7, 50, 18);

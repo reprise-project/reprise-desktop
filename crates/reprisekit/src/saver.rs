@@ -739,8 +739,8 @@ mod tests {
     #[test]
     fn the_logo_preview_frame_and_its_bounce() {
         let (s, c) = run(Kind::Logo, &Options::default(), 30);
-        if crate::text::tahoma_installed() {
-            assert_eq!(digest(&c), 6853275207346283637, "logo frame 30, seed 7");
+        if crate::text::test_tahoma() {
+            assert_eq!(digest(&c), 3579411078834488872, "logo frame 30, seed 7");
         }
         let (word, (x, y)) = (s.logo().unwrap(), s.logo_at().unwrap());
         assert!(x >= 0 && y >= 0);
