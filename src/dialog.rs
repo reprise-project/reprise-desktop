@@ -8657,7 +8657,7 @@ mod tests {
     fn browse_is_a_frame_around_the_file_dialog() {
         let theme = Theme::default();
         let Some(text) = tahoma() else { return };
-        let dir = std::env::temp_dir().join("reprise-browse-frame");
+        let dir = std::env::temp_dir().join(format!("reprise-browse-frame-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let mut d = Dialog::browse(crate::filepick::FilePicker::run_command(
@@ -8692,7 +8692,7 @@ mod tests {
         let (dw, dh) = (168, 55);
         let theme = Theme::default();
         let Some(text) = tahoma() else { return };
-        let dir = std::env::temp_dir().join("reprise-browse-grown");
+        let dir = std::env::temp_dir().join(format!("reprise-browse-grown-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let mut d = Dialog::browse(crate::filepick::FilePicker::run_command(
@@ -8787,7 +8787,7 @@ mod tests {
         use reprisekit::controls::{filedlg, shellview};
         let theme = blue();
         let text = TextRenderer::load(&FontConfig::default());
-        let dir = std::env::temp_dir().join("reprise-browse-hover");
+        let dir = std::env::temp_dir().join(format!("reprise-browse-hover-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let mut d = Dialog::browse(crate::filepick::FilePicker::run_command(

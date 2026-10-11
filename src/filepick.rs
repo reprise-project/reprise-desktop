@@ -560,8 +560,11 @@ mod tests {
         p.dlg.entries().iter().map(|e| e.name.as_str()).collect()
     }
 
+    /// A scratch folder of this process's own: test runs of other checkouts
+    /// share the temp dir.
     fn sandbox(name: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("reprise-filepick-{name}"));
+        let dir =
+            std::env::temp_dir().join(format!("reprise-filepick-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(dir.join("Pictures")).expect("mkdir");
         for f in ["dunes", ".hidden", "Pictures/meadow"] {
