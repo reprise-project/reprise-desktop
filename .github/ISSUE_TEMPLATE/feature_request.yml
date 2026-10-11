@@ -19,9 +19,10 @@ body:
     id: interface
     attributes:
       label: Interface
-      description: Which interfaces it applies to.
+      description: Pick every interface it applies to.
       multiple: true
       options:
         - Classic
         - Blue
         - Glass
+        - Not tied to an interface
