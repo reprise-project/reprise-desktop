@@ -157,9 +157,10 @@ network time.
 
 ## Smaller things
 
-- **Safely Remove Hardware.** Mounts drives as you plug them in (ext4 and XFS
-  ones too, though their packages ask UDisks2 not to), asks for an encrypted
-  drive's passphrase, and shows a tray icon while there's something to eject.
+- **Safely Remove Hardware.** Mounts drives as you plug them in, whatever
+  their file system, unless UDisks2 marks them hidden or internal. Asks for an
+  encrypted drive's passphrase, and shows a tray icon while there's something
+  to eject.
   Nothing mounts on its own while the session is locked.
 - **Run As.** The admin password prompt. It takes a fingerprint too, when
   polkit is set up for one.
