@@ -39,7 +39,8 @@ use repriseapp::keys::{dialog_key, form_input};
 use repriseapp::oneshot::{self, MsgBox};
 use repriseapp::openwith::ChooserInput;
 use repriseapp::{
-    App, BTN_LEFT, Child, Ctx, DropForm, Event, KeyInput, PointerInput, Reply, Waker, WinId,
+    App, BTN_LEFT, Child, Ctx, DropForm, Event, FileDrop, KeyInput, PointerInput, Reply, Waker,
+    WinId,
 };
 use reprisebus::instance::{self, Claim};
 use reprisefs::autostart::Entry;
@@ -2456,6 +2457,13 @@ impl App for SettingsApp {
             _ => return None,
         };
         Some(DropForm { form, px: None })
+    }
+
+    fn drop_file_dialog(&mut self, win: WinId) -> Option<FileDrop<'_>> {
+        (win == ADD_WIN).then_some(FileDrop {
+            dlg: self.add.as_mut()?,
+            host: &self.add_host,
+        })
     }
 
     fn draw(&mut self, win: WinId, c: &mut Canvas, ctx: &Ctx) {

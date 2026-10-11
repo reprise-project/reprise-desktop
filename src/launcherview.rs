@@ -138,6 +138,17 @@ impl State {
         self.apply_launcher(event);
     }
 
+    /// Text dropped on the field becomes the query (`dialogdrop`); `true` when it went in.
+    pub fn launcher_dropped(&mut self, text: &str) -> bool {
+        let Some(v) = self.launcher.as_mut() else {
+            return false;
+        };
+        let event = v.model.drop_query(text);
+        let took = event == Event::QueryChanged;
+        self.apply_launcher(event);
+        took
+    }
+
     pub fn launcher_hit(&self, lx: f64, ly: f64) -> Hit {
         let Some(v) = self.launcher.as_ref() else {
             return Hit::Panel;

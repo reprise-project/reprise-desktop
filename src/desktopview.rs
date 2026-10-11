@@ -67,6 +67,9 @@ pub struct DesktopView {
     /// An in-progress inline rename: the icon index and the edit.
     pub rename: Option<(usize, TextEdit)>,
     pub(crate) rename_press: Option<u32>,
+    /// Where a drag resting on the rename box would drop its text (`dialogdrop`): the box
+    /// shows its caret there, without the selection, until the drag goes.
+    pub rename_drop: Option<usize>,
     watch: Option<DirWatch>,
     /// Re-armed on every inotify wakeup; the rescan runs when it fires, so an unpack
     /// costs one scan, not one per file.
@@ -718,6 +721,7 @@ pub fn setup(state: &mut State) {
         last_click: None,
         rename: None,
         rename_press: None,
+        rename_drop: None,
         watch,
         settle: None,
         drawn: Vec::new(),
@@ -928,13 +932,25 @@ impl State {
         }
         view.drawn.resize(count, None);
         let mut redraw = Vec::new();
+        let dropping = view
+            .rename
+            .as_ref()
+            .zip(view.rename_drop)
+            .map(|((_, e), at)| {
+                let mut e = e.clone();
+                e.place(at, false);
+                e
+            });
         for (i, (e, cell)) in view.entries.iter().zip(&view.cells).enumerate() {
             let is_cut = cut.contains(&e.path);
             let editing = view
                 .rename
                 .as_ref()
                 .filter(|(ri, _)| *ri == i)
-                .map(|(_, edit)| (edit, caret_on));
+                .map(|(_, edit)| match &dropping {
+                    Some(d) => (d, true),
+                    None => (edit, caret_on),
+                });
             let selected = view.selection.is(i) || view.drop_hilite == Some(i);
             let ring = view.focus_ring && view.selection.focus == Some(i);
             let key = CellKey {

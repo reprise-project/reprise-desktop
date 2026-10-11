@@ -238,7 +238,11 @@ are.
 - **Drop text into fields.** Text dragged from any program lands in a
   text field of Reprise's programs and dialogs, Run included, where the
   drop caret shows, and a drag held at the field's edge scrolls it.
-  Dropped files give their paths, quoted when they hold a space.
+  Dropped files give their paths, quoted when they hold a space. A file
+  dropped on an Open or Save As dialog's File name gives its name, or its
+  full path when it lies in another folder. The launcher's and the Start
+  menu's search fields take a drop as the query, and a desktop icon's
+  rename box takes it at the drop caret; files go into these by name.
 - **Touchpad gestures.** Three fingers switch desktops and open the
   overview. Pinches and swipes with other finger counts go to the program,
   so a browser can pinch-zoom and swipe back.
