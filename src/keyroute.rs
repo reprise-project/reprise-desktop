@@ -598,10 +598,10 @@ pub fn drag_spends(route: &KeyRoute, mods: u32) -> u32 {
 }
 
 /// Whether a bind's action runs during a drag between programs: those
-/// that bring another window, the desktop or a search field within reach of
-/// the drop (the switcher, Start, the launcher, Show Desktop, minimize,
+/// that bring another window, the desktop or a field within reach of the
+/// drop (the switcher, Start, the launcher, Run, Show Desktop, minimize,
 /// maximize, snap, the desktop switch) and the magnifier. The rest (closing,
-/// dialogs, screenshots) wait for the drop.
+/// other dialogs, screenshots) wait for the drop.
 pub fn runs_during_drag(a: &Action) -> bool {
     matches!(
         a,
@@ -609,6 +609,7 @@ pub fn runs_during_drag(a: &Action) -> bool {
             | Action::Flip
             | Action::StartMenu
             | Action::Launcher
+            | Action::Run
             | Action::ShowDesktop
             | Action::Minimize
             | Action::Maximize
@@ -1436,13 +1437,18 @@ mod tests {
         assert_eq!(route(&m, &ctrl_escape, &b, &[]).route, KeyRoute::DragCancel);
         assert_eq!(r(&m, &press(KEY_n, 0)), KeyRoute::Swallow);
         assert_eq!(r(&m, &release(KEY_n)), KeyRoute::Client);
-        // Binds that open a dialog wait for the drop; the launcher's field takes it.
-        let routed = route(&m, &press(KEY_r, MOD_LOGO), &binds(), &[]);
+        // Binds with nothing to drop on wait for the drop; the launcher's
+        // and Run's fields take it.
+        let routed = route(&m, &press(KEY_v, MOD_LOGO), &binds(), &[]);
         assert_eq!(routed.route, KeyRoute::Swallow);
         assert_eq!(routed.arm_super, Some(false));
         assert_eq!(
             r(&m, &press(KEY_space, MOD_LOGO)),
             KeyRoute::Binds(vec![Action::Launcher])
+        );
+        assert_eq!(
+            r(&m, &press(KEY_r, MOD_LOGO)),
+            KeyRoute::Binds(vec![Action::Run])
         );
     }
 
@@ -1543,6 +1549,7 @@ mod tests {
             Action::Cycle,
             Action::StartMenu,
             Action::Launcher,
+            Action::Run,
             Action::ShowDesktop,
             Action::Minimize,
             Action::Maximize,
@@ -1556,7 +1563,6 @@ mod tests {
             Action::Close,
             Action::Exit,
             Action::Lock,
-            Action::Run,
             Action::WindowMenu,
             Action::CarryToDesktop(Step::Next),
             Action::Screenshot,
