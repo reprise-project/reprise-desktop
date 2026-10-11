@@ -46,7 +46,7 @@ label a pixel or two off.
 | Font | Used for | Without it | License |
 | --- | --- | --- | --- |
 | DejaVu Sans | the fallback for everything | | Bitstream Vera plus public domain; packaged everywhere (`ttf-dejavu` on Arch) |
-| Tahoma | the UI | DejaVu Sans | proprietary |
+| Tahoma | the UI | DejaVu Sans | Wine's version is LGPL-2.1-or-later (`ttf-tahoma` on Arch, AUR) |
 | a second dialog font, named in `[fonts] shell_dlg` by family or `.ttf` path | the dialogs set in a wider face: End Program, Power Options, Sounds and Audio Devices, Volume Control, a connection's Status, Notepad's Find and Replace, folder Properties | `[fonts] family` | proprietary |
 | Trebuchet MS | Reprise Blue's caption titles | DejaVu Sans | proprietary |
 | Franklin Gothic Medium | Blue's Start label (italic), and the Log Off and Turn Off panels' titles in every interface (regular) | Trebuchet MS Bold (Italic), then DejaVu Sans | proprietary |

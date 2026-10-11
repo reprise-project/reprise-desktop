@@ -12,7 +12,7 @@ url="https://github.com/reprise-project/reprise-desktop"
 license=('GPL-3.0-or-later')
 depends=('seatd' 'systemd-libs' 'libinput' 'libdrm' 'mesa' 'libglvnd' 'libdisplay-info' 'libxkbcommon' 'xorg-xwayland' 'freetype2' 'fontconfig' 'pam' 'libxcrypt' 'dbus' 'pipewire')
 makedepends=('cargo' 'clang' 'pkgconf' 'git')
-optdepends=('ttf-tahoma: the Tahoma UI font'
+optdepends=('ttf-tahoma: Wine'\''s Tahoma, the UI font the layouts are tuned for'
             'ttf-dejavu: fallback font' 'noto-fonts-cjk: Chinese, Japanese and Korean text'
             'wqy-bitmapfont: crisp Chinese text in Reprise'\''s own text with antialias = false'
             'noto-fonts-emoji: the colour emoji in the Super+. picker'
