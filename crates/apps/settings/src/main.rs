@@ -2052,6 +2052,11 @@ impl SettingsApp {
 
     fn key(&mut self, k: KeyInput, cm: &ControlMetrics) -> Reply {
         let ctrl_tab = propsheet::page_step(k.sym, k.mods.ctrl, k.mods.shift);
+        if let Some(dir) = form::shove_dir(k.sym, k.mods.ctrl, k.mods.shift, k.mods.alt)
+            && let Some(ev) = self.sheet.shove(dir)
+        {
+            return self.sheet_event(ev);
+        }
         let Some(key) = dialog_key(&k) else {
             return Reply::none();
         };

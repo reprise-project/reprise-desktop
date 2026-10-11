@@ -53,8 +53,9 @@ One window, 23 pages, four headings. Only one runs at a time.
   - **Background:** a picture or a slideshow, its position, the desktop
     colour and which icons sit on the desktop.
   - **Screen Saver:** the saver, its settings and a live preview.
-  - **Display:** arrange monitors by dragging them, Identify, the primary
-    screen, and each screen's resolution, refresh rate, orientation, scale
+  - **Display:** arrange monitors by dragging them, or pick one with the
+    arrows and move it with Ctrl+arrows to the next edge that way, Identify,
+    the primary screen, and each screen's resolution, refresh rate, orientation, scale
     and adaptive sync.
   - **Night Light:** warmth, and sunset to sunrise or a schedule.
   - **Fonts & Icons:** the UI and dialog fonts, the icon theme, frame and
