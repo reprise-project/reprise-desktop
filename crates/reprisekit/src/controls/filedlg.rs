@@ -796,7 +796,13 @@ impl FileDlg {
     /// A drag dropped `line` on File name: it goes in at the drop caret as
     /// [`TextEdit::drop_text`] puts it, and the field takes the focus. `false` when the field
     /// was not taking the drag or nothing went in.
-    pub fn drop_text(&mut self, text: &TextRenderer, px: u32, r: Rect, line: &str) -> bool {
+    pub fn drop_text(
+        &mut self,
+        text: &TextRenderer,
+        px: u32,
+        r: Rect,
+        line: &crate::textedit::DropLine,
+    ) -> bool {
         let Some((x, first)) = self.name_drop.take() else {
             return false;
         };
@@ -3385,11 +3391,14 @@ mod tests {
             "the view takes no text"
         );
         assert!(d.drag_over(&t, px, R, x, f.y + 5));
-        assert!(d.drop_text(&t, px, R, "c"));
+        assert!(d.drop_text(&t, px, R, &crate::textedit::DropLine::Text("c".into())));
         assert_eq!(d.file_name(), "abc.txt");
         assert_eq!(d.filename.selected_text(), "c");
         assert_eq!(d.focus, Focus::FileName);
-        assert!(!d.drop_text(&t, px, R, "x"), "the drop ended the drag");
+        assert!(
+            !d.drop_text(&t, px, R, &crate::textedit::DropLine::Text("x".into())),
+            "the drop ended the drag"
+        );
         assert_eq!(d.typed, "abc.txt", "the dropped text counts as typed");
     }
 

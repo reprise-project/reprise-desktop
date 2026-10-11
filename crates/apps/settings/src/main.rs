@@ -3041,7 +3041,11 @@ mod tests {
             .unwrap()
             .placed(&reprisekit::controls::metrics::ControlMetrics::CLASSIC);
         assert!(form.drag_over(r.x + 4, r.y + r.height / 2, &ctx.text, px));
-        let changed = form.drop_text("htop", &ctx.text, px);
+        let changed = form.drop_text(
+            &reprisekit::textedit::DropLine::Text("htop".into()),
+            &ctx.text,
+            px,
+        );
         assert_eq!(changed, form::Event::Changed("task_manager"));
         a.event(MAIN, Event::FieldDropped(changed), &mut ctx);
         assert!(
