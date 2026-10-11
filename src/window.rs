@@ -766,7 +766,7 @@ impl State {
 
     /// Tell an X11 client where its client rect starts, keeping the size its X window was last
     /// given (a pending `request_size` must not be undone).
-    fn place_x11(&mut self, w: WindowId) {
+    pub(crate) fn place_x11(&mut self, w: WindowId) {
         let Some(win) = self.win(w) else {
             return;
         };
@@ -1184,6 +1184,7 @@ impl State {
         self.refit_scale(w);
         self.place_ime_popup();
         self.place_x11(w);
+        self.follow_tabs(w, false);
     }
 
     /// Finish moves `drag_to` left pending; for a dragged window, track caption and snap targets
@@ -1711,6 +1712,8 @@ impl State {
                     self.move_to(w, x, y);
                 }
             }
+            let sizing = self.interaction.is_resize_of(w) || self.wm.snap.follows_drag(w);
+            self.follow_tabs(w, !sizing);
         }
         // The commit for the last requested size usually lands after release, so the anchor
         // outlives the drag until `anchor_done`.
@@ -2179,7 +2182,7 @@ impl State {
         }
     }
 
-    pub fn set_resizing(&self, w: WindowId, on: bool) {
+    pub fn set_resizing(&mut self, w: WindowId, on: bool) {
         if let Some(t) = self.win(w).and_then(Window::xdg) {
             t.with_pending_state(|s| {
                 if on {
@@ -2189,6 +2192,9 @@ impl State {
                 }
             });
             self.send_configure(w);
+        }
+        if !on {
+            self.follow_tabs(w, true);
         }
     }
 

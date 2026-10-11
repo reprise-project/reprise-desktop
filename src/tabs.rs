@@ -44,6 +44,15 @@ impl<T: Copy + Eq> Groups<T> {
             .map_or_else(|| vec![w], |g| g.members.clone())
     }
 
+    /// The members hidden behind `w`, or none when `w` is not its group's
+    /// shown window.
+    pub fn hidden_behind(&self, w: T) -> Vec<T> {
+        match self.group_of(w) {
+            Some(g) if g.shown() == w => g.members.iter().copied().filter(|&m| m != w).collect(),
+            _ => Vec::new(),
+        }
+    }
+
     pub fn select(&mut self, w: T) -> Option<T> {
         let gi = self.index_of(w)?;
         let g = &mut self.groups[gi];
@@ -174,6 +183,14 @@ mod tests {
         assert_eq!(left, [1, 3, 5], "every window but the shown ones");
         assert!(g.groups.is_empty());
         assert_eq!(g.first_hidden(), None);
+    }
+
+    #[test]
+    fn only_the_shown_tab_carries_the_hidden_ones() {
+        let g = groups(&[(&[1, 2, 3], 1)]);
+        assert_eq!(g.hidden_behind(2), vec![1, 3]);
+        assert!(g.hidden_behind(1).is_empty(), "a hidden tab leads none");
+        assert!(g.hidden_behind(4).is_empty(), "a window in no group");
     }
 
     #[test]
