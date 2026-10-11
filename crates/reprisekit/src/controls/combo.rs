@@ -515,7 +515,13 @@ impl Combo {
     /// A drag dropped `line` on the field: it goes in at the drop caret as
     /// [`TextEdit::drop_text`] puts it. `false` when the field was not taking the drag or
     /// nothing went in.
-    pub fn drop_text(&mut self, lay: &Layout, line: &str, text: &TextRenderer, px: u32) -> bool {
+    pub fn drop_text(
+        &mut self,
+        lay: &Layout,
+        line: &crate::textedit::DropLine,
+        text: &TextRenderer,
+        px: u32,
+    ) -> bool {
         let Some(x) = self.drop_x.take() else {
             return false;
         };
@@ -1484,7 +1490,12 @@ mod tests {
         assert!(c.drop_x.is_none());
         let x = lay.text.x + text.measure("fo", false, px);
         assert!(c.drag_over(&lay, x, 10));
-        assert!(c.drop_text(&lay, "X", &text, px));
+        assert!(c.drop_text(
+            &lay,
+            &crate::textedit::DropLine::Text("X".into()),
+            &text,
+            px
+        ));
         let edit = c.edit.as_ref().unwrap();
         assert_eq!(edit.text, "foXot");
         assert_eq!(edit.selected_text(), "X");

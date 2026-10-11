@@ -2877,7 +2877,7 @@ impl Dialog {
     pub fn drop_text(
         &mut self,
         layout: &DialogLayout,
-        line: &str,
+        line: &crate::textedit::DropLine,
         text: &TextRenderer,
         px: u32,
     ) -> Outcome {
@@ -8470,13 +8470,16 @@ mod tests {
         );
         let x = field.x + combo::EDIT_TEXT_X + text.measure("fo", false, px);
         assert!(d.drag_over(&l, x, field.y + 5, &text, px));
-        assert_eq!(d.drop_text(&l, "X", &text, px), Outcome::Redraw);
+        assert_eq!(
+            d.drop_text(&l, &crate::textedit::DropLine::Text("X".into()), &text, px),
+            Outcome::Redraw
+        );
         let edit = d.field.as_ref().unwrap().edit().unwrap();
         assert_eq!(edit.text, "foXot");
         assert_eq!(edit.selected_text(), "X");
         assert_eq!(d.button_focus, None, "the field has the keyboard");
         assert_eq!(
-            d.drop_text(&l, "Y", &text, px),
+            d.drop_text(&l, &crate::textedit::DropLine::Text("Y".into()), &text, px),
             Outcome::Nothing,
             "the drop ended the drag"
         );

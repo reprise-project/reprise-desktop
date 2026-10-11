@@ -1573,7 +1573,12 @@ impl Form {
     /// A drag dropped `line` on the field under it: it goes in at the drop caret as
     /// [`TextEdit::drop_text`] puts it, and the field takes the focus. `Changed` with the field's
     /// id, or `None` when no field was taking the drag or nothing went in.
-    pub fn drop_text(&mut self, line: &str, text: &TextRenderer, px: u32) -> Event {
+    pub fn drop_text(
+        &mut self,
+        line: &crate::textedit::DropLine,
+        text: &TextRenderer,
+        px: u32,
+    ) -> Event {
         let Some(d) = self.field_drop.take() else {
             return Event::None;
         };
@@ -4859,12 +4864,15 @@ mod tests {
         let x = inner_x + t.measure("hello", false, PX);
         assert!(!f.drag_over(30, 15, &t, PX), "a label takes no drop");
         assert!(f.drag_over(x, 15, &t, PX));
-        assert_eq!(f.drop_text(" big", &t, PX), Event::Changed("find"));
+        assert_eq!(
+            f.drop_text(&crate::textedit::DropLine::Text(" big".into()), &t, PX),
+            Event::Changed("find")
+        );
         assert_eq!(f.focus(), Some(1), "the field takes the focus");
         assert_eq!(field(&f).0.text, "hello big world");
         assert_eq!(field(&f).0.selected_text(), " big");
         assert_eq!(
-            f.drop_text("x", &t, PX),
+            f.drop_text(&crate::textedit::DropLine::Text("x".into()), &t, PX),
             Event::None,
             "the drop ended the drag"
         );
