@@ -29,14 +29,21 @@ impl Explorer {
         Some(self.volumes_changed(snap, ctx))
     }
 
-    /// Computer re-lists when `snap` differs from what it shows; elsewhere the
+    /// Computer re-lists when `snap` differs from what it shows, the Recycle Bin
+    /// when a volume mounted or unmounted (for the drive's trash); elsewhere the
     /// drives are re-read if the mounts moved.
     pub(crate) fn volumes_changed(&mut self, snap: Snapshot, ctx: &mut Ctx) -> Reply {
         if snap == self.volumes {
             return Reply::none();
         }
+        let mounts = |s: &Snapshot| -> Vec<std::path::PathBuf> {
+            let mut m: Vec<_> = s.volumes.iter().flat_map(|v| v.mounts.clone()).collect();
+            m.sort();
+            m
+        };
+        let moved = mounts(&snap) != mounts(&self.volumes);
         self.volumes = snap;
-        if self.place == Place::Computer {
+        if self.place == Place::Computer || (moved && self.place == Place::RecycleBin) {
             return self.refresh(ctx);
         }
         self.sync_drives(ctx);

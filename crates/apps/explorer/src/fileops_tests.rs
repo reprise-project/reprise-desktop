@@ -566,6 +566,63 @@ fn the_recycle_bin_holds_every_drives_trash() {
     assert!(ex.dialog.is_none(), "no error box");
 }
 
+#[test]
+fn an_open_recycle_bin_lists_a_drives_trash_once_udisks_reports_it_mounted() {
+    use reprisefs::udisks::{Snapshot, Volume};
+    use std::os::unix::fs::MetadataExt;
+    let _guard = TRASH_ENV.lock().unwrap_or_else(|e| e.into_inner());
+    let home = tempfile::tempdir().expect("a temp dir");
+    let _data_home = DataHome::set(home.path());
+    let drive = home.path().join("stick");
+    let uid = std::fs::metadata(home.path()).expect("stat").uid();
+    let files = drive.join(format!(".Trash-{uid}/files"));
+    std::fs::create_dir_all(&files).expect("mkdir");
+    std::fs::write(files.join("d.txt"), "d").expect("write");
+    let table = home.path().join("mounts");
+    let home_row = format!("/dev/a {} ext4 rw 0 0\n", home.path().display());
+    std::fs::write(&table, &home_row).expect("write");
+    reprisefs::trash::set_mount_table(Some(table.clone()));
+    let mut ctx = test_ctx();
+    let mut ex = crate::tests::test_explorer(Place::RecycleBin, &mut ctx);
+    assert!(ex.items.is_empty());
+    let listed = |ex: &Explorer| ex.items.iter().any(|it| it.name == "d.txt");
+    let stick = |mounts: Vec<PathBuf>, label: &str| Snapshot {
+        volumes: vec![Volume {
+            path: "/block/sdx1".into(),
+            device: "/dev/sdx1".into(),
+            label: Some(label.into()),
+            filesystem: true,
+            mounts,
+            ..Default::default()
+        }],
+        ..Default::default()
+    };
+
+    ex.volumes_changed(stick(Vec::new(), "STICK"), &mut ctx);
+    std::fs::write(
+        &table,
+        format!("{home_row}/dev/sdx1 {} vfat rw 0 0\n", drive.display()),
+    )
+    .expect("write");
+    ex.volumes_changed(stick(vec![drive.clone()], "STICK"), &mut ctx);
+    assert!(
+        listed(&ex),
+        "the stick's trashed file is listed once it mounts"
+    );
+
+    std::fs::write(&table, &home_row).expect("write");
+    let reply = ex.volumes_changed(stick(vec![drive.clone()], "RENAMED"), &mut ctx);
+    assert_eq!(
+        reply,
+        Reply::none(),
+        "a change that moves no mount re-lists nothing"
+    );
+    assert!(listed(&ex));
+
+    ex.volumes_changed(stick(Vec::new(), "RENAMED"), &mut ctx);
+    assert!(!listed(&ex), "its file goes once the stick unmounts");
+}
+
 /// Delete on a drive that cannot hold a trash asks to delete for good, and says why.
 #[test]
 fn delete_on_a_drive_with_no_recycle_bin_says_so() {
