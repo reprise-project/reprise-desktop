@@ -189,13 +189,14 @@ impl Window {
         px: u32,
         cm: &ControlMetrics,
     ) {
-        let mut lines = reprisekit::text::wrap(text, &model::headline(phase, updates), MSG_W, px);
-        lines.truncate(MSG_LINES);
-        self.form.set_lines("message", &lines);
-
         if self.rows != updates {
             self.fill(updates, cm);
         }
+        let picked = self.rows.iter().filter(|u| self.wanted(u)).count();
+        let headline = model::headline(phase, updates, picked);
+        let mut lines = reprisekit::text::wrap(text, &headline, MSG_W, px);
+        lines.truncate(MSG_LINES);
+        self.form.set_lines("message", &lines);
         self.list.focus_ring = self.list_focus;
         let about = self.selected().map(Update::about).unwrap_or_default();
         self.form.set_text("about", &about);
@@ -209,7 +210,7 @@ impl Window {
         };
         let enabled = match act {
             Outcome::Restart => true,
-            _ => !busy && self.rows.iter().any(|u| !self.unchecked.contains(&u.key())),
+            _ => !busy && picked > 0,
         };
         if let Some(item) = self.form.item_mut("act") {
             item.control = button(label, enabled, true);
@@ -406,6 +407,13 @@ mod tests {
         }
     }
 
+    fn message(w: &Window) -> String {
+        match w.form.item("message").map(|i| &i.control) {
+            Some(Control::Lines(lines)) => lines.join(" "),
+            other => panic!("message is {other:?}"),
+        }
+    }
+
     fn enabled(w: &Window, id: &str) -> bool {
         matches!(
             w.form.item(id).map(|i| &i.control),
@@ -482,11 +490,17 @@ mod tests {
         assert_eq!(label(&w, "about"), "Update: the bash package");
         assert_eq!(w.event(form::Event::Pressed("act")), Outcome::Install);
 
+        assert!(message(&w).starts_with("2 updates are available"));
+
         w.list_key(&form::Key::Space, &cm);
+        env.sync(&mut w, &Phase::Ready, &ups);
+        assert!(message(&w).starts_with("1 of 2 updates selected."));
+        assert!(enabled(&w, "act"));
         w.list_key(&form::Key::Down, &cm);
         w.list_key(&form::Key::Space, &cm);
         env.sync(&mut w, &Phase::Ready, &ups);
         assert!(w.checked().is_empty());
+        assert!(message(&w).starts_with("0 of 2 updates selected."));
         assert!(!enabled(&w, "act"));
 
         let installing = Phase::Installing {
