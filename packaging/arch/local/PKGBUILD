@@ -10,9 +10,10 @@ pkgdesc="Wayland desktop with a classic retro look, with Notepad, Explorer and a
 arch=('x86_64')
 url="https://github.com/reprise-project/reprise-desktop"
 license=('GPL-3.0-or-later')
-depends=('seatd' 'systemd-libs' 'libinput' 'libdrm' 'mesa' 'libglvnd' 'libdisplay-info' 'libxkbcommon' 'xorg-xwayland' 'freetype2' 'fontconfig' 'pam' 'libxcrypt' 'dbus' 'pipewire' 'ttf-tahoma')
+depends=('seatd' 'systemd-libs' 'libinput' 'libdrm' 'mesa' 'libglvnd' 'libdisplay-info' 'libxkbcommon' 'xorg-xwayland' 'freetype2' 'fontconfig' 'pam' 'libxcrypt' 'dbus' 'pipewire')
 makedepends=('cargo' 'clang' 'pkgconf' 'git')
-optdepends=('ttf-dejavu: fallback font' 'noto-fonts-cjk: Chinese, Japanese and Korean text'
+optdepends=('ttf-tahoma: Wine'\''s Tahoma, the UI font the layouts are tuned for'
+            'ttf-dejavu: fallback font' 'noto-fonts-cjk: Chinese, Japanese and Korean text'
             'wqy-bitmapfont: crisp Chinese text in Reprise'\''s own text with antialias = false'
             'noto-fonts-emoji: the colour emoji in the Super+. picker'
             'xdg-utils: open a file with no default program, the Start menu Internet and Help rows, the Edit File... button in Reprise Settings, and a network'\''s sign-in page'
