@@ -10,7 +10,9 @@ use repriseapp::filedlg::{Host, Resolved, Step, taken, type_keep};
 use repriseapp::keys::AltArm;
 use repriseapp::keys::dialog_key;
 use repriseapp::oneshot::{self, MsgBox};
-use repriseapp::{App, BTN_LEFT, Child, Ctx, Event, KeyInput, MAIN, PointerInput, Reply, WinId};
+use repriseapp::{
+    App, BTN_LEFT, Child, Ctx, DropForm, Event, KeyInput, MAIN, PointerInput, Reply, WinId,
+};
 use reprisekit::access::{ROOT, Tree};
 use reprisekit::classic::widgets::{self, Axis, ScrollHit};
 use reprisekit::controls::aboutbox;
@@ -147,6 +149,7 @@ fn form_event(
             Some(f) => FormStep::Out(f.leave()),
             None => FormStep::None,
         },
+        Event::FieldDropped(e) => FormStep::Out(*e),
         _ => FormStep::None,
     }
 }
@@ -1589,6 +1592,16 @@ impl App for Notepad {
         }
     }
 
+    fn drop_form(&mut self, win: WinId) -> Option<DropForm<'_>> {
+        let (form, px) = match win {
+            GOTO => (self.goto.as_mut()?, None),
+            FIND => (self.find.as_mut()?, Some(self.dialog_px)),
+            REPLACE_WIN => (self.replace.as_mut()?, Some(self.dialog_px)),
+            _ => return None,
+        };
+        Some(DropForm { form, px })
+    }
+
     fn draw(&mut self, win: WinId, c: &mut Canvas, ctx: &Ctx) {
         self.follow(ctx);
         let cs = &ctx.theme.colors;
@@ -1836,6 +1849,7 @@ impl Notepad {
             Event::Tick if self.dragging.is_some() => self.select_drag(true, ctx),
             Event::Tick => self.drop_event(ev, ctx),
             Event::PastedFiles(_)
+            | Event::FieldDropped(_)
             | Event::Wake
             | Event::DragEnd { .. }
             | Event::DropCancelled

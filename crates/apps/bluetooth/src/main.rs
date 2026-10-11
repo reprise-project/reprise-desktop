@@ -24,7 +24,7 @@ use std::sync::mpsc::Receiver;
 
 use repriseapp::keys::{dialog_key, form_clipboard, form_input, sheet_input};
 use repriseapp::oneshot::{self, MsgBox};
-use repriseapp::{App, BTN_LEFT, Child, Ctx, Event, MAIN, PointerInput, Reply, WinId};
+use repriseapp::{App, BTN_LEFT, Child, Ctx, DropForm, Event, MAIN, PointerInput, Reply, WinId};
 use reprisekit::access::Tree;
 use reprisekit::controls::metrics::ControlMetrics;
 use reprisekit::controls::msgbox::Fields;
@@ -951,6 +951,16 @@ impl App for BtApp {
         }
     }
 
+    fn drop_form(&mut self, win: WinId) -> Option<DropForm<'_>> {
+        let form = match win {
+            WIZARD => &mut self.wizard.as_mut()?.page.form,
+            PROPS => self.props.as_mut()?.sheet.open_mut(),
+            PAIR => &mut self.pair.as_mut()?.form,
+            _ => return None,
+        };
+        Some(DropForm { form, px: None })
+    }
+
     fn draw(&mut self, win: WinId, c: &mut Canvas, ctx: &Ctx) {
         let cs = &ctx.theme.colors;
         let px = ctx.theme.fonts.size_px;
@@ -1092,6 +1102,17 @@ mod tests {
         s.devices.clear();
         a.snapshot_in(s);
         assert!(a.props.is_none());
+    }
+
+    #[test]
+    fn the_properties_sheet_takes_drops_on_its_open_page() {
+        let mut a = app();
+        a.snapshot_in(snap(true));
+        assert!(a.drop_form(PROPS).is_none());
+        a.open_props("/a/cans");
+        let d = a.drop_form(PROPS).expect("the open sheet's page");
+        assert!(d.form.item(props::NAME).is_some());
+        assert!(a.drop_form(MAIN).is_none());
     }
 
     #[test]

@@ -234,6 +234,10 @@ are.
 - **Input methods.** fcitx5 and ibus work in programs and in Reprise's own
   fields: Run, the launcher, the Start menu's search, a desktop rename and
   the dialogs.
+- **Drop text into fields.** Text dragged from any program lands in a
+  text field of Reprise's programs and dialogs, Run included, where the
+  drop caret shows, and a drag held at the field's edge scrolls it.
+  Dropped files give their paths, quoted when they hold a space.
 - **Touchpad gestures.** Three fingers switch desktops and open the
   overview. Pinches and swipes with other finger counts go to the program,
   so a browser can pinch-zoom and swipe back.

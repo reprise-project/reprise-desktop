@@ -26,7 +26,7 @@ use std::sync::mpsc::Receiver;
 use repriseapp::filedlg::{Host, Resolved, Step, type_keep};
 use repriseapp::keys::{form_clipboard, form_input, sheet_input};
 use repriseapp::oneshot::{self, MsgBox};
-use repriseapp::{App, BTN_LEFT, Child, Ctx, Event, MAIN, PointerInput, Reply, WinId};
+use repriseapp::{App, BTN_LEFT, Child, Ctx, DropForm, Event, MAIN, PointerInput, Reply, WinId};
 use reprisekit::access::Tree;
 use reprisekit::art::neticon;
 use reprisekit::controls::filedlg::{self, DlgMode, Event as FileEvent, Fields, FileDlg};
@@ -1145,6 +1145,15 @@ impl App for NetApp {
             }
             _ => self.folder.access(tree, ctx),
         }
+    }
+
+    fn drop_form(&mut self, win: WinId) -> Option<DropForm<'_>> {
+        let form = match win {
+            VPN => self.vpn.as_mut()?.sheet_mut().open_mut(),
+            HOTSPOT => &mut self.hotspot.as_mut()?.form,
+            _ => return None,
+        };
+        Some(DropForm { form, px: None })
     }
 
     fn draw(&mut self, win: WinId, c: &mut Canvas, ctx: &Ctx) {

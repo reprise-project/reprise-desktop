@@ -464,6 +464,11 @@ impl PropSheet {
         self.event(i, ev)
     }
 
+    /// What a drop on a field of the open page changed ([`Form::drop_text`]), as the sheet's.
+    pub fn dropped(&self, ev: form::Event) -> Event {
+        self.event(self.tabs.open, ev)
+    }
+
     pub fn hit(&self, x: i32, y: i32, text: &TextRenderer, px: u32) -> Option<Hit> {
         let l = self.layout(text, px);
         if let (Nav::List(list), Some(lay)) = (&self.nav, &l.list)
