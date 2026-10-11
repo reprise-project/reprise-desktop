@@ -109,11 +109,15 @@ pub fn draw_start_above(
 
 /// The renderer for `style`'s caption font, loaded once per thread. A dialog and the Appearance sample get only the body renderer from their host, so they take this one.
 pub fn caption_text(style: &Style) -> Rc<TextRenderer> {
+    loaded(style.caption_text.font())
+}
+
+/// A renderer for `font`, loaded once per thread while the font stays the same.
+fn loaded(font: FontConfig) -> Rc<TextRenderer> {
     thread_local! {
         static LOADED: RefCell<Option<(FontConfig, Rc<TextRenderer>)>> =
             const { RefCell::new(None) };
     }
-    let font = style.caption_text.font();
     LOADED.with_borrow_mut(|slot| match slot {
         Some((f, t)) if *f == font => t.clone(),
         _ => {
@@ -122,6 +126,37 @@ pub fn caption_text(style: &Style) -> Rc<TextRenderer> {
             t
         }
     })
+}
+
+/// The narrowest client width at which `theme`'s caption shows `title` whole beside `chrome`'s
+/// caption buttons, at scale 1.
+pub fn caption_fit(theme: &Theme, title: &str, chrome: Chrome) -> i32 {
+    if !chrome.decorated {
+        return 0;
+    }
+    // The buttons sit at the caption's right, so the title's room grows one for one with the width.
+    const PROBE: i32 = 1000;
+    let g = FrameGeometry::layout(&theme.metrics, PROBE, 1, false, chrome);
+    let (room, need) = match &theme.look {
+        Look::Classic => {
+            let room = if chrome.icon {
+                classic::frame::title_rect(&g, 1)
+            } else {
+                let n =
+                    i32::from(chrome.buttons.has(CaptionButton::Close)) + i32::from(chrome.help);
+                classic::widgets::caption_title_rect(g.caption, n, 1)
+            };
+            let text = loaded(theme.fonts.clone());
+            (room.width, text.measure(title, true, theme.fonts.size_px))
+        }
+        Look::Styled(s) => {
+            let (left, right) = style_frame::title_span(s, &g, 1);
+            let spec = &s.caption_text;
+            let need = caption_text(s).measure(title, spec.bold, spec.size_px);
+            (right - left, need)
+        }
+    };
+    PROBE - room + need
 }
 
 /// A dialog's frame over a client of button face: border, caption, the close box when `geom.chrome` has one, and the ? box left of it when `help` is `Some`. Classic's dialog caption has no icon and its ? box ignores the pointer; a styled look draws its usual frame and help button part, else Classic's ? box.
@@ -269,6 +304,47 @@ mod tests {
     use crate::interfaces::theme_for;
     use crate::taskbar::TaskbarShape;
     use crate::theme::Theme;
+
+    #[test]
+    fn caption_fit_leaves_a_title_exactly_its_room_in_every_interface() {
+        let title = "User Accounts";
+        for (i, dialog, prompt) in [
+            (Interface::Classic, 159, 103),
+            (Interface::Blue, 179, 179),
+            (Interface::Glass, 201, 201),
+        ] {
+            let theme = theme_for(i);
+            let fit = caption_fit(&theme, title, Chrome::DIALOG);
+            let g = FrameGeometry::layout(&theme.metrics, fit, 1, false, Chrome::DIALOG);
+            let room = match &theme.look {
+                Look::Classic => classic::frame::title_rect(&g, 1).width,
+                Look::Styled(s) => {
+                    let (left, right) = style_frame::title_span(s, &g, 1);
+                    right - left
+                }
+            };
+            let need = match &theme.look {
+                Look::Classic => {
+                    loaded(theme.fonts.clone()).measure(title, true, theme.fonts.size_px)
+                }
+                Look::Styled(s) => {
+                    caption_text(s).measure(title, s.caption_text.bold, s.caption_text.size_px)
+                }
+            };
+            assert_eq!(room, need, "{i:?}: the title fills its room at the fit");
+            assert_eq!(fit, dialog, "{i:?} dialog caption");
+            assert_eq!(
+                caption_fit(&theme, title, Chrome::PROMPT),
+                prompt,
+                "{i:?} prompt caption"
+            );
+        }
+        let undecorated = Chrome {
+            decorated: false,
+            ..Chrome::DIALOG
+        };
+        assert_eq!(caption_fit(&Theme::default(), title, undecorated), 0);
+    }
 
     /// Blue draws its controls hot and held; Classic and Glass draw them the same whatever the pointer does, so hover asks them for no redraw.
     #[test]

@@ -79,11 +79,11 @@ pub enum Outcome {
 }
 
 impl MsgBox {
-    pub fn new(title: impl Into<String>, fields: Fields) -> MsgBox {
-        MsgBox {
-            title: title.into(),
-            fields,
-        }
+    /// A box at least as wide as its caption needs for `title` ([`crate::caption_fit`]).
+    pub fn new(title: impl Into<String>, mut fields: Fields) -> MsgBox {
+        let title = title.into();
+        fields.min_w = fields.min_w.max(crate::caption_fit(&title));
+        MsgBox { title, fields }
     }
 
     pub fn child(&self, id: WinId, text: &TextRenderer, px: u32) -> Child {
@@ -161,8 +161,46 @@ mod tests {
                 buttons: vec!["Yes".into(), "No".into()],
                 default: 1,
                 min_text_h: None,
+                min_w: 0,
             },
         )
+    }
+
+    #[test]
+    fn a_short_box_widens_for_its_title_up_to_the_output() {
+        use reprisekit::interface::Interface;
+        let text = TextRenderer::load(&FontConfig::default());
+        let px = 11;
+        let short = || Fields {
+            text: "Access denied.".into(),
+            icon: None,
+            buttons: vec!["OK".into()],
+            default: 0,
+            min_text_h: None,
+            min_w: 0,
+        };
+        assert_eq!(msgbox::client(&short(), &text, px).0, 162);
+        for (i, w) in [
+            (Interface::Classic, 162),
+            (Interface::Blue, 179),
+            (Interface::Glass, 201),
+        ] {
+            crate::publish_theme(&reprisekit::interfaces::theme_for(i));
+            let b = MsgBox::new("User Accounts", short());
+            assert_eq!(b.child("box", &text, px).size.0, w, "{i:?}");
+            let ok = msgbox::form(&b.fields, &text, px)
+                .item(msgbox::OK)
+                .unwrap()
+                .rect;
+            assert_eq!(ok.x, (w - ok.width) / 2, "{i:?}: OK centres in the box");
+        }
+        crate::CAPTION_FIT.with_borrow_mut(|(_, out)| *out = Some(180));
+        let b = MsgBox::new("User Accounts", short());
+        assert_eq!(
+            b.child("box", &text, px).size.0,
+            180 - 2 * 8,
+            "a 180 px output less the Glass dialog border"
+        );
     }
 
     #[test]

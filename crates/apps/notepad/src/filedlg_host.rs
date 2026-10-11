@@ -244,6 +244,7 @@ impl Notepad {
             buttons: vec!["Yes".into(), "No".into()],
             default: self.overwrite_focus,
             min_text_h: None,
+            min_w: 0,
         }
     }
 

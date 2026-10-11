@@ -240,6 +240,7 @@ impl BtApp {
                 buttons: vec!["OK".into()],
                 default: 0,
                 min_text_h: None,
+                min_w: 0,
             },
         ));
     }
@@ -400,6 +401,7 @@ impl BtApp {
                 buttons: vec!["&Yes".into(), "&No".into()],
                 default: 0,
                 min_text_h: None,
+                min_w: 0,
             },
         );
         self.remove = Some((path, b));
