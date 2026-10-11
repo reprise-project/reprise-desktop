@@ -223,7 +223,21 @@ pub fn read() -> zbus::Result<Vec<User>> {
     })
 }
 
-pub fn apply(ops: &[Op]) -> Result<(), String> {
+/// Why [`apply`] stopped.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Failure {
+    /// The password prompt was dismissed: nothing to tell.
+    Dismissed,
+    Text(String),
+}
+
+impl From<String> for Failure {
+    fn from(text: String) -> Failure {
+        Failure::Text(text)
+    }
+}
+
+pub fn apply(ops: &[Op]) -> Result<(), Failure> {
     zbus::block_on(async {
         let conn = connect(None).await.map_err(|e| e.to_string())?;
         for op in ops {
@@ -233,7 +247,7 @@ pub fn apply(ops: &[Op]) -> Result<(), String> {
     })
 }
 
-async fn run(conn: &zbus::Connection, op: &Op) -> Result<(), String> {
+async fn run(conn: &zbus::Connection, op: &Op) -> Result<(), Failure> {
     match op {
         Op::RealName { path, name } => {
             user_call(conn, path, "SetRealName", &(name.as_str(),)).await
@@ -260,9 +274,10 @@ async fn run(conn: &zbus::Connection, op: &Op) -> Result<(), String> {
             let (current, new) = (current.clone(), new.clone());
             // passwd talks over a terminal and waits on its own pace:
             // it runs on a thread of its own, off the bus's executor.
-            std::thread::spawn(move || passwd::change_own(&current, &new))
+            let changed = std::thread::spawn(move || passwd::change_own(&current, &new))
                 .join()
-                .map_err(|_| "passwd stopped unexpectedly".to_string())?
+                .map_err(|_| "passwd stopped unexpectedly".to_string())?;
+            Ok(changed?)
         }
         Op::Create {
             login,
@@ -306,7 +321,7 @@ async fn user_call<B>(
     path: &str,
     method: &str,
     body: &B,
-) -> Result<(), String>
+) -> Result<(), Failure>
 where
     B: serde::Serialize + zbus::zvariant::DynamicType,
 {
@@ -322,7 +337,7 @@ async fn interactive<B, R>(
     iface: &'static str,
     method: &str,
     body: &B,
-) -> Result<R, String>
+) -> Result<R, Failure>
 where
     B: serde::Serialize + zbus::zvariant::DynamicType,
     R: for<'d> zbus::zvariant::DynamicDeserialize<'d>,
@@ -344,23 +359,32 @@ where
         )
         .await
         .map_err(|e| describe(method, e))?
-        .ok_or_else(|| format!("{method} sent no reply"))
+        .ok_or_else(|| Failure::Text(format!("{method} sent no reply")))
 }
 
-fn describe(method: &str, e: zbus::Error) -> String {
+fn describe(method: &str, e: zbus::Error) -> Failure {
     match &e {
         zbus::Error::MethodError(name, msg, _) => {
             log::error!("{method}: {name}: {msg:?}");
-            if name.as_str().ends_with("PermissionDenied") {
-                return "You are not allowed to make this change.".into();
-            }
-            msg.clone().unwrap_or_else(|| name.to_string())
+            failure(name, msg.as_deref(), reprisebus::polkit::dismissed)
         }
         _ => {
             log::error!("{method}: {e}");
-            e.to_string()
+            Failure::Text(e.to_string())
         }
     }
+}
+
+/// AccountsService answers PermissionDenied for a dismissed prompt and a
+/// refused password alike; `dismissed` tells them apart.
+fn failure(name: &str, msg: Option<&str>, dismissed: impl FnOnce() -> bool) -> Failure {
+    if !name.ends_with("PermissionDenied") {
+        return Failure::Text(msg.unwrap_or(name).to_string());
+    }
+    if dismissed() {
+        return Failure::Dismissed;
+    }
+    Failure::Text("You are not allowed to make this change.".into())
 }
 
 /// Your `~/.face`, when you keep one, takes the new picture too, so the
@@ -385,6 +409,25 @@ fn update_face(file: &Path) {
 mod tests {
     use super::*;
     use zbus::zvariant::Value;
+
+    #[test]
+    fn a_dismissed_prompt_is_silent_and_a_refusal_is_told() {
+        const DENIED: &str = "org.freedesktop.Accounts.Error.PermissionDenied";
+        assert_eq!(
+            failure(DENIED, Some("Not authorized"), || true),
+            Failure::Dismissed
+        );
+        assert_eq!(
+            failure(DENIED, Some("Not authorized"), || false),
+            Failure::Text("You are not allowed to make this change.".into())
+        );
+        let other = failure(
+            "org.freedesktop.Accounts.Error.Failed",
+            Some("running 'useradd' failed"),
+            || panic!("only a PermissionDenied asks whether the prompt was dismissed"),
+        );
+        assert_eq!(other, Failure::Text("running 'useradd' failed".into()));
+    }
 
     #[test]
     fn people_are_the_login_accounts_in_the_people_range() {
