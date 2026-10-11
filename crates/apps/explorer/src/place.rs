@@ -6,6 +6,7 @@ use reprisefs::listing::Item;
 use reprisefs::places::{Drive, DriveKind, home_label};
 use reprisefs::udisks::{Disk, Snapshot, Volume};
 use reprisekit::controls::shellview::Field;
+use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -366,6 +367,28 @@ pub fn bin_dirs() -> Vec<PathBuf> {
     reprisefs::trash::Bins::system()
         .map(|b| b.files_dirs())
         .unwrap_or_default()
+}
+
+/// What the Recycle Bin view watches: the home trash's folders
+/// (`places::trash_watches`), so a trash made or moved back while it is shown
+/// lists, and each other drive's files folder.
+pub fn bin_watches() -> Vec<(PathBuf, Option<OsString>)> {
+    let Some(bins) = reprisefs::trash::Bins::system() else {
+        return Vec::new();
+    };
+    let roots = bins.roots();
+    let Some((home, drives)) = roots.split_first() else {
+        return Vec::new();
+    };
+    let drives = drives
+        .iter()
+        .map(|r| r.join("files"))
+        .filter(|f| f.is_dir())
+        .map(|f| (f, None));
+    reprisefs::places::trash_watches(home)
+        .into_iter()
+        .chain(drives)
+        .collect()
 }
 
 /// `place`'s contents: a real directory read (for `RecycleBin` each of

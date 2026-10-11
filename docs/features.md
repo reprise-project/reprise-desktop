@@ -150,8 +150,8 @@ the Super tap, Super+Shift+Esc and the VT switch keys can be rebound.
 
 ## Desktop
 
-- **Icons** you can drag around, rename with F2, delete to the trash and
-  right-click. Documents, Computer, Home and Recycle Bin are there if you
+- **Icons** you can drag around, rename with F2, delete to the trash,
+  refresh with F5 and right-click. Documents, Computer, Home and Recycle Bin are there if you
   want them, and the files in `~/Desktop` too.
 - **Trusted launchers.** A `.desktop` file on the desktop runs only once
   you've marked it trusted, so a download can't pose as a program.
