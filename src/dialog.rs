@@ -1118,6 +1118,17 @@ impl Dialog {
         (self.title.as_str(), path)
     }
 
+    /// The pid End Program's End Now would kill; None for any other dialog.
+    pub fn end_program_pid(&self) -> Option<i32> {
+        if !matches!(self.style, Style::EndProgram) {
+            return None;
+        }
+        self.buttons.iter().find_map(|b| match b.action {
+            DialogAction::EndProgram(pid) => Some(pid),
+            _ => None,
+        })
+    }
+
     /// Whether the dialog has a taskbar button: only End Program, which stands for an unresponsive
     /// program.
     pub fn on_taskbar(&self) -> bool {
@@ -6576,6 +6587,16 @@ mod tests {
         assert!(!Dialog::run(&[]).on_taskbar());
         assert!(!Dialog::log_off().on_taskbar());
         assert!(!Dialog::error("Title", "Text".into()).on_taskbar());
+    }
+
+    #[test]
+    fn only_end_program_names_a_pid() {
+        assert_eq!(
+            Dialog::end_program("foot", 4321).end_program_pid(),
+            Some(4321)
+        );
+        assert_eq!(Dialog::run(&[]).end_program_pid(), None);
+        assert_eq!(Dialog::log_off().end_program_pid(), None);
     }
 
     /// The advances a second dialog font gives at 11 px where they differ

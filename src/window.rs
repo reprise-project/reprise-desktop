@@ -2155,6 +2155,7 @@ impl State {
             let win = self.windows.remove(i);
             self.scene.destroy(win.tree);
         }
+        self.close_ended_programs();
         self.focus_top();
         self.redraw_taskbars();
         self.redraw_all();
