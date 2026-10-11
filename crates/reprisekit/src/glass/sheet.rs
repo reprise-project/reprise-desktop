@@ -843,8 +843,7 @@ mod tests {
 
     #[test]
     fn a_glass_button_label_is_black_with_its_baseline_on_row_15() {
-        let theme = glass();
-        if !TextRenderer::load(&theme.fonts).has_face("Tahoma") {
+        if !crate::text::test_tahoma() {
             return;
         }
         let c = button_at((75, 23), 1, "Cancel", NORMAL);
@@ -943,8 +942,7 @@ mod tests {
 
     #[test]
     fn a_glass_group_box_label_sits_9_px_in_with_its_baseline_4_px_under_the_line() {
-        let theme = glass();
-        if !TextRenderer::load(&theme.fonts).has_face("Tahoma") {
+        if !crate::text::test_tahoma() {
             return;
         }
         let g = Rect::new(5, 20, 150, 60);

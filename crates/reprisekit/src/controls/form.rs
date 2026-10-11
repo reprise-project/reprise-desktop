@@ -3854,7 +3854,7 @@ mod tests {
     #[test]
     fn labels_at_their_ink_start_on_the_same_column_in_either_dialog_font() {
         let path = "/usr/share/wine/fonts/sserife.fon";
-        if !crate::text::tahoma_installed() || !std::path::Path::new(path).exists() {
+        if !crate::text::test_tahoma() || !std::path::Path::new(path).exists() {
             return;
         }
         let theme = Theme::default();
@@ -3907,7 +3907,7 @@ mod tests {
     #[test]
     fn a_check_boxs_label_starts_five_px_past_the_box() {
         let text = TextRenderer::load(&FontConfig::default());
-        if !text.has_face("Tahoma") {
+        if !crate::text::test_tahoma() {
             return;
         }
         let theme = Theme::default();
@@ -4007,7 +4007,7 @@ mod tests {
     #[test]
     fn a_blue_check_box_and_radio_share_a_column() {
         let text = TextRenderer::load(&FontConfig::default());
-        if !text.has_face("Tahoma") {
+        if !crate::text::test_tahoma() {
             return;
         }
         let theme = crate::interfaces::theme_for(crate::interface::Interface::Blue);
@@ -4038,7 +4038,7 @@ mod tests {
     #[test]
     fn a_glass_check_box_and_radio_share_a_column() {
         let text = TextRenderer::load(&FontConfig::default());
-        if !text.has_face("Tahoma") {
+        if !crate::text::test_tahoma() {
             return;
         }
         let theme = crate::interfaces::theme_for(crate::interface::Interface::Glass);
@@ -4069,7 +4069,7 @@ mod tests {
     #[test]
     fn a_greyed_blue_static_label_is_etched() {
         let text = TextRenderer::load(&FontConfig::default());
-        if !text.has_face("Tahoma") {
+        if !crate::text::test_tahoma() {
             return;
         }
         let form = Form::new(vec![
@@ -4095,7 +4095,7 @@ mod tests {
     #[test]
     fn a_greyed_blue_check_box_label_is_flat() {
         let text = TextRenderer::load(&FontConfig::default());
-        if !text.has_face("Tahoma") {
+        if !crate::text::test_tahoma() {
             return;
         }
         let form = Form::new(vec![Item::check("ro", 10, 10, "&Read-only").enabled(false)]);
@@ -4128,7 +4128,7 @@ mod tests {
     #[test]
     fn a_greyed_blue_radio_label_is_flat() {
         let text = TextRenderer::load(&FontConfig::default());
-        if !text.has_face("Tahoma") {
+        if !crate::text::test_tahoma() {
             return;
         }
         let form = Form::new(vec![Item::radio("up", 10, 10, "&Up", "dir").enabled(false)]);
@@ -4153,7 +4153,7 @@ mod tests {
     #[test]
     fn greyed_glass_check_box_and_radio_labels_are_flat_6b6b6b() {
         let text = TextRenderer::load(&FontConfig::default());
-        if !text.has_face("Tahoma") {
+        if !crate::text::test_tahoma() {
             return;
         }
         let form = Form::new(vec![
@@ -4208,7 +4208,7 @@ mod tests {
     #[test]
     fn a_blue_radio_label_sits_on_the_check_box_labels_row() {
         let text = tr();
-        if !text.has_face("Tahoma") {
+        if !crate::text::test_tahoma() {
             return;
         }
         let blue = crate::interfaces::theme_for(crate::interface::Interface::Blue);
@@ -5027,7 +5027,7 @@ mod tests {
     /// changes what it draws.
     #[test]
     fn masked_edit_draws_bullets() {
-        if !crate::text::tahoma_installed() {
+        if !crate::text::test_tahoma() {
             return;
         }
         let t = tr();

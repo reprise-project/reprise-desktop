@@ -994,7 +994,7 @@ mod tests {
 
     #[test]
     fn info_tip_wraps_at_300_px_and_sits_where_asked() {
-        if !crate::text::tahoma_installed() {
+        if !crate::text::test_tahoma() {
             return;
         }
         let theme = Theme::default();
@@ -1373,7 +1373,7 @@ mod tests {
                 assert_eq!(c.get(x, y), black, "{v:?}: the frame at {x},{y}");
             }
             assert_eq!(c.get(1, 1), theme.colors.info_bk.argb(), "{v:?}: the fill");
-            if crate::text::tahoma_installed() {
+            if crate::text::test_tahoma() {
                 assert_eq!(h, 17, "{v:?}: 17 px tall");
                 let first = (1..w - 1).find(|&x| (1..h - 1).any(|y| c.get(x, y) == black));
                 let top = (1..h - 1).find(|&y| (1..w - 1).any(|x| c.get(x, y) == black));

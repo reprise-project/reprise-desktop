@@ -250,7 +250,36 @@ pub(crate) fn system_fonts(families: &[String]) -> Arc<Database> {
     }
     let mut db = Database::new();
     db.load_system_fonts();
+    if let Some(dir) = test_fonts_dir() {
+        load_test_fonts(&mut db, &dir);
+    }
     fonts.insert(Arc::new(db)).clone()
+}
+
+/// The directory `REPRISE_TEST_FONTS` names (filled by `scripts/test-fonts.sh`), whose faces
+/// replace the system's faces of the same family so pixel tests render alike on every machine.
+fn test_fonts_dir() -> Option<PathBuf> {
+    std::env::var_os("REPRISE_TEST_FONTS")
+        .filter(|v| !v.is_empty())
+        .map(PathBuf::from)
+}
+
+fn load_test_fonts(db: &mut Database, dir: &std::path::Path) {
+    let mut test = Database::new();
+    test.load_fonts_dir(dir);
+    let families: Vec<String> = test
+        .faces()
+        .flat_map(|f| f.families.iter().map(|(name, _)| name.clone()))
+        .collect();
+    let shadowed: Vec<fontdb::ID> = db
+        .faces()
+        .filter(|f| f.families.iter().any(|(name, _)| families.contains(name)))
+        .map(|f| f.id)
+        .collect();
+    for id in shadowed {
+        db.remove_face(id);
+    }
+    db.load_fonts_dir(dir);
 }
 
 fn needs_scan(db: &Database, families: &[String]) -> bool {
@@ -260,11 +289,21 @@ fn needs_scan(db: &Database, families: &[String]) -> bool {
     })
 }
 
-/// Whether [`FontConfig::default`] resolves to the default UI face the pixel tests need; they
-/// skip without it. Cached.
-pub fn tahoma_installed() -> bool {
+/// Whether the default UI face is the Tahoma `REPRISE_TEST_FONTS` supplies, which the pixel tests
+/// are pinned to; they skip without it. Cached.
+pub fn test_tahoma() -> bool {
     static FOUND: OnceLock<bool> = OnceLock::new();
-    *FOUND.get_or_init(|| TextRenderer::load(&FontConfig::default()).has_face("Tahoma"))
+    *FOUND.get_or_init(|| {
+        let Some(dir) = test_fonts_dir() else {
+            return false;
+        };
+        let families = FontConfig::default().family;
+        let db = system_fonts(&families);
+        let dir = dir.canonicalize().unwrap_or(dir);
+        families.first().is_some_and(|f| f == "Tahoma")
+            && find_face(&db, &families, false, Weight::NORMAL, fontdb::Style::Normal)
+                .is_some_and(|(path, _, family, _)| family == "Tahoma" && path.starts_with(&dir))
+    })
 }
 
 /// The second dialog font `spec` names, a family (exact match) or an absolute font file path;
@@ -956,8 +995,7 @@ mod tests {
 
     #[test]
     fn the_second_dialog_font_loads_by_family_or_file_on_the_ui_baseline() {
-        let ui = renderer();
-        if !ui.has_face("Tahoma") {
+        if !test_tahoma() {
             return;
         }
         let db = system_fonts(&[]);
@@ -1166,7 +1204,15 @@ mod tests {
     }
 
     #[test]
+    fn reprise_test_fonts_supplies_the_ui_tahoma() {
+        if test_fonts_dir().is_some() {
+            assert!(test_tahoma(), "REPRISE_TEST_FONTS holds no Tahoma");
+        }
+    }
+
+    #[test]
     fn grayscale_mode_blends() {
+        // Wine's Tahoma has bilevel bitmap strikes from 8 to 16 px but none at 14.
         let r = TextRenderer::load(&FontConfig {
             antialias: true,
             ..FontConfig::default()
@@ -1180,7 +1226,7 @@ mod tests {
             false,
             Color::rgb(255, 255, 255),
             Align::Left,
-            11,
+            14,
         );
         let partial = c.pixels.iter().any(|&p| p != 0xFF000000 && p != 0xFFFFFFFF);
         assert!(partial, "expected at least one antialiased pixel");
@@ -1256,7 +1302,7 @@ mod tests {
             antialias: false,
             ..FontConfig::default()
         });
-        if !r.has_face("Tahoma") {
+        if !test_tahoma() {
             return;
         }
         assert_eq!(r.measure("Start", false, 11), 24);

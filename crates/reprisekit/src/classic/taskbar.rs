@@ -409,7 +409,7 @@ mod tests {
         let theme = Theme::default().with_text_size(150);
         let cs = &theme.colors;
         assert_eq!(theme.metrics.taskbar_height, 35);
-        if !crate::text::tahoma_installed() {
+        if !crate::text::test_tahoma() {
             return;
         }
         let text = TextRenderer::load(&theme.fonts);
@@ -468,13 +468,13 @@ mod tests {
         let title = ink_rows(t, 24);
         assert_eq!(
             (title[0], title[title.len() - 1]),
-            (8, 23),
+            (7, 24),
             "the title's ink rows"
         );
         let clock = ink_rows(l.clock, 2);
         assert_eq!(
             (clock[0], clock[clock.len() - 1]),
-            (9, 20),
+            (8, 20),
             "the clock's ink rows"
         );
         assert!(

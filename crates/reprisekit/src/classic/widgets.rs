@@ -1292,7 +1292,7 @@ mod tests {
     #[test]
     fn group_box_label_gap_counts_the_access_key() {
         let (theme, text) = setup();
-        if !text.has_face("Tahoma") {
+        if !crate::text::test_tahoma() {
             return;
         }
         let cs = &theme.colors;
@@ -1851,7 +1851,7 @@ mod tests {
     #[test]
     fn a_long_value_scrolls_to_keep_the_caret_in_the_field() {
         let (theme, text) = setup();
-        if !text.has_face("Tahoma") {
+        if !crate::text::test_tahoma() {
             return;
         }
         let px = theme.fonts.size_px;
@@ -1934,7 +1934,7 @@ mod tests {
     #[test]
     fn a_visible_caret_does_not_move_the_view() {
         let (theme, text) = setup();
-        if !text.has_face("Tahoma") {
+        if !crate::text::test_tahoma() {
             return;
         }
         let px = theme.fonts.size_px;
@@ -1946,7 +1946,7 @@ mod tests {
     #[test]
     fn a_scrolled_field_paints_nothing_past_its_right_edge() {
         let (theme, text) = setup();
-        if !text.has_face("Tahoma") {
+        if !crate::text::test_tahoma() {
             return;
         }
         let cs = &theme.colors;
@@ -2071,7 +2071,7 @@ mod tests {
     #[test]
     fn a_selection_and_the_caret_cover_13_rows_from_the_text_area_s_top() {
         let (theme, text) = setup();
-        if !text.has_face("Tahoma") {
+        if !crate::text::test_tahoma() {
             return;
         }
         let cs = &theme.colors;
@@ -2141,7 +2141,7 @@ mod tests {
     #[test]
     fn a_scrolled_multibyte_value_stays_on_char_boundaries() {
         let (theme, text) = setup();
-        if !text.has_face("Tahoma") {
+        if !crate::text::test_tahoma() {
             return;
         }
         let cs = &theme.colors;
