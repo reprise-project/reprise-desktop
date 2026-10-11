@@ -15,7 +15,9 @@
 
 use crate::access::{self, Tree, accesskit};
 use crate::art::viewsicon;
-use crate::classic::widgets::{self, BUTTON_H, BUTTON_W, BarHit, draw_edit, edit_first_visible};
+use crate::classic::widgets::{
+    self, BUTTON_H, BUTTON_W, BarHit, LINE_H, draw_edit, edit_first_visible,
+};
 use crate::controls::combo::{self, Combo};
 use crate::controls::form;
 use crate::controls::iconview::IconMove;
@@ -312,6 +314,8 @@ pub struct FileDlg {
     /// The pattern typed into File name that filters the view in place
     /// of Files of type, until another type is picked.
     wildcard: Option<String>,
+    /// A drag resting on File name: its logical x, and the first byte shown while it rests.
+    name_drop: Option<(i32, usize)>,
     /// The look's control sizes of the last `draw`, which `hit`, `access`,
     /// the keys and the clicks lay the dialog out with, and whether that
     /// look lights what the pointer rests on.
@@ -466,6 +470,7 @@ impl FileDlg {
             size: CLIENT,
             typed: String::new(),
             wildcard: None,
+            name_drop: None,
             drawn: Drawn::default(),
             fields,
         }
@@ -743,6 +748,94 @@ impl FileDlg {
     pub fn set_file_name(&mut self, name: &str) {
         self.filename.set_selected(name);
         self.typed = name.to_string();
+    }
+
+    /// A drag at (`x`, `y`) in `r`: over File name the field shows a drop caret there and takes
+    /// the drag (`true`); anywhere else the drop caret goes.
+    pub fn drag_over(&mut self, text: &TextRenderer, px: u32, r: Rect, x: i32, y: i32) -> bool {
+        if self.views_open || self.hit(text, px, r, x, y) != Some(Hit::FileName) {
+            self.name_drop = None;
+            return false;
+        }
+        let first = match self.name_drop {
+            Some((_, first)) => first,
+            None => {
+                let w = self.name_inner(text, px, r).width;
+                edit_first_visible(text, &self.filename, w, px, 0)
+            }
+        };
+        self.name_drop = Some((x, first));
+        true
+    }
+
+    /// The drag left or ended: `true` when a drop caret was showing.
+    pub fn drag_leave(&mut self) -> bool {
+        self.name_drop.take().is_some()
+    }
+
+    /// The first byte shown one step on for a drag resting at File name's edge
+    /// ([`crate::textedit::drag_scroll`]), None when it stays.
+    pub fn drag_scroll(&self, text: &TextRenderer, px: u32, r: Rect) -> Option<usize> {
+        let (x, first) = self.name_drop?;
+        let inner = self.name_inner(text, px, r);
+        let s = &self.filename.text;
+        crate::textedit::drag_scroll(text, s, first, inner.width, LINE_H, x - inner.x, px)
+    }
+
+    /// Take [`FileDlg::drag_scroll`]'s step, for a host's tick; `true` when the field moved.
+    pub fn drag_tick(&mut self, text: &TextRenderer, px: u32, r: Rect) -> bool {
+        let Some(to) = self.drag_scroll(text, px, r) else {
+            return false;
+        };
+        if let Some((_, first)) = &mut self.name_drop {
+            *first = to;
+        }
+        true
+    }
+
+    /// A drag dropped `line` on File name: it goes in at the drop caret as
+    /// [`TextEdit::drop_text`] puts it, and the field takes the focus. `false` when the field
+    /// was not taking the drag or nothing went in.
+    pub fn drop_text(&mut self, text: &TextRenderer, px: u32, r: Rect, line: &str) -> bool {
+        let Some((x, first)) = self.name_drop.take() else {
+            return false;
+        };
+        let inner = self.name_inner(text, px, r);
+        let first = first.min(self.filename.text.len());
+        let tail = &self.filename.text[first..];
+        let at = first + crate::textedit::index_at(text, tail, x - inner.x, px);
+        if !self.filename.drop_text(at, line) {
+            return false;
+        }
+        self.typed = self.filename.text.clone();
+        self.focus = Focus::FileName;
+        true
+    }
+
+    /// Files dropped on File name replace its text, selected: `names` as the field takes a
+    /// selection of several (quoted) where the dialog picks several, else the first.
+    pub fn drop_names(&mut self, names: &[String]) -> bool {
+        if self.name_drop.take().is_none() {
+            return false;
+        }
+        let text = match names {
+            [] => return false,
+            [_, _, ..] if self.multi() => names
+                .iter()
+                .map(|n| format!("\"{n}\""))
+                .collect::<Vec<_>>()
+                .join(" "),
+            [first, ..] => first.clone(),
+        };
+        self.set_file_name(&text);
+        self.focus = Focus::FileName;
+        true
+    }
+
+    /// File name's text area in `r`, in logical px.
+    fn name_inner(&self, text: &TextRenderer, px: u32, r: Rect) -> Rect {
+        let lay = self.layout(text, px, r, &self.drawn.0.get());
+        lay.filename.inset(widgets::FIELD_PAD)
     }
 
     fn layout(&self, text: &TextRenderer, px: u32, r: Rect, cm: &ControlMetrics) -> Layout {
@@ -1613,7 +1706,10 @@ impl FileDlg {
             focused,
             Interaction::Idle,
         );
-        let first = edit_first_visible(text, &self.filename, inner.width, px, 0);
+        let first = match self.name_drop {
+            Some((_, first)) => first.min(self.filename.text.len()),
+            None => edit_first_visible(text, &self.filename, inner.width, px, 0),
+        };
         draw_edit(
             c,
             text,
@@ -1621,9 +1717,14 @@ impl FileDlg {
             inner,
             px,
             p,
-            Caret::new(self.focus == Focus::FileName, true),
+            Caret::new(self.focus == Focus::FileName, self.name_drop.is_none()),
             first,
         );
+        if let Some((x, _)) = self.name_drop {
+            let tail = &self.filename.text[first..];
+            let at = first + crate::textedit::index_at(text, tail, x * s - inner.x, px);
+            widgets::draw_edit_drop_point(c, text, &self.filename, inner, px, p, first, at);
+        }
         draw_button(
             c,
             text,
@@ -3265,5 +3366,79 @@ mod tests {
             d.wheel(R, on_type, -2 * WHEEL_ROWS),
             Event::FilterChanged(0)
         ));
+    }
+
+    fn name_field(d: &FileDlg, t: &TextRenderer, px: u32) -> Rect {
+        d.layout(t, px, R, &d.drawn.0.get()).filename
+    }
+
+    #[test]
+    fn text_dropped_on_file_name_lands_at_the_drop_caret_and_takes_the_focus() {
+        let (t, px) = (text(), Theme::default().fonts.size_px);
+        let mut d = sample();
+        d.set_file_name("ab.txt");
+        d.focus = Focus::Shell;
+        let f = name_field(&d, &t, px);
+        let x = f.x + widgets::FIELD_PAD + t.measure("ab", false, px);
+        assert!(
+            !d.drag_over(&t, px, R, f.x, f.y - 20),
+            "the view takes no text"
+        );
+        assert!(d.drag_over(&t, px, R, x, f.y + 5));
+        assert!(d.drop_text(&t, px, R, "c"));
+        assert_eq!(d.file_name(), "abc.txt");
+        assert_eq!(d.filename.selected_text(), "c");
+        assert_eq!(d.focus, Focus::FileName);
+        assert!(!d.drop_text(&t, px, R, "x"), "the drop ended the drag");
+        assert_eq!(d.typed, "abc.txt", "the dropped text counts as typed");
+    }
+
+    #[test]
+    fn dropped_files_replace_file_name_quoted_only_where_several_are_picked() {
+        let (t, px) = (text(), Theme::default().fonts.size_px);
+        let names = ["a.txt".to_string(), "/tmp/my b.txt".to_string()];
+        let mut one = sample();
+        one.set_file_name("old");
+        let f = name_field(&one, &t, px);
+        assert!(!one.drop_names(&names), "no drag rests on the field");
+        assert!(one.drag_over(&t, px, R, f.x + 10, f.y + 5));
+        assert!(one.drop_names(&names));
+        assert_eq!(one.file_name(), "a.txt");
+        assert_eq!(one.filename.selected_text(), "a.txt");
+        let mut many = multi(DlgMode::Open, true);
+        assert!(many.drag_over(&t, px, R, f.x + 10, f.y + 5));
+        assert!(many.drop_names(&names));
+        assert_eq!(many.file_name(), r#""a.txt" "/tmp/my b.txt""#);
+        assert_eq!(
+            split_names(many.file_name()),
+            names,
+            "Accept takes them back apart"
+        );
+    }
+
+    #[test]
+    fn a_drag_resting_at_file_names_edge_scrolls_it_and_draws_a_drop_caret() {
+        let (t, theme) = (text(), Theme::default());
+        let px = theme.fonts.size_px;
+        let mut d = sample();
+        d.set_file_name(&"long name ".repeat(12));
+        let f = name_field(&d, &t, px);
+        let (y, left) = (f.y + 5, f.x + 2);
+        assert!(d.drag_over(&t, px, R, f.x + 40, y));
+        assert_eq!(d.drag_scroll(&t, px, R), None, "the middle rests still");
+        let end = d.name_drop.unwrap().1;
+        assert!(end > 0, "the caret at the end scrolled the name");
+        assert!(d.drag_over(&t, px, R, left, y));
+        assert!(d.drag_tick(&t, px, R));
+        assert_eq!(d.name_drop, Some((left, end - 1)));
+        let shot = |d: &FileDlg| {
+            let mut c = Canvas::new(R.width as u32, R.height as u32);
+            d.draw(&mut c, &t, &classic_paint(&theme.colors, 1), R, px);
+            c
+        };
+        let dropping = shot(&d);
+        assert!(d.drag_leave());
+        assert!(!d.drag_tick(&t, px, R), "no drag, no step");
+        assert_ne!(dropping.pixels, shot(&d).pixels);
     }
 }

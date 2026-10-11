@@ -7,7 +7,7 @@ use crate::dialog;
 use crate::filechooser::{Input, Kind, Output, save_files_paths};
 use repriseapp::filedlg::{Host, Resolved, Step, taken};
 use repriseapp::oneshot::{MsgBox, Outcome};
-use repriseapp::{App, Ctx, Event, MAIN, Reply, WinId};
+use repriseapp::{App, Ctx, Event, FileDrop, MAIN, Reply, WinId};
 use reprisefs::mimetree::MimeTree;
 use reprisekit::access::Tree;
 use reprisekit::controls::filedlg::{
@@ -207,6 +207,13 @@ impl App for Pick {
             .iter()
             .map(|(m, _)| m.child(MSGBOX, &self.text, self.px))
             .collect()
+    }
+
+    fn drop_file_dialog(&mut self, win: WinId) -> Option<FileDrop<'_>> {
+        (win == MAIN).then_some(FileDrop {
+            dlg: &mut self.dlg,
+            host: &self.host,
+        })
     }
 
     fn event(&mut self, win: WinId, ev: Event, ctx: &mut Ctx) -> Reply {

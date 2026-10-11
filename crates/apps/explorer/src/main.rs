@@ -35,7 +35,8 @@ use props_dialog::{PROPS, Props};
 use repriseapp::decode::Decoders;
 use repriseapp::keys::AltArm;
 use repriseapp::{
-    App, BTN_LEFT, BTN_RIGHT, Child, Ctx, DropForm, Event, MAIN, PointerInput, Reply, WinId,
+    App, BTN_LEFT, BTN_RIGHT, Child, Ctx, DropForm, Event, FileDrop, MAIN, PointerInput, Reply,
+    WinId,
 };
 use reprisefs::history::History;
 use reprisefs::listing::Item;
@@ -918,6 +919,17 @@ impl App for Lazy {
             _ => return None,
         };
         Some(DropForm { form, px: None })
+    }
+
+    fn drop_file_dialog(&mut self, win: WinId) -> Option<FileDrop<'_>> {
+        let Some(Dialog::ChooseProgram(cp)) = self.inner.as_mut()?.dialog.as_mut() else {
+            return None;
+        };
+        let b = cp.browse.as_mut().filter(|_| win == PROGRAM_BROWSE)?;
+        Some(FileDrop {
+            dlg: &mut b.dlg,
+            host: &b.host,
+        })
     }
 
     fn draw(&mut self, win: WinId, c: &mut Canvas, ctx: &Ctx) {

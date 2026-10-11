@@ -95,7 +95,7 @@ use wayland_client::{
 };
 
 pub use dnd::{Accept, Actions, DragAction, DragOut, DropKind, Dropped, Offered, Uri};
-pub use fielddrop::DropForm;
+pub use fielddrop::{DropForm, FileDrop};
 use reprisefs::pipe::PasteBuf;
 pub use reprisekit;
 use reprisekit::access::{Tree, accesskit};
@@ -305,7 +305,8 @@ pub enum Event {
         source: Actions,
     },
     /// A drag dropped on a field of the window's `App::drop_form` changed it (`Changed`
-    /// with the field's id), as a key or paste in it would.
+    /// with the field's id), as a key or paste in it would; `App::drop_file_dialog`'s File
+    /// name reports `fielddrop::FILE_NAME`.
     FieldDropped(reprisekit::controls::form::Event),
     /// The `Ask` drop this window was answering is gone: the dragging
     /// program or the compositor dropped it, or the answer was an action
@@ -600,6 +601,12 @@ pub trait App {
     /// ([`fielddrop`]); its drags then never reach `event`. None (the default) hands them
     /// to `event`.
     fn drop_form(&mut self, _win: WinId) -> Option<DropForm<'_>> {
+        None
+    }
+    /// The file dialog in window `win`, whose File name field takes a drag of text or files as
+    /// a form's field does; files go in by name, or by path from another folder. None (the
+    /// default) hands the drags to `event`.
+    fn drop_file_dialog(&mut self, _win: WinId) -> Option<FileDrop<'_>> {
         None
     }
 }
@@ -1309,9 +1316,14 @@ impl Host {
         if !drag && !(hover.is_some() && *ev == Event::Tick) {
             return None;
         }
-        let DropForm { form, px } = self.app.drop_form(win)?;
-        let px = px.unwrap_or(self.ctx.theme.fonts.size_px);
-        let out = fielddrop::event(form, &mut hover, ev, &self.ctx.text, px);
+        let theme_px = self.ctx.theme.fonts.size_px;
+        let out = if let Some(DropForm { form, px }) = self.app.drop_form(win) {
+            let px = px.unwrap_or(theme_px);
+            fielddrop::event(form, &mut hover, ev, &self.ctx.text, px)
+        } else {
+            let mut file = self.app.drop_file_dialog(win)?;
+            fielddrop::event(&mut file, &mut hover, ev, &self.ctx.text, theme_px)
+        };
         self.field_drag = hover.map(|h| (win, h));
         out
     }

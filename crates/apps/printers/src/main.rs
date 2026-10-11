@@ -25,7 +25,9 @@ use std::sync::mpsc::Receiver;
 use repriseapp::filedlg::{Host, Resolved, Step};
 use repriseapp::keys::{form_clipboard, form_input, sheet_input};
 use repriseapp::oneshot::{self, MsgBox};
-use repriseapp::{App, BTN_LEFT, Child, Ctx, DropForm, Event, MAIN, PointerInput, Reply, WinId};
+use repriseapp::{
+    App, BTN_LEFT, Child, Ctx, DropForm, Event, FileDrop, MAIN, PointerInput, Reply, WinId,
+};
 use reprisekit::access::Tree;
 use reprisekit::controls::filedlg::{DlgMode, Event as FileEvent, Fields as FileFields, FileDlg};
 use reprisekit::controls::msgbox::Fields;
@@ -962,6 +964,11 @@ impl App for PrintersApp {
             _ => return None,
         };
         Some(DropForm { form, px: None })
+    }
+
+    fn drop_file_dialog(&mut self, win: WinId) -> Option<FileDrop<'_>> {
+        let (host, dlg) = self.browse.as_mut().filter(|_| win == BROWSE)?;
+        Some(FileDrop { dlg, host })
     }
 
     fn draw(&mut self, win: WinId, c: &mut Canvas, ctx: &Ctx) {

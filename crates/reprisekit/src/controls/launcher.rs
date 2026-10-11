@@ -347,6 +347,22 @@ impl Launcher {
         }
     }
 
+    /// Text dropped on the field: its first line, as a paste takes it, becomes the query.
+    pub fn drop_query(&mut self, text: &str) -> Event {
+        let mut edit = TextEdit::new("", false);
+        if !edit.paste(text, &[]) {
+            return Event::None;
+        }
+        let before = self.query().to_string();
+        self.edit = edit;
+        self.tail = None;
+        self.completing = true;
+        match self.query() == before {
+            true => Event::None,
+            false => Event::QueryChanged,
+        }
+    }
+
     /// The host's answer to `QueryChanged`: the ranked app rows for `query()`. File
     /// rows stay until `set_files`. Completes the field from the first app row when
     /// it starts with the query (case-insensitively), keeping the query's casing;
@@ -987,6 +1003,21 @@ mod tests {
         typed(&mut l, "n");
         assert_eq!(l.paste("ot"), Event::QueryChanged);
         assert_eq!(l.query(), "not");
+    }
+
+    #[test]
+    fn a_drop_replaces_the_query_and_a_shown_completion() {
+        let mut l = Launcher::new();
+        typed(&mut l, "n");
+        l.tail = Some(1);
+        assert_eq!(l.drop_query("foot\nbar"), Event::QueryChanged);
+        assert_eq!(
+            (l.query(), l.edit.text.as_str(), l.tail),
+            ("foot", "foot", None)
+        );
+        assert_eq!(l.drop_query("foot"), Event::None, "the same query");
+        assert_eq!(l.drop_query(""), Event::None, "nothing to drop");
+        assert_eq!(l.query(), "foot");
     }
 
     #[test]

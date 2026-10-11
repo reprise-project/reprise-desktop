@@ -296,6 +296,17 @@ impl StartPanel {
         self.edited(&before, moved)
     }
 
+    /// Text dropped on the search field: its first line, as a paste takes it, becomes the
+    /// query.
+    pub fn drop_query(&mut self, s: &str) -> Event {
+        let mut edit = TextEdit::new("", false);
+        if !edit.paste(s, &[]) {
+            return Event::None;
+        }
+        let before = std::mem::replace(&mut self.edit, edit);
+        self.edited(&before.text, true)
+    }
+
     pub fn pointer(&mut self, at: Option<Spot>) -> Event {
         if at == self.hot {
             return Event::None;
@@ -850,6 +861,17 @@ pub(crate) mod tests {
             rows: (0..12).map(|k| row(&format!("f{k}"))).collect(),
         }]);
         assert_eq!(p.results[0].rows.len(), MAX_RESULTS);
+    }
+
+    #[test]
+    fn a_drop_on_the_search_field_replaces_the_query_and_searches() {
+        let mut p = StartPanel::new();
+        p.paste("old");
+        assert_eq!(p.drop_query("notes\nmore"), Event::QueryChanged);
+        assert_eq!((p.mode(), p.query()), (Mode::Search, "notes"));
+        assert_eq!(p.edit().caret(), 5);
+        assert_eq!(p.drop_query("\u{7}"), Event::None, "nothing to drop");
+        assert_eq!(p.query(), "notes");
     }
 
     #[test]

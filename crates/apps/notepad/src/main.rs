@@ -11,7 +11,8 @@ use repriseapp::keys::AltArm;
 use repriseapp::keys::dialog_key;
 use repriseapp::oneshot::{self, MsgBox};
 use repriseapp::{
-    App, BTN_LEFT, Child, Ctx, DropForm, Event, KeyInput, MAIN, PointerInput, Reply, WinId,
+    App, BTN_LEFT, Child, Ctx, DropForm, Event, FileDrop, KeyInput, MAIN, PointerInput, Reply,
+    WinId,
 };
 use reprisekit::access::{ROOT, Tree};
 use reprisekit::classic::widgets::{self, Axis, ScrollHit};
@@ -1604,6 +1605,18 @@ impl App for Notepad {
             _ => return None,
         };
         Some(DropForm { form, px })
+    }
+
+    fn drop_file_dialog(&mut self, win: WinId) -> Option<FileDrop<'_>> {
+        let dlg = match win {
+            OPEN => self.open.as_mut()?,
+            SAVEAS => self.saveas.as_mut()?,
+            _ => return None,
+        };
+        Some(FileDrop {
+            dlg,
+            host: &self.host,
+        })
     }
 
     fn draw(&mut self, win: WinId, c: &mut Canvas, ctx: &Ctx) {
