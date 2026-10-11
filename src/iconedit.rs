@@ -237,6 +237,7 @@ impl State {
         }
         view.rename = Some((index, TextEdit::new(entry.label.clone(), true)));
         view.rename_press = None;
+        view.rename_drop = None;
         view.selection.set_only(Some(index));
         self.restart_caret();
         self.relayout_desktop();

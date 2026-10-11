@@ -705,6 +705,18 @@ impl State {
         self.start_panel_event_with(enters, |m| m.key(key));
     }
 
+    /// Text dropped on the search field becomes the query (`dialogdrop`); `true` when it went
+    /// in.
+    pub fn start_panel_dropped(&mut self, text: &str) -> bool {
+        let mut took = false;
+        self.start_panel_event(|m| {
+            let event = m.drop_query(text);
+            took = event == Event::QueryChanged;
+            event
+        });
+        took
+    }
+
     pub fn start_panel_paste(&mut self, text: &str) {
         self.start_panel_event(|m| m.paste(text));
     }

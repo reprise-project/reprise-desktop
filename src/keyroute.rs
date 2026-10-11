@@ -598,16 +598,17 @@ pub fn drag_spends(route: &KeyRoute, mods: u32) -> u32 {
 }
 
 /// Whether a bind's action runs during a drag between programs: those
-/// that bring another window or the desktop within reach of the drop
-/// (the switcher, Start, Show Desktop, minimize, maximize, snap, the
-/// desktop switch) and the magnifier. The rest (closing, dialogs, fields,
-/// screenshots) wait for the drop.
+/// that bring another window, the desktop or a search field within reach of
+/// the drop (the switcher, Start, the launcher, Show Desktop, minimize,
+/// maximize, snap, the desktop switch) and the magnifier. The rest (closing,
+/// dialogs, screenshots) wait for the drop.
 pub fn runs_during_drag(a: &Action) -> bool {
     matches!(
         a,
         Action::Cycle
             | Action::Flip
             | Action::StartMenu
+            | Action::Launcher
             | Action::ShowDesktop
             | Action::Minimize
             | Action::Maximize
@@ -1435,11 +1436,14 @@ mod tests {
         assert_eq!(route(&m, &ctrl_escape, &b, &[]).route, KeyRoute::DragCancel);
         assert_eq!(r(&m, &press(KEY_n, 0)), KeyRoute::Swallow);
         assert_eq!(r(&m, &release(KEY_n)), KeyRoute::Client);
-        // Binds that open a field or a dialog wait for the drop.
+        // Binds that open a dialog wait for the drop; the launcher's field takes it.
         let routed = route(&m, &press(KEY_r, MOD_LOGO), &binds(), &[]);
         assert_eq!(routed.route, KeyRoute::Swallow);
         assert_eq!(routed.arm_super, Some(false));
-        assert_eq!(r(&m, &press(KEY_space, MOD_LOGO)), KeyRoute::Swallow);
+        assert_eq!(
+            r(&m, &press(KEY_space, MOD_LOGO)),
+            KeyRoute::Binds(vec![Action::Launcher])
+        );
     }
 
     #[test]
@@ -1538,6 +1542,7 @@ mod tests {
         for a in [
             Action::Cycle,
             Action::StartMenu,
+            Action::Launcher,
             Action::ShowDesktop,
             Action::Minimize,
             Action::Maximize,
@@ -1552,7 +1557,6 @@ mod tests {
             Action::Exit,
             Action::Lock,
             Action::Run,
-            Action::Launcher,
             Action::WindowMenu,
             Action::CarryToDesktop(Step::Next),
             Action::Screenshot,
