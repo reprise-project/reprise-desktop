@@ -111,9 +111,11 @@ pub struct Explorer {
     pub drive_mounts: Vec<PathBuf>,
     mounts_seen: String,
     pub(crate) udisks: Option<reprisefs::udisks::Udisks>,
-    /// Read with every drive scan and every Computer listing: a stick plugged in
-    /// without being mounted doesn't change `/proc/mounts`.
+    /// Read with every drive scan and every Computer listing, and taken from
+    /// `volume_changes`: a stick plugged in without being mounted doesn't change `/proc/mounts`.
     pub(crate) volumes: reprisefs::udisks::Snapshot,
+    /// [`reprisefs::udisks::follow`]'s snapshots, each with a wake.
+    volume_changes: Option<std::sync::mpsc::Receiver<reprisefs::udisks::Snapshot>>,
     /// Read once: they change on a package install, not between listings.
     pub(crate) globs: Arc<reprisefs::apps::MimeDb>,
     /// The home and document folders a listing gives their own icon, read once.
@@ -212,7 +214,9 @@ impl Explorer {
         let settings = Settings::load();
         let apps = reprisefs::apps::scan(&reprisefs::apps::default_dirs());
         let udisks = reprisefs::udisks::Udisks::system();
-        Explorer::with_settings(start, settings, apps, udisks, ctx)
+        let mut ex = Explorer::with_settings(start, settings, apps, udisks, ctx);
+        ex.follow_volumes(ctx.wake.clone());
+        ex
     }
 
     /// The window on `settings`, `app_index` and `udisks` as given, for tests that read nothing of the developer's own.
@@ -250,6 +254,7 @@ impl Explorer {
             drives,
             mounts_seen: std::fs::read_to_string("/proc/mounts").unwrap_or_default(),
             volumes: reprisefs::udisks::Snapshot::default(),
+            volume_changes: None,
             udisks,
             globs: Arc::new(reprisefs::apps::mime_globs()),
             specials: place::special_folders(),
@@ -642,11 +647,9 @@ impl Explorer {
     /// Read UDisks2 again and mark the mounted drives it calls removable:
     /// `/proc/mounts` alone takes an unlocked stick's cleartext volume for a fixed disk.
     fn sync_volumes(&mut self) {
-        self.volumes = self
-            .udisks
-            .as_ref()
-            .map(|u| u.snapshot())
-            .unwrap_or_default();
+        if let Some(u) = &self.udisks {
+            self.volumes = u.snapshot();
+        }
         for d in &mut self.drives {
             if self.volumes.removable_device(&d.device) {
                 d.removable = true;

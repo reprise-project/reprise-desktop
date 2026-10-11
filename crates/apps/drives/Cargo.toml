@@ -17,12 +17,9 @@ path = "src/main.rs"
 repriseapp = { path = "../../repriseapp" }
 reprisekit = { path = "../../reprisekit" }
 reprisetray = { path = "../../reprisetray" }
-reprisebus = { path = "../../reprisebus" }
 reprisefs = { path = "../../reprisefs" }
 repriseconf = { path = "../../repriseconf" }
 zbus.workspace = true
-futures-util.workspace = true
-async-io = "2"
 zeroize.workspace = true
 log.workspace = true
 env_logger.workspace = true

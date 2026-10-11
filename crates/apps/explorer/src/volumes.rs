@@ -8,9 +8,41 @@ use crate::dialogs::Dialog;
 use crate::place::{self, Place};
 use repriseapp::unlock::{self, Outcome, Unlock};
 use repriseapp::{Ctx, Event, Reply};
-use reprisefs::udisks::{Error, ErrorKind, Volume};
+use reprisefs::udisks::{Error, ErrorKind, Snapshot, Volume};
 
 impl Explorer {
+    /// Take UDisks2's snapshots as it changes, so Computer gains and loses a
+    /// drive that is plugged in or pulled out without a mount.
+    pub(crate) fn follow_volumes(&mut self, wake: repriseapp::Waker) {
+        let (tx, rx) = std::sync::mpsc::channel();
+        reprisefs::udisks::follow(move |snap| {
+            if tx.send(snap).is_ok() {
+                wake.wake();
+            }
+        });
+        self.volume_changes = Some(rx);
+    }
+
+    /// The latest snapshot `follow_volumes` posted, if any arrived.
+    pub(crate) fn poll_volumes(&mut self, ctx: &mut Ctx) -> Option<Reply> {
+        let snap = self.volume_changes.as_ref()?.try_iter().last()?;
+        Some(self.volumes_changed(snap, ctx))
+    }
+
+    /// Computer re-lists when `snap` differs from what it shows; elsewhere the
+    /// drives are re-read if the mounts moved.
+    pub(crate) fn volumes_changed(&mut self, snap: Snapshot, ctx: &mut Ctx) -> Reply {
+        if snap == self.volumes {
+            return Reply::none();
+        }
+        self.volumes = snap;
+        if self.place == Place::Computer {
+            return self.refresh(ctx);
+        }
+        self.sync_drives(ctx);
+        Reply::none()
+    }
+
     pub(crate) fn selected_unmounted(&self) -> Option<Volume> {
         if self.place != Place::Computer {
             return None;
