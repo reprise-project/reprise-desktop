@@ -624,7 +624,7 @@ pub fn picked<'a>(lv: &ListView, d: &'a Defaults) -> Option<&'a FileType> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use std::collections::HashMap;
 
