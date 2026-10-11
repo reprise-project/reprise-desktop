@@ -201,11 +201,21 @@ pub fn count(n: usize) -> String {
     }
 }
 
-pub fn headline(phase: &Phase, updates: &[Update]) -> String {
+/// `picked` is how many of `updates` are checked for install.
+pub fn headline(phase: &Phase, updates: &[Update], picked: usize) -> String {
     match phase {
         Phase::Unchecked => "Reprise has not checked for updates yet.".into(),
         Phase::Checking => "Checking for updates...".into(),
         Phase::Ready if updates.is_empty() => "Your computer is up to date.".into(),
+        Phase::Ready if picked == 0 => format!(
+            "0 of {} selected. Check the updates you want to install.",
+            count(updates.len())
+        ),
+        Phase::Ready if picked < updates.len() => format!(
+            "{picked} of {} selected. Click Install to download and install {}.",
+            count(updates.len()),
+            if picked == 1 { "it" } else { "them" },
+        ),
         Phase::Ready => format!(
             "{} {} available for your computer. Click Install to download and install {}.",
             count(updates.len()),
@@ -443,11 +453,39 @@ mod tests {
         let one = [pkg("a", Kind::Normal)];
         let two = [pkg("a", Kind::Normal), pkg("b", Kind::Normal)];
         assert_eq!(
-            headline(&Phase::Ready, &one),
+            headline(&Phase::Ready, &one, 1),
             "1 update is available for your computer. Click Install to download and install it."
         );
-        assert!(headline(&Phase::Ready, &two).starts_with("2 updates are available"));
-        assert_eq!(headline(&Phase::Ready, &[]), "Your computer is up to date.");
+        assert!(headline(&Phase::Ready, &two, 2).starts_with("2 updates are available"));
+        assert_eq!(
+            headline(&Phase::Ready, &[], 0),
+            "Your computer is up to date."
+        );
+    }
+
+    #[test]
+    fn the_headline_counts_the_checked_updates_when_some_are_unchecked() {
+        let one = [pkg("a", Kind::Normal)];
+        let eight: Vec<Update> = (0..8)
+            .map(|i| pkg(&format!("p{i}"), Kind::Normal))
+            .collect();
+        assert_eq!(
+            headline(&Phase::Ready, &eight, 5),
+            "5 of 8 updates selected. Click Install to download and install them."
+        );
+        assert_eq!(
+            headline(&Phase::Ready, &eight, 1),
+            "1 of 8 updates selected. Click Install to download and install it."
+        );
+        assert_eq!(
+            headline(&Phase::Ready, &eight, 0),
+            "0 of 8 updates selected. Check the updates you want to install."
+        );
+        assert_eq!(
+            headline(&Phase::Ready, &one, 0),
+            "0 of 1 update selected. Check the updates you want to install."
+        );
+        assert!(headline(&Phase::Ready, &eight, 8).starts_with("8 updates are available"));
     }
 
     #[test]
