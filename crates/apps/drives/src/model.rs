@@ -12,10 +12,15 @@ pub enum Arrival {
     Unlock(String),
 }
 
+/// File systems whose own packages (e2fsprogs, xfsprogs) clear `HintAuto`
+/// in a udev rule so nothing mounts them while every session is locked.
+/// The applet leaves arrivals alone under the lock already, so it mounts these.
+const HINT_CLEARED_UNDER_LOCK: &[&str] = &["ext2", "ext3", "ext4", "ext4dev", "xfs"];
+
 /// Whether `v` is the user's own removable volume and fine to act on
 /// without being asked. A cleartext volume carries its container's hints.
 fn auto(snap: &Snapshot, v: &Volume) -> bool {
-    snap.removable(v) && v.auto
+    snap.removable(v) && (v.auto || HINT_CLEARED_UNDER_LOCK.contains(&v.fs_type.as_str()))
 }
 
 /// What appeared between `prev` and `next` that the applet mounts or
@@ -202,6 +207,28 @@ mod tests {
         manual.auto = false;
         let after = snap(vec![disk("d", true)], vec![ignored, manual]);
         assert!(arrivals(Some(&before), &after).is_empty());
+    }
+
+    #[test]
+    fn an_ext4_or_xfs_stick_mounts_though_its_auto_hint_is_cleared() {
+        let before = snap(vec![], vec![]);
+        let stick = |path: &str, fs_type: &str| Volume {
+            fs_type: fs_type.into(),
+            auto: false,
+            ..fat(path, "d", false)
+        };
+        let after = snap(
+            vec![disk("d", true)],
+            vec![
+                stick("sdb1", "ext4"),
+                stick("sdb2", "xfs"),
+                stick("sdb3", "vfat"),
+            ],
+        );
+        assert_eq!(
+            arrivals(Some(&before), &after),
+            [Arrival::Mount("sdb1".into()), Arrival::Mount("sdb2".into())]
+        );
     }
 
     #[test]
