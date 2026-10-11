@@ -237,7 +237,7 @@ mod tests {
     /// its rect.
     #[test]
     fn a_squeezed_bar_draws_nothing_outside_its_rect() {
-        if !crate::text::tahoma_installed() {
+        if !crate::text::test_tahoma() {
             return;
         }
         let theme = Theme::default();
@@ -283,7 +283,7 @@ mod tests {
 
     #[test]
     fn draw_lays_the_x_and_the_title_in_the_header() {
-        if !crate::text::tahoma_installed() {
+        if !crate::text::test_tahoma() {
             return;
         }
         let theme = Theme::default();
@@ -369,7 +369,7 @@ mod tests {
     /// and the frame are unchanged.
     #[test]
     fn a_greyed_bar_writes_its_title_in_gray_text() {
-        if !crate::text::tahoma_installed() {
+        if !crate::text::test_tahoma() {
             return;
         }
         let theme = Theme::default();

@@ -213,7 +213,7 @@ mod tests {
 
     #[test]
     fn the_box_lays_out_on_its_grid() {
-        if !crate::text::tahoma_installed() {
+        if !crate::text::test_tahoma() {
             return;
         }
         const EXPECTED_ICON: (i32, i32) = (11, 15);

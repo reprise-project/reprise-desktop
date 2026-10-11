@@ -473,7 +473,7 @@ mod tests {
 
     #[test]
     fn big_layout_places_explorers_strip() {
-        if !crate::text::tahoma_installed() {
+        if !crate::text::test_tahoma() {
             return;
         }
         let text = renderer();
@@ -498,7 +498,7 @@ mod tests {
 
     #[test]
     fn blues_big_strip_lays_out_wider_history_buttons() {
-        if !crate::text::tahoma_installed() {
+        if !crate::text::test_tahoma() {
             return;
         }
         let text = renderer();
@@ -559,7 +559,7 @@ mod tests {
 
     #[test]
     fn a_big_labelled_button_places_its_icon_and_label() {
-        if !crate::text::tahoma_installed() {
+        if !crate::text::test_tahoma() {
             return;
         }
         const FRAME: i32 = 228;
@@ -745,7 +745,7 @@ mod tests {
 
     #[test]
     fn a_latched_button_sinks_over_a_plain_face_even_when_hot() {
-        if !crate::text::tahoma_installed() {
+        if !crate::text::test_tahoma() {
             return;
         }
         let theme = Theme::default();
@@ -775,7 +775,7 @@ mod tests {
 
     #[test]
     fn a_big_button_gets_the_hot_border_and_the_pressed_shift() {
-        if !crate::text::tahoma_installed() {
+        if !crate::text::test_tahoma() {
             return;
         }
         let theme = Theme::default();

@@ -436,7 +436,7 @@ mod tests {
 
     #[test]
     fn blues_address_label_inks_the_rebar_label_grey() {
-        if !crate::text::tahoma_installed() {
+        if !crate::text::test_tahoma() {
             return;
         }
         let ab = bar();
@@ -494,7 +494,7 @@ mod tests {
 
     #[test]
     fn draws_the_band_pixels() {
-        if !crate::text::tahoma_installed() {
+        if !crate::text::test_tahoma() {
             return;
         }
         let ab = bar();
@@ -557,7 +557,7 @@ mod tests {
 
     #[test]
     fn draws_the_open_list() {
-        if !crate::text::tahoma_installed() {
+        if !crate::text::test_tahoma() {
             return;
         }
         let mut ab = bar();

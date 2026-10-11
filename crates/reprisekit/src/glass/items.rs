@@ -328,7 +328,7 @@ mod tests {
         near("unfocused fill", c.get(x, row_y(top, 0) + 2), 0xF7F8F8, 2);
         assert_eq!(c.get(x, row_y(top, 2)), rgb(0x7A9BCD), "focus outline");
         // A face wider than the default UI face reaches the point with the row's size.
-        if crate::text::tahoma_installed() {
+        if crate::text::test_tahoma() {
             assert_eq!(c.get(x, row_y(top, 2) + 8), rgb(0xFFFFFF), "nothing inside");
         }
         theme.active = false;

@@ -32,8 +32,16 @@ jobs:
             target
           key: cargo-${{ steps.rustc.outputs.version }}-${{ hashFiles('Cargo.lock') }}
           restore-keys: cargo-${{ steps.rustc.outputs.version }}-
-      # The checkout and the cache come back owned by root.
+      # The Tahoma the pixel tests are pinned to.
+      - uses: actions/cache@v6
+        with:
+          path: /home/builder/.cache/reprise-test-fonts
+          key: test-fonts-${{ hashFiles('scripts/test-fonts.sh') }}
+      # The checkout and the caches come back owned by root.
       - run: chown -R builder "$GITHUB_WORKSPACE" /home/builder
+      - run: |
+          dir=$(runuser -u builder -- env HOME=/home/builder scripts/test-fonts.sh)
+          echo "REPRISE_TEST_FONTS=$dir" >> "$GITHUB_ENV"
       - run: runuser -u builder -- env HOME=/home/builder cargo fmt --check
       - run: runuser -u builder -- env HOME=/home/builder cargo clippy --workspace --all-targets -- -D warnings
-      - run: runuser -u builder -- env HOME=/home/builder cargo test --workspace --no-fail-fast
+      - run: runuser -u builder -- env HOME=/home/builder REPRISE_TEST_FONTS="$REPRISE_TEST_FONTS" cargo test --workspace --no-fail-fast

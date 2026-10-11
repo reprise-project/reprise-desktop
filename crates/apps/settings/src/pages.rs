@@ -2952,7 +2952,7 @@ mod tests {
     /// of a check box's, it starts a pixel right of the radio's.
     #[test]
     fn lines_under_a_choice_start_at_its_label_in_every_look() {
-        if !reprisekit::text::tahoma_installed() {
+        if !reprisekit::text::test_tahoma() {
             return;
         }
         use reprisekit::interface::Interface;
@@ -3130,7 +3130,7 @@ mod tests {
         assert_eq!(rect(&s, p, "magnifier_follow"), Rect::new(32, 184, 13, 13));
         assert_eq!(rect(&s, p, "mag_note"), Rect::new(32, 206, 334, 39));
         inside_page(&s, p);
-        if !reprisekit::text::tahoma_installed() {
+        if !reprisekit::text::test_tahoma() {
             return;
         }
         let text = TextRenderer::load(&FontConfig::default());

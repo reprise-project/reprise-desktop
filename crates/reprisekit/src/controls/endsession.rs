@@ -321,7 +321,7 @@ mod tests {
 
     #[test]
     fn the_classic_prompt_draws_its_list_and_buttons() {
-        if !crate::text::tahoma_installed() {
+        if !crate::text::test_tahoma() {
             return;
         }
         let (text, px) = rend();

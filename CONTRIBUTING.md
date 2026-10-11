@@ -17,8 +17,18 @@ and run Reprise, nested in your current session or from a login manager.
 CI runs the same three commands in an `archlinux:latest` container as an
 unprivileged user (`.github/workflows/ci.yml` installs the packages). Run
 the tests as a normal user too: some check that a read-only directory
-refuses a write, which root ignores. Tests that pin Tahoma or Segoe UI
-glyphs skip those checks when the fonts aren't installed.
+refuses a write, which root ignores.
+
+Pixel tests that depend on the UI font are pinned to Wine 9.0's Tahoma.
+`scripts/test-fonts.sh` downloads it into your cache and prints the
+directory; the tests load Tahoma from there instead of the system:
+
+    export REPRISE_TEST_FONTS=$(scripts/test-fonts.sh)
+    cargo test --workspace
+
+Without `REPRISE_TEST_FONTS` those tests skip, as do the ones that pin
+Trebuchet MS or Segoe UI glyphs when those fonts aren't installed. CI sets
+it.
 
 - **Pixel-neutral changes.** If a change shouldn't move a pixel, prove it
   with `scripts/pixels-unchanged.sh [--with-blue] BASE`. It renders the

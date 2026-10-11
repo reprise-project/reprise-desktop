@@ -1585,7 +1585,7 @@ mod tests {
 
     #[test]
     fn the_sort_arrow_sits_after_the_title() {
-        if !crate::text::tahoma_installed() {
+        if !crate::text::test_tahoma() {
             return;
         }
         let text = TextRenderer::load(&FontConfig::default());
@@ -1634,7 +1634,7 @@ mod tests {
     /// short of the column's end, and the title ends its ink 10 px before the arrow.
     #[test]
     fn a_right_aligned_sorted_column_puts_its_arrow_after_the_title() {
-        if !crate::text::tahoma_installed() {
+        if !crate::text::test_tahoma() {
             return;
         }
         let mut lv = view(0);
@@ -1726,7 +1726,7 @@ mod tests {
     /// divider (85..93 of 96) and ends its ink 10 px before it, at 74 (unsorted: 88).
     #[test]
     fn blue_sorted_titles_move_in_and_a_right_aligned_arrow_meets_the_divider() {
-        if !crate::text::tahoma_installed() {
+        if !crate::text::test_tahoma() {
             return;
         }
         let rest = blue_header_inks(None);
@@ -1813,7 +1813,7 @@ mod tests {
 
     #[test]
     fn the_rename_box_is_a_black_border_on_white_over_the_name() {
-        if !crate::text::tahoma_installed() {
+        if !crate::text::test_tahoma() {
             return;
         }
         let text = TextRenderer::load(&FontConfig::default());
@@ -2097,7 +2097,7 @@ mod tests {
         let framed = layout(&lv, r, &ControlMetrics::CLASSIC);
         assert_eq!(framed.header, Rect::new(22, 32, 296, HEADER_H));
         assert_eq!(framed.body.x, 22);
-        if !crate::text::tahoma_installed() {
+        if !crate::text::test_tahoma() {
             return;
         }
         lv.frame = false;
@@ -2111,7 +2111,7 @@ mod tests {
 
     #[test]
     fn a_group_header_is_bold_over_the_gradient_rule() {
-        if !crate::text::tahoma_installed() {
+        if !crate::text::test_tahoma() {
             return;
         }
         let lv = grouped();
