@@ -8,7 +8,7 @@
 //! keyboard; typed text closes it and goes on to the launcher's search.
 //!
 //! Snap assist is the same model in a zone: after a snap that leaves zones
-//! free (`apply_layout`), the first free zone shows a panel 13 px in from
+//! free (`apply_layout`, `key_into_zone`), the first free zone shows a panel 13 px in from
 //! its edges with a card per other window of the desktop. Picking one snaps
 //! it there and moves on to the next free zone. It has no dim; under a
 //! glass look the panel is a glass sheet (`glass::Backdrop`).
@@ -29,6 +29,7 @@ use crate::keys;
 use crate::livepreview::ThumbId;
 use crate::output::upload_scaled;
 use crate::raster::{Canvas, Rect};
+use crate::snapview::Snapping;
 use crate::window::WindowId;
 
 const DIM: [f32; 4] = [0.0, 0.0, 0.0, 0.6];
@@ -176,6 +177,13 @@ impl State {
         self.show_overview(all, model, windows, grids, None);
     }
 
+    pub fn snap_assist_open(&self) -> bool {
+        self.overview
+            .view
+            .as_ref()
+            .is_some_and(|v| v.assist.is_some())
+    }
+
     /// Snap assist after `snapped` filled a zone from the snap layout
     /// picker: offers the desktop's other snappable windows outside
     /// `snapped`'s group for the first of `zones`.
@@ -183,25 +191,21 @@ impl State {
         if self.overview.view.is_some() || self.is_locked() || self.switcher.is_open() {
             return;
         }
-        let windows: Vec<WindowId> = (self.overview_windows().into_iter())
-            .filter(|&w| {
-                !self.wm.snap.shares_group(snapped, w) && self.win(w).is_some_and(|x| x.snappable())
-            })
-            .collect();
-        self.snap_assist_at(snapped, zones, windows);
+        self.snap_assist_at(snapped, zones);
     }
 
-    /// Snap assist offering `windows` for the first of `zones`: a single
-    /// grid over the zone, on the output under its centre.
-    fn snap_assist_at(
-        &mut self,
-        leader: WindowId,
-        zones: Vec<(usize, Rect)>,
-        windows: Vec<WindowId>,
-    ) {
+    /// Snap assist for the first of `zones`: a single grid over the zone, on the output under
+    /// its centre, offering the desktop's other snappable windows outside `leader`'s group, as
+    /// many as its panel holds.
+    fn snap_assist_at(&mut self, leader: WindowId, zones: Vec<(usize, Rect)>) {
         let Some(&(_, area)) = zones.first() else {
             return;
         };
+        let mut windows: Vec<WindowId> = (self.overview_windows().into_iter())
+            .filter(|&w| {
+                !self.wm.snap.shares_group(leader, w) && self.win(w).is_some_and(|x| x.snappable())
+            })
+            .collect();
         if windows.is_empty() || area.width <= 0 || area.height <= 0 {
             return;
         }
@@ -209,6 +213,12 @@ impl State {
         let Some(output) = self.output_at(f64::from(cx), f64::from(cy)) else {
             return;
         };
+        let work = self.usable_area(Some(&output));
+        let fits = OverviewLayout::assist_fits(windows.len(), area, (work.width, work.height));
+        windows.truncate(fits);
+        if windows.is_empty() {
+            return;
+        }
         let layout = self.overview_grid(windows.len(), area, true);
         let model = Overview::new(windows.len());
         let grids = vec![(output, layout)];
@@ -304,24 +314,16 @@ impl State {
             return;
         };
         let w = v.windows.get(i).copied();
-        let assist = v.assist.clone().map(|(leader, zones)| {
-            let left: Vec<WindowId> = v
-                .windows
-                .iter()
-                .copied()
-                .filter(|&x| Some(x) != w)
-                .collect();
-            (leader, zones, left)
-        });
+        let assist = v.assist.clone();
         self.close_overview();
         let Some(w) = w else {
             return;
         };
-        if let Some((leader, zones, left)) = assist {
+        if let Some((leader, zones)) = assist {
             if let Some((&(zone, rect), rest)) = zones.split_first() {
                 self.wm.snap.join_group(leader, w, zone);
                 self.snap_to_zone(w, rect);
-                self.snap_assist_at(leader, rest.to_vec(), left);
+                self.snap_assist_at(leader, rest.to_vec());
             }
             return;
         }
@@ -422,36 +424,35 @@ impl State {
 
     /// The window list may have changed: keep the open overview's order,
     /// drop gone windows, append new ones to their output's grid. Snap
-    /// assist adds none and closes once none is left.
+    /// assist keeps the windows offered at the pick (`assist_offer`).
     pub fn overview_refresh(&mut self) {
         let Some(v) = self.overview.view.as_ref() else {
             return;
         };
         let now = self.overview_windows();
-        let mut order: Vec<WindowId> = v
-            .windows
-            .iter()
-            .copied()
-            .filter(|w| now.contains(w))
-            .collect();
         let boxes: Vec<Rect> = v.layouts.iter().map(|l| l.area).collect();
         let selected = v.windows.get(v.model.selected).copied();
-        // Snap assist keeps the windows offered at the pick.
-        let (windows, counts) = if v.assist.is_some() {
-            let n = order.len();
-            (order, vec![n])
-        } else {
-            order.extend(now.iter().copied().filter(|w| !v.windows.contains(w)));
-            self.overview_grouped(&order, &boxes)
+        let (windows, counts) = match v.assist {
+            Some((leader, _)) => {
+                let Some(offer) = assist_offer(&self.wm.snap, leader, &v.windows, &now) else {
+                    self.close_overview();
+                    return;
+                };
+                let n = offer.len();
+                (offer, vec![n])
+            }
+            None => {
+                let mut order: Vec<WindowId> = (v.windows.iter().copied())
+                    .filter(|w| now.contains(w))
+                    .collect();
+                order.extend(now.iter().copied().filter(|w| !v.windows.contains(w)));
+                self.overview_grouped(&order, &boxes)
+            }
         };
         let Some(v) = self.overview.view.as_mut() else {
             return;
         };
         if windows == v.windows {
-            return;
-        }
-        if windows.is_empty() && v.assist.is_some() {
-            self.close_overview();
             return;
         }
         v.windows = windows;
@@ -688,6 +689,22 @@ impl State {
     }
 }
 
+/// Snap assist's cards once the window list is `now`: the `offered`
+/// windows still open, or None to close it when none is left or `leader`
+/// has left its group, which a pick would join.
+fn assist_offer(
+    snap: &Snapping,
+    leader: WindowId,
+    offered: &[WindowId],
+    now: &[WindowId],
+) -> Option<Vec<WindowId>> {
+    snap.group_of(leader)?;
+    let left: Vec<WindowId> = (offered.iter().copied())
+        .filter(|w| now.contains(w))
+        .collect();
+    (!left.is_empty()).then_some(left)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -716,5 +733,33 @@ mod tests {
         assert_eq!(key_of(&press(&[keys::KEY_Return], 0)), Some(Key::Enter));
         assert_eq!(key_of(&press(&[keys::KEY_Escape], 0)), Some(Key::Escape));
         assert_eq!(key_of(&press(&[keys::KEY_a], 0)), None, "text goes on");
+    }
+
+    #[test]
+    fn snap_assist_closes_once_its_snapped_window_leaves_the_group() {
+        use crate::snap::{Splits, ZoneLayout};
+        let (a, b, c, d) = (
+            WindowId::next(),
+            WindowId::next(),
+            WindowId::next(),
+            WindowId::next(),
+        );
+        let thirds = ZoneLayout::parse("1|1|1").unwrap();
+        let splits = Splits::new(&thirds, Rect::new(0, 0, 1920, 1032));
+        let mut snap = Snapping::default();
+        snap.new_group(a, "DP-1", &thirds, splits, 0);
+        snap.join_group(a, b, 1);
+        assert_eq!(
+            assist_offer(&snap, a, &[c, d], &[a, b, d]),
+            Some(vec![d]),
+            "a closed card goes"
+        );
+        assert_eq!(assist_offer(&snap, a, &[c], &[a, b]), None, "no card left");
+        snap.forget_window(a);
+        assert_eq!(
+            assist_offer(&snap, a, &[c, d], &[b, c, d]),
+            None,
+            "the snapped window closed, though its group has another member"
+        );
     }
 }

@@ -118,16 +118,19 @@ impl PickerLayout {
 /// Zone `z` of a work area `work` big as a tile of `cell`: each side at
 /// its share of the cell's side plus one [`TILE_GAP`], the far sides
 /// giving the gap back, so an even split's tiles are equal, stand
-/// `TILE_GAP` apart and meet the cell's edges.
+/// `TILE_GAP` apart and meet the cell's edges. A zone too thin for its
+/// gap keeps a pixel at the cell's far edge at most.
 fn tile(cell: Rect, z: Rect, work: (i32, i32)) -> Rect {
-    let at = |v: i32, len: i32, total: i32| {
-        let total = i64::from(total.max(1));
-        ((i64::from(v) * i64::from(len + TILE_GAP) + total / 2) / total) as i32
+    let span = |v0: i32, v1: i32, len: i32, total: i32| {
+        let at = |v: i32| {
+            let total = i64::from(total.max(1));
+            ((i64::from(v) * i64::from(len + TILE_GAP) + total / 2) / total) as i32
+        };
+        let a = at(v0).min(len - 1);
+        (a, (at(v1) - TILE_GAP).max(a + 1))
     };
-    let x0 = at(z.x, cell.width, work.0);
-    let x1 = at(z.right(), cell.width, work.0) - TILE_GAP;
-    let y0 = at(z.y, cell.height, work.1);
-    let y1 = at(z.bottom(), cell.height, work.1) - TILE_GAP;
+    let (x0, x1) = span(z.x, z.right(), cell.width, work.0);
+    let (y0, y1) = span(z.y, z.bottom(), cell.height, work.1);
     Rect::new(cell.x + x0, cell.y + y0, x1 - x0, y1 - y0)
 }
 
@@ -176,6 +179,18 @@ mod tests {
         let stack = &l.tiles[3];
         assert_eq!((stack[1].height, stack[2].height), (30, 30));
         assert_eq!(stack[2].y - stack[1].bottom(), TILE_GAP);
+    }
+
+    #[test]
+    fn a_zone_thinner_than_the_gap_keeps_a_tile_in_its_cell() {
+        let spec = CellSpec {
+            zones: cols(&[0, 1900, 1920]),
+            ..CellSpec::default()
+        };
+        let l = PickerLayout::compute(Shape::Grid, WORK, &[spec]);
+        let (cell, thin) = (l.cells[0], l.tiles[0][1]);
+        assert_eq!(thin, Rect::new(cell.right() - 1, cell.y, 1, 64));
+        assert_eq!(l.hit(thin.x, thin.y + 10), Some((0, 1)));
     }
 
     #[test]

@@ -446,6 +446,7 @@ impl State {
             dialog_modal: self.dialog_is_modal(),
             launcher_open: self.launcher.is_some(),
             overview_open: self.overview.view.is_some(),
+            snap_assist_open: self.snap_assist_open(),
             snap_picker_open: self.snap_picker.is_shown(),
             snap_picker_keys: self.snap_picker.has_keys(),
             start_panel_open: self.start_panel.is_some(),
