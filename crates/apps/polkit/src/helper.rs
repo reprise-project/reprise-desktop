@@ -974,7 +974,13 @@ mod tests {
         use std::os::unix::fs::PermissionsExt;
         let dir = scratch("refused");
         let sock = dir.join("agent-helper.socket");
-        drop(std::os::unix::net::UnixListener::bind(&sock).unwrap());
+        // A socket inode bound to nothing. A dropped listener would not do: a
+        // helper another test thread spawns holds its fd, still listening, until
+        // the child execs.
+        let path = std::ffi::CString::new(sock.as_os_str().as_encoded_bytes()).unwrap();
+        // SAFETY: `path` is NUL-terminated and outlives the call.
+        let rc = unsafe { libc::mknod(path.as_ptr(), libc::S_IFSOCK | 0o600, 0) };
+        assert_eq!(rc, 0, "mknod: {}", std::io::Error::last_os_error());
         let helper = dir.join("helper");
         std::fs::write(&helper, "#!/bin/sh\ncat\n").unwrap();
         std::fs::set_permissions(&helper, std::fs::Permissions::from_mode(0o755)).unwrap();
