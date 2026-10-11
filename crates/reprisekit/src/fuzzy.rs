@@ -8,14 +8,18 @@ const WORD_START: u32 = 4;
 const RUN: u32 = 2;
 const SCATTERED: u32 = 1;
 
-/// A word starts after a space, `-`, `_`, `.` or a case step (`MyApp` has two).
-fn is_word_start(prev: Option<char>, c: char) -> bool {
-    match prev {
-        None => true,
-        Some(p) => {
-            p == ' ' || p == '-' || p == '_' || p == '.' || (p.is_lowercase() && c.is_uppercase())
-        }
-    }
+/// Whether `cand[i]` starts a word: it follows a space, `-`, `_` or `.`, or a
+/// case step (`MyApp` splits as `My|App`, `KCalc` as `K|Calc`).
+pub fn is_word_start(cand: &[char], i: usize) -> bool {
+    let Some(prev) = i.checked_sub(1) else {
+        return true;
+    };
+    let (p, c) = (cand[prev], cand[i]);
+    matches!(p, ' ' | '-' | '_' | '.')
+        || (p.is_lowercase() && c.is_uppercase())
+        || (p.is_uppercase()
+            && c.is_uppercase()
+            && cand.get(i + 1).is_some_and(|n| n.is_lowercase()))
 }
 
 fn char_matches(c: char, want: char) -> bool {
@@ -27,10 +31,7 @@ fn scan(query: &[char], cand: &[char], prefer_word_start: bool) -> Option<u32> {
     let mut search_from = 0;
     let mut prev_matched: Option<usize> = None;
     for (k, &want) in query.iter().enumerate() {
-        let word_start_at = |i: usize| {
-            let prev = if i == 0 { None } else { Some(cand[i - 1]) };
-            is_word_start(prev, cand[i])
-        };
+        let word_start_at = |i: usize| is_word_start(cand, i);
         let found = if prefer_word_start {
             (search_from..cand.len())
                 .find(|&i| char_matches(cand[i], want) && word_start_at(i))
@@ -130,6 +131,19 @@ mod tests {
         assert!(prefix > word, "{prefix} > {word}");
         assert!(word > run, "{word} > {run}");
         assert!(run > scattered, "{run} > {scattered}");
+    }
+
+    #[test]
+    fn words_start_after_a_separator_or_a_case_step() {
+        let starts = |name: &str| {
+            let c: Vec<char> = name.chars().collect();
+            (0..c.len())
+                .filter(|&i| is_word_start(&c, i))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(starts("MyApp"), [0, 2]);
+        assert_eq!(starts("KCalc"), [0, 1]);
+        assert_eq!(starts("GNOME no-op"), [0, 6, 9]);
     }
 
     #[test]
