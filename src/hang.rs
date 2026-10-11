@@ -56,9 +56,11 @@ impl Liveness {
         self.hung = true;
     }
 
-    /// The client showed it is running (it committed a new frame).
-    pub fn alive(&mut self) {
-        self.hung = false;
+    /// The client showed it is running (it answered a ping or committed a new frame): whether it
+    /// was hung until now.
+    pub fn alive(&mut self) -> bool {
+        self.waiting = false;
+        std::mem::take(&mut self.hung)
     }
 
     /// The window is being asked to close: whether its client is already known not to answer, so
@@ -81,12 +83,12 @@ fn may_end(pid: i32, own: i32, xwayland: i32) -> bool {
 }
 
 /// The index and pid of each End Program among `dialogs` (their `end_program_pid`s) whose pid
-/// has no window in `live`.
-fn orphaned(dialogs: &[Option<i32>], live: &[i32]) -> Vec<(usize, i32)> {
+/// `ends` picks.
+fn end_programs(dialogs: &[Option<i32>], ends: impl Fn(i32) -> bool) -> Vec<(usize, i32)> {
     dialogs
         .iter()
         .enumerate()
-        .filter_map(|(i, pid)| pid.filter(|p| !live.contains(p)).map(|p| (i, p)))
+        .filter_map(|(i, pid)| pid.filter(|&p| ends(p)).map(|p| (i, p)))
         .collect()
 }
 
@@ -203,8 +205,24 @@ impl State {
 
     /// Window `w` committed: its client is running.
     pub fn window_alive(&mut self, w: WindowId) {
-        if let Some(h) = self.hang.windows.get_mut(&w) {
-            h.liveness.alive();
+        self.recovered(&[w]);
+    }
+
+    /// Windows `ws` showed their client is running: close End Program for each that was hung.
+    fn recovered(&mut self, ws: &[WindowId]) {
+        let mut pids = Vec::new();
+        for &w in ws {
+            let was_hung = self
+                .hang
+                .windows
+                .get_mut(&w)
+                .is_some_and(|h| h.liveness.alive());
+            if was_hung && let Some(pid) = self.client_pid(w) {
+                pids.push(pid);
+            }
+        }
+        if !pids.is_empty() {
+            self.close_end_programs(|p| pids.contains(&p), "is responding again");
         }
     }
 
@@ -266,14 +284,11 @@ impl State {
     }
 
     fn answered(&mut self, target: Target) {
-        match self.hang.pings.remove(&target) {
-            Some(t) => self.handle.remove(t),
-            None => {
-                for w in self.windows_of(target) {
-                    self.window_hang(w).liveness.alive();
-                }
-            }
+        if let Some(t) = self.hang.pings.remove(&target) {
+            self.handle.remove(t);
         }
+        let ws = self.windows_of(target);
+        self.recovered(&ws);
     }
 
     fn windows_of(&mut self, target: Target) -> Vec<WindowId> {
@@ -328,14 +343,18 @@ impl State {
             .iter()
             .filter_map(|w| self.client_pid(w.id))
             .collect();
+        self.close_end_programs(|p| !live.contains(&p), "has no window left");
+    }
+
+    fn close_end_programs(&mut self, ends: impl Fn(i32) -> bool, why: &str) {
         let pids: Vec<Option<i32>> = self
             .dialogs
             .views
             .iter()
             .map(|v| v.dialog.end_program_pid())
             .collect();
-        for (i, pid) in orphaned(&pids, &live).into_iter().rev() {
-            log::info!("end program: pid {pid} has no window left; closing");
+        for (i, pid) in end_programs(&pids, ends).into_iter().rev() {
+            log::info!("end program: pid {pid} {why}; closing");
             self.close_dialog_at(i);
         }
     }
@@ -433,9 +452,21 @@ mod tests {
     #[test]
     fn end_program_closes_once_its_program_has_no_window() {
         let dialogs = [Some(10), None, Some(20), Some(10)];
-        assert_eq!(orphaned(&dialogs, &[20, 30]), vec![(0, 10), (3, 10)]);
-        assert_eq!(orphaned(&dialogs, &[10, 20]), vec![]);
-        assert_eq!(orphaned(&dialogs, &[]), vec![(0, 10), (2, 20), (3, 10)]);
+        let orphaned = |live: &[i32]| end_programs(&dialogs, |p| !live.contains(&p));
+        assert_eq!(orphaned(&[20, 30]), vec![(0, 10), (3, 10)]);
+        assert_eq!(orphaned(&[10, 20]), vec![]);
+        assert_eq!(orphaned(&[]), vec![(0, 10), (2, 20), (3, 10)]);
+    }
+
+    #[test]
+    fn a_hung_window_answering_again_reports_its_recovery_once() {
+        let mut l = Liveness::default();
+        assert!(!l.alive(), "a window never hung did not recover");
+        l.pinged(Instant::now());
+        l.timed_out();
+        assert!(l.alive(), "the first answer after a timeout is a recovery");
+        assert!(!l.alive(), "a second answer is not");
+        assert!(!l.hung(false), "not hung after recovering");
     }
 
     /// The caption names the executable, without the kernel's " (deleted)" mark on a binary
