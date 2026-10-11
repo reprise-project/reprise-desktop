@@ -122,7 +122,8 @@ the Super tap, Super+Shift+Esc and the VT switch keys can be rebound.
 - **From the keyboard.** Super and Left or Right step a window through the
   zones and on to the next screen. Super+Up steps up, then maximizes; Super+
   Down steps down, restores, then gives back the size from before the snap.
-  Stepping into another window's zone swaps the two. Hold Shift while dragging
+  Stepping into another window's zone swaps the two, and a step that leaves
+  zones free offers snap assist for them. Hold Shift while dragging
   to drop into the zones of the layout you picked.
 
 ![Snap assist offering Explorer for the free half after Notepad snapped left](screenshots/snap-assist.png)
