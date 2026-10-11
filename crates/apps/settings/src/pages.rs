@@ -795,11 +795,12 @@ pub fn power(a: Area) -> Form {
 
 /// How windows snap, tab and come back: the Snapping group holds
 /// `[window_snapping]`'s drag snapping, the snap layouts on the maximize
-/// button and the snap bar a drag shows (greyed with drag snapping off);
-/// Tabs and Placement holds `[windows]`.
+/// button, the snap bar a drag shows (greyed with drag snapping off) and the
+/// layouts they offer; Tabs and Placement holds `[windows]`.
 pub fn windows(a: Area) -> Form {
+    let gw = a.gw();
     Form::new(vec![
-        group(a, "snap_group", 44, 96, "Snapping"),
+        group(a, "snap_group", 44, 144, "Snapping"),
         Item::check(
             "snap_enabled",
             GX,
@@ -818,17 +819,26 @@ pub fn windows(a: Area) -> Form {
             114,
             "Show snap layouts in a &bar when dragging a title bar up",
         ),
-        group(a, "tabs_group", 152, 72, "Tabs and Placement"),
+        Item::label_at("snap_layouts_label", GX, 142, 84, "&Custom layouts:"),
+        edit("snap_layouts", GX + 88, 138, gw - 88),
+        Item::label_at(
+            "snap_layouts_note",
+            GX,
+            164,
+            gw,
+            "Empty for the built-in six, e.g. 1|1 2|1 1:2|1:2",
+        ),
+        group(a, "tabs_group", 200, 72, "Tabs and Placement"),
         Item::check(
             "window_tabs",
             GX,
-            174,
+            222,
             "Drop a window on a title bar to group them as &tabs",
         ),
         Item::check(
             "remember_windows",
             GX,
-            198,
+            246,
             "Re&member where each program's window was closed",
         ),
     ])
@@ -1644,6 +1654,7 @@ fn binds() -> Vec<Bind> {
         Bind::Flag("snap_enabled", lens!(snap_enabled)),
         Bind::Flag("snap_picker", lens!(snap_picker)),
         Bind::Flag("snap_bar", lens!(snap_bar)),
+        Bind::Text("snap_layouts", lens!(snap_layouts)),
         Bind::Flag("nl_enabled", lens!(nl_enabled)),
         Bind::Kelvin("nl_temperature", lens!(nl_temperature)),
         Bind::Radio("nl_sun", lens!(nl_schedule), "sun"),
@@ -4402,22 +4413,24 @@ mod tests {
     fn the_windows_page_geometry() {
         let s = built();
         let p = Page::Windows;
-        assert_eq!(rect(&s, p, "snap_group"), Rect::new(20, 44, 358, 96));
+        assert_eq!(rect(&s, p, "snap_group"), Rect::new(20, 44, 358, 144));
         assert_eq!(rect(&s, p, "snap_enabled"), Rect::new(32, 66, 13, 13));
         assert_eq!(rect(&s, p, "snap_picker"), Rect::new(32, 90, 13, 13));
         assert_eq!(rect(&s, p, "snap_bar"), Rect::new(32, 114, 13, 13));
-        assert_eq!(rect(&s, p, "tabs_group"), Rect::new(20, 152, 358, 72));
-        assert_eq!(rect(&s, p, "window_tabs"), Rect::new(32, 174, 13, 13));
-        assert_eq!(rect(&s, p, "remember_windows"), Rect::new(32, 198, 13, 13));
+        assert_eq!(rect(&s, p, "snap_layouts"), Rect::new(120, 138, 246, 20));
+        assert_eq!(rect(&s, p, "tabs_group"), Rect::new(20, 200, 358, 72));
+        assert_eq!(rect(&s, p, "window_tabs"), Rect::new(32, 222, 13, 13));
+        assert_eq!(rect(&s, p, "remember_windows"), Rect::new(32, 246, 13, 13));
         inside_page(&s, p);
     }
 
     #[test]
-    fn the_windows_page_reads_back_tabs_the_picker_and_the_bar() {
+    fn the_windows_page_reads_back_tabs_the_picker_the_bar_and_the_layouts() {
         let want = Settings {
             window_tabs: false,
             snap_picker: false,
             snap_bar: false,
+            snap_layouts: "1|1 2-1:2".into(),
             remember_windows: false,
             ..Settings::default()
         };

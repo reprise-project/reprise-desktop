@@ -372,6 +372,9 @@ pub struct Settings {
     /// `[window_snapping] bar`: the snap layouts in a bar at the top while
     /// a title bar is dragged toward it.
     pub snap_bar: bool,
+    /// `[window_snapping] layouts`: the specs apart by spaces or commas,
+    /// empty for the built-in six.
+    pub snap_layouts: String,
 
     pub nl_enabled: bool,
     /// Kelvin at night.
@@ -564,6 +567,7 @@ impl Default for Settings {
             snap_enabled: true,
             snap_picker: true,
             snap_bar: true,
+            snap_layouts: String::new(),
 
             nl_enabled: false,
             nl_temperature: 4000,
@@ -867,6 +871,9 @@ enum Field {
     /// A comma-separated `Settings` string against a TOML array of
     /// strings (`fonts.family`).
     List(Key, Lens<Settings, String>),
+    /// A `Settings` string of words apart by spaces or commas against a
+    /// TOML array of strings (`window_snapping.layouts`).
+    Words(Key, Lens<Settings, String>),
     /// A `Settings` integer in tenths against a TOML float (`mouse.speed`),
     /// read back into its range of tenths.
     Tenths(Key, Lens<Settings, i64>, (i64, i64)),
@@ -1025,6 +1032,7 @@ fn fields() -> Vec<Field> {
         Field::Flag(k("window_snapping", "enabled"), lens!(snap_enabled)),
         Field::Flag(k("window_snapping", "picker"), lens!(snap_picker)),
         Field::Flag(k("window_snapping", "bar"), lens!(snap_bar)),
+        Field::Words(k("window_snapping", "layouts"), lens!(snap_layouts)),
         Field::Flag(k("night_light", "enabled"), lens!(nl_enabled)),
         Field::Int(k("night_light", "temperature"), lens!(nl_temperature)),
         Field::Text(k("night_light", "schedule"), lens!(nl_schedule)),
@@ -1077,6 +1085,7 @@ impl Field {
             | Field::Int(k, _)
             | Field::Flag(k, _)
             | Field::List(k, _)
+            | Field::Words(k, _)
             | Field::Tenths(k, _, _)
             | Field::Names(k, _) => k,
         }
@@ -1090,6 +1099,7 @@ impl Field {
             Field::List(_, at) => {
                 Value::Array(text_to_list(at.get(s)).into_iter().collect::<Array>())
             }
+            Field::Words(_, at) => Value::Array(words(at.get(s)).collect::<Array>()),
             Field::Tenths(_, at, _) => Value::from(*at.get(s) as f64 / 10.0),
             Field::Names(_, at) => {
                 Value::Array(at.get(s).iter().map(String::as_str).collect::<Array>())
@@ -1099,7 +1109,7 @@ impl Field {
 
     fn same(&self, a: &Settings, b: &Settings) -> bool {
         match self {
-            Field::Text(_, at) | Field::List(_, at) => at.get(a) == at.get(b),
+            Field::Text(_, at) | Field::List(_, at) | Field::Words(_, at) => at.get(a) == at.get(b),
             Field::Int(_, at) | Field::Tenths(_, at, _) => at.get(a) == at.get(b),
             Field::Flag(_, at) => at.get(a) == at.get(b),
             Field::Names(_, at) => at.get(a) == at.get(b),
@@ -1108,7 +1118,9 @@ impl Field {
 
     fn copy(&self, from: &Settings, to: &mut Settings) {
         match self {
-            Field::Text(_, at) | Field::List(_, at) => *at.get_mut(to) = at.get(from).clone(),
+            Field::Text(_, at) | Field::List(_, at) | Field::Words(_, at) => {
+                *at.get_mut(to) = at.get(from).clone()
+            }
             Field::Int(_, at) | Field::Tenths(_, at, _) => *at.get_mut(to) = *at.get(from),
             Field::Flag(_, at) => *at.get_mut(to) = *at.get(from),
             Field::Names(_, at) => *at.get_mut(to) = at.get(from).clone(),
@@ -1124,6 +1136,10 @@ fn list_to_text(item: &Item) -> Option<String> {
             .collect::<Vec<_>>()
             .join(", "),
     )
+}
+
+fn words(text: &str) -> impl Iterator<Item = &str> {
+    (text.split([',', ' ', '\t'])).filter(|w| !w.is_empty())
 }
 
 pub(crate) fn text_to_list(text: &str) -> Vec<String> {
@@ -1170,6 +1186,12 @@ pub fn load(text: &str) -> Settings {
             Field::List(_, at) => {
                 if let Some(v) = list_to_text(item) {
                     *at.get_mut(&mut s) = v;
+                }
+            }
+            Field::Words(_, at) => {
+                if let Some(arr) = item.as_array() {
+                    let w: Vec<&str> = arr.iter().filter_map(|v| v.as_str()).collect();
+                    *at.get_mut(&mut s) = w.join(" ");
                 }
             }
             Field::Tenths(_, at, (lo, hi)) => {
@@ -1455,6 +1477,22 @@ fn remove_if_empty(doc: &mut DocumentMut, path: &'static str) {
     }
 }
 
+/// The compositor's own parse of each spec in `text`, at most `ZONE_MAX` of them.
+fn check_snap_layouts(text: &str) -> Result<(), String> {
+    use reprisekit::snaplayouts::{ZONE_MAX, ZoneLayout};
+    let specs: Vec<&str> = words(text).collect();
+    if specs.len() > ZONE_MAX {
+        return Err(format!(
+            "Snap layouts: at most {ZONE_MAX} layouts, got {}.",
+            specs.len()
+        ));
+    }
+    for spec in specs {
+        ZoneLayout::parse(spec).map_err(|e| format!("Snap layouts: {e}."))?;
+    }
+    Ok(())
+}
+
 /// What Apply refuses before writing: a bind's key that will not bind, or a program key changed from `base` that fails `check_program_keys`.
 pub fn validate(s: &Settings, base: &Settings) -> Result<(), String> {
     if s.nl_from == s.nl_to {
@@ -1469,6 +1507,7 @@ pub fn validate(s: &Settings, base: &Settings) -> Result<(), String> {
             return Err("A spawn shortcut needs a command.".into());
         }
     }
+    check_snap_layouts(&s.snap_layouts)?;
     let as_loaded = |p: &ProgramShortcut| {
         (base.programs.iter()).any(|b| b.app == p.app && b.id == p.id && b.keys == p.keys)
     };
@@ -2144,6 +2183,7 @@ size_px = 12
             snap_enabled: false,
             snap_picker: false,
             snap_bar: false,
+            snap_layouts: "1|1 2-1:2".into(),
             nl_enabled: true,
             nl_temperature: 3400,
             nl_schedule: "fixed".into(),
@@ -2189,6 +2229,53 @@ size_px = 12
         assert!(d.snap_enabled, "drag snapping is on");
         assert!(d.snap_picker);
         assert!(d.snap_bar);
+        assert_eq!(d.snap_layouts, "", "the built-in six");
+    }
+
+    #[test]
+    fn snap_layouts_write_as_an_array_and_read_back() {
+        let want = Settings {
+            snap_picker: false,
+            snap_layouts: "1|1,2|1  1:2|1:2".into(),
+            ..Settings::default()
+        };
+        let out = saved("", &want);
+        assert!(
+            out.contains(r#"layouts = ["1|1", "2|1", "1:2|1:2"]"#),
+            "{out}"
+        );
+        assert!(out.contains("picker = false"), "{out}");
+        let got = load(&out);
+        assert!(!got.snap_picker);
+        assert_eq!(got.snap_layouts, "1|1 2|1 1:2|1:2");
+        let cleared = Settings {
+            snap_layouts: String::new(),
+            ..got.clone()
+        };
+        let out = save(&out, &cleared, &got).unwrap();
+        assert!(!out.contains("layouts"), "empty is the default: {out}");
+    }
+
+    #[test]
+    fn validate_refuses_a_snap_layout_the_compositor_would() {
+        let base = Settings::default();
+        let with = |l: &str| Settings {
+            snap_layouts: l.into(),
+            ..Settings::default()
+        };
+        assert_eq!(validate(&with("1|1 2-1:2"), &base), Ok(()));
+        assert_eq!(
+            validate(&with("1|1 1|0"), &base),
+            Err(r#"Snap layouts: "1|0": "0" is not a weight > 0."#.into())
+        );
+        assert_eq!(
+            validate(&with("1|1-1"), &base),
+            Err(r#"Snap layouts: "1|1-1" mixes | and -."#.into())
+        );
+        assert_eq!(
+            validate(&with("1 1 1 1 1 1 1"), &base),
+            Err("Snap layouts: at most 6 layouts, got 7.".into())
+        );
     }
 
     #[test]
