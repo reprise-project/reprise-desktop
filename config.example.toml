@@ -280,6 +280,12 @@ suspend_after = 0            # run [power] standby
 # location = true            # false refuses every program that asks geoclue for the
 #                            # location, without the prompt
 
+# [drives]                   # Settings > Default Programs also sets this
+# on_insert = "ask"          # what a plugged-in drive does: "ask" shows a balloon with
+#                            # Mount and Open and Mount buttons; "mount" mounts it;
+#                            # "open" mounts it and opens a window; "nothing" leaves it
+#                            # in Computer. Read as each drive arrives
+
 # [debug]                    # Settings > Advanced also sets these
 # overlay = false            # true shows frame rate, render times, damage, clients
 #                            # and memory in each screen's top-right corner

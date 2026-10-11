@@ -50,7 +50,9 @@ pub fn translate(msg: Msg) -> Option<TrayMsg> {
         Msg::Clicked(ID_HOTSPOT) => TrayMsg::Hotspot,
         Msg::Clicked(id) if id >= ID_VPN => TrayMsg::Vpn((id - ID_VPN) as usize),
         Msg::BalloonClicked(TAG_PORTAL) => TrayMsg::SignIn,
-        Msg::Clicked(_) | Msg::Scroll(_) | Msg::BalloonClicked(_) => return None,
+        Msg::Clicked(_) | Msg::Scroll(_) | Msg::BalloonClicked(_) | Msg::BalloonButton(..) => {
+            return None;
+        }
     })
 }
 

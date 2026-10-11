@@ -86,7 +86,8 @@ One window, 23 pages, four headings. Only one runs at a time.
     lock screen's wallpaper.
   - **Startup:** autostart entries and session restore.
   - **Default Programs:** browser, mail, music, video, photos, text editor,
-    file manager, terminal, and the program for every file type.
+    file manager, terminal, what a plugged-in drive does, and the program
+    for every file type.
   - **Advanced:** clipboard history, screenshots, recent files, location,
     desktop water, the debug overlay, and an Edit File... button for when
     you'd rather just open `config.toml`.
@@ -157,11 +158,22 @@ network time.
 
 ## Smaller things
 
-- **Safely Remove Hardware.** Mounts drives as you plug them in, whatever
-  their file system, unless UDisks2 marks them hidden or internal. Asks for an
-  encrypted drive's passphrase, and shows a tray icon while there's something
-  to eject.
-  Nothing mounts on its own while the session is locked.
+- **Safely Remove Hardware.** Handles drives as you plug them in, whatever
+  their file system, unless UDisks2 marks them hidden or internal, and shows a
+  tray icon while there's something to eject. What a plugged-in drive does is
+  `[drives] on_insert`, set on Settings > Default Programs:
+  - `"ask"` (the default): a "New drive" balloon with Mount and Open and
+    Mount buttons (Unlock and Open and Unlock for an encrypted drive, which
+    then asks for its passphrase). Nothing mounts until you pick one; a
+    dismissed balloon leaves the drive in Computer to open from there.
+  - `"mount"`: mounts it (asking an encrypted drive's passphrase first) and
+    shows a balloon you can click to open it.
+  - `"open"`: mounts it and opens a window on it.
+  - `"nothing"`: leaves it in Computer.
+
+  The key is read as each drive arrives, so a change applies to the next one.
+  Nothing happens on its own while the session is locked, and drives already
+  plugged in when the session starts are left as they are.
 - **Run As.** The admin password prompt. It takes a fingerprint too, when
   polkit is set up for one.
 - **About Reprise.** Version, operating system, kernel, model, processor,

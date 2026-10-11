@@ -28,7 +28,9 @@ pub fn translate(msg: Msg) -> Option<TrayMsg> {
         Msg::Clicked(ID_FOLDER) => TrayMsg::Folder,
         Msg::Clicked(id) if id >= QUEUE_BASE => TrayMsg::Queue((id - QUEUE_BASE) as usize),
         Msg::BalloonClicked(tag) => TrayMsg::Balloon(tag),
-        Msg::Clicked(_) | Msg::SecondaryActivate | Msg::Scroll(_) => return None,
+        Msg::Clicked(_) | Msg::SecondaryActivate | Msg::Scroll(_) | Msg::BalloonButton(..) => {
+            return None;
+        }
     })
 }
 

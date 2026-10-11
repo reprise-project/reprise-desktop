@@ -1333,6 +1333,11 @@ impl SettingsApp {
     }
 
     fn defaults_changed(&mut self, id: &str) -> Reply {
+        if id == defaultspage::DRIVE_INSERT {
+            pages::read_one(&self.sheet, id, &mut self.want);
+            self.sync_apply();
+            return Reply::redraw();
+        }
         let page = &self.sheet.pages[Page::DefaultPrograms.index()];
         let Some(d) = self.defaults.as_mut() else {
             return Reply::redraw();
@@ -2989,6 +2994,39 @@ mod tests {
         assert!(a.apply());
         let text = std::fs::read_to_string(&path).unwrap();
         assert!(text.contains("image = \"\""), "{text}");
+    }
+
+    #[test]
+    fn the_drive_combo_shows_and_writes_on_insert() {
+        let dir = tmp("drive-insert");
+        let path = dir.join("config.toml");
+        std::fs::write(&path, "[drives]\non_insert = \"mount\"\n").unwrap();
+        let mut a = SettingsApp::open(path.clone());
+        let dp = Page::DefaultPrograms.index();
+        assert_eq!(
+            a.sheet.pages[dp].combo_selected(defaultspage::DRIVE_INSERT),
+            Some(1),
+            "Mount it"
+        );
+        a.sheet.pages[dp].set_combo(defaultspage::DRIVE_INSERT, 2);
+        a.sheet_event(propsheet::Event::Page(
+            dp,
+            form::Event::Changed(defaultspage::DRIVE_INSERT),
+        ));
+        assert!(a.apply());
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(text, "[drives]\non_insert = \"open\"\n");
+        a.sheet.pages[dp].set_combo(defaultspage::DRIVE_INSERT, 0);
+        a.sheet_event(propsheet::Event::Page(
+            dp,
+            form::Event::Changed(defaultspage::DRIVE_INSERT),
+        ));
+        assert!(a.apply());
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(
+            text, "",
+            "Ask what to do is the default and removes the key"
+        );
     }
 
     #[test]
