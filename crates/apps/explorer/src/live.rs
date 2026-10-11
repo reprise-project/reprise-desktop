@@ -69,7 +69,7 @@ impl Explorer {
     }
 
     /// `Event::Wake`: a put, job or tip walk finished, thumbnails arrived, or
-    /// the watch saw a change (which re-lists). A closing window quits here
+    /// the watch or UDisks2 saw a change (which re-lists). A closing window quits here
     /// once its work is done.
     pub fn wake(&mut self, ctx: &mut Ctx) -> Reply {
         let put = self.poll_put(ctx);
@@ -101,6 +101,9 @@ impl Explorer {
         let put = job.or(put).filter(|r| *r != Reply::none());
         if self.watch.as_mut().is_some_and(|w| w.take_changed()) {
             let r = self.refresh(ctx);
+            return put.unwrap_or(r);
+        }
+        if let Some(r) = self.poll_volumes(ctx) {
             return put.unwrap_or(r);
         }
         if let Some(r) = put {

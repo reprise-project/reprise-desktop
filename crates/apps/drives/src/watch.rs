@@ -1,26 +1,15 @@
-//! The UDisks2 side: a thread following its signals that hands the app a whole [`Snapshot`] after
+//! The UDisks2 side: [`udisks::follow`] hands the app a whole [`Snapshot`] after
 //! every change, and the calls the app asks for, each on its own thread (any can wait on polkit).
 
 use std::path::PathBuf;
 use std::sync::mpsc::{Receiver, Sender, channel};
-use std::time::Duration;
 
-use futures_util::FutureExt;
-use futures_util::stream::StreamExt;
-use reprisefs::udisks::{self, Error, Objects, Snapshot, Udisks};
-use zbus::Connection;
+use reprisefs::udisks::{self, Error, Snapshot, Udisks};
 use zeroize::Zeroizing;
 
-const OBJECT_MANAGER: &str = "org.freedesktop.DBus.ObjectManager";
 const PROPERTIES: &str = "org.freedesktop.DBus.Properties";
 const LOGIN: &str = "org.freedesktop.login1";
 const SESSION_IFACE: &str = "org.freedesktop.login1.Session";
-
-const SIGNALS: &[&str] = &["InterfacesAdded", "InterfacesRemoved", "PropertiesChanged"];
-
-/// A mount point appears a moment after the signal that announced the
-/// device; a burst of signals costs one read after this pause.
-const SETTLE: Duration = Duration::from_millis(150);
 
 #[derive(Debug)]
 pub enum Msg {
@@ -135,63 +124,6 @@ pub fn watch(waker: repriseapp::Waker) -> (Receiver<Msg>, Calls) {
         udisks: Udisks::system(),
         poster: poster.clone(),
     };
-    if let Err(e) = std::thread::Builder::new()
-        .name("reprise-drives-udisks".into())
-        .spawn(move || zbus::block_on(run(poster)))
-    {
-        log::warn!("could not start the UDisks2 thread: {e}");
-    }
+    udisks::follow(move |s| poster.post(Msg::Snapshot(s)));
     (rx, calls)
-}
-
-async fn run(poster: Poster) {
-    let conn = match Connection::system().await {
-        Ok(c) => c,
-        Err(e) => {
-            log::info!("no system bus ({e}); no drives to follow");
-            poster.post(Msg::Snapshot(Snapshot::default()));
-            return;
-        }
-    };
-    let mut rules = Vec::new();
-    for member in SIGNALS {
-        match zbus::MatchRule::builder()
-            .msg_type(zbus::message::Type::Signal)
-            .sender(udisks::NAME)
-            .and_then(|b| b.member(*member))
-        {
-            Ok(b) => rules.push(b.build().into()),
-            Err(e) => log::warn!("no match rule for {member}: {e}"),
-        }
-    }
-    // Subscribed before the first read, so no change slips between.
-    let mut signals = reprisebus::signals(&conn, udisks::NAME, rules).await;
-    loop {
-        poster.post(Msg::Snapshot(read(&conn).await));
-        if signals.next().await.is_none() {
-            log::warn!("the UDisks2 signal streams all ended");
-            return;
-        }
-        async_io::Timer::after(SETTLE).await;
-        while let Some(Some(_)) = signals.next().now_or_never() {}
-    }
-}
-
-async fn read(conn: &Connection) -> Snapshot {
-    let reply = conn
-        .call_method(
-            Some(udisks::NAME),
-            udisks::ROOT,
-            Some(OBJECT_MANAGER),
-            "GetManagedObjects",
-            &(),
-        )
-        .await;
-    match reply.and_then(|m| m.body().deserialize::<Objects>()) {
-        Ok(objects) => udisks::fold(&objects),
-        Err(e) => {
-            log::info!("no UDisks2 objects ({e})");
-            Snapshot::default()
-        }
-    }
 }

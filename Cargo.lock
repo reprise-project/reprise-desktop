@@ -2031,12 +2031,9 @@ dependencies = [
 name = "reprise-drives"
 version = "0.1.0"
 dependencies = [
- "async-io",
  "env_logger",
- "futures-util",
  "log",
  "repriseapp",
- "reprisebus",
  "repriseconf",
  "reprisefs",
  "reprisekit",
@@ -2287,10 +2284,13 @@ dependencies = [
 name = "reprisefs"
 version = "0.1.0"
 dependencies = [
+ "async-io",
+ "futures-util",
  "libc",
  "log",
  "md5",
  "png",
+ "reprisebus",
  "serde",
  "tempfile",
  "toml_edit",
