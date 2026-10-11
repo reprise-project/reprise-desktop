@@ -498,22 +498,37 @@ impl AddWizard {
         self.go(Step::Name, s);
     }
 
+    /// The found list shows its highlight only while its radio is the active choice.
+    fn set_typed(&mut self, typed: bool) {
+        self.typed = typed;
+        self.page.form.set_check(FOUND, !typed);
+        self.page.form.set_check(TYPED, typed);
+        if let Some(Control::ListBox { list, .. }) =
+            self.page.form.item_mut(DEVICES).map(|i| &mut i.control)
+        {
+            list.selected = if typed { None } else { self.device };
+        }
+    }
+
     fn read(&mut self, id: &str) -> Outcome {
         let f = &self.page.form;
         match id {
-            FOUND => self.typed = false,
-            TYPED => self.typed = true,
+            FOUND => {
+                let any = matches!(&self.devices, Some(Ok(d)) if !d.is_empty());
+                if self.device.is_none() && any {
+                    self.device = Some(0);
+                }
+                self.set_typed(false);
+            }
+            TYPED => self.set_typed(true),
             DEVICES => {
                 self.device = list_selected(f, DEVICES);
-                self.typed = false;
-                self.page.form.set_check(FOUND, true);
-                self.page.form.set_check(TYPED, false);
+                self.set_typed(false);
             }
             ADDRESS => {
                 self.address = edit_text(f, ADDRESS);
-                self.typed = !self.address.trim().is_empty() || self.typed;
-                self.page.form.set_check(TYPED, self.typed);
-                self.page.form.set_check(FOUND, !self.typed);
+                let typed = !self.address.trim().is_empty() || self.typed;
+                self.set_typed(typed);
             }
             SEARCH => {
                 self.search = edit_text(f, SEARCH);
@@ -812,6 +827,33 @@ mod tests {
         );
         assert!(!w.adding);
         assert!(w.error.contains("cannot contain"));
+    }
+
+    #[test]
+    fn the_address_radio_clears_the_found_highlight() {
+        let s = snap();
+        let mut w = AddWizard::new(&s, None);
+        w.devices_in(Ok(found()), &s);
+        pick_device(&mut w, 1, &s);
+        type_into(&mut w, ADDRESS, "10.0.0.7", &s);
+        w.event(form::Event::Changed(TYPED), &s);
+        assert!(w.typed);
+        assert_eq!(list_selected(&w.page.form, DEVICES), None);
+        assert_eq!(w.page.form.checked(FOUND), Some(false));
+        assert_eq!(w.uri().as_deref(), Some("ipp://10.0.0.7/ipp/print"));
+
+        w.event(form::Event::Changed(FOUND), &s);
+        assert!(!w.typed);
+        assert_eq!(list_selected(&w.page.form, DEVICES), Some(1));
+        assert_eq!(w.uri(), Some(found()[1].uri.clone()));
+
+        w.event(form::Event::Changed(TYPED), &s);
+        pick_device(&mut w, 0, &s);
+        assert!(!w.typed);
+        assert_eq!(w.page.form.checked(FOUND), Some(true));
+        assert_eq!(w.page.form.checked(TYPED), Some(false));
+        assert_eq!(list_selected(&w.page.form, DEVICES), Some(0));
+        assert_eq!(w.uri(), Some(found()[0].uri.clone()));
     }
 
     #[test]
