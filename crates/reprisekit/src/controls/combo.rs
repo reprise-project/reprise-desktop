@@ -7,7 +7,8 @@
 use crate::access::{self, Tree, accesskit};
 use crate::classic::widgets::{
     BarHit, FIELD_PAD, LINE_H, ROW_H, RingInk, ScrollHit, ScrollParts, access_edit, draw_edit,
-    draw_focus_ring_screen, edit_first_visible, scrollbar_hit, scrollbar_parts, scrollbar_pos_at,
+    draw_edit_drop_point, draw_focus_ring_screen, edit_first_visible, scrollbar_hit,
+    scrollbar_parts, scrollbar_pos_at,
 };
 use crate::controls::metrics::ControlMetrics;
 use crate::controls::scrollbar::ThumbDrag;
@@ -97,6 +98,8 @@ pub struct Combo {
     pub first: Cell<usize>,
     /// Drawn in the field before the text (the address bar's place).
     pub icon: Option<Canvas>,
+    /// A drag of text resting on the editable field, at this logical x ([`Combo::drag_over`]).
+    pub drop_x: Option<i32>,
 }
 
 impl Combo {
@@ -119,6 +122,7 @@ impl Combo {
             edit: None,
             first: Cell::new(0),
             icon: None,
+            drop_x: None,
         }
     }
 
@@ -474,6 +478,51 @@ impl Hit {
 }
 
 impl Combo {
+    /// A drag at (`x`, `y`): over an enabled editable field with its list closed the field shows
+    /// a drop caret there and takes the drag (`true`); anywhere else the drop caret goes.
+    pub fn drag_over(&mut self, lay: &Layout, x: i32, y: i32) -> bool {
+        let takes = self.enabled
+            && self.open.is_none()
+            && self.edit.as_ref().is_some_and(|e| !e.is_secret())
+            && hit(self, lay, x, y) == Some(Hit::Field);
+        self.drop_x = takes.then_some(x);
+        takes
+    }
+
+    /// The drag left or ended: `true` when a drop caret was showing.
+    pub fn drag_leave(&mut self) -> bool {
+        self.drop_x.take().is_some()
+    }
+
+    /// The scroll offset one step on for a drag resting on the field
+    /// ([`crate::textedit::drag_scroll`], a [`LINE_H`] band at each side), None when it stays.
+    pub fn drag_scroll(&self, lay: &Layout, text: &TextRenderer, px: u32) -> Option<usize> {
+        let (x, edit) = (self.drop_x?, self.edit.as_ref()?);
+        let from = crate::controls::form::visible_from(edit, &self.first);
+        let w = lay.text.width;
+        crate::textedit::drag_scroll(text, &edit.text, from, w, LINE_H, x - lay.text.x, px)
+    }
+
+    /// Take [`Combo::drag_scroll`]'s step, for a host's tick; `true` when the field moved.
+    pub fn drag_tick(&mut self, lay: &Layout, text: &TextRenderer, px: u32) -> bool {
+        let Some(to) = self.drag_scroll(lay, text, px) else {
+            return false;
+        };
+        self.first.set(to);
+        true
+    }
+
+    /// A drag dropped `line` on the field: it goes in at the drop caret as
+    /// [`TextEdit::drop_text`] puts it. `false` when the field was not taking the drag or
+    /// nothing went in.
+    pub fn drop_text(&mut self, lay: &Layout, line: &str, text: &TextRenderer, px: u32) -> bool {
+        let Some(x) = self.drop_x.take() else {
+            return false;
+        };
+        let at = self.edit_index(text, px, x - lay.text.x);
+        self.edit.as_mut().is_some_and(|e| e.drop_text(at, line))
+    }
+
     /// A press on part `bar` of the open list's scrollbar: an arrow scrolls a row, the track a page; the thumb is grabbed into `thumb` for [`Combo::drag_bar`]. True when the list scrolled.
     pub fn press_bar(&mut self, bar: BarHit, thumb: &mut ThumbDrag) -> bool {
         match thumb.press(Axis::Vertical, bar).by(1, self.rows as i64) {
@@ -588,10 +637,24 @@ pub fn draw(
             )
         });
     } else if let Some(edit) = &combo.edit {
+        // A drag resting on the field scrolls it (`drag_tick`), so the caret no longer pins the
+        // view.
         let from = crate::controls::form::visible_from(edit, &combo.first);
-        let first = edit_first_visible(text, edit, tr.width, px, from);
+        let first = match combo.drop_x {
+            Some(_) => from,
+            None => edit_first_visible(text, edit, tr.width, px, from),
+        };
         combo.first.set(first);
+        let caret = match combo.drop_x {
+            Some(_) => Caret::new(caret.focused(), false),
+            None => caret,
+        };
         draw_edit(c, text, edit, tr, px, p, caret, first);
+        if let Some(x) = combo.drop_x {
+            let tail = &edit.text[first..];
+            let at = first + crate::textedit::index_at(text, tail, x * s - tr.x, px);
+            draw_edit_drop_point(c, text, edit, tr, px, p, first, at);
+        }
     } else if list_button {
         text.draw(c, tr, combo.value(), false, cs.button_text, Align::Left, px);
         if focus && cue && combo.open.is_none() {
@@ -1400,5 +1463,119 @@ mod tests {
             cs.window.argb(),
             "white past the highlight"
         );
+    }
+
+    fn run_box(value: &str) -> (Combo, Layout) {
+        let mut c = combo();
+        c.edit = Some(TextEdit::new(value, false));
+        let lay = layout(&c, Rect::new(0, 0, 120, COMBO_H), &ControlMetrics::CLASSIC);
+        (c, lay)
+    }
+
+    #[test]
+    fn text_dropped_on_an_editable_field_lands_at_the_drop_caret_selected() {
+        let text = TextRenderer::load(&FontConfig::default());
+        let px = Theme::default().fonts.size_px;
+        let (mut c, lay) = run_box("foot");
+        assert!(
+            !c.drag_over(&lay, lay.drop.x + 2, 10),
+            "the drop button takes nothing"
+        );
+        assert!(c.drop_x.is_none());
+        let x = lay.text.x + text.measure("fo", false, px);
+        assert!(c.drag_over(&lay, x, 10));
+        assert!(c.drop_text(&lay, "X", &text, px));
+        let edit = c.edit.as_ref().unwrap();
+        assert_eq!(edit.text, "foXot");
+        assert_eq!(edit.selected_text(), "X");
+        assert!(c.drop_x.is_none(), "the drop ends the drag");
+    }
+
+    #[test]
+    fn a_plain_open_or_greyed_combo_takes_no_drop() {
+        let lay = layout(
+            &combo(),
+            Rect::new(0, 0, 120, COMBO_H),
+            &ControlMetrics::CLASSIC,
+        );
+        assert!(!combo().drag_over(&lay, 20, 10), "a pick list has no caret");
+        let (mut c, lay) = run_box("x");
+        c.open = Some(0);
+        assert!(!c.drag_over(&lay, 20, 10));
+        let (mut c, lay) = run_box("x");
+        c.enabled = false;
+        assert!(!c.drag_over(&lay, 20, 10));
+    }
+
+    #[test]
+    fn a_drag_resting_at_the_fields_edge_scrolls_it_and_the_drop_caret_shows() {
+        let text = TextRenderer::load(&FontConfig::default());
+        let theme = Theme::default();
+        let cs = &theme.colors;
+        let px = theme.fonts.size_px;
+        let (mut c, lay) = run_box("/usr/share/applications/org.example.Long.desktop");
+        let shot = |c: &Combo| {
+            let mut canvas = Canvas::new(120, COMBO_H as u32);
+            let caret = Caret::new(false, true);
+            draw(
+                &mut canvas,
+                &text,
+                &classic_paint(cs, 1),
+                c,
+                &lay,
+                false,
+                false,
+                caret,
+                ComboLit::IDLE,
+                px,
+            );
+            canvas
+        };
+        shot(&c);
+        let end = c.first.get();
+        assert!(end > 0, "the caret at the end scrolled the start away");
+        assert!(c.drag_over(&lay, lay.text.x + 1, 10));
+        assert_eq!(c.drag_scroll(&lay, &text, px), Some(end - 1));
+        assert!(c.drag_tick(&lay, &text, px));
+        let before = shot(&c);
+        assert_eq!(c.first.get(), end - 1, "the draw keeps the scrolled view");
+        let x = lay.text.x + 30;
+        c.drag_over(&lay, x, 10);
+        let after = shot(&c);
+        c.drag_leave();
+        let plain = shot(&c);
+        assert_eq!(
+            c.first.get(),
+            end,
+            "without a drag the caret pins the view again"
+        );
+        let changed: Vec<(i32, i32)> = (0..COMBO_H)
+            .flat_map(|y| (0..120).map(move |x| (x, y)))
+            .filter(|&(x, y)| before.get(x, y) != after.get(x, y))
+            .collect();
+        let mut cols: Vec<i32> = changed.iter().map(|&(x, _)| x).collect();
+        cols.dedup();
+        cols.sort();
+        cols.dedup();
+        assert_eq!(
+            cols.len(),
+            2,
+            "the drop caret moved from one column to another: {cols:?}"
+        );
+        assert_eq!(
+            cols[0], lay.text.x,
+            "the field's left edge, where it rested"
+        );
+        assert!(
+            (x - 4..=x + 4).contains(&cols[1]),
+            "near the pointer: {cols:?}"
+        );
+        let bar = changed.iter().filter(|&&(cx, _)| cx == cols[1]);
+        assert!(
+            bar.clone()
+                .all(|&(cx, cy)| after.get(cx, cy) == cs.button_text.argb())
+        );
+        assert!(bar.count() >= 8, "a line tall");
+        assert_ne!(plain.pixels, after.pixels);
     }
 }

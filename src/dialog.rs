@@ -2824,6 +2824,81 @@ impl Dialog {
         }
     }
 
+    /// A drag at dialog point (`x`, `y`): Run's field, or a form's edit field, shows a drop
+    /// caret there and takes the drag (`true`); anywhere else the drop caret goes.
+    pub fn drag_over(
+        &mut self,
+        layout: &DialogLayout,
+        x: i32,
+        y: i32,
+        text: &TextRenderer,
+        px: u32,
+    ) -> bool {
+        if let Some(f) = self.form_mut() {
+            return f
+                .open_page_mut()
+                .is_some_and(|form| form.drag_over(x, y, text, px));
+        }
+        match (self.field.as_mut(), layout.field) {
+            (Some(f), Some(r)) => {
+                f.combo
+                    .drag_over(&combo::layout(&f.combo, r, &layout.controls), x, y)
+            }
+            _ => false,
+        }
+    }
+
+    /// The drag left or ended: `true` when a drop caret was showing.
+    pub fn drag_leave(&mut self) -> bool {
+        if let Some(f) = self.form_mut() {
+            return f.open_page_mut().is_some_and(|form| form.drag_leave());
+        }
+        self.field.as_mut().is_some_and(|f| f.combo.drag_leave())
+    }
+
+    /// A drag resting at a field's edge scrolls it a step; `true` when it moved.
+    pub fn drag_tick(&mut self, layout: &DialogLayout, text: &TextRenderer, px: u32) -> bool {
+        if let Some(f) = self.form_mut() {
+            return f
+                .open_page_mut()
+                .is_some_and(|form| form.drag_tick(text, px));
+        }
+        match (self.field.as_mut(), layout.field) {
+            (Some(f), Some(r)) => {
+                let lay = combo::layout(&f.combo, r, &layout.controls);
+                f.combo.drag_tick(&lay, text, px)
+            }
+            _ => false,
+        }
+    }
+
+    /// A drag dropped `line` on the field under it: it goes in at the drop caret, selected, and
+    /// the field takes the keyboard.
+    pub fn drop_text(
+        &mut self,
+        layout: &DialogLayout,
+        line: &str,
+        text: &TextRenderer,
+        px: u32,
+    ) -> Outcome {
+        if let Some(f) = self.form_mut() {
+            let Some(form) = f.open_page_mut() else {
+                return Outcome::Nothing;
+            };
+            let ev = form.drop_text(line, text, px);
+            return f.event(ev);
+        }
+        let (Some(f), Some(r)) = (self.field.as_mut(), layout.field) else {
+            return Outcome::Nothing;
+        };
+        let lay = combo::layout(&f.combo, r, &layout.controls);
+        if !f.combo.drop_text(&lay, line, text, px) {
+            return Outcome::Nothing;
+        }
+        self.button_focus = None;
+        Outcome::Redraw
+    }
+
     /// The edit control that has the keyboard: a form's focused field or
     /// memo, Browse's File name field, else the dialog's own field.
     pub fn focused_edit(&self) -> Option<FocusedEdit<'_>> {
@@ -8376,6 +8451,35 @@ mod tests {
         assert_eq!(d.release(None), Outcome::Redraw);
         assert!(!d.holding_thumb());
         assert!(d.field.as_ref().unwrap().combo.open.is_some());
+    }
+
+    #[test]
+    fn text_dropped_on_runs_field_lands_at_the_drop_caret_and_takes_the_keyboard() {
+        let theme = Theme::default();
+        let text = TextRenderer::load(&FontConfig::default());
+        let px = theme.fonts.size_px;
+        let mut d = Dialog::run(&[]);
+        d.set_field("foot");
+        d.button_focus = Some(0);
+        let l = DialogLayout::compute(&theme, &text, &d);
+        let field = l.field.unwrap();
+        let ok = l.buttons[0];
+        assert!(
+            !d.drag_over(&l, ok.x + 5, ok.y + 5, &text, px),
+            "a button takes no drop"
+        );
+        let x = field.x + combo::EDIT_TEXT_X + text.measure("fo", false, px);
+        assert!(d.drag_over(&l, x, field.y + 5, &text, px));
+        assert_eq!(d.drop_text(&l, "X", &text, px), Outcome::Redraw);
+        let edit = d.field.as_ref().unwrap().edit().unwrap();
+        assert_eq!(edit.text, "foXot");
+        assert_eq!(edit.selected_text(), "X");
+        assert_eq!(d.button_focus, None, "the field has the keyboard");
+        assert_eq!(
+            d.drop_text(&l, "Y", &text, px),
+            Outcome::Nothing,
+            "the drop ended the drag"
+        );
     }
 
     #[test]

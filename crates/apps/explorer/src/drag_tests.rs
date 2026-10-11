@@ -950,3 +950,41 @@ fn a_read_only_place_is_no_drop_target() {
     let bg = background(&ex, &ctx);
     assert_eq!(ex.drag_target(bg.0, bg.1, &[], &ctx), None);
 }
+
+#[test]
+fn a_drop_on_the_address_bar_goes_into_its_field() {
+    let mut ctx = test_ctx();
+    let (_dir, mut ex) = explorer(&mut ctx);
+    let r = ex.layout(&ctx).address.expect("the address bar shows");
+    let text = Offered {
+        files: false,
+        link: false,
+        text: true,
+    };
+    let at = (r.x + r.width / 2, r.y + r.height / 2);
+    let a = ex.drag_enter(at.0, at.1, text, false, &ctx);
+    let a = a.drag_accept.flatten().expect("the field takes text");
+    assert_eq!(a.kind, DropKind::Text);
+    assert!(ex.address.combo.drop_x.is_some(), "the drop caret shows");
+    ex.address.combo.edit = Some(reprisekit::textedit::TextEdit::new("", false));
+    let r = ex.drag_drop(
+        at,
+        Dropped::Text("/tmp".into()),
+        DragAction::Ask,
+        Actions::ALL,
+        &mut ctx,
+    );
+    assert_eq!(r.answer_drop, Some(Some(DragAction::Copy)));
+    assert_eq!(ex.address.text(), "/tmp");
+    assert_eq!(ex.focus, crate::Focus::Address);
+    assert!(ex.address.combo.drop_x.is_none());
+
+    let f = ex.drag_enter(at.0, at.1, FILES, false, &ctx);
+    assert_eq!(
+        f.drag_accept.flatten().map(|a| a.kind),
+        Some(DropKind::Files),
+        "files drop their paths"
+    );
+    ex.drag_leave();
+    assert!(ex.address.combo.drop_x.is_none());
+}

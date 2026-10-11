@@ -38,7 +38,9 @@ use repriseapp::filedlg::{Host, Resolved, Step, type_keep};
 use repriseapp::keys::{dialog_key, form_input};
 use repriseapp::oneshot::{self, MsgBox};
 use repriseapp::openwith::ChooserInput;
-use repriseapp::{App, BTN_LEFT, Child, Ctx, Event, KeyInput, PointerInput, Reply, Waker, WinId};
+use repriseapp::{
+    App, BTN_LEFT, Child, Ctx, DropForm, Event, KeyInput, PointerInput, Reply, Waker, WinId,
+};
 use reprisebus::instance::{self, Claim};
 use reprisefs::autostart::Entry;
 use reprisekit::access::{ROOT, Tree};
@@ -2443,6 +2445,18 @@ impl App for SettingsApp {
         reply
     }
 
+    fn drop_form(&mut self, win: WinId) -> Option<DropForm<'_>> {
+        let form = match win {
+            repriseapp::MAIN => self.sheet.open_mut(),
+            SHORTCUT_WIN => &mut self.shortcut.as_mut()?.form,
+            ADD_ITEM_WIN => &mut self.add_item.as_mut()?.form,
+            RENAME_WIN => &mut self.rename.as_mut()?.form,
+            SAVER_WIN => &mut self.saver_dlg.as_mut()?.form,
+            _ => return None,
+        };
+        Some(DropForm { form, px: None })
+    }
+
     fn draw(&mut self, win: WinId, c: &mut Canvas, ctx: &Ctx) {
         if win == repriseapp::MAIN {
             self.fit_window(ctx.size);
@@ -2565,6 +2579,10 @@ impl SettingsApp {
                 Reply::redraw()
             }
             Event::Key(k) => self.key(k, &ctx.theme.look.controls()),
+            Event::FieldDropped(e) => {
+                let ev = self.sheet.dropped(e);
+                self.sheet_event(ev)
+            }
             Event::Pointer(PointerInput::Press {
                 x,
                 y,
@@ -2962,6 +2980,28 @@ mod tests {
         assert!(a.apply());
         let text = std::fs::read_to_string(&path).unwrap();
         assert!(text.contains("image = \"\""), "{text}");
+    }
+
+    #[test]
+    fn a_drop_on_a_page_field_is_read_into_the_settings() {
+        let mut a = app("drop");
+        let mut ctx = test_ctx();
+        let px = ctx.theme.fonts.size_px;
+        a.sheet.tabs.open = Page::Advanced.index();
+        let form = a.drop_form(MAIN).expect("the open page").form;
+        let r = form
+            .item("task_manager")
+            .unwrap()
+            .placed(&reprisekit::controls::metrics::ControlMetrics::CLASSIC);
+        assert!(form.drag_over(r.x + 4, r.y + r.height / 2, &ctx.text, px));
+        let changed = form.drop_text("htop", &ctx.text, px);
+        assert_eq!(changed, form::Event::Changed("task_manager"));
+        a.event(MAIN, Event::FieldDropped(changed), &mut ctx);
+        assert!(
+            a.want.task_manager.contains("htop"),
+            "{}",
+            a.want.task_manager
+        );
     }
 
     #[test]

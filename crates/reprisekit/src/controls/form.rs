@@ -500,7 +500,17 @@ pub struct Form {
     /// in a font with a [`TextRenderer::lead`] each starts that many
     /// columns left of its rect.
     pub labels_at_ink: bool,
+    /// A drag of text resting on an edit field, from [`Form::drag_over`].
+    field_drop: Option<FieldDrop>,
     rendered: Rendered,
+}
+
+/// The edit field a drag rests on and where, in form px.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct FieldDrop {
+    item: usize,
+    x: i32,
+    y: i32,
 }
 
 /// What the last `draw` left for the next: canvases rendered from a control's inputs, reused
@@ -836,6 +846,7 @@ impl Form {
             caret: true,
             font: DialogFont::Ui,
             labels_at_ink: false,
+            field_drop: None,
             rendered: Rendered::default(),
         };
         let first = (0..form.items.len()).find(|&i| form.tab_stop(i));
@@ -1481,6 +1492,107 @@ impl Form {
         };
         text.zeroize();
         ev
+    }
+
+    /// A drag at (`x`, `y`): over an enabled, unmasked edit field or editable combo the field
+    /// shows a drop caret there and takes the drag (`true`); anywhere else the drop caret goes.
+    pub fn drag_over(&mut self, x: i32, y: i32, text: &TextRenderer, px: u32) -> bool {
+        self.drag_leave();
+        let Some(Hit { item, part, .. }) = self.hit(x, y, text, px) else {
+            return false;
+        };
+        let cm = self.controls();
+        let it = &mut self.items[item];
+        let placed = it.placed(&cm);
+        let takes = match (part, &mut it.control) {
+            (Part::Edit(_), Control::Edit { edit, .. }) => !edit.is_secret(),
+            (Part::Combo(combo::Hit::Field), Control::Combo(c)) => {
+                c.drag_over(&combo::layout(c, placed, &cm), x, y)
+            }
+            _ => false,
+        };
+        if takes {
+            self.field_drop = Some(FieldDrop { item, x, y });
+        }
+        takes
+    }
+
+    /// The drag left or ended: `true` when a drop caret was showing.
+    pub fn drag_leave(&mut self) -> bool {
+        let Some(d) = self.field_drop.take() else {
+            return false;
+        };
+        if let Some(Control::Combo(c)) = self.items.get_mut(d.item).map(|it| &mut it.control) {
+            c.drag_leave();
+        }
+        true
+    }
+
+    /// The scroll offset one step on for the field under a resting drag
+    /// ([`crate::textedit::drag_scroll`], a [`LINE_H`] band at each side), None when it stays.
+    pub fn drag_scroll(&self, text: &TextRenderer, px: u32) -> Option<usize> {
+        let d = self.field_drop?;
+        let it = self.items.get(d.item)?;
+        let text = text.dialog(self.font);
+        let cm = self.controls();
+        match &it.control {
+            Control::Edit { edit, first, .. } => {
+                let inner = it.placed(&cm).inset(widgets::FIELD_PAD);
+                crate::textedit::drag_scroll(
+                    text,
+                    &edit.text,
+                    visible_from(edit, first),
+                    inner.width,
+                    LINE_H,
+                    d.x - inner.x,
+                    px,
+                )
+            }
+            Control::Combo(c) => c.drag_scroll(&combo::layout(c, it.placed(&cm), &cm), text, px),
+            _ => None,
+        }
+    }
+
+    /// Take [`Form::drag_scroll`]'s step, for a host's tick; `true` when the field moved.
+    pub fn drag_tick(&mut self, text: &TextRenderer, px: u32) -> bool {
+        let Some(to) = self.drag_scroll(text, px) else {
+            return false;
+        };
+        match self
+            .field_drop
+            .and_then(|d| self.items.get(d.item))
+            .map(|it| &it.control)
+        {
+            Some(Control::Edit { first, .. }) => first.set(to),
+            Some(Control::Combo(c)) => c.first.set(to),
+            _ => return false,
+        }
+        true
+    }
+
+    /// A drag dropped `line` on the field under it: it goes in at the drop caret as
+    /// [`TextEdit::drop_text`] puts it, and the field takes the focus. `Changed` with the field's
+    /// id, or `None` when no field was taking the drag or nothing went in.
+    pub fn drop_text(&mut self, line: &str, text: &TextRenderer, px: u32) -> Event {
+        let Some(d) = self.field_drop.take() else {
+            return Event::None;
+        };
+        let hit = self.hit(d.x, d.y, text, px).filter(|h| h.item == d.item);
+        let cm = self.controls();
+        let dialog = text.dialog(self.font);
+        let it = &mut self.items[d.item];
+        let placed = it.placed(&cm);
+        let took = match (hit.map(|h| h.part), &mut it.control) {
+            (Some(Part::Edit(at)), Control::Edit { edit, .. }) => edit.drop_text(at, line),
+            (_, Control::Combo(c)) => c.drop_text(&combo::layout(c, placed, &cm), line, dialog, px),
+            _ => false,
+        };
+        if !took {
+            return Event::None;
+        }
+        let id = it.id;
+        self.set_focus(Some(d.item));
+        Event::Changed(id)
     }
 
     /// The window lost the keyboard: a focused hot-key field forgets the
@@ -2985,8 +3097,14 @@ pub fn draw(c: &mut Canvas, text: &TextRenderer, p: &Paint, form: &Form, cues: b
                 };
                 // Kept in step here because only this place holds what computes it; `inner` is the text
                 // area in device px.
+                // A drag resting on the field scrolls it (`drag_tick`), so the caret no longer pins
+                // the view.
+                let drop = form.field_drop.filter(|d| d.item == i);
                 let from = visible_from(shown, first);
-                let from = edit_first_visible(text, shown, inner.width, px, from);
+                let from = match drop {
+                    Some(_) => from,
+                    None => edit_first_visible(text, shown, inner.width, px, from),
+                };
                 first.set(from);
                 let greyed = greyed_field_scheme(p, *enabled);
                 let ep = match &greyed {
@@ -3000,9 +3118,14 @@ pub fn draw(c: &mut Canvas, text: &TextRenderer, p: &Paint, form: &Form, cues: b
                     inner,
                     px,
                     &ep,
-                    Caret::new(focused && *enabled, form.caret),
+                    Caret::new(focused && *enabled, form.caret && drop.is_none()),
                     from,
                 );
+                if let Some(d) = drop {
+                    let tail = &shown.text[from..];
+                    let at = from + crate::textedit::index_at(text, tail, d.x * s - inner.x, px);
+                    widgets::draw_edit_drop_point(c, text, shown, inner, px, p, from, at);
+                }
             }
             Control::Combo(combo) => {
                 let lay = combo::layout(combo, it.placed(&cm), &cm);
@@ -4717,6 +4840,124 @@ mod tests {
             panic!()
         };
         assert_eq!(edit.selection(), to..at, "the drag swept back to `to`");
+    }
+
+    fn field(f: &Form) -> (&TextEdit, usize) {
+        match &f.items[1].control {
+            Control::Edit { edit, first, .. } => (edit, first.get()),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_drag_over_a_field_drops_its_text_at_the_drop_caret() {
+        let t = tr();
+        let mut f = edit_form();
+        f.paste("hello world".into());
+        f.set_focus(None);
+        let inner_x = 80 + crate::classic::widgets::FIELD_PAD;
+        let x = inner_x + t.measure("hello", false, PX);
+        assert!(!f.drag_over(30, 15, &t, PX), "a label takes no drop");
+        assert!(f.drag_over(x, 15, &t, PX));
+        assert_eq!(f.drop_text(" big", &t, PX), Event::Changed("find"));
+        assert_eq!(f.focus(), Some(1), "the field takes the focus");
+        assert_eq!(field(&f).0.text, "hello big world");
+        assert_eq!(field(&f).0.selected_text(), " big");
+        assert_eq!(
+            f.drop_text("x", &t, PX),
+            Event::None,
+            "the drop ended the drag"
+        );
+    }
+
+    #[test]
+    fn a_masked_or_greyed_field_takes_no_drop() {
+        let t = tr();
+        let mut f = edit_form();
+        f.items[1].control = Control::Edit {
+            edit: TextEdit::secret(),
+            first: Cell::new(0),
+            enabled: true,
+        };
+        assert!(!f.drag_over(120, 15, &t, PX));
+        let mut f = edit_form();
+        f.set_enabled("find", false);
+        assert!(!f.drag_over(120, 15, &t, PX));
+        assert!(!f.drag_leave());
+    }
+
+    #[test]
+    fn a_drag_resting_at_a_fields_edge_scrolls_it_without_moving_the_caret() {
+        let t = tr();
+        let theme = Theme::default();
+        let mut f = edit_form();
+        f.paste("abcdefghijklmnopqrstuvwxyz0123456789".into());
+        let mut c = Canvas::new(200, 80);
+        draw(&mut c, &t, &classic_paint(&theme.colors, 1), &f, true, PX);
+        let end = field(&f).1;
+        assert!(end > 0, "the caret at the end scrolled the value");
+        assert!(f.drag_over(130, 15, &t, PX));
+        assert_eq!(f.drag_scroll(&t, PX), None, "the middle rests still");
+        assert!(f.drag_over(82, 15, &t, PX));
+        assert_eq!(
+            f.drag_scroll(&t, PX),
+            Some(end - 1),
+            "nothing moves before the tick"
+        );
+        for k in 1..=3 {
+            assert!(f.drag_tick(&t, PX));
+            draw(&mut c, &t, &classic_paint(&theme.colors, 1), &f, true, PX);
+            assert_eq!(field(&f).1, end - k, "the draw keeps the scrolled view");
+        }
+        let caret = field(&f).0.caret();
+        assert!(f.drag_over(178, 15, &t, PX));
+        assert!(f.drag_tick(&t, PX));
+        assert_eq!(field(&f).1, end - 2);
+        assert!(f.drag_leave());
+        assert!(!f.drag_tick(&t, PX), "no drag, no step");
+        draw(&mut c, &t, &classic_paint(&theme.colors, 1), &f, true, PX);
+        assert_eq!(
+            field(&f).1,
+            end,
+            "without a drag the caret pins the view again"
+        );
+        assert_eq!(field(&f).0.caret(), caret);
+    }
+
+    #[test]
+    fn the_drop_caret_is_a_bar_where_the_text_would_land() {
+        let t = tr();
+        let theme = Theme::default();
+        let cs = &theme.colors;
+        let mut f = edit_form();
+        f.paste("hello world".into());
+        f.set_focus(None);
+        let inner_x = 80 + crate::classic::widgets::FIELD_PAD;
+        let x = inner_x + t.measure("hello", false, PX);
+        let shot = |f: &Form| {
+            let mut c = Canvas::new(200, 40);
+            c.fill_rect(c.bounds(), cs.button_face);
+            draw(&mut c, &t, &classic_paint(cs, 1), f, true, PX);
+            c
+        };
+        let before = shot(&f);
+        f.drag_over(x, 15, &t, PX);
+        let after = shot(&f);
+        let changed: Vec<(i32, i32)> = (0..40)
+            .flat_map(|y| (0..200).map(move |x| (x, y)))
+            .filter(|&(x, y)| before.get(x, y) != after.get(x, y))
+            .collect();
+        assert!(!changed.is_empty());
+        assert!(
+            changed.iter().all(|&(cx, _)| cx == x),
+            "one column at the drop caret: {changed:?}"
+        );
+        assert!(
+            changed
+                .iter()
+                .all(|&(cx, cy)| after.get(cx, cy) == cs.button_text.argb())
+        );
+        assert!(changed.len() >= 8, "a line tall");
     }
 
     /// `first` is the field's scroll offset and `draw` owns it: typing
