@@ -105,6 +105,52 @@ fn align(v: i32, to: &[i32], snap: i32) -> i32 {
         .unwrap_or(v)
 }
 
+/// Left of, right of, above and below `o` for a tile of `size`: `y` places the
+/// first two, `x` the last two.
+fn beside(o: Rect, (w, h): (i32, i32), x: i32, y: i32) -> [(i32, i32); 4] {
+    [(o.x - w, y), (o.right(), y), (x, o.y - h), (x, o.bottom())]
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Dir {
+    Left,
+    Right,
+    Up,
+    Down,
+}
+
+/// The next place in `dir` for a tile of `size` at `from` among `others`: against an
+/// edge, lined up with it or keeping `from`'s offset, overlapping none. A place
+/// straight along `dir` comes first, then the least sideways shift, then the nearest.
+pub fn shove(others: &[Rect], size: (i32, i32), from: (i32, i32), dir: Dir) -> Option<(i32, i32)> {
+    let (w, h) = size;
+    let mut best: Option<((i32, i32), (i32, i32))> = None;
+    for o in others {
+        for x in [o.x, o.right() - w, from.0] {
+            for y in [o.y, o.bottom() - h, from.1] {
+                for at in beside(*o, size, x, y) {
+                    let (dx, dy) = (at.0 - from.0, at.1 - from.1);
+                    let (ahead, side) = match dir {
+                        Dir::Left => (-dx, dy),
+                        Dir::Right => (dx, dy),
+                        Dir::Up => (-dy, dx),
+                        Dir::Down => (dy, dx),
+                    };
+                    let r = Rect::new(at.0, at.1, w, h);
+                    if ahead <= 0 || !touches(r, *o) || others.iter().any(|q| overlaps(r, *q)) {
+                        continue;
+                    }
+                    let rank = (side.abs(), ahead);
+                    if best.is_none_or(|(_, b)| rank < b) {
+                        best = Some((at, rank));
+                    }
+                }
+            }
+        }
+    }
+    best.map(|(at, _)| at)
+}
+
 pub fn snap(others: &[Rect], size: (i32, i32), want: (i32, i32), snap: i32) -> Option<(i32, i32)> {
     let (w, h) = size;
     let mut best: Option<((i32, i32), i64)> = None;
@@ -119,7 +165,7 @@ pub fn snap(others: &[Rect], size: (i32, i32), want: (i32, i32), snap: i32) -> O
             &[o.x, o.right() - w],
             snap,
         );
-        for at in [(o.x - w, y), (o.right(), y), (x, o.y - h), (x, o.bottom())] {
+        for at in beside(*o, size, x, y) {
             let r = Rect::new(at.0, at.1, w, h);
             if others.iter().any(|q| overlaps(r, *q)) {
                 continue;
@@ -289,6 +335,25 @@ impl Arrange {
         }
     }
 
+    /// Move the picked tile to its next place in `dir` ([`shove`]), settling the rest
+    /// around it as a drop does. False when nothing lies that way.
+    pub fn shove(&mut self, dir: Dir) -> bool {
+        let k = self.selected;
+        if self.held.is_some() || k >= self.tiles.len() {
+            return false;
+        }
+        let others: Vec<Rect> = (self.tiles.iter().enumerate())
+            .filter(|(i, _)| *i != k)
+            .map(|(_, t)| t.rect())
+            .collect();
+        let Some(to) = shove(&others, self.tiles[k].size, self.tiles[k].pos, dir) else {
+            return false;
+        };
+        self.tiles[k].pos = to;
+        settle(&mut self.tiles, k);
+        true
+    }
+
     pub fn step(&mut self, key: Step) -> bool {
         let n = self.tiles.len();
         if n == 0 {
@@ -379,6 +444,7 @@ pub fn access(
         let r = a.tile_rect(lay, k);
         let mut o = access::named(Role::ListBoxOption, r, &format!("{}. {}", t.number, t.name));
         o.set_selected(a.selected == k);
+        o.set_description(format!("At {}, {}", t.pos.0, t.pos.1));
         tree.push(id, (key, k), o);
     }
     id
@@ -538,6 +604,69 @@ mod tests {
         assert!(a.drop_held());
         assert!(!a.holding() && !a.drop_held());
         assert!(touches(a.tiles[0].rect(), a.tiles[1].rect()));
+    }
+
+    #[test]
+    fn ctrl_right_moves_a_tile_from_left_of_to_right_of_its_neighbour() {
+        let (mut a, _) = well();
+        assert!(a.shove(Dir::Right));
+        let (r1, r2) = (a.tiles[0].rect(), a.tiles[1].rect());
+        assert_eq!(
+            r1,
+            Rect::new(1280, 0, 1920, 1080),
+            "right of 2, tops lined up"
+        );
+        assert_eq!(r2, Rect::new(0, 0, 1280, 1024));
+        assert!(a.shove(Dir::Left), "and back");
+        assert_eq!((a.tiles[0].pos, a.tiles[1].pos), ((0, 0), (1920, 0)));
+    }
+
+    #[test]
+    fn ctrl_down_slides_a_tile_along_the_edge_then_below() {
+        let (mut a, _) = well();
+        a.selected = 1;
+        assert!(a.shove(Dir::Down));
+        assert_eq!(a.tiles[1].pos, (1920, 56), "bottoms lined up");
+        assert!(a.shove(Dir::Down));
+        assert_eq!(a.tiles[1].pos, (640, 1080), "below 1, right edges lined up");
+        assert_eq!(a.tiles[0].pos, (0, 0));
+        assert!(!a.shove(Dir::Down), "nothing lies further down");
+    }
+
+    #[test]
+    fn a_shove_past_the_outer_edge_does_nothing() {
+        let (mut a, _) = well();
+        a.selected = 1;
+        let before = a.tiles.clone();
+        assert!(!a.shove(Dir::Right));
+        assert_eq!(a.tiles, before);
+        let mut one = Arrange::new(vec![tile(1, (0, 0), (1920, 1080))], 0);
+        for d in [Dir::Left, Dir::Right, Dir::Up, Dir::Down] {
+            assert!(!one.shove(d), "{d:?} with one monitor");
+        }
+    }
+
+    #[test]
+    fn a_shoved_tile_overlaps_none_and_keeps_the_layout_whole() {
+        let mut a = Arrange::new(
+            vec![
+                tile(1, (0, 0), (100, 100)),
+                tile(2, (100, 0), (100, 100)),
+                tile(3, (200, 0), (100, 100)),
+            ],
+            1,
+        );
+        for d in [
+            Dir::Down,
+            Dir::Right,
+            Dir::Up,
+            Dir::Up,
+            Dir::Left,
+            Dir::Left,
+        ] {
+            a.shove(d);
+            assert!(whole(&a.tiles), "after {d:?}: {:?}", a.tiles);
+        }
     }
 
     #[test]

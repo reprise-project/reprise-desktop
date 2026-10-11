@@ -1069,6 +1069,27 @@ mod tests {
     }
 
     #[test]
+    fn ctrl_arrows_move_the_picked_tile_on_the_page() {
+        let mut d = pair();
+        let mut f = page(&d, Area::MIN);
+        f.focus_id(PRIMARY);
+        assert_eq!(f.shove(arrange::Dir::Right), None, "the well has no focus");
+        f.focus_id(ARRANGE);
+        assert_eq!(
+            f.shove(arrange::Dir::Right),
+            Some(form::Event::Changed(ARRANGE))
+        );
+        assert!(read(&mut d, &f, ARRANGE));
+        let at: Vec<_> = d.tiles().iter().map(|t| t.pos).collect();
+        assert_eq!(at, vec![(1920, 0), (0, 0)]);
+        assert_eq!(
+            f.shove(arrange::Dir::Right),
+            Some(form::Event::None),
+            "at the edge"
+        );
+    }
+
+    #[test]
     fn the_page_draws_the_arrangement_well() {
         let theme = reprisekit::theme::Theme::default();
         let text = TextRenderer::load(&theme.fonts);
