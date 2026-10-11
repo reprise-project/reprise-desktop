@@ -18,6 +18,29 @@ pub fn trash_dir() -> Option<PathBuf> {
     Some(trash_root()?.join("files"))
 }
 
+/// The folders to watch so the trash at `root` is seen filling, arriving and leaving: its files
+/// folder (every entry), then each existing folder above it up to `root`'s parent, for the one
+/// entry on the way down. A missing parent is stood in for by its nearest existing ancestor, so a
+/// first trashing on a fresh account is seen.
+pub fn trash_watches(root: &Path) -> Vec<(PathBuf, Option<OsString>)> {
+    let files = root.join("files");
+    let mut out = Vec::new();
+    if files.is_dir() {
+        out.push((files.clone(), None));
+    }
+    let mut child = files.as_path();
+    while let Some(dir) = child.parent() {
+        if dir.is_dir() {
+            out.push((dir.to_path_buf(), child.file_name().map(OsString::from)));
+            if !dir.starts_with(root) {
+                break;
+            }
+        }
+        child = dir;
+    }
+    out
+}
+
 /// Whether the trash's files folder has anything in it; cheaper than the count `trash_contents` takes.
 pub fn trash_empty(files: &Path) -> bool {
     match std::fs::read_dir(files) {
@@ -615,6 +638,42 @@ fn root_of(mounts: &[u8]) -> Option<(String, String)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_trash_is_watched_from_its_nearest_existing_folder() {
+        let home = tempfile::tempdir().unwrap();
+        let data = home.path().join(".local/share");
+        let root = data.join("Trash");
+        let files = root.join("files");
+        let at = |dir: &Path, name: Option<&str>| (dir.to_path_buf(), name.map(OsString::from));
+
+        assert_eq!(
+            trash_watches(&root),
+            [at(home.path(), Some(".local"))],
+            "no data folder yet: the home folder, for .local"
+        );
+        std::fs::create_dir_all(&data).unwrap();
+        assert_eq!(
+            trash_watches(&root),
+            [at(&data, Some("Trash"))],
+            "no trash yet: the data folder, for Trash"
+        );
+        std::fs::create_dir(&root).unwrap();
+        assert_eq!(
+            trash_watches(&root),
+            [at(&root, Some("files")), at(&data, Some("Trash"))],
+            "no files folder yet: the trash for it, the data folder for the trash leaving"
+        );
+        std::fs::create_dir(&files).unwrap();
+        assert_eq!(
+            trash_watches(&root),
+            [
+                at(&files, None),
+                at(&root, Some("files")),
+                at(&data, Some("Trash"))
+            ],
+        );
+    }
 
     #[test]
     fn a_drive_is_named_and_iconed_by_what_it_is() {

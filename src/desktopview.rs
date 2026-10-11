@@ -546,9 +546,9 @@ fn migrate_launcher_keys(
 
 /// What the desktop watch covers. When `files` shows the folder's files: the
 /// desktop folder (ATTRIB, because chmod +x turns a `.desktop` file into a
-/// launcher) and its parent (for the folder being made). The home trash and its
-/// files folder once they exist, and each mounted drive's trash, so the Recycle
-/// Bin's icon flips between empty and full.
+/// launcher) and its parent (for the folder being made). The home trash
+/// (`home_trash_wants`) and each mounted drive's trash, so the Recycle Bin's
+/// icon flips between empty and full.
 fn watch_wants(dir: &Path, files: bool, system_icons: &[String]) -> Vec<Want> {
     let mut want = Vec::new();
     if files {
@@ -571,22 +571,9 @@ fn watch_wants(dir: &Path, files: bool, system_icons: &[String]) -> Vec<Want> {
         }
     }
     if system_icons.iter().any(|n| n == "recycle-bin")
-        && let Some(files) = places::trash_dir()
+        && let Some(root) = places::trash_root()
     {
-        let trash =
-            WatchMask::CREATE | WatchMask::DELETE | WatchMask::MOVED_FROM | WatchMask::MOVED_TO;
-        if let Some(parent) = files.parent() {
-            want.push(Want {
-                dir: parent.to_path_buf(),
-                mask: trash,
-                only: Vec::new(),
-            });
-        }
-        want.push(Want {
-            dir: files,
-            mask: trash,
-            only: Vec::new(),
-        });
+        want.extend(home_trash_wants(&root));
         // Each mounted drive's trash too, and each drive's top for its
         // trash being made; an eject drops the watch, which is a change.
         let Some(bins) = reprisefs::trash::Bins::system() else {
@@ -603,17 +590,35 @@ fn watch_wants(dir: &Path, files: bool, system_icons: &[String]) -> Vec<Want> {
         for root in bins.roots().into_iter().skip(1) {
             want.push(Want {
                 dir: root.join("files"),
-                mask: trash,
+                mask: TRASH_MASK,
                 only: Vec::new(),
             });
             want.push(Want {
                 dir: root,
-                mask: trash,
+                mask: TRASH_MASK,
                 only: Vec::new(),
             });
         }
     }
     want
+}
+
+const TRASH_MASK: WatchMask = WatchMask::CREATE
+    .union(WatchMask::DELETE)
+    .union(WatchMask::MOVED_FROM)
+    .union(WatchMask::MOVED_TO);
+
+/// The home trash's watches (`places::trash_watches`), so the Recycle Bin
+/// sees its folders made, moved back, deleted or moved away.
+fn home_trash_wants(root: &Path) -> Vec<Want> {
+    places::trash_watches(root)
+        .into_iter()
+        .map(|(dir, only)| Want {
+            dir,
+            mask: TRASH_MASK,
+            only: only.into_iter().collect(),
+        })
+        .collect()
 }
 
 /// Where each icon of `old` sits in `new`, matched by `DesktopEntry::id`; None
@@ -1705,6 +1710,38 @@ impl State {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A home trash made after the watch started is seen through the data
+    /// folder, as is one moved away and back, and a file landing in it.
+    #[test]
+    fn the_home_trash_watch_follows_its_folder() {
+        let data = std::env::temp_dir().join(format!("reprise-bin-watch-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&data);
+        std::fs::create_dir_all(&data).unwrap();
+        let root = data.join("Trash");
+        let mut w = DirWatch::new().unwrap();
+        w.sync(&home_trash_wants(&root));
+
+        std::fs::write(data.join("recently-used.xbel"), "").unwrap();
+        assert!(!w.drain(), "a file in the data folder: no rescan");
+        std::fs::create_dir_all(root.join("files")).unwrap();
+        assert!(w.drain(), "the trash made: rescan");
+        w.sync(&home_trash_wants(&root));
+        std::fs::write(root.join("files/a.txt"), "").unwrap();
+        assert!(w.drain(), "a file trashed: rescan");
+
+        let aside = data.join("Trash.bak");
+        std::fs::rename(&root, &aside).unwrap();
+        assert!(w.drain(), "the trash moved away: rescan");
+        w.sync(&home_trash_wants(&root));
+        std::fs::rename(&aside, &root).unwrap();
+        assert!(w.drain(), "the trash moved back: rescan");
+        w.sync(&home_trash_wants(&root));
+        std::fs::remove_file(root.join("files/a.txt")).unwrap();
+        assert!(w.drain(), "the bin emptied: rescan");
+
+        let _ = std::fs::remove_dir_all(&data);
+    }
 
     /// Draws the desktop menu, the place menus and the folder and file icon menus
     /// under Classic into `target/`, for `scripts/pixels-unchanged.sh`.

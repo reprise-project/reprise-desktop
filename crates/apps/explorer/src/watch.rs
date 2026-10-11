@@ -7,10 +7,11 @@
 
 use inotify::{EventMask, Inotify, WatchDescriptor, WatchMask, Watches};
 use repriseapp::Waker;
+use std::ffi::OsString;
 use std::io;
-use std::path::Path;
-use std::sync::Arc;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 /// How long the thread waits after the first event, so a burst of writes costs one refresh.
@@ -37,9 +38,13 @@ fn mask() -> WatchMask {
         | WatchMask::CLOSE_WRITE
 }
 
+/// The watches that count only events naming one entry, with that entry.
+type Only = Arc<Mutex<Vec<(WatchDescriptor, OsString)>>>;
+
 pub struct Watch {
     watches: Watches,
     wd: Vec<WatchDescriptor>,
+    only: Only,
     changed: Arc<AtomicBool>,
 }
 
@@ -50,6 +55,8 @@ impl Watch {
         let watches = inotify.watches();
         let changed = Arc::new(AtomicBool::new(false));
         let flag = changed.clone();
+        let only: Only = Arc::default();
+        let filter = only.clone();
         std::thread::Builder::new()
             .name("watch".to_string())
             .spawn(move || {
@@ -63,7 +70,15 @@ impl Watch {
                             // whatever the mask says). Taking it for a
                             // change would refresh, which re-watches,
                             // which reports IGNORED again: a busy loop.
-                            if events.all(|e| e.mask.contains(EventMask::IGNORED)) {
+                            let only = filter.lock().unwrap_or_else(|e| e.into_inner());
+                            let counts = |e: &inotify::Event<&std::ffi::OsStr>| {
+                                !e.mask.contains(EventMask::IGNORED)
+                                    && only
+                                        .iter()
+                                        .find(|(wd, _)| *wd == e.wd)
+                                        .is_none_or(|(_, name)| e.name == Some(name.as_os_str()))
+                            };
+                            if !events.any(|e| counts(&e)) {
                                 continue;
                             }
                         }
@@ -84,23 +99,31 @@ impl Watch {
         Ok(Watch {
             watches,
             wd: Vec::new(),
+            only,
             changed,
         })
     }
 
     /// Watch `dir` instead of whatever was being watched.
     pub fn watch(&mut self, dir: &Path) {
-        self.watch_all(std::slice::from_ref(&dir));
+        self.watch_all(&[(dir.to_path_buf(), None)]);
     }
 
-    /// Watch every one of `dirs` (the Recycle Bin's folders, one per drive) instead of whatever was
-    /// being watched.
+    /// Watch every one of `dirs` (the Recycle Bin's folders, one per drive, and the folders above
+    /// the home trash) instead of whatever was being watched. A folder paired with a name counts
+    /// only events naming that entry.
     /// A folder that cannot be watched is logged and left unwatched; F5 still refreshes it.
-    pub fn watch_all(&mut self, dirs: &[impl AsRef<Path>]) {
+    pub fn watch_all(&mut self, dirs: &[(PathBuf, Option<OsString>)]) {
         self.clear();
-        for dir in dirs.iter().map(AsRef::as_ref) {
+        let mut only = self.only.lock().unwrap_or_else(|e| e.into_inner());
+        for (dir, name) in dirs {
             match self.watches.add(dir, mask()) {
-                Ok(wd) => self.wd.push(wd),
+                Ok(wd) => {
+                    if let Some(name) = name {
+                        only.push((wd.clone(), name.clone()));
+                    }
+                    self.wd.push(wd);
+                }
                 Err(e) => log::info!("cannot watch {}: {e}", dir.display()),
             }
         }
@@ -108,6 +131,7 @@ impl Watch {
 
     /// Stop watching anything (Computer and the other places that are not a folder on disk).
     pub fn clear(&mut self) {
+        self.only.lock().unwrap_or_else(|e| e.into_inner()).clear();
         for wd in self.wd.drain(..) {
             let _ = self.watches.remove(wd);
         }
@@ -189,6 +213,21 @@ mod tests {
         drop(f);
         std::thread::sleep(COALESCE * 4);
         assert!(watch.take_changed(), "its close is");
+    }
+
+    /// A folder watched for one entry wakes for that entry only.
+    #[test]
+    fn a_named_watch_counts_only_its_entry() {
+        let mut watch = Watch::new(Waker::noop()).expect("inotify");
+        let dir = tempfile::tempdir().expect("tempdir");
+        watch.watch_all(&[(dir.path().to_path_buf(), Some("Trash".into()))]);
+        std::fs::write(dir.path().join("recently-used.xbel"), "x").expect("write");
+        std::thread::sleep(COALESCE * 4);
+        assert!(!watch.take_changed(), "another entry is not a change");
+
+        std::fs::create_dir(dir.path().join("Trash")).expect("mkdir");
+        std::thread::sleep(COALESCE * 4);
+        assert!(watch.take_changed(), "the named entry is");
     }
 
     #[test]
