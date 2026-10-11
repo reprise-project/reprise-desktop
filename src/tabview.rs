@@ -7,7 +7,8 @@
 //! are hidden as a minimized window is (`Window::tab_hidden`) and keep their
 //! task buttons. A window that comes to show takes the frame rect and the
 //! maximized, snapped and minimized state of the one it replaces
-//! (`adopt_frame`). A tab dragged along the caption reorders; dragged off it,
+//! (`adopt_frame`); the hidden ones follow the shown one's moves and sizes
+//! (`follow_tabs`). A tab dragged along the caption reorders; dragged off it,
 //! it leaves the group and carries on as a move of its own window.
 
 use std::time::{Duration, Instant};
@@ -360,6 +361,37 @@ impl State {
         );
         self.relayout(m);
         self.request_size(m, cw, ch);
+    }
+
+    /// Keep the tabs hidden behind `w`, when it is its group's shown window,
+    /// on its frame: they move with it, and with `size` they also take its
+    /// size and state. Sizes wait for the end of a drag resize, so hidden
+    /// clients get one configure instead of one per motion.
+    pub(crate) fn follow_tabs(&mut self, w: WindowId, size: bool) {
+        let hidden = self.tabs.groups.hidden_behind(w);
+        if hidden.is_empty() {
+            return;
+        }
+        let Some(rect) = self.win(w).map(|x| x.frame_rect()) else {
+            return;
+        };
+        for m in hidden {
+            if size {
+                self.adopt_frame(m, w);
+                continue;
+            }
+            let Some(win) = self.win_mut(m) else {
+                continue;
+            };
+            if (win.x, win.y) == (rect.x, rect.y) {
+                continue;
+            }
+            win.x = rect.x;
+            win.y = rect.y;
+            let tree = win.tree;
+            self.scene.set_position(tree, rect.x, rect.y);
+            self.place_x11(m);
+        }
     }
 
     pub fn select_tab(&mut self, m: WindowId) {
