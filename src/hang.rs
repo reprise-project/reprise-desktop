@@ -80,6 +80,16 @@ fn may_end(pid: i32, own: i32, xwayland: i32) -> bool {
     pid > 1 && pid != own && pid != xwayland
 }
 
+/// The index and pid of each End Program among `dialogs` (their `end_program_pid`s) whose pid
+/// has no window in `live`.
+fn orphaned(dialogs: &[Option<i32>], live: &[i32]) -> Vec<(usize, i32)> {
+    dialogs
+        .iter()
+        .enumerate()
+        .filter_map(|(i, pid)| pid.filter(|p| !live.contains(p)).map(|p| (i, p)))
+        .collect()
+}
+
 fn program_name(pid: i32) -> Option<String> {
     std::fs::read_link(format!("/proc/{pid}/exe"))
         .ok()
@@ -311,6 +321,25 @@ impl State {
         self.open_dialog(Dialog::end_program(&name, pid));
     }
 
+    /// A window went away: close each End Program whose program has no window left.
+    pub fn close_ended_programs(&mut self) {
+        let live: Vec<i32> = self
+            .windows
+            .iter()
+            .filter_map(|w| self.client_pid(w.id))
+            .collect();
+        let pids: Vec<Option<i32>> = self
+            .dialogs
+            .views
+            .iter()
+            .map(|v| v.dialog.end_program_pid())
+            .collect();
+        for (i, pid) in orphaned(&pids, &live).into_iter().rev() {
+            log::info!("end program: pid {pid} has no window left; closing");
+            self.close_dialog_at(i);
+        }
+    }
+
     /// End Program's End Now: SIGKILL `pid`, as long as a window still belongs to it. The program
     /// may have gone and its pid been reused while the dialog waited; a window holding the pid
     /// means it is still the one that stopped responding.
@@ -399,6 +428,14 @@ mod tests {
         assert!(!may_end(100, 100, 200), "never the compositor");
         assert!(!may_end(200, 100, 200), "never the Xwayland server");
         assert!(may_end(200, 100, 0), "no Xwayland spares no pid");
+    }
+
+    #[test]
+    fn end_program_closes_once_its_program_has_no_window() {
+        let dialogs = [Some(10), None, Some(20), Some(10)];
+        assert_eq!(orphaned(&dialogs, &[20, 30]), vec![(0, 10), (3, 10)]);
+        assert_eq!(orphaned(&dialogs, &[10, 20]), vec![]);
+        assert_eq!(orphaned(&dialogs, &[]), vec![(0, 10), (2, 20), (3, 10)]);
     }
 
     /// The caption names the executable, without the kernel's " (deleted)" mark on a binary
