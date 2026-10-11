@@ -85,7 +85,7 @@ window. The desktop menu's Next desktop background skips the slideshow ahead.
 
 `[screensaver] name` picks what `[idle] blank_after` starts: `blank` (the
 default), `starfield`, `mystify`, `logo` or `photos`. It covers every screen
-until the next input, and `[idle] lock_after` locks the session underneath.
+and hides the pointer until the next input, and `[idle] lock_after` locks the session underneath.
 `speed` (1 to 10), `stars`, `shapes`, `cycle_colors`, `folder` (for Photos;
 Pictures when left out) and `photo_seconds` tune them.
 

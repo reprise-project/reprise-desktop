@@ -241,12 +241,14 @@ fn render_scene_into(
         backend,
         scene,
         cursor,
+        saver,
         cursors,
         config,
         glass,
         interaction,
         ..
     } = state;
+    let cursor = crate::saverview::cursor(saver, cursor);
     let b = backend.as_mut().ok_or("no backend")?;
     // A capture shows the backdrop as it is now: nothing to hold.
     glass.begin(
@@ -443,9 +445,11 @@ fn fill_cursor(state: &mut State, session: &CursorSessionRef, frame: Frame) {
         backend,
         scene,
         cursor,
+        saver,
         cursors,
         ..
     } = state;
+    let cursor = crate::saverview::cursor(saver, cursor);
     let Some(b) = backend.as_mut() else {
         return frame.fail(CaptureFailureReason::Unknown);
     };

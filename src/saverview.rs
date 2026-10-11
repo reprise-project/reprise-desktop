@@ -13,6 +13,7 @@ use std::time::{Duration, Instant};
 use reprisekit::saver::{self, Kind, STEP_MS, Saver};
 use reprisescene::{BufferId, RectId, TreeId};
 use smithay::{
+    input::pointer::CursorImageStatus,
     output::Output,
     reexports::calloop::{
         RegistrationToken, channel,
@@ -134,6 +135,13 @@ pub fn start(state: &mut State, kind: Kind, preview: bool) {
 
 pub fn running(state: &State) -> bool {
     state.saver.run.is_some()
+}
+
+static HIDDEN: CursorImageStatus = CursorImageStatus::Hidden;
+
+/// The pointer an output draws: none while a saver covers the screen; the first input that stops it brings it back.
+pub fn cursor<'a>(saver: &SaverState, cursor: &'a CursorImageStatus) -> &'a CursorImageStatus {
+    if saver.run.is_some() { &HIDDEN } else { cursor }
 }
 
 pub fn stop(state: &mut State) {
@@ -365,4 +373,39 @@ fn decode_next(
         current = Some(path);
     }
     (None, None)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use smithay::input::pointer::CursorIcon;
+
+    fn running(kind: Kind) -> SaverState {
+        SaverState {
+            run: Some(Run {
+                kind,
+                grace_until: None,
+                outs: Vec::new(),
+                timer: None,
+                photos: None,
+                photo_tx: None,
+                last: Instant::now(),
+                generation: 1,
+            }),
+            generation: 1,
+        }
+    }
+
+    #[test]
+    fn a_running_saver_hides_the_pointer_and_its_end_shows_it() {
+        let arrow = CursorImageStatus::Named(CursorIcon::Default);
+        assert!(matches!(
+            cursor(&running(Kind::Starfield), &arrow),
+            CursorImageStatus::Hidden
+        ));
+        assert!(matches!(
+            cursor(&SaverState::default(), &arrow),
+            CursorImageStatus::Named(CursorIcon::Default)
+        ));
+    }
 }
