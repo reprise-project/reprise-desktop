@@ -130,6 +130,7 @@ impl AccountsApp {
                 buttons: vec!["OK".into()],
                 default: 0,
                 min_text_h: None,
+                min_w: 0,
             },
         ));
     }
@@ -238,6 +239,7 @@ impl AccountsApp {
                 ],
                 default: 2,
                 min_text_h: None,
+                min_w: 0,
             },
         );
         self.remove = Some((uid, b));

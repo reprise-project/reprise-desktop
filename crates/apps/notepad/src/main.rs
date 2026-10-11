@@ -571,6 +571,7 @@ impl Notepad {
                     buttons: vec!["Yes".into(), "No".into()],
                     default: 0,
                     min_text_h: None,
+                    min_w: 0,
                 },
             );
             self.lossy = Some((prompt, text));
@@ -1105,6 +1106,7 @@ impl Notepad {
                 buttons: vec!["OK".into()],
                 default: 0,
                 min_text_h: None,
+                min_w: 0,
             },
         )
     }
@@ -1118,6 +1120,7 @@ impl Notepad {
                 buttons: vec!["OK".into()],
                 default: 0,
                 min_text_h: None,
+                min_w: 0,
             },
         )
     }
@@ -1348,6 +1351,7 @@ impl Notepad {
             buttons: vec!["&Yes".into(), "&No".into(), "Cancel".into()],
             default: self.savechanges_focus,
             min_text_h: None,
+            min_w: 0,
         }
     }
 

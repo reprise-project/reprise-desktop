@@ -399,6 +399,7 @@ impl Explorer {
             buttons: vec!["OK".to_string()],
             default: 0,
             min_text_h: None,
+            min_w: repriseapp::caption_fit(ERROR_TITLE),
         })
     }
 

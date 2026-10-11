@@ -924,6 +924,12 @@ pub fn draw_size_grip(c: &mut Canvas, cs: &ColorScheme, r: Rect, s: i32) {
     }
 }
 
+/// The title's room in a dialog caption without an icon, `buttons` caption buttons at its right.
+pub fn caption_title_rect(caption: Rect, buttons: i32, s: i32) -> Rect {
+    let ramp = caption_ramp(caption.width, buttons, s);
+    Rect::new(caption.x + 2 * s, caption.y, ramp - 2 * s, caption.height)
+}
+
 #[expect(clippy::too_many_arguments)]
 pub fn draw_caption(
     c: &mut Canvas,
@@ -939,9 +945,15 @@ pub fn draw_caption(
     let (left, right, ink) = caption_colors(cs, active);
     let n = buttons.len() as i32;
     caption_gradient(c, caption, n, left, right, s);
-    let ramp = caption_ramp(caption.width, n, s);
-    let title_r = Rect::new(caption.x + 2 * s, caption.y, ramp - 2 * s, caption.height);
-    text.draw(c, title_r, title, true, ink, Align::Left, px);
+    text.draw(
+        c,
+        caption_title_rect(caption, n, s),
+        title,
+        true,
+        ink,
+        Align::Left,
+        px,
+    );
     for &(r, glyph) in buttons {
         draw_caption_button(c, cs, r, glyph, false, s);
     }

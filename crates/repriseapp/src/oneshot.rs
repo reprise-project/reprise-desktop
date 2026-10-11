@@ -79,11 +79,11 @@ pub enum Outcome {
 }
 
 impl MsgBox {
-    pub fn new(title: impl Into<String>, fields: Fields) -> MsgBox {
-        MsgBox {
-            title: title.into(),
-            fields,
-        }
+    /// A box at least as wide as its caption needs for `title` ([`crate::caption_fit`]).
+    pub fn new(title: impl Into<String>, mut fields: Fields) -> MsgBox {
+        let title = title.into();
+        fields.min_w = fields.min_w.max(crate::caption_fit(&title));
+        MsgBox { title, fields }
     }
 
     pub fn child(&self, id: WinId, text: &TextRenderer, px: u32) -> Child {
@@ -161,8 +161,55 @@ mod tests {
                 buttons: vec!["Yes".into(), "No".into()],
                 default: 1,
                 min_text_h: None,
+                min_w: 0,
             },
         )
+    }
+
+    #[test]
+    fn a_short_box_widens_for_its_title_up_to_the_output() {
+        use reprisekit::interface::Interface;
+        let text = TextRenderer::load(&FontConfig::default());
+        let px = 11;
+        let short = || Fields {
+            text: "Access denied.".into(),
+            icon: None,
+            buttons: vec!["OK".into()],
+            default: 0,
+            min_text_h: None,
+            min_w: 0,
+        };
+        // Widths per look are pinned by look::caption_fit's own test.
+        let plain = msgbox::client(&short(), &text, px).0;
+        if text.has_face("Tahoma") {
+            assert_eq!(plain, 162);
+        }
+        let mut glass = 0;
+        for i in [Interface::Classic, Interface::Blue, Interface::Glass] {
+            let theme = reprisekit::interfaces::theme_for(i);
+            crate::publish_theme(&theme);
+            let b = MsgBox::new("User Accounts", short());
+            let w = b.child("box", &text, px).size.0;
+            let fit = reprisekit::look::caption_fit(
+                &theme,
+                "User Accounts",
+                reprisekit::frame::Chrome::DIALOG,
+            );
+            assert_eq!(w, plain.max(fit), "{i:?}: the wider of text and title");
+            let ok = msgbox::form(&b.fields, &text, px)
+                .item(msgbox::OK)
+                .unwrap()
+                .rect;
+            assert_eq!(ok.x, (w - ok.width) / 2, "{i:?}: OK centres in the box");
+            glass = w;
+        }
+        crate::CAPTION_FIT.with_borrow_mut(|(_, out)| *out = Some(180));
+        let b = MsgBox::new("User Accounts", short());
+        assert_eq!(
+            b.child("box", &text, px).size.0,
+            glass.min(180 - 2 * 8),
+            "capped to a 180 px output less the Glass dialog border"
+        );
     }
 
     #[test]

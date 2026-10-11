@@ -324,12 +324,13 @@ impl Explorer {
 
     fn box_fields(&self) -> Option<msgbox::Fields> {
         match self.dialog.as_ref()? {
-            Dialog::Message { text, .. } => Some(msgbox::Fields {
+            Dialog::Message { title, text } => Some(msgbox::Fields {
                 text: text.clone(),
                 icon: self.error_icon.clone(),
                 buttons: vec!["OK".to_string()],
                 default: 0,
                 min_text_h: None,
+                min_w: repriseapp::caption_fit(title),
             }),
             Dialog::Confirm(_)
             | Dialog::ChooseProgram(_)

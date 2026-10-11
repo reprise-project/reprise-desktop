@@ -139,6 +139,7 @@ impl Pick {
             buttons,
             default,
             min_text_h: None,
+            min_w: 0,
         };
         self.msg = Some((MsgBox::new(self.input.title.clone(), fields), replace));
         Reply::redraw_all()

@@ -59,6 +59,9 @@ pub struct Fields {
     /// `src/dialog.rs::confirm_delete` passes the same 51). `None` sizes
     /// the box to its own lines.
     pub min_text_h: Option<i32>,
+    /// The narrowest client width, for a caption title wider than the text
+    /// and buttons ([`crate::look::caption_fit`]); 0 sizes the box to them.
+    pub min_w: i32,
 }
 
 /// The height the text block takes: one row a line, never less than
@@ -88,8 +91,8 @@ fn button_row_w(n: i32) -> i32 {
     n * BUTTON_W + (n - 1).max(0) * BUTTON_GAP
 }
 
-/// The client size this box needs: wide enough for its widest line and
-/// its button row, and tall enough for every line of text (one line
+/// The client size this box needs: wide enough for its widest line,
+/// its button row and `min_w`, and tall enough for every line of text (one line
 /// keeps `CLIENT_H`; each embedded `\n` adds one `LINE_H`, and a
 /// `min_text_h` box keeps its reserved rows whatever the text is).
 pub fn client(f: &Fields, text: &TextRenderer, px: u32) -> (i32, i32) {
@@ -102,7 +105,7 @@ pub fn client(f: &Fields, text: &TextRenderer, px: u32) -> (i32, i32) {
     let msg = text_x(f) + widest + MARGIN_X;
     let n = f.buttons.len() as i32;
     let row = MARGIN_X * 2 + button_row_w(n);
-    (msg.max(row).max(MIN_W), CLIENT_H + extra_h(f))
+    (msg.max(row).max(MIN_W).max(f.min_w), CLIENT_H + extra_h(f))
 }
 
 /// Build the box over the size `client` reports. Panics on a fourth
@@ -180,6 +183,7 @@ mod tests {
             buttons: vec!["OK".into()],
             default: 0,
             min_text_h: None,
+            min_w: 0,
         }
     }
 
@@ -261,6 +265,7 @@ mod tests {
             buttons: vec!["Yes".into(), "No".into(), "Cancel".into()],
             default: 0,
             min_text_h: None,
+            min_w: 0,
         };
         let f = form(&prompt, &text, px);
         let r = |i: usize| f.item(button_id(i)).expect("the button exists").rect;
@@ -286,6 +291,7 @@ mod tests {
             buttons: vec!["Yes".into(), "No".into()],
             default: 1,
             min_text_h: None,
+            min_w: 0,
         };
         let mut f = form(&replace, &text, px);
         assert_eq!(f.focus().map(|i| f.items[i].id), Some(button_id(1)));

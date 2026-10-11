@@ -613,6 +613,41 @@ pub enum Caption {
     Fixed,
 }
 
+thread_local! {
+    /// The host's theme and the main window's output width, for [`caption_fit`].
+    static CAPTION_FIT: RefCell<(Option<Theme>, Option<i32>)> = const { RefCell::new((None, None)) };
+}
+
+/// The narrowest client width at which a child window's caption shows `title` whole under the
+/// host's theme (an owned child wears the dialog caption), no wider than the main window's
+/// output allows. 0 before the host has a theme.
+pub fn caption_fit(title: &str) -> i32 {
+    use reprisekit::frame::{Chrome, FrameGeometry};
+    CAPTION_FIT.with_borrow(|(theme, output_w)| {
+        let Some(theme) = theme else {
+            return 0;
+        };
+        let fit = reprisekit::look::caption_fit(theme, title, Chrome::DIALOG);
+        match output_w {
+            Some(w) => {
+                let usable = FrameGeometry::client_size_for_total(
+                    &theme.metrics,
+                    *w,
+                    1,
+                    false,
+                    Chrome::DIALOG,
+                );
+                fit.min(usable.0)
+            }
+            None => fit,
+        }
+    })
+}
+
+fn publish_theme(theme: &Theme) {
+    CAPTION_FIT.with_borrow_mut(|(t, _)| *t = Some(theme.clone()));
+}
+
 const BLINK_MS: u64 = 530;
 pub const TICK_MS: u64 = 50;
 
@@ -819,6 +854,7 @@ pub fn run(app: Box<dyn App>) {
     let (w, h) = sane_size(app.initial_size());
     let look = Look::from_env();
     let theme = look.theme();
+    publish_theme(&theme);
     let text = TextRenderer::load(&theme.fonts);
     let icons = look.icons();
     let (ping, ping_source) = make_ping().expect("ping");
@@ -1749,6 +1785,7 @@ impl Host {
         if theme.fonts != self.ctx.theme.fonts {
             self.ctx.text = TextRenderer::load(&theme.fonts);
         }
+        publish_theme(&theme);
         self.ctx.theme = theme;
         self.ctx.text_size = self.look.text_size;
         if key == reprisebus::appearance::ICON_THEME {
@@ -2209,6 +2246,7 @@ impl CompositorHandler for Host {
                 .iter()
                 .any(|s| s.id == MAIN && s.window.wl_surface() == surface)
         {
+            CAPTION_FIT.with_borrow_mut(|(_, w)| *w = Some(size.0));
             self.send(MAIN, Event::Output(size));
         }
         let Some((x, y)) = info.and_then(|i| i.logical_position) else {

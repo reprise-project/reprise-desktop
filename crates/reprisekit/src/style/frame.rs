@@ -73,6 +73,14 @@ pub fn draw_frame(
     canvas.clear_rect(geom.client);
 }
 
+/// Where a title may run in `style`'s caption: from its left edge to the first caption button.
+pub(crate) fn title_span(style: &Style, geom: &FrameGeometry, s: i32) -> (i32, i32) {
+    (
+        geom.caption.x + style.caption_title.text_x * s,
+        geom.buttons[0].x,
+    )
+}
+
 fn draw_title(
     canvas: &mut Canvas,
     style: &Style,
@@ -86,9 +94,8 @@ fn draw_title(
     let m = usize::from(state.maximized);
     let translucent = style.glass.is_some();
     let spec = &style.caption_text;
-    let first_button_x = geom.buttons[0].x;
+    let (mut title_x, first_button_x) = title_span(style, geom, s);
     let size = spec.size_px * s as u32;
-    let mut title_x = geom.caption.x + t.text_x * s;
     if style.centred_title {
         let tw = caption_text.measure(state.title, spec.bold, size);
         let centred = geom.origin.0 + geom.total.0 / 2 - tw / 2;
