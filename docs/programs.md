@@ -14,8 +14,9 @@ The file manager, and the default for folders.
   Forward with their history, Up and an address bar (Alt+D). It remembers
   your view and window size.
 - **Places:** Desktop, Documents, Home, Computer and the Recycle Bin.
-  Computer lists your drives, unmounted removable ones included: open one to
-  mount it, Eject to remove it safely. Network and FUSE mounts stay out of
+  Computer lists your drives, unmounted and locked removable ones included:
+  open one to mount it (a locked one asks for its passphrase first), Eject to
+  remove it safely. Network and FUSE mounts stay out of
   that list, so a slow server can't stall it.
 - **File operations** run in the background, so a big copy doesn't freeze
   anything. Cut, Copy, Paste (with Yes to All), Paste Shortcut, New Folder,

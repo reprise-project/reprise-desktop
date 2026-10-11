@@ -90,6 +90,11 @@ pub struct Volume {
 }
 
 impl Volume {
+    /// An encrypted container with no cleartext volume.
+    pub fn locked(&self) -> bool {
+        self.encrypted && self.cleartext.is_none()
+    }
+
     pub fn name(&self, disk: Option<&Disk>) -> String {
         match &self.label {
             Some(l) => l.clone(),
@@ -141,11 +146,12 @@ impl Snapshot {
         !v.ignore && !v.system && self.disk_of(v).is_some_and(|d| d.removable)
     }
 
-    /// Removable volumes with a file system that is not mounted.
+    /// Removable volumes with a file system that is not mounted, and
+    /// removable containers still locked.
     pub fn unmounted(&self) -> Vec<&Volume> {
         self.volumes
             .iter()
-            .filter(|v| v.filesystem && v.mounts.is_empty() && self.removable(v))
+            .filter(|v| (v.filesystem || v.locked()) && v.mounts.is_empty() && self.removable(v))
             .collect()
     }
 
@@ -651,6 +657,21 @@ pub(crate) mod tests {
             "the mounted FAT, the container, the partition table and the internal disk stay out"
         );
         assert_eq!(snap.volumes_on(&format!("{DR}/Vault")).len(), 2);
+    }
+
+    #[test]
+    fn a_locked_container_is_listed_as_unmounted() {
+        let path = |p: &str| OwnedObjectPath::try_from(p.to_string()).unwrap();
+        let mut m = objects();
+        m.remove(&path(&format!("{BD}/dm_2d0")));
+        m.get_mut(&path(&format!("{BD}/sdc"))).unwrap().insert(
+            ENCRYPTED_IFACE.to_string(),
+            props(vec![("CleartextDevice", o("/"))]),
+        );
+        let snap = fold(&m);
+        let names: Vec<&str> = snap.unmounted().iter().map(|v| v.device.as_str()).collect();
+        assert_eq!(names, ["/dev/sdc"]);
+        assert!(snap.unmounted()[0].locked());
     }
 
     #[test]

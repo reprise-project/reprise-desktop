@@ -1,10 +1,13 @@
 //! Computer's removable drives through UDisks2: opening an unmounted volume
-//! mounts it first, and Eject safely removes the row's drive. Both calls can
+//! mounts it first (a locked one asks for its passphrase and unlocks it
+//! before that), and Eject safely removes the row's drive. The calls can
 //! wait on a polkit prompt, so they run as jobs and finish at a wake.
 
 use crate::Explorer;
+use crate::dialogs::Dialog;
 use crate::place::{self, Place};
-use repriseapp::{Ctx, Reply};
+use repriseapp::unlock::{self, Outcome, Unlock};
+use repriseapp::{Ctx, Event, Reply};
 use reprisefs::udisks::{Error, ErrorKind, Volume};
 
 impl Explorer {
@@ -24,12 +27,16 @@ impl Explorer {
                 .is_some_and(|it| place::eject_target(&self.volumes, it).is_some())
     }
 
-    /// Mount `v`, then go into where it landed. A refusal raises a box titled after the volume; a dismissed prompt raises nothing.
+    /// Mount `v`, then go into where it landed; a locked `v` raises Unlock Drive instead. A refusal raises a box titled after the volume; a dismissed prompt raises nothing.
     pub(crate) fn mount_and_open(&mut self, v: Volume, ctx: &mut Ctx) -> Reply {
         let Some(udisks) = self.udisks.clone() else {
             return Reply::none();
         };
         let name = v.name(self.volumes.disk_of(&v));
+        if v.locked() {
+            self.dialog = Some(Dialog::Unlock(Box::new(Unlock::open(v.path, &name, ctx))));
+            return Reply::redraw_all();
+        }
         self.spawn_job(ctx, move || {
             let mounted = udisks.mount(&v.path);
             Box::new(move |ex: &mut Explorer, ctx: &mut Ctx| match mounted {
@@ -38,6 +45,78 @@ impl Explorer {
             })
         });
         Reply::redraw()
+    }
+
+    /// Unlock Drive's window. OK unlocks the container on a job, then mounts
+    /// its cleartext volume and goes into it; a refused passphrase keeps the
+    /// box up to try again.
+    pub(crate) fn unlock_event(&mut self, ev: Event, ctx: &mut Ctx) -> Reply {
+        let Some(Dialog::Unlock(u)) = self.dialog.as_mut() else {
+            return Reply::none();
+        };
+        let clip = repriseapp::keys::form_clipboard(u.form.focused_edit(), &ev);
+        let reply = match u.input(ev, ctx) {
+            Outcome::None => Reply::none(),
+            Outcome::Redraw => Reply::redraw(),
+            Outcome::Cancel => {
+                self.dialog = None;
+                self.show_waiting(ctx)
+            }
+            Outcome::Submit(pass) => {
+                let volume = u.volume.clone();
+                let Some(udisks) = self.udisks.clone() else {
+                    return Reply::none();
+                };
+                let name = self.volumes.volume(&volume).map_or_else(
+                    || "Removable Disk".into(),
+                    |v| v.name(self.volumes.disk_of(v)),
+                );
+                self.spawn_job(ctx, move || {
+                    let opened = udisks
+                        .unlock(&volume, &pass)
+                        .map(|clear| udisks.mount(&clear));
+                    drop(pass);
+                    Box::new(move |ex: &mut Explorer, ctx: &mut Ctx| {
+                        ex.unlocked(&volume, &name, opened, ctx)
+                    })
+                });
+                Reply::redraw()
+            }
+        };
+        reply.with_clipboard(clip)
+    }
+
+    fn unlocked(
+        &mut self,
+        volume: &str,
+        name: &str,
+        opened: Result<Result<std::path::PathBuf, Error>, Error>,
+        ctx: &mut Ctx,
+    ) -> Reply {
+        let open = matches!(&self.dialog, Some(Dialog::Unlock(u)) if u.volume == volume);
+        match opened {
+            Err(e) if e.kind != ErrorKind::Cancelled => {
+                log::info!("unlocking {volume}: {e}");
+                if let Some(Dialog::Unlock(u)) = self.dialog.as_mut().filter(|_| open) {
+                    u.fail(unlock::failure(&e.message));
+                }
+                Reply::redraw_all()
+            }
+            done => {
+                if open {
+                    self.dialog = None;
+                }
+                let reply = match done {
+                    Ok(Ok(at)) => self.go(Place::Folder(at), ctx),
+                    Ok(Err(e)) => self.udisks_failed(&format!("Could not open {name}"), &e, ctx),
+                    Err(_) => Reply::none(),
+                };
+                Reply {
+                    redraw_all: true,
+                    ..reply
+                }
+            }
+        }
     }
 
     /// Eject: safely remove the drive under the single selected row, then re-read the drives.
