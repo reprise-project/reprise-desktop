@@ -40,6 +40,10 @@ const DEFAULT_MS: i32 = 7000;
 const MIN_MS: i32 = 3000;
 const MAX_MS: i32 = 20000;
 
+/// An open reply row with no key or pointer in the balloon for this long collapses, and the balloon
+/// times out as usual so the queue behind it moves.
+const REPLY_IDLE: Duration = Duration::from_secs(120);
+
 /// freedesktop `NotificationClosed` reason codes.
 pub const REASON_EXPIRED: u32 = 1;
 pub const REASON_DISMISSED: u32 = 2;
@@ -132,6 +136,7 @@ struct Balloon {
     held: Option<(NotifyHit, bool)>,
     hot: Option<NotifyHit>,
     reply: Option<ReplyField>,
+    pointer_in: bool,
 }
 
 #[derive(Default)]
@@ -139,6 +144,8 @@ pub struct NotifyView {
     active: Option<Balloon>,
     queue: VecDeque<Item>,
     recent: VecDeque<(String, Instant)>,
+    /// Text typed into reply rows that collapsed idle, by notification id; Reply brings it back.
+    drafts: Vec<(u32, ReplyField)>,
     /// The `default` action of the compositor's own notice; any other notice clears it.
     own_click: Option<Vec<OsString>>,
     timer: Option<RegistrationToken>,
@@ -150,20 +157,69 @@ pub struct NotifyView {
 }
 
 fn arm(state: &mut State, ms: Option<i32>) {
+    arm_for(
+        state,
+        ms.filter(|&ms| ms > 0)
+            .map(|ms| Duration::from_millis(ms as u64)),
+    );
+}
+
+fn arm_for(state: &mut State, wait: Option<Duration>) {
     if let Some(t) = state.notify.timer.take() {
         state.handle.remove(t);
     }
-    let Some(ms) = ms.filter(|&ms| ms > 0) else {
+    let Some(wait) = wait else {
         return;
     };
-    let timer = Timer::from_duration(Duration::from_millis(ms as u64));
-    match state.handle.insert_source(timer, |_, _, state| {
-        state.notify.timer = None;
-        expired(state);
-        TimeoutAction::Drop
-    }) {
+    match state
+        .handle
+        .insert_source(Timer::from_duration(wait), |_, _, state| {
+            state.notify.timer = None;
+            due(state);
+            TimeoutAction::Drop
+        }) {
         Ok(t) => state.notify.timer = Some(t),
         Err(e) => log::warn!("notification timer: {}", e.error),
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Due {
+    Expire,
+    /// The reply row has sat untouched for `REPLY_IDLE`.
+    Collapse,
+    /// The reply row is open with the pointer in the balloon: another `REPLY_IDLE`.
+    Wait,
+}
+
+fn due_step(replying: bool, pointer_in: bool) -> Due {
+    match (replying, pointer_in) {
+        (false, _) => Due::Expire,
+        (true, false) => Due::Collapse,
+        (true, true) => Due::Wait,
+    }
+}
+
+fn due(state: &mut State) {
+    let Some(b) = state.notify.active.as_ref() else {
+        return;
+    };
+    match due_step(b.reply.is_some(), b.pointer_in) {
+        Due::Expire => expired(state),
+        Due::Collapse => collapse_idle(state),
+        Due::Wait => arm_for(state, Some(REPLY_IDLE)),
+    }
+}
+
+/// A key or the pointer in the balloon: an open reply row gets another `REPLY_IDLE`.
+fn reply_touched(state: &mut State) {
+    if state
+        .notify
+        .active
+        .as_ref()
+        .is_some_and(|b| b.reply.is_some())
+    {
+        arm_for(state, Some(REPLY_IDLE));
     }
 }
 
@@ -500,11 +556,8 @@ pub fn invoke(state: &mut State, id: u32, key: &str) {
 
 fn start_reply(state: &mut State, id: u32) {
     if state.notify.active.as_ref().is_some_and(|b| b.item.is(id)) {
-        let focused = ReplyField {
-            focused: true,
-            ..ReplyField::default()
-        };
-        expand(state, focused);
+        let field = take_draft(&mut state.notify.drafts, id);
+        expand(state, field);
         return;
     }
     let Some(n) = state
@@ -525,11 +578,20 @@ fn start_reply(state: &mut State, id: u32) {
     }
     drop_balloon(state, id);
     display(state, Item::Note(n));
-    let focused = ReplyField {
+    let field = take_draft(&mut state.notify.drafts, id);
+    expand(state, field);
+}
+
+/// `id`'s draft, focused, or an empty focused field.
+fn take_draft(drafts: &mut Vec<(u32, ReplyField)>, id: u32) -> ReplyField {
+    let field = drafts
+        .iter()
+        .position(|(i, _)| *i == id)
+        .map(|at| drafts.remove(at).1);
+    ReplyField {
         focused: true,
-        ..ReplyField::default()
-    };
-    expand(state, focused);
+        ..field.unwrap_or_default()
+    }
 }
 
 fn expand(state: &mut State, field: ReplyField) {
@@ -541,23 +603,47 @@ fn expand(state: &mut State, field: ReplyField) {
     }
     let focused = field.focused;
     b.reply = Some(field);
-    arm(state, None);
+    arm_for(state, Some(REPLY_IDLE));
     if focused {
         state.restart_caret();
     }
     paint(state);
 }
 
-fn collapse(state: &mut State) {
-    let Some(b) = state.notify.active.as_mut() else {
-        return;
-    };
-    if b.reply.take().is_none() {
-        return;
-    }
+fn collapse(state: &mut State) -> Option<ReplyField> {
+    let b = state.notify.active.as_mut()?;
+    let field = b.reply.take()?;
     let ms = b.item.note().and_then(timeout_ms);
     arm(state, ms);
     paint(state);
+    Some(field)
+}
+
+/// The reply row sat idle: it collapses, any text typed kept for the next Reply on this
+/// notification while the history holds it.
+fn collapse_idle(state: &mut State) {
+    let id = state
+        .notify
+        .active
+        .as_ref()
+        .and_then(|b| b.item.note())
+        .map(|n| n.id);
+    let Some(field) = collapse(state) else {
+        return;
+    };
+    let Some(id) = id.filter(|_| field.to_send().is_some()) else {
+        return;
+    };
+    let v = &mut state.notify;
+    v.drafts
+        .retain(|(i, _)| *i != id && v.log.get(*i).is_some());
+    v.drafts.push((
+        id,
+        ReplyField {
+            focused: false,
+            ..field
+        },
+    ));
 }
 
 /// Send `text` as the active balloon's reply: `NotificationReplied` fires, and the notification
@@ -619,8 +705,11 @@ pub fn key(state: &mut State, k: &DialogKey) {
         ReplyEvent::None => {}
         ReplyEvent::Redraw => paint(state),
         ReplyEvent::Send(text) => send_reply(state, text),
-        ReplyEvent::Collapse => collapse(state),
+        ReplyEvent::Collapse => {
+            collapse(state);
+        }
     }
+    reply_touched(state);
 }
 
 /// Text from the clipboard into the reply field.
@@ -630,6 +719,7 @@ pub fn paste(state: &mut State, text: &str) {
     {
         paint(state);
     }
+    reply_touched(state);
 }
 
 /// A press anywhere off the balloon: its reply field lets go of the keyboard and stays open.
@@ -733,6 +823,7 @@ pub fn press(state: &mut State, x: f64, y: f64, button: u32) -> bool {
     let Some((lay, hit, lx)) = balloon_hit(state, x, y) else {
         return false;
     };
+    reply_touched(state);
     let hit = if button == BTN_LEFT {
         hit
     } else {
@@ -791,7 +882,7 @@ fn lay_scale(state: &State) -> i32 {
 }
 
 /// The pointer moved, `over` the balloon or not: the close box, the button or the reply field under
-/// it lights.
+/// it lights. Moving in the balloon or out of it restarts an open reply row's `REPLY_IDLE`.
 pub fn hover(state: &mut State, x: f64, y: f64, over: bool) {
     let hit = if over {
         balloon_hit(state, x, y).map(|(_, h, _)| h)
@@ -802,9 +893,13 @@ pub fn hover(state: &mut State, x: f64, y: f64, over: bool) {
     let Some(b) = state.notify.active.as_mut() else {
         return;
     };
+    let was_in = std::mem::replace(&mut b.pointer_in, hit.is_some());
     if b.hot != hot {
         b.hot = hot;
         paint(state);
+    }
+    if hit.is_some() || was_in {
+        reply_touched(state);
     }
 }
 
@@ -990,6 +1085,7 @@ fn display(state: &mut State, item: Item) {
         held: None,
         hot: None,
         reply: None,
+        pointer_in: false,
     });
     reposition(state);
     arm(state, ms);
@@ -1121,6 +1217,31 @@ mod tests {
         assert_eq!(timeout_ms(&n), Some(MIN_MS));
         n.urgency = Urgency::Critical;
         assert_eq!(timeout_ms(&n), None);
+    }
+
+    /// An open reply row collapses once idle, but not while the pointer rests in the balloon; a
+    /// collapsed balloon expires on its own timeout.
+    #[test]
+    fn an_idle_reply_row_collapses_unless_the_pointer_is_in_the_balloon() {
+        assert_eq!(due_step(true, false), Due::Collapse);
+        assert_eq!(due_step(true, true), Due::Wait);
+        assert_eq!(due_step(false, true), Due::Expire);
+        assert_eq!(due_step(false, false), Due::Expire);
+        assert_eq!(REPLY_IDLE, Duration::from_secs(120));
+    }
+
+    #[test]
+    fn reply_brings_back_its_notifications_draft_focused() {
+        let typed = |t: &str| ReplyField {
+            edit: TextEdit::new(t, false),
+            focused: false,
+        };
+        let mut drafts = vec![(1, typed("see you")), (2, typed("ok"))];
+        let back = take_draft(&mut drafts, 1);
+        assert_eq!((back.edit.text.as_str(), back.focused), ("see you", true));
+        assert_eq!(drafts.len(), 1);
+        let fresh = take_draft(&mut drafts, 3);
+        assert!(fresh.edit.text.is_empty() && fresh.focused);
     }
 
     #[test]
