@@ -1,12 +1,18 @@
-//! Unlock Drive: the box a locked drive opens when plugged in.
+//! Unlock Drive: the passphrase box for a locked drive, raised when it is
+//! plugged in and when it is opened from Computer.
 
 use std::cell::Cell;
 
+use reprisekit::access::Tree;
 use reprisekit::classic::widgets::{BUTTON_H, BUTTON_W, LINE_H};
 use reprisekit::controls::form::{self, Control, Form, Item};
+use reprisekit::look::Paint;
 use reprisekit::raster::{Canvas, Rect};
 use reprisekit::textedit::TextEdit;
 use zeroize::Zeroizing;
+
+use crate::keys::form_input;
+use crate::{Ctx, Event};
 
 pub const CLIENT: (i32, i32) = (378, 150);
 
@@ -25,7 +31,9 @@ const BTN_Y: i32 = CLIENT.1 - 12 - BUTTON_H;
 const CANCEL_X: i32 = CLIENT.0 - 12 - BUTTON_W;
 const OK_X: i32 = CANCEL_X - 6 - BUTTON_W;
 
+pub const TITLE: &str = "Unlock Drive";
 pub const WRONG: &str = "The passphrase is not correct.";
+const ICON_NAME: &str = "drive-removable-media";
 
 pub enum Outcome {
     None,
@@ -45,7 +53,24 @@ pub fn message(name: &str) -> String {
     format!("'{name}' is encrypted. Type its passphrase to unlock it.")
 }
 
+/// The status line for a failed unlock with UDisks2 `message`.
+pub fn failure(message: &str) -> &str {
+    // Wrong-passphrase wording varies by cryptsetup version.
+    let m = message.to_lowercase();
+    let wrong = ["passphrase", "not permitted", "no key"]
+        .iter()
+        .any(|w| m.contains(w));
+    if wrong { WRONG } else { message }
+}
+
 impl Unlock {
+    /// The box for container `volume`, named `name` in its message.
+    pub fn open(volume: String, name: &str, ctx: &mut Ctx) -> Unlock {
+        let lines =
+            reprisekit::text::wrap(&ctx.text, &message(name), MSG_W, ctx.theme.fonts.size_px);
+        Unlock::new(volume, &lines, ctx.icons.get(ICON_NAME, 32))
+    }
+
     pub fn new(volume: String, lines: &[String], icon: Option<Canvas>) -> Unlock {
         let refs: Vec<&str> = lines.iter().map(|s| s.as_str()).collect();
         let items = vec![
@@ -118,6 +143,41 @@ impl Unlock {
             form::Event::Redraw => Outcome::Redraw,
             _ => Outcome::None,
         }
+    }
+
+    /// An event on the box's window; the close box is Cancel.
+    pub fn input(&mut self, ev: Event, ctx: &Ctx) -> Outcome {
+        match ev {
+            Event::CloseRequest => Outcome::Cancel,
+            Event::Pasted(text) => {
+                let ev = self.form.paste(text);
+                self.event(ev)
+            }
+            ev => match form_input(&mut self.form, &ev, ctx) {
+                Some(ev) => self.event(ev),
+                None => Outcome::None,
+            },
+        }
+    }
+
+    pub fn draw(&self, c: &mut Canvas, ctx: &Ctx) {
+        c.fill_rect(c.bounds(), ctx.theme.colors.button_face);
+        let paint = Paint {
+            s: 1,
+            ..ctx.theme.paint()
+        };
+        form::draw(
+            c,
+            &ctx.text,
+            &paint,
+            &self.form,
+            true,
+            ctx.theme.fonts.size_px,
+        );
+    }
+
+    pub fn access(&self, tree: &mut Tree, ctx: &Ctx) {
+        crate::oneshot::access_form(&self.form, tree, &ctx.text, ctx.theme.fonts.size_px);
     }
 
     pub fn fail(&mut self, why: &str) {
@@ -213,6 +273,18 @@ mod tests {
         assert_eq!(d.status(), "The passphrase is not correct.");
         typed(&mut d, "right");
         assert!(matches!(d.event(form::Event::Default), Outcome::Submit(_)));
+    }
+
+    #[test]
+    fn a_refused_passphrase_reads_as_wrong_and_other_failures_as_given() {
+        assert_eq!(
+            failure("Error unlocking /dev/sdc: Failed to activate device: Operation not permitted"),
+            WRONG
+        );
+        assert_eq!(
+            failure("Device /dev/sdc is busy"),
+            "Device /dev/sdc is busy"
+        );
     }
 
     #[test]

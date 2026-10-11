@@ -1,4 +1,4 @@
-//! Explorer's modal dialogs in one child window: the error box, the delete and replace confirmations, the Open With chooser, the Properties sheet's Advanced Attributes, Confirm Attribute Changes and Change Icon, and the Move and Copy folder picker (`browse`).
+//! Explorer's modal dialogs in one child window: the error box, the delete and replace confirmations, the Open With chooser, the Properties sheet's Advanced Attributes, Confirm Attribute Changes and Change Icon, the Move and Copy folder picker (`browse`), and Unlock Drive.
 //!
 //! One child at a time: raising a second replaces the first. Two stack instead: the chooser's Browse... opens the program picker (`PROGRAM_BROWSE`) over it, and a refused name in the Move/Copy picker raises its error box (`browse::ERROR`). The error and confirm boxes keep only their text and focused button, so their [`Form`] is rebuilt per event; the chooser keeps an `openwith` control that takes its own events ([`crate::openwith`]).
 
@@ -6,6 +6,7 @@ use crate::place;
 use crate::props_dialog::{ADV_CANCEL, ADV_OK, ATTR_CANCEL, ATTR_OK, ATTR_SIZE, AttrConfirm};
 use crate::{BTN_LEFT, Explorer};
 use repriseapp::filedlg::Host;
+use repriseapp::unlock::{self, Unlock};
 use repriseapp::{Caption, Child, Ctx, Event, PointerInput, Reply, WinId};
 use reprisekit::controls::aboutbox;
 use reprisekit::controls::browsefolder;
@@ -199,6 +200,8 @@ pub enum Dialog {
     },
     About(Form),
     Browse(crate::browse::Browse),
+    /// Unlock Drive, over a locked drive opened from Computer.
+    Unlock(Box<Unlock>),
 }
 
 impl Dialog {
@@ -222,6 +225,7 @@ impl Dialog {
             Dialog::About(_) => "About Explorer".to_string(),
             Dialog::Browse(b) if b.mv => "Move Items".to_string(),
             Dialog::Browse(_) => "Copy Items".to_string(),
+            Dialog::Unlock(_) => unlock::TITLE.to_string(),
         }
     }
 }
@@ -334,7 +338,8 @@ impl Explorer {
             | Dialog::Advanced { .. }
             | Dialog::ChangeIcon { .. }
             | Dialog::About(_)
-            | Dialog::Browse(_) => None,
+            | Dialog::Browse(_)
+            | Dialog::Unlock(_) => None,
         }
     }
 
@@ -429,6 +434,7 @@ impl Explorer {
                     Dialog::About(_) => aboutbox::CLIENT,
                     Dialog::Browse(_) => browsefolder::CLIENT,
                     Dialog::ChooseProgram(_) => openwith::CLIENT,
+                    Dialog::Unlock(_) => unlock::CLIENT,
                     Dialog::Confirm(_) => {
                         self.confirm_layout().expect("a delete prompt is up").size
                     }
@@ -471,6 +477,10 @@ impl Explorer {
 
     pub fn draw_dialog(&self, c: &mut Canvas, ctx: &Ctx) {
         c.fill_rect(c.bounds(), ctx.theme.colors.button_face);
+        if let Some(Dialog::Unlock(u)) = &self.dialog {
+            u.draw(c, ctx);
+            return;
+        }
         if let Some(Dialog::Browse(b)) = &self.dialog {
             let lay = b.bf.layout(
                 &self.dialog_text,
@@ -543,6 +553,10 @@ impl Explorer {
     }
 
     pub fn access_dialog(&self, tree: &mut reprisekit::access::Tree, ctx: &Ctx) {
+        if let Some(Dialog::Unlock(u)) = &self.dialog {
+            u.access(tree, ctx);
+            return;
+        }
         if let Some(Dialog::Browse(b)) = &self.dialog {
             b.bf.access(
                 tree,
@@ -596,6 +610,9 @@ impl Explorer {
         }
         if matches!(self.dialog, Some(Dialog::ChooseProgram(_))) {
             return self.chooser_event(ev, ctx);
+        }
+        if matches!(self.dialog, Some(Dialog::Unlock(_))) {
+            return self.unlock_event(ev, ctx);
         }
         // The boxes that keep a form (attribute confirm, Advanced Attributes, Change Icon) take their events in place; the text boxes rebuild theirs per event.
         let kept = match self.dialog.as_mut() {
@@ -775,9 +792,9 @@ impl Explorer {
             }
             // The picker has no form: `browse_event` answers it.
             Dialog::Browse(_) => Answer::Stay,
-            // The chooser has no form either: `chooser_event` answers it,
-            // and `dialog_event` never reaches here for it.
-            Dialog::ChooseProgram(_) => Answer::Stay,
+            // The chooser and Unlock Drive answer in `chooser_event` and
+            // `unlock_event`; `dialog_event` never reaches here for them.
+            Dialog::ChooseProgram(_) | Dialog::Unlock(_) => Answer::Stay,
         };
         match answer {
             Answer::Stay if out == form::Event::None => Reply::none(),

@@ -5,24 +5,21 @@
 
 mod model;
 mod tray;
-mod unlock;
 mod watch;
 
 use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
 use std::sync::mpsc::Receiver;
 
-use repriseapp::keys::{form_clipboard, form_input};
-use repriseapp::oneshot;
+use repriseapp::keys::form_clipboard;
+use repriseapp::unlock;
 use repriseapp::{App, BTN_LEFT, Child, Ctx, Event, KeyInput, PointerInput, Reply, WinId};
 use reprisefs::udisks::{ErrorKind, Snapshot};
 use reprisekit::access::{ROOT, Tree};
-use reprisekit::controls::form;
 use reprisekit::controls::menu::{
     MenuAction, MenuCtx, MenuItem, MenuKey, MenuTree, PopupMenu, draw_shadow, draws_own_shadow,
     place_popup,
 };
-use reprisekit::look::Paint;
 use reprisekit::raster::{Canvas, Rect};
 use reprisekit::taskbar::Edge;
 use reprisekit::textedit::keysym;
@@ -31,7 +28,6 @@ use model::{Arrival, Entry};
 
 const FLYOUT: WinId = "flyout";
 const UNLOCK: WinId = "unlock";
-const DRIVE_ICON: &str = "drive-removable-media";
 
 struct Flyout {
     at: (i32, i32),
@@ -147,14 +143,7 @@ impl DrivesApp {
             return;
         };
         let name = model::container_name(self.snap(), &volume);
-        let lines = reprisekit::text::wrap(
-            &ctx.text,
-            &unlock::message(&name),
-            unlock::MSG_W,
-            ctx.theme.fonts.size_px,
-        );
-        let icon = ctx.icons.get(DRIVE_ICON, 32);
-        self.unlock = Some(unlock::Unlock::new(volume, &lines, icon));
+        self.unlock = Some(unlock::Unlock::open(volume, &name, ctx));
     }
 
     fn mounted(&mut self, volume: &str, result: Result<PathBuf, reprisefs::udisks::Error>) {
@@ -202,12 +191,7 @@ impl DrivesApp {
                     return;
                 };
                 log::info!("unlocking {volume}: {e}");
-                // Wrong-passphrase wording varies by cryptsetup version.
-                let m = e.message.to_lowercase();
-                let wrong = ["passphrase", "not permitted", "no key"]
-                    .iter()
-                    .any(|w| m.contains(w));
-                u.fail(if wrong { unlock::WRONG } else { &e.message });
+                u.fail(unlock::failure(&e.message));
             }
         }
     }
@@ -386,18 +370,7 @@ impl DrivesApp {
         let Some(u) = self.unlock.as_mut() else {
             return Reply::none();
         };
-        let out = match ev {
-            Event::CloseRequest => unlock::Outcome::Cancel,
-            Event::Pasted(text) => {
-                let ev = u.form.paste(text);
-                u.event(ev)
-            }
-            ev => match form_input(&mut u.form, &ev, ctx) {
-                Some(ev) => u.event(ev),
-                None => return Reply::none(),
-            },
-        };
-        match out {
+        match u.input(ev, ctx) {
             unlock::Outcome::None => Reply::none(),
             unlock::Outcome::Redraw => Reply::redraw(),
             unlock::Outcome::Cancel => {
@@ -449,7 +422,7 @@ impl App for DrivesApp {
             .iter()
             .map(|_| Child {
                 id: UNLOCK,
-                title: "Unlock Drive".into(),
+                title: unlock::TITLE.into(),
                 size: unlock::CLIENT,
                 fixed: true,
                 modal: false,
@@ -505,7 +478,7 @@ impl App for DrivesApp {
             }
             UNLOCK => {
                 if let Some(u) = &self.unlock {
-                    oneshot::access_form(&u.form, tree, &ctx.text, ctx.theme.fonts.size_px);
+                    u.access(tree, ctx);
                 }
             }
             _ => {}
@@ -513,7 +486,6 @@ impl App for DrivesApp {
     }
 
     fn draw(&mut self, win: WinId, c: &mut Canvas, ctx: &Ctx) {
-        let cs = &ctx.theme.colors;
         match win {
             FLYOUT => {
                 let Some(f) = self.flyout.as_mut() else {
@@ -530,19 +502,8 @@ impl App for DrivesApp {
                 menu.draw(c, &ctx.theme, &ctx.text, false);
             }
             UNLOCK => {
-                c.fill_rect(c.bounds(), cs.button_face);
                 if let Some(u) = &self.unlock {
-                    form::draw(
-                        c,
-                        &ctx.text,
-                        &Paint {
-                            s: 1,
-                            ..ctx.theme.paint()
-                        },
-                        &u.form,
-                        true,
-                        ctx.theme.fonts.size_px,
-                    );
+                    u.draw(c, ctx);
                 }
             }
             _ => {}
