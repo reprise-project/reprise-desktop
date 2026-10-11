@@ -13,7 +13,8 @@ body:
   - type: dropdown
     id: interface
     attributes:
-      label: Interface
+      label: Interface in use
+      description: The one you were running when it happened, even if the bug isn't about how things look.
       options:
         - Classic
         - Blue
