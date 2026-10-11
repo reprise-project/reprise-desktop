@@ -35,8 +35,8 @@ session file, the PAM files and the portal backend.
 - freetype2, fontconfig, PAM, libxcrypt, dbus and PipeWire
 - Xwayland, for X11 programs. Reprise starts it on the first X11 connection
   and stops it when X11 programs have gone quiet.
-- A UI font: DejaVu Sans, or an existing, lawfully obtained installation of
-  Tahoma for the intended period typography. See [Fonts](#fonts).
+- Wine's Tahoma, the UI font (`ttf-tahoma` on Arch, from the AUR). Without
+  it, Reprise falls back to DejaVu Sans. See [Fonts](#fonts).
 - An icon theme. A classic, early-2000s theme will look most at home; see
   [assets.md](assets.md#icons).
 - A desktop folder on a file system with `user.` extended attributes, such
@@ -132,7 +132,8 @@ desktop and stays out of the way when it's missing.
 
 ## Fonts
 
-Reprise ships no fonts. DejaVu Sans covers everything; the period faces
-(Tahoma, Trebuchet MS, Franklin Gothic Medium, Segoe UI and a wider dialog
-font) are picked up if you have a licensed copy. [assets.md](assets.md#fonts)
+Reprise ships no fonts. The UI is set in Tahoma; Wine's free version
+(LGPL) is the one the package depends on. DejaVu Sans covers everything
+else. The other period faces (Trebuchet MS, Franklin Gothic Medium, Segoe
+UI and a wider dialog font) are picked up if you have a licensed copy. [assets.md](assets.md#fonts)
 has the table.
