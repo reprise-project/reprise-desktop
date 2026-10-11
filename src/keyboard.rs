@@ -396,6 +396,7 @@ impl State {
             KeyRoute::IconCut(i) => self.copy_icons(i, true),
             KeyRoute::IconCopy(i) => self.copy_icons(i, false),
             KeyRoute::IconPaste => self.paste_on_desktop(None, false),
+            KeyRoute::IconRefresh => self.rescan_desktop(),
             KeyRoute::Binds(actions) => {
                 for a in &actions {
                     self.run_action(a, k.mods);

@@ -41,10 +41,12 @@ impl DirWatch {
 
     /// Make the watched set `want`: drop directories no longer in it, take
     /// each kept one's `only`, and watch every wanted directory that exists
-    /// and is not watched yet. Each path must name a different directory,
-    /// since inotify gives one inode one watch. `DELETE_SELF | MOVE_SELF` is
-    /// added to each mask so the watch notices its directory leaving.
+    /// and is not watched yet. Wants naming the same path are merged; two
+    /// paths must not name one directory, since inotify gives one inode one
+    /// watch. `DELETE_SELF | MOVE_SELF` is added to each mask so the watch
+    /// notices its directory leaving.
     pub fn sync(&mut self, want: &[Want]) {
+        let want = &merged(want);
         let ino = &mut self.ino;
         self.watched.retain(|x| {
             let keep = want.iter().any(|w| w.dir == x.dir);
@@ -123,6 +125,33 @@ impl DirWatch {
         }
         changed
     }
+}
+
+/// `want` with each path once: masks joined, `only` joined (empty, meaning
+/// every event, wins).
+fn merged(want: &[Want]) -> Vec<Want> {
+    let mut out: Vec<Want> = Vec::with_capacity(want.len());
+    for w in want {
+        let Some(m) = out.iter_mut().find(|m| m.dir == w.dir) else {
+            out.push(Want {
+                dir: w.dir.clone(),
+                mask: w.mask,
+                only: w.only.clone(),
+            });
+            continue;
+        };
+        m.mask |= w.mask;
+        if w.only.is_empty() {
+            m.only.clear();
+        } else if !m.only.is_empty() {
+            for n in &w.only {
+                if !m.only.contains(n) {
+                    m.only.push(n.clone());
+                }
+            }
+        }
+    }
+    out
 }
 
 #[cfg(test)]
@@ -205,6 +234,31 @@ mod tests {
         w.sync(&wants(&home));
         std::fs::write(desk.join("b.txt"), "").unwrap();
         assert!(w.drain(), "a file in the new desktop directory: rescan");
+
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    /// Two wants on one directory (the home folder, for the desktop folder
+    /// and for `.local` on the way to the trash) both count.
+    #[test]
+    fn wants_on_one_directory_are_merged() {
+        let home =
+            std::env::temp_dir().join(format!("reprise-dirwatch-two-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        std::fs::create_dir_all(&home).unwrap();
+        let only = |name: &str| Want {
+            dir: home.clone(),
+            mask: WatchMask::CREATE,
+            only: vec![name.into()],
+        };
+        let mut w = DirWatch::new().unwrap();
+        w.sync(&[only("Desktop"), only(".local")]);
+        std::fs::write(home.join("notes.txt"), "").unwrap();
+        assert!(!w.drain(), "neither name: no rescan");
+        std::fs::create_dir(home.join(".local")).unwrap();
+        assert!(w.drain(), "the second want's name: rescan");
+        std::fs::create_dir(home.join("Desktop")).unwrap();
+        assert!(w.drain(), "the first want's name: rescan");
 
         let _ = std::fs::remove_dir_all(&home);
     }

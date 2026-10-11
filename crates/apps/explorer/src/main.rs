@@ -588,7 +588,7 @@ impl Explorer {
         self.request_thumbs();
         if let Some(w) = self.watch.as_mut() {
             match place.path() {
-                Some(_) if place == Place::RecycleBin => w.watch_all(&place::bin_dirs()),
+                Some(_) if place == Place::RecycleBin => w.watch_all(&place::bin_watches()),
                 Some(dir) => w.watch(&dir),
                 None => w.clear(),
             }

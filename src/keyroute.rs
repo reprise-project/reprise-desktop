@@ -184,6 +184,8 @@ pub enum KeyRoute {
     IconCopy(usize),
     /// Ctrl+V: the clipboard's files onto the desktop.
     IconPaste,
+    /// F5: the icons and the Recycle Bin listed again.
+    IconRefresh,
     /// The keybinds the press matched, in keysym order.
     Binds(Vec<Action>),
     /// The global shortcuts the press matched; no keybind did.
@@ -492,9 +494,9 @@ pub fn route(modes: &Modes, k: &KeyPress, binds: &[Keybind], globals: &[GlobalBi
     }
     // The desktop icons when nothing else has the keyboard: arrows move
     // the selection, Enter opens, Alt+Enter shows Properties, Delete
-    // trashes (Shift+Delete for good), F2 renames, the Menu key opens the
-    // menu, and Ctrl+A, Ctrl+X, Ctrl+C and Ctrl+V select all, cut, copy
-    // and paste. A bound key goes to its bind or global shortcut, so
+    // trashes (Shift+Delete for good), F2 renames, F5 refreshes, the Menu
+    // key opens the menu, and Ctrl+A, Ctrl+X, Ctrl+C and Ctrl+V select all,
+    // cut, copy and paste. A bound key goes to its bind or global shortcut, so
     // Super+Ctrl+arrows switch desktops from an empty one.
     if k.pressed
         && modes.desktop_has_keyboard
@@ -513,6 +515,7 @@ pub fn route(modes: &Modes, k: &KeyPress, binds: &[Keybind], globals: &[GlobalBi
                 }
                 (KEY_a, MOD_CTRL) if modes.has_icons => return with(KeyRoute::IconSelectAll),
                 (KEY_v, MOD_CTRL) => return with(KeyRoute::IconPaste),
+                (KEY_F5, 0) => return with(KeyRoute::IconRefresh),
                 _ => {}
             }
         }
@@ -1962,7 +1965,7 @@ mod tests {
     }
 
     #[test]
-    fn the_desktop_takes_its_menu_and_clipboard_keys() {
+    fn the_desktop_takes_its_menu_clipboard_and_refresh_keys() {
         let m = Modes {
             desktop_has_keyboard: true,
             has_icons: true,
@@ -1995,6 +1998,7 @@ mod tests {
         assert_eq!(r(&none, &press(KEY_Menu, 0)), KeyRoute::IconMenu(None));
         assert_eq!(r(&none, &press(KEY_c, MOD_CTRL)), KeyRoute::Client);
         assert_eq!(r(&none, &press(KEY_v, MOD_CTRL)), KeyRoute::IconPaste);
+        assert_eq!(r(&none, &press(KEY_F5, 0)), KeyRoute::IconRefresh);
     }
 
     #[test]
