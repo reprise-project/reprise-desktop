@@ -14,8 +14,10 @@ pub enum Arrival {
 
 /// Whether `v` is the user's own removable volume and fine to act on
 /// without being asked. A cleartext volume carries its container's hints.
+/// `HintAuto` is ignored: e2fsprogs and xfsprogs clear it on every volume of
+/// their kind, and arrivals under a lock are already left alone (watch.rs).
 fn auto(snap: &Snapshot, v: &Volume) -> bool {
-    snap.removable(v) && v.auto
+    snap.removable(v)
 }
 
 /// What appeared between `prev` and `next` that the applet mounts or
@@ -194,14 +196,40 @@ mod tests {
     }
 
     #[test]
-    fn hidden_or_manual_volumes_are_left_alone() {
+    fn hidden_or_system_volumes_are_left_alone() {
         let before = snap(vec![], vec![]);
         let mut ignored = fat("sdb1", "d", false);
         ignored.ignore = true;
-        let mut manual = fat("sdb2", "d", false);
-        manual.auto = false;
-        let after = snap(vec![disk("d", true)], vec![ignored, manual]);
+        let mut system = fat("sdb2", "d", false);
+        system.system = true;
+        let after = snap(vec![disk("d", true)], vec![ignored, system]);
         assert!(arrivals(Some(&before), &after).is_empty());
+    }
+
+    #[test]
+    fn a_stick_mounts_though_its_auto_hint_is_cleared() {
+        let before = snap(vec![], vec![]);
+        let stick = |path: &str, fs_type: &str| Volume {
+            fs_type: fs_type.into(),
+            auto: false,
+            ..fat(path, "d", false)
+        };
+        let after = snap(
+            vec![disk("d", true)],
+            vec![
+                stick("sdb1", "ext4"),
+                stick("sdb2", "xfs"),
+                stick("sdb3", "vfat"),
+            ],
+        );
+        assert_eq!(
+            arrivals(Some(&before), &after),
+            [
+                Arrival::Mount("sdb1".into()),
+                Arrival::Mount("sdb2".into()),
+                Arrival::Mount("sdb3".into())
+            ]
+        );
     }
 
     #[test]
