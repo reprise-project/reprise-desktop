@@ -181,7 +181,9 @@ the Super tap, Super+Shift+Esc and the VT switch keys can be rebound.
 ## Notifications
 
 - **Balloons** in the corner by the tray, with the buttons programs send. A
-  chat app's Reply opens a text field right there.
+  chat app's Reply opens a text field right there. Left alone for two
+  minutes, the field folds away (keeping what you typed for the next Reply)
+  and the balloon makes room for the next.
 - **History.** A bell in the tray keeps the session's notifications, grouped
   per program, each group with its own Clear.
 - **Bursts fold together.** A program that sends more than three balloons in

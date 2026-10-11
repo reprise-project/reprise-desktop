@@ -209,6 +209,8 @@ impl History {
 
     /// New entries, newest first. The selection stays on its header or notification
     /// while it is still there, the scroll inside the new rows, folded groups folded.
+    /// When its whole group is gone, the selection moves to the next group's header
+    /// (the previous one's after the last group), scrolled into view.
     pub fn set_entries(&mut self, entries: Vec<Entry>) {
         self.entries = entries;
         self.rebuild();
@@ -216,6 +218,12 @@ impl History {
 
     fn rebuild(&mut self) {
         let picked = self.list.selected.and_then(|i| self.meta.get(i).cloned());
+        let picked_app = self
+            .list
+            .selected
+            .and_then(|i| self.app_of(i))
+            .map(str::to_string);
+        let old_apps: Vec<String> = self.headers().map(str::to_string).collect();
         let mut apps: Vec<&str> = Vec::new();
         for e in &self.entries {
             if !apps.contains(&e.app.as_str()) {
@@ -264,17 +272,38 @@ impl History {
             (Some(Meta::Note { id: a, .. }), Meta::Note { id: b, .. }) => a == b,
             _ => false,
         };
-        self.list.selected = self
-            .meta
-            .iter()
-            .position(same)
-            .or_else(|| old.map(|i| i.min(n.saturating_sub(1))))
-            .filter(|_| n > 0);
+        let kept = self.meta.iter().position(same);
         self.list.top = top.min(n.saturating_sub(ROWS as usize));
+        let gone = picked_app.filter(|a| !self.headers().any(|h| h == a));
+        if kept.is_none()
+            && let Some(app) = gone
+        {
+            self.list.selected = None;
+            if let Some(h) = neighbour_group(&old_apps, &app, |a| self.header_row(a)) {
+                self.list.select(h, ROWS as usize);
+            }
+        } else {
+            self.list.selected = kept
+                .or_else(|| old.map(|i| i.min(n.saturating_sub(1))))
+                .filter(|_| n > 0);
+        }
         // A rebuilt list may have moved a held group's Clear.
         if matches!(self.pointer.held(), Some(Held::GroupClear(_))) {
             self.pointer.clear();
         }
+    }
+
+    fn headers(&self) -> impl Iterator<Item = &str> {
+        self.meta.iter().filter_map(|m| match m {
+            Meta::Header { app, .. } => Some(app.as_str()),
+            Meta::Note { .. } => None,
+        })
+    }
+
+    fn header_row(&self, app: &str) -> Option<usize> {
+        self.meta
+            .iter()
+            .position(|m| matches!(m, Meta::Header { app: a, .. } if a == app))
     }
 
     pub fn note_at(&self, i: usize) -> Option<u32> {
@@ -304,10 +333,7 @@ impl History {
         } else {
             self.folded.insert(app.to_string())
         };
-        let header = self
-            .meta
-            .iter()
-            .position(|m| matches!(m, Meta::Header { app: a, .. } if a == app));
+        let header = self.header_row(app);
         if let Some(h) = header {
             self.list.selected = Some(h);
         }
@@ -326,10 +352,7 @@ impl History {
     pub fn reveal(&mut self, app: &str) {
         self.folded.remove(app);
         self.rebuild();
-        let header = self
-            .meta
-            .iter()
-            .position(|m| matches!(m, Meta::Header { app: a, .. } if a == app));
+        let header = self.header_row(app);
         if let Some(h) = header {
             let first = if self.note_at(h + 1).is_some() {
                 h + 1
@@ -472,6 +495,18 @@ impl History {
             _ => None,
         }
     }
+}
+
+/// The row of the first group after `app` in `order` that `row_of` still finds, else of the
+/// nearest one before it.
+fn neighbour_group(
+    order: &[String],
+    app: &str,
+    row_of: impl Fn(&str) -> Option<usize>,
+) -> Option<usize> {
+    let at = order.iter().position(|a| a == app)?;
+    let after = order[at + 1..].iter().find_map(|a| row_of(a));
+    after.or_else(|| order[..at].iter().rev().find_map(|a| row_of(a)))
 }
 
 pub fn hit(h: &History, x: i32, y: i32, cm: &ControlMetrics) -> Hit {
@@ -773,6 +808,53 @@ mod tests {
         );
         h.set_entries(entries);
         assert_eq!(h.note_at(h.list.selected.unwrap()), Some(2));
+        h.set_entries(Vec::new());
+        assert_eq!(h.list.selected, None);
+    }
+
+    /// Clearing the selected program's group moves the selection to the next
+    /// group's header, after the last group to the previous one's, scrolled
+    /// into view; with nothing left there is none.
+    #[test]
+    fn clearing_the_selected_group_selects_the_next_header() {
+        let without = |h: &History, app: &str| -> Vec<Entry> {
+            h.entries.iter().filter(|e| e.app != app).cloned().collect()
+        };
+        let mut h = sample();
+        h.list.select(2, ROWS as usize);
+        h.set_entries(without(&h, "Mail"));
+        assert_eq!(labels(&h)[0], "Updates (1)");
+        assert_eq!(h.list.selected, Some(0), "the next group's header");
+
+        let mut h = sample();
+        h.list.select(5, ROWS as usize);
+        h.set_entries(without(&h, "Calendar"));
+        assert_eq!(
+            h.list.selected,
+            Some(3),
+            "Updates' header, the group before"
+        );
+
+        let mut h = History::new();
+        let entries: Vec<Entry> = (0..24)
+            .map(|i| Entry {
+                id: 100 - i,
+                app: if i < 15 { "Chat" } else { "Mail" }.into(),
+                icon: None,
+                message: format!("m{i}"),
+                time: String::new(),
+                live: true,
+            })
+            .collect();
+        h.set_entries(entries);
+        h.list.select(20, ROWS as usize);
+        assert_eq!(h.list.top, 11);
+        h.set_entries(without(&h, "Mail"));
+        assert_eq!(h.list.selected, Some(0), "Chat's header");
+        assert_eq!(h.list.top, 0, "scrolled to it");
+
+        let mut h = sample();
+        h.list.select(1, ROWS as usize);
         h.set_entries(Vec::new());
         assert_eq!(h.list.selected, None);
     }
