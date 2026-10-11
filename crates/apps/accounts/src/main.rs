@@ -12,7 +12,7 @@ use std::sync::mpsc::{Receiver, channel};
 use repriseapp::filedlg::{Host, Resolved, Step, type_keep};
 use repriseapp::keys::{dialog_key, form_clipboard, form_input, sheet_input};
 use repriseapp::oneshot::{self, MsgBox};
-use repriseapp::{App, BTN_LEFT, Child, Ctx, Event, PointerInput, Reply, WinId};
+use repriseapp::{App, BTN_LEFT, Child, Ctx, DropForm, Event, PointerInput, Reply, WinId};
 use reprisekit::access::Tree;
 use reprisekit::controls::filedlg::{
     self, DlgMode, Event as FileEvent, Fields as FileFields, FileDlg,
@@ -696,6 +696,15 @@ impl App for AccountsApp {
             }
             _ => self.users.access(tree, ctx),
         }
+    }
+
+    fn drop_form(&mut self, win: WinId) -> Option<DropForm<'_>> {
+        let form = match win {
+            PROPS => self.props.as_mut()?.sheet.open_mut(),
+            ADD => &mut self.add.as_mut()?.form,
+            _ => return None,
+        };
+        Some(DropForm { form, px: None })
     }
 
     fn draw(&mut self, win: WinId, c: &mut Canvas, ctx: &Ctx) {

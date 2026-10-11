@@ -34,7 +34,9 @@ use place::{Listed, Place, list, sort_order_grouped};
 use props_dialog::{PROPS, Props};
 use repriseapp::decode::Decoders;
 use repriseapp::keys::AltArm;
-use repriseapp::{App, BTN_LEFT, BTN_RIGHT, Child, Ctx, Event, MAIN, PointerInput, Reply, WinId};
+use repriseapp::{
+    App, BTN_LEFT, BTN_RIGHT, Child, Ctx, DropForm, Event, MAIN, PointerInput, Reply, WinId,
+};
 use reprisefs::history::History;
 use reprisefs::listing::Item;
 use reprisekit::controls::addressbar::AddressBar;
@@ -866,7 +868,15 @@ impl App for Lazy {
                 ex.flush_settings();
                 Reply::redraw()
             }
-            Event::Tick => ex.tip_tick(std::time::Instant::now(), ctx),
+            Event::Tick => {
+                let field = ex.address_tick(ctx);
+                let tip = ex.tip_tick(std::time::Instant::now(), ctx);
+                Reply {
+                    redraw: field.redraw || tip.redraw,
+                    tick: field.tick || tip.tick,
+                    ..tip
+                }
+            }
             Event::Focus(false) => {
                 ex.alt_arm.interrupt();
                 let closed = ex.close_drop_menu();
@@ -900,6 +910,14 @@ impl App for Lazy {
             _ => Reply::redraw(),
         };
         ex.settle_drop(reply)
+    }
+
+    fn drop_form(&mut self, win: WinId) -> Option<DropForm<'_>> {
+        let form = match win {
+            PROPS => self.inner.as_mut()?.props.as_mut()?.sheet.open_mut(),
+            _ => return None,
+        };
+        Some(DropForm { form, px: None })
     }
 
     fn draw(&mut self, win: WinId, c: &mut Canvas, ctx: &Ctx) {

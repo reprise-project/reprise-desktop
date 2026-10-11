@@ -6,9 +6,10 @@ use crate::commands::Command;
 use crate::place::Place;
 use crate::window::Popup;
 use crate::{BTN_LEFT, DRAG_SLOP, Explorer};
-use repriseapp::Reply;
 use repriseapp::{Accept, Actions, Ctx, DragAction, DragOut, DropKind, Dropped, Offered, Uri};
+use repriseapp::{Reply, fielddrop};
 use reprisefs::ops::DropOp;
+use reprisekit::controls::addressbar;
 use reprisekit::controls::iconview::{self, Ghost};
 use reprisekit::controls::shellview::{self, Mode};
 use reprisekit::controls::treeview;
@@ -420,17 +421,28 @@ impl Explorer {
 
     pub(crate) fn drag_leave(&mut self) -> Reply {
         self.incoming = None;
+        self.address.combo.drag_leave();
         self.sv.drop_target = None;
         self.tree.drop_hilight = None;
         Reply::redraw()
     }
 
     fn drag_answer(&mut self, x: i32, y: i32, ctx: &Ctx) -> Reply {
-        let Some(inc) = self.incoming.as_ref() else {
+        let Some(offered) = self.incoming.as_ref().map(|i| i.offered) else {
             return Reply::none();
         };
-        let paths = inc.paths.clone();
-        let offered = inc.offered;
+        if let Some(kind) = fielddrop::kind_for(offered)
+            && self.address_drag(x, y, ctx)
+        {
+            self.sv.drop_target = None;
+            self.tree.drop_hilight = None;
+            return Reply {
+                redraw: true,
+                tick: self.address_scroll(ctx).is_some(),
+                ..Reply::drag_accept(Some(fielddrop::accept_as(kind, Actions::default())))
+            };
+        }
+        let paths = self.incoming.as_ref().and_then(|i| i.paths.clone());
         let over = drop_kind(offered)
             .and_then(|_| self.drag_target(x, y, paths.as_deref().unwrap_or(&[]), ctx));
         let dir = over.and_then(|t| self.target_dir(&t));
@@ -476,6 +488,9 @@ impl Explorer {
             ),
             false => (action, source),
         };
+        if self.address.combo.drop_x.is_some() {
+            return self.address_drop(&data, action, ctx);
+        }
         self.drag_leave();
         let (paths, links) = split_drop(data);
         let dir = self
@@ -635,6 +650,66 @@ impl Explorer {
             })
         });
         Reply::redraw()
+    }
+
+    fn address_layout(&self, ctx: &Ctx) -> Option<addressbar::Layout> {
+        let r = self.layout(ctx).address?;
+        let px = ctx.theme.fonts.size_px;
+        let cm = ctx.theme.look.controls();
+        Some(addressbar::layout(&self.address, &ctx.text, px, r, &cm))
+    }
+
+    /// A drag at (`x`, `y`) over the address field shows its drop caret there: `true` when the
+    /// field takes it.
+    fn address_drag(&mut self, x: i32, y: i32, ctx: &Ctx) -> bool {
+        match self.address_layout(ctx) {
+            Some(al) => self.address.combo.drag_over(&al.combo, x, y),
+            None => {
+                self.address.combo.drag_leave();
+                false
+            }
+        }
+    }
+
+    fn address_scroll(&self, ctx: &Ctx) -> Option<usize> {
+        let al = self.address_layout(ctx)?;
+        let px = ctx.theme.fonts.size_px;
+        self.address.combo.drag_scroll(&al.combo, &ctx.text, px)
+    }
+
+    /// The tick while a drag rests on the address field: a step at its edge.
+    pub(crate) fn address_tick(&mut self, ctx: &Ctx) -> Reply {
+        let (Some(_), Some(al)) = (self.address.combo.drop_x, self.address_layout(ctx)) else {
+            return Reply::none();
+        };
+        let px = ctx.theme.fonts.size_px;
+        if !self.address.combo.drag_tick(&al.combo, &ctx.text, px) {
+            return Reply::none();
+        }
+        Reply {
+            tick: self.address_scroll(ctx).is_some(),
+            ..Reply::redraw()
+        }
+    }
+
+    /// A drop on the address field: its text, or the files' paths, go in at the drop caret and
+    /// the field takes the keyboard.
+    fn address_drop(&mut self, data: &Dropped, action: DragAction, ctx: &Ctx) -> Reply {
+        let took = self.address_layout(ctx).is_some_and(|al| {
+            let px = ctx.theme.fonts.size_px;
+            let line = fielddrop::line(data);
+            self.address
+                .combo
+                .drop_text(&al.combo, &line, &ctx.text, px)
+        });
+        self.drag_leave();
+        if took {
+            self.focus = crate::Focus::Address;
+        }
+        Reply {
+            answer_drop: (action == DragAction::Ask).then_some(took.then_some(DragAction::Copy)),
+            ..Reply::redraw()
+        }
     }
 
     pub(crate) fn drag_target(

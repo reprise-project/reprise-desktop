@@ -107,6 +107,7 @@ mod desktop;
 mod desktopfiles;
 mod desktopview;
 mod dialog;
+mod dialogdrop;
 mod dialogview;
 mod dirwatch;
 mod dragview;

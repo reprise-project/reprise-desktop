@@ -1599,7 +1599,7 @@ impl State {
         self.spawn_argv_activated(argv);
     }
 
-    fn apply_dialog(&mut self, outcome: Outcome) {
+    pub(crate) fn apply_dialog(&mut self, outcome: Outcome) {
         self.run_picker_requests();
         match outcome {
             Outcome::Nothing => {}

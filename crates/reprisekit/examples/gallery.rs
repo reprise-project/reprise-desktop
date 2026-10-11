@@ -1963,6 +1963,8 @@ fn render(theme: &Theme, with_blue: bool) -> Canvas {
     ];
     let mut form = form::Form::new(items);
     form.focus_id("combo");
+    let drop_x = 545 + 3 + text.dialog(form.font).measure("Ln 1,", false, px);
+    form.drag_over(drop_x, 110, &text, px);
     form::draw(
         &mut c,
         &text,

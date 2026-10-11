@@ -5,6 +5,7 @@ pub mod about;
 mod access;
 pub mod decode;
 pub mod dnd;
+pub mod fielddrop;
 pub mod filedlg;
 pub mod heads;
 pub mod keys;
@@ -94,6 +95,7 @@ use wayland_client::{
 };
 
 pub use dnd::{Accept, Actions, DragAction, DragOut, DropKind, Dropped, Offered, Uri};
+pub use fielddrop::DropForm;
 use reprisefs::pipe::PasteBuf;
 pub use reprisekit;
 use reprisekit::access::{Tree, accesskit};
@@ -302,6 +304,9 @@ pub enum Event {
         action: DragAction,
         source: Actions,
     },
+    /// A drag dropped on a field of the window's `App::drop_form` changed it (`Changed`
+    /// with the field's id), as a key or paste in it would.
+    FieldDropped(reprisekit::controls::form::Event),
     /// The `Ask` drop this window was answering is gone: the dragging
     /// program or the compositor dropped it, or the answer was an action
     /// the source does not allow. Nothing was finished.
@@ -591,6 +596,12 @@ pub trait App {
     /// set the focus. Called only while a screen reader listens. Without it
     /// the window is an empty, titled one.
     fn access(&mut self, _win: WinId, _tree: &mut Tree, _ctx: &Ctx) {}
+    /// The form in window `win` whose single-line edit fields take a drag of text or files
+    /// ([`fielddrop`]); its drags then never reach `event`. None (the default) hands them
+    /// to `event`.
+    fn drop_form(&mut self, _win: WinId) -> Option<DropForm<'_>> {
+        None
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -826,6 +837,7 @@ pub fn run(app: Box<dyn App>) {
         copy_clip: None,
         drag_out: None,
         drag_in: None,
+        field_drag: None,
         asked_drop: None,
         ticking: Vec::new(),
         portal_done,
@@ -1085,6 +1097,8 @@ struct Host {
     copy_clip: Option<FileClip>,
     drag_out: Option<Outgoing>,
     drag_in: Option<Incoming>,
+    /// A drag over a window's `App::drop_form`.
+    field_drag: Option<(WinId, fielddrop::Hover)>,
     asked_drop: Option<Asked>,
     ticking: Vec<WinId>,
     /// Where a document portal call's thread sends what to do with its
@@ -1229,8 +1243,41 @@ impl Host {
                 s.access.state.dirty = true;
             }
         }
+        if let Some((reply, changed)) = self.field_drop(win, &ev) {
+            self.apply(win, reply);
+            if changed != reprisekit::controls::form::Event::None {
+                self.send(win, Event::FieldDropped(changed));
+            }
+            return;
+        }
         let reply = self.app.event(win, ev, &mut self.ctx);
         self.apply(win, reply);
+    }
+
+    /// `ev` for window `win`'s drop form, when it has one and `ev` is a drag over it or a tick
+    /// while one rests on it.
+    fn field_drop(
+        &mut self,
+        win: WinId,
+        ev: &Event,
+    ) -> Option<(Reply, reprisekit::controls::form::Event)> {
+        let drag = matches!(
+            ev,
+            Event::DragEnter { .. }
+                | Event::DragMotion { .. }
+                | Event::DragFiles { .. }
+                | Event::DragLeave
+                | Event::DragDrop { .. }
+        );
+        let mut hover = self.field_drag.filter(|(w, _)| *w == win).map(|(_, h)| h);
+        if !drag && !(hover.is_some() && *ev == Event::Tick) {
+            return None;
+        }
+        let DropForm { form, px } = self.app.drop_form(win)?;
+        let px = px.unwrap_or(self.ctx.theme.fonts.size_px);
+        let out = fielddrop::event(form, &mut hover, ev, &self.ctx.text, px);
+        self.field_drag = hover.map(|h| (win, h));
+        out
     }
 
     fn arm_tick(&mut self, win: WinId) {

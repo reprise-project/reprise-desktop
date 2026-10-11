@@ -100,7 +100,8 @@ pub fn form_clipboard(focused: Option<form::FocusedEdit>, ev: &Event) -> Reply {
 /// One event fed to a property sheet: a key through [`form_key`] with Ctrl+Tab
 /// and Ctrl+Page Down turning the page ([`propsheet::page_step`]), a left press
 /// hit-tested and clicked, motion tracked, a release released, Leave clearing
-/// what the pointer lit. `None` is an event the host answers itself.
+/// what the pointer lit, a drop on a field ([`crate::fielddrop`]) heard as the
+/// open page's. `None` is an event the host answers itself.
 pub fn sheet_input(sheet: &mut PropSheet, ev: &Event, ctx: &Ctx) -> Option<propsheet::Event> {
     let px = ctx.theme.fonts.size_px;
     Some(match ev {
@@ -129,6 +130,7 @@ pub fn sheet_input(sheet: &mut PropSheet, ev: &Event, ctx: &Ctx) -> Option<props
             button: BTN_LEFT, ..
         }) => sheet.release(),
         Event::Pointer(PointerInput::Leave) => sheet.leave(),
+        Event::FieldDropped(e) => sheet.dropped(*e),
         _ => return None,
     })
 }
@@ -181,6 +183,7 @@ pub fn form_input(form: &mut Form, ev: &Event, ctx: &Ctx) -> Option<form::Event>
             button: BTN_LEFT, ..
         }) => form.release(),
         Event::Pointer(PointerInput::Leave) => form.leave(),
+        Event::FieldDropped(e) => *e,
         _ => return None,
     })
 }

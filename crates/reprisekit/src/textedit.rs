@@ -564,6 +564,19 @@ impl TextEdit {
         self.key(EditKey::Insert(line))
     }
 
+    /// Dropped text, taken as [`TextEdit::paste`] takes it, put in at byte `at` and selected; the selection there was is let go.
+    pub fn drop_text(&mut self, at: usize, text: &str) -> bool {
+        let at = self.text.floor_char_boundary(at);
+        let (caret, anchor) = (self.caret, self.anchor);
+        (self.caret, self.anchor) = (at, at);
+        if !self.paste(text, &[]) {
+            (self.caret, self.anchor) = (caret, anchor);
+            return false;
+        }
+        self.anchor = at;
+        true
+    }
+
     /// `replace_range`, except that a secret field outgrowing its buffer moves to a bigger one by hand and zeroizes the old.
     fn splice(&mut self, range: std::ops::Range<usize>, s: &str) {
         let need = self.text.len() - range.len() + s.len();
@@ -664,7 +677,7 @@ pub fn key_for(sym: u32, ctrl: bool, shift: bool, utf8: Option<&str>) -> Option<
     Some(EditKey::Insert(s.to_string()))
 }
 
-/// Byte index of the leftmost visible character so the caret stays inside a field `inner_w` px wide. Scrolls by whole characters; each walk stops once past `inner_w`, so the cost follows what is on screen.
+/// Byte index of the leftmost visible character so the caret stays inside a field `inner_w` px wide: [`first_visible_at`] the caret.
 pub fn edit_first_visible(
     text: &crate::text::TextRenderer,
     edit: &TextEdit,
@@ -672,18 +685,30 @@ pub fn edit_first_visible(
     px: u32,
     first: usize,
 ) -> usize {
-    let s = edit.text.as_str();
+    first_visible_at(text, &edit.text, edit.caret(), inner_w, px, first)
+}
+
+/// Byte index of the leftmost visible character so byte `at` of `s` stays inside a field `inner_w` px wide. Scrolls by whole characters; each walk stops once past `inner_w`, so the cost follows what is on screen.
+pub fn first_visible_at(
+    text: &crate::text::TextRenderer,
+    s: &str,
+    at: usize,
+    inner_w: i32,
+    px: u32,
+    first: usize,
+) -> usize {
     let adv = |ch| text.advance(ch, false, px);
+    let at = s.floor_char_boundary(at);
     let mut first = first.min(s.len());
     if !s.is_char_boundary(first) {
         first = 0;
     }
-    if edit.caret() < first {
-        first = edit.caret();
+    if at < first {
+        first = at;
     }
     let mut used = 0;
-    let mut start = edit.caret();
-    for (i, ch) in s[first..edit.caret()].char_indices().rev() {
+    let mut start = at;
+    for (i, ch) in s[first..at].char_indices().rev() {
         used += adv(ch);
         if used > inner_w {
             break;
@@ -706,6 +731,44 @@ pub fn edit_first_visible(
         first = i;
     }
     first
+}
+
+/// The scroll offset one character on for a drag resting `x` px into a field `inner_w` px wide that shows `s` from byte `first`, None when it stays: back a character in the `band` px at the left (or left of the field) while text is hidden there, on one in the band at the right while text runs past it. The host calls it on a tick while the drag rests.
+pub fn drag_scroll(
+    text: &crate::text::TextRenderer,
+    s: &str,
+    first: usize,
+    inner_w: i32,
+    band: i32,
+    x: i32,
+    px: u32,
+) -> Option<usize> {
+    let first = first.min(s.len());
+    if x < band {
+        return (first > 0).then(|| words::prev_char(s, first));
+    }
+    if x >= inner_w - band && text.measure(&s[first..], false, px) > inner_w {
+        return Some(words::next_char(s, first));
+    }
+    None
+}
+
+/// Dropped paths as one line for a field: space-separated, a path holding a space or a character
+/// a shell reads specially in single quotes.
+pub fn paths_line<P: AsRef<std::path::Path>>(paths: &[P]) -> String {
+    let plain = |c: char| c.is_alphanumeric() || "/._-+,:@%=~".contains(c);
+    paths
+        .iter()
+        .map(|p| {
+            let p = p.as_ref().to_string_lossy();
+            if !p.is_empty() && p.chars().all(plain) {
+                p.into_owned()
+            } else {
+                format!("'{}'", p.replace('\'', "'\\''"))
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 /// Byte index in `s` nearest to `x` px: the char boundary whose prefix advance is closest, so a click on a glyph's right half lands after it; ties go earlier. The walk stops at the first prefix reaching `x`.
@@ -1177,5 +1240,82 @@ mod tests {
         assert_eq!(t.selection(), 1..3);
         t.key(EditKey::Backspace { word: false });
         assert_eq!(t.text, "a");
+    }
+
+    #[test]
+    fn a_drag_resting_in_an_edge_band_scrolls_a_character_while_text_is_hidden_there() {
+        let text = crate::text::TextRenderer::load(&crate::theme::FontConfig::default());
+        let px = crate::theme::Theme::default().fonts.size_px;
+        let s = "C:/a long path/that runs/past the field";
+        let w = text.measure(&s[..10], false, px);
+        let step = |first, x| drag_scroll(&text, s, first, w, 8, x, px);
+        assert_eq!(step(0, w / 2), None, "the middle rests still");
+        assert_eq!(step(0, 2), None, "nothing hidden at the left");
+        assert_eq!(step(0, w - 2), Some(1), "the right band steps on");
+        assert_eq!(step(3, -4), Some(2), "left of the field counts as the band");
+        let end = first_visible_at(&text, s, s.len(), w, px, 0);
+        assert_eq!(step(end, w - 2), None, "the end is in view");
+        assert_eq!(drag_scroll(&text, "ab", 0, w, 8, w - 2, px), None);
+        let e = "aé";
+        assert_eq!(
+            drag_scroll(&text, e, e.len(), 0, 8, 0, px),
+            Some(1),
+            "back a whole char"
+        );
+    }
+
+    #[test]
+    fn first_visible_at_keeps_any_index_in_view() {
+        let text = crate::text::TextRenderer::load(&crate::theme::FontConfig::default());
+        let px = crate::theme::Theme::default().fonts.size_px;
+        let s = "0123456789abcdefghij";
+        let w = text.measure("01234", false, px);
+        assert_eq!(
+            first_visible_at(&text, s, 2, w, px, 10),
+            2,
+            "an index left of the view pulls it back"
+        );
+        let first = first_visible_at(&text, s, 15, w, px, 0);
+        assert!(text.measure(&s[first..15], false, px) <= w && first > 0);
+        assert_eq!(
+            first_visible_at(&text, s, 12, w, px, 10),
+            10,
+            "an index in view leaves it"
+        );
+        let caret = e("0123456789abcdefghij");
+        assert_eq!(
+            edit_first_visible(&text, &caret, w, px, 0),
+            first_visible_at(&text, s, s.len(), w, px, 0),
+            "the caret's view"
+        );
+    }
+
+    #[test]
+    fn dropped_text_lands_at_the_drop_point_selected() {
+        let mut t = TextEdit::new("hello world", true);
+        assert!(t.drop_text(5, " big\nnext line"));
+        assert_eq!(t.text, "hello big world", "the first line, as a paste");
+        assert_eq!(t.selected_text(), " big");
+        assert!(t.key(EditKey::Undo));
+        assert_eq!(t.text, "hello world");
+        let mut t = TextEdit::new("ab", false);
+        assert!(!t.drop_text(1, "\u{7}"));
+        assert_eq!(
+            (t.text.as_str(), t.caret, t.anchor),
+            ("ab", 2, 2),
+            "nothing to drop moves nothing"
+        );
+    }
+
+    #[test]
+    fn dropped_paths_join_with_spaces_and_odd_ones_are_quoted() {
+        assert_eq!(paths_line(&["/usr/bin/foot"]), "/usr/bin/foot");
+        assert_eq!(
+            paths_line(&["/home/u/My Files/a.txt", "/tmp/b.txt"]),
+            "'/home/u/My Files/a.txt' /tmp/b.txt"
+        );
+        assert_eq!(paths_line(&["/tmp/it's"]), "'/tmp/it'\\''s'");
+        assert_eq!(paths_line(&["/tmp/$HOME;x"]), "'/tmp/$HOME;x'");
+        assert_eq!(paths_line::<&str>(&[]), "");
     }
 }

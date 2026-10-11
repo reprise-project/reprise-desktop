@@ -12,7 +12,7 @@ pub const CLIENT: (i32, i32) = (361, 419);
 const TABS: [&str; 1] = ["General"];
 
 const ICON: &str = "icon";
-const NAME: &str = "name";
+pub(crate) const NAME: &str = "name";
 const TYPE: &str = "type";
 const ADDRESS: &str = "address";
 const STATUS: &str = "status";

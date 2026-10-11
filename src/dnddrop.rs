@@ -41,8 +41,8 @@ const MOVE: DndAction = DndAction::Move;
 const ASK: DndAction = DndAction::Ask;
 
 /// The most a drop's data may be: a list of paths or links, never a file.
-const MAX_BYTES: usize = 1 << 20;
-const READ_TIMEOUT: Duration = Duration::from_secs(10);
+pub(crate) const MAX_BYTES: usize = 1 << 20;
+pub(crate) const READ_TIMEOUT: Duration = Duration::from_secs(10);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Plan {
@@ -251,6 +251,8 @@ pub struct Receiving {
 #[derive(Default)]
 pub struct Drops {
     over: Option<Over>,
+    /// A drag over a dialog's text field (`dialogdrop`).
+    pub field: Option<crate::dialogdrop::FieldOver>,
     receiving: Vec<Receiving>,
     next: u64,
 }
@@ -327,6 +329,9 @@ impl State {
         source: &SeatSource,
         pos: smithay::utils::Point<f64, smithay::utils::Logical>,
     ) -> Option<&'static [&'static str]> {
+        if let Some(cursor) = self.field_over(source, pos) {
+            return Some(cursor);
+        }
         let Some(target) = self.drop_target_at(&[], pos) else {
             self.drop_left();
             return None;
@@ -367,6 +372,11 @@ impl State {
 
     /// The drag left Reprise's targets: the source hears nothing takes it here, and the folder icon resets.
     pub fn drop_left(&mut self) {
+        self.target_left();
+        self.field_left();
+    }
+
+    pub(crate) fn target_left(&mut self) {
         let Some(was) = self.dnd.drops.over.take() else {
             return;
         };
@@ -382,6 +392,9 @@ impl State {
     /// Runs under the pointer's lock (no pointer calls). `dropped`: it landed on a
     /// Reprise target, whose data is asked for from an idle.
     pub fn drop_drag_ended(&mut self, source: &SeatSource, dropped: bool) {
+        if self.field_drag_ended(source, dropped) {
+            return;
+        }
         let Some(over) = self.dnd.drops.over.take() else {
             return;
         };

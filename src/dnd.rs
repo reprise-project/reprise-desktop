@@ -1040,6 +1040,7 @@ impl State {
         self.rehover();
         self.update_drag_cursor();
         self.spring();
+        self.field_tick();
         TimeoutAction::ToDuration(CURSOR_TICK)
     }
 
