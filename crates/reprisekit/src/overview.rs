@@ -41,11 +41,15 @@ pub const STAND_IN_PX: i32 = 48;
 /// window shows at two fifths, not across the screen.
 const MAX_FIFTHS: i32 = 2;
 /// Snap assist: the panel's inset from its zone, a card's header, the
-/// space between cards and round them inside the panel, the frame round
-/// a card's picture, and its close button.
+/// largest space between cards and round them inside the panel, the frame
+/// round a card's picture, and its close button.
 pub const ASSIST_INSET: i32 = 13;
 pub const ASSIST_HEADER: i32 = 39;
 pub const ASSIST_GAP: i32 = 26;
+/// The smallest space between and round the cards, and the share of the
+/// zone's shorter side it takes between that and [`ASSIST_GAP`].
+pub const ASSIST_GAP_MIN: i32 = 8;
+pub const ASSIST_GAP_DIVISOR: i32 = 24;
 pub const ASSIST_FRAME: i32 = 8;
 pub const ASSIST_CLOSE: i32 = 28;
 
@@ -136,35 +140,36 @@ impl OverviewLayout {
     }
 
     /// Snap assist's cards for `count` windows in zone `area` of a screen
-    /// `screen` big: a centred grid in the panel, [`ASSIST_GAP`] apart and
+    /// `screen` big: a centred grid in the panel, [`assist_gap`] apart and
     /// round, each card its [`ASSIST_HEADER`] row (icon and title) over a
     /// picture box of the screen's shape inside an [`ASSIST_FRAME`].
     /// `titles` are the headers.
     pub fn compute_assist(count: usize, area: Rect, screen: (i32, i32)) -> OverviewLayout {
         let panel = assist_panel((area.width, area.height), 1);
+        let gap = assist_gap((area.width, area.height));
         let inner = Rect::new(
-            panel.x + ASSIST_GAP,
-            panel.y + ASSIST_GAP,
-            (panel.width - 2 * ASSIST_GAP).max(1),
-            (panel.height - 2 * ASSIST_GAP).max(1),
+            panel.x + gap,
+            panel.y + gap,
+            (panel.width - 2 * gap).max(1),
+            (panel.height - 2 * gap).max(1),
         );
         let shape = (i64::from(screen.0.max(1)), i64::from(screen.1.max(1)));
         let chrome = (2 * ASSIST_FRAME, ASSIST_HEADER + ASSIST_FRAME);
-        let (cols, bw, bh) = best_box(count, inner, ASSIST_GAP, chrome, shape, inner.width);
+        let (cols, bw, bh) = best_box(count, inner, gap, chrome, shape, inner.width);
         let (cw, ch) = (bw + chrome.0, bh + chrome.1);
         let nrows = count.div_ceil(cols.max(1));
-        let block_h = nrows as i32 * ch + (nrows as i32 - 1).max(0) * ASSIST_GAP;
+        let block_h = nrows as i32 * ch + (nrows as i32 - 1).max(0) * gap;
         let top = inner.y + (inner.height - block_h) / 2;
         let (mut cells, mut rows) = (Vec::with_capacity(count), Vec::with_capacity(nrows));
         for r in 0..nrows {
             let first = r * cols;
             rows.push(first);
             let k = (count - first).min(cols) as i32;
-            let row_w = k * cw + (k - 1) * ASSIST_GAP;
+            let row_w = k * cw + (k - 1) * gap;
             let left = inner.x + (inner.width - row_w) / 2;
-            let y = top + r as i32 * (ch + ASSIST_GAP);
+            let y = top + r as i32 * (ch + gap);
             for c in 0..k {
-                cells.push(Rect::new(left + c * (cw + ASSIST_GAP), y, cw, ch));
+                cells.push(Rect::new(left + c * (cw + gap), y, cw, ch));
             }
         }
         let pictures = (cells.iter())
@@ -284,6 +289,12 @@ fn best_box(
 pub fn assist_panel(size: (i32, i32), s: i32) -> Rect {
     let i = ASSIST_INSET * s;
     Rect::new(i, i, size.0 - 2 * i, size.1 - 2 * i)
+}
+
+/// The space between snap assist's cards and round them in a zone `size`
+/// big: a share of its shorter side, so a small zone gives it to the cards.
+pub fn assist_gap(size: (i32, i32)) -> i32 {
+    (size.0.min(size.1) / ASSIST_GAP_DIVISOR).clamp(ASSIST_GAP_MIN, ASSIST_GAP)
 }
 
 /// The card whose close button is at (`x`, `y`), from the area's
@@ -692,15 +703,35 @@ mod tests {
         let panel = assist_panel((quarter.width, quarter.height), 1);
         let inside = |l: &OverviewLayout| l.cells.iter().all(|c| c.intersect(&panel) == *c);
         assert!(!inside(&OverviewLayout::compute_assist(
-            80, quarter, screen
+            200, quarter, screen
         )));
-        let n = OverviewLayout::assist_fits(80, quarter, screen);
-        assert_eq!(n, 60);
+        let n = OverviewLayout::assist_fits(200, quarter, screen);
+        assert_eq!(n, 105);
         assert!(inside(&OverviewLayout::compute_assist(n, quarter, screen)));
         assert_eq!(OverviewLayout::assist_fits(6, quarter, screen), 6);
         assert_eq!(
             OverviewLayout::assist_fits(3, Rect::new(0, 0, 60, 60), screen),
             0
+        );
+    }
+
+    #[test]
+    fn assist_gap_follows_the_zones_shorter_side_within_its_bounds() {
+        assert_eq!(assist_gap((960, 1032)), ASSIST_GAP, "half of 1920x1032");
+        assert_eq!(assist_gap((640, 692)), ASSIST_GAP, "half of 1280x692");
+        assert_eq!(assist_gap((640, 346)), 14, "quarter of 1280x692");
+        assert_eq!(assist_gap((150, 90)), ASSIST_GAP_MIN);
+    }
+
+    #[test]
+    fn a_quarter_zone_gives_its_spare_gap_to_the_cards() {
+        let (screen, quarter) = ((1280, 692), Rect::new(0, 0, 640, 346));
+        let l = OverviewLayout::compute_assist(2, quarter, screen);
+        assert_eq!(l.cells[1].x - l.cells[0].right(), 14);
+        assert_eq!(
+            (l.pictures[0].width, l.pictures[0].height),
+            (270, 145),
+            "wider than the 252x136 a {ASSIST_GAP} px gap leaves"
         );
     }
 
