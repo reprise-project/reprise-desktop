@@ -134,9 +134,106 @@ fn tile(cell: Rect, z: Rect, work: (i32, i32)) -> Rect {
     Rect::new(cell.x + x0, cell.y + y0, x1 - x0, y1 - y0)
 }
 
+/// Spelt as band weights joined by `|` (columns) or `-` (rows), a band cut
+/// further as `weight:parts`: "1|1:2" is a half and two quarters.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ZoneLayout {
+    pub columns: bool,
+    pub bands: Vec<(f64, u32)>,
+}
+
+pub const ZONE_MAX: usize = 6;
+
+impl ZoneLayout {
+    pub fn parse(spec: &str) -> Result<ZoneLayout, String> {
+        let spec = spec.trim();
+        let columns = !spec.contains('-');
+        if !columns && spec.contains('|') {
+            return Err(format!("{spec:?} mixes | and -"));
+        }
+        let sep = if columns { '|' } else { '-' };
+        let band = |band: &str| -> Result<(f64, u32), String> {
+            let (w, parts) = band.split_once(':').unwrap_or((band, "1"));
+            let (w, parts) = (w.trim(), parts.trim());
+            let weight = (w.parse::<f64>().ok()).filter(|v| v.is_finite() && *v > 0.0);
+            let Some(weight) = weight else {
+                return Err(format!("{spec:?}: {w:?} is not a weight > 0"));
+            };
+            match parts.parse::<u32>() {
+                Ok(p) if (1..=ZONE_MAX as u32).contains(&p) => Ok((weight, p)),
+                _ => Err(format!(
+                    "{spec:?}: {parts:?} is not a count of parts from 1 to {ZONE_MAX}"
+                )),
+            }
+        };
+        let bands = spec.split(sep).map(band).collect::<Result<Vec<_>, _>>()?;
+        if bands.len() > ZONE_MAX {
+            return Err(format!("{spec:?}: at most {ZONE_MAX} bands"));
+        }
+        Ok(ZoneLayout { columns, bands })
+    }
+
+    pub fn zones(&self, work: Rect) -> Vec<Rect> {
+        let weights: Vec<f64> = self.bands.iter().map(|b| b.0).collect();
+        let (along, across) = if self.columns {
+            ((work.x, work.width), (work.y, work.height))
+        } else {
+            ((work.y, work.height), (work.x, work.width))
+        };
+        let cuts = boundaries(along.0, along.1, &weights);
+        let mut out = Vec::new();
+        for (i, &(_, parts)) in self.bands.iter().enumerate() {
+            let parts = boundaries(across.0, across.1, &vec![1.0; parts as usize]);
+            for k in 0..parts.len() - 1 {
+                let (a0, a1, b0, b1) = (cuts[i], cuts[i + 1], parts[k], parts[k + 1]);
+                out.push(if self.columns {
+                    Rect::new(a0, b0, a1 - a0, b1 - b0)
+                } else {
+                    Rect::new(b0, a0, b1 - b0, a1 - a0)
+                });
+            }
+        }
+        out
+    }
+
+    pub fn zone_count(&self) -> usize {
+        self.bands.iter().map(|b| b.1 as usize).sum()
+    }
+}
+
+fn boundaries(start: i32, size: i32, weights: &[f64]) -> Vec<i32> {
+    debug_assert!(!weights.is_empty());
+    let total: f64 = weights.iter().sum();
+    let mut out = Vec::with_capacity(weights.len() + 1);
+    out.push(start);
+    let mut cum = 0.0;
+    for w in &weights[..weights.len() - 1] {
+        cum += w;
+        out.push(start + (size as f64 * cum / total).round() as i32);
+    }
+    out.push(start + size);
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_zone_layout_reads_columns_rows_and_split_bands() {
+        let z = ZoneLayout::parse("2|1").unwrap();
+        let want = vec![(2.0, 1), (1.0, 1)];
+        assert_eq!((z.columns, z.bands), (true, want));
+        let z = ZoneLayout::parse(" 1 - 1:2 ").unwrap();
+        assert_eq!((z.columns, z.bands), (false, vec![(1.0, 1), (1.0, 2)]));
+        assert!(ZoneLayout::parse("1|1-1").is_err(), "mixed");
+        assert!(ZoneLayout::parse("1||1").is_err(), "an empty band");
+        assert!(ZoneLayout::parse("0|1").is_err());
+        assert!(ZoneLayout::parse("1:0").is_err());
+        assert!(ZoneLayout::parse("1:7").is_err());
+        assert!(ZoneLayout::parse("1:x").is_err());
+        assert!(ZoneLayout::parse("1|1|1|1|1|1|1").is_err(), "seven bands");
+    }
 
     const WORK: (i32, i32) = (1920, 1050);
 

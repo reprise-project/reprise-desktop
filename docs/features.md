@@ -109,7 +109,8 @@ the Super tap, Super+Shift+Esc and the VT switch keys can be rebound.
 - **Snap layouts.** Rest on a maximize button, or press Super+Z, for six
   ways to split the screen: halves, two thirds and a third, thirds, a half
   and two quarters, quarters, and a wide middle column. A portrait screen
-  gets rows. `[window_snapping] layouts` replaces them with your own.
+  gets rows. `[window_snapping] layouts`, or Custom layouts on the Windows
+  page of Reprise Settings, replaces them with your own.
 - **The snap bar.** Drag a window toward the top of the screen and the
   layouts drop down. Hold the window over a zone and let go.
 - **Suggestions.** The layouts start with your last few arrangements on
