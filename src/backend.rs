@@ -795,6 +795,7 @@ fn render(state: &mut State, crtc: crtc::Handle) {
         backend,
         scene,
         cursor,
+        saver,
         cursors,
         config,
         glass,
@@ -803,6 +804,7 @@ fn render(state: &mut State, crtc: crtc::Handle) {
         magnifier,
         ..
     } = state;
+    let cursor = crate::saverview::cursor(saver, cursor);
     let Some(b) = backend.as_mut() else {
         return;
     };
@@ -921,11 +923,13 @@ fn pointer_frame(
         backend,
         scene,
         cursor,
+        saver,
         cursors,
         magnifier,
         config,
         ..
     } = state;
+    let cursor = crate::saverview::cursor(saver, cursor);
     let b = backend.as_mut()?;
     let s = b.surfaces.get_mut(&crtc)?;
     if magnifier.zooms(output) || s.callback_timer.is_some() || s.scene_seen != scene.changes() {
