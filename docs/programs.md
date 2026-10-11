@@ -143,7 +143,8 @@ you when it's done, or when it isn't.
 
 Change your name, picture and password. With admin rights, add and remove
 accounts, choosing what happens to their files. A new account can be told to
-pick its own password at first login.
+pick its own password at first login. Cancelling the admin password prompt
+leaves everything as it was, with no error; a refused password says so.
 
 ## Software Updates
 

@@ -1,16 +1,19 @@
 //! The agent's side of polkit: registration for this logind session and
 //! `AuthenticationAgent` at `/reprise/polkit/Agent`. `BeginAuthentication` stays
 //! pending until the dialog is done; zbus runs each call on its own task so
-//! `CancelAuthentication` gets through.
+//! `CancelAuthentication` gets through. Dismissed prompts are kept for
+//! [`reprisebus::polkit::dismissed`] on the session bus.
 
 use std::collections::HashMap;
 use std::sync::mpsc::{Receiver, Sender, channel};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use zbus::message::Header;
 use zbus::zvariant::OwnedValue;
 
 pub const PATH: &str = "/reprise/polkit/Agent";
-const BUS_NAME: &str = "reprise.polkit";
+const BUS_NAME: &str = reprisebus::polkit::NAME;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Outcome {
@@ -120,9 +123,43 @@ async fn check_caller(conn: &zbus::Connection, hdr: &Header<'_>) -> Result<(), E
     )))
 }
 
+/// How long a dismissal waits for its program to ask about it.
+const DISMISSAL_TTL: Duration = Duration::from_secs(30);
+
+/// The processes whose prompt was dismissed, by the pid polkitd names as the
+/// subject, each answered once through [`reprisebus::polkit::dismissed`].
+#[derive(Default)]
+struct Dismissed(Vec<(u32, Instant)>);
+
+impl Dismissed {
+    fn record(&mut self, pid: u32, now: Instant) {
+        self.forget_old(now);
+        self.0.push((pid, now));
+    }
+
+    fn take(&mut self, pid: u32, now: Instant) -> bool {
+        self.forget_old(now);
+        let before = self.0.len();
+        self.0.retain(|(p, _)| *p != pid);
+        self.0.len() != before
+    }
+
+    fn forget_old(&mut self, now: Instant) {
+        self.0
+            .retain(|(_, at)| now.saturating_duration_since(*at) < DISMISSAL_TTL);
+    }
+}
+
+type Dismissals = Arc<Mutex<Dismissed>>;
+
+fn lock(d: &Dismissals) -> std::sync::MutexGuard<'_, Dismissed> {
+    d.lock().unwrap_or_else(|e| e.into_inner())
+}
+
 struct Agent {
     tx: Sender<Msg>,
     waker: repriseapp::Waker,
+    dismissed: Dismissals,
 }
 
 impl Agent {
@@ -140,7 +177,7 @@ impl Agent {
         action_id: &str,
         message: &str,
         _icon_name: &str,
-        _details: HashMap<&str, &str>,
+        details: HashMap<&str, &str>,
         cookie: &str,
         identities: Vec<(String, HashMap<String, OwnedValue>)>,
         #[zbus(connection)] conn: &zbus::Connection,
@@ -165,7 +202,15 @@ impl Agent {
         }));
         match wait.recv().await {
             Ok(Outcome::Success) => Ok(()),
-            Ok(Outcome::Cancelled) => Err(Error::Cancelled("cancelled by the user".into())),
+            Ok(Outcome::Cancelled) => {
+                if let Some(pid) = details
+                    .get("polkit.subject-pid")
+                    .and_then(|p| p.parse().ok())
+                {
+                    lock(&self.dismissed).record(pid, Instant::now());
+                }
+                Err(Error::Cancelled("cancelled by the user".into()))
+            }
             Ok(Outcome::Failed) | Err(_) => Err(Error::Failed("authentication failed".into())),
         }
     }
@@ -179,6 +224,27 @@ impl Agent {
         check_caller(conn, &hdr).await?;
         self.send(Msg::Cancel(cookie.to_string()));
         Ok(())
+    }
+}
+
+/// Answers [`reprisebus::polkit::dismissed`] for the calling process.
+struct DismissalsIface(Dismissals);
+
+#[zbus::interface(name = "reprise.polkit.Dismissals")]
+impl DismissalsIface {
+    async fn take(
+        &self,
+        #[zbus(connection)] conn: &zbus::Connection,
+        #[zbus(header)] hdr: Header<'_>,
+    ) -> zbus::fdo::Result<bool> {
+        let sender = hdr
+            .sender()
+            .ok_or_else(|| zbus::fdo::Error::Failed("no sender".into()))?;
+        let pid = zbus::fdo::DBusProxy::new(conn)
+            .await?
+            .get_connection_unix_process_id(sender.clone().into())
+            .await?;
+        Ok(lock(&self.0).take(pid, Instant::now()))
     }
 }
 
@@ -208,7 +274,7 @@ fn subject(session: &str) -> zbus_polkit::policykit1::Subject {
     }
 }
 
-async fn single_instance() {
+async fn single_instance(dismissed: Dismissals) {
     let Ok(conn) = zbus::Connection::session().await else {
         return;
     };
@@ -219,13 +285,22 @@ async fn single_instance() {
         log::info!("another reprise-polkit owns {BUS_NAME}; exiting");
         std::process::exit(0);
     }
+    let iface = DismissalsIface(dismissed);
+    if let Err(e) = conn
+        .object_server()
+        .at(reprisebus::polkit::PATH, iface)
+        .await
+    {
+        log::warn!("cannot serve {}: {e}", reprisebus::polkit::INTERFACE);
+    }
     let _ = SESSION_BUS.set(conn);
 }
 
 static SESSION_BUS: std::sync::OnceLock<zbus::Connection> = std::sync::OnceLock::new();
 
 async fn run(tx: Sender<Msg>, waker: repriseapp::Waker, ready: Sender<bool>) {
-    single_instance().await;
+    let dismissed = Dismissals::default();
+    single_instance(dismissed.clone()).await;
     let conn = match zbus::Connection::system().await {
         Ok(c) => c,
         Err(e) => {
@@ -242,7 +317,11 @@ async fn run(tx: Sender<Msg>, waker: repriseapp::Waker, ready: Sender<bool>) {
             return;
         }
     };
-    let agent = Agent { tx, waker };
+    let agent = Agent {
+        tx,
+        waker,
+        dismissed,
+    };
     if let Err(e) = conn.object_server().at(PATH, agent).await {
         log::warn!("cannot serve the agent: {e}");
         let _ = ready.send(false);
@@ -309,6 +388,21 @@ mod tests {
         assert_eq!(preselect(&users, Some("bob")), 1, "root when bob is absent");
         let users = vec!["alice".to_string(), "carol".to_string()];
         assert_eq!(preselect(&users, Some("bob")), 0, "else the first row");
+    }
+
+    #[test]
+    fn a_dismissal_is_answered_once_for_its_own_pid_within_the_ttl() {
+        let t0 = Instant::now();
+        let mut d = Dismissed::default();
+        d.record(10, t0);
+        d.record(20, t0);
+        assert!(!d.take(30, t0), "no prompt of pid 30 was dismissed");
+        assert!(d.take(10, t0));
+        assert!(!d.take(10, t0), "the answer is given once");
+        assert!(
+            !d.take(20, t0 + DISMISSAL_TTL),
+            "a dismissal nobody asked about lapses"
+        );
     }
 
     #[test]

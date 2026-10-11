@@ -53,7 +53,7 @@ enum After {
     Remove,
 }
 
-type Answer = (Result<(), String>, zbus::Result<Vec<User>>);
+type Answer = (Result<(), acct::Failure>, zbus::Result<Vec<User>>);
 
 struct AccountsApp {
     users: users::Users,
@@ -199,7 +199,7 @@ impl AccountsApp {
         if after == After::Add && done.is_ok() {
             self.add = None;
         }
-        if let Err(why) = done {
+        if let Err(acct::Failure::Text(why)) = done {
             self.fail(why);
         }
         Reply::redraw_all()

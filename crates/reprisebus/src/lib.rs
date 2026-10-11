@@ -15,8 +15,9 @@
 //! [`appearance`] follows the compositor's look from a running program.
 //! [`filetransfer`] hands dragged files to and from sandboxed programs.
 //! [`tray`] asks the compositor to open the tray's Customize dialog, or
-//! to turn off for a critical battery.
-//! The last four share a program's one blocking session bus connection
+//! to turn off for a critical battery. [`polkit`] asks whether a password
+//! prompt was dismissed.
+//! The last five share a program's one blocking session bus connection
 //! ([`session`]).
 
 pub mod a11y;
@@ -24,6 +25,7 @@ pub mod appearance;
 pub mod filetransfer;
 pub mod fprint;
 pub mod instance;
+pub mod polkit;
 pub mod tray;
 
 use futures_util::future::ready;
