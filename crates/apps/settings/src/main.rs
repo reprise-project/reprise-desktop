@@ -48,6 +48,7 @@ use reprisekit::access::{ROOT, Tree};
 use reprisekit::classic::widgets::BarHit;
 use reprisekit::controls::filedlg::{self, DlgMode, Event as FileEvent, Fields, FileDlg};
 use reprisekit::controls::form;
+use reprisekit::controls::iconview;
 use reprisekit::controls::listview::{self, ListView};
 use reprisekit::controls::metrics::ControlMetrics;
 use reprisekit::controls::msgbox;
@@ -271,6 +272,8 @@ struct SettingsApp {
     locations_focus: bool,
     location_ids: Vec<String>,
     location_file: PathBuf,
+    /// The time and row of the last press on a side list, for pairing a double click.
+    row_press: Option<(u32, usize)>,
 
     pads: Vec<reprisebus::tray::Pad>,
     pad_picked: usize,
@@ -438,6 +441,7 @@ impl SettingsApp {
             pad_picked: 0,
             pads_fresh: false,
             types: defaultspage::new_list(),
+            row_press: None,
             types_focus: false,
             chooser: None,
             locations: pages::new_location_list(),
@@ -2067,15 +2071,12 @@ impl SettingsApp {
                 return self.side_tab(back);
             }
             if held {
-                // Enter on a shortcut row edits it, on a file type
-                // changes its program; on the Startup list it stays the
+                // On the Startup and locations lists Enter stays the
                 // sheet's OK.
-                if key == form::Key::Enter && self.sheet.tabs.open == Page::Keyboard.index() {
-                    return self.edit_shortcut();
-                }
-                if key == form::Key::Enter && self.sheet.tabs.open == Page::DefaultPrograms.index()
+                if key == form::Key::Enter
+                    && let Some(r) = self.list_activate()
                 {
-                    return self.open_chooser();
+                    return r;
                 }
                 if let Some(key) = pages::list_key(&key) {
                     return self.list_key(&key, cm);
@@ -2086,7 +2087,20 @@ impl SettingsApp {
         self.sheet_event(ev)
     }
 
-    fn list_press(&mut self, x: i32, y: i32, cm: &ControlMetrics) -> Reply {
+    /// Enter or a double click on the side list's focused row: a shortcut row opens its editor, a file
+    /// type the program chooser. `None` on a list with no such action.
+    fn list_activate(&mut self) -> Option<Reply> {
+        match registry::open(&self.sheet) {
+            Page::Keyboard => Some(self.edit_shortcut()),
+            Page::DefaultPrograms => Some(self.open_chooser()),
+            _ => None,
+        }
+    }
+
+    fn list_press(&mut self, x: i32, y: i32, time: u32, ctx: &Ctx) -> Reply {
+        let cm = &ctx.theme.look.controls();
+        let threshold = ctx.theme.metrics.double_click_ms;
+        let last = self.row_press.take();
         // A click gives the list the keyboard and the ring; `select`
         // alone does not turn the ring on.
         self.focus_side_list(true);
@@ -2101,7 +2115,14 @@ impl SettingsApp {
         list.header.press(hit.column(), false);
         match hit {
             listview::Hit::Check(i) => list.select(Some(i), &lay),
-            listview::Hit::Row(i) => list.select(Some(i), &lay),
+            listview::Hit::Row(i) => {
+                list.select(Some(i), &lay);
+                if iconview::is_double_click(last, time, i, threshold) {
+                    self.sync_apply();
+                    return self.list_activate().unwrap_or_else(Reply::redraw);
+                }
+                self.row_press = Some((time, i));
+            }
             listview::Hit::VBar(BarHit::Back) => {
                 list.scroll(-1, &lay);
             }
@@ -2601,6 +2622,7 @@ impl SettingsApp {
                 x,
                 y,
                 button: BTN_LEFT,
+                time,
                 ..
             }) => {
                 // A combo's list dropped over the side list covers it.
@@ -2610,7 +2632,7 @@ impl SettingsApp {
                         .side_list()
                         .is_some_and(|(_, rect, _)| rect.contains(x, y))
                 {
-                    return self.list_press(x, y, &ctx.theme.look.controls());
+                    return self.list_press(x, y, time, ctx);
                 }
                 let hit = self.sheet.hit(x, y, &ctx.text, px);
                 let was = self.sheet.tabs.open;
@@ -2952,6 +2974,71 @@ mod tests {
             action: Some((PAGE_ACTION.into(), vec![name.into()])),
             token: None,
         }
+    }
+
+    /// A left press at `time` on side list row `row`, found by walking down the list's body.
+    fn press_side_row(a: &mut SettingsApp, ctx: &mut Ctx, row: usize, time: u32) {
+        let (list, rect, _) = a.side_list().expect("a page with a side list");
+        let lay = listview::layout(list, rect, &ctx.theme.look.controls());
+        let x = lay.body.x + 8;
+        let y = (lay.body.y..lay.body.bottom())
+            .find(|&y| list.hit(&lay, x, y) == listview::Hit::Row(row))
+            .expect("the row is on screen");
+        let press = PointerInput::Press {
+            x,
+            y,
+            button: BTN_LEFT,
+            time,
+            mods: repriseapp::Mods::default(),
+        };
+        a.event(MAIN, Event::Pointer(press), ctx);
+    }
+
+    fn enter(a: &mut SettingsApp, ctx: &Ctx) {
+        let k = KeyInput {
+            sym: reprisekit::textedit::keysym::RETURN,
+            utf8: None,
+            mods: repriseapp::Mods::default(),
+            edit: None,
+        };
+        a.key(k, &ctx.theme.look.controls());
+    }
+
+    #[test]
+    fn a_double_click_on_a_file_type_opens_the_chooser_like_enter() {
+        let mut a = app("types-double-click");
+        let mut ctx = test_ctx();
+        a.open_page(Page::DefaultPrograms);
+        a.defaults = Some(defaultspage::tests::defaults());
+        a.refill_defaults();
+        let mime = |a: &SettingsApp| a.chooser.as_ref().map(|c| c.mime.clone());
+
+        press_side_row(&mut a, &mut ctx, 1, 1000);
+        assert_eq!(mime(&a), None, "one click only picks the row");
+        press_side_row(&mut a, &mut ctx, 1, 1000 + 1100);
+        assert_eq!(mime(&a), None, "1100 ms apart is two clicks");
+        press_side_row(&mut a, &mut ctx, 1, 1000 + 1400);
+        let double = mime(&a).expect("the chooser opens on a double click");
+
+        a.chooser = None;
+        enter(&mut a, &ctx);
+        assert_eq!(mime(&a), Some(double), "Enter opens it for the same type");
+    }
+
+    #[test]
+    fn a_double_click_on_a_shortcut_edits_it_like_enter() {
+        let mut a = app("shortcuts-double-click");
+        let mut ctx = test_ctx();
+        a.open_page(Page::Keyboard);
+        press_side_row(&mut a, &mut ctx, 0, 1000);
+        assert!(a.shortcut.is_none(), "one click only picks the row");
+        press_side_row(&mut a, &mut ctx, 0, 1300);
+        assert!(a.shortcut.is_some(), "a double click opens the editor");
+        let target = a.shortcut_target.take();
+        a.shortcut = None;
+        enter(&mut a, &ctx);
+        assert!(a.shortcut.is_some());
+        assert_eq!(a.shortcut_target, target, "Enter edits the same row");
     }
 
     fn pick_row(a: &mut SettingsApp, i: usize) {
