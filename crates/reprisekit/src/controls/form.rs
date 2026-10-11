@@ -136,8 +136,8 @@ pub enum Control {
     /// arrows and a click move the pick, which reports `Changed`.
     IconList(Box<iconlist::IconList>),
     /// The monitor arrangement well, [`arrange::Arrange`]: a press picks
-    /// a tile and a drag moves it; the drop and the arrows report
-    /// `Changed`.
+    /// a tile and a drag moves it, as Ctrl+arrows do ([`Form::shove`]); the
+    /// drop and the arrows report `Changed`.
     Arrange(Box<arrange::Arrange>),
 }
 
@@ -700,6 +700,22 @@ pub fn special_key(sym: u32, shift: bool, alt: bool) -> Option<Key> {
         keysym::PAGE_UP | keysym::KP_PAGE_UP => Key::PageUp,
         keysym::PAGE_DOWN | keysym::KP_PAGE_DOWN => Key::PageDown,
         keysym::F4 => Key::Drop,
+        _ => return None,
+    })
+}
+
+/// The way Ctrl+arrow `sym` moves a focused arrangement's picked tile
+/// ([`Form::shove`]), or `None` for any other press.
+pub fn shove_dir(sym: u32, ctrl: bool, shift: bool, alt: bool) -> Option<arrange::Dir> {
+    use crate::textedit::keysym;
+    if !ctrl || shift || alt {
+        return None;
+    }
+    Some(match sym {
+        keysym::LEFT | keysym::KP_LEFT => arrange::Dir::Left,
+        keysym::RIGHT | keysym::KP_RIGHT => arrange::Dir::Right,
+        keysym::UP | keysym::KP_UP => arrange::Dir::Up,
+        keysym::DOWN | keysym::KP_DOWN => arrange::Dir::Down,
         _ => return None,
     })
 }
@@ -1635,6 +1651,21 @@ impl Form {
             hotkey::Took::Redraw => Some(Event::Redraw),
             hotkey::Took::Changed => Some(Event::Changed(self.items[i].id)),
         }
+    }
+
+    /// Ctrl+arrow for a focused arrangement: its picked tile moves ([`arrange::Arrange::shove`]).
+    /// `None` when something else has the focus, which then reads the press as usual.
+    pub fn shove(&mut self, dir: arrange::Dir) -> Option<Event> {
+        let i = self.focus.filter(|_| self.open_combo().is_none())?;
+        let id = self.items[i].id;
+        let Control::Arrange(a) = &mut self.items[i].control else {
+            return None;
+        };
+        Some(if a.enabled && a.shove(dir) {
+            Event::Changed(id)
+        } else {
+            Event::None
+        })
     }
 
     pub fn key(&mut self, key: Key) -> Event {

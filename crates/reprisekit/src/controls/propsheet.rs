@@ -458,6 +458,16 @@ impl PropSheet {
         self.event(i, ev)
     }
 
+    /// [`Form::shove`] on the open page; `None` while the strip has the focus.
+    pub fn shove(&mut self, dir: crate::controls::arrange::Dir) -> Option<Event> {
+        if self.tabs.focused {
+            return None;
+        }
+        let i = self.tabs.open;
+        let ev = self.pages.get_mut(i)?.shove(dir)?;
+        Some(self.event(i, ev))
+    }
+
     pub fn paste(&mut self, text: String) -> Event {
         let i = self.tabs.open;
         let ev = self.pages[i].paste(text);
