@@ -223,6 +223,8 @@ pub struct Settings {
     pub wallpaper_position: String,
     /// `[wallpaper] water`: "off" or one of [`WATER_STYLES`]' values.
     pub wallpaper_water: String,
+    /// `[drives] on_insert`: one of [`DRIVE_INSERTS`]' values.
+    pub drive_insert: String,
     /// `[wallpaper] slideshow`: the folder whose pictures take turns;
     /// empty shows `wallpaper` alone.
     pub slideshow: String,
@@ -464,6 +466,7 @@ impl Default for Settings {
             wallpaper: String::new(),
             wallpaper_position: "stretch".into(),
             wallpaper_water: "off".into(),
+            drive_insert: "ask".into(),
             slideshow: String::new(),
             slideshow_interval: 30,
             slideshow_shuffle: false,
@@ -818,6 +821,14 @@ pub const POSITIONS: &Choices = &[
 /// Mirrors `reprisekit::water::Water::parse`.
 pub const WATER_STYLES: &Choices = &[("calm", "Calm"), ("lively", "Lively"), ("rain", "Rain")];
 
+/// Default Programs' plugged-in drive combo. Mirrors `OnInsert::parse` in reprise-drives.
+pub const DRIVE_INSERTS: &Choices = &[
+    ("ask", "Ask what to do"),
+    ("mount", "Mount it"),
+    ("open", "Mount it and open a window"),
+    ("nothing", "Do nothing"),
+];
+
 /// The system icons the Background page ticks, in the desktop's order,
 /// and the Recycle Bin, which always follows them. Mirror
 /// `Config::default`'s `system_icons`.
@@ -918,6 +929,7 @@ fn fields() -> Vec<Field> {
         Field::Text(k("wallpaper", "image"), lens!(wallpaper)),
         Field::Text(k("wallpaper", "position"), lens!(wallpaper_position)),
         Field::Text(k("wallpaper", "water"), lens!(wallpaper_water)),
+        Field::Text(k("drives", "on_insert"), lens!(drive_insert)),
         Field::Text(k("wallpaper", "slideshow"), lens!(slideshow)),
         Field::Int(k("wallpaper", "interval"), lens!(slideshow_interval)),
         Field::Flag(k("wallpaper", "shuffle"), lens!(slideshow_shuffle)),
@@ -2093,6 +2105,7 @@ size_px = 12
             wallpaper: "/usr/share/backgrounds/a.png".into(),
             wallpaper_position: "tile".into(),
             wallpaper_water: "rain".into(),
+            drive_insert: "open".into(),
             slideshow: "~/Pictures/Slides".into(),
             slideshow_interval: 5,
             slideshow_shuffle: true,
@@ -2398,6 +2411,25 @@ size_px = 12
         want.desktop_animation_ms = 200;
         let out = save(&out, &want, &base).expect("parses");
         assert_eq!(out, "", "the emptied [workspaces] goes too");
+    }
+
+    #[test]
+    fn the_drive_insert_mode_round_trips_and_the_default_leaves_the_file() {
+        assert_eq!(load("").drive_insert, "ask");
+        let text = "[drives]\non_insert = \"nothing\"\n";
+        let s = load(text);
+        assert_eq!(s.drive_insert, "nothing");
+        assert_eq!(saved(text, &s), text);
+        let mut open = s.clone();
+        open.drive_insert = "open".into();
+        assert_eq!(saved(text, &open), "[drives]\non_insert = \"open\"\n");
+        let mut ask = s;
+        ask.drive_insert = "ask".into();
+        assert_eq!(
+            saved(text, &ask),
+            "",
+            "the default removes the key and its table"
+        );
     }
 
     #[test]

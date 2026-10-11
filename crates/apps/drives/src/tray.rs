@@ -18,6 +18,8 @@ pub enum TrayMsg {
     Remove(usize),
     /// A clickable balloon, by its tag.
     Balloon(u32),
+    /// Button `i` of a balloon with buttons, by its tag.
+    Button(u32, usize),
 }
 
 /// Row ids are the entry's index plus one; 0 is the dbusmenu's root.
@@ -34,6 +36,7 @@ pub fn translate(msg: Msg) -> Option<TrayMsg> {
         Msg::Activate(x, y) => TrayMsg::Open(x, y),
         Msg::Clicked(id) if id > 0 => TrayMsg::Remove(id as usize - 1),
         Msg::BalloonClicked(tag) => TrayMsg::Balloon(tag),
+        Msg::BalloonButton(tag, i) => TrayMsg::Button(tag, i),
         Msg::Clicked(_) | Msg::SecondaryActivate | Msg::Scroll(_) => return None,
     })
 }
@@ -87,6 +90,10 @@ mod tests {
         assert_eq!(translate(Msg::Clicked(0)), None);
         assert_eq!(translate(Msg::Activate(5, 6)), Some(TrayMsg::Open(5, 6)));
         assert_eq!(translate(Msg::BalloonClicked(3)), Some(TrayMsg::Balloon(3)));
+        assert_eq!(
+            translate(Msg::BalloonButton(3, 1)),
+            Some(TrayMsg::Button(3, 1))
+        );
     }
 
     #[test]

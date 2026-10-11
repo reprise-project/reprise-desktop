@@ -21,7 +21,9 @@ pub fn translate(msg: Msg) -> Option<TrayMsg> {
     Some(match msg {
         Msg::Activate(..) | Msg::Clicked(ID_OPEN) | Msg::BalloonClicked(_) => TrayMsg::Open,
         Msg::Clicked(ID_CHECK) => TrayMsg::Check,
-        Msg::Clicked(_) | Msg::SecondaryActivate | Msg::Scroll(_) => return None,
+        Msg::Clicked(_) | Msg::SecondaryActivate | Msg::Scroll(_) | Msg::BalloonButton(..) => {
+            return None;
+        }
     })
 }
 

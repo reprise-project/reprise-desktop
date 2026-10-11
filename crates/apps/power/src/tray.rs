@@ -30,7 +30,9 @@ pub fn translate(msg: Msg) -> Option<TrayMsg> {
         Msg::Clicked(ID_PROPERTIES) => TrayMsg::OpenProperties,
         Msg::Clicked(ID_EXIT) => TrayMsg::Exit,
         Msg::Clicked(id) if id >= ID_PROFILE => TrayMsg::Profile((id - ID_PROFILE) as usize),
-        Msg::Clicked(_) | Msg::Scroll(_) | Msg::BalloonClicked(_) => return None,
+        Msg::Clicked(_) | Msg::Scroll(_) | Msg::BalloonClicked(_) | Msg::BalloonButton(..) => {
+            return None;
+        }
     })
 }
 

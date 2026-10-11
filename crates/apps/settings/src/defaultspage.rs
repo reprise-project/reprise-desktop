@@ -1,5 +1,5 @@
-//! The Default Programs page: a combo per kind of program, every file type with its program, a filter, and
-//! Change... and Restore Default. Defaults live in the mime-apps lists ([`reprisefs::props`]); edits wait in
+//! The Default Programs page: a combo per kind of program, what a plugged-in drive does (`[drives] on_insert`),
+//! every file type with its program, a filter, and Change... and Restore Default. Defaults live in the mime-apps lists ([`reprisefs::props`]); edits wait in
 //! [`Defaults::edits`] until Apply and go to the user's `mimeapps.list`.
 
 use reprisefs::apps::AppEntry;
@@ -109,6 +109,9 @@ pub const KINDS: [Kind; 7] = [
 
 pub const TERMINAL: &str = "dp_terminal";
 const TERMINAL_LABEL: &str = "dp_terminal_label";
+pub const DRIVE_INSERT: &str = "dp_drive_insert";
+const DRIVE_INSERT_LABEL: &str = "dp_drive_insert_label";
+const DRIVE_LABEL_W: i32 = 140;
 pub const FILTER: &str = "dp_filter";
 pub const CHANGE: &str = "dp_change";
 pub const RESTORE: &str = "dp_restore";
@@ -121,7 +124,7 @@ const LABEL_W: i32 = 96;
 const DROP_ROWS: usize = 12;
 
 pub fn list(a: Area) -> Rect {
-    Rect::new(X, 266, a.w, 128 + a.dh)
+    Rect::new(X, 289, a.w, 128 + a.dh)
 }
 pub const COLUMNS: [(&str, i32); 3] = [("Type", 90), ("Description", 140), ("Opens With", 108)];
 const RESTORE_W: i32 = 96;
@@ -148,6 +151,21 @@ pub fn page(a: Area) -> Form {
             DROP_ROWS,
         ));
     }
+    let y = ROW0 + (KINDS.len() as i32 + 1) * ROW_STEP;
+    items.push(Item::label_at(
+        DRIVE_INSERT_LABEL,
+        X,
+        y,
+        DRIVE_LABEL_W,
+        "When a &drive is plugged in:",
+    ));
+    items.push(crate::pages::choice(
+        DRIVE_INSERT,
+        X + DRIVE_LABEL_W + 4,
+        y - 4,
+        a.combo(Area::MIN.w - DRIVE_LABEL_W - 4),
+        crate::model::DRIVE_INSERTS,
+    ));
     let y = list.y - 22;
     items.push(Item::label_at("dp_types_label", X, y, 120, "File types:"));
     let fw = a.combo(150);
@@ -875,10 +893,12 @@ mod tests {
         assert_eq!(at("dp_browser"), Rect::new(120, 44, 258, 21));
         assert_eq!(at(TERMINAL_LABEL), Rect::new(20, 209, 96, 13));
         assert_eq!(at(TERMINAL), Rect::new(120, 205, 258, 21));
-        assert_eq!(at("dp_types_label"), Rect::new(20, 244, 120, 13));
-        assert_eq!(at(FILTER), Rect::new(228, 240, 150, 20));
-        assert_eq!(at(CHANGE), Rect::new(201, 400, 75, 23));
-        assert_eq!(at(RESTORE), Rect::new(282, 400, 96, 23));
+        assert_eq!(at(DRIVE_INSERT_LABEL), Rect::new(20, 232, 140, 13));
+        assert_eq!(at(DRIVE_INSERT), Rect::new(164, 228, 214, 21));
+        assert_eq!(at("dp_types_label"), Rect::new(20, 267, 120, 13));
+        assert_eq!(at(FILTER), Rect::new(228, 263, 150, 20));
+        assert_eq!(at(CHANGE), Rect::new(201, 423, 75, 23));
+        assert_eq!(at(RESTORE), Rect::new(282, 423, 96, 23));
         assert_eq!(
             at(RESTORE).right(),
             list(Area::MIN).right(),
@@ -891,7 +911,7 @@ mod tests {
     fn the_page_draws_the_list_under_a_dropped_combo() {
         let cs = reprisekit::theme::Theme::default().colors;
         let (c, list, terminal) = drawn(false);
-        assert_eq!((list.x, list.y), (166, 266));
+        assert_eq!((list.x, list.y), (166, 289));
         let header = (list.x + 80, list.y + 6);
         let row = |r: i32| list.y + 2 + 17 + 17 * r + 8;
         let lit = |c: &reprisekit::raster::Canvas, y| {

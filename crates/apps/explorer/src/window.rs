@@ -682,14 +682,7 @@ pub fn folder_tip_lines(
     Some(folder_tip_text(size, folders, files))
 }
 
-/// [`reprisefs::props::format_size`] without the bracketed exact count ("109 MB").
-pub fn short_size(bytes: u64) -> String {
-    let full = reprisefs::props::format_size(bytes);
-    match full.split_once(" (") {
-        Some((short, _)) => short.to_string(),
-        None => full,
-    }
-}
+pub use reprisefs::props::short_size;
 
 #[cfg(test)]
 mod tests {
@@ -871,12 +864,6 @@ mod tests {
         let p = status_panels(5, 3, Some(1260), "Computer", None);
         assert_eq!(p[0].text, "3 object(s) selected");
         assert_eq!(p[1].text, "1.23 KB");
-    }
-
-    #[test]
-    fn short_size_drops_the_exact_byte_count() {
-        assert_eq!(short_size(1260), "1.23 KB");
-        assert_eq!(short_size(512), "512 bytes");
     }
 
     fn item(name: &str, is_dir: bool, kind: &str, size: u64) -> Item {

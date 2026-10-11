@@ -1,6 +1,6 @@
 //! What the applet decides from UDisks2 snapshots, with no bus: which new
-//! volumes it mounts or asks a passphrase for, the rows of the Safely
-//! Remove Hardware menu, and the words of its balloons.
+//! volumes arrived and what `[drives] on_insert` does with them, the rows of
+//! the Safely Remove Hardware menu, and the words of its balloons.
 
 use std::path::Path;
 
@@ -10,6 +10,65 @@ use reprisefs::udisks::{Disk, Snapshot, Volume};
 pub enum Arrival {
     Mount(String),
     Unlock(String),
+}
+
+impl Arrival {
+    pub fn volume(&self) -> &str {
+        match self {
+            Arrival::Mount(v) | Arrival::Unlock(v) => v,
+        }
+    }
+}
+
+/// `[drives] on_insert`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum OnInsert {
+    #[default]
+    Ask,
+    Mount,
+    Open,
+    Nothing,
+}
+
+impl OnInsert {
+    /// An unknown value is the default.
+    pub fn parse(s: &str) -> OnInsert {
+        match s {
+            "mount" => OnInsert::Mount,
+            "open" => OnInsert::Open,
+            "nothing" => OnInsert::Nothing,
+            _ => OnInsert::Ask,
+        }
+    }
+}
+
+/// What the applet does with an arrival.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Act {
+    /// The balloon with its two buttons ([`ask_balloon`]).
+    Ask(Arrival),
+    /// Mount (a locked container: the passphrase box, then mount), then
+    /// open a window on it when `open`, else the "Mounted at" balloon.
+    Go {
+        arrival: Arrival,
+        open: bool,
+    },
+    Nothing,
+}
+
+pub fn act(arrival: Arrival, mode: OnInsert) -> Act {
+    match mode {
+        OnInsert::Ask => Act::Ask(arrival),
+        OnInsert::Mount => Act::Go {
+            arrival,
+            open: false,
+        },
+        OnInsert::Open => Act::Go {
+            arrival,
+            open: true,
+        },
+        OnInsert::Nothing => Act::Nothing,
+    }
 }
 
 /// Whether `v` is the user's own removable volume and fine to act on
@@ -97,6 +156,48 @@ pub fn container_name(snap: &Snapshot, volume: &str) -> String {
     let label = v.and_then(|v| v.label.clone());
     let disk = v.and_then(|v| snap.disk_of(v)).map(Disk::name);
     label.or(disk).unwrap_or_else(|| "Removable Disk".into())
+}
+
+/// How the ask balloon names a new volume: its label, else its size and
+/// its drive's name ("7.45 GB Kingston DataTraveler").
+pub fn arrival_name(snap: &Snapshot, volume: &str) -> String {
+    let Some(v) = snap.volume(volume) else {
+        return "Removable Disk".into();
+    };
+    if let Some(l) = &v.label {
+        return l.clone();
+    }
+    let disk = snap
+        .disk_of(v)
+        .map_or_else(|| "Removable Disk".into(), Disk::name);
+    if v.size == 0 {
+        return disk;
+    }
+    format!("{} {disk}", reprisefs::props::short_size(v.size))
+}
+
+/// The ask balloon's title, body and buttons; button 0 opens a window
+/// once the drive is mounted.
+pub struct AskBalloon {
+    pub summary: String,
+    pub body: String,
+    pub buttons: [&'static str; 2],
+}
+
+pub fn ask_balloon(name: &str, locked: bool) -> AskBalloon {
+    if locked {
+        AskBalloon {
+            summary: format!("New drive: {name}"),
+            body: "This drive is locked. Unlock it to use the files on it.".into(),
+            buttons: ["Unlock and Open", "Unlock"],
+        }
+    } else {
+        AskBalloon {
+            summary: format!("New drive: {name}"),
+            body: "Mount it to use the files on it.".into(),
+            buttons: ["Mount and Open", "Mount"],
+        }
+    }
 }
 
 pub fn mounted_balloon(name: &str, at: &Path) -> (String, String) {
@@ -269,6 +370,67 @@ mod tests {
             arrivals(Some(&locked), &unlocked).is_empty(),
             "the container is not asked again, and its cleartext waits for the unlock to return"
         );
+    }
+
+    #[test]
+    fn each_mode_decides_what_an_arrival_does() {
+        let m = Arrival::Mount("sdb1".into());
+        let u = Arrival::Unlock("sdc".into());
+        assert_eq!(OnInsert::parse("bogus"), OnInsert::Ask);
+        assert_eq!(OnInsert::default(), OnInsert::Ask);
+        for (name, mode) in [
+            ("ask", OnInsert::Ask),
+            ("mount", OnInsert::Mount),
+            ("open", OnInsert::Open),
+            ("nothing", OnInsert::Nothing),
+        ] {
+            assert_eq!(OnInsert::parse(name), mode);
+        }
+        for a in [m, u] {
+            assert_eq!(act(a.clone(), OnInsert::Ask), Act::Ask(a.clone()));
+            assert_eq!(
+                act(a.clone(), OnInsert::Mount),
+                Act::Go {
+                    arrival: a.clone(),
+                    open: false
+                }
+            );
+            assert_eq!(
+                act(a.clone(), OnInsert::Open),
+                Act::Go {
+                    arrival: a.clone(),
+                    open: true
+                }
+            );
+            assert_eq!(act(a, OnInsert::Nothing), Act::Nothing);
+        }
+    }
+
+    #[test]
+    fn the_ask_balloon_offers_mount_or_unlock() {
+        let b = ask_balloon("KINGSTON", false);
+        assert_eq!(b.summary, "New drive: KINGSTON");
+        assert_eq!(b.buttons, ["Mount and Open", "Mount"]);
+        let b = ask_balloon("VAULT", true);
+        assert_eq!(b.summary, "New drive: VAULT");
+        assert_eq!(b.buttons, ["Unlock and Open", "Unlock"]);
+    }
+
+    #[test]
+    fn a_new_drive_is_named_by_label_else_size_and_drive() {
+        let mut bare = fat("sdb1", "d", false);
+        bare.label = None;
+        bare.size = 8_000_000_000;
+        let s = snap(
+            vec![disk("d", true)],
+            vec![fat("sdc1", "d", false), bare.clone()],
+        );
+        assert_eq!(arrival_name(&s, "sdc1"), "KINGSTON");
+        assert_eq!(arrival_name(&s, "sdb1"), "7.45 GB Kingston DataTraveler");
+        bare.size = 0;
+        let s = snap(vec![disk("d", true)], vec![bare]);
+        assert_eq!(arrival_name(&s, "sdb1"), "Kingston DataTraveler");
+        assert_eq!(arrival_name(&s, "gone"), "Removable Disk");
     }
 
     #[test]

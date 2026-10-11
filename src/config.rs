@@ -2309,6 +2309,9 @@ struct FileConfig {
     /// `[recycle_bin]` is read by `reprisefs::bincap::Policy`; accepted here so the file parses.
     #[allow(dead_code)]
     recycle_bin: Option<serde::de::IgnoredAny>,
+    /// `[drives]` is read by reprise-drives; accepted here so the file parses.
+    #[allow(dead_code)]
+    drives: Option<serde::de::IgnoredAny>,
     startmenu: Option<Vec<FileMenuEntry>>,
     quicklaunch: Option<Vec<FileQuickLaunch>>,
     startmenu_banner: Option<String>,

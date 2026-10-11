@@ -125,6 +125,8 @@ pub enum Msg {
     Clicked(i32),
     /// A balloon sent with `notify_clickable` was clicked, by its tag; the window's token waits in `take_activation_token`.
     BalloonClicked(u32),
+    /// Button `i` (in the order given) of a balloon sent with `notify_buttons` was pressed, by its tag; the token waits as for a click.
+    BalloonButton(u32, usize),
 }
 
 pub type Wake = Arc<dyn Fn() + Send + Sync>;
@@ -179,6 +181,7 @@ enum Cmd {
         summary: String,
         body: String,
         tag: Option<u32>,
+        buttons: Vec<String>,
     },
 }
 
@@ -202,6 +205,7 @@ impl TrayHandle {
             summary: summary.into(),
             body: escape_markup(body),
             tag: None,
+            buttons: Vec::new(),
         });
     }
 
@@ -210,6 +214,17 @@ impl TrayHandle {
             summary: summary.into(),
             body: escape_markup(body),
             tag: Some(tag),
+            buttons: Vec::new(),
+        });
+    }
+
+    /// A balloon with a button per label and no click on its body; a press comes back as [`Msg::BalloonButton`].
+    pub fn notify_buttons(&self, summary: &str, body: &str, tag: u32, buttons: &[&str]) {
+        let _ = self.commands.send_blocking(Cmd::Notify {
+            summary: summary.into(),
+            body: escape_markup(body),
+            tag: Some(tag),
+            buttons: buttons.iter().map(|b| b.to_string()).collect(),
         });
     }
 
@@ -493,24 +508,36 @@ async fn publish(conn: &Connection, state: &Arc<Mutex<State>>) {
     }
 }
 
-/// A balloon: `Notify(app_name, replaces_id, icon, summary, body, actions, hints, timeout)`, with a
-/// `default` action when `clickable`. The server's id for it, None when the call failed.
+/// The `Notify` actions list: a key and label per button, else a `default` action when `clickable`.
+fn actions(clickable: bool, buttons: &[String]) -> Vec<String> {
+    if !buttons.is_empty() {
+        buttons
+            .iter()
+            .enumerate()
+            .flat_map(|(i, label)| [format!("{BUTTON_KEY}{i}"), label.clone()])
+            .collect()
+    } else if clickable {
+        vec!["default".into(), String::new()]
+    } else {
+        Vec::new()
+    }
+}
+
+const BUTTON_KEY: &str = "button";
+
+/// A balloon: `Notify(app_name, replaces_id, icon, summary, body, actions, hints, timeout)`, with
+/// [`actions`]. The server's id for it, None when the call failed.
 async fn notify(
     conn: &Connection,
     config: &Config,
     summary: &str,
     body: &str,
-    clickable: bool,
+    actions: Vec<String>,
 ) -> Option<u32> {
     let proxy = Proxy::new(conn, NOTIFY_NAME, NOTIFY_PATH, NOTIFY_NAME)
         .await
         .ok()?;
     let hints: HashMap<&str, Value<'_>> = HashMap::new();
-    let actions: Vec<&str> = if clickable {
-        vec!["default", ""]
-    } else {
-        Vec::new()
-    };
     let reply = proxy
         .call_method(
             "Notify",
@@ -565,19 +592,25 @@ fn balloon_signal(m: &zbus::Message) -> Option<BalloonSignal> {
     }
 }
 
-/// The clickable balloons still up, by server id, with the tag each comes back with.
+/// The clickable balloons and balloons with buttons still up, by server id, with the tag each comes back with.
 #[derive(Debug, Default)]
 struct Clickable(HashMap<u32, u32>);
 
 impl Clickable {
-    /// What a server signal means here: a click on one of ours is its tag, and its token goes to `token`.
-    fn on(&mut self, signal: BalloonSignal, token: &Token) -> Option<u32> {
+    /// What a server signal means here: a click or button press on one of ours, by its tag; its token goes to `token`.
+    fn on(&mut self, signal: BalloonSignal, token: &Token) -> Option<Msg> {
         match signal {
             BalloonSignal::ActivationToken(id, t) if self.0.contains_key(&id) => {
                 *token.lock().unwrap_or_else(|e| e.into_inner()) = Some(t);
                 None
             }
-            BalloonSignal::ActionInvoked(id, key) if key == "default" => self.0.remove(&id),
+            BalloonSignal::ActionInvoked(id, key) if key == "default" => {
+                self.0.remove(&id).map(Msg::BalloonClicked)
+            }
+            BalloonSignal::ActionInvoked(id, key) => {
+                let i = key.strip_prefix(BUTTON_KEY)?.parse().ok()?;
+                self.0.remove(&id).map(|tag| Msg::BalloonButton(tag, i))
+            }
             BalloonSignal::Closed(id) => {
                 self.0.remove(&id);
                 None
@@ -668,15 +701,21 @@ async fn run(conn: Connection, shared: Shared, commands: async_channel::Receiver
                 }
                 publish(&conn, &state).await;
             }
-            Wakeup::Cmd(Cmd::Notify { summary, body, tag }) => {
-                let id = notify(&conn, &config, &summary, &body, tag.is_some()).await;
+            Wakeup::Cmd(Cmd::Notify {
+                summary,
+                body,
+                tag,
+                buttons,
+            }) => {
+                let actions = actions(tag.is_some(), &buttons);
+                let id = notify(&conn, &config, &summary, &body, actions).await;
                 if let (Some(id), Some(tag)) = (id, tag) {
                     clickable.0.insert(id, tag);
                 }
             }
             Wakeup::Balloon(signal) => {
-                if let Some(tag) = clickable.on(signal, &shared.token) {
-                    shared.send(Msg::BalloonClicked(tag));
+                if let Some(msg) = clickable.on(signal, &shared.token) {
+                    shared.send(msg);
                 }
             }
             Wakeup::WatcherUp => register(&conn).await,
@@ -791,7 +830,9 @@ mod tests {
         }
         .notify("Wireless", "Connected to: <b>cafe</b>");
         match rx.try_recv().expect("the command") {
-            Cmd::Notify { summary, body, tag } => {
+            Cmd::Notify {
+                summary, body, tag, ..
+            } => {
                 assert_eq!(summary, "Wireless");
                 assert_eq!(body, "Connected to: &lt;b&gt;cafe&lt;/b&gt;");
                 assert_eq!(tag, None);
@@ -879,7 +920,7 @@ mod tests {
         );
         assert_eq!(
             c.on(BalloonSignal::ActionInvoked(7, "default".into()), &token),
-            Some(42)
+            Some(Msg::BalloonClicked(42))
         );
         assert_eq!(
             c.on(BalloonSignal::ActionInvoked(7, "default".into()), &token),
@@ -889,6 +930,33 @@ mod tests {
         c.0.insert(3, 1);
         c.on(BalloonSignal::Closed(3), &token);
         assert!(c.0.is_empty(), "a closed balloon is forgotten");
+    }
+
+    #[test]
+    fn a_balloon_button_comes_back_as_its_tag_and_index() {
+        assert_eq!(
+            actions(true, &["Mount and Open".into(), "Mount".into()]),
+            ["button0", "Mount and Open", "button1", "Mount"],
+            "buttons replace the body click"
+        );
+        assert_eq!(actions(true, &[]), ["default", ""]);
+        assert!(actions(false, &[]).is_empty());
+        let token = Token::default();
+        let mut c = Clickable::default();
+        c.0.insert(5, 9);
+        assert_eq!(
+            c.on(BalloonSignal::ActionInvoked(5, "other".into()), &token),
+            None
+        );
+        assert_eq!(
+            c.on(BalloonSignal::ActionInvoked(5, "button1".into()), &token),
+            Some(Msg::BalloonButton(9, 1))
+        );
+        assert_eq!(
+            c.on(BalloonSignal::ActionInvoked(5, "button0".into()), &token),
+            None,
+            "a balloon answers once"
+        );
     }
 
     fn prop(row: &OwnedValue, key: &str) -> Option<OwnedValue> {

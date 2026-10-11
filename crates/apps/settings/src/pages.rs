@@ -1512,6 +1512,11 @@ fn binds() -> Vec<Bind> {
         Bind::Num("previews_fps", lens!(previews_fps)),
         Bind::Named("switcher_style", lens!(switcher_style), SWITCHER_STYLES),
         Bind::Named("switcher_size", lens!(switcher_size), SWITCHER_SIZES),
+        Bind::Named(
+            crate::defaultspage::DRIVE_INSERT,
+            lens!(drive_insert),
+            crate::model::DRIVE_INSERTS,
+        ),
         Bind::Named("hot_corner", lens!(hot_corner), HOT_CORNERS),
         Bind::Flag("screenshot_save", lens!(screenshot_save)),
         Bind::Flag("clipboard_history", lens!(clipboard_history)),

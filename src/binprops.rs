@@ -212,14 +212,7 @@ impl BinSheet {
     }
 }
 
-/// Three significant digits and the unit, "19.8 GB".
-pub fn short_size(bytes: u64) -> String {
-    let full = reprisefs::props::format_size(bytes);
-    match full.split_once(" (") {
-        Some((short, _)) => short.to_string(),
-        None => full,
-    }
-}
+pub use reprisefs::props::short_size;
 
 /// The home trash's drive first, as "Local Disk (/)" by its mount, then each
 /// drive of `reprisefs::places::mounted_drives` that has or can make a
@@ -616,13 +609,6 @@ mod tests {
         assert_eq!(d.item("no_bin").unwrap().rect.x, 24);
         assert_eq!(d.item("size_of").unwrap().rect, Rect::new(156, 62, 160, 13));
         assert!(d.item("confirm").is_none());
-    }
-
-    #[test]
-    fn short_sizes_drop_the_byte_count() {
-        assert_eq!(short_size(21_365_735_424), "19.8 GB");
-        assert_eq!(short_size(2_136_573_542), "1.98 GB");
-        assert_eq!(short_size(0), "0 bytes");
     }
 
     fn sheet_of(d: &mut Dialog) -> &BinSheet {

@@ -67,11 +67,8 @@ impl Calls {
 
     pub fn arrived(&self, arrival: crate::model::Arrival) {
         self.spawn("arrival", move |u, p| {
-            let path = match &arrival {
-                crate::model::Arrival::Mount(v) | crate::model::Arrival::Unlock(v) => v.clone(),
-            };
             if session_locked(u) {
-                p.post(Msg::Locked(path));
+                p.post(Msg::Locked(arrival.volume().to_string()));
             } else {
                 p.post(Msg::Arrived(arrival));
             }

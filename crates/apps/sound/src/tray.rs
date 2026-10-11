@@ -47,7 +47,7 @@ pub fn translate(msg: Msg) -> Option<TrayMsg> {
         // twenty 5 % steps, so nothing past that means anything.
         Msg::Scroll(delta) => TrayMsg::Scroll(delta.clamp(-WHEEL_MAX, WHEEL_MAX)),
         Msg::Clicked(ID_EXIT) => TrayMsg::Exit,
-        Msg::Clicked(_) | Msg::BalloonClicked(_) => return None,
+        Msg::Clicked(_) | Msg::BalloonClicked(_) | Msg::BalloonButton(..) => return None,
     })
 }
 
