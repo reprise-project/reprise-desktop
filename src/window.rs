@@ -136,15 +136,17 @@ pub fn fit_size(size: (i32, i32), area: Rect) -> (i32, i32) {
     )
 }
 
-/// Client size for a first configure; a CSD client is asked for the whole frame.
+/// Client size for a first configure; a CSD client is asked for the whole frame. A normal size
+/// fits `area` but never goes under the client's `limits`.
 pub fn first_configure_size(
     m: &Metrics,
     want: &Want,
-    resizable: bool,
+    limits: SizeLimits,
     screen: Rect,
     area: Rect,
     chrome: Chrome,
 ) -> Option<(i32, i32)> {
+    let resizable = limits.resizable();
     match want.state {
         Some(WindowState::Fullscreen) => Some((screen.width, screen.height)),
         Some(WindowState::Maximized) if resizable => Some(FrameGeometry::client_size_for_total(
@@ -156,7 +158,8 @@ pub fn first_configure_size(
         )),
         _ => want.size.map(|s| {
             let (w, h) = fit_size(s, area);
-            FrameGeometry::client_size_for_total(m, w, h, false, chrome)
+            let client = FrameGeometry::client_size_for_total(m, w, h, false, chrome);
+            crate::snap::commit_size(client, limits)
         }),
     }
 }
@@ -575,8 +578,7 @@ impl Window {
     }
 
     pub fn is_resizable(&self) -> bool {
-        let l = self.size_limits();
-        l.max != (Some(l.min.0), Some(l.min.1))
+        self.size_limits().resizable()
     }
 
     pub fn has_frame(&self) -> bool {
@@ -1228,7 +1230,15 @@ impl State {
         }
     }
 
+    /// Ask `w` for a client size; a normal window is never asked for less than its minimum or more
+    /// than its maximum.
     pub fn request_size(&mut self, w: WindowId, cw: i32, ch: i32) {
+        let (cw, ch) = match self.win(w) {
+            Some(x) if !x.maximized && !x.fullscreen => {
+                crate::snap::commit_size((cw, ch), x.size_limits())
+            }
+            _ => (cw, ch),
+        };
         if self.win(w).is_some_and(|x| x.x11().is_some()) {
             self.configure_x11(w, cw, ch);
             return;
@@ -1878,6 +1888,16 @@ impl State {
                     .as_ref()
                     .and_then(|x| x.size)
                     .map_or(total, |s| fit_size(s, area));
+                // A normal frame is at least as big as the client's minimum made it.
+                let normal = !matches!(
+                    want.as_ref().and_then(|x| x.state),
+                    Some(WindowState::Maximized | WindowState::Fullscreen)
+                );
+                let s = if normal {
+                    (s.0.max(total.0), s.1.max(total.1))
+                } else {
+                    s
+                };
                 size = Some(s);
                 match pos {
                     Position::At(px, py) => {
@@ -2268,6 +2288,12 @@ pub struct SizeLimits {
     pub max: (Option<i32>, Option<i32>),
 }
 
+impl SizeLimits {
+    pub fn resizable(self) -> bool {
+        self.max != (Some(self.min.0), Some(self.min.1))
+    }
+}
+
 /// From (min_w, min_h, max_w, max_h); a max <= 0 is unbounded as in xdg-shell.
 pub(crate) fn client_limits(limits: (i32, i32, i32, i32)) -> SizeLimits {
     let (min_w, min_h, max_w, max_h) = limits;
@@ -2651,7 +2677,7 @@ mod tests {
         .want(true);
         for decorated in [false, true] {
             let chrome = chrome_for(false, true, decorated, DialogTag::None);
-            let (w, h) = first_configure_size(&m, &want, true, screen, area, chrome)
+            let (w, h) = first_configure_size(&m, &want, OPEN, screen, area, chrome)
                 .expect("a remembered frame asks for a size");
             assert_eq!(
                 FrameGeometry::layout(&m, w, h, false, chrome).total,
@@ -2661,8 +2687,47 @@ mod tests {
         }
         let csd = chrome_for(false, true, false, DialogTag::None);
         assert_eq!(
-            first_configure_size(&m, &want, true, screen, area, csd),
+            first_configure_size(&m, &want, OPEN, screen, area, csd),
             Some((831, 678))
+        );
+    }
+
+    const OPEN: SizeLimits = SizeLimits {
+        min: (1, 1),
+        max: (None, None),
+    };
+
+    #[test]
+    fn a_remembered_frame_under_the_minimum_reopens_at_the_minimum() {
+        let m = Metrics::default();
+        let screen = Rect::new(0, 0, 1920, 1080);
+        let area = Rect::new(0, 0, 1920, 1050);
+        let remembered = |width, height| {
+            crate::windowrules::Remembered {
+                output: "Virtual-1".into(),
+                x: 32,
+                y: 32,
+                width,
+                height,
+                maximized: false,
+            }
+            .want(true)
+        };
+        let limits = SizeLimits {
+            min: (544, 528),
+            max: (None, None),
+        };
+        let csd = chrome_for(false, true, false, DialogTag::None);
+        let size = |want| first_configure_size(&m, &want, limits, screen, area, csd);
+        assert_eq!(size(remembered(760, 500)), Some((760, 528)));
+        assert_eq!(size(remembered(400, 300)), Some((544, 528)));
+        assert_eq!(size(remembered(2400, 1400)), Some((1920, 1050)));
+        let decorated = chrome_for(false, true, true, DialogTag::None);
+        assert_eq!(
+            first_configure_size(&m, &remembered(760, 500), limits, screen, area, decorated)
+                .map(|s| s.1),
+            Some(528),
+            "the minimum is the client's, inside the frame"
         );
     }
 

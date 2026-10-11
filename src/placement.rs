@@ -160,11 +160,12 @@ impl State {
         let Some(win) = self.win(w) else {
             return;
         };
-        let resizable = win.is_resizable();
+        let limits = win.size_limits();
+        let resizable = limits.resizable();
         let size = first_configure_size(
             &self.config.theme.metrics,
             &want,
-            resizable,
+            limits,
             screen,
             area,
             win.chrome(),

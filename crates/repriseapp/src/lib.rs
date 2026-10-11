@@ -676,6 +676,17 @@ fn sane_size((w, h): (i32, i32)) -> (i32, i32) {
     (sane_side(i64::from(w)), sane_side(i64::from(h)))
 }
 
+/// The main window's opening client size and its floor: a resizable window
+/// opens no smaller than its minimum, whatever size the program kept.
+fn opening_size(app: &dyn App) -> ((i32, i32), (i32, i32)) {
+    let size = sane_size(app.initial_size());
+    if app.fixed() {
+        return (size, size);
+    }
+    let min = app.min_size(MAIN).map_or(MIN_SIZE, sane_size);
+    ((size.0.max(min.0), size.1.max(min.1)), min)
+}
+
 /// The size a configure leaves a window at, and whether the program
 /// still owns it. `asked` is what the configure asks per side (`None`
 /// leaves that side to the window), `last` what the one before asked.
@@ -858,7 +869,7 @@ pub fn run(app: Box<dyn App>) {
         .ok();
     // The main window itself is `sync_main`'s, so a program that starts
     // hidden never gets a surface for it.
-    let (w, h) = sane_size(app.initial_size());
+    let ((w, h), _) = opening_size(&*app);
     let look = Look::from_env();
     let theme = look.theme();
     publish_theme(&theme);
@@ -1482,7 +1493,7 @@ impl Host {
     }
 
     fn make_main(&mut self) {
-        let (w, h) = sane_size(self.app.initial_size());
+        let ((w, h), min) = opening_size(&*self.app);
         let surface = self.compositor.create_surface(&self.qh);
         let scaling = self.scaling(&surface);
         let window =
@@ -1491,12 +1502,9 @@ impl Host {
         let title = self.app.title();
         window.set_title(title.clone());
         window.set_app_id(self.app.app_id());
+        window.set_min_size(Some((min.0 as u32, min.1 as u32)));
         if self.app.fixed() {
-            window.set_min_size(Some((w as u32, h as u32)));
             window.set_max_size(Some((w as u32, h as u32)));
-        } else {
-            let min = self.app.min_size(MAIN).map_or(MIN_SIZE, sane_size);
-            window.set_min_size(Some((min.0 as u32, min.1 as u32)));
         }
         if let Some(handle) = self.app.foreign_parent() {
             self.foreign = self.import_parent(&handle, &window);
@@ -3631,6 +3639,57 @@ pub(crate) fn main_wanted(hidden: bool, have: bool) -> Option<bool> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    struct Kept {
+        kept: (i32, i32),
+        min: Option<(i32, i32)>,
+        fixed: bool,
+    }
+
+    impl App for Kept {
+        fn title(&self) -> String {
+            String::new()
+        }
+        fn app_id(&self) -> String {
+            String::new()
+        }
+        fn initial_size(&self) -> (i32, i32) {
+            self.kept
+        }
+        fn fixed(&self) -> bool {
+            self.fixed
+        }
+        fn min_size(&self, _: WinId) -> Option<(i32, i32)> {
+            self.min
+        }
+        fn event(&mut self, _: WinId, _: Event, _: &mut Ctx) -> Reply {
+            Reply::default()
+        }
+        fn draw(&mut self, _: WinId, _: &mut Canvas, _: &Ctx) {}
+    }
+
+    #[test]
+    fn a_kept_size_under_the_minimum_opens_at_the_minimum() {
+        let app = |kept, min, fixed| Kept { kept, min, fixed };
+        let min = Some((544, 528));
+        assert_eq!(
+            opening_size(&app((760, 500), min, false)),
+            ((760, 528), (544, 528))
+        );
+        assert_eq!(
+            opening_size(&app((900, 700), min, false)),
+            ((900, 700), (544, 528))
+        );
+        assert_eq!(
+            opening_size(&app((50, 20), None, false)),
+            (MIN_SIZE, MIN_SIZE)
+        );
+        assert_eq!(
+            opening_size(&app((300, 200), min, true)),
+            ((300, 200), (300, 200)),
+            "a fixed window is pinned to its own size"
+        );
+    }
 
     #[test]
     fn theme_from_env_with_no_interface_is_the_default_theme() {
