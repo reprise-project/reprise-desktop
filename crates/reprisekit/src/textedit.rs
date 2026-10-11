@@ -564,16 +564,43 @@ impl TextEdit {
         self.key(EditKey::Insert(line))
     }
 
-    /// Dropped text, taken as [`TextEdit::paste`] takes it, put in at byte `at` and selected; the selection there was is let go.
-    pub fn drop_text(&mut self, at: usize, text: &str) -> bool {
+    /// A drop, taken as [`TextEdit::paste`] takes it, put in at byte `at` and selected; the selection there was is let go.
+    /// Paths get a space on each side that touches a non-space char, which stays unselected.
+    pub fn drop_text(&mut self, at: usize, line: &DropLine) -> bool {
         let at = self.text.floor_char_boundary(at);
+        let text = line.text();
+        let (lead, trail) = match line {
+            DropLine::Paths(p) if !p.is_empty() => {
+                let apart = |c: Option<char>| c.is_some_and(|c| !c.is_whitespace());
+                (
+                    apart(self.text[..at].chars().next_back()),
+                    apart(self.text[at..].chars().next()),
+                )
+            }
+            _ => (false, false),
+        };
         let (caret, anchor) = (self.caret, self.anchor);
         (self.caret, self.anchor) = (at, at);
+        let padded;
+        let text = match (lead, trail) {
+            (false, false) => text,
+            _ => {
+                padded = format!(
+                    "{}{text}{}",
+                    if lead { " " } else { "" },
+                    if trail { " " } else { "" }
+                );
+                padded.as_str()
+            }
+        };
         if !self.paste(text, &[]) {
             (self.caret, self.anchor) = (caret, anchor);
             return false;
         }
-        self.anchor = at;
+        self.anchor = (at + usize::from(lead)).min(self.caret);
+        if trail && self.caret > self.anchor && self.text[..self.caret].ends_with(' ') {
+            self.caret -= 1;
+        }
         true
     }
 
@@ -751,6 +778,22 @@ pub fn drag_scroll(
         return Some(words::next_char(s, first));
     }
     None
+}
+
+/// What a drag drops on a field: text as it came, or a line of paths ([`paths_line`]) kept
+/// apart from the text around the drop point.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum DropLine {
+    Text(String),
+    Paths(String),
+}
+
+impl DropLine {
+    pub fn text(&self) -> &str {
+        match self {
+            DropLine::Text(t) | DropLine::Paths(t) => t,
+        }
+    }
 }
 
 /// Dropped paths as one line for a field: space-separated, a path holding a space or a character
@@ -1293,18 +1336,62 @@ mod tests {
     #[test]
     fn dropped_text_lands_at_the_drop_point_selected() {
         let mut t = TextEdit::new("hello world", true);
-        assert!(t.drop_text(5, " big\nnext line"));
+        assert!(t.drop_text(5, &DropLine::Text(" big\nnext line".into())));
         assert_eq!(t.text, "hello big world", "the first line, as a paste");
         assert_eq!(t.selected_text(), " big");
         assert!(t.key(EditKey::Undo));
         assert_eq!(t.text, "hello world");
         let mut t = TextEdit::new("ab", false);
-        assert!(!t.drop_text(1, "\u{7}"));
+        assert!(!t.drop_text(1, &DropLine::Text("\u{7}".into())));
         assert_eq!(
             (t.text.as_str(), t.caret, t.anchor),
             ("ab", 2, 2),
             "nothing to drop moves nothing"
         );
+    }
+
+    fn drop_paths(text: &str, at: usize) -> (String, String) {
+        let mut t = TextEdit::new(text, false);
+        assert!(t.drop_text(at, &DropLine::Paths("'/tmp/a b'".into())));
+        (t.text.clone(), t.selected_text().to_string())
+    }
+
+    #[test]
+    fn dropped_paths_get_a_space_from_the_text_they_touch() {
+        let sel = "'/tmp/a b'".to_string();
+        assert_eq!(
+            drop_paths("cat", 3),
+            ("cat '/tmp/a b'".into(), sel.clone()),
+            "at the end"
+        );
+        assert_eq!(
+            drop_paths("cat", 0),
+            ("'/tmp/a b' cat".into(), sel.clone()),
+            "at the start"
+        );
+        assert_eq!(
+            drop_paths("ab", 1),
+            ("a '/tmp/a b' b".into(), sel.clone()),
+            "mid-word"
+        );
+        assert_eq!(
+            drop_paths("", 0),
+            (sel.clone(), sel.clone()),
+            "an empty field"
+        );
+        assert_eq!(
+            drop_paths("a  b", 2),
+            ("a '/tmp/a b' b".into(), sel),
+            "between spaces"
+        );
+    }
+
+    #[test]
+    fn dropped_text_gets_no_space() {
+        let mut t = TextEdit::new("cat", false);
+        assert!(t.drop_text(3, &DropLine::Text("x".into())));
+        assert_eq!(t.text, "catx");
+        assert_eq!(t.selected_text(), "x");
     }
 
     #[test]

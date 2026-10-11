@@ -11,6 +11,7 @@ use reprisekit::controls::filedlg::FileDlg;
 use reprisekit::controls::form::{self, Form};
 use reprisekit::raster::Rect;
 use reprisekit::text::TextRenderer;
+use reprisekit::textedit::DropLine;
 
 /// A form whose edit fields take drops, and the font size it is drawn at when that is not the
 /// theme's.
@@ -83,7 +84,7 @@ impl Target for FileDrop<'_> {
     fn drop(&mut self, data: &Dropped, text: &TextRenderer, px: u32) -> form::Event {
         let r = self.client();
         let took = match data {
-            Dropped::Text(t) => self.dlg.drop_text(text, px, r, t),
+            Dropped::Text(t) => self.dlg.drop_text(text, px, r, &DropLine::Text(t.clone())),
             Dropped::Files(paths) => {
                 let dir = self.host.folder.and_then(|id| self.host.folders.path(id));
                 self.dlg.drop_names(&file_names(paths, dir))
@@ -152,11 +153,11 @@ pub fn accept_as(kind: DropKind, source: Actions) -> Accept {
 
 /// The line a field takes for `data`: text as it came, files as their paths
 /// ([`reprisekit::textedit::paths_line`]).
-pub fn line(data: &Dropped) -> String {
+pub fn line(data: &Dropped) -> DropLine {
     match data {
-        Dropped::Text(t) => t.clone(),
-        Dropped::Files(paths) => reprisekit::textedit::paths_line(paths),
-        Dropped::Uris(_) => String::new(),
+        Dropped::Text(t) => DropLine::Text(t.clone()),
+        Dropped::Files(paths) => DropLine::Paths(reprisekit::textedit::paths_line(paths)),
+        Dropped::Uris(_) => DropLine::Text(String::new()),
     }
 }
 

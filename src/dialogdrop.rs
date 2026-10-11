@@ -8,6 +8,7 @@
 use std::os::fd::OwnedFd;
 
 use reprisefs::dropdata::{self, Dropped};
+use reprisekit::textedit::DropLine;
 use smithay::{
     input::dnd::{DndAction, Source},
     reexports::wayland_server::protocol::wl_data_device_manager::DndAction as WlDndAction,
@@ -50,9 +51,9 @@ pub fn field_mime<S: AsRef<str>>(offered: &[S]) -> Option<&'static str> {
 
 /// The line a field takes for a drop read as `mime`: a URI list's files and links, a path
 /// holding a space quoted ([`reprisekit::textedit::paths_line`]); text as it came.
-pub fn field_line(mime: &str, bytes: &[u8]) -> String {
+pub fn field_line(mime: &str, bytes: &[u8]) -> DropLine {
     if mime != dropdata::URI_LIST {
-        return String::from_utf8_lossy(bytes).into_owned();
+        return DropLine::Text(String::from_utf8_lossy(bytes).into_owned());
     }
     let items: Vec<String> = dropdata::decode(mime, bytes)
         .into_iter()
@@ -61,14 +62,14 @@ pub fn field_line(mime: &str, bytes: &[u8]) -> String {
             Dropped::Url { url, .. } => url,
         })
         .collect();
-    reprisekit::textedit::paths_line(&items)
+    DropLine::Paths(reprisekit::textedit::paths_line(&items))
 }
 
 /// The line a name field (a search query, a rename box) takes for a drop read as `mime`: a URI
 /// list's files by their names and links whole, space-separated; text as it came.
-pub fn name_line(mime: &str, bytes: &[u8]) -> String {
+pub fn name_line(mime: &str, bytes: &[u8]) -> DropLine {
     if mime != dropdata::URI_LIST {
-        return String::from_utf8_lossy(bytes).into_owned();
+        return DropLine::Text(String::from_utf8_lossy(bytes).into_owned());
     }
     let names: Vec<String> = dropdata::decode(mime, bytes)
         .into_iter()
@@ -81,7 +82,7 @@ pub fn name_line(mime: &str, bytes: &[u8]) -> String {
             Dropped::Url { url, .. } => url,
         })
         .collect();
-    names.join(" ")
+    DropLine::Paths(names.join(" "))
 }
 
 impl State {
@@ -301,8 +302,8 @@ impl State {
         };
         let took = match over.field {
             Field::Dialog(id) => self.dialog_field_dropped(id, &field_line(over.mime, &bytes)),
-            Field::Launcher => self.launcher_dropped(&name_line(over.mime, &bytes)),
-            Field::StartPanel => self.start_panel_dropped(&name_line(over.mime, &bytes)),
+            Field::Launcher => self.launcher_dropped(name_line(over.mime, &bytes).text()),
+            Field::StartPanel => self.start_panel_dropped(name_line(over.mime, &bytes).text()),
             Field::Rename(_) => self.rename_dropped(&name_line(over.mime, &bytes)),
         };
         self.field_let_go(over);
@@ -316,7 +317,7 @@ impl State {
         }
     }
 
-    fn dialog_field_dropped(&mut self, id: u64, line: &str) -> bool {
+    fn dialog_field_dropped(&mut self, id: u64, line: &DropLine) -> bool {
         let px = self.config.dialog_theme.fonts.size_px;
         let Some(i) = self.dialog_index(id) else {
             return false;
@@ -334,8 +335,11 @@ impl State {
     }
 
     /// Text dropped on the rename box goes in at the drop caret, selected, without a `/`.
-    fn rename_dropped(&mut self, line: &str) -> bool {
-        let line = line.replace('/', "");
+    fn rename_dropped(&mut self, line: &DropLine) -> bool {
+        let line = match line {
+            DropLine::Text(t) => DropLine::Text(t.replace('/', "")),
+            DropLine::Paths(p) => DropLine::Paths(p.replace('/', "")),
+        };
         let took = self.desktop.as_mut().is_some_and(|d| {
             let at = d.rename_drop.take();
             let edit = d.rename.as_mut().map(|(_, e)| e);
@@ -381,15 +385,24 @@ mod tests {
         let list = b"file:///usr/bin/foot\r\nfile:///tmp/my%20notes.txt\r\n";
         assert_eq!(
             field_line(dropdata::URI_LIST, list),
-            "/usr/bin/foot '/tmp/my notes.txt'"
+            DropLine::Paths("/usr/bin/foot '/tmp/my notes.txt'".into())
         );
-        assert_eq!(field_line(dropdata::TEXT_UTF8, "ls -l".as_bytes()), "ls -l");
+        assert_eq!(
+            field_line(dropdata::TEXT_UTF8, "ls -l".as_bytes()),
+            DropLine::Text("ls -l".into())
+        );
     }
 
     #[test]
     fn a_name_field_takes_dropped_files_by_their_names() {
         let list = b"file:///usr/bin/foot\r\nfile:///tmp/my%20notes.txt\r\n";
-        assert_eq!(name_line(dropdata::URI_LIST, list), "foot my notes.txt");
-        assert_eq!(name_line(dropdata::TEXT_UTF8, b"a/b"), "a/b");
+        assert_eq!(
+            name_line(dropdata::URI_LIST, list),
+            DropLine::Paths("foot my notes.txt".into())
+        );
+        assert_eq!(
+            name_line(dropdata::TEXT_UTF8, b"a/b"),
+            DropLine::Text("a/b".into())
+        );
     }
 }
