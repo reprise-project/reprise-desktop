@@ -170,7 +170,8 @@ struct Notepad {
     path: Option<std::path::PathBuf>,
     /// The file had a CRLF break, so every break saves as CRLF, a mixed file's LF ones too.
     crlf: bool,
-    dragging: bool,
+    /// Where the held selection drag's pointer last was; ticks scroll from there.
+    dragging: Option<(i32, i32)>,
     thumb: ThumbDrag,
     last_press: Option<(u32, multiedit::Pos)>,
     /// Alt went down and nothing else since; Alt's release activates the menu bar unless anything
@@ -338,7 +339,7 @@ impl Notepad {
             mono,
             bar,
             path,
-            dragging: false,
+            dragging: None,
             thumb: ThumbDrag::default(),
             last_press: None,
             alt_arm: AltArm::default(),
@@ -756,7 +757,7 @@ impl Notepad {
                         self.edit.select_word_at(pos);
                     } else {
                         self.edit.place(pos, false);
-                        self.dragging = true;
+                        self.dragging = Some((x, y));
                     }
                     return Reply::redraw();
                 }
@@ -772,7 +773,7 @@ impl Notepad {
                 if lit { Reply::redraw() } else { Reply::none() }
             }
             PointerInput::Release { .. } => {
-                self.dragging = false;
+                self.dragging = None;
                 self.thumb.release();
                 if self.view.bars.release_bar() && ctx.styled() {
                     Reply::redraw()
@@ -845,25 +846,34 @@ impl Notepad {
             }
             return Reply::redraw();
         }
-        if self.dragging {
-            let el = self.edit_layout(ctx);
-            let pos = multiedit::pos_at(
-                &self.mono,
-                &self.metrics,
-                &self.edit,
-                &el,
-                self.view,
-                x,
-                y,
-                1,
-            );
-            if self.edit.place(pos, true) {
-                self.view
-                    .follow(&self.mono, &self.metrics, &self.edit, &el, 1);
-                return Reply::redraw();
-            }
+        if self.dragging.is_some() {
+            self.dragging = Some((x, y));
+            return self.select_drag(false, ctx);
         }
         Reply::none()
+    }
+
+    fn select_drag(&mut self, tick: bool, ctx: &Ctx) -> Reply {
+        let Some((x, y)) = self.dragging else {
+            return Reply::none();
+        };
+        let el = self.edit_layout(ctx);
+        let step = multiedit::select_drag(
+            &self.mono,
+            &self.metrics,
+            &mut self.edit,
+            &el,
+            &mut self.view,
+            x,
+            y,
+            1,
+            tick,
+        );
+        Reply {
+            redraw: step.changed,
+            tick: step.scrolling,
+            ..Reply::none()
+        }
     }
 
     fn scroll(&mut self, by: i64, ctx: &Ctx) -> bool {
@@ -1822,8 +1832,9 @@ impl Notepad {
             | Event::DragMotion { .. }
             | Event::DragFiles { .. }
             | Event::DragLeave
-            | Event::DragDrop { .. }
-            | Event::Tick => self.drop_event(ev, ctx),
+            | Event::DragDrop { .. } => self.drop_event(ev, ctx),
+            Event::Tick if self.dragging.is_some() => self.select_drag(true, ctx),
+            Event::Tick => self.drop_event(ev, ctx),
             Event::PastedFiles(_)
             | Event::Wake
             | Event::DragEnd { .. }
@@ -2214,6 +2225,47 @@ mod tests {
             step(&mut find, release),
             FormStep::Out(form::Event::Redraw)
         ));
+    }
+
+    #[test]
+    fn a_selection_drag_held_below_the_edit_scrolls_on_ticks_until_released() {
+        let mut ctx = test_ctx();
+        let mut np = Notepad::new(None);
+        np.edit = MultiEdit::new(&"line\n".repeat(200));
+        let lay = np.edit_layout(&ctx);
+        let x = lay.inner.x + 20;
+        np.pointer(
+            PointerInput::Press {
+                x,
+                y: lay.inner.y + 4,
+                button: BTN_LEFT,
+                time: 0,
+                mods: repriseapp::Mods::default(),
+            },
+            &ctx,
+        );
+        let below = lay.inner.bottom() + 30;
+        let r = np.pointer(PointerInput::Motion { x, y: below }, &ctx);
+        assert!(r.tick && r.redraw);
+        assert_eq!(np.view.top, 0);
+        for top in 1..=3 {
+            let r = np.event(MAIN, Event::Tick, &mut ctx);
+            assert!(r.tick && r.redraw);
+            assert_eq!(np.view.top, top);
+        }
+        assert_eq!(np.edit.caret().line, 3 + lay.rows - 1);
+        np.pointer(
+            PointerInput::Release {
+                x,
+                y: below,
+                button: BTN_LEFT,
+                mods: repriseapp::Mods::default(),
+            },
+            &ctx,
+        );
+        let r = np.event(MAIN, Event::Tick, &mut ctx);
+        assert!(!r.tick, "released, the ticks stop");
+        assert_eq!(np.view.top, 3);
     }
 
     #[test]

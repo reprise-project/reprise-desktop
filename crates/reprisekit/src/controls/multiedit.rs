@@ -1221,6 +1221,48 @@ pub fn drag_scroll(
     (v != view).then_some(v)
 }
 
+/// What one [`select_drag`] call did.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct SelectStep {
+    pub changed: bool,
+    /// The pointer rests where a tick scrolls; the host keeps ticking while it holds.
+    pub scrolling: bool,
+}
+
+/// A selection drag held at (`x`, `y`), inside the edit or past any side of it. The point is taken
+/// at its nearest spot in the full rows; on a `tick` the view first steps as [`drag_scroll`]
+/// decides there, then the selection extends to the position under it.
+#[expect(clippy::too_many_arguments)]
+pub fn select_drag(
+    text: &TextRenderer,
+    m: &Metrics,
+    edit: &mut MultiEdit,
+    lay: &Layout,
+    view: &mut View,
+    x: i32,
+    y: i32,
+    s: i32,
+    tick: bool,
+) -> SelectStep {
+    let i = lay.inner;
+    let full = i.y + s + lay.rows.max(1) as i32 * m.line_h.max(1) * s - 1;
+    let (x, y) = (
+        x.clamp(i.x, i.right() - 1),
+        y.clamp(i.y, full.min(i.bottom() - 1)),
+    );
+    let before = *view;
+    if tick && let Some(v) = drag_scroll(text, m, edit, lay, *view, x, y, s) {
+        *view = v;
+    }
+    let pos = pos_at(text, m, edit, lay, *view, x, y, s);
+    let placed = edit.place(pos, true);
+    view.follow(text, m, edit, lay, s);
+    SelectStep {
+        changed: placed || *view != before,
+        scrolling: drag_scroll(text, m, edit, lay, *view, x, y, s).is_some(),
+    }
+}
+
 /// Draw the control: edge, box, lines from `view.top`, selection on `hilight`, the caret (1 px bar)
 /// in the blink's shown half, and the scrollbars the layout calls for.
 #[expect(clippy::too_many_arguments)]
@@ -2046,6 +2088,57 @@ mod tests {
         assert_eq!(step(at(5, max - 3), i.right() - 1, mid_y), Some(at(5, max)));
         assert_eq!(step(at(5, max), i.right() - 1, mid_y), None);
         assert_eq!(step(at(5, 0), i.right() - 1, i.y), Some(at(4, 13)));
+    }
+
+    #[test]
+    fn a_selection_drag_past_an_edge_scrolls_on_ticks_and_extends_to_the_edge_row() {
+        let text = TextRenderer::load(&FontConfig::default());
+        let m = Metrics::default();
+        let mut t = e(&"line\n".repeat(50));
+        let lay = layout(&text, &m, &t, Rect::new(0, 0, 200, 80), 1);
+        let i = lay.inner;
+        let rows = lay.rows;
+        let mut v = View::default();
+        let drag = |t: &mut MultiEdit, v: &mut View, x, y, tick| {
+            select_drag(&text, &m, t, &lay, v, x, y, 1, tick)
+        };
+        t.place(Pos { line: 1, col: 2 }, false);
+        let below = i.bottom() + 40;
+        let r = drag(&mut t, &mut v, i.x + 20, below, false);
+        assert!(r.changed && r.scrolling);
+        assert_eq!(v.top, 0, "motion past the edge does not scroll");
+        assert_eq!(
+            t.caret().line,
+            rows - 1,
+            "the caret goes to the last full row"
+        );
+        for n in 1..=3 {
+            let r = drag(&mut t, &mut v, i.x + 20, below, true);
+            assert!(r.changed && r.scrolling);
+            assert_eq!(v.top, n);
+            assert_eq!(t.caret().line, n + rows - 1);
+        }
+        assert_eq!(t.selection(), (Pos { line: 1, col: 2 }, t.caret()));
+        let r = drag(&mut t, &mut v, i.x + 20, i.y - 30, true);
+        assert_eq!((v.top, t.caret().line), (2, 2), "above the edit scrolls up");
+        assert!(r.scrolling);
+        let r = drag(&mut t, &mut v, i.x + 20, i.y + 1 + 13 + 6, true);
+        assert!(!r.scrolling, "the middle rests still");
+        assert_eq!(v.top, 2);
+
+        let mut t = e(&format!("{}\nb", "x".repeat(80)));
+        let mut v = View::default();
+        let r = drag(&mut t, &mut v, i.right() + 50, i.y + 2, true);
+        assert!(
+            r.scrolling && v.left > 0,
+            "past the right side scrolls right"
+        );
+        let left = v.left;
+        let r = drag(&mut t, &mut v, i.x - 50, i.y + 2, true);
+        assert!(
+            r.changed && v.left < left,
+            "past the left side scrolls back"
+        );
     }
 
     #[test]
