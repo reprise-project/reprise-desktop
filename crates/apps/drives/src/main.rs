@@ -1,5 +1,6 @@
-//! reprise-drives: removable drives for the session. Mounts plugged-in
-//! drives through UDisks2 (balloon, passphrase box for locked ones) and
+//! reprise-drives: removable drives for the session. Does what `[drives]
+//! on_insert` says with plugged-in drives (asks in a balloon, mounts through
+//! UDisks2, opens a window, raises the passphrase box for locked ones) and
 //! lists them in the Safely Remove Hardware tray menu. No main window; the
 //! process is autostarted for the session.
 
@@ -7,8 +8,8 @@ mod model;
 mod tray;
 mod watch;
 
-use std::collections::{HashMap, VecDeque};
-use std::path::PathBuf;
+use std::collections::{HashMap, HashSet, VecDeque};
+use std::path::{Path, PathBuf};
 use std::sync::mpsc::Receiver;
 
 use repriseapp::keys::form_clipboard;
@@ -24,7 +25,7 @@ use reprisekit::raster::{Canvas, Rect};
 use reprisekit::taskbar::Edge;
 use reprisekit::textedit::keysym;
 
-use model::{Arrival, Entry};
+use model::{Act, Arrival, Entry};
 
 const FLYOUT: WinId = "flyout";
 const UNLOCK: WinId = "unlock";
@@ -70,6 +71,11 @@ struct DrivesApp {
     unlock_queue: VecDeque<String>,
     removing: HashMap<String, Removing>,
     balloons: HashMap<u32, PathBuf>,
+    /// Ask balloons by tag, kept after the balloon goes: the history still runs its buttons.
+    asks: HashMap<u32, Arrival>,
+    /// Volumes that get a window once mounted; a container's moves to its
+    /// cleartext volume when it unlocks.
+    open_after: HashSet<String>,
     next_tag: u32,
 }
 
@@ -114,6 +120,7 @@ impl DrivesApp {
             self.unlock = None;
         }
         self.unlock_queue.retain(|v| !gone(v));
+        self.open_after.retain(|v| snap.volume(v).is_some());
         self.push_state();
         if self
             .flyout
@@ -124,7 +131,35 @@ impl DrivesApp {
         }
     }
 
+    fn tag(&mut self) -> u32 {
+        let tag = self.next_tag;
+        self.next_tag = self.next_tag.wrapping_add(1);
+        tag
+    }
+
+    /// `[drives] on_insert` is read at each arrival, so a change applies to the next drive.
     fn arrived(&mut self, a: Arrival) {
+        let mode = model::OnInsert::parse(&repriseconf::drives_on_insert());
+        let volume = a.volume().to_string();
+        match model::act(a, mode) {
+            Act::Ask(a) => {
+                let name = model::arrival_name(self.snap(), a.volume());
+                let b = model::ask_balloon(&name, matches!(a, Arrival::Unlock(_)));
+                let tag = self.tag();
+                self.asks.insert(tag, a);
+                if let Some(t) = &self.tray {
+                    t.notify_buttons(&b.summary, &b.body, tag, &b.buttons);
+                }
+            }
+            Act::Go { arrival, open } => self.go(arrival, open),
+            Act::Nothing => log::info!("{volume} arrived; left alone"),
+        }
+    }
+
+    fn go(&mut self, a: Arrival, open: bool) {
+        if open {
+            self.open_after.insert(a.volume().to_string());
+        }
         match a {
             Arrival::Mount(v) => {
                 if let Some(c) = &self.calls {
@@ -132,6 +167,29 @@ impl DrivesApp {
                 }
             }
             Arrival::Unlock(v) => self.unlock_queue.push_back(v),
+        }
+    }
+
+    /// Button `i` of ask balloon `tag`: 0 mounts and opens, 1 mounts. A
+    /// balloon pressed from the history after its drive went or was mounted
+    /// elsewhere does only what still makes sense.
+    fn ask_answered(&mut self, tag: u32, i: usize) {
+        let Some(a) = self.asks.remove(&tag) else {
+            return;
+        };
+        let open = i == 0;
+        let Some(v) = self.snap().volume(a.volume()) else {
+            return;
+        };
+        match &a {
+            Arrival::Mount(_) if !v.mounts.is_empty() => {
+                if open {
+                    let at = v.mounts[0].clone();
+                    self.open_path(&at);
+                }
+            }
+            Arrival::Unlock(_) if !v.locked() => {}
+            _ => self.go(a, open),
         }
     }
 
@@ -152,17 +210,20 @@ impl DrivesApp {
             |v| model::volume_name(self.snap(), v),
         );
         match result {
+            Ok(at) if self.open_after.remove(volume) => self.open_path(&at),
             Ok(at) => {
                 let (summary, body) = model::mounted_balloon(&name, &at);
-                let tag = self.next_tag;
-                self.next_tag = self.next_tag.wrapping_add(1);
+                let tag = self.tag();
                 self.balloons.insert(tag, at);
                 if let Some(t) = &self.tray {
                     t.notify_clickable(&summary, &body, tag);
                 }
             }
-            Err(e) if e.kind == ErrorKind::Cancelled => {}
+            Err(e) if e.kind == ErrorKind::Cancelled => {
+                self.open_after.remove(volume);
+            }
             Err(e) => {
+                self.open_after.remove(volume);
                 log::warn!("mounting {volume}: {e}");
                 self.notify((format!("Could not mount {name}"), e.message));
             }
@@ -177,6 +238,9 @@ impl DrivesApp {
                 if open {
                     self.unlock = None;
                 }
+                if self.open_after.remove(volume) {
+                    self.open_after.insert(clear.clone());
+                }
                 if let Some(c) = &self.calls {
                     c.mount(clear);
                 }
@@ -185,6 +249,7 @@ impl DrivesApp {
                 if open {
                     self.unlock = None;
                 }
+                self.open_after.remove(volume);
             }
             Err(e) => {
                 let Some(u) = self.unlock.as_mut().filter(|_| open) else {
@@ -238,10 +303,14 @@ impl DrivesApp {
     }
 
     fn open_folder(&mut self, tag: u32) {
-        let Some(at) = self.balloons.remove(&tag) else {
-            return;
-        };
-        let argv = reprisefs::apps::open_argv_for(&at);
+        if let Some(at) = self.balloons.remove(&tag) {
+            self.open_path(&at);
+        }
+    }
+
+    /// A window on `at`, presented with the token a balloon click or button press left.
+    fn open_path(&self, at: &Path) {
+        let argv = reprisefs::apps::open_argv_for(at);
         let token = self.tray.as_ref().and_then(|t| t.take_activation_token());
         let mut cmd = std::process::Command::new(&argv[0]);
         cmd.args(&argv[1..]);
@@ -291,6 +360,7 @@ impl DrivesApp {
                     }
                 }
                 Some(tray::TrayMsg::Balloon(tag)) => self.open_folder(tag),
+                Some(tray::TrayMsg::Button(tag, i)) => self.ask_answered(tag, i),
                 _ => {}
             }
         }
@@ -374,6 +444,7 @@ impl DrivesApp {
             unlock::Outcome::None => Reply::none(),
             unlock::Outcome::Redraw => Reply::redraw(),
             unlock::Outcome::Cancel => {
+                self.open_after.remove(&u.volume);
                 self.unlock = None;
                 Reply::redraw_all()
             }

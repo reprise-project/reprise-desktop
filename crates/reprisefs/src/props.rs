@@ -1026,6 +1026,15 @@ fn ids_in_list(text: &str, group: &str, mime: &str) -> Vec<String> {
     Vec::new()
 }
 
+/// [`format_size`] without the bracketed byte count: "19.8 GB".
+pub fn short_size(bytes: u64) -> String {
+    let full = format_size(bytes);
+    match full.split_once(" (") {
+        Some((short, _)) => short.to_string(),
+        None => full,
+    }
+}
+
 /// The size text: "0 bytes" under a kilobyte, else three significant digits of KB / MB / GB, cut not rounded, then the byte count: "1.23 KB (1,260 bytes)".
 pub fn format_size(bytes: u64) -> String {
     if bytes < 1024 {
@@ -1140,6 +1149,13 @@ mod tests {
         );
         let stop = AtomicBool::new(true);
         assert_eq!(folder_totals_unless(dir.path(), &stop), None);
+    }
+
+    #[test]
+    fn short_sizes_drop_the_byte_count() {
+        assert_eq!(short_size(21_365_735_424), "19.8 GB");
+        assert_eq!(short_size(1260), "1.23 KB");
+        assert_eq!(short_size(512), "512 bytes");
     }
 
     #[test]

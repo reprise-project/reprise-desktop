@@ -108,6 +108,24 @@ fn taskbar_position_in(text: &str) -> String {
         .unwrap_or_else(|| "bottom".into())
 }
 
+/// `[drives] on_insert`, read now: what reprise-drives does with a plugged-in drive, "ask" when unset
+/// or not a string.
+pub fn drives_on_insert() -> String {
+    let text = std::fs::read_to_string(config_path()).unwrap_or_default();
+    drives_on_insert_in(&text)
+}
+
+fn drives_on_insert_in(text: &str) -> String {
+    text.parse::<DocumentMut>()
+        .ok()
+        .and_then(|doc| {
+            get(&doc, &key("drives", "on_insert"))
+                .and_then(Item::as_str)
+                .map(String::from)
+        })
+        .unwrap_or_else(|| "ask".into())
+}
+
 pub fn xdg_home(var: &str, fallback: &str) -> PathBuf {
     xdg_home_from(std::env::var_os(var), std::env::var_os("HOME"), fallback)
 }
@@ -433,6 +451,16 @@ mod tests {
         assert_eq!(text_size_in("[accessibility]\ntext_size = 150\n"), 150);
         assert_eq!(text_size_in("[accessibility]\ntext_size = 140\n"), 100);
         assert_eq!(text_size_in("[accessibility]\ntext_size = \"150\"\n"), 100);
+    }
+
+    #[test]
+    fn the_drive_insert_mode_is_read_or_ask() {
+        assert_eq!(drives_on_insert_in(""), "ask");
+        assert_eq!(
+            drives_on_insert_in("[drives]\non_insert = \"open\"\n"),
+            "open"
+        );
+        assert_eq!(drives_on_insert_in("[drives]\non_insert = true\n"), "ask");
     }
 
     #[test]
