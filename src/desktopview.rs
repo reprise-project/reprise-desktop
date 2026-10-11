@@ -694,6 +694,7 @@ pub fn setup(state: &mut State) {
     let watch = match DirWatch::new() {
         Ok(w) => {
             watch_on_loop(state, &w);
+            mounts_on_loop(state);
             Some(w)
         }
         Err(e) => {
@@ -748,6 +749,24 @@ fn watch_on_loop(state: &mut State, watch: &DirWatch) {
     }
 }
 
+/// Rescan on each mount or unmount, so a drive mounted later has its trash
+/// watched. `/proc/self/mounts` wakes its pollers on every mount change and is
+/// always readable, so only edge mode tells the changes apart.
+fn mounts_on_loop(state: &mut State) {
+    let file = match std::fs::File::open("/proc/self/mounts") {
+        Ok(f) => f,
+        Err(e) => return log::warn!("desktop icons: no mount table: {e}"),
+    };
+    let source = Generic::new(file, Interest::READ, Mode::Edge);
+    let added = state.handle.insert_source(source, |_, _, state| {
+        state.settle_rescan();
+        Ok(PostAction::Continue)
+    });
+    if let Err(e) = added {
+        log::warn!("desktop icons: {}", e.error);
+    }
+}
+
 impl State {
     /// The primary output: the one `[[outputs]] primary` names while in the layout,
     /// else the first with a non-empty layout box. Icons sit on it; balloons and the
@@ -768,9 +787,16 @@ impl State {
         let Some(view) = self.desktop.as_mut() else {
             return;
         };
-        if !view.watch.as_mut().is_some_and(|w| w.drain()) {
-            return;
+        if view.watch.as_mut().is_some_and(|w| w.drain()) {
+            self.settle_rescan();
         }
+    }
+
+    /// Rescan once changes stop arriving for `SETTLE_MS`.
+    fn settle_rescan(&mut self) {
+        let Some(view) = self.desktop.as_mut() else {
+            return;
+        };
         if let Some(t) = view.settle.take() {
             self.handle.remove(t);
         }
