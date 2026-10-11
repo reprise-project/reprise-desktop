@@ -1084,6 +1084,9 @@ impl State {
     /// Super and an arrow: the focused window steps across the active layout, on to the next
     /// output, then maximized or back to its pre-snap size.
     pub fn key_snap(&mut self, dir: Dir) {
+        if self.snap_assist_open() {
+            self.close_overview();
+        }
         let Some(w) = self.focused else {
             return;
         };
@@ -1158,7 +1161,7 @@ impl State {
     }
 
     /// `w` into zone `zone` of `out`'s active layout, in the group a drop there joins; a member
-    /// it swaps with fills the zone `w` left.
+    /// it swaps with fills the zone `w` left. Zones the group leaves free get snap assist.
     fn key_into_zone(&mut self, out: &Output, w: WindowId, zone: usize, maximized: bool) {
         let work = self.usable_area(Some(out));
         let live = self.snap_live();
@@ -1171,6 +1174,8 @@ impl State {
             self.snap_to_zone(o, l.zones[from]);
         }
         self.snap_to_zone(w, l.zones[zone]);
+        let free = self.free_zones(w, &l.zones);
+        self.open_snap_assist(w, free);
     }
 
     fn unsnap(&mut self, w: WindowId) {
@@ -1548,6 +1553,19 @@ mod tests {
         let l = s.key_zone(a, "DP-1", WORK, 0, false, all).unwrap();
         assert_eq!(l.swapped, Some((b, 1)), "Left: back again");
         assert_eq!(s.group_of(a), s.group_of(b));
+    }
+
+    #[test]
+    fn a_super_arrow_snap_leaves_free_only_the_zones_no_member_holds() {
+        let (a, b) = (WindowId::next(), WindowId::next());
+        let mut s = Snapping::default();
+        let l = s.key_zone(a, "DP-1", WORK, 0, false, all).unwrap();
+        assert_eq!(s.free_zones(a, l.zones.len(), all), vec![1]);
+        let l = s.key_zone(b, "DP-1", WORK, 1, false, all).unwrap();
+        assert_eq!(s.free_zones(b, l.zones.len(), all), vec![]);
+        let l = s.key_zone(a, "DP-1", WORK, 1, false, all).unwrap();
+        assert_eq!(l.swapped, Some((b, 0)));
+        assert_eq!(s.free_zones(a, l.zones.len(), all), vec![], "a swap");
     }
 
     #[test]

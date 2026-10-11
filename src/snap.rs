@@ -410,9 +410,26 @@ impl Splits {
         &self.zones
     }
 
+    /// Move every inner cut within [`SNUG`] of `from` to `to`, held so each zone it bounds
+    /// keeps at least a pixel.
     pub fn move_split(&mut self, vertical: bool, from: i32, to: i32) {
         let w = self.work;
         let near = |v: i32| (v - from).abs() <= SNUG;
+        let (mut lo, mut hi) = (i32::MIN, i32::MAX);
+        for z in &self.zones {
+            let (a, b, start, end) = if vertical {
+                (z.x, z.right(), w.x, w.right())
+            } else {
+                (z.y, z.bottom(), w.y, w.bottom())
+            };
+            if a != start && near(a) {
+                hi = hi.min(b - 1);
+            }
+            if b != end && near(b) {
+                lo = lo.max(a + 1);
+            }
+        }
+        let to = if lo <= hi { to.clamp(lo, hi) } else { to };
         for z in &mut self.zones {
             if vertical {
                 let (mut a, mut b) = (z.x, z.right());
@@ -966,6 +983,19 @@ mod tests {
             1032,
             "the work area's foot stays"
         );
+    }
+
+    #[test]
+    fn a_split_moved_past_a_zone_stops_a_pixel_short() {
+        let mut a = ActiveLayout::new(zl("1|1"), false, WORK);
+        a.move_split(true, 960, 2500);
+        assert_eq!(a.zones(WORK)[1], Rect::new(1919, 0, 1, 1032));
+        a.move_split(true, 1919, -40);
+        assert_eq!(a.zones(WORK)[0], Rect::new(0, 0, 1, 1032));
+        let mut r = ActiveLayout::new(zl("1-1-1"), false, WORK);
+        r.move_split(false, 344, 900);
+        let z = r.zones(WORK).to_vec();
+        assert_eq!((z[0].height, z[1].height), (687, 1), "held at the next cut");
     }
 
     #[test]

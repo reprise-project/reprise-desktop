@@ -66,8 +66,10 @@ pub struct Modes {
     /// bind.
     pub dialog_modal: bool,
     pub launcher_open: bool,
-    /// The window overview is open.
+    /// The window overview is open, and whether it is snap assist, which
+    /// lets the snap binds through.
     pub overview_open: bool,
+    pub snap_assist_open: bool,
     /// The snap layout picker is open, and whether the bind opened it,
     /// which gives it every press.
     pub snap_picker_open: bool,
@@ -372,8 +374,14 @@ pub fn route(modes: &Modes, k: &KeyPress, binds: &[Keybind], globals: &[GlobalBi
         })
     };
     if modes.overview_open && k.pressed {
+        let snaps = bound(k, binds);
         return with(if own(Action::Overview) {
             KeyRoute::Binds(vec![Action::Overview])
+        } else if modes.snap_assist_open
+            && !snaps.is_empty()
+            && snaps.iter().all(|a| matches!(a, Action::Snap(_)))
+        {
+            KeyRoute::Binds(snaps)
         } else {
             KeyRoute::Overview
         });
@@ -1589,6 +1597,38 @@ mod tests {
             ],
         );
         assert_eq!(fired, vec![NEXT]);
+    }
+
+    #[test]
+    fn snap_assist_lets_the_snap_binds_through_and_the_overview_does_not() {
+        use crate::snap::Dir;
+        let bind = vec![Keybind {
+            mods: MOD_LOGO,
+            keysym: KEY_Left,
+            action: Action::Snap(Dir::Left),
+        }];
+        let overview = Modes {
+            overview_open: true,
+            ..Modes::default()
+        };
+        let assist = Modes {
+            snap_assist_open: true,
+            ..overview.clone()
+        };
+        let snap = press(KEY_Left, MOD_LOGO);
+        assert_eq!(
+            route(&assist, &snap, &bind, &[]).route,
+            KeyRoute::Binds(vec![Action::Snap(Dir::Left)])
+        );
+        assert_eq!(
+            route(&assist, &press(KEY_Left, 0), &bind, &[]).route,
+            KeyRoute::Overview,
+            "a bare arrow walks the cards"
+        );
+        assert_eq!(
+            route(&overview, &snap, &bind, &[]).route,
+            KeyRoute::Overview
+        );
     }
 
     #[test]

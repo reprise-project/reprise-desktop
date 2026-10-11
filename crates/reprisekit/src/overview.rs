@@ -183,6 +183,19 @@ impl OverviewLayout {
         }
     }
 
+    /// How many of `count` cards [`compute_assist`](Self::compute_assist)
+    /// fits in zone `area`'s panel, none of them past its edges.
+    pub fn assist_fits(count: usize, area: Rect, screen: (i32, i32)) -> usize {
+        let panel = assist_panel((area.width, area.height), 1);
+        (1..=count)
+            .rev()
+            .find(|&n| {
+                let l = Self::compute_assist(n, area, screen);
+                l.cells.iter().all(|c| c.intersect(&panel) == *c)
+            })
+            .unwrap_or(0)
+    }
+
     /// Card `i`'s close button: square, at its header's right end, 5 px
     /// in, centred down the header.
     pub fn assist_close(&self, i: usize) -> Option<Rect> {
@@ -670,6 +683,25 @@ mod tests {
         for c in &l.cells {
             assert!(Rect::new(13 + 26, 13 + 26, 934 - 52, 1006 - 52).contains(c.x, c.y));
         }
+    }
+
+    #[test]
+    fn assist_offers_only_the_cards_its_panel_holds() {
+        let quarter = Rect::new(0, 0, 683, 369);
+        let screen = (1366, 738);
+        let panel = assist_panel((quarter.width, quarter.height), 1);
+        let inside = |l: &OverviewLayout| l.cells.iter().all(|c| c.intersect(&panel) == *c);
+        assert!(!inside(&OverviewLayout::compute_assist(
+            80, quarter, screen
+        )));
+        let n = OverviewLayout::assist_fits(80, quarter, screen);
+        assert_eq!(n, 60);
+        assert!(inside(&OverviewLayout::compute_assist(n, quarter, screen)));
+        assert_eq!(OverviewLayout::assist_fits(6, quarter, screen), 6);
+        assert_eq!(
+            OverviewLayout::assist_fits(3, Rect::new(0, 0, 60, 60), screen),
+            0
+        );
     }
 
     #[test]
