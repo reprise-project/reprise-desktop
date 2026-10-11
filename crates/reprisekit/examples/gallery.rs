@@ -7947,7 +7947,7 @@ fn render_caption_tabs() -> Canvas {
                 close: true,
             }),
             held: None,
-            ghost: false,
+            ghost: None,
         };
         let ghost = CaptionTabs {
             tabs: vec![
@@ -7958,7 +7958,7 @@ fn render_caption_tabs() -> Canvas {
             selected: 0,
             hot: None,
             held: None,
-            ghost: true,
+            ghost: Some(2),
         };
         let narrow = CaptionTabs {
             selected: 0,
