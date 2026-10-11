@@ -131,6 +131,7 @@ impl DateTimeApp {
                             buttons: vec!["OK".into()],
                             default: 0,
                             min_text_h: None,
+                            min_w: 0,
                         },
                     ));
                 }

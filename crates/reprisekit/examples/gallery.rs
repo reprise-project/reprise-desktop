@@ -2091,6 +2091,7 @@ fn render(theme: &Theme, with_blue: bool) -> Canvas {
         buttons: vec!["OK".into()],
         default: 0,
         min_text_h: None,
+        min_w: 0,
     };
     let (mw, mh) = msgbox::client(&notice, &text, px);
     let mut msg_c = Canvas::new(mw as u32, mh as u32);

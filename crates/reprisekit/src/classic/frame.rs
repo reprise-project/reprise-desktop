@@ -86,17 +86,9 @@ pub fn draw_frame(
         ),
     }
 
-    let first_button_x = geom.buttons[0].x;
-    let title_x = geom.caption.x + (4 + ICON_AREA) * s;
-    let title_rect = Rect::new(
-        title_x,
-        geom.caption.y,
-        (first_button_x - 2 * s - title_x).max(0),
-        geom.caption.height,
-    );
     text.draw(
         canvas,
-        title_rect,
+        title_rect(geom, s),
         state.title,
         true,
         ink,
@@ -106,6 +98,18 @@ pub fn draw_frame(
 
     draw_buttons(canvas, cs, geom, state, s);
     punch_client_hole(canvas, geom);
+}
+
+/// The title's room in a caption with an icon: from past the icon to just short of the first
+/// caption button.
+pub(crate) fn title_rect(geom: &FrameGeometry, s: i32) -> Rect {
+    let title_x = geom.caption.x + (4 + ICON_AREA) * s;
+    Rect::new(
+        title_x,
+        geom.caption.y,
+        (geom.buttons[0].x - 2 * s - title_x).max(0),
+        geom.caption.height,
+    )
 }
 
 fn draw_buttons(

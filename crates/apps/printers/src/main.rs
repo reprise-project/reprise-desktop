@@ -59,6 +59,7 @@ fn note(title: &str, text: String, icon: Option<Canvas>) -> MsgBox {
             buttons: vec!["OK".into()],
             default: 0,
             min_text_h: None,
+            min_w: 0,
         },
     )
 }
@@ -389,6 +390,7 @@ impl PrintersApp {
                 buttons: vec!["&Yes".into(), "&No".into()],
                 default: 0,
                 min_text_h: None,
+                min_w: 0,
             },
         );
         self.confirm = Some((printer, b));
