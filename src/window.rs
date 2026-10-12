@@ -371,6 +371,8 @@ pub struct Window {
     pub sticky: bool,
     /// In a tab group showing another window: hidden like a minimized window.
     pub tab_hidden: bool,
+    /// The `tab_group` its window rules gave it at map.
+    pub tab_group: Option<String>,
 }
 
 /// Whether (`x`, `y`) takes the pointer: clear pixels of a styled caption's cut corner pass
@@ -712,6 +714,7 @@ impl State {
             desktop: 0,
             sticky: false,
             tab_hidden: false,
+            tab_group: None,
         });
         id
     }
@@ -1944,6 +1947,7 @@ impl State {
         if let Some(win) = self.win_mut(w) {
             win.x = x;
             win.y = y;
+            win.tab_group = want.as_ref().and_then(|x| x.tab_group.clone());
             if let Some(want) = &want {
                 log::info!("window {:?}: placed at {x},{y} for {want:?}", win.app_id());
                 win.apply_rule(want, desktops);
@@ -2036,6 +2040,9 @@ impl State {
         {
             t.send_configure();
         }
+        if placeable {
+            self.tab_on_map(w);
+        }
         self.sync_toplevel(w);
         self.write_x11_state(w);
         self.window_opening(w);
@@ -2107,6 +2114,7 @@ impl State {
         self.wm.snap.forget_window(w);
         crate::peek::forget_window(self, w);
         self.forget_tabs(w, was_focused);
+        self.session.regrouping.forget(w);
         // The window is mid-teardown, still in the scene: the overview
         // drops it once the loop is idle.
         if self.overview.view.is_some() {

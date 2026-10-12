@@ -23,6 +23,10 @@ impl<T: Copy + Eq> Group<T> {
 }
 
 impl<T: Copy + Eq> Groups<T> {
+    pub fn iter(&self) -> impl Iterator<Item = &Group<T>> {
+        self.groups.iter()
+    }
+
     fn index_of(&self, w: T) -> Option<usize> {
         self.groups.iter().position(|g| g.members.contains(&w))
     }
