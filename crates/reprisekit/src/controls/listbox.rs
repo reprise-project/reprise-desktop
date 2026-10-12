@@ -110,11 +110,12 @@ pub struct Layout {
     /// bar out with as `draw` does.
     pub thumb_min: i32,
     pub check: i32,
+    pub row_h: i32,
 }
 
 pub fn layout(lb: &ListBox, frame: Rect, cm: &ControlMetrics) -> Layout {
     let mut inner = frame.inset(2);
-    let visible = (inner.height / ROW_H).max(1) as usize;
+    let visible = (inner.height / cm.list_row).max(1) as usize;
     let scrollbar = (lb.items.len() > visible).then(|| {
         let sb = Rect::new(inner.right() - cm.scroll, inner.y, cm.scroll, inner.height);
         inner.width -= cm.scroll;
@@ -127,6 +128,7 @@ pub fn layout(lb: &ListBox, frame: Rect, cm: &ControlMetrics) -> Layout {
         scrollbar,
         thumb_min: cm.thumb_min,
         check: cm.check,
+        row_h: cm.list_row,
     }
 }
 
@@ -149,7 +151,7 @@ pub fn check_box(lb: &ListBox, lay: &Layout, i: usize) -> Option<Rect> {
     if i >= lb.checks.len() || i < lb.top || i >= lb.top + lay.visible {
         return None;
     }
-    let y = lay.inner.y + (i - lb.top) as i32 * ROW_H + CHECK_Y;
+    let y = lay.inner.y + (i - lb.top) as i32 * lay.row_h + CHECK_Y + (lay.row_h - ROW_H) / 2;
     Some(Rect::new(lay.inner.x + CHECK_X, y, lay.check, lay.check))
 }
 
@@ -189,7 +191,7 @@ pub fn hit(lb: &ListBox, lay: &Layout, x: i32, y: i32) -> Option<Hit> {
     if !lay.inner.contains(x, y) {
         return None;
     }
-    let row = ((y - lay.inner.y) / ROW_H) as usize + lb.top;
+    let row = ((y - lay.inner.y) / lay.row_h) as usize + lb.top;
     if check_box(lb, lay, row).is_some_and(|b| b.contains(x, y)) {
         return Some(Hit::Check(row));
     }
@@ -239,7 +241,9 @@ pub fn draw(
         draw_scrollbar(c, p, sb.scaled(s), lb.top, lay.visible, lb.items.len(), bar);
     }
     let inner = lay.inner.scaled(s);
-    let rh = ROW_H * s;
+    let rh = lay.row_h * s;
+    // A taller row (grown text) centres its check box and icon down the row.
+    let glyph_dy = (lay.row_h - ROW_H) / 2 * s;
     let mut y = inner.y;
     for i in lb.top..lb.items.len() {
         if y >= inner.bottom() {
@@ -259,7 +263,7 @@ pub fn draw(
         if let Some(&checked) = lb.checks.get(i) {
             let b = Rect::new(
                 inner.x + CHECK_X * s,
-                y + CHECK_Y * s,
+                y + CHECK_Y * s + glyph_dy,
                 lay.check * s,
                 lay.check * s,
             );
@@ -267,9 +271,10 @@ pub fn draw(
                 draw_list_check(c, p, b, checked);
             }
         } else if let Some(Some(ic)) = icons.get(i) {
-            let clip = Rect::new(inner.x + ICON_X * s, y, ic.width as i32, ic.height as i32)
+            let iy = y + glyph_dy;
+            let clip = Rect::new(inner.x + ICON_X * s, iy, ic.width as i32, ic.height as i32)
                 .intersect(&inner);
-            c.blit_over_clipped(inner.x + ICON_X * s, y, ic, clip);
+            c.blit_over_clipped(inner.x + ICON_X * s, iy, ic, clip);
         }
         let text_x = if lb.checks.is_empty() {
             TEXT_X
@@ -323,12 +328,12 @@ pub fn access(
             o.set_description(d.as_str());
         }
         if (lb.top..lb.top + lay.visible).contains(&i) {
-            let y = lay.inner.y + (i - lb.top) as i32 * ROW_H;
+            let y = lay.inner.y + (i - lb.top) as i32 * lay.row_h;
             o.set_bounds(access::bounds(Rect::new(
                 lay.inner.x,
                 y,
                 lay.inner.width,
-                ROW_H,
+                lay.row_h,
             )));
         }
         o.set_selected(lb.selected == Some(i));

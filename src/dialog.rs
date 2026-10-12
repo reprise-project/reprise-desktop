@@ -6,7 +6,7 @@ use crate::config::{Action, PowerConfig};
 use crate::raster::{Canvas, Rect};
 use crate::text::{Align, DialogFont, TextRenderer, access_key, split_mnemonic, wrap};
 use crate::textedit::{EditKey, TextEdit};
-use crate::theme::{Color, Metrics, Theme};
+use crate::theme::{Color, Metrics, TextUnits, Theme};
 use reprisekit::classic::widgets::{
     BUTTON_GAP, BUTTON_H, BUTTON_W, BarHit, CheckState, LINE_H, draw_label,
 };
@@ -214,14 +214,6 @@ impl AttrConfirm {
     }
 }
 
-/// Move every control on `pages` right by `dx` and down by `dy`.
-pub(crate) fn shift(pages: &mut [reprisekit::controls::form::Form], dx: i32, dy: i32) {
-    for item in pages.iter_mut().flat_map(|p| p.items.iter_mut()) {
-        item.rect.x += dx;
-        item.rect.y += dy;
-    }
-}
-
 /// What a form dialog holds: a property sheet (tabs over one page each,
 /// the sheet's buttons along the bottom), or one plain form.
 #[derive(Clone, Debug, PartialEq)]
@@ -269,9 +261,8 @@ pub enum Kind {
     Location(String),
 }
 
-/// A form dialog: its size, what it holds, and which dialog it is. A
-/// sheet's client sits at `FORM_CLIENT` plus `frame_d`; a plain form's
-/// controls are in the dialog's coordinates.
+/// A form dialog: its size at 100% text, what it holds, and which dialog it is. The client sits
+/// at `FORM_CLIENT` plus `frame_d`, which is the sheet's or the form's origin.
 #[derive(Clone, Debug, PartialEq)]
 pub struct FormDialog {
     pub size: (i32, i32),
@@ -301,11 +292,11 @@ impl FormDialog {
         kind: FormKind,
     ) -> FormDialog {
         let (x, y) = FORM_CLIENT;
-        shift(std::slice::from_mut(&mut form), x, y);
+        form.origin = FORM_CLIENT;
         FormDialog::plain((w + 2 * x, h + x + y), form, kind)
     }
 
-    /// A form dialog of outer `size`, controls placed for a 3 px frame and 18 px caption.
+    /// A form dialog of outer `size`, the form's origin at its client's corner.
     pub fn plain(
         size: (i32, i32),
         form: reprisekit::controls::form::Form,
@@ -317,6 +308,15 @@ impl FormDialog {
             kind,
             frame_d: (0, 0),
         }
+    }
+
+    /// The outer size at the text size `u`: the client grows, the frame and caption keep theirs.
+    pub fn grown_size(&self, u: TextUnits) -> (i32, i32) {
+        let (x, y) = FORM_CLIENT;
+        let (dx, dy) = self.frame_d;
+        let pad = (2 * (x + dx), x + y + dx + dy);
+        let (w, h) = u.size((self.size.0 - pad.0, self.size.1 - pad.1));
+        (w + pad.0, h + pad.1)
     }
 
     /// Make room for tabs that wrap onto more rows; idempotent.
@@ -337,7 +337,7 @@ impl FormDialog {
         self.frame_d = d;
         match &mut self.body {
             FormBody::Sheet(s) => s.place((FORM_CLIENT.0 + d.0, FORM_CLIENT.1 + d.1)),
-            FormBody::Plain(f) => shift(std::slice::from_mut(&mut **f), dx, dy),
+            FormBody::Plain(f) => f.origin = (f.origin.0 + dx, f.origin.1 + dy),
         }
     }
 
@@ -1088,6 +1088,8 @@ impl Dialog {
     pub fn fit(&mut self, theme: &Theme, text: &TextRenderer) {
         match &mut self.style {
             Style::Form(f) => {
+                let p = theme.paint();
+                f.body.pages().iter().for_each(|page| page.drawn_with(&p));
                 f.fit_tabs(text, theme.fonts.size_px);
                 f.fit_frame(client_shift(theme));
             }
@@ -1098,6 +1100,15 @@ impl Dialog {
             }
             _ => {}
         }
+    }
+
+    /// Whether the dialog lays out for the text size. The file Browse dialog, the Open With
+    /// chooser, the tray's Customize dialog and the Welcome panel keep 100% text and sizes.
+    pub fn grows(&self) -> bool {
+        !matches!(
+            self.style,
+            Style::Browse(_) | Style::Chooser(_) | Style::TrayCustomize(_) | Style::Welcome
+        )
     }
 
     /// What makes this dialog "the same window" as one already open: its
@@ -1567,9 +1578,10 @@ impl Dialog {
         robots: Option<[CheckState; 2]>,
         text: &TextRenderer,
         px: u32,
+        u: TextUnits,
     ) -> Dialog {
         use reprisekit::controls::filesheet;
-        let form = filesheet::advanced_form(subject, None, robots, text, px);
+        let form = filesheet::advanced_form(subject, None, robots, text, px, u);
         let size = filesheet::advanced_size(subject);
         Dialog {
             icon: Some("document-properties".into()),
@@ -1588,14 +1600,19 @@ impl Dialog {
 
     /// Confirm Attribute Changes: holds a folder's or set's write until OK says how far down the
     /// tree it reaches; opens on "subfolders and files".
-    pub fn confirm_attributes(a: AttrConfirm, text: &TextRenderer, px: u32) -> Dialog {
+    pub fn confirm_attributes(
+        a: AttrConfirm,
+        text: &TextRenderer,
+        px: u32,
+        u: TextUnits,
+    ) -> Dialog {
         use reprisekit::controls::filesheet::{self, Subject};
         let verb = a.attrs.verbs(a.hidden());
         let subject = match a.write {
             AttrWrite::One { .. } => Subject::Folder,
             AttrWrite::Set { .. } => Subject::Set { has_dir: true },
         };
-        let form = filesheet::attr_form(&verb, subject, text, px);
+        let form = filesheet::attr_form(&verb, subject, text, px, u);
         Dialog::new(
             "Confirm Attribute Changes",
             Style::Form(Box::new(FormDialog::from_client(
@@ -1613,10 +1630,11 @@ impl Dialog {
         batch: crate::dragview::Batch,
         text: &TextRenderer,
         px: u32,
+        u: TextUnits,
     ) -> Dialog {
         use reprisekit::controls::replacebox;
-        let form = replacebox::form(&fields, text, px);
-        let size = replacebox::client(&fields, text, px);
+        let form = replacebox::form(&fields, text, px, u);
+        let size = replacebox::client(&fields, text, px, u);
         Dialog::new(
             fields.title(),
             Style::Form(Box::new(FormDialog::from_client(
@@ -1634,10 +1652,11 @@ impl Dialog {
         fields: &reprisekit::controls::endsession::Fields,
         text: &TextRenderer,
         px: u32,
+        u: TextUnits,
     ) -> Dialog {
         use reprisekit::controls::endsession;
-        let form = endsession::form(fields, text, px);
-        let size = endsession::client(fields, text, px);
+        let form = endsession::form(fields, text, px, u);
+        let size = endsession::client(fields, text, px, u);
         Dialog::new(
             fields.title(),
             Style::Form(Box::new(FormDialog::from_client(
@@ -1655,10 +1674,11 @@ impl Dialog {
         desktop_id: String,
         text: &TextRenderer,
         px: u32,
+        u: TextUnits,
     ) -> Dialog {
         use reprisekit::controls::locationprompt;
-        let form = locationprompt::form(fields, text, px);
-        let size = locationprompt::client(fields, text, px);
+        let form = locationprompt::form(fields, text, px, u);
+        let size = locationprompt::client(fields, text, px, u);
         Dialog::new(
             locationprompt::TITLE,
             Style::Form(Box::new(FormDialog::from_client(
@@ -3330,7 +3350,7 @@ impl DialogLayout {
     /// first ([`Dialog::fit`]).
     pub fn compute(theme: &Theme, text: &TextRenderer, d: &Dialog) -> DialogLayout {
         DialogLayout {
-            controls: theme.look.controls(),
+            controls: theme.look.controls().grown(theme.text),
             ..Self::compute_body(theme, text, d)
         }
     }
@@ -3346,9 +3366,33 @@ impl DialogLayout {
             Style::EndProgram => Self::compute_end_program(theme, text.dialog(d.font()), d),
             Style::Classic {
                 template, text_h, ..
-            } => Self::compute_template(theme, text, d, *template, *text_h),
+            } => return Self::compute_template(theme, text, d, *template, *text_h),
         };
-        body.framed(theme, d.help)
+        body.grown(theme.text).framed(theme, d.help)
+    }
+
+    /// A body laid out at 100% under `DIALOG_FRAME` and a `CAPTION_H` caption, at the text size
+    /// `u`: the client and its rects grow from the client's corner, the icon keeps its size.
+    fn grown(mut self, u: TextUnits) -> DialogLayout {
+        let (ox, oy) = FORM_CLIENT;
+        let map = |r: &mut Rect| {
+            let g = u.rect(Rect::new(r.x - ox, r.y - oy, r.width, r.height));
+            *r = Rect::new(g.x + ox, g.y + oy, g.width, g.height);
+        };
+        [&mut self.field_label, &mut self.field, &mut self.page]
+            .into_iter()
+            .flatten()
+            .for_each(map);
+        if let Some(icon) = &mut self.icon {
+            let g = u.at(Rect::new(icon.x - ox, icon.y - oy, icon.width, icon.height));
+            *icon = Rect::new(g.x + ox, g.y + oy, g.width, g.height);
+        }
+        self.lines.iter_mut().for_each(|(r, _)| map(r));
+        self.buttons.iter_mut().for_each(map);
+        let pad = (2 * DIALOG_FRAME, DIALOG_FRAME + FORM_CLIENT.1);
+        let (w, h) = u.size((self.size.0 - pad.0, self.size.1 - pad.1));
+        self.size = (w + pad.0, h + pad.1);
+        self
     }
 
     /// A body laid out for `DIALOG_FRAME` and a `CAPTION_H` caption, put
@@ -3396,6 +3440,7 @@ impl DialogLayout {
         template: Template,
         text_h: Option<i32>,
     ) -> DialogLayout {
+        let u = theme.text;
         let lay = dlgtemplate::layout(
             template,
             text,
@@ -3407,24 +3452,25 @@ impl DialogLayout {
                 buttons: d.buttons.len(),
                 text_h,
             },
-        );
-        let (mut drop, mut list) = (None, None);
-        if let (Some(fl), Some(box_r)) = (&d.field, lay.field) {
-            let cl = combo::layout(&fl.combo, box_r, &theme.look.controls());
-            drop = Some(cl.drop);
-            list = Some(cl.list);
-        }
-        DialogLayout {
+            u,
+        )
+        .grown(u);
+        let mut body = DialogLayout {
             size: lay.size,
             icon: lay.icon,
             lines: lay.lines,
             field_label: lay.field_label,
             field: lay.field,
-            drop,
-            list,
             buttons: lay.buttons,
             ..Default::default()
         }
+        .framed(theme, d.help);
+        if let (Some(fl), Some(box_r)) = (&d.field, body.field) {
+            let cl = combo::layout(&fl.combo, box_r, &theme.look.controls().grown(u));
+            body.drop = Some(cl.drop);
+            body.list = Some(cl.list);
+        }
+        body
     }
 
     /// End Program on its fixed template: each `\n`-separated paragraph
@@ -3440,7 +3486,7 @@ impl DialogLayout {
             .split('\n')
             .zip(EP_PARA_Y)
             .flat_map(|(para, y)| {
-                wrap(text, para, width, px)
+                wrap(text, para, theme.text.len(width), px)
                     .into_iter()
                     .enumerate()
                     .map(move |(i, s)| (Rect::new(x, y + i as i32 * LINE_H, width, LINE_H), s))
@@ -3609,13 +3655,9 @@ impl DialogLayout {
         f: &FormDialog,
     ) -> DialogLayout {
         let px = theme.fonts.size_px;
-        let (w, h) = FrameGeometry::client_size_for_total(
-            &theme.metrics,
-            f.size.0,
-            f.size.1,
-            false,
-            chrome(false),
-        );
+        let (tw, th) = f.grown_size(theme.text);
+        let (w, h) =
+            FrameGeometry::client_size_for_total(&theme.metrics, tw, th, false, chrome(false));
         let g = FrameGeometry::layout(&theme.metrics, w, h, false, chrome(false));
         let (tabs, page) = match f.sheet() {
             Some(s) => {
@@ -3627,7 +3669,7 @@ impl DialogLayout {
         // The dialog's icon (a message box's question mark, Power Options'
         // plug) sits where the open page's "icon" picture is; a page
         // without one shows none.
-        let icon = f.open_page().and_then(|p| p.item("icon")).map(|i| i.rect);
+        let icon = f.open_page().and_then(|p| p.rect("icon"));
         DialogLayout {
             icon,
             tabs,
@@ -4086,10 +4128,10 @@ fn draw_form(
     let Some(form) = f.open_page() else {
         return;
     };
-    if let (FormKind::Properties(_), Some(item), Some(ic)) =
-        (&f.kind, form.item("opens_icon"), opens_icon)
+    if let (FormKind::Properties(_), Some(r), Some(ic)) =
+        (&f.kind, form.rect("opens_icon"), opens_icon)
     {
-        c.blit_over(item.rect.x * s, item.rect.y * s, ic);
+        c.blit_over(r.x * s, r.y * s, ic);
     }
     if matches!(f.kind, FormKind::Properties(_) | FormKind::SetProperties(_)) {
         // In `page_pictures` order, which the host resolved from row 1 on.
@@ -4099,11 +4141,11 @@ fn draw_form(
             reprisekit::controls::filesheet::CUSTOM_ICON,
             reprisekit::controls::filesheet::CUSTOM_PREVIEW,
         ];
-        let ids = pictures.into_iter().filter_map(|id| form.item(id));
-        for (item, ic) in ids.zip(row_icons.iter().skip(1)) {
+        let rects = pictures.into_iter().filter_map(|id| form.rect(id));
+        for (r, ic) in rects.zip(row_icons.iter().skip(1)) {
             if let Some(ic) = ic {
                 let (w, h) = (ic.width as i32, ic.height as i32);
-                let r = item.rect.scaled(s);
+                let r = r.scaled(s);
                 c.blit_over(
                     r.x + (r.width - w).max(0) / 2,
                     r.y + (r.height - h).max(0) / 2,
@@ -5792,7 +5834,7 @@ mod tests {
         assert_eq!(tabs(&d), Some(1));
         let page = d.form().unwrap().open_page().unwrap();
         let ok = page.index_of("ok").unwrap();
-        let r = page.items[ok].rect;
+        let r = page.rect("ok").unwrap();
         let (x, y) = (r.x + 5, r.y + 5);
         let over = l.hit(&d, x, y, &text, px);
         assert!(matches!(over, Some(DialogHit::Control(_))));
@@ -6751,7 +6793,8 @@ mod tests {
                 robots: Some([on, on]),
             }
         );
-        let mut adv = Dialog::advanced_attributes(Subject::File, Some([on, on]), &text, px);
+        let mut adv =
+            Dialog::advanced_attributes(Subject::File, Some([on, on]), &text, px, TextUnits::ONE);
         adv.key(Key::Space);
         assert_eq!(adv.key(Key::Enter), Outcome::AdvancedChosen([off, on]));
         assert!(d.advanced_chosen([off, on]));
@@ -6790,12 +6833,12 @@ mod tests {
         let theme = Theme::default();
         let text = TextRenderer::load(&FontConfig::default());
         let px = theme.fonts.size_px;
-        let d = Dialog::advanced_attributes(Subject::File, None, &text, px);
+        let d = Dialog::advanced_attributes(Subject::File, None, &text, px, TextUnits::ONE);
         assert_eq!(d.title, "Advanced Attributes");
         let l = DialogLayout::compute(&theme, &text, &d);
         assert_eq!(l.size, (384, 287));
         assert_eq!(l.icon, Some(Rect::new(14, 33, 32, 32)));
-        let folder = Dialog::advanced_attributes(Subject::Folder, None, &text, px);
+        let folder = Dialog::advanced_attributes(Subject::Folder, None, &text, px, TextUnits::ONE);
         assert_eq!(
             DialogLayout::compute(&theme, &text, &folder).size,
             (384, 309)
@@ -6822,18 +6865,25 @@ mod tests {
         use reprisekit::controls::form::Control;
         let theme = reprisekit::interfaces::theme_for(reprisekit::interface::Interface::Glass);
         let text = TextRenderer::load(&FontConfig::default());
-        let d = Dialog::advanced_attributes(Subject::File, None, &text, theme.fonts.size_px);
+        let d = Dialog::advanced_attributes(
+            Subject::File,
+            None,
+            &text,
+            theme.fonts.size_px,
+            TextUnits::ONE,
+        );
         let l = DialogLayout::compute(&theme, &text, &d);
         let ok = d
             .form()
             .and_then(|f| f.open_page())
             .and_then(|form| {
-                form.items
+                let it = form
+                    .items
                     .iter()
-                    .find(|it| matches!(it.control, Control::Button { default: true, .. }))
+                    .find(|it| matches!(it.control, Control::Button { default: true, .. }))?;
+                form.rect(it.id)
             })
-            .expect("a default button")
-            .rect;
+            .expect("a default button");
         let top = |active| {
             let c = draw(
                 &theme,
@@ -6970,7 +7020,7 @@ mod tests {
     fn press_control(d: &mut Dialog, id: &str) -> Outcome {
         let theme = Theme::default();
         let text = TextRenderer::load(&FontConfig::default());
-        let r = sheet_form(d).item(id).expect(id).rect;
+        let r = sheet_form(d).rect(id).expect(id);
         let l = DialogLayout::compute(&theme, &text, d);
         let hit = l.hit(d, r.x + 3, r.y + 3, &text, theme.fonts.size_px);
         let out = d.click(hit);
@@ -6993,7 +7043,7 @@ mod tests {
         let page = l.page.unwrap();
         assert_eq!((page.x, page.y, page.right()), (9, 49, 358));
         let form = sheet_form(&d);
-        assert_eq!(form.item(NAME).unwrap().rect, Rect::new(97, 69, 246, 23));
+        assert_eq!(form.rect(NAME).unwrap(), Rect::new(97, 69, 246, 23));
         assert_eq!(
             reprisekit::controls::filesheet::typed_name(form),
             "New Text Document"
@@ -7220,16 +7270,15 @@ mod tests {
             None,
         );
         let cs = &theme.colors;
-        let ir = sheet_form(&d).item("opens_icon").unwrap().rect;
+        let ir = sheet_form(&d).rect("opens_icon").unwrap();
         assert_eq!(ir, Rect::new(98, 142, 16, 16));
         assert_eq!(c.get(ir.x, ir.y), cs.hilight.argb());
         assert_eq!(c.get(ir.right() - 1, ir.bottom() - 1), cs.hilight.argb());
         assert_eq!(c.get(ir.x - 1, ir.y), cs.button_face.argb());
         assert_eq!(c.get(ir.right(), ir.bottom()), cs.button_face.argb());
         let ro = sheet_form(&d)
-            .item(reprisekit::controls::filesheet::READ_ONLY)
-            .unwrap()
-            .rect;
+            .rect(reprisekit::controls::filesheet::READ_ONLY)
+            .unwrap();
         assert_eq!(c.get(ro.x + 6, ro.y + 8), cs.button_text.argb());
     }
 
@@ -7271,6 +7320,7 @@ mod tests {
             },
             &text,
             theme.fonts.size_px,
+            TextUnits::ONE,
         )
     }
 
@@ -7293,7 +7343,12 @@ mod tests {
             close: true,
         };
         let verb = |read_only| {
-            let d = Dialog::confirm_attributes(confirm(read_only), &text, theme.fonts.size_px);
+            let d = Dialog::confirm_attributes(
+                confirm(read_only),
+                &text,
+                theme.fonts.size_px,
+                TextUnits::ONE,
+            );
             match &d
                 .form()
                 .unwrap()
@@ -7336,7 +7391,7 @@ mod tests {
         let l = DialogLayout::compute(&theme, &text, &d);
         assert_eq!(l.size, (392, 240));
         let form = d.form().unwrap().open_page().unwrap();
-        let at = |id: &str| form.item(id).unwrap().rect;
+        let at = |id: &str| form.rect(id).unwrap();
         assert_eq!((at("attr_intro").x, at("attr_intro").y), (14, 33));
         assert_eq!((at("attr_verb").x, at("attr_verb").y), (59, 59));
         assert!(matches!(
@@ -8074,6 +8129,7 @@ mod tests {
             },
             &text,
             theme.fonts.size_px,
+            TextUnits::ONE,
         );
         assert!(matches!(
             &d.form().unwrap().open_page().unwrap().item(ATTR_TREE).unwrap().control,
@@ -8979,7 +9035,7 @@ mod tests {
         let mut d = Dialog::properties(&file_info(), "text-x-generic", (0, 0));
         d.fit(&classic, &text);
         let cl = DialogLayout::compute(&classic, &text, &d);
-        let name = sheet_form(&d).item(NAME).unwrap().rect;
+        let name = sheet_form(&d).rect(NAME).unwrap();
         d.fit(&blue, &text);
         d.fit(&blue, &text);
         let bl = DialogLayout::compute(&blue, &text, &d);
@@ -8991,7 +9047,7 @@ mod tests {
             Some(Rect::new(page.x, page.y + 8, page.width, page.height))
         );
         assert_eq!(bl.tabs[0].y, cl.tabs[0].y + 8);
-        let moved = sheet_form(&d).item(NAME).unwrap().rect;
+        let moved = sheet_form(&d).rect(NAME).unwrap();
         assert_eq!(
             moved,
             Rect::new(name.x, name.y + 8, name.width, name.height)
@@ -9002,7 +9058,7 @@ mod tests {
         ));
         d.fit(&classic, &text);
         assert_eq!(DialogLayout::compute(&classic, &text, &d), cl);
-        assert_eq!(sheet_form(&d).item(NAME).unwrap().rect, name);
+        assert_eq!(sheet_form(&d).rect(NAME).unwrap(), name);
     }
 
     #[test]
@@ -9190,8 +9246,20 @@ mod tests {
                 c
             },
             attr_confirm(),
-            Dialog::advanced_attributes(Subject::File, None, &text, theme.fonts.size_px),
-            Dialog::advanced_attributes(Subject::Folder, None, &text, theme.fonts.size_px),
+            Dialog::advanced_attributes(
+                Subject::File,
+                None,
+                &text,
+                theme.fonts.size_px,
+                TextUnits::ONE,
+            ),
+            Dialog::advanced_attributes(
+                Subject::Folder,
+                None,
+                &text,
+                theme.fonts.size_px,
+                TextUnits::ONE,
+            ),
             Dialog::confirm_hide(crate::desktop::Place::Computer, "Computer"),
             Dialog::end_program("signal-desktop", 1234),
             Dialog::log_off(),
@@ -9326,5 +9394,109 @@ mod tests {
             }
             reprisekit::raster::write_preview(&out, file);
         }
+    }
+
+    fn render(theme: &Theme, text: &TextRenderer, l: &DialogLayout, d: &Dialog) -> Canvas {
+        draw(
+            theme,
+            text,
+            l,
+            None,
+            None,
+            &[],
+            &[],
+            None,
+            d,
+            false,
+            Lit::default(),
+            Cues::NONE,
+            true,
+            None,
+        )
+    }
+
+    /// At 150% and 200% Run grows inside its frame: its lines sit a grown line apart and fit
+    /// their rows, the field holds a grown line, its open list's rows grow, and the buttons sit
+    /// inside the dialog under the field. 100% is Run as laid out.
+    #[test]
+    fn run_grows_with_the_text_size() {
+        let Some(text) = tahoma() else { return };
+        let one = DialogLayout::compute(&Theme::default(), &text, &Dialog::run(&history()));
+        assert_eq!(one.size, (347, 179));
+        for pct in [150, 200] {
+            let theme = Theme::default().with_text_size(pct);
+            let (u, px) = (theme.text, theme.fonts.size_px);
+            let mut d = Dialog::run(&history());
+            d.fit(&theme, &text);
+            let l = DialogLayout::compute(&theme, &text, &d);
+            let caption_grow = theme.metrics.caption_height - 18;
+            assert_eq!(l.size.0, 2 * 3 + u.len(347 - 6), "{pct}%");
+            assert_eq!(l.size.1, 21 + caption_grow + u.len(179 - 24) + 3, "{pct}%");
+            for pair in l.lines.windows(2) {
+                assert!(pair[0].0.bottom() <= pair[1].0.y, "{pct}%: lines apart");
+            }
+            for (r, line) in &l.lines {
+                assert!(text.measure(line, false, px) <= r.width, "{pct}%: {line:?}");
+                assert!(r.height >= u.len(LINE_H) - 1, "{pct}%");
+            }
+            let field = l.field.unwrap();
+            assert!(
+                field.height >= px as i32 + 6,
+                "{pct}%: the field holds a line"
+            );
+            assert!(l.lines.last().unwrap().0.bottom() <= field.y);
+            let list = l.list.unwrap();
+            assert_eq!(list.height, LIST_ROWS as i32 * u.len(13) + 2, "{pct}%");
+            for b in &l.buttons {
+                assert!(b.y >= field.bottom(), "{pct}%");
+                assert!(
+                    b.right() <= l.size.0 - 3 && b.bottom() <= l.size.1 - 3,
+                    "{pct}%"
+                );
+            }
+            let c = render(&theme, &text, &l, &d);
+            assert_eq!((c.width as i32, c.height as i32), l.size);
+        }
+    }
+
+    /// A message box and a form dialog at 150%: the template's client grows by the units, and a
+    /// form dialog's outer size and its page's controls grow from the client's corner.
+    #[test]
+    fn prompts_and_form_dialogs_grow_with_the_text_size() {
+        use reprisekit::controls::filesheet;
+        let Some(text) = tahoma() else { return };
+        let theme = Theme::default().with_text_size(150);
+        let u = theme.text;
+        let d = Dialog::confirm_delete("a.txt", std::path::Path::new("/tmp/a.txt"), false, false);
+        let l = DialogLayout::compute(&theme, &text, &d);
+        let base = DialogLayout::compute(&Theme::default(), &text, &d);
+        assert_eq!(l.size.0, 6 + u.len(base.size.0 - 6));
+        for b in &l.buttons {
+            assert!((u.len(23) - 1..=u.len(23) + 1).contains(&b.height));
+            assert!(b.right() <= l.size.0 - 3 && b.bottom() <= l.size.1 - 3);
+        }
+        let icon = l.icon.unwrap();
+        assert_eq!((icon.width, icon.height), (ICON_PX, ICON_PX));
+
+        let mut adv = Dialog::advanced_attributes(
+            filesheet::Subject::File,
+            None,
+            &text,
+            theme.fonts.size_px,
+            u,
+        );
+        adv.fit(&theme, &text);
+        let l = DialogLayout::compute(&theme, &text, &adv);
+        let f = adv.form().unwrap();
+        let caption_grow = theme.metrics.caption_height - 18;
+        let (w, h) = filesheet::advanced_size(filesheet::Subject::File);
+        assert_eq!(l.size, (6 + u.len(w), 21 + caption_grow + u.len(h) + 3));
+        let page = f.open_page().unwrap();
+        let ok = page.rect(filesheet::ADV_OK).unwrap();
+        let design = page.item(filesheet::ADV_OK).unwrap().rect;
+        assert_eq!(ok.width, u.len(design.right()) - u.len(design.x));
+        assert!(ok.right() <= l.size.0 && ok.bottom() <= l.size.1);
+        let c = render(&theme, &text, &l, &adv);
+        assert_eq!((c.width as i32, c.height as i32), l.size);
     }
 }

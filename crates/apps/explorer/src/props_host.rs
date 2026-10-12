@@ -392,26 +392,26 @@ impl Explorer {
         Some(Child {
             id: PROPS,
             title: p.title(),
-            size: p.size(),
+            size: self.forms.text.size(p.size()),
             fixed: true,
             modal: false,
         })
     }
 
     pub fn draw_props(&self, c: &mut Canvas, ctx: &Ctx) {
-        let cs = &ctx.theme.colors;
-        c.fill_rect(c.bounds(), cs.button_face);
+        let forms = ctx.forms();
+        c.fill_rect(c.bounds(), forms.colors.button_face);
         if let Some(p) = &self.props {
             propsheet::draw(
                 c,
                 &ctx.text,
                 &Paint {
                     s: 1,
-                    ..ctx.theme.paint()
+                    ..forms.paint()
                 },
                 &p.sheet,
                 true,
-                ctx.theme.fonts.size_px,
+                forms.fonts.size_px,
             );
         }
     }
@@ -582,7 +582,8 @@ impl Explorer {
                 hidden,
                 filesheet::Subject::Folder,
                 &self.dialog_text,
-                self.dialog_px,
+                self.forms.fonts.size_px,
+                self.forms.text,
             );
             self.dialog = Some(crate::dialogs::Dialog::AttrConfirm(AttrConfirm {
                 set: None,
@@ -618,7 +619,8 @@ impl Explorer {
                 hidden,
                 filesheet::Subject::Set { has_dir: true },
                 &self.dialog_text,
-                self.dialog_px,
+                self.forms.fonts.size_px,
+                self.forms.text,
             );
             self.dialog = Some(crate::dialogs::Dialog::AttrConfirm(AttrConfirm {
                 set: Some(paths),

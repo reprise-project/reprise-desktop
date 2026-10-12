@@ -126,6 +126,11 @@ impl Window {
         self.form.set_picture("icon", icon);
     }
 
+    /// The list's rect at the text size the form was last drawn at; its rows stay at 100%.
+    fn list_rect(&self) -> Rect {
+        self.form.units().rect(LIST)
+    }
+
     fn selected(&self) -> Option<&Update> {
         self.list.selection.focus.and_then(|i| self.rows.get(i))
     }
@@ -176,25 +181,20 @@ impl Window {
         let at = keep
             .and_then(|k| self.rows.iter().position(|u| u.key() == k))
             .or((!self.rows.is_empty()).then_some(0));
-        let lay = listview::layout(&self.list, LIST, cm);
+        let lay = listview::layout(&self.list, self.list_rect(), cm);
         self.list.top = self.list.top.min(self.list.slots().saturating_sub(1));
         self.list.select(at, &lay);
     }
 
-    pub fn sync(
-        &mut self,
-        phase: &Phase,
-        updates: &[Update],
-        text: &TextRenderer,
-        px: u32,
-        cm: &ControlMetrics,
-    ) {
+    /// Refresh from `phase` and `updates`, wrapping the message as `forms` draws it.
+    pub fn sync(&mut self, phase: &Phase, updates: &[Update], text: &TextRenderer, forms: &Theme) {
         if self.rows != updates {
-            self.fill(updates, cm);
+            self.fill(updates, &forms.look.controls());
         }
         let picked = self.rows.iter().filter(|u| self.wanted(u)).count();
         let headline = model::headline(phase, updates, picked);
-        let mut lines = reprisekit::text::wrap(text, &headline, MSG_W, px);
+        let (w, px) = (forms.text.len(MSG_W), forms.fonts.size_px);
+        let mut lines = reprisekit::text::wrap(text, &headline, w, px);
         lines.truncate(MSG_LINES);
         self.form.set_lines("message", &lines);
         self.list.focus_ring = self.list_focus;
@@ -245,9 +245,10 @@ impl Window {
 
     /// A pointer event, if the list takes it.
     pub fn list_pointer(&mut self, ev: ListInput, cm: &ControlMetrics) -> Option<Outcome> {
-        let lay = listview::layout(&self.list, LIST, cm);
+        let list = self.list_rect();
+        let lay = listview::layout(&self.list, list, cm);
         match ev {
-            ListInput::Press(x, y) if LIST.contains(x, y) => {
+            ListInput::Press(x, y) if list.contains(x, y) => {
                 self.focus_list(true);
                 let hit = self.list.hit(&lay, x, y);
                 self.list.press_check(hit);
@@ -286,7 +287,7 @@ impl Window {
                 }
                 Some(Outcome::Redraw)
             }
-            ListInput::Scroll(x, y, rows) if LIST.contains(x, y) => {
+            ListInput::Scroll(x, y, rows) if list.contains(x, y) => {
                 Some(if self.list.scroll(rows as i64, &lay) {
                     Outcome::Redraw
                 } else {
@@ -315,7 +316,7 @@ impl Window {
             form::Key::Edit(e) => form::flat_key(e)?,
             other => other.clone(),
         };
-        let lay = listview::layout(&self.list, LIST, cm);
+        let lay = listview::layout(&self.list, self.list_rect(), cm);
         let n = self.list.rows.len() as i64;
         let mods = Mods::default();
         let moved = match flat {
@@ -359,24 +360,45 @@ impl Window {
 
     pub fn access(&self, tree: &mut Tree, text: &TextRenderer, px: u32, cm: &ControlMetrics) {
         let focus = self.form.access(tree, ROOT, text, px);
-        let lay = listview::layout(&self.list, LIST, cm);
+        let lay = listview::layout(&self.list, self.list_rect(), cm);
         let row = self.list.access(&lay, tree, ROOT, "updates");
         if let Some(f) = if self.list_focus { Some(row) } else { focus } {
             tree.set_focus(f);
         }
     }
 
-    pub fn draw(&self, c: &mut Canvas, text: &TextRenderer, theme: &Theme, px: u32, phase: &Phase) {
+    /// The form draws with `forms`; the list's rows stay at `theme`'s 100% text.
+    pub fn draw(
+        &self,
+        c: &mut Canvas,
+        text: &TextRenderer,
+        theme: &Theme,
+        forms: &Theme,
+        phase: &Phase,
+    ) {
         let paint = Paint {
+            s: 1,
+            ..forms.paint()
+        };
+        c.fill_rect(c.bounds(), theme.colors.button_face);
+        form::draw(c, text, &paint, &self.form, true, forms.fonts.size_px);
+        let lay = listview::layout(&self.list, self.list_rect(), &theme.look.controls());
+        let list_paint = Paint {
             s: 1,
             ..theme.paint()
         };
-        c.fill_rect(c.bounds(), theme.colors.button_face);
-        form::draw(c, text, &paint, &self.form, true, px);
-        let lay = listview::layout(&self.list, LIST, &theme.look.controls());
-        listview::draw(c, text, &paint, &self.list, &lay, None, px);
+        listview::draw(
+            c,
+            text,
+            &list_paint,
+            &self.list,
+            &lay,
+            None,
+            theme.fonts.size_px,
+        );
         if let Phase::Installing { fraction, .. } = phase {
-            draw_progress(c, &paint, BAR, fraction.unwrap_or(0.0), true);
+            let bar = forms.text.rect(BAR);
+            draw_progress(c, &paint, bar, fraction.unwrap_or(0.0), true);
         }
     }
 }
@@ -434,8 +456,7 @@ mod tests {
             }
         }
         fn sync(&self, w: &mut Window, phase: &Phase, ups: &[Update]) {
-            let cm = self.theme.look.controls();
-            w.sync(phase, ups, &self.text, self.theme.fonts.size_px, &cm);
+            w.sync(phase, ups, &self.text, &self.theme);
         }
     }
 
@@ -577,6 +598,33 @@ mod tests {
     }
 
     #[test]
+    fn at_150_percent_the_list_takes_its_grown_rect() {
+        let env = Env::new();
+        let forms = env.theme.with_form_text(150);
+        let cm = env.theme.look.controls();
+        let mut w = Window::new(None);
+        w.form.drawn_with(&forms.paint());
+        w.sync(
+            &Phase::Ready,
+            &[update("a"), update("b")],
+            &env.text,
+            &forms,
+        );
+        let grown = forms.text.rect(LIST);
+        assert_eq!(w.list_rect(), grown);
+        let lay = listview::layout(&w.list, grown, &cm);
+        let b = w.list.check_rect(&lay, 1);
+        let (x, y) = (b.x + b.width / 2, b.y + b.height / 2);
+        w.list_pointer(ListInput::Press(x, y), &cm);
+        w.list_pointer(ListInput::Release(x, y), &cm);
+        assert_eq!(
+            w.checked().len(),
+            1,
+            "the second row's box sits in the grown list"
+        );
+    }
+
+    #[test]
     fn tab_runs_from_the_list_through_the_buttons_and_back() {
         let env = Env::new();
         let cm = env.theme.look.controls();
@@ -606,13 +654,7 @@ mod tests {
         w.list_key(&form::Key::Down, &cm);
         w.list_key(&form::Key::Space, &cm);
         let mut c = Canvas::new(CLIENT.0 as u32, CLIENT.1 as u32);
-        w.draw(
-            &mut c,
-            &env.text,
-            &env.theme,
-            env.theme.fonts.size_px,
-            &phase,
-        );
+        w.draw(&mut c, &env.text, &env.theme, &env.theme, &phase);
         let lay = listview::layout(&w.list, LIST, &cm);
         let rule = reprisekit::theme::Color::rgb(166, 202, 240).argb();
         // Each heading's rule starts at the body's left edge, 18 rows into its slot.
@@ -658,13 +700,7 @@ mod tests {
         let mut w = Window::new(None);
         env.sync(&mut w, &phase, &ups);
         let mut c = Canvas::new(CLIENT.0 as u32, CLIENT.1 as u32);
-        w.draw(
-            &mut c,
-            &env.text,
-            &env.theme,
-            env.theme.fonts.size_px,
-            &phase,
-        );
+        w.draw(&mut c, &env.text, &env.theme, &env.theme, &phase);
         reprisekit::raster::write_preview(&c, "reprise-updates.png");
     }
 }

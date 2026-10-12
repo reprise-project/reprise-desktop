@@ -64,7 +64,10 @@ struct AccountsApp {
     waker: Option<repriseapp::Waker>,
     face: Option<Canvas>,
     text: Option<Rc<TextRenderer>>,
-    px: u32,
+    /// The forms theme at the last event: `children` and `initial_size` have no `Ctx`.
+    forms: Theme,
+    /// The client size last asked for the main window.
+    asked: (i32, i32),
 }
 
 impl AccountsApp {
@@ -81,18 +84,17 @@ impl AccountsApp {
             waker: None,
             face: None,
             text: None,
-            px: 0,
+            forms: Theme::default(),
+            asked: users::CLIENT,
         }
     }
 
     fn fonts(&mut self) {
         self.text = Some(Rc::new(TextRenderer::load(&FontConfig::default())));
-        self.px = Theme::default().fonts.size_px;
     }
 
-    fn text_px(&self) -> (Rc<TextRenderer>, u32) {
-        let text = self.text.clone().expect("fonts are loaded in start");
-        (text, self.px)
+    fn text(&self) -> Rc<TextRenderer> {
+        self.text.clone().expect("fonts are loaded in start")
     }
 
     /// Run `ops` (none for a plain read) and reread the accounts, off the
@@ -244,12 +246,11 @@ impl AccountsApp {
 
     fn main_event(&mut self, ev: Event, ctx: &mut Ctx) -> Reply {
         let cm = ctx.theme.look.controls();
+        let list_r = self.users.list_rect();
         let lit = {
             let list = &mut self.users.list;
             let changed = match &ev {
-                Event::Pointer(PointerInput::Motion { x, y }) => {
-                    list.hover(users::LIST, *x, *y, &cm)
-                }
+                Event::Pointer(PointerInput::Motion { x, y }) => list.hover(list_r, *x, *y, &cm),
                 Event::Pointer(PointerInput::Leave) => list.leave(),
                 Event::Pointer(PointerInput::Release {
                     button: BTN_LEFT, ..
@@ -266,17 +267,17 @@ impl AccountsApp {
                 button: BTN_LEFT,
                 time,
                 ..
-            }) if users::LIST.contains(x, y) => {
+            }) if list_r.contains(x, y) => {
                 let at = ctx.theme.metrics.click(x, y, time);
                 self.users.list_press(at, &cm)
             }
             Event::Pointer(PointerInput::Motion { y, .. })
-                if self.users.list.drag(users::LIST, y, &cm) =>
+                if self.users.list.drag(list_r, y, &cm) =>
             {
                 users::Outcome::Redraw
             }
             Event::Pointer(PointerInput::Scroll { rows, .. }) => {
-                if self.users.list.scroll(rows, users::LIST) {
+                if self.users.list.scroll(rows, list_r) {
                     users::Outcome::Redraw
                 } else {
                     users::Outcome::None
@@ -421,11 +422,11 @@ impl AccountsApp {
     }
 
     fn remove_event(&mut self, ev: Event) -> Reply {
-        let (text, px) = self.text_px();
+        let text = self.text();
         let Some((uid, b)) = &mut self.remove else {
             return Reply::none();
         };
-        match b.event(&ev, &text, px) {
+        match b.event(&ev, &text, &self.forms) {
             oneshot::Outcome::None => Reply::none(),
             oneshot::Outcome::Redraw => Reply::redraw(),
             oneshot::Outcome::Closed(button) => {
@@ -444,11 +445,11 @@ impl AccountsApp {
     }
 
     fn error_event(&mut self, ev: Event) -> Reply {
-        let (text, px) = self.text_px();
+        let text = self.text();
         let Some(b) = &mut self.error else {
             return Reply::none();
         };
-        match b.event(&ev, &text, px) {
+        match b.event(&ev, &text, &self.forms) {
             oneshot::Outcome::None => Reply::none(),
             oneshot::Outcome::Redraw => Reply::redraw(),
             oneshot::Outcome::Closed(_) => {
@@ -565,7 +566,7 @@ impl App for AccountsApp {
     }
 
     fn initial_size(&self) -> (i32, i32) {
-        users::CLIENT
+        self.forms.text.size(users::CLIENT)
     }
 
     fn fixed(&self) -> bool {
@@ -585,7 +586,7 @@ impl App for AccountsApp {
             out.push(Child {
                 id: PROPS,
                 title: p.window_title(),
-                size: props::CLIENT,
+                size: self.forms.text.size(p.sheet.size),
                 fixed: true,
                 modal: false,
             });
@@ -594,7 +595,7 @@ impl App for AccountsApp {
             out.push(Child {
                 id: ADD,
                 title: "Add Account".into(),
-                size: adduser::CLIENT,
+                size: self.forms.text.size(adduser::CLIENT),
                 fixed: true,
                 modal: false,
             });
@@ -610,10 +611,10 @@ impl App for AccountsApp {
         }
         if let Some(text) = &self.text {
             if let Some((_, b)) = &self.remove {
-                out.push(b.child(REMOVE, text, self.px));
+                out.push(b.child(REMOVE, text, &self.forms));
             }
             if let Some(b) = &self.error {
-                out.push(b.child(ERROR, text, self.px));
+                out.push(b.child(ERROR, text, &self.forms));
             }
         }
         out
@@ -626,27 +627,20 @@ impl App for AccountsApp {
     }
 
     fn event(&mut self, win: WinId, ev: Event, ctx: &mut Ctx) -> Reply {
-        if self.face.is_none() {
-            self.face = ctx.icons.get("avatar-default", ROW_PX as i32);
-            self.browse_host.icons.prime(&mut ctx.icons);
+        self.forms = ctx.forms();
+        let mut reply = self.dispatch(win, ev, ctx);
+        let size = self.forms.text.size(users::CLIENT);
+        if size != self.asked {
+            self.asked = size;
+            reply.size = Some(size);
+            reply.redraw_all = true;
         }
-        if matches!(ev, Event::Wake) {
-            return self.wake();
-        }
-        let clip = form_clipboard(self.focused_edit(win), &ev);
-        match win {
-            PROPS => self.props_event(ev, ctx),
-            ADD => self.add_event(ev, ctx),
-            BROWSE => self.browse_event(ev, ctx),
-            REMOVE => self.remove_event(ev),
-            ERROR => self.error_event(ev),
-            _ => self.main_event(ev, ctx),
-        }
-        .with_clipboard(clip)
+        reply
     }
 
     fn access(&mut self, win: WinId, tree: &mut Tree, ctx: &Ctx) {
-        let px = ctx.theme.fonts.size_px;
+        let forms = ctx.forms();
+        let px = forms.fonts.size_px;
         match win {
             PROPS => {
                 if let Some(p) = &self.props {
@@ -661,17 +655,17 @@ impl App for AccountsApp {
             BROWSE => {
                 if let Some(d) = &self.browse {
                     let r = Rect::new(0, 0, d.client().0, d.client().1);
-                    d.access(tree, r, &ctx.text, px);
+                    d.access(tree, r, &ctx.text, ctx.theme.fonts.size_px);
                 }
             }
             REMOVE => {
                 if let Some((_, b)) = &self.remove {
-                    b.access(tree, &ctx.text, px);
+                    b.access(tree, &ctx.text, &forms);
                 }
             }
             ERROR => {
                 if let Some(b) = &self.error {
-                    b.access(tree, &ctx.text, px);
+                    b.access(tree, &ctx.text, &forms);
                 }
             }
             _ => self.users.access(tree, ctx),
@@ -696,10 +690,11 @@ impl App for AccountsApp {
 
     fn draw(&mut self, win: WinId, c: &mut Canvas, ctx: &Ctx) {
         let cs = &ctx.theme.colors;
-        let px = ctx.theme.fonts.size_px;
+        let forms = ctx.forms();
+        let px = forms.fonts.size_px;
         let paint = Paint {
             s: 1,
-            ..ctx.theme.paint()
+            ..forms.paint()
         };
         match win {
             PROPS => {
@@ -719,24 +714,49 @@ impl App for AccountsApp {
                     d.draw(
                         c,
                         &ctx.text,
-                        &paint,
+                        &Paint {
+                            s: 1,
+                            ..ctx.theme.paint()
+                        },
                         Rect::new(0, 0, d.client().0, d.client().1),
-                        px,
+                        ctx.theme.fonts.size_px,
                     );
                 }
             }
             REMOVE => {
                 if let Some((_, b)) = &self.remove {
-                    b.draw(c, &ctx.theme, &ctx.text, px);
+                    b.draw(c, &forms, &ctx.text);
                 }
             }
             ERROR => {
                 if let Some(b) = &self.error {
-                    b.draw(c, &ctx.theme, &ctx.text, px);
+                    b.draw(c, &forms, &ctx.text);
                 }
             }
             _ => self.users.draw(c, ctx, self.face.as_ref()),
         }
+    }
+}
+
+impl AccountsApp {
+    fn dispatch(&mut self, win: WinId, ev: Event, ctx: &mut Ctx) -> Reply {
+        if self.face.is_none() {
+            self.face = ctx.icons.get("avatar-default", ROW_PX as i32);
+            self.browse_host.icons.prime(&mut ctx.icons);
+        }
+        if matches!(ev, Event::Wake) {
+            return self.wake();
+        }
+        let clip = form_clipboard(self.focused_edit(win), &ev);
+        match win {
+            PROPS => self.props_event(ev, ctx),
+            ADD => self.add_event(ev, ctx),
+            BROWSE => self.browse_event(ev, ctx),
+            REMOVE => self.remove_event(ev),
+            ERROR => self.error_event(ev),
+            _ => self.main_event(ev, ctx),
+        }
+        .with_clipboard(clip)
     }
 }
 

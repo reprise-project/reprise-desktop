@@ -21,7 +21,7 @@ use reprisekit::controls::timefield::TimeField;
 use reprisekit::controls::updown::UpDown;
 use reprisekit::raster::{Canvas, Rect};
 use reprisekit::text::Align;
-use reprisekit::theme::Color;
+use reprisekit::theme::{Color, TextUnits};
 
 /// The sheet's client size: 404x341 outside, less the frame.
 pub const CLIENT: (i32, i32) = (398, 317);
@@ -260,6 +260,22 @@ impl Sheet {
         self.sheet.set_apply_enabled(dirty);
     }
 
+    /// Size the zone panel for text drawn at `u`: unlike a picture it grows with the page.
+    pub fn fit(&mut self, u: TextUnits) {
+        let grown = u.rect(PANEL);
+        let Some(item) = self.sheet.pages[TAB_ZONE].item_mut("panel") else {
+            return;
+        };
+        if (item.rect.width, item.rect.height) != (grown.width, grown.height) {
+            item.rect = Rect {
+                x: PANEL.x,
+                y: PANEL.y,
+                ..grown
+            };
+            item.control = panel_well(grown);
+        }
+    }
+
     fn write_clock(&mut self) {
         let page = &mut self.sheet.pages[TAB_DATE];
         let face = match page.item("time").map(|i| &i.control) {
@@ -341,12 +357,20 @@ fn date_page(now: Local, first_weekday: u32, twelve: bool, system: &System) -> F
     Form::new(items)
 }
 
+/// The zone panel: a white well with a 2 px frame filling `r`.
+fn panel_well(r: Rect) -> Control {
+    let mut white = Canvas::new((r.width - 4) as u32, (r.height - 4) as u32);
+    white.fill_rect(white.bounds(), Color::rgb(255, 255, 255));
+    Control::Picture {
+        canvas: Some(white),
+        frame: 2,
+    }
+}
+
 fn zone_page(zones: &[String], current: &str) -> Form {
     let labels: Vec<String> = zones.iter().map(|z| z.replace('_', " ")).collect();
     let rows: Vec<&str> = labels.iter().map(String::as_str).collect();
     let selected = zones.iter().position(|z| z == current).unwrap_or(0);
-    let mut white = Canvas::new((PANEL.width - 4) as u32, (PANEL.height - 4) as u32);
-    white.fill_rect(white.bounds(), Color::rgb(255, 255, 255));
     let mid = PANEL.y + PANEL.height / 2;
     Form::new(vec![
         Item::new(
@@ -354,14 +378,7 @@ fn zone_page(zones: &[String], current: &str) -> Form {
             Rect::new(18, 37, 362, reprisekit::controls::combo::COMBO_H),
             Control::Combo(Combo::new(&rows, selected, 16)),
         ),
-        Item::new(
-            "panel",
-            PANEL,
-            Control::Picture {
-                canvas: Some(white),
-                frame: 2,
-            },
-        ),
+        Item::new("panel", PANEL, panel_well(PANEL)),
         Item::aligned(
             "city",
             Rect::new(PANEL.x, mid - 14, PANEL.width, 13),
@@ -565,6 +582,25 @@ mod tests {
         );
         assert!(!s.dirty());
         assert_eq!(s.event(propsheet::Event::Ok), Outcome::Close);
+    }
+
+    #[test]
+    fn the_zone_panel_grows_with_the_text() {
+        let mut s = sheet();
+        let u = TextUnits::new(17, 11);
+        s.fit(u);
+        let page = &s.sheet.pages[TAB_ZONE];
+        page.drawn_with(&reprisekit::look::Paint {
+            text: u,
+            ..reprisekit::theme::Theme::default().paint()
+        });
+        assert_eq!(page.rect("panel"), Some(u.rect(PANEL)));
+        assert!(matches!(
+            &page.item("panel").unwrap().control,
+            Control::Picture { canvas: Some(c), .. } if (c.width, c.height) == (553, 286)
+        ));
+        s.fit(TextUnits::ONE);
+        assert_eq!(s.sheet.pages[TAB_ZONE].item("panel").unwrap().rect, PANEL);
     }
 
     #[test]

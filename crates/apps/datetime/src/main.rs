@@ -34,10 +34,12 @@ struct DateTimeApp {
     applying: Option<(Receiver<Result<System, String>>, bool)>,
     waker: Option<repriseapp::Waker>,
     error: Option<MsgBox>,
-    /// The renderer the box is sized and drawn with: `children` has no
-    /// `Ctx`, so it is loaded in `start`.
+    /// The renderer and forms theme the box is sized with: `children` has no
+    /// `Ctx`, so they are kept from `start` and the last event.
     dialog_text: Option<TextRenderer>,
-    dialog_px: u32,
+    forms: Theme,
+    /// The client size last asked for the main window.
+    asked: (i32, i32),
     quit: bool,
 }
 
@@ -151,7 +153,7 @@ impl DateTimeApp {
         let (Some(b), Some(text)) = (&mut self.error, &self.dialog_text) else {
             return Reply::none();
         };
-        match b.event(&ev, text, self.dialog_px) {
+        match b.event(&ev, text, &self.forms) {
             oneshot::Outcome::Closed(_) => {
                 self.error = None;
                 Reply::redraw_all()
@@ -181,14 +183,14 @@ impl App for DateTimeApp {
 
     fn children(&self) -> Vec<Child> {
         match (&self.error, &self.dialog_text) {
-            (Some(b), Some(text)) => vec![b.child(ERROR_WIN, text, self.dialog_px)],
+            (Some(b), Some(text)) => vec![b.child(ERROR_WIN, text, &self.forms)],
             _ => Vec::new(),
         }
     }
 
     fn start(&mut self, waker: repriseapp::Waker) {
         self.dialog_text = Some(TextRenderer::load(&FontConfig::default()));
-        self.dialog_px = Theme::default().fonts.size_px;
+        self.asked = sheet::CLIENT;
         match timedate::read() {
             Ok((system, zones)) => {
                 self.system = system;
@@ -212,6 +214,55 @@ impl App for DateTimeApp {
     }
 
     fn event(&mut self, win: WinId, ev: Event, ctx: &mut Ctx) -> Reply {
+        self.forms = ctx.forms();
+        let mut reply = self.dispatch(win, ev, ctx);
+        let size = self.forms.text.size(sheet::CLIENT);
+        if size != self.asked {
+            self.asked = size;
+            reply.size = Some(size);
+            reply.redraw = true;
+        }
+        reply
+    }
+
+    fn access(&mut self, win: WinId, tree: &mut Tree, ctx: &Ctx) {
+        let forms = ctx.forms();
+        if win == ERROR_WIN {
+            if let (Some(b), Some(text)) = (&self.error, &self.dialog_text) {
+                b.access(tree, text, &forms);
+            }
+        } else if let Some(s) = &self.sheet {
+            oneshot::access_sheet(&s.sheet, tree, &ctx.text, forms.fonts.size_px);
+        }
+    }
+
+    fn draw(&mut self, win: WinId, c: &mut Canvas, ctx: &Ctx) {
+        let forms = ctx.forms();
+        if win == ERROR_WIN {
+            if let (Some(b), Some(text)) = (&self.error, &self.dialog_text) {
+                b.draw(c, &forms, text);
+            }
+            return;
+        }
+        let s = self.ensure();
+        s.fit(forms.text);
+        c.fill_rect(c.bounds(), forms.colors.button_face);
+        propsheet::draw(
+            c,
+            &ctx.text,
+            &Paint {
+                s: 1,
+                ..forms.paint()
+            },
+            &s.sheet,
+            true,
+            forms.fonts.size_px,
+        );
+    }
+}
+
+impl DateTimeApp {
+    fn dispatch(&mut self, win: WinId, ev: Event, ctx: &mut Ctx) -> Reply {
         if matches!(ev, Event::Wake) {
             return self.wake();
         }
@@ -244,39 +295,6 @@ impl App for DateTimeApp {
                 ..Reply::none()
             },
         }
-    }
-
-    fn access(&mut self, win: WinId, tree: &mut Tree, ctx: &Ctx) {
-        if win == ERROR_WIN {
-            if let (Some(b), Some(text)) = (&self.error, &self.dialog_text) {
-                b.access(tree, text, self.dialog_px);
-            }
-        } else if let Some(s) = &self.sheet {
-            oneshot::access_sheet(&s.sheet, tree, &ctx.text, ctx.theme.fonts.size_px);
-        }
-    }
-
-    fn draw(&mut self, win: WinId, c: &mut Canvas, ctx: &Ctx) {
-        let cs = &ctx.theme.colors;
-        if win == ERROR_WIN {
-            if let (Some(b), Some(text)) = (&self.error, &self.dialog_text) {
-                b.draw(c, &ctx.theme, text, self.dialog_px);
-            }
-            return;
-        }
-        let s = self.ensure();
-        c.fill_rect(c.bounds(), cs.button_face);
-        propsheet::draw(
-            c,
-            &ctx.text,
-            &Paint {
-                s: 1,
-                ..ctx.theme.paint()
-            },
-            &s.sheet,
-            true,
-            ctx.theme.fonts.size_px,
-        );
     }
 }
 

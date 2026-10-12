@@ -18,6 +18,7 @@ use reprisekit::icontheme::{IconCache, IconTheme};
 use reprisekit::look::Paint;
 use reprisekit::raster::{Canvas, Rect};
 use reprisekit::text::Align;
+use reprisekit::theme::Theme;
 use std::io::{BufRead, Write};
 use std::os::unix::process::CommandExt;
 use std::process::{Child, Command, Stdio};
@@ -195,6 +196,12 @@ pub const TEXT_X: i32 = 54;
 pub const ICON_PX: i32 = 32;
 const ICON_AT: (i32, i32) = (12, 12);
 
+/// The theme a prompt's form draws with, for building it before `repriseapp::run`: what
+/// `Ctx::forms` gives once it runs.
+pub fn start_forms() -> Theme {
+    repriseapp::start_theme().with_form_text(repriseconf::text_size())
+}
+
 /// The icon theme repriseapp loads. A prompt resolves its icons before its
 /// window opens, since the first frame is drawn before any event.
 pub fn icons() -> IconCache {
@@ -256,7 +263,7 @@ pub enum Refusal {
 
 pub type OnCancel = Box<dyn FnMut(&Form, Refusal)>;
 
-/// A prompt's window: `icon` over `form`, fixed at `size`, owned by `parent`
+/// A prompt's window: `icon` over `form`, fixed at `size` (100% text), owned by `parent`
 /// and, when `modal`, blocking it. `accept` runs `on_accept`, which returns
 /// whether the prompt is answered; any other close runs `on_cancel` and quits.
 pub struct Prompt {
@@ -311,7 +318,7 @@ impl App for Prompt {
     }
 
     fn initial_size(&self) -> (i32, i32) {
-        self.size
+        start_forms().text.size(self.size)
     }
 
     fn fixed(&self) -> bool {
@@ -337,26 +344,28 @@ impl App for Prompt {
     }
 
     fn access(&mut self, _win: WinId, tree: &mut Tree, ctx: &Ctx) {
-        repriseapp::oneshot::access_form(&self.form, tree, &ctx.text, ctx.theme.fonts.size_px);
+        let px = self.form.units().px(ctx.theme.fonts.size_px);
+        repriseapp::oneshot::access_form(&self.form, tree, &ctx.text, px);
     }
 
     fn draw(&mut self, _win: WinId, c: &mut Canvas, ctx: &Ctx) {
-        let cs = &ctx.theme.colors;
-        let px = ctx.theme.fonts.size_px;
-        c.fill_rect(c.bounds(), cs.button_face);
+        let forms = ctx.forms();
+        let px = forms.fonts.size_px;
+        c.fill_rect(c.bounds(), forms.colors.button_face);
         form::draw(
             c,
             &ctx.text,
             &Paint {
                 s: 1,
-                ..ctx.theme.paint()
+                ..forms.paint()
             },
             &self.form,
             true,
             px,
         );
         if let Some(ic) = self.icon.as_ref() {
-            c.blit_over(ICON_AT.0, ICON_AT.1, ic);
+            let u = forms.text;
+            c.blit_over(u.len(ICON_AT.0), u.len(ICON_AT.1), ic);
         }
     }
 }

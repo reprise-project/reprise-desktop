@@ -689,7 +689,7 @@ pub fn draw(
         let hl = match lay.icon {
             Some(_) => {
                 let w = text.measure(combo.value(), false, px);
-                let h = LINE_H * s;
+                let h = p.text.len(LINE_H) * s;
                 Rect::new(tr.x, tr.y + (tr.height - h) / 2, w.min(tr.width), h)
             }
             None => lay.highlight.scaled(s),
@@ -760,7 +760,7 @@ pub fn draw_list(
         draw_scrollbar(c, p, sb, top, rows, items.len(), bar);
     }
     let shell = shell(items);
-    let rh = items_row_h(items, &p.look.controls()) * s;
+    let rh = items_row_h(items, &p.look.controls().grown(p.text)) * s;
     for (row, i) in (top..items.len().min(top + rows)).enumerate() {
         let r = Rect::new(inner.x, inner.y + row as i32 * rh, inner.width, rh);
         let (bg, fg) = if highlighted == Some(i) {
@@ -772,9 +772,9 @@ pub fn draw_list(
         };
         if !shell {
             c.fill_rect(r, bg);
-            // The text is set on a 13 px line centred in the row: the
-            // whole of a 13 px row, a row down a 15 px one.
-            let line = LINE_H * s;
+            // The text is set on a 13 px line (grown with the text) centred
+            // in the row: the whole of a 13 px row, a row down a 15 px one.
+            let line = p.text.len(LINE_H) * s;
             let ty = r.y + (r.height - line) / 2;
             let tr = Rect::new(r.x + 2 * s, ty, r.width - 2 * s, line);
             text.draw(c, tr, &items[i].text, false, fg, Align::Left, px);

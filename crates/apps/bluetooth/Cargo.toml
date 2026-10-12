@@ -18,6 +18,7 @@ repriseapp = { path = "../../repriseapp" }
 reprisekit = { path = "../../reprisekit" }
 reprisetray = { path = "../../reprisetray" }
 reprisebus = { path = "../../reprisebus" }
+repriseconf = { path = "../../repriseconf" }
 async-channel.workspace = true
 zbus.workspace = true
 futures-util.workspace = true

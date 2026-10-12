@@ -990,6 +990,7 @@ mod tests {
             s: 1,
             back: crate::look::Backdrop::Face,
             active: true,
+            text: crate::theme::TextUnits::ONE,
         };
         let r = Rect::new(2, 2, 16, 16);
         let (mut a, mut b) = (Canvas::new(20, 20), Canvas::new(20, 20));

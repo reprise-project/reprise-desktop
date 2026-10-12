@@ -103,7 +103,7 @@ pub fn form_clipboard(focused: Option<form::FocusedEdit>, ev: &Event) -> Reply {
 /// what the pointer lit, a drop on a field ([`crate::fielddrop`]) heard as the
 /// open page's. `None` is an event the host answers itself.
 pub fn sheet_input(sheet: &mut PropSheet, ev: &Event, ctx: &Ctx) -> Option<propsheet::Event> {
-    let px = ctx.theme.fonts.size_px;
+    let px = sheet.open().units().px(ctx.theme.fonts.size_px);
     Some(match ev {
         Event::Key(k) => {
             let ctrl_tab = propsheet::page_step(k.sym, k.mods.ctrl, k.mods.shift);
@@ -152,7 +152,7 @@ pub fn hotkey_input(form: &mut Form, k: &KeyInput, down: bool) -> Option<form::E
 /// the keys first ([`hotkey_input`]), and is blurred when the window loses the
 /// keyboard or the compositor takes its shortcuts back.
 pub fn form_input(form: &mut Form, ev: &Event, ctx: &Ctx) -> Option<form::Event> {
-    let px = ctx.theme.fonts.size_px;
+    let px = form.units().px(ctx.theme.fonts.size_px);
     Some(match ev {
         Event::Focus(false) | Event::ShortcutsInactive => {
             form.blur_hotkey().then_some(form::Event::Redraw)?
