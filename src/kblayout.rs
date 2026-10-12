@@ -9,7 +9,7 @@ use reprisefs::xkb::Described;
 use smithay::output::Output;
 
 use crate::compositor::State;
-use crate::menuview::MenuKind;
+use crate::menuview::{MenuFrom, MenuKind};
 use crate::raster::Rect;
 use crate::startmenu::{MenuItem, MenuLayout, MenuStyle, submenu_max_rows};
 
@@ -142,7 +142,15 @@ impl State {
             (layout.width, layout.height),
             usable,
         );
-        self.push_menu(0, (x, y), layout, items, output.clone(), MenuKind::Layouts);
+        self.push_menu(
+            0,
+            (x, y),
+            layout,
+            items,
+            output.clone(),
+            MenuKind::Layouts,
+            MenuFrom::Bar,
+        );
         self.redraw_menu(0);
     }
 }

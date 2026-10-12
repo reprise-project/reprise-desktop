@@ -15,7 +15,7 @@ use smithay::{
 use crate::compositor::State;
 use crate::config::{NightLightConfig, NightSchedule};
 use crate::gammacontrol::{GammaControlHandler, GammaControlState};
-use crate::menuview::MenuKind;
+use crate::menuview::{MenuFrom, MenuKind};
 use crate::raster::{Canvas, Rect};
 use crate::startmenu::{MenuItem, MenuLayout, MenuStyle, submenu_max_rows};
 use schedule::{LocalClock, Plan};
@@ -377,6 +377,7 @@ pub fn open_menu(state: &mut State, output: &Output, cell: Rect) {
         items,
         output.clone(),
         MenuKind::NightLight(rows),
+        MenuFrom::Bar,
     );
     state.redraw_menu(0);
 }

@@ -15,7 +15,7 @@ use crate::compositor::{SceneOwner, State};
 use crate::dialogview::DialogKey;
 use crate::glass::{Backdrop, Pane, PaneShape};
 use crate::keys;
-use crate::menuview::MenuKind;
+use crate::menuview::{MenuFrom, MenuKind};
 use crate::output::upload_scaled;
 use crate::raster::Rect;
 use crate::search::{
@@ -224,7 +224,7 @@ impl State {
             Pick::Calc | Pick::Setting(_) => return,
         };
         self.close_menu();
-        self.push_context_menu(at, items, kind);
+        self.push_context_menu(at, items, kind, MenuFrom::Elsewhere);
     }
 
     fn apply_launcher(&mut self, event: Event) {
