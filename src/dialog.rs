@@ -1983,39 +1983,20 @@ impl Dialog {
 
     /// "Confirm File Delete" ("Folder" for a folder, whose template reserves four text lines): Yes
     /// trashes `path`, No/Escape leave it. With `erase` Yes removes it outright, with a folder icon
-    /// under a red badge.
-    pub fn confirm_delete(name: &str, path: &std::path::Path, is_dir: bool, erase: bool) -> Dialog {
+    /// under a red badge; `no_bin` says its drive has no Recycle Bin.
+    pub fn confirm_delete(
+        name: &str,
+        path: &std::path::Path,
+        is_dir: bool,
+        erase: bool,
+        no_bin: bool,
+    ) -> Dialog {
         let yes = DialogAction::Delete {
             paths: vec![path.to_path_buf()],
             erase,
         };
-        let (title, text, text_h) = match (is_dir, erase) {
-            (true, false) => (
-                "Confirm Folder Delete",
-                format!(
-                    "Are you sure you want to remove the folder '{name}' and move all its \
-                     contents to the Recycle Bin?"
-                ),
-                Some(51),
-            ),
-            (true, true) => (
-                "Confirm Folder Delete",
-                format!(
-                    "Are you sure you want to remove the folder '{name}' and all its contents?"
-                ),
-                Some(51),
-            ),
-            (false, false) => (
-                "Confirm File Delete",
-                format!("Are you sure you want to send '{name}' to the Recycle Bin?"),
-                None,
-            ),
-            (false, true) => (
-                "Confirm File Delete",
-                format!("Are you sure you want to delete '{name}'?"),
-                None,
-            ),
-        };
+        let kind = reprisefs::bincap::ConfirmKind::of(1, is_dir);
+        let (title, text) = reprisefs::bincap::delete_prompt(kind, name, 1, erase, no_bin);
         let icon = if erase { "folder" } else { "user-trash-full" };
         Dialog {
             icon: Some(icon.into()),
@@ -2028,7 +2009,7 @@ impl Dialog {
                 title,
                 Style::Classic {
                     template: Template::MessageBox,
-                    text_h,
+                    text_h: is_dir.then_some(51),
                     delete_badge: erase,
                 },
                 Placement::Center,
@@ -2038,18 +2019,16 @@ impl Dialog {
 
     /// "Confirm Multiple File Delete" for a selection of `paths`: "send
     /// these N items to the Recycle Bin", or "delete these N items" with
-    /// `erase`. Yes trashes (or erases) every one of them.
-    pub fn confirm_delete_many(paths: &[std::path::PathBuf], erase: bool) -> Dialog {
+    /// `erase`, led by the missing Recycle Bin with `no_bin`. Yes trashes
+    /// (or erases) every one of them.
+    pub fn confirm_delete_many(paths: &[std::path::PathBuf], erase: bool, no_bin: bool) -> Dialog {
+        use reprisefs::bincap::{ConfirmKind, delete_prompt};
         let count = paths.len();
         let yes = DialogAction::Delete {
             paths: paths.to_vec(),
             erase,
         };
-        let text = if erase {
-            format!("Are you sure you want to delete these {count} items?")
-        } else {
-            format!("Are you sure you want to send these {count} items to the Recycle Bin?")
-        };
+        let (title, text) = delete_prompt(ConfirmKind::Multiple, "", count, erase, no_bin);
         let icon = if erase { "folder" } else { "user-trash-full" };
         Dialog {
             icon: Some(icon.into()),
@@ -2059,7 +2038,7 @@ impl Dialog {
                 button("&No", DialogAction::Cancel, false),
             ],
             ..Dialog::new(
-                "Confirm Multiple File Delete",
+                title,
                 Style::Classic {
                     template: Template::MultiDelete,
                     text_h: None,
@@ -2302,15 +2281,10 @@ impl Dialog {
     /// Delete" naming the one item, or "Confirm Multiple File Delete" with
     /// the count. Yes empties it.
     pub fn confirm_empty_bin(count: usize, first: Option<&str>) -> Dialog {
+        use reprisefs::bincap::{ConfirmKind, delete_prompt};
         let (title, text) = match (count, first) {
-            (1, Some(name)) => (
-                "Confirm File Delete",
-                format!("Are you sure you want to delete '{name}'?"),
-            ),
-            _ => (
-                "Confirm Multiple File Delete",
-                format!("Are you sure you want to delete these {count} items?"),
-            ),
+            (1, Some(name)) => delete_prompt(ConfirmKind::File, name, 1, true, false),
+            _ => delete_prompt(ConfirmKind::Multiple, "", count, true, false),
         };
         Dialog {
             icon: Some("user-trash-full".into()),
@@ -5305,6 +5279,7 @@ mod tests {
             std::path::Path::new("/x"),
             false,
             false,
+            false,
         );
         let l = DialogLayout::compute(&theme, &text, &c);
         assert_eq!(l.size.0, 419);
@@ -5315,7 +5290,7 @@ mod tests {
         assert_eq!(l.buttons[1], Rect::new(326, 96, 80, 23));
         assert_eq!(l.size.1, 133);
         let dir = std::env::temp_dir();
-        let f = Dialog::confirm_delete("New Folder", &dir, true, false);
+        let f = Dialog::confirm_delete("New Folder", &dir, true, false, false);
         assert_eq!(f.title, "Confirm Folder Delete");
         assert!(
             f.text
@@ -5465,7 +5440,7 @@ mod tests {
     fn classic_dialog_has_a_close_button_and_a_focus_ring() {
         let theme = Theme::default();
         let text = TextRenderer::load(&FontConfig::default());
-        let d = Dialog::confirm_delete("x", std::path::Path::new("/x"), false, false);
+        let d = Dialog::confirm_delete("x", std::path::Path::new("/x"), false, false, false);
         let l = DialogLayout::compute(&theme, &text, &d);
         let close = l.close.unwrap();
         assert_eq!(
@@ -5553,7 +5528,7 @@ mod tests {
     #[test]
     fn confirm_delete_trashes_on_yes_only() {
         let path = std::path::Path::new("/home/u/Desktop/it's mine.txt");
-        let mut d = Dialog::confirm_delete("it's mine.txt", path, false, false);
+        let mut d = Dialog::confirm_delete("it's mine.txt", path, false, false, false);
         assert_eq!(d.placement, Placement::Center);
         assert!(d.text.contains("'it's mine.txt'"));
         let yes = Outcome::Delete {
@@ -5568,7 +5543,7 @@ mod tests {
         );
         assert_eq!(d.key(Key::Escape), Outcome::Close);
         assert_eq!(d.press(1), Outcome::Close);
-        let mut e = Dialog::confirm_delete("it's mine.txt", path, false, true);
+        let mut e = Dialog::confirm_delete("it's mine.txt", path, false, true, false);
         assert_eq!(e.text, "Are you sure you want to delete 'it's mine.txt'?");
         assert_eq!(e.icon.as_deref(), Some("folder"));
         assert!(matches!(
@@ -5586,7 +5561,7 @@ mod tests {
             }
         );
         let dir = std::env::temp_dir();
-        let f = Dialog::confirm_delete("New Folder", &dir, true, true);
+        let f = Dialog::confirm_delete("New Folder", &dir, true, true, false);
         assert_eq!(f.title, "Confirm Folder Delete");
         assert_eq!(
             f.text,
@@ -5639,7 +5614,7 @@ mod tests {
             std::path::PathBuf::from("/d/New Folder"),
             std::path::PathBuf::from("/d/a b.txt"),
         ];
-        let mut d = Dialog::confirm_delete_many(&paths, false);
+        let mut d = Dialog::confirm_delete_many(&paths, false, false);
         assert_eq!(d.title, "Confirm Multiple File Delete");
         assert_eq!(
             d.text,
@@ -5660,7 +5635,7 @@ mod tests {
         assert_eq!(l.lines[0].0.y, 45);
         assert_eq!(l.buttons[0], Rect::new(224, 96, 87, BUTTON_H));
         assert_eq!(l.buttons[1], Rect::new(318, 96, 87, BUTTON_H));
-        let mut e = Dialog::confirm_delete_many(&paths, true);
+        let mut e = Dialog::confirm_delete_many(&paths, true, false);
         assert_eq!(e.text, "Are you sure you want to delete these 2 items?");
         assert!(matches!(
             e.style,
@@ -5678,7 +5653,7 @@ mod tests {
     fn confirm_delete_keeps_a_name_that_is_not_utf8() {
         use std::os::unix::ffi::OsStrExt;
         let path = std::path::PathBuf::from(std::ffi::OsStr::from_bytes(b"/d/a\xffb.txt"));
-        let mut d = Dialog::confirm_delete("a\u{fffd}b.txt", &path, false, false);
+        let mut d = Dialog::confirm_delete("a\u{fffd}b.txt", &path, false, false, false);
         assert_eq!(
             d.key(Key::Enter),
             Outcome::Delete {
@@ -5687,8 +5662,25 @@ mod tests {
             }
         );
         let paths = vec![path, std::path::PathBuf::from("/d/c.txt")];
-        let mut m = Dialog::confirm_delete_many(&paths, true);
+        let mut m = Dialog::confirm_delete_many(&paths, true, false);
         assert_eq!(m.key(Key::Enter), Outcome::Delete { paths, erase: true });
+    }
+
+    #[test]
+    fn a_delete_off_a_drive_with_no_bin_says_so_first() {
+        let one =
+            Dialog::confirm_delete("d.txt", std::path::Path::new("/m/d.txt"), false, true, true);
+        assert_eq!(
+            one.text,
+            "This drive has no Recycle Bin. Are you sure you want to delete 'd.txt'?"
+        );
+        let paths = vec!["/m/a".into(), "/m/b".into()];
+        let many = Dialog::confirm_delete_many(&paths, true, true);
+        assert_eq!(
+            many.text,
+            "Some of these items are on a drive with no Recycle Bin. Are you sure you want to \
+             delete these 2 items?"
+        );
     }
 
     #[test]
@@ -9013,7 +9005,7 @@ mod tests {
         let blue = blue();
         let text = TextRenderer::load(&FontConfig::default());
         let px = blue.fonts.size_px;
-        let d = Dialog::confirm_delete("x", std::path::Path::new("/x"), false, false);
+        let d = Dialog::confirm_delete("x", std::path::Path::new("/x"), false, false, false);
         let cl = DialogLayout::compute(&classic, &text, &d);
         let bl = DialogLayout::compute(&blue, &text, &d);
         assert_eq!(bl.caption, Rect::new(3, 3, cl.caption.width, 26));
@@ -9073,7 +9065,7 @@ mod tests {
         let glass = reprisekit::interfaces::theme_for(reprisekit::interface::Interface::Glass);
         let text = TextRenderer::load(&FontConfig::default());
         let px = glass.fonts.size_px;
-        let d = Dialog::confirm_delete("x", std::path::Path::new("/x"), false, false);
+        let d = Dialog::confirm_delete("x", std::path::Path::new("/x"), false, false, false);
         let cl = DialogLayout::compute(&classic, &text, &d);
         let gl = DialogLayout::compute(&glass, &text, &d);
         let (w, h) = gl.size;
@@ -9132,7 +9124,7 @@ mod tests {
         use reprisekit::style::{Part, State};
         let blue = blue();
         let text = TextRenderer::load(&FontConfig::default());
-        let mut d = Dialog::confirm_delete("x", std::path::Path::new("/x"), false, false);
+        let mut d = Dialog::confirm_delete("x", std::path::Path::new("/x"), false, false, false);
         d.close_hot = true;
         let l = DialogLayout::compute(&blue, &text, &d);
         let c = draw(
@@ -9570,7 +9562,7 @@ mod tests {
             let path = std::path::Path::new("/tmp/a.txt");
             let mut ds = vec![
                 Dialog::run(&history()),
-                Dialog::confirm_delete("a.txt", path, false, false),
+                Dialog::confirm_delete("a.txt", path, false, false, false),
                 Dialog::advanced_attributes(filesheet::Subject::File, None, &text, px, u),
             ];
             ds.iter_mut().for_each(|d| d.fit(theme, &text));
@@ -9636,7 +9628,13 @@ mod tests {
         let Some(text) = tahoma() else { return };
         let theme = Theme::default().with_text_size(150);
         let u = theme.text;
-        let d = Dialog::confirm_delete("a.txt", std::path::Path::new("/tmp/a.txt"), false, false);
+        let d = Dialog::confirm_delete(
+            "a.txt",
+            std::path::Path::new("/tmp/a.txt"),
+            false,
+            false,
+            false,
+        );
         let l = DialogLayout::compute(&theme, &text, &d);
         let base = DialogLayout::compute(&Theme::default(), &text, &d);
         assert_eq!(l.size.0, 6 + u.len(base.size.0 - 6));

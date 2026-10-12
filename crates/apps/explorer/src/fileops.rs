@@ -510,12 +510,7 @@ impl Explorer {
             crate::chrome_icon(ctx, &["user-trash-full"], 32)
         };
         let bin = in_bin.then(|| self.selected_bin_items());
-        let count = paths.len();
-        let reply = self.confirm_box(kind, &name, paths, erase, icon, false, bin);
-        if no_bin && let Some(Dialog::Confirm(c)) = self.dialog.as_mut() {
-            c.text = format!("{} {}", reprisefs::trash::no_bin_lead(count), c.text);
-        }
-        reply
+        self.confirm_box(kind, &name, paths, erase, no_bin, icon, false, bin)
     }
 
     pub fn confirm_empty_bin(&mut self, ctx: &mut Ctx) -> Reply {
@@ -526,7 +521,7 @@ impl Explorer {
         let kind = ConfirmKind::of(self.items.len(), only.is_some_and(|it| it.is_dir));
         let name = only.map(|it| it.name.clone()).unwrap_or_default();
         let icon = crate::chrome_icon(ctx, &["user-trash-full"], 32);
-        self.confirm_box(kind, &name, Vec::new(), true, icon, true, None)
+        self.confirm_box(kind, &name, Vec::new(), true, false, icon, true, None)
     }
 
     /// Yes on that prompt: empty every trash. `Trash` undos go with it (their `files/` copies are
@@ -657,7 +652,7 @@ impl Explorer {
                     },
                     32,
                 );
-                let reply = self.confirm_box(kind, "", Vec::new(), true, icon, false, None);
+                let reply = self.confirm_box(kind, "", Vec::new(), true, false, icon, false, None);
                 if let Some(Dialog::Confirm(c)) = self.dialog.as_mut() {
                     c.text = text;
                     c.too_big = Some(asker);

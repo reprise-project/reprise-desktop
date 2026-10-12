@@ -135,14 +135,6 @@ pub fn trash(path: &Path) -> io::Result<(Trashed, Vec<PathBuf>)> {
         .trash(path)
 }
 
-pub fn no_bin_lead(count: usize) -> &'static str {
-    if count == 1 {
-        "This drive has no Recycle Bin."
-    } else {
-        "Some of these items are on a drive with no Recycle Bin."
-    }
-}
-
 /// Every trash a session uses: the home trash, and the one each other
 /// mounted drive keeps at its top. A path goes to the home trash when it
 /// is on the home trash's drive, else to its own drive's
