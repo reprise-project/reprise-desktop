@@ -537,6 +537,7 @@ mod tests {
         }];
         let tabs = vec![crate::session::SavedTabs {
             apps: vec!["foot".into(), "foot".into()],
+            titles: vec!["~".into(), "~/src".into()],
             shown: 1,
             desktop: 1,
             frame: Some(crate::windowrules::Remembered {

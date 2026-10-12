@@ -1868,7 +1868,7 @@ impl State {
         // A client can gain an owner between first configure and map.
         let placeable = win.placeable();
         let mut want = win.placement.take().filter(|_| placeable);
-        let app = win.app();
+        let (app, title) = (win.app(), win.title());
         // Windows of one app planned together can each plan the same saved
         // tab group; the one that maps as another group's takes its frame.
         let mut resized = false;
@@ -1876,7 +1876,7 @@ impl State {
             && self
                 .session
                 .regrouping
-                .frame(&app, std::time::Instant::now())
+                .frame(&app, &title, std::time::Instant::now())
                 .is_some()
         {
             let fresh = self.plan_window(w);

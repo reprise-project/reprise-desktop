@@ -92,10 +92,10 @@ impl State {
             base = m.want(first);
         }
         if !fixed
-            && let Some(f) = self
-                .session
-                .regrouping
-                .frame(&app_id, std::time::Instant::now())
+            && let Some(f) =
+                self.session
+                    .regrouping
+                    .frame(&app_id, &win.title(), std::time::Instant::now())
         {
             base = self.regroup_want(f);
         }
@@ -108,10 +108,10 @@ impl State {
         {
             base.desktop = Some(d);
         }
-        if let Some(d) = self
-            .session
-            .regrouping
-            .desktop(&app_id, std::time::Instant::now())
+        if let Some(d) =
+            self.session
+                .regrouping
+                .desktop(&app_id, &win.title(), std::time::Instant::now())
             && d < self.desktops.count
         {
             base.desktop = Some(d);
