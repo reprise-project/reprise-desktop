@@ -758,6 +758,9 @@ struct Look {
     /// `[accessibility] text_size` in percent, read and followed as
     /// `shell_dlg` is, for [`Ctx::text_size`].
     text_size: u32,
+    /// `[metrics] double_click_ms`, read and followed as `shell_dlg` is; `None` keeps the
+    /// interface's own.
+    double_click_ms: Option<i32>,
 }
 
 impl Look {
@@ -771,6 +774,7 @@ impl Look {
                 .unwrap_or_else(|_| "hicolor".into()),
             shell_dlg: repriseconf::shell_dlg(),
             text_size: repriseconf::text_size(),
+            double_click_ms: repriseconf::double_click_ms(),
         }
     }
 
@@ -782,6 +786,9 @@ impl Look {
             self.colors.as_deref(),
         );
         theme.fonts.shell_dlg = self.shell_dlg.clone();
+        if let Some(ms) = self.double_click_ms {
+            theme.metrics.double_click_ms = ms;
+        }
         theme
     }
 
@@ -798,6 +805,14 @@ impl Look {
             let font = Some(value).filter(|s| !s.trim().is_empty());
             let changed = self.shell_dlg != font;
             self.shell_dlg = font;
+            return changed;
+        }
+        if key == a::DOUBLE_CLICK_MS {
+            let Ok(ms) = value.parse() else {
+                return false;
+            };
+            let changed = self.double_click_ms != Some(ms);
+            self.double_click_ms = Some(ms);
             return changed;
         }
         if key == a::TEXT_SIZE {
@@ -1169,8 +1184,8 @@ struct Host {
     /// The last pointer press's serial, which a drag must name.
     press_serial: u32,
     /// The time the last pointer press carried, real or a reader's
-    /// (`access_msg`): a reader's click is stamped a second after it, so
-    /// two never make a double click.
+    /// (`access_msg`): a reader's click is stamped a second past the
+    /// double-click time after it, so two never make a double click.
     press_time: u32,
     compositor: CompositorState,
     xdg_shell: XdgShell,
@@ -1866,7 +1881,8 @@ impl Host {
                 let Some(g) = target.and_then(|t| reprisekit::access::gesture(req.act, t)) else {
                     return;
                 };
-                self.press_time = self.press_time.wrapping_add(1000);
+                let apart = self.ctx.theme.metrics.double_click_ms.max(0) as u32 + 1000;
+                self.press_time = self.press_time.wrapping_add(apart);
                 for input in access::reader_input(g, self.press_time) {
                     self.pointer(win, input);
                 }
@@ -3822,6 +3838,17 @@ mod tests {
         assert_eq!(look.theme().fonts.shell_dlg.as_deref(), Some("Tahoma"));
         assert!(look.set(a::SHELL_DLG, String::new()), "unset is a change");
         assert_eq!(look.theme().fonts.shell_dlg, None);
+    }
+
+    #[test]
+    fn the_configured_double_click_time_reaches_the_themes_metrics() {
+        use reprisebus::appearance as a;
+        let mut look = Look::default();
+        assert_eq!(look.theme().metrics.double_click_ms, 500);
+        assert!(look.set(a::DOUBLE_CLICK_MS, "900".into()));
+        assert!(!look.set(a::DOUBLE_CLICK_MS, "900".into()));
+        assert!(!look.set(a::DOUBLE_CLICK_MS, "slow".into()));
+        assert_eq!(look.theme().metrics.double_click_ms, 900);
     }
 
     #[test]

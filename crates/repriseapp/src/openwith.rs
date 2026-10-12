@@ -31,20 +31,32 @@ impl ChooserInput {
 
     /// Feed `ev` to `ow`, laid out as `lay`. A key that brings out a cue is at
     /// least `Event::Redraw`.
-    pub fn event(&mut self, ow: &mut OpenWith, lay: &Layout, ev: &Event) -> openwith::Event {
+    pub fn event(
+        &mut self,
+        ow: &mut OpenWith,
+        lay: &Layout,
+        ev: &Event,
+        metrics: &Metrics,
+    ) -> openwith::Event {
         if let Event::Key(k) = ev {
             let alt = k.mods.alt || matches!(k.sym, keysym::ALT_L | keysym::ALT_R);
             if self.cues.key(alt) {
-                return match self.route(ow, lay, ev) {
+                return match self.route(ow, lay, ev, metrics) {
                     openwith::Event::None => openwith::Event::Redraw,
                     e => e,
                 };
             }
         }
-        self.route(ow, lay, ev)
+        self.route(ow, lay, ev, metrics)
     }
 
-    fn route(&mut self, ow: &mut OpenWith, lay: &Layout, ev: &Event) -> openwith::Event {
+    fn route(
+        &mut self,
+        ow: &mut OpenWith,
+        lay: &Layout,
+        ev: &Event,
+        metrics: &Metrics,
+    ) -> openwith::Event {
         match ev {
             Event::Key(k) => match dialog_key(k) {
                 // The chooser has no edit field: only a flattened key counts, not a paste or IME commit.
@@ -63,10 +75,7 @@ impl ChooserInput {
                 ..
             }) => {
                 let hit = ow.hit(lay, *x, *y);
-                if self
-                    .clicks
-                    .press(hit, Metrics::default().click(*x, *y, *time))
-                {
+                if self.clicks.press(hit, metrics.click(*x, *y, *time)) {
                     ow.double_click(hit)
                 } else {
                     ow.click(hit)
@@ -172,12 +181,17 @@ mod tests {
         let (mut ow, lay) = chooser();
         let mut input = ChooserInput::default();
         assert_eq!(
-            input.event(&mut ow, &lay, &press(centre(lay.ok), 1000)),
+            input.event(
+                &mut ow,
+                &lay,
+                &press(centre(lay.ok), 1000),
+                &Metrics::default()
+            ),
             openwith::Event::Redraw,
             "the press only arms OK"
         );
         assert_eq!(
-            input.event(&mut ow, &lay, &release(centre(lay.ok))),
+            input.event(&mut ow, &lay, &release(centre(lay.ok)), &Metrics::default()),
             choose("alpha")
         );
     }
@@ -187,13 +201,18 @@ mod tests {
         let (mut ow, lay) = chooser();
         let mut input = ChooserInput::default();
         let motion = |(x, y)| Event::Pointer(PointerInput::Motion { x, y });
-        input.event(&mut ow, &lay, &press(centre(lay.ok), 1000));
-        let mut drag = |at| input.event(&mut ow, &lay, &motion(at));
+        input.event(
+            &mut ow,
+            &lay,
+            &press(centre(lay.ok), 1000),
+            &Metrics::default(),
+        );
+        let mut drag = |at| input.event(&mut ow, &lay, &motion(at), &Metrics::default());
         assert_eq!(drag((5, 5)), openwith::Event::Redraw, "off OK it pops up");
         assert_eq!(drag((6, 5)), openwith::Event::None, "still off it");
         assert_eq!(drag(centre(lay.ok)), openwith::Event::Redraw, "back on");
         assert_eq!(
-            input.event(&mut ow, &lay, &release(centre(lay.ok))),
+            input.event(&mut ow, &lay, &release(centre(lay.ok)), &Metrics::default()),
             choose("alpha")
         );
     }
@@ -202,10 +221,36 @@ mod tests {
     fn two_quick_presses_on_one_row_choose_it() {
         let (mut ow, lay) = chooser();
         let mut input = ChooserInput::default();
-        input.event(&mut ow, &lay, &press(row(&lay, 2), 1000));
+        input.event(
+            &mut ow,
+            &lay,
+            &press(row(&lay, 2), 1000),
+            &Metrics::default(),
+        );
         assert_eq!(
-            input.event(&mut ow, &lay, &press(row(&lay, 2), 1300)),
+            input.event(
+                &mut ow,
+                &lay,
+                &press(row(&lay, 2), 1300),
+                &Metrics::default()
+            ),
             choose("beta")
+        );
+    }
+
+    #[test]
+    fn presses_pair_within_the_configured_double_click_time() {
+        let (mut ow, lay) = chooser();
+        let mut input = ChooserInput::default();
+        let slow = Metrics {
+            double_click_ms: 900,
+            ..Metrics::default()
+        };
+        input.event(&mut ow, &lay, &press(row(&lay, 2), 1000), &slow);
+        assert_eq!(
+            input.event(&mut ow, &lay, &press(row(&lay, 2), 1800), &slow),
+            choose("beta"),
+            "800 ms apart is a double click at 900 ms"
         );
     }
 
@@ -213,9 +258,19 @@ mod tests {
     fn two_quick_presses_on_different_rows_only_pick_the_second() {
         let (mut ow, lay) = chooser();
         let mut input = ChooserInput::default();
-        input.event(&mut ow, &lay, &press(row(&lay, 1), 1000));
+        input.event(
+            &mut ow,
+            &lay,
+            &press(row(&lay, 1), 1000),
+            &Metrics::default(),
+        );
         assert_eq!(
-            input.event(&mut ow, &lay, &press(row(&lay, 4), 1300)),
+            input.event(
+                &mut ow,
+                &lay,
+                &press(row(&lay, 4), 1300),
+                &Metrics::default()
+            ),
             openwith::Event::Redraw
         );
         assert_eq!(ow.chosen().map(|p| p.id.as_str()), Some("gamma"));
@@ -230,12 +285,17 @@ mod tests {
         let mut input = ChooserInput::default();
         let wheel = |(x, y), rows| Event::Pointer(PointerInput::Scroll { x, y, rows });
         assert_eq!(
-            input.event(&mut ow, &lay, &wheel(row(&lay, 1), 3)),
+            input.event(&mut ow, &lay, &wheel(row(&lay, 1), 3), &Metrics::default()),
             openwith::Event::Redraw
         );
         assert_eq!(ow.list.top, 3);
         assert_eq!(
-            input.event(&mut ow, &lay, &wheel(centre(lay.ok), 3)),
+            input.event(
+                &mut ow,
+                &lay,
+                &wheel(centre(lay.ok), 3),
+                &Metrics::default()
+            ),
             openwith::Event::None,
             "off the list"
         );
@@ -246,7 +306,7 @@ mod tests {
         let (mut ow, lay) = chooser();
         ow.focus = Focus::Always;
         let mut input = ChooserInput::default();
-        input.event(&mut ow, &lay, &key(0x20, " "));
+        input.event(&mut ow, &lay, &key(0x20, " "), &Metrics::default());
         assert!(ow.always.on, "the box is ticked");
     }
 
@@ -254,7 +314,7 @@ mod tests {
     fn a_letter_walks_the_list() {
         let (mut ow, lay) = chooser();
         let mut input = ChooserInput::default();
-        input.event(&mut ow, &lay, &key(0x67, "g"));
+        input.event(&mut ow, &lay, &key(0x67, "g"), &Metrics::default());
         assert_eq!(ow.chosen().map(|p| p.id.as_str()), Some("gamma"));
     }
 
@@ -262,10 +322,15 @@ mod tests {
     fn the_cues_wait_for_a_key() {
         let (mut ow, lay) = chooser();
         let mut input = ChooserInput::default();
-        input.event(&mut ow, &lay, &press(centre(lay.cancel), 1000));
-        input.event(&mut ow, &lay, &release((0, 0)));
+        input.event(
+            &mut ow,
+            &lay,
+            &press(centre(lay.cancel), 1000),
+            &Metrics::default(),
+        );
+        input.event(&mut ow, &lay, &release((0, 0)), &Metrics::default());
         assert_eq!(input.cues(), Cues::NONE, "the pointer alone shows no cues");
-        input.event(&mut ow, &lay, &key(0xff09, "\t"));
+        input.event(&mut ow, &lay, &key(0xff09, "\t"), &Metrics::default());
         assert_eq!(
             input.cues(),
             Cues {
@@ -281,12 +346,12 @@ mod tests {
         let (mut ow, lay) = chooser();
         let mut input = ChooserInput::default();
         assert_eq!(
-            input.event(&mut ow, &lay, &key(0xffe9, "")),
+            input.event(&mut ow, &lay, &key(0xffe9, ""), &Metrics::default()),
             openwith::Event::Redraw
         );
         assert_eq!(input.cues(), Cues::ALL);
         assert_eq!(
-            input.event(&mut ow, &lay, &key(0xffe9, "")),
+            input.event(&mut ow, &lay, &key(0xffe9, ""), &Metrics::default()),
             openwith::Event::None,
             "a second Alt changes nothing"
         );
@@ -298,7 +363,7 @@ mod tests {
         let (mut ow, lay) = chooser();
         let mut input = ChooserInput::opened(true);
         assert_eq!(
-            input.event(&mut ow, &lay, &key(0, "gamma")),
+            input.event(&mut ow, &lay, &key(0, "gamma"), &Metrics::default()),
             openwith::Event::None,
             "a paste or an IME commit does not type-ahead (the cues are out already)"
         );

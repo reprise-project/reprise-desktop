@@ -51,7 +51,7 @@ impl Explorer {
             (0, 0),
             &ctx.theme.look.controls(),
         );
-        let out = cp.input.event(&mut cp.ow, &lay, &ev);
+        let out = cp.input.event(&mut cp.ow, &lay, &ev, &ctx.theme.metrics);
         match out {
             openwith::Event::None => Reply::none(),
             openwith::Event::Redraw => Reply::redraw(),
@@ -96,9 +96,14 @@ impl Explorer {
         };
         let k = keep(b.dlg.filter());
         b.host.ensure_listed(&mut b.dlg, &mut ctx.icons, &k);
-        let step = b
-            .host
-            .event(&mut b.dlg, &ev, &self.dialog_text, self.dialog_px, ctx.size);
+        let step = b.host.event(
+            &mut b.dlg,
+            &ev,
+            &self.dialog_text,
+            self.dialog_px,
+            ctx.size,
+            &ctx.theme.metrics,
+        );
         match step {
             Step::Closed | Step::Out(FileEvent::Cancel) => {
                 cp.browse = None;

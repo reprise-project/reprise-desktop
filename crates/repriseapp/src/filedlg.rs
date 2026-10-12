@@ -205,6 +205,7 @@ impl Host {
         text: &TextRenderer,
         px: u32,
         size: (i32, i32),
+        metrics: &Metrics,
     ) -> Step {
         use reprisekit::controls::filedlg::Event as E;
         let (w, h) = dlg.client();
@@ -241,10 +242,7 @@ impl Host {
                 time,
             }) => {
                 let hit = dlg.hit(text, px, r, *x, *y);
-                if self
-                    .clicks
-                    .press(hit, Metrics::default().click(*x, *y, *time))
-                {
+                if self.clicks.press(hit, metrics.click(*x, *y, *time)) {
                     dlg.double_click(r, hit)
                 } else {
                     dlg.click(r, hit, mods(m))
@@ -443,12 +441,26 @@ mod tests {
             })
         };
         assert!(matches!(
-            h.event(&mut dlg, &thumb(0x113), &text, 11, CLIENT),
+            h.event(
+                &mut dlg,
+                &thumb(0x113),
+                &text,
+                11,
+                CLIENT,
+                &Metrics::default()
+            ),
             Step::Out(E::NeedListing(1))
         ));
         dlg.set_listing(listing(1));
         assert!(matches!(
-            h.event(&mut dlg, &thumb(0x114), &text, 11, CLIENT),
+            h.event(
+                &mut dlg,
+                &thumb(0x114),
+                &text,
+                11,
+                CLIENT,
+                &Metrics::default()
+            ),
             Step::Out(E::NeedListing(2))
         ));
     }
@@ -491,7 +503,14 @@ mod tests {
         );
         let text = TextRenderer::load(&reprisekit::theme::FontConfig::default());
         let mut host = Host::default();
-        host.event(&mut dlg, &key(keysym::DOWN, true, None), &text, 11, CLIENT);
+        host.event(
+            &mut dlg,
+            &key(keysym::DOWN, true, None),
+            &text,
+            11,
+            CLIENT,
+            &Metrics::default(),
+        );
         assert_eq!(dlg.file_name(), "a.txt", "Ctrl+Down moves the focus alone");
         host.event(
             &mut dlg,
@@ -499,6 +518,7 @@ mod tests {
             &text,
             11,
             CLIENT,
+            &Metrics::default(),
         );
         assert_eq!(dlg.file_name(), "\"b.txt\" \"a.txt\"");
     }
@@ -706,7 +726,14 @@ mod tests {
         let text = TextRenderer::load(&reprisekit::theme::FontConfig::default());
         let accept = |h: &mut Host, dlg: &mut FileDlg, typed: &str| {
             dlg.set_file_name(typed);
-            h.event(dlg, &key(keysym::RETURN, false, None), &text, 11, CLIENT)
+            h.event(
+                dlg,
+                &key(keysym::RETURN, false, None),
+                &text,
+                11,
+                CLIENT,
+                &Metrics::default(),
+            )
         };
         let Step::Out(E::NeedListing(id)) = accept(&mut h, &mut dlg, "*") else {
             panic!("a bare pattern relists the open folder");
@@ -813,15 +840,36 @@ mod tests {
         let wheel = |x, y, rows| Event::Pointer(PointerInput::Scroll { x, y, rows });
         let mut host = Host::default();
         assert!(matches!(
-            host.event(&mut dlg, &wheel(x, y, -WHEEL_ROWS), &text, 11, CLIENT),
+            host.event(
+                &mut dlg,
+                &wheel(x, y, -WHEEL_ROWS),
+                &text,
+                11,
+                CLIENT,
+                &Metrics::default()
+            ),
             Step::None
         ));
         assert!(matches!(
-            host.event(&mut dlg, &wheel(x, y, WHEEL_ROWS), &text, 11, CLIENT),
+            host.event(
+                &mut dlg,
+                &wheel(x, y, WHEEL_ROWS),
+                &text,
+                11,
+                CLIENT,
+                &Metrics::default()
+            ),
             Step::Redraw
         ));
         assert!(matches!(
-            host.event(&mut dlg, &wheel(1, 1, WHEEL_ROWS), &text, 11, CLIENT),
+            host.event(
+                &mut dlg,
+                &wheel(1, 1, WHEEL_ROWS),
+                &text,
+                11,
+                CLIENT,
+                &Metrics::default()
+            ),
             Step::None
         ));
     }

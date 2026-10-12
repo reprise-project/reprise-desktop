@@ -701,7 +701,14 @@ impl NetApp {
         let host = &mut self.import_host;
         let keep = type_keep(d);
         host.ensure_listed(d, &mut ctx.icons, &keep);
-        let picked = match host.event(d, &ev, &ctx.text, ctx.theme.fonts.size_px, ctx.size) {
+        let picked = match host.event(
+            d,
+            &ev,
+            &ctx.text,
+            ctx.theme.fonts.size_px,
+            ctx.size,
+            &ctx.theme.metrics,
+        ) {
             Step::Closed | Step::Out(FileEvent::Cancel) => None,
             Step::None => return Reply::none(),
             Step::Redraw => return Reply::redraw(),

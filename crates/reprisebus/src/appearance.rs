@@ -27,7 +27,10 @@ pub const GLASS_MODE: &str = "glass-mode";
 /// `[accessibility] text_size`, in percent ("150").
 pub const TEXT_SIZE: &str = "text-size";
 
-const KEYS: [&str; 7] = [
+/// `[metrics] double_click_ms` in force, in ms ("500").
+pub const DOUBLE_CLICK_MS: &str = "double-click-ms";
+
+const KEYS: [&str; 8] = [
     INTERFACE,
     BLUE_VARIANT,
     GLASS_MODE,
@@ -35,6 +38,7 @@ const KEYS: [&str; 7] = [
     ICON_THEME,
     SHELL_DLG,
     TEXT_SIZE,
+    DOUBLE_CLICK_MS,
 ];
 
 /// Call `changed(key, value)` from a thread of its own for each key of

@@ -221,7 +221,8 @@ impl App for Choose {
                     (0, 0),
                     &ctx.theme.look.controls(),
                 );
-                self.input_state.event(&mut self.ow, &lay, &ev)
+                self.input_state
+                    .event(&mut self.ow, &lay, &ev, &ctx.theme.metrics)
             }
         };
         match out {

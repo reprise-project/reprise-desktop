@@ -40,6 +40,7 @@ pub struct Appearance {
     /// 100%: GTK scales it by `text-scaling-factor`.
     pub font_name: String,
     pub text_size: u32,
+    pub double_click_ms: i32,
     /// `[toolkits] gtk_theme`, "auto", "reprise" or a theme's name.
     pub gtk_theme: String,
     /// The theme directory holding the generated GTK theme
@@ -76,6 +77,7 @@ impl Appearance {
             cursor_size: cursor_size as i32,
             font_name: font_name(&cfg.theme.fonts, cfg.accessibility.text_factor()),
             text_size: cfg.accessibility.text_size,
+            double_click_ms: cfg.theme.metrics.double_click_ms,
             gtk_theme: cfg.toolkits.gtk_theme.clone(),
             gtk_generated: None,
             font_smoothing: cfg.toolkits.font_smoothing,
@@ -149,6 +151,11 @@ impl Appearance {
                 look::NAMESPACE,
                 look::TEXT_SIZE,
                 Value::from(self.text_size.to_string()),
+            ),
+            (
+                look::NAMESPACE,
+                look::DOUBLE_CLICK_MS,
+                Value::from(self.double_click_ms.to_string()),
             ),
             (
                 GNOME,
@@ -425,7 +432,7 @@ mod tests {
         };
         assert_eq!(
             s.read_all(vec![look::NAMESPACE.into()])[look::NAMESPACE].len(),
-            7
+            8
         );
         let text = |key| String::try_from(s.lookup(look::NAMESPACE, key).unwrap()).unwrap();
         assert_eq!(text(look::INTERFACE), "blue");
@@ -435,7 +442,13 @@ mod tests {
         assert_eq!(text(look::SHELL_DLG), "/usr/share/wine/fonts/sserife.fon");
         assert_eq!(text(look::GLASS_MODE), "light");
         assert_eq!(text(look::TEXT_SIZE), "100");
+        assert_eq!(text(look::DOUBLE_CLICK_MS), "500");
         assert!(s.lookup(look::NAMESPACE, "color-scheme").is_err());
+        let slow = crate::config::Config::parse("[metrics]\ndouble_click_ms = 900\n").unwrap();
+        assert_eq!(
+            Appearance::of(&slow).get(look::NAMESPACE, look::DOUBLE_CLICK_MS),
+            Some(Value::from("900"))
+        );
     }
 
     #[test]
