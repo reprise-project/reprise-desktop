@@ -31,7 +31,7 @@ struct DateTimeApp {
     zones: Vec<String>,
     /// An Apply under way on the worker thread, and whether an OK started
     /// it (the sheet closes when it succeeds).
-    applying: Option<(Receiver<Result<System, String>>, bool)>,
+    applying: Option<(Receiver<Result<System, timedate::Failure>>, bool)>,
     waker: Option<repriseapp::Waker>,
     error: Option<MsgBox>,
     /// The renderer and forms theme the box is sized with: `children` has no
@@ -117,7 +117,7 @@ impl DateTimeApp {
                         self.quit = true;
                     }
                 }
-                Err(msg) => {
+                Err(failure) => {
                     // The settings may be half changed: read what stuck.
                     if let Ok((system, _)) = timedate::read() {
                         self.system = system;
@@ -125,17 +125,19 @@ impl DateTimeApp {
                     if let Some(s) = &mut self.sheet {
                         s.unapplied(&self.system);
                     }
-                    self.error = Some(MsgBox::new(
-                        TITLE,
-                        msgbox::Fields {
-                            text: format!("The clock could not be changed: {msg}"),
-                            icon: None,
-                            buttons: vec!["OK".into()],
-                            default: 0,
-                            min_text_h: None,
-                            min_w: 0,
-                        },
-                    ));
+                    if let timedate::Failure::Text(msg) = failure {
+                        self.error = Some(MsgBox::new(
+                            TITLE,
+                            msgbox::Fields {
+                                text: format!("The clock could not be changed: {msg}"),
+                                icon: None,
+                                buttons: vec!["OK".into()],
+                                default: 0,
+                                min_text_h: None,
+                                min_w: 0,
+                            },
+                        ));
+                    }
                 }
             }
         }
