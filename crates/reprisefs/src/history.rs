@@ -35,6 +35,11 @@ impl<T> History<T> {
         self.at = self.entries.len() - 1;
     }
 
+    /// Put `t` in place of the current entry, leaving the rest as it was.
+    pub fn replace(&mut self, t: T) {
+        self.entries[self.at] = t;
+    }
+
     pub fn back(&mut self) -> Option<&T> {
         self.go(1)
     }

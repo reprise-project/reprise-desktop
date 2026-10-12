@@ -38,13 +38,66 @@ fn mask() -> WatchMask {
         | WatchMask::CLOSE_WRITE
 }
 
-/// The watches that count only events naming one entry, with that entry.
-type Only = Arc<Mutex<Vec<(WatchDescriptor, OsString)>>>;
+/// What the thread and the window share: the watches that count only events naming one entry (with
+/// that entry), and the folder [`Watch::watch`] shows.
+#[derive(Default)]
+struct Shared {
+    only: Vec<(WatchDescriptor, OsString)>,
+    shown: Option<Shown>,
+}
+
+/// The shown folder's own watch and its parent's, which names it when it is renamed in place.
+struct Shown {
+    dir: PathBuf,
+    wd: WatchDescriptor,
+    parent: Option<WatchDescriptor>,
+    /// The cookie of the parent's MOVED_FROM naming the folder, to pair with its MOVED_TO.
+    leaving: Option<u32>,
+    /// Set once the folder left: its new path after a rename in place, else its old path.
+    gone: Option<PathBuf>,
+}
+
+impl Shared {
+    /// Take in one event; true when it counts as a change.
+    fn note(&mut self, e: &inotify::Event<&std::ffi::OsStr>) -> bool {
+        // IGNORED is the kernel's answer to our own `remove` in [`Watch::clear`] (it comes
+        // whatever the mask says). Taking it for a change would refresh, which re-watches,
+        // which reports IGNORED again: a busy loop.
+        if e.mask.contains(EventMask::IGNORED) {
+            return false;
+        }
+        if let Some(s) = self.shown.as_mut() {
+            if s.parent.as_ref() == Some(&e.wd) {
+                let ours = e.name == s.dir.file_name();
+                if e.mask.contains(EventMask::MOVED_FROM) && ours {
+                    s.leaving = Some(e.cookie);
+                } else if e.mask.contains(EventMask::MOVED_TO)
+                    && s.leaving == Some(e.cookie)
+                    && let Some(name) = e.name
+                {
+                    s.gone.get_or_insert_with(|| s.dir.with_file_name(name));
+                }
+                return false;
+            }
+            if e.wd == s.wd
+                && e.mask
+                    .intersects(EventMask::MOVE_SELF | EventMask::DELETE_SELF)
+            {
+                s.gone.get_or_insert_with(|| s.dir.clone());
+                return true;
+            }
+        }
+        self.only
+            .iter()
+            .find(|(wd, _)| *wd == e.wd)
+            .is_none_or(|(_, name)| e.name == Some(name.as_os_str()))
+    }
+}
 
 pub struct Watch {
     watches: Watches,
     wd: Vec<WatchDescriptor>,
-    only: Only,
+    shared: Arc<Mutex<Shared>>,
     changed: Arc<AtomicBool>,
 }
 
@@ -55,30 +108,21 @@ impl Watch {
         let watches = inotify.watches();
         let changed = Arc::new(AtomicBool::new(false));
         let flag = changed.clone();
-        let only: Only = Arc::default();
-        let filter = only.clone();
+        let shared: Arc<Mutex<Shared>> = Arc::default();
+        let seen = shared.clone();
         std::thread::Builder::new()
             .name("watch".to_string())
             .spawn(move || {
                 let mut buf = [0u8; 4096];
                 let mut last_wake: Option<Instant> = None;
+                let note = |events: inotify::Events| {
+                    let mut seen = seen.lock().unwrap_or_else(|e| e.into_inner());
+                    events.fold(false, |any, e| seen.note(&e) | any)
+                };
                 loop {
                     match inotify.read_events_blocking(&mut buf) {
-                        Ok(mut events) => {
-                            // IGNORED is the kernel's answer to our own
-                            // `remove` in [`Watch::watch`] (it comes
-                            // whatever the mask says). Taking it for a
-                            // change would refresh, which re-watches,
-                            // which reports IGNORED again: a busy loop.
-                            let only = filter.lock().unwrap_or_else(|e| e.into_inner());
-                            let counts = |e: &inotify::Event<&std::ffi::OsStr>| {
-                                !e.mask.contains(EventMask::IGNORED)
-                                    && only
-                                        .iter()
-                                        .find(|(wd, _)| *wd == e.wd)
-                                        .is_none_or(|(_, name)| e.name == Some(name.as_os_str()))
-                            };
-                            if !events.any(|e| counts(&e)) {
+                        Ok(events) => {
+                            if !note(events) {
                                 continue;
                             }
                         }
@@ -89,8 +133,10 @@ impl Watch {
                         }
                     }
                     std::thread::sleep(settle(last_wake.map(|t| t.elapsed())));
-                    // Swallow the rest of the burst; the fd is non-blocking.
-                    let _ = inotify.read_events(&mut buf);
+                    // The rest of the burst is one change; the fd is non-blocking.
+                    if let Ok(events) = inotify.read_events(&mut buf) {
+                        note(events);
+                    }
                     flag.store(true, Ordering::SeqCst);
                     wake.wake();
                     last_wake = Some(Instant::now());
@@ -99,39 +145,64 @@ impl Watch {
         Ok(Watch {
             watches,
             wd: Vec::new(),
-            only,
+            shared,
             changed,
         })
     }
 
-    /// Watch `dir` instead of whatever was being watched.
+    fn shared(&self) -> std::sync::MutexGuard<'_, Shared> {
+        self.shared.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// Watch `dir` instead of whatever was being watched, and notice it leaving ([`Watch::take_gone`]).
     pub fn watch(&mut self, dir: &Path) {
-        self.watch_all(&[(dir.to_path_buf(), None)]);
+        self.clear();
+        let Some(wd) = self.add(dir, mask() | WatchMask::MOVE_SELF | WatchMask::DELETE_SELF) else {
+            return;
+        };
+        let parent = dir
+            .parent()
+            .and_then(|p| self.add(p, WatchMask::MOVED_FROM | WatchMask::MOVED_TO));
+        self.shared().shown = Some(Shown {
+            dir: dir.to_path_buf(),
+            wd,
+            parent,
+            leaving: None,
+            gone: None,
+        });
     }
 
     /// Watch every one of `dirs` (the Recycle Bin's folders, one per drive, and the folders above
     /// the home trash) instead of whatever was being watched. A folder paired with a name counts
     /// only events naming that entry.
-    /// A folder that cannot be watched is logged and left unwatched; F5 still refreshes it.
     pub fn watch_all(&mut self, dirs: &[(PathBuf, Option<OsString>)]) {
         self.clear();
-        let mut only = self.only.lock().unwrap_or_else(|e| e.into_inner());
         for (dir, name) in dirs {
-            match self.watches.add(dir, mask()) {
-                Ok(wd) => {
-                    if let Some(name) = name {
-                        only.push((wd.clone(), name.clone()));
-                    }
-                    self.wd.push(wd);
-                }
-                Err(e) => log::info!("cannot watch {}: {e}", dir.display()),
+            if let Some(wd) = self.add(dir, mask())
+                && let Some(name) = name
+            {
+                self.shared().only.push((wd, name.clone()));
+            }
+        }
+    }
+
+    /// A folder that cannot be watched is logged and left unwatched; F5 still refreshes it.
+    fn add(&mut self, dir: &Path, mask: WatchMask) -> Option<WatchDescriptor> {
+        match self.watches.add(dir, mask) {
+            Ok(wd) => {
+                self.wd.push(wd.clone());
+                Some(wd)
+            }
+            Err(e) => {
+                log::info!("cannot watch {}: {e}", dir.display());
+                None
             }
         }
     }
 
     /// Stop watching anything (Computer and the other places that are not a folder on disk).
     pub fn clear(&mut self) {
-        self.only.lock().unwrap_or_else(|e| e.into_inner()).clear();
+        *self.shared() = Shared::default();
         for wd in self.wd.drain(..) {
             let _ = self.watches.remove(wd);
         }
@@ -140,6 +211,12 @@ impl Watch {
     /// Whether the folder changed since the last call.
     pub fn take_changed(&mut self) -> bool {
         self.changed.swap(false, Ordering::SeqCst)
+    }
+
+    /// Once the folder [`Watch::watch`] shows was deleted or moved away: its new path when it was
+    /// renamed in place, else its old one.
+    pub fn take_gone(&mut self) -> Option<PathBuf> {
+        self.shared().shown.as_mut()?.gone.take()
     }
 
     #[cfg(test)]
@@ -237,8 +314,61 @@ mod tests {
         assert!(watch.wd.is_empty());
         let dir = tempfile::tempdir().expect("tempdir");
         watch.watch(dir.path());
-        assert_eq!(watch.wd.len(), 1);
+        assert_eq!(watch.wd.len(), 2, "the folder and its parent");
         watch.clear();
         assert!(watch.wd.is_empty());
+    }
+
+    fn wait() {
+        std::thread::sleep(COALESCE * 4);
+    }
+
+    #[test]
+    fn a_folder_renamed_in_place_is_gone_to_its_new_name() {
+        let mut watch = Watch::new(Waker::noop()).expect("inotify");
+        let top = tempfile::tempdir().expect("tempdir");
+        let (old, new) = (top.path().join("old"), top.path().join("new"));
+        std::fs::create_dir(&old).expect("mkdir");
+        watch.watch(&old);
+        std::fs::write(top.path().join("other.txt"), "x").expect("write");
+        std::fs::rename(top.path().join("other.txt"), top.path().join("moved.txt")).expect("mv");
+        wait();
+        assert_eq!(
+            watch.take_gone(),
+            None,
+            "another entry moving in the parent"
+        );
+        assert!(
+            !watch.take_changed(),
+            "the parent's events are not a change"
+        );
+
+        std::fs::rename(&old, &new).expect("rename");
+        wait();
+        assert_eq!(watch.take_gone(), Some(new));
+        assert_eq!(watch.take_gone(), None, "taken once");
+    }
+
+    #[test]
+    fn a_folder_moved_elsewhere_or_deleted_is_gone_from_its_old_path() {
+        let mut watch = Watch::new(Waker::noop()).expect("inotify");
+        let top = tempfile::tempdir().expect("tempdir");
+        let shown = top.path().join("a").join("shown");
+        std::fs::create_dir_all(&shown).expect("mkdir");
+        std::fs::create_dir(top.path().join("b")).expect("mkdir");
+        watch.watch(&shown);
+        std::fs::rename(&shown, top.path().join("b").join("shown")).expect("mv");
+        wait();
+        assert_eq!(
+            watch.take_gone(),
+            Some(shown.clone()),
+            "moved to another folder"
+        );
+
+        std::fs::create_dir(&shown).expect("mkdir");
+        watch.watch(&shown);
+        std::fs::remove_dir(&shown).expect("rmdir");
+        wait();
+        assert_eq!(watch.take_gone(), Some(shown), "deleted");
     }
 }

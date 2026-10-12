@@ -574,33 +574,52 @@ fn watch_wants(dir: &Path, files: bool, system_icons: &[String]) -> Vec<Want> {
         && let Some(root) = places::trash_root()
     {
         want.extend(home_trash_wants(&root));
-        // Each mounted drive's trash too, and each drive's top for its
-        // trash being made; an eject drops the watch, which is a change.
-        let Some(bins) = reprisefs::trash::Bins::system() else {
-            return want;
-        };
-        let names = [".Trash".into(), format!(".Trash-{}", bins.uid).into()];
-        for top in bins.mounts.iter().filter(|m| !bins.unlisted.contains(*m)) {
-            want.push(Want {
-                dir: top.clone(),
-                mask: WatchMask::CREATE | WatchMask::MOVED_TO,
-                only: names.to_vec(),
-            });
-        }
-        for root in bins.roots().into_iter().skip(1) {
-            want.push(Want {
-                dir: root.join("files"),
-                mask: TRASH_MASK,
-                only: Vec::new(),
-            });
-            want.push(Want {
-                dir: root,
-                mask: TRASH_MASK,
-                only: Vec::new(),
-            });
+        if let Some(bins) = reprisefs::trash::Bins::system() {
+            want.extend(drive_trash_wants(&bins));
         }
     }
     want
+}
+
+/// Each mounted drive's trash, and each drive's top for its trash being
+/// made; an eject drops the watch, which is a change. A top the user cannot
+/// read (`/root` on its own subvolume) holds no trash of theirs and is left out.
+fn drive_trash_wants(bins: &reprisefs::trash::Bins) -> Vec<Want> {
+    let mut want = Vec::new();
+    let names = [".Trash".into(), format!(".Trash-{}", bins.uid).into()];
+    for top in bins.mounts.iter().filter(|m| !bins.unlisted.contains(*m)) {
+        if !readable(top) {
+            continue;
+        }
+        want.push(Want {
+            dir: top.clone(),
+            mask: WatchMask::CREATE | WatchMask::MOVED_TO,
+            only: names.to_vec(),
+        });
+    }
+    for root in bins.roots().into_iter().skip(1) {
+        want.push(Want {
+            dir: root.join("files"),
+            mask: TRASH_MASK,
+            only: Vec::new(),
+        });
+        want.push(Want {
+            dir: root,
+            mask: TRASH_MASK,
+            only: Vec::new(),
+        });
+    }
+    want
+}
+
+/// Whether the user may list `dir`, which inotify needs to watch it.
+fn readable(dir: &Path) -> bool {
+    use std::os::unix::ffi::OsStrExt;
+    let Ok(c) = std::ffi::CString::new(dir.as_os_str().as_bytes()) else {
+        return false;
+    };
+    // SAFETY: `c` is a valid NUL-terminated path.
+    unsafe { libc::access(c.as_ptr(), libc::R_OK) == 0 }
 }
 
 const TRASH_MASK: WatchMask = WatchMask::CREATE
@@ -1866,6 +1885,23 @@ mod tests {
             [dir.to_path_buf(), PathBuf::from("/home/u")],
             "the folder and its parent"
         );
+    }
+
+    #[test]
+    fn a_drive_top_the_user_cannot_read_is_not_watched() {
+        use std::os::unix::fs::PermissionsExt;
+        let top = std::env::temp_dir().join(format!("reprise-drive-tops-{}", std::process::id()));
+        let (open, shut) = (top.join("open"), top.join("shut"));
+        std::fs::create_dir_all(&open).unwrap();
+        std::fs::create_dir_all(&shut).unwrap();
+        std::fs::set_permissions(&shut, std::fs::Permissions::from_mode(0o300)).unwrap();
+        let bins = reprisefs::trash::Bins::new(top.join("home"), vec![open.clone(), shut]);
+        let dirs: Vec<PathBuf> = drive_trash_wants(&bins)
+            .into_iter()
+            .map(|w| w.dir)
+            .collect();
+        let _ = std::fs::remove_dir_all(&top);
+        assert_eq!(dirs, [open]);
     }
 
     #[test]
