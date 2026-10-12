@@ -304,6 +304,7 @@ pub(super) fn metrics(v: Variant) -> TaskMetrics {
         section_inset: 15,
         text_dx: 1,
         foot: 1,
+        line: 13,
     }
 }
 

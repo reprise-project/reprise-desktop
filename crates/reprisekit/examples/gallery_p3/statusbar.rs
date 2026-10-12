@@ -6,7 +6,7 @@ use reprisekit::theme::{Color, Theme};
 pub const HEIGHT: i32 = 2 * 23 + 12;
 
 pub fn draw(c: &mut Canvas, theme: &Theme, text: &TextRenderer, r: Rect) {
-    let h = statusbar::height(&theme.look);
+    let h = statusbar::height(&theme.controls());
     let mut icon = Canvas::new(statusbar::ICON_PX as u32, statusbar::ICON_PX as u32);
     icon.fill_rect(Rect::new(2, 2, 12, 12), Color::rgb(80, 193, 255));
     for (i, grip) in [true, false].into_iter().enumerate() {

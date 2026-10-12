@@ -324,6 +324,8 @@ pub struct TaskMetrics {
     pub text_dx: i32,
     /// Rows at the pane's bottom edge left in the window colour under its background.
     pub foot: i32,
+    /// A line of a link's or a Details line's text, tall.
+    pub line: i32,
 }
 
 impl TaskMetrics {
@@ -337,6 +339,7 @@ impl TaskMetrics {
         section_inset: 14,
         text_dx: 0,
         foot: 0,
+        line: 13,
     };
 }
 
@@ -437,6 +440,15 @@ impl ControlMetrics {
                 ..self.menubar
             },
             places: self.places.grown(u),
+            status_bar: u.len(self.status_bar),
+            task: TaskMetrics {
+                line: u.len(self.task.line),
+                ..self.task
+            },
+            bar: BarMetrics {
+                header: u.len(self.bar.header),
+                ..self.bar
+            },
             text: u,
             ..self
         }

@@ -28,7 +28,7 @@ fn index_of(ex: &Explorer, name: &str) -> usize {
 
 fn cell(ex: &Explorer, ctx: &Ctx, i: usize) -> Rect {
     let lay = ex.layout(ctx);
-    shellview::layout(&ex.sv, lay.view, &ctx.theme.look.controls()).cells[i]
+    shellview::layout(&ex.sv, lay.view, &ctx.theme.controls()).cells[i]
 }
 
 fn centre(ex: &Explorer, ctx: &Ctx, i: usize) -> (i32, i32) {

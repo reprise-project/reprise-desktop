@@ -171,7 +171,7 @@ impl App for Choose {
     }
 
     fn initial_size(&self) -> (i32, i32) {
-        openwith::CLIENT
+        openwith::client(&crate::dialog::start_forms().controls())
     }
 
     fn fixed(&self) -> bool {
@@ -217,9 +217,9 @@ impl App for Choose {
             ev => {
                 let lay = self.ow.layout(
                     &ctx.text,
-                    ctx.theme.fonts.size_px,
+                    ctx.forms().fonts.size_px,
                     (0, 0),
-                    &ctx.theme.look.controls(),
+                    &ctx.forms().controls(),
                 );
                 self.input_state
                     .event(&mut self.ow, &lay, &ev, &ctx.theme.metrics)
@@ -234,17 +234,17 @@ impl App for Choose {
     }
 
     fn draw(&mut self, _win: WinId, c: &mut Canvas, ctx: &Ctx) {
-        let px = ctx.theme.fonts.size_px;
+        let px = ctx.forms().fonts.size_px;
         let lay = self
             .ow
-            .layout(&ctx.text, px, (0, 0), &ctx.theme.look.controls());
+            .layout(&ctx.text, px, (0, 0), &ctx.forms().controls());
         let rows: Vec<Option<&Canvas>> = self.row_icons.iter().map(Option::as_ref).collect();
         self.ow.draw(
             c,
             &ctx.text,
             &Paint {
                 s: 1,
-                ..ctx.theme.paint()
+                ..ctx.forms().paint()
             },
             &lay,
             self.icon.as_ref(),
@@ -257,9 +257,9 @@ impl App for Choose {
     fn access(&mut self, _win: WinId, tree: &mut Tree, ctx: &Ctx) {
         let lay = self.ow.layout(
             &ctx.text,
-            ctx.theme.fonts.size_px,
+            ctx.forms().fonts.size_px,
             (0, 0),
-            &ctx.theme.look.controls(),
+            &ctx.forms().controls(),
         );
         self.ow.access(tree, &lay);
     }

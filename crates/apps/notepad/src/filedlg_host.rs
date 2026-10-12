@@ -30,6 +30,7 @@ impl Notepad {
                 multiple: false,
                 filters: vec!["Text Documents (*.txt)".into(), "All Files (*.*)".into()],
             },
+            self.forms.text,
         );
         self.open = Some(dlg);
     }
@@ -45,6 +46,7 @@ impl Notepad {
                 multiple: false,
                 filters: vec!["Text Documents (*.txt)".into(), "All Files (*.*)".into()],
             },
+            self.forms.text,
         );
         self.saveas = Some(dlg);
     }
@@ -59,7 +61,7 @@ impl Notepad {
             dlg,
             &ev,
             &self.dialog_text,
-            self.dialog_px,
+            self.forms.fonts.size_px,
             ctx.size,
             &ctx.theme.metrics,
         ) {
@@ -150,7 +152,7 @@ impl Notepad {
             dlg,
             &ev,
             &self.dialog_text,
-            self.dialog_px,
+            self.forms.fonts.size_px,
             ctx.size,
             &ctx.theme.metrics,
         ) {

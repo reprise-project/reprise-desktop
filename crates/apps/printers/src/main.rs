@@ -653,6 +653,7 @@ impl PrintersApp {
                         multiple: false,
                         filters: vec!["Printer Drivers (*.ppd)".into(), "All Files (*.*)".into()],
                     },
+                    ctx.forms().text,
                 );
                 self.browse = Some((host, dlg));
                 Reply::redraw_all()
@@ -688,7 +689,7 @@ impl PrintersApp {
             d,
             &ev,
             &ctx.text,
-            ctx.theme.fonts.size_px,
+            ctx.forms().fonts.size_px,
             ctx.size,
             &ctx.theme.metrics,
         ) {
@@ -920,7 +921,7 @@ impl App for PrintersApp {
                         tree,
                         Rect::new(0, 0, w, h),
                         &ctx.text,
-                        ctx.theme.fonts.size_px,
+                        ctx.forms().fonts.size_px,
                     );
                 }
             }
@@ -984,14 +985,14 @@ impl App for PrintersApp {
                     let (w, h) = d.client();
                     let paint = Paint {
                         s: 1,
-                        ..ctx.theme.paint()
+                        ..forms.paint()
                     };
                     d.draw(
                         c,
                         &ctx.text,
                         &paint,
                         Rect::new(0, 0, w, h),
-                        ctx.theme.fonts.size_px,
+                        forms.fonts.size_px,
                     );
                 }
             }

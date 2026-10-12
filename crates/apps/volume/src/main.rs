@@ -218,7 +218,7 @@ impl Volume {
             }],
             grip: false,
         };
-        let h = statusbar::height(&ctx.theme.look);
+        let h = statusbar::height(&ctx.theme.controls());
         let r = Rect::new(0, ctx.size.1 - fit::status_h(&ctx.theme), ctx.size.0, h);
         (bar, r)
     }
@@ -760,7 +760,7 @@ impl App for Volume {
                 let menus = self.bar.access(&self.bar_layout(ctx), tree, ROOT);
                 let focus = self.mixer.access(&self.mixer_layout(ctx), tree, ROOT);
                 let (sb, r) = self.status(ctx);
-                statusbar::access(&sb, r, tree, ROOT);
+                statusbar::access(&sb, r, ctx.theme.text, tree, ROOT);
                 tree.set_focus(menus.unwrap_or(focus));
             }
         }
@@ -953,7 +953,7 @@ mod tests {
         let v = Volume::new(View::Playback, Snapshot::default(), State::default());
         let mut ctx = test_ctx();
         ctx.theme = reprisekit::interfaces::theme_for(reprisekit::interface::Interface::Blue);
-        let h = statusbar::height(&ctx.theme.look);
+        let h = statusbar::height(&ctx.theme.controls());
         assert_ne!(h, statusbar::HEIGHT, "Blue's bar is not Classic's");
         let (_, r) = v.status(&ctx);
         assert_eq!(

@@ -47,9 +47,9 @@ impl Explorer {
         };
         let lay = cp.ow.layout(
             &self.dialog_text,
-            self.dialog_px,
+            self.forms.fonts.size_px,
             (0, 0),
-            &ctx.theme.look.controls(),
+            &self.forms.controls(),
         );
         let out = cp.input.event(&mut cp.ow, &lay, &ev, &ctx.theme.metrics);
         match out {
@@ -71,6 +71,7 @@ impl Explorer {
                         mode: DlgMode::Open,
                         multiple: false,
                     },
+                    self.forms.text,
                 );
                 if let Some(Dialog::ChooseProgram(cp)) = self.dialog.as_mut() {
                     cp.browse = Some(ProgramBrowse { host, dlg });
@@ -100,7 +101,7 @@ impl Explorer {
             &mut b.dlg,
             &ev,
             &self.dialog_text,
-            self.dialog_px,
+            self.forms.fonts.size_px,
             ctx.size,
             &ctx.theme.metrics,
         );
@@ -158,7 +159,7 @@ impl Explorer {
         }
     }
 
-    pub fn draw_program_browse(&self, c: &mut Canvas, ctx: &Ctx) {
+    pub fn draw_program_browse(&self, c: &mut Canvas) {
         if let Some(Dialog::ChooseProgram(cp)) = &self.dialog
             && let Some(b) = &cp.browse
         {
@@ -168,10 +169,10 @@ impl Explorer {
                 &self.dialog_text,
                 &Paint {
                     s: 1,
-                    ..ctx.theme.paint()
+                    ..self.forms.paint()
                 },
                 reprisekit::raster::Rect::new(0, 0, w, h),
-                self.dialog_px,
+                self.forms.fonts.size_px,
             );
         }
     }
@@ -185,7 +186,7 @@ impl Explorer {
                 tree,
                 reprisekit::raster::Rect::new(0, 0, w, h),
                 &self.dialog_text,
-                self.dialog_px,
+                self.forms.fonts.size_px,
             );
         }
     }

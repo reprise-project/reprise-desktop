@@ -1320,7 +1320,7 @@ impl SettingsApp {
                 let lay = listview::layout(
                     &self.shortcuts,
                     self.on_page(pages::shortcuts(self.area())),
-                    &ctx.theme.look.controls(),
+                    &ctx.forms().controls(),
                 );
                 self.shortcuts.select(Some(row), &lay);
                 self.sync_apply();
@@ -1507,14 +1507,15 @@ impl SettingsApp {
     }
 
     fn chooser_event(&mut self, ev: Event, ctx: &Ctx) -> Reply {
+        let dt = self.dialog_theme(&ctx.theme);
         let Some(c) = self.chooser.as_mut() else {
             return Reply::none();
         };
         let out = match ev {
             Event::CloseRequest => openwith::Event::Cancel,
             ev => {
-                let cm = ctx.theme.look.controls();
-                let lay = c.ow.layout(&self.dialog_text, self.dialog_px, (0, 0), &cm);
+                let lay =
+                    c.ow.layout(&self.dialog_text, dt.fonts.size_px, (0, 0), &dt.controls());
                 c.input.event(&mut c.ow, &lay, &ev, &ctx.theme.metrics)
             }
         };
@@ -1999,11 +2000,12 @@ impl SettingsApp {
                     Reply::none()
                 }
                 backgroundpage::BROWSE => {
-                    self.open_add(if backgroundpage::slideshow(&self.want) {
+                    let pick = if backgroundpage::slideshow(&self.want) {
                         Pick::SlideFolder
                     } else {
                         Pick::Wallpaper
-                    });
+                    };
+                    self.open_add(pick);
                     Reply::redraw_all()
                 }
                 pages::REMOVE => self.remove_selected(),
@@ -2183,7 +2185,7 @@ impl SettingsApp {
     }
 
     fn list_press(&mut self, x: i32, y: i32, time: u32, ctx: &Ctx) -> Reply {
-        let cm = &ctx.theme.look.controls();
+        let cm = &ctx.forms().controls();
         // A click gives the list the keyboard and the ring; `select`
         // alone does not turn the ring on.
         self.focus_side_list(true);
@@ -2235,7 +2237,7 @@ impl SettingsApp {
 
     /// Light the side list's header column under the pointer; true when that changed what draws.
     fn list_hover(&mut self, x: i32, y: i32, ctx: &Ctx) -> bool {
-        let cm = ctx.theme.look.controls();
+        let cm = ctx.forms().controls();
         let styled = ctx.styled();
         let Some((list, rect, _)) = self.side_list() else {
             return false;
@@ -2324,7 +2326,9 @@ impl SettingsApp {
                 },
             ),
         };
-        self.add = Some(self.add_host.open(&dir, fields));
+        // The sheet's last draw carries the text size the dialog grows by.
+        let u = self.sheet.open().units();
+        self.add = Some(self.add_host.open(&dir, fields, u));
     }
 
     fn close_add(&mut self) -> Reply {
@@ -2344,7 +2348,7 @@ impl SettingsApp {
             d,
             &ev,
             &ctx.text,
-            ctx.theme.fonts.size_px,
+            ctx.forms().fonts.size_px,
             ctx.size,
             &ctx.theme.metrics,
         ) {
@@ -2516,7 +2520,7 @@ impl App for SettingsApp {
             kids.push(Child {
                 id: CHOOSER_WIN,
                 title: openwith::TITLE.into(),
-                size: openwith::CLIENT,
+                size: self.units.size(openwith::CLIENT),
                 fixed: true,
                 modal: true,
             });
@@ -2621,7 +2625,7 @@ impl SettingsApp {
         if matches!(ev, Event::Wake) {
             return self.wake();
         }
-        self.fit_columns(&ctx.theme.look.controls());
+        self.fit_columns(&ctx.forms().controls());
         if self.err_icon.is_none() {
             self.err_icon = ctx.icons.get("dialog-error", 32);
         }
@@ -2710,7 +2714,7 @@ impl SettingsApp {
                 self.sheet.open_mut().caret = ctx.caret_on;
                 Reply::redraw()
             }
-            Event::Key(k) => self.key(k, &ctx.theme.look.controls()),
+            Event::Key(k) => self.key(k, &ctx.forms().controls()),
             Event::FieldDropped(e) => {
                 let ev = self.sheet.dropped(e);
                 self.sheet_event(ev)
@@ -2748,7 +2752,7 @@ impl SettingsApp {
             }
             Event::Pointer(PointerInput::Motion { x, y }) => {
                 let lit = self.list_hover(x, y, ctx);
-                if let Some(r) = self.list_motion(x, y, &ctx.theme.look.controls()) {
+                if let Some(r) = self.list_motion(x, y, &ctx.forms().controls()) {
                     return r;
                 }
                 let hit = self.sheet.hit(x, y, &ctx.text, px);
@@ -2780,7 +2784,7 @@ impl SettingsApp {
                 if !rect.contains(x, y) {
                     return Reply::none();
                 }
-                let lay = listview::layout(list, rect, &ctx.theme.look.controls());
+                let lay = listview::layout(list, rect, &ctx.forms().controls());
                 if list.scroll(rows as i64, &lay) {
                     Reply::redraw()
                 } else {
@@ -2794,7 +2798,7 @@ impl SettingsApp {
                 ..
             }) => {
                 let lit = self.list_unhover(true, ctx);
-                if let Some(r) = self.list_release(x, y, &ctx.theme.look.controls()) {
+                if let Some(r) = self.list_release(x, y, &ctx.forms().controls()) {
                     return r;
                 }
                 let ev = self.sheet.release();
@@ -2819,9 +2823,8 @@ impl SettingsApp {
     }
 
     fn paint(&mut self, win: WinId, c: &mut Canvas, ctx: &Ctx) {
-        self.fit_columns(&ctx.theme.look.controls());
+        self.fit_columns(&ctx.forms().controls());
         let cs = &ctx.theme.colors;
-        let px = ctx.theme.fonts.size_px;
         let forms = ctx.forms();
         let form_px = forms.fonts.size_px;
         if win == ERROR_WIN {
@@ -2877,25 +2880,20 @@ impl SettingsApp {
         }
         if win == CHOOSER_WIN {
             if let Some(ch) = &self.chooser {
-                let lay = ch.ow.layout(
-                    &self.dialog_text,
-                    self.dialog_px,
-                    (0, 0),
-                    &ctx.theme.look.controls(),
-                );
+                let dt = self.dialog_theme(&ctx.theme);
+                let lay = ch
+                    .ow
+                    .layout(&self.dialog_text, dt.fonts.size_px, (0, 0), &dt.controls());
                 let rows: Vec<Option<&Canvas>> = ch.row_icons.iter().map(Option::as_ref).collect();
                 ch.ow.draw(
                     c,
                     &self.dialog_text,
-                    &Paint {
-                        s: 1,
-                        ..ctx.theme.paint()
-                    },
+                    &Paint { s: 1, ..dt.paint() },
                     &lay,
                     ch.icon.as_ref(),
                     &rows,
                     ch.input.cues(),
-                    self.dialog_px,
+                    dt.fonts.size_px,
                 );
             }
             return;
@@ -2907,10 +2905,10 @@ impl SettingsApp {
                     &ctx.text,
                     &Paint {
                         s: 1,
-                        ..ctx.theme.paint()
+                        ..forms.paint()
                     },
                     Rect::new(0, 0, d.client().0, d.client().1),
-                    px,
+                    form_px,
                 );
             }
             return;
@@ -2935,19 +2933,19 @@ impl SettingsApp {
         c.with_clip(page.unwrap_or(c.bounds()), |c| {
             if open == Page::Startup.index() {
                 let r = self.on_page(pages::list(self.area()));
-                pages::draw_list(c, &ctx.text, &ctx.theme, &self.list, r, px, 1);
+                pages::draw_list(c, &ctx.text, &forms, &self.list, r, form_px, 1);
             }
             if open == Page::Keyboard.index() {
                 let r = self.on_page(pages::shortcuts(self.area()));
-                pages::draw_shortcuts(c, &ctx.text, &ctx.theme, &self.shortcuts, r, px, 1);
+                pages::draw_shortcuts(c, &ctx.text, &forms, &self.shortcuts, r, form_px, 1);
             }
             if open == Page::DefaultPrograms.index() {
                 let r = self.on_page(defaultspage::list(self.area()));
-                pages::draw_list(c, &ctx.text, &ctx.theme, &self.types, r, px, 1);
+                pages::draw_list(c, &ctx.text, &forms, &self.types, r, form_px, 1);
             }
             if open == Page::Advanced.index() {
                 let r = self.on_page(pages::locations(self.area()));
-                pages::draw_list(c, &ctx.text, &ctx.theme, &self.locations, r, px, 1);
+                pages::draw_list(c, &ctx.text, &forms, &self.locations, r, form_px, 1);
             }
         });
         if open == Page::DefaultPrograms.index() {
@@ -2961,7 +2959,7 @@ impl SettingsApp {
     }
 
     fn describe(&mut self, win: WinId, tree: &mut Tree, ctx: &Ctx) {
-        self.fit_columns(&ctx.theme.look.controls());
+        self.fit_columns(&ctx.forms().controls());
 
         let px = ctx.theme.fonts.size_px;
         let drawn = |f: &form::Form| f.units().px(px);
@@ -3004,15 +3002,17 @@ impl SettingsApp {
             }
             CHOOSER_WIN => {
                 if let Some(ch) = &self.chooser {
-                    let cm = ctx.theme.look.controls();
-                    let lay = ch.ow.layout(&self.dialog_text, self.dialog_px, (0, 0), &cm);
+                    let dt = self.dialog_theme(&ctx.theme);
+                    let lay =
+                        ch.ow
+                            .layout(&self.dialog_text, dt.fonts.size_px, (0, 0), &dt.controls());
                     ch.ow.access(tree, &lay);
                 }
             }
             ADD_WIN => {
                 if let Some(d) = &self.add {
                     let r = Rect::new(0, 0, d.client().0, d.client().1);
-                    d.access(tree, r, &ctx.text, px);
+                    d.access(tree, r, &ctx.text, ctx.forms().fonts.size_px);
                 }
             }
             _ => {
@@ -3020,7 +3020,7 @@ impl SettingsApp {
                     self.sheet
                         .access(tree, ROOT, &ctx.text, drawn(self.sheet.open()));
                 if let Some((list, rect, focused)) = self.side_list() {
-                    let lay = listview::layout(list, rect, &ctx.theme.look.controls());
+                    let lay = listview::layout(list, rect, &ctx.forms().controls());
                     let row = list.access(&lay, tree, panel, "side list");
                     if *focused {
                         focus = Some(row);
@@ -3091,7 +3091,7 @@ mod tests {
     /// A left press at `time` on side list row `row`, found by walking down the list's body.
     fn press_side_row(a: &mut SettingsApp, ctx: &mut Ctx, row: usize, time: u32) {
         let (list, rect, _) = a.side_list().expect("a page with a side list");
-        let lay = listview::layout(list, rect, &ctx.theme.look.controls());
+        let lay = listview::layout(list, rect, &ctx.forms().controls());
         let x = lay.body.x + 8;
         let y = (lay.body.y..lay.body.bottom())
             .find(|&y| list.hit(&lay, x, y) == listview::Hit::Row(row))
@@ -3113,7 +3113,7 @@ mod tests {
             mods: repriseapp::Mods::default(),
             edit: None,
         };
-        a.key(k, &ctx.theme.look.controls());
+        a.key(k, &ctx.forms().controls());
     }
 
     #[test]
@@ -3469,7 +3469,7 @@ mod tests {
         let (mut app, mut ctx) = question_up("question-yes", displayhost::Press::Ok);
         let q = app.display.flow.question.as_ref().expect("the question");
         let yes = q.dialog.form.item(monitordlg::YES).expect("a Yes button");
-        let r = yes.placed(&ctx.theme.look.controls());
+        let r = yes.placed(&ctx.forms().controls());
         let (x, y) = (r.x + r.width / 2, r.y + r.height / 2);
         let mods = repriseapp::Mods::default();
         let press = PointerInput::Press {

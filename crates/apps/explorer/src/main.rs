@@ -370,15 +370,14 @@ impl Explorer {
             ctx.size,
             &self.settings,
             self.explorer_bar.width,
-            statusbar::height(&ctx.theme.look),
-            &ctx.theme.look.controls(),
+            statusbar::height(&ctx.theme.controls()),
+            &ctx.theme.controls(),
         )
     }
 
     /// Rebuilt only when the view's geometry or the look's control sizes changed.
     pub fn view_layout(&self, frame: Rect, ctx: &Ctx) -> Rc<shellview::Layout> {
-        self.sv_layout
-            .get(&self.sv, frame, &ctx.theme.look.controls())
+        self.sv_layout.get(&self.sv, frame, &ctx.theme.controls())
     }
 
     pub fn bar_layout(&self, ctx: &Ctx) -> menubar::Layout {
@@ -387,7 +386,7 @@ impl Explorer {
             &ctx.text,
             ctx.theme.fonts.size_px,
             menu,
-            &ctx.theme.look.controls(),
+            &ctx.theme.controls(),
         )
     }
 
@@ -792,6 +791,10 @@ impl App for Lazy {
         Settings::load().window
     }
 
+    fn text_sized(&self) -> bool {
+        true
+    }
+
     fn children(&self) -> Vec<Child> {
         match &self.inner {
             Some(ex) if !ex.closing => ex.children(),
@@ -950,7 +953,7 @@ impl App for Lazy {
             return;
         }
         if win == PROGRAM_BROWSE {
-            ex.draw_program_browse(c, ctx);
+            ex.draw_program_browse(c);
             return;
         }
         if win == browse::ERROR {

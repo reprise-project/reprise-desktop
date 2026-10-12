@@ -202,10 +202,9 @@ impl Explorer {
         }
 
         if let Some(r) = lay.toolbar {
-            let rects =
-                toolbar::layout(&self.toolbar, &ctx.text, px, r, &ctx.theme.look.controls());
+            let rects = toolbar::layout(&self.toolbar, &ctx.text, px, r, &ctx.theme.controls());
             if let Some((i, part)) =
-                toolbar::hit_part(&self.toolbar, &rects, x, y, &ctx.theme.look.controls())
+                toolbar::hit_part(&self.toolbar, &rects, x, y, &ctx.theme.controls())
             {
                 return self.toolbar_press(i, part, rects[i], lay.client, ctx);
             }
@@ -215,8 +214,7 @@ impl Explorer {
         }
 
         if let Some(r) = lay.address {
-            let al =
-                addressbar::layout(&self.address, &ctx.text, px, r, &ctx.theme.look.controls());
+            let al = addressbar::layout(&self.address, &ctx.text, px, r, &ctx.theme.controls());
             let hit = addressbar::hit(&self.address, &al, x, y);
             if hit != addressbar::Hit::Nothing {
                 self.focus = Focus::Address;
@@ -240,13 +238,8 @@ impl Explorer {
                         return Reply::none();
                     };
                     self.focus = Focus::Tree;
-                    let tl = treeview::layout(
-                        &self.tree,
-                        &ctx.text,
-                        px,
-                        frame,
-                        &ctx.theme.look.controls(),
-                    );
+                    let tl =
+                        treeview::layout(&self.tree, &ctx.text, px, frame, &ctx.theme.controls());
                     match self.tree.hit(&tl, x, y) {
                         treeview::Hit::Expander(i) => {
                             if let Some(p) = self.tree.toggle(i, &tl) {
@@ -294,7 +287,7 @@ impl Explorer {
         if let Some(r) = lay.tasks
             && r.contains(x, y)
         {
-            let tl = taskpane::layout(&self.taskpane, &ctx.text, px, r, &ctx.theme.look.controls());
+            let tl = taskpane::layout(&self.taskpane, &ctx.text, px, r, &ctx.theme.controls());
             let hit = taskpane::hit(&self.taskpane, &tl, x, y);
             let ev = self.taskpane.click(hit);
             return self.taskpane_event(ev, ctx);
@@ -469,7 +462,7 @@ impl Explorer {
         if let (Some(bl), Some(frame)) = (&lay.bar, lay.tree)
             && bl.body.contains(x, y)
         {
-            let tl = treeview::layout(&self.tree, &ctx.text, px, frame, &ctx.theme.look.controls());
+            let tl = treeview::layout(&self.tree, &ctx.text, px, frame, &ctx.theme.controls());
             if let treeview::Hit::Row(i) = self.tree.hit(&tl, x, y) {
                 self.tree.select(i, &tl);
             }
@@ -522,7 +515,7 @@ impl Explorer {
         match frame {
             Some(frame) if free && self.popup.is_none() => {
                 let px = ctx.theme.fonts.size_px;
-                let cm = ctx.theme.look.controls();
+                let cm = ctx.theme.controls();
                 let tl = treeview::layout(&self.tree, &ctx.text, px, frame, &cm);
                 let hot = self.tree.hover(&tl, &ctx.text, px, x, y);
                 // Only a look that boxes its items lights the row and the
@@ -557,7 +550,7 @@ impl Explorer {
         let lay = self.layout(ctx);
         let tree = lay.tree.filter(|r| r.contains(x, y)).and_then(|frame| {
             let px = ctx.theme.fonts.size_px;
-            let cm = ctx.theme.look.controls();
+            let cm = ctx.theme.controls();
             let tl = treeview::layout(&self.tree, &ctx.text, px, frame, &cm);
             (on(tl.scrollbar) || on(tl.hscroll))
                 .then(|| self.tree.hit(&tl, x, y).bar())
@@ -614,7 +607,7 @@ impl Explorer {
                 return Reply::none();
             };
             let px = ctx.theme.fonts.size_px;
-            let tl = treeview::layout(&self.tree, &ctx.text, px, frame, &ctx.theme.look.controls());
+            let tl = treeview::layout(&self.tree, &ctx.text, px, frame, &ctx.theme.controls());
             let (top, left) = (self.tree.top, self.tree.left);
             if let Some(grab) = self.tree_thumb.grab(Axis::Vertical) {
                 self.tree.top = self.tree.top_at(&tl, y, grab);
@@ -700,8 +693,7 @@ impl Explorer {
         dirty |= self.bar.hover(x, y, &ml) && ctx.styled();
         dirty |= self.hover_view(x, y, &lay, ctx);
         if let Some(r) = lay.toolbar {
-            let rects =
-                toolbar::layout(&self.toolbar, &ctx.text, px, r, &ctx.theme.look.controls());
+            let rects = toolbar::layout(&self.toolbar, &ctx.text, px, r, &ctx.theme.controls());
             let hot = toolbar::hit(&self.toolbar, &rects, x, y);
             if self.toolbar.hot != hot {
                 self.toolbar.hot = hot;
@@ -709,8 +701,7 @@ impl Explorer {
             }
         }
         if let Some(r) = lay.address {
-            let al =
-                addressbar::layout(&self.address, &ctx.text, px, r, &ctx.theme.look.controls());
+            let al = addressbar::layout(&self.address, &ctx.text, px, r, &ctx.theme.controls());
             let go = matches!(
                 addressbar::hit(&self.address, &al, x, y),
                 addressbar::Hit::Go
@@ -740,7 +731,7 @@ impl Explorer {
     fn hover_tasks(&mut self, x: i32, y: i32, lay: &crate::window::Layout, ctx: &Ctx) -> bool {
         let hit = lay.tasks.filter(|r| r.contains(x, y)).map(|r| {
             let px = ctx.theme.fonts.size_px;
-            let tl = taskpane::layout(&self.taskpane, &ctx.text, px, r, &ctx.theme.look.controls());
+            let tl = taskpane::layout(&self.taskpane, &ctx.text, px, r, &ctx.theme.controls());
             taskpane::hit(&self.taskpane, &tl, x, y)
         });
         let header = match hit {
@@ -775,7 +766,7 @@ impl Explorer {
         if let Some(frame) = lay.tree
             && lay.bar.as_ref().is_some_and(|b| b.body.contains(x, y))
         {
-            let tl = treeview::layout(&self.tree, &ctx.text, px, frame, &ctx.theme.look.controls());
+            let tl = treeview::layout(&self.tree, &ctx.text, px, frame, &ctx.theme.controls());
             self.tree.scroll(rows as i64, &tl);
             return Reply::redraw();
         }

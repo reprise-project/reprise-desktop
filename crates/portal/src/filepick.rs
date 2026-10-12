@@ -248,7 +248,7 @@ impl App for Pick {
             &mut self.dlg,
             &ev,
             &ctx.text,
-            ctx.theme.fonts.size_px,
+            ctx.forms().fonts.size_px,
             ctx.size,
             &ctx.theme.metrics,
         ) {
@@ -282,15 +282,16 @@ impl App for Pick {
             return;
         }
         let r = self.client();
+        let forms = ctx.forms();
         self.dlg.draw(
             c,
             &ctx.text,
             &Paint {
                 s: 1,
-                ..ctx.theme.paint()
+                ..forms.paint()
             },
             r,
-            ctx.theme.fonts.size_px,
+            forms.fonts.size_px,
         );
     }
 
@@ -302,7 +303,8 @@ impl App for Pick {
             return;
         }
         let r = self.client();
-        self.dlg.access(tree, r, &ctx.text, ctx.theme.fonts.size_px);
+        self.dlg
+            .access(tree, r, &ctx.text, ctx.forms().fonts.size_px);
     }
 }
 
@@ -340,7 +342,7 @@ pub fn run_dialog() {
         multiple: input.multiple,
     };
     let start = PathBuf::from(OsStr::from_bytes(&input.start));
-    let mut dlg = host.open(&start, fields);
+    let mut dlg = host.open(&start, fields, dialog::start_forms().text);
     dlg.set_file_name(&input.name);
     if let Some(raw) = &input.name_raw {
         host.alias(input.name.clone(), OsStr::from_bytes(raw).to_os_string());
