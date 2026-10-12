@@ -1856,9 +1856,26 @@ impl State {
         win.desktop = current;
         // A client can gain an owner between first configure and map.
         let placeable = win.placeable();
-        let want = win.placement.take().filter(|_| placeable);
+        let mut want = win.placement.take().filter(|_| placeable);
+        let app = win.app();
+        // Windows of one app planned together can each plan the same saved
+        // tab group; the one that maps as another group's takes its frame.
+        let mut resized = false;
+        if placeable
+            && self
+                .session
+                .regrouping
+                .frame(&app, std::time::Instant::now())
+                .is_some()
+        {
+            let fresh = self.plan_window(w);
+            if fresh != want {
+                let size = |x: &Option<Want>| x.as_ref().and_then(|x| x.size);
+                resized = size(&fresh) != size(&want);
+                want = fresh;
+            }
+        }
         if placeable {
-            let app = win.app();
             self.session.restoring.mapped(&app);
         }
         let out = self.placement_output(want.as_ref());
@@ -1954,8 +1971,9 @@ impl State {
             }
         }
         self.relayout(w);
-        // An X11 client can resize itself before map; ask for the planned size again.
-        if self.win(w).is_some_and(|x| x.x11().is_some())
+        // An X11 client can resize itself before map, and a regrouped window can have planned
+        // another size: ask for the planned size again.
+        if (resized || self.win(w).is_some_and(|x| x.x11().is_some()))
             && let Some(s) = want.as_ref().and_then(|x| x.size)
             && let Some(chrome) = self.win(w).map(Window::chrome)
         {
