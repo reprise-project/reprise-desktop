@@ -26,14 +26,13 @@ use repriseapp::keys::{dialog_key, form_clipboard, form_input, sheet_input};
 use repriseapp::oneshot::{self, MsgBox};
 use repriseapp::{App, BTN_LEFT, Child, Ctx, DropForm, Event, PointerInput, Reply, WinId};
 use reprisekit::access::Tree;
-use reprisekit::controls::metrics::ControlMetrics;
 use reprisekit::controls::msgbox::Fields;
 use reprisekit::controls::{form, propsheet, wizard};
 use reprisekit::look::Paint;
 use reprisekit::raster::Canvas;
 use reprisekit::text::TextRenderer;
 use reprisekit::textedit::keysym;
-use reprisekit::theme::{FontConfig, Metrics, Theme};
+use reprisekit::theme::{FontConfig, Theme};
 
 /// Child windows; one of each at a time.
 const WIZARD: WinId = "wizard";
@@ -406,14 +405,16 @@ impl BtApp {
     }
 
     /// The Devices list's share of a sheet event; `None` leaves it to the sheet.
-    fn devices_list_event(
-        &mut self,
-        ev: &Event,
-        metrics: &Metrics,
-        cm: &ControlMetrics,
-    ) -> Option<devices::Outcome> {
+    fn devices_list_event(&mut self, ev: &Event, ctx: &Ctx) -> Option<devices::Outcome> {
+        let (metrics, cm) = (&ctx.theme.metrics, &ctx.theme.look.controls());
         let on_devices = self.devices.sheet.tabs.open == devices::TAB_DEVICES;
         let list = self.devices.list_rect();
+        let on_list = |x: i32, y: i32| {
+            let px = ctx.form_units().px(ctx.theme.fonts.size_px);
+            on_devices
+                && list.contains(x, y)
+                && self.devices.sheet.reaches_page(x, y, &ctx.text, px)
+        };
         match ev {
             Event::Pointer(PointerInput::Press {
                 x,
@@ -422,7 +423,7 @@ impl BtApp {
                 time,
                 ..
             }) => {
-                if on_devices && list.contains(*x, *y) {
+                if on_list(*x, *y) {
                     let at = metrics.click(*x, *y, *time);
                     return Some(self.devices.list_press(at, cm));
                 }
@@ -435,8 +436,8 @@ impl BtApp {
                 .drag(list, *y, cm)
                 .then_some(devices::Outcome::Redraw),
 
-            Event::Pointer(PointerInput::Scroll { rows, .. }) => {
-                let live = on_devices && self.devices.blank_text().is_none();
+            Event::Pointer(PointerInput::Scroll { x, y, rows }) if on_list(*x, *y) => {
+                let live = self.devices.blank_text().is_none();
                 Some(if live && self.devices.list.scroll(*rows, list) {
                     devices::Outcome::Redraw
                 } else {
@@ -467,9 +468,12 @@ impl BtApp {
         let cm = ctx.theme.look.controls();
         let rect = self.devices.list_rect();
         let list = &mut self.devices.list;
+        let px = ctx.form_units().px(ctx.theme.fonts.size_px);
         let on_devices = self.devices.sheet.tabs.open == devices::TAB_DEVICES;
         let changed = match ev {
-            Event::Pointer(PointerInput::Motion { x, y }) if on_devices => {
+            Event::Pointer(PointerInput::Motion { x, y })
+                if on_devices && self.devices.sheet.reaches_page(*x, *y, &ctx.text, px) =>
+            {
                 list.hover(rect, *x, *y, &cm)
             }
             Event::Pointer(PointerInput::Motion { .. } | PointerInput::Leave) => list.leave(),
@@ -495,15 +499,13 @@ impl BtApp {
                 self.devices.sheet.open_mut().caret = ctx.caret_on;
                 return Reply::redraw();
             }
-            ev => {
-                match self.devices_list_event(&ev, &ctx.theme.metrics, &ctx.theme.look.controls()) {
-                    Some(out) => out,
-                    None => match sheet_input(&mut self.devices.sheet, &ev, ctx) {
-                        Some(e) => self.devices.event(e),
-                        None => return Reply::none(),
-                    },
-                }
-            }
+            ev => match self.devices_list_event(&ev, ctx) {
+                Some(out) => out,
+                None => match sheet_input(&mut self.devices.sheet, &ev, ctx) {
+                    Some(e) => self.devices.event(e),
+                    None => return Reply::none(),
+                },
+            },
         };
         match out {
             devices::Outcome::None => Reply::none(),
@@ -1413,6 +1415,70 @@ mod tests {
         let grown = a.event(MAIN, Event::Resized, &mut ctx);
         assert_eq!(grown.size, Some(u.size(devices::CLIENT)));
         assert_eq!(a.event(MAIN, Event::Blink, &mut ctx).size, None);
+    }
+
+    /// In a window shorter than the sheet the device list scrolls with the page and draws only
+    /// inside it; the wheel over the page's scrollbar scrolls the page.
+    #[test]
+    fn the_devices_list_scrolls_and_clips_with_a_short_page() {
+        let mut a = app();
+        let mut ctx = test_ctx();
+        let mut s = snap(true);
+        s.devices = (0..20)
+            .map(|i| Device {
+                path: format!("/a/d{i}"),
+                alias: format!("Device {i}"),
+                ..cans(false)
+            })
+            .collect();
+        a.snapshot_in(s);
+        ctx.size = (devices::CLIENT.0, 300);
+        a.event(MAIN, Event::Pointer(PointerInput::Leave), &mut ctx);
+        let px = ctx.theme.fonts.size_px;
+        let bar = a
+            .devices
+            .sheet
+            .layout(&ctx.text, px)
+            .bar
+            .expect("the page scrolls");
+        let wheel = PointerInput::Scroll {
+            x: bar.x + 2,
+            y: bar.y + bar.height / 2,
+            rows: 3,
+        };
+        a.event(MAIN, Event::Pointer(wheel), &mut ctx);
+        let (_, dy) = a.devices.sheet.page_offset();
+        assert!(dy < 0, "the page scrolled");
+        assert_eq!(a.devices.list_rect().y, devices::LIST.y + dy);
+        let clip = a.devices.sheet.page_clip(&ctx.text, px).unwrap();
+        assert!(
+            a.devices.list_rect().y < clip.y,
+            "the list runs above the page"
+        );
+
+        let draw = |a: &mut BtApp| {
+            let mut c = Canvas::new(ctx.size.0 as u32, ctx.size.1 as u32);
+            a.draw(MAIN, &mut c, &ctx);
+            c
+        };
+        let first = draw(&mut a);
+        let list = a.devices.list_rect();
+        a.devices.list.scroll(2, list);
+        let scrolled = draw(&mut a);
+        let outside = |x: i32, y: i32| !clip.contains(x, y);
+        let (w, h) = (ctx.size.0, ctx.size.1);
+        let pts = (0..h).flat_map(|y| (0..w).map(move |x| (x, y)));
+        assert!(
+            pts.clone()
+                .filter(|&(x, y)| outside(x, y))
+                .all(|(x, y)| first.get(x, y) == scrolled.get(x, y)),
+            "nothing of the list draws outside the page"
+        );
+        assert!(
+            pts.filter(|&(x, y)| clip.contains(x, y))
+                .any(|(x, y)| first.get(x, y) != scrolled.get(x, y)),
+            "the list draws inside it"
+        );
     }
 
     fn test_ctx() -> Ctx {

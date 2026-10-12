@@ -871,7 +871,7 @@ pub(crate) mod tests {
         let mut c = reprisekit::raster::Canvas::new(sheet.size.0 as u32, sheet.size.1 as u32);
         c.fill_rect(c.bounds(), theme.colors.button_face);
         propsheet::draw(&mut c, &text, &theme.paint(), &sheet, true, px);
-        let list = crate::pages::on_sheet(&sheet, list(Area::MIN));
+        let list = sheet.on_page(list(Area::MIN));
         crate::pages::draw_list(&mut c, &text, &theme, &lv, list, px, 1);
         propsheet::draw_popups(&mut c, &text, &theme.paint(), &sheet, px);
         let terminal = page_rect(&sheet, TERMINAL);
