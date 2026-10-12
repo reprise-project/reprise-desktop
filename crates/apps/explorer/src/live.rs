@@ -132,7 +132,7 @@ impl Explorer {
         }
     }
 
-    /// The folder shown was deleted or moved away: show the nearest folder that exists at or above
+    /// The folder shown, or one above it, was deleted or moved away: show the nearest folder that exists at or above
     /// `from` (its new path after a rename in place, else its old one) in its place in the history.
     fn follow_gone(&mut self, from: &Path, ctx: &mut Ctx) -> Reply {
         let Some(dir) = from.ancestors().find(|p| p.is_dir()) else {
@@ -141,6 +141,14 @@ impl Explorer {
         let place = Place::from_path(dir);
         if place == self.place {
             return self.refresh(ctx);
+        }
+        // The Folders pane still holds the old names. What changed is a folder above the old path;
+        // refilling top down keeps what is open below.
+        if let Some(old) = self.place.path() {
+            let above: Vec<&Path> = old.ancestors().filter(|p| p.is_dir()).collect();
+            for p in above.into_iter().rev() {
+                self.refill_tree_node(&Place::from_path(p), ctx);
+            }
         }
         self.history.replace(place.clone());
         self.show(place, ctx)
