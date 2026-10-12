@@ -1579,7 +1579,7 @@ fn a_click_on_a_picker_row_opens_it() {
         b.bf.tree.top = at - 1;
     }
     let (lay, tree) = browse_state(&ex, &ctx);
-    let y = lay.tree.body.y + (at - tree.top) as i32 * tree.row_h() + 8;
+    let y = lay.tree.body.y + (at - tree.top) as i32 * lay.tree.row_h + 8;
     let x = (lay.tree.body.x..lay.tree.body.right())
         .find(|&x| tree.hit(&lay.tree, x, y) == reprisekit::controls::treeview::Hit::Row(at))
         .expect("sub's icon")
@@ -1615,7 +1615,7 @@ fn a_double_click_on_a_picker_plus_box_turns_it_once() {
     let sub_path = rows[at].path.clone();
     b.bf.tree.top = at - 1;
     let (lay, tree) = browse_state(&ex, &ctx);
-    let y = lay.tree.body.y + (at - tree.top) as i32 * tree.row_h() + 8;
+    let y = lay.tree.body.y + (at - tree.top) as i32 * lay.tree.row_h + 8;
     let x = (lay.tree.body.x..lay.tree.body.right())
         .find(|&x| tree.hit(&lay.tree, x, y) == reprisekit::controls::treeview::Hit::Expander(at))
         .expect("sub's plus box");

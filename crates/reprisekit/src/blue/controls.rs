@@ -102,6 +102,7 @@ pub(super) fn address_metrics() -> AddressMetrics {
 pub(super) fn menubar_metrics() -> MenuBarMetrics {
     MenuBarMetrics {
         plain: MenuTitles {
+            bar_h: 20,
             first_x: 0,
             frame_y: 0,
             frame_h: 19,
@@ -109,6 +110,7 @@ pub(super) fn menubar_metrics() -> MenuBarMetrics {
             text_dy: 0,
         },
         banded: MenuTitles {
+            bar_h: 20,
             first_x: 2,
             frame_y: 1,
             frame_h: 19,

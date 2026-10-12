@@ -29,6 +29,11 @@ const OK_R: Rect = Rect::new(210, 363, BUTTON_W, BUTTON_H);
 const CANCEL_R: Rect = Rect::new(291, 363, BUTTON_W, BUTTON_H);
 
 pub const CLIENT: (i32, i32) = (390, 395);
+
+/// The client's size with its text grown by `cm.text`.
+pub fn client(cm: &ControlMetrics) -> (i32, i32) {
+    cm.text.size(CLIENT)
+}
 pub const TITLE: &str = "Open With";
 pub const ICON: &str = "system-run";
 pub const PROGRAM_ICON: &str = "application-x-executable";
@@ -122,6 +127,8 @@ pub struct OpenWith {
     pub focus: Focus,
     pointer: Pointer<Focus>,
     thumb: ThumbDrag,
+    /// The list's rows in view at the last layout's text size: what the keys page and scroll by.
+    rows: std::cell::Cell<usize>,
 }
 
 fn rows(recommended: Vec<Program>, others: Vec<Program>) -> Vec<Row<Program>> {
@@ -169,6 +176,7 @@ impl OpenWith {
             focus: Focus::List,
             pointer: Pointer::new(),
             thumb: ThumbDrag::default(),
+            rows: std::cell::Cell::new(ROWS),
         }
     }
 
@@ -198,7 +206,7 @@ impl OpenWith {
             .iter()
             .position(|r| matches!(r, Row::Item { data, .. } if data.id == id));
         if let Some(i) = at {
-            self.list.select(i, ROWS);
+            self.list.select(i, self.rows.get());
         }
         at.is_some()
     }
@@ -220,7 +228,7 @@ impl OpenWith {
             data: p,
         });
         let last = rows.len() - 1;
-        self.list.select(last, ROWS);
+        self.list.select(last, self.rows.get());
     }
 
     fn focusable(&self, f: Focus) -> bool {
@@ -297,12 +305,12 @@ impl OpenWith {
                 let delta = match key {
                     Key::Up => -1,
                     Key::Down => 1,
-                    Key::PageUp => -(ROWS as i64),
-                    Key::PageDown => ROWS as i64,
+                    Key::PageUp => -(self.rows.get() as i64),
+                    Key::PageDown => self.rows.get() as i64,
                     Key::Home => i64::MIN / 2,
                     _ => i64::MAX / 2,
                 };
-                redraw_if(self.list.step(delta, ROWS))
+                redraw_if(self.list.step(delta, self.rows.get()))
             }
             // Hosts flatten one-character inserts to `Key::Char` (`form::flat_key`)
             // and drop longer ones, so no raw `Key::Edit` insert lands here.
@@ -315,7 +323,7 @@ impl OpenWith {
         if !c.is_alphanumeric() {
             return Event::None;
         }
-        redraw_if(self.list.jump(c, ROWS))
+        redraw_if(self.list.jump(c, self.rows.get()))
     }
 
     pub fn click(&mut self, hit: Option<Hit>) -> Event {
@@ -326,7 +334,7 @@ impl OpenWith {
             Hit::List(grouplist::Hit::Row(i)) => {
                 self.focus = Focus::List;
                 if i < self.list.rows.len() {
-                    self.list.select(i, ROWS);
+                    self.list.select(i, self.rows.get());
                 }
                 Event::Redraw
             }
@@ -334,8 +342,11 @@ impl OpenWith {
                 let Some(bar) = h.bar() else {
                     return Event::None;
                 };
-                let by = self.thumb.press(Axis::Vertical, bar).by(1, ROWS as i64);
-                redraw_if(self.list.scroll(by as i32, ROWS))
+                let by = self
+                    .thumb
+                    .press(Axis::Vertical, bar)
+                    .by(1, self.rows.get() as i64);
+                redraw_if(self.list.scroll(by as i32, self.rows.get()))
             }
             Hit::Always => self.arm(Focus::Always),
             Hit::Browse => self.arm(Focus::Browse),
@@ -417,7 +428,7 @@ impl OpenWith {
     /// `rows` counts down as positive.
     pub fn wheel(&mut self, hit: Option<Hit>, rows: i32) -> Event {
         match hit {
-            Some(Hit::List(_)) => redraw_if(self.list.scroll(rows, ROWS)),
+            Some(Hit::List(_)) => redraw_if(self.list.scroll(rows, self.rows.get())),
             _ => Event::None,
         }
     }
@@ -429,29 +440,38 @@ impl OpenWith {
         origin: (i32, i32),
         cm: &ControlMetrics,
     ) -> Layout {
-        let at = |r: Rect| Rect::new(r.x + origin.0, r.y + origin.1, r.width, r.height);
+        let u = cm.text;
+        let moved = |r: Rect| Rect::new(r.x + origin.0, r.y + origin.1, r.width, r.height);
+        let at = |r: Rect| moved(u.rect(r));
         let (plain_group, _) = split_mnemonic(GROUP);
         let (plain_always, _) = split_mnemonic(ALWAYS);
-        let check = at(Rect::new(CHECK_AT.0, CHECK_AT.1, cm.check, cm.check));
+        // The box keeps its size, centred down the label's grown line.
+        let line = at(Rect::new(CHECK_AT.0, CHECK_AT.1, cm.check, cm.check));
+        let check = Rect::new(
+            line.x,
+            line.y + (line.height - cm.check) / 2,
+            cm.check,
+            cm.check,
+        );
+        let list = grouplist::layout(&self.list, at(LIST), cm);
+        self.rows.set(list.visible);
         Layout {
             client: at(Rect::new(0, 0, CLIENT.0, CLIENT.1)),
-            icon: at(ICON_AT),
+            icon: moved(u.at(ICON_AT)),
             prompt: at(PROMPT_AT),
             file: at(FILE_AT),
             group: at(GROUP_R),
-            group_label: at(Rect::new(
-                GROUP_LABEL.0,
-                GROUP_LABEL.1,
-                text.measure(&plain_group, false, px),
-                LINE_H,
-            )),
-            list: grouplist::layout(&self.list, at(LIST), cm),
+            group_label: Rect {
+                width: text.measure(&plain_group, false, px),
+                ..at(Rect::new(GROUP_LABEL.0, GROUP_LABEL.1, 0, LINE_H))
+            },
+            list,
             check,
             check_label: Rect::new(
-                check.x + cm.check_label,
-                check.y,
+                line.x + cm.check_label,
+                line.y,
                 text.measure(&plain_always, false, px),
-                cm.check,
+                line.height,
             ),
             browse: at(BROWSE_R),
             ok: at(OK_R),
@@ -521,7 +541,7 @@ impl OpenWith {
             Align::Left,
             px,
         );
-        let indent = FILE_NAME_X - FILE_AT.x;
+        let indent = p.text.len(FILE_NAME_X) - p.text.len(FILE_AT.x);
         let name_r = Rect::new(
             lay.file.x + indent,
             lay.file.y,
@@ -707,6 +727,32 @@ mod tests {
         assert_eq!(o.list.selected, Some(1));
         assert_eq!(ROWS, 11);
         assert!(o.ok_enabled());
+    }
+
+    /// At 200% text the client, the list and the buttons grow, the list's rows with them; the
+    /// check box keeps its size centred on its label's line, the icon its 32 px, and Page Down
+    /// steps by the rows the grown list shows.
+    #[test]
+    fn a_grown_chooser_grows_its_rects_and_rows() {
+        let mut o = sample();
+        let u = crate::theme::TextUnits::new(22, 11);
+        let cm = ControlMetrics::CLASSIC.grown(u);
+        let lay = o.layout(&text(), 22, (0, 0), &cm);
+        assert_eq!(client(&cm), (2 * CLIENT.0, 2 * CLIENT.1));
+        assert_eq!(lay.client, Rect::new(0, 0, 2 * CLIENT.0, 2 * CLIENT.1));
+        assert_eq!(lay.icon, Rect::new(22, 22, 32, 32));
+        assert_eq!(lay.ok, Rect::new(420, 726, 2 * BUTTON_W, 2 * BUTTON_H));
+        assert_eq!(lay.list.frame, Rect::new(48, 162, 676, 420));
+        assert_eq!(lay.list.row_h, 36);
+        assert_eq!(lay.list.visible, (420 - 4) / 36);
+        assert_eq!(lay.check.width, 13);
+        assert_eq!(lay.check.y, 598 + (26 - 13) / 2);
+        assert_eq!(lay.check_label.height, 26);
+        assert_eq!(o.list.selected, Some(1));
+        o.key(Key::PageDown);
+        assert_eq!(o.list.selected, Some(1 + lay.list.visible));
+        let ok = grouplist::hit(&o.list, &lay.list, 60, 162 + 2 + 36 + 5);
+        assert_eq!(ok, Some(grouplist::Hit::Row(o.list.top + 1)));
     }
 
     #[test]

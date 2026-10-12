@@ -12,8 +12,9 @@ const INSET: i32 = 4;
 const HOUR_LEN: f64 = 0.6;
 const MINUTE_LEN: f64 = 0.78;
 const SECOND_LEN: f64 = 0.8;
-const HOUR_HALF_W: f64 = 5.0;
-const MINUTE_HALF_W: f64 = 4.0;
+/// The hour and minute hands' widths at their base, 100% px: they grow with the face.
+const HOUR_W: i32 = 10;
+const MINUTE_W: i32 = 8;
 
 /// What the clock shows.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -60,7 +61,8 @@ fn angles(f: Face) -> (f64, f64, f64) {
     (h / 12.0 * tau, m / 60.0 * tau, s / 60.0 * tau)
 }
 
-/// Draw the clock in `r` (logical px) at `p`'s scale.
+/// Draw the clock in `r` (logical px) at `p`'s scale. The hands widen with `p.text`; the hour
+/// dots and the hands' bevel keep their px.
 pub fn draw(c: &mut Canvas, p: &Paint, r: Rect, face: Face) {
     let Paint { cs, s, .. } = *p;
     for k in 0..12 {
@@ -71,7 +73,11 @@ pub fn draw(c: &mut Canvas, p: &Paint, r: Rect, face: Face) {
     let (ha, ma, sa) = angles(face);
     let (cx, cy, _, _) = geometry(r);
     let centre = (f64::from(cx), f64::from(cy));
-    for (angle, len, half) in [(ha, HOUR_LEN, HOUR_HALF_W), (ma, MINUTE_LEN, MINUTE_HALF_W)] {
+    let half = |w: i32| f64::from(p.text.len(w)) / 2.0;
+    for (angle, len, half) in [
+        (ha, HOUR_LEN, half(HOUR_W)),
+        (ma, MINUTE_LEN, half(MINUTE_W)),
+    ] {
         let tip = reach(r, angle, len);
         let (dx, dy) = (angle.cos() * half, angle.sin() * half);
         let kite = [

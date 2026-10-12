@@ -33,7 +33,7 @@ use crate::raster::{Canvas, Rect};
 use crate::selection::Mods;
 use crate::text::{Align, TextRenderer};
 use crate::textedit::{Caret, EditKey, TextEdit};
-use crate::theme::Theme;
+use crate::theme::{TextUnits, Theme};
 use accesskit::NodeId;
 use std::cell::Cell;
 
@@ -320,6 +320,8 @@ pub struct FileDlg {
     /// the keys and the clicks lay the dialog out with, and whether that
     /// look lights what the pointer rests on.
     drawn: Drawn,
+    /// How its 100% layout grows with the text ([`FileDlg::set_text`]).
+    text: TextUnits,
 }
 
 /// The sizes a `FileDlg` was last drawn with, and whether its look lights
@@ -472,6 +474,7 @@ impl FileDlg {
             wildcard: None,
             name_drop: None,
             drawn: Drawn::default(),
+            text: TextUnits::ONE,
             fields,
         }
     }
@@ -546,10 +549,18 @@ impl FileDlg {
     /// The client size the dialog opens at and shrinks to no further:
     /// `CLIENT` with the extra rows.
     pub fn min_client(&self) -> (i32, i32) {
+        let u = self.text;
         (
-            CLIENT.0,
-            CLIENT.1 + self.extra.as_ref().map_or(0, |(_, h)| *h),
+            u.len(CLIENT.0),
+            u.len(CLIENT.1 + self.extra.as_ref().map_or(0, |(_, h)| *h)),
         )
+    }
+
+    /// Lay the dialog out for text grown by `u` from here on: the host draws it with a theme of
+    /// the same [`Theme::text`]. The client grows to the new minimum.
+    pub fn set_text(&mut self, u: TextUnits) {
+        self.text = u;
+        self.set_size(self.size);
     }
 
     pub fn client(&self) -> (i32, i32) {
@@ -848,14 +859,18 @@ impl FileDlg {
         let client = r;
         let dy = self.grow(r);
         let r = rows(r, cm);
+        // 100% lengths at the text size; the toolbar's buttons and the icons keep their px.
+        let u = |v: i32| cm.text.len(v);
         let label_h = px as i32 + 2;
         let lookin_label_w = text.measure("Look in:", false, px);
         let lookin_label = Rect::new(
-            r.x + LOOKIN_LABEL_X,
-            r.y + LOOKIN_Y + LABEL_DY - 1,
+            r.x + u(LOOKIN_LABEL_X),
+            r.y + u(LOOKIN_Y + LABEL_DY) - 1,
             lookin_label_w,
             label_h,
         );
+        let lookin_h = u(LOOKIN_H);
+        let toolbar_y = r.y + u(TOOLBAR_Y) + (lookin_h - LOOKIN_H) / 2;
 
         // An item's width does not depend on the rect, so one pass at x 0
         // gives the natural width, and the rects shift into place after it.
@@ -863,19 +878,19 @@ impl FileDlg {
             &self.toolbar,
             text,
             px,
-            Rect::new(0, r.y + TOOLBAR_Y, 0, toolbar::HEIGHT),
+            Rect::new(0, toolbar_y, 0, toolbar::HEIGHT),
             cm,
         );
         let toolbar_w = toolbar_rects.last().map_or(0, |b| b.right());
-        let toolbar_x = r.right() - TOOLBAR_MARGIN - toolbar_w;
+        let toolbar_x = r.right() - u(TOOLBAR_MARGIN) - toolbar_w;
         for b in &mut toolbar_rects {
             b.x += toolbar_x;
         }
-        let toolbar = Rect::new(toolbar_x, r.y + TOOLBAR_Y, toolbar_w, toolbar::HEIGHT);
+        let toolbar = Rect::new(toolbar_x, toolbar_y, toolbar_w, toolbar::HEIGHT);
 
-        let lookin_x = r.x + LOOKIN_X;
-        let lookin_w = (toolbar_x - TOOLBAR_GAP - lookin_x).max(0);
-        let lookin_field = Rect::new(lookin_x, r.y + LOOKIN_Y, lookin_w, LOOKIN_H);
+        let lookin_x = r.x + u(LOOKIN_X);
+        let lookin_w = (toolbar_x - u(TOOLBAR_GAP) - lookin_x).max(0);
+        let lookin_field = Rect::new(lookin_x, r.y + u(LOOKIN_Y), lookin_w, lookin_h);
         let mut lookin = combo::layout(&self.lookin, lookin_field, cm);
         if self.crumb_icon().is_some() {
             let shift = LOOKIN_ICON_X + LOOKIN_ICON_PX + LOOKIN_ICON_GAP - 2;
@@ -885,34 +900,42 @@ impl FileDlg {
             lookin.highlight.width -= shift;
         }
 
-        let places = Rect::new(r.x + MARGIN, r.y + SHELL_Y, placesbar::WIDTH, PLACES_H + dy);
+        let places = Rect::new(
+            r.x + u(MARGIN),
+            r.y + u(SHELL_Y),
+            u(MARGIN + placesbar::WIDTH) - u(MARGIN),
+            u(SHELL_Y + PLACES_H) - u(SHELL_Y) + dy,
+        );
         let places_rects = placesbar::layout(&self.places, places, &cm.places);
 
         let label_w =
             text.measure("File name:", false, px)
                 .max(text.measure("Files of type:", false, px));
-        let field_x = r.x + FIELD_X;
-        let accept_x = r.right() - MARGIN - BUTTON_W;
-        let field_w = (accept_x - FIELD_BUTTON_GAP - field_x).max(0);
+        let field_x = r.x + u(FIELD_X);
+        let (button_w, button_h) = (u(BUTTON_W), u(BUTTON_H));
+        let accept_x = r.right() - u(MARGIN) - button_w;
+        let field_w = (accept_x - u(FIELD_BUTTON_GAP) - field_x).max(0);
 
+        let filename_y = r.y + dy + u(FILENAME_Y);
         let filename_label = Rect::new(
-            r.x + ROW_LABEL_X,
-            r.y + dy + FILENAME_Y + LABEL_DY,
+            r.x + u(ROW_LABEL_X),
+            filename_y + u(LABEL_DY),
             label_w,
             label_h,
         );
-        let filename = Rect::new(field_x, r.y + dy + FILENAME_Y, field_w, FILENAME_H);
-        let accept = Rect::new(accept_x, r.y + dy + FILENAME_Y, BUTTON_W, BUTTON_H);
+        let filename = Rect::new(field_x, filename_y, field_w, u(FILENAME_H));
+        let accept = Rect::new(accept_x, filename_y, button_w, button_h);
 
         // This label sits 2 px higher against its field than the other
         // two (its baseline 13 px below the field's top).
+        let filetype_y = r.y + dy + u(FILETYPE_Y);
         let filetype_label = Rect::new(
-            r.x + ROW_LABEL_X,
-            r.y + dy + FILETYPE_Y + LABEL_DY - 2,
+            r.x + u(ROW_LABEL_X),
+            filetype_y + u(LABEL_DY) - 2,
             label_w,
             label_h,
         );
-        let filetype_field = Rect::new(field_x, r.y + dy + FILETYPE_Y, field_w, FILETYPE_H);
+        let filetype_field = Rect::new(field_x, filetype_y, field_w, u(FILETYPE_H));
         // The row sits near the client's bottom edge, and a list drawn
         // past it could not be clicked: it opens above the field instead.
         let mut filetype = combo::layout(&self.filetype, filetype_field, cm);
@@ -923,16 +946,11 @@ impl FileDlg {
                 sb.y += dy;
             }
         }
-        let cancel = Rect::new(
-            accept_x,
-            r.y + dy + FILETYPE_Y + CANCEL_DY,
-            BUTTON_W,
-            BUTTON_H,
-        );
+        let cancel = Rect::new(accept_x, filetype_y + CANCEL_DY, button_w, button_h);
 
         let views = self.views_open.then(|| {
             let anchor = toolbar_rects[TOOLBAR_VIEWS];
-            let menu = self.views_menu(text, px, r.width);
+            let menu = self.views_menu(text, px, r.width, cm.text);
             let popup = Rect::new(anchor.x, anchor.bottom(), menu.width, menu.height);
             (popup, menu)
         });
@@ -961,8 +979,10 @@ impl FileDlg {
     fn shell_layout(&self, r: Rect, cm: &ControlMetrics) -> shellview::Layout {
         let dy = self.grow(r);
         let r = rows(r, cm);
-        let shell_w = (r.width - SHELL_X - MARGIN).max(0);
-        let shell = Rect::new(r.x + SHELL_X, r.y + SHELL_Y, shell_w, SHELL_H + dy);
+        let u = |v: i32| cm.text.len(v);
+        let shell_w = (r.width - u(SHELL_X) - u(MARGIN)).max(0);
+        let shell_h = u(SHELL_Y + SHELL_H) - u(SHELL_Y) + dy;
+        let shell = Rect::new(r.x + u(SHELL_X), r.y + u(SHELL_Y), shell_w, shell_h);
         shellview::layout(&self.shell, shell, cm)
     }
 
@@ -977,10 +997,12 @@ impl FileDlg {
             .collect()
     }
 
-    fn views_menu(&self, text: &TextRenderer, px: u32, max_width: i32) -> MenuLayout {
+    fn views_menu(&self, text: &TextRenderer, px: u32, max_width: i32, u: TextUnits) -> MenuLayout {
         let items = self.views_menu_items();
-        let style = MenuStyle::context(&Theme::default(), ContextBitmaps::None)
-            .fit(text, &items, px, max_width);
+        let mut theme = Theme::default();
+        theme.fonts.size_px = u.px(theme.fonts.size_px);
+        let style =
+            MenuStyle::context(&theme, ContextBitmaps::None).fit(text, &items, px, max_width);
         MenuLayout::compute_styled(&style, &items, usize::MAX)
     }
 
@@ -1645,7 +1667,7 @@ impl FileDlg {
     /// Draws the client area into `r`; the title bar is the host's chrome.
     pub fn draw(&self, c: &mut Canvas, text: &TextRenderer, p: &Paint, r: Rect, px: u32) {
         let Paint { cs, s, .. } = *p;
-        self.drawn.0.set(p.look.controls());
+        self.drawn.0.set(p.look.controls().grown(p.text));
         self.drawn.1.set(p.look.lights_pointer());
         let lay = self.layout(text, px, r, &self.drawn.0.get());
         c.fill_rect(r.scaled(s), cs.button_face);
@@ -1674,7 +1696,7 @@ impl FileDlg {
         if let Some(icon) = self.crumb_icon() {
             c.blit_over(
                 (lay.lookin.field.x + LOOKIN_ICON_X) * s,
-                (lay.lookin.field.y + LOOKIN_ICON_Y) * s,
+                (lay.lookin.field.y + LOOKIN_ICON_Y + (lay.lookin.field.height - LOOKIN_H) / 2) * s,
                 icon,
             );
         }
@@ -1784,10 +1806,7 @@ impl FileDlg {
             let rows = rows(r, &self.drawn.0.get());
             let dy = self.grow(r);
             let mut shifted = f.clone();
-            for it in &mut shifted.items {
-                it.rect.x += rows.x;
-                it.rect.y += rows.y + dy;
-            }
+            shifted.origin = (rows.x, rows.y + dy);
             if self.focus != Focus::Extra {
                 shifted.set_focus(None);
             }
@@ -2695,6 +2714,63 @@ mod tests {
         assert_eq!(lay.cancel, moved(base.cancel, dw, dh), "Cancel");
         let hit = d.hit(&t, 11, big, FIELD_X + 5, EXTRA_Y + dh + 5);
         assert!(matches!(hit, Some(Hit::Extra(_))), "got {hit:?}");
+    }
+
+    /// At 200% text the client opens at twice its 100% minimum and every row, field and button
+    /// grows from the client's corner; the toolbar's buttons keep their px, centred on the Look in
+    /// row; a host's extra rows draw and hit at their grown place.
+    #[test]
+    fn a_grown_text_size_grows_the_dialog() {
+        let t = text();
+        let u = TextUnits::new(22, 11);
+        let mut d = with_extra();
+        d.set_text(u);
+        assert_eq!(d.min_client(), (2 * CLIENT.0, 2 * (CLIENT.1 + EXTRA_H)));
+        assert_eq!(d.client(), d.min_client());
+        let (w, h) = d.client();
+        let r = Rect::new(0, 0, w, h);
+        let cs = ColorScheme::default();
+        let p = Paint {
+            text: u,
+            ..classic_paint(&cs, 1)
+        };
+        let mut c = Canvas::new(w as u32, h as u32);
+        d.draw(&mut c, &t, &p, r, 22);
+        let lay = d.layout(&t, 22, r, &ControlMetrics::CLASSIC.grown(u));
+        assert_eq!(
+            lay.lookin.field,
+            Rect::new(198, 16, lay.lookin.field.width, 44)
+        );
+        assert_eq!(lay.toolbar.height, toolbar::HEIGHT);
+        assert_eq!(lay.toolbar.y, 16 + (44 - toolbar::HEIGHT) / 2);
+        assert_eq!(
+            lay.places,
+            Rect::new(12, 74, 2 * placesbar::WIDTH, 2 * PLACES_H)
+        );
+        assert_eq!(lay.shell.frame.x, 2 * SHELL_X);
+        assert_eq!(
+            lay.filename,
+            Rect::new(390, 788, w - 12 - 150 - 66 - 390, 44)
+        );
+        assert_eq!(lay.accept, Rect::new(w - 12 - 150, 788, 150, 46));
+        assert_eq!(lay.cancel.y, 2 * FILETYPE_Y + CANCEL_DY);
+        let (bx, by) = (2 * FIELD_X, 2 * EXTRA_Y);
+        // The 13 px box centred down its 26 px row.
+        assert_eq!(
+            c.get(bx, by + 6),
+            cs.button_shadow.argb(),
+            "the extra check box's corner"
+        );
+        let hit = d.hit(&t, 22, r, bx + 5, by + 6 + 5);
+        assert!(
+            matches!(hit, Some(Hit::Extra(h)) if h.item == 0),
+            "got {hit:?}"
+        );
+        let hit = d.hit(&t, 22, r, bx + 5, 2 * (EXTRA_Y + 20) + 5);
+        assert!(
+            matches!(hit, Some(Hit::Extra(h)) if h.item == 1),
+            "got {hit:?}"
+        );
     }
 
     #[test]

@@ -135,11 +135,14 @@ pub struct Layout {
     pub scrollbar: Option<Rect>,
     /// The look's shortest scrollbar thumb, which hit and drag lay the bar out with as `draw` does.
     pub thumb_min: i32,
+    /// A row's height, grown with the text.
+    pub row_h: i32,
 }
 
 pub fn layout<T>(list: &GroupList<T>, frame: Rect, cm: &ControlMetrics) -> Layout {
     let mut inner = frame.inset(2);
-    let visible = (inner.height / ROW_H).max(1) as usize;
+    let row_h = cm.text.len(ROW_H);
+    let visible = (inner.height / row_h).max(1) as usize;
     let scrollbar = (list.rows.len() > visible).then(|| {
         let sb = Rect::new(inner.right() - cm.scroll, inner.y, cm.scroll, inner.height);
         inner.width -= cm.scroll;
@@ -151,6 +154,7 @@ pub fn layout<T>(list: &GroupList<T>, frame: Rect, cm: &ControlMetrics) -> Layou
         visible,
         scrollbar,
         thumb_min: cm.thumb_min,
+        row_h,
     }
 }
 
@@ -182,8 +186,8 @@ pub fn row_rect<T>(list: &GroupList<T>, lay: &Layout, i: usize) -> Option<Rect> 
     let k = i
         .checked_sub(list.top)
         .filter(|&k| k < lay.visible && i < list.rows.len())?;
-    let y = lay.inner.y + k as i32 * ROW_H;
-    Some(Rect::new(lay.inner.x, y, lay.inner.width, ROW_H))
+    let y = lay.inner.y + k as i32 * lay.row_h;
+    Some(Rect::new(lay.inner.x, y, lay.inner.width, lay.row_h))
 }
 
 /// What a point lands on: a row in view, or a part of the scrollbar.
@@ -201,7 +205,7 @@ pub fn hit<T>(list: &GroupList<T>, lay: &Layout, x: i32, y: i32) -> Option<Hit> 
     if !lay.inner.contains(x, y) {
         return None;
     }
-    let k = ((y - lay.inner.y) / ROW_H) as usize;
+    let k = ((y - lay.inner.y) / lay.row_h) as usize;
     let row = list.top + k;
     (k < lay.visible && row < list.rows.len()).then_some(Hit::Row(row))
 }
@@ -269,7 +273,7 @@ pub fn draw<T>(
         );
     }
     let inner = lay.inner.scaled(s);
-    let rh = ROW_H * s;
+    let rh = lay.row_h * s;
     let last = list.rows.len().min(list.top + lay.visible);
     for (k, i) in (list.top..last).enumerate() {
         let y = inner.y + k as i32 * rh;
@@ -327,8 +331,8 @@ pub fn access<T>(
         let mut o = Node::new(Role::ListBoxOption);
         o.set_label(row.label());
         if (list.top..list.top + lay.visible).contains(&i) {
-            let y = lay.inner.y + (i - list.top) as i32 * ROW_H;
-            let r = Rect::new(lay.inner.x, y, lay.inner.width, ROW_H);
+            let y = lay.inner.y + (i - list.top) as i32 * lay.row_h;
+            let r = Rect::new(lay.inner.x, y, lay.inner.width, lay.row_h);
             o.set_bounds(access::bounds(r));
         }
         o.set_selected(list.selected == Some(i));

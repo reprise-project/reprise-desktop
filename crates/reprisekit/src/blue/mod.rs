@@ -294,6 +294,7 @@ fn controls(v: Variant) -> ControlMetrics {
         places: controls::places_metrics(),
         file_dlg: FileDlgMetrics { dy: -1 },
         start_menu: start_menu_metrics(),
+        text: crate::theme::TextUnits::ONE,
     }
 }
 
