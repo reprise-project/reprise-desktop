@@ -19,6 +19,7 @@ use smithay::{
 };
 
 use reprisekit::classic::frame::{CaptionButton, Edges, FrameGeometry, FrameHit};
+use reprisekit::pointer::{Click, DoubleClick};
 
 use reprisescene::TreeId;
 
@@ -1291,13 +1292,11 @@ impl State {
             }
             Hit::Frame { window, hit } => {
                 self.focus_window(window);
-                let now = time.millis();
-                let threshold = self.config.theme.metrics.double_click_ms as u32;
-                let double = matches!(self.last_click, Some((t, w)) if w == window && now.wrapping_sub(t) < threshold);
+                let click = (self.config.theme.metrics).click(at.0, at.1, time.millis());
+                let double = caption_double(&mut self.caption_clicks, window, hit, button, click);
                 if hit == FrameHit::Title
                     && let Some((tab, member)) = self.tab_at(window, pos.x, pos.y)
                 {
-                    self.last_click = (button == BTN_LEFT && !double).then_some((now, window));
                     self.tab_press(window, tab, member, button, at, double);
                     return;
                 }
@@ -1312,17 +1311,15 @@ impl State {
                     FrameHit::Icon => {
                         // A second click on the icon closed the menu above.
                         if double {
-                            self.last_click = None;
                             self.close(window);
-                        } else if closed != Some(MenuRoot::Window(window)) {
-                            self.last_click = Some((now, window));
+                        } else if closed == Some(MenuRoot::Window(window)) {
+                            self.caption_clicks.reset();
+                        } else {
                             self.open_window_menu_below(window, false);
                         }
                     }
                     FrameHit::Title => {
-                        self.last_click = Some((now, window));
                         if double {
-                            self.last_click = None;
                             let maximized = self.win(window).is_some_and(|w| w.maximized);
                             self.set_maximized(window, !maximized);
                         } else {
@@ -1367,7 +1364,7 @@ impl State {
                 bar,
                 hit: TaskbarHit::Clock,
             } if button == BTN_LEFT => {
-                crate::calendarview::clock_press(self, bar, time.millis(), calendar_was_open)
+                crate::calendarview::clock_press(self, bar, at, time.millis(), calendar_was_open)
             }
             // An icon takes the press as on the bar; the panel keeps it.
             Hit::TrayFlyout { cell } => {
@@ -1912,9 +1909,53 @@ pub(crate) fn resize_rect(
     r
 }
 
+/// Whether a press on frame part `hit` completes a double click on the caption or icon. Only left
+/// presses there pair; another button forgets the last.
+fn caption_double(
+    clicks: &mut DoubleClick<(WindowId, FrameHit)>,
+    window: WindowId,
+    hit: FrameHit,
+    button: u32,
+    click: Click,
+) -> bool {
+    if button != BTN_LEFT {
+        clicks.reset();
+        return false;
+    }
+    matches!(hit, FrameHit::Title | FrameHit::Icon) && clicks.press((window, hit), click)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn caption_presses_pair_on_one_part_within_the_configured_time_and_slop() {
+        let m = reprisekit::theme::Metrics {
+            double_click_ms: 900,
+            ..Default::default()
+        };
+        let w = WindowId::next();
+        let mut clicks = DoubleClick::default();
+        let mut press = |hit, button, x, time| {
+            caption_double(&mut clicks, w, hit, button, m.click(x, 10, time))
+        };
+        assert!(!press(FrameHit::Title, BTN_LEFT, 100, 1000));
+        assert!(press(FrameHit::Title, BTN_LEFT, 104, 1800), "800 ms, 4 px");
+        assert!(!press(FrameHit::Title, BTN_LEFT, 100, 3000));
+        assert!(!press(FrameHit::Icon, BTN_LEFT, 100, 3100), "another part");
+        assert!(!press(FrameHit::Icon, BTN_RIGHT, 100, 3200));
+        assert!(
+            !press(FrameHit::Icon, BTN_LEFT, 100, 3300),
+            "a right press between"
+        );
+        assert!(
+            press(FrameHit::Icon, BTN_LEFT, 100, 3400),
+            "the icon pairs too"
+        );
+        assert!(!press(FrameHit::Title, BTN_LEFT, 100, 5000));
+        assert!(!press(FrameHit::Title, BTN_LEFT, 105, 5100), "5 px off");
+    }
 
     #[test]
     fn a_drop_restores_to_the_rect_from_before_the_drag() {
