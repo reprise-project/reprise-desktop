@@ -319,7 +319,7 @@ struct SettingsApp {
     requests: Option<instance::Requests>,
     waker: Option<Waker>,
     scan: Option<Receiver<Vec<PathBuf>>>,
-    /// A slideshow folder the scan missed and its pictures, listed for the monitor.
+    /// The slideshow folder and its pictures, listed for the monitor.
     listed: Option<(PathBuf, Vec<PathBuf>)>,
     listing: Option<(PathBuf, Receiver<Vec<PathBuf>>)>,
     /// The slideshow folder picked before Picture was chosen; kept in the state file.
@@ -797,7 +797,7 @@ impl SettingsApp {
     }
 
     fn show_monitor(&mut self) {
-        let file = backgroundpage::monitor_file(&self.want, &self.wallpapers, self.listed());
+        let file = backgroundpage::monitor_file(&self.want, self.listed());
         backgroundpage::show(
             &mut self.sheet.pages[Page::Background.index()],
             &self.want,
@@ -810,9 +810,9 @@ impl SettingsApp {
         self.listed.as_ref().map_or(&[], |(_, p)| p.as_slice())
     }
 
-    /// List the pending slideshow folder on a thread when the scan found no picture in it and it is not listed or being listed already.
+    /// List the pending slideshow folder on a thread unless it is listed or being listed already.
     fn list_slide_folder(&mut self) {
-        let Some(folder) = backgroundpage::unlisted_folder(&self.want, &self.wallpapers) else {
+        let Some(folder) = wallpapers::expand(&self.want.slideshow) else {
             return;
         };
         let is = |f: &PathBuf| *f == folder;
@@ -822,7 +822,10 @@ impl SettingsApp {
             return;
         }
         let dir = folder.clone();
-        self.listing = Some((folder, self.spawn(move || wallpapers::list(&dir))));
+        self.listing = Some((
+            folder,
+            self.spawn(move || reprisefs::pictures::in_folder(&dir)),
+        ));
     }
 
     /// The Picture / Slideshow combo moved: a slideshow starts on [`backgroundpage::slideshow_start`] (else Pictures), and Picture keeps the folder it leaves for the next switch.
@@ -921,10 +924,10 @@ impl SettingsApp {
         rx
     }
 
-    /// Decode the pending wallpaper for the monitor unless shown or a decode is under way; that one's end calls this again. A slideshow folder the scan missed is listed first.
+    /// Decode the pending wallpaper for the monitor unless shown or a decode is under way; that one's end calls this again. A slideshow folder is listed first.
     fn want_preview(&mut self) {
         self.list_slide_folder();
-        let want = backgroundpage::monitor_file(&self.want, &self.wallpapers, self.listed());
+        let want = backgroundpage::monitor_file(&self.want, self.listed());
         let Some(file) = backgroundpage::next_decode(
             &want,
             self.picture.as_ref().map(|p| p.path.as_str()),
@@ -3199,7 +3202,9 @@ mod tests {
         let (walls, trips) = (dir.join("Walls"), dir.join("Trips"));
         std::fs::create_dir_all(&walls).unwrap();
         std::fs::create_dir_all(&trips).unwrap();
-        std::fs::write(trips.join("coast.jpg"), b"x").unwrap();
+        for f in ["anim.gif", "coast10.jpg", "Coast9.jpg"] {
+            std::fs::write(trips.join(f), b"x").unwrap();
+        }
         let path = dir.join("config.toml");
         let wall = walls.join("dunes.jpg");
         std::fs::write(&path, format!("[wallpaper]\nimage = {:?}\n", wall)).unwrap();
@@ -3228,8 +3233,8 @@ mod tests {
         }
         assert_eq!(
             a.picture.as_ref().map(|p| p.path.clone()),
-            Some(name(&trips.join("coast.jpg"))),
-            "the first picture of a folder the scan never saw"
+            Some(name(&trips.join("Coast9.jpg"))),
+            "the desktop's first slide: no .gif, Coast9 before coast10"
         );
 
         mode(&mut a, 0);
