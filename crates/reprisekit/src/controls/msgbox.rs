@@ -30,7 +30,7 @@ pub fn button_id(i: usize) -> &'static str {
 /// Right margin after the text, and the left one without an icon.
 const MARGIN_X: i32 = 8;
 const ICON: i32 = 32;
-/// The icon's 32x32 bounding box.
+/// The icon's 32x32 bounding box at 100%.
 const ICON_XY: (i32, i32) = (11, 15);
 /// From the icon's right edge to the text's ink.
 const ICON_GAP: i32 = 19;
@@ -78,12 +78,23 @@ fn extra_h(f: &Fields) -> i32 {
     (block_h(f) - LINE_H).max(0)
 }
 
-fn text_x(f: &Fields) -> i32 {
+/// The text column's left edge as laid out at 100%, and how many px past it the text starts at
+/// any text size: beside an icon the column starts at the icon's left edge and steps past the
+/// icon and the gap, which keep their size.
+fn text_x(f: &Fields) -> (i32, i32) {
     if f.icon.is_some() {
-        ICON_XY.0 + ICON + ICON_GAP
+        (ICON_XY.0, ICON + ICON_GAP)
     } else {
-        MARGIN_X
+        (MARGIN_X, 0)
     }
+}
+
+/// The 100% rect the icon is laid out at: it moves down as far as the first line's centre does.
+fn icon_rect(u: TextUnits, px: u32) -> Rect {
+    let row = u.base_px(px) as i32 + 4;
+    let centre = |u: TextUnits| (u.len(TEXT_Y) + u.len(TEXT_Y + row)) / 2;
+    let y = u.design(ICON_XY.1 + centre(u) - centre(TextUnits::ONE));
+    Rect::new(ICON_XY.0, y, ICON, ICON)
 }
 
 /// The width of `n` buttons in a row, `BUTTON_GAP` apart. `client` and
@@ -101,10 +112,11 @@ pub fn client(f: &Fields, text: &TextRenderer, px: u32, u: TextUnits) -> (i32, i
     let lines: Vec<&str> = f.text.split('\n').collect();
     let widest = lines
         .iter()
-        .map(|l| u.design(text.measure(l, false, px)))
+        .map(|l| text.measure(l, false, px))
         .max()
         .unwrap_or(0);
-    let msg = text_x(f) + widest + MARGIN_X;
+    let (tx, step) = text_x(f);
+    let msg = u.design(u.len(tx) + step + widest) + MARGIN_X;
     let n = f.buttons.len() as i32;
     let row = MARGIN_X * 2 + button_row_w(n);
     (
@@ -117,21 +129,17 @@ pub fn client(f: &Fields, text: &TextRenderer, px: u32, u: TextUnits) -> (i32, i
 /// button, through [`button_id`].
 pub fn form(f: &Fields, text: &TextRenderer, px: u32, u: TextUnits) -> Form {
     let (w, _) = client(f, text, px, u);
-    let tx = text_x(f);
+    let (tx, step) = text_x(f);
     let lines: Vec<&str> = f.text.split('\n').collect();
     let extra = extra_h(f);
     let mut items = Vec::new();
     if let Some(icon) = &f.icon {
-        items.push(Item::picture(
-            "icon",
-            Rect::new(ICON_XY.0, ICON_XY.1, ICON, ICON),
-            Some(icon.clone()),
-        ));
+        items.push(Item::picture("icon", icon_rect(u, px), Some(icon.clone())));
     }
     // A reserved-height box top-aligns its rows, so it draws
     // through `Lines` like a multi-line message rather than through the
     // vertically centred single `Label` row.
-    items.push(if lines.len() > 1 || f.min_text_h.is_some() {
+    let text_item = if lines.len() > 1 || f.min_text_h.is_some() {
         Item::lines(
             "text",
             Rect::new(tx, TEXT_Y, w - tx - MARGIN_X, block_h(f)),
@@ -143,7 +151,8 @@ pub fn form(f: &Fields, text: &TextRenderer, px: u32, u: TextUnits) -> Form {
             Rect::new(tx, TEXT_Y, w - tx - MARGIN_X, u.base_px(px) as i32 + 4),
             &f.text,
         )
-    });
+    };
+    items.push(text_item.indent_px(step));
     // The row is centred as a block, so one button sits in the middle and
     // three sit together. A taller message pushes the row down by the
     // same lines it grew by.
@@ -371,7 +380,7 @@ mod tests {
         let without = form(&bare, &text, px, TextUnits::ONE);
         assert!(with.item("icon").is_some());
         assert!(without.item("icon").is_none());
-        let tx = |f: &Form| f.item("text").expect("the text row exists").rect.x;
+        let tx = |f: &Form| f.rect("text").expect("the text row exists").x;
         assert!(
             tx(&without) < tx(&with),
             "the text moves left without an icon"
@@ -383,23 +392,53 @@ mod tests {
     #[test]
     fn a_grown_box_fits_its_text_and_buttons() {
         let text = TextRenderer::load(&FontConfig::default());
-        for px in [17, 22] {
-            let u = TextUnits::new(px, 11);
+        for pct in [100, 150, 200] {
+            let theme = Theme::default().with_form_text(pct);
+            let (u, px) = (theme.text, theme.fonts.size_px);
             let f = notfound();
             let (w, h) = u.size(client(&f, &text, px, u));
             let form = form(&f, &text, px, u);
-            let lines = form.item("text").unwrap().rect;
+            form.drawn_with(&theme.paint());
+            let line = form.rect("text").unwrap();
             let measured = text.measure(&f.text, false, px);
+            assert!(line.width >= measured, "{pct}%: the line fits its row");
             assert!(
-                u.rect(lines).width >= measured,
-                "{px}: the line fits its row"
+                line.right() + u.len(MARGIN_X) <= w,
+                "{pct}%: the line ends a margin inside {w}"
             );
-            let ok = u.rect(form.item(OK).unwrap().rect);
+            let ok = form.rect(OK).unwrap();
             assert!(
                 ok.right() <= w && ok.bottom() <= h,
-                "{px}: OK inside {w}x{h}"
+                "{pct}%: OK inside {w}x{h}"
             );
             assert_eq!(ok.height, u.len(64 + BUTTON_H) - u.len(64));
+        }
+    }
+
+    /// The icon keeps 32x32 and its 19 px gap to the text at every text size; only the text
+    /// column grows. The icon stays level with the first line.
+    #[test]
+    fn a_grown_box_keeps_its_icon_and_its_gap() {
+        let text = TextRenderer::load(&FontConfig::default());
+        for (pct, expected_icon) in [(100, (11, 15)), (150, (17, 32)), (200, (22, 48))] {
+            let theme = Theme::default().with_form_text(pct);
+            let (u, px) = (theme.text, theme.fonts.size_px);
+            let form = form(&notfound(), &text, px, u);
+            form.drawn_with(&theme.paint());
+            let icon = form.rect("icon").unwrap();
+            let line = form.rect("text").unwrap();
+            assert_eq!((icon.x, icon.y), expected_icon, "{pct}%: the icon's place");
+            assert_eq!(
+                (icon.width, icon.height),
+                (32, 32),
+                "{pct}%: the icon's size"
+            );
+            assert_eq!(line.x - icon.right(), 19, "{pct}%: the icon-to-text gap");
+            let (icon_mid, line_mid) = (icon.y + icon.height / 2, line.y + line.height / 2);
+            assert!(
+                (icon_mid - line_mid).abs() <= 1,
+                "{pct}%: icon centre {icon_mid}, line centre {line_mid}"
+            );
         }
     }
 }

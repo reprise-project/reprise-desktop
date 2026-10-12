@@ -172,9 +172,18 @@ impl Layout {
         self
     }
 
+    /// How far right of the icon's left edge the text starts, when it keeps that at every text
+    /// size: beside an icon with no field below. The icon and its gap keep their px; only the
+    /// text column grows.
+    fn beside_icon(&self) -> Option<i32> {
+        let icon = self.icon.filter(|_| self.field.is_none())?;
+        self.lines.first().map(|(r, _)| r.x - icon.x)
+    }
+
     /// This whole-dialog layout at the text size `u`: the client area and every rect in it grow
     /// from the client's corner; the frame and caption keep theirs.
     pub fn grown(mut self, u: TextUnits) -> Layout {
+        let beside = self.beside_icon();
         let (ox, oy) = (FRAME, FRAME + CAPTION_H);
         let map = |r: &mut Rect| {
             let g = u.rect(Rect::new(r.x - ox, r.y - oy, r.width, r.height));
@@ -188,6 +197,13 @@ impl Layout {
             (icon.width, icon.height) = (ICON_PX, ICON_PX);
         }
         self.lines.iter_mut().for_each(|(r, _)| map(r));
+        if let (Some(step), Some(icon)) = (beside, self.icon) {
+            for (r, _) in &mut self.lines {
+                let right = r.right();
+                r.x = icon.x + step;
+                r.width = right - r.x;
+            }
+        }
         self.buttons.iter_mut().for_each(map);
         let (cw, ch) = u.size((self.size.0 - 2 * FRAME, self.size.1 - 2 * FRAME - CAPTION_H));
         self.size = (cw + 2 * FRAME, ch + 2 * FRAME + CAPTION_H);
@@ -212,16 +228,22 @@ pub fn layout(
     } else {
         left
     };
+    // Where the text starts at the text size: see `Layout::beside_icon`.
+    let start = if f.icon && !f.field {
+        u.len(left) + ICON_PX + cm.icon_gap
+    } else {
+        u.len(text_x)
+    };
     let (w, wrapped) = match cm.width {
-        Some(w) => (w, wrap(text, f.text, u.len(w - cm.right - text_x), px)),
+        Some(w) => (w, wrap(text, f.text, u.len(w - cm.right) - start, px)),
         None => {
             let lines = wrap(text, f.text, i32::MAX, px);
             let widest = lines
                 .iter()
-                .map(|l| u.design(text.measure(l, false, px)))
+                .map(|l| text.measure(l, false, px))
                 .max()
                 .unwrap_or(0);
-            (text_x + widest + cm.right, lines)
+            (u.design(start + widest) + cm.right, lines)
         }
     };
     let body_y = FRAME + CAPTION_H + cm.top;
@@ -301,11 +323,9 @@ pub fn form(lay: &Layout, icon: Option<Canvas>, buttons: &[String], default: usi
             .lines
             .last()
             .map_or(first.height, |(r, _)| r.bottom() - first.y);
-        items.push(Item::lines(
-            "text",
-            Rect::new(first.x, first.y, first.width, h),
-            &lines,
-        ));
+        let step = lay.beside_icon().unwrap_or(0);
+        let r = Rect::new(first.x - step, first.y, first.width + step, h);
+        items.push(Item::lines("text", r, &lines).indent_px(step));
     }
     for (i, (r, label)) in lay.buttons.iter().zip(buttons).enumerate() {
         items.push(Item::button(BUTTON_IDS[i], *r, label, true, i == default));
@@ -407,5 +427,45 @@ mod tests {
         );
         let last = *big.buttons.last().unwrap();
         assert!(last.right() <= big.size.0 - FRAME && last.bottom() <= big.size.1 - FRAME);
+    }
+
+    /// A message box keeps its 32 px icon and the 16 px gap to its text at every text size, drawn
+    /// by the compositor (whole-dialog layout) or by a program (the form); only the text column
+    /// grows, and its lines still fit it.
+    #[test]
+    fn a_grown_message_box_keeps_its_icon_and_its_gap() {
+        const EXPECTED_GAP: i32 = 16;
+        let text = TextRenderer::load(&FontConfig::default());
+        let f = Fields {
+            text: "Are you sure you want to send 'a considerably longer file name.txt' to the Recycle Bin?",
+            icon: true,
+            field: false,
+            buttons: 2,
+            text_h: None,
+        };
+        for pct in [100, 150, 200] {
+            let theme = Theme::default().with_form_text(pct);
+            let (u, px) = (theme.text, theme.fonts.size_px);
+            let lay = layout(Template::MessageBox, &text, px, &f, u);
+            let whole = lay.clone().grown(u);
+            let icon = whole.icon.unwrap();
+            assert_eq!((icon.width, icon.height), (ICON_PX, ICON_PX), "{pct}%");
+            for (r, line) in &whole.lines {
+                assert_eq!(r.x - icon.right(), EXPECTED_GAP, "{pct}%: the gap");
+                assert!(
+                    text.measure(line, false, px) <= r.width,
+                    "{pct}%: {line:?} fits"
+                );
+            }
+            let form = form(&lay.client(), None, &["&Yes".into(), "&No".into()], 0);
+            form.drawn_with(&theme.paint());
+            let (icon, lines) = (form.rect("icon").unwrap(), form.rect("text").unwrap());
+            assert_eq!((icon.width, icon.height), (ICON_PX, ICON_PX), "{pct}%");
+            assert_eq!(
+                lines.x - icon.right(),
+                EXPECTED_GAP,
+                "{pct}%: the form's gap"
+            );
+        }
     }
 }
