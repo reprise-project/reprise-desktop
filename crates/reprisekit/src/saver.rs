@@ -152,6 +152,19 @@ struct Shape {
     history: Vec<[(f32, f32); 4]>,
 }
 
+/// A bar from `from` to `to`, `width` wide, squared off half a width past each end: a star is a
+/// bar of no length, a square centred on its spot.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Mark {
+    pub from: (f32, f32),
+    pub to: (f32, f32),
+    pub width: f32,
+    pub color: Color,
+}
+
+/// [`Saver::marks`]: a star or line is one unit wide per this many units of height, at least 1.
+const MARK_UNIT_PER: f32 = 540.0;
+
 const LOGO_COLORS: [Color; 6] = [
     Color::rgb(0xFF, 0xFF, 0xFF),
     Color::rgb(0x40, 0xC0, 0xFF),
@@ -440,6 +453,42 @@ impl Saver {
         }
     }
 
+    /// Starfield and Mystify as strokes for a GPU host, in the saver's units, bottom first: a star
+    /// is a square on its spot, a Mystify edge a bar between two corners. Other savers have none.
+    pub fn marks(&self) -> Vec<Mark> {
+        let (w, h) = (self.w as f32, self.h as f32);
+        let unit = (h / MARK_UNIT_PER).max(1.0);
+        match &self.scene {
+            Scene::Stars(stars) => stars
+                .iter()
+                .map(|s| {
+                    let at = project(s, w, h);
+                    Mark {
+                        from: at,
+                        to: at,
+                        width: if near(s) { unit * 2.0 } else { unit },
+                        color: star_color(s),
+                    }
+                })
+                .collect(),
+            Scene::Shapes(shapes) => shapes
+                .iter()
+                .flat_map(|s| {
+                    let color = hue_color(s.hue);
+                    outlines(s).flat_map(move |o| {
+                        (0..4).map(move |i| Mark {
+                            from: o[i],
+                            to: o[(i + 1) % 4],
+                            width: unit,
+                            color,
+                        })
+                    })
+                })
+                .collect(),
+            _ => Vec::new(),
+        }
+    }
+
     pub fn draw(&self, canvas: &mut Canvas) {
         let all = canvas.bounds();
         canvas.fill_rect(all, Color::rgb(0, 0, 0));
@@ -450,26 +499,15 @@ impl Saver {
                 let unit = (self.h / 300).max(1) as i32;
                 for s in stars {
                     let (px, py) = project(s, w, h);
-                    let level = ((1.0 - s.z) * 255.0).clamp(60.0, 255.0) as u8;
-                    let size = if s.z < 0.3 { unit * 2 } else { unit };
-                    canvas.fill_rect(
-                        Rect::new(px as i32, py as i32, size, size),
-                        Color::rgb(level, level, level),
-                    );
+                    let size = if near(s) { unit * 2 } else { unit };
+                    canvas.fill_rect(Rect::new(px as i32, py as i32, size, size), star_color(s));
                 }
             }
             Scene::Shapes(shapes) => {
                 let unit = (self.h / 400).max(1) as i32;
                 for s in shapes {
                     let color = hue_color(s.hue);
-                    let outlines = std::iter::once(&s.at).chain(
-                        s.history
-                            .iter()
-                            .skip(TRAIL_GAP - 1)
-                            .step_by(TRAIL_GAP)
-                            .take(TRAIL - 1),
-                    );
-                    for o in outlines {
+                    for o in outlines(s) {
                         for i in 0..4 {
                             let (a, b) = (o[i], o[(i + 1) % 4]);
                             line(canvas, a, b, unit, color);
@@ -495,6 +533,26 @@ impl Saver {
             }
         }
     }
+}
+
+fn near(s: &Star) -> bool {
+    s.z < 0.3
+}
+
+fn star_color(s: &Star) -> Color {
+    let level = ((1.0 - s.z) * 255.0).clamp(60.0, 255.0) as u8;
+    Color::rgb(level, level, level)
+}
+
+/// A shape's outline now, then every `TRAIL_GAP`th one before it.
+fn outlines(s: &Shape) -> impl Iterator<Item = &[(f32, f32); 4]> {
+    std::iter::once(&s.at).chain(
+        s.history
+            .iter()
+            .skip(TRAIL_GAP - 1)
+            .step_by(TRAIL_GAP)
+            .take(TRAIL - 1),
+    )
 }
 
 fn project(s: &Star, w: f32, h: f32) -> (f32, f32) {
@@ -733,6 +791,87 @@ mod tests {
             for (x, y) in sh.at {
                 assert!((0.0..152.0).contains(&x) && (0.0..112.0).contains(&y));
             }
+        }
+    }
+
+    fn marks_at(kind: Kind, w: u32, h: u32, steps: usize) -> Vec<Mark> {
+        let mut s = Saver::new(kind, &Options::default(), w, h, 7, &text());
+        for _ in 0..steps {
+            s.step();
+        }
+        s.marks()
+    }
+
+    #[test]
+    fn starfield_marks_are_squares_on_each_star() {
+        let mut s = Saver::new(Kind::Starfield, &Options::default(), 1920, 1080, 7, &text());
+        for _ in 0..20 {
+            s.step();
+        }
+        let marks = s.marks();
+        let Scene::Stars(stars) = &s.scene else {
+            unreachable!()
+        };
+        assert_eq!(marks.len(), 200, "one per star");
+        for (m, st) in marks.iter().zip(stars) {
+            assert_eq!(m.from, m.to, "a star has no length");
+            assert_eq!(m.from, project(st, 1920.0, 1080.0));
+            let level = m.color.r;
+            assert_eq!((m.color.g, m.color.b), (level, level), "grey");
+            assert!(level >= 60);
+            let want = if st.z < 0.3 { 4.0 } else { 2.0 };
+            assert_eq!(m.width, want, "2 wide at 1080 high, 4 when near");
+        }
+        assert!(marks.iter().any(|m| m.width == 4.0) && marks.iter().any(|m| m.width == 2.0));
+    }
+
+    #[test]
+    fn mystify_marks_close_each_outline_of_the_trail() {
+        let marks = marks_at(Kind::Mystify, 1920, 1080, 40);
+        assert_eq!(
+            marks.len(),
+            2 * TRAIL * 4,
+            "two shapes, five outlines, four edges"
+        );
+        for quad in marks.chunks(4) {
+            for i in 0..4 {
+                assert_eq!(quad[i].to, quad[(i + 1) % 4].from, "edges meet");
+                assert_eq!(quad[i].color, quad[0].color, "one colour per outline");
+                assert_eq!(quad[i].width, 2.0);
+            }
+        }
+        assert_ne!(
+            marks[0].color,
+            marks[TRAIL * 4].color,
+            "each shape its own hue"
+        );
+        for m in &marks {
+            for (x, y) in [m.from, m.to] {
+                assert!((0.0..1920.0).contains(&x) && (0.0..1080.0).contains(&y));
+            }
+        }
+    }
+
+    #[test]
+    fn marks_scale_with_the_screen_and_lines_stay_one_unit_on_small_ones() {
+        for kind in [Kind::Starfield, Kind::Mystify] {
+            let half = marks_at(kind, 960, 540, 40);
+            let full = marks_at(kind, 1920, 1080, 40);
+            assert_eq!(half.len(), full.len());
+            for (a, b) in half.iter().zip(&full) {
+                for (p, q) in [(a.from, b.from), (a.to, b.to)] {
+                    let d = ((p.0 * 2.0 - q.0).abs()).max((p.1 * 2.0 - q.1).abs());
+                    assert!(d <= 2.0, "{kind:?}: {p:?} doubled is {q:?}");
+                }
+            }
+        }
+        assert!(
+            marks_at(Kind::Mystify, 152, 112, 1)
+                .iter()
+                .all(|m| m.width == 1.0)
+        );
+        for kind in [Kind::Blank, Kind::Logo, Kind::Photos] {
+            assert!(marks_at(kind, 152, 112, 1).is_empty(), "{kind:?}");
         }
     }
 

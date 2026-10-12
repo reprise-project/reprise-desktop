@@ -39,6 +39,7 @@ pub struct GlassCtx {
     /// nothing behind its art).
     fx: RefCell<Option<GlassFx>>,
     flip: RefCell<Option<reprisefx::FlipFx>>,
+    strokes: Cell<Option<reprisefx::StrokeFx>>,
     pass: Cell<Pass>,
     /// The backdrop the frame being built blurs; None blurs the frame beneath each piece of glass.
     source: RefCell<Option<Source>>,
@@ -92,10 +93,20 @@ impl GlassCtx {
             .map_err(|e| log::warn!("3D switcher: no cards, the shader did not compile: {e}"))
             .ok();
         *self.flip.borrow_mut() = flip;
+        let strokes = reprisefx::StrokeFx::new(renderer)
+            .map_err(|e| {
+                log::warn!("screen savers: no stars or lines, the shader did not compile: {e}")
+            })
+            .ok();
+        self.strokes.set(strokes);
     }
 
     pub fn flip_fx(&self) -> Option<reprisefx::FlipFx> {
         self.flip.borrow().clone()
+    }
+
+    pub fn stroke_fx(&self) -> Option<reprisefx::StrokeFx> {
+        self.strokes.get()
     }
 
     pub fn begin(&self, output: &Output, settings: Settings, quality: Quality, hold: bool) {

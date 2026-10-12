@@ -78,6 +78,7 @@
 //!   in two packed RGBA8 textures that take turns, steps it with the frame's
 //!   splashes (`reprisekit::water`) while windows hold their texels flat, and
 //!   makes its normals once per frame. [`WaterFx`] holds the programs, once per renderer.
+//! - [`strokes`]: flat bars at any angle in one batch, the Starfield's stars and Mystify's lines.
 
 pub mod blur;
 pub mod colorfx;
@@ -88,6 +89,7 @@ pub mod lens;
 mod picture;
 mod shaders;
 mod space;
+pub mod strokes;
 pub mod tint;
 pub mod water;
 
@@ -97,5 +99,6 @@ pub use element::{Glass, GlassElement, GlassFrame, GlassFx, Shape};
 pub use flip::{FlipCard, FlipCardElement, FlipFx, mipmaps};
 pub use lens::Lens;
 pub use picture::{Picture, Source, Update};
+pub use strokes::{Stroke, StrokeElement, StrokeFx, Strokes};
 pub use tint::Tint;
 pub use water::{Pool, WaterElement, WaterFx};
