@@ -235,10 +235,11 @@ pub fn fill_folders(form: &mut Form, folders: &[PathBuf], picked: &str, icon: Op
 }
 
 /// The file the monitor shows for `s`: the pending wallpaper, or for a
-/// slideshow the first of `pictures` in its folder; empty for none. A
+/// slideshow the first picture in its folder, from `pictures` (the scan)
+/// or else `listed` (the folder's own listing); empty for none. A
 /// built-in is its `reprise:` spelling in `s`'s glass colour, so a new
 /// glass colour is a new picture.
-pub fn monitor_file(s: &Settings, pictures: &[PathBuf]) -> String {
+pub fn monitor_file(s: &Settings, pictures: &[PathBuf], listed: &[PathBuf]) -> String {
     if !slideshow(s) {
         let glass = crate::appearancepage::glass(s);
         return match builtin(&s.wallpaper) {
@@ -251,9 +252,36 @@ pub fn monitor_file(s: &Settings, pictures: &[PathBuf]) -> String {
     };
     pictures
         .iter()
+        .chain(listed)
         .find(|p| p.parent() == Some(folder.as_path()))
         .map(|p| p.to_string_lossy().into_owned())
         .unwrap_or_default()
+}
+
+/// The slideshow folder of `s` when none of `pictures` lies in it, so
+/// the host has to list it for the monitor.
+pub fn unlisted_folder(s: &Settings, pictures: &[PathBuf]) -> Option<PathBuf> {
+    let folder = expand(&s.slideshow)?;
+    (!pictures
+        .iter()
+        .any(|p| p.parent() == Some(folder.as_path())))
+    .then_some(folder)
+}
+
+/// The folder a slideshow starts on, as the config spells it: `last`,
+/// the one picked before, else the pending `wallpaper`'s folder; `None`
+/// when neither is a folder on disk.
+pub fn slideshow_start(last: &str, wallpaper: &str) -> Option<String> {
+    if expand(last).is_some_and(|p| p.is_dir()) {
+        return Some(last.to_string());
+    }
+    if builtin(wallpaper).is_some() {
+        return None;
+    }
+    let parent = expand(wallpaper)?.parent()?.to_path_buf();
+    parent
+        .is_dir()
+        .then(|| parent.to_string_lossy().into_owned())
 }
 
 /// The Home icon's check: its desktop label ("<user>'s Home"), H its
@@ -474,9 +502,9 @@ mod tests {
             glass_mode: "dark".into(),
             ..Settings::default()
         };
-        assert_eq!(monitor_file(&s, &[]), "reprise:flow/night");
+        assert_eq!(monitor_file(&s, &[], &[]), "reprise:flow/night");
         s.wallpaper = "reprise:ridges/dusk".into();
-        assert_eq!(monitor_file(&s, &[]), "reprise:ridges/dusk");
+        assert_eq!(monitor_file(&s, &[], &[]), "reprise:ridges/dusk");
         let mut f = page(Area::MIN);
         follow(&mut f, &s);
         match &f.item("wallpaper_position").unwrap().control {
@@ -512,12 +540,57 @@ mod tests {
             slideshow: "/w/a".into(),
             ..Settings::default()
         };
-        assert_eq!(monitor_file(&s, &pics), "/w/a/hills.jpg");
+        assert_eq!(monitor_file(&s, &pics, &[]), "/w/a/hills.jpg");
         let one = Settings {
             slideshow: String::new(),
             ..s
         };
-        assert_eq!(monitor_file(&one, &pics), "/w/b/dunes.jpg");
+        assert_eq!(monitor_file(&one, &pics, &[]), "/w/b/dunes.jpg");
+    }
+
+    #[test]
+    fn a_slideshow_folder_the_scan_missed_shows_its_listed_first_picture() {
+        let pics = [PathBuf::from("/w/a/hills.jpg")];
+        let s = Settings {
+            slideshow: "/far/Trips".into(),
+            ..Settings::default()
+        };
+        assert_eq!(
+            unlisted_folder(&s, &pics),
+            Some(PathBuf::from("/far/Trips"))
+        );
+        assert_eq!(monitor_file(&s, &pics, &[]), "", "the desktop colour");
+        let listed = [
+            PathBuf::from("/far/Trips/coast.jpg"),
+            PathBuf::from("/far/Trips/hut.png"),
+        ];
+        assert_eq!(monitor_file(&s, &pics, &listed), "/far/Trips/coast.jpg");
+        let scanned = Settings {
+            slideshow: "/w/a".into(),
+            ..Settings::default()
+        };
+        assert_eq!(unlisted_folder(&scanned, &pics), None);
+        assert_eq!(unlisted_folder(&Settings::default(), &pics), None);
+    }
+
+    #[test]
+    fn a_slideshow_starts_on_the_folder_picked_before_else_the_wallpapers() {
+        let dir = std::env::temp_dir().join(format!("reprise-slide-start-{}", std::process::id()));
+        let (trips, walls) = (dir.join("Trips"), dir.join("Walls"));
+        std::fs::create_dir_all(&trips).unwrap();
+        std::fs::create_dir_all(&walls).unwrap();
+        let s = |p: &Path| p.to_string_lossy().into_owned();
+        let wall = s(&walls.join("dunes.jpg"));
+        assert_eq!(slideshow_start(&s(&trips), &wall), Some(s(&trips)));
+        assert_eq!(slideshow_start("", &wall), Some(s(&walls)));
+        assert_eq!(
+            slideshow_start(&s(&dir.join("gone")), &wall),
+            Some(s(&walls)),
+            "a folder since removed is skipped"
+        );
+        assert_eq!(slideshow_start("", "reprise:flow/night"), None);
+        assert_eq!(slideshow_start("", ""), None);
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
