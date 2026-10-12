@@ -692,6 +692,11 @@ pub fn open_argv_for(path: &Path) -> Vec<OsString> {
     vec![opener_for(path).into(), path.into()]
 }
 
+/// Explorer on the folder `path` sits in, with `path` selected.
+pub fn open_location_argv(path: &Path) -> Vec<OsString> {
+    vec!["reprise-explorer".into(), "--select".into(), path.into()]
+}
+
 pub fn split_list(v: Option<&str>) -> Vec<String> {
     v.map(|v| {
         v.split(';')

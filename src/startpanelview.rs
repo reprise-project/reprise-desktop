@@ -1160,7 +1160,7 @@ impl State {
         self.push_start_popup((row.right(), row.y), items, kind, place_popup);
     }
 
-    fn quick_file_of(&self, id: &str) -> Option<String> {
+    pub(crate) fn quick_file_of(&self, id: &str) -> Option<String> {
         self.quicklaunch
             .iter()
             .find(|q| q.app.as_ref().is_some_and(|a| a.id == id))

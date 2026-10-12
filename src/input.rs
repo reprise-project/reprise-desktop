@@ -1256,7 +1256,7 @@ impl State {
         ) {
             self.close_menu();
         }
-        if !matches!(hit, Hit::Launcher { .. }) {
+        if !matches!(hit, Hit::Launcher { .. } | Hit::Menu { .. }) {
             self.close_launcher();
         }
         if press_closes_start_panel(&hit) {
@@ -1454,11 +1454,11 @@ impl State {
             // stops there rather than falling through to what it covers.
             Hit::Osd => self.hide_osd(),
             // Likewise: a row starts it, the rest keeps it open.
-            Hit::Launcher { hit } => {
-                if button == BTN_LEFT {
-                    self.launcher_clicked(hit);
-                }
-            }
+            Hit::Launcher { hit } => match button {
+                BTN_LEFT => self.launcher_clicked(hit),
+                BTN_RIGHT => self.launcher_right_clicked(hit),
+                _ => {}
+            },
             Hit::StartPanel { spot } => self.start_panel_press(spot, button),
             Hit::ClipView { hit } => {
                 if button == BTN_LEFT {

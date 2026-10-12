@@ -113,7 +113,7 @@ impl State {
     }
 
     /// Delete `paths`, asking first as `delete_mode` says (Delete, or Shift+Delete with `shift`). Each item's fate (`Bins::fate`) is read off the loop first: it stats the paths and their mounts, which a hung network mount would stall.
-    fn ask_delete(&mut self, paths: Vec<PathBuf>, label: Option<String>, shift: bool) {
+    pub(crate) fn ask_delete(&mut self, paths: Vec<PathBuf>, label: Option<String>, shift: bool) {
         self.spawn_fs_job(move || -> OnLoop {
             use reprisefs::bincap::{Fate, Policy, delete_mode};
             let bins = reprisefs::trash::Bins::system();
