@@ -26,7 +26,7 @@ use crate::look::Paint;
 use crate::look::widgets::header as header_widgets;
 use crate::look::widgets::item::{self, Mark};
 use crate::look::widgets::{draw_checkbox, draw_field_frame, draw_hscrollbar, draw_scrollbar};
-use crate::pointer::{Lit, Pointer};
+use crate::pointer::{Click, DoubleClick, Lit, Pointer};
 use crate::raster::{Canvas, Rect};
 use crate::selection::{Mods, Selection, step_index};
 use crate::text::{Align, TextRenderer};
@@ -181,6 +181,8 @@ pub struct ListView<R: Rows = Vec<Row>, C = Vec<Column>, S = Selection> {
     pub hot: Option<usize>,
     /// The list lacks the focus: a boxing look greys the selection.
     pub inactive: bool,
+    /// The last left press on a row, for [`ListView::activated`].
+    pub clicks: DoubleClick<usize>,
 }
 
 impl<R: Rows + Default> Default for ListView<R> {
@@ -204,6 +206,7 @@ impl<R: Rows + Default> Default for ListView<R> {
             header: Pointer::new(),
             hot: None,
             inactive: false,
+            clicks: DoubleClick::default(),
         }
     }
 }
@@ -599,6 +602,18 @@ impl<R: Rows, C: AsRef<[Column]>, S: Borrow<Selection>> ListView<R, C, S> {
         };
         *c = !*c;
         true
+    }
+
+    /// A left press `at` on `hit`: the row it activates (Enter's twin) when it is the second press on that row within
+    /// the double-click time and distance. Every left press goes through it, so one elsewhere breaks the pair.
+    pub fn activated(&mut self, hit: Hit, at: Click) -> Option<usize> {
+        match hit {
+            Hit::Row(i) => self.clicks.press(i, at).then_some(i),
+            _ => {
+                self.clicks.reset();
+                None
+            }
+        }
     }
 
     /// A press on `hit`: a row's check box is held, drawn pressed, until the release ([`ListView::release_check`]).
@@ -1059,6 +1074,35 @@ mod tests {
                 .collect(),
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn a_second_press_on_a_row_in_time_and_place_activates_it() {
+        let mut lv = view(3);
+        let lay = layout(&lv, Rect::new(0, 0, 200, 100), &ControlMetrics::CLASSIC);
+        let (x, y) = (lay.body.x + 10, lay.body.y + 3);
+        let press = |lv: &mut ListView, x: i32, y: i32, time: u32| {
+            let at = Click {
+                x,
+                y,
+                time,
+                double_ms: 500,
+            };
+            lv.activated(lv.hit(&lay, x, y), at)
+        };
+        assert_eq!(press(&mut lv, x, y, 1000), None, "a first press");
+        assert_eq!(press(&mut lv, x + 4, y + 4, 1499), Some(0), "the same row");
+        assert_eq!(press(&mut lv, x + 4, y + 4, 1550), None, "a third press");
+
+        press(&mut lv, x, y, 3000);
+        assert_eq!(press(&mut lv, x, y + ROW_H, 3100), None, "another row");
+        press(&mut lv, x, y, 5000);
+        assert_eq!(press(&mut lv, x, y, 5500), None, "too slow");
+        press(&mut lv, x, y, 7000);
+        assert_eq!(press(&mut lv, x + 5, y, 7100), None, "too far");
+        press(&mut lv, x, y, 9000);
+        press(&mut lv, x, lay.body.bottom() - 2, 9100);
+        assert_eq!(press(&mut lv, x, y, 9200), None, "the background between");
     }
 
     /// The vertical bar answers page and thumb hits; `top_at` maps a dragged thumb back to a row.

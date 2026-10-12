@@ -418,6 +418,7 @@ fn details_listview(sv: &ShellView) -> DetailsView<'_> {
         header: sv.header,
         hot: sv.hot,
         inactive: sv.inactive,
+        clicks: Default::default(),
     }
 }
 
@@ -461,6 +462,7 @@ fn with_details<T>(
         header: *header,
         hot: None,
         inactive: false,
+        clicks: Default::default(),
     };
     let out = f(&mut lv);
     *columns = lv.columns;

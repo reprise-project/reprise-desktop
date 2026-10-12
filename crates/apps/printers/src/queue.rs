@@ -7,6 +7,7 @@ use reprisekit::controls::menubar::{self, Action, Bar, Key};
 use reprisekit::controls::shellview::size_text;
 use reprisekit::controls::statusbar::{self, Panel, StatusBar};
 use reprisekit::look::Paint;
+use reprisekit::pointer::Click;
 use reprisekit::raster::{Canvas, Rect};
 use reprisekit::textedit::keysym;
 
@@ -257,7 +258,8 @@ impl Queue {
         statusbar::hit_grip(&sb, r, x, y)
     }
 
-    pub fn press(&mut self, x: i32, y: i32, button: u32, s: &Snapshot, ctx: &Ctx) -> Outcome {
+    pub fn press(&mut self, at: Click, button: u32, s: &Snapshot, ctx: &Ctx) -> Outcome {
+        let (x, y) = (at.x, at.y);
         self.alt_arm.interrupt();
         if let Some(p) = self.popup.as_mut() {
             let step = p.press(x, y, ctx);
@@ -276,7 +278,7 @@ impl Queue {
         if !r.contains(x, y) {
             return Outcome::None;
         }
-        let press = self.list.press(x, y, button, r, ctx);
+        let press = self.list.press(at, button, r, ctx);
         self.set_menus(s);
         match press {
             Press::Row(i) if button == BTN_RIGHT => {
@@ -284,7 +286,9 @@ impl Queue {
                 self.popup = Popup::open(rows, x, y, ctx);
                 Outcome::Redraw
             }
-            Press::Row(_) | Press::Background | Press::Redraw => Outcome::Redraw,
+            Press::Row(_) | Press::Activate(_) | Press::Background | Press::Redraw => {
+                Outcome::Redraw
+            }
             Press::None => Outcome::None,
         }
     }
@@ -434,6 +438,16 @@ fn redraw(changed: bool) -> Outcome {
 mod tests {
     use super::*;
 
+    /// A press that never completes a double click.
+    fn one(x: i32, y: i32) -> Click {
+        Click {
+            x,
+            y,
+            time: 0,
+            double_ms: 0,
+        }
+    }
+
     const PRINTER_MENU: usize = 0;
     const DOCUMENT_MENU: usize = 1;
     use crate::cups::Printer;
@@ -537,7 +551,7 @@ mod tests {
         let mut q = Queue::new("Laser");
         q.refresh(&s);
         let (x, y) = row_point(&q, &ctx, 1);
-        assert_eq!(q.press(x, y, BTN_RIGHT, &s, &ctx), Outcome::Redraw);
+        assert_eq!(q.press(one(x, y), BTN_RIGHT, &s, &ctx), Outcome::Redraw);
         q.key(&key(keysym::DOWN), &s, &ctx);
         assert_eq!(
             q.key(&key(keysym::RETURN), &s, &ctx),

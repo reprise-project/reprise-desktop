@@ -10,6 +10,7 @@ use reprisekit::controls::metrics::ControlMetrics;
 use reprisekit::controls::tilelist::{self, Entry, Press, TILE_H, Tile, TileList};
 use reprisekit::controls::wizard::{self, EXTERIOR_BODY, INTERIOR_BODY, Style, Wizard};
 use reprisekit::look::Paint;
+use reprisekit::pointer::Click;
 use reprisekit::raster::{Canvas, Rect};
 use reprisekit::text::{TextRenderer, wrap};
 
@@ -474,9 +475,7 @@ impl AddWizard {
 
     pub fn list_press(
         &mut self,
-        x: i32,
-        y: i32,
-        double: bool,
+        at: Click,
         text: &TextRenderer,
         px: u32,
         cm: &ControlMetrics,
@@ -484,12 +483,14 @@ impl AddWizard {
         if self.step != Step::Search {
             return Outcome::None;
         }
-        match self.list.press(LIST, x, y, cm) {
+        match self.list.press(LIST, at, cm) {
             Press::None => Outcome::None,
             Press::Redraw => Outcome::Redraw,
-            Press::Row { changed, .. } => {
+            Press::Row {
+                changed, activate, ..
+            } => {
                 self.sync_search();
-                if double {
+                if activate {
                     self.next(text, px)
                 } else if changed {
                     Outcome::Redraw
@@ -581,7 +582,7 @@ impl AddWizard {
 mod tests {
     use super::*;
     use crate::bz::{Adapter, Answer, Kind};
-    use reprisekit::theme::{FontConfig, Theme};
+    use reprisekit::theme::{FontConfig, Metrics, Theme};
 
     struct T {
         text: TextRenderer,
@@ -640,9 +641,7 @@ mod tests {
         let lay = tilelist::layout(&w.list, LIST, &ControlMetrics::CLASSIC);
         let r = lay.slots[0].rect;
         w.list_press(
-            r.x + 20,
-            r.y + 20,
-            false,
+            Metrics::default().click(r.x + 20, r.y + 20, 0),
             &t.text,
             t.px,
             &ControlMetrics::CLASSIC,

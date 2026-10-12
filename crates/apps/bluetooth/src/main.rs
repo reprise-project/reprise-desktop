@@ -24,7 +24,7 @@ use std::sync::mpsc::Receiver;
 
 use repriseapp::keys::{dialog_key, form_clipboard, form_input, sheet_input};
 use repriseapp::oneshot::{self, MsgBox};
-use repriseapp::{App, BTN_LEFT, Child, Ctx, DropForm, Event, MAIN, PointerInput, Reply, WinId};
+use repriseapp::{App, BTN_LEFT, Child, Ctx, DropForm, Event, PointerInput, Reply, WinId};
 use reprisekit::access::Tree;
 use reprisekit::controls::metrics::ControlMetrics;
 use reprisekit::controls::msgbox::Fields;
@@ -33,7 +33,7 @@ use reprisekit::look::Paint;
 use reprisekit::raster::Canvas;
 use reprisekit::text::TextRenderer;
 use reprisekit::textedit::keysym;
-use reprisekit::theme::{FontConfig, Theme};
+use reprisekit::theme::{FontConfig, Metrics, Theme};
 
 /// Child windows; one of each at a time.
 const WIZARD: WinId = "wizard";
@@ -41,10 +41,6 @@ const PROPS: WinId = "props";
 const PAIR: WinId = "pair";
 const REMOVE: WinId = "remove";
 const ERROR: WinId = "error";
-
-/// A double click: a second press within this time and distance, in the same window.
-const DOUBLE_MS: u32 = 400;
-const DOUBLE_SLOP: i32 = 4;
 
 struct BtApp {
     tray: Option<reprisetray::TrayHandle>,
@@ -69,7 +65,6 @@ struct BtApp {
     px: u32,
     hidden: bool,
     tray_only: bool,
-    last_press: Option<(u32, WinId, i32, i32)>,
 }
 
 impl BtApp {
@@ -94,7 +89,6 @@ impl BtApp {
             px: 0,
             hidden: tray_only,
             tray_only,
-            last_press: None,
         }
     }
 
@@ -411,7 +405,7 @@ impl BtApp {
     fn devices_list_event(
         &mut self,
         ev: &Event,
-        double: bool,
+        metrics: &Metrics,
         cm: &ControlMetrics,
     ) -> Option<devices::Outcome> {
         let on_devices = self.devices.sheet.tabs.open == devices::TAB_DEVICES;
@@ -421,10 +415,12 @@ impl BtApp {
                 x,
                 y,
                 button: BTN_LEFT,
+                time,
                 ..
             }) => {
                 if on_devices && list.contains(*x, *y) {
-                    return Some(self.devices.list_press(*x, *y, double, cm));
+                    let at = metrics.click(*x, *y, *time);
+                    return Some(self.devices.list_press(at, cm));
                 }
                 self.devices.list_focus = false;
                 None
@@ -488,20 +484,21 @@ impl BtApp {
     }
 
     fn main_event_inner(&mut self, ev: Event, ctx: &mut Ctx) -> Reply {
-        let double = self.double_of(MAIN, &ev);
         let out = match ev {
             Event::CloseRequest => return self.close_main(),
             Event::Blink => {
                 self.devices.sheet.open_mut().caret = ctx.caret_on;
                 return Reply::redraw();
             }
-            ev => match self.devices_list_event(&ev, double, &ctx.theme.look.controls()) {
-                Some(out) => out,
-                None => match sheet_input(&mut self.devices.sheet, &ev, ctx) {
-                    Some(e) => self.devices.event(e),
-                    None => return Reply::none(),
-                },
-            },
+            ev => {
+                match self.devices_list_event(&ev, &ctx.theme.metrics, &ctx.theme.look.controls()) {
+                    Some(out) => out,
+                    None => match sheet_input(&mut self.devices.sheet, &ev, ctx) {
+                        Some(e) => self.devices.event(e),
+                        None => return Reply::none(),
+                    },
+                }
+            }
         };
         match out {
             devices::Outcome::None => Reply::none(),
@@ -556,7 +553,6 @@ impl BtApp {
     }
 
     fn wizard_event_inner(&mut self, ev: Event, ctx: &Ctx) -> Reply {
-        let double = self.double_of(WIZARD, &ev);
         let (text, px) = self.text_px();
         let Some(w) = self.wizard.as_mut() else {
             return Reply::none();
@@ -577,9 +573,11 @@ impl BtApp {
                 x,
                 y,
                 button: BTN_LEFT,
+                time,
                 ..
             }) if searching && list.contains(x, y) => {
-                w.list_press(x, y, double, &text, px, &ctx.theme.look.controls())
+                let at = ctx.theme.metrics.click(x, y, time);
+                w.list_press(at, &text, px, &ctx.theme.look.controls())
             }
             Event::Pointer(PointerInput::Motion { y, .. })
                 if w.list.drag(list, y, &ctx.theme.look.controls()) =>
@@ -794,32 +792,6 @@ impl BtApp {
             }
         }
     }
-
-    /// Whether this press completes a double click; a match clears the memory, so a third press is not a second double.
-    fn double(&mut self, win: WinId, time: u32, x: i32, y: i32) -> bool {
-        let double = self.last_press.is_some_and(|(t, w, px, py)| {
-            w == win
-                && time.wrapping_sub(t) < DOUBLE_MS
-                && (x - px).abs() <= DOUBLE_SLOP
-                && (y - py).abs() <= DOUBLE_SLOP
-        });
-        self.last_press = (!double).then_some((time, win, x, y));
-        double
-    }
-
-    /// The double-click flag for a left-button press; false for anything else.
-    fn double_of(&mut self, win: WinId, ev: &Event) -> bool {
-        match ev {
-            Event::Pointer(PointerInput::Press {
-                x,
-                y,
-                button: BTN_LEFT,
-                time,
-                ..
-            }) => self.double(win, *time, *x, *y),
-            _ => false,
-        }
-    }
 }
 
 impl App for BtApp {
@@ -1029,7 +1001,7 @@ fn main() {
 mod tests {
     use super::*;
     use crate::bz::{Adapter, Ask, Device, Kind};
-    use repriseapp::KeyInput;
+    use repriseapp::{KeyInput, MAIN};
     use reprisekit::textedit::EditKey;
 
     fn app() -> BtApp {

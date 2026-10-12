@@ -795,7 +795,7 @@ fn a_marquee_counts_its_entries_in_the_status_bar() {
             x: sl.body.right() - 2,
             y: sl.body.bottom() - 2,
             button: BTN_LEFT,
-            time: DOUBLE_MS * 10,
+            time: 5000,
             mods: repriseapp::Mods::default(),
         },
         &mut ctx,
@@ -857,7 +857,7 @@ fn the_picker_resizes() {
     assert_eq!(lay.tree.frame.width, 286 + 100, "the tree takes the width");
     assert_eq!(lay.cancel.y, 317 + 50, "the buttons ride the bottom");
     let (gx, gy) = (lay.grip.x + 8, lay.grip.y + 8);
-    let reply = ex.dialog_event(press_at(gx, gy, DOUBLE_MS * 10), &mut ctx);
+    let reply = ex.dialog_event(press_at(gx, gy, 5000), &mut ctx);
     assert!(reply.resize, "the grip resizes the window");
 }
 
@@ -1226,7 +1226,7 @@ fn release_at(x: i32, y: i32) -> Event {
 /// A left click on the picker at (`x`, `y`): the press, then the release
 /// a button acts on.
 fn click_at(ex: &mut Explorer, x: i32, y: i32, ctx: &mut Ctx) -> Reply {
-    ex.dialog_event(press_at(x, y, DOUBLE_MS * 10), ctx);
+    ex.dialog_event(press_at(x, y, 5000), ctx);
     ex.dialog_event(release_at(x, y), ctx)
 }
 
@@ -1387,7 +1387,7 @@ fn the_pickers_buttons_act_on_the_release() {
     ex.open_browse(true, &mut ctx);
     let (lay, _) = browse_state(&ex, &ctx);
     let (x, y) = (lay.cancel.x + 10, lay.cancel.y + 10);
-    ex.dialog_event(press_at(x, y, DOUBLE_MS * 10), &mut ctx);
+    ex.dialog_event(press_at(x, y, 5000), &mut ctx);
     assert!(ex.dialog.is_some(), "the press leaves it up");
     ex.dialog_event(
         Event::Pointer(PointerInput::Motion { x: 5, y: 5 }),
@@ -1437,7 +1437,7 @@ fn the_pickers_tree_takes_the_wheel_and_a_thumb_drag() {
             )
         })
         .expect("a thumb on the bar");
-    ex.dialog_event(press_at(tx, ty, DOUBLE_MS * 10), &mut ctx);
+    ex.dialog_event(press_at(tx, ty, 5000), &mut ctx);
     ex.dialog_event(
         Event::Pointer(PointerInput::Motion { x: tx, y: ty + 30 }),
         &mut ctx,
@@ -1548,7 +1548,7 @@ fn a_click_on_a_picker_row_opens_it() {
         .find(|&x| tree.hit(&lay.tree, x, y) == reprisekit::controls::treeview::Hit::Row(at))
         .expect("sub's icon")
         + 2;
-    ex.dialog_event(press_at(x, y, DOUBLE_MS * 10), &mut ctx);
+    ex.dialog_event(press_at(x, y, 5000), &mut ctx);
     let Some(Dialog::Browse(b)) = ex.dialog.as_ref() else {
         panic!("the picker is up");
     };
@@ -1588,7 +1588,7 @@ fn a_double_click_on_a_picker_plus_box_turns_it_once() {
         _ => panic!("the picker is up"),
     };
     assert!(!open(&ex));
-    let t = DOUBLE_MS * 10;
+    let t = 5000;
     ex.dialog_event(press_at(x, y, t), &mut ctx);
     ex.dialog_event(press_at(x, y, t + 100), &mut ctx);
     assert!(open(&ex), "a double click turns it once");

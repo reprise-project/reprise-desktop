@@ -51,6 +51,7 @@ use reprisekit::controls::taskpane::TaskPane;
 use reprisekit::controls::toolbar::ToolBar;
 use reprisekit::controls::treeview::{Style, TreeView};
 use reprisekit::look::widgets::item;
+use reprisekit::pointer::DoubleClick;
 use reprisekit::raster::{Canvas, Rect};
 use reprisekit::text::TextRenderer;
 use reprisekit::textedit::keysym;
@@ -64,7 +65,6 @@ use thumbs::Thumbs;
 use watch::Watch;
 use window::Popup;
 
-const DOUBLE_MS: u32 = 500;
 /// Index of the Folders button in [`Explorer::toolbar`]'s items, for the latched state.
 const FOLDERS_ITEM: usize = 4;
 /// How far the pointer must travel from a press before it is a drag, not a click.
@@ -163,9 +163,9 @@ pub struct Explorer {
     /// `children(&self)` has no `Ctx` to borrow a renderer from.
     dialog_text: TextRenderer,
     dialog_px: u32,
-    last_press: Option<(u32, usize)>,
-    /// For the double click that takes a list row as the default button.
-    dialog_press: Option<u32>,
+    clicks: DoubleClick<usize>,
+    /// For the double click that takes a list row as the default button, keyed by the form item.
+    dialog_clicks: DoubleClick<Option<usize>>,
     alt_arm: AltArm,
     /// The last input was a key, not a pointer press: a dialog opened now shows keyboard cues from the start.
     keyed: bool,
@@ -303,8 +303,8 @@ impl Explorer {
             error_icon: None,
             dialog_text: TextRenderer::load(&FontConfig::default()),
             dialog_px: Theme::default().fonts.size_px,
-            last_press: None,
-            dialog_press: None,
+            clicks: DoubleClick::default(),
+            dialog_clicks: DoubleClick::default(),
             alt_arm: AltArm::default(),
             keyed: false,
             dragging: false,

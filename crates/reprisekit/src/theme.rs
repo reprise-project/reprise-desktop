@@ -417,6 +417,18 @@ impl Default for Theme {
     }
 }
 
+impl Metrics {
+    /// A left press at (`x`, `y`), event `time` ms, for [`crate::pointer::DoubleClick`] pairing in this theme's double-click time.
+    pub fn click(&self, x: i32, y: i32, time: u32) -> crate::pointer::Click {
+        crate::pointer::Click {
+            x,
+            y,
+            time,
+            double_ms: self.double_click_ms,
+        }
+    }
+}
+
 impl Theme {
     /// Metrics and font size multiplied by `n`, `scale` set to `n`, and
     /// the look's style at `n` ([`crate::paint::Look::at_scale`]). Always

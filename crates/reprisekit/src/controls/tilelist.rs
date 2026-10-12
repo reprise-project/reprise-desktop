@@ -14,7 +14,7 @@ use crate::controls::listview::{GROUP_H, draw_group_header, list_rule};
 use crate::controls::metrics::ControlMetrics;
 use crate::look::Paint;
 use crate::look::widgets::{draw_field_frame, draw_scrollbar};
-use crate::pointer::{Lit, Pointer};
+use crate::pointer::{Click, DoubleClick, Lit, Pointer};
 use crate::raster::{Canvas, Rect};
 use crate::text::{Align, TextRenderer};
 use crate::theme::ColorScheme;
@@ -46,6 +46,7 @@ pub struct TileList {
     pub row_h: i32,
     thumb_drag: Option<i32>,
     bars: Pointer<ScrollHit>,
+    clicks: DoubleClick<usize>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -74,7 +75,12 @@ pub enum Hit {
 pub enum Press {
     None,
     Redraw,
-    Row { row: usize, changed: bool },
+    /// `activate`: the second press on the row within the double-click time and distance (Enter's twin).
+    Row {
+        row: usize,
+        changed: bool,
+        activate: bool,
+    },
 }
 
 impl TileList {
@@ -86,6 +92,7 @@ impl TileList {
             row_h,
             thumb_drag: None,
             bars: Pointer::new(),
+            clicks: DoubleClick::default(),
         }
     }
 
@@ -186,9 +193,17 @@ impl TileList {
         self.step(delta, rect, cm)
     }
 
-    pub fn press(&mut self, rect: Rect, x: i32, y: i32, cm: &ControlMetrics) -> Press {
+    pub fn press(&mut self, rect: Rect, at: Click, cm: &ControlMetrics) -> Press {
+        let (x, y) = (at.x, at.y);
         let lay = layout(self, rect, cm);
         let h = hit(self, &lay, x, y);
+        let activate = match h {
+            Some(Hit::Row(entry)) => self.clicks.press(entry, at),
+            _ => {
+                self.clicks.reset();
+                false
+            }
+        };
         let bar = match h {
             Some(Hit::Scroll(sh)) => Some(sh),
             _ => None,
@@ -220,7 +235,11 @@ impl TileList {
                 };
                 let changed = self.selected != Some(entry);
                 self.selected = Some(entry);
-                Press::Row { row, changed }
+                Press::Row {
+                    row,
+                    changed,
+                    activate,
+                }
             }
             Some(Hit::Header) | None => Press::None,
         }
@@ -579,27 +598,81 @@ mod tests {
         );
     }
 
+    fn click(x: i32, y: i32, time: u32) -> Click {
+        Click {
+            x,
+            y,
+            time,
+            double_ms: 500,
+        }
+    }
+
+    fn row(row: usize, changed: bool, activate: bool) -> Press {
+        Press::Row {
+            row,
+            changed,
+            activate,
+        }
+    }
+
     #[test]
     fn a_press_picks_a_row_and_a_header_picks_nothing() {
         let mut list = grouped();
+        let cm = &ControlMetrics::CLASSIC;
         assert_eq!(
-            list.press(BOX, 40, 2 + 5, &ControlMetrics::CLASSIC),
+            list.press(BOX, click(40, 2 + 5, 0), cm),
             Press::None,
             "the Audio header"
         );
+        let y = 2 + 31 + 52 + 10;
+        assert_eq!(list.press(BOX, click(40, y, 1000), cm), row(1, true, false));
         assert_eq!(
-            list.press(BOX, 40, 2 + 31 + 52 + 10, &ControlMetrics::CLASSIC),
-            Press::Row {
-                row: 1,
-                changed: true
-            }
+            list.press(BOX, click(40, y, 2000), cm),
+            row(1, false, false)
+        );
+    }
+
+    #[test]
+    fn a_second_press_on_the_row_in_time_and_place_activates_it() {
+        let mut list = grouped();
+        let cm = &ControlMetrics::CLASSIC;
+        let y = 2 + 31 + 52 + 10;
+        list.press(BOX, click(40, y, 1000), cm);
+        assert_eq!(
+            list.press(BOX, click(43, y + 3, 1400), cm),
+            row(1, false, true)
         );
         assert_eq!(
-            list.press(BOX, 40, 2 + 31 + 52 + 10, &ControlMetrics::CLASSIC),
-            Press::Row {
-                row: 1,
-                changed: false
-            }
+            list.press(BOX, click(43, y + 3, 1450), cm),
+            row(1, false, false),
+            "a third press starts over"
+        );
+
+        let next = y + 31 + 52;
+        list.press(BOX, click(40, y, 3000), cm);
+        assert_eq!(
+            list.press(BOX, click(40, next, 3100), cm),
+            row(2, true, false),
+            "another row"
+        );
+        list.press(BOX, click(40, y, 5000), cm);
+        assert_eq!(
+            list.press(BOX, click(40, y, 5500), cm),
+            row(1, false, false),
+            "too slow"
+        );
+        list.press(BOX, click(40, y, 7000), cm);
+        assert_eq!(
+            list.press(BOX, click(45, y, 7100), cm),
+            row(1, false, false),
+            "too far"
+        );
+        list.press(BOX, click(40, y, 9000), cm);
+        list.press(BOX, click(40, 2 + 5, 9100), cm);
+        assert_eq!(
+            list.press(BOX, click(40, y, 9200), cm),
+            row(1, false, false),
+            "a press elsewhere breaks the pair"
         );
     }
 
@@ -699,7 +772,7 @@ mod tests {
             ),
             "the hot up arrow"
         );
-        list.press(r, x, y, &cm);
+        list.press(r, click(x, y, 0), &cm);
         assert_eq!(
             drawn(&list),
             crate::look::styled::fixture::blue_pixel(
