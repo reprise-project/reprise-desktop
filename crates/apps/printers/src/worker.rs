@@ -1,25 +1,30 @@
-//! The work off the event loop: one thread that owns the conversation with cupsd. It reads
-//! printers and jobs on a schedule (every couple of seconds while a window is up or a job
-//! is waiting, rarely otherwise), runs what the windows ask one request at a time, and reads
-//! again after each change. Device discovery and the driver list take seconds, so each runs
-//! on its own thread.
+//! The thread that owns the conversation with cupsd: it reads printers and jobs (`schedule`
+//! says when), runs what the windows ask one request at a time, and reads again after.
 
 use std::collections::BTreeMap;
 use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender, channel};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 use crate::cups::{self, Change, Client, Device, Job, JobOp, NewPrinter, Options, Ppd, Snapshot};
+use crate::notifier::{self, Lease};
 
+/// While a window is up or a job waits: lpoptions and a backend's `ATTR:` lines change what
+/// they show without an event, and cupsd stays up for a waiting job anyway.
 const FAST: Duration = Duration::from_secs(2);
-/// Otherwise: enough for the tray icon to come up for a job a program
-/// sent.
+/// Idle with no notifier: enough for the tray icon to come up for a job a program sent.
 const SLOW: Duration = Duration::from_secs(20);
+/// Idle with the notifier: how often the lease is looked at; cupsd is asked only when it is due.
+const LEASE_CHECK: Duration = Duration::from_secs(10 * 60);
+/// A burst of events reads once.
+const SETTLE: Duration = Duration::from_millis(200);
 /// How long the backends get to find devices.
 const DISCOVERY_SECS: i32 = 6;
 
 #[derive(Clone, Debug)]
 pub enum Cmd {
     Refresh,
+    /// cupsd raised a printer or job event.
+    Changed,
     /// Whether a window is up, so the queue moves while it is watched.
     Watching(bool),
     Pause(String),
@@ -96,7 +101,10 @@ pub fn start(waker: repriseapp::Waker) -> (Receiver<Msg>, Handle) {
     let poster = Poster { tx, waker };
     std::thread::Builder::new()
         .name("cups".into())
-        .spawn(move || run(cmd_rx, poster))
+        .spawn({
+            let cmd_tx = cmd_tx.clone();
+            move || run(cmd_rx, cmd_tx, poster)
+        })
         .expect("spawn the cups thread");
     (rx, Handle(cmd_tx))
 }
@@ -108,31 +116,52 @@ struct State {
     /// The jobs the last read had, to tell which ones ended since.
     active: BTreeMap<i32, Job>,
     watching: bool,
+    /// Whether the system bus carries cupsd's signals to this thread.
+    listening: bool,
+    lease: Option<Lease>,
 }
 
-fn run(rx: Receiver<Cmd>, poster: Poster) {
+fn run(rx: Receiver<Cmd>, tx: Sender<Cmd>, poster: Poster) {
+    let listening = notifier::listen(move || {
+        let _ = tx.send(Cmd::Changed);
+    });
     let mut st = State {
         client: Client::new(),
         poster,
         last: None,
         active: BTreeMap::new(),
         watching: false,
+        listening,
+        lease: None,
     };
+    st.keep_subscribed();
     st.refresh();
     let mut next = Instant::now() + st.interval();
+    // An event came in and the next tick reads.
+    let mut stale = false;
     loop {
         let wait = next.saturating_duration_since(Instant::now());
         match rx.recv_timeout(wait) {
+            Ok(Cmd::Changed) => {
+                stale = true;
+                next = next.min(Instant::now() + SETTLE);
+            }
             Ok(cmd) => {
                 if st.handle(cmd) {
                     st.refresh();
+                    stale = false;
                     next = Instant::now() + st.interval();
                 } else {
                     next = next.min(Instant::now() + st.interval());
                 }
             }
             Err(RecvTimeoutError::Timeout) => {
-                st.refresh();
+                // A new subscription may have missed events.
+                let new = st.keep_subscribed();
+                if new || stale || st.polling() {
+                    st.refresh();
+                }
+                stale = false;
                 next = Instant::now() + st.interval();
             }
             Err(RecvTimeoutError::Disconnected) => return,
@@ -163,14 +192,77 @@ fn title(cmd: &Cmd) -> &'static str {
             op: JobOp::Restart, ..
         } => "Could not restart the document",
         Cmd::Add { .. } => "Could not add the printer",
-        Cmd::Refresh | Cmd::Watching(_) | Cmd::Options(_) | Cmd::Devices | Cmd::Ppds => "Printers",
+        Cmd::Refresh
+        | Cmd::Changed
+        | Cmd::Watching(_)
+        | Cmd::Options(_)
+        | Cmd::Devices
+        | Cmd::Ppds => "Printers",
+    }
+}
+
+/// How long until the next tick, and whether that tick reads cupsd. Idle with the notifier
+/// the tick only looks at the lease.
+fn schedule(watching: bool, busy: bool, notified: bool) -> (Duration, bool) {
+    if watching || busy {
+        (FAST, true)
+    } else if notified {
+        (LEASE_CHECK, false)
+    } else {
+        (SLOW, true)
     }
 }
 
 impl State {
-    fn interval(&self) -> Duration {
+    fn schedule(&self) -> (Duration, bool) {
         let busy = self.last.as_ref().is_some_and(|s| !s.jobs.is_empty());
-        if self.watching || busy { FAST } else { SLOW }
+        schedule(self.watching, busy, self.listening && self.lease.is_some())
+    }
+
+    fn interval(&self) -> Duration {
+        self.schedule().0
+    }
+
+    fn polling(&self) -> bool {
+        self.schedule().1
+    }
+
+    /// Renew the subscription when its lease is half gone, or make one while there is none
+    /// and the bus is there to hear it. True when a new one was made.
+    fn keep_subscribed(&mut self) -> bool {
+        if !self.listening {
+            return false;
+        }
+        let now = SystemTime::now();
+        match &self.lease {
+            Some(l) if !l.due(now) => false,
+            Some(l) => match notifier::renew(&self.client, l.id, now) {
+                Ok(l) => {
+                    self.lease = Some(l);
+                    false
+                }
+                Err(e) => {
+                    log::info!("renewing printer events {}: {e:?}", l.id);
+                    self.lease = None;
+                    self.subscribe(now)
+                }
+            },
+            None => self.subscribe(now),
+        }
+    }
+
+    fn subscribe(&mut self, now: SystemTime) -> bool {
+        match notifier::subscribe(&self.client, now) {
+            Ok(l) => {
+                log::debug!("printer events: subscription {}", l.id);
+                self.lease = Some(l);
+                true
+            }
+            Err(e) => {
+                log::info!("no printer events from cupsd, reading it on a timer: {e:?}");
+                false
+            }
+        }
     }
 
     /// Read everything; post the snapshot when it changed and the jobs
@@ -220,7 +312,7 @@ impl State {
     fn handle(&mut self, cmd: Cmd) -> bool {
         let c = &self.client;
         let result = match &cmd {
-            Cmd::Refresh => return true,
+            Cmd::Refresh | Cmd::Changed => return true,
             Cmd::Watching(on) => {
                 let was = self.watching;
                 self.watching = *on;
@@ -290,5 +382,18 @@ impl State {
             });
         }
         true
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn idle_with_the_notifier_reads_cupsd_only_on_events() {
+        assert_eq!(schedule(false, false, true), (LEASE_CHECK, false));
+        assert_eq!(schedule(false, false, false), (SLOW, true));
+        assert_eq!(schedule(true, false, true), (FAST, true));
+        assert_eq!(schedule(false, true, true), (FAST, true));
     }
 }

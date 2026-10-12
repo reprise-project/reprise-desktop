@@ -8,6 +8,7 @@ pub const OPERATION: u8 = 0x01;
 pub const JOB: u8 = 0x02;
 const END: u8 = 0x03;
 pub const PRINTER: u8 = 0x04;
+pub const SUBSCRIPTION: u8 = 0x06;
 
 const INTEGER: u8 = 0x21;
 const BOOLEAN: u8 = 0x22;
