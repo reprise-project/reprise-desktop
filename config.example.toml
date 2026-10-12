@@ -195,7 +195,8 @@ interface = "classic"        # classic | blue | glass; an unknown value falls ba
 # ring_down = "ctrl+minus"
 # strip_up = "volume-up"     # each tenth of the strip towards its top; strip_down away from it
 #                            # a value is a [[keybinds]] action name, "mode" (the next mode),
-#                            # "none", or keys as [[keybinds]] spell them, sent to the app in front;
+#                            # "spawn:" and a command ("spawn:krita"), "none", or keys as
+#                            # [[keybinds]] spell them, sent to the app in front;
 #                            # a button's keys stay down while it does
 # ring_step = 15             # degrees of ring per step, above 0 to 360
 # strip_step = 0.1           # strip per step, of its length, above 0 to 1
