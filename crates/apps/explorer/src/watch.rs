@@ -46,15 +46,51 @@ struct Shared {
     shown: Option<Shown>,
 }
 
-/// The shown folder's own watch and its parent's, which names it when it is renamed in place.
+/// The shown folder's watch and one on every folder above it, which name the folder on the path
+/// when it is renamed or moved and report their own move.
 struct Shown {
     dir: PathBuf,
-    wd: WatchDescriptor,
-    parent: Option<WatchDescriptor>,
-    /// The cookie of the parent's MOVED_FROM naming the folder, to pair with its MOVED_TO.
-    leaving: Option<u32>,
-    /// Set once the folder left: its new path after a rename in place, else its old path.
+    /// `levels[k]` watches `dir.ancestors().nth(k)`; `None` where the folder could not be watched.
+    levels: Vec<Option<WatchDescriptor>>,
+    /// The cookie and level of a MOVED_FROM naming the folder on the path, to pair with its
+    /// MOVED_TO.
+    leaving: Option<(u32, usize)>,
+    /// Set once the folder or one above it left: the folder's new path when the move landed in a
+    /// watched level, else its old path.
     gone: Option<PathBuf>,
+}
+
+impl Shown {
+    /// Take in an event on `levels[k]`; true when it counts as a change.
+    fn note(&mut self, k: usize, e: &inotify::Event<&std::ffi::OsStr>) -> bool {
+        if e.mask
+            .intersects(EventMask::MOVE_SELF | EventMask::DELETE_SELF)
+        {
+            self.gone.get_or_insert_with(|| self.dir.clone());
+            return true;
+        }
+        if k == 0 {
+            return true;
+        }
+        let path: Vec<&Path> = self.dir.ancestors().collect();
+        if e.mask.contains(EventMask::MOVED_FROM) && e.name == path[k - 1].file_name() {
+            self.leaving = Some((e.cookie, k));
+        } else if e.mask.contains(EventMask::MOVED_TO)
+            && let Some((cookie, from)) = self.leaving
+            && cookie == e.cookie
+            && k >= from
+            && let Some(name) = e.name
+        {
+            let mut to = path[k].join(name);
+            if let Ok(rest) = self.dir.strip_prefix(path[from - 1])
+                && !rest.as_os_str().is_empty()
+            {
+                to.push(rest);
+            }
+            self.gone.get_or_insert(to);
+        }
+        false
+    }
 }
 
 impl Shared {
@@ -66,26 +102,10 @@ impl Shared {
         if e.mask.contains(EventMask::IGNORED) {
             return false;
         }
-        if let Some(s) = self.shown.as_mut() {
-            if s.parent.as_ref() == Some(&e.wd) {
-                let ours = e.name == s.dir.file_name();
-                if e.mask.contains(EventMask::MOVED_FROM) && ours {
-                    s.leaving = Some(e.cookie);
-                } else if e.mask.contains(EventMask::MOVED_TO)
-                    && s.leaving == Some(e.cookie)
-                    && let Some(name) = e.name
-                {
-                    s.gone.get_or_insert_with(|| s.dir.with_file_name(name));
-                }
-                return false;
-            }
-            if e.wd == s.wd
-                && e.mask
-                    .intersects(EventMask::MOVE_SELF | EventMask::DELETE_SELF)
-            {
-                s.gone.get_or_insert_with(|| s.dir.clone());
-                return true;
-            }
+        if let Some(s) = self.shown.as_mut()
+            && let Some(k) = s.levels.iter().position(|w| w.as_ref() == Some(&e.wd))
+        {
+            return s.note(k, e);
         }
         self.only
             .iter()
@@ -154,19 +174,33 @@ impl Watch {
         self.shared.lock().unwrap_or_else(|e| e.into_inner())
     }
 
-    /// Watch `dir` instead of whatever was being watched, and notice it leaving ([`Watch::take_gone`]).
+    /// Watch `dir` instead of whatever was being watched, and notice it or a folder above it
+    /// leaving ([`Watch::take_gone`]). Each level up costs one inotify watch.
     pub fn watch(&mut self, dir: &Path) {
         self.clear();
         let Some(wd) = self.add(dir, mask() | WatchMask::MOVE_SELF | WatchMask::DELETE_SELF) else {
             return;
         };
-        let parent = dir
-            .parent()
-            .and_then(|p| self.add(p, WatchMask::MOVED_FROM | WatchMask::MOVED_TO));
+        let mut levels = vec![Some(wd)];
+        for up in dir.ancestors().skip(1) {
+            let mask = WatchMask::MOVED_FROM
+                | WatchMask::MOVED_TO
+                | WatchMask::MOVE_SELF
+                | WatchMask::DELETE_SELF;
+            levels.push(match self.watches.add(up, mask) {
+                Ok(wd) => {
+                    self.wd.push(wd.clone());
+                    Some(wd)
+                }
+                Err(e) => {
+                    log::debug!("cannot watch {}: {e}", up.display());
+                    None
+                }
+            });
+        }
         self.shared().shown = Some(Shown {
             dir: dir.to_path_buf(),
-            wd,
-            parent,
+            levels,
             leaving: None,
             gone: None,
         });
@@ -213,8 +247,8 @@ impl Watch {
         self.changed.swap(false, Ordering::SeqCst)
     }
 
-    /// Once the folder [`Watch::watch`] shows was deleted or moved away: its new path when it was
-    /// renamed in place, else its old one.
+    /// Once the folder [`Watch::watch`] shows, or one above it, was deleted or moved away: the
+    /// folder's new path when the move stayed within the watched levels, else its old one.
     pub fn take_gone(&mut self) -> Option<PathBuf> {
         self.shared().shown.as_mut()?.gone.take()
     }
@@ -314,7 +348,11 @@ mod tests {
         assert!(watch.wd.is_empty());
         let dir = tempfile::tempdir().expect("tempdir");
         watch.watch(dir.path());
-        assert_eq!(watch.wd.len(), 2, "the folder and its parent");
+        assert_eq!(
+            watch.wd.len(),
+            dir.path().ancestors().count(),
+            "the folder and every folder above it"
+        );
         watch.clear();
         assert!(watch.wd.is_empty());
     }
@@ -368,6 +406,56 @@ mod tests {
         std::fs::create_dir(&shown).expect("mkdir");
         watch.watch(&shown);
         std::fs::remove_dir(&shown).expect("rmdir");
+        wait();
+        assert_eq!(watch.take_gone(), Some(shown), "deleted");
+    }
+    /// `top/a/b/shown`, watched at `shown`.
+    fn deep() -> (tempfile::TempDir, Watch, PathBuf) {
+        let top = tempfile::tempdir().expect("tempdir");
+        let shown = top.path().join("a").join("b").join("shown");
+        std::fs::create_dir_all(&shown).expect("mkdir");
+        let mut watch = Watch::new(Waker::noop()).expect("inotify");
+        watch.watch(&shown);
+        (top, watch, shown)
+    }
+
+    #[test]
+    fn a_folder_above_renamed_in_place_is_followed_to_the_new_path() {
+        let (top, mut watch, _) = deep();
+        let a = top.path().join("a");
+        std::fs::create_dir(a.join("c")).expect("mkdir");
+        std::fs::rename(a.join("c"), a.join("d")).expect("mv");
+        wait();
+        assert_eq!(watch.take_gone(), None, "a sibling renamed");
+        assert!(!watch.take_changed(), "events above are not a change");
+
+        std::fs::rename(&a, top.path().join("z")).expect("rename");
+        wait();
+        assert_eq!(
+            watch.take_gone(),
+            Some(top.path().join("z").join("b").join("shown"))
+        );
+    }
+
+    #[test]
+    fn a_folder_above_moved_up_the_path_is_followed() {
+        let (top, mut watch, _) = deep();
+        std::fs::rename(top.path().join("a").join("b"), top.path().join("b2")).expect("mv");
+        wait();
+        assert_eq!(watch.take_gone(), Some(top.path().join("b2").join("shown")));
+    }
+
+    #[test]
+    fn a_folder_above_moved_off_the_path_or_deleted_is_gone_from_the_old_path() {
+        let (top, mut watch, shown) = deep();
+        let away = tempfile::tempdir().expect("tempdir");
+        std::fs::rename(top.path().join("a"), away.path().join("a")).expect("mv");
+        wait();
+        assert_eq!(watch.take_gone(), Some(shown.clone()), "moved elsewhere");
+
+        std::fs::create_dir_all(&shown).expect("mkdir");
+        watch.watch(&shown);
+        std::fs::remove_dir_all(top.path().join("a")).expect("rm");
         wait();
         assert_eq!(watch.take_gone(), Some(shown), "deleted");
     }
