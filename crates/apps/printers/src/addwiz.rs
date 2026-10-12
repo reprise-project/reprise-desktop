@@ -68,10 +68,15 @@ pub struct AddWizard {
     ppds: Option<Result<Vec<Ppd>, String>>,
     asked_ppds: bool,
     search: String,
+    /// The URI `search` and the driver were chosen for; another pick refills the search from
+    /// that printer's maker and clears the driver.
+    searched_for: Option<String>,
     shown: Vec<usize>,
     ppd: Option<String>,
     file: Option<PathBuf>,
     name: String,
+    /// The URI `name` was given for; another pick replaces it with a fresh suggestion.
+    named_for: Option<String>,
     location: String,
     make_default: bool,
     test_page: bool,
@@ -157,10 +162,12 @@ impl AddWizard {
             ppds: None,
             asked_ppds: false,
             search: String::new(),
+            searched_for: None,
             shown: Vec::new(),
             ppd: None,
             file: None,
             name: String::new(),
+            named_for: None,
             location: String::new(),
             make_default: s.printers.is_empty(),
             test_page: false,
@@ -323,6 +330,9 @@ impl AddWizard {
                 .collect(),
             _ => Vec::new(),
         };
+        if self.driver_rows().1.is_none() {
+            self.ppd = None;
+        }
     }
 
     fn driver_rows(&self) -> (Vec<String>, Option<usize>) {
@@ -354,10 +364,12 @@ impl AddWizard {
     }
 
     fn driver_page(&mut self) -> Wizard {
-        if self.search.is_empty()
-            && let Some(d) = self.chosen_device()
-        {
-            self.search = d.maker();
+        let uri = self.uri();
+        if self.searched_for != uri {
+            self.search = self.chosen_device().map(Device::maker).unwrap_or_default();
+            self.searched_for = uri;
+            self.ppd = None;
+            self.file = None;
         }
         self.filter();
         let (rows, at) = self.driver_rows();
@@ -393,7 +405,8 @@ impl AddWizard {
     }
 
     fn name_page(&mut self, s: &Snapshot) -> Wizard {
-        if self.name.is_empty() {
+        let uri = self.uri();
+        if self.name.trim().is_empty() || self.named_for != uri {
             let from = match self.chosen_device() {
                 Some(d) if !d.info.is_empty() => d.info.clone(),
                 Some(d) => d.make_model.clone(),
@@ -408,6 +421,7 @@ impl AddWizard {
                     .to_string(),
             };
             self.name = free_name(&suggest_name(&from), s);
+            self.named_for = uri;
         }
         let items = vec![
             Item::label_at("name_label", B.x, B.y + 4, 90, "Printer &name:"),
@@ -787,12 +801,15 @@ mod tests {
         assert_eq!(w.ppd.as_deref(), Some("drv:///brlaser.drv/br1110.ppd"));
         type_into(&mut w, SEARCH, "laserjet", &s);
         assert_eq!(w.shown, [1]);
+        if let Some(Control::ListBox { list, .. }) =
+            w.page.form.item_mut(DRIVERS).map(|it| &mut it.control)
+        {
+            list.selected = Some(0);
+        }
+        w.event(form::Event::Changed(DRIVERS), &s);
         w.event(form::Event::Pressed(wizard::NEXT), &s);
         assert_eq!(w.step, Step::Name);
-        assert_eq!(
-            w.driver(),
-            Driver::Ppd("drv:///brlaser.drv/br1110.ppd".into())
-        );
+        assert_eq!(w.driver(), Driver::Ppd("lsb/usr/hp/hp-laserjet.ppd".into()));
         w.event(form::Event::Pressed(wizard::BACK), &s);
         assert_eq!(w.step, Step::Driver);
         assert_eq!(w.event(form::Event::Pressed(DISK), &s), Outcome::HaveDisk);
@@ -854,6 +871,124 @@ mod tests {
         assert_eq!(w.page.form.checked(TYPED), Some(false));
         assert_eq!(list_selected(&w.page.form, DEVICES), Some(0));
         assert_eq!(w.uri(), Some(found()[0].uri.clone()));
+    }
+
+    #[test]
+    fn the_suggested_name_follows_the_pick_and_a_typed_name_stays_with_it() {
+        let s = snap();
+        let mut w = AddWizard::new(&s, None);
+        w.devices_in(Ok(found()), &s);
+        w.event(form::Event::Pressed(wizard::NEXT), &s);
+        assert_eq!(w.name, "Office_Jet_2");
+
+        w.event(form::Event::Pressed(wizard::BACK), &s);
+        type_into(&mut w, ADDRESS, "printer.lan", &s);
+        w.event(form::Event::Pressed(wizard::NEXT), &s);
+        assert_eq!(w.step, Step::Name);
+        assert_eq!(w.name, "printer.lan", "another pick gets its own name");
+
+        type_into(&mut w, NAME, "Hall", &s);
+        w.event(form::Event::Pressed(wizard::BACK), &s);
+        w.event(form::Event::Pressed(wizard::NEXT), &s);
+        assert_eq!(
+            w.name, "Hall",
+            "a typed name stays while the pick is the same"
+        );
+        assert_eq!(edit_text(&w.page.form, NAME), "Hall");
+
+        w.event(form::Event::Pressed(wizard::BACK), &s);
+        type_into(&mut w, ADDRESS, "attic.lan", &s);
+        w.event(form::Event::Pressed(wizard::NEXT), &s);
+        assert_eq!(w.name, "attic.lan", "a new address replaces the typed name");
+    }
+
+    #[test]
+    fn the_driver_search_follows_the_pick_and_a_typed_search_stays_with_it() {
+        let s = snap();
+        let mut w = AddWizard::new(&s, None);
+        let mut devices = found();
+        devices.push(Device {
+            uri: "usb://Epson/L3150?serial=4".into(),
+            info: "Epson L3150".into(),
+            make_model: "Epson L3150 Series".into(),
+            class: "direct".into(),
+            device_id: "MFG:EPSON;MDL:L3150 Series;".into(),
+        });
+        w.devices_in(Ok(devices), &s);
+        pick_device(&mut w, 1, &s);
+        w.event(form::Event::Pressed(wizard::NEXT), &s);
+        w.ppds_in(Ok(ppds()), &s);
+        assert_eq!(w.search, "Brother");
+
+        w.event(form::Event::Pressed(wizard::BACK), &s);
+        pick_device(&mut w, 2, &s);
+        w.event(form::Event::Pressed(wizard::NEXT), &s);
+        assert_eq!(w.search, "EPSON", "another pick searches its own maker");
+
+        type_into(&mut w, SEARCH, "laserjet", &s);
+        w.event(form::Event::Pressed(wizard::BACK), &s);
+        w.event(form::Event::Pressed(wizard::NEXT), &s);
+        assert_eq!(
+            w.search, "laserjet",
+            "a typed search stays while the pick is the same"
+        );
+        assert_eq!(edit_text(&w.page.form, SEARCH), "laserjet");
+
+        w.event(form::Event::Pressed(wizard::BACK), &s);
+        pick_device(&mut w, 1, &s);
+        w.event(form::Event::Pressed(wizard::NEXT), &s);
+        assert_eq!(w.search, "Brother", "a new pick replaces the typed search");
+    }
+
+    #[test]
+    fn a_driver_is_dropped_when_the_pick_changes_or_the_search_hides_it() {
+        let s = snap();
+        let mut w = AddWizard::new(&s, None);
+        w.devices_in(Ok(found()), &s);
+        pick_device(&mut w, 1, &s);
+        w.event(form::Event::Pressed(wizard::NEXT), &s);
+        w.ppds_in(Ok(ppds()), &s);
+        if let Some(Control::ListBox { list, .. }) =
+            w.page.form.item_mut(DRIVERS).map(|it| &mut it.control)
+        {
+            list.selected = Some(0);
+        }
+        w.event(form::Event::Changed(DRIVERS), &s);
+        assert_eq!(w.ppd.as_deref(), Some("drv:///brlaser.drv/br1110.ppd"));
+
+        type_into(&mut w, SEARCH, "laserjet", &s);
+        assert_eq!(w.ppd, None, "a driver the search hides is not picked");
+        assert_eq!(
+            w.event(form::Event::Pressed(wizard::NEXT), &s),
+            Outcome::None
+        );
+
+        type_into(&mut w, SEARCH, "brother", &s);
+        w.event(form::Event::Pressed(wizard::BACK), &s);
+        w.event(form::Event::Pressed(wizard::NEXT), &s);
+        assert_eq!(w.ppd, None);
+        w.file_in("/tmp/brother.ppd".into(), &s);
+        w.event(form::Event::Pressed(wizard::BACK), &s);
+        w.event(form::Event::Pressed(wizard::NEXT), &s);
+        assert_eq!(
+            w.driver(),
+            Driver::File("/tmp/brother.ppd".into()),
+            "the driver stays while the pick is the same"
+        );
+
+        w.event(form::Event::Pressed(wizard::BACK), &s);
+        type_into(&mut w, ADDRESS, "socket://10.0.0.7:9100", &s);
+        w.event(form::Event::Pressed(wizard::NEXT), &s);
+        assert_eq!(w.step, Step::Driver);
+        assert_eq!(
+            (w.ppd.as_ref(), w.file.as_ref()),
+            (None, None),
+            "another pick starts with no driver"
+        );
+        assert_eq!(
+            w.event(form::Event::Pressed(wizard::NEXT), &s),
+            Outcome::None
+        );
     }
 
     #[test]
