@@ -15,6 +15,7 @@ mod hotspot;
 mod import;
 mod keydlg;
 mod nm;
+mod stations;
 mod status;
 mod tray;
 mod vpnsheet;
@@ -452,8 +453,26 @@ impl NetApp {
                 }
             }
         }
-        if let Some(s) = latest {
-            self.snapshot_in(s);
+        match latest {
+            Some(mut s) => {
+                for d in &mut s.devices {
+                    d.hotspot_clients = hotspot_clients(d);
+                }
+                self.snapshot_in(s);
+            }
+            None if self
+                .snapshot
+                .devices
+                .iter()
+                .any(|d| hotspot_clients(d) != d.hotspot_clients) =>
+            {
+                let mut s = self.snapshot.clone();
+                for d in &mut s.devices {
+                    d.hotspot_clients = hotspot_clients(d);
+                }
+                self.snapshot_in(s);
+            }
+            None => {}
         }
         while let Some(raw) = self.msgs.as_ref().and_then(|rx| rx.try_recv().ok()) {
             let Some(msg) = tray::translate(raw) else {
@@ -1039,6 +1058,8 @@ impl App for NetApp {
             }
             reprisetray::Started::Unavailable => {}
         }
+        let station_waker = waker.clone();
+        stations::watch(move || station_waker.wake());
         let (rx, handle) = nm::watch(waker);
         self.nm_rx = Some(rx);
         self.nm = Some(handle);
@@ -1249,6 +1270,10 @@ impl App for NetApp {
 /// A message box's text wrapped to lines the box keeps narrow.
 fn wrap(text: &str) -> String {
     reprisekit::text::wrap_chars(text, 60).join("\n")
+}
+
+fn hotspot_clients(d: &nm::Device) -> Option<usize> {
+    d.hotspot.as_ref().and_then(|_| stations::count(&d.iface))
 }
 
 fn main() {

@@ -23,6 +23,7 @@ async-channel.workspace = true
 zbus.workspace = true
 zeroize.workspace = true
 futures-util.workspace = true
+libc.workspace = true
 log.workspace = true
 env_logger.workspace = true
 getrandom = "0.4"

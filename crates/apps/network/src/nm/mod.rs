@@ -179,6 +179,22 @@ pub struct Device {
     pub tx_bytes: u64,
     pub wifi: Option<Wifi>,
     pub hotspot: Option<String>,
+    /// Devices joined to the hotspot; None when that is not known.
+    pub hotspot_clients: Option<usize>,
+}
+
+impl Device {
+    /// "Hotspot: Desk (2 devices)" while the hotspot is up, without the count when it is not
+    /// known.
+    pub fn hotspot_line(&self) -> Option<String> {
+        let ssid = self.hotspot.as_ref()?;
+        Some(match self.hotspot_clients {
+            None => format!("Hotspot: {ssid}"),
+            Some(0) => format!("Hotspot: {ssid} (no devices)"),
+            Some(1) => format!("Hotspot: {ssid} (1 device)"),
+            Some(n) => format!("Hotspot: {ssid} ({n} devices)"),
+        })
+    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -378,6 +394,7 @@ pub fn fold_device(props: &DeviceProps) -> Device {
         tx_bytes: big(&stats, "TxBytes"),
         wifi: (kind == Kind::Wifi).then(|| fold_wifi(props)),
         hotspot: props.hotspot.clone(),
+        hotspot_clients: None,
     }
 }
 
@@ -893,6 +910,21 @@ mod tests {
                 },
             ]
         );
+    }
+
+    #[test]
+    fn the_hotspot_line_counts_its_devices_when_known() {
+        let mut d = Device::default();
+        assert_eq!(d.hotspot_line(), None);
+        d.hotspot = Some("Desk".into());
+        assert_eq!(d.hotspot_line().as_deref(), Some("Hotspot: Desk"));
+        let mut line = |n| {
+            d.hotspot_clients = Some(n);
+            d.hotspot_line().unwrap()
+        };
+        assert_eq!(line(0), "Hotspot: Desk (no devices)");
+        assert_eq!(line(1), "Hotspot: Desk (1 device)");
+        assert_eq!(line(3), "Hotspot: Desk (3 devices)");
     }
 
     #[test]

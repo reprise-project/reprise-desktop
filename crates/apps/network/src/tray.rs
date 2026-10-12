@@ -214,8 +214,8 @@ fn link_tip(s: &nm::Snapshot) -> String {
     let Some(d) = primary(s) else {
         return "No network adapters".to_string();
     };
-    if let Some(ssid) = &d.hotspot {
-        return format!("{}\nHotspot: {ssid}", d.shell_name);
+    if let Some(line) = d.hotspot_line() {
+        return format!("{}\n{line}", d.shell_name);
     }
     if !d.managed {
         return format!("{}\nDisabled", d.shell_name);
@@ -700,6 +700,11 @@ mod tests {
         s.devices[0].hotspot = Some("Desk".into());
         assert!(menu_shape(&s).hotspot_on);
         assert_eq!(tooltip(&s), "Wireless Network Connection\nHotspot: Desk");
+        s.devices[0].hotspot_clients = Some(1);
+        assert_eq!(
+            tooltip(&s),
+            "Wireless Network Connection\nHotspot: Desk (1 device)"
+        );
     }
 
     #[test]
