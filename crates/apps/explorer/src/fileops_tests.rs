@@ -1425,13 +1425,8 @@ fn chooser_ok_runs_the_program_on_release() {
     ex.choose_program_for(&path, false, &mut ctx);
     let ok = match ex.dialog.as_ref() {
         Some(Dialog::ChooseProgram(c)) => {
-            c.ow.layout(
-                &ex.dialog_text,
-                ex.dialog_px,
-                (0, 0),
-                &ctx.theme.look.controls(),
-            )
-            .ok
+            c.ow.layout(&ex.dialog_text, ex.dialog_px, (0, 0), &ctx.theme.controls())
+                .ok
         }
         other => panic!("expected the chooser, got {:?}", other.is_some()),
     };

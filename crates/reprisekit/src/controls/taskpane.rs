@@ -14,11 +14,11 @@ pub const ROW_H: i32 = 20;
 /// Background between one section's bottom border and the next header.
 pub const GAP: i32 = 15;
 
-const LINE_H: i32 = 13;
 const GROUP_GAP: i32 = 5;
 
-fn line_h(line: &str) -> i32 {
-    if line.is_empty() { GROUP_GAP } else { LINE_H }
+/// A Details line's pitch: `lh` for text, a gap for an empty line.
+fn line_h(line: &str, lh: i32) -> i32 {
+    if line.is_empty() { GROUP_GAP } else { lh }
 }
 /// A row is its content plus this much room below it; the icon and first line both start at the row's top.
 const ROW_PAD: i32 = 4;
@@ -100,6 +100,8 @@ pub struct Layout {
     pub back: Rect,
     /// What the look's background covers: the frame after the metrics' `lead` columns and above its `foot` rows.
     pub text_dx: i32,
+    /// A line of text's pitch ([`TaskMetrics::line`]).
+    pub line_h: i32,
     pub headers: Vec<Rect>,
     pub rows: Vec<Vec<Rect>>,
     pub link_lines: Vec<Vec<Vec<String>>>,
@@ -185,6 +187,7 @@ fn lay_in(
         frame: r,
         back: Rect::new(r.x + lead, r.y, r.width - lead, r.height - foot),
         text_dx: tm.text_dx,
+        line_h: tm.line,
         scrollbar: sb,
         ..Default::default()
     };
@@ -217,7 +220,7 @@ fn lay_in(
                 let mut ry = y + BODY_TOP_PAD;
                 for row in links {
                     let wrapped = wrap(text, &row.text, text_w, px);
-                    let h = (wrapped.len().max(1) as i32 * LINE_H).max(ICON) + ROW_PAD;
+                    let h = (wrapped.len().max(1) as i32 * tm.line).max(ICON) + ROW_PAD;
                     rows.push(Rect::new(sect_x + TEXT_INSET, ry, sect_w - TEXT_INSET, h));
                     row_lines.push(wrapped);
                     ry += h;
@@ -226,7 +229,7 @@ fn lay_in(
             }
             Body::Lines(lines) => {
                 body_lines = lines_of(text, lines, lines_width(sect_w), px);
-                let text_h: i32 = body_lines.iter().map(|(l, _)| line_h(l)).sum();
+                let text_h: i32 = body_lines.iter().map(|(l, _)| line_h(l, tm.line)).sum();
                 BODY_TOP_PAD + text_h + LINES_BOTTOM_PAD + 1
             }
         };
@@ -357,13 +360,13 @@ pub fn draw(c: &mut Canvas, text: &TextRenderer, p: &Paint, tp: &TaskPane, lay: 
                     let ink = look::link_ink(p, row.enabled, hot);
                     let mut ly = rr.y;
                     for line in wrapped {
-                        let lr = Rect::new(tx * s, ly * s, tw * s, LINE_H * s);
+                        let lr = Rect::new(tx * s, ly * s, tw * s, lay.line_h * s);
                         text.draw(c, lr, line, false, ink, Align::Left, px);
                         if hot {
                             let w = text.measure(line, false, px);
-                            c.fill_rect(Rect::new(lr.x, lr.y + LINE_H * s - s, w, s), ink);
+                            c.fill_rect(Rect::new(lr.x, lr.bottom() - s, w, s), ink);
                         }
-                        ly += LINE_H;
+                        ly += lay.line_h;
                     }
                 }
             }
@@ -372,9 +375,9 @@ pub fn draw(c: &mut Canvas, text: &TextRenderer, p: &Paint, tp: &TaskPane, lay: 
                 let tw = (text_right(body.x, body.width) - tx).max(1);
                 let mut ly = body.y + BODY_TOP_PAD;
                 for (line, bold) in lay.lines.get(i).into_iter().flatten() {
-                    let lr = Rect::new(tx * s, ly * s, tw * s, LINE_H * s);
+                    let lr = Rect::new(tx * s, ly * s, tw * s, lay.line_h * s);
                     text.draw(c, lr, line, *bold, cs.window_text, Align::Left, px);
-                    ly += line_h(line);
+                    ly += line_h(line, lay.line_h);
                 }
             }
         }
@@ -591,7 +594,7 @@ mod tests {
         );
         assert_eq!(
             lay.bodies[2].height,
-            BODY_TOP_PAD + 4 * LINE_H + GROUP_GAP + LINES_BOTTOM_PAD + 1
+            BODY_TOP_PAD + 4 * TaskMetrics::CLASSIC.line + GROUP_GAP + LINES_BOTTOM_PAD + 1
         );
     }
 
@@ -808,7 +811,7 @@ mod tests {
         assert!(
             (ROW_TOPS[0]..ROW_TOPS[0] + 16).any(|y| c.get(LINK_INK_X, y) == cs.window_text.argb())
         );
-        let under = lay.rows[0][0].y + LINE_H - 1;
+        let under = lay.rows[0][0].y + lay.line_h - 1;
         assert_eq!(c.get(LINK_INK_X, under), white);
         tp.hot = Some((0, 0));
         draw(&mut c, &text, &classic_paint(cs, 1), &tp, &lay, px);

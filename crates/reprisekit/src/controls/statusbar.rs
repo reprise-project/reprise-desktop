@@ -5,10 +5,12 @@
 //! recess. A panel may carry a 16 px icon.
 
 use crate::access::{self, Tree, accesskit};
+use crate::look::Paint;
 use crate::look::widgets::statusbar as widgets;
-use crate::look::{Look, Paint};
+use crate::metrics::ControlMetrics;
 use crate::raster::{Canvas, Rect};
 use crate::text::{Align, TextRenderer};
+use crate::theme::TextUnits;
 use accesskit::{NodeId, Role};
 
 /// The bar's height in Classic; a look sets its own ([`height`]).
@@ -49,12 +51,13 @@ pub struct StatusBar {
     pub grip: bool,
 }
 
-pub fn layout(sb: &StatusBar, r: Rect) -> Vec<Rect> {
+/// The panels in `r`, their fixed widths and their height grown with the text by `u`.
+pub fn layout(sb: &StatusBar, r: Rect, u: TextUnits) -> Vec<Rect> {
     let fixed: i32 = sb
         .panels
         .iter()
         .filter(|p| p.width > 0)
-        .map(|p| p.width)
+        .map(|p| u.len(p.width))
         .sum();
     let gaps = GAP * (sb.panels.len().saturating_sub(1)) as i32;
     let flex = sb.panels.iter().filter(|p| p.width <= 0).count().max(1) as i32;
@@ -62,22 +65,23 @@ pub fn layout(sb: &StatusBar, r: Rect) -> Vec<Rect> {
     let mut out = Vec::with_capacity(sb.panels.len());
     let mut x = r.x;
     for p in &sb.panels {
-        let w = if p.width > 0 { p.width } else { spare };
-        out.push(Rect::new(x, r.y + GAP, w, PANEL_H));
+        let w = if p.width > 0 { u.len(p.width) } else { spare };
+        out.push(Rect::new(x, r.y + GAP, w, u.len(PANEL_H)));
         x += w + GAP;
     }
     out
 }
 
-pub fn height(look: &Look) -> i32 {
-    look.controls().status_bar
+/// The bar's height in a look with controls `cm`, grown with its text.
+pub fn height(cm: &ControlMetrics) -> i32 {
+    cm.status_bar
 }
 
 pub fn draw(c: &mut Canvas, text: &TextRenderer, p: &Paint, sb: &StatusBar, r: Rect, px: u32) {
     let Paint { cs, s, .. } = *p;
     let bar = r.scaled(s);
     widgets::draw_bar(c, p, bar);
-    let rects = layout(sb, r);
+    let rects = layout(sb, r, p.text);
     for (i, (panel, rect)) in sb.panels.iter().zip(&rects).enumerate() {
         let next = rects.get(i + 1).map(|n| n.x * s);
         let boxes = widgets::draw_pane(c, p, bar, rect.scaled(s), next, sb.grip, i == 0);
@@ -102,9 +106,9 @@ pub fn draw(c: &mut Canvas, text: &TextRenderer, p: &Paint, sb: &StatusBar, r: R
     }
 }
 
-pub fn access(sb: &StatusBar, r: Rect, tree: &mut Tree, parent: NodeId) -> NodeId {
+pub fn access(sb: &StatusBar, r: Rect, u: TextUnits, tree: &mut Tree, parent: NodeId) -> NodeId {
     let id = tree.push(parent, "status", access::node(Role::Status, r));
-    for (i, (p, pr)) in sb.panels.iter().zip(layout(sb, r)).enumerate() {
+    for (i, (p, pr)) in sb.panels.iter().zip(layout(sb, r, u)).enumerate() {
         if !p.text.is_empty() {
             tree.push(id, i, access::label(pr, &p.text, true));
         }
@@ -141,10 +145,22 @@ mod tests {
 
     /// Notepad's bar: a 1432 px client, panel 1 1074 wide from x 0, a 2 px gap,
     /// panel 2 356 wide, both 18 px tall 2 px down.
+    /// At 200% text a panel's fixed width and its height grow with the bar.
+    #[test]
+    fn grown_panels_take_the_texts_width_and_height() {
+        let u = TextUnits::new(22, 11);
+        let cm = ControlMetrics::CLASSIC.grown(u);
+        assert_eq!(height(&cm), 44);
+        let r = Rect::new(0, 100, 1432, height(&cm));
+        let lay = layout(&bar(), r, u);
+        assert_eq!(lay[1], Rect::new(1432 - 712, 102, 712, 36));
+        assert_eq!(lay[0], Rect::new(0, 102, 1432 - 712 - 2, 36));
+    }
+
     #[test]
     fn panels_land_on_their_pixels() {
         let r = Rect::new(0, 746, 1432, HEIGHT);
-        let lay = layout(&bar(), r);
+        let lay = layout(&bar(), r, TextUnits::ONE);
         assert_eq!(lay.len(), 2);
         assert_eq!(lay[0], Rect::new(0, 748, 1074, PANEL_H));
         assert_eq!(lay[1], Rect::new(1076, 748, 356, PANEL_H));
@@ -171,7 +187,7 @@ mod tests {
             grip: false,
         };
         draw(&mut c, &text, &classic_paint(cs, 1), &sb, r, 11);
-        let p = layout(&sb, r)[0];
+        let p = layout(&sb, r, TextUnits::ONE)[0];
         assert_eq!(c.get(p.x + 5, p.y), cs.button_shadow.argb());
         assert_eq!(c.get(p.x, p.y + 5), cs.button_shadow.argb());
         assert_eq!(c.get(p.x + 5, p.bottom() - 1), cs.button_hilight.argb());
@@ -221,7 +237,7 @@ mod tests {
         );
         let bearing = ink(&scratch, origin).expect("the label inks something");
 
-        let p = layout(&sb, r)[0];
+        let p = layout(&sb, r, TextUnits::ONE)[0];
         let first = ink(&c, p).expect("the panel's text inks something");
         assert_eq!(
             first,
@@ -235,13 +251,14 @@ mod tests {
     #[test]
     fn the_grip_does_not_take_space_from_the_panels() {
         let r = Rect::new(0, 0, 400, HEIGHT);
-        let with = layout(&bar(), r);
+        let with = layout(&bar(), r, TextUnits::ONE);
         let without = layout(
             &StatusBar {
                 grip: false,
                 ..bar()
             },
             r,
+            TextUnits::ONE,
         );
         assert_eq!(with, without, "the grip must not change panel layout");
 
@@ -298,7 +315,7 @@ mod tests {
         let mut c = Canvas::new(900, 700);
         c.fill_rect(c.bounds(), cs.window);
         draw(&mut c, &text, &classic_paint(cs, 1), &sb, r, 11);
-        let p = layout(&sb, r)[0];
+        let p = layout(&sb, r, TextUnits::ONE)[0];
         assert_eq!(p.x, PANEL_X);
 
         let icon_cols = (p.x..p.right())
@@ -349,7 +366,7 @@ mod tests {
     fn blue_bar(v: crate::blue::Variant, sb: &StatusBar, w: i32) -> Canvas {
         let theme = crate::interfaces::blue_theme(v);
         let text = TextRenderer::load(&FontConfig::default());
-        let h = height(&theme.look);
+        let h = height(&theme.controls());
         let mut c = Canvas::new(w as u32, h as u32);
         draw(&mut c, &text, &theme.paint(), sb, Rect::new(0, 0, w, h), 11);
         c
@@ -377,8 +394,8 @@ mod tests {
     #[test]
     fn a_blue_bar_is_23_px_tall() {
         let blue = crate::interfaces::blue_theme(crate::blue::Variant::Blue);
-        assert_eq!(height(&blue.look), 23);
-        assert_eq!(height(&Theme::default().look), HEIGHT);
+        assert_eq!(height(&blue.controls()), 23);
+        assert_eq!(height(&Theme::default().controls()), HEIGHT);
     }
 
     /// A navy, olive green or silver pane is its divider, a shadow line and a
@@ -388,7 +405,7 @@ mod tests {
     fn a_blue_panes_divider_sits_before_the_next_pane() {
         let luma = |p: u32| (p >> 16 & 0xFF) + (p >> 8 & 0xFF) + (p & 0xFF);
         let r = Rect::new(0, 0, 400, 23);
-        let lay = layout(&explorer_bar(true), r);
+        let lay = layout(&explorer_bar(true), r, TextUnits::ONE);
         use crate::blue::Variant;
         for v in [Variant::Blue, Variant::Olive, Variant::Silver] {
             let c = blue_bar(v, &explorer_bar(true), 400);

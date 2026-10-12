@@ -44,7 +44,6 @@ use reprisekit::{
 };
 use reprisekit::{controls::menu, controls::treeview};
 
-const MENU_BAND_H: i32 = menubar::BAR_H + 2;
 const TASK_W: i32 = 200;
 const TASK_VIEW_GAP: i32 = 10;
 /// Fixed widths of the status bar's size and zone panels.
@@ -56,7 +55,7 @@ const ZONE_PANEL_W: i32 = 153;
 pub struct Layout {
     pub client: Rect,
     pub rebar: Rect,
-    /// The menu bar's band; the bar takes its top [`menubar::BAR_H`].
+    /// The menu bar's band; the bar takes its top [`menubar::bar_h`].
     pub menu: Rect,
     pub toolbar: Option<Rect>,
     pub address: Option<Rect>,
@@ -73,7 +72,7 @@ pub struct Layout {
 /// The rebar's bands for `settings`: menu bar, then toolbar and address bar when shown.
 pub fn rebar(settings: &Settings, cm: &ControlMetrics) -> rebar::Rebar {
     let mut bands = vec![rebar::Band {
-        height: MENU_BAND_H,
+        height: menubar::bar_h(cm) + 2,
     }];
     if settings.toolbars {
         bands.push(rebar::Band {
@@ -81,7 +80,9 @@ pub fn rebar(settings: &Settings, cm: &ControlMetrics) -> rebar::Rebar {
         });
     }
     if settings.address_bar {
-        bands.push(rebar::Band { height: 22 });
+        bands.push(rebar::Band {
+            height: cm.text.len(22),
+        });
     }
     rebar::Rebar { bands }
 }
@@ -216,7 +217,7 @@ pub fn draw(ex: &Explorer, c: &mut Canvas, ctx: &Ctx) {
             px,
         );
         if let Some(tree) = lay.tree {
-            let tl = treeview::layout(&ex.tree, &ctx.text, px, tree, &ctx.theme.look.controls());
+            let tl = treeview::layout(&ex.tree, &ctx.text, px, tree, &ctx.theme.controls());
             treeview::draw(
                 c,
                 &ctx.text,
@@ -232,13 +233,7 @@ pub fn draw(ex: &Explorer, c: &mut Canvas, ctx: &Ctx) {
         }
     }
     if let Some(tasks) = lay.tasks {
-        let tl = taskpane::layout(
-            &ex.taskpane,
-            &ctx.text,
-            px,
-            tasks,
-            &ctx.theme.look.controls(),
-        );
+        let tl = taskpane::layout(&ex.taskpane, &ctx.text, px, tasks, &ctx.theme.controls());
         taskpane::draw(
             c,
             &ctx.text,
@@ -263,7 +258,7 @@ pub fn draw(ex: &Explorer, c: &mut Canvas, ctx: &Ctx) {
         );
     }
 
-    let rb = rebar(&ex.settings, &ctx.theme.look.controls());
+    let rb = rebar(&ex.settings, &ctx.theme.controls());
     rebar::draw(
         c,
         &Paint {
@@ -274,7 +269,7 @@ pub fn draw(ex: &Explorer, c: &mut Canvas, ctx: &Ctx) {
         lay.rebar,
     );
     if let Some(r) = lay.toolbar {
-        let rects = toolbar::layout(&ex.toolbar, &ctx.text, px, r, &ctx.theme.look.controls());
+        let rects = toolbar::layout(&ex.toolbar, &ctx.text, px, r, &ctx.theme.controls());
         toolbar::draw(
             c,
             &ctx.text,
@@ -289,7 +284,7 @@ pub fn draw(ex: &Explorer, c: &mut Canvas, ctx: &Ctx) {
         );
     }
     if let Some(r) = lay.address {
-        let al = addressbar::layout(&ex.address, &ctx.text, px, r, &ctx.theme.look.controls());
+        let al = addressbar::layout(&ex.address, &ctx.text, px, r, &ctx.theme.controls());
         let focused = ex.focus == crate::Focus::Address;
         addressbar::draw(
             c,
@@ -333,7 +328,7 @@ pub fn draw(ex: &Explorer, c: &mut Canvas, ctx: &Ctx) {
     let ml = ex.bar_layout(ctx);
     ex.bar.draw(c, &ctx.text, &ctx.theme, &ml);
     if let Some(r) = lay.address {
-        let al = addressbar::layout(&ex.address, &ctx.text, px, r, &ctx.theme.look.controls());
+        let al = addressbar::layout(&ex.address, &ctx.text, px, r, &ctx.theme.controls());
         addressbar::draw_list(
             c,
             &ctx.text,
@@ -367,12 +362,12 @@ pub fn access(ex: &Explorer, tree: &mut Tree, ctx: &Ctx) {
     let lay = ex.layout(ctx);
     let menus = ex.bar.access(&ex.bar_layout(ctx), tree, ROOT);
     if let Some(r) = lay.toolbar {
-        let rects = toolbar::layout(&ex.toolbar, &ctx.text, px, r, &ctx.theme.look.controls());
+        let rects = toolbar::layout(&ex.toolbar, &ctx.text, px, r, &ctx.theme.controls());
         toolbar::access(&ex.toolbar, r, &rects, tree, ROOT, "toolbar");
     }
     let mut address = None;
     if let Some(r) = lay.address {
-        let al = addressbar::layout(&ex.address, &ctx.text, px, r, &ctx.theme.look.controls());
+        let al = addressbar::layout(&ex.address, &ctx.text, px, r, &ctx.theme.controls());
         address = Some(addressbar::access(
             &ex.address,
             &al,
@@ -390,20 +385,20 @@ pub fn access(ex: &Explorer, tree: &mut Tree, ctx: &Ctx) {
             access::named(Role::Pane, bl.frame, &ex.explorer_bar.title),
         );
         if let Some(r) = lay.tree {
-            let tl = treeview::layout(&ex.tree, &ctx.text, px, r, &ctx.theme.look.controls());
+            let tl = treeview::layout(&ex.tree, &ctx.text, px, r, &ctx.theme.controls());
             folders = Some(treeview::access(
                 &ex.tree, &tl, &ctx.text, px, tree, pane, "folders",
             ));
         }
     }
     if let Some(r) = lay.tasks {
-        let tl = taskpane::layout(&ex.taskpane, &ctx.text, px, r, &ctx.theme.look.controls());
+        let tl = taskpane::layout(&ex.taskpane, &ctx.text, px, r, &ctx.theme.controls());
         taskpane::access(&ex.taskpane, &tl, tree, ROOT);
     }
     let sl = ex.view_layout(lay.view, ctx);
     let view = shellview::access(&ex.sv, &sl, &ctx.text, px, tree, ROOT, "view");
     if let Some(r) = lay.status {
-        statusbar::access(&ex.status, r, tree, ROOT);
+        statusbar::access(&ex.status, r, ctx.theme.text, tree, ROOT);
     }
     let popup = ex
         .popup
@@ -738,6 +733,23 @@ mod tests {
         assert_eq!(lay.status, Some(Rect::new(0, 551, 792, 22)));
         assert_eq!(lay.view.inset(FIELD_PAD).bottom(), 551);
         assert_eq!(lay.bar.expect("bar").frame.bottom(), 551);
+    }
+
+    /// At 200% text the menu and address bands, the Folders bar's title strip and the status
+    /// bar grow with the text; the toolbar's band keeps its height.
+    #[test]
+    fn the_bands_and_bars_grow_with_the_text_size() {
+        let s = Settings {
+            status_bar: true,
+            ..Settings::default()
+        };
+        let cm = ControlMetrics::CLASSIC.grown(reprisekit::theme::TextUnits::new(22, 11));
+        let lay = layout(client(), &s, 200, statusbar::height(&cm), &cm);
+        assert_eq!(lay.menu, Rect::new(0, 3, 792, 42));
+        assert_eq!(lay.toolbar, Some(Rect::new(0, 47, 792, 30)));
+        assert_eq!(lay.address, Some(Rect::new(0, 79, 792, 44)));
+        assert_eq!(lay.status, Some(Rect::new(0, 573 - 44, 792, 44)));
+        assert_eq!(lay.bar.expect("folders bar").header.height, 40);
     }
 
     #[test]

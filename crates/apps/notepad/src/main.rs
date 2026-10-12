@@ -395,23 +395,26 @@ impl Notepad {
             &ctx.text,
             ctx.theme.fonts.size_px,
             self.client(ctx),
-            &ctx.theme.look.controls(),
+            &ctx.theme.controls(),
         )
     }
 
-    /// The status bar reserves no space of its own, so the edit gives up its height here.
-    fn edit_height(&self, h: i32, bar_h: i32) -> i32 {
+    /// The status bar reserves no space of its own, so the edit gives up its height here, under
+    /// a `menu_h` menu bar.
+    fn edit_height(&self, h: i32, menu_h: i32, bar_h: i32) -> i32 {
         let bar = if self.status_bar { bar_h } else { 0 };
-        h - menubar::BAR_H - bar
+        h - menu_h - bar
     }
 
     fn edit_rect(&self, ctx: &Ctx) -> Rect {
         let c = self.client(ctx);
+        let cm = ctx.theme.controls();
+        let menu_h = menubar::bar_h(&cm);
         Rect::new(
             c.x,
-            c.y + menubar::BAR_H,
+            c.y + menu_h,
             c.width,
-            self.edit_height(c.height, statusbar::height(&ctx.theme.look)),
+            self.edit_height(c.height, menu_h, statusbar::height(&cm)),
         )
     }
 
@@ -1507,6 +1510,10 @@ impl App for Notepad {
         (568, 328)
     }
 
+    fn text_sized(&self) -> bool {
+        true
+    }
+
     fn min_size(&self, win: WinId) -> Option<(i32, i32)> {
         match win {
             OPEN => self.open.as_ref().map(FileDlg::min_client),
@@ -1573,7 +1580,7 @@ impl App for Notepad {
             kids.push(Child {
                 id: OPEN,
                 title: "Open".into(),
-                size: CLIENT,
+                size: self.open.as_ref().map_or(CLIENT, FileDlg::client),
                 fixed: false,
                 modal: true,
             });
@@ -1582,7 +1589,7 @@ impl App for Notepad {
             kids.push(Child {
                 id: SAVEAS,
                 title: "Save As".into(),
-                size: CLIENT,
+                size: self.saveas.as_ref().map_or(CLIENT, FileDlg::client),
                 fixed: false,
                 modal: true,
             });
@@ -1779,10 +1786,10 @@ impl App for Notepad {
                         &self.dialog_text,
                         &Paint {
                             s: 1,
-                            ..ctx.theme.paint()
+                            ..self.forms.paint()
                         },
                         Rect::new(0, 0, d.client().0, d.client().1),
-                        self.dialog_px,
+                        self.forms.fonts.size_px,
                     );
                 }
             }
@@ -1793,10 +1800,10 @@ impl App for Notepad {
                         &self.dialog_text,
                         &Paint {
                             s: 1,
-                            ..ctx.theme.paint()
+                            ..self.forms.paint()
                         },
                         Rect::new(0, 0, d.client().0, d.client().1),
-                        self.dialog_px,
+                        self.forms.fonts.size_px,
                     );
                 }
             }
@@ -1806,7 +1813,7 @@ impl App for Notepad {
 
     fn access(&mut self, win: WinId, tree: &mut Tree, ctx: &Ctx) {
         self.follow(ctx);
-        let (dt, dpx) = (&self.dialog_text, self.dialog_px);
+        let dt = &self.dialog_text;
         let (forms, fpx) = (&self.forms, self.forms.fonts.size_px);
         let built = |f: &Form, tree: &mut Tree| {
             f.drawn_with(&forms.paint());
@@ -1862,12 +1869,12 @@ impl App for Notepad {
             }
             OPEN => {
                 if let Some(d) = &self.open {
-                    d.access(tree, Rect::new(0, 0, d.client().0, d.client().1), dt, dpx);
+                    d.access(tree, Rect::new(0, 0, d.client().0, d.client().1), dt, fpx);
                 }
             }
             SAVEAS => {
                 if let Some(d) = &self.saveas {
-                    d.access(tree, Rect::new(0, 0, d.client().0, d.client().1), dt, dpx);
+                    d.access(tree, Rect::new(0, 0, d.client().0, d.client().1), dt, fpx);
                 }
             }
             _ => self.access_main(tree, ctx),
@@ -1997,7 +2004,7 @@ impl Notepad {
             ],
             grip: !ctx.maximized,
         };
-        let h = statusbar::height(&ctx.theme.look);
+        let h = statusbar::height(&ctx.theme.controls());
         let r = Rect::new(0, ctx.size.1 - h, ctx.size.0, h);
         Some((bar, r))
     }
@@ -2016,7 +2023,7 @@ impl Notepad {
             "edit",
         );
         if let Some((bar, r)) = self.status(ctx) {
-            statusbar::access(&bar, r, tree, ROOT);
+            statusbar::access(&bar, r, ctx.theme.text, tree, ROOT);
         }
         tree.set_focus(menus.unwrap_or(edit));
     }
@@ -2109,9 +2116,9 @@ mod tests {
     fn showing_the_bar_shortens_the_edit() {
         let mut np = Notepad::new(None);
         assert!(!np.status_bar, "starts with the bar hidden");
-        let tall = np.edit_height(400, 23);
+        let tall = np.edit_height(400, menubar::BAR_H, 23);
         np.status_bar = true;
-        let short = np.edit_height(400, 23);
+        let short = np.edit_height(400, menubar::BAR_H, 23);
         assert_eq!(tall - short, 23);
     }
 
@@ -2606,6 +2613,27 @@ mod tests {
         let size = |id| np.children().into_iter().find(|c| c.id == id).unwrap().size;
         assert_eq!(size(FIND), (547, 158));
         assert_eq!(size(GOTO), (414, 147));
+    }
+
+    /// At 200% text the window's theme is at the text size: the menu bar and the status bar
+    /// grow, the text box takes what is left, and Open opens at its grown size.
+    #[test]
+    fn the_bars_and_the_file_dialog_grow_with_the_text_size() {
+        let mut np = Notepad::new(None);
+        let mut ctx = test_ctx();
+        ctx.text_size = 200;
+        ctx.theme = Theme::default().with_text_size(200);
+        np.follow(&ctx);
+        np.status_bar = true;
+        let r = np.edit_rect(&ctx);
+        assert_eq!((r.y, r.bottom()), (40, 328 - 44));
+        let (bar, sr) = np.status(&ctx).expect("the status bar is on");
+        assert_eq!(sr, Rect::new(0, 328 - 44, 568, 44));
+        let panels = statusbar::layout(&bar, sr, ctx.theme.text);
+        assert_eq!(panels[1].width, 712);
+        np.open_dialog();
+        let kid = np.children().into_iter().find(|c| c.id == OPEN).unwrap();
+        assert_eq!(kid.size, (2 * CLIENT.0, 2 * CLIENT.1));
     }
 
     #[test]

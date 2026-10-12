@@ -5548,7 +5548,7 @@ fn render_glass_lists(theme: &Theme) -> Canvas {
     }
     let mut icon = Canvas::new(statusbar::ICON_PX as u32, statusbar::ICON_PX as u32);
     icon.fill_rect(Rect::new(2, 2, 12, 12), Color::rgb(80, 193, 255));
-    let h = statusbar::height(&theme.look);
+    let h = statusbar::height(&theme.controls());
     for (i, grip) in [true, false].into_iter().enumerate() {
         let sb = StatusBar {
             panels: vec![

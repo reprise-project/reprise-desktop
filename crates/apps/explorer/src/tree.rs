@@ -90,7 +90,7 @@ impl Explorer {
                 &ctx.text,
                 ctx.theme.fonts.size_px,
                 frame,
-                &ctx.theme.look.controls(),
+                &ctx.theme.controls(),
             );
             self.tree.follow(&tl);
         }

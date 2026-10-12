@@ -1236,7 +1236,7 @@ fn browse_state(
         panic!("the Browse dialog is what is up");
     };
     let lay =
-        b.bf.layout(&ex.dialog_text, ex.dialog_px, &ctx.theme.look.controls());
+        b.bf.layout(&ex.dialog_text, ex.dialog_px, &ctx.theme.controls());
     (lay, b.bf.tree.clone())
 }
 
@@ -1524,7 +1524,7 @@ fn a_click_in_the_folders_pane_opens_the_folder() {
         ex.tree.top = i.saturating_sub(1);
         let frame = ex.layout(ctx).tree.expect("the Folders pane");
         let px = ctx.theme.fonts.size_px;
-        let tl = treeview::layout(&ex.tree, &ctx.text, px, frame, &ctx.theme.look.controls());
+        let tl = treeview::layout(&ex.tree, &ctx.text, px, frame, &ctx.theme.controls());
         let y = tl.body.y + (i - ex.tree.top) as i32 * treeview::ROW_H + 8;
         let x = (tl.body.x..tl.body.right())
             .find(|&x| ex.tree.hit(&tl, x, y) == treeview::Hit::Row(i))

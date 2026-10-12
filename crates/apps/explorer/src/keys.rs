@@ -167,7 +167,7 @@ impl Explorer {
             let Some(frame) = lay.tree else {
                 return Reply::none();
             };
-            let tl = treeview::layout(&self.tree, &ctx.text, px, frame, &ctx.theme.look.controls());
+            let tl = treeview::layout(&self.tree, &ctx.text, px, frame, &ctx.theme.controls());
             let rows = self.tree.visible();
             // The selected row's lower-left, when it is on screen.
             let at = self
@@ -218,7 +218,7 @@ impl Explorer {
             &ctx.text,
             ctx.theme.fonts.size_px,
             frame,
-            &ctx.theme.look.controls(),
+            &ctx.theme.controls(),
         );
         let rows = tl.rows as i64;
         let moved = match k.sym {
@@ -452,7 +452,7 @@ mod tests {
         ex.sv.selection.set_only(Some(1));
 
         let lay = ex.layout(&ctx);
-        let sl = shellview::layout(&ex.sv, lay.view, &ctx.theme.look.controls());
+        let sl = shellview::layout(&ex.sv, lay.view, &ctx.theme.controls());
         let cell = sl.cells[1];
         ex.key_inner(
             key(reprisekit::textedit::keysym::F10, None, false, true, false),

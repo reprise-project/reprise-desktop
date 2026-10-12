@@ -407,7 +407,7 @@ impl Explorer {
 
     pub fn min_size(&self, win: WinId) -> Option<(i32, i32)> {
         match (win, &self.dialog) {
-            (DIALOG, Some(Dialog::Browse(_))) => Some(browsefolder::MIN),
+            (DIALOG, Some(Dialog::Browse(_))) => Some(browsefolder::min(&self.forms.controls())),
             (PROGRAM_BROWSE, Some(Dialog::ChooseProgram(cp))) => {
                 cp.browse.as_ref().map(|b| b.dlg.min_client())
             }
@@ -449,8 +449,8 @@ impl Explorer {
                         u.size(reprisekit::controls::filesheet::CHANGE_ICON_SIZE)
                     }
                     Dialog::About(_) => u.size(aboutbox::CLIENT),
-                    Dialog::Browse(_) => browsefolder::CLIENT,
-                    Dialog::ChooseProgram(_) => openwith::CLIENT,
+                    Dialog::Browse(_) => browsefolder::client(&self.forms.controls()),
+                    Dialog::ChooseProgram(_) => openwith::client(&self.forms.controls()),
                     Dialog::Unlock(_) => u.size(unlock::CLIENT),
                     Dialog::Confirm(_) => {
                         u.size(self.confirm_layout().expect("a delete prompt is up").size)
@@ -501,27 +501,27 @@ impl Explorer {
         if let Some(Dialog::Browse(b)) = &self.dialog {
             let lay = b.bf.layout(
                 &self.dialog_text,
-                self.dialog_px,
-                &ctx.theme.look.controls(),
+                self.forms.fonts.size_px,
+                &self.forms.controls(),
             );
             b.bf.draw(
                 c,
                 &self.dialog_text,
                 &Paint {
                     s: 1,
-                    ..ctx.theme.paint()
+                    ..self.forms.paint()
                 },
                 &lay,
-                self.dialog_px,
+                self.forms.fonts.size_px,
             );
             return;
         }
         if let Some(Dialog::ChooseProgram(cp)) = &self.dialog {
             let lay = cp.ow.layout(
                 &self.dialog_text,
-                self.dialog_px,
+                self.forms.fonts.size_px,
                 (0, 0),
-                &ctx.theme.look.controls(),
+                &self.forms.controls(),
             );
             let rows: Vec<Option<&Canvas>> = cp.row_icons.iter().map(Option::as_ref).collect();
             cp.ow.draw(
@@ -529,13 +529,13 @@ impl Explorer {
                 &self.dialog_text,
                 &Paint {
                     s: 1,
-                    ..ctx.theme.paint()
+                    ..self.forms.paint()
                 },
                 &lay,
                 cp.icon.as_ref(),
                 &rows,
                 cp.input.cues(),
-                self.dialog_px,
+                self.forms.fonts.size_px,
             );
             return;
         }
@@ -578,17 +578,17 @@ impl Explorer {
             b.bf.access(
                 tree,
                 &self.dialog_text,
-                self.dialog_px,
-                &ctx.theme.look.controls(),
+                self.forms.fonts.size_px,
+                &self.forms.controls(),
             );
             return;
         }
         if let Some(Dialog::ChooseProgram(cp)) = &self.dialog {
             let lay = cp.ow.layout(
                 &self.dialog_text,
-                self.dialog_px,
+                self.forms.fonts.size_px,
                 (0, 0),
-                &ctx.theme.look.controls(),
+                &self.forms.controls(),
             );
             cp.ow.access(tree, &lay);
             return;

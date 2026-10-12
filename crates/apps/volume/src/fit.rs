@@ -10,7 +10,7 @@ use reprisekit::theme::Theme;
 
 /// The status line's height: the look's status bar.
 pub fn status_h(theme: &Theme) -> i32 {
-    statusbar::height(&theme.look) - 1
+    statusbar::height(&theme.controls()) - 1
 }
 
 /// The mixer body's size for `m` under `theme` on an output `room` wide (unknown: as wide as the columns want).

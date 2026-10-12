@@ -356,7 +356,7 @@ impl Explorer {
             return shellview::name_hit(&self.sv, &sl, x, y, &ctx.text, px).map(HoverOn::Entry);
         }
         let r = lay.tasks.filter(|r| r.contains(x, y))?;
-        let controls = ctx.theme.look.controls();
+        let controls = ctx.theme.controls();
         let tl = taskpane::layout(&self.taskpane, &ctx.text, px, r, &controls);
         match taskpane::hit(&self.taskpane, &tl, x, y) {
             taskpane::Hit::Row(i, j) if self.pane_tip(i, j).is_some() => Some(HoverOn::Pane(i, j)),
@@ -449,7 +449,7 @@ mod tests {
 
     fn centre(ex: &Explorer, ctx: &Ctx, i: usize) -> (i32, i32) {
         let lay = ex.layout(ctx);
-        let sl = shellview::layout(&ex.sv, lay.view, &ctx.theme.look.controls());
+        let sl = shellview::layout(&ex.sv, lay.view, &ctx.theme.controls());
         let cell = sl.cells[i];
         (cell.x + cell.width / 2, cell.y + cell.height / 2)
     }
@@ -571,7 +571,7 @@ mod tests {
             ex.sv.set_mode(mode);
             ex.hide_tip();
             let lay = ex.layout(&ctx);
-            let sl = shellview::layout(&ex.sv, lay.view, &ctx.theme.look.controls());
+            let sl = shellview::layout(&ex.sv, lay.view, &ctx.theme.controls());
             let px = ctx.theme.fonts.size_px;
             let name = shellview::label_rect(&ex.sv, &sl, i, &ctx.text, px);
             let (x, y) = (name.x + 2, name.y + name.height / 2);
@@ -595,7 +595,7 @@ mod tests {
         let lay = ex.layout(&ctx);
         let r = lay.tasks.expect("the task pane");
         let px = ctx.theme.fonts.size_px;
-        let controls = ctx.theme.look.controls();
+        let controls = ctx.theme.controls();
         let tl = taskpane::layout(&ex.taskpane, &ctx.text, px, r, &controls);
         let goto = crate::commands::Command::GoTo(Place::Computer);
         let (i, j) = (0..ex.pane_cmds.len())
@@ -717,7 +717,7 @@ mod tests {
         let i = index_of(&ex, "a.png");
 
         let lay = ex.layout(&ctx);
-        let sl = shellview::layout(&ex.sv, lay.view, &ctx.theme.look.controls());
+        let sl = shellview::layout(&ex.sv, lay.view, &ctx.theme.controls());
         let px = ctx.theme.fonts.size_px;
         let name = shellview::label_rect(&ex.sv, &sl, i, &ctx.text, px);
         ex.hover_view(name.x + 2, name.y + name.height / 2, &lay, &ctx);

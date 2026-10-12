@@ -21,6 +21,16 @@ use crate::theme::ColorScheme;
 
 pub const CLIENT: (i32, i32) = (318, 351);
 pub const MIN: (i32, i32) = (310, 262);
+
+/// The client's opening size with its text grown by `cm.text`.
+pub fn client(cm: &ControlMetrics) -> (i32, i32) {
+    cm.text.size(CLIENT)
+}
+
+/// The smallest client with its text grown by `cm.text`.
+pub fn min(cm: &ControlMetrics) -> (i32, i32) {
+    cm.text.size(MIN)
+}
 pub const HINT: &str = "Click a plus sign to see the folders inside.";
 pub const NEW_FOLDER_LABEL: &str = "&Make New Folder";
 
@@ -204,15 +214,24 @@ impl BrowseFolder {
         px: u32,
         cm: &ControlMetrics,
     ) {
-        self.size = (size.0.max(MIN.0), size.1.max(MIN.1));
+        let min = min(cm);
+        self.size = (size.0.max(min.0), size.1.max(min.1));
         let lay = self.layout(text, px, cm);
         self.tree.follow(&lay.tree);
     }
 
     pub fn layout(&self, text: &TextRenderer, px: u32, cm: &ControlMetrics) -> Layout {
-        let (dw, dh) = (self.size.0 - CLIENT.0, self.size.1 - CLIENT.1);
-        let grow = |r: Rect, w: i32, h: i32| Rect::new(r.x, r.y, r.width + w, r.height + h);
-        let shift = |r: Rect, x: i32, y: i32| Rect::new(r.x + x, r.y + y, r.width, r.height);
+        let u = cm.text;
+        let (cw, ch) = client(cm);
+        let (dw, dh) = (self.size.0 - cw, self.size.1 - ch);
+        let grow = |r: Rect, w: i32, h: i32| {
+            let r = u.rect(r);
+            Rect::new(r.x, r.y, r.width + w, r.height + h)
+        };
+        let shift = |r: Rect, x: i32, y: i32| {
+            let r = u.rect(r);
+            Rect::new(r.x + x, r.y + y, r.width, r.height)
+        };
         let mut lay = Layout {
             prompt: grow(PROMPT, dw, 0),
             tree: treeview::layout(&self.tree, text, px, grow(TREE, dw, dh), cm),
@@ -523,9 +542,10 @@ impl BrowseFolder {
         let cs = p.cs;
         let s = c.scale();
         c.fill_rect(c.bounds(), cs.button_face);
-        draw_lines(c, text, cs, lay.prompt, &self.prompt, px, s);
+        let line_h = p.text.len(LINE_H);
+        draw_lines(c, text, cs, lay.prompt, &self.prompt, line_h, px, s);
         treeview::draw(c, text, &Paint { s, ..*p }, &self.tree, &lay.tree, None, px);
-        draw_lines(c, text, cs, lay.hint, HINT, px, s);
+        draw_lines(c, text, cs, lay.hint, HINT, line_h, px, s);
         draw_size_grip(c, &Paint { s, ..*p }, lay.grip.scaled(s));
         let ring = |f: Focus| match self.focus {
             Focus::Tree | Focus::NewFolder => f == self.default,
@@ -610,18 +630,20 @@ fn button_of(hit: Hit) -> Option<Focus> {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn draw_lines(
     c: &mut Canvas,
     text: &TextRenderer,
     cs: &ColorScheme,
     r: Rect,
     body: &str,
+    line_h: i32,
     px: u32,
     s: i32,
 ) {
     let lines = text::wrap(text, body, r.width, px);
-    for (i, line) in lines.iter().take((r.height / LINE_H) as usize).enumerate() {
-        let lr = Rect::new(r.x, r.y + LINE_H * i as i32, r.width, LINE_H).scaled(s);
+    for (i, line) in lines.iter().take((r.height / line_h) as usize).enumerate() {
+        let lr = Rect::new(r.x, r.y + line_h * i as i32, r.width, line_h).scaled(s);
         text.draw(c, lr, line, false, cs.button_text, Align::Left, px);
     }
 }
@@ -668,6 +690,24 @@ mod tests {
             "prompt column"
         );
         assert_eq!((lay.hint.x, lay.hint.y), (15, 287), "hint line");
+    }
+
+    /// At 200% text the client and its parts double from the client's corner and the tree's rows
+    /// grow; a window wider than that stretches the tree as at 100%.
+    #[test]
+    fn a_grown_text_size_grows_the_dialog() {
+        let t = text();
+        let cm = ControlMetrics::CLASSIC.grown(crate::theme::TextUnits::new(22, 11));
+        let mut d = sample();
+        assert_eq!(client(&cm), (636, 702));
+        assert_eq!(min(&cm), (620, 524));
+        d.set_size((100, 100), &t, 22, &cm);
+        assert_eq!(d.size(), min(&cm), "no smaller than the grown minimum");
+        d.set_size((636 + 40, 702), &t, 22, &cm);
+        let lay = d.layout(&t, 22, &cm);
+        assert_eq!(lay.accept, Rect::new(294 + 40, 634, 150, 46));
+        assert_eq!(lay.tree.frame, Rect::new(34, 120, 572 + 40, 416));
+        assert_eq!(lay.tree.row_h, 34);
     }
 
     #[test]

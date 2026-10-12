@@ -167,8 +167,8 @@ impl Explorer {
         }
         let lay = b.bf.layout(
             &self.dialog_text,
-            self.dialog_px,
-            &ctx.theme.look.controls(),
+            self.forms.fonts.size_px,
+            &self.forms.controls(),
         );
         b.bf.tree.follow(&lay.tree);
         self.dialog = Some(Dialog::Browse(b));
@@ -185,8 +185,8 @@ impl Explorer {
         };
         let lay = b.bf.layout(
             &self.dialog_text,
-            self.dialog_px,
-            &ctx.theme.look.controls(),
+            self.forms.fonts.size_px,
+            &self.forms.controls(),
         );
         let press = match ev {
             Event::Pointer(
@@ -232,7 +232,7 @@ impl Explorer {
                 }
             }
             Event::Pointer(PointerInput::Motion { x, y }) => {
-                b.bf.motion(&lay, &self.dialog_text, self.dialog_px, x, y)
+                b.bf.motion(&lay, &self.dialog_text, self.forms.fonts.size_px, x, y)
             }
             Event::Pointer(PointerInput::Release { .. }) => b.bf.release(),
             Event::Pointer(PointerInput::Leave) => b.bf.leave(),
@@ -241,8 +241,8 @@ impl Explorer {
                 b.bf.set_size(
                     ctx.size,
                     &self.dialog_text,
-                    self.dialog_px,
-                    &ctx.theme.look.controls(),
+                    self.forms.fonts.size_px,
+                    &self.forms.controls(),
                 );
                 browsefolder::Event::Redraw
             }
@@ -299,8 +299,8 @@ impl Explorer {
                 if let Some(i) = row {
                     let lay = b.bf.layout(
                         &self.dialog_text,
-                        self.dialog_px,
-                        &ctx.theme.look.controls(),
+                        self.forms.fonts.size_px,
+                        &self.forms.controls(),
                     );
                     b.bf.new_folder_made([p.as_slice(), &[i]].concat(), &lay);
                 }
@@ -360,8 +360,8 @@ impl Explorer {
                     b.bf.tree.selected = Some([parent.as_slice(), &[i]].concat());
                     let lay = b.bf.layout(
                         &self.dialog_text,
-                        self.dialog_px,
-                        &ctx.theme.look.controls(),
+                        self.forms.fonts.size_px,
+                        &self.forms.controls(),
                     );
                     b.bf.tree.follow(&lay.tree);
                 }

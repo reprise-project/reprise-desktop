@@ -158,9 +158,10 @@ pub fn layout(
         text.measure("Address", false, px),
         r.height,
     );
-    let go_w = cm.address.go_w;
+    // The label's and Go's room grows with the text; the band's height is the caller's.
+    let go_w = cm.text.len(cm.address.go_w);
     let go = Rect::new(r.right() - RIGHT_PAD - go_w, r.y, go_w, r.height);
-    let field_x = r.x + FIELD_X;
+    let field_x = r.x + cm.text.len(FIELD_X);
     let field = Rect::new(field_x, r.y, (go.x - field_x).max(0), r.height);
     Layout {
         label,

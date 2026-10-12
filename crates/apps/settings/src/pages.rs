@@ -2292,7 +2292,7 @@ pub fn draw_shortcuts(
         text,
         &Paint { s, ..theme.paint() },
         lv,
-        &listview::layout(lv, rect, &theme.look.controls()),
+        &listview::layout(lv, rect, &theme.controls()),
         None,
         px,
     );
@@ -2314,7 +2314,7 @@ pub fn draw_list(
         text,
         &Paint { s, ..theme.paint() },
         lv,
-        &listview::layout(lv, rect, &theme.look.controls()),
+        &listview::layout(lv, rect, &theme.controls()),
         None,
         px,
     );

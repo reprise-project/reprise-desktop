@@ -107,9 +107,10 @@ use reprisekit::theme::Theme;
 use zeroize::{Zeroize, Zeroizing};
 
 pub struct Ctx {
-    /// The look's theme. Its text stays at 100% whatever the text size:
-    /// lists, menus and toolbars are laid out in fixed pixels. Forms draw
-    /// with [`Ctx::forms`].
+    /// The look's theme. Its text stays at 100% unless the program is
+    /// [`App::text_sized`]: then it is at the text size, and the program lays
+    /// its lists, menus and bars out with [`Theme::controls`]. Forms draw with
+    /// [`Ctx::forms`].
     pub theme: Theme,
     /// `[accessibility] text_size`, in percent: what a program grows its
     /// forms ([`Ctx::forms`]) and its document's text (the edit control) by.
@@ -134,7 +135,11 @@ impl Ctx {
     /// at the text size. Their 100% layouts grow by its `text`; a window holding one is
     /// `forms().text.size` of its 100% size.
     pub fn forms(&self) -> Theme {
-        self.theme.with_form_text(self.text_size)
+        if self.theme.text.is_one() {
+            self.theme.with_form_text(self.text_size)
+        } else {
+            self.theme.clone()
+        }
     }
 
     /// How [`Ctx::forms`] grows a 100% layout, without building its theme.
@@ -605,6 +610,12 @@ pub trait App {
     fn output_management(&self) -> bool {
         false
     }
+    /// Whether [`Ctx::theme`] is at the text size: the program lays its own
+    /// lists, trees, menus and bars out with [`Theme::controls`], so they grow
+    /// with the text. Read at start and on every look change.
+    fn text_sized(&self) -> bool {
+        false
+    }
     fn event(&mut self, win: WinId, ev: Event, ctx: &mut Ctx) -> Reply;
     fn draw(&mut self, win: WinId, c: &mut Canvas, ctx: &Ctx);
     /// Window `win`'s accessibility tree, from the state `draw` last drew:
@@ -664,6 +675,15 @@ pub fn caption_fit(title: &str) -> i32 {
             None => fit,
         }
     })
+}
+
+/// `theme` at `text_size` for an [`App::text_sized`] program, else as it is.
+fn sized(theme: Theme, app: &dyn App, text_size: u32) -> Theme {
+    if app.text_sized() {
+        theme.with_text_size(text_size)
+    } else {
+        theme
+    }
 }
 
 fn publish_theme(theme: &Theme) {
@@ -932,6 +952,7 @@ pub fn run(app: Box<dyn App>) {
     let theme = look.theme();
     publish_theme(&theme);
     let text = TextRenderer::load(&theme.fonts);
+    let theme = sized(theme, &*app, look.text_size);
     let icons = look.icons();
     let (ping, ping_source) = make_ping().expect("ping");
     let (a11y, a11y_source) = channel();
@@ -1944,11 +1965,14 @@ impl Host {
             return;
         }
         let theme = self.look.theme();
-        if theme.fonts != self.ctx.theme.fonts {
+        // The old theme's fonts at 100%, as the renderer was loaded with them.
+        let mut before = self.ctx.theme.fonts.clone();
+        before.size_px = self.ctx.theme.text.base_px(before.size_px);
+        if theme.fonts != before {
             self.ctx.text = TextRenderer::load(&theme.fonts);
         }
         publish_theme(&theme);
-        self.ctx.theme = theme;
+        self.ctx.theme = sized(theme, &*self.app, self.look.text_size);
         self.ctx.text_size = self.look.text_size;
         if key == reprisebus::appearance::ICON_THEME {
             let scale = self.ctx.icons.scale();
@@ -4036,6 +4060,31 @@ mod tests {
             "a side past MAX_SIDE"
         );
         assert_eq!(draw_scale(None, 4, (MAX_SIDE, 10)), 1);
+    }
+
+    /// A program at the text size has its forms theme as its own theme, the text grown once;
+    /// any other program grows its 100% theme for its forms.
+    #[test]
+    fn forms_grow_the_text_once() {
+        let theme = Theme::default();
+        let mut ctx = Ctx {
+            theme: theme.clone(),
+            text: TextRenderer::load(&theme.fonts),
+            icons: IconCache::new(IconTheme::load("test", &[])),
+            caret_on: true,
+            size: (40, 30),
+            maximized: false,
+            origin: (0, 0),
+            wake: Waker::noop(),
+            heads: Default::default(),
+            text_size: 150,
+        };
+        let grown = reprisekit::theme::TextUnits::new(17, 11);
+        assert_eq!(ctx.forms().fonts.size_px, 17);
+        assert_eq!(ctx.forms().text, grown);
+        ctx.theme = theme.with_text_size(150);
+        assert_eq!(ctx.forms().fonts.size_px, 17);
+        assert_eq!(ctx.forms().text, grown);
     }
 
     #[test]

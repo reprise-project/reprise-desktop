@@ -36,7 +36,7 @@ use reprisekit::controls::propsheet::{self, PropSheet};
 use reprisekit::look::Paint;
 use reprisekit::raster::{Canvas, Rect};
 use reprisekit::text::TextRenderer;
-use reprisekit::theme::Theme;
+use reprisekit::theme::{TextUnits, Theme};
 
 /// The windows the folder and the tray open. One Status sheet and one VPN
 /// sheet at a time: opening another replaces it.
@@ -333,7 +333,7 @@ impl NetApp {
         ));
     }
 
-    fn open_import(&mut self) {
+    fn open_import(&mut self, u: TextUnits) {
         let home = std::env::var_os("HOME")
             .map(PathBuf::from)
             .unwrap_or_else(|| PathBuf::from("/"));
@@ -349,6 +349,7 @@ impl NetApp {
                     "All Files (*.*)".into(),
                 ],
             },
+            u,
         ));
     }
 
@@ -585,7 +586,7 @@ impl NetApp {
                 Reply::redraw_all()
             }
             folder::Outcome::Import => {
-                self.open_import();
+                self.open_import(ctx.forms().text);
                 Reply::redraw_all()
             }
             folder::Outcome::CreateHotspot(p) => {
@@ -705,7 +706,7 @@ impl NetApp {
             d,
             &ev,
             &ctx.text,
-            ctx.theme.fonts.size_px,
+            ctx.forms().fonts.size_px,
             ctx.size,
             &ctx.theme.metrics,
         ) {
@@ -1079,7 +1080,6 @@ impl App for NetApp {
     }
 
     fn access(&mut self, win: WinId, tree: &mut Tree, ctx: &Ctx) {
-        let px = ctx.theme.fonts.size_px;
         let forms = ctx.forms();
         let form_px = forms.fonts.size_px;
         match win {
@@ -1111,7 +1111,7 @@ impl App for NetApp {
             IMPORT => {
                 if let Some(d) = &self.import {
                     let r = Rect::new(0, 0, d.client().0, d.client().1);
-                    d.access(tree, r, &ctx.text, px);
+                    d.access(tree, r, &ctx.text, forms.fonts.size_px);
                 }
             }
             NOTICE => {
@@ -1141,7 +1141,6 @@ impl App for NetApp {
 
     fn draw(&mut self, win: WinId, c: &mut Canvas, ctx: &Ctx) {
         let cs = &ctx.theme.colors;
-        let px = ctx.theme.fonts.size_px;
         let forms = ctx.forms();
         let form_px = forms.fonts.size_px;
         match win {
@@ -1221,10 +1220,10 @@ impl App for NetApp {
                         &ctx.text,
                         &Paint {
                             s: 1,
-                            ..ctx.theme.paint()
+                            ..forms.paint()
                         },
                         Rect::new(0, 0, d.client().0, d.client().1),
-                        px,
+                        form_px,
                     );
                 }
             }
