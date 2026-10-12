@@ -9,7 +9,7 @@ pub mod settings;
 use crate::compositor::State;
 use crate::icontheme::IconCache;
 use crate::input::{BTN_LEFT, BTN_MIDDLE, BTN_RIGHT, Hit};
-use crate::menuview::MenuKind;
+use crate::menuview::{MenuFrom, MenuKind};
 use crate::raster::{Canvas, Rect};
 use crate::startmenu::{MenuItem, MenuLayout, MenuStyle, place_submenu, submenu_max_rows};
 use crate::taskbar::TaskbarHit;
@@ -1355,6 +1355,7 @@ fn open_layout(state: &mut State, id: String, parent: i32, nodes: Vec<MenuNode>)
             items,
             output,
             MenuKind::Tray { id, node_ids },
+            MenuFrom::Bar,
         );
         state.redraw_menu(0);
         return;
@@ -1406,6 +1407,7 @@ fn open_layout(state: &mut State, id: String, parent: i32, nodes: Vec<MenuNode>)
         items,
         output,
         MenuKind::Tray { id, node_ids },
+        MenuFrom::Bar,
     );
     if let Some(m) = state.menus.last_mut() {
         m.parent_row = Some(row);

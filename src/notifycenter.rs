@@ -11,7 +11,7 @@ use smithay::output::Output;
 use crate::compositor::{SceneOwner, State};
 use crate::glass::{self, Backdrop};
 use crate::input::{BTN_LEFT, BTN_RIGHT};
-use crate::menuview::MenuKind;
+use crate::menuview::{MenuFrom, MenuKind};
 use crate::output::upload_scaled;
 use crate::raster::Rect;
 use crate::startmenu::{MenuLayout, MenuStyle};
@@ -325,6 +325,6 @@ pub fn open_actions_menu(
     let pos = place_popup((x, at.1), (layout.width, layout.height), usable);
     let keys = actions.into_iter().map(|(k, _)| k).collect();
     let kind = MenuKind::NotifyActions { id, keys };
-    state.push_menu(0, pos, layout, items, output, kind);
+    state.push_menu(0, pos, layout, items, output, kind, MenuFrom::Elsewhere);
     state.redraw_menu(0);
 }

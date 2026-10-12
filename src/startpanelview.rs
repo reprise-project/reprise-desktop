@@ -1079,7 +1079,7 @@ impl State {
         }
         crate::tooltip::hover_start_panel(self, None);
         self.close_menu();
-        self.push_context_menu_placed(at, items, kind, place);
+        self.push_context_menu_placed(at, items, kind, crate::menuview::MenuFrom::Bar, place);
     }
 
     fn open_start_context(&mut self, s: Spot) {
