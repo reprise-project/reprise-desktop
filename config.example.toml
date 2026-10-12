@@ -394,7 +394,8 @@ suspend_after = 0            # run [power] standby
 # always_on_top = true
 # sticky = true              # on every desktop
 # tab_group = "shells"       # windows matching rules with the same name share one tab group: the
-#                            # first one opens on its own, later ones join it as the last tab
+#                            # first one opens on its own, later ones join it as the last tab; a
+#                            # window pulled out of the group is passed over until regrouped
 #                            # dialogs keep centring on their owner; fixed-size windows ignore size
 
 # [window_snapping]          # snap a window to the screen's edges and the zones of its layout
