@@ -101,8 +101,11 @@ pub fn form_clipboard(focused: Option<form::FocusedEdit>, ev: &Event) -> Reply {
 /// and Ctrl+Page Down turning the page ([`propsheet::page_step`]), a left press
 /// hit-tested and clicked, motion tracked, a release released, Leave clearing
 /// what the pointer lit, a drop on a field ([`crate::fielddrop`]) heard as the
-/// open page's. `None` is an event the host answers itself.
+/// open page's. `None` is an event the host answers itself. First the sheet fits the
+/// window's height ([`PropSheet::fit_height`]): a window cut short scrolls the page.
 pub fn sheet_input(sheet: &mut PropSheet, ev: &Event, ctx: &Ctx) -> Option<propsheet::Event> {
+    let u = ctx.form_units();
+    sheet.fit_height(u.within(ctx.size.1 - sheet.origin().1));
     let px = sheet.open().units().px(ctx.theme.fonts.size_px);
     Some(match ev {
         Event::Key(k) => {

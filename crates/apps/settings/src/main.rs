@@ -235,11 +235,6 @@ enum Pick {
 }
 
 /// The longest 100% length that grows to no more than `v`.
-fn fit_within(u: TextUnits, v: i32) -> i32 {
-    let d = u.design(v);
-    if u.len(d) > v { d - 1 } else { d }
-}
-
 fn take<T>(rx: &Receiver<T>) -> Result<Option<T>, ()> {
     match rx.try_recv() {
         Ok(v) => Ok(Some(v)),
@@ -357,16 +352,15 @@ impl SettingsApp {
     /// Lay the sheet out for a main window of client `size`: the sheet
     /// takes it (no smaller than its smallest), every page takes the
     /// layout its builder gives it there, and the Pointers preview is
-    /// drawn again at its new size. What the controls hold stays. True
-    /// when anything moved.
+    /// drawn again at its new size. What the controls hold stays. A window
+    /// shorter than the smallest sheet shows it scrolled. True when
+    /// anything moved.
     fn fit_window(&mut self, size: (i32, i32)) -> bool {
         let (u, min) = (self.units, Area::MIN.sheet_size());
-        let size = (
-            fit_within(u, size.0).max(min.0),
-            fit_within(u, size.1).max(min.1),
-        );
+        let shown = (u.within(size.0), u.within(size.1));
+        let size = (shown.0.max(min.0), shown.1.max(min.1));
         if size == self.sheet.size {
-            return false;
+            return self.sheet.fit_height(shown.1);
         }
         self.sheet.resize(size);
         let a = self.area();
@@ -398,6 +392,7 @@ impl SettingsApp {
         pages::fit_list_columns(&mut self.list, list);
         self.preview_for = None;
         self.sheet.reveal_open();
+        self.sheet.fit_height(shown.1);
         true
     }
 
@@ -2940,27 +2935,33 @@ impl SettingsApp {
             true,
             form_px,
         );
-        if self.sheet.tabs.open == Page::Startup.index() {
-            let r = self.on_page(pages::list(self.area()));
-            pages::draw_list(c, &ctx.text, &ctx.theme, &self.list, r, px, 1);
-        }
-        if self.sheet.tabs.open == Page::Keyboard.index() {
-            let r = self.on_page(pages::shortcuts(self.area()));
-            pages::draw_shortcuts(c, &ctx.text, &ctx.theme, &self.shortcuts, r, px, 1);
-        }
-        if self.sheet.tabs.open == Page::DefaultPrograms.index() {
-            let r = self.on_page(defaultspage::list(self.area()));
-            pages::draw_list(c, &ctx.text, &ctx.theme, &self.types, r, px, 1);
+        let open = self.sheet.tabs.open;
+        let page = self.sheet.page_clip(&ctx.text, form_px);
+        c.with_clip(page.unwrap_or(c.bounds()), |c| {
+            if open == Page::Startup.index() {
+                let r = self.on_page(pages::list(self.area()));
+                pages::draw_list(c, &ctx.text, &ctx.theme, &self.list, r, px, 1);
+            }
+            if open == Page::Keyboard.index() {
+                let r = self.on_page(pages::shortcuts(self.area()));
+                pages::draw_shortcuts(c, &ctx.text, &ctx.theme, &self.shortcuts, r, px, 1);
+            }
+            if open == Page::DefaultPrograms.index() {
+                let r = self.on_page(defaultspage::list(self.area()));
+                pages::draw_list(c, &ctx.text, &ctx.theme, &self.types, r, px, 1);
+            }
+            if open == Page::Advanced.index() {
+                let r = self.on_page(pages::locations(self.area()));
+                pages::draw_list(c, &ctx.text, &ctx.theme, &self.locations, r, px, 1);
+            }
+        });
+        if open == Page::DefaultPrograms.index() {
             // A combo dropped over the list covers it.
             let p = Paint {
                 s: 1,
                 ..forms.paint()
             };
             propsheet::draw_popups(c, &ctx.text, &p, &self.sheet, form_px);
-        }
-        if self.sheet.tabs.open == Page::Advanced.index() {
-            let r = self.on_page(pages::locations(self.area()));
-            pages::draw_list(c, &ctx.text, &ctx.theme, &self.locations, r, px, 1);
         }
     }
 
@@ -3683,6 +3684,39 @@ mod tests {
         app.rename = Some(renamedlg::RenameDialog::new("Name"));
         let rename = app.children().into_iter().find(|c| c.id == RENAME_WIN);
         assert_eq!(rename.map(|c| c.size), Some(u.size(renamedlg::CLIENT)));
+    }
+
+    /// At 200% on a 1080-line screen the work area is shorter than the smallest sheet: the
+    /// sheet keeps the pages it was built with, its buttons sit inside the window and the page
+    /// scrolls.
+    #[test]
+    fn at_200_percent_a_window_shorter_than_the_sheet_scrolls_its_page() {
+        let mut app = app("resize-200");
+        let mut ctx = test_ctx();
+        ctx.text_size = 200;
+        let u = ctx.forms().text;
+        let min = app.min_size(MAIN).unwrap();
+        assert!(
+            u.len(528) > 1026,
+            "the smallest sheet is taller than the work area"
+        );
+        ctx.size = (1914, 1026);
+        app.event(MAIN, Event::Resized, &mut ctx);
+        assert_eq!(app.min_size(MAIN), Some(u.size((544, 528))), "{min:?}");
+        assert_eq!(
+            app.sheet.size.1, 528,
+            "the pages keep their smallest height"
+        );
+        let client = app.sheet.client();
+        assert!(client.1 <= 1026, "{client:?} fits the window");
+        let mut c = Canvas::new(1914, 1026);
+        app.draw(MAIN, &mut c, &ctx);
+        for id in [propsheet::OK, propsheet::CANCEL, propsheet::APPLY] {
+            let b = app.sheet.open().rect(id).unwrap();
+            assert!(b.bottom() <= 1026, "{id} at {b:?} shows");
+        }
+        let l = app.sheet.layout(&ctx.text, ctx.forms().fonts.size_px);
+        assert!(l.bar.is_some(), "the page scrolls");
     }
 
     #[test]
