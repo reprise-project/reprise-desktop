@@ -14,7 +14,7 @@ use crate::look::widgets::{
 use crate::metrics::ControlMetrics;
 use crate::raster::{Canvas, Rect};
 use crate::text::{Align, TextRenderer};
-use crate::theme::Theme;
+use crate::theme::{TextUnits, Theme};
 use accesskit::{NodeId, Role};
 
 pub const W: i32 = 162;
@@ -157,19 +157,27 @@ pub struct Layout {
     pub frame: Rect,
     pub inner: Rect,
     pub band: Rect,
+    /// How the grid's 100% columns, rows and text boxes grow with the text; the frame and the
+    /// today ring keep their px.
+    pub text: TextUnits,
 }
 
 impl Layout {
+    /// Where column `i` starts, `dx` 100% px further right.
+    fn col_at(&self, i: usize, dx: i32) -> i32 {
+        self.inner.x - 1 + self.text.len(45 * i as i32 / 2 + dx)
+    }
+
     pub fn col_x(&self, i: usize) -> i32 {
-        self.inner.x - 1 + 45 * i as i32 / 2
+        self.col_at(i, 0)
     }
 
     fn centre_x(&self, i: usize) -> i32 {
-        self.col_x(i) + 12
+        self.col_at(i, 12)
     }
 
     pub fn row_y(&self, r: usize) -> i32 {
-        self.band.bottom() + ROW_H * r as i32
+        self.inner.y + self.text.len(ROW_H * (r as i32 + 1))
     }
 
     pub fn cell(&self, k: usize) -> Rect {
@@ -180,24 +188,40 @@ impl Layout {
         } else {
             self.col_x(col + 1)
         };
-        Rect::new(x, self.row_y(row), right - x, ROW_H)
+        let y = self.row_y(row);
+        Rect::new(x, y, right - x, self.row_y(row + 1) - y)
     }
 
     /// The text box day number `label` takes in cell `k`: its advance
-    /// width by `LINE_H`, centred on the column's centre point.
+    /// width by a line, centred on the column's centre point.
     pub fn number_box(&self, k: usize, label_w: i32) -> Rect {
         let x = self.centre_x(k % 7) - label_w / 2;
-        Rect::new(x, self.row_y(k / 7) + 3, label_w, LINE_H)
+        let y = self.row_y(k / 7) + self.text.len(3);
+        Rect::new(x, y, label_w, self.text.len(LINE_H))
+    }
+
+    /// Weekday letter `i`'s text box in the band.
+    fn letter_box(&self, i: usize) -> Rect {
+        let x = self.col_at(i, 6);
+        let y = self.band.y + self.text.len(3);
+        Rect::new(x, y, self.col_at(i, 18) - x, self.text.len(LINE_H))
     }
 }
 
-pub fn layout(r: Rect) -> Layout {
+/// The grid in `r`, its rows and columns grown by `cm.text`.
+pub fn layout(r: Rect, cm: &ControlMetrics) -> Layout {
     let inner = r.inset(2);
     Layout {
         frame: r,
         inner,
-        band: Rect::new(inner.x, inner.y, inner.width, ROW_H),
+        band: Rect::new(inner.x, inner.y, inner.width, cm.text.len(ROW_H)),
+        text: cm.text,
     }
+}
+
+/// The grid's size at the text size `cm.text`.
+pub fn size(cm: &ControlMetrics) -> (i32, i32) {
+    cm.text.size((W, H))
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -238,8 +262,15 @@ pub fn draw(
     let letters = draw_calendar_band(c, p, lay.band.scaled(s), cal.enabled);
     for i in 0..7 {
         let letter = LETTERS[(i as u32 + cal.first_weekday) as usize % 7];
-        let r = Rect::new(lay.col_x(i) + 6, lay.band.y + 3, 12, LINE_H);
-        text.draw(c, r.scaled(s), letter, false, letters, Align::Left, px);
+        text.draw(
+            c,
+            lay.letter_box(i).scaled(s),
+            letter,
+            false,
+            letters,
+            Align::Left,
+            px,
+        );
     }
     let ink = if cal.enabled {
         cs.window_text
@@ -284,10 +315,15 @@ const TITLE_H: i32 = 16;
 const ARROW_W: i32 = 16;
 
 /// The popup panel's size in a look with controls `cm`: 174x162 inside
-/// Classic's 2 px edge, 12 px more each way inside an 8 px border.
+/// Classic's 2 px edge, 12 px more each way inside an 8 px border. The grid
+/// and the title row grow with `cm.text`.
 pub fn popup_size(cm: &ControlMetrics) -> (i32, i32) {
     let e = cm.flyout_border;
-    (W + 2 * (e + PAD), TITLE_H + H + 2 * (e + PAD) + PAD)
+    let (w, h) = size(cm);
+    (
+        w + 2 * (e + PAD),
+        cm.text.len(TITLE_H) + h + 2 * (e + PAD) + PAD,
+    )
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -301,11 +337,13 @@ pub struct PopupLayout {
 pub fn popup_layout(cm: &ControlMetrics) -> PopupLayout {
     let x = cm.flyout_border + PAD;
     let y = x;
+    let (w, h) = size(cm);
+    let title_h = cm.text.len(TITLE_H);
     PopupLayout {
-        prev: Rect::new(x, y, ARROW_W, TITLE_H),
-        next: Rect::new(x + W - ARROW_W, y, ARROW_W, TITLE_H),
-        title: Rect::new(x + ARROW_W, y, W - 2 * ARROW_W, TITLE_H),
-        grid: layout(Rect::new(x, y + TITLE_H + PAD, W, H)),
+        prev: Rect::new(x, y, ARROW_W, title_h),
+        next: Rect::new(x + w - ARROW_W, y, ARROW_W, title_h),
+        title: Rect::new(x + ARROW_W, y, w - 2 * ARROW_W, title_h),
+        grid: layout(Rect::new(x, y + title_h + PAD, w, h), cm),
     }
 }
 
@@ -337,7 +375,7 @@ pub fn draw_popup(theme: &Theme, text: &TextRenderer, cal: &Calendar, hot: Popup
     let cs = p.cs;
     let s = p.s;
     let px = theme.fonts.size_px;
-    let cm = theme.look.controls();
+    let cm = theme.controls();
     let lay = popup_layout(&cm);
     let (w, h) = popup_size(&cm);
     let mut c = Canvas::new((w * s) as u32, (h * s) as u32);
@@ -450,7 +488,7 @@ mod tests {
             (398, 317),
         );
         let page = sheet.frame().1;
-        let lay = layout(Rect::new(27, 90, W, H));
+        let lay = layout(Rect::new(27, 90, W, H), &ControlMetrics::CLASSIC);
         let f = lay.frame;
         let body = (lay.inner.x, lay.band.bottom() + 20);
         let mut bare = Canvas::new(398, 317);
@@ -505,7 +543,7 @@ mod tests {
         let theme = crate::interfaces::theme_for(crate::interface::Interface::Blue);
         let text = TextRenderer::load(&FontConfig::default());
         let p = theme.paint();
-        let lay = layout(Rect::new(27, 90, W, H));
+        let lay = layout(Rect::new(27, 90, W, H), &ControlMetrics::CLASSIC);
         let b = lay.band;
         let letters = crate::blue::Variant::Blue
             .scheme()
@@ -601,7 +639,7 @@ mod tests {
 
     #[test]
     fn layout_and_hits() {
-        let l = layout(Rect::new(27, 87, W, H));
+        let l = layout(Rect::new(27, 87, W, H), &ControlMetrics::CLASSIC);
         assert_eq!(l.inner, Rect::new(29, 89, 158, 126));
         assert_eq!(l.band, Rect::new(29, 89, 158, 18));
         let lefts: Vec<i32> = (0..7).map(|i| l.col_x(i)).collect();
@@ -623,7 +661,7 @@ mod tests {
         let theme = Theme::default();
         let text = TextRenderer::load(&FontConfig::default());
         let cs = &theme.colors;
-        let l = layout(Rect::new(27, 87, W, H));
+        let l = layout(Rect::new(27, 87, W, H), &ControlMetrics::CLASSIC);
         let mut cal = Calendar::new(2026, 9, Some(24), 0);
         cal.today = Some((2026, 9, 3));
         let mut c = Canvas::new(200, 230);
@@ -653,6 +691,72 @@ mod tests {
         let b = l.number_box(cal.cell_of(3), text.measure("3", false, 11));
         assert_eq!(c.get(b.x - 1, b.y - 1), cs.hilight.argb());
         assert_eq!(c.get(b.x, b.y), cs.window.argb());
+    }
+
+    /// At 150% and 200% the grid's columns, rows and number boxes grow with the text, the 2 px
+    /// sunken edge keeps its px, and the picked day's highlight is the grown number box.
+    #[test]
+    fn a_grown_grid_grows_its_cells_and_keeps_its_edge() {
+        let theme = Theme::default();
+        let text = TextRenderer::load(&FontConfig::default());
+        let cs = &theme.colors;
+        for (pct, px) in [(100, 11), (150, 17), (200, 22)] {
+            let u = crate::theme::TextUnits::new(px, 11);
+            let cm = ControlMetrics::CLASSIC.grown(u);
+            let frame = u.rect(Rect::new(27, 87, W, H));
+            let l = layout(frame, &cm);
+            assert_eq!(l.band.height, u.len(ROW_H), "{pct}%");
+            assert_eq!(l.row_y(0), l.inner.y + u.len(18), "{pct}%");
+            assert_eq!(l.cell(1).height, u.len(36) - u.len(18), "{pct}%");
+            assert_eq!(l.col_x(3), l.inner.x - 1 + u.len(67), "{pct}%");
+            assert_eq!(l.cell(6).right(), l.inner.right(), "{pct}%");
+            let mut cal = Calendar::new(2026, 9, Some(24), 0);
+            cal.today = Some((2026, 9, 3));
+            let mut c = Canvas::new(500, 500);
+            c.fill_rect(c.bounds(), cs.button_face);
+            let p = Paint {
+                text: u,
+                ..classic_paint(cs, 1)
+            };
+            draw(&mut c, &text, &p, &cal, &l, false, px);
+            assert_eq!(c.get(frame.x, frame.y), cs.button_shadow.argb());
+            assert_eq!(c.get(frame.x + 1, frame.y + 1), cs.button_dk_shadow.argb());
+            assert_eq!(
+                c.get(l.inner.x + 1, l.band.bottom() - 1),
+                cs.button_shadow.argb()
+            );
+            assert_eq!(c.get(l.inner.x + 1, l.band.bottom()), cs.window.argb());
+            let b = l.number_box(cal.cell_of(24), text.measure("24", false, px));
+            assert_eq!(b.height, u.len(LINE_H), "{pct}%");
+            assert_eq!(c.get(b.x, b.y), cs.hilight.argb(), "{pct}%");
+            assert_eq!(
+                c.get(b.right() - 1, b.bottom() - 1),
+                cs.hilight.argb(),
+                "{pct}%"
+            );
+            assert_eq!(c.get(b.x, b.bottom()), cs.window.argb(), "{pct}%");
+            let cell = l.cell(cal.cell_of(24));
+            assert_eq!(
+                hit(&cal, &l, cell.x + 2, cell.bottom() - 1),
+                Some(Hit::Day(24))
+            );
+        }
+    }
+
+    /// The popup's grid and title row grow with the text in a theme at 200%; its border and arrow
+    /// buttons' widths keep their px.
+    #[test]
+    fn a_grown_popup_grows_its_grid_and_title_row() {
+        let u = crate::theme::TextUnits::new(22, 11);
+        let cm = ControlMetrics::CLASSIC.grown(u);
+        let lay = popup_layout(&cm);
+        assert_eq!(popup_size(&cm), (2 * W + 12, 2 * 16 + 2 * H + 16));
+        assert_eq!(lay.prev, Rect::new(6, 6, 16, 32));
+        assert_eq!(lay.grid.frame, Rect::new(6, 42, 2 * W, 2 * H));
+        assert_eq!(
+            popup_hit(&cm, lay.next.x + 2, lay.next.y + 30),
+            PopupHit::Next
+        );
     }
 
     #[test]

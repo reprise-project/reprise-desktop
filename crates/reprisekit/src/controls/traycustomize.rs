@@ -35,7 +35,7 @@ use crate::raster::{Canvas, Rect};
 use crate::style::PageInks;
 use crate::text::{self, Align, TextRenderer, split_mnemonic};
 use crate::textedit::Caret;
-use crate::theme::Theme;
+use crate::theme::{TextUnits, Theme};
 
 /// What one tray item does with its icon and its balloons.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -179,6 +179,7 @@ pub const CURRENT: &str = "Current Items";
 pub const PAST: &str = "Past Items";
 
 /// Where an interface puts the parts, from the client area's top-left.
+#[derive(Clone, Copy)]
 struct Geometry {
     client: (i32, i32),
     intro: Rect,
@@ -226,6 +227,32 @@ const CLASSIC: Geometry = Geometry {
     ok: Rect::new(183, 359, 75, 23),
     cancel: Rect::new(264, 359, 75, 23),
 };
+
+impl Geometry {
+    /// These parts for text grown by `u`: rects, rows and columns grow, the icon stays centred
+    /// down its taller row, and the header's hidden row keeps its px.
+    fn grown(&self, u: TextUnits) -> Geometry {
+        let row_h = u.len(self.row_h);
+        Geometry {
+            client: u.size(self.client),
+            intro: u.rect(self.intro),
+            prompt: u.rect(self.prompt),
+            list: u.rect(self.list),
+            columns: self.columns.map(|w| u.len(w)),
+            group_h: u.len(self.group_h),
+            group_gap: u.len(self.group_gap),
+            rule_y: u.len(self.rule_y),
+            row_h,
+            highlight_h: u.len(self.highlight_h),
+            icon_dy: self.icon_dy + (row_h - self.row_h) / 2,
+            check: self.check.map(|(x, y)| (u.len(x), u.len(y))),
+            restore: u.rect(self.restore),
+            ok: u.rect(self.ok),
+            cancel: u.rect(self.cancel),
+            ..*self
+        }
+    }
+}
 
 /// Glass's page. Its rows' box starts `PAGE_BODY_Y` into the list and
 /// holds no group headers; `prompt` is the heading's box and `restore`
@@ -455,19 +482,24 @@ impl TrayCustomize {
         self.refocus();
     }
 
-    /// Whether the dialog is laid out as Glass's settings page.
-    fn is_page(&self) -> bool {
+    /// Whether the dialog is laid out as Glass's settings page, whose layout keeps its 100% px.
+    pub fn is_page(&self) -> bool {
         self.wording == Wording::Glass
     }
 
+    /// Where the parts go, grown by `metrics.text`.
+    fn geometry(&self) -> Geometry {
+        self.wording.geometry().grown(self.metrics.text)
+    }
+
     pub fn client(&self) -> (i32, i32) {
-        self.wording.geometry().client
+        self.geometry().client
     }
 
     /// The rows' box's height: the list's inside less the header's rows
     /// that show; on the page, the list's inside under its titles.
     pub fn body_height(&self) -> i32 {
-        let g = self.wording.geometry();
+        let g = self.geometry();
         if self.is_page() {
             return g.list.height - PAGE_BODY_Y - 1;
         }
@@ -505,7 +537,7 @@ impl TrayCustomize {
 
     /// How tall slot `k` of `slots` is.
     fn slot_h(&self, slots: &[Slot], k: usize) -> i32 {
-        let g = self.wording.geometry();
+        let g = self.geometry();
         match slots[k] {
             Slot::Header(_) if k > 0 => g.group_h + g.group_gap,
             Slot::Header(_) => g.group_h,
@@ -725,7 +757,7 @@ impl TrayCustomize {
                 if self.focus == Focus::List && !self.entries.is_empty() =>
             {
                 let last = self.entries.len() - 1;
-                let page = (height / self.wording.geometry().row_h).max(1) as usize;
+                let page = (height / self.geometry().row_h).max(1) as usize;
                 let at = self.selected;
                 let next = match key {
                     Key::Up => at.map_or(0, |i| i.saturating_sub(1)),
@@ -910,7 +942,7 @@ impl TrayCustomize {
         if self.is_page() {
             return self.page_layout(text, px, origin);
         }
-        let g = self.wording.geometry();
+        let g = self.geometry();
         let cm = &self.metrics;
         let at = |r: Rect| Rect::new(r.x + origin.0, r.y + origin.1, r.width, r.height);
         let frame = at(g.list);
@@ -960,7 +992,8 @@ impl TrayCustomize {
             .filter(|_| self.list_enabled())
             .and_then(|i| placed.iter().find(|(s, _)| *s == Slot::Row(i)))
             .map(|&(Slot::Row(i) | Slot::Header(i), r)| {
-                let field = Rect::new(body.x + g.columns[0] + 1, r.y, g.columns[1], combo::COMBO_H);
+                let combo_h = cm.text.len(combo::COMBO_H);
+                let field = Rect::new(body.x + g.columns[0] + 1, r.y, g.columns[1], combo_h);
                 (i, combo::layout(&self.combo, field, cm))
             });
         let (check, check_label) = match g.check {
@@ -1165,11 +1198,12 @@ impl TrayCustomize {
         let Paint { cs, s, active, .. } = *p;
         let dots = cues.focus && active;
         let w = self.wording;
-        let g = w.geometry();
+        let g = self.geometry();
         let live = self.list_enabled();
         c.fill_rect(lay.client.scaled(s), cs.button_face);
         let lines = text::wrap(text, w.intro(), lay.intro.width * s, px);
-        let pitch = lay.intro.height / (lay.intro.height / LINE_H).max(1);
+        let line_h = self.metrics.text.len(LINE_H);
+        let pitch = lay.intro.height / (lay.intro.height / line_h).max(1);
         for (i, line) in lines.iter().enumerate() {
             let r = Rect::new(
                 lay.intro.x,
@@ -1547,7 +1581,7 @@ impl TrayCustomize {
     ) {
         let Paint { cs, s, active, .. } = *p;
         let w = self.wording;
-        let g = w.geometry();
+        let g = self.geometry();
         let live = self.list_enabled();
         c.fill_rect(lay.body.scaled(s), cs.window);
         let ink = if live { cs.window_text } else { cs.gray_text };
@@ -1869,6 +1903,25 @@ mod tests {
             l.check.is_none(),
             "Classic's switch is on the settings sheet"
         );
+    }
+
+    /// At 200% text the Classic dialog's client, list, rows and buttons grow with the text; the
+    /// header keeps its one row under the frame, and the selected row's combo grows with it.
+    #[test]
+    fn a_grown_classic_dialog_grows_its_parts() {
+        let mut t = sample(Wording::Classic);
+        t.metrics = metrics(Wording::Classic).grown(TextUnits::new(22, 11));
+        t.select(1);
+        let l = t.layout(&text(), 22, (0, 0));
+        assert_eq!(t.client(), (696, 782));
+        assert_eq!(l.frame, Rect::new(18, 164, 660, 416));
+        assert_eq!(l.header, Rect::new(20, 165, 656, 34));
+        assert_eq!(l.body.y, 199);
+        let hs: Vec<_> = l.slots.iter().map(|(_, r)| r.height).collect();
+        assert_eq!(hs, [64, 36, 36, 36, 86, 36]);
+        assert_eq!(l.ok, Rect::new(366, 718, 150, 46));
+        let (_, cl) = l.combo.expect("a combo on the selected row");
+        assert_eq!(cl.field, Rect::new(20 + 370 + 1, 199 + 64 + 36, 248, 42));
     }
 
     #[test]

@@ -176,7 +176,7 @@ impl Explorer {
                 .filter(|i| *i >= self.tree.top && *i < self.tree.top + tl.rows)
                 .map(|i| {
                     let below = (i - self.tree.top) as i32 + 1;
-                    (tl.body.x + 8, tl.body.y + below * self.tree.row_h())
+                    (tl.body.x + 8, tl.body.y + below * tl.row_h)
                 })
                 .unwrap_or((tl.body.x + 8, tl.body.y + 8));
             let node = self

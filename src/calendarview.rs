@@ -115,7 +115,7 @@ fn open(state: &mut State, bar: TreeId) {
     model.today = Some((y, m, d));
     let b = state.layout_box(Some(&output));
     let p = state.bar_placement(&output);
-    let (w, h) = calendar::popup_size(&state.config.theme.look.controls());
+    let (w, h) = calendar::popup_size(&state.config.theme.controls());
     let clock = crate::raster::Rect::new(
         p.shown.x + clock.x,
         p.shown.y + clock.y,
@@ -172,7 +172,7 @@ pub fn clicked(state: &mut State, hit: PopupHit) {
 pub fn hit(state: &State, lx: f64, ly: f64) -> PopupHit {
     match state.calendar.view.as_ref() {
         Some(v) => calendar::popup_hit(
-            &state.config.theme.look.controls(),
+            &state.config.theme.controls(),
             lx.floor() as i32 - v.at.0,
             ly.floor() as i32 - v.at.1,
         ),
@@ -199,7 +199,7 @@ fn redraw(state: &mut State) {
     let scale = state.draw_scale_at(Some(&v.output)).max(1);
     let theme = state.config.theme.scaled(scale);
     let canvas = calendar::draw_popup(&theme, &state.text, &v.model, v.hot);
-    let size = calendar::popup_size(&state.config.theme.look.controls());
+    let size = calendar::popup_size(&state.config.theme.controls());
     let pane = glass::flyout_glass(&state.config, size);
     let Some(v) = state.calendar.view.as_mut() else {
         return;
@@ -217,7 +217,7 @@ fn redraw(state: &mut State) {
 pub fn access(state: &State) -> Option<reprisekit::access::Tree> {
     let v = state.calendar.view.as_ref()?;
     let px = state.config.theme.fonts.size_px;
-    let cm = state.config.theme.look.controls();
+    let cm = state.config.theme.controls();
     Some(popup_tree(&v.model, &cm, v.at, &state.text, px))
 }
 
