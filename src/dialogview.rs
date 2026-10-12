@@ -14,6 +14,7 @@ use reprisekit::controls::grouplist;
 use reprisekit::controls::openwith;
 use reprisekit::controls::shellview;
 use reprisekit::cues::Cues;
+use reprisekit::pointer::DoubleClick;
 use reprisescene::{BufferId, TreeId};
 use smithay::input::keyboard::{KeysymHandle, ModifiersState};
 use smithay::output::Output;
@@ -61,9 +62,9 @@ pub struct DialogView {
     pub y: i32,
     pub output: Output,
     /// Last press in the field or a form's edit field, for double-click word select.
-    field_press: DoubleClick,
+    field_press: DoubleClick<usize>,
     /// A list row's last press, for double-click as OK.
-    row_press: DoubleClick,
+    row_press: DoubleClick<usize>,
     /// The wheel's sub-notch remainder, in 120ths of a notch.
     wheel: i32,
     /// Icons the last draw used, so a caret blink skips the lookups.
@@ -88,30 +89,6 @@ impl DialogView {
 
 const FADE_STEPS: i32 = 25;
 const FADE_TICK: std::time::Duration = std::time::Duration::from_millis(40);
-
-/// The last press on a dialog target (a list row, or `0` for the field), for telling a double click.
-#[derive(Default)]
-struct DoubleClick {
-    at: Option<(u32, usize)>,
-}
-
-impl DoubleClick {
-    /// Whether a press on `target` at `time_msec` completes a double click; one that does resets.
-    fn press(&mut self, target: usize, time_msec: u32, threshold_ms: i32) -> bool {
-        let double = reprisekit::controls::iconview::is_double_click(
-            self.at,
-            time_msec,
-            target,
-            threshold_ms,
-        );
-        self.at = (!double).then_some((time_msec, target));
-        double
-    }
-
-    fn reset(&mut self) {
-        self.at = None;
-    }
-}
 
 static NEXT_ID: AtomicU64 = AtomicU64::new(0);
 
@@ -1129,10 +1106,17 @@ impl State {
         self.apply_dialog(outcome);
     }
 
+    /// A left press at the pointer for double-click pairing, in the dialog theme's double-click time.
+    fn dialog_click(&self, time_msec: u32) -> reprisekit::pointer::Click {
+        let p = self.pointer_location();
+        let (x, y) = (p.x.floor() as i32, p.y.floor() as i32);
+        self.config.dialog_theme.metrics.click(x, y, time_msec)
+    }
+
     /// A left press in the top dialog's field at text offset `x`: caret under the pointer (Shift
     /// extends), maybe a drag-select; a second press in the double-click time selects the word.
     fn press_dialog_field(&mut self, x: i32, time_msec: u32) -> Outcome {
-        let threshold = self.config.dialog_theme.metrics.double_click_ms;
+        let at = self.dialog_click(time_msec);
         let shift = self
             .seat
             .get_keyboard()
@@ -1143,7 +1127,7 @@ impl State {
         let Some(v) = dialogs.views.last_mut() else {
             return Outcome::Nothing;
         };
-        if v.field_press.press(0, time_msec, threshold) {
+        if v.field_press.press(0, at) {
             v.dialog.double_click_field(text, px, x)
         } else {
             let out = v.dialog.press_field(text, px, x, shift);
@@ -1157,21 +1141,21 @@ impl State {
     /// A left press elsewhere on the top dialog: a Browse picker or the dialog clicks `hit`, double-click
     /// on a repeat press on the same row. A held thumb or form button keeps the pointer until release.
     fn press_dialog_body(&mut self, hit: Option<DialogHit>, time_msec: u32) -> Outcome {
-        let threshold = self.config.dialog_theme.metrics.double_click_ms;
+        let at = self.dialog_click(time_msec);
         let Some(v) = self.dialogs.views.last_mut() else {
             return Outcome::Nothing;
         };
         let double = match hit {
             Some(DialogHit::Chooser(openwith::Hit::List(grouplist::Hit::Row(i)))) => {
-                v.row_press.press(i, time_msec, threshold)
+                v.row_press.press(i, at)
             }
             Some(DialogHit::Browse(filedlg::Hit::Shell(shellview::Hit::Entry(i)))) => {
-                v.row_press.press(i, time_msec, threshold)
+                v.row_press.press(i, at)
             }
             Some(DialogHit::Control(h))
                 if matches!(h.part, reprisekit::controls::form::Part::Edit(_)) =>
             {
-                v.field_press.press(h.item, time_msec, threshold)
+                v.field_press.press(h.item, at)
             }
             _ => {
                 v.row_press.reset();
@@ -2242,9 +2226,7 @@ fn client_part(canvas: &Canvas, layout: &DialogLayout, scale: i32) -> Option<(Ca
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        DoubleClick, client_part, glass_pane, raise_order, refit_origin, row_icon_names, to_local,
-    };
+    use super::{client_part, glass_pane, raise_order, refit_origin, row_icon_names, to_local};
     use crate::dialog::Dialog;
     use crate::raster::Rect;
     use reprisekit::controls::form::Key;
@@ -2342,18 +2324,6 @@ mod tests {
         assert_eq!(to_local(-299.5, 10.5, (-300, 10)), (0, 0));
         assert_eq!(to_local(-300.5, 9.5, (-300, 10)), (-1, -1));
         assert_eq!(to_local(12.7, 3.2, (10, 0)), (2, 3));
-    }
-
-    #[test]
-    fn a_second_press_on_the_same_row_in_time_is_a_double_click() {
-        let mut d = DoubleClick::default();
-        assert!(!d.press(3, 1000, 500), "a first press is single");
-        assert!(d.press(3, 1400, 500), "the same row within 500 ms");
-        assert!(!d.press(3, 1450, 500), "a third press starts over");
-        assert!(!d.press(4, 1500, 500), "another row is single");
-        assert!(!d.press(4, 2000, 500), "500 ms later is single");
-        d.reset();
-        assert!(!d.press(4, 2100, 500), "a reset forgets the last press");
     }
 
     #[test]

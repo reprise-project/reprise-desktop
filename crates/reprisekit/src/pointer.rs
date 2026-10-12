@@ -193,6 +193,51 @@ impl Pointer<(Axis, ScrollHit)> {
     }
 }
 
+/// Px a second press may land from the first, on either axis, and still pair into a double click.
+pub const DOUBLE_CLICK_SLOP: i32 = 4;
+
+/// A left press as double-click pairing reads it: the point, the event time (ms) and the theme's `double_click_ms`
+/// ([`crate::theme::Metrics::click`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Click {
+    pub x: i32,
+    pub y: i32,
+    pub time: u32,
+    pub double_ms: i32,
+}
+
+/// Pairs left presses on parts `P` into double clicks: a second press on the same part within the click's
+/// `double_ms` and [`DOUBLE_CLICK_SLOP`] of the first. A pair clears the memory, so a third press starts over.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DoubleClick<P> {
+    last: Option<(P, Click)>,
+}
+
+impl<P> Default for DoubleClick<P> {
+    fn default() -> Self {
+        DoubleClick { last: None }
+    }
+}
+
+impl<P: Copy + Eq> DoubleClick<P> {
+    /// A left press on `part`: true when it completes a double click.
+    pub fn press(&mut self, part: P, at: Click) -> bool {
+        let double = self.last.is_some_and(|(p, first)| {
+            p == part
+                && at.time.wrapping_sub(first.time) < at.double_ms.max(0) as u32
+                && (at.x - first.x).abs() <= DOUBLE_CLICK_SLOP
+                && (at.y - first.y).abs() <= DOUBLE_CLICK_SLOP
+        });
+        self.last = (!double).then_some((part, at));
+        double
+    }
+
+    /// Forget the last press: the next one is a first.
+    pub fn reset(&mut self) {
+        self.last = None;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -346,5 +391,52 @@ mod tests {
             None,
             "release off the thumb still does nothing"
         );
+    }
+
+    fn at(x: i32, y: i32, time: u32) -> Click {
+        Click {
+            x,
+            y,
+            time,
+            double_ms: 500,
+        }
+    }
+
+    #[test]
+    fn a_second_press_on_the_same_part_in_time_and_place_is_a_double_click() {
+        let mut d = DoubleClick::default();
+        assert!(!d.press(A, at(40, 40, 1000)), "a first press is single");
+        assert!(d.press(A, at(44, 36, 1499)), "4 px off and 499 ms later");
+        assert!(!d.press(A, at(44, 36, 1600)), "a third press starts over");
+    }
+
+    #[test]
+    fn another_part_a_slow_press_or_a_far_one_is_single() {
+        let mut other = DoubleClick::default();
+        other.press(A, at(40, 40, 1000));
+        assert!(!other.press(B, at(40, 40, 1100)), "another part");
+
+        let mut slow = DoubleClick::default();
+        slow.press(A, at(40, 40, 1000));
+        assert!(!slow.press(A, at(40, 40, 1500)), "500 ms later");
+
+        let mut far = DoubleClick::default();
+        far.press(A, at(40, 40, 1000));
+        assert!(
+            !far.press(A, at(40 + DOUBLE_CLICK_SLOP + 1, 40, 1100)),
+            "5 px off"
+        );
+
+        let mut reset = DoubleClick::default();
+        reset.press(A, at(40, 40, 1000));
+        reset.reset();
+        assert!(!reset.press(A, at(40, 40, 1100)), "a reset forgets");
+    }
+
+    #[test]
+    fn a_double_click_spans_the_event_clock_wrapping() {
+        let mut d = DoubleClick::default();
+        d.press(A, at(0, 0, u32::MAX - 100));
+        assert!(d.press(A, at(0, 0, 100)), "201 ms across the wrap");
     }
 }

@@ -3,8 +3,8 @@
 //! menu and the drag image. Kept out of `drag.rs` to keep it under 800 lines.
 
 use super::*;
+use crate::BTN_RIGHT;
 use crate::tests::test_ctx;
-use crate::{BTN_RIGHT, DOUBLE_MS};
 use repriseapp::Mods as SeatMods;
 use repriseapp::PointerInput;
 
@@ -51,7 +51,7 @@ fn press_with(ex: &mut Explorer, ctx: &mut Ctx, at: (i32, i32), button: u32, mod
             x: at.0,
             y: at.1,
             button,
-            time: DOUBLE_MS * 10,
+            time: 5000,
             mods,
         },
         ctx,

@@ -8,6 +8,7 @@ use reprisekit::controls::listview::{self, Column, ListView};
 use reprisekit::controls::menu::{MenuAction, MenuCtx, MenuItem, MenuKey, MenuTree, PopupMenu};
 use reprisekit::controls::taskpane::{self, Body, Section, TaskPane};
 use reprisekit::look::Paint;
+use reprisekit::pointer::Click;
 use reprisekit::raster::{Canvas, Rect};
 use reprisekit::selection::Mods;
 use reprisekit::textedit::keysym;
@@ -391,15 +392,8 @@ impl Folder {
         redraw(self.list.scroll(rows as i64, &lay))
     }
 
-    pub fn press(
-        &mut self,
-        x: i32,
-        y: i32,
-        button: u32,
-        double: bool,
-        s: &nm::Snapshot,
-        ctx: &Ctx,
-    ) -> Outcome {
+    pub fn press(&mut self, at: Click, button: u32, s: &nm::Snapshot, ctx: &Ctx) -> Outcome {
+        let (x, y) = (at.x, at.y);
         // A pointer press. An open menu takes every press; one outside closes it and is eaten. Otherwise the right button selects and opens the row's menu, a double click opens a device's Status window or toggles a VPN, a single click selects.
         let lit = button == BTN_LEFT
             && {
@@ -408,7 +402,7 @@ impl Folder {
                 self.list.bars.press_bar(over) | self.list.header.press(column, false)
             }
             && ctx.styled();
-        match self.press_at(x, y, button, double, s, ctx) {
+        match self.press_at(at, button, s, ctx) {
             Outcome::None if lit => Outcome::Redraw,
             out => out,
         }
@@ -436,15 +430,8 @@ impl Folder {
         self.list.hit(&lay, x, y).column()
     }
 
-    fn press_at(
-        &mut self,
-        x: i32,
-        y: i32,
-        button: u32,
-        double: bool,
-        s: &nm::Snapshot,
-        ctx: &Ctx,
-    ) -> Outcome {
+    fn press_at(&mut self, at: Click, button: u32, s: &nm::Snapshot, ctx: &Ctx) -> Outcome {
+        let (x, y) = (at.x, at.y);
         if let Some(p) = self.popup.as_mut() {
             let act = p.chain.click(&p.tree, x, y, &popup_ctx(ctx, client(ctx)));
             return self.popup_action(act);
@@ -452,16 +439,19 @@ impl Folder {
         let (pane_r, list_r) = self.layout(ctx);
         if list_r.contains(x, y) {
             let lay = listview::layout(&self.list, list_r, &ctx.theme.look.controls());
-            return match self.list.hit(&lay, x, y) {
+            let hit = self.list.hit(&lay, x, y);
+            // Only a left press pairs, so a right click between two left ones does not break the pair.
+            let activated = button == BTN_LEFT && self.list.activated(hit, at).is_some();
+            return match hit {
                 listview::Hit::Row(i) => {
                     self.list.select(Some(i), &lay);
                     self.set_details(s);
-                    match (button, double) {
-                        (BTN_RIGHT, _) => {
+                    match button {
+                        BTN_RIGHT => {
                             self.open_popup(i, x, y, s, ctx);
                             Outcome::Redraw
                         }
-                        (BTN_LEFT, true) => self.activate(i, s),
+                        _ if activated => self.activate(i, s),
                         _ => Outcome::Redraw,
                     }
                 }
@@ -755,6 +745,26 @@ mod tests {
     use super::*;
     use reprisekit::controls::metrics::ControlMetrics;
 
+    /// A press that never completes a double click.
+    fn one(x: i32, y: i32) -> Click {
+        Click {
+            x,
+            y,
+            time: 0,
+            double_ms: 0,
+        }
+    }
+
+    /// A press that completes a double click after a press on the same row.
+    fn two(x: i32, y: i32) -> Click {
+        Click {
+            x,
+            y,
+            time: 1,
+            double_ms: 500,
+        }
+    }
+
     /// In client coordinates: the pane's first section border and header top, the list header's face top, the body's left edge, the column dividers, the group rule and the first row's top.
     const SECTION_X: i32 = 12;
     const SECTION_RIGHT: i32 = 198;
@@ -852,7 +862,7 @@ mod tests {
         let up = (Axis::Vertical, ScrollHit::Back);
         assert_eq!(f.motion(x, y, &ctx), Outcome::Redraw);
         assert_eq!(f.list.bars.of(up), Interaction::Hot);
-        f.press(x, y, BTN_LEFT, false, &snapshot(), &ctx);
+        f.press(one(x, y), BTN_LEFT, &snapshot(), &ctx);
         assert_eq!(f.list.bars.of(up), Interaction::Pressed);
         assert_eq!(f.release(&ctx), Outcome::Redraw);
         assert_eq!(f.list.bars.of(up), Interaction::Hot);
@@ -1108,7 +1118,7 @@ mod tests {
         let s = snapshot();
         let mut f = folder();
         let (x, y) = row_point(&f, &ctx, 1);
-        assert_eq!(f.press(x, y, BTN_RIGHT, false, &s, &ctx), Outcome::Redraw);
+        assert_eq!(f.press(one(x, y), BTN_RIGHT, &s, &ctx), Outcome::Redraw);
         assert_eq!(f.list.selection.single(), Some(1));
         assert!(f.popup.is_some(), "the menu is open");
         let key = |sym| KeyInput {
@@ -1123,11 +1133,11 @@ mod tests {
             Outcome::Toggle("/dev/2".into())
         );
         assert!(f.popup.is_none(), "picking a row closes the menu");
-        f.press(x, y, BTN_RIGHT, false, &s, &ctx);
+        f.press(one(x, y), BTN_RIGHT, &s, &ctx);
         assert_eq!(f.key(&key(keysym::ESCAPE), &s, &ctx), Outcome::Redraw);
         assert!(f.popup.is_none());
-        f.press(x, y, BTN_RIGHT, false, &s, &ctx);
-        assert_eq!(f.press(4, 4, BTN_LEFT, false, &s, &ctx), Outcome::Redraw);
+        f.press(one(x, y), BTN_RIGHT, &s, &ctx);
+        assert_eq!(f.press(one(4, 4), BTN_LEFT, &s, &ctx), Outcome::Redraw);
         assert!(f.popup.is_none());
         assert_eq!(f.list.selection.single(), Some(1), "the click did not land");
     }
@@ -1138,21 +1148,23 @@ mod tests {
         let mut s = snapshot();
         let mut f = folder();
         let (x, y) = row_point(&f, &ctx, 0);
-        assert_eq!(f.press(x, y, BTN_LEFT, false, &s, &ctx), Outcome::Redraw);
+        assert_eq!(f.press(one(x, y), BTN_LEFT, &s, &ctx), Outcome::Redraw);
         assert_eq!(f.list.selection.single(), Some(0));
         assert_eq!(
-            f.press(x, y, BTN_LEFT, true, &s, &ctx),
+            f.press(two(x, y), BTN_LEFT, &s, &ctx),
             Outcome::OpenStatus("/dev/1".into())
         );
         let (x, y) = row_point(&f, &ctx, 2);
+        f.press(one(x, y), BTN_LEFT, &s, &ctx);
         assert_eq!(
-            f.press(x, y, BTN_LEFT, true, &s, &ctx),
+            f.press(two(x, y), BTN_LEFT, &s, &ctx),
             Outcome::VpnUp("/settings/7".into())
         );
         s.vpns[0].active = true;
         f.refresh(&s, None);
+        f.press(one(x, y), BTN_LEFT, &s, &ctx);
         assert_eq!(
-            f.press(x, y, BTN_LEFT, true, &s, &ctx),
+            f.press(two(x, y), BTN_LEFT, &s, &ctx),
             Outcome::VpnDown("/settings/7".into())
         );
         let key = |sym| KeyInput {
@@ -1185,7 +1197,7 @@ mod tests {
             pane_r,
             &ctx.theme.look.controls(),
         );
-        let mut click = |r: Rect| f.press(r.x + 2, r.y + 2, BTN_LEFT, false, &s, &ctx);
+        let mut click = |r: Rect| f.press(one(r.x + 2, r.y + 2), BTN_LEFT, &s, &ctx);
         assert_eq!(
             click(lay.rows[TASKS][TASK_WIREGUARD]),
             Outcome::NewWireGuard
@@ -1211,7 +1223,7 @@ mod tests {
         );
         let head = lay.headers[0];
         assert_eq!(
-            f.press(head.x + 2, head.y + 2, BTN_LEFT, false, &s, &ctx),
+            f.press(one(head.x + 2, head.y + 2), BTN_LEFT, &s, &ctx),
             Outcome::Redraw
         );
         assert!(!f.pane.sections[0].open, "the header folded the section");
@@ -1239,23 +1251,21 @@ mod tests {
         assert_eq!(f.list.top, 0);
         assert_eq!(f.wheel(-1, &ctx), Outcome::None, "already at the top");
         assert_eq!(
-            f.press(sb.x + 2, sb.bottom() - 3, BTN_LEFT, false, &s, &ctx),
+            f.press(one(sb.x + 2, sb.bottom() - 3), BTN_LEFT, &s, &ctx),
             Outcome::Redraw
         );
         assert_eq!(f.list.top, 1);
         let below = f.list.top;
         assert_eq!(
-            f.press(sb.x + 2, sb.bottom() - 30, BTN_LEFT, false, &s, &ctx),
+            f.press(one(sb.x + 2, sb.bottom() - 30), BTN_LEFT, &s, &ctx),
             Outcome::Redraw
         );
         assert!(f.list.top > below + 1, "the trough paged down");
         let paged = f.list.top;
         assert_eq!(
             f.press(
-                sb.x + 2,
-                sb.y + ControlMetrics::CLASSIC.scroll + 1,
+                one(sb.x + 2, sb.y + ControlMetrics::CLASSIC.scroll + 1),
                 BTN_LEFT,
-                false,
                 &s,
                 &ctx
             ),

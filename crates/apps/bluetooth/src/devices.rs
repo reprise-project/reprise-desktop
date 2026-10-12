@@ -12,6 +12,7 @@ use reprisekit::controls::metrics::ControlMetrics;
 use reprisekit::controls::propsheet::{self, PropSheet};
 use reprisekit::controls::tilelist::{self, Entry, Press, TILE_H, Tile, TileList};
 use reprisekit::look::Paint;
+use reprisekit::pointer::Click;
 use reprisekit::raster::{Canvas, Rect};
 use reprisekit::text::Align;
 
@@ -261,18 +262,20 @@ impl Devices {
         }
     }
 
-    pub fn list_press(&mut self, x: i32, y: i32, double: bool, cm: &ControlMetrics) -> Outcome {
+    pub fn list_press(&mut self, at: Click, cm: &ControlMetrics) -> Outcome {
         if self.blank_text().is_some() {
             return Outcome::None;
         }
         self.list_focus = true;
         self.sheet.open_mut().set_focus(None);
-        match self.list.press(LIST, x, y, cm) {
+        match self.list.press(LIST, at, cm) {
             Press::None => Outcome::None,
             Press::Redraw => Outcome::Redraw,
-            Press::Row { changed, .. } => {
+            Press::Row {
+                changed, activate, ..
+            } => {
                 self.write();
-                match (double, self.selected_path()) {
+                match (activate, self.selected_path()) {
                     (true, Some(p)) => Outcome::Toggle(p),
                     _ if changed => Outcome::Redraw,
                     _ => Outcome::None,
@@ -400,6 +403,10 @@ mod tests {
     use crate::bz::{Adapter, Kind};
     use reprisekit::controls::form::Control;
 
+    fn at(x: i32, y: i32, time: u32) -> Click {
+        reprisekit::theme::Metrics::default().click(x, y, time)
+    }
+
     fn dev(path: &str, alias: &str, kind: Kind, connected: bool) -> Device {
         Device {
             path: path.into(),
@@ -489,7 +496,7 @@ mod tests {
         assert!(enabled(&d, ADD));
         assert!(!enabled(&d, REMOVE) && !enabled(&d, CONNECT) && !enabled(&d, PROPS));
         let (x, y) = entry_point(&d, 1);
-        d.list_press(x, y, false, &ControlMetrics::CLASSIC);
+        d.list_press(at(x, y, 0), &ControlMetrics::CLASSIC);
         assert!(enabled(&d, REMOVE) && enabled(&d, CONNECT) && enabled(&d, PROPS));
         assert_eq!(label(&d, CONNECT), "&Disconnect", "Cans is connected");
         d.list_key(&form::Key::Down, &ControlMetrics::CLASSIC);
@@ -501,7 +508,7 @@ mod tests {
         let mut d = Devices::new();
         d.refresh(&four());
         let (x, y) = entry_point(&d, 1);
-        d.list_press(x, y, false, &ControlMetrics::CLASSIC);
+        d.list_press(at(x, y, 0), &ControlMetrics::CLASSIC);
         let page = &mut d.sheet.pages[TAB_DEVICES];
         assert_eq!(
             page.key(form::Key::Access('p')),
@@ -518,7 +525,7 @@ mod tests {
         let mut d = Devices::new();
         d.refresh(&four());
         let (x, y) = entry_point(&d, 3);
-        d.list_press(x, y, false, &ControlMetrics::CLASSIC);
+        d.list_press(at(x, y, 0), &ControlMetrics::CLASSIC);
         assert_eq!(d.selected().map(|r| r.alias.as_str()), Some("Mouse"));
         let mut s = four();
         s.devices.retain(|r| r.alias != "Mouse");
@@ -532,7 +539,7 @@ mod tests {
         let mut d = Devices::new();
         d.refresh(&four());
         let (x, y) = entry_point(&d, 6);
-        d.list_press(x, y, false, &ControlMetrics::CLASSIC);
+        d.list_press(at(x, y, 0), &ControlMetrics::CLASSIC);
         let mut s = four();
         s.devices.push(dev("/d/6", "Buds", Kind::Headphones, false));
         d.refresh(&s);
@@ -546,7 +553,7 @@ mod tests {
         assert!(!enabled(&d, ADD));
         let (x, y) = (LIST.x + 40, LIST.y + 40);
         assert_eq!(
-            d.list_press(x, y, false, &ControlMetrics::CLASSIC),
+            d.list_press(at(x, y, 0), &ControlMetrics::CLASSIC),
             Outcome::None
         );
         d.refresh(&Snapshot::default());
@@ -559,9 +566,9 @@ mod tests {
         let mut d = Devices::new();
         d.refresh(&four());
         let (x, y) = entry_point(&d, 1);
-        d.list_press(x, y, false, &ControlMetrics::CLASSIC);
+        d.list_press(at(x, y, 0), &ControlMetrics::CLASSIC);
         assert_eq!(
-            d.list_press(x, y, true, &ControlMetrics::CLASSIC),
+            d.list_press(at(x, y, 100), &ControlMetrics::CLASSIC),
             Outcome::Toggle("/d/1".into())
         );
         assert_eq!(
@@ -576,7 +583,7 @@ mod tests {
         let mut d = Devices::new();
         d.refresh(&four());
         let (x, y) = entry_point(&d, 1);
-        d.list_press(x, y, false, &ControlMetrics::CLASSIC);
+        d.list_press(at(x, y, 0), &ControlMetrics::CLASSIC);
         d.sheet.tabs.open = TAB_OPTIONS;
         d.sheet.pages[TAB_OPTIONS].set_check("power", false);
         d.event(propsheet::Event::Page(

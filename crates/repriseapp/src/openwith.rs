@@ -4,15 +4,16 @@
 use reprisekit::controls::form;
 use reprisekit::controls::openwith::{self, Hit, Layout, OpenWith};
 use reprisekit::cues::Cues;
+use reprisekit::pointer::DoubleClick;
 use reprisekit::textedit::keysym;
+use reprisekit::theme::Metrics;
 
-use crate::filedlg::DOUBLE_CLICK_MS;
 use crate::keys::dialog_key;
 use crate::{BTN_LEFT, Event, PointerInput};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct ChooserInput {
-    last_press: Option<(u32, Option<Hit>)>,
+    clicks: DoubleClick<Option<Hit>>,
     cues: Cues,
 }
 
@@ -62,11 +63,10 @@ impl ChooserInput {
                 ..
             }) => {
                 let hit = ow.hit(lay, *x, *y);
-                let double = self
-                    .last_press
-                    .is_some_and(|(t, h)| h == hit && time.wrapping_sub(t) < DOUBLE_CLICK_MS);
-                self.last_press = if double { None } else { Some((*time, hit)) };
-                if double {
+                if self
+                    .clicks
+                    .press(hit, Metrics::default().click(*x, *y, *time))
+                {
                     ow.double_click(hit)
                 } else {
                     ow.click(hit)

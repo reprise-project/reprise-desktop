@@ -5,6 +5,7 @@ use repriseapp::{BTN_LEFT, Ctx};
 use reprisekit::classic::widgets::{Axis, BarHit, ScrollHit};
 use reprisekit::controls::listview::{self, Column, ListView};
 use reprisekit::look::Paint;
+use reprisekit::pointer::Click;
 use reprisekit::raster::{Canvas, Rect};
 use reprisekit::selection::Mods;
 use reprisekit::textedit::keysym;
@@ -17,6 +18,8 @@ pub struct List {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Press {
     Row(usize),
+    /// A left double click on the row (Enter's twin).
+    Activate(usize),
     Background,
     Redraw,
     None,
@@ -66,8 +69,9 @@ impl List {
         self.view.hit(&self.layout(r, ctx), x, y).column()
     }
 
-    /// A press at (`x`, `y`) inside `r`: any button selects the row under it; the left one also works the scrollbars.
-    pub fn press(&mut self, x: i32, y: i32, button: u32, r: Rect, ctx: &Ctx) -> Press {
+    /// A press `at` inside `r`: any button selects the row under it; the left one also works the scrollbars.
+    pub fn press(&mut self, at: Click, button: u32, r: Rect, ctx: &Ctx) -> Press {
+        let (x, y) = (at.x, at.y);
         let lit = button == BTN_LEFT
             && {
                 let over = self.bar_at(x, y, r, ctx);
@@ -77,10 +81,17 @@ impl List {
             && ctx.styled();
         let lay = self.layout(r, ctx);
         let moved = |b: bool| if b || lit { Press::Redraw } else { Press::None };
-        match self.view.hit(&lay, x, y) {
+        let hit = self.view.hit(&lay, x, y);
+        // Only a left press pairs, so a right click between two left ones does not break the pair.
+        let activated = button == BTN_LEFT && self.view.activated(hit, at).is_some();
+        match hit {
             listview::Hit::Row(i) => {
                 self.view.select(Some(i), &lay);
-                Press::Row(i)
+                if activated {
+                    Press::Activate(i)
+                } else {
+                    Press::Row(i)
+                }
             }
             listview::Hit::Background => {
                 self.view.select(None, &lay);

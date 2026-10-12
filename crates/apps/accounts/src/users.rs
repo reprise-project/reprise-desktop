@@ -11,6 +11,7 @@ use reprisekit::controls::form::{self, Form, Item};
 use reprisekit::controls::metrics::ControlMetrics;
 use reprisekit::controls::tilelist::{self, Entry, Press, TILE_H, Tile, TileList};
 use reprisekit::look::Paint;
+use reprisekit::pointer::Click;
 use reprisekit::raster::{Canvas, Rect};
 use reprisekit::text::Align;
 
@@ -192,18 +193,18 @@ impl Users {
     }
 
     /// A left press inside [`LIST`]: the list takes the keyboard and picks a row; a double click opens Properties.
-    pub fn list_press(&mut self, x: i32, y: i32, double: bool, cm: &ControlMetrics) -> Outcome {
+    pub fn list_press(&mut self, at: Click, cm: &ControlMetrics) -> Outcome {
         if self.blank_text().is_some() {
             return Outcome::None;
         }
         self.list_focus = true;
         self.form.set_focus(None);
-        match self.list.press(LIST, x, y, cm) {
+        match self.list.press(LIST, at, cm) {
             Press::None => Outcome::None,
             Press::Redraw => Outcome::Redraw,
-            Press::Row { .. } => {
+            Press::Row { activate, .. } => {
                 self.write();
-                match (double, self.selected_uid()) {
+                match (activate, self.selected_uid()) {
                     (true, Some(uid)) => Outcome::Properties(uid),
                     _ => Outcome::Redraw,
                 }

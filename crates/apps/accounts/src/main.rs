@@ -37,9 +37,6 @@ const ERROR: WinId = "error";
 
 const TITLE: &str = "User Accounts";
 
-const DOUBLE_MS: u32 = 400;
-const DOUBLE_SLOP: i32 = 4;
-
 const ROW_PX: u32 = 32;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -68,7 +65,6 @@ struct AccountsApp {
     face: Option<Canvas>,
     text: Option<Rc<TextRenderer>>,
     px: u32,
-    last_press: Option<(u32, WinId, i32, i32)>,
 }
 
 impl AccountsApp {
@@ -86,7 +82,6 @@ impl AccountsApp {
             face: None,
             text: None,
             px: 0,
-            last_press: None,
         }
     }
 
@@ -263,15 +258,18 @@ impl AccountsApp {
             };
             changed && ctx.styled()
         };
-        let double = self.double_of(repriseapp::MAIN, &ev);
         let out = match ev {
             Event::CloseRequest => users::Outcome::Close,
             Event::Pointer(PointerInput::Press {
                 x,
                 y,
                 button: BTN_LEFT,
+                time,
                 ..
-            }) if users::LIST.contains(x, y) => self.users.list_press(x, y, double, &cm),
+            }) if users::LIST.contains(x, y) => {
+                let at = ctx.theme.metrics.click(x, y, time);
+                self.users.list_press(at, &cm)
+            }
             Event::Pointer(PointerInput::Motion { y, .. })
                 if self.users.list.drag(users::LIST, y, &cm) =>
             {
@@ -548,28 +546,6 @@ impl AccountsApp {
             ADD => self.add.as_ref()?.form.focused_edit(),
             _ => None,
         }
-    }
-
-    fn double_of(&mut self, win: WinId, ev: &Event) -> bool {
-        let Event::Pointer(PointerInput::Press {
-            x,
-            y,
-            button: BTN_LEFT,
-            time,
-            ..
-        }) = ev
-        else {
-            return false;
-        };
-        let (x, y, time) = (*x, *y, *time);
-        let double = self.last_press.is_some_and(|(t, w, px, py)| {
-            w == win
-                && time.wrapping_sub(t) < DOUBLE_MS
-                && (x - px).abs() <= DOUBLE_SLOP
-                && (y - py).abs() <= DOUBLE_SLOP
-        });
-        self.last_press = (!double).then_some((time, win, x, y));
-        double
     }
 }
 

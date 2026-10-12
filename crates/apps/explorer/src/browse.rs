@@ -13,6 +13,7 @@ use reprisekit::controls::form::{self, Form};
 use reprisekit::controls::msgbox;
 use reprisekit::controls::treeview::{Style, TreeView};
 use reprisekit::look::Paint;
+use reprisekit::pointer::DoubleClick;
 use reprisekit::raster::Canvas;
 use reprisekit::textedit::keysym;
 use std::path::{Path, PathBuf};
@@ -25,7 +26,7 @@ pub struct Browse {
     /// The pick the buttons were last judged for; judging stats the folder, and
     /// every pointer motion ends in `sync_buttons`.
     pub judged: Option<Option<Place>>,
-    pub last_press: Option<(u32, Option<browsefolder::Hit>)>,
+    pub clicks: DoubleClick<Option<browsefolder::Hit>>,
     pub refused: Option<Refused>,
 }
 
@@ -153,7 +154,7 @@ impl Explorer {
             items,
             mv,
             judged: None,
-            last_press: None,
+            clicks: DoubleClick::default(),
             refused: None,
         };
         if self.keyed {
@@ -223,10 +224,7 @@ impl Explorer {
                 ..
             }) => {
                 let hit = b.bf.hit(&lay, x, y);
-                let double = b
-                    .last_press
-                    .is_some_and(|(t, h)| h == hit && time.wrapping_sub(t) < crate::DOUBLE_MS);
-                b.last_press = if double { None } else { Some((time, hit)) };
+                let double = b.clicks.press(hit, ctx.theme.metrics.click(x, y, time));
                 if double {
                     b.bf.double_click(&lay, hit)
                 } else {
@@ -596,7 +594,7 @@ mod tests {
             items: vec![t.path().join("a.txt")],
             mv: false,
             judged: None,
-            last_press: None,
+            clicks: DoubleClick::default(),
             refused: None,
         };
         b.sync_buttons();

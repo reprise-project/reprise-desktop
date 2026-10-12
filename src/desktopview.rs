@@ -15,6 +15,7 @@ use std::time::Duration;
 
 use inotify::WatchMask;
 use reprisefs::{apps, names, ops, places};
+use reprisekit::pointer::DoubleClick;
 use reprisekit::selection::{self, Mods, Selection};
 use reprisescene::{BufferId, Input, TreeId};
 use smithay::{
@@ -63,7 +64,7 @@ pub struct DesktopView {
     /// Whether the selection shows its dotted focus ring: hidden until the keyboard
     /// is used on the desktop.
     pub(crate) focus_ring: bool,
-    last_click: Option<(u32, usize)>,
+    last_click: DoubleClick<usize>,
     /// An in-progress inline rename: the icon index and the edit.
     pub rename: Option<(usize, TextEdit)>,
     pub(crate) rename_press: Option<u32>,
@@ -743,7 +744,7 @@ pub fn setup(state: &mut State) {
         band_strip: None,
         drop_hilite: None,
         focus_ring: false,
-        last_click: None,
+        last_click: DoubleClick::default(),
         rename: None,
         rename_press: None,
         rename_drop: None,
@@ -897,7 +898,7 @@ impl State {
             .rename
             .take()
             .and_then(|(i, edit)| Some((remap(&i)?, edit)));
-        view.last_click = None;
+        view.last_click.reset();
         if migrate_launcher_keys(&view.entries, &mut view.positions) {
             crate::state::save_desktop(view.auto_arrange, &view.positions);
         }
@@ -1095,7 +1096,7 @@ impl State {
         time_msec: u32,
         mods: Mods,
     ) {
-        let threshold = self.config.theme.metrics.double_click_ms;
+        let click = self.config.theme.metrics.click(at.0, at.1, time_msec);
         let Some(view) = self.desktop.as_mut() else {
             return;
         };
@@ -1103,8 +1104,7 @@ impl State {
         let mut open = None;
         match index.filter(|&i| i < view.entries.len()) {
             Some(i) => {
-                let double = desktop::is_double_click(view.last_click, time_msec, i, threshold);
-                view.last_click = if double { None } else { Some((time_msec, i)) };
+                let double = view.last_click.press(i, click);
                 let in_set =
                     mods == Mods::default() && view.selection.len() > 1 && view.selection.is(i);
                 view.press = in_set.then_some(Press::Icon(i));
@@ -1116,7 +1116,7 @@ impl State {
                 }
             }
             None => {
-                view.last_click = None;
+                view.last_click.reset();
                 if !mods.ctrl {
                     view.selection.clear();
                 }

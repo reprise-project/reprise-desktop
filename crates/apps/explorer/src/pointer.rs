@@ -328,7 +328,7 @@ impl Explorer {
                     // The marquee starts here and only becomes visible
                     // once the pointer has moved `DRAG_SLOP` px.
                     self.marquee_from = Some(((x, y), self.sv.selection.set.clone(), mods.ctrl));
-                    self.last_press = None;
+                    self.clicks.reset();
                 }
                 shellview::Hit::Header(i) => return self.run(Command::Sort(i), ctx),
                 shellview::Hit::Divider(i) => {

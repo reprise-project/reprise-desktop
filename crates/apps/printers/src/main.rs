@@ -27,7 +27,7 @@ use repriseapp::filedlg::{Host, Resolved, Step};
 use repriseapp::keys::{form_clipboard, form_input, sheet_input};
 use repriseapp::oneshot::{self, MsgBox};
 use repriseapp::{
-    App, BTN_LEFT, Child, Ctx, DropForm, Event, FileDrop, MAIN, PointerInput, Reply, WinId,
+    App, BTN_LEFT, Child, Ctx, DropForm, Event, FileDrop, PointerInput, Reply, WinId,
 };
 use reprisekit::access::Tree;
 use reprisekit::controls::filedlg::{DlgMode, Event as FileEvent, Fields as FileFields, FileDlg};
@@ -47,9 +47,6 @@ const WIZARD: WinId = "wizard";
 const BROWSE: WinId = "browse";
 const CONFIRM: WinId = "confirm";
 const NOTE: WinId = "note";
-
-const DOUBLE_MS: u32 = 400;
-const DOUBLE_SLOP: i32 = 4;
 
 const PRINTER_ICON: &str = "printer";
 
@@ -92,7 +89,6 @@ struct PrintersApp {
     hidden: bool,
     tray_only: bool,
     watching: bool,
-    last_press: Option<(u32, WinId, i32, i32)>,
     balloons: Vec<String>,
     announced: HashSet<String>,
     select: Option<String>,
@@ -415,30 +411,6 @@ impl PrintersApp {
         Reply::redraw()
     }
 
-    fn double(&mut self, win: WinId, time: u32, x: i32, y: i32) -> bool {
-        let double = self.last_press.is_some_and(|(t, w, px, py)| {
-            w == win
-                && time.wrapping_sub(t) < DOUBLE_MS
-                && (x - px).abs() <= DOUBLE_SLOP
-                && (y - py).abs() <= DOUBLE_SLOP
-        });
-        self.last_press = (!double).then_some((time, win, x, y));
-        double
-    }
-
-    fn double_of(&mut self, win: WinId, ev: &Event) -> bool {
-        match ev {
-            Event::Pointer(PointerInput::Press {
-                x,
-                y,
-                button: BTN_LEFT,
-                time,
-                ..
-            }) => self.double(win, *time, *x, *y),
-            _ => false,
-        }
-    }
-
     fn read_icons(&mut self, ctx: &mut Ctx) {
         if self.icons_read {
             return;
@@ -517,7 +489,6 @@ impl PrintersApp {
     }
 
     fn main_event(&mut self, ev: Event, ctx: &mut Ctx) -> Reply {
-        let double = self.double_of(MAIN, &ev);
         let s = &self.snapshot;
         let out = match ev {
             Event::CloseRequest => return self.close_main(),
@@ -527,9 +498,11 @@ impl PrintersApp {
             }
             Event::Blink if self.folder.editing() => return Reply::redraw(),
             Event::Key(k) => self.folder.key(&k, s, ctx),
-            Event::Pointer(PointerInput::Press { x, y, button, .. }) => {
-                self.folder.press(x, y, button, double, s, ctx)
-            }
+            Event::Pointer(PointerInput::Press {
+                x, y, button, time, ..
+            }) => self
+                .folder
+                .press(ctx.theme.metrics.click(x, y, time), button, s, ctx),
             Event::Pointer(PointerInput::Motion { x, y }) => self.folder.motion(x, y, ctx),
             Event::Pointer(PointerInput::Release { .. }) => self.folder.release(ctx),
             Event::Pointer(PointerInput::Leave) => self.folder.leave(ctx),
@@ -552,11 +525,13 @@ impl PrintersApp {
             }
             Event::Key(k) => q.key(&k, s, ctx),
             Event::KeyUp(k) => q.key_up(&k, ctx),
-            Event::Pointer(PointerInput::Press { x, y, button, .. }) => {
+            Event::Pointer(PointerInput::Press {
+                x, y, button, time, ..
+            }) => {
                 if button == BTN_LEFT && q.on_grip(x, y, ctx) {
                     return Reply::resize();
                 }
-                q.press(x, y, button, s, ctx)
+                q.press(ctx.theme.metrics.click(x, y, time), button, s, ctx)
             }
             Event::Pointer(PointerInput::Motion { x, y }) => q.motion(x, y, ctx),
             Event::Pointer(PointerInput::Release { .. }) => q.release(ctx),

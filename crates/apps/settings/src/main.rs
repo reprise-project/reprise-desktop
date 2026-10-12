@@ -48,7 +48,6 @@ use reprisekit::access::{ROOT, Tree};
 use reprisekit::classic::widgets::BarHit;
 use reprisekit::controls::filedlg::{self, DlgMode, Event as FileEvent, Fields, FileDlg};
 use reprisekit::controls::form;
-use reprisekit::controls::iconview;
 use reprisekit::controls::listview::{self, ListView};
 use reprisekit::controls::metrics::ControlMetrics;
 use reprisekit::controls::msgbox;
@@ -272,8 +271,6 @@ struct SettingsApp {
     locations_focus: bool,
     location_ids: Vec<String>,
     location_file: PathBuf,
-    /// The time and row of the last press on a side list, for pairing a double click.
-    row_press: Option<(u32, usize)>,
 
     pads: Vec<reprisebus::tray::Pad>,
     pad_picked: usize,
@@ -450,7 +447,6 @@ impl SettingsApp {
             pad_picked: 0,
             pads_fresh: false,
             types: defaultspage::new_list(),
-            row_press: None,
             types_focus: false,
             chooser: None,
             locations: pages::new_location_list(),
@@ -2151,8 +2147,6 @@ impl SettingsApp {
 
     fn list_press(&mut self, x: i32, y: i32, time: u32, ctx: &Ctx) -> Reply {
         let cm = &ctx.theme.look.controls();
-        let threshold = ctx.theme.metrics.double_click_ms;
-        let last = self.row_press.take();
         // A click gives the list the keyboard and the ring; `select`
         // alone does not turn the ring on.
         self.focus_side_list(true);
@@ -2161,6 +2155,7 @@ impl SettingsApp {
         };
         let lay = listview::layout(list, rect, cm);
         let hit = list.hit(&lay, x, y);
+        let activated = list.activated(hit, ctx.theme.metrics.click(x, y, time));
         // A box pressed is held; it toggles on the release over it
         // (`list_release`). A header column held draws pressed.
         list.press_check(hit);
@@ -2169,11 +2164,10 @@ impl SettingsApp {
             listview::Hit::Check(i) => list.select(Some(i), &lay),
             listview::Hit::Row(i) => {
                 list.select(Some(i), &lay);
-                if iconview::is_double_click(last, time, i, threshold) {
+                if activated.is_some() {
                     self.sync_apply();
                     return self.list_activate().unwrap_or_else(Reply::redraw);
                 }
-                self.row_press = Some((time, i));
             }
             listview::Hit::VBar(BarHit::Back) => {
                 list.scroll(-1, &lay);

@@ -188,10 +188,7 @@ impl Explorer {
         ctx: &mut Ctx,
     ) -> Reply {
         let (x, y) = at;
-        let double = self
-            .last_press
-            .is_some_and(|(t, j)| j == i && time.wrapping_sub(t) < crate::DOUBLE_MS);
-        self.last_press = if double { None } else { Some((time, i)) };
+        let double = self.clicks.press(i, ctx.theme.metrics.click(x, y, time));
         if double {
             self.sv.selection.set_only(Some(i));
             return self.open_selected(ctx);

@@ -7,6 +7,7 @@ use reprisekit::controls::listview::{self, Column};
 use reprisekit::controls::menu::MenuItem;
 use reprisekit::controls::taskpane::{self, Body, Section, TaskPane};
 use reprisekit::look::Paint;
+use reprisekit::pointer::Click;
 use reprisekit::raster::{Canvas, Rect};
 use reprisekit::textedit::{TextEdit, keysym};
 
@@ -407,15 +408,8 @@ impl Folder {
         }
     }
 
-    pub fn press(
-        &mut self,
-        x: i32,
-        y: i32,
-        button: u32,
-        double: bool,
-        s: &Snapshot,
-        ctx: &Ctx,
-    ) -> Outcome {
+    pub fn press(&mut self, at: Click, button: u32, s: &Snapshot, ctx: &Ctx) -> Outcome {
+        let (x, y) = (at.x, at.y);
         if let Some(p) = self.popup.as_mut() {
             return match p.press(x, y, ctx) {
                 Step::Chosen(a) => {
@@ -446,19 +440,17 @@ impl Folder {
             }
         }
         if list_r.contains(x, y) {
-            let press = self.list.press(x, y, button, list_r, ctx);
+            let press = self.list.press(at, button, list_r, ctx);
             self.set_pane(s);
             return match press {
-                Press::Row(i) => match (button, double) {
-                    (BTN_RIGHT, _) => {
-                        self.open_menu(Some(i), x, y, s, ctx);
-                        Outcome::Redraw
-                    }
-                    (BTN_LEFT, true) => match self.names.get(i) {
-                        Some(n) => Outcome::Open(n.clone()),
-                        None => Outcome::Redraw,
-                    },
-                    _ => Outcome::Redraw,
+                Press::Row(i) if button == BTN_RIGHT => {
+                    self.open_menu(Some(i), x, y, s, ctx);
+                    Outcome::Redraw
+                }
+                Press::Row(_) => Outcome::Redraw,
+                Press::Activate(i) => match self.names.get(i) {
+                    Some(n) => Outcome::Open(n.clone()),
+                    None => Outcome::Redraw,
                 },
                 Press::Background => {
                     if button == BTN_RIGHT {
@@ -671,6 +663,16 @@ mod tests {
     use super::*;
     use crate::cups::{Job, JobState};
 
+    /// A press that never completes a double click.
+    fn one(x: i32, y: i32) -> Click {
+        Click {
+            x,
+            y,
+            time: 0,
+            double_ms: 0,
+        }
+    }
+
     pub(crate) fn printer(name: &str) -> Printer {
         Printer {
             name: name.into(),
@@ -780,7 +782,7 @@ mod tests {
         let mut f = folder(None);
         assert_eq!(task_texts(&f), [("Add a printer".to_string(), true)]);
         let (x, y) = row_point(&f, &ctx, 1);
-        assert_eq!(f.press(x, y, BTN_LEFT, false, &s, &ctx), Outcome::Redraw);
+        assert_eq!(f.press(one(x, y), BTN_LEFT, &s, &ctx), Outcome::Redraw);
         let texts: Vec<String> = task_texts(&f).into_iter().map(|t| t.0).collect();
         assert_eq!(
             texts,
@@ -797,7 +799,7 @@ mod tests {
             ]
         );
         let (x, y) = row_point(&f, &ctx, 0);
-        f.press(x, y, BTN_LEFT, false, &s, &ctx);
+        f.press(one(x, y), BTN_LEFT, &s, &ctx);
         let t = task_texts(&f);
         assert!(!t.iter().any(|(s, _)| s == "Set as default printer"));
         assert!(t.contains(&("Cancel all documents".to_string(), false)));
@@ -812,21 +814,35 @@ mod tests {
     }
 
     #[test]
+    fn a_double_click_on_a_printer_opens_it() {
+        let ctx = ctx();
+        let s = snap();
+        let mut f = folder(None);
+        let (x, y) = row_point(&f, &ctx, 1);
+        let at = |time| ctx.theme.metrics.click(x, y, time);
+        assert_eq!(f.press(at(1000), BTN_LEFT, &s, &ctx), Outcome::Redraw);
+        assert_eq!(
+            f.press(at(1100), BTN_LEFT, &s, &ctx),
+            Outcome::Open("Laser".into())
+        );
+    }
+
+    #[test]
     fn a_task_link_acts_on_the_selection() {
         let ctx = ctx();
         let s = snap();
         let mut f = folder(None);
         let (x, y) = row_point(&f, &ctx, 1);
-        f.press(x, y, BTN_LEFT, false, &s, &ctx);
+        f.press(one(x, y), BTN_LEFT, &s, &ctx);
         let lay = f.pane_layout(&ctx);
         let r = lay.rows[TASKS][3];
         assert_eq!(
-            f.press(r.x + 4, r.y + 4, BTN_LEFT, false, &s, &ctx),
+            f.press(one(r.x + 4, r.y + 4), BTN_LEFT, &s, &ctx),
             Outcome::Resume("Laser".into())
         );
         let r = lay.rows[TASKS][6];
         assert_eq!(
-            f.press(r.x + 4, r.y + 4, BTN_LEFT, false, &s, &ctx),
+            f.press(one(r.x + 4, r.y + 4), BTN_LEFT, &s, &ctx),
             Outcome::Redraw
         );
         assert!(f.editing(), "Rename this printer opened the box");
@@ -838,7 +854,7 @@ mod tests {
         let s = snap();
         let mut f = folder(None);
         let (x, y) = row_point(&f, &ctx, 0);
-        assert_eq!(f.press(x, y, BTN_RIGHT, false, &s, &ctx), Outcome::Redraw);
+        assert_eq!(f.press(one(x, y), BTN_RIGHT, &s, &ctx), Outcome::Redraw);
         assert!(f.popup.is_some());
         f.key(&key(keysym::DOWN), &s, &ctx);
         f.key(&key(keysym::DOWN), &s, &ctx);
@@ -848,7 +864,7 @@ mod tests {
         );
         assert!(f.popup.is_none());
         let (_, r) = f.layout(&ctx);
-        f.press(r.x + 40, r.bottom() - 20, BTN_RIGHT, false, &s, &ctx);
+        f.press(one(r.x + 40, r.bottom() - 20), BTN_RIGHT, &s, &ctx);
         f.key(&key(keysym::DOWN), &s, &ctx);
         assert_eq!(f.key(&key(keysym::RETURN), &s, &ctx), Outcome::Add);
     }
