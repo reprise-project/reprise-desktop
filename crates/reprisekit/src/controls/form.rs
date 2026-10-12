@@ -2987,7 +2987,8 @@ fn unmasked_index(edit: &TextEdit, at: usize) -> usize {
 
 /// Where `it` draws and takes the pointer, on the surface: its 100% rect grown by `u` and moved
 /// to `origin`, then by its [`Indent`]. Pictures and controls with fixed art keep their size and
-/// only move; a separator and a rule keep their thickness. Indents keep their px: they
+/// only move; a separator and a rule keep their thickness, and an icon list, whose
+/// rows of fixed icons fill its height, keeps its height. Indents keep their px: they
 /// step past a check box, which keeps its size.
 fn place(it: &Item, cm: &ControlMetrics, u: TextUnits, origin: (i32, i32)) -> Rect {
     let r = match it.control {
@@ -2995,7 +2996,7 @@ fn place(it: &Item, cm: &ControlMetrics, u: TextUnits, origin: (i32, i32)) -> Re
         | Control::Monitor(_)
         | Control::Spectrum
         | Control::Sample { .. } => u.at(it.rect),
-        Control::Separator => Rect {
+        Control::Separator | Control::IconList(_) => Rect {
             height: it.rect.height,
             ..u.rect(it.rect)
         },
@@ -6931,6 +6932,30 @@ mod tests {
         draw(&mut Canvas::new(700, 300), &text, &p, &f, false, 22);
         assert_eq!(f.rect("across"), Some(Rect::new(20, 200, 600, 1)));
         assert_eq!(f.rect("down"), Some(Rect::new(40, 20, 2, 120)));
+    }
+
+    #[test]
+    fn a_grown_icon_list_widens_and_keeps_its_bar_at_its_foot() {
+        let text = TextRenderer::load(&FontConfig::default());
+        let icons = iconlist::IconList::new(vec!["a".into(); 12], vec![None; 12], Some(0));
+        let r = Rect::new(10, 20, 76, 199);
+        let f = Form::new(vec![Item::new(
+            "icons",
+            r,
+            Control::IconList(Box::new(icons)),
+        )]);
+        let theme = Theme::default();
+        let p = Paint {
+            text: TextUnits::new(22, 11),
+            ..classic_paint(&theme.colors, 1)
+        };
+        draw(&mut Canvas::new(400, 300), &text, &p, &f, false, 22);
+        let grown = f.rect("icons").unwrap();
+        assert_eq!(grown, Rect::new(20, 40, 152, 199));
+        let at_100 = iconlist::layout(r, &ControlMetrics::CLASSIC);
+        let lay = iconlist::layout(grown, &ControlMetrics::CLASSIC);
+        assert_eq!(lay.bar.bottom() - grown.y, at_100.bar.bottom() - r.y);
+        assert_eq!(lay.cols, 4, "the width shows more columns");
     }
 
     /// A form drawn at an origin keeps that offset as it is and grows only its own layout from
