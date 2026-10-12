@@ -685,6 +685,7 @@ mod tests {
             width: 640,
             height: 480,
             maximized,
+            text_size: 100,
         }
     }
 

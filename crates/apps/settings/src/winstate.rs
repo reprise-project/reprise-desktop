@@ -1,5 +1,5 @@
 //! What the settings window keeps between runs in `$XDG_STATE_HOME/reprise/settings.toml`: its
-//! client size and the slideshow folder last picked.
+//! client size with the text size it was left at, and the slideshow folder last picked.
 
 use std::path::{Path, PathBuf};
 
@@ -15,23 +15,42 @@ pub fn path() -> PathBuf {
 }
 
 /// The window size the file at `path` keeps, no smaller than `min`; [`DEFAULT`] when there is none.
-pub fn load(path: &Path, min: (i32, i32)) -> (i32, i32) {
-    let size = read(path)
+/// A size left at a larger text size than `text_size` shrinks by the ratio of the two, down to no
+/// less than [`DEFAULT`].
+pub fn load(path: &Path, min: (i32, i32), text_size: u32) -> (i32, i32) {
+    let doc = read(path);
+    let size = doc
+        .as_ref()
         .and_then(|doc| {
             let a = doc.get("window")?.as_array()?;
             let side = |i: usize| i32::try_from(a.get(i)?.as_integer()?).ok();
             Some((side(0)?, side(1)?))
         })
         .unwrap_or(DEFAULT);
+    let left_at = doc
+        .as_ref()
+        .and_then(|doc| u32::try_from(doc.get("text_size")?.as_integer()?).ok())
+        .filter(|&pct| pct > text_size);
+    let size = match left_at {
+        Some(pct) => {
+            let shrink = |v: i32, natural: i32| {
+                let k = (i64::from(v) * i64::from(text_size) / i64::from(pct)) as i32;
+                v.min(k.max(natural))
+            };
+            (shrink(size.0, DEFAULT.0), shrink(size.1, DEFAULT.1))
+        }
+        None => size,
+    };
     (size.0.max(min.0), size.1.max(min.1))
 }
 
-/// Write `size` as the window size into the file at `path`.
-pub fn save(path: &Path, size: (i32, i32)) {
+/// Write `size`, left at `text_size` percent, as the window size into the file at `path`.
+pub fn save(path: &Path, size: (i32, i32), text_size: u32) {
     let mut a = Array::new();
     a.push(i64::from(size.0));
     a.push(i64::from(size.1));
     set(path, "window", value(a));
+    set(path, "text_size", value(i64::from(text_size)));
 }
 
 /// The slideshow folder kept at `path`, as the config spells it; empty for none.
@@ -69,13 +88,13 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         let path = dir.join("reprise").join("settings.toml");
         let min = (544, 528);
-        assert_eq!(load(&path, min), DEFAULT, "no file yet");
-        save(&path, (900, 700));
-        assert_eq!(load(&path, min), (900, 700));
-        save(&path, (100, 100));
-        assert_eq!(load(&path, min), min, "never under the smallest");
+        assert_eq!(load(&path, min, 100), DEFAULT, "no file yet");
+        save(&path, (900, 700), 100);
+        assert_eq!(load(&path, min, 100), (900, 700));
+        save(&path, (100, 100), 100);
+        assert_eq!(load(&path, min, 100), min, "never under the smallest");
         std::fs::write(&path, "window = \"big\"\n").unwrap();
-        assert_eq!(load(&path, min), DEFAULT);
+        assert_eq!(load(&path, min, 100), DEFAULT);
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -86,10 +105,54 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         let path = dir.join("settings.toml");
         assert_eq!(slideshow(&path), "", "no file yet");
-        save(&path, (900, 700));
+        save(&path, (900, 700), 100);
         save_slideshow(&path, "~/Pictures/Trips");
         assert_eq!(slideshow(&path), "~/Pictures/Trips");
-        assert_eq!(load(&path, (544, 528)), (900, 700), "the size stays");
+        assert_eq!(load(&path, (544, 528), 100), (900, 700), "the size stays");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_size_left_at_a_larger_text_size_shrinks_back() {
+        let dir =
+            std::env::temp_dir().join(format!("reprise-winstate-text-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let path = dir.join("settings.toml");
+        let min = (544, 528);
+        save(&path, (1088, 1056), 200);
+        assert_eq!(
+            load(&path, min, 100),
+            DEFAULT,
+            "200% to 100%: the opening size"
+        );
+        assert_eq!(
+            load(&path, (816, 792), 150),
+            (816, 792),
+            "150%: its smallest"
+        );
+        assert_eq!(
+            load(&path, (1088, 1056), 200),
+            (1088, 1056),
+            "the same size"
+        );
+        save(&path, (1800, 1000), 200);
+        assert_eq!(
+            load(&path, min, 100),
+            (900, 680),
+            "halved, no less than the opening size"
+        );
+        save(&path, (900, 700), 100);
+        assert_eq!(
+            load(&path, (1088, 1056), 200),
+            (1088, 1056),
+            "a smaller one grows to the smallest"
+        );
+        std::fs::write(&path, "window = [1000, 900]\n").unwrap();
+        assert_eq!(
+            load(&path, min, 100),
+            (1000, 900),
+            "no text size kept: as it is"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
