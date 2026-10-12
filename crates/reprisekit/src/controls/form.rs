@@ -239,6 +239,8 @@ pub struct Item {
 /// How an item's rect is anchored. `UnderCheck`: under a check box's label, starting
 /// `check_label` right of the box. `Wraps` and `CheckWrap`: a check box whose label runs onto
 /// a second line, and that line (at `check_wrap`); both sit `check_wrap_dy` below their rects.
+/// `Px(n)`: `n` px right of its rect's left edge at any text size, its right edge kept, as text
+/// beside a picture that keeps its size.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Indent {
     #[default]
@@ -246,6 +248,7 @@ pub enum Indent {
     UnderCheck,
     Wraps,
     CheckWrap,
+    Px(i32),
 }
 
 impl Item {
@@ -279,18 +282,27 @@ impl Item {
         }
     }
 
+    pub fn indent_px(self, n: i32) -> Item {
+        Item {
+            indent: Indent::Px(n),
+            ..self
+        }
+    }
+
     /// Where the item draws and takes the pointer at the control sizes
     /// `cm`: its rect, moved by its [`Indent`]. A wrapping check box's
     /// own rect stays put; its label moves ([`check_label_rect`]).
     pub fn placed(&self, cm: &ControlMetrics) -> Rect {
-        let (dx, dy) = match self.indent {
-            Indent::None | Indent::Wraps => (0, 0),
-            Indent::UnderCheck => (cm.check_label, 0),
-            Indent::CheckWrap => (cm.check_wrap, cm.check_wrap_dy),
+        let (dx, dy, dw) = match self.indent {
+            Indent::None | Indent::Wraps => (0, 0, 0),
+            Indent::UnderCheck => (cm.check_label, 0, 0),
+            Indent::CheckWrap => (cm.check_wrap, cm.check_wrap_dy, 0),
+            Indent::Px(n) => (n, 0, -n),
         };
         Rect {
             x: self.rect.x + dx,
             y: self.rect.y + dy,
+            width: self.rect.width + dw,
             ..self.rect
         }
     }
@@ -2971,6 +2983,7 @@ fn place(it: &Item, cm: &ControlMetrics, u: TextUnits, origin: (i32, i32)) -> Re
     Rect {
         x: r.x + placed.x - it.rect.x + origin.0,
         y: r.y + placed.y - it.rect.y + origin.1,
+        width: r.width + placed.width - it.rect.width,
         ..r
     }
 }
