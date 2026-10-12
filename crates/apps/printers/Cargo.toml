@@ -20,6 +20,7 @@ reprisetray = { path = "../../reprisetray" }
 reprisefs = { path = "../../reprisefs" }
 reprisebus = { path = "../../reprisebus" }
 libc.workspace = true
+inotify.workspace = true
 # cups-pk-helper on the system bus, for accounts outside CUPS's admin group.
 zbus.workspace = true
 serde.workspace = true

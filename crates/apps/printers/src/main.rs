@@ -10,6 +10,7 @@ mod folder;
 mod http;
 mod ipp;
 mod list;
+mod lpwatch;
 mod notifier;
 mod pkhelper;
 mod popup;
