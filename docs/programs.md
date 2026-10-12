@@ -143,8 +143,7 @@ you when it's done, or when it isn't.
 
 Change your name, picture and password. With admin rights, add and remove
 accounts, choosing what happens to their files. A new account can be told to
-pick its own password at first login. Cancelling the admin password prompt
-leaves everything as it was, with no error; a refused password says so.
+pick its own password at first login.
 
 ## Software Updates
 
@@ -177,7 +176,9 @@ network time.
   Nothing happens on its own while the session is locked, and drives already
   plugged in when the session starts are left as they are.
 - **Run As.** The admin password prompt. It takes a fingerprint too, when
-  polkit is set up for one.
+  polkit is set up for one. Cancelling it in User Accounts, Network
+  Connections, Printers or Software Updates leaves things as they were, with
+  no error; a refused password says so.
 - **About Reprise.** Version, operating system, kernel, model, processor,
   graphics, memory (in kilobytes, total and available), disk, displays and
   uptime, with a Copy button for bug reports. The programs' own Help > About

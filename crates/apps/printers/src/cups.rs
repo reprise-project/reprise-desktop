@@ -51,9 +51,11 @@ pub enum Error {
     /// cupsd said no to an admin operation and cups-pk-helper, which
     /// could ask for a password instead, is not installed.
     NeedsHelper,
-    /// cups-pk-helper was asked and polkit said no: the password box was
-    /// closed or the password was wrong.
+    /// cups-pk-helper was asked and polkit refused the password.
     NotAuthorized,
+    /// cups-pk-helper was asked and the password prompt was dismissed:
+    /// nothing to tell.
+    Dismissed,
     Refused(String),
 }
 
@@ -73,6 +75,7 @@ impl Error {
                 "Nothing was changed: this needs an administrator's password.".into()
             }
             Error::Refused(why) => why.clone(),
+            Error::Dismissed => String::new(),
         }
     }
 }
