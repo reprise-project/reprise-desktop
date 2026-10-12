@@ -122,7 +122,7 @@ impl Client {
 
     /// Send `req` to `resource` and read the answer; an IPP error status
     /// is an [`Error`].
-    fn call(&self, resource: &str, req: Request) -> Result<Response> {
+    pub(crate) fn call(&self, resource: &str, req: Request) -> Result<Response> {
         let req = req.op_attr("requesting-user-name", Value::name(&self.user));
         let reply = http::post(&self.server, resource, &req.encode(), &self.user)?;
         let resp = ipp::parse(&reply.body).map_err(|e| {
