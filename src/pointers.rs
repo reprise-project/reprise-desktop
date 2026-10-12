@@ -323,7 +323,7 @@ impl State {
                     && self.panels.region.is_none();
                 if g.enabled && free && event.fingers() == g.fingers {
                     self.pointers.swipe = Some(KeptSwipe {
-                        tracker: crate::gestures::Tracker::default(),
+                        tracker: crate::gestures::Tracker::new(g),
                         overview_was_open: self.overview.view.is_some(),
                     });
                     return true;
