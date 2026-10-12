@@ -67,7 +67,8 @@ pub struct DesktopView {
     last_click: DoubleClick<usize>,
     /// An in-progress inline rename: the icon index and the edit.
     pub rename: Option<(usize, TextEdit)>,
-    pub(crate) rename_press: Option<u32>,
+    /// Left presses in the rename box, paired into the double click that selects a word.
+    pub(crate) rename_clicks: DoubleClick<()>,
     /// Where a drag resting on the rename box would drop its text (`dialogdrop`): the box
     /// shows its caret there, without the selection, until the drag goes.
     pub rename_drop: Option<usize>,
@@ -746,7 +747,7 @@ pub fn setup(state: &mut State) {
         focus_ring: false,
         last_click: DoubleClick::default(),
         rename: None,
-        rename_press: None,
+        rename_clicks: DoubleClick::default(),
         rename_drop: None,
         watch,
         settle: None,

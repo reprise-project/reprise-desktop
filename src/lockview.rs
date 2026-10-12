@@ -284,7 +284,7 @@ pub fn engage(state: &mut State) {
     // Before the lock is up: the drag's end puts the pointer back on a client, which the focus clearing below takes away.
     state.cancel_drag();
     cancel_interaction(state);
-    state.last_click = None;
+    state.caption_clicks.reset();
     let prev_focus = state.focused;
     let prev_focused_layer = crate::layer::holds_keyboard(state)
         .then(|| state.layers_shell.focused.clone())

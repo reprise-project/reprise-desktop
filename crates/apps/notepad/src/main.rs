@@ -29,6 +29,7 @@ use reprisekit::controls::statusbar::{self, Panel, StatusBar};
 use reprisekit::icontheme::IconCache;
 use reprisekit::look::Paint;
 use reprisekit::look::widgets::draw_scroll_corner;
+use reprisekit::pointer::DoubleClick;
 use reprisekit::raster::{Canvas, Rect};
 use reprisekit::text::TextRenderer;
 use reprisekit::textedit::{EditKey, TextEdit, keysym};
@@ -177,7 +178,8 @@ struct Notepad {
     /// Where the held selection drag's pointer last was; ticks scroll from there.
     dragging: Option<(i32, i32)>,
     thumb: ThumbDrag,
-    last_press: Option<(u32, multiedit::Pos)>,
+    /// Left presses in the text, paired into the double click that selects a word.
+    text_clicks: DoubleClick<()>,
     /// Alt went down and nothing else since; Alt's release activates the menu bar unless anything
     /// took the keyboard in between.
     alt_arm: AltArm,
@@ -349,7 +351,7 @@ impl Notepad {
             path,
             dragging: None,
             thumb: ThumbDrag::default(),
-            last_press: None,
+            text_clicks: DoubleClick::default(),
             alt_arm: AltArm::default(),
             status_bar: false,
             goto: None,
@@ -759,11 +761,7 @@ impl Notepad {
                         y,
                         1,
                     );
-                    let double = self
-                        .last_press
-                        .is_some_and(|(t, q)| time.wrapping_sub(t) < 500 && q == pos);
-                    self.last_press = if double { None } else { Some((time, pos)) };
-                    if double {
+                    if self.text_clicks.press((), m.metrics.click(x, y, time)) {
                         self.edit.select_word_at(pos);
                     } else {
                         self.edit.place(pos, false);
@@ -2140,6 +2138,38 @@ mod tests {
             !np.pointer(press(w - 4, h - 4), &ctx).resize,
             "no grip while maximized"
         );
+    }
+
+    #[test]
+    fn a_double_click_in_the_text_selects_a_word_within_the_configured_time() {
+        let mut ctx = test_ctx();
+        ctx.theme.metrics.double_click_ms = 900;
+        let mut np = Notepad::new(None);
+        np.edit = MultiEdit::new("alpha beta");
+        let el = np.edit_layout(&ctx);
+        let (x, y) = (el.inner.x + 4, el.inner.y + 4);
+        let press = |x, y, time| PointerInput::Press {
+            x,
+            y,
+            button: BTN_LEFT,
+            time,
+            mods: repriseapp::Mods::default(),
+        };
+        let release = PointerInput::Release {
+            x,
+            y,
+            button: BTN_LEFT,
+            mods: repriseapp::Mods::default(),
+        };
+        np.pointer(press(x, y, 1000), &ctx);
+        np.pointer(release, &ctx);
+        np.pointer(press(x + 4, y, 1800), &ctx);
+        assert_eq!(np.edit.selected_text(), "alpha ", "800 ms and 4 px apart");
+        np.pointer(release, &ctx);
+        np.pointer(press(x, y, 3000), &ctx);
+        np.pointer(release, &ctx);
+        np.pointer(press(x + 5, y, 3100), &ctx);
+        assert!(!np.edit.has_selection(), "5 px apart is two clicks");
     }
 
     /// Opening Go To declares the child window; closing it withdraws it.

@@ -22,7 +22,7 @@ use reprisekit::look::Paint;
 use reprisekit::raster::{Canvas, Rect};
 use reprisekit::taskbar::Edge;
 use reprisekit::text::TextRenderer;
-use reprisekit::theme::{FontConfig, Metrics, Theme};
+use reprisekit::theme::{FontConfig, Theme};
 
 const ERROR_WIN: WinId = "error";
 const VOLUME_CONTROL: &str = "reprise-volume";
@@ -75,8 +75,8 @@ struct Open {
     popup: VolumePopup,
 }
 
-fn interval() -> Duration {
-    Duration::from_millis(Metrics::default().double_click_ms as u64)
+fn interval(ctx: &Ctx) -> Duration {
+    Duration::from_millis(ctx.theme.metrics.double_click_ms.max(0) as u64)
 }
 
 fn track_pos(volume: f64) -> usize {
@@ -483,7 +483,8 @@ impl Sound {
                 }
                 tray::TrayMsg::Scroll(delta) => steps = steps.saturating_add(delta),
                 tray::TrayMsg::Activate(x, y) => {
-                    match self.gate.press(Instant::now(), (x, y), interval()) {
+                    let interval = interval(ctx);
+                    match self.gate.press(Instant::now(), (x, y), interval) {
                         tray::Press::Double => {
                             self.flyout = None;
                             show = true;
@@ -491,7 +492,7 @@ impl Sound {
                         tray::Press::First => {
                             if let Some(w) = self.waker.clone() {
                                 std::thread::spawn(move || {
-                                    std::thread::sleep(interval() + Duration::from_millis(10));
+                                    std::thread::sleep(interval + Duration::from_millis(10));
                                     w.wake();
                                 });
                             }
@@ -523,7 +524,7 @@ impl Sound {
             pipewire::set_volume(&self.snapshot, id, v);
             self.recent.note(id, v, Instant::now());
         }
-        if let Some(at) = self.gate.due(Instant::now(), interval()) {
+        if let Some(at) = self.gate.due(Instant::now(), interval(ctx)) {
             let mix = self.popup_mix();
             self.flyout = Some(Open {
                 at,

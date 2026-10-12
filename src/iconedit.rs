@@ -236,7 +236,7 @@ impl State {
             return;
         }
         view.rename = Some((index, TextEdit::new(entry.label.clone(), true)));
-        view.rename_press = None;
+        view.rename_clicks.reset();
         view.rename_drop = None;
         view.selection.set_only(Some(index));
         self.restart_caret();
@@ -314,12 +314,10 @@ impl State {
             .seat
             .get_keyboard()
             .is_some_and(|k| k.modifier_state().shift);
-        let double_ms = theme.metrics.double_click_ms as u32;
-        let double = view
-            .rename_press
-            .is_some_and(|t| time_msec.wrapping_sub(t) < double_ms);
+        let click = theme.metrics.click(lx as i32, ly as i32, time_msec);
+        let mut double = false;
         if let Some(d) = self.desktop.as_mut() {
-            d.rename_press = if double { None } else { Some(time_msec) };
+            double = d.rename_clicks.press((), click);
             if let Some((_, edit)) = d.rename.as_mut() {
                 if double {
                     edit.select_word_at(i);

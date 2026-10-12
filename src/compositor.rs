@@ -34,7 +34,9 @@ use smithay::{
 };
 
 use reprisekit::{
+    frame::FrameHit,
     icontheme::{IconCache, IconTheme},
+    pointer::DoubleClick,
     text::TextRenderer,
 };
 use reprisescene::TreeId;
@@ -209,8 +211,8 @@ pub struct State {
     pub caption_text: TextRenderer,
     /// The move, size or caption button press the pointer is in.
     pub interaction: Interaction,
-    /// (time_msec, window) of the last caption press, for double-click.
-    pub last_click: Option<(u32, WindowId)>,
+    /// Left presses on a frame's caption or icon, paired into double clicks.
+    pub caption_clicks: DoubleClick<(WindowId, FrameHit)>,
     /// The pointer at the last button press.
     pub press_at: (f64, f64),
     pub buttons_down: u32,
@@ -484,7 +486,7 @@ impl State {
             text,
             caption_text,
             interaction: Interaction::Idle,
-            last_click: None,
+            caption_clicks: DoubleClick::default(),
             press_at: (0.0, 0.0),
             buttons_down: 0,
             popups: PopupManager::default(),
