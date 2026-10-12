@@ -2,8 +2,14 @@
 //! command (it does the pull, signature checks and polkit prompt itself). Output is read in the C locale.
 
 use std::collections::HashMap;
-use std::io::{BufRead, BufReader};
+use std::ffi::OsString;
+use std::io::{self, BufRead, BufReader};
+use std::os::fd::AsRawFd;
+use std::path::PathBuf;
 use std::process::{Command, Stdio};
+use std::time::{Duration, Instant};
+
+use inotify::{EventMask, Inotify, WatchDescriptor, WatchMask};
 
 use crate::model::{Install, Kind, Origin, Update};
 
@@ -206,6 +212,152 @@ pub fn install(
     }
 }
 
+/// The system and user installations, where Flatpak looks for them.
+pub fn installations() -> Vec<PathBuf> {
+    let var = |k| {
+        std::env::var_os(k)
+            .filter(|v| !v.is_empty())
+            .map(PathBuf::from)
+    };
+    let system = var("FLATPAK_SYSTEM_DIR").unwrap_or_else(|| "/var/lib/flatpak".into());
+    let user = var("FLATPAK_USER_DIR").or_else(|| {
+        var("XDG_DATA_HOME")
+            .or_else(|| var("HOME").map(|h| h.join(".local/share")))
+            .map(|d| d.join("flatpak"))
+    });
+    std::iter::once(system).chain(user).collect()
+}
+
+/// Flatpak touches an installation's `.changed` after every change to it, whoever made it.
+const CHANGED: &str = ".changed";
+
+enum Watched {
+    Installation,
+    /// The parent of an installation not made yet, with the installation's name in it.
+    Parent(OsString),
+}
+
+/// The installations' `.changed` files under inotify.
+pub struct Watch {
+    inotify: Inotify,
+    watched: Vec<(WatchDescriptor, Watched, PathBuf)>,
+}
+
+impl Watch {
+    pub fn new(dirs: Vec<PathBuf>) -> io::Result<Watch> {
+        let mut w = Watch {
+            inotify: Inotify::init()?,
+            watched: Vec::new(),
+        };
+        for dir in dirs {
+            if !w.add(&dir) {
+                log::info!("{} is not watched for Flatpak changes", dir.display());
+            }
+        }
+        Ok(w)
+    }
+
+    /// Watch `dir`, or the parent it will be made in; false when neither is there.
+    fn add(&mut self, dir: &std::path::Path) -> bool {
+        let mut watches = self.inotify.watches();
+        let mask =
+            WatchMask::ATTRIB | WatchMask::CREATE | WatchMask::CLOSE_WRITE | WatchMask::MOVED_TO;
+        if let Ok(wd) = watches.add(dir, mask) {
+            self.watched
+                .push((wd, Watched::Installation, dir.to_path_buf()));
+            return true;
+        }
+        let (Some(parent), Some(name)) = (dir.parent(), dir.file_name()) else {
+            return false;
+        };
+        match watches.add(parent, WatchMask::CREATE | WatchMask::MOVED_TO) {
+            Ok(wd) => {
+                let parent = Watched::Parent(name.to_os_string());
+                self.watched.push((wd, parent, dir.to_path_buf()));
+                true
+            }
+            Err(_) => false,
+        }
+    }
+
+    /// Whether the events waiting tell of a change. An installation that appears is one, and is
+    /// watched from then on.
+    fn read(&mut self) -> io::Result<bool> {
+        let mut buf = [0u8; 4096];
+        let mut changed = false;
+        let mut made = Vec::new();
+        loop {
+            let events = match self.inotify.read_events(&mut buf) {
+                Ok(e) => e,
+                Err(e) if e.kind() == io::ErrorKind::WouldBlock => break,
+                Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
+                Err(e) => return Err(e),
+            };
+            for e in events {
+                if e.mask.contains(EventMask::IGNORED) {
+                    continue;
+                }
+                let Some((_, watched, dir)) = self.watched.iter().find(|(wd, ..)| *wd == e.wd)
+                else {
+                    continue;
+                };
+                match watched {
+                    Watched::Installation => changed |= e.name == Some(CHANGED.as_ref()),
+                    Watched::Parent(name) if e.name == Some(name.as_os_str()) => {
+                        made.push((e.wd.clone(), dir.clone()));
+                        changed = true;
+                    }
+                    Watched::Parent(_) => {}
+                }
+            }
+        }
+        for (wd, dir) in made {
+            self.watched.retain(|(w, _, d)| !(*w == wd && *d == dir));
+            if !self.watched.iter().any(|(w, ..)| *w == wd) {
+                let _ = self.inotify.watches().remove(wd);
+            }
+            self.add(&dir);
+        }
+        Ok(changed)
+    }
+
+    /// Whether an event is waiting, after at most `timeout` (forever with `None`).
+    fn wait(&self, timeout: Option<Duration>) -> io::Result<bool> {
+        let mut fd = libc::pollfd {
+            fd: self.inotify.as_raw_fd(),
+            events: libc::POLLIN,
+            revents: 0,
+        };
+        let ms = timeout.map_or(-1, |t| {
+            t.as_micros().div_ceil(1000).min(i32::MAX as u128) as i32
+        });
+        // SAFETY: `fd` is one valid pollfd that outlives the call.
+        match unsafe { libc::poll(&mut fd, 1, ms) } {
+            n if n >= 0 => Ok(n > 0),
+            _ => match io::Error::last_os_error() {
+                e if e.kind() == io::ErrorKind::Interrupted => Ok(false),
+                e => Err(e),
+            },
+        }
+    }
+
+    /// Blocks until a change, then until `settle` passes with no other: one call per burst.
+    /// Returns when the last change of the burst was heard.
+    pub fn next(&mut self, settle: Duration) -> io::Result<Instant> {
+        while !(self.wait(None)? && self.read()?) {}
+        let mut last = Instant::now();
+        loop {
+            let left = (last + settle).saturating_duration_since(Instant::now());
+            if left.is_zero() {
+                return Ok(last);
+            }
+            if self.wait(Some(left))? && self.read()? {
+                last = Instant::now();
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -257,6 +409,66 @@ mod tests {
         );
         assert_eq!(started("Updating appstream data"), None);
         assert_eq!(started("Nothing to do."), None);
+    }
+
+    /// As Flatpak marks a change: makes `.changed`, or sets its times by path (`touch -c` does
+    /// not open the file).
+    fn mark(dir: &std::path::Path) {
+        let path = dir.join(CHANGED);
+        if !path.exists() {
+            return std::fs::write(&path, "").unwrap();
+        }
+        let ok = Command::new("touch").arg("-c").arg(&path).status();
+        assert!(ok.is_ok_and(|s| s.success()));
+    }
+
+    #[test]
+    fn a_burst_of_changes_is_one_and_an_installation_made_later_is_watched() {
+        let root =
+            std::env::temp_dir().join(format!("reprise-flatpak-watch-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let (system, user) = (root.join("system"), root.join("user"));
+        std::fs::create_dir_all(&system).unwrap();
+        mark(&system);
+        let mut w = Watch::new(vec![system.clone(), user.clone()]).unwrap();
+
+        std::fs::write(system.join("other"), "").unwrap();
+        assert!(!w.read().unwrap(), "only .changed tells of a change");
+
+        let settle = Duration::from_millis(200);
+        let marks = std::thread::spawn({
+            let system = system.clone();
+            move || {
+                for _ in 0..2 {
+                    mark(&system);
+                    std::thread::sleep(Duration::from_millis(60));
+                }
+                mark(&system);
+                Instant::now()
+            }
+        });
+        let start = Instant::now();
+        assert!(
+            w.wait(Some(Duration::from_secs(2))).unwrap(),
+            "a touch is heard"
+        );
+        let heard = w.next(settle).unwrap();
+        let last = marks.join().unwrap();
+        assert!(
+            heard + Duration::from_millis(60) >= last,
+            "the burst ends at its last mark"
+        );
+        assert!(start.elapsed() >= Duration::from_millis(120) + settle);
+        assert!(
+            !w.wait(Some(Duration::ZERO)).unwrap(),
+            "one call took the whole burst"
+        );
+
+        std::fs::create_dir(&user).unwrap();
+        assert!(w.read().unwrap(), "a new installation is a change");
+        mark(&user);
+        assert!(w.read().unwrap(), "and is watched from then on");
+        std::fs::remove_dir_all(&root).unwrap();
     }
 
     #[test]
