@@ -430,6 +430,12 @@ impl TextUnits {
         (v as i64 * d + n - 1).div_euclid(n) as i32
     }
 
+    /// The longest 100% length that grows to at most `v`: what a layout fills of `v` grown px.
+    pub fn within(self, v: i32) -> i32 {
+        let d = self.design(v);
+        if self.len(d) > v { d - 1 } else { d }
+    }
+
     /// `r` with both its edges mapped, so rects that touch at 100% still touch.
     pub fn rect(self, r: Rect) -> Rect {
         let (x, y) = (self.len(r.x), self.len(r.y));

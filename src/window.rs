@@ -136,8 +136,13 @@ pub fn fit_size(size: (i32, i32), area: Rect) -> (i32, i32) {
     )
 }
 
+/// The largest client a normal window of `chrome` has in `area`: the xdg-toplevel bounds.
+pub fn area_client(m: &Metrics, area: Rect, chrome: Chrome) -> (i32, i32) {
+    FrameGeometry::client_size_for_total(m, area.width, area.height, false, chrome)
+}
+
 /// Client size for a first configure; a CSD client is asked for the whole frame. A normal size
-/// fits `area` but never goes under the client's `limits`.
+/// fits `area` and goes under the client's `limits` only where they would not fit it.
 pub fn first_configure_size(
     m: &Metrics,
     want: &Want,
@@ -159,7 +164,9 @@ pub fn first_configure_size(
         _ => want.size.map(|s| {
             let (w, h) = fit_size(s, area);
             let client = FrameGeometry::client_size_for_total(m, w, h, false, chrome);
-            crate::snap::commit_size(client, limits)
+            let (cw, ch) = crate::snap::commit_size(client, limits);
+            let most = area_client(m, area, chrome);
+            (cw.min(most.0), ch.min(most.1))
         }),
     }
 }
@@ -2730,6 +2737,15 @@ mod tests {
         assert_eq!(size(remembered(760, 500)), Some((760, 528)));
         assert_eq!(size(remembered(400, 300)), Some((544, 528)));
         assert_eq!(size(remembered(2400, 1400)), Some((1920, 1050)));
+        let tall = SizeLimits {
+            min: (1100, 1300),
+            max: (None, None),
+        };
+        assert_eq!(
+            first_configure_size(&m, &remembered(760, 500), tall, screen, area, csd),
+            Some((1100, 1050)),
+            "a minimum past the work area opens as tall as the area"
+        );
         let decorated = chrome_for(false, true, true, DialogTag::None);
         assert_eq!(
             first_configure_size(&m, &remembered(760, 500), limits, screen, area, decorated)

@@ -3724,7 +3724,7 @@ impl DialogLayout {
                 FormBody::Sheet(s) => s.hit(x, y, text, px).and_then(|h| match h {
                     Hit::Tab(i) => Some(DialogHit::Tab(i)),
                     Hit::Control(h) => Some(DialogHit::Control(h)),
-                    Hit::ListBar(_) | Hit::List => None,
+                    Hit::ListBar(_) | Hit::List | Hit::PageBar(_) => None,
                 }),
                 FormBody::Plain(form) => form.hit(x, y, text, px).map(DialogHit::Control),
             };

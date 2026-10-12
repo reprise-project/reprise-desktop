@@ -137,6 +137,12 @@ impl Ctx {
         self.theme.with_form_text(self.text_size)
     }
 
+    /// How [`Ctx::forms`] grows a 100% layout, without building its theme.
+    pub fn form_units(&self) -> reprisekit::theme::TextUnits {
+        let base = self.theme.fonts.size_px;
+        reprisekit::theme::TextUnits::new(reprisekit::theme::text_px(base, self.text_size), base)
+    }
+
     /// Ask the compositor to set `cfg` on output `name`; returns the number
     /// `Event::HeadsApplied` answers with. Fails without
     /// [`App::output_management`] or the protocol.
@@ -684,6 +690,14 @@ fn sane_size((w, h): (i32, i32)) -> (i32, i32) {
     (sane_side(i64::from(w)), sane_side(i64::from(h)))
 }
 
+/// `size` held inside `bounds`, side by side.
+fn bounded(size: (i32, i32), bounds: Option<(i32, i32)>) -> (i32, i32) {
+    match bounds {
+        Some((bw, bh)) => (size.0.min(bw), size.1.min(bh)),
+        None => size,
+    }
+}
+
 /// The main window's opening client size and its floor: a resizable window
 /// opens no smaller than its minimum, whatever size the program kept.
 fn opening_size(app: &dyn App) -> ((i32, i32), (i32, i32)) {
@@ -713,6 +727,20 @@ fn configured_size(
         return (now, true);
     }
     ((asked.0.unwrap_or(now.0), asked.1.unwrap_or(now.1)), false)
+}
+
+/// The size a configure leaves a window at, held inside `bounds` on each side the window
+/// picks itself (`asked` leaves it); a side the compositor asks for is its own.
+fn held_size(
+    size: (i32, i32),
+    asked: (Option<i32>, Option<i32>),
+    bounds: Option<(i32, i32)>,
+) -> (i32, i32) {
+    let held = bounded(size, bounds);
+    (
+        asked.0.map_or(held.0, |_| size.0),
+        asked.1.map_or(held.1, |_| size.1),
+    )
 }
 
 /// The theme a program builds from the compositor's environment: the
@@ -1074,6 +1102,9 @@ struct Slot {
     maximized: bool,
     asked: (Option<i32>, Option<i32>),
     own: bool,
+    /// The largest client size the compositor suggests (xdg-toplevel `configure_bounds`): its
+    /// work area less the frame. The window, its own sizes and its minimum stay inside it.
+    bounds: Option<(i32, i32)>,
     /// The compositor has the toplevel activated; a flyout goes by the
     /// keyboard. A new toplevel counts as active until a configure after its
     /// first buffer says otherwise: focus is decided after that buffer.
@@ -1428,7 +1459,7 @@ impl Host {
         if let Some(size) = reply.size
             && let Some(s) = self.slot_mut(MAIN)
         {
-            let size = sane_size(size);
+            let size = bounded(sane_size(size), s.bounds);
             if s.size != size {
                 s.size = size;
                 s.buffers = [None, None];
@@ -1536,6 +1567,7 @@ impl Host {
                 maximized: false,
                 asked: (None, None),
                 own: false,
+                bounds: None,
                 activated: true,
                 configured: false,
                 dirty: true,
@@ -1567,6 +1599,41 @@ impl Host {
                 self.slots.retain(|s| s.id != MAIN);
             }
             None => {}
+        }
+    }
+
+    /// Window `id`'s min and max client size as the program asks for them now: a fixed window
+    /// pinned at its size, a resizable one held at its minimum. Both stay inside the bounds.
+    fn limits(&self, id: WinId) -> Option<Limits> {
+        let s = self.slots.iter().find(|s| s.id == id)?;
+        let (min, max) = if id == MAIN {
+            if self.app.fixed() {
+                (s.size, Some(s.size))
+            } else {
+                (self.app.min_size(MAIN).map_or(MIN_SIZE, sane_size), None)
+            }
+        } else {
+            let c = self.app.children().into_iter().find(|c| c.id == id)?;
+            let size = sane_size(c.size);
+            match c.fixed {
+                true => (size, Some(size)),
+                false => (self.app.min_size(id).map_or(size, sane_size), None),
+            }
+        };
+        Some((bounded(min, s.bounds), max.map(|m| bounded(m, s.bounds))))
+    }
+
+    /// Tell the compositor window `id`'s [`Host::limits`].
+    fn declare_limits(&mut self, id: WinId) {
+        let Some((min, max)) = self.limits(id) else {
+            return;
+        };
+        let Some(w) = self.slot_mut(id).and_then(|s| s.window.toplevel()) else {
+            return;
+        };
+        w.set_min_size(Some((min.0 as u32, min.1 as u32)));
+        if let Some(max) = max {
+            w.set_max_size(Some((max.0 as u32, max.1 as u32)));
         }
     }
 
@@ -1642,6 +1709,7 @@ impl Host {
                 maximized: false,
                 asked: (None, None),
                 own: false,
+                bounds: None,
                 activated: true,
                 configured: false,
                 dirty: true,
@@ -1760,6 +1828,7 @@ impl Host {
             maximized: false,
             asked: (None, None),
             own: false,
+            bounds: None,
             activated: true,
             configured: false,
             dirty: true,
@@ -1832,11 +1901,8 @@ impl Host {
             for id in ids {
                 self.send(id, Event::Resized);
             }
-            if !self.app.fixed()
-                && let Some(min) = self.app.min_size(MAIN).map(sane_size)
-                && let Some(w) = self.slot_mut(MAIN).and_then(|s| s.window.toplevel())
-            {
-                w.set_min_size(Some((min.0 as u32, min.1 as u32)));
+            if !self.app.fixed() {
+                self.declare_limits(MAIN);
             }
         }
     }
@@ -2347,12 +2413,24 @@ impl WindowHandler for Host {
             configure.new_size.0.map(|v| sane_side(v.get().into())),
             configure.new_size.1.map(|v| sane_side(v.get().into())),
         );
+        let bounds = configure
+            .suggested_bounds
+            .filter(|&(w, h)| w > 0 && h > 0)
+            .map(|(w, h)| sane_size((w as i32, h as i32)));
         let s = self.slot_mut(id).expect("slot");
         let (size, own) = configured_size(s.size, asked, s.asked, s.own, configure.is_resizing());
+        let moved_bounds = bounds.is_some() && bounds != s.bounds;
+        if bounds.is_some() {
+            s.bounds = bounds;
+        }
+        let size = held_size(size, asked, s.bounds);
         s.asked = asked;
         s.own = own;
         if s.mapped {
             s.activated = configure.is_activated();
+        }
+        if moved_bounds {
+            self.declare_limits(id);
         }
         self.configured(id, size, configure.is_maximized(), qh);
     }
@@ -2685,6 +2763,9 @@ struct Asked {
 const ASK_TIMEOUT: Duration = Duration::from_secs(60);
 
 type OnLoop = Box<dyn FnOnce(&mut Host) + Send>;
+
+/// A window's min client size and, for a fixed one, its max.
+type Limits = ((i32, i32), Option<(i32, i32)>);
 
 struct Incoming {
     win: WinId,
@@ -4088,6 +4169,25 @@ mod tests {
             configured_size((296, 300), (None, None), (None, None), true, false),
             ((296, 300), true)
         );
+    }
+
+    /// A window that picks its own size stays inside the compositor's bounds: a Settings sheet
+    /// grown past a 1080-line screen opens as tall as the work area. A side the compositor asks
+    /// for (maximized, fullscreen) is its own.
+    #[test]
+    fn a_size_the_window_picks_stays_inside_the_bounds() {
+        let bounds = Some((1914, 1026));
+        assert_eq!(held_size((1200, 1300), (None, None), bounds), (1200, 1026));
+        assert_eq!(held_size((2100, 900), (None, None), bounds), (1914, 900));
+        assert_eq!(
+            held_size((1920, 1080), (Some(1920), Some(1080)), bounds),
+            (1920, 1080)
+        );
+        assert_eq!(
+            held_size((1200, 1300), (Some(1200), None), bounds),
+            (1200, 1026)
+        );
+        assert_eq!(held_size((1200, 1300), (None, None), None), (1200, 1300));
     }
 
     #[test]

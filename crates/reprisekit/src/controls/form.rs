@@ -505,7 +505,17 @@ pub struct Form {
     /// Where the form's (0, 0) sits on the surface it is drawn on. The items' rects are laid out
     /// for 100% text from here; this offset does not grow with the text.
     pub origin: (i32, i32),
+    /// The part of the surface a scrolled form shows through, if it scrolls.
+    pub view: Option<View>,
     rendered: Rendered,
+}
+
+/// A scrolled form's window onto the surface: every item but those in `keep` draws and takes
+/// the pointer only inside `rect`, laid out as an item's is (for 100% text, from the origin).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct View {
+    pub rect: Rect,
+    pub keep: &'static [&'static str],
 }
 
 /// The edit field a drag rests on and where, in form px.
@@ -869,6 +879,7 @@ impl Form {
             labels_at_ink: false,
             field_drop: None,
             origin: (0, 0),
+            view: None,
             rendered: Rendered::default(),
         };
         let first = (0..form.items.len()).find(|&i| form.tab_stop(i));
@@ -919,6 +930,18 @@ impl Form {
     /// measures at `units().px` of its 100% font size, as the draw did.
     pub fn units(&self) -> TextUnits {
         self.rendered.text.get()
+    }
+
+    /// The rect item `it` is clipped to on the surface: the [`View`]'s, unless it is kept.
+    fn clip_of(&self, it: &Item) -> Option<Rect> {
+        let v = self.view.filter(|v| !v.keep.contains(&it.id))?;
+        let r = self.units().rect(v.rect);
+        Some(Rect::new(
+            r.x + self.origin.0,
+            r.y + self.origin.1,
+            r.width,
+            r.height,
+        ))
     }
 
     /// Where `it` draws and takes the pointer at the last draw's text size: see [`place`].
@@ -2222,6 +2245,9 @@ impl Form {
         }
         let text = text.dialog(self.font);
         for (i, it) in self.items.iter().enumerate().rev() {
+            if self.clip_of(it).is_some_and(|v| !v.contains(x, y)) {
+                continue;
+            }
             let part = match &it.control {
                 Control::Combo(c) => {
                     let lay = combo::layout(c, self.at(it), &self.rendered.controls.get());
@@ -3080,7 +3106,11 @@ pub fn draw(c: &mut Canvas, text: &TextRenderer, p: &Paint, form: &Form, cues: b
         let cue = focused && cues;
         let placed = form.at(it);
         let r = placed.scaled(s);
-        match &it.control {
+        let clip = form.clip_of(it);
+        if clip.is_some_and(|v| v.intersect(&placed).is_empty()) {
+            continue;
+        }
+        let draw_item = |c: &mut Canvas| match &it.control {
             Control::Label {
                 text: label,
                 enabled,
@@ -3416,6 +3446,10 @@ pub fn draw(c: &mut Canvas, text: &TextRenderer, p: &Paint, form: &Form, cues: b
                 let caret = Caret::new(focused && memo.enabled, form.caret);
                 multiedit::draw(c, text, &mp, &m, &memo.edit, view, &lay, caret);
             }
+        };
+        match clip {
+            Some(v) => c.with_clip(v.scaled(s), draw_item),
+            None => draw_item(c),
         }
     }
     draw_open_popups(c, text, p, form, px);

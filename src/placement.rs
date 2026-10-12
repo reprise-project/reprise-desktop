@@ -6,7 +6,7 @@ use smithay::reexports::wayland_protocols::xdg::shell::server::xdg_toplevel;
 use smithay::utils::Rectangle;
 
 use crate::compositor::State;
-use crate::window::{Kind, Window, WindowId, first_configure_size, x11_geometry};
+use crate::window::{Kind, Window, WindowId, area_client, first_configure_size, x11_geometry};
 use crate::windowrules::{Remembered, Want, WindowState};
 
 pub struct Wm {
@@ -154,17 +154,24 @@ impl State {
             });
         }
         let want = self.plan_window(w);
+        let out = self.placement_output(want.as_ref());
+        let area = self.usable_area(out.as_ref());
+        let metrics = &self.config.theme.metrics;
+        let most = self.win(w).map(|x| area_client(metrics, area, x.chrome()));
         let Some(win) = self.win_mut(w) else {
             return;
         };
         win.placement = want.clone();
+        if let (Some(t), Some(most)) = (win.xdg(), most)
+            && area.width > 0
+        {
+            t.with_pending_state(|s| s.bounds = Some(most.into()));
+        }
         let Some(want) = want else {
             self.send_configure(w);
             return;
         };
-        let out = self.placement_output(Some(&want));
         let screen = self.layout_box(out.as_ref());
-        let area = self.usable_area(out.as_ref());
         let Some(win) = self.win(w) else {
             return;
         };
