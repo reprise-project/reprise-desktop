@@ -903,6 +903,124 @@ pub fn place_notify(usable: Rect, lay: &NotifyLayout, scale: i32, edge: Edge) ->
     (x.min(usable.right() - w).max(usable.x), y.max(usable.y))
 }
 
+/// What a balloon says to a screen reader, in full where the drawing wraps or cuts it. `opens`:
+/// a click on the body runs something; `urgent`: the alert interrupts.
+#[derive(Clone, Copy, Debug)]
+pub struct NotifySays<'a> {
+    pub app: &'a str,
+    pub title: &'a str,
+    pub body: &'a str,
+    pub actions: &'a [&'a str],
+    pub opens: bool,
+    pub urgent: bool,
+}
+
+impl NotifySays<'_> {
+    /// The alert's name, announced when it appears or changes: "App: title. body".
+    pub fn spoken(&self) -> String {
+        let text: Vec<&str> = [self.title, self.body]
+            .into_iter()
+            .map(str::trim)
+            .filter(|t| !t.is_empty())
+            .collect();
+        let text = text.join(". ");
+        match (self.app.is_empty(), text.is_empty()) {
+            (true, _) => text,
+            (false, true) => self.app.to_string(),
+            (false, false) => format!("{}: {text}", self.app),
+        }
+    }
+}
+
+const NOTIFY_MORE_NAME: &str = "More actions";
+
+/// The balloon's `access` part for `lay` at scale 1: a live alert, announced when added under a
+/// new `key` or renamed. Returns the reply field while it has the keyboard, else the alert.
+#[allow(clippy::too_many_arguments)]
+pub fn access_notify(
+    key: impl std::hash::Hash,
+    lay: &NotifyLayout,
+    says: &NotifySays,
+    reply: Option<&ReplyField>,
+    text: &TextRenderer,
+    px: u32,
+    tree: &mut crate::access::Tree,
+    parent: crate::access::accesskit::NodeId,
+) -> crate::access::accesskit::NodeId {
+    use crate::access::{self, accesskit::Action, accesskit::Live, accesskit::Role};
+    // Peer text is plain: `&` is no access key marker.
+    let plain = |s: &str| s.replace('&', "&&");
+    let top = lay.bubble_y;
+    let mut alert = access::node(Role::Alert, Rect::new(0, top, lay.bubble_w, lay.bubble_h));
+    alert.set_label(says.spoken());
+    alert.set_live(if says.urgent {
+        Live::Assertive
+    } else {
+        Live::Polite
+    });
+    let id = tree.push(parent, ("alert", key), alert);
+    let tb = lay.title_box;
+    let title = Rect::new(tb.x, top + tb.y, tb.width, tb.height);
+    tree.push(id, "title", access::label(title, &plain(says.title), true));
+    if !says.body.is_empty() {
+        let lines = lay.lines.len().max(1) as i32;
+        let r = Rect::new(lay.text_x, top + lay.body_y, lay.text_w, lines * lay.line_h);
+        let mut body = access::label(r, &plain(says.body), true);
+        if says.opens {
+            body.add_action(Action::Click);
+        }
+        tree.push(id, "body", body);
+    }
+    for (i, &r) in lay.buttons.iter().enumerate() {
+        let name = plain(says.actions.get(i).copied().unwrap_or_default());
+        tree.push(id, ("button", i), access::button(r, &name, true, false));
+    }
+    if let Some(r) = lay.more {
+        tree.push(id, "more", access::button(r, NOTIFY_MORE_NAME, true, false));
+    }
+    let mut focus = id;
+    if let (Some(f), Some(field)) = (lay.field, reply) {
+        let first = edit_first_visible(text, &field.edit, f.width - 2 * FIELD_PAD, px, 0);
+        let fid = crate::classic::widgets::access_edit(
+            &field.edit,
+            first,
+            false,
+            f,
+            true,
+            text,
+            px,
+            tree,
+            id,
+            "reply",
+        );
+        if let Some(n) = tree.get_mut(fid)
+            && !lay.placeholder.is_empty()
+        {
+            n.set_placeholder(lay.placeholder.as_str());
+        }
+        if field.focused {
+            focus = fid;
+        }
+    }
+    if let Some(r) = lay.send {
+        let can = reply.is_some_and(|f| f.to_send().is_some());
+        let name = plain(&lay.send_label);
+        tree.push(id, "send", access::button(r, &name, can, false));
+    }
+    tree.push(id, "close", access::button(lay.close, "Close", true, false));
+    // Liveness is inherited: the parts would each be announced too.
+    let parts = tree
+        .get(id)
+        .map(|n| n.children().to_vec())
+        .unwrap_or_default();
+    for p in parts {
+        if let Some(n) = tree.get_mut(p) {
+            n.set_live(Live::Off);
+        }
+    }
+    focus
+}
+
 #[cfg(test)]
 mod tests {
     use crate::theme::Color;
@@ -1650,5 +1768,160 @@ mod tests {
         let w = t.measure("Sure", false, theme.fonts.size_px);
         f.click(&theme, &t, &lay, field.x + FIELD_PAD + w);
         assert_eq!(f.edit.caret(), 4);
+    }
+
+    use crate::access::ROOT;
+    use crate::access::accesskit::{Action, Live, Role};
+
+    fn parts(
+        tree: &crate::access::Tree,
+        id: crate::access::accesskit::NodeId,
+    ) -> Vec<(Role, String)> {
+        let n = tree.get(id).unwrap();
+        n.children()
+            .iter()
+            .map(|&c| {
+                let n = tree.get(c).unwrap();
+                let name = n.label().or(n.value()).unwrap_or_default();
+                (n.role(), name.to_string())
+            })
+            .collect()
+    }
+
+    #[test]
+    fn the_balloon_is_a_live_alert_naming_its_parts() {
+        let t = TextRenderer::load(&FontConfig::default());
+        let theme = Theme::default();
+        let acts = ["Open", "Save & Archive", "Later", "Snooze"];
+        let body = "Lunch at noon? The usual place, unless it rains again today.";
+        let lay = notify_layout(&theme, &t, "Ana", body, &acts, None);
+        let says = NotifySays {
+            app: "Chat",
+            title: "Ana",
+            body,
+            actions: &acts,
+            opens: true,
+            urgent: false,
+        };
+        let mut tree = crate::access::Tree::window("", (lay.width, lay.height));
+        let px = theme.fonts.size_px;
+        let alert = access_notify(1, &lay, &says, None, &t, px, &mut tree, ROOT);
+        let n = tree.get(alert).unwrap();
+        assert_eq!(n.role(), Role::Alert);
+        assert_eq!(n.label(), Some(format!("Chat: Ana. {body}").as_str()));
+        assert_eq!(n.live(), Some(Live::Polite));
+        let named = |r: Role, s: &str| (r, s.to_string());
+        assert_eq!(
+            parts(&tree, alert),
+            [
+                named(Role::Label, "Ana"),
+                named(Role::Label, body),
+                named(Role::Button, "Open"),
+                named(Role::Button, "Save & Archive"),
+                named(Role::Button, "Later"),
+                named(Role::Button, "More actions"),
+                named(Role::Button, "Close"),
+            ]
+        );
+        let kids = n.children();
+        let body_node = tree.get(kids[1]).unwrap();
+        assert!(body_node.supports_action(Action::Click), "the body opens");
+        let open = tree.get(kids[2]).unwrap();
+        assert_eq!(open.bounds(), Some(crate::access::bounds(lay.buttons[0])));
+        assert!(open.supports_action(Action::Click));
+        let close = tree.get(kids[6]).unwrap();
+        assert_eq!(close.bounds(), Some(crate::access::bounds(lay.close)));
+        assert!(
+            kids.iter()
+                .all(|&k| tree.get(k).unwrap().live() == Some(Live::Off)),
+            "only the alert is announced, not each part again"
+        );
+    }
+
+    #[test]
+    fn an_urgent_balloon_is_assertive_and_follows_the_bubble() {
+        let t = TextRenderer::load(&FontConfig::default());
+        let theme = Theme::default();
+        let lay = notify_layout(&theme, &t, "Battery low", "", &[], None).on_edge(Edge::Top);
+        let says = NotifySays {
+            app: "",
+            title: "Battery low",
+            body: "",
+            actions: &[],
+            opens: false,
+            urgent: true,
+        };
+        let mut tree = crate::access::Tree::window("", (lay.width, lay.height));
+        let alert = access_notify(1, &lay, &says, None, &t, 11, &mut tree, ROOT);
+        let n = tree.get(alert).unwrap();
+        assert_eq!(n.live(), Some(Live::Assertive));
+        assert_eq!(n.label(), Some("Battery low"));
+        assert_eq!(n.bounds().map(|b| b.y0), Some(f64::from(NOTIFY_TAIL_H)));
+        assert_eq!(
+            parts(&tree, alert),
+            [
+                (Role::Label, "Battery low".to_string()),
+                (Role::Button, "Close".to_string())
+            ]
+        );
+        let only_app = NotifySays {
+            app: "Mail",
+            title: " ",
+            ..says
+        };
+        assert_eq!(only_app.spoken(), "Mail");
+    }
+
+    #[test]
+    fn the_reply_row_reads_as_a_field_and_send() {
+        let t = TextRenderer::load(&FontConfig::default());
+        let theme = Theme::default();
+        let lay = notify_layout(&theme, &t, "Ana", "Lunch?", &["Reply"], Some(REPLY));
+        let says = NotifySays {
+            app: "Chat",
+            title: "Ana",
+            body: "Lunch?",
+            actions: &["Reply"],
+            opens: false,
+            urgent: false,
+        };
+        let px = theme.fonts.size_px;
+        let mut field = ReplyField::default();
+        let mut tree = crate::access::Tree::window("", (lay.width, lay.height));
+        let alert = access_notify(1, &lay, &says, Some(&field), &t, px, &mut tree, ROOT);
+        assert_eq!(
+            tree.get(alert).unwrap().role(),
+            Role::Alert,
+            "not focused yet"
+        );
+        let kids = tree.get(alert).unwrap().children().to_vec();
+        let input = tree.get(kids[2]).unwrap();
+        assert_eq!(input.role(), Role::TextInput);
+        assert_eq!(input.placeholder(), Some("Write a reply"));
+        assert_eq!(
+            input.bounds(),
+            Some(crate::access::bounds(lay.field.unwrap()))
+        );
+        let send = tree.get(kids[3]).unwrap();
+        assert_eq!((send.role(), send.label()), (Role::Button, Some("Send")));
+        assert!(send.is_disabled(), "nothing to send");
+        assert!(
+            !tree.get(kids[1]).unwrap().supports_action(Action::Click),
+            "a body with no default action does not offer a click"
+        );
+
+        field.focused = true;
+        field.key(ReplyKey::Edit(EditKey::Insert("on my way".into())));
+        let mut tree = crate::access::Tree::window("", (lay.width, lay.height));
+        let focus = access_notify(1, &lay, &says, Some(&field), &t, px, &mut tree, ROOT);
+        let input = tree.get(focus).unwrap();
+        assert_eq!(input.role(), Role::TextInput);
+        let run = tree.get(input.children()[0]).unwrap();
+        assert_eq!(run.value(), Some("on my way"));
+        let kids = tree.get(alert).unwrap().children().to_vec();
+        assert!(
+            !tree.get(kids[3]).unwrap().is_disabled(),
+            "Send comes alive"
+        );
     }
 }

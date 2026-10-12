@@ -9,8 +9,8 @@ use std::ffi::OsString;
 use std::time::{Duration, Instant};
 
 use reprisekit::controls::tooltip::{
-    NOTIFY_BUTTONS, NotifyHit, NotifyLayout, NotifyReply, ReplyEvent, ReplyField, ReplyKey,
-    draw_notify_balloon, notify_hit, notify_layout, place_notify,
+    NOTIFY_BUTTONS, NotifyHit, NotifyLayout, NotifyReply, NotifySays, ReplyEvent, ReplyField,
+    ReplyKey, access_notify, draw_notify_balloon, notify_hit, notify_layout, place_notify,
 };
 use reprisekit::icon::IconSource;
 use reprisekit::taskbar::Edge;
@@ -28,6 +28,7 @@ use crate::dialogview::DialogKey;
 use crate::input::BTN_LEFT;
 use crate::notifylog::Log;
 use crate::output::upload_scaled;
+use crate::raster::Rect;
 use crate::startmenu::MenuItem;
 use crate::text::TextRenderer;
 use crate::theme::Theme;
@@ -137,6 +138,8 @@ struct Balloon {
     hot: Option<NotifyHit>,
     reply: Option<ReplyField>,
     pointer_in: bool,
+    /// Counts the balloons shown, so each is a new node to a screen reader.
+    serial: u64,
 }
 
 #[derive(Default)]
@@ -154,6 +157,7 @@ pub struct NotifyView {
     pub center: Option<crate::notifycenter::CenterView>,
     /// A wheel's sub-notch remainder over the history popup.
     pub center_wheel: i32,
+    shown: u64,
 }
 
 fn arm(state: &mut State, ms: Option<i32>) {
@@ -1076,6 +1080,7 @@ fn display(state: &mut State, item: Item) {
     crate::glass::leave_out(scene, tree);
     scene.set_data(tree, Some(SceneOwner::Notification));
     let buffer = scene.buffer_create(tree);
+    state.notify.shown += 1;
     state.notify.active = Some(Balloon {
         item,
         at: (0, 0),
@@ -1086,6 +1091,7 @@ fn display(state: &mut State, item: Item) {
         hot: None,
         reply: None,
         pointer_in: false,
+        serial: state.notify.shown,
     });
     reposition(state);
     arm(state, ms);
@@ -1154,6 +1160,63 @@ fn paint(state: &mut State) {
     state.ime_field_drawn(Editor::NotifyReply, spot, origin, scale);
     state.redraw_all();
     crate::access::touch(state);
+}
+
+/// The balloons' tree, kept while no balloon is up: an alert added to a tree a reader already
+/// holds is announced, one in a new tree is not.
+pub fn access(state: &State) -> reprisekit::access::Tree {
+    use reprisekit::access::{ROOT, accesskit::Role};
+    const NAME: &str = "Notifications";
+    let (Some(b), Some(output)) = (state.notify.active.as_ref(), state.first_output()) else {
+        return crate::access::root(Role::Window, NAME, Rect::default());
+    };
+    let theme = &state.config.theme;
+    let edge = state.bar_placement(&output).edge;
+    let lay = lay_out(theme, &state.text, &b.item, b.reply.is_some(), edge);
+    let rect = Rect::new(b.at.0, b.at.1, lay.width, lay.height);
+    let mut tree = crate::access::root(Role::Window, NAME, rect);
+    let labels;
+    let lines;
+    let says = match &b.item {
+        Item::Note(n) => {
+            labels = button_labels(n);
+            NotifySays {
+                app: &n.app,
+                title: &n.summary,
+                body: &n.body,
+                actions: &labels,
+                opens: n.has_action(DEFAULT_ACTION),
+                urgent: n.urgency == Urgency::Critical,
+            }
+        }
+        Item::Burst(burst) => {
+            lines = (
+                burst.title(),
+                Vec::from_iter(burst.lines.iter().map(String::as_str)).join("\n"),
+            );
+            NotifySays {
+                app: "",
+                title: &lines.0,
+                body: &lines.1,
+                actions: &[],
+                opens: true,
+                urgent: false,
+            }
+        }
+    };
+    let px = theme.fonts.size_px;
+    let focus = access_notify(
+        b.serial,
+        &lay,
+        &says,
+        b.reply.as_ref(),
+        &state.text,
+        px,
+        &mut tree,
+        ROOT,
+    );
+    tree.set_focus(focus);
+    tree
 }
 
 /// The caret blinked: redraw the reply field.

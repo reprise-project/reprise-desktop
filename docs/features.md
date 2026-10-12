@@ -193,7 +193,8 @@ the Super tap, Super+Shift+Esc and the VT switch keys can be rebound.
   minutes, the field folds away (keeping what you typed for the next Reply)
   and the balloon makes room for the next.
 - **History.** A bell in the tray keeps the session's notifications, grouped
-  per program, each group with its own Clear.
+  per program, each group with its own Clear. The arrows walk it, Enter runs
+  a notification, Delete dismisses it and the Menu key lists its actions.
 - **Bursts fold together.** A program that sends more than three balloons in
   ten seconds gets one "5 new from Mail" balloon instead.
 - **Do Not Disturb** holds back all but the critical ones. They still go into
@@ -287,7 +288,8 @@ are.
 ## Accessibility
 
 - **Screen readers.** Reprise's programs and its own Start menu, taskbar,
-  switcher, launcher and dialogs speak AT-SPI. They're tested with Orca.
+  switcher, launcher, dialogs, notification balloons and history speak
+  AT-SPI. A balloon is announced when it appears. They're tested with Orca.
 - **Magnifier** from 1x to 8x (Super+= and Super+-) that follows the pointer,
   the caret and the keyboard focus.
 - **Colour filters:** grayscale, inverted, and corrections for three kinds of
