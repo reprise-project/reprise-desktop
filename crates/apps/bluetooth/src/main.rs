@@ -64,6 +64,8 @@ struct BtApp {
     text: Option<Rc<TextRenderer>>,
     /// The last event's [`Ctx::forms`], which dialogs are built and sized with.
     forms: Theme,
+    /// The client size last asked for the main window, which grows with the text size.
+    asked: Option<(i32, i32)>,
     hidden: bool,
     tray_only: bool,
 }
@@ -88,6 +90,7 @@ impl BtApp {
             disconnected: HashSet::new(),
             text: None,
             forms: Theme::default(),
+            asked: None,
             hidden: tray_only,
             tray_only,
         }
@@ -887,7 +890,7 @@ impl App for BtApp {
             return self.wake();
         }
         let clip = form_clipboard(self.focused_edit(win), &ev);
-        match win {
+        let mut reply = match win {
             WIZARD => self.wizard_event(ev, ctx),
             PROPS => self.props_event(ev, ctx),
             PAIR => self.pair_event(ev, ctx),
@@ -895,7 +898,14 @@ impl App for BtApp {
             ERROR => self.error_event(ev),
             _ => self.main_event(ev, ctx),
         }
-        .with_clipboard(clip)
+        .with_clipboard(clip);
+        let size = self.forms.text.size(devices::CLIENT);
+        if self.asked != Some(size) {
+            self.asked = Some(size);
+            reply.size = Some(size);
+            reply.redraw = true;
+        }
+        reply
     }
 
     fn access(&mut self, win: WinId, tree: &mut Tree, ctx: &Ctx) {
@@ -1388,6 +1398,21 @@ mod tests {
         let size = |a: &BtApp, id| a.children().iter().find(|c| c.id == id).unwrap().size;
         assert_eq!(size(&a, WIZARD), (768, 556));
         assert_eq!(size(&a, PROPS), (558, 648));
+    }
+
+    /// Bluetooth Devices, a fixed window, asks for its grown size when the text size changes
+    /// while it is open, and asks nothing while the size stands.
+    #[test]
+    fn the_open_window_grows_with_the_text_size() {
+        let mut a = app();
+        let mut ctx = test_ctx();
+        a.event(MAIN, Event::Blink, &mut ctx);
+        assert_eq!(a.event(MAIN, Event::Blink, &mut ctx).size, None);
+        ctx.text_size = 150;
+        let u = ctx.forms().text;
+        let grown = a.event(MAIN, Event::Resized, &mut ctx);
+        assert_eq!(grown.size, Some(u.size(devices::CLIENT)));
+        assert_eq!(a.event(MAIN, Event::Blink, &mut ctx).size, None);
     }
 
     fn test_ctx() -> Ctx {
