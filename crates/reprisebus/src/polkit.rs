@@ -20,3 +20,64 @@ pub fn dismissed() -> bool {
         false
     })
 }
+
+/// How a service behind polkit said no.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Refusal {
+    /// The password prompt was dismissed: nothing to tell.
+    Dismissed,
+    /// The password was refused, or polkit allows no one.
+    Denied,
+}
+
+/// The refusal `e` is, when its error name passes `refused`; None for any
+/// other error. `dismissed`, normally [`dismissed`], is asked only for a
+/// refusal, since asking forgets the dismissal.
+pub fn refusal(
+    e: &zbus::Error,
+    refused: impl FnOnce(&str) -> bool,
+    dismissed: impl FnOnce() -> bool,
+) -> Option<Refusal> {
+    match e {
+        zbus::Error::MethodError(name, _, _) if refused(name.as_str()) => Some(if dismissed() {
+            Refusal::Dismissed
+        } else {
+            Refusal::Denied
+        }),
+        _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn error(name: &'static str) -> zbus::Error {
+        let msg = zbus::Message::method_call("/", "M")
+            .and_then(|b| b.build(&()))
+            .expect("a method call");
+        zbus::Error::MethodError(
+            zbus::names::OwnedErrorName::try_from(name).expect("an error name"),
+            Some("Not authorized".into()),
+            msg,
+        )
+    }
+
+    #[test]
+    fn only_a_refusal_asks_whether_the_prompt_was_dismissed() {
+        let refused = |n: &str| n.ends_with("PermissionDenied");
+        let denied = error("org.example.PermissionDenied");
+        assert_eq!(refusal(&denied, refused, || true), Some(Refusal::Dismissed));
+        assert_eq!(refusal(&denied, refused, || false), Some(Refusal::Denied));
+        let other = refusal(&error("org.example.Failed"), refused, || {
+            panic!("asking forgets a dismissal another error has no claim to")
+        });
+        assert_eq!(other, None);
+        let local = refusal(
+            &zbus::Error::InvalidReply,
+            |_| true,
+            || panic!("only a method error is a refusal"),
+        );
+        assert_eq!(local, None);
+    }
+}

@@ -23,6 +23,10 @@ const ONLY_TRUSTED: u64 = 1 << 1;
 const EXIT_SUCCESS: u32 = 1;
 const EXIT_CANCELLED: u32 = 3;
 
+/// `PK_ERROR_ENUM_NOT_AUTHORIZED`: polkit said no, for a dismissed prompt and
+/// a refused password alike.
+const ERROR_NOT_AUTHORIZED: u32 = 48;
+
 const STATUS_DOWNLOAD: u32 = 8;
 const STATUS_INSTALL: u32 = 9;
 const STATUS_UPDATE: u32 = 10;
@@ -34,6 +38,8 @@ const PERCENT_UNKNOWN: u32 = 101;
 pub enum Error {
     /// No PackageKit on this system: not an error, just nothing to ask.
     Unavailable,
+    /// The password prompt was dismissed: nothing to tell.
+    Dismissed,
     Failed(String),
 }
 
@@ -175,7 +181,7 @@ async fn transaction(
     sent.map_err(failed)?;
 
     let mut said = Said::default();
-    let mut error: Option<String> = None;
+    let mut error: Option<(u32, String)> = None;
     // The percentage runs 0 to 100 through the dependency resolve before it restarts for download and install; it is shown only once the packages' own steps begin, so the bar never goes back.
     let mut stepped = false;
     while let Some(sig) = signals.next().await {
@@ -197,8 +203,8 @@ async fn transaction(
                 }
             }
             (TX_IFACE, "ErrorCode") => {
-                if let Ok((_, details)) = body.deserialize::<(u32, String)>() {
-                    error = Some(details);
+                if let Ok(code) = body.deserialize::<(u32, String)>() {
+                    error = Some(code);
                 }
             }
             (TX_IFACE, "RequireRestart") => {
@@ -219,9 +225,7 @@ async fn transaction(
                 return match exit {
                     EXIT_SUCCESS => Ok(said),
                     EXIT_CANCELLED => Err(Error::Failed("The update was cancelled.".into())),
-                    _ => Err(Error::Failed(error.unwrap_or_else(|| {
-                        "PackageKit did not finish the request.".into()
-                    }))),
+                    _ => Err(refusal(error, reprisebus::polkit::dismissed)),
                 };
             }
             (PROPERTIES, "PropertiesChanged") => {
@@ -249,7 +253,7 @@ async fn transaction(
 pub async fn updates(conn: &Connection, refresh: bool) -> Result<Vec<Update>, Error> {
     if refresh {
         match transaction(conn, Request::Refresh, false, &mut |_, _| {}).await {
-            Ok(_) => {}
+            Ok(_) | Err(Error::Dismissed) => {}
             Err(Error::Unavailable) => return Err(Error::Unavailable),
             Err(Error::Failed(e)) => log::info!("refreshing the package lists: {e}"),
         }
@@ -276,6 +280,15 @@ fn fold(rows: Vec<(u32, String, String)>) -> Vec<Update> {
         .collect()
 }
 
+/// Why a transaction failed, from its last `ErrorCode`.
+fn refusal(error: Option<(u32, String)>, dismissed: impl FnOnce() -> bool) -> Error {
+    match error {
+        Some((ERROR_NOT_AUTHORIZED, _)) if dismissed() => Error::Dismissed,
+        Some((_, details)) => Error::Failed(details),
+        None => Error::Failed("PackageKit did not finish the request.".into()),
+    }
+}
+
 pub async fn install(
     conn: &Connection,
     ids: Vec<String>,
@@ -288,6 +301,25 @@ pub async fn install(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn not_authorized_is_a_dismissal_or_a_refusal() {
+        let denied = || {
+            Some((
+                ERROR_NOT_AUTHORIZED,
+                "Failed to obtain authentication.".into(),
+            ))
+        };
+        assert_eq!(refusal(denied(), || true), Error::Dismissed);
+        assert_eq!(
+            refusal(denied(), || false),
+            Error::Failed("Failed to obtain authentication.".into())
+        );
+        let other = refusal(Some((2, "No network.".into())), || {
+            panic!("only NotAuthorized asks whether the prompt was dismissed")
+        });
+        assert_eq!(other, Error::Failed("No network.".into()));
+    }
 
     #[test]
     fn package_rows_become_updates_and_blocked_ones_are_left_out() {

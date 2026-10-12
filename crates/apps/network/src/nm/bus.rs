@@ -298,7 +298,7 @@ async fn queue<F, Fut>(
     run: F,
 ) where
     F: Fn(Cmd) -> Fut,
-    Fut: std::future::Future<Output = Result<Option<NmMsg>, String>>,
+    Fut: std::future::Future<Output = Result<Option<NmMsg>, Failure>>,
 {
     let (main_tx, main_rx) = async_channel::unbounded::<Cmd>();
     let (stats_tx, stats_rx) = async_channel::unbounded::<Cmd>();
@@ -339,10 +339,14 @@ async fn queue<F, Fut>(
     futures_util::future::join3(route, stats, main).await;
 }
 
-fn ran(cmd: &Cmd, result: Result<Option<NmMsg>, String>) -> Wake {
+fn ran(cmd: &Cmd, result: Result<Option<NmMsg>, Failure>) -> Wake {
     let (reply, error) = match result {
         Ok(reply) => (reply.map(Box::new), None),
-        Err(e) => {
+        Err(Failure::Dismissed) => {
+            log::info!("{cmd:?}: the password prompt was dismissed");
+            (None, None)
+        }
+        Err(Failure::Text(e)) => {
             log::warn!("{cmd:?} failed: {e}");
             (None, Some(e))
         }
@@ -690,16 +694,55 @@ fn failure_title(device: Option<&str>, snapshot: &Snapshot) -> String {
         .unwrap_or_else(|| "Network Connections".into())
 }
 
-/// A D-Bus error as the message box shows it, without NM's bus-name prefix.
-fn clean(e: impl std::fmt::Display) -> String {
-    e.to_string().replace("org.freedesktop.NetworkManager.", "")
+/// Why a command stopped.
+#[derive(Debug, PartialEq, Eq)]
+enum Failure {
+    /// The admin password prompt was dismissed: nothing to tell.
+    Dismissed,
+    Text(String),
 }
 
-fn opath(path: &str) -> Result<ObjectPath<'_>, String> {
+impl From<String> for Failure {
+    fn from(text: String) -> Failure {
+        Failure::Text(text)
+    }
+}
+
+impl From<&str> for Failure {
+    fn from(text: &str) -> Failure {
+        Failure::Text(text.into())
+    }
+}
+
+impl std::fmt::Display for Failure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Failure::Dismissed => f.write_str("the password prompt was dismissed"),
+            Failure::Text(text) => f.write_str(text),
+        }
+    }
+}
+
+/// A D-Bus error as the message box shows it, without NM's bus-name prefix.
+fn clean(e: impl std::fmt::Display) -> Failure {
+    Failure::Text(e.to_string().replace("org.freedesktop.NetworkManager.", ""))
+}
+
+/// NetworkManager answers a `PermissionDenied` for a dismissed prompt and a
+/// refused password alike; `dismissed` tells them apart.
+fn auth_failure(e: zbus::Error, dismissed: impl FnOnce() -> bool) -> Failure {
+    let refused = |n: &str| n.ends_with(".PermissionDenied");
+    match reprisebus::polkit::refusal(&e, refused, dismissed) {
+        Some(reprisebus::polkit::Refusal::Dismissed) => Failure::Dismissed,
+        _ => clean(e),
+    }
+}
+
+fn opath(path: &str) -> Result<ObjectPath<'_>, Failure> {
     ObjectPath::try_from(path).map_err(clean)
 }
 
-async fn proxy<'a>(conn: &Connection, path: &'a str, iface: &'a str) -> Result<Proxy<'a>, String> {
+async fn proxy<'a>(conn: &Connection, path: &'a str, iface: &'a str) -> Result<Proxy<'a>, Failure> {
     proxy_on(conn, NAME, path, iface).await
 }
 
@@ -710,7 +753,7 @@ async fn proxy_on<'a>(
     dest: &'a str,
     path: &'a str,
     iface: &'a str,
-) -> Result<Proxy<'a>, String> {
+) -> Result<Proxy<'a>, Failure> {
     let path = opath(path)?;
     zbus::proxy::Builder::<Proxy>::new(conn)
         .destination(dest)
@@ -725,7 +768,7 @@ async fn proxy_on<'a>(
 
 /// A call that may raise the admin password prompt: carries allow-interactive-authorization,
 /// without which polkit refuses outright.
-async fn call_auth<B, R>(p: &Proxy<'_>, method: &str, body: &B) -> Result<Option<R>, String>
+async fn call_auth<B, R>(p: &Proxy<'_>, method: &str, body: &B) -> Result<Option<R>, Failure>
 where
     B: zbus::export::serde::Serialize + zbus::zvariant::DynamicType,
     R: for<'d> zbus::zvariant::DynamicDeserialize<'d>,
@@ -736,7 +779,7 @@ where
         body,
     )
     .await
-    .map_err(clean)
+    .map_err(|e| auth_failure(e, reprisebus::polkit::dismissed))
 }
 
 /// `ActivateConnection(connection, device, specific)`; "/" means "any".
@@ -745,7 +788,7 @@ async fn activate(
     connection: &str,
     device: &str,
     ap: &str,
-) -> Result<(), String> {
+) -> Result<(), Failure> {
     let manager = proxy(conn, MANAGER_PATH, NAME).await?;
     call_auth::<_, zbus::zvariant::OwnedObjectPath>(
         &manager,
@@ -884,7 +927,7 @@ async fn rekey(
     conn_path: &str,
     psk: &str,
     offered: &'static str,
-) -> Result<(), String> {
+) -> Result<(), Failure> {
     let p = proxy(conn, conn_path, CONNECTION_IFACE).await?;
     let reply = p.call_method("GetSettings", &()).await.map_err(clean)?;
     let current: HashMap<String, Props> = reply.body().deserialize().map_err(clean)?;
@@ -917,7 +960,7 @@ async fn rekey(
 
 /// `Device.Disconnect`; Disable and Repair only log its error, since a device already down refuses
 /// it.
-async fn disconnect(conn: &Connection, device: &str) -> Result<(), String> {
+async fn disconnect(conn: &Connection, device: &str) -> Result<(), Failure> {
     proxy(conn, device, DEVICE_IFACE)
         .await?
         .call_method("Disconnect", &())
@@ -926,14 +969,17 @@ async fn disconnect(conn: &Connection, device: &str) -> Result<(), String> {
         .map_err(clean)
 }
 
-async fn command(conn: &Connection, cmd: &Cmd) -> Result<Option<NmMsg>, String> {
+async fn command(conn: &Connection, cmd: &Cmd) -> Result<Option<NmMsg>, Failure> {
     match cmd {
         Cmd::LoadVpn(conn_path) => load_vpn(conn, conn_path).await.map(|e| Some(NmMsg::Vpn(e))),
         cmd => act(conn, cmd).await.map(|()| None),
     }
 }
 
-async fn settings_of(conn: &Connection, conn_path: &str) -> Result<HashMap<String, Props>, String> {
+async fn settings_of(
+    conn: &Connection,
+    conn_path: &str,
+) -> Result<HashMap<String, Props>, Failure> {
     let p = proxy(conn, conn_path, CONNECTION_IFACE).await?;
     let reply = p.call_method("GetSettings", &()).await.map_err(clean)?;
     reply.body().deserialize().map_err(clean)
@@ -941,7 +987,7 @@ async fn settings_of(conn: &Connection, conn_path: &str) -> Result<HashMap<Strin
 
 /// A saved VPN for its Properties sheet; WireGuard keys come from `GetSecrets`, which may prompt;
 /// refused, the key fields are empty.
-async fn load_vpn(conn: &Connection, conn_path: &str) -> Result<VpnEdit, String> {
+async fn load_vpn(conn: &Connection, conn_path: &str) -> Result<VpnEdit, Failure> {
     let settings = settings_of(conn, conn_path).await?;
     let kind = settings
         .get("connection")
@@ -954,7 +1000,7 @@ async fn load_vpn(conn: &Connection, conn_path: &str) -> Result<VpnEdit, String>
         let p = proxy(conn, conn_path, CONNECTION_IFACE).await?;
         call_auth::<_, HashMap<String, Props>>(&p, "GetSecrets", &("wireguard",))
             .await?
-            .ok_or_else(|| "no secrets in the reply".to_string())
+            .ok_or_else(|| Failure::from("no secrets in the reply"))
     }
     .await;
     let secrets = secrets
@@ -1037,7 +1083,7 @@ fn import_error(stderr: &str) -> String {
 
 /// `nmcli connection import type KIND file PATH`: importers live in libnm and each VPN plugin's
 /// editor library, not on the bus. Run on its own thread so the bus executor never waits.
-async fn nmcli_import(path: &std::path::Path, kind: &str) -> Result<(), String> {
+async fn nmcli_import(path: &std::path::Path, kind: &str) -> Result<(), Failure> {
     let (tx, rx) = async_channel::bounded(1);
     let (path, kind) = (path.to_path_buf(), kind.to_string());
     std::thread::Builder::new()
@@ -1054,10 +1100,10 @@ async fn nmcli_import(path: &std::path::Path, kind: &str) -> Result<(), String> 
             });
         })
         .map_err(|e| e.to_string())?;
-    rx.recv().await.map_err(|e| e.to_string())?
+    Ok(rx.recv().await.map_err(|e| e.to_string())??)
 }
 
-async fn add_connection(conn: &Connection, settings: crate::wg::Settings) -> Result<(), String> {
+async fn add_connection(conn: &Connection, settings: crate::wg::Settings) -> Result<(), Failure> {
     let p = proxy(conn, SETTINGS_PATH, SETTINGS_IFACE).await?;
     call_auth::<_, zbus::zvariant::OwnedObjectPath>(&p, "AddConnection", &(settings,))
         .await
@@ -1068,14 +1114,14 @@ async fn update(
     conn: &Connection,
     conn_path: &str,
     settings: crate::wg::Settings,
-) -> Result<(), String> {
+) -> Result<(), Failure> {
     let p = proxy(conn, conn_path, CONNECTION_IFACE).await?;
     call_auth::<_, ()>(&p, "Update", &(settings,))
         .await
         .map(|_| ())
 }
 
-async fn act(conn: &Connection, cmd: &Cmd) -> Result<(), String> {
+async fn act(conn: &Connection, cmd: &Cmd) -> Result<(), Failure> {
     match cmd {
         Cmd::Connect {
             device,
@@ -1179,7 +1225,7 @@ async fn act(conn: &Connection, cmd: &Cmd) -> Result<(), String> {
             call_auth::<_, ()>(&p, "Delete", &()).await.map(|_| ())
         }
         Cmd::Import { path, kinds } => {
-            let mut last = Err("No VPN plugin for NetworkManager is installed.".to_string());
+            let mut last = Err("No VPN plugin for NetworkManager is installed.".into());
             for kind in kinds {
                 last = nmcli_import(path, kind).await;
                 if last.is_ok() {
@@ -1261,6 +1307,37 @@ mod tests {
             ssid: "Net".into(),
             psk: None,
         }
+    }
+
+    #[test]
+    fn a_dismissed_prompt_has_no_message_box_and_a_refusal_has_one() {
+        let msg = zbus::Message::method_call("/", "ActivateConnection")
+            .and_then(|b| b.build(&()))
+            .unwrap();
+        let denied = || {
+            zbus::Error::MethodError(
+                "org.freedesktop.NetworkManager.PermissionDenied"
+                    .try_into()
+                    .unwrap(),
+                Some("Not authorized to control networking.".into()),
+                msg.clone(),
+            )
+        };
+        let dismissed = auth_failure(denied(), || true);
+        assert_eq!(dismissed, Failure::Dismissed);
+        assert!(matches!(
+            ran(&join(), Err(dismissed)),
+            Wake::Ran { error: None, .. }
+        ));
+        let refused = auth_failure(denied(), || false);
+        assert_eq!(
+            refused,
+            Failure::Text("PermissionDenied: Not authorized to control networking.".into())
+        );
+        assert!(matches!(
+            ran(&join(), Err(refused)),
+            Wake::Ran { error: Some(_), .. }
+        ));
     }
 
     #[test]

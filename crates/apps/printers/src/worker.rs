@@ -362,10 +362,11 @@ impl State {
                     if *test_page {
                         match cups::test_page(c, &printer.name) {
                             Ok(_) => self.poster.post(Msg::TestPage(printer.name.clone())),
-                            Err(e) => self.poster.post(Msg::Failed {
-                                title: title(&Cmd::TestPage(String::new())).into(),
-                                body: e.text(),
-                            }),
+                            Err(e) => {
+                                if let Some(m) = failed(&Cmd::TestPage(String::new()), &e) {
+                                    self.poster.post(m);
+                                }
+                            }
                         }
                     }
                 }
@@ -376,13 +377,20 @@ impl State {
         };
         if let Err(e) = result {
             log::warn!("{cmd:?}: {e:?}");
-            self.poster.post(Msg::Failed {
-                title: title(&cmd).into(),
-                body: e.text(),
-            });
+            if let Some(m) = failed(&cmd, &e) {
+                self.poster.post(m);
+            }
         }
         true
     }
+}
+
+/// The message box for a failed request; a dismissed password prompt has none.
+fn failed(cmd: &Cmd, e: &cups::Error) -> Option<Msg> {
+    (*e != cups::Error::Dismissed).then(|| Msg::Failed {
+        title: title(cmd).into(),
+        body: e.text(),
+    })
 }
 
 #[cfg(test)]
@@ -395,5 +403,16 @@ mod tests {
         assert_eq!(schedule(false, false, false), (SLOW, true));
         assert_eq!(schedule(true, false, true), (FAST, true));
         assert_eq!(schedule(false, true, true), (FAST, true));
+    }
+
+    #[test]
+    fn a_dismissed_prompt_has_no_message_box_and_a_refusal_has_one() {
+        let delete = Cmd::Delete("Office".into());
+        assert!(failed(&delete, &cups::Error::Dismissed).is_none());
+        let Some(Msg::Failed { title, body }) = failed(&delete, &cups::Error::NotAuthorized) else {
+            panic!("a refused password is told");
+        };
+        assert_eq!(title, "Could not delete the printer");
+        assert_eq!(body, cups::Error::NotAuthorized.text());
     }
 }

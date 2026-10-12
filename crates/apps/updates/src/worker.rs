@@ -34,7 +34,15 @@ pub enum Msg {
         fraction: Option<f64>,
         doing: String,
     },
-    Installed(Result<Restart, String>),
+    Installed(Result<Restart, Failure>),
+}
+
+/// Why an install stopped.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Failure {
+    /// Every password prompt was dismissed: nothing was installed and nothing to tell.
+    Dismissed,
+    Text(String),
 }
 
 #[derive(Clone)]
@@ -153,6 +161,7 @@ async fn check(conn: Option<&Connection>, refresh: bool, manual: bool) -> Found 
                 log::info!("PackageKit is not installed; no package updates");
             }
             Err(packagekit::Error::Failed(e)) => found.push((Group::Packages, Err(e))),
+            Err(packagekit::Error::Dismissed) => {}
         }
     }
     if flatpak::present() {
@@ -168,6 +177,7 @@ async fn check(conn: Option<&Connection>, refresh: bool, manual: bool) -> Found 
                 log::info!("fwupd is not installed; no firmware updates");
             }
             Err(fwupd::Error::Failed(e)) => found.push((Group::Firmware, Err(e))),
+            Err(fwupd::Error::Dismissed) => {}
         }
     }
     found
@@ -216,7 +226,7 @@ async fn install(
     conn: Option<&Connection>,
     updates: Vec<Update>,
     poster: &Poster,
-) -> Result<Restart, String> {
+) -> Result<Restart, Failure> {
     let stages = stages(updates);
     let n = stages.len().max(1) as f64;
     let mut doing = String::from("Preparing to install");
@@ -224,8 +234,7 @@ async fn install(
         fraction: None,
         doing: doing.clone(),
     });
-    let mut restart = Restart::None;
-    let mut failure: Option<String> = None;
+    let mut done_stages = Vec::new();
     for (i, stage) in stages.into_iter().enumerate() {
         let mut report = |fraction: Option<f64>, line: Option<String>| {
             if let Some(l) = line {
@@ -247,35 +256,48 @@ async fn install(
                     seen += 1.0;
                 })
                 .map(|()| Restart::None)
+                .map_err(Failure::Text)
             }
-            (_, None) => Err("There is no system bus.".into()),
+            (_, None) => Err(Failure::Text("There is no system bus.".into())),
             (Stage::Packages(ids), Some(c)) => {
                 match packagekit::install(c, ids, &mut report).await {
                     Ok(r) => Ok(r),
                     Err(packagekit::Error::Unavailable) => {
-                        Err("PackageKit is not installed.".into())
+                        Err(Failure::Text("PackageKit is not installed.".into()))
                     }
-                    Err(packagekit::Error::Failed(e)) => Err(e),
+                    Err(packagekit::Error::Dismissed) => Err(Failure::Dismissed),
+                    Err(packagekit::Error::Failed(e)) => Err(Failure::Text(e)),
                 }
             }
             (Stage::Firmware(u), Some(c)) => match fwupd::install(c, &u, &mut report).await {
                 Ok(r) => Ok(r),
-                Err(fwupd::Error::Unavailable) => Err("fwupd is not installed.".into()),
-                Err(fwupd::Error::Failed(e)) => Err(e),
+                Err(fwupd::Error::Unavailable) => {
+                    Err(Failure::Text("fwupd is not installed.".into()))
+                }
+                Err(fwupd::Error::Dismissed) => Err(Failure::Dismissed),
+                Err(fwupd::Error::Failed(e)) => Err(Failure::Text(e)),
             },
         };
+        if let Err(Failure::Text(e)) = &done {
+            log::warn!("installing updates: {e}");
+        }
+        done_stages.push(done);
+    }
+    outcome(done_stages)
+}
+
+/// The stages' results as one: the first failure with something to tell, else the
+/// restart the installed stages ask for, else (every prompt dismissed) a dismissal.
+fn outcome(stages: Vec<Result<Restart, Failure>>) -> Result<Restart, Failure> {
+    let mut restart = None;
+    for done in stages {
         match done {
-            Ok(r) => restart = restart.max(r),
-            Err(e) => {
-                log::warn!("installing updates: {e}");
-                failure.get_or_insert(e);
-            }
+            Ok(r) => restart = Some(restart.unwrap_or(Restart::None).max(r)),
+            Err(Failure::Dismissed) => {}
+            Err(e) => return Err(e),
         }
     }
-    match failure {
-        Some(e) => Err(e),
-        None => Ok(restart),
-    }
+    restart.ok_or(Failure::Dismissed)
 }
 
 async fn watch(jobs: Jobs) {
@@ -316,6 +338,21 @@ async fn watch(jobs: Jobs) {
 mod tests {
     use super::*;
     use crate::model::Kind;
+
+    #[test]
+    fn a_dismissed_stage_is_silent_unless_every_stage_was_dismissed() {
+        let text = || Err(Failure::Text("No network.".into()));
+        assert_eq!(
+            outcome(vec![Err(Failure::Dismissed), Ok(Restart::System)]),
+            Ok(Restart::System)
+        );
+        assert_eq!(outcome(vec![Err(Failure::Dismissed), text()]), text());
+        assert_eq!(outcome(vec![Ok(Restart::None), text()]), text());
+        assert_eq!(
+            outcome(vec![Err(Failure::Dismissed), Err(Failure::Dismissed)]),
+            Err(Failure::Dismissed)
+        );
+    }
 
     #[test]
     fn waiting_checks_fold_into_one_after_the_installs() {

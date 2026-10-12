@@ -164,7 +164,8 @@ impl UpdatesApp {
                         }
                         self.phase = Phase::Installed(restart);
                     }
-                    Err(why) => {
+                    Err(worker::Failure::Dismissed) => self.phase = Phase::Ready,
+                    Err(worker::Failure::Text(why)) => {
                         log::warn!("installing updates: {why}");
                         let message = model::install_failed(&why);
                         if self.hidden {
@@ -458,6 +459,26 @@ mod tests {
                 fraction: Some(0.5),
                 doing: "Installing b".into()
             }
+        );
+    }
+
+    #[test]
+    fn a_dismissed_install_returns_to_the_list_and_a_refused_one_says_so() {
+        let mut app = UpdatesApp::new(true);
+        app.worker_msg(found(Ok(vec![update("a")])));
+        app.install();
+        app.worker_msg(worker::Msg::Installed(Err(worker::Failure::Dismissed)));
+        assert_eq!(app.phase, Phase::Ready);
+        assert_eq!(app.updates.len(), 1);
+
+        app.install();
+        let refused = worker::Failure::Text("Failed to obtain authentication.".into());
+        app.worker_msg(worker::Msg::Installed(Err(refused)));
+        assert_eq!(
+            app.phase,
+            Phase::Failed(
+                "The updates could not be installed. Failed to obtain authentication.".into()
+            )
         );
     }
 
