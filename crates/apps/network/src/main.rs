@@ -26,9 +26,7 @@ use std::sync::mpsc::Receiver;
 use repriseapp::filedlg::{Host, Resolved, Step, type_keep};
 use repriseapp::keys::{form_clipboard, form_input, sheet_input};
 use repriseapp::oneshot::{self, MsgBox};
-use repriseapp::{
-    App, BTN_LEFT, Child, Ctx, DropForm, Event, FileDrop, MAIN, PointerInput, Reply, WinId,
-};
+use repriseapp::{App, Child, Ctx, DropForm, Event, FileDrop, PointerInput, Reply, WinId};
 use reprisekit::access::Tree;
 use reprisekit::art::neticon;
 use reprisekit::controls::filedlg::{self, DlgMode, Event as FileEvent, Fields, FileDlg};
@@ -87,11 +85,6 @@ struct Notice {
     delete: Option<String>,
 }
 
-/// A double click: a second press this soon after the first, and this
-/// near it, in the same window.
-const DOUBLE_MS: u32 = 400;
-const DOUBLE_SLOP: i32 = 4;
-
 #[derive(Default)]
 struct NetApp {
     tray: Option<reprisetray::TrayHandle>,
@@ -123,8 +116,6 @@ struct NetApp {
     refit: bool,
     hidden: bool,
     tray_only: bool,
-    /// The last press, for the double click: its time, window and point.
-    last_press: Option<(u32, WinId, i32, i32)>,
 }
 
 impl NetApp {
@@ -522,22 +513,7 @@ impl NetApp {
             ..Reply::none()
         }
     }
-
-    /// Whether this press is the second half of a double click. A third
-    /// press is not a second double, so a match clears the memory.
-    fn double(&mut self, win: WinId, time: u32, x: i32, y: i32) -> bool {
-        let double = self.last_press.is_some_and(|(t, w, px, py)| {
-            w == win
-                && time.wrapping_sub(t) < DOUBLE_MS
-                && (x - px).abs() <= DOUBLE_SLOP
-                && (y - py).abs() <= DOUBLE_SLOP
-        });
-        self.last_press = (!double).then_some((time, win, x, y));
-        double
-    }
-
     fn folder_event(&mut self, ev: Event, ctx: &Ctx) -> Reply {
-        let double = self.double_of(MAIN, &ev);
         let out = match ev {
             Event::CloseRequest => {
                 // Hiding is only a way back if the tray icon is there to
@@ -553,8 +529,11 @@ impl NetApp {
                 return Reply::redraw();
             }
             Event::Key(k) => self.folder.key(&k, &self.snapshot, ctx),
-            Event::Pointer(PointerInput::Press { x, y, button, .. }) => {
-                self.folder.press(x, y, button, double, &self.snapshot, ctx)
+            Event::Pointer(PointerInput::Press {
+                x, y, button, time, ..
+            }) => {
+                let at = ctx.theme.metrics.click(x, y, time);
+                self.folder.press(at, button, &self.snapshot, ctx)
             }
             Event::Pointer(PointerInput::Motion { x, y }) => self.folder.motion(x, y, ctx),
             Event::Pointer(PointerInput::Release { .. }) => self.folder.release(ctx),
@@ -782,7 +761,6 @@ impl NetApp {
     }
 
     fn chooser_event(&mut self, ev: Event, ctx: &Ctx) -> Reply {
-        let double = self.double_of(CHOOSER, &ev);
         let out = {
             let Some(c) = self.chooser.as_mut() else {
                 return Reply::none();
@@ -790,9 +768,9 @@ impl NetApp {
             match ev {
                 Event::CloseRequest => chooser::Outcome::Close,
                 Event::Key(k) => c.key(&k, &ctx.theme.look.controls()),
-                Event::Pointer(PointerInput::Press { x, y, button, .. }) => {
-                    c.press(x, y, button, double, ctx)
-                }
+                Event::Pointer(PointerInput::Press {
+                    x, y, button, time, ..
+                }) => c.press(ctx.theme.metrics.click(x, y, time), button, ctx),
                 Event::Pointer(PointerInput::Motion { x, y }) => c.motion(x, y, ctx),
                 Event::Pointer(PointerInput::Release { .. }) => c.release(ctx),
                 Event::Pointer(PointerInput::Leave) => c.leave(ctx),
@@ -924,21 +902,6 @@ impl NetApp {
             ssid,
             psk,
         });
-    }
-
-    /// The double-click flag for a press; only the left button counts, so a right
-    /// click between two left ones does not break the pair.
-    fn double_of(&mut self, win: WinId, ev: &Event) -> bool {
-        match ev {
-            Event::Pointer(PointerInput::Press {
-                x,
-                y,
-                button: BTN_LEFT,
-                time,
-                ..
-            }) => self.double(win, *time, *x, *y),
-            _ => false,
-        }
     }
 
     /// Hand the folder its VPN icon on the first event with a [`Ctx`],
@@ -1341,25 +1304,5 @@ mod tests {
         app.event(KEY, ctrl(b'a'), &mut ctx);
         assert_eq!(app.event(KEY, ctrl(b'c'), &mut ctx).copy, None);
         assert_eq!(app.event(KEY, ctrl(b'x'), &mut ctx).copy, None);
-    }
-
-    #[test]
-    fn a_double_click_is_close_in_time_and_place() {
-        let mut app = NetApp::default();
-        assert!(!app.double(MAIN, 1000, 40, 40), "the first press is single");
-        assert!(app.double(MAIN, 1300, 42, 41), "inside both windows");
-        assert!(!app.double(MAIN, 1400, 42, 41));
-
-        let mut slow = NetApp::default();
-        slow.double(MAIN, 1000, 40, 40);
-        assert!(!slow.double(MAIN, 1000 + DOUBLE_MS, 40, 40), "too late");
-
-        let mut far = NetApp::default();
-        far.double(MAIN, 1000, 40, 40);
-        assert!(!far.double(MAIN, 1100, 40 + DOUBLE_SLOP + 1, 40), "too far");
-
-        let mut across = NetApp::default();
-        across.double(MAIN, 1000, 40, 40);
-        assert!(!across.double(CHOOSER, 1100, 40, 40));
     }
 }

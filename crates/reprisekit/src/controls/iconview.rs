@@ -182,15 +182,6 @@ pub fn layout(cell: Cell, area: Rect, count: usize) -> Vec<Rect> {
         .collect()
 }
 
-pub fn is_double_click(
-    last: Option<(u32, usize)>,
-    now: u32,
-    index: usize,
-    threshold_ms: i32,
-) -> bool {
-    matches!(last, Some((t, i)) if i == index && now.wrapping_sub(t) < threshold_ms.max(0) as u32)
-}
-
 pub fn wrap_label(text: &TextRenderer, name: &str, max_w: i32, size_px: u32) -> Vec<String> {
     let words: Vec<&str> = name.split_whitespace().collect();
     if words.is_empty() {
@@ -815,15 +806,6 @@ mod tests {
         let off = layout(Cell::square(CELL), Rect::new(100, 50, 300, 20), 2);
         assert_eq!(off[0], Rect::new(100, 50, CELL, CELL));
         assert_eq!(off[1], Rect::new(100 + CELL, 50, CELL, CELL));
-    }
-
-    #[test]
-    fn double_click_needs_same_index_within_threshold() {
-        assert!(is_double_click(Some((1000, 3)), 1300, 3, 500));
-        assert!(!is_double_click(Some((1000, 3)), 1600, 3, 500));
-        assert!(!is_double_click(Some((1000, 3)), 1300, 4, 500));
-        assert!(!is_double_click(None, 1300, 3, 500));
-        assert!(is_double_click(Some((u32::MAX - 100, 0)), 100, 0, 500));
     }
 
     fn text() -> TextRenderer {

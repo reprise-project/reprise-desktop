@@ -9,6 +9,7 @@ use reprisekit::controls::metrics::ControlMetrics;
 use reprisekit::controls::taskpane::{self, Section, TaskPane};
 use reprisekit::controls::tilelist::{self, Press, TileList};
 use reprisekit::look::Paint;
+use reprisekit::pointer::Click;
 use reprisekit::raster::{Canvas, Rect};
 use reprisekit::text::Align;
 use reprisekit::textedit::keysym::{self, SPACE};
@@ -213,7 +214,8 @@ impl Chooser {
         (Rect::new(0, 0, PANE_W, ctx.size.1), LIST_R)
     }
 
-    pub fn press(&mut self, x: i32, y: i32, button: u32, double: bool, ctx: &Ctx) -> Outcome {
+    pub fn press(&mut self, at: Click, button: u32, ctx: &Ctx) -> Outcome {
+        let (x, y) = (at.x, at.y);
         if button != BTN_LEFT {
             return Outcome::None;
         }
@@ -226,7 +228,7 @@ impl Chooser {
             };
         }
         if list_r.contains(x, y) {
-            return self.press_list(x, y, double, list_r, &ctx.theme.look.controls());
+            return self.press_list(at, list_r, &ctx.theme.look.controls());
         }
         if pane_r.contains(x, y) {
             let lay = taskpane::layout(
@@ -246,20 +248,15 @@ impl Chooser {
         Outcome::None
     }
 
-    fn press_list(
-        &mut self,
-        x: i32,
-        y: i32,
-        double: bool,
-        _list_r: Rect,
-        cm: &ControlMetrics,
-    ) -> Outcome {
-        match self.list.press(LIST_R, x, y, cm) {
+    fn press_list(&mut self, at: Click, _list_r: Rect, cm: &ControlMetrics) -> Outcome {
+        match self.list.press(LIST_R, at, cm) {
             Press::None => Outcome::None,
             Press::Redraw => Outcome::Redraw,
-            Press::Row { changed, .. } => {
+            Press::Row {
+                changed, activate, ..
+            } => {
                 self.sync_button();
-                if double {
+                if activate {
                     self.activate()
                 } else if changed {
                     Outcome::Redraw
@@ -588,6 +585,26 @@ fn pane_sections() -> Vec<Section> {
 mod tests {
     use super::*;
 
+    /// A press that never completes a double click.
+    fn one(x: i32, y: i32) -> Click {
+        Click {
+            x,
+            y,
+            time: 0,
+            double_ms: 0,
+        }
+    }
+
+    /// A press that completes a double click after a press on the same row.
+    fn two(x: i32, y: i32) -> Click {
+        Click {
+            x,
+            y,
+            time: 1,
+            double_ms: 500,
+        }
+    }
+
     fn ctx() -> Ctx {
         crate::tests::test_ctx(CLIENT)
     }
@@ -798,8 +815,9 @@ mod tests {
         });
         let mut c = Chooser::new(&d);
         let (x, y) = slot_point(&ctx, &c, 0);
+        c.press(one(x, y), BTN_LEFT, &ctx);
         assert_eq!(
-            c.press(x, y, BTN_LEFT, true, &ctx),
+            c.press(two(x, y), BTN_LEFT, &ctx),
             Outcome::Connect {
                 ap: "/ap/6".into(),
                 ssid: "Office".into(),
@@ -820,8 +838,9 @@ mod tests {
         });
         let mut c = Chooser::new(&d);
         let (x, y) = slot_point(&ctx, &c, 0);
+        c.press(one(x, y), BTN_LEFT, &ctx);
         assert_eq!(
-            c.press(x, y, BTN_LEFT, true, &ctx),
+            c.press(two(x, y), BTN_LEFT, &ctx),
             Outcome::Connect {
                 ap: "/ap/7".into(),
                 ssid: "Lab".into(),
@@ -841,16 +860,17 @@ mod tests {
         };
         assert_eq!(label(&c), ("&Connect".into(), false), "nothing picked yet");
         let (x, y) = slot_point(&ctx, &c, 0);
-        assert_eq!(c.press(x, y, BTN_LEFT, false, &ctx), Outcome::Redraw);
+        assert_eq!(c.press(one(x, y), BTN_LEFT, &ctx), Outcome::Redraw);
         assert_eq!(c.list.selected_row(), Some(0));
         assert_eq!(label(&c), ("&Disconnect".into(), true));
         let btn = c.button.item("connect").unwrap().rect;
         assert_eq!(
-            c.press(btn.x + 4, btn.y + 4, BTN_LEFT, false, &ctx),
+            c.press(one(btn.x + 4, btn.y + 4), BTN_LEFT, &ctx),
             Outcome::Disconnect
         );
         let (x, y) = slot_point(&ctx, &c, 3);
-        assert_eq!(c.press(x, y, BTN_LEFT, true, &ctx), {
+        c.press(one(x, y), BTN_LEFT, &ctx);
+        assert_eq!(c.press(two(x, y), BTN_LEFT, &ctx), {
             Outcome::Connect {
                 ap: "/ap/5".into(),
                 ssid: "Neighbour".into(),
@@ -859,10 +879,10 @@ mod tests {
             }
         });
         let (x, y) = slot_point(&ctx, &c, 2);
-        c.press(x, y, BTN_LEFT, false, &ctx);
+        c.press(one(x, y), BTN_LEFT, &ctx);
         assert_eq!(label(&c), ("&Connect".into(), true));
         assert_eq!(
-            c.press(btn.x + 4, btn.y + 4, BTN_LEFT, false, &ctx),
+            c.press(one(btn.x + 4, btn.y + 4), BTN_LEFT, &ctx),
             Outcome::Connect {
                 ap: "/ap/1".into(),
                 ssid: "Cafe".into(),
@@ -872,15 +892,16 @@ mod tests {
             "an open network needs no key"
         );
         let (x, y) = slot_point(&ctx, &c, 1);
-        assert_eq!(c.press(x, y, BTN_LEFT, false, &ctx), Outcome::Redraw);
+        assert_eq!(c.press(one(x, y), BTN_LEFT, &ctx), Outcome::Redraw);
         assert_eq!(label(&c), ("&Connect".into(), false));
         assert_eq!(
-            c.press(btn.x + 4, btn.y + 4, BTN_LEFT, false, &ctx),
+            c.press(one(btn.x + 4, btn.y + 4), BTN_LEFT, &ctx),
             Outcome::None
         );
-        assert_eq!(c.press(x, y, BTN_LEFT, true, &ctx), Outcome::None);
+        c.press(one(x, y), BTN_LEFT, &ctx);
+        assert_eq!(c.press(two(x, y), BTN_LEFT, &ctx), Outcome::None);
         let (x, y) = slot_point(&ctx, &c, 5);
-        assert_eq!(c.press(x, y, BTN_LEFT, false, &ctx), Outcome::None);
+        assert_eq!(c.press(one(x, y), BTN_LEFT, &ctx), Outcome::None);
         assert_eq!(c.list.selected_row(), Some(1));
         let (pane_r, _) = c.layout(&ctx);
         let lay = taskpane::layout(
@@ -892,12 +913,12 @@ mod tests {
         );
         let row = lay.rows[0][0];
         assert_eq!(
-            c.press(row.x + 2, row.y + 2, BTN_LEFT, false, &ctx),
+            c.press(one(row.x + 2, row.y + 2), BTN_LEFT, &ctx),
             Outcome::Rescan
         );
         let row = lay.rows[0][1];
         assert_eq!(
-            c.press(row.x + 2, row.y + 2, BTN_LEFT, false, &ctx),
+            c.press(one(row.x + 2, row.y + 2), BTN_LEFT, &ctx),
             Outcome::None
         );
     }
@@ -991,12 +1012,12 @@ mod tests {
         assert_eq!(c.scroll(-99), Outcome::Redraw);
         assert_eq!(c.list.top, 0);
         assert_eq!(
-            c.press(sb.x + 2, sb.bottom() - 3, BTN_LEFT, false, &ctx),
+            c.press(one(sb.x + 2, sb.bottom() - 3), BTN_LEFT, &ctx),
             Outcome::Redraw
         );
         assert_eq!(c.list.top, 1);
         assert_eq!(
-            c.press(sb.x + 2, sb.y + 2, BTN_LEFT, false, &ctx),
+            c.press(one(sb.x + 2, sb.y + 2), BTN_LEFT, &ctx),
             Outcome::Redraw
         );
         assert_eq!(c.list.top, 0);
@@ -1011,7 +1032,7 @@ mod tests {
         );
         let thumb = parts.thumb.expect("a thumb");
         assert_eq!(
-            c.press(thumb.x + 2, thumb.y + 3, BTN_LEFT, false, &ctx),
+            c.press(one(thumb.x + 2, thumb.y + 3), BTN_LEFT, &ctx),
             Outcome::None
         );
         assert_eq!(c.list.top, 0, "a press on the thumb does not page");

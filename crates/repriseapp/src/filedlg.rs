@@ -16,11 +16,13 @@ use reprisekit::text::TextRenderer;
 use reprisekit::textedit::keysym;
 
 use reprisefs::folders::FolderTable;
-use reprisekit::controls::filedlg::{Crumb, Fields, FileDlg, Folder, FolderId};
+use reprisekit::controls::filedlg::{Crumb, Fields, FileDlg, Folder, FolderId, Hit};
 use reprisekit::controls::placesbar::Place;
 use reprisekit::controls::shellview::Entry;
 use reprisekit::icontheme::IconCache;
+use reprisekit::pointer::DoubleClick;
 use reprisekit::raster::Canvas;
+use reprisekit::theme::Metrics;
 
 fn dialog_places() -> Vec<reprisefs::places::DialogPlace> {
     reprisefs::places::dialog_places(repriseconf::recent_files())
@@ -186,32 +188,14 @@ pub struct Host {
     pub folders: FolderTable,
     pub folder: Option<FolderId>,
     pub icons: Icons,
-    last_press: Option<u32>,
+    clicks: DoubleClick<Option<Hit>>,
     aliases: HashMap<String, OsString>,
 }
-
-pub(crate) const DOUBLE_CLICK_MS: u32 = 500;
 
 impl Host {
     pub fn open(&mut self, dir: &Path, fields: Fields) -> FileDlg {
         self.folder = Some(self.folders.id(dir));
         self.icons.dialog(fields)
-    }
-
-    pub fn is_double(&mut self, ev: &Event) -> bool {
-        let Event::Pointer(PointerInput::Press {
-            button: crate::BTN_LEFT,
-            time,
-            ..
-        }) = ev
-        else {
-            return false;
-        };
-        let double = self
-            .last_press
-            .is_some_and(|t| time.wrapping_sub(t) < DOUBLE_CLICK_MS);
-        self.last_press = if double { None } else { Some(*time) };
-        double
     }
 
     pub fn event(
@@ -254,10 +238,13 @@ impl Host {
                 y,
                 button: crate::BTN_LEFT,
                 mods: m,
-                ..
+                time,
             }) => {
                 let hit = dlg.hit(text, px, r, *x, *y);
-                if self.is_double(ev) {
+                if self
+                    .clicks
+                    .press(hit, Metrics::default().click(*x, *y, *time))
+                {
                     dlg.double_click(r, hit)
                 } else {
                     dlg.click(r, hit, mods(m))
@@ -594,25 +581,6 @@ mod tests {
         let mut h = Host::default();
         let id = h.place(5).expect("Computer has a folder");
         assert_eq!(h.folders.path(id), Some(Path::new("/")));
-    }
-
-    fn press(time: u32) -> Event {
-        Event::Pointer(PointerInput::Press {
-            x: 0,
-            y: 0,
-            button: crate::BTN_LEFT,
-            time,
-            mods: crate::Mods::default(),
-        })
-    }
-
-    #[test]
-    fn a_second_press_within_the_double_click_time_is_a_double_click() {
-        let mut h = Host::default();
-        assert!(!h.is_double(&press(1000)));
-        assert!(h.is_double(&press(1300)), "300 ms apart");
-        assert!(!h.is_double(&press(1400)), "a third press starts over");
-        assert!(!h.is_double(&press(2500)), "1100 ms apart is two clicks");
     }
 
     #[test]

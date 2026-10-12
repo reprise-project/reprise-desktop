@@ -637,10 +637,8 @@ impl Explorer {
                     ..
                 }) => {
                     let hit = form.hit(x, y, &self.dialog_text, self.dialog_px);
-                    let double = self
-                        .dialog_press
-                        .is_some_and(|t| time.wrapping_sub(t) < crate::DOUBLE_MS);
-                    self.dialog_press = if double { None } else { Some(time) };
+                    let at = ctx.theme.metrics.click(x, y, time);
+                    let double = self.dialog_clicks.press(hit.map(|h| h.item), at);
                     if double {
                         form.double_click(hit)
                     } else {
