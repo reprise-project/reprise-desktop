@@ -2548,11 +2548,6 @@ impl App for SettingsApp {
         }
         let mut reply = self.route(win, ev, ctx);
         reply.redraw |= moved;
-        // A text size grown while the window is open can leave it under the sheet's minimum.
-        let need = self.units.size(Area::MIN.sheet_size());
-        if main && !ctx.maximized && (ctx.size.0 < need.0 || ctx.size.1 < need.1) {
-            reply.size = Some((ctx.size.0.max(need.0), ctx.size.1.max(need.1)));
-        }
         if let Some(press) = self.display.pending.take() {
             let r = self.start_display(press, &mut ctx.heads);
             reply.quit |= r.quit;

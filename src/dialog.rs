@@ -9418,6 +9418,36 @@ mod tests {
     /// At 150% and 200% Run grows inside its frame: its lines sit a grown line apart and fit
     /// their rows, the field holds a grown line, its open list's rows grow, and the buttons sit
     /// inside the dialog under the field. 100% is Run as laid out.
+    /// A dialog open when the text size changes lays out as one opened at the new size: the
+    /// config reload refits every open dialog (`configwatch::retheme`).
+    #[test]
+    fn an_open_dialog_lays_out_again_at_a_new_text_size() {
+        use reprisekit::controls::filesheet;
+        let Some(text) = tahoma() else { return };
+        let one = Theme::default();
+        let big = Theme::default().with_text_size(200);
+        let opened = |theme: &Theme| {
+            let (px, u) = (theme.fonts.size_px, theme.text);
+            let path = std::path::Path::new("/tmp/a.txt");
+            let mut ds = vec![
+                Dialog::run(&history()),
+                Dialog::confirm_delete("a.txt", path, false, false),
+                Dialog::advanced_attributes(filesheet::Subject::File, None, &text, px, u),
+            ];
+            ds.iter_mut().for_each(|d| d.fit(theme, &text));
+            ds
+        };
+        for (mut d, fresh) in opened(&one).into_iter().zip(opened(&big)) {
+            d.fit(&big, &text);
+            assert_eq!(
+                DialogLayout::compute(&big, &text, &d),
+                DialogLayout::compute(&big, &text, &fresh),
+                "{}",
+                d.title
+            );
+        }
+    }
+
     #[test]
     fn run_grows_with_the_text_size() {
         let Some(text) = tahoma() else { return };

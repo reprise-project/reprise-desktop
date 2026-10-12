@@ -171,6 +171,20 @@ pub fn first_configure_size(
     }
 }
 
+/// Where a frame that was `was` and is now `now` goes to stay inside `area`: moved as little as
+/// keeps it there, when it was inside and grew past an edge. `None` leaves it where it is.
+pub fn grown_back_inside(was: Rect, now: Rect, area: Rect) -> Option<(i32, i32)> {
+    let inside = |r: Rect| {
+        r.x >= area.x && r.y >= area.y && r.right() <= area.right() && r.bottom() <= area.bottom()
+    };
+    let grew = now.width > was.width || now.height > was.height;
+    if area.width <= 0 || !grew || !inside(was) || inside(now) {
+        return None;
+    }
+    let to = keep_inside((now.x, now.y), (now.width, now.height), area);
+    (to != (now.x, now.y)).then_some(to)
+}
+
 /// A dialog's frame origin: centred on its owner (or on `area` if ownerless), pushed inside `area`.
 pub fn centre_on(parent: Rect, size: (i32, i32), area: Rect) -> (i32, i32) {
     let x = parent.x + (parent.width - size.0) / 2;
@@ -1726,8 +1740,10 @@ impl State {
         };
         let resized = win.client_size() != (win.client_w, win.client_h)
             || (win.surface_origin() != self.scene_surface_origin(w));
+        let was = win.frame_rect();
         if resized {
             self.relayout(w);
+            self.keep_grown_inside(w, was);
             if let Some(win) = self.win(w)
                 && let Some(a) = win.resize_anchor
             {
@@ -2291,6 +2307,25 @@ impl State {
         self.move_to(w, x, y);
     }
 
+    /// A window that was inside the work area and grew past it on its own (a program growing
+    /// with the text size) moves back in as little as it takes; one the user is sizing, or
+    /// one already partly outside, stays put.
+    fn keep_grown_inside(&mut self, w: WindowId, was: Rect) {
+        let Some(win) = self.win(w) else {
+            return;
+        };
+        let now = win.frame_rect();
+        let user = win.resize_anchor.is_some()
+            || win.maximized
+            || win.fullscreen
+            || self.interaction.is_resize_of(w)
+            || self.wm.snap.follows_drag(w);
+        let area = self.usable_area_for_window(w);
+        if let Some((x, y)) = grown_back_inside(was, now, area).filter(|_| !user) {
+            self.move_to(w, x, y);
+        }
+    }
+
     pub fn usable_area_for_window(&self, w: WindowId) -> Rect {
         let Some(r) = self.win(w).map(Window::frame_rect) else {
             return Rect::default();
@@ -2773,6 +2808,24 @@ mod tests {
             Some(528),
             "the minimum is the client's, inside the frame"
         );
+    }
+
+    /// A window growing with the text size past the taskbar moves up as far as it overran; one
+    /// the user left partly off screen, or one that shrank, stays put.
+    #[test]
+    fn a_window_that_grew_past_the_work_area_moves_back_in() {
+        let area = Rect::new(0, 0, 1920, 1050);
+        let was = Rect::new(640, 160, 620, 700);
+        let now = Rect::new(640, 160, 820, 960);
+        assert_eq!(grown_back_inside(was, now, area), Some((640, 90)));
+        let fits = Rect::new(640, 160, 700, 800);
+        assert_eq!(grown_back_inside(was, fits, area), None);
+        let off = Rect::new(1500, 160, 620, 700);
+        assert_eq!(
+            grown_back_inside(off, Rect { width: 820, ..off }, area),
+            None
+        );
+        assert_eq!(grown_back_inside(now, was, area), None);
     }
 
     #[test]
