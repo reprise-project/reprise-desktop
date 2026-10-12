@@ -19,6 +19,10 @@
 //! Tabs that wrap onto more rows push the page down 18 px a row; a host calls
 //! [`PropSheet::fit_tabs`] to grow the sheet by as much.
 //!
+//! A client shorter than the sheet was built for ([`PropSheet::fit_height`]) keeps the buttons
+//! along its bottom and scrolls the page's controls under the look's scrollbar, down the page's
+//! right edge.
+//!
 //! Pages are built in the client's coordinates (outer minus the 3 px frame and
 //! 21 px caption) for 100% text. A host that draws the sheet inside a frame of
 //! its own places the client with [`PropSheet::place`]; from then on the pages,
@@ -32,12 +36,16 @@
 //! presses Apply.
 
 use crate::access::{self, Tree, accesskit};
-use crate::classic::widgets::{BUTTON_H, BUTTON_W, BarHit};
+use crate::classic::widgets::{
+    BUTTON_H, BUTTON_W, BarHit, LINE_H, ScrollParts, bar_hit, scrollbar_parts,
+};
 use crate::controls::form::{self, Control, Form, Item};
 use crate::controls::pagelist::{self, PageList};
+use crate::controls::scrollbar::ThumbDrag;
 use crate::controls::tabstrip::{self, TabStrip};
 use crate::look::Paint;
-use crate::look::widgets::{draw_page, group_label_ink};
+use crate::look::widgets::{draw_page, draw_scrollbar, group_label_ink};
+use crate::pointer::{Axis, Pointer, ScrollHit};
 use crate::raster::{Canvas, Rect};
 use crate::text::{Align, DialogFont, TextRenderer};
 use crate::theme::TextUnits;
@@ -54,6 +62,9 @@ const PAGE_TOP: i32 = 28;
 const PAGE_BOTTOM: i32 = 36;
 const BUTTON_BOTTOM: i32 = 7;
 const BUTTON_PITCH: i32 = BUTTON_W + 6;
+/// The page's bevel, which the scrollbar and the scrolled controls keep inside.
+const PAGE_EDGE: i32 = 2;
+const BUTTON_IDS: &[&str] = &[OK, CANCEL, APPLY];
 
 /// Which buttons the sheet's row holds. Each set fills the slots from the right,
 /// so OK / Cancel sit where Cancel and Apply would.
@@ -84,6 +95,18 @@ pub struct PropSheet {
     /// The dialog font the whole sheet is set in: its first page's.
     pub font: DialogFont,
     pub nav: Nav,
+    scroll: PageScroll,
+}
+
+/// The page's scroll in a client shorter than the sheet ([`PropSheet::fit_height`]), at 100%.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+struct PageScroll {
+    /// How much shorter than `size` the client is.
+    short: i32,
+    /// How far the pages' controls are scrolled up: 0 to `short`.
+    top: i32,
+    drag: ThumbDrag,
+    bars: Pointer<ScrollHit>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -101,6 +124,8 @@ pub enum Hit {
     Tab(usize),
     ListBar(BarHit),
     List,
+    /// The page's scrollbar, in a client shorter than the sheet.
+    PageBar(BarHit),
     Control(form::Hit),
 }
 
@@ -114,6 +139,8 @@ pub struct Layout {
     pub ok: Rect,
     pub cancel: Rect,
     pub apply: Rect,
+    /// The page's scrollbar, when the client is shorter than the sheet.
+    pub bar: Option<Rect>,
 }
 
 fn buttons(size: (i32, i32)) -> (Rect, Rect, Rect) {
@@ -129,6 +156,10 @@ fn shift(page: &mut Form, dx: i32, dy: i32) {
         item.rect.x += dx;
         item.rect.y += dy;
     }
+}
+
+fn is_button(it: &Item) -> bool {
+    BUTTON_IDS.contains(&it.id)
 }
 
 impl PropSheet {
@@ -155,6 +186,7 @@ impl PropSheet {
             page_dy: 0,
             font: pages.first().map(|p| p.font).unwrap_or_default(),
             nav: Nav::Tabs,
+            scroll: PageScroll::default(),
         };
         sheet.pages = pages.into_iter().map(|p| sheet.dress(p, false)).collect();
         sheet
@@ -181,6 +213,7 @@ impl PropSheet {
             page_dy: 0,
             font: pages.first().map(|p| p.font).unwrap_or_default(),
             nav: Nav::List(PageList::new(groups)),
+            scroll: PageScroll::default(),
         };
         sheet.pages = pages.into_iter().map(|p| sheet.dress(p, false)).collect();
         sheet
@@ -195,17 +228,24 @@ impl PropSheet {
     }
 
     /// How far every page's rects have moved from where they were built, at 100%: the list's
-    /// advance and the rows of tabs. The origin is the pages' [`Form::origin`].
+    /// advance, the rows of tabs and the page's scroll. The origin is the pages' [`Form::origin`].
     pub fn page_offset(&self) -> (i32, i32) {
-        (self.page_dx(), self.page_dy)
+        (self.page_dx(), self.page_dy - self.scroll.top)
+    }
+
+    /// The client size at 100%: [`PropSheet::size`] less what [`PropSheet::fit_height`] cut.
+    fn shown(&self) -> (i32, i32) {
+        (self.size.0, self.size.1 - self.scroll.short)
     }
 
     fn dress(&self, mut page: Form, apply: bool) -> Form {
         page.font = self.font;
         page.origin = self.origin;
-        shift(&mut page, self.page_dx(), self.page_dy);
+        page.view = self.view();
+        let (dx, dy) = self.page_offset();
+        shift(&mut page, dx, dy);
         let at = |r: Rect| r;
-        let (ok, cancel, apply_r) = buttons(self.size);
+        let (ok, cancel, apply_r) = buttons(self.shown());
         let row = match self.buttons {
             Buttons::OkCancelApply => vec![
                 Item::button(OK, at(ok), "OK", true, true),
@@ -259,6 +299,11 @@ impl PropSheet {
         self.origin = origin;
     }
 
+    /// The client's top-left on the surface the sheet is drawn on ([`PropSheet::place`]).
+    pub fn origin(&self) -> (i32, i32) {
+        self.origin
+    }
+
     /// Lay the sheet out for `p`'s look and text size until it is drawn: a host that sizes
     /// its window from [`PropSheet::client`] or calls [`PropSheet::fit_tabs`] before the
     /// first draw calls this first. [`draw`] does it itself.
@@ -273,9 +318,115 @@ impl PropSheet {
         self.open().units()
     }
 
-    /// The client size at the text size the sheet was last drawn at: [`PropSheet::size`] grown.
+    /// The client size at the text size the sheet was last drawn at: [`PropSheet::size`] grown,
+    /// less what [`PropSheet::fit_height`] cut.
     pub fn client(&self) -> (i32, i32) {
-        self.units().size(self.size)
+        self.units().size(self.shown())
+    }
+
+    /// Show the sheet in a client `h` tall at 100%. Shorter than [`PropSheet::size`], the
+    /// buttons keep to the client's bottom and the page scrolls through the rest; as tall or
+    /// taller, the sheet is whole. Idempotent; true when anything moved.
+    pub fn fit_height(&mut self, h: i32) -> bool {
+        let short = (self.size.1 - h).max(0);
+        let dy = short - self.scroll.short;
+        if dy != 0 {
+            self.scroll.short = short;
+            self.move_buttons(0, -dy);
+        }
+        let top = self.scroll.top;
+        self.scroll_to(top) || dy != 0
+    }
+
+    /// The page's controls' 100% rects that show through the page: inside its bevel, from
+    /// where the page starts to where it ends now. None while the sheet is whole.
+    fn view(&self) -> Option<form::View> {
+        if self.scroll.short == 0 {
+            return None;
+        }
+        let (w, h) = self.shown();
+        let top = self.page_top();
+        let x = MARGIN + self.page_dx() + PAGE_EDGE;
+        let bottom = h - PAGE_BOTTOM - PAGE_EDGE;
+        Some(form::View {
+            rect: Rect::new(
+                x,
+                top + PAGE_EDGE,
+                w - MARGIN - PAGE_EDGE - x,
+                bottom - top - PAGE_EDGE,
+            ),
+            keep: BUTTON_IDS,
+        })
+    }
+
+    /// The page's top at 100%, under the rows of tabs.
+    fn page_top(&self) -> i32 {
+        PAGE_TOP + self.page_dy
+    }
+
+    /// How much of the page shows and how tall it was built, at 100%.
+    fn page_span(&self) -> (i32, i32) {
+        let visible = self.shown().1 - PAGE_BOTTOM - self.page_top();
+        (visible, visible + self.scroll.short)
+    }
+
+    /// Scroll the page's controls so `top` 100% px of the page are above it, held to
+    /// `0..=short`. True when they moved.
+    fn scroll_to(&mut self, top: i32) -> bool {
+        let top = top.clamp(0, self.scroll.short);
+        let dy = top - self.scroll.top;
+        self.scroll.top = top;
+        for page in &mut self.pages {
+            for it in page.items.iter_mut().filter(|it| !is_button(it)) {
+                it.rect.y -= dy;
+            }
+        }
+        self.sync_view();
+        dy != 0
+    }
+
+    fn sync_view(&mut self) {
+        let view = self.view();
+        for page in &mut self.pages {
+            page.view = view;
+        }
+    }
+
+    /// Scroll the page so its focused control shows whole, as little as it takes. True when
+    /// the controls moved.
+    fn reveal_focus(&mut self) -> bool {
+        if self.scroll.short == 0 || self.tabs.focused {
+            return false;
+        }
+        let page = self.open();
+        let Some(r) = page
+            .focus()
+            .map(|i| &page.items[i])
+            .filter(|it| !is_button(it))
+            .map(|it| it.rect)
+        else {
+            return false;
+        };
+        let (top, (visible, _)) = (self.page_top() + PAGE_EDGE, self.page_span());
+        let bottom = top + visible - 2 * PAGE_EDGE;
+        let by = if r.y < top {
+            r.y - top
+        } else if r.bottom() > bottom {
+            (r.bottom() - bottom).min(r.y - top)
+        } else {
+            0
+        };
+        let to = self.scroll.top + by;
+        self.scroll_to(to)
+    }
+
+    fn move_buttons(&mut self, dx: i32, dy: i32) {
+        for page in &mut self.pages {
+            for it in page.items.iter_mut().filter(|it| is_button(it)) {
+                it.rect.x += dx;
+                it.rect.y += dy;
+            }
+        }
     }
 
     /// How many rows the tabs take at `px` across the page.
@@ -306,6 +457,7 @@ impl PropSheet {
             for page in &mut self.pages {
                 shift(page, 0, dy);
             }
+            self.sync_view();
         }
         dy
     }
@@ -319,14 +471,8 @@ impl PropSheet {
             return;
         }
         self.size = size;
-        for page in &mut self.pages {
-            for it in &mut page.items {
-                if matches!(it.id, OK | CANCEL | APPLY) {
-                    it.rect.x += dx;
-                    it.rect.y += dy;
-                }
-            }
-        }
+        self.move_buttons(dx, dy);
+        self.sync_view();
     }
 
     /// The page under `rows` rows of tabs, on the surface: the open tab's row runs into it.
@@ -340,7 +486,7 @@ impl PropSheet {
             self.strip().1 + PAGE_TOP - STRIP.1 - tabstrip::TAB_H + u.len(tabstrip::TAB_H) * rows
         };
         let x = ox + u.len(MARGIN + self.page_dx());
-        let bottom = oy + u.len(h - PAGE_BOTTOM);
+        let bottom = oy + u.len(h - self.scroll.short - PAGE_BOTTOM);
         Rect::new(x, top, ox + u.len(w - MARGIN) - x, bottom - top)
     }
 
@@ -366,7 +512,7 @@ impl PropSheet {
             let r = u.rect(r);
             Rect::new(r.x + ox, r.y + oy, r.width, r.height)
         };
-        let (ok, cancel, apply) = buttons(self.size);
+        let (ok, cancel, apply) = buttons(self.shown());
         // A shorter set fills the rightmost slots; the empty rects are unreachable by
         // `draw` and `hit`.
         let none = Rect::new(0, 0, 0, 0);
@@ -396,6 +542,7 @@ impl PropSheet {
                 (Vec::new(), self.list_layout(), title)
             }
         };
+        let bar = self.bar_in(page);
         Layout {
             strip,
             page,
@@ -405,7 +552,74 @@ impl PropSheet {
             ok,
             cancel,
             apply,
+            bar,
         }
+    }
+
+    /// The page's scrollbar down the right edge of `page`, while the client is short.
+    fn bar_in(&self, page: Rect) -> Option<Rect> {
+        (self.scroll.short > 0).then(|| {
+            let w = self.open().controls().scroll;
+            Rect::new(
+                page.right() - PAGE_EDGE - w,
+                page.y + PAGE_EDGE,
+                w,
+                page.height - 2 * PAGE_EDGE,
+            )
+        })
+    }
+
+    /// The page's scrollbar under the rows of tabs the sheet has made room for.
+    fn bar(&self) -> Option<Rect> {
+        self.bar_in(self.page(self.page_dy / tabstrip::ROW_H + 1))
+    }
+
+    /// A press on part `hit` of the page's scrollbar: an arrow scrolls a line, the track a
+    /// page, the thumb is grabbed.
+    fn page_bar_press(&mut self, hit: BarHit) {
+        self.scroll
+            .bars
+            .press(hit.part(), matches!(hit, BarHit::Thumb(_)));
+        let (visible, _) = self.page_span();
+        let by = self.scroll.drag.press(Axis::Vertical, hit);
+        let to = self.scroll.top + by.by(LINE_H as i64, visible as i64) as i32;
+        self.scroll_to(to);
+    }
+
+    /// The pointer at (`x`, `y`) while the page's thumb is held: the page follows it. `None`
+    /// unless the thumb is held, else whether the page moved.
+    fn page_bar_drag(&mut self, x: i32, y: i32) -> Option<bool> {
+        let parts = self.bar_parts(self.bar()?);
+        let (visible, total) = self.page_span();
+        let top = self.scroll.drag.pos(
+            Axis::Vertical,
+            &parts,
+            (x, y),
+            visible as usize,
+            total as usize,
+        )?;
+        Some(self.scroll_to(top as i32))
+    }
+
+    /// The page's scrollbar's parts, laid out in `bar`.
+    fn bar_parts(&self, bar: Rect) -> ScrollParts {
+        let (visible, total) = self.page_span();
+        let thumb_min = self.open().controls().thumb_min;
+        scrollbar_parts(
+            bar,
+            1,
+            self.scroll.top as usize,
+            visible as usize,
+            total as usize,
+            false,
+            thumb_min,
+        )
+    }
+
+    /// The page's inside on the surface while it scrolls, for a host that draws its own
+    /// controls on the page: they clip to it. None while the sheet is whole.
+    pub fn page_clip(&self, text: &TextRenderer, px: u32) -> Option<Rect> {
+        (self.scroll.short > 0).then(|| self.layout(text, px).page.inset(PAGE_EDGE))
     }
 
     /// The page list's rects in list mode, which need no text; its scrollbar has the
@@ -415,7 +629,7 @@ impl PropSheet {
             return None;
         };
         let (ox, oy) = self.origin;
-        let h = self.size.1 - STRIP.1 - PAGE_BOTTOM;
+        let h = self.shown().1 - STRIP.1 - PAGE_BOTTOM;
         let r = self
             .units()
             .rect(Rect::new(MARGIN, STRIP.1, pagelist::WIDTH, h));
@@ -470,6 +684,7 @@ impl PropSheet {
         let r = nav_key(&mut self.tabs, &mut self.pages, key, ctrl_tab, list);
         if r == StripKey::Turned {
             self.reveal_open();
+            self.scroll_to(0);
         }
         r
     }
@@ -479,6 +694,7 @@ impl PropSheet {
         let r = nav_click(&mut self.tabs, &mut self.pages, i, list);
         if r == StripKey::Turned {
             self.reveal_open();
+            self.scroll_to(0);
         }
         r
     }
@@ -495,11 +711,20 @@ impl PropSheet {
         match self.strip_key(&key, ctrl_tab) {
             StripKey::Pass => {}
             StripKey::None => return Event::None,
-            StripKey::Moved | StripKey::Turned => return Event::Redraw,
+            StripKey::Moved | StripKey::Turned => {
+                self.reveal_focus();
+                return Event::Redraw;
+            }
         }
         let i = self.tabs.open;
         let ev = self.pages[i].key(key);
-        self.event(i, ev)
+        match self.event(i, ev) {
+            Event::None if self.reveal_focus() => Event::Redraw,
+            ev => {
+                self.reveal_focus();
+                ev
+            }
+        }
     }
 
     /// [`Form::shove`] on the open page; `None` while the strip has the focus.
@@ -536,6 +761,9 @@ impl PropSheet {
         if let Some(i) = tabstrip::hit(&l.tabs, x, y) {
             return Some(Hit::Tab(i));
         }
+        if let Some(bar) = l.bar.filter(|b| b.contains(x, y)) {
+            return Some(Hit::PageBar(bar_hit(&self.bar_parts(bar), x, y, false)));
+        }
         self.open().hit(x, y, text, px).map(Hit::Control)
     }
 
@@ -549,6 +777,10 @@ impl PropSheet {
             }
             Some(Hit::ListBar(b)) => {
                 self.on_list(|list, lay| list.bar_press(b, lay));
+                return Event::Redraw;
+            }
+            Some(Hit::PageBar(b)) => {
+                self.page_bar_press(b);
                 return Event::Redraw;
             }
             Some(Hit::List) => return Event::None,
@@ -567,7 +799,18 @@ impl PropSheet {
             Some(Hit::ListBar(b)) => Some(b),
             _ => None,
         };
-        let lit = self.on_list(|list, _| list.bar_hover(bar));
+        let page_bar = match hit {
+            Some(Hit::PageBar(b)) => b.part(),
+            _ => None,
+        };
+        let lit = self.on_list(|list, _| list.bar_hover(bar)) | self.scroll.bars.motion(page_bar);
+        if let Some(moved) = self.page_bar_drag(x, y) {
+            return if moved || lit {
+                Event::Redraw
+            } else {
+                Event::None
+            };
+        }
         if let Some(moved) = self.on_list(|list, lay| list.bar_drag(x, y, lay)) {
             return if moved || lit {
                 Event::Redraw
@@ -595,13 +838,28 @@ impl PropSheet {
             let moved = self.on_list(|list, lay| list.scroll(rows * pagelist::ROW_H, lay));
             return if moved { Event::Redraw } else { Event::None };
         }
+        if let Some(Hit::PageBar(_)) = hit {
+            return self.wheel_page(rows);
+        }
         let i = self.tabs.open;
-        let ev = self.pages[i].wheel(control(hit), rows);
-        self.event(i, ev)
+        match self.pages[i].wheel(control(hit), rows) {
+            form::Event::None if !matches!(hit, Some(Hit::Tab(_))) => self.wheel_page(rows),
+            ev => self.event(i, ev),
+        }
+    }
+
+    /// The wheel scrolls a page that shows in part a line a row.
+    fn wheel_page(&mut self, rows: i32) -> Event {
+        let to = self.scroll.top + rows * LINE_H;
+        if self.scroll_to(to) {
+            Event::Redraw
+        } else {
+            Event::None
+        }
     }
 
     pub fn leave(&mut self) -> Event {
-        let bar = self.on_list(|list, _| list.bar_leave());
+        let bar = self.on_list(|list, _| list.bar_leave()) | self.scroll.bars.leave();
         let i = self.tabs.open;
         let lit = (self.tabs.hover(None) && self.pages[i].styled()) || bar;
         let ev = self.pages[i].leave();
@@ -616,6 +874,10 @@ impl PropSheet {
             Nav::List(list) => list.bar_release(),
             Nav::Tabs => false,
         };
+        let held = self.scroll.drag.release();
+        let lit = self.scroll.bars.lit();
+        self.scroll.bars.release();
+        let bar = bar || held || lit != self.scroll.bars.lit();
         let i = self.tabs.open;
         let ev = self.pages[i].release();
         match self.event(i, ev) {
@@ -887,6 +1149,20 @@ pub fn draw(
         _ => tabstrip::draw(c, nav_text, p, &sheet.tabs, &l.tabs, l.page, cues, px),
     }
     form::draw(c, text, &p.on_page(page), sheet.open(), cues, px);
+    if let Some(bar) = l.bar {
+        let (visible, total) = sheet.page_span();
+        let top = sheet.scroll.top as usize;
+        let lit = sheet.scroll.bars.lit();
+        draw_scrollbar(
+            c,
+            p,
+            bar.scaled(s),
+            top,
+            visible as usize,
+            total as usize,
+            lit,
+        );
+    }
 }
 
 pub fn draw_popups(c: &mut Canvas, text: &TextRenderer, p: &Paint, sheet: &PropSheet, px: u32) {
@@ -2254,5 +2530,102 @@ mod tests {
         assert_eq!(list.rows[1].y - list.rows[0].y, u.len(17));
         assert_eq!(list.frame.x, u.len(MARGIN));
         assert_eq!(l.page.x, u.len(pagelist::ADVANCE + MARGIN));
+    }
+
+    /// A 398x424 sheet shown 300 tall at 200%: the buttons keep to the client's bottom, the page
+    /// ends above them with a scrollbar, a control below the page's end neither draws nor takes
+    /// the pointer there, and the wheel or Tab onto it scrolls it into view.
+    #[test]
+    fn a_short_client_keeps_its_buttons_and_scrolls_the_page() {
+        let theme = Theme::default().with_form_text(200);
+        let (u, px) = (theme.text, theme.fonts.size_px);
+        let text = TextRenderer::load(&FontConfig::default());
+        let p = theme.paint();
+        let page = Form::new(vec![
+            Item::check("top", 20, 50, "Top"),
+            Item::check("low", 20, 350, "Low"),
+        ]);
+        let mut s = PropSheet::new(&["General"], vec![page], (398, 424));
+        s.drawn_with(&p);
+        assert!(s.fit_height(300));
+        assert!(!s.fit_height(300), "idempotent");
+        assert_eq!(
+            s.size,
+            (398, 424),
+            "the pages keep the size they were built for"
+        );
+        assert_eq!(s.client(), (u.len(398), u.len(300)));
+        let l = s.layout(&text, px);
+        assert_eq!(l.ok.bottom(), u.len(300 - BUTTON_BOTTOM));
+        assert_eq!(l.page.bottom(), u.len(300 - PAGE_BOTTOM));
+        let bar = l.bar.expect("a page that shows in part has a scrollbar");
+        assert_eq!(bar.right(), l.page.right() - PAGE_EDGE);
+        let low = s.open().rect("low").unwrap();
+        assert!(low.y > l.page.bottom(), "Low starts below the page's end");
+        assert!(
+            s.hit(low.x + 4, low.y + low.height / 2, &text, px)
+                .is_none(),
+            "Low takes no pointer over the buttons' row"
+        );
+        let mut c = Canvas::new(u.len(398) as u32, u.len(300) as u32);
+        draw(&mut c, &text, &p, &s, false, px);
+
+        assert_eq!(s.wheel(None, 100), Event::Redraw);
+        assert_eq!(
+            s.page_offset(),
+            (0, -124),
+            "scrolled through all 124 px cut"
+        );
+        let low = s.open().rect("low").unwrap();
+        assert!(
+            low.y >= l.page.y && low.bottom() <= l.page.bottom(),
+            "{low:?} shows"
+        );
+        let hit = s.hit(low.x + 4, low.y + low.height / 2, &text, px);
+        assert!(
+            matches!(hit, Some(Hit::Control(_))),
+            "Low takes the pointer"
+        );
+        assert_eq!(s.open().rect(OK).unwrap(), l.ok, "the buttons stay put");
+
+        assert_eq!(s.wheel(None, -100), Event::Redraw);
+        s.open_mut().focus_id("top");
+        s.key(form::Key::Tab { back: false }, None);
+        assert_eq!(s.open().focus().map(|i| s.open().items[i].id), Some("low"));
+        let low = s.open().rect("low").unwrap();
+        assert!(
+            low.bottom() <= l.page.bottom(),
+            "Tab onto Low brings it into view"
+        );
+
+        assert!(s.fit_height(424));
+        assert_eq!(s.page_offset(), (0, 0), "a whole sheet does not scroll");
+        assert_eq!(s.layout(&text, px).bar, None);
+    }
+
+    /// A press on the page's scrollbar arrow scrolls a line; its thumb drags the page.
+    #[test]
+    fn the_page_scrollbar_scrolls_the_page() {
+        let text = TextRenderer::load(&FontConfig::default());
+        let px = Theme::default().fonts.size_px;
+        let mut s = sheet(&["General"], (398, 424));
+        s.drawn_with(&Theme::default().paint());
+        s.fit_height(300);
+        let bar = s.layout(&text, px).bar.unwrap();
+        let down = s.hit(bar.x + 2, bar.bottom() - 3, &text, px);
+        assert_eq!(down, Some(Hit::PageBar(BarHit::Forward)));
+        assert_eq!(s.click(down), Event::Redraw);
+        assert_eq!(s.page_offset().1, -LINE_H);
+        s.release();
+        let parts = s.bar_parts(bar);
+        let grab = s.hit(bar.x + 2, parts.thumb.unwrap().y + 2, &text, px);
+        assert!(
+            matches!(grab, Some(Hit::PageBar(BarHit::Thumb(_)))),
+            "{grab:?}"
+        );
+        s.click(grab);
+        assert_eq!(s.motion(bar.x + 2, bar.bottom(), None), Event::Redraw);
+        assert_eq!(s.page_offset().1, -124, "dragged to the end");
+        s.release();
     }
 }
