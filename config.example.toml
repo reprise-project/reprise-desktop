@@ -358,10 +358,11 @@ suspend_after = 0            # run [power] standby
 # text_size = 100            # percent, 100 to 200 in steps of 25: the taskbar, Start menu,
 #                            # menus, captions and tooltips, the heights that hold them,
 #                            # dialogs, settings pages and program forms (they grow with the
-#                            # text; check boxes, bevels and icons keep their size), Notepad's
-#                            # text, and GTK's and Qt's text (text-scaling-factor, the qt6ct
-#                            # font). Desktop icons, the file dialog, Open With and program
-#                            # lists keep their size.
+#                            # text; check boxes, bevels and icons keep their size), the file
+#                            # dialog, Open With, Log Off and Turn Off, Explorer's and Notepad's
+#                            # windows, Notepad's text, and GTK's and Qt's text
+#                            # (text-scaling-factor, the qt6ct font). Desktop icons and other
+#                            # programs' lists and bars keep their size.
 #                            # Open windows grow when it changes; a sheet taller than the
 #                            # screen scrolls its page.
 # color_filter = "none"      # the whole screen through a filter: "grayscale", "invert", or a

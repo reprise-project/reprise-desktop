@@ -652,7 +652,7 @@ impl Explorer {
     fn address_layout(&self, ctx: &Ctx) -> Option<addressbar::Layout> {
         let r = self.layout(ctx).address?;
         let px = ctx.theme.fonts.size_px;
-        let cm = ctx.theme.look.controls();
+        let cm = ctx.theme.controls();
         Some(addressbar::layout(&self.address, &ctx.text, px, r, &cm))
     }
 
@@ -738,7 +738,7 @@ impl Explorer {
         if !bl.body.contains(x, y) {
             return None;
         }
-        let tl = treeview::layout(&self.tree, &ctx.text, px, frame, &ctx.theme.look.controls());
+        let tl = treeview::layout(&self.tree, &ctx.text, px, frame, &ctx.theme.controls());
         let treeview::Hit::Row(i) = self.tree.hit(&tl, x, y) else {
             return None;
         };

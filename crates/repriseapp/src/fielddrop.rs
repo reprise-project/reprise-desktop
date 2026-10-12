@@ -471,6 +471,7 @@ mod tests {
                 mode: DlgMode::Open,
                 multiple: false,
             },
+            reprisekit::theme::TextUnits::ONE,
         );
         dlg.set_file_name("old.txt");
         let r = Rect::new(0, 0, CLIENT.0, CLIENT.1);

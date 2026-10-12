@@ -211,13 +211,13 @@ impl Queue {
             }],
             grip: true,
         };
-        let h = statusbar::height(&ctx.theme.look);
+        let h = statusbar::height(&ctx.theme.controls());
         (bar, Rect::new(0, ctx.size.1 - h, ctx.size.0, h))
     }
 
     fn list_rect(&self, ctx: &Ctx) -> Rect {
         let top = menubar::BAR_H + 1;
-        let h = statusbar::height(&ctx.theme.look);
+        let h = statusbar::height(&ctx.theme.controls());
         Rect::new(0, top, ctx.size.0, (ctx.size.1 - top - h).max(1))
     }
 
@@ -420,7 +420,7 @@ impl Queue {
         let lay = self.list.layout(r, ctx);
         let row = self.list.view.access(&lay, tree, ROOT, "documents");
         let (sb, sr) = self.status_bar(ctx);
-        statusbar::access(&sb, sr, tree, ROOT);
+        statusbar::access(&sb, sr, ctx.theme.text, tree, ROOT);
         let popup = self.popup.as_ref().map(|p| p.access(tree, ROOT));
         tree.set_focus(popup.or(menus).unwrap_or(row));
     }

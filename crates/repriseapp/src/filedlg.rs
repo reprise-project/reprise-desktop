@@ -22,7 +22,7 @@ use reprisekit::controls::shellview::Entry;
 use reprisekit::icontheme::IconCache;
 use reprisekit::pointer::DoubleClick;
 use reprisekit::raster::Canvas;
-use reprisekit::theme::Metrics;
+use reprisekit::theme::{Metrics, TextUnits};
 
 fn dialog_places() -> Vec<reprisefs::places::DialogPlace> {
     reprisefs::places::dialog_places(repriseconf::recent_files())
@@ -193,9 +193,13 @@ pub struct Host {
 }
 
 impl Host {
-    pub fn open(&mut self, dir: &Path, fields: Fields) -> FileDlg {
+    /// The dialog on `dir`, laid out for text grown by `u` ([`crate::Ctx::forms`]'s): the host
+    /// draws it with that theme and sizes its window from [`FileDlg::client`].
+    pub fn open(&mut self, dir: &Path, fields: Fields, u: TextUnits) -> FileDlg {
         self.folder = Some(self.folders.id(dir));
-        self.icons.dialog(fields)
+        let mut dlg = self.icons.dialog(fields);
+        dlg.set_text(u);
+        dlg
     }
 
     pub fn event(

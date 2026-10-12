@@ -25,7 +25,7 @@ use reprisekit::look::Paint;
 use reprisekit::raster::{Canvas, Rect};
 use reprisekit::text::TextRenderer;
 use reprisekit::textedit::keysym;
-use reprisekit::theme::{FontConfig, Theme};
+use reprisekit::theme::{FontConfig, TextUnits, Theme};
 
 use acct::{Op, User};
 
@@ -377,7 +377,7 @@ impl AccountsApp {
                 Reply::redraw_all()
             }
             props::Outcome::Browse => {
-                self.open_browse();
+                self.open_browse(ctx.forms().text);
                 Reply::redraw_all()
             }
             props::Outcome::Close => {
@@ -459,7 +459,7 @@ impl AccountsApp {
         }
     }
 
-    fn open_browse(&mut self) {
+    fn open_browse(&mut self, u: TextUnits) {
         let dir = reprisefs::places::user_dir("PICTURES", "Pictures")
             .filter(|p| p.is_dir())
             .or_else(|| std::env::var_os("HOME").map(PathBuf::from))
@@ -474,7 +474,7 @@ impl AccountsApp {
                 "All Files (*.*)".into(),
             ],
         };
-        self.browse = Some(self.browse_host.open(&dir, fields));
+        self.browse = Some(self.browse_host.open(&dir, fields, u));
     }
 
     fn browse_event(&mut self, ev: Event, ctx: &mut Ctx) -> Reply {
@@ -492,7 +492,7 @@ impl AccountsApp {
             d,
             &ev,
             &ctx.text,
-            ctx.theme.fonts.size_px,
+            ctx.forms().fonts.size_px,
             ctx.size,
             &ctx.theme.metrics,
         ) {
@@ -662,7 +662,7 @@ impl App for AccountsApp {
             BROWSE => {
                 if let Some(d) = &self.browse {
                     let r = Rect::new(0, 0, d.client().0, d.client().1);
-                    d.access(tree, r, &ctx.text, ctx.theme.fonts.size_px);
+                    d.access(tree, r, &ctx.text, px);
                 }
             }
             REMOVE => {
@@ -721,12 +721,9 @@ impl App for AccountsApp {
                     d.draw(
                         c,
                         &ctx.text,
-                        &Paint {
-                            s: 1,
-                            ..ctx.theme.paint()
-                        },
+                        &paint,
                         Rect::new(0, 0, d.client().0, d.client().1),
-                        ctx.theme.fonts.size_px,
+                        px,
                     );
                 }
             }
