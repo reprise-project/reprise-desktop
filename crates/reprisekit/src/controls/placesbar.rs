@@ -68,7 +68,7 @@ pub fn hit(rects: &[Rect], x: i32, y: i32) -> Option<usize> {
 /// selected tile.
 pub fn draw(c: &mut Canvas, text: &TextRenderer, p: &Paint, pb: &PlacesBar, r: Rect, px: u32) {
     let Paint { cs, s, .. } = *p;
-    let pm = p.look.controls().places;
+    let pm = p.look.controls().grown(p.text).places;
     let sr = r.scaled(s);
     crate::look::widgets::placesbar::draw_panel(c, p, sr);
     let content_x = sr.x + BORDER * s;

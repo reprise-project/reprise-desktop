@@ -2250,7 +2250,8 @@ impl Form {
                     Part::Tree(tv.hit(&lay, x, y))
                 }
                 Control::Calendar(cal) => {
-                    match calendar::hit(cal, &calendar::layout(self.at(it)), x, y) {
+                    let lay = calendar::layout(self.at(it), &self.rendered.controls.get());
+                    match calendar::hit(cal, &lay, x, y) {
                         Some(h) => Part::Calendar(h),
                         None => continue,
                     }
@@ -2954,9 +2955,7 @@ fn place(it: &Item, cm: &ControlMetrics, u: TextUnits, origin: (i32, i32)) -> Re
         Control::Picture { .. }
         | Control::Monitor(_)
         | Control::Spectrum
-        | Control::Sample { .. }
-        | Control::Clock(_)
-        | Control::Calendar(_) => u.at(it.rect),
+        | Control::Sample { .. } => u.at(it.rect),
         Control::Separator => Rect {
             height: it.rect.height,
             ..u.rect(it.rect)
@@ -3252,8 +3251,7 @@ pub fn draw(c: &mut Canvas, text: &TextRenderer, p: &Paint, form: &Form, cues: b
                 let bars = form
                     .bar_lit(i)
                     .map(|(hit, how)| ((Axis::Vertical, hit), how));
-                // A tree's rows keep their 100% pitch, so its text does too.
-                treeview::draw(c, text, p, tv, &lay, bars, grow.base_px(px));
+                treeview::draw(c, text, p, tv, &lay, bars, px);
             }
             Control::UpDown(u) => {
                 let lay = updown::layout_for(u, placed, &cm, grow);
@@ -3370,8 +3368,8 @@ pub fn draw(c: &mut Canvas, text: &TextRenderer, p: &Paint, form: &Form, cues: b
             }
             Control::Color(b) => colorbutton::draw(c, p, placed, b),
             Control::Calendar(cal) => {
-                let lay = calendar::layout(placed);
-                calendar::draw(c, text, p, cal, &lay, cue, grow.base_px(px));
+                let lay = calendar::layout(placed, &cm);
+                calendar::draw(c, text, p, cal, &lay, cue, px);
             }
             Control::Clock(face) => clockface::draw(c, p, placed, *face),
             Control::Time(tf) => {
@@ -3615,7 +3613,6 @@ impl Form {
                 }
                 Control::Tree(tv) => {
                     let lay = treeview::layout_without_text(tv, r, &self.rendered.controls.get());
-                    let px = self.units().base_px(px);
                     let target = treeview::access(tv, &lay, text, px, tree, up, key);
                     (target, Some(Tree::id_of(up, key)))
                 }
@@ -3640,8 +3637,8 @@ impl Form {
                     (id, Some(id))
                 }
                 Control::Calendar(cal) => {
-                    let px = self.units().base_px(px);
-                    let id = calendar::access(cal, &calendar::layout(r), text, px, tree, up, key);
+                    let lay = calendar::layout(r, &self.rendered.controls.get());
+                    let id = calendar::access(cal, &lay, text, px, tree, up, key);
                     (id, Some(id))
                 }
                 Control::Time(tf) => {
@@ -6747,6 +6744,64 @@ mod tests {
                 "{pct}%: the picked row is drawn a grown row tall"
             );
         }
+    }
+
+    /// A grown form grows its calendar, clock and tree with the text: their rects grow from the
+    /// form's origin, a day is hit at its grown cell, and the tree's rows take the grown pitch.
+    #[test]
+    fn a_grown_form_grows_its_calendar_clock_and_tree() {
+        let text = TextRenderer::load(&FontConfig::default());
+        let cs = &Theme::default().colors;
+        let tv = TreeView::new(
+            vec![
+                treeview::Node::new("One", false),
+                treeview::Node::new("Two", false),
+            ],
+            treeview::Style::Plain,
+        );
+        let mut f = Form::new(vec![
+            Item::new(
+                "cal",
+                Rect::new(27, 87, calendar::W, calendar::H),
+                Control::Calendar(Calendar::new(2026, 9, Some(24), 0)),
+            ),
+            Item::new(
+                "clock",
+                Rect::new(225, 68, 132, 100),
+                Control::Clock(clockface::Face::default()),
+            ),
+            Item::new("tree", Rect::new(10, 230, 200, 60), Control::Tree(tv)),
+        ]);
+        let u = TextUnits::new(22, 11);
+        let p = Paint {
+            text: u,
+            ..classic_paint(cs, 1)
+        };
+        let mut c = Canvas::new(800, 700);
+        draw(&mut c, &text, &p, &f, false, 22);
+        for id in ["cal", "clock", "tree"] {
+            let design = f.item(id).unwrap().rect;
+            assert_eq!(f.rect(id), Some(u.rect(design)), "{id}");
+        }
+        // The 1st of September 2026: row 0, column 2 of the grown grid.
+        let cal = f.rect("cal").unwrap();
+        let lay = calendar::layout(cal, &f.controls());
+        let first = lay.cell(2);
+        let hit = f.hit(first.x + 3, first.y + 3, &text, 22);
+        assert_eq!(f.click(hit), Event::Changed("cal"));
+        let tree = f.rect("tree").unwrap();
+        let row_h = u.len(18);
+        let hit = f.hit(tree.x + 40, tree.y + row_h + 2, &text, 22);
+        assert!(
+            matches!(
+                hit,
+                Some(Hit {
+                    part: Part::Tree(treeview::Hit::Row(1)),
+                    ..
+                })
+            ),
+            "the second row a grown row down, got {hit:?}"
+        );
     }
 
     /// A form drawn at an origin keeps that offset as it is and grows only its own layout from

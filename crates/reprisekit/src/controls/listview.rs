@@ -31,7 +31,7 @@ use crate::raster::{Canvas, Rect};
 use crate::selection::{Mods, Selection, step_index};
 use crate::text::{Align, TextRenderer};
 use crate::textedit::{Caret, TextEdit};
-use crate::theme::{Color, ColorScheme};
+use crate::theme::{Color, ColorScheme, TextUnits};
 use accesskit::{Node, NodeId, Role};
 use std::borrow::{Borrow, Cow};
 
@@ -256,6 +256,20 @@ pub struct Layout {
     pub thumb_min: i32,
     /// The look's check box side.
     pub check: i32,
+    /// How the rows and group headers grow with the text ([`ControlMetrics::text`]).
+    pub text: TextUnits,
+}
+
+impl Layout {
+    /// A row's height at the text size.
+    pub fn row_h(&self) -> i32 {
+        self.text.len(ROW_H)
+    }
+
+    /// A group header's slot at the text size.
+    pub fn group_h(&self) -> i32 {
+        self.text.len(GROUP_H)
+    }
 }
 
 pub fn layout<R: Rows, C: AsRef<[Column]>, S: Borrow<Selection>>(
@@ -267,10 +281,11 @@ pub fn layout<R: Rows, C: AsRef<[Column]>, S: Borrow<Selection>>(
     let header = Rect::new(inner.x, inner.y, inner.width, cm.list_header);
     let (full_w, full_h) = (inner.width, inner.height - cm.list_header);
     let total_w: i32 = lv.columns.as_ref().iter().map(|c| c.width).sum();
+    let u = cm.text;
     let content_h: i32 = if lv.groups.is_empty() {
-        lv.rows.len() as i32 * ROW_H
+        lv.rows.len() as i32 * u.len(ROW_H)
     } else {
-        lv.slots_from(0).map(slot_h).sum()
+        lv.slots_from(0).map(|sl| slot_h(sl, u)).sum()
     };
     // Reserving one bar can make the other necessary and neither is given back: two rounds converge.
     let (mut vbar, mut hbar) = (false, false);
@@ -278,7 +293,7 @@ pub fn layout<R: Rows, C: AsRef<[Column]>, S: Borrow<Selection>>(
         let w = full_w - if vbar { cm.scroll } else { 0 };
         let h = full_h - if hbar { cm.scroll } else { 0 };
         hbar |= total_w > w;
-        vbar |= content_h > h.max(ROW_H);
+        vbar |= content_h > h.max(u.len(ROW_H));
     }
     let body = Rect::new(
         inner.x,
@@ -286,7 +301,7 @@ pub fn layout<R: Rows, C: AsRef<[Column]>, S: Borrow<Selection>>(
         full_w - if vbar { cm.scroll } else { 0 },
         full_h - if hbar { cm.scroll } else { 0 },
     );
-    let rows = lv.visible(body.height);
+    let rows = lv.visible(body.height, u);
     Layout {
         frame: r,
         header,
@@ -297,24 +312,26 @@ pub fn layout<R: Rows, C: AsRef<[Column]>, S: Borrow<Selection>>(
         total_w,
         thumb_min: cm.thumb_min,
         check: cm.check,
+        text: u,
     }
 }
 
+/// A row's check box, centred down a row taller than 17 px.
 fn check_box(lay: &Layout, at: i32) -> Rect {
     Rect::new(
         lay.frame.x + CHECK_X,
-        lay.body.y + at + CHECK_Y,
+        lay.body.y + at + CHECK_Y + (lay.row_h() - ROW_H) / 2,
         lay.check,
         lay.check,
     )
 }
 
-/// How tall a slot is: [`GROUP_H`] for a header, [`ROW_H`] for a row.
-fn slot_h(slot: Slot) -> i32 {
-    match slot {
+/// How tall a slot is at the text size `u`: [`GROUP_H`] for a header, [`ROW_H`] for a row.
+fn slot_h(slot: Slot, u: TextUnits) -> i32 {
+    u.len(match slot {
         Slot::Header(_) => GROUP_H,
         Slot::Row(_) => ROW_H,
-    }
+    })
 }
 
 impl<R: Rows, C: AsRef<[Column]>, S: Borrow<Selection>> ListView<R, C, S> {
@@ -335,22 +352,22 @@ impl<R: Rows, C: AsRef<[Column]>, S: Borrow<Selection>> ListView<R, C, S> {
     }
 
     /// The same slots with their y offset (px) from the first one's top.
-    fn slots_at(&self, from: usize) -> impl Iterator<Item = (Slot, i32)> + '_ {
+    fn slots_at(&self, from: usize, u: TextUnits) -> impl Iterator<Item = (Slot, i32)> + '_ {
         let mut y = 0;
         self.slots_from(from).map(move |s| {
             let at = y;
-            y += slot_h(s);
+            y += slot_h(s, u);
             (s, at)
         })
     }
 
     /// How many slot positions `height` px hold from `top`: the slots, then empty [`ROW_H`] positions
     /// once they run out.
-    fn visible(&self, height: i32) -> usize {
+    fn visible(&self, height: i32, u: TextUnits) -> usize {
         let mut slots = self.slots_from(self.top);
         let (mut y, mut n) = (0, 0);
         loop {
-            let h = slots.next().map_or(ROW_H, slot_h);
+            let h = slot_h(slots.next().unwrap_or(Slot::Row(0)), u);
             if y + h > height {
                 return n.max(1);
             }
@@ -376,7 +393,8 @@ impl<R: Rows, C: AsRef<[Column]>, S: Borrow<Selection>> ListView<R, C, S> {
 
     /// Where `row` sits in the body (px, negative above its top). A group starting exactly at `top`
     /// pushes its first row down by its header.
-    fn slot_y(&self, row: usize) -> i32 {
+    fn slot_y(&self, row: usize, lay: &Layout) -> i32 {
+        let (row_h, group_h) = (lay.row_h(), lay.group_h());
         let heads = |lo: usize, hi: usize| {
             self.groups
                 .iter()
@@ -384,9 +402,9 @@ impl<R: Rows, C: AsRef<[Column]>, S: Borrow<Selection>> ListView<R, C, S> {
                 .count() as i32
         };
         if row >= self.top {
-            (row - self.top) as i32 * ROW_H + heads(self.top, row) * GROUP_H
+            (row - self.top) as i32 * row_h + heads(self.top, row) * group_h
         } else {
-            -((self.top - row) as i32 * ROW_H + heads(row + 1, self.top) * GROUP_H)
+            -((self.top - row) as i32 * row_h + heads(row + 1, self.top) * group_h)
         }
     }
 
@@ -397,7 +415,10 @@ impl<R: Rows, C: AsRef<[Column]>, S: Borrow<Selection>> ListView<R, C, S> {
         }
         (0..self.rows.len())
             .rev()
-            .take_while(|&r| self.slots_from(r).map(slot_h).sum::<i32>() <= lay.body.height)
+            .take_while(|&r| {
+                let h: i32 = self.slots_from(r).map(|sl| slot_h(sl, lay.text)).sum();
+                h <= lay.body.height
+            })
             .last()
             .unwrap_or(self.rows.len().saturating_sub(1))
     }
@@ -419,7 +440,7 @@ impl<R: Rows, C: AsRef<[Column]>, S: Borrow<Selection>> ListView<R, C, S> {
             while g > 0 && self.groups[g - 1].first >= t {
                 g -= 1;
             }
-            let need = ROW_H + if head { GROUP_H } else { 0 };
+            let need = lay.row_h() + if head { lay.group_h() } else { 0 };
             if t < i && used + need > lay.body.height {
                 t += 1;
                 break;
@@ -475,8 +496,8 @@ impl<R: Rows, C: AsRef<[Column]>, S: Borrow<Selection>> ListView<R, C, S> {
         }
         if lay.body.contains(x, y) {
             let dy = y - lay.body.y;
-            for (slot, at) in self.slots_at(self.top).take(lay.rows) {
-                if dy >= at + slot_h(slot) {
+            for (slot, at) in self.slots_at(self.top, lay.text).take(lay.rows) {
+                if dy >= at + slot_h(slot, lay.text) {
                     continue;
                 }
                 let Slot::Row(i) = slot else {
@@ -495,7 +516,7 @@ impl<R: Rows, C: AsRef<[Column]>, S: Borrow<Selection>> ListView<R, C, S> {
     /// Row `row`'s name as `draw` shows it, at 1x: the ink cut by the Name column, 2 px of highlight
     /// either side, never past the column's right edge.
     pub fn name_rect(&self, lay: &Layout, row: usize, text: &TextRenderer, px: u32) -> Rect {
-        let y = lay.body.y + self.slot_y(row);
+        let y = lay.body.y + self.slot_y(row, lay);
         let cx = lay.body.x - self.left_in(lay);
         let cw = self.columns.as_ref().first().map_or(0, |c| c.width);
         let tx = match &self.checks {
@@ -505,7 +526,7 @@ impl<R: Rows, C: AsRef<[Column]>, S: Borrow<Selection>> ListView<R, C, S> {
         let name = self.rows.cell(row, 0);
         let shown = text.ellipsize(&name, (cx + cw - tx - 2).max(0), false, px);
         let right = (tx + text.measure(&shown, false, px) + 2).min(cx + cw);
-        Rect::new(tx - 2, y, (right - tx + 2).max(0), ROW_H)
+        Rect::new(tx - 2, y, (right - tx + 2).max(0), lay.row_h())
     }
 
     /// The rename box over `row`'s name cell, border included, sized to its text.
@@ -514,10 +535,10 @@ impl<R: Rows, C: AsRef<[Column]>, S: Borrow<Selection>> ListView<R, C, S> {
             Some((i, ed)) if *i == row => ed.text.as_str(),
             _ => &self.rows.cell(row, 0),
         };
-        let y = lay.body.y + self.slot_y(row);
+        let y = lay.body.y + self.slot_y(row, lay);
         let tx = lay.body.x - self.left_in(lay) + NAME_X;
         let w = text.measure(shown, false, px);
-        Rect::new(tx - EDIT_BACK, y, w + EDIT_PAD_L + EDIT_PAD_R, EDIT_H)
+        Rect::new(tx - EDIT_BACK, y, w + EDIT_PAD_L + EDIT_PAD_R, lay.row_h())
     }
 
     /// The top row a thumb grabbed `grab` px below its top scrolls to when the pointer is at `y`, at
@@ -589,7 +610,7 @@ impl<R: Rows, C: AsRef<[Column]>, S: Borrow<Selection>> ListView<R, C, S> {
 
     /// Row `row`'s check box in control space: [`CHECK_X`] from the frame edge, [`CHECK_Y`] below the row top.
     pub fn check_rect(&self, lay: &Layout, row: usize) -> Rect {
-        check_box(lay, self.slot_y(row))
+        check_box(lay, self.slot_y(row, lay))
     }
 
     /// Flip row `row`'s check state; `false` with no check column or `row` out of range.
@@ -743,15 +764,20 @@ fn draw_rows<R: Rows, C: AsRef<[Column]>, S: Borrow<Selection>>(
             cx += col.width * s;
         }
     }
-    let row_h = ROW_H * s;
-    for (slot, at) in lv.slots_at(lv.top).take(lay.rows) {
+    let row_h = lay.row_h() * s;
+    let title_h = lay.text.len(GROUP_TITLE_H);
+    let rule = GroupRule {
+        y: title_h - 1,
+        ..list_rule(cs)
+    };
+    for (slot, at) in lv.slots_at(lv.top, lay.text).take(lay.rows) {
         let y = body.y + at * s;
         let i = match slot {
             Slot::Header(g) => {
-                let r = Rect::new(body.x, y, body.width, GROUP_H * s);
-                let title_box = (GROUP_TEXT_DY * s, GROUP_TITLE_H * s);
+                let r = Rect::new(body.x, y, body.width, lay.group_h() * s);
+                let title_box = (GROUP_TEXT_DY * s, title_h * s);
                 let title = &lv.groups[g].title;
-                draw_group_header(c, text, cs, r, title, title_box, &list_rule(cs), px, s);
+                draw_group_header(c, text, cs, r, title, title_box, &rule, px, s);
                 continue;
             }
             Slot::Row(i) => i,
@@ -823,11 +849,13 @@ fn draw_rows<R: Rows, C: AsRef<[Column]>, S: Borrow<Selection>>(
     }
 }
 
-/// A group header's rule: `from` at the left edge fading linearly to `to` over `width` px.
+/// A group header's rule `y` px down the header: `from` at the left edge fading linearly to `to`
+/// over `width` px.
 pub(crate) struct GroupRule {
     pub from: Color,
     pub to: Color,
     pub width: i32,
+    pub y: i32,
 }
 
 pub(crate) fn list_rule(cs: &ColorScheme) -> GroupRule {
@@ -835,11 +863,12 @@ pub(crate) fn list_rule(cs: &ColorScheme) -> GroupRule {
         from: GROUP_LINE,
         to: cs.window,
         width: GROUP_LINE_W,
+        y: GROUP_RULE_Y,
     }
 }
 
 /// A group header in the already-scaled `r`: bold title [`GROUP_TEXT_X`] in from the left edge in
-/// `title_box` (top offset, height), then `rule` [`GROUP_RULE_Y`] down. Shared with the shell view's icon modes.
+/// `title_box` (top offset, height), then `rule` its `y` down. Shared with the shell view's icon modes.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn draw_group_header(
     c: &mut Canvas,
@@ -860,7 +889,7 @@ pub(crate) fn draw_group_header(
     );
     let shown = text.ellipsize(title, tr.width, true, px);
     text.draw(c, tr, &shown, true, cs.window_text, Align::Left, px);
-    let ly = r.y + GROUP_RULE_Y * s;
+    let ly = r.y + rule.y * s;
     let span = rule.width.max(1);
     // Not `Canvas::hgradient`: that spreads the ramp over the rect and rounds; this runs at a fixed rate and truncates.
     for d in (0..rule.width).take_while(|d| d * s < r.width) {
@@ -1025,13 +1054,13 @@ impl<R: Rows, C: AsRef<[Column]>, S: Borrow<Selection>> ListView<R, C, S> {
             if let Some(on) = self.checks.as_ref().and_then(|c| c.get(i)) {
                 o.set_toggled((*on).into());
             }
-            let y = lay.body.y + self.slot_y(i);
-            if y >= lay.body.y && y + ROW_H <= lay.body.bottom() {
+            let y = lay.body.y + self.slot_y(i, lay);
+            if y >= lay.body.y && y + lay.row_h() <= lay.body.bottom() {
                 o.set_bounds(access::bounds(Rect::new(
                     lay.body.x,
                     y,
                     lay.body.width,
-                    ROW_H,
+                    lay.row_h(),
                 )));
             }
             let oid = tree.push(id, i, o);
@@ -1900,6 +1929,51 @@ mod tests {
             lv.check_rect(&lay, 1),
             Rect::new(8, lay.body.y + ROW_H + 3, 13, 13)
         );
+    }
+
+    /// At 150% and 200% the header, rows and group headers grow with the text; the check box
+    /// keeps its 13 px, centred down its taller row, and a selected name's highlight fills the row.
+    #[test]
+    fn grown_text_grows_rows_and_group_headers() {
+        let text = TextRenderer::load(&FontConfig::default());
+        let cs = &Theme::default().colors;
+        for (pct, px) in [(100, 11), (150, 17), (200, 22)] {
+            let u = TextUnits::new(px, 11);
+            let cm = ControlMetrics::CLASSIC.grown(u);
+            let (row_h, group_h) = (u.len(ROW_H), u.len(GROUP_H));
+            let lv = grouped();
+            let lay = layout(&lv, Rect::new(0, 0, 400, 400), &cm);
+            assert_eq!(lay.header.height, u.len(HEADER_H), "{pct}%");
+            let at = |y: i32| lv.hit(&lay, 30, lay.body.y + y);
+            assert_eq!(at(group_h - 1), Hit::Background, "{pct}%: the header");
+            assert_eq!(at(group_h), Hit::Row(0), "{pct}%");
+            assert_eq!(at(group_h + row_h), Hit::Row(1), "{pct}%");
+            assert_eq!(at(2 * group_h + 2 * row_h), Hit::Row(2), "{pct}%");
+
+            let mut lv = view(3);
+            lv.checks = Some(vec![true; 3]);
+            lv.selection.set_only(Some(1));
+            let lay = layout(&lv, Rect::new(0, 0, 400, 200), &cm);
+            let b = lv.check_rect(&lay, 1);
+            assert_eq!(b.width, 13, "{pct}%");
+            assert_eq!(b.y, lay.body.y + row_h + 3 + (row_h - ROW_H) / 2, "{pct}%");
+            let mut c = Canvas::new(400, 200);
+            let p = Paint {
+                text: u,
+                ..classic_paint(cs, 1)
+            };
+            draw(&mut c, &text, &p, &lv, &lay, None, px);
+            assert_eq!(
+                c.get(b.x, b.y),
+                cs.button_shadow.argb(),
+                "{pct}%: the box's edge"
+            );
+            let hx = b.right() + CHECK_TEXT_GAP;
+            let top = lay.body.y + row_h;
+            assert_eq!(c.get(hx, top), cs.hilight.argb(), "{pct}%");
+            assert_eq!(c.get(hx, top + row_h - 1), cs.hilight.argb(), "{pct}%");
+            assert_ne!(c.get(hx, top + row_h), cs.hilight.argb(), "{pct}%");
+        }
     }
 
     #[test]

@@ -7,7 +7,7 @@
 
 use crate::access::{self, Tree, accesskit};
 use crate::look::Paint;
-use crate::metrics::MenuTitles;
+use crate::metrics::{ControlMetrics, MenuTitles};
 use crate::raster::{Canvas, EdgeStyle, Rect};
 use crate::style::{Part, State};
 use crate::text::split_mnemonic;
@@ -15,6 +15,11 @@ use crate::text::{Align, TextRenderer};
 use accesskit::{NodeId, Role};
 
 pub const BAR_H: i32 = 20;
+
+/// A window's own menu bar, tall, in a look with controls `cm` (grown with the text).
+pub fn bar_h(cm: &ControlMetrics) -> i32 {
+    cm.menubar.plain.bar_h
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Title {
@@ -51,7 +56,7 @@ impl Layout {
         titles: &[Title],
         m: &MenuTitles,
     ) -> Layout {
-        let bar = Rect::new(client.x, client.y, client.width, BAR_H);
+        let bar = Rect::new(client.x, client.y, client.width, m.bar_h);
         let mut x = bar.x + m.first_x;
         let frames = titles
             .iter()
@@ -221,6 +226,52 @@ mod tests {
         assert_eq!(lay.hit(file.right() + 1, 5), Some(1));
         assert_eq!(lay.hit(5, 25), None);
         assert_eq!(lay.popup_origin(0), (file.x, 19));
+    }
+
+    /// A bar laid out with controls grown to 200% text is taller by the text's growth, its title
+    /// frames with it, a pixel down as at 100%; the open title's sunken frame spans the grown
+    /// frame.
+    #[test]
+    fn a_grown_bar_and_its_titles_grow_with_the_text() {
+        let text = TextRenderer::load(&FontConfig::default());
+        let titles = [Title::new("&File"), Title::new("&Edit")];
+        let u = crate::theme::TextUnits::new(22, 11);
+        let cm = ControlMetrics::CLASSIC.grown(u);
+        assert_eq!(bar_h(&cm), 40);
+        let lay = Layout::compute(
+            &text,
+            22,
+            Rect::new(0, 0, 300, 200),
+            &titles,
+            cm.menubar.titles(false),
+        );
+        assert_eq!(lay.bar, Rect::new(0, 0, 300, 40));
+        let file = lay.frames[0];
+        assert_eq!((file.x, file.y, file.height), (2, 1, 38));
+        assert_eq!(file.width, text.measure("File", false, 22) + 14);
+        assert_eq!(lay.popup_origin(0), (2, 39));
+        let theme = Theme::default().with_form_text(200);
+        let mut c = Canvas::new(300, 40);
+        draw(
+            &mut c,
+            &text,
+            &theme.paint(),
+            &lay,
+            &titles,
+            Some(0),
+            None,
+            false,
+            false,
+            22,
+        );
+        let cs = &theme.colors;
+        assert_eq!(c.get(file.x, file.y), cs.button_shadow.argb());
+        assert_eq!(
+            c.get(file.x + 2, file.bottom() - 1),
+            cs.button_hilight.argb()
+        );
+        assert_eq!(c.get(file.x, file.bottom()), cs.button_face.argb());
+        assert_eq!(bar_h(&ControlMetrics::CLASSIC), BAR_H);
     }
 
     #[test]

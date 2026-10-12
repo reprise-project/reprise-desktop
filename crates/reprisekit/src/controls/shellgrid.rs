@@ -2,7 +2,7 @@
 
 use crate::classic::widgets::draw_focus_ring;
 use crate::controls::iconview;
-use crate::controls::listview::{GroupRule, draw_group_header};
+use crate::controls::listview::{GROUP_RULE_Y, GroupRule, draw_group_header};
 use crate::controls::shellview::{Entry, Group, Layout, Mode, ShellView, draw_rename};
 use crate::look::Paint;
 use crate::look::widgets::item;
@@ -318,6 +318,7 @@ pub(crate) fn draw_grid(
                 from: cs.gradient_active_title,
                 to: cs.window,
                 width: GROUP_LINE_W,
+                y: GROUP_RULE_Y,
             };
             draw_group_header(&mut bc, text, cs, r, &g.title, title_box, &rule, px, s);
         }

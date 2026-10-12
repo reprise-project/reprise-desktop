@@ -34,9 +34,9 @@ use reprisekit::controls::{
     aboutbox, addressbar, browsefolder, colorbutton, colorpick, combo, dlgtemplate, endsession,
     explorerbar, filedlg, filesheet, finddlg,
     form::{self, Control, Item},
-    grouplist, infotip, launcher, listbox, listview, locationprompt, mixer, msgbox, multiedit,
-    notifyhistory, osd, placesbar, regionselect, replacebox, shellview, switcher, tabstrip,
-    taskpane, taskpreview, toolbar, tooltip, updown, volumepopup, wizard,
+    grouplist, infotip, launcher, listbox, listview, locationprompt, menubar, mixer, msgbox,
+    multiedit, notifyhistory, osd, placesbar, regionselect, replacebox, shellview, switcher,
+    tabstrip, taskpane, taskpreview, toolbar, tooltip, updown, volumepopup, wizard,
 };
 use reprisekit::glass::shadow;
 use reprisekit::interface::Interface;
@@ -342,13 +342,14 @@ fn render_location_prompt(with_blue: bool) -> Canvas {
     c
 }
 
-/// A message box over a property sheet in each look, their forms laid out for 100% text and
-/// drawn at `pct`.
+/// A message box over a property sheet over a window's controls (a menu bar with its File menu
+/// open, a list view, a tree and a calendar) in each look, laid out for 100% text and drawn at
+/// `pct`.
 fn render_text_size(pct: u32) -> Canvas {
     let looks = [Interface::Classic, Interface::Blue, Interface::Glass];
     let themes: Vec<Theme> = looks
         .iter()
-        .map(|&i| interfaces::theme_for(i).with_form_text(pct))
+        .map(|&i| interfaces::theme_for(i).with_text_size(pct))
         .collect();
     let u = themes[0].text;
     let notice = msgbox::Fields {
@@ -388,9 +389,11 @@ fn render_text_size(pct: u32) -> Canvas {
     let text0 = TextRenderer::load(&themes[0].fonts);
     let (mw, mh) = u.size(msgbox::client(&notice, &text0, u.px(base_px), u));
     let col = sw.max(mw) + 10;
+    let (cw, ch) = u.size(TEXT_SIZE_CONTROLS);
+    let col = col.max(cw + 10);
     let mut c = Canvas::new(
         (themes.len() as i32 * col + 10) as u32,
-        (mh + sh + 30) as u32,
+        (mh + sh + ch + 40) as u32,
     );
     c.fill_rect(c.bounds(), Color::rgb(58, 110, 165));
     for (i, theme) in themes.iter().enumerate() {
@@ -408,7 +411,77 @@ fn render_text_size(pct: u32) -> Canvas {
         sheet_c.fill_rect(sheet_c.bounds(), theme.colors.button_face);
         propsheet::draw(&mut sheet_c, &text, &theme.paint(), &sheet, true, px);
         c.blit_canvas(x, mh + 20, &sheet_c);
+        c.blit_canvas(x, mh + sh + 30, &text_size_controls(theme, &text));
     }
+    c
+}
+
+/// The window controls' panel in `render_text_size`, 100% px.
+const TEXT_SIZE_CONTROLS: (i32, i32) = (420, 330);
+
+/// A menu bar with its File menu open over a grouped list view, a tree and a calendar, laid out
+/// with `theme`'s controls grown by its text.
+fn text_size_controls(theme: &Theme, text: &TextRenderer) -> Canvas {
+    use reprisekit::controls::calendar;
+    use reprisekit::controls::menubar::Bar;
+    let px = theme.fonts.size_px;
+    let cm = theme.controls();
+    let u = theme.text;
+    let (w, h) = u.size(TEXT_SIZE_CONTROLS);
+    let mut c = Canvas::new(w as u32, h as u32);
+    let cs = &theme.colors;
+    c.fill_rect(c.bounds(), cs.button_face);
+    let p = theme.paint();
+    let mut lv = listview::sample();
+    lv.edit = None;
+    lv.groups = vec![listview::Group {
+        title: "Documents".into(),
+        first: 2,
+    }];
+    let top = menubar::bar_h(&cm);
+    let lr = Rect::new(4, top + 4, w - 8, u.len(130));
+    listview::draw(
+        &mut c,
+        text,
+        &p,
+        &lv,
+        &listview::layout(&lv, lr, &cm),
+        None,
+        px,
+    );
+    let mut docs = Node::new("My Documents", true);
+    docs.expanded = true;
+    docs.children = vec![Node::new("Letters", false), Node::new("Photos", true)];
+    let mut tv = TreeView::new(
+        vec![docs, Node::new("Recycle Bin", false)],
+        treeview::Style::Classic,
+    );
+    tv.selected = Some(vec![0, 1]);
+    let tr = Rect::new(4, lr.bottom() + 6, u.len(190), u.len(130));
+    let tl = treeview::layout(&tv, text, px, tr, &cm);
+    treeview::draw(&mut c, text, &p, &tv, &tl, None, px);
+    let mut cal = calendar::Calendar::new(2026, 9, Some(24), 0);
+    cal.today = Some((2026, 9, 3));
+    let (gw, gh) = calendar::size(&cm);
+    let gl = calendar::layout(Rect::new(tr.right() + 8, tr.y, gw, gh), &cm);
+    calendar::draw(&mut c, text, &p, &cal, &gl, false, px);
+    let mut bar = Bar::new(vec![
+        (
+            "&File",
+            vec![
+                MenuItem::item("&New"),
+                MenuItem::item("&Open..."),
+                MenuItem::Separator,
+                MenuItem::item("E&xit"),
+            ],
+        ),
+        ("&Edit", vec![MenuItem::item("&Undo")]),
+        ("&View", vec![MenuItem::item("&Status Bar")]),
+    ]);
+    let lay = bar.layout(text, px, Rect::new(0, 0, w, h), &cm);
+    bar.open_title(0, &lay, text, theme, px, true);
+    bar.underline = true;
+    bar.draw(&mut c, text, theme, &lay);
     c
 }
 
@@ -3613,7 +3686,10 @@ fn render(theme: &Theme, with_blue: bool) -> Canvas {
         );
         let mut cal = calendar::Calendar::new(2026, 9, Some(24), 0);
         cal.today = Some((2026, 9, 3));
-        let cl = calendar::layout(Rect::new(530, 5470, calendar::W, calendar::H));
+        let cl = calendar::layout(
+            Rect::new(530, 5470, calendar::W, calendar::H),
+            &theme.controls(),
+        );
         calendar::draw(
             &mut c,
             &text,
@@ -4761,7 +4837,10 @@ fn render(theme: &Theme, with_blue: bool) -> Canvas {
         {
             let mut cal = calendar::Calendar::new(2026, 9, Some(29), 0);
             cal.enabled = enabled;
-            let lay = calendar::layout(Rect::new(X0 + i as i32 * 200, y, calendar::W, calendar::H));
+            let lay = calendar::layout(
+                Rect::new(X0 + i as i32 * 200, y, calendar::W, calendar::H),
+                &theme.controls(),
+            );
             calendar::draw(&mut c, &text, &bp, &cal, &lay, false, px);
             state_label(&mut c, lay.frame.x, y + calendar::H + 2, 100, label);
         }
@@ -6054,12 +6133,10 @@ fn render_glass_popup_parts(theme: &Theme) -> Canvas {
     for (i, enabled) in [true, false].into_iter().enumerate() {
         let mut cal = calendar::Calendar::new(2026, 10, Some(4), 0);
         cal.enabled = enabled;
-        let lay = calendar::layout(Rect::new(
-            370 + i as i32 * 180,
-            10,
-            calendar::W,
-            calendar::H,
-        ));
+        let lay = calendar::layout(
+            Rect::new(370 + i as i32 * 180, 10, calendar::W, calendar::H),
+            &theme.controls(),
+        );
         calendar::draw(&mut c, &text, &p, &cal, &lay, false, px);
     }
     let places = placesbar::PlacesBar {

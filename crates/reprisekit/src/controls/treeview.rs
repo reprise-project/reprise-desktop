@@ -208,6 +208,8 @@ pub struct Layout {
     pub content_w: i32,
     /// The look's shortest scrollbar thumb, which hit and drag lay the bar out with as `draw` does.
     pub thumb_min: i32,
+    /// The row pitch, grown with the text ([`TreeView::row_h`]).
+    pub row_h: i32,
 }
 
 impl TreeView {
@@ -335,7 +337,7 @@ impl TreeView {
             return Hit::Nothing;
         }
         let rows = self.visible();
-        let row_h = self.row_h();
+        let row_h = lay.row_h;
         let i = self.top + ((y - lay.body.y) / row_h) as usize;
         let Some(row) = rows.get(i) else {
             return Hit::Nothing;
@@ -357,12 +359,13 @@ impl TreeView {
         Hit::Nothing
     }
 
-    /// The row pitch: `Style::Plain`'s list is a px taller than the trees with expander boxes.
-    pub fn row_h(&self) -> i32 {
-        match self.style {
+    /// The row pitch with text grown by `cm.text`: `Style::Plain`'s list is a px taller than the
+    /// trees with expander boxes.
+    pub fn row_h(&self, cm: &ControlMetrics) -> i32 {
+        cm.text.len(match self.style {
             Style::Plain => PLAIN_ROW_H,
             _ => ROW_H,
-        }
+        })
     }
 
     /// Where a row's icon starts inside the body: `Classic` keeps an expander
@@ -432,7 +435,7 @@ impl TreeView {
         let row = lay
             .body
             .contains(x, y)
-            .then(|| self.top + ((y - lay.body.y) / self.row_h()) as usize)
+            .then(|| self.top + ((y - lay.body.y) / lay.row_h) as usize)
             .filter(|&i| i < self.visible().len());
         let over = Over {
             inside: lay.frame.contains(x, y),
@@ -533,7 +536,7 @@ impl TreeView {
         if !(self.top..self.top + lay.rows).contains(&i) {
             return None;
         }
-        let row_h = self.row_h();
+        let row_h = lay.row_h;
         let x = lay.body.x - self.left_in(lay) + self.label_x(rows[i].depth) - EDIT_BACK;
         let w = listview::EDIT_PAD_L + text.measure(&ed.text, false, px) + listview::EDIT_PAD_R;
         Some(Rect::new(
@@ -708,13 +711,14 @@ pub fn layout_without_text(tv: &TreeView, r: Rect, cm: &ControlMetrics) -> Layou
 fn layout_with(tv: &TreeView, r: Rect, content_w: i32, cm: &ControlMetrics) -> Layout {
     let inner = if tv.style.flat() { r } else { r.inset(2) };
     let visible = tv.visible();
+    let row_h = tv.row_h(cm);
     // Reserving one bar can make the other necessary and neither is given back, so two rounds reach the fixed point (as in `listview`).
     let (mut vbar, mut hbar) = (false, false);
     for _ in 0..2 {
         let w = inner.width - if vbar { cm.scroll } else { 0 };
         let h = inner.height - if hbar { cm.scroll } else { 0 };
         hbar |= content_w > w;
-        vbar |= visible.len() > (h / tv.row_h()).max(1) as usize;
+        vbar |= visible.len() > (h / row_h).max(1) as usize;
     }
     let body = Rect::new(
         inner.x,
@@ -725,11 +729,12 @@ fn layout_with(tv: &TreeView, r: Rect, content_w: i32, cm: &ControlMetrics) -> L
     Layout {
         frame: r,
         body,
-        rows: (body.height / tv.row_h()).max(1) as usize,
+        rows: (body.height / row_h).max(1) as usize,
         scrollbar: vbar.then(|| Rect::new(body.right(), body.y, cm.scroll, body.height)),
         hscroll: hbar.then(|| Rect::new(body.x, body.bottom(), body.width, cm.scroll)),
         content_w,
         thumb_min: cm.thumb_min,
+        row_h,
     }
 }
 
@@ -780,7 +785,7 @@ pub fn draw(
     );
     let all = Rect::new(0, 0, body.width, body.height);
     bc.fill_rect(all, cs.window);
-    let row_h = tv.row_h() * s;
+    let row_h = lay.row_h * s;
     let left = tv.left_in(lay) * s;
     // The dotted lines and box rings are 128 grey, `button_shadow` in every stock scheme; a dark scheme's follows.
     let line = cs.button_shadow;
@@ -950,7 +955,7 @@ pub fn access(
     let rows = tv.visible();
     // The node of each depth's last row: a row hangs under the one at the depth above.
     let mut at_depth: Vec<NodeId> = Vec::new();
-    let rh = tv.row_h();
+    let rh = lay.row_h;
     for (i, row) in rows.iter().enumerate() {
         let Some(node) = tv.node(&row.path) else {
             continue;
@@ -1175,6 +1180,48 @@ mod tests {
         );
         let tx = b.x + 2 * INDENT + ICON_PX + LABEL_GAP;
         assert_eq!(c.get(tx - 1, b.y + 2 * ROW_H + 8), cs.hilight.argb());
+    }
+
+    /// At a grown text size the rows grow with the text while the expander box keeps its 9 px,
+    /// centred on the taller row; hit and the selection band follow the grown pitch.
+    #[test]
+    fn grown_text_grows_the_rows_and_keeps_the_box() {
+        let text = TextRenderer::load(&FontConfig::default());
+        let cs = &Theme::default().colors;
+        for (pct, px) in [(100, 11), (150, 17), (200, 22)] {
+            let u = crate::theme::TextUnits::new(px, 11);
+            let cm = ControlMetrics::CLASSIC.grown(u);
+            let mut tv = tree();
+            let lay = layout(&tv, &text, px, Rect::new(0, 0, 300, 400), &cm);
+            let row_h = u.len(ROW_H);
+            assert_eq!(lay.row_h, row_h, "{pct}%");
+            assert_eq!(lay.rows, ((400 - 4) / row_h) as usize, "{pct}%");
+            tv.select(2, &lay);
+            let p = Paint {
+                text: u,
+                ..classic_paint(cs, 1)
+            };
+            let mut c = Canvas::new(300, 400);
+            draw(&mut c, &text, &p, &tv, &lay, None, px);
+            let b = lay.body;
+            assert_eq!(tv.hit(&lay, b.x + 60, b.y + 2 * row_h + 1), Hit::Row(2));
+            assert_eq!(tv.hit(&lay, b.x + 60, b.y + 2 * row_h - 1), Hit::Row(1));
+            // Row 0's box: its top ring row 4 px above the row's middle, the box 9 px tall.
+            let mid = b.y + row_h / 2;
+            assert_eq!(c.get(b.x + BOX_X, mid - 4), LINE_GRAY.argb(), "{pct}%");
+            assert_eq!(c.get(b.x + BOX_X + 4, mid - 4), LINE_GRAY.argb(), "{pct}%");
+            assert_eq!(c.get(b.x + BOX_X + 4, mid + 4), LINE_GRAY.argb(), "{pct}%");
+            assert_ne!(c.get(b.x + BOX_X + 4, mid + 5), LINE_GRAY.argb(), "{pct}%");
+            // The selected row's band fills its grown height.
+            let tx = b.x + 2 * INDENT + ICON_PX + LABEL_GAP;
+            assert_eq!(c.get(tx - 1, b.y + 2 * row_h), cs.hilight.argb(), "{pct}%");
+            assert_eq!(
+                c.get(tx - 1, b.y + 3 * row_h - 1),
+                cs.hilight.argb(),
+                "{pct}%"
+            );
+            assert_ne!(c.get(tx - 1, b.y + 3 * row_h), cs.hilight.argb(), "{pct}%");
+        }
     }
 
     /// An expanded node blits `open_icon`, a collapsed one `icon`, as different pixels.
@@ -1721,7 +1768,7 @@ mod tests {
             let mut c = Canvas::new(200, 100);
             draw(&mut c, &text, &classic_paint(cs, 1), &tv, &lay, None, px);
             let b = lay.body;
-            let row_h = tv.row_h();
+            let row_h = lay.row_h;
             let (y0, y1) = (b.y + row_h, b.y + 2 * row_h);
             let lx = b.x + tv.label_x(1);
             let w = text.measure("My Documents", false, px);

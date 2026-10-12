@@ -33,7 +33,7 @@ use crate::raster::{Canvas, Rect};
 use crate::selection::{Mods, Selection, scroll_into_view};
 use crate::text::{Align, TextRenderer};
 use crate::textedit::TextEdit;
-use crate::theme::Color;
+use crate::theme::{Color, TextUnits};
 use accesskit::{NodeId, Role};
 use std::borrow::Cow;
 use std::cell::RefCell;
@@ -43,8 +43,12 @@ pub const ROW_H: i32 = 17;
 pub const ICON_PX: i32 = 16;
 const COL_W: i32 = 196;
 
-fn list_cell() -> Cell {
-    Cell { w: COL_W, h: ROW_H }
+/// List mode's cell, grown with the text by `u`.
+fn list_cell(u: TextUnits) -> Cell {
+    Cell {
+        w: u.len(COL_W),
+        h: u.len(ROW_H),
+    }
 }
 
 pub use crate::controls::shellgrid::{
@@ -229,8 +233,8 @@ pub enum Hit {
 /// Rows per column and the columns that takes for `sv.entries`, given an
 /// `area` as tall as the body. The column count can't reuse
 /// `iconview::columns`, which answers "how many fit", not "how many are needed".
-fn rows_and_cols(sv: &ShellView, area: Rect) -> (usize, usize) {
-    let rows = iconview::rows_per_column(list_cell(), area);
+fn rows_and_cols(sv: &ShellView, area: Rect, u: TextUnits) -> (usize, usize) {
+    let rows = iconview::rows_per_column(list_cell(u), area);
     let cols = sv.entries.len().div_ceil(rows);
     (rows, cols)
 }
@@ -516,9 +520,9 @@ pub fn layout(sv: &ShellView, r: Rect, cm: &ControlMetrics) -> Layout {
     match sv.mode {
         Mode::List => {
             let sunken = frame.inset(FIELD_PAD);
-            let cell = list_cell();
-            let (_, cols) = rows_and_cols(sv, sunken);
-            let overflows = cols as i32 * COL_W > sunken.width;
+            let cell = list_cell(cm.text);
+            let (_, cols) = rows_and_cols(sv, sunken, cm.text);
+            let overflows = cols as i32 * cell.w > sunken.width;
             let (body, hscroll) = if overflows {
                 let h = (sunken.height - cm.scroll).max(0);
                 let bar = Rect::new(sunken.x, sunken.y + h, sunken.width, cm.scroll);
@@ -527,7 +531,7 @@ pub fn layout(sv: &ShellView, r: Rect, cm: &ControlMetrics) -> Layout {
                 (sunken, None)
             };
             // The bar's height comes off the rows, which can push entries into another column: the range is the columns `body` holds.
-            let content_w = rows_and_cols(sv, body).1 as i32 * COL_W;
+            let content_w = rows_and_cols(sv, body, cm.text).1 as i32 * cell.w;
             let left = scrollbar::held(sv.left, body.width, content_w);
             let cells: Vec<Rect> = iconview::layout(cell, body, sv.entries.len())
                 .into_iter()
@@ -548,13 +552,14 @@ pub fn layout(sv: &ShellView, r: Rect, cm: &ControlMetrics) -> Layout {
             let lv = details_listview(sv);
             let lv_lay = listview::layout(&lv, frame, cm);
             // One rect per entry: a row scrolled out of view keeps its place above or below the body.
+            let row_h = lv_lay.row_h();
             let cells: Vec<Rect> = (0..sv.entries.len())
                 .map(|i| {
                     Rect::new(
                         lv_lay.body.x,
-                        lv_lay.body.y + (i as i64 - sv.top as i64) as i32 * listview::ROW_H,
+                        lv_lay.body.y + (i as i64 - sv.top as i64) as i32 * row_h,
                         lv_lay.body.width,
-                        listview::ROW_H,
+                        row_h,
                     )
                 })
                 .collect();
@@ -571,7 +576,7 @@ pub fn layout(sv: &ShellView, r: Rect, cm: &ControlMetrics) -> Layout {
                 headers: Vec::new(),
                 hscroll: lv_lay.hscroll,
                 vscroll: lv_lay.scrollbar,
-                content: (lv_lay.total_w, sv.entries.len() as i32 * listview::ROW_H),
+                content: (lv_lay.total_w, sv.entries.len() as i32 * row_h),
                 controls: *cm,
             }
         }
@@ -755,8 +760,8 @@ pub fn ensure_visible(sv: &mut ShellView, i: usize, lay: &Layout) {
             }
         }
         Mode::Details => {
-            let rows =
-                (lay.body.height - lay.controls.list_header).max(listview::ROW_H) / listview::ROW_H;
+            let row_h = lay.controls.text.len(listview::ROW_H);
+            let rows = (lay.body.height - lay.controls.list_header).max(row_h) / row_h;
             scroll_into_view(&mut sv.top, i, rows as usize);
         }
         _ => {
@@ -776,7 +781,7 @@ pub fn scroll(sv: &mut ShellView, by: i32, lay: &Layout) -> bool {
     match sv.mode {
         Mode::List => {
             let notches = by.signum() * (by.abs() / WHEEL_ROWS).max(1);
-            hscroll(sv, notches * COL_W, lay)
+            hscroll(sv, notches * list_cell(lay.controls.text).w, lay)
         }
         Mode::Details => with_details(sv, |lv| {
             let lv_lay = listview::layout(lv, lay.frame, &lay.controls);
@@ -851,7 +856,7 @@ const DETAILS_NUDGE: i32 = 16;
 
 pub fn hstep(sv: &mut ShellView, dir: i32, lay: &Layout) -> bool {
     let step = match sv.mode {
-        Mode::List => COL_W,
+        Mode::List => list_cell(lay.controls.text).w,
         _ => DETAILS_NUDGE,
     };
     hscroll(sv, dir.signum() * step, lay)
@@ -993,7 +998,7 @@ pub(crate) fn draw_rename(
         label.x - listview::EDIT_BACK * s,
         label.y - s,
         w,
-        listview::EDIT_H * s,
+        p.text.len(listview::EDIT_H) * s,
     );
     listview::draw_rename_box(c, text, p, ed, box_r, px);
 }
@@ -1071,7 +1076,8 @@ pub fn draw(
         let mark = if editing { Mark::default() } else { sv.mark(i) };
         let boxed = item::draw_item(c, p, item_box, mark);
         if let Some(icon) = shellgrid::entry_icon(entry, Mode::List) {
-            c.blit_over(cell_s.x, cell_s.y, &icon);
+            let dy = (cell.height - ICON_PX) / 2 * s;
+            c.blit_over(cell_s.x, cell_s.y + dy, &icon);
         }
         let label = label_full.intersect(&visible_s);
         if label.is_empty() {

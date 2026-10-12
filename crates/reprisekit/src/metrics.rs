@@ -70,6 +70,9 @@ pub struct ControlMetrics {
     pub file_dlg: FileDlgMetrics,
     /// The Start menu's and its submenus' borders.
     pub start_menu: StartMenuMetrics,
+    /// How the rows that hold a line of text grow with the text size ([`ControlMetrics::grown`]):
+    /// tree, list view and menu bar rows and the calendar's cells read it.
+    pub text: crate::theme::TextUnits,
 }
 
 /// How far in from the Start menu's edges its rows sit, border included, and where its separators'
@@ -113,6 +116,15 @@ impl PlacesMetrics {
         tile: 65,
         icon_top: 3,
     };
+
+    /// Tiles whose label, under the 32 px icon, grows by `u`.
+    fn grown(self, u: crate::theme::TextUnits) -> PlacesMetrics {
+        let icon = self.icon_top + 32;
+        PlacesMetrics {
+            tile: icon + u.len(self.tile - icon),
+            ..self
+        }
+    }
 }
 
 /// Where the file dialog lays out its rows, logical px.
@@ -259,6 +271,8 @@ impl MenuBarMetrics {
 /// A menu bar's title frames, logical px.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct MenuTitles {
+    /// The bar, tall.
+    pub bar_h: i32,
     /// The first frame's left edge, from the bar's.
     pub first_x: i32,
     /// Each frame's top, from the bar's, and its height.
@@ -271,9 +285,19 @@ pub struct MenuTitles {
 }
 
 impl MenuTitles {
-    /// Classic's: 18 px frames a pixel down, from 2 px in, the text 7 px in and centred down the
-    /// frame.
+    /// The bar and its frames `by` px taller; the frames keep their place from the bar's top.
+    fn taller(self, by: i32) -> MenuTitles {
+        MenuTitles {
+            bar_h: self.bar_h + by,
+            frame_h: self.frame_h + by,
+            ..self
+        }
+    }
+
+    /// Classic's: a 20 px bar, 18 px frames a pixel down, from 2 px in, the text 7 px in and
+    /// centred down the frame.
     pub const CLASSIC: MenuTitles = MenuTitles {
+        bar_h: 20,
         first_x: 2,
         frame_y: 1,
         frame_h: 18,
@@ -389,6 +413,7 @@ impl ControlMetrics {
         places: PlacesMetrics::CLASSIC,
         file_dlg: FileDlgMetrics::CLASSIC,
         start_menu: StartMenuMetrics::CLASSIC,
+        text: crate::theme::TextUnits::ONE,
     };
 }
 
@@ -400,6 +425,19 @@ impl ControlMetrics {
             combo_row: u.len(self.combo_row),
             list_row: u.len(self.list_row),
             list_header: u.len(self.list_header),
+            menubar: MenuBarMetrics {
+                plain: self
+                    .menubar
+                    .plain
+                    .taller(u.len(self.menubar.plain.bar_h) - self.menubar.plain.bar_h),
+                banded: self
+                    .menubar
+                    .banded
+                    .taller(u.len(self.menubar.banded.bar_h) - self.menubar.banded.bar_h),
+                ..self.menubar
+            },
+            places: self.places.grown(u),
+            text: u,
             ..self
         }
     }
