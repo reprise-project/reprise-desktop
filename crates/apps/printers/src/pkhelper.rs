@@ -4,13 +4,15 @@
 use std::collections::BTreeMap;
 use std::sync::Mutex;
 
+use reprisebus::polkit::Refusal;
+
 use crate::cups::{Error, Result};
 
 const DEST: &str = "org.opensuse.CupsPkHelper.Mechanism";
 const PATH: &str = "/";
 const IFACE: &str = "org.opensuse.CupsPkHelper.Mechanism";
-/// What the service answers when polkit said no: the password box was
-/// closed, or the password was wrong.
+/// What the service answers when polkit said no: the password prompt was
+/// dismissed, or the password was wrong.
 const NOT_PRIVILEGED: &str = "org.opensuse.CupsPkHelper.Mechanism.NotPrivileged";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -85,10 +87,14 @@ fn outcome(method: &str, error: &str) -> Result<()> {
 }
 
 fn bus_error(method: &str, e: zbus::Error) -> Error {
-    if let zbus::Error::MethodError(name, _, _) = &e
-        && name.as_str() == NOT_PRIVILEGED
-    {
-        return Error::NotAuthorized;
+    describe(method, e, reprisebus::polkit::dismissed)
+}
+
+fn describe(method: &str, e: zbus::Error, dismissed: impl FnOnce() -> bool) -> Error {
+    match reprisebus::polkit::refusal(&e, |n| n == NOT_PRIVILEGED, dismissed) {
+        Some(Refusal::Dismissed) => return Error::Dismissed,
+        Some(Refusal::Denied) => return Error::NotAuthorized,
+        None => {}
     }
     log::warn!("{method}: {e}");
     Error::Refused(format!("cups-pk-helper could not make the change ({e})."))
@@ -263,6 +269,35 @@ mod tests {
             outcome("PrinterDelete", "printer not found"),
             Err(Error::Refused("Printer not found.".into()))
         );
+    }
+
+    #[test]
+    fn not_privileged_is_a_dismissal_or_a_refusal() {
+        let msg = zbus::Message::method_call("/", "PrinterDelete")
+            .and_then(|b| b.build(&()))
+            .expect("a method call");
+        let error = |name: &'static str| {
+            zbus::Error::MethodError(
+                zbus::names::OwnedErrorName::try_from(name).expect("an error name"),
+                Some("Not authorized".into()),
+                msg.clone(),
+            )
+        };
+        let not_privileged = || error(NOT_PRIVILEGED);
+        assert_eq!(
+            describe("PrinterDelete", not_privileged(), || true),
+            Error::Dismissed
+        );
+        assert_eq!(
+            describe("PrinterDelete", not_privileged(), || false),
+            Error::NotAuthorized
+        );
+        let other = describe(
+            "PrinterDelete",
+            error("org.opensuse.CupsPkHelper.Mechanism.CupsError"),
+            || panic!("only NotPrivileged asks whether the prompt was dismissed"),
+        );
+        assert!(matches!(other, Error::Refused(_)));
     }
 
     #[test]

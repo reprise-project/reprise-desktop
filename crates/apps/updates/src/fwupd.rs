@@ -43,6 +43,8 @@ const STATUS_DEVICE_BUSY: u32 = 12;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Error {
     Unavailable,
+    /// The password prompt was dismissed: nothing to tell.
+    Dismissed,
     Failed(String),
 }
 
@@ -64,6 +66,16 @@ fn failed(e: zbus::Error) -> Error {
         }
     }
     Error::Failed(e.to_string())
+}
+
+/// fwupd answers `AuthFailed` for a dismissed prompt and a refused password
+/// alike; `dismissed` tells them apart.
+fn install_failed(e: zbus::Error, dismissed: impl FnOnce() -> bool) -> Error {
+    let refused = |n: &str| n == "org.freedesktop.fwupd.AuthFailed";
+    match reprisebus::polkit::refusal(&e, refused, dismissed) {
+        Some(reprisebus::polkit::Refusal::Dismissed) => Error::Dismissed,
+        _ => failed(e),
+    }
 }
 
 fn sentence(s: &str) -> String {
@@ -195,7 +207,7 @@ pub async fn updates(conn: &Connection) -> Result<Vec<Update>, Error> {
         // One device the daemon cannot answer for leaves the rest listed.
         match newest(conn, &text(&d, "DeviceId")).await {
             Ok(Some(r)) => out.push(update(&d, &r)),
-            Ok(None) => {}
+            Ok(None) | Err(Error::Dismissed) => {}
             Err(Error::Unavailable) => return Err(Error::Unavailable),
             Err(Error::Failed(e)) => log::info!("firmware for {}: {e}", text(&d, "Name")),
         }
@@ -434,7 +446,7 @@ pub async fn install(
             }
         }
     };
-    done.map_err(failed)?;
+    done.map_err(|e| install_failed(e, reprisebus::polkit::dismissed))?;
     let flags = devices(conn)
         .await?
         .iter()
@@ -461,6 +473,30 @@ mod tests {
                 )
             })
             .collect()
+    }
+
+    #[test]
+    fn auth_failed_is_a_dismissal_or_a_refusal() {
+        let msg = zbus::Message::method_call("/", "Install")
+            .and_then(|b| b.build(&()))
+            .unwrap();
+        let error = |name: &str| {
+            zbus::Error::MethodError(
+                name.try_into().unwrap(),
+                Some("Failed to obtain auth".into()),
+                msg.clone(),
+            )
+        };
+        let auth_failed = || error("org.freedesktop.fwupd.AuthFailed");
+        assert_eq!(install_failed(auth_failed(), || true), Error::Dismissed);
+        assert_eq!(
+            install_failed(auth_failed(), || false),
+            Error::Failed("Failed to obtain auth.".into())
+        );
+        let other = install_failed(error("org.freedesktop.fwupd.Internal"), || {
+            panic!("only AuthFailed asks whether the prompt was dismissed")
+        });
+        assert_eq!(other, Error::Failed("Failed to obtain auth.".into()));
     }
 
     #[test]
