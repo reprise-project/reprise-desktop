@@ -9,13 +9,15 @@
 //! restores it, so a crashed session gets the last clean one back.
 //!
 //! Tab groups come back too: each saved group's windows, matched by app id
-//! as they map, join in their old tab order on the group's desktop, and the
-//! tab that showed shows again once its window is back. An app starts once;
+//! as they map, join in their old tab order on the group's desktop and in
+//! the group's own frame, and the tab that showed shows again once its
+//! window is back. An app starts once;
 //! `RESTART_SETTLE` after a window of it maps, it starts again for each empty
 //! slot no start in flight will fill, so an app that brings back its own
 //! windows gets no extra one.
 
 use crate::compositor::State;
+use crate::windowrules::Remembered;
 use reprisefs::apps::AppEntry;
 use reprisefs::autostart::Entry;
 use serde::{Deserialize, Serialize};
@@ -79,25 +81,29 @@ pub struct SavedTabs {
     pub shown: usize,
     /// The virtual desktop the group was on, from 0.
     pub desktop: usize,
+    /// The group's frame, on the output it was on.
+    #[serde(default)]
+    pub frame: Option<Remembered>,
 }
 
-/// The tab groups to save from `groups`, each as its windows' app ids in tab
-/// order, the shown index and the desktop. Windows of apps not in `saved`
-/// are left out, and so is a group left with fewer than two.
-pub fn pick_tabs(groups: &[(Vec<String>, usize, usize)], saved: &[SavedApp]) -> Vec<SavedTabs> {
+/// The tab groups to save from `groups`: windows of apps not in `saved`
+/// (an empty app id for a window not saved) are left out, and so is a group
+/// left with fewer than two.
+pub fn pick_tabs(groups: &[SavedTabs], saved: &[SavedApp]) -> Vec<SavedTabs> {
     groups
         .iter()
-        .filter_map(|(apps, shown, desktop)| {
+        .filter_map(|g| {
+            let apps = &g.apps;
             let keep = |a: &String| saved.iter().any(|s| s.app_id == *a);
             let kept: Vec<String> = apps.iter().filter(|a| keep(a)).cloned().collect();
             let shown = apps
-                .get(*shown)
+                .get(g.shown)
                 .filter(|a| keep(a))
-                .map_or(0, |_| apps[..*shown].iter().filter(|a| keep(a)).count());
-            (kept.len() >= 2).then_some(SavedTabs {
+                .map_or(0, |_| apps[..g.shown].iter().filter(|a| keep(a)).count());
+            (kept.len() >= 2).then(|| SavedTabs {
                 apps: kept,
                 shown,
-                desktop: *desktop,
+                ..g.clone()
             })
         })
         .collect()
@@ -190,6 +196,7 @@ struct Regroup<T> {
     slots: Vec<(String, Option<T>)>,
     shown: usize,
     desktop: usize,
+    frame: Option<Remembered>,
 }
 
 /// The saved tab groups waiting for their windows, while the login is recent.
@@ -230,6 +237,7 @@ impl<T: Copy + Eq> PendingTabs<T> {
                     slots: t.apps.iter().map(|a| (a.clone(), None)).collect(),
                     shown: t.shown,
                     desktop: t.desktop,
+                    frame: t.frame.clone(),
                 })
                 .collect(),
             until: Some(now + DESKTOP_WINDOW),
@@ -324,6 +332,16 @@ impl<T: Copy + Eq> PendingTabs<T> {
         self.free_slot(app_id).map(|(g, _)| self.groups[g].desktop)
     }
 
+    /// The frame the next window of `app_id` opens in, when it is back for
+    /// a saved group that kept one.
+    pub fn frame(&self, app_id: &str, now: Instant) -> Option<&Remembered> {
+        if !self.open(now) {
+            return None;
+        }
+        let (g, _) = self.free_slot(app_id)?;
+        self.groups[g].frame.as_ref()
+    }
+
     /// Window `w` of `app_id` has mapped: it takes the first free slot for
     /// its app, and joins the members of that group already back.
     pub fn claim(&mut self, app_id: &str, w: T, now: Instant) -> Claim<T> {
@@ -400,7 +418,7 @@ pub fn save(state: &mut State) {
             .map(|w| (w.app(), w.desktop))
             .collect();
         let saved = pick(&open, &state.app_index, &state.config.session.exclude);
-        let groups: Vec<(Vec<String>, usize, usize)> = state
+        let groups: Vec<SavedTabs> = state
             .tabs
             .groups
             .iter()
@@ -410,7 +428,12 @@ pub fn save(state: &mut State) {
                 let apps = members
                     .map(|m| m.filter(|m| saving(m)).map(|m| m.app()).unwrap_or_default())
                     .collect();
-                Some((apps, g.shown, shown.desktop))
+                Some(SavedTabs {
+                    apps,
+                    shown: g.shown,
+                    desktop: shown.desktop,
+                    frame: state.frame_of(g.shown()),
+                })
             })
             .collect();
         let tabs = pick_tabs(&groups, &saved);
@@ -625,6 +648,18 @@ mod tests {
             apps: apps.iter().map(|a| a.to_string()).collect(),
             shown,
             desktop,
+            frame: None,
+        }
+    }
+
+    fn frame(output: &str, x: i32, maximized: bool) -> Remembered {
+        Remembered {
+            output: output.into(),
+            x,
+            y: 40,
+            width: 640,
+            height: 480,
+            maximized,
         }
     }
 
@@ -634,21 +669,24 @@ mod tests {
             saved("foot", "foot.desktop", 0),
             saved("gimp", "gimp.desktop", 1),
         ];
-        let group = |apps: &[&str], shown, desktop| {
-            (apps.iter().map(|a| a.to_string()).collect(), shown, desktop)
-        };
         let got = pick_tabs(
             &[
-                group(&["gimp", "unknown", "foot", "foot"], 3, 1),
-                group(&["foot", "unknown"], 0, 0),
-                group(&["unknown", "gimp", "foot"], 0, 2),
+                SavedTabs {
+                    frame: Some(frame("DP-1", 10, true)),
+                    ..tabs(&["gimp", "unknown", "foot", "foot"], 3, 1)
+                },
+                tabs(&["foot", "unknown"], 0, 0),
+                tabs(&["unknown", "gimp", "foot"], 0, 2),
             ],
             &saved,
         );
         assert_eq!(
             got,
             [
-                tabs(&["gimp", "foot", "foot"], 2, 1),
+                SavedTabs {
+                    frame: Some(frame("DP-1", 10, true)),
+                    ..tabs(&["gimp", "foot", "foot"], 2, 1)
+                },
                 tabs(&["gimp", "foot"], 0, 2),
             ],
             "a left-out shown tab gives the first tab"
@@ -774,6 +812,51 @@ mod tests {
             }
         );
         assert_eq!(p.claim("c", 4, t), Claim::None, "the group is done");
+    }
+
+    #[test]
+    fn each_group_opens_in_its_own_frame() {
+        let t = Instant::now();
+        let saved = [
+            SavedTabs {
+                frame: Some(frame("DP-1", 10, false)),
+                ..tabs(&["foot", "foot"], 0, 0)
+            },
+            SavedTabs {
+                frame: Some(frame("HDMI-A-1", 300, true)),
+                ..tabs(&["foot", "foot"], 1, 1)
+            },
+            tabs(&["gimp", "foot"], 0, 0),
+        ];
+        let mut p = PendingTabs::new(&saved, t);
+        assert_eq!(p.frame("foot", t), Some(&frame("DP-1", 10, false)));
+        p.claim("foot", 1, t);
+        p.claim("foot", 2, t);
+        assert_eq!(
+            p.frame("foot", t),
+            Some(&frame("HDMI-A-1", 300, true)),
+            "the first group is full: the next foot opens in the second's frame"
+        );
+        p.claim("foot", 3, t);
+        p.claim("foot", 4, t);
+        assert_eq!(p.frame("foot", t), None, "a group saved without a frame");
+        assert_eq!(p.frame("gimp", t), None);
+        let late = t + DESKTOP_WINDOW + Duration::from_secs(1);
+        let p = PendingTabs::<u32>::new(&saved, t);
+        assert_eq!(p.frame("foot", late), None);
+    }
+
+    #[test]
+    fn saved_tabs_without_a_frame_still_load() {
+        #[derive(Deserialize)]
+        struct Wrap {
+            session_tabs: Vec<SavedTabs>,
+        }
+        let old: Wrap = toml::from_str(
+            "[[session_tabs]]\napps = [\"foot\", \"foot\"]\nshown = 1\ndesktop = 0\n",
+        )
+        .unwrap();
+        assert_eq!(old.session_tabs, [tabs(&["foot", "foot"], 1, 0)]);
     }
 
     #[test]
