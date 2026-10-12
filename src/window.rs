@@ -2205,9 +2205,7 @@ impl State {
             win.pressed = None;
             win.resize_anchor = None;
         }
-        if matches!(self.last_click, Some((_, x)) if x == w) {
-            self.last_click = None;
-        }
+        self.caption_clicks.reset();
     }
 
     pub fn set_resizing(&mut self, w: WindowId, on: bool) {

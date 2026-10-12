@@ -20,6 +20,7 @@ use reprisekit::access::accesskit::Role;
 use reprisekit::access::{ROOT, Tree};
 use reprisekit::controls::calendar::{self, Calendar, PopupHit};
 use reprisekit::metrics::ControlMetrics;
+use reprisekit::pointer::DoubleClick;
 use reprisekit::text::TextRenderer;
 use reprisescene::{BufferId, TreeId};
 use smithay::output::Output;
@@ -30,8 +31,8 @@ const PROPERTIES: &str = "reprise-datetime";
 #[derive(Default)]
 pub struct CalendarState {
     view: Option<CalendarView>,
-    /// When the clock last took a left click (ms), for its double click.
-    last_click: Option<u32>,
+    /// Left presses on a bar's clock, paired into its double click.
+    clicks: DoubleClick<TreeId>,
 }
 
 struct CalendarView {
@@ -67,23 +68,17 @@ pub fn open_on(state: &State) -> Option<Output> {
     state.calendar.view.as_ref().map(|v| v.output.clone())
 }
 
-/// A left press on bar `bar`'s clock at `time` (ms): the second of a
+/// A left press on bar `bar`'s clock at layout `at`, `time` (ms): the second of a
 /// double click opens Date and Time Properties; otherwise the popup
 /// opens, or stays closed when it was open before the press (`was_open`,
 /// read before the press closed anything).
-pub fn clock_press(state: &mut State, bar: TreeId, time: u32, was_open: bool) {
-    let threshold = state.config.theme.metrics.double_click_ms as u32;
-    let double = state
-        .calendar
-        .last_click
-        .is_some_and(|t| time.wrapping_sub(t) < threshold);
-    if double {
-        state.calendar.last_click = None;
+pub fn clock_press(state: &mut State, bar: TreeId, at: (i32, i32), time: u32, was_open: bool) {
+    let click = state.config.theme.metrics.click(at.0, at.1, time);
+    if state.calendar.clicks.press(bar, click) {
         close(state);
         state.spawn_activated(PROPERTIES);
         return;
     }
-    state.calendar.last_click = Some(time);
     if was_open {
         close(state);
     } else {
