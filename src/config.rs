@@ -1931,6 +1931,7 @@ struct FileWindowRule {
     desktop: Option<i64>,
     always_on_top: Option<bool>,
     sticky: Option<bool>,
+    tab_group: Option<String>,
 }
 
 impl FileWindowRule {
@@ -1992,6 +1993,7 @@ impl FileWindowRule {
             desktop,
             always_on_top: self.always_on_top,
             sticky: self.sticky,
+            tab_group: self.tab_group,
         })
     }
 }
@@ -5278,7 +5280,7 @@ command = "gedit"
             "[windows]\nremember = false\n\n\
              [[window_rules]]\napp_id = \"foot\"\nsize = [800, 600]\nposition = [-10, 40]\n\
              output = \"DP-2\"\nstate = \"maximized\"\ndesktop = 2\nalways_on_top = true\n\
-             sticky = false\n\n\
+             sticky = false\ntab_group = \"shells\"\n\n\
              [[window_rules]]\napp_id = \"firefox\"\ntitle = \"*Mail*\"\n",
         )
         .unwrap();
@@ -5296,6 +5298,7 @@ command = "gedit"
                     desktop: Some(1),
                     always_on_top: Some(true),
                     sticky: Some(false),
+                    tab_group: Some("shells".into()),
                 },
                 WindowRule {
                     app_id: "firefox".into(),

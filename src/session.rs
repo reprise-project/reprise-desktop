@@ -7,16 +7,28 @@
 //! windows are asked to close (`sessionend`), or when the loop stops for a
 //! signal. It lives in the state file and is kept after the login that
 //! restores it, so a crashed session gets the last clean one back.
+//!
+//! Tab groups come back too: each saved group's windows, matched by app id
+//! as they map, join in their old tab order on the group's desktop, and the
+//! tab that showed shows again once its window is back. An app starts once;
+//! `RESTART_SETTLE` after a window of it maps, it starts again for each empty
+//! slot no start in flight will fill, so an app that brings back its own
+//! windows gets no extra one.
 
 use crate::compositor::State;
 use reprisefs::apps::AppEntry;
 use reprisefs::autostart::Entry;
 use serde::{Deserialize, Serialize};
+use smithay::reexports::calloop::timer::{TimeoutAction, Timer};
 use std::time::{Duration, Instant};
 
 /// How long after login a restored app's first window still goes to its old
 /// desktop; a later window is taken to have been started by hand.
 const DESKTOP_WINDOW: Duration = Duration::from_secs(120);
+
+/// How long after a restored app's first window maps its other saved tab
+/// windows have to come back before it is started again for them.
+pub const RESTART_SETTLE: Duration = Duration::from_secs(4);
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SavedApp {
@@ -56,6 +68,39 @@ pub fn pick(open: &[(String, usize)], apps: &[AppEntry], exclude: &[String]) -> 
         });
     }
     saved
+}
+
+/// A tab group the session ended with.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SavedTabs {
+    /// Its windows' app ids, in tab order.
+    pub apps: Vec<String>,
+    /// The index in `apps` of the tab that showed.
+    pub shown: usize,
+    /// The virtual desktop the group was on, from 0.
+    pub desktop: usize,
+}
+
+/// The tab groups to save from `groups`, each as its windows' app ids in tab
+/// order, the shown index and the desktop. Windows of apps not in `saved`
+/// are left out, and so is a group left with fewer than two.
+pub fn pick_tabs(groups: &[(Vec<String>, usize, usize)], saved: &[SavedApp]) -> Vec<SavedTabs> {
+    groups
+        .iter()
+        .filter_map(|(apps, shown, desktop)| {
+            let keep = |a: &String| saved.iter().any(|s| s.app_id == *a);
+            let kept: Vec<String> = apps.iter().filter(|a| keep(a)).cloned().collect();
+            let shown = apps
+                .get(*shown)
+                .filter(|a| keep(a))
+                .map_or(0, |_| apps[..*shown].iter().filter(|a| keep(a)).count());
+            (kept.len() >= 2).then_some(SavedTabs {
+                apps: kept,
+                shown,
+                desktop: *desktop,
+            })
+        })
+        .collect()
 }
 
 /// Programs that start another program named further down their command line.
@@ -124,12 +169,208 @@ impl Pending {
     }
 }
 
-/// `State::session`: the last session's apps (kept in the state file) and
-/// the desktops restored apps' first windows go back to.
+/// What a mapped window does about the saved tab groups.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Claim<T> {
+    /// It fills no saved group's slot.
+    None,
+    /// It is the first of its group back: it stands alone for now.
+    First,
+    /// It joins `target`'s group in front of `before` (at the end when
+    /// None); `show` is the tab to show then, when it is back.
+    Join {
+        target: T,
+        before: Option<T>,
+        show: Option<T>,
+    },
+}
+
+#[derive(Debug)]
+struct Regroup<T> {
+    slots: Vec<(String, Option<T>)>,
+    shown: usize,
+    desktop: usize,
+}
+
+/// The saved tab groups waiting for their windows, while the login is recent.
+#[derive(Debug)]
+pub struct PendingTabs<T> {
+    groups: Vec<Regroup<T>>,
+    until: Option<Instant>,
+    restarts: Vec<Restart>,
+}
+
+/// A restored app that may start again for its empty tab slots.
+#[derive(Debug)]
+struct Restart {
+    app: String,
+    /// Starts left within the cap of one per saved slot, the first included.
+    left: usize,
+    /// Starts whose window has not mapped yet.
+    in_flight: usize,
+    armed: bool,
+}
+
+impl<T> Default for PendingTabs<T> {
+    fn default() -> Self {
+        PendingTabs {
+            groups: Vec::new(),
+            until: None,
+            restarts: Vec::new(),
+        }
+    }
+}
+
+impl<T: Copy + Eq> PendingTabs<T> {
+    pub fn new(tabs: &[SavedTabs], now: Instant) -> PendingTabs<T> {
+        PendingTabs {
+            groups: tabs
+                .iter()
+                .map(|t| Regroup {
+                    slots: t.apps.iter().map(|a| (a.clone(), None)).collect(),
+                    shown: t.shown,
+                    desktop: t.desktop,
+                })
+                .collect(),
+            until: Some(now + DESKTOP_WINDOW),
+            restarts: Vec::new(),
+        }
+    }
+
+    /// Restore has started `app_id` once: it may start again for empty
+    /// slots, at most once per slot it has in all, that first start included.
+    pub fn started(&mut self, app_id: &str) {
+        let slots = self.free_slots(app_id);
+        if slots > 1 {
+            self.restarts.push(Restart {
+                app: app_id.to_string(),
+                left: slots - 1,
+                in_flight: 1,
+                armed: false,
+            });
+        }
+    }
+
+    fn free_slots(&self, app_id: &str) -> usize {
+        let slots = self.groups.iter().flat_map(|r| &r.slots);
+        slots.filter(|(a, w)| w.is_none() && a == app_id).count()
+    }
+
+    /// A window of `app_id` has mapped (after its `claim`), landing one of
+    /// its starts: whether to arm the `RESTART_SETTLE` timer that ends in
+    /// `restart`.
+    pub fn settle(&mut self, app_id: &str, now: Instant) -> bool {
+        let (open, free) = (self.open(now), self.free_slots(app_id));
+        let Some(i) = self.restarts.iter().position(|r| r.app == app_id) else {
+            return false;
+        };
+        if !open || free == 0 {
+            self.restarts.remove(i);
+            return false;
+        }
+        let r = &mut self.restarts[i];
+        r.in_flight = r.in_flight.saturating_sub(1);
+        !std::mem::replace(&mut r.armed, true)
+    }
+
+    /// `app_id`'s settle has ended: how many more times to start it, one per
+    /// empty slot no start in flight will fill, within its cap. The next
+    /// settle waits for its next window.
+    pub fn restart(&mut self, app_id: &str, now: Instant) -> usize {
+        let (open, free) = (self.open(now), self.free_slots(app_id));
+        let Some(i) = self
+            .restarts
+            .iter()
+            .position(|r| r.armed && r.app == app_id)
+        else {
+            return 0;
+        };
+        let r = &mut self.restarts[i];
+        r.armed = false;
+        let n = if open {
+            free.saturating_sub(r.in_flight).min(r.left)
+        } else {
+            0
+        };
+        r.left -= n;
+        r.in_flight += n;
+        if !open || r.left == 0 {
+            self.restarts.remove(i);
+        }
+        n
+    }
+
+    fn open(&self, now: Instant) -> bool {
+        self.until.is_some_and(|u| now <= u)
+    }
+
+    /// The group and slot the next window of `app_id` fills.
+    fn free_slot(&self, app_id: &str) -> Option<(usize, usize)> {
+        self.groups.iter().enumerate().find_map(|(g, r)| {
+            let s = r
+                .slots
+                .iter()
+                .position(|(a, w)| w.is_none() && a == app_id)?;
+            Some((g, s))
+        })
+    }
+
+    /// The desktop the next window of `app_id` goes to, when it is back
+    /// for a saved group.
+    pub fn desktop(&self, app_id: &str, now: Instant) -> Option<usize> {
+        if !self.open(now) {
+            return None;
+        }
+        self.free_slot(app_id).map(|(g, _)| self.groups[g].desktop)
+    }
+
+    /// Window `w` of `app_id` has mapped: it takes the first free slot for
+    /// its app, and joins the members of that group already back.
+    pub fn claim(&mut self, app_id: &str, w: T, now: Instant) -> Claim<T> {
+        if !self.open(now) {
+            return Claim::None;
+        }
+        let Some((g, s)) = self.free_slot(app_id) else {
+            return Claim::None;
+        };
+        let r = &mut self.groups[g];
+        r.slots[s].1 = Some(w);
+        let back = |range: &[(String, Option<T>)]| range.iter().find_map(|(_, m)| *m);
+        let target = back(&r.slots[..s]).or_else(|| back(&r.slots[s + 1..]));
+        let claim = match target {
+            None => Claim::First,
+            Some(target) => Claim::Join {
+                target,
+                before: back(&r.slots[s + 1..]),
+                show: r.slots.get(r.shown).and_then(|(_, m)| *m),
+            },
+        };
+        if r.slots.iter().all(|(a, m)| m.is_some() || a.is_empty()) {
+            self.groups.remove(g);
+        }
+        claim
+    }
+
+    /// `w` is gone: its slot stays empty for good, and a window that joins
+    /// later takes another member as its target.
+    pub fn forget(&mut self, w: T) {
+        for (a, m) in self.groups.iter_mut().flat_map(|r| &mut r.slots) {
+            if *m == Some(w) {
+                a.clear();
+                *m = None;
+            }
+        }
+    }
+}
+
+/// `State::session`: the last session's apps and tab groups (kept in the
+/// state file) and the desktops and groups restored windows go back to.
 #[derive(Debug, Default)]
 pub struct Session {
     pub apps: Vec<SavedApp>,
+    pub tabs: Vec<SavedTabs>,
     pub restoring: Pending,
+    pub regrouping: PendingTabs<crate::window::WindowId>,
     /// `end` already kept this session, so the loop's own `end` at shutdown
     /// must not take the emptied screen over it.
     pub kept: bool,
@@ -137,35 +378,55 @@ pub struct Session {
 
 impl Session {
     pub fn load() -> Session {
+        let p = crate::state::load();
         Session {
-            apps: crate::state::load().session,
-            restoring: Pending::default(),
-            kept: false,
+            apps: p.session,
+            tabs: p.session_tabs,
+            ..Session::default()
         }
     }
 }
 
-/// Take the open windows' apps as the session to restore at the next login
-/// (empty when `[session] restore` is off) and queue the state file's write.
+/// Take the open windows' apps and tab groups as the session to restore at
+/// the next login (empty when `[session] restore` is off) and queue the
+/// state file's write.
 pub fn save(state: &mut State) {
-    let saved = if state.config.session.restore {
+    let (saved, tabs) = if state.config.session.restore {
+        let saving = |w: &crate::window::Window| w.mapped && w.placeable();
         let open: Vec<(String, usize)> = state
             .windows
             .iter()
-            .filter(|w| w.mapped && w.placeable())
+            .filter(|w| saving(w))
             .map(|w| (w.app(), w.desktop))
             .collect();
-        pick(&open, &state.app_index, &state.config.session.exclude)
+        let saved = pick(&open, &state.app_index, &state.config.session.exclude);
+        let groups: Vec<(Vec<String>, usize, usize)> = state
+            .tabs
+            .groups
+            .iter()
+            .filter_map(|g| {
+                let shown = state.win(g.shown())?;
+                let members = g.members.iter().map(|&m| state.win(m));
+                let apps = members
+                    .map(|m| m.filter(|m| saving(m)).map(|m| m.app()).unwrap_or_default())
+                    .collect();
+                Some((apps, g.shown, shown.desktop))
+            })
+            .collect();
+        let tabs = pick_tabs(&groups, &saved);
+        (saved, tabs)
     } else {
-        Vec::new()
+        (Vec::new(), Vec::new())
     };
     log::info!(
-        "session: saved {:?}",
-        saved.iter().map(|s| &s.app_id).collect::<Vec<_>>()
+        "session: saved {:?}, tabs {:?}",
+        saved.iter().map(|s| &s.app_id).collect::<Vec<_>>(),
+        tabs.iter().map(|t| &t.apps).collect::<Vec<_>>()
     );
-    if state.session.apps != saved {
-        crate::state::save_session(&saved);
+    if state.session.apps != saved || state.session.tabs != tabs {
+        crate::state::save_session(&saved, &tabs);
         state.session.apps = saved;
+        state.session.tabs = tabs;
     }
 }
 
@@ -192,13 +453,46 @@ pub fn restore(state: &mut State, autostarted: &[Entry]) {
         &state.config.session.exclude,
         autostarted,
     );
+    let now = Instant::now();
+    let mut regrouping = PendingTabs::new(&state.session.tabs, now);
     for (s, e) in &start {
         log::info!("session: restoring {} ({})", s.app_id, e.id);
         let argv = reprisefs::apps::launch_argv(e, &state.config.terminal);
         crate::spawn::spawn_argv(&argv, &state.env, None);
+        regrouping.started(&s.app_id);
     }
     let started: Vec<&SavedApp> = start.iter().map(|(s, _)| *s).collect();
-    state.session.restoring = Pending::new(&started, Instant::now());
+    state.session.restoring = Pending::new(&started, now);
+    state.session.regrouping = regrouping;
+}
+
+/// A window of `app_id` has mapped: when restore started it and some of its
+/// saved tab slots are empty, start it again for those after `RESTART_SETTLE`.
+pub fn settle_restart(state: &mut State, app_id: &str) {
+    if !state.session.regrouping.settle(app_id, Instant::now()) {
+        return;
+    }
+    let app = app_id.to_string();
+    let timer = Timer::from_duration(RESTART_SETTLE);
+    let armed = state.handle.insert_source(timer, move |_, _, state| {
+        let n = state.session.regrouping.restart(&app, Instant::now());
+        let entry = state.session.apps.iter().find(|s| s.app_id == app);
+        let entry = entry.and_then(|s| state.app_index.iter().find(|e| e.id == s.entry));
+        let (Some(e), true) = (entry, n > 0) else {
+            return TimeoutAction::Drop;
+        };
+        log::info!(
+            "session: {app} left {n} tab slot(s) empty {RESTART_SETTLE:?} after a window, starting it again"
+        );
+        let argv = reprisefs::apps::launch_argv(e, &state.config.terminal);
+        for _ in 0..n {
+            crate::spawn::spawn_argv(&argv, &state.env, None);
+        }
+        TimeoutAction::Drop
+    });
+    if let Err(e) = armed {
+        log::warn!("session: no restart timer for {app_id}: {e}");
+    }
 }
 
 #[cfg(test)]
@@ -324,6 +618,173 @@ mod tests {
             None
         );
         assert_eq!(Pending::default().desktop("gimp", t), None);
+    }
+
+    fn tabs(apps: &[&str], shown: usize, desktop: usize) -> SavedTabs {
+        SavedTabs {
+            apps: apps.iter().map(|a| a.to_string()).collect(),
+            shown,
+            desktop,
+        }
+    }
+
+    #[test]
+    fn pick_tabs_keeps_saved_apps_in_order_and_drops_groups_of_one() {
+        let saved = [
+            saved("foot", "foot.desktop", 0),
+            saved("gimp", "gimp.desktop", 1),
+        ];
+        let group = |apps: &[&str], shown, desktop| {
+            (apps.iter().map(|a| a.to_string()).collect(), shown, desktop)
+        };
+        let got = pick_tabs(
+            &[
+                group(&["gimp", "unknown", "foot", "foot"], 3, 1),
+                group(&["foot", "unknown"], 0, 0),
+                group(&["unknown", "gimp", "foot"], 0, 2),
+            ],
+            &saved,
+        );
+        assert_eq!(
+            got,
+            [
+                tabs(&["gimp", "foot", "foot"], 2, 1),
+                tabs(&["gimp", "foot"], 0, 2),
+            ],
+            "a left-out shown tab gives the first tab"
+        );
+    }
+
+    #[test]
+    fn an_app_whose_windows_all_come_back_gets_no_second_start() {
+        let t = Instant::now();
+        let mut p = PendingTabs::<u32>::new(&[tabs(&["firefox", "firefox"], 0, 0)], t);
+        p.started("firefox");
+        assert_eq!(p.restart("firefox", t), 0, "no window yet: no settle armed");
+        let mut p = PendingTabs::<u32>::new(&[tabs(&["firefox", "firefox"], 0, 0)], t);
+        p.started("firefox");
+        p.claim("firefox", 1, t);
+        assert!(p.settle("firefox", t));
+        p.claim("firefox", 2, t);
+        assert!(!p.settle("firefox", t), "the slots are full");
+        assert_eq!(p.restart("firefox", t + RESTART_SETTLE), 0);
+    }
+
+    #[test]
+    fn an_app_that_brings_back_one_window_is_started_for_the_rest() {
+        let t = Instant::now();
+        let later = t + RESTART_SETTLE;
+        let saved = [
+            tabs(&["foot", "foot", "gimp"], 0, 0),
+            tabs(&["foot", "x"], 0, 0),
+        ];
+        let mut p = PendingTabs::new(&saved, t);
+        p.started("foot");
+        p.started("gimp");
+        p.claim("foot", 1, t);
+        assert!(p.settle("foot", t));
+        assert!(!p.settle("foot", t), "one settle at a time");
+        assert_eq!(p.restart("foot", later), 2, "one start per empty slot");
+        p.claim("foot", 2, later);
+        assert!(!p.settle("foot", later), "three saved slots, three starts");
+        assert_eq!(p.restart("foot", later + RESTART_SETTLE), 0);
+        assert!(!p.settle("x", t), "an app restore did not start");
+        p.claim("gimp", 3, t);
+        assert!(!p.settle("gimp", t), "gimp's one slot is full");
+        let late = t + DESKTOP_WINDOW + Duration::from_secs(1);
+        let mut p = PendingTabs::new(&saved, t);
+        p.started("foot");
+        p.claim("foot", 1, t);
+        assert!(p.settle("foot", t));
+        assert_eq!(p.restart("foot", late), 0, "the restore window has ended");
+    }
+
+    #[test]
+    fn a_start_whose_window_has_not_mapped_is_not_started_again() {
+        let t = Instant::now();
+        let mut p = PendingTabs::new(&[tabs(&["lo", "lo", "lo", "lo"], 0, 0)], t);
+        p.started("lo");
+        p.claim("lo", 1, t);
+        assert!(p.settle("lo", t));
+        p.claim("lo", 2, t);
+        assert_eq!(p.restart("lo", t + RESTART_SETTLE), 2);
+        assert_eq!(
+            p.restart("lo", t + RESTART_SETTLE * 2),
+            0,
+            "the next settle waits for a window"
+        );
+        p.claim("lo", 3, t + RESTART_SETTLE * 3);
+        assert!(p.settle("lo", t + RESTART_SETTLE * 3));
+        assert_eq!(
+            p.restart("lo", t + RESTART_SETTLE * 4),
+            0,
+            "one empty slot, one start still in flight"
+        );
+    }
+
+    #[test]
+    fn windows_regroup_in_tab_order_as_they_come_back() {
+        let t = Instant::now();
+        let mut p = PendingTabs::new(&[tabs(&["a", "b", "c"], 1, 2), tabs(&["b", "d"], 0, 0)], t);
+        assert_eq!(p.desktop("c", t), Some(2));
+        assert_eq!(p.desktop("d", t), Some(0));
+        assert_eq!(p.claim("x", 9, t), Claim::None);
+        assert_eq!(p.claim("c", 3, t), Claim::First);
+        assert_eq!(
+            p.claim("a", 1, t),
+            Claim::Join {
+                target: 3,
+                before: Some(3),
+                show: None
+            },
+            "before the later tab; the shown one is not back yet"
+        );
+        assert_eq!(
+            p.claim("b", 2, t),
+            Claim::Join {
+                target: 1,
+                before: Some(3),
+                show: Some(2)
+            }
+        );
+        assert_eq!(
+            p.desktop("b", t),
+            Some(0),
+            "the next b is the second group's"
+        );
+        assert_eq!(p.claim("b", 4, t), Claim::First);
+        assert_eq!(p.desktop("a", t), None, "the first group is complete");
+        assert_eq!(p.claim("a", 5, t), Claim::None);
+    }
+
+    #[test]
+    fn a_closed_member_leaves_its_slot_empty_and_the_rest_still_join() {
+        let t = Instant::now();
+        let mut p = PendingTabs::new(&[tabs(&["a", "b", "c"], 0, 0)], t);
+        assert_eq!(p.claim("a", 1, t), Claim::First);
+        p.forget(1);
+        assert_eq!(p.claim("b", 2, t), Claim::First);
+        assert_eq!(p.claim("a", 7, t), Claim::None, "a's slot is gone");
+        assert_eq!(
+            p.claim("c", 3, t),
+            Claim::Join {
+                target: 2,
+                before: None,
+                show: None
+            }
+        );
+        assert_eq!(p.claim("c", 4, t), Claim::None, "the group is done");
+    }
+
+    #[test]
+    fn regrouping_ends_with_the_restore_window() {
+        let t = Instant::now();
+        let late = t + DESKTOP_WINDOW + Duration::from_secs(1);
+        let mut p = PendingTabs::new(&[tabs(&["a", "b"], 0, 1)], t);
+        assert_eq!(p.claim("a", 1, t), Claim::First);
+        assert_eq!(p.desktop("b", late), None);
+        assert_eq!(p.claim("b", 2, late), Claim::None);
+        assert_eq!(PendingTabs::<u32>::default().claim("a", 1, t), Claim::None);
     }
 
     #[test]

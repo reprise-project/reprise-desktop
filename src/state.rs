@@ -38,6 +38,8 @@ pub struct Persisted {
     pub bin: Option<crate::binprops::OldBinSettings>,
     /// The apps open when the last session ended, started again at login.
     pub session: Vec<crate::session::SavedApp>,
+    /// The tab groups open when the last session ended, regrouped at login.
+    pub session_tabs: Vec<crate::session::SavedTabs>,
     /// The programs pinned to the Glass Start menu, by desktop file id.
     pub start_pins: Vec<String>,
     /// Launched programs' desktop file ids, newest first.
@@ -170,10 +172,11 @@ fn window_geometry_keys(
     }
 }
 
-/// Queue a write of the apps the session ended with (`session`), leaving every other key as it is.
-pub fn save_session(apps: &[crate::session::SavedApp]) {
+/// Queue a write of the apps and tab groups the session ended with (`session`, `session_tabs`),
+/// leaving every other key as it is.
+pub fn save_session(apps: &[crate::session::SavedApp], tabs: &[crate::session::SavedTabs]) {
     let path = path();
-    let keys = session_keys(apps);
+    let keys = session_keys(apps, tabs);
     run_in_order(move || patch(&path, keys));
 }
 
@@ -184,10 +187,15 @@ pub fn save_color_filter_last(name: &str) {
     run_in_order(move || patch(&path, keys));
 }
 
-fn session_keys(apps: &[crate::session::SavedApp]) -> toml::Table {
-    match toml::Value::try_from(apps) {
-        Ok(v) => toml::Table::from_iter([("session".to_string(), v)]),
-        Err(e) => {
+fn session_keys(
+    apps: &[crate::session::SavedApp],
+    tabs: &[crate::session::SavedTabs],
+) -> toml::Table {
+    match (toml::Value::try_from(apps), toml::Value::try_from(tabs)) {
+        (Ok(a), Ok(t)) => {
+            toml::Table::from_iter([("session".to_string(), a), ("session_tabs".to_string(), t)])
+        }
+        (Err(e), _) | (_, Err(e)) => {
             log::warn!("state: could not serialize the session: {e}");
             toml::Table::new()
         }
@@ -527,11 +535,17 @@ mod tests {
             entry: "foot.desktop".into(),
             desktop: 1,
         }];
-        let (p, a) = (path.clone(), apps.clone());
-        run_in_order(move || patch(&p, session_keys(&a)));
+        let tabs = vec![crate::session::SavedTabs {
+            apps: vec!["foot".into(), "foot".into()],
+            shown: 1,
+            desktop: 1,
+        }];
+        let (p, a, t) = (path.clone(), apps.clone(), tabs.clone());
+        run_in_order(move || patch(&p, session_keys(&a, &t)));
         flush();
         let back = load_from(&path);
         assert_eq!(back.session, apps);
+        assert_eq!(back.session_tabs, tabs);
         assert!(back.auto_arrange);
         std::fs::remove_dir_all(&dir).unwrap();
     }

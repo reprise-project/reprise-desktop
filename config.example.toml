@@ -374,7 +374,8 @@ suspend_after = 0            # run [power] standby
 
 # [session]
 # restore = false            # true: the apps open at Log Off, Turn Off or Restart start again at
-#                            # the next login, each on its old desktop; only apps with a Start menu entry
+#                            # the next login, each on its old desktop, and their tab groups come
+#                            # back with the same tab shown; only apps with a Start menu entry
 # exclude = ["foot"]         # app ids never started again. Globs: * and ?. X11: the class.
 # end_processes = true       # Log Off ends every program left in the login session, windowless ones
 #                            # too; false leaves them running (a display manager login only)
@@ -389,6 +390,8 @@ suspend_after = 0            # run [power] standby
 # desktop = 2                # 1 to [workspaces] count
 # always_on_top = true
 # sticky = true              # on every desktop
+# tab_group = "shells"       # windows matching rules with the same name share one tab group: the
+#                            # first one opens on its own, later ones join it as the last tab
 #                            # dialogs keep centring on their owner; fixed-size windows ignore size
 
 # [window_snapping]          # snap a window to the screen's edges and the zones of its layout
