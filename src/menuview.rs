@@ -296,8 +296,17 @@ pub struct Menu {
     pub hovered: Option<usize>,
     pub output: Output,
     pub kind: MenuKind,
+    pub from: MenuFrom,
     pub parent_row: Option<usize>,
     opened: Instant,
+}
+
+/// Where a menu was opened. One opened from the taskbar keeps an
+/// auto-hidden bar shown while it is up; one opened elsewhere does not.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MenuFrom {
+    Bar,
+    Elsewhere,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -307,6 +316,37 @@ pub enum MenuRoot {
     JumpList(usize),
     TaskOverflow(TreeId),
     Other,
+}
+
+#[cfg(test)]
+impl Menu {
+    /// An empty menu of `kind` on `output`, with buffers in `scene`.
+    pub(crate) fn for_test(
+        scene: &mut crate::compositor::DeskScene,
+        output: Output,
+        kind: MenuKind,
+        from: MenuFrom,
+    ) -> Menu {
+        let tree = scene.tree_create(scene.root());
+        let theme = crate::config::Config::default().theme;
+        Menu {
+            tree,
+            buffer: scene.buffer_create(tree),
+            shadow: scene.buffer_create(tree),
+            shadow_floor: None,
+            shadow_drawn: None,
+            layout: MenuLayout::compute_styled(&MenuStyle::root(&theme), &[], usize::MAX),
+            items: Vec::new(),
+            x: 0,
+            y: 0,
+            hovered: None,
+            output,
+            kind,
+            from,
+            parent_row: None,
+            opened: Instant::now(),
+        }
+    }
 }
 
 const RECENT_DOCUMENTS: usize = 15;
@@ -445,6 +485,7 @@ fn list_anchor(layout: &reprisekit::taskbar::TaskbarLayout, i: usize) -> Rect {
 }
 
 impl State {
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn push_menu(
         &mut self,
         depth: usize,
@@ -453,6 +494,7 @@ impl State {
         items: Vec<MenuItem>,
         output: Output,
         kind: MenuKind,
+        from: MenuFrom,
     ) {
         let scene = &mut self.scene;
         let tree = scene.tree_create(self.layers.menu);
@@ -479,6 +521,7 @@ impl State {
             hovered: None,
             output,
             kind,
+            from,
             parent_row: None,
             opened: Instant::now(),
         });
@@ -620,7 +663,15 @@ impl State {
             start.height,
         );
         let at = start_menu_at(dock, &p, start, (layout.width, layout.height), area);
-        self.push_menu(0, at, layout, items, output, MenuKind::Entries(entries));
+        self.push_menu(
+            0,
+            at,
+            layout,
+            items,
+            output,
+            MenuKind::Entries(entries),
+            MenuFrom::Bar,
+        );
         if let Some(m) = self.menus.first_mut() {
             m.shadow_floor = start_menu_shadow_floor(dock, &p);
         }
@@ -1004,7 +1055,11 @@ impl State {
                 start_submenu_shadow_floor(dock, &p, y)
             })
             .flatten();
-        self.push_menu(depth + 1, (x, y), layout, items, output, kind);
+        let from = self
+            .menus
+            .get(depth)
+            .map_or(MenuFrom::Elsewhere, |m| m.from);
+        self.push_menu(depth + 1, (x, y), layout, items, output, kind, from);
         if let Some(m) = self.menus.last_mut() {
             m.parent_row = Some(row);
             m.shadow_floor = floor;
@@ -1022,8 +1077,9 @@ impl State {
         at: (i32, i32),
         items: Vec<MenuItem>,
         kind: MenuKind,
+        from: MenuFrom,
     ) {
-        self.push_context_menu_placed(at, items, kind, place_popup);
+        self.push_context_menu_placed(at, items, kind, from, place_popup);
     }
 
     pub(crate) fn push_context_menu_placed(
@@ -1031,6 +1087,7 @@ impl State {
         at: (i32, i32),
         items: Vec<MenuItem>,
         kind: MenuKind,
+        from: MenuFrom,
         place: impl FnOnce((i32, i32), (i32, i32), Rect) -> (i32, i32),
     ) {
         let Some(output) = self.output_at(at.0 as f64, at.1 as f64) else {
@@ -1045,7 +1102,7 @@ impl State {
         );
         let layout = MenuLayout::compute_styled(&style, &items, usize::MAX);
         let pos = place(at, (layout.width, layout.height), usable);
-        self.push_menu(0, pos, layout, items, output, kind);
+        self.push_menu(0, pos, layout, items, output, kind, from);
         self.redraw_menu(0);
     }
 
@@ -1079,7 +1136,12 @@ impl State {
             .or_else(|| close_binds().next())
             .map(|b| crate::winmenu::keybind_label(b.mods, b.keysym));
         let (items, rows) = crate::winmenu::window_menu(state, close_keys.as_deref());
-        self.push_context_menu(at, items, MenuKind::Window { window: w, rows });
+        let from = if from_taskbar {
+            MenuFrom::Bar
+        } else {
+            MenuFrom::Elsewhere
+        };
+        self.push_context_menu(at, items, MenuKind::Window { window: w, rows }, from);
     }
 
     pub fn open_window_menu_below(&mut self, w: WindowId, from_taskbar: bool) {
@@ -1134,7 +1196,7 @@ impl State {
         self.close_menu();
         let has_windows = !self.task_windows().is_empty();
         let (items, commands) = crate::taskbar::taskbar_menu(self.bar_shared.locked, has_windows);
-        self.push_context_menu(at, items, MenuKind::Taskbar { commands });
+        self.push_context_menu(at, items, MenuKind::Taskbar { commands }, MenuFrom::Bar);
     }
 
     pub fn open_desktop_menu(&mut self, at: (i32, i32)) {
@@ -1149,7 +1211,7 @@ impl State {
             commands,
             target: None,
         };
-        self.push_context_menu(at, items, kind);
+        self.push_context_menu(at, items, kind, MenuFrom::Elsewhere);
     }
 
     pub fn open_icon_menu(&mut self, index: usize, at: (i32, i32)) {
@@ -1170,7 +1232,7 @@ impl State {
             commands,
             target: Some(target),
         };
-        self.push_context_menu(at, items, kind);
+        self.push_context_menu(at, items, kind, MenuFrom::Elsewhere);
     }
 
     pub fn open_drop_menu(
@@ -1190,7 +1252,7 @@ impl State {
             commands,
             target: None,
         };
-        self.push_context_menu(at, items, kind);
+        self.push_context_menu(at, items, kind, MenuFrom::Elsewhere);
     }
 
     pub fn open_quick_menu(&mut self, index: usize, at: (i32, i32)) {
@@ -1199,7 +1261,7 @@ impl State {
         };
         self.close_menu();
         let (items, commands) = crate::taskbar::quick_menu();
-        self.push_context_menu(at, items, MenuKind::Quick { file, commands });
+        self.push_context_menu(at, items, MenuKind::Quick { file, commands }, MenuFrom::Bar);
     }
 
     fn jump_target(&self, tree: TreeId, i: usize) -> Option<JumpTarget> {
@@ -1305,7 +1367,7 @@ impl State {
             target: Box::new(target),
             button: i,
         };
-        self.push_context_menu(at, items, kind);
+        self.push_context_menu(at, items, kind, MenuFrom::Bar);
     }
 
     fn jump_activate(&mut self, row: JumpRow, target: &JumpTarget) {
@@ -1412,7 +1474,7 @@ impl State {
             rows,
             button: i,
         };
-        self.push_menu(0, pos, layout, items, output, kind);
+        self.push_menu(0, pos, layout, items, output, kind, MenuFrom::Bar);
         self.redraw_menu(0);
     }
 
@@ -1459,7 +1521,7 @@ impl State {
         );
         let pos = place_popup(p.anchor_point(cell), (layout.width, layout.height), usable);
         let kind = MenuKind::TaskOverflow { bar: tree, keys };
-        self.push_menu(0, pos, layout, items, output, kind);
+        self.push_menu(0, pos, layout, items, output, kind, MenuFrom::Bar);
         self.redraw_menu(0);
         self.redraw_taskbars();
     }

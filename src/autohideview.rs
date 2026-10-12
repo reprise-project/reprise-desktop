@@ -27,7 +27,7 @@ use crate::autohide::{AutoHide, Rules, Signals};
 use crate::compositor::State;
 use crate::config::Config;
 use crate::input::Interaction;
-use crate::menuview::MenuKind;
+use crate::menuview::{Menu, MenuFrom};
 use crate::raster::Rect;
 use crate::taskbarview::Bar;
 
@@ -105,13 +105,12 @@ fn rules(c: &Config) -> Rules {
     }
 }
 
-/// Whether a menu stack whose root is `kind` hangs off the bar, holding it
-/// shown while open. The desktop's menus and a notification's actions do not.
-pub fn holds_bar(kind: &MenuKind) -> bool {
-    !matches!(
-        kind,
-        MenuKind::Desktop { .. } | MenuKind::NotifyActions { .. }
-    )
+/// Whether the root of `menus` was opened from the bar on `out`, holding it
+/// shown while open.
+fn menu_holds(menus: &[Menu], out: &Output) -> bool {
+    menus
+        .first()
+        .is_some_and(|m| m.output == *out && m.from == MenuFrom::Bar)
 }
 
 fn attention_on(state: &State, out: &Output) -> bool {
@@ -129,7 +128,7 @@ fn attention_on(state: &State, out: &Output) -> bool {
 }
 
 pub fn popup_on(state: &State, out: &Output) -> bool {
-    let menu = (state.menus.first()).is_some_and(|m| m.output == *out && holds_bar(&m.kind));
+    let menu = menu_holds(&state.menus, out);
     let tray_menu =
         (state.tray.as_ref()).is_some_and(|t| t.pending_menu.as_ref().is_some_and(|p| p.1 == *out));
     let tray_popup = (state.bar_hide.tray_popups.iter()).any(|(o, _)| o == out);
@@ -419,40 +418,36 @@ pub fn config_changed(state: &mut State) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::menuview::MenuKind;
+
+    fn test_output(name: &str) -> Output {
+        Output::new(
+            name.into(),
+            smithay::output::PhysicalProperties {
+                size: (0, 0).into(),
+                subpixel: smithay::output::Subpixel::Unknown,
+                make: "Reprise".into(),
+                model: "Test".into(),
+                serial_number: "0".into(),
+            },
+        )
+    }
 
     #[test]
-    fn the_bars_menus_hold_it_and_the_desktops_do_not() {
+    fn a_menu_holds_the_bar_by_where_it_opened_not_by_its_rows() {
         let mut scene = crate::compositor::DeskScene::new();
-        let bar = scene.tree_create(scene.root());
-        let held = [
-            MenuKind::Entries(Vec::new()),
-            MenuKind::Taskbar {
-                commands: Vec::new(),
-            },
-            MenuKind::Tray {
-                id: String::new(),
-                node_ids: Vec::new(),
-            },
-            MenuKind::Layouts,
-            MenuKind::NightLight(Vec::new()),
-            MenuKind::TaskOverflow {
-                bar,
-                keys: Vec::new(),
-            },
-        ];
-        for (i, k) in held.iter().enumerate() {
-            assert!(holds_bar(k), "root {i} hangs off the bar");
-        }
-        let desktop = MenuKind::Desktop {
-            commands: Vec::new(),
-            target: None,
-        };
-        assert!(!holds_bar(&desktop), "the desktop's menu");
-        let actions = MenuKind::NotifyActions {
-            id: 1,
-            keys: Vec::new(),
-        };
-        assert!(!holds_bar(&actions), "a notification's actions");
+        let (a, b) = (test_output("A-1"), test_output("B-1"));
+        let program = || MenuKind::StartPanel { rows: Vec::new() };
+        let start = Menu::for_test(&mut scene, a.clone(), program(), MenuFrom::Bar);
+        let launcher = Menu::for_test(&mut scene, a.clone(), program(), MenuFrom::Elsewhere);
+        assert!(menu_holds(&[start], &a), "a Start panel row's menu");
+        assert!(
+            !menu_holds(&[launcher], &a),
+            "the same menu from the launcher"
+        );
+        let start = Menu::for_test(&mut scene, a.clone(), program(), MenuFrom::Bar);
+        assert!(!menu_holds(&[start], &b), "another output's bar");
+        assert!(!menu_holds(&[], &a), "no menu");
     }
 
     #[test]
@@ -520,19 +515,7 @@ mod tests {
 
     #[test]
     fn one_tray_press_holds_one_popup() {
-        let out = |name: &str| {
-            Output::new(
-                name.into(),
-                smithay::output::PhysicalProperties {
-                    size: (0, 0).into(),
-                    subpixel: smithay::output::Subpixel::Unknown,
-                    make: "Reprise".into(),
-                    model: "Test".into(),
-                    serial_number: "0".into(),
-                },
-            )
-        };
-        let (a, b) = (out("A-1"), out("B-1"));
+        let (a, b) = (test_output("A-1"), test_output("B-1"));
         let pressed = Instant::now();
         let after = pressed + Duration::from_millis(100);
         let mut hide = BarHide {
@@ -560,16 +543,7 @@ mod tests {
 
     #[test]
     fn a_tray_press_that_opened_nothing_is_dropped_once_its_window_passes() {
-        let out = Output::new(
-            "A-1".into(),
-            smithay::output::PhysicalProperties {
-                size: (0, 0).into(),
-                subpixel: smithay::output::Subpixel::Unknown,
-                make: "Reprise".into(),
-                model: "Test".into(),
-                serial_number: "0".into(),
-            },
-        );
+        let out = test_output("A-1");
         let pressed = Instant::now();
         let window = Duration::from_millis(750);
         let mut hide = BarHide {
