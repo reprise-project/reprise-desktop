@@ -463,13 +463,29 @@ impl State {
         let lead = self.tabs.groups.shown_of(target);
         self.tabs.groups.join_at(w, target, slot);
         let members = self.tabs.groups.members_of(w);
+        self.regrouped(&members);
         self.retab(&members, Some(lead));
         true
     }
 
+    fn regrouped(&mut self, members: &[WindowId]) {
+        for &m in members {
+            if let Some(win) = self.win_mut(m) {
+                win.tab_pulled_out = false;
+            }
+        }
+    }
+
+    fn pulled_out(&mut self, w: WindowId) {
+        if let Some(win) = self.win_mut(w) {
+            win.tab_pulled_out = true;
+        }
+    }
+
     /// A window that just mapped joins the tab group it belongs in: the
     /// restored session's group it is back for, or else the group of the
-    /// oldest open window its `tab_group` rule names. It goes to the
+    /// oldest open window its `tab_group` rule names that was not pulled
+    /// out of its group by hand (`rule_target`). It goes to the
     /// group's desktop. A restored app still short of its saved windows
     /// may start again (`session::settle_restart`).
     pub(crate) fn tab_on_map(&mut self, w: WindowId) {
@@ -499,12 +515,12 @@ impl State {
                 let Some(name) = self.win(w).and_then(|x| x.tab_group.clone()) else {
                     return;
                 };
-                let target = self
+                let open = self
                     .windows
                     .iter()
-                    .map(|x| x.id)
-                    .filter(|&t| t != w && self.tabbable(t))
-                    .find(|&t| self.win(t).and_then(|x| x.tab_group.as_ref()) == Some(&name));
+                    .filter(|x| x.id != w && self.tabbable(x.id));
+                let open = open.map(|x| (x.id, x.tab_group.as_deref(), x.tab_pulled_out));
+                let target = rule_target(open, &name);
                 if let Some(t) = target {
                     self.join_tabs_quiet(w, t, usize::MAX, false);
                 }
@@ -539,6 +555,7 @@ impl State {
         if !self.leave_tabs_quiet(w) {
             return;
         }
+        self.pulled_out(w);
         self.step_off_group(w);
         self.focus_window(w);
     }
@@ -868,6 +885,7 @@ impl State {
         if in_group {
             self.tabs.tear_off(member);
             self.leave_tabs_quiet(member);
+            self.pulled_out(member);
             if let Some(tree) = self.win(member).map(|x| x.tree) {
                 self.scene.raise_to_top(tree);
             }
@@ -890,6 +908,7 @@ impl State {
         }
         let lead = self.tabs.put_back(t);
         let members = self.tabs.groups.members_of(w);
+        self.regrouped(&members);
         self.retab(&members, Some(lead));
         self.focus_window(w);
     }
@@ -936,9 +955,35 @@ impl State {
     }
 }
 
+/// The window a new window of `tab_group` rule `name` joins, from the open
+/// `windows` (id, rule name, pulled out by hand) oldest first.
+fn rule_target<'a, T>(
+    windows: impl IntoIterator<Item = (T, Option<&'a str>, bool)>,
+    name: &str,
+) -> Option<T> {
+    windows
+        .into_iter()
+        .find(|&(_, n, pulled_out)| n == Some(name) && !pulled_out)
+        .map(|(id, ..)| id)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_rule_passes_over_a_window_pulled_out_of_its_group() {
+        let open = [
+            (1, Some("shells"), true),
+            (2, None, false),
+            (3, Some("build"), false),
+            (4, Some("shells"), false),
+        ];
+        assert_eq!(rule_target(open, "shells"), Some(4));
+        assert_eq!(rule_target(open, "build"), Some(3));
+        assert_eq!(rule_target(open, "mail"), None);
+        assert_eq!(rule_target([(1, Some("shells"), true)], "shells"), None);
+    }
 
     #[test]
     fn a_torn_tab_goes_back_to_its_slot_showing() {
