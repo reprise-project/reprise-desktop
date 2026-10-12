@@ -181,8 +181,9 @@ network time.
   plugged in when the session starts are left as they are.
 - **Run As.** The admin password prompt. It takes a fingerprint too, when
   polkit is set up for one. Cancelling it in User Accounts, Network
-  Connections, Printers or Software Updates leaves things as they were, with
-  no error; a refused password says so.
+  Connections, Printers, Software Updates, Date and Time, Explorer or Safely
+  Remove Hardware leaves things as they were, with no error; a refused
+  password says so.
 - **About Reprise.** Version, operating system, kernel, model, processor,
   graphics, memory (in kilobytes, total and available), disk, displays and
   uptime, with a Copy button for bug reports. The programs' own Help > About
