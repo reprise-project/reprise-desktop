@@ -1094,21 +1094,19 @@ impl Dialog {
                 f.fit_frame(client_shift(theme));
             }
             Style::TrayCustomize(t) => {
-                t.metrics = theme.look.controls();
+                t.metrics = theme.controls();
                 t.set_wording(traycustomize::Wording::of(theme));
                 self.title = t.wording.title().into();
             }
+            Style::Browse(p) => p.dlg.set_text(theme.text),
             _ => {}
         }
     }
 
-    /// Whether the dialog lays out for the text size. The file Browse dialog, the Open With
-    /// chooser, the tray's Customize dialog and the Welcome panel keep 100% text and sizes.
+    /// Whether the dialog lays out for the text size. The tray's Customize page under a look
+    /// with glass keeps 100% text and sizes.
     pub fn grows(&self) -> bool {
-        !matches!(
-            self.style,
-            Style::Browse(_) | Style::Chooser(_) | Style::TrayCustomize(_) | Style::Welcome
-        )
+        !matches!(&self.style, Style::TrayCustomize(t) if t.is_page())
     }
 
     /// What makes this dialog "the same window" as one already open: its
@@ -3313,6 +3311,9 @@ const WELCOME_LABEL_Y: i32 = 44;
 const WELCOME_THREE: (i32, [i32; 3]) = (85, [29, 115, 200]);
 const WELCOME_TWO: (i32, [i32; 2]) = (115, [43, 158]);
 const WELCOME_CANCEL: (i32, i32, i32) = (60, 20, 167);
+/// The art tables' columns across the panel and the gradient's rows, at 100%.
+const PANEL_W: i32 = 312;
+const PANEL_H: i32 = 110;
 
 /// The Welcome panel under a look with glass, a dialog like any other
 /// in its frame: a 312 px wide client, the icon buttons 80x64 push
@@ -3358,10 +3359,12 @@ impl DialogLayout {
     fn compute_body(theme: &Theme, text: &TextRenderer, d: &Dialog) -> DialogLayout {
         let body = match &d.style {
             Style::Welcome if theme.glass().is_some() => Self::compute_welcome_glass(d),
-            Style::Welcome => return Self::compute_welcome(d),
+            Style::Welcome => return Self::compute_welcome(d, theme.text),
             Style::Form(f) => return Self::compute_form(theme, text, d, f),
             Style::Chooser(_) => Self::compute_chooser(),
-            Style::TrayCustomize(t) => Self::compute_client(t.client()),
+            Style::TrayCustomize(t) => {
+                return Self::compute_client(t.client()).framed(theme, d.help);
+            }
             Style::Browse(p) => return Self::compute_browse(theme, d.help, p.dlg.client()),
             Style::EndProgram => Self::compute_end_program(theme, text.dialog(d.font()), d),
             Style::Classic {
@@ -3546,7 +3549,7 @@ impl DialogLayout {
     /// The Welcome panel: icon buttons in a row of cells across the
     /// gradient, the rest (Cancel) as small classic buttons from the right
     /// of the bottom band.
-    fn compute_welcome(d: &Dialog) -> DialogLayout {
+    fn compute_welcome(d: &Dialog, u: TextUnits) -> DialogLayout {
         let b = WELCOME_BORDER;
         let inner_w = WELCOME_W - 2 * b;
         let caption = Rect::new(b, b, inner_w, WELCOME_TITLE_H);
@@ -3562,7 +3565,7 @@ impl DialogLayout {
         let (cw, ch, cy) = WELCOME_CANCEL;
         let mut next_icon = 0;
         let mut next_plain = 0;
-        let buttons = d
+        let buttons: Vec<Rect> = d
             .buttons
             .iter()
             .map(|x| {
@@ -3587,9 +3590,10 @@ impl DialogLayout {
                 }
             })
             .collect();
+        let buttons = buttons.into_iter().map(|r: Rect| u.rect(r)).collect();
         DialogLayout {
-            size: (WELCOME_W, WELCOME_H),
-            caption,
+            size: u.size((WELCOME_W, WELCOME_H)),
+            caption: u.rect(caption),
             buttons,
             ..Default::default()
         }
@@ -4484,30 +4488,41 @@ fn draw_welcome(
     let b = WELCOME_BORDER * s;
     let inner = Rect::new(b, b, w - 2 * b, h - 2 * b);
     c.fill_rect(inner, PANEL_BAND);
-    let title = layout.caption.scaled(s);
-    for (row, runs) in SEPARATOR_RUNS.iter().enumerate() {
-        let y = title.bottom() + row as i32 * s;
-        let mut x = title.x;
-        for &(i, n) in runs.iter() {
-            let width = n as i32 * s;
-            c.fill_rect(Rect::new(x, y, width, s), PANEL_SEPARATOR[i as usize]);
-            x += width;
+    // The bands are drawn for 312 columns and a 110-row gradient at 100%; grown with the text
+    // they stretch, each logical px taking the colour of the 100% one it maps back to.
+    let u = theme.text;
+    let caption = layout.caption;
+    let title = caption.scaled(s);
+    let band_top = caption.bottom() + 2;
+    let band = Rect::new(caption.x, band_top, caption.width, u.len(156) - band_top);
+    let across = |n: i32| n * band.width / PANEL_W;
+    let runs_row = |c: &mut Canvas, y: i32, runs: &mut dyn Iterator<Item = (Color, i32)>| {
+        let mut at = 0;
+        for (ink, n) in runs {
+            let (x0, x1) = (across(at), across(at + n));
+            c.fill_rect(Rect::new(band.x + x0, y, x1 - x0, 1).scaled(s), ink);
+            at += n;
         }
+    };
+    for (row, runs) in SEPARATOR_RUNS.iter().enumerate() {
+        let mut inks = runs
+            .iter()
+            .map(|&(i, n)| (PANEL_SEPARATOR[i as usize], n as i32));
+        runs_row(&mut c, caption.bottom() + row as i32, &mut inks);
     }
-    let band = Rect::new(title.x, title.bottom() + 2 * s, title.width, 110 * s);
-    for y in 0..band.height / s {
-        for x in 0..band.width / s {
-            let at = Rect::new(band.x + x * s, band.y + y * s, s, s);
-            c.fill_rect(at, panel_gradient(x, y));
+    for y in 0..band.height {
+        for x in 0..band.width {
+            let at = Rect::new(band.x + x, band.y + y, 1, 1).scaled(s);
+            let ink = panel_gradient(x * PANEL_W / band.width, y * PANEL_H / band.height);
+            c.fill_rect(at, ink);
         }
     }
     for (row, runs) in PANEL_LINE_RUNS.iter().enumerate() {
-        let y = band.bottom() + row as i32 * s;
-        let mut x = band.x;
-        for &(color, n) in runs {
-            c.fill_rect(Rect::new(x, y, n * s, s), color);
-            x += n * s;
-        }
+        runs_row(
+            &mut c,
+            band.bottom() + row as i32,
+            &mut runs.iter().copied(),
+        );
     }
     let spec = welcome_title_text();
     WELCOME_TITLE.with(|t| {
@@ -4523,18 +4538,21 @@ fn draw_welcome(
             spec.bold,
             spec.color,
             Align::Left,
-            spec.size_in(t) * s as u32,
+            u.px(spec.size_in(t)) * s as u32,
         )
     });
     if let Some(logo) = logo {
-        c.blit_over(title.right() - 43 * s, title.y + 6 * s, logo);
+        let dy = 6 + (caption.height - WELCOME_TITLE_H) / 2;
+        c.blit_over(title.right() - 43 * s, title.y + dy * s, logo);
     }
     let mut fallback: Option<Canvas> = None;
     for (i, (r, btn)) in layout.buttons.iter().zip(&d.buttons).enumerate() {
         let r = r.scaled(s);
         if btn.icon.is_some() {
             let icon_px = ICON_PX * s;
-            let at = (r.x + (r.width - icon_px) / 2, r.y + WELCOME_ICON_Y * s);
+            let (icon_y, label) =
+                welcome_cell(r, WELCOME_CELL_H, WELCOME_CELL_H - WELCOME_LABEL_Y, u, s);
+            let at = (r.x + (r.width - icon_px) / 2, icon_y);
             let icon = match button_icons.get(i).and_then(|o| o.as_ref()) {
                 Some(icon) => icon,
                 None => {
@@ -4552,7 +4570,6 @@ fn draw_welcome(
                 c.blit_over(at.0, at.1, &faded);
             }
             let color = if btn.enabled { white } else { PANEL_DISABLED };
-            let label = Rect::new(r.x, r.y + WELCOME_LABEL_Y * s, r.width, 20 * s);
             if cues.keys {
                 draw_label(
                     &mut c,
@@ -4585,6 +4602,18 @@ fn draw_welcome(
         }
     }
     c
+}
+
+/// A Welcome icon cell `r` (scaled) laid out `cell_h` tall at 100% with a `label_h` label line
+/// `WELCOME_LABEL_Y` down: the icon's top and the label's box at the text size `u`. The label
+/// keeps its 100% gap to the cell's bottom, grown; the icon keeps its px and moves down half
+/// as far as the label did.
+fn welcome_cell(r: Rect, cell_h: i32, label_h: i32, u: TextUnits, s: i32) -> (i32, Rect) {
+    let h = r.height / s;
+    let label_y = (h - u.len(cell_h - WELCOME_LABEL_Y)).max(WELCOME_LABEL_Y);
+    let icon_y = WELCOME_ICON_Y + (label_y - WELCOME_LABEL_Y) / 2;
+    let label = Rect::new(r.x, r.y + label_y * s, r.width, u.len(label_h) * s);
+    (r.y + icon_y * s, label)
 }
 
 /// How a framed Welcome panel's icon button shows: wearing the default
@@ -4635,7 +4664,9 @@ fn draw_icon_button(
             &fallback
         }
     };
-    let at = (r.x + (r.width - icon_px) / 2, r.y + WELCOME_ICON_Y * s);
+    let cell_h = GLASS_WELCOME_CELL.1;
+    let (icon_y, label) = welcome_cell(r, cell_h, cell_h - WELCOME_LABEL_Y - 4, theme.text, s);
+    let at = (r.x + (r.width - icon_px) / 2, icon_y);
     if b.enabled {
         c.blit_over(at.0, at.1, icon);
     } else {
@@ -4648,7 +4679,6 @@ fn draw_icon_button(
     } else {
         p.cs.gray_text
     };
-    let label = Rect::new(r.x, r.y + WELCOME_LABEL_Y * s, r.width, 16 * s);
     if cues.keys {
         draw_label(c, text, label, &b.label, false, ink, Align::Center, px, s);
     } else {
@@ -5923,6 +5953,109 @@ mod tests {
             let path = format!("{}/target/{name}.png", env!("CARGO_MANIFEST_DIR"));
             std::fs::write(&path, reprisekit::raster::to_png(&c)).unwrap();
         }
+    }
+
+    /// At 200% text the Turn Off panel doubles: its title, cells and Cancel grow, the gradient
+    /// and the lines under it stretch over the grown band, and the icons keep their 32 px while
+    /// the labels grow under them.
+    #[test]
+    fn the_welcome_panel_grows_with_the_text_size() {
+        let theme = Theme::default().with_text_size(200);
+        let u = theme.text;
+        let text = TextRenderer::load(&theme.fonts);
+        let d = Dialog::turn_off(&power());
+        let l = DialogLayout::compute(&theme, &text, &d);
+        assert_eq!(l.size, (628, 400));
+        assert_eq!(l.caption, u.rect(Rect::new(1, 1, 312, 43)));
+        assert_eq!(l.buttons[0], u.rect(Rect::new(29, 73, 85, 64)));
+        assert_eq!(l.buttons[3], u.rect(Rect::new(243, 168, 60, 20)));
+        let icon = Canvas::new(ICON_PX as u32, ICON_PX as u32);
+        let mut icon = icon;
+        icon.fill_rect(icon.bounds(), Color::rgb(1, 2, 3));
+        let c = draw(
+            &theme,
+            &text,
+            &l,
+            None,
+            None,
+            &[Some(icon.clone()), Some(icon.clone()), Some(icon), None],
+            &[],
+            None,
+            &d,
+            true,
+            None,
+            Cues::ALL,
+            true,
+            None,
+        );
+        assert_eq!((c.width as i32, c.height as i32), l.size);
+        // The band runs from under the separator's two rows to the lines at 2 x 156.
+        let band_top = l.caption.bottom() + 2;
+        assert_eq!(c.get(3, band_top), panel_gradient(0, 0).argb());
+        assert_eq!(c.get(3, 311), panel_gradient(0, 109).argb());
+        assert_eq!(c.get(3, 312), PANEL_LINE_RUNS[0][0].0.argb());
+        assert_eq!(c.get(3, 313), PANEL_LINE_RUNS[1][0].0.argb());
+        let (bw, bh) = (l.caption.width, 312 - band_top);
+        let at = panel_gradient(366 * PANEL_W / bw, 100 * PANEL_H / bh);
+        assert_eq!(
+            c.get(1 + 366, band_top + 100),
+            at.argb(),
+            "the gradient stretched"
+        );
+        let cell = l.buttons[2];
+        let shown = (cell.y..cell.bottom())
+            .filter(|&y| c.get(cell.x + cell.width / 2, y) == Color::rgb(1, 2, 3).argb())
+            .count();
+        assert_eq!(shown, ICON_PX as usize, "the icon keeps its 32 px");
+        let white = Color::rgb(255, 255, 255).argb();
+        let label_rows: Vec<i32> = (cell.y..cell.bottom())
+            .filter(|&y| (cell.x..cell.right()).any(|x| c.get(x, y) == white))
+            .collect();
+        let (top, bottom) = (label_rows[0], *label_rows.last().unwrap());
+        assert!(
+            bottom - top >= 12,
+            "the label's ink grows, rows {top}..={bottom}"
+        );
+        assert!(bottom < cell.bottom(), "and stays in its cell");
+    }
+
+    /// At 200% text the Open With chooser's and the Browse dialog's clients double inside their
+    /// frames, and a click lands on the grown Cancel.
+    #[test]
+    fn open_with_and_browse_grow_with_the_text_size() {
+        let theme = Theme::default().with_text_size(200);
+        let text = TextRenderer::load(&theme.fonts);
+        let px = theme.fonts.size_px;
+        let caption_grow = theme.metrics.caption_height - 18;
+        let d = chooser();
+        let l = DialogLayout::compute(&theme, &text, &d);
+        let (cw, ch) = openwith::CLIENT;
+        assert_eq!(l.page.map(|p| (p.width, p.height)), Some((2 * cw, 2 * ch)));
+        assert_eq!(l.size, (2 * cw + 6, 2 * ch + 21 + caption_grow + 3));
+
+        let dir = std::env::temp_dir().join(format!("reprise-browse-grown-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut d = Dialog::browse(crate::filepick::FilePicker::run_command(
+            &dir,
+            crate::filepick::Icons::default(),
+            true,
+        ));
+        d.fit(&theme, &text);
+        let l = DialogLayout::compute(&theme, &text, &d);
+        let page = l.page.unwrap();
+        assert_eq!((page.width, page.height), (1110, 902));
+        let c = render(&theme, &text, &l, &d);
+        assert_eq!((c.width as i32, c.height as i32), l.size);
+        // Cancel: 150x46, 12 px in from the right, 2 px above the Files of type row.
+        let (x, y) = (page.right() - 12 - 150 + 10, page.y + 844 - 2 + 10);
+        assert_eq!(
+            l.hit(&d, x, y, &text, px),
+            Some(DialogHit::Browse(
+                reprisekit::controls::filedlg::Hit::Cancel
+            ))
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
