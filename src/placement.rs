@@ -76,7 +76,7 @@ impl State {
             .map(|w| w.id)
     }
 
-    fn plan_window(&self, w: WindowId) -> Option<Want> {
+    pub(crate) fn plan_window(&self, w: WindowId) -> Option<Want> {
         let win = self.win(w)?;
         if !win.placeable() {
             return None;
@@ -90,6 +90,14 @@ impl State {
             && let Some(m) = self.wm.remembered.get(&app_id)
         {
             base = m.want(first);
+        }
+        if !fixed
+            && let Some(f) = self
+                .session
+                .regrouping
+                .frame(&app_id, std::time::Instant::now())
+        {
+            base = self.regroup_want(f);
         }
         if first
             && let Some(d) = self
@@ -114,6 +122,25 @@ impl State {
             want.size = None;
         }
         (want != Want::default()).then_some(want)
+    }
+
+    /// A restored tab group's frame `f` as a placement: on its output, or
+    /// fitted to the primary one when that output is gone. A normal frame
+    /// says so, so a state the first configure planned is not kept.
+    fn regroup_want(&self, f: &Remembered) -> Want {
+        let mut want = f.want(true);
+        let present = self
+            .scene
+            .outputs()
+            .iter()
+            .any(|o| o.name() == f.output && self.layout_box(Some(o)).width > 0);
+        if !present {
+            want.output = self.first_output().map(|o| o.name());
+        }
+        if !f.maximized {
+            want.state = Some(WindowState::Normal);
+        }
+        want
     }
 
     pub fn placement_output(&self, want: Option<&Want>) -> Option<Output> {
@@ -242,8 +269,30 @@ impl State {
         }
     }
 
-    /// Keep where `w` is as its app's remembered frame: its normal frame
-    /// rect relative to the output under it, and whether it is maximized.
+    /// Where `w` is: its normal frame rect relative to the output under it,
+    /// and whether it is maximized. A snapped window's frame is its zone.
+    pub fn frame_of(&self, w: WindowId) -> Option<Remembered> {
+        let win = self.win(w)?;
+        let normal = match (win.fullscreen, win.maximized) {
+            (true, false) => win.saved_fullscreen,
+            (_, true) => win.saved,
+            _ => None,
+        }
+        .unwrap_or(win.frame_rect());
+        let (cx, cy) = (normal.x + normal.width / 2, normal.y + normal.height / 2);
+        let out = self.output_at(cx as f64, cy as f64)?;
+        let b = self.layout_box(Some(&out));
+        Some(Remembered {
+            output: out.name(),
+            x: normal.x - b.x,
+            y: normal.y - b.y,
+            width: normal.width,
+            height: normal.height,
+            maximized: win.maximized,
+        })
+    }
+
+    /// Keep where `w` is (`frame_of`) as its app's remembered frame.
     pub fn remember_window(&mut self, w: WindowId, last_only: bool) {
         let Some(win) = self.win(w) else {
             return;
@@ -255,25 +304,8 @@ impl State {
         if last_only && self.newest_of_app(&app_id, w).is_some() {
             return;
         }
-        let normal = match (win.fullscreen, win.maximized) {
-            (true, false) => win.saved_fullscreen,
-            (_, true) => win.saved,
-            _ => None,
-        }
-        .unwrap_or(win.frame_rect());
-        let maximized = win.maximized;
-        let (cx, cy) = (normal.x + normal.width / 2, normal.y + normal.height / 2);
-        let Some(out) = self.output_at(cx as f64, cy as f64) else {
+        let Some(entry) = self.frame_of(w) else {
             return;
-        };
-        let b = self.layout_box(Some(&out));
-        let entry = Remembered {
-            output: out.name(),
-            x: normal.x - b.x,
-            y: normal.y - b.y,
-            width: normal.width,
-            height: normal.height,
-            maximized,
         };
         if self.wm.remembered.get(&app_id) != Some(&entry) {
             log::info!("window {app_id:?}: remembered {entry:?}");

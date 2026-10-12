@@ -539,6 +539,14 @@ mod tests {
             apps: vec!["foot".into(), "foot".into()],
             shown: 1,
             desktop: 1,
+            frame: Some(crate::windowrules::Remembered {
+                output: "DP-1".into(),
+                x: 20,
+                y: 30,
+                width: 800,
+                height: 600,
+                maximized: true,
+            }),
         }];
         let (p, a, t) = (path.clone(), apps.clone(), tabs.clone());
         run_in_order(move || patch(&p, session_keys(&a, &t)));
