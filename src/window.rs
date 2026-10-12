@@ -373,6 +373,9 @@ pub struct Window {
     pub tab_hidden: bool,
     /// The `tab_group` its window rules gave it at map.
     pub tab_group: Option<String>,
+    /// Pulled out of its tab group by hand: new windows of its `tab_group`
+    /// pass it over until it is in a group again.
+    pub tab_pulled_out: bool,
 }
 
 /// Whether (`x`, `y`) takes the pointer: clear pixels of a styled caption's cut corner pass
@@ -715,6 +718,7 @@ impl State {
             sticky: false,
             tab_hidden: false,
             tab_group: None,
+            tab_pulled_out: false,
         });
         id
     }

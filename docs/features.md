@@ -92,7 +92,8 @@ the Super tap, Super+Shift+Esc and the VT switch keys can be rebound.
 - **Window rules** in the config match windows by app id and title, with
   globs, and pin their size, position, screen, desktop, state, always-on-top
   or sticky flag. `tab_group = "name"` puts every window its rules name the
-  same into one tab group, each new one as the last tab.
+  same into one tab group, each new one as the last tab. A window you pull
+  out of that group stays out of it until you group it again.
 - **Small conveniences.** Super+C centres a window on the screen under the
   pointer. Super+Shift+B hides its frame. Esc during a caption drag puts the
   window back where it was.
