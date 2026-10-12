@@ -480,9 +480,10 @@ pub struct Reply {
     /// otherwise.
     pub resize: bool,
     /// Make the main window this client size (logical px), for a window that
-    /// grows with what it shows. The next frame is drawn at it, with no
-    /// `Event::Resized`. It stands until the compositor asks for another
-    /// size; a configure that only repeats the last size asked for leaves it.
+    /// grows with what it shows, held inside the compositor's bounds. A size that
+    /// changes the window's sends it `Event::Resized`. It stands until the
+    /// compositor asks for another size; a configure that only repeats the last
+    /// size asked for leaves it.
     pub size: Option<(i32, i32)>,
 }
 
@@ -696,6 +697,12 @@ fn bounded(size: (i32, i32), bounds: Option<(i32, i32)>) -> (i32, i32) {
         Some((bw, bh)) => (size.0.min(bw), size.1.min(bh)),
         None => size,
     }
+}
+
+/// The size a window of `now` takes for limits `min` and `max`: a fixed window (`max`) its
+/// size, a resizable one at least `min`.
+fn regrown(now: (i32, i32), min: (i32, i32), max: Option<(i32, i32)>) -> (i32, i32) {
+    max.unwrap_or((now.0.max(min.0), now.1.max(min.1)))
 }
 
 /// The main window's opening client size and its floor: a resizable window
@@ -1120,6 +1127,8 @@ struct Slot {
     /// The largest client size the compositor suggests (xdg-toplevel `configure_bounds`): its
     /// work area less the frame. The window, its own sizes and its minimum stay inside it.
     bounds: Option<(i32, i32)>,
+    /// The size the program last asked for a child window ([`Child::size`]).
+    wanted: (i32, i32),
     /// The compositor has the toplevel activated; a flyout goes by the
     /// keyboard. A new toplevel counts as active until a configure after its
     /// first buffer says otherwise: focus is decided after that buffer.
@@ -1471,11 +1480,13 @@ impl Host {
             self.begin_resize(win);
         }
         let fixed = self.app.fixed();
+        let mut resized = false;
         if let Some(size) = reply.size
             && let Some(s) = self.slot_mut(MAIN)
         {
             let size = bounded(sane_size(size), s.bounds);
             if s.size != size {
+                resized = true;
                 s.size = size;
                 s.buffers = [None, None];
                 s.pool = None;
@@ -1487,6 +1498,9 @@ impl Host {
                 }
             }
             s.own = true;
+        }
+        if resized {
+            self.send(MAIN, Event::Resized);
         }
         if reply.tick {
             self.arm_tick(win);
@@ -1583,6 +1597,7 @@ impl Host {
                 asked: (None, None),
                 own: false,
                 bounds: None,
+                wanted: (w, h),
                 activated: true,
                 configured: false,
                 dirty: true,
@@ -1636,6 +1651,30 @@ impl Host {
             }
         };
         Some((bounded(min, s.bounds), max.map(|m| bounded(m, s.bounds))))
+    }
+
+    /// Fit window `id` to what its program asks now, after that changed (the text size, a
+    /// child's size): a fixed window takes its size, a resizable one grows to at least its
+    /// minimum. The compositor keeps its top-left; a maximized window keeps the screen's size.
+    /// A window that changed size hears `Event::Resized`.
+    fn refit(&mut self, id: WinId) {
+        let Some((min, max)) = self.limits(id) else {
+            return;
+        };
+        self.declare_limits(id);
+        let Some(s) = self.slot_mut(id) else {
+            return;
+        };
+        let size = regrown(s.size, min, max);
+        if s.maximized || size == s.size {
+            return;
+        }
+        s.size = size;
+        s.buffers = [None, None];
+        s.pool = None;
+        s.dirty = true;
+        s.own = true;
+        self.send(id, Event::Resized);
     }
 
     /// Tell the compositor window `id`'s [`Host::limits`].
@@ -1725,6 +1764,7 @@ impl Host {
                 asked: (None, None),
                 own: false,
                 bounds: None,
+                wanted: size,
                 activated: true,
                 configured: false,
                 dirty: true,
@@ -1735,10 +1775,15 @@ impl Host {
                 access: access::SlotAccess::new(c.id, &self.a11y),
             });
         }
+        let mut resized = Vec::new();
         for c in &want {
             let caption = self.app.caption(c.id);
             if let Some(s) = self.slots.iter_mut().find(|s| s.id == c.id) {
                 s.modal = c.modal;
+                if s.wanted != sane_size(c.size) {
+                    s.wanted = sane_size(c.size);
+                    resized.push(c.id);
+                }
                 if s.title != c.title
                     && let Some(w) = s.window.toplevel()
                 {
@@ -1752,6 +1797,9 @@ impl Host {
                     send_tag(self.tag_manager.as_ref(), w, caption);
                 }
             }
+        }
+        for id in resized {
+            self.refit(id);
         }
     }
 
@@ -1844,6 +1892,7 @@ impl Host {
             asked: (None, None),
             own: false,
             bounds: None,
+            wanted: (0, 0),
             activated: true,
             configured: false,
             dirty: true,
@@ -1910,14 +1959,14 @@ impl Host {
             s.dirty = true;
         }
         // Forms and the windows that hold them grow with the text size: each window hears it as
-        // a resize and answers with its new size.
+        // a resize and answers with its new size, then grows to what its program asks now.
         if self.look.text_size != text_size {
             let ids: Vec<WinId> = self.slots.iter().map(|s| s.id).collect();
-            for id in ids {
+            for &id in &ids {
                 self.send(id, Event::Resized);
             }
-            if !self.app.fixed() {
-                self.declare_limits(MAIN);
+            for id in ids {
+                self.refit(id);
             }
         }
     }
@@ -4196,6 +4245,18 @@ mod tests {
             configured_size((296, 300), (None, None), (None, None), true, false),
             ((296, 300), true)
         );
+    }
+
+    /// A text size change grows an open window: a fixed one to the size its program asks
+    /// for, a resizable one to at least its new minimum, never smaller than it was.
+    #[test]
+    fn an_open_window_grows_to_what_its_program_asks() {
+        assert_eq!(
+            regrown((398, 424), (398, 424), Some((597, 636))),
+            (597, 636)
+        );
+        assert_eq!(regrown((900, 700), (816, 792), None), (900, 792));
+        assert_eq!(regrown((900, 900), (816, 792), None), (900, 900));
     }
 
     /// A window that picks its own size stays inside the compositor's bounds: a Settings sheet
