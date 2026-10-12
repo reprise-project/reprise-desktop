@@ -2023,6 +2023,7 @@ dependencies = [
  "env_logger",
  "log",
  "repriseapp",
+ "reprisebus",
  "reprisefs",
  "reprisekit",
  "serde",

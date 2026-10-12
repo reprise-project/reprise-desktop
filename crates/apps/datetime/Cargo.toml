@@ -17,6 +17,7 @@ path = "src/main.rs"
 repriseapp = { path = "../../repriseapp" }
 reprisekit = { path = "../../reprisekit" }
 reprisefs = { path = "../../reprisefs" }
+reprisebus = { path = "../../reprisebus" }
 zbus.workspace = true
 serde.workspace = true
 log.workspace = true

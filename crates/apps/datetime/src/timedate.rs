@@ -71,9 +71,9 @@ pub fn read() -> zbus::Result<(System, Vec<String>)> {
 /// after everything else; a time is local to the zone just set, so the
 /// process rereads the zone before converting it. Blocks until polkit is
 /// answered.
-pub fn apply(change: &Change) -> Result<System, String> {
+pub fn apply(change: &Change) -> Result<System, Failure> {
     zbus::block_on(async {
-        let conn = connect(None).await.map_err(|e| e.to_string())?;
+        let conn = connect(None).await.map_err(text)?;
         if change.ntp == Some(false) {
             call(&conn, "SetNTP", &(false, true)).await?;
         }
@@ -95,29 +95,90 @@ pub fn apply(change: &Change) -> Result<System, String> {
         if change.ntp == Some(true) {
             call(&conn, "SetNTP", &(true, true)).await?;
         }
-        read_system(&conn).await.map_err(|e| e.to_string())
+        read_system(&conn).await.map_err(text)
     })
 }
 
-async fn call<B>(conn: &zbus::Connection, method: &str, body: &B) -> Result<(), String>
+/// Why [`apply`] stopped.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Failure {
+    /// The password prompt was dismissed: nothing to tell.
+    Dismissed,
+    Text(String),
+}
+
+fn text(e: zbus::Error) -> Failure {
+    Failure::Text(e.to_string())
+}
+
+async fn call<B>(conn: &zbus::Connection, method: &str, body: &B) -> Result<(), Failure>
 where
     B: serde::Serialize + zbus::zvariant::DynamicType,
 {
     conn.call_method(Some(DEST), PATH, Some(IFACE), method, body)
         .await
         .map(|_| ())
-        .map_err(|e| describe(method, e))
+        .map_err(|e| describe(method, e, reprisebus::polkit::dismissed))
 }
 
-fn describe(method: &str, e: zbus::Error) -> String {
+/// timedated answers `AccessDenied` for a dismissed prompt and a refused
+/// password alike; `dismissed` tells them apart.
+fn describe(method: &str, e: zbus::Error, dismissed: impl FnOnce() -> bool) -> Failure {
+    let refused = |n: &str| n == "org.freedesktop.DBus.Error.AccessDenied";
+    if reprisebus::polkit::refusal(&e, refused, dismissed)
+        == Some(reprisebus::polkit::Refusal::Dismissed)
+    {
+        log::info!("{method}: the password prompt was dismissed");
+        return Failure::Dismissed;
+    }
     match &e {
         zbus::Error::MethodError(name, Some(msg), _) => {
             log::error!("{method}: {name}: {msg}");
-            msg.clone()
+            Failure::Text(msg.clone())
         }
         _ => {
             log::error!("{method}: {e}");
-            e.to_string()
+            text(e)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn error(name: &'static str, text: &str) -> zbus::Error {
+        let msg = zbus::Message::method_call(PATH, "SetNTP")
+            .and_then(|b| b.build(&()))
+            .expect("a method call");
+        zbus::Error::MethodError(
+            name.try_into().expect("an error name"),
+            Some(text.into()),
+            msg,
+        )
+    }
+
+    #[test]
+    fn access_denied_is_a_dismissal_or_a_refusal() {
+        let denied = || {
+            error(
+                "org.freedesktop.DBus.Error.AccessDenied",
+                "Permission denied",
+            )
+        };
+        assert_eq!(describe("SetNTP", denied(), || true), Failure::Dismissed);
+        assert_eq!(
+            describe("SetNTP", denied(), || false),
+            Failure::Text("Permission denied".into())
+        );
+        let other = describe(
+            "SetTime",
+            error(
+                "org.freedesktop.timedate1.AutomaticTimeSyncEnabled",
+                "NTP is on",
+            ),
+            || panic!("only a refusal asks whether the prompt was dismissed"),
+        );
+        assert_eq!(other, Failure::Text("NTP is on".into()));
     }
 }
