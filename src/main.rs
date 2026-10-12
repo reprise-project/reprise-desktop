@@ -112,6 +112,7 @@ mod dialogview;
 mod dirwatch;
 mod dragview;
 mod editkeys;
+mod filemenu;
 mod filepick;
 mod fsjobs;
 mod gestures;

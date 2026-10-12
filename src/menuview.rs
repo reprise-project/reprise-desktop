@@ -97,6 +97,11 @@ pub enum MenuKind {
         commands: Vec<Option<DesktopCommand>>,
         target: Option<IconId>,
     },
+    /// A file or folder search found (`filemenu`).
+    File {
+        commands: Vec<Option<DesktopCommand>>,
+        path: PathBuf,
+    },
     /// A grouped taskbar button's popup (`taskbar::window_list`): `button` is the
     /// taskbar button index it hangs off, so clicking it again toggles the list shut.
     WindowList {
@@ -144,6 +149,10 @@ pub enum MenuPick {
     Desktop {
         command: DesktopCommand,
         target: Option<IconId>,
+    },
+    File {
+        command: DesktopCommand,
+        path: PathBuf,
     },
     WindowList {
         windows: Vec<WindowId>,
@@ -209,6 +218,13 @@ impl MenuKind {
                 Some(command) => MenuPick::Desktop {
                     command,
                     target: target.clone(),
+                },
+                None => MenuPick::Nothing,
+            },
+            MenuKind::File { commands, path } => match commands.get(idx).cloned().flatten() {
+                Some(command) => MenuPick::File {
+                    command,
+                    path: path.clone(),
                 },
                 None => MenuPick::Nothing,
             },
@@ -542,12 +558,15 @@ impl State {
             Some(MenuKind::Groups { groups, .. }) => idx < groups.len(),
             Some(
                 kind @ (MenuKind::Desktop { .. }
+                | MenuKind::File { .. }
                 | MenuKind::Taskbar { .. }
                 | MenuKind::Window { .. }
                 | MenuKind::JumpList { .. }
                 | MenuKind::WindowList { .. }),
             ) => match kind.pick(idx) {
-                MenuPick::Desktop { command, .. } => command.opens_submenu(),
+                MenuPick::Desktop { command, .. } | MenuPick::File { command, .. } => {
+                    command.opens_submenu()
+                }
                 MenuPick::Taskbar(c) => c == TaskbarCommand::Toolbars,
                 MenuPick::Window { row, .. } => {
                     matches!(row, WindowMenuRow::MoveToMenu | WindowMenuRow::TabsOfMenu)
@@ -742,54 +761,22 @@ impl State {
             }
             MenuKind::Desktop { commands, target } => {
                 let target = target.clone();
-                let px = self.context_icon_px(&output);
-                let (items, commands) = match commands.get(row).cloned().flatten() {
-                    Some(DesktopCommand::ArrangeIcons) => {
-                        crate::desktopview::arrange_menu(self.desktop_auto_arrange())
-                    }
-                    Some(DesktopCommand::New) => {
-                        let (mut items, commands) = crate::desktopview::new_menu();
-                        for (item, name) in items.iter_mut().zip(crate::desktopview::NEW_MENU_ICONS)
-                        {
-                            if let (MenuItem::Entry { icon, .. }, Some(name)) = (item, name) {
-                                *icon = self.icons.get(name, px);
-                            }
-                        }
-                        (items, commands)
-                    }
-                    Some(DesktopCommand::OpenWith) => {
-                        let apps = target
-                            .as_ref()
-                            .map(|t| self.open_with_apps(t))
-                            .unwrap_or_default();
-                        let (mut items, commands) = crate::desktopview::open_with_menu(&apps);
-                        for (item, (id, _)) in items.iter_mut().zip(&apps) {
-                            let name = self
-                                .app_index
-                                .iter()
-                                .find(|a| &a.id == id)
-                                .and_then(|a| a.icon.clone());
-                            if let (MenuItem::Entry { icon, .. }, Some(name)) = (item, name) {
-                                *icon = self.icons.get(&name, px);
-                            }
-                        }
-                        (items, commands)
-                    }
-                    Some(DesktopCommand::SendTo) => {
-                        let view = self.desktop.as_mut()?;
-                        let rows = reprisefs::sendto::session_rows(view.drives.current());
-                        let (mut items, commands) = crate::desktopview::send_to_menu(&rows);
-                        for (item, r) in items.iter_mut().zip(&rows) {
-                            if let MenuItem::Entry { icon, .. } = item {
-                                *icon = self.icons.get(r.icon, px);
-                            }
-                        }
-                        view.send_to = rows;
-                        (items, commands)
-                    }
-                    _ => return None,
+                let command = commands.get(row).cloned().flatten()?;
+                let apps = |s: &Self| {
+                    target
+                        .as_ref()
+                        .map(|t| s.open_with_apps(t))
+                        .unwrap_or_default()
                 };
+                let (items, commands) = self.desktop_submenu(command, &output, apps)?;
                 return Some((items, MenuKind::Desktop { commands, target }, true));
+            }
+            MenuKind::File { commands, path } => {
+                let path = path.clone();
+                let command = commands.get(row).cloned().flatten()?;
+                let apps = |s: &Self| s.open_with_apps_for(&path);
+                let (items, commands) = self.desktop_submenu(command, &output, apps)?;
+                return Some((items, MenuKind::File { commands, path }, true));
             }
             _ => {}
         }
@@ -901,6 +888,60 @@ impl State {
             tips.push(None);
         }
         (items, MenuKind::Documents { paths, tips })
+    }
+
+    /// The submenu desktop row `command` opens: Arrange Icons By, New, Open
+    /// With (listing `open_with`'s programs) or Send To.
+    fn desktop_submenu(
+        &mut self,
+        command: DesktopCommand,
+        output: &Output,
+        open_with: impl FnOnce(&Self) -> Vec<(String, String)>,
+    ) -> Option<(Vec<MenuItem>, Vec<Option<DesktopCommand>>)> {
+        let px = self.context_icon_px(output);
+        let (items, commands) = match command {
+            DesktopCommand::ArrangeIcons => {
+                crate::desktopview::arrange_menu(self.desktop_auto_arrange())
+            }
+            DesktopCommand::New => {
+                let (mut items, commands) = crate::desktopview::new_menu();
+                for (item, name) in items.iter_mut().zip(crate::desktopview::NEW_MENU_ICONS) {
+                    if let (MenuItem::Entry { icon, .. }, Some(name)) = (item, name) {
+                        *icon = self.icons.get(name, px);
+                    }
+                }
+                (items, commands)
+            }
+            DesktopCommand::OpenWith => {
+                let apps = open_with(self);
+                let (mut items, commands) = crate::desktopview::open_with_menu(&apps);
+                for (item, (id, _)) in items.iter_mut().zip(&apps) {
+                    let name = self
+                        .app_index
+                        .iter()
+                        .find(|a| &a.id == id)
+                        .and_then(|a| a.icon.clone());
+                    if let (MenuItem::Entry { icon, .. }, Some(name)) = (item, name) {
+                        *icon = self.icons.get(&name, px);
+                    }
+                }
+                (items, commands)
+            }
+            DesktopCommand::SendTo => {
+                let view = self.desktop.as_mut()?;
+                let rows = reprisefs::sendto::session_rows(view.drives.current());
+                let (mut items, commands) = crate::desktopview::send_to_menu(&rows);
+                for (item, r) in items.iter_mut().zip(&rows) {
+                    if let MenuItem::Entry { icon, .. } = item {
+                        *icon = self.icons.get(r.icon, px);
+                    }
+                }
+                view.send_to = rows;
+                (items, commands)
+            }
+            _ => return None,
+        };
+        Some((items, commands))
     }
 
     fn open_submenu(&mut self, depth: usize, row: usize) {
@@ -1766,6 +1807,8 @@ impl State {
         if pick_closes_start_panel(&pick) {
             self.close_start_panel();
         }
+        // A menu open with the launcher is one of its rows'.
+        self.close_launcher();
         self.close_menu();
         match pick {
             MenuPick::Nothing => {}
@@ -1786,6 +1829,7 @@ impl State {
                 QuickCommand::Delete => self.quick_remove(&file),
             },
             MenuPick::Desktop { command, target } => self.desktop_command(command, target),
+            MenuPick::File { command, path } => self.file_command(command, path),
             MenuPick::WindowList { windows, row } => self.window_list_activate(&windows, row),
             MenuPick::Jump { row, target } => self.jump_activate(row, &target),
             MenuPick::NotifyAction { id, key } => crate::notifyview::invoke(self, id, &key),

@@ -96,6 +96,8 @@ pub enum Key {
     Enter,
     CtrlEnter,
     Escape,
+    /// The menu key or Shift+F10: the highlighted row's context menu.
+    Menu,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -106,6 +108,8 @@ pub enum Event {
     QueryChanged,
     Launch(Pick),
     OpenFolder(usize),
+    /// Open the context menu of a program or file row, highlighted.
+    Context(Pick),
     Close,
 }
 
@@ -331,6 +335,24 @@ impl Launcher {
                 None => Event::Close,
             },
             Key::Escape => Event::Close,
+            Key::Menu => self.picked().map_or(Event::None, Self::context_of),
+        }
+    }
+
+    /// A right press on row `p`: it takes the highlight, and a program or
+    /// file row opens its context menu.
+    pub fn right_press(&mut self, p: Pick) -> Event {
+        let Some(i) = self.lines().iter().position(|l| *l == Line::Row(p)) else {
+            return Event::None;
+        };
+        self.list.selected = Some(i);
+        Self::context_of(p)
+    }
+
+    fn context_of(p: Pick) -> Event {
+        match p {
+            Pick::App(_) | Pick::File(_) => Event::Context(p),
+            Pick::Calc | Pick::Setting(_) => Event::None,
         }
     }
 
@@ -500,6 +522,25 @@ pub fn hit(l: &Launcher, x: i32, y: i32, theme: &Theme) -> Hit {
         }
     }
     Hit::Panel
+}
+
+/// Line `i`'s rect in panel coordinates, where a menu opened from the keys
+/// hangs.
+pub fn row_rect(l: &Launcher, i: usize, theme: &Theme) -> Option<Rect> {
+    let lay = layout(l, theme);
+    if !lay.rows.is_empty() {
+        return lay.rows.get(i).copied();
+    }
+    let ll = listbox::layout(&l.list, lay.list?, &theme.look.controls());
+    let shown = i.checked_sub(l.list.top)?;
+    (i < l.list.items.len() && shown < ll.visible).then(|| {
+        Rect::new(
+            ll.inner.x,
+            ll.inner.y + shown as i32 * listbox::ROW_H,
+            ll.inner.width,
+            listbox::ROW_H,
+        )
+    })
 }
 
 /// Draw the panel: `icon` is the 32 px icon of the highlighted row (or the
@@ -1309,6 +1350,37 @@ mod tests {
         l.key(Key::Up);
         l.key(Key::Up);
         assert_eq!(l.picked(), Some(Pick::Calc));
+    }
+
+    #[test]
+    fn program_and_file_rows_open_a_context_menu_from_the_keys_or_a_right_press() {
+        let mut l = with_every_kind();
+        assert_eq!(l.key(Key::Menu), Event::None, "the answer has no menu");
+        l.key(Key::Down);
+        assert_eq!(l.key(Key::Menu), Event::Context(Pick::App(0)));
+        assert_eq!(l.right_press(Pick::File(0)), Event::Context(Pick::File(0)));
+        assert_eq!(l.picked(), Some(Pick::File(0)), "the pressed row is lit");
+        assert_eq!(l.right_press(Pick::Setting(0)), Event::None);
+        assert_eq!(l.picked(), Some(Pick::Setting(0)));
+        assert_eq!(l.right_press(Pick::File(3)), Event::None, "no such row");
+        assert_eq!(l.picked(), Some(Pick::Setting(0)));
+        assert_eq!(Launcher::new().key(Key::Menu), Event::None, "no rows");
+    }
+
+    #[test]
+    fn a_rows_rect_is_where_it_hits() {
+        for theme in [
+            Theme::default(),
+            crate::interfaces::theme_for(crate::interface::Interface::Glass),
+        ] {
+            let l = with_every_kind();
+            for i in [0, 1, 3, 5] {
+                let r = row_rect(&l, i, &theme).expect("a shown row");
+                let hit = hit(&l, r.x + 30, r.y + r.height / 2, &theme);
+                assert_eq!(hit, Hit::Row(l.pick(i).unwrap()), "line {i}");
+            }
+            assert_eq!(row_rect(&l, 6, &theme), None, "past the last line");
+        }
     }
 
     #[test]
