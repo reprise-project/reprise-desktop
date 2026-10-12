@@ -560,14 +560,16 @@ pub fn zip_argv(paths: &[PathBuf], zip: &Path) -> Vec<OsString> {
 }
 
 /// Delete `path`: into its drive's trash ([`crate::trash::trash`]), or
-/// for good through [`erase`]. A path already gone is not an error when
+/// for good through [`erase`], as `plan` says. A path already gone is not an error when
 /// trashing. One on a drive without a Recycle Bin is refused with
 /// `CrossesDevices`; the caller asks to erase it instead.
-pub fn delete(path: &Path, erase: bool) -> io::Result<()> {
-    if erase {
-        return self::erase(path);
+pub fn delete(path: &Path, plan: crate::bincap::Plan) -> io::Result<()> {
+    match plan {
+        crate::bincap::Plan::Erase => self::erase(path),
+        crate::bincap::Plan::Trash(known) => {
+            gone_is_done(crate::trash::trash(path, known).map(|(t, _)| t), path)
+        }
     }
-    gone_is_done(crate::trash::trash(path).map(|(t, _)| t), path)
 }
 
 /// [`delete`]'s trashing, into the trash at `root`.
@@ -2561,7 +2563,7 @@ mod tests {
         fs::write(&raw, "raw").unwrap();
         fs::write(&lossy, "lossy").unwrap();
 
-        delete(&raw, true).unwrap();
+        delete(&raw, crate::bincap::Plan::Erase).unwrap();
 
         assert!(!raw.exists(), "the named file is gone");
         assert_eq!(fs::read_to_string(&lossy).unwrap(), "lossy");

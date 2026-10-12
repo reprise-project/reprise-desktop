@@ -31,9 +31,11 @@ fn lone_file(entries: &[DesktopEntry], files: &[PathBuf]) -> Option<usize> {
         .position(|e| e.kind == desktop::Kind::File && &e.path == path)
 }
 
-fn delete_each(items: impl Iterator<Item = (PathBuf, bool)>) -> Option<(PathBuf, std::io::Error)> {
+fn delete_each(
+    items: impl Iterator<Item = (PathBuf, reprisefs::bincap::Plan)>,
+) -> Option<(PathBuf, std::io::Error)> {
     let mut items = items;
-    items.find_map(|(p, erase)| ops::delete(&p, erase).err().map(|e| (p, e)))
+    items.find_map(|(p, plan)| ops::delete(&p, plan).err().map(|e| (p, e)))
 }
 
 impl State {
@@ -151,19 +153,23 @@ impl State {
 
     /// Delete `paths` off the loop: to the trash, or for good with `erase`. Trashing first asks one at a time about items too big for their Recycle Bin ([`State::too_big_step`]). The first failure stops the rest and an error box says why.
     pub fn delete_paths(&mut self, paths: Vec<PathBuf>, erase: bool) {
+        use reprisefs::bincap::{Plan, TooBig, TooBigStep};
         self.spawn_fs_job(move || -> OnLoop {
-            if !erase {
+            let plan = if erase {
+                paths.into_iter().map(|p| (p, Plan::Erase)).collect()
+            } else {
                 let bins = reprisefs::trash::Bins::system();
-                let big: Vec<bool> = paths
+                let measured = paths
                     .iter()
-                    .map(|p| bins.as_ref().is_some_and(|b| b.too_big(p)))
+                    .map(|p| bins.as_ref().and_then(|b| b.measure(p)))
                     .collect();
-                if big.contains(&true) {
-                    let asker = reprisefs::bincap::TooBig::new(paths, big);
-                    return Box::new(move |state| state.too_big_step(asker));
+                let asker = TooBig::new(paths, measured);
+                match asker.step() {
+                    TooBigStep::Done(plan) => plan,
+                    _ => return Box::new(move |state| state.too_big_step(asker)),
                 }
-            }
-            let failed = delete_each(paths.into_iter().map(|p| (p, erase)));
+            };
+            let failed = delete_each(plan.into_iter());
             Box::new(move |state| state.delete_failed(failed))
         });
     }

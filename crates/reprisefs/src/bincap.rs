@@ -202,6 +202,65 @@ pub fn item_size(path: &Path, limit: u64) -> io::Result<u64> {
     Ok(total)
 }
 
+/// What tells a measured item changed since: its inode and change time.
+/// A folder's change time moves when an entry is added, removed or
+/// renamed directly in it, not when something deeper changes.
+type ItemStamp = (u64, u64, i64, i64);
+
+fn item_stamp(path: &Path) -> Option<ItemStamp> {
+    use std::os::unix::fs::MetadataExt;
+    let m = std::fs::symlink_metadata(path).ok()?;
+    Some((m.dev(), m.ino(), m.ctime(), m.ctime_nsec()))
+}
+
+/// An item's size against its Recycle Bin's cap, as a Delete measures it
+/// before asking about items too big for the bin
+/// ([`crate::trash::Bins::measure`]). Trashing reuses the size while the
+/// item's stamp holds and the count was complete, so a big folder is
+/// walked once.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Measured {
+    /// Bytes counted; past `cap` the count stopped early.
+    pub size: u64,
+    pub cap: u64,
+    stamp: Option<ItemStamp>,
+}
+
+impl Measured {
+    pub(crate) fn of(path: &Path, cap: u64) -> io::Result<Measured> {
+        let stamp = item_stamp(path);
+        let size = item_size(path, cap)?;
+        Ok(Measured { size, cap, stamp })
+    }
+
+    /// A size with nothing to check it against: trashing measures again.
+    pub fn unstamped(size: u64, cap: u64) -> Measured {
+        Measured {
+            size,
+            cap,
+            stamp: None,
+        }
+    }
+
+    pub fn too_big(&self) -> bool {
+        self.size > self.cap
+    }
+
+    /// The size, while it is complete and `path` has not changed since.
+    pub(crate) fn still(&self, path: &Path) -> Option<u64> {
+        (!self.too_big() && self.stamp.is_some() && item_stamp(path) == self.stamp)
+            .then_some(self.size)
+    }
+}
+
+/// What a Delete does to one item: erase it, or trash it with the size
+/// measured for it, if any.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Plan {
+    Erase,
+    Trash(Option<Measured>),
+}
+
 pub fn drive_size(root: &Path) -> u64 {
     root.ancestors()
         .find(|a| a.exists())
@@ -390,26 +449,28 @@ pub fn too_big_text(name: &str) -> String {
 pub enum TooBigStep<'a> {
     Ask(&'a Path),
     /// Every question is answered: each item kept in the batch, with
-    /// whether it is erased (`true`) or trashed. An item answered No is
-    /// left out, and stays where it is.
-    Done(Vec<(PathBuf, bool)>),
+    /// what happens to it. An item answered No is left out, and stays
+    /// where it is.
+    Done(Vec<(PathBuf, Plan)>),
     Cancelled,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TooBig {
     paths: Vec<PathBuf>,
-    big: Vec<bool>,
+    measured: Vec<Option<Measured>>,
     answers: Vec<Option<bool>>,
     cancelled: bool,
 }
 
 impl TooBig {
-    pub fn new(paths: Vec<PathBuf>, big: Vec<bool>) -> TooBig {
+    /// A Delete trashing `paths`, each with its measure (`None`: not
+    /// measured, as for an item with no Recycle Bin).
+    pub fn new(paths: Vec<PathBuf>, measured: Vec<Option<Measured>>) -> TooBig {
         let answers = vec![None; paths.len()];
         TooBig {
             paths,
-            big,
+            measured,
             answers,
             cancelled: false,
         }
@@ -419,8 +480,12 @@ impl TooBig {
         self.paths.len() > 1
     }
 
+    fn big(&self, i: usize) -> bool {
+        self.measured[i].is_some_and(|m| m.too_big())
+    }
+
     fn next(&self) -> Option<usize> {
-        (0..self.paths.len()).find(|&i| self.big[i] && self.answers[i].is_none())
+        (0..self.paths.len()).find(|&i| self.big(i) && self.answers[i].is_none())
     }
 
     pub fn step(&self) -> TooBigStep<'_> {
@@ -434,9 +499,9 @@ impl TooBig {
             self.paths
                 .iter()
                 .enumerate()
-                .filter_map(|(i, p)| match (self.big[i], self.answers[i]) {
-                    (false, _) => Some((p.clone(), false)),
-                    (true, Some(true)) => Some((p.clone(), true)),
+                .filter_map(|(i, p)| match (self.big(i), self.answers[i]) {
+                    (false, _) => Some((p.clone(), Plan::Trash(self.measured[i]))),
+                    (true, Some(true)) => Some((p.clone(), Plan::Erase)),
                     (true, _) => None,
                 })
                 .collect(),
@@ -454,7 +519,7 @@ impl TooBig {
             Answer::Yes => self.answers[i] = Some(true),
             Answer::YesToAll => {
                 for j in i..self.paths.len() {
-                    if self.big[j] {
+                    if self.big(j) {
                         self.answers[j] = Some(true);
                     }
                 }
@@ -728,8 +793,10 @@ mod tests {
     fn too_big_asks_in_order_and_yes_to_all_answers_the_rest() {
         let p = |s: &str| PathBuf::from(s);
         let paths = vec![p("a"), p("big1"), p("b"), p("big2"), p("big3")];
-        let big = vec![false, true, false, true, true];
-        let mut q = TooBig::new(paths.clone(), big.clone());
+        let fits = Some(Measured::unstamped(1, 2));
+        let big = Some(Measured::unstamped(3, 2));
+        let measured = vec![fits, big, None, big, big];
+        let mut q = TooBig::new(paths.clone(), measured.clone());
         assert!(q.many());
         assert_eq!(q.step(), TooBigStep::Ask(Path::new("big1")));
         q.answer(Answer::No);
@@ -738,24 +805,24 @@ mod tests {
         assert_eq!(
             q.step(),
             TooBigStep::Done(vec![
-                (p("a"), false),
-                (p("b"), false),
-                (p("big2"), true),
-                (p("big3"), true),
+                (p("a"), Plan::Trash(fits)),
+                (p("b"), Plan::Trash(None)),
+                (p("big2"), Plan::Erase),
+                (p("big3"), Plan::Erase),
             ])
         );
 
-        let mut q = TooBig::new(paths.clone(), big.clone());
+        let mut q = TooBig::new(paths.clone(), measured.clone());
         q.answer(Answer::Yes);
         q.answer(Answer::Cancel);
         assert_eq!(q.step(), TooBigStep::Cancelled);
         q.answer(Answer::Yes);
         assert_eq!(q.step(), TooBigStep::Cancelled);
 
-        let mut one = TooBig::new(vec![p("big")], vec![true]);
+        let mut one = TooBig::new(vec![p("big")], vec![big]);
         assert!(!one.many());
         one.answer(Answer::Yes);
-        assert_eq!(one.step(), TooBigStep::Done(vec![(p("big"), true)]));
+        assert_eq!(one.step(), TooBigStep::Done(vec![(p("big"), Plan::Erase)]));
     }
 
     #[test]

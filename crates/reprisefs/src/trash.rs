@@ -129,10 +129,11 @@ pub fn recyclable(path: &Path) -> bool {
     Bins::system().is_some_and(|b| b.recyclable(path))
 }
 
-pub fn trash(path: &Path) -> io::Result<(Trashed, Vec<PathBuf>)> {
+/// [`Bins::trash_measured`] into the session's trashes.
+pub fn trash(path: &Path, known: Option<bincap::Measured>) -> io::Result<(Trashed, Vec<PathBuf>)> {
     Bins::system()
         .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "no trash directory"))?
-        .trash(path)
+        .trash_measured(path, known)
 }
 
 pub fn no_bin_lead(count: usize) -> &'static str {
@@ -268,15 +269,14 @@ impl Bins {
         }
     }
 
-    pub fn too_big(&self, path: &Path) -> bool {
+    /// `path`'s size against the cap of the trash it would go to; `None`
+    /// when it would not be recycled or cannot be looked at.
+    pub fn measure(&self, path: &Path) -> Option<bincap::Measured> {
         if self.fate(path) != Fate::Recycle {
-            return false;
+            return None;
         }
-        let Some(root) = self.bin_for(path, false) else {
-            return false;
-        };
-        let cap = self.cap(&root);
-        bincap::item_size(path, cap).is_ok_and(|size| size > cap)
+        let root = self.bin_for(path, false)?;
+        bincap::Measured::of(path, self.cap(&root)).ok()
     }
 
     fn drive_bin(&self, top: &Path, make: bool) -> Option<PathBuf> {
@@ -333,6 +333,16 @@ impl Bins {
     /// with `Unsupported`, and an item bigger than the whole cap with
     /// `FileTooLarge`.
     pub fn trash(&self, path: &Path) -> io::Result<(Trashed, Vec<PathBuf>)> {
+        self.trash_measured(path, None)
+    }
+
+    /// [`Bins::trash`], reusing `known`'s size when it still holds
+    /// ([`bincap::Measured`]); otherwise the item is measured again.
+    pub fn trash_measured(
+        &self,
+        path: &Path,
+        known: Option<bincap::Measured>,
+    ) -> io::Result<(Trashed, Vec<PathBuf>)> {
         let root = self.bin_for(path, true).ok_or_else(|| {
             io::Error::new(
                 io::ErrorKind::CrossesDevices,
@@ -356,7 +366,10 @@ impl Bins {
             return trash_in(&root, &path).map(|t| (t, Vec::new()));
         }
         let cap = self.cap(&root);
-        let size = bincap::item_size(&path, cap)?;
+        let size = match known.and_then(|m| m.still(&path)) {
+            Some(size) => size,
+            None => bincap::item_size(&path, cap)?,
+        };
         if size > cap {
             return Err(io::Error::new(
                 io::ErrorKind::FileTooLarge,
@@ -1734,8 +1747,8 @@ mod tests {
         let fits = t.path().join("home/fits.iso");
         sparse(&fits, cap);
 
-        assert!(bins.too_big(&big));
-        assert!(!bins.too_big(&fits));
+        assert!(bins.measure(&big).unwrap().too_big());
+        assert!(!bins.measure(&fits).unwrap().too_big());
         let e = bins.trash(&big).unwrap_err();
         assert_eq!(e.kind(), io::ErrorKind::FileTooLarge);
         assert!(big.exists());
@@ -1766,6 +1779,35 @@ mod tests {
         assert!(!b.files.exists() && !b.info.exists(), "the oldest went");
         assert!(a.files.exists() && c.files.exists());
         assert_eq!(bincap::used(&bins.home), 2 * (cap * 2 / 5));
+    }
+
+    #[test]
+    fn trashing_reuses_the_measure_while_the_folder_is_unchanged() {
+        let (t, bins, _drive) = drives();
+        let dir = t.path().join("home/Photos");
+        fs::create_dir_all(dir.join("2026")).unwrap();
+        fs::write(dir.join("2026/a.jpg"), [0u8; 300]).unwrap();
+        let measured = bins.measure(&dir).unwrap();
+        assert_eq!(measured.size, 300);
+        // Deeper than the folder's own entries: the stamp does not see it.
+        fs::write(dir.join("2026/b.jpg"), [0u8; 200]).unwrap();
+        bins.trash_measured(&dir, Some(measured)).unwrap();
+        assert_eq!(bincap::used(&bins.home), 300, "the measured size is kept");
+    }
+
+    #[test]
+    fn a_folder_that_gains_an_entry_after_its_measure_is_measured_again() {
+        let (t, bins, _drive, cap) = capped();
+        let dir = t.path().join("home/Downloads");
+        sparse(&dir.join("part.bin"), cap / 2);
+        let measured = bins.measure(&dir).unwrap();
+        assert!(!measured.too_big());
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        sparse(&dir.join("more.bin"), cap);
+
+        let e = bins.trash_measured(&dir, Some(measured)).unwrap_err();
+        assert_eq!(e.kind(), io::ErrorKind::FileTooLarge);
+        assert!(dir.exists());
     }
 
     #[test]
@@ -1803,7 +1845,7 @@ mod tests {
 
         assert_eq!(bins.fate(&on_drive), Fate::RemoveImmediately);
         assert_eq!(bins.fate(&at_home), Fate::Recycle);
-        assert!(!bins.too_big(&on_drive));
+        assert_eq!(bins.measure(&on_drive), None);
         let e = bins.trash(&on_drive).unwrap_err();
         assert_eq!(e.kind(), io::ErrorKind::Unsupported);
         assert!(on_drive.exists());
