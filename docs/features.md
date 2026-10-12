@@ -228,7 +228,9 @@ are.
   left open again at the next login, on the desktops they were on. Tab
   groups come back in their tab order with the same tab shown, each where
   it was: same screen, size and maximized state, on the primary screen
-  when its screen is gone. A program
+  when its screen is gone. A window that opens with the title it had goes
+  back to its own group and tab; others fill their program's tabs in order.
+  A program
   starts once; if its other grouped windows aren't back 4 seconds after a
   window of it appears, it starts again for each one missing that no
   earlier start is still bringing, never more often than it had windows.

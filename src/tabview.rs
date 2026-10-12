@@ -489,11 +489,12 @@ impl State {
     /// group's desktop. A restored app still short of its saved windows
     /// may start again (`session::settle_restart`).
     pub(crate) fn tab_on_map(&mut self, w: WindowId) {
-        let Some(app) = self.win(w).map(|x| x.app()) else {
+        let Some((app, title)) = self.win(w).map(|x| (x.app(), x.title())) else {
             return;
         };
         let desktop = self.desktop_of(w);
-        let claim = self.session.regrouping.claim(&app, w, Instant::now());
+        let now = Instant::now();
+        let claim = self.session.regrouping.claim(&app, &title, w, now);
         crate::session::settle_restart(self, &app);
         match claim {
             Claim::First => {}
