@@ -785,6 +785,7 @@ fn render(state: &mut State, crtc: crtc::Handle) {
     }
     state.window_anims_frame(&output);
     state.switch_anim_frame(&output);
+    state.overview_fade_frame();
     state.flip_frame(&output);
     state.water_frame(&output);
     crate::autohideview::frame(state, &output);
