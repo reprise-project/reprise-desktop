@@ -6,11 +6,14 @@ use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender, channel};
 use std::time::{Duration, Instant, SystemTime};
 
 use crate::cups::{self, Change, Client, Device, Job, JobOp, NewPrinter, Options, Ppd, Snapshot};
+use crate::lpwatch;
 use crate::notifier::{self, Lease};
 
-/// While a window is up or a job waits: lpoptions and a backend's `ATTR:` lines change what
-/// they show without an event, and cupsd stays up for a waiting job anyway.
+/// While a window is up or a job waits with no notifier.
 const FAST: Duration = Duration::from_secs(2);
+/// While a window is up or a job waits with the notifier. cupsd's D-Bus notifier sends from one
+/// subscription only, so another program's with fewer events (no `job-progress`) can hold it.
+const SAFETY: Duration = Duration::from_secs(30);
 /// Idle with no notifier: enough for the tray icon to come up for a job a program sent.
 const SLOW: Duration = Duration::from_secs(20);
 /// Idle with the notifier: how often the lease is looked at; cupsd is asked only when it is due.
@@ -122,8 +125,12 @@ struct State {
 }
 
 fn run(rx: Receiver<Cmd>, tx: Sender<Cmd>, poster: Poster) {
+    let lp = tx.clone();
     let listening = notifier::listen(move || {
         let _ = tx.send(Cmd::Changed);
+    });
+    lpwatch::watch(cups::lpoptions_folders(), move || {
+        let _ = lp.send(Cmd::Changed);
     });
     let mut st = State {
         client: Client::new(),
@@ -204,12 +211,11 @@ fn title(cmd: &Cmd) -> &'static str {
 /// How long until the next tick, and whether that tick reads cupsd. Idle with the notifier
 /// the tick only looks at the lease.
 fn schedule(watching: bool, busy: bool, notified: bool) -> (Duration, bool) {
-    if watching || busy {
-        (FAST, true)
-    } else if notified {
-        (LEASE_CHECK, false)
-    } else {
-        (SLOW, true)
+    match (watching || busy, notified) {
+        (true, true) => (SAFETY, true),
+        (true, false) => (FAST, true),
+        (false, true) => (LEASE_CHECK, false),
+        (false, false) => (SLOW, true),
     }
 }
 
@@ -398,11 +404,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn idle_with_the_notifier_reads_cupsd_only_on_events() {
+    fn with_the_notifier_cupsd_is_read_on_events_and_a_slow_safety_tick() {
         assert_eq!(schedule(false, false, true), (LEASE_CHECK, false));
+        assert_eq!(schedule(true, false, true), (SAFETY, true));
+        assert_eq!(schedule(false, true, true), (SAFETY, true));
         assert_eq!(schedule(false, false, false), (SLOW, true));
-        assert_eq!(schedule(true, false, true), (FAST, true));
-        assert_eq!(schedule(false, true, true), (FAST, true));
+        assert_eq!(schedule(true, false, false), (FAST, true));
+        assert_eq!(schedule(false, true, false), (FAST, true));
     }
 
     #[test]

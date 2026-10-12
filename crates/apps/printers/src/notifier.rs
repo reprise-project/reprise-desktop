@@ -9,14 +9,23 @@ use crate::ipp::{Request, SUBSCRIPTION, Value};
 const CREATE_PRINTER_SUBSCRIPTIONS: u16 = 0x0016;
 const RENEW_SUBSCRIPTION: u16 = 0x001A;
 const GET_SUBSCRIPTIONS: u16 = 0x0019;
+const CANCEL_SUBSCRIPTION: u16 = 0x001B;
 
 const RECIPIENT: &str = "dbus://";
 /// Marks the subscription as this program's, for the next run to find: cupsd reports
 /// `notify-events` back expanded, so the events cannot tell it apart.
 const USER_DATA: &[u8] = b"reprise-printers";
-/// Every printer event and job state or config change. No `job-progress`: a running job is
-/// read on a timer anyway.
-const EVENTS: [&str; 3] = ["printer-changed", "job-state-changed", "job-config-changed"];
+/// Every printer event (a backend's `ATTR:` and `STATE:` lines raise `printer-state-changed`)
+/// and every job event, `job-progress` for the pages printed.
+const EVENTS: [&str; 4] = [
+    "printer-changed",
+    "job-state-changed",
+    "job-config-changed",
+    "job-progress",
+];
+/// The event that tells a subscription of this version from one an older run made with
+/// fewer: cupsd reports `notify-events` expanded, so the list is not compared whole.
+const NEWEST: &str = "job-progress";
 /// Seconds. Long, since renewing wakes cupsd; a crash leaves the subscription this long at most.
 const LEASE: i32 = 24 * 60 * 60;
 
@@ -97,26 +106,48 @@ fn mine_request() -> Request {
         .op_attr("my-subscriptions", Value::Bool(true))
 }
 
-/// The id of a subscription of ours a previous run left behind, so a restart renews it
-/// instead of adding another.
-pub fn ours(groups: &[crate::ipp::Group]) -> Option<i32> {
-    groups
-        .iter()
-        .filter(|g| g.tag == SUBSCRIPTION)
-        .find(|g| {
-            g.str("notify-recipient-uri") == Some(RECIPIENT)
-                && g.get("notify-printer-uri").is_none()
-                && g.get("notify-user-data") == Some(&[Value::Octets(USER_DATA.to_vec())])
-        })
-        .and_then(|g| g.int("notify-subscription-id"))
+fn cancel_request(id: i32) -> Request {
+    Request::new(CANCEL_SUBSCRIPTION)
+        .op_attr("printer-uri", server_uri())
+        .op_attr("notify-subscription-id", Value::Int(id))
+}
+
+/// The subscriptions of ours a previous run left behind: one with every event, which a
+/// restart renews instead of adding another, and the ones an older run made with fewer.
+/// Those go: cupsd's D-Bus notifier sends from one subscription only, maybe the poorer.
+pub fn ours(groups: &[crate::ipp::Group]) -> (Option<i32>, Vec<i32>) {
+    let mut current = None;
+    let mut stale = Vec::new();
+    let mine = groups.iter().filter(|g| {
+        g.tag == SUBSCRIPTION
+            && g.str("notify-recipient-uri") == Some(RECIPIENT)
+            && g.get("notify-printer-uri").is_none()
+            && g.get("notify-user-data") == Some(&[Value::Octets(USER_DATA.to_vec())])
+    });
+    for g in mine {
+        let Some(id) = g.int("notify-subscription-id") else {
+            continue;
+        };
+        if current.is_none() && g.strs("notify-events").iter().any(|e| e == NEWEST) {
+            current = Some(id);
+        } else {
+            stale.push(id);
+        }
+    }
+    (current, stale)
 }
 
 /// Renew the subscription a previous run left, else create one.
 pub fn subscribe(c: &Client, now: SystemTime) -> Result<Lease> {
-    let left = c
+    let (left, stale) = c
         .call("/", mine_request())
-        .ok()
-        .and_then(|r| ours(&r.groups));
+        .map(|r| ours(&r.groups))
+        .unwrap_or_default();
+    for id in stale {
+        if let Err(e) = c.call("/", cancel_request(id)) {
+            log::info!("cancelling printer events {id}: {e:?}");
+        }
+    }
     if let Some(id) = left
         && let Ok(l) = renew(c, id, now)
     {
@@ -220,7 +251,12 @@ mod tests {
         assert_eq!(sub.str("notify-recipient-uri"), Some("dbus://"));
         assert_eq!(
             sub.strs("notify-events"),
-            ["printer-changed", "job-state-changed", "job-config-changed"]
+            [
+                "printer-changed",
+                "job-state-changed",
+                "job-config-changed",
+                "job-progress"
+            ]
         );
         assert_eq!(sub.int("notify-lease-duration"), Some(86400));
         assert_eq!(
@@ -251,12 +287,15 @@ mod tests {
     }
 
     #[test]
-    fn a_restart_finds_its_own_server_subscription() {
-        let sub = |id: i32, recipient: &str, data: &[u8], printer: bool| {
+    fn a_restart_renews_its_own_server_subscription_and_cancels_older_ones() {
+        let sub_with = |id: i32, recipient: &str, data: &[u8], printer: bool, events: &[&str]| {
             let mut attrs = vec![
                 attr("notify-subscription-id", vec![Value::Int(id)]),
                 attr("notify-recipient-uri", vec![Value::uri(recipient)]),
-                attr("notify-events", vec![Value::keyword("job-created")]),
+                attr(
+                    "notify-events",
+                    events.iter().map(|e| Value::keyword(e)).collect(),
+                ),
                 attr("notify-user-data", vec![Value::Octets(data.to_vec())]),
             ];
             if printer {
@@ -270,14 +309,41 @@ mod tests {
                 attrs,
             }
         };
+        let sub = |id: i32, recipient: &str, data: &[u8], printer: bool| {
+            sub_with(
+                id,
+                recipient,
+                data,
+                printer,
+                &["job-created", "job-progress"],
+            )
+        };
         let groups = vec![
             sub(1, "rss://", USER_DATA, false),
             sub(2, "dbus://", b"", false),
             sub(3, "dbus://", USER_DATA, true),
             sub(4, "dbus://", USER_DATA, false),
         ];
-        assert_eq!(ours(&groups), Some(4));
-        assert_eq!(ours(&groups[..3]), None);
+        assert_eq!(ours(&groups), (Some(4), vec![]));
+        assert_eq!(ours(&groups[..3]), (None, vec![]));
+
+        let older = sub_with(5, "dbus://", USER_DATA, false, &["job-created"]);
+        assert_eq!(
+            ours(&[older.clone(), groups[3].clone()]),
+            (Some(4), vec![5]),
+            "one without job-progress is an older run's"
+        );
+        assert_eq!(ours(&[older]), (None, vec![5]));
+        assert_eq!(
+            ours(&[groups[3].clone(), sub(6, "dbus://", USER_DATA, false)]),
+            (Some(4), vec![6]),
+            "a second current one goes too"
+        );
+
+        let req = ipp::parse(&cancel_request(5).encode()).expect("parses");
+        assert_eq!(req.status, CANCEL_SUBSCRIPTION);
+        let op = req.groups.iter().find(|g| g.tag == OPERATION).unwrap();
+        assert_eq!(op.int("notify-subscription-id"), Some(5));
     }
 
     #[test]

@@ -451,7 +451,7 @@ pub fn snapshot(c: &Client) -> Result<Snapshot> {
         .ok()
         .and_then(|r| r.first(PRINTER).map(|g| g.string("printer-name")))
         .filter(|n| !n.is_empty());
-    let default = user_default(&lpoptions_text())
+    let default = own_default()
         .filter(|n| printers.iter().any(|p| &p.name == n))
         .or(server_default);
     Ok(Snapshot {
@@ -520,8 +520,30 @@ pub fn user_default(lpoptions: &str) -> Option<String> {
     })
 }
 
+/// The folder of the system's lpoptions, which the user's own overrides.
+const SYSTEM_LPOPTIONS: &str = "/etc/cups";
+
 fn lpoptions_path() -> Option<std::path::PathBuf> {
     std::env::var_os("HOME").map(|h| std::path::Path::new(&h).join(".cups/lpoptions"))
+}
+
+/// The folders whose lpoptions name a default: the user's, then the system's.
+pub fn lpoptions_folders() -> Vec<std::path::PathBuf> {
+    let user = lpoptions_path().and_then(|p| p.parent().map(|d| d.to_path_buf()));
+    user.into_iter()
+        .chain([std::path::PathBuf::from(SYSTEM_LPOPTIONS)])
+        .collect()
+}
+
+fn own_default() -> Option<String> {
+    let system = std::fs::read_to_string(std::path::Path::new(SYSTEM_LPOPTIONS).join("lpoptions"))
+        .unwrap_or_default();
+    own_default_in(&lpoptions_text(), &system)
+}
+
+/// The default an lpoptions file names, the user's before the system's.
+fn own_default_in(user: &str, system: &str) -> Option<String> {
+    user_default(user).or_else(|| user_default(system))
 }
 
 fn lpoptions_text() -> String {
@@ -594,7 +616,7 @@ fn cancel_calls(jobs: &[Job]) -> Vec<Call> {
         .collect()
 }
 
-/// Make `name` the default: the server's, and the user's own when their
+/// Make `name` the default: the server's, and the user's own when an
 /// lpoptions names one (it would hide the server's otherwise). An
 /// account that may not set the server's and has no cups-pk-helper sets
 /// its own.
@@ -603,7 +625,7 @@ pub fn set_default(c: &Client, name: &str) -> Result<()> {
     let server = c.admin(printer_op(c, CUPS_SET_DEFAULT, name), || {
         vec![Call::PrinterSetDefault(name.into())]
     });
-    let has_own = user_default(&text).is_some();
+    let has_own = own_default().is_some();
     if has_own || server == Err(Error::NeedsHelper) {
         write_lpoptions(&with_user_default(&text, name))?;
         return Ok(());
@@ -1268,6 +1290,13 @@ mod tests {
             "Default Inkjet\nDest Other sides=one-sided\nDest Laser/draft media=a4\n"
         );
         assert_eq!(user_default(&new), Some("Inkjet".into()));
+        assert_eq!(own_default_in(&new, text), Some("Inkjet".into()));
+        assert_eq!(
+            own_default_in("Dest Other\n", text),
+            Some("Laser".into()),
+            "the system's lpoptions names it when the user's does not"
+        );
+        assert_eq!(own_default_in("", ""), None);
     }
 
     #[test]
