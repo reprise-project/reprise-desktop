@@ -2746,6 +2746,7 @@ mod tests {
             origin: (0, 0),
             wake: repriseapp::Waker::noop(),
             heads: Default::default(),
+            want_tick: Default::default(),
             text_size: 100,
         }
     }

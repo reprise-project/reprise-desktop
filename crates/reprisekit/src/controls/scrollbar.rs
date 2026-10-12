@@ -8,9 +8,56 @@
 //! lights under the pointer is [`crate::pointer::Pointer`]'s. A control
 //! keeps a [`ThumbDrag`] next to the position it scrolls, or hands one
 //! to its host, which feeds it the press, every motion and the release.
+//! A held arrow repeats on the host's ticks ([`ArrowRepeat`]).
+
+use std::time::{Duration, Instant};
 
 use crate::classic::widgets::{BarHit, ScrollParts, scrollbar_pos_at};
 use crate::pointer::Axis;
+
+/// How long an arrow is held before it steps again, from the first tick
+/// after the press (a host ticks every 50 ms or so).
+pub const REPEAT_AFTER: Duration = Duration::from_millis(350);
+pub const REPEAT_EVERY: Duration = Duration::from_millis(50);
+
+/// A held arrow's repeat: [`REPEAT_AFTER`] from the first tick after the press, then every
+/// [`REPEAT_EVERY`] until the release.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ArrowRepeat {
+    /// The next step: `Some(None)` from the press until the first tick sets its time.
+    next: Option<Option<Instant>>,
+}
+
+impl ArrowRepeat {
+    /// A press on part `hit`: an arrow starts the repeat, any other part stops it.
+    pub fn press(&mut self, hit: BarHit) {
+        self.next = matches!(hit, BarHit::Back | BarHit::Forward).then_some(None);
+    }
+
+    pub fn release(&mut self) {
+        self.next = None;
+    }
+
+    pub fn held(&self) -> bool {
+        self.next.is_some()
+    }
+
+    /// A host tick at `now`: true when the held arrow steps now.
+    pub fn due(&mut self, now: Instant) -> bool {
+        match self.next {
+            None => false,
+            Some(None) => {
+                self.next = Some(Some(now + REPEAT_AFTER));
+                false
+            }
+            Some(Some(at)) if now < at => false,
+            Some(Some(_)) => {
+                self.next = Some(Some(now + REPEAT_EVERY));
+                true
+            }
+        }
+    }
+}
 
 /// What a press on a part of a scrollbar asks of the view.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

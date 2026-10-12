@@ -3134,6 +3134,7 @@ mod tests {
             origin: (0, 0),
             wake: repriseapp::Waker::noop(),
             heads: repriseapp::heads::HeadRequests::default(),
+            want_tick: Default::default(),
             text_size: 100,
         }
     }
