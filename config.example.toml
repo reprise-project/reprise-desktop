@@ -197,8 +197,8 @@ interface = "classic"        # classic | blue | glass; an unknown value falls ba
 
 [power]                      # what the Turn Off dialog's buttons run
 standby = "systemctl suspend"
-poweroff = "systemctl poweroff"
-reboot = "systemctl reboot"
+poweroff = "systemctl poweroff"    # exactly "systemctl|loginctl poweroff|reboot" calls
+reboot = "systemctl reboot"        # logind itself; another command is judged by its exit status
 hibernate = "systemctl hibernate"
 # The lid and the buttons (reprise-power's Power Options edits these):
 # nothing | screen_off | lock | standby | hibernate | turnoff | ask (the Turn Off dialog)

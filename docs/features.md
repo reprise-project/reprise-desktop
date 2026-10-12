@@ -218,7 +218,12 @@ are.
   to have a little gravity.
 - **Save prompts.** Log Off, Turn Off and Restart ask every window to close
   and wait, so programs can ask to save. After 5 seconds a list shows who's
-  still holding things up, with End Now and Cancel.
+  still holding things up, with End Now and Cancel. Turn Off and Restart ask
+  logind first: when it says no, nothing closes. A refusal before or after
+  the programs close (polkit, an inhibitor, a failing `[power]` command)
+  shows a message saying why; a cancelled password prompt shows nothing.
+  End Now overrides the inhibitors the list showed, which usually asks for
+  a password; a critical battery overrides them too.
 - **Session restore.** `[session] restore = true` starts the programs you
   left open again at the next login, on the desktops they were on. Tab
   groups come back in their tab order with the same tab shown, each where

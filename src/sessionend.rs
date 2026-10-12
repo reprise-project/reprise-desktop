@@ -1,6 +1,7 @@
 //! Ending the session: Log Off, Turn Off and Restart close programs first so nothing unsaved is lost without a word.
 //! `begin` asks every window to close, then the session ends once no window or inhibitor holds it; after `PROMPT_AFTER`
 //! the session-end prompt lists what is left. A critical battery kills the remainder after `PROMPT_AFTER` without a prompt.
+//! Turn Off and Restart ask logind first, and a refusal before or after the programs close shows a message box.
 
 use std::time::Duration;
 
@@ -93,11 +94,28 @@ impl Mode {
 }
 
 pub fn begin(state: &mut State, goal: Goal, cmd: Option<String>) {
-    start(state, goal, cmd, false);
+    check(state, goal, cmd, false);
 }
 
 pub fn begin_critical(state: &mut State, cmd: String) {
-    start(state, Goal::TurnOff, Some(cmd), true);
+    check(state, Goal::TurnOff, Some(cmd), true);
+}
+
+/// Start the end once logind says the action is allowed, so a refusal
+/// closes nothing. A custom command has only its exit status to go by.
+fn check(state: &mut State, goal: Goal, cmd: Option<String>, critical: bool) {
+    let verb = cmd.as_deref().and_then(logind_verb);
+    let Some(verb) = verb.filter(|_| state.ending.is_none()) else {
+        start(state, goal, cmd, critical);
+        return;
+    };
+    state.spawn_fs_job(move || {
+        let refused = zbus::block_on(can(verb));
+        Box::new(move |state: &mut State| match refused {
+            None => start(state, goal, cmd, critical),
+            Some(why) => refuse(state, goal, &why),
+        })
+    });
 }
 
 fn start(state: &mut State, goal: Goal, cmd: Option<String>, critical: bool) {
@@ -121,7 +139,7 @@ fn start(state: &mut State, goal: Goal, cmd: Option<String>, critical: bool) {
     state.session.kept = true;
     if state.is_locked() {
         log::info!("session end: locked, nobody to ask");
-        go_on(state, goal, cmd);
+        go_on(state, goal, cmd, false);
         return;
     }
     let (tx, rx) = channel::channel::<Vec<Holder>>();
@@ -183,7 +201,7 @@ pub fn tick(state: &mut State) {
     let holders = e.holders.as_ref().map(|h| holding(h, e.goal));
     if programs.is_empty() && holders.as_ref().is_some_and(Vec::is_empty) {
         log::info!("session end: every program closed");
-        finish(state);
+        finish(state, false);
         return;
     }
     if e.mode == Mode::Prompted {
@@ -197,17 +215,19 @@ fn run_step(state: &mut State, step: Step) {
         Step::Prompt => sync_prompt(state),
         Step::Force => {
             log::info!("session end: critical battery, ending what is left");
-            end_now(state);
+            end_now(state, true);
         }
     }
 }
 
-fn end_now(state: &mut State) {
+/// `override_inhibitors`: End Now, after the prompt showed the inhibitors,
+/// or a critical battery, which takes the power anyway.
+fn end_now(state: &mut State, override_inhibitors: bool) {
     let pids: Vec<i32> = programs(state).iter().filter_map(|p| p.pid).collect();
     for pid in pids {
         end_process(state, pid);
     }
-    finish(state);
+    finish(state, override_inhibitors);
 }
 
 pub fn answer(state: &mut State, choice: Choice) {
@@ -217,7 +237,7 @@ pub fn answer(state: &mut State, choice: Choice) {
     match choice {
         Choice::EndNow => {
             log::info!("session end: End Now");
-            end_now(state);
+            end_now(state, true);
         }
         Choice::Cancel => cancel(state),
     }
@@ -235,7 +255,7 @@ fn cancel(state: &mut State) {
     state.session.kept = false;
 }
 
-fn finish(state: &mut State) {
+fn finish(state: &mut State, override_inhibitors: bool) {
     let Some(mut e) = state.ending.take() else {
         return;
     };
@@ -251,16 +271,277 @@ fn finish(state: &mut State) {
     {
         let _ = stop.try_send(());
     }
-    go_on(state, e.goal, e.cmd);
+    go_on(state, e.goal, e.cmd, override_inhibitors);
 }
 
-fn go_on(state: &mut State, goal: Goal, cmd: Option<String>) {
-    match cmd {
-        Some(cmd) => {
-            log::info!("session end: {goal:?} runs {cmd:?}");
-            state.spawn_activated(&cmd);
+fn go_on(state: &mut State, goal: Goal, cmd: Option<String>, override_inhibitors: bool) {
+    let Some(cmd) = cmd else {
+        state.signal.stop();
+        return;
+    };
+    log::info!("session end: {goal:?} runs {cmd:?}");
+    let env = state.env.clone();
+    state.spawn_fs_job(move || {
+        let failed = match logind_verb(&cmd) {
+            Some(verb) => zbus::block_on(call(verb, override_inhibitors)),
+            None => run(&cmd, &env),
+        };
+        Box::new(move |state: &mut State| {
+            if let Some(why) = failed {
+                refuse(state, goal, &why);
+            }
+        })
+    });
+}
+
+/// Why the computer stayed up.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum Refused {
+    NotAllowed,
+    Unsupported,
+    Held(Vec<Holder>),
+    Failed(String),
+}
+
+fn refuse(state: &mut State, goal: Goal, why: &Refused) {
+    log::warn!("session end: {goal:?} refused: {why:?}");
+    let title = match goal {
+        Goal::Restart => "Restart Computer",
+        Goal::TurnOff | Goal::LogOff => "Turn Off Computer",
+    };
+    state.open_dialog(crate::dialog::Dialog::error(title, refusal_text(goal, why)));
+}
+
+fn refusal_text(goal: Goal, why: &Refused) -> String {
+    let what = match goal {
+        Goal::Restart => "restart",
+        Goal::TurnOff | Goal::LogOff => "turn off",
+    };
+    let reason = match why {
+        Refused::NotAllowed => format!("You are not allowed to {what} this computer."),
+        Refused::Unsupported => "This computer does not support it.".to_string(),
+        Refused::Held(holders) if holders.is_empty() => "A program is preventing it.".to_string(),
+        Refused::Held(holders) => {
+            let mut text = "These programs are preventing it:".to_string();
+            for h in holders {
+                text.push('\n');
+                text.push_str(&h.who);
+                if !h.why.is_empty() {
+                    text.push_str(": ");
+                    text.push_str(&h.why);
+                }
+            }
+            text
         }
-        None => state.signal.stop(),
+        Refused::Failed(m) => m.clone(),
+    };
+    format!("Reprise could not {what} the computer.\n\n{reason}")
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Verb {
+    PowerOff,
+    Reboot,
+}
+
+impl Verb {
+    fn can(self) -> &'static str {
+        match self {
+            Verb::PowerOff => "CanPowerOff",
+            Verb::Reboot => "CanReboot",
+        }
+    }
+
+    fn method(self) -> &'static str {
+        match self {
+            Verb::PowerOff => "PowerOff",
+            Verb::Reboot => "Reboot",
+        }
+    }
+
+    fn method_with_flags(self) -> &'static str {
+        match self {
+            Verb::PowerOff => "PowerOffWithFlags",
+            Verb::Reboot => "RebootWithFlags",
+        }
+    }
+}
+
+/// The logind action `cmd` is when it says exactly `systemctl` or `loginctl`
+/// with `poweroff` or `reboot`; logind is then called directly, so polkit
+/// sees the compositor and a dismissed prompt can be told apart.
+fn logind_verb(cmd: &str) -> Option<Verb> {
+    let words: Vec<&str> = cmd.split_whitespace().collect();
+    let [program, verb] = words[..] else {
+        return None;
+    };
+    let name = program.rsplit('/').next()?;
+    if name != "systemctl" && name != "loginctl" {
+        return None;
+    }
+    match verb {
+        "poweroff" => Some(Verb::PowerOff),
+        "reboot" => Some(Verb::Reboot),
+        _ => None,
+    }
+}
+
+/// logind's `Can*` answer as a refusal. `challenge` goes ahead, as polkit
+/// asks for a password; so does `inhibited`, whose holders the prompt lists.
+fn refused_by(answer: &str) -> Option<Refused> {
+    match answer {
+        "yes" | "challenge" | "inhibited" => None,
+        "na" => Some(Refused::Unsupported),
+        _ => Some(Refused::NotAllowed),
+    }
+}
+
+/// A refusal names the shutdown inhibitors, when there are any.
+async fn with_holders(conn: &zbus::Connection, why: Refused) -> Refused {
+    if !matches!(why, Refused::NotAllowed | Refused::Held(_)) {
+        return why;
+    }
+    let holders = logind_holders(conn).await;
+    if holders.is_empty() {
+        why
+    } else {
+        Refused::Held(holders)
+    }
+}
+
+/// Unreachable logind lets the end go ahead: the action itself reports.
+async fn can(verb: Verb) -> Option<Refused> {
+    let conn = connect(true).await?;
+    let reply = conn
+        .call_method(
+            Some(LOGIND),
+            LOGIND_PATH,
+            Some(LOGIND_MANAGER),
+            verb.can(),
+            &(),
+        )
+        .await
+        .and_then(|m| m.body().deserialize::<String>());
+    match reply {
+        Ok(answer) => {
+            log::info!("session end: {} says {answer:?}", verb.can());
+            Some(with_holders(&conn, refused_by(&answer)?).await)
+        }
+        Err(e) => {
+            log::warn!("session end: {}: {e}", verb.can());
+            None
+        }
+    }
+}
+
+/// `SD_LOGIND_SKIP_INHIBITORS` from org.freedesktop.login1(5): bypasses
+/// block inhibitors, subject to polkit's `*-ignore-inhibit`.
+const SKIP_INHIBITORS: u64 = 1 << 4;
+
+fn logind_flags(override_inhibitors: bool) -> u64 {
+    if override_inhibitors {
+        SKIP_INHIBITORS
+    } else {
+        0
+    }
+}
+
+/// A logind without `*WithFlags` (before 248) or without the skip flag
+/// (before 257); the plain call lets polkit decide on the inhibitors there.
+fn too_old_for_flags(e: &zbus::Error) -> bool {
+    matches!(
+        error_name(e),
+        Some("org.freedesktop.DBus.Error.UnknownMethod" | "org.freedesktop.DBus.Error.InvalidArgs")
+    )
+}
+
+async fn call(verb: Verb, override_inhibitors: bool) -> Option<Refused> {
+    // No method timeout: a password prompt stays up as long as polkit lets it.
+    let conn = match zbus::Connection::system().await {
+        Ok(c) => c,
+        Err(e) => return Some(Refused::Failed(e.to_string())),
+    };
+    let reply = async {
+        let proxy: zbus::Proxy<'_> = zbus::proxy::Builder::new(&conn)
+            .destination(LOGIND)?
+            .path(LOGIND_PATH)?
+            .interface(LOGIND_MANAGER)?
+            .cache_properties(zbus::proxy::CacheProperties::No)
+            .build()
+            .await?;
+        let interactive = zbus::proxy::MethodFlags::AllowInteractiveAuth.into();
+        let flags = logind_flags(override_inhibitors);
+        match proxy
+            .call_with_flags::<_, _, ()>(verb.method_with_flags(), interactive, &(flags,))
+            .await
+        {
+            Err(e) if too_old_for_flags(&e) => {
+                log::info!("session end: {}: {e}", verb.method_with_flags());
+                proxy
+                    .call_with_flags::<_, _, ()>(verb.method(), interactive, &(true,))
+                    .await
+            }
+            r => r,
+        }
+    }
+    .await;
+    let e = reply.err()?;
+    Some(with_holders(&conn, failure(&e, reprisebus::polkit::dismissed)?).await)
+}
+
+/// A failed logind call as a refusal; a dismissed password prompt is none.
+fn failure(e: &zbus::Error, dismissed: impl FnOnce() -> bool) -> Option<Refused> {
+    let refused = |name: &str| {
+        name == "org.freedesktop.DBus.Error.AccessDenied"
+            || name == "org.freedesktop.DBus.Error.InteractiveAuthorizationRequired"
+    };
+    match reprisebus::polkit::refusal(e, refused, dismissed) {
+        Some(reprisebus::polkit::Refusal::Dismissed) => None,
+        Some(reprisebus::polkit::Refusal::Denied) => Some(Refused::NotAllowed),
+        None if error_name(e) == Some("org.freedesktop.login1.BlockedByInhibitorLock") => {
+            Some(Refused::Held(Vec::new()))
+        }
+        None => Some(Refused::Failed(match e {
+            // logind gives up on polkit after 25 s, prompt or not.
+            _ if matches!(
+                error_name(e),
+                Some("org.freedesktop.DBus.Error.NoReply" | "org.freedesktop.DBus.Error.Timeout")
+            ) =>
+            {
+                "The password was not given in time.".to_string()
+            }
+            zbus::Error::MethodError(_, Some(m), _) => m.clone(),
+            e => e.to_string(),
+        })),
+    }
+}
+
+fn error_name(e: &zbus::Error) -> Option<&str> {
+    match e {
+        zbus::Error::MethodError(name, _, _) => Some(name.as_str()),
+        _ => None,
+    }
+}
+
+/// Run a custom `[power]` command and wait for it.
+fn run(cmd: &str, env: &crate::spawn::SessionEnv) -> Option<Refused> {
+    let mut c = crate::spawn::command(cmd, env, None);
+    crate::spawn::detach(&mut c);
+    c.stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::piped());
+    match c.output() {
+        Ok(o) if o.status.success() => None,
+        Ok(o) => Some(Refused::Failed(command_failure(cmd, &o.status, &o.stderr))),
+        Err(e) => Some(Refused::Failed(format!("\"{cmd}\" did not start: {e}"))),
+    }
+}
+
+/// The last line `cmd` wrote to stderr, else its exit status.
+fn command_failure(cmd: &str, status: &std::process::ExitStatus, stderr: &[u8]) -> String {
+    let text = String::from_utf8_lossy(stderr);
+    match text.lines().map(str::trim).rfind(|l| !l.is_empty()) {
+        Some(line) => line.to_string(),
+        None => format!("\"{cmd}\" failed ({status})."),
     }
 }
 
@@ -674,5 +955,115 @@ mod tests {
             .into_iter(),
         );
         assert_eq!(got, [holder("packagekit", "Installing", true)]);
+    }
+
+    #[test]
+    fn only_a_bare_systemctl_or_loginctl_command_is_called_on_logind() {
+        assert_eq!(logind_verb("systemctl poweroff"), Some(Verb::PowerOff));
+        assert_eq!(logind_verb(" loginctl  reboot "), Some(Verb::Reboot));
+        assert_eq!(logind_verb("/usr/bin/systemctl reboot"), Some(Verb::Reboot));
+        assert_eq!(logind_verb("systemctl poweroff -i"), None);
+        assert_eq!(logind_verb("sudo systemctl poweroff"), None);
+        assert_eq!(logind_verb("systemctl suspend"), None);
+        assert_eq!(logind_verb("my-poweroff"), None);
+        assert_eq!(logind_verb(""), None);
+    }
+
+    #[test]
+    fn only_no_and_na_keep_the_programs_open() {
+        assert_eq!(refused_by("yes"), None);
+        assert_eq!(refused_by("challenge"), None);
+        assert_eq!(refused_by("no"), Some(Refused::NotAllowed));
+        assert_eq!(refused_by("na"), Some(Refused::Unsupported));
+        assert_eq!(refused_by("inhibited"), None);
+        assert_eq!(refused_by("maybe"), Some(Refused::NotAllowed));
+    }
+
+    fn method_error(name: &'static str, text: &str) -> zbus::Error {
+        let msg = zbus::Message::method_call("/", "M")
+            .and_then(|b| b.build(&()))
+            .expect("a method call");
+        zbus::Error::MethodError(
+            zbus::names::OwnedErrorName::try_from(name).expect("an error name"),
+            Some(text.into()),
+            msg,
+        )
+    }
+
+    #[test]
+    fn a_dismissed_prompt_is_no_refusal_and_other_errors_keep_their_text() {
+        let denied = method_error(
+            "org.freedesktop.DBus.Error.AccessDenied",
+            "Permission denied",
+        );
+        assert_eq!(failure(&denied, || true), None);
+        assert_eq!(failure(&denied, || false), Some(Refused::NotAllowed));
+        let other = method_error("org.freedesktop.login1.OperationInProgress", "Busy");
+        let got = failure(&other, || panic!("only a refusal asks about the prompt"));
+        assert_eq!(got, Some(Refused::Failed("Busy".into())));
+        let late = method_error(
+            "org.freedesktop.DBus.Error.NoReply",
+            "Method call timed out",
+        );
+        assert_eq!(
+            failure(&late, || false),
+            Some(Refused::Failed(
+                "The password was not given in time.".into()
+            ))
+        );
+        let blocked = method_error(
+            "org.freedesktop.login1.BlockedByInhibitorLock",
+            "Operation denied due to active block inhibitor",
+        );
+        assert_eq!(failure(&blocked, || false), Some(Refused::Held(Vec::new())));
+    }
+
+    #[test]
+    fn an_override_skips_the_inhibitors_and_an_old_logind_falls_back() {
+        assert_eq!(logind_flags(true), 0x10);
+        assert_eq!(logind_flags(false), 0);
+        let old = method_error("org.freedesktop.DBus.Error.UnknownMethod", "Unknown method");
+        assert!(too_old_for_flags(&old));
+        let blocked = method_error("org.freedesktop.login1.BlockedByInhibitorLock", "Blocked");
+        assert!(!too_old_for_flags(&blocked));
+    }
+
+    #[test]
+    fn a_failed_command_reports_its_last_error_line_else_its_status() {
+        use std::os::unix::process::ExitStatusExt;
+        let st = std::process::ExitStatus::from_raw(1 << 8);
+        assert_eq!(
+            command_failure(
+                "off",
+                &st,
+                b"warning\nCall to PowerOff failed: Access denied\n\n"
+            ),
+            "Call to PowerOff failed: Access denied"
+        );
+        assert_eq!(
+            command_failure("off", &st, b""),
+            "\"off\" failed (exit status: 1)."
+        );
+    }
+
+    #[test]
+    fn the_message_names_the_action_and_why() {
+        assert_eq!(
+            refusal_text(Goal::Restart, &Refused::NotAllowed),
+            "Reprise could not restart the computer.\n\nYou are not allowed to restart this computer."
+        );
+        let held = Refused::Held(vec![
+            holder("packagekit", "Installing updates", true),
+            holder("backup", "", true),
+        ]);
+        assert_eq!(
+            refusal_text(Goal::TurnOff, &held),
+            "Reprise could not turn off the computer.\n\n\
+             These programs are preventing it:\npackagekit: Installing updates\nbackup"
+        );
+        assert!(
+            refusal_text(Goal::TurnOff, &Refused::Held(Vec::new()))
+                .ends_with("\n\nA program is preventing it.")
+        );
     }
 }
