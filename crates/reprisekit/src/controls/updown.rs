@@ -23,12 +23,12 @@ use crate::pointer::Lit;
 use crate::raster::{Canvas, Rect};
 use crate::text::{Align, TextRenderer};
 use crate::textedit::{EditKey, TextEdit};
+use crate::theme::TextUnits;
 use accesskit::{NodeId, Role};
 
 pub const WIDTH: i32 = 50;
 pub const HEIGHT: i32 = 20;
 const BUTTON_W: i32 = 15;
-const BUTTON_H: i32 = 8;
 const MIN_DIGITS: usize = 4;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -185,18 +185,21 @@ pub struct Layout {
 }
 
 pub fn layout(x: i32, y: i32) -> Layout {
-    layout_in(Rect::new(x, y, WIDTH, HEIGHT))
+    layout_in(Rect::new(x, y, WIDTH, HEIGHT), HEIGHT)
 }
 
-fn layout_in(r: Rect) -> Layout {
-    let field = Rect::new(r.x, r.y, r.width, HEIGHT);
+/// A plain spinner at `r`'s top-left, `field_h` tall, its buttons splitting the column inside
+/// the frame.
+fn layout_in(r: Rect, field_h: i32) -> Layout {
+    let field = Rect::new(r.x, r.y, r.width, field_h);
     let inner = field.inset(2);
     let bx = inner.right() - BUTTON_W;
+    let (up, down) = split_buttons(Rect::new(bx, inner.y, BUTTON_W, inner.height));
     Layout {
         field,
         edit: Rect::new(inner.x, inner.y, bx - inner.x, inner.height),
-        up: Rect::new(bx, inner.y, BUTTON_W, BUTTON_H),
-        down: Rect::new(bx, inner.y + BUTTON_H, BUTTON_W, BUTTON_H),
+        up,
+        down,
     }
 }
 
@@ -233,11 +236,12 @@ pub fn buddy_layout(r: Rect, cm: &ControlMetrics) -> Layout {
     }
 }
 
-pub fn layout_for(ud: &UpDown, r: Rect, cm: &ControlMetrics) -> Layout {
+/// `ud` filling `r`, a plain one as tall as `u` grows its 20 px field.
+pub fn layout_for(ud: &UpDown, r: Rect, cm: &ControlMetrics, u: TextUnits) -> Layout {
     if ud.buddy {
         buddy_layout(r, cm)
     } else {
-        layout_in(r)
+        layout_in(r, u.len(HEIGHT))
     }
 }
 
@@ -347,7 +351,7 @@ pub fn draw(
                 // One text line tall, centred in the field, like the time
                 // field's current part.
                 let (a, b) = (at(sel.start), at(sel.end));
-                let lh = LINE_H * s;
+                let lh = p.text.len(LINE_H) * s;
                 let hl = Rect::new(a, tr.y + (tr.height - lh) / 2, b - a, lh);
                 c.fill_rect(hl, cs.hilight);
                 text.draw(
@@ -424,7 +428,12 @@ mod tests {
         let page = sheet.frame().1;
         let mut ud = UpDown::new(2026, 1970, 2099).with_buddy();
         ud.enabled = false;
-        let l = layout_for(&ud, Rect::new(112, 58, 79, 21), &theme.look.controls());
+        let l = layout_for(
+            &ud,
+            Rect::new(112, 58, 79, 21),
+            &theme.look.controls(),
+            TextUnits::ONE,
+        );
         let gap = Rect::new(
             l.up.x - 1,
             l.up.bottom(),
@@ -664,7 +673,12 @@ mod tests {
         let text = TextRenderer::load(&FontConfig::default());
         let cs = &theme.colors;
         let ud = UpDown::new(2026, 1970, 2099).with_buddy();
-        let l = layout_for(&ud, Rect::new(112, 55, 79, 21), &ControlMetrics::CLASSIC);
+        let l = layout_for(
+            &ud,
+            Rect::new(112, 55, 79, 21),
+            &ControlMetrics::CLASSIC,
+            TextUnits::ONE,
+        );
         assert_eq!(l.field, Rect::new(112, 55, 63, 21));
         assert_eq!(l.up, Rect::new(175, 55, 16, 10));
         assert_eq!(l.down, Rect::new(175, 65, 16, 10));
@@ -776,7 +790,7 @@ mod tests {
         let cs = &theme.colors;
         let ud = UpDown::new(2026, 1970, 2099).with_buddy();
         let r = Rect::new(112, 58, 79, 21);
-        let l = layout_for(&ud, r, &theme.look.controls());
+        let l = layout_for(&ud, r, &theme.look.controls(), TextUnits::ONE);
         assert_eq!(l.field, r);
         assert_eq!(l.edit, Rect::new(114, 60, 60, 17));
         assert_eq!(l.up, Rect::new(174, 60, 15, 8));

@@ -651,52 +651,57 @@ const CHROME: Chrome = Chrome {
 /// caption inside `DIALOG_W` x `DIALOG_H`. A styled look puts the style's
 /// frame around the client area Classic has under the default metrics, so
 /// the body keeps its size and the dialog grows by the frame's difference.
+/// The client grows with the text size (`theme.text`); so does Classic's
+/// whole dialog, by as much.
 pub fn dialog_layout(theme: &Theme) -> DialogLayout {
     let s = theme.scale.max(1);
+    let u = theme.text;
     let m = &theme.metrics;
+    let d = Metrics::DEFAULT;
+    let (cw, ch) = (
+        DIALOG_W - 2 * d.frame_width,
+        DIALOG_H - 2 * d.frame_width - d.caption_height,
+    );
+    let grow = (
+        (u.len(cw) - cw) * s,
+        (u.len(ch) - ch) * s + (m.caption_height - d.caption_height * s).max(0),
+    );
     let (frame, caption, client) = match theme.look {
         Look::Classic => {
             let f = m.frame_width;
-            let (w, h) = (DIALOG_W * s, DIALOG_H * s);
+            let (w, h) = (DIALOG_W * s + grow.0, DIALOG_H * s + grow.1);
             let caption = Rect::new(f, f, w - 2 * f, m.caption_height);
             let client = Rect::new(f, caption.bottom(), w - 2 * f, h - f - caption.bottom());
             (None, caption, client)
         }
         Look::Styled(_) => {
-            let d = Metrics::DEFAULT;
-            let cw = DIALOG_W - 2 * d.frame_width;
-            let ch = DIALOG_H - 2 * d.frame_width - d.caption_height;
-            let g = FrameGeometry::layout(m, cw * s, ch * s, false, CHROME);
+            let g = FrameGeometry::layout(m, u.len(cw) * s, u.len(ch) * s, false, CHROME);
             (Some(g), g.caption, g.client)
         }
     };
-    let body_y = client.y + PAD * s;
-    let box_x = client.x + (PAD + LABEL_W) * s;
-    let box_w = client.right() - PAD * s - box_x;
-    let user_box = Rect::new(box_x, body_y + 24 * s, box_w, ROW_H * s);
-    let field = Rect::new(box_x, body_y + 52 * s, box_w, ROW_H * s);
+    // `v` 100% px from the client's top or left, at the text size, in device px.
+    let at = |v: i32| u.len(v) * s;
+    let box_x = client.x + at(PAD + LABEL_W);
+    let box_w = client.right() - at(PAD) - box_x;
+    let row = |top: i32| {
+        let top = PAD + top;
+        Rect::new(box_x, client.y + at(top), box_w, at(top + ROW_H) - at(top))
+    };
+    let user_box = row(24);
+    let field = row(52);
     let message = Rect::new(
-        client.x + PAD * s,
-        body_y + 80 * s,
-        client.width - 2 * PAD * s,
-        MESSAGE_LINES as i32 * LINE_H * s,
+        client.x + at(PAD),
+        client.y + at(PAD + 80),
+        client.width - 2 * at(PAD),
+        at(MESSAGE_LINES as i32 * LINE_H),
     );
-    let by = client.bottom() - PAD * s - BUTTON_H * s;
-    let cancel = Rect::new(
-        client.right() - PAD * s - BUTTON_W * s,
-        by,
-        BUTTON_W * s,
-        BUTTON_H * s,
-    );
-    let ok = Rect::new(
-        cancel.x - 6 * s - BUTTON_W * s,
-        by,
-        BUTTON_W * s,
-        BUTTON_H * s,
-    );
+    let (bw, bh) = (at(BUTTON_W), at(BUTTON_H));
+    let by = client.bottom() - at(PAD) - bh;
+    let cancel = Rect::new(client.right() - at(PAD) - bw, by, bw, bh);
+    let ok = Rect::new(cancel.x - at(6) - bw, by, bw, bh);
     let size = match frame {
         Some(g) => g.total,
-        None => (DIALOG_W * s, DIALOG_H * s),
+        None => (DIALOG_W * s + grow.0, DIALOG_H * s + grow.1),
     };
     DialogLayout {
         size,
@@ -786,9 +791,10 @@ fn draw_body(
     let s = theme.scale.max(1);
     let cs = &theme.colors;
     let px = theme.fonts.size_px;
-    let label_x = l.caption.x + PAD * s;
-    let body_y = l.caption.bottom() + PAD * s;
-    let line = Rect::new(label_x, body_y, l.size.0 - 2 * label_x, 16 * s);
+    let at = |v: i32| theme.text.len(v) * s;
+    let label_x = l.caption.x + at(PAD);
+    let body_y = l.caption.bottom() + at(PAD);
+    let line = Rect::new(label_x, body_y, l.size.0 - 2 * label_x, at(16));
     text.draw(
         c,
         line,
@@ -802,7 +808,7 @@ fn draw_body(
     let label = |c: &mut Canvas, r: Rect, s_: &str| {
         text.draw(
             c,
-            Rect::new(label_x, r.y, LABEL_W * s, r.height),
+            Rect::new(label_x, r.y, at(LABEL_W), r.height),
             s_,
             false,
             cs.button_text,
@@ -854,11 +860,12 @@ fn draw_body(
     if let Some(msg) = msg {
         let lines = message_lines(text, msg, l.message.width, px);
         for (i, line) in lines.iter().enumerate() {
+            let line_h = at(LINE_H);
             let r = Rect::new(
                 l.message.x,
-                l.message.y + i as i32 * LINE_H * s,
+                l.message.y + i as i32 * line_h,
                 l.message.width,
-                LINE_H * s,
+                line_h,
             );
             text.draw(c, r, line, false, cs.button_text, Align::Left, px);
         }
@@ -1529,6 +1536,31 @@ mod tests {
                 y += c.height as i32 + gap;
             }
             reprisekit::raster::write_preview(&out, file);
+        }
+    }
+
+    /// At 150% and 200% the dialog's client grows with the text: the rows hold a grown line, the
+    /// message clears the buttons, and every part sits inside the dialog. 100% is the 360x180
+    /// dialog.
+    #[test]
+    fn the_dialog_grows_with_the_text_size() {
+        assert_eq!(dialog_layout(&Theme::default()).size, (DIALOG_W, DIALOG_H));
+        for pct in [150, 200] {
+            let theme = Theme::default().with_text_size(pct);
+            let l = dialog_layout(&theme);
+            let px = theme.fonts.size_px as i32;
+            assert!(l.field.height >= px + 4, "{pct}%");
+            assert!(l.user_box.bottom() <= l.field.y, "{pct}%");
+            assert!(l.field.bottom() <= l.message.y, "{pct}%");
+            assert!(
+                l.message.bottom() <= l.ok.y,
+                "{pct}%: the message clears the buttons"
+            );
+            assert!(
+                l.cancel.right() <= l.size.0 && l.cancel.bottom() <= l.size.1,
+                "{pct}%"
+            );
+            assert!(l.caption.bottom() <= l.user_box.y, "{pct}%");
         }
     }
 }

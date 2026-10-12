@@ -276,6 +276,7 @@ fn controls(v: Variant) -> ControlMetrics {
         combo_drop: 15,
         combo_gap: 3,
         combo_row: 13,
+        list_row: 17,
         buddy_spin: 15,
         buddy_spin_inside: true,
         vtrack_thumb: 22,

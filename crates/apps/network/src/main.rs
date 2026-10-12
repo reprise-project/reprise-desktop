@@ -36,6 +36,7 @@ use reprisekit::controls::propsheet::{self, PropSheet};
 use reprisekit::look::Paint;
 use reprisekit::raster::{Canvas, Rect};
 use reprisekit::text::TextRenderer;
+use reprisekit::theme::Theme;
 
 /// The windows the folder and the tray open. One Status sheet and one VPN
 /// sheet at a time: opening another replaces it.
@@ -105,9 +106,10 @@ struct NetApp {
     import_host: Host,
     hotspot: Option<hotspot::HotspotDialog>,
     notice: Option<Notice>,
-    /// The message box's font, loaded in `start`: the box sizes its window
-    /// before any event brings a `Ctx`.
-    dialog_text: Option<(TextRenderer, u32)>,
+    /// The message box's font, loaded in `start`: `children` sizes its window without a `Ctx`.
+    dialog_text: Option<TextRenderer>,
+    /// `Ctx::forms` as of the last event, which `children` sizes form windows by.
+    forms: Theme,
     /// The icon theme's "network-vpn" at 16 px; see `read_icons`.
     vpn_icon: Option<Canvas>,
     icons_read: bool,
@@ -741,13 +743,13 @@ impl NetApp {
     }
 
     fn notice_event(&mut self, ev: Event) -> Reply {
-        let Some((text, px)) = &self.dialog_text else {
+        let Some(text) = &self.dialog_text else {
             return Reply::none();
         };
         let Some(n) = &mut self.notice else {
             return Reply::none();
         };
-        match n.msg.event(&ev, text, *px) {
+        match n.msg.event(&ev, text, &self.forms) {
             oneshot::Outcome::Closed(button) => {
                 if let (Some(conn), Some(0)) = (n.delete.take(), button) {
                     self.send(nm::Cmd::DeleteVpn(conn));
@@ -935,6 +937,7 @@ impl App for NetApp {
     }
 
     fn children(&self) -> Vec<Child> {
+        let u = self.forms.text;
         let mut out = Vec::new();
         if self.chooser.is_some() {
             out.push(Child {
@@ -949,7 +952,7 @@ impl App for NetApp {
             out.push(Child {
                 id: KEY,
                 title: keydlg::KeyDialog::window_title(),
-                size: keydlg::CLIENT,
+                size: u.size(keydlg::CLIENT),
                 fixed: true,
                 modal: true,
             });
@@ -965,7 +968,7 @@ impl App for NetApp {
             out.push(Child {
                 id: STATUS,
                 title,
-                size: status::CLIENT,
+                size: u.size(status::CLIENT),
                 fixed: true,
                 modal: false,
             });
@@ -974,7 +977,7 @@ impl App for NetApp {
             out.push(Child {
                 id: VPN,
                 title: w.title(),
-                size: w.sheet().size,
+                size: u.size(w.sheet().size),
                 fixed: true,
                 modal: false,
             });
@@ -992,13 +995,13 @@ impl App for NetApp {
             out.push(Child {
                 id: HOTSPOT,
                 title: hotspot::HotspotDialog::window_title(),
-                size: hotspot::CLIENT,
+                size: u.size(hotspot::CLIENT),
                 fixed: true,
                 modal: false,
             });
         }
-        if let (Some(n), Some((text, px))) = (&self.notice, &self.dialog_text) {
-            out.push(n.msg.child(NOTICE, text, *px));
+        if let (Some(n), Some(text)) = (&self.notice, &self.dialog_text) {
+            out.push(n.msg.child(NOTICE, text, &self.forms));
         }
         out
     }
@@ -1031,14 +1034,11 @@ impl App for NetApp {
         let (rx, handle) = nm::watch(waker);
         self.nm_rx = Some(rx);
         self.nm = Some(handle);
-        let fonts = reprisekit::theme::FontConfig::default();
-        self.dialog_text = Some((
-            TextRenderer::load(&fonts),
-            reprisekit::theme::Theme::default().fonts.size_px,
-        ));
+        self.dialog_text = Some(TextRenderer::load(&reprisekit::theme::FontConfig::default()));
     }
 
     fn event(&mut self, win: WinId, ev: Event, ctx: &mut Ctx) -> Reply {
+        self.forms = ctx.forms();
         if matches!(ev, Event::Wake) {
             return self.wake();
         }
@@ -1073,6 +1073,8 @@ impl App for NetApp {
 
     fn access(&mut self, win: WinId, tree: &mut Tree, ctx: &Ctx) {
         let px = ctx.theme.fonts.size_px;
+        let forms = ctx.forms();
+        let form_px = forms.fonts.size_px;
         match win {
             CHOOSER => {
                 if let Some(ch) = &self.chooser {
@@ -1081,22 +1083,22 @@ impl App for NetApp {
             }
             KEY => {
                 if let Some(k) = &self.key {
-                    oneshot::access_form(&k.form, tree, &ctx.text, px);
+                    oneshot::access_form(&k.form, tree, &ctx.text, form_px);
                 }
             }
             STATUS => {
                 if let Some(s) = &self.status {
-                    oneshot::access_sheet(&s.sheet, tree, &ctx.text, px);
+                    oneshot::access_sheet(&s.sheet, tree, &ctx.text, form_px);
                 }
             }
             VPN => {
                 if let Some(w) = &self.vpn {
-                    oneshot::access_sheet(w.sheet(), tree, &ctx.text, px);
+                    oneshot::access_sheet(w.sheet(), tree, &ctx.text, form_px);
                 }
             }
             HOTSPOT => {
                 if let Some(d) = &self.hotspot {
-                    oneshot::access_form(&d.form, tree, &ctx.text, px);
+                    oneshot::access_form(&d.form, tree, &ctx.text, form_px);
                 }
             }
             IMPORT => {
@@ -1106,8 +1108,8 @@ impl App for NetApp {
                 }
             }
             NOTICE => {
-                if let (Some(n), Some((text, px))) = (&self.notice, &self.dialog_text) {
-                    n.msg.access(tree, text, *px);
+                if let Some(n) = &self.notice {
+                    n.msg.access(tree, &ctx.text, &forms);
                 }
             }
             _ => self.folder.access(tree, ctx),
@@ -1133,6 +1135,8 @@ impl App for NetApp {
     fn draw(&mut self, win: WinId, c: &mut Canvas, ctx: &Ctx) {
         let cs = &ctx.theme.colors;
         let px = ctx.theme.fonts.size_px;
+        let forms = ctx.forms();
+        let form_px = forms.fonts.size_px;
         match win {
             CHOOSER => {
                 if let Some(ch) = &self.chooser {
@@ -1147,11 +1151,11 @@ impl App for NetApp {
                         &ctx.text,
                         &Paint {
                             s: 1,
-                            ..ctx.theme.paint()
+                            ..forms.paint()
                         },
                         &k.form,
                         true,
-                        px,
+                        form_px,
                     );
                 }
             }
@@ -1163,11 +1167,11 @@ impl App for NetApp {
                         &ctx.text,
                         &Paint {
                             s: 1,
-                            ..ctx.theme.paint()
+                            ..forms.paint()
                         },
                         &s.sheet,
                         true,
-                        px,
+                        form_px,
                     );
                 }
             }
@@ -1179,11 +1183,11 @@ impl App for NetApp {
                         &ctx.text,
                         &Paint {
                             s: 1,
-                            ..ctx.theme.paint()
+                            ..forms.paint()
                         },
                         w.sheet(),
                         true,
-                        px,
+                        form_px,
                     );
                 }
             }
@@ -1195,11 +1199,11 @@ impl App for NetApp {
                         &ctx.text,
                         &Paint {
                             s: 1,
-                            ..ctx.theme.paint()
+                            ..forms.paint()
                         },
                         &d.form,
                         true,
-                        px,
+                        form_px,
                     );
                 }
             }
@@ -1218,8 +1222,8 @@ impl App for NetApp {
                 }
             }
             NOTICE => {
-                if let (Some(n), Some((text, px))) = (&self.notice, &self.dialog_text) {
-                    n.msg.draw(c, &ctx.theme, text, *px);
+                if let Some(n) = &self.notice {
+                    n.msg.draw(c, &forms, &ctx.text);
                 }
             }
             // The folder's own size decides its last column's width and
@@ -1304,5 +1308,22 @@ mod tests {
         app.event(KEY, ctrl(b'a'), &mut ctx);
         assert_eq!(app.event(KEY, ctrl(b'c'), &mut ctx).copy, None);
         assert_eq!(app.event(KEY, ctrl(b'x'), &mut ctx).copy, None);
+    }
+
+    #[test]
+    fn a_dialog_window_opens_at_the_text_size_of_the_last_event() {
+        let mut ctx = test_ctx(folder::CLIENT);
+        ctx.text_size = 150;
+        let mut app = NetApp::default();
+        app.open_hotspot("/dev/1");
+        app.event(repriseapp::MAIN, Event::Wake, &mut ctx);
+        let child = app
+            .children()
+            .into_iter()
+            .find(|c| c.id == HOTSPOT)
+            .unwrap();
+        let u = reprisekit::theme::TextUnits::new(17, 11);
+        assert_eq!(child.size, u.size(hotspot::CLIENT));
+        assert_eq!(child.size, (556, 331));
     }
 }

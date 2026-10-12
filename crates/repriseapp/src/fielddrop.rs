@@ -14,7 +14,7 @@ use reprisekit::text::TextRenderer;
 use reprisekit::textedit::DropLine;
 
 /// A form whose edit fields take drops, and the font size it is drawn at when that is not the
-/// theme's.
+/// theme's at the text size the form was last drawn at.
 pub struct DropForm<'a> {
     pub form: &'a mut Form,
     pub px: Option<u32>,

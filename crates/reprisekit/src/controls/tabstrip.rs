@@ -18,6 +18,7 @@ use crate::look::Paint;
 use crate::look::widgets::{draw_tab, draw_tab_focus};
 use crate::raster::{Canvas, Rect};
 use crate::text::TextRenderer;
+use crate::theme::TextUnits;
 use accesskit::{NodeId, Role};
 
 pub const TAB_H: i32 = 18;
@@ -126,7 +127,8 @@ pub fn row_count(text: &TextRenderer, px: u32, strip: &TabStrip, width: i32) -> 
 }
 
 /// The tabs' rects, parallel to the labels: closed ones as laid out, the open
-/// one grown. `x`, `y` is the strip's top-left, `width` the page's.
+/// one grown. `x`, `y` is the strip's top-left, `width` the page's; tabs and
+/// rows are as tall as `u` grows 18 px.
 pub fn layout(
     text: &TextRenderer,
     px: u32,
@@ -134,24 +136,26 @@ pub fn layout(
     x: i32,
     y: i32,
     width: i32,
+    u: TextUnits,
 ) -> Vec<Rect> {
     let widths: Vec<i32> = strip
         .labels
         .iter()
         .map(|l| text.measure(l, false, px) + PAD)
         .collect();
-    place(&widths, strip.open, x, y, width)
+    place(&widths, strip.open, x, y, width, u.len(TAB_H))
 }
 
-/// [`layout`] for tabs already measured: `widths` include the 13 px pad.
-fn place(widths: &[i32], open: usize, x: i32, y: i32, width: i32) -> Vec<Rect> {
+/// [`layout`] for tabs already measured: `widths` include the 13 px pad; tabs and rows are
+/// `tab_h` tall.
+fn place(widths: &[i32], open: usize, x: i32, y: i32, width: i32, tab_h: i32) -> Vec<Rect> {
     let rows = rows(widths, width);
     let count = rows.len();
     let open_row = rows.iter().position(|r| r.contains(&open)).unwrap_or(0);
     let mut out = vec![Rect::new(0, 0, 0, 0); widths.len()];
     for (r, row) in rows.iter().enumerate() {
         let up = (r + count - open_row) % count;
-        let top = y + ROW_H * (count - 1 - up) as i32;
+        let top = y + tab_h * (count - 1 - up) as i32;
         let (fill, odd) = if count > 1 {
             let left = width - 4 - widths[row.clone()].iter().sum::<i32>();
             let k = row.len() as i32;
@@ -166,9 +170,9 @@ fn place(widths: &[i32], open: usize, x: i32, y: i32, width: i32) -> Vec<Rect> {
                 w += 1;
             }
             out[i] = if i == open {
-                Rect::new(tx - 2, top, w + 4, TAB_H + 2)
+                Rect::new(tx - 2, top, w + 4, tab_h + 2)
             } else {
-                Rect::new(tx, top + 2, w, TAB_H)
+                Rect::new(tx, top + 2, w, tab_h)
             };
             tx += w;
         }
@@ -182,7 +186,7 @@ pub fn hit(tabs: &[Rect], x: i32, y: i32) -> Option<usize> {
 
 /// The focus ring round the open tab laid out at `open`.
 pub fn focus_ring(open: Rect) -> Rect {
-    Rect::new(open.x + 3, open.y + 3, open.width - 6, TAB_H - 2)
+    Rect::new(open.x + 3, open.y + 3, open.width - 6, open.height - 4)
 }
 
 /// Draw the strip over `page`: closed tabs first, then the open one, with its
@@ -279,7 +283,7 @@ mod tests {
         let text = TextRenderer::load(&FontConfig::default());
         let px = Theme::default().fonts.size_px;
         let strip = TabStrip::new(&["Themes", "Desktop", "Screen Saver"], 0);
-        let tabs = layout(&text, px, &strip, 9, 29, 386);
+        let tabs = layout(&text, px, &strip, 9, 29, 386, TextUnits::ONE);
         let w0 = text.measure("Themes", false, px) + 13;
         assert_eq!(tabs[0], Rect::new(9, 29, w0 + 4, 20));
         assert_eq!(tabs[1].x, 11 + w0);
@@ -302,7 +306,7 @@ mod tests {
     #[test]
     fn tabs_that_overflow_wrap_into_rows_spread_to_the_width() {
         assert_eq!(
-            place(&SEVEN, 0, 8, 0, 401),
+            place(&SEVEN, 0, 8, 0, 401, TAB_H),
             vec![
                 Rect::new(8, 18, 89, 20),
                 Rect::new(95, 20, 123, 18),
@@ -318,7 +322,7 @@ mod tests {
     #[test]
     fn the_open_tabs_row_moves_next_to_the_page() {
         assert_eq!(
-            place(&SEVEN, 4, 8, 0, 401),
+            place(&SEVEN, 4, 8, 0, 401, TAB_H),
             vec![
                 Rect::new(10, 2, 85, 18),
                 Rect::new(95, 2, 123, 18),
@@ -339,7 +343,7 @@ mod tests {
         let text = TextRenderer::load(&FontConfig::default());
         let cs = &theme.colors;
         let strip = TabStrip::new(&[""; 7], 0);
-        let tabs = place(&SEVEN, 0, 8, 0, 401);
+        let tabs = place(&SEVEN, 0, 8, 0, 401, TAB_H);
         let page = Rect::new(8, 38, 401, 60);
         let mut c = Canvas::new(420, 100);
         c.fill_rect(c.bounds(), cs.button_face);
@@ -387,7 +391,7 @@ mod tests {
         let text = TextRenderer::load(&FontConfig::default());
         let cs = &theme.colors;
         let strip = TabStrip::new(&["Themes", "Desktop"], 1);
-        let tabs = layout(&text, 11, &strip, 9, 29, 386);
+        let tabs = layout(&text, 11, &strip, 9, 29, 386, TextUnits::ONE);
         let page = Rect::new(9, 49, 386, 100);
         let mut c = Canvas::new(404, 160);
         c.fill_rect(c.bounds(), cs.button_face);
@@ -420,7 +424,7 @@ mod tests {
         let text = TextRenderer::load(&FontConfig::default());
         let cs = &theme.colors;
         let strip = TabStrip::new(&["Volume", "Sounds", "Audio"], 0);
-        let tabs = layout(&text, 11, &strip, 9, 29, 386);
+        let tabs = layout(&text, 11, &strip, 9, 29, 386, TextUnits::ONE);
         let page = Rect::new(9, 49, 386, 100);
         let mut c = Canvas::new(404, 160);
         c.fill_rect(c.bounds(), cs.button_face);
@@ -458,6 +462,7 @@ mod tests {
             9,
             9,
             200,
+            TextUnits::ONE,
         );
         let theme = one.scaled(s);
         let text = TextRenderer::load(&theme.fonts);

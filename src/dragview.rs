@@ -1035,8 +1035,8 @@ impl State {
             icon: self.icons.get("folder", 32),
             many: batch.puts.len() > 1,
         };
-        let px = self.config.theme.fonts.size_px;
-        crate::dialog::Dialog::confirm_replace(fields, batch, &self.text, px)
+        let t = &self.config.theme;
+        crate::dialog::Dialog::confirm_replace(fields, batch, &self.text, t.fonts.size_px, t.text)
     }
 
     fn show_drop_failure(&mut self, failed: Option<Failure>) {
@@ -1520,7 +1520,7 @@ mod tests {
             many: false,
         };
         let text = crate::text::TextRenderer::load(&crate::theme::FontConfig::default());
-        let mut d = Dialog::confirm_replace(fields, batch, &text, 11);
+        let mut d = Dialog::confirm_replace(fields, batch, &text, 11, crate::theme::TextUnits::ONE);
         match d.key(Key::Enter) {
             Outcome::Replace { batch, answer } => {
                 assert_eq!(answer, Answer::Yes, "Enter is the Yes");

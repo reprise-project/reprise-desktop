@@ -8,6 +8,9 @@
 //! [`INTERIOR_BODY`], keeps one [`Wizard`] per page it shows, feeds the form its
 //! input and hands the form's event to [`Wizard::event`]. The buttons are items
 //! on the page's [`Form`], so Tab order and access keys work as in any dialog.
+//!
+//! Everything is laid out for 100% text and grows with [`Paint::text`]: the
+//! window is `CLIENT` grown ([`crate::theme::TextUnits::size`]).
 
 use crate::access::{self, Tree, accesskit};
 use crate::classic::widgets::{BUTTON_H, BUTTON_W};
@@ -136,30 +139,25 @@ impl Wizard {
 }
 
 pub fn draw(c: &mut Canvas, text: &TextRenderer, p: &Paint, w: &Wizard, cues: bool, px: u32) {
-    let Paint { cs, s, .. } = *p;
-    let (cw, _) = CLIENT;
+    let Paint { cs, s, text: u, .. } = *p;
+    let cw = u.len(CLIENT.0);
+    let rule_y = u.len(RULE_Y);
     c.fill_rect(c.bounds(), cs.button_face);
     match &w.style {
         Style::Exterior { title } => {
-            c.fill_rect(Rect::new(PANEL_W, 0, cw - PANEL_W, RULE_Y), cs.window);
-            c.dither_rect_t(Rect::new(0, 0, PANEL_W, RULE_Y), PANEL_NAVY, PANEL_BLACK, s);
-            let tr = Rect::new(
-                EXT_TITLE_AT.0,
-                EXT_TITLE_AT.1,
-                cw - EXT_TITLE_AT.0 - 8,
-                EXT_TITLE_PX as i32 + 4,
-            );
-            for (i, line) in crate::text::wrap_bold(text, title, tr.width, EXT_TITLE_PX, true)
+            let panel_w = u.len(PANEL_W);
+            c.fill_rect(Rect::new(panel_w, 0, cw - panel_w, rule_y), cs.window);
+            c.dither_rect_t(Rect::new(0, 0, panel_w, rule_y), PANEL_NAVY, PANEL_BLACK, s);
+            let title_px = u.px(EXT_TITLE_PX);
+            let line_h = title_px as i32 + 4;
+            let x = u.len(EXT_TITLE_AT.0);
+            let tr = Rect::new(x, u.len(EXT_TITLE_AT.1), cw - x - u.len(8), line_h);
+            for (i, line) in crate::text::wrap_bold(text, title, tr.width, title_px, true)
                 .iter()
                 .enumerate()
             {
-                let lr = Rect::new(
-                    tr.x,
-                    tr.y + i as i32 * (EXT_TITLE_PX as i32 + 4),
-                    tr.width,
-                    EXT_TITLE_PX as i32 + 4,
-                );
-                text.draw(c, lr, line, true, cs.window_text, Align::Left, EXT_TITLE_PX);
+                let lr = Rect::new(tr.x, tr.y + i as i32 * line_h, tr.width, line_h);
+                text.draw(c, lr, line, true, cs.window_text, Align::Left, title_px);
             }
         }
         Style::Interior {
@@ -167,19 +165,13 @@ pub fn draw(c: &mut Canvas, text: &TextRenderer, p: &Paint, w: &Wizard, cues: bo
             subtitle,
             icon,
         } => {
-            c.fill_rect(Rect::new(0, 0, cw, HEADER_H), cs.window);
+            let header_h = u.len(HEADER_H);
+            c.fill_rect(Rect::new(0, 0, cw, header_h), cs.window);
+            let (title_r, subtitle_r) = interior_text(u);
+            text.draw(c, title_r, title, true, cs.window_text, Align::Left, px);
             text.draw(
                 c,
-                Rect::new(TITLE_AT.0, TITLE_AT.1, cw - TITLE_AT.0 - 60, 13),
-                title,
-                true,
-                cs.window_text,
-                Align::Left,
-                px,
-            );
-            text.draw(
-                c,
-                Rect::new(SUBTITLE_AT.0, SUBTITLE_AT.1, cw - SUBTITLE_AT.0 - 60, 13),
+                subtitle_r,
                 subtitle,
                 false,
                 cs.window_text,
@@ -187,13 +179,27 @@ pub fn draw(c: &mut Canvas, text: &TextRenderer, p: &Paint, w: &Wizard, cues: bo
                 px,
             );
             if let Some(icon) = icon {
-                c.blit_over(ICON_AT.0, ICON_AT.1, icon);
+                c.blit_over(u.len(ICON_AT.0), u.len(ICON_AT.1), icon);
             }
-            c.etched_hline_t(0, cw, HEADER_H, cs, s);
+            c.etched_hline_t(0, cw, header_h, cs, s);
         }
     }
-    c.etched_hline_t(0, cw, RULE_Y, cs, s);
+    c.etched_hline_t(0, cw, rule_y, cs, s);
     form::draw(c, text, p, &w.form, cues, px);
+}
+
+/// An interior page's title and subtitle rects at the text size `u`.
+fn interior_text(u: crate::theme::TextUnits) -> (Rect, Rect) {
+    let cw = CLIENT.0;
+    (
+        u.rect(Rect::new(TITLE_AT.0, TITLE_AT.1, cw - TITLE_AT.0 - 60, 13)),
+        u.rect(Rect::new(
+            SUBTITLE_AT.0,
+            SUBTITLE_AT.1,
+            cw - SUBTITLE_AT.0 - 60,
+            13,
+        )),
+    )
 }
 
 impl Wizard {
@@ -207,14 +213,15 @@ impl Wizard {
         px: u32,
     ) -> Option<NodeId> {
         let (cw, _) = CLIENT;
+        let u = self.form.units();
         match &self.style {
             Style::Exterior { title } => {
-                let r = Rect::new(
+                let r = u.rect(Rect::new(
                     EXT_TITLE_AT.0,
                     EXT_TITLE_AT.1,
                     cw - EXT_TITLE_AT.0 - 8,
                     RULE_Y,
-                );
+                ));
                 let mut n = access::label(r, title, true);
                 n.set_role(Role::Heading);
                 tree.push(parent, "title", n);
@@ -222,12 +229,15 @@ impl Wizard {
             Style::Interior {
                 title, subtitle, ..
             } => {
-                let r = Rect::new(TITLE_AT.0, TITLE_AT.1, cw - TITLE_AT.0 - 60, 13);
-                let mut n = access::label(r, title, true);
+                let (title_r, subtitle_r) = interior_text(u);
+                let mut n = access::label(title_r, title, true);
                 n.set_role(Role::Heading);
                 tree.push(parent, "title", n);
-                let r = Rect::new(SUBTITLE_AT.0, SUBTITLE_AT.1, cw - SUBTITLE_AT.0 - 60, 13);
-                tree.push(parent, "subtitle", access::label(r, subtitle, true));
+                tree.push(
+                    parent,
+                    "subtitle",
+                    access::label(subtitle_r, subtitle, true),
+                );
             }
         }
         self.form.access(tree, parent, text, px)

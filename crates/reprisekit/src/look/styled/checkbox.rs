@@ -120,6 +120,7 @@ mod tests {
             s: 1,
             back: crate::look::Backdrop::Face,
             active: true,
+            text: crate::theme::TextUnits::ONE,
         };
         let mut c = Canvas::new(13, 13);
         draw_checkbox_state(
@@ -382,6 +383,7 @@ mod tests {
                 s,
                 back: crate::look::Backdrop::Face,
                 active: true,
+                text: crate::theme::TextUnits::ONE,
             };
             let mut c = Canvas::new(36 * s as u32, 17 * s as u32);
             draw_checkbox_state(&mut c, &p, B.scaled(s), CheckState::On, Interaction::Hot);

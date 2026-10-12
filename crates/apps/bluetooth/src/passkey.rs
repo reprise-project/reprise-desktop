@@ -5,6 +5,7 @@ use reprisekit::classic::widgets::LINE_H;
 use reprisekit::controls::form::{Form, Item};
 use reprisekit::raster::Rect;
 use reprisekit::text::{TextRenderer, wrap};
+use reprisekit::theme::Theme;
 
 use crate::bz::{Answer, Ask};
 use crate::props::edit_text;
@@ -43,8 +44,9 @@ fn radio(id: &'static str, x: i32, y: i32, label: &str, checked: bool) -> Item {
     Item::radio(id, x, y, label, GROUP).checked(checked)
 }
 
-pub fn items(ask: &Ask, name: &str, body: Rect, text: &TextRenderer, px: u32) -> Vec<Item> {
-    let lines = wrap(text, &sentence(ask, name), body.width, px);
+pub fn items(ask: &Ask, name: &str, body: Rect, text: &TextRenderer, forms: &Theme) -> Vec<Item> {
+    let wrap_w = forms.text.len(body.width);
+    let lines = wrap(text, &sentence(ask, name), wrap_w, forms.fonts.size_px);
     let refs: Vec<&str> = lines.iter().map(String::as_str).collect();
     let mut out = vec![Item::lines_at(
         "sentence", body.x, body.y, body.width, &refs,
@@ -139,7 +141,7 @@ mod tests {
             "Pad",
             Rect::new(10, 10, 300, 150),
             &text,
-            Theme::default().fonts.size_px,
+            &Theme::default(),
         ))
     }
 

@@ -1,5 +1,6 @@
 //! One-shot dialogs: boxes with no state beyond being open. Their form is rebuilt on every event,
-//! so a press resolves its release at once. [`MsgBox`] wraps the common case.
+//! so a press resolves its release at once. [`MsgBox`] wraps the common case. The theme they take
+//! is the one their forms draw in ([`crate::Ctx::forms`]), whose text size the forms grow with.
 
 use crate::keys::dialog_key;
 use crate::{BTN_LEFT, Child, Event, PointerInput, WinId};
@@ -19,7 +20,8 @@ pub enum Step {
     Out(form::Event),
 }
 
-pub fn event(ev: &Event, text: &TextRenderer, px: u32, build: impl FnOnce() -> Form) -> Step {
+pub fn event(ev: &Event, text: &TextRenderer, theme: &Theme, build: impl FnOnce() -> Form) -> Step {
+    let px = theme.fonts.size_px;
     match ev {
         Event::CloseRequest => Step::Closed,
         Event::Blink => Step::Redraw,
@@ -37,6 +39,7 @@ pub fn event(ev: &Event, text: &TextRenderer, px: u32, build: impl FnOnce() -> F
             ..
         }) => {
             let mut f = build();
+            f.drawn_with(&theme.paint());
             let hit = f.hit(*x, *y, text, px);
             f.click(hit);
             Step::Out(f.release())
@@ -48,14 +51,15 @@ pub fn event(ev: &Event, text: &TextRenderer, px: u32, build: impl FnOnce() -> F
 /// between events, so a key that moves the focus (Tab, the arrows) moves
 /// `fields.default` with it: the next form puts the focus and the ring
 /// on that button, and Enter and Space press it.
-pub fn msgbox_event(ev: &Event, text: &TextRenderer, px: u32, fields: &mut Fields) -> Step {
+pub fn msgbox_event(ev: &Event, text: &TextRenderer, theme: &Theme, fields: &mut Fields) -> Step {
+    let (px, u) = (theme.fonts.size_px, theme.text);
     let Event::Key(k) = ev else {
-        return event(ev, text, px, || msgbox::form(fields, text, px));
+        return event(ev, text, theme, || msgbox::form(fields, text, px, u));
     };
     let Some(key) = dialog_key(k) else {
         return Step::None;
     };
-    let mut f = msgbox::form(fields, text, px);
+    let mut f = msgbox::form(fields, text, px, u);
     let out = f.key(key);
     if let Some(i) = f.focus() {
         let id = f.items[i].id;
@@ -86,18 +90,19 @@ impl MsgBox {
         MsgBox { title, fields }
     }
 
-    pub fn child(&self, id: WinId, text: &TextRenderer, px: u32) -> Child {
+    pub fn child(&self, id: WinId, text: &TextRenderer, theme: &Theme) -> Child {
+        let u = theme.text;
         Child {
             id,
             title: self.title.clone(),
-            size: msgbox::client(&self.fields, text, px),
+            size: u.size(msgbox::client(&self.fields, text, theme.fonts.size_px, u)),
             fixed: true,
             modal: true,
         }
     }
 
-    pub fn event(&mut self, ev: &Event, text: &TextRenderer, px: u32) -> Outcome {
-        match msgbox_event(ev, text, px, &mut self.fields) {
+    pub fn event(&mut self, ev: &Event, text: &TextRenderer, theme: &Theme) -> Outcome {
+        match msgbox_event(ev, text, theme, &mut self.fields) {
             Step::Closed => Outcome::Closed(None),
             Step::Redraw => Outcome::Redraw,
             Step::None => Outcome::None,
@@ -111,9 +116,10 @@ impl MsgBox {
         }
     }
 
-    pub fn draw(&self, c: &mut Canvas, theme: &Theme, text: &TextRenderer, px: u32) {
+    pub fn draw(&self, c: &mut Canvas, theme: &Theme, text: &TextRenderer) {
+        let px = theme.fonts.size_px;
         c.fill_rect(c.bounds(), theme.colors.button_face);
-        let f = msgbox::form(&self.fields, text, px);
+        let f = msgbox::form(&self.fields, text, px, theme.text);
         form::draw(
             c,
             text,
@@ -127,8 +133,11 @@ impl MsgBox {
         );
     }
 
-    pub fn access(&self, tree: &mut Tree, text: &TextRenderer, px: u32) {
-        access_form(&msgbox::form(&self.fields, text, px), tree, text, px);
+    pub fn access(&self, tree: &mut Tree, text: &TextRenderer, theme: &Theme) {
+        let px = theme.fonts.size_px;
+        let f = msgbox::form(&self.fields, text, px, theme.text);
+        f.drawn_with(&theme.paint());
+        access_form(&f, tree, text, px);
     }
 }
 
@@ -150,7 +159,7 @@ pub fn access_sheet(sheet: &PropSheet, tree: &mut Tree, text: &TextRenderer, px:
 mod tests {
     use super::*;
     use reprisekit::textedit::{EditKey, keysym};
-    use reprisekit::theme::FontConfig;
+    use reprisekit::theme::{FontConfig, TextUnits};
 
     fn two_buttons() -> MsgBox {
         MsgBox::new(
@@ -180,7 +189,7 @@ mod tests {
             min_w: 0,
         };
         // Widths per look are pinned by look::caption_fit's own test.
-        let plain = msgbox::client(&short(), &text, px).0;
+        let plain = msgbox::client(&short(), &text, px, TextUnits::ONE).0;
         if reprisekit::text::test_tahoma() {
             assert_eq!(plain, 162);
         }
@@ -189,14 +198,14 @@ mod tests {
             let theme = reprisekit::interfaces::theme_for(i);
             crate::publish_theme(&theme);
             let b = MsgBox::new("User Accounts", short());
-            let w = b.child("box", &text, px).size.0;
+            let w = b.child("box", &text, &Theme::default()).size.0;
             let fit = reprisekit::look::caption_fit(
                 &theme,
                 "User Accounts",
                 reprisekit::frame::Chrome::DIALOG,
             );
             assert_eq!(w, plain.max(fit), "{i:?}: the wider of text and title");
-            let ok = msgbox::form(&b.fields, &text, px)
+            let ok = msgbox::form(&b.fields, &text, px, TextUnits::ONE)
                 .item(msgbox::OK)
                 .unwrap()
                 .rect;
@@ -206,7 +215,7 @@ mod tests {
         crate::CAPTION_FIT.with_borrow_mut(|(_, out)| *out = Some(180));
         let b = MsgBox::new("User Accounts", short());
         assert_eq!(
-            b.child("box", &text, px).size.0,
+            b.child("box", &text, &Theme::default()).size.0,
             glass.min(180 - 2 * 8),
             "capped to a 180 px output less the Glass dialog border"
         );
@@ -216,7 +225,6 @@ mod tests {
     fn an_arrow_moves_the_focus_and_enter_presses_the_focused_button() {
         let mut b = two_buttons();
         let text = TextRenderer::load(&FontConfig::default());
-        let px = 11;
         let key = |sym, edit| {
             Event::Key(crate::KeyInput {
                 sym,
@@ -230,12 +238,12 @@ mod tests {
             word: false,
         };
         assert_eq!(
-            b.event(&key(keysym::LEFT, Some(left)), &text, px),
+            b.event(&key(keysym::LEFT, Some(left)), &text, &Theme::default()),
             Outcome::Redraw
         );
         assert_eq!(b.fields.default, 0, "Left moves the focus from No to Yes");
         assert_eq!(
-            b.event(&key(keysym::RETURN, None), &text, px),
+            b.event(&key(keysym::RETURN, None), &text, &Theme::default()),
             Outcome::Closed(Some(0)),
             "Enter presses Yes"
         );
@@ -246,14 +254,17 @@ mod tests {
         let mut b = two_buttons();
         let text = TextRenderer::load(&FontConfig::default());
         let px = 11;
-        let child = b.child("box", &text, px);
+        let child = b.child("box", &text, &Theme::default());
         assert!(child.modal && child.fixed);
-        assert_eq!(child.size, msgbox::client(&b.fields, &text, px));
         assert_eq!(
-            b.event(&Event::CloseRequest, &text, px),
+            child.size,
+            msgbox::client(&b.fields, &text, px, TextUnits::ONE)
+        );
+        assert_eq!(
+            b.event(&Event::CloseRequest, &text, &Theme::default()),
             Outcome::Closed(None)
         );
-        let f = msgbox::form(&b.fields, &text, px);
+        let f = msgbox::form(&b.fields, &text, px, TextUnits::ONE);
         let yes = f.item(msgbox::button_id(0)).expect("Yes").rect;
         let press = Event::Pointer(PointerInput::Press {
             x: yes.x + 2,
@@ -262,6 +273,9 @@ mod tests {
             mods: Default::default(),
             time: 0,
         });
-        assert_eq!(b.event(&press, &text, px), Outcome::Closed(Some(0)));
+        assert_eq!(
+            b.event(&press, &text, &Theme::default()),
+            Outcome::Closed(Some(0))
+        );
     }
 }

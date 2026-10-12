@@ -233,6 +233,17 @@ impl Dialog {
 pub(crate) use repriseapp::keys::dialog_key;
 
 impl Explorer {
+    pub(crate) fn follow_forms(&mut self, ctx: &Ctx) {
+        self.forms = ctx.forms();
+        self.forms.fonts.size_px = self.forms.text.px(self.dialog_px);
+    }
+
+    /// `f` laid out for the forms theme before its first draw, so it can be hit or read.
+    pub(crate) fn built(&self, f: Form) -> Form {
+        f.drawn_with(&self.forms.paint());
+        f
+    }
+
     /// Raise a box titled `title` over `text` with the theme's error icon. While a replace prompt is up the box waits for it (`messages_waiting`).
     pub fn message_box(&mut self, title: &str, text: String, ctx: &mut Ctx) -> Reply {
         if matches!(self.dialog, Some(Dialog::Replace(_))) {
@@ -266,7 +277,8 @@ impl Explorer {
             icon,
             robots,
             &self.dialog_text,
-            self.dialog_px,
+            self.forms.fonts.size_px,
+            self.forms.text,
         );
         let live = robots.is_some();
         self.dialog = Some(Dialog::Advanced {
@@ -280,7 +292,10 @@ impl Explorer {
     pub fn about_box(&mut self, ctx: &mut Ctx) -> Reply {
         let icon = crate::chrome_icon(ctx, &["system-file-manager"], 32);
         let fields = repriseapp::about::fields("Explorer", icon);
-        let form = aboutbox::form(&fields, &ctx.text, ctx.theme.fonts.size_px);
+        let px = ctx.theme.fonts.size_px;
+        let mut form = aboutbox::form(&fields, &ctx.text, px);
+        let w = self.forms.text.len(aboutbox::CLIENT.0);
+        form.set_picture("banner", aboutbox::banner_wide(&ctx.text, px, w));
         self.dialog = Some(Dialog::About(form));
         Reply::redraw_all()
     }
@@ -348,11 +363,12 @@ impl Explorer {
         let Some(Dialog::Replace(r)) = self.dialog.as_ref() else {
             return None;
         };
-        let mut f = replacebox::form(&r.fields, &self.dialog_text, self.dialog_px);
+        let (px, u) = (self.forms.fonts.size_px, self.forms.text);
+        let mut f = replacebox::form(&r.fields, &self.dialog_text, px, u);
         if let Some(id) = r.focus {
             f.focus_id(id);
         }
-        Some(f)
+        Some(self.built(f))
     }
 
     fn confirm_layout(&self) -> Option<dlgtemplate::Layout> {
@@ -362,7 +378,7 @@ impl Explorer {
         let lay = dlgtemplate::layout(
             c.template,
             &self.dialog_text,
-            self.dialog_px,
+            self.forms.fonts.size_px,
             &dlgtemplate::Fields {
                 text: &c.text,
                 icon: true,
@@ -370,6 +386,7 @@ impl Explorer {
                 buttons: c.buttons().len(),
                 text_h: c.min_text_h,
             },
+            self.forms.text,
         );
         Some(lay.client())
     }
@@ -381,13 +398,11 @@ impl Explorer {
             if let Some(id) = c.focus {
                 f.focus_id(id);
             }
-            return Some(f);
+            return Some(self.built(f));
         }
-        Some(msgbox::form(
-            &self.box_fields()?,
-            &self.dialog_text,
-            self.dialog_px,
-        ))
+        let (px, u) = (self.forms.fonts.size_px, self.forms.text);
+        let f = msgbox::form(&self.box_fields()?, &self.dialog_text, px, u);
+        Some(self.built(f))
     }
 
     pub fn min_size(&self, win: WinId) -> Option<(i32, i32)> {
@@ -420,24 +435,25 @@ impl Explorer {
 
     pub fn children(&self) -> Vec<Child> {
         let mut out = Vec::new();
+        let (text, px, u) = (&self.dialog_text, self.forms.fonts.size_px, self.forms.text);
         if let Some(d) = &self.dialog {
             let size = match self.box_fields() {
-                Some(f) => msgbox::client(&f, &self.dialog_text, self.dialog_px),
+                Some(f) => u.size(msgbox::client(&f, text, px, u)),
                 None => match d {
-                    Dialog::Replace(r) => {
-                        replacebox::client(&r.fields, &self.dialog_text, self.dialog_px)
-                    }
-                    Dialog::AttrConfirm(_) => ATTR_SIZE,
+                    Dialog::Replace(r) => u.size(replacebox::client(&r.fields, text, px, u)),
+                    Dialog::AttrConfirm(_) => u.size(ATTR_SIZE),
                     Dialog::Advanced { subject, .. } => {
-                        reprisekit::controls::filesheet::advanced_size(*subject)
+                        u.size(reprisekit::controls::filesheet::advanced_size(*subject))
                     }
-                    Dialog::ChangeIcon { .. } => reprisekit::controls::filesheet::CHANGE_ICON_SIZE,
-                    Dialog::About(_) => aboutbox::CLIENT,
+                    Dialog::ChangeIcon { .. } => {
+                        u.size(reprisekit::controls::filesheet::CHANGE_ICON_SIZE)
+                    }
+                    Dialog::About(_) => u.size(aboutbox::CLIENT),
                     Dialog::Browse(_) => browsefolder::CLIENT,
                     Dialog::ChooseProgram(_) => openwith::CLIENT,
-                    Dialog::Unlock(_) => unlock::CLIENT,
+                    Dialog::Unlock(_) => u.size(unlock::CLIENT),
                     Dialog::Confirm(_) => {
-                        self.confirm_layout().expect("a delete prompt is up").size
+                        u.size(self.confirm_layout().expect("a delete prompt is up").size)
                     }
                     Dialog::Message { .. } => unreachable!("box_fields answers it"),
                 },
@@ -456,7 +472,7 @@ impl Explorer {
             out.push(Child {
                 id: crate::browse::ERROR,
                 title: crate::browse::ERROR_TITLE.into(),
-                size: msgbox::client(&f, &self.dialog_text, self.dialog_px),
+                size: u.size(msgbox::client(&f, text, px, u)),
                 fixed: true,
                 modal: true,
             });
@@ -545,11 +561,11 @@ impl Explorer {
             &self.dialog_text,
             &Paint {
                 s: 1,
-                ..ctx.theme.paint()
+                ..self.forms.paint()
             },
             form,
             true,
-            self.dialog_px,
+            self.forms.fonts.size_px,
         );
     }
 
@@ -592,7 +608,8 @@ impl Explorer {
             },
             None => return,
         };
-        repriseapp::oneshot::access_form(form, tree, &self.dialog_text, self.dialog_px);
+        let px = self.forms.fonts.size_px;
+        repriseapp::oneshot::access_form(form, tree, &self.dialog_text, px);
     }
 
     /// The dialog's own event loop. Every box closes on its cancel
@@ -636,7 +653,7 @@ impl Explorer {
                     time,
                     ..
                 }) => {
-                    let hit = form.hit(x, y, &self.dialog_text, self.dialog_px);
+                    let hit = form.hit(x, y, &self.dialog_text, self.forms.fonts.size_px);
                     let at = ctx.theme.metrics.click(x, y, time);
                     let double = self.dialog_clicks.press(hit.map(|h| h.item), at);
                     if double {
@@ -651,11 +668,11 @@ impl Explorer {
                     button: BTN_LEFT, ..
                 }) => form.release(),
                 Event::Pointer(PointerInput::Motion { x, y }) => {
-                    let hit = form.hit(x, y, &self.dialog_text, self.dialog_px);
+                    let hit = form.hit(x, y, &self.dialog_text, self.forms.fonts.size_px);
                     form.motion(x, y, hit)
                 }
                 Event::Pointer(PointerInput::Scroll { x, y, rows }) => {
-                    let hit = form.hit(x, y, &self.dialog_text, self.dialog_px);
+                    let hit = form.hit(x, y, &self.dialog_text, self.forms.fonts.size_px);
                     form.wheel(hit, rows)
                 }
                 Event::Pointer(PointerInput::Leave) => form.leave(),
@@ -680,7 +697,7 @@ impl Explorer {
                     button: BTN_LEFT,
                     ..
                 }) => {
-                    let hit = f.hit(x, y, &self.dialog_text, self.dialog_px);
+                    let hit = f.hit(x, y, &self.dialog_text, self.forms.fonts.size_px);
                     f.click(hit);
                     f.release()
                 }

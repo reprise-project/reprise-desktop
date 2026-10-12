@@ -18,6 +18,7 @@ use repriseapp::keys::{dialog_key, form_input};
 use repriseapp::{App, BTN_LEFT, Ctx, Event, PointerInput, Reply, WinId};
 use reprisekit::access::Tree;
 use reprisekit::raster::Canvas;
+use reprisekit::theme::TextUnits;
 
 use model::{Announced, Phase, Restart, Update};
 
@@ -39,6 +40,10 @@ struct UpdatesApp {
     icon_loaded: bool,
     hidden: bool,
     tray_only: bool,
+    /// The text size at the last event, which `initial_size` grows the window by.
+    units: TextUnits,
+    /// The client size last asked for the window.
+    asked: (i32, i32),
 }
 
 impl UpdatesApp {
@@ -54,6 +59,8 @@ impl UpdatesApp {
             hold: false,
             tray_state: None,
             window: window::Window::new(None),
+            units: TextUnits::ONE,
+            asked: window::CLIENT,
             icon_loaded: false,
             hidden: tray_only,
             tray_only,
@@ -234,13 +241,8 @@ impl UpdatesApp {
     }
 
     fn sync_window(&mut self, ctx: &Ctx) {
-        self.window.sync(
-            &self.phase,
-            &self.updates,
-            &ctx.text,
-            ctx.theme.fonts.size_px,
-            &ctx.theme.look.controls(),
-        );
+        self.window
+            .sync(&self.phase, &self.updates, &ctx.text, &ctx.forms());
     }
 
     fn list_input(&mut self, ev: &Event, ctx: &Ctx) -> Option<window::Outcome> {
@@ -287,7 +289,7 @@ impl App for UpdatesApp {
     }
 
     fn initial_size(&self) -> (i32, i32) {
-        window::CLIENT
+        self.units.size(window::CLIENT)
     }
 
     fn fixed(&self) -> bool {
@@ -324,7 +326,36 @@ impl App for UpdatesApp {
         self.jobs = Some(jobs);
     }
 
-    fn event(&mut self, _win: WinId, ev: Event, ctx: &mut Ctx) -> Reply {
+    fn event(&mut self, win: WinId, ev: Event, ctx: &mut Ctx) -> Reply {
+        self.units = ctx.forms().text;
+        let mut reply = self.dispatch(win, ev, ctx);
+        let size = self.units.size(window::CLIENT);
+        if size != self.asked {
+            self.asked = size;
+            reply.size = Some(size);
+            reply.redraw = true;
+        }
+        reply
+    }
+
+    fn access(&mut self, _win: WinId, tree: &mut Tree, ctx: &Ctx) {
+        self.window.access(
+            tree,
+            &ctx.text,
+            ctx.forms().fonts.size_px,
+            &ctx.theme.look.controls(),
+        );
+    }
+
+    fn draw(&mut self, _win: WinId, c: &mut Canvas, ctx: &Ctx) {
+        self.sync_window(ctx);
+        self.window
+            .draw(c, &ctx.text, &ctx.theme, &ctx.forms(), &self.phase);
+    }
+}
+
+impl UpdatesApp {
+    fn dispatch(&mut self, _win: WinId, ev: Event, ctx: &mut Ctx) -> Reply {
         self.load_icons(ctx);
         if matches!(ev, Event::Wake) {
             let reply = self.wake();
@@ -362,26 +393,6 @@ impl App for UpdatesApp {
         };
         self.sync_window(ctx);
         reply
-    }
-
-    fn access(&mut self, _win: WinId, tree: &mut Tree, ctx: &Ctx) {
-        self.window.access(
-            tree,
-            &ctx.text,
-            ctx.theme.fonts.size_px,
-            &ctx.theme.look.controls(),
-        );
-    }
-
-    fn draw(&mut self, _win: WinId, c: &mut Canvas, ctx: &Ctx) {
-        self.sync_window(ctx);
-        self.window.draw(
-            c,
-            &ctx.text,
-            &ctx.theme,
-            ctx.theme.fonts.size_px,
-            &self.phase,
-        );
     }
 }
 

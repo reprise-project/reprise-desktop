@@ -9,6 +9,7 @@ use reprisekit::controls::form::{CHECK, Control, Form, Item};
 use reprisekit::metrics::ControlMetrics;
 use reprisekit::raster::Rect;
 use reprisekit::text::TextRenderer;
+use reprisekit::theme::TextUnits;
 use zbus::zvariant::Value;
 
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq)]
@@ -95,7 +96,8 @@ pub fn parse_choices(v: &Value<'_>) -> Vec<Choice> {
         .collect()
 }
 
-/// The rows for `choices` stacked from `y`, and the y under the last row.
+/// The rows for `choices` stacked from `y`, and the y under the last row, in 100% units for
+/// text set at `px` that grows by `u`.
 pub fn choice_rows(
     choices: &[Choice],
     x: i32,
@@ -103,6 +105,7 @@ pub fn choice_rows(
     w: i32,
     text: &TextRenderer,
     px: u32,
+    u: TextUnits,
 ) -> (Vec<Item>, i32) {
     if choices.len() > IDS.len() {
         log::warn!("{} choices; showing the first {}", choices.len(), IDS.len());
@@ -128,7 +131,7 @@ pub fn choice_rows(
             bottom = y + CHECK;
             y += CHECK_PITCH;
         } else {
-            let label_w = (text.measure(&plain, false, px) + 1).min(w / 2);
+            let label_w = u.design(text.measure(&plain, false, px) + 1).min(w / 2);
             items.push(Item::label(
                 LABEL_IDS[i],
                 Rect::new(x, y + (COMBO_H - LINE_H) / 2, label_w, LINE_H),
@@ -159,15 +162,17 @@ pub fn choice_rows(
 }
 
 /// Shorten each choice combo's open list so it ends by `bottom`, the client's
-/// height; rows past the edge could not be clicked. A shortened list scrolls.
-pub fn fit_lists(form: &mut Form, bottom: i32, cm: &ControlMetrics) {
+/// height; rows past the edge could not be clicked. A shortened list scrolls. `bottom` is at
+/// 100%; the lists are measured as they draw, grown by `u`.
+pub fn fit_lists(form: &mut Form, bottom: i32, cm: &ControlMetrics, u: TextUnits) {
+    let (cm, bottom) = (cm.grown(u), u.len(bottom));
     for id in IDS {
         let Some(it) = form.item_mut(id) else {
             continue;
         };
-        let field = it.rect;
+        let field = u.rect(it.rect);
         if let Control::Combo(c) = &mut it.control {
-            while c.rows > 1 && combo::list_rect(c, field, cm).bottom() > bottom {
+            while c.rows > 1 && combo::list_rect(c, field, &cm).bottom() > bottom {
                 c.rows -= 1;
             }
         }
@@ -215,7 +220,7 @@ mod tests {
 
     fn rows(cs: &[Choice]) -> (Form, i32) {
         let text = TextRenderer::load(&FontConfig::default());
-        let (items, bottom) = choice_rows(cs, 54, 90, 326, &text, 11);
+        let (items, bottom) = choice_rows(cs, 54, 90, 326, &text, 11, TextUnits::ONE);
         (Form::new(items), bottom)
     }
 

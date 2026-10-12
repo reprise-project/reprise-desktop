@@ -23,6 +23,7 @@ use reprisekit::access::Tree;
 use reprisekit::controls::form;
 use reprisekit::look::Paint;
 use reprisekit::raster::Canvas;
+use reprisekit::theme::TextUnits;
 
 use agent::{Msg, Outcome, Request};
 use dialog::RunAs;
@@ -105,6 +106,8 @@ struct PolkitApp {
     queue: VecDeque<Request>,
     active: Option<Active>,
     waker: Option<repriseapp::Waker>,
+    /// The text size the active dialog opened at.
+    units: TextUnits,
 }
 
 impl PolkitApp {
@@ -159,10 +162,12 @@ impl PolkitApp {
     /// the dialog's column.
     fn open_next_in(&mut self, ctx: &mut Ctx) {
         let (key, user) = request_icons(ctx);
-        let px = ctx.theme.fonts.size_px;
+        let forms = ctx.forms();
+        let (px, width) = (forms.fonts.size_px, forms.text.len(dialog::MSG_W));
         let text = &ctx.text;
-        let wrap = |m: &str| reprisekit::text::wrap(text, m, dialog::MSG_W, px);
+        let wrap = |m: &str| reprisekit::text::wrap(text, m, width, px);
         self.open_next(&wrap, key, user);
+        self.units = forms.text;
     }
 
     fn report(&mut self, r: Report) {
@@ -319,7 +324,7 @@ impl App for PolkitApp {
     fn initial_size(&self) -> (i32, i32) {
         self.active
             .as_ref()
-            .map_or(dialog::CLIENT, |a| a.dialog.size)
+            .map_or(dialog::CLIENT, |a| self.units.size(a.dialog.size))
     }
 
     fn hidden(&self) -> bool {
@@ -332,7 +337,7 @@ impl App for PolkitApp {
             .map(|a| Child {
                 id: RUNAS,
                 title: "Run As".into(),
-                size: a.dialog.size,
+                size: self.units.size(a.dialog.size),
                 fixed: true,
                 modal: true,
             })
@@ -378,13 +383,14 @@ impl App for PolkitApp {
         if win == RUNAS
             && let Some(a) = &self.active
         {
-            oneshot::access_form(&a.dialog.form, tree, &ctx.text, ctx.theme.fonts.size_px);
+            let px = a.dialog.form.units().px(ctx.theme.fonts.size_px);
+            oneshot::access_form(&a.dialog.form, tree, &ctx.text, px);
         }
     }
 
     fn draw(&mut self, win: WinId, c: &mut Canvas, ctx: &Ctx) {
-        let cs = &ctx.theme.colors;
-        c.fill_rect(c.bounds(), cs.button_face);
+        let forms = ctx.forms();
+        c.fill_rect(c.bounds(), forms.colors.button_face);
         if win == RUNAS
             && let Some(a) = &self.active
         {
@@ -393,11 +399,11 @@ impl App for PolkitApp {
                 &ctx.text,
                 &Paint {
                     s: 1,
-                    ..ctx.theme.paint()
+                    ..forms.paint()
                 },
                 &a.dialog.form,
                 true,
-                ctx.theme.fonts.size_px,
+                forms.fonts.size_px,
             );
         }
     }

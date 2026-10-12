@@ -376,6 +376,76 @@ pub fn text_px(px: u32, pct: u32) -> u32 {
     ((px * pct + 50) / 100).min(FontConfig::SIZE_PX_MAX.max(px))
 }
 
+/// How a layout drawn for 100% text grows at the text size: the UI font's px at the text size
+/// over its px at 100%. Rects laid out in 100% units map through it; bevels, glyph boxes and
+/// pictures keep their size.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TextUnits {
+    px: u32,
+    base: u32,
+}
+
+impl Default for TextUnits {
+    fn default() -> TextUnits {
+        TextUnits::ONE
+    }
+}
+
+impl TextUnits {
+    pub const ONE: TextUnits = TextUnits { px: 1, base: 1 };
+
+    /// Text set at `px` where the layout was drawn for `base`.
+    pub fn new(px: u32, base: u32) -> TextUnits {
+        if px == base || base == 0 {
+            TextUnits::ONE
+        } else {
+            TextUnits { px, base }
+        }
+    }
+
+    pub fn is_one(self) -> bool {
+        self == TextUnits::ONE
+    }
+
+    /// `v` 100% px at the text size, rounded half up.
+    pub fn len(self, v: i32) -> i32 {
+        let (n, d) = (self.px as i64, self.base as i64);
+        (2 * v as i64 * n + d).div_euclid(2 * d) as i32
+    }
+
+    /// `px` (a font size or a device px count at 100%) at the text size.
+    pub fn px(self, px: u32) -> u32 {
+        self.len(px as i32).max(0) as u32
+    }
+
+    /// The inverse of [`TextUnits::px`] for a font size: what `px` was at 100%.
+    pub fn base_px(self, px: u32) -> u32 {
+        ((2 * px as u64 * self.base as u64 + self.px as u64) / (2 * self.px as u64)) as u32
+    }
+
+    /// The shortest 100% length that grows to at least `v`: a measured text width as a 100%
+    /// layout reserves it.
+    pub fn design(self, v: i32) -> i32 {
+        let (n, d) = (self.px as i64, self.base as i64);
+        (v as i64 * d + n - 1).div_euclid(n) as i32
+    }
+
+    /// `r` with both its edges mapped, so rects that touch at 100% still touch.
+    pub fn rect(self, r: Rect) -> Rect {
+        let (x, y) = (self.len(r.x), self.len(r.y));
+        Rect::new(x, y, self.len(r.right()) - x, self.len(r.bottom()) - y)
+    }
+
+    /// `r` moved to where its top-left maps, its size kept: a picture or a fixed control.
+    pub fn at(self, r: Rect) -> Rect {
+        Rect::new(self.len(r.x), self.len(r.y), r.width, r.height)
+    }
+
+    pub fn size(self, (w, h): (i32, i32)) -> (i32, i32) {
+        (self.len(w), self.len(h))
+    }
+}
+
 /// Colors, metrics and fonts plus the output scale the metrics are expressed
 /// in. `Theme::default()` and the config are always at scale 1; draw code
 /// receives `theme.scaled(output_scale)` and multiplies its own constants by
@@ -387,6 +457,9 @@ pub struct Theme {
     pub fonts: FontConfig,
     pub scale: i32,
     pub look: crate::paint::Look,
+    /// How forms laid out for 100% text grow at the text size; [`TextUnits::ONE`] unless
+    /// [`Theme::with_text_size`] set it.
+    pub text: TextUnits,
     /// Whether the window being drawn is the active one, handed on by
     /// [`Theme::paint`]. True unless a host that draws several windows
     /// sets it for one draw and puts it back after. Draw state, not
@@ -401,6 +474,7 @@ impl PartialEq for Theme {
             && self.fonts == o.fonts
             && self.scale == o.scale
             && self.look == o.look
+            && self.text == o.text
     }
 }
 
@@ -412,6 +486,7 @@ impl Default for Theme {
             fonts: FontConfig::default(),
             scale: 1,
             look: crate::paint::Look::Classic,
+            text: TextUnits::ONE,
             active: true,
         }
     }
@@ -442,6 +517,7 @@ impl Theme {
             fonts: self.fonts.scaled(n),
             scale: n,
             look: self.look.at_scale(n),
+            text: self.text,
             active: self.active,
         }
     }
@@ -456,9 +532,8 @@ impl Theme {
         if pct == 100 {
             return self.clone();
         }
-        let mut t = self.clone();
-        let base = t.fonts.size_px;
-        t.fonts.size_px = text_px(base, pct);
+        let base = self.fonts.size_px;
+        let mut t = self.with_form_text(pct);
         let grow = line_growth(t.fonts.size_px) - line_growth(base);
         let m = &mut t.metrics;
         for h in [
@@ -481,6 +556,16 @@ impl Theme {
         t
     }
 
+    /// This theme with only the UI font and [`Theme::text`] at `pct` percent: what forms laid out
+    /// for 100% text draw with. Metrics and the look stay.
+    pub fn with_form_text(&self, pct: u32) -> Theme {
+        let mut t = self.clone();
+        let base = t.fonts.size_px;
+        t.fonts.size_px = text_px(base, pct);
+        t.text = TextUnits::new(t.fonts.size_px, base);
+        t
+    }
+
     pub fn for_draw(p: &Paint, px: u32) -> Theme {
         Theme {
             colors: p.cs.clone(),
@@ -491,6 +576,7 @@ impl Theme {
             },
             scale: p.s,
             look: p.look.clone(),
+            text: p.text,
             active: p.active,
         }
     }
@@ -503,6 +589,33 @@ impl Theme {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn text_units_grow_lengths_and_both_edges_of_a_rect() {
+        let one = TextUnits::new(11, 11);
+        assert!(one.is_one());
+        let r = Rect::new(7, 13, 75, 23);
+        assert_eq!(one.rect(r), r);
+        let big = TextUnits::new(17, 11);
+        assert_eq!(big.len(11), 17);
+        assert_eq!(big.len(13), 20);
+        assert_eq!(big.len(-5), -8);
+        assert_eq!(big.rect(r), Rect::new(11, 20, 127 - 11, 56 - 20));
+        assert_eq!(big.at(r), Rect::new(11, 20, 75, 23));
+        let (a, b) = (Rect::new(0, 0, 75, 23), Rect::new(81, 0, 75, 23));
+        assert!(big.rect(a).right() < big.rect(b).x, "neighbours stay apart");
+        assert_eq!(big.base_px(17), 11);
+        for v in [0, 1, 16, 17, 100, 233] {
+            let d = big.design(v);
+            assert!(big.len(d) >= v && big.len(d - 1) < v, "{v} -> {d}");
+        }
+        assert_eq!(big.base_px(34), 22, "a device px at scale 2");
+        assert_eq!(TextUnits::new(22, 11).rect(r), Rect::new(14, 26, 150, 46));
+        let t = Theme::default().with_text_size(150);
+        assert_eq!(t.text, big);
+        assert_eq!(t.scaled(2).paint().text, big);
+        assert!(Theme::default().with_text_size(100).text.is_one());
+    }
 
     #[test]
     fn parse_hex_and_triplet() {

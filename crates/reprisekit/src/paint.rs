@@ -117,6 +117,8 @@ pub struct Paint<'a> {
     /// [`Style::default_needs_active`] draws a default push button as a
     /// plain one while it is false.
     pub active: bool,
+    /// How a form laid out for 100% text grows ([`Theme::text`]).
+    pub text: crate::theme::TextUnits,
 }
 
 impl<'a> Paint<'a> {
@@ -151,6 +153,7 @@ pub(crate) fn classic_paint(cs: &ColorScheme, s: i32) -> Paint<'_> {
         s,
         back: Backdrop::Face,
         active: true,
+        text: crate::theme::TextUnits::ONE,
     }
 }
 
@@ -170,6 +173,7 @@ impl Theme {
             s: self.scale.max(1),
             back: Backdrop::Face,
             active: self.active,
+            text: self.text,
         }
     }
 

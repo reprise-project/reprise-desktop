@@ -1,5 +1,6 @@
 //! The message box, sized to its content, laid out in client
-//! coordinates.
+//! coordinates for 100% text: text measured at a grown size is reserved at
+//! the 100% width that grows to fit it.
 //!
 //! One control serves both the one-button information box and the
 //! three-button "save the changes?" prompt: the button list is a `Vec`.
@@ -8,6 +9,7 @@ use crate::classic::widgets::{BUTTON_GAP, BUTTON_H, BUTTON_W, LINE_H};
 use crate::controls::form::{Form, Item};
 use crate::raster::{Canvas, Rect};
 use crate::text::TextRenderer;
+use crate::theme::TextUnits;
 
 /// The first button's id. A one-button box is an OK box.
 pub const OK: &str = "btn0";
@@ -59,7 +61,7 @@ pub struct Fields {
     /// `src/dialog.rs::confirm_delete` passes the same 51). `None` sizes
     /// the box to its own lines.
     pub min_text_h: Option<i32>,
-    /// The narrowest client width, for a caption title wider than the text
+    /// The narrowest client width as drawn, for a caption title wider than the text
     /// and buttons ([`crate::look::caption_fit`]); 0 sizes the box to them.
     pub min_w: i32,
 }
@@ -91,27 +93,30 @@ fn button_row_w(n: i32) -> i32 {
     n * BUTTON_W + (n - 1).max(0) * BUTTON_GAP
 }
 
-/// The client size this box needs: wide enough for its widest line,
-/// its button row and `min_w`, and tall enough for every line of text (one line
-/// keeps `CLIENT_H`; each embedded `\n` adds one `LINE_H`, and a
-/// `min_text_h` box keeps its reserved rows whatever the text is).
-pub fn client(f: &Fields, text: &TextRenderer, px: u32) -> (i32, i32) {
+/// The client size this box needs at 100%, for text set at `px` that grows by `u`: wide enough
+/// for its widest line, its button row and `min_w`, and tall enough for every line of text (one
+/// line keeps `CLIENT_H`; each embedded `\n` adds one `LINE_H`, and a `min_text_h` box keeps its
+/// reserved rows whatever the text is). The window is `u.size` of it.
+pub fn client(f: &Fields, text: &TextRenderer, px: u32, u: TextUnits) -> (i32, i32) {
     let lines: Vec<&str> = f.text.split('\n').collect();
     let widest = lines
         .iter()
-        .map(|l| text.measure(l, false, px))
+        .map(|l| u.design(text.measure(l, false, px)))
         .max()
         .unwrap_or(0);
     let msg = text_x(f) + widest + MARGIN_X;
     let n = f.buttons.len() as i32;
     let row = MARGIN_X * 2 + button_row_w(n);
-    (msg.max(row).max(MIN_W).max(f.min_w), CLIENT_H + extra_h(f))
+    (
+        msg.max(row).max(MIN_W).max(u.design(f.min_w)),
+        CLIENT_H + extra_h(f),
+    )
 }
 
 /// Build the box over the size `client` reports. Panics on a fourth
 /// button, through [`button_id`].
-pub fn form(f: &Fields, text: &TextRenderer, px: u32) -> Form {
-    let (w, _) = client(f, text, px);
+pub fn form(f: &Fields, text: &TextRenderer, px: u32, u: TextUnits) -> Form {
+    let (w, _) = client(f, text, px, u);
     let tx = text_x(f);
     let lines: Vec<&str> = f.text.split('\n').collect();
     let extra = extra_h(f);
@@ -135,7 +140,7 @@ pub fn form(f: &Fields, text: &TextRenderer, px: u32) -> Form {
     } else {
         Item::label(
             "text",
-            Rect::new(tx, TEXT_Y, w - tx - MARGIN_X, px as i32 + 4),
+            Rect::new(tx, TEXT_Y, w - tx - MARGIN_X, u.base_px(px) as i32 + 4),
             &f.text,
         )
     });
@@ -196,9 +201,12 @@ mod tests {
         let (text, px) = rend();
         let mut tall = notfound();
         tall.min_text_h = Some(FOLDER_TEXT_H);
-        let plain_h = client(&notfound(), &text, px).1;
-        assert_eq!(client(&tall, &text, px).1, plain_h + FOLDER_TEXT_H - LINE_H);
-        let f = form(&tall, &text, px);
+        let plain_h = client(&notfound(), &text, px, TextUnits::ONE).1;
+        assert_eq!(
+            client(&tall, &text, px, TextUnits::ONE).1,
+            plain_h + FOLDER_TEXT_H - LINE_H
+        );
+        let f = form(&tall, &text, px, TextUnits::ONE);
         let row = f.item("text").expect("the text row exists");
         assert_eq!(row.rect.height, FOLDER_TEXT_H);
         assert!(
@@ -219,7 +227,7 @@ mod tests {
         const EXPECTED_ICON: (i32, i32) = (11, 15);
         const EXPECTED_OK: (i32, i32, i32, i32) = (44, 64, 75, 23);
         let (text, px) = rend();
-        let f = form(&notfound(), &text, px);
+        let f = form(&notfound(), &text, px, TextUnits::ONE);
         let icon = f.item("icon").expect("the icon slot is filled").rect;
         assert_eq!((icon.x, icon.y), EXPECTED_ICON);
         assert_eq!((icon.width, icon.height), (32, 32));
@@ -234,10 +242,10 @@ mod tests {
     #[test]
     fn the_box_grows_with_its_text() {
         let (text, px) = rend();
-        let narrow = client(&notfound(), &text, px);
+        let narrow = client(&notfound(), &text, px, TextUnits::ONE);
         let mut wordy = notfound();
         wordy.text = "Cannot find \"a considerably longer search string than that\"".into();
-        let wide = client(&wordy, &text, px);
+        let wide = client(&wordy, &text, px, TextUnits::ONE);
         assert!(wide.0 > narrow.0, "a longer message makes a wider box");
         assert_eq!(wide.1, narrow.1, "one line of text keeps the same height");
     }
@@ -246,8 +254,8 @@ mod tests {
     #[test]
     fn one_button_is_centred_and_default() {
         let (text, px) = rend();
-        let f = form(&notfound(), &text, px);
-        let (w, _) = client(&notfound(), &text, px);
+        let f = form(&notfound(), &text, px, TextUnits::ONE);
+        let (w, _) = client(&notfound(), &text, px, TextUnits::ONE);
         let ok = f.item(OK).expect("the OK button exists").rect;
         let slack = (w - ok.width) / 2;
         assert!((ok.x - slack).abs() <= 1, "the lone button is centred");
@@ -267,7 +275,7 @@ mod tests {
             min_text_h: None,
             min_w: 0,
         };
-        let f = form(&prompt, &text, px);
+        let f = form(&prompt, &text, px, TextUnits::ONE);
         let r = |i: usize| f.item(button_id(i)).expect("the button exists").rect;
         assert_eq!(r(0).y, r(1).y, "the buttons share a row");
         assert_eq!(r(1).y, r(2).y);
@@ -293,7 +301,7 @@ mod tests {
             min_text_h: None,
             min_w: 0,
         };
-        let mut f = form(&replace, &text, px);
+        let mut f = form(&replace, &text, px, TextUnits::ONE);
         assert_eq!(f.focus().map(|i| f.items[i].id), Some(button_id(1)));
         assert_eq!(f.key(Key::Space), Event::Pressed(button_id(1)));
         assert_eq!(f.key(Key::Enter), Event::Pressed(button_id(1)));
@@ -311,17 +319,17 @@ mod tests {
         const SECOND_LINE_BUTTON_Y: i32 = 77; // BUTTON_Y (64) + one row (13)
         let (text, px) = rend();
         let one = notfound();
-        let one_h = client(&one, &text, px).1;
+        let one_h = client(&one, &text, px, TextUnits::ONE).1;
         let mut two = notfound();
         two.text =
             "The text in the Untitled file has changed.\nDo you want to save the changes?".into();
-        let (_, two_h) = client(&two, &text, px);
+        let (_, two_h) = client(&two, &text, px, TextUnits::ONE);
         assert_eq!(
             two_h,
             one_h + SECOND_LINE_DELTA,
             "one extra line, one extra row of height"
         );
-        let f = form(&two, &text, px);
+        let f = form(&two, &text, px, TextUnits::ONE);
         match &f.item("text").expect("the text row exists").control {
             Control::Lines(lines) => assert_eq!(
                 lines,
@@ -342,7 +350,7 @@ mod tests {
         let (text, px) = rend();
         let mut four = notfound();
         four.buttons = vec!["A".into(), "B".into(), "C".into(), "D".into()];
-        form(&four, &text, px);
+        form(&four, &text, px, TextUnits::ONE);
     }
 
     #[test]
@@ -357,10 +365,10 @@ mod tests {
     #[test]
     fn an_absent_icon_closes_its_column() {
         let (text, px) = rend();
-        let with = form(&notfound(), &text, px);
+        let with = form(&notfound(), &text, px, TextUnits::ONE);
         let mut bare = notfound();
         bare.icon = None;
-        let without = form(&bare, &text, px);
+        let without = form(&bare, &text, px, TextUnits::ONE);
         assert!(with.item("icon").is_some());
         assert!(without.item("icon").is_none());
         let tx = |f: &Form| f.item("text").expect("the text row exists").rect.x;
@@ -368,5 +376,30 @@ mod tests {
             tx(&without) < tx(&with),
             "the text moves left without an icon"
         );
+    }
+
+    /// At a grown text size the box is laid out at 100% with its text reserved at the 100%
+    /// width that grows to fit it: grown, every line fits its row and the buttons stay inside.
+    #[test]
+    fn a_grown_box_fits_its_text_and_buttons() {
+        let text = TextRenderer::load(&FontConfig::default());
+        for px in [17, 22] {
+            let u = TextUnits::new(px, 11);
+            let f = notfound();
+            let (w, h) = u.size(client(&f, &text, px, u));
+            let form = form(&f, &text, px, u);
+            let lines = form.item("text").unwrap().rect;
+            let measured = text.measure(&f.text, false, px);
+            assert!(
+                u.rect(lines).width >= measured,
+                "{px}: the line fits its row"
+            );
+            let ok = u.rect(form.item(OK).unwrap().rect);
+            assert!(
+                ok.right() <= w && ok.bottom() <= h,
+                "{px}: OK inside {w}x{h}"
+            );
+            assert_eq!(ok.height, u.len(64 + BUTTON_H) - u.len(64));
+        }
     }
 }

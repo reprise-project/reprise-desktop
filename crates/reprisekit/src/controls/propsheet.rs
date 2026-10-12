@@ -20,9 +20,11 @@
 //! [`PropSheet::fit_tabs`] to grow the sheet by as much.
 //!
 //! Pages are built in the client's coordinates (outer minus the 3 px frame and
-//! 21 px caption). A host that draws the sheet inside a frame of its own places
-//! the client with [`PropSheet::place`]; from then on the pages,
+//! 21 px caption) for 100% text. A host that draws the sheet inside a frame of
+//! its own places the client with [`PropSheet::place`]; from then on the pages,
 //! [`PropSheet::layout`] and [`PropSheet::hit`] are in that surface's coordinates.
+//! The sheet grows with the text size it was last drawn at
+//! ([`PropSheet::drawn_with`]) as its pages do: [`PropSheet::client`] is its size.
 //!
 //! The buttons are items on each page's [`Form`], so they get its Tab order and
 //! access keys: Tab runs off the page's last control onto OK, Cancel and a live
@@ -38,6 +40,7 @@ use crate::look::Paint;
 use crate::look::widgets::{draw_page, group_label_ink};
 use crate::raster::{Canvas, Rect};
 use crate::text::{Align, DialogFont, TextRenderer};
+use crate::theme::TextUnits;
 use accesskit::{NodeId, Role};
 
 pub const OK: &str = "ok";
@@ -191,17 +194,17 @@ impl PropSheet {
         if self.is_list() { pagelist::ADVANCE } else { 0 }
     }
 
-    /// How far every page has moved from where it was built: the origin, the list's
-    /// advance and the rows of tabs.
+    /// How far every page's rects have moved from where they were built, at 100%: the list's
+    /// advance and the rows of tabs. The origin is the pages' [`Form::origin`].
     pub fn page_offset(&self) -> (i32, i32) {
-        (self.origin.0 + self.page_dx(), self.origin.1 + self.page_dy)
+        (self.page_dx(), self.page_dy)
     }
 
     fn dress(&self, mut page: Form, apply: bool) -> Form {
         page.font = self.font;
-        let (ox, oy) = self.origin;
-        shift(&mut page, ox + self.page_dx(), oy + self.page_dy);
-        let at = |r: Rect| Rect::new(r.x + ox, r.y + oy, r.width, r.height);
+        page.origin = self.origin;
+        shift(&mut page, self.page_dx(), self.page_dy);
+        let at = |r: Rect| r;
         let (ok, cancel, apply_r) = buttons(self.size);
         let row = match self.buttons {
             Buttons::OkCancelApply => vec![
@@ -250,20 +253,45 @@ impl PropSheet {
     /// Put the client's top-left at `origin` on the surface the sheet is drawn on,
     /// moving every control with it. Idempotent.
     pub fn place(&mut self, origin: (i32, i32)) {
-        let (dx, dy) = (origin.0 - self.origin.0, origin.1 - self.origin.1);
         for page in &mut self.pages {
-            shift(page, dx, dy);
+            page.origin = origin;
         }
         self.origin = origin;
     }
 
-    fn rows_below(&self, text: &TextRenderer, px: u32) -> i32 {
+    /// Lay the sheet out for `p`'s look and text size until it is drawn: a host that sizes
+    /// its window from [`PropSheet::client`] or calls [`PropSheet::fit_tabs`] before the
+    /// first draw calls this first. [`draw`] does it itself.
+    pub fn drawn_with(&self, p: &Paint) {
+        for page in &self.pages {
+            page.drawn_with(p);
+        }
+    }
+
+    /// The text size the sheet was last drawn at.
+    fn units(&self) -> TextUnits {
+        self.open().units()
+    }
+
+    /// The client size at the text size the sheet was last drawn at: [`PropSheet::size`] grown.
+    pub fn client(&self) -> (i32, i32) {
+        self.units().size(self.size)
+    }
+
+    /// How many rows the tabs take at `px` across the page.
+    fn tab_rows(&self, text: &TextRenderer, px: u32) -> i32 {
         if self.is_list() {
-            return 0;
+            return 1;
         }
         let text = text.dialog(self.font);
-        let rows = tabstrip::row_count(text, px, &self.tabs, self.size.0 - 2 * MARGIN);
-        tabstrip::ROW_H * (rows as i32 - 1)
+        let u = self.units();
+        let width = u.len(self.size.0 - MARGIN) - u.len(MARGIN);
+        tabstrip::row_count(text, px, &self.tabs, width) as i32
+    }
+
+    /// How far below their one-row place the pages sit for the rows of tabs, at 100%.
+    fn rows_below(&self, text: &TextRenderer, px: u32) -> i32 {
+        tabstrip::ROW_H * (self.tab_rows(text, px) - 1)
     }
 
     /// Make room for tabs that wrap onto more rows: the sheet grows by the extra
@@ -301,32 +329,43 @@ impl PropSheet {
         }
     }
 
-    fn page(&self, top: i32) -> Rect {
+    /// The page under `rows` rows of tabs, on the surface: the open tab's row runs into it.
+    fn page(&self, rows: i32) -> Rect {
+        let u = self.units();
         let (w, h) = self.size;
         let (ox, oy) = self.origin;
-        let dx = self.page_dx();
-        Rect::new(
-            MARGIN + dx + ox,
-            top + oy,
-            w - 2 * MARGIN - dx,
-            h - top - PAGE_BOTTOM,
-        )
+        let top = if self.is_list() {
+            oy + u.len(PAGE_TOP)
+        } else {
+            self.strip().1 + PAGE_TOP - STRIP.1 - tabstrip::TAB_H + u.len(tabstrip::TAB_H) * rows
+        };
+        let x = ox + u.len(MARGIN + self.page_dx());
+        let bottom = oy + u.len(h - PAGE_BOTTOM);
+        Rect::new(x, top, ox + u.len(w - MARGIN) - x, bottom - top)
     }
 
     fn strip(&self) -> (i32, i32) {
-        (STRIP.0 + self.origin.0, STRIP.1 + self.origin.1)
+        let u = self.units();
+        (
+            self.origin.0 + u.len(STRIP.0),
+            self.origin.1 + u.len(STRIP.1),
+        )
     }
 
     /// The strip's top-left and the page under one row of tabs: the part of
     /// [`PropSheet::layout`] that needs no text.
     pub fn frame(&self) -> ((i32, i32), Rect) {
-        (self.strip(), self.page(PAGE_TOP))
+        (self.strip(), self.page(1))
     }
 
     pub fn layout(&self, text: &TextRenderer, px: u32) -> Layout {
-        let page = self.page(PAGE_TOP + self.rows_below(text, px));
+        let page = self.page(self.tab_rows(text, px));
+        let u = self.units();
         let (ox, oy) = self.origin;
-        let at = |r: Rect| Rect::new(r.x + ox, r.y + oy, r.width, r.height);
+        let at = |r: Rect| {
+            let r = u.rect(r);
+            Rect::new(r.x + ox, r.y + oy, r.width, r.height)
+        };
         let (ok, cancel, apply) = buttons(self.size);
         // A shorter set fills the rightmost slots; the empty rects are unreachable by
         // `draw` and `hit`.
@@ -346,12 +385,14 @@ impl PropSheet {
                     strip.0,
                     strip.1,
                     page.width,
+                    u,
                 ),
                 None,
                 none,
             ),
             Nav::List(_) => {
-                let title = Rect::new(page.x, STRIP.1 + 2 + oy, page.width, pagelist::ROW_H);
+                let (top, bottom) = (u.len(STRIP.1 + 2), u.len(STRIP.1 + 2 + pagelist::ROW_H));
+                let title = Rect::new(page.x, oy + top, page.width, bottom - top);
                 (Vec::new(), self.list_layout(), title)
             }
         };
@@ -375,7 +416,10 @@ impl PropSheet {
         };
         let (ox, oy) = self.origin;
         let h = self.size.1 - STRIP.1 - PAGE_BOTTOM;
-        let frame = Rect::new(MARGIN + ox, STRIP.1 + oy, pagelist::WIDTH, h);
+        let r = self
+            .units()
+            .rect(Rect::new(MARGIN, STRIP.1, pagelist::WIDTH, h));
+        let frame = Rect::new(r.x + ox, r.y + oy, r.width, r.height);
         Some(pagelist::layout(rows, frame, &self.open().controls()))
     }
 
@@ -1100,18 +1144,13 @@ mod tests {
             Rect::new(166, 50, 13, 13)
         );
         s.place((3, 21));
-        assert_eq!(s.page_offset(), (149, 21));
+        assert_eq!(s.page_offset(), (146, 0), "the origin is the pages' own");
+        assert_eq!(s.open().origin, (3, 21));
         let l = s.layout(&text, px);
         assert_eq!(l.list.map(|l| l.frame), Some(Rect::new(9, 29, 140, 380)));
-        assert_eq!(
-            s.open().item("check").unwrap().rect,
-            Rect::new(169, 71, 13, 13)
-        );
+        assert_eq!(s.open().rect("check"), Some(Rect::new(169, 71, 13, 13)));
         s.set_page(2, check_page("New"));
-        assert_eq!(
-            s.pages[2].item("check").unwrap().rect,
-            Rect::new(169, 71, 13, 13)
-        );
+        assert_eq!(s.pages[2].rect("check"), Some(Rect::new(169, 71, 13, 13)));
         // A tab sheet's pages have not moved.
         assert_eq!(sheet(&["General"], (398, 424)).page_offset(), (0, 0));
     }
@@ -1401,7 +1440,15 @@ mod tests {
         s.set_page(1, Form::new(vec![]));
         assert!(s.pages.iter().all(|p| p.font == DialogFont::ShellDlg));
         let l = s.layout(&text, 11);
-        let want = tabstrip::layout(second, 11, &s.tabs, l.strip.0, l.strip.1, l.page.width);
+        let want = tabstrip::layout(
+            second,
+            11,
+            &s.tabs,
+            l.strip.0,
+            l.strip.1,
+            l.page.width,
+            TextUnits::ONE,
+        );
         assert_eq!(l.tabs, want);
         let ui = sheet(&["General", "Web"], (371, 424));
         assert_eq!(ui.font, DialogFont::Ui);
@@ -1510,11 +1557,8 @@ mod tests {
         assert_eq!(l.page, Rect::new(9, 49, 326, 312));
         assert_eq!(l.ok, Rect::new(98, 367, BUTTON_W, BUTTON_H));
         assert_eq!(l.tabs[0].x, before.tabs[0].x + 3);
-        assert_eq!(s.open().item(OK).unwrap().rect, l.ok);
-        assert_eq!(
-            s.open().item("check").unwrap().rect,
-            Rect::new(23, 71, 13, 13)
-        );
+        assert_eq!(s.open().rect(OK), Some(l.ok));
+        assert_eq!(s.open().rect("check"), Some(Rect::new(23, 71, 13, 13)));
         assert!(matches!(
             s.hit(24, 72, &text, px),
             Some(Hit::Control(form::Hit { item: 0, .. }))
@@ -1540,8 +1584,8 @@ mod tests {
         )]);
         s.set_page(1, page);
         let p = &s.pages[1];
-        assert_eq!(p.item("new").unwrap().rect, Rect::new(23, 71, 13, 13));
-        assert_eq!(p.item(OK).unwrap().rect, s.pages[0].item(OK).unwrap().rect);
+        assert_eq!(p.rect("new"), Some(Rect::new(23, 71, 13, 13)));
+        assert_eq!(p.rect(OK), s.pages[0].rect(OK));
         assert!(matches!(
             p.item(APPLY).unwrap().control,
             Control::Button { enabled: true, .. }
@@ -2146,5 +2190,69 @@ mod tests {
         let (x, y) = (t.x + 5, t.y + 5);
         assert_eq!(s.motion(x, y, s.hit(x, y, &text, px)), Event::None);
         assert!(drawn(&s, &theme) == rest, "a Classic tab draws the same");
+    }
+
+    /// At 150% and 200% a tabbed sheet grows from its origin: the client, the page and the
+    /// buttons grow with the text, the tabs are as tall as the grown row with the open one
+    /// running into the page, and a click on a grown button lands on it. 100% is the layout as
+    /// built.
+    #[test]
+    fn a_grown_sheet_lays_its_page_tabs_and_buttons_out_with_the_text() {
+        let theme = Theme::default();
+        let text = TextRenderer::load(&FontConfig::default());
+        for px in [11, 17, 22] {
+            let u = TextUnits::new(px, 11);
+            let mut s = sheet(&["General", "Sharing"], (398, 424));
+            s.place((3, 21));
+            let p = Paint {
+                text: u,
+                ..theme.paint()
+            };
+            s.drawn_with(&p);
+            assert_eq!(s.client(), (u.len(398), u.len(424)));
+            let l = s.layout(&text, px);
+            let open = l.tabs[0];
+            assert_eq!(open.height, u.len(tabstrip::TAB_H) + 2, "{px}");
+            assert_eq!(
+                open.bottom(),
+                l.page.y,
+                "{px}: the open tab runs into the page"
+            );
+            assert_eq!(l.page.x, 3 + u.len(MARGIN));
+            assert_eq!(l.page.right(), 3 + u.len(398 - MARGIN));
+            assert_eq!(l.apply.right(), 3 + u.len(398 - MARGIN));
+            assert_eq!(l.apply.bottom(), 21 + u.len(424 - BUTTON_BOTTOM));
+            let apply = s.open().rect(APPLY).unwrap();
+            assert_eq!(
+                apply, l.apply,
+                "{px}: the page's button is where the layout says"
+            );
+            let mut c = Canvas::new(3 + u.len(398) as u32, 21 + u.len(424) as u32);
+            draw(&mut c, &text, &p, &s, false, px);
+            let ok = l.ok;
+            let hit = s.hit(ok.x + ok.width / 2, ok.y + ok.height / 2, &text, px);
+            assert!(matches!(hit, Some(Hit::Control(_))), "{px}");
+            assert_eq!(s.click(hit), Event::Redraw);
+            assert_eq!(s.release(), Event::Ok, "{px}");
+        }
+    }
+
+    /// A list sheet at 150%: the list's rows grow with the text and its frame from the origin.
+    #[test]
+    fn a_grown_list_sheet_grows_its_rows() {
+        let theme = Theme::default();
+        let text = TextRenderer::load(&FontConfig::default());
+        let u = TextUnits::new(17, 11);
+        let s = list_sheet();
+        s.drawn_with(&Paint {
+            text: u,
+            ..theme.paint()
+        });
+        let l = s.layout(&text, 17);
+        let list = l.list.unwrap();
+        assert_eq!(list.row_h, u.len(17));
+        assert_eq!(list.rows[1].y - list.rows[0].y, u.len(17));
+        assert_eq!(list.frame.x, u.len(MARGIN));
+        assert_eq!(l.page.x, u.len(pagelist::ADVANCE + MARGIN));
     }
 }

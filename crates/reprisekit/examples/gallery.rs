@@ -4,7 +4,8 @@
 //! colour scheme. `REPRISE_GALLERY_SCALE=<n>` writes only the parts pages, drawn
 //! by styles built for scale `n` (see `gallery_parts`), and the Blue tray arrow
 //! page. `REPRISE_GALLERY_LOOK=classic` leaves the Blue bands blank and skips
-//! the Blue, Glass and taskbar PNGs.
+//! the Blue, Glass and taskbar PNGs. `REPRISE_GALLERY_TEXT_SIZE=<percent>` writes
+//! only a message box and a property sheet in each look at that text size.
 
 #[path = "gallery_p3/mod.rs"]
 mod gallery_p3;
@@ -66,6 +67,16 @@ fn main() {
         write_preview(
             &render_orb_glow(n.max(1)),
             "reprisekit-gallery-orb-glow-glass.png",
+        );
+        return;
+    }
+    if let Ok(pct) = std::env::var("REPRISE_GALLERY_TEXT_SIZE") {
+        let pct: u32 = pct
+            .parse()
+            .expect("REPRISE_GALLERY_TEXT_SIZE is a percentage");
+        write_preview(
+            &render_text_size(pct),
+            &format!("reprisekit-gallery-text-size-{pct}.png"),
         );
         return;
     }
@@ -270,7 +281,12 @@ fn render_end_session(with_blue: bool) -> Canvas {
         themes.push(interfaces::theme_for(Interface::Glass));
     }
     let base = TextRenderer::load(&Theme::default().fonts);
-    let (w, h) = endsession::client(&fields, &base, Theme::default().fonts.size_px);
+    let (w, h) = endsession::client(
+        &fields,
+        &base,
+        Theme::default().fonts.size_px,
+        reprisekit::theme::TextUnits::ONE,
+    );
     let mut c = Canvas::new(
         (themes.len() as i32 * (w + 10) + 10) as u32,
         (h + 20) as u32,
@@ -279,8 +295,8 @@ fn render_end_session(with_blue: bool) -> Canvas {
     for (i, theme) in themes.iter().enumerate() {
         let text = TextRenderer::load(&theme.fonts);
         let px = theme.fonts.size_px;
-        let (bw, bh) = endsession::client(&fields, &text, px);
-        let f = endsession::form(&fields, &text, px);
+        let (bw, bh) = endsession::client(&fields, &text, px, reprisekit::theme::TextUnits::ONE);
+        let f = endsession::form(&fields, &text, px, reprisekit::theme::TextUnits::ONE);
         let mut box_c = Canvas::new(bw as u32, bh as u32);
         endsession::draw(&mut box_c, &text, &theme.paint(), &f, px);
         c.blit_canvas(10 + i as i32 * (w + 10), 10, &box_c);
@@ -302,7 +318,12 @@ fn render_location_prompt(with_blue: bool) -> Canvas {
         themes.push(interfaces::theme_for(Interface::Glass));
     }
     let base = TextRenderer::load(&Theme::default().fonts);
-    let (w, h) = locationprompt::client(&fields, &base, Theme::default().fonts.size_px);
+    let (w, h) = locationprompt::client(
+        &fields,
+        &base,
+        Theme::default().fonts.size_px,
+        reprisekit::theme::TextUnits::ONE,
+    );
     let mut c = Canvas::new(
         (themes.len() as i32 * (w + 10) + 10) as u32,
         (h + 20) as u32,
@@ -311,11 +332,82 @@ fn render_location_prompt(with_blue: bool) -> Canvas {
     for (i, theme) in themes.iter().enumerate() {
         let text = TextRenderer::load(&theme.fonts);
         let px = theme.fonts.size_px;
-        let (bw, bh) = locationprompt::client(&fields, &text, px);
-        let f = locationprompt::form(&fields, &text, px);
+        let (bw, bh) =
+            locationprompt::client(&fields, &text, px, reprisekit::theme::TextUnits::ONE);
+        let f = locationprompt::form(&fields, &text, px, reprisekit::theme::TextUnits::ONE);
         let mut box_c = Canvas::new(bw as u32, bh as u32);
         locationprompt::draw(&mut box_c, &text, &theme.paint(), &f, px);
         c.blit_canvas(10 + i as i32 * (w + 10), 10, &box_c);
+    }
+    c
+}
+
+/// A message box over a property sheet in each look, their forms laid out for 100% text and
+/// drawn at `pct`.
+fn render_text_size(pct: u32) -> Canvas {
+    let looks = [Interface::Classic, Interface::Blue, Interface::Glass];
+    let themes: Vec<Theme> = looks
+        .iter()
+        .map(|&i| interfaces::theme_for(i).with_form_text(pct))
+        .collect();
+    let u = themes[0].text;
+    let notice = msgbox::Fields {
+        text: "Reprise cannot find 'zzzzq'.\nCheck the spelling and try again.".into(),
+        icon: None,
+        buttons: vec!["OK".into(), "Cancel".into()],
+        default: 0,
+        min_text_h: None,
+        min_w: 0,
+    };
+    let page = || {
+        form::Form::new(vec![
+            Item::group("g", Rect::new(14, 38, 262, 94), "Options"),
+            Item::label_at("nl", 24, 58, 60, "&Name:"),
+            Item::edit("name", Rect::new(84, 54, 180, 21), "Reprise", true),
+            Item::check("c", 24, 84, "&Show the clock").checked(true),
+            Item::radio("r1", 24, 104, "&Small icons", "size").checked(true),
+            Item::radio("r2", 138, 104, "&Large icons", "size"),
+            Item::label_at("sl", 14, 146, 60, "&Size:"),
+            Item::combo("size", 84, 142, 120, &["Small", "Medium", "Large"], 3),
+            Item::new(
+                "list",
+                Rect::new(14, 172, 262, 3 * listbox::ROW_H + 4),
+                Control::ListBox {
+                    list: listbox::ListBox::new(
+                        vec!["Clock".into(), "Volume".into(), "Network".into()],
+                        Some(0),
+                    ),
+                    icons: Vec::new(),
+                },
+            ),
+        ])
+    };
+    let sheet_size = (290, 270);
+    let (sw, sh) = u.size(sheet_size);
+    let base_px = Theme::default().fonts.size_px;
+    let text0 = TextRenderer::load(&themes[0].fonts);
+    let (mw, mh) = u.size(msgbox::client(&notice, &text0, u.px(base_px), u));
+    let col = sw.max(mw) + 10;
+    let mut c = Canvas::new(
+        (themes.len() as i32 * col + 10) as u32,
+        (mh + sh + 30) as u32,
+    );
+    c.fill_rect(c.bounds(), Color::rgb(58, 110, 165));
+    for (i, theme) in themes.iter().enumerate() {
+        let text = TextRenderer::load(&theme.fonts);
+        let px = theme.fonts.size_px;
+        let x = 10 + i as i32 * col;
+        let (bw, bh) = u.size(msgbox::client(&notice, &text, px, u));
+        let mut box_c = Canvas::new(bw as u32, bh as u32);
+        box_c.fill_rect(box_c.bounds(), theme.colors.button_face);
+        let f = msgbox::form(&notice, &text, px, u);
+        form::draw(&mut box_c, &text, &theme.paint(), &f, true, px);
+        c.blit_canvas(x, 10, &box_c);
+        let sheet = PropSheet::new(&["General"], vec![page()], sheet_size);
+        let mut sheet_c = Canvas::new(sw as u32, sh as u32);
+        sheet_c.fill_rect(sheet_c.bounds(), theme.colors.button_face);
+        propsheet::draw(&mut sheet_c, &text, &theme.paint(), &sheet, true, px);
+        c.blit_canvas(x, mh + 20, &sheet_c);
     }
     c
 }
@@ -1840,7 +1932,15 @@ fn render(theme: &Theme, with_blue: bool) -> Canvas {
     draw_page(&mut c, &Paint { s, ..theme.paint() }, page);
     let mut strip = tabstrip::TabStrip::new(&["Themes", "Desktop", "Screen Saver"], 1);
     strip.focused = true;
-    let tabs = tabstrip::layout(&text, px, &strip, page.x, page.y - 20, page.width);
+    let tabs = tabstrip::layout(
+        &text,
+        px,
+        &strip,
+        page.x,
+        page.y - 20,
+        page.width,
+        reprisekit::theme::TextUnits::ONE,
+    );
     tabstrip::draw(
         &mut c,
         &text,
@@ -2093,10 +2193,10 @@ fn render(theme: &Theme, with_blue: bool) -> Canvas {
         min_text_h: None,
         min_w: 0,
     };
-    let (mw, mh) = msgbox::client(&notice, &text, px);
+    let (mw, mh) = msgbox::client(&notice, &text, px, theme.text);
     let mut msg_c = Canvas::new(mw as u32, mh as u32);
     msg_c.fill_rect(msg_c.bounds(), cs.button_face);
-    let msg_form = msgbox::form(&notice, &text, px);
+    let msg_form = msgbox::form(&notice, &text, px, theme.text);
     form::draw(
         &mut msg_c,
         &text,
@@ -2119,6 +2219,7 @@ fn render(theme: &Theme, with_blue: bool) -> Canvas {
                 buttons: 2,
                 text_h: None,
             },
+            theme.text,
         )
         .client();
         let mut icon = Canvas::new(32, 32);
@@ -3240,7 +3341,13 @@ fn render(theme: &Theme, with_blue: bool) -> Canvas {
         let (aw, ah) = filesheet::ATTR_SIZE;
         let mut attr_c = Canvas::new(aw as u32, ah as u32);
         attr_c.fill_rect(attr_c.bounds(), cs.button_face);
-        let attr = filesheet::attr_form("set read-only", filesheet::Subject::Folder, &text, px);
+        let attr = filesheet::attr_form(
+            "set read-only",
+            filesheet::Subject::Folder,
+            &text,
+            px,
+            reprisekit::theme::TextUnits::ONE,
+        );
         form::draw(
             &mut attr_c,
             &text,
@@ -3260,7 +3367,14 @@ fn render(theme: &Theme, with_blue: bool) -> Canvas {
                 reprisekit::classic::widgets::CheckState::Mixed,
                 reprisekit::classic::widgets::CheckState::On,
             ]);
-            let adv = filesheet::advanced_form(subject, None, robots, &text, px);
+            let adv = filesheet::advanced_form(
+                subject,
+                None,
+                robots,
+                &text,
+                px,
+                reprisekit::theme::TextUnits::ONE,
+            );
             form::draw(
                 &mut adv_c,
                 &text,
@@ -3468,7 +3582,12 @@ fn render(theme: &Theme, with_blue: bool) -> Canvas {
         use reprisekit::controls::{calendar, timefield};
         c.fill_rect(Rect::new(520, 5430, 420, 360), cs.button_face);
         let year = updown::UpDown::new(2026, 1970, 2099).with_buddy();
-        let yl = updown::layout_for(&year, Rect::new(620, 5440, 79, 21), &theme.look.controls());
+        let yl = updown::layout_for(
+            &year,
+            Rect::new(620, 5440, 79, 21),
+            &theme.look.controls(),
+            reprisekit::theme::TextUnits::ONE,
+        );
         updown::draw(
             &mut c,
             &text,
@@ -3630,9 +3749,9 @@ fn render(theme: &Theme, with_blue: bool) -> Canvas {
         };
         let mut y = 6220;
         for fields in [file, folder] {
-            let (w, h) = replacebox::client(&fields, &text, px);
+            let (w, h) = replacebox::client(&fields, &text, px, reprisekit::theme::TextUnits::ONE);
             let mut box_c = Canvas::new(w as u32, h as u32);
-            let f = replacebox::form(&fields, &text, px);
+            let f = replacebox::form(&fields, &text, px, reprisekit::theme::TextUnits::ONE);
             replacebox::draw(&mut box_c, &text, &Paint { s, ..theme.paint() }, &f, px);
             c.blit_canvas(424, y, &box_c);
             y += h + 10;
@@ -4575,7 +4694,7 @@ fn render(theme: &Theme, with_blue: bool) -> Canvas {
             let mut year = updown::UpDown::new(2026, 1970, 2099).with_buddy();
             year.enabled = enabled;
             let r = Rect::new(X0 + 330 + i as i32 * 90, y, 79, 21);
-            let lay = updown::layout_for(&year, r, &bcm);
+            let lay = updown::layout_for(&year, r, &bcm, reprisekit::theme::TextUnits::ONE);
             updown::draw(&mut c, &text, &bp, &year, &lay, false, None, px);
             state_label(&mut c, r.x, y + 23, 79, label);
         }
@@ -6103,7 +6222,15 @@ fn render_glass_sheet(theme: &Theme) -> Canvas {
     strip.hot = Some(2);
     strip.focused = true;
     let page = Rect::new(470, 65, 300, 85);
-    let tabs = tabstrip::layout(&text, px, &strip, page.x, page.y - 20, page.width);
+    let tabs = tabstrip::layout(
+        &text,
+        px,
+        &strip,
+        page.x,
+        page.y - 20,
+        page.width,
+        reprisekit::theme::TextUnits::ONE,
+    );
     draw_page(&mut c, &p, page);
     tabstrip::draw(&mut c, &text, &p, &strip, &tabs, page, true, px);
     let pg = Rect::new(page.x + 10, page.y + 20, 180, 55);

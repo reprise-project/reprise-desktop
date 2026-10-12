@@ -6,6 +6,7 @@ use crate::controls::form::{CHECK, Control, Form, Item};
 use crate::raster::{Canvas, Rect};
 use crate::text::{DialogFont, TextRenderer};
 use crate::textedit::TextEdit;
+use crate::theme::TextUnits;
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Facts {
@@ -1508,6 +1509,7 @@ pub fn advanced_form(
     robots: Option<[CheckState; 2]>,
     text: &TextRenderer,
     px: u32,
+    u: TextUnits,
 ) -> Form {
     let is_dir = subject.reaches_folders();
     let (grid, what) = if is_dir {
@@ -1526,7 +1528,7 @@ pub fn advanced_form(
             text,
             "When you apply these changes you will be asked whether they should reach all \
              subfolders and files as well.",
-            ADV_TEXT_W,
+            u.len(ADV_TEXT_W),
             px,
         ));
     }
@@ -1553,7 +1555,7 @@ pub fn advanced_form(
         // The title sits a pixel further left than `Control::Group` puts
         // its own, so the frame goes in untitled and the title over the
         // gap it punches.
-        let tw = text.measure(title, false, px);
+        let tw = u.design(text.measure(title, false, px));
         let tx = ADV_GROUP_X + ADV_TITLE_DX;
         items.push(Item::group(
             id,
@@ -1645,7 +1647,7 @@ pub const SET_ATTR_LABELS: [&str; 2] = [
     "Apply changes to the selected items, subfolders and files",
 ];
 
-pub fn attr_form(verb: &str, subject: Subject, text: &TextRenderer, px: u32) -> Form {
+pub fn attr_form(verb: &str, subject: Subject, text: &TextRenderer, px: u32, u: TextUnits) -> Form {
     let (question, labels) = match subject {
         Subject::Set { .. } => (SET_ATTR_QUESTION, SET_ATTR_LABELS),
         _ => (ATTR_QUESTION, ATTR_LABELS),
@@ -1655,7 +1657,7 @@ pub fn attr_form(verb: &str, subject: Subject, text: &TextRenderer, px: u32) -> 
         Item::label_at("attr_intro", ATTR_TEXT_X, ATTR_INTRO_Y, width, ATTR_INTRO),
         Item::label_at("attr_verb", ATTR_CHANGE_X, ATTR_CHANGE_Y, width, verb),
     ];
-    for (i, line) in crate::text::wrap(text, question, width, px)
+    for (i, line) in crate::text::wrap(text, question, u.len(width), px)
         .into_iter()
         .enumerate()
     {
@@ -1935,17 +1937,17 @@ mod tests {
             (true, "Choose the settings you want for the selected items"),
         ] {
             let set = Subject::Set { has_dir };
-            let adv = advanced_form(set, None, None, &t, px);
+            let adv = advanced_form(set, None, None, &t, px, TextUnits::ONE);
             assert_eq!(line(&adv, "adv_l0"), first);
             assert_eq!(advanced_size(set), advanced_size(Subject::single(has_dir)));
             assert_eq!(adv.item("adv_l1").is_some(), has_dir);
         }
         let set = Subject::Set { has_dir: true };
-        let f = attr_form("set read-only", set, &t, px);
+        let f = attr_form("set read-only", set, &t, px, TextUnits::ONE);
         assert_eq!(line(&f, ATTR_ONLY), SET_ATTR_LABELS[0]);
         assert_eq!(line(&f, ATTR_TREE), SET_ATTR_LABELS[1]);
         assert!(line(&f, "attr_q0").contains("the selected items only"));
-        let folder = attr_form("set read-only", Subject::Folder, &t, px);
+        let folder = attr_form("set read-only", Subject::Folder, &t, px, TextUnits::ONE);
         assert_eq!(line(&folder, ATTR_ONLY), ATTR_LABELS[0]);
     }
 
@@ -1954,7 +1956,14 @@ mod tests {
         let (t, px) = (text(), px());
         let read = robots_states(Some([Some(true), None])).unwrap();
         assert_eq!(read, [CheckState::On, CheckState::Mixed]);
-        let mut f = advanced_form(Subject::Set { has_dir: true }, None, Some(read), &t, px);
+        let mut f = advanced_form(
+            Subject::Set { has_dir: true },
+            None,
+            Some(read),
+            &t,
+            px,
+            TextUnits::ONE,
+        );
         let enabled = |f: &Form, id: &str| {
             matches!(
                 f.item(id).map(|i| &i.control),
@@ -1973,7 +1982,7 @@ mod tests {
             robots_moves(read, robots_chosen(&f)),
             [Some(false), Some(false)]
         );
-        let greyed = advanced_form(Subject::File, None, None, &t, px);
+        let greyed = advanced_form(Subject::File, None, None, &t, px, TextUnits::ONE);
         assert!(!enabled(&greyed, ADV_ARCHIVE));
         assert_eq!(greyed.check_state(ADV_ARCHIVE), Some(CheckState::Off));
     }
@@ -2707,7 +2716,7 @@ mod tests {
         ] {
             let subject = Subject::single(is_dir);
             assert_eq!(advanced_size(subject), size);
-            let f = advanced_form(subject, None, None, &t, px);
+            let f = advanced_form(subject, None, None, &t, px, TextUnits::ONE);
             let rect = |id: &str| f.item(id).expect(id).rect;
             assert_eq!(rect("icon"), Rect::new(11, 12, 32, 32));
             let ys: Vec<i32> = ["adv_l0", "adv_l1", "adv_l2"]
@@ -2747,7 +2756,7 @@ mod tests {
         }
         let theme = Theme::default();
         let cs = &theme.colors;
-        let f = advanced_form(Subject::File, None, None, &t, px());
+        let f = advanced_form(Subject::File, None, None, &t, px(), TextUnits::ONE);
         let (w, h) = advanced_size(Subject::File);
         let mut c = Canvas::new(w as u32, h as u32);
         c.fill_rect(c.bounds(), cs.button_face);
@@ -2919,7 +2928,7 @@ mod tests {
         }
         let blue = crate::interfaces::theme_for(crate::interface::Interface::Blue);
         let cs = &blue.colors;
-        let f = advanced_form(Subject::File, None, None, &t, px());
+        let f = advanced_form(Subject::File, None, None, &t, px(), TextUnits::ONE);
         let (w, h) = advanced_size(Subject::File);
         let mut c = Canvas::new(w as u32, h as u32);
         c.fill_rect(c.bounds(), cs.button_face);

@@ -2010,6 +2010,7 @@ dependencies = [
  "log",
  "repriseapp",
  "reprisebus",
+ "repriseconf",
  "reprisekit",
  "reprisetray",
  "zbus",

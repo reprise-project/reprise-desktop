@@ -14,6 +14,7 @@ use crate::controls::form::{self, Event, Form, Item};
 use crate::look::Paint;
 use crate::raster::{Canvas, Rect};
 use crate::text::TextRenderer;
+use crate::theme::TextUnits;
 
 pub const YES: &str = "yes";
 pub const YES_ALL: &str = "yes_all";
@@ -158,7 +159,7 @@ struct Plan {
     button_right: i32,
 }
 
-fn plan(f: &Fields, text: &TextRenderer, px: u32) -> Plan {
+fn plan(f: &Fields, text: &TextRenderer, px: u32, u: TextUnits) -> Plan {
     let what = match f.subject {
         Subject::File { .. } => "file",
         Subject::Folder => "folder",
@@ -189,7 +190,7 @@ fn plan(f: &Fields, text: &TextRenderer, px: u32) -> Plan {
         }
         Subject::Folder => {
             let mut y = FOLDER_PARA_Y;
-            for l in crate::text::wrap(text, MERGE_TEXT, FOLDER_WRAP_W, px) {
+            for l in crate::text::wrap(text, MERGE_TEXT, u.len(FOLDER_WRAP_W), px) {
                 lines.push((l, y));
                 y += LINE_H;
             }
@@ -208,16 +209,16 @@ fn button_row_w(n: usize) -> i32 {
     n as i32 * BUTTON_W + (n as i32 - 1).max(0) * BUTTON_GAP
 }
 
-/// The client size the prompt needs: its own width, or wider for a long
-/// name, and tall enough for its rows and buttons.
-pub fn client(f: &Fields, text: &TextRenderer, px: u32) -> (i32, i32) {
-    let p = plan(f, text, px);
+/// The client size the prompt needs at 100%, for text set at `px` that grows by `u`: its own
+/// width, or wider for a long name, and tall enough for its rows and buttons.
+pub fn client(f: &Fields, text: &TextRenderer, px: u32, u: TextUnits) -> (i32, i32) {
+    let p = plan(f, text, px, u);
     let lines = p
         .lines
         .iter()
-        .map(|(l, _)| TEXT_X + text.measure(l, false, px));
+        .map(|(l, _)| TEXT_X + u.design(text.measure(l, false, px)));
     let facts = p.sides.iter().flat_map(|(_, s)| {
-        [&s.size, &s.modified].map(|t| SIDE_TEXT_X + text.measure(t, false, px))
+        [&s.size, &s.modified].map(|t| SIDE_TEXT_X + u.design(text.measure(t, false, px)))
     });
     let widest = lines.chain(facts).max().unwrap_or(0);
     let w = (widest + MARGIN)
@@ -227,7 +228,7 @@ pub fn client(f: &Fields, text: &TextRenderer, px: u32) -> (i32, i32) {
 }
 
 /// Lay the prompt out over [`client`]'s size. Yes is the default button.
-pub fn form(f: &Fields, text: &TextRenderer, px: u32) -> Form {
+pub fn form(f: &Fields, text: &TextRenderer, px: u32, u: TextUnits) -> Form {
     const LINE_IDS: [&str; 8] = [
         "line0", "line1", "line2", "line3", "line4", "line5", "line6", "line7",
     ];
@@ -235,8 +236,8 @@ pub fn form(f: &Fields, text: &TextRenderer, px: u32) -> Form {
         ("existing_icon", "existing_size", "existing_modified"),
         ("incoming_icon", "incoming_size", "incoming_modified"),
     ];
-    let (w, _) = client(f, text, px);
-    let p = plan(f, text, px);
+    let (w, _) = client(f, text, px, u);
+    let p = plan(f, text, px, u);
     let mut items = Vec::new();
     if let Some(icon) = &f.icon {
         items.push(Item::picture(
@@ -333,9 +334,9 @@ mod tests {
     #[test]
     fn the_buttons_follow_the_batch_and_map_to_answers() {
         let (text, px) = rend();
-        let one = form(&file(), &text, px);
+        let one = form(&file(), &text, px, TextUnits::ONE);
         assert_eq!(button_ids(&one), [YES, NO]);
-        let many = form(&folder(), &text, px);
+        let many = form(&folder(), &text, px, TextUnits::ONE);
         assert_eq!(button_ids(&many), [YES, YES_ALL, NO, CANCEL]);
         assert_eq!(many.default_button().map(|i| many.items[i].id), Some(YES));
         assert_eq!(choice(&Event::Default), Some(Choice::Yes));
@@ -354,8 +355,8 @@ mod tests {
             return;
         }
         let (text, px) = rend();
-        assert_eq!(client(&file(), &text, px), (420, 229));
-        let f = form(&file(), &text, px);
+        assert_eq!(client(&file(), &text, px, TextUnits::ONE), (420, 229));
+        let f = form(&file(), &text, px, TextUnits::ONE);
         let r = |id: &str| {
             let r = f.item(id).expect("the item exists").rect;
             (r.x, r.y)
@@ -381,7 +382,7 @@ mod tests {
     fn the_folder_prompt_wraps_its_paragraph_over_the_buttons() {
         let (text, px) = rend();
         let fields = folder();
-        let f = form(&fields, &text, px);
+        let f = form(&fields, &text, px, TextUnits::ONE);
         assert!(f.item("existing_size").is_none());
         let rows: Vec<i32> = f
             .items
@@ -394,7 +395,7 @@ mod tests {
         let yes = f.item(YES).unwrap().rect;
         assert_eq!(yes.y, rows[rows.len() - 1] + LINE_H + 23);
         assert_eq!(yes.x, 62);
-        assert_eq!(client(&fields, &text, px), (413, 138));
+        assert_eq!(client(&fields, &text, px, TextUnits::ONE), (413, 138));
         assert_eq!(fields.title(), "Confirm Folder Replace");
         assert_eq!(file().title(), "Confirm File Replace");
     }
@@ -405,9 +406,9 @@ mod tests {
         let (text, px) = rend();
         let mut long = file();
         long.name = "a considerably longer file name than the prompt starts with.txt".into();
-        let (w, _) = client(&long, &text, px);
+        let (w, _) = client(&long, &text, px, TextUnits::ONE);
         assert!(w > 420);
-        let f = form(&long, &text, px);
+        let f = form(&long, &text, px, TextUnits::ONE);
         assert_eq!(f.item(NO).unwrap().rect.right(), w - 11);
     }
 
@@ -423,8 +424,8 @@ mod tests {
         let theme = Theme::default();
         let cs = &theme.colors;
         let fields = file();
-        let (w, h) = client(&fields, &text, px);
-        let f = form(&fields, &text, px);
+        let (w, h) = client(&fields, &text, px, TextUnits::ONE);
+        let f = form(&fields, &text, px, TextUnits::ONE);
         let mut c = Canvas::new(w as u32, h as u32);
         draw(&mut c, &text, &theme.paint(), &f, px);
         assert_eq!(
@@ -459,9 +460,15 @@ mod tests {
             (file(), "replacebox-file-preview.png"),
             (folder(), "replacebox-folder-preview.png"),
         ] {
-            let (w, h) = client(&fields, &text, px);
+            let (w, h) = client(&fields, &text, px, TextUnits::ONE);
             let mut c = Canvas::new(w as u32, h as u32);
-            draw(&mut c, &text, &theme.paint(), &form(&fields, &text, px), px);
+            draw(
+                &mut c,
+                &text,
+                &theme.paint(),
+                &form(&fields, &text, px, TextUnits::ONE),
+                px,
+            );
             crate::raster::write_preview(&c, name);
         }
     }
