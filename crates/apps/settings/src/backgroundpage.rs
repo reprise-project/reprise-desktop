@@ -235,11 +235,11 @@ pub fn fill_folders(form: &mut Form, folders: &[PathBuf], picked: &str, icon: Op
 }
 
 /// The file the monitor shows for `s`: the pending wallpaper, or for a
-/// slideshow the first picture in its folder, from `pictures` (the scan)
-/// or else `listed` (the folder's own listing); empty for none. A
-/// built-in is its `reprise:` spelling in `s`'s glass colour, so a new
-/// glass colour is a new picture.
-pub fn monitor_file(s: &Settings, pictures: &[PathBuf], listed: &[PathBuf]) -> String {
+/// slideshow the first picture in `listed` (its folder's
+/// `reprisefs::pictures::in_folder`, the desktop's first slide); empty
+/// for none. A built-in is its `reprise:` spelling in `s`'s glass colour,
+/// so a new glass colour is a new picture.
+pub fn monitor_file(s: &Settings, listed: &[PathBuf]) -> String {
     if !slideshow(s) {
         let glass = crate::appearancepage::glass(s);
         return match builtin(&s.wallpaper) {
@@ -250,22 +250,11 @@ pub fn monitor_file(s: &Settings, pictures: &[PathBuf], listed: &[PathBuf]) -> S
     let Some(folder) = expand(&s.slideshow) else {
         return String::new();
     };
-    pictures
+    listed
         .iter()
-        .chain(listed)
         .find(|p| p.parent() == Some(folder.as_path()))
         .map(|p| p.to_string_lossy().into_owned())
         .unwrap_or_default()
-}
-
-/// The slideshow folder of `s` when none of `pictures` lies in it, so
-/// the host has to list it for the monitor.
-pub fn unlisted_folder(s: &Settings, pictures: &[PathBuf]) -> Option<PathBuf> {
-    let folder = expand(&s.slideshow)?;
-    (!pictures
-        .iter()
-        .any(|p| p.parent() == Some(folder.as_path())))
-    .then_some(folder)
 }
 
 /// The folder a slideshow starts on, as the config spells it: `last`,
@@ -502,9 +491,9 @@ mod tests {
             glass_mode: "dark".into(),
             ..Settings::default()
         };
-        assert_eq!(monitor_file(&s, &[], &[]), "reprise:flow/night");
+        assert_eq!(monitor_file(&s, &[]), "reprise:flow/night");
         s.wallpaper = "reprise:ridges/dusk".into();
-        assert_eq!(monitor_file(&s, &[], &[]), "reprise:ridges/dusk");
+        assert_eq!(monitor_file(&s, &[]), "reprise:ridges/dusk");
         let mut f = page(Area::MIN);
         follow(&mut f, &s);
         match &f.item("wallpaper_position").unwrap().control {
@@ -540,37 +529,32 @@ mod tests {
             slideshow: "/w/a".into(),
             ..Settings::default()
         };
-        assert_eq!(monitor_file(&s, &pics, &[]), "/w/a/hills.jpg");
+        let listed = [
+            PathBuf::from("/w/a/hills.jpg"),
+            PathBuf::from("/w/a/lake.jpg"),
+        ];
+        assert_eq!(monitor_file(&s, &listed), "/w/a/hills.jpg");
         let one = Settings {
             slideshow: String::new(),
             ..s
         };
-        assert_eq!(monitor_file(&one, &pics, &[]), "/w/b/dunes.jpg");
+        assert_eq!(monitor_file(&one, &listed), "/w/b/dunes.jpg");
     }
 
     #[test]
-    fn a_slideshow_folder_the_scan_missed_shows_its_listed_first_picture() {
-        let pics = [PathBuf::from("/w/a/hills.jpg")];
+    fn a_slideshow_shows_the_first_picture_of_its_own_folder_listing() {
         let s = Settings {
             slideshow: "/far/Trips".into(),
             ..Settings::default()
         };
-        assert_eq!(
-            unlisted_folder(&s, &pics),
-            Some(PathBuf::from("/far/Trips"))
-        );
-        assert_eq!(monitor_file(&s, &pics, &[]), "", "the desktop colour");
+        assert_eq!(monitor_file(&s, &[]), "", "the desktop colour until listed");
+        let other = [PathBuf::from("/w/a/hills.jpg")];
+        assert_eq!(monitor_file(&s, &other), "", "another folder's listing");
         let listed = [
             PathBuf::from("/far/Trips/coast.jpg"),
             PathBuf::from("/far/Trips/hut.png"),
         ];
-        assert_eq!(monitor_file(&s, &pics, &listed), "/far/Trips/coast.jpg");
-        let scanned = Settings {
-            slideshow: "/w/a".into(),
-            ..Settings::default()
-        };
-        assert_eq!(unlisted_folder(&scanned, &pics), None);
-        assert_eq!(unlisted_folder(&Settings::default(), &pics), None);
+        assert_eq!(monitor_file(&s, &listed), "/far/Trips/coast.jpg");
     }
 
     #[test]

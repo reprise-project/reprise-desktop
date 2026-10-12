@@ -20,6 +20,7 @@ pub mod meta;
 pub mod mimetree;
 pub mod names;
 pub mod ops;
+pub mod pictures;
 pub mod pipe;
 pub mod places;
 pub mod props;

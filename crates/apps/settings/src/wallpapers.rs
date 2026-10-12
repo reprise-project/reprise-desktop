@@ -3,17 +3,14 @@
 
 use std::path::{Path, PathBuf};
 
+use reprisefs::pictures::natural_cmp;
+
 use crate::backgroundpage::label;
 
-pub const EXTS: [&str; 6] = ["bmp", "gif", "jpg", "jpeg", "dib", "png"];
-pub const FILTER: &str = "Background Files (*.bmp;*.gif;*.jpg;*.jpeg;*.dib;*.png)";
-const DEPTH: usize = 3;
+pub use reprisefs::pictures::is_picture;
 
-pub fn is_picture(p: &Path) -> bool {
-    p.extension()
-        .and_then(|e| e.to_str())
-        .is_some_and(|e| EXTS.iter().any(|x| x.eq_ignore_ascii_case(e)))
-}
+pub const FILTER: &str = "Background Files (*.bmp;*.jpg;*.jpeg;*.dib;*.png)";
+const DEPTH: usize = 3;
 
 pub fn refusal(path: &Path) -> Option<String> {
     (!is_picture(path)).then(|| {
@@ -42,17 +39,13 @@ fn dirs_for(pictures: Option<PathBuf>, home: Option<PathBuf>) -> Vec<PathBuf> {
 }
 
 /// The pictures under `dirs` and up to `DEPTH` folders below each,
-/// sorted by their row's name without regard to case, then by path. A
+/// sorted by their row's name in `reprisefs::pictures::natural_cmp`
+/// order, then by path. A
 /// folder that cannot be read is skipped, and so is every hidden file
 /// and folder (a thumbnail cache). A file reached twice, through a
 /// symlink, is listed once, by the path that sorts first.
 pub fn scan(dirs: &[PathBuf]) -> Vec<PathBuf> {
     scan_to(dirs, DEPTH)
-}
-
-/// The pictures straight inside `dir`, in [`scan`]'s order.
-pub fn list(dir: &Path) -> Vec<PathBuf> {
-    scan_to(&[dir.to_path_buf()], 0)
 }
 
 fn scan_to(dirs: &[PathBuf], max: usize) -> Vec<PathBuf> {
@@ -78,7 +71,9 @@ fn scan_to(dirs: &[PathBuf], max: usize) -> Vec<PathBuf> {
     for d in dirs {
         walk(d, &mut out, 0, max);
     }
-    out.sort_by_cached_key(|p| (label(p).to_lowercase(), p.clone()));
+    let mut keyed: Vec<(String, PathBuf)> = out.into_iter().map(|p| (label(&p), p)).collect();
+    keyed.sort_by(|(la, a), (lb, b)| natural_cmp(la, lb).then_with(|| a.cmp(b)));
+    let mut out: Vec<PathBuf> = keyed.into_iter().map(|(_, p)| p).collect();
     let mut seen = std::collections::HashSet::new();
     out.retain(|p| seen.insert(std::fs::canonicalize(p).unwrap_or_else(|_| p.clone())));
     out
@@ -172,8 +167,9 @@ mod tests {
             "b.PNG",
             "notes.txt",
             "sub/a.jpg",
-            "1/2/3/deep.gif",
+            "1/2/3/deep.bmp",
             "1/2/3/4/too-deep.png",
+            "anim.gif",
             "x/C.dib",
         ] {
             touch(root, f);
@@ -183,25 +179,11 @@ mod tests {
             .iter()
             .map(|p| p.strip_prefix(root).unwrap().display().to_string())
             .collect();
-        assert_eq!(names, ["sub/a.jpg", "b.PNG", "x/C.dib", "1/2/3/deep.gif"]);
+        assert_eq!(names, ["sub/a.jpg", "b.PNG", "x/C.dib", "1/2/3/deep.bmp"]);
         assert!(
             scan(&[root.join("missing")]).is_empty(),
             "a folder that is not there is skipped"
         );
-    }
-
-    #[test]
-    fn a_folder_lists_only_the_pictures_straight_inside() {
-        let dir = tmp("list");
-        let root = &dir.0;
-        for f in ["b.PNG", "a.jpg", "notes.txt", ".hidden.png", "sub/c.jpg"] {
-            touch(root, f);
-        }
-        let names: Vec<String> = list(root)
-            .iter()
-            .map(|p| p.strip_prefix(root).unwrap().display().to_string())
-            .collect();
-        assert_eq!(names, ["a.jpg", "b.PNG"]);
     }
 
     #[test]
@@ -300,10 +282,10 @@ mod tests {
 
     #[test]
     fn pictures_are_known_by_their_extension_in_any_case() {
-        for ok in ["a.bmp", "a.GIF", "a.jpg", "a.JPEG", "a.dib", "a.png"] {
+        for ok in ["a.bmp", "a.jpg", "a.JPEG", "a.dib", "a.png"] {
             assert!(is_picture(Path::new(ok)), "{ok}");
         }
-        for no in ["a.webp", "a.txt", "png"] {
+        for no in ["a.gif", "a.webp", "a.txt", "png"] {
             assert!(!is_picture(Path::new(no)), "{no}");
         }
     }

@@ -369,7 +369,7 @@ impl State {
         let spawned = std::thread::Builder::new()
             .name("slideshow".into())
             .spawn(move || {
-                let list = crate::slideshow::pictures(&folder);
+                let list = reprisefs::pictures::in_folder(&folder);
                 let roll = crate::slideshow::roll();
                 let _ = tx.send(crate::slideshow::next(
                     &list,

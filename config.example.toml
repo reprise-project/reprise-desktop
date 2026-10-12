@@ -83,7 +83,7 @@ interface = "classic"        # classic | blue | glass; an unknown value falls ba
 #                            # a name from another interface falls back to that interface's default and logs a warning; Glass ignores the key
 
 # [wallpaper]                # the picture under the desktop icons, drawn over [colors] background
-# image = "/usr/share/backgrounds/picture.jpg"   # bmp, gif, jpg, png or dib; "" or a file that does not decode shows the colour alone
+# image = "/usr/share/backgrounds/picture.jpg"   # bmp, jpg, png or dib; "" or a file that does not decode shows the colour alone
 # image = "reprise:tarn/dusk"   # a built-in drawn picture, see below; unset, classic shows the colour alone, blue tarn/blue, glass flow/glass
 #                            # built-ins: caustic, reeded, panes (sky ruby green violet dark), ridges, tarn (dawn day dusk night blue),
 #                            # terraces (spring harvest dusk frost blue), fold (teal steel sand night), contour (teal night paper dusk),
@@ -93,7 +93,7 @@ interface = "classic"        # classic | blue | glass; an unknown value falls ba
 # lock_screen = false        # the picture behind the lock screen's dialog too; off under classic, on under blue and glass
 # slideshow = "~/Pictures/Wallpapers"   # a folder whose pictures take turns in place of image, each fading into the next
 # interval = 30              # minutes each slideshow picture shows, 1 to 1440; the desktop menu's Next desktop background skips ahead
-# shuffle = false            # true: the slideshow picks at random instead of by file name
+# shuffle = false            # true: the slideshow picks at random instead of by file name (case ignored, numbers by value)
 # water = "off"              # off | calm | lively | rain: ripples on the wallpaper that follow the pointer, the icons and the windows; rain adds a drop every second or so
 # water_rate = "refresh"     # "refresh" | 30 to 240: steps a second; refresh steps once a frame at each output's own refresh. The ripples settle and travel alike at any rate, but below 60 they travel slower, at rate/60 of their speed
 
