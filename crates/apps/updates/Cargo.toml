@@ -25,5 +25,7 @@ toml.workspace = true
 # The settle pause after a burst of change signals; zbus already pulls
 # it in.
 async-io = "2"
+inotify.workspace = true
+libc.workspace = true
 log.workspace = true
 env_logger.workspace = true

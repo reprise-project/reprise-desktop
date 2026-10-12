@@ -178,10 +178,12 @@ pub enum Phase {
     Unchecked,
     Checking,
     Ready,
-    /// An install is running: progress 0 to 1 (None while unknown) and the current step.
+    /// An install is running: progress 0 to 1 (None while unknown), the current step, and what a
+    /// device being updated asks the user to do before it carries on.
     Installing {
         fraction: Option<f64>,
         doing: String,
+        request: Option<String>,
     },
     Installed(Restart),
     Failed(String),
@@ -222,6 +224,9 @@ pub fn headline(phase: &Phase, updates: &[Update], picked: usize) -> String {
             if updates.len() == 1 { "is" } else { "are" },
             if updates.len() == 1 { "it" } else { "them" },
         ),
+        Phase::Installing {
+            request: Some(r), ..
+        } => r.clone(),
         Phase::Installing { .. } => {
             "Installing updates. You can close this window; the updates keep installing.".into()
         }
@@ -238,7 +243,9 @@ pub fn headline(phase: &Phase, updates: &[Update], picked: usize) -> String {
 
 pub fn progress_line(phase: &Phase) -> String {
     match phase {
-        Phase::Installing { fraction, doing } => match fraction {
+        Phase::Installing {
+            fraction, doing, ..
+        } => match fraction {
             Some(f) => format!("{doing} ({}%)", (f * 100.0).round() as i32),
             None => doing.clone(),
         },
@@ -343,6 +350,23 @@ pub fn installed_balloon(restart: Restart) -> (String, String) {
         Restart::None => "Your computer is up to date.",
     };
     ("Updates installed".into(), body.into())
+}
+
+/// Something a device asks for while its firmware installs: `now` holds the install until it is
+/// done, otherwise it finishes the update afterwards.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Request {
+    pub message: String,
+    pub now: bool,
+}
+
+pub fn request_balloon(r: &Request) -> (String, String) {
+    let summary = if r.now {
+        "Firmware update needs you"
+    } else {
+        "Finish the firmware update"
+    };
+    (summary.into(), r.message.clone())
 }
 
 /// `[power] reboot` from the config, the command the Turn Off dialog's Restart runs too.
@@ -506,6 +530,7 @@ mod tests {
         let p = Phase::Installing {
             fraction: Some(0.426),
             doing: "Downloading firefox".into(),
+            request: None,
         };
         assert_eq!(progress_line(&p), "Downloading firefox (43%)");
         assert_eq!(tray_look(&p, &[]).tip, "Installing updates (43%)");
