@@ -1,6 +1,7 @@
-//! Tablet pads: the buttons, rings and strips beside a drawing tablet's
-//! surface, handled by Reprise itself. `[[tablet_pads]]` gives each button
-//! and each step of a ring or strip an action or a key chord; a chord
+//! Tablet pads: the buttons, keys, rings, strips and dials beside a drawing
+//! tablet's surface, handled by Reprise itself. `[[tablet_pads]]` gives each
+//! button and key and each step of a ring, strip or dial an action or a key
+//! chord; a chord
 //! reaches the focused client as key presses through `handle_key`, so
 //! binds and the lock see it as a typed one, and stays down while the
 //! button does. Clients see no tablet-v2 pad objects.
@@ -19,6 +20,7 @@ use smithay::reexports::input::{
     self as libinput, DeviceCapability,
     event::{
         EventTrait,
+        keyboard::KeyState,
         tablet_pad::{ButtonState, TabletPadEvent, TabletPadEventTrait},
     },
 };
@@ -34,7 +36,18 @@ const RING_STEP: f64 = 15.0;
 /// `strip_step`.
 const STRIP_STEP: f64 = 0.1;
 
-/// What a pad button, or one step of a ring or strip, does.
+/// The keys libinput reports from a pad, by the name a `keys` table uses
+/// and their evdev code.
+const PAD_KEYS: [(&str, u32); 3] = [
+    ("buttonconfig", 0x240),
+    ("controlpanel", 0x243),
+    ("onscreen_keyboard", 0x278),
+];
+
+/// A dial's travel per step, as libinput counts it (a wheel's detent).
+const DIAL_STEP: f64 = 120.0;
+
+/// What a pad button or key, or one step of a ring, strip or dial, does.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Binding {
     /// A compositor action, by its keybind name ("zoom-in").
@@ -81,10 +94,14 @@ impl Binding {
 pub struct Mapping {
     /// By button number, the first button 1.
     pub buttons: BTreeMap<u32, Binding>,
+    /// By evdev key code.
+    pub keys: BTreeMap<u32, Binding>,
     pub ring_up: Option<Binding>,
     pub ring_down: Option<Binding>,
     pub strip_up: Option<Binding>,
     pub strip_down: Option<Binding>,
+    pub dial_up: Option<Binding>,
+    pub dial_down: Option<Binding>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -105,20 +122,27 @@ pub struct PadConfig {
 pub enum Control {
     /// libinput's button number, the first 0.
     Button(u32),
+    /// A pad key's evdev code.
+    Key(u32),
     RingUp,
     RingDown,
     StripUp,
     StripDown,
+    DialUp,
+    DialDown,
 }
 
 impl Mapping {
     fn get(&self, c: Control) -> Option<&Binding> {
         match c {
             Control::Button(n) => self.buttons.get(&(n + 1)),
+            Control::Key(code) => self.keys.get(&code),
             Control::RingUp => self.ring_up.as_ref(),
             Control::RingDown => self.ring_down.as_ref(),
             Control::StripUp => self.strip_up.as_ref(),
             Control::StripDown => self.strip_down.as_ref(),
+            Control::DialUp => self.dial_up.as_ref(),
+            Control::DialDown => self.dial_down.as_ref(),
         }
     }
 }
@@ -144,10 +168,13 @@ pub fn find<'a>(list: &'a [PadConfig], name: &str) -> Option<&'a PadConfig> {
 pub struct FilePad {
     name: Option<String>,
     buttons: Option<BTreeMap<String, String>>,
+    keys: Option<BTreeMap<String, String>>,
     ring_up: Option<String>,
     ring_down: Option<String>,
     strip_up: Option<String>,
     strip_down: Option<String>,
+    dial_up: Option<String>,
+    dial_down: Option<String>,
     ring_step: Option<f64>,
     strip_step: Option<f64>,
     modes: Option<Vec<FileMapping>>,
@@ -157,10 +184,13 @@ pub struct FilePad {
 #[serde(deny_unknown_fields)]
 pub struct FileMapping {
     buttons: Option<BTreeMap<String, String>>,
+    keys: Option<BTreeMap<String, String>>,
     ring_up: Option<String>,
     ring_down: Option<String>,
     strip_up: Option<String>,
     strip_down: Option<String>,
+    dial_up: Option<String>,
+    dial_down: Option<String>,
 }
 
 impl FileMapping {
@@ -178,12 +208,28 @@ impl FileMapping {
                 buttons.insert(n, b);
             }
         }
+        let mut keys = BTreeMap::new();
+        for (k, v) in self.keys.unwrap_or_default() {
+            let code = (PAD_KEYS.iter().find(|(name, _)| *name == k))
+                .map(|&(_, code)| code)
+                .ok_or_else(|| {
+                    format!(
+                        "{at}: keys: {k:?} is no pad key (buttonconfig, controlpanel or onscreen_keyboard)"
+                    )
+                })?;
+            if let Some(b) = one(&format!("keys.{k}"), Some(v))? {
+                keys.insert(code, b);
+            }
+        }
         Ok(Mapping {
             buttons,
+            keys,
             ring_up: one("ring_up", self.ring_up)?,
             ring_down: one("ring_down", self.ring_down)?,
             strip_up: one("strip_up", self.strip_up)?,
             strip_down: one("strip_down", self.strip_down)?,
+            dial_up: one("dial_up", self.dial_up)?,
+            dial_down: one("dial_down", self.dial_down)?,
         })
     }
 }
@@ -193,10 +239,13 @@ impl FilePad {
         let name = self.name.unwrap_or_else(|| "*".into());
         let base = FileMapping {
             buttons: self.buttons,
+            keys: self.keys,
             ring_up: self.ring_up,
             ring_down: self.ring_down,
             strip_up: self.strip_up,
             strip_down: self.strip_down,
+            dial_up: self.dial_up,
+            dial_down: self.dial_down,
         }
         .parse(at)?;
         let modes = (self.modes.unwrap_or_default().into_iter().enumerate())
@@ -252,6 +301,15 @@ impl Dial {
     }
 }
 
+/// A dial turned by `v120` (libinput's wheel units, positive as a wheel
+/// scrolling down) with `acc` not yet spent: the steps, upward positive.
+fn dial_steps(acc: &mut f64, v120: f64) -> i32 {
+    *acc -= v120;
+    let steps = (*acc / DIAL_STEP).trunc();
+    *acc -= steps * DIAL_STEP;
+    steps as i32
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PadInfo {
     pub name: String,
@@ -269,8 +327,11 @@ struct Pad {
     mode: usize,
     rings: Vec<Dial>,
     strips: Vec<Dial>,
-    /// Each held button's chord: the evdev codes it pressed, in order.
-    held: Vec<(u32, Vec<u32>)>,
+    /// Each dial's travel not yet spent on a step, by dial number.
+    dials: Vec<f64>,
+    /// Each held button's or key's chord: the evdev codes it pressed, in
+    /// order.
+    held: Vec<(Control, Vec<u32>)>,
 }
 
 #[derive(Default)]
@@ -315,6 +376,7 @@ pub fn added(state: &mut State, device: &libinput::Device) {
         strips: vec![Dial::default(); info.strips as usize],
         info,
         mode: 0,
+        dials: Vec::new(),
         held: Vec::new(),
     });
     pads.publish();
@@ -348,46 +410,42 @@ pub fn event(state: &mut State, e: TabletPadEvent) {
     let entry = find(&state.config.tablet_pads, &device.name());
     let ring_step = entry.map_or(RING_STEP, |p| p.ring_step);
     let strip_step = entry.map_or(STRIP_STEP, |p| p.strip_step);
-    let group = e.mode_group();
-    let libinput_modes = group.number_of_modes() > 1;
+    // A key event has no mode group (libinput hands back null for it), so a
+    // key takes the first group's current mode.
+    let (libinput_mode, libinput_modes) = match &e {
+        TabletPadEvent::Key(_) => device
+            .tablet_pad_mode_group(0)
+            .map_or((0, false), |g| (g.mode(), g.number_of_modes() > 1)),
+        _ => (e.mode(), e.mode_group().number_of_modes() > 1),
+    };
     let pad = &mut state.devices.pads.pads[i];
     let mode = if libinput_modes {
-        e.mode() as usize
+        libinput_mode as usize
     } else {
         pad.mode
     };
     match e {
         TabletPadEvent::Button(b) => {
-            let n = b.button_number();
-            if b.button_state() == ButtonState::Released {
-                if let Some(h) = pad.held.iter().position(|(btn, _)| *btn == n) {
-                    let (_, codes) = pad.held.swap_remove(h);
-                    state.pad_chord_up(codes);
-                }
-                return;
+            let pressed = b.button_state() == ButtonState::Pressed;
+            state.pad_press(
+                i,
+                mode,
+                libinput_modes,
+                Control::Button(b.button_number()),
+                pressed,
+            );
+        }
+        TabletPadEvent::Key(k) => {
+            let pressed = k.key_state() == KeyState::Pressed;
+            state.pad_press(i, mode, libinput_modes, Control::Key(k.key()), pressed);
+        }
+        TabletPadEvent::Dial(d) => {
+            let n = d.number() as usize;
+            if pad.dials.len() <= n {
+                pad.dials.resize(n + 1, 0.0);
             }
-            let Some(binding) = state.pad_binding(i, mode, Control::Button(n)) else {
-                return;
-            };
-            match binding {
-                Binding::Keys { mods, keysym } => {
-                    let codes = state.pad_chord_down(mods, keysym);
-                    state.devices.pads.pads[i].held.push((n, codes));
-                }
-                Binding::Mode if libinput_modes => {
-                    log::debug!(
-                        "tablet pad: libinput counts this pad's modes; `mode` does nothing"
-                    );
-                }
-                Binding::Mode => {
-                    let count = find(&state.config.tablet_pads, &device.name())
-                        .map_or(1, PadConfig::mode_count);
-                    let pad = &mut state.devices.pads.pads[i];
-                    pad.mode = (pad.mode + 1) % count;
-                    log::info!("tablet pad {}: mode {}", pad.info.name, pad.mode + 1);
-                }
-                Binding::Action(a) => state.pad_action(&a),
-            }
+            let steps = dial_steps(&mut pad.dials[n], d.dial_v120());
+            state.pad_steps(i, mode, steps, Control::DialUp, Control::DialDown);
         }
         TabletPadEvent::Ring(r) => {
             let Some(dial) = pad.rings.get_mut(r.number() as usize) else {
@@ -415,6 +473,47 @@ const CHORD_MODS: [(u32, u32); 4] = [
 ];
 
 impl State {
+    /// Pad `i`'s button or key `c` went down or up: a bound chord stays
+    /// down while it does; an action or mode switch runs on the press.
+    fn pad_press(
+        &mut self,
+        i: usize,
+        mode: usize,
+        libinput_modes: bool,
+        c: Control,
+        pressed: bool,
+    ) {
+        if !pressed {
+            let pad = &mut self.devices.pads.pads[i];
+            if let Some(h) = pad.held.iter().position(|(held, _)| *held == c) {
+                let (_, codes) = pad.held.swap_remove(h);
+                self.pad_chord_up(codes);
+            }
+            return;
+        }
+        let Some(binding) = self.pad_binding(i, mode, c) else {
+            return;
+        };
+        match binding {
+            Binding::Keys { mods, keysym } => {
+                let codes = self.pad_chord_down(mods, keysym);
+                self.devices.pads.pads[i].held.push((c, codes));
+            }
+            Binding::Mode if libinput_modes => {
+                log::debug!("tablet pad: libinput counts this pad's modes; `mode` does nothing");
+            }
+            Binding::Mode => {
+                let pad = &self.devices.pads.pads[i];
+                let count =
+                    find(&self.config.tablet_pads, &pad.info.name).map_or(1, PadConfig::mode_count);
+                let pad = &mut self.devices.pads.pads[i];
+                pad.mode = (pad.mode + 1) % count;
+                log::info!("tablet pad {}: mode {}", pad.info.name, pad.mode + 1);
+            }
+            Binding::Action(a) => self.pad_action(&a),
+        }
+    }
+
     /// Pad `i`'s binding for `c` in `mode`, cloned off the config.
     fn pad_binding(&self, i: usize, mode: usize, c: Control) -> Option<Binding> {
         let pad = &self.devices.pads.pads[i];
@@ -423,7 +522,7 @@ impl State {
             .cloned()
     }
 
-    /// `steps` of a ring or strip: each one up or down runs its binding,
+    /// `steps` of a ring, strip or dial: each one up or down runs its binding,
     /// a chord as one tap.
     fn pad_steps(&mut self, i: usize, mode: usize, steps: i32, up: Control, down: Control) {
         if steps == 0 {
@@ -716,6 +815,82 @@ mod tests {
         assert!(
             err("[[tablet_pads]]\nstrip_step = -0.1").starts_with("tablet_pads #1: strip_step:")
         );
+    }
+
+    #[test]
+    fn pad_keys_and_dials_bind_by_name_and_per_mode() {
+        let pads = parse(
+            r#"
+            [[tablet_pads]]
+            keys = { controlpanel = "run", onscreen_keyboard = "ctrl+z" }
+            dial_up = "zoom-in"
+            dial_down = "spawn:true"
+            [[tablet_pads.modes]]
+            [[tablet_pads.modes]]
+            keys = { controlpanel = "launcher" }
+            "#,
+        );
+        let p = &pads[0];
+        assert_eq!(
+            p.binding(0, Control::Key(0x243)),
+            Some(&Binding::Action(Action::Run))
+        );
+        assert_eq!(
+            p.binding(1, Control::Key(0x243)),
+            Some(&Binding::Action(Action::Launcher))
+        );
+        assert_eq!(
+            p.binding(1, Control::Key(0x278)),
+            Some(&Binding::Keys {
+                mods: MOD_CTRL,
+                keysym: KEY_z
+            })
+        );
+        assert_eq!(
+            p.binding(0, Control::Key(0x240)),
+            None,
+            "buttonconfig is unbound"
+        );
+        assert_eq!(
+            p.binding(0, Control::DialUp),
+            Some(&Binding::Action(Action::Zoom(
+                crate::magnifier::ZoomStep::In
+            )))
+        );
+        assert_eq!(
+            p.binding(0, Control::DialDown),
+            Some(&Binding::Action(Action::Spawn("true".into())))
+        );
+    }
+
+    #[test]
+    fn an_unknown_pad_key_says_where() {
+        #[derive(Deserialize)]
+        struct F {
+            tablet_pads: Vec<FilePad>,
+        }
+        let f: F = toml::from_str("[[tablet_pads]]\nkeys = { KEY_A = \"run\" }").unwrap();
+        let err = f
+            .tablet_pads
+            .into_iter()
+            .next()
+            .unwrap()
+            .parse("tablet_pads #1");
+        assert!(
+            err.unwrap_err()
+                .starts_with("tablet_pads #1: keys: \"KEY_A\" is no pad key")
+        );
+    }
+
+    #[test]
+    fn a_dial_steps_a_detent_at_a_time_up_as_a_wheel_scrolls_up() {
+        let mut acc = 0.0;
+        assert_eq!(dial_steps(&mut acc, -120.0), 1, "a detent up");
+        assert_eq!(dial_steps(&mut acc, 240.0), -2, "two detents down");
+        assert_eq!(dial_steps(&mut acc, -60.0), 0, "half a detent waits");
+        assert_eq!(dial_steps(&mut acc, -60.0), 1, "and the other half steps");
+        assert_eq!(dial_steps(&mut acc, 30.0), 0);
+        assert_eq!(acc, -30.0, "a part detent carries");
     }
 
     #[test]

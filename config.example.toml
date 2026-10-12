@@ -194,6 +194,8 @@ interface = "classic"        # classic | blue | glass; an unknown value falls ba
 # ring_up = "ctrl+plus"      # each 15 degrees clockwise; ring_down counter-clockwise
 # ring_down = "ctrl+minus"
 # strip_up = "volume-up"     # each tenth of the strip towards its top; strip_down away from it
+# dial_up = "desktop-prev"   # each detent of a dial, as a wheel scrolling up; dial_down as one scrolling down
+# keys = { controlpanel = "run" }  # the pad keys some pads have: buttonconfig, controlpanel, onscreen_keyboard
 #                            # a value is a [[keybinds]] action name, "mode" (the next mode),
 #                            # "spawn:" and a command ("spawn:krita"), "none", or keys as
 #                            # [[keybinds]] spell them, sent to the app in front;
