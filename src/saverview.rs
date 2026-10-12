@@ -3,28 +3,33 @@
 //! gets a tree in `layers.saver`, above the lock screen: a black rect and what the saver draws over it,
 //! stepped by one timer at `saver::STEP_MS` (30 a second) while something moves.
 //!
-//! Per-step cost: Starfield and Mystify draw a canvas at half the output's size and show it stretched;
-//! the logo moves one buffer and uploads again only when its colour changes; Photos uploads a picture
+//! Per-step cost: Starfield and Mystify hand their marks to a stroke node the GPU draws at the
+//! output's resolution; the logo moves one buffer and uploads again only when its colour changes; Photos uploads a picture
 //! once and then only moves the new one's opacity during the fade; Blank runs no timer.
 
+use std::cell::RefCell;
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
 use std::time::{Duration, Instant};
 
-use reprisekit::saver::{self, Kind, STEP_MS, Saver};
-use reprisescene::{BufferId, RectId, TreeId};
+use reprisefx::{Stroke, Strokes};
+use reprisekit::saver::{self, Kind, Mark, STEP_MS, Saver};
+use reprisescene::{BufferId, CustomElement, CustomNode, Input, RectId, TreeId};
 use smithay::{
+    backend::renderer::gles::GlesRenderer,
     input::pointer::CursorImageStatus,
     output::Output,
     reexports::calloop::{
         RegistrationToken, channel,
         timer::{TimeoutAction, Timer},
     },
+    utils::{Logical, Physical, Point, Rectangle, Scale, Size},
 };
 
 use crate::compositor::State;
+use crate::glass::GlassCtx;
 use crate::raster::Canvas;
 
-const SHRINK: i32 = 2;
 /// Input this soon after Preview starts a saver is the click that asked for it, not a wish to stop.
 const PREVIEW_GRACE: Duration = Duration::from_millis(800);
 
@@ -56,13 +61,12 @@ struct Out {
     tree: TreeId,
     _black: RectId,
     saver: Saver,
-    /// Starfield and Mystify: the canvas drawn each step and its buffer, stretched over the output.
-    frame: Option<(BufferId, Canvas)>,
+    /// Starfield and Mystify: the marks the stroke node draws, and its commit.
+    marks: Option<(SharedMarks, Rc<Strokes>)>,
     logo: Option<(BufferId, Option<usize>)>,
     shown: Option<BufferId>,
     incoming: Option<BufferId>,
     current: Option<PathBuf>,
-    size: (i32, i32),
 }
 
 /// Start `kind` on every output, replacing any saver running. `preview` is Preview's run, which the next input after a moment stops.
@@ -88,33 +92,40 @@ pub fn start(state: &mut State, kind: Kind, preview: bool) {
         let black = state
             .scene
             .rect_create(tree, (b.width, b.height), [0.0, 0.0, 0.0, 1.0]);
-        let (sw, sh) = match kind {
-            Kind::Starfield | Kind::Mystify => (
-                (b.width / SHRINK).max(1) as u32,
-                (b.height / SHRINK).max(1) as u32,
-            ),
-            _ => (b.width as u32, b.height as u32),
-        };
         let seed = generation as u32 ^ (i as u32 + 1).wrapping_mul(0x9E37_79B9);
-        let saver = Saver::new(kind, &opts, sw, sh, seed, &state.text);
-        let frame = matches!(kind, Kind::Starfield | Kind::Mystify).then(|| {
-            let buf = state.scene.buffer_create(tree);
-            state
-                .scene
-                .buffer_set_dest_size(buf, Some((b.width, b.height).into()));
-            (buf, Canvas::new(sw, sh))
+        let saver = Saver::new(
+            kind,
+            &opts,
+            b.width as u32,
+            b.height as u32,
+            seed,
+            &state.text,
+        );
+        let marks = matches!(kind, Kind::Starfield | Kind::Mystify).then(|| {
+            let marks = Rc::new(RefCell::new(Vec::new()));
+            let strokes = Rc::new(Strokes::default());
+            let node = state.scene.custom_create(
+                tree,
+                Box::new(MarksNode {
+                    ctx: state.glass.clone(),
+                    marks: marks.clone(),
+                    strokes: strokes.clone(),
+                    extent: Size::from((b.width, b.height)),
+                }),
+            );
+            state.scene.set_input(node, Input::Passthrough);
+            (marks, strokes)
         });
         let logo = (kind == Kind::Logo).then(|| (state.scene.buffer_create(tree), None));
         outs.push(Out {
             tree,
             _black: black,
             saver,
-            frame,
+            marks,
             logo,
             shown: None,
             incoming: None,
             current: None,
-            size: (b.width, b.height),
         });
     }
     state.saver.run = Some(Run {
@@ -229,15 +240,9 @@ fn show(state: &mut State) {
     };
     let scene = &mut state.scene;
     for o in &mut run.outs {
-        if let Some((buf, canvas)) = &mut o.frame {
-            o.saver.draw(canvas);
-            scene.buffer_set_canvas(
-                *buf,
-                &canvas.pixels,
-                canvas.width as i32,
-                canvas.height as i32,
-            );
-            scene.buffer_set_dest_size(*buf, Some(o.size.into()));
+        if let Some((marks, strokes)) = &o.marks {
+            *marks.borrow_mut() = o.saver.marks();
+            strokes.changed();
         }
         if let Some((buf, uploaded)) = &mut o.logo {
             let color = o.saver.logo_color();
@@ -267,6 +272,70 @@ fn show(state: &mut State) {
     }
     state.saver.run = Some(run);
     state.redraw_all();
+}
+
+type SharedMarks = Rc<RefCell<Vec<Mark>>>;
+
+/// Starfield's or Mystify's marks over one output, in logical units from the tree's corner.
+struct MarksNode {
+    ctx: Rc<GlassCtx>,
+    marks: SharedMarks,
+    strokes: Rc<Strokes>,
+    extent: Size<i32, Logical>,
+}
+
+impl CustomNode<GlesRenderer> for MarksNode {
+    fn size(&self) -> Size<i32, Logical> {
+        self.extent
+    }
+
+    fn elements(
+        &self,
+        _renderer: &mut GlesRenderer,
+        location: Point<f64, Physical>,
+        scale: Scale<f64>,
+        alpha: f32,
+    ) -> Vec<CustomElement<GlesRenderer>> {
+        let Some(fx) = self.ctx.stroke_fx() else {
+            return Vec::new();
+        };
+        let geometry = Rectangle::new(
+            location.to_i32_round(),
+            self.extent.to_f64().to_physical(scale).to_i32_round(),
+        );
+        let strokes = to_physical(
+            &self.marks.borrow(),
+            scale,
+            location - geometry.loc.to_f64(),
+        );
+        vec![CustomElement::new(
+            self.strokes.element(&fx, geometry, &strokes, alpha),
+        )]
+    }
+}
+
+/// `marks` (logical) as strokes in physical pixels from the element's corner, which lies `shift`
+/// before the node's own.
+fn to_physical(marks: &[Mark], scale: Scale<f64>, shift: Point<f64, Physical>) -> Vec<Stroke> {
+    let (sx, sy) = (scale.x as f32, scale.y as f32);
+    let (dx, dy) = (shift.x as f32, shift.y as f32);
+    let at = |p: (f32, f32)| [p.0 * sx + dx, p.1 * sy + dy];
+    marks
+        .iter()
+        .map(|m| {
+            let c = |v: u8| f32::from(v) / 255.0;
+            let color = [c(m.color.r), c(m.color.g), c(m.color.b), 1.0];
+            if m.from == m.to {
+                return Stroke::dot(at(m.from), m.width * sx, color);
+            }
+            Stroke {
+                from: at(m.from),
+                to: at(m.to),
+                width: m.width * sx,
+                color,
+            }
+        })
+        .collect()
 }
 
 fn listen_for_photos(state: &mut State) {
@@ -394,6 +463,33 @@ mod tests {
             }),
             generation: 1,
         }
+    }
+
+    #[test]
+    fn marks_reach_physical_pixels_at_the_output_scale_and_stars_snap() {
+        use reprisekit::theme::Color;
+        let m = Mark {
+            from: (10.0, 20.0),
+            to: (30.0, 20.0),
+            width: 2.0,
+            color: Color::rgb(255, 0, 51),
+        };
+        let s = to_physical(&[m], Scale::from(2.0), Point::from((0.5, -0.25)));
+        assert_eq!(
+            s,
+            vec![Stroke {
+                from: [20.5, 39.75],
+                to: [60.5, 39.75],
+                width: 4.0,
+                color: [1.0, 0.0, 0.2, 1.0],
+            }]
+        );
+        let star = Mark { to: m.from, ..m };
+        assert_eq!(
+            to_physical(&[star], Scale::from(1.5), Point::from((0.0, 0.0)))[0],
+            Stroke::dot([15.0, 30.0], 3.0, [1.0, 0.0, 0.2, 1.0]),
+            "a star is a dot on whole pixels"
+        );
     }
 
     #[test]
