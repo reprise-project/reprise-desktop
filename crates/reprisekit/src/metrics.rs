@@ -31,6 +31,8 @@ pub struct ControlMetrics {
     /// A row of a combo's open list without icons, tall. A shell list's rows are 16 px in every
     /// look.
     pub combo_row: i32,
+    /// A list box's rows, tall.
+    pub list_row: i32,
     /// A buddy spinner's button column width: the year field's, and the time field's.
     pub buddy_spin: i32,
     /// Whether a buddy spinner's buttons sit inside its field's frame, as a plain spinner's do,
@@ -369,6 +371,7 @@ impl ControlMetrics {
         combo_drop: 16,
         combo_gap: 0,
         combo_row: 13,
+        list_row: 17,
         buddy_spin: 16,
         buddy_spin_inside: false,
         vtrack_thumb: 21,
@@ -387,6 +390,19 @@ impl ControlMetrics {
         file_dlg: FileDlgMetrics::CLASSIC,
         start_menu: StartMenuMetrics::CLASSIC,
     };
+}
+
+impl ControlMetrics {
+    /// These sizes for text grown by `u`: the rows that hold a line of text grow; boxes, glyphs,
+    /// scrollbars and drop buttons keep their size.
+    pub fn grown(self, u: crate::theme::TextUnits) -> ControlMetrics {
+        ControlMetrics {
+            combo_row: u.len(self.combo_row),
+            list_row: u.len(self.list_row),
+            list_header: u.len(self.list_header),
+            ..self
+        }
+    }
 }
 
 impl Default for ControlMetrics {

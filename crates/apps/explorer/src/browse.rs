@@ -403,7 +403,8 @@ impl Explorer {
 
     fn browse_error_form(&self) -> Option<Form> {
         let f = self.browse_error_fields()?;
-        Some(msgbox::form(&f, &self.dialog_text, self.dialog_px))
+        let (px, u) = (self.forms.fonts.size_px, self.forms.text);
+        Some(self.built(msgbox::form(&f, &self.dialog_text, px, u)))
     }
 
     pub fn browse_error_event(&mut self, ev: Event) -> Reply {
@@ -422,7 +423,7 @@ impl Explorer {
                 let Some(mut f) = self.browse_error_form() else {
                     return Reply::none();
                 };
-                let hit = f.hit(x, y, &self.dialog_text, self.dialog_px);
+                let hit = f.hit(x, y, &self.dialog_text, self.forms.fonts.size_px);
                 f.click(hit);
                 f.release()
             }
@@ -449,15 +450,16 @@ impl Explorer {
         if let Some(f) = self.browse_error_form() {
             let p = Paint {
                 s: 1,
-                ..ctx.theme.paint()
+                ..self.forms.paint()
             };
-            form::draw(c, &self.dialog_text, &p, &f, true, self.dialog_px);
+            form::draw(c, &self.dialog_text, &p, &f, true, self.forms.fonts.size_px);
         }
     }
 
     pub fn access_browse_error(&self, tree: &mut reprisekit::access::Tree) {
         if let Some(f) = self.browse_error_form() {
-            repriseapp::oneshot::access_form(&f, tree, &self.dialog_text, self.dialog_px);
+            let px = self.forms.fonts.size_px;
+            repriseapp::oneshot::access_form(&f, tree, &self.dialog_text, px);
         }
     }
 

@@ -88,6 +88,7 @@ fn styled(s: Arc<Style>) -> Theme {
         scale: 1,
         look: Look::Styled(s),
         active: true,
+        text: crate::theme::TextUnits::ONE,
     }
 }
 
@@ -276,6 +277,7 @@ pub fn draw_start_panel(
             s: l.scale.max(1),
             back: Backdrop::Face,
             active: true,
+            text: crate::theme::TextUnits::ONE,
         };
         let o = l.canvas;
         let sb = Rect::new(bar.x - o.x, bar.y - o.y, bar.width, bar.height);

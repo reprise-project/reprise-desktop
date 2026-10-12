@@ -17,6 +17,7 @@ use reprisekit::controls::{form, msgbox};
 use reprisekit::look::Paint;
 use reprisekit::raster::{Canvas, Rect};
 use reprisekit::text::TextRenderer;
+use reprisekit::theme::Theme;
 use std::ffi::OsStr;
 use std::os::unix::ffi::OsStrExt;
 use std::path::PathBuf;
@@ -79,7 +80,8 @@ struct Pick {
     dlg: FileDlg,
     host: Host,
     text: TextRenderer,
-    px: u32,
+    /// The theme the message boxes open at.
+    forms: Theme,
     msg: Option<(MsgBox, Option<PathBuf>)>,
     out: Arc<Mutex<Output>>,
     mime_tree: Rc<MimeTree>,
@@ -141,6 +143,7 @@ impl Pick {
             min_text_h: None,
             min_w: 0,
         };
+        self.forms = ctx.forms();
         self.msg = Some((MsgBox::new(self.input.title.clone(), fields), replace));
         Reply::redraw_all()
     }
@@ -205,7 +208,7 @@ impl App for Pick {
     fn children(&self) -> Vec<repriseapp::Child> {
         self.msg
             .iter()
-            .map(|(m, _)| m.child(MSGBOX, &self.text, self.px))
+            .map(|(m, _)| m.child(MSGBOX, &self.text, &self.forms))
             .collect()
     }
 
@@ -221,7 +224,7 @@ impl App for Pick {
             let Some((m, replace)) = &mut self.msg else {
                 return Reply::none();
             };
-            return match m.event(&ev, &self.text, self.px) {
+            return match m.event(&ev, &self.text, &ctx.forms()) {
                 Outcome::None => Reply::none(),
                 Outcome::Redraw => Reply::redraw(),
                 Outcome::Closed(Some(0)) if replace.is_some() => {
@@ -273,7 +276,7 @@ impl App for Pick {
     fn draw(&mut self, win: WinId, c: &mut Canvas, ctx: &Ctx) {
         if win == MSGBOX {
             if let Some((m, _)) = &self.msg {
-                m.draw(c, &ctx.theme, &self.text, self.px);
+                m.draw(c, &ctx.forms(), &self.text);
             }
             return;
         }
@@ -293,7 +296,7 @@ impl App for Pick {
     fn access(&mut self, win: WinId, tree: &mut Tree, ctx: &Ctx) {
         if win == MSGBOX {
             if let Some((m, _)) = &self.msg {
-                m.access(tree, &self.text, self.px);
+                m.access(tree, &self.text, &ctx.forms());
             }
             return;
         }
@@ -351,6 +354,7 @@ pub fn run_dialog() {
             w,
             &text,
             px,
+            reprisekit::theme::TextUnits::ONE,
         );
         dlg.set_extra(
             form::Form::new(items),
@@ -365,7 +369,7 @@ pub fn run_dialog() {
         dlg,
         host,
         text,
-        px,
+        forms: dialog::start_forms(),
         msg: None,
         out: out.clone(),
         mime_tree: Rc::new(MimeTree::load()),

@@ -94,7 +94,8 @@ struct PrintersApp {
     select: Option<String>,
     renaming: HashSet<String>,
     text: Option<Rc<TextRenderer>>,
-    px: u32,
+    /// `Ctx::forms` at the last event, for `children`, which has no `Ctx`.
+    forms: Theme,
 }
 
 impl PrintersApp {
@@ -109,15 +110,6 @@ impl PrintersApp {
 
     fn fonts(&mut self) {
         self.text = Some(Rc::new(TextRenderer::load(&FontConfig::default())));
-        self.px = Theme::default().fonts.size_px;
-    }
-
-    fn text_px(&self) -> (Rc<TextRenderer>, u32) {
-        let text = self
-            .text
-            .clone()
-            .unwrap_or_else(|| Rc::new(TextRenderer::load(&FontConfig::default())));
-        (text, self.px.max(1))
     }
 
     fn send(&self, cmd: Cmd) {
@@ -737,12 +729,11 @@ impl PrintersApp {
         }
     }
 
-    fn confirm_event(&mut self, ev: Event) -> Reply {
-        let (text, px) = self.text_px();
+    fn confirm_event(&mut self, ev: Event, ctx: &Ctx) -> Reply {
         let Some((printer, b)) = &mut self.confirm else {
             return Reply::none();
         };
-        match b.event(&ev, &text, px) {
+        match b.event(&ev, &ctx.text, &self.forms) {
             oneshot::Outcome::None => Reply::none(),
             oneshot::Outcome::Redraw => Reply::redraw(),
             oneshot::Outcome::Closed(button) => {
@@ -756,12 +747,11 @@ impl PrintersApp {
         }
     }
 
-    fn note_event(&mut self, ev: Event) -> Reply {
-        let (text, px) = self.text_px();
+    fn note_event(&mut self, ev: Event, ctx: &Ctx) -> Reply {
         let Some(b) = &mut self.note else {
             return Reply::none();
         };
-        match b.event(&ev, &text, px) {
+        match b.event(&ev, &ctx.text, &self.forms) {
             oneshot::Outcome::None => Reply::none(),
             oneshot::Outcome::Redraw => Reply::redraw(),
             oneshot::Outcome::Closed(_) => {
@@ -812,7 +802,7 @@ impl App for PrintersApp {
             out.push(Child {
                 id: PROPS,
                 title: p.window_title(),
-                size: props::CLIENT,
+                size: self.forms.text.size(props::CLIENT),
                 fixed: true,
                 modal: false,
             });
@@ -821,7 +811,7 @@ impl App for PrintersApp {
             out.push(Child {
                 id: WIZARD,
                 title: "Add Printer Wizard".into(),
-                size: wizard::CLIENT,
+                size: self.forms.text.size(wizard::CLIENT),
                 fixed: true,
                 modal: false,
             });
@@ -837,10 +827,10 @@ impl App for PrintersApp {
         }
         if let Some(text) = &self.text {
             if let Some((_, b)) = &self.confirm {
-                out.push(b.child(CONFIRM, text, self.px));
+                out.push(b.child(CONFIRM, text, &self.forms));
             }
             if let Some(b) = &self.note {
-                out.push(b.child(NOTE, text, self.px));
+                out.push(b.child(NOTE, text, &self.forms));
             }
         }
         out
@@ -871,6 +861,7 @@ impl App for PrintersApp {
     }
 
     fn event(&mut self, win: WinId, ev: Event, ctx: &mut Ctx) -> Reply {
+        self.forms = ctx.forms();
         if matches!(ev, Event::Wake) {
             return self.wake();
         }
@@ -888,15 +879,16 @@ impl App for PrintersApp {
             PROPS => self.props_event(ev, ctx),
             WIZARD => self.wizard_event(ev, ctx),
             BROWSE => self.browse_event(ev, ctx),
-            CONFIRM => self.confirm_event(ev),
-            NOTE => self.note_event(ev),
+            CONFIRM => self.confirm_event(ev, ctx),
+            NOTE => self.note_event(ev, ctx),
             _ => self.main_event(ev, ctx),
         }
         .with_clipboard(clip)
     }
 
     fn access(&mut self, win: WinId, tree: &mut Tree, ctx: &Ctx) {
-        let px = ctx.theme.fonts.size_px;
+        let forms = ctx.forms();
+        let px = forms.fonts.size_px;
         match win {
             QUEUE => {
                 if let Some(q) = &self.queue {
@@ -916,17 +908,22 @@ impl App for PrintersApp {
             BROWSE => {
                 if let Some((_, d)) = &self.browse {
                     let (w, h) = d.client();
-                    d.access(tree, Rect::new(0, 0, w, h), &ctx.text, px);
+                    d.access(
+                        tree,
+                        Rect::new(0, 0, w, h),
+                        &ctx.text,
+                        ctx.theme.fonts.size_px,
+                    );
                 }
             }
             CONFIRM => {
                 if let Some((_, b)) = &self.confirm {
-                    b.access(tree, &ctx.text, px);
+                    b.access(tree, &ctx.text, &forms);
                 }
             }
             NOTE => {
                 if let Some(b) = &self.note {
-                    b.access(tree, &ctx.text, px);
+                    b.access(tree, &ctx.text, &forms);
                 }
             }
             _ => self.folder.access(tree, ctx),
@@ -948,10 +945,11 @@ impl App for PrintersApp {
     }
 
     fn draw(&mut self, win: WinId, c: &mut Canvas, ctx: &Ctx) {
-        let px = ctx.theme.fonts.size_px;
+        let forms = ctx.forms();
+        let px = forms.fonts.size_px;
         let paint = Paint {
             s: 1,
-            ..ctx.theme.paint()
+            ..forms.paint()
         };
         match win {
             QUEUE => {
@@ -976,17 +974,27 @@ impl App for PrintersApp {
             BROWSE => {
                 if let Some((_, d)) = &self.browse {
                     let (w, h) = d.client();
-                    d.draw(c, &ctx.text, &paint, Rect::new(0, 0, w, h), px);
+                    let paint = Paint {
+                        s: 1,
+                        ..ctx.theme.paint()
+                    };
+                    d.draw(
+                        c,
+                        &ctx.text,
+                        &paint,
+                        Rect::new(0, 0, w, h),
+                        ctx.theme.fonts.size_px,
+                    );
                 }
             }
             CONFIRM => {
                 if let Some((_, b)) = &self.confirm {
-                    b.draw(c, &ctx.theme, &ctx.text, px);
+                    b.draw(c, &forms, &ctx.text);
                 }
             }
             NOTE => {
                 if let Some(b) = &self.note {
-                    b.draw(c, &ctx.theme, &ctx.text, px);
+                    b.draw(c, &forms, &ctx.text);
                 }
             }
             _ => {
@@ -1032,5 +1040,30 @@ mod tests {
             heads: Default::default(),
             text_size: 100,
         }
+    }
+
+    #[test]
+    fn form_windows_open_at_the_text_size() {
+        let mut app = PrintersApp::default();
+        app.open_wizard();
+        let printer = cups::Printer {
+            name: "Laser".into(),
+            ..Default::default()
+        };
+        app.props = Some(props::PropsSheet::new(&printer, None));
+        let mut ctx = Ctx {
+            text_size: 150,
+            ..test_ctx(folder::CLIENT)
+        };
+        app.event(repriseapp::MAIN, Event::Blink, &mut ctx);
+        let size = |id| {
+            app.children()
+                .into_iter()
+                .find(|c| c.id == id)
+                .unwrap()
+                .size
+        };
+        assert_eq!(size(WIZARD), (768, 556));
+        assert_eq!(size(PROPS), (587, 680));
     }
 }

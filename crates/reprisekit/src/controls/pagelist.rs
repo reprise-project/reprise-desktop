@@ -116,7 +116,7 @@ impl PageList {
         self.bars.press(hit.part(), matches!(hit, BarHit::Thumb(_)));
         self.repeat = matches!(hit, BarHit::Back | BarHit::Forward).then_some(None);
         let by = self.drag.press(Axis::Vertical, hit);
-        let dy = by.by(ROW_H as i64, lay.inner.height as i64) as i32;
+        let dy = by.by(lay.row_h as i64, lay.inner.height as i64) as i32;
         self.scroll(dy, lay)
     }
 
@@ -162,8 +162,8 @@ impl PageList {
         }
         self.repeat = Some(Some(now + REPEAT_EVERY));
         let dy = match self.bars.lit() {
-            Some((ScrollHit::Back, Interaction::Pressed)) => -ROW_H,
-            Some((ScrollHit::Forward, Interaction::Pressed)) => ROW_H,
+            Some((ScrollHit::Back, Interaction::Pressed)) => -lay.row_h,
+            Some((ScrollHit::Forward, Interaction::Pressed)) => lay.row_h,
             _ => return false,
         };
         self.scroll(dy, lay)
@@ -215,6 +215,8 @@ pub struct Layout {
     pub total: i32,
     pub top: i32,
     pub thumb_min: i32,
+    /// A row's height: the look's list row ([`ControlMetrics::list_row`]).
+    pub row_h: i32,
 }
 
 pub fn layout(list: &PageList, frame: Rect, cm: &ControlMetrics) -> Layout {
@@ -226,7 +228,7 @@ pub fn layout(list: &PageList, frame: Rect, cm: &ControlMetrics) -> Layout {
             y += HEADING_GAP;
         }
         tops.push(y);
-        y += ROW_H;
+        y += cm.list_row;
     }
     let total = y;
     let scrollbar = (total > inner.height).then(|| {
@@ -236,7 +238,7 @@ pub fn layout(list: &PageList, frame: Rect, cm: &ControlMetrics) -> Layout {
     let top = held(list.top, inner.height, total);
     let rows = tops
         .into_iter()
-        .map(|t| Rect::new(inner.x, inner.y + t - top, inner.width, ROW_H))
+        .map(|t| Rect::new(inner.x, inner.y + t - top, inner.width, cm.list_row))
         .collect();
     Layout {
         frame,
@@ -246,6 +248,7 @@ pub fn layout(list: &PageList, frame: Rect, cm: &ControlMetrics) -> Layout {
         total,
         top,
         thumb_min: cm.thumb_min,
+        row_h: cm.list_row,
     }
 }
 

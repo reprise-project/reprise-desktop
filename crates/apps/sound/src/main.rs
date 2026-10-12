@@ -46,10 +46,13 @@ struct Sound {
     /// the only way to it, so a tray that will not start is fatal.
     tray_only: bool,
     error: Option<MsgBox>,
-    /// The renderer the box is sized and drawn with: `children` has no
-    /// `Ctx`, so it is loaded in `start`.
+    /// The renderer and forms theme the box and window are sized with:
+    /// `children` and `initial_size` have no `Ctx`, so they are kept from
+    /// `start` and the last event.
     dialog_text: Option<TextRenderer>,
-    dialog_px: u32,
+    forms: Theme,
+    /// The client size last asked for the main window.
+    asked: (i32, i32),
     gate: tray::ClickGate,
     waker: Option<repriseapp::Waker>,
     flyout: Option<Open>,
@@ -316,7 +319,7 @@ impl Sound {
         let (Some(b), Some(text)) = (&mut self.error, &self.dialog_text) else {
             return Reply::none();
         };
-        match b.event(&ev, text, self.dialog_px) {
+        match b.event(&ev, text, &self.forms) {
             oneshot::Outcome::Closed(_) => {
                 self.error = None;
                 Reply::redraw_all()
@@ -558,7 +561,7 @@ impl App for Sound {
     }
 
     fn initial_size(&self) -> (i32, i32) {
-        sheet::CLIENT
+        self.forms.text.size(sheet::CLIENT)
     }
 
     fn fixed(&self) -> bool {
@@ -571,7 +574,7 @@ impl App for Sound {
 
     fn children(&self) -> Vec<Child> {
         match (&self.error, &self.dialog_text) {
-            (Some(b), Some(text)) => vec![b.child(ERROR_WIN, text, self.dialog_px)],
+            (Some(b), Some(text)) => vec![b.child(ERROR_WIN, text, &self.forms)],
             _ => Vec::new(),
         }
     }
@@ -586,7 +589,7 @@ impl App for Sound {
     fn start(&mut self, waker: repriseapp::Waker) {
         self.waker = Some(waker.clone());
         self.dialog_text = Some(TextRenderer::load(&FontConfig::default()));
-        self.dialog_px = Theme::default().fonts.size_px;
+        self.asked = sheet::CLIENT;
         // The tray goes first: it takes the `reprise.sound` bus name and a
         // second instance exits here once it has raised the first. Spawning
         // `pw-dump` before that would leave the loser's child behind.
@@ -611,6 +614,78 @@ impl App for Sound {
     }
 
     fn event(&mut self, win: WinId, ev: Event, ctx: &mut Ctx) -> Reply {
+        self.forms = ctx.forms();
+        let mut reply = self.dispatch(win, ev, ctx);
+        let size = self.forms.text.size(sheet::CLIENT);
+        if size != self.asked {
+            self.asked = size;
+            reply.size = Some(size);
+            reply.redraw = true;
+        }
+        reply
+    }
+
+    fn access(&mut self, win: WinId, tree: &mut Tree, ctx: &Ctx) {
+        let forms = ctx.forms();
+        match win {
+            FLYOUT_WIN => {
+                if let Some(f) = &self.flyout {
+                    let lay = flyout_layout(f, ctx);
+                    let focus =
+                        f.popup
+                            .access(&lay, &ctx.text, ctx.theme.fonts.size_px, tree, ROOT);
+                    tree.set_focus(focus);
+                }
+            }
+            ERROR_WIN => {
+                if let (Some(b), Some(text)) = (&self.error, &self.dialog_text) {
+                    b.access(tree, text, &forms);
+                }
+            }
+            _ => {
+                if let Some(s) = &self.sheet {
+                    oneshot::access_sheet(&s.sheet, tree, &ctx.text, forms.fonts.size_px);
+                }
+            }
+        }
+    }
+
+    fn draw(&mut self, win: WinId, c: &mut Canvas, ctx: &Ctx) {
+        if win == FLYOUT_WIN {
+            // The canvas arrives transparent; only the panel is drawn.
+            if let Some(f) = &self.flyout {
+                let lay = flyout_layout(f, ctx);
+                volumepopup::draw(c, &ctx.theme, &ctx.text, &f.popup, &lay);
+            }
+            return;
+        }
+        let forms = ctx.forms();
+        if win == ERROR_WIN {
+            if let (Some(b), Some(text)) = (&self.error, &self.dialog_text) {
+                b.draw(c, &forms, text);
+            }
+            return;
+        }
+        self.build(None);
+        c.fill_rect(c.bounds(), forms.colors.button_face);
+        if let Some(s) = &self.sheet {
+            propsheet::draw(
+                c,
+                &ctx.text,
+                &Paint {
+                    s: 1,
+                    ..forms.paint()
+                },
+                &s.sheet,
+                true,
+                forms.fonts.size_px,
+            );
+        }
+    }
+}
+
+impl Sound {
+    fn dispatch(&mut self, win: WinId, ev: Event, ctx: &mut Ctx) -> Reply {
         if matches!(ev, Event::Wake) {
             return self.wake(ctx);
         }
@@ -636,63 +711,6 @@ impl App for Sound {
             },
         };
         self.outcome(out)
-    }
-
-    fn access(&mut self, win: WinId, tree: &mut Tree, ctx: &Ctx) {
-        match win {
-            FLYOUT_WIN => {
-                if let Some(f) = &self.flyout {
-                    let lay = flyout_layout(f, ctx);
-                    let focus =
-                        f.popup
-                            .access(&lay, &ctx.text, ctx.theme.fonts.size_px, tree, ROOT);
-                    tree.set_focus(focus);
-                }
-            }
-            ERROR_WIN => {
-                if let (Some(b), Some(text)) = (&self.error, &self.dialog_text) {
-                    b.access(tree, text, self.dialog_px);
-                }
-            }
-            _ => {
-                if let Some(s) = &self.sheet {
-                    oneshot::access_sheet(&s.sheet, tree, &ctx.text, ctx.theme.fonts.size_px);
-                }
-            }
-        }
-    }
-
-    fn draw(&mut self, win: WinId, c: &mut Canvas, ctx: &Ctx) {
-        if win == FLYOUT_WIN {
-            // The canvas arrives transparent; only the panel is drawn.
-            if let Some(f) = &self.flyout {
-                let lay = flyout_layout(f, ctx);
-                volumepopup::draw(c, &ctx.theme, &ctx.text, &f.popup, &lay);
-            }
-            return;
-        }
-        let cs = &ctx.theme.colors;
-        if win == ERROR_WIN {
-            if let (Some(b), Some(text)) = (&self.error, &self.dialog_text) {
-                b.draw(c, &ctx.theme, text, self.dialog_px);
-            }
-            return;
-        }
-        self.build(None);
-        c.fill_rect(c.bounds(), cs.button_face);
-        if let Some(s) = &self.sheet {
-            propsheet::draw(
-                c,
-                &ctx.text,
-                &Paint {
-                    s: 1,
-                    ..ctx.theme.paint()
-                },
-                &s.sheet,
-                true,
-                ctx.theme.fonts.size_px,
-            );
-        }
     }
 }
 

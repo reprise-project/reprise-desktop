@@ -431,7 +431,7 @@ fn cover_output(state: &mut State, output: &Output) {
         forget_output(state, output);
         return;
     }
-    let color = state.config.dialog_theme.colors.background.as_f32();
+    let color = state.config.theme.colors.background.as_f32();
     let existing = state
         .lock
         .active
@@ -547,11 +547,11 @@ const LOCK_ICON: &str = "system-lock-screen";
 
 fn redraw_output(state: &mut State, output: &Output) {
     let scale = state.draw_scale_at(Some(output));
-    let px = state.config.dialog_theme.scaled(scale).icon_size();
+    let px = state.config.theme.scaled(scale).icon_size();
     let icon = state.icons.get_shared(LOCK_ICON, px);
     let b = state.layout_box(Some(output));
-    let logical = lock::dialog_layout(&state.config.dialog_theme.scaled(1));
-    let theme = state.config.dialog_theme.scaled(scale);
+    let logical = lock::dialog_layout(&state.config.theme.scaled(1));
+    let theme = state.config.theme.scaled(scale);
     let Some(l) = state.lock.active.as_ref() else {
         return;
     };

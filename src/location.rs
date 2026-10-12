@@ -189,8 +189,9 @@ fn asked(state: &mut State, ask: Ask) {
         .and_then(|name| state.icons.get(&name, 32))
         .or_else(|| state.icons.get("dialog-question", 32));
     let fields = locationprompt::Fields { program, icon };
-    let px = state.config.theme.fonts.size_px;
-    let d = crate::dialog::Dialog::location_prompt(&fields, desktop_id.clone(), &state.text, px);
+    let t = &state.config.theme;
+    let (px, u) = (t.fonts.size_px, t.text);
+    let d = crate::dialog::Dialog::location_prompt(&fields, desktop_id.clone(), &state.text, px, u);
     state.location.pending.push((desktop_id, vec![reply]));
     state.open_dialog(d);
 }

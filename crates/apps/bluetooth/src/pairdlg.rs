@@ -5,6 +5,7 @@ use reprisekit::classic::widgets::{BUTTON_H, BUTTON_W};
 use reprisekit::controls::form::{self, Form, Item};
 use reprisekit::raster::Rect;
 use reprisekit::text::TextRenderer;
+use reprisekit::theme::Theme;
 
 use crate::bz::{AgentRequest, Answer};
 use crate::passkey;
@@ -28,8 +29,8 @@ pub enum Outcome {
 }
 
 impl PairDialog {
-    pub fn new(req: AgentRequest, name: &str, text: &TextRenderer, px: u32) -> PairDialog {
-        let mut items = passkey::items(&req.ask, name, BODY, text, px);
+    pub fn new(req: AgentRequest, name: &str, text: &TextRenderer, forms: &Theme) -> PairDialog {
+        let mut items = passkey::items(&req.ask, name, BODY, text, forms);
         let y = CLIENT.1 - 12 - BUTTON_H;
         let waits = req.done.is_some();
         items.push(Item::button(
@@ -103,10 +104,7 @@ mod tests {
             done: Some(done),
         };
         let text = TextRenderer::load(&FontConfig::default());
-        (
-            PairDialog::new(req, "Pad", &text, Theme::default().fonts.size_px),
-            wait,
-        )
+        (PairDialog::new(req, "Pad", &text, &Theme::default()), wait)
     }
 
     #[test]

@@ -162,7 +162,11 @@ pub struct Explorer {
     error_icon: Option<Canvas>,
     /// `children(&self)` has no `Ctx` to borrow a renderer from.
     dialog_text: TextRenderer,
+    /// The dialog font's px at 100%; the folder picker and the Open With chooser stay at it.
     dialog_px: u32,
+    /// The forms theme with the dialog font at the text size, which the boxes draw with and
+    /// size their windows by ([`Explorer::follow_forms`]).
+    forms: Theme,
     clicks: DoubleClick<usize>,
     /// For the double click that takes a list row as the default button, keyed by the form item.
     dialog_clicks: DoubleClick<Option<usize>>,
@@ -303,6 +307,7 @@ impl Explorer {
             error_icon: None,
             dialog_text: TextRenderer::load(&FontConfig::default()),
             dialog_px: Theme::default().fonts.size_px,
+            forms: Theme::default(),
             clicks: DoubleClick::default(),
             dialog_clicks: DoubleClick::default(),
             alt_arm: AltArm::default(),
@@ -344,6 +349,7 @@ impl Explorer {
             folder_tip: None,
             tip_walk: None,
         };
+        ex.follow_forms(ctx);
         ex.build_toolbar(ctx);
         ex.build_address(ctx);
         ex.build_tree(ctx);
@@ -816,6 +822,7 @@ impl App for Lazy {
             self.inner = Some(ex);
         }
         let ex = self.inner.as_mut().expect("built above");
+        ex.follow_forms(ctx);
         match ev {
             Event::Key(_) => ex.keyed = true,
             Event::Pointer(PointerInput::Press { .. }) => ex.keyed = false,
@@ -937,6 +944,7 @@ impl App for Lazy {
             c.fill_rect(c.bounds(), ctx.theme.colors.button_face);
             return;
         };
+        ex.follow_forms(ctx);
         if win == DIALOG {
             ex.draw_dialog(c, ctx);
             return;
@@ -962,16 +970,17 @@ impl App for Lazy {
     }
 
     fn access(&mut self, win: WinId, tree: &mut reprisekit::access::Tree, ctx: &Ctx) {
-        let Some(ex) = &self.inner else {
+        let Some(ex) = &mut self.inner else {
             return;
         };
+        ex.follow_forms(ctx);
         match win {
             DIALOG => ex.access_dialog(tree, ctx),
             PROGRAM_BROWSE => ex.access_program_browse(tree),
             browse::ERROR => ex.access_browse_error(tree),
             PROPS => {
                 if let Some(p) = &ex.props {
-                    let px = ctx.theme.fonts.size_px;
+                    let px = ctx.forms().fonts.size_px;
                     let (_, focus) = p
                         .sheet
                         .access(tree, reprisekit::access::ROOT, &ctx.text, px);

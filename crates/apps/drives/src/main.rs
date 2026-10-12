@@ -68,6 +68,8 @@ struct DrivesApp {
     tray_state: Option<reprisetray::Shown>,
     flyout: Option<Flyout>,
     unlock: Option<unlock::Unlock>,
+    /// The unlock box's client size at the text size it opened at.
+    unlock_size: (i32, i32),
     unlock_queue: VecDeque<String>,
     removing: HashMap<String, Removing>,
     balloons: HashMap<u32, PathBuf>,
@@ -202,6 +204,7 @@ impl DrivesApp {
         };
         let name = model::container_name(self.snap(), &volume);
         self.unlock = Some(unlock::Unlock::open(volume, &name, ctx));
+        self.unlock_size = unlock::Unlock::client(ctx);
     }
 
     fn mounted(&mut self, volume: &str, result: Result<PathBuf, reprisefs::udisks::Error>) {
@@ -494,7 +497,7 @@ impl App for DrivesApp {
             .map(|_| Child {
                 id: UNLOCK,
                 title: unlock::TITLE.into(),
-                size: unlock::CLIENT,
+                size: self.unlock_size,
                 fixed: true,
                 modal: false,
             })

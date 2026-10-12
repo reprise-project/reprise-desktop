@@ -13,8 +13,8 @@ use reprisekit::raster::Canvas;
 struct AboutBox {
     facts: SystemFacts,
     logo: Option<Canvas>,
-    /// Built with the first outputs, and again when they or the
-    /// interface change.
+    /// Built with the first outputs, and again when they, the
+    /// interface or the text size change.
     form: Option<Form>,
     /// Until the first `Event::Heads` the window has no surface: the
     /// display lines set its height.
@@ -29,18 +29,32 @@ impl AboutBox {
         }
     }
 
-    /// The form for the facts as they are and the interface `ctx` draws
-    /// in, rebuilt only when that interface is not the one it shows.
+    /// The form for the facts as they are and the interface and text size `ctx` draws in,
+    /// rebuilt only when those are not the ones it shows.
     fn form(&mut self, ctx: &Ctx) -> &mut Form {
         let interface = about::interface_name(&ctx.theme);
         if self.facts.interface != interface {
             self.facts.interface = interface.into();
             self.form = None;
         }
+        let forms = ctx.forms();
+        let paint = forms.paint();
+        if self.form.as_ref().is_some_and(|f| f.units() != paint.text) {
+            self.form = None;
+        }
         let px = ctx.theme.fonts.size_px;
         let system = self.system();
-        self.form
-            .get_or_insert_with(|| aboutbox::system_form(&system, &ctx.text, px))
+        self.form.get_or_insert_with(|| {
+            let mut f = aboutbox::system_form(&system, &ctx.text, px);
+            let w = paint.text.len(aboutbox::system_size(&system).0);
+            f.set_picture("banner", aboutbox::banner_wide(&ctx.text, px, w));
+            f.drawn_with(&paint);
+            f
+        })
+    }
+
+    fn size(&self, ctx: &Ctx) -> (i32, i32) {
+        ctx.forms().text.size(aboutbox::system_size(&self.system()))
     }
 
     fn answer(&self, ev: form::Event) -> Reply {
@@ -108,7 +122,7 @@ impl App for AboutBox {
                 self.form = None;
                 self.form(ctx);
                 Reply {
-                    size: Some(aboutbox::system_size(&self.system())),
+                    size: Some(self.size(ctx)),
                     redraw: true,
                     ..Default::default()
                 }
@@ -130,7 +144,7 @@ impl App for AboutBox {
                 button: BTN_LEFT,
                 ..
             }) => {
-                let px = ctx.theme.fonts.size_px;
+                let px = ctx.forms().fonts.size_px;
                 let hit = self.form(ctx).hit(x, y, &ctx.text, px);
                 match self.form(ctx).click(hit) {
                     form::Event::None => Reply::none(),
@@ -138,7 +152,7 @@ impl App for AboutBox {
                 }
             }
             Event::Pointer(PointerInput::Motion { x, y }) => {
-                let px = ctx.theme.fonts.size_px;
+                let px = ctx.forms().fonts.size_px;
                 let hit = self.form(ctx).hit(x, y, &ctx.text, px);
                 match self.form(ctx).motion(x, y, hit) {
                     form::Event::None => Reply::none(),
@@ -160,21 +174,21 @@ impl App for AboutBox {
     }
 
     fn access(&mut self, _win: WinId, tree: &mut Tree, ctx: &Ctx) {
-        let px = ctx.theme.fonts.size_px;
+        let px = ctx.forms().fonts.size_px;
         let form = self.form(ctx).clone();
         repriseapp::oneshot::access_form(&form, tree, &ctx.text, px);
     }
 
     fn draw(&mut self, _win: WinId, c: &mut Canvas, ctx: &Ctx) {
-        let cs = &ctx.theme.colors;
-        let px = ctx.theme.fonts.size_px;
-        c.fill_rect(c.bounds(), cs.button_face);
+        let forms = ctx.forms();
+        let px = forms.fonts.size_px;
+        c.fill_rect(c.bounds(), forms.colors.button_face);
         form::draw(
             c,
             &ctx.text,
             &Paint {
                 s: 1,
-                ..ctx.theme.paint()
+                ..forms.paint()
             },
             self.form(ctx),
             true,

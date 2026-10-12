@@ -945,9 +945,9 @@ impl State {
         while view.nodes.len() < count {
             view.nodes.push(self.scene.buffer_create(view.tree));
         }
-        // The labels stay at the dialogs' text size: the grid's cells are
-        // fixed pixels, and a larger label would run into the next icon.
-        let base = &self.config.dialog_theme;
+        // The labels stay at 100% text: the grid's cells are fixed pixels,
+        // and a larger label would run into the next icon.
+        let base = &self.config.base_theme;
         if view
             .drawn_theme
             .as_ref()

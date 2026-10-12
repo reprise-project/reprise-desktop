@@ -203,7 +203,11 @@ struct Notepad {
     lossy: Option<(MsgBox, String)>,
     /// Kept here because `children(&self)` has no `Ctx`.
     dialog_text: TextRenderer,
+    /// The dialog font's px at 100%; file dialogs stay at it.
     dialog_px: u32,
+    /// The forms theme with the dialog font at the text size: Find, Replace, Go To, About and the
+    /// message boxes draw and size their windows with it.
+    forms: Theme,
     open: Option<FileDlg>,
     saveas: Option<FileDlg>,
     host: Host,
@@ -367,6 +371,7 @@ impl Notepad {
             lossy: None,
             dialog_text: TextRenderer::load(&FontConfig::default()),
             dialog_px: Theme::default().fonts.size_px,
+            forms: Theme::default(),
             open: None,
             saveas: None,
             host: Host::default(),
@@ -587,7 +592,7 @@ impl Notepad {
         let Some((b, _)) = &mut self.lossy else {
             return Reply::none();
         };
-        match b.event(&ev, &self.dialog_text, self.dialog_px) {
+        match b.event(&ev, &self.dialog_text, &self.forms) {
             oneshot::Outcome::Closed(answer) => {
                 let (_, text) = self.lossy.take().expect("checked above");
                 if answer == Some(0) {
@@ -911,7 +916,7 @@ impl Notepad {
     }
 
     fn goto_event(&mut self, ev: Event, ctx: &mut Ctx) -> Reply {
-        let px = ctx.theme.fonts.size_px;
+        let px = ctx.forms().fonts.size_px;
         match form_event(&mut self.goto, &ev, &ctx.text, px, ctx.caret_on) {
             FormStep::Closed => {
                 self.goto = None;
@@ -1038,6 +1043,8 @@ impl Notepad {
     }
 
     fn follow(&mut self, ctx: &Ctx) {
+        self.forms = ctx.forms();
+        self.forms.fonts.size_px = self.forms.text.px(self.dialog_px);
         self.metrics.follow_look(&ctx.theme.look.controls());
         let px = reprisekit::theme::text_px(EDIT_PX, ctx.text_size);
         self.metrics.font_px = px;
@@ -1130,13 +1137,38 @@ impl Notepad {
         repriseapp::about::fields("Notepad", self.app_icon.clone())
     }
 
+    /// Laid out for the 100% font; the banner spans the grown window.
+    fn about_form(&self) -> Form {
+        let (text, px) = (&self.dialog_text, self.dialog_px);
+        let mut f = aboutbox::form(&self.about_fields(), text, px);
+        let w = self.forms.text.len(aboutbox::CLIENT.0);
+        f.set_picture("banner", aboutbox::banner_wide(text, px, w));
+        f
+    }
+
+    fn msgbox_size(&self, fields: &msgbox::Fields) -> (i32, i32) {
+        let u = self.forms.text;
+        u.size(msgbox::client(
+            fields,
+            &self.dialog_text,
+            self.forms.fonts.size_px,
+            u,
+        ))
+    }
+
     fn find_event(&mut self, ev: Event, ctx: &mut Ctx) -> Reply {
         if let Event::Key(k) = &ev
             && let Some(r) = self.accel(k, ctx)
         {
             return r;
         }
-        match form_event(&mut self.find, &ev, &ctx.text, self.dialog_px, ctx.caret_on) {
+        match form_event(
+            &mut self.find,
+            &ev,
+            &ctx.text,
+            self.forms.fonts.size_px,
+            ctx.caret_on,
+        ) {
             FormStep::Closed => {
                 self.find = None;
                 Reply::redraw_all()
@@ -1189,7 +1221,7 @@ impl Notepad {
             &mut self.replace,
             &ev,
             &ctx.text,
-            self.dialog_px,
+            self.forms.fonts.size_px,
             ctx.caret_on,
         ) {
             FormStep::Closed => {
@@ -1285,7 +1317,7 @@ impl Notepad {
         let Some(b) = &mut self.notfound else {
             return Reply::none();
         };
-        match b.event(&ev, &self.dialog_text, self.dialog_px) {
+        match b.event(&ev, &self.dialog_text, &self.forms) {
             oneshot::Outcome::Closed(_) => {
                 self.notfound = None;
                 Reply::redraw_all()
@@ -1299,7 +1331,7 @@ impl Notepad {
         let Some(b) = &mut self.error else {
             return Reply::none();
         };
-        match b.event(&ev, &self.dialog_text, self.dialog_px) {
+        match b.event(&ev, &self.dialog_text, &self.forms) {
             oneshot::Outcome::Closed(_) => {
                 self.error = None;
                 Reply::redraw_all()
@@ -1311,9 +1343,7 @@ impl Notepad {
 
     /// About's own loop.
     fn about_event(&mut self, ev: Event, _ctx: &mut Ctx) -> Reply {
-        let step = oneshot::event(&ev, &self.dialog_text, self.dialog_px, || {
-            aboutbox::form(&self.about_fields(), &self.dialog_text, self.dialog_px)
-        });
+        let step = oneshot::event(&ev, &self.dialog_text, &self.forms, || self.about_form());
         match step {
             FormStep::Closed => {
                 self.about = false;
@@ -1412,7 +1442,7 @@ impl Notepad {
 
     fn savechanges_event(&mut self, ev: Event, _ctx: &mut Ctx) -> Reply {
         let mut fields = self.savechanges_fields();
-        let step = oneshot::msgbox_event(&ev, &self.dialog_text, self.dialog_px, &mut fields);
+        let step = oneshot::msgbox_event(&ev, &self.dialog_text, &self.forms, &mut fields);
         self.savechanges_focus = fields.default;
         match step {
             FormStep::Closed => {
@@ -1493,7 +1523,7 @@ impl App for Notepad {
             kids.push(Child {
                 id: GOTO,
                 title: "Goto line".into(),
-                size: GOTO_CLIENT,
+                size: self.forms.text.size(GOTO_CLIENT),
                 fixed: true,
                 modal: true,
             });
@@ -1502,7 +1532,7 @@ impl App for Notepad {
             kids.push(Child {
                 id: FIND,
                 title: "Find".into(),
-                size: finddlg::FIND_CLIENT,
+                size: self.forms.text.size(finddlg::FIND_CLIENT),
                 fixed: true,
                 modal: false,
             });
@@ -1511,22 +1541,22 @@ impl App for Notepad {
             kids.push(Child {
                 id: REPLACE_WIN,
                 title: "Replace".into(),
-                size: finddlg::REPLACE_CLIENT,
+                size: self.forms.text.size(finddlg::REPLACE_CLIENT),
                 fixed: true,
                 modal: false,
             });
         }
         if let Some(b) = &self.notfound {
-            kids.push(b.child(NOTFOUND, &self.dialog_text, self.dialog_px));
+            kids.push(b.child(NOTFOUND, &self.dialog_text, &self.forms));
         }
         if let Some(b) = &self.error {
-            kids.push(b.child(ERRORBOX, &self.dialog_text, self.dialog_px));
+            kids.push(b.child(ERRORBOX, &self.dialog_text, &self.forms));
         }
         if self.about {
             kids.push(Child {
                 id: ABOUT,
                 title: "About Notepad".into(),
-                size: aboutbox::CLIENT,
+                size: self.forms.text.size(aboutbox::CLIENT),
                 fixed: true,
                 modal: true,
             });
@@ -1536,7 +1566,7 @@ impl App for Notepad {
             kids.push(Child {
                 id: SAVECHANGES,
                 title: "Notepad".into(),
-                size: msgbox::client(&fields, &self.dialog_text, self.dialog_px),
+                size: self.msgbox_size(&fields),
                 fixed: true,
                 modal: true,
             });
@@ -1560,14 +1590,14 @@ impl App for Notepad {
             });
         }
         if let Some((b, _)) = &self.lossy {
-            kids.push(b.child(LOSSY, &self.dialog_text, self.dialog_px));
+            kids.push(b.child(LOSSY, &self.dialog_text, &self.forms));
         }
         if let Some(path) = &self.overwrite {
             let fields = self.overwrite_fields(path);
             kids.push(Child {
                 id: OVERWRITE,
                 title: "Save As".into(),
-                size: msgbox::client(&fields, &self.dialog_text, self.dialog_px),
+                size: self.msgbox_size(&fields),
                 fixed: true,
                 modal: true,
             });
@@ -1600,8 +1630,8 @@ impl App for Notepad {
     fn drop_form(&mut self, win: WinId) -> Option<DropForm<'_>> {
         let (form, px) = match win {
             GOTO => (self.goto.as_mut()?, None),
-            FIND => (self.find.as_mut()?, Some(self.dialog_px)),
-            REPLACE_WIN => (self.replace.as_mut()?, Some(self.dialog_px)),
+            FIND => (self.find.as_mut()?, Some(self.forms.fonts.size_px)),
+            REPLACE_WIN => (self.replace.as_mut()?, Some(self.forms.fonts.size_px)),
             _ => return None,
         };
         Some(DropForm { form, px })
@@ -1622,6 +1652,7 @@ impl App for Notepad {
     fn draw(&mut self, win: WinId, c: &mut Canvas, ctx: &Ctx) {
         self.follow(ctx);
         let cs = &ctx.theme.colors;
+        let forms = ctx.forms();
         match win {
             GOTO => {
                 c.fill_rect(c.bounds(), cs.button_face);
@@ -1631,11 +1662,11 @@ impl App for Notepad {
                         &ctx.text,
                         &Paint {
                             s: 1,
-                            ..ctx.theme.paint()
+                            ..forms.paint()
                         },
                         f,
                         true,
-                        ctx.theme.fonts.size_px,
+                        forms.fonts.size_px,
                     );
                 }
             }
@@ -1647,11 +1678,11 @@ impl App for Notepad {
                         &ctx.text,
                         &Paint {
                             s: 1,
-                            ..ctx.theme.paint()
+                            ..self.forms.paint()
                         },
                         f,
                         true,
-                        self.dialog_px,
+                        self.forms.fonts.size_px,
                     );
                 }
             }
@@ -1663,42 +1694,42 @@ impl App for Notepad {
                         &ctx.text,
                         &Paint {
                             s: 1,
-                            ..ctx.theme.paint()
+                            ..self.forms.paint()
                         },
                         f,
                         true,
-                        self.dialog_px,
+                        self.forms.fonts.size_px,
                     );
                 }
             }
             NOTFOUND => {
                 if let Some(b) = &self.notfound {
-                    b.draw(c, &ctx.theme, &self.dialog_text, self.dialog_px);
+                    b.draw(c, &self.forms, &self.dialog_text);
                 }
             }
             ERRORBOX => {
                 if let Some(b) = &self.error {
-                    b.draw(c, &ctx.theme, &self.dialog_text, self.dialog_px);
+                    b.draw(c, &self.forms, &self.dialog_text);
                 }
             }
             LOSSY => {
                 if let Some((b, _)) = &self.lossy {
-                    b.draw(c, &ctx.theme, &self.dialog_text, self.dialog_px);
+                    b.draw(c, &self.forms, &self.dialog_text);
                 }
             }
             ABOUT => {
                 c.fill_rect(c.bounds(), cs.button_face);
-                let f = aboutbox::form(&self.about_fields(), &self.dialog_text, self.dialog_px);
+                let f = self.about_form();
                 form::draw(
                     c,
                     &self.dialog_text,
                     &Paint {
                         s: 1,
-                        ..ctx.theme.paint()
+                        ..self.forms.paint()
                     },
                     &f,
                     true,
-                    self.dialog_px,
+                    self.forms.fonts.size_px,
                 );
             }
             SAVECHANGES => {
@@ -1706,18 +1737,19 @@ impl App for Notepad {
                 let f = msgbox::form(
                     &self.savechanges_fields(),
                     &self.dialog_text,
-                    self.dialog_px,
+                    self.forms.fonts.size_px,
+                    self.forms.text,
                 );
                 form::draw(
                     c,
                     &self.dialog_text,
                     &Paint {
                         s: 1,
-                        ..ctx.theme.paint()
+                        ..self.forms.paint()
                     },
                     &f,
                     true,
-                    self.dialog_px,
+                    self.forms.fonts.size_px,
                 );
             }
             OVERWRITE => {
@@ -1726,18 +1758,19 @@ impl App for Notepad {
                     let f = msgbox::form(
                         &self.overwrite_fields(path),
                         &self.dialog_text,
-                        self.dialog_px,
+                        self.forms.fonts.size_px,
+                        self.forms.text,
                     );
                     form::draw(
                         c,
                         &self.dialog_text,
                         &Paint {
                             s: 1,
-                            ..ctx.theme.paint()
+                            ..self.forms.paint()
                         },
                         &f,
                         true,
-                        self.dialog_px,
+                        self.forms.fonts.size_px,
                     );
                 }
             }
@@ -1776,49 +1809,57 @@ impl App for Notepad {
     fn access(&mut self, win: WinId, tree: &mut Tree, ctx: &Ctx) {
         self.follow(ctx);
         let (dt, dpx) = (&self.dialog_text, self.dialog_px);
+        let (forms, fpx) = (&self.forms, self.forms.fonts.size_px);
+        let built = |f: &Form, tree: &mut Tree| {
+            f.drawn_with(&forms.paint());
+            oneshot::access_form(f, tree, dt, fpx);
+        };
         match win {
             GOTO => {
                 if let Some(f) = &self.goto {
-                    oneshot::access_form(f, tree, &ctx.text, ctx.theme.fonts.size_px);
+                    oneshot::access_form(f, tree, &ctx.text, ctx.forms().fonts.size_px);
                 }
             }
             FIND => {
                 if let Some(f) = &self.find {
-                    oneshot::access_form(f, tree, &ctx.text, dpx);
+                    oneshot::access_form(f, tree, &ctx.text, fpx);
                 }
             }
             REPLACE_WIN => {
                 if let Some(f) = &self.replace {
-                    oneshot::access_form(f, tree, &ctx.text, dpx);
+                    oneshot::access_form(f, tree, &ctx.text, fpx);
                 }
             }
             NOTFOUND => {
                 if let Some(b) = &self.notfound {
-                    b.access(tree, dt, dpx);
+                    b.access(tree, dt, forms);
                 }
             }
             ERRORBOX => {
                 if let Some(b) = &self.error {
-                    b.access(tree, dt, dpx);
+                    b.access(tree, dt, forms);
                 }
             }
             LOSSY => {
                 if let Some((b, _)) = &self.lossy {
-                    b.access(tree, dt, dpx);
+                    b.access(tree, dt, forms);
                 }
             }
             ABOUT => {
-                let f = aboutbox::form(&self.about_fields(), dt, dpx);
-                oneshot::access_form(&f, tree, dt, dpx);
+                built(&self.about_form(), tree);
             }
             SAVECHANGES => {
-                let f = msgbox::form(&self.savechanges_fields(), dt, dpx);
-                oneshot::access_form(&f, tree, dt, dpx);
+                built(
+                    &msgbox::form(&self.savechanges_fields(), dt, fpx, forms.text),
+                    tree,
+                );
             }
             OVERWRITE => {
                 if let Some(path) = &self.overwrite {
-                    let f = msgbox::form(&self.overwrite_fields(path), dt, dpx);
-                    oneshot::access_form(&f, tree, dt, dpx);
+                    built(
+                        &msgbox::form(&self.overwrite_fields(path), dt, fpx, forms.text),
+                        tree,
+                    );
                 }
             }
             OPEN => {
@@ -2520,6 +2561,21 @@ mod tests {
             .expect("the about child");
         assert_eq!(kid.size, aboutbox::CLIENT);
         assert!(kid.fixed && kid.modal);
+    }
+
+    #[test]
+    fn dialogs_grow_with_the_text_size() {
+        let mut np = Notepad::new(None);
+        let mut ctx = test_ctx();
+        ctx.text_size = 150;
+        np.follow(&ctx);
+        assert_eq!(np.forms.fonts.size_px, 17);
+        assert_eq!(np.forms.text, reprisekit::theme::TextUnits::new(17, 11));
+        np.open_find();
+        np.goto = Some(goto_form("1"));
+        let size = |id| np.children().into_iter().find(|c| c.id == id).unwrap().size;
+        assert_eq!(size(FIND), (547, 158));
+        assert_eq!(size(GOTO), (414, 147));
     }
 
     #[test]

@@ -357,8 +357,11 @@ suspend_after = 0            # run [power] standby
 # mouse_keys_num_lock = true # only while Num Lock is on; false: always
 # text_size = 100            # percent, 100 to 200 in steps of 25: the taskbar, Start menu,
 #                            # menus, captions and tooltips, the heights that hold them,
-#                            # Notepad's text, and GTK's and Qt's text (text-scaling-factor,
-#                            # the qt6ct font). Dialogs and desktop icons keep their size.
+#                            # dialogs, settings pages and program forms (they grow with the
+#                            # text; check boxes, bevels and icons keep their size), Notepad's
+#                            # text, and GTK's and Qt's text (text-scaling-factor, the qt6ct
+#                            # font). Desktop icons, the file dialog, Open With and program
+#                            # lists keep their size.
 # color_filter = "none"      # the whole screen through a filter: "grayscale", "invert", or a
 #                            # correction for "deuteranopia", "protanopia" or "tritanopia";
 #                            # screenshots and screen sharing stay unfiltered

@@ -19,7 +19,7 @@ const RO_FALSE: reprisefs::props::AttrMoves = reprisefs::props::AttrMoves {
 use reprisekit::controls::form::Item;
 use reprisekit::raster::Canvas;
 use reprisekit::textedit::TextEdit;
-use reprisekit::theme::{FontConfig, Theme};
+use reprisekit::theme::{FontConfig, TextUnits, Theme};
 use std::path::PathBuf;
 
 fn text() -> TextRenderer {
@@ -292,7 +292,14 @@ fn the_tree_attribute_write_runs_on_a_job() {
     ex.open_properties(&full, "Reports", "Reports", &mut ctx);
     ex.finish_puts(&mut ctx);
 
-    let form = attr_form(&RO_TRUE, None, FOLDER, &ex.dialog_text, ex.dialog_px);
+    let form = attr_form(
+        &RO_TRUE,
+        None,
+        FOLDER,
+        &ex.dialog_text,
+        ex.dialog_px,
+        TextUnits::ONE,
+    );
     assert!(attr_tree_picked(&form));
     let a = AttrConfirm {
         set: None,
@@ -655,7 +662,7 @@ fn hidden_renames_and_an_indeterminate_box_writes_nothing() {
 /// The confirm box a folder's attributes raise: verb, question and the radio pair with "subfolders and files" picked.
 #[test]
 fn the_attribute_question_names_the_change_and_the_scope() {
-    let f = attr_form(&RO_TRUE, None, FOLDER, &text(), px());
+    let f = attr_form(&RO_TRUE, None, FOLDER, &text(), px(), TextUnits::ONE);
     let label_of = |id: &str| match f.item(id).map(|i| &i.control) {
         Some(Control::Label { text, .. }) => text.clone(),
         Some(Control::Radio { label, .. }) => label.clone(),
@@ -670,7 +677,7 @@ fn the_attribute_question_names_the_change_and_the_scope() {
     assert_eq!(label_of(ATTR_ONLY), ATTR_LABELS[0]);
     assert!(attr_tree_picked(&f), "opens on the tree radio");
     assert_eq!(
-        attr_form(&RO_FALSE, None, FOLDER, &text(), px())
+        attr_form(&RO_FALSE, None, FOLDER, &text(), px(), TextUnits::ONE)
             .item("attr_verb")
             .map(|i| match &i.control {
                 Control::Label { text, .. } => text.clone(),
@@ -800,7 +807,14 @@ fn a_blue_attribute_box_picks_a_radio_by_its_label_16_px_in() {
     ctx.theme = reprisekit::interfaces::theme_for(reprisekit::interface::Interface::Blue);
     let mut ex =
         crate::tests::test_explorer(crate::Place::Folder(dir.path().to_path_buf()), &mut ctx);
-    let form = attr_form(&RO_TRUE, None, FOLDER, &ex.dialog_text, ex.dialog_px);
+    let form = attr_form(
+        &RO_TRUE,
+        None,
+        FOLDER,
+        &ex.dialog_text,
+        ex.dialog_px,
+        TextUnits::ONE,
+    );
     let only = form.item(ATTR_ONLY).expect("the this-folder radio").rect;
     ex.dialog = Some(crate::dialogs::Dialog::AttrConfirm(AttrConfirm {
         set: None,
@@ -852,7 +866,14 @@ fn the_attribute_box_is_left_unlit_after_press_release_and_leave() {
     ctx.theme = reprisekit::interfaces::theme_for(reprisekit::interface::Interface::Blue);
     let mut ex =
         crate::tests::test_explorer(crate::Place::Folder(dir.path().to_path_buf()), &mut ctx);
-    let form = attr_form(&RO_TRUE, None, FOLDER, &ex.dialog_text, ex.dialog_px);
+    let form = attr_form(
+        &RO_TRUE,
+        None,
+        FOLDER,
+        &ex.dialog_text,
+        ex.dialog_px,
+        TextUnits::ONE,
+    );
     let only = form.index_of(ATTR_ONLY).expect("the this-folder radio");
     let cancel = form.index_of(ATTR_CANCEL).expect("Cancel");
     let (r, cr) = (form.items[only].rect, form.items[cancel].rect);

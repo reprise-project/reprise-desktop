@@ -62,7 +62,8 @@ struct BtApp {
     disconnected: HashSet<String>,
     /// Dialog renderer, loaded in `start`: `children` and the wake have no `Ctx` to measure with.
     text: Option<Rc<TextRenderer>>,
-    px: u32,
+    /// The last event's [`Ctx::forms`], which dialogs are built and sized with.
+    forms: Theme,
     hidden: bool,
     tray_only: bool,
 }
@@ -86,7 +87,7 @@ impl BtApp {
             connecting: HashSet::new(),
             disconnected: HashSet::new(),
             text: None,
-            px: 0,
+            forms: Theme::default(),
             hidden: tray_only,
             tray_only,
         }
@@ -94,12 +95,12 @@ impl BtApp {
 
     fn fonts(&mut self) {
         self.text = Some(Rc::new(TextRenderer::load(&FontConfig::default())));
-        self.px = Theme::default().fonts.size_px;
+        self.forms = Theme::default();
     }
 
-    fn text_px(&self) -> (Rc<TextRenderer>, u32) {
+    fn text_forms(&self) -> (Rc<TextRenderer>, Theme) {
         let text = self.text.clone().expect("fonts are loaded in start");
-        (text, self.px)
+        (text, self.forms.clone())
     }
 
     fn send(&self, cmd: bz::Cmd) {
@@ -135,9 +136,9 @@ impl BtApp {
         );
         self.snapshot = s;
         self.devices.refresh(&self.snapshot);
-        let (text, px) = self.text_px();
+        let (text, forms) = self.text_forms();
         if let Some(w) = &mut self.wizard {
-            w.refresh(&self.snapshot, &text, px);
+            w.refresh(&self.snapshot, &text, &forms);
         }
         // Properties closes once its device is gone or unpaired, or its adapter went away.
         let live = self.props.as_ref().and_then(|p| {
@@ -185,23 +186,23 @@ impl BtApp {
                 last.strip_prefix("dev_").unwrap_or(last).replace('_', ":")
             }
         };
-        let (text, px) = self.text_px();
+        let (text, forms) = self.text_forms();
         let req = match &mut self.wizard {
-            Some(w) => match w.agent(req, &text, px) {
+            Some(w) => match w.agent(req, &text, &forms) {
                 Ok(()) => return,
                 Err(r) => r,
             },
             None => req,
         };
         // Replacing an open box drops its request, answering it Canceled.
-        self.pair = Some(pairdlg::PairDialog::new(req, &name, &text, px));
+        self.pair = Some(pairdlg::PairDialog::new(req, &name, &text, &forms));
     }
 
     /// BlueZ cancelled the pending request held by the wizard or the Pairing Request box. A shown code is never waited on.
     fn agent_cancel(&mut self) {
-        let (text, px) = self.text_px();
+        let (text, forms) = self.text_forms();
         if let Some(w) = &mut self.wizard
-            && w.agent_cancel(&text, px)
+            && w.agent_cancel(&text, &forms)
         {
             return;
         }
@@ -251,15 +252,15 @@ impl BtApp {
                     device,
                     connect_error,
                 } => {
-                    let (text, px) = self.text_px();
+                    let (text, forms) = self.text_forms();
                     if let Some(w) = &mut self.wizard {
-                        w.paired(&device, connect_error, &text, px);
+                        w.paired(&device, connect_error, &text, &forms);
                     }
                 }
                 bz::BzMsg::PairFailed { device, reason } => {
-                    let (text, px) = self.text_px();
+                    let (text, forms) = self.text_forms();
                     if let Some(w) = &mut self.wizard {
-                        w.pair_failed(&device, reason, &text, px);
+                        w.pair_failed(&device, reason, &text, &forms);
                     }
                 }
                 // The request's device may be in this same burst; the box names it by alias.
@@ -317,8 +318,8 @@ impl BtApp {
 
     fn open_wizard(&mut self) {
         if self.wizard.is_none() {
-            let (text, px) = self.text_px();
-            self.wizard = Some(addwiz::AddWizard::new(&text, px));
+            let (text, forms) = self.text_forms();
+            self.wizard = Some(addwiz::AddWizard::new(&text, &forms));
         }
     }
 
@@ -409,7 +410,7 @@ impl BtApp {
         cm: &ControlMetrics,
     ) -> Option<devices::Outcome> {
         let on_devices = self.devices.sheet.tabs.open == devices::TAB_DEVICES;
-        let list = devices::LIST;
+        let list = self.devices.list_rect();
         match ev {
             Event::Pointer(PointerInput::Press {
                 x,
@@ -461,11 +462,12 @@ impl BtApp {
     /// Updates the Devices list's scrollbar highlight for a pointer event. True when a styled look must redraw.
     fn devices_list_light(&mut self, ev: &Event, ctx: &Ctx) -> bool {
         let cm = ctx.theme.look.controls();
+        let rect = self.devices.list_rect();
         let list = &mut self.devices.list;
         let on_devices = self.devices.sheet.tabs.open == devices::TAB_DEVICES;
         let changed = match ev {
             Event::Pointer(PointerInput::Motion { x, y }) if on_devices => {
-                list.hover(devices::LIST, *x, *y, &cm)
+                list.hover(rect, *x, *y, &cm)
             }
             Event::Pointer(PointerInput::Motion { .. } | PointerInput::Leave) => list.leave(),
             Event::Pointer(PointerInput::Release {
@@ -536,8 +538,8 @@ impl BtApp {
             let searching = w.step == addwiz::Step::Search;
             let changed = match &ev {
                 Event::Pointer(PointerInput::Motion { x, y }) if searching => {
-                    w.list
-                        .hover(addwiz::LIST, *x, *y, &ctx.theme.look.controls())
+                    let r = w.list_rect();
+                    w.list.hover(r, *x, *y, &ctx.theme.look.controls())
                 }
                 Event::Pointer(PointerInput::Motion { .. } | PointerInput::Leave) => w.list.leave(),
                 Event::Pointer(PointerInput::Release {
@@ -553,21 +555,21 @@ impl BtApp {
     }
 
     fn wizard_event_inner(&mut self, ev: Event, ctx: &Ctx) -> Reply {
-        let (text, px) = self.text_px();
+        let (text, forms) = self.text_forms();
         let Some(w) = self.wizard.as_mut() else {
             return Reply::none();
         };
         let searching = w.step == addwiz::Step::Search;
-        let list = addwiz::LIST;
+        let list = w.list_rect();
         let out = match ev {
-            Event::CloseRequest => w.event(form::Event::Cancel, &text, px),
+            Event::CloseRequest => w.event(form::Event::Cancel, &text, &forms),
             Event::Blink => {
                 w.page.form.caret = ctx.caret_on;
                 return Reply::redraw();
             }
             Event::Pasted(t) => {
                 let e = w.page.form.paste(t);
-                w.event(e, &text, px)
+                w.event(e, &text, &forms)
             }
             Event::Pointer(PointerInput::Press {
                 x,
@@ -577,7 +579,7 @@ impl BtApp {
                 ..
             }) if searching && list.contains(x, y) => {
                 let at = ctx.theme.metrics.click(x, y, time);
-                w.list_press(at, &text, px, &ctx.theme.look.controls())
+                w.list_press(at, &text, &forms, &ctx.theme.look.controls())
             }
             Event::Pointer(PointerInput::Motion { y, .. })
                 if w.list.drag(list, y, &ctx.theme.look.controls()) =>
@@ -598,7 +600,7 @@ impl BtApp {
                     return Reply::redraw();
                 }
                 match form_input(&mut w.page.form, &ev, ctx) {
-                    Some(e) => w.event(e, &text, px),
+                    Some(e) => w.event(e, &text, &forms),
                     None => return Reply::none(),
                 }
             }
@@ -752,11 +754,11 @@ impl BtApp {
     }
 
     fn remove_event(&mut self, ev: Event) -> Reply {
-        let (text, px) = self.text_px();
+        let (text, forms) = self.text_forms();
         let Some((path, b)) = &mut self.remove else {
             return Reply::none();
         };
-        match b.event(&ev, &text, px) {
+        match b.event(&ev, &text, &forms) {
             oneshot::Outcome::None => Reply::none(),
             oneshot::Outcome::Redraw => Reply::redraw(),
             oneshot::Outcome::Closed(button) => {
@@ -779,11 +781,11 @@ impl BtApp {
     }
 
     fn error_event(&mut self, ev: Event) -> Reply {
-        let (text, px) = self.text_px();
+        let (text, forms) = self.text_forms();
         let Some(b) = &mut self.error else {
             return Reply::none();
         };
-        match b.event(&ev, &text, px) {
+        match b.event(&ev, &text, &forms) {
             oneshot::Outcome::None => Reply::none(),
             oneshot::Outcome::Redraw => Reply::redraw(),
             oneshot::Outcome::Closed(_) => {
@@ -804,7 +806,8 @@ impl App for BtApp {
     }
 
     fn initial_size(&self) -> (i32, i32) {
-        devices::CLIENT
+        let forms = repriseapp::start_theme().with_form_text(repriseconf::text_size());
+        forms.text.size(devices::CLIENT)
     }
 
     fn fixed(&self) -> bool {
@@ -816,12 +819,13 @@ impl App for BtApp {
     }
 
     fn children(&self) -> Vec<Child> {
+        let u = self.forms.text;
         let mut out = Vec::new();
         if self.wizard.is_some() {
             out.push(Child {
                 id: WIZARD,
                 title: "Add Bluetooth Device Wizard".into(),
-                size: wizard::CLIENT,
+                size: u.size(wizard::CLIENT),
                 fixed: true,
                 modal: false,
             });
@@ -830,7 +834,7 @@ impl App for BtApp {
             out.push(Child {
                 id: PROPS,
                 title: p.window_title(),
-                size: props::CLIENT,
+                size: u.size(props::CLIENT),
                 fixed: true,
                 modal: false,
             });
@@ -839,17 +843,17 @@ impl App for BtApp {
             out.push(Child {
                 id: PAIR,
                 title: "Bluetooth Pairing Request".into(),
-                size: pairdlg::CLIENT,
+                size: u.size(pairdlg::CLIENT),
                 fixed: true,
                 modal: true,
             });
         }
         if let Some(text) = &self.text {
             if let Some((_, b)) = &self.remove {
-                out.push(b.child(REMOVE, text, self.px));
+                out.push(b.child(REMOVE, text, &self.forms));
             }
             if let Some(b) = &self.error {
-                out.push(b.child(ERROR, text, self.px));
+                out.push(b.child(ERROR, text, &self.forms));
             }
         }
         out
@@ -878,6 +882,7 @@ impl App for BtApp {
     }
 
     fn event(&mut self, win: WinId, ev: Event, ctx: &mut Ctx) -> Reply {
+        self.forms = ctx.forms();
         if matches!(ev, Event::Wake) {
             return self.wake();
         }
@@ -894,7 +899,8 @@ impl App for BtApp {
     }
 
     fn access(&mut self, win: WinId, tree: &mut Tree, ctx: &Ctx) {
-        let px = ctx.theme.fonts.size_px;
+        let forms = ctx.forms();
+        let px = forms.fonts.size_px;
         match win {
             WIZARD => {
                 if let Some(w) = &self.wizard {
@@ -913,12 +919,12 @@ impl App for BtApp {
             }
             REMOVE => {
                 if let Some((_, b)) = &self.remove {
-                    b.access(tree, &ctx.text, px);
+                    b.access(tree, &ctx.text, &forms);
                 }
             }
             ERROR => {
                 if let Some(b) = &self.error {
-                    b.access(tree, &ctx.text, px);
+                    b.access(tree, &ctx.text, &forms);
                 }
             }
             _ => self.devices.access(tree, ctx),
@@ -937,7 +943,8 @@ impl App for BtApp {
 
     fn draw(&mut self, win: WinId, c: &mut Canvas, ctx: &Ctx) {
         let cs = &ctx.theme.colors;
-        let px = ctx.theme.fonts.size_px;
+        let forms = ctx.forms();
+        let px = forms.fonts.size_px;
         match win {
             WIZARD => {
                 if let Some(w) = &self.wizard {
@@ -952,7 +959,7 @@ impl App for BtApp {
                         &ctx.text,
                         &Paint {
                             s: 1,
-                            ..ctx.theme.paint()
+                            ..forms.paint()
                         },
                         &p.sheet,
                         true,
@@ -968,7 +975,7 @@ impl App for BtApp {
                         &ctx.text,
                         &Paint {
                             s: 1,
-                            ..ctx.theme.paint()
+                            ..forms.paint()
                         },
                         &d.form,
                         true,
@@ -978,12 +985,12 @@ impl App for BtApp {
             }
             REMOVE => {
                 if let Some((_, b)) = &self.remove {
-                    b.draw(c, &ctx.theme, &ctx.text, px);
+                    b.draw(c, &forms, &ctx.text);
                 }
             }
             ERROR => {
                 if let Some(b) = &self.error {
-                    b.draw(c, &ctx.theme, &ctx.text, px);
+                    b.draw(c, &forms, &ctx.text);
                 }
             }
             _ => self.devices.draw(c, ctx, &self.icons),
@@ -1038,12 +1045,12 @@ mod tests {
         a.snapshot_in(snap(true));
         a.open_props("/a/cans");
         a.open_wizard();
-        let (text, px) = a.text_px();
+        let (text, forms) = a.text_forms();
         let w = a.wizard.as_mut().unwrap();
         w.page.form.set_check("ready", true);
-        w.event(form::Event::Changed("ready"), &text, px);
+        w.event(form::Event::Changed("ready"), &text, &forms);
         assert_eq!(
-            w.event(form::Event::Default, &text, px),
+            w.event(form::Event::Default, &text, &forms),
             addwiz::Outcome::StartDiscovery
         );
         let (done, wait) = async_channel::bounded(1);
@@ -1365,6 +1372,22 @@ mod tests {
         let cut = a.event(PROPS, ctrl(b'x'), &mut ctx).copy;
         assert_eq!(cut.as_deref(), Some("Cans"));
         assert_eq!(name(&a), "", "a cut empties the field");
+    }
+
+    #[test]
+    fn dialogs_open_at_the_text_size() {
+        let mut a = app();
+        a.snapshot_in(snap(true));
+        let mut ctx = Ctx {
+            text_size: 150,
+            ..test_ctx()
+        };
+        a.event(MAIN, Event::Blink, &mut ctx);
+        a.open_wizard();
+        a.open_props("/a/cans");
+        let size = |a: &BtApp, id| a.children().iter().find(|c| c.id == id).unwrap().size;
+        assert_eq!(size(&a, WIZARD), (768, 556));
+        assert_eq!(size(&a, PROPS), (558, 648));
     }
 
     fn test_ctx() -> Ctx {

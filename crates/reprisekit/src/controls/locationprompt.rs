@@ -7,6 +7,7 @@ use crate::controls::form::{self, Event, Form, Item};
 use crate::look::Paint;
 use crate::raster::{Canvas, Rect};
 use crate::text::TextRenderer;
+use crate::theme::TextUnits;
 
 pub const ALLOW: &str = "allow";
 pub const DENY: &str = "deny";
@@ -83,8 +84,10 @@ struct Plan {
     button_y: i32,
 }
 
-fn plan(f: &Fields, text: &TextRenderer, px: u32) -> Plan {
-    let col = W - TEXT_X - MARGIN;
+/// The prompt at 100% for text set at `px`, which grows by `u`: each paragraph wraps at the
+/// width its column grows to.
+fn plan(f: &Fields, text: &TextRenderer, px: u32, u: TextUnits) -> Plan {
+    let col = u.len(W - TEXT_X - MARGIN);
     let question = crate::text::wrap(text, &f.question(), col, px);
     let detail_y = TEXT_Y + question.len() as i32 * LINE_H + GAP;
     let detail = crate::text::wrap(text, DETAIL_TEXT, col, px);
@@ -101,14 +104,14 @@ fn plan(f: &Fields, text: &TextRenderer, px: u32) -> Plan {
 
 /// The client size the prompt needs: a long program name wraps and
 /// makes it taller.
-pub fn client(f: &Fields, text: &TextRenderer, px: u32) -> (i32, i32) {
-    (W, plan(f, text, px).button_y + BUTTON_H + MARGIN)
+pub fn client(f: &Fields, text: &TextRenderer, px: u32, u: TextUnits) -> (i32, i32) {
+    (W, plan(f, text, px, u).button_y + BUTTON_H + MARGIN)
 }
 
 /// Lay the prompt out over [`client`]'s size: the check box ticked, the
 /// focus and the default on Deny.
-pub fn form(f: &Fields, text: &TextRenderer, px: u32) -> Form {
-    let p = plan(f, text, px);
+pub fn form(f: &Fields, text: &TextRenderer, px: u32, u: TextUnits) -> Form {
+    let p = plan(f, text, px, u);
     let col = W - TEXT_X - MARGIN;
     let mut items = Vec::new();
     if let Some(icon) = &f.icon {
@@ -180,7 +183,7 @@ mod tests {
     #[test]
     fn the_buttons_answer_and_closing_remembers_nothing() {
         let (text, px) = rend();
-        let mut f = form(&fields(), &text, px);
+        let mut f = form(&fields(), &text, px, TextUnits::ONE);
         assert_eq!(f.focus().map(|i| f.items[i].id), Some(DENY));
         assert_eq!(f.default_button().map(|i| f.items[i].id), Some(DENY));
         assert_eq!(
@@ -206,9 +209,9 @@ mod tests {
     fn the_prompt_lays_out_on_its_grid() {
         let (text, px) = rend();
         let fields = fields();
-        let (w, h) = client(&fields, &text, px);
+        let (w, h) = client(&fields, &text, px, TextUnits::ONE);
         assert_eq!(w, 360);
-        let f = form(&fields, &text, px);
+        let f = form(&fields, &text, px, TextUnits::ONE);
         let r = |id: &str| f.item(id).expect("the item exists").rect;
         match &f.item(QUESTION).unwrap().control {
             form::Control::Lines(l) => {
@@ -231,12 +234,12 @@ mod tests {
     #[test]
     fn a_long_name_wraps_and_grows_the_prompt() {
         let (text, px) = rend();
-        let short = client(&fields(), &text, px);
+        let short = client(&fields(), &text, px, TextUnits::ONE);
         let long = Fields {
             program: "A Program With A Rather Long Name From Its Desktop Entry".into(),
             icon: None,
         };
-        let tall = client(&long, &text, px);
+        let tall = client(&long, &text, px, TextUnits::ONE);
         assert_eq!(tall.0, short.0);
         assert!(tall.1 > short.1, "{tall:?} taller than {short:?}");
     }
@@ -250,8 +253,8 @@ mod tests {
         let theme = Theme::default();
         let cs = &theme.colors;
         let fields = fields();
-        let (w, h) = client(&fields, &text, px);
-        let f = form(&fields, &text, px);
+        let (w, h) = client(&fields, &text, px, TextUnits::ONE);
+        let f = form(&fields, &text, px, TextUnits::ONE);
         let mut c = Canvas::new(w as u32, h as u32);
         draw(&mut c, &text, &theme.paint(), &f, px);
         let r = |id: &str| f.item(id).unwrap().rect;
@@ -286,8 +289,8 @@ mod tests {
     fn blue_and_glass_draw_the_prompt_in_their_looks() {
         let (text, px) = rend();
         let fields = fields();
-        let (w, h) = client(&fields, &text, px);
-        let f = form(&fields, &text, px);
+        let (w, h) = client(&fields, &text, px, TextUnits::ONE);
+        let f = form(&fields, &text, px, TextUnits::ONE);
         let classic = {
             let mut c = Canvas::new(w as u32, h as u32);
             draw(&mut c, &text, &Theme::default().paint(), &f, px);
@@ -321,9 +324,15 @@ mod tests {
         let (text, px) = rend();
         let theme = Theme::default();
         let fields = fields();
-        let (w, h) = client(&fields, &text, px);
+        let (w, h) = client(&fields, &text, px, TextUnits::ONE);
         let mut c = Canvas::new(w as u32, h as u32);
-        draw(&mut c, &text, &theme.paint(), &form(&fields, &text, px), px);
+        draw(
+            &mut c,
+            &text,
+            &theme.paint(),
+            &form(&fields, &text, px, TextUnits::ONE),
+            px,
+        );
         crate::raster::write_preview(&c, "locationprompt-preview.png");
     }
 }

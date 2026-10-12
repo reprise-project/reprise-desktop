@@ -66,8 +66,9 @@ pub fn failure(message: &str) -> &str {
 impl Unlock {
     /// The box for container `volume`, named `name` in its message.
     pub fn open(volume: String, name: &str, ctx: &mut Ctx) -> Unlock {
-        let lines =
-            reprisekit::text::wrap(&ctx.text, &message(name), MSG_W, ctx.theme.fonts.size_px);
+        let forms = ctx.forms();
+        let width = forms.text.len(MSG_W);
+        let lines = reprisekit::text::wrap(&ctx.text, &message(name), width, forms.fonts.size_px);
         Unlock::new(volume, &lines, ctx.icons.get(ICON_NAME, 32))
     }
 
@@ -161,23 +162,23 @@ impl Unlock {
     }
 
     pub fn draw(&self, c: &mut Canvas, ctx: &Ctx) {
-        c.fill_rect(c.bounds(), ctx.theme.colors.button_face);
+        let forms = ctx.forms();
+        c.fill_rect(c.bounds(), forms.colors.button_face);
         let paint = Paint {
             s: 1,
-            ..ctx.theme.paint()
+            ..forms.paint()
         };
-        form::draw(
-            c,
-            &ctx.text,
-            &paint,
-            &self.form,
-            true,
-            ctx.theme.fonts.size_px,
-        );
+        form::draw(c, &ctx.text, &paint, &self.form, true, forms.fonts.size_px);
     }
 
     pub fn access(&self, tree: &mut Tree, ctx: &Ctx) {
-        crate::oneshot::access_form(&self.form, tree, &ctx.text, ctx.theme.fonts.size_px);
+        let px = self.form.units().px(ctx.theme.fonts.size_px);
+        crate::oneshot::access_form(&self.form, tree, &ctx.text, px);
+    }
+
+    /// The box's client size at the text size.
+    pub fn client(ctx: &Ctx) -> (i32, i32) {
+        ctx.forms().text.size(CLIENT)
     }
 
     pub fn fail(&mut self, why: &str) {

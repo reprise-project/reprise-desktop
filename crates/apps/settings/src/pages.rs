@@ -52,10 +52,15 @@ const GTK_FIXED_ROWS: &Choices = &[
     (TOOLKIT_REPRISE, REPRISE_TOOLKIT_ROW),
 ];
 
-/// `r`, in the coordinates a page was built in, where the sheet has put that page ([`PropSheet::page_offset`]).
+/// `r`, in the coordinates a page was built in, where the sheet has put that page
+/// ([`PropSheet::page_offset`]), grown with the text the page was last drawn at.
 pub fn on_sheet(sheet: &PropSheet, r: Rect) -> Rect {
     let (dx, dy) = sheet.page_offset();
-    Rect::new(r.x + dx, r.y + dy, r.width, r.height)
+    let page = sheet.open();
+    let r = page
+        .units()
+        .rect(Rect::new(r.x + dx, r.y + dy, r.width, r.height));
+    Rect::new(r.x + page.origin.0, r.y + page.origin.1, r.width, r.height)
 }
 
 /// The night light trackbar's range and step, in kelvin: warmest on the left.

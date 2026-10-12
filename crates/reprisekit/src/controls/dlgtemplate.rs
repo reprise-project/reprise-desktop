@@ -1,12 +1,14 @@
 //! The fixed templates the shell's own prompts are built on (Run, delete confirmations, key aid
 //! prompts, desktop notices): a width, icon margins, text wrap and a button row. [`layout`] works
-//! in whole-dialog coordinates under a [`FRAME`] px frame and [`CAPTION_H`] caption; a program
-//! whose frame the compositor draws takes [`Layout::client`] and [`form`].
+//! in whole-dialog coordinates under a [`FRAME`] px frame and [`CAPTION_H`] caption, for 100%
+//! text; [`Layout::grown`] puts it at the text size. A program whose frame the compositor draws
+//! takes [`Layout::client`] and [`form`], which grows with the form.
 
 use crate::classic::widgets::{BUTTON_GAP, BUTTON_H, BUTTON_W, LINE_H, ROW_H};
 use crate::controls::form::{Form, Item};
 use crate::raster::{Canvas, Rect};
 use crate::text::{TextRenderer, wrap};
+use crate::theme::TextUnits;
 
 pub const FRAME: i32 = 3;
 pub const CAPTION_H: i32 = 18;
@@ -169,9 +171,40 @@ impl Layout {
         self.size = (self.size.0 - 2 * FRAME, self.size.1 - 2 * FRAME - CAPTION_H);
         self
     }
+
+    /// This whole-dialog layout at the text size `u`: the client area and every rect in it grow
+    /// from the client's corner; the frame and caption keep theirs.
+    pub fn grown(mut self, u: TextUnits) -> Layout {
+        let (ox, oy) = (FRAME, FRAME + CAPTION_H);
+        let map = |r: &mut Rect| {
+            let g = u.rect(Rect::new(r.x - ox, r.y - oy, r.width, r.height));
+            *r = Rect::new(g.x + ox, g.y + oy, g.width, g.height);
+        };
+        [&mut self.icon, &mut self.field_label, &mut self.field]
+            .into_iter()
+            .flatten()
+            .for_each(map);
+        if let Some(icon) = &mut self.icon {
+            (icon.width, icon.height) = (ICON_PX, ICON_PX);
+        }
+        self.lines.iter_mut().for_each(|(r, _)| map(r));
+        self.buttons.iter_mut().for_each(map);
+        let (cw, ch) = u.size((self.size.0 - 2 * FRAME, self.size.1 - 2 * FRAME - CAPTION_H));
+        self.size = (cw + 2 * FRAME, ch + 2 * FRAME + CAPTION_H);
+        self
+    }
 }
 
-pub fn layout(template: Template, text: &TextRenderer, px: u32, f: &Fields) -> Layout {
+/// `template` laid out at 100% for text set at `px`, which grows by `u`: the text wraps at the
+/// width its column grows to, and a column sized to its text reserves the 100% width that grows
+/// to fit it.
+pub fn layout(
+    template: Template,
+    text: &TextRenderer,
+    px: u32,
+    f: &Fields,
+    u: TextUnits,
+) -> Layout {
     let cm = template.metrics();
     let left = cm.left;
     let text_x = if f.icon {
@@ -180,12 +213,12 @@ pub fn layout(template: Template, text: &TextRenderer, px: u32, f: &Fields) -> L
         left
     };
     let (w, wrapped) = match cm.width {
-        Some(w) => (w, wrap(text, f.text, w - cm.right - text_x, px)),
+        Some(w) => (w, wrap(text, f.text, u.len(w - cm.right - text_x), px)),
         None => {
             let lines = wrap(text, f.text, i32::MAX, px);
             let widest = lines
                 .iter()
-                .map(|l| text.measure(l, false, px))
+                .map(|l| u.design(text.measure(l, false, px)))
                 .max()
                 .unwrap_or(0);
             (text_x + widest + cm.right, lines)
@@ -308,7 +341,7 @@ mod tests {
             buttons: 2,
             text_h: None,
         };
-        let lay = layout(Template::MessageBox, &text, px, &f);
+        let lay = layout(Template::MessageBox, &text, px, &f, TextUnits::ONE);
         assert_eq!(lay.size.0, EXPECTED_W);
         assert_eq!(lay.icon.map(|r| r.x), Some(EXPECTED_ICON_X));
         assert_eq!(lay.lines.len(), 1);
@@ -328,7 +361,7 @@ mod tests {
             buttons: 2,
             text_h: None,
         };
-        let whole = layout(Template::MultiDelete, &text, px, &f);
+        let whole = layout(Template::MultiDelete, &text, px, &f, TextUnits::ONE);
         let client = whole.clone().client();
         assert_eq!(client.size, (whole.size.0 - 6, whole.size.1 - 24));
         let (a, b) = (whole.buttons[0], client.buttons[0]);
@@ -338,5 +371,41 @@ mod tests {
             form.item(BUTTON_IDS[1]).map(|it| it.rect),
             Some(client.buttons[1])
         );
+    }
+
+    /// A grown Run-like template keeps its frame and caption and grows the client: its lines
+    /// sit a grown pitch apart and wrap to the grown column, the field and buttons grow.
+    #[test]
+    fn a_grown_template_grows_the_client_inside_the_frame() {
+        let (text, _) = rend();
+        let f = Fields {
+            text: "Type the name of a program, folder, document, or Internet resource, and Reprise will open it for you.",
+            icon: true,
+            field: true,
+            buttons: 3,
+            text_h: None,
+        };
+        let one = layout(Template::Run, &text, 11, &f, TextUnits::ONE);
+        assert_eq!(one.clone().grown(TextUnits::ONE), one);
+        let u = TextUnits::new(17, 11);
+        let big = layout(Template::Run, &text, 17, &f, u).grown(u);
+        assert_eq!(big.size.0, 2 * FRAME + u.len(347 - 2 * FRAME));
+        let pitch = big.lines[1].0.y - big.lines[0].0.y;
+        assert!(
+            pitch >= u.len(LINE_H) - 1 && pitch <= u.len(LINE_H) + 1,
+            "pitch {pitch}"
+        );
+        for (r, line) in &big.lines {
+            assert!(text.measure(line, false, 17) <= r.width, "{line:?} fits");
+        }
+        let icon = big.icon.unwrap();
+        assert_eq!((icon.width, icon.height), (ICON_PX, ICON_PX));
+        let field_h = big.field.unwrap().height;
+        assert!(
+            (u.len(ROW_H) - 1..=u.len(ROW_H) + 1).contains(&field_h),
+            "{field_h}"
+        );
+        let last = *big.buttons.last().unwrap();
+        assert!(last.right() <= big.size.0 - FRAME && last.bottom() <= big.size.1 - FRAME);
     }
 }

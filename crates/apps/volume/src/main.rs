@@ -33,7 +33,7 @@ use reprisekit::look::Paint;
 use reprisekit::raster::{Canvas, Rect};
 use reprisekit::text::TextRenderer;
 use reprisekit::textedit::keysym;
-use reprisekit::theme::{FontConfig, Theme};
+use reprisekit::theme::{FontConfig, TextUnits, Theme};
 
 use state::State;
 use view::{Options, Recent, View};
@@ -119,6 +119,8 @@ struct Volume {
     app_icon: Option<Canvas>,
     dialog_text: TextRenderer,
     dialog_px: u32,
+    /// The forms theme at the last event, which `children` sizes the dialogs with.
+    forms: Theme,
     waker: Option<repriseapp::Waker>,
     /// A refused Select or Mute: the boxes go back to the snapshot at once, as no update will come.
     refused: Receiver<()>,
@@ -154,6 +156,7 @@ impl Volume {
             app_icon: None,
             dialog_text: TextRenderer::load(&FontConfig::default()),
             dialog_px: Theme::default().fonts.size_px,
+            forms: Theme::default(),
             waker: None,
             refused,
             refused_tx,
@@ -541,9 +544,28 @@ impl Volume {
         repriseapp::about::fields("Volume Control", self.app_icon.clone())
     }
 
+    /// The about box's theme: the forms theme with its font at `dialog_px` grown.
+    fn about_theme(&self, forms: &Theme) -> Theme {
+        let mut t = forms.clone();
+        t.fonts.size_px = t.text.px(self.dialog_px);
+        t
+    }
+
+    /// The about box laid out at 100%, its banner as wide as the grown window.
+    fn about_form(&self, u: TextUnits) -> Form {
+        let text = &self.dialog_text;
+        let mut f = aboutbox::form(&self.about_fields(), text, self.dialog_px);
+        if !u.is_one() {
+            let w = u.len(aboutbox::CLIENT.0);
+            f.set_picture("banner", aboutbox::banner_wide(text, self.dialog_px, w));
+        }
+        f
+    }
+
     fn about_event(&mut self, ev: Event) -> Reply {
-        let step = oneshot::event(&ev, &self.dialog_text, self.dialog_px, || {
-            aboutbox::form(&self.about_fields(), &self.dialog_text, self.dialog_px)
+        let theme = self.about_theme(&self.forms);
+        let step = oneshot::event(&ev, &self.dialog_text, &theme, || {
+            self.about_form(theme.text)
         });
         match step {
             oneshot::Step::Closed
@@ -572,13 +594,13 @@ impl Volume {
         self.bar.draw(c, &ctx.text, &ctx.theme, &lay);
     }
 
-    fn draw_form(c: &mut Canvas, ctx: &Ctx, f: &Form, text: &TextRenderer, px: u32) {
+    fn draw_form(c: &mut Canvas, forms: &Theme, f: &Form, text: &TextRenderer) {
         let p = Paint {
             s: 1,
-            ..ctx.theme.paint()
+            ..forms.paint()
         };
         c.fill_rect(c.bounds(), p.cs.button_face);
-        form::draw(c, text, &p, f, true, px);
+        form::draw(c, text, &p, f, true, forms.fonts.size_px);
     }
 }
 
@@ -607,7 +629,7 @@ impl App for Volume {
             kids.push(Child {
                 id: PROPS_WIN,
                 title: "Properties".into(),
-                size: dialogs::PROPS,
+                size: self.forms.text.size(dialogs::PROPS),
                 fixed: true,
                 modal: true,
             });
@@ -622,7 +644,7 @@ impl App for Volume {
                         .first()
                         .map_or(view::MASTER_TITLE, |c| c.title.as_str())
                 ),
-                size: dialogs::ADVANCED,
+                size: self.forms.text.size(dialogs::ADVANCED),
                 fixed: true,
                 modal: true,
             });
@@ -631,7 +653,7 @@ impl App for Volume {
             kids.push(Child {
                 id: ABOUT_WIN,
                 title: "About Volume Control".into(),
-                size: aboutbox::CLIENT,
+                size: self.forms.text.size(aboutbox::CLIENT),
                 fixed: true,
                 modal: true,
             });
@@ -651,6 +673,7 @@ impl App for Volume {
         if self.mixer.speaker.is_none() {
             self.mixer.speaker = ctx.icons.get(SPEAKER, 16);
         }
+        self.forms = ctx.forms();
         if matches!(ev, Event::Wake) {
             return self.wake(ctx);
         }
@@ -692,27 +715,30 @@ impl App for Volume {
     }
 
     fn draw(&mut self, win: WinId, c: &mut Canvas, ctx: &Ctx) {
+        let forms = ctx.forms();
         match win {
             PROPS_WIN => {
                 if let Some(p) = &self.props {
-                    Volume::draw_form(c, ctx, &p.form, &ctx.text, ctx.theme.fonts.size_px);
+                    Volume::draw_form(c, &forms, &p.form, &ctx.text);
                 }
             }
             ADVANCED_WIN => {
                 if let Some(f) = &self.advanced {
-                    Volume::draw_form(c, ctx, f, &ctx.text, ctx.theme.fonts.size_px);
+                    Volume::draw_form(c, &forms, f, &ctx.text);
                 }
             }
             ABOUT_WIN => {
-                let f = aboutbox::form(&self.about_fields(), &self.dialog_text, self.dialog_px);
-                Volume::draw_form(c, ctx, &f, &self.dialog_text, self.dialog_px);
+                let theme = self.about_theme(&forms);
+                let f = self.about_form(theme.text);
+                Volume::draw_form(c, &theme, &f, &self.dialog_text);
             }
             _ => self.draw_main(c, ctx),
         }
     }
 
     fn access(&mut self, win: WinId, tree: &mut Tree, ctx: &Ctx) {
-        let (dt, dpx) = (&ctx.text, ctx.theme.fonts.size_px);
+        let forms = ctx.forms();
+        let (dt, dpx) = (&ctx.text, forms.fonts.size_px);
         match win {
             PROPS_WIN => {
                 if let Some(p) = &self.props {
@@ -725,8 +751,10 @@ impl App for Volume {
                 }
             }
             ABOUT_WIN => {
-                let f = aboutbox::form(&self.about_fields(), &self.dialog_text, self.dialog_px);
-                oneshot::access_form(&f, tree, &self.dialog_text, self.dialog_px);
+                let theme = self.about_theme(&forms);
+                let f = self.about_form(theme.text);
+                f.drawn_with(&theme.paint());
+                oneshot::access_form(&f, tree, &self.dialog_text, theme.fonts.size_px);
             }
             _ => {
                 let menus = self.bar.access(&self.bar_layout(ctx), tree, ROOT);

@@ -416,8 +416,9 @@ fn sync_prompt(state: &mut State) {
             }
             log::info!("session end: prompting for {} rows", fields.rows.len());
             fields.icon = state.icons.get("dialog-warning", 32);
-            let px = state.config.dialog_theme.fonts.size_px;
-            let d = crate::dialog::Dialog::end_session(&fields, &state.text, px);
+            let t = &state.config.theme;
+            let d =
+                crate::dialog::Dialog::end_session(&fields, &state.text, t.fonts.size_px, t.text);
             state.open_dialog(d);
         }
     }

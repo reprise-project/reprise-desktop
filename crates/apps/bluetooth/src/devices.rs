@@ -142,6 +142,12 @@ impl Devices {
         d
     }
 
+    /// The device list on the Devices page as last drawn: 100% tiles in a frame that grows with
+    /// the page.
+    pub fn list_rect(&self) -> Rect {
+        self.sheet.pages[TAB_DEVICES].units().rect(LIST)
+    }
+
     pub fn selected(&self) -> Option<&Device> {
         self.list.selected_row().and_then(|i| self.rows.get(i))
     }
@@ -168,7 +174,7 @@ impl Devices {
         self.list.entries = entries(&self.rows);
         self.list
             .select_row(keep.and_then(|p| self.rows.iter().position(|d| d.path == p)));
-        self.list.clamp(LIST);
+        self.list.clamp(self.list_rect());
         self.adapter = s.adapter.is_some();
         let now = s.adapter.as_ref().map_or(Options::default(), |a| Options {
             powered: a.powered,
@@ -268,7 +274,7 @@ impl Devices {
         }
         self.list_focus = true;
         self.sheet.open_mut().set_focus(None);
-        match self.list.press(LIST, at, cm) {
+        match self.list.press(self.list_rect(), at, cm) {
             Press::None => Outcome::None,
             Press::Redraw => Outcome::Redraw,
             Press::Row {
@@ -293,7 +299,7 @@ impl Devices {
         if *key == form::Key::Enter {
             return self.selected_path().map(Outcome::Properties);
         }
-        if self.list.key(key, LIST, cm) {
+        if self.list.key(key, self.list_rect(), cm) {
             self.write();
             return Some(Outcome::Redraw);
         }
@@ -309,16 +315,17 @@ impl Devices {
     }
 
     pub fn access(&self, tree: &mut Tree, ctx: &Ctx) {
-        let px = ctx.theme.fonts.size_px;
+        let px = self.sheet.open().units().px(ctx.theme.fonts.size_px);
         let panel = oneshot::access_sheet(&self.sheet, tree, &ctx.text, px);
+        let list = self.list_rect();
         if self.sheet.tabs.open != TAB_DEVICES {
             return;
         }
         if let Some(line) = self.blank_text() {
-            tree.push(panel, "empty", access::label(LIST, line, true));
+            tree.push(panel, "empty", access::label(list, line, true));
             return;
         }
-        let lay = tilelist::layout(&self.list, LIST, &ctx.theme.look.controls());
+        let lay = tilelist::layout(&self.list, list, &ctx.theme.look.controls());
         let row = tilelist::access(
             &self.list,
             &lay,
@@ -334,25 +341,27 @@ impl Devices {
 
     pub fn draw(&self, c: &mut Canvas, ctx: &Ctx, icons: &Icons) {
         let cs = &ctx.theme.colors;
-        let px = ctx.theme.fonts.size_px;
+        let forms = ctx.forms();
         c.fill_rect(c.bounds(), cs.button_face);
         propsheet::draw(
             c,
             &ctx.text,
             &Paint {
                 s: 1,
-                ..ctx.theme.paint()
+                ..forms.paint()
             },
             &self.sheet,
             true,
-            px,
+            forms.fonts.size_px,
         );
         if self.sheet.tabs.open != TAB_DEVICES {
             return;
         }
+        let px = ctx.theme.fonts.size_px;
+        let list = self.list_rect();
         if let Some(line) = self.blank_text() {
             let empty = TileList::new(TILE_H);
-            let lay = tilelist::layout(&empty, LIST, &ctx.theme.look.controls());
+            let lay = tilelist::layout(&empty, list, &ctx.theme.look.controls());
             tilelist::draw(
                 c,
                 &ctx.text,
@@ -365,12 +374,12 @@ impl Devices {
                 px,
                 |_, _, _, _| {},
             );
-            let r = Rect::new(LIST.x, LIST.y + 24, LIST.width, LINE_H);
+            let r = Rect::new(list.x, list.y + 24, list.width, LINE_H);
             ctx.text
                 .draw(c, r, line, false, cs.gray_text, Align::Center, px);
             return;
         }
-        let lay = tilelist::layout(&self.list, LIST, &ctx.theme.look.controls());
+        let lay = tilelist::layout(&self.list, list, &ctx.theme.look.controls());
         tilelist::draw(
             c,
             &ctx.text,

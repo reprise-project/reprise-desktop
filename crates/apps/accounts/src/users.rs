@@ -118,6 +118,11 @@ impl Users {
         u
     }
 
+    /// The list's rect at the text size the form was last drawn at; its tiles stay at 100%.
+    pub fn list_rect(&self) -> Rect {
+        self.form.units().rect(LIST)
+    }
+
     pub fn selected(&self) -> Option<&User> {
         self.list.selected_row().and_then(|i| self.rows.get(i))
     }
@@ -137,7 +142,7 @@ impl Users {
             .and_then(|uid| self.rows.iter().position(|u| u.uid == uid))
             .or(yours);
         self.list.select_row(pick);
-        self.list.clamp(LIST);
+        self.list.clamp(self.list_rect());
         self.failed = None;
         self.loaded = true;
         self.write();
@@ -192,14 +197,14 @@ impl Users {
         }
     }
 
-    /// A left press inside [`LIST`]: the list takes the keyboard and picks a row; a double click opens Properties.
+    /// A left press inside [`Users::list_rect`]: the list takes the keyboard and picks a row; a double click opens Properties.
     pub fn list_press(&mut self, at: Click, cm: &ControlMetrics) -> Outcome {
         if self.blank_text().is_some() {
             return Outcome::None;
         }
         self.list_focus = true;
         self.form.set_focus(None);
-        match self.list.press(LIST, at, cm) {
+        match self.list.press(self.list_rect(), at, cm) {
             Press::None => Outcome::None,
             Press::Redraw => Outcome::Redraw,
             Press::Row { activate, .. } => {
@@ -220,7 +225,7 @@ impl Users {
         if *key == form::Key::Enter {
             return self.selected_uid().map(Outcome::Properties);
         }
-        if self.list.key(key, LIST, cm) {
+        if self.list.key(key, self.list_rect(), cm) {
             self.write();
             return Some(Outcome::Redraw);
         }
@@ -235,14 +240,15 @@ impl Users {
     }
 
     pub fn access(&self, tree: &mut Tree, ctx: &Ctx) {
-        let px = ctx.theme.fonts.size_px;
+        let px = ctx.forms().fonts.size_px;
         oneshot::access_form(&self.form, tree, &ctx.text, px);
         let root = access::ROOT;
+        let list = self.list_rect();
         if let Some(line) = self.blank_text() {
-            tree.push(root, "empty", access::label(LIST, line, true));
+            tree.push(root, "empty", access::label(list, line, true));
             return;
         }
-        let lay = tilelist::layout(&self.list, LIST, &ctx.theme.look.controls());
+        let lay = tilelist::layout(&self.list, list, &ctx.theme.look.controls());
         let row = tilelist::access(
             &self.list,
             &lay,
@@ -261,27 +267,35 @@ impl Users {
         }
     }
 
-    /// The window: the form, then the list over its rect; `face` stands in for a missing picture.
+    /// The window: the form at the text size, then the list over its rect with its tiles at
+    /// 100%; `face` stands in for a missing picture.
     pub fn draw(&self, c: &mut Canvas, ctx: &Ctx, face: Option<&Canvas>) {
         let cs = &ctx.theme.colors;
+        let forms = ctx.forms();
+        let form_paint = Paint {
+            s: 1,
+            ..forms.paint()
+        };
+        c.fill_rect(c.bounds(), cs.button_face);
+        let fpx = forms.fonts.size_px;
+        form::draw(c, &ctx.text, &form_paint, &self.form, !self.list_focus, fpx);
         let px = ctx.theme.fonts.size_px;
         let paint = Paint {
             s: 1,
             ..ctx.theme.paint()
         };
-        c.fill_rect(c.bounds(), cs.button_face);
-        form::draw(c, &ctx.text, &paint, &self.form, !self.list_focus, px);
         let cm = ctx.theme.look.controls();
+        let list = self.list_rect();
         if let Some(line) = self.blank_text() {
             let empty = TileList::new(TILE_H);
-            let lay = tilelist::layout(&empty, LIST, &cm);
+            let lay = tilelist::layout(&empty, list, &cm);
             tilelist::draw(c, &ctx.text, &paint, &empty, &lay, px, |_, _, _, _| {});
-            let r = Rect::new(LIST.x, LIST.y + 24, LIST.width, LINE_H);
+            let r = Rect::new(list.x, list.y + 24, list.width, LINE_H);
             ctx.text
                 .draw(c, r, line, false, cs.gray_text, Align::Center, px);
             return;
         }
-        let lay = tilelist::layout(&self.list, LIST, &cm);
+        let lay = tilelist::layout(&self.list, list, &cm);
         tilelist::draw(
             c,
             &ctx.text,

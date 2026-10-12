@@ -354,6 +354,7 @@ mod tests {
             s: 1,
             back: crate::look::Backdrop::Face,
             active: true,
+            text: crate::theme::TextUnits::ONE,
         };
         let lay = trackbar::layout(&trackbar::TrackBar::new(13, 18), 4, 4, 71);
         let (mut a, mut b) = (Canvas::new(90, 40), Canvas::new(90, 40));

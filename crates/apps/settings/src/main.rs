@@ -57,7 +57,7 @@ use reprisekit::icontheme::IconTheme;
 use reprisekit::look::Paint;
 use reprisekit::raster::{Canvas, Rect};
 use reprisekit::text::TextRenderer;
-use reprisekit::theme::{FontConfig, Theme};
+use reprisekit::theme::{FontConfig, TextUnits, Theme};
 
 use crate::pages::Area;
 use crate::registry::Page;
@@ -234,6 +234,12 @@ enum Pick {
     SlideFolder,
 }
 
+/// The longest 100% length that grows to no more than `v`.
+fn fit_within(u: TextUnits, v: i32) -> i32 {
+    let d = u.design(v);
+    if u.len(d) > v { d - 1 } else { d }
+}
+
 fn take<T>(rx: &Receiver<T>) -> Result<Option<T>, ()> {
     match rx.try_recv() {
         Ok(v) => Ok(Some(v)),
@@ -322,6 +328,7 @@ struct SettingsApp {
     state_path: Option<PathBuf>,
     window: (i32, i32),
     window_dirty: bool,
+    units: TextUnits,
 }
 
 impl SettingsApp {
@@ -332,8 +339,11 @@ impl SettingsApp {
             app.sheet.reveal_open();
         }
         app.requests = requests;
+        app.units = Theme::default()
+            .with_form_text(repriseconf::text_size())
+            .text;
         let state = winstate::path();
-        app.window = winstate::load(&state, Area::MIN.sheet_size());
+        app.window = winstate::load(&state, app.min_window());
         app.last_slideshow = winstate::slideshow(&state);
         app.state_path = Some(state);
         app
@@ -350,8 +360,11 @@ impl SettingsApp {
     /// drawn again at its new size. What the controls hold stays. True
     /// when anything moved.
     fn fit_window(&mut self, size: (i32, i32)) -> bool {
-        let min = Area::MIN.sheet_size();
-        let size = (size.0.max(min.0), size.1.max(min.1));
+        let (u, min) = (self.units, Area::MIN.sheet_size());
+        let size = (
+            fit_within(u, size.0).max(min.0),
+            fit_within(u, size.1).max(min.1),
+        );
         if size == self.sheet.size {
             return false;
         }
@@ -381,10 +394,34 @@ impl SettingsApp {
         }
         // Command takes the Startup list's new width; a column the user
         // dragged keeps its width until the window resizes.
-        pages::fit_list_columns(&mut self.list, pages::list(a));
+        let list = self.on_page(pages::list(a));
+        pages::fit_list_columns(&mut self.list, list);
         self.preview_for = None;
         self.sheet.reveal_open();
         true
+    }
+
+    /// Take the text size the forms draw at, and lay the sheet out at it before the next draw.
+    fn follow_text(&mut self, ctx: &Ctx) {
+        let forms = ctx.forms();
+        self.units = forms.text;
+        self.sheet.drawn_with(&Paint {
+            s: 1,
+            ..forms.paint()
+        });
+    }
+
+    /// The smallest main window: the smallest sheet grown with the text.
+    fn min_window(&self) -> (i32, i32) {
+        self.units.size(Area::MIN.sheet_size())
+    }
+
+    /// A dialog's forms theme on `base`: the dialog font at the text size.
+    fn dialog_theme(&self, base: &Theme) -> Theme {
+        let mut t = base.clone();
+        t.text = self.units;
+        t.fonts.size_px = self.units.px(self.dialog_px);
+        t
     }
 
     fn save_window(&mut self) {
@@ -493,6 +530,7 @@ impl SettingsApp {
             state_path: None,
             window: Area::MIN.sheet_size(),
             window_dirty: false,
+            units: TextUnits::ONE,
         };
         app.display
             .model
@@ -691,11 +729,12 @@ impl SettingsApp {
         }
     }
 
-    fn error_event(&mut self, ev: Event) -> Reply {
+    fn error_event(&mut self, ev: Event, ctx: &Ctx) -> Reply {
+        let theme = self.dialog_theme(&ctx.theme);
         let Some(b) = &mut self.error else {
             return Reply::none();
         };
-        match b.event(&ev, &self.dialog_text, self.dialog_px) {
+        match b.event(&ev, &self.dialog_text, &theme) {
             oneshot::Outcome::Closed(_) => {
                 self.error = None;
                 Reply::redraw_all()
@@ -2374,13 +2413,14 @@ impl App for SettingsApp {
     }
 
     fn initial_size(&self) -> (i32, i32) {
-        self.window
+        let min = self.min_window();
+        (self.window.0.max(min.0), self.window.1.max(min.1))
     }
 
     /// Smallest sizes: the sheet's pages at their smallest, the file dialog's opening size.
     fn min_size(&self, win: WinId) -> Option<(i32, i32)> {
         match &self.add {
-            _ if win == repriseapp::MAIN => Some(Area::MIN.sheet_size()),
+            _ if win == repriseapp::MAIN => Some(self.min_window()),
             Some(d) if win == ADD_WIN => Some(d.min_client()),
             _ => None,
         }
@@ -2417,7 +2457,7 @@ impl App for SettingsApp {
             kids.push(Child {
                 id: SHORTCUT_WIN,
                 title: d.title.into(),
-                size: shortcutdlg::CLIENT,
+                size: self.units.size(shortcutdlg::CLIENT),
                 fixed: true,
                 modal: true,
             });
@@ -2426,7 +2466,7 @@ impl App for SettingsApp {
             kids.push(Child {
                 id: LAYOUT_WIN,
                 title: "Add Layout".into(),
-                size: layoutdlg::CLIENT,
+                size: self.units.size(layoutdlg::CLIENT),
                 fixed: true,
                 modal: true,
             });
@@ -2435,7 +2475,7 @@ impl App for SettingsApp {
             kids.push(Child {
                 id: ADD_ITEM_WIN,
                 title: "Add Item".into(),
-                size: additem::CLIENT,
+                size: self.units.size(additem::CLIENT),
                 fixed: true,
                 modal: true,
             });
@@ -2444,7 +2484,7 @@ impl App for SettingsApp {
             kids.push(Child {
                 id: RENAME_WIN,
                 title: "Rename".into(),
-                size: renamedlg::CLIENT,
+                size: self.units.size(renamedlg::CLIENT),
                 fixed: true,
                 modal: true,
             });
@@ -2453,7 +2493,7 @@ impl App for SettingsApp {
             kids.push(Child {
                 id: SAVER_WIN,
                 title: d.title(),
-                size: d.client,
+                size: self.units.size(d.client),
                 fixed: true,
                 modal: true,
             });
@@ -2462,7 +2502,7 @@ impl App for SettingsApp {
             kids.push(Child {
                 id: displayhost::MONITOR_WIN,
                 title: "Monitor Settings".into(),
-                size: monitordlg::CLIENT,
+                size: self.units.size(monitordlg::CLIENT),
                 fixed: true,
                 modal: true,
             });
@@ -2477,13 +2517,18 @@ impl App for SettingsApp {
             });
         }
         if let Some(b) = &self.error {
-            kids.push(b.child(ERROR_WIN, &self.dialog_text, self.dialog_px));
+            kids.push(b.child(
+                ERROR_WIN,
+                &self.dialog_text,
+                &self.dialog_theme(&Theme::default()),
+            ));
         }
         kids
     }
 
     fn event(&mut self, win: WinId, ev: Event, ctx: &mut Ctx) -> Reply {
         self.controls = ctx.theme.look.controls();
+        self.follow_text(ctx);
         let main = win == repriseapp::MAIN;
         let moved = main && self.fit_window(ctx.size);
         match ev {
@@ -2498,6 +2543,11 @@ impl App for SettingsApp {
         }
         let mut reply = self.route(win, ev, ctx);
         reply.redraw |= moved;
+        // A text size grown while the window is open can leave it under the sheet's minimum.
+        let need = self.units.size(Area::MIN.sheet_size());
+        if main && !ctx.maximized && (ctx.size.0 < need.0 || ctx.size.1 < need.1) {
+            reply.size = Some((ctx.size.0.max(need.0), ctx.size.1.max(need.1)));
+        }
         if let Some(press) = self.display.pending.take() {
             let r = self.start_display(press, &mut ctx.heads);
             reply.quit |= r.quit;
@@ -2539,6 +2589,7 @@ impl App for SettingsApp {
     }
 
     fn draw(&mut self, win: WinId, c: &mut Canvas, ctx: &Ctx) {
+        self.follow_text(ctx);
         if win == repriseapp::MAIN {
             self.fit_window(ctx.size);
         }
@@ -2598,7 +2649,7 @@ impl SettingsApp {
             self.fail(&reason);
         }
         if win == ERROR_WIN {
-            return self.error_event(ev);
+            return self.error_event(ev, ctx);
         }
         if win == ADD_WIN {
             return self.add_event(ev, ctx);
@@ -2624,7 +2675,7 @@ impl SettingsApp {
         if win == CHOOSER_WIN {
             return self.chooser_event(ev, ctx);
         }
-        let px = ctx.theme.fonts.size_px;
+        let px = self.sheet.open().units().px(ctx.theme.fonts.size_px);
         if self.sheet.tabs.open != Page::Startup.index() {
             self.focus_list(false);
         }
@@ -2759,18 +2810,23 @@ impl SettingsApp {
 
     fn fit_columns(&mut self, cm: &ControlMetrics) {
         let a = self.area();
-        pages::fit_shortcut_columns(&mut self.shortcuts, cm, pages::shortcuts(a));
-        defaultspage::fit_columns(&mut self.types, cm, defaultspage::list(a));
-        pages::fit_location_columns(&mut self.locations, cm, pages::locations(a));
+        let shortcuts = self.on_page(pages::shortcuts(a));
+        let types = self.on_page(defaultspage::list(a));
+        let locations = self.on_page(pages::locations(a));
+        pages::fit_shortcut_columns(&mut self.shortcuts, cm, shortcuts);
+        defaultspage::fit_columns(&mut self.types, cm, types);
+        pages::fit_location_columns(&mut self.locations, cm, locations);
     }
 
     fn paint(&mut self, win: WinId, c: &mut Canvas, ctx: &Ctx) {
         self.fit_columns(&ctx.theme.look.controls());
         let cs = &ctx.theme.colors;
         let px = ctx.theme.fonts.size_px;
+        let forms = ctx.forms();
+        let form_px = forms.fonts.size_px;
         if win == ERROR_WIN {
             if let Some(b) = &self.error {
-                b.draw(c, &ctx.theme, &self.dialog_text, self.dialog_px);
+                b.draw(c, &self.dialog_theme(&ctx.theme), &self.dialog_text);
             }
             return;
         }
@@ -2782,11 +2838,11 @@ impl SettingsApp {
                     &ctx.text,
                     &Paint {
                         s: 1,
-                        ..ctx.theme.paint()
+                        ..forms.paint()
                     },
                     &d.form,
                     true,
-                    px,
+                    form_px,
                 );
             }
             return;
@@ -2802,9 +2858,9 @@ impl SettingsApp {
             if let Some(f) = dialog {
                 let p = Paint {
                     s: 1,
-                    ..ctx.theme.paint()
+                    ..forms.paint()
                 };
-                form::draw(c, &ctx.text, &p, f, true, px);
+                form::draw(c, &ctx.text, &p, f, true, form_px);
             }
             return;
         }
@@ -2813,9 +2869,9 @@ impl SettingsApp {
             if let Some(q) = &self.display.flow.question {
                 let p = Paint {
                     s: 1,
-                    ..ctx.theme.paint()
+                    ..forms.paint()
                 };
-                form::draw(c, &ctx.text, &p, &q.dialog.form, true, px);
+                form::draw(c, &ctx.text, &p, &q.dialog.form, true, form_px);
             }
             return;
         }
@@ -2868,11 +2924,11 @@ impl SettingsApp {
             &ctx.text,
             &Paint {
                 s: 1,
-                ..ctx.theme.paint()
+                ..forms.paint()
             },
             &self.sheet,
             true,
-            px,
+            form_px,
         );
         if self.sheet.tabs.open == Page::Startup.index() {
             let r = self.on_page(pages::list(self.area()));
@@ -2888,9 +2944,9 @@ impl SettingsApp {
             // A combo dropped over the list covers it.
             let p = Paint {
                 s: 1,
-                ..ctx.theme.paint()
+                ..forms.paint()
             };
-            propsheet::draw_popups(c, &ctx.text, &p, &self.sheet, px);
+            propsheet::draw_popups(c, &ctx.text, &p, &self.sheet, form_px);
         }
         if self.sheet.tabs.open == Page::Advanced.index() {
             let r = self.on_page(pages::locations(self.area()));
@@ -2902,40 +2958,42 @@ impl SettingsApp {
         self.fit_columns(&ctx.theme.look.controls());
 
         let px = ctx.theme.fonts.size_px;
+        let drawn = |f: &form::Form| f.units().px(px);
         match win {
             ERROR_WIN => {
                 if let Some(b) = &self.error {
-                    b.access(tree, &self.dialog_text, self.dialog_px);
+                    b.access(tree, &self.dialog_text, &self.dialog_theme(&ctx.theme));
                 }
             }
             SHORTCUT_WIN => {
                 if let Some(d) = &self.shortcut {
-                    oneshot::access_form(&d.form, tree, &ctx.text, px);
+                    oneshot::access_form(&d.form, tree, &ctx.text, drawn(&d.form));
                 }
             }
             LAYOUT_WIN => {
                 if let Some(d) = &self.add_layout {
-                    oneshot::access_form(&d.form, tree, &ctx.text, px);
+                    oneshot::access_form(&d.form, tree, &ctx.text, drawn(&d.form));
                 }
             }
             ADD_ITEM_WIN => {
                 if let Some(d) = &self.add_item {
-                    oneshot::access_form(&d.form, tree, &ctx.text, px);
+                    oneshot::access_form(&d.form, tree, &ctx.text, drawn(&d.form));
                 }
             }
             RENAME_WIN => {
                 if let Some(d) = &self.rename {
-                    oneshot::access_form(&d.form, tree, &ctx.text, px);
+                    oneshot::access_form(&d.form, tree, &ctx.text, drawn(&d.form));
                 }
             }
             SAVER_WIN => {
                 if let Some(d) = &self.saver_dlg {
-                    oneshot::access_form(&d.form, tree, &ctx.text, px);
+                    oneshot::access_form(&d.form, tree, &ctx.text, drawn(&d.form));
                 }
             }
             displayhost::MONITOR_WIN => {
                 if let Some(q) = &self.display.flow.question {
-                    oneshot::access_form(&q.dialog.form, tree, &ctx.text, px);
+                    let f = &q.dialog.form;
+                    oneshot::access_form(f, tree, &ctx.text, drawn(f));
                 }
             }
             CHOOSER_WIN => {
@@ -2952,7 +3010,9 @@ impl SettingsApp {
                 }
             }
             _ => {
-                let (panel, mut focus) = self.sheet.access(tree, ROOT, &ctx.text, px);
+                let (panel, mut focus) =
+                    self.sheet
+                        .access(tree, ROOT, &ctx.text, drawn(self.sheet.open()));
                 if let Some((list, rect, focused)) = self.side_list() {
                     let lay = listview::layout(list, rect, &ctx.theme.look.controls());
                     let row = list.access(&lay, tree, panel, "side list");
@@ -3581,6 +3641,36 @@ mod tests {
         app.event(MAIN, Event::Resized, &mut ctx);
         assert_eq!(app.sheet.size, min, "no smaller than its smallest");
         assert_eq!(add(&app), before);
+    }
+
+    #[test]
+    fn at_150_percent_the_window_holds_the_grown_sheet() {
+        let mut app = app("resize-150");
+        let mut ctx = test_ctx();
+        ctx.text_size = 150;
+        let u = TextUnits::new(17, 11);
+        assert_eq!(ctx.forms().text, u);
+        ctx.size = (1000, 900);
+        app.event(MAIN, Event::Resized, &mut ctx);
+        assert_eq!(app.min_size(MAIN), Some(u.size((544, 528))));
+        let (w, h) = app.sheet.size;
+        assert_eq!(app.sheet.client(), u.size((w, h)));
+        assert!(
+            u.len(w) <= 1000 && u.len(w + 1) > 1000,
+            "{w} is the widest that fits"
+        );
+        assert!(
+            u.len(h) <= 900 && u.len(h + 1) > 900,
+            "{h} is the tallest that fits"
+        );
+
+        ctx.size = (300, 200);
+        app.event(MAIN, Event::Resized, &mut ctx);
+        assert_eq!(app.sheet.size, (544, 528), "no smaller than its smallest");
+
+        app.rename = Some(renamedlg::RenameDialog::new("Name"));
+        let rename = app.children().into_iter().find(|c| c.id == RENAME_WIN);
+        assert_eq!(rename.map(|c| c.size), Some(u.size(renamedlg::CLIENT)));
     }
 
     #[test]

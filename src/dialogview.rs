@@ -157,6 +157,19 @@ fn refit_origin(
 }
 
 /// Layout point in dialog pixels. Flooring keeps the pixel under the pointer left of or above the layout origin.
+/// The theme dialog `d` is laid out and drawn in: the config's at the text size, or the 100% one
+/// for a dialog that does not grow ([`Dialog::grows`]).
+pub(crate) fn theme_for<'a>(
+    config: &'a crate::config::Config,
+    d: &Dialog,
+) -> &'a crate::theme::Theme {
+    if d.grows() {
+        &config.theme
+    } else {
+        &config.base_theme
+    }
+}
+
 fn to_local(lx: f64, ly: f64, origin: (i32, i32)) -> (i32, i32) {
     (lx.floor() as i32 - origin.0, ly.floor() as i32 - origin.1)
 }
@@ -330,8 +343,9 @@ impl State {
         if area.width <= 0 {
             return;
         }
-        d.fit(&self.config.dialog_theme, &self.text);
-        let layout = DialogLayout::compute(&self.config.dialog_theme, &self.text, &d);
+        let theme = theme_for(&self.config, &d);
+        d.fit(theme, &self.text);
+        let layout = DialogLayout::compute(theme, &self.text, &d);
         let (x, y) = match d.placement {
             Placement::ByStart => {
                 dialog::by_start(area, self.bar_placement(&out).edge, layout.size)
@@ -681,7 +695,7 @@ impl State {
         };
         let mut canvas = still.clone();
         if self.caret.on {
-            let theme = self.config.dialog_theme.scaled(*at);
+            let theme = theme_for(&self.config, &v.dialog).scaled(*at);
             dialog::draw_field(&mut canvas, &theme, &self.text, &v.layout, &v.dialog, true);
         }
         let buffer = v.buffer;
@@ -709,8 +723,9 @@ impl State {
         let Some(v) = dialogs.views.get_mut(index) else {
             return;
         };
-        v.dialog.fit(&config.dialog_theme, text);
-        v.layout = DialogLayout::compute(&config.dialog_theme, text, &v.dialog);
+        let theme = theme_for(config, &v.dialog);
+        v.dialog.fit(theme, text);
+        v.layout = DialogLayout::compute(theme, text, &v.dialog);
     }
 
     pub fn invalidate_dialogs(&mut self) {
@@ -723,11 +738,13 @@ impl State {
     pub fn redraw_dialog(&mut self, index: usize) {
         let active = index + 1 == self.dialogs.views.len() && self.dialog_has_keyboard();
         let caret_on = self.caret.on && active;
-        let Some(output) = self.dialogs.views.get(index).map(|v| v.output.clone()) else {
+        let Some(v) = self.dialogs.views.get(index) else {
             return;
         };
+        let output = v.output.clone();
+        let base = theme_for(&self.config, &v.dialog).clone();
         let scale = self.draw_scale_at(Some(&output)).max(1);
-        let theme = self.config.dialog_theme.scaled(scale);
+        let theme = base.scaled(scale);
         let wanted = crate::glass::wanted(&self.config);
         let preedit = active
             .then(|| self.ime_field_preedit(crate::caret::Editor::Dialog))
@@ -738,7 +755,6 @@ impl State {
             text,
             scene,
             glass,
-            config,
             ..
         } = self;
         let v = &mut dialogs.views[index];
@@ -822,7 +838,7 @@ impl State {
             }
         }
         upload_scaled(scene, v.buffer, &canvas, scale);
-        let pane = glass_pane(&config.dialog_theme, wanted, &v.layout);
+        let pane = glass_pane(&base, wanted, &v.layout);
         v.backdrop.set(scene, glass, v.glass_tree, pane);
         let origin = (v.x, v.y);
         if active {
@@ -845,7 +861,7 @@ impl State {
         {
             n.set_modal();
         }
-        let px = self.config.dialog_theme.fonts.size_px;
+        let px = theme_for(&self.config, &v.dialog).fonts.size_px;
         let focus = dialog::access(&v.dialog, &v.layout, &self.text, px, &mut tree);
         tree.set_focus(focus);
         Some(tree)
@@ -854,7 +870,7 @@ impl State {
     /// The pointer moved onto dialog `index`'s close box when `over` is `Some((index, true))`; a styled
     /// look redraws on hot changes, Classic does not.
     pub fn dialog_hover_close(&mut self, over: Option<(usize, bool)>) {
-        let styled = self.config.dialog_theme.look.style().is_some();
+        let styled = self.config.theme.look.style().is_some();
         for i in 0..self.dialogs.views.len() {
             let hot = styled && over == Some((i, true));
             let v = &mut self.dialogs.views[i];
@@ -870,7 +886,7 @@ impl State {
     /// The pointer moved with nothing held: `at` is `Some((index, over))` or off every dialog. A styled
     /// look lights the control under it; Classic redraws nothing.
     pub fn dialog_hover(&mut self, at: Option<(usize, Option<DialogHit>)>) {
-        let styled = self.config.dialog_theme.look.lights_pointer();
+        let styled = self.config.theme.look.lights_pointer();
         let pos = self.pointer_location();
         for i in 0..self.dialogs.views.len() {
             let v = &mut self.dialogs.views[i];
@@ -959,7 +975,7 @@ impl State {
 
     pub fn dialog_hit(&self, index: usize, lx: f64, ly: f64) -> Option<DialogHit> {
         let v = self.dialogs.views.get(index)?;
-        hit(v, lx, ly, &self.text, &self.config.dialog_theme)
+        hit(v, lx, ly, &self.text, theme_for(&self.config, &v.dialog))
     }
 
     /// Start sizing the top dialog from `edges`, via its border or Browse's grip.
@@ -1005,7 +1021,7 @@ impl State {
             return;
         }
         p.dlg.set_size(client);
-        v.layout = DialogLayout::compute(&config.dialog_theme, text, &v.dialog);
+        v.layout = DialogLayout::compute(theme_for(config, &v.dialog), text, &v.dialog);
         self.move_dialog(index, r.x, r.y);
         self.redraw_dialog(index);
     }
@@ -1071,7 +1087,7 @@ impl State {
             self.begin_dialog_size(e);
             return;
         }
-        let lights = self.config.dialog_theme.look.lights_pointer();
+        let lights = self.config.theme.look.lights_pointer();
         let v = &mut self.dialogs.views[top];
         let outcome = match hit {
             Some(DialogHit::Close) => Outcome::Close,
@@ -1106,11 +1122,19 @@ impl State {
         self.apply_dialog(outcome);
     }
 
-    /// A left press at the pointer for double-click pairing, in the dialog theme's double-click time.
+    /// A left press at the pointer for double-click pairing, in the theme's double-click time.
     fn dialog_click(&self, time_msec: u32) -> reprisekit::pointer::Click {
         let p = self.pointer_location();
         let (x, y) = (p.x.floor() as i32, p.y.floor() as i32);
-        self.config.dialog_theme.metrics.click(x, y, time_msec)
+        self.config.theme.metrics.click(x, y, time_msec)
+    }
+
+    /// The font size the top dialog is set in ([`theme_for`]).
+    fn top_dialog_px(&self) -> u32 {
+        let top = self.dialogs.views.last();
+        top.map_or(&self.config.theme, |v| theme_for(&self.config, &v.dialog))
+            .fonts
+            .size_px
     }
 
     /// A left press in the top dialog's field at text offset `x`: caret under the pointer (Shift
@@ -1121,7 +1145,7 @@ impl State {
             .seat
             .get_keyboard()
             .is_some_and(|k| k.modifier_state().shift);
-        let px = self.config.dialog_theme.fonts.size_px;
+        let px = self.top_dialog_px();
         self.restart_caret();
         let State { dialogs, text, .. } = self;
         let Some(v) = dialogs.views.last_mut() else {
@@ -1196,7 +1220,7 @@ impl State {
 
     /// The pointer, held since a field or thumb press, is at (`lx`, `ly`): extend the selection or drive the thumb.
     pub fn dialog_drag_field(&mut self, lx: f64, ly: f64) {
-        let px = self.config.dialog_theme.fonts.size_px;
+        let px = self.top_dialog_px();
         let State { dialogs, text, .. } = self;
         let Some(v) = dialogs.views.last_mut() else {
             return;
@@ -1231,8 +1255,8 @@ impl State {
             return;
         };
         let over = self.dialog_hit(i, pos.x, pos.y);
-        let styled = self.config.dialog_theme.look.lights_pointer();
-        let px = self.config.dialog_theme.fonts.size_px;
+        let styled = self.config.theme.look.lights_pointer();
+        let px = self.top_dialog_px();
         let State { dialogs, text, .. } = self;
         let v = &mut dialogs.views[i];
         if v.dialog.holding_button() {
@@ -1309,7 +1333,7 @@ impl State {
             return;
         };
         let over = self.dialog_hit(i, pos.x, pos.y);
-        let styled = self.config.dialog_theme.look.lights_pointer();
+        let styled = self.config.theme.look.lights_pointer();
         let v = &mut self.dialogs.views[i];
         if v.dialog.help_box.holding() {
             v.dialog.drag_help(matches!(over, Some(DialogHit::Help)));
@@ -1437,7 +1461,7 @@ impl State {
         let edge = out
             .as_ref()
             .map_or(self.config.taskbar.position, |o| self.bar_placement(o).edge);
-        let size = DialogLayout::compute(&self.config.dialog_theme, &self.text, &d).size;
+        let size = DialogLayout::compute(theme_for(&self.config, &d), &self.text, &d).size;
         let (x, y) = dialog::browse_by_start(area, edge, size);
         d.placement = Placement::At(x, y);
         self.open_dialog_over(d);
@@ -1638,8 +1662,9 @@ impl State {
                 self.apply_set_default(&path, &app, mime.as_deref())
             }
             Outcome::AdvancedAttributes { subject, robots } => {
-                let px = self.config.dialog_theme.fonts.size_px;
-                let d = Dialog::advanced_attributes(subject, robots, &self.text, px);
+                let t = &self.config.theme;
+                let px = t.fonts.size_px;
+                let d = Dialog::advanced_attributes(subject, robots, &self.text, px, t.text);
                 self.open_dialog_over(d)
             }
             Outcome::AdvancedChosen(chosen) => {
@@ -2083,8 +2108,8 @@ impl State {
             return;
         };
         self.raise_dialog(i);
-        let px = self.config.dialog_theme.fonts.size_px;
-        let d = Dialog::confirm_attributes(c, &self.text, px);
+        let t = &self.config.theme;
+        let d = Dialog::confirm_attributes(c, &self.text, t.fonts.size_px, t.text);
         self.open_view(d, sheet);
     }
 

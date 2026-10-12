@@ -255,7 +255,7 @@ impl Notepad {
             return Reply::none();
         };
         let mut fields = self.overwrite_fields(&path);
-        let step = oneshot::msgbox_event(&ev, &self.dialog_text, self.dialog_px, &mut fields);
+        let step = oneshot::msgbox_event(&ev, &self.dialog_text, &self.forms, &mut fields);
         self.overwrite_focus = fields.default;
         match step {
             FormStep::Closed => self.overwrite_outcome(form::Event::Cancel),

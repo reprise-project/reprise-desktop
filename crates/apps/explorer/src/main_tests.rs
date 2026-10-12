@@ -740,6 +740,42 @@ fn settings_changes_defer_the_write() {
 }
 
 #[test]
+fn boxes_and_the_sheet_grow_with_the_text_size() {
+    let dir = tempfile::tempdir().expect("a temp dir");
+    let mut ctx = test_ctx();
+    let mut ex = test_explorer(Place::Folder(dir.path().to_path_buf()), &mut ctx);
+    let sizes = |ex: &mut Explorer, ctx: &mut Ctx| {
+        ex.run(commands::Command::About, ctx);
+        let about = ex.children()[0].size;
+        ex.dialog = None;
+        ex.open_properties(dir.path(), "d", "d", ctx);
+        let sheet = ex.children()[0].size;
+        ex.props = None;
+        (about, sheet)
+    };
+    let (about, sheet) = sizes(&mut ex, &mut ctx);
+    ctx.text_size = 150;
+    ex.follow_forms(&ctx);
+    assert_eq!(ex.forms.fonts.size_px, 17);
+    let u = reprisekit::theme::TextUnits::new(17, 11);
+    assert_eq!(sizes(&mut ex, &mut ctx), (u.size(about), u.size(sheet)));
+
+    ex.run(commands::Command::About, &mut ctx);
+    let Some(Dialog::About(form)) = &ex.dialog else {
+        panic!("the About box is up");
+    };
+    let banner = match &form.item("banner").expect("the banner").control {
+        reprisekit::controls::form::Control::Picture { canvas, .. } => canvas.as_ref(),
+        _ => None,
+    };
+    assert_eq!(
+        banner.map(|c| c.width as i32),
+        Some(u.size(about).0),
+        "the banner spans the grown box"
+    );
+}
+
+#[test]
 fn about_opens_the_shared_box_with_the_explorer_name() {
     let dir = tempfile::tempdir().expect("a temp dir");
     let mut ctx = test_ctx();

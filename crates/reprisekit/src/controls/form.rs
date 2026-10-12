@@ -34,7 +34,7 @@ use crate::pointer::{Interaction, Lit, Pointer, WHEEL_ROWS};
 use crate::raster::{Canvas, EdgeStyle, Rect};
 use crate::text::{Align, DialogFont, TextRenderer};
 use crate::textedit::{Caret, EditKey, TextEdit};
-use crate::theme::{Color, ColorScheme, Theme};
+use crate::theme::{Color, ColorScheme, TextUnits, Theme};
 use crate::trackbar::{self, TrackBar};
 use accesskit::{NodeId, Role};
 
@@ -168,11 +168,11 @@ impl Memo {
     }
 
     /// How a memo lays its text out at font size `px`: the dialog line
-    /// pitch, the vertical scrollbar always, the look's bar sizes `cm`.
-    pub fn metrics(px: u32, cm: &ControlMetrics) -> multiedit::Metrics {
+    /// pitch grown by `u`, the vertical scrollbar always, the look's bar sizes `cm`.
+    pub fn metrics(px: u32, cm: &ControlMetrics, u: TextUnits) -> multiedit::Metrics {
         multiedit::Metrics {
             font_px: px,
-            line_h: LINE_H,
+            line_h: u.len(LINE_H),
             bars_always: false,
             vbar_always: true,
             bar: cm.scroll,
@@ -502,6 +502,9 @@ pub struct Form {
     pub labels_at_ink: bool,
     /// A drag of text resting on an edit field, from [`Form::drag_over`].
     field_drop: Option<FieldDrop>,
+    /// Where the form's (0, 0) sits on the surface it is drawn on. The items' rects are laid out
+    /// for 100% text from here; this offset does not grow with the text.
+    pub origin: (i32, i32),
     rendered: Rendered,
 }
 
@@ -520,6 +523,8 @@ struct FieldDrop {
 struct Rendered {
     entries: RefCell<Vec<Rendering>>,
     controls: Cell<ControlMetrics>,
+    /// The last draw's text size ([`Paint::text`]), which the items' rects grow by.
+    text: Cell<TextUnits>,
     /// The last draw's scale, 0 before the first: a memo keeps its
     /// horizontal scroll in device px, which `hit` and `access` read at 1x.
     scale: Cell<i32>,
@@ -863,6 +868,7 @@ impl Form {
             font: DialogFont::Ui,
             labels_at_ink: false,
             field_drop: None,
+            origin: (0, 0),
             rendered: Rendered::default(),
         };
         let first = (0..form.items.len()).find(|&i| form.tab_stop(i));
@@ -870,12 +876,13 @@ impl Form {
         form
     }
 
-    /// Keep `p`'s look's control sizes as the ones `hit`, `access` and
+    /// Keep `p`'s look's control sizes and text size as the ones `hit`, `access` and
     /// the keys lay the controls out with. `draw` does this itself; a
-    /// host that draws a copy of the form (shifted, refocused) calls it on
-    /// the form it keeps.
-    pub(crate) fn drawn_with(&self, p: &Paint) {
-        self.rendered.controls.set(p.look.controls());
+    /// host that draws a copy of the form (shifted, refocused), or hits or reads
+    /// [`Form::rect`] on a form not drawn yet, calls it first.
+    pub fn drawn_with(&self, p: &Paint) {
+        self.rendered.controls.set(p.look.controls().grown(p.text));
+        self.rendered.text.set(p.text);
         self.rendered.scale.set(p.s);
         self.rendered.styled.set(p.look.lights_pointer());
     }
@@ -903,8 +910,26 @@ impl Form {
         multiedit::View { left, ..to }
     }
 
+    /// The look's control sizes at the text size of the last draw.
     pub(crate) fn controls(&self) -> ControlMetrics {
         self.rendered.controls.get()
+    }
+
+    /// The text size the form was last drawn at ([`Paint::text`]). A host feeding it input
+    /// measures at `units().px` of its 100% font size, as the draw did.
+    pub fn units(&self) -> TextUnits {
+        self.rendered.text.get()
+    }
+
+    /// Where `it` draws and takes the pointer at the last draw's text size: see [`place`].
+    fn at(&self, it: &Item) -> Rect {
+        place(it, &self.controls(), self.units(), self.origin)
+    }
+
+    /// The rect item `id` was last drawn in, on the surface: its rect grown with the text and
+    /// moved to the form's origin and by its indent. For a host that draws over an item.
+    pub fn rect(&self, id: &str) -> Option<Rect> {
+        self.item(id).map(|it| self.at(it))
     }
 
     pub(crate) fn styled(&self) -> bool {
@@ -1066,7 +1091,7 @@ impl Form {
         let Control::TrackBar(t) = &it.control else {
             return;
         };
-        let r = it.placed(&self.rendered.controls.get());
+        let r = self.at(it);
         let lay = trackbar::layout(t, r.x, r.y, r.width);
         if !lay.bounds.contains(x, y) {
             return;
@@ -1518,8 +1543,8 @@ impl Form {
             return false;
         };
         let cm = self.controls();
+        let placed = self.at(&self.items[item]);
         let it = &mut self.items[item];
-        let placed = it.placed(&cm);
         let takes = match (part, &mut it.control) {
             (Part::Edit(_), Control::Edit { edit, .. }) => !edit.is_secret(),
             (Part::Combo(combo::Hit::Field), Control::Combo(c)) => {
@@ -1553,18 +1578,18 @@ impl Form {
         let cm = self.controls();
         match &it.control {
             Control::Edit { edit, first, .. } => {
-                let inner = it.placed(&cm).inset(widgets::FIELD_PAD);
+                let inner = self.at(it).inset(widgets::FIELD_PAD);
                 crate::textedit::drag_scroll(
                     text,
                     &edit.text,
                     visible_from(edit, first),
                     inner.width,
-                    LINE_H,
+                    self.units().len(LINE_H),
                     d.x - inner.x,
                     px,
                 )
             }
-            Control::Combo(c) => c.drag_scroll(&combo::layout(c, it.placed(&cm), &cm), text, px),
+            Control::Combo(c) => c.drag_scroll(&combo::layout(c, self.at(it), &cm), text, px),
             _ => None,
         }
     }
@@ -1601,8 +1626,8 @@ impl Form {
         let hit = self.hit(d.x, d.y, text, px).filter(|h| h.item == d.item);
         let cm = self.controls();
         let dialog = text.dialog(self.font);
+        let placed = self.at(&self.items[d.item]);
         let it = &mut self.items[d.item];
-        let placed = it.placed(&cm);
         let took = match (hit.map(|h| h.part), &mut it.control) {
             (Some(Part::Edit(at)), Control::Edit { edit, .. }) => edit.drop_text(at, line),
             (_, Control::Combo(c)) => c.drop_text(&combo::layout(c, placed, &cm), line, dialog, px),
@@ -1821,7 +1846,7 @@ impl Form {
                     return Event::None;
                 };
                 let id = self.items[i].id;
-                let rect = self.items[i].placed(&self.rendered.controls.get());
+                let rect = self.at(&self.items[i]);
                 match (&mut self.items[i].control, other) {
                     (Control::Check { checked, mixed, .. }, Key::Space) => {
                         toggle_check(checked, mixed);
@@ -2076,7 +2101,7 @@ impl Form {
     fn char_key(&mut self, ch: char) -> Event {
         if let Some(i) = self.focus {
             let id = self.items[i].id;
-            let rect = self.items[i].placed(&self.rendered.controls.get());
+            let rect = self.at(&self.items[i]);
             match &mut self.items[i].control {
                 Control::Memo(m) => {
                     let changed = m.edit.edit_key(EditKey::Insert(ch.to_string()));
@@ -2166,7 +2191,7 @@ impl Form {
             let it = &self.items[i];
             match &it.control {
                 Control::Combo(c) => {
-                    let lay = combo::layout(c, it.placed(&cm_all), &self.rendered.controls.get());
+                    let lay = combo::layout(c, self.at(it), &self.rendered.controls.get());
                     if let Some(h) = combo::hit(c, &lay, x, y) {
                         return Some(Hit {
                             item: i,
@@ -2175,7 +2200,7 @@ impl Form {
                         });
                     }
                 }
-                Control::Color(_) => match colorbutton::hit_popup(it.placed(&cm_all), x, y) {
+                Control::Color(_) => match colorbutton::hit_popup(self.at(it), x, y) {
                     Some(colorbutton::PopupHit::Swatch(k)) => {
                         return Some(Hit {
                             item: i,
@@ -2199,74 +2224,65 @@ impl Form {
         for (i, it) in self.items.iter().enumerate().rev() {
             let part = match &it.control {
                 Control::Combo(c) => {
-                    let lay = combo::layout(c, it.placed(&cm_all), &self.rendered.controls.get());
+                    let lay = combo::layout(c, self.at(it), &self.rendered.controls.get());
                     match combo::hit(c, &lay, x, y) {
                         Some(h) => Part::Combo(h),
                         None => continue,
                     }
                 }
                 Control::ListBox { list, .. } => {
-                    let lay =
-                        listbox::layout(list, it.placed(&cm_all), &self.rendered.controls.get());
+                    let lay = listbox::layout(list, self.at(it), &self.rendered.controls.get());
                     match listbox::hit(list, &lay, x, y) {
                         Some(h) => Part::List(h),
-                        None if it.placed(&cm_all).contains(x, y) => Part::Body,
+                        None if self.at(it).contains(x, y) => Part::Body,
                         None => continue,
                     }
                 }
                 Control::Tree(tv) => {
-                    if !it.placed(&cm_all).contains(x, y) {
+                    if !self.at(it).contains(x, y) {
                         continue;
                     }
                     let lay = treeview::layout_without_text(
                         tv,
-                        it.placed(&cm_all),
+                        self.at(it),
                         &self.rendered.controls.get(),
                     );
                     Part::Tree(tv.hit(&lay, x, y))
                 }
                 Control::Calendar(cal) => {
-                    match calendar::hit(cal, &calendar::layout(it.placed(&cm_all)), x, y) {
+                    match calendar::hit(cal, &calendar::layout(self.at(it)), x, y) {
                         Some(h) => Part::Calendar(h),
                         None => continue,
                     }
                 }
                 Control::Time(tf) => {
                     let cm = self.rendered.controls.get();
-                    match timefield::hit(
-                        tf,
-                        &timefield::layout(it.placed(&cm_all), &cm),
-                        x,
-                        y,
-                        text,
-                        px,
-                    ) {
+                    match timefield::hit(tf, &timefield::layout(self.at(it), &cm), x, y, text, px) {
                         Some(h) => Part::Time(h),
                         None => continue,
                     }
                 }
                 Control::Clock(_) => continue,
                 Control::HotKey(_) => {
-                    if !hotkey::hit(hotkey::layout(it.placed(&cm_all)), x, y) {
+                    if !hotkey::hit(hotkey::layout(self.at(it)), x, y) {
                         continue;
                     }
                     Part::Body
                 }
                 Control::UpDown(u) => {
-                    let lay =
-                        updown::layout_for(u, it.placed(&cm_all), &self.rendered.controls.get());
+                    let lay = updown::layout_for(
+                        u,
+                        self.at(it),
+                        &self.rendered.controls.get(),
+                        self.units(),
+                    );
                     match updown::hit(u, &lay, x, y, text, px) {
                         Some(h) => Part::UpDown(h),
                         None => continue,
                     }
                 }
                 Control::TrackBar(t) => {
-                    let lay = trackbar::layout(
-                        t,
-                        it.placed(&cm_all).x,
-                        it.placed(&cm_all).y,
-                        it.placed(&cm_all).width,
-                    );
+                    let lay = trackbar::layout(t, self.at(it).x, self.at(it).y, self.at(it).width);
                     match trackbar::hit(&lay, x, y) {
                         Some(h) => Part::TrackBar(h),
                         None => continue,
@@ -2274,9 +2290,10 @@ impl Form {
                 }
                 Control::Check { .. } => {
                     let cm = self.rendered.controls.get();
-                    let r = it.placed(&cm_all);
-                    if check_box(r, &cm).contains(x, y)
-                        || check_label_rect(r, it.indent, &cm, 200).contains(x, y)
+                    let r = self.at(it);
+                    let w = self.units().len(200);
+                    if check_box(r, &cm, glyph_dy(it, r)).contains(x, y)
+                        || check_label_rect(r, it.indent, &cm, w).contains(x, y)
                     {
                         Part::Body
                     } else {
@@ -2285,9 +2302,10 @@ impl Form {
                 }
                 Control::Radio { .. } => {
                     let cm = self.rendered.controls.get();
-                    let r = it.placed(&cm_all);
-                    if radio_box(r, &cm).contains(x, y)
-                        || radio_label_rect(r, &cm, 200).contains(x, y)
+                    let r = self.at(it);
+                    let w = self.units().len(200);
+                    if radio_box(r, &cm, glyph_dy(it, r)).contains(x, y)
+                        || radio_label_rect(r, &cm, w).contains(x, y)
                     {
                         Part::Body
                     } else {
@@ -2295,7 +2313,7 @@ impl Form {
                     }
                 }
                 Control::IconList(l) => {
-                    let lay = iconlist::layout(it.placed(&cm_all), &cm_all);
+                    let lay = iconlist::layout(self.at(it), &cm_all);
                     match l.hit(&lay, &cm_all, x, y) {
                         Some(h) => Part::IconList(h),
                         None if lay.frame.contains(x, y) => Part::Body,
@@ -2303,7 +2321,7 @@ impl Form {
                     }
                 }
                 Control::Arrange(a) => {
-                    let lay = arrange::layout(it.placed(&cm_all), a);
+                    let lay = arrange::layout(self.at(it), a);
                     match a.hit(&lay, x, y) {
                         Some(tile) => Part::Tile { tile, at: (x, y) },
                         None if lay.frame.contains(x, y) => Part::Body,
@@ -2311,12 +2329,12 @@ impl Form {
                     }
                 }
                 Control::Memo(memo) => {
-                    let r = it.placed(&cm_all);
+                    let r = self.at(it);
                     if !r.contains(x, y) {
                         continue;
                     }
                     let text = text.dialog(self.font);
-                    let m = Memo::metrics(px, &cm_all);
+                    let m = Memo::metrics(px, &cm_all, self.units());
                     let lay = multiedit::layout(text, &m, &memo.edit, r, 1);
                     let view = self.memo_view_1x(memo);
                     let bar = multiedit::bar_hit(text, &m, &memo.edit, &lay, view, x, y).and_then(
@@ -2345,7 +2363,7 @@ impl Form {
                     first,
                     enabled,
                 } => {
-                    if !it.placed(&cm_all).contains(x, y) {
+                    if !self.at(it).contains(x, y) {
                         continue;
                     }
                     if !*enabled {
@@ -2363,7 +2381,7 @@ impl Form {
                         } else {
                             edit
                         };
-                        let inner_x = it.placed(&cm_all).x + crate::classic::widgets::FIELD_PAD;
+                        let inner_x = self.at(it).x + crate::classic::widgets::FIELD_PAD;
                         let from = visible_from(shown, first);
                         let dx = (x - inner_x).max(0);
                         let at = crate::textedit::index_at(text, &shown.text[from..], dx, px);
@@ -2384,7 +2402,7 @@ impl Form {
                 | Control::Rule
                 | Control::Blank => continue,
                 _ => {
-                    if it.placed(&cm_all).contains(x, y) {
+                    if self.at(it).contains(x, y) {
                         Part::Body
                     } else {
                         continue;
@@ -2413,7 +2431,7 @@ impl Form {
         }
         let i = h.item;
         let id = self.items[i].id;
-        let rect = self.items[i].placed(&self.rendered.controls.get());
+        let rect = self.at(&self.items[i]);
         if self.items[i].focusable() {
             self.set_focus(Some(i));
         }
@@ -2685,7 +2703,7 @@ impl Form {
             memo.view.set(to);
             return Event::Redraw;
         }
-        let rect = self.items[i].placed(&self.rendered.controls.get());
+        let rect = self.at(&self.items[i]);
         let id = self.items[i].id;
         match (&mut self.items[i].control, drag) {
             (Control::Edit { edit, .. }, Drag::Edit(_)) => {
@@ -2799,7 +2817,7 @@ impl Form {
         };
         let i = h.item;
         let cm = self.rendered.controls.get();
-        let rect = self.items[i].placed(&cm);
+        let rect = self.at(&self.items[i]);
         let focused = self.focus() == Some(i);
         let moved = match &mut self.items[i].control {
             Control::Combo(_) if !focused => false,
@@ -2927,8 +2945,44 @@ fn unmasked_index(edit: &TextEdit, at: usize) -> usize {
         .map_or(edit.text.len(), |(i, _)| i)
 }
 
-fn check_box(r: Rect, cm: &ControlMetrics) -> Rect {
-    Rect::new(r.x, r.y, cm.check, cm.check)
+/// Where `it` draws and takes the pointer, on the surface: its 100% rect grown by `u` and moved
+/// to `origin`, then by its [`Indent`]. Pictures and controls with fixed art keep their size and
+/// only move; a separator keeps its height and a rule its width. Indents keep their px: they
+/// step past a check box, which keeps its size.
+fn place(it: &Item, cm: &ControlMetrics, u: TextUnits, origin: (i32, i32)) -> Rect {
+    let r = match it.control {
+        Control::Picture { .. }
+        | Control::Monitor(_)
+        | Control::Spectrum
+        | Control::Sample { .. }
+        | Control::Clock(_)
+        | Control::Calendar(_) => u.at(it.rect),
+        Control::Separator => Rect {
+            height: it.rect.height,
+            ..u.rect(it.rect)
+        },
+        Control::Rule => Rect {
+            width: it.rect.width,
+            ..u.rect(it.rect)
+        },
+        _ => u.rect(it.rect),
+    };
+    let placed = it.placed(cm);
+    Rect {
+        x: r.x + placed.x - it.rect.x + origin.0,
+        y: r.y + placed.y - it.rect.y + origin.1,
+        ..r
+    }
+}
+
+/// How far down its placed rect a check box's or radio's glyph sits beyond where it does at
+/// 100%: half the row's growth, so the glyph stays centred on its label's line.
+fn glyph_dy(it: &Item, placed: Rect) -> i32 {
+    (placed.height - it.rect.height) / 2
+}
+
+fn check_box(r: Rect, cm: &ControlMetrics, dy: i32) -> Rect {
+    Rect::new(r.x, r.y + dy, cm.check, cm.check)
 }
 
 /// A check box's label: `cm.check_label` right of its item rect's left
@@ -2960,8 +3014,8 @@ fn toggle_check(checked: &mut bool, mixed: &mut Option<bool>) {
 
 /// A radio button's circle: `cm.radio` px square at its item rect's top,
 /// `cm.radio_x` right of its left edge.
-fn radio_box(r: Rect, cm: &ControlMetrics) -> Rect {
-    Rect::new(r.x + cm.radio_x, r.y, cm.radio, cm.radio)
+fn radio_box(r: Rect, cm: &ControlMetrics, dy: i32) -> Rect {
+    Rect::new(r.x + cm.radio_x, r.y + dy, cm.radio, cm.radio)
 }
 
 /// A radio button's label: `cm.radio_label` right of its item rect's left
@@ -3011,7 +3065,8 @@ fn draw_choice_label(
 pub fn draw(c: &mut Canvas, text: &TextRenderer, p: &Paint, form: &Form, cues: bool, px: u32) {
     let Paint { cs, s, .. } = *p;
     form.drawn_with(p);
-    let cm = p.look.controls();
+    let cm = form.controls();
+    let grow = p.text;
     let text = text.dialog(form.font);
     let at_ink = |r: Rect| {
         if form.labels_at_ink {
@@ -3023,7 +3078,8 @@ pub fn draw(c: &mut Canvas, text: &TextRenderer, p: &Paint, form: &Form, cues: b
     for (i, it) in form.items.iter().enumerate() {
         let focused = form.focus == Some(i);
         let cue = focused && cues;
-        let r = it.placed(&cm).scaled(s);
+        let placed = form.at(it);
+        let r = placed.scaled(s);
         match &it.control {
             Control::Label {
                 text: label,
@@ -3040,7 +3096,11 @@ pub fn draw(c: &mut Canvas, text: &TextRenderer, p: &Paint, form: &Form, cues: b
             Control::Lines(lines) => {
                 let r = at_ink(r);
                 for (k, line) in lines.iter().enumerate() {
-                    let lr = Rect::new(r.x, r.y + k as i32 * LINE_H * s, r.width, LINE_H * s);
+                    let (top, bottom) = (
+                        grow.len(k as i32 * LINE_H),
+                        grow.len((k as i32 + 1) * LINE_H),
+                    );
+                    let lr = Rect::new(r.x, r.y + top * s, r.width, (bottom - top) * s);
                     text.draw(c, lr, line, false, cs.button_text, Align::Left, px);
                 }
             }
@@ -3056,8 +3116,8 @@ pub fn draw(c: &mut Canvas, text: &TextRenderer, p: &Paint, form: &Form, cues: b
                 // a column left. The line's break opens 2 px before the
                 // pen.
                 let lw = text.measure(&crate::text::split_mnemonic(label).0, false, px);
-                let lx = r.x + (10 - text.lead()) * s;
-                let lr = Rect::new(lx, r.y - 5 * s, lw, LINE_H * s);
+                let lx = r.x + (grow.len(10) - text.lead()) * s;
+                let lr = Rect::new(lx, r.y - grow.len(5) * s, lw, grow.len(LINE_H) * s);
                 draw_group_box(c, text, p, r, lr, label, px);
             }
             Control::Separator => c.etched_divider_t(r.x, r.right() - s, r.y, cs, s),
@@ -3069,7 +3129,7 @@ pub fn draw(c: &mut Canvas, text: &TextRenderer, p: &Paint, form: &Form, cues: b
                 enabled,
                 mixed,
             } => {
-                let b = check_box(it.placed(&cm), &cm).scaled(s);
+                let b = check_box(placed, &cm, glyph_dy(it, placed)).scaled(s);
                 let state = match (*mixed, *checked) {
                     (Some(true), _) => CheckState::Mixed,
                     (_, true) => CheckState::On,
@@ -3081,7 +3141,7 @@ pub fn draw(c: &mut Canvas, text: &TextRenderer, p: &Paint, form: &Form, cues: b
                 } else {
                     draw_checkbox_state_disabled(c, p, b, state);
                 }
-                let lr = check_label_rect(it.placed(&cm), it.indent, &cm, 0).scaled(s);
+                let lr = check_label_rect(placed, it.indent, &cm, 0).scaled(s);
                 let part = crate::style::Part::CheckBox;
                 draw_choice_label(c, text, p, lr, label, *enabled, part, cue, px);
             }
@@ -3091,14 +3151,14 @@ pub fn draw(c: &mut Canvas, text: &TextRenderer, p: &Paint, form: &Form, cues: b
                 enabled,
                 ..
             } => {
-                let b = radio_box(it.placed(&cm), &cm).scaled(s);
+                let b = radio_box(placed, &cm, glyph_dy(it, placed)).scaled(s);
                 if *enabled {
                     let ptr = form.pointer.of((i, Light::Body));
                     draw_radio(c, p, b, *checked, ptr);
                 } else {
                     draw_radio_disabled(c, p, b, *checked);
                 }
-                let lr = radio_label_rect(it.placed(&cm), &cm, 0).scaled(s);
+                let lr = radio_label_rect(placed, &cm, 0).scaled(s);
                 let part = crate::style::Part::Radio;
                 draw_choice_label(c, text, p, lr, label, *enabled, part, cue, px);
             }
@@ -3164,7 +3224,7 @@ pub fn draw(c: &mut Canvas, text: &TextRenderer, p: &Paint, form: &Form, cues: b
                 }
             }
             Control::Combo(combo) => {
-                let lay = combo::layout(combo, it.placed(&cm), &cm);
+                let lay = combo::layout(combo, placed, &cm);
                 let drop = form.pointer.of((i, Light::Drop));
                 let frame = match drop {
                     Interaction::Idle => form.pointer.of((i, Light::Field)),
@@ -3184,22 +3244,23 @@ pub fn draw(c: &mut Canvas, text: &TextRenderer, p: &Paint, form: &Form, cues: b
                 );
             }
             Control::ListBox { list, icons } => {
-                let lay = listbox::layout(list, it.placed(&cm), &cm);
+                let lay = listbox::layout(list, placed, &cm);
                 listbox::draw(c, text, p, list, &lay, icons, form.bar_lit(i), px);
             }
             Control::Tree(tv) => {
-                let lay = treeview::layout_without_text(tv, it.placed(&cm), &cm);
+                let lay = treeview::layout_without_text(tv, placed, &cm);
                 let bars = form
                     .bar_lit(i)
                     .map(|(hit, how)| ((Axis::Vertical, hit), how));
-                treeview::draw(c, text, p, tv, &lay, bars, px);
+                // A tree's rows keep their 100% pitch, so its text does too.
+                treeview::draw(c, text, p, tv, &lay, bars, grow.base_px(px));
             }
             Control::UpDown(u) => {
-                let lay = updown::layout_for(u, it.placed(&cm), &cm);
+                let lay = updown::layout_for(u, placed, &cm, grow);
                 updown::draw(c, text, p, u, &lay, focused, form.spin_lit(i), px);
             }
             Control::TrackBar(t) => {
-                let at = it.placed(&cm);
+                let at = placed;
                 let lay = trackbar::layout(t, at.x, at.y, at.width);
                 draw_trackbar(
                     c,
@@ -3307,31 +3368,31 @@ pub fn draw(c: &mut Canvas, text: &TextRenderer, p: &Paint, form: &Form, cues: b
                 draw_well(c, p, r, EdgeStyle::ButtonSunken);
                 c.blit_canvas(r.x + 2 * s, r.y + 2 * s, &pic[0]);
             }
-            Control::Color(b) => colorbutton::draw(c, p, it.placed(&cm), b),
+            Control::Color(b) => colorbutton::draw(c, p, placed, b),
             Control::Calendar(cal) => {
-                let lay = calendar::layout(it.placed(&cm));
-                calendar::draw(c, text, p, cal, &lay, cue, px);
+                let lay = calendar::layout(placed);
+                calendar::draw(c, text, p, cal, &lay, cue, grow.base_px(px));
             }
-            Control::Clock(face) => clockface::draw(c, p, it.placed(&cm), *face),
+            Control::Clock(face) => clockface::draw(c, p, placed, *face),
             Control::Time(tf) => {
-                let lay = timefield::layout(it.placed(&cm), &cm);
+                let lay = timefield::layout(placed, &cm);
                 timefield::draw(c, text, p, tf, &lay, focused, form.spin_lit(i), px);
             }
             Control::HotKey(h) => {
                 let ptr = form.pointer.of((i, Light::Body));
-                let field = hotkey::layout(it.placed(&cm));
+                let field = hotkey::layout(placed);
                 hotkey::draw(c, text, p, h, field, focused, form.caret, ptr, px);
             }
             Control::IconList(l) => {
-                let lay = iconlist::layout(it.placed(&cm), &cm);
+                let lay = iconlist::layout(placed, &cm);
                 iconlist::draw(c, p, l, &lay, cue, cm.thumb_min);
             }
             Control::Arrange(a) => {
-                let lay = arrange::layout(it.placed(&cm), a);
+                let lay = arrange::layout(placed, a);
                 arrange::draw(c, text, p, a, &lay, cue, px);
             }
             Control::Memo(memo) => {
-                let m = Memo::metrics(px, &cm);
+                let m = Memo::metrics(px, &cm, grow);
                 let lay = multiedit::layout(text, &m, &memo.edit, r, s);
                 memo.rows.set(lay.rows);
                 let mut view = memo.view.get();
@@ -3367,11 +3428,12 @@ pub fn draw_popups(c: &mut Canvas, text: &TextRenderer, p: &Paint, form: &Form, 
 }
 
 fn draw_open_popups(c: &mut Canvas, text: &TextRenderer, p: &Paint, form: &Form, px: u32) {
-    let cm = p.look.controls();
+    form.drawn_with(p);
+    let cm = form.controls();
     for (i, it) in form.items.iter().enumerate() {
         match &it.control {
             Control::Combo(combo) if combo.open.is_some() => {
-                let lay = combo::layout(combo, it.placed(&cm), &cm);
+                let lay = combo::layout(combo, form.at(it), &cm);
                 combo::draw_list(
                     c,
                     text,
@@ -3386,9 +3448,7 @@ fn draw_open_popups(c: &mut Canvas, text: &TextRenderer, p: &Paint, form: &Form,
                     px,
                 );
             }
-            Control::Color(b) if b.open => {
-                colorbutton::draw_popup(c, text, p, it.placed(&cm), b, px)
-            }
+            Control::Color(b) if b.open => colorbutton::draw_popup(c, text, p, form.at(it), b, px),
             _ => {}
         }
     }
@@ -3411,7 +3471,7 @@ impl Form {
         let cm = self.rendered.controls.get();
         let text = text.dialog(self.font);
         for (i, it) in self.items.iter().enumerate() {
-            let r = it.placed(&cm);
+            let r = self.at(it);
             let within = |g: &Rect| {
                 g.contains(r.x, r.y) && r.right() <= g.right() && r.bottom() <= g.bottom()
             };
@@ -3458,7 +3518,12 @@ impl Form {
                 } => {
                     let lw = text.measure(&crate::text::split_mnemonic(l).0, false, px);
                     let cm = self.rendered.controls.get();
-                    let b = check_box(r, &cm).union(&check_label_rect(r, it.indent, &cm, lw + 2));
+                    let b = check_box(r, &cm, glyph_dy(it, r)).union(&check_label_rect(
+                        r,
+                        it.indent,
+                        &cm,
+                        lw + 2,
+                    ));
                     let state = match (mixed, checked) {
                         (Some(true), _) => accesskit::Toggled::Mixed,
                         (_, c) => (*c).into(),
@@ -3474,7 +3539,8 @@ impl Form {
                 } => {
                     let lw = text.measure(&crate::text::split_mnemonic(l).0, false, px);
                     let cm = self.rendered.controls.get();
-                    let b = radio_box(r, &cm).union(&radio_label_rect(r, &cm, lw + 2));
+                    let b =
+                        radio_box(r, &cm, glyph_dy(it, r)).union(&radio_label_rect(r, &cm, lw + 2));
                     let n = access::toggle(Role::RadioButton, b, l, (*checked).into(), *enabled);
                     (tree.push(up, key, n), None)
                 }
@@ -3497,7 +3563,7 @@ impl Form {
                     (id, Some(id))
                 }
                 Control::Memo(memo) => {
-                    let m = Memo::metrics(px, &cm);
+                    let m = Memo::metrics(px, &cm, self.units());
                     let lay = multiedit::layout(text, &m, &memo.edit, r, 1);
                     let id = multiedit::access(
                         &memo.edit,
@@ -3549,12 +3615,19 @@ impl Form {
                 }
                 Control::Tree(tv) => {
                     let lay = treeview::layout_without_text(tv, r, &self.rendered.controls.get());
+                    let px = self.units().base_px(px);
                     let target = treeview::access(tv, &lay, text, px, tree, up, key);
                     (target, Some(Tree::id_of(up, key)))
                 }
                 Control::UpDown(u) => {
                     let cm = self.rendered.controls.get();
-                    let id = updown::access(u, &updown::layout_for(u, r, &cm), tree, up, key);
+                    let id = updown::access(
+                        u,
+                        &updown::layout_for(u, r, &cm, self.units()),
+                        tree,
+                        up,
+                        key,
+                    );
                     (id, Some(id))
                 }
                 Control::TrackBar(t) => {
@@ -3567,6 +3640,7 @@ impl Form {
                     (id, Some(id))
                 }
                 Control::Calendar(cal) => {
+                    let px = self.units().base_px(px);
                     let id = calendar::access(cal, &calendar::layout(r), text, px, tree, up, key);
                     (id, Some(id))
                 }
@@ -3734,7 +3808,7 @@ mod tests {
         let start = multiedit::Pos::default();
         let lay = multiedit::layout(
             &t,
-            &Memo::metrics(PX, &ControlMetrics::CLASSIC),
+            &Memo::metrics(PX, &ControlMetrics::CLASSIC, TextUnits::ONE),
             &{
                 let Control::Memo(m) = &f.items[0].control else {
                     unreachable!()
@@ -3778,7 +3852,7 @@ mod tests {
             let Control::Memo(m) = &f.items[0].control else {
                 unreachable!()
             };
-            let mm = Memo::metrics(PX, &ControlMetrics::CLASSIC);
+            let mm = Memo::metrics(PX, &ControlMetrics::CLASSIC, TextUnits::ONE);
             let lay = multiedit::layout(&t, &mm, &m.edit, r, 1);
             let v = f.memo_view_1x(m);
             (
@@ -3830,7 +3904,7 @@ mod tests {
         let Control::Memo(m) = &f.items[0].control else {
             unreachable!()
         };
-        let mm = Memo::metrics(PX, &ControlMetrics::CLASSIC);
+        let mm = Memo::metrics(PX, &ControlMetrics::CLASSIC, TextUnits::ONE);
         let lay = multiedit::layout(&t, &mm, &m.edit, r, 1);
         let total = multiedit::widest_px(&t, &mm, &m.edit) + 2;
         assert_eq!(memo(&f).1.left, 2 * (total - lay.inner.width));
@@ -6351,7 +6425,9 @@ mod tests {
         assert_eq!(f.motion(x, y, at(&f, x, y)), Event::Redraw);
         assert_eq!(f.spin_lit(i), Some((Arrow::Up, Interaction::Hot)));
         let up = match &f.items[i].control {
-            Control::UpDown(u) => updown::layout_for(u, f.items[i].rect, &theme.look.controls()).up,
+            Control::UpDown(u) => {
+                updown::layout_for(u, f.items[i].rect, &theme.look.controls(), TextUnits::ONE).up
+            }
             _ => unreachable!("spin is an up-down"),
         };
         let edge = |state| {
@@ -6559,5 +6635,136 @@ mod tests {
         rebuilt.carry_pointer(&f);
         assert!(!rebuilt.holding(), "the held button no longer exists");
         assert_eq!(rebuilt.pointer.hot(), None);
+    }
+
+    /// The form [`grown_form_draws_rects_with_the_text_and_keeps_glyphs`] draws at each size.
+    fn sized_form() -> Form {
+        let mut f = Form::new(vec![
+            Item::group("g", Rect::new(6, 10, 200, 120), "Group"),
+            Item::label_at("l", 16, 26, 60, "&Name:"),
+            Item::edit("e", Rect::new(80, 22, 110, 21), "text", true),
+            Item::check("c", 16, 52, "Check"),
+            Item::radio("r", 16, 72, "Radio", "rg"),
+            Item::lines_at("ls", 16, 90, 180, &["one", "two"]),
+            Item::picture("p", Rect::new(210, 10, 32, 32), Some(Canvas::new(32, 32))),
+            Item::combo("cb", 16, 140, 100, &["a", "b", "c"], 3),
+            Item::button("ok", Rect::new(130, 140, 75, 23), "OK", true, false),
+        ]);
+        f.set_check("c", true);
+        f
+    }
+
+    /// At 150% and 200% every control's rect grows with the text from its 100% place (both
+    /// edges, so neighbours stay apart), a picture keeps its size, a check box keeps its 13 px
+    /// box centred on its taller row, and the open combo's rows grow; 100% is the rect as laid out.
+    #[test]
+    fn grown_form_draws_rects_with_the_text_and_keeps_glyphs() {
+        let theme = Theme::default();
+        let cs = &theme.colors;
+        let text = TextRenderer::load(&FontConfig::default());
+        for (pct, px) in [(100, 11), (150, 17), (200, 22)] {
+            let u = TextUnits::new(px, 11);
+            let mut f = sized_form();
+            let mut c = Canvas::new(500, 400);
+            c.fill_rect(c.bounds(), cs.button_face);
+            let p = Paint {
+                text: u,
+                ..classic_paint(cs, 1)
+            };
+            draw(&mut c, &text, &p, &f, false, px);
+            for id in ["e", "ok", "g", "cb"] {
+                let design = f.item(id).unwrap().rect;
+                assert_eq!(f.rect(id), Some(u.rect(design)), "{id} at {pct}%");
+            }
+            let ok = f.rect("ok").unwrap();
+            assert_eq!(
+                ok,
+                Rect::new(
+                    u.len(130),
+                    u.len(140),
+                    u.len(205) - u.len(130),
+                    u.len(163) - u.len(140)
+                )
+            );
+            assert_eq!(
+                c.get(ok.right() - 1, ok.bottom() - 1),
+                cs.button_dk_shadow.argb(),
+                "{pct}%: 1 px bevel at the grown corner"
+            );
+            assert_eq!(
+                c.get(ok.right() - 2, ok.bottom() - 2),
+                cs.button_shadow.argb(),
+                "{pct}%"
+            );
+            assert_eq!(f.rect("p").unwrap().width, 32, "the picture keeps its size");
+
+            // The check box: 13 px, its top half the row's growth below the row's.
+            let row = f.rect("c").unwrap();
+            assert_eq!(row.height, u.len(52 + CHECK) - u.len(52));
+            let by = row.y + (row.height - CHECK) / 2;
+            assert_eq!(
+                c.get(row.x, by),
+                cs.button_shadow.argb(),
+                "{pct}%: the box's top-left"
+            );
+            assert_eq!(
+                c.get(row.x + 12, by + 12),
+                cs.button_hilight.argb(),
+                "{pct}%: its bottom-right"
+            );
+            assert_eq!(
+                c.get(row.x + 12, by + 13),
+                cs.button_face.argb(),
+                "{pct}%: 13 px tall"
+            );
+            assert_eq!(
+                c.get(row.x + 13, by + 12),
+                cs.button_face.argb(),
+                "{pct}%: 13 px wide"
+            );
+
+            // A click on the grown button's far corner lands on it.
+            let hit = f.hit(ok.right() - 1, ok.bottom() - 1, &text, px);
+            assert_eq!(hit.map(|h| h.item), f.index_of("ok"), "{pct}%");
+
+            // The open combo's rows hold a line of the grown text.
+            f.focus_id("cb");
+            f.key(Key::Drop);
+            draw(&mut c, &text, &p, &f, false, px);
+            let Control::Combo(cb) = &f.item("cb").unwrap().control else {
+                unreachable!()
+            };
+            let lay = combo::layout(cb, f.rect("cb").unwrap(), &f.controls());
+            assert_eq!(lay.row_h, u.len(13), "{pct}%");
+            assert_eq!(lay.list.height, 3 * u.len(13) + 2);
+            let x = lay.list.right() - 3;
+            let lit = (lay.list.y..lay.list.bottom())
+                .filter(|&y| c.get(x, y) == cs.hilight.argb())
+                .count();
+            assert_eq!(
+                lit as i32,
+                u.len(13),
+                "{pct}%: the picked row is drawn a grown row tall"
+            );
+        }
+    }
+
+    /// A form drawn at an origin keeps that offset as it is and grows only its own layout from
+    /// there.
+    #[test]
+    fn a_grown_form_keeps_its_origin() {
+        let theme = Theme::default();
+        let cs = &theme.colors;
+        let text = TextRenderer::load(&FontConfig::default());
+        let mut f = sized_form();
+        f.origin = (3, 21);
+        let u = TextUnits::new(17, 11);
+        let p = Paint {
+            text: u,
+            ..classic_paint(cs, 1)
+        };
+        draw(&mut Canvas::new(500, 400), &text, &p, &f, false, 17);
+        let r = f.rect("ok").unwrap();
+        assert_eq!((r.x, r.y), (3 + u.len(130), 21 + u.len(140)));
     }
 }

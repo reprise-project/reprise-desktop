@@ -4,6 +4,7 @@ use crate::controls::listbox::{self, ListBox};
 use crate::look::Paint;
 use crate::raster::{Canvas, Rect};
 use crate::text::TextRenderer;
+use crate::theme::TextUnits;
 
 pub const END_NOW: &str = "end_now";
 pub const CANCEL: &str = "cancel";
@@ -89,12 +90,14 @@ struct Plan {
     button_y: i32,
 }
 
-fn plan(f: &Fields, text: &TextRenderer, px: u32) -> Plan {
-    let intro = crate::text::wrap(text, &f.intro(), W - TEXT_X - MARGIN, px);
+/// The prompt at 100% for text set at `px`, which grows by `u`: each paragraph wraps at the
+/// width its column grows to.
+fn plan(f: &Fields, text: &TextRenderer, px: u32, u: TextUnits) -> Plan {
+    let intro = crate::text::wrap(text, &f.intro(), u.len(W - TEXT_X - MARGIN), px);
     let intro_end = TEXT_Y + intro.len() as i32 * LINE_H;
     let list_y = intro_end.max(ICON_XY.1 + ICON) + GAP;
     let outro_y = list_y + LIST_H + GAP;
-    let outro = crate::text::wrap(text, OUTRO_TEXT, W - 2 * MARGIN, px);
+    let outro = crate::text::wrap(text, OUTRO_TEXT, u.len(W - 2 * MARGIN), px);
     let button_y = outro_y + outro.len() as i32 * LINE_H + BUTTON_GAP_Y;
     Plan {
         intro,
@@ -107,8 +110,8 @@ fn plan(f: &Fields, text: &TextRenderer, px: u32) -> Plan {
 
 /// The client size the prompt needs. It depends on the goal alone, so
 /// refilling the list never moves the frame.
-pub fn client(f: &Fields, text: &TextRenderer, px: u32) -> (i32, i32) {
-    (W, plan(f, text, px).button_y + BUTTON_H + MARGIN)
+pub fn client(f: &Fields, text: &TextRenderer, px: u32, u: TextUnits) -> (i32, i32) {
+    (W, plan(f, text, px, u).button_y + BUTTON_H + MARGIN)
 }
 
 fn list(rows: &[Row]) -> ListBox {
@@ -117,8 +120,8 @@ fn list(rows: &[Row]) -> ListBox {
     lb
 }
 
-pub fn form(f: &Fields, text: &TextRenderer, px: u32) -> Form {
-    let p = plan(f, text, px);
+pub fn form(f: &Fields, text: &TextRenderer, px: u32, u: TextUnits) -> Form {
+    let p = plan(f, text, px, u);
     let mut items = Vec::new();
     if let Some(icon) = &f.icon {
         items.push(Item::picture(
@@ -245,7 +248,7 @@ mod tests {
     #[test]
     fn the_buttons_map_to_answers_and_cancel_is_the_default() {
         let (text, px) = rend();
-        let f = form(&fields(), &text, px);
+        let f = form(&fields(), &text, px, TextUnits::ONE);
         assert_eq!(f.focus().map(|i| f.items[i].id), Some(CANCEL));
         assert_eq!(f.default_button().map(|i| f.items[i].id), Some(CANCEL));
         assert_eq!(choice(&Event::Pressed(END_NOW)), Some(Choice::EndNow));
@@ -261,9 +264,9 @@ mod tests {
         let mut f = fields();
         assert_eq!(f.title(), "Log Off Reprise");
         assert!(f.intro().contains("before Reprise can log off"));
-        let size = client(&f, &text, px);
+        let size = client(&f, &text, px, TextUnits::ONE);
         f.rows = (0..20).map(|i| row(&format!("Program {i}"), "")).collect();
-        assert_eq!(client(&f, &text, px), size);
+        assert_eq!(client(&f, &text, px, TextUnits::ONE), size);
         f.goal = Goal::Restart;
         assert_eq!(f.title(), "Restart Computer");
         assert!(f.intro().contains("the computer can restart"));
@@ -275,9 +278,9 @@ mod tests {
     fn the_prompt_lays_out_on_its_grid() {
         let (text, px) = rend();
         let fields = fields();
-        let (w, h) = client(&fields, &text, px);
+        let (w, h) = client(&fields, &text, px, TextUnits::ONE);
         assert_eq!(w, 400);
-        let f = form(&fields, &text, px);
+        let f = form(&fields, &text, px, TextUnits::ONE);
         let r = |id: &str| f.item(id).expect("the item exists").rect;
         let list = r(LIST);
         assert_eq!((list.x, list.width, list.height), (11, 378, 106));
@@ -292,7 +295,7 @@ mod tests {
     #[test]
     fn set_rows_refills_the_list_in_place() {
         let (text, px) = rend();
-        let mut f = form(&fields(), &text, px);
+        let mut f = form(&fields(), &text, px, TextUnits::ONE);
         assert_eq!(
             rows_of(&f).1,
             ["", "There are unsaved documents"],
@@ -328,8 +331,8 @@ mod tests {
         let theme = Theme::default();
         let cs = &theme.colors;
         let fields = fields();
-        let (w, h) = client(&fields, &text, px);
-        let f = form(&fields, &text, px);
+        let (w, h) = client(&fields, &text, px, TextUnits::ONE);
+        let f = form(&fields, &text, px, TextUnits::ONE);
         let mut c = Canvas::new(w as u32, h as u32);
         draw(&mut c, &text, &theme.paint(), &f, px);
         let r = |id: &str| f.item(id).unwrap().rect;
@@ -385,8 +388,8 @@ mod tests {
     fn blue_and_glass_draw_the_prompt_in_their_looks() {
         let (text, px) = rend();
         let fields = fields();
-        let (w, h) = client(&fields, &text, px);
-        let f = form(&fields, &text, px);
+        let (w, h) = client(&fields, &text, px, TextUnits::ONE);
+        let f = form(&fields, &text, px, TextUnits::ONE);
         let classic = {
             let mut c = Canvas::new(w as u32, h as u32);
             draw(&mut c, &text, &Theme::default().paint(), &f, px);
@@ -419,9 +422,15 @@ mod tests {
         let (text, px) = rend();
         let theme = Theme::default();
         let fields = fields();
-        let (w, h) = client(&fields, &text, px);
+        let (w, h) = client(&fields, &text, px, TextUnits::ONE);
         let mut c = Canvas::new(w as u32, h as u32);
-        draw(&mut c, &text, &theme.paint(), &form(&fields, &text, px), px);
+        draw(
+            &mut c,
+            &text,
+            &theme.paint(),
+            &form(&fields, &text, px, TextUnits::ONE),
+            px,
+        );
         crate::raster::write_preview(&c, "endsession-preview.png");
     }
 }

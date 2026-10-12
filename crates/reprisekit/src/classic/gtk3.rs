@@ -153,6 +153,7 @@ fn art(cs: &ColorScheme, s: i32) -> Vec<Canvas> {
         s,
         back: Backdrop::Face,
         active: true,
+        text: crate::theme::TextUnits::ONE,
     };
     let draw = |w: i32, h: i32, f: &dyn Fn(&mut Canvas, Rect)| {
         let mut c = Canvas::new((w * s) as u32, (h * s) as u32);

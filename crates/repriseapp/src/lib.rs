@@ -108,10 +108,11 @@ use zeroize::{Zeroize, Zeroizing};
 
 pub struct Ctx {
     /// The look's theme. Its text stays at 100% whatever the text size:
-    /// a program's forms are laid out in fixed pixels.
+    /// lists, menus and toolbars are laid out in fixed pixels. Forms draw
+    /// with [`Ctx::forms`].
     pub theme: Theme,
     /// `[accessibility] text_size`, in percent: what a program grows its
-    /// document's text by (the edit control).
+    /// forms ([`Ctx::forms`]) and its document's text (the edit control) by.
     pub text_size: u32,
     pub text: TextRenderer,
     pub icons: IconCache,
@@ -129,6 +130,13 @@ pub struct Ctx {
 }
 
 impl Ctx {
+    /// The theme a program's forms, property sheets, wizards and message boxes draw with: `theme`
+    /// at the text size. Their 100% layouts grow by its `text`; a window holding one is
+    /// `forms().text.size` of its 100% size.
+    pub fn forms(&self) -> Theme {
+        self.theme.with_form_text(self.text_size)
+    }
+
     /// Ask the compositor to set `cfg` on output `name`; returns the number
     /// `Event::HeadsApplied` answers with. Fails without
     /// [`App::output_management`] or the protocol.
@@ -1329,7 +1337,7 @@ impl Host {
         }
         let theme_px = self.ctx.theme.fonts.size_px;
         let out = if let Some(DropForm { form, px }) = self.app.drop_form(win) {
-            let px = px.unwrap_or(theme_px);
+            let px = px.unwrap_or_else(|| form.units().px(theme_px));
             fielddrop::event(form, &mut hover, ev, &self.ctx.text, px)
         } else {
             let mut file = self.app.drop_file_dialog(win)?;
@@ -1798,6 +1806,7 @@ impl Host {
     }
 
     fn relook(&mut self, key: &str, value: String) {
+        let text_size = self.look.text_size;
         if !self.look.set(key, value) {
             return;
         }
@@ -1815,6 +1824,20 @@ impl Host {
         }
         for s in self.slots.iter_mut() {
             s.dirty = true;
+        }
+        // Forms and the windows that hold them grow with the text size: each window hears it as
+        // a resize and answers with its new size.
+        if self.look.text_size != text_size {
+            let ids: Vec<WinId> = self.slots.iter().map(|s| s.id).collect();
+            for id in ids {
+                self.send(id, Event::Resized);
+            }
+            if !self.app.fixed()
+                && let Some(min) = self.app.min_size(MAIN).map(sane_size)
+                && let Some(w) = self.slot_mut(MAIN).and_then(|s| s.window.toplevel())
+            {
+                w.set_min_size(Some((min.0 as u32, min.1 as u32)));
+            }
         }
     }
 

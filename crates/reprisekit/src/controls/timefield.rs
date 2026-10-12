@@ -317,7 +317,7 @@ pub fn draw(
         inner.height,
     );
     let (shown, ranges) = tf.text();
-    let lh = crate::classic::widgets::LINE_H * s;
+    let lh = p.text.len(crate::classic::widgets::LINE_H) * s;
     for run in runs(&shown, &ranges, text, px, s) {
         let w = text.measure(run.text, false, px);
         let r = Rect::new(tr.x + run.x, tr.y, w, tr.height);

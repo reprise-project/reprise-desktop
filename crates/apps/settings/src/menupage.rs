@@ -139,11 +139,11 @@ fn at_root(p: &[usize]) -> Vec<usize> {
 }
 
 fn pick(form: &mut Form, p: &[usize], cm: &ControlMetrics) {
-    let rect = form.item(TREE).map_or(tree_rect(Area::MIN), |i| i.rect);
-
+    let rect = form.rect(TREE).unwrap_or(tree_rect(Area::MIN));
+    let cm = cm.grown(form.units());
     if let Some(t) = tv_mut(form) {
         t.selected = Some(at_root(p));
-        let lay = treeview::layout_without_text(t, rect, cm);
+        let lay = treeview::layout_without_text(t, rect, &cm);
         t.follow(&lay);
     }
 }

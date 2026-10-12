@@ -520,12 +520,12 @@ mod tests {
             fd.sheet().unwrap().layout(&text, px).page,
             Rect::new(9, 67, 326, 312)
         );
-        let ok = |fd: &FormDialog| fd.pages()[0].item("ok").unwrap().rect;
+        let ok = |fd: &FormDialog| fd.pages()[0].rect("ok").unwrap();
         assert_eq!(ok(fd), Rect::new(98, 385, 75, 23));
         rebuild(fd);
         assert_eq!(ok(fd), Rect::new(98, 385, 75, 23));
         assert_eq!(
-            fd.pages()[0].item("confirm").unwrap().rect,
+            fd.pages()[0].rect("confirm").unwrap(),
             Rect::new(33, 281, 13, 13)
         );
         let l = DialogLayout::compute(&theme, &text, &d);
@@ -545,7 +545,7 @@ mod tests {
         let pages = d.form().unwrap().pages();
         assert_eq!(pages.len(), 2);
         let g = &pages[0];
-        let rect = |id: &str| g.item(id).unwrap().rect;
+        let rect = |id: &str| g.rect(id).unwrap();
         assert_eq!(rect("independent"), Rect::new(34, 63, 12, 12));
         assert_eq!(rect("all"), Rect::new(34, 85, 12, 12));
         assert_eq!(rect("group"), Rect::new(24, 91, 296, 161));
@@ -553,10 +553,9 @@ mod tests {
         assert_eq!(rect("confirm"), Rect::new(33, 263, 13, 13));
         // The trackbar's channel runs x 57 to 267 at y 171, 7 rows under the control's top, ticks 62 to 262.
         let bar = g.item("size").unwrap();
+        let r = g.rect("size").unwrap();
         let lay = match &bar.control {
-            Control::TrackBar(t) => {
-                reprisekit::trackbar::layout(t, bar.rect.x, bar.rect.y, bar.rect.width)
-            }
+            Control::TrackBar(t) => reprisekit::trackbar::layout(t, r.x, r.y, r.width),
             _ => panic!(),
         };
         assert_eq!(lay.channel, Rect::new(57, 171, 211, 4));
@@ -606,8 +605,8 @@ mod tests {
             d.item("no_bin").unwrap().control,
             Control::Check { enabled: false, .. }
         ));
-        assert_eq!(d.item("no_bin").unwrap().rect.x, 24);
-        assert_eq!(d.item("size_of").unwrap().rect, Rect::new(156, 62, 160, 13));
+        assert_eq!(d.rect("no_bin").unwrap().x, 24);
+        assert_eq!(d.rect("size_of").unwrap(), Rect::new(156, 62, 160, 13));
         assert!(d.item("confirm").is_none());
     }
 

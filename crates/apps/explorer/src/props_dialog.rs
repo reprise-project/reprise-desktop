@@ -17,6 +17,7 @@ pub use reprisekit::controls::filesheet::{
 use reprisekit::controls::form::{Control, Form};
 use reprisekit::controls::propsheet::PropSheet;
 use reprisekit::text::TextRenderer;
+use reprisekit::theme::TextUnits;
 use std::path::{Path, PathBuf};
 
 /// The sheet's own window; modeless, its boxes come up modal over it in the [`DIALOG`] child.
@@ -90,8 +91,9 @@ pub fn attr_form(
     subject: filesheet::Subject,
     text: &TextRenderer,
     px: u32,
+    u: TextUnits,
 ) -> Form {
-    filesheet::attr_form(&attrs.verbs(hidden), subject, text, px)
+    filesheet::attr_form(&attrs.verbs(hidden), subject, text, px, u)
 }
 
 pub struct Props {

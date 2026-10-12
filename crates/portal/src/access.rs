@@ -11,6 +11,7 @@ use reprisekit::controls::form::{Form, Item};
 use reprisekit::metrics::ControlMetrics;
 use reprisekit::raster::{Canvas, Rect};
 use reprisekit::text::TextRenderer;
+use reprisekit::theme::TextUnits;
 use std::collections::HashMap;
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
@@ -95,14 +96,16 @@ pub fn icon_names(icon: Option<&str>) -> Vec<String> {
     names
 }
 
-/// The prompt's form and client size: subtitle, body and choices stacked from line 12, Allow and Deny 20 px under the lowest row and never above the permit prompt's row at 97. Subtitle and body are capped at `SUBTITLE_LINES` and `BODY_LINES`. Deny is the default button and has the focus, so Enter never grants by accident. `cm` is the look the prompt runs in, whose combo lists are kept inside it.
+/// The prompt's form and 100% client size for text set at `px` that grows by `u`: subtitle, body and choices stacked from line 12, Allow and Deny 20 px under the lowest row and never above the permit prompt's row at 97. Subtitle and body are capped at `SUBTITLE_LINES` and `BODY_LINES`. Deny is the default button and has the focus, so Enter never grants by accident. `cm` is the look the prompt runs in, whose combo lists are kept inside it.
 pub fn build_form(
     input: &Input,
     text: &TextRenderer,
     px: u32,
+    u: TextUnits,
     cm: &ControlMetrics,
 ) -> (Form, (i32, i32)) {
     let col = CLIENT_W - TEXT_X - MARGIN;
+    let wrap_w = u.len(col);
     let mut items: Vec<Item> = Vec::new();
     let mut bottom: Option<i32> = None;
     let next_y = |bottom: Option<i32>| bottom.map_or(FIRST_Y, |b| b + LINE_H);
@@ -110,7 +113,13 @@ pub fn build_form(
         ("subtitle", &input.subtitle, SUBTITLE_LINES),
         ("body", &input.body, BODY_LINES),
     ] {
-        let lines = capped(text, reprisekit::text::wrap(text, s, col, px), max, col, px);
+        let lines = capped(
+            text,
+            reprisekit::text::wrap(text, s, wrap_w, px),
+            max,
+            wrap_w,
+            px,
+        );
         if lines.is_empty() {
             continue;
         }
@@ -122,7 +131,7 @@ pub fn build_form(
     }
     if !input.choices.is_empty() {
         let (rows, end) =
-            choices::choice_rows(&input.choices, TEXT_X, next_y(bottom), col, text, px);
+            choices::choice_rows(&input.choices, TEXT_X, next_y(bottom), col, text, px, u);
         items.extend(rows);
         bottom = Some(end);
     }
@@ -143,7 +152,7 @@ pub fn build_form(
     ));
     let size = (CLIENT_W, button_y + BUTTON_H + MARGIN);
     let mut form = Form::new(items);
-    choices::fit_lists(&mut form, size.1, cm);
+    choices::fit_lists(&mut form, size.1, cm, u);
     form.focus_id("deny");
     (form, size)
 }
@@ -228,10 +237,10 @@ pub fn run_dialog() {
     let Some(input) = dialog::read_input::<Input>() else {
         return;
     };
-    let theme = reprisekit::theme::Theme::default();
-    let text = TextRenderer::load(&theme.fonts);
-    let cm = repriseapp::start_theme().look.controls();
-    let (form, size) = build_form(&input, &text, theme.fonts.size_px, &cm);
+    let text = TextRenderer::load(&reprisekit::theme::Theme::default().fonts);
+    let forms = dialog::start_forms();
+    let cm = forms.look.controls();
+    let (form, size) = build_form(&input, &text, forms.fonts.size_px, forms.text, &cm);
     let mut icons = dialog::icons();
     let icon = icon_names(input.icon.as_deref())
         .iter()
@@ -295,6 +304,7 @@ mod tests {
             input,
             &TextRenderer::load(&FontConfig::default()),
             11,
+            TextUnits::ONE,
             &ControlMetrics::CLASSIC,
         )
     }
@@ -304,6 +314,41 @@ mod tests {
             subtitle: "Portal Test wants to use the camera.".into(),
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn at_150_percent_the_text_wraps_to_the_grown_column_and_the_combo_list_fits_the_window() {
+        let text = TextRenderer::load(&FontConfig::default());
+        let u = TextUnits::new(17, 11);
+        let input = Input {
+            body: "It will see what your camera sees, and it can record what it sees for as long as it runs. You can change this in Settings.".into(),
+            choices: vec![Choice {
+                id: "m".into(),
+                label: "Camera:".into(),
+                options: (0..8).map(|i| (format!("{i}"), format!("Camera {i}"))).collect(),
+                initial: "0".into(),
+            }],
+            ..base()
+        };
+        let (f, size) = build_form(&input, &text, 17, u, &ControlMetrics::CLASSIC);
+        let col = u.len(CLIENT_W - TEXT_X - MARGIN);
+        let Control::Lines(lines) = &f.item("body").unwrap().control else {
+            panic!("the body is lines");
+        };
+        assert!(lines.len() > 1);
+        for l in lines {
+            assert!(text.measure(l, false, 17) <= col, "{l:?} fits {col} px");
+        }
+        let Control::Combo(c) = &f.item("choice0").unwrap().control else {
+            panic!("the choice is a combo");
+        };
+        let field = u.rect(f.item("choice0").unwrap().rect);
+        let cm = ControlMetrics::CLASSIC.grown(u);
+        let list = reprisekit::controls::combo::list_rect(c, field, &cm);
+        assert!(
+            list.bottom() <= u.len(size.1),
+            "the open list ends inside the window"
+        );
     }
 
     #[test]
@@ -606,7 +651,7 @@ mod tests {
             ],
             ..base()
         };
-        let (f, (w, h)) = build_form(&input, &text, px, &ControlMetrics::CLASSIC);
+        let (f, (w, h)) = build_form(&input, &text, px, TextUnits::ONE, &ControlMetrics::CLASSIC);
         assert_eq!(
             (w, h),
             (391, 172),
@@ -695,7 +740,13 @@ mod tests {
             ],
             ..base()
         };
-        let (f, (w, h)) = build_form(&input, &text, theme.fonts.size_px, &theme.look.controls());
+        let (f, (w, h)) = build_form(
+            &input,
+            &text,
+            theme.fonts.size_px,
+            TextUnits::ONE,
+            &theme.look.controls(),
+        );
         let mut c = Canvas::new(w as u32, h as u32);
         c.fill_rect(c.bounds(), theme.colors.button_face);
         form::draw(&mut c, &text, &theme.paint(), &f, true, theme.fonts.size_px);
