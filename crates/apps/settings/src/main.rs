@@ -316,6 +316,11 @@ struct SettingsApp {
     requests: Option<instance::Requests>,
     waker: Option<Waker>,
     scan: Option<Receiver<Vec<PathBuf>>>,
+    /// A slideshow folder the scan missed and its pictures, listed for the monitor.
+    listed: Option<(PathBuf, Vec<PathBuf>)>,
+    listing: Option<(PathBuf, Receiver<Vec<PathBuf>>)>,
+    /// The slideshow folder picked before Picture was chosen; kept in the state file.
+    last_slideshow: String,
     decoding: Option<(String, Receiver<Option<Decoded>>)>,
     state_path: Option<PathBuf>,
     window: (i32, i32),
@@ -332,6 +337,7 @@ impl SettingsApp {
         app.requests = requests;
         let state = winstate::path();
         app.window = winstate::load(&state, Area::MIN.sheet_size());
+        app.last_slideshow = winstate::slideshow(&state);
         app.state_path = Some(state);
         app
     }
@@ -409,7 +415,10 @@ impl SettingsApp {
                 heads: &[],
             },
         );
-        let wallpapers: Vec<PathBuf> = wallpapers::expand(&loaded.wallpaper).into_iter().collect();
+        let wallpapers: Vec<PathBuf> = wallpapers::expand(&loaded.wallpaper)
+            .filter(|_| backgroundpage::builtin(&loaded.wallpaper).is_none())
+            .into_iter()
+            .collect();
         backgroundpage::fill(
             &mut sheet.pages[Page::Background.index()],
             &wallpapers,
@@ -481,6 +490,9 @@ impl SettingsApp {
             requests: None,
             waker: None,
             scan: None,
+            listed: None,
+            listing: None,
+            last_slideshow: String::new(),
             decoding: None,
             state_path: None,
             window: Area::MIN.sheet_size(),
@@ -750,7 +762,7 @@ impl SettingsApp {
     }
 
     fn show_monitor(&mut self) {
-        let file = backgroundpage::monitor_file(&self.want, &self.wallpapers);
+        let file = backgroundpage::monitor_file(&self.want, &self.wallpapers, self.listed());
         backgroundpage::show(
             &mut self.sheet.pages[Page::Background.index()],
             &self.want,
@@ -759,22 +771,42 @@ impl SettingsApp {
         );
     }
 
-    /// The Picture / Slideshow combo moved: a slideshow starts on the pending wallpaper's folder.
+    fn listed(&self) -> &[PathBuf] {
+        self.listed.as_ref().map_or(&[], |(_, p)| p.as_slice())
+    }
+
+    /// List the pending slideshow folder on a thread when the scan found no picture in it and it is not listed or being listed already.
+    fn list_slide_folder(&mut self) {
+        let Some(folder) = backgroundpage::unlisted_folder(&self.want, &self.wallpapers) else {
+            return;
+        };
+        let is = |f: &PathBuf| *f == folder;
+        if self.listed.as_ref().is_some_and(|(f, _)| is(f))
+            || self.listing.as_ref().is_some_and(|(f, _)| is(f))
+        {
+            return;
+        }
+        let dir = folder.clone();
+        self.listing = Some((folder, self.spawn(move || wallpapers::list(&dir))));
+    }
+
+    /// The Picture / Slideshow combo moved: a slideshow starts on [`backgroundpage::slideshow_start`] (else Pictures), and Picture keeps the folder it leaves for the next switch.
     fn pick_mode(&mut self) {
         let page = &self.sheet.pages[Page::Background.index()];
         let slides = page.combo_selected(backgroundpage::MODE) == Some(1);
         if slides == backgroundpage::slideshow(&self.want) {
             return;
         }
-        self.want.slideshow = if slides {
-            wallpapers::expand(&self.want.wallpaper)
-                .and_then(|p| p.parent().map(Path::to_path_buf))
-                .unwrap_or_else(wallpapers::start_dir)
-                .to_string_lossy()
-                .into_owned()
+        if slides {
+            self.want.slideshow =
+                backgroundpage::slideshow_start(&self.last_slideshow, &self.want.wallpaper)
+                    .unwrap_or_else(|| wallpapers::start_dir().to_string_lossy().into_owned());
         } else {
-            String::new()
-        };
+            self.last_slideshow = std::mem::take(&mut self.want.slideshow);
+            if let Some(path) = &self.state_path {
+                winstate::save_slideshow(path, &self.last_slideshow);
+            }
+        }
         self.fill_wallpapers();
     }
 
@@ -854,9 +886,10 @@ impl SettingsApp {
         rx
     }
 
-    /// Decode the pending wallpaper for the monitor unless shown or a decode is under way; that one's end calls this again.
+    /// Decode the pending wallpaper for the monitor unless shown or a decode is under way; that one's end calls this again. A slideshow folder the scan missed is listed first.
     fn want_preview(&mut self) {
-        let want = backgroundpage::monitor_file(&self.want, &self.wallpapers);
+        self.list_slide_folder();
+        let want = backgroundpage::monitor_file(&self.want, &self.wallpapers, self.listed());
         let Some(file) = backgroundpage::next_decode(
             &want,
             self.picture.as_ref().map(|p| p.path.as_str()),
@@ -882,7 +915,7 @@ impl SettingsApp {
         self.decoding = Some((want, rx));
     }
 
-    /// A thread is done: fill the list from the scan or put the decode on the monitor; a later start opens its page unless a dialog is up.
+    /// A thread is done: fill the list from the scan, keep a slideshow folder's listing, or put the decode on the monitor; a later start opens its page unless a dialog is up.
     fn wake(&mut self) -> Reply {
         let mut changed = false;
         let mut activate = None;
@@ -903,6 +936,20 @@ impl SettingsApp {
                 self.scan = None;
                 self.wallpapers = wallpapers::add_missing(found, &self.wallpapers);
                 self.fill_wallpapers();
+                changed = true;
+            }
+        }
+        if let Some((folder, rx)) = &self.listing {
+            let found = match take(rx) {
+                Ok(None) => None,
+                Ok(Some(found)) => Some(found),
+                Err(()) => Some(Vec::new()),
+            };
+            if let Some(found) = found {
+                self.listed = Some((folder.clone(), found));
+                self.listing = None;
+                self.want_preview();
+                self.show_monitor();
                 changed = true;
             }
         }
@@ -3077,6 +3124,10 @@ mod tests {
             .iter()
             .position(|b| b.to_string() == "ridges/dusk")
             .unwrap();
+        assert!(
+            a.wallpapers.is_empty() && a.slide_folders().is_empty(),
+            "a built-in is neither a picture file nor a slideshow folder"
+        );
         pick_row(&mut a, dusk + 1);
         assert_eq!(a.want.wallpaper, "reprise:ridges/dusk");
         assert!(a.apply());
@@ -3086,6 +3137,52 @@ mod tests {
         assert!(a.apply());
         let text = std::fs::read_to_string(&path).unwrap();
         assert!(text.contains("image = \"\""), "{text}");
+    }
+
+    #[test]
+    fn a_slideshow_folder_survives_a_switch_to_picture_and_its_first_picture_reaches_the_monitor() {
+        let dir = tmp("slide-folder");
+        let (walls, trips) = (dir.join("Walls"), dir.join("Trips"));
+        std::fs::create_dir_all(&walls).unwrap();
+        std::fs::create_dir_all(&trips).unwrap();
+        std::fs::write(trips.join("coast.jpg"), b"x").unwrap();
+        let path = dir.join("config.toml");
+        let wall = walls.join("dunes.jpg");
+        std::fs::write(&path, format!("[wallpaper]\nimage = {:?}\n", wall)).unwrap();
+        let mut a = SettingsApp::open(path);
+        let state = dir.join("settings.toml");
+        a.state_path = Some(state.clone());
+        let bg = Page::Background.index();
+        let mode = |a: &mut SettingsApp, i: usize| {
+            a.sheet.pages[bg].set_combo(backgroundpage::MODE, i);
+            a.sheet_event(propsheet::Event::Page(
+                bg,
+                form::Event::Changed(backgroundpage::MODE),
+            ));
+        };
+        let name = |p: &Path| p.to_string_lossy().into_owned();
+
+        mode(&mut a, 1);
+        assert_eq!(a.want.slideshow, name(&walls), "the wallpaper's folder");
+        a.slide_folder(trips.clone());
+        for _ in 0..500 {
+            a.wake();
+            if a.listing.is_none() && a.decoding.is_none() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        assert_eq!(
+            a.picture.as_ref().map(|p| p.path.clone()),
+            Some(name(&trips.join("coast.jpg"))),
+            "the first picture of a folder the scan never saw"
+        );
+
+        mode(&mut a, 0);
+        assert_eq!(a.want.slideshow, "");
+        assert_eq!(winstate::slideshow(&state), name(&trips));
+        mode(&mut a, 1);
+        assert_eq!(a.want.slideshow, name(&trips), "the folder picked before");
     }
 
     #[test]
