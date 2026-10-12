@@ -125,11 +125,11 @@ impl DateTimeApp {
                     if let Some(s) = &mut self.sheet {
                         s.unapplied(&self.system);
                     }
-                    if let timedate::Failure::Text(msg) = failure {
+                    if let Some(text) = failure.message() {
                         self.error = Some(MsgBox::new(
                             TITLE,
                             msgbox::Fields {
-                                text: format!("The clock could not be changed: {msg}"),
+                                text,
                                 icon: None,
                                 buttons: vec!["OK".into()],
                                 default: 0,

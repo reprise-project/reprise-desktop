@@ -120,11 +120,11 @@ impl PolkitApp {
                     .as_ref()
                     .is_some_and(|a| a.request.cookie == cookie)
                 {
-                    self.finish(Outcome::Cancelled);
+                    self.finish(Outcome::Withdrawn);
                 } else if let Some(i) = self.queue.iter().position(|r| r.cookie == cookie)
                     && let Some(r) = self.queue.remove(i)
                 {
-                    let _ = r.done.send_blocking(Outcome::Cancelled);
+                    let _ = r.done.send_blocking(Outcome::Withdrawn);
                 }
             }
         }
@@ -293,6 +293,10 @@ impl PolkitApp {
                 },
             }
         };
+        self.dialog_outcome(out)
+    }
+
+    fn dialog_outcome(&mut self, out: dialog::Outcome) -> Reply {
         match out {
             dialog::Outcome::None => Reply::none(),
             dialog::Outcome::Redraw => Reply::redraw(),
@@ -437,7 +441,7 @@ mod tests {
     }
 
     #[test]
-    fn requests_queue_and_cancel_by_cookie() {
+    fn polkitd_withdraws_requests_by_cookie() {
         let mut app = PolkitApp::default();
         let (a, a_rx) = request("a");
         let (b, b_rx) = request("b");
@@ -449,9 +453,20 @@ mod tests {
         // A queued request cancels without ever opening.
         app.handle(Msg::Cancel("b".into()));
         assert!(app.queue.is_empty());
-        assert_eq!(b_rx.try_recv(), Ok(Outcome::Cancelled));
+        assert_eq!(b_rx.try_recv(), Ok(Outcome::Withdrawn));
         // Cancelling the open one closes it.
         app.handle(Msg::Cancel("a".into()));
+        assert!(app.active.is_none());
+        assert_eq!(a_rx.try_recv(), Ok(Outcome::Withdrawn));
+    }
+
+    #[test]
+    fn only_the_prompts_own_cancel_is_a_dismissal() {
+        let mut app = PolkitApp::default();
+        let (a, a_rx) = request("a");
+        app.handle(Msg::Begin(a));
+        open(&mut app);
+        app.dialog_outcome(dialog::Outcome::Cancel);
         assert!(app.active.is_none());
         assert_eq!(a_rx.try_recv(), Ok(Outcome::Cancelled));
     }
