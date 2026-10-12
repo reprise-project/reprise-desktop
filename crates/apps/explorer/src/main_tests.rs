@@ -1966,3 +1966,41 @@ fn the_shown_folder_is_followed_when_renamed_and_left_for_its_parent_when_delete
     assert_eq!(ex.place, Place::Folder(top.path().to_path_buf()));
     assert!(!ex.history.can_back());
 }
+
+#[test]
+fn a_folder_above_the_shown_one_renamed_is_followed_and_moved_away_is_left_for_the_nearest() {
+    let top = tempfile::tempdir().expect("a temp dir");
+    let shown = top.path().join("a").join("shown");
+    std::fs::create_dir_all(&shown).expect("mkdir");
+    std::fs::write(shown.join("a.txt"), "1").expect("write");
+    let mut ctx = test_ctx();
+    let mut ex = test_explorer(Place::Folder(shown.clone()), &mut ctx);
+    // `tempdir` names start with a dot, which the tree hides by default.
+    ex.settings.show_hidden = true;
+    ex.build_tree(&mut ctx);
+    ex.show(Place::Folder(shown), &mut ctx);
+
+    std::fs::rename(top.path().join("a"), top.path().join("z")).expect("rename");
+    wait_for_watch();
+    ex.wake(&mut ctx);
+    let renamed = Place::Folder(top.path().join("z").join("shown"));
+    assert_eq!(ex.place, renamed);
+    assert_eq!(ex.items.len(), 1);
+    assert!(!ex.history.can_back());
+    let node = ex
+        .tree_path_of(&renamed)
+        .expect("the new path in the Folders pane");
+    assert_eq!(ex.tree.selected, Some(node), "and selected there");
+    assert_eq!(
+        ex.tree_path_of(&Place::Folder(top.path().join("a"))),
+        None,
+        "the old name is gone from the pane"
+    );
+
+    let away = tempfile::tempdir().expect("a temp dir");
+    std::fs::rename(top.path().join("z"), away.path().join("z")).expect("mv");
+    wait_for_watch();
+    ex.wake(&mut ctx);
+    assert_eq!(ex.place, Place::Folder(top.path().to_path_buf()));
+    assert!(!ex.history.can_back());
+}
