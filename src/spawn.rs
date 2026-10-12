@@ -513,7 +513,7 @@ fn start(mut c: std::process::Command, what: &str) -> std::io::Result<()> {
 /// Make `c` a child of its own: new session with no controlling terminal, stdin on `/dev/null`,
 /// an empty signal mask (the `block_signals` mask survives exec) and SIGINT at its default (an
 /// ignored one survives exec, as when started with `&`).
-fn detach(c: &mut std::process::Command) {
+pub(crate) fn detach(c: &mut std::process::Command) {
     c.stdin(std::process::Stdio::null());
     // SAFETY: the closure runs between fork and exec; sigemptyset,
     // pthread_sigmask, signal and setsid are async-signal-safe and nothing
