@@ -121,6 +121,7 @@ pub enum DesktopCommand {
     AllowLaunching,
     CreateShortcut,
     Explore,
+    OpenFileLocation,
     OpenWith,
     SendTo,
     SendToDest(usize),
@@ -148,7 +149,7 @@ pub enum DesktopCommand {
     DropCancel,
 }
 
-fn entry(label: &str) -> MenuItem {
+pub(crate) fn entry(label: &str) -> MenuItem {
     let (label, mnemonic) = split_mnemonic(label);
     MenuItem::entry(label).mnemonic(mnemonic)
 }
@@ -1295,26 +1296,52 @@ impl State {
     }
 
     fn send_to(&mut self, index: usize, row: usize) {
-        use reprisefs::sendto::SendTo;
         let Some(view) = self.desktop.as_ref() else {
-            return;
-        };
-        let Some(dest) = view.send_to.get(row).map(|r| r.dest.clone()) else {
             return;
         };
         let existing: Vec<String> = view.entries.iter().map(|e| e.name.clone()).collect();
         let sources = self.aimed_sources(index, true);
+        let beside = view.cells.get(index).map(|c| (c.x, c.y));
+        self.send_sources_to(row, &sources, &existing, beside);
+    }
+
+    /// Send To row `row` (of the rows the submenu last listed) for `sources`:
+    /// a zip named apart from `existing`, a desktop shortcut on the cell
+    /// nearest `beside` (else the first free one), a mail or a copy.
+    pub(crate) fn send_sources_to(
+        &mut self,
+        row: usize,
+        sources: &[crate::dragview::DragSource],
+        existing: &[String],
+        beside: Option<(i32, i32)>,
+    ) {
+        use reprisefs::sendto::SendTo;
+        let Some(dest) = (self.desktop.as_ref())
+            .and_then(|v| v.send_to.get(row))
+            .map(|r| r.dest.clone())
+        else {
+            return;
+        };
         let paths: Vec<PathBuf> = sources.iter().map(|s| s.path().to_path_buf()).collect();
         match dest {
             SendTo::Zip => {
-                if let Some(argv) = reprisefs::sendto::zip_argv(&paths, &existing) {
+                if let Some(argv) = reprisefs::sendto::zip_argv(&paths, existing) {
                     self.spawn_argv_activated(&argv);
                 }
             }
-            SendTo::DesktopShortcut => self.shortcuts_beside(index, &sources),
+            SendTo::DesktopShortcut => {
+                let area = self.desktop_area();
+                let (x, y) = beside.unwrap_or((area.x, area.y));
+                let cell = desktop::cell_at(desktop::Cell::square(desktop::CELL), area, x, y);
+                self.perform_all(
+                    sources,
+                    &crate::dragview::DropTarget::Desktop(cell),
+                    crate::dragview::DropOp::Shortcut,
+                );
+            }
             SendTo::Mail => self.spawn_argv_activated(&reprisefs::sendto::mail_argv(&paths)),
             SendTo::Folder(dir) => self.perform_all(
-                &sources,
+                sources,
                 &crate::dragview::DropTarget::Folder(dir),
                 crate::dragview::DropOp::Copy,
             ),
@@ -1427,9 +1454,24 @@ impl State {
         let Some(view) = self.desktop.as_ref() else {
             return Vec::new();
         };
-        let path = desktop::find(&view.entries, target).map(|i| &view.entries[i].path);
+        match desktop::find(&view.entries, target) {
+            Some(i) => self.open_with_apps_for(&view.entries[i].path),
+            None => Vec::new(),
+        }
+    }
+
+    /// The programs registered for `path`'s type: desktop-file id and name.
+    pub(crate) fn open_with_apps_for(&self, path: &Path) -> Vec<(String, String)> {
+        let empty;
+        let mime = match self.desktop.as_ref() {
+            Some(v) => &v.mime,
+            None => {
+                empty = apps::MimeDb::empty();
+                &empty
+            }
+        };
         let index = &self.app_index;
-        path.and_then(|p| apps::mime_of_in(&view.mime, p))
+        apps::mime_of_in(mime, path)
             .map(|mime| apps::open_with(index, &mime))
             .unwrap_or_default()
             .into_iter()
@@ -1548,6 +1590,31 @@ impl State {
 
     /// Run a desktop-menu command; `aim` is the icon it was aimed at, which may have
     /// since gone.
+    /// Open each of `paths` in program `app` (a desktop-file id).
+    pub(crate) fn open_files_with(&mut self, paths: Vec<PathBuf>, app: &str) {
+        let Some(app) = self.app_index.iter().find(|a| a.id == app).cloned() else {
+            return;
+        };
+        for path in paths {
+            let argv = apps::open_argv(&app, &self.config.terminal, &path);
+            self.spawn_argv_activated(&argv);
+        }
+    }
+
+    /// Print each of `paths` with `lp`, or open it in the text/plain
+    /// default whatever its own type.
+    pub(crate) fn print_or_edit(&mut self, paths: Vec<PathBuf>, print: bool) {
+        let editor = reprisefs::props::default_app_entry("text/plain", &self.app_index).cloned();
+        for path in paths {
+            let argv = if print {
+                vec!["lp".into(), path.into_os_string()]
+            } else {
+                reprisefs::props::open_argv(&path, editor.as_ref(), &self.config.terminal)
+            };
+            self.spawn_argv_activated(&argv);
+        }
+    }
+
     pub fn desktop_command(&mut self, cmd: DesktopCommand, aim: Option<IconId>) {
         use DesktopCommand as Dc;
         let target = match &aim {
@@ -1654,29 +1721,13 @@ impl State {
                 let Some(i) = target else {
                     return;
                 };
-                let Some(app) = self.app_index.iter().find(|a| a.id == app).cloned() else {
-                    return;
-                };
-                for path in self.aimed_files(i) {
-                    let argv = apps::open_argv(&app, &self.config.terminal, &path);
-                    self.spawn_argv_activated(&argv);
-                }
+                self.open_files_with(self.aimed_files(i), &app);
             }
             Dc::Print | Dc::Edit => {
                 let Some(i) = target else {
                     return;
                 };
-                // Edit: the text/plain default, whatever the file's own type.
-                let editor =
-                    reprisefs::props::default_app_entry("text/plain", &self.app_index).cloned();
-                for path in self.aimed_files(i) {
-                    let argv = if cmd == Dc::Print {
-                        vec!["lp".into(), path.into_os_string()]
-                    } else {
-                        reprisefs::props::open_argv(&path, editor.as_ref(), &self.config.terminal)
-                    };
-                    self.spawn_argv_activated(&argv);
-                }
+                self.print_or_edit(self.aimed_files(i), cmd == Dc::Print);
             }
             Dc::ArrangeByName => self.arrange_by_name(),
             Dc::AutoArrange => self.toggle_auto_arrange(),
@@ -1706,6 +1757,8 @@ impl State {
             }
             // Only ever a submenu opener; picking it does nothing.
             Dc::ArrangeIcons | Dc::New | Dc::OpenWith | Dc::SendTo => {}
+            // Only the launcher's file menu (`filemenu`) has this row.
+            Dc::OpenFileLocation => {}
             Dc::IconProperties => {
                 if let Some(i) = target {
                     self.open_icon_properties(i);

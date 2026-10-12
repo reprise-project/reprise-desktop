@@ -1,6 +1,7 @@
 //! The application launcher on the scene: one `reprisekit::controls::launcher` panel centred on the output under the pointer, on the menu layer, fed every key press while open. On every change of the typed text it works out the calculator's answer (`search::calc_row`), ranks the Start menu's app index (`State::app_index`, by `search::rank_apps`) and finds settings pages (`search::rank_settings`). Enter on the answer copies it; a program starts as from the Start menu; a settings row opens the settings program on its page.
 //! From two typed characters it also searches the home folder for files through `search::FileSearch`, unless `[launcher] search_files` is off.
 //! The panel's tree in `layers.menu` is tagged `SceneOwner::Launcher` and holds the glass tree (its `Backdrop` under a glass look), then the buffer, which takes the pointer on the panel only: its shadow lets the pointer through.
+//! A right press or the menu key on a program or file row opens its context menu (`open_launcher_context`); picking a row of it closes the panel.
 //! `Action::Launcher` (Super+Space by default) opens it and its own bind closes it; `KeyRoute::Launcher` hands it every other press. Locking closes it.
 
 use std::path::PathBuf;
@@ -14,6 +15,7 @@ use crate::compositor::{SceneOwner, State};
 use crate::dialogview::DialogKey;
 use crate::glass::{Backdrop, Pane, PaneShape};
 use crate::keys;
+use crate::menuview::MenuKind;
 use crate::output::upload_scaled;
 use crate::raster::Rect;
 use crate::search::{
@@ -38,11 +40,13 @@ pub struct LauncherView {
 }
 
 /// The launcher's key for a press the filter caught: Enter (Ctrl+Enter
-/// for a file row's folder), Escape, the arrows, or an edit key for the
-/// field; None for a key it does not use.
+/// for a file row's folder), Escape, the arrows, the menu key or
+/// Shift+F10, or an edit key for the field; None for a key it does not use.
 fn key_of(k: &DialogKey) -> Option<Key> {
     let ctrl = k.mods & keys::MOD_CTRL != 0;
     let special = k.syms.iter().find_map(|&sym| match sym {
+        keys::KEY_Menu => Some(Key::Menu),
+        keys::KEY_F10 if k.mods == keys::MOD_SHIFT => Some(Key::Menu),
         keys::KEY_Return | keys::KEY_KP_Enter if ctrl => Some(Key::CtrlEnter),
         keys::KEY_Return | keys::KEY_KP_Enter => Some(Key::Enter),
         keys::KEY_Escape => Some(Key::Escape),
@@ -166,6 +170,63 @@ impl State {
         }
     }
 
+    /// A right press on the panel: a program or file row opens its menu.
+    pub fn launcher_right_clicked(&mut self, hit: Hit) {
+        let Hit::Row(p) = hit else {
+            return;
+        };
+        let Some(v) = self.launcher.as_mut() else {
+            return;
+        };
+        let event = v.model.right_press(p);
+        self.apply_launcher(event);
+    }
+
+    /// Row `pick`'s context menu: a program row's is the Start menu's, a
+    /// file row's `filemenu`'s. It opens at the pointer when that is on the
+    /// row, else under the row.
+    fn open_launcher_context(&mut self, pick: Pick) {
+        self.redraw_launcher();
+        let Some(v) = self.launcher.as_ref() else {
+            return;
+        };
+        let p = self.pointer_location();
+        let at = if self.launcher_hit(p.x, p.y) == Hit::Row(pick) {
+            (p.x as i32, p.y as i32)
+        } else {
+            let line = v.model.list.selected.unwrap_or(0);
+            match launcher::row_rect(&v.model, line, &self.config.theme) {
+                Some(r) => (v.at.0 + r.x, v.at.1 + r.bottom()),
+                None => return,
+            }
+        };
+        let (items, kind) = match pick {
+            Pick::App(i) => {
+                let Some(&app) = v.matches.get(i) else {
+                    return;
+                };
+                let Some(entry) = self.app_index.get(app) else {
+                    return;
+                };
+                let pinned_start = self.launches.is_pinned(&entry.id);
+                let pinned_taskbar = self.quick_file_of(&entry.id).is_some();
+                let (items, rows) =
+                    crate::startmenu::program_menu(app, pinned_start, pinned_taskbar, false);
+                (items, MenuKind::StartPanel { rows })
+            }
+            Pick::File(i) => {
+                let Some(path) = v.search.files.get(i).cloned() else {
+                    return;
+                };
+                let (items, commands) = self.file_menu_rows(&path);
+                (items, MenuKind::File { commands, path })
+            }
+            Pick::Calc | Pick::Setting(_) => return,
+        };
+        self.close_menu();
+        self.push_context_menu(at, items, kind);
+    }
+
     fn apply_launcher(&mut self, event: Event) {
         match event {
             Event::None => self.redraw_launcher(),
@@ -217,17 +278,16 @@ impl State {
                 }
             }
             Event::OpenFolder(i) => {
-                let argv = self
+                let path = self
                     .launcher
                     .as_ref()
-                    .and_then(|v| v.search.files.get(i))
-                    .and_then(|p| p.parent())
-                    .map(reprisefs::apps::open_argv_for);
+                    .and_then(|v| v.search.files.get(i).cloned());
                 self.close_launcher();
-                if let Some(argv) = argv {
-                    self.spawn_argv_activated(&argv);
+                if let Some(path) = path {
+                    self.open_file_location(&path);
                 }
             }
+            Event::Context(pick) => self.open_launcher_context(pick),
             Event::Close => self.close_launcher(),
         }
     }
@@ -458,7 +518,7 @@ mod tests {
     use reprisekit::textedit::EditKey;
 
     #[test]
-    fn enter_escape_and_the_arrows_win_over_the_fields_edit_key() {
+    fn enter_escape_the_arrows_and_the_menu_keys_win_over_the_fields_edit_key() {
         let press = |sym: u32, mods: u32| DialogKey {
             syms: vec![sym],
             mods,
@@ -472,6 +532,12 @@ mod tests {
         assert_eq!(key_of(&press(keys::KEY_Escape, 0)), Some(Key::Escape));
         assert_eq!(key_of(&press(keys::KEY_KP_Up, 0)), Some(Key::Up));
         assert_eq!(key_of(&press(keys::KEY_Down, 0)), Some(Key::Down));
+        assert_eq!(key_of(&press(keys::KEY_Menu, 0)), Some(Key::Menu));
+        assert_eq!(
+            key_of(&press(keys::KEY_F10, keys::MOD_SHIFT)),
+            Some(Key::Menu)
+        );
+        assert_ne!(key_of(&press(keys::KEY_F10, 0)), Some(Key::Menu));
         assert_eq!(
             key_of(&press(keys::KEY_x, 0)),
             Some(Key::Char(EditKey::Insert("x".into())))

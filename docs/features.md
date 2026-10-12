@@ -66,7 +66,9 @@ the Super tap, Super+Shift+Esc and the VT switch keys can be rebound.
   and settings pages ("wifi", "touchpad"), finds files in your home folder
   from two letters on, and does sums: `2+3*4`, Enter copies 14. File search
   uses plocate's database when it has one and `fd` when it doesn't, so
-  nothing crawls your disk in the background.
+  nothing crawls your disk in the background. Right-click a row, or press
+  the menu key, for the Start menu's program menu or a file's menu; Open
+  file location (or Ctrl+Enter) shows the file selected in its folder.
 - **Run...** for when you know exactly what you want.
 
 ## Windows
