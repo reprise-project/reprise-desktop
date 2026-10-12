@@ -104,7 +104,20 @@ pub fn apply(change: &Change) -> Result<System, Failure> {
 pub enum Failure {
     /// The password prompt was dismissed: nothing to tell.
     Dismissed,
+    /// timedated stopped waiting for the password prompt.
+    TimedOut,
     Text(String),
+}
+
+impl Failure {
+    /// The message box text; None for a dismissal.
+    pub fn message(&self) -> Option<String> {
+        match self {
+            Failure::Dismissed => None,
+            Failure::TimedOut => Some(reprisebus::polkit::TIMED_OUT.into()),
+            Failure::Text(msg) => Some(format!("The clock could not be changed: {msg}")),
+        }
+    }
 }
 
 fn text(e: zbus::Error) -> Failure {
@@ -125,11 +138,16 @@ where
 /// password alike; `dismissed` tells them apart.
 fn describe(method: &str, e: zbus::Error, dismissed: impl FnOnce() -> bool) -> Failure {
     let refused = |n: &str| n == "org.freedesktop.DBus.Error.AccessDenied";
-    if reprisebus::polkit::refusal(&e, refused, dismissed)
-        == Some(reprisebus::polkit::Refusal::Dismissed)
-    {
-        log::info!("{method}: the password prompt was dismissed");
-        return Failure::Dismissed;
+    match reprisebus::polkit::refusal(&e, refused, dismissed) {
+        Some(reprisebus::polkit::Refusal::Dismissed) => {
+            log::info!("{method}: the password prompt was dismissed");
+            return Failure::Dismissed;
+        }
+        Some(reprisebus::polkit::Refusal::TimedOut) => {
+            log::warn!("{method}: timedated stopped waiting for the password prompt");
+            return Failure::TimedOut;
+        }
+        Some(reprisebus::polkit::Refusal::Denied) | None => {}
     }
     match &e {
         zbus::Error::MethodError(name, Some(msg), _) => {
@@ -180,5 +198,26 @@ mod tests {
             || panic!("only a refusal asks whether the prompt was dismissed"),
         );
         assert_eq!(other, Failure::Text("NTP is on".into()));
+    }
+
+    #[test]
+    fn a_prompt_open_too_long_says_to_try_again() {
+        let no_reply = error(
+            "org.freedesktop.DBus.Error.NoReply",
+            "Method call timed out",
+        );
+        let failure = describe("SetNTP", no_reply, || {
+            panic!("a timeout does not ask whether the prompt was dismissed")
+        });
+        assert_eq!(failure, Failure::TimedOut);
+        assert_eq!(
+            failure.message().as_deref(),
+            Some("The password prompt was open too long, so nothing was changed. Try again.")
+        );
+        assert_eq!(Failure::Dismissed.message(), None);
+        assert_eq!(
+            Failure::Text("NTP is on".into()).message().as_deref(),
+            Some("The clock could not be changed: NTP is on")
+        );
     }
 }

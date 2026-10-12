@@ -498,17 +498,15 @@ fn failure(e: &zbus::Error, dismissed: impl FnOnce() -> bool) -> Option<Refused>
     match reprisebus::polkit::refusal(e, refused, dismissed) {
         Some(reprisebus::polkit::Refusal::Dismissed) => None,
         Some(reprisebus::polkit::Refusal::Denied) => Some(Refused::NotAllowed),
+        Some(reprisebus::polkit::Refusal::TimedOut) => {
+            Some(Refused::Failed(reprisebus::polkit::TIMED_OUT.to_string()))
+        }
         None if error_name(e) == Some("org.freedesktop.login1.BlockedByInhibitorLock") => {
             Some(Refused::Held(Vec::new()))
         }
         None => Some(Refused::Failed(match e {
-            // logind gives up on polkit after 25 s, prompt or not.
-            _ if matches!(
-                error_name(e),
-                Some("org.freedesktop.DBus.Error.NoReply" | "org.freedesktop.DBus.Error.Timeout")
-            ) =>
-            {
-                "The password was not given in time.".to_string()
+            _ if error_name(e) == Some("org.freedesktop.DBus.Error.Timeout") => {
+                reprisebus::polkit::TIMED_OUT.to_string()
             }
             zbus::Error::MethodError(_, Some(m), _) => m.clone(),
             e => e.to_string(),
@@ -1007,9 +1005,7 @@ mod tests {
         );
         assert_eq!(
             failure(&late, || false),
-            Some(Refused::Failed(
-                "The password was not given in time.".into()
-            ))
+            Some(Refused::Failed(reprisebus::polkit::TIMED_OUT.into()))
         );
         let blocked = method_error(
             "org.freedesktop.login1.BlockedByInhibitorLock",

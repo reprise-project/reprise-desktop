@@ -18,7 +18,11 @@ const BUS_NAME: &str = reprisebus::polkit::NAME;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Outcome {
     Success,
+    /// Cancel or Esc in the prompt.
     Cancelled,
+    /// polkitd's `CancelAuthentication`: the service stopped waiting, so
+    /// nobody dismissed anything.
+    Withdrawn,
     Failed,
 }
 
@@ -211,6 +215,7 @@ impl Agent {
                 }
                 Err(Error::Cancelled("cancelled by the user".into()))
             }
+            Ok(Outcome::Withdrawn) => Err(Error::Cancelled("withdrawn by polkitd".into())),
             Ok(Outcome::Failed) | Err(_) => Err(Error::Failed("authentication failed".into())),
         }
     }

@@ -94,7 +94,7 @@ fn describe(method: &str, e: zbus::Error, dismissed: impl FnOnce() -> bool) -> E
     match reprisebus::polkit::refusal(&e, |n| n == NOT_PRIVILEGED, dismissed) {
         Some(Refusal::Dismissed) => return Error::Dismissed,
         Some(Refusal::Denied) => return Error::NotAuthorized,
-        None => {}
+        Some(Refusal::TimedOut) | None => {}
     }
     log::warn!("{method}: {e}");
     Error::Refused(format!("cups-pk-helper could not make the change ({e})."))

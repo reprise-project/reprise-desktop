@@ -183,7 +183,9 @@ network time.
   polkit is set up for one. Cancelling it in User Accounts, Network
   Connections, Printers, Software Updates, Date and Time, Explorer or Safely
   Remove Hardware leaves things as they were, with no error; a refused
-  password says so.
+  password says so. systemd's services wait 25 s for the password: in Date
+  and Time a prompt left open longer closes, and the program says to try
+  again.
 - **About Reprise.** Version, operating system, kernel, model, processor,
   graphics, memory (in kilobytes, total and available), disk, displays and
   uptime, with a Copy button for bug reports. The programs' own Help > About
