@@ -1899,3 +1899,34 @@ fn computer_gains_and_loses_a_locked_stick_as_udisks_reports_it() {
     ex.volumes_changed(Snapshot::default(), &mut ctx);
     assert!(!listed(&ex), "the stick's row goes once it is pulled out");
 }
+
+/// Long enough for the watch's one-second gap between wakes and its coalescing.
+fn wait_for_watch() {
+    std::thread::sleep(std::time::Duration::from_millis(1500));
+}
+
+#[test]
+fn the_shown_folder_is_followed_when_renamed_and_left_for_its_parent_when_deleted() {
+    let top = tempfile::tempdir().expect("a temp dir");
+    let (old, new) = (top.path().join("old"), top.path().join("new"));
+    std::fs::create_dir(&old).expect("mkdir");
+    std::fs::write(old.join("a.txt"), "1").expect("write");
+    let mut ctx = test_ctx();
+    let mut ex = test_explorer(Place::Folder(old.clone()), &mut ctx);
+
+    std::fs::rename(&old, &new).expect("rename");
+    wait_for_watch();
+    ex.wake(&mut ctx);
+    assert_eq!(ex.place, Place::Folder(new.clone()));
+    assert_eq!(ex.items.len(), 1);
+    assert!(
+        !ex.history.can_back(),
+        "the new name takes the old one's place"
+    );
+
+    std::fs::remove_dir_all(&new).expect("rm");
+    wait_for_watch();
+    ex.wake(&mut ctx);
+    assert_eq!(ex.place, Place::Folder(top.path().to_path_buf()));
+    assert!(!ex.history.can_back());
+}

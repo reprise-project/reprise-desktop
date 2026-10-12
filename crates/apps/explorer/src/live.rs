@@ -4,13 +4,14 @@
 //! `Event::Wake` drains the arrivals ([`Explorer::wake`]); `Event::Tick`,
 //! requested while a hover waits, shows the tip ([`Explorer::tip_tick`]).
 
+use crate::place::Place;
 use crate::window;
 use crate::{Explorer, HoverOn, Tip};
 use repriseapp::{Ctx, KeyInput, PointerInput, Reply};
 use reprisefs::listing::Item;
 use reprisekit::controls::shellview::{self, Mode};
 use reprisekit::controls::taskpane;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, TryRecvError};
@@ -69,7 +70,7 @@ impl Explorer {
     }
 
     /// `Event::Wake`: a put, job or tip walk finished, thumbnails arrived, or
-    /// the watch or UDisks2 saw a change (which re-lists). A closing window quits here
+    /// the watch or UDisks2 saw a change (which re-lists), or the folder left (which follows it). A closing window quits here
     /// once its work is done.
     pub fn wake(&mut self, ctx: &mut Ctx) -> Reply {
         let put = self.poll_put(ctx);
@@ -99,6 +100,10 @@ impl Explorer {
         }
         // A finished put already re-listed; its reply may carry an error box.
         let put = job.or(put).filter(|r| *r != Reply::none());
+        if let Some(from) = self.watch.as_mut().and_then(|w| w.take_gone()) {
+            let r = self.follow_gone(&from, ctx);
+            return put.unwrap_or(r);
+        }
         if self.watch.as_mut().is_some_and(|w| w.take_changed()) {
             let r = self.refresh(ctx);
             return put.unwrap_or(r);
@@ -125,6 +130,20 @@ impl Explorer {
         } else {
             Reply::none()
         }
+    }
+
+    /// The folder shown was deleted or moved away: show the nearest folder that exists at or above
+    /// `from` (its new path after a rename in place, else its old one) in its place in the history.
+    fn follow_gone(&mut self, from: &Path, ctx: &mut Ctx) -> Reply {
+        let Some(dir) = from.ancestors().find(|p| p.is_dir()) else {
+            return self.refresh(ctx);
+        };
+        let place = Place::from_path(dir);
+        if place == self.place {
+            return self.refresh(ctx);
+        }
+        self.history.replace(place.clone());
+        self.show(place, ctx)
     }
 
     /// Restores the scroll position after a re-listing, clamped to the new content.
