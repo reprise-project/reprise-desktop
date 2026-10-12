@@ -1,33 +1,10 @@
-//! A folder of pictures taking turns: which files count and which one
-//! comes next. The wallpaper slideshow (`[wallpaper] slideshow`) and the
-//! Photos screen saver both pick through it, each on its own thread.
+//! Which picture of a slideshow folder comes next. The wallpaper slideshow
+//! (`[wallpaper] slideshow`) and the Photos screen saver both pick through
+//! it, each on its own thread, from `reprisefs::pictures::in_folder`.
 
 use std::path::{Path, PathBuf};
 
-/// The picture files the compositor decodes.
-const EXTS: [&str; 5] = ["jpg", "jpeg", "png", "bmp", "dib"];
-
-/// The pictures straight inside `folder`, by name; none when it cannot
-/// be read.
-pub fn pictures(folder: &Path) -> Vec<PathBuf> {
-    let Ok(entries) = std::fs::read_dir(folder) else {
-        return Vec::new();
-    };
-    let mut out: Vec<PathBuf> = entries
-        .flatten()
-        .map(|e| e.path())
-        .filter(|p| {
-            p.extension()
-                .and_then(|e| e.to_str())
-                .is_some_and(|e| EXTS.iter().any(|x| x.eq_ignore_ascii_case(e)))
-                && p.is_file()
-        })
-        .collect();
-    out.sort();
-    out
-}
-
-/// The picture after `current` in `list`: the next by name (back to the
+/// The picture after `current` in `list`: the next in list order (back to the
 /// first after the last, or the first when `current` is not there), or
 /// with `shuffle` any other one, picked by `roll`. None for an empty list.
 pub fn next(list: &[PathBuf], current: Option<&Path>, shuffle: bool, roll: u32) -> Option<PathBuf> {
@@ -103,17 +80,5 @@ mod tests {
             next(&one, Some(Path::new("a.jpg")), true, 5),
             Some("a.jpg".into())
         );
-    }
-
-    #[test]
-    fn only_picture_files_count() {
-        let dir = std::env::temp_dir().join(format!("reprise-slides-{}", std::process::id()));
-        std::fs::create_dir_all(dir.join("sub.jpg")).unwrap();
-        for f in ["b.JPG", "a.png", "notes.txt", "c.gif"] {
-            std::fs::write(dir.join(f), b"").unwrap();
-        }
-        let found = pictures(&dir);
-        std::fs::remove_dir_all(&dir).unwrap();
-        assert_eq!(found, vec![dir.join("a.png"), dir.join("b.JPG")]);
     }
 }

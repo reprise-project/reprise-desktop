@@ -427,7 +427,7 @@ fn decode_next(
         .or_else(|| reprisefs::places::user_dir("PICTURES", "Pictures"));
     let list = folder
         .as_deref()
-        .map(crate::slideshow::pictures)
+        .map(reprisefs::pictures::in_folder)
         .unwrap_or_default();
     let mut current = current.map(Path::to_path_buf);
     for _ in 0..list.len().min(8) {
