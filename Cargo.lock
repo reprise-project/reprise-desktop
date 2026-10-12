@@ -2209,6 +2209,8 @@ dependencies = [
  "async-io",
  "env_logger",
  "futures-util",
+ "inotify",
+ "libc",
  "log",
  "repriseapp",
  "reprisebus",

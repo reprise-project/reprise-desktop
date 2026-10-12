@@ -114,6 +114,7 @@ impl UpdatesApp {
         self.phase = Phase::Installing {
             fraction: None,
             doing: "Preparing to install".into(),
+            request: None,
         };
         if let Some(j) = &self.jobs {
             j.send(worker::Job::Install(picked));
@@ -150,9 +151,26 @@ impl UpdatesApp {
                 }
             }
             worker::Msg::Progress { fraction, doing } => {
-                if let Phase::Installing { fraction: f, .. } = &self.phase {
-                    let fraction = fraction.or(*f);
-                    self.phase = Phase::Installing { fraction, doing };
+                if let Phase::Installing {
+                    fraction: f,
+                    doing: d,
+                    ..
+                } = &mut self.phase
+                {
+                    *f = fraction.or(*f);
+                    *d = doing;
+                }
+            }
+            worker::Msg::Request(r) => {
+                // One to do now shows in the window; it balloons too when the window is hidden. One
+                // that finishes the update afterwards always balloons, as the install ends with it.
+                if let Some(r) = &r
+                    && (self.hidden || !r.now)
+                {
+                    self.notify(model::request_balloon(r), true);
+                }
+                if let Phase::Installing { request, .. } = &mut self.phase {
+                    *request = r.filter(|r| r.now).map(|r| r.message);
                 }
             }
             worker::Msg::Installed(result) => {
@@ -413,7 +431,8 @@ mod tests {
             app.phase,
             Phase::Installing {
                 fraction: Some(0.25),
-                doing: "Installing b".into()
+                doing: "Installing b".into(),
+                request: None,
             }
         );
         app.worker_msg(worker::Msg::Installed(Ok(Restart::None)));
@@ -457,7 +476,8 @@ mod tests {
             app.phase,
             Phase::Installing {
                 fraction: Some(0.5),
-                doing: "Installing b".into()
+                doing: "Installing b".into(),
+                request: None,
             }
         );
     }
@@ -479,6 +499,37 @@ mod tests {
             Phase::Failed(
                 "The updates could not be installed. Failed to obtain authentication.".into()
             )
+        );
+    }
+
+    #[test]
+    fn a_device_request_heads_the_window_until_the_device_carries_on() {
+        let mut app = UpdatesApp::new(false);
+        app.worker_msg(found(Ok(vec![update("a")])));
+        app.install();
+        let replug = model::Request {
+            message: "Unplug Webcam and plug it back in to continue the update.".into(),
+            now: true,
+        };
+        app.worker_msg(worker::Msg::Request(Some(replug.clone())));
+        app.worker_msg(worker::Msg::Progress {
+            fraction: Some(0.5),
+            doing: "Waiting for you".into(),
+        });
+        assert_eq!(model::headline(&app.phase, &app.updates, 1), replug.message);
+        app.worker_msg(worker::Msg::Request(None));
+        assert!(
+            model::headline(&app.phase, &app.updates, 1).starts_with("Installing updates."),
+            "{:?}",
+            app.phase
+        );
+        app.worker_msg(worker::Msg::Request(Some(model::Request {
+            now: false,
+            ..replug
+        })));
+        assert!(
+            model::headline(&app.phase, &app.updates, 1).starts_with("Installing updates."),
+            "a request for afterwards goes to a balloon"
         );
     }
 

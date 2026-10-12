@@ -14,7 +14,7 @@ use zbus::Connection;
 use zbus::proxy::{CacheProperties, MethodFlags};
 use zbus::zvariant::{Fd, OwnedValue, Value};
 
-use crate::model::{Kind, Origin, Restart, Update};
+use crate::model::{Kind, Origin, Request, Restart, Update};
 
 pub const NAME: &str = "org.freedesktop.fwupd";
 const PATH: &str = "/";
@@ -39,6 +39,16 @@ const STATUS_DEVICE_READ: u32 = 9;
 const STATUS_DEVICE_ERASE: u32 = 10;
 const STATUS_WAITING_FOR_AUTH: u32 = 11;
 const STATUS_DEVICE_BUSY: u32 = 12;
+const STATUS_WAITING_FOR_USER: u32 = 14;
+
+/// `FwupdFeatureFlags`: this client shows a request's generic and device-specific messages.
+const FEATURE_REQUESTS: u64 = 1 << 4;
+const FEATURE_REQUESTS_NON_GENERIC: u64 = 1 << 9;
+
+/// `FwupdRequestKind::Post`: the request finishes the update after the install returns.
+const REQUEST_POST: u32 = 1;
+/// `FwupdRequestFlags::NonGenericMessage`: only the request's own message says what to do.
+const REQUEST_NON_GENERIC_MESSAGE: u64 = 1 << 2;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Error {
@@ -49,6 +59,8 @@ pub enum Error {
 }
 
 pub type Progress<'a> = &'a mut dyn FnMut(Option<f64>, Option<String>);
+/// A device's request while its firmware installs, and `None` once it carries on.
+pub type Asks<'a> = &'a mut dyn FnMut(Option<Request>);
 
 type Dict = HashMap<String, OwnedValue>;
 
@@ -198,6 +210,22 @@ fn update(device: &Dict, release: &Dict) -> Update {
     }
 }
 
+/// Signals after which the firmware updates may differ: new metadata, a device plugged in or out.
+pub fn change_rules() -> zbus::Result<Vec<zbus::OwnedMatchRule>> {
+    ["Changed", "DeviceAdded", "DeviceRemoved"]
+        .into_iter()
+        .map(|member| {
+            zbus::MatchRule::builder()
+                .msg_type(zbus::message::Type::Signal)
+                .sender(NAME)?
+                .path(PATH)?
+                .interface(IFACE)?
+                .member(member)
+                .map(|b| b.build().into())
+        })
+        .collect()
+}
+
 pub async fn updates(conn: &Connection) -> Result<Vec<Update>, Error> {
     let mut out = Vec::new();
     for d in devices(conn).await? {
@@ -341,8 +369,52 @@ fn status_line(status: u32, name: &str) -> Option<String> {
         STATUS_SCHEDULING => format!("Scheduling the update for {name}"),
         STATUS_WAITING_FOR_AUTH => "Waiting for authentication".into(),
         STATUS_DEVICE_BUSY => format!("Waiting for {name}"),
+        STATUS_WAITING_FOR_USER => "Waiting for you".into(),
         _ => return None,
     })
+}
+
+/// What a `DeviceRequest` asks of the user, said in Reprise's words unless only the device's own
+/// message will do.
+fn request(r: &Dict, name: &str) -> Request {
+    let own = text(r, "UpdateMessage");
+    let generic = match text(r, "AppstreamId").as_str() {
+        "org.freedesktop.fwupd.request.remove-replug" | "org.freedesktop.fwupd.replug-install" => {
+            Some(format!(
+                "Unplug {name} and plug it back in to continue the update."
+            ))
+        }
+        "org.freedesktop.fwupd.request.remove-usb-cable" => Some(format!(
+            "Unplug the USB cable of {name} to continue the update."
+        )),
+        "org.freedesktop.fwupd.request.insert-usb-cable" => Some(format!(
+            "Plug the USB cable of {name} back in to continue the update."
+        )),
+        "org.freedesktop.fwupd.replug-power" => Some(format!(
+            "Unplug the power cable of {name} and plug it back in to continue the update."
+        )),
+        "org.freedesktop.fwupd.request.press-unlock" => {
+            Some(format!("Press unlock on {name} to continue the update."))
+        }
+        "org.freedesktop.fwupd.request.do-not-power-off" => Some(format!(
+            "Do not turn off your computer or unplug its power until {name} has finished updating."
+        )),
+        "org.freedesktop.fwupd.restart-daemon" => Some(format!(
+            "Restart the fwupd service to finish updating {name}."
+        )),
+        _ => None,
+    };
+    let message = if number(r, "Flags") & REQUEST_NON_GENERIC_MESSAGE != 0 && !own.is_empty() {
+        sentence(&own)
+    } else {
+        generic
+            .or_else(|| (!own.is_empty()).then(|| sentence(&own)))
+            .unwrap_or_else(|| format!("{name} is waiting for you to continue the update."))
+    };
+    Request {
+        message,
+        now: number(r, "RequestKind") != u64::from(REQUEST_POST),
+    }
 }
 
 fn location(release: &Dict, remotes: &[Dict]) -> Option<String> {
@@ -372,6 +444,7 @@ pub async fn install(
     conn: &Connection,
     device: &Update,
     progress: Progress<'_>,
+    asks: Asks<'_>,
 ) -> Result<Restart, Error> {
     let name = device.name.as_str();
     let release = newest(conn, &device.id)
@@ -390,15 +463,31 @@ pub async fn install(
     let scratch = Scratch::new("firmware.cab");
     let cab = fetch(&loc, &scratch).map_err(Error::Failed)?;
 
-    let rule = zbus::MatchRule::builder()
-        .msg_type(zbus::message::Type::Signal)
-        .sender(NAME)
-        .and_then(|b| b.path(PATH))
-        .and_then(|b| b.interface(PROPERTIES))
-        .and_then(|b| b.member("PropertiesChanged"))
-        .map(|b| b.build().into())
-        .map_err(|e| Error::Failed(e.to_string()))?;
-    let mut signals = reprisebus::signals(conn, NAME, vec![rule]).await;
+    let rule = |iface: &'static str, member: &'static str| {
+        zbus::MatchRule::builder()
+            .msg_type(zbus::message::Type::Signal)
+            .sender(NAME)
+            .and_then(|b| b.path(PATH))
+            .and_then(|b| b.interface(iface))
+            .and_then(|b| b.member(member))
+            .map(|b| b.build().into())
+            .map_err(|e| Error::Failed(e.to_string()))
+    };
+    let rules = vec![
+        rule(PROPERTIES, "PropertiesChanged")?,
+        rule(IFACE, "DeviceRequest")?,
+    ];
+    let mut signals = reprisebus::signals(conn, NAME, rules).await;
+    // Firmware whose metadata requires a client that shows requests installs only with these.
+    if let Err(e) = call(
+        conn,
+        "SetFeatureFlags",
+        &(FEATURE_REQUESTS | FEATURE_REQUESTS_NON_GENERIC,),
+    )
+    .await
+    {
+        log::info!("fwupd feature flags: {e}");
+    }
     let proxy = zbus::proxy::Builder::<zbus::Proxy>::new(conn)
         .destination(NAME)
         .and_then(|b| b.path(PATH))
@@ -419,6 +508,7 @@ pub async fn install(
     );
     futures_util::pin_mut!(call);
     let mut listening = true;
+    let mut waiting = false;
     let done = loop {
         if !listening {
             break call.as_mut().await;
@@ -426,15 +516,28 @@ pub async fn install(
         match select(call.as_mut(), signals.next()).await {
             Either::Left((r, _)) => break r,
             Either::Right((None | Some(Signal::OwnerChanged), _)) => listening = false,
+            Either::Right((Some(Signal::Message(m)), _))
+                if m.header().member().is_some_and(|n| n == "DeviceRequest") =>
+            {
+                let Ok(r) = m.body().deserialize::<Dict>() else {
+                    continue;
+                };
+                let r = request(&r, name);
+                log::info!("{name} asks: {}", r.message);
+                waiting = r.now;
+                asks(Some(r));
+            }
             Either::Right((Some(Signal::Message(m)), _)) => {
                 let Ok((_, changed, _)) = m.body().deserialize::<(String, Dict, Vec<String>)>()
                 else {
                     continue;
                 };
-                let line = changed
-                    .get("Status")
-                    .and_then(|v| u32::try_from(v).ok())
-                    .and_then(|s| status_line(s, name));
+                let status = changed.get("Status").and_then(|v| u32::try_from(v).ok());
+                if waiting && status.is_some_and(|s| s != STATUS_WAITING_FOR_USER) {
+                    waiting = false;
+                    asks(None);
+                }
+                let line = status.and_then(|s| status_line(s, name));
                 let pct = changed
                     .get("Percentage")
                     .and_then(|v| u32::try_from(v).ok())
@@ -563,6 +666,44 @@ mod tests {
             location(&release, &[]).as_deref(),
             Some("https://cdn.example.org/downloads/abc-webcam.cab")
         );
+    }
+
+    #[test]
+    fn a_request_says_what_to_do_in_its_own_words_unless_only_the_device_can() {
+        let replug = dict(&[
+            (
+                "AppstreamId",
+                Value::from("org.freedesktop.fwupd.request.remove-replug"),
+            ),
+            ("RequestKind", Value::from(2u32)),
+            ("Flags", Value::from(1u64)),
+            ("UpdateMessage", Value::from("Please pull it out")),
+        ]);
+        assert_eq!(
+            request(&replug, "Webcam"),
+            Request {
+                message: "Unplug Webcam and plug it back in to continue the update.".into(),
+                now: true,
+            }
+        );
+
+        let own = dict(&[
+            (
+                "AppstreamId",
+                Value::from("org.freedesktop.fwupd.request.remove-replug"),
+            ),
+            ("Flags", Value::from(REQUEST_NON_GENERIC_MESSAGE)),
+            ("UpdateMessage", Value::from("Hold the pairing button")),
+        ]);
+        assert_eq!(request(&own, "Dock").message, "Hold the pairing button.");
+
+        let unknown = dict(&[
+            ("AppstreamId", Value::from("com.example.dock.lever")),
+            ("RequestKind", Value::from(REQUEST_POST)),
+        ]);
+        let r = request(&unknown, "Dock");
+        assert_eq!(r.message, "Dock is waiting for you to continue the update.");
+        assert!(!r.now, "a post request finishes the update afterwards");
     }
 
     #[test]

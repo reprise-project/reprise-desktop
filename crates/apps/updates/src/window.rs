@@ -506,6 +506,7 @@ mod tests {
         let installing = Phase::Installing {
             fraction: Some(0.5),
             doing: "Installing bash".into(),
+            request: None,
         };
         env.sync(&mut w, &installing, &ups);
         assert!(!enabled(&w, "act"));
@@ -601,6 +602,7 @@ mod tests {
         let phase = Phase::Installing {
             fraction: Some(0.5),
             doing: "Updating Editor".into(),
+            request: None,
         };
         env.sync(&mut w, &phase, &ups);
         w.list_key(&form::Key::Down, &cm);
@@ -654,6 +656,7 @@ mod tests {
         let phase = Phase::Installing {
             fraction: Some(0.42),
             doing: "Updating Editor".into(),
+            request: None,
         };
         let mut w = Window::new(None);
         env.sync(&mut w, &phase, &ups);
