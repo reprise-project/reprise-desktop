@@ -271,15 +271,19 @@ pub fn draw_edit(
             inner.x + text.measure(&edit.text[first..i], false, px)
         }
     };
-    text.draw(
-        c,
-        inner,
-        &edit.text[first..],
-        false,
-        cs.button_text,
-        Align::Left,
-        px,
-    );
+    if edit.text.is_empty() && !edit.cue().is_empty() {
+        text.draw(c, inner, edit.cue(), false, cs.gray_text, Align::Left, px);
+    } else {
+        text.draw(
+            c,
+            inner,
+            &edit.text[first..],
+            false,
+            cs.button_text,
+            Align::Left,
+            px,
+        );
+    }
     let line = text
         .line(inner, false, px)
         .map_or(inner, |(y, h)| Rect::new(inner.x, y, inner.width, h))
@@ -1079,6 +1083,9 @@ pub fn access_edit(
     };
     let mut n = access::node(role, r);
     access::focusable(&mut n, enabled);
+    if !edit.cue().is_empty() {
+        n.set_placeholder(edit.cue());
+    }
     let id = tree.push(parent, key, n);
     let inner = r.inset(FIELD_PAD);
     let first = if edit.text.is_char_boundary(first.min(edit.text.len())) {
