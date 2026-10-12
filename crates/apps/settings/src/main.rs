@@ -1517,7 +1517,7 @@ impl SettingsApp {
             ev => {
                 let cm = ctx.theme.look.controls();
                 let lay = c.ow.layout(&self.dialog_text, self.dialog_px, (0, 0), &cm);
-                c.input.event(&mut c.ow, &lay, &ev)
+                c.input.event(&mut c.ow, &lay, &ev, &ctx.theme.metrics)
             }
         };
         match out {
@@ -2342,7 +2342,14 @@ impl SettingsApp {
         let host = &mut self.add_host;
         let keep = type_keep(d);
         host.ensure_listed(d, &mut ctx.icons, &keep);
-        match host.event(d, &ev, &ctx.text, ctx.theme.fonts.size_px, ctx.size) {
+        match host.event(
+            d,
+            &ev,
+            &ctx.text,
+            ctx.theme.fonts.size_px,
+            ctx.size,
+            &ctx.theme.metrics,
+        ) {
             Step::Closed | Step::Out(FileEvent::Cancel) => self.close_add(),
             Step::None => Reply::none(),
             Step::Redraw => Reply::redraw(),

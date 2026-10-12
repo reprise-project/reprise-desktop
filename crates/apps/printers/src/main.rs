@@ -683,7 +683,14 @@ impl PrintersApp {
         };
         let keep = repriseapp::filedlg::type_keep(d);
         host.ensure_listed(d, &mut ctx.icons, &keep);
-        match host.event(d, &ev, &ctx.text, ctx.theme.fonts.size_px, ctx.size) {
+        match host.event(
+            d,
+            &ev,
+            &ctx.text,
+            ctx.theme.fonts.size_px,
+            ctx.size,
+            &ctx.theme.metrics,
+        ) {
             Step::Closed | Step::Out(FileEvent::Cancel) => {
                 self.browse = None;
                 Reply::redraw_all()

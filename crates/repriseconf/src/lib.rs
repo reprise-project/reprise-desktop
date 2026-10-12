@@ -90,6 +90,21 @@ fn text_size_in(text: &str) -> u32 {
         .unwrap_or(100)
 }
 
+/// `[metrics] double_click_ms`, read now; `None` when unset or outside 0..=10000, which leaves the
+/// interface's own time.
+pub fn double_click_ms() -> Option<i32> {
+    let text = std::fs::read_to_string(config_path()).unwrap_or_default();
+    double_click_ms_in(&text)
+}
+
+fn double_click_ms_in(text: &str) -> Option<i32> {
+    let doc = text.parse::<DocumentMut>().ok()?;
+    get(&doc, &key("metrics", "double_click_ms"))?
+        .as_integer()
+        .and_then(|v| i32::try_from(v).ok())
+        .filter(|v| (0..=10_000).contains(v))
+}
+
 /// `[taskbar] position`, read now: "bottom" when unset, not a string or unparsable. Tray applets
 /// ask each time a popup opens.
 pub fn taskbar_position() -> String {
@@ -451,6 +466,23 @@ mod tests {
         assert_eq!(text_size_in("[accessibility]\ntext_size = 150\n"), 150);
         assert_eq!(text_size_in("[accessibility]\ntext_size = 140\n"), 100);
         assert_eq!(text_size_in("[accessibility]\ntext_size = \"150\"\n"), 100);
+    }
+
+    #[test]
+    fn the_double_click_time_is_read_or_left_to_the_interface() {
+        assert_eq!(double_click_ms_in(""), None);
+        assert_eq!(
+            double_click_ms_in("[metrics]\ndouble_click_ms = 900\n"),
+            Some(900)
+        );
+        assert_eq!(
+            double_click_ms_in("[metrics]\ndouble_click_ms = -1\n"),
+            None
+        );
+        assert_eq!(
+            double_click_ms_in("[metrics]\ndouble_click_ms = \"900\"\n"),
+            None
+        );
     }
 
     #[test]

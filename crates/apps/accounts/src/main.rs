@@ -488,7 +488,14 @@ impl AccountsApp {
             app.browse = None;
             Reply::redraw_all()
         };
-        match host.event(d, &ev, &ctx.text, ctx.theme.fonts.size_px, ctx.size) {
+        match host.event(
+            d,
+            &ev,
+            &ctx.text,
+            ctx.theme.fonts.size_px,
+            ctx.size,
+            &ctx.theme.metrics,
+        ) {
             Step::Closed | Step::Out(FileEvent::Cancel) => close(self),
             Step::None => Reply::none(),
             Step::Redraw => Reply::redraw(),

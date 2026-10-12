@@ -55,10 +55,14 @@ impl Notepad {
         };
         self.host
             .ensure_listed(dlg, &mut ctx.icons, &type_keep(dlg));
-        match self
-            .host
-            .event(dlg, &ev, &self.dialog_text, self.dialog_px, ctx.size)
-        {
+        match self.host.event(
+            dlg,
+            &ev,
+            &self.dialog_text,
+            self.dialog_px,
+            ctx.size,
+            &ctx.theme.metrics,
+        ) {
             Step::Closed => self.open_outcome(FileEvent::Cancel, &mut ctx.icons),
             Step::Redraw => Reply::redraw(),
             Step::Resize => Reply::resize(),
@@ -142,10 +146,14 @@ impl Notepad {
         };
         self.host
             .ensure_listed(dlg, &mut ctx.icons, &type_keep(dlg));
-        match self
-            .host
-            .event(dlg, &ev, &self.dialog_text, self.dialog_px, ctx.size)
-        {
+        match self.host.event(
+            dlg,
+            &ev,
+            &self.dialog_text,
+            self.dialog_px,
+            ctx.size,
+            &ctx.theme.metrics,
+        ) {
             Step::Closed => self.saveas_outcome(FileEvent::Cancel, &mut ctx.icons),
             Step::Redraw => Reply::redraw(),
             Step::Resize => Reply::resize(),

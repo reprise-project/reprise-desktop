@@ -250,6 +250,7 @@ impl App for Pick {
             &ctx.text,
             ctx.theme.fonts.size_px,
             ctx.size,
+            &ctx.theme.metrics,
         ) {
             Step::Closed | Step::Out(FileEvent::Cancel) => Reply {
                 quit: true,
