@@ -91,7 +91,8 @@ the Super tap, Super+Shift+Esc and the VT switch keys can be rebound.
   screen, same size, maximized if it was.
 - **Window rules** in the config match windows by app id and title, with
   globs, and pin their size, position, screen, desktop, state, always-on-top
-  or sticky flag.
+  or sticky flag. `tab_group = "name"` puts every window its rules name the
+  same into one tab group, each new one as the last tab.
 - **Small conveniences.** Super+C centres a window on the screen under the
   pointer. Super+Shift+B hides its frame. Esc during a caption drag puts the
   window back where it was.
@@ -218,7 +219,12 @@ are.
   and wait, so programs can ask to save. After 5 seconds a list shows who's
   still holding things up, with End Now and Cancel.
 - **Session restore.** `[session] restore = true` starts the programs you
-  left open again at the next login, on the desktops they were on.
+  left open again at the next login, on the desktops they were on. Tab
+  groups come back in their tab order with the same tab shown. A program
+  starts once; if its other grouped windows aren't back 4 seconds after a
+  window of it appears, it starts again for each one missing that no
+  earlier start is still bringing, never more often than it had windows.
+  Windows that don't come back within two minutes are left out.
 - **XDG autostart,** with a Startup page in Reprise Settings to turn entries
   on and off.
 

@@ -10,6 +10,9 @@
 //! (`adopt_frame`); the hidden ones follow the shown one's moves and sizes
 //! (`follow_tabs`). A tab dragged along the caption reorders; dragged off it,
 //! it leaves the group and carries on as a move of its own window.
+//!
+//! A window also joins a group as it maps, for session restore or a
+//! `tab_group` window rule (`tab_on_map`).
 
 use std::time::{Duration, Instant};
 
@@ -21,6 +24,7 @@ use smithay::reexports::calloop::timer::{TimeoutAction, Timer};
 
 use crate::compositor::{SceneOwner, State};
 use crate::input::Interaction;
+use crate::session::Claim;
 use crate::tabs::Groups;
 use crate::window::{Kind, WindowId};
 
@@ -439,12 +443,19 @@ impl State {
     /// show it there: with `whole`, `w`'s own group comes along; otherwise
     /// `w` leaves it alone. Either must be [`State::tabbable`].
     pub fn join_tabs(&mut self, w: WindowId, target: WindowId, slot: usize, whole: bool) {
+        if self.join_tabs_quiet(w, target, slot, whole) {
+            self.focus_window(w);
+        }
+    }
+
+    /// `join_tabs` without the focus. Returns whether `w` joined.
+    fn join_tabs_quiet(&mut self, w: WindowId, target: WindowId, slot: usize, whole: bool) -> bool {
         if !self.tabbable(w) || !self.tabbable(target) {
-            return;
+            return false;
         }
         let groups = &self.tabs.groups;
         if groups.members_of(target).contains(&w) {
-            return;
+            return false;
         }
         if !whole && groups.group_of(w).is_some() {
             self.leave_tabs_quiet(w);
@@ -453,7 +464,55 @@ impl State {
         self.tabs.groups.join_at(w, target, slot);
         let members = self.tabs.groups.members_of(w);
         self.retab(&members, Some(lead));
-        self.focus_window(w);
+        true
+    }
+
+    /// A window that just mapped joins the tab group it belongs in: the
+    /// restored session's group it is back for, or else the group of the
+    /// oldest open window its `tab_group` rule names. It goes to the
+    /// group's desktop. A restored app still short of its saved windows
+    /// may start again (`session::settle_restart`).
+    pub(crate) fn tab_on_map(&mut self, w: WindowId) {
+        let Some(app) = self.win(w).map(|x| x.app()) else {
+            return;
+        };
+        let desktop = self.desktop_of(w);
+        let claim = self.session.regrouping.claim(&app, w, Instant::now());
+        crate::session::settle_restart(self, &app);
+        match claim {
+            Claim::First => {}
+            Claim::Join {
+                target,
+                before,
+                show,
+            } => {
+                let lead = self.tabs.groups.shown_of(target);
+                let members = self.tabs.groups.members_of(target);
+                let slot = before
+                    .and_then(|b| members.iter().position(|&m| m == b))
+                    .unwrap_or(usize::MAX);
+                if self.join_tabs_quiet(w, target, slot, false) {
+                    self.select_tab(show.unwrap_or(lead));
+                }
+            }
+            Claim::None => {
+                let Some(name) = self.win(w).and_then(|x| x.tab_group.clone()) else {
+                    return;
+                };
+                let target = self
+                    .windows
+                    .iter()
+                    .map(|x| x.id)
+                    .filter(|&t| t != w && self.tabbable(t))
+                    .find(|&t| self.win(t).and_then(|x| x.tab_group.as_ref()) == Some(&name));
+                if let Some(t) = target {
+                    self.join_tabs_quiet(w, t, usize::MAX, false);
+                }
+            }
+        }
+        if self.desktop_of(w) != desktop {
+            self.desktops_changed();
+        }
     }
 
     /// Take `w` out of its group, the group showing another tab in its

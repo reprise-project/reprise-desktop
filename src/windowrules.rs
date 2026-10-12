@@ -47,6 +47,8 @@ pub struct WindowRule {
     pub desktop: Option<usize>,
     pub always_on_top: Option<bool>,
     pub sticky: Option<bool>,
+    /// Windows matching rules with the same name share one tab group.
+    pub tab_group: Option<String>,
 }
 
 impl WindowRule {
@@ -70,6 +72,7 @@ pub struct Want {
     pub desktop: Option<usize>,
     pub always_on_top: Option<bool>,
     pub sticky: Option<bool>,
+    pub tab_group: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -119,6 +122,7 @@ pub fn want(rules: &[WindowRule], app_id: &str, title: &str, base: Want) -> Want
             over(&mut w.desktop, &r.desktop);
             over(&mut w.always_on_top, &r.always_on_top);
             over(&mut w.sticky, &r.sticky);
+            over(&mut w.tab_group, &r.tab_group);
             w
         })
 }
@@ -205,6 +209,7 @@ mod tests {
             WindowRule {
                 desktop: Some(2),
                 title: Some("build".into()),
+                tab_group: Some("shells".into()),
                 ..rule("foot")
             },
         ];
@@ -219,9 +224,12 @@ mod tests {
                 desktop: Some(1),
                 always_on_top: Some(true),
                 sticky: None,
+                tab_group: None,
             }
         );
-        assert_eq!(want(&rules, "foot", "build", base).desktop, Some(2));
+        let build = want(&rules, "foot", "build", base);
+        assert_eq!(build.desktop, Some(2));
+        assert_eq!(build.tab_group.as_deref(), Some("shells"));
         assert_eq!(want(&[], "foot", "", Want::default()), Want::default());
     }
 

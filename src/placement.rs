@@ -100,6 +100,14 @@ impl State {
         {
             base.desktop = Some(d);
         }
+        if let Some(d) = self
+            .session
+            .regrouping
+            .desktop(&app_id, std::time::Instant::now())
+            && d < self.desktops.count
+        {
+            base.desktop = Some(d);
+        }
         let mut want =
             crate::windowrules::want(&self.config.window_rules, &app_id, &win.title(), base);
         if fixed {
