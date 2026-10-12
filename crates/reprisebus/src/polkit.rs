@@ -28,10 +28,19 @@ pub enum Refusal {
     Dismissed,
     /// The password was refused, or polkit allows no one.
     Denied,
+    /// The service stopped waiting for the password prompt and answered
+    /// `NoReply`; systemd's services wait 25 s.
+    TimedOut,
 }
 
-/// The refusal `e` is, when its error name passes `refused`; None for any
-/// other error. `dismissed`, normally [`dismissed`], is asked only for a
+/// What a program says for [`Refusal::TimedOut`].
+pub const TIMED_OUT: &str =
+    "The password prompt was open too long, so nothing was changed. Try again.";
+
+const NO_REPLY: &str = "org.freedesktop.DBus.Error.NoReply";
+
+/// The refusal `e` is, when its error name passes `refused` or is `NoReply`;
+/// None for any other error. `dismissed`, normally [`dismissed`], is asked only for a
 /// refusal, since asking forgets the dismissal.
 pub fn refusal(
     e: &zbus::Error,
@@ -39,6 +48,9 @@ pub fn refusal(
     dismissed: impl FnOnce() -> bool,
 ) -> Option<Refusal> {
     match e {
+        zbus::Error::MethodError(name, _, _) if name.as_str() == NO_REPLY => {
+            Some(Refusal::TimedOut)
+        }
         zbus::Error::MethodError(name, _, _) if refused(name.as_str()) => Some(if dismissed() {
             Refusal::Dismissed
         } else {
@@ -79,5 +91,15 @@ mod tests {
             || panic!("only a method error is a refusal"),
         );
         assert_eq!(local, None);
+    }
+
+    #[test]
+    fn no_reply_is_a_timed_out_prompt_whatever_the_service_refuses_with() {
+        let timed_out = refusal(
+            &error("org.freedesktop.DBus.Error.NoReply"),
+            |n| n.ends_with("PermissionDenied"),
+            || panic!("asking forgets a dismissal a timeout has no claim to"),
+        );
+        assert_eq!(timed_out, Some(Refusal::TimedOut));
     }
 }
