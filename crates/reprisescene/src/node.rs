@@ -221,6 +221,8 @@ pub(crate) struct Node<R: Renderer, D> {
     /// and everything under it out of the backdrop.
     pub(crate) in_backdrop: bool,
     pub(crate) opacity: f32,
+    /// A tree's clip, node-local: its leaves draw and hit only inside it.
+    pub(crate) clip: Option<Rectangle<i32, Logical>>,
     pub(crate) input: Input,
     pub(crate) data: Option<D>,
     pub(crate) content: Content<R>,

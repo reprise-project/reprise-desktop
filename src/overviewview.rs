@@ -22,6 +22,7 @@ use reprisekit::textedit::EditKey;
 use reprisescene::{BufferId, TreeId};
 use smithay::backend::input::InputTime;
 use smithay::output::Output;
+use smithay::utils::Rectangle;
 
 use crate::compositor::{SceneOwner, State};
 use crate::dialogview::DialogKey;
@@ -404,7 +405,7 @@ impl State {
     }
 
     /// Move each sliding grid on an output of `shifts` across by that output's shift
-    /// for the desktop the swipe leaves and for the one it heads to.
+    /// for the desktop the swipe leaves and for the one it heads to, clipped to its output.
     pub fn overview_slide_place(&mut self, shifts: &[(Output, (i32, i32))]) {
         let Some(v) = self.overview.view.as_ref() else {
             return;
@@ -421,12 +422,14 @@ impl State {
             for (l, g) in layouts.iter().zip(grids) {
                 if let Some((_, (out, inn))) = shifts.iter().find(|(o, _)| *o == g.output) {
                     let dx = if leaving { *out } else { *inn };
-                    moves.push((g.cells, l.area.x + dx, l.area.y));
+                    moves.push((g.cells, l.area, dx));
                 }
             }
         }
-        for (cells, x, y) in moves {
-            self.scene.set_position(cells, x, y);
+        for (cells, area, dx) in moves {
+            self.scene.set_position(cells, area.x + dx, area.y);
+            let clip = Rectangle::new((-dx, 0).into(), (area.width, area.height).into());
+            self.scene.set_clip(cells, Some(clip));
             self.scene.set_enabled(cells, true);
         }
     }
@@ -459,6 +462,7 @@ impl State {
         self.overview_slide_drop();
         for (cells, a) in homes {
             self.scene.set_position(cells, a.x, a.y);
+            self.scene.set_clip(cells, None);
         }
         self.redraw_all();
     }

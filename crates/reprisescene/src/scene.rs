@@ -72,6 +72,7 @@ impl<R: Renderer, D> Scene<R, D> {
                     enabled: true,
                     in_backdrop: true,
                     opacity: 1.0,
+                    clip: None,
                     input: Input::All,
                     data: None,
                     content: Content::Tree(Vec::new()),
@@ -164,6 +165,7 @@ impl<R: Renderer, D> Scene<R, D> {
             enabled: true,
             in_backdrop: true,
             opacity: 1.0,
+            clip: None,
             input: Input::All,
             data: None,
             content,
@@ -323,6 +325,35 @@ impl<R: Renderer, D> Scene<R, D> {
 
     pub fn opacity(&self, node: impl Into<NodeId>) -> Option<f32> {
         self.node(node.into()).map(|n| n.opacity)
+    }
+
+    /// Draw and hit `tree`'s leaves only inside `clip` (node-local, so it moves with the
+    /// tree); None draws them whole. Nested clips intersect.
+    pub fn set_clip(&mut self, tree: TreeId, clip: Option<Rectangle<i32, Logical>>) {
+        if let Some(n) = self.node_mut(tree.0) {
+            n.clip = clip;
+        }
+    }
+
+    pub fn clip(&self, tree: TreeId) -> Option<Rectangle<i32, Logical>> {
+        self.node(tree.0)?.clip
+    }
+
+    /// The intersection of the clips of `node`'s ancestors, layout; None when none clips.
+    pub(crate) fn clip_above(&self, node: NodeId) -> Option<Rectangle<i32, Logical>> {
+        let mut out = None;
+        let mut at = self.node(node).and_then(|n| n.parent);
+        while let Some(p) = at {
+            let Some(n) = self.node(p.0) else {
+                break;
+            };
+            if let Some(c) = n.clip {
+                let pos = self.coords(p).map(|(pos, _)| pos).unwrap_or_default();
+                out = Some(meet(out, Rectangle::new(pos + c.loc, c.size)));
+            }
+            at = n.parent;
+        }
+        out
     }
 
     pub fn set_input(&mut self, node: impl Into<NodeId>, input: Input) {
@@ -712,5 +743,18 @@ impl<R: Renderer, D> Drop for Scene<R, D> {
     fn drop(&mut self) {
         let root = self.root;
         self.destroy(root);
+    }
+}
+
+/// `clip` narrowed by `r`; an empty result keeps its place so nothing passes it.
+pub(crate) fn meet(
+    clip: Option<Rectangle<i32, Logical>>,
+    r: Rectangle<i32, Logical>,
+) -> Rectangle<i32, Logical> {
+    match clip {
+        None => r,
+        Some(c) => c
+            .intersection(r)
+            .unwrap_or_else(|| Rectangle::new(c.loc, Size::default())),
     }
 }

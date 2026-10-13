@@ -12,6 +12,7 @@ use smithay::{
             solid::SolidColorRenderElement,
             surface::{WaylandSurfaceRenderElement, render_elements_from_surface_tree},
             texture::TextureRenderElement,
+            utils::CropRenderElement,
         },
         utils::{CommitCounter, DamageSet, OpaqueRegions},
     },
@@ -26,6 +27,7 @@ use crate::{
     Scene,
     node::{BufferNode, Content, CustomElement, NodeId, Pixels},
     query::output_rect,
+    scene::meet,
 };
 
 /// What to render: a layout rectangle at a scale. An output's view is its
@@ -91,9 +93,12 @@ impl Mode<'_> {
     }
 }
 
-/// A leaf a walk reached: the node, its layout position and opacity, and
-/// whether it lies in a subtree left out of the backdrop.
-type Visit<'v, R, D> = dyn FnMut(&crate::node::Node<R, D>, Point<i32, Logical>, f32, bool) + 'v;
+/// A leaf a walk reached: the node, its layout position and opacity, whether it lies in a
+/// subtree left out of the backdrop, and its ancestors' clip (layout).
+type Visit<'v, R, D> =
+    dyn FnMut(&crate::node::Node<R, D>, Point<i32, Logical>, f32, bool, Clip) + 'v;
+
+type Clip = Option<Rectangle<i32, Logical>>;
 
 /// A buffer's element with the node's opaque region, physical, from the
 /// element's top-left.
@@ -171,6 +176,8 @@ pub enum SceneElement<R: Renderer> {
     Texture(BufferElement<TextureRenderElement<R::TextureId>>),
     Surface(WaylandSurfaceRenderElement<R>),
     Custom(CustomElement<R>),
+    /// A leaf element cut to a clipped tree's bounds.
+    Cropped(Box<CropRenderElement<SceneElement<R>>>),
 }
 
 impl<R: Renderer> std::fmt::Debug for SceneElement<R>
@@ -184,6 +191,7 @@ where
             SceneElement::Texture(e) => f.debug_tuple("Texture").field(e.inner.id()).finish(),
             SceneElement::Surface(e) => f.debug_tuple("Surface").field(e).finish(),
             SceneElement::Custom(e) => f.debug_tuple("Custom").field(e).finish(),
+            SceneElement::Cropped(_) => f.write_str("Cropped"),
         }
     }
 }
@@ -198,6 +206,10 @@ macro_rules! each {
             SceneElement::Surface($e) => $f,
             SceneElement::Custom(c) => {
                 let $e = c.inner();
+                $f
+            }
+            SceneElement::Cropped(c) => {
+                let $e = &**c;
                 $f
             }
         }
@@ -367,7 +379,8 @@ where
             1.0,
             false,
             pass,
-            &mut |_, _, _, left_out| hit |= left_out,
+            None,
+            &mut |_, _, _, left_out, _| hit |= left_out,
         );
         hit
     }
@@ -402,8 +415,9 @@ where
                 1.0,
                 false,
                 pass,
-                &mut |n, pos, alpha, _| {
-                    out.extend(Self::leaf_element(renderer, n, pos, alpha, view))
+                None,
+                &mut |n, pos, alpha, _, clip| {
+                    out.extend(Self::leaf_element(renderer, n, pos, alpha, view, clip))
                 },
             );
         }
@@ -423,7 +437,10 @@ where
             1.0,
             false,
             pass,
-            &mut |n, pos, alpha, _| out.extend(Self::leaf_element(renderer, n, pos, alpha, view)),
+            None,
+            &mut |n, pos, alpha, _, clip| {
+                out.extend(Self::leaf_element(renderer, n, pos, alpha, view, clip))
+            },
         );
         out
     }
@@ -431,7 +448,8 @@ where
     /// Visit the leaves `pass` keeps under `id` front to back (the top
     /// child first), `origin` being its parent's layout position, `alpha`
     /// the opacity above it and `left_out` whether an ancestor is left out
-    /// of the backdrop.
+    /// of the backdrop. `clip` is the ancestors' clip, layout.
+    #[allow(clippy::too_many_arguments)]
     fn walk(
         &self,
         id: NodeId,
@@ -439,6 +457,7 @@ where
         alpha: f32,
         left_out: bool,
         pass: Pass,
+        clip: Clip,
         visit: &mut Visit<'_, R, D>,
     ) {
         let hoist = self.hoist.as_ref().filter(|_| pass.hoist);
@@ -472,11 +491,12 @@ where
                 }
                 if let (Some(hn), Some((a, out))) = (self.node(h), self.shown(h, pass.mode)) {
                     let pos = self.origin_of(h) + hn.position;
-                    self.walk_node(hn, pos, a, out, pass, visit);
+                    let c = self.clip_above(h);
+                    self.walk_node(hn, pos, a, out, pass, c, visit);
                 }
             }
         }
-        self.walk_node(n, origin + n.position, alpha, left_out, pass, visit);
+        self.walk_node(n, origin + n.position, alpha, left_out, pass, clip, visit);
     }
 
     /// The opacity `id` draws at with every ancestor's, and whether it or
@@ -505,6 +525,7 @@ where
 
     /// `walk` for `n` at layout position `pos` and opacity `alpha`, its
     /// own flags already applied.
+    #[allow(clippy::too_many_arguments)]
     fn walk_node(
         &self,
         n: &crate::node::Node<R, D>,
@@ -512,11 +533,16 @@ where
         alpha: f32,
         left_out: bool,
         pass: Pass,
+        clip: Clip,
         visit: &mut Visit<'_, R, D>,
     ) {
         if let Content::Tree(children) = &n.content {
+            let clip = match n.clip {
+                Some(c) => Some(meet(clip, Rectangle::new(pos + c.loc, c.size))),
+                None => clip,
+            };
             for c in children.iter().rev() {
-                self.walk(*c, pos, alpha, left_out, pass, visit);
+                self.walk(*c, pos, alpha, left_out, pass, clip, visit);
             }
             return;
         }
@@ -529,15 +555,43 @@ where
                 }
             }
         }
-        if !Self::leaf_rect(n, pos).is_some_and(|r| r.overlaps(pass.view.area)) {
+        if !Self::leaf_rect(n, pos)
+            .is_some_and(|r| r.overlaps(pass.view.area) && clip.is_none_or(|c| r.overlaps(c)))
+        {
             return;
         }
-        visit(n, pos, alpha, left_out);
+        visit(n, pos, alpha, left_out, clip);
     }
 
     /// The elements of leaf `n` at layout position `pos` and opacity
-    /// `alpha` in `view`.
+    /// `alpha` in `view`, cut to `clip` (layout).
     fn leaf_element(
+        renderer: &mut R,
+        n: &crate::node::Node<R, D>,
+        pos: Point<i32, Logical>,
+        alpha: f32,
+        view: &View,
+        clip: Clip,
+    ) -> Vec<SceneElement<R>> {
+        let elements = Self::leaf_elements(renderer, n, pos, alpha, view);
+        let Some(c) = clip.filter(|c| Self::leaf_rect(n, pos).is_some_and(|r| !c.contains_rect(r)))
+        else {
+            return elements;
+        };
+        let (a, b) = (
+            view.to_physical(c.loc),
+            view.to_physical(c.loc + c.size.to_point()),
+        );
+        let (a, b) = (a.to_i32_round::<i32>(), b.to_i32_round::<i32>());
+        let crop = Rectangle::new(a, (b.x - a.x, b.y - a.y).into());
+        elements
+            .into_iter()
+            .filter_map(|e| CropRenderElement::from_element(e, view.scale, crop))
+            .map(|e| SceneElement::Cropped(Box::new(e)))
+            .collect()
+    }
+
+    fn leaf_elements(
         renderer: &mut R,
         n: &crate::node::Node<R, D>,
         pos: Point<i32, Logical>,
