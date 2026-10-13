@@ -242,6 +242,15 @@ impl ToolbarMetrics {
         split_drop: 12,
         split_arrow_dy: 1,
     };
+
+    /// A strip whose labels grow by `u`: their 13 px line grows, the 24 px icon box and pads stay.
+    fn grown(self, u: crate::theme::TextUnits) -> ToolbarMetrics {
+        const LINE: i32 = 13;
+        ToolbarMetrics {
+            height: self.height + u.len(LINE) - LINE,
+            ..self
+        }
+    }
 }
 
 /// Where a menu bar puts its titles, logical px: [`MenuTitles`] on a window's own bar and on one in
@@ -422,7 +431,7 @@ impl ControlMetrics {
 
 impl ControlMetrics {
     /// These sizes for text grown by `u`: the rows that hold a line of text grow; boxes, glyphs,
-    /// scrollbars and drop buttons keep their size.
+    /// icons, scrollbars and drop buttons keep their size.
     pub fn grown(self, u: crate::theme::TextUnits) -> ControlMetrics {
         ControlMetrics {
             combo_row: u.len(self.combo_row),
@@ -440,6 +449,7 @@ impl ControlMetrics {
                 ..self.menubar
             },
             places: self.places.grown(u),
+            toolbar: self.toolbar.grown(u),
             status_bar: u.len(self.status_bar),
             task: TaskMetrics {
                 header: u.len(self.task.header),

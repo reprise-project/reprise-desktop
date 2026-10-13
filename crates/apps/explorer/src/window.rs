@@ -735,8 +735,8 @@ mod tests {
         assert_eq!(lay.bar.expect("bar").frame.bottom(), 551);
     }
 
-    /// At 200% text the menu and address bands, the Folders bar's title strip and the status
-    /// bar grow with the text; the toolbar's band keeps its height.
+    /// At 200% text the menu, toolbar and address bands, the Folders bar's title strip and the
+    /// status bar grow with the text.
     #[test]
     fn the_bands_and_bars_grow_with_the_text_size() {
         let s = Settings {
@@ -746,8 +746,8 @@ mod tests {
         let cm = ControlMetrics::CLASSIC.grown(reprisekit::theme::TextUnits::new(22, 11));
         let lay = layout(client(), &s, 200, statusbar::height(&cm), &cm);
         assert_eq!(lay.menu, Rect::new(0, 3, 792, 42));
-        assert_eq!(lay.toolbar, Some(Rect::new(0, 47, 792, 30)));
-        assert_eq!(lay.address, Some(Rect::new(0, 79, 792, 44)));
+        assert_eq!(lay.toolbar, Some(Rect::new(0, 47, 792, 43)));
+        assert_eq!(lay.address, Some(Rect::new(0, 92, 792, 44)));
         assert_eq!(lay.status, Some(Rect::new(0, 573 - 44, 792, 44)));
         assert_eq!(lay.bar.expect("folders bar").header.height, 40);
     }

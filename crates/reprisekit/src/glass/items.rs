@@ -450,6 +450,7 @@ mod tests {
             iconview::draw_cell_at(
                 &mut d,
                 (0, 0),
+                iconview::Cell::square(iconview::CELL),
                 &theme,
                 &text,
                 "Computer",
@@ -590,6 +591,7 @@ mod tests {
             iconview::draw_cell_at(
                 &mut d,
                 (5, 5),
+                iconview::Cell::square(iconview::CELL),
                 &theme,
                 &text,
                 "Computer",

@@ -9,7 +9,7 @@ use crate::look::widgets::item;
 use crate::raster::{Canvas, Rect};
 use crate::text::{Align, TextRenderer};
 use crate::textedit::{Caret, Preedit, TextEdit};
-use crate::theme::{Color, Theme};
+use crate::theme::{Color, TextUnits, Theme};
 
 /// Grid cell edge, the icon's inset from its cell's top edge, and icon size, in logical px.
 pub const CELL: i32 = 75;
@@ -26,7 +26,18 @@ impl Cell {
     pub const fn square(n: i32) -> Cell {
         Cell { w: n, h: n }
     }
+
+    /// The desktop's cell with the label's room grown by `u`; the icon keeps its size and place.
+    pub fn grown(u: TextUnits) -> Cell {
+        Cell {
+            w: u.len(CELL),
+            h: LABEL_TOP + u.len(CELL - LABEL_TOP),
+        }
+    }
 }
+
+/// The label's top in its cell, 4 px under the icon.
+const LABEL_TOP: i32 = ICON_TOP + ICON_PX + 4;
 
 pub fn rows_per_column(cell: Cell, area: Rect) -> usize {
     (area.height / cell.h).max(1) as usize
@@ -255,11 +266,11 @@ impl EditLine {
     }
 }
 
-/// The rename box for `edit` in a cell at `theme.scale`: text wrapped and
+/// The rename box for `edit` in a `w` px wide cell at `theme.scale`: text wrapped and
 /// centred in a white box with a 1 px border, never narrower than 30 px.
-pub fn edit_layout(theme: &Theme, text: &TextRenderer, edit: &TextEdit) -> EditLayout {
+pub fn edit_layout(theme: &Theme, text: &TextRenderer, edit: &TextEdit, w: i32) -> EditLayout {
     let s = theme.scale.max(1);
-    let size = CELL * s;
+    let size = w * s;
     let font = theme.fonts.size_px;
     let step = font as i32 + 2 * s;
     let ranges = wrap_edit(text, &edit.text, size - 8 * s, font);
@@ -334,7 +345,7 @@ pub fn draw_cell(
 ) -> Canvas {
     let size = CELL * theme.scale.max(1);
     let extra = rename.map_or(0, |(edit, _)| {
-        let r = edit_layout(theme, text, edit).rect;
+        let r = edit_layout(theme, text, edit, CELL).rect;
         (-r.x).max(r.right() - size).max(0)
     });
     let mut c = Canvas::new((size + 2 * extra) as u32, size as u32);
@@ -342,6 +353,7 @@ pub fn draw_cell(
     draw_cell_at(
         &mut c,
         (extra, 0),
+        Cell::square(CELL),
         theme,
         text,
         name,
@@ -353,10 +365,12 @@ pub fn draw_cell(
     c
 }
 
+/// [`draw_cell`] into `c` at device px `pos`, in a `cell` sized in logical px.
 #[allow(clippy::too_many_arguments)]
 pub fn draw_cell_at(
     c: &mut Canvas,
     pos: (i32, i32),
+    cell: Cell,
     theme: &Theme,
     text: &TextRenderer,
     name: &str,
@@ -368,7 +382,7 @@ pub fn draw_cell_at(
     let (x0, y0) = pos;
     let s = theme.scale.max(1);
     let cs = &theme.colors;
-    let size = CELL * s;
+    let size = cell.w * s;
     let icon_px = ICON_PX * s;
     let fallback;
     let icon = match icon {
@@ -379,8 +393,8 @@ pub fn draw_cell_at(
         }
     };
     let boxed = selected.is_some() && rename.is_none() && {
-        let l = label_layout(text, name, theme.fonts.size_px, s).rect;
-        let r = Rect::new(x0, y0, size, (l.bottom() + 2 * s).min(size));
+        let l = label_layout(text, name, theme.fonts.size_px, s, cell.w).rect;
+        let r = Rect::new(x0, y0, size, (l.bottom() + 2 * s).min(cell.h * s));
         item::draw_desktop_item(c, &theme.paint(), r)
     };
     let selected = selected.filter(|_| !boxed);
@@ -414,7 +428,7 @@ pub fn draw_cell_at(
         };
         let white = cs.window;
         let black = cs.window_text;
-        let mut lay = edit_layout(theme, text, edit);
+        let mut lay = edit_layout(theme, text, edit, cell.w);
         lay.shift(x0);
         let r = Rect::new(lay.rect.x, y0 + lay.rect.y, lay.rect.width, lay.rect.height);
         c.fill_rect(r, white);
@@ -474,7 +488,7 @@ pub fn draw_cell_at(
         return;
     }
 
-    let label = label_layout(text, name, font, s);
+    let label = label_layout(text, name, font, s, cell.w);
     let l = label.rect;
     let rect = Rect::new(x0 + l.x, y0 + l.y, l.width, l.height);
     let fg = if selected.is_some() {
@@ -506,7 +520,7 @@ pub fn draw_cell_at(
     }
 }
 
-/// A cell's label at scale `s`, in the cell's coordinates: `name` wrapped to two
+/// A `w` px wide cell's label at scale `s`, in the cell's coordinates: `name` wrapped to two
 /// lines; `rect` is what a selection fills.
 pub struct LabelLayout {
     pub rect: Rect,
@@ -520,8 +534,8 @@ pub struct LabelLine {
     pub width: i32,
 }
 
-pub fn label_layout(text: &TextRenderer, name: &str, px: u32, s: i32) -> LabelLayout {
-    let size = CELL * s;
+pub fn label_layout(text: &TextRenderer, name: &str, px: u32, s: i32, w: i32) -> LabelLayout {
+    let size = w * s;
     let step = px as i32 + 2 * s;
     let lines: Vec<LabelLine> = wrap_label(text, name, size - 4 * s, px)
         .into_iter()
@@ -542,7 +556,7 @@ pub fn label_layout(text: &TextRenderer, name: &str, px: u32, s: i32) -> LabelLa
         .unwrap_or(size / 2);
     let rect = Rect::new(
         x0 - 2 * s,
-        (ICON_TOP + ICON_PX + 4) * s,
+        LABEL_TOP * s,
         x1 - x0 + 4 * s,
         lines.len() as i32 * step + 2 * s,
     );
@@ -654,7 +668,16 @@ pub fn drag_image(
     for g in ghosts.iter().filter(reach) {
         let pos = ((g.at.0 - r.x) * s, (g.at.1 - r.y) * s);
         draw_cell_at(
-            &mut c, pos, theme, text, g.name, g.icon, g.shortcut, None, None,
+            &mut c,
+            pos,
+            Cell::square(CELL),
+            theme,
+            text,
+            g.name,
+            g.icon,
+            g.shortcut,
+            None,
+            None,
         );
     }
     c.fade(1, 2);
@@ -983,7 +1006,7 @@ mod tests {
         assert_eq!(c.get(x0 + wide + 3, y0 + 20), hil);
         assert_eq!(c.get(x0 + wide + 4, y0 + 20), 0);
         assert_eq!(
-            label_layout(&t, name, font, 1).rect,
+            label_layout(&t, name, font, 1, CELL).rect,
             Rect::new(x0, y0, wide + 4, 28)
         );
         let ink = cs.hilight_text.argb();
@@ -1050,6 +1073,7 @@ mod tests {
             draw_cell_at(
                 &mut got,
                 (41, 30),
+                Cell::square(CELL),
                 &theme,
                 &t,
                 "My Network Places",
@@ -1186,7 +1210,7 @@ mod tests {
         let t = text();
         let font = theme.fonts.size_px;
         let edit = TextEdit::new("New Text Document", false);
-        let lay = edit_layout(&theme, &t, &edit);
+        let lay = edit_layout(&theme, &t, &edit, CELL);
         assert_eq!(lay.lines.len(), 2);
         let (l1, l2) = (&lay.lines[0], &lay.lines[1]);
         assert_eq!((l1.start, l2.start), (0, 9));
@@ -1216,7 +1240,7 @@ mod tests {
             "",
         ] {
             let edit = TextEdit::new(name, false);
-            let lay = edit_layout(&theme, &t, &edit);
+            let lay = edit_layout(&theme, &t, &edit, CELL);
             let mut next = 0;
             for l in &lay.lines {
                 assert_eq!(
@@ -1254,7 +1278,7 @@ mod tests {
         let t = text();
         let long = "Reasdfghijklmnop";
         let edit = TextEdit::new(long, false);
-        let lay = edit_layout(&theme, &t, &edit);
+        let lay = edit_layout(&theme, &t, &edit, CELL);
         assert!(lay.rect.right() > CELL, "the box overflows the cell");
         let c = draw_cell(
             &theme,
