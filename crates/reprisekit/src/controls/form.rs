@@ -2987,7 +2987,7 @@ fn unmasked_index(edit: &TextEdit, at: usize) -> usize {
 
 /// Where `it` draws and takes the pointer, on the surface: its 100% rect grown by `u` and moved
 /// to `origin`, then by its [`Indent`]. Pictures and controls with fixed art keep their size and
-/// only move; a separator keeps its height and a rule its width. Indents keep their px: they
+/// only move; a separator and a rule keep their thickness. Indents keep their px: they
 /// step past a check box, which keeps its size.
 fn place(it: &Item, cm: &ControlMetrics, u: TextUnits, origin: (i32, i32)) -> Rect {
     let r = match it.control {
@@ -2999,8 +2999,12 @@ fn place(it: &Item, cm: &ControlMetrics, u: TextUnits, origin: (i32, i32)) -> Re
             height: it.rect.height,
             ..u.rect(it.rect)
         },
-        Control::Rule => Rect {
+        Control::Rule if it.rect.width <= it.rect.height => Rect {
             width: it.rect.width,
+            ..u.rect(it.rect)
+        },
+        Control::Rule => Rect {
+            height: it.rect.height,
             ..u.rect(it.rect)
         },
         _ => u.rect(it.rect),
@@ -6910,6 +6914,23 @@ mod tests {
             ),
             "the second row a grown row down, got {hit:?}"
         );
+    }
+
+    #[test]
+    fn a_grown_rule_grows_along_its_length_only() {
+        let text = TextRenderer::load(&FontConfig::default());
+        let f = Form::new(vec![
+            Item::rule("across", Rect::new(10, 100, 300, 1)),
+            Item::rule("down", Rect::new(20, 10, 2, 60)),
+        ]);
+        let theme = Theme::default();
+        let p = Paint {
+            text: TextUnits::new(22, 11),
+            ..classic_paint(&theme.colors, 1)
+        };
+        draw(&mut Canvas::new(700, 300), &text, &p, &f, false, 22);
+        assert_eq!(f.rect("across"), Some(Rect::new(20, 200, 600, 1)));
+        assert_eq!(f.rect("down"), Some(Rect::new(40, 20, 2, 120)));
     }
 
     /// A form drawn at an origin keeps that offset as it is and grows only its own layout from
