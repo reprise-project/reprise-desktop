@@ -622,21 +622,11 @@ impl Explorer {
             };
         }
         if let Some((col, from, width)) = self.resizing {
-            // Through `ListView::resize_column`, which owns the minimum
-            // width; the shell view keeps the columns, so they go into a
-            // transient list view and come straight back.
-            let before = self.sv.columns.get(col).map(|c| c.width);
-            let mut lv: reprisekit::controls::listview::ListView =
-                reprisekit::controls::listview::ListView {
-                    columns: std::mem::take(&mut self.sv.columns),
-                    ..Default::default()
-                };
-            lv.resize_column(col, width + x - from);
-            self.sv.columns = lv.columns;
-            return if before == self.sv.columns.get(col).map(|c| c.width) {
-                Reply::none()
-            } else {
+            let u = ctx.theme.controls().text;
+            return if shellview::resize_column(&mut self.sv, col, width, x - from, u) {
                 Reply::redraw()
+            } else {
+                Reply::none()
             };
         }
         if let Some((origin, base, ctrl)) = self.marquee_from.clone() {

@@ -179,7 +179,7 @@ pub struct Explorer {
     /// of replacing it). The rectangle lives in `sv.marquee`, appearing once the
     /// pointer has moved [`DRAG_SLOP`] px.
     marquee_from: Option<((i32, i32), std::collections::BTreeSet<usize>, bool)>,
-    /// A Details column divider drag: the column, the press position and the column's width then.
+    /// A Details column divider drag: the column, the press position and the column's 100% width then.
     resizing: Option<(usize, i32, i32)>,
     thumb: ThumbDrag,
     tree_thumb: ThumbDrag,
