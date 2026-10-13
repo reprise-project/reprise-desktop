@@ -208,7 +208,7 @@ struct Notepad {
     /// The dialog font's px at 100%; file dialogs stay at it.
     dialog_px: u32,
     /// The forms theme with the dialog font at the text size: Find, Replace, Go To, About and the
-    /// message boxes draw and size their windows with it.
+    /// message boxes draw and size their windows with it; the main window opens at its text size.
     forms: Theme,
     open: Option<FileDlg>,
     saveas: Option<FileDlg>,
@@ -1507,7 +1507,7 @@ impl App for Notepad {
         "reprise.notepad".into()
     }
     fn initial_size(&self) -> (i32, i32) {
-        (568, 328)
+        self.forms.text.size((568, 328))
     }
 
     fn text_sized(&self) -> bool {
@@ -2032,7 +2032,9 @@ impl Notepad {
 fn main() {
     env_logger::init();
     let path = std::env::args_os().nth(1).map(std::path::PathBuf::from);
-    repriseapp::run(Box::new(Notepad::new(path)));
+    let mut notepad = Notepad::new(path);
+    notepad.forms = repriseapp::start_forms();
+    repriseapp::run(Box::new(notepad));
 }
 
 #[cfg(test)]
@@ -2613,6 +2615,16 @@ mod tests {
         let size = |id| np.children().into_iter().find(|c| c.id == id).unwrap().size;
         assert_eq!(size(FIND), (547, 158));
         assert_eq!(size(GOTO), (414, 147));
+    }
+
+    #[test]
+    fn the_window_opens_at_the_text_size() {
+        let mut np = Notepad::new(None);
+        assert_eq!(np.initial_size(), (568, 328));
+        let mut ctx = test_ctx();
+        ctx.text_size = 200;
+        np.follow(&ctx);
+        assert_eq!(np.initial_size(), (1136, 656));
     }
 
     /// At 200% text the window's theme is at the text size: the menu bar and the status bar

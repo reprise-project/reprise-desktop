@@ -73,23 +73,23 @@ pub struct Want {
     pub always_on_top: Option<bool>,
     pub sticky: Option<bool>,
     pub tab_group: Option<String>,
-    /// A normal frame kept at a larger text size: `size` is left to the program.
-    pub shrunk: Option<Shrunk>,
+    /// A normal frame kept at another text size: `size` is left to the program.
+    pub rescaled: Option<Rescaled>,
 }
 
-/// A normal frame kept at a larger text size than now. The window opens at its program's own
-/// size, then takes the frame shrunk by the ratio of the two text sizes where that is larger,
-/// never more than the frame it was kept at.
+/// A normal frame kept at another text size than now. The window opens at its program's own
+/// size, then takes that size held between the frame it was kept at and that frame scaled by
+/// the ratio of the two text sizes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Shrunk {
+pub struct Rescaled {
     pub to: (i32, i32),
     pub kept: (i32, i32),
 }
 
-impl Shrunk {
+impl Rescaled {
     /// The frame size of a window that opened at frame size `opening`.
     pub fn size(self, opening: (i32, i32)) -> (i32, i32) {
-        let side = |to: i32, kept: i32, opening: i32| kept.min(to.max(opening));
+        let side = |to: i32, kept: i32, opening: i32| opening.clamp(to.min(kept), to.max(kept));
         (
             side(self.to.0, self.kept.0, opening.0),
             side(self.to.1, self.kept.1, opening.1),
@@ -116,28 +116,28 @@ fn full_size() -> u32 {
 }
 
 impl Remembered {
-    /// Where the app's next window opens at `text_size`: a frame kept at a larger text size
-    /// shrinks by the ratio of the two, so a window that grew with the text shrinks back with it,
-    /// down to no less than its program's own size ([`Shrunk`]). A maximized one restores to
-    /// the shrunk size.
+    /// Where the app's next window opens at `text_size`: a frame kept at another text size
+    /// scales by the ratio of the two, so a window that grew or shrank with the text does so
+    /// again, but no further than its program's own size ([`Rescaled`]). A maximized one
+    /// restores to the scaled size.
     pub fn want(&self, first: bool, text_size: u32) -> Want {
         let kept = (self.width, self.height);
-        let shrunk = (self.text_size > text_size).then(|| {
-            let shrink =
+        let rescaled = (self.text_size != text_size).then(|| {
+            let scale =
                 |v: i32| (i64::from(v) * i64::from(text_size) / i64::from(self.text_size)) as i32;
-            Shrunk {
-                to: (shrink(kept.0), shrink(kept.1)),
+            Rescaled {
+                to: (scale(kept.0), scale(kept.1)),
                 kept,
             }
         });
         let maximized = first && self.maximized;
         Want {
-            size: match shrunk {
+            size: match rescaled {
                 Some(s) if maximized => Some(s.to),
                 Some(_) => None,
                 None => Some(kept),
             },
-            shrunk: shrunk.filter(|_| !maximized),
+            rescaled: rescaled.filter(|_| !maximized),
             position: Some(if first {
                 Position::At(self.x, self.y)
             } else {
@@ -162,7 +162,7 @@ pub fn want(rules: &[WindowRule], app_id: &str, title: &str, base: Want) -> Want
             }
             over(&mut w.size, &r.size);
             if r.size.is_some() {
-                w.shrunk = None;
+                w.rescaled = None;
             }
             over(
                 &mut w.position,
@@ -233,7 +233,7 @@ mod tests {
     }
 
     #[test]
-    fn a_frame_kept_at_a_larger_text_size_shrinks_back() {
+    fn a_frame_kept_at_another_text_size_scales_toward_the_programs_size() {
         let m = Remembered {
             output: "DP-1".into(),
             x: 100,
@@ -245,7 +245,7 @@ mod tests {
         };
         let opened = |pct: u32, opening: (i32, i32)| {
             let want = m.want(true, pct);
-            want.size.or(want.shrunk.map(|s| s.size(opening)))
+            want.size.or(want.rescaled.map(|s| s.size(opening)))
         };
         assert_eq!(opened(100, (500, 400)), Some((544, 488)));
         assert_eq!(opened(150, (500, 400)), Some((816, 732)));
@@ -270,14 +270,14 @@ mod tests {
             ..m.clone()
         };
         assert_eq!(maximized.want(true, 100).size, Some((544, 488)));
-        assert_eq!(maximized.want(true, 100).shrunk, None);
+        assert_eq!(maximized.want(true, 100).rescaled, None);
         let rule = WindowRule {
             size: Some((800, 600)),
             ..rule("app")
         };
         let ruled = want(&[rule], "app", "", m.want(true, 100));
         assert_eq!(
-            (ruled.size, ruled.shrunk),
+            (ruled.size, ruled.rescaled),
             (Some((800, 600)), None),
             "a rule's size wins"
         );
@@ -285,10 +285,24 @@ mod tests {
             text_size: 100,
             ..m.clone()
         };
+        let grown = |opening: (i32, i32)| {
+            let want = small.want(true, 200);
+            want.size.or(want.rescaled.map(|s| s.size(opening)))
+        };
         assert_eq!(
-            small.want(true, 200).size,
+            grown((1520, 1100)),
+            Some((1520, 1100)),
+            "kept smaller: grows"
+        );
+        assert_eq!(
+            grown((500, 400)),
             Some((1088, 976)),
-            "kept smaller: as it is"
+            "no smaller than it was kept"
+        );
+        assert_eq!(
+            grown((3000, 900)),
+            Some((2176, 976)),
+            "nor larger than twice that"
         );
         let old: Remembered =
             toml::from_str("output = \"DP-1\"\nx = 0\ny = 0\nwidth = 900\nheight = 700\n").unwrap();
@@ -341,7 +355,7 @@ mod tests {
                 always_on_top: Some(true),
                 sticky: None,
                 tab_group: None,
-                shrunk: None,
+                rescaled: None,
             }
         );
         let build = want(&rules, "foot", "build", base);
