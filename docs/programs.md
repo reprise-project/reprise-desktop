@@ -93,6 +93,10 @@ One window, 23 pages, four headings. Only one runs at a time.
     desktop water, the debug overlay, and an Edit File... button for when
     you'd rather just open `config.toml`.
 
+When `config.toml` changes while Settings is open (an editor, or a key aid's
+shortcut), the controls you haven't touched show the new values; yours stay
+as you left them, and OK and Apply write only what you changed.
+
 `reprise-settings --page display` opens on a page: its name in lower case,
 spaces as hyphens and `&` as `and` (`fonts-and-icons`, `start-menu`).
 `--focus mouse_keys` puts the keyboard on a control there. A

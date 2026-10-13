@@ -1455,6 +1455,30 @@ pub fn save(text: &str, want: &Settings, base: &Settings) -> Result<String, Stri
     Ok(doc.to_string())
 }
 
+/// `config.toml` changed under the sheet: every value `want` still holds as `base` (what the sheet loaded or last saved) takes `fresh`'s, the file as it reads now; a value the user moved stays pending.
+pub fn rebase(want: &mut Settings, base: &Settings, fresh: &Settings) {
+    fn follow<T: PartialEq + Clone>(want: &mut T, base: &T, fresh: &T) {
+        if want == base {
+            *want = fresh.clone();
+        }
+    }
+    for f in fields() {
+        if f.same(want, base) {
+            f.copy(fresh, want);
+        }
+    }
+    follow(
+        &mut want.glass_custom,
+        &base.glass_custom,
+        &fresh.glass_custom,
+    );
+    follow(&mut want.shortcuts, &base.shortcuts, &fresh.shortcuts);
+    follow(&mut want.programs, &base.programs, &fresh.programs);
+    follow(&mut want.denied, &base.denied, &fresh.denied);
+    follow(&mut want.startmenu, &base.startmenu, &fresh.startmenu);
+    follow(&mut want.tablet_pads, &base.tablet_pads, &fresh.tablet_pads);
+}
+
 /// The sheet's interface moved from `from` to `s.interface`: the scheme goes back to the new interface's own, and every field `text` leaves unset that held `from`'s default takes the new one's. Moved back to `loaded`'s interface, the scheme and glass colour are `loaded`'s again.
 pub fn switch_interface(s: &mut Settings, from: &str, text: &str, loaded: &Settings) {
     let doc = text
@@ -1702,6 +1726,23 @@ size_px = 12
         let out = save(text, &s, &load(text)).expect("parses");
 
         assert_eq!(out, text.replace("antialias = true\n", ""));
+    }
+
+    #[test]
+    fn rebase_takes_the_files_values_and_keeps_the_ones_the_sheet_moved() {
+        let base = load("");
+        let mut want = base.clone();
+        want.sticky_keys = true;
+        let edited = "[accessibility]\nmouse_keys = true\nsticky_keys = false\n";
+        let fresh = load(edited);
+        rebase(&mut want, &base, &fresh);
+        assert!(want.mouse_keys, "an untouched value follows the file");
+        assert!(want.sticky_keys, "a moved value stays pending");
+        let out = save(edited, &want, &fresh).expect("parses");
+        assert_eq!(
+            out, "[accessibility]\nmouse_keys = true\nsticky_keys = true\n",
+            "Apply writes only the moved value"
+        );
     }
 
     #[test]
