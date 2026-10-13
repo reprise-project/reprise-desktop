@@ -30,7 +30,7 @@ use crate::pointer::{Interaction, Lit, Pointer, WHEEL_ROWS};
 use crate::raster::{Canvas, Rect};
 use crate::style::Part as StylePart;
 use crate::text::{Align, DialogFont, TextRenderer};
-use crate::theme::Theme;
+use crate::theme::{TextUnits, Theme};
 use crate::trackbar::{self, TrackBar};
 use accesskit::{NodeId, Role};
 use std::cell::Cell;
@@ -51,9 +51,7 @@ const SEP_X: i32 = 2;
 /// Where the separators start: the device column's, and the others'.
 const DEVICE_SEP_Y: i32 = 2;
 const SEP_Y: i32 = 41;
-/// The body's height without the Advanced button's row, and the least
-/// width a window over it keeps.
-pub const BODY_H: i32 = TRACK_Y + TRACK_H + CHECK_GAP + ROW_H + BOTTOM;
+/// The least width a window over the body keeps.
 pub const MIN_W: i32 = 106;
 /// The text starts this far into a column's controls.
 const PAD: i32 = 6;
@@ -77,7 +75,7 @@ const SPEAKER_GAP: i32 = 8;
 const SPEAKER_Y: i32 = 1;
 const VOLUME_LABEL_Y: i32 = 94;
 const TRACK_Y: i32 = 117;
-/// The volume channel's height in a body [`BODY_H`] tall, and its least.
+/// The volume channel's height in a body that shows the whole column, and its least.
 const TRACK_H: i32 = 75;
 const MIN_TRACK_H: i32 = 40;
 const CHANNEL_W: i32 = 4;
@@ -274,9 +272,82 @@ pub enum Hit {
     Outside,
 }
 
-/// Under the columns: the Advanced button's row when it shows.
-fn below(advanced: bool) -> i32 {
-    if advanced { ADVANCED_ROW } else { 0 }
+/// The layout's lengths at the text size: the columns, their text rows, the channels and the
+/// Advanced button grow with the text; the slots, the etched lines, the channel's width, the
+/// speakers, the check box and the thumbs keep their size.
+#[derive(Clone, Copy, Debug)]
+struct Dims {
+    device_w: i32,
+    col_w: i32,
+    min_w: i32,
+    pad: i32,
+    device_mid: i32,
+    mid: i32,
+    row_h: i32,
+    title_y: i32,
+    underline_y: i32,
+    underline_w: i32,
+    sep_y: i32,
+    balance_label_y: i32,
+    balance_y: i32,
+    balance_w: i32,
+    volume_label_y: i32,
+    track_y: i32,
+    track_h: i32,
+    min_track_h: i32,
+    check_gap: i32,
+    body_h: i32,
+    advanced_gap: i32,
+    advanced_w: i32,
+    advanced_h: i32,
+    advanced_row: i32,
+}
+
+impl Dims {
+    fn new(u: TextUnits) -> Dims {
+        let l = |v| u.len(v);
+        let (track_y, track_h, check_gap, row_h) = (l(TRACK_Y), l(TRACK_H), l(CHECK_GAP), l(ROW_H));
+        Dims {
+            device_w: l(DEVICE_W),
+            col_w: SLOT + l(COL_W - SLOT),
+            min_w: l(MIN_W),
+            pad: l(PAD),
+            device_mid: l(DEVICE_MID),
+            mid: l(MID),
+            row_h,
+            title_y: l(TITLE_Y),
+            underline_y: l(UNDERLINE_Y),
+            underline_w: l(UNDERLINE_W),
+            sep_y: l(SEP_Y),
+            balance_label_y: l(BALANCE_LABEL_Y),
+            balance_y: l(BALANCE_Y),
+            balance_w: l(BALANCE_W),
+            volume_label_y: l(VOLUME_LABEL_Y),
+            track_y,
+            track_h,
+            min_track_h: l(MIN_TRACK_H),
+            check_gap,
+            body_h: track_y + track_h + check_gap + row_h + l(BOTTOM),
+            advanced_gap: l(ADVANCED_GAP),
+            advanced_w: l(ADVANCED_W),
+            advanced_h: l(ADVANCED_H),
+            advanced_row: l(ADVANCED_ROW),
+        }
+    }
+
+    /// Under the columns: the Advanced button's row when it shows.
+    fn below(&self, advanced: bool) -> i32 {
+        if advanced { self.advanced_row } else { 0 }
+    }
+
+    /// A column's width, with its slot.
+    fn extent(&self, c: &Column) -> i32 {
+        if is_device(c) {
+            self.device_w
+        } else {
+            self.col_w
+        }
+    }
 }
 
 /// Whether a column is the output device's, which has its own width.
@@ -284,20 +355,22 @@ fn is_device(c: &Column) -> bool {
     c.check == Check::MuteAll
 }
 
-/// A column's width, with its slot.
-fn extent(c: &Column) -> i32 {
-    if is_device(c) { DEVICE_W } else { COL_W }
+/// The body width at text units `u` that shows the output device's column (with `device`) and
+/// `others` more side by side, and at least [`min_width`].
+pub fn width(device: bool, others: usize, u: TextUnits) -> i32 {
+    let d = Dims::new(u);
+    (i32::from(device) * d.device_w + others as i32 * d.col_w).max(d.min_w)
 }
 
-/// The body width that shows the output device's column (with `device`)
-/// and `others` more side by side, and at least [`MIN_W`].
-pub fn width(device: bool, others: usize) -> i32 {
-    (i32::from(device) * DEVICE_W + others as i32 * COL_W).max(MIN_W)
+/// The least width a window over the body keeps at text units `u`.
+pub fn min_width(u: TextUnits) -> i32 {
+    Dims::new(u).min_w
 }
 
-/// The body height, with the Advanced button's row or without.
-pub fn height(advanced: bool) -> i32 {
-    BODY_H + below(advanced)
+/// The body height at text units `u`, with the Advanced button's row or without.
+pub fn height(advanced: bool, u: TextUnits) -> i32 {
+    let d = Dims::new(u);
+    d.body_h + d.below(advanced)
 }
 
 /// Column `col`'s parts, its controls from `x` in a body from `y`, the
@@ -308,6 +381,7 @@ fn column_layout(
     text: &TextRenderer,
     px: u32,
     cm: &crate::metrics::ControlMetrics,
+    d: &Dims,
     x: i32,
     y: i32,
     track_h: i32,
@@ -315,24 +389,25 @@ fn column_layout(
 ) -> ColumnLayout {
     let device = is_device(col);
     let (w, mid) = if device {
-        (DEVICE_W, DEVICE_MID)
+        (d.device_w, d.device_mid)
     } else {
-        (COL_W - SLOT, MID)
+        (d.col_w - SLOT, d.mid)
     };
-    let label_w = w - 2 * PAD;
-    let check_y = y + TRACK_Y + track_h + CHECK_GAP;
+    let label_w = w - 2 * d.pad;
+    let check_y = y + d.track_y + track_h + d.check_gap;
     let check_w = text.measure(col.check.label(), false, px);
     // The channels run from a pixel left of the centre line.
     let channel_x = x + mid - 1;
-    let balance_x = channel_x + CHANNEL_W / 2 - BALANCE_W / 2;
-    let speaker_y = y + BALANCE_Y + SPEAKER_Y;
+    let balance_x = channel_x + CHANNEL_W / 2 - d.balance_w / 2;
+    let speaker_y = y + d.balance_y + SPEAKER_Y;
     let thumb = cm.vtrack_thumb;
+    let row = |top: i32, w: i32| Rect::new(x + d.pad, y + top, w, d.row_h);
     ColumnLayout {
         rect: Rect::new(x, y, w, h),
-        title: Rect::new(x + PAD, y + TITLE_Y, label_w, ROW_H),
-        underline: device.then(|| Rect::new(x + PAD, y + UNDERLINE_Y, UNDERLINE_W, 2)),
-        balance_label: Rect::new(x + PAD, y + BALANCE_LABEL_Y, label_w, ROW_H),
-        balance: trackbar::layout(&col.balance, balance_x, y + BALANCE_Y, BALANCE_W),
+        title: row(d.title_y, label_w),
+        underline: device.then(|| Rect::new(x + d.pad, y + d.underline_y, d.underline_w, 2)),
+        balance_label: row(d.balance_label_y, label_w),
+        balance: trackbar::layout(&col.balance, balance_x, y + d.balance_y, d.balance_w),
         speakers: [
             Rect::new(
                 balance_x - SPEAKER_GAP - SPEAKER,
@@ -341,32 +416,37 @@ fn column_layout(
                 SPEAKER,
             ),
             Rect::new(
-                balance_x + BALANCE_W + SPEAKER_GAP,
+                balance_x + d.balance_w + SPEAKER_GAP,
                 speaker_y,
                 SPEAKER,
                 SPEAKER,
             ),
         ],
-        volume_label: Rect::new(x + PAD, y + VOLUME_LABEL_Y, label_w, ROW_H),
+        volume_label: row(d.volume_label_y, label_w),
         volume: trackbar::layout_vertical_with(
             &col.volume,
             channel_x - (trackbar::vertical_width(thumb) - CHANNEL_W) / 2,
-            y + TRACK_Y,
+            y + d.track_y,
             track_h,
             thumb,
         ),
-        check: Rect::new(x + PAD, check_y, cm.check, cm.check),
-        check_label: Rect::new(x + PAD + cm.check_label, check_y, check_w, ROW_H),
+        check: Rect::new(
+            x + d.pad,
+            check_y + (d.row_h - ROW_H) / 2,
+            cm.check,
+            cm.check,
+        ),
+        check_label: Rect::new(x + d.pad + cm.check_label, check_y, check_w, d.row_h),
         separator: None,
     }
 }
 
 /// How many columns from `first` fit side by side in `w`: at least one.
-fn fitting(m: &Mixer, first: usize, w: i32) -> usize {
+fn fitting(m: &Mixer, d: &Dims, first: usize, w: i32) -> usize {
     let mut used = 0;
     let mut n = 0;
     for c in m.columns.iter().skip(first) {
-        used += extent(c);
+        used += d.extent(c);
         if used > w && n > 0 {
             break;
         }
@@ -377,11 +457,11 @@ fn fitting(m: &Mixer, first: usize, w: i32) -> usize {
 
 /// The first column shown when the last one is: as far right as the
 /// columns scroll.
-fn last_first_at(m: &Mixer, w: i32) -> usize {
+fn last_first_at(m: &Mixer, d: &Dims, w: i32) -> usize {
     let mut used = 0;
     let mut first = m.columns.len();
     for c in m.columns.iter().rev() {
-        used += extent(c);
+        used += d.extent(c);
         if used > w && first < m.columns.len() {
             break;
         }
@@ -390,17 +470,18 @@ fn last_first_at(m: &Mixer, w: i32) -> usize {
     first
 }
 
-/// Lay the mixer out in `body`.
+/// Lay the mixer out in `body`, grown by the theme's text units.
 pub fn layout(m: &Mixer, theme: &Theme, text: &TextRenderer, body: Rect) -> Layout {
     let text = text.dialog(DialogFont::ShellDlg);
     let px = theme.fonts.size_px;
     let cm = theme.look.controls();
-    let scrolls = m.columns.len() > fitting(m, 0, body.width);
-    let first = m.first.min(last_first_at(m, body.width));
-    let shown = fitting(m, first, body.width).min(m.columns.len().saturating_sub(first));
+    let d = Dims::new(theme.text);
+    let scrolls = m.columns.len() > fitting(m, &d, 0, body.width);
+    let first = m.first.min(last_first_at(m, &d, body.width));
+    let shown = fitting(m, &d, first, body.width).min(m.columns.len().saturating_sub(first));
     let bar_h = if scrolls { cm.scroll } else { 0 };
     let h = body.height - bar_h;
-    let track_h = (h - (BODY_H - TRACK_H) - below(m.advanced)).max(MIN_TRACK_H);
+    let track_h = (h - (d.body_h - d.track_h) - d.below(m.advanced)).max(d.min_track_h);
     let mut x = body.x;
     let mut prev_device = None;
     let mut columns = Vec::with_capacity(m.columns.len());
@@ -411,13 +492,13 @@ pub fn layout(m: &Mixer, theme: &Theme, text: &TextRenderer, body: Rect) -> Layo
         }
         let device = is_device(c);
         let controls = if device { x } else { x + SLOT };
-        let mut cl = column_layout(c, text, px, &cm, controls, body.y, track_h, h);
+        let mut cl = column_layout(c, text, px, &cm, &d, controls, body.y, track_h, h);
         if !device && let Some(after_device) = prev_device {
-            let top = if after_device { DEVICE_SEP_Y } else { SEP_Y };
+            let top = if after_device { DEVICE_SEP_Y } else { d.sep_y };
             cl.separator = Some(Rect::new(x + SEP_X, body.y + top, 2, h - top));
         }
         prev_device = Some(device);
-        x += extent(c);
+        x += d.extent(c);
         columns.push(Some(cl));
     }
     let title_line = columns
@@ -427,7 +508,7 @@ pub fn layout(m: &Mixer, theme: &Theme, text: &TextRenderer, body: Rect) -> Layo
         .map(|cl| {
             Rect::new(
                 cl.title.x,
-                body.y + UNDERLINE_Y,
+                body.y + d.underline_y,
                 body.right() - cl.title.x,
                 2,
             )
@@ -435,9 +516,9 @@ pub fn layout(m: &Mixer, theme: &Theme, text: &TextRenderer, body: Rect) -> Layo
     let advanced = match columns.first() {
         Some(Some(cl)) if m.advanced => Some(Rect::new(
             cl.check.x,
-            cl.check.bottom() + ADVANCED_GAP,
-            ADVANCED_W,
-            ADVANCED_H,
+            cl.check_label.bottom() + d.advanced_gap,
+            d.advanced_w,
+            d.advanced_h,
         )),
         _ => None,
     };
@@ -487,9 +568,9 @@ pub fn hit(m: &Mixer, lay: &Layout, x: i32, y: i32) -> Hit {
         }
         let row = Rect::new(
             cl.check.x,
-            cl.check.y,
+            cl.check_label.y,
             cl.check_label.right() - cl.check.x,
-            ROW_H,
+            cl.check_label.height,
         );
         if row.contains(x, y) {
             return Hit::Check(i);
@@ -705,11 +786,11 @@ impl Mixer {
         }
     }
 
-    /// The body size that shows every column side by side.
-    pub fn size(&self) -> (i32, i32) {
+    /// The body size at text units `u` that shows every column side by side.
+    pub fn size(&self, u: TextUnits) -> (i32, i32) {
         let device = self.columns.first().is_some_and(is_device);
         let others = self.columns.len() - usize::from(device);
-        (width(device, others), height(self.advanced))
+        (width(device, others, u), height(self.advanced, u))
     }
 
     /// Take the lines from the host. Columns are matched by key: one that
@@ -1256,7 +1337,7 @@ mod tests {
     }
 
     fn lay(m: &Mixer) -> Layout {
-        let (w, h) = m.size();
+        let (w, h) = m.size(TextUnits::ONE);
         lay_in(m, &Theme::default(), Rect::new(0, 20, w, h))
     }
 
@@ -1270,18 +1351,21 @@ mod tests {
 
     #[test]
     fn the_body_fits_its_columns() {
-        assert_eq!(Mixer::new(&lines(), false).size(), (135 + 2 * 105, 225));
-        assert_eq!(Mixer::new(&lines(), true).size(), (345, 252));
+        assert_eq!(
+            Mixer::new(&lines(), false).size(TextUnits::ONE),
+            (135 + 2 * 105, 225)
+        );
+        assert_eq!(Mixer::new(&lines(), true).size(TextUnits::ONE), (345, 252));
         let rec = [line("mic", 10, None, Check::Select)];
         assert_eq!(
-            Mixer::new(&rec, false).size(),
+            Mixer::new(&rec, false).size(TextUnits::ONE),
             (106, 225),
             "never under 106"
         );
         let rec2 = [rec[0].clone(), line("mix", 10, None, Check::Select)];
-        assert_eq!(Mixer::new(&rec2, false).size().0, 210);
-        assert_eq!(Mixer::new(&lines()[..1], false).size().0, 135);
-        assert_eq!(Mixer::new(&[], false).size().0, MIN_W);
+        assert_eq!(Mixer::new(&rec2, false).size(TextUnits::ONE).0, 210);
+        assert_eq!(Mixer::new(&lines()[..1], false).size(TextUnits::ONE).0, 135);
+        assert_eq!(Mixer::new(&[], false).size(TextUnits::ONE).0, MIN_W);
     }
 
     #[test]
@@ -1357,7 +1441,7 @@ mod tests {
         let m = Mixer::new(&lines(), false);
         let blue = theme_for(Interface::Blue);
         let thumb = blue.look.controls().vtrack_thumb;
-        let (w, h) = m.size();
+        let (w, h) = m.size(TextUnits::ONE);
         let l = lay_in(&m, &blue, Rect::new(0, 0, w, h));
         let v = &col(&l, 0).volume;
         assert_eq!(v.thumb.width, thumb);
@@ -1373,7 +1457,7 @@ mod tests {
     #[test]
     fn the_volume_channel_takes_the_height_the_body_leaves() {
         let m = Mixer::new(&lines(), false);
-        let (w, h) = Mixer::new(&lines(), true).size();
+        let (w, h) = Mixer::new(&lines(), true).size(TextUnits::ONE);
         let l = lay_in(&m, &Theme::default(), Rect::new(0, 0, w, h));
         assert_eq!(
             col(&l, 0).volume.bounds.height,
@@ -1684,7 +1768,7 @@ mod tests {
     }
 
     fn drawn(theme: &Theme, m: &Mixer) -> (Canvas, Layout) {
-        let (w, h) = m.size();
+        let (w, h) = m.size(theme.text);
         let l = lay_in(m, theme, Rect::new(0, 0, w, h));
         let text = TextRenderer::load(&theme.fonts);
         let mut c = Canvas::new(w as u32, h as u32);
@@ -1697,6 +1781,82 @@ mod tests {
             .flat_map(|x| (r.y..r.bottom()).map(move |y| (x, y)))
             .filter(|&(x, y)| c.get(x, y) == ink)
             .count()
+    }
+
+    /// At 150% and 200% the columns, their text rows, the channels and the Advanced button grow
+    /// with the text; the check box, the speakers, the thumbs and the slots keep their size, and
+    /// every label is inked inside its grown row.
+    #[test]
+    fn a_grown_text_size_grows_the_columns_and_keeps_the_glyphs() {
+        for (pct, px) in [(150, 17), (200, 22)] {
+            let u = TextUnits::new(px, 11);
+            let theme = Theme::default().with_text_size(pct);
+            assert_eq!(theme.text, u);
+            let m = Mixer::new(&lines(), true);
+            let (w, h) = m.size(u);
+            assert_eq!(w, u.len(DEVICE_W) + 2 * (SLOT + u.len(100)), "{pct}%");
+            let body_h = u.len(TRACK_Y) + u.len(TRACK_H) + u.len(CHECK_GAP) + u.len(ROW_H);
+            assert_eq!(h, body_h + u.len(BOTTOM) + u.len(ADVANCED_ROW), "{pct}%");
+            assert_eq!(min_width(u), u.len(MIN_W), "{pct}%");
+            let (c, l) = drawn(&theme, &m);
+            let d = col(&l, 0);
+            assert_eq!(
+                d.title,
+                Rect::new(
+                    u.len(PAD),
+                    u.len(TITLE_Y),
+                    u.len(DEVICE_W) - 2 * u.len(PAD),
+                    u.len(ROW_H)
+                ),
+                "{pct}%"
+            );
+            assert_eq!(d.volume.bounds.height, u.len(TRACK_H), "{pct}%");
+            assert_eq!(
+                d.volume.thumb.width,
+                crate::metrics::ControlMetrics::CLASSIC.vtrack_thumb,
+                "{pct}%"
+            );
+            assert_eq!(d.balance.channel.width, u.len(BALANCE_W), "{pct}%");
+            assert_eq!(d.speakers[0].width, SPEAKER, "{pct}%");
+            assert_eq!((d.check.width, d.check.height), (13, 13), "{pct}%");
+            assert_eq!(
+                d.check.y - d.check_label.y,
+                (u.len(ROW_H) - ROW_H) / 2,
+                "{pct}%: the box centred down its row"
+            );
+            assert_eq!(col(&l, 1).rect.x, u.len(DEVICE_W) + SLOT, "{pct}%");
+            let adv = l.advanced.expect("Advanced on");
+            assert_eq!(
+                (adv.width, adv.height),
+                (u.len(ADVANCED_W), u.len(ADVANCED_H)),
+                "{pct}%"
+            );
+            assert_eq!(
+                hit(&m, &l, adv.x + 2, adv.bottom() - 2),
+                Hit::Advanced,
+                "{pct}%"
+            );
+            assert_eq!(
+                hit(
+                    &m,
+                    &l,
+                    d.check_label.right() - 1,
+                    d.check_label.bottom() - 1
+                ),
+                Hit::Check(0),
+                "{pct}%"
+            );
+            let ink = theme.colors.button_text.argb();
+            for r in [d.title, d.balance_label, d.volume_label, d.check_label] {
+                let around = Rect::new(r.x, r.y - 4, r.width, r.height + 8);
+                assert!(inked(&c, r, ink) > 0, "{pct}%: {r:?} holds its label");
+                assert_eq!(
+                    inked(&c, around, ink),
+                    inked(&c, r, ink),
+                    "{pct}%: {r:?} holds all of it"
+                );
+            }
+        }
     }
 
     #[test]
@@ -1873,12 +2033,16 @@ mod tests {
             (theme_for(Interface::Blue), Mixer::new(&lines(), true)),
             (theme_for(Interface::Glass), Mixer::new(&lines(), true)),
         ];
-        let w = cases.iter().map(|(_, m)| m.size().0).max().unwrap_or(0);
-        let h: i32 = cases.iter().map(|(_, m)| m.size().1).sum();
+        let w = cases
+            .iter()
+            .map(|(_, m)| m.size(TextUnits::ONE).0)
+            .max()
+            .unwrap_or(0);
+        let h: i32 = cases.iter().map(|(_, m)| m.size(TextUnits::ONE).1).sum();
         let mut c = Canvas::new(w as u32, h as u32);
         let mut y = 0;
         for (theme, m) in &cases {
-            let (mw, mh) = m.size();
+            let (mw, mh) = m.size(TextUnits::ONE);
             let text = TextRenderer::load(&theme.fonts);
             let l = layout(m, theme, &text, Rect::new(0, y, mw, mh));
             draw(&mut c, theme, &text, m, &l);

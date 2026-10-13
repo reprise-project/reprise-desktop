@@ -174,7 +174,8 @@ impl Devices {
         self.list.entries = entries(&self.rows);
         self.list
             .select_row(keep.and_then(|p| self.rows.iter().position(|d| d.path == p)));
-        self.list.clamp(self.list_rect());
+        self.list
+            .clamp(self.list_rect(), reprisekit::theme::TextUnits::ONE);
         self.adapter = s.adapter.is_some();
         let now = s.adapter.as_ref().map_or(Options::default(), |a| Options {
             powered: a.powered,
@@ -408,7 +409,7 @@ impl Devices {
                     caption: &caption,
                     greyed: false,
                 };
-                tilelist::draw_tile(c, &ctx.text, cs, r, &tile, sel, px);
+                tilelist::draw_tile(c, &ctx.text, cs, r, &tile, sel, px, lay.text);
             },
         );
     }

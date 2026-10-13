@@ -15,11 +15,11 @@ pub fn status_h(theme: &Theme) -> i32 {
 
 /// The mixer body's size for `m` under `theme` on an output `room` wide (unknown: as wide as the columns want).
 pub fn body(m: &Mixer, theme: &Theme, room: Option<i32>) -> (i32, i32) {
-    let (w, h) = m.size();
+    let (w, h) = m.size(theme.text);
     let frame = 2 * theme.metrics.dialog_frame_width;
     match room {
         Some(room) if w + frame > room => (
-            (room - frame).max(mixer::MIN_W),
+            (room - frame).max(mixer::min_width(theme.text)),
             h + theme.look.controls().scroll,
         ),
         _ => (w, h),
@@ -72,6 +72,10 @@ mod tests {
         let (w, h) = body(&m, &theme, Some(1024));
         assert_eq!(w, 1024 - 2 * theme.metrics.dialog_frame_width);
         assert_eq!(h, 225 + theme.look.controls().scroll);
-        assert_eq!(body(&m, &theme, Some(4000)), m.size(), "room for all");
+        assert_eq!(
+            body(&m, &theme, Some(4000)),
+            m.size(theme.text),
+            "room for all"
+        );
     }
 }

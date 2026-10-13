@@ -10,14 +10,14 @@ use crate::classic::widgets::{
 use crate::controls::form;
 #[cfg(test)]
 use crate::controls::listview;
-use crate::controls::listview::{GROUP_H, draw_group_header, list_rule};
+use crate::controls::listview::{GROUP_H, GroupRule, draw_group_header, list_rule};
 use crate::controls::metrics::ControlMetrics;
 use crate::look::Paint;
 use crate::look::widgets::{draw_field_frame, draw_scrollbar};
 use crate::pointer::{Click, DoubleClick, Lit, Pointer};
 use crate::raster::{Canvas, Rect};
 use crate::text::{Align, TextRenderer};
-use crate::theme::ColorScheme;
+use crate::theme::{ColorScheme, TextUnits};
 use accesskit::{NodeId, Role};
 
 pub const TILE_H: i32 = 52;
@@ -30,6 +30,7 @@ const CAPTION_Y: i32 = 28;
 const TEXT_RIGHT: i32 = 8;
 const TAG_GAP: i32 = 8;
 
+/// A group header's title box: its top offset and height, at 100% text.
 const HEADER_TITLE: (i32, i32) = (1, 19);
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -43,6 +44,7 @@ pub struct TileList {
     pub entries: Vec<Entry>,
     pub top: usize,
     pub selected: Option<usize>,
+    /// A row's height at 100% text; [`layout`] grows it with the text.
     pub row_h: i32,
     thumb_drag: Option<i32>,
     bars: Pointer<ScrollHit>,
@@ -62,6 +64,8 @@ pub struct Layout {
     pub scrollbar: Option<Rect>,
     pub page: usize,
     pub thumb_min: i32,
+    /// How the rows and headers grew with the text ([`ControlMetrics::text`]).
+    pub text: TextUnits,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -103,11 +107,11 @@ impl TileList {
         }
     }
 
-    fn entry_h(&self, e: &Entry) -> i32 {
-        match e {
+    fn entry_h(&self, e: &Entry, u: TextUnits) -> i32 {
+        u.len(match e {
             Entry::Header(_) => GROUP_H,
             Entry::Row(_) => self.row_h,
-        }
+        })
     }
 
     pub fn selected_row(&self) -> Option<usize> {
@@ -121,10 +125,10 @@ impl TileList {
         self.selected = row.and_then(|r| self.entries.iter().position(|e| *e == Entry::Row(r)));
     }
 
-    fn max_top(&self, inner_h: i32) -> usize {
+    fn max_top(&self, inner_h: i32, u: TextUnits) -> usize {
         let mut used = 0;
         for (i, e) in self.entries.iter().enumerate().rev() {
-            used += self.entry_h(e);
+            used += self.entry_h(e, u);
             if used > inner_h {
                 return i + 1;
             }
@@ -132,14 +136,16 @@ impl TileList {
         0
     }
 
-    pub fn clamp(&mut self, rect: Rect) {
+    /// Drops a selection that is no longer a row and pulls `top` back so `rect`, its rows grown
+    /// by `u`, stays full.
+    pub fn clamp(&mut self, rect: Rect, u: TextUnits) {
         if self
             .selected
             .is_some_and(|i| !matches!(self.entries.get(i), Some(Entry::Row(_))))
         {
             self.selected = None;
         }
-        self.top = self.top.min(self.max_top(rect.inset(2).height));
+        self.top = self.top.min(self.max_top(rect.inset(2).height, u));
     }
 
     pub fn step(&mut self, delta: i32, rect: Rect, cm: &ControlMetrics) -> bool {
@@ -223,7 +229,7 @@ impl TileList {
                         return Press::None;
                     }
                 };
-                if self.scroll(delta, rect) {
+                if self.scroll(delta, rect, cm.text) {
                     Press::Redraw
                 } else {
                     Press::None
@@ -268,7 +274,7 @@ impl TileList {
             return false;
         };
         let top = scrollbar_pos_at(&parts, y - grab, lay.page, self.entries.len(), false);
-        self.scroll(top as i32 - self.top as i32, rect)
+        self.scroll(top as i32 - self.top as i32, rect, cm.text)
     }
 
     pub fn bar_lit(&self) -> Lit<ScrollHit> {
@@ -295,8 +301,9 @@ impl TileList {
         self.bars.leave()
     }
 
-    pub fn scroll(&mut self, rows: i32, rect: Rect) -> bool {
-        let max = self.max_top(rect.inset(2).height) as i64;
+    /// Scrolls by `rows` entries in `rect`, its rows grown by `u`.
+    pub fn scroll(&mut self, rows: i32, rect: Rect, u: TextUnits) -> bool {
+        let max = self.max_top(rect.inset(2).height, u) as i64;
         let top = (self.top as i64 + i64::from(rows)).clamp(0, max) as usize;
         if top == self.top {
             return false;
@@ -308,14 +315,15 @@ impl TileList {
 
 pub fn layout(list: &TileList, rect: Rect, cm: &ControlMetrics) -> Layout {
     let inner = rect.inset(2);
-    let total: i32 = list.entries.iter().map(|e| list.entry_h(e)).sum();
+    let u = cm.text;
+    let total: i32 = list.entries.iter().map(|e| list.entry_h(e, u)).sum();
     let scrollbar = (total > inner.height)
         .then(|| Rect::new(inner.right() - cm.scroll, inner.y, cm.scroll, inner.height));
     let row_w = inner.width - scrollbar.map_or(0, |s| s.width);
     let mut slots = Vec::new();
     let mut y = inner.y;
     for (i, e) in list.entries.iter().enumerate().skip(list.top) {
-        let h = list.entry_h(e);
+        let h = list.entry_h(e, u);
         if y + h > inner.bottom() {
             break;
         }
@@ -332,6 +340,7 @@ pub fn layout(list: &TileList, rect: Rect, cm: &ControlMetrics) -> Layout {
         scrollbar,
         page,
         thumb_min: cm.thumb_min,
+        text: u,
     }
 }
 
@@ -375,6 +384,11 @@ pub fn draw(
     );
     c.fill_rect(outer, cs.window);
     draw_field_frame(c, &Paint { s: 1, ..*p }, outer, cs.window);
+    let title_h = lay.text.len(HEADER_TITLE.1);
+    let rule = GroupRule {
+        y: title_h - 1,
+        ..list_rule(cs)
+    };
     for slot in &lay.slots {
         match &list.entries[slot.entry] {
             Entry::Header(title) => draw_group_header(
@@ -383,8 +397,8 @@ pub fn draw(
                 cs,
                 slot.rect,
                 title,
-                HEADER_TITLE,
-                &list_rule(cs),
+                (HEADER_TITLE.0, title_h),
+                &rule,
                 px,
                 1,
             ),
@@ -413,6 +427,9 @@ pub struct Tile<'a> {
     pub greyed: bool,
 }
 
+/// A tile in row `r`: its two lines sit where a 100% row puts them, grown by `u`; the icon keeps
+/// its size, centred down the row.
+#[expect(clippy::too_many_arguments)]
 pub fn draw_tile(
     c: &mut Canvas,
     text: &TextRenderer,
@@ -421,7 +438,9 @@ pub fn draw_tile(
     tile: &Tile,
     selected: bool,
     px: u32,
+    u: TextUnits,
 ) {
+    let (name_y, caption_y, line_h) = (u.len(NAME_Y), u.len(CAPTION_Y), u.len(LINE_H));
     let ink = match (selected, tile.greyed) {
         (true, _) => cs.hilight_text,
         (false, true) => cs.gray_text,
@@ -441,7 +460,7 @@ pub fn draw_tile(
         let tag_x = right - w;
         text.draw(
             c,
-            Rect::new(tag_x, r.y + NAME_Y, w, LINE_H),
+            Rect::new(tag_x, r.y + name_y, w, line_h),
             tile.tag,
             false,
             ink,
@@ -453,7 +472,7 @@ pub fn draw_tile(
     let title = text.ellipsize(tile.title, title_right - tx, true, px);
     text.draw(
         c,
-        Rect::new(tx, r.y + NAME_Y, title_right - tx, LINE_H),
+        Rect::new(tx, r.y + name_y, title_right - tx, line_h),
         &title,
         true,
         ink,
@@ -463,7 +482,7 @@ pub fn draw_tile(
     let caption = text.ellipsize(tile.caption, right - tx, false, px);
     text.draw(
         c,
-        Rect::new(tx, r.y + CAPTION_Y, right - tx, LINE_H),
+        Rect::new(tx, r.y + caption_y, right - tx, line_h),
         &caption,
         false,
         ink,
@@ -682,9 +701,110 @@ mod tests {
         list.top = 4;
         list.select_row(Some(8));
         list.entries.truncate(3);
-        list.clamp(BOX);
+        list.clamp(BOX, TextUnits::ONE);
         assert_eq!(list.top, 0);
         assert_eq!(list.selected, None);
+    }
+
+    /// At 150% and 200% rows and headers grow with the text, hits and the page follow them,
+    /// the header's rule moves under its taller title and a tile's lines move down its row while
+    /// the icon keeps its 32 px, centred.
+    #[test]
+    fn grown_text_grows_rows_headers_and_tile_lines() {
+        let text = TextRenderer::load(&FontConfig::default());
+        let cs = &Theme::default().colors;
+        for (pct, px) in [(150, 17), (200, 22)] {
+            let u = TextUnits::new(px, 11);
+            let cm = ControlMetrics::CLASSIC.grown(u);
+            let (row_h, head_h) = (u.len(TILE_H), u.len(listview::GROUP_H));
+            let tall = Rect::new(0, 0, 396, 2 * head_h + 3 * row_h + 4);
+            let mut list = grouped();
+            let lay = layout(&list, tall, &cm);
+            let tops: Vec<(i32, i32)> = lay
+                .slots
+                .iter()
+                .map(|s| (s.rect.y, s.rect.height))
+                .collect();
+            assert_eq!(
+                tops,
+                [
+                    (2, head_h),
+                    (2 + head_h, row_h),
+                    (2 + head_h + row_h, row_h),
+                    (2 + head_h + 2 * row_h, head_h),
+                    (2 + 2 * head_h + 2 * row_h, row_h),
+                ],
+                "{pct}%"
+            );
+            assert_eq!(
+                lay.scrollbar, None,
+                "{pct}%: the grown entries fill the box"
+            );
+            let short = Rect::new(0, 0, 396, 2 * row_h + 4);
+            assert_eq!(
+                layout(&TileList::rows(5, TILE_H), short, &cm).page,
+                2,
+                "{pct}%"
+            );
+            let y = 2 + head_h + row_h + row_h / 2;
+            assert_eq!(
+                list.press(tall, click(40, y, 0), &cm),
+                row(1, true, false),
+                "{pct}%"
+            );
+
+            let mut c = Canvas::new(tall.width as u32, tall.height as u32);
+            draw(
+                &mut c,
+                &text,
+                &crate::paint::classic_paint(cs, 1),
+                &list,
+                &lay,
+                px,
+                |_, _, _, _| {},
+            );
+            let rule = 2 + u.len(HEADER_TITLE.1) - 1;
+            assert_ne!(c.get(2, rule), cs.window.argb(), "{pct}%: the rule");
+            assert_eq!(
+                c.get(2, rule - 1),
+                cs.window.argb(),
+                "{pct}%: above the rule"
+            );
+
+            let mut icon = Canvas::new(32, 32);
+            icon.fill_rect(icon.bounds(), cs.hilight);
+            let r = Rect::new(0, 0, 300, row_h);
+            let mut c = Canvas::new(300, row_h as u32);
+            let tile = Tile {
+                icon: Some(&icon),
+                title: "Mouse",
+                tag: "",
+                caption: "Connected",
+                greyed: false,
+            };
+            draw_tile(&mut c, &text, cs, r, &tile, false, px, u);
+            let iy = (row_h - 32) / 2;
+            assert_eq!(
+                c.get(ICON_X, iy),
+                cs.hilight.argb(),
+                "{pct}%: the icon's top"
+            );
+            assert_eq!(c.get(ICON_X + 31, iy + 31), cs.hilight.argb(), "{pct}%");
+            assert_ne!(c.get(ICON_X + 32, iy + 31), cs.hilight.argb(), "{pct}%");
+            let tx = ICON_X + 32 + TEXT_X;
+            let ink_rows: Vec<i32> = (0..row_h)
+                .filter(|&y| (tx..300).any(|x| c.get(x, y) == cs.window_text.argb()))
+                .collect();
+            let (first, last) = (ink_rows[0], *ink_rows.last().unwrap());
+            assert!(
+                first >= u.len(NAME_Y),
+                "{pct}%: the title starts in its grown line"
+            );
+            assert!(
+                last >= u.len(CAPTION_Y) && last < u.len(CAPTION_Y) + u.len(LINE_H),
+                "{pct}%: the caption ends in its grown line"
+            );
+        }
     }
 
     #[test]
@@ -702,7 +822,7 @@ mod tests {
             caption: "Connected",
             greyed: false,
         };
-        draw_tile(&mut c, &text, cs, r, &tile, false, px);
+        draw_tile(&mut c, &text, cs, r, &tile, false, px, TextUnits::ONE);
         let window = cs.window.argb();
         for x in 160 - TEXT_RIGHT..160 {
             for y in NAME_Y..NAME_Y + 13 {
@@ -725,7 +845,16 @@ mod tests {
             caption: "",
             greyed: false,
         };
-        draw_tile(&mut c, &text, cs, r, &tile, true, theme.fonts.size_px);
+        draw_tile(
+            &mut c,
+            &text,
+            cs,
+            r,
+            &tile,
+            true,
+            theme.fonts.size_px,
+            TextUnits::ONE,
+        );
         assert_eq!(
             c.get(199, 1),
             cs.hilight.argb(),

@@ -442,6 +442,7 @@ impl ControlMetrics {
             places: self.places.grown(u),
             status_bar: u.len(self.status_bar),
             task: TaskMetrics {
+                header: u.len(self.task.header),
                 line: u.len(self.task.line),
                 ..self.task
             },

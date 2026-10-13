@@ -332,7 +332,8 @@ impl AddWizard {
                 self.list.entries = (0..self.found.len()).map(Entry::Row).collect();
                 self.list
                     .select_row(keep.and_then(|p| self.found.iter().position(|d| d.path == p)));
-                self.list.clamp(self.list_rect());
+                self.list
+                    .clamp(self.list_rect(), reprisekit::theme::TextUnits::ONE);
                 self.sync_search();
             }
             Step::Pairing => {
@@ -586,7 +587,7 @@ impl AddWizard {
                     caption: d.kind.name(),
                     greyed: false,
                 };
-                tilelist::draw_tile(c, &ctx.text, cs, r, &tile, sel, px);
+                tilelist::draw_tile(c, &ctx.text, cs, r, &tile, sel, px, lay.text);
             },
         );
     }

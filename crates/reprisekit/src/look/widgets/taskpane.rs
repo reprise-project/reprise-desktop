@@ -5,6 +5,7 @@
 
 use crate::look::Paint;
 use crate::look::styled;
+use crate::metrics::TaskMetrics;
 use crate::pointer::Interaction;
 use crate::raster::{Canvas, Rect};
 use crate::style::{Part, State};
@@ -59,7 +60,9 @@ pub fn draw_header(
     c.fill_rect(r, cs.button_face);
     text.draw(c, title_r, title, true, cs.button_text, Align::Left, px);
     let dy = if open { CHEVRON_Y_OPEN } else { CHEVRON_Y_SHUT };
-    let cy = r.y + dy * s;
+    // A band grown with the text keeps the chevron centred down it.
+    let grown = (r.height - TaskMetrics::CLASSIC.header * s).max(0) / 2;
+    let cy = r.y + dy * s + grown;
     let cx = r.right() - CHEVRON_RIGHT * s;
     for k in 0..2 {
         draw_chevron(

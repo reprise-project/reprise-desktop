@@ -277,7 +277,7 @@ impl AccountsApp {
                 users::Outcome::Redraw
             }
             Event::Pointer(PointerInput::Scroll { rows, .. }) => {
-                if self.users.list.scroll(rows, list_r) {
+                if self.users.list.scroll(rows, list_r, cm.text) {
                     users::Outcome::Redraw
                 } else {
                     users::Outcome::None

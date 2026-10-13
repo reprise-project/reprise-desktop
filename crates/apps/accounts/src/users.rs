@@ -142,7 +142,8 @@ impl Users {
             .and_then(|uid| self.rows.iter().position(|u| u.uid == uid))
             .or(yours);
         self.list.select_row(pick);
-        self.list.clamp(self.list_rect());
+        self.list
+            .clamp(self.list_rect(), reprisekit::theme::TextUnits::ONE);
         self.failed = None;
         self.loaded = true;
         self.write();
@@ -313,7 +314,7 @@ impl Users {
                     caption: &cap,
                     greyed: false,
                 };
-                tilelist::draw_tile(c, &ctx.text, cs, r, &tile, sel, px);
+                tilelist::draw_tile(c, &ctx.text, cs, r, &tile, sel, px, lay.text);
             },
         );
     }

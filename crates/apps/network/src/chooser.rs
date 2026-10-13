@@ -202,7 +202,7 @@ impl Chooser {
         self.list.entries = (0..self.rows.len()).map(tilelist::Entry::Row).collect();
         self.list
             .select_row(ssid.and_then(|s| self.rows.iter().position(|r| r.ssid == s)));
-        self.list.clamp(LIST_R);
+        self.list.clamp(LIST_R, reprisekit::theme::TextUnits::ONE);
         self.sync_button();
     }
 
@@ -326,7 +326,10 @@ impl Chooser {
     }
 
     pub fn scroll(&mut self, rows: i32) -> Outcome {
-        if self.list.scroll(rows, LIST_R) {
+        if self
+            .list
+            .scroll(rows, LIST_R, reprisekit::theme::TextUnits::ONE)
+        {
             Outcome::Redraw
         } else {
             Outcome::None

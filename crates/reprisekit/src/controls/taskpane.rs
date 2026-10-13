@@ -531,6 +531,83 @@ mod tests {
         assert!(lay.scrollbar.is_none());
     }
 
+    /// At 150% and 200% a title band grows with the text. Classic's chevrons stay centred down
+    /// it; Blue's fold button keeps its art at the band's top, where a 100% band draws it.
+    #[test]
+    fn a_grown_title_band_keeps_its_chevrons_and_button() {
+        let (_, text) = renderer();
+        for (pct, px) in [(150, 17), (200, 22)] {
+            let u = crate::theme::TextUnits::new(px, 11);
+            let theme = Theme::default();
+            let cm = ControlMetrics::CLASSIC.grown(u);
+            let lay = layout(&pane(), &text, px, PANE, &cm);
+            let band = u.len(TaskMetrics::CLASSIC.header);
+            assert_eq!(lay.headers[0].height, band, "{pct}%");
+            assert_eq!(lay.bodies[0].y, HEADER0_Y + band, "{pct}%");
+            let mut c = Canvas::new(200, 600);
+            draw(
+                &mut c,
+                &text,
+                &classic_paint(&theme.colors, 1),
+                &pane(),
+                &lay,
+                px,
+            );
+            let h = lay.headers[0];
+            let ink = theme.colors.button_text.argb();
+            let x = h.right() - CHEVRON_RIGHT + 3;
+            let rows: Vec<i32> = (h.y..h.bottom()).filter(|&y| c.get(x, y) == ink).collect();
+            let top = h.y + CHEVRON_Y_OPEN + (band - TaskMetrics::CLASSIC.header) / 2;
+            assert_eq!(rows.first(), Some(&top), "{pct}%: the open chevron's tip");
+
+            let blue = crate::interfaces::blue_theme(crate::blue::Variant::Blue);
+            let native = blue.look.controls().task.header;
+            let grown = blue.look.controls().grown(u);
+            let band = grown.task.header;
+            assert_eq!(band, u.len(native), "{pct}%");
+            let r = Rect::new(0, 0, 186, native);
+            let mut one = Canvas::new(186, native as u32);
+            draw_band(&mut one, &text, &blue, r, px);
+            let mut big = Canvas::new(186, band as u32);
+            draw_band(&mut big, &text, &blue, Rect::new(0, 0, 186, band), px);
+            for y in 0..native - 2 {
+                for x in 186 - 24..186 {
+                    assert_eq!(
+                        big.get(x, y),
+                        one.get(x, y),
+                        "{pct}%: the button at ({x}, {y})"
+                    );
+                }
+            }
+            let fill = big.get(100, native - 2);
+            assert_eq!(
+                big.get(100, band - 2),
+                fill,
+                "{pct}%: the stretched fill row"
+            );
+            assert_eq!(
+                big.get(100, band - 1),
+                one.get(100, native - 1),
+                "{pct}%: the last row"
+            );
+        }
+    }
+
+    fn draw_band(c: &mut Canvas, text: &TextRenderer, theme: &Theme, r: Rect, px: u32) {
+        let title = Rect::new(r.x + 13, r.y + 2, 0, r.height);
+        look::draw_header(
+            c,
+            text,
+            &theme.paint(),
+            r,
+            title,
+            "",
+            true,
+            Interaction::Idle,
+            px,
+        );
+    }
+
     #[test]
     fn blues_background_stops_a_row_short_of_the_bottom() {
         let (_, text) = renderer();

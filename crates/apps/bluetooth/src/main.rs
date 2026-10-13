@@ -438,7 +438,7 @@ impl BtApp {
 
             Event::Pointer(PointerInput::Scroll { x, y, rows }) if on_list(*x, *y) => {
                 let live = self.devices.blank_text().is_none();
-                Some(if live && self.devices.list.scroll(*rows, list) {
+                Some(if live && self.devices.list.scroll(*rows, list, cm.text) {
                     devices::Outcome::Redraw
                 } else {
                     devices::Outcome::None
@@ -592,7 +592,8 @@ impl BtApp {
                 return Reply::redraw();
             }
             Event::Pointer(PointerInput::Scroll { rows, .. }) => {
-                return if searching && w.list.scroll(rows, list) {
+                return if searching && w.list.scroll(rows, list, reprisekit::theme::TextUnits::ONE)
+                {
                     Reply::redraw()
                 } else {
                     Reply::none()
@@ -1463,7 +1464,9 @@ mod tests {
         };
         let first = draw(&mut a);
         let list = a.devices.list_rect();
-        a.devices.list.scroll(2, list);
+        a.devices
+            .list
+            .scroll(2, list, reprisekit::theme::TextUnits::ONE);
         let scrolled = draw(&mut a);
         let outside = |x: i32, y: i32| !clip.contains(x, y);
         let (w, h) = (ctx.size.0, ctx.size.1);
