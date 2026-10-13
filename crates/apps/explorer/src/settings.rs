@@ -1,6 +1,7 @@
 //! Per-window preferences in `$XDG_STATE_HOME/reprise/explorer.toml`; every field has a default.
 
 use reprisekit::controls::{explorerbar, listview};
+use reprisekit::theme::TextUnits;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -17,6 +18,7 @@ pub struct Settings {
     pub toolbars: bool,
     pub address_bar: bool,
     pub bar_width: i32,
+    /// The main window's client size in 100% px, grown by the text size at open.
     pub window: (i32, i32),
     /// Details view column widths in 100% px, grown by the text size when
     /// drawn; empty means the built-in defaults.
@@ -93,6 +95,16 @@ impl Settings {
     /// `thumbnail_size`'s bounds: no smaller than the frame it fills,
     /// no larger than a 1 MiB thumbnail.
     pub const THUMBNAIL_SIZE: std::ops::RangeInclusive<u32> = crate::thumbs::FRAME_INNER..=512;
+
+    /// The main window's client size where text grows by `units`.
+    pub fn window_at(&self, units: TextUnits) -> (i32, i32) {
+        units.size(self.window)
+    }
+
+    /// Keep client size `px`, drawn where text grows by `units`, as [`Settings::window`].
+    pub fn keep_window(&mut self, px: (i32, i32), units: TextUnits) {
+        self.window = (units.within(px.0), units.within(px.1));
+    }
 
     pub fn path() -> Option<PathBuf> {
         let base = std::env::var_os("XDG_STATE_HOME")
@@ -191,6 +203,23 @@ mod tests {
         assert_eq!(s.window, repriseapp::MIN_SIZE);
         assert_eq!(s.columns, [listview::MIN_COL_W, listview::MIN_COL_W, 180]);
         assert_eq!(Settings::default().clamped(), Settings::default());
+    }
+
+    #[test]
+    fn the_window_is_kept_in_100_units_and_grows_by_the_text_size() {
+        let mut s = Settings::default();
+        let twice = TextUnits::new(22, 11);
+        assert_eq!(s.window_at(TextUnits::ONE), (792, 573));
+        assert_eq!(s.window_at(twice), (1584, 1146));
+        s.keep_window((1584, 1146), twice);
+        assert_eq!(s.window, (792, 573));
+        s.keep_window((1001, 700), twice);
+        assert_eq!(s.window, (500, 350), "never reopens larger than it closed");
+        let half_again = TextUnits::new(17, 11);
+        for side in [120, 573, 792, 1001] {
+            s.keep_window(half_again.size((side, side)), half_again);
+            assert_eq!(s.window, (side, side), "{side} comes back from 150%");
+        }
     }
 
     #[test]
