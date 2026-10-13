@@ -242,6 +242,7 @@ mod tests {
             wake: crate::Waker::noop(),
             heads: Default::default(),
             want_tick: Default::default(),
+            at_pick: false,
             text_size: 100,
         };
         let page = Form::new(vec![Item::label("l", Rect::new(20, 50, 100, 13), "Label")]);
@@ -312,6 +313,7 @@ mod tests {
             wake: crate::Waker::noop(),
             heads: Default::default(),
             want_tick: Default::default(),
+            at_pick: false,
             text_size: 100,
         };
         let mut form = Form::new(vec![Item::new(
@@ -368,6 +370,7 @@ mod tests {
             wake: crate::Waker::noop(),
             heads: Default::default(),
             want_tick: Default::default(),
+            at_pick: false,
             text_size: 100,
         };
         let mut form = Form::new(vec![Item::new(
@@ -422,6 +425,7 @@ mod tests {
             wake: crate::Waker::noop(),
             heads: Default::default(),
             want_tick: Default::default(),
+            at_pick: false,
             text_size: 100,
         };
         let px = ctx.theme.fonts.size_px;
@@ -568,6 +572,7 @@ mod tests {
             wake: crate::Waker::noop(),
             heads: Default::default(),
             want_tick: Default::default(),
+            at_pick: false,
             text_size: 100,
         };
         let px = ctx.theme.fonts.size_px;

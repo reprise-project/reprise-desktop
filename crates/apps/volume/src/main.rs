@@ -819,6 +819,7 @@ mod tests {
             wake: repriseapp::Waker::noop(),
             heads: Default::default(),
             want_tick: Default::default(),
+            at_pick: false,
             text_size: 100,
         }
     }
