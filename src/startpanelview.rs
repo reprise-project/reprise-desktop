@@ -832,11 +832,11 @@ impl State {
                 .and_then(|&a| self.app_index.get(a))
                 .map(|e| Run::App(Box::new(e.clone()))),
             Some(ResultKind::Settings) => v.result_settings.get(r).copied().map(Run::Setting),
-            Some(ResultKind::Files) => v.search.files.get(r).map(|p| {
-                Run::File(with_mime(self.desktop.as_ref(), |mime| {
-                    reprisefs::props::open_argv_in(p, mime, &self.app_index, &self.config.terminal)
-                }))
-            }),
+            Some(ResultKind::Files) => v
+                .search
+                .files
+                .get(r)
+                .map(|p| Run::File(self.found_open_argv(p))),
             None => None,
         };
         self.close_start_panel();
