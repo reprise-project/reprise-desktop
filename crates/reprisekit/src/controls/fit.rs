@@ -28,16 +28,21 @@ pub(crate) const GAP: i32 = 4;
 /// The px kept inside a group box's right edge, at 100% text.
 pub(crate) const PAD: i32 = 6;
 
-/// Where item `i`'s right edge may run to in `rects`: the next control on its row, or its
-/// group box's right edge less `pad`.
-pub(crate) fn limit(rects: &[Rect], kinds: &[Kind], i: usize, pad: i32) -> i32 {
+/// Where text on item `i`'s row starting at `from` may run to in `rects`: the next control on
+/// the row starting right of `from`, or item `i`'s group box's right edge less `pad`. A control
+/// at `from` itself (a check box label's second line) is the text's own.
+pub(crate) fn limit(rects: &[Rect], kinds: &[Kind], i: usize, from: i32, pad: i32) -> i32 {
     let f = Fit {
         out: rects.to_vec(),
         kinds,
         gap: 0,
         pad,
     };
-    f.limit(i)
+    (0..rects.len())
+        .filter(|&j| f.row(i, j) && rects[j].x > from)
+        .map(|j| rects[j].x)
+        .min()
+        .unwrap_or_else(|| f.bound(i))
 }
 
 impl Kind {

@@ -317,6 +317,37 @@ mod tests {
     }
 
     #[test]
+    fn every_prompt_fits_its_text() {
+        let input = Input {
+            body: "It will see what your camera sees, and it can record what it sees for as \
+                   long as it runs. You can change this in Settings."
+                .into(),
+            choices: vec![
+                Choice {
+                    id: "m".into(),
+                    label: "Camera:".into(),
+                    options: (0..3)
+                        .map(|i| (format!("{i}"), format!("Integrated Camera {i}")))
+                        .collect(),
+                    initial: "0".into(),
+                },
+                Choice {
+                    id: "r".into(),
+                    label: "Remember this choice".into(),
+                    options: Vec::new(),
+                    initial: "false".into(),
+                },
+            ],
+            ..base()
+        };
+        let over = crate::dialog::overflows(|theme, text| {
+            let (px, u) = (theme.fonts.size_px, theme.text);
+            build_form(&input, text, px, u, &theme.controls()).0
+        });
+        assert!(over.is_empty(), "{}", over.join("\n"));
+    }
+
+    #[test]
     fn at_150_percent_the_text_wraps_to_the_grown_column_and_the_combo_list_fits_the_window() {
         let text = TextRenderer::load(&FontConfig::default());
         let u = TextUnits::new(17, 11);
