@@ -4,7 +4,7 @@
 
 use std::cell::Cell;
 
-use reprisekit::classic::widgets::BUTTON_H;
+use reprisekit::classic::widgets::{BUTTON_H, LINE_H};
 use reprisekit::controls::form::{self, Control, Form, Item};
 use reprisekit::controls::listbox::ListBox;
 use reprisekit::controls::propsheet::{self, Buttons, PropSheet};
@@ -28,6 +28,8 @@ const FIELD_H: i32 = 20;
 const ROW_Y: i32 = 46;
 const PITCH: i32 = 30;
 const LABEL_DY: i32 = 4;
+/// The public key's row: a line taller than the others, its value set on two.
+const PUB_ROW: i32 = 3;
 const GEN_W: i32 = 75;
 
 const LIST: Rect = Rect::new(LABEL_X, ROW_Y, 290, 82);
@@ -103,7 +105,14 @@ fn set_cue(f: &mut Form, id: &str, cue: &str) {
 }
 
 fn row_y(i: i32) -> i32 {
-    ROW_Y + i * PITCH
+    ROW_Y + i * PITCH + if i > PUB_ROW { LINE_H } else { 0 }
+}
+
+/// A public key as its two lines: a 44-character key does not fit one line of the field in
+/// every face.
+fn key_lines(key: &str) -> Vec<String> {
+    let (a, b) = key.split_at(key.len().div_ceil(2));
+    vec![a.to_string(), b.to_string()]
 }
 
 fn label(id: &'static str, i: i32, text: &str) -> Item {
@@ -138,13 +147,13 @@ fn iface_page(cfg: &wg::Config) -> Form {
             "&Generate",
             true,
         ),
-        label("pub_l", 3, "Public key:"),
-        Item::label_at(
+        label("pub_l", PUB_ROW, "Public key:"),
+        Item::new(
             "pub",
-            FIELD_X,
-            row_y(3) + LABEL_DY,
-            FIELD_W,
-            &wg::public_key(&cfg.private_key).unwrap_or_default(),
+            Rect::new(FIELD_X, row_y(PUB_ROW) + LABEL_DY, FIELD_W, 2 * LINE_H),
+            Control::Lines(key_lines(
+                &wg::public_key(&cfg.private_key).unwrap_or_default(),
+            )),
         ),
         label("addr_l", 4, "&Addresses:"),
         edit(
@@ -470,12 +479,12 @@ impl WgSheet {
                     set_field(f, "key", &k);
                 }
                 let public = wg::public_key(text_of(f, "key")).unwrap_or_default();
-                f.set_text("pub", &public);
+                f.set_lines("pub", &key_lines(&public));
                 Outcome::Redraw
             }
             form::Event::Changed("key") => {
                 let public = wg::public_key(text_of(f, "key")).unwrap_or_default();
-                f.set_text("pub", &public);
+                f.set_lines("pub", &key_lines(&public));
                 Outcome::Redraw
             }
             form::Event::Default => self.event(propsheet::Event::Ok),
@@ -726,6 +735,44 @@ mod tests {
         last
     }
 
+    fn shown_key(s: &WgSheet) -> Vec<String> {
+        match &s.sheet.pages[TAB_IFACE].item("pub").unwrap().control {
+            Control::Lines(lines) => lines.clone(),
+            other => panic!("pub is {other:?}"),
+        }
+    }
+
+    /// A public key of the widest characters fits its field in DejaVu Sans, at 100% and 200%
+    /// text, and the rows under it clear its second line.
+    #[test]
+    fn the_public_key_fits_its_field() {
+        let text = reprisekit::text::TextRenderer::load(&reprisekit::theme::FontConfig {
+            family: vec!["DejaVu Sans".into()],
+            ..Default::default()
+        });
+        if !text.has_face("DejaVu Sans") {
+            return;
+        }
+        let mut s = WgSheet::new(&cfg(), None);
+        let page = &mut s.sheet.pages[TAB_IFACE];
+        let lines = key_lines(&format!("{}=", "W".repeat(43)));
+        page.set_lines("pub", &lines);
+        for pct in [100, 200] {
+            let theme = reprisekit::theme::Theme::default().with_form_text(pct);
+            page.drawn_with(&theme.paint());
+            let field = page.rect("pub").unwrap().width;
+            for l in &lines {
+                let w = text.measure(l, false, theme.fonts.size_px);
+                assert!(w <= field, "{pct}%: {w} px in {field}");
+            }
+        }
+        let (key, addr) = (
+            page.item("pub").unwrap().rect,
+            page.item("addr").unwrap().rect,
+        );
+        assert!(key.bottom() <= addr.y, "{key:?} runs into {addr:?}");
+    }
+
     #[test]
     fn ok_hands_back_the_connection_as_it_was_loaded() {
         let mut s = WgSheet::new(&cfg(), Some("/Settings/4".into()));
@@ -735,16 +782,10 @@ mod tests {
         );
         assert_eq!(s.window_title(), "Away Properties");
         assert_eq!(
-            text_of(&s.sheet.pages[TAB_IFACE], "pub").len(),
-            0,
-            "the public key is a label, not a field"
+            shown_key(&s),
+            ["HIgo9xNzJMWLKASShiTqIy", "bxZ0U3wGLiUeJ1PKf8ykw="],
+            "the public key is text on two lines, not a field"
         );
-        match &s.sheet.pages[TAB_IFACE].item("pub").unwrap().control {
-            Control::Label { text, .. } => {
-                assert_eq!(text, "HIgo9xNzJMWLKASShiTqIybxZ0U3wGLiUeJ1PKf8ykw=")
-            }
-            _ => panic!("pub is a label"),
-        }
     }
 
     #[test]
@@ -756,11 +797,7 @@ mod tests {
         ));
         let key = text_of(&s.sheet.pages[TAB_IFACE], "key").to_string();
         assert_ne!(key, KEY_A);
-        let shown = match &s.sheet.pages[TAB_IFACE].item("pub").unwrap().control {
-            Control::Label { text, .. } => text.clone(),
-            _ => String::new(),
-        };
-        assert_eq!(Some(shown), wg::public_key(&key));
+        assert_eq!(Some(shown_key(&s).concat()), wg::public_key(&key));
     }
 
     #[test]
