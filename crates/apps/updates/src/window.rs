@@ -191,9 +191,6 @@ impl Window {
         if self.rows != updates {
             self.fill(updates, &forms.controls());
         }
-        for (col, (_, w)) in self.list.columns.iter_mut().zip(COLUMNS) {
-            col.width = forms.text.len(w);
-        }
         let picked = self.rows.iter().filter(|u| self.wanted(u)).count();
         let headline = model::headline(phase, updates, picked);
         let (w, px) = (forms.text.len(MSG_W), forms.fonts.size_px);
@@ -617,9 +614,9 @@ mod tests {
         );
         let grown = forms.text.rect(LIST);
         assert_eq!(w.list_rect(), grown);
-        let widths: Vec<i32> = w.list.columns.iter().map(|c| c.width).collect();
-        assert_eq!(widths, [331, 204, 198], "the columns grow with the text");
         let lay = listview::layout(&w.list, grown, &cm);
+        let widths: Vec<i32> = w.list.columns.iter().map(|c| lay.col_w(c)).collect();
+        assert_eq!(widths, [331, 204, 198], "the columns grow with the text");
         let b = w.list.check_rect(&lay, 1);
         let (x, y) = (b.x + b.width / 2, b.y + b.height / 2);
         w.list_pointer(ListInput::Press(x, y), &cm);

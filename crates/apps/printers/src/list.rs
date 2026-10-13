@@ -173,13 +173,9 @@ impl List {
     /// Give the last column what the body has left, so the columns fill it.
     pub fn fit_last(&mut self, r: Rect, ctx: &Ctx) {
         let lay = self.layout(r, ctx);
-        let n = self.view.columns.len();
-        if n == 0 {
-            return;
+        if let Some(last) = self.view.columns.len().checked_sub(1) {
+            self.view.fill_column(last, lay.body.width, lay.text);
         }
-        let fixed: i32 = self.view.columns[..n - 1].iter().map(|c| c.width).sum();
-        self.view
-            .resize_column(n - 1, (lay.body.width - fixed).max(40));
     }
 
     pub fn follow(&mut self, r: Rect, ctx: &Ctx) {

@@ -360,8 +360,7 @@ impl Folder {
     pub fn fit_columns(&mut self, ctx: &Ctx) {
         let (_, list_r) = self.layout(ctx);
         let lay = listview::layout(&self.list, list_r, &ctx.theme.controls());
-        let fixed: i32 = self.list.columns[..3].iter().map(|c| c.width).sum();
-        self.list.resize_column(3, lay.body.width - fixed);
+        self.list.fill_column(3, lay.body.width, lay.text);
     }
 
     /// Give Device Name what the body has left, so the last column takes the rest. The host calls it on resize.
@@ -1054,6 +1053,23 @@ mod tests {
         let (_, list_r) = f.layout(&wide);
         let ll = listview::layout(&f.list, list_r, &ctx.theme.look.controls());
         assert_eq!(ll.total_w, ll.body.width);
+        assert!(ll.hscroll.is_none());
+    }
+
+    #[test]
+    fn at_200_percent_the_columns_grow_and_device_name_takes_the_rest() {
+        let mut ctx = ctx_sized((2 * CLIENT.0, 2 * CLIENT.1));
+        ctx.theme = ctx.theme.with_text_size(200);
+        ctx.text_size = 200;
+        let mut f = Folder::new();
+        f.refresh(&snapshot(), None);
+        f.fit_columns(&ctx);
+        let widths: Vec<i32> = f.list.columns.iter().map(|c| c.width).collect();
+        assert_eq!(widths, [NAME_W, TYPE_W, STATUS_W, DEVICE_W], "kept at 100%");
+        let (_, list_r) = f.layout(&ctx);
+        let ll = listview::layout(&f.list, list_r, &ctx.theme.controls());
+        assert_eq!(ll.col_w(&f.list.columns[0]), 2 * NAME_W);
+        assert_eq!(ll.total_w, ll.body.width, "the columns fill the body");
         assert!(ll.hscroll.is_none());
     }
 
