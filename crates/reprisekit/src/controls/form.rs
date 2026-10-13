@@ -517,7 +517,7 @@ pub struct Form {
     /// Where the form's (0, 0) sits on the surface it is drawn on. The items' rects are laid out
     /// for 100% text from here; this offset does not grow with the text.
     pub origin: (i32, i32),
-    /// The part of the surface a scrolled form shows through, if it scrolls.
+    /// The part of the surface a form that can scroll shows through: a sheet's page.
     pub view: Option<View>,
     rendered: Rendered,
 }
@@ -554,6 +554,9 @@ struct Rendered {
     /// ([`crate::look::Look::lights_pointer`]); any other lights only a
     /// held push button.
     styled: Cell<bool>,
+    /// The notes the last draw found taller than their rects, by item, and by how much at
+    /// 100%: their rewrapped lines run below, so [`Form::flowed`] moves what lies under them.
+    flow: RefCell<Vec<(usize, i32)>>,
     #[cfg(test)]
     renders: Cell<usize>,
 }
@@ -958,7 +961,72 @@ impl Form {
 
     /// Where `it` draws and takes the pointer at the last draw's text size: see [`place`].
     fn at(&self, it: &Item) -> Rect {
-        place(it, &self.controls(), self.units(), self.origin)
+        place(
+            it,
+            self.flowed(it),
+            &self.controls(),
+            self.units(),
+            self.origin,
+        )
+    }
+
+    /// `it`'s 100% rect after the notes the last draw found too short for their lines
+    /// ([`Form::lay_out_notes`]): such a note takes its lines' height, an item at or below its
+    /// bottom moves down by the growth and an item around it grows by as much. Items the
+    /// [`View`] keeps stay.
+    pub fn flowed(&self, it: &Item) -> Rect {
+        let flow = self.rendered.flow.borrow();
+        let mut r = it.rect;
+        let Some(view) = self.view.filter(|_| !flow.is_empty()) else {
+            return r;
+        };
+        if view.keep.contains(&it.id) {
+            return r;
+        }
+        for &(k, grow) in flow.iter() {
+            let Some(note) = self.items.get(k) else {
+                continue;
+            };
+            let n = note.rect;
+            if std::ptr::eq(note, it) {
+                r.height += grow;
+            } else if it.rect.y >= n.bottom() {
+                r.y += grow;
+            } else if it.rect.y <= n.y
+                && it.rect.x <= n.x
+                && it.rect.right() >= n.right()
+                && it.rect.bottom() >= n.bottom()
+            {
+                r.height += grow;
+            }
+        }
+        r
+    }
+
+    /// Lay the notes out at the last draw's text size, scale `s` and font size `px`: in a form
+    /// with a [`View`], which scrolls through what it does not show, a note whose lines rewrap
+    /// to more than its rect holds grows ([`Form::flowed`]). [`draw`] does this itself.
+    pub fn lay_out_notes(&self, text: &TextRenderer, s: i32, px: u32) {
+        self.rendered.flow.borrow_mut().clear();
+        if self.view.is_none() {
+            return;
+        }
+        let text = text.dialog(self.font);
+        let flow = self
+            .items
+            .iter()
+            .enumerate()
+            .filter_map(|(i, it)| {
+                let Control::Lines(lines) = &it.control else {
+                    return None;
+                };
+                let width = self.at(it).width * s;
+                let grow =
+                    note_lines(text, lines, width, px).len() as i32 * LINE_H - it.rect.height;
+                (grow > 0).then_some((i, grow))
+            })
+            .collect();
+        *self.rendered.flow.borrow_mut() = flow;
     }
 
     /// The rect item `id` was last drawn in, on the surface: its rect grown with the text and
@@ -2985,30 +3053,30 @@ fn unmasked_index(edit: &TextEdit, at: usize) -> usize {
         .map_or(edit.text.len(), |(i, _)| i)
 }
 
-/// Where `it` draws and takes the pointer, on the surface: its 100% rect grown by `u` and moved
+/// Where `it` draws and takes the pointer, on the surface: its 100% `rect` grown by `u` and moved
 /// to `origin`, then by its [`Indent`]. Pictures and controls with fixed art keep their size and
 /// only move; a separator and a rule keep their thickness, and an icon list, whose
 /// rows of fixed icons fill its height, keeps its height. Indents keep their px: they
 /// step past a check box, which keeps its size.
-fn place(it: &Item, cm: &ControlMetrics, u: TextUnits, origin: (i32, i32)) -> Rect {
+fn place(it: &Item, rect: Rect, cm: &ControlMetrics, u: TextUnits, origin: (i32, i32)) -> Rect {
     let r = match it.control {
         Control::Picture { .. }
         | Control::Monitor(_)
         | Control::Spectrum
-        | Control::Sample { .. } => u.at(it.rect),
+        | Control::Sample { .. } => u.at(rect),
         Control::Separator | Control::IconList(_) => Rect {
-            height: it.rect.height,
-            ..u.rect(it.rect)
+            height: rect.height,
+            ..u.rect(rect)
         },
-        Control::Rule if it.rect.width <= it.rect.height => Rect {
-            width: it.rect.width,
-            ..u.rect(it.rect)
+        Control::Rule if rect.width <= rect.height => Rect {
+            width: rect.width,
+            ..u.rect(rect)
         },
         Control::Rule => Rect {
-            height: it.rect.height,
-            ..u.rect(it.rect)
+            height: rect.height,
+            ..u.rect(rect)
         },
-        _ => u.rect(it.rect),
+        _ => u.rect(rect),
     };
     let placed = it.placed(cm);
     Rect {
@@ -3016,6 +3084,21 @@ fn place(it: &Item, cm: &ControlMetrics, u: TextUnits, origin: (i32, i32)) -> Re
         y: r.y + placed.y - it.rect.y + origin.1,
         width: r.width + placed.width - it.rect.width,
         ..r
+    }
+}
+
+/// The lines a note draws in `width` device px at `px`: its own, or its text rewrapped to the
+/// width when a line is wider.
+fn note_lines<'a>(
+    text: &TextRenderer,
+    lines: &'a [String],
+    width: i32,
+    px: u32,
+) -> std::borrow::Cow<'a, [String]> {
+    if lines.iter().all(|l| text.measure(l, false, px) <= width) {
+        lines.into()
+    } else {
+        crate::text::wrap(text, &lines.join(" "), width, px).into()
     }
 }
 
@@ -3109,6 +3192,7 @@ fn draw_choice_label(
 pub fn draw(c: &mut Canvas, text: &TextRenderer, p: &Paint, form: &Form, cues: bool, px: u32) {
     let Paint { cs, s, .. } = *p;
     form.drawn_with(p);
+    form.lay_out_notes(text, s, px);
     let cm = form.controls();
     let grow = p.text;
     let text = text.dialog(form.font);
@@ -3143,13 +3227,7 @@ pub fn draw(c: &mut Canvas, text: &TextRenderer, p: &Paint, form: &Form, cues: b
             }
             Control::Lines(lines) => {
                 let r = at_ink(r);
-                let rewrapped;
-                let lines = if lines.iter().all(|l| text.measure(l, false, px) <= r.width) {
-                    lines
-                } else {
-                    rewrapped = crate::text::wrap(text, &lines.join(" "), r.width, px);
-                    &rewrapped
-                };
+                let lines = note_lines(text, lines, r.width, px);
                 for (k, line) in lines.iter().enumerate() {
                     let (top, bottom) = (
                         grow.len(k as i32 * LINE_H),
@@ -6992,6 +7070,63 @@ mod tests {
             inked(10, 10 + w, 10 + 2 * LINE_H, 10 + 3 * LINE_H),
             "the overflow wraps onto a third line"
         );
+    }
+
+    /// In a form with a view, a note rewrapped onto a third line grows a line: what lies under it
+    /// moves down a line, a group around it grows and a kept button stays. Without a view
+    /// nothing moves.
+    #[test]
+    fn a_rewrapped_note_in_a_view_pushes_what_lies_under_it() {
+        let theme = Theme::default();
+        let text = TextRenderer::load(&FontConfig::default());
+        let lines = [
+            "Shift five times turns StickyKeys on",
+            "or off, right Shift held down",
+        ];
+        let w = text.measure(lines[0], false, 11) - 20;
+        let items = || {
+            vec![
+                Item::new(
+                    "group",
+                    Rect::new(4, 4, w + 12, 4 * LINE_H),
+                    Control::Group("G".into()),
+                ),
+                Item::lines("note", Rect::new(10, 20, w, 2 * LINE_H), &lines),
+                Item::check("beside", w + 20, 20, "B"),
+                Item::check("below", 10, 20 + 2 * LINE_H, "Below"),
+                Item::button("ok", Rect::new(10, 100, 75, 23), "OK", true, true),
+            ]
+        };
+        let mut f = Form::new(items());
+        f.view = Some(View {
+            rect: Rect::new(0, 0, 400, 90),
+            keep: &["ok"],
+        });
+        let mut c = Canvas::new(400, 140);
+        draw(
+            &mut c,
+            &text,
+            &classic_paint(&theme.colors, 1),
+            &f,
+            false,
+            11,
+        );
+        assert_eq!(f.rect("note").unwrap().height, 3 * LINE_H);
+        assert_eq!(f.rect("group").unwrap().height, 5 * LINE_H);
+        assert_eq!(f.rect("beside").unwrap().y, 20);
+        assert_eq!(f.rect("below").unwrap().y, 20 + 3 * LINE_H);
+        assert_eq!(f.rect("ok").unwrap().y, 100);
+
+        let plain = Form::new(items());
+        draw(
+            &mut c,
+            &text,
+            &classic_paint(&theme.colors, 1),
+            &plain,
+            false,
+            11,
+        );
+        assert_eq!(plain.rect("below").unwrap().y, 20 + 2 * LINE_H);
     }
 
     /// A form drawn at an origin keeps that offset as it is and grows only its own layout from
