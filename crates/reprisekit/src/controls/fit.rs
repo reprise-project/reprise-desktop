@@ -1,7 +1,7 @@
-//! Room for measured text in a form laid out in fixed px: a label wider than its rect takes
-//! the space to its right, and when that is not enough the column of controls right of it
-//! moves over. Widths only change where the text does not fit, and a label that cannot get
-//! all the room it needs leaves the layout as it was.
+//! Room for measured text in a form laid out in fixed px: a label or a combo's value wider
+//! than its rect takes the space to its right, and when that is not enough the column of
+//! controls right of it moves over. Widths only change where the text does not fit, and a
+//! label that cannot get all the room it needs leaves the layout as it was.
 
 use crate::raster::Rect;
 
@@ -10,7 +10,8 @@ pub(crate) enum Kind {
     /// Left-aligned text `need` px wide.
     Text { need: i32 },
     /// A control that can give up width at its left edge (an edit, a combo, a list, a
-    /// trackbar), whose value wants `need` px of width (0 for no value of its own).
+    /// trackbar, a spinner with its field), whose value wants `need` px of width (0 for no
+    /// value of its own).
     Stretch { need: i32 },
     /// A control of fixed width: it moves with its column.
     Fixed,
@@ -66,8 +67,7 @@ pub(crate) fn fit(rects: &[Rect], kinds: &[Kind], gap: i32, pad: i32) -> Vec<Rec
         if let Kind::Stretch { need } = kind
             && need > f.out[i].width
         {
-            let room = f.limit(i) - f.out[i].x;
-            f.out[i].width = need.min(room).max(f.out[i].width);
+            f.stretch(i, need);
         }
     }
     f.out
@@ -98,8 +98,22 @@ impl Fit<'_> {
         }
     }
 
-    /// Moves the column item `j` starts `d` px right, unless that moves a push button or
-    /// pushes a control that keeps its width past its bound.
+    /// Widens stretching item `i` towards the `need` px its value takes: into the gap before
+    /// the next control on its row, moving that control's column over when the gap is short.
+    fn stretch(&mut self, i: usize, need: i32) {
+        if let Some(j) = self.next(i) {
+            let short = need - (self.out[j].x - self.gap - self.out[i].x);
+            if short > 0 {
+                self.shift_column(j, short);
+            }
+        }
+        let room = self.limit(i) - self.out[i].x;
+        self.out[i].width = need.min(room).max(self.out[i].width);
+    }
+
+    /// Moves the column item `j` starts `d` px right, unless that moves a push button, pushes
+    /// a control that keeps its width past its bound or narrows a stretching one below the
+    /// width its value needs.
     fn shift_column(&mut self, j: usize, d: i32) {
         let before = self.out.clone();
         let bounds: Vec<i32> = (0..before.len()).map(|k| self.bound(k)).collect();
@@ -108,7 +122,7 @@ impl Fit<'_> {
             self.out[k] != before[k]
                 && match self.kinds[k] {
                     Kind::Anchored => true,
-                    Kind::Stretch { .. } => false,
+                    Kind::Stretch { need } => self.out[k].width < need.min(before[k].width),
                     _ => self.out[k].right() > bounds[k],
                 }
         });
@@ -304,6 +318,30 @@ mod tests {
         let out = fit(&rects, &kinds, GAP, PAD);
         assert_eq!(out[1].width, 130);
         assert_eq!(out[2].width, 134, "up to the gap before the next control");
+    }
+
+    #[test]
+    fn a_combo_short_of_room_narrows_the_field_after_it() {
+        let rects = [r(0, 0, 200, 80), r(12, 16, 75, 21), r(97, 16, 79, 21)];
+        let kinds = [
+            Kind::Group,
+            Kind::Stretch { need: 87 },
+            Kind::Stretch { need: 50 },
+        ];
+        let out = fit(&rects, &kinds, GAP, PAD);
+        assert_eq!(out[1], r(12, 16, 87, 21));
+        assert_eq!(out[2], r(103, 16, 73, 21), "right edge kept");
+        let kinds = [
+            Kind::Group,
+            Kind::Stretch { need: 87 },
+            Kind::Stretch { need: 76 },
+        ];
+        let out = fit(&rects, &kinds, GAP, PAD);
+        assert_eq!(
+            out[2], rects[2],
+            "a field is not narrowed below its own value"
+        );
+        assert_eq!(out[1].width, 81, "up to the gap");
     }
 
     #[test]

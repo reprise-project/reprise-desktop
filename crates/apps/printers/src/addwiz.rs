@@ -816,6 +816,43 @@ mod tests {
         w.event(form::Event::Changed(DEVICES), s);
     }
 
+    /// Every page fits its text under every interface and text size: the printer page while
+    /// searching, with printers found, with network printers only and with an error, the
+    /// driver page before and after its list is read, and the name page with and without an
+    /// error.
+    #[test]
+    fn every_page_fits_its_text() {
+        let over = reprisekit::interfaces::form_overflows(|_, _, _| {
+            let s = snap();
+            let mut pages = Vec::new();
+            let mut w = AddWizard::new(&s, None);
+            pages.push(("searching".to_string(), w.page.form.clone()));
+            w.devices_in(Err(cups::Error::NotRunning));
+            pages.push(("no search".into(), w.page.form.clone()));
+            w.devices_in(Ok(found()));
+            w.network_in(None);
+            pages.push(("found".into(), w.page.form.clone()));
+            pick_device(&mut w, 1, &s);
+            w.event(form::Event::Pressed(wizard::NEXT), &s);
+            pages.push(("reading drivers".into(), w.page.form.clone()));
+            w.ppds_in(Ok(ppds()), &s);
+            pages.push(("drivers".into(), w.page.form.clone()));
+            let mut w = AddWizard::new(&s, None);
+            w.devices_in(Err(cups::Error::Denied));
+            w.network_in(Some(vec![network("Lab"), network("Office")]));
+            pages.push(("found on the network".into(), w.page.form.clone()));
+            let mut w = AddWizard::new(&s, None);
+            w.devices_in(Ok(found()));
+            w.network_in(None);
+            w.event(form::Event::Pressed(wizard::NEXT), &s);
+            pages.push(("name".into(), w.page.form.clone()));
+            w.add_failed("The printer could not be added.", &s);
+            pages.push(("name error".into(), w.page.form.clone()));
+            pages
+        });
+        assert!(over.is_empty(), "{}", over.join("\n"));
+    }
+
     #[test]
     fn a_driverless_printer_skips_the_driver_page() {
         let s = snap();

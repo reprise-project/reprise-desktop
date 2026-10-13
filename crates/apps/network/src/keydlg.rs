@@ -202,6 +202,15 @@ mod tests {
         KeyDialog::new(&"Neighbour".into(), "/ap/5", Security::Psk)
     }
 
+    /// The dialog fits its text under every interface and text size.
+    #[test]
+    fn the_dialog_fits_its_text() {
+        let over = reprisekit::interfaces::form_overflows(|_, _, _| {
+            vec![("key".into(), dialog().form.clone())]
+        });
+        assert!(over.is_empty(), "{}", over.join("\n"));
+    }
+
     /// Type `s` into the field called `id`, as the form's own key
     /// handling would.
     fn type_into(d: &mut KeyDialog, id: &str, s: &str) {
