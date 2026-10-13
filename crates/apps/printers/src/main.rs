@@ -97,7 +97,7 @@ struct PrintersApp {
     select: Option<String>,
     renaming: HashSet<String>,
     text: Option<Rc<TextRenderer>>,
-    /// `Ctx::forms` at the last event, for `children`, which has no `Ctx`.
+    /// `Ctx::forms` at the last event, for `children` and `initial_size`, which have no `Ctx`.
     forms: Theme,
 }
 
@@ -107,6 +107,7 @@ impl PrintersApp {
             hidden: tray_only,
             tray_only,
             user: cups::Client::new().user,
+            forms: repriseapp::start_forms(),
             ..PrintersApp::default()
         }
     }
@@ -805,7 +806,7 @@ impl App for PrintersApp {
     }
 
     fn initial_size(&self) -> (i32, i32) {
-        folder::CLIENT
+        self.forms.text.size(folder::CLIENT)
     }
 
     fn text_sized(&self) -> bool {
@@ -822,7 +823,7 @@ impl App for PrintersApp {
             out.push(Child {
                 id: QUEUE,
                 title: q.title(&self.snapshot),
-                size: queue::CLIENT,
+                size: self.forms.text.size(queue::CLIENT),
                 fixed: false,
                 modal: false,
             });
@@ -1095,5 +1096,21 @@ mod tests {
         };
         assert_eq!(size(WIZARD), (768, 556));
         assert_eq!(size(PROPS), (587, 680));
+    }
+
+    #[test]
+    fn the_folder_and_the_queue_open_at_the_text_size() {
+        let mut app = PrintersApp::default();
+        assert_eq!(app.initial_size(), folder::CLIENT);
+        app.queue = Some(queue::Queue::new("Laser"));
+        let mut ctx = Ctx {
+            text_size: 200,
+            ..test_ctx(folder::CLIENT)
+        };
+        app.event(repriseapp::MAIN, Event::Blink, &mut ctx);
+        let twice = |(w, h): (i32, i32)| (2 * w, 2 * h);
+        assert_eq!(app.initial_size(), twice(folder::CLIENT));
+        let queue = app.children().into_iter().find(|c| c.id == QUEUE);
+        assert_eq!(queue.map(|c| c.size), Some(twice(queue::CLIENT)));
     }
 }

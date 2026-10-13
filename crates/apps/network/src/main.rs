@@ -109,7 +109,7 @@ struct NetApp {
     notice: Option<Notice>,
     /// The message box's font, loaded in `start`: `children` sizes its window without a `Ctx`.
     dialog_text: Option<TextRenderer>,
-    /// `Ctx::forms` as of the last event, which `children` sizes form windows by.
+    /// `Ctx::forms` as of the last event, which `children` and `initial_size` size windows by.
     forms: Theme,
     /// The icon theme's "network-vpn" at 16 px; see `read_icons`.
     vpn_icon: Option<Canvas>,
@@ -957,7 +957,7 @@ impl App for NetApp {
     }
 
     fn initial_size(&self) -> (i32, i32) {
-        folder::CLIENT
+        self.forms.text.size(folder::CLIENT)
     }
 
     fn text_sized(&self) -> bool {
@@ -1287,6 +1287,7 @@ fn main() {
     repriseapp::run(Box::new(NetApp {
         hidden: tray_only,
         tray_only,
+        forms: repriseapp::start_forms(),
         ..NetApp::default()
     }));
 }
@@ -1362,5 +1363,18 @@ mod tests {
         let u = reprisekit::theme::TextUnits::new(17, 11);
         assert_eq!(child.size, u.size(hotspot::CLIENT));
         assert_eq!(child.size, (556, 331));
+    }
+
+    #[test]
+    fn the_window_opens_at_the_text_size_of_the_last_event() {
+        let mut app = NetApp::default();
+        assert_eq!(app.initial_size(), folder::CLIENT);
+        let mut ctx = test_ctx(folder::CLIENT);
+        ctx.text_size = 200;
+        app.event(repriseapp::MAIN, Event::Wake, &mut ctx);
+        assert_eq!(
+            app.initial_size(),
+            (2 * folder::CLIENT.0, 2 * folder::CLIENT.1)
+        );
     }
 }
