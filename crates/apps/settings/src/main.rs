@@ -1,11 +1,12 @@
 //! Reprise Settings: a property sheet over `config.toml` and the XDG autostart directories.
 //!
-//! Pages are listed in `registry::GROUPS`; `--page night-light` opens on one (`--focus mouse_keys` then focuses a control there), and a second start hands its page to the running sheet (`reprisebus::instance`). OK and Apply rewrite `config.toml` with `toml_edit` and the autostart files. The Startup list's Add... and Remove, Quick Launch changes and the Advanced page's Forget act at once. The Display page goes through wlr-output-management (`repriseapp::heads`); only a Yes on the Monitor Settings question writes `[[outputs]]`.
+//! Pages are listed in `registry::GROUPS`; `--page night-light` opens on one (`--focus mouse_keys` then focuses a control there), and a second start hands its page to the running sheet (`reprisebus::instance`). OK and Apply rewrite `config.toml` with `toml_edit` and the autostart files; a change written elsewhere while the sheet is open is reread (`configwatch`). The Startup list's Add... and Remove, Quick Launch changes and the Advanced page's Forget act at once. The Display page goes through wlr-output-management (`repriseapp::heads`); only a Yes on the Monitor Settings question writes `[[outputs]]`.
 
 mod additem;
 mod appearancepage;
 mod autostart;
 mod backgroundpage;
+mod configwatch;
 mod cursors;
 mod defaultspage;
 mod displayflow;
@@ -31,6 +32,8 @@ mod winstate;
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, TryRecvError, channel};
 
 use repriseapp::decode::{Decoded, Decoders};
@@ -320,6 +323,8 @@ struct SettingsApp {
     thumbing: Option<Receiver<Vec<Option<Canvas>>>>,
     requests: Option<instance::Requests>,
     waker: Option<Waker>,
+    /// Set by the `configwatch` thread when `config.toml` changed on disk.
+    config_touched: Arc<AtomicBool>,
     scan: Option<Receiver<Vec<PathBuf>>>,
     /// The slideshow folder and its pictures, listed for the monitor.
     listed: Option<(PathBuf, Vec<PathBuf>)>,
@@ -530,6 +535,7 @@ impl SettingsApp {
             thumbing: None,
             requests: None,
             waker: None,
+            config_touched: Arc::default(),
             scan: None,
             listed: None,
             listing: None,
@@ -752,6 +758,29 @@ impl SettingsApp {
         }
     }
 
+    /// Reread `config.toml` after a write from elsewhere: the controls the user has not moved show
+    /// the file's values, moved ones keep theirs, and Apply still writes only the moved ones. False
+    /// when the file is unreadable, does not parse, or reads as the sheet already had it.
+    fn config_changed(&mut self) -> bool {
+        let (text, err) = read_config(&self.path);
+        if err.is_some() || text.parse::<toml_edit::DocumentMut>().is_err() {
+            return false;
+        }
+        let fresh = model::load(&text);
+        if fresh == self.loaded {
+            return false;
+        }
+        model::rebase(&mut self.want, &self.loaded, &fresh);
+        self.loaded = fresh;
+        pages::write(&mut self.sheet, &self.want, &self.xkb);
+        self.menu_icons_due = true;
+        self.fill_shortcuts();
+        self.fill_wallpapers();
+        self.want_preview();
+        self.sync_apply();
+        true
+    }
+
     fn revert(&mut self) {
         self.want = self.loaded.clone();
         pages::write(&mut self.sheet, &self.want, &self.xkb);
@@ -965,6 +994,9 @@ impl SettingsApp {
     fn wake(&mut self) -> Reply {
         let mut changed = false;
         let mut activate = None;
+        if self.config_touched.swap(false, Ordering::AcqRel) {
+            changed |= self.config_changed();
+        }
         while let Some(req) = self.requests.as_ref().and_then(instance::Requests::next) {
             changed |= self.request(&req);
             activate = req.token.or(activate);
@@ -2630,6 +2662,8 @@ impl App for SettingsApp {
             // For a request that came before the loop ran.
             waker.wake();
         }
+        let w = waker.clone();
+        configwatch::spawn(&self.path, self.config_touched.clone(), move || w.wake());
         self.waker = Some(waker);
         let had = self.wallpapers.clone();
         self.scan = Some(
@@ -3325,6 +3359,31 @@ mod tests {
             a.want.task_manager.contains("htop"),
             "{}",
             a.want.task_manager
+        );
+    }
+
+    #[test]
+    fn a_config_written_elsewhere_shows_on_the_open_sheet_and_apply_keeps_it() {
+        let path = tmp("config-changed").join("config.toml");
+        std::fs::write(&path, "").unwrap();
+        let mut a = SettingsApp::open(path.clone());
+        a.want.slow_keys = true;
+        std::fs::write(&path, "[accessibility]\nmouse_keys = true\n").unwrap();
+        assert!(a.config_changed());
+        let ax = &a.sheet.pages[Page::Accessibility.index()];
+        assert_eq!(ax.checked("mouse_keys"), Some(true));
+        let speed = &ax.item("mouse_keys_speed").unwrap().control;
+        assert!(
+            matches!(speed, form::Control::TrackBar(t) if t.enabled),
+            "its controls ungrey"
+        );
+        assert_eq!(ax.checked("slow_keys"), Some(true), "a pending check stays");
+        assert!(!a.config_changed(), "a file read as before changes nothing");
+        assert!(a.apply());
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(
+            text.contains("mouse_keys = true") && text.contains("slow_keys = true"),
+            "{text}"
         );
     }
 
