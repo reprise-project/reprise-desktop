@@ -2962,15 +2962,28 @@ fn render(theme: &Theme, with_blue: bool) -> Canvas {
         signalbars::draw(&mut c, 16 + 28 * 6, 3081, 5, false);
         let mut secret = TextEdit::secret();
         secret.paste("correcthorse", &[]);
-        let key = form::Form::new(vec![Item::new(
-            "key",
-            Rect::new(16, 3105, 150, 20),
-            Control::Edit {
-                edit: secret,
-                first: std::cell::Cell::new(0),
-                enabled: true,
-            },
-        )]);
+        let mut kept = TextEdit::secret();
+        kept.set_cue("Leave empty to keep the saved key");
+        let key = form::Form::new(vec![
+            Item::new(
+                "key",
+                Rect::new(16, 3105, 150, 20),
+                Control::Edit {
+                    edit: secret,
+                    first: std::cell::Cell::new(0),
+                    enabled: true,
+                },
+            ),
+            Item::new(
+                "kept",
+                Rect::new(176, 3105, 238, 20),
+                Control::Edit {
+                    edit: kept,
+                    first: std::cell::Cell::new(0),
+                    enabled: true,
+                },
+            ),
+        ]);
         form::draw(&mut c, &text, &Paint { s, ..theme.paint() }, &key, true, px);
     }
 

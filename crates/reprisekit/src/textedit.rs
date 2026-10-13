@@ -16,6 +16,7 @@ pub struct TextEdit {
     anchor: usize,
     undo: Undo<String, usize>,
     secret: bool,
+    cue: String,
 }
 
 impl std::fmt::Debug for TextEdit {
@@ -29,6 +30,7 @@ impl std::fmt::Debug for TextEdit {
         d.field("caret", &self.caret)
             .field("anchor", &self.anchor)
             .field("secret", &self.secret)
+            .field("cue", &self.cue)
             .finish()
     }
 }
@@ -315,6 +317,7 @@ impl TextEdit {
             text,
             undo: Undo::default(),
             secret: false,
+            cue: String::new(),
         }
     }
 
@@ -325,11 +328,21 @@ impl TextEdit {
             anchor: 0,
             undo: Undo::default(),
             secret: true,
+            cue: String::new(),
         }
     }
 
     pub fn is_secret(&self) -> bool {
         self.secret
+    }
+
+    /// Greyed text the field shows while it is empty; it is never part of the value.
+    pub fn cue(&self) -> &str {
+        &self.cue
+    }
+
+    pub fn set_cue(&mut self, cue: impl Into<String>) {
+        self.cue = cue.into();
     }
 
     pub fn caret(&self) -> usize {
@@ -354,8 +367,10 @@ impl TextEdit {
 
     pub fn set_selected(&mut self, text: impl Into<String>) {
         let secret = self.secret;
+        let cue = std::mem::take(&mut self.cue);
         *self = TextEdit::new(text, true);
         self.secret = secret;
+        self.cue = cue;
     }
 
     /// Zeroize the text and undo snapshot in place and leave the field empty. The buffer is kept, so a secret field's reservation outlives a retry.
