@@ -55,7 +55,7 @@ use reprisekit::pointer::DoubleClick;
 use reprisekit::raster::{Canvas, Rect};
 use reprisekit::text::TextRenderer;
 use reprisekit::textedit::keysym;
-use reprisekit::theme::{FontConfig, Theme};
+use reprisekit::theme::{FontConfig, TextUnits, Theme};
 use settings::Settings;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -139,6 +139,9 @@ pub struct Explorer {
     /// `settings` changed since the last write. A resize delivers a burst of
     /// events; the file is written on the next blink, on losing focus or on closing.
     settings_dirty: bool,
+    /// The main window's client size at its last resize, kept in 100% px at the next save: by
+    /// then a text size change has regrown a window at its opening size, or left the user's size.
+    window_px: Option<(i32, i32)>,
     pub popup: Option<Popup>,
     pub focus: Focus,
     pub undo: Option<&'static str>,
@@ -291,6 +294,7 @@ impl Explorer {
             },
             settings,
             settings_dirty: false,
+            window_px: None,
             popup: None,
             focus: Focus::View,
             undo: None,
@@ -409,6 +413,9 @@ impl Explorer {
 
     pub(crate) fn flush_settings(&mut self) {
         if std::mem::take(&mut self.settings_dirty) {
+            if let Some(px) = self.window_px {
+                self.settings.keep_window(px, self.forms.text);
+            }
             self.settings.save();
         }
     }
@@ -773,6 +780,8 @@ struct Lazy {
     start: Place,
     select: Option<PathBuf>,
     inner: Option<Explorer>,
+    /// How the text grows as the program starts, for the window's opening size.
+    units: TextUnits,
 }
 
 impl App for Lazy {
@@ -788,7 +797,10 @@ impl App for Lazy {
     }
 
     fn initial_size(&self) -> (i32, i32) {
-        Settings::load().window
+        match &self.inner {
+            Some(ex) => ex.settings.window_at(ex.forms.text),
+            None => Settings::load().window_at(self.units),
+        }
     }
 
     fn text_sized(&self) -> bool {
@@ -898,7 +910,7 @@ impl App for Lazy {
                 }
             }
             Event::Resized => {
-                ex.settings.window = ctx.size;
+                ex.window_px = Some(ctx.size);
                 ex.settings_dirty = true;
                 Reply::redraw()
             }
@@ -1030,6 +1042,7 @@ fn main() {
         start,
         select,
         inner: None,
+        units: repriseapp::start_forms().text,
     }));
 }
 
