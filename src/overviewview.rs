@@ -58,6 +58,31 @@ pub struct OverviewView {
     /// The dim over every output (none under snap assist) and each grid's `cells`.
     tree: TreeId,
     fade: Option<FadeRun>,
+    slide: Option<Slide>,
+}
+
+/// A grid set the overview can show: the fields `OverviewView` swaps with a [`Slide`]'s.
+struct Sheet {
+    model: Overview,
+    windows: Vec<WindowId>,
+    layouts: Vec<OverviewLayout>,
+    grids: Vec<Grid>,
+}
+
+/// A horizontal swipe under the open overview: the grids of `desktop`, the one sliding in or
+/// (once the swipe commits) out, beside the open ones.
+struct Slide {
+    desktop: usize,
+    other: Sheet,
+    /// The open grids are the desktop the swipe leaves; false once it commits.
+    leaving: bool,
+}
+
+fn swap_sheet(v: &mut OverviewView, s: &mut Sheet) {
+    std::mem::swap(&mut v.model, &mut s.model);
+    std::mem::swap(&mut v.windows, &mut s.windows);
+    std::mem::swap(&mut v.layouts, &mut s.layouts);
+    std::mem::swap(&mut v.grids, &mut s.grids);
 }
 
 /// A released vertical swipe's run-on: the fade eases over `span` (opacities) in `ms`.
@@ -115,7 +140,11 @@ impl State {
     /// Alt+Tab's windows (`switchable_windows`) without the dialogs, most
     /// recently focused first, minimized last.
     fn overview_windows(&self) -> Vec<WindowId> {
-        let mut v = self.switchable_windows();
+        self.overview_windows_on(self.desktops.current)
+    }
+
+    fn overview_windows_on(&self, n: usize) -> Vec<WindowId> {
+        let mut v = self.switchable_windows_on(n);
         v.reverse();
         v.sort_by_key(|&w| self.win(w).is_some_and(|x| x.minimized));
         v
@@ -276,21 +305,9 @@ impl State {
         let grids = grids
             .into_iter()
             .map(|(output, layout)| {
-                let cells = self.scene.tree_create(tree);
-                self.scene.set_position(cells, layout.area.x, layout.area.y);
-                let glass = assist.is_some().then(|| {
-                    let t = self.scene.tree_create(cells);
-                    (t, Backdrop::new(&self.glass))
-                });
-                let chrome = self.scene.buffer_create(cells);
+                let grid = self.overview_grid_nodes(tree, output, layout.area, assist.is_some());
                 layouts.push(layout);
-                Grid {
-                    output,
-                    cells,
-                    glass,
-                    chrome,
-                    thumbs: Vec::new(),
-                }
+                grid
             })
             .collect();
         self.overview.view = Some(OverviewView {
@@ -301,12 +318,161 @@ impl State {
             assist,
             tree,
             fade: None,
+            slide: None,
         });
         self.clear_pointer_focus();
         self.set_cursor("default");
         self.redraw_overview();
         let p = self.pointer_location();
         self.repoint(p, InputTime::now());
+    }
+
+    /// A grid's nodes on `tree`, its cells at `area`'s top-left; `glass` for snap assist's.
+    fn overview_grid_nodes(
+        &mut self,
+        tree: TreeId,
+        output: Output,
+        area: Rect,
+        glass: bool,
+    ) -> Grid {
+        let cells = self.scene.tree_create(tree);
+        self.scene.set_position(cells, area.x, area.y);
+        let glass = glass.then(|| {
+            let t = self.scene.tree_create(cells);
+            (t, Backdrop::new(&self.glass))
+        });
+        let chrome = self.scene.buffer_create(cells);
+        Grid {
+            output,
+            cells,
+            glass,
+            chrome,
+            thumbs: Vec::new(),
+        }
+    }
+
+    /// A horizontal swipe heads for desktop `to`: lay out its grids beside the open
+    /// overview's, hidden until `overview_slide_place` puts them. Not under snap assist.
+    pub fn overview_slide_target(&mut self, to: usize) {
+        let Some(v) = self.overview.view.as_ref() else {
+            return;
+        };
+        if v.assist.is_some() || v.slide.as_ref().is_some_and(|s| s.desktop == to) {
+            return;
+        }
+        let tree = v.tree;
+        let boxes: Vec<Rect> = v.layouts.iter().map(|l| l.area).collect();
+        let outputs: Vec<Output> = v.grids.iter().map(|g| g.output.clone()).collect();
+        self.overview_slide_drop();
+        let order = self.overview_windows_on(to);
+        let (windows, counts) = self.overview_grouped(&order, &boxes);
+        let mut layouts = Vec::with_capacity(boxes.len());
+        let mut grids = Vec::with_capacity(boxes.len());
+        for ((output, b), n) in outputs.into_iter().zip(boxes).zip(counts) {
+            let grid = self.overview_grid_nodes(tree, output, b, false);
+            self.scene.set_enabled(grid.cells, false);
+            grids.push(grid);
+            layouts.push(OverviewLayout::compute(n, b));
+        }
+        let mut model = Overview::new(windows.len());
+        if let Some(first) = order.first() {
+            model.selected = windows.iter().position(|w| w == first).unwrap_or(0);
+        }
+        let mut other = Sheet {
+            model,
+            windows,
+            layouts,
+            grids,
+        };
+        let Some(v) = self.overview.view.as_mut() else {
+            return;
+        };
+        swap_sheet(v, &mut other);
+        let mut first = 0;
+        for g in 0..other.grids.len() {
+            first += self.redraw_overview_grid(g, first);
+        }
+        let Some(v) = self.overview.view.as_mut() else {
+            return;
+        };
+        swap_sheet(v, &mut other);
+        v.slide = Some(Slide {
+            desktop: to,
+            other,
+            leaving: true,
+        });
+    }
+
+    /// Move each sliding grid on an output of `shifts` across by that output's shift
+    /// for the desktop the swipe leaves and for the one it heads to.
+    pub fn overview_slide_place(&mut self, shifts: &[(Output, (i32, i32))]) {
+        let Some(v) = self.overview.view.as_ref() else {
+            return;
+        };
+        let Some(slide) = v.slide.as_ref() else {
+            return;
+        };
+        let mut moves = Vec::new();
+        let sheets = [
+            (&v.layouts, &v.grids, slide.leaving),
+            (&slide.other.layouts, &slide.other.grids, !slide.leaving),
+        ];
+        for (layouts, grids, leaving) in sheets {
+            for (l, g) in layouts.iter().zip(grids) {
+                if let Some((_, (out, inn))) = shifts.iter().find(|(o, _)| *o == g.output) {
+                    let dx = if leaving { *out } else { *inn };
+                    moves.push((g.cells, l.area.x + dx, l.area.y));
+                }
+            }
+        }
+        for (cells, x, y) in moves {
+            self.scene.set_position(cells, x, y);
+            self.scene.set_enabled(cells, true);
+        }
+    }
+
+    /// The swipe under the overview committed: the incoming grids become the open ones.
+    pub fn overview_slide_commit(&mut self) {
+        let Some(v) = self.overview.view.as_mut() else {
+            return;
+        };
+        let Some(mut slide) = v.slide.take() else {
+            return;
+        };
+        swap_sheet(v, &mut slide.other);
+        slide.leaving = false;
+        v.slide = Some(slide);
+        self.redraw_overview();
+    }
+
+    /// The desktop slide ended: drop the other grids and settle the open ones in place.
+    pub fn overview_slide_end(&mut self) {
+        let Some(v) = self.overview.view.as_ref() else {
+            return;
+        };
+        if v.slide.is_none() {
+            return;
+        }
+        let homes: Vec<(TreeId, Rect)> = (v.grids.iter().zip(&v.layouts))
+            .map(|(g, l)| (g.cells, l.area))
+            .collect();
+        self.overview_slide_drop();
+        for (cells, a) in homes {
+            self.scene.set_position(cells, a.x, a.y);
+        }
+        self.redraw_all();
+    }
+
+    fn overview_slide_drop(&mut self) {
+        let Some(slide) = self.overview.view.as_mut().and_then(|v| v.slide.take()) else {
+            return;
+        };
+        for g in slide.other.grids {
+            for id in g.thumbs.into_iter().flatten() {
+                self.thumb_drop(id);
+            }
+            self.scene.destroy(g.cells);
+        }
     }
 
     /// Show the open overview at `opacity`, dim and all (the swipe fade).
@@ -359,6 +525,7 @@ impl State {
 
     /// Close the overview without changing the focus.
     pub fn close_overview(&mut self) {
+        self.overview_slide_drop();
         let Some(v) = self.overview.view.take() else {
             return;
         };
