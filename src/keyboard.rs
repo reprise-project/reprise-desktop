@@ -14,7 +14,7 @@
 use reprisekit::classic::frame::{Edges, FrameGeometry};
 use smithay::{
     backend::input::{Event, InputBackend, InputTime, KeyState, KeyboardKeyEvent},
-    input::keyboard::{FilterResult, Keycode, ModifiersState, xkb},
+    input::keyboard::{FilterResult, KeyboardSource, Keycode, ModifiersState, xkb},
     reexports::wayland_server::DisplayHandle,
     utils::SERIAL_COUNTER,
 };
@@ -108,15 +108,28 @@ impl State {
         self.handle_key(event.key_code(), pressed, Event::time(&event));
     }
 
-    /// One key event, xkb keycode `code`: decode it, route it, and forward
-    /// it to the seat or act on it.
+    /// One key event, xkb keycode `code`, from the seat's own keyboard.
     pub(crate) fn handle_key(&mut self, code: Keycode, pressed: bool, time: InputTime) {
+        // A virtual keyboard's keymap gives way to the keyboard's own.
+        self.vk_restore();
+        self.route_key(code, pressed, time, KeyboardSource::MAIN);
+    }
+
+    /// One key event from `source`, under the keymap in force: decode it,
+    /// route it, and forward it to the seat or act on it. A virtual
+    /// keyboard's key skips the typing aids and the input method's grab.
+    pub(crate) fn route_key(
+        &mut self,
+        code: Keycode,
+        pressed: bool,
+        time: InputTime,
+        source: KeyboardSource,
+    ) {
+        let from_seat = source == KeyboardSource::MAIN;
         self.settle_pointer();
         let Some(keyboard) = self.seat.get_keyboard() else {
             return;
         };
-        // A virtual keyboard's keymap gives way to the keyboard's own.
-        self.vk_restore();
         self.key_input.last_key_input = true;
         let keycode = code.raw();
         // The keysyms before this key updates the state, as the route
@@ -136,10 +149,10 @@ impl State {
         }
         let mods_before = keyboard.modifier_state();
         let k = key_press(syms, keys::mask(&mods_before), pressed);
-        if !self.aids_key(keycode, &k) {
+        if from_seat && !self.aids_key(keycode, &k) {
             return;
         }
-        if !self.mousekeys_key(keycode, pressed, &mods_before) {
+        if from_seat && !self.mousekeys_key(keycode, pressed, &mods_before) {
             self.aids_after_key();
             return;
         }
@@ -244,7 +257,9 @@ impl State {
         // (`imefield`).
         let mut field_key = None;
         let to_ime = if pressed {
-            let to = crate::imefield::field_route(&routed.route) && self.ime_takes_field_keys();
+            let to = from_seat
+                && crate::imefield::field_route(&routed.route)
+                && self.ime_takes_field_keys();
             if to {
                 self.key_input.ime_keys.push(keycode);
             }
@@ -258,8 +273,14 @@ impl State {
             routed.route = KeyRoute::Swallow;
         }
         let route = &routed.route;
-        let intercepted =
-            keyboard.input::<(), _>(self, code, state, serial, time, |st, mods, h| {
+        let intercepted = keyboard.input_from_source::<(), _>(
+            source,
+            self,
+            code,
+            state,
+            serial,
+            time,
+            |st, mods, h| {
                 let forward = match route {
                     _ if to_ime => true,
                     KeyRoute::Lock => crate::lockview::key(st, pressed, &h),
@@ -280,7 +301,8 @@ impl State {
                 } else {
                     FilterResult::Intercept(())
                 }
-            });
+            },
+        );
         let forward = intercepted.is_none();
         if let Some(k) = field_key.as_mut() {
             k.edit = crate::editkeys::from_keyboard(&keyboard, self, code);

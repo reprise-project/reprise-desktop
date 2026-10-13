@@ -15,8 +15,8 @@ use smithay::{
     input::{
         SeatHandler,
         keyboard::{
-            FilterResult, GrabStartData as KeyboardGrabStartData, KeyboardGrab,
-            KeyboardInnerHandle, KeyboardSource, ModifiersState,
+            GrabStartData as KeyboardGrabStartData, KeyboardGrab, KeyboardInnerHandle,
+            KeyboardSource, ModifiersState,
         },
     },
     reexports::{
@@ -132,12 +132,12 @@ impl VkKeymap {
 impl TextInputActivation for State {}
 
 impl VirtualKeyboardHandler for State {
-    /// A key goes to the keyboard focus under the device's keymap, past
-    /// the binds and the input method's grab; modifiers go on the xkb
-    /// state as the device set them. A key the seat already holds is the
-    /// input method's echo of it and goes to the client alone: the seat
-    /// would absorb a second press of it, and the input method's grab
-    /// would then miss its release.
+    /// A key is routed as the seat's keys are (`State::route_key`), under
+    /// the device's keymap and past the input method's grab; modifiers go
+    /// on the xkb state as the device set them. A key the seat already
+    /// holds is the input method's echo of it and goes to the client
+    /// alone: the seat would absorb a second press of it, and the input
+    /// method's grab would then miss its release.
     fn process_virtual_keyboard_event(&mut self, event: InputEvent<VirtualKeyboardBackend>) {
         let Some(keyboard) = self.seat.get_keyboard() else {
             return;
@@ -167,15 +167,7 @@ impl VirtualKeyboardHandler for State {
                         .sources
                         .entry(device)
                         .or_insert_with(KeyboardSource::new_auxiliary);
-                    keyboard.input_from_source::<(), _>(
-                        source,
-                        self,
-                        code,
-                        key_state,
-                        serial,
-                        time,
-                        |_, _, _| FilterResult::Forward,
-                    );
+                    self.route_key(code, key_state == KeyState::Pressed, time, source);
                 }
                 self.ime.vk_key = false;
             }

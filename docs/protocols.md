@@ -31,6 +31,11 @@ data control, virtual input and input methods. A Flatpak you trust can be
 given the clipboard protocols with `[clipboard] trusted_apps`; see
 [flatpak-clipboard.md](flatpak-clipboard.md).
 
+A virtual keyboard's keys go where the keyboard's would: they fire key
+binds, open and drive menus and dialogs, and a screen saver Preview takes
+them. At the lock screen and while an input capture holds the keyboard, the
+compositor drops them.
+
 ## Wayland globals
 
 - **Core and shell:** `wl_compositor`, `wl_subcompositor`, `wl_shm`,
