@@ -711,7 +711,7 @@ fn render_about_system(with_blue: bool) -> Canvas {
     for (i, theme) in themes.iter().enumerate() {
         let text = TextRenderer::load(&theme.fonts);
         let px = theme.fonts.size_px;
-        let built = aboutbox::system_form(&system, &text, px);
+        let built = aboutbox::system_form(&system, &text, px, theme.text);
         let mut box_c = Canvas::new(w as u32, h as u32);
         box_c.fill_rect(box_c.bounds(), theme.colors.button_face);
         form::draw(&mut box_c, &text, &theme.paint(), &built, true, px);
