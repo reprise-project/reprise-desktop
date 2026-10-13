@@ -119,6 +119,7 @@ futures-lite.workspace = true
 async-process = "2"
 futures-util.workspace = true
 image.workspace = true
+jpeg-decoder = { version = "0.3", default-features = false }
 pipewire.workspace = true
 reis = { version = "0.7", default-features = false }
 rustix = { version = "1", features = ["net"] }
