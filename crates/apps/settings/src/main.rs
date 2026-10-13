@@ -331,6 +331,8 @@ struct SettingsApp {
     window: (i32, i32),
     window_dirty: bool,
     units: TextUnits,
+    /// `[accessibility] text_size` now, kept beside the window size.
+    text_size: u32,
 }
 
 impl SettingsApp {
@@ -347,11 +349,10 @@ impl SettingsApp {
             }
         }
         app.requests = requests;
-        app.units = Theme::default()
-            .with_form_text(repriseconf::text_size())
-            .text;
+        app.text_size = repriseconf::text_size();
+        app.units = Theme::default().with_form_text(app.text_size).text;
         let state = winstate::path();
-        app.window = winstate::load(&state, app.min_window());
+        app.window = winstate::load(&state, app.min_window(), app.text_size);
         app.last_slideshow = winstate::slideshow(&state);
         app.state_path = Some(state);
         app
@@ -413,6 +414,7 @@ impl SettingsApp {
     fn follow_text(&mut self, ctx: &Ctx) {
         let forms = ctx.forms();
         self.units = forms.text;
+        self.text_size = ctx.text_size;
         self.sheet.drawn_with(&Paint {
             s: 1,
             ..forms.paint()
@@ -438,7 +440,7 @@ impl SettingsApp {
         }
         self.window_dirty = false;
         if let Some(path) = &self.state_path {
-            winstate::save(path, self.window);
+            winstate::save(path, self.window, self.text_size);
         }
     }
 
@@ -539,6 +541,7 @@ impl SettingsApp {
             window: Area::MIN.sheet_size(),
             window_dirty: false,
             units: TextUnits::ONE,
+            text_size: 100,
         };
         app.display
             .model
@@ -3657,14 +3660,18 @@ mod tests {
         );
         assert_eq!(app.sheet.pages[windows].checked("window_tabs"), Some(tabs));
         app.event(MAIN, Event::Focus(false), &mut ctx);
-        assert_eq!(winstate::load(&state, min), (900, 700), "kept");
+        assert_eq!(winstate::load(&state, min, 100), (900, 700), "kept");
 
         ctx.size = (1900, 1000);
         ctx.maximized = true;
         app.event(MAIN, Event::Resized, &mut ctx);
         assert_eq!(app.sheet.size, (1900, 1000));
         app.event(MAIN, Event::Focus(false), &mut ctx);
-        assert_eq!(winstate::load(&state, min), (900, 700), "not the screen's");
+        assert_eq!(
+            winstate::load(&state, min, 100),
+            (900, 700),
+            "not the screen's"
+        );
 
         ctx.size = (300, 200);
         ctx.maximized = false;

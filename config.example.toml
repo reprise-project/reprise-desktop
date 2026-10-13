@@ -386,7 +386,8 @@ suspend_after = 0            # run [power] standby
 
 # [windows]
 # remember = true            # an app's next window opens where its last one closed (size, place,
-#                            # screen, maximized); its further windows cascade from it
+#                            # screen, maximized); its further windows cascade from it. A size
+#                            # kept at a larger text_size shrinks by the ratio of the two
 # tabs = true                # a window dragged onto another's title bar joins its tab group;
 #                            # false: no tab groups, and turning it off splits the open ones
 

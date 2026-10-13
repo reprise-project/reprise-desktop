@@ -473,6 +473,7 @@ mod tests {
                 width: 640,
                 height: 480,
                 maximized: true,
+                text_size: 100,
             },
         )]);
         let p = path.clone();
@@ -547,6 +548,7 @@ mod tests {
                 width: 800,
                 height: 600,
                 maximized: true,
+                text_size: 100,
             }),
         }];
         let (p, a, t) = (path.clone(), apps.clone(), tabs.clone());
