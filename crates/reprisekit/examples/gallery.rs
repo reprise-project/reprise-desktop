@@ -390,10 +390,11 @@ fn render_text_size(pct: u32) -> Canvas {
     let (mw, mh) = u.size(msgbox::client(&notice, &text0, u.px(base_px), u));
     let col = sw.max(mw) + 10;
     let (cw, ch) = u.size(TEXT_SIZE_CONTROLS);
-    let col = col.max(cw + 10);
+    let (pw, ph) = u.size(TEXT_SIZE_PANES);
+    let col = col.max(cw + 10).max(pw + 10);
     let mut c = Canvas::new(
         (themes.len() as i32 * col + 10) as u32,
-        (mh + sh + ch + 40) as u32,
+        (mh + sh + ch + ph + 50) as u32,
     );
     c.fill_rect(c.bounds(), Color::rgb(58, 110, 165));
     for (i, theme) in themes.iter().enumerate() {
@@ -412,7 +413,81 @@ fn render_text_size(pct: u32) -> Canvas {
         propsheet::draw(&mut sheet_c, &text, &theme.paint(), &sheet, true, px);
         c.blit_canvas(x, mh + 20, &sheet_c);
         c.blit_canvas(x, mh + sh + 30, &text_size_controls(theme, &text));
+        c.blit_canvas(x, mh + sh + ch + 40, &text_size_panes(theme, &text));
     }
+    c
+}
+
+/// The panes' panel in `render_text_size`, 100% px.
+const TEXT_SIZE_PANES: (i32, i32) = (600, 330);
+
+/// A grouped tile list over a task pane, beside a mixer, laid out with `theme`'s controls grown by
+/// its text.
+fn text_size_panes(theme: &Theme, text: &TextRenderer) -> Canvas {
+    use reprisekit::controls::mixer;
+    use reprisekit::controls::taskpane::{self, Row, Section, TaskPane};
+    use reprisekit::controls::tilelist::{self, Entry, TILE_H, Tile, TileList};
+    let px = theme.fonts.size_px;
+    let cm = theme.controls();
+    let u = theme.text;
+    let (w, h) = u.size(TEXT_SIZE_PANES);
+    let mut c = Canvas::new(w as u32, h as u32);
+    let cs = &theme.colors;
+    c.fill_rect(c.bounds(), cs.button_face);
+    let p = theme.paint();
+    let mut list = TileList::new(TILE_H);
+    list.entries = vec![Entry::Header("Audio".into()), Entry::Row(0), Entry::Row(1)];
+    list.select_row(Some(1));
+    let lr = Rect::new(4, 4, u.len(220), u.len(31 + 2 * TILE_H + 4));
+    let lay = tilelist::layout(&list, lr, &cm);
+    let rows = [
+        ("Headphones", "Connected", "80%"),
+        ("Speaker", "Not connected", ""),
+    ];
+    tilelist::draw(&mut c, text, &p, &list, &lay, px, |c, rr, i, sel| {
+        let (title, caption, tag) = rows[i];
+        let tile = Tile {
+            icon: None,
+            title,
+            tag,
+            caption,
+            greyed: false,
+        };
+        tilelist::draw_tile(c, text, cs, rr, &tile, sel, px, lay.text);
+    });
+    let tp = TaskPane {
+        sections: vec![
+            Section::links(
+                "Network Tasks",
+                vec![Row::new("View available networks", None)],
+            ),
+            Section::lines("Details", vec![("Local Area Connection".into(), true)]),
+        ],
+        ..Default::default()
+    };
+    let pr = Rect::new(4, lr.bottom() + 6, u.len(220), h - lr.bottom() - 10);
+    let pl = taskpane::layout(&tp, text, px, pr, &cm);
+    taskpane::draw(&mut c, text, &p, &tp, &pl, px);
+    let line = |key: &str, volume, check| mixer::Line {
+        key: key.into(),
+        title: key.into(),
+        volume,
+        balance: Some(10),
+        check,
+        checked: false,
+        live: true,
+    };
+    let m = mixer::Mixer::new(
+        &[
+            line("Volume Control", 42, mixer::Check::MuteAll),
+            line("Firefox", 48, mixer::Check::Mute),
+        ],
+        true,
+    );
+    let (mw, mh) = m.size(u);
+    let body = Rect::new(lr.right() + 8, 4, mw, mh);
+    let ml = mixer::layout(&m, theme, text, body);
+    mixer::draw(&mut c, theme, text, &m, &ml);
     c
 }
 
@@ -2646,7 +2721,7 @@ fn render(theme: &Theme, with_blue: bool) -> Canvas {
         m.focus = mixer::Focus::Balance(1);
         m.cues = true;
         m.speaker = Some(speaker.clone());
-        let (w, h) = m.size();
+        let (w, h) = m.size(theme.text);
         let body = Rect::new(600, 7150, w, h);
         let lay = mixer::layout(&m, theme, &text, body);
         mixer::draw(&mut c, theme, &text, &m, &lay);
@@ -2658,7 +2733,7 @@ fn render(theme: &Theme, with_blue: bool) -> Canvas {
         recording[2].live = false;
         let mut m = mixer::Mixer::new(&recording, false);
         m.speaker = Some(speaker);
-        let (w, h) = m.size();
+        let (w, h) = m.size(theme.text);
         let body = Rect::new(600, 7422, w, h);
         let lay = mixer::layout(&m, theme, &text, body);
         mixer::draw(&mut c, theme, &text, &m, &lay);
@@ -3549,7 +3624,7 @@ fn render(theme: &Theme, with_blue: bool) -> Canvas {
                     caption,
                     greyed,
                 };
-                tilelist::draw_tile(c, &text, cs, rr, &tile, sel, px);
+                tilelist::draw_tile(c, &text, cs, rr, &tile, sel, px, lay.text);
             },
         );
     }

@@ -38,14 +38,17 @@ pub fn draw_header(
     let state = state(true, ptr);
     st.draw(c, r, Part::TaskGroupHeader, State::Normal, s);
     // An atlas painted at scale holds `scale` pixels per design pixel.
-    let w = img.frame(state).width / img.scale * s;
-    st.draw(
-        c,
-        Rect::new(r.right() - w, r.y, w, r.height),
-        button,
-        state,
-        s,
-    );
+    let frame = img.frame(state);
+    let (w, h) = (frame.width / img.scale * s, frame.height / img.scale * s);
+    let at = Rect::new(r.right() - w, r.y, w, h);
+    if r.height == h {
+        st.draw(c, at, button, state, s);
+    } else {
+        // A band grown with the text keeps the button's art at its top, less the art's last
+        // two rows, where the header's stretched fill row takes over.
+        let clip = Rect::new(at.x, at.y, w, (h - 2 * s).min(r.height));
+        c.with_clip(clip, |c| st.draw(c, at, button, state, s));
+    }
     let lit = if state == State::Normal {
         State::Normal
     } else {
