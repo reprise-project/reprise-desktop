@@ -3143,6 +3143,13 @@ pub fn draw(c: &mut Canvas, text: &TextRenderer, p: &Paint, form: &Form, cues: b
             }
             Control::Lines(lines) => {
                 let r = at_ink(r);
+                let rewrapped;
+                let lines = if lines.iter().all(|l| text.measure(l, false, px) <= r.width) {
+                    lines
+                } else {
+                    rewrapped = crate::text::wrap(text, &lines.join(" "), r.width, px);
+                    &rewrapped
+                };
                 for (k, line) in lines.iter().enumerate() {
                     let (top, bottom) = (
                         grow.len(k as i32 * LINE_H),
@@ -6956,6 +6963,35 @@ mod tests {
         let lay = iconlist::layout(grown, &ControlMetrics::CLASSIC);
         assert_eq!(lay.bar.bottom() - grown.y, at_100.bar.bottom() - r.y);
         assert_eq!(lay.cols, 4, "the width shows more columns");
+    }
+
+    #[test]
+    fn lines_wider_than_their_rect_wrap_inside_it() {
+        let theme = Theme::default();
+        let cs = &theme.colors;
+        let text = TextRenderer::load(&FontConfig::default());
+        let lines = [
+            "Shift five times turns StickyKeys on",
+            "or off, right Shift held down",
+        ];
+        let w = text.measure(lines[0], false, 11) - 20;
+        let f = Form::new(vec![Item::new(
+            "note",
+            Rect::new(10, 10, w, 2 * LINE_H),
+            Control::Lines(lines.iter().map(|l| l.to_string()).collect()),
+        )]);
+        let mut c = Canvas::new(400, 100);
+        c.fill_rect(c.bounds(), cs.button_face);
+        draw(&mut c, &text, &classic_paint(cs, 1), &f, false, 11);
+        let ink = cs.button_text.argb();
+        let inked = |x0: i32, x1: i32, y0: i32, y1: i32| {
+            (y0..y1).any(|y| (x0..x1).any(|x| c.get(x, y) == ink))
+        };
+        assert!(!inked(10 + w, 400, 0, 100), "no ink right of the rect");
+        assert!(
+            inked(10, 10 + w, 10 + 2 * LINE_H, 10 + 3 * LINE_H),
+            "the overflow wraps onto a third line"
+        );
     }
 
     /// A form drawn at an origin keeps that offset as it is and grows only its own layout from
