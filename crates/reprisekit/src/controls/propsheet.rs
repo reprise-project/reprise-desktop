@@ -21,7 +21,8 @@
 //!
 //! A client shorter than the sheet was built for ([`PropSheet::fit_height`]) keeps the buttons
 //! along its bottom and scrolls the page's controls under the look's scrollbar, down the page's
-//! right edge.
+//! right edge. A page whose notes rewrapped onto more lines ([`Form::flowed`]) scrolls through
+//! what they pushed past its end the same way.
 //!
 //! Pages are built in the client's coordinates (outer minus the 3 px frame and
 //! 21 px caption) for 100% text. A host that draws the sheet inside a frame of
@@ -140,7 +141,7 @@ pub struct Layout {
     pub ok: Rect,
     pub cancel: Rect,
     pub apply: Rect,
-    /// The page's scrollbar, when the client is shorter than the sheet.
+    /// The page's scrollbar, while the page scrolls ([`PropSheet::fit_height`]).
     pub bar: Option<Rect>,
 }
 
@@ -242,7 +243,7 @@ impl PropSheet {
     fn dress(&self, mut page: Form, apply: bool) -> Form {
         page.font = self.font;
         page.origin = self.origin;
-        page.view = self.view();
+        page.view = Some(self.view());
         let (dx, dy) = self.page_offset();
         shift(&mut page, dx, dy);
         let at = |r: Rect| r;
@@ -340,16 +341,13 @@ impl PropSheet {
     }
 
     /// The page's controls' 100% rects that show through the page: inside its bevel, from
-    /// where the page starts to where it ends now. None while the sheet is whole.
-    fn view(&self) -> Option<form::View> {
-        if self.scroll.short == 0 {
-            return None;
-        }
+    /// where the page starts to where it ends now.
+    fn view(&self) -> form::View {
         let (w, h) = self.shown();
         let top = self.page_top();
         let x = MARGIN + self.page_dx() + PAGE_EDGE;
         let bottom = h - PAGE_BOTTOM - PAGE_EDGE;
-        Some(form::View {
+        form::View {
             rect: Rect::new(
                 x,
                 top + PAGE_EDGE,
@@ -357,7 +355,7 @@ impl PropSheet {
                 bottom - top - PAGE_EDGE,
             ),
             keep: BUTTON_IDS,
-        })
+        }
     }
 
     /// The page's top at 100%, under the rows of tabs.
@@ -365,16 +363,32 @@ impl PropSheet {
         PAGE_TOP + self.page_dy
     }
 
-    /// How much of the page shows and how tall it was built, at 100%.
+    /// How much of the page shows and how tall its controls reach, at 100%.
     fn page_span(&self) -> (i32, i32) {
         let visible = self.shown().1 - PAGE_BOTTOM - self.page_top();
-        (visible, visible + self.scroll.short)
+        (visible, visible + self.range())
+    }
+
+    /// How far the page scrolls at 100%: what the client cut off the sheet, and how much
+    /// further down the open page's controls reach than they were built to
+    /// ([`Form::flowed`]).
+    fn range(&self) -> i32 {
+        let page = self.open();
+        let bottom = |r: fn(&Form, &Item) -> Rect| {
+            page.items
+                .iter()
+                .filter(|it| !is_button(it))
+                .map(|it| r(page, it).bottom())
+                .max()
+                .unwrap_or(0)
+        };
+        self.scroll.short + (bottom(Form::flowed) - bottom(|_, it| it.rect)).max(0)
     }
 
     /// Scroll the page's controls so `top` 100% px of the page are above it, held to
-    /// `0..=short`. True when they moved.
+    /// `0..=range`. True when they moved.
     fn scroll_to(&mut self, top: i32) -> bool {
-        let top = top.clamp(0, self.scroll.short);
+        let top = top.clamp(0, self.range());
         let dy = top - self.scroll.top;
         self.scroll.top = top;
         for page in &mut self.pages {
@@ -387,7 +401,7 @@ impl PropSheet {
     }
 
     fn sync_view(&mut self) {
-        let view = self.view();
+        let view = Some(self.view());
         for page in &mut self.pages {
             page.view = view;
         }
@@ -396,7 +410,7 @@ impl PropSheet {
     /// Scroll the page so its focused control shows whole, as little as it takes. True when
     /// the controls moved.
     fn reveal_focus(&mut self) -> bool {
-        if self.scroll.short == 0 || self.tabs.focused {
+        if self.range() == 0 || self.tabs.focused {
             return false;
         }
         let page = self.open();
@@ -404,7 +418,7 @@ impl PropSheet {
             .focus()
             .map(|i| &page.items[i])
             .filter(|it| !is_button(it))
-            .map(|it| it.rect)
+            .map(|it| page.flowed(it))
         else {
             return false;
         };
@@ -557,9 +571,9 @@ impl PropSheet {
         }
     }
 
-    /// The page's scrollbar down the right edge of `page`, while the client is short.
+    /// The page's scrollbar down the right edge of `page`, while the page scrolls.
     fn bar_in(&self, page: Rect) -> Option<Rect> {
-        (self.scroll.short > 0).then(|| {
+        (self.range() > 0).then(|| {
             let w = self.open().controls().scroll;
             Rect::new(
                 page.right() - PAGE_EDGE - w,
@@ -619,9 +633,9 @@ impl PropSheet {
     }
 
     /// The page's inside on the surface while it scrolls, for a host that draws its own
-    /// controls on the page: they clip to it. None while the sheet is whole.
+    /// controls on the page: they clip to it. None while the page shows whole.
     pub fn page_clip(&self, text: &TextRenderer, px: u32) -> Option<Rect> {
-        (self.scroll.short > 0).then(|| self.layout(text, px).page.inset(PAGE_EDGE))
+        (self.range() > 0).then(|| self.layout(text, px).page.inset(PAGE_EDGE))
     }
 
     /// `r`, in the coordinates the open page was built in, where the sheet shows it on the
@@ -637,9 +651,9 @@ impl PropSheet {
     }
 
     /// Whether the pointer at (`x`, `y`) reaches a control a host draws on the page: always while
-    /// the sheet is whole, else inside [`PropSheet::page_clip`] and off the page's scrollbar.
+    /// the page shows whole, else inside [`PropSheet::page_clip`] and off the page's scrollbar.
     pub fn reaches_page(&self, x: i32, y: i32, text: &TextRenderer, px: u32) -> bool {
-        if self.scroll.short == 0 {
+        if self.range() == 0 {
             return true;
         }
         let l = self.layout(text, px);
@@ -1178,6 +1192,7 @@ pub fn draw(
     for page in &sheet.pages {
         page.drawn_with(p);
     }
+    sheet.open().lay_out_notes(text, s, px);
     let l = sheet.layout(text, px);
     let page = l.page.scaled(s);
     draw_page(c, p, page);
@@ -2644,6 +2659,52 @@ mod tests {
 
         assert!(s.fit_height(424));
         assert_eq!(s.page_offset(), (0, 0), "a whole sheet does not scroll");
+        assert_eq!(s.layout(&text, px).bar, None);
+    }
+
+    /// A note whose lines rewrap onto one more line than its rect holds pushes the controls under
+    /// it down a line, and the page scrolls through that line though the sheet is whole.
+    #[test]
+    fn a_rewrapped_note_pushes_the_page_down_and_scrolls_it() {
+        let text = TextRenderer::load(&FontConfig::default());
+        let theme = Theme::default();
+        let (px, p) = (theme.fonts.size_px, theme.paint());
+        let lines = [
+            "Sunset and sunrise are worked out",
+            "for the time zone's city.",
+        ];
+        let w = text.measure(lines[0], false, px) - 20;
+        let page = Form::new(vec![
+            Item::lines("note", Rect::new(20, 330, w, 2 * LINE_H), &lines),
+            Item::check("low", 20, 360, "Low"),
+        ]);
+        let mut s = PropSheet::new(&["General"], vec![page], (398, 424));
+        s.drawn_with(&p);
+        assert!(!s.fit_height(424), "the sheet is whole");
+        let mut c = Canvas::new(398, 424);
+        draw(&mut c, &text, &p, &s, false, px);
+        let note = s.open().rect("note").unwrap();
+        assert_eq!(note.height, 3 * LINE_H, "the note takes its third line");
+        assert_eq!(s.open().rect("low").unwrap().y, 360 + LINE_H);
+        assert_eq!(s.open().rect(OK).unwrap(), s.layout(&text, px).ok);
+        assert!(s.layout(&text, px).bar.is_some(), "the page scrolls");
+        assert_eq!(s.page_span().1 - s.page_span().0, LINE_H);
+        assert_eq!(s.wheel(None, 100), Event::Redraw);
+        assert_eq!(s.page_offset().1, -LINE_H, "through the pushed line");
+
+        let roomy = Form::new(vec![
+            Item::lines("note", Rect::new(20, 330, 360, 2 * LINE_H), &lines),
+            Item::check("low", 20, 360, "Low"),
+        ]);
+        s.set_page(0, roomy);
+        draw(&mut c, &text, &p, &s, false, px);
+        s.fit_height(424);
+        assert_eq!(s.page_offset().1, 0, "nothing left to scroll");
+        assert_eq!(
+            s.open().rect("low").unwrap().y,
+            360,
+            "a note that fits moves nothing"
+        );
         assert_eq!(s.layout(&text, px).bar, None);
     }
 
