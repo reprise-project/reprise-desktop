@@ -308,6 +308,20 @@ pub fn bin_fields() -> Vec<Field> {
     ]
 }
 
+/// Tiles' lines under `e`'s name: its kind and [`size_text`]; none for a folder.
+/// A picture's [`image_detail`] replaces them once its size is known.
+pub fn tile_detail(e: &Entry) -> Vec<String> {
+    if e.is_folder() {
+        return Vec::new();
+    }
+    vec![e.kind.clone(), size_text(e.size)]
+}
+
+/// Tiles' lines under a picture's name: its `dims` over its `kind`.
+pub fn image_detail(dims: (u32, u32), kind: &str) -> Vec<String> {
+    vec![format!("{} x {}", dims.0, dims.1), kind.to_string()]
+}
+
 /// A file's size in Explorer's Size column and under a tile's name: bytes
 /// rounded up to whole KB, grouped in threes (0 reads "0 KB", 1 and 1024
 /// "1 KB", 1025 "2 KB", 12,345,678 "12,057 KB"). The status bar, Details
@@ -1572,6 +1586,33 @@ pub(crate) mod tests {
         assert_eq!(size_text(1_234_567), "1,206 KB");
         assert_eq!(size_text(12_345_678), "12,057 KB");
         assert_eq!(size_text(1 << 40), "1,073,741,824 KB");
+    }
+
+    #[test]
+    fn a_tile_names_a_folder_alone_and_a_file_with_its_kind_and_size() {
+        let e = |is_dir, link, kind: &str, size| Entry {
+            is_dir,
+            link,
+            kind: kind.into(),
+            size,
+            ..Default::default()
+        };
+        assert!(tile_detail(&e(true, false, "File Folder", 4096)).is_empty());
+        let tile = |size| tile_detail(&e(false, false, "Text Document", size));
+        assert_eq!(tile(2_048), ["Text Document", "2 KB"]);
+        assert_eq!(tile(6_500)[1], "7 KB");
+        assert_eq!(
+            tile_detail(&e(true, true, "Shortcut", 4096)),
+            ["Shortcut", "4 KB"]
+        );
+    }
+
+    #[test]
+    fn tiles_writes_a_pictures_dimensions_over_its_kind() {
+        assert_eq!(
+            image_detail((800, 600), "JPEG Image"),
+            ["800 x 600", "JPEG Image"]
+        );
     }
 
     /// Details lays out over listview's grid: a row is its height and the first starts below the header.

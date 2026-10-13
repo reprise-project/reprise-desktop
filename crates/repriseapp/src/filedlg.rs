@@ -4,7 +4,6 @@
 use std::collections::HashMap;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
-use std::rc::Rc;
 
 use crate::{Event, PointerInput};
 use reprisefs::listing::Item;
@@ -15,11 +14,12 @@ use reprisekit::selection::Mods;
 use reprisekit::text::TextRenderer;
 use reprisekit::textedit::keysym;
 
+use crate::thumbs::{self, Thumbs};
 use reprisefs::folders::FolderTable;
 use reprisekit::controls::filedlg::{Crumb, Fields, FileDlg, Folder, FolderId, Hit};
 use reprisekit::controls::placesbar::Place;
-use reprisekit::controls::shellview::Entry;
-use reprisekit::icontheme::IconCache;
+use reprisekit::controls::shellview::{self, Entry, Mode};
+use reprisekit::icontheme::{IconCache, ListingIcons};
 use reprisekit::pointer::DoubleClick;
 use reprisekit::raster::Canvas;
 use reprisekit::theme::{Metrics, TextUnits};
@@ -92,59 +92,86 @@ pub fn listing(
     folders_only: bool,
     keep: &dyn Fn(&Item) -> bool,
 ) -> Option<Folder> {
-    listing_raw(folders, id, icons, folders_only, keep).map(|(f, _)| f)
+    listing_raw(folders, id, icons, folders_only, keep).map(|l| l.folder)
 }
 
+struct Listing {
+    folder: Folder,
+    /// Names shown for paths they don't spell: non-UTF-8 names and My Recent Documents' files.
+    aliases: Vec<(String, OsString)>,
+    /// The pictures' paths; picture `i`'s entry has id `i + 1`.
+    pictures: Vec<PathBuf>,
+}
+
+/// Entries wear Explorer's icons at every size and its Tiles lines; a picture's thumbnail
+/// arrives later ([`Host::show_thumbnails`]).
 fn listing_raw(
     folders: &mut FolderTable,
     id: FolderId,
     icons: &mut IconCache,
     folders_only: bool,
     keep: &dyn Fn(&Item) -> bool,
-) -> Option<(Folder, Vec<(String, OsString)>)> {
+) -> Option<Listing> {
     let path = folders.path(id)?.to_path_buf();
-    let folder_icon = icons.get("folder", 16).map(Rc::new);
-    let file_icon = icons.get("text-x-generic", 16).map(Rc::new);
     let globs = reprisefs::apps::mime_globs();
-    let mut aliases: Vec<(String, OsString)> = Vec::new();
-    let entries = reprisefs::listing::dialog_rows(&path, &globs, |i| {
+    let rows = reprisefs::listing::dialog_rows(&path, &globs, |i| {
         if folders_only {
             i.is_dir
         } else {
             i.is_dir || keep(i)
         }
-    })
-    .into_iter()
-    .inspect(|r| {
-        if r.path.parent() != Some(path.as_path()) {
-            aliases.push((r.name.clone(), r.path.clone().into_os_string()));
-        } else if let Some(raw) = r.path.file_name()
-            && raw.to_str().is_none()
-        {
-            aliases.push((r.name.clone(), raw.to_os_string()));
-        }
-    })
-    .map(|r| Entry {
-        icon: if r.is_dir {
-            folder_icon.clone()
-        } else {
-            file_icon.clone()
-        },
-        id: if r.is_dir { folders.id(&r.path) } else { 0 },
-        name: r.name,
-        is_dir: r.is_dir,
-        link: r.is_link,
-        size: r.size,
-        kind: r.kind,
-        modified: r.modified,
-        mtime: r.mtime,
-        ..Default::default()
-    })
-    .collect();
+    });
+    let specials = reprisefs::places::special_folders();
+    let names: Vec<String> = rows
+        .iter()
+        .map(|r| reprisefs::icons::item_icon(&r.item, &specials, &|n| icons.has(n)))
+        .collect();
+    let mut shared = ListingIcons::default();
+    let mut aliases: Vec<(String, OsString)> = Vec::new();
+    let mut pictures = Vec::new();
+    let entries = rows
+        .into_iter()
+        .zip(names)
+        .map(|(r, name)| {
+            let it = r.item;
+            if it.path.parent() != Some(path.as_path()) {
+                aliases.push((it.name.clone(), it.path.clone().into_os_string()));
+            } else if let Some(raw) = it.path.file_name()
+                && raw.to_str().is_none()
+            {
+                aliases.push((it.name.clone(), raw.to_os_string()));
+            }
+            let id = if it.is_dir {
+                folders.id(&it.path)
+            } else if it.is_image() {
+                pictures.push(it.path.clone());
+                pictures.len() as u64
+            } else {
+                0
+            };
+            let [icon, icon32, icon48] = shared.get(icons, &name);
+            let mut e = Entry {
+                id,
+                icon,
+                icon32,
+                icon48,
+                name: it.name,
+                is_dir: it.is_dir,
+                link: it.is_link,
+                size: it.size,
+                kind: it.kind,
+                modified: r.modified,
+                mtime: it.modified,
+                ..Default::default()
+            };
+            e.detail = shellview::tile_detail(&e);
+            e
+        })
+        .collect();
     let parent = reprisefs::places::dialog_parent(&path).map(|p| folders.id(p));
     let label = reprisefs::places::dialog_label(&path);
-    Some((
-        Folder {
+    Some(Listing {
+        folder: Folder {
             id,
             parent,
             crumbs: vec![Crumb {
@@ -156,7 +183,8 @@ fn listing_raw(
             entries,
         },
         aliases,
-    ))
+        pictures,
+    })
 }
 
 pub fn type_keep(dlg: &FileDlg) -> impl Fn(&Item) -> bool + 'static {
@@ -190,6 +218,22 @@ pub struct Host {
     pub icons: Icons,
     clicks: DoubleClick<Option<Hit>>,
     aliases: HashMap<String, OsString>,
+    thumbs: Option<Thumbs>,
+    pictures: Pictures,
+}
+
+/// The listed pictures and how far their thumbnails have got.
+#[derive(Default)]
+struct Pictures {
+    /// Picture `i`'s path; its entry's id is `i + 1`.
+    paths: Vec<PathBuf>,
+    ids: HashMap<PathBuf, u64>,
+    /// Bumped by every listing, so thumbnails for an earlier one are dropped.
+    generation: u64,
+    /// This listing's pictures are queued for decoding.
+    asked: bool,
+    /// The icon cache's scale when listed: the thumbnails' device pixels.
+    scale: i32,
 }
 
 impl Host {
@@ -202,7 +246,76 @@ impl Host {
         dlg
     }
 
+    /// Decodes the listed pictures' thumbnails off the loop for Thumbnails and Tiles; `wake`
+    /// fires as they arrive and the host's `Event::Wake` through [`Host::event`] shows them.
+    pub fn show_thumbnails(&mut self, wake: crate::Waker) {
+        self.thumbs = Some(Thumbs::new(
+            std::sync::Arc::new(crate::decode::Decoders::default_set()),
+            thumbs::FRAME_INNER,
+            thumbs::open_cache(thumbs::CACHE_BYTES),
+            wake,
+        ));
+    }
+
+    /// Queues this listing's pictures once Views shows Thumbnails or Tiles.
+    fn ask_thumbs(&mut self, dlg: &FileDlg) {
+        let Some(worker) = &mut self.thumbs else {
+            return;
+        };
+        let p = &mut self.pictures;
+        if p.asked || !matches!(dlg.view(), Mode::Thumbnails | Mode::Tiles) {
+            return;
+        }
+        p.asked = true;
+        for path in &p.paths {
+            worker.request(path.clone(), p.generation);
+        }
+    }
+
+    /// Hands the thumbnails that arrived to their entries: true when one did.
+    fn take_thumbs(&mut self, dlg: &mut FileDlg) -> bool {
+        let Some(worker) = &mut self.thumbs else {
+            return false;
+        };
+        let done = worker.drain();
+        if done.is_empty() {
+            return false;
+        }
+        let at: HashMap<u64, usize> = dlg
+            .entries()
+            .iter()
+            .enumerate()
+            .filter(|(_, e)| !e.is_dir && e.id != 0)
+            .map(|(i, e)| (e.id, i))
+            .collect();
+        let mut shown = false;
+        for d in done {
+            let Some(&i) = self.pictures.ids.get(&d.path).and_then(|id| at.get(id)) else {
+                continue;
+            };
+            let e = &mut dlg.entries_mut()[i];
+            e.thumb = Some(thumbs::for_display(d.thumb, d.dims, self.pictures.scale));
+            e.detail = shellview::image_detail(d.dims, &e.kind);
+            shown = true;
+        }
+        shown
+    }
+
     pub fn event(
+        &mut self,
+        dlg: &mut FileDlg,
+        ev: &Event,
+        text: &TextRenderer,
+        px: u32,
+        size: (i32, i32),
+        metrics: &Metrics,
+    ) -> Step {
+        let step = self.event_inner(dlg, ev, text, px, size, metrics);
+        self.ask_thumbs(dlg);
+        step
+    }
+
+    fn event_inner(
         &mut self,
         dlg: &mut FileDlg,
         ev: &Event,
@@ -221,6 +334,12 @@ impl Host {
         let out = match ev {
             Event::CloseRequest => return Step::Closed,
             Event::Blink => return Step::Redraw,
+            Event::Wake => {
+                return match self.take_thumbs(dlg) {
+                    true => Step::Redraw,
+                    false => Step::None,
+                };
+            }
             Event::Resized => {
                 dlg.set_size(size);
                 return Step::Redraw;
@@ -316,11 +435,24 @@ impl Host {
             Some(p) => reprisekit::controls::filedlg::pattern_keeps(p, &i.name),
             None => keep(i),
         };
-        if let Some((f, aliases)) = listing_raw(&mut self.folders, id, icons, folders_only, &keep) {
+        if let Some(l) = listing_raw(&mut self.folders, id, icons, folders_only, &keep) {
             self.folder = Some(id);
             self.aliases.clear();
-            self.aliases.extend(aliases);
-            dlg.set_listing(f);
+            self.aliases.extend(l.aliases);
+            let p = &mut self.pictures;
+            p.generation += 1;
+            p.asked = false;
+            p.scale = icons.scale();
+            p.ids = (1..)
+                .zip(&l.pictures)
+                .map(|(id, path)| (path.clone(), id))
+                .collect();
+            p.paths = l.pictures;
+            if let Some(t) = &mut self.thumbs {
+                t.cancel_all();
+            }
+            dlg.set_listing(l.folder);
+            self.ask_thumbs(dlg);
         }
     }
 
@@ -876,5 +1008,229 @@ mod tests {
             ),
             Step::None
         ));
+    }
+
+    const FOLDER: u32 = 0xff20_40c0;
+    const TEXT: u32 = 0xffc0_4020;
+    const PICTURE: u32 = 0xff20_a040;
+    const PIXELS: u32 = 0xffe0_c000;
+
+    fn png(path: &Path, w: u32, h: u32, argb: u32) {
+        let [a, r, g, b] = argb.to_be_bytes();
+        image::RgbaImage::from_pixel(w, h, image::Rgba([r, g, b, a]))
+            .save(path)
+            .unwrap();
+    }
+
+    /// An icon theme drawing "folder", "text-x-generic" and "image-x-generic" in flat colours at
+    /// 16, 32 and 48 px.
+    fn flat_icons(t: &Path) -> IconCache {
+        let root = t.join("icons");
+        let theme = root.join("flat");
+        let dirs = ["16x16/places", "32x32/places", "48x48/places"];
+        let mut index = format!("[Icon Theme]\nName=Flat\nDirectories={}\n", dirs.join(","));
+        for (d, px) in dirs.iter().zip([16, 32, 48]) {
+            index += &format!("\n[{d}]\nSize={px}\nType=Fixed\n");
+            std::fs::create_dir_all(theme.join(d)).unwrap();
+            for (name, argb) in [
+                ("folder", FOLDER),
+                ("text-x-generic", TEXT),
+                ("image-x-generic", PICTURE),
+            ] {
+                png(&theme.join(d).join(format!("{name}.png")), px, px, argb);
+            }
+        }
+        std::fs::write(theme.join("index.theme"), index).unwrap();
+        IconCache::new(reprisekit::icontheme::IconTheme::load("flat", &[root]))
+    }
+
+    /// `t` holds a folder, a 2 KB text file and a 40x30 picture.
+    fn pictures_folder() -> tempfile::TempDir {
+        let t = tempfile::tempdir().unwrap();
+        let dir = t.path().join("list");
+        std::fs::create_dir_all(dir.join("sub")).unwrap();
+        std::fs::write(dir.join("notes.txt"), [b'x'; 2048]).unwrap();
+        png(&dir.join("pic.png"), 40, 30, PIXELS);
+        t
+    }
+
+    fn open_dlg(h: &mut Host) -> FileDlg {
+        h.icons.dialog(Fields {
+            title: "Open".into(),
+            accept_label: "Open".into(),
+            filters: vec!["All Files".into()],
+            mode: DlgMode::Open,
+            multiple: false,
+        })
+    }
+
+    fn entry<'a>(dlg: &'a FileDlg, name: &str) -> &'a Entry {
+        dlg.entries().iter().find(|e| e.name == name).expect(name)
+    }
+
+    fn colour(icon: &Option<std::rc::Rc<Canvas>>) -> Option<(u32, u32)> {
+        icon.as_ref()
+            .map(|c| (c.width, c.get(c.width as i32 / 2, c.height as i32 / 2)))
+    }
+
+    /// Picks `mode` from Views the way a click does.
+    fn view(h: &mut Host, dlg: &mut FileDlg, mode: Mode) {
+        let i = [
+            Mode::Thumbnails,
+            Mode::Tiles,
+            Mode::Icons,
+            Mode::List,
+            Mode::Details,
+        ]
+        .iter()
+        .position(|m| *m == mode)
+        .unwrap();
+        let (w, ht) = dlg.client();
+        let r = Rect::new(0, 0, w, ht);
+        dlg.click(r, Some(Hit::ToolBar(3)), Mods::default());
+        dlg.click(r, Some(Hit::ViewsItem(i)), Mods::default());
+        h.ask_thumbs(dlg);
+    }
+
+    /// Wakes the host until the worker's thumbnails are in.
+    fn settle_thumbs(h: &mut Host, dlg: &mut FileDlg) {
+        let text = TextRenderer::load(&reprisekit::theme::FontConfig::default());
+        for _ in 0..500 {
+            if matches!(
+                h.event(dlg, &Event::Wake, &text, 11, CLIENT, &Metrics::default()),
+                Step::Redraw
+            ) {
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        panic!("no thumbnail arrived");
+    }
+
+    fn thumbs_without_cache(h: &mut Host) {
+        h.thumbs = Some(Thumbs::new(
+            std::sync::Arc::new(crate::decode::Decoders::default_set()),
+            thumbs::FRAME_INNER,
+            None,
+            crate::Waker::noop(),
+        ));
+    }
+
+    #[test]
+    fn a_listing_gives_entries_their_icons_at_every_size_and_tiles_lines() {
+        let t = pictures_folder();
+        let mut icons = flat_icons(t.path());
+        let mut h = host_in(&t.path().join("list"));
+        let mut dlg = open_dlg(&mut h);
+        h.ensure_listed(&mut dlg, &mut icons, &|_| true);
+        let sizes = |e: &Entry| [&e.icon, &e.icon32, &e.icon48].map(colour);
+        let folder = entry(&dlg, "sub");
+        assert_eq!(
+            sizes(folder),
+            [Some((16, FOLDER)), Some((32, FOLDER)), Some((48, FOLDER))]
+        );
+        assert!(folder.detail.is_empty(), "a folder's tile names it alone");
+        let notes = entry(&dlg, "notes.txt");
+        assert_eq!(
+            sizes(notes),
+            [Some((16, TEXT)), Some((32, TEXT)), Some((48, TEXT))]
+        );
+        assert_eq!(notes.detail, [notes.kind.clone(), "2 KB".into()]);
+        let pic = entry(&dlg, "pic.png");
+        assert_eq!(
+            sizes(pic),
+            [
+                Some((16, PICTURE)),
+                Some((32, PICTURE)),
+                Some((48, PICTURE))
+            ]
+        );
+        assert!(pic.thumb.is_none(), "no thumbnail before it is decoded");
+        assert_eq!(pic.detail[0], pic.kind);
+    }
+
+    #[test]
+    fn tiles_and_thumbnails_show_a_pictures_thumbnail_and_size() {
+        let t = pictures_folder();
+        let mut icons = flat_icons(t.path());
+        let mut h = host_in(&t.path().join("list"));
+        thumbs_without_cache(&mut h);
+        let mut dlg = open_dlg(&mut h);
+        h.ensure_listed(&mut dlg, &mut icons, &|_| true);
+        assert!(!h.pictures.asked, "List decodes nothing");
+        view(&mut h, &mut dlg, Mode::Tiles);
+        assert!(h.pictures.asked);
+        settle_thumbs(&mut h, &mut dlg);
+        let pic = entry(&dlg, "pic.png");
+        let thumb = pic.thumb.as_ref().expect("the picture's thumbnail");
+        assert_eq!((thumb.width, thumb.height), (40, 30), "never upscaled");
+        assert_eq!(thumb.get(20, 15), PIXELS);
+        assert_eq!(pic.detail, ["40 x 30".to_string(), pic.kind.clone()]);
+        assert!(entry(&dlg, "notes.txt").thumb.is_none());
+    }
+
+    /// Where a colour lands in the drawn dialog: its bounding box.
+    fn found(c: &Canvas, argb: u32) -> Option<Rect> {
+        let mut hit: Option<(i32, i32, i32, i32)> = None;
+        for y in 0..c.height as i32 {
+            for x in 0..c.width as i32 {
+                if c.get(x, y) == argb {
+                    let b = hit.get_or_insert((x, y, x, y));
+                    *b = (b.0.min(x), b.1.min(y), b.2.max(x), b.3.max(y));
+                }
+            }
+        }
+        hit.map(|(l, t, r, b)| Rect::new(l, t, r - l + 1, b - t + 1))
+    }
+
+    fn drawn(dlg: &FileDlg) -> Canvas {
+        let (w, h) = dlg.client();
+        let mut c = Canvas::new(w as u32, h as u32);
+        let theme = reprisekit::theme::Theme::default();
+        let text = TextRenderer::load(&theme.fonts);
+        dlg.draw(
+            &mut c,
+            &text,
+            &theme.paint(),
+            Rect::new(0, 0, w, h),
+            theme.fonts.size_px,
+        );
+        c
+    }
+
+    #[test]
+    fn the_dialog_draws_tiles_icons_and_thumbnails_pictures() {
+        let t = pictures_folder();
+        let mut icons = flat_icons(t.path());
+        let mut h = host_in(&t.path().join("list"));
+        thumbs_without_cache(&mut h);
+        let mut dlg = open_dlg(&mut h);
+        h.ensure_listed(&mut dlg, &mut icons, &|_| true);
+        view(&mut h, &mut dlg, Mode::Tiles);
+        let tiles = drawn(&dlg);
+        for argb in [FOLDER, TEXT, PICTURE] {
+            let r = found(&tiles, argb).expect("a 48 px icon");
+            assert_eq!((r.width, r.height), (48, 48));
+        }
+        let mut bare = dlg.clone();
+        for e in bare.entries_mut() {
+            e.detail.clear();
+        }
+        assert_ne!(drawn(&bare), tiles, "the kind and size lines are drawn");
+        settle_thumbs(&mut h, &mut dlg);
+        assert!(
+            found(&drawn(&dlg), PICTURE).is_some(),
+            "Tiles keeps the icon"
+        );
+        view(&mut h, &mut dlg, Mode::Thumbnails);
+        let thumbnails = drawn(&dlg);
+        let pic = found(&thumbnails, PIXELS).expect("the picture");
+        assert_eq!((pic.width, pic.height), (40, 30), "at its own size");
+        assert!(
+            found(&thumbnails, PICTURE).is_none(),
+            "the picture stands for its icon"
+        );
+        let r = found(&thumbnails, TEXT).expect("a 32 px icon");
+        assert_eq!((r.width, r.height), (32, 32));
     }
 }

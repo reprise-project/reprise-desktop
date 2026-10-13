@@ -9319,15 +9319,11 @@ mod tests {
             .unwrap_or_else(|_| std::env::temp_dir());
         let mut picker = crate::filepick::FilePicker::run_command(
             &dir,
-            crate::filepick::Icons {
-                file: icons.get("application-x-executable", 16),
-                document: icons.get("text-x-generic", 16),
-                ..crate::filepick::common_icons(&mut icons)
-            },
+            crate::filepick::icons(&mut icons),
             true,
         );
         for r in picker.take_requests() {
-            picker.reply(r.run());
+            picker.reply(r.run(), &mut icons);
         }
         let d = Dialog::browse(picker);
         let l = DialogLayout::compute(&theme, &text, &d);

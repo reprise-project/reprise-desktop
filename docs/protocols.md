@@ -78,7 +78,8 @@ compositor drops them.
 - **GlobalShortcuts**
 - **Access**, the generic permission prompt
 - **FileChooser** and **AppChooser:** Reprise's own Open, Save and Open With
-  dialogs
+  dialogs. Their Tiles and Thumbnails views show pictures as Explorer does,
+  from the same thumbnail cache
 - **Notification**
 - **Inhibit:** idle, suspend and log off
 

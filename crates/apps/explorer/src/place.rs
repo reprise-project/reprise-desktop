@@ -40,15 +40,6 @@ fn documents() -> Option<PathBuf> {
         .clone()
 }
 
-/// The folders a listing gives their own icon: home (`user-home`) and the
-/// document folders (`reprisefs::places::document_dir_paths`).
-pub fn special_folders() -> Vec<(PathBuf, &'static str)> {
-    let mut out: Vec<(PathBuf, &'static str)> =
-        home().map(|h| (h, "user-home")).into_iter().collect();
-    out.extend(reprisefs::places::document_dir_paths());
-    out
-}
-
 /// The real folders that stand for a shell place.
 pub struct Specials<'a> {
     pub home: &'a Path,
@@ -601,7 +592,7 @@ mod tests {
         assert_eq!(Place::Home.icon_name(), "user-home");
         // A listing shows the home folder with Home's icon too.
         assert_eq!(
-            special_folders().first(),
+            reprisefs::places::special_folders().first(),
             super::home().map(|h| (h, "user-home")).as_ref()
         );
     }

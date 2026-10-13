@@ -21,19 +21,19 @@ mod props_dialog;
 mod props_host;
 mod rename;
 mod settings;
-mod thumbs;
 mod tree;
 mod volumes;
 mod watch;
 mod window;
 
 use dialogs::{DIALOG, Dialog, PROGRAM_BROWSE};
-use icons::{chrome_icon, entry_icon_name};
+use icons::chrome_icon;
 use menus::MenuState;
 use place::{Listed, Place, list, sort_order_grouped};
 use props_dialog::{PROPS, Props};
 use repriseapp::decode::Decoders;
 use repriseapp::keys::AltArm;
+use repriseapp::thumbs::{self, Thumbs};
 use repriseapp::{
     App, BTN_LEFT, BTN_RIGHT, Child, Ctx, DropForm, Event, FileDrop, MAIN, PointerInput, Reply,
     WinId,
@@ -50,6 +50,7 @@ use reprisekit::controls::statusbar::{self, StatusBar};
 use reprisekit::controls::taskpane::TaskPane;
 use reprisekit::controls::toolbar::ToolBar;
 use reprisekit::controls::treeview::{Style, TreeView};
+use reprisekit::icontheme::ListingIcons;
 use reprisekit::look::widgets::item;
 use reprisekit::pointer::DoubleClick;
 use reprisekit::raster::{Canvas, Rect};
@@ -61,7 +62,6 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
-use thumbs::Thumbs;
 use watch::Watch;
 use window::Popup;
 
@@ -238,7 +238,11 @@ impl Explorer {
         ctx: &mut Ctx,
     ) -> Explorer {
         let (jobs_tx, jobs_rx) = std::sync::mpsc::channel();
-        let thumb_cache = thumbs::open_cache(&settings.thumbnail_cache);
+        let thumb_cache = settings
+            .thumbnail_cache
+            .enabled
+            .then(|| thumbs::open_cache(settings.thumbnail_cache.max_bytes()))
+            .flatten();
         let thumb_size = settings.thumbnail_size;
         let drives = reprisefs::places::drives();
         let mut sv = ShellView {
@@ -267,7 +271,7 @@ impl Explorer {
             volume_changes: None,
             udisks,
             globs: Arc::new(reprisefs::apps::mime_globs()),
-            specials: place::special_folders(),
+            specials: reprisefs::places::special_folders(),
             bar: menus::menu_bar(&MenuState::default()),
             toolbar: ToolBar {
                 items: Vec::new(),
@@ -481,10 +485,10 @@ impl Explorer {
         );
         self.set_columns(&place);
         let is_12h = reprisefs::locale::is_12h();
-        // Resolved up front: `pick_icon` asks what the theme carries, and the cache below wants it mutable.
+        // Resolved up front: `item_icon` asks what the theme carries, and the icons below want the cache mutable.
         let names: Vec<String> = items
             .iter()
-            .map(|it| entry_icon_name(it, &self.specials, &|n| ctx.icons.has(n)))
+            .map(|it| reprisefs::icons::item_icon(it, &self.specials, &|n| ctx.icons.has(n)))
             .collect();
         // A re-listing of the same place keeps the thumbnails of unchanged images,
         // so a download finishing in a picture folder doesn't redecode the rest.
@@ -496,27 +500,19 @@ impl Explorer {
                 }
             }
         }
-        let mut cache: HashMap<(String, i32), Option<std::rc::Rc<Canvas>>> = HashMap::new();
+        let mut icons = ListingIcons::default();
         self.sv.hot = None;
         self.sv.entries = items
             .iter()
             .enumerate()
             .map(|(i, it)| {
-                let name = names[i].clone();
-                // One canvas per (name, size) for the listing, shared by refcount.
-                let mut pick = |px: i32| -> Option<std::rc::Rc<Canvas>> {
-                    let key = (name.clone(), px);
-                    cache
-                        .entry(key)
-                        .or_insert_with(|| ctx.icons.get(&name, px).map(std::rc::Rc::new))
-                        .clone()
-                };
-                Entry {
+                let [icon, icon32, icon48] = icons.get(&mut ctx.icons, &names[i]);
+                let mut e = Entry {
                     id: i as u64,
                     name: it.label().to_string(),
-                    icon: pick(16),
-                    icon32: pick(32),
-                    icon48: pick(48),
+                    icon,
+                    icon32,
+                    icon48,
                     // Thumbnails arrive later from the `thumbs` worker, or are carried over below.
                     thumb: None,
                     is_dir: it.is_dir,
@@ -529,7 +525,7 @@ impl Explorer {
                         .map(|s| reprisefs::listing::date_text(s, is_12h))
                         .unwrap_or_default(),
                     mtime: it.modified,
-                    detail: window::tile_detail(it),
+                    detail: Vec::new(),
                     folder: if let Some(t) = &it.trashed {
                         t.original
                             .parent()
@@ -544,7 +540,9 @@ impl Explorer {
                         .and_then(|t| t.deleted)
                         .map(|s| reprisefs::listing::date_text(s, is_12h))
                         .unwrap_or_default(),
-                }
+                };
+                e.detail = shellview::tile_detail(&e);
+                e
             })
             .collect();
         let mut dims = HashMap::new();
@@ -557,7 +555,7 @@ impl Explorer {
             };
             if (size, modified) == (it.size, it.modified) {
                 e.thumb = Some(thumb);
-                e.detail = crate::thumbs::image_detail(d, &it.kind);
+                e.detail = shellview::image_detail(d, &it.kind);
                 dims.insert(it.path.clone(), d);
             }
         }

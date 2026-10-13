@@ -2263,6 +2263,7 @@ dependencies = [
  "reprisefs",
  "reprisekit",
  "smithay-client-toolkit",
+ "tempfile",
  "wayland-client",
  "zeroize",
 ]

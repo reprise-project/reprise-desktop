@@ -1467,22 +1467,13 @@ impl State {
         self.apply_dialog(outcome);
     }
 
-    /// Icons of a Browse dialog picking a program: a program's for files the filter shows, a document's behind All Files.
-    fn program_icons(&mut self) -> crate::filepick::Icons {
-        crate::filepick::Icons {
-            file: self.icons.get("application-x-executable", 16),
-            document: self.icons.get("text-x-generic", 16),
-            ..crate::filepick::common_icons(&mut self.icons)
-        }
-    }
-
     /// Run's Browse...: on the home folder, in the corner by the Start button, 3 px in from the screen edge.
     fn browse_run(&mut self) {
         let start = std::env::var_os("HOME")
             .map(std::path::PathBuf::from)
             .filter(|p| p.is_dir())
             .unwrap_or_else(|| std::path::PathBuf::from("/"));
-        let icons = self.program_icons();
+        let icons = crate::filepick::icons(&mut self.icons);
         let picker =
             crate::filepick::FilePicker::run_command(&start, icons, self.config.recent_files);
         let mut d = Dialog::browse(picker);
@@ -1500,7 +1491,7 @@ impl State {
 
     /// The Open With chooser's Browse...: "Open With..." on `/usr/bin`, cascaded 3 px right and 22 px below the chooser.
     fn browse_program(&mut self) {
-        let icons = self.program_icons();
+        let icons = crate::filepick::icons(&mut self.icons);
         let picker = crate::filepick::FilePicker::program(
             std::path::Path::new("/usr/bin"),
             icons,
@@ -1620,7 +1611,7 @@ impl State {
         let Some(p) = self.dialogs.views[i].dialog.picker_mut() else {
             return;
         };
-        match p.reply(reply) {
+        match p.reply(reply, &mut self.icons) {
             Outcome::Nothing => {}
             Outcome::Redraw => self.redraw_dialog(i),
             pick => {

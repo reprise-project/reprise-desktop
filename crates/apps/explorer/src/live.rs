@@ -61,7 +61,7 @@ impl Explorer {
             .items
             .iter()
             .zip(&self.sv.entries)
-            .filter(|(it, e)| is_image(it) && e.thumb.is_none())
+            .filter(|(it, e)| it.is_image() && e.thumb.is_none())
             .map(|(it, _)| it.path.clone())
             .collect();
         for path in wanted {
@@ -92,8 +92,10 @@ impl Explorer {
             let kind = self.items[i].kind.clone();
             if let Some(e) = self.sv.entries.get_mut(i) {
                 let scale = ctx.icons.scale();
-                e.thumb = Some(crate::thumbs::for_display(done.thumb, done.dims, scale));
-                e.detail = crate::thumbs::image_detail(done.dims, &kind);
+                e.thumb = Some(repriseapp::thumbs::for_display(
+                    done.thumb, done.dims, scale,
+                ));
+                e.detail = shellview::image_detail(done.dims, &kind);
             }
             arrived.push(done.path);
             dirty = true;
@@ -313,7 +315,7 @@ impl Explorer {
     /// no thumbnail. Each image is asked for once per listing; the answer
     /// rewrites a tip already up and the pane.
     pub(crate) fn read_dims(&mut self, i: usize, ctx: &Ctx) {
-        let Some(it) = self.items.get(i).filter(|it| is_image(it)) else {
+        let Some(it) = self.items.get(i).filter(|it| it.is_image()) else {
             return;
         };
         if self.image_dims.contains_key(&it.path) || !self.dims_asked.insert(it.path.clone()) {
@@ -403,10 +405,6 @@ fn tip_reads_folder(it: &Item) -> bool {
     it.is_folder() && it.drive.is_none()
 }
 
-fn is_image(it: &Item) -> bool {
-    !it.is_dir && it.mime.as_deref().is_some_and(|m| m.starts_with("image/"))
-}
-
 /// The first [`reprisefs::imagesize::HEAD_BYTES`] of `path`, where an image states its size.
 fn read_head(path: &std::path::Path) -> Option<Vec<u8>> {
     use std::io::Read;
@@ -424,8 +422,8 @@ mod tests {
     use super::*;
     use crate::place::Place;
     use crate::tests::test_ctx;
-    use crate::thumbs::Done;
     use repriseapp::KeyInput;
+    use repriseapp::thumbs::Done;
     use reprisekit::raster::Canvas;
 
     /// One image (by name; nothing decodes it), one text file and one subfolder, in Thumbnails.
@@ -465,9 +463,9 @@ mod tests {
         let mut ctx = test_ctx();
         let (_dir, ex) = explorer(&mut ctx);
         let by = |name: &str| &ex.items[index_of(&ex, name)];
-        assert!(is_image(by("a.png")));
-        assert!(!is_image(by("b.txt")));
-        assert!(!is_image(by("sub")));
+        assert!(by("a.png").is_image());
+        assert!(!by("b.txt").is_image());
+        assert!(!by("sub").is_image());
     }
 
     /// A tick after `HOVER` on the hovered entry.

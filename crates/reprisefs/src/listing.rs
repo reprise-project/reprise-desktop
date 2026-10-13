@@ -52,6 +52,15 @@ impl Item {
     pub fn is_folder(&self) -> bool {
         self.is_dir && !self.is_link
     }
+
+    /// A file whose MIME type is a picture: Thumbnails and Tiles decode it.
+    pub fn is_image(&self) -> bool {
+        !self.is_dir
+            && self
+                .mime
+                .as_deref()
+                .is_some_and(|m| m.starts_with("image/"))
+    }
 }
 
 /// Everything in `dir`, folders ([`Item::is_folder`]) first then
@@ -141,17 +150,11 @@ fn item_with(p: &Path, is_link: bool, listed: &hidden::Listed, globs: &MimeDb) -
     }
 }
 
+/// A file dialog's listed item and its Date Modified text.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Row {
-    pub name: String,
-    pub path: PathBuf,
-    pub is_dir: bool,
-    pub is_link: bool,
-    pub exec: bool,
-    pub size: u64,
-    pub kind: String,
+    pub item: Item,
     pub modified: String,
-    pub mtime: Option<i64>,
 }
 
 /// `dir` as a file dialog lists it: [`read_dir`]'s order, hidden entries
@@ -185,16 +188,12 @@ fn rows(items: Vec<Item>, mut keep: impl FnMut(&Item) -> bool) -> Vec<Row> {
     items
         .into_iter()
         .filter(|i| !i.hidden && keep(i))
-        .map(|i| Row {
-            modified: i.modified.map(|s| date_text(s, is_12h)).unwrap_or_default(),
-            mtime: i.modified,
-            name: i.name,
-            path: i.path,
-            is_dir: i.is_dir,
-            is_link: i.is_link,
-            exec: i.exec,
-            size: i.size,
-            kind: i.kind,
+        .map(|item| Row {
+            modified: item
+                .modified
+                .map(|s| date_text(s, is_12h))
+                .unwrap_or_default(),
+            item,
         })
         .collect()
 }
@@ -397,9 +396,9 @@ mod tests {
         let rows = dialog_rows(t.path(), &MimeDb::empty(), |i| {
             i.is_dir || i.name.ends_with(".txt")
         });
-        let names: Vec<&str> = rows.iter().map(|r| r.name.as_str()).collect();
+        let names: Vec<&str> = rows.iter().map(|r| r.item.name.as_str()).collect();
         assert_eq!(names, ["dir", "b.txt"]);
-        assert_eq!(rows[1].path, t.path().join("b.txt"));
+        assert_eq!(rows[1].item.path, t.path().join("b.txt"));
         assert!(!rows[1].modified.is_empty(), "a file's date is formatted");
     }
     #[test]
@@ -419,7 +418,7 @@ mod tests {
         });
         let got: Vec<(&str, &Path)> = rows
             .iter()
-            .map(|r| (r.name.as_str(), r.path.as_path()))
+            .map(|r| (r.item.name.as_str(), r.item.path.as_path()))
             .collect();
         assert_eq!(got, [("notes.txt", new.as_path())]);
     }
