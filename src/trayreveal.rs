@@ -46,16 +46,6 @@ pub fn hidden(state: &State) -> usize {
     }
 }
 
-/// How wide a run opens fully under the current look, in logical px: 0
-/// in a look without the arrow or with nothing hidden.
-fn full_width(state: &State) -> i32 {
-    if arrow_look(state) {
-        reprisekit::taskbar::reveal_width(&state.config.theme.taskbar_shape(), hidden(state))
-    } else {
-        0
-    }
-}
-
 /// How many hidden cells a bar draws with its run opened `reveal` px, of
 /// `hidden`: whole cells inside the run along a Bottom or Top bar, every
 /// one of them on a side bar once the run is open at all. The tray's
@@ -69,8 +59,9 @@ pub fn cells(side: bool, shape: &TaskbarShape, hidden: usize, reveal: i32) -> us
 }
 
 /// Keep a run in step with the hidden items: an open run shuts at once
-/// when `full` is 0 (nothing hidden, overflow off, a look without the
-/// arrow), and otherwise heads for `full` as items come and go. Returns
+/// when `full` is 0 (nothing hidden, no room, overflow off, a look without
+/// the arrow), drops at once to a `full` it is past, since the layout
+/// draws no more than `full`, and otherwise slides on to `full`. Returns
 /// whether the run moves on from `now`.
 fn follow(open: &mut bool, slide: &mut Slide, full: i32, now: Instant) -> bool {
     if !*open {
@@ -82,7 +73,11 @@ fn follow(open: &mut bool, slide: &mut Slide, full: i32, now: Instant) -> bool {
         return false;
     }
     let target = slide.x(now) - slide.offset(now);
-    if target != full {
+    if slide.x(now) >= full {
+        if target != full || !slide.settled(now) {
+            *slide = Slide::at(full);
+        }
+    } else if target != full {
         slide.retarget(full, now);
     }
     !slide.settled(now)
@@ -166,11 +161,10 @@ pub fn toggle(state: &mut State, tree: TreeId) {
 }
 
 fn set(state: &mut State, tree: TreeId, open: bool) {
-    let full = full_width(state);
-    let Some(side) = state
-        .bar(tree)
-        .map(|b| state.bar_placement(&b.output).edge.is_side())
-    else {
+    let Some((full, side)) = state.bar(tree).map(|b| {
+        let side = state.bar_placement(&b.output).edge.is_side();
+        (b.layout.run_width, side)
+    }) else {
         return;
     };
     let ms = if side { 0 } else { SLIDE_MS };
@@ -204,15 +198,15 @@ pub fn collapse_all(state: &mut State) {
     }
 }
 
-/// How far `bar`'s run is open at `now`, in logical px, as its draw lays
-/// it out. Follows the hidden items (see [`follow`]). `bar` is out of
+/// Keep `bar`'s run heading for the width its new layout opens fully
+/// (`TaskbarLayout::run_width`, see [`follow`]), so a run capped by the
+/// bar's room stops sliding where its cells stop. `bar` is out of
 /// `state.bars` while it draws.
-pub fn frame(state: &mut State, bar: &mut Bar, now: Instant) -> i32 {
-    let full = full_width(state);
+pub fn follow_layout(state: &mut State, bar: &mut Bar, now: Instant) {
+    let full = bar.layout.run_width;
     if follow(&mut bar.tray_open, &mut bar.tray_reveal, full, now) {
         arm_tick(state);
     }
-    bar.tray_reveal.x(now).clamp(0, full)
 }
 
 /// What the idle timers do as the pointer goes from the notification
@@ -456,16 +450,34 @@ mod tests {
     }
 
     #[test]
-    fn an_open_run_heads_for_the_new_width_as_items_come_and_go() {
+    fn an_open_run_slides_on_to_a_wider_run_as_items_come() {
+        let now = Instant::now();
+        let mut open = true;
+        let mut slide = opened(40, now);
+        assert!(follow(&mut open, &mut slide, 60, now));
+        assert!(open);
+        assert_eq!(slide.x(now), 40, "the run moves on from where it is drawn");
+        assert_eq!(slide.offset(now), -20, "the run heads for 60 px");
+        let later = now + Duration::from_millis(u64::from(SLIDE_MS));
+        assert_eq!(slide.x(later), 60);
+    }
+
+    #[test]
+    fn a_run_past_its_width_settles_there_at_once() {
         let now = Instant::now();
         let mut open = true;
         let mut slide = opened(60, now);
-        assert!(follow(&mut open, &mut slide, 40, now));
+        assert!(!follow(&mut open, &mut slide, 40, now), "items went");
         assert!(open);
-        assert_eq!(slide.x(now), 60, "the run moves on from where it is drawn");
-        assert_eq!(slide.offset(now), 20, "the run heads for 40 px");
-        let later = now + Duration::from_millis(u64::from(SLIDE_MS));
-        assert_eq!(slide.x(later), 40);
+        assert_eq!(slide.x(now), 40);
+        assert!(slide.settled(now));
+        let mut slide = Slide::new(0, 600, now - Duration::from_millis(50), SLIDE_MS, Ease::Out);
+        assert!(slide.x(now) > 100);
+        assert!(
+            !follow(&mut open, &mut slide, 100, now),
+            "a run opening past the bar's room stops at it"
+        );
+        assert_eq!(slide.x(now), 100);
     }
 
     #[test]
