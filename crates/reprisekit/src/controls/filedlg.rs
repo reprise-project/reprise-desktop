@@ -1291,6 +1291,11 @@ impl FileDlg {
         {
             return Event::Redraw;
         }
+        // Hosts send Left, Right, Home and End as edit keys, which only the File name field edits with.
+        let key = match key {
+            form::Key::Edit(ek) => form::flat_key(&ek).unwrap_or(form::Key::Edit(ek)),
+            k => k,
+        };
         let dir = match key {
             form::Key::Up => IconMove::Up,
             form::Key::Down => IconMove::Down,
@@ -3378,6 +3383,37 @@ mod tests {
         assert_eq!(key(&mut d, form::Key::Down), Some(3));
         assert_eq!(key(&mut d, form::Key::Up), Some(1));
         assert_eq!(key(&mut d, form::Key::Up), Some(1));
+    }
+
+    /// Left, Right, Home and End arrive as edit keys and walk the view's cells as the arrows do.
+    #[test]
+    fn edit_arrow_keys_walk_the_icon_view() {
+        let mut d = multi(DlgMode::Open, false);
+        let names: Vec<String> = (0..12).map(|i| format!("f{i:02}.txt")).collect();
+        d.set_listing(folder(1, None, names.iter().map(|n| file(n)).collect()));
+        d.shell.set_mode(Mode::Icons);
+        d.focus = Focus::Shell;
+        d.shell.selection.set_only(Some(0));
+        let mut key = |k: EditKey| {
+            d.key(R, form::Key::Edit(k), None, Mods::default());
+            d.shell.selection.focus
+        };
+        assert_eq!(
+            key(EditKey::Right {
+                select: false,
+                word: false
+            }),
+            Some(1)
+        );
+        assert_eq!(
+            key(EditKey::Left {
+                select: false,
+                word: false
+            }),
+            Some(0)
+        );
+        assert_eq!(key(EditKey::End { select: false }), Some(11));
+        assert_eq!(key(EditKey::Home { select: false }), Some(0));
     }
 
     #[test]
