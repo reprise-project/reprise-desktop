@@ -6,7 +6,7 @@ use crate::access::{self, Tree, accesskit};
 use crate::classic::widgets::{BarHit, ScrollParts, bar_hit, scrollbar_parts};
 use crate::controls::form;
 use crate::controls::metrics::ControlMetrics;
-use crate::controls::scrollbar::{ThumbDrag, held};
+use crate::controls::scrollbar::{ArrowRepeat, ThumbDrag, held};
 use crate::controls::tabstrip::TabStrip;
 use crate::look::Paint;
 use crate::look::widgets::item::{self, Mark};
@@ -15,7 +15,7 @@ use crate::pointer::{Axis, Interaction, Pointer, ScrollHit};
 use crate::raster::{Canvas, Rect};
 use crate::text::{Align, TextRenderer};
 use accesskit::{NodeId, Role};
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 pub const WIDTH: i32 = 140;
 /// The list's left edge to the page's: the list, then the sheet's 6 px
@@ -41,15 +41,8 @@ pub struct PageList {
     pub top: i32,
     pub drag: ThumbDrag,
     pub bars: Pointer<ScrollHit>,
-    /// The held arrow's next step: `Some(None)` from the press until the
-    /// first tick sets its time.
-    repeat: Option<Option<Instant>>,
+    repeat: ArrowRepeat,
 }
-
-/// How long an arrow is held before it steps again, from the first tick
-/// after the press (a host ticks every 50 ms or so).
-pub const REPEAT_AFTER: Duration = Duration::from_millis(350);
-pub const REPEAT_EVERY: Duration = Duration::from_millis(50);
 
 impl PageList {
     /// `groups` are the headings in order, each with its pages' labels;
@@ -69,7 +62,7 @@ impl PageList {
             top: 0,
             drag: ThumbDrag::default(),
             bars: Pointer::new(),
-            repeat: None,
+            repeat: ArrowRepeat::default(),
         }
     }
 
@@ -114,7 +107,7 @@ impl PageList {
     /// grabbed. The part draws pressed. True when the rows moved.
     pub fn bar_press(&mut self, hit: BarHit, lay: &Layout) -> bool {
         self.bars.press(hit.part(), matches!(hit, BarHit::Thumb(_)));
-        self.repeat = matches!(hit, BarHit::Back | BarHit::Forward).then_some(None);
+        self.repeat.press(hit);
         let by = self.drag.press(Axis::Vertical, hit);
         let dy = by.by(lay.row_h as i64, lay.inner.height as i64) as i32;
         self.scroll(dy, lay)
@@ -136,31 +129,23 @@ impl PageList {
     /// part under the pointer turns lit. True when what draws changed.
     pub fn bar_release(&mut self) -> bool {
         self.drag.release();
-        self.repeat = None;
+        self.repeat.release();
         let before = self.bars.lit();
         self.bars.release();
         self.bars.lit() != before
     }
 
     pub fn repeating(&self) -> bool {
-        self.repeat.is_some()
+        self.repeat.held()
     }
 
     /// A host tick at `now` with an arrow held: the first sets when it
-    /// repeats; from then the arrow steps a row every `REPEAT_EVERY`
+    /// repeats; from then the arrow steps a row every [`REPEAT_EVERY`](crate::controls::scrollbar::REPEAT_EVERY)
     /// while the pointer is on it. True when the rows moved.
     pub fn bar_tick(&mut self, now: Instant, lay: &Layout) -> bool {
-        let Some(at) = self.repeat else {
-            return false;
-        };
-        let Some(at) = at else {
-            self.repeat = Some(Some(now + REPEAT_AFTER));
-            return false;
-        };
-        if now < at {
+        if !self.repeat.due(now) {
             return false;
         }
-        self.repeat = Some(Some(now + REPEAT_EVERY));
         let dy = match self.bars.lit() {
             Some((ScrollHit::Back, Interaction::Pressed)) => -lay.row_h,
             Some((ScrollHit::Forward, Interaction::Pressed)) => lay.row_h,
@@ -428,9 +413,11 @@ pub fn access(
 mod tests {
     use super::*;
     use crate::access::ROOT;
+    use crate::controls::scrollbar::{REPEAT_AFTER, REPEAT_EVERY};
     use crate::interface::Interface;
     use crate::interfaces::theme_for;
     use crate::theme::{Color, FontConfig, Theme};
+    use std::time::Duration;
 
     const GROUPS: &[(&str, &[&str])] =
         &[("Look", &["Night Light", "Effects"]), ("Input", &["Mouse"])];

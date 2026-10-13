@@ -101,13 +101,23 @@ pub fn form_clipboard(focused: Option<form::FocusedEdit>, ev: &Event) -> Reply {
 /// and Ctrl+Page Down turning the page ([`propsheet::page_step`]), a left press
 /// hit-tested and clicked, motion tracked, a release released, Leave clearing
 /// what the pointer lit, a drop on a field ([`crate::fielddrop`]) heard as the
-/// open page's. `None` is an event the host answers itself. First the sheet fits the
-/// window's height ([`PropSheet::fit_height`]): a window cut short scrolls the page.
+/// open page's, a tick stepping a held scrollbar arrow. `None` is an event the host answers
+/// itself. First the sheet fits the window's height ([`PropSheet::fit_height`]): a window cut
+/// short scrolls the page. While an arrow is held the host keeps ticking ([`Ctx::want_tick`]).
 pub fn sheet_input(sheet: &mut PropSheet, ev: &Event, ctx: &Ctx) -> Option<propsheet::Event> {
+    let out = sheet_event(sheet, ev, ctx);
+    if sheet.ticking() {
+        ctx.want_tick.set(true);
+    }
+    out
+}
+
+fn sheet_event(sheet: &mut PropSheet, ev: &Event, ctx: &Ctx) -> Option<propsheet::Event> {
     let u = ctx.form_units();
     sheet.fit_height(u.within(ctx.size.1 - sheet.origin().1));
     let px = sheet.open().units().px(ctx.theme.fonts.size_px);
     Some(match ev {
+        Event::Tick if sheet.ticking() => sheet.tick(std::time::Instant::now()),
         Event::Key(k) => {
             let ctrl_tab = propsheet::page_step(k.sym, k.mods.ctrl, k.mods.shift);
             sheet.key(form_key(k)?, ctrl_tab)
@@ -212,6 +222,74 @@ mod tests {
         assert!(!AltArm::default().release_alt());
     }
 
+    /// A held page arrow asks the host for ticks, and a tick steps it once it repeats.
+    #[test]
+    fn a_held_page_arrow_keeps_the_window_ticking() {
+        use reprisekit::controls::form::Item;
+        use reprisekit::controls::propsheet::{self, PropSheet};
+        use reprisekit::raster::Rect;
+        let ctx = Ctx {
+            theme: reprisekit::theme::Theme::default(),
+            text: reprisekit::text::TextRenderer::load(&reprisekit::theme::FontConfig::default()),
+            icons: reprisekit::icontheme::IconCache::new(reprisekit::icontheme::IconTheme::load(
+                "test",
+                &[],
+            )),
+            caret_on: true,
+            size: (398, 300),
+            maximized: false,
+            origin: (0, 0),
+            wake: crate::Waker::noop(),
+            heads: Default::default(),
+            want_tick: Default::default(),
+            text_size: 100,
+        };
+        let page = Form::new(vec![Item::label("l", Rect::new(20, 50, 100, 13), "Label")]);
+        let mut sheet = PropSheet::new(&["General"], vec![page], (398, 424));
+        let _ = sheet_input(&mut sheet, &Event::Pointer(PointerInput::Leave), &ctx);
+        assert!(!ctx.want_tick.take());
+        let bar = sheet.layout(&ctx.text, 11).bar.expect("the page scrolls");
+        let (x, y) = (bar.x + 2, bar.bottom() - 3);
+        let press = Event::Pointer(PointerInput::Press {
+            x,
+            y,
+            button: BTN_LEFT,
+            time: 0,
+            mods: crate::Mods::default(),
+        });
+        let _ = sheet_input(
+            &mut sheet,
+            &Event::Pointer(PointerInput::Motion { x, y }),
+            &ctx,
+        );
+        assert_eq!(
+            sheet_input(&mut sheet, &press, &ctx),
+            Some(propsheet::Event::Redraw)
+        );
+        assert!(ctx.want_tick.take(), "the press asks for a tick");
+        let stepped = sheet.page_offset().1;
+        let _ = sheet_input(&mut sheet, &Event::Tick, &ctx);
+        assert!(ctx.want_tick.take(), "and each tick for the next");
+        std::thread::sleep(reprisekit::controls::scrollbar::REPEAT_AFTER);
+        assert_eq!(
+            sheet_input(&mut sheet, &Event::Tick, &ctx),
+            Some(propsheet::Event::Redraw)
+        );
+        assert!(
+            sheet.page_offset().1 < stepped,
+            "the held arrow stepped again"
+        );
+        assert!(ctx.want_tick.take());
+        let release = Event::Pointer(PointerInput::Release {
+            x,
+            y,
+            button: BTN_LEFT,
+            mods: crate::Mods::default(),
+        });
+        let _ = sheet_input(&mut sheet, &release, &ctx);
+        assert!(!ctx.want_tick.take(), "the release stops it");
+    }
+
     /// The window losing the keyboard blurs a focused hot-key field: the
     /// modifier held when it went is forgotten, since its release goes
     /// elsewhere, and the next key records without it.
@@ -233,6 +311,7 @@ mod tests {
             origin: (0, 0),
             wake: crate::Waker::noop(),
             heads: Default::default(),
+            want_tick: Default::default(),
             text_size: 100,
         };
         let mut form = Form::new(vec![Item::new(
@@ -288,6 +367,7 @@ mod tests {
             origin: (0, 0),
             wake: crate::Waker::noop(),
             heads: Default::default(),
+            want_tick: Default::default(),
             text_size: 100,
         };
         let mut form = Form::new(vec![Item::new(
@@ -341,6 +421,7 @@ mod tests {
             origin: (0, 0),
             wake: crate::Waker::noop(),
             heads: Default::default(),
+            want_tick: Default::default(),
             text_size: 100,
         };
         let px = ctx.theme.fonts.size_px;
@@ -486,6 +567,7 @@ mod tests {
             origin: (0, 0),
             wake: crate::Waker::noop(),
             heads: Default::default(),
+            want_tick: Default::default(),
             text_size: 100,
         };
         let px = ctx.theme.fonts.size_px;

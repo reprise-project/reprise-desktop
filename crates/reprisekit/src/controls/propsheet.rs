@@ -41,11 +41,11 @@ use crate::classic::widgets::{
 };
 use crate::controls::form::{self, Control, Form, Item};
 use crate::controls::pagelist::{self, PageList};
-use crate::controls::scrollbar::ThumbDrag;
+use crate::controls::scrollbar::{ArrowRepeat, ThumbDrag};
 use crate::controls::tabstrip::{self, TabStrip};
 use crate::look::Paint;
 use crate::look::widgets::{draw_page, draw_scrollbar, group_label_ink};
-use crate::pointer::{Axis, Pointer, ScrollHit};
+use crate::pointer::{Axis, Interaction, Pointer, ScrollHit};
 use crate::raster::{Canvas, Rect};
 use crate::text::{Align, DialogFont, TextRenderer};
 use crate::theme::TextUnits;
@@ -107,6 +107,7 @@ struct PageScroll {
     top: i32,
     drag: ThumbDrag,
     bars: Pointer<ScrollHit>,
+    repeat: ArrowRepeat,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -580,6 +581,7 @@ impl PropSheet {
         self.scroll
             .bars
             .press(hit.part(), matches!(hit, BarHit::Thumb(_)));
+        self.scroll.repeat.press(hit);
         let (visible, _) = self.page_span();
         let by = self.scroll.drag.press(Axis::Vertical, hit);
         let to = self.scroll.top + by.by(LINE_H as i64, visible as i64) as i32;
@@ -905,6 +907,7 @@ impl PropSheet {
             Nav::Tabs => false,
         };
         let held = self.scroll.drag.release();
+        self.scroll.repeat.release();
         let lit = self.scroll.bars.lit();
         self.scroll.bars.release();
         let bar = bar || held || lit != self.scroll.bars.lit();
@@ -916,14 +919,25 @@ impl PropSheet {
         }
     }
 
-    /// Whether the page list has an arrow held: the host sends [`PropSheet::tick`]
-    /// until it lets go.
+    /// Whether the page list or the page has a scrollbar arrow held: the host sends
+    /// [`PropSheet::tick`] until it lets go.
     pub fn ticking(&self) -> bool {
-        matches!(&self.nav, Nav::List(list) if list.repeating())
+        self.scroll.repeat.held() || matches!(&self.nav, Nav::List(list) if list.repeating())
     }
 
+    /// A host tick at `now`: a held arrow steps once it repeats, while the pointer is on it.
     pub fn tick(&mut self, now: std::time::Instant) -> Event {
-        if self.on_list(|list, lay| list.bar_tick(now, lay)) {
+        let page = self.scroll.repeat.due(now)
+            && match self.scroll.bars.lit() {
+                Some((ScrollHit::Back, Interaction::Pressed)) => {
+                    self.scroll_to(self.scroll.top - LINE_H)
+                }
+                Some((ScrollHit::Forward, Interaction::Pressed)) => {
+                    self.scroll_to(self.scroll.top + LINE_H)
+                }
+                _ => false,
+            };
+        if self.on_list(|list, lay| list.bar_tick(now, lay)) || page {
             Event::Redraw
         } else {
             Event::None
@@ -1346,7 +1360,7 @@ mod tests {
     #[test]
     fn a_held_list_arrow_repeats_on_the_hosts_ticks() {
         use crate::classic::widgets::BarHit;
-        use crate::controls::pagelist::REPEAT_AFTER;
+        use crate::controls::scrollbar::REPEAT_AFTER;
         let mut s = long_list_sheet();
         let down = Some(Hit::ListBar(BarHit::Forward));
         assert_eq!(s.motion(135, 380, down), Event::Redraw, "lit");
@@ -2657,5 +2671,38 @@ mod tests {
         assert_eq!(s.motion(bar.x + 2, bar.bottom(), None), Event::Redraw);
         assert_eq!(s.page_offset().1, -124, "dragged to the end");
         s.release();
+    }
+
+    /// The page's arrow held repeats on the host's ticks like the kit's other scrollbars.
+    #[test]
+    fn a_held_page_arrow_repeats_on_the_hosts_ticks() {
+        use crate::controls::scrollbar::{REPEAT_AFTER, REPEAT_EVERY};
+        let text = TextRenderer::load(&FontConfig::default());
+        let px = Theme::default().fonts.size_px;
+        let mut s = sheet(&["General"], (398, 424));
+        s.drawn_with(&Theme::default().paint());
+        s.fit_height(300);
+        let bar = s.layout(&text, px).bar.unwrap();
+        let (x, y) = (bar.x + 2, bar.bottom() - 3);
+        let down = s.hit(x, y, &text, px);
+        s.motion(x, y, down);
+        assert!(!s.ticking());
+        s.click(down);
+        assert!(s.ticking());
+        assert_eq!(s.page_offset().1, -LINE_H);
+        let t0 = std::time::Instant::now();
+        assert_eq!(s.tick(t0), Event::None, "the pause starts");
+        assert_eq!(s.tick(t0 + REPEAT_AFTER), Event::Redraw);
+        assert_eq!(s.page_offset().1, -2 * LINE_H);
+        assert_eq!(s.tick(t0 + REPEAT_AFTER + REPEAT_EVERY), Event::Redraw);
+        assert_eq!(s.page_offset().1, -3 * LINE_H);
+        s.motion(x - 40, y, None);
+        assert_eq!(
+            s.tick(t0 + REPEAT_AFTER + 2 * REPEAT_EVERY),
+            Event::None,
+            "off the arrow"
+        );
+        s.release();
+        assert!(!s.ticking());
     }
 }
