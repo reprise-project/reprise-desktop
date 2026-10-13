@@ -49,6 +49,8 @@ pub struct Modes {
     pub locked: bool,
     /// An InputCapture client has the keyboard.
     pub captured: bool,
+    /// A Preview saver is up, or the key being handled ended one (`saverview::holds_keys`).
+    pub saver_preview: bool,
     /// A keyboard move or size from the window menu is under way.
     pub keyboard_interaction: bool,
     /// An edge or width drag of the taskbar is under way (`bardrag`).
@@ -284,6 +286,14 @@ pub fn route(modes: &Modes, k: &KeyPress, binds: &[Keybind], globals: &[GlobalBi
             };
         }
         return plain(KeyRoute::Captured);
+    }
+    // A press under a Preview saver is no one's, the one that ends it too; a release goes where its press went.
+    if modes.saver_preview && k.pressed {
+        return Routed {
+            route: KeyRoute::Swallow,
+            arm_super: Some(false),
+            fire_super: false,
+        };
     }
     if modes.region_open && k.pressed {
         return plain(match k.syms.first() {
@@ -927,6 +937,37 @@ mod tests {
         assert_eq!(r(&all, &press(KEY_XF86Sleep, 0)), KeyRoute::SleepKey);
         // A release is nobody's: the lock takes it, as it takes every key.
         assert_eq!(r(&all, &release(KEY_XF86PowerOff)), KeyRoute::Lock);
+    }
+
+    #[test]
+    fn a_preview_saver_keeps_every_press_from_the_program() {
+        let m = Modes {
+            saver_preview: true,
+            desktop_has_keyboard: false,
+            ..Modes::default()
+        };
+        assert_eq!(r(&m, &press(KEY_a, 0)), KeyRoute::Swallow);
+        assert_eq!(
+            r(&m, &press(KEY_r, MOD_LOGO)),
+            KeyRoute::Swallow,
+            "binds wait too"
+        );
+        let super_down = route(&m, &press(KEY_Super_L, 0), &binds(), &[]);
+        assert_eq!(super_down.route, KeyRoute::Swallow);
+        assert_eq!(
+            super_down.arm_super,
+            Some(false),
+            "its release opens no Start menu"
+        );
+        assert_eq!(
+            r(&m, &press(KEY_XF86AudioMute, 0)),
+            KeyRoute::Media(Action::Mute)
+        );
+        assert_eq!(
+            r(&m, &release(KEY_a)),
+            KeyRoute::Client,
+            "held back by the taken list"
+        );
     }
 
     #[test]

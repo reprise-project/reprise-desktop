@@ -37,6 +37,8 @@ const PREVIEW_GRACE: Duration = Duration::from_millis(800);
 pub struct SaverState {
     run: Option<Run>,
     generation: u64,
+    /// The input being handled met a Preview, running or ended by it: its keys reach no program.
+    holds_keys: bool,
 }
 
 struct Run {
@@ -171,14 +173,27 @@ pub fn stop(state: &mut State) {
     state.redraw_all();
 }
 
+/// Called before every input is handled: ends the saver, unless it is a Preview still in its grace.
 pub fn activity(state: &mut State) {
-    let Some(run) = &state.saver.run else {
-        return;
-    };
-    if run.grace_until.is_some_and(|t| Instant::now() < t) {
-        return;
+    let (ends, holds_keys) = meets(state.saver.run.as_ref(), Instant::now());
+    state.saver.holds_keys = holds_keys;
+    if ends {
+        stop(state);
     }
-    stop(state);
+}
+
+/// Whether the key being handled met a Preview, which keeps it from the focused program.
+pub fn holds_keys(state: &State) -> bool {
+    state.saver.holds_keys
+}
+
+/// What an input at `now` does to `run`: whether it ends it, and whether its keys are held back.
+fn meets(run: Option<&Run>, now: Instant) -> (bool, bool) {
+    let Some(run) = run else {
+        return (false, false);
+    };
+    let grace = run.grace_until.is_some_and(|t| now < t);
+    (!grace, run.grace_until.is_some())
 }
 
 pub fn outputs_changed(state: &mut State) {
@@ -462,6 +477,7 @@ mod tests {
                 generation: 1,
             }),
             generation: 1,
+            holds_keys: false,
         }
     }
 
@@ -503,5 +519,30 @@ mod tests {
             cursor(&SaverState::default(), &arrow),
             CursorImageStatus::Named(CursorIcon::Default)
         ));
+    }
+
+    #[test]
+    fn a_preview_holds_keys_through_its_grace_and_the_input_that_ends_it() {
+        let now = Instant::now();
+        let mut preview = running(Kind::Logo);
+        preview.run.as_mut().unwrap().grace_until = Some(now + PREVIEW_GRACE);
+        let run = preview.run.as_ref();
+        assert_eq!(
+            meets(run, now),
+            (false, true),
+            "in the grace: kept up, keys held"
+        );
+        assert_eq!(
+            meets(run, now + PREVIEW_GRACE),
+            (true, true),
+            "after it: ended, keys held"
+        );
+        let idle = running(Kind::Logo);
+        assert_eq!(
+            meets(idle.run.as_ref(), now),
+            (true, false),
+            "an idle saver passes its keys"
+        );
+        assert_eq!(meets(None, now), (false, false));
     }
 }
