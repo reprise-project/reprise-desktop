@@ -818,7 +818,7 @@ fn the_drag_image_stacks_every_dragged_icon() {
     }
 }
 
-/// At a larger text size every mode's image is made of grown icon cells: the dragged cells in the icon modes, the pressed entry's centred on the press in List and Details.
+/// At a larger text size every mode's image is made of whole grown icon cells inside the grown square: the dragged cells in the icon modes, the pressed entry's centred on the press in List and Details.
 #[test]
 fn the_drag_image_grows_with_the_text_size() {
     const EXPECTED_CELL: [(u32, (i32, i32)); 2] = [(150, (116, 95)), (200, (150, 112))];
@@ -839,7 +839,8 @@ fn the_drag_image_grows_with_the_text_size() {
             let at = centre(&ex, &ctx, index_of(&ex, "a.txt"));
             press(&mut ex, &mut ctx, at, BTN_LEFT);
             let (img, grab) = ex.drag_image(&ctx).expect("an image");
-            let window = Rect::new(at.0 - 128, at.1 - 128, 256, 256);
+            let side = 256 * pct as i32 / 100;
+            let window = Rect::new(at.0 - side / 2, at.1 - side / 2, side, side);
             let bounds = if matches!(mode, Mode::List | Mode::Details) {
                 Rect::new(at.0 - w / 2, at.1 - h / 2, w, h)
             } else {
@@ -847,10 +848,10 @@ fn the_drag_image_grows_with_the_text_size() {
                     .iter()
                     .map(|n| cell(&ex, &ctx, index_of(&ex, n)))
                     .map(|c| Rect::new(c.x, c.y, w, h))
+                    .filter(|c| window.intersect(c) == *c)
                     .reduce(|a, b| a.union(&b))
-                    .expect("cells")
-            }
-            .intersect(&window);
+                    .expect("a whole cell")
+            };
             assert_eq!(
                 (img.width as i32, img.height as i32),
                 (bounds.width, bounds.height),
