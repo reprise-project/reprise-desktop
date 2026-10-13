@@ -142,8 +142,7 @@ impl Devices {
         d
     }
 
-    /// The device list on the Devices page as last drawn: 100% tiles in a frame that grows and
-    /// scrolls with the page.
+    /// The device list on the Devices page as last drawn: it grows and scrolls with the page.
     pub fn list_rect(&self) -> Rect {
         self.sheet.on_page(LIST)
     }
@@ -174,8 +173,7 @@ impl Devices {
         self.list.entries = entries(&self.rows);
         self.list
             .select_row(keep.and_then(|p| self.rows.iter().position(|d| d.path == p)));
-        self.list
-            .clamp(self.list_rect(), reprisekit::theme::TextUnits::ONE);
+        self.list.clamp(self.list_rect(), self.sheet.open().units());
         self.adapter = s.adapter.is_some();
         let now = s.adapter.as_ref().map_or(Options::default(), |a| Options {
             powered: a.powered,
@@ -316,7 +314,7 @@ impl Devices {
     }
 
     pub fn access(&self, tree: &mut Tree, ctx: &Ctx) {
-        let px = self.sheet.open().units().px(ctx.theme.fonts.size_px);
+        let px = self.sheet.open().units().px(ctx.base_px());
         let panel = oneshot::access_sheet(&self.sheet, tree, &ctx.text, px);
         let list = self.list_rect();
         if self.sheet.tabs.open != TAB_DEVICES {
@@ -326,7 +324,7 @@ impl Devices {
             tree.push(panel, "empty", access::label(list, line, true));
             return;
         }
-        let lay = tilelist::layout(&self.list, list, &ctx.theme.look.controls());
+        let lay = tilelist::layout(&self.list, list, &ctx.theme.controls());
         let row = tilelist::access(
             &self.list,
             &lay,
@@ -370,7 +368,7 @@ impl Devices {
         let list = self.list_rect();
         if let Some(line) = self.blank_text() {
             let empty = TileList::new(TILE_H);
-            let lay = tilelist::layout(&empty, list, &ctx.theme.look.controls());
+            let lay = tilelist::layout(&empty, list, &ctx.theme.controls());
             tilelist::draw(
                 c,
                 &ctx.text,
@@ -383,12 +381,13 @@ impl Devices {
                 px,
                 |_, _, _, _| {},
             );
-            let r = Rect::new(list.x, list.y + 24, list.width, LINE_H);
+            let u = ctx.theme.text;
+            let r = Rect::new(list.x, list.y + u.len(24), list.width, u.len(LINE_H));
             ctx.text
                 .draw(c, r, line, false, cs.gray_text, Align::Center, px);
             return;
         }
-        let lay = tilelist::layout(&self.list, list, &ctx.theme.look.controls());
+        let lay = tilelist::layout(&self.list, list, &ctx.theme.controls());
         tilelist::draw(
             c,
             &ctx.text,

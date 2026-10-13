@@ -110,8 +110,7 @@ impl AddWizard {
         w
     }
 
-    /// The found-devices list on the page as last drawn: the list keeps 100% tiles in a frame that
-    /// grows with the page.
+    /// The found-devices list on the page as last drawn: it grows with the page.
     pub fn list_rect(&self) -> Rect {
         self.page.form.units().rect(LIST)
     }
@@ -332,8 +331,7 @@ impl AddWizard {
                 self.list.entries = (0..self.found.len()).map(Entry::Row).collect();
                 self.list
                     .select_row(keep.and_then(|p| self.found.iter().position(|d| d.path == p)));
-                self.list
-                    .clamp(self.list_rect(), reprisekit::theme::TextUnits::ONE);
+                self.list.clamp(self.list_rect(), self.page.form.units());
                 self.sync_search();
             }
             Step::Pairing => {
@@ -526,10 +524,10 @@ impl AddWizard {
     }
 
     pub fn access(&self, tree: &mut Tree, ctx: &Ctx) {
-        let px = self.page.form.units().px(ctx.theme.fonts.size_px);
+        let px = self.page.form.units().px(ctx.base_px());
         let mut focus = self.page.access(tree, ROOT, &ctx.text, px);
         if self.step == Step::Search {
-            let lay = tilelist::layout(&self.list, self.list_rect(), &ctx.theme.look.controls());
+            let lay = tilelist::layout(&self.list, self.list_rect(), &ctx.theme.controls());
             focus = Some(tilelist::access(
                 &self.list,
                 &lay,
@@ -567,7 +565,7 @@ impl AddWizard {
             return;
         }
         let px = ctx.theme.fonts.size_px;
-        let lay = tilelist::layout(&self.list, self.list_rect(), &ctx.theme.look.controls());
+        let lay = tilelist::layout(&self.list, self.list_rect(), &ctx.theme.controls());
         tilelist::draw(
             c,
             &ctx.text,

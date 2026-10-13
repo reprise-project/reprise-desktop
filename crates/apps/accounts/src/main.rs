@@ -245,7 +245,7 @@ impl AccountsApp {
     }
 
     fn main_event(&mut self, ev: Event, ctx: &mut Ctx) -> Reply {
-        let cm = ctx.theme.look.controls();
+        let cm = ctx.theme.controls();
         let list_r = self.users.list_rect();
         let lit = {
             let list = &mut self.users.list;
@@ -574,6 +574,10 @@ impl App for AccountsApp {
 
     fn initial_size(&self) -> (i32, i32) {
         self.forms.text.size(users::CLIENT)
+    }
+
+    fn text_sized(&self) -> bool {
+        true
     }
 
     fn fixed(&self) -> bool {

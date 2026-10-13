@@ -118,7 +118,7 @@ impl Users {
         u
     }
 
-    /// The list's rect at the text size the form was last drawn at; its tiles stay at 100%.
+    /// The list's rect at the text size the form was last drawn at.
     pub fn list_rect(&self) -> Rect {
         self.form.units().rect(LIST)
     }
@@ -142,8 +142,7 @@ impl Users {
             .and_then(|uid| self.rows.iter().position(|u| u.uid == uid))
             .or(yours);
         self.list.select_row(pick);
-        self.list
-            .clamp(self.list_rect(), reprisekit::theme::TextUnits::ONE);
+        self.list.clamp(self.list_rect(), self.form.units());
         self.failed = None;
         self.loaded = true;
         self.write();
@@ -249,7 +248,7 @@ impl Users {
             tree.push(root, "empty", access::label(list, line, true));
             return;
         }
-        let lay = tilelist::layout(&self.list, list, &ctx.theme.look.controls());
+        let lay = tilelist::layout(&self.list, list, &ctx.theme.controls());
         let row = tilelist::access(
             &self.list,
             &lay,
@@ -268,8 +267,8 @@ impl Users {
         }
     }
 
-    /// The window: the form at the text size, then the list over its rect with its tiles at
-    /// 100%; `face` stands in for a missing picture.
+    /// The window: the form, then the list over its rect, both at the text size; `face` stands
+    /// in for a missing picture.
     pub fn draw(&self, c: &mut Canvas, ctx: &Ctx, face: Option<&Canvas>) {
         let cs = &ctx.theme.colors;
         let forms = ctx.forms();
@@ -285,13 +284,14 @@ impl Users {
             s: 1,
             ..ctx.theme.paint()
         };
-        let cm = ctx.theme.look.controls();
+        let cm = ctx.theme.controls();
         let list = self.list_rect();
         if let Some(line) = self.blank_text() {
             let empty = TileList::new(TILE_H);
             let lay = tilelist::layout(&empty, list, &cm);
             tilelist::draw(c, &ctx.text, &paint, &empty, &lay, px, |_, _, _, _| {});
-            let r = Rect::new(list.x, list.y + 24, list.width, LINE_H);
+            let u = ctx.theme.text;
+            let r = Rect::new(list.x, list.y + u.len(24), list.width, u.len(LINE_H));
             ctx.text
                 .draw(c, r, line, false, cs.gray_text, Align::Center, px);
             return;
@@ -401,6 +401,26 @@ mod tests {
         assert_eq!(u.selected().map(|s| s.uid), Some(1002));
         u.refresh(three()[..1].to_vec(), vec![None]);
         assert_eq!(u.selected().map(|s| s.uid), Some(1000));
+    }
+
+    /// At 200% the list's frame and its tiles and headings grow together: a press on the third
+    /// grown tile picks it.
+    #[test]
+    fn at_200_percent_the_tiles_grow_with_the_list() {
+        let theme = reprisekit::theme::Theme::default().with_text_size(200);
+        let (cm, t) = (theme.controls(), theme.text);
+        let mut u = Users::new();
+        u.form.drawn_with(&theme.paint());
+        u.refresh(three(), vec![None; 3]);
+        let list = u.list_rect();
+        assert_eq!(list, t.rect(LIST));
+        let lay = tilelist::layout(&u.list, list, &cm);
+        let third = lay.slots[4].rect;
+        assert_eq!(third.height, t.len(TILE_H));
+        assert_eq!(third.y, list.y + 2 + 2 * t.len(31) + 2 * t.len(TILE_H));
+        let at = theme.metrics.click(third.x + 60, third.bottom() - 4, 0);
+        u.list_press(at, &cm);
+        assert_eq!(u.selected().map(|s| s.login.as_str()), Some("sam"));
     }
 
     #[test]

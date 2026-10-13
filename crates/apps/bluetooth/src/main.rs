@@ -406,11 +406,11 @@ impl BtApp {
 
     /// The Devices list's share of a sheet event; `None` leaves it to the sheet.
     fn devices_list_event(&mut self, ev: &Event, ctx: &Ctx) -> Option<devices::Outcome> {
-        let (metrics, cm) = (&ctx.theme.metrics, &ctx.theme.look.controls());
+        let (metrics, cm) = (&ctx.theme.metrics, &ctx.theme.controls());
         let on_devices = self.devices.sheet.tabs.open == devices::TAB_DEVICES;
         let list = self.devices.list_rect();
         let on_list = |x: i32, y: i32| {
-            let px = ctx.form_units().px(ctx.theme.fonts.size_px);
+            let px = ctx.form_units().px(ctx.base_px());
             on_devices
                 && list.contains(x, y)
                 && self.devices.sheet.reaches_page(x, y, &ctx.text, px)
@@ -465,10 +465,10 @@ impl BtApp {
 
     /// Updates the Devices list's scrollbar highlight for a pointer event. True when a styled look must redraw.
     fn devices_list_light(&mut self, ev: &Event, ctx: &Ctx) -> bool {
-        let cm = ctx.theme.look.controls();
+        let cm = ctx.theme.controls();
         let rect = self.devices.list_rect();
         let list = &mut self.devices.list;
-        let px = ctx.form_units().px(ctx.theme.fonts.size_px);
+        let px = ctx.form_units().px(ctx.base_px());
         let on_devices = self.devices.sheet.tabs.open == devices::TAB_DEVICES;
         let changed = match ev {
             Event::Pointer(PointerInput::Motion { x, y })
@@ -544,7 +544,7 @@ impl BtApp {
             let changed = match &ev {
                 Event::Pointer(PointerInput::Motion { x, y }) if searching => {
                     let r = w.list_rect();
-                    w.list.hover(r, *x, *y, &ctx.theme.look.controls())
+                    w.list.hover(r, *x, *y, &ctx.theme.controls())
                 }
                 Event::Pointer(PointerInput::Motion { .. } | PointerInput::Leave) => w.list.leave(),
                 Event::Pointer(PointerInput::Release {
@@ -584,16 +584,15 @@ impl BtApp {
                 ..
             }) if searching && list.contains(x, y) => {
                 let at = ctx.theme.metrics.click(x, y, time);
-                w.list_press(at, &text, &forms, &ctx.theme.look.controls())
+                w.list_press(at, &text, &forms, &ctx.theme.controls())
             }
             Event::Pointer(PointerInput::Motion { y, .. })
-                if w.list.drag(list, y, &ctx.theme.look.controls()) =>
+                if w.list.drag(list, y, &ctx.theme.controls()) =>
             {
                 return Reply::redraw();
             }
             Event::Pointer(PointerInput::Scroll { rows, .. }) => {
-                return if searching && w.list.scroll(rows, list, reprisekit::theme::TextUnits::ONE)
-                {
+                return if searching && w.list.scroll(rows, list, ctx.theme.text) {
                     Reply::redraw()
                 } else {
                     Reply::none()
@@ -601,7 +600,7 @@ impl BtApp {
             }
             ev => {
                 if let Event::Key(k) = &ev
-                    && dialog_key(k).is_some_and(|key| w.list_key(&key, &ctx.theme.look.controls()))
+                    && dialog_key(k).is_some_and(|key| w.list_key(&key, &ctx.theme.controls()))
                 {
                     return Reply::redraw();
                 }
@@ -817,6 +816,10 @@ impl App for BtApp {
     }
 
     fn fixed(&self) -> bool {
+        true
+    }
+
+    fn text_sized(&self) -> bool {
         true
     }
 
@@ -1268,7 +1271,7 @@ mod tests {
             })
             .collect();
         a.snapshot_in(s);
-        let cm = ctx.theme.look.controls();
+        let cm = ctx.theme.controls();
         let sb = tilelist::layout(&a.devices.list, devices::LIST, &cm)
             .scrollbar
             .expect("20 devices overflow the list");
@@ -1324,7 +1327,7 @@ mod tests {
         let w = a.wizard.as_mut().unwrap();
         w.step = addwiz::Step::Search;
         w.list = tilelist::TileList::rows(30, 40);
-        let cm = ctx.theme.look.controls();
+        let cm = ctx.theme.controls();
         let sb = tilelist::layout(&w.list, addwiz::LIST, &cm)
             .scrollbar
             .expect("30 rows overflow the list");
@@ -1482,6 +1485,47 @@ mod tests {
                 .any(|(x, y)| first.get(x, y) != scrolled.get(x, y)),
             "the list draws inside it"
         );
+    }
+
+    /// At 200% the Devices list grows with its page and its tiles grow with it: a press on the
+    /// last grown tile picks that device.
+    #[test]
+    fn at_200_percent_the_device_tiles_grow_with_the_page() {
+        use reprisekit::controls::tilelist;
+        let mut a = app();
+        let mut ctx = test_ctx();
+        ctx.text_size = 200;
+        ctx.theme = Theme::default().with_text_size(200);
+        let u = ctx.theme.text;
+        ctx.size = u.size(devices::CLIENT);
+        let mut s = snap(true);
+        s.devices = (0..2)
+            .map(|i| Device {
+                path: format!("/a/d{i}"),
+                alias: format!("Device {i}"),
+                ..cans(false)
+            })
+            .collect();
+        a.snapshot_in(s);
+        a.event(MAIN, Event::Pointer(PointerInput::Leave), &mut ctx);
+        let mut c = Canvas::new(ctx.size.0 as u32, ctx.size.1 as u32);
+        a.draw(MAIN, &mut c, &ctx);
+        let list = a.devices.list_rect();
+        assert_eq!(list.width, u.rect(devices::LIST).width);
+        let cm = ctx.theme.controls();
+        let lay = tilelist::layout(&a.devices.list, list, &cm);
+        let last = lay.slots.last().expect("a tile");
+        assert_eq!(last.rect.height, u.len(tilelist::TILE_H));
+        let (x, y) = (last.rect.x + 60, last.rect.bottom() - 4);
+        let press = PointerInput::Press {
+            x,
+            y,
+            button: BTN_LEFT,
+            time: 0,
+            mods: repriseapp::Mods::default(),
+        };
+        a.main_event(Event::Pointer(press), &mut ctx);
+        assert_eq!(a.devices.list.selected, Some(last.entry));
     }
 
     fn test_ctx() -> Ctx {
