@@ -1955,6 +1955,7 @@ dependencies = [
  "futures-util",
  "image",
  "inotify",
+ "input",
  "jpeg-decoder",
  "libc",
  "log",

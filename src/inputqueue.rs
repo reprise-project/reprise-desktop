@@ -6,12 +6,14 @@ use smithay::{
         libinput::{LibinputInputBackend, PointerScrollAxis},
     },
     reexports::input::{
-        self as libinput,
+        self as libinput, AsRaw, FromRaw,
         event::{
             DeviceEvent, EventTrait, GestureEvent, KeyboardEvent, PointerEvent, SwitchEvent,
             TabletToolEvent, TouchEvent,
             gesture::{GestureHoldEvent, GesturePinchEvent, GestureSwipeEvent},
+            tablet_pad::{TabletPadDialEvent, TabletPadEvent},
         },
+        ffi,
     },
 };
 
@@ -19,7 +21,14 @@ use crate::compositor::State;
 
 /// Feed every queued libinput event to the backend's input handler, without reading the devices.
 pub fn take_queued(state: &mut State, mut libinput: libinput::Libinput) {
-    for event in &mut libinput {
+    loop {
+        if let Some(dial) = take_dial(&libinput) {
+            crate::tabletpad::event(state, TabletPadEvent::Dial(dial));
+            continue;
+        }
+        let Some(event) = libinput.next() else {
+            break;
+        };
         match event {
             libinput::Event::TabletPad(e) => crate::tabletpad::event(state, e),
             event => {
@@ -28,6 +37,25 @@ pub fn take_queued(state: &mut State, mut libinput: libinput::Libinput) {
                 }
             }
         }
+    }
+}
+
+/// The next queued event, if it is a pad dial's. The input crate's event
+/// iterator skips dial events (it converts no `TABLET_PAD_DIAL`), so they
+/// are taken off the queue here first.
+fn take_dial(libinput: &libinput::Libinput) -> Option<TabletPadDialEvent> {
+    // SAFETY: the context is live for as long as `libinput` is.
+    let next = unsafe { ffi::libinput_next_event_type(libinput.as_raw_mut()) };
+    if next != ffi::libinput_event_type_LIBINPUT_EVENT_TABLET_PAD_DIAL {
+        return None;
+    }
+    // SAFETY: the queue's head is a dial event, so `libinput_get_event`
+    // returns it and it is a tablet pad event; the wrapper owns it and
+    // destroys it on drop.
+    unsafe {
+        let event = ffi::libinput_get_event(libinput.as_raw_mut());
+        let pad = ffi::libinput_event_get_tablet_pad_event(event);
+        Some(TabletPadDialEvent::from_raw(pad, libinput))
     }
 }
 
