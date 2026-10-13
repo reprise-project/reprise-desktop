@@ -5,6 +5,7 @@ use std::collections::BTreeMap;
 use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender, channel};
 use std::time::{Duration, Instant, SystemTime};
 
+use crate::avahi;
 use crate::cups::{self, Change, Client, Device, Job, JobOp, NewPrinter, Options, Ppd, Snapshot};
 use crate::lpwatch;
 use crate::notifier::{self, Lease};
@@ -49,7 +50,12 @@ pub enum Cmd {
         op: JobOp,
     },
     Options(String),
-    Devices,
+    /// Ask cupsd's backends; `prompt` lets cups-pk-helper ask for the admin password.
+    Devices {
+        prompt: bool,
+    },
+    /// Browse avahi-daemon's network printers while the wizard is up.
+    Network(bool),
     Ppds,
     Add {
         printer: NewPrinter,
@@ -70,6 +76,8 @@ pub enum Msg {
     },
     Options(String, cups::Result<Options>),
     Devices(cups::Result<Vec<Device>>),
+    /// The network printers avahi-daemon sees; `None` without avahi-daemon.
+    Network(Option<Vec<Device>>),
     Ppds(cups::Result<Vec<Ppd>>),
     Added(cups::Result<String>),
     TestPage(String),
@@ -122,6 +130,8 @@ struct State {
     /// Whether the system bus carries cupsd's signals to this thread.
     listening: bool,
     lease: Option<Lease>,
+    /// The system bus connection the avahi-daemon browsers live on; closing it ends them.
+    network: Option<zbus::blocking::Connection>,
 }
 
 fn run(rx: Receiver<Cmd>, tx: Sender<Cmd>, poster: Poster) {
@@ -140,6 +150,7 @@ fn run(rx: Receiver<Cmd>, tx: Sender<Cmd>, poster: Poster) {
         watching: false,
         listening,
         lease: None,
+        network: None,
     };
     st.keep_subscribed();
     st.refresh();
@@ -203,7 +214,8 @@ fn title(cmd: &Cmd) -> &'static str {
         | Cmd::Changed
         | Cmd::Watching(_)
         | Cmd::Options(_)
-        | Cmd::Devices
+        | Cmd::Devices { .. }
+        | Cmd::Network(_)
         | Cmd::Ppds => "Printers",
     }
 }
@@ -269,6 +281,34 @@ impl State {
                 false
             }
         }
+    }
+
+    fn browse(&mut self, on: bool) {
+        if let Some(conn) = self.network.take() {
+            let _ = conn.close();
+        }
+        if !on {
+            return;
+        }
+        let conn = match zbus::blocking::Connection::system() {
+            Ok(c) => c,
+            Err(e) => {
+                log::info!("no system bus for network printers: {e}");
+                self.poster.post(Msg::Network(None));
+                return;
+            }
+        };
+        self.network = Some(conn.clone());
+        let poster = self.poster.clone();
+        std::thread::spawn(move || match avahi::start(&conn) {
+            Ok(signals) => avahi::run(&conn, signals, |d| poster.post(Msg::Network(Some(d)))),
+            // A closed connection is a wizard that went away, not a missing avahi-daemon.
+            Err(_) if conn.is_closed() => {}
+            Err(e) => {
+                log::info!("no network printers from avahi-daemon, asking cupsd: {e}");
+                poster.post(Msg::Network(None));
+            }
+        });
     }
 
     /// Read everything; post the snapshot when it changed and the jobs
@@ -343,11 +383,15 @@ impl State {
                 self.poster.post(Msg::Options(p.clone(), r));
                 return false;
             }
-            Cmd::Devices => {
-                let (c, poster) = (c.clone(), self.poster.clone());
+            Cmd::Devices { prompt } => {
+                let (c, poster, prompt) = (c.clone(), self.poster.clone(), *prompt);
                 std::thread::spawn(move || {
-                    poster.post(Msg::Devices(cups::devices(&c, DISCOVERY_SECS)));
+                    poster.post(Msg::Devices(cups::devices(&c, DISCOVERY_SECS, prompt)));
                 });
+                return false;
+            }
+            Cmd::Network(on) => {
+                self.browse(*on);
                 return false;
             }
             Cmd::Ppds => {

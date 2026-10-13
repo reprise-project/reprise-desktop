@@ -4,6 +4,7 @@
 
 use std::sync::Arc;
 
+use crate::avahi;
 use crate::http::{self, Server};
 use crate::ipp::{self, JOB, OPERATION, PRINTER, Request, Response, Value};
 use crate::pkhelper::{self, Call, Helper};
@@ -1121,7 +1122,9 @@ const EXCLUDED_SCHEMES: [&str; 3] = ["cups-brf", "beh", "fax"];
 /// The devices cupsd's backends find within `secs` seconds. The ones a
 /// backend lists as a protocol without a printer behind it ("socket",
 /// "ipp", "lpd") are left out; the wizard asks for an address instead.
-pub fn devices(c: &Client, secs: i32) -> Result<Vec<Device>> {
+/// CUPS-Get-Devices is an admin operation: when cupsd says no, cups-pk-helper
+/// and its password prompt are asked only with `prompt`, else it is [`Error::Denied`].
+pub fn devices(c: &Client, secs: i32, prompt: bool) -> Result<Vec<Device>> {
     let req = Request::new(CUPS_GET_DEVICES)
         .op_attr("timeout", Value::Int(secs))
         .add(
@@ -1129,9 +1132,8 @@ pub fn devices(c: &Client, secs: i32) -> Result<Vec<Device>> {
             "exclude-schemes",
             EXCLUDED_SCHEMES.iter().map(|s| Value::name(s)).collect(),
         );
-    let found: Vec<Device> = match c.call("/admin/", req) {
-        Ok(r) => r
-            .groups(PRINTER)
+    let peer = c.call("/admin/", req).map(|r| {
+        r.groups(PRINTER)
             .map(|g| Device {
                 uri: g.string("device-uri"),
                 info: g.string("device-info"),
@@ -1139,7 +1141,20 @@ pub fn devices(c: &Client, secs: i32) -> Result<Vec<Device>> {
                 class: g.string("device-class"),
                 device_id: g.string("device-id"),
             })
-            .collect(),
+            .collect()
+    });
+    devices_after(c, peer, secs, prompt)
+}
+
+fn devices_after(
+    c: &Client,
+    peer: Result<Vec<Device>>,
+    secs: i32,
+    prompt: bool,
+) -> Result<Vec<Device>> {
+    let found = match peer {
+        Ok(found) => found,
+        Err(Error::Denied) if !prompt => return Err(Error::Denied),
         Err(Error::Denied) if c.helper.installed() => {
             let found = c.helper.devices(secs, &EXCLUDED_SCHEMES)?;
             pkhelper::devices_from(&found)
@@ -1159,6 +1174,10 @@ pub fn devices(c: &Client, secs: i32) -> Result<Vec<Device>> {
         Err(Error::Denied) => return Err(Error::NeedsHelper),
         Err(e) => return Err(e),
     };
+    Ok(tidy(found))
+}
+
+fn tidy(found: Vec<Device>) -> Vec<Device> {
     let mut out: Vec<Device> = found
         .into_iter()
         .filter(|d| d.uri.contains(':') && d.uri.contains('/'))
@@ -1167,7 +1186,28 @@ pub fn devices(c: &Client, secs: i32) -> Result<Vec<Device>> {
     // once, as its driverless address when it has one.
     out.sort_by_key(|d| (!d.driverless(), d.info.to_lowercase()));
     out.dedup_by(|b, a| !a.info.is_empty() && a.info == b.info);
-    Ok(out)
+    out
+}
+
+/// Whether two devices are one printer. cupsd's backends name a printer by its service, its
+/// make and model or both.
+pub fn same(a: &Device, b: &Device) -> bool {
+    let info = |d: &Device| d.info.trim_end_matches(" (driverless)").to_lowercase();
+    a.uri == b.uri
+        || !a.info.is_empty() && info(a) == info(b)
+        || avahi::service_name(&a.uri).is_some_and(|n| Some(n) == avahi::service_name(&b.uri))
+}
+
+/// What cupsd found and what avahi-daemon sees, a printer both list shown once as cupsd's.
+pub fn merge(cups: &[Device], network: &[Device]) -> Vec<Device> {
+    let mut all = cups.to_vec();
+    all.extend(
+        network
+            .iter()
+            .filter(|d| !cups.iter().any(|c| same(c, d)))
+            .cloned(),
+    );
+    tidy(all)
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -1548,6 +1588,82 @@ mod tests {
                 .text()
                 .contains("administrator's password")
         );
+    }
+
+    #[test]
+    fn a_device_scan_without_the_prompt_never_asks_the_helper() {
+        let h = Arc::new(pkhelper::fake::Fake {
+            found: std::collections::BTreeMap::from([
+                ("device-uri:0".into(), "usb://HP/LaserJet?serial=1".into()),
+                ("device-info:0".into(), "HP LaserJet".into()),
+            ]),
+            ..pkhelper::fake::Fake::installed()
+        });
+        assert_eq!(
+            devices_after(&client(&h), Err(Error::Denied), 6, false),
+            Err(Error::Denied)
+        );
+        assert_eq!(*h.scans.lock().unwrap(), 0);
+
+        let found = devices_after(&client(&h), Err(Error::Denied), 6, true).expect("devices");
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].uri, "usb://HP/LaserJet?serial=1");
+        assert_eq!(*h.scans.lock().unwrap(), 1);
+
+        let none = Arc::new(pkhelper::fake::Fake::default());
+        assert_eq!(
+            devices_after(&client(&none), Err(Error::Denied), 6, true),
+            Err(Error::NeedsHelper)
+        );
+    }
+
+    #[test]
+    fn a_network_printer_cupsd_lists_too_shows_once_as_cupsds() {
+        let cups = [
+            Device {
+                uri: "dnssd://Office%20Jet._ipp._tcp.local/?uuid=1".into(),
+                info: "Office Jet".into(),
+                make_model: "HP OfficeJet 5200".into(),
+                class: "network".into(),
+                device_id: "MFG:HP;MDL:OfficeJet 5200;".into(),
+            },
+            Device {
+                uri: "ipps://Lab._ipps._tcp.local/".into(),
+                info: "Example Laser (driverless)".into(),
+                class: "network".into(),
+                ..Default::default()
+            },
+            Device {
+                uri: "usb://Brother/HL-1110?serial=9".into(),
+                info: "Brother HL-1110".into(),
+                class: "direct".into(),
+                ..Default::default()
+            },
+        ];
+        let network = |uri: &str, info: &str| Device {
+            uri: uri.into(),
+            info: info.into(),
+            class: "network".into(),
+            ..Default::default()
+        };
+        let avahi = [
+            network("dnssd://Office%20Jet._ipp._tcp.local/?uuid=1", "Office Jet"),
+            network("dnssd://Lab._ipp._tcp.local/", "Lab"),
+            network("dnssd://Attic._ipp._tcp.local/", "Attic"),
+        ];
+        let merged = merge(&cups, &avahi);
+        let uris: Vec<&str> = merged.iter().map(|d| d.uri.as_str()).collect();
+        assert_eq!(
+            uris,
+            [
+                "dnssd://Attic._ipp._tcp.local/",
+                "ipps://Lab._ipps._tcp.local/",
+                "dnssd://Office%20Jet._ipp._tcp.local/?uuid=1",
+                "usb://Brother/HL-1110?serial=9",
+            ]
+        );
+        assert_eq!(merged[2].make_model, "HP OfficeJet 5200");
+        assert_eq!(merge(&[], &avahi).len(), 3);
     }
 
     #[test]

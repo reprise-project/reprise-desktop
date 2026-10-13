@@ -144,7 +144,9 @@ power button and sleep button do. The battery icon's menu switches profile.
 
 The printer folder, a queue for each printer, and the Add Printer Wizard,
 which finds printers on USB and the network or takes an address, and picks a
-driver by maker and model. Properties covers sharing, ports, paper size,
+driver by maker and model. Network printers come from avahi-daemon when it
+runs, so an account outside CUPS's admin group meets the password prompt only
+at Finish, or at Search Again, which looks for USB printers too. Properties covers sharing, ports, paper size,
 two-sided and colour. A tray icon shows up while something prints and tells
 you when it's done, or when it isn't.
 

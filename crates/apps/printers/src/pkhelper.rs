@@ -232,6 +232,8 @@ pub mod fake {
         pub answer: Option<Error>,
         pub calls: Mutex<Vec<Call>>,
         pub found: BTreeMap<String, String>,
+        /// How many DevicesGet calls, each a password prompt, were made.
+        pub scans: Mutex<usize>,
     }
 
     impl Fake {
@@ -258,6 +260,7 @@ pub mod fake {
         }
 
         fn devices(&self, _: i32, _: &[&str]) -> Result<BTreeMap<String, String>> {
+            *self.scans.lock().unwrap() += 1;
             Ok(self.found.clone())
         }
     }
