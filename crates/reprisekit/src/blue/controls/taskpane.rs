@@ -10,10 +10,10 @@ use crate::theme::Color;
 
 const BACK_H: i32 = 456;
 const BAND_W: i32 = 185;
-/// The title band's fixed ends: the rounded corner's columns and rows, and the fold button's 24
-/// columns on the right.
+/// The title band's fixed ends: the rounded corner's columns, the fold button's 24 columns on the
+/// right, and every row but the last fill row, which a band grown with the text stretches.
 const HEADER_LEFT: i32 = 4;
-const HEADER_TOP: i32 = 4;
+const HEADER_STRETCH_ROW: i32 = 2;
 const BUTTON_W: i32 = 24;
 const GLOSS_SPLIT: f64 = 12.0;
 
@@ -268,9 +268,9 @@ pub(super) fn parts(v: Variant, d: i32) -> Vec<(Part, PartImage)> {
             Part::TaskGroupHeader,
             image(header, &[State::Normal]).sizing(Insets::new(
                 HEADER_LEFT,
-                HEADER_TOP,
+                h - HEADER_STRETCH_ROW,
                 BUTTON_W,
-                0,
+                HEADER_STRETCH_ROW - 1,
             )),
         ),
         (
@@ -369,7 +369,7 @@ mod tests {
             let h = band_h(v);
             let header = part(v, 1, Part::TaskGroupHeader);
             assert_eq!((header.atlas.width, header.atlas.height), (185, h as u32));
-            assert_eq!(header.sizing, Insets::new(4, 4, 24, 0), "{v:?}");
+            assert_eq!(header.sizing, Insets::new(4, h - 2, 24, 1), "{v:?}");
             let fold = part(v, 1, Part::TaskCollapse);
             assert_eq!(fold.atlas.height, 3 * h as u32, "{v:?}");
         }
