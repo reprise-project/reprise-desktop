@@ -1651,7 +1651,7 @@ impl App for Notepad {
         };
         Some(FileDrop {
             dlg,
-            host: &self.host,
+            host: &mut self.host,
         })
     }
 

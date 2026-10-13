@@ -1161,7 +1161,7 @@ impl App for NetApp {
     fn drop_file_dialog(&mut self, win: WinId) -> Option<FileDrop<'_>> {
         (win == IMPORT).then_some(FileDrop {
             dlg: self.import.as_mut()?,
-            host: &self.import_host,
+            host: &mut self.import_host,
         })
     }
 
