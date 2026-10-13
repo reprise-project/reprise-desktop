@@ -937,13 +937,31 @@ fn add_calls(p: &NewPrinter) -> Vec<Call> {
 }
 
 /// Rename a printer: CUPS has no rename, so a new queue takes the old
-/// one's address, driver, description and sharing, its jobs move over,
-/// it becomes the default if the old one was, and the old one goes.
-/// cups-pk-helper's PrinterRename takes the same steps as root. The
+/// one's address, PPD, description, sharing and defaults, its jobs move
+/// over, it becomes the default if the old one was, and the old one goes.
+/// cups-pk-helper's PrinterRename takes the same steps as root but leaves
+/// the defaults the PPD does not hold, so they follow as calls. The
 /// user's own default follows the name either way.
 pub fn rename(c: &Client, old: &str, new: &str, s: &Snapshot) -> Result<()> {
-    c.admin(rename_by_peer(c, old, new, s), || {
-        vec![Call::PrinterRename(old.into(), new.into())]
+    let ppd = ppd_of(c, old)?;
+    let defaults = match options(c, old) {
+        Ok(o) => carried_defaults(&o, ppd.is_some()),
+        Err(e) => {
+            log::warn!("reading {old}'s defaults: {e:?}");
+            Vec::new()
+        }
+    };
+    c.admin(rename_by_peer(c, old, new, s, ppd, &defaults), || {
+        let mut calls = vec![Call::PrinterRename(old.into(), new.into())];
+        calls.extend(defaults.iter().filter_map(|(k, v)| {
+            let option = option_of(k).to_string();
+            Some(Call::PrinterAddOptionDefault(
+                new.into(),
+                option,
+                vec![value_text(v)?],
+            ))
+        }));
+        calls
     })?;
     let text = lpoptions_text();
     if user_default(&text).as_deref() == Some(old) {
@@ -952,7 +970,48 @@ pub fn rename(c: &Client, old: &str, new: &str, s: &Snapshot) -> Result<()> {
     Ok(())
 }
 
-fn rename_by_peer(c: &Client, old: &str, new: &str, s: &Snapshot) -> Result<()> {
+/// The `*-default` attributes a renamed queue keeps: color and quality,
+/// and media and sides unless a PPD holds them.
+fn carried_defaults(o: &Options, has_ppd: bool) -> Vec<(String, Value)> {
+    let mut out = Vec::new();
+    let mut keep = |attr: &str, value: Option<Value>| {
+        if let Some(v) = value {
+            out.push((attr.to_string(), v));
+        }
+    };
+    if !has_ppd {
+        keep(
+            "media-default",
+            o.media.default.as_deref().map(Value::keyword),
+        );
+        keep(
+            "sides-default",
+            o.sides.default.as_deref().map(Value::keyword),
+        );
+    }
+    keep(
+        "print-color-mode-default",
+        o.color.default.as_deref().map(Value::keyword),
+    );
+    keep(
+        "print-quality-default",
+        o.quality
+            .default
+            .as_deref()
+            .and_then(|q| q.parse().ok())
+            .map(Value::Enum),
+    );
+    out
+}
+
+fn rename_by_peer(
+    c: &Client,
+    old: &str,
+    new: &str,
+    s: &Snapshot,
+    ppd: Option<Vec<u8>>,
+    defaults: &[(String, Value)],
+) -> Result<()> {
     let Some(p) = s.printer(old) else {
         return Err(Error::Refused(format!("{old} is no longer there.")));
     };
@@ -961,11 +1020,6 @@ fn rename_by_peer(c: &Client, old: &str, new: &str, s: &Snapshot) -> Result<()> 
             "There is already a printer called {new}."
         )));
     }
-    let ppd = http::get(
-        &c.server,
-        &format!("/printers/{}.ppd", escape(old)),
-        &c.user,
-    );
     let mut req = Request::new(CUPS_ADD_MODIFY_PRINTER)
         .op_attr("printer-uri", Value::uri(&printer_uri(new)))
         .printer_attr("device-uri", Value::uri(&p.device_uri))
@@ -974,10 +1028,11 @@ fn rename_by_peer(c: &Client, old: &str, new: &str, s: &Snapshot) -> Result<()> 
         .printer_attr("printer-is-shared", Value::Bool(p.shared))
         .printer_attr("printer-is-accepting-jobs", Value::Bool(true))
         .printer_attr("printer-state", Value::Enum(3));
-    match ppd {
-        Ok(r) if !r.body.is_empty() => req = req.with_data(r.body),
-        Ok(_) | Err(http::Error::Failed(_)) => {}
-        Err(e) => return Err(e.into()),
+    for (k, v) in defaults {
+        req = req.printer_attr(k, v.clone());
+    }
+    if let Some(ppd) = ppd {
+        req = req.with_data(ppd);
     }
     c.call("/admin/", req)?;
     for j in s.jobs_of(old) {
@@ -1620,6 +1675,46 @@ mod tests {
             printer_attrs(&req),
             [("media-default".into(), Value::Empty(ipp::DELETE_ATTR))]
         );
+    }
+
+    #[test]
+    fn a_rename_keeps_the_defaults_the_ppd_does_not_hold() {
+        let o = Options {
+            media: Setting {
+                default: Some("iso_a4_210x297mm".into()),
+                ..Setting::default()
+            },
+            sides: Setting {
+                default: Some("one-sided".into()),
+                ..Setting::default()
+            },
+            color: Setting {
+                default: Some("monochrome".into()),
+                ..Setting::default()
+            },
+            quality: Setting {
+                default: Some("5".into()),
+                ..Setting::default()
+            },
+        };
+        let tail = [
+            (
+                "print-color-mode-default".into(),
+                Value::keyword("monochrome"),
+            ),
+            ("print-quality-default".into(), Value::Enum(5)),
+        ];
+        assert_eq!(carried_defaults(&o, true), tail);
+        let all = carried_defaults(&o, false);
+        assert_eq!(
+            all[..2],
+            [
+                ("media-default".into(), Value::keyword("iso_a4_210x297mm")),
+                ("sides-default".into(), Value::keyword("one-sided")),
+            ]
+        );
+        assert_eq!(all[2..], tail);
+        assert!(carried_defaults(&Options::default(), false).is_empty());
     }
 
     #[test]
