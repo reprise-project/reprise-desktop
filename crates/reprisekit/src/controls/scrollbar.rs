@@ -8,12 +8,14 @@
 //! lights under the pointer is [`crate::pointer::Pointer`]'s. A control
 //! keeps a [`ThumbDrag`] next to the position it scrolls, or hands one
 //! to its host, which feeds it the press, every motion and the release.
-//! A held arrow repeats on the host's ticks ([`ArrowRepeat`]).
+//! A held arrow repeats on the host's ticks ([`ArrowRepeat`]). A page
+//! that shows through a shorter view scrolls under a [`PageScroll`].
 
 use std::time::{Duration, Instant};
 
-use crate::classic::widgets::{BarHit, ScrollParts, scrollbar_pos_at};
-use crate::pointer::Axis;
+use crate::classic::widgets::{BarHit, LINE_H, ScrollParts, scrollbar_parts, scrollbar_pos_at};
+use crate::pointer::{Axis, Interaction, Lit, Pointer, ScrollHit};
+use crate::raster::Rect;
 
 /// How long an arrow is held before it steps again, from the first tick
 /// after the press (a host ticks every 50 ms or so).
@@ -164,6 +166,110 @@ impl ThumbDrag {
     }
 }
 
+/// A page taller than the view it shows through, scrolled in its 100% px under a bar down the
+/// view's side: how much it is cut and scrolled, the held thumb, the lit part and a held arrow.
+/// The owner holds `top` to its range and moves its content by it. An arrow steps [`LINE_H`],
+/// the track a view.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct PageScroll {
+    /// How much taller than its view the page was built.
+    pub short: i32,
+    /// How far the page is scrolled up: 0 to the owner's range.
+    pub top: i32,
+    drag: ThumbDrag,
+    bars: Pointer<ScrollHit>,
+    repeat: ArrowRepeat,
+}
+
+impl PageScroll {
+    /// A press on part `hit` of the bar over a view `visible` tall: the top it asks for. A held
+    /// arrow repeats on [`PageScroll::tick`]; a thumb is grabbed.
+    pub fn press(&mut self, hit: BarHit, visible: i32) -> i32 {
+        self.bars.press(hit.part(), matches!(hit, BarHit::Thumb(_)));
+        self.repeat.press(hit);
+        let by = self.drag.press(Axis::Vertical, hit);
+        self.top + by.by(LINE_H as i64, visible as i64) as i32
+    }
+
+    /// The top the held thumb asks for with the pointer at `at` on a bar laid out as `parts`
+    /// over `visible` of `total`; `None` unless the thumb is held.
+    pub fn drag(
+        &self,
+        parts: &ScrollParts,
+        at: (i32, i32),
+        visible: i32,
+        total: i32,
+    ) -> Option<i32> {
+        let pos = self
+            .drag
+            .pos(Axis::Vertical, parts, at, visible as usize, total as usize)?;
+        Some(pos as i32)
+    }
+
+    /// The pointer moved onto `hit` of the bar, `None` off it. True when the bar's look changed.
+    pub fn motion(&mut self, hit: Option<BarHit>) -> bool {
+        self.bars.motion(hit.and_then(BarHit::part))
+    }
+
+    pub fn leave(&mut self) -> bool {
+        self.bars.leave()
+    }
+
+    /// The pointer let go: true when a thumb was held or the bar's look changed.
+    pub fn release(&mut self) -> bool {
+        let held = self.drag.release();
+        self.repeat.release();
+        let lit = self.bars.lit();
+        self.bars.release();
+        held || lit != self.bars.lit()
+    }
+
+    /// Whether the thumb is held.
+    pub fn holding(&self) -> bool {
+        self.drag.holding()
+    }
+
+    /// Whether an arrow is held: the host ticks [`PageScroll::tick`] until the release.
+    pub fn ticking(&self) -> bool {
+        self.repeat.held()
+    }
+
+    /// A host tick at `now`: the top a held arrow asks for once it repeats, while the pointer is
+    /// on it.
+    pub fn tick(&mut self, now: Instant) -> Option<i32> {
+        if !self.repeat.due(now) {
+            return None;
+        }
+        match self.bars.lit() {
+            Some((ScrollHit::Back, Interaction::Pressed)) => Some(self.top - LINE_H),
+            Some((ScrollHit::Forward, Interaction::Pressed)) => Some(self.top + LINE_H),
+            _ => None,
+        }
+    }
+
+    pub fn lit(&self) -> Lit<ScrollHit> {
+        self.bars.lit()
+    }
+
+    /// The bar's parts in `bar`, over a view `visible` of a page `total` tall.
+    pub fn parts(&self, bar: Rect, visible: i32, total: i32, thumb_min: i32) -> ScrollParts {
+        let (top, visible, total) = (self.top as usize, visible as usize, total as usize);
+        scrollbar_parts(bar, 1, top, visible, total, false, thumb_min)
+    }
+
+    /// How far the page scrolls so the span `r` (top, bottom) shows whole in the view from
+    /// `view.0` to `view.1`, as little as it takes; its top shows when it is taller than the view.
+    pub fn reveal(view: (i32, i32), r: (i32, i32)) -> i32 {
+        if r.0 < view.0 {
+            r.0 - view.0
+        } else if r.1 > view.1 {
+            (r.1 - view.1).min(r.0 - view.0)
+        } else {
+            0
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -235,6 +341,18 @@ mod tests {
         assert_eq!(Press::Lines(-1).by(1, 6), -1);
         assert_eq!(Press::Grab.by(1, 6), 0, "the thumb moves nothing");
         assert!(!d.holding(), "no press but the thumb's grabs");
+    }
+
+    #[test]
+    fn reveal_scrolls_as_little_as_shows_a_span_whole() {
+        assert_eq!(PageScroll::reveal((100, 300), (120, 140)), 0, "in view");
+        assert_eq!(PageScroll::reveal((100, 300), (80, 120)), -20, "above");
+        assert_eq!(PageScroll::reveal((100, 300), (280, 330)), 30, "below");
+        assert_eq!(
+            PageScroll::reveal((100, 300), (150, 500)),
+            50,
+            "taller: its top"
+        );
     }
 
     #[test]

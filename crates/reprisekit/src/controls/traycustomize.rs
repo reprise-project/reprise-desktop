@@ -6,7 +6,9 @@
 //!
 //! Classic's client area is 348x391 with a 330x208 list; Glass lays it out as
 //! a 1184x575 settings page with a 1000x376 list. Sizes are in the layout
-//! consts below.
+//! consts below, at 100% text; both grow with the text size. A page wider or
+//! taller than the room its host has ([`TrayCustomize::fit`]) narrows its
+//! list and wraps its text, and scrolls above the button band.
 
 use std::sync::Arc;
 
@@ -24,13 +26,13 @@ use crate::controls::combo::{self, Combo, ComboLit};
 use crate::controls::form;
 use crate::controls::listview::{draw_group_header, list_rule};
 use crate::controls::metrics::ControlMetrics;
-use crate::controls::scrollbar::ThumbDrag;
+use crate::controls::scrollbar::{PageScroll, ThumbDrag};
 use crate::cues::Cues;
 use crate::icon::IconSource;
 use crate::look::Paint;
 use crate::look::widgets::header as header_widgets;
 use crate::look::widgets::{draw_button, draw_checkbox, draw_field_frame, draw_scrollbar};
-use crate::pointer::{Axis, Interaction, Pointer};
+use crate::pointer::{Axis, Interaction, Pointer, WHEEL_ROWS};
 use crate::raster::{Canvas, Rect};
 use crate::style::PageInks;
 use crate::text::{self, Align, TextRenderer, split_mnemonic};
@@ -229,6 +231,26 @@ const CLASSIC: Geometry = Geometry {
 };
 
 impl Geometry {
+    /// These parts with the intro `dy` taller: what lies under it moves down and the client
+    /// grows by as much.
+    fn pushed(&self, dy: i32) -> Geometry {
+        let down = |r: Rect| Rect::new(r.x, r.y + dy, r.width, r.height);
+        Geometry {
+            client: (self.client.0, self.client.1 + dy),
+            intro: Rect {
+                height: self.intro.height + dy,
+                ..self.intro
+            },
+            prompt: down(self.prompt),
+            list: down(self.list),
+            check: self.check.map(|(x, y)| (x, y + dy)),
+            restore: down(self.restore),
+            ok: down(self.ok),
+            cancel: down(self.cancel),
+            ..*self
+        }
+    }
+
     /// These parts for text grown by `u`: rects, rows and columns grow, the icon stays centred
     /// down its taller row, and the header's hidden row keeps its px.
     fn grown(&self, u: TextUnits) -> Geometry {
@@ -295,8 +317,19 @@ const PAGE_TIP: Rect = Rect::new(67, 19, 400, 18);
 /// The page's check box label, from the box's left edge, and a pixel up.
 const PAGE_CHECK_LABEL: i32 = 19;
 const PAGE_COMBO: Rect = Rect::new(PAGE_BEHAVIOURS_X, 8, 279, 23);
-/// The separator over the button band, from the client's top.
+/// The separator over the button band, from the client's top, and the band's height.
 const PAGE_BAND_Y: i32 = 532;
+const PAGE_BAND_H: i32 = 43;
+/// The page's side margins, and how far OK's and Cancel's left edges sit in from its right.
+const PAGE_MARGIN: i32 = 92;
+const PAGE_OK_X: i32 = 250;
+const PAGE_CANCEL_X: i32 = 168;
+/// What a narrowed page keeps right of a combo, and between a name and the combo.
+const PAGE_COMBO_RIGHT: i32 = 50;
+const PAGE_NAME_GAP: i32 = 25;
+/// The narrowest page: a name column 100 px wide.
+const PAGE_MIN_W: i32 =
+    2 * PAGE_MARGIN + PAGE_NAME.x + 100 + PAGE_NAME_GAP + PAGE_COMBO.width + PAGE_COMBO_RIGHT;
 /// The heading's size over the body text's: 16 px to 12.
 const HEADING_SCALE: (u32, u32) = (4, 3);
 
@@ -362,6 +395,8 @@ pub enum Hit {
     List,
     Combo(combo::Hit),
     Bar(BarHit),
+    /// The page's own scrollbar, while the page scrolls.
+    PageBar(BarHit),
     AllIcons,
     Restore,
     Ok,
@@ -415,6 +450,109 @@ pub struct TrayCustomize {
     /// The list's thumb, and the open combo list's, while dragged.
     thumb: ThumbDrag,
     combo_thumb: ThumbDrag,
+    /// The most client the host has room for, in px at the text size; `None` has room for all.
+    /// [`TrayCustomize::fit`] lays the page out in it.
+    pub room: Option<(i32, i32)>,
+    /// The intro as [`TrayCustomize::fit`] wrapped it; empty before. The page draws an empty
+    /// one on one line; Classic's grows past three lines by the rest.
+    intro: Vec<String>,
+    /// Restore Defaults' width at 100%, as wide as [`TrayCustomize::fit`] found its label
+    /// needs; `None` before.
+    restore_w: Option<i32>,
+    /// The page's scroll above its band, in a client shorter than the page.
+    page_scroll: PageScroll,
+}
+
+/// Glass's page at the text size: 100% widths after the room, how much the intro's extra lines
+/// push what lies under it down and how far the page is scrolled.
+#[derive(Clone, Copy)]
+struct PageGeo {
+    u: TextUnits,
+    width: i32,
+    dy: i32,
+    top: i32,
+    short: i32,
+}
+
+impl PageGeo {
+    fn list_w(&self) -> i32 {
+        self.width - 2 * PAGE_MARGIN
+    }
+
+    /// Where the Behaviors column starts in the list: in from the right as the list narrows.
+    fn behaviours_x(&self) -> i32 {
+        PAGE_BEHAVIOURS_X.min(self.list_w() - PAGE_COMBO.width - PAGE_COMBO_RIGHT)
+    }
+
+    fn name_w(&self) -> i32 {
+        PAGE_NAME
+            .width
+            .min(self.behaviours_x() - PAGE_NAME.x - PAGE_NAME_GAP)
+    }
+
+    /// The page's parts down to the band, 100% tall.
+    fn content_h(&self) -> i32 {
+        PAGE_BAND_Y + self.dy
+    }
+
+    /// How much of them shows above the band.
+    fn view_h(&self) -> i32 {
+        self.content_h() - self.short
+    }
+
+    /// `r`, laid out at 100% from the page's top-left with the parts under the intro `dy`
+    /// further down, grown and scrolled.
+    fn at(&self, r: Rect) -> Rect {
+        let g = self.u.rect(r);
+        Rect::new(g.x, g.y - self.u.len(self.top), g.width, g.height)
+    }
+
+    fn list(&self) -> Rect {
+        Rect::new(
+            GLASS.list.x,
+            GLASS.list.y + self.dy,
+            self.list_w(),
+            GLASS.list.height,
+        )
+    }
+
+    fn intro(&self, lines: i32) -> Rect {
+        let r = GLASS.intro;
+        Rect::new(r.x, r.y, self.list_w(), r.height + (lines - 1) * LINE_H)
+    }
+
+    fn restore(&self) -> Rect {
+        let r = GLASS.restore;
+        Rect::new(r.x, r.y + self.dy, r.width, r.height)
+    }
+
+    /// The check box's row: as tall as the box at 100%.
+    fn check(&self, check: i32) -> Rect {
+        let (x, y) = GLASS.check.unwrap_or_default();
+        Rect::new(x, y + self.dy, check, check)
+    }
+
+    /// The band and the part of the page above it, from the client's top-left.
+    fn band(&self) -> Rect {
+        self.u
+            .rect(Rect::new(0, self.view_h(), self.width, PAGE_BAND_H))
+    }
+
+    fn view(&self) -> Rect {
+        self.u.rect(Rect::new(0, 0, self.width, self.view_h()))
+    }
+
+    fn button(&self, from_right: i32) -> Rect {
+        let ok = GLASS.ok;
+        let y = self.view_h() + ok.y - PAGE_BAND_Y;
+        self.u
+            .rect(Rect::new(self.width - from_right, y, ok.width, ok.height))
+    }
+}
+
+/// How many lines `line_h` apart a box `h` tall, grown from whole 100% lines, holds.
+fn rows_in(h: i32, line_h: i32) -> i32 {
+    ((h + line_h / 2) / line_h).max(1)
 }
 
 /// A label's layout rect on the device: its width was measured at the
@@ -450,6 +588,10 @@ impl TrayCustomize {
             hot_row: None,
             thumb: ThumbDrag::default(),
             combo_thumb: ThumbDrag::default(),
+            room: None,
+            intro: Vec::new(),
+            restore_w: None,
+            page_scroll: PageScroll::default(),
         };
         if t.is_page() {
             t.focus = Focus::Combo;
@@ -468,6 +610,8 @@ impl TrayCustomize {
         }
         self.wording = w;
         self.top = 0;
+        self.page_scroll = PageScroll::default();
+        self.intro.clear();
         self.hot_row = None;
         self.focus = if self.is_page() {
             Focus::Combo
@@ -482,27 +626,123 @@ impl TrayCustomize {
         self.refocus();
     }
 
-    /// Whether the dialog is laid out as Glass's settings page, whose layout keeps its 100% px.
+    /// Whether the dialog is laid out as Glass's settings page.
     pub fn is_page(&self) -> bool {
         self.wording == Wording::Glass
     }
 
-    /// Where the parts go, grown by `metrics.text`.
+    /// Where the parts go, grown by `metrics.text`: Classic's after its intro's lines and
+    /// Restore Defaults' label as [`TrayCustomize::fit`] wrapped and sized them.
     fn geometry(&self) -> Geometry {
-        self.wording.geometry().grown(self.metrics.text)
+        let mut g = *self.wording.geometry();
+        if !self.is_page() {
+            let rows = (self.intro.len() as i32 - g.intro.height / LINE_H).max(0);
+            g = g.pushed(rows * LINE_H);
+            if let Some(w) = self.restore_w {
+                let r = g.restore;
+                g.restore = Rect::new(r.right() - w, r.y, w, r.height);
+            }
+        }
+        g.grown(self.metrics.text)
+    }
+
+    /// The page at the text size in [`TrayCustomize::room`], as [`TrayCustomize::fit`] left it.
+    fn page_geo(&self) -> PageGeo {
+        let u = self.metrics.text;
+        let full = GLASS.client.0;
+        let width = self
+            .room
+            .map_or(full, |r| u.within(r.0).clamp(PAGE_MIN_W, full));
+        let lines = self.intro.len().max(1) as i32;
+        PageGeo {
+            u,
+            width,
+            dy: (lines - 1) * LINE_H,
+            top: self.page_scroll.top,
+            short: self.page_scroll.short,
+        }
+    }
+
+    /// Lay the parts out around their text at `px`. Classic's intro takes the lines it wraps
+    /// onto and Restore Defaults the width its label needs. The page fits
+    /// [`TrayCustomize::room`]: a narrower page wraps its intro onto more lines, and one taller
+    /// than the room keeps its band at the client's foot and scrolls the rest. Idempotent.
+    pub fn fit(&mut self, text: &TextRenderer, px: u32) {
+        self.intro.clear();
+        self.restore_w = None;
+        if !self.is_page() {
+            let u = self.metrics.text;
+            let width = u.len(CLASSIC.intro.width);
+            self.intro = text::wrap(text, self.wording.intro(), width, px);
+            let label = split_mnemonic(self.wording.restore()).0;
+            let need = u.design(text.measure(&label, false, px) + u.len(6));
+            self.restore_w = Some(need.max(CLASSIC.restore.width));
+            return;
+        }
+        let g = self.page_geo();
+        let width = g.u.len(g.list_w());
+        let intro = self.wording.intro();
+        if text.measure(intro, false, px) > width {
+            self.intro = text::wrap(text, intro, width, px);
+        }
+        let g = self.page_geo();
+        let full = g.content_h() + PAGE_BAND_H;
+        let room = self.room.map_or(full, |r| g.u.within(r.1));
+        self.page_scroll.short = (full - room).clamp(0, g.content_h() - LINE_H);
+        self.scroll_page_to(self.page_scroll.top);
+    }
+
+    /// Scroll the page so `top` 100% px of it are above the client, held to its range. True
+    /// when it moved.
+    fn scroll_page_to(&mut self, top: i32) -> bool {
+        let top = top.clamp(0, self.page_scroll.short);
+        std::mem::replace(&mut self.page_scroll.top, top) != top
+    }
+
+    /// The span the focused part takes down the page at 100%, unscrolled, if it scrolls.
+    fn focus_span(&self) -> Option<(i32, i32)> {
+        let g = self.page_geo();
+        let r = match self.focus {
+            Focus::Combo => {
+                let k = self.selected?.checked_sub(self.top)? as i32;
+                let y = g.list().y + PAGE_BODY_Y + k * GLASS.row_h + PAGE_COMBO.y;
+                Rect::new(0, y, 0, PAGE_COMBO.height)
+            }
+            Focus::AllIcons => g.check(self.metrics.check).inset(-1),
+            Focus::Restore => g.restore(),
+            Focus::List | Focus::Ok | Focus::Cancel => return None,
+        };
+        Some((r.y, r.bottom()))
+    }
+
+    /// Scroll the page so its focused part shows whole, as little as it takes. True when it
+    /// moved.
+    fn reveal_focus(&mut self) -> bool {
+        let Some(span) = self.focus_span().filter(|_| self.page_scroll.short > 0) else {
+            return false;
+        };
+        let g = self.page_geo();
+        let top = self.page_scroll.top;
+        let by = PageScroll::reveal((top, top + g.view_h()), span);
+        self.scroll_page_to(top + by)
     }
 
     pub fn client(&self) -> (i32, i32) {
+        if self.is_page() {
+            let g = self.page_geo();
+            return (g.u.len(g.width), g.band().bottom());
+        }
         self.geometry().client
     }
 
     /// The rows' box's height: the list's inside less the header's rows
     /// that show; on the page, the list's inside under its titles.
     pub fn body_height(&self) -> i32 {
-        let g = self.geometry();
         if self.is_page() {
-            return g.list.height - PAGE_BODY_Y - 1;
+            let g = self.page_geo();
+            return g.u.rect(g.list()).height - g.u.len(PAGE_BODY_Y) - 1;
         }
+        let g = self.geometry();
         g.list.height - 4 - (self.metrics.list_header - g.header_under)
     }
 
@@ -681,6 +921,14 @@ impl TrayCustomize {
     }
 
     pub fn key(&mut self, key: form::Key) -> Event {
+        let ev = self.key_inner(key);
+        match ev {
+            Event::None | Event::Redraw if self.reveal_focus() => Event::Redraw,
+            ev => ev,
+        }
+    }
+
+    fn key_inner(&mut self, key: form::Key) -> Event {
         let height = self.body_height();
         use form::Key;
         if self.combo.open.is_some() {
@@ -775,6 +1023,21 @@ impl TrayCustomize {
         }
     }
 
+    /// The wheel turned `rows` rows over `hit`: the list scrolls, and while the page scrolls,
+    /// the page does off the list or where the list stops. Nothing while a combo is open. True
+    /// when anything moved.
+    pub fn wheel(&mut self, hit: Option<Hit>, rows: i32) -> bool {
+        if self.combo.open.is_some() {
+            return false;
+        }
+        let on_list = matches!(hit, Some(Hit::Row(_) | Hit::List | Hit::Bar(_)));
+        if (on_list || self.page_scroll.short == 0) && self.scroll(rows) {
+            return true;
+        }
+        let to = self.page_scroll.top + rows * WHEEL_ROWS * LINE_H;
+        self.scroll_page_to(to)
+    }
+
     /// Scroll the list by `rows` slots.
     pub fn scroll(&mut self, rows: i32) -> bool {
         let slots = self.slots();
@@ -829,6 +1092,11 @@ impl TrayCustomize {
                 let by = self.thumb.press(Axis::Vertical, bar).by(1, page);
                 redraw_if(self.scroll(by as i32) || matches!(bar, BarHit::Thumb(_)))
             }
+            Hit::PageBar(bar) => {
+                let to = self.page_scroll.press(bar, self.page_geo().view_h());
+                self.scroll_page_to(to);
+                Event::Redraw
+            }
             Hit::AllIcons => self.arm(Focus::AllIcons),
             Hit::Restore => self.arm(Focus::Restore),
             Hit::Ok => self.arm(Focus::Ok),
@@ -850,14 +1118,37 @@ impl TrayCustomize {
         Event::Redraw
     }
 
-    /// Whether the pointer holds a push button, the box or a thumb.
+    /// Whether the pointer holds a push button, the box, a thumb or the page's arrow.
     pub fn holding(&self) -> bool {
-        self.pointer.holding() || self.thumb.holding() || self.combo_thumb.holding()
+        self.pointer.holding()
+            || self.thumb.holding()
+            || self.combo_thumb.holding()
+            || self.page_scroll.holding()
+            || self.page_scroll.ticking()
     }
 
-    /// The pointer at `y` with a thumb held: its list follows. `None`
+    /// Whether the page's arrow is held: the host sends [`TrayCustomize::tick`] until the
+    /// release.
+    pub fn ticking(&self) -> bool {
+        self.page_scroll.ticking()
+    }
+
+    /// A host tick at `now`: a held page arrow steps once it repeats.
+    pub fn tick(&mut self, now: std::time::Instant) -> Event {
+        let to = self.page_scroll.tick(now);
+        redraw_if(to.is_some_and(|to| self.scroll_page_to(to)))
+    }
+
+    /// The pointer at `y` with a thumb held: its list or the page follows. `None`
     /// with none held.
     pub fn drag(&mut self, lay: &Layout, y: i32) -> Option<Event> {
+        if let (Some(bar), true) = (lay.page_bar, self.page_scroll.holding()) {
+            let g = self.page_geo();
+            let (visible, total) = (g.view_h(), g.content_h());
+            let parts = self.page_scroll.parts(bar, visible, total, lay.thumb_min);
+            let to = self.page_scroll.drag(&parts, (bar.x, y), visible, total)?;
+            return Some(redraw_if(self.scroll_page_to(to)));
+        }
         if let (Some((_, cl)), true) = (&lay.combo, self.combo_thumb.holding()) {
             return Some(redraw_if(self.combo.drag_bar(cl, &self.combo_thumb, y)));
         }
@@ -888,6 +1179,10 @@ impl TrayCustomize {
     pub fn motion(&mut self, hit: Option<Hit>) -> Event {
         let held = self.pointer.holding();
         let mut changed = self.pointer.motion(Self::button(hit));
+        changed |= self.page_scroll.motion(match hit {
+            Some(Hit::PageBar(b)) => Some(b),
+            _ => None,
+        });
         if let (true, Some(open), Some(Hit::Combo(combo::Hit::Row(i)))) =
             (self.is_page(), self.combo.open, hit)
             && open != i
@@ -910,14 +1205,15 @@ impl TrayCustomize {
 
     /// The pointer left the dialog: nothing stays hot.
     pub fn leave(&mut self) -> Event {
-        let changed = self.pointer.leave() | self.hot_row.take().is_some();
+        let changed =
+            self.pointer.leave() | self.hot_row.take().is_some() | self.page_scroll.leave();
         redraw_if(changed)
     }
 
     /// The pointer let go over `hit`: the held push button or box acts if
     /// the release lands on it. A held thumb lets go.
     pub fn release(&mut self, hit: Option<Hit>) -> Event {
-        if self.thumb.release() | self.combo_thumb.release() {
+        if self.thumb.release() | self.combo_thumb.release() | self.page_scroll.release() {
             return Event::Redraw;
         }
         if !self.pointer.holding() {
@@ -1031,44 +1327,45 @@ impl TrayCustomize {
             thumb_min: cm.thumb_min,
             fields: Vec::new(),
             band: None,
+            view: at(Rect::new(0, 0, g.client.0, g.client.1)),
+            page_bar: None,
         }
     }
 
     /// Glass's page: every row in view carries its combo's field, the bar
-    /// is always there, and Restore is a link as wide as its words.
+    /// is always there, and Restore is a link as wide as its words. Above the
+    /// band the parts scroll with the page.
     fn page_layout(&self, text: &TextRenderer, px: u32, origin: (i32, i32)) -> Layout {
-        let g = &GLASS;
+        let g = self.page_geo();
+        let u = g.u;
         let cm = &self.metrics;
         let at = |r: Rect| Rect::new(r.x + origin.0, r.y + origin.1, r.width, r.height);
-        let frame = at(g.list);
+        let on_page = |r: Rect| at(g.at(r));
+        let frame = on_page(g.list());
         let inner = frame.inset(1);
         let vbar = Rect::new(inner.right() - cm.scroll, inner.y, cm.scroll, inner.height);
-        let body = Rect::new(
-            inner.x,
-            frame.y + PAGE_BODY_Y,
-            vbar.x - inner.x,
-            inner.bottom() - frame.y - PAGE_BODY_Y,
-        );
+        let body_y = frame.y + u.len(PAGE_BODY_Y);
+        let body = Rect::new(inner.x, body_y, vbar.x - inner.x, inner.bottom() - body_y);
+        let titles = u.rect(PAGE_TITLES);
+        let rule_inset = u.len(PAGE_RULE_INSET);
         let header = Rect::new(
-            frame.x + PAGE_TITLES.x,
-            frame.y + PAGE_TITLES.y,
-            vbar.x - PAGE_RULE_INSET - frame.x - PAGE_TITLES.x,
-            PAGE_TITLES.height,
+            frame.x + titles.x,
+            frame.y + titles.y,
+            vbar.x - rule_inset - frame.x - titles.x,
+            titles.height,
         );
+        let behaviours = frame.x + u.len(g.behaviours_x());
         let columns = [
+            Rect::new(header.x, header.y, behaviours - header.x, header.height),
             Rect::new(
-                header.x,
+                behaviours,
                 header.y,
-                PAGE_BEHAVIOURS_X - PAGE_TITLES.x,
-                header.height,
-            ),
-            Rect::new(
-                frame.x + PAGE_BEHAVIOURS_X,
-                header.y,
-                header.right() - frame.x - PAGE_BEHAVIOURS_X,
+                header.right() - behaviours,
                 header.height,
             ),
         ];
+        let row_h = u.len(GLASS.row_h);
+        let field = u.rect(PAGE_COMBO);
         let slots = self.slots();
         let top = self.top.min(slots.len());
         let mut placed = Vec::new();
@@ -1078,38 +1375,51 @@ impl TrayCustomize {
             if y >= body.bottom() {
                 break;
             }
-            let r = Rect::new(body.x, y, body.width, g.row_h);
+            let r = Rect::new(body.x, y, body.width, row_h);
             if let Slot::Row(i) = slot {
-                let f = PAGE_COMBO;
-                fields.push((i, Rect::new(frame.x + f.x, y + f.y, f.width, f.height)));
+                let f = Rect::new(behaviours, y + field.y, field.width, field.height);
+                fields.push((i, f));
             }
             placed.push((slot, r));
-            y += g.row_h;
+            y += row_h;
         }
         let combo = self
             .selected
             .and_then(|i| fields.iter().find(|(j, _)| *j == i))
             .map(|&(i, f)| (i, combo::layout(&self.combo, f, cm)));
-        let (cx, cy) = g.check.unwrap_or_default();
-        let check = at(Rect::new(cx, cy, cm.check, cm.check));
+        let row = on_page(g.check(cm.check));
+        let check = Rect::new(
+            row.x,
+            row.y + (row.height - cm.check) / 2,
+            cm.check,
+            cm.check,
+        );
         let (plain, _) = split_mnemonic(ALL_ICONS);
         let check_label = Rect::new(
             check.x + PAGE_CHECK_LABEL,
-            check.y - 1,
+            row.y - 1,
             text.measure(&plain, false, px),
-            cm.check,
+            row.height,
         );
-        let link = at(g.restore);
+        let link = on_page(g.restore());
         let restore = Rect::new(
             link.x,
             link.y,
             text.measure(self.wording.restore(), false, px),
             link.height,
         );
+        let view = at(g.view());
+        let page_bar = (g.short > 0)
+            .then(|| Rect::new(view.right() - cm.scroll, view.y, cm.scroll, view.height));
         Layout {
-            client: at(Rect::new(0, 0, g.client.0, g.client.1)),
-            intro: at(g.intro),
-            prompt: at(g.prompt),
+            client: at(Rect::new(0, 0, view.width, g.band().bottom())),
+            intro: on_page(g.intro(self.intro.len().max(1) as i32)),
+            prompt: on_page(Rect::new(
+                GLASS.prompt.x,
+                GLASS.prompt.y,
+                g.list_w(),
+                GLASS.prompt.height,
+            )),
             frame,
             inner,
             header,
@@ -1122,33 +1432,40 @@ impl TrayCustomize {
             check: Some(check),
             check_label: Some(check_label),
             restore,
-            ok: at(g.ok),
-            cancel: at(g.cancel),
+            ok: at(g.button(PAGE_OK_X)),
+            cancel: at(g.button(PAGE_CANCEL_X)),
             thumb_min: cm.thumb_min,
             fields,
-            band: Some(at(Rect::new(
-                0,
-                PAGE_BAND_Y,
-                g.client.0,
-                g.client.1 - PAGE_BAND_Y,
-            ))),
+            band: Some(at(g.band())),
+            view,
+            page_bar,
         }
     }
 
     pub fn hit(&self, lay: &Layout, x: i32, y: i32) -> Option<Hit> {
         if let Some((_, cl)) = &lay.combo
             && let Some(h) = combo::hit(&self.combo, cl, x, y)
+            && (matches!(h, combo::Hit::Row(_)) || h.bar().is_some() || lay.view.contains(x, y))
         {
             return Some(Hit::Combo(h));
         }
-        for (r, h) in [
-            (lay.ok, Hit::Ok),
-            (lay.cancel, Hit::Cancel),
-            (lay.restore, Hit::Restore),
-        ] {
+        if let Some(bar) = lay.page_bar.filter(|b| b.contains(x, y)) {
+            let g = self.page_geo();
+            let parts = self
+                .page_scroll
+                .parts(bar, g.view_h(), g.content_h(), lay.thumb_min);
+            return Some(Hit::PageBar(bar_hit(&parts, x, y, false)));
+        }
+        for (r, h) in [(lay.ok, Hit::Ok), (lay.cancel, Hit::Cancel)] {
             if r.contains(x, y) {
                 return Some(h);
             }
+        }
+        if !lay.view.contains(x, y) {
+            return None;
+        }
+        if lay.restore.contains(x, y) {
+            return Some(Hit::Restore);
         }
         if let (Some(b), Some(l)) = (lay.check, lay.check_label)
             && (b.contains(x, y) || l.contains(x, y))
@@ -1203,7 +1520,7 @@ impl TrayCustomize {
         c.fill_rect(lay.client.scaled(s), cs.button_face);
         let lines = text::wrap(text, w.intro(), lay.intro.width * s, px);
         let line_h = self.metrics.text.len(LINE_H);
-        let pitch = lay.intro.height / (lay.intro.height / line_h).max(1);
+        let pitch = lay.intro.height / rows_in(lay.intro.height, line_h);
         for (i, line) in lines.iter().enumerate() {
             let r = Rect::new(
                 lay.intro.x,
@@ -1351,10 +1668,79 @@ impl TrayCustomize {
         px: u32,
     ) {
         let Paint { cs, s, active, .. } = *p;
+        c.fill_rect(lay.client.scaled(s), cs.window);
+        c.with_clip(lay.view.scaled(s), |c| {
+            self.draw_page_parts(c, text, p, inks, lay, cues, px)
+        });
+        if let Some(bar) = lay.page_bar {
+            let g = self.page_geo();
+            let (top, visible, total) = (g.top as usize, g.view_h() as usize, g.content_h());
+            let lit = self.page_scroll.lit();
+            draw_scrollbar(c, p, bar.scaled(s), top, visible, total as usize, lit);
+        }
+        if let Some(band) = lay.band {
+            let band = band.scaled(s);
+            c.fill_rect(band, cs.button_face);
+            c.fill_rect(Rect::new(band.x, band.y, band.width, s), inks.rule);
+        }
+        let dots = cues.focus && active;
+        for (r, label, f) in [
+            (lay.ok, "OK", Focus::Ok),
+            (lay.cancel, "Cancel", Focus::Cancel),
+        ] {
+            let default = active
+                && match self.focus {
+                    Focus::Cancel => f == Focus::Cancel,
+                    _ => f == Focus::Ok,
+                };
+            let ptr = self.pointer.of(f);
+            draw_button(
+                c,
+                text,
+                p,
+                r.scaled(s),
+                label,
+                default,
+                ptr,
+                true,
+                dots && self.focus == f,
+                px,
+            );
+        }
+        if let (Some((_, cl)), Some(open)) = (&lay.combo, self.combo.open) {
+            combo::draw_list(
+                c,
+                text,
+                p,
+                &self.combo.items,
+                Some(open),
+                self.combo.top,
+                self.combo.rows,
+                cl.list,
+                cl.scrollbar,
+                None,
+                px,
+            );
+        }
+    }
+
+    /// The page's parts above the band, in its view: the heading, the text, the list, the link
+    /// and the box.
+    #[allow(clippy::too_many_arguments)]
+    fn draw_page_parts(
+        &self,
+        c: &mut Canvas,
+        text: &TextRenderer,
+        p: &Paint,
+        inks: &PageInks,
+        lay: &Layout,
+        cues: Cues,
+        px: u32,
+    ) {
+        let Paint { cs, s, active, .. } = *p;
         let dots = cues.focus && active;
         let w = self.wording;
         let live = self.list_enabled();
-        c.fill_rect(lay.client.scaled(s), cs.window);
         let heading_px = px * HEADING_SCALE.0 / HEADING_SCALE.1;
         let heading = Wording::HEADING;
         text.draw(
@@ -1367,13 +1753,22 @@ impl TrayCustomize {
             heading_px,
         );
         let intro = lay.intro.scaled(s);
-        text.draw(c, intro, w.intro(), false, cs.window_text, Align::Left, px);
+        if self.intro.is_empty() {
+            text.draw(c, intro, w.intro(), false, cs.window_text, Align::Left, px);
+        }
+        let first = self.metrics.text.rect(GLASS.intro).height * s;
+        let pitch = self.metrics.text.len(LINE_H) * s;
+        for (k, line) in self.intro.iter().enumerate() {
+            let r = Rect::new(intro.x, intro.y + k as i32 * pitch, intro.width, first);
+            text.draw(c, r, line, false, cs.window_text, Align::Left, px);
+        }
 
         let frame = lay.frame.scaled(s);
         c.fill_rect(frame, inks.list_frame);
         c.fill_rect(lay.inner.scaled(s), cs.window);
         for (r, title) in lay.columns.iter().zip(w.columns()) {
-            let tr = Rect::new(r.x + PAGE_TITLE_X, r.y, r.width - PAGE_TITLE_X, r.height);
+            let dx = self.metrics.text.len(PAGE_TITLE_X);
+            let tr = Rect::new(r.x + dx, r.y, r.width - dx, r.height);
             text.draw(
                 c,
                 tr.scaled(s),
@@ -1384,11 +1779,17 @@ impl TrayCustomize {
                 px,
             );
         }
+        let u = self.metrics.text;
         let rule_x = lay.columns[0].x;
-        let rule_end = lay.body.right() - PAGE_RULE_INSET;
-        let rule = Rect::new(rule_x, lay.frame.y + PAGE_RULE_Y, rule_end + 1 - rule_x, 1);
+        let rule_end = lay.body.right() - u.len(PAGE_RULE_INSET);
+        let rule = Rect::new(
+            rule_x,
+            lay.frame.y + u.len(PAGE_RULE_Y),
+            rule_end + 1 - rule_x,
+            1,
+        );
         c.fill_rect(rule.scaled(s), inks.rule);
-        let body = lay.body.scaled(s);
+        let body = lay.body.intersect(&lay.view).scaled(s);
         c.with_clip(body, |c| {
             for &(slot, r) in &lay.slots {
                 let Slot::Row(i) = slot else { continue };
@@ -1439,49 +1840,6 @@ impl TrayCustomize {
                 draw_focus_ring(c, ring, s, cs.window_text);
             }
         }
-        if let Some(band) = lay.band {
-            let band = band.scaled(s);
-            c.fill_rect(band, cs.button_face);
-            c.fill_rect(Rect::new(band.x, band.y, band.width, s), inks.rule);
-        }
-        for (r, label, f) in [
-            (lay.ok, "OK", Focus::Ok),
-            (lay.cancel, "Cancel", Focus::Cancel),
-        ] {
-            let default = active
-                && match self.focus {
-                    Focus::Cancel => f == Focus::Cancel,
-                    _ => f == Focus::Ok,
-                };
-            let ptr = self.pointer.of(f);
-            draw_button(
-                c,
-                text,
-                p,
-                r.scaled(s),
-                label,
-                default,
-                ptr,
-                true,
-                dots && self.focus == f,
-                px,
-            );
-        }
-        if let (Some((_, cl)), Some(open)) = (&lay.combo, self.combo.open) {
-            combo::draw_list(
-                c,
-                text,
-                p,
-                &self.combo.items,
-                Some(open),
-                self.combo.top,
-                self.combo.rows,
-                cl.list,
-                cl.scrollbar,
-                None,
-                px,
-            );
-        }
     }
 
     /// Page row `i` in its slot `r` (logical px): the icon, the name over
@@ -1503,18 +1861,22 @@ impl TrayCustomize {
         let w = self.wording;
         let e = &self.entries[i];
         let x0 = lay.frame.x;
+        let u = self.metrics.text;
         if let Some(src) = e
             .icon
             .iter()
             .min_by_key(|src| (src.width as i32 - ICON_PX * s).abs())
         {
             let ic = src.to_canvas(ICON_PX * s);
-            c.blit_over((x0 + PAGE_ICON.0) * s, (r.y + PAGE_ICON.1) * s, &ic);
+            let dy = u.len(PAGE_ICON.1) + (u.len(PAGE_NAME.height) - PAGE_NAME.height) / 2;
+            c.blit_over((x0 + u.len(PAGE_ICON.0)) * s, (r.y + dy) * s, &ic);
         }
+        let name_w = self.page_geo().name_w();
         for (b, line, ink) in [
             (PAGE_NAME, &e.name, cs.window_text),
             (PAGE_TIP, &e.detail, inks.detail),
         ] {
+            let b = u.rect(Rect { width: name_w, ..b });
             let tr = Rect::new(x0 + b.x, r.y + b.y, b.width, b.height).scaled(s);
             let shown = text.ellipsize(line, tr.width, false, px);
             text.draw(c, tr, &shown, false, ink, Align::Left, px);
@@ -1648,6 +2010,61 @@ impl TrayCustomize {
         }
     }
 
+    /// The texts that run past their boxes with text at `px`, by name and how many px over, for
+    /// an audit: the page's run to the client's right edge at most, a button's label to its
+    /// sides less 3 px each.
+    pub fn overflows(&self, text: &TextRenderer, px: u32) -> Vec<(&'static str, i32)> {
+        let lay = self.layout(text, px, (0, 0));
+        let w = self.wording;
+        let u = self.metrics.text;
+        let width = |s: &str, bold: bool, px: u32| text.measure(&split_mnemonic(s).0, bold, px);
+        let mut over = Vec::new();
+        let mut put = |name: &'static str, by: i32| {
+            if by > 0 {
+                over.push((name, by));
+            }
+        };
+        let button = |label: &str, r: Rect| width(label, false, px) - (r.width - u.len(6));
+        put("ok", button("OK", lay.ok));
+        put("cancel", button("Cancel", lay.cancel));
+        if self.is_page() {
+            let heading_px = px * HEADING_SCALE.0 / HEADING_SCALE.1;
+            put(
+                "heading",
+                width(Wording::HEADING, false, heading_px) - lay.prompt.width,
+            );
+            let intro = match self.intro.as_slice() {
+                [] => width(w.intro(), false, px),
+                lines => lines.iter().map(|l| width(l, false, px)).max().unwrap_or(0),
+            };
+            put("intro", intro - lay.intro.width);
+            let right = lay.client.right();
+            put(
+                "all icons",
+                lay.check_label.map_or(0, |l| l.right() - right),
+            );
+            put("restore", lay.restore.right() - right);
+            for (r, title) in lay.columns.iter().zip(w.columns()) {
+                let room = r.width - u.len(PAGE_TITLE_X);
+                put("column", width(title, true, px) - room);
+            }
+            return over;
+        }
+        let line_h = u.len(LINE_H);
+        let lines = text::wrap(text, w.intro(), lay.intro.width, px).len() as i32;
+        put(
+            "intro",
+            (lines - rows_in(lay.intro.height, line_h)) * line_h,
+        );
+        put("prompt", width(w.prompt(), false, px) - lay.prompt.width);
+        put("restore", button(w.restore(), lay.restore));
+        let check = lay
+            .check_label
+            .map_or(0, |l| l.right() - lay.client.right());
+        put("all icons", check);
+        over
+    }
+
     /// The text, the list with its rows (each named by the item and
     /// valued by its behaviour), the combo, the box and the buttons; the
     /// focused part gets the focus.
@@ -1754,6 +2171,10 @@ pub struct Layout {
     pub fields: Vec<(usize, Rect)>,
     /// The page's button band under its rule.
     pub band: Option<Rect>,
+    /// What shows of the parts that scroll: the client above the page's band.
+    pub view: Rect,
+    /// The page's scrollbar down the view's right edge, while the page scrolls.
+    pub page_bar: Option<Rect>,
 }
 
 #[cfg(test)]
@@ -2335,6 +2756,187 @@ mod tests {
         assert_eq!(l.fields[0], (3, Rect::new(584, 140, 279, 23)));
     }
 
+    /// At 125% (14 px) with every glyph 9 px wide, Classic's intro wraps onto a fourth line:
+    /// what lies under it moves down a line and the client grows by one. Restore Defaults
+    /// widens leftward to its label and 3 px a side.
+    #[test]
+    fn classic_fits_its_intro_and_restore_label() {
+        let text = TextRenderer::stub(14, |_| 9);
+        let mut t = sample(Wording::Classic);
+        t.metrics = metrics(Wording::Classic).grown(TextUnits::new(14, 11));
+        assert_eq!(t.client(), (443, 498));
+        t.fit(&text, 14);
+        assert_eq!(t.intro.len(), 4);
+        let l = t.layout(&text, 14, (0, 0));
+        assert_eq!(t.client(), (443, 514));
+        assert_eq!(l.intro.height, 66);
+        assert_eq!(l.prompt.y, 101);
+        assert_eq!(
+            (l.restore.x, l.restore.right(), l.restore.y),
+            (279, 431, 407)
+        );
+        assert!(t.overflows(&text, 14).is_empty());
+    }
+
+    /// The sample page at 200% (22 px) in `room`, fitted with every glyph 11 px wide.
+    fn grown_page(room: Option<(i32, i32)>) -> (TrayCustomize, TextRenderer) {
+        let text = TextRenderer::stub(22, |_| 11);
+        let mut t = sample(Wording::Glass);
+        t.metrics = metrics(Wording::Glass).grown(TextUnits::new(22, 11));
+        t.room = room;
+        t.fit(&text, 22);
+        (t, text)
+    }
+
+    /// With room for all of it, the page at 200% is twice its 100% size, its parts with it.
+    #[test]
+    fn a_grown_glass_page_grows_its_parts() {
+        let (t, text) = grown_page(None);
+        let l = t.layout(&text, 22, (0, 0));
+        assert_eq!(t.client(), (2368, 1150));
+        assert_eq!(l.frame, Rect::new(184, 168, 2000, 752));
+        assert_eq!(l.body.y, 168 + 96);
+        assert_eq!(l.slots[1].1.y, 168 + 96 + 96, "rows twice as tall");
+        assert_eq!(l.fields[0], (0, Rect::new(184 + 984, 280, 558, 46)));
+        assert_eq!(l.intro, Rect::new(184, 104, 2000, 40), "one line");
+        assert_eq!(l.ok, Rect::new(1868, 1084, 152, 46));
+        assert_eq!(l.band, Some(Rect::new(0, 1064, 2368, 86)));
+        assert_eq!(l.view, Rect::new(0, 0, 2368, 1064));
+        assert_eq!(l.page_bar, None);
+        assert!(t.overflows(&text, 22).is_empty());
+    }
+
+    /// A 1080p output at 200% has room for a 1900x1000 client: the page narrows to 1900, its
+    /// Behaviors column moves in and the intro wraps onto a second line that pushes the list
+    /// down. The band keeps to the client's foot and the page above it scrolls 88 px at 100%.
+    #[test]
+    fn a_page_bigger_than_its_room_narrows_and_scrolls_above_its_band() {
+        let (t, text) = grown_page(Some((1900, 1000)));
+        let l = t.layout(&text, 22, (0, 0));
+        assert_eq!(t.client(), (1900, 1000));
+        assert_eq!(t.intro.len(), 2);
+        assert_eq!(l.intro, Rect::new(184, 104, 1532, 66));
+        assert_eq!(l.frame, Rect::new(184, 194, 1532, 752));
+        assert_eq!(l.fields[0].1.x, 184 + 874);
+        assert_eq!(l.band, Some(Rect::new(0, 914, 1900, 86)));
+        assert_eq!(l.view, Rect::new(0, 0, 1900, 914));
+        assert_eq!(l.page_bar, Some(Rect::new(1883, 0, 17, 914)));
+        assert_eq!(l.ok, Rect::new(1400, 934, 152, 46));
+        assert_eq!(l.cancel.x, 1564);
+        assert_eq!(t.page_scroll.short, 88);
+        assert!(t.overflows(&text, 22).is_empty());
+    }
+
+    /// Off the list the wheel scrolls the page three lines a notch; on a list that cannot
+    /// scroll, the page too. The page stops at its end, the band stays.
+    #[test]
+    fn the_wheel_scrolls_the_page_off_the_list_and_where_it_stops() {
+        let (mut t, text) = grown_page(Some((1900, 1000)));
+        assert!(t.wheel(None, 1));
+        assert_eq!(t.page_scroll.top, 39);
+        let l = t.layout(&text, 22, (0, 0));
+        assert_eq!(l.frame.y, 194 - 78);
+        assert_eq!(l.band, Some(Rect::new(0, 914, 1900, 86)));
+        assert!(t.wheel(Some(Hit::List), 1), "four rows show whole");
+        assert_eq!(t.page_scroll.top, 78);
+        assert!(t.wheel(Some(Hit::Row(0)), 1));
+        assert_eq!(t.page_scroll.top, 88, "held at the end");
+        assert!(!t.wheel(None, 1));
+        assert!(t.wheel(None, -5));
+        assert_eq!(t.page_scroll.top, 0);
+    }
+
+    /// Tab walks the combos, the box and the link; each scrolls the page as little as shows it
+    /// whole, down and back up.
+    #[test]
+    fn keyboard_focus_scrolls_the_page_to_show_the_focused_part() {
+        let (mut t, _) = grown_page(Some((1900, 600)));
+        assert_eq!((t.page_scroll.short, t.page_scroll.top), (288, 0));
+        let tab = |t: &mut TrayCustomize, back: bool| {
+            t.key(form::Key::Tab { back });
+            (t.focus, t.selected, t.page_scroll.top)
+        };
+        assert_eq!(tab(&mut t, false), (Focus::Combo, Some(1), 0));
+        assert_eq!(tab(&mut t, false), (Focus::Combo, Some(2), 15));
+        assert_eq!(tab(&mut t, false), (Focus::Combo, Some(3), 63));
+        assert_eq!(tab(&mut t, false), (Focus::AllIcons, Some(3), 271));
+        assert_eq!(tab(&mut t, false), (Focus::Restore, Some(3), 271));
+        assert_eq!(tab(&mut t, false), (Focus::Ok, Some(3), 271));
+        t.focus = Focus::AllIcons;
+        assert_eq!(tab(&mut t, true), (Focus::Combo, Some(3), 271));
+        assert_eq!(tab(&mut t, true), (Focus::Combo, Some(2), 249));
+    }
+
+    /// The page's bar: an arrow steps a line and repeats while held, the track a view, the
+    /// thumb follows the pointer.
+    #[test]
+    fn the_page_bar_steps_repeats_and_drags() {
+        use crate::controls::scrollbar::REPEAT_AFTER;
+        let (mut t, text) = grown_page(Some((1900, 600)));
+        let l = t.layout(&text, 22, (0, 0));
+        let bar = l.page_bar.unwrap();
+        let down = t.hit(&l, bar.x + 8, bar.bottom() - 4);
+        assert_eq!(down, Some(Hit::PageBar(BarHit::Forward)));
+        t.click(down);
+        assert_eq!(t.page_scroll.top, LINE_H);
+        assert!(t.ticking() && t.holding());
+        let t0 = std::time::Instant::now();
+        assert_eq!(t.tick(t0), Event::None, "the first tick starts the wait");
+        assert_eq!(t.tick(t0 + REPEAT_AFTER), Event::Redraw);
+        assert_eq!(t.page_scroll.top, 2 * LINE_H);
+        t.release(down);
+        assert!(!t.ticking());
+        t.click(Some(Hit::PageBar(BarHit::PageForward)));
+        assert_eq!(t.page_scroll.top, 2 * LINE_H + 257, "a view");
+        t.release(None);
+        let l = t.layout(&text, 22, (0, 0));
+        let parts = t.page_scroll.parts(bar, 257, 545, l.thumb_min);
+        let thumb = parts.thumb.unwrap();
+        let grab = t.hit(&l, bar.x + 8, thumb.y + 2);
+        assert!(matches!(grab, Some(Hit::PageBar(BarHit::Thumb(_)))));
+        t.click(grab);
+        assert_eq!(t.drag(&l, -500), Some(Event::Redraw));
+        assert_eq!(t.page_scroll.top, 0);
+        assert_eq!(t.release(None), Event::Redraw);
+    }
+
+    /// Scrolled, the page's parts draw only above the band: the band, its rule and the buttons
+    /// stay at the client's foot and the bar runs down the right edge, at either scale.
+    #[test]
+    fn a_scrolled_page_draws_its_parts_above_the_band() {
+        let (mut t, text) = grown_page(Some((1900, 1000)));
+        t.wheel(None, 1);
+        let theme = glass_theme().with_text_size(200);
+        let inks = theme.look.style().and_then(|st| st.page).unwrap();
+        let (cs, white) = (&theme.colors, theme.colors.window.argb());
+        for s in [1, 2] {
+            let l = t.layout(&text, 22, (0, 0));
+            let mut c = Canvas::new((1900 * s) as u32, (1000 * s) as u32);
+            let scaled = theme.scaled(s);
+            let p = scaled.paint();
+            t.draw(&mut c, &text, &p, &l, Cues::NONE, 22);
+            assert_eq!(c.get(500 * s, l.frame.y * s), inks.list_frame.argb());
+            assert_eq!(c.get(500 * s, (l.frame.y - 1) * s), white);
+            assert_eq!(c.get(500 * s, 914 * s), inks.rule.argb(), "the band's rule");
+            assert_eq!(c.get(500 * s, 999 * s), cs.button_face.argb());
+            assert_ne!(c.get(1891 * s, 400 * s), white, "the bar");
+            assert_eq!(c.get(1880 * s, 400 * s), white);
+        }
+        let (mut t, text) = grown_page(Some((1900, 600)));
+        t.wheel(None, 3);
+        let l = t.layout(&text, 22, (0, 0));
+        assert!(
+            l.frame.bottom() > l.view.bottom(),
+            "the list runs under the band"
+        );
+        let mut c = Canvas::new(1900, 600);
+        t.draw(&mut c, &text, &theme.paint(), &l, Cues::NONE, 22);
+        let band = l.band.unwrap();
+        for y in band.y + 1..band.bottom() {
+            assert_ne!(c.get(185, y), white, "no list under the band at {y}");
+        }
+    }
+
     #[test]
     #[ignore]
     fn preview() {
@@ -2370,5 +2972,17 @@ mod tests {
         let mut t = sample(Wording::Glass);
         t.all_icons = Some(true);
         draw(&t, "greyed");
+        let theme = glass_theme().with_text_size(200);
+        let px = theme.fonts.size_px;
+        let mut t = sample(Wording::Glass);
+        t.metrics = theme.controls();
+        t.room = Some((1900, 1000));
+        t.fit(&text, px);
+        t.wheel(None, 1);
+        let l = t.layout(&text, px, (0, 0));
+        let (cw, ch) = t.client();
+        let mut c = Canvas::new(cw as u32, ch as u32);
+        t.draw(&mut c, &text, &theme.paint(), &l, Cues::NONE, px);
+        crate::raster::write_preview(&c, "traycustomize-glass-200.png");
     }
 }
