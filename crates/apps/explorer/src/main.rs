@@ -239,11 +239,7 @@ impl Explorer {
         ctx: &mut Ctx,
     ) -> Explorer {
         let (jobs_tx, jobs_rx) = std::sync::mpsc::channel();
-        let thumb_cache = settings
-            .thumbnail_cache
-            .enabled
-            .then(|| thumbs::open_cache(settings.thumbnail_cache.max_bytes()))
-            .flatten();
+        let thumb_cache = thumbs::configured_cache();
         let thumb_size = settings.thumbnail_size;
         let drives = reprisefs::places::drives();
         let mut sv = ShellView {
