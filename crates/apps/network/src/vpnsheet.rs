@@ -38,6 +38,7 @@ const PEER_LABEL_X: i32 = 26;
 const PEER_FIELD_X: i32 = FIELD_X;
 const PEER_FIELD_W: i32 = CLIENT.0 - 26 - PEER_FIELD_X;
 const PEER_ROW_Y: i32 = GROUP.y + 22;
+pub const KEEP_CUE: &str = "Leave empty to keep the saved key";
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Outcome {
@@ -95,6 +96,12 @@ fn set_field(f: &mut Form, id: &str, s: &str) {
     }
 }
 
+fn set_cue(f: &mut Form, id: &str, cue: &str) {
+    if let Some(Control::Edit { edit, .. }) = f.item_mut(id).map(|i| &mut i.control) {
+        edit.set_cue(cue);
+    }
+}
+
 fn row_y(i: i32) -> i32 {
     ROW_Y + i * PITCH
 }
@@ -109,7 +116,7 @@ fn iface_page(cfg: &wg::Config) -> Form {
         "Separate several addresses or servers with commas.",
         "Search domains may go among the DNS servers.",
     ];
-    Form::new(vec![
+    let mut f = Form::new(vec![
         label("name_l", 0, "Connection &name:"),
         edit("name", FIELD_X, row_y(0), FIELD_W, &cfg.name, false),
         label("iface_l", 1, "&Interface:"),
@@ -167,7 +174,11 @@ fn iface_page(cfg: &wg::Config) -> Form {
             "Blank picks a free port.",
         ),
         Item::lines_at("note", LABEL_X, row_y(7) + 8, FIELD_RIGHT - LABEL_X, &note),
-    ])
+    ]);
+    if cfg.stored_key {
+        set_cue(&mut f, "key", KEEP_CUE);
+    }
+    f
 }
 
 pub fn peer_line(i: usize, p: &wg::Peer) -> String {
@@ -277,6 +288,7 @@ pub struct WgSheet {
     shown: Option<usize>,
     /// The sheet shows no MTU; a loaded or imported one rides along.
     mtu: Option<u32>,
+    stored_key: bool,
 }
 
 impl WgSheet {
@@ -288,6 +300,7 @@ impl WgSheet {
             peers: cfg.peers.clone(),
             shown: None,
             mtu: cfg.mtu,
+            stored_key: cfg.stored_key,
         };
         s.show_peer((!cfg.peers.is_empty()).then_some(0));
         s.sheet.pages[TAB_IFACE].focus_id("name");
@@ -336,6 +349,7 @@ impl WgSheet {
         let f = self.peers_form();
         set_field(f, "pk", &peer.public_key);
         set_field(f, "psk", &peer.preshared_key);
+        set_cue(f, "psk", if peer.stored_psk { KEEP_CUE } else { "" });
         set_field(f, "endpoint", &peer.endpoint);
         set_field(f, "allowed", &wg::join(&peer.allowed_ips));
         set_field(
@@ -372,8 +386,12 @@ impl WgSheet {
         };
         let f = &self.sheet.pages[TAB_PEERS];
         let keepalive = text_of(f, "keepalive").trim();
+        let public_key = text_of(f, "pk").trim().to_string();
+        // A stored preshared key belongs to the public key it was saved with.
+        let stored_psk = self.peers[i].stored_psk && self.peers[i].public_key == public_key;
         let peer = wg::Peer {
-            public_key: text_of(f, "pk").trim().to_string(),
+            public_key,
+            stored_psk,
             preshared_key: Psk::new(text_of(f, "psk").trim()),
             endpoint: text_of(f, "endpoint").trim().to_string(),
             allowed_ips: wg::split(text_of(f, "allowed")),
@@ -382,6 +400,9 @@ impl WgSheet {
             keepalive: keepalive.parse::<u16>().ok().filter(|&k| k != 0),
         };
         self.peers[i] = peer;
+        if !stored_psk {
+            set_cue(self.peers_form(), "psk", "");
+        }
     }
 
     pub fn config(&self) -> wg::Config {
@@ -396,6 +417,7 @@ impl WgSheet {
             listen_port: port.parse::<u16>().ok().filter(|&p| p != 0),
             mtu: self.mtu,
             peers: self.peers.clone(),
+            stored_key: self.stored_key,
         }
     }
 
@@ -630,7 +652,69 @@ mod tests {
                 keepalive: Some(25),
                 ..wg::Peer::default()
             }],
+            stored_key: false,
         }
+    }
+
+    /// A profile whose keys NetworkManager would not give out.
+    fn kept() -> wg::Config {
+        let mut c = cfg();
+        c.private_key = Psk::new("");
+        c.stored_key = true;
+        c.peers[0].stored_psk = true;
+        c
+    }
+
+    fn cue_of<'a>(f: &'a Form, id: &str) -> &'a str {
+        match f.item(id).map(|i| &i.control) {
+            Some(Control::Edit { edit, .. }) => edit.cue(),
+            _ => "",
+        }
+    }
+
+    #[test]
+    fn empty_stored_key_fields_say_they_keep_the_saved_key() {
+        let s = WgSheet::new(&kept(), Some("/Settings/4".into()));
+        assert_eq!(cue_of(&s.sheet.pages[TAB_IFACE], "key"), KEEP_CUE);
+        assert_eq!(cue_of(&s.sheet.pages[TAB_PEERS], "psk"), KEEP_CUE);
+        let s = WgSheet::new(&cfg(), Some("/Settings/4".into()));
+        assert_eq!(cue_of(&s.sheet.pages[TAB_IFACE], "key"), "");
+        assert_eq!(cue_of(&s.sheet.pages[TAB_PEERS], "psk"), "");
+    }
+
+    #[test]
+    fn ok_on_untouched_stored_keys_saves_them_as_kept() {
+        let mut s = WgSheet::new(&kept(), Some("/Settings/4".into()));
+        assert_eq!(
+            s.event(propsheet::Event::Ok),
+            Outcome::Save(Box::new(kept()))
+        );
+    }
+
+    #[test]
+    fn a_new_preshared_key_beside_a_kept_private_key_asks_for_both() {
+        let mut s = WgSheet::new(&kept(), Some("/Settings/4".into()));
+        set_field(&mut s.sheet.pages[TAB_PEERS], "psk", KEY_A);
+        s.take_peer_fields();
+        assert!(matches!(s.event(propsheet::Event::Ok), Outcome::Problem(_)));
+        assert_eq!(
+            s.sheet.tabs.open, TAB_IFACE,
+            "the sheet turns to the private key"
+        );
+        let f = &s.sheet.pages[TAB_IFACE];
+        assert_eq!(f.focus(), f.index_of("key"));
+    }
+
+    #[test]
+    fn a_new_public_key_drops_the_stored_preshared_key() {
+        let mut s = WgSheet::new(&kept(), Some("/Settings/4".into()));
+        set_field(&mut s.sheet.pages[TAB_PEERS], "pk", KEY_A);
+        s.event(propsheet::Event::Page(
+            TAB_PEERS,
+            form::Event::Changed("pk"),
+        ));
+        assert!(!s.config().peers[0].stored_psk);
+        assert_eq!(cue_of(&s.sheet.pages[TAB_PEERS], "psk"), "");
     }
 
     fn type_into(f: &mut Form, id: &str, s: &str) -> form::Event {

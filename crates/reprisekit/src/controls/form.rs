@@ -2972,6 +2972,7 @@ const BULLET: &str = "\u{25cf}";
 fn masked(edit: &TextEdit) -> TextEdit {
     let at = |i: usize| edit.text[..i].chars().count() * BULLET.len();
     let mut m = TextEdit::secret();
+    m.set_cue(edit.cue());
     m.text.push_str(&BULLET.repeat(edit.text.chars().count()));
     m.set_selection(at(edit.anchor()), at(edit.caret()));
     m
@@ -5226,6 +5227,66 @@ mod tests {
             .filter(|&(x, y)| bullets.get(x, y) == cs.button_text.argb())
             .count();
         assert!(ink > 20, "three bullets' worth of ink, not {ink} px");
+    }
+
+    /// An empty field with a cue draws it in grey text; typing replaces it,
+    /// and a masked field shows its cue rather than bullets.
+    #[test]
+    fn an_empty_edit_draws_its_cue_in_grey() {
+        if !crate::text::test_tahoma() {
+            return;
+        }
+        let t = tr();
+        let theme = Theme::default();
+        let cs = &theme.colors;
+        let field = edit_form().items[1].rect;
+        let ink = |secret: bool, value: &str| {
+            let mut f = edit_form();
+            let Control::Edit { edit, .. } = &mut f.items[1].control else {
+                panic!("the fixture's second item is the edit")
+            };
+            *edit = if secret {
+                TextEdit::secret()
+            } else {
+                TextEdit::new("", false)
+            };
+            edit.set_cue("Unchanged");
+            edit.paste(value, &[]);
+            f.caret = false;
+            let mut c = Canvas::new(200, 80);
+            draw(&mut c, &t, &classic_paint(cs, 1), &f, false, PX);
+            let count = |colour: Color| {
+                (field.x + 3..field.right() - 3)
+                    .flat_map(|x| (field.y + 3..field.bottom() - 3).map(move |y| (x, y)))
+                    .filter(|&(x, y)| c.get(x, y) == colour.argb())
+                    .count()
+            };
+            (count(cs.gray_text), count(cs.button_text))
+        };
+        let (grey, black) = ink(false, "");
+        assert!(grey > 20, "the cue is drawn in grey, {grey} px");
+        assert_eq!(black, 0, "and nothing in the text colour");
+        assert_eq!(ink(true, "").0, grey, "a masked field shows the same cue");
+        let (grey, black) = ink(false, "abc");
+        assert_eq!(grey, 0, "a value hides the cue");
+        assert!(black > 10, "and is drawn itself, {black} px");
+    }
+
+    #[test]
+    fn an_edit_cue_is_its_placeholder() {
+        let mut f = edit_form();
+        let Control::Edit { edit, .. } = &mut f.items[1].control else {
+            panic!("the fixture's second item is the edit")
+        };
+        edit.set_cue("Unchanged");
+        let mut tree = crate::access::Tree::window("Find", (220, 170));
+        f.access(&mut tree, crate::access::ROOT, &tr(), 11);
+        let node = tree
+            .nodes()
+            .find(|(_, n)| n.role() == Role::TextInput)
+            .map(|(_, n)| n.clone())
+            .expect("the edit has a node");
+        assert_eq!(node.placeholder(), Some("Unchanged"));
     }
 
     #[test]
