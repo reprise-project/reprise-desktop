@@ -695,7 +695,7 @@ impl App for AccountsApp {
     fn drop_file_dialog(&mut self, win: WinId) -> Option<FileDrop<'_>> {
         (win == BROWSE).then_some(FileDrop {
             dlg: self.browse.as_mut()?,
-            host: &self.browse_host,
+            host: &mut self.browse_host,
         })
     }
 

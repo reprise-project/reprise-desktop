@@ -20,10 +20,11 @@ pub struct DropForm<'a> {
     pub px: Option<u32>,
 }
 
-/// A file dialog whose File name field takes drops, and the host that knows its open folder.
+/// A file dialog whose File name field takes drops, and the host that knows its open folder and
+/// decodes its pictures.
 pub struct FileDrop<'a> {
     pub dlg: &'a mut FileDlg,
-    pub host: &'a crate::filedlg::Host,
+    pub host: &'a mut crate::filedlg::Host,
 }
 
 /// What takes a drag: a form's fields or a file dialog's File name.
@@ -481,7 +482,7 @@ mod tests {
             .unwrap();
         let mut file = FileDrop {
             dlg: &mut dlg,
-            host: &host,
+            host: &mut host,
         };
         let mut h = None;
         let enter = Event::DragEnter {

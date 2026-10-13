@@ -643,7 +643,8 @@ pub trait App {
     }
     /// The file dialog in window `win`, whose File name field takes a drag of text or files as
     /// a form's field does; files go in by name, or by path from another folder. None (the
-    /// default) hands the drags to `event`.
+    /// default) hands the drags to `event`. The host also decodes its pictures for Thumbnails
+    /// and Tiles and redraws the window as they arrive.
     fn drop_file_dialog(&mut self, _win: WinId) -> Option<FileDrop<'_>> {
         None
     }
@@ -1082,6 +1083,10 @@ pub fn run(app: Box<dyn App>) {
     loop_handle
         .insert_source(ping_source, |(), &mut (), host: &mut Host| {
             host.send(MAIN, Event::Wake);
+            let wins: Vec<WinId> = host.slots.iter().map(|s| s.id).collect();
+            for win in filedlg::take_thumbs(&mut *host.app, wins) {
+                host.mark_dirty(win);
+            }
         })
         .expect("ping source");
     loop_handle
@@ -1424,6 +1429,7 @@ impl Host {
             }
             return;
         }
+        filedlg::thumbs_on(&mut *self.app, win, &self.ctx.wake);
         let mut reply = self.app.event(win, ev, &mut self.ctx);
         reply.tick |= self.ctx.want_tick.take();
         self.apply(win, reply);
