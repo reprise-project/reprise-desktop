@@ -40,6 +40,8 @@ pub enum Call {
     PrinterSetInfo(String, String),
     PrinterSetLocation(String, String),
     PrinterSetShared(String, bool),
+    /// Sets the option's Default line in the queue's PPD.
+    PrinterAddOption(String, String, Vec<String>),
     PrinterAddOptionDefault(String, String, Vec<String>),
     JobCancelPurge(i32, bool),
     JobRestart(i32),
@@ -60,6 +62,7 @@ impl Call {
             Call::PrinterSetInfo(..) => "PrinterSetInfo",
             Call::PrinterSetLocation(..) => "PrinterSetLocation",
             Call::PrinterSetShared(..) => "PrinterSetShared",
+            Call::PrinterAddOption(..) => "PrinterAddOption",
             Call::PrinterAddOptionDefault(..) => "PrinterAddOptionDefault",
             Call::JobCancelPurge(..) => "JobCancelPurge",
             Call::JobRestart(_) => "JobRestart",
@@ -181,7 +184,9 @@ impl Helper for Bus {
             | Call::PrinterSetLocation(n, s) => self.send(m, &(n, s)),
             Call::PrinterSetEnabled(n, b) | Call::PrinterSetShared(n, b) => self.send(m, &(n, b)),
             Call::PrinterSetAcceptJobs(n, b) => self.send(m, &(n, b, "")),
-            Call::PrinterAddOptionDefault(n, o, v) => self.send(m, &(n, o, v)),
+            Call::PrinterAddOption(n, o, v) | Call::PrinterAddOptionDefault(n, o, v) => {
+                self.send(m, &(n, o, v))
+            }
             Call::JobCancelPurge(id, purge) => self.send(m, &(id, purge)),
             Call::JobRestart(id) => self.send(m, &(id,)),
             Call::JobSetHoldUntil(id, when) => self.send(m, &(id, when)),

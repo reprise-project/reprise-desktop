@@ -7,6 +7,7 @@ use std::sync::Arc;
 use crate::http::{self, Server};
 use crate::ipp::{self, JOB, OPERATION, PRINTER, Request, Response, Value};
 use crate::pkhelper::{self, Call, Helper};
+use crate::ppd;
 
 const PRINT_JOB: u16 = 0x0002;
 const CANCEL_JOB: u16 = 0x0008;
@@ -727,7 +728,10 @@ impl Change {
             && self.defaults.is_empty()
     }
 
-    fn into_request(self, name: &str) -> Request {
+    /// The CUPS-Add-Modify-Printer request. With the queue's `ppd`, the
+    /// defaults go into its Default lines and the PPD goes up with the
+    /// request, as `lpadmin -o` sends it.
+    fn into_request(self, name: &str, ppd: Option<&[u8]>) -> Request {
         let mut req = Request::new(CUPS_ADD_MODIFY_PRINTER)
             .op_attr("printer-uri", Value::uri(&printer_uri(name)));
         if let Some(s) = self.info {
@@ -742,13 +746,37 @@ impl Change {
         if let Some(b) = self.shared {
             req = req.printer_attr("printer-is-shared", Value::Bool(b));
         }
+        let texts: Vec<(String, String)> = self
+            .defaults
+            .iter()
+            .filter_map(|(k, v)| Some((option_of(k).to_string(), value_text(v)?)))
+            .collect();
+        let (data, applied) = match ppd {
+            Some(p) if !texts.is_empty() => {
+                let (out, applied) = ppd::with_defaults(p, &texts);
+                ((out != p).then_some(out), applied)
+            }
+            _ => (None, Vec::new()),
+        };
         for (k, v) in self.defaults {
+            let option = option_of(&k);
+            let carried = ppd::CARRIED.contains(&option) && applied.iter().any(|a| a == option);
+            let v = if carried {
+                Value::Empty(ipp::DELETE_ATTR)
+            } else {
+                v
+            };
             req = req.printer_attr(&k, v);
+        }
+        if let Some(d) = data {
+            req = req.with_data(d);
         }
         req
     }
 
-    fn calls(&self, name: &str) -> Vec<Call> {
+    /// The same change through cups-pk-helper. On a queue with a PPD,
+    /// PrinterAddOption sets the Default line as `lpadmin -o` does.
+    fn calls(&self, name: &str, has_ppd: bool) -> Vec<Call> {
         let n = || name.to_string();
         let mut out = Vec::new();
         if let Some(s) = &self.info {
@@ -764,16 +792,54 @@ impl Change {
             out.push(Call::PrinterSetShared(n(), b));
         }
         for (k, v) in &self.defaults {
-            let text = match v {
-                Value::Int(i) | Value::Enum(i) => i.to_string(),
-                Value::Str(_, s) => s.clone(),
-                Value::Bool(b) => b.to_string(),
-                _ => continue,
+            let Some(text) = value_text(v) else {
+                continue;
             };
-            let option = k.strip_suffix("-default").unwrap_or(k).to_string();
-            out.push(Call::PrinterAddOptionDefault(n(), option, vec![text]));
+            let option = option_of(k).to_string();
+            if !has_ppd {
+                out.push(Call::PrinterAddOptionDefault(n(), option, vec![text]));
+                continue;
+            }
+            out.push(Call::PrinterAddOption(
+                n(),
+                option.clone(),
+                vec![text.clone()],
+            ));
+            let queue_value = if ppd::CARRIED.contains(&option.as_str()) {
+                Vec::new()
+            } else {
+                vec![text]
+            };
+            out.push(Call::PrinterAddOptionDefault(n(), option, queue_value));
         }
         out
+    }
+}
+
+/// "media-default" names the option "media".
+fn option_of(attr: &str) -> &str {
+    attr.strip_suffix("-default").unwrap_or(attr)
+}
+
+fn value_text(v: &Value) -> Option<String> {
+    match v {
+        Value::Int(i) | Value::Enum(i) => Some(i.to_string()),
+        Value::Str(_, s) => Some(s.clone()),
+        Value::Bool(b) => Some(b.to_string()),
+        _ => None,
+    }
+}
+
+/// The queue's PPD as cupsd serves it; `None` for a queue without one.
+fn ppd_of(c: &Client, name: &str) -> Result<Option<Vec<u8>>> {
+    match http::get(
+        &c.server,
+        &format!("/printers/{}.ppd", escape(name)),
+        &c.user,
+    ) {
+        Ok(r) if !r.body.is_empty() => Ok(Some(r.body)),
+        Err(e @ http::Error::Unreachable(_)) => Err(e.into()),
+        Ok(_) | Err(_) => Ok(None),
     }
 }
 
@@ -781,9 +847,15 @@ pub fn modify(c: &Client, name: &str, change: Change) -> Result<()> {
     if change.is_empty() {
         return Ok(());
     }
-    let calls = change.calls(name);
+    let ppd = if change.defaults.is_empty() {
+        None
+    } else {
+        ppd_of(c, name)?
+    };
+    let calls = change.calls(name, ppd.is_some());
     c.admin(
-        c.call("/admin/", change.into_request(name)).map(drop),
+        c.call("/admin/", change.into_request(name, ppd.as_deref()))
+            .map(drop),
         || calls,
     )
 }
@@ -1436,18 +1508,118 @@ mod tests {
             ],
         };
         let n = || "Laser".to_string();
+        let fields = [
+            Call::PrinterSetInfo(n(), "Front desk".into()),
+            Call::PrinterSetLocation(n(), "Hall".into()),
+            Call::PrinterSetDevice(n(), "socket://10.0.0.9".into()),
+            Call::PrinterSetShared(n(), true),
+        ];
+        let calls = change.calls("Laser", false);
+        assert_eq!(calls[..4], fields);
         assert_eq!(
-            change.calls("Laser"),
+            calls[4..],
             [
-                Call::PrinterSetInfo(n(), "Front desk".into()),
-                Call::PrinterSetLocation(n(), "Hall".into()),
-                Call::PrinterSetDevice(n(), "socket://10.0.0.9".into()),
-                Call::PrinterSetShared(n(), true),
                 Call::PrinterAddOptionDefault(n(), "media".into(), vec!["iso_a4_210x297mm".into()]),
                 Call::PrinterAddOptionDefault(n(), "print-quality".into(), vec!["5".into()]),
             ]
         );
-        assert!(Change::default().calls("Laser").is_empty());
+        assert!(Change::default().calls("Laser", false).is_empty());
+    }
+
+    #[test]
+    fn on_a_ppd_queue_the_helper_sets_the_ppd_and_clears_media_and_sides() {
+        let change = Change {
+            defaults: vec![
+                ("media-default".into(), Value::keyword("iso_a4_210x297mm")),
+                ("sides-default".into(), Value::keyword("one-sided")),
+                ("print-quality-default".into(), Value::Enum(5)),
+            ],
+            ..Change::default()
+        };
+        let n = || "Laser".to_string();
+        let v = |s: &str| vec![s.to_string()];
+        assert_eq!(
+            change.calls("Laser", true),
+            [
+                Call::PrinterAddOption(n(), "media".into(), v("iso_a4_210x297mm")),
+                Call::PrinterAddOptionDefault(n(), "media".into(), vec![]),
+                Call::PrinterAddOption(n(), "sides".into(), v("one-sided")),
+                Call::PrinterAddOptionDefault(n(), "sides".into(), vec![]),
+                Call::PrinterAddOption(n(), "print-quality".into(), v("5")),
+                Call::PrinterAddOptionDefault(n(), "print-quality".into(), v("5")),
+            ]
+        );
+    }
+
+    const PPD: &str = "*PPD-Adobe: \"4.3\"
+*DefaultPageSize: Letter
+*PageSize Letter/Letter: \"\"
+*PageSize A4/A4: \"\"
+*PaperDimension Letter/Letter: \"612 792\"
+*PaperDimension A4/A4: \"595 842\"
+*DefaultDuplex: None
+*Duplex None/Off: \"\"
+*Duplex DuplexNoTumble/Long Edge: \"\"
+";
+
+    fn printer_attrs(req: &Request) -> Vec<(String, Value)> {
+        req.groups
+            .iter()
+            .filter(|g| g.tag == PRINTER)
+            .flat_map(|g| &g.attrs)
+            .map(|a| (a.name.clone(), a.values[0].clone()))
+            .collect()
+    }
+
+    #[test]
+    fn device_settings_on_a_ppd_queue_upload_the_ppd_with_its_defaults() {
+        let change = Change {
+            defaults: vec![
+                ("media-default".into(), Value::keyword("iso_a4_210x297mm")),
+                (
+                    "sides-default".into(),
+                    Value::keyword("two-sided-short-edge"),
+                ),
+                (
+                    "print-color-mode-default".into(),
+                    Value::keyword("monochrome"),
+                ),
+            ],
+            ..Change::default()
+        };
+        let req = change.clone().into_request("Laser", Some(PPD.as_bytes()));
+        let ppd = String::from_utf8(req.data.clone()).expect("UTF-8");
+        assert!(ppd.contains("*DefaultPageSize: A4\n"));
+        assert!(ppd.contains("*DefaultDuplex: None\n"));
+        assert_eq!(
+            printer_attrs(&req),
+            [
+                ("media-default".into(), Value::Empty(ipp::DELETE_ATTR)),
+                (
+                    "sides-default".into(),
+                    Value::keyword("two-sided-short-edge")
+                ),
+                (
+                    "print-color-mode-default".into(),
+                    Value::keyword("monochrome")
+                ),
+            ]
+        );
+
+        let req = change.clone().into_request("Laser", None);
+        assert!(req.data.is_empty());
+        assert_eq!(printer_attrs(&req), change.defaults);
+
+        let same = Change {
+            defaults: vec![("media-default".into(), Value::keyword("na_letter_8.5x11in"))],
+            ..Change::default()
+        };
+        let req = same.into_request("Laser", Some(PPD.as_bytes()));
+        assert!(req.data.is_empty(), "an unchanged PPD stays on the server");
+        assert_eq!(
+            printer_attrs(&req),
+            [("media-default".into(), Value::Empty(ipp::DELETE_ATTR))]
+        );
     }
 
     #[test]
