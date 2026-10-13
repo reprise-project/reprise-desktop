@@ -324,7 +324,7 @@ impl State {
                 if g.enabled && free && event.fingers() == g.fingers {
                     self.overview_fade_settle();
                     self.pointers.swipe = Some(KeptSwipe {
-                        tracker: crate::gestures::Tracker::default(),
+                        tracker: crate::gestures::Tracker::new(g),
                         overview_was_open: self.overview.view.is_some(),
                     });
                     return true;

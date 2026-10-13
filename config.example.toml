@@ -178,6 +178,12 @@ interface = "classic"        # classic | blue | glass; an unknown value falls ba
 # enabled = true
 # fingers = 3                # 3 or 4: left/right slide the desktops with the fingers,
 #                            # up fades the window overview in, down fades it out
+# distance = 400             # 100 to 2000: the travel for a whole desktop or the whole fade, in
+#                            # libinput's swipe units (about 3 to 4 cm of finger travel)
+# commit_at = 30             # 5 to 95: percent of the way past which a lifted swipe goes through
+# flick_speed = 300          # 50 to 5000: swipe units a second over the last 100 ms that make
+#                            # a lift a flick, which goes through from any distance; a flick
+#                            # back springs back
 
 [touchscreen]                # a finger on an app that takes touch is touch; anywhere else it clicks and drags
 # output = "eDP-1"           # the output it covers; default: what udev says, else the laptop's own panel
