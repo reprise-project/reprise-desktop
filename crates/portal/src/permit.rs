@@ -344,6 +344,20 @@ mod tests {
     use super::*;
 
     #[test]
+    fn every_prompt_fits_its_text() {
+        let input = Input {
+            parent: None,
+            app: "Chromium".into(),
+            offer_remember: true,
+            items: vec!["Mute: Ctrl+M".into(), "Push to talk: Ctrl+Space".into()],
+        };
+        for kind in Kind::ALL {
+            let over = crate::dialog::overflows(|_, _| build_form(kind, &input));
+            assert!(over.is_empty(), "{kind:?}:\n{}", over.join("\n"));
+        }
+    }
+
+    #[test]
     fn permit_input_survives_the_pipe() {
         for parent in [Some("h1".to_string()), None] {
             let input = Input {

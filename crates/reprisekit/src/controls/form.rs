@@ -53,7 +53,10 @@ pub enum Control {
         enabled: bool,
         align: Align,
     },
+    /// A note: its lines, rewrapped to its width when one is wider ([`Form::flowed`]).
     Lines(Vec<String>),
+    /// A note drawn greyed, as [`Item::enabled`] leaves a [`Control::Lines`] it greys.
+    GreyedLines(Vec<String>),
     Group(String),
     /// A group box title set on its own, for a title the group's 10 px inset does not place;
     /// drawn over a [`Control::Blank`] break in the group's top line.
@@ -453,6 +456,14 @@ impl Item {
             Control::HotKey(h) => h.enabled = on,
             Control::Memo(m) => m.enabled = on,
             Control::Arrange(a) => a.enabled = on,
+            Control::Lines(l) | Control::GreyedLines(l) => {
+                let l = std::mem::take(l);
+                self.control = if on {
+                    Control::Lines(l)
+                } else {
+                    Control::GreyedLines(l)
+                };
+            }
             _ => {}
         }
         self
@@ -1037,7 +1048,7 @@ impl Form {
             .iter()
             .enumerate()
             .filter_map(|(i, it)| {
-                let Control::Lines(lines) = &it.control else {
+                let (Control::Lines(lines) | Control::GreyedLines(lines)) = &it.control else {
                     return None;
                 };
                 let width = self.at(it).width * s;
@@ -1148,13 +1159,13 @@ impl Form {
                 (Control::Combo(_), fit::Kind::Stretch { need }) => need - r.width,
                 (Control::Check { label, .. }, _) => {
                     let lr = check_label_rect(r, it.indent, &cm, measure(label));
-                    lr.right() - fit::limit(&rects, &kinds, i, pad)
+                    lr.right() - fit::limit(&rects, &kinds, i, lr.x, pad)
                 }
                 (Control::Radio { label, .. }, _) => {
                     let lr = radio_label_rect(r, &cm, measure(label));
-                    lr.right() - fit::limit(&rects, &kinds, i, pad)
+                    lr.right() - fit::limit(&rects, &kinds, i, lr.x, pad)
                 }
-                (Control::Lines(lines), _) => {
+                (Control::Lines(lines) | Control::GreyedLines(lines), _) => {
                     let shown = note_lines(text, lines, r.width, px);
                     let room = (it.rect.height / LINE_H) as usize;
                     let rows = u.len(shown.len().saturating_sub(room) as i32 * LINE_H);
@@ -1312,7 +1323,10 @@ impl Form {
     /// keep their new text, which was measured for the new size.
     pub fn carry(&mut self, old: &Form) {
         for it in &mut self.items {
-            if matches!(it.control, Control::Label { .. } | Control::Lines(_)) {
+            if matches!(
+                it.control,
+                Control::Label { .. } | Control::Lines(_) | Control::GreyedLines(_)
+            ) {
                 continue;
             }
             if let Some(o) = old.item(it.id)
@@ -1411,14 +1425,19 @@ impl Form {
         }
     }
 
+    /// Put `s` in label `id`, or make it note `id`'s one line.
     pub fn set_text(&mut self, id: &str, s: &str) {
-        if let Some(Control::Label { text, .. }) = self.item_mut(id).map(|i| &mut i.control) {
-            *text = s.to_string();
+        match self.item_mut(id).map(|i| &mut i.control) {
+            Some(Control::Label { text, .. }) => *text = s.to_string(),
+            Some(Control::Lines(lines) | Control::GreyedLines(lines)) => *lines = vec![s.into()],
+            _ => {}
         }
     }
 
     pub fn set_lines(&mut self, id: &str, s: &[String]) {
-        if let Some(Control::Lines(lines)) = self.item_mut(id).map(|i| &mut i.control) {
+        if let Some(Control::Lines(lines) | Control::GreyedLines(lines)) =
+            self.item_mut(id).map(|i| &mut i.control)
+        {
             *lines = s.to_vec();
         }
     }
@@ -2663,6 +2682,7 @@ impl Form {
                 }
                 Control::Label { .. }
                 | Control::Lines(_)
+                | Control::GreyedLines(_)
                 | Control::Group(_)
                 | Control::GroupTitle(_)
                 | Control::Separator
@@ -3386,16 +3406,21 @@ pub fn draw(c: &mut Canvas, text: &TextRenderer, p: &Paint, form: &Form, cues: b
                     draw_disabled_label(c, text, p, r, label, *align, px, None);
                 }
             }
-            Control::Lines(lines) => {
+            Control::Lines(lines) | Control::GreyedLines(lines) => {
                 let r = at_ink(r);
                 let lines = note_lines(text, lines, r.width, px);
+                let live = matches!(it.control, Control::Lines(_));
                 for (k, line) in lines.iter().enumerate() {
                     let (top, bottom) = (
                         grow.len(k as i32 * LINE_H),
                         grow.len((k as i32 + 1) * LINE_H),
                     );
                     let lr = Rect::new(r.x, r.y + top * s, r.width, (bottom - top) * s);
-                    text.draw(c, lr, line, false, cs.button_text, Align::Left, px);
+                    if live {
+                        text.draw(c, lr, line, false, cs.button_text, Align::Left, px);
+                    } else {
+                        draw_disabled_label(c, text, p, lr, line, Align::Left, px, None);
+                    }
                 }
             }
             Control::GroupTitle(title) => {
@@ -3785,8 +3810,9 @@ impl Form {
                     label = Some(tree.push(up, key, access::label(r, t, *enabled)));
                     continue;
                 }
-                Control::Lines(lines) => {
-                    label = Some(tree.push(up, key, access::label(r, &lines.join(" "), true)));
+                Control::Lines(lines) | Control::GreyedLines(lines) => {
+                    let live = matches!(it.control, Control::Lines(_));
+                    label = Some(tree.push(up, key, access::label(r, &lines.join(" "), live)));
                     continue;
                 }
                 Control::GroupTitle(t) => {
@@ -4257,6 +4283,45 @@ mod tests {
         assert_eq!(wide.hit(100, 20, &text, 11).map(|h| h.item), Some(1));
         assert!(wide.overflows(&text, 11).is_empty());
         assert_eq!(fits.overflows(&text, 11), Vec::new());
+    }
+
+    #[test]
+    fn a_greyed_note_is_drawn_grey_and_rewraps() {
+        if !crate::text::test_tahoma() {
+            return;
+        }
+        let text = tr();
+        let theme = Theme::default();
+        let cs = &theme.colors;
+        let live = Item::lines_at("n", 10, 10, 60, &["one two three four"]);
+        let note = live.clone().enabled(false);
+        assert!(matches!(note.control, Control::GreyedLines(_)));
+        assert_eq!(note.clone().enabled(true), live);
+        let form = Form::new(vec![note]);
+        let mut c = Canvas::new(200, 60);
+        c.fill_rect(c.bounds(), cs.button_face);
+        draw(&mut c, &text, &classic_paint(cs, 1), &form, false, PX);
+        let count = |colour: Color| c.pixels.iter().filter(|&&p| p == colour.argb()).count();
+        assert!(count(cs.gray_text) > 20);
+        assert_eq!(count(cs.button_text), 0);
+        assert!(
+            matches!(form.overflows(&text, PX)[..], [("n", by)] if by >= LINE_H),
+            "the note rewraps onto a row it was not built with"
+        );
+    }
+
+    /// Blue lifts a wrapped check box label's second line onto the box's row.
+    #[test]
+    fn a_wrapped_check_box_label_is_not_cut_by_its_own_second_line() {
+        let theme = blue();
+        let text = TextRenderer::stub(11, |_| 6);
+        let form = Form::new(vec![
+            Item::group("g", Rect::new(0, 0, 300, 80), "Group"),
+            Item::check("c", 10, 20, "Do not move files to the bin.").wraps(),
+            Item::label("c2", Rect::new(10, 33, 250, 13), "Remove them at once").check_wrap(),
+        ]);
+        form.drawn_with(&theme.paint());
+        assert_eq!(form.overflows(&text, 11), Vec::new());
     }
 
     /// In a view, the fit moves a field over first and a rewrapped note above it then moves it
