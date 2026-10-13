@@ -18,29 +18,52 @@ pub fn critical_turn_off() -> zbus::Result<()> {
     Ok(())
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Pad {
     /// The device name, as `[[tablet_pads]] name` globs match it.
     pub name: String,
     pub buttons: u32,
     pub rings: u32,
     pub strips: u32,
+    pub dials: u32,
+    /// The pad keys it has, by the names a `keys` table uses
+    /// ("controlpanel").
+    pub keys: Vec<String>,
+}
+
+/// A [`Pad`] as `TabletPads` sends it.
+pub type PadWire = (String, u32, u32, u32, u32, Vec<String>);
+
+impl Pad {
+    pub fn wire(&self) -> PadWire {
+        (
+            self.name.clone(),
+            self.buttons,
+            self.rings,
+            self.strips,
+            self.dials,
+            self.keys.clone(),
+        )
+    }
+
+    pub fn from_wire((name, buttons, rings, strips, dials, keys): PadWire) -> Pad {
+        Pad {
+            name,
+            buttons,
+            rings,
+            strips,
+            dials,
+            keys,
+        }
+    }
 }
 
 /// The tablet pads connected now, in the order they came. Blocks for at most [`crate::METHOD_TIMEOUT`].
 pub fn tablet_pads() -> zbus::Result<Vec<Pad>> {
     let conn = crate::session()?;
     let reply = conn.call_method(Some(NAME), PATH, Some(INTERFACE), "TabletPads", &())?;
-    let list: Vec<(String, u32, u32, u32)> = reply.body().deserialize()?;
-    Ok(list
-        .into_iter()
-        .map(|(name, buttons, rings, strips)| Pad {
-            name,
-            buttons,
-            rings,
-            strips,
-        })
-        .collect())
+    let list: Vec<PadWire> = reply.body().deserialize()?;
+    Ok(list.into_iter().map(Pad::from_wire).collect())
 }
 
 /// Ask the compositor to show each output's number, big in its middle for 2 s. Blocks for at most [`crate::METHOD_TIMEOUT`].
@@ -61,4 +84,24 @@ pub fn preview_screen_saver(name: &str) -> zbus::Result<()> {
         &(name,),
     )?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use zbus::zvariant::Type;
+
+    #[test]
+    fn a_pad_crosses_the_bus_with_its_dials_and_keys() {
+        assert_eq!(PadWire::SIGNATURE.to_string(), "(suuuuas)");
+        let pad = Pad {
+            name: "Wacom Intuos Pro M Pad".into(),
+            buttons: 9,
+            rings: 1,
+            strips: 0,
+            dials: 2,
+            keys: vec!["controlpanel".into(), "onscreen_keyboard".into()],
+        };
+        assert_eq!(Pad::from_wire(pad.wire()), pad);
+    }
 }

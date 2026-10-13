@@ -277,8 +277,8 @@ are.
 - **Touchscreens.** A program that takes touch gets touch; anywhere else a
   finger clicks and drags. Each touchscreen can be mapped to its screen.
 - **Drawing tablets** with pressure, tilt and the pen's buttons. The pad's
-  buttons, rings and strips run desktop actions or send key chords, set per
-  pad in Reprise Settings.
+  buttons, keys, rings, strips and dials run desktop actions or send key
+  chords, set per pad in Reprise Settings.
 - **Global shortcuts for programs.** A voice chat's push-to-talk works while
   another window has focus. The program asks once, and you can change its
   keys on the Keyboard page.
