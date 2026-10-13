@@ -81,6 +81,27 @@ pub(crate) fn title_span(style: &Style, geom: &FrameGeometry, s: i32) -> (i32, i
     )
 }
 
+/// How far a fixed caption baseline moves at the text size: as far as a line centred in the
+/// caption moves when both the caption and the text grow.
+fn grown_baseline_shift(
+    style: &Style,
+    theme: &Theme,
+    caption_text: &TextRenderer,
+    geom: &FrameGeometry,
+    s: i32,
+) -> i32 {
+    let spec = &style.caption_text;
+    let base = theme.text.base_px(spec.size_px);
+    if base == spec.size_px {
+        return 0;
+    }
+    let centred =
+        |h: i32, px: u32| caption_text.baseline(Rect::new(0, 0, 0, h), spec.bold, px * s as u32);
+    let grown = centred(geom.caption.height, spec.size_px);
+    let at_100 = centred(style.metrics.caption_height * s, base);
+    grown.zip(at_100).map_or(0, |(g, b)| g - b)
+}
+
 fn draw_title(
     canvas: &mut Canvas,
     style: &Style,
@@ -114,7 +135,11 @@ fn draw_title(
     };
     let title = if translucent {
         let baseline = match t.baseline {
-            Some(b) => Some(geom.caption.y + b[m] * s),
+            Some(b) => Some(
+                geom.caption.y
+                    + b[m] * s
+                    + grown_baseline_shift(style, theme, caption_text, geom, s),
+            ),
             None => caption_text.baseline(title_rect, spec.bold, size),
         };
         baseline.and_then(|baseline| {
@@ -137,7 +162,12 @@ fn draw_title(
 
     let icon_px = theme.icon_size();
     let (ix, iy) = t.icon[m];
-    let (icon_x, icon_y) = (geom.caption.x + ix * s, geom.caption.y + iy * s);
+    let grown = if theme.text.is_one() {
+        0
+    } else {
+        geom.caption.height - style.metrics.caption_height * s
+    };
+    let (icon_x, icon_y) = (geom.caption.x + ix * s, geom.caption.y + iy * s + grown / 2);
     let fallback;
     let im = match state.icon {
         Some(im) => im,
@@ -1033,6 +1063,72 @@ mod tests {
                 "maximized {maximized}: capitals about 9 rows tall"
             );
         }
+    }
+
+    #[test]
+    fn a_grown_glass_title_keeps_its_whole_height_inside_the_caption() {
+        if !glass_title_face() {
+            return;
+        }
+        let base = theme_for(Interface::Glass);
+        let ink = |pct: u32, maximized: bool, n: i32| {
+            let grown = base.with_text_size(pct);
+            let g = FrameGeometry::layout(&grown.metrics, 800, 400, maximized, Chrome::WINDOW)
+                .scaled(n);
+            let theme = grown.scaled(n);
+            let s = theme.look.style().unwrap();
+            let text = TextRenderer::load(&s.caption_text.font());
+            let mut c = Canvas::new(g.total.0 as u32, g.total.1 as u32);
+            let st = FrameState {
+                title: "Hg",
+                ..state(true, maximized)
+            };
+            draw_frame(&mut c, s, &theme, &text, &g, &st);
+            let x0 = if maximized { 20 } else { 28 };
+            let (_, _, top, bottom) = ink_box_in(&c, x0 * n, (x0 + 45) * n, 2 * n, g.client.y)
+                .expect("the title has ink");
+            (g.caption, top, bottom)
+        };
+        for (maximized, n) in [(false, 1), (true, 1), (false, 2)] {
+            let (_, top, bottom) = ink(100, maximized, n);
+            for pct in [150, 200] {
+                let (caption, big_top, big_bottom) = ink(pct, maximized, n);
+                let want = (bottom - top + 1) * pct as i32 / 100;
+                assert!(
+                    (big_bottom - big_top + 1 - want).abs() <= 2 * n,
+                    "maximized {maximized}, scale {n}, {pct}%: the title is {want} rows tall, got {big_top}..={big_bottom}"
+                );
+                assert!(
+                    big_top > caption.y && big_bottom < caption.bottom(),
+                    "maximized {maximized}, scale {n}, {pct}%: rows {big_top}..={big_bottom} sit inside {caption:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_grown_caption_keeps_its_icon_centred_on_the_growth() {
+        let mut icon = Canvas::new(16, 16);
+        icon.fill_rect(icon.bounds(), crate::theme::Color::rgb(0xFF, 0, 0xFF));
+        let magenta = icon.get(0, 0);
+        let base = theme_for(Interface::Glass);
+        let top_row = |pct: u32| {
+            let theme = base.with_text_size(pct);
+            let s = theme.look.style().unwrap();
+            let g = FrameGeometry::layout(&theme.metrics, 800, 400, false, Chrome::WINDOW);
+            let text = TextRenderer::load(&s.caption_text.font());
+            let mut c = Canvas::new(g.total.0 as u32, g.total.1 as u32);
+            let st = FrameState {
+                icon: Some(&icon),
+                ..state(true, false)
+            };
+            draw_frame(&mut c, s, &theme, &text, &g, &st);
+            let row = (0..g.client.y).find(|&y| c.get(8, y) == magenta);
+            (row.expect("the icon shows"), g.caption.height)
+        };
+        let (y, h) = top_row(100);
+        let (big_y, big_h) = top_row(200);
+        assert_eq!(big_y - y, (big_h - h) / 2);
     }
 
     #[test]
