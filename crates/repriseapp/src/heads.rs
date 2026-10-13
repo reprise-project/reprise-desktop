@@ -1035,6 +1035,7 @@ mod tests {
             wake: crate::Waker::noop(),
             heads: HeadRequests::default(),
             want_tick: Default::default(),
+            at_pick: false,
             text_size: 100,
         };
         let n = ctx.configure_head("DP-1", HeadConfig::default());

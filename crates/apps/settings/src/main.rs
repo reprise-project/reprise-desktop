@@ -2613,9 +2613,9 @@ impl App for SettingsApp {
         let main = win == repriseapp::MAIN;
         let moved = main && self.fit_window(ctx.size);
         match ev {
-            // A maximized window's size is the screen's, not one to open
-            // at next time.
-            Event::Resized if main && !ctx.maximized && ctx.size != self.window => {
+            // A maximized window's size is the screen's and one at its pick the program's
+            // (held inside the work area or not): neither is one to open at next time.
+            Event::Resized if main && !ctx.maximized && !ctx.at_pick && ctx.size != self.window => {
                 self.window = ctx.size;
                 self.window_dirty = true;
             }
@@ -3153,6 +3153,7 @@ mod tests {
             wake: repriseapp::Waker::noop(),
             heads: repriseapp::heads::HeadRequests::default(),
             want_tick: Default::default(),
+            at_pick: false,
             text_size: 100,
         }
     }
@@ -3756,6 +3757,36 @@ mod tests {
         app.event(MAIN, Event::Resized, &mut ctx);
         assert_eq!(app.sheet.size, min, "no smaller than its smallest");
         assert_eq!(add(&app), before);
+    }
+
+    /// At 200% on a 1080-line screen the window opens at its pick held to the work area; that
+    /// size is not kept, so the size left at 100% stands. A size the user gives it is kept.
+    #[test]
+    fn a_held_opening_size_is_not_kept() {
+        let mut app = app("held");
+        let min = app.min_size(MAIN).unwrap();
+        let state = tmp("held-state").join("settings.toml");
+        app.state_path = Some(state.clone());
+        winstate::save(&state, (900, 700), 100);
+        let mut ctx = test_ctx();
+        ctx.text_size = 200;
+        ctx.size = (1088, 1026);
+        ctx.at_pick = true;
+        app.event(MAIN, Event::Resized, &mut ctx);
+        app.event(MAIN, Event::Focus(false), &mut ctx);
+        assert_eq!(winstate::load(&state, min, 100), (900, 700));
+
+        ctx.size = (1200, 1000);
+        ctx.at_pick = false;
+        app.event(MAIN, Event::Resized, &mut ctx);
+        app.event(MAIN, Event::Focus(false), &mut ctx);
+        assert_eq!(
+            winstate::kept(&state),
+            winstate::Kept {
+                size: (1200, 1000),
+                text_size: Some(200)
+            }
+        );
     }
 
     #[test]

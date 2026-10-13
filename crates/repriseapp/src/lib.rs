@@ -122,6 +122,9 @@ pub struct Ctx {
     /// The window's client size, logical px.
     pub size: (i32, i32),
     pub maximized: bool,
+    /// The window is at the size its program picked, held inside the compositor's bounds:
+    /// neither the user nor the compositor sized it since. A program keeps only other sizes.
+    pub at_pick: bool,
     /// The global position of the window the event or draw is for: the
     /// output's top-left for a flyout, (0, 0) for a toplevel, which
     /// cannot know its own.
@@ -1044,6 +1047,7 @@ pub fn run(app: Box<dyn App>) {
             wake: Waker(Arc::new(ping)),
             heads: heads::HeadRequests::default(),
             want_tick: Default::default(),
+            at_pick: false,
         },
         exit: false,
         last_serial: 0,
@@ -1397,6 +1401,7 @@ impl Host {
             Some(s) => {
                 self.ctx.size = s.size;
                 self.ctx.maximized = s.maximized;
+                self.ctx.at_pick = at_pick(s.size, s.picked, s.bounds);
                 self.ctx.origin = s.origin;
             }
             // A hidden main window still takes events the host has no
@@ -2001,6 +2006,7 @@ impl Host {
         let (size, modal) = (s.size, s.modal);
         self.ctx.size = s.size;
         self.ctx.maximized = s.maximized;
+        self.ctx.at_pick = at_pick(s.size, s.picked, s.bounds);
         self.ctx.origin = s.origin;
         let (app, ctx) = (&mut self.app, &self.ctx);
         let acc = &mut self.slots[i].access;
@@ -2306,6 +2312,7 @@ impl Host {
         }
         self.ctx.size = (w, h);
         self.ctx.maximized = self.slots[i].maximized;
+        self.ctx.at_pick = at_pick((w, h), self.slots[i].picked, self.slots[i].bounds);
         self.ctx.origin = self.slots[i].origin;
         // Only the active window draws as active (a dialog's default
         // button, under a look that shows it): a toplevel as the compositor
@@ -4137,6 +4144,7 @@ mod tests {
             wake: Waker::noop(),
             heads: Default::default(),
             want_tick: Default::default(),
+            at_pick: false,
             text_size: 150,
         };
         let grown = reprisekit::theme::TextUnits::new(17, 11);
@@ -4163,6 +4171,7 @@ mod tests {
             wake: Waker::noop(),
             heads: Default::default(),
             want_tick: Default::default(),
+            at_pick: false,
             text_size: 150,
         };
         assert_eq!(ctx.base_px(), 11);
@@ -4187,6 +4196,7 @@ mod tests {
             wake: Waker::noop(),
             heads: Default::default(),
             want_tick: Default::default(),
+            at_pick: false,
             text_size: 100,
         };
         let r = Rect::new(5, 4, 30, 20);
@@ -4234,6 +4244,7 @@ mod tests {
             wake: Waker::noop(),
             heads: Default::default(),
             want_tick: Default::default(),
+            at_pick: false,
             text_size: 100,
         };
         let r = Rect::new(0, 8, 120, 22);
