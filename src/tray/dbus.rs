@@ -141,11 +141,9 @@ impl Shell {
         Ok(())
     }
 
-    async fn tablet_pads(&self) -> Vec<(String, u32, u32, u32)> {
+    async fn tablet_pads(&self) -> Vec<reprisebus::tray::PadWire> {
         let pads = self.pads.lock().unwrap_or_else(|e| e.into_inner());
-        (pads.iter())
-            .map(|p| (p.name.clone(), p.buttons, p.rings, p.strips))
-            .collect()
+        pads.iter().map(reprisebus::tray::Pad::wire).collect()
     }
 }
 

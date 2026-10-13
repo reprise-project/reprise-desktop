@@ -17,7 +17,7 @@ use std::sync::{Arc, Mutex};
 use serde::Deserialize;
 use smithay::backend::input::InputTime;
 use smithay::reexports::input::{
-    self as libinput, DeviceCapability,
+    self as libinput, AsRaw, DeviceCapability,
     event::{
         EventTrait,
         keyboard::KeyState,
@@ -310,19 +310,11 @@ fn dial_steps(acc: &mut f64, v120: f64) -> i32 {
     steps as i32
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct PadInfo {
-    pub name: String,
-    pub buttons: u32,
-    pub rings: u32,
-    pub strips: u32,
-}
-
-pub type Shared = Arc<Mutex<Vec<PadInfo>>>;
+pub type Shared = Arc<Mutex<Vec<reprisebus::tray::Pad>>>;
 
 struct Pad {
     device: libinput::Device,
-    info: PadInfo,
+    info: reprisebus::tray::Pad,
     /// The mode a pad without libinput modes is in.
     mode: usize,
     rings: Vec<Dial>,
@@ -356,18 +348,28 @@ pub fn added(state: &mut State, device: &libinput::Device) {
         return;
     }
     let count = |n: i32| u32::try_from(n).unwrap_or(0);
-    let info = PadInfo {
+    // SAFETY: `device` is a live libinput device; the call only reads it.
+    let dials =
+        unsafe { libinput::ffi::libinput_device_tablet_pad_get_num_dials(device.as_raw_mut()) };
+    let info = reprisebus::tray::Pad {
         name: device.name().into_owned(),
         buttons: count(device.tablet_pad_number_of_buttons()),
         rings: count(device.tablet_pad_number_of_rings()),
         strips: count(device.tablet_pad_number_of_strips()),
+        dials: count(dials),
+        keys: (PAD_KEYS.iter())
+            .filter(|&&(_, code)| device.tablet_pad_has_key(code) == Some(true))
+            .map(|&(name, _)| name.to_string())
+            .collect(),
     };
     log::info!(
-        "new tablet pad {}: {} buttons, {} rings, {} strips",
+        "new tablet pad {}: {} buttons, {} rings, {} strips, {} dials, keys {:?}",
         info.name,
         info.buttons,
         info.rings,
-        info.strips
+        info.strips,
+        info.dials,
+        info.keys
     );
     let pads = &mut state.devices.pads;
     pads.pads.push(Pad {

@@ -253,9 +253,11 @@ mod tests {
         ]);
         let pad = reprisebus::tray::Pad {
             name: "Pad".into(),
-            buttons: 18,
+            buttons: 13,
             rings: 1,
             strips: 1,
+            dials: 1,
+            keys: crate::tabletpage::PAD_KEYS.map(|k| k.0.to_string()).into(),
         };
         let side = |r| {
             reprisekit::controls::form::Item::new(

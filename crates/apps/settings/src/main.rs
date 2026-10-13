@@ -1425,13 +1425,25 @@ impl SettingsApp {
         let Some(pad) = self.pads.get(self.pad_picked) else {
             return Reply::none();
         };
+        let list = &mut self.want.tablet_pads;
+        let step = match id {
+            tabletpage::RING_STEP => Some(tabletpage::Step::Ring),
+            tabletpage::STRIP_STEP => Some(tabletpage::Step::Strip),
+            _ => None,
+        };
+        if let Some(step) = step {
+            if let Some(form::Control::UpDown(u)) = page.item(id).map(|i| &i.control) {
+                tabletpage::set_step(list, &pad.name, step, u.value());
+                self.sync_apply();
+            }
+            return Reply::redraw();
+        }
         let Some(i) = tabletpage::ROW_IDS.iter().position(|r| *r == id) else {
             return Reply::none();
         };
-        let Some(&slot) = tabletpage::slots(pad).get(i) else {
+        let Some(&tabletpage::Row::Bind(slot)) = tabletpage::rows_of(pad).get(i) else {
             return Reply::none();
         };
-        let list = &mut self.want.tablet_pads;
         let had = tabletpage::entry_for(list, &pad.name).map_or("", |e| list[e].get(slot));
         let value = tabletpage::value_at(row, had);
         tabletpage::bind(list, &pad.name, slot, &value);
