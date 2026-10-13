@@ -333,6 +333,8 @@ struct SettingsApp {
     last_slideshow: String,
     decoding: Option<(String, Receiver<Option<Decoded>>)>,
     state_path: Option<PathBuf>,
+    /// The size the state file kept at start, which the window opens at for each text size.
+    kept: winstate::Kept,
     window: (i32, i32),
     window_dirty: bool,
     units: TextUnits,
@@ -357,7 +359,8 @@ impl SettingsApp {
         app.text_size = repriseconf::text_size();
         app.units = Theme::default().with_form_text(app.text_size).text;
         let state = winstate::path();
-        app.window = winstate::load(&state, app.min_window(), app.text_size);
+        app.kept = winstate::kept(&state);
+        app.window = app.initial_size();
         app.last_slideshow = winstate::slideshow(&state);
         app.state_path = Some(state);
         app
@@ -544,6 +547,10 @@ impl SettingsApp {
             last_slideshow: String::new(),
             decoding: None,
             state_path: None,
+            kept: winstate::Kept {
+                size: Area::MIN.sheet_size(),
+                text_size: None,
+            },
             window: Area::MIN.sheet_size(),
             window_dirty: false,
             units: TextUnits::ONE,
@@ -2488,8 +2495,7 @@ impl App for SettingsApp {
     }
 
     fn initial_size(&self) -> (i32, i32) {
-        let min = self.min_window();
-        (self.window.0.max(min.0), self.window.1.max(min.1))
+        self.kept.at(self.text_size, self.min_window())
     }
 
     /// Smallest sizes: the sheet's pages at their smallest, the file dialog's opening size.
@@ -3780,6 +3786,25 @@ mod tests {
         app.rename = Some(renamedlg::RenameDialog::new("Name"));
         let rename = app.children().into_iter().find(|c| c.id == RENAME_WIN);
         assert_eq!(rename.map(|c| c.size), Some(u.size(renamedlg::CLIENT)));
+    }
+
+    /// The size Settings opens at follows the text size live: its smallest sheet at 200%, the
+    /// opening size again back at 100%, whatever size the window took in between.
+    #[test]
+    fn the_opening_size_follows_the_text_size() {
+        let mut app = app("opening-size");
+        app.kept = winstate::Kept {
+            size: winstate::DEFAULT,
+            text_size: None,
+        };
+        let mut ctx = test_ctx();
+        ctx.text_size = 200;
+        ctx.size = (1088, 1026);
+        app.event(MAIN, Event::Resized, &mut ctx);
+        assert_eq!(app.initial_size(), (1088, 1056));
+        ctx.text_size = 100;
+        app.event(MAIN, Event::Resized, &mut ctx);
+        assert_eq!(app.initial_size(), winstate::DEFAULT);
     }
 
     /// At 200% on a 1080-line screen the work area is shorter than the smallest sheet: the
