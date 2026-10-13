@@ -14,10 +14,36 @@ pub fn path() -> PathBuf {
         .join("settings.toml")
 }
 
-/// The window size the file at `path` keeps, no smaller than `min`; [`DEFAULT`] when there is none.
-/// A size left at a larger text size than `text_size` shrinks by the ratio of the two, down to no
-/// less than [`DEFAULT`].
-pub fn load(path: &Path, min: (i32, i32), text_size: u32) -> (i32, i32) {
+/// A window size the state file keeps and the text size it was left at.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Kept {
+    pub size: (i32, i32),
+    pub text_size: Option<u32>,
+}
+
+impl Kept {
+    /// The size the window opens at `text_size`, no smaller than `min`. A size left at a larger
+    /// text size shrinks by the ratio of the two, down to no less than [`DEFAULT`].
+    pub fn at(self, text_size: u32, min: (i32, i32)) -> (i32, i32) {
+        let size = match self.text_size.filter(|&pct| pct > text_size) {
+            Some(pct) => {
+                let shrink = |v: i32, natural: i32| {
+                    let k = (i64::from(v) * i64::from(text_size) / i64::from(pct)) as i32;
+                    v.min(k.max(natural))
+                };
+                (
+                    shrink(self.size.0, DEFAULT.0),
+                    shrink(self.size.1, DEFAULT.1),
+                )
+            }
+            None => self.size,
+        };
+        (size.0.max(min.0), size.1.max(min.1))
+    }
+}
+
+/// The window size the file at `path` keeps; [`DEFAULT`] when there is none.
+pub fn kept(path: &Path) -> Kept {
     let doc = read(path);
     let size = doc
         .as_ref()
@@ -27,21 +53,16 @@ pub fn load(path: &Path, min: (i32, i32), text_size: u32) -> (i32, i32) {
             Some((side(0)?, side(1)?))
         })
         .unwrap_or(DEFAULT);
-    let left_at = doc
+    let text_size = doc
         .as_ref()
-        .and_then(|doc| u32::try_from(doc.get("text_size")?.as_integer()?).ok())
-        .filter(|&pct| pct > text_size);
-    let size = match left_at {
-        Some(pct) => {
-            let shrink = |v: i32, natural: i32| {
-                let k = (i64::from(v) * i64::from(text_size) / i64::from(pct)) as i32;
-                v.min(k.max(natural))
-            };
-            (shrink(size.0, DEFAULT.0), shrink(size.1, DEFAULT.1))
-        }
-        None => size,
-    };
-    (size.0.max(min.0), size.1.max(min.1))
+        .and_then(|doc| u32::try_from(doc.get("text_size")?.as_integer()?).ok());
+    Kept { size, text_size }
+}
+
+/// The window size the file at `path` keeps, opened at `text_size` ([`Kept::at`]).
+#[cfg(test)]
+pub fn load(path: &Path, min: (i32, i32), text_size: u32) -> (i32, i32) {
+    kept(path).at(text_size, min)
 }
 
 /// Write `size`, left at `text_size` percent, as the window size into the file at `path`.
