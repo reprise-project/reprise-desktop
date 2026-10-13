@@ -56,6 +56,25 @@ pub fn draw(c: &mut Canvas, x: i32, y: i32, px: i32, color: Color) {
     c.blit_mask_over(x * s, y * s, dev, dev, &mask, color, clip);
 }
 
+/// The mask laid out for exactly `px` when there is one, else the ribbon at `px`: a size between
+/// the drawn ones stays smooth instead of sampling a larger mask.
+pub fn coverage_any(px: usize) -> Vec<u8> {
+    if SIZES.contains(&px) {
+        coverage(px)
+    } else {
+        path_coverage(px)
+    }
+}
+
+/// [`draw`] through [`coverage_any`].
+pub fn draw_any(c: &mut Canvas, x: i32, y: i32, px: i32, color: Color) {
+    let s = c.scale();
+    let dev = (px * s).max(0) as usize;
+    let mask = coverage_any(dev);
+    let clip = c.bounds();
+    c.blit_mask_over(x * s, y * s, dev, dev, &mask, color, clip);
+}
+
 struct Ribbon {
     size: f64,
     w: f64,
@@ -194,6 +213,11 @@ pub(crate) fn assert_drawn(c: &Canvas, x: i32, y: i32, px: i32, ink: Color) {
 }
 
 #[cfg(test)]
+pub(crate) fn assert_any_drawn(c: &Canvas, x: i32, y: i32, px: i32, ink: Color) {
+    assert_inked(c, x, y, px, &coverage_any(px as usize), ink);
+}
+
+#[cfg(test)]
 pub(crate) fn assert_path_drawn(c: &Canvas, x: i32, y: i32, px: i32, ink: Color) {
     assert_inked(c, x, y, px, &path_coverage(px as usize), ink);
 }
@@ -280,6 +304,16 @@ mod tests {
         let m = path_coverage(72);
         assert!(m.iter().any(|&a| a > 0 && a < 255), "anti-aliased edges");
         assert_eq!(m[36 * 72 + 10], 255);
+    }
+
+    #[test]
+    fn any_size_takes_its_own_mask_or_else_the_ribbon() {
+        for n in SIZES {
+            assert_eq!(coverage_any(n), coverage(n), "{n}");
+        }
+        for n in [30, 36, 37, 64] {
+            assert_eq!(coverage_any(n), path_coverage(n), "{n}");
+        }
     }
 
     #[test]
