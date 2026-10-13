@@ -1390,6 +1390,22 @@ impl State {
             .collect()
     }
 
+    /// Allow Launching on `paths`, the first failure in an error box.
+    pub(crate) fn allow_launching(&mut self, paths: &[PathBuf]) {
+        let failed = paths
+            .iter()
+            .find_map(|p| apps::allow_launching(p).err().map(|e| (p, e)));
+        if let Some((path, e)) = failed {
+            let name = path
+                .file_name()
+                .unwrap_or(path.as_os_str())
+                .to_string_lossy();
+            let text = format!("Cannot allow {name} to launch: {e}");
+            self.open_dialog(crate::dialog::Dialog::error("Allow Launching", text));
+        }
+        self.rescan_desktop();
+    }
+
     pub fn open_icon(&mut self, index: usize) {
         let Some(view) = self.desktop.as_ref() else {
             return;
@@ -1398,17 +1414,13 @@ impl State {
             return;
         };
         let argv: Vec<std::ffi::OsString> = match &entry.target {
-            Target::Launch(app) => apps::launch_argv(app, &self.config.terminal),
-            Target::Open(path) => reprisefs::props::open_argv_in(
-                path,
-                &view.mime,
-                &self.app_index,
-                &self.config.terminal,
-            ),
             Target::Uri(_) => match desktop::place_argv(entry) {
                 Some(argv) => argv.into_iter().map(Into::into).collect(),
                 None => return,
             },
+            target => {
+                desktop::open_argv(target, &view.mime, &self.app_index, &self.config.terminal)
+            }
         };
         self.spawn_argv_activated(&argv);
     }
@@ -1700,18 +1712,7 @@ impl State {
                         .collect(),
                     None => Vec::new(),
                 };
-                let failed = paths
-                    .iter()
-                    .find_map(|p| apps::allow_launching(p).err().map(|e| (p, e)));
-                if let Some((path, e)) = failed {
-                    let name = path
-                        .file_name()
-                        .unwrap_or(path.as_os_str())
-                        .to_string_lossy();
-                    let text = format!("Cannot allow {name} to launch: {e}");
-                    self.open_dialog(crate::dialog::Dialog::error("Allow Launching", text));
-                }
-                self.rescan_desktop();
+                self.allow_launching(&paths);
             }
             Dc::Settings => {
                 self.spawn_argv_activated(&["reprise-settings", "--page", "background"])
