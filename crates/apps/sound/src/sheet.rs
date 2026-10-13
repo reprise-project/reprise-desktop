@@ -1115,6 +1115,16 @@ mod tests {
         Sheet::new(snap, Icons::default())
     }
 
+    /// Both pages fit their text under every interface and text size.
+    #[test]
+    fn the_pages_fit_their_text() {
+        let over = reprisekit::interfaces::form_overflows(|_, _, _| {
+            let s = sheet(&fixture()).sheet;
+            s.tabs.labels.into_iter().zip(s.pages).collect()
+        });
+        assert!(over.is_empty(), "{}", over.join("\n"));
+    }
+
     fn list(s: &Sheet, id: &str) -> ListBox {
         match &s.sheet.open().item(id).expect("list exists").control {
             Control::ListBox { list, .. } => list.clone(),

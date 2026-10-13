@@ -293,6 +293,15 @@ mod tests {
         )
     }
 
+    /// The dialog fits its text under every interface and text size.
+    #[test]
+    fn the_dialog_fits_its_text() {
+        let over = reprisekit::interfaces::form_overflows(|_, _, _| {
+            vec![("add".into(), AddUser::new(vec![]).form.clone())]
+        });
+        assert!(over.is_empty(), "{}", over.join("\n"));
+    }
+
     #[test]
     #[ignore]
     fn render_dialog() {

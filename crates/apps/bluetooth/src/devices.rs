@@ -469,6 +469,17 @@ mod tests {
         )
     }
 
+    /// Both pages fit their text under every interface and text size.
+    #[test]
+    fn the_pages_fit_their_text() {
+        let over = reprisekit::interfaces::form_overflows(|_, _, _| {
+            let mut d = Devices::new();
+            d.refresh(&four());
+            d.sheet.tabs.labels.into_iter().zip(d.sheet.pages).collect()
+        });
+        assert!(over.is_empty(), "{}", over.join("\n"));
+    }
+
     fn label(d: &Devices, id: &str) -> String {
         match d.sheet.pages[TAB_DEVICES].item(id).map(|i| &i.control) {
             Some(Control::Button { label, .. }) => label.clone(),

@@ -75,6 +75,40 @@ pub fn sample_theme(
     t
 }
 
+/// What runs over in the forms `build` makes for each interface, its theme at every text size
+/// and the text they are measured with, in Tahoma (where installed) and DejaVu Sans: one line
+/// per item ([`controls::form::Form::overflows`]), empty when all the text fits. For a
+/// program's audit test.
+pub fn form_overflows(
+    mut build: impl FnMut(Interface, &Theme, &TextRenderer) -> Vec<(String, controls::form::Form)>,
+) -> Vec<String> {
+    let mut over = Vec::new();
+    for family in ["Tahoma", "DejaVu Sans"] {
+        let text = TextRenderer::load(&FontConfig {
+            family: vec![family.into()],
+            ..FontConfig::default()
+        });
+        if !text.has_face(family) {
+            continue;
+        }
+        for i in [Interface::Classic, Interface::Blue, Interface::Glass] {
+            for pct in [100, 125, 150, 175, 200] {
+                let theme = theme_for(i).with_form_text(pct);
+                for (name, form) in build(i, &theme, &text) {
+                    form.drawn_with(&theme.paint());
+                    for (id, by) in form.overflows(&text, theme.fonts.size_px) {
+                        over.push(format!(
+                            "{family}, {}, {pct}%, {name}: {id} {by} px over",
+                            i.as_str()
+                        ));
+                    }
+                }
+            }
+        }
+    }
+    over
+}
+
 pub fn small_bar(theme: &mut Theme, glass: &glass::Settings) {
     theme.metrics.taskbar_height = glass::SMALL_TASKBAR_HEIGHT;
     theme.look = Look::Styled(glass::small_bar_style(glass));

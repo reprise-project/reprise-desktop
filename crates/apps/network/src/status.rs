@@ -361,6 +361,26 @@ mod tests {
         page.item(id).unwrap_or_else(|| panic!("no {id}")).rect
     }
 
+    /// The wired and wireless pages fit their text under every interface and text size.
+    #[test]
+    fn the_status_pages_fit_their_text() {
+        let over = reprisekit::interfaces::form_overflows(|_, _, _| {
+            [("wired", wired()), ("wireless", wireless())]
+                .into_iter()
+                .flat_map(|(kind, d)| {
+                    let s = Status::new(&d).sheet;
+                    let tabs = s
+                        .tabs
+                        .labels
+                        .into_iter()
+                        .map(move |t| format!("{kind} {t}"));
+                    tabs.zip(s.pages)
+                })
+                .collect()
+        });
+        assert!(over.is_empty(), "{}", over.join("\n"));
+    }
+
     #[test]
     fn durations_format_as_clock_time_with_days() {
         assert_eq!(duration_text(None), "");

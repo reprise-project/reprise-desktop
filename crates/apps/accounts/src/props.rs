@@ -523,6 +523,27 @@ mod tests {
         Ok(PathBuf::from("/run/user/1000/reprise-accounts/p.png"))
     }
 
+    /// Every page fits its text under every interface and text size, for your account and
+    /// for another one.
+    #[test]
+    fn every_page_fits_its_text() {
+        let over = reprisekit::interfaces::form_overflows(|_, _, _| {
+            [("yours", user(true, true)), ("another", user(false, false))]
+                .into_iter()
+                .flat_map(|(whose, u)| {
+                    let s = Props::new(u, None, false).sheet.clone();
+                    let tabs = s
+                        .tabs
+                        .labels
+                        .into_iter()
+                        .map(move |t| format!("{whose} {t}"));
+                    tabs.zip(s.pages)
+                })
+                .collect()
+        });
+        assert!(over.is_empty(), "{}", over.join("\n"));
+    }
+
     /// Writes target/accounts-props-preview.png (the three tabs, yours and
     /// another account's Password) for a visual check.
     #[test]

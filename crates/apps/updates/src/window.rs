@@ -496,6 +496,34 @@ mod tests {
         ups
     }
 
+    /// The window fits its text in every phase under every interface and text size.
+    #[test]
+    fn the_window_fits_its_text() {
+        let over = reprisekit::interfaces::form_overflows(|_, forms, text| {
+            let ups = mixed();
+            [
+                Phase::Unchecked,
+                Phase::Checking,
+                Phase::Ready,
+                Phase::Installing {
+                    fraction: Some(0.4),
+                    doing: "Downloading Integrated Webcam".into(),
+                    request: Some("Unplug the camera and plug it back in.".into()),
+                },
+                Phase::Installed(Restart::System),
+                Phase::Failed("The package manager is busy.".into()),
+            ]
+            .into_iter()
+            .map(|phase| {
+                let mut w = Window::new(None);
+                w.sync(&phase, &ups, text, forms);
+                (format!("{phase:?}"), w.form)
+            })
+            .collect()
+        });
+        assert!(over.is_empty(), "{}", over.join("\n"));
+    }
+
     #[test]
     fn install_is_there_only_with_checked_updates_and_nothing_running() {
         let env = Env::new();

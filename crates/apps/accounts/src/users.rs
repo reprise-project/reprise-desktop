@@ -349,6 +349,15 @@ mod tests {
         ]
     }
 
+    /// The window fits its text under every interface and text size.
+    #[test]
+    fn the_window_fits_its_text() {
+        let over = reprisekit::interfaces::form_overflows(|_, _, _| {
+            vec![("users".into(), Users::new().form)]
+        });
+        assert!(over.is_empty(), "{}", over.join("\n"));
+    }
+
     fn enabled(u: &Users, id: &str) -> bool {
         matches!(
             u.form.item(id).map(|i| &i.control),

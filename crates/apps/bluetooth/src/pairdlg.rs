@@ -107,6 +107,33 @@ mod tests {
         (PairDialog::new(req, "Pad", &text, &Theme::default()), wait)
     }
 
+    /// The box fits its text for each request under every interface and text size.
+    #[test]
+    fn the_box_fits_its_text() {
+        let over = reprisekit::interfaces::form_overflows(|_, forms, text| {
+            [
+                Ask::PinCode,
+                Ask::Passkey,
+                Ask::ShowPin("0000".into()),
+                Ask::ShowPasskey(123_456),
+                Ask::Confirm(123_456),
+                Ask::Authorize,
+            ]
+            .into_iter()
+            .map(|ask| {
+                let name = format!("{ask:?}");
+                let req = AgentRequest {
+                    device: "/d/1".into(),
+                    ask,
+                    done: None,
+                };
+                (name, PairDialog::new(req, "Pad", text, forms).form.clone())
+            })
+            .collect()
+        });
+        assert!(over.is_empty(), "{}", over.join("\n"));
+    }
+
     #[test]
     fn ok_answers_and_cancel_drops() {
         let (mut d, wait) = dialog(Ask::Confirm(7));

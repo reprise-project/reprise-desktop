@@ -437,6 +437,16 @@ mod tests {
         Sheet::new(&system(), &zones(), now(), 0, true)
     }
 
+    /// Both pages fit their text under every interface and text size.
+    #[test]
+    fn the_pages_fit_their_text() {
+        let over = reprisekit::interfaces::form_overflows(|_, _, _| {
+            let s = sheet().sheet;
+            s.tabs.labels.into_iter().zip(s.pages).collect()
+        });
+        assert!(over.is_empty(), "{}", over.join("\n"));
+    }
+
     /// Writes target/datetime-preview.png (both tabs side by side) for a
     /// visual check.
     #[test]

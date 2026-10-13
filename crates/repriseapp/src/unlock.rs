@@ -248,6 +248,22 @@ mod tests {
         }
     }
 
+    /// The box fits its text, its message wrapped as `open` wraps it and with a failure shown,
+    /// under every interface and text size.
+    #[test]
+    fn the_box_fits_its_text() {
+        let over = reprisekit::interfaces::form_overflows(|_, forms, text| {
+            let width = forms.text.len(MSG_W);
+            let msg = message("Kingston DataTraveler");
+            let lines = reprisekit::text::wrap(text, &msg, width, forms.fonts.size_px);
+            let mut d = Unlock::new("sdc".into(), &lines, None);
+            let fresh = d.form.clone();
+            d.fail(WRONG);
+            vec![("unlock".into(), fresh), ("wrong".into(), d.form.clone())]
+        });
+        assert!(over.is_empty(), "{}", over.join("\n"));
+    }
+
     #[test]
     fn ok_waits_for_a_passphrase_and_hands_it_over_once() {
         let mut d = Unlock::new("sdc".into(), &[message("VAULT")], None);

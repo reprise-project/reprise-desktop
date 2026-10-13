@@ -1,6 +1,6 @@
 //! "Create Hotspot": turns a Wi-Fi radio into an access point sharing this computer's connection. Asks for the network's name, its password (shown), WPA2 or WPA3, and the band.
 
-use reprisekit::classic::widgets::{BUTTON_GAP, BUTTON_H, BUTTON_W};
+use reprisekit::classic::widgets::{BUTTON_GAP, BUTTON_H, BUTTON_W, LINE_H};
 use reprisekit::controls::form::{self, Control, Form, Item};
 
 use crate::nm::{Band, Psk};
@@ -60,11 +60,9 @@ impl HotspotDialog {
             Item::label_at(id, MARGIN, ROW_Y[i] + LABEL_DY, LABEL_W, text)
         };
         let items = vec![
-            Item::lines_at(
+            Item::lines(
                 "intro",
-                MARGIN,
-                MARGIN,
-                CLIENT.0 - 2 * MARGIN,
+                reprisekit::raster::Rect::new(MARGIN, MARGIN, CLIENT.0 - 2 * MARGIN, 2 * LINE_H),
                 &["Share this computer's connection with other devices over Wi-Fi."],
             ),
             label("ssid_l", 0, "Network &name:"),
@@ -165,6 +163,15 @@ pub fn default_ssid() -> String {
 mod tests {
     use super::*;
     use reprisekit::raster::Canvas;
+
+    /// The dialog fits its text under every interface and text size.
+    #[test]
+    fn the_dialog_fits_its_text() {
+        let over = reprisekit::interfaces::form_overflows(|_, _, _| {
+            vec![("hotspot".into(), HotspotDialog::new("/dev/3", "desk").form)]
+        });
+        assert!(over.is_empty(), "{}", over.join("\n"));
+    }
 
     fn type_into(d: &mut HotspotDialog, id: &str, s: &str) {
         d.form.focus_id(id);
