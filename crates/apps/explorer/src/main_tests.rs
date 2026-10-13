@@ -634,6 +634,28 @@ fn escape_abandons_a_marquee_and_a_divider_drag() {
     assert_eq!(ex.sv.columns[0].width, 178, "the width is back");
 }
 
+/// A divider dragged 40 px at 200% saves the column 20 px wider: widths are kept at 100%.
+#[test]
+fn a_column_drag_at_200_percent_saves_half_the_px() {
+    let dir = tempfile::tempdir().expect("a temp dir");
+    let mut ctx = test_ctx();
+    ctx.theme = Theme::default().with_text_size(200);
+    let mut ex = test_explorer(Place::Folder(dir.path().to_path_buf()), &mut ctx);
+    ex.resizing = Some((2, 300, 118));
+    ex.pointer(repriseapp::PointerInput::Motion { x: 340, y: 50 }, &mut ctx);
+    ex.pointer(
+        repriseapp::PointerInput::Release {
+            x: 340,
+            y: 50,
+            button: crate::BTN_LEFT,
+            mods: repriseapp::Mods::default(),
+        },
+        &mut ctx,
+    );
+    assert_eq!(ex.sv.columns[2].width, 138);
+    assert_eq!(ex.settings.columns[2], 138);
+}
+
 #[test]
 fn a_refresh_keeps_the_scroll_position() {
     let dir = tempfile::tempdir().expect("a temp dir");
