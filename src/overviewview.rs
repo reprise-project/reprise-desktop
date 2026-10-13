@@ -86,6 +86,15 @@ fn swap_sheet(v: &mut OverviewView, s: &mut Sheet) {
     std::mem::swap(&mut v.grids, &mut s.grids);
 }
 
+/// The cell at layout `(x, y)` of grids at rest; none while they slide, as a cell's
+/// resting place is not where it is drawn.
+fn resting_hit(layouts: &[OverviewLayout], sliding: bool, x: i32, y: i32) -> Option<usize> {
+    if sliding {
+        return None;
+    }
+    overview::hit_grids(layouts, x, y)
+}
+
 /// A released vertical swipe's run-on: the fade eases over `span` (opacities) in `ms`.
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct FadeRun {
@@ -465,6 +474,8 @@ impl State {
             self.scene.set_clip(cells, None);
         }
         self.redraw_all();
+        let p = self.pointer_location();
+        self.repoint(p, InputTime::now());
     }
 
     fn overview_slide_drop(&mut self) {
@@ -606,7 +617,7 @@ impl State {
 
     pub fn overview_hit(&self, lx: f64, ly: f64) -> Option<usize> {
         let v = self.overview.view.as_ref()?;
-        overview::hit_grids(&v.layouts, lx as i32, ly as i32)
+        resting_hit(&v.layouts, v.slide.is_some(), lx as i32, ly as i32)
     }
 
     pub fn overview_hover(&mut self, cell: Option<usize>) {
@@ -617,10 +628,19 @@ impl State {
     }
 
     /// A button pressed while the overview is up: a left click on a cell
-    /// activates its window, any other press closes it.
+    /// activates its window, any other press closes it. A press while the grids
+    /// slide does nothing.
     pub fn overview_press(&mut self, button: u32) {
         if !self.overview.taken.contains(&button) {
             self.overview.taken.push(button);
+        }
+        if self
+            .overview
+            .view
+            .as_ref()
+            .is_some_and(|v| v.slide.is_some())
+        {
+            return;
         }
         // Snap assist's close button closes the hot card's window. A reader's
         // click reaches any card's button: it has no pointer to make one hot.
@@ -951,6 +971,16 @@ mod tests {
             mods,
             edit: None,
         }
+    }
+
+    #[test]
+    fn grids_take_no_hits_while_they_slide() {
+        let layout = OverviewLayout::compute(2, Rect::new(0, 0, 1000, 600));
+        let c = layout.cells[0];
+        let (x, y) = (c.x + c.width / 2, c.y + c.height / 2);
+        let layouts = [layout];
+        assert_eq!(resting_hit(&layouts, false, x, y), Some(0));
+        assert_eq!(resting_hit(&layouts, true, x, y), None);
     }
 
     #[test]
