@@ -322,6 +322,7 @@ impl State {
                     && self.switcher.panel.is_none()
                     && self.panels.region.is_none();
                 if g.enabled && free && event.fingers() == g.fingers {
+                    self.overview_fade_settle();
                     self.pointers.swipe = Some(KeptSwipe {
                         tracker: crate::gestures::Tracker::default(),
                         overview_was_open: self.overview.view.is_some(),
@@ -403,11 +404,7 @@ impl State {
                 } else {
                     !(commit && p > 0.0)
                 };
-                if close {
-                    self.close_overview();
-                } else {
-                    self.set_overview_fade(1.0);
-                }
+                self.overview_fade_to(!close);
             }
         }
     }
