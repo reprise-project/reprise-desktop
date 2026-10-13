@@ -179,6 +179,7 @@ impl Rig {
             quality: Quality::Full,
             hold: false,
             source: None,
+            downscale: 1,
         }
     }
 }
@@ -575,6 +576,7 @@ fn a_picture_redrawn_where_it_changed_is_the_picture_drawn_whole() {
             quality,
             hold: false,
             source: Some(src),
+            downscale: 1,
         };
         let mut parts = Picture::new();
         let first = half_backdrop(&mut r, detail);
@@ -938,6 +940,7 @@ fn turned_glass(
                 quality: Quality::Full,
                 hold: false,
                 source: None,
+                downscale: 1,
             },
         )
         .unwrap()
@@ -1368,6 +1371,89 @@ fn a_fine_checker_drawn_at_a_quarter_size_is_an_even_grey() {
         for x in 11..39 {
             let [v, ..] = p.at(x, y);
             assert!((112..=143).contains(&v), "({x}, {y}) is {v}, not grey");
+        }
+    }
+}
+
+/// Glass shrunk into a half-resolution target (a backdrop beneath other
+/// glass) draws, at each target pixel, the mean of the 2x2 output pixels
+/// the glass draws there on the output, for every material; past its
+/// shapes and in its holes it draws nothing.
+#[test]
+fn glass_shrunk_to_half_resolution_is_the_glass_on_the_output_downscaled() {
+    let Some(mut r) = rig(240, 160) else { return };
+    let ramp = |x: i32, y: i32| [(x * 2) as u8, (y * 3) as u8, (x + y) as u8];
+    let shapes = [Shape {
+        rect: rect(41, 31, 141, 91),
+        radii: [14.0, 0.0, 8.0, 4.0],
+    }];
+    let holes = [rect(57, 55, 100, 51)];
+    let black = r.backdrop(|_, _| [0; 3]);
+    let half: Size<i32, Physical> = (120, 80).into();
+    let half_black = r.backdrop_of(half, |_, _| [0; 3]);
+    let half_target: GlesTexture = r
+        .renderer
+        .create_buffer(Fourcc::Abgr8888, (half.w, half.h).into())
+        .expect("a half-resolution target");
+    for (material, within) in [
+        (Material::Frosted, 2),
+        (Material::Smoked, 2),
+        (Material::Molten, 6),
+    ] {
+        let s = plain(material);
+        let mut picture = Picture::new();
+        let back = half_backdrop(&mut r, ramp);
+        let src = blur_into(&mut r, &mut picture, &back, &[], &s, Quality::Full, false);
+        let f = GlassFrame {
+            source: Some(&src),
+            ..r.frame(&shapes, &holes, &s)
+        };
+        r.frames = 0;
+        let (full, _) = r.render(vec![Glass::new().element(&r.fx, &f).unwrap()], &black);
+
+        let shrunk = GlassFrame { downscale: 2, ..f };
+        let el = Glass::new().element(&r.fx, &shrunk).unwrap();
+        let output = std::mem::replace(&mut r.size, half);
+        let target = std::mem::replace(&mut r.target, half_target.clone());
+        let tracker = std::mem::replace(
+            &mut r.tracker,
+            OutputDamageTracker::new(half, 1.0, Transform::Normal),
+        );
+        r.frames = 0;
+        let (got, _) = r.render(vec![el], &half_black);
+        (r.size, r.target, r.tracker) = (output, target, tracker);
+
+        // Clear of the edge's anti-aliasing and Molten's rim.
+        let inset = |r: Rectangle<i32, Physical>, by: i32| {
+            Rectangle::new(
+                (r.loc.x + by, r.loc.y + by).into(),
+                (r.size.w - 2 * by, r.size.h - 2 * by).into(),
+            )
+        };
+        let grow = |r: Rectangle<i32, Physical>, by: i32| inset(r, -by);
+        let inner = inset(shapes[0].rect, 16);
+        for y in 0..half.h {
+            for x in 0..half.w {
+                let block = rect(2 * x, 2 * y, 2, 2);
+                let at = got.at(x, y);
+                if !grow(shapes[0].rect, 1).overlaps(block)
+                    || inset(holes[0], 1).contains_rect(block)
+                {
+                    assert_eq!(at, [0; 3], "{material:?}: nothing at ({x}, {y})");
+                } else if inner.contains_rect(block) && !grow(holes[0], 1).overlaps(block) {
+                    let mean = [0, 1, 2].map(|c| {
+                        let sum: u32 = [(0, 0), (1, 0), (0, 1), (1, 1)]
+                            .iter()
+                            .map(|(dx, dy)| u32::from(full.at(2 * x + dx, 2 * y + dy)[c]))
+                            .sum();
+                        f64::from(sum) / 4.0
+                    });
+                    assert!(
+                        near(at, mean, f64::from(within)),
+                        "{material:?}: ({x}, {y}) is {at:?}, the output's mean {mean:?}"
+                    );
+                }
+            }
         }
     }
 }

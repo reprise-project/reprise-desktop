@@ -40,6 +40,9 @@
 //!   and holes in output-local physical pixels, `[glass]` settings, tint
 //!   surface, output size and scale, opacity, quality, hold, the picture's
 //!   source if any). Put the element directly below the chrome it backs.
+//! - Glass beneath other glass, drawn into that glass's own half-resolution
+//!   backdrop: a second [`Glass`] with [`GlassFrame::downscale`] 2, the
+//!   shapes laid out on the output, and a source.
 //!
 //! `[glass] fast_drag`: pass [`blur::quality`]`(dragging, fast_drag)`. A
 //! quality change changes the element's commit, so the drag's end re-blurs

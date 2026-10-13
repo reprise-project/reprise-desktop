@@ -115,6 +115,12 @@ pub trait CustomNode<R: Renderer> {
         false
     }
 
+    /// Whether [`Scene::elements_below`](crate::Scene::elements_below)
+    /// keeps this node: true for glass, which shows through glass above it.
+    fn in_backdrop_below(&self) -> bool {
+        self.in_backdrop()
+    }
+
     /// The node's elements, front to back, for a view at `scale` where the
     /// node's top-left lands at `location`, physical, from the view's
     /// top-left. `alpha` is the node's opacity times its ancestors'.

@@ -79,8 +79,8 @@ enum Mode<'a> {
     Backdrop,
     /// What lies under `anchor`'s subtree as the screen draws it: the
     /// subtree and everything above it skipped, the subtrees left out of
-    /// the backdrop kept, the custom nodes as in `Backdrop`. `passed`
-    /// turns true once the walk is past the anchor.
+    /// the backdrop kept, the custom nodes [`crate::CustomNode::in_backdrop_below`]
+    /// keeps. `passed` turns true once the walk is past the anchor.
     Below {
         anchor: NodeId,
         passed: &'a Cell<bool>,
@@ -93,10 +93,10 @@ impl Mode<'_> {
     }
 }
 
-/// A leaf a walk reached: the node, its layout position and opacity, whether it lies in a
-/// subtree left out of the backdrop, and its ancestors' clip (layout).
+/// A leaf a walk reached: its id and node, its layout position and opacity, whether it lies in
+/// a subtree left out of the backdrop, and its ancestors' clip (layout).
 type Visit<'v, R, D> =
-    dyn FnMut(&crate::node::Node<R, D>, Point<i32, Logical>, f32, bool, Clip) + 'v;
+    dyn FnMut(NodeId, &crate::node::Node<R, D>, Point<i32, Logical>, f32, bool, Clip) + 'v;
 
 type Clip = Option<Rectangle<i32, Logical>>;
 
@@ -342,8 +342,8 @@ where
     /// What the screen draws under `node`'s subtree, for `view`: the
     /// subtree and everything above it left out, the subtrees
     /// [`Scene::set_in_backdrop`] left out kept (another window's frame
-    /// beneath glass), custom nodes as [`Scene::backdrop_elements`] keeps
-    /// them. Its Ids are the full render's.
+    /// beneath glass), the custom nodes [`crate::CustomNode::in_backdrop_below`]
+    /// keeps. Its Ids are the full render's.
     pub fn elements_below(
         &self,
         renderer: &mut R,
@@ -380,9 +380,31 @@ where
             false,
             pass,
             None,
-            &mut |_, _, _, left_out, _| hit |= left_out,
+            &mut |_, _, _, _, left_out, _| hit |= left_out,
         );
         hit
+    }
+
+    /// The leaves the screen shows meeting `area` (layout), front to back
+    /// as [`Scene::render_elements`] orders their elements. Makes no
+    /// elements.
+    pub fn leaves_in(&self, area: Rectangle<i32, Logical>) -> Vec<NodeId> {
+        let pass = Pass {
+            view: &View::new(area, 1.0),
+            mode: Mode::Screen,
+            hoist: true,
+        };
+        let mut out = Vec::new();
+        self.walk(
+            self.root().node(),
+            Point::default(),
+            1.0,
+            false,
+            pass,
+            None,
+            &mut |id, _, _, _, _, _| out.push(id),
+        );
+        out
     }
 
     /// [`Scene::render_elements`] for `output`'s view; none without a mode.
@@ -410,13 +432,14 @@ where
                 hoist: false,
             };
             self.walk_node(
+                id,
                 n,
                 origin + n.position,
                 1.0,
                 false,
                 pass,
                 None,
-                &mut |n, pos, alpha, _, clip| {
+                &mut |_, n, pos, alpha, _, clip| {
                     out.extend(Self::leaf_element(renderer, n, pos, alpha, view, clip))
                 },
             );
@@ -438,7 +461,7 @@ where
             false,
             pass,
             None,
-            &mut |n, pos, alpha, _, clip| {
+            &mut |_, n, pos, alpha, _, clip| {
                 out.extend(Self::leaf_element(renderer, n, pos, alpha, view, clip))
             },
         );
@@ -492,11 +515,12 @@ where
                 if let (Some(hn), Some((a, out))) = (self.node(h), self.shown(h, pass.mode)) {
                     let pos = self.origin_of(h) + hn.position;
                     let c = self.clip_above(h);
-                    self.walk_node(hn, pos, a, out, pass, c, visit);
+                    self.walk_node(h, hn, pos, a, out, pass, c, visit);
                 }
             }
         }
-        self.walk_node(n, origin + n.position, alpha, left_out, pass, clip, visit);
+        let pos = origin + n.position;
+        self.walk_node(id, n, pos, alpha, left_out, pass, clip, visit);
     }
 
     /// The opacity `id` draws at with every ancestor's, and whether it or
@@ -528,6 +552,7 @@ where
     #[allow(clippy::too_many_arguments)]
     fn walk_node(
         &self,
+        id: NodeId,
         n: &crate::node::Node<R, D>,
         pos: Point<i32, Logical>,
         alpha: f32,
@@ -549,8 +574,13 @@ where
         match pass.mode {
             Mode::Screen => {}
             Mode::Below { passed, .. } if !passed.get() => return,
-            Mode::Backdrop | Mode::Below { .. } => {
+            Mode::Backdrop => {
                 if matches!(&n.content, Content::Custom(c) if !c.in_backdrop()) {
+                    return;
+                }
+            }
+            Mode::Below { .. } => {
+                if matches!(&n.content, Content::Custom(c) if !c.in_backdrop_below()) {
                     return;
                 }
             }
@@ -560,7 +590,7 @@ where
         {
             return;
         }
-        visit(n, pos, alpha, left_out, clip);
+        visit(id, n, pos, alpha, left_out, clip);
     }
 
     /// The elements of leaf `n` at layout position `pos` and opacity

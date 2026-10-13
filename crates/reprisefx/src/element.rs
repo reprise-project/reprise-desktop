@@ -120,6 +120,10 @@ pub struct GlassFrame<'a> {
     /// The output's blurred backdrop to draw from (`Picture::source`); None copies and blurs the frame.
     /// With one the shapes must be output-local.
     pub source: Option<&'a Source>,
+    /// Output pixels per pixel of the target: 1 on the output, 2 in a half-resolution backdrop
+    /// (glass beneath other glass). Shapes, holes, output and scale stay the output's. Above 1 the
+    /// glass needs a source.
+    pub downscale: i32,
 }
 
 /// The handle a host keeps for one piece of glass (a window's frame, the taskbar). Its element keeps
@@ -158,7 +162,8 @@ impl Glass {
 
     /// The element for this frame; None when the glass is opaque or has no shapes.
     pub fn element(&self, fx: &GlassFx, f: &GlassFrame<'_>) -> Option<GlassElement> {
-        if !f.settings.transparency || f.shapes.is_empty() {
+        let k = f.downscale.max(1);
+        if !f.settings.transparency || f.shapes.is_empty() || (k > 1 && f.source.is_none()) {
             return None;
         }
         let material = f.settings.material;
@@ -178,20 +183,21 @@ impl Glass {
         if bounds.is_empty() {
             return None;
         }
-        let geometry = Rectangle::new(
+        let area = Rectangle::new(
             (bounds.loc.x - reach, bounds.loc.y - reach).into(),
             (bounds.size.w + 2 * reach, bounds.size.h + 2 * reach).into(),
         );
+        let geometry = shrink(area, k);
         let plan = Plan::new(f.settings.blur, material, f.quality);
         let tint = f.surface.map(|s| Tint::new(f.settings, s));
-        let k = key(f, geometry, plan, tint, &lenses);
+        let drawn = key(f, area, plan, tint, &lenses);
         let hold = f.hold && !self.refresh.replace(false);
-        let caught_up = f.source.map(|s| self.catch_up(s, geometry, bend));
-        if self.key.get() != Some(k) {
+        let caught_up = f.source.map(|s| self.catch_up(s, area, k, bend));
+        if self.key.get() != Some(drawn) {
             if self.key.get().is_some() {
                 self.bump();
             }
-            self.key.set(Some(k));
+            self.key.set(Some(drawn));
         } else if let Some(Some(changed)) = caught_up {
             self.damage.borrow_mut().add(changed);
         } else if let Some(None) = caught_up {
@@ -201,8 +207,9 @@ impl Glass {
             fx: fx.clone(),
             id: self.id.clone(),
             damage: self.damage.borrow().snapshot(),
-            key: k,
+            key: drawn,
             geometry,
+            downscale: k,
             shapes: f.shapes.to_vec(),
             lenses,
             holes: f.holes.to_vec(),
@@ -218,14 +225,17 @@ impl Glass {
         })
     }
 
-    /// Where `source` changed under glass at `geometry` (whose lens reads `bend` past its shapes) since
-    /// this glass last drew from it, local to the geometry; None when too far behind to say.
+    /// Where `source` changed under glass over `area` (output pixels; its lens reads `bend` past its
+    /// shapes) since this glass last drew from it, in target pixels (`downscale` output pixels each)
+    /// local to the element's geometry; None when too far behind to say.
     fn catch_up(
         &self,
         source: &Source,
-        geometry: Rectangle<i32, Physical>,
+        area: Rectangle<i32, Physical>,
+        downscale: i32,
         bend: i32,
     ) -> Option<Vec<Rectangle<i32, Physical>>> {
+        let geometry = shrink(area, downscale);
         let now = source.damage.current_commit();
         let mut seen = self.seen.borrow_mut();
         let last = match seen.iter_mut().find(|(id, _)| *id == source.id) {
@@ -245,8 +255,9 @@ impl Glass {
                         (r.loc.x - bend, r.loc.y - bend).into(),
                         (r.size.w + 2 * bend, r.size.h + 2 * bend).into(),
                     );
-                    grown.intersection(geometry)
+                    grown.intersection(area)
                 })
+                .map(|r| shrink(r, downscale))
                 .map(|r| Rectangle::new(r.loc - geometry.loc, r.size))
                 .collect(),
         )
@@ -266,6 +277,25 @@ impl Glass {
     pub fn is_stale(&self) -> bool {
         self.stale.get()
     }
+}
+
+/// The target pixels `r` (output pixels) touches when each target pixel is `k` output pixels.
+fn shrink(r: Rectangle<i32, Physical>, k: i32) -> Rectangle<i32, Physical> {
+    let (x0, y0) = (r.loc.x.div_euclid(k), r.loc.y.div_euclid(k));
+    let x1 = (r.loc.x + r.size.w + k - 1).div_euclid(k);
+    let y1 = (r.loc.y + r.size.h + k - 1).div_euclid(k);
+    Rectangle::new((x0, y0).into(), (x1 - x0, y1 - y0).into())
+}
+
+/// The target pixels `r` (output pixels) covers whole when each target pixel is `k` output pixels.
+fn shrink_in(r: Rectangle<i32, Physical>, k: i32) -> Rectangle<i32, Physical> {
+    let x0 = (r.loc.x + k - 1).div_euclid(k);
+    let y0 = (r.loc.y + k - 1).div_euclid(k);
+    let (x1, y1) = (
+        (r.loc.x + r.size.w).div_euclid(k),
+        (r.loc.y + r.size.h).div_euclid(k),
+    );
+    Rectangle::new((x0, y0).into(), ((x1 - x0).max(0), (y1 - y0).max(0)).into())
 }
 
 /// How many changes a damage tracker can catch up on; one further behind draws the element whole.
@@ -313,6 +343,7 @@ fn key(
         f.output.h,
         f.scale.to_bits(),
         f.source.map(|s| s.id),
+        f.downscale,
     )
         .hash(&mut h);
     h.finish()
@@ -326,8 +357,10 @@ pub struct GlassElement {
     id: Id,
     damage: DamageSnapshot<i32, Physical>,
     key: u64,
-    /// The shapes' bounds, grown by the blur's reach and the lens's when the glass blurs the frame.
+    /// The shapes' bounds, grown by the blur's reach and the lens's when the glass blurs the frame, in
+    /// target pixels.
     geometry: Rectangle<i32, Physical>,
+    downscale: i32,
     shapes: Vec<Shape>,
     lenses: Vec<Option<Lens>>,
     holes: Vec<Rectangle<i32, Physical>>,
@@ -484,12 +517,14 @@ impl RenderElement<GlesRenderer> for GlassElement {
             strength: 0.0,
             material: self.settings.material,
         });
-        let holes = self
-            .holes
-            .iter()
-            .map(|h| Rectangle::new(h.loc + offset, h.size));
+        let k = self.downscale;
+        let holes = self.holes.iter().map(|h| {
+            let h = shrink_in(*h, k);
+            Rectangle::new(h.loc + offset, h.size)
+        });
         for (shape, lens) in self.shapes.iter().zip(&self.lenses) {
-            let s = Rectangle::new(shape.rect.loc + offset, shape.rect.size);
+            let t = shrink(shape.rect, k);
+            let s = Rectangle::new(t.loc + offset, t.size);
             let parts: Vec<Rectangle<i32, Physical>> = damage
                 .iter()
                 .filter_map(|d| Rectangle::new(d.loc + dst.loc, d.size).intersection(s))
@@ -503,23 +538,28 @@ impl RenderElement<GlesRenderer> for GlassElement {
             if parts.is_empty() {
                 continue;
             }
-            // The shape where the picture holds it, and the space its distance field runs in (the
-            // shader's coordinates run along the picture).
-            let (b, turn, radii) = match self.source {
-                Some(_) => (shape.rect, Transform::Normal, shape.radii),
-                None => (
-                    space.in_fb(s),
-                    space.upright(),
-                    space.radii_in_fb(shape.radii),
+            // The shape where the picture holds it, the output pixels the drawn target pixels span
+            // (the shape's unless shrunk), and the space its distance field runs in (the shader's
+            // coordinates run along the picture).
+            let (b, span, turn, radii) = match self.source {
+                Some(_) => (
+                    shape.rect,
+                    Rectangle::new(t.loc.upscale(k), t.size.upscale(k)),
+                    Transform::Normal,
+                    shape.radii,
                 ),
+                None => {
+                    let b = space.in_fb(s);
+                    (b, b, space.upright(), space.radii_in_fb(shape.radii))
+                }
             };
             let src = Rectangle::new(
                 (
-                    f64::from(b.loc.x - c.loc.x) * kx,
-                    f64::from(b.loc.y - c.loc.y) * ky,
+                    f64::from(span.loc.x - c.loc.x) * kx,
+                    f64::from(span.loc.y - c.loc.y) * ky,
                 )
                     .into(),
-                (f64::from(b.size.w) * kx, f64::from(b.size.h) * ky).into(),
+                (f64::from(span.size.w) * kx, f64::from(span.size.h) * ky).into(),
             );
             let uniforms = [
                 Uniform::new(
