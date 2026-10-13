@@ -7934,10 +7934,10 @@ mod tests {
         let sheet = d.form_mut().unwrap().sheet_mut().unwrap();
         assert_eq!(sheet.tabs.labels, ["General", "Shortcut"]);
         let general = &sheet.pages[0];
-        assert!(matches!(
+        assert_eq!(
             general.item("v_opens").map(|i| &i.control),
-            Some(Control::Label { text, .. }) if text == "Player"
-        ));
+            Some(&Control::Lines(vec!["Player".into()]))
+        );
         assert!(general.item("v_desc").is_none());
         std::fs::remove_dir_all(&dir).unwrap();
     }
@@ -7974,6 +7974,7 @@ mod tests {
             let form = &d.form().unwrap().pages()[page];
             match form.item(id).map(|i| &i.control) {
                 Some(Control::Label { text, .. }) => Some(text.clone()),
+                Some(Control::Lines(lines)) => Some(lines.join(" ")),
                 _ => None,
             }
         };
@@ -8587,10 +8588,12 @@ mod tests {
         );
         let mut sheet = Dialog::properties(&file_info(), "text-x-generic", (0, 0));
         assert!(sheet.set_opens_with("Vim".into(), Some("vim".into())));
-        assert!(matches!(
+        assert_eq!(
             sheet_form(&sheet).item("v_opens").map(|i| &i.control),
-            Some(reprisekit::controls::form::Control::Label { text, .. }) if text == "Vim"
-        ));
+            Some(&reprisekit::controls::form::Control::Lines(vec![
+                "Vim".into()
+            ]))
+        );
         assert!(matches!(
             &sheet.form().unwrap().kind,
             FormKind::Properties(b) if b.opens_icon.as_deref() == Some("vim")
@@ -9833,8 +9836,11 @@ mod tests {
             vec![None, None],
             None,
         );
+        let mut zip = file_info();
+        zip.opens_with = Some("Compressed (zipped) Folders".into());
         let mut ds = vec![
             Dialog::properties(&file_info(), "text-x-generic", (0, 0)),
+            Dialog::properties(&zip, "package-x-generic", (0, 0)),
             Dialog::properties(&folder, "folder", (0, 0)),
             Dialog::properties(&launcher, "utilities-terminal", (0, 0)),
             Dialog::set_properties(&a_set(), "Reports", (0, 0)),
@@ -9848,7 +9854,7 @@ mod tests {
         ];
         // Dates in a long weekday and month, whatever the locale.
         let date = "Wednesday, September 30, 2026, 12:00:00 PM";
-        for d in &mut ds[..3] {
+        for d in &mut ds[..4] {
             let page = &mut d.form_mut().unwrap().pages_mut()[0];
             for id in ["v_made", "v_mod", "v_acc"] {
                 page.set_text(id, date);
