@@ -1307,6 +1307,25 @@ impl Form {
         });
     }
 
+    /// Take over what `old`'s controls hold, its focus and its pointer when the host builds the
+    /// same form again for a new text size or font. Items are matched by id; labels and notes
+    /// keep their new text, which was measured for the new size.
+    pub fn carry(&mut self, old: &Form) {
+        for it in &mut self.items {
+            if matches!(it.control, Control::Label { .. } | Control::Lines(_)) {
+                continue;
+            }
+            if let Some(o) = old.item(it.id)
+                && std::mem::discriminant(&o.control) == std::mem::discriminant(&it.control)
+            {
+                it.control = o.control.clone();
+            }
+        }
+        let focus = old.focus.and_then(|i| self.index_of(old.items.get(i)?.id));
+        self.set_focus(focus);
+        self.carry_pointer(old);
+    }
+
     /// Move each control to the rect of `template`'s item with the same id, moved by `offset`;
     /// a control without one stays. Lets a resized window rebuild the page and keep what the controls hold.
     pub fn take_layout(&mut self, template: &Form, offset: (i32, i32)) {
@@ -6906,6 +6925,28 @@ mod tests {
         f.set_track("track", 4);
         f.set_track("track", 3);
         assert_eq!(f.lit(i, Light::Thumb), Interaction::Idle);
+    }
+
+    #[test]
+    fn carry_keeps_the_controls_and_focus_and_takes_the_new_text() {
+        let built = |line: &str| {
+            Form::new(vec![
+                Item::label_at("line", 10, 10, 200, line),
+                Item::check("check", 10, 30, "&Remember"),
+                Item::button("ok", Rect::new(10, 60, 75, 23), "OK", true, true),
+            ])
+        };
+        let mut old = built("One long line");
+        old.set_check("check", true);
+        old.focus_id("ok");
+        let mut new = built("One long");
+        new.carry(&old);
+        assert_eq!(new.checked("check"), Some(true));
+        assert_eq!(new.focus(), new.index_of("ok"));
+        assert_eq!(
+            new.item("line").map(|i| &i.control),
+            built("One long").item("line").map(|i| &i.control)
+        );
     }
 
     /// A host rebuilds the open page's `Form` on every model change. `carry_pointer` puts back
