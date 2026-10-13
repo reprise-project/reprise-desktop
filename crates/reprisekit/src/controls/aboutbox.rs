@@ -4,7 +4,7 @@ use crate::classic::widgets::{BUTTON_H, BUTTON_W};
 use crate::controls::form::{Control, Form, Item};
 use crate::raster::{Canvas, Rect};
 use crate::text::{Align, TextRenderer};
-use crate::theme::Color;
+use crate::theme::{Color, TextUnits};
 
 pub const BANNER_W: i32 = 413;
 pub const BANNER_H: i32 = 77;
@@ -269,14 +269,14 @@ pub fn system_size(s: &System) -> (i32, i32) {
     (SYSTEM_W, buttons + BUTTON_H + BOTTOM)
 }
 
-/// Build the system view over its [`system_size`]. A line too long for its column ends in an
-/// ellipsis.
-pub fn system_form(s: &System, text: &TextRenderer, px: u32) -> Form {
+/// Build the system view over its [`system_size`] for text at `px` (its 100% size) grown by
+/// `u`. A line too long for its column at that size ends in an ellipsis.
+pub fn system_form(s: &System, text: &TextRenderer, px: u32, u: TextUnits) -> Form {
     let (w, _) = system_size(s);
     let mut items = vec![Item::picture(
         "banner",
         Rect::new(0, BANNER_Y, w, BANNER_H),
-        Some(banner_wide(text, px, w)),
+        Some(banner_wide(text, px, u.len(w))),
     )];
     if let Some(logo) = &s.logo {
         items.push(Item::picture(
@@ -288,9 +288,10 @@ pub fn system_form(s: &System, text: &TextRenderer, px: u32) -> Form {
     let (rows, _) = system_rows(s);
     let groups: Vec<&Group> = s.groups.iter().filter(|g| !g.lines.is_empty()).collect();
     let line_w = w - RIGHT - LINE_X;
+    let grown_w = u.rect(Rect::new(LINE_X, 0, line_w, 0)).width;
     let fit = |line: &str| {
         let shown = crate::text::split_mnemonic(line).0;
-        let cut = text.ellipsize(&shown, line_w, false, px);
+        let cut = text.ellipsize(&shown, grown_w, false, u.px(px));
         if cut == shown {
             line.to_string()
         } else {
@@ -774,7 +775,7 @@ mod tests {
         let text = TextRenderer::load(&FontConfig::default());
         let theme = Theme::default();
         let px = theme.fonts.size_px;
-        let built = system_form(s, &text, px);
+        let built = system_form(s, &text, px, TextUnits::ONE);
         let (w, h) = system_size(s);
         let mut c = Canvas::new(w as u32, h as u32);
         c.fill_rect(c.bounds(), theme.colors.button_face);
@@ -883,6 +884,46 @@ mod tests {
         assert_eq!(c.get(250, 212), cs.button_shadow.argb());
         assert_eq!(c.get(250, 213), cs.button_hilight.argb());
         assert_eq!(c.get(11, 212), bg, "the separator starts at x12");
+    }
+
+    /// A line that just fits its column at 100% text still fits the grown column at every text
+    /// size: it is cut at the grown size, not at 100%.
+    #[test]
+    fn lines_fit_their_grown_column() {
+        let text = TextRenderer::load(&FontConfig::default());
+        let px = 11;
+        let line_w = SYSTEM_W - RIGHT - LINE_X;
+        let just_fits = |s: &str| {
+            let n = (1..=s.len())
+                .rev()
+                .find(|&n| text.measure(&s[..n], false, px) <= line_w)
+                .unwrap_or(0);
+            s[..n].to_string()
+        };
+        let lines: Vec<String> = [
+            "AMD Radeon RX 7900 XT/7900 XTX/7900 GRE/7900M and a name far too long to fit",
+            "Intel(R) Core(TM) Ultra 7 155H with 22 threads and more besides",
+            "Mesa Intel(R) Graphics (ADL GT2) on eDP-1 and HDMI-A-1 and DP-3",
+            "WWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWW",
+            "iiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiii",
+            "1920 x 1080, 60 Hz (Built-in display), 2560 x 1440, 144 Hz",
+        ]
+        .iter()
+        .map(|s| just_fits(s))
+        .collect();
+        let system = System {
+            logo: None,
+            groups: vec![Group {
+                label: "Lines:".into(),
+                lines,
+            }],
+        };
+        for pct in [100, 125, 150, 175, 200] {
+            let theme = Theme::default().with_form_text(pct);
+            let built = system_form(&system, &text, px, theme.text);
+            built.drawn_with(&theme.paint());
+            assert_eq!(built.overflows(&text, theme.fonts.size_px), [], "{pct}%");
+        }
     }
 
     /// A long line is cut with an ellipsis, and a doubled `&` still draws as one.

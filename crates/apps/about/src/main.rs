@@ -45,9 +45,7 @@ impl AboutBox {
         let px = ctx.theme.fonts.size_px;
         let system = self.system();
         self.form.get_or_insert_with(|| {
-            let mut f = aboutbox::system_form(&system, &ctx.text, px);
-            let w = paint.text.len(aboutbox::system_size(&system).0);
-            f.set_picture("banner", aboutbox::banner_wide(&ctx.text, px, w));
+            let f = aboutbox::system_form(&system, &ctx.text, px, paint.text);
             f.drawn_with(&paint);
             f
         })
