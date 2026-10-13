@@ -44,7 +44,10 @@ pub enum Step {
 pub enum Outcome {
     None,
     Redraw,
-    Search,
+    /// Ask cupsd's backends again; `prompt` lets cups-pk-helper ask for the admin password.
+    Search {
+        prompt: bool,
+    },
     Drivers,
     HaveDisk,
     Add {
@@ -55,12 +58,25 @@ pub enum Outcome {
     Close,
 }
 
+/// What avahi-daemon has said so far.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum Network {
+    Browsing,
+    Found(Vec<Device>),
+    Off,
+}
+
 pub struct AddWizard {
     pub step: Step,
     pub page: Wizard,
     icon: Option<Canvas>,
-    /// `None` while a search runs.
-    devices: Option<Result<Vec<Device>, String>>,
+    /// What cupsd's backends found, `None` while they search. [`cups::Error::Denied`] is a
+    /// search without the password prompt that cupsd refused: until Search Again asks with the
+    /// prompt, only the network printers show.
+    local: Option<Result<Vec<Device>, cups::Error>>,
+    network: Network,
+    /// The rows of the found list: both of the above.
+    devices: Vec<Device>,
     device: Option<usize>,
     typed: bool,
     address: String,
@@ -155,7 +171,9 @@ impl AddWizard {
                 true,
                 false,
             ),
-            devices: None,
+            local: None,
+            network: Network::Browsing,
+            devices: Vec::new(),
             device: None,
             typed: false,
             address: String::new(),
@@ -182,15 +200,14 @@ impl AddWizard {
         if self.typed {
             return address_uri(&self.address);
         }
-        let d = self.devices.as_ref()?.as_ref().ok()?.get(self.device?)?;
-        Some(d.uri.clone())
+        Some(self.devices.get(self.device?)?.uri.clone())
     }
 
     fn chosen_device(&self) -> Option<&Device> {
         if self.typed {
             return None;
         }
-        self.devices.as_ref()?.as_ref().ok()?.get(self.device?)
+        self.devices.get(self.device?)
     }
 
     fn needs_driver(&self) -> bool {
@@ -238,18 +255,34 @@ impl AddWizard {
         self.sync_next();
     }
 
+    fn status(&self) -> String {
+        let (n, network_only) = (self.devices.len(), self.local_pending());
+        let searching = match &self.local {
+            None => true,
+            Some(Err(e)) if !network_only => return e.text(),
+            Some(_) => self.network == Network::Browsing,
+        };
+        let found = match n {
+            _ if searching => return "Searching for printers...".into(),
+            0 => "No printers were found".to_string(),
+            1 => "1 printer was found".into(),
+            n => format!("{n} printers were found"),
+        };
+        if network_only {
+            format!("{found} on the network.")
+        } else {
+            format!("{found}.")
+        }
+    }
+
+    /// cupsd's search has not run with the password prompt yet.
+    fn local_pending(&self) -> bool {
+        matches!(self.local, Some(Err(cups::Error::Denied)))
+    }
+
     fn choose_page(&self) -> Wizard {
-        let labels: Vec<String> = match &self.devices {
-            Some(Ok(d)) => d.iter().map(Device::label).collect(),
-            _ => Vec::new(),
-        };
-        let status = match &self.devices {
-            None => "Searching for printers...".to_string(),
-            Some(Ok(d)) if d.is_empty() => "No printers were found.".into(),
-            Some(Ok(d)) if d.len() == 1 => "1 printer was found.".into(),
-            Some(Ok(d)) => format!("{} printers were found.", d.len()),
-            Some(Err(why)) => why.clone(),
-        };
+        let labels: Vec<String> = self.devices.iter().map(Device::label).collect();
+        let status = self.status();
         let list_h = 104;
         let y_status = B.y + 20 + list_h + 6;
         let y_typed = y_status + BUTTON_H + 8;
@@ -271,7 +304,7 @@ impl AddWizard {
                 y_status,
                 96,
                 "&Search Again",
-                self.devices.is_some(),
+                self.local.is_some(),
             ),
             Item::radio(
                 TYPED,
@@ -471,24 +504,75 @@ impl AddWizard {
         self.page.set_cancel_enabled(!self.adding);
     }
 
-    pub fn devices_in(&mut self, r: cups::Result<Vec<Device>>, s: &Snapshot) {
-        let found = r.map_err(|e| e.text());
-        let had = self.device.and_then(|i| {
-            self.devices
-                .as_ref()
-                .and_then(|d| d.as_ref().ok())
-                .and_then(|d| d.get(i))
-                .map(|d| d.uri.clone())
+    /// What cupsd's backends found. A dismissed password prompt leaves the network list, or
+    /// with no avahi-daemon an empty one: asking again would bring the prompt straight back.
+    pub fn devices_in(&mut self, r: cups::Result<Vec<Device>>) -> Outcome {
+        self.local = Some(match r {
+            Err(cups::Error::Dismissed) if self.network != Network::Off => Err(cups::Error::Denied),
+            r => r,
         });
-        self.device = match (&found, had) {
-            (Ok(d), Some(uri)) => d.iter().position(|x| x.uri == uri),
-            (Ok(d), None) if !d.is_empty() && !self.typed => Some(0),
-            _ => None,
+        self.found_changed()
+    }
+
+    /// avahi-daemon's network printers, `None` when it is not there.
+    pub fn network_in(&mut self, found: Option<Vec<Device>>) -> Outcome {
+        self.network = found.map_or(Network::Off, Network::Found);
+        self.found_changed()
+    }
+
+    /// Rebuild the found list, keeping the pick. With no avahi-daemon an account cupsd refused
+    /// gets the search with the password prompt right away.
+    fn found_changed(&mut self) -> Outcome {
+        let network = match &self.network {
+            Network::Found(d) => d.as_slice(),
+            _ => &[],
         };
-        self.devices = Some(found);
-        if self.step == Step::Choose {
-            self.go(Step::Choose, s);
+        let found = match &self.local {
+            Some(Ok(d)) => cups::merge(d, network),
+            _ => cups::merge(&[], network),
+        };
+        let had = self.device.and_then(|i| self.devices.get(i));
+        self.device = match had {
+            Some(d) => found
+                .iter()
+                .position(|x| x.uri == d.uri)
+                .or_else(|| found.iter().position(|x| cups::same(x, d))),
+            None if !found.is_empty() && !self.typed => Some(0),
+            None => None,
+        };
+        self.devices = found;
+        let fallback = self.local_pending() && self.network == Network::Off;
+        if fallback {
+            self.local = None;
         }
+        self.show_found();
+        if fallback {
+            Outcome::Search { prompt: true }
+        } else {
+            Outcome::Redraw
+        }
+    }
+
+    /// Update the found list, its status and Search Again in place, so a printer coming or
+    /// going leaves the focus and a typed address alone.
+    fn show_found(&mut self) {
+        if self.step != Step::Choose {
+            return;
+        }
+        let labels: Vec<String> = self.devices.iter().map(Device::label).collect();
+        let selected = if self.typed { None } else { self.device };
+        if let Some(Control::ListBox { list, .. }) =
+            self.page.form.item_mut(DEVICES).map(|i| &mut i.control)
+        {
+            list.top = list.top.min(labels.len().saturating_sub(1));
+            list.items = labels;
+            list.selected = selected;
+        }
+        let status = self.status();
+        self.page.form.set_text(STATUS, &status);
+        let again = self.local.is_some();
+        self.page.form.set_enabled(AGAIN, again);
+        self.sync_next();
     }
 
     pub fn ppds_in(&mut self, r: cups::Result<Vec<Ppd>>, s: &Snapshot) {
@@ -528,8 +612,7 @@ impl AddWizard {
         let f = &self.page.form;
         match id {
             FOUND => {
-                let any = matches!(&self.devices, Some(Ok(d)) if !d.is_empty());
-                if self.device.is_none() && any {
+                if self.device.is_none() && !self.devices.is_empty() {
                     self.device = Some(0);
                 }
                 self.set_typed(false);
@@ -645,9 +728,9 @@ impl AddWizard {
             },
             wizard::Event::Finish => self.finish(s),
             wizard::Event::Page(form::Event::Pressed(AGAIN)) => {
-                self.devices = None;
-                self.go(Step::Choose, s);
-                Outcome::Search
+                self.local = None;
+                self.show_found();
+                Outcome::Search { prompt: true }
             }
             wizard::Event::Page(form::Event::Pressed(DISK)) => Outcome::HaveDisk,
             wizard::Event::Page(form::Event::Changed(id)) => self.read(id),
@@ -738,7 +821,7 @@ mod tests {
         let s = snap();
         let mut w = AddWizard::new(&s, None);
         assert_eq!(w.step, Step::Choose);
-        w.devices_in(Ok(found()), &s);
+        w.devices_in(Ok(found()));
         assert_eq!(w.device, Some(0), "the first found printer is picked");
         assert_eq!(
             w.event(form::Event::Pressed(wizard::NEXT), &s),
@@ -774,7 +857,7 @@ mod tests {
     fn a_usb_printer_picks_a_driver_from_the_search() {
         let s = snap();
         let mut w = AddWizard::new(&s, None);
-        w.devices_in(Ok(found()), &s);
+        w.devices_in(Ok(found()));
         pick_device(&mut w, 1, &s);
         assert_eq!(
             w.event(form::Event::Pressed(wizard::NEXT), &s),
@@ -831,7 +914,7 @@ mod tests {
         assert_eq!(address_uri("a b"), None);
         let s = snap();
         let mut w = AddWizard::new(&s, None);
-        w.devices_in(Ok(Vec::new()), &s);
+        w.devices_in(Ok(Vec::new()));
         type_into(&mut w, ADDRESS, "printer.lan", &s);
         assert!(w.typed);
         w.event(form::Event::Pressed(wizard::NEXT), &s);
@@ -850,7 +933,7 @@ mod tests {
     fn the_address_radio_clears_the_found_highlight() {
         let s = snap();
         let mut w = AddWizard::new(&s, None);
-        w.devices_in(Ok(found()), &s);
+        w.devices_in(Ok(found()));
         pick_device(&mut w, 1, &s);
         type_into(&mut w, ADDRESS, "10.0.0.7", &s);
         w.event(form::Event::Changed(TYPED), &s);
@@ -877,7 +960,7 @@ mod tests {
     fn the_suggested_name_follows_the_pick_and_a_typed_name_stays_with_it() {
         let s = snap();
         let mut w = AddWizard::new(&s, None);
-        w.devices_in(Ok(found()), &s);
+        w.devices_in(Ok(found()));
         w.event(form::Event::Pressed(wizard::NEXT), &s);
         assert_eq!(w.name, "Office_Jet_2");
 
@@ -914,7 +997,7 @@ mod tests {
             class: "direct".into(),
             device_id: "MFG:EPSON;MDL:L3150 Series;".into(),
         });
-        w.devices_in(Ok(devices), &s);
+        w.devices_in(Ok(devices));
         pick_device(&mut w, 1, &s);
         w.event(form::Event::Pressed(wizard::NEXT), &s);
         w.ppds_in(Ok(ppds()), &s);
@@ -944,7 +1027,7 @@ mod tests {
     fn a_driver_is_dropped_when_the_pick_changes_or_the_search_hides_it() {
         let s = snap();
         let mut w = AddWizard::new(&s, None);
-        w.devices_in(Ok(found()), &s);
+        w.devices_in(Ok(found()));
         pick_device(&mut w, 1, &s);
         w.event(form::Event::Pressed(wizard::NEXT), &s);
         w.ppds_in(Ok(ppds()), &s);
@@ -991,6 +1074,160 @@ mod tests {
         );
     }
 
+    fn network(name: &str) -> Device {
+        crate::avahi::device(name, "_ipp._tcp", "local", &[], 0).expect("a network printer")
+    }
+
+    fn status(w: &AddWizard) -> String {
+        match w.page.form.item(STATUS).map(|i| &i.control) {
+            Some(Control::Label { text, .. }) => text.clone(),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn outside_the_admin_group_a_network_printer_is_added_with_no_prompt_before_finish() {
+        let s = snap();
+        let mut w = AddWizard::new(&s, None);
+        assert_eq!(status(&w), "Searching for printers...");
+        assert_eq!(w.devices_in(Err(cups::Error::Denied)), Outcome::Redraw);
+        assert_eq!(status(&w), "Searching for printers...");
+        assert_eq!(w.network_in(Some(vec![network("Lab")])), Outcome::Redraw);
+        assert_eq!(status(&w), "1 printer was found on the network.");
+        assert_eq!(w.device, Some(0));
+        assert_eq!(
+            w.event(form::Event::Pressed(wizard::NEXT), &s),
+            Outcome::Redraw
+        );
+        assert_eq!(w.step, Step::Name);
+        match w.event(form::Event::Pressed(wizard::NEXT), &s) {
+            Outcome::Add { printer, .. } => {
+                assert_eq!(printer.device_uri, "dnssd://Lab._ipp._tcp.local/");
+                assert_eq!(printer.driver, Driver::Everywhere);
+                assert_eq!(printer.info, "Lab");
+            }
+            other => panic!("{other:?}"),
+        }
+
+        let mut w = AddWizard::new(&s, None);
+        assert_eq!(w.network_in(Some(Vec::new())), Outcome::Redraw);
+        assert_eq!(w.devices_in(Err(cups::Error::Denied)), Outcome::Redraw);
+        assert_eq!(status(&w), "No printers were found on the network.");
+    }
+
+    #[test]
+    fn without_avahi_a_refused_search_asks_with_the_prompt_at_once() {
+        let s = snap();
+        let mut w = AddWizard::new(&s, None);
+        assert_eq!(w.devices_in(Err(cups::Error::Denied)), Outcome::Redraw);
+        assert_eq!(w.network_in(None), Outcome::Search { prompt: true });
+        assert_eq!(status(&w), "Searching for printers...");
+        assert_eq!(w.devices_in(Ok(found())), Outcome::Redraw);
+        assert_eq!(status(&w), "2 printers were found.");
+
+        let mut w = AddWizard::new(&s, None);
+        assert_eq!(w.network_in(None), Outcome::Redraw);
+        assert_eq!(
+            w.devices_in(Err(cups::Error::Denied)),
+            Outcome::Search { prompt: true }
+        );
+
+        let mut w = AddWizard::new(&s, None);
+        assert_eq!(w.network_in(None), Outcome::Redraw);
+        assert_eq!(
+            w.devices_in(Ok(found())),
+            Outcome::Redraw,
+            "an admin needs no prompt"
+        );
+
+        let mut w = AddWizard::new(&s, None);
+        w.network_in(None);
+        w.devices_in(Err(cups::Error::Denied));
+        assert_eq!(
+            w.devices_in(Err(cups::Error::Dismissed)),
+            Outcome::Redraw,
+            "a dismissed prompt is not asked again"
+        );
+        assert_eq!(
+            w.event(form::Event::Pressed(AGAIN), &s),
+            Outcome::Search { prompt: true }
+        );
+    }
+
+    #[test]
+    fn search_again_asks_with_the_prompt_and_a_dismissed_prompt_keeps_the_network_list() {
+        let s = snap();
+        let mut w = AddWizard::new(&s, None);
+        w.network_in(Some(vec![network("Lab")]));
+        w.devices_in(Err(cups::Error::Denied));
+        assert_eq!(
+            w.event(form::Event::Pressed(AGAIN), &s),
+            Outcome::Search { prompt: true }
+        );
+        assert_eq!(status(&w), "Searching for printers...");
+        assert_eq!(
+            w.devices.len(),
+            1,
+            "the network list stays while cupsd searches"
+        );
+        assert_eq!(w.devices_in(Err(cups::Error::Dismissed)), Outcome::Redraw);
+        assert_eq!(status(&w), "1 printer was found on the network.");
+
+        w.event(form::Event::Pressed(AGAIN), &s);
+        w.devices_in(Ok(found()));
+        let uris: Vec<&str> = w.devices.iter().map(|d| d.uri.as_str()).collect();
+        assert_eq!(
+            uris,
+            [
+                "dnssd://Lab._ipp._tcp.local/",
+                found()[0].uri.as_str(),
+                found()[1].uri.as_str()
+            ]
+        );
+        assert_eq!(status(&w), "3 printers were found.");
+    }
+
+    #[test]
+    fn the_pick_follows_its_printer_as_the_network_list_changes() {
+        let s = snap();
+        let mut w = AddWizard::new(&s, None);
+        w.devices_in(Ok(found()));
+        w.network_in(Some(vec![network("Office Jet")]));
+        assert_eq!(
+            w.devices.len(),
+            2,
+            "cupsd's own entry for a network printer stays"
+        );
+        pick_device(&mut w, 1, &s);
+        w.network_in(Some(vec![network("Attic"), network("Office Jet")]));
+        assert_eq!(w.devices[0].info, "Attic");
+        assert_eq!(w.device, Some(2));
+        assert_eq!(list_selected(&w.page.form, DEVICES), Some(2));
+        assert_eq!(w.uri(), Some(found()[1].uri.clone()));
+
+        pick_device(&mut w, 0, &s);
+        w.network_in(Some(Vec::new()));
+        assert_eq!(w.device, None, "a printer that went is not picked");
+        assert!(!w.can_next());
+
+        let mut w = AddWizard::new(&s, None);
+        w.network_in(Some(vec![network("Attic"), network("Lab")]));
+        pick_device(&mut w, 1, &s);
+        let lab = Device {
+            uri: "ipps://Lab._ipps._tcp.local/".into(),
+            info: "Example Laser (driverless)".into(),
+            class: "network".into(),
+            ..Default::default()
+        };
+        w.devices_in(Ok(vec![lab.clone()]));
+        assert_eq!(w.devices.len(), 2);
+        assert_eq!(
+            w.uri(),
+            Some(lab.uri),
+            "the pick moves to cupsd's entry for the same printer"
+        );
+    }
+
     #[test]
     fn names_come_from_what_the_printer_calls_itself() {
         assert_eq!(
@@ -1016,7 +1253,8 @@ mod tests {
         };
         let s = snap();
         let mut w = AddWizard::new(&s, None);
-        w.devices_in(Ok(found()), &s);
+        w.devices_in(Ok(found()));
+        w.network_in(Some(Vec::new()));
         pick_device(&mut w, 1, &s);
         let mut shots = Vec::new();
         let mut shot = |w: &AddWizard| {

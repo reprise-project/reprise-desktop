@@ -5,6 +5,7 @@
 //! worker thread and the window modules.
 
 mod addwiz;
+mod avahi;
 mod cups;
 mod folder;
 mod http;
@@ -247,9 +248,12 @@ impl PrintersApp {
                     }
                 }
                 Msg::Devices(r) => {
-                    if let Some(w) = &mut self.wizard {
-                        w.devices_in(r, &self.snapshot);
-                    }
+                    let out = self.wizard.as_mut().map(|w| w.devices_in(r));
+                    self.search(out);
+                }
+                Msg::Network(r) => {
+                    let out = self.wizard.as_mut().map(|w| w.network_in(r));
+                    self.search(out);
                 }
                 Msg::Ppds(r) => {
                     if let Some(w) = &mut self.wizard {
@@ -257,8 +261,7 @@ impl PrintersApp {
                     }
                 }
                 Msg::Added(Ok(name)) => {
-                    self.wizard = None;
-                    self.browse = None;
+                    self.close_wizard();
                     self.hidden = false;
                     self.select = Some(name);
                 }
@@ -350,7 +353,20 @@ impl PrintersApp {
     fn open_wizard(&mut self) {
         if self.wizard.is_none() {
             self.wizard = Some(addwiz::AddWizard::new(&self.snapshot, self.icon32.clone()));
-            self.send(Cmd::Devices);
+            self.send(Cmd::Network(true));
+            self.send(Cmd::Devices { prompt: false });
+        }
+    }
+
+    fn close_wizard(&mut self) {
+        self.wizard = None;
+        self.browse = None;
+        self.send(Cmd::Network(false));
+    }
+
+    fn search(&self, out: Option<addwiz::Outcome>) {
+        if let Some(addwiz::Outcome::Search { prompt }) = out {
+            self.send(Cmd::Devices { prompt });
         }
     }
 
@@ -631,8 +647,8 @@ impl PrintersApp {
         match out {
             addwiz::Outcome::None => Reply::none(),
             addwiz::Outcome::Redraw => Reply::redraw(),
-            addwiz::Outcome::Search => {
-                self.send(Cmd::Devices);
+            addwiz::Outcome::Search { prompt } => {
+                self.send(Cmd::Devices { prompt });
                 Reply::redraw()
             }
             addwiz::Outcome::Drivers => {
@@ -672,8 +688,7 @@ impl PrintersApp {
                 Reply::redraw()
             }
             addwiz::Outcome::Close => {
-                self.wizard = None;
-                self.browse = None;
+                self.close_wizard();
                 self.sync_watching();
                 Reply::redraw_all()
             }
