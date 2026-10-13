@@ -1,6 +1,6 @@
 //! Reprise Settings: a property sheet over `config.toml` and the XDG autostart directories.
 //!
-//! Pages are listed in `registry::GROUPS`; `--page night-light` opens on one, and a second start hands its page to the running sheet (`reprisebus::instance`). OK and Apply rewrite `config.toml` with `toml_edit` and the autostart files. The Startup list's Add... and Remove, Quick Launch changes and the Advanced page's Forget act at once. The Display page goes through wlr-output-management (`repriseapp::heads`); only a Yes on the Monitor Settings question writes `[[outputs]]`.
+//! Pages are listed in `registry::GROUPS`; `--page night-light` opens on one (`--focus mouse_keys` then focuses a control there), and a second start hands its page to the running sheet (`reprisebus::instance`). OK and Apply rewrite `config.toml` with `toml_edit` and the autostart files. The Startup list's Add... and Remove, Quick Launch changes and the Advanced page's Forget act at once. The Display page goes through wlr-output-management (`repriseapp::heads`); only a Yes on the Monitor Settings question writes `[[outputs]]`.
 
 mod additem;
 mod appearancepage;
@@ -207,20 +207,27 @@ fn read_config(path: &Path) -> (String, Option<String>) {
     (text, err)
 }
 
-fn page_arg(mut args: impl Iterator<Item = String>) -> Option<Page> {
+/// `--page <name>` and `--focus <control id>`, in either order and with or without `=`.
+fn page_arg(mut args: impl Iterator<Item = String>) -> Option<(Page, Option<String>)> {
+    let (mut page, mut focus) = (None, None);
     while let Some(a) = args.next() {
-        let name = match a.strip_prefix("--page=") {
-            Some(n) => n.to_string(),
-            None if a == "--page" => args.next()?,
-            None => continue,
+        let (flag, value) = match a.split_once('=') {
+            Some((f, v)) => (f.to_string(), Some(v.to_string())),
+            None => (a, None),
         };
-        let page = Page::named(&name);
-        if page.is_none() {
-            log::warn!("--page {name:?} names no page");
-        }
-        return page;
+        let slot = match flag.as_str() {
+            "--page" => &mut page,
+            "--focus" => &mut focus,
+            _ => continue,
+        };
+        *slot = value.or_else(|| args.next());
     }
-    None
+    let name = page?;
+    let page = Page::named(&name);
+    if page.is_none() {
+        log::warn!("--page {name:?} names no page");
+    }
+    Some((page?, focus))
 }
 
 /// The bus name the running sheet owns; a later start sends it a `page` action.
@@ -327,11 +334,17 @@ struct SettingsApp {
 }
 
 impl SettingsApp {
-    fn new(page: Option<Page>, requests: Option<instance::Requests>) -> SettingsApp {
+    fn new(
+        page: Option<(Page, Option<String>)>,
+        requests: Option<instance::Requests>,
+    ) -> SettingsApp {
         let mut app = SettingsApp::open(repriseconf::config_path());
-        if let Some(p) = page {
+        if let Some((p, focus)) = page {
             app.sheet.tabs.open = p.index();
             app.sheet.reveal_open();
+            if let Some(id) = focus {
+                app.sheet.focus_control(&id);
+            }
         }
         app.requests = requests;
         app.units = Theme::default()
@@ -1045,23 +1058,29 @@ impl SettingsApp {
     fn request(&mut self, req: &instance::Request) -> bool {
         match &req.action {
             Some((action, params)) if action == PAGE_ACTION && self.children().is_empty() => {
-                match params.as_slice() {
-                    [name] => Page::named(name).is_some_and(|p| self.open_page(p)),
-                    _ => false,
-                }
+                let (name, focus) = match params.as_slice() {
+                    [name] => (name, None),
+                    [name, focus] => (name, Some(focus.as_str())),
+                    _ => return false,
+                };
+                Page::named(name).is_some_and(|p| self.open_page(p, focus))
             }
             _ => false,
         }
     }
 
-    fn open_page(&mut self, page: Page) -> bool {
-        if self.sheet.tabs.open == page.index() {
+    /// Open `page`, with the keyboard on control `focus` when one is named. True when anything moved.
+    fn open_page(&mut self, page: Page, focus: Option<&str>) -> bool {
+        if self.sheet.tabs.open == page.index() && focus.is_none() {
             return false;
         }
         self.blur_side_lists();
         self.sheet.tabs.open = page.index();
         self.sheet.reveal_open();
-        self.tab_opened();
+        match focus {
+            Some(id) => self.sheet.focus_control(id),
+            None => self.tab_opened(),
+        }
         true
     }
 
@@ -3037,7 +3056,10 @@ impl SettingsApp {
 fn main() {
     env_logger::init();
     let page = page_arg(std::env::args().skip(1));
-    let action = page.map(|p| (PAGE_ACTION.to_string(), vec![p.slug()]));
+    let action = page.as_ref().map(|(p, focus)| {
+        let params = std::iter::once(p.slug()).chain(focus.clone()).collect();
+        (PAGE_ACTION.to_string(), params)
+    });
     let requests = match instance::claim(BUS_NAME, action) {
         Claim::First(r) => Some(r),
         Claim::Handed => return,
@@ -3120,7 +3142,7 @@ mod tests {
     fn a_double_click_on_a_file_type_opens_the_chooser_like_enter() {
         let mut a = app("types-double-click");
         let mut ctx = test_ctx();
-        a.open_page(Page::DefaultPrograms);
+        a.open_page(Page::DefaultPrograms, None);
         a.defaults = Some(defaultspage::tests::defaults());
         a.refill_defaults();
         let mime = |a: &SettingsApp| a.chooser.as_ref().map(|c| c.mime.clone());
@@ -3141,7 +3163,7 @@ mod tests {
     fn a_double_click_on_a_shortcut_edits_it_like_enter() {
         let mut a = app("shortcuts-double-click");
         let mut ctx = test_ctx();
-        a.open_page(Page::Keyboard);
+        a.open_page(Page::Keyboard, None);
         press_side_row(&mut a, &mut ctx, 0, 1000);
         assert!(a.shortcut.is_none(), "one click only picks the row");
         press_side_row(&mut a, &mut ctx, 0, 1300);
@@ -3716,7 +3738,7 @@ mod tests {
 
     #[test]
     fn the_page_argument_names_a_page() {
-        let args = |v: &[&str]| page_arg(v.iter().map(|s| s.to_string()));
+        let args = |v: &[&str]| page_arg(v.iter().map(|s| s.to_string())).map(|a| a.0);
         assert_eq!(args(&["--page", "night-light"]), Some(Page::NightLight));
         assert_eq!(args(&["--page=fonts-and-icons"]), Some(Page::FontsAndIcons));
         assert_eq!(args(&["--page", "startup"]), Some(Page::Startup));
@@ -3724,6 +3746,46 @@ mod tests {
         assert_eq!(args(&["--page", "background"]), Some(Page::Background));
         assert_eq!(args(&["--page", "nowhere"]), None);
         assert_eq!(args(&[]), None);
+    }
+
+    #[test]
+    fn the_focus_argument_names_a_control_on_the_page() {
+        let args = |v: &[&str]| page_arg(v.iter().map(|s| s.to_string()));
+        let mouse_keys = Some((Page::Accessibility, Some("mouse_keys".to_string())));
+        assert_eq!(
+            args(&["--page", "accessibility", "--focus", "mouse_keys"]),
+            mouse_keys
+        );
+        assert_eq!(
+            args(&["--focus=mouse_keys", "--page=accessibility"]),
+            mouse_keys
+        );
+        assert_eq!(args(&["--focus", "mouse_keys"]), None, "no page, no focus");
+    }
+
+    #[test]
+    fn a_request_with_a_control_opens_its_page_with_the_keyboard_on_it() {
+        let mut a = app("focus-request");
+        let req = |page: &str, id: &str| instance::Request {
+            action: Some((PAGE_ACTION.into(), vec![page.into(), id.into()])),
+            token: None,
+        };
+        let focused = |a: &SettingsApp| {
+            let page = a.sheet.open();
+            page.focus().map(|i| page.items[i].id)
+        };
+        assert!(a.request(&req("accessibility", "mouse_keys")));
+        assert_eq!(a.sheet.tabs.open, Page::Accessibility.index());
+        assert!(
+            !a.sheet.tabs.focused,
+            "the page strip lets go of the keyboard"
+        );
+        assert_eq!(focused(&a), Some("mouse_keys"));
+        assert!(
+            a.request(&req("accessibility", "sticky_keys")),
+            "the open page still moves the focus"
+        );
+        assert_eq!(focused(&a), Some("sticky_keys"));
     }
 
     #[test]

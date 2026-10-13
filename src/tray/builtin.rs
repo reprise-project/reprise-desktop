@@ -133,7 +133,13 @@ pub fn click(state: &mut State, output: &Output, b: Builtin, cell: Rect, button:
         Builtin::Notifications if matches!(button, BTN_LEFT | BTN_RIGHT) => {
             crate::notifycenter::toggle(state, output, cell)
         }
-        // The indicators only tell; a click on them does nothing.
+        Builtin::StickyKeys if button == BTN_LEFT => {
+            state.spawn_argv_activated(&crate::keyfilter::SETTINGS_ARGV)
+        }
+        Builtin::MouseKeys if button == BTN_LEFT => {
+            state.spawn_argv_activated(&crate::mousekeys::SETTINGS_ARGV)
+        }
+        // The other indicators only tell; a click on them does nothing.
         Builtin::StickyKeys
         | Builtin::MouseKeys
         | Builtin::Layout

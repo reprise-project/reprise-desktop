@@ -362,7 +362,8 @@ suspend_after = 0            # run [power] standby
 # shortcuts = true           # Shift five times toggles StickyKeys, right Shift held 8 s SlowKeys,
 #                            # left Alt+left Shift+Num Lock MouseKeys
 # mouse_keys = false         # the numeric keypad moves the pointer: 1-9 move, 5 clicks,
-#                            # + double-clicks, / * - pick left, middle, right, 0 holds, . lets go
+#                            # + double-clicks, / * - pick left, middle, right, 0 holds, . lets go;
+#                            # Ctrl glides at twice the top speed, Shift at 20 pixels a second
 # mouse_keys_speed = 400     # top speed in pixels a second, 50 to 2000
 # mouse_keys_acceleration = 1.0  # seconds a held key takes to reach it, 0 to 5
 # mouse_keys_num_lock = true # only while Num Lock is on; false: always
