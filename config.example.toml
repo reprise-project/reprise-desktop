@@ -106,8 +106,9 @@ interface = "classic"        # classic | blue | glass; an unknown value falls ba
 # streaks = true             # false: no reflection streaks over the glass
 # fast_drag = true           # while a window is dragged or sized: a lighter blur,
 #                            # a frame behind; the full one again once let go
-# blur_frames = true         # glass over another window's frame, a dialog's or the
-#                            # taskbar shows it blurred; false: one blur less per such glass
+# blur_frames = true         # glass over another window's frame and glass, a dialog's
+#                            # or the taskbar's shows them blurred; false: one blur less
+#                            # per such glass
 # blur_rate = 30             # at most this many times a second a program drawing
 #                            # next to the glass (a video) blurs into it again; 0: every frame
 # mode = "light"             # light | dark

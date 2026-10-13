@@ -719,6 +719,17 @@ fn a_hoisted_node_draws_above_its_tree_and_nowhere_else() {
         vec![b.clone(), l.clone(), p.clone(), h.clone()],
         "over the pinned rect, under the bar, gone from its own place"
     );
+    let leaves: Vec<NodeId> = [bar.node(), low_rect.node(), pinned.node(), high.node()].into();
+    assert_eq!(
+        s.leaves_in(rect(0, 0, 100, 100)),
+        leaves,
+        "in the same order"
+    );
+    assert_eq!(
+        s.leaves_in(rect(40, 0, 60, 10)),
+        vec![bar.node(), pinned.node()],
+        "only those meeting the area"
+    );
     assert_eq!(s.children(windows), &[low.into(), high.into()]);
     assert_eq!(
         s.node_at(root, (15.0, 15.0).into()).map(|x| x.node),
@@ -1149,6 +1160,50 @@ fn a_custom_node_may_ask_to_be_in_the_backdrop() {
     let back = s.backdrop_elements(&mut TestRenderer, &view(100, 100));
     assert_eq!(back.len(), 1, "the pond, not the glass");
     assert_eq!(back[0].id(), &id);
+}
+
+struct LowerGlass(Id);
+
+impl CustomNode<TestRenderer> for LowerGlass {
+    fn size(&self) -> Size<i32, Logical> {
+        (30, 30).into()
+    }
+    fn in_backdrop_below(&self) -> bool {
+        true
+    }
+    fn elements(
+        &self,
+        r: &mut TestRenderer,
+        location: Point<f64, Physical>,
+        scale: Scale<f64>,
+        alpha: f32,
+    ) -> Vec<CustomElement<TestRenderer>> {
+        Square(self.0.clone()).elements(r, location, scale, alpha)
+    }
+}
+
+#[test]
+fn glass_may_ask_to_lie_below_other_glass_and_stays_out_of_the_backdrop() {
+    let mut s = TestScene::new();
+    let root = s.root();
+    s.rect_create(root, (100, 100), RED);
+    let lower = s.tree_create(root);
+    s.set_in_backdrop(lower, false);
+    let id = Id::new();
+    s.custom_create(lower, Box::new(LowerGlass(id.clone())));
+    let upper = s.tree_create(root);
+    s.custom_create(upper, Box::new(LowerGlass(Id::new())));
+    let below: Vec<Id> = s
+        .elements_below(&mut TestRenderer, upper, &view(100, 100))
+        .iter()
+        .map(|e| e.id().clone())
+        .collect();
+    assert_eq!(below.len(), 2, "the lower glass over the wallpaper");
+    assert_eq!(below[0], id);
+    assert!(s.left_out_below(upper, rect(0, 0, 10, 10)));
+    s.set_in_backdrop(lower, true);
+    let back = s.backdrop_elements(&mut TestRenderer, &view(100, 100));
+    assert_eq!(back.len(), 1, "never in the backdrop itself");
 }
 
 /// Drives Smithay's damage tracker over a scene, one frame per call.
