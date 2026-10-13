@@ -920,6 +920,12 @@ pub fn start_theme() -> Theme {
     Look::from_env().theme()
 }
 
+/// [`Ctx::forms`] as the program starts, for an [`App::initial_size`] asked before any event.
+pub fn start_forms() -> Theme {
+    let look = Look::from_env();
+    look.theme().with_form_text(look.text_size)
+}
+
 pub fn run(app: Box<dyn App>) {
     let conn = Connection::connect_to_env().expect("WAYLAND_DISPLAY");
     let (globals, event_queue) = registry_queue_init(&conn).expect("registry");
