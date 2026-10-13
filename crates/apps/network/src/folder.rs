@@ -123,8 +123,8 @@ pub fn rows_for(s: &nm::Snapshot) -> (Vec<Row>, Vec<listview::Row>, Vec<listview
 }
 
 fn device_status(d: &nm::Device) -> String {
-    match &d.hotspot {
-        Some(ssid) if d.state == nm::State::Connected => format!("Hotspot: {ssid}"),
+    match d.hotspot_line() {
+        Some(line) if d.state == nm::State::Connected => line,
         Some(_) => "Starting hotspot".into(),
         None => status::status_word(d).into(),
     }
@@ -1221,6 +1221,9 @@ mod tests {
             f.list.rows[1].cells[2], "Hotspot: Desk",
             "the radio's Status cell"
         );
+        on.devices[1].hotspot_clients = Some(2);
+        f.refresh(&on, None);
+        assert_eq!(f.list.rows[1].cells[2], "Hotspot: Desk (2 devices)");
         let head = lay.headers[0];
         assert_eq!(
             f.press(one(head.x + 2, head.y + 2), BTN_LEFT, &s, &ctx),
