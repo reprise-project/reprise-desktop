@@ -275,10 +275,21 @@ pub fn scroll(state: &mut State, steps: i64) {
     }
 }
 
+pub fn key(state: &mut State, sym: u32, mods: u32) {
+    let Some(key) = key_of(sym, mods) else {
+        return;
+    };
+    let Some(v) = state.notify.center.as_mut() else {
+        return;
+    };
+    let event = v.model.key(key);
+    apply(state, event);
+}
+
 #[expect(non_upper_case_globals)] // xkb keysym names in patterns
-pub fn key(state: &mut State, sym: u32) {
+fn key_of(sym: u32, mods: u32) -> Option<Key> {
     use crate::keys::*;
-    let key = match sym {
+    Some(match sym {
         KEY_Up | KEY_KP_Up => Key::Up,
         KEY_Down | KEY_KP_Down => Key::Down,
         KEY_Left | KEY_KP_Left => Key::Left,
@@ -290,14 +301,10 @@ pub fn key(state: &mut State, sym: u32) {
         KEY_Return | KEY_KP_Enter => Key::Enter,
         KEY_Delete | KEY_KP_Delete => Key::Delete,
         KEY_Menu => Key::Menu,
+        KEY_F10 if mods == MOD_SHIFT => Key::Menu,
         KEY_Escape => Key::Escape,
-        _ => return,
-    };
-    let Some(v) = state.notify.center.as_mut() else {
-        return;
-    };
-    let event = v.model.key(key);
-    apply(state, event);
+        _ => return None,
+    })
 }
 
 fn apply(state: &mut State, event: Event) {
@@ -368,4 +375,18 @@ pub fn open_actions_menu(
     let kind = MenuKind::NotifyActions { id, keys };
     state.push_menu(0, pos, layout, items, output, kind, MenuFrom::Elsewhere);
     state.redraw_menu(0);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::keys::*;
+
+    #[test]
+    fn shift_f10_opens_the_row_menu_like_the_menu_key() {
+        assert_eq!(key_of(KEY_F10, MOD_SHIFT), Some(Key::Menu));
+        assert_eq!(key_of(KEY_Menu, 0), Some(Key::Menu));
+        assert_eq!(key_of(KEY_F10, 0), None);
+        assert_eq!(key_of(KEY_F10, MOD_SHIFT | MOD_CTRL), None);
+    }
 }

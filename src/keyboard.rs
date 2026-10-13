@@ -366,7 +366,7 @@ impl State {
             KeyRoute::TrayFlyoutClose => crate::trayflyout::close(self),
             KeyRoute::SnapPicker(sym) => crate::snappickerview::key(self, sym),
             KeyRoute::Taskbar(sym) => self.bar_key(sym, k.mods & keys::MOD_SHIFT != 0),
-            KeyRoute::NotifyCenter(sym) => crate::notifycenter::key(self, sym),
+            KeyRoute::NotifyCenter(sym) => crate::notifycenter::key(self, sym, k.mods),
             KeyRoute::NotifyReply => {
                 if let Some(k) = field_key {
                     crate::notifyview::key(self, &k);
