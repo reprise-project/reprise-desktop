@@ -280,11 +280,52 @@ pub fn document_tip(icon: &str) -> Option<&'static str> {
 /// Reads the file (a regular file of at most 64 KiB, opened without
 /// blocking; see `apps::read_desktop_file`).
 pub fn can_allow_launching(entry: &DesktopEntry) -> bool {
-    entry.kind == Kind::File
-        && matches!(entry.target, Target::Open(_))
-        && entry.name.ends_with(".desktop")
-        && apps::read_desktop_file(&entry.path)
-            .is_ok_and(|text| apps::parse_desktop(&text, &entry.name).is_some())
+    entry.kind == Kind::File && can_allow_launching_at(&entry.path, &entry.target)
+}
+
+/// [`can_allow_launching`] for a file at `path` opening `target`, in any folder.
+pub fn can_allow_launching_at(path: &Path, target: &Target) -> bool {
+    let name = path
+        .file_name()
+        .map(|n| n.to_string_lossy())
+        .unwrap_or_default();
+    matches!(target, Target::Open(_))
+        && name.ends_with(".desktop")
+        && apps::read_desktop_file(path)
+            .is_ok_and(|text| apps::parse_desktop(&text, &name).is_some())
+}
+
+/// What opening the file or folder at `path` does, as its icon would in the
+/// desktop folder: a trusted launcher runs, a link opens its URL.
+pub fn file_target(path: &Path) -> Target {
+    match std::fs::metadata(path)
+        .ok()
+        .and_then(|m| apps::shortcut_at(path, &m))
+    {
+        Some(sc) => shortcut_target(sc),
+        None => Target::Open(path.to_path_buf()),
+    }
+}
+
+fn shortcut_target(sc: apps::Shortcut) -> Target {
+    match sc {
+        apps::Shortcut::App(app) => Target::Launch(app),
+        apps::Shortcut::Link(link) => Target::Uri(link.url),
+    }
+}
+
+/// The argument vector that opens a file's `target`, run with no shell.
+pub fn open_argv(
+    target: &Target,
+    mime: &apps::MimeDb,
+    programs: &[AppEntry],
+    terminal: &str,
+) -> Vec<std::ffi::OsString> {
+    match target {
+        Target::Launch(app) => apps::launch_argv(app, terminal),
+        Target::Open(path) => reprisefs::props::open_argv_in(path, mime, programs, terminal),
+        Target::Uri(uri) => vec!["xdg-open".into(), uri.into()],
+    }
 }
 
 pub fn scan(
@@ -338,10 +379,7 @@ pub fn scan(
                 name: file_name,
                 label,
                 icon,
-                target: match sc {
-                    apps::Shortcut::App(app) => Target::Launch(app),
-                    apps::Shortcut::Link(link) => Target::Uri(link.url),
-                },
+                target: shortcut_target(sc),
                 path,
                 shortcut: true,
                 kind: Kind::File,
@@ -869,5 +907,25 @@ mod tests {
             list.iter().all(|e| matches!(e.target, Target::Open(_))),
             "both open with xdg-open"
         );
+    }
+
+    #[test]
+    fn a_found_desktop_file_opens_as_a_document_until_allowed_to_launch() {
+        let dir = fixture("found");
+        let _cleanup = Cleanup(dir.clone());
+        let path = dir.join("tool.desktop");
+        std::fs::write(
+            &path,
+            "[Desktop Entry]\nType=Application\nName=Tool\nExec=reprise-tool --go\n",
+        )
+        .unwrap();
+        let argv = || open_argv(&file_target(&path), &apps::MimeDb::empty(), &[], "foot");
+        assert_eq!(file_target(&path), Target::Open(path.clone()));
+        assert!(can_allow_launching_at(&path, &file_target(&path)));
+        assert_eq!(argv(), ["xdg-open".into(), path.clone().into_os_string()]);
+        apps::allow_launching(&path).unwrap();
+        assert!(matches!(file_target(&path), Target::Launch(_)));
+        assert!(!can_allow_launching_at(&path, &file_target(&path)));
+        assert_eq!(argv(), ["reprise-tool", "--go"]);
     }
 }

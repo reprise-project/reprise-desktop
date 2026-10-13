@@ -1,6 +1,7 @@
 //! The context menu of a file or folder found by search: the desktop's icon menu
-//! (`desktopview::icon_menu`), acting on the path, with Open file location after
-//! its Open group. Rename is greyed, as a search row has no field to rename in.
+//! (`desktopview::icon_menu`), acting on the path as its icon would, with Open file
+//! location after its Open group. Rename is greyed, as a search row has no field to
+//! rename in.
 
 use std::path::{Path, PathBuf};
 
@@ -8,22 +9,19 @@ use reprisefs::apps;
 use reprisekit::controls::menu::MenuItem;
 
 use crate::compositor::State;
+use crate::desktop::{self, Target};
 use crate::desktopview::{DesktopCommand, IconMenu, entry, icon_menu};
 use crate::dragview::{DragSource, DropOp, DropTarget};
 
-/// The menu of a folder (`is_dir`) or of a file of type `mime`.
-pub fn file_menu(is_dir: bool, mime: Option<&str>) -> (Vec<MenuItem>, Vec<Option<DesktopCommand>>) {
-    let (print, edit) = if is_dir {
+/// The menu of a folder (`m.is_dir`) or of a file of type `mime`, with `m`'s
+/// launcher rows; the file verbs come from `mime`.
+pub fn file_menu(m: IconMenu, mime: Option<&str>) -> (Vec<MenuItem>, Vec<Option<DesktopCommand>>) {
+    let (print, edit) = if m.is_dir {
         (false, false)
     } else {
         reprisefs::props::verbs(mime, reprisefs::props::has_lp())
     };
-    let (mut items, mut commands) = icon_menu(IconMenu {
-        is_dir,
-        print,
-        edit,
-        ..IconMenu::default()
-    });
+    let (mut items, mut commands) = icon_menu(IconMenu { print, edit, ..m });
     let after_open = items
         .iter()
         .position(|i| matches!(i, MenuItem::Separator))
@@ -38,6 +36,23 @@ pub fn file_menu(is_dir: bool, mime: Option<&str>) -> (Vec<MenuItem>, Vec<Option
     (items, commands)
 }
 
+/// The launcher rows of a found `path`: Allow Launching for an untrusted
+/// application `.desktop` file, Run as... for a trusted one.
+fn found_menu(path: &Path, is_dir: bool) -> IconMenu {
+    if is_dir {
+        return IconMenu {
+            is_dir,
+            ..IconMenu::default()
+        };
+    }
+    let target = desktop::file_target(path);
+    IconMenu {
+        allow_launching: desktop::can_allow_launching_at(path, &target),
+        launcher: matches!(target, Target::Launch(_)),
+        ..IconMenu::default()
+    }
+}
+
 impl State {
     pub(crate) fn file_menu_rows(
         &self,
@@ -47,7 +62,13 @@ impl State {
         let mime = (!is_dir)
             .then(|| self.with_mime(|db| apps::mime_of_in(db, path)))
             .flatten();
-        file_menu(is_dir, mime.as_deref())
+        file_menu(found_menu(path, is_dir), mime.as_deref())
+    }
+
+    /// The program run when a found `path` is opened: its icon's on the desktop.
+    pub(crate) fn found_open_argv(&self, path: &Path) -> Vec<std::ffi::OsString> {
+        let target = desktop::file_target(path);
+        self.with_mime(|db| desktop::open_argv(&target, db, &self.app_index, &self.config.terminal))
     }
 
     /// Row `cmd` of `file_menu` picked for `path`.
@@ -56,15 +77,13 @@ impl State {
         let source = || vec![DragSource::file(path.clone())];
         match cmd {
             Dc::Open | Dc::Explore => {
-                let argv = self.with_mime(|db| {
-                    reprisefs::props::open_argv_in(
-                        &path,
-                        db,
-                        &self.app_index,
-                        &self.config.terminal,
-                    )
-                });
+                let argv = self.found_open_argv(&path);
                 self.spawn_argv_activated(&argv);
+            }
+            Dc::AllowLaunching => {
+                if found_menu(&path, path.is_dir()).allow_launching {
+                    self.allow_launching(&[path]);
+                }
             }
             Dc::OpenFileLocation => self.open_file_location(&path),
             Dc::Print | Dc::Edit => self.print_or_edit(vec![path], cmd == Dc::Print),
@@ -157,7 +176,7 @@ mod tests {
 
     #[test]
     fn a_found_file_gets_the_icon_menu_with_rename_greyed() {
-        let (items, commands) = file_menu(false, Some("text/plain"));
+        let (items, commands) = file_menu(IconMenu::default(), Some("text/plain"));
         let (icon, icon_commands) = icon_menu(IconMenu {
             print: reprisefs::props::verbs(Some("text/plain"), reprisefs::props::has_lp()).0,
             edit: true,
@@ -182,7 +201,13 @@ mod tests {
     #[test]
     fn open_file_location_follows_the_open_group_of_a_found_file_or_folder() {
         let at = |is_dir, mime| {
-            let (items, commands) = file_menu(is_dir, mime);
+            let (items, commands) = file_menu(
+                IconMenu {
+                    is_dir,
+                    ..IconMenu::default()
+                },
+                mime,
+            );
             let i = commands
                 .iter()
                 .position(|c| *c == Some(DesktopCommand::OpenFileLocation))
@@ -207,7 +232,13 @@ mod tests {
 
     #[test]
     fn a_found_folder_gets_explore_and_paste() {
-        let (items, commands) = file_menu(true, None);
+        let (items, commands) = file_menu(
+            IconMenu {
+                is_dir: true,
+                ..IconMenu::default()
+            },
+            None,
+        );
         assert!(commands.contains(&Some(DesktopCommand::Explore)));
         assert!(commands.contains(&Some(DesktopCommand::PasteInto)));
         assert!(!commands.contains(&Some(DesktopCommand::OpenWith)));
@@ -219,5 +250,57 @@ mod tests {
             items[rename],
             MenuItem::Entry { enabled: false, .. }
         ));
+    }
+
+    #[test]
+    fn a_found_untrusted_desktop_file_gets_allow_launching_until_it_is_a_launcher() {
+        let dir = std::env::temp_dir().join(format!("reprise-filemenu-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("tool.desktop");
+        std::fs::write(
+            &path,
+            "[Desktop Entry]\nType=Application\nName=Tool\nExec=true\n",
+        )
+        .unwrap();
+        let rows = |path: &Path| {
+            let (items, commands) = file_menu(found_menu(path, false), None);
+            (labels(&items), commands)
+        };
+        let (items, commands) = rows(&path);
+        let allow = commands
+            .iter()
+            .position(|c| *c == Some(DesktopCommand::AllowLaunching))
+            .expect("an Allow Launching row");
+        assert_eq!(commands[allow - 1], Some(DesktopCommand::OpenWith));
+        assert!(!items.iter().any(|(l, _)| l == "Run as..."));
+
+        apps::allow_launching(&path).unwrap();
+        let (items, commands) = rows(&path);
+        assert!(!commands.contains(&Some(DesktopCommand::AllowLaunching)));
+        assert!(
+            items.contains(&("Run as...".to_string(), false)),
+            "a greyed Run as..."
+        );
+
+        let text = dir.join("notes.txt");
+        std::fs::write(&text, "x").unwrap();
+        assert!(
+            !rows(&text)
+                .1
+                .contains(&Some(DesktopCommand::AllowLaunching))
+        );
+        let link = dir.join("link.desktop");
+        std::fs::write(
+            &link,
+            "[Desktop Entry]\nType=Link\nName=L\nURL=https://example.org\n",
+        )
+        .unwrap();
+        assert!(
+            !rows(&link)
+                .1
+                .contains(&Some(DesktopCommand::AllowLaunching))
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 }

@@ -240,7 +240,6 @@ impl State {
                     return;
                 };
                 let apps = &self.app_index;
-                let terminal = &self.config.terminal;
                 enum Launch {
                     App(reprisefs::apps::AppEntry),
                     Argv(Vec<std::ffi::OsString>),
@@ -256,17 +255,11 @@ impl State {
                         .and_then(|&ai| apps.get(ai))
                         .cloned()
                         .map(Launch::App),
-                    Pick::File(i) => v.search.files.get(i).map(|p| {
-                        let empty;
-                        let mime = match self.desktop.as_ref() {
-                            Some(d) => &d.mime,
-                            None => {
-                                empty = reprisefs::apps::MimeDb::empty();
-                                &empty
-                            }
-                        };
-                        Launch::Argv(reprisefs::props::open_argv_in(p, mime, apps, terminal))
-                    }),
+                    Pick::File(i) => v
+                        .search
+                        .files
+                        .get(i)
+                        .map(|p| Launch::Argv(self.found_open_argv(p))),
                 };
                 self.close_launcher();
                 match launch {
