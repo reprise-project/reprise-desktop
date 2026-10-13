@@ -187,7 +187,7 @@ impl NetApp {
             .devices
             .iter()
             .find(|d| d.path == path && d.kind == nm::Kind::Wifi)
-            .map(chooser::Chooser::new);
+            .map(|d| chooser::Chooser::new(d, self.forms.text));
         if let Some(c) = found {
             self.chooser = Some(c);
         }
@@ -794,9 +794,10 @@ impl NetApp {
             let Some(c) = self.chooser.as_mut() else {
                 return Reply::none();
             };
+            c.units = ctx.theme.text;
             match ev {
                 Event::CloseRequest => chooser::Outcome::Close,
-                Event::Key(k) => c.key(&k, &ctx.theme.look.controls()),
+                Event::Key(k) => c.key(&k, &ctx.theme.controls()),
                 Event::Pointer(PointerInput::Press {
                     x, y, button, time, ..
                 }) => c.press(ctx.theme.metrics.click(x, y, time), button, ctx),
@@ -959,6 +960,10 @@ impl App for NetApp {
         folder::CLIENT
     }
 
+    fn text_sized(&self) -> bool {
+        true
+    }
+
     fn hidden(&self) -> bool {
         self.hidden
     }
@@ -970,7 +975,7 @@ impl App for NetApp {
             out.push(Child {
                 id: CHOOSER,
                 title: "Wireless Network Connection".into(),
-                size: chooser::CLIENT,
+                size: u.size(chooser::CLIENT),
                 fixed: true,
                 modal: false,
             });
@@ -1013,7 +1018,7 @@ impl App for NetApp {
             out.push(Child {
                 id: IMPORT,
                 title: "Import".into(),
-                size: filedlg::CLIENT,
+                size: self.import.as_ref().map_or(filedlg::CLIENT, |d| d.client()),
                 fixed: false,
                 modal: true,
             });

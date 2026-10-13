@@ -38,7 +38,7 @@ impl List {
     }
 
     pub fn layout(&self, r: Rect, ctx: &Ctx) -> listview::Layout {
-        listview::layout(&self.view, r, &ctx.theme.look.controls())
+        listview::layout(&self.view, r, &ctx.theme.controls())
     }
 
     pub fn selected(&self) -> Option<usize> {
