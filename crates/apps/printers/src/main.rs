@@ -793,6 +793,10 @@ impl App for PrintersApp {
         folder::CLIENT
     }
 
+    fn text_sized(&self) -> bool {
+        true
+    }
+
     fn hidden(&self) -> bool {
         self.hidden
     }

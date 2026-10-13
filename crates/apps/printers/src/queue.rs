@@ -197,7 +197,7 @@ impl Queue {
             &ctx.text,
             ctx.theme.fonts.size_px,
             Rect::new(0, 0, ctx.size.0, ctx.size.1),
-            &ctx.theme.look.controls(),
+            &ctx.theme.controls(),
         )
     }
 
@@ -216,7 +216,7 @@ impl Queue {
     }
 
     fn list_rect(&self, ctx: &Ctx) -> Rect {
-        let top = menubar::BAR_H + 1;
+        let top = menubar::bar_h(&ctx.theme.controls()) + 1;
         let h = statusbar::height(&ctx.theme.controls());
         Rect::new(0, top, ctx.size.0, (ctx.size.1 - top - h).max(1))
     }
@@ -371,10 +371,9 @@ impl Queue {
                 let lay = self.list.layout(r, ctx);
                 let at = self.list.selected();
                 let y = lay.body.y
-                    + at.map_or(0, |i| i.saturating_sub(self.list.view.top) as i32)
-                        * listview::ROW_H;
+                    + at.map_or(0, |i| i.saturating_sub(self.list.view.top) as i32) * lay.row_h();
                 let rows = document_rows(self.selected_job());
-                self.popup = Popup::open(rows, lay.body.x + 20, y + listview::ROW_H, ctx);
+                self.popup = Popup::open(rows, lay.body.x + 20, y + lay.row_h(), ctx);
                 Outcome::Redraw
             }
             _ => Outcome::None,
@@ -503,7 +502,7 @@ mod tests {
         let lay = q.list.layout(q.list_rect(ctx), ctx);
         (
             lay.body.x + 20,
-            lay.body.y + listview::ROW_H / 2 + i as i32 * listview::ROW_H,
+            lay.body.y + lay.row_h() / 2 + i as i32 * lay.row_h(),
         )
     }
 
