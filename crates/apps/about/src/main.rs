@@ -19,9 +19,23 @@ struct AboutBox {
     /// Until the first `Event::Heads` the window has no surface: the
     /// display lines set its height.
     heard_outputs: bool,
+    /// The client size last asked for, at the text size of the last event.
+    asked: (i32, i32),
 }
 
 impl AboutBox {
+    fn new(facts: SystemFacts) -> Self {
+        let mut about = AboutBox {
+            facts,
+            logo: None,
+            form: None,
+            heard_outputs: false,
+            asked: (0, 0),
+        };
+        about.asked = aboutbox::system_size(&about.system());
+        about
+    }
+
     fn system(&self) -> System {
         System {
             logo: self.logo.clone(),
@@ -72,38 +86,8 @@ impl AboutBox {
             _ => Reply::redraw(),
         }
     }
-}
 
-impl App for AboutBox {
-    fn title(&self) -> String {
-        "About Reprise".into()
-    }
-
-    fn app_id(&self) -> String {
-        "reprise.about".into()
-    }
-
-    fn initial_size(&self) -> (i32, i32) {
-        aboutbox::system_size(&self.system())
-    }
-
-    fn fixed(&self) -> bool {
-        true
-    }
-
-    fn caption(&self, _win: WinId) -> Caption {
-        Caption::Fixed
-    }
-
-    fn hidden(&self) -> bool {
-        !self.heard_outputs
-    }
-
-    fn output_management(&self) -> bool {
-        true
-    }
-
-    fn event(&mut self, _win: WinId, ev: Event, ctx: &mut Ctx) -> Reply {
+    fn dispatch(&mut self, ev: Event, ctx: &mut Ctx) -> Reply {
         match ev {
             Event::Heads(heads) => {
                 if !self.heard_outputs {
@@ -119,11 +103,7 @@ impl App for AboutBox {
                 self.heard_outputs = true;
                 self.form = None;
                 self.form(ctx);
-                Reply {
-                    size: Some(self.size(ctx)),
-                    redraw: true,
-                    ..Default::default()
-                }
+                Reply::redraw()
             }
             Event::CloseRequest => Reply {
                 quit: true,
@@ -170,6 +150,47 @@ impl App for AboutBox {
             _ => Reply::none(),
         }
     }
+}
+
+impl App for AboutBox {
+    fn title(&self) -> String {
+        "About Reprise".into()
+    }
+
+    fn app_id(&self) -> String {
+        "reprise.about".into()
+    }
+
+    fn initial_size(&self) -> (i32, i32) {
+        self.asked
+    }
+
+    fn fixed(&self) -> bool {
+        true
+    }
+
+    fn caption(&self, _win: WinId) -> Caption {
+        Caption::Fixed
+    }
+
+    fn hidden(&self) -> bool {
+        !self.heard_outputs
+    }
+
+    fn output_management(&self) -> bool {
+        true
+    }
+
+    fn event(&mut self, _win: WinId, ev: Event, ctx: &mut Ctx) -> Reply {
+        let mut reply = self.dispatch(ev, ctx);
+        let size = self.size(ctx);
+        if size != self.asked {
+            self.asked = size;
+            reply.size = Some(size);
+            reply.redraw = true;
+        }
+        reply
+    }
 
     fn access(&mut self, _win: WinId, tree: &mut Tree, ctx: &Ctx) {
         let px = ctx.forms().fonts.size_px;
@@ -197,12 +218,7 @@ impl App for AboutBox {
 
 fn main() {
     env_logger::init();
-    repriseapp::run(Box::new(AboutBox {
-        facts: SystemFacts::read(),
-        logo: None,
-        form: None,
-        heard_outputs: false,
-    }));
+    repriseapp::run(Box::new(AboutBox::new(SystemFacts::read())));
 }
 
 #[cfg(test)]
@@ -250,5 +266,40 @@ mod tests {
             )]
         });
         assert!(over.is_empty(), "{}", over.join("\n"));
+    }
+
+    fn test_ctx(text_size: u32) -> Ctx {
+        Ctx {
+            theme: reprisekit::theme::Theme::default(),
+            text: reprisekit::text::TextRenderer::load(&reprisekit::theme::FontConfig::default()),
+            icons: reprisekit::icontheme::IconCache::new(reprisekit::icontheme::IconTheme::load(
+                "test",
+                &[],
+            )),
+            caret_on: true,
+            size: (300, 300),
+            maximized: false,
+            origin: (0, 0),
+            wake: repriseapp::Waker::noop(),
+            heads: Default::default(),
+            want_tick: Default::default(),
+            text_size,
+        }
+    }
+
+    #[test]
+    fn the_window_opens_and_stays_at_the_text_size() {
+        let mut about = AboutBox::new(SystemFacts::default());
+        let mut ctx = test_ctx(150);
+        about.event(repriseapp::MAIN, Event::Heads(Vec::new()), &mut ctx);
+        let system = aboutbox::system_size(&about.system());
+        let at = |size| test_ctx(size).forms().text.size(system);
+        assert_ne!(at(150), at(100));
+        assert_eq!(about.initial_size(), at(150), "the window maps at 150%");
+
+        ctx.text_size = 200;
+        let reply = about.event(repriseapp::MAIN, Event::Resized, &mut ctx);
+        assert_eq!(reply.size, Some(at(200)), "a live change to 200% grows it");
+        assert_eq!(about.initial_size(), at(200));
     }
 }
