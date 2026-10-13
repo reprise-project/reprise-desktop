@@ -554,6 +554,22 @@ fn arrange_bands(
     }
 }
 
+/// Where the tray row (less its 4 px lead) may start at the earliest so
+/// `arrange_bands` still fits the tools band whole: `band_x` with no tools,
+/// else past their smallest arrangement.
+fn bands_floor(band_x: i32, tools: i32, task_min: i32, bands: Bands, locked: bool) -> i32 {
+    if tools == 0 {
+        return band_x;
+    }
+    let step = if locked { BAND_GAP } else { BAND_GAP_GRIP };
+    let first = if bands.tasks_first {
+        task_min + step + tools
+    } else {
+        tools + step
+    };
+    band_x + first + 4
+}
+
 impl TaskbarLayout {
     pub fn compute(
         m: &Metrics,
@@ -657,8 +673,17 @@ impl TaskbarLayout {
         let shown_n = tray_count as i32;
         let foot = clock.x - 6;
         let cell_x = |k: i32| foot - icon - k * pitch;
+        let quick_w = quick_count as i32 * QUICK_W;
+        let pager_gap = if quick_count > 0 && pager_count > 0 {
+            PAGER_GAP
+        } else {
+            0
+        };
+        let tools_w = quick_w + pager_gap + pager_count as i32 * QUICK_W;
+        // A capped run stops short of the tools band, so the arrow is never under it.
+        let floor = bands_floor(band_x, tools_w, TASKS_MIN_W, bands, locked);
         let hidden = arrow.map_or(0, |a| {
-            let room = cell_x(shown_n - 1) - a.gap - a.size.0 - band_x;
+            let room = cell_x(shown_n - 1) - a.gap - a.size.0 - floor;
             counts_hidden.min((room.max(0) / pitch) as usize)
         });
         let run_width = reveal_width(shape, hidden);
@@ -703,13 +728,6 @@ impl TaskbarLayout {
             Some(x) => x - 4,
             None => clock.x - 6,
         };
-        let quick_w = quick_count as i32 * QUICK_W;
-        let pager_gap = if quick_count > 0 && pager_count > 0 {
-            PAGER_GAP
-        } else {
-            0
-        };
-        let tools_w = quick_w + pager_gap + pager_count as i32 * QUICK_W;
         let a = arrange_bands(
             band_x,
             limit,
@@ -875,8 +893,17 @@ impl TaskbarLayout {
         let foot = clock_r.y - 6;
         // An open run lays the hidden cells ahead of the shown ones, so the grid grows up from the clock.
         let arrow = shape.tray_arrow.filter(|_| chevron);
+        let per_line = (room / QUICK_W).max(1);
+        let lines = |n: usize| n.div_ceil(per_line as usize) as i32 * QUICK_W;
+        let pager_gap = if quick_count > 0 && pager_count > 0 {
+            PAGER_GAP
+        } else {
+            0
+        };
+        let tools = lines(quick_count) + pager_gap + lines(pager_count);
+        let floor = bands_floor(band_y, tools, btn, bands, locked);
         let fit = arrow.map_or(0, |a| {
-            let high = foot - band_y - a.side_size.1 - a.side_gap;
+            let high = foot - floor - a.side_size.1 - a.side_gap;
             let rows = ((high + shape.tray_gap).max(0) / pitch) as usize;
             counts_hidden.min((rows * per_row as usize).saturating_sub(tray_count))
         });
@@ -946,14 +973,6 @@ impl TaskbarLayout {
         } else {
             Rect::new(left, well_y, room, clock_r.bottom() - well_y)
         };
-        let per_line = (room / QUICK_W).max(1);
-        let lines = |n: usize| n.div_ceil(per_line as usize) as i32 * QUICK_W;
-        let pager_gap = if quick_count > 0 && pager_count > 0 {
-            PAGER_GAP
-        } else {
-            0
-        };
-        let tools = lines(quick_count) + pager_gap + lines(pager_count);
         let a = arrange_bands(band_y, limit, tools, (btn, btn), bands, locked, task_count);
         if let Some(g) = a.grip {
             grips.push(grip(g));
@@ -4909,6 +4928,80 @@ mod tests {
         let at = lay(run);
         assert_eq!((at.chevron, &at.tray), (full.chevron, &full.tray));
         assert_eq!(lay(run - 1).tray_hidden, full.tray_hidden - 1);
+    }
+
+    fn tools_and_arrow(hidden: usize, reveal: i32) -> TaskbarCounts {
+        TaskbarCounts {
+            quick: 3,
+            pager: 4,
+            tasks: 2,
+            ..arrow_counts(4, hidden, reveal)
+        }
+    }
+
+    /// The tools band's rects end before `arrow` on the bar's long axis.
+    fn clear_of_tools(l: &TaskbarLayout, arrow: Rect, side: bool) -> bool {
+        (l.quick.iter().chain(&l.pager)).all(|r| {
+            if side {
+                r.bottom() <= arrow.y
+            } else {
+                r.right() <= arrow.x
+            }
+        })
+    }
+
+    #[test]
+    fn a_capped_run_leaves_its_arrow_clear_of_the_tools_band() {
+        let m = Metrics::default();
+        let s = TaskbarShape::CLASSIC;
+        for locked in [true, false] {
+            for tasks_first in [false, true] {
+                let bands = Bands {
+                    tasks_first,
+                    first_width: None,
+                };
+                let lay = |reveal| {
+                    let span = BarSpan {
+                        edge: Edge::Bottom,
+                        length: 800,
+                        thickness: m.taskbar_height,
+                    };
+                    let clock = ClockText { time: 30, date: 30 };
+                    TaskbarLayout::compute_on(
+                        &m,
+                        &s,
+                        span,
+                        locked,
+                        tools_and_arrow(60, reveal),
+                        clock,
+                        bands,
+                    )
+                };
+                let open = lay(reveal_width(&s, 60));
+                let arrow = open.chevron.unwrap();
+                assert!(open.tray_hidden > 0, "the run still opens");
+                assert!(
+                    clear_of_tools(&open, arrow, false),
+                    "locked {locked}, tasks first {tasks_first}: arrow {arrow:?} under {:?} {:?}",
+                    open.quick,
+                    open.pager
+                );
+                assert_eq!(open.run_width, reveal_width(&s, open.tray_hidden));
+            }
+        }
+    }
+
+    #[test]
+    fn a_capped_column_run_leaves_its_arrow_clear_of_the_tools_band() {
+        let open = classic_column(Edge::Left, 60, tools_and_arrow(60, 1), true);
+        let arrow = open.chevron.unwrap();
+        assert!(open.tray_hidden > 0, "the run still opens");
+        assert!(
+            clear_of_tools(&open, arrow, true),
+            "arrow {arrow:?} under {:?} {:?}",
+            open.quick,
+            open.pager
+        );
     }
 
     #[test]
