@@ -2424,6 +2424,70 @@ mod tests {
         assert!(over.is_empty(), "{}", over.join("\n"));
     }
 
+    /// The dialogs the pages open fit their text too, with long layout, variant and program names.
+    #[test]
+    fn every_dialog_fits_its_text_under_every_interface() {
+        let reg = reprisefs::xkb::parse(
+            "<layoutList>\
+             <layout><configItem><name>us</name><description>English (US)</description>\
+             </configItem><variantList><variant><configItem><name>intl</name>\
+             <description>English (US, intl., with dead keys)</description></configItem>\
+             </variant></variantList></layout>\
+             <layout><configItem><name>hu</name><description>Hungarian</description>\
+             </configItem><variantList><variant><configItem><name>101_qwerty_comma_dead</name>\
+             <description>Hungarian (QWERTY, 101-key, comma, dead keys)</description>\
+             </configItem></variant></variantList></layout>\
+             </layoutList>",
+        );
+        let app = |name: &str| {
+            let entry = format!("[Desktop Entry]\nType=Application\nName={name}\nExec=true\n");
+            reprisefs::apps::parse_desktop(&entry, "a.desktop").unwrap()
+        };
+        let long = Shortcut::new(
+            "Super+Shift+Alt+Page_Down",
+            "spawn",
+            "flatpak run org.example.App",
+        );
+        let over = reprisekit::interfaces::form_overflows(|_, _, _| {
+            let mut forms = vec![
+                (
+                    "Add Item".into(),
+                    crate::additem::AddItemDialog::new(
+                        vec![app("LibreOffice Impress"), app("Text Editor")],
+                        "foot",
+                    )
+                    .form,
+                ),
+                (
+                    "Add Layout".into(),
+                    crate::layoutdlg::LayoutDialog::new(&reg).form,
+                ),
+                (
+                    "Keep display".into(),
+                    crate::monitordlg::MonitorDialog::new(15, None).form,
+                ),
+                (
+                    "Rename".into(),
+                    crate::renamedlg::RenameDialog::new("Documents").form,
+                ),
+                (
+                    "Shortcut".into(),
+                    crate::shortcutdlg::ShortcutDialog::new(Some(&long), vec![]).form,
+                ),
+                (
+                    "Program shortcut".into(),
+                    crate::shortcutdlg::ShortcutDialog::for_program("Ctrl+Alt+T", vec![]).form,
+                ),
+            ];
+            for kind in reprisekit::saver::Kind::ALL {
+                let d = crate::saverdlg::SaverDialog::new(kind, &Settings::default());
+                forms.push((format!("{kind:?} settings"), d.form));
+            }
+            forms
+        });
+        assert!(over.is_empty(), "{}", over.join("\n"));
+    }
+
     fn under(interface: &str) -> PropSheet {
         with(&Settings {
             interface: interface.into(),
