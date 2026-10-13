@@ -37,6 +37,13 @@ fn clipped(moved: Rect, area: Rect, still: Rect, opacity: f32) -> Option<Piece> 
     Some(Piece { dest, src, opacity })
 }
 
+/// How far a horizontal slide `width` wide has moved the old and the new desktop at eased progress `e`.
+pub fn slide_shift(width: i32, forward: bool, e: f64) -> (i32, i32) {
+    let sign = if forward { -1 } else { 1 };
+    let old = sign * (e.clamp(0.0, 1.0) * f64::from(width)).round() as i32;
+    (old, old - sign * width)
+}
+
 /// Where the old and the new desktop's stills go at eased progress `e`.
 pub fn pieces(
     style: SwitchStyle,
@@ -52,9 +59,9 @@ pub fn pieces(
     match style {
         SwitchStyle::None => (None, None),
         SwitchStyle::Slide => {
-            let shift = sign * (e * area.width as f64).round() as i32;
-            let old = Rect::new(area.x + shift, area.y, area.width, area.height);
-            let new = Rect::new(old.x - sign * area.width, area.y, area.width, area.height);
+            let (old, new) = slide_shift(area.width, forward, e);
+            let old = Rect::new(area.x + old, area.y, area.width, area.height);
+            let new = Rect::new(area.x + new, area.y, area.width, area.height);
             (
                 clipped(old, area, still, 1.0),
                 clipped(new, area, still, 1.0),
@@ -156,6 +163,17 @@ impl Default for SwitchAnim {
     }
 }
 
+/// Each screen's `slide_shift` (only `only`'s when given), for the overview's grids to slide along.
+fn overview_shifts(a: &SwitchAnim, only: Option<&Output>, e: f64) -> Vec<(Output, (i32, i32))> {
+    if a.style != SwitchStyle::Slide {
+        return Vec::new();
+    }
+    (a.screens.iter())
+        .filter(|s| only.is_none_or(|o| *o == s.output))
+        .map(|s| (s.output.clone(), slide_shift(s.area.width, a.forward, e)))
+        .collect()
+}
+
 pub fn drag_finish(p: f64, commit: bool) -> ((f64, f64), f64) {
     let p = p.clamp(0.0, 1.0);
     let to = if commit { 1.0 } else { 0.0 };
@@ -178,6 +196,7 @@ impl State {
         for s in &screens {
             crate::backend::schedule(self, &s.output);
         }
+        self.overview_slide_end();
     }
 
     /// Called before `desktops.current` changes.
@@ -255,6 +274,9 @@ impl State {
             }
             None => 0.0,
         };
+        if let Some((to, _)) = self.switch_anim.drag {
+            self.overview_slide_target(to);
+        }
         let a = &mut self.switch_anim;
         if let Some(d) = a.drag.as_mut() {
             d.1 = e;
@@ -270,6 +292,7 @@ impl State {
         };
         let commit = commit && e > 0.0;
         if commit {
+            self.overview_slide_commit();
             self.switch_desktop_as(to, false);
         }
         let (span, share) = drag_finish(e, commit);
@@ -389,9 +412,11 @@ impl State {
             }
         }
         let outputs: Vec<Output> = a.screens.iter().map(|s| s.output.clone()).collect();
+        let shifts = overview_shifts(a, None, e);
         for (node, px, b, piece) in steps {
             self.place_still(&Still { node, px }, b, piece);
         }
+        self.overview_slide_place(&shifts);
         for o in &outputs {
             crate::backend::schedule(self, o);
         }
@@ -479,9 +504,11 @@ impl State {
         if steps.is_empty() {
             return;
         }
+        let shifts = overview_shifts(a, Some(output), e);
         for (node, px, b, piece) in steps {
             self.place_still(&Still { node, px }, b, piece);
         }
+        self.overview_slide_place(&shifts);
         // Late in the ease a frame can move nothing and so damage nothing; ask
         // anyway, so the end still comes.
         crate::backend::schedule(self, output);
@@ -660,6 +687,19 @@ mod tests {
                 assert_eq!(at(style, true, 0.5).1, None, "{style:?}");
             }
         }
+    }
+
+    #[test]
+    fn a_slide_shifts_the_old_desktop_out_and_the_new_one_in_beside_it() {
+        assert_eq!(slide_shift(1000, true, 0.0), (0, 1000));
+        assert_eq!(slide_shift(1000, true, 0.25), (-250, 750));
+        assert_eq!(slide_shift(1000, false, 0.25), (250, -750));
+        assert_eq!(slide_shift(1000, true, 1.0), (-1000, 0));
+        assert_eq!(
+            slide_shift(1000, false, 1.5),
+            (1000, 0),
+            "clamped to the way"
+        );
     }
 
     #[test]

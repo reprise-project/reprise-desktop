@@ -116,13 +116,18 @@ impl State {
     /// included, in focus order (least recently focused first). Dialogs
     /// are represented by their owner.
     pub fn switchable_windows(&self) -> Vec<WindowId> {
+        self.switchable_windows_on(self.desktops.current)
+    }
+
+    /// `switchable_windows` as desktop `n` would have them.
+    pub fn switchable_windows_on(&self, n: usize) -> Vec<WindowId> {
         self.focus_order
             .iter()
             .copied()
             .filter(|&w| {
                 self.win(w)
                     .is_some_and(|x| x.mapped && !x.override_redirect && !x.is_owned())
-                    && self.on_current_desktop(w)
+                    && self.desktop_of(w).is_none_or(|d| d == n)
             })
             .collect()
     }
