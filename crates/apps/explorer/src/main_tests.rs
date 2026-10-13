@@ -718,6 +718,7 @@ fn select_opens_the_folder_on_the_entry() {
         start: place,
         select,
         inner: None,
+        units: TextUnits::ONE,
     };
     let _ = app.event(MAIN, Event::Resized, &mut ctx);
     let ex = app.inner.as_mut().expect("the window");
@@ -744,6 +745,7 @@ fn settings_changes_defer_the_write() {
         start: ex.place.clone(),
         select: None,
         inner: Some(ex),
+        units: TextUnits::ONE,
     };
     let _ = app.event(MAIN, Event::Resized, &mut ctx);
     let ex = app.inner.as_mut().expect("the window");
@@ -760,6 +762,46 @@ fn settings_changes_defer_the_write() {
         let _ = ex.run(cmd.clone(), &mut ctx);
         assert!(ex.settings_dirty, "{cmd:?} marks the settings");
     }
+}
+
+/// The host tells a text size change as a resize at the old size, then regrows a window still at
+/// its opening size to the size `initial_size` gives; a window the user sized keeps its size.
+#[test]
+fn the_window_opens_at_the_text_size_and_keeps_its_size_in_100_units() {
+    let dir = tempfile::tempdir().expect("a temp dir");
+    let mut ctx = test_ctx();
+    let ex = test_explorer(Place::Folder(dir.path().to_path_buf()), &mut ctx);
+    let mut app = Lazy {
+        start: ex.place.clone(),
+        select: None,
+        inner: Some(ex),
+        units: TextUnits::ONE,
+    };
+    let mut resized = |app: &mut Lazy, text_size: u32, size: (i32, i32)| {
+        ctx.text_size = text_size;
+        ctx.size = size;
+        let _ = app.event(MAIN, Event::Resized, &mut ctx);
+    };
+    let saved = |app: &mut Lazy| {
+        let ex = app.inner.as_mut().expect("the window");
+        ex.flush_settings();
+        ex.settings.window
+    };
+    resized(&mut app, 100, (792, 573));
+    assert_eq!(saved(&mut app), (792, 573));
+    resized(&mut app, 200, (792, 573));
+    assert_eq!(app.initial_size(), (1584, 1146), "a picked size regrows");
+    resized(&mut app, 200, (1584, 1146));
+    assert_eq!(saved(&mut app), (792, 573));
+    resized(&mut app, 200, (1000, 700));
+    assert_eq!(saved(&mut app), (500, 350));
+    assert_eq!(app.initial_size(), (1000, 700));
+    resized(&mut app, 100, (1000, 700));
+    assert_eq!(
+        saved(&mut app),
+        (1000, 700),
+        "a size the user kept across the change is its 100% size"
+    );
 }
 
 #[test]
