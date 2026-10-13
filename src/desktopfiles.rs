@@ -131,21 +131,17 @@ impl State {
             let is_dir = matches!(paths.as_slice(), [one] if one.is_dir() && !one.is_symlink());
             Box::new(move |state| {
                 let erase = mode.erase;
-                let mut dialog = match paths.as_slice() {
+                let dialog = match paths.as_slice() {
                     [] => return,
                     _ if !mode.ask => return state.delete_paths(paths, erase),
                     [one] => {
                         let name = label.unwrap_or_else(|| {
                             one.file_name().unwrap_or_default().to_string_lossy().into()
                         });
-                        Dialog::confirm_delete(&name, one, is_dir, erase)
+                        Dialog::confirm_delete(&name, one, is_dir, erase, mode.no_bin)
                     }
-                    _ => Dialog::confirm_delete_many(&paths, erase),
+                    _ => Dialog::confirm_delete_many(&paths, erase, mode.no_bin),
                 };
-                if mode.no_bin {
-                    let lead = reprisefs::trash::no_bin_lead(paths.len());
-                    dialog.text = format!("{lead} {}", dialog.text);
-                }
                 state.open_dialog(dialog);
             })
         });

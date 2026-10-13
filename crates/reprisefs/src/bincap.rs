@@ -563,6 +563,73 @@ pub fn delete_mode(confirm: bool, fates: &[Fate], shift: bool) -> DeleteMode {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ConfirmKind {
+    File,
+    Folder,
+    Multiple,
+}
+
+impl ConfirmKind {
+    pub fn of(count: usize, is_dir: bool) -> ConfirmKind {
+        match (count, is_dir) {
+            (1, true) => ConfirmKind::Folder,
+            (1, false) => ConfirmKind::File,
+            _ => ConfirmKind::Multiple,
+        }
+    }
+}
+
+/// The caption and question of a delete prompt over `count` items of
+/// `kind`, `name` being the lone item's. `erase` removes rather than
+/// recycles and says so; `no_bin` leads with the drive having no Recycle
+/// Bin, the reason for the erase.
+pub fn delete_prompt(
+    kind: ConfirmKind,
+    name: &str,
+    count: usize,
+    erase: bool,
+    no_bin: bool,
+) -> (&'static str, String) {
+    let (title, question) = match (kind, erase) {
+        (ConfirmKind::File, false) => (
+            "Confirm File Delete",
+            format!("Are you sure you want to send '{name}' to the Recycle Bin?"),
+        ),
+        (ConfirmKind::File, true) => (
+            "Confirm File Delete",
+            format!("Are you sure you want to delete '{name}'?"),
+        ),
+        (ConfirmKind::Folder, false) => (
+            "Confirm Folder Delete",
+            format!(
+                "Are you sure you want to remove the folder '{name}' and move all its \
+                 contents to the Recycle Bin?"
+            ),
+        ),
+        (ConfirmKind::Folder, true) => (
+            "Confirm Folder Delete",
+            format!("Are you sure you want to remove the folder '{name}' and all its contents?"),
+        ),
+        (ConfirmKind::Multiple, false) => (
+            "Confirm Multiple File Delete",
+            format!("Are you sure you want to send these {count} items to the Recycle Bin?"),
+        ),
+        (ConfirmKind::Multiple, true) => (
+            "Confirm Multiple File Delete",
+            format!("Are you sure you want to delete these {count} items?"),
+        ),
+    };
+    if !no_bin {
+        return (title, question);
+    }
+    let lead = match count {
+        1 => "This drive has no Recycle Bin.",
+        _ => "Some of these items are on a drive with no Recycle Bin.",
+    };
+    (title, format!("{lead} {question}"))
+}
+
 pub fn label(path: &Path) -> String {
     path.file_name()
         .unwrap_or(path.as_os_str())
@@ -823,6 +890,89 @@ mod tests {
         assert!(!one.many());
         one.answer(Answer::Yes);
         assert_eq!(one.step(), TooBigStep::Done(vec![(p("big"), Plan::Erase)]));
+    }
+
+    #[test]
+    fn the_delete_prompts_read_as_expected() {
+        use ConfirmKind::*;
+        let p = |kind, name, count, erase, no_bin| delete_prompt(kind, name, count, erase, no_bin);
+        let same = |(title, text): (&str, String), want: (&str, &str)| {
+            assert_eq!((title, text.as_str()), want);
+        };
+        same(
+            p(File, "notes.txt", 1, false, false),
+            (
+                "Confirm File Delete",
+                "Are you sure you want to send 'notes.txt' to the Recycle Bin?",
+            ),
+        );
+        same(
+            p(File, "notes.txt", 1, true, false),
+            (
+                "Confirm File Delete",
+                "Are you sure you want to delete 'notes.txt'?",
+            ),
+        );
+        same(
+            p(Folder, "Reports", 1, false, false),
+            (
+                "Confirm Folder Delete",
+                "Are you sure you want to remove the folder 'Reports' and move all its contents \
+                 to the Recycle Bin?",
+            ),
+        );
+        same(
+            p(Folder, "Reports", 1, true, false),
+            (
+                "Confirm Folder Delete",
+                "Are you sure you want to remove the folder 'Reports' and all its contents?",
+            ),
+        );
+        same(
+            p(Multiple, "", 4, false, false),
+            (
+                "Confirm Multiple File Delete",
+                "Are you sure you want to send these 4 items to the Recycle Bin?",
+            ),
+        );
+        same(
+            p(Multiple, "", 4, true, false),
+            (
+                "Confirm Multiple File Delete",
+                "Are you sure you want to delete these 4 items?",
+            ),
+        );
+        same(
+            p(File, "d.txt", 1, true, true),
+            (
+                "Confirm File Delete",
+                "This drive has no Recycle Bin. Are you sure you want to delete 'd.txt'?",
+            ),
+        );
+        same(
+            p(Folder, "Reports", 1, true, true),
+            (
+                "Confirm Folder Delete",
+                "This drive has no Recycle Bin. Are you sure you want to remove the folder \
+                 'Reports' and all its contents?",
+            ),
+        );
+        same(
+            p(Multiple, "", 3, true, true),
+            (
+                "Confirm Multiple File Delete",
+                "Some of these items are on a drive with no Recycle Bin. Are you sure you want \
+                 to delete these 3 items?",
+            ),
+        );
+    }
+
+    #[test]
+    fn one_entry_is_a_file_or_a_folder_and_more_are_multiple() {
+        assert_eq!(ConfirmKind::of(1, false), ConfirmKind::File);
+        assert_eq!(ConfirmKind::of(1, true), ConfirmKind::Folder);
+        assert_eq!(ConfirmKind::of(3, true), ConfirmKind::Multiple);
+        assert_eq!(ConfirmKind::of(0, false), ConfirmKind::Multiple);
     }
 
     #[test]

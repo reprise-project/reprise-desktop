@@ -358,21 +358,16 @@ impl Explorer {
                         return self.delete_now(&[path], mode.erase, ctx);
                     }
                     let icon = crate::chrome_icon(ctx, &["user-trash-full"], 32);
-                    let reply = self.confirm_box(
+                    self.confirm_box(
                         ConfirmKind::Folder,
                         &name,
                         vec![path],
                         mode.erase,
+                        mode.no_bin,
                         icon,
                         false,
                         None,
-                    );
-                    if mode.no_bin
-                        && let Some(crate::dialogs::Dialog::Confirm(c)) = self.dialog.as_mut()
-                    {
-                        c.text = format!("{} {}", reprisefs::trash::no_bin_lead(1), c.text);
-                    }
-                    reply
+                    )
                 }
                 None => Reply::none(),
             },
