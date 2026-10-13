@@ -13,6 +13,7 @@ pub mod oneshot;
 pub mod openwith;
 mod outputmgmt;
 mod textinput;
+pub mod thumbs;
 pub mod unlock;
 
 use smithay_client_toolkit::reexports::calloop::channel as reprise_channel;

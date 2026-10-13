@@ -193,6 +193,10 @@ impl App for Pick {
         self.dlg.client()
     }
 
+    fn start(&mut self, waker: repriseapp::Waker) {
+        self.host.show_thumbnails(waker);
+    }
+
     fn min_size(&self, win: WinId) -> Option<(i32, i32)> {
         (win == MAIN).then(|| self.dlg.min_client())
     }

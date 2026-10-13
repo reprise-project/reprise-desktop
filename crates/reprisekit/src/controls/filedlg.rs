@@ -720,6 +720,16 @@ impl FileDlg {
         &self.shell.entries
     }
 
+    /// For a host filling in what arrives after the listing, such as a picture's thumbnail.
+    pub fn entries_mut(&mut self) -> &mut [shellview::Entry] {
+        &mut self.shell.entries
+    }
+
+    /// The view picked from Views.
+    pub fn view(&self) -> Mode {
+        self.shell.mode
+    }
+
     pub fn set_filter(&mut self, i: usize) {
         self.filetype.selected = i.min(self.fields.filters.len().saturating_sub(1));
     }

@@ -872,6 +872,20 @@ impl IconCache {
     }
 }
 
+/// A file listing's icons by name at 16, 32 and 48 px (List and Details, Icons and Thumbnails,
+/// Tiles): each name is loaded once and its canvases shared by every entry wearing it.
+#[derive(Default)]
+pub struct ListingIcons(HashMap<String, [Option<std::rc::Rc<Canvas>>; 3]>);
+
+impl ListingIcons {
+    pub fn get(&mut self, cache: &mut IconCache, name: &str) -> [Option<std::rc::Rc<Canvas>>; 3] {
+        self.0
+            .entry(name.to_string())
+            .or_insert_with(|| [16, 32, 48].map(|px| cache.get(name, px).map(std::rc::Rc::new)))
+            .clone()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

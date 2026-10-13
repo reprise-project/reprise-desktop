@@ -85,7 +85,7 @@ impl Default for Settings {
             columns: Vec::new(),
             show_hidden: false,
             pane_open: BTreeMap::new(),
-            thumbnail_size: crate::thumbs::FRAME_INNER,
+            thumbnail_size: repriseapp::thumbs::FRAME_INNER,
             thumbnail_cache: ThumbCacheSettings::default(),
         }
     }
@@ -94,7 +94,7 @@ impl Default for Settings {
 impl Settings {
     /// `thumbnail_size`'s bounds: no smaller than the frame it fills,
     /// no larger than a 1 MiB thumbnail.
-    pub const THUMBNAIL_SIZE: std::ops::RangeInclusive<u32> = crate::thumbs::FRAME_INNER..=512;
+    pub const THUMBNAIL_SIZE: std::ops::RangeInclusive<u32> = repriseapp::thumbs::FRAME_INNER..=512;
 
     /// The main window's client size where text grows by `units`.
     pub fn window_at(&self, units: TextUnits) -> (i32, i32) {

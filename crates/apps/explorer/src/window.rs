@@ -592,16 +592,6 @@ pub fn details_text(
     out
 }
 
-/// Tiles detail under `it`'s name: kind and size in whole KB
-/// ([`shellview::size_text`]); nothing for folders, drives and shell places.
-/// Decoded image dimensions replace it ([`crate::thumbs::image_detail`]).
-pub fn tile_detail(it: &Item) -> Vec<String> {
-    if it.is_folder() {
-        return Vec::new();
-    }
-    vec![it.kind.clone(), shellview::size_text(it.size)]
-}
-
 /// The infotip's lines for `it`; `dims` is the image size once known.
 ///
 /// Image: dimensions, type, size. A plain file drops the dimensions and
@@ -894,23 +884,6 @@ mod tests {
             trashed: None,
             shortcut: None,
         }
-    }
-
-    /// Folders and drives show the name alone; files add kind and size in whole KB.
-    #[test]
-    fn a_tile_names_a_folder_alone_and_a_file_with_its_kind_and_size() {
-        assert!(tile_detail(&item("Stuff", true, "File Folder", 4096)).is_empty());
-        assert!(tile_detail(&item("Local Disk (/)", true, "Local Disk", 1 << 30)).is_empty());
-        let tile = |size| tile_detail(&item("notes.txt", false, "Text Document", size));
-        assert_eq!(tile(2_048), ["Text Document", "2 KB"]);
-        assert_eq!(tile(1)[1], "1 KB");
-        assert_eq!(tile(6_500)[1], "7 KB");
-        assert_eq!(tile(12_345_678)[1], "12,057 KB");
-        let linked = Item {
-            is_link: true,
-            ..item("Stuff", true, "Shortcut", 4096)
-        };
-        assert_eq!(tile_detail(&linked), ["Shortcut", "4 KB"]);
     }
 
     #[test]

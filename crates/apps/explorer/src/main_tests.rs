@@ -1907,7 +1907,7 @@ fn a_launcher_lists_runs_and_renames_by_its_name() {
     assert_eq!(names, ["notes.txt", "Terminal"], "sorted by the shown name");
     assert!(ex.sv.entries[1].link, "the shortcut arrow");
     assert_eq!(
-        crate::icons::entry_icon_name(&ex.items[1], &[], &|_| true),
+        reprisefs::icons::item_icon(&ex.items[1], &[], &|_| true),
         "utilities-terminal"
     );
 
