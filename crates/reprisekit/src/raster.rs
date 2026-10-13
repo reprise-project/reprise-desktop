@@ -1191,6 +1191,20 @@ impl Canvas {
     }
 }
 
+/// A `w` x `h` picture's size fitted inside `max`, keeping its aspect; one that fits already
+/// stays as it is.
+pub fn fit_size(w: u32, h: u32, max: (u32, u32)) -> (u32, u32) {
+    let (mw, mh) = max;
+    if w == 0 || h == 0 || (w <= mw && h <= mh) {
+        return (w, h);
+    }
+    let scale = (mw as f64 / w as f64).min(mh as f64 / h as f64);
+    (
+        ((w as f64 * scale).round() as u32).max(1),
+        ((h as f64 * scale).round() as u32).max(1),
+    )
+}
+
 /// Write `canvas` as an opaque RGB PNG named `name` under the workspace's
 /// `target/` and print where. For the ignored preview tests and the
 /// gallery; panics when the file cannot be written.
@@ -1284,6 +1298,16 @@ fn in_rounded(r: Rect, radius: i32, x: i32, y: i32) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn fit_size_scales_down_keeping_aspect() {
+        assert_eq!(fit_size(800, 600, (96, 96)), (96, 72));
+    }
+
+    #[test]
+    fn fit_size_never_upscales() {
+        assert_eq!(fit_size(50, 20, (96, 96)), (50, 20));
+    }
 
     #[test]
     fn mix_keeps_its_own_pixels_at_zero_takes_the_others_at_one_and_blends_between() {

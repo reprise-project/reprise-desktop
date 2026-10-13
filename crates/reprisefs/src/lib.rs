@@ -31,6 +31,7 @@ pub mod search;
 pub mod sendto;
 pub mod sysinfo;
 pub mod thumbnails;
+pub mod thumbpipe;
 pub mod trash;
 pub mod udisks;
 pub mod undo;

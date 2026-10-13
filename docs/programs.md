@@ -32,8 +32,10 @@ The file manager, and the default for folders.
   attributes, a Shortcut tab for launchers and a Change Icon for folders.
   Select several files for one sheet that covers them all.
 - **Thumbnails** decode in the background into the freedesktop thumbnail
-  cache, shared with other file managers. Folders update by themselves, no F5
-  needed.
+  cache, shared with other file managers. The Browse... dialogs of Run and
+  Open With read the same cache and leave the pictures it lacks to Explorer,
+  so the desktop itself never decodes a picture. Folders update by
+  themselves, no F5 needed.
 
 ## Notepad
 

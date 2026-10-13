@@ -322,6 +322,24 @@ pub fn image_detail(dims: (u32, u32), kind: &str) -> Vec<String> {
     vec![format!("{} x {}", dims.0, dims.1), kind.to_string()]
 }
 
+/// The square inside [`THUMB_FRAME`]'s 1 px border that a thumbnail fits in.
+pub const THUMB_INNER: u32 = (THUMB_FRAME - 2) as u32;
+
+/// `thumb` of a `dims` picture as an [`Entry::thumb`]: fitted inside [`THUMB_INNER`], never past
+/// the picture's own size, in device pixels at `scale`.
+pub fn frame_thumb(thumb: Canvas, dims: (u32, u32), scale: i32) -> Canvas {
+    let s = scale.max(1) as u32;
+    let (lw, lh) = crate::raster::fit_size(dims.0, dims.1, (THUMB_INNER, THUMB_INNER));
+    let (w, h) = (lw.max(1) * s, lh.max(1) * s);
+    let (sw, sh) = thumb.device_size();
+    let device = if (sw, sh) == (w, h) {
+        thumb
+    } else {
+        Canvas::resample_box_from(sw, sh, w, h, |x, y| thumb.pixels[(y * sw + x) as usize])
+    };
+    device.at_scale(scale)
+}
+
 /// A file's size in Explorer's Size column and under a tile's name: bytes
 /// rounded up to whole KB, grouped in threes (0 reads "0 KB", 1 and 1024
 /// "1 KB", 1025 "2 KB", 12,345,678 "12,057 KB"). The status bar, Details
@@ -1281,6 +1299,23 @@ pub(crate) mod tests {
     use crate::look::classic_paint;
     use crate::textedit::TextEdit;
     use crate::theme::{ColorScheme, FontConfig, Theme};
+
+    #[test]
+    fn a_thumbnail_fits_the_frame_at_the_windows_scale() {
+        let big = Canvas::from_pixels(256, 192, vec![0xff00_00ff; 256 * 192]);
+        let one = frame_thumb(big.clone(), (800, 600), 1);
+        assert_eq!((one.width, one.height, one.scale()), (94, 71, 1));
+        assert_eq!(one.get(10, 10), 0xff00_00ff);
+        let two = frame_thumb(big, (800, 600), 2);
+        assert_eq!((two.width, two.height, two.scale()), (94, 71, 2));
+        assert_eq!(two.device_size(), (188, 142));
+        let small = Canvas::from_pixels(94, 71, vec![0xff00_00ff; 94 * 71]);
+        assert_eq!(frame_thumb(small, (800, 600), 2).device_size(), (188, 142));
+        let tiny = Canvas::from_pixels(16, 8, vec![1; 128]);
+        let t = frame_thumb(tiny.clone(), (16, 8), 1);
+        assert_eq!(t, tiny);
+        assert_eq!(frame_thumb(tiny, (16, 8), 3).device_size(), (48, 24));
+    }
 
     pub(crate) fn rend() -> (TextRenderer, u32) {
         (

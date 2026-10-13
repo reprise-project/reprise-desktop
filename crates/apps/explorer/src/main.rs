@@ -1034,6 +1034,15 @@ fn parse_args(args: impl IntoIterator<Item = std::ffi::OsString>) -> (Place, Opt
 
 fn main() {
     env_logger::init();
+    if std::env::args_os()
+        .nth(1)
+        .is_some_and(|a| a == reprisefs::thumbpipe::FLAG)
+    {
+        if let Err(e) = thumbs::serve_stdio() {
+            log::warn!("thumbnailer: {e}");
+        }
+        return;
+    }
     let (start, select) = parse_args(std::env::args_os().skip(1));
     repriseapp::run(Box::new(Lazy {
         start,

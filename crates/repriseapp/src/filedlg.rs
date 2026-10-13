@@ -333,7 +333,7 @@ impl Host {
                 continue;
             };
             let e = &mut dlg.entries_mut()[i];
-            e.thumb = Some(thumbs::for_display(d.thumb, d.dims, self.pictures.scale));
+            e.thumb = Some(shellview::frame_thumb(d.thumb, d.dims, self.pictures.scale));
             e.detail = shellview::image_detail(d.dims, &e.kind);
             shown = true;
         }

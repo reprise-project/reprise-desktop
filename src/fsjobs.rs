@@ -39,6 +39,13 @@ fn run_one(run: OnLoop, state: &mut State) {
     }
 }
 
+impl FsJobs {
+    /// The channel's sending end, for a worker of its own that hands results to the loop.
+    pub fn sender(&self) -> Option<Sender<OnLoop>> {
+        self.tx.clone()
+    }
+}
+
 impl State {
     /// Run `work` on a thread; what it returns runs on the loop afterwards. Without
     /// the channel it runs inline; returns false only if the thread fails to spawn

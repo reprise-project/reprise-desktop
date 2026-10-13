@@ -1,11 +1,12 @@
 //! Pictures' thumbnails for Thumbnails and Tiles, decoded off the event loop by one worker thread
-//! through the freedesktop thumbnail cache. Explorer and the file dialog host share it. Navigation
+//! through the freedesktop thumbnail cache. Explorer and the file dialog host share it; Explorer's
+//! [`serve_stdio`] decodes for the compositor's Browse dialog in a process of its own. Navigation
 //! bumps a generation counter and the worker drops requests older than the newest it has seen.
 
 use crate::Waker;
 use crate::decode::Decoders;
 use reprisefs::thumbnails::{Rgba, Thumbnails};
-use reprisekit::controls::shellview::THUMB_FRAME;
+use reprisefs::thumbpipe;
 use reprisekit::raster::Canvas;
 use std::collections::{HashSet, VecDeque};
 use std::path::PathBuf;
@@ -13,7 +14,7 @@ use std::sync::Arc;
 use std::sync::mpsc::{Receiver, Sender, TryRecvError, channel};
 use std::thread::JoinHandle;
 
-pub const FRAME_INNER: u32 = (THUMB_FRAME - 2) as u32;
+pub const FRAME_INNER: u32 = reprisekit::controls::shellview::THUMB_INNER;
 
 struct Request {
     path: PathBuf,
@@ -161,6 +162,40 @@ fn work(
     }
 }
 
+/// The thumbnail helper of [`reprisefs::thumbpipe`]: answers the paths on stdin through the
+/// shared cache as `[thumbnail_cache]` sets it, decoding a miss into it, until stdin closes.
+pub fn serve_stdio() -> std::io::Result<()> {
+    let mut cache = configured_cache();
+    serve(
+        &Decoders::default_set(),
+        cache.as_mut(),
+        std::io::stdin().lock(),
+        std::io::stdout().lock(),
+    )
+}
+
+fn serve(
+    decoders: &Decoders,
+    mut cache: Option<&mut Thumbnails>,
+    mut input: impl std::io::BufRead,
+    mut output: impl std::io::Write,
+) -> std::io::Result<()> {
+    let edge = reprisefs::thumbnails::edge_for(FRAME_INNER);
+    while let Some(path) = thumbpipe::read_request(&mut input)? {
+        let thumb = thumbnail(decoders, edge, cache.as_deref_mut(), &path).map(|(c, dims)| {
+            let (width, height) = c.device_size();
+            thumbpipe::Thumb {
+                width,
+                height,
+                pixels: c.pixels,
+                dims,
+            }
+        });
+        thumbpipe::write_reply(&mut output, thumb.as_ref())?;
+    }
+    Ok(())
+}
+
 /// The shared cache under `$XDG_CACHE_HOME/thumbnails`, capped at `max_bytes`.
 pub fn open_cache(max_bytes: u64) -> Option<Thumbnails> {
     Some(Thumbnails::at(
@@ -249,19 +284,6 @@ fn take_queued(rx: &Receiver<Request>, queue: &mut VecDeque<Request>, newest: &m
         *newest = (*newest).max(req.generation);
         queue.push_back(req);
     }
-}
-
-pub fn for_display(thumb: Canvas, dims: (u32, u32), scale: i32) -> Canvas {
-    let s = scale.max(1) as u32;
-    let (lw, lh) = crate::decode::fit(dims.0, dims.1, (FRAME_INNER, FRAME_INNER));
-    let (w, h) = (lw.max(1) * s, lh.max(1) * s);
-    let (sw, sh) = thumb.device_size();
-    let device = if (sw, sh) == (w, h) {
-        thumb
-    } else {
-        Canvas::resample_box_from(sw, sh, w, h, |x, y| thumb.pixels[(y * sw + x) as usize])
-    };
-    device.at_scale(scale)
 }
 
 #[cfg(test)]
@@ -380,6 +402,32 @@ mod tests {
     }
 
     #[test]
+    fn the_helper_answers_each_path_in_order() {
+        let (dir, src, decoders, count, mut cache) = counted(b"FAKE picture");
+        let bad = dir.path().join("b.fake");
+        std::fs::write(&bad, b"FAKE BAD picture").unwrap();
+        let mut asked = Vec::new();
+        for p in [&src, &bad, &src] {
+            thumbpipe::write_request(&mut asked, p).unwrap();
+        }
+        let mut answers = Vec::new();
+        serve(&decoders, Some(&mut cache), &asked[..], &mut answers).unwrap();
+        let mut r = std::io::Cursor::new(answers);
+        let first = thumbpipe::read_reply(&mut r, 128)
+            .unwrap()
+            .expect("a thumbnail");
+        assert_eq!((first.width, first.height, first.dims), (2, 1, (640, 320)));
+        assert_eq!(first.pixels, [0xff00_00ff, 0xff00_ff00]);
+        assert_eq!(thumbpipe::read_reply(&mut r, 128).unwrap(), None);
+        assert_eq!(thumbpipe::read_reply(&mut r, 128).unwrap(), Some(first));
+        assert_eq!(
+            count.load(std::sync::atomic::Ordering::SeqCst),
+            2,
+            "the second ask is a cache hit"
+        );
+    }
+
+    #[test]
     fn a_picture_that_failed_is_not_decoded_again_until_it_changes() {
         let (_dir, src, decoders, count, mut cache) = counted(b"FAKE BAD picture");
         assert!(thumbnail(&decoders, 128, Some(&mut cache), &src).is_none());
@@ -388,22 +436,5 @@ mod tests {
         std::fs::write(&src, b"FAKE picture, saved again").unwrap();
         assert!(thumbnail(&decoders, 128, Some(&mut cache), &src).is_some());
         assert_eq!(count.load(std::sync::atomic::Ordering::SeqCst), 2);
-    }
-
-    #[test]
-    fn a_thumbnail_fits_the_frame_at_the_windows_scale() {
-        let big = Canvas::from_pixels(256, 192, vec![0xff00_00ff; 256 * 192]);
-        let one = for_display(big.clone(), (800, 600), 1);
-        assert_eq!((one.width, one.height, one.scale()), (94, 71, 1));
-        assert_eq!(one.get(10, 10), 0xff00_00ff);
-        let two = for_display(big, (800, 600), 2);
-        assert_eq!((two.width, two.height, two.scale()), (94, 71, 2));
-        assert_eq!(two.device_size(), (188, 142));
-        let small = Canvas::from_pixels(94, 71, vec![0xff00_00ff; 94 * 71]);
-        assert_eq!(for_display(small, (800, 600), 2).device_size(), (188, 142));
-        let tiny = Canvas::from_pixels(16, 8, vec![1; 128]);
-        let t = for_display(tiny.clone(), (16, 8), 1);
-        assert_eq!(t, tiny);
-        assert_eq!(for_display(tiny, (16, 8), 3).device_size(), (48, 24));
     }
 }

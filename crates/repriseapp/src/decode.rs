@@ -104,7 +104,7 @@ impl ImageDecoder for ImageCrateDecoder {
         let mut img = D::from_decoder(decoder).ok()?;
         img.apply_orientation(orientation);
         let (width, height) = (img.width(), img.height());
-        let (fw, fh) = fit(width, height, max);
+        let (fw, fh) = reprisekit::raster::fit_size(width, height, max);
         // The 8-bit layouts resample from the decoded buffer as it is; only
         // the rest pay for an RGBA8 copy.
         let canvas = match &img {
@@ -142,18 +142,6 @@ where
         let [r, g, b, a] = img.get_pixel(x, y).to_rgba().0;
         premultiply(u32::from_be_bytes([a, r, g, b]))
     })
-}
-
-pub fn fit(w: u32, h: u32, max: (u32, u32)) -> (u32, u32) {
-    let (mw, mh) = max;
-    if w == 0 || h == 0 || (w <= mw && h <= mh) {
-        return (w, h);
-    }
-    let scale = (mw as f64 / w as f64).min(mh as f64 / h as f64);
-    (
-        ((w as f64 * scale).round() as u32).max(1),
-        ((h as f64 * scale).round() as u32).max(1),
-    )
 }
 
 #[cfg(test)]
@@ -213,16 +201,6 @@ mod tests {
             }
         }
         !c
-    }
-
-    #[test]
-    fn fit_scales_down_keeping_aspect() {
-        assert_eq!(fit(800, 600, (96, 96)), (96, 72));
-    }
-
-    #[test]
-    fn fit_never_upscales() {
-        assert_eq!(fit(50, 20, (96, 96)), (50, 20));
     }
 
     fn encode_png(w: u32, h: u32, rgba: &[u8]) -> Vec<u8> {
