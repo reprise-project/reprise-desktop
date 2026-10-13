@@ -1,7 +1,8 @@
 //! Glass's blurred backdrop on the scene: one `reprisefx` element per piece of glass, made each
 //! frame by a scene node beneath the chrome it backs.
 //! Glass blurs the output's backdrop with chrome left out (`GlassCtx::update_backdrop`); glass over
-//! chrome (`[glass] blur_frames`) blurs a backdrop of its own.
+//! chrome or under other glass (`[glass] blur_frames`) blurs a backdrop of its own, with the glass
+//! beneath it drawn in.
 
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
@@ -49,6 +50,9 @@ pub struct GlassCtx {
     nodes: RefCell<Vec<Placed>>,
     own: RefCell<Vec<(Rc<Glass>, Source)>>,
     beneath: RefCell<HashMap<(String, CustomId), Beneath>>,
+    /// The elements being made are a backdrop of its own for glass above: glass draws into it at
+    /// its half resolution.
+    drawing_beneath: Cell<bool>,
 }
 
 struct Placed {
@@ -60,6 +64,14 @@ struct Placed {
 struct Beneath {
     backdrop: OutputBackdrop,
     glass: Weak<Glass>,
+}
+
+/// A shown glass node in stacking order, with what its glass reads.
+struct Stacked {
+    node: CustomId,
+    glass: Rc<Glass>,
+    anchor: NodeId,
+    reads: Reads,
 }
 
 struct OutputBackdrop {
@@ -188,22 +200,51 @@ impl GlassCtx {
         let pass = self.pass.get();
         let mut nodes = self.nodes.borrow_mut();
         nodes.retain(|n| n.glass.strong_count() > 0 && scene.is_alive(n.node));
+        let shown = scene.leaves_in(area);
+        let mut stacked: Vec<(usize, &Placed)> = nodes
+            .iter()
+            .filter_map(|n| Some((shown.iter().position(|&l| l == n.node.into())?, n)))
+            .collect();
+        // Bottom first: a lower glass's backdrop is final before glass above draws that glass.
+        stacked.sort_by_key(|&(i, _)| std::cmp::Reverse(i));
+        let stacked: Vec<Stacked> = stacked
+            .into_iter()
+            .filter_map(|(_, n)| {
+                let (Some(glass), Some((at, true)), Some(anchor)) = (
+                    n.glass.upgrade(),
+                    scene.coords(n.node),
+                    anchor(scene, n.node.into()),
+                ) else {
+                    return None;
+                };
+                let at = (at - area.loc).to_f64().to_physical(scale);
+                let reads = Reads::of(&n.pane, at, seen, scale, &pass);
+                Some(Stacked {
+                    node: n.node,
+                    glass,
+                    anchor,
+                    reads,
+                })
+            })
+            .collect();
         let mut beneath = self.beneath.borrow_mut();
         let mut used = Vec::new();
-        for n in nodes.iter() {
-            let (Some(glass), Some((at, true)), Some(anchor)) = (
-                n.glass.upgrade(),
-                scene.coords(n.node),
-                anchor(scene, n.node.into()),
-            ) else {
-                continue;
-            };
-            let at = (at - area.loc).to_f64().to_physical(scale);
-            let reads = Reads::of(&n.pane, at, seen, scale, &pass);
-            if !reads
-                .reach
-                .iter()
-                .any(|r| scene.left_out_below(anchor, layout(*r, area.loc, scale)))
+        for (i, n) in stacked.iter().enumerate() {
+            let (glass, anchor, reads) = (n.glass.clone(), n.anchor, &n.reads);
+            // Glass above draws this glass from this glass's own backdrop: the output's holds the
+            // clients of the windows above it.
+            let drawn_above = stacked[i + 1..].iter().any(|u| {
+                u.anchor != anchor
+                    && u.reads
+                        .reach
+                        .iter()
+                        .any(|r| reads.needed.iter().any(|m| m.overlaps(*r)))
+            });
+            if !drawn_above
+                && !reads
+                    .reach
+                    .iter()
+                    .any(|r| scene.left_out_below(anchor, layout(*r, area.loc, scale)))
             {
                 continue;
             }
@@ -222,7 +263,9 @@ impl GlassCtx {
                 continue;
             };
             let view = View::new(area, scale / 2.0);
+            self.drawing_beneath.set(true);
             let elements = scene.elements_below(renderer, anchor, &view);
+            self.drawing_beneath.set(false);
             if let Some(source) =
                 self.redraw(renderer, b, &elements, clear, output, Some(&reads.needed))
             {
@@ -620,41 +663,45 @@ pub fn place_flyout(
 /// bottom corners in both.
 pub(crate) fn drawn_shapes(pane: &Pane, material: Material, scale: f64) -> Vec<(Rect, [f32; 4])> {
     let fine = crate::output::draw_scale(scale as f32) > 1;
+    if material == Material::Molten || fine {
+        return round_shapes(pane);
+    }
     pane.shapes
         .iter()
         .flat_map(|s| {
             let r = s.rect;
-            match material {
-                _ if material == Material::Molten || fine => {
-                    let c = corner_radius(s.corner);
-                    let t = if s.square_top { 0.0 } else { c };
-                    let b = if s.square_bottom { 0.0 } else { c };
-                    vec![(r, [t, t, b, b])]
-                }
-                Material::Frosted | Material::Smoked | Material::Molten => {
-                    // Square-bottomed: the top half of a shape twice as tall. Square-topped: the
-                    // bottom half.
-                    let h = if s.square_bottom || s.square_top {
-                        2 * r.height
-                    } else {
-                        r.height
-                    };
-                    let skip = if s.square_top { r.height } else { 0 };
-                    rounded_rects(r.width, h, s.corner)
-                        .into_iter()
-                        .filter_map(|p| {
-                            let y0 = p.y.max(skip);
-                            let y1 = p.bottom().min(skip + r.height);
-                            (y1 > y0).then(|| {
-                                (
-                                    Rect::new(r.x + p.x, r.y + y0 - skip, p.width, y1 - y0),
-                                    [0.0; 4],
-                                )
-                            })
-                        })
-                        .collect()
-                }
-            }
+            // Square-bottomed: the top half of a shape twice as tall. Square-topped: the bottom half.
+            let h = if s.square_bottom || s.square_top {
+                2 * r.height
+            } else {
+                r.height
+            };
+            let skip = if s.square_top { r.height } else { 0 };
+            rounded_rects(r.width, h, s.corner)
+                .into_iter()
+                .filter_map(move |p| {
+                    let y0 = p.y.max(skip);
+                    let y1 = p.bottom().min(skip + r.height);
+                    (y1 > y0).then(|| {
+                        (
+                            Rect::new(r.x + p.x, r.y + y0 - skip, p.width, y1 - y0),
+                            [0.0; 4],
+                        )
+                    })
+                })
+        })
+        .collect()
+}
+
+/// `pane`'s shapes whole, with corner radii (tl, tr, br, bl) from their tables.
+fn round_shapes(pane: &Pane) -> Vec<(Rect, [f32; 4])> {
+    pane.shapes
+        .iter()
+        .map(|s| {
+            let c = corner_radius(s.corner);
+            let t = if s.square_top { 0.0 } else { c };
+            let b = if s.square_bottom { 0.0 } else { c };
+            (s.rect, [t, t, b, b])
         })
         .collect()
 }
@@ -711,6 +758,7 @@ impl Backdrop {
                 Box::new(GlassNode {
                     ctx: ctx.clone(),
                     glass: self.glass.clone(),
+                    beneath: Glass::new(),
                     size: p.extent(),
                     pane: p.clone(),
                 }),
@@ -730,6 +778,9 @@ impl Backdrop {
 struct GlassNode {
     ctx: Rc<GlassCtx>,
     glass: Rc<Glass>,
+    /// The glass drawn into the backdrops of glass above it: its own handle, so its damage and its
+    /// half-resolution key stay apart from the screen's.
+    beneath: Glass,
     pane: Pane,
     size: Size<i32, Logical>,
 }
@@ -737,6 +788,10 @@ struct GlassNode {
 impl CustomNode<GlesRenderer> for GlassNode {
     fn size(&self) -> Size<i32, Logical> {
         self.size
+    }
+
+    fn in_backdrop_below(&self) -> bool {
+        true
     }
 
     fn elements(
@@ -755,7 +810,18 @@ impl CustomNode<GlesRenderer> for GlassNode {
         let own = own.iter().find(|(g, _)| Rc::ptr_eq(g, &self.glass));
         let shared = self.ctx.source.borrow();
         let source = own.map(|(_, s)| s).or(shared.as_ref());
-        let shapes: Vec<Shape> = drawn_shapes(&self.pane, pass.settings.material, scale.x)
+        // In a backdrop beneath other glass the shapes are laid out on the output and drawn whole:
+        // stepped corner rows would be half a pixel tall.
+        let beneath = self.ctx.drawing_beneath.get();
+        let (glass, downscale, location, scale, drawn) = if beneath {
+            let location = location.upscale(2.0);
+            let scale = Scale::from((scale.x * 2.0, scale.y * 2.0));
+            (&self.beneath, 2, location, scale, round_shapes(&self.pane))
+        } else {
+            let drawn = drawn_shapes(&self.pane, pass.settings.material, scale.x);
+            (&*self.glass, 1, location, scale, drawn)
+        };
+        let shapes: Vec<Shape> = drawn
             .into_iter()
             .map(|(rect, radii)| Shape {
                 rect: physical(rect, location, scale),
@@ -768,7 +834,7 @@ impl CustomNode<GlesRenderer> for GlassNode {
             .iter()
             .map(|&r| physical(r, location, scale))
             .collect();
-        let element = self.glass.element(
+        let element = glass.element(
             fx,
             &GlassFrame {
                 shapes: &shapes,
@@ -781,9 +847,10 @@ impl CustomNode<GlesRenderer> for GlassNode {
                 quality: pass.quality,
                 hold: pass.hold,
                 source,
+                downscale,
             },
         );
-        if let Some(e) = &element {
+        if let (Some(e), false) = (&element, beneath) {
             self.ctx.made.borrow_mut().push(e.id().clone());
         }
         element.map(CustomElement::new).into_iter().collect()
@@ -1126,6 +1193,159 @@ mod tests {
         assert!(
             off > 230,
             "off, glass shows the white under the caption: {off}"
+        );
+    }
+
+    fn test_output_of(w: i32, h: i32) -> Output {
+        let o = test_output();
+        let mode = smithay::output::Mode {
+            size: (w, h).into(),
+            refresh: 60_000,
+        };
+        o.change_current_state(Some(mode), None, None, None);
+        o
+    }
+
+    /// A window at `at` whose left-out chrome holds a `size` sheet of glass, over a black rect of
+    /// `under` when given (glass on screen covers it).
+    fn glass_window(
+        scene: &mut DeskScene,
+        ctx: &Rc<GlassCtx>,
+        windows: TreeId,
+        at: (i32, i32),
+        size: (i32, i32),
+        under: Option<(i32, i32)>,
+    ) -> (TreeId, Backdrop) {
+        let window = scene.tree_create(windows);
+        scene.set_position(window, at.0, at.1);
+        let chrome = scene.tree_create(window);
+        leave_out(scene, chrome);
+        if let Some(under) = under {
+            scene.rect_create(chrome, under, [0.0, 0.0, 0.0, 1.0]);
+        }
+        let mut glass = Backdrop::new(ctx);
+        glass.set(scene, ctx, chrome, Some(sheet_pane(size, &[])));
+        (window, glass)
+    }
+
+    /// The red channel of `points` on a 320x200 output after one frame of `scene`.
+    fn red_at(
+        renderer: &mut GlesRenderer,
+        ctx: &GlassCtx,
+        scene: &DeskScene,
+        material: Material,
+        points: &[(i32, i32)],
+    ) -> Vec<u32> {
+        let output = test_output_of(320, 200);
+        let settings = Settings {
+            material,
+            streaks: false,
+            ..Settings::default()
+        };
+        let clear = Color32F::from([0.0, 0.0, 0.0, 1.0]);
+        ctx.begin(&output, settings, Quality::Full, false);
+        ctx.update_backdrop(renderer, scene, &output, clear, true);
+        let elements = scene.render_elements_for(renderer, &output);
+        let mut target = crate::offscreen::Target::new(renderer, (320, 200).into(), 1.0).unwrap();
+        target.render(renderer, &elements).unwrap();
+        let canvas = target.read(renderer).unwrap();
+        points
+            .iter()
+            .map(|&(x, y)| (canvas.pixels[(y * 320 + x) as usize] >> 16) & 0xFF)
+            .collect()
+    }
+
+    #[test]
+    fn glass_over_other_glass_shows_that_glass_and_not_what_it_covers() {
+        for material in [Material::Frosted, Material::Smoked, Material::Molten] {
+            let Ok(mut renderer) = reprisefx::headless::renderer() else {
+                eprintln!("skipped: no renderer");
+                return;
+            };
+            let ctx = GlassCtx::new();
+            ctx.set_renderer(&mut renderer);
+            let mut scene = DeskScene::new();
+            let root = scene.root();
+            let desktop = scene.tree_create(root);
+            scene.rect_create(desktop, (320, 200), [1.0; 4]);
+            let windows = scene.tree_create(root);
+            let lower = Some((200, 120));
+            let _lower = glass_window(&mut scene, &ctx, windows, (20, 20), (200, 120), lower);
+            let _upper = glass_window(&mut scene, &ctx, windows, (120, 80), (180, 100), None);
+            let [lower_alone, both] = red_at(
+                &mut renderer,
+                &ctx,
+                &scene,
+                material,
+                &[(60, 50), (170, 110)],
+            )[..] else {
+                unreachable!()
+            };
+            assert!(
+                lower_alone > 230,
+                "{material:?}: the lower glass shows the white desktop"
+            );
+            assert!(
+                both > 230,
+                "{material:?}: through the upper glass the lower glass shows, not the black under it: {both}"
+            );
+        }
+    }
+
+    #[test]
+    fn glass_beneath_other_glass_blurs_a_backdrop_without_the_windows_above_it() {
+        let Ok(mut renderer) = reprisefx::headless::renderer() else {
+            eprintln!("skipped: no renderer");
+            return;
+        };
+        let ctx = GlassCtx::new();
+        ctx.set_renderer(&mut renderer);
+        let mut scene = DeskScene::new();
+        let root = scene.root();
+        let desktop = scene.tree_create(root);
+        scene.rect_create(desktop, (320, 200), [1.0; 4]);
+        let windows = scene.tree_create(root);
+        let (_, lower) = glass_window(&mut scene, &ctx, windows, (20, 20), (120, 80), None);
+        let (upper, _upper) = glass_window(&mut scene, &ctx, windows, (100, 60), (120, 80), None);
+        let lower = lower.node.unwrap();
+        let own = |ctx: &GlassCtx| ctx.beneath.borrow().contains_key(&("test".into(), lower));
+        red_at(&mut renderer, &ctx, &scene, Material::Frosted, &[]);
+        assert!(own(&ctx), "under the upper glass");
+        scene.set_position(upper, 200, 120);
+        red_at(&mut renderer, &ctx, &scene, Material::Frosted, &[]);
+        assert!(
+            !own(&ctx),
+            "past the upper glass's reach the output's backdrop does"
+        );
+    }
+
+    #[test]
+    fn glass_beneath_other_glass_draws_its_own_backdrop_into_it() {
+        let Ok(mut renderer) = reprisefx::headless::renderer() else {
+            eprintln!("skipped: no renderer");
+            return;
+        };
+        let ctx = GlassCtx::new();
+        ctx.set_renderer(&mut renderer);
+        let mut scene = DeskScene::new();
+        let root = scene.root();
+        let desktop = scene.tree_create(root);
+        scene.rect_create(desktop, (320, 200), [1.0; 4]);
+        let windows = scene.tree_create(root);
+        let bottom = scene.tree_create(windows);
+        let caption = scene.tree_create(bottom);
+        leave_out(&mut scene, caption);
+        scene.rect_create(caption, (320, 70), [0.0, 0.0, 0.0, 1.0]);
+        let middle = scene.tree_create(windows);
+        let top = scene.tree_create(windows);
+        // The top glass is made first: its backdrop still waits for the middle glass's.
+        let _top = glass_window(&mut scene, &ctx, top, (120, 20), (180, 100), None);
+        let _middle = glass_window(&mut scene, &ctx, middle, (20, 10), (200, 120), None);
+        let red = red_at(&mut renderer, &ctx, &scene, Material::Frosted, &[(170, 35)]);
+        assert!(
+            red[0] < 80,
+            "the middle glass shows the black caption beneath it, through the top glass too: {}",
+            red[0]
         );
     }
 

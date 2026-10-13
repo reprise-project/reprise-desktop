@@ -131,6 +131,7 @@ fn main() {
             quality: Quality::Full,
             hold: false,
             source: None,
+            downscale: 1,
         };
         els.extend(glass.element(&fx, &f).map(El::Glass));
     };
