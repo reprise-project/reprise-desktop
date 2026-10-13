@@ -631,23 +631,40 @@ fn tint(white: &Canvas, color: Color) -> Canvas {
 }
 
 pub fn fit(src: &Canvas, w: u32, h: u32) -> Canvas {
+    fit_from(src.width, src.height, w, h, |fw, fh| {
+        src.resample_box(fw, fh)
+    })
+}
+
+/// [`fit`] for a `sw` x `sh` picture that `scaled(fw, fh)` resamples, so a decoder reads its own buffer.
+pub fn fit_from(
+    sw: u32,
+    sh: u32,
+    w: u32,
+    h: u32,
+    scaled: impl FnOnce(u32, u32) -> Canvas,
+) -> Canvas {
     let mut out = Canvas::new(w.max(1), h.max(1));
     out.fill_rect(out.bounds(), Color::rgb(0, 0, 0));
-    if src.width == 0 || src.height == 0 {
+    if sw == 0 || sh == 0 {
         return out;
     }
-    let k = (w as f32 / src.width as f32).min(h as f32 / src.height as f32);
-    let (fw, fh) = (
-        ((src.width as f32 * k).round() as u32).clamp(1, w.max(1)),
-        ((src.height as f32 * k).round() as u32).clamp(1, h.max(1)),
-    );
-    let scaled = src.resample_box(fw, fh);
+    let (fw, fh) = fit_size(sw, sh, w, h);
     out.blit_canvas(
         (w as i32 - fw as i32) / 2,
         (h as i32 - fh as i32) / 2,
-        &scaled,
+        &scaled(fw, fh),
     );
     out
+}
+
+/// The size a `sw` x `sh` picture takes fitted whole into `w` x `h`.
+pub fn fit_size(sw: u32, sh: u32, w: u32, h: u32) -> (u32, u32) {
+    let k = (w as f32 / sw.max(1) as f32).min(h as f32 / sh.max(1) as f32);
+    (
+        ((sw as f32 * k).round() as u32).clamp(1, w.max(1)),
+        ((sh as f32 * k).round() as u32).clamp(1, h.max(1)),
+    )
 }
 
 #[cfg(test)]
