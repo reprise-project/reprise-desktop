@@ -139,8 +139,9 @@ pub struct Explorer {
     /// `settings` changed since the last write. A resize delivers a burst of
     /// events; the file is written on the next blink, on losing focus or on closing.
     settings_dirty: bool,
-    /// The main window's client size at its last resize, kept in 100% px at the next save: by
-    /// then a text size change has regrown a window at its opening size, or left the user's size.
+    /// The main window's client size at its last unmaximized resize when the user sized it, kept
+    /// in 100% px at the next save. `None` while it is at its opening size, held or not: the saved
+    /// size stands.
     window_px: Option<(i32, i32)>,
     pub popup: Option<Popup>,
     pub focus: Focus,
@@ -907,8 +908,10 @@ impl App for Lazy {
                     ..Reply::none()
                 }
             }
+            // A maximized window's size is the screen's: a hand size still pending is saved.
+            Event::Resized if ctx.maximized => Reply::redraw(),
             Event::Resized => {
-                ex.window_px = Some(ctx.size);
+                ex.window_px = (!ctx.at_pick).then_some(ctx.size);
                 ex.settings_dirty = true;
                 Reply::redraw()
             }

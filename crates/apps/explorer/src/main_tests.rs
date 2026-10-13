@@ -32,6 +32,7 @@ pub(crate) fn test_ctx() -> Ctx {
         wake: repriseapp::Waker::noop(),
         heads: Default::default(),
         want_tick: Default::default(),
+        at_pick: false,
         text_size: 100,
     }
 }
@@ -802,6 +803,96 @@ fn the_window_opens_at_the_text_size_and_keeps_its_size_in_100_units() {
         (1000, 700),
         "a size the user kept across the change is its 100% size"
     );
+}
+
+/// A maximized window's size is not saved; a hand size pending when it was maximized is.
+#[test]
+fn a_maximized_size_is_not_saved() {
+    let dir = tempfile::tempdir().expect("a temp dir");
+    let mut ctx = test_ctx();
+    let ex = test_explorer(Place::Folder(dir.path().to_path_buf()), &mut ctx);
+    let mut app = Lazy {
+        start: ex.place.clone(),
+        select: None,
+        inner: Some(ex),
+        units: TextUnits::ONE,
+    };
+    let mut resized = |app: &mut Lazy, size: (i32, i32), maximized: bool| {
+        ctx.size = size;
+        ctx.maximized = maximized;
+        let _ = app.event(MAIN, Event::Resized, &mut ctx);
+    };
+    let saved = |app: &mut Lazy| {
+        let ex = app.inner.as_mut().expect("the window");
+        ex.flush_settings();
+        ex.settings.window
+    };
+    resized(&mut app, (900, 600), false);
+    resized(&mut app, (1920, 1000), true);
+    assert_eq!(saved(&mut app), (900, 600), "the pending hand size");
+    resized(&mut app, (1920, 1000), true);
+    assert_eq!(saved(&mut app), (900, 600), "not the screen's");
+    resized(&mut app, (900, 600), false);
+    resized(&mut app, (700, 500), false);
+    assert_eq!(saved(&mut app), (700, 500));
+}
+
+/// A size the window takes at its pick, held inside a 1080-line work area at 200% or not, keeps
+/// the saved size, so the next open at 100% is the size before; a size the user gives it is saved.
+#[test]
+fn a_held_opening_size_keeps_the_saved_size_and_a_users_size_is_saved() {
+    let dir = tempfile::tempdir().expect("a temp dir");
+    let mut ctx = test_ctx();
+    let ex = test_explorer(Place::Folder(dir.path().to_path_buf()), &mut ctx);
+    let mut app = Lazy {
+        start: ex.place.clone(),
+        select: None,
+        inner: Some(ex),
+        units: TextUnits::ONE,
+    };
+    let mut resized = |app: &mut Lazy, text_size: u32, size: (i32, i32), at_pick: bool| {
+        ctx.text_size = text_size;
+        ctx.size = size;
+        ctx.at_pick = at_pick;
+        let _ = app.event(MAIN, Event::Resized, &mut ctx);
+    };
+    let saved = |app: &mut Lazy| {
+        let ex = app.inner.as_mut().expect("the window");
+        ex.flush_settings();
+        ex.settings.window
+    };
+    let held = (1584, 1000);
+
+    resized(&mut app, 200, (792, 573), true);
+    assert_eq!(app.initial_size(), (1584, 1146));
+    resized(&mut app, 200, held, true);
+    assert_eq!(saved(&mut app), (792, 573), "a held pick keeps the default");
+    resized(&mut app, 100, held, true);
+    resized(&mut app, 100, (792, 573), true);
+    assert_eq!(app.initial_size(), (792, 573));
+    assert_eq!(saved(&mut app), (792, 573));
+
+    resized(&mut app, 100, (900, 600), false);
+    assert_eq!(
+        saved(&mut app),
+        (900, 600),
+        "a size the user gives is saved"
+    );
+    resized(&mut app, 200, (1800, 1000), true);
+    assert_eq!(app.initial_size(), (1800, 1200));
+    assert_eq!(
+        saved(&mut app),
+        (900, 600),
+        "a held pick keeps the user's size"
+    );
+    resized(&mut app, 200, (1400, 900), false);
+    assert_eq!(
+        saved(&mut app),
+        (700, 450),
+        "a size the user gives at 200% is saved"
+    );
+    resized(&mut app, 100, (1400, 900), false);
+    assert_eq!(app.initial_size(), (700, 450));
 }
 
 #[test]
