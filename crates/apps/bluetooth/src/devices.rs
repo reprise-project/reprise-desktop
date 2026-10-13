@@ -142,10 +142,10 @@ impl Devices {
         d
     }
 
-    /// The device list on the Devices page as last drawn: 100% tiles in a frame that grows with
-    /// the page.
+    /// The device list on the Devices page as last drawn: 100% tiles in a frame that grows and
+    /// scrolls with the page.
     pub fn list_rect(&self) -> Rect {
-        self.sheet.pages[TAB_DEVICES].units().rect(LIST)
+        self.sheet.on_page(LIST)
     }
 
     pub fn selected(&self) -> Option<&Device> {
@@ -357,6 +357,14 @@ impl Devices {
         if self.sheet.tabs.open != TAB_DEVICES {
             return;
         }
+        let clip = self.sheet.page_clip(&ctx.text, forms.fonts.size_px);
+        c.with_clip(clip.unwrap_or(c.bounds()), |c| {
+            self.draw_list(c, ctx, icons)
+        });
+    }
+
+    fn draw_list(&self, c: &mut Canvas, ctx: &Ctx, icons: &Icons) {
+        let cs = &ctx.theme.colors;
         let px = ctx.theme.fonts.size_px;
         let list = self.list_rect();
         if let Some(line) = self.blank_text() {

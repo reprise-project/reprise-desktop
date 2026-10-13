@@ -35,7 +35,7 @@ use crate::model::{
 use crate::registry::Page;
 use repriseconf::{Lens, lens};
 
-/// The client every page is built for at [`Area::MIN`]; the sheet puts each page right of its list ([`on_sheet`]).
+/// The client every page is built for at [`Area::MIN`]; the sheet puts each page right of its list ([`PropSheet::on_page`]).
 pub const CLIENT: (i32, i32) = (398, 528);
 
 /// The Pointers page's preview and the combo row standing for an empty `[cursor] theme`.
@@ -51,17 +51,6 @@ const GTK_FIXED_ROWS: &Choices = &[
     (TOOLKIT_AUTO, GTK_AUTO_ROW),
     (TOOLKIT_REPRISE, REPRISE_TOOLKIT_ROW),
 ];
-
-/// `r`, in the coordinates a page was built in, where the sheet has put that page
-/// ([`PropSheet::page_offset`]), grown with the text the page was last drawn at.
-pub fn on_sheet(sheet: &PropSheet, r: Rect) -> Rect {
-    let (dx, dy) = sheet.page_offset();
-    let page = sheet.open();
-    let r = page
-        .units()
-        .rect(Rect::new(r.x + dx, r.y + dy, r.width, r.height));
-    Rect::new(r.x + page.origin.0, r.y + page.origin.1, r.width, r.height)
-}
 
 /// The night light trackbar's range and step, in kelvin: warmest on the left.
 const KELVIN_MIN: i64 = 2500;
@@ -2885,7 +2874,7 @@ mod tests {
             color_scheme: "Brick".into(),
             ..Settings::default()
         });
-        let r = on_sheet(&s, appearancepage::sample_rect(Area::MIN));
+        let r = s.on_page(appearancepage::sample_rect(Area::MIN));
         let brick = reprisekit::schemes::scheme("Brick").expect("Brick is a Classic scheme");
         assert_eq!(draw(&s).get(r.x + 3, r.y + 3), brick.background.argb());
         let g = with(&Settings {
@@ -2906,7 +2895,7 @@ mod tests {
         let text = TextRenderer::load(&FontConfig::default());
         let s = built();
         let page = s.layout(&text, Theme::default().fonts.size_px).page;
-        let list = on_sheet(&s, list(Area::MIN));
+        let list = s.on_page(list(Area::MIN));
         assert_eq!((list.x, list.y, list.width), (166, 44, 358));
         assert!(list.x >= page.x && list.right() <= page.right() && list.bottom() <= page.bottom());
         let remove = s.pages[Page::Startup.index()].item(REMOVE).unwrap().rect;
@@ -2915,7 +2904,7 @@ mod tests {
             list.right(),
             "Remove is flush with the list"
         );
-        let shortcuts = on_sheet(&s, shortcuts(Area::MIN));
+        let shortcuts = s.on_page(shortcuts(Area::MIN));
         let delete = s.pages[Page::Keyboard.index()]
             .item(SC_REMOVE)
             .unwrap()
@@ -3201,7 +3190,7 @@ mod tests {
             ..Settings::default()
         };
         let mut s = with(&want);
-        let r = on_sheet(&s, crate::visionpage::preview_rect(Area::MIN));
+        let r = s.on_page(crate::visionpage::preview_rect(Area::MIN));
         let pixel = |s: &PropSheet, x: i32, y: i32| {
             let mut c = Canvas::new(s.size.0 as u32, s.size.1 as u32);
             form::draw(
@@ -3464,7 +3453,7 @@ mod tests {
             ..Settings::default()
         };
         let mut s = with(&want);
-        let r = on_sheet(&s, backgroundpage::MONITOR_RECT);
+        let r = s.on_page(backgroundpage::MONITOR_RECT);
         let (sx, sy, _, _) = reprisekit::classic::assets::MONITOR_SCREEN;
         let at_screen = |s: &PropSheet, x: i32, y: i32| {
             let mut c = Canvas::new(s.size.0 as u32, s.size.1 as u32);
@@ -4873,7 +4862,7 @@ mod tests {
                     &text,
                     &theme,
                     &lv,
-                    on_sheet(&sheet, list(Area::MIN)),
+                    sheet.on_page(list(Area::MIN)),
                     px,
                     1,
                 );
@@ -4884,7 +4873,7 @@ mod tests {
                     &text,
                     &theme,
                     &sc,
-                    on_sheet(&sheet, shortcuts(Area::MIN)),
+                    sheet.on_page(shortcuts(Area::MIN)),
                     px,
                     1,
                 );

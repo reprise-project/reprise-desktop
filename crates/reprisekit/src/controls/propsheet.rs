@@ -622,6 +622,28 @@ impl PropSheet {
         (self.scroll.short > 0).then(|| self.layout(text, px).page.inset(PAGE_EDGE))
     }
 
+    /// `r`, in the coordinates the open page was built in, where the sheet shows it on the
+    /// surface: moved with the page ([`PropSheet::page_offset`]) and grown with the text the
+    /// page was last drawn at. For a control a host draws on the page.
+    pub fn on_page(&self, r: Rect) -> Rect {
+        let (dx, dy) = self.page_offset();
+        let page = self.open();
+        let r = page
+            .units()
+            .rect(Rect::new(r.x + dx, r.y + dy, r.width, r.height));
+        Rect::new(r.x + page.origin.0, r.y + page.origin.1, r.width, r.height)
+    }
+
+    /// Whether the pointer at (`x`, `y`) reaches a control a host draws on the page: always while
+    /// the sheet is whole, else inside [`PropSheet::page_clip`] and off the page's scrollbar.
+    pub fn reaches_page(&self, x: i32, y: i32, text: &TextRenderer, px: u32) -> bool {
+        if self.scroll.short == 0 {
+            return true;
+        }
+        let l = self.layout(text, px);
+        l.page.inset(PAGE_EDGE).contains(x, y) && !l.bar.is_some_and(|b| b.contains(x, y))
+    }
+
     /// The page list's rects in list mode, which need no text; its scrollbar has the
     /// width of the look the open page was last drawn in.
     fn list_layout(&self) -> Option<pagelist::Layout> {
