@@ -90,6 +90,8 @@ smithay = { workspace = true, features = [
     "xwayland",
 ] }
 smithay-drm-extras.workspace = true
+# Smithay's libinput, with libinput 1.26's pad dials.
+input = { version = "0.10", default-features = false, features = ["libinput_1_26"] }
 tracing = { version = "0.1", default-features = false, features = ["std"] }
 xcursor = "0.3"
 # focus, `_NET_WM_ICON` and counting the X11 programs (X-Resource) to stop

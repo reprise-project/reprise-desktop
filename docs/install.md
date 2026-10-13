@@ -28,8 +28,8 @@ session file, the PAM files and the portal backend.
 
 - systemd (logind, the user manager and timedated) and libseat (from seatd;
   it talks to logind)
-- libudev, libinput, libdrm, Mesa (GBM and the EGL and OpenGL ES drivers),
-  libglvnd and libdisplay-info
+- libudev, libinput 1.26 or later, libdrm, Mesa (GBM and the EGL and OpenGL ES
+  drivers), libglvnd and libdisplay-info
 - libxkbcommon and xkeyboard-config, whose registry names the keyboard
   layouts in the tray and in Reprise Settings
 - freetype2, fontconfig, PAM, libxcrypt, dbus and PipeWire
