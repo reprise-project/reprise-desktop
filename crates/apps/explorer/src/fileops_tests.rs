@@ -764,7 +764,7 @@ fn the_bin_acts_only_on_the_item_it_listed() {
     ex.run(Command::Delete { erase: false }, &mut ctx);
 
     reprisefs::trash::restore_free(&listed).expect("put back");
-    reprisefs::trash::trash(&two.join("a.txt")).expect("trash two");
+    reprisefs::trash::trash(&two.join("a.txt"), None).expect("trash two");
     ex.dialog_event(key_event_alt('y'), &mut ctx);
     ex.finish_puts(&mut ctx);
     assert!(listed.files.exists(), "the new item stays");

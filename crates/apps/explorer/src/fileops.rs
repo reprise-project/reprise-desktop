@@ -104,20 +104,24 @@ fn file_label(path: &Path) -> String {
 /// A Delete's work on its job: each path trashed into `bins` or erased, stopping at the first
 /// failure. The loop pushes trashed items as one undo and drops undos for items the bin's cap
 /// erased.
-fn delete_planned(bins: Option<&reprisefs::trash::Bins>, plan: Vec<(PathBuf, bool)>) -> JobDone {
+fn delete_planned(
+    bins: Option<&reprisefs::trash::Bins>,
+    plan: Vec<(PathBuf, reprisefs::bincap::Plan)>,
+) -> JobDone {
+    use reprisefs::bincap::Plan;
     let mut batch = Vec::new();
     let mut purged = Vec::new();
     let mut failed = None;
-    for (path, erase) in &plan {
-        let done = if *erase {
-            reprisefs::ops::erase(path).map(|()| None)
-        } else {
-            bins.ok_or_else(|| std::io::Error::other("cannot find the Recycle Bin"))
-                .and_then(|b| b.trash(path))
+    for (path, plan) in &plan {
+        let done = match *plan {
+            Plan::Erase => reprisefs::ops::erase(path).map(|()| None),
+            Plan::Trash(known) => bins
+                .ok_or_else(|| std::io::Error::other("cannot find the Recycle Bin"))
+                .and_then(|b| b.trash_measured(path, known))
                 .map(|(t, gone)| {
                     purged.extend(gone);
                     Some(Undoable::Trash(t))
-                })
+                }),
         };
         match done {
             Ok(Some(u)) => batch.push(u),
@@ -617,22 +621,22 @@ impl Explorer {
     /// their Recycle Bin are asked about one at a time first ([`Explorer::too_big_step`]).
     pub(crate) fn delete_now(&mut self, paths: &[PathBuf], erase: bool, ctx: &mut Ctx) -> Reply {
         let paths = paths.to_vec();
+        use reprisefs::bincap::{Plan, TooBig, TooBigStep};
         self.spawn_job(ctx, move || {
             let bins = reprisefs::trash::Bins::system();
-            if !erase {
-                let big: Vec<bool> = paths
-                    .iter()
-                    .map(|p| bins.as_ref().is_some_and(|b| b.too_big(p)))
-                    .collect();
-                if big.contains(&true) {
-                    let asker = reprisefs::bincap::TooBig::new(paths, big);
-                    return Box::new(move |ex: &mut Explorer, ctx: &mut Ctx| {
-                        ex.too_big_step(asker, ctx)
-                    });
-                }
+            if erase {
+                let plan = paths.into_iter().map(|p| (p, Plan::Erase)).collect();
+                return delete_planned(bins.as_ref(), plan);
             }
-            let plan = paths.into_iter().map(|p| (p, erase)).collect();
-            delete_planned(bins.as_ref(), plan)
+            let measured = paths
+                .iter()
+                .map(|p| bins.as_ref().and_then(|b| b.measure(p)))
+                .collect();
+            let asker = TooBig::new(paths, measured);
+            match asker.step() {
+                TooBigStep::Done(plan) => delete_planned(bins.as_ref(), plan),
+                _ => Box::new(move |ex: &mut Explorer, ctx: &mut Ctx| ex.too_big_step(asker, ctx)),
+            }
         });
         Reply::none()
     }
