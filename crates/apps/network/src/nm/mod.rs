@@ -189,13 +189,25 @@ pub struct Vpn {
     pub active: bool,
 }
 
+/// The name shown for a VPN kind: NM's plugin service name without its
+/// `org.freedesktop.NetworkManager.` prefix, or `wireguard`.
 pub fn vpn_kind_label(kind: &str) -> String {
     match kind {
-        "openvpn" => "OpenVPN".into(),
-        "wireguard" => "WireGuard".into(),
-        "openconnect" => "OpenConnect".into(),
-        other => other.into(),
+        "openvpn" => "OpenVPN",
+        "wireguard" => "WireGuard",
+        "openconnect" => "OpenConnect",
+        "vpnc" => "Cisco VPN (vpnc)",
+        "l2tp" => "L2TP",
+        "pptp" => "PPTP",
+        "sstp" => "SSTP",
+        "fortisslvpn" => "Fortinet SSL VPN",
+        "strongswan" => "IPsec (strongSwan)",
+        "libreswan" | "openswan" => "IPsec (Libreswan)",
+        "ssh" => "SSH",
+        "iodine" => "Iodine DNS tunnel",
+        other => other,
     }
+    .into()
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -888,7 +900,14 @@ mod tests {
         assert_eq!(vpn_kind_label("openvpn"), "OpenVPN");
         assert_eq!(vpn_kind_label("wireguard"), "WireGuard");
         assert_eq!(vpn_kind_label("openconnect"), "OpenConnect");
-        assert_eq!(vpn_kind_label("pptp"), "pptp");
+        assert_eq!(vpn_kind_label("vpnc"), "Cisco VPN (vpnc)");
+        assert_eq!(vpn_kind_label("l2tp"), "L2TP");
+        assert_eq!(vpn_kind_label("pptp"), "PPTP");
+        assert_eq!(vpn_kind_label("sstp"), "SSTP");
+        assert_eq!(vpn_kind_label("fortisslvpn"), "Fortinet SSL VPN");
+        assert_eq!(vpn_kind_label("strongswan"), "IPsec (strongSwan)");
+        assert_eq!(vpn_kind_label("libreswan"), "IPsec (Libreswan)");
+        assert_eq!(vpn_kind_label("someplugin"), "someplugin");
     }
 
     #[test]
