@@ -85,6 +85,8 @@ desktop and stays out of the way when it's missing.
 - cups-filters, for driverless IPP Everywhere and AirPrint printers
 - cups-pk-helper, so accounts outside CUPS's admin group can manage printers
   after the admin password prompt
+- avahi-daemon, so the Add Printer wizard lists network printers for accounts
+  outside CUPS's admin group without the admin password prompt
 - PackageKit, Flatpak and fwupd, for system, Flatpak and firmware updates in
   Software Updates
 - AccountsService, for User Accounts
