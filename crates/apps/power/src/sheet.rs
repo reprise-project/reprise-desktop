@@ -671,29 +671,15 @@ mod tests {
         )
     }
 
-    /// Every page's text fits in Tahoma and in DejaVu Sans, which is wider.
+    /// Every page's text fits under every interface and text size, in Tahoma and in DejaVu
+    /// Sans, which is wider.
     #[test]
     fn every_page_fits_its_text() {
-        let s = sheet();
-        let mut over = Vec::new();
-        for family in ["Tahoma", "DejaVu Sans"] {
-            let text = reprisekit::text::TextRenderer::load(&reprisekit::theme::FontConfig {
-                family: vec![family.into()],
-                ..Default::default()
-            });
-            if !text.has_face(family) {
-                continue;
-            }
-            for page in &s.sheet.pages {
-                page.drawn_with(&reprisekit::theme::Theme::default().paint());
-                over.extend(
-                    page.overflows(&text, 11)
-                        .into_iter()
-                        .map(|o| format!("{family}: {o:?}")),
-                );
-            }
-        }
-        assert!(over.is_empty(), "{over:?}");
+        let over = reprisekit::interfaces::form_overflows(|_, _, _| {
+            let s = sheet().sheet;
+            s.tabs.labels.into_iter().zip(s.pages).collect()
+        });
+        assert!(over.is_empty(), "{}", over.join("\n"));
     }
 
     fn changed(s: &mut Sheet, id: &'static str) -> Outcome {

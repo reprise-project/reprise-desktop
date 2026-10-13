@@ -204,3 +204,51 @@ fn main() {
         heard_outputs: false,
     }));
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The system view fits its text under every interface and text size: "Operating system:"
+    /// in its label column, and long processor and graphics names cut to their grown column.
+    #[test]
+    fn the_system_view_fits_its_text() {
+        let facts = SystemFacts {
+            version: "0.1.0".into(),
+            interface: "Classic".into(),
+            os: "Arch Linux".into(),
+            kernel: "6.17.2-arch1-1".into(),
+            arch: "x86_64".into(),
+            hostname: "desk".into(),
+            model: Some("ASUS ROG Strix G16 G614JV_G614JV 1.0".into()),
+            cpu: Some("13th Gen Intel(R) Core(TM) i7-13650HX".into()),
+            cores: Some(14),
+            threads: 20,
+            mhz: Some(4900.0),
+            gpus: vec!["NVIDIA GeForce RTX 4060 Max-Q / Mobile (AD107M)".into()],
+            ram: Some(16 << 30),
+            ram_free: Some(9 << 30),
+            disk: Some((1 << 40, 400 << 30)),
+            user: "Jo Doe".into(),
+            login: "jo".into(),
+            uptime: Some(11_520),
+            displays: vec![
+                "2560 x 1600, 240 Hz (Built-in display)".into(),
+                "3840 x 2160, 60 Hz, 150% (DELL U2720Q)".into(),
+            ],
+            ..SystemFacts::default()
+        };
+        let system = System {
+            logo: None,
+            groups: facts.groups(),
+        };
+        let over = reprisekit::interfaces::form_overflows(|_, theme, text| {
+            let px = theme.text.base_px(theme.fonts.size_px);
+            vec![(
+                "system".into(),
+                aboutbox::system_form(&system, text, px, theme.text),
+            )]
+        });
+        assert!(over.is_empty(), "{}", over.join("\n"));
+    }
+}

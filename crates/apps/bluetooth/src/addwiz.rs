@@ -661,6 +661,63 @@ mod tests {
         );
     }
 
+    /// Every page fits its text under every interface and text size: Welcome, the search
+    /// running and done, connecting, each pairing request, and each way it finishes.
+    #[test]
+    fn every_page_fits_its_text() {
+        let asks = [
+            Ask::PinCode,
+            Ask::Passkey,
+            Ask::ShowPin("0000".into()),
+            Ask::ShowPasskey(123_456),
+            Ask::Confirm(123_456),
+            Ask::Authorize,
+        ];
+        let over = reprisekit::interfaces::form_overflows(|_, forms, text| {
+            let mut pages = Vec::new();
+            let mut w = AddWizard::new(text, forms);
+            pages.push(("welcome".to_string(), w.page.form.clone()));
+            w.page.form.set_check(READY, true);
+            w.event(form::Event::Changed(READY), text, forms);
+            w.event(form::Event::Pressed(wizard::NEXT), text, forms);
+            w.refresh(&snap(true, true), text, forms);
+            pages.push(("searching".into(), w.page.form.clone()));
+            w.refresh(&snap(true, false), text, forms);
+            pages.push(("searched".into(), w.page.form.clone()));
+            w.list.select_row(Some(0));
+            w.sync_search();
+            w.event(form::Event::Default, text, forms);
+            pages.push(("connecting".into(), w.page.form.clone()));
+            for ask in &asks {
+                let req = AgentRequest {
+                    device: "/a/pad".into(),
+                    ask: ask.clone(),
+                    done: None,
+                };
+                w.agent(req, text, forms).unwrap();
+                pages.push((format!("{ask:?}"), w.page.form.clone()));
+            }
+            let finished = [
+                None,
+                Some(Ok("Host is down".to_string())),
+                Some(Err("Authentication Failed".to_string())),
+            ];
+            for how in finished {
+                let mut w = AddWizard::new(text, forms);
+                w.target = Some(dev("/a/pad", Some("Pad"), false, Some(-50)));
+                w.step = Step::Pairing;
+                match &how {
+                    None => w.paired("/a/pad", None, text, forms),
+                    Some(Ok(e)) => w.paired("/a/pad", Some(e.clone()), text, forms),
+                    Some(Err(e)) => w.pair_failed("/a/pad", e.clone(), text, forms),
+                }
+                pages.push((format!("finish {how:?}"), w.page.form.clone()));
+            }
+            pages
+        });
+        assert!(over.is_empty(), "{}", over.join("\n"));
+    }
+
     #[test]
     fn welcome_next_waits_for_the_check() {
         let t = t();

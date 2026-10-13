@@ -266,6 +266,16 @@ mod tests {
         PropsSheet::new(&cans(), Canvas::new(32, 32))
     }
 
+    /// The sheet fits its text under every interface and text size.
+    #[test]
+    fn the_sheet_fits_its_text() {
+        let over = reprisekit::interfaces::form_overflows(|_, _, _| {
+            let s = sheet().sheet;
+            s.tabs.labels.into_iter().zip(s.pages).collect()
+        });
+        assert!(over.is_empty(), "{}", over.join("\n"));
+    }
+
     #[test]
     fn the_rows_show_type_address_status_and_battery() {
         let p = sheet();

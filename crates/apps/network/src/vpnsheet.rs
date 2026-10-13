@@ -681,6 +681,23 @@ mod tests {
         }
     }
 
+    /// Both sheets fit their text under every interface and text size.
+    #[test]
+    fn the_sheets_fit_their_text() {
+        let over = reprisekit::interfaces::form_overflows(|_, _, _| {
+            let wg = WgSheet::new(&cfg(), None).sheet.pages;
+            let plugin = PluginSheet::new("/Settings/3", "Work", "openvpn", &[])
+                .sheet
+                .pages;
+            TABS.iter()
+                .map(|t| t.to_string())
+                .zip(wg)
+                .chain(plugin.into_iter().map(|p| ("plugin".into(), p)))
+                .collect()
+        });
+        assert!(over.is_empty(), "{}", over.join("\n"));
+    }
+
     #[test]
     fn empty_stored_key_fields_say_they_keep_the_saved_key() {
         let s = WgSheet::new(&kept(), Some("/Settings/4".into()));

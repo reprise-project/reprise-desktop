@@ -220,7 +220,7 @@ pub fn advanced(icon: Option<Canvas>) -> Form {
             27,
             79,
             330,
-            &["These settings control how the tone of your audio sounds."],
+            &["These settings control the tone of your audio."],
         ),
         Item::label_at("bass_label", 27, 102, 40, "&Bass:"),
         greyed("bass_low", 117, 102, 30, "Low"),
@@ -292,6 +292,21 @@ mod tests {
             Control::ListBox { list, .. } => (list.items.clone(), list.checks.clone()),
             _ => unreachable!(),
         }
+    }
+
+    /// Properties and Advanced Controls fit their text under every interface and text size.
+    #[test]
+    fn the_dialogs_fit_their_text() {
+        let over = reprisekit::interfaces::form_overflows(|_, _, _| {
+            vec![
+                (
+                    "properties".into(),
+                    Props::new(&snap(), &Options::new(View::Playback)).form,
+                ),
+                ("advanced".into(), advanced(None)),
+            ]
+        });
+        assert!(over.is_empty(), "{}", over.join("\n"));
     }
 
     #[test]

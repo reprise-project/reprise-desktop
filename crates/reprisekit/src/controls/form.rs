@@ -1073,6 +1073,13 @@ impl Form {
                             need: widest.map_or(0, |w| w + inset),
                         }
                     }
+                    Control::UpDown(ud) if ud.buddy => {
+                        let edit = updown::layout_for(ud, r, &cm, u).edit;
+                        let widest = [ud.min, ud.max].map(|v| measure(&v.to_string()));
+                        fit::Kind::Stretch {
+                            need: widest.into_iter().max().unwrap_or(0) + r.width - edit.width,
+                        }
+                    }
                     Control::Edit { .. }
                     | Control::ListBox { .. }
                     | Control::Tree(_)
@@ -1121,7 +1128,8 @@ impl Form {
     /// [`Form::lay_out_notes`] have laid them out at 1x, with how many px it runs over: a label
     /// or a combo's widest value wider than its rect, a check box's or radio's label running
     /// into the next control on its row or past its group box, and a note that wraps to more
-    /// rows than it was built with, even where it flows and pushes the page down.
+    /// rows than it was built with, even where it flows and pushes the page down, or keeps a
+    /// line wider than its rect (a word too long to wrap).
     pub fn overflows(&self, text: &TextRenderer, px: u32) -> Vec<(&'static str, i32)> {
         self.fit_text(text, px);
         self.lay_out_notes(text, 1, px);
@@ -1147,9 +1155,11 @@ impl Form {
                     lr.right() - fit::limit(&rects, &kinds, i, pad)
                 }
                 (Control::Lines(lines), _) => {
-                    let rows = note_lines(text, lines, r.width, px).len();
+                    let shown = note_lines(text, lines, r.width, px);
                     let room = (it.rect.height / LINE_H) as usize;
-                    u.len(rows.saturating_sub(room) as i32 * LINE_H)
+                    let rows = u.len(shown.len().saturating_sub(room) as i32 * LINE_H);
+                    let widest = shown.iter().map(|l| text.measure(l, false, px)).max();
+                    rows.max(widest.unwrap_or(0) - r.width)
                 }
                 _ => 0,
             };
@@ -4254,6 +4264,20 @@ mod tests {
         assert_eq!(f.rect("note"), Some(Rect::new(10, 4, 100, 2 * LINE_H)));
         assert_eq!(f.rect("e"), Some(Rect::new(87, 20 + LINE_H, 67, 20)));
         assert_eq!(f.overflows(&text, 11), vec![("note", LINE_H)]);
+    }
+
+    /// A note line with a word wider than its rect runs over by the word's excess, though it
+    /// wraps to no more rows.
+    #[test]
+    fn a_note_word_wider_than_its_rect_overflows() {
+        let text = TextRenderer::stub(11, |_| 8);
+        let f = Form::new(vec![Item::lines(
+            "note",
+            Rect::new(10, 4, 100, 2 * LINE_H),
+            &["aaaaaaaaaaaaaa b"],
+        )]);
+        f.drawn_with(&Theme::default().paint());
+        assert_eq!(f.overflows(&text, 11), vec![("note", 14 * 8 - 100)]);
     }
 
     /// A form set in the second dialog font draws its items in it; the

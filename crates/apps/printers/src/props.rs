@@ -570,6 +570,33 @@ mod tests {
         p.read(id);
     }
 
+    /// Every page fits its text under every interface and text size, Device Settings while
+    /// reading, filled in and failed.
+    #[test]
+    fn every_page_fits_its_text() {
+        let over = reprisekit::interfaces::form_overflows(|_, _, _| {
+            let mut p = PropsSheet::new(&laser(), None);
+            let reading = p.sheet.pages[DEVICE].clone();
+            let mut o = options();
+            o.color = Setting {
+                choices: vec!["monochrome".into(), "color".into()],
+                default: Some("color".into()),
+            };
+            p.set_options(o, &laser());
+            let mut failed = PropsSheet::new(&laser(), None);
+            failed.options_failed("The printer did not answer.");
+            let mut pages: Vec<(String, Form)> = TABS
+                .iter()
+                .map(|t| t.to_string())
+                .zip(p.sheet.pages)
+                .collect();
+            pages.push(("reading".into(), reading));
+            pages.push(("failed".into(), failed.sheet.pages.swap_remove(DEVICE)));
+            pages
+        });
+        assert!(over.is_empty(), "{}", over.join("\n"));
+    }
+
     #[test]
     fn the_fields_open_on_the_printer_and_apply_starts_greyed() {
         let p = PropsSheet::new(&laser(), None);
