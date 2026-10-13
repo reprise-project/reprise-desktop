@@ -303,7 +303,7 @@ impl State {
             return false;
         };
         let theme = &self.config.theme;
-        let lay = desktop::edit_layout(theme, &self.text, edit);
+        let lay = desktop::edit_layout(theme, &self.text, edit, desktop::CELL);
         let (x, y) = (lx as i32 - cell.x, ly as i32 - cell.y);
         if !lay.rect.contains(x, y) {
             self.commit_rename();
@@ -344,7 +344,7 @@ impl State {
             return;
         };
         let theme = &self.config.theme;
-        let lay = desktop::edit_layout(theme, &self.text, edit);
+        let lay = desktop::edit_layout(theme, &self.text, edit, desktop::CELL);
         let i = lay.index_at(
             &self.text,
             theme.fonts.size_px,
