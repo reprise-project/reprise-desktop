@@ -297,8 +297,11 @@ are.
   menus, captions, Notepad and your GTK and Qt programs grow with it.
 - **StickyKeys and SlowKeys,** offered when you press Shift five times or
   hold the right Shift for eight seconds.
-- **MouseKeys:** the keypad moves the pointer, clicks and drags. Left
-  Alt+Left Shift+Num Lock turns it on.
+- **MouseKeys:** the keypad moves the pointer, clicks and drags; hold Ctrl
+  to go faster or Shift to creep a pixel at a time. Left Alt+Left Shift+Num
+  Lock turns it on and off, with a balloon saying which.
+- Clicking the StickyKeys or MouseKeys icon in the notification area opens
+  its settings.
 
 ## Hardware and network
 

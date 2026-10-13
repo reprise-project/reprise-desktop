@@ -20,6 +20,15 @@ use crate::config::AccessibilityConfig;
 use crate::keyroute::{KeyPress, modifier_key};
 use crate::keys::*;
 
+/// The argv that opens Settings on the StickyKeys group.
+pub const SETTINGS_ARGV: [&str; 5] = [
+    "reprise-settings",
+    "--page",
+    "accessibility",
+    "--focus",
+    "sticky_keys",
+];
+
 /// Shift presses in a row that make the StickyKeys shortcut.
 const SHIFT_PRESSES: u32 = 5;
 /// The longest gap between two of them, in ms.
@@ -524,6 +533,9 @@ impl State {
                 log::info!("{} turned off from the keyboard", aid.name());
                 self.store_aid(aid, false);
                 self.mousekeys_configured();
+                if aid == Aid::MouseKeys {
+                    self.mousekeys_switched(false);
+                }
             }
             None => {}
         }

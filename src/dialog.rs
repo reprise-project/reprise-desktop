@@ -2224,7 +2224,10 @@ impl Dialog {
                 button("&No", DialogAction::Cancel, false),
                 button(
                     "&Settings...",
-                    DialogAction::Spawn("reprise-settings --page accessibility".into()),
+                    DialogAction::Spawn(format!(
+                        "reprise-settings --page accessibility --focus {}",
+                        aid.key()
+                    )),
                     false,
                 ),
             ],
@@ -9291,7 +9294,10 @@ mod tests {
             assert_eq!(d.press(1), Outcome::Close);
             assert_eq!(
                 d.press(2),
-                Outcome::Spawn("reprise-settings --page accessibility".into())
+                Outcome::Spawn(format!(
+                    "reprise-settings --page accessibility --focus {}",
+                    aid.key()
+                ))
             );
         }
     }

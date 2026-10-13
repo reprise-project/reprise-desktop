@@ -1,6 +1,7 @@
 //! MouseKeys (`[accessibility] mouse_keys`): the numeric keypad drives the
 //! pointer. [`MouseKeys`] is the pure model (keys and ticks in, moves and
 //! presses out); the host below it runs it and ticks it while a direction key is down.
+//! Ctrl held speeds the glide up and Shift slows it to a crawl.
 
 use std::time::Duration;
 
@@ -39,6 +40,38 @@ pub mod code {
 const GLIDE_AFTER_MS: u64 = 300;
 const START_SPEED: f64 = 30.0;
 const TICK_MS: u64 = 10;
+/// Ctrl multiplies the top speed by this, with no acceleration.
+const FAST_FACTOR: f64 = 2.0;
+/// Shift's glide in pixels a second: one pixel every 50 ms.
+const CRAWL_SPEED: f64 = 20.0;
+
+/// The argv that opens Settings on the MouseKeys group.
+pub const SETTINGS_ARGV: [&str; 5] = [
+    "reprise-settings",
+    "--page",
+    "accessibility",
+    "--focus",
+    "mouse_keys",
+];
+
+/// How fast a held direction key glides, from the modifiers held.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Pace {
+    Normal,
+    Fast,
+    Crawl,
+}
+
+impl Pace {
+    /// Shift wins over Ctrl.
+    pub fn of(ctrl: bool, shift: bool) -> Pace {
+        match (ctrl, shift) {
+            (_, true) => Pace::Crawl,
+            (true, false) => Pace::Fast,
+            (false, false) => Pace::Normal,
+        }
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Action {
@@ -124,10 +157,11 @@ impl MouseKeys {
         self.held
     }
 
-    /// Whether the keypad drives the pointer: on, Num Lock as asked, and no
-    /// modifier held (Alt types a character code, Shift selects).
-    pub fn active(&self, num_lock: bool, modifier_held: bool) -> bool {
-        self.on && (num_lock || !self.num_lock) && !modifier_held
+    /// Whether the keypad drives the pointer: on, Num Lock as asked, and
+    /// neither Alt nor Super held (`alt_or_super`), which pass the keypad
+    /// through. Ctrl and Shift set the [`Pace`] instead.
+    pub fn active(&self, num_lock: bool, alt_or_super: bool) -> bool {
+        self.on && (num_lock || !self.num_lock) && !alt_or_super
     }
 
     pub fn key(&mut self, code: u32, pressed: bool, active: bool, now: u64) -> Option<Vec<Action>> {
@@ -203,7 +237,7 @@ impl MouseKeys {
         start + (top - start) * k
     }
 
-    pub fn tick(&mut self, now: u64) -> (i32, i32) {
+    pub fn tick(&mut self, now: u64, pace: Pace) -> (i32, i32) {
         if self.dirs.is_empty() {
             return (0, 0);
         }
@@ -212,7 +246,11 @@ impl MouseKeys {
         if now <= from {
             return (0, 0);
         }
-        let v = self.speed_at(now - self.since - GLIDE_AFTER_MS);
+        let v = match pace {
+            Pace::Normal => self.speed_at(now - self.since - GLIDE_AFTER_MS),
+            Pace::Fast => self.speed as f64 * FAST_FACTOR,
+            Pace::Crawl => CRAWL_SPEED,
+        };
         let dist = v * (now - from) as f64 / 1000.0;
         let (sx, sy) = self
             .dirs
@@ -252,10 +290,9 @@ impl State {
     }
 
     pub fn mousekeys_key(&mut self, code: u32, pressed: bool, mods: &ModifiersState) -> bool {
-        let modifier = mods.shift || mods.ctrl || mods.alt || mods.logo;
         let now = self.mousekeys_now();
         let mk = &mut self.key_input.mouse_keys.model;
-        let active = mk.active(mods.num_lock, modifier);
+        let active = mk.active(mods.num_lock, mods.alt || mods.logo);
         let before = (mk.pick(), mk.held());
         let Some(acts) = mk.key(code, pressed, active, now) else {
             return true;
@@ -304,7 +341,11 @@ impl State {
             Timer::from_duration(Duration::from_millis(TICK_MS)),
             |_, _, state| {
                 let now = state.mousekeys_now();
-                let (dx, dy) = state.key_input.mouse_keys.model.tick(now);
+                let pace = state.seat.get_keyboard().map_or(Pace::Normal, |k| {
+                    let mods = k.modifier_state();
+                    Pace::of(mods.ctrl, mods.shift)
+                });
+                let (dx, dy) = state.key_input.mouse_keys.model.tick(now, pace);
                 if (dx, dy) != (0, 0) {
                     state.mousekeys_do(vec![Action::Move(dx, dy)]);
                 }
@@ -320,6 +361,31 @@ impl State {
             Ok(t) => self.key_input.mouse_keys.timer = Some(t),
             Err(e) => log::warn!("mouse keys timer: {}", e.error),
         }
+    }
+}
+
+/// The balloon after the shortcut turned MouseKeys on or off: summary and body.
+pub fn switched_notice(on: bool) -> (&'static str, &'static str) {
+    if on {
+        (
+            "MouseKeys is on",
+            "The keypad moves the pointer. Hold Ctrl to go faster or Shift to creep. \
+             Left Alt+left Shift+Num Lock turns it off.",
+        )
+    } else {
+        (
+            "MouseKeys is off",
+            "Left Alt+left Shift+Num Lock turns it on again.",
+        )
+    }
+}
+
+impl State {
+    /// Tell the user the shortcut turned MouseKeys on or off; a click on the balloon opens its settings.
+    pub fn mousekeys_switched(&mut self, on: bool) {
+        let (summary, body) = switched_notice(on);
+        let argv = SETTINGS_ARGV.iter().map(Into::into).collect();
+        crate::notifyview::notice_opening(self, summary, body, argv);
     }
 }
 
@@ -389,12 +455,12 @@ mod tests {
     fn a_held_key_glides_slowly_then_reaches_the_top_speed() {
         let mut m = on();
         press(&mut m, KP6, 0);
-        assert_eq!(m.tick(GLIDE_AFTER_MS), (0, 0));
+        assert_eq!(m.tick(GLIDE_AFTER_MS, Pace::Normal), (0, 0));
         let mut moved = 0;
         let mut t = GLIDE_AFTER_MS;
         while t < GLIDE_AFTER_MS + 1000 {
             t += TICK_MS;
-            moved += m.tick(t).0;
+            moved += m.tick(t, Pace::Normal).0;
         }
         assert!(
             (210..=220).contains(&moved),
@@ -403,7 +469,7 @@ mod tests {
         let mut moved = 0;
         for _ in 0..100 {
             t += TICK_MS;
-            let (dx, dy) = m.tick(t);
+            let (dx, dy) = m.tick(t, Pace::Normal);
             moved += dx;
             assert_eq!(dy, 0);
         }
@@ -421,8 +487,8 @@ mod tests {
         });
         press(&mut m, KP2, 0);
         let t = GLIDE_AFTER_MS;
-        m.tick(t);
-        assert_eq!(m.tick(t + 500), (0, 50));
+        m.tick(t, Pace::Normal);
+        assert_eq!(m.tick(t + 500, Pace::Normal), (0, 50));
     }
 
     #[test]
@@ -434,11 +500,11 @@ mod tests {
             Some(vec![]),
             "the second key adds no step"
         );
-        m.tick(GLIDE_AFTER_MS);
-        let (dx, dy) = m.tick(GLIDE_AFTER_MS + 2000);
+        m.tick(GLIDE_AFTER_MS, Pace::Normal);
+        let (dx, dy) = m.tick(GLIDE_AFTER_MS + 2000, Pace::Normal);
         assert!(dx < 0 && dx == dy, "({dx}, {dy}) runs up and left");
         press(&mut m, KP6, 2400);
-        let (dx, dy) = m.tick(GLIDE_AFTER_MS + 2500);
+        let (dx, dy) = m.tick(GLIDE_AFTER_MS + 2500, Pace::Normal);
         assert_eq!(dx, 0);
         assert!(dy < 0);
     }
@@ -489,6 +555,35 @@ mod tests {
     }
 
     #[test]
+    fn ctrl_glides_at_twice_the_top_speed_at_once_and_shift_crawls_a_pixel_a_step() {
+        assert_eq!(Pace::of(false, false), Pace::Normal);
+        assert_eq!(Pace::of(true, false), Pace::Fast);
+        assert_eq!(Pace::of(true, true), Pace::Crawl, "Shift wins");
+        let mut m = on();
+        press(&mut m, KP6, 0);
+        m.tick(GLIDE_AFTER_MS, Pace::Fast);
+        assert_eq!(
+            m.tick(GLIDE_AFTER_MS + 100, Pace::Fast),
+            (80, 0),
+            "800 px a second from the start, against 400 at the top"
+        );
+        let mut t = GLIDE_AFTER_MS + 100;
+        let mut steps = Vec::new();
+        for _ in 0..20 {
+            t += TICK_MS;
+            steps.push(m.tick(t, Pace::Crawl).0);
+        }
+        assert!(steps.iter().all(|&d| d <= 1), "{steps:?}");
+        assert_eq!(steps.iter().sum::<i32>(), 4, "20 px a second");
+        t += 100;
+        let dx = m.tick(t, Pace::Normal).0;
+        assert!(
+            (17..=18).contains(&dx),
+            "{dx}: letting go of Shift picks the ramp up where it was"
+        );
+    }
+
+    #[test]
     fn num_lock_and_modifiers_decide_whether_the_keypad_drives_the_pointer() {
         let m = on();
         assert!(m.active(true, false));
@@ -498,7 +593,7 @@ mod tests {
         );
         assert!(
             !m.active(true, true),
-            "a held modifier lets the keys through"
+            "a held Alt or Super lets the keys through"
         );
         let mut always = MouseKeys::default();
         always.configure(&AccessibilityConfig {

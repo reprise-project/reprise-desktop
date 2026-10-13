@@ -94,7 +94,8 @@ One window, 23 pages, four headings. Only one runs at a time.
     you'd rather just open `config.toml`.
 
 `reprise-settings --page display` opens on a page: its name in lower case,
-spaces as hyphens and `&` as `and` (`fonts-and-icons`, `start-menu`). A
+spaces as hyphens and `&` as `and` (`fonts-and-icons`, `start-menu`).
+`--focus mouse_keys` puts the keyboard on a control there. A
 display change applies first, then asks whether to keep it, and reverts after
 15 seconds without an answer.
 

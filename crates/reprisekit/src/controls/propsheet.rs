@@ -645,6 +645,14 @@ impl PropSheet {
         self.on_list(|list, lay| list.reveal(open, lay))
     }
 
+    /// Give the keyboard to control `id` on the open page, taking it from the page strip, and
+    /// scroll the control into view.
+    pub fn focus_control(&mut self, id: &str) {
+        self.tabs.focused = false;
+        self.open_mut().focus_id(id);
+        self.reveal_focus();
+    }
+
     pub fn open(&self) -> &Form {
         &self.pages[self.tabs.open]
     }
