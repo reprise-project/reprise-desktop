@@ -818,6 +818,53 @@ fn the_drag_image_stacks_every_dragged_icon() {
     }
 }
 
+/// At a larger text size every mode's image is made of grown icon cells: the dragged cells in the icon modes, the pressed entry's centred on the press in List and Details.
+#[test]
+fn the_drag_image_grows_with_the_text_size() {
+    const EXPECTED_CELL: [(u32, (i32, i32)); 2] = [(150, (116, 95)), (200, (150, 112))];
+    let modes = [
+        Mode::Icons,
+        Mode::Tiles,
+        Mode::Thumbnails,
+        Mode::List,
+        Mode::Details,
+    ];
+    for (pct, (w, h)) in EXPECTED_CELL {
+        for mode in modes {
+            let mut ctx = test_ctx();
+            ctx.theme = reprisekit::theme::Theme::default().with_text_size(pct);
+            let (_dir, mut ex) = explorer(&mut ctx);
+            ex.sv.mode = mode;
+            select(&mut ex, &["a.txt", "Box", "Crate"]);
+            let at = centre(&ex, &ctx, index_of(&ex, "a.txt"));
+            press(&mut ex, &mut ctx, at, BTN_LEFT);
+            let (img, grab) = ex.drag_image(&ctx).expect("an image");
+            let window = Rect::new(at.0 - 128, at.1 - 128, 256, 256);
+            let bounds = if matches!(mode, Mode::List | Mode::Details) {
+                Rect::new(at.0 - w / 2, at.1 - h / 2, w, h)
+            } else {
+                ["a.txt", "Box", "Crate"]
+                    .iter()
+                    .map(|n| cell(&ex, &ctx, index_of(&ex, n)))
+                    .map(|c| Rect::new(c.x, c.y, w, h))
+                    .reduce(|a, b| a.union(&b))
+                    .expect("cells")
+            }
+            .intersect(&window);
+            assert_eq!(
+                (img.width as i32, img.height as i32),
+                (bounds.width, bounds.height),
+                "{mode:?} at {pct}%"
+            );
+            assert_eq!(
+                grab,
+                (at.0 - bounds.x, at.1 - bounds.y),
+                "{mode:?} at {pct}%"
+            );
+        }
+    }
+}
+
 /// The press's selection change is held back over an already selected entry, so dragging one of several carries all.
 #[test]
 fn a_press_on_a_selected_entry_drags_the_whole_selection() {

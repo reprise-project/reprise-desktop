@@ -636,17 +636,20 @@ pub struct Ghost<'a> {
     pub shortcut: bool,
 }
 
-/// The image a drag of several icons carries: every icon drawn unselected,
-/// faded 1:2 and cut to a [`DRAG_IMAGE_MAX`] square centred on `pointer`.
+/// The image a drag of several icons carries: every icon drawn unselected in
+/// a `cell`, faded 1:2 and cut to a [`DRAG_IMAGE_MAX`] square centred on `pointer`.
 /// Returns the image and the pointer's place in it; None when no cell reaches it.
 pub fn drag_image(
     theme: &Theme,
     text: &TextRenderer,
     ghosts: &[Ghost],
+    cell: Cell,
     pointer: (i32, i32),
 ) -> Option<(Canvas, (i32, i32))> {
     let s = theme.scale.max(1);
-    let cells = ghosts.iter().map(|g| Rect::new(g.at.0, g.at.1, CELL, CELL));
+    let cells = ghosts
+        .iter()
+        .map(|g| Rect::new(g.at.0, g.at.1, cell.w, cell.h));
     let bounds = cells.reduce(|a, b| a.union(&b))?;
     let half = DRAG_IMAGE_MAX / 2;
     let window = Rect::new(
@@ -661,23 +664,14 @@ pub fn drag_image(
     }
     let mut c = Canvas::new((r.width * s) as u32, (r.height * s) as u32);
     let reach = |g: &&Ghost| {
-        !Rect::new(g.at.0, g.at.1, CELL, CELL)
+        !Rect::new(g.at.0, g.at.1, cell.w, cell.h)
             .intersect(&r)
             .is_empty()
     };
     for g in ghosts.iter().filter(reach) {
         let pos = ((g.at.0 - r.x) * s, (g.at.1 - r.y) * s);
         draw_cell_at(
-            &mut c,
-            pos,
-            Cell::square(CELL),
-            theme,
-            text,
-            g.name,
-            g.icon,
-            g.shortcut,
-            None,
-            None,
+            &mut c, pos, cell, theme, text, g.name, g.icon, g.shortcut, None, None,
         );
     }
     c.fade(1, 2);
@@ -1394,6 +1388,8 @@ mod tests {
         c
     }
 
+    const DESKTOP: Cell = Cell::square(CELL);
+
     fn holds(img: &Canvas, cell: &Canvas, at: (i32, i32)) -> bool {
         (0..cell.height as i32)
             .all(|y| (0..cell.width as i32).all(|x| img.get(at.0 + x, at.1 + y) == cell.get(x, y)))
@@ -1416,7 +1412,7 @@ mod tests {
                 shortcut: false,
             },
         ];
-        let (img, grab) = drag_image(&theme, &t, &ghosts, (150, 50)).expect("an image");
+        let (img, grab) = drag_image(&theme, &t, &ghosts, DESKTOP, (150, 50)).expect("an image");
         assert_eq!((img.width, img.height), (150, 75));
         assert_eq!(grab, (50, 10));
         assert!(holds(&img, &ghost_cell(&theme, &t, "a.txt"), (0, 0)));
@@ -1436,7 +1432,7 @@ mod tests {
                 shortcut: false,
             })
             .collect();
-        let (img, grab) = drag_image(&theme, &t, &ghosts, (40, 120)).expect("an image");
+        let (img, grab) = drag_image(&theme, &t, &ghosts, DESKTOP, (40, 120)).expect("an image");
         assert_eq!((img.width, img.height), (75, 235));
         assert_eq!(grab, (32, 112));
         for (i, name) in ["one", "two", "three"].iter().enumerate() {
@@ -1447,6 +1443,63 @@ mod tests {
             ));
         }
         assert!((0..75).all(|x| img.get(x, 77) == 0));
+    }
+
+    /// At a larger text size each ghost is the grown cell, its label wrapped in the grown width.
+    #[test]
+    fn a_grown_drag_image_draws_each_ghost_in_the_grown_cell() {
+        const EXPECTED: [(u32, (i32, i32)); 2] = [(150, (116, 95)), (200, (150, 112))];
+        let name = "Holiday photos from the hills";
+        for (pct, size) in EXPECTED {
+            let theme = Theme::default().with_text_size(pct);
+            let t = TextRenderer::load(&theme.fonts);
+            let cell = Cell::grown(theme.text);
+            assert_eq!((cell.w, cell.h), size, "{pct}%");
+            let ghosts = [
+                Ghost {
+                    at: (0, 0),
+                    name,
+                    icon: None,
+                    shortcut: false,
+                },
+                Ghost {
+                    at: (0, cell.h),
+                    name: "Box",
+                    icon: None,
+                    shortcut: true,
+                },
+            ];
+            let pointer = (cell.w / 2, cell.h);
+            let (img, grab) = drag_image(&theme, &t, &ghosts, cell, pointer).expect("an image");
+            assert_eq!((img.width as i32, img.height as i32), (cell.w, 2 * cell.h));
+            assert_eq!(grab, pointer);
+            for (k, g) in ghosts.iter().enumerate() {
+                let mut one = Canvas::new(cell.w as u32, cell.h as u32);
+                draw_cell_at(
+                    &mut one,
+                    (0, 0),
+                    cell,
+                    &theme,
+                    &t,
+                    g.name,
+                    None,
+                    g.shortcut,
+                    None,
+                    None,
+                );
+                one.fade(1, 2);
+                assert!(holds(&img, &one, (0, k as i32 * cell.h)), "{pct}%: {k}");
+            }
+            let label = label_layout(&t, name, theme.fonts.size_px, 1, cell.w);
+            assert!(
+                label.lines.iter().all(|l| l.width <= cell.w - 4),
+                "{pct}%: wrapped in the grown width"
+            );
+            assert!(
+                label.rect.width > CELL,
+                "{pct}%: wider than a desktop cell's label"
+            );
+        }
     }
 
     #[test]
@@ -1460,13 +1513,13 @@ mod tests {
                 shortcut: false,
             })
             .collect();
-        let (img, grab) = drag_image(&theme, &t, &ghosts, (40, 40)).expect("an image");
+        let (img, grab) = drag_image(&theme, &t, &ghosts, DESKTOP, (40, 40)).expect("an image");
         assert_eq!((img.width, img.height), (168, 75));
         assert_eq!(grab, (40, 40));
-        let (img, grab) = drag_image(&theme, &t, &ghosts, (300, 40)).expect("an image");
+        let (img, grab) = drag_image(&theme, &t, &ghosts, DESKTOP, (300, 40)).expect("an image");
         assert_eq!((img.width, img.height), (256, 75));
         assert_eq!(grab, (128, 40));
-        assert!(drag_image(&theme, &t, &ghosts[..1], (1000, 1000)).is_none());
-        assert!(drag_image(&theme, &t, &[], (0, 0)).is_none());
+        assert!(drag_image(&theme, &t, &ghosts[..1], DESKTOP, (1000, 1000)).is_none());
+        assert!(drag_image(&theme, &t, &[], DESKTOP, (0, 0)).is_none());
     }
 }

@@ -271,7 +271,7 @@ impl Explorer {
             Mode::Thumbnails | Mode::Icons => e.icon32.clone(),
             Mode::List | Mode::Details => e.icon.clone(),
         };
-        let half = iconview::CELL / 2;
+        let cell = iconview::Cell::grown(ctx.theme.text);
         let flat = matches!(self.sv.mode, Mode::List | Mode::Details);
         let shown: Vec<(usize, (i32, i32))> = if flat {
             let (ox, oy) = d.origin;
@@ -279,7 +279,7 @@ impl Explorer {
                 shellview::Hit::Entry(i) => i,
                 _ => *d.items.first()?,
             };
-            vec![(pressed, (ox - half, oy - half))]
+            vec![(pressed, (ox - cell.w / 2, oy - cell.h / 2))]
         } else {
             d.items
                 .iter()
@@ -308,7 +308,7 @@ impl Explorer {
         // is swapped the way `shellgrid` swaps it for the same call.
         let mut theme = ctx.theme.clone();
         theme.colors.desktop_text = theme.colors.window_text;
-        iconview::drag_image(&theme, &ctx.text, &ghosts, d.origin)
+        iconview::drag_image(&theme, &ctx.text, &ghosts, cell, d.origin)
     }
 
     pub(crate) fn drag_release(&mut self, x: i32, y: i32, ctx: &mut Ctx) -> Reply {
