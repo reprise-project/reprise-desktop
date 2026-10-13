@@ -1222,7 +1222,7 @@ impl SettingsApp {
     }
 
     fn on_page(&self, r: Rect) -> Rect {
-        pages::on_sheet(&self.sheet, r)
+        self.sheet.on_page(r)
     }
 
     fn side_list(&mut self) -> Option<(&mut ListView, Rect, &mut bool)> {
