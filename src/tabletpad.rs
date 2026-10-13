@@ -47,9 +47,10 @@ pub enum Binding {
 }
 
 impl Binding {
-    /// `s` as a binding: an action name, "mode", or a key chord. Action
-    /// names come first, so "next" is the media action, not the Next key
-    /// (spell that "Page_Down"). None for "" and "none".
+    /// `s` as a binding: an action name, "mode", "spawn:" and a command,
+    /// or a key chord. Action names come first, so "next" is the media
+    /// action, not the Next key (spell that "Page_Down"). None for "" and
+    /// "none".
     pub fn parse(s: &str) -> Result<Option<Binding>, String> {
         let s = s.trim();
         if s.is_empty() || s.eq_ignore_ascii_case("none") {
@@ -57,6 +58,13 @@ impl Binding {
         }
         if s == "mode" {
             return Ok(Some(Binding::Mode));
+        }
+        if let Some(cmd) = s.strip_prefix("spawn:") {
+            let cmd = cmd.trim();
+            if cmd.is_empty() {
+                return Err("spawn: needs a command".into());
+            }
+            return Ok(Some(Binding::Action(Action::Spawn(cmd.into()))));
         }
         if s != "spawn"
             && let Ok(a) = Action::from_parts(s, None)
@@ -519,6 +527,13 @@ mod tests {
             Ok(Some(Binding::Action(Action::Next)))
         );
         assert!(Binding::parse("spawn").is_err(), "spawn needs a command");
+        assert_eq!(
+            Binding::parse("spawn: krita --nosplash"),
+            Ok(Some(Binding::Action(Action::Spawn(
+                "krita --nosplash".into()
+            ))))
+        );
+        assert!(Binding::parse("spawn:").is_err());
         assert!(Binding::parse("ctrl+nosuchkey").is_err());
     }
 
