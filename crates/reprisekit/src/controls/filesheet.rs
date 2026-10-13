@@ -123,6 +123,8 @@ pub enum Row {
         ids: (&'static str, &'static str),
         label: &'static str,
         value: String,
+        /// The value may run onto a second line, inside its row's pitch: a long date.
+        wraps: bool,
     },
     OpensWith {
         name: String,
@@ -144,7 +146,18 @@ fn tick(on: bool) -> CheckState {
 }
 
 pub fn rows(facts: &Facts) -> Vec<Row> {
-    let pair = |ids, label, value: String| Row::Pair { ids, label, value };
+    let pair = |ids, label, value: String| Row::Pair {
+        ids,
+        label,
+        value,
+        wraps: false,
+    };
+    let date = |ids, label, value: String| Row::Pair {
+        ids,
+        label,
+        value,
+        wraps: true,
+    };
     let mut rows = vec![
         Row::Header,
         Row::Separator,
@@ -182,15 +195,15 @@ pub fn rows(facts: &Facts) -> Vec<Row> {
     }
     rows.push(Row::Separator);
     if let Some(created) = &facts.created {
-        rows.push(pair(("l_made", "v_made"), "Created:", created.clone()));
+        rows.push(date(("l_made", "v_made"), "Created:", created.clone()));
     }
     if !facts.is_dir {
-        rows.push(pair(
+        rows.push(date(
             ("l_mod", "v_mod"),
             "Modified:",
             facts.modified.clone(),
         ));
-        rows.push(pair(
+        rows.push(date(
             ("l_acc", "v_acc"),
             "Accessed:",
             facts.accessed.clone(),
@@ -218,6 +231,7 @@ pub fn set_rows(facts: &SetFacts) -> Vec<Row> {
         ids,
         label,
         value: value.clone(),
+        wraps: false,
     };
     vec![
         Row::Count {
@@ -312,15 +326,15 @@ pub fn general_page(
                 ids,
                 label: l,
                 value,
+                wraps,
             } => {
                 items.push(Item::label_at(ids.0, LABEL_X, y, value_x - LABEL_X, l));
-                items.push(Item::label_at(
-                    ids.1,
-                    value_x,
-                    y,
-                    SEP_RIGHT - value_x,
-                    value,
-                ));
+                let w = SEP_RIGHT - value_x;
+                items.push(if *wraps {
+                    Item::lines(ids.1, Rect::new(value_x, y, w, ROW_PITCH), &[value])
+                } else {
+                    Item::label_at(ids.1, value_x, y, w, value)
+                });
                 y += ROW_PITCH;
             }
             Row::OpensWith { name } => {
@@ -1073,10 +1087,14 @@ pub fn change_icon_restore(form: &mut Form) {
     }
 }
 
-fn greyed_lines(items: &mut Vec<Item>, (x, y, w): (i32, i32, i32), lines: &[(&'static str, &str)]) {
-    for (k, (id, line)) in lines.iter().enumerate() {
-        items.push(Item::label_at(id, x, y + k as i32 * LINE_H, w, line).enabled(false));
-    }
+/// A greyed paragraph broken into `lines` at `(x, y)`, `w` wide: it rewraps when a line is wider.
+fn greyed_note(
+    items: &mut Vec<Item>,
+    id: &'static str,
+    (x, y, w): (i32, i32, i32),
+    lines: &[&str],
+) {
+    items.push(Item::lines_at(id, x, y, w, lines).enabled(false));
 }
 
 pub fn no_summary_page() -> Form {
@@ -1116,29 +1134,22 @@ pub fn sharing_page(local: Option<Canvas>, network: Option<Canvas>) -> Form {
         ),
         Item::picture("sh_local", Rect::new(31, 54, ICON_PX, ICON_PX), local),
     ];
-    greyed_lines(
+    greyed_note(
         &mut items,
+        "sh_a0",
         (SHARE_X, 53, SHARE_W),
         &[
-            (
-                "sh_a0",
-                "To share this folder with other users of this computer",
-            ),
-            ("sh_a1", "only, drag it to the Public folder."),
+            "To share this folder with other users of this computer",
+            "only, drag it to the Public folder.",
         ],
     );
-    greyed_lines(
+    greyed_note(
         &mut items,
+        "sh_b0",
         (SHARE_X, 92, SHARE_W),
         &[
-            (
-                "sh_b0",
-                "To make this folder and its subfolders private so that",
-            ),
-            (
-                "sh_b1",
-                "only you have access, select the following check box.",
-            ),
+            "To make this folder and its subfolders private,",
+            "select the following check box.",
         ],
     );
     items.push(Item::check("sh_private", 70, 129, "&Make this folder private").enabled(false));
@@ -1152,36 +1163,30 @@ pub fn sharing_page(local: Option<Canvas>, network: Option<Canvas>) -> Form {
         Rect::new(31, 171, ICON_PX, ICON_PX),
         network,
     ));
-    greyed_lines(
+    greyed_note(
         &mut items,
+        "sh_c0",
         (SHARE_X, 170, SHARE_W),
         &[
-            ("sh_c0", "As a security measure, this computer shares no"),
-            (
-                "sh_c1",
-                "folders on the network. A folder is shared through a",
-            ),
-            (
-                "sh_c2",
-                "file server such as Samba, set up outside Reprise.",
-            ),
+            "This computer shares no folders on the network.",
+            "A file server such as Samba, set up outside",
+            "Reprise, shares folders.",
         ],
     );
-    greyed_lines(
+    greyed_note(
         &mut items,
+        "sh_d0",
         (SHARE_X, 237, SHARE_W),
         &[
-            (
-                "sh_d0",
-                "If you understand the security risks, add this folder",
-            ),
-            ("sh_d1", "to the file server's shares yourself."),
+            "If you understand the security risks, add this folder",
+            "to the file server's shares yourself.",
         ],
     );
-    greyed_lines(
+    greyed_note(
         &mut items,
+        "sh_more",
         (29, 287, 300),
-        &[("sh_more", "Learn more about sharing and security.")],
+        &["Learn more about sharing and security."],
     );
     Form::new(items)
 }
@@ -1192,19 +1197,14 @@ pub fn sharing_page(local: Option<Canvas>, network: Option<Canvas>) -> Form {
 /// nothing maps to them and every box shows no state.
 pub fn compat_page() -> Form {
     let mut items = Vec::new();
-    greyed_lines(
+    greyed_note(
         &mut items,
+        "cp_l0",
         (22, 40, 310),
         &[
-            (
-                "cp_l0",
-                "If you have problems with this program and it worked correctly",
-            ),
-            (
-                "cp_l1",
-                "on an earlier system, select the compatibility mode that",
-            ),
-            ("cp_l2", "matches that earlier system."),
+            "If you have problems with this program and it worked correctly",
+            "on an earlier system, select the compatibility mode that",
+            "matches that earlier system.",
         ],
     );
     items.push(Item::group(
@@ -1252,10 +1252,11 @@ pub fn compat_page() -> Form {
         )
         .enabled(false),
     );
-    greyed_lines(
+    greyed_note(
         &mut items,
+        "cp_more",
         (22, 365, 300),
-        &[("cp_more", "Learn more about program compatibility.")],
+        &["Learn more about program compatibility."],
     );
     Form::new(items)
 }
@@ -1574,7 +1575,7 @@ pub fn advanced_form(
             "{} is ready for &archiving",
             if is_dir { "Folder" } else { "File" }
         ),
-        format!("For fast searching, allow Indexing Service to &index this {what}"),
+        format!("Allow this {what} to be &indexed for fast searching"),
         "&Compress contents to save disk space".to_string(),
         "&Encrypt contents to secure data".to_string(),
     ];
@@ -1751,6 +1752,27 @@ mod tests {
         let comments = page.rect(SUMMARY_IDS[5]).unwrap();
         assert!(comments.x > SUM_COMMENTS.x, "{comments:?}");
         assert_eq!(comments.right(), SUM_COMMENTS.right());
+    }
+
+    #[test]
+    fn a_long_date_wraps_inside_its_row() {
+        let family = "DejaVu Sans";
+        let text = TextRenderer::load(&FontConfig {
+            family: vec![family.into()],
+            ..FontConfig::default()
+        });
+        if !text.has_face(family) {
+            return;
+        }
+        let date = "Wednesday, September 30, 2026, 12:00:00 PM";
+        let mut f = facts(false);
+        f.modified = date.into();
+        let (page, _) = general_page(&rows(&f), "a", None, None);
+        page.drawn_with(&Theme::default().paint());
+        let r = page.rect("v_mod").unwrap();
+        assert!(text.measure(date, false, px()) > r.width);
+        assert_eq!(page.overflows(&text, px()), Vec::new());
+        assert_eq!(page.rect("l_acc").unwrap().y, r.y + ROW_PITCH);
     }
 
     fn facts(is_dir: bool) -> Facts {
@@ -2596,8 +2618,8 @@ mod tests {
         assert_eq!(rect("sh_local"), Rect::new(31, 54, 32, 32));
         assert_eq!(rect("sh_network"), Rect::new(31, 171, 32, 32));
         assert_eq!(
-            ["sh_a0", "sh_a1", "sh_b0", "sh_c0", "sh_c2", "sh_d0"].map(|id| rect(id).y),
-            [53, 66, 92, 170, 196, 237]
+            ["sh_a0", "sh_b0", "sh_c0", "sh_d0"].map(|id| (rect(id).y, rect(id).height)),
+            [(53, 26), (92, 26), (170, 39), (237, 26)]
         );
         assert_eq!(rect("sh_private"), Rect::new(70, 129, 13, 13));
         assert_eq!(p.focus(), None, "nothing on it is live");
@@ -2632,7 +2654,12 @@ mod tests {
             return;
         }
         for it in &p.items {
-            if let Control::Label { text: s, .. } = &it.control {
+            let lines = match &it.control {
+                Control::Label { text: s, .. } => std::slice::from_ref(s),
+                Control::Lines(l) | Control::GreyedLines(l) => l.as_slice(),
+                _ => continue,
+            };
+            for s in lines {
                 let w = t.measure(s, false, px());
                 assert!(
                     w <= it.rect.width,

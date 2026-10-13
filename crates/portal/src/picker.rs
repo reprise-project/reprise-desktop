@@ -349,6 +349,14 @@ mod tests {
     }
 
     #[test]
+    fn the_picker_fits_its_text() {
+        let over = crate::dialog::overflows(|_, _| {
+            build_form(&rows(), Some(1), true, "Chromium", |_| None)
+        });
+        assert!(over.is_empty(), "{}", over.join("\n"));
+    }
+
+    #[test]
     #[ignore]
     fn render_picker() {
         use reprisekit::theme::{FontConfig, Theme};

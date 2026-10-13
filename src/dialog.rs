@@ -9781,6 +9781,190 @@ mod tests {
         }
     }
 
+    /// Every compositor dialog laid out as a form, under each interface, at each text size.
+    fn form_dialogs(theme: &Theme, text: &TextRenderer) -> Vec<Dialog> {
+        use reprisekit::controls::iconlist::IconList;
+        let (px, u) = (theme.fonts.size_px, theme.text);
+        let mut folder = file_info();
+        folder.is_dir = true;
+        folder.opens_with = None;
+        folder.name = "Reports".into();
+        folder.hidden_ext = String::new();
+        folder.path = "/home/u/Desktop/Reports".into();
+        folder.contains = Some((12, 3));
+        let mut launcher = file_info();
+        launcher.name = "Shell".into();
+        launcher.hidden_ext = String::new();
+        launcher.path = "/home/u/Desktop/shell.desktop".into();
+        launcher.is_shortcut = true;
+        launcher.launcher = Some(reprisefs::launcher::Launcher {
+            target: "/bin/sh".into(),
+            ..Default::default()
+        });
+        let bin = crate::binprops::BinSheet::new(
+            reprisefs::bincap::Policy::default(),
+            vec![crate::binprops::Drive {
+                key: "home".into(),
+                label: "Local Disk (/home)".into(),
+                size: 21_365_735_424,
+            }],
+        );
+        let confirm = |write| AttrConfirm {
+            write,
+            attrs: reprisefs::props::AttrMoves {
+                read_only: Some(true),
+                ..Default::default()
+            },
+            close: true,
+        };
+        let one = AttrWrite::One {
+            path: "/d/Reports".into(),
+            name: Some(".Reports".into()),
+            hidden: Some(true),
+            folder_icon: None,
+        };
+        let set = AttrWrite::Set {
+            paths: vec!["/d/a".into(), "/d/Reports".into()],
+            hidden: Some(true),
+            folder_icon: None,
+        };
+        let icons = IconList::new(
+            ["folder", "folder-music"].map(String::from).to_vec(),
+            vec![None, None],
+            None,
+        );
+        let mut ds = vec![
+            Dialog::properties(&file_info(), "text-x-generic", (0, 0)),
+            Dialog::properties(&folder, "folder", (0, 0)),
+            Dialog::properties(&launcher, "utilities-terminal", (0, 0)),
+            Dialog::set_properties(&a_set(), "Reports", (0, 0)),
+            crate::binprops::dialog(bin, (0, 0), "user-trash"),
+            Dialog::change_icon("Reports", "theme", icons, false),
+            Dialog::advanced_attributes(Subject::File, None, text, px, u),
+            Dialog::advanced_attributes(Subject::Folder, None, text, px, u),
+            Dialog::advanced_attributes(Subject::Set { has_dir: true }, None, text, px, u),
+            Dialog::confirm_attributes(confirm(one), text, px, u),
+            Dialog::confirm_attributes(confirm(set), text, px, u),
+        ];
+        // Dates in a long weekday and month, whatever the locale.
+        let date = "Wednesday, September 30, 2026, 12:00:00 PM";
+        for d in &mut ds[..3] {
+            let page = &mut d.form_mut().unwrap().pages_mut()[0];
+            for id in ["v_made", "v_mod", "v_acc"] {
+                page.set_text(id, date);
+            }
+        }
+        ds.iter_mut().for_each(|d| d.fit(theme, text));
+        ds.extend(
+            measured_forms()
+                .iter()
+                .map(|m| opened_measured(m, theme, text)),
+        );
+        ds
+    }
+
+    /// Every compositor dialog drawn from a template or as a Welcome panel.
+    fn template_dialogs() -> Vec<Dialog> {
+        let path = std::path::Path::new("/home/u/Desktop/Quarterly report.txt");
+        let paths: Vec<std::path::PathBuf> = vec!["/d/a".into(), "/d/b".into()];
+        let too_big = reprisefs::bincap::TooBig::new(
+            vec!["/d/big.iso".into()],
+            vec![Some(reprisefs::bincap::Measured::unstamped(2, 1))],
+        );
+        let mut ds = vec![
+            Dialog::run(&history()),
+            Dialog::log_off(),
+            Dialog::turn_off(&power()),
+            Dialog::confirm_delete("Quarterly report.txt", path, false, false, false),
+            Dialog::confirm_delete("Reports", path, true, true, true),
+            Dialog::confirm_delete_many(&paths, false, false),
+            Dialog::confirm_delete_many(&paths, true, true),
+            Dialog::too_big(std::path::Path::new("/d/big.iso"), false, too_big),
+            Dialog::confirm_delete_icons(vec!["computer".into()], paths.clone()),
+            Dialog::end_program("Text Editor", 42),
+            Dialog::error("Run", "Reprise cannot find 'frobnicate'.".into()),
+            Dialog::confirm_empty_bin(3, None),
+            Dialog::confirm_empty_bin(1, Some("Quarterly report.txt")),
+        ];
+        ds.extend(
+            [
+                crate::desktop::Place::Documents,
+                crate::desktop::Place::Computer,
+                crate::desktop::Place::Home,
+            ]
+            .map(|p| Dialog::confirm_hide(p, &p.label())),
+        );
+        ds.extend(
+            [
+                crate::keyfilter::Aid::StickyKeys,
+                crate::keyfilter::Aid::SlowKeys,
+                crate::keyfilter::Aid::MouseKeys,
+            ]
+            .map(Dialog::key_aid_prompt),
+        );
+        ds
+    }
+
+    /// Forms through `Form::overflows`; templates by their lines, field label and push buttons.
+    #[test]
+    fn every_dialog_fits_its_text_under_every_interface() {
+        use reprisekit::interface::Interface;
+        let mut over = Vec::new();
+        for family in ["Tahoma", "DejaVu Sans"] {
+            let text = TextRenderer::load(&FontConfig {
+                family: vec![family.into()],
+                ..FontConfig::default()
+            });
+            if !text.has_face(family) {
+                continue;
+            }
+            for i in [Interface::Classic, Interface::Blue, Interface::Glass] {
+                for pct in [100, 125, 150, 175, 200] {
+                    let theme = reprisekit::interfaces::theme_for(i).with_text_size(pct);
+                    let px = theme.fonts.size_px;
+                    let mut put = |title: &str, what: String| {
+                        over.push(format!("{family}, {}, {pct}%, {title}: {what}", i.as_str()))
+                    };
+                    for d in form_dialogs(&theme, &text) {
+                        for (n, page) in d.form().unwrap().pages().iter().enumerate() {
+                            for (id, by) in page.overflows(&text, px) {
+                                put(&d.title, format!("page {n}, {id} {by} px over"));
+                            }
+                        }
+                    }
+                    for mut d in template_dialogs() {
+                        d.fit(&theme, &text);
+                        let l = DialogLayout::compute(&theme, &text, &d);
+                        let t = text.dialog(d.font());
+                        let width = |s: &str| t.measure(&split_mnemonic(s).0, false, px);
+                        for (r, line) in &l.lines {
+                            if width(line) > r.width {
+                                put(
+                                    &d.title,
+                                    format!("{line:?} {} px over", width(line) - r.width),
+                                );
+                            }
+                        }
+                        if let (Some(f), Some(r)) = (&d.field, l.field_label)
+                            && width(&f.label) > r.width
+                        {
+                            put(&d.title, format!("{:?} over", f.label));
+                        }
+                        if matches!(d.style, Style::Welcome) {
+                            continue;
+                        }
+                        for (b, r) in d.buttons.iter().zip(&l.buttons) {
+                            if width(&b.label) > r.width - theme.text.len(6) {
+                                put(&d.title, format!("{:?} over its button", b.label));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        assert!(over.is_empty(), "{}", over.join("\n"));
+    }
+
     #[test]
     fn run_grows_with_the_text_size() {
         let Some(text) = tahoma() else { return };
