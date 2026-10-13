@@ -153,10 +153,16 @@ impl RunAs {
                     enabled: true,
                 },
             ),
-            Item::label(
+            // A long PAM or helper message runs onto a second line, which ends at the buttons' top.
+            Item::lines(
                 "status",
-                Rect::new(LABEL_X, STATUS_Y + extra, CLIENT.0 - LABEL_X - 16, LINE_H),
-                "",
+                Rect::new(
+                    LABEL_X,
+                    STATUS_Y + extra,
+                    CLIENT.0 - LABEL_X - 16,
+                    2 * LINE_H,
+                ),
+                &[],
             ),
             Item::button(
                 "ok",
@@ -247,7 +253,7 @@ impl RunAs {
     #[cfg(test)]
     pub fn status(&self) -> &str {
         match self.form.item("status").map(|i| &i.control) {
-            Some(Control::Label { text, .. }) => text,
+            Some(Control::Lines(lines)) => lines.first().map_or("", |l| l),
             _ => "",
         }
     }
@@ -352,6 +358,11 @@ mod tests {
             Rect::new(CANCEL_X, BTN_Y, BUTTON_W, BUTTON_H)
         );
         assert_eq!(rect(&d, "cancel").right(), CLIENT.0 - 16);
+        assert_eq!(
+            rect(&d, "status").bottom(),
+            BTN_Y,
+            "two status lines end at the buttons"
+        );
         assert_eq!(rect(&d, "ok").bottom(), CLIENT.1 - 12);
         assert!(matches!(
             &d.form.item("password").unwrap().control,
@@ -504,6 +515,40 @@ mod tests {
         let d = dialog_with(three_lines);
         assert_eq!(d.size, (CLIENT.0, CLIENT.1 + LINE_H));
         assert_eq!(rect(&d, "following").y, FOLLOWING_Y + LINE_H);
+    }
+
+    /// The box fits a long action message wrapped as the host wraps it, several identities
+    /// with a long user name, and each status line the agent shows, under every interface
+    /// and text size.
+    #[test]
+    fn the_box_fits_its_text() {
+        let users: Vec<String> = ["root", "alice", "maintenance-administrator", "backup"]
+            .map(String::from)
+            .into();
+        let message = "Authentication is required to mount Kingston DataTraveler 3.0 \
+            (/dev/sdc1) referenced in the /etc/fstab file as a removable drive";
+        let statuses = [
+            FAILED,
+            "The account is locked due to 3 failed logins.",
+            "(9 minutes left to unlock)",
+            "Place your finger on the fingerprint reader",
+            "Failed to match fingerprint",
+            "The polkit helper could not be started.",
+            "Cannot reach the polkit helper: No such file or directory (os error 2)",
+        ];
+        let over = reprisekit::interfaces::form_overflows(|_, forms, text| {
+            let width = forms.text.len(MSG_W);
+            let lines = reprisekit::text::wrap(text, message, width, forms.fonts.size_px);
+            statuses
+                .iter()
+                .map(|status| {
+                    let mut d = RunAs::new(&lines, &users, 2, None, Some(Canvas::new(16, 16)));
+                    d.set_status(status);
+                    (format!("runas \"{status}\""), d.form)
+                })
+                .collect()
+        });
+        assert!(over.is_empty(), "{}", over.join("\n"));
     }
 
     #[test]
