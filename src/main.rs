@@ -133,6 +133,7 @@ mod mapfocus;
 mod migrate;
 mod osdview;
 mod output;
+mod pickthumbs;
 mod placement;
 mod power;
 mod quicklaunch;
