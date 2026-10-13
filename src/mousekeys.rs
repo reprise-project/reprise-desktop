@@ -45,15 +45,6 @@ const FAST_FACTOR: f64 = 2.0;
 /// Shift's glide in pixels a second: one pixel every 50 ms.
 const CRAWL_SPEED: f64 = 20.0;
 
-/// The argv that opens Settings on the MouseKeys group.
-pub const SETTINGS_ARGV: [&str; 5] = [
-    "reprise-settings",
-    "--page",
-    "accessibility",
-    "--focus",
-    "mouse_keys",
-];
-
 /// How fast a held direction key glides, from the modifiers held.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Pace {
@@ -361,31 +352,6 @@ impl State {
             Ok(t) => self.key_input.mouse_keys.timer = Some(t),
             Err(e) => log::warn!("mouse keys timer: {}", e.error),
         }
-    }
-}
-
-/// The balloon after the shortcut turned MouseKeys on or off: summary and body.
-pub fn switched_notice(on: bool) -> (&'static str, &'static str) {
-    if on {
-        (
-            "MouseKeys is on",
-            "The keypad moves the pointer. Hold Ctrl to go faster or Shift to creep. \
-             Left Alt+left Shift+Num Lock turns it off.",
-        )
-    } else {
-        (
-            "MouseKeys is off",
-            "Left Alt+left Shift+Num Lock turns it on again.",
-        )
-    }
-}
-
-impl State {
-    /// Tell the user the shortcut turned MouseKeys on or off; a click on the balloon opens its settings.
-    pub fn mousekeys_switched(&mut self, on: bool) {
-        let (summary, body) = switched_notice(on);
-        let argv = SETTINGS_ARGV.iter().map(Into::into).collect();
-        crate::notifyview::notice_opening(self, summary, body, argv);
     }
 }
 

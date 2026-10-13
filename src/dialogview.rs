@@ -1782,9 +1782,7 @@ impl State {
             Outcome::TurnOn(aid) => {
                 self.close_dialog();
                 self.set_aid(aid, true);
-                if aid == crate::keyfilter::Aid::MouseKeys {
-                    self.mousekeys_switched(true);
-                }
+                self.aid_switched(aid, true);
             }
             Outcome::TrayChoices(c) => {
                 self.close_dialog();
