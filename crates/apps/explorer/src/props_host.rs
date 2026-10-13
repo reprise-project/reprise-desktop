@@ -845,11 +845,7 @@ impl Explorer {
             return;
         };
         let page = p.general_mut();
-        if let Some(it) = page.item_mut("v_opens")
-            && let Control::Label { text, .. } = &mut it.control
-        {
-            *text = name;
-        }
+        page.set_text("v_opens", &name);
         if let Some(it) = page.item_mut("opens_icon")
             && let Control::Picture { canvas, .. } = &mut it.control
         {

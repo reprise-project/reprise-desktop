@@ -351,12 +351,11 @@ pub fn general_page(
                     app.clone(),
                 ));
                 let change_x = ROW_BUTTON_RIGHT - ROW_BUTTON_W;
-                items.push(Item::label_at(
+                // Change... holds its place: a longer name runs onto a second line beside it.
+                items.push(Item::lines(
                     "v_opens",
-                    APP_NAME_X,
-                    y,
-                    change_x - BUTTON_GAP - APP_NAME_X,
-                    name,
+                    Rect::new(APP_NAME_X, y, change_x - BUTTON_GAP - APP_NAME_X, ROW_PITCH),
+                    &[name],
                 ));
                 items.push(button(
                     CHANGE,
@@ -1773,6 +1772,29 @@ mod tests {
         assert!(text.measure(date, false, px()) > r.width);
         assert_eq!(page.overflows(&text, px()), Vec::new());
         assert_eq!(page.rect("l_acc").unwrap().y, r.y + ROW_PITCH);
+    }
+
+    #[test]
+    fn a_long_program_name_wraps_beside_change() {
+        let name = "Compressed (zipped) Folders";
+        for family in ["Tahoma", "DejaVu Sans"] {
+            let text = TextRenderer::load(&FontConfig {
+                family: vec![family.into()],
+                ..FontConfig::default()
+            });
+            if !text.has_face(family) {
+                continue;
+            }
+            let mut f = facts(false);
+            f.opens_with = Some(name.into());
+            let (page, _) = general_page(&rows(&f), "a", None, None);
+            page.drawn_with(&Theme::default().paint());
+            let r = page.rect("v_opens").unwrap();
+            assert!(text.measure(name, false, px()) > r.width, "{family}");
+            assert_eq!(page.overflows(&text, px()), Vec::new(), "{family}");
+            assert_eq!(page.rect(CHANGE), Some(Rect::new(234, 118, 105, 23)));
+            assert_eq!(page.rect("sep1").unwrap().y, r.y + ROW_PITCH);
+        }
     }
 
     fn facts(is_dir: bool) -> Facts {
