@@ -14,6 +14,7 @@ mod lpwatch;
 mod notifier;
 mod pkhelper;
 mod popup;
+mod ppd;
 mod props;
 mod queue;
 mod tray;

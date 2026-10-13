@@ -10,6 +10,8 @@ const END: u8 = 0x03;
 pub const PRINTER: u8 = 0x04;
 pub const SUBSCRIPTION: u8 = 0x06;
 
+/// The out-of-band value that removes an attribute.
+pub const DELETE_ATTR: u8 = 0x16;
 const INTEGER: u8 = 0x21;
 const BOOLEAN: u8 = 0x22;
 const ENUM: u8 = 0x23;
