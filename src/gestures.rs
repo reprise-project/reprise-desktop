@@ -3,18 +3,18 @@
 //! in (up) or out (down). Other finger counts, pinches and holds go on to the client under the pointer (`pointers`).
 //!
 //! A kept swipe locks to an axis once it has travelled [`LOCK`], then reports its progress along that
-//! axis: the travel over [`DISTANCE`], signed. On lift it commits past [`COMMIT_AT`] of the way or on a
-//! flick of at least [`FLICK`] the way it went, and springs back otherwise; a flick back springs back
-//! from any distance. A cancelled swipe (a finger added or lifted midway) springs back.
+//! axis: the travel over `[gestures] distance`, signed. On lift it commits past `commit_at` percent of
+//! the way or on a flick of at least `flick_speed` the way it went, and springs back otherwise; a flick
+//! back springs back from any distance. A cancelled swipe (a finger added or lifted midway) springs back.
+//!
+//! The units are libinput's swipe units: pixels at 1000 dpi, accelerated, and slowed to about 0.3 of
+//! that on a touchpad.
 
-/// The travel for the whole way, in libinput's swipe units (pixels at 1000 dpi, accelerated, and
-/// slowed to about 0.3 of that on a touchpad): some 3 to 4 cm of finger travel at an even pace.
-pub const DISTANCE: f64 = 400.0;
-pub const COMMIT_AT: f64 = 0.3;
+use crate::config::GesturesConfig;
+
 /// The travel after which a swipe picks its axis: the one it went further along.
 pub const LOCK: f64 = 12.0;
-/// The speed of a flick, in swipe units per millisecond, taken over the last [`FLICK_MS`].
-pub const FLICK: f64 = 0.3;
+/// The flick's speed is taken over this many last milliseconds.
 pub const FLICK_MS: u64 = 100;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -27,6 +27,7 @@ pub enum Axis {
 /// A kept swipe under way: its travel, the axis once locked, and its recent motion along that axis for the flick.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Tracker {
+    tuning: GesturesConfig,
     dx: f64,
     dy: f64,
     axis: Option<Axis>,
@@ -35,6 +36,13 @@ pub struct Tracker {
 }
 
 impl Tracker {
+    pub fn new(tuning: GesturesConfig) -> Self {
+        Tracker {
+            tuning,
+            ..Tracker::default()
+        }
+    }
+
     /// The fingers moved by `(dx, dy)` at `ms`: the axis and the progress along it, or None while no axis is picked.
     pub fn update(&mut self, dx: f64, dy: f64, ms: u64) -> Option<(Axis, f64)> {
         self.dx += dx;
@@ -57,14 +65,14 @@ impl Tracker {
         self.progress()
     }
 
-    /// The axis and the progress along it: the travel over [`DISTANCE`], signed as [`Axis`] says, not clamped.
+    /// The axis and the progress along it: the travel over `distance`, signed as [`Axis`] says, not clamped.
     pub fn progress(&self) -> Option<(Axis, f64)> {
         let axis = self.axis?;
         let travel = match axis {
             Axis::Horizontal => -self.dx,
             Axis::Vertical => -self.dy,
         };
-        Some((axis, travel / DISTANCE))
+        Some((axis, travel / f64::from(self.tuning.distance)))
     }
 
     /// The speed along the axis over the last [`FLICK_MS`] before `ms`, or since the axis was picked if sooner, in the progress's sense.
@@ -87,10 +95,12 @@ impl Tracker {
             return Some((axis, p, false));
         }
         let v = self.speed(ms) * p.signum();
-        let commit = if v <= -FLICK {
+        let flick = f64::from(self.tuning.flick_speed) / 1000.0;
+        let commit_at = f64::from(self.tuning.commit_at) / 100.0;
+        let commit = if v <= -flick {
             false
         } else {
-            v >= FLICK || p.abs() >= COMMIT_AT
+            v >= flick || p.abs() >= commit_at
         };
         Some((axis, p, commit))
     }
@@ -99,6 +109,9 @@ impl Tracker {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const DISTANCE: f64 = 400.0;
+    const COMMIT_AT: f64 = 0.3;
 
     fn swipe(steps: &[(f64, f64)]) -> Tracker {
         let mut t = Tracker::default();
@@ -159,7 +172,7 @@ mod tests {
 
     #[test]
     fn a_flick_commits_from_a_short_distance_and_a_flick_back_springs_back() {
-        // 72 units counted after the lock in the last 100 ms: 0.72 per ms, past FLICK, from 20 % of the way.
+        // 72 units counted after the lock in the last 100 ms: 0.72 per ms, past the flick speed, from 20 % of the way.
         assert_eq!(end(&[(-8.0, 0.0); 10]), Some((Axis::Horizontal, 0.2, true)));
         // 10 units over the 50 ms since the lock: 0.2 per ms, and 5 % of the way.
         assert_eq!(end(&[(-2.0, 0.0); 10]).map(|r| r.2), Some(false));
@@ -179,6 +192,38 @@ mod tests {
         t.update(-80.0, 0.0, 0);
         assert_eq!(t.release(200, false), Some((Axis::Horizontal, 0.2, false)));
         assert_eq!(t.release(50, false).map(|r| r.2), Some(true));
+    }
+
+    #[test]
+    fn the_tuning_sets_the_distance_the_commit_point_and_the_flick() {
+        let tuned = |distance, commit_at, flick_speed| {
+            Tracker::new(GesturesConfig {
+                distance,
+                commit_at,
+                flick_speed,
+                ..GesturesConfig::default()
+            })
+        };
+        let mut t = tuned(800, 30, 300);
+        t.update(-200.0, 0.0, 0);
+        assert_eq!(t.progress(), Some((Axis::Horizontal, 0.25)));
+        assert_eq!(
+            t.release(500, false).map(|r| r.2),
+            Some(false),
+            "short of 30 %"
+        );
+        let mut t = tuned(800, 20, 300);
+        t.update(-200.0, 0.0, 0);
+        assert_eq!(t.release(500, false).map(|r| r.2), Some(true), "past 20 %");
+        // 0.2 units per ms over the last 100 ms, 5 % of the way: a flick only at 200 per second.
+        let steps = [(-2.0, 0.0); 10];
+        for (speed, commits) in [(300, false), (200, true)] {
+            let mut t = tuned(400, 30, speed);
+            for (i, &(dx, dy)) in steps.iter().enumerate() {
+                t.update(dx, dy, i as u64 * 10);
+            }
+            assert_eq!(t.release(100, false).map(|r| r.2), Some(commits), "{speed}");
+        }
     }
 
     #[test]

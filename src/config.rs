@@ -513,6 +513,12 @@ impl HotCorner {
 pub struct GesturesConfig {
     pub enabled: bool,
     pub fingers: u32,
+    /// libinput swipe units for the whole way.
+    pub distance: u32,
+    /// Percent of the way past which a released swipe commits.
+    pub commit_at: u32,
+    /// Swipe units per second that make a release a flick.
+    pub flick_speed: u32,
 }
 
 impl Default for GesturesConfig {
@@ -520,6 +526,9 @@ impl Default for GesturesConfig {
         GesturesConfig {
             enabled: true,
             fingers: 3,
+            distance: 400,
+            commit_at: 30,
+            flick_speed: 300,
         }
     }
 }
@@ -1841,6 +1850,9 @@ struct FileOverview {
 struct FileGestures {
     enabled: Option<bool>,
     fingers: Option<i64>,
+    distance: Option<i64>,
+    commit_at: Option<i64>,
+    flick_speed: Option<i64>,
 }
 
 #[derive(Deserialize, Default)]
@@ -2913,6 +2925,25 @@ impl Config {
                     return Err(format!("gestures.fingers must be 3 or 4, got {n}"));
                 }
                 cfg.gestures.fingers = n as u32;
+            }
+            let ranged =
+                |key: &str, v: Option<i64>, lo: u32, hi: u32| -> Result<Option<u32>, String> {
+                    v.map(|n| {
+                        u32::try_from(n)
+                            .ok()
+                            .filter(|n| (lo..=hi).contains(n))
+                            .ok_or_else(|| format!("gestures.{key} must be {lo} to {hi}, got {n}"))
+                    })
+                    .transpose()
+                };
+            if let Some(n) = ranged("distance", g.distance, 100, 2000)? {
+                cfg.gestures.distance = n;
+            }
+            if let Some(n) = ranged("commit_at", g.commit_at, 5, 95)? {
+                cfg.gestures.commit_at = n;
+            }
+            if let Some(n) = ranged("flick_speed", g.flick_speed, 50, 5000)? {
+                cfg.gestures.flick_speed = n;
             }
         }
         if let Some(c) = file.clipboard {
@@ -4374,6 +4405,30 @@ mod tests {
         let c = Config::parse("[gestures]\nenabled = false\nfingers = 4\n").unwrap();
         assert_eq!((c.gestures.enabled, c.gestures.fingers), (false, 4));
         assert!(Config::parse("[gestures]\nfingers = 2\n").is_err());
+    }
+
+    #[test]
+    fn gesture_tuning_defaults_and_ranges() {
+        let d = Config::default().gestures;
+        assert_eq!((d.distance, d.commit_at, d.flick_speed), (400, 30, 300));
+        let c = Config::parse("[gestures]\ndistance = 600\ncommit_at = 50\nflick_speed = 800\n")
+            .unwrap()
+            .gestures;
+        assert_eq!((c.distance, c.commit_at, c.flick_speed), (600, 50, 800));
+        for bad in [
+            "distance = 99",
+            "distance = 2001",
+            "commit_at = 4",
+            "commit_at = 96",
+            "flick_speed = 49",
+            "flick_speed = 5001",
+            "flick_speed = -1",
+        ] {
+            assert!(
+                Config::parse(&format!("[gestures]\n{bad}\n")).is_err(),
+                "{bad}"
+            );
+        }
     }
 
     #[test]

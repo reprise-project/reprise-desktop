@@ -269,7 +269,10 @@ are.
   rename box takes it at the drop caret; files go into these by name.
 - **Touchpad gestures.** Three fingers switch desktops and open the
   overview. Pinches and swipes with other finger counts go to the program,
-  so a browser can pinch-zoom and swipe back.
+  so a browser can pinch-zoom and swipe back. A lifted swipe runs on to
+  where it was heading, and the overview's grids slide with the desktops.
+  `[gestures]` sets the travel, the point past which a swipe goes through
+  and the speed of a flick.
 - **Touchscreens.** A program that takes touch gets touch; anywhere else a
   finger clicks and drags. Each touchscreen can be mapped to its screen.
 - **Drawing tablets** with pressure, tilt and the pen's buttons. The pad's
