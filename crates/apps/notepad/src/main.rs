@@ -1138,12 +1138,13 @@ impl Notepad {
         repriseapp::about::fields("Notepad", self.app_icon.clone())
     }
 
-    /// Laid out for the 100% font; the banner spans the grown window.
+    /// Laid out for the 100% font; the banner is drawn at the grown size.
     fn about_form(&self) -> Form {
         let (text, px) = (&self.dialog_text, self.dialog_px);
         let mut f = aboutbox::form(&self.about_fields(), text, px);
-        let w = self.forms.text.len(aboutbox::CLIENT.0);
-        f.set_picture("banner", aboutbox::banner_wide(text, px, w));
+        let u = self.forms.text;
+        let w = u.len(aboutbox::CLIENT.0);
+        f.set_picture("banner", aboutbox::banner_wide(text, px, w, u));
         f
     }
 

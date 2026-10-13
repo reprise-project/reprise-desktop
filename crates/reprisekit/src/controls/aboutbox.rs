@@ -44,53 +44,111 @@ const CR_Y: [i32; 2] = [47, 58];
 /// Paint the banner: blue field with highlight, orange bar, copyright lower left, mark and
 /// wordmark right.
 pub fn banner(text: &TextRenderer, px: u32) -> Canvas {
-    banner_wide(text, px, BANNER_W)
+    banner_wide(text, px, BANNER_W, TextUnits::ONE)
 }
 
-/// [`banner`] `w` px wide (at least [`BANNER_W`]): the right-hand falloffs stretch to the new
-/// edge; everything left of the peak stays.
-pub fn banner_wide(text: &TextRenderer, px: u32, w: i32) -> Canvas {
-    let w = w.max(BANNER_W);
-    let mut c = Canvas::new(w as u32, BANNER_H as u32);
-    c.fill_rect(Rect::new(0, 0, FLAT_X, BANNER_H), BASE);
-    c.hgradient(Rect::new(FLAT_X, 0, PEAK_X - FLAT_X, BANNER_H), BASE, PEAK);
-    c.hgradient(Rect::new(PEAK_X, 0, w - PEAK_X, BANNER_H), PEAK, EDGE);
-    let bar_h = BANNER_H - ORANGE_TOP;
+/// [`banner`] for text at `px` (its 100% size) grown by `u`, `w` px wide (at least
+/// [`BANNER_W`] grown): its layout in text units, its text and mark at the grown size. The
+/// right-hand falloffs stretch to the new edge; everything left of the peak stays.
+pub fn banner_wide(text: &TextRenderer, px: u32, w: i32, u: TextUnits) -> Canvas {
+    let w = w.max(u.len(BANNER_W));
+    let h = u.len(BANNER_H);
+    let (flat_x, peak_x, orange_x) = (u.len(FLAT_X), u.len(PEAK_X), u.len(ORANGE_X));
+    let mut c = Canvas::new(w as u32, h as u32);
+    c.fill_rect(Rect::new(0, 0, flat_x, h), BASE);
+    c.hgradient(Rect::new(flat_x, 0, peak_x - flat_x, h), BASE, PEAK);
+    c.hgradient(Rect::new(peak_x, 0, w - peak_x, h), PEAK, EDGE);
+    let bar = u.rect(Rect::new(0, ORANGE_TOP, 0, BANNER_H - ORANGE_TOP));
     c.hgradient(
-        Rect::new(0, ORANGE_TOP, ORANGE_X + 1, bar_h),
+        Rect::new(0, bar.y, orange_x + 1, bar.height),
         BAR_LEFT,
         ORANGE,
     );
     c.hgradient(
-        Rect::new(ORANGE_X, ORANGE_TOP, w - ORANGE_X, bar_h),
+        Rect::new(orange_x, bar.y, w - orange_x, bar.height),
         ORANGE,
         BAR_RIGHT,
     );
-    // Copyright, light on blue, two lines split on the newline.
+    // Copyright, light on blue, two lines split on the newline. Its baselines keep their grown
+    // distance above the bar, so the descenders clear it at every size.
     let white = Color::rgb(255, 255, 255);
     for (i, line) in BANNER_COPYRIGHT.lines().take(2).enumerate() {
-        let r = Rect::new(CR_X, CR_Y[i], w - CR_X, px as i32 + 4);
-        text.draw(&mut c, r, line, false, white, Align::Left, px);
+        let r = Rect::new(CR_X, CR_Y[i], 0, px as i32 + 4);
+        let r = grown_text(text, r, false, px, u, |b| bar.y - u.len(ORANGE_TOP - b));
+        let r = Rect {
+            width: w - r.x,
+            ..r
+        };
+        text.draw(&mut c, r, line, false, white, Align::Left, u.px(px));
     }
-    let mark = Rect::new(PEAK_X - 120, 24, w - (PEAK_X - 120) - 12, 28);
-    text.draw(&mut c, mark, BANNER_MARK, true, white, Align::Right, px * 2);
-    // The mark before it, its foot on the wordmark's last inked row; the 24 px drawing inks
-    // rows and columns 1..=22.
-    let left = mark.right() - text.measure(BANNER_MARK, true, px * 2);
-    let foot = text
-        .baseline(mark, true, px * 2)
-        .map_or(mark.bottom(), |b| b - 1);
-    logo_at(
+    let mark = Rect::new(PEAK_X - 120, 24, 0, 28);
+    let mark = grown_text(text, mark, true, px * 2, u, |b| u.len(b));
+    let mark = Rect {
+        width: w - mark.x - u.len(12),
+        ..mark
+    };
+    let mark_px = u.px(px * 2);
+    text.draw(
         &mut c,
-        left - BANNER_LOGO_GAP - (BANNER_LOGO - 1),
-        foot - (BANNER_LOGO - 2),
+        mark,
+        BANNER_MARK,
+        true,
+        white,
+        Align::Right,
+        mark_px,
+    );
+    // The logo before it, its last solid column the gap before the wordmark and its
+    // last solid row on the wordmark's last inked row.
+    let left = mark.right() - text.measure(BANNER_MARK, true, mark_px);
+    let foot = text
+        .baseline(mark, true, mark_px)
+        .map_or(mark.bottom(), |b| b - 1);
+    let n = u.len(BANNER_LOGO);
+    let (right, bottom) = solid_extent(n);
+    crate::art::logo::draw_any(
+        &mut c,
+        left - u.len(BANNER_LOGO_GAP) - 1 - right,
+        foot - bottom,
+        n,
         white,
     );
     c
 }
 
-fn logo_at(c: &mut Canvas, x: i32, y: i32, ink: Color) {
-    crate::art::logo::draw(c, x, y, BANNER_LOGO, ink);
+/// `r`, a 100% rect for text at `px`, grown by `u` and moved so the grown text's baseline lands on
+/// `to` of the 100% baseline: a font's ascent and descent do not grow in step with its px.
+fn grown_text(
+    text: &TextRenderer,
+    r: Rect,
+    bold: bool,
+    px: u32,
+    u: TextUnits,
+    to: impl Fn(i32) -> i32,
+) -> Rect {
+    let g = u.rect(r);
+    match (text.baseline(r, bold, px), text.baseline(g, bold, u.px(px))) {
+        (Some(at), Some(grown)) => Rect {
+            y: g.y + to(at) - grown,
+            ..g
+        },
+        _ => g,
+    }
+}
+
+/// The last column and row where the `n` px logo is at least half covered.
+fn solid_extent(n: i32) -> (i32, i32) {
+    let m = crate::art::logo::coverage_any(n as usize);
+    let solid = |i: usize| m[i] >= 128;
+    let n = n as usize;
+    let right = (0..n)
+        .rev()
+        .find(|&x| (0..n).any(|y| solid(y * n + x)))
+        .unwrap_or(0);
+    let bottom = (0..n)
+        .rev()
+        .find(|&y| (0..n).any(|x| solid(y * n + x)))
+        .unwrap_or(0);
+    (right as i32, bottom as i32)
 }
 
 const TEXT_X: i32 = 53;
@@ -276,7 +334,7 @@ pub fn system_form(s: &System, text: &TextRenderer, px: u32, u: TextUnits) -> Fo
     let mut items = vec![Item::picture(
         "banner",
         Rect::new(0, BANNER_Y, w, BANNER_H),
-        Some(banner_wide(text, px, u.len(w))),
+        Some(banner_wide(text, px, u.len(w), u)),
     )];
     if let Some(logo) = &s.logo {
         items.push(Item::picture(
@@ -737,8 +795,167 @@ mod tests {
     #[test]
     fn the_wide_banner_at_413_is_the_banner() {
         let text = TextRenderer::load(&FontConfig::default());
-        assert_eq!(banner_wide(&text, 11, BANNER_W), banner(&text, 11));
-        assert_eq!(banner_wide(&text, 11, 200).width, BANNER_W as u32);
+        assert_eq!(
+            banner_wide(&text, 11, BANNER_W, TextUnits::ONE),
+            banner(&text, 11)
+        );
+        assert_eq!(
+            banner_wide(&text, 11, 200, TextUnits::ONE).width,
+            BANNER_W as u32
+        );
+    }
+
+    /// The 24 px logo is solid through row and column 22, which puts it where the 100% banner
+    /// keeps it.
+    #[test]
+    fn the_24_px_logo_is_solid_through_22() {
+        assert_eq!(solid_extent(24), (22, 22));
+    }
+
+    /// At 150% and 200% the banner is the system view's grown width and its grown height, and
+    /// its bar, gradient anchors and copyright margin sit at their grown places.
+    #[test]
+    fn the_banner_grows_with_the_text_size() {
+        const WHITE: u32 = 0xFFFF_FFFF;
+        let text = TextRenderer::load(&FontConfig::default());
+        for (pct, size, bar_top) in [(150, (773, 119), 111), (200, (1000, 154), 144)] {
+            let u = Theme::default().with_form_text(pct).text;
+            let c = banner_wide(&text, 11, u.len(SYSTEM_W), u);
+            assert_eq!((c.width as i32, c.height as i32), size, "{pct}%");
+            let (w, h) = size;
+            for y in bar_top..h {
+                assert_eq!(c.get(0, y), BAR_LEFT.argb(), "{pct}%: bar row {y} at x0");
+                assert_eq!(c.get(u.len(ORANGE_X), y), ORANGE.argb(), "{pct}%: plateau");
+                assert_eq!(
+                    c.get(w - 1, y),
+                    BAR_RIGHT.argb(),
+                    "{pct}%: bar row {y} at the edge"
+                );
+            }
+            assert_eq!(
+                c.get(0, bar_top - 1),
+                BASE.argb(),
+                "{pct}%: field over the bar"
+            );
+            assert_eq!(c.get(u.len(PEAK_X), 5), PEAK.argb(), "{pct}%: peak");
+            assert_eq!(c.get(w - 1, 5), EDGE.argb(), "{pct}%: edge");
+            for x in 0..u.len(CR_X) {
+                for y in 0..bar_top {
+                    assert_ne!(c.get(x, y), WHITE, "{pct}%: margin clear at ({x}, {y})");
+                }
+            }
+            for x in 0..w {
+                for y in bar_top..h {
+                    assert_ne!(
+                        c.get(x, y),
+                        WHITE,
+                        "{pct}%: no ink on the bar at ({x}, {y})"
+                    );
+                }
+            }
+        }
+    }
+
+    /// At every text size the logo is drawn at the grown size, its last solid row on the
+    /// wordmark's last inked row and its last solid column the grown gap clear of the
+    /// wordmark's ink; the wordmark keeps its grown right margin.
+    #[test]
+    fn the_mark_and_wordmark_grow_together() {
+        let text = TextRenderer::load(&FontConfig::default());
+        let white = Color::rgb(255, 255, 255);
+        for (pct, logo) in [(100, 24), (125, 31), (150, 37), (175, 41), (200, 48)] {
+            let u = Theme::default().with_form_text(pct).text;
+            let c = banner_wide(&text, 11, u.len(SYSTEM_W), u);
+            let w = c.width as i32;
+            assert_eq!(u.len(BANNER_LOGO), logo, "{pct}%");
+            let mark_px = u.px(22);
+            let mark = Rect::new(PEAK_X - 120, 24, 0, 28);
+            let mark = grown_text(&text, mark, true, 22, u, |b| u.len(b));
+            let mark = Rect {
+                width: w - mark.x - u.len(12),
+                ..mark
+            };
+            let left = mark.right() - text.measure(BANNER_MARK, true, mark_px);
+            let foot = text.baseline(mark, true, mark_px).unwrap() - 1;
+            let (right, bottom) = solid_extent(logo);
+            let (x, y) = (left - u.len(BANNER_LOGO_GAP) - 1 - right, foot - bottom);
+            crate::art::logo::assert_any_drawn(&c, x, y, logo, white);
+            let white = white.argb();
+            let inked = |x: i32| (0..c.height as i32).any(|y| c.get(x, y) == white);
+            let last = (0..w).rev().find(|&x| inked(x)).expect("the wordmark inks");
+            assert!(last < w - u.len(12), "{pct}%: wordmark ends at {last}");
+            assert!(
+                !(x + right + 1..left).any(inked),
+                "{pct}%: the gap between logo and wordmark is clear"
+            );
+            let last_row = |cols: std::ops::Range<i32>| {
+                (0..c.height as i32)
+                    .rev()
+                    .find(|&y| cols.clone().any(|x| c.get(x, y) == white))
+            };
+            let r_w = text.advance('R', true, mark_px);
+            assert_eq!(
+                last_row(left..left + r_w),
+                Some(foot),
+                "{pct}%: the R's foot"
+            );
+        }
+    }
+
+    /// The copyright's first and last inked rows at each text size: its baselines grow with the
+    /// text, and its descenders stay clear of the bar.
+    #[test]
+    fn the_copyright_ink_grows_with_the_text_size() {
+        if !crate::text::test_tahoma() {
+            return;
+        }
+        let text = TextRenderer::load(&FontConfig::default());
+        let white = Color::rgb(255, 255, 255).argb();
+        for (pct, span) in [(100, (49, 70)), (150, (75, 109)), (200, (100, 141))] {
+            let u = Theme::default().with_form_text(pct).text;
+            let c = banner_wide(&text, 11, u.len(SYSTEM_W), u);
+            let inked = |y: i32| (0..u.len(FLAT_X)).any(|x| c.get(x, y) == white);
+            let rows: Vec<i32> = (0..c.height as i32).filter(|&y| inked(y)).collect();
+            assert_eq!(
+                (rows[0], rows[rows.len() - 1]),
+                span,
+                "{pct}%: copyright ink rows"
+            );
+            assert!(
+                span.1 < u.len(ORANGE_TOP) - 1,
+                "{pct}%: a row clear above the bar"
+            );
+        }
+    }
+
+    /// The banner fills the window's width at every text size and ends above the table.
+    #[test]
+    fn the_banner_fits_the_window_at_every_text_size() {
+        let text = TextRenderer::load(&FontConfig::default());
+        for pct in [100, 125, 150, 175, 200] {
+            let theme = Theme::default().with_form_text(pct);
+            let u = theme.text;
+            let built = system_form(&system_sample(), &text, 11, u);
+            let (w, _) = u.size(system_size(&system_sample()));
+            let item = built.item("banner").expect("banner");
+            let Control::Picture {
+                canvas: Some(pic), ..
+            } = &item.control
+            else {
+                panic!("the banner is a picture");
+            };
+            let at = u.at(item.rect);
+            assert_eq!(
+                (at.x, pic.width as i32),
+                (0, w),
+                "{pct}%: as wide as the window"
+            );
+            let table = u.rect(built.item("group0").expect("group0").rect).y;
+            assert!(
+                at.y + pic.height as i32 <= table,
+                "{pct}%: the banner ends above the table"
+            );
+        }
     }
 
     /// Three groups of 2, 1 and 3 lines, a 64 px one-colour logo, and a line too long for its
