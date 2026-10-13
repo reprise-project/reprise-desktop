@@ -104,7 +104,7 @@ struct Listing {
 }
 
 /// Entries wear Explorer's icons at every size and its Tiles lines; a picture's thumbnail
-/// arrives later ([`Host::show_thumbnails`]).
+/// arrives later ([`take_thumbs`]).
 fn listing_raw(
     folders: &mut FolderTable,
     id: FolderId,
@@ -187,6 +187,27 @@ fn listing_raw(
     })
 }
 
+/// Starts thumbnails for the file dialog in window `win` ([`crate::App::drop_file_dialog`]):
+/// the repriseapp host calls it before each event, so no program wires them up.
+pub(crate) fn thumbs_on(app: &mut dyn crate::App, win: crate::WinId, wake: &crate::Waker) {
+    if let Some(f) = app.drop_file_dialog(win) {
+        f.host.thumbs_on(wake);
+    }
+}
+
+/// Hands the file dialogs in `wins` the thumbnails that arrived: the windows that show one.
+pub(crate) fn take_thumbs(
+    app: &mut dyn crate::App,
+    wins: impl IntoIterator<Item = crate::WinId>,
+) -> Vec<crate::WinId> {
+    wins.into_iter()
+        .filter(|&win| {
+            app.drop_file_dialog(win)
+                .is_some_and(|f| f.host.take_thumbs(f.dlg))
+        })
+        .collect()
+}
+
 pub fn type_keep(dlg: &FileDlg) -> impl Fn(&Item) -> bool + 'static {
     let pattern = dlg.picked_pattern();
     move |i| {
@@ -246,14 +267,17 @@ impl Host {
         dlg
     }
 
-    /// Decodes the listed pictures' thumbnails off the loop for Thumbnails and Tiles; `wake`
-    /// fires as they arrive and the host's `Event::Wake` through [`Host::event`] shows them.
-    pub fn show_thumbnails(&mut self, wake: crate::Waker) {
+    /// Starts the worker that decodes the listed pictures for Thumbnails and Tiles, once; `wake`
+    /// fires as they arrive and [`Host::take_thumbs`] shows them.
+    fn thumbs_on(&mut self, wake: &crate::Waker) {
+        if self.thumbs.is_some() {
+            return;
+        }
         self.thumbs = Some(Thumbs::new(
             std::sync::Arc::new(crate::decode::Decoders::default_set()),
             thumbs::FRAME_INNER,
             thumbs::open_cache(thumbs::CACHE_BYTES),
-            wake,
+            wake.clone(),
         ));
     }
 
@@ -334,12 +358,6 @@ impl Host {
         let out = match ev {
             Event::CloseRequest => return Step::Closed,
             Event::Blink => return Step::Redraw,
-            Event::Wake => {
-                return match self.take_thumbs(dlg) {
-                    true => Step::Redraw,
-                    false => Step::None,
-                };
-            }
             Event::Resized => {
                 dlg.set_size(size);
                 return Step::Redraw;
@@ -1092,14 +1110,10 @@ mod tests {
         h.ask_thumbs(dlg);
     }
 
-    /// Wakes the host until the worker's thumbnails are in.
+    /// Takes thumbnails until the worker's are in.
     fn settle_thumbs(h: &mut Host, dlg: &mut FileDlg) {
-        let text = TextRenderer::load(&reprisekit::theme::FontConfig::default());
         for _ in 0..500 {
-            if matches!(
-                h.event(dlg, &Event::Wake, &text, 11, CLIENT, &Metrics::default()),
-                Step::Redraw
-            ) {
+            if h.take_thumbs(dlg) {
                 return;
             }
             std::thread::sleep(std::time::Duration::from_millis(10));
@@ -1167,6 +1181,77 @@ mod tests {
         assert_eq!(thumb.get(20, 15), PIXELS);
         assert_eq!(pic.detail, ["40 x 30".to_string(), pic.kind.clone()]);
         assert!(entry(&dlg, "notes.txt").thumb.is_none());
+    }
+
+    /// A program with a file dialog in window `DLG` that does nothing for its thumbnails.
+    struct Program {
+        host: Host,
+        dlg: FileDlg,
+    }
+
+    const DLG: crate::WinId = "open";
+
+    impl crate::App for Program {
+        fn title(&self) -> String {
+            String::new()
+        }
+        fn app_id(&self) -> String {
+            String::new()
+        }
+        fn initial_size(&self) -> (i32, i32) {
+            CLIENT
+        }
+        fn event(&mut self, _: crate::WinId, _: Event, _: &mut crate::Ctx) -> crate::Reply {
+            crate::Reply::default()
+        }
+        fn draw(&mut self, _: crate::WinId, _: &mut Canvas, _: &crate::Ctx) {}
+        fn drop_file_dialog(
+            &mut self,
+            win: crate::WinId,
+        ) -> Option<crate::fielddrop::FileDrop<'_>> {
+            (win == DLG).then_some(crate::fielddrop::FileDrop {
+                dlg: &mut self.dlg,
+                host: &mut self.host,
+            })
+        }
+    }
+
+    #[test]
+    fn every_programs_file_dialog_shows_thumbnails_without_wiring() {
+        let t = pictures_folder();
+        let mut icons = flat_icons(t.path());
+        let mut host = host_in(&t.path().join("list"));
+        let dlg = open_dlg(&mut host);
+        let mut app = Program { host, dlg };
+        thumbs_on(&mut app, crate::MAIN, &crate::Waker::noop());
+        assert!(
+            app.host.thumbs.is_none(),
+            "a window without a dialog starts nothing"
+        );
+        thumbs_on(&mut app, DLG, &crate::Waker::noop());
+        assert!(
+            app.host.thumbs.is_some(),
+            "the dialog's window starts the worker"
+        );
+        thumbs_without_cache(&mut app.host);
+        thumbs_on(&mut app, DLG, &crate::Waker::noop());
+        let Program { host, dlg } = &mut app;
+        host.ensure_listed(dlg, &mut icons, &|_| true);
+        view(host, dlg, Mode::Thumbnails);
+        let mut redrawn = Vec::new();
+        for _ in 0..500 {
+            redrawn = take_thumbs(&mut app, [crate::MAIN, DLG]);
+            if !redrawn.is_empty() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert_eq!(redrawn, [DLG], "the dialog's window redraws");
+        assert!(entry(&app.dlg, "pic.png").thumb.is_some());
+        assert!(
+            take_thumbs(&mut app, [DLG]).is_empty(),
+            "nothing new to show"
+        );
     }
 
     /// Where a colour lands in the drawn dialog: its bounding box.

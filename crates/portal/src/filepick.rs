@@ -193,10 +193,6 @@ impl App for Pick {
         self.dlg.client()
     }
 
-    fn start(&mut self, waker: repriseapp::Waker) {
-        self.host.show_thumbnails(waker);
-    }
-
     fn min_size(&self, win: WinId) -> Option<(i32, i32)> {
         (win == MAIN).then(|| self.dlg.min_client())
     }
@@ -219,7 +215,7 @@ impl App for Pick {
     fn drop_file_dialog(&mut self, win: WinId) -> Option<FileDrop<'_>> {
         (win == MAIN).then_some(FileDrop {
             dlg: &mut self.dlg,
-            host: &self.host,
+            host: &mut self.host,
         })
     }
 

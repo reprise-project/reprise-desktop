@@ -951,7 +951,7 @@ impl App for Lazy {
         let b = cp.browse.as_mut().filter(|_| win == PROGRAM_BROWSE)?;
         Some(FileDrop {
             dlg: &mut b.dlg,
-            host: &b.host,
+            host: &mut b.host,
         })
     }
 

@@ -2660,7 +2660,7 @@ impl App for SettingsApp {
     fn drop_file_dialog(&mut self, win: WinId) -> Option<FileDrop<'_>> {
         (win == ADD_WIN).then_some(FileDrop {
             dlg: self.add.as_mut()?,
-            host: &self.add_host,
+            host: &mut self.add_host,
         })
     }
 
