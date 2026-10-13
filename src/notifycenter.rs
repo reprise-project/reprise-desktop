@@ -106,6 +106,7 @@ pub fn close(state: &mut State) {
     state.scene.destroy(v.tree);
     state.redraw_all();
     crate::autohideview::poke(state);
+    crate::access::touch(state);
 }
 
 pub fn refresh(state: &mut State) {
@@ -158,6 +159,35 @@ fn redraw(state: &mut State) {
     glass::place_flyout(scene, v.buffer, &state.config.theme, size);
     v.glass.set(scene, &state.glass, v.glass_tree, pane);
     state.redraw_all();
+    crate::access::touch(state);
+}
+
+/// The open history's tree, the selected row focused.
+pub fn access(state: &State) -> Option<reprisekit::access::Tree> {
+    use reprisekit::access::{ROOT, accesskit::Role};
+    let v = state.notify.center.as_ref()?;
+    let cm = state.config.theme.look.controls();
+    let size = (notifyhistory::width(&cm), notifyhistory::layout(&cm).height);
+    let rect = Rect::new(v.at.0, v.at.1, size.0, size.1);
+    let mut tree = crate::access::root(Role::Window, "Notifications", rect);
+    let focus = notifyhistory::access(&v.model, &cm, &mut tree, ROOT);
+    tree.set_focus(focus);
+    Some(tree)
+}
+
+/// A reader focused the row at layout point (`x`, `y`): select it without the click that would
+/// fold a header.
+pub fn select_at(state: &mut State, x: f64, y: f64) {
+    let cm = state.config.theme.look.controls();
+    let Some(v) = state.notify.center.as_mut() else {
+        return;
+    };
+    let Hit::List(grouplist::Hit::Row(i)) = hit(v, x, y, &cm) else {
+        return;
+    };
+    if v.model.select(i) {
+        redraw(state);
+    }
 }
 
 fn hit(v: &CenterView, x: f64, y: f64, cm: &ControlMetrics) -> Hit {
@@ -259,6 +289,7 @@ pub fn key(state: &mut State, sym: u32) {
         KEY_End | KEY_KP_End => Key::End,
         KEY_Return | KEY_KP_Enter => Key::Enter,
         KEY_Delete | KEY_KP_Delete => Key::Delete,
+        KEY_Menu => Key::Menu,
         KEY_Escape => Key::Escape,
         _ => return,
     };
@@ -281,6 +312,16 @@ fn apply(state: &mut State, event: Event) {
         Event::ClearGroup(app) => crate::notifyview::clear_app(state, &app),
         Event::Dismiss(id) => crate::notifyview::forget(state, id),
         Event::Invoke(id) => crate::notifyview::invoke(state, id, DEFAULT_ACTION),
+        Event::Menu(id) => {
+            let cm = state.config.theme.look.controls();
+            let Some(v) = state.notify.center.as_ref() else {
+                return;
+            };
+            let row = v.model.list.selected.and_then(|i| v.model.row_rect(i, &cm));
+            if let Some(r) = row {
+                open_row_menu(state, id, (v.at.0 + r.x, v.at.1 + r.bottom()));
+            }
+        }
         Event::Close => close(state),
     }
 }
