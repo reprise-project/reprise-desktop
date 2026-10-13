@@ -728,9 +728,22 @@ fn bounded(size: (i32, i32), bounds: Option<(i32, i32)>) -> (i32, i32) {
 }
 
 /// The size a window of `now` takes for limits `min` and `max`: a fixed window (`max`) its
-/// size, a resizable one at least `min`.
-fn regrown(now: (i32, i32), min: (i32, i32), max: Option<(i32, i32)>) -> (i32, i32) {
-    max.unwrap_or((now.0.max(min.0), now.1.max(min.1)))
+/// size; a resizable one at its program's pick the size the program picks now (`natural`),
+/// else its own size; either no smaller than `min`.
+fn regrown(
+    now: (i32, i32),
+    min: (i32, i32),
+    max: Option<(i32, i32)>,
+    natural: Option<(i32, i32)>,
+) -> (i32, i32) {
+    let size = natural.unwrap_or(now);
+    max.unwrap_or((size.0.max(min.0), size.1.max(min.1)))
+}
+
+/// Whether a window of `size` is at the size its program picked (`picked`), held inside
+/// `bounds`: neither the user nor the compositor sized it since.
+fn at_pick(size: (i32, i32), picked: (i32, i32), bounds: Option<(i32, i32)>) -> bool {
+    size == bounded(picked, bounds)
 }
 
 /// The main window's opening client size and its floor: a resizable window
@@ -1159,6 +1172,8 @@ struct Slot {
     bounds: Option<(i32, i32)>,
     /// The size the program last asked for a child window ([`Child::size`]).
     wanted: (i32, i32),
+    /// The size the program last gave the window: its opening size, a `Reply::size` or a refit.
+    picked: (i32, i32),
     /// The compositor has the toplevel activated; a flyout goes by the
     /// keyboard. A new toplevel counts as active until a configure after its
     /// first buffer says otherwise: focus is decided after that buffer.
@@ -1516,7 +1531,8 @@ impl Host {
         if let Some(size) = reply.size
             && let Some(s) = self.slot_mut(MAIN)
         {
-            let size = bounded(sane_size(size), s.bounds);
+            s.picked = sane_size(size);
+            let size = bounded(s.picked, s.bounds);
             if s.size != size {
                 resized = true;
                 s.size = size;
@@ -1630,6 +1646,7 @@ impl Host {
                 own: false,
                 bounds: None,
                 wanted: (w, h),
+                picked: (w, h),
                 activated: true,
                 configured: false,
                 dirty: true,
@@ -1685,20 +1702,42 @@ impl Host {
         Some((bounded(min, s.bounds), max.map(|m| bounded(m, s.bounds))))
     }
 
+    /// The size window `id`'s program picks for it now: the main window's opening size, a
+    /// child's [`Child::size`].
+    fn natural(&self, id: WinId) -> Option<(i32, i32)> {
+        if id == MAIN {
+            return Some(opening_size(&*self.app).0);
+        }
+        let c = self.app.children().into_iter().find(|c| c.id == id)?;
+        Some(sane_size(c.size))
+    }
+
     /// Fit window `id` to what its program asks now, after that changed (the text size, a
-    /// child's size): a fixed window takes its size, a resizable one grows to at least its
-    /// minimum. The compositor keeps its top-left; a maximized window keeps the screen's size.
-    /// A window that changed size hears `Event::Resized`.
+    /// child's size): a fixed window takes its size; a resizable one still at its program's
+    /// pick takes the size the program picks now, one the user sized keeps its size; both at
+    /// least the minimum. The compositor keeps its top-left; a maximized window keeps the
+    /// screen's size. A window that changed size hears `Event::Resized`.
     fn refit(&mut self, id: WinId) {
         let Some((min, max)) = self.limits(id) else {
             return;
         };
         self.declare_limits(id);
+        let natural = self.natural(id);
         let Some(s) = self.slot_mut(id) else {
             return;
         };
-        let size = regrown(s.size, min, max);
-        if s.maximized || size == s.size {
+        if s.maximized {
+            return;
+        }
+        let natural = natural.filter(|_| at_pick(s.size, s.picked, s.bounds));
+        if let Some(n) = natural {
+            s.picked = n;
+        }
+        let size = bounded(regrown(s.size, min, max, natural), s.bounds);
+        if max.is_some() {
+            s.picked = size;
+        }
+        if size == s.size {
             return;
         }
         s.size = size;
@@ -1797,6 +1836,7 @@ impl Host {
                 own: false,
                 bounds: None,
                 wanted: size,
+                picked: size,
                 activated: true,
                 configured: false,
                 dirty: true,
@@ -1925,6 +1965,7 @@ impl Host {
             own: false,
             bounds: None,
             wanted: (0, 0),
+            picked: (0, 0),
             activated: true,
             configured: false,
             dirty: true,
@@ -4333,16 +4374,36 @@ mod tests {
         );
     }
 
-    /// A text size change grows an open window: a fixed one to the size its program asks
-    /// for, a resizable one to at least its new minimum, never smaller than it was.
+    /// A text size change refits an open window: a fixed one to the size its program asks
+    /// for; a resizable one at its program's pick to the size the program picks now, larger
+    /// or smaller; one the user sized keeps its size, held to at least its new minimum.
     #[test]
-    fn an_open_window_grows_to_what_its_program_asks() {
+    fn an_open_window_takes_what_its_program_asks() {
         assert_eq!(
-            regrown((398, 424), (398, 424), Some((597, 636))),
+            regrown((398, 424), (398, 424), Some((597, 636)), None),
             (597, 636)
         );
-        assert_eq!(regrown((900, 700), (816, 792), None), (900, 792));
-        assert_eq!(regrown((900, 900), (816, 792), None), (900, 900));
+        assert_eq!(regrown((900, 700), (816, 792), None, None), (900, 792));
+        assert_eq!(regrown((900, 900), (816, 792), None, None), (900, 900));
+        assert_eq!(
+            regrown((1088, 1000), (544, 528), None, Some((760, 680))),
+            (760, 680),
+            "a picked size shrinks back"
+        );
+        assert_eq!(
+            regrown((760, 680), (1088, 1056), None, Some((1088, 1056))),
+            (1088, 1056),
+            "and grows"
+        );
+    }
+
+    /// A window is at its program's pick while its size is that pick held inside the bounds;
+    /// any other size is the user's or the compositor's.
+    #[test]
+    fn a_window_is_at_its_pick_until_sized_otherwise() {
+        assert!(at_pick((1088, 1056), (1088, 1056), None));
+        assert!(at_pick((1088, 1000), (1088, 1056), Some((1900, 1000))));
+        assert!(!at_pick((1200, 1000), (1088, 1056), Some((1900, 1000))));
     }
 
     /// A window that picks its own size stays inside the compositor's bounds: a Settings sheet
