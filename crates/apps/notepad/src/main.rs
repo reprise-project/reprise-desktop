@@ -2041,6 +2041,14 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn go_to_fits_its_text_under_every_interface() {
+        let over = reprisekit::interfaces::form_overflows(|_, _, _| {
+            vec![("Go To Line".into(), goto_form("12345"))]
+        });
+        assert!(over.is_empty(), "{}", over.join("\n"));
+    }
     use repriseapp::filedlg::places;
 
     #[test]
