@@ -157,19 +157,6 @@ fn refit_origin(
 }
 
 /// Layout point in dialog pixels. Flooring keeps the pixel under the pointer left of or above the layout origin.
-/// The theme dialog `d` is laid out and drawn in: the config's at the text size, or the 100% one
-/// for a dialog that does not grow ([`Dialog::grows`]).
-pub(crate) fn theme_for<'a>(
-    config: &'a crate::config::Config,
-    d: &Dialog,
-) -> &'a crate::theme::Theme {
-    if d.grows() {
-        &config.theme
-    } else {
-        &config.base_theme
-    }
-}
-
 fn to_local(lx: f64, ly: f64, origin: (i32, i32)) -> (i32, i32) {
     (lx.floor() as i32 - origin.0, ly.floor() as i32 - origin.1)
 }
@@ -343,8 +330,8 @@ impl State {
         if area.width <= 0 {
             return;
         }
-        let theme = theme_for(&self.config, &d);
-        d.fit(theme, &self.text);
+        let theme = &self.config.theme;
+        d.fit_in(theme, &self.text, (area.width, area.height));
         let layout = DialogLayout::compute(theme, &self.text, &d);
         let (x, y) = match d.placement {
             Placement::ByStart => {
@@ -634,9 +621,14 @@ impl State {
         crate::access::touch(self);
     }
 
-    /// Pull every dialog back inside its output's usable area after a layout change (`update_layout`).
+    /// Pull every dialog back inside its output's usable area after a layout change
+    /// (`update_layout`); the tray's Customize page lays itself out in the new area first.
     pub fn keep_dialogs_inside(&mut self) {
         for i in 0..self.dialogs.views.len() {
+            if self.dialogs.views[i].dialog.tray().is_some() {
+                self.refit_dialog(i);
+                self.redraw_dialog(i);
+            }
             let v = &self.dialogs.views[i];
             let area = self.usable_area(Some(&v.output));
             if let Some((x, y)) = refit_origin(&v.dialog, (v.x, v.y), v.layout.size, area) {
@@ -695,7 +687,7 @@ impl State {
         };
         let mut canvas = still.clone();
         if self.caret.on {
-            let theme = theme_for(&self.config, &v.dialog).scaled(*at);
+            let theme = self.config.theme.scaled(*at);
             dialog::draw_field(&mut canvas, &theme, &self.text, &v.layout, &v.dialog, true);
         }
         let buffer = v.buffer;
@@ -712,20 +704,29 @@ impl State {
         self.redraw_dialog(i);
     }
 
-    /// Fit dialog `index` to the theme and lay it out again, after a tab or theme change.
+    /// Fit dialog `index` to the theme and its output's usable area and lay it out again, after
+    /// a tab or theme change; one whose new size runs past the area's edge moves back inside.
     pub fn refit_dialog(&mut self, index: usize) {
+        let Some(output) = self.dialogs.views.get(index).map(|v| v.output.clone()) else {
+            return;
+        };
+        let area = self.usable_area(Some(&output));
         let State {
             config,
             text,
             dialogs,
             ..
         } = self;
-        let Some(v) = dialogs.views.get_mut(index) else {
-            return;
-        };
-        let theme = theme_for(config, &v.dialog);
-        v.dialog.fit(theme, text);
+        let v = &mut dialogs.views[index];
+        let theme = &config.theme;
+        let before = v.layout.size;
+        v.dialog.fit_in(theme, text, (area.width, area.height));
         v.layout = DialogLayout::compute(theme, text, &v.dialog);
+        if v.layout.size != before
+            && let Some((x, y)) = refit_origin(&v.dialog, (v.x, v.y), v.layout.size, area)
+        {
+            self.move_dialog(index, x, y);
+        }
     }
 
     pub fn invalidate_dialogs(&mut self) {
@@ -742,7 +743,7 @@ impl State {
             return;
         };
         let output = v.output.clone();
-        let base = theme_for(&self.config, &v.dialog).clone();
+        let base = self.config.theme.clone();
         let scale = self.draw_scale_at(Some(&output)).max(1);
         let theme = base.scaled(scale);
         let wanted = crate::glass::wanted(&self.config);
@@ -861,7 +862,7 @@ impl State {
         {
             n.set_modal();
         }
-        let px = theme_for(&self.config, &v.dialog).fonts.size_px;
+        let px = self.config.theme.fonts.size_px;
         let focus = dialog::access(&v.dialog, &v.layout, &self.text, px, &mut tree);
         tree.set_focus(focus);
         Some(tree)
@@ -924,11 +925,8 @@ impl State {
         }
         let v = &mut self.dialogs.views[index];
         if let Some(t) = v.dialog.tray_mut() {
-            if t.combo.open.is_some() {
-                return true;
-            }
             let (steps, _) = crate::tray::wheel_steps(discrete, continuous, 0);
-            if t.scroll(-steps) {
+            if t.wheel(dialog::tray_part(over), -steps) {
                 self.redraw_dialog(index);
             }
             return true;
@@ -975,7 +973,7 @@ impl State {
 
     pub fn dialog_hit(&self, index: usize, lx: f64, ly: f64) -> Option<DialogHit> {
         let v = self.dialogs.views.get(index)?;
-        hit(v, lx, ly, &self.text, theme_for(&self.config, &v.dialog))
+        hit(v, lx, ly, &self.text, &self.config.theme)
     }
 
     /// Start sizing the top dialog from `edges`, via its border or Browse's grip.
@@ -1021,7 +1019,7 @@ impl State {
             return;
         }
         p.dlg.set_size(client);
-        v.layout = DialogLayout::compute(theme_for(config, &v.dialog), text, &v.dialog);
+        v.layout = DialogLayout::compute(&config.theme, text, &v.dialog);
         self.move_dialog(index, r.x, r.y);
         self.redraw_dialog(index);
     }
@@ -1129,12 +1127,9 @@ impl State {
         self.config.theme.metrics.click(x, y, time_msec)
     }
 
-    /// The font size the top dialog is set in ([`theme_for`]).
+    /// The font size dialogs are set in.
     fn top_dialog_px(&self) -> u32 {
-        let top = self.dialogs.views.last();
-        top.map_or(&self.config.theme, |v| theme_for(&self.config, &v.dialog))
-            .fonts
-            .size_px
+        self.config.theme.fonts.size_px
     }
 
     /// A left press in the top dialog's field at text offset `x`: caret under the pointer (Shift
@@ -1202,6 +1197,13 @@ impl State {
             _ if double => v.dialog.double_click(hit),
             _ => v.dialog.click(hit),
         };
+        if v.dialog.tray().is_some_and(|t| t.ticking()) {
+            let id = v.id;
+            self.tick_tray(id);
+        }
+        let Some(v) = self.dialogs.views.last_mut() else {
+            return out;
+        };
         let page = v.dialog.form().and_then(|f| f.open_page());
         if page.is_some_and(|p| p.drag.is_some()) || v.dialog.holding_thumb() {
             self.interaction = Interaction::FieldDrag {
@@ -1216,6 +1218,35 @@ impl State {
             self.interaction = Interaction::DialogPress;
         }
         out
+    }
+
+    /// Tick the tray's Customize page `id` while its page arrow is held: the page steps as the
+    /// arrow repeats.
+    fn tick_tray(&mut self, id: u64) {
+        let every = reprisekit::controls::scrollbar::REPEAT_EVERY;
+        let added = self
+            .handle
+            .insert_source(Timer::from_duration(every), move |now, _, state| {
+                let Some(i) = state.dialogs.views.iter().position(|v| v.id == id) else {
+                    return TimeoutAction::Drop;
+                };
+                let Some(t) = state.dialogs.views[i].dialog.tray_mut() else {
+                    return TimeoutAction::Drop;
+                };
+                let moved = t.tick(now) != reprisekit::controls::traycustomize::Event::None;
+                let ticking = t.ticking();
+                if moved {
+                    state.redraw_dialog(i);
+                }
+                if ticking {
+                    TimeoutAction::ToDuration(every)
+                } else {
+                    TimeoutAction::Drop
+                }
+            });
+        if let Err(e) = added {
+            log::warn!("dialog: no scroll timer: {}", e.error);
+        }
     }
 
     /// The pointer, held since a field or thumb press, is at (`lx`, `ly`): extend the selection or drive the thumb.
@@ -1461,7 +1492,7 @@ impl State {
         let edge = out
             .as_ref()
             .map_or(self.config.taskbar.position, |o| self.bar_placement(o).edge);
-        let size = DialogLayout::compute(theme_for(&self.config, &d), &self.text, &d).size;
+        let size = DialogLayout::compute(&self.config.theme, &self.text, &d).size;
         let (x, y) = dialog::browse_by_start(area, edge, size);
         d.placement = Placement::At(x, y);
         self.open_dialog_over(d);
