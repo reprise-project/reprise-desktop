@@ -599,6 +599,55 @@ mod tests {
         assert_eq!(inked.len(), 5, "the arrow is 5 px at its widest row");
     }
 
+    /// The big strip grows with its labels' line, 13 px at 100%; the 24 px icons centre down it.
+    #[test]
+    fn a_big_strip_grows_to_fit_its_grown_labels() {
+        const EXPECTED: [(u32, i32); 3] = [(100, 30), (150, 37), (200, 43)];
+        for (pct, h) in EXPECTED {
+            let theme = Theme::default().with_text_size(pct);
+            let cm = theme.controls();
+            assert_eq!(height(true, &cm), h, "{pct}%");
+            assert_eq!(
+                height(false, &cm),
+                HEIGHT,
+                "{pct}%: the small strip keeps its height"
+            );
+            let text = TextRenderer::load(&theme.fonts);
+            let px = theme.fonts.size_px;
+            let mut icon = Canvas::new(BIG_ICON as u32, BIG_ICON as u32);
+            let red = crate::theme::Color::rgb(255, 0, 0);
+            icon.fill_rect(icon.bounds(), red);
+            let tb = ToolBar {
+                items: vec![Item::Button {
+                    id: FOLDERS,
+                    icon: Some(icon),
+                    label: Some("Folders".into()),
+                    enabled: true,
+                }],
+                ..explorer_strip()
+            };
+            let r = Rect::new(0, 0, 200, h);
+            let rects = layout(&tb, &text, px, r, &cm);
+            assert_eq!(rects[0].height, h);
+            let mut c = Canvas::new(200, h as u32);
+            draw(&mut c, &text, &theme.paint(), &tb, r, &rects, px);
+            let top = (h - BIG_ICON) / 2;
+            let x = rects[0].x + BIG_PAD + 1;
+            assert_eq!(c.get(x, top), red.argb(), "{pct}%");
+            assert_eq!(c.get(x, top + BIG_ICON - 1), red.argb(), "{pct}%");
+            assert_ne!(c.get(x, top - 1), red.argb(), "{pct}%");
+            let ink = theme.colors.button_text.argb();
+            let rows: Vec<i32> = (0..h)
+                .filter(|&y| (x + BIG_ICON..200).any(|x| c.get(x, y) == ink))
+                .collect();
+            let (first, last) = (rows[0], *rows.last().unwrap());
+            assert!(
+                first > 1 && last < h - 2,
+                "{pct}%: the label's ink {first}..={last} sits inside the strip"
+            );
+        }
+    }
+
     #[test]
     fn hit_finds_the_item_under_the_pointer() {
         let text = renderer();

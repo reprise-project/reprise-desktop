@@ -533,12 +533,12 @@ pub fn label_rect(sv: &ShellView, lay: &Layout, i: usize, text: &TextRenderer, p
                 cell.height,
             )
         }
-        mode => shellgrid::label_of(mode, cell, e, text, px),
+        mode => shellgrid::label_of(mode, cell, e, text, px, lay.controls.text),
     }
 }
 
 /// `sv`'s layout in `r`. Measures nothing: every mode's cells are a fixed
-/// pitch, and label rects come from `label_rect` on demand.
+/// pitch at the text size, and label rects come from `label_rect` on demand.
 /// List: a sunken field (`FIELD_PAD` inset, matching the frame `draw` puts
 /// round it) holding the fixed-pitch grid, with a horizontal scrollbar along
 /// the bottom once the columns overflow, never a vertical one. The three icon
@@ -613,7 +613,8 @@ pub fn layout(sv: &ShellView, r: Rect, cm: &ControlMetrics) -> Layout {
         }
         Mode::Thumbnails | Mode::Tiles | Mode::Icons => {
             let sunken = frame.inset(FIELD_PAD);
-            let cell = shellgrid::mode_cell(sv.mode);
+            let grid = shellgrid::Grid::of(sv.mode, cm.text);
+            let cell = grid.cell;
             // Reserving the bar narrows the body, which can need one more row: two
             // rounds reach the fixed point, as `listview::layout` does.
             let mut vbar = false;
@@ -626,12 +627,12 @@ pub fn layout(sv: &ShellView, r: Rect, cm: &ControlMetrics) -> Layout {
                     sunken.width - if vbar { cm.scroll } else { 0 },
                     sunken.height,
                 );
-                let h = shellgrid::grid_height(cell, body, sv.entries.len(), &sv.groups);
+                let h = shellgrid::grid_height(&grid, body, sv.entries.len(), &sv.groups);
                 content_h = h;
                 vbar |= h > body.height;
             }
             let (cells, headers) =
-                shellgrid::grid(cell, body, sv.entries.len(), &sv.groups, sv.top as i32);
+                shellgrid::grid(&grid, body, sv.entries.len(), &sv.groups, sv.top as i32);
             Layout {
                 frame,
                 body,
@@ -819,7 +820,7 @@ pub fn scroll(sv: &mut ShellView, by: i32, lay: &Layout) -> bool {
             lv.scroll(by as i64, &lv_lay)
         }),
         _ => {
-            let pitch = shellgrid::mode_cell(sv.mode).1;
+            let pitch = shellgrid::Grid::of(sv.mode, lay.controls.text).cell.1;
             let max = (lay.content.1 - lay.body.height).max(0) as i64;
             let top = (sv.top as i64 + by as i64 * pitch as i64).clamp(0, max) as usize;
             let changed = top != sv.top;
@@ -839,7 +840,10 @@ pub fn page(sv: &mut ShellView, by: i32, lay: &Layout) -> bool {
         }
         Mode::List => false,
         _ => {
-            let pitch = shellgrid::mode_cell(sv.mode).1.max(1);
+            let pitch = shellgrid::Grid::of(sv.mode, lay.controls.text)
+                .cell
+                .1
+                .max(1);
             scroll(sv, by * (lay.body.height / pitch).max(1), lay)
         }
     }

@@ -9,7 +9,7 @@ use crate::look::widgets::item;
 use crate::raster::{Canvas, Rect};
 use crate::text::{Align, TextRenderer};
 use crate::textedit::Caret;
-use crate::theme::{ColorScheme, Theme};
+use crate::theme::{ColorScheme, TextUnits, Theme};
 use std::borrow::Cow;
 
 /// A thumbnail's frame, border included.
@@ -19,6 +19,8 @@ pub(crate) const THUMB_FRAME_X: i32 = 17;
 pub(crate) const THUMB_FRAME_Y: i32 = 3;
 pub(crate) const THUMB_LABEL_GAP: i32 = 2;
 pub(crate) const THUMB_RING: i32 = 3;
+/// The label's room under the frame, what a thumbnail cell grows with the text.
+const THUMB_LABEL_H: i32 = THUMB_CELL.1 - THUMB_FRAME_Y - THUMB_FRAME - THUMB_LABEL_GAP;
 pub const TILE_CELL: (i32, i32) = (218, 56);
 pub const TILE_ICON: i32 = 48;
 pub(crate) const TILE_ICON_OFF: (i32, i32) = (5, 4);
@@ -41,26 +43,48 @@ pub(crate) const GRID_TOP: i32 = 4;
 pub(crate) const TILE_TOP: i32 = 2;
 pub(crate) const LINE_PITCH: i32 = 13;
 
-fn grid_top(cell: (i32, i32)) -> i32 {
-    if cell == TILE_CELL {
-        TILE_TOP
-    } else {
-        GRID_TOP
-    }
+/// An icon mode's flow at a text size: the cells' text and the group headers grow by `u`, icons and air stay.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct Grid {
+    pub cell: (i32, i32),
+    top: i32,
+    header_h: i32,
 }
 
-/// The cell `mode` flows on; `List` and `Details` have their own layout and are not asked.
-pub(crate) fn mode_cell(mode: Mode) -> (i32, i32) {
-    match mode {
-        Mode::Thumbnails => THUMB_CELL,
-        Mode::Tiles => TILE_CELL,
-        _ => ICON_CELL,
+impl Grid {
+    /// `mode`'s grid; `List` and `Details` have their own layout and are not asked.
+    pub(crate) fn of(mode: Mode, u: TextUnits) -> Grid {
+        let (cell, top) = match mode {
+            Mode::Thumbnails => (
+                (
+                    THUMB_CELL.0 + u.len(THUMB_FRAME) - THUMB_FRAME,
+                    THUMB_CELL.1 + u.len(THUMB_LABEL_H) - THUMB_LABEL_H,
+                ),
+                GRID_TOP,
+            ),
+            Mode::Tiles => (
+                (
+                    TILE_TEXT_X + u.len(TILE_CELL.0 - TILE_TEXT_X),
+                    u.len(TILE_CELL.1),
+                ),
+                TILE_TOP,
+            ),
+            _ => {
+                let c = iconview::Cell::grown(u);
+                ((c.w, c.h), GRID_TOP)
+            }
+        };
+        Grid {
+            cell,
+            top,
+            header_h: u.len(GROUP_HEADER_H),
+        }
     }
 }
 
 /// The icon modes' row-major flow: one rect per entry on a `cell` grid filling `body`'s width, a full-width header rect before each group's first entry (`GROUP_GAP` of air first, unless it opens the view). A grouped view's cells start `GROUP_INDENT` in. `top` is the px already scrolled away, subtracted from every rect.
 pub(crate) fn grid(
-    cell: (i32, i32),
+    g: &Grid,
     body: Rect,
     count: usize,
     groups: &[Group],
@@ -68,7 +92,7 @@ pub(crate) fn grid(
 ) -> (Vec<Rect>, Vec<Rect>) {
     let (mut cells, mut headers) = (Vec::with_capacity(count), Vec::new());
     flow(
-        cell,
+        g,
         body,
         count,
         groups,
@@ -79,13 +103,13 @@ pub(crate) fn grid(
     (cells, headers)
 }
 
-pub(crate) fn grid_height(cell: (i32, i32), body: Rect, count: usize, groups: &[Group]) -> i32 {
-    flow(cell, body, count, groups, 0, |_| {}, |_| {})
+pub(crate) fn grid_height(g: &Grid, body: Rect, count: usize, groups: &[Group]) -> i32 {
+    flow(g, body, count, groups, 0, |_| {}, |_| {})
 }
 
 /// The flow `grid` and `grid_height` share; `groups` is sorted by `first`, so one cursor walks it.
 fn flow(
-    cell: (i32, i32),
+    g: &Grid,
     body: Rect,
     count: usize,
     groups: &[Group],
@@ -93,9 +117,10 @@ fn flow(
     mut on_cell: impl FnMut(Rect),
     mut on_header: impl FnMut(Rect),
 ) -> i32 {
+    let cell = g.cell;
     let indent = if groups.is_empty() { 0 } else { GROUP_INDENT };
     let cols = ((body.width - indent) / cell.0).max(1);
-    let mut y = grid_top(cell);
+    let mut y = g.top;
     let mut col = 0;
     let mut next_group = groups.iter().map(|g| g.first).peekable();
     let mut open = false;
@@ -110,13 +135,8 @@ fn flow(
             } else if i == 0 {
                 y = 0;
             }
-            on_header(Rect::new(
-                body.x,
-                body.y + y - top,
-                body.width,
-                GROUP_HEADER_H,
-            ));
-            y += GROUP_HEADER_H;
+            on_header(Rect::new(body.x, body.y + y - top, body.width, g.header_h));
+            y += g.header_h;
             col = 0;
         }
         if col == cols {
@@ -141,8 +161,8 @@ pub(crate) fn tile_lines(e: &Entry) -> Vec<&str> {
         .collect()
 }
 
-pub(crate) fn block_h(n: usize, px: u32) -> i32 {
-    (n.max(1) as i32 - 1) * LINE_PITCH + px as i32
+pub(crate) fn block_h(n: usize, px: u32, u: TextUnits) -> i32 {
+    (n.max(1) as i32 - 1) * u.len(LINE_PITCH) + px as i32
 }
 
 pub(crate) fn widths(text: &TextRenderer, lines: &[&str], px: u32) -> (i32, Vec<i32>) {
@@ -150,17 +170,18 @@ pub(crate) fn widths(text: &TextRenderer, lines: &[&str], px: u32) -> (i32, Vec<
     (each.iter().copied().max().unwrap_or(0), each)
 }
 
+/// A thumbnail cell's frame, centred in the room a grown cell gains.
 pub(crate) fn thumb_frame(cell: Rect) -> Rect {
     Rect::new(
-        cell.x + THUMB_FRAME_X,
+        cell.x + THUMB_FRAME_X + (cell.width - THUMB_CELL.0) / 2,
         cell.y + THUMB_FRAME_Y,
         THUMB_FRAME,
         THUMB_FRAME,
     )
 }
 
-pub(crate) fn thumb_lines(text: &TextRenderer, name: &str, px: u32) -> Vec<String> {
-    iconview::wrap_label(text, name, THUMB_FRAME, px)
+pub(crate) fn thumb_lines(text: &TextRenderer, name: &str, px: u32, u: TextUnits) -> Vec<String> {
+    iconview::wrap_label(text, name, u.len(THUMB_FRAME), px)
 }
 
 /// A `Theme` for `iconview::draw_cell` with `desktop_text` swapped for `window_text`: the label sits on the view's `window`.
@@ -186,7 +207,7 @@ pub(crate) fn entry_icon(e: &Entry, mode: Mode) -> Option<Cow<'_, Canvas>> {
     Some(Cow::Owned(icon))
 }
 
-/// One tile: the 48 px icon, then the name and `detail` lines in one block, filled with the highlight when selected. `cell` and `label` are already scaled and offset into the canvas.
+/// One tile: the 48 px icon, centred down a grown cell, then the name and `detail` lines in one block, filled with the highlight when selected. `cell` and `label` are already scaled and offset into the canvas.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn draw_tile(
     c: &mut Canvas,
@@ -198,10 +219,12 @@ pub(crate) fn draw_tile(
     sel: (bool, bool),
     px: u32,
     s: i32,
+    u: TextUnits,
 ) {
     let (selected, ring) = sel;
     if let Some(icon) = entry_icon(e, Mode::Tiles) {
-        let (ix, iy) = (cell.x + TILE_ICON_OFF.0 * s, cell.y + TILE_ICON_OFF.1 * s);
+        let dy = TILE_ICON_OFF.1 + (cell.height / s - TILE_CELL.1) / 2;
+        let (ix, iy) = (cell.x + TILE_ICON_OFF.0 * s, cell.y + dy * s);
         c.blit_over(ix, iy, &icon);
         if e.link {
             iconview::draw_shortcut_arrow(c, ix, iy + TILE_ICON * s, s);
@@ -219,7 +242,7 @@ pub(crate) fn draw_tile(
         };
         let r = Rect::new(
             label.x,
-            label.y + k as i32 * LINE_PITCH * s,
+            label.y + k as i32 * u.len(LINE_PITCH) * s,
             avail,
             px as i32 + 3 * s,
         );
@@ -248,11 +271,13 @@ pub(crate) fn draw_thumb(
     sel: (bool, bool),
     px: u32,
     s: i32,
+    u: TextUnits,
 ) {
     let (selected, ring) = sel;
+    let at = thumb_frame(Rect::new(0, 0, cell.width / s, cell.height / s));
     let frame = Rect::new(
-        cell.x + THUMB_FRAME_X * s,
-        cell.y + THUMB_FRAME_Y * s,
+        cell.x + at.x * s,
+        cell.y + at.y * s,
         THUMB_FRAME * s,
         THUMB_FRAME * s,
     );
@@ -277,10 +302,10 @@ pub(crate) fn draw_thumb(
     } else {
         cs.window_text
     };
-    for (k, line) in thumb_lines(text, &e.name, px).iter().enumerate() {
+    for (k, line) in thumb_lines(text, &e.name, px, u).iter().enumerate() {
         let r = Rect::new(
             label.x,
-            label.y + k as i32 * LINE_PITCH * s,
+            label.y + k as i32 * u.len(LINE_PITCH) * s,
             label.width,
             px as i32 + 3 * s,
         );
@@ -301,6 +326,7 @@ pub(crate) fn draw_grid(
     px: u32,
 ) {
     let Paint { cs, s, .. } = *p;
+    let u = lay.controls.text;
     let body = lay.body.scaled(s);
     let mut bc = c.scratch(body.width.max(0) as u32, body.height.max(0) as u32);
     let all = Rect::new(0, 0, body.width, body.height);
@@ -313,26 +339,26 @@ pub(crate) fn draw_grid(
     for (h, g) in lay.headers.iter().zip(&sv.groups) {
         let r = off(*h);
         if !r.intersect(&all).is_empty() {
-            let title_box = (GROUP_TITLE_Y * s, px as i32 + 3 * s);
+            let title_box = (u.len(GROUP_TITLE_Y) * s, px as i32 + 3 * s);
             let rule = GroupRule {
                 from: cs.gradient_active_title,
                 to: cs.window,
                 width: GROUP_LINE_W,
-                y: GROUP_RULE_Y,
+                y: u.len(GROUP_RULE_Y),
             };
             draw_group_header(&mut bc, text, cs, r, &g.title, title_box, &rule, px, s);
         }
     }
     let theme = cell_theme(p, px);
     for (i, e) in sv.entries.iter().enumerate() {
-        let Some(&cell) = lay.cells.get(i) else {
+        let Some(&at) = lay.cells.get(i) else {
             break;
         };
-        if off(cell).intersect(&all).is_empty() {
+        if off(at).intersect(&all).is_empty() {
             continue;
         }
-        let label = off(label_of(sv.mode, cell, e, text, px));
-        let cell = off(cell);
+        let label = off(label_of(sv.mode, at, e, text, px, u));
+        let cell = off(at);
         let editing = matches!(&sv.edit, Some((j, _)) if *j == i);
         // A look that boxes its items boxes the cell, from its top to 2 px under the label (a tile's whole cell), and draws the rest as if nothing were selected.
         let foot = match sv.mode {
@@ -363,6 +389,10 @@ pub(crate) fn draw_grid(
                 iconview::draw_cell_at(
                     &mut bc,
                     (cell.x, cell.y),
+                    iconview::Cell {
+                        w: at.width,
+                        h: at.height,
+                    },
                     &theme,
                     text,
                     &e.name,
@@ -373,13 +403,35 @@ pub(crate) fn draw_grid(
                 );
             }
             Mode::Tiles => {
-                draw_tile(&mut bc, text, cs, e, cell, label, (selected, ring), px, s);
+                draw_tile(
+                    &mut bc,
+                    text,
+                    cs,
+                    e,
+                    cell,
+                    label,
+                    (selected, ring),
+                    px,
+                    s,
+                    u,
+                );
                 if editing {
                     draw_rename(&mut bc, text, p, sv, i, label, px);
                 }
             }
             _ => {
-                draw_thumb(&mut bc, text, cs, e, cell, label, (selected, ring), px, s);
+                draw_thumb(
+                    &mut bc,
+                    text,
+                    cs,
+                    e,
+                    cell,
+                    label,
+                    (selected, ring),
+                    px,
+                    s,
+                    u,
+                );
                 if editing {
                     draw_rename(&mut bc, text, p, sv, i, label, px);
                 }
@@ -395,11 +447,18 @@ pub(crate) fn draw_grid(
     c.blit_canvas(body.x, body.y, &bc);
 }
 
-/// The label rect for an icon-mode cell: what `draw` highlights and where a rename box goes.
-pub(crate) fn label_of(mode: Mode, cell: Rect, e: &Entry, text: &TextRenderer, px: u32) -> Rect {
+/// The label rect for an icon-mode cell at text size `u`: what `draw` highlights and where a rename box goes.
+pub(crate) fn label_of(
+    mode: Mode,
+    cell: Rect,
+    e: &Entry,
+    text: &TextRenderer,
+    px: u32,
+    u: TextUnits,
+) -> Rect {
     match mode {
         Mode::Icons => {
-            let r = iconview::label_layout(text, &e.name, px, 1).rect;
+            let r = iconview::label_layout(text, &e.name, px, 1, cell.width).rect;
             Rect::new(cell.x + r.x, cell.y + r.y, r.width, r.height)
         }
         Mode::Tiles => {
@@ -414,23 +473,23 @@ pub(crate) fn label_of(mode: Mode, cell: Rect, e: &Entry, text: &TextRenderer, p
                 &shown.iter().map(String::as_str).collect::<Vec<_>>(),
                 px,
             );
-            let h = block_h(shown.len(), px);
+            let h = block_h(shown.len(), px, u);
             Rect::new(
                 cell.x + TILE_TEXT_X,
-                cell.y + tile_text_top(shown.len()),
+                cell.y + u.len(tile_text_top(shown.len())),
                 widest,
                 h,
             )
         }
         _ => {
             let frame = thumb_frame(cell);
-            let lines = thumb_lines(text, &e.name, px);
+            let lines = thumb_lines(text, &e.name, px, u);
             let (widest, _) = widths(
                 text,
                 &lines.iter().map(String::as_str).collect::<Vec<_>>(),
                 px,
             );
-            let h = block_h(lines.len(), px);
+            let h = block_h(lines.len(), px, u);
             Rect::new(
                 frame.x + (frame.width - widest) / 2,
                 frame.bottom() + THUMB_LABEL_GAP,
@@ -749,6 +808,240 @@ mod tests {
         assert_ne!(bottom(lay.cells[0]), black);
     }
 
+    /// `sv` laid out and drawn in Classic at `pct` text size, with the size's controls and font.
+    fn render_at(sv: &ShellView, r: Rect, pct: u32) -> (Canvas, Layout, Theme) {
+        let theme = Theme::default().with_text_size(pct);
+        let text = TextRenderer::load(&theme.fonts);
+        let lay = layout(sv, r, &theme.controls());
+        let mut c = Canvas::new(r.width as u32, r.height as u32);
+        let px = theme.fonts.size_px;
+        crate::controls::shellview::draw(&mut c, &text, &theme.paint(), sv, &lay, None, px);
+        (c, lay, theme)
+    }
+
+    #[test]
+    fn the_icon_modes_cells_grow_with_the_text_size() {
+        const EXPECTED: [(Mode, [(i32, i32); 3]); 3] = [
+            (Mode::Icons, [(75, 75), (116, 95), (150, 112)]),
+            (Mode::Tiles, [(218, 56), (305, 87), (378, 112)]),
+            (Mode::Thumbnails, [(125, 139), (177, 160), (221, 177)]),
+        ];
+        let r = Rect::new(0, 0, 1000, 800);
+        for (mode, sizes) in EXPECTED {
+            for (pct, size) in [100, 150, 200].into_iter().zip(sizes) {
+                let sv = iconed(4, mode);
+                let cm = Theme::default().with_text_size(pct).controls();
+                let lay = layout(&sv, r, &cm);
+                let c = lay.cells[0];
+                assert_eq!((c.width, c.height), size, "{mode:?} at {pct}%");
+                assert_eq!(
+                    lay.cells[1].x - c.x,
+                    size.0,
+                    "{mode:?} at {pct}%: the pitch"
+                );
+            }
+        }
+    }
+
+    /// The icons keep their size in a grown cell: a tile's 48 px icon stays 5 px in and centres down the cell.
+    #[test]
+    fn a_grown_tile_keeps_its_icon_and_spaces_its_lines_at_the_grown_pitch() {
+        // (pct, icon top, text top, block height): three lines at a 20 px pitch at 150%, 26 px at 200%.
+        const EXPECTED: [(u32, i32, i32, i32); 2] =
+            [(150, 19, 9, 2 * 20 + 17), (200, 32, 12, 2 * 26 + 22)];
+        let mut sv = iconed(2, Mode::Tiles);
+        sv.entries[0].detail = vec!["Text Document".into(), "1 KB".into()];
+        sv.selection.set_only(Some(0));
+        let red = Color::rgb(255, 0, 0).argb();
+        for (pct, icon_top, top, h) in EXPECTED {
+            let (c, lay, theme) = render_at(&sv, Rect::new(0, 0, 900, 300), pct);
+            let text = TextRenderer::load(&theme.fonts);
+            let cell = lay.cells[0];
+            let (ix, iy) = (cell.x + EXPECTED_TILE_ICON_OFF.0, cell.y + icon_top);
+            assert_eq!(c.get(ix, iy), red, "{pct}%: the icon's top-left");
+            assert_eq!(c.get(ix + TILE_ICON - 1, iy + TILE_ICON - 1), red, "{pct}%");
+            assert_ne!(c.get(ix, iy - 1), red, "{pct}%: 48 px, not grown");
+            assert_ne!(c.get(ix + TILE_ICON, iy), red, "{pct}%");
+            let label =
+                crate::controls::shellview::label_rect(&sv, &lay, 0, &text, theme.fonts.size_px);
+            assert_eq!(label.x, cell.x + EXPECTED_TILE_TEXT_X, "{pct}%");
+            assert_eq!((label.y - cell.y, label.height), (top, h), "{pct}%");
+            let hil = theme.colors.hilight.argb();
+            assert_eq!(c.get(label.x, label.y), hil, "{pct}%: the block is filled");
+            assert_eq!(c.get(label.x, label.bottom() - 1), hil, "{pct}%");
+            assert_ne!(c.get(label.x, label.bottom()), hil, "{pct}%");
+        }
+    }
+
+    /// A grown thumbnail keeps its 96 px frame, centred in the wider cell, and wraps its label to the grown width.
+    #[test]
+    fn a_grown_thumbnail_centres_its_frame_over_a_wider_label() {
+        const EXPECTED_FRAME_X: [(u32, i32); 3] = [(100, 17), (150, 43), (200, 65)];
+        let mut sv = iconed(2, Mode::Thumbnails);
+        sv.entries[0].name = "Holiday photos from the hills".into();
+        sv.selection.set_only(Some(0));
+        for (pct, x) in EXPECTED_FRAME_X {
+            let (c, lay, theme) = render_at(&sv, Rect::new(0, 0, 600, 400), pct);
+            let text = TextRenderer::load(&theme.fonts);
+            let px = theme.fonts.size_px;
+            let cell = lay.cells[0];
+            let frame = thumb_frame(cell);
+            assert_eq!(frame.x - cell.x, x, "{pct}%");
+            assert_eq!(
+                (frame.width, frame.height),
+                (EXPECTED_THUMB_FRAME, EXPECTED_THUMB_FRAME)
+            );
+            let hil = theme.colors.hilight.argb();
+            assert_eq!(
+                c.get(frame.x - EXPECTED_THUMB_RING, frame.y + 10),
+                hil,
+                "{pct}%: the ring"
+            );
+            assert_eq!(
+                c.get(frame.x - EXPECTED_THUMB_RING - 1, frame.y + 10),
+                theme.colors.window.argb()
+            );
+            let u = theme.controls().text;
+            let lines = thumb_lines(&text, &sv.entries[0].name, px, u);
+            assert_eq!(lines.len(), 2, "{pct}%: {lines:?}");
+            let widest = lines
+                .iter()
+                .map(|l| text.measure(l, false, px))
+                .max()
+                .unwrap();
+            assert!(widest <= u.len(EXPECTED_THUMB_FRAME), "{pct}%: {widest}");
+            let label = crate::controls::shellview::label_rect(&sv, &lay, 0, &text, px);
+            assert_eq!(label.y, frame.bottom() + THUMB_LABEL_GAP, "{pct}%");
+            assert_eq!(
+                label.height,
+                u.len(LINE_PITCH) + px as i32,
+                "{pct}%: two lines"
+            );
+            assert!((label.x + label.width / 2 - (frame.x + frame.width / 2)).abs() <= 1);
+            assert!(
+                label.bottom() <= cell.bottom(),
+                "{pct}%: the label fits its cell"
+            );
+        }
+    }
+
+    /// An icon cell's label wraps in the grown width and centres under the 32 px icon, which keeps its place.
+    #[test]
+    fn a_grown_icon_cell_centres_its_label_under_the_icon() {
+        let mut sv = iconed(2, Mode::Icons);
+        sv.entries[0].name = "Holiday photos from the hills".into();
+        for pct in [150, 200] {
+            let (c, lay, theme) = render_at(&sv, Rect::new(0, 0, 600, 400), pct);
+            let text = TextRenderer::load(&theme.fonts);
+            let cell = lay.cells[0];
+            let ix = cell.x + (cell.width - iconview::ICON_PX + 1) / 2;
+            let red = Color::rgb(255, 0, 0).argb();
+            assert_eq!(c.get(ix, cell.y + iconview::ICON_TOP), red, "{pct}%");
+            assert_ne!(
+                c.get(ix + iconview::ICON_PX, cell.y + iconview::ICON_TOP),
+                red
+            );
+            let label =
+                crate::controls::shellview::label_rect(&sv, &lay, 0, &text, theme.fonts.size_px);
+            assert_eq!(
+                label.y - cell.y,
+                iconview::ICON_TOP + iconview::ICON_PX + 4,
+                "{pct}%"
+            );
+            assert!(
+                (label.x + label.width / 2 - (cell.x + cell.width / 2)).abs() <= 1,
+                "{pct}%"
+            );
+            assert!(
+                label.x >= cell.x && label.right() <= cell.right(),
+                "{pct}%: {label:?} in {cell:?}"
+            );
+            assert!(
+                label.bottom() < cell.bottom(),
+                "{pct}%: two lines fit the cell"
+            );
+        }
+    }
+
+    /// A grown header is taller and draws its rule lower, clear of the grown title; the rule keeps its length.
+    #[test]
+    fn a_grown_group_header_draws_its_rule_under_the_title() {
+        const EXPECTED: [(u32, i32, i32); 2] = [(150, 48, 28), (200, 62, 36)];
+        let mut sv = iconed(2, Mode::Tiles);
+        sv.groups = vec![Group {
+            title: "Folders".into(),
+            first: 0,
+        }];
+        for (pct, header_h, rule_y) in EXPECTED {
+            let (c, lay, theme) = render_at(&sv, Rect::new(0, 0, 900, 400), pct);
+            let cs = &theme.colors;
+            let h = lay.headers[0];
+            assert_eq!(h.height, header_h, "{pct}%");
+            assert_eq!(lay.cells[0].y, h.bottom(), "{pct}%");
+            assert_eq!(
+                c.get(h.x, h.y + rule_y),
+                cs.gradient_active_title.argb(),
+                "{pct}%"
+            );
+            assert_eq!(c.get(h.x, h.y + rule_y + 1), cs.window.argb(), "{pct}%");
+            assert_eq!(
+                c.get(h.x, h.y + EXPECTED_GROUP_RULE_Y),
+                cs.window.argb(),
+                "{pct}%"
+            );
+            let ink = cs.window_text.argb();
+            let title_rows: Vec<i32> = (h.y..h.bottom())
+                .filter(|&y| (h.x..h.x + 120).any(|x| c.get(x, y) == ink))
+                .collect();
+            assert!(!title_rows.is_empty(), "{pct}%: the title draws");
+            assert!(
+                title_rows.iter().all(|&y| y < h.y + rule_y),
+                "{pct}%: {title_rows:?}"
+            );
+            assert_ne!(
+                c.get(h.x + GROUP_LINE_W + 1, h.y + rule_y),
+                cs.gradient_active_title.argb()
+            );
+        }
+    }
+
+    /// Arrow keys, hits and the wheel follow the grown grid: at 200% a row holds half as many icons.
+    #[test]
+    fn arrow_keys_and_the_wheel_follow_the_grown_rows() {
+        use crate::controls::shellview::{Hit, hit, scroll, step};
+        use crate::selection::Mods;
+        let r = Rect::new(0, 0, 3 * 150 + 2 * FIELD_PAD + 20, 200);
+        for (pct, per_row, pitch) in [(100, 6, 75), (200, 3, 112)] {
+            let mut sv = iconed(30, Mode::Icons);
+            sv.selection.set_only(Some(0));
+            let cm = Theme::default().with_text_size(pct).controls();
+            let lay = layout(&sv, r, &cm);
+            assert!(step(
+                &mut sv,
+                iconview::IconMove::Down,
+                &lay,
+                Mods::default()
+            ));
+            assert_eq!(sv.selection.focus, Some(per_row), "{pct}%");
+            assert!(step(
+                &mut sv,
+                iconview::IconMove::Right,
+                &lay,
+                Mods::default()
+            ));
+            assert_eq!(sv.selection.focus, Some(per_row + 1), "{pct}%");
+            let c = lay.cells[per_row + 1];
+            assert_eq!(
+                hit(&sv, &lay, c.right() - 1, c.y + 1),
+                Hit::Entry(per_row + 1)
+            );
+            sv.top = 0;
+            let lay = layout(&sv, r, &cm);
+            assert!(scroll(&mut sv, 1, &lay));
+            assert_eq!(sv.top, pitch, "{pct}%: a wheel step is one row");
+        }
+    }
+
     #[test]
     fn renaming_in_icons_draws_iconviews_edit_box() {
         let mut sv = iconed(1, Mode::Icons);
@@ -757,7 +1050,8 @@ mod tests {
         let (c, lay, theme) = render(&sv, Rect::new(0, 0, 300, 300));
         let (text, px) = rend();
         let _ = px;
-        let box_r = iconview::edit_layout(&theme, &text, &sv.edit.as_ref().unwrap().1).rect;
+        let box_r =
+            iconview::edit_layout(&theme, &text, &sv.edit.as_ref().unwrap().1, iconview::CELL).rect;
         let cell = lay.cells[0];
         let black = Color::rgb(0, 0, 0).argb();
         assert_eq!(

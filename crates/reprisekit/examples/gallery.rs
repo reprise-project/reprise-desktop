@@ -5,7 +5,8 @@
 //! by styles built for scale `n` (see `gallery_parts`), and the Blue tray arrow
 //! page. `REPRISE_GALLERY_LOOK=classic` leaves the Blue bands blank and skips
 //! the Blue, Glass and taskbar PNGs. `REPRISE_GALLERY_TEXT_SIZE=<percent>` writes
-//! only a message box and a property sheet in each look at that text size.
+//! only a message box, a property sheet, window controls, panes and the shell
+//! view's icon modes in each look at that text size.
 
 #[path = "gallery_p3/mod.rs"]
 mod gallery_p3;
@@ -391,10 +392,11 @@ fn render_text_size(pct: u32) -> Canvas {
     let col = sw.max(mw) + 10;
     let (cw, ch) = u.size(TEXT_SIZE_CONTROLS);
     let (pw, ph) = u.size(TEXT_SIZE_PANES);
-    let col = col.max(cw + 10).max(pw + 10);
+    let (vw, vh) = u.size(TEXT_SIZE_VIEWS);
+    let col = col.max(cw + 10).max(pw + 10).max(vw + 10);
     let mut c = Canvas::new(
         (themes.len() as i32 * col + 10) as u32,
-        (mh + sh + ch + ph + 50) as u32,
+        (mh + sh + ch + ph + vh + 60) as u32,
     );
     c.fill_rect(c.bounds(), Color::rgb(58, 110, 165));
     for (i, theme) in themes.iter().enumerate() {
@@ -414,6 +416,71 @@ fn render_text_size(pct: u32) -> Canvas {
         c.blit_canvas(x, mh + 20, &sheet_c);
         c.blit_canvas(x, mh + sh + 30, &text_size_controls(theme, &text));
         c.blit_canvas(x, mh + sh + ch + 40, &text_size_panes(theme, &text));
+        c.blit_canvas(x, mh + sh + ch + ph + 50, &text_size_views(theme, &text));
+    }
+    c
+}
+
+/// The shell views' panel in `render_text_size`, 100% px.
+const TEXT_SIZE_VIEWS: (i32, i32) = (700, 250);
+
+/// Explorer's big toolbar over the shell view in Icons, grouped Tiles and Thumbnails, laid out
+/// with `theme`'s controls grown by its text.
+fn text_size_views(theme: &Theme, text: &TextRenderer) -> Canvas {
+    let px = theme.fonts.size_px;
+    let cm = theme.controls();
+    let u = theme.text;
+    let (w, h) = u.size(TEXT_SIZE_VIEWS);
+    let mut c = Canvas::new(w as u32, h as u32);
+    c.fill_rect(c.bounds(), theme.colors.button_face);
+    let p = theme.paint();
+    let labelled = |id, label: &str| toolbar::Item::DropButton {
+        id,
+        icon: None,
+        label: Some(label.into()),
+        enabled: true,
+    };
+    let tb = toolbar::ToolBar {
+        items: vec![
+            labelled(toolbar::BACK, "Back"),
+            toolbar::Item::Separator,
+            toolbar::Item::Button {
+                id: toolbar::FOLDERS,
+                icon: None,
+                label: Some("Folders".into()),
+                enabled: true,
+            },
+            toolbar::Item::DropButton {
+                id: toolbar::VIEWS,
+                icon: Some(viewsicon::draw24()),
+                label: None,
+                enabled: true,
+            },
+        ],
+        hot: None,
+        pressed: None,
+        latched: Some(2),
+        big: true,
+    };
+    let strip = Rect::new(0, 0, w, toolbar::height(true, &cm));
+    let rects = toolbar::layout(&tb, text, px, strip, &cm);
+    toolbar::draw(&mut c, text, &p, &tb, strip, &rects, px);
+    let views = [
+        (shellview::Mode::Icons, false),
+        (shellview::Mode::Tiles, true),
+        (shellview::Mode::Thumbnails, false),
+    ];
+    let vw = (w - 4 * 4) / 3;
+    for (i, (mode, grouped)) in views.into_iter().enumerate() {
+        let sv = shellview::sample(mode, grouped);
+        let r = Rect::new(
+            4 + i as i32 * (vw + 4),
+            strip.bottom() + 4,
+            vw,
+            h - strip.bottom() - 8,
+        );
+        let lay = shellview::layout(&sv, r, &cm);
+        shellview::draw(&mut c, text, &p, &sv, &lay, None, px);
     }
     c
 }
@@ -6169,6 +6236,7 @@ fn render_glass_items(theme: &Theme) -> Canvas {
         iconview::draw_cell_at(
             &mut c,
             (at.x + 7, at.y - 2),
+            iconview::Cell::square(iconview::CELL),
             theme,
             &text,
             "Computer",
