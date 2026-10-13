@@ -288,6 +288,7 @@ pub struct State {
     pub dialogs: crate::dialogview::Dialogs,
     pub caret: crate::caret::Caret,
     pub fsjobs: crate::fsjobs::FsJobs,
+    pub pickthumbs: crate::pickthumbs::PickThumbs,
     pub hang: crate::hang::Hang,
     /// The key route's own state: the Super tap, chords, keys kept from
     /// the client (`keyboard`).
@@ -542,6 +543,7 @@ impl State {
             dialogs: Default::default(),
             caret: Default::default(),
             fsjobs: Default::default(),
+            pickthumbs: Default::default(),
             hang: Default::default(),
             key_input: crate::keyboard::KeyInput::new(&dh),
             devices: crate::devices::Devices::new(&dh),

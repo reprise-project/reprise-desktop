@@ -601,6 +601,9 @@ impl State {
     }
 
     fn destroy_dialog(&mut self, mut v: DialogView) {
+        if v.dialog.picker().is_some() {
+            self.pickthumbs.forget(v.id);
+        }
         self.switcher_forget(crate::switcherview::Entry::Dialog(v.id));
         if let Some(t) = v.fade.take() {
             self.handle.remove(t);
@@ -1586,7 +1589,8 @@ impl State {
         self.redraw_dialog(i);
     }
 
-    /// Runs every Browse dialog's queued folder reads off the loop; replies find dialogs by id.
+    /// Runs every Browse dialog's queued folder reads off the loop, and fetches the thumbnails
+    /// of the pictures it lists in Thumbnails or Tiles; replies find dialogs by id.
     fn run_picker_requests(&mut self) {
         let jobs: Vec<(u64, crate::filepick::Request)> = self
             .dialogs
@@ -1601,6 +1605,35 @@ impl State {
                 Box::new(move |state| state.picker_reply(id, reply))
             });
         }
+        let pictures: Vec<_> = self
+            .dialogs
+            .views
+            .iter_mut()
+            .filter_map(|v| Some((v.id, v.dialog.picker_mut()?.take_pictures()?)))
+            .collect();
+        for (id, (generation, paths)) in pictures {
+            let to_loop = self.fsjobs.sender();
+            self.pickthumbs.want(to_loop, id, generation, paths);
+        }
+    }
+
+    /// Thumbnails fetched for Browse dialog `id`'s listing `generation`; a dialog closed or
+    /// relisted meanwhile drops them.
+    pub(crate) fn picker_thumbs(
+        &mut self,
+        id: u64,
+        generation: u64,
+        done: Vec<crate::pickthumbs::Done>,
+    ) {
+        let Some(i) = self.dialogs.views.iter().position(|v| v.id == id) else {
+            return;
+        };
+        let Some(p) = self.dialogs.views[i].dialog.picker_mut() else {
+            return;
+        };
+        if p.thumbs(generation, done) {
+            self.redraw_dialog(i);
+        }
     }
 
     /// A folder read for Browse dialog `id` is done; a pick acts as if the dialog were on top.
@@ -1613,7 +1646,10 @@ impl State {
         };
         match p.reply(reply, &mut self.icons) {
             Outcome::Nothing => {}
-            Outcome::Redraw => self.redraw_dialog(i),
+            Outcome::Redraw => {
+                self.run_picker_requests();
+                self.redraw_dialog(i);
+            }
             pick => {
                 self.raise_dialog(i);
                 self.apply_dialog(pick);

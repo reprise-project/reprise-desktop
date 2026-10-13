@@ -92,9 +92,7 @@ impl Explorer {
             let kind = self.items[i].kind.clone();
             if let Some(e) = self.sv.entries.get_mut(i) {
                 let scale = ctx.icons.scale();
-                e.thumb = Some(repriseapp::thumbs::for_display(
-                    done.thumb, done.dims, scale,
-                ));
+                e.thumb = Some(shellview::frame_thumb(done.thumb, done.dims, scale));
                 e.detail = shellview::image_detail(done.dims, &kind);
             }
             arrived.push(done.path);

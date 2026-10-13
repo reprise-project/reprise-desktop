@@ -8,7 +8,8 @@
 //! The picker never touches the file system itself: a folder read or a
 //! typed name's lookup can block for good on a dead network mount. It
 //! queues a [`Request`] instead; the host runs it off the loop and hands
-//! the [`Reply`] back through [`FilePicker::reply`].
+//! the [`Reply`] back through [`FilePicker::reply`]. Pictures' thumbnails
+//! come the same way: [`FilePicker::take_pictures`], then [`FilePicker::thumbs`].
 
 use crate::dialog::Outcome;
 use crate::raster::{Canvas, Rect};
@@ -16,7 +17,7 @@ use reprisefs::listing::Row;
 use reprisekit::controls::filedlg::{self, Crumb, Event, Fields, FileDlg, Folder, FolderId};
 use reprisekit::controls::form::Key;
 use reprisekit::controls::placesbar::Place;
-use reprisekit::controls::shellview::{self, Entry};
+use reprisekit::controls::shellview::{self, Entry, Mode};
 use reprisekit::frame::Edges;
 use reprisekit::icontheme::{IconCache, ListingIcons};
 use reprisekit::selection::Mods;
@@ -104,6 +105,20 @@ pub struct FilePicker {
     /// My Recent Documents' files by the name each is listed as, while
     /// that listing is on screen.
     recent: std::collections::HashMap<String, PathBuf>,
+    pictures: Pictures,
+}
+
+/// The listed pictures and how far their thumbnails have got.
+#[derive(Clone, Debug, Default, PartialEq)]
+struct Pictures {
+    /// Picture `i`'s path; its entry's id is `i + 1`.
+    paths: Vec<PathBuf>,
+    /// Bumped by every listing, so thumbnails for an earlier one are dropped.
+    generation: u64,
+    /// This listing's pictures went to the host.
+    asked: bool,
+    /// The icon cache's scale when listed: the thumbnails' device pixels.
+    scale: i32,
 }
 
 /// File system work the picker is waiting on, for the host to run off
@@ -209,6 +224,7 @@ impl FilePicker {
             listing: None,
             opening: None,
             recent: Default::default(),
+            pictures: Pictures::default(),
         };
         let id = picker.folders.id(start);
         picker.list(id);
@@ -264,8 +280,10 @@ impl FilePicker {
                 } else {
                     Default::default()
                 };
-                let entries = self.entries(rows, cache);
+                let (entries, pictures) = self.entries(rows, cache);
                 self.show(id, &r.path, entries);
+                self.pictures.paths = pictures;
+                self.pictures.scale = cache.scale();
                 match (&r.pattern, r.id) {
                     (Some(p), _) => self.dlg.apply_wildcard(p),
                     // The field empties once the folder is entered.
@@ -285,6 +303,49 @@ impl FilePicker {
         }
     }
 
+    /// The listing's pictures and their generation, once, when Views shows Thumbnails or Tiles:
+    /// the host fetches their thumbnails off the loop and hands them to [`FilePicker::thumbs`].
+    pub fn take_pictures(&mut self) -> Option<(u64, Vec<PathBuf>)> {
+        let p = &mut self.pictures;
+        let shown = matches!(self.dlg.view(), Mode::Thumbnails | Mode::Tiles);
+        if p.asked || !shown || p.paths.is_empty() {
+            return None;
+        }
+        p.asked = true;
+        Some((p.generation, p.paths.clone()))
+    }
+
+    /// Thumbnails fetched for listing `generation`: each picture shows it, and its Tiles lines
+    /// its size. True when one did; a listing replaced meanwhile takes none.
+    pub fn thumbs(&mut self, generation: u64, done: Vec<(PathBuf, Canvas, (u32, u32))>) -> bool {
+        if generation != self.pictures.generation {
+            return false;
+        }
+        let at: std::collections::HashMap<u64, usize> = self
+            .dlg
+            .entries()
+            .iter()
+            .enumerate()
+            .filter(|(_, e)| !e.is_dir && e.id != 0)
+            .map(|(i, e)| (e.id, i))
+            .collect();
+        let ids: std::collections::HashMap<&Path, usize> = (1..)
+            .zip(&self.pictures.paths)
+            .filter_map(|(id, p)| Some((p.as_path(), *at.get(&id)?)))
+            .collect();
+        let mut shown = false;
+        for (path, thumb, dims) in done {
+            let Some(&i) = ids.get(path.as_path()) else {
+                continue;
+            };
+            let e = &mut self.dlg.entries_mut()[i];
+            e.thumb = Some(shellview::frame_thumb(thumb, dims, self.pictures.scale));
+            e.detail = shellview::image_detail(dims, &e.kind);
+            shown = true;
+        }
+        shown
+    }
+
     pub fn current(&self) -> Option<&Path> {
         self.dlg.folder().and_then(|id| self.folders.path(id))
     }
@@ -302,8 +363,8 @@ impl FilePicker {
 
     /// `rows` as the dialog's entries, with Explorer's icons and Tiles lines, except that a
     /// program wears the executable's icon; a `folders` handle on every subfolder so entering
-    /// one resolves.
-    fn entries(&mut self, rows: Vec<Row>, cache: &mut IconCache) -> Vec<Entry> {
+    /// one resolves, and [`Pictures`]' id on every picture. Returns the pictures' paths too.
+    fn entries(&mut self, rows: Vec<Row>, cache: &mut IconCache) -> (Vec<Entry>, Vec<PathBuf>) {
         let specials = reprisefs::places::special_folders();
         let names: Vec<String> = rows
             .iter()
@@ -313,17 +374,23 @@ impl FilePicker {
             })
             .collect();
         let mut shared = ListingIcons::default();
-        rows.into_iter()
+        let mut pictures = Vec::new();
+        let entries = rows
+            .into_iter()
             .zip(names)
             .map(|(r, name)| {
                 let it = r.item;
                 let [icon, icon32, icon48] = shared.get(cache, &name);
+                let id = if it.is_dir {
+                    self.folders.id(&it.path)
+                } else if it.is_image() {
+                    pictures.push(it.path.clone());
+                    pictures.len() as u64
+                } else {
+                    0
+                };
                 let mut e = Entry {
-                    id: if it.is_dir {
-                        self.folders.id(&it.path)
-                    } else {
-                        0
-                    },
+                    id,
                     icon,
                     icon32,
                     icon48,
@@ -339,11 +406,18 @@ impl FilePicker {
                 e.detail = shellview::tile_detail(&e);
                 e
             })
-            .collect()
+            .collect();
+        (entries, pictures)
     }
 
-    /// Hands folder `id` at `path` to the dialog with `entries`.
+    /// Hands folder `id` at `path` to the dialog with `entries`, its pictures' thumbnails
+    /// still to come.
     fn show(&mut self, id: FolderId, path: &Path, entries: Vec<Entry>) {
+        let generation = self.pictures.generation + 1;
+        self.pictures = Pictures {
+            generation,
+            ..Default::default()
+        };
         let parent = reprisefs::places::dialog_parent(path).map(|p| self.folders.id(p));
         let label = reprisefs::places::dialog_label(path);
         self.dlg.set_listing(Folder {
@@ -845,6 +919,88 @@ mod tests {
         let notes = entry("notes.txt");
         assert_eq!(worn(&notes), sizes(text));
         assert_eq!(notes.detail, [notes.kind.clone(), "1 KB".into()]);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    fn fnv(c: &Canvas, r: Rect) -> u64 {
+        let px = (r.y..r.bottom()).flat_map(|y| (r.x..r.right()).map(move |x| c.get(x, y)));
+        px.fold(0xcbf2_9ce4_8422_2325, |h, p| {
+            (h ^ u64::from(p)).wrapping_mul(0x0100_0000_01b3)
+        })
+    }
+
+    /// Where `argb` lands in `c`: its bounding box.
+    fn found(c: &Canvas, argb: u32) -> Option<Rect> {
+        let mut hit: Option<(i32, i32, i32, i32)> = None;
+        for y in 0..c.height as i32 {
+            for x in 0..c.width as i32 {
+                if c.get(x, y) == argb {
+                    let b = hit.get_or_insert((x, y, x, y));
+                    *b = (b.0.min(x), b.1.min(y), b.2.max(x), b.3.max(y));
+                }
+            }
+        }
+        hit.map(|(l, t, r, b)| Rect::new(l, t, r - l + 1, b - t + 1))
+    }
+
+    /// Thumbnails asks for the listing's pictures once; their thumbnails fill the frames, at the
+    /// size that fits there, and give the picture's size to Tiles. A relisted folder drops the
+    /// earlier listing's.
+    #[test]
+    fn thumbnails_fetch_the_pictures_once_and_show_their_thumbnails() {
+        const SAND: u32 = 0xffd2_b48c;
+        let dir = sandbox("thumbs");
+        let pic = dir.join("dunes.png");
+        std::fs::write(&pic, b"never decoded here").unwrap();
+        let mut p = FilePicker::run_command(&dir, Icons::default(), true);
+        p.dlg.set_filter(1);
+        p.sync_filter();
+        settle(&mut p);
+        assert_eq!(p.take_pictures(), None, "List fetches nothing");
+        p.click(R, Some(filedlg::Hit::ToolBar(3)));
+        p.click(R, Some(filedlg::Hit::ViewsItem(0)));
+        assert_eq!(p.dlg.view(), Mode::Thumbnails);
+        let (generation, paths) = p.take_pictures().expect("Thumbnails fetches the pictures");
+        assert_eq!(paths, std::slice::from_ref(&pic));
+        assert_eq!(p.take_pictures(), None, "once per listing");
+        let thumb = || {
+            vec![(
+                pic.clone(),
+                Canvas::from_pixels(128, 64, vec![SAND; 128 * 64]),
+                (800, 400),
+            )]
+        };
+        assert!(!p.thumbs(generation + 1, thumb()), "not this listing's");
+        assert!(p.thumbs(generation, thumb()));
+        let e = p
+            .dlg
+            .entries()
+            .iter()
+            .find(|e| e.name == "dunes.png")
+            .unwrap();
+        let t = e.thumb.as_ref().expect("the thumbnail");
+        assert_eq!((t.width, t.height), (94, 47));
+        assert_eq!(e.detail, ["800 x 400".to_string(), e.kind.clone()]);
+
+        let theme = reprisekit::theme::Theme::default();
+        let text = reprisekit::text::TextRenderer::load(&theme.fonts);
+        let mut c = Canvas::new(R.width as u32, R.height as u32);
+        p.dlg
+            .draw(&mut c, &text, &theme.paint(), R, theme.fonts.size_px);
+        let drawn = found(&c, SAND).expect("the thumbnail is drawn");
+        assert_eq!((drawn.width, drawn.height), (94, 47));
+        // The picture's cell: its frame and name. The Look in and places labels name the
+        // test's folder and user.
+        let cell = Rect::new(drawn.x - 9, drawn.y - 33, 112, 136);
+        if reprisekit::text::test_tahoma() {
+            assert_eq!(fnv(&c, cell), 0xdb3b_8c32_df81_6bd0, "Browse in Thumbnails");
+        }
+
+        p.event(Event::NeedListing(p.dlg.folder().unwrap()));
+        settle(&mut p);
+        let (relisted, _) = p.take_pictures().expect("the new listing's pictures");
+        assert!(relisted > generation);
+        assert!(!p.thumbs(generation, thumb()), "the earlier listing's");
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
