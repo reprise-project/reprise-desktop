@@ -18,8 +18,8 @@ pub struct Settings {
     pub address_bar: bool,
     pub bar_width: i32,
     pub window: (i32, i32),
-    /// Details view column widths in px; empty means the built-in
-    /// defaults.
+    /// Details view column widths in 100% px, grown by the text size when
+    /// drawn; empty means the built-in defaults.
     pub columns: Vec<i32>,
     pub show_hidden: bool,
     /// Which task pane sections the user has collapsed, by title. A

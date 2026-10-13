@@ -136,6 +136,7 @@ pub struct ShellView {
     /// The entry a drag is hovering: highlighted like a selected one, never focused.
     pub drop_target: Option<usize>,
     /// Details' columns, seeded from `details_columns`; a host persists its widths here across a resize.
+    /// Widths are 100% px: Details draws them grown by the text size ([`resize_column`] maps a drag back).
     pub columns: Vec<listview::Column>,
     pub fields: Vec<Field>,
     /// The entry under the pointer ([`ShellView::hover`]), lit by a look that boxes its items.
@@ -252,6 +253,17 @@ pub fn details_columns() -> Vec<listview::Column> {
         listview::Column::new("Type", 118),
         listview::Column::new("Date Modified", 120),
     ]
+}
+
+/// Details' column `col`, `from` 100% px wide when its divider was pressed,
+/// dragged `dx` px at text size `u`: it takes the longest 100% width that grows
+/// to at most the dragged edge, held to `listview::MIN_COL_W`. `true` when it changed.
+pub fn resize_column(sv: &mut ShellView, col: usize, from: i32, dx: i32, u: TextUnits) -> bool {
+    let Some(c) = sv.columns.get_mut(col) else {
+        return false;
+    };
+    let width = u.within(u.len(from) + dx).max(listview::MIN_COL_W);
+    std::mem::replace(&mut c.width, width) != width
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -399,12 +411,29 @@ impl listview::Rows for DetailsRows<'_> {
 }
 
 /// The transient `listview::ListView` a Details arm builds over `sv`; it
-/// borrows the columns and selection, so a layout, hit or draw copies nothing large.
-type DetailsView<'a> = listview::ListView<DetailsRows<'a>, &'a [listview::Column], &'a Selection>;
+/// borrows the selection and, at 100%, the columns, so a layout, hit or draw copies nothing large.
+type DetailsView<'a> =
+    listview::ListView<DetailsRows<'a>, Cow<'a, [listview::Column]>, &'a Selection>;
 
-fn details_listview(sv: &ShellView) -> DetailsView<'_> {
+/// `columns` with their 100% widths grown by `u`.
+fn grown(columns: &[listview::Column], u: TextUnits) -> Cow<'_, [listview::Column]> {
+    if u.is_one() {
+        return Cow::Borrowed(columns);
+    }
+    Cow::Owned(
+        columns
+            .iter()
+            .map(|c| listview::Column {
+                width: u.len(c.width),
+                ..c.clone()
+            })
+            .collect(),
+    )
+}
+
+fn details_listview(sv: &ShellView, u: TextUnits) -> DetailsView<'_> {
     listview::ListView {
-        columns: &sv.columns,
+        columns: grown(&sv.columns, u),
         rows: DetailsRows(&sv.entries, &sv.fields),
         selection: &sv.selection,
         top: sv.top,
@@ -426,10 +455,11 @@ fn details_listview(sv: &ShellView) -> DetailsView<'_> {
     }
 }
 
-/// Run `f` on a Details `ListView` that owns `sv`'s columns, selection and
-/// rename for the call (moved out, not copied), then move changes back into `sv`.
+/// Run `f` on a Details `ListView` that owns `sv`'s selection and rename for
+/// the call (moved out, not copied) and its columns grown by `u`, then move changes back into `sv`.
 fn with_details<T>(
     sv: &mut ShellView,
+    u: TextUnits,
     f: impl FnOnce(&mut listview::ListView<DetailsRows<'_>>) -> T,
 ) -> T {
     let ShellView {
@@ -447,8 +477,9 @@ fn with_details<T>(
         header,
         ..
     } = sv;
+    let units = std::mem::take(columns);
     let mut lv = listview::ListView {
-        columns: std::mem::take(columns),
+        columns: grown(&units, u).into_owned(),
         rows: DetailsRows(entries, fields),
         selection: std::mem::take(selection),
         top: *top,
@@ -469,7 +500,7 @@ fn with_details<T>(
         clicks: Default::default(),
     };
     let out = f(&mut lv);
-    *columns = lv.columns;
+    *columns = units;
     *selection = lv.selection;
     *top = lv.top;
     *left = lv.left;
@@ -484,7 +515,7 @@ fn with_details<T>(
 /// measuring every label per layout made a pointer move O(folder).
 pub fn label_rect(sv: &ShellView, lay: &Layout, i: usize, text: &TextRenderer, px: u32) -> Rect {
     if matches!(sv.mode, Mode::Details) {
-        let lv = details_listview(sv);
+        let lv = details_listview(sv, lay.controls.text);
         let lv_lay = listview::layout(&lv, lay.frame, &lay.controls);
         return lv.edit_rect(&lv_lay, i, text, px);
     }
@@ -549,7 +580,7 @@ pub fn layout(sv: &ShellView, r: Rect, cm: &ControlMetrics) -> Layout {
             }
         }
         Mode::Details => {
-            let lv = details_listview(sv);
+            let lv = details_listview(sv, cm.text);
             let lv_lay = listview::layout(&lv, frame, cm);
             // One rect per entry: a row scrolled out of view keeps its place above or below the body.
             let row_h = lv_lay.row_h();
@@ -678,7 +709,7 @@ impl LayoutCache {
 /// vertical scrollbar, then the cells, and report a group header as `Background`.
 pub fn hit(sv: &ShellView, lay: &Layout, x: i32, y: i32) -> Hit {
     if matches!(sv.mode, Mode::Details) {
-        let lv = details_listview(sv);
+        let lv = details_listview(sv, lay.controls.text);
         let lv_lay = listview::layout(&lv, lay.frame, &lay.controls);
         return match lv.hit(&lv_lay, x, y) {
             listview::Hit::Row(i) => Hit::Entry(i),
@@ -725,7 +756,7 @@ pub fn name_hit(
     let named = match sv.mode {
         // The name as its column cuts it short, not the rename box's rect, which runs on for the whole name.
         Mode::Details => {
-            let lv = details_listview(sv);
+            let lv = details_listview(sv, lay.controls.text);
             let lv_lay = listview::layout(&lv, lay.frame, &lay.controls);
             x < lv.name_rect(&lv_lay, i, text, px).right()
         }
@@ -783,7 +814,7 @@ pub fn scroll(sv: &mut ShellView, by: i32, lay: &Layout) -> bool {
             let notches = by.signum() * (by.abs() / WHEEL_ROWS).max(1);
             hscroll(sv, notches * list_cell(lay.controls.text).w, lay)
         }
-        Mode::Details => with_details(sv, |lv| {
+        Mode::Details => with_details(sv, lay.controls.text, |lv| {
             let lv_lay = listview::layout(lv, lay.frame, &lay.controls);
             lv.scroll(by as i64, &lv_lay)
         }),
@@ -802,7 +833,7 @@ pub fn scroll(sv: &mut ShellView, by: i32, lay: &Layout) -> bool {
 pub fn page(sv: &mut ShellView, by: i32, lay: &Layout) -> bool {
     match sv.mode {
         Mode::Details => {
-            let lv = details_listview(sv);
+            let lv = details_listview(sv, lay.controls.text);
             let rows = listview::layout(&lv, lay.frame, &lay.controls).rows.max(1) as i32;
             scroll(sv, by * rows, lay)
         }
@@ -843,7 +874,7 @@ pub fn hscroll(sv: &mut ShellView, by: i32, lay: &Layout) -> bool {
             sv.left = scrollbar::held(from + by, lay.body.width, lay.content.0);
             sv.left != from
         }
-        Mode::Details => with_details(sv, |lv| {
+        Mode::Details => with_details(sv, lay.controls.text, |lv| {
             let lv_lay = listview::layout(lv, lay.frame, &lay.controls);
             lv.hscroll(by, &lv_lay)
         }),
@@ -881,7 +912,7 @@ pub fn drag_hthumb(sv: &mut ShellView, x: i32, grab: i32, lay: &Layout) -> bool 
             sv.left = left;
             changed
         }
-        Mode::Details => with_details(sv, |lv| {
+        Mode::Details => with_details(sv, lay.controls.text, |lv| {
             let lv_lay = listview::layout(lv, lay.frame, &lay.controls);
             let left = lv.left_at(&lv_lay, x, grab);
             let changed = left != lv.left;
@@ -910,7 +941,7 @@ fn icon_vparts(sv: &ShellView, lay: &Layout, vb: Rect) -> ScrollParts {
 pub fn drag_thumb(sv: &mut ShellView, y: i32, grab: i32, lay: &Layout) -> bool {
     match sv.mode {
         Mode::List => false,
-        Mode::Details => with_details(sv, |lv| {
+        Mode::Details => with_details(sv, lay.controls.text, |lv| {
             let lv_lay = listview::layout(lv, lay.frame, &lay.controls);
             let top = lv.top_at(&lv_lay, y, grab);
             let changed = top != lv.top;
@@ -958,7 +989,7 @@ fn details_step(sv: &mut ShellView, dir: IconMove, lay: &Layout, mods: Mods) -> 
         IconMove::End => i64::MAX / 2,
         IconMove::Left | IconMove::Right => return false,
     };
-    with_details(sv, |lv| {
+    with_details(sv, lay.controls.text, |lv| {
         let lv_lay = listview::layout(lv, lay.frame, &lay.controls);
         lv.step(row_step, &lv_lay, mods)
     })
@@ -1024,7 +1055,7 @@ pub fn draw(
 ) {
     let Paint { cs, s, .. } = *p;
     if matches!(sv.mode, Mode::Details) {
-        let lv = details_listview(sv);
+        let lv = details_listview(sv, lay.controls.text);
         let lv_lay = listview::layout(&lv, lay.frame, &lay.controls);
         listview::draw(c, text, p, &lv, &lv_lay, bars, px);
         return;
@@ -1863,6 +1894,51 @@ pub(crate) mod tests {
         assert_eq!(sv.left, 0);
     }
 
+    /// Details' widths are 100% px: at 200% every column, its divider and the
+    /// scrolled width are twice as wide, and at 100% they draw as saved.
+    #[test]
+    fn details_columns_draw_grown_by_the_text_size() {
+        let mut sv = view(3);
+        sv.mode = Mode::Details;
+        let r = Rect::new(0, 0, 400, 200);
+        let saved: i32 = sv.columns.iter().map(|c| c.width).sum();
+        for (pct, k) in [(100, 1), (200, 2)] {
+            let cm = crate::theme::Theme::default()
+                .with_text_size(pct)
+                .controls();
+            let lay = layout(&sv, r, &cm);
+            assert_eq!(lay.content.0, k * saved, "{pct}%: the columns' width");
+            let edge = FIELD_PAD + k * 178;
+            assert_eq!(
+                hit(&sv, &lay, edge, FIELD_PAD + 2),
+                Hit::Divider(0),
+                "{pct}%"
+            );
+        }
+        assert_eq!(sv.columns[0].width, 178, "laying out keeps the saved width");
+    }
+
+    /// A divider dragged 40 px at 200% widens its column by 20 100% px; the same drag at 100% by 40.
+    #[test]
+    fn a_divider_drag_saves_its_width_at_100_percent() {
+        let mut sv = view(3);
+        let big = crate::theme::Theme::default()
+            .with_text_size(200)
+            .controls()
+            .text;
+        assert!(resize_column(&mut sv, 2, 118, 40, big));
+        assert_eq!(sv.columns[2].width, 138);
+        assert!(
+            !resize_column(&mut sv, 2, 118, 41, big),
+            "the edge stays at or left of the pointer"
+        );
+        assert!(resize_column(&mut sv, 2, 138, 40, TextUnits::ONE));
+        assert_eq!(sv.columns[2].width, 178);
+        assert!(resize_column(&mut sv, 2, 178, -400, big));
+        assert_eq!(sv.columns[2].width, listview::MIN_COL_W);
+        assert!(!resize_column(&mut sv, 9, 100, 40, big), "no such column");
+    }
+
     /// Details re-lays its list out at the sizes its layout was built with: at
     /// 17 px the up arrow's last row, 16 px down the bar, is still the arrow, not the thumb.
     #[test]
@@ -2045,7 +2121,7 @@ pub(crate) mod tests {
         sv.mode = Mode::Details;
         let r = Rect::new(0, 0, 300, 160);
         let lay = layout(&sv, r, &cm);
-        let lv = details_listview(&sv);
+        let lv = details_listview(&sv, cm.text);
         let sb = listview::layout(&lv, r, &cm)
             .scrollbar
             .expect("80 rows overflow");
