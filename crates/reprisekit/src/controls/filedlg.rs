@@ -1289,6 +1289,7 @@ impl FileDlg {
         if let Some(c) = ch.filter(|c| *c != ' ')
             && shellview::type_ahead(&mut self.shell, c)
         {
+            shellview::follow(&mut self.shell, lay);
             return Event::Redraw;
         }
         // Hosts send Left, Right, Home and End as edit keys, which only the File name field edits with.
@@ -1307,7 +1308,6 @@ impl FileDlg {
         };
         let mods = self.sel_mods(mods);
         if shellview::step(&mut self.shell, dir, lay, mods) {
-            shellview::follow(&mut self.shell, lay);
             if self.multi() {
                 self.sync_name_field();
             }
@@ -2096,6 +2096,47 @@ mod tests {
         assert_eq!(lay.toolbar_rects[TOOLBAR_VIEWS].right(), CLIENT.0 - 84);
         assert_eq!(lay.toolbar.right(), CLIENT.0 - 84);
         assert!(lay.views.is_none(), "no popup while it is closed");
+    }
+
+    /// End and a typed letter scroll the entry they reach into view once, in every mode.
+    #[test]
+    fn a_key_scrolls_the_entry_it_reaches_into_view() {
+        let names = |i: usize| format!("{}{i:04}.png", if i < 1000 { "a" } else { "b" });
+        for mode in [
+            Mode::Thumbnails,
+            Mode::Tiles,
+            Mode::Icons,
+            Mode::List,
+            Mode::Details,
+        ] {
+            let mut d = sample();
+            d.set_listing(folder(
+                1,
+                None,
+                (0..2000).map(|i| file(&names(i))).collect(),
+            ));
+            d.shell.set_mode(mode);
+            d.focus = Focus::Shell;
+            let cm = ControlMetrics::CLASSIC;
+            let shown = |d: &FileDlg, i: usize| {
+                let lay = d.shell_layout(R, &cm);
+                let cell = lay.cells[i];
+                let body = lay.body;
+                body.x <= cell.x
+                    && cell.right() <= body.right()
+                    && body.y <= cell.y
+                    && cell.bottom() <= body.bottom()
+            };
+            d.key(R, form::Key::End, None, Mods::default());
+            assert!(shown(&d, 1999), "{mode:?}: End shows the last entry");
+            d.key(R, form::Key::Home, None, Mods::default());
+            d.key(R, form::Key::Char('b'), Some('b'), Mods::default());
+            assert_eq!(d.shell.selection.focus, Some(1000));
+            assert!(
+                shown(&d, 1000),
+                "{mode:?}: the typed letter's entry is shown"
+            );
+        }
     }
 
     /// `top` is px in Icons and rows in Details, so a Views pick starts
