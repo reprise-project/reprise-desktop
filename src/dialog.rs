@@ -1169,6 +1169,18 @@ impl Dialog {
         }
     }
 
+    /// [`Dialog::fit`] on an output whose usable area is `area` big: the tray's Customize page
+    /// lays itself out in the client a frame that size leaves.
+    pub fn fit_in(&mut self, theme: &Theme, text: &TextRenderer, area: (i32, i32)) {
+        if let Style::TrayCustomize(t) = &mut self.style {
+            let pad = DialogLayout::compute_client((0, 0))
+                .framed(theme, self.help)
+                .size;
+            t.room = Some((area.0 - pad.0, area.1 - pad.1));
+        }
+        self.fit(theme, text);
+    }
+
     /// Fit a form dialog to `theme`: a form laid out around measured text is built again, and
     /// wrapped tabs and a larger frame grow it.
     pub fn fit(&mut self, theme: &Theme, text: &TextRenderer) {
@@ -1183,17 +1195,12 @@ impl Dialog {
             Style::TrayCustomize(t) => {
                 t.metrics = theme.controls();
                 t.set_wording(traycustomize::Wording::of(theme));
+                t.fit(text, theme.fonts.size_px);
                 self.title = t.wording.title().into();
             }
             Style::Browse(p) => p.dlg.set_text(theme.text),
             _ => {}
         }
-    }
-
-    /// Whether the dialog lays out for the text size. The tray's Customize page under a look
-    /// with glass keeps 100% text and sizes.
-    pub fn grows(&self) -> bool {
-        !matches!(&self.style, Style::TrayCustomize(t) if t.is_page())
     }
 
     /// What makes this dialog "the same window" as one already open: its
@@ -9784,6 +9791,63 @@ mod tests {
         }
     }
 
+    /// The usable area of a 1920x1080 output over a 40 px taskbar.
+    const AREA_1080P: (i32, i32) = (1920, 1040);
+
+    /// The tray's Customize dialog in `theme`'s words over three items, as the tray opens it.
+    fn tray_dialog(theme: &Theme) -> Dialog {
+        use reprisekit::controls::traycustomize::{Behaviour, Entry, Wording};
+        let entry = |key: &str, name: &str| Entry {
+            key: key.into(),
+            name: name.into(),
+            detail: format!("{name}: all is well"),
+            icon: std::sync::Arc::from([]),
+            passive: false,
+            behaviour: Behaviour::Auto,
+        };
+        let w = Wording::of(theme);
+        Dialog::tray_customize(TrayCustomize::new(
+            w,
+            vec![entry("nm-applet", "Network"), entry("volume", "Volume")],
+            vec![entry("sticky", "Sticky Keys")],
+            (w == Wording::Glass).then_some(false),
+            theme.look.controls(),
+        ))
+    }
+
+    /// At 100% the tray's Customize page keeps its 1184x575 client on a 1080p output; at 150% it
+    /// grows with the text, and at 200% it fits the output, its page scrolling above the band.
+    /// A text size change while it is open lays it out again.
+    #[test]
+    fn the_tray_customize_page_grows_and_fits_its_output() {
+        let text = TextRenderer::load(&FontConfig::default());
+        let glass = reprisekit::interfaces::theme_for(reprisekit::interface::Interface::Glass);
+        let mut d = tray_dialog(&glass);
+        let client = |d: &Dialog| d.tray().unwrap().client();
+        d.fit_in(&glass, &text, AREA_1080P);
+        assert_eq!(client(&d), (1184, 575));
+        let big = glass.with_text_size(150);
+        d.fit_in(&big, &text, AREA_1080P);
+        assert_eq!(client(&d), big.text.size((1184, 575)));
+        let huge = glass.with_text_size(200);
+        d.fit_in(&huge, &text, AREA_1080P);
+        let l = DialogLayout::compute(&huge, &text, &d);
+        assert!(
+            l.size.0 <= AREA_1080P.0 && l.size.1 <= AREA_1080P.1,
+            "{:?}",
+            l.size
+        );
+        let client = l.page.unwrap();
+        let tray = d
+            .tray()
+            .unwrap()
+            .layout(&text, huge.fonts.size_px, (client.x, client.y));
+        assert!(tray.page_bar.is_some(), "the page scrolls");
+        assert_eq!(tray.band.unwrap().bottom(), client.bottom());
+        d.fit_in(&glass, &text, AREA_1080P);
+        assert_eq!(d.tray().unwrap().client(), (1184, 575), "back at 100%");
+    }
+
     /// Every compositor dialog laid out as a form, under each interface, at each text size.
     fn form_dialogs(theme: &Theme, text: &TextRenderer) -> Vec<Dialog> {
         use reprisekit::controls::iconlist::IconList;
@@ -9964,6 +10028,15 @@ mod tests {
                                 put(&d.title, format!("{:?} over its button", b.label));
                             }
                         }
+                    }
+                    let mut d = tray_dialog(&theme);
+                    d.fit_in(&theme, &text, AREA_1080P);
+                    let l = DialogLayout::compute(&theme, &text, &d);
+                    if l.size.0 > AREA_1080P.0 || l.size.1 > AREA_1080P.1 {
+                        put(&d.title, format!("{:?} past a 1080p output", l.size));
+                    }
+                    for (part, by) in d.tray().unwrap().overflows(&text, px) {
+                        put(&d.title, format!("{part} {by} px over"));
                     }
                 }
             }

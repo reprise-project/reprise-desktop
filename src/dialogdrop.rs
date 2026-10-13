@@ -141,9 +141,7 @@ impl State {
             return None;
         }
         let v = &mut self.dialogs.views[index];
-        let px = crate::dialogview::theme_for(&self.config, &v.dialog)
-            .fonts
-            .size_px;
+        let px = self.config.theme.fonts.size_px;
         let at = (pos.x as i32 - v.x, pos.y as i32 - v.y);
         let takes = v.dialog.drag_over(&v.layout, at.0, at.1, &self.text, px);
         let field = Field::Dialog(v.id);
@@ -198,9 +196,7 @@ impl State {
             return;
         };
         let v = &mut self.dialogs.views[i];
-        let px = crate::dialogview::theme_for(&self.config, &v.dialog)
-            .fonts
-            .size_px;
+        let px = self.config.theme.fonts.size_px;
         if v.dialog.drag_tick(&v.layout, &self.text, px) {
             self.redraw_dialog(i);
         }
@@ -326,9 +322,7 @@ impl State {
             return false;
         };
         let v = &mut self.dialogs.views[i];
-        let px = crate::dialogview::theme_for(&self.config, &v.dialog)
-            .fonts
-            .size_px;
+        let px = self.config.theme.fonts.size_px;
         let outcome = v.dialog.drop_text(&v.layout, line, &self.text, px);
         v.dialog.drag_leave();
         let took = outcome != crate::dialog::Outcome::Nothing;

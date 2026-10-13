@@ -37,16 +37,13 @@
 //! presses Apply.
 
 use crate::access::{self, Tree, accesskit};
-use crate::classic::widgets::{
-    BUTTON_H, BUTTON_W, BarHit, LINE_H, ScrollParts, bar_hit, scrollbar_parts,
-};
+use crate::classic::widgets::{BUTTON_H, BUTTON_W, BarHit, LINE_H, ScrollParts, bar_hit};
 use crate::controls::form::{self, Control, Form, Item};
 use crate::controls::pagelist::{self, PageList};
-use crate::controls::scrollbar::{ArrowRepeat, ThumbDrag};
+use crate::controls::scrollbar::PageScroll;
 use crate::controls::tabstrip::{self, TabStrip};
 use crate::look::Paint;
 use crate::look::widgets::{draw_page, draw_scrollbar, group_label_ink};
-use crate::pointer::{Axis, Interaction, Pointer, ScrollHit};
 use crate::raster::{Canvas, Rect};
 use crate::text::{Align, DialogFont, TextRenderer};
 use crate::theme::TextUnits;
@@ -96,19 +93,9 @@ pub struct PropSheet {
     /// The dialog font the whole sheet is set in: its first page's.
     pub font: DialogFont,
     pub nav: Nav,
+    /// The page's scroll in a client shorter than the sheet ([`PropSheet::fit_height`]), at
+    /// 100%: `short` is how much shorter than `size` the client is.
     scroll: PageScroll,
-}
-
-/// The page's scroll in a client shorter than the sheet ([`PropSheet::fit_height`]), at 100%.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-struct PageScroll {
-    /// How much shorter than `size` the client is.
-    short: i32,
-    /// How far the pages' controls are scrolled up: 0 to `short`.
-    top: i32,
-    drag: ThumbDrag,
-    bars: Pointer<ScrollHit>,
-    repeat: ArrowRepeat,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -424,14 +411,7 @@ impl PropSheet {
         };
         let (top, (visible, _)) = (self.page_top() + PAGE_EDGE, self.page_span());
         let bottom = top + visible - 2 * PAGE_EDGE;
-        let by = if r.y < top {
-            r.y - top
-        } else if r.bottom() > bottom {
-            (r.bottom() - bottom).min(r.y - top)
-        } else {
-            0
-        };
-        let to = self.scroll.top + by;
+        let to = self.scroll.top + PageScroll::reveal((top, bottom), (r.y, r.bottom()));
         self.scroll_to(to)
     }
 
@@ -592,13 +572,8 @@ impl PropSheet {
     /// A press on part `hit` of the page's scrollbar: an arrow scrolls a line, the track a
     /// page, the thumb is grabbed.
     fn page_bar_press(&mut self, hit: BarHit) {
-        self.scroll
-            .bars
-            .press(hit.part(), matches!(hit, BarHit::Thumb(_)));
-        self.scroll.repeat.press(hit);
         let (visible, _) = self.page_span();
-        let by = self.scroll.drag.press(Axis::Vertical, hit);
-        let to = self.scroll.top + by.by(LINE_H as i64, visible as i64) as i32;
+        let to = self.scroll.press(hit, visible);
         self.scroll_to(to);
     }
 
@@ -607,29 +582,15 @@ impl PropSheet {
     fn page_bar_drag(&mut self, x: i32, y: i32) -> Option<bool> {
         let parts = self.bar_parts(self.bar()?);
         let (visible, total) = self.page_span();
-        let top = self.scroll.drag.pos(
-            Axis::Vertical,
-            &parts,
-            (x, y),
-            visible as usize,
-            total as usize,
-        )?;
-        Some(self.scroll_to(top as i32))
+        let top = self.scroll.drag(&parts, (x, y), visible, total)?;
+        Some(self.scroll_to(top))
     }
 
     /// The page's scrollbar's parts, laid out in `bar`.
     fn bar_parts(&self, bar: Rect) -> ScrollParts {
         let (visible, total) = self.page_span();
         let thumb_min = self.open().controls().thumb_min;
-        scrollbar_parts(
-            bar,
-            1,
-            self.scroll.top as usize,
-            visible as usize,
-            total as usize,
-            false,
-            thumb_min,
-        )
+        self.scroll.parts(bar, visible, total, thumb_min)
     }
 
     /// The page's inside on the surface while it scrolls, for a host that draws its own
@@ -846,10 +807,10 @@ impl PropSheet {
             _ => None,
         };
         let page_bar = match hit {
-            Some(Hit::PageBar(b)) => b.part(),
+            Some(Hit::PageBar(b)) => Some(b),
             _ => None,
         };
-        let lit = self.on_list(|list, _| list.bar_hover(bar)) | self.scroll.bars.motion(page_bar);
+        let lit = self.on_list(|list, _| list.bar_hover(bar)) | self.scroll.motion(page_bar);
         if let Some(moved) = self.page_bar_drag(x, y) {
             return if moved || lit {
                 Event::Redraw
@@ -905,7 +866,7 @@ impl PropSheet {
     }
 
     pub fn leave(&mut self) -> Event {
-        let bar = self.on_list(|list, _| list.bar_leave()) | self.scroll.bars.leave();
+        let bar = self.on_list(|list, _| list.bar_leave()) | self.scroll.leave();
         let i = self.tabs.open;
         let lit = (self.tabs.hover(None) && self.pages[i].styled()) || bar;
         let ev = self.pages[i].leave();
@@ -920,11 +881,7 @@ impl PropSheet {
             Nav::List(list) => list.bar_release(),
             Nav::Tabs => false,
         };
-        let held = self.scroll.drag.release();
-        self.scroll.repeat.release();
-        let lit = self.scroll.bars.lit();
-        self.scroll.bars.release();
-        let bar = bar || held || lit != self.scroll.bars.lit();
+        let bar = self.scroll.release() || bar;
         let i = self.tabs.open;
         let ev = self.pages[i].release();
         match self.event(i, ev) {
@@ -936,21 +893,12 @@ impl PropSheet {
     /// Whether the page list or the page has a scrollbar arrow held: the host sends
     /// [`PropSheet::tick`] until it lets go.
     pub fn ticking(&self) -> bool {
-        self.scroll.repeat.held() || matches!(&self.nav, Nav::List(list) if list.repeating())
+        self.scroll.ticking() || matches!(&self.nav, Nav::List(list) if list.repeating())
     }
 
     /// A host tick at `now`: a held arrow steps once it repeats, while the pointer is on it.
     pub fn tick(&mut self, now: std::time::Instant) -> Event {
-        let page = self.scroll.repeat.due(now)
-            && match self.scroll.bars.lit() {
-                Some((ScrollHit::Back, Interaction::Pressed)) => {
-                    self.scroll_to(self.scroll.top - LINE_H)
-                }
-                Some((ScrollHit::Forward, Interaction::Pressed)) => {
-                    self.scroll_to(self.scroll.top + LINE_H)
-                }
-                _ => false,
-            };
+        let page = self.scroll.tick(now).is_some_and(|to| self.scroll_to(to));
         if self.on_list(|list, lay| list.bar_tick(now, lay)) || page {
             Event::Redraw
         } else {
@@ -1211,7 +1159,7 @@ pub fn draw(
     if let Some(bar) = l.bar {
         let (visible, total) = sheet.page_span();
         let top = sheet.scroll.top as usize;
-        let lit = sheet.scroll.bars.lit();
+        let lit = sheet.scroll.lit();
         draw_scrollbar(
             c,
             p,
