@@ -115,7 +115,7 @@ pub fn sheet_input(sheet: &mut PropSheet, ev: &Event, ctx: &Ctx) -> Option<props
 fn sheet_event(sheet: &mut PropSheet, ev: &Event, ctx: &Ctx) -> Option<propsheet::Event> {
     let u = ctx.form_units();
     sheet.fit_height(u.within(ctx.size.1 - sheet.origin().1));
-    let px = sheet.open().units().px(ctx.theme.fonts.size_px);
+    let px = sheet.open().units().px(ctx.base_px());
     Some(match ev {
         Event::Tick if sheet.ticking() => sheet.tick(std::time::Instant::now()),
         Event::Key(k) => {
@@ -165,7 +165,7 @@ pub fn hotkey_input(form: &mut Form, k: &KeyInput, down: bool) -> Option<form::E
 /// the keys first ([`hotkey_input`]), and is blurred when the window loses the
 /// keyboard or the compositor takes its shortcuts back.
 pub fn form_input(form: &mut Form, ev: &Event, ctx: &Ctx) -> Option<form::Event> {
-    let px = form.units().px(ctx.theme.fonts.size_px);
+    let px = form.units().px(ctx.base_px());
     Some(match ev {
         Event::Focus(false) | Event::ShortcutsInactive => {
             form.blur_hotkey().then_some(form::Event::Redraw)?

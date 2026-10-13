@@ -172,7 +172,7 @@ impl Unlock {
     }
 
     pub fn access(&self, tree: &mut Tree, ctx: &Ctx) {
-        let px = self.form.units().px(ctx.theme.fonts.size_px);
+        let px = self.form.units().px(ctx.base_px());
         crate::oneshot::access_form(&self.form, tree, &ctx.text, px);
     }
 
