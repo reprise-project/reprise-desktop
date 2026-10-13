@@ -6,7 +6,7 @@
 //! page. `REPRISE_GALLERY_LOOK=classic` leaves the Blue bands blank and skips
 //! the Blue, Glass and taskbar PNGs. `REPRISE_GALLERY_TEXT_SIZE=<percent>` writes
 //! only a message box, a property sheet, window controls, panes and the shell
-//! view's icon modes in each look at that text size.
+//! view's icon modes in each look at that text size, and About's system view.
 
 #[path = "gallery_p3/mod.rs"]
 mod gallery_p3;
@@ -79,6 +79,10 @@ fn main() {
             &render_text_size(pct),
             &format!("reprisekit-gallery-text-size-{pct}.png"),
         );
+        write_preview(
+            &render_about_system(true, pct),
+            &format!("reprisekit-gallery-about-system-{pct}.png"),
+        );
         return;
     }
     let with_blue = std::env::var("REPRISE_GALLERY_LOOK").as_deref() != Ok("classic");
@@ -102,7 +106,7 @@ fn main() {
     }
     write_preview(&render_file_dialog(), "reprisekit-gallery-file-dialog.png");
     write_preview(
-        &render_about_system(with_blue),
+        &render_about_system(with_blue, 100),
         "reprisekit-gallery-about-system.png",
     );
     write_preview(
@@ -660,8 +664,8 @@ fn render_stats_panel(with_blue: bool) -> Canvas {
     c
 }
 
-/// About Reprise's system view with a stand-in logo, in each look.
-fn render_about_system(with_blue: bool) -> Canvas {
+/// About Reprise's system view with a stand-in logo, in each look, at `pct` text size.
+fn render_about_system(with_blue: bool, pct: u32) -> Canvas {
     let g = |label: &str, lines: &[&str]| aboutbox::Group {
         label: label.into(),
         lines: lines.iter().map(|s| s.to_string()).collect(),
@@ -697,12 +701,12 @@ fn render_about_system(with_blue: bool) -> Canvas {
             g("Session:", &["Jo Doe (jo)", "Up 3 hours, 12 minutes"]),
         ],
     };
-    let mut themes = vec![Theme::default()];
+    let mut themes = vec![Theme::default().with_text_size(pct)];
     if with_blue {
-        themes.push(interfaces::theme_for(Interface::Blue));
-        themes.push(interfaces::theme_for(Interface::Glass));
+        themes.push(interfaces::theme_for(Interface::Blue).with_text_size(pct));
+        themes.push(interfaces::theme_for(Interface::Glass).with_text_size(pct));
     }
-    let (w, h) = aboutbox::system_size(&system);
+    let (w, h) = themes[0].text.size(aboutbox::system_size(&system));
     let mut c = Canvas::new(
         (themes.len() as i32 * (w + 10) + 10) as u32,
         (h + 20) as u32,
@@ -711,7 +715,7 @@ fn render_about_system(with_blue: bool) -> Canvas {
     for (i, theme) in themes.iter().enumerate() {
         let text = TextRenderer::load(&theme.fonts);
         let px = theme.fonts.size_px;
-        let built = aboutbox::system_form(&system, &text, px, theme.text);
+        let built = aboutbox::system_form(&system, &text, theme.text.base_px(px), theme.text);
         let mut box_c = Canvas::new(w as u32, h as u32);
         box_c.fill_rect(box_c.bounds(), theme.colors.button_face);
         form::draw(&mut box_c, &text, &theme.paint(), &built, true, px);

@@ -233,8 +233,9 @@ impl Explorer {
         let fields = repriseapp::about::fields("Explorer", icon);
         let px = ctx.theme.fonts.size_px;
         let mut form = aboutbox::form(&fields, &ctx.text, px);
-        let w = self.forms.text.len(aboutbox::CLIENT.0);
-        form.set_picture("banner", aboutbox::banner_wide(&ctx.text, px, w));
+        let u = self.forms.text;
+        let w = u.len(aboutbox::CLIENT.0);
+        form.set_picture("banner", aboutbox::banner_wide(&ctx.text, px, w, u));
         self.dialog = Some(Dialog::About(form));
         Reply::redraw_all()
     }

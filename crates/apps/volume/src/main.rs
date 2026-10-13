@@ -551,13 +551,13 @@ impl Volume {
         t
     }
 
-    /// The about box laid out at 100%, its banner as wide as the grown window.
+    /// The about box laid out at 100%, its banner drawn at the grown size.
     fn about_form(&self, u: TextUnits) -> Form {
         let text = &self.dialog_text;
         let mut f = aboutbox::form(&self.about_fields(), text, self.dialog_px);
         if !u.is_one() {
             let w = u.len(aboutbox::CLIENT.0);
-            f.set_picture("banner", aboutbox::banner_wide(text, self.dialog_px, w));
+            f.set_picture("banner", aboutbox::banner_wide(text, self.dialog_px, w, u));
         }
         f
     }
