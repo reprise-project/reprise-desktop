@@ -113,6 +113,14 @@ pub fn document_dirs() -> Vec<(PathBuf, &'static str)> {
         .collect()
 }
 
+/// The folders a listing gives their own icon: home (`user-home`) and [`document_dir_paths`].
+pub fn special_folders() -> Vec<(PathBuf, &'static str)> {
+    let home = std::env::var_os("HOME").map(|h| (PathBuf::from(h), "user-home"));
+    let mut out: Vec<(PathBuf, &'static str)> = home.into_iter().collect();
+    out.extend(document_dir_paths());
+    out
+}
+
 /// [`document_dirs`] whether or not they exist, from one read and no stat: what a listing matches its folders against.
 pub fn document_dir_paths() -> Vec<(PathBuf, &'static str)> {
     const DIRS: [(&str, &str, &str); 5] = [

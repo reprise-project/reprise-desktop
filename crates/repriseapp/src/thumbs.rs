@@ -1,9 +1,9 @@
-//! Thumbnails, decoded off the event loop by one worker thread. Navigation bumps a generation
-//! counter and the worker drops requests older than the newest it has seen.
+//! Pictures' thumbnails for Thumbnails and Tiles, decoded off the event loop by one worker thread
+//! through the freedesktop thumbnail cache. Explorer and the file dialog host share it. Navigation
+//! bumps a generation counter and the worker drops requests older than the newest it has seen.
 
-use crate::settings::ThumbCacheSettings;
-use repriseapp::Waker;
-use repriseapp::decode::Decoders;
+use crate::Waker;
+use crate::decode::Decoders;
 use reprisefs::thumbnails::{Rgba, Thumbnails};
 use reprisekit::controls::shellview::THUMB_FRAME;
 use reprisekit::raster::Canvas;
@@ -33,7 +33,6 @@ pub struct Thumbs {
     pending: HashSet<PathBuf>,
     generation: u64,
     worker: Option<JoinHandle<()>>,
-    #[cfg(test)]
     done_tx: Sender<Done>,
 }
 
@@ -46,7 +45,6 @@ impl Thumbs {
     ) -> Thumbs {
         let (tx, req_rx) = channel::<Request>();
         let (done_tx, rx) = channel::<Done>();
-        #[cfg(test)]
         let test_tx = done_tx.clone();
         let edge = reprisefs::thumbnails::edge_for(size);
         let worker = std::thread::Builder::new()
@@ -65,13 +63,12 @@ impl Thumbs {
             pending: HashSet::new(),
             generation: 0,
             worker,
-            #[cfg(test)]
             done_tx: test_tx,
         }
     }
 
-    #[cfg(test)]
-    pub(crate) fn deliver(&self, done: Done) {
+    /// Hands `done` in as the worker would: tests deliver thumbnails without decoding.
+    pub fn deliver(&self, done: Done) {
         self.done_tx.send(done).expect("the receiver is ours");
     }
 
@@ -164,13 +161,21 @@ fn work(
     }
 }
 
-pub fn open_cache(settings: &ThumbCacheSettings) -> Option<Thumbnails> {
-    let root = Thumbnails::default_dir().filter(|_| settings.enabled)?;
-    Some(Thumbnails::at(root, PROGRAM, settings.max_bytes()))
+/// The shared cache under `$XDG_CACHE_HOME/thumbnails`, capped at `max_bytes`.
+pub fn open_cache(max_bytes: u64) -> Option<Thumbnails> {
+    Some(Thumbnails::at(
+        Thumbnails::default_dir()?,
+        PROGRAM,
+        max_bytes,
+    ))
 }
 
-const PROGRAM: &str = concat!("reprise-explorer-", env!("CARGO_PKG_VERSION"));
+/// The cap of a program that has no setting for it.
+pub const CACHE_BYTES: u64 = 512 << 20;
 
+const PROGRAM: &str = concat!("reprise-", env!("CARGO_PKG_VERSION"));
+
+/// `path`'s thumbnail at `edge` and its size, from `cache` or decoded into it. A file the stat
 /// cannot read skips the cache both ways, so nobody else's thumbnail of
 /// it shows. The stat comes before the read, so a picture changed in
 /// between is kept under its old stamp and simply misses next time.
@@ -234,7 +239,7 @@ fn take_queued(rx: &Receiver<Request>, queue: &mut VecDeque<Request>, newest: &m
 
 pub fn for_display(thumb: Canvas, dims: (u32, u32), scale: i32) -> Canvas {
     let s = scale.max(1) as u32;
-    let (lw, lh) = repriseapp::decode::fit(dims.0, dims.1, (FRAME_INNER, FRAME_INNER));
+    let (lw, lh) = crate::decode::fit(dims.0, dims.1, (FRAME_INNER, FRAME_INNER));
     let (w, h) = (lw.max(1) * s, lh.max(1) * s);
     let (sw, sh) = thumb.device_size();
     let device = if (sw, sh) == (w, h) {
@@ -243,10 +248,6 @@ pub fn for_display(thumb: Canvas, dims: (u32, u32), scale: i32) -> Canvas {
         Canvas::resample_box_from(sw, sh, w, h, |x, y| thumb.pixels[(y * sw + x) as usize])
     };
     device.at_scale(scale)
-}
-
-pub fn image_detail(dims: (u32, u32), kind: &str) -> Vec<String> {
-    vec![format!("{} x {}", dims.0, dims.1), kind.to_string()]
 }
 
 #[cfg(test)]
@@ -306,13 +307,13 @@ mod tests {
 
     struct Counting(Arc<std::sync::atomic::AtomicUsize>);
 
-    impl repriseapp::decode::ImageDecoder for Counting {
+    impl crate::decode::ImageDecoder for Counting {
         fn probe(&self, bytes: &[u8]) -> bool {
             bytes.starts_with(b"FAKE")
         }
-        fn decode(&self, bytes: &[u8], _: (u32, u32)) -> Option<repriseapp::decode::Decoded> {
+        fn decode(&self, bytes: &[u8], _: (u32, u32)) -> Option<crate::decode::Decoded> {
             self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-            (!bytes.starts_with(b"FAKE BAD")).then(|| repriseapp::decode::Decoded {
+            (!bytes.starts_with(b"FAKE BAD")).then(|| crate::decode::Decoded {
                 canvas: Canvas::from_pixels(2, 1, vec![0xff00_00ff, 0xff00_ff00]),
                 width: 640,
                 height: 320,
@@ -377,13 +378,5 @@ mod tests {
         let t = for_display(tiny.clone(), (16, 8), 1);
         assert_eq!(t, tiny);
         assert_eq!(for_display(tiny, (16, 8), 3).device_size(), (48, 24));
-    }
-
-    #[test]
-    fn tiles_writes_the_dimensions_over_the_kind() {
-        assert_eq!(
-            image_detail((800, 600), "JPEG Image"),
-            ["800 x 600", "JPEG Image"]
-        );
     }
 }

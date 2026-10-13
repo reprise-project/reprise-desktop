@@ -16,8 +16,9 @@ use reprisefs::listing::Row;
 use reprisekit::controls::filedlg::{self, Crumb, Event, Fields, FileDlg, Folder, FolderId};
 use reprisekit::controls::form::Key;
 use reprisekit::controls::placesbar::Place;
-use reprisekit::controls::shellview::Entry;
+use reprisekit::controls::shellview::{self, Entry};
 use reprisekit::frame::Edges;
+use reprisekit::icontheme::{IconCache, ListingIcons};
 use reprisekit::selection::Mods;
 use reprisekit::textedit::EditKey;
 use std::path::{Path, PathBuf};
@@ -59,23 +60,17 @@ impl Purpose {
     }
 }
 
-/// Icons the dialog draws, fetched by the host: the places tiles at 32 px
-/// in `reprisefs::places::dialog_places`' order, the toolbar's buttons at 16 in `TOOLBAR`'s, and the
-/// 16 px row icons for the listing.
+/// The dialog's own icons, fetched by the host: the places tiles at 32 px in
+/// `reprisefs::places::dialog_places`' order, the toolbar's buttons at 16 in `TOOLBAR`'s, and the
+/// Look in folder. The listing's come from the cache handed to [`FilePicker::reply`].
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Icons {
     pub places: Vec<Option<Canvas>>,
     pub toolbar: Vec<Option<Canvas>>,
     pub folder: Option<Canvas>,
-    /// The icon for a file the filter is for (a picture, a program).
-    pub file: Option<Canvas>,
-    /// Any other file, behind an "All Files" filter.
-    pub document: Option<Canvas>,
 }
 
-/// The icons every picker shares: the places tiles, the toolbar and the
-/// folder. `file` and `document` are the purpose's own.
-pub fn common_icons(cache: &mut reprisekit::icontheme::IconCache) -> Icons {
+pub fn icons(cache: &mut IconCache) -> Icons {
     Icons {
         places: reprisefs::places::dialog_places(true)
             .iter()
@@ -83,8 +78,6 @@ pub fn common_icons(cache: &mut reprisekit::icontheme::IconCache) -> Icons {
             .collect(),
         toolbar: TOOLBAR.iter().map(|i| cache.get(i, 16)).collect(),
         folder: cache.get("folder", 16),
-        file: None,
-        document: None,
     }
 }
 
@@ -244,10 +237,10 @@ impl FilePicker {
         self.seq
     }
 
-    /// A finished [`Request`]: the listing lands, or a typed name enters
-    /// its folder or is the pick. A reply that a later navigation made
-    /// stale changes nothing.
-    pub fn reply(&mut self, r: Reply) -> Outcome {
+    /// A finished [`Request`]: the listing lands, its entries wearing `cache`'s icons, or a typed
+    /// name enters its folder or is the pick. A reply that a later navigation made stale changes
+    /// nothing.
+    pub fn reply(&mut self, r: Reply, cache: &mut IconCache) -> Outcome {
         if r.id.is_some() {
             if self.listing != Some(r.seq) {
                 return Outcome::Nothing;
@@ -266,12 +259,12 @@ impl FilePicker {
                 let id = r.id.unwrap_or_else(|| self.folders.id(&r.path));
                 self.recent = if reprisefs::places::is_recent(&r.path) {
                     rows.iter()
-                        .map(|r| (r.name.clone(), r.path.clone()))
+                        .map(|r| (r.item.name.clone(), r.item.path.clone()))
                         .collect()
                 } else {
                     Default::default()
                 };
-                let entries = self.entries(rows);
+                let entries = self.entries(rows, cache);
                 self.show(id, &r.path, entries);
                 match (&r.pattern, r.id) {
                     (Some(p), _) => self.dlg.apply_wildcard(p),
@@ -307,32 +300,44 @@ impl FilePicker {
         self.opening = None;
     }
 
-    /// `rows` as the dialog's entries: the host's icons, and a `folders`
-    /// handle on every subfolder so entering one resolves.
-    fn entries(&mut self, rows: Vec<Row>) -> Vec<Entry> {
+    /// `rows` as the dialog's entries, with Explorer's icons and Tiles lines, except that a
+    /// program wears the executable's icon; a `folders` handle on every subfolder so entering
+    /// one resolves.
+    fn entries(&mut self, rows: Vec<Row>, cache: &mut IconCache) -> Vec<Entry> {
+        let specials = reprisefs::places::special_folders();
+        let names: Vec<String> = rows
+            .iter()
+            .map(|r| match &r.item {
+                it if it.exec && !it.is_dir => "application-x-executable".to_string(),
+                it => reprisefs::icons::item_icon(it, &specials, &|n| cache.has(n)),
+            })
+            .collect();
+        let mut shared = ListingIcons::default();
         rows.into_iter()
-            .map(|r| Entry {
-                id: if r.is_dir {
-                    self.folders.id(&r.path)
-                } else {
-                    0
-                },
-                icon: if r.is_dir {
-                    self.icons.folder.clone()
-                } else if !r.exec {
-                    self.icons.document.clone()
-                } else {
-                    self.icons.file.clone()
-                }
-                .map(std::rc::Rc::new),
-                name: r.name,
-                is_dir: r.is_dir,
-                link: r.is_link,
-                size: r.size,
-                kind: r.kind,
-                modified: r.modified,
-                mtime: r.mtime,
-                ..Default::default()
+            .zip(names)
+            .map(|(r, name)| {
+                let it = r.item;
+                let [icon, icon32, icon48] = shared.get(cache, &name);
+                let mut e = Entry {
+                    id: if it.is_dir {
+                        self.folders.id(&it.path)
+                    } else {
+                        0
+                    },
+                    icon,
+                    icon32,
+                    icon48,
+                    name: it.name,
+                    is_dir: it.is_dir,
+                    link: it.is_link,
+                    size: it.size,
+                    kind: it.kind,
+                    modified: r.modified,
+                    mtime: it.modified,
+                    ..Default::default()
+                };
+                e.detail = shellview::tile_detail(&e);
+                e
             })
             .collect()
     }
@@ -543,12 +548,20 @@ mod tests {
 
     const R: Rect = Rect::new(0, 0, filedlg::CLIENT.0, filedlg::CLIENT.1);
 
+    fn cache() -> IconCache {
+        IconCache::new(reprisekit::icontheme::IconTheme::load("test", &[]))
+    }
+
     /// Runs the picker's queued requests the way the host's thread would,
     /// returning the last outcome that did something.
     fn settle(p: &mut FilePicker) -> Outcome {
+        settle_with(p, &mut cache())
+    }
+
+    fn settle_with(p: &mut FilePicker, icons: &mut IconCache) -> Outcome {
         let mut out = Outcome::Nothing;
         for r in p.take_requests() {
-            match p.reply(r.run()) {
+            match p.reply(r.run(), icons) {
                 Outcome::Nothing => {}
                 o => out = o,
             }
@@ -689,13 +702,16 @@ mod tests {
         p.list(recent);
         p.take_requests();
         let file = dir.join("dunes");
-        p.reply(Reply {
-            seq: p.listing.unwrap(),
-            id: Some(recent),
-            path: PathBuf::from(reprisefs::places::RECENT),
-            pattern: None,
-            found: Found::Folder(read_folder(&dir, Some(&[]), None)),
-        });
+        p.reply(
+            Reply {
+                seq: p.listing.unwrap(),
+                id: Some(recent),
+                path: PathBuf::from(reprisefs::places::RECENT),
+                pattern: None,
+                found: Found::Folder(read_folder(&dir, Some(&[]), None)),
+            },
+            &mut cache(),
+        );
         assert!(!p.dlg.can_go_up(), "Recent has no folder above it");
         p.dlg.set_file_name("nope");
         p.key(R, Key::Enter);
@@ -758,13 +774,77 @@ mod tests {
         assert_eq!(settle(&mut p), Outcome::Redraw);
         for r in slow {
             assert_eq!(
-                p.reply(r.run()),
+                p.reply(r.run(), &mut cache()),
                 Outcome::Nothing,
                 "stale reply changes nothing"
             );
         }
         assert_eq!(p.current(), Some(dir.join("Pictures").as_path()));
         assert_eq!(names(&p), ["meadow"]);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// An icon theme drawing `names` in their flat colours at 16, 32 and 48 px under `root`.
+    fn flat_icons(root: &Path, names: &[(&str, u32)]) -> IconCache {
+        let theme = root.join("flat");
+        let dirs = ["16x16/apps", "32x32/apps", "48x48/apps"];
+        let mut index = format!("[Icon Theme]\nName=Flat\nDirectories={}\n", dirs.join(","));
+        for (d, px) in dirs.iter().zip([16, 32, 48]) {
+            index += &format!("\n[{d}]\nSize={px}\nType=Fixed\n");
+            std::fs::create_dir_all(theme.join(d)).unwrap();
+            for (name, argb) in names {
+                let [a, r, g, b] = argb.to_be_bytes();
+                image::RgbaImage::from_pixel(px, px, image::Rgba([r, g, b, a]))
+                    .save(theme.join(d).join(format!("{name}.png")))
+                    .unwrap();
+            }
+        }
+        std::fs::write(theme.join("index.theme"), index).unwrap();
+        IconCache::new(reprisekit::icontheme::IconTheme::load(
+            "flat",
+            &[root.to_path_buf()],
+        ))
+    }
+
+    /// Entries carry their icon at all three sizes and Tiles' lines: a program wears the
+    /// executable's icon, any other file its type's.
+    #[test]
+    fn entries_wear_their_icons_at_every_size_and_tiles_lines() {
+        let dir = sandbox("tiles");
+        let (folder, program, text) = (0xff20_40c0, 0xffc0_4020, 0xff20_a040);
+        let mut icons = flat_icons(
+            &dir.join(".icons"),
+            &[
+                ("folder", folder),
+                ("application-x-executable", program),
+                ("text-x-generic", text),
+            ],
+        );
+        let mut p = FilePicker::run_command(&dir, Icons::default(), true);
+        p.dlg.set_filter(1);
+        p.sync_filter();
+        settle_with(&mut p, &mut icons);
+        let entry = |name: &str| {
+            p.dlg
+                .entries()
+                .iter()
+                .find(|e| e.name == name)
+                .cloned()
+                .expect(name)
+        };
+        let worn = |e: &Entry| {
+            [&e.icon, &e.icon32, &e.icon48].map(|c| c.as_ref().map(|c| (c.width, c.get(8, 8))))
+        };
+        let sizes = |argb| [Some((16, argb)), Some((32, argb)), Some((48, argb))];
+        let pictures = entry("Pictures");
+        assert_eq!(worn(&pictures), sizes(folder));
+        assert!(pictures.detail.is_empty(), "a folder's tile names it alone");
+        let dunes = entry("dunes");
+        assert_eq!(worn(&dunes), sizes(program));
+        assert_eq!(dunes.detail, [dunes.kind.clone(), "1 KB".into()]);
+        let notes = entry("notes.txt");
+        assert_eq!(worn(&notes), sizes(text));
+        assert_eq!(notes.detail, [notes.kind.clone(), "1 KB".into()]);
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
