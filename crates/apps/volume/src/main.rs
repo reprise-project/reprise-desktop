@@ -188,7 +188,7 @@ impl Volume {
     }
 
     fn body(&self, ctx: &Ctx) -> Rect {
-        let top = menubar::BAR_H;
+        let top = menubar::bar_h(&ctx.theme.controls());
         let (w, h) = self.main_size;
         Rect::new(0, top, w, h - top - fit::status_h(&ctx.theme))
     }
@@ -202,7 +202,7 @@ impl Volume {
             &ctx.text,
             ctx.theme.fonts.size_px,
             Rect::new(0, 0, ctx.size.0, ctx.size.1),
-            &ctx.theme.look.controls(),
+            &ctx.theme.controls(),
         )
     }
 
@@ -620,6 +620,10 @@ impl App for Volume {
     }
 
     fn fixed(&self) -> bool {
+        true
+    }
+
+    fn text_sized(&self) -> bool {
         true
     }
 

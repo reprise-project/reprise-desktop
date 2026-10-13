@@ -28,7 +28,7 @@ pub fn body(m: &Mixer, theme: &Theme, room: Option<i32>) -> (i32, i32) {
 
 pub fn window(m: &Mixer, theme: &Theme, room: Option<i32>) -> (i32, i32) {
     let (w, h) = body(m, theme, room);
-    (w, menubar::BAR_H + h + status_h(theme))
+    (w, menubar::bar_h(&theme.controls()) + h + status_h(theme))
 }
 
 #[cfg(test)]
@@ -60,6 +60,21 @@ mod tests {
         let m = Mixer::new(&lines, false);
         assert_eq!(window(&m, &theme, None), (450, 20 + 225 + 21));
         assert_eq!(window(&Mixer::new(&lines, true), &theme, None).1, 293);
+    }
+
+    /// At 200% the menu bar, the mixer and the status line all grow with the text.
+    #[test]
+    fn at_200_percent_the_window_fits_the_grown_bars_and_columns() {
+        let theme = Theme::default().with_text_size(200);
+        let m = Mixer::new(
+            &[line("out", Check::MuteAll), line("a", Check::Mute)],
+            false,
+        );
+        let (w, h) = m.size(theme.text);
+        assert_eq!((w, h), (2 * 135 + 5 + 2 * 100, 2 * 225));
+        let bars = menubar::bar_h(&theme.controls()) + status_h(&theme);
+        assert_eq!(bars, 40 + 43);
+        assert_eq!(window(&m, &theme, None), (w, h + bars));
     }
 
     #[test]

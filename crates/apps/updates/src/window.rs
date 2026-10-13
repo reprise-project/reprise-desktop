@@ -126,7 +126,7 @@ impl Window {
         self.form.set_picture("icon", icon);
     }
 
-    /// The list's rect at the text size the form was last drawn at; its rows stay at 100%.
+    /// The list's rect at the text size the form was last drawn at.
     fn list_rect(&self) -> Rect {
         self.form.units().rect(LIST)
     }
@@ -189,7 +189,10 @@ impl Window {
     /// Refresh from `phase` and `updates`, wrapping the message as `forms` draws it.
     pub fn sync(&mut self, phase: &Phase, updates: &[Update], text: &TextRenderer, forms: &Theme) {
         if self.rows != updates {
-            self.fill(updates, &forms.look.controls());
+            self.fill(updates, &forms.controls());
+        }
+        for (col, (_, w)) in self.list.columns.iter_mut().zip(COLUMNS) {
+            col.width = forms.text.len(w);
         }
         let picked = self.rows.iter().filter(|u| self.wanted(u)).count();
         let headline = model::headline(phase, updates, picked);
@@ -367,7 +370,7 @@ impl Window {
         }
     }
 
-    /// The form draws with `forms`; the list's rows stay at `theme`'s 100% text.
+    /// The form draws with `forms`, the list with `theme`'s controls.
     pub fn draw(
         &self,
         c: &mut Canvas,
@@ -382,7 +385,7 @@ impl Window {
         };
         c.fill_rect(c.bounds(), theme.colors.button_face);
         form::draw(c, text, &paint, &self.form, true, forms.fonts.size_px);
-        let lay = listview::layout(&self.list, self.list_rect(), &theme.look.controls());
+        let lay = listview::layout(&self.list, self.list_rect(), &theme.controls());
         let list_paint = Paint {
             s: 1,
             ..theme.paint()
@@ -599,10 +602,11 @@ mod tests {
     }
 
     #[test]
-    fn at_150_percent_the_list_takes_its_grown_rect() {
+    fn at_150_percent_the_list_and_its_rows_grow() {
         let env = Env::new();
-        let forms = env.theme.with_form_text(150);
-        let cm = env.theme.look.controls();
+        let forms = env.theme.with_text_size(150);
+        let cm = forms.controls();
+        assert_eq!(cm.list_row, forms.text.len(listview::ROW_H));
         let mut w = Window::new(None);
         w.form.drawn_with(&forms.paint());
         w.sync(
@@ -613,6 +617,8 @@ mod tests {
         );
         let grown = forms.text.rect(LIST);
         assert_eq!(w.list_rect(), grown);
+        let widths: Vec<i32> = w.list.columns.iter().map(|c| c.width).collect();
+        assert_eq!(widths, [331, 204, 198], "the columns grow with the text");
         let lay = listview::layout(&w.list, grown, &cm);
         let b = w.list.check_rect(&lay, 1);
         let (x, y) = (b.x + b.width / 2, b.y + b.height / 2);

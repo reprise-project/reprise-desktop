@@ -487,6 +487,10 @@ impl App for DrivesApp {
         unlock::CLIENT
     }
 
+    fn text_sized(&self) -> bool {
+        true
+    }
+
     fn hidden(&self) -> bool {
         true
     }

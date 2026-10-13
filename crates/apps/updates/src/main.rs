@@ -247,7 +247,7 @@ impl UpdatesApp {
 
     fn list_input(&mut self, ev: &Event, ctx: &Ctx) -> Option<window::Outcome> {
         use window::ListInput;
-        let cm = ctx.theme.look.controls();
+        let cm = ctx.theme.controls();
         let input = match *ev {
             Event::Key(ref k) => return self.window.list_key(&dialog_key(k)?, &cm),
             Event::Pointer(PointerInput::Press {
@@ -290,6 +290,10 @@ impl App for UpdatesApp {
 
     fn initial_size(&self) -> (i32, i32) {
         self.units.size(window::CLIENT)
+    }
+
+    fn text_sized(&self) -> bool {
+        true
     }
 
     fn fixed(&self) -> bool {
@@ -343,7 +347,7 @@ impl App for UpdatesApp {
             tree,
             &ctx.text,
             ctx.forms().fonts.size_px,
-            &ctx.theme.look.controls(),
+            &ctx.theme.controls(),
         );
     }
 
