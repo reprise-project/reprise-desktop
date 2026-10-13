@@ -240,7 +240,6 @@ impl Explorer {
     ) -> Explorer {
         let (jobs_tx, jobs_rx) = std::sync::mpsc::channel();
         let thumb_cache = thumbs::configured_cache();
-        let thumb_size = settings.thumbnail_size;
         let drives = reprisefs::places::drives();
         let mut sv = ShellView {
             mode: commands::mode_from_name(&settings.mode),
@@ -335,7 +334,6 @@ impl Explorer {
             closing: false,
             thumbs: Thumbs::new(
                 Arc::new(Decoders::default_set()),
-                thumb_size,
                 thumb_cache,
                 ctx.wake.clone(),
             ),
@@ -592,7 +590,7 @@ impl Explorer {
         self.generation += 1;
         self.thumbs.cancel_all();
         self.hide_tip();
-        self.request_thumbs();
+        self.request_thumbs(ctx.icons.scale());
         if let Some(w) = self.watch.as_mut() {
             match place.path() {
                 Some(_) if place == Place::RecycleBin => w.watch_all(&place::bin_watches()),

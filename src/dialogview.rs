@@ -1617,9 +1617,9 @@ impl State {
             .iter_mut()
             .filter_map(|v| Some((v.id, v.dialog.picker_mut()?.take_pictures()?)))
             .collect();
-        for (id, (generation, paths)) in pictures {
+        for (id, (generation, px, paths)) in pictures {
             let to_loop = self.fsjobs.sender();
-            self.pickthumbs.want(to_loop, id, generation, paths);
+            self.pickthumbs.want(to_loop, id, generation, px, paths);
         }
     }
 
@@ -1647,10 +1647,11 @@ impl State {
         let Some(i) = self.dialogs.views.iter().position(|v| v.id == id) else {
             return;
         };
+        let scale = self.draw_scale_at(Some(&self.dialogs.views[i].output));
         let Some(p) = self.dialogs.views[i].dialog.picker_mut() else {
             return;
         };
-        match p.reply(reply, &mut self.icons) {
+        match p.reply(reply, &mut self.icons, scale) {
             Outcome::Nothing => {}
             Outcome::Redraw => {
                 self.run_picker_requests();

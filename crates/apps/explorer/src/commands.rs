@@ -273,7 +273,7 @@ impl Explorer {
                 self.settings_dirty = true;
                 // Thumbnails and Tiles are the modes that show one, so
                 // switching into either is when the decode is asked for.
-                self.request_thumbs();
+                self.request_thumbs(ctx.icons.scale());
                 Reply::redraw()
             }
             Command::Sort(col) => {

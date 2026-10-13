@@ -42,6 +42,7 @@ enum Msg {
     Want {
         dialog: u64,
         generation: u64,
+        edge: u32,
         paths: Vec<PathBuf>,
     },
     Forget(u64),
@@ -54,14 +55,15 @@ pub struct PickThumbs {
 }
 
 impl PickThumbs {
-    /// Fetches `paths`' thumbnails for listing `generation` of Browse dialog `dialog`, dropping
-    /// what is still queued for its earlier listings. Batches run
+    /// Fetches `paths`' thumbnails, filling `px` device pixels, for listing `generation` of Browse
+    /// dialog `dialog`, dropping what is still queued for its earlier listings. Batches run
     /// `State::picker_thumbs` on the loop through `to_loop`.
     pub fn want(
         &mut self,
         to_loop: Option<LoopSender<OnLoop>>,
         dialog: u64,
         generation: u64,
+        px: u32,
         paths: Vec<PathBuf>,
     ) {
         if self.tx.is_none() {
@@ -83,6 +85,7 @@ impl PickThumbs {
         let want = Msg::Want {
             dialog,
             generation,
+            edge: reprisefs::thumbnails::edge_for(px),
             paths,
         };
         if self.tx.as_ref().is_some_and(|tx| tx.send(want).is_err()) {
@@ -102,6 +105,7 @@ impl PickThumbs {
 struct Job {
     dialog: u64,
     generation: u64,
+    edge: u32,
     path: PathBuf,
 }
 
@@ -118,12 +122,14 @@ impl Queue {
             Msg::Want {
                 dialog,
                 generation,
+                edge,
                 paths,
             } => {
                 self.newest.insert(dialog, generation);
                 self.jobs.extend(paths.into_iter().map(|path| Job {
                     dialog,
                     generation,
+                    edge,
                     path,
                 }));
             }
@@ -186,7 +192,6 @@ impl Batch {
 
 fn work(rx: Receiver<Msg>, to_loop: LoopSender<OnLoop>) {
     let mut cache = None;
-    let edge = reprisefs::thumbnails::edge_for(reprisekit::controls::shellview::THUMB_INNER);
     let mut queue = Queue::default();
     let mut batch = Batch::default();
     let mut helper = Fetcher::new(helper_command, ANSWER_WITHIN);
@@ -224,14 +229,14 @@ fn work(rx: Receiver<Msg>, to_loop: LoopSender<OnLoop>) {
                 continue;
             }
         };
-        let thumb = match cached(cache.as_ref(), &job.path, &meta, edge) {
+        let thumb = match cached(cache.as_ref(), &job.path, &meta, job.edge) {
             Some(hit) => {
                 hits += 1;
                 Some(hit)
             }
             None => {
                 asked += 1;
-                helper.fetch(&job.path, edge)
+                helper.fetch(&job.path, job.edge)
             }
         };
         if let Some((thumb, dims)) = thumb {
@@ -426,7 +431,7 @@ impl Helper {
         edge: u32,
         within: Duration,
     ) -> io::Result<Option<thumbpipe::Thumb>> {
-        thumbpipe::write_request(&mut self.stdin, path)?;
+        thumbpipe::write_request(&mut self.stdin, path, edge)?;
         self.stdout.get_mut().until = Instant::now() + within;
         thumbpipe::read_reply(&mut self.stdout, edge)
     }
@@ -483,6 +488,7 @@ mod tests {
         Msg::Want {
             dialog,
             generation,
+            edge: 128,
             paths: paths.iter().map(PathBuf::from).collect(),
         }
     }
@@ -515,13 +521,14 @@ mod tests {
         assert!(q.is_empty());
     }
 
-    /// A helper answering each path with a 1x1 thumbnail of a 2x3 picture, which hangs on a
-    /// path holding "hang".
+    /// A helper skipping each request's size and answering its path with a 1x1 thumbnail of a
+    /// 2x3 picture, which hangs on a path holding "hang".
     fn fake_helper() -> Command {
         let mut c = Command::new("bash");
         c.args([
             "-c",
-            r"while IFS= read -r -d '' p; do
+            r"while dd bs=4 count=1 iflag=fullblock status=none of=/dev/null &&
+                IFS= read -r -d '' p; do
                 case $p in *hang*) exec sleep 60;; esac
                 printf '\1\0\0\0\1\0\0\0\2\0\0\0\3\0\0\0\377\0\0\377'
             done",

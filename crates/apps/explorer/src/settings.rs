@@ -27,11 +27,6 @@ pub struct Settings {
     /// Which task pane sections the user has collapsed, by title. A
     /// title that is not here is open, so a new section needs no entry.
     pub pane_open: BTreeMap<String, bool>,
-    /// The square, in pixels, thumbnails must stay sharp at. The frame shows
-    /// 94 logical px; a scaled screen needs more (188 for 2x). Pictures are
-    /// decoded to the cache size that holds it (128, 256 or 512). Clamped to
-    /// [`Settings::THUMBNAIL_SIZE`].
-    pub thumbnail_size: u32,
 }
 
 impl Default for Settings {
@@ -51,16 +46,11 @@ impl Default for Settings {
             columns: Vec::new(),
             show_hidden: false,
             pane_open: BTreeMap::new(),
-            thumbnail_size: repriseapp::thumbs::FRAME_INNER,
         }
     }
 }
 
 impl Settings {
-    /// `thumbnail_size`'s bounds: no smaller than the frame it fills,
-    /// no larger than a 1 MiB thumbnail.
-    pub const THUMBNAIL_SIZE: std::ops::RangeInclusive<u32> = repriseapp::thumbs::FRAME_INNER..=512;
-
     /// The main window's client size where text grows by `units`.
     pub fn window_at(&self, units: TextUnits) -> (i32, i32) {
         units.size(self.window)
@@ -105,8 +95,6 @@ impl Settings {
         for w in &mut self.columns {
             *w = (*w).max(listview::MIN_COL_W);
         }
-        let px = Self::THUMBNAIL_SIZE;
-        self.thumbnail_size = self.thumbnail_size.clamp(*px.start(), *px.end());
         self
     }
 
@@ -183,20 +171,6 @@ mod tests {
             s.keep_window(half_again.size((side, side)), half_again);
             assert_eq!(s.window, (side, side), "{side} comes back from 150%");
         }
-    }
-
-    #[test]
-    fn the_thumbnail_size_defaults_to_the_frame_and_is_clamped() {
-        assert_eq!(Settings::default().thumbnail_size, 94);
-        let size = |px: u32| {
-            toml::from_str::<Settings>(&format!("thumbnail_size = {px}\n"))
-                .unwrap()
-                .clamped()
-                .thumbnail_size
-        };
-        assert_eq!(size(16), 94);
-        assert_eq!(size(256), 256);
-        assert_eq!(size(4000), 512);
     }
 
     #[test]
