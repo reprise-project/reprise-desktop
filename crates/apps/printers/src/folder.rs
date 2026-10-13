@@ -350,11 +350,13 @@ impl Folder {
         self.pane.hot = None;
     }
 
+    /// The task pane and the list, the pane widening with the text.
     pub fn layout(&self, ctx: &Ctx) -> (Rect, Rect) {
         let (w, h) = ctx.size;
+        let (pane_w, list_x) = (ctx.theme.text.len(PANE_W), ctx.theme.text.len(LIST_X));
         (
-            Rect::new(0, 0, PANE_W, h),
-            Rect::new(LIST_X, LIST_Y, (w - LIST_X).max(1), (h - LIST_Y).max(1)),
+            Rect::new(0, 0, pane_w, h),
+            Rect::new(list_x, LIST_Y, (w - list_x).max(1), (h - LIST_Y).max(1)),
         )
     }
 
@@ -371,7 +373,7 @@ impl Folder {
             &ctx.text,
             ctx.theme.fonts.size_px,
             pane_r,
-            &ctx.theme.look.controls(),
+            &ctx.theme.controls(),
         )
     }
 
@@ -596,9 +598,9 @@ impl Folder {
         let lay = self.list.layout(r, ctx);
         let at = self.list.selected();
         let y = at.map_or(lay.body.y, |i| {
-            lay.body.y + i.saturating_sub(self.list.view.top) as i32 * listview::ROW_H
+            lay.body.y + i.saturating_sub(self.list.view.top) as i32 * lay.row_h()
         });
-        self.open_menu(at, lay.body.x + 20, y + listview::ROW_H, s, ctx);
+        self.open_menu(at, lay.body.x + 20, y + lay.row_h(), s, ctx);
         Outcome::Redraw
     }
 
@@ -717,7 +719,7 @@ mod tests {
         let lay = f.list.layout(r, ctx);
         (
             lay.body.x + 20,
-            lay.body.y + listview::ROW_H / 2 + i as i32 * listview::ROW_H,
+            lay.body.y + lay.row_h() / 2 + i as i32 * lay.row_h(),
         )
     }
 

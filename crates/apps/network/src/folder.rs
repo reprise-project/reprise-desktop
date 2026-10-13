@@ -352,14 +352,14 @@ impl Folder {
     /// A new snapshot: rows, icons and Details lines. The selection follows its row's path. `vpn_icon` is the theme's "network-vpn" at 16 px; without it a VPN row gets the wired icon's VPN badge.
     pub fn follow(&mut self, ctx: &Ctx) {
         let (_, list_r) = self.layout(ctx);
-        let lay = listview::layout(&self.list, list_r, &ctx.theme.look.controls());
+        let lay = listview::layout(&self.list, list_r, &ctx.theme.controls());
         self.list.follow(&lay);
     }
 
     /// Scroll the kept selection into view; the host calls it after [`Folder::refresh`], which has no [`Ctx`].
     pub fn fit_columns(&mut self, ctx: &Ctx) {
         let (_, list_r) = self.layout(ctx);
-        let lay = listview::layout(&self.list, list_r, &ctx.theme.look.controls());
+        let lay = listview::layout(&self.list, list_r, &ctx.theme.controls());
         let fixed: i32 = self.list.columns[..3].iter().map(|c| c.width).sum();
         self.list.resize_column(3, lay.body.width - fixed);
     }
@@ -373,11 +373,13 @@ impl Folder {
         }
     }
 
+    /// The task pane and the list, the pane widening with the text.
     pub fn layout(&self, ctx: &Ctx) -> (Rect, Rect) {
         let (w, h) = ctx.size;
+        let (pane_w, list_x) = (ctx.theme.text.len(PANE_W), ctx.theme.text.len(LIST_X));
         (
-            Rect::new(0, 0, PANE_W, h),
-            Rect::new(LIST_X, LIST_Y, (w - LIST_X).max(1), (h - LIST_Y).max(1)),
+            Rect::new(0, 0, pane_w, h),
+            Rect::new(list_x, LIST_Y, (w - list_x).max(1), (h - LIST_Y).max(1)),
         )
     }
 
@@ -388,7 +390,7 @@ impl Folder {
 
     pub fn wheel(&mut self, rows: i32, ctx: &Ctx) -> Outcome {
         let (_, list_r) = self.layout(ctx);
-        let lay = listview::layout(&self.list, list_r, &ctx.theme.look.controls());
+        let lay = listview::layout(&self.list, list_r, &ctx.theme.controls());
         redraw(self.list.scroll(rows as i64, &lay))
     }
 
@@ -413,7 +415,7 @@ impl Folder {
         if self.popup.is_some() || !ctx.styled() || !list_r.contains(x, y) {
             return None;
         }
-        let lay = listview::layout(&self.list, list_r, &ctx.theme.look.controls());
+        let lay = listview::layout(&self.list, list_r, &ctx.theme.controls());
         let on = |r: Option<Rect>| r.is_some_and(|r| r.contains(x, y));
         if !on(lay.scrollbar) && !on(lay.hscroll) {
             return None;
@@ -426,7 +428,7 @@ impl Folder {
         if self.popup.is_some() || !ctx.styled() || !list_r.contains(x, y) {
             return None;
         }
-        let lay = listview::layout(&self.list, list_r, &ctx.theme.look.controls());
+        let lay = listview::layout(&self.list, list_r, &ctx.theme.controls());
         self.list.hit(&lay, x, y).column()
     }
 
@@ -438,7 +440,7 @@ impl Folder {
         }
         let (pane_r, list_r) = self.layout(ctx);
         if list_r.contains(x, y) {
-            let lay = listview::layout(&self.list, list_r, &ctx.theme.look.controls());
+            let lay = listview::layout(&self.list, list_r, &ctx.theme.controls());
             let hit = self.list.hit(&lay, x, y);
             // Only a left press pairs, so a right click between two left ones does not break the pair.
             let activated = button == BTN_LEFT && self.list.activated(hit, at).is_some();
@@ -491,7 +493,7 @@ impl Folder {
                 &ctx.text,
                 ctx.theme.fonts.size_px,
                 pane_r,
-                &ctx.theme.look.controls(),
+                &ctx.theme.controls(),
             );
             let hit = taskpane::hit(&self.pane, &lay, x, y);
             // Only the Network Tasks links are live; any other click opens or shuts a section.
@@ -526,7 +528,7 @@ impl Folder {
     fn drag_or_menu(&mut self, x: i32, y: i32, ctx: &Ctx) -> Outcome {
         if let Some(grab) = self.thumb_drag {
             let (_, list_r) = self.layout(ctx);
-            let lay = listview::layout(&self.list, list_r, &ctx.theme.look.controls());
+            let lay = listview::layout(&self.list, list_r, &ctx.theme.controls());
             let top = self.list.top_at(&lay, y, grab);
             let moved = top != self.list.top;
             self.list.top = top;
@@ -556,7 +558,7 @@ impl Folder {
             return self.popup_action(act);
         }
         let (_, list_r) = self.layout(ctx);
-        let lay = listview::layout(&self.list, list_r, &ctx.theme.look.controls());
+        let lay = listview::layout(&self.list, list_r, &ctx.theme.controls());
         match k.sym {
             keysym::UP | keysym::KP_UP => self.step(-1, &lay, s),
             keysym::DOWN | keysym::KP_DOWN => self.step(1, &lay, s),
@@ -589,13 +591,7 @@ impl Folder {
         // The band behind both is `window`: white either side of the
         // pane's sections and up to the list's first column.
         c.fill_rect(c.bounds(), cs.window);
-        let pl = taskpane::layout(
-            &self.pane,
-            &ctx.text,
-            px,
-            pane_r,
-            &ctx.theme.look.controls(),
-        );
+        let pl = taskpane::layout(&self.pane, &ctx.text, px, pane_r, &ctx.theme.controls());
         let paint = Paint {
             s: 1,
             ..ctx.theme.paint()
@@ -612,7 +608,7 @@ impl Folder {
                 pane_r.height,
             ),
         );
-        let ll = listview::layout(&self.list, list_r, &ctx.theme.look.controls());
+        let ll = listview::layout(&self.list, list_r, &ctx.theme.controls());
         listview::draw(
             c,
             &ctx.text,
@@ -633,15 +629,9 @@ impl Folder {
     pub fn access(&self, tree: &mut Tree, ctx: &Ctx) {
         let (pane_r, list_r) = self.layout(ctx);
         let px = ctx.theme.fonts.size_px;
-        let pl = taskpane::layout(
-            &self.pane,
-            &ctx.text,
-            px,
-            pane_r,
-            &ctx.theme.look.controls(),
-        );
+        let pl = taskpane::layout(&self.pane, &ctx.text, px, pane_r, &ctx.theme.controls());
         taskpane::access(&self.pane, &pl, tree, ROOT);
-        let ll = listview::layout(&self.list, list_r, &ctx.theme.look.controls());
+        let ll = listview::layout(&self.list, list_r, &ctx.theme.controls());
         let row = self.list.access(&ll, tree, ROOT, "connections");
         let popup = self
             .popup

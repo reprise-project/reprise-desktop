@@ -13,7 +13,7 @@ use reprisekit::pointer::Click;
 use reprisekit::raster::{Canvas, Rect};
 use reprisekit::text::Align;
 use reprisekit::textedit::keysym::{self, SPACE};
-use reprisekit::theme::Color;
+use reprisekit::theme::{Color, TextUnits};
 
 use crate::nm;
 
@@ -31,9 +31,6 @@ const BTN_W: i32 = 88;
 const BTN_Y: i32 = CLIENT.1 - 12 - BUTTON_H;
 const BTN_X: i32 = CLIENT.0 - 12 - BTN_W;
 const LIST_H: i32 = BTN_Y - 8 - LIST_Y;
-/// Rows shown at [`CLIENT`]'s height: [`Chooser::key`] pages by it without a
-/// [`Ctx`], and the window does not resize.
-const PAGE: usize = ((LIST_H - 4) / ROW_H) as usize;
 
 const TEXT_X: i32 = 9;
 const NAME_Y: i32 = 9;
@@ -163,10 +160,12 @@ pub struct Chooser {
     pub list: TileList,
     pub connecting: Option<nm::Ssid>,
     pub button: Form,
+    /// The text units the window is laid out at: its 100% layout grows by them.
+    pub units: TextUnits,
 }
 
 impl Chooser {
-    pub fn new(d: &nm::Device) -> Chooser {
+    pub fn new(d: &nm::Device, units: TextUnits) -> Chooser {
         let mut c = Chooser {
             device_path: d.path.clone(),
             pane: TaskPane {
@@ -185,6 +184,7 @@ impl Chooser {
                     default: true,
                 },
             )]),
+            units,
         };
         c.refresh(d);
         c
@@ -202,7 +202,7 @@ impl Chooser {
         self.list.entries = (0..self.rows.len()).map(tilelist::Entry::Row).collect();
         self.list
             .select_row(ssid.and_then(|s| self.rows.iter().position(|r| r.ssid == s)));
-        self.list.clamp(LIST_R, reprisekit::theme::TextUnits::ONE);
+        self.list.clamp(self.list_r(), self.units);
         self.sync_button();
     }
 
@@ -211,7 +211,17 @@ impl Chooser {
     }
 
     pub fn layout(&self, ctx: &Ctx) -> (Rect, Rect) {
-        (Rect::new(0, 0, PANE_W, ctx.size.1), LIST_R)
+        let pane = Rect::new(0, 0, self.units.len(PANE_W), ctx.size.1);
+        (pane, self.list_r())
+    }
+
+    fn list_r(&self) -> Rect {
+        self.units.rect(LIST_R)
+    }
+
+    /// The rows the list shows at once, which Page Up and Page Down move by.
+    fn page(&self) -> i32 {
+        ((self.list_r().height - 4) / self.units.len(ROW_H)).max(1)
     }
 
     pub fn press(&mut self, at: Click, button: u32, ctx: &Ctx) -> Outcome {
@@ -228,7 +238,7 @@ impl Chooser {
             };
         }
         if list_r.contains(x, y) {
-            return self.press_list(at, list_r, &ctx.theme.look.controls());
+            return self.press_list(at, list_r, &ctx.theme.controls());
         }
         if pane_r.contains(x, y) {
             let lay = taskpane::layout(
@@ -236,7 +246,7 @@ impl Chooser {
                 &ctx.text,
                 ctx.theme.fonts.size_px,
                 pane_r,
-                &ctx.theme.look.controls(),
+                &ctx.theme.controls(),
             );
             let hit = taskpane::hit(&self.pane, &lay, x, y);
             return match self.pane.click(hit) {
@@ -248,8 +258,8 @@ impl Chooser {
         Outcome::None
     }
 
-    fn press_list(&mut self, at: Click, _list_r: Rect, cm: &ControlMetrics) -> Outcome {
-        match self.list.press(LIST_R, at, cm) {
+    fn press_list(&mut self, at: Click, list_r: Rect, cm: &ControlMetrics) -> Outcome {
+        match self.list.press(list_r, at, cm) {
             Press::None => Outcome::None,
             Press::Redraw => Outcome::Redraw,
             Press::Row {
@@ -273,8 +283,8 @@ impl Chooser {
             keysym::DOWN | keysym::KP_DOWN => self.step(1, cm),
             keysym::HOME | keysym::KP_HOME => self.step(i32::MIN / 2, cm),
             keysym::END | keysym::KP_END => self.step(i32::MAX / 2, cm),
-            keysym::PAGE_UP => self.step(-(PAGE as i32), cm),
-            keysym::PAGE_DOWN => self.step(PAGE as i32, cm),
+            keysym::PAGE_UP => self.step(-self.page(), cm),
+            keysym::PAGE_DOWN => self.step(self.page(), cm),
             keysym::ESCAPE => Outcome::Close,
             keysym::RETURN | keysym::KP_ENTER => self.button_key(form::Key::Enter),
             SPACE => self.button_key(form::Key::Space),
@@ -291,7 +301,7 @@ impl Chooser {
     }
 
     fn step(&mut self, step: i32, cm: &ControlMetrics) -> Outcome {
-        if self.list.step(step, LIST_R, cm) {
+        if self.list.step(step, self.list_r(), cm) {
             self.sync_button();
             Outcome::Redraw
         } else {
@@ -300,9 +310,9 @@ impl Chooser {
     }
 
     pub fn motion(&mut self, x: i32, y: i32, ctx: &Ctx) -> Outcome {
-        let cm = ctx.theme.look.controls();
-        let lit = self.list.hover(LIST_R, x, y, &cm) && ctx.styled();
-        if self.list.drag(LIST_R, y, &cm) || lit {
+        let (cm, list_r) = (ctx.theme.controls(), self.list_r());
+        let lit = self.list.hover(list_r, x, y, &cm) && ctx.styled();
+        if self.list.drag(list_r, y, &cm) || lit {
             Outcome::Redraw
         } else {
             Outcome::None
@@ -326,10 +336,7 @@ impl Chooser {
     }
 
     pub fn scroll(&mut self, rows: i32) -> Outcome {
-        if self
-            .list
-            .scroll(rows, LIST_R, reprisekit::theme::TextUnits::ONE)
-        {
+        if self.list.scroll(rows, self.list_r(), self.units) {
             Outcome::Redraw
         } else {
             Outcome::None
@@ -379,13 +386,7 @@ impl Chooser {
         let px = ctx.theme.fonts.size_px;
         let (pane_r, list_r) = self.layout(ctx);
         c.fill_rect(c.bounds(), cs.window);
-        let pl = taskpane::layout(
-            &self.pane,
-            &ctx.text,
-            px,
-            pane_r,
-            &ctx.theme.look.controls(),
-        );
+        let pl = taskpane::layout(&self.pane, &ctx.text, px, pane_r, &ctx.theme.controls());
         let paint = Paint {
             s: 1,
             ..ctx.theme.paint()
@@ -402,9 +403,10 @@ impl Chooser {
                 pane_r.height,
             ),
         );
+        let u = self.units;
         ctx.text.draw(
             c,
-            Rect::new(BODY_X, HEAD_Y, BODY_W, LINE_H),
+            u.rect(Rect::new(BODY_X, HEAD_Y, BODY_W, LINE_H)),
             "Choose a wireless network",
             true,
             cs.window_text,
@@ -414,7 +416,12 @@ impl Chooser {
         for (i, line) in INTRO.iter().enumerate() {
             ctx.text.draw(
                 c,
-                Rect::new(BODY_X, INTRO_Y + i as i32 * LINE_H, BODY_W, LINE_H),
+                u.rect(Rect::new(
+                    BODY_X,
+                    INTRO_Y + i as i32 * LINE_H,
+                    BODY_W,
+                    LINE_H,
+                )),
                 line,
                 false,
                 cs.window_text,
@@ -422,7 +429,7 @@ impl Chooser {
                 px,
             );
         }
-        let lay = tilelist::layout(&self.list, list_r, &ctx.theme.look.controls());
+        let lay = tilelist::layout(&self.list, list_r, &ctx.theme.controls());
         tilelist::draw(
             c,
             &ctx.text,
@@ -453,24 +460,24 @@ impl Chooser {
     pub fn access(&self, tree: &mut Tree, ctx: &Ctx) {
         let px = ctx.theme.fonts.size_px;
         let (pane_r, list_r) = self.layout(ctx);
-        let pl = taskpane::layout(
-            &self.pane,
-            &ctx.text,
-            px,
-            pane_r,
-            &ctx.theme.look.controls(),
-        );
+        let pl = taskpane::layout(&self.pane, &ctx.text, px, pane_r, &ctx.theme.controls());
         taskpane::access(&self.pane, &pl, tree, ROOT);
+        let u = self.units;
         let mut head = access::label(
-            Rect::new(BODY_X, HEAD_Y, BODY_W, LINE_H),
+            u.rect(Rect::new(BODY_X, HEAD_Y, BODY_W, LINE_H)),
             "Choose a wireless network",
             true,
         );
         head.set_role(accesskit::Role::Heading);
         tree.push(ROOT, "heading", head);
-        let intro = Rect::new(BODY_X, INTRO_Y, BODY_W, LINE_H * INTRO.len() as i32);
+        let intro = u.rect(Rect::new(
+            BODY_X,
+            INTRO_Y,
+            BODY_W,
+            LINE_H * INTRO.len() as i32,
+        ));
         tree.push(ROOT, "intro", access::label(intro, &INTRO.join(" "), true));
-        let lay = tilelist::layout(&self.list, list_r, &ctx.theme.look.controls());
+        let lay = tilelist::layout(&self.list, list_r, &ctx.theme.controls());
         let row = tilelist::access(
             &self.list,
             &lay,
@@ -491,9 +498,14 @@ impl Chooser {
     }
 }
 
+/// A network's row in `r`: its two lines sit where a 100% row puts them, grown by the theme's
+/// text; the bars, the padlock and the star keep their size.
 pub fn draw_row(c: &mut Canvas, ctx: &Ctx, r: Rect, row: &NetRow, selected: bool) {
     let cs = &ctx.theme.colors;
     let px = ctx.theme.fonts.size_px;
+    let u = ctx.theme.text;
+    let (name_y, caption_y, line_h) = (r.y + u.len(NAME_Y), r.y + u.len(CAPTION_Y), u.len(LINE_H));
+    let lift = (line_h - LINE_H) / 2;
     let greyed = row.security == nm::Security::Enterprise;
     let ink = match (selected, greyed) {
         (true, _) => cs.hilight_text,
@@ -505,11 +517,11 @@ pub fn draw_row(c: &mut Canvas, ctx: &Ctx, r: Rect, row: &NetRow, selected: bool
     signalbars::draw(
         c,
         bars_x,
-        r.y + (ROW_H - signalbars::HEIGHT) / 2,
+        r.y + (r.height - signalbars::HEIGHT) / 2,
         signalbars::five(row.strength),
         !greyed,
     );
-    let name_r = Rect::new(r.x + TEXT_X, r.y + NAME_Y, r.width, LINE_H);
+    let name_r = Rect::new(r.x + TEXT_X, name_y, r.width, line_h);
     ctx.text
         .draw(c, name_r, &row.ssid.to_string(), true, ink, Align::Left, px);
     if !row.tag.is_empty() {
@@ -517,23 +529,23 @@ pub fn draw_row(c: &mut Canvas, ctx: &Ctx, r: Rect, row: &NetRow, selected: bool
         let tag_x = bars_x - TAG_GAP - w;
         ctx.text.draw(
             c,
-            Rect::new(tag_x, r.y + NAME_Y, w, LINE_H),
+            Rect::new(tag_x, name_y, w, line_h),
             &row.tag,
             false,
             ink,
             Align::Left,
             px,
         );
-        sprite(c, tag_x - STAR_W, r.y + NAME_Y + 3, &STAR, ink);
+        sprite(c, tag_x - STAR_W, name_y + lift + 3, &STAR, ink);
     }
     let lock = row.security != nm::Security::Open;
     if lock {
-        padlock(c, r.x + TEXT_X, r.y + CAPTION_Y + 2, ink);
+        padlock(c, r.x + TEXT_X, caption_y + lift + 2, ink);
     }
     let cap_x = r.x + TEXT_X + if lock { LOCK_W } else { 0 };
     ctx.text.draw(
         c,
-        Rect::new(cap_x, r.y + CAPTION_Y, r.width, LINE_H),
+        Rect::new(cap_x, caption_y, r.width, line_h),
         caption(row.security),
         false,
         ink,
@@ -663,7 +675,7 @@ mod tests {
     }
 
     fn chooser() -> Chooser {
-        Chooser::new(&device())
+        Chooser::new(&device(), TextUnits::ONE)
     }
 
     fn ssids(c: &Chooser) -> Vec<String> {
@@ -673,7 +685,8 @@ mod tests {
     fn slot_point(ctx: &Ctx, c: &Chooser, n: usize) -> (i32, i32) {
         let (_, list_r) = c.layout(ctx);
         let inner = list_r.inset(2);
-        (inner.x + 40, inner.y + n as i32 * ROW_H + ROW_H / 2)
+        let row_h = c.units.len(ROW_H);
+        (inner.x + 40, inner.y + n as i32 * row_h + row_h / 2)
     }
 
     fn key(sym: u32) -> KeyInput {
@@ -792,7 +805,7 @@ mod tests {
         assert!(btn.right() <= CLIENT.0 && btn.bottom() <= CLIENT.1);
         assert!(btn.y > list_r.bottom(), "the button clears the list");
         assert_eq!(list_r.right(), btn.right(), "both end on one column");
-        assert_eq!(PAGE, 6);
+        assert_eq!(c.page(), 6);
         assert_eq!(c.pane.sections.len(), 2);
         let taskpane::Body::Links(rows) = &c.pane.sections[0].body else {
             panic!("Network Tasks has links")
@@ -816,7 +829,7 @@ mod tests {
                 ..ap("/ap/6", "Office", 60, nm::Security::Psk)
             }],
         });
-        let mut c = Chooser::new(&d);
+        let mut c = Chooser::new(&d, TextUnits::ONE);
         let (x, y) = slot_point(&ctx, &c, 0);
         c.press(one(x, y), BTN_LEFT, &ctx);
         assert_eq!(
@@ -830,6 +843,34 @@ mod tests {
         );
     }
 
+    /// At 200% the window, its pane, list, rows and button grow with the text: the third grown
+    /// row takes a press, Page Down moves by the rows the grown list shows, and the button stays
+    /// inside the grown client.
+    #[test]
+    fn at_200_percent_the_window_and_its_rows_grow() {
+        let u = TextUnits::new(22, 11);
+        let mut ctx = crate::tests::test_ctx(u.size(CLIENT));
+        ctx.text_size = 200;
+        ctx.theme = reprisekit::theme::Theme::default().with_text_size(200);
+        assert_eq!(ctx.theme.text, u);
+        let mut c = Chooser::new(&device(), u);
+        let (pane_r, list_r) = c.layout(&ctx);
+        assert_eq!(pane_r.width, 2 * PANE_W);
+        assert_eq!(list_r, u.rect(LIST_R));
+        assert_eq!(c.page(), (list_r.height - 4) / (2 * ROW_H));
+        let mut canvas = Canvas::new(ctx.size.0 as u32, ctx.size.1 as u32);
+        c.draw(&mut canvas, &ctx);
+        let btn = c
+            .button
+            .units()
+            .rect(c.button.item("connect").unwrap().rect);
+        assert!(btn.right() <= ctx.size.0 && btn.bottom() <= ctx.size.1);
+        assert!(btn.y > list_r.bottom(), "the button clears the grown list");
+        let (x, y) = slot_point(&ctx, &c, 2);
+        c.press(one(x, y), BTN_LEFT, &ctx);
+        assert_eq!(c.list.selected_row(), Some(2));
+    }
+
     #[test]
     fn an_unsaved_wpa3_network_asks_for_its_key() {
         let ctx = ctx();
@@ -839,7 +880,7 @@ mod tests {
             strength: 0,
             aps: vec![ap("/ap/7", "Lab", 60, nm::Security::Sae)],
         });
-        let mut c = Chooser::new(&d);
+        let mut c = Chooser::new(&d, TextUnits::ONE);
         let (x, y) = slot_point(&ctx, &c, 0);
         c.press(one(x, y), BTN_LEFT, &ctx);
         assert_eq!(
@@ -912,7 +953,7 @@ mod tests {
             &ctx.text,
             ctx.theme.fonts.size_px,
             pane_r,
-            &ctx.theme.look.controls(),
+            &ctx.theme.controls(),
         );
         let row = lay.rows[0][0];
         assert_eq!(
@@ -1028,7 +1069,7 @@ mod tests {
             sb,
             1,
             c.list.top,
-            PAGE,
+            c.page() as usize,
             c.rows.len(),
             false,
             ctx.theme.look.controls().thumb_min,
