@@ -73,6 +73,28 @@ pub struct Want {
     pub always_on_top: Option<bool>,
     pub sticky: Option<bool>,
     pub tab_group: Option<String>,
+    /// A normal frame kept at a larger text size: `size` is left to the program.
+    pub shrunk: Option<Shrunk>,
+}
+
+/// A normal frame kept at a larger text size than now. The window opens at its program's own
+/// size, then takes the frame shrunk by the ratio of the two text sizes where that is larger,
+/// never more than the frame it was kept at.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Shrunk {
+    pub to: (i32, i32),
+    pub kept: (i32, i32),
+}
+
+impl Shrunk {
+    /// The frame size of a window that opened at frame size `opening`.
+    pub fn size(self, opening: (i32, i32)) -> (i32, i32) {
+        let side = |to: i32, kept: i32, opening: i32| kept.min(to.max(opening));
+        (
+            side(self.to.0, self.kept.0, opening.0),
+            side(self.to.1, self.kept.1, opening.1),
+        )
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -95,16 +117,27 @@ fn full_size() -> u32 {
 
 impl Remembered {
     /// Where the app's next window opens at `text_size`: a frame kept at a larger text size
-    /// shrinks by the ratio of the two, so a window that grew with the text shrinks back with it.
+    /// shrinks by the ratio of the two, so a window that grew with the text shrinks back with it,
+    /// down to no less than its program's own size ([`Shrunk`]). A maximized one restores to
+    /// the shrunk size.
     pub fn want(&self, first: bool, text_size: u32) -> Want {
-        let shrink = |v: i32| match self.text_size {
-            kept if kept > text_size => {
-                (i64::from(v) * i64::from(text_size) / i64::from(kept)) as i32
+        let kept = (self.width, self.height);
+        let shrunk = (self.text_size > text_size).then(|| {
+            let shrink =
+                |v: i32| (i64::from(v) * i64::from(text_size) / i64::from(self.text_size)) as i32;
+            Shrunk {
+                to: (shrink(kept.0), shrink(kept.1)),
+                kept,
             }
-            _ => v,
-        };
+        });
+        let maximized = first && self.maximized;
         Want {
-            size: Some((shrink(self.width), shrink(self.height))),
+            size: match shrunk {
+                Some(s) if maximized => Some(s.to),
+                Some(_) => None,
+                None => Some(kept),
+            },
+            shrunk: shrunk.filter(|_| !maximized),
             position: Some(if first {
                 Position::At(self.x, self.y)
             } else {
@@ -128,6 +161,9 @@ pub fn want(rules: &[WindowRule], app_id: &str, title: &str, base: Want) -> Want
                 }
             }
             over(&mut w.size, &r.size);
+            if r.size.is_some() {
+                w.shrunk = None;
+            }
             over(
                 &mut w.position,
                 &r.position.map(|(x, y)| Position::At(x, y)),
@@ -207,9 +243,44 @@ mod tests {
             maximized: false,
             text_size: 200,
         };
-        assert_eq!(m.want(true, 100).size, Some((544, 488)));
-        assert_eq!(m.want(true, 150).size, Some((816, 732)));
-        assert_eq!(m.want(true, 200).size, Some((1088, 976)), "the same size");
+        let opened = |pct: u32, opening: (i32, i32)| {
+            let want = m.want(true, pct);
+            want.size.or(want.shrunk.map(|s| s.size(opening)))
+        };
+        assert_eq!(opened(100, (500, 400)), Some((544, 488)));
+        assert_eq!(opened(150, (500, 400)), Some((816, 732)));
+        assert_eq!(opened(200, (500, 400)), Some((1088, 976)), "the same size");
+        assert_eq!(
+            opened(100, (766, 709)),
+            Some((766, 709)),
+            "no smaller than the program opens at"
+        );
+        assert_eq!(
+            opened(100, (1200, 709)),
+            Some((1088, 709)),
+            "nor larger than it was kept"
+        );
+        assert_eq!(
+            m.want(true, 100).size,
+            None,
+            "the program picks its size first"
+        );
+        let maximized = Remembered {
+            maximized: true,
+            ..m.clone()
+        };
+        assert_eq!(maximized.want(true, 100).size, Some((544, 488)));
+        assert_eq!(maximized.want(true, 100).shrunk, None);
+        let rule = WindowRule {
+            size: Some((800, 600)),
+            ..rule("app")
+        };
+        let ruled = want(&[rule], "app", "", m.want(true, 100));
+        assert_eq!(
+            (ruled.size, ruled.shrunk),
+            (Some((800, 600)), None),
+            "a rule's size wins"
+        );
         let small = Remembered {
             text_size: 100,
             ..m.clone()
@@ -270,6 +341,7 @@ mod tests {
                 always_on_top: Some(true),
                 sticky: None,
                 tab_group: None,
+                shrunk: None,
             }
         );
         let build = want(&rules, "foot", "build", base);

@@ -1912,6 +1912,7 @@ impl State {
             .filter(|&p| self.win(p).is_some_and(|p| p.mapped));
         let resizable = self.win(w).is_some_and(Window::is_resizable);
         let position = want.as_ref().and_then(|x| x.position);
+        let shrunk = want.as_ref().and_then(|x| x.shrunk);
         // X11 position read before `relayout` configures it.
         let x11_at = self
             .win(w)
@@ -1931,16 +1932,18 @@ impl State {
                 centre_on(frame, total, area)
             }
             (None, Some(pos)) => {
-                let s = want
-                    .as_ref()
-                    .and_then(|x| x.size)
-                    .map_or(total, |s| fit_size(s, area));
-                // A normal frame is at least as big as the client's minimum made it.
+                let s = match (want.as_ref().and_then(|x| x.size), shrunk) {
+                    (Some(s), _) => fit_size(s, area),
+                    (None, Some(sh)) => fit_size(sh.size(total), area),
+                    (None, None) => total,
+                };
+                // A normal frame is at least as big as the client's minimum made it; a shrunk
+                // one opened at the client's own size.
                 let normal = !matches!(
                     want.as_ref().and_then(|x| x.state),
                     Some(WindowState::Maximized | WindowState::Fullscreen)
                 );
-                let s = if normal {
+                let s = if normal && shrunk.is_none() {
                     (s.0.max(total.0), s.1.max(total.1))
                 } else {
                     s
@@ -1999,12 +2002,17 @@ impl State {
         }
         self.relayout(w);
         // An X11 client can resize itself before map, and a regrouped window can have planned
-        // another size: ask for the planned size again.
-        if (resized || self.win(w).is_some_and(|x| x.x11().is_some()))
-            && let Some(s) = want.as_ref().and_then(|x| x.size)
+        // another size: ask for the planned size again. A shrunk frame larger than the client's
+        // own size is asked for now.
+        let again = resized || self.win(w).is_some_and(|x| x.x11().is_some());
+        let ask = match (want.as_ref().and_then(|x| x.size), shrunk) {
+            (Some(s), _) if again => Some(fit_size(s, area)),
+            (None, Some(sh)) => Some(fit_size(sh.size(total), area)).filter(|&s| s != total),
+            _ => None,
+        };
+        if let Some((fw, fh)) = ask
             && let Some(chrome) = self.win(w).map(Window::chrome)
         {
-            let (fw, fh) = fit_size(s, area);
             let (cw, ch) = FrameGeometry::client_size_for_total(&m, fw, fh, false, chrome);
             self.request_size(w, cw, ch);
         }
