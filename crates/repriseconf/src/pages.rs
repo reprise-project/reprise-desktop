@@ -203,7 +203,7 @@ impl Page {
                 "open with",
                 "file types",
             ],
-            Page::Advanced => &["screenshots", "task manager"],
+            Page::Advanced => &["screenshots", "task manager", "thumbnails", "cache"],
         }
     }
 
