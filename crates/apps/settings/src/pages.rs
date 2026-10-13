@@ -22,7 +22,7 @@ use reprisekit::look::Paint;
 use reprisekit::raster::{Canvas, Rect};
 use reprisekit::text::TextRenderer;
 use reprisekit::textedit::TextEdit;
-use reprisekit::theme::{Color, FontConfig, Theme};
+use reprisekit::theme::{Color, FontConfig, TextUnits, Theme};
 use reprisekit::trackbar::{self, TrackBar};
 
 use crate::model::{
@@ -2156,9 +2156,8 @@ pub fn new_list() -> ListView {
     }
 }
 
-pub fn fit_list_columns(lv: &mut ListView, rect: Rect) {
-    let rest = COLUMNS[0].1 + COLUMNS[2].1;
-    lv.resize_column(1, rect.width - 4 - rest);
+pub fn fit_list_columns(lv: &mut ListView, rect: Rect, u: TextUnits) {
+    lv.fill_column(1, rect.width - 4, u);
 }
 
 pub fn fill_list(lv: &mut ListView, entries: &[Entry], checks: &[bool]) {
@@ -2196,8 +2195,7 @@ pub fn fit_shortcut_columns(
     cm: &reprisekit::controls::metrics::ControlMetrics,
     rect: Rect,
 ) {
-    let keys = SHORTCUT_COLUMNS[0].1;
-    lv.resize_column(1, rect.width - 4 - cm.scroll - keys);
+    lv.fill_column(1, rect.width - 4 - cm.scroll, cm.text);
 }
 
 /// Refill `lv` from `s` in [`crate::model::row`]'s order: the desktop's binds
@@ -2245,8 +2243,7 @@ pub fn fit_location_columns(
     cm: &reprisekit::controls::metrics::ControlMetrics,
     rect: Rect,
 ) {
-    let location = LOCATION_COLUMNS[1].1;
-    lv.resize_column(0, rect.width - 4 - cm.scroll - location);
+    lv.fill_column(0, rect.width - 4 - cm.scroll, cm.text);
 }
 
 pub fn fill_locations(lv: &mut ListView, answers: &[(String, bool)]) {

@@ -214,8 +214,7 @@ pub fn fit_columns(
     cm: &reprisekit::controls::metrics::ControlMetrics,
     rect: Rect,
 ) {
-    let rest: i32 = COLUMNS[..2].iter().map(|c| c.1).sum();
-    lv.resize_column(2, rect.width - 4 - cm.scroll - rest);
+    lv.fill_column(2, rect.width - 4 - cm.scroll, cm.text);
 }
 
 /// A terminal the Terminal combo offers: its name, and the command the

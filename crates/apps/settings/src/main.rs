@@ -411,7 +411,7 @@ impl SettingsApp {
         // Command takes the Startup list's new width; a column the user
         // dragged keeps its width until the window resizes.
         let list = self.on_page(pages::list(a));
-        pages::fit_list_columns(&mut self.list, list);
+        pages::fit_list_columns(&mut self.list, list, self.units);
         self.preview_for = None;
         self.sheet.reveal_open();
         self.sheet.fit_height(shown.1);
