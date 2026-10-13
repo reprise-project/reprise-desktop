@@ -128,6 +128,9 @@ pub struct Ctx {
     /// Wakes the event loop with `Event::Wake` on `MAIN` from any thread.
     pub wake: Waker,
     pub heads: heads::HeadRequests,
+    /// Set while handling an event by a control that steps on its own while held (a sheet's
+    /// scrollbar arrow, [`keys::sheet_input`]): the host sends the window an `Event::Tick`.
+    pub want_tick: std::cell::Cell<bool>,
 }
 
 impl Ctx {
@@ -1015,6 +1018,7 @@ pub fn run(app: Box<dyn App>) {
             origin: (0, 0),
             wake: Waker(Arc::new(ping)),
             heads: heads::HeadRequests::default(),
+            want_tick: Default::default(),
         },
         exit: false,
         last_serial: 0,
@@ -1388,7 +1392,8 @@ impl Host {
             }
             return;
         }
-        let reply = self.app.event(win, ev, &mut self.ctx);
+        let mut reply = self.app.event(win, ev, &mut self.ctx);
+        reply.tick |= self.ctx.want_tick.take();
         self.apply(win, reply);
     }
 
@@ -4077,6 +4082,7 @@ mod tests {
             origin: (0, 0),
             wake: Waker::noop(),
             heads: Default::default(),
+            want_tick: Default::default(),
             text_size: 150,
         };
         let grown = reprisekit::theme::TextUnits::new(17, 11);
@@ -4103,6 +4109,7 @@ mod tests {
             origin: (0, 0),
             wake: Waker::noop(),
             heads: Default::default(),
+            want_tick: Default::default(),
             text_size: 100,
         };
         let r = Rect::new(5, 4, 30, 20);
@@ -4149,6 +4156,7 @@ mod tests {
             origin: (0, 0),
             wake: Waker::noop(),
             heads: Default::default(),
+            want_tick: Default::default(),
             text_size: 100,
         };
         let r = Rect::new(0, 8, 120, 22);
