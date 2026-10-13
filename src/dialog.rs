@@ -5596,10 +5596,11 @@ mod tests {
 
     #[test]
     fn too_big_asks_with_the_batch_buttons() {
-        use reprisefs::bincap::TooBig;
+        use reprisefs::bincap::{Measured, TooBig};
         use reprisefs::replace::Answer;
         let big = std::path::PathBuf::from("/d/big.iso");
-        let asker = TooBig::new(vec!["/d/a".into(), big.clone()], vec![false, true]);
+        let too_big = Some(Measured::unstamped(2, 1));
+        let asker = TooBig::new(vec!["/d/a".into(), big.clone()], vec![None, too_big]);
         let mut d = Dialog::too_big(&big, false, asker.clone());
         assert_eq!(d.title, "Confirm File Delete");
         assert_eq!(
@@ -5626,7 +5627,7 @@ mod tests {
             assert_eq!((w[0].width, w[1].x - w[0].right()), (80, 7));
         }
 
-        let one = TooBig::new(vec![big.clone()], vec![true]);
+        let one = TooBig::new(vec![big.clone()], vec![too_big]);
         let d = Dialog::too_big(&big, true, one);
         assert_eq!(d.title, "Confirm Folder Delete");
         let labels: Vec<&str> = d.buttons.iter().map(|b| b.label.as_str()).collect();
