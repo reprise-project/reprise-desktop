@@ -147,8 +147,13 @@ impl Ctx {
 
     /// How [`Ctx::forms`] grows a 100% layout, without building its theme.
     pub fn form_units(&self) -> reprisekit::theme::TextUnits {
-        let base = self.theme.fonts.size_px;
+        let base = self.base_px();
         reprisekit::theme::TextUnits::new(reprisekit::theme::text_px(base, self.text_size), base)
+    }
+
+    /// The UI font's px at 100% text, what a form's `units().px(..)` grows.
+    pub fn base_px(&self) -> u32 {
+        self.theme.text.base_px(self.theme.fonts.size_px)
     }
 
     /// Ask the compositor to set `cfg` on output `name`; returns the number
@@ -1416,13 +1421,14 @@ impl Host {
         if !drag && !(hover.is_some() && *ev == Event::Tick) {
             return None;
         }
-        let theme_px = self.ctx.theme.fonts.size_px;
+        let base = self.ctx.base_px();
         let out = if let Some(DropForm { form, px }) = self.app.drop_form(win) {
-            let px = px.unwrap_or_else(|| form.units().px(theme_px));
+            let px = px.unwrap_or_else(|| form.units().px(base));
             fielddrop::event(form, &mut hover, ev, &self.ctx.text, px)
         } else {
+            let px = self.ctx.form_units().px(base);
             let mut file = self.app.drop_file_dialog(win)?;
-            fielddrop::event(&mut file, &mut hover, ev, &self.ctx.text, theme_px)
+            fielddrop::event(&mut file, &mut hover, ev, &self.ctx.text, px)
         };
         self.field_drag = hover.map(|h| (win, h));
         out
@@ -4091,6 +4097,29 @@ mod tests {
         ctx.theme = theme.with_text_size(150);
         assert_eq!(ctx.forms().fonts.size_px, 17);
         assert_eq!(ctx.forms().text, grown);
+    }
+
+    /// A text-sized program's theme is already at 150%: its form units, and the px a form drawn
+    /// at them hit-tests with, grow the 100% font once.
+    #[test]
+    fn a_text_sized_theme_grows_form_units_once() {
+        let theme = Theme::default();
+        let ctx = Ctx {
+            theme: theme.with_text_size(150),
+            text: TextRenderer::load(&theme.fonts),
+            icons: IconCache::new(IconTheme::load("test", &[])),
+            caret_on: true,
+            size: (40, 30),
+            maximized: false,
+            origin: (0, 0),
+            wake: Waker::noop(),
+            heads: Default::default(),
+            want_tick: Default::default(),
+            text_size: 150,
+        };
+        assert_eq!(ctx.base_px(), 11);
+        assert_eq!(ctx.form_units(), reprisekit::theme::TextUnits::new(17, 11));
+        assert_eq!(ctx.form_units().px(ctx.base_px()), 17);
     }
 
     #[test]
