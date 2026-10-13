@@ -13,6 +13,8 @@
 //! it there and moves on to the next free zone. It has no dim; under a
 //! glass look the panel is a glass sheet (`glass::Backdrop`).
 
+use std::time::Instant;
+
 use reprisekit::controls::overview::{self, Event, Key, Overview, OverviewLayout};
 use reprisekit::interfaces;
 use reprisekit::taskpreview::fit;
@@ -55,6 +57,27 @@ pub struct OverviewView {
     assist: Option<(WindowId, Vec<(usize, Rect)>)>,
     /// The dim over every output (none under snap assist) and each grid's `cells`.
     tree: TreeId,
+    fade: Option<FadeRun>,
+}
+
+/// A released vertical swipe's run-on: the fade eases over `span` (opacities) in `ms`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct FadeRun {
+    span: (f64, f64),
+    ms: u32,
+    started: Instant,
+}
+
+/// The run-on from `opacity` to shown (`open`) or gone, timed as a desktop swipe's run-on of `ms`.
+fn fade_run(opacity: f32, open: bool, ms: u32) -> ((f64, f64), u32) {
+    let (span, share) = crate::switchanim::drag_finish(f64::from(opacity), open);
+    (span, ((f64::from(ms) * share).round() as u32).max(1))
+}
+
+/// The opacity `elapsed` ms into a run over `span` lasting `ms`; None once it has ended.
+fn fade_at((from, to): (f64, f64), ms: u32, elapsed: f64) -> Option<f32> {
+    let t = elapsed / f64::from(ms.max(1));
+    (t < 1.0).then(|| (from + (to - from) * crate::windowanim::ease(t)) as f32)
 }
 
 struct Grid {
@@ -144,6 +167,7 @@ impl State {
     }
 
     pub fn toggle_overview(&mut self) {
+        self.overview_fade_settle();
         if self.overview.view.is_some() {
             self.close_overview();
         } else {
@@ -276,6 +300,7 @@ impl State {
             grids,
             assist,
             tree,
+            fade: None,
         });
         self.clear_pointer_focus();
         self.set_cursor("default");
@@ -289,6 +314,46 @@ impl State {
         if let Some(v) = self.overview.view.as_ref() {
             self.scene.set_opacity(v.tree, opacity);
             self.redraw_all();
+        }
+    }
+
+    /// Ease the open overview from its opacity to shown (`open`) or gone, closing it at the end.
+    pub fn overview_fade_to(&mut self, open: bool) {
+        let ms = self.config.workspace_animation.ms;
+        let Some(v) = self.overview.view.as_mut() else {
+            return;
+        };
+        let opacity = self.scene.opacity(v.tree).unwrap_or(1.0);
+        let (span, ms) = fade_run(opacity, open, ms);
+        v.fade = Some(FadeRun {
+            span,
+            ms,
+            started: Instant::now(),
+        });
+        self.redraw_all();
+    }
+
+    /// Called from each output's render: the next step of a fade run-on.
+    pub fn overview_fade_frame(&mut self) {
+        let Some(run) = self.overview.view.as_ref().and_then(|v| v.fade) else {
+            return;
+        };
+        let elapsed = run.started.elapsed().as_secs_f64() * 1000.0;
+        match fade_at(run.span, run.ms, elapsed) {
+            Some(opacity) => self.set_overview_fade(opacity),
+            None => self.overview_fade_settle(),
+        }
+    }
+
+    /// End a running fade run-on where it was heading.
+    pub fn overview_fade_settle(&mut self) {
+        let Some(run) = self.overview.view.as_mut().and_then(|v| v.fade.take()) else {
+            return;
+        };
+        if run.span.1 > 0.0 {
+            self.set_overview_fade(1.0);
+        } else {
+            self.close_overview();
         }
     }
 
@@ -715,6 +780,26 @@ mod tests {
             mods,
             edit: None,
         }
+    }
+
+    #[test]
+    fn a_released_fade_runs_on_from_where_the_fingers_left_it() {
+        let (span, ms) = fade_run(0.6, true, 200);
+        assert!((span.0 - 0.6).abs() < 1e-6);
+        assert_eq!((span.1, ms), (1.0, 80));
+        assert_eq!(fade_at(span, ms, 0.0), Some(0.6));
+        let mid = fade_at(span, ms, 40.0).unwrap();
+        assert!(mid > 0.8 && mid < 1.0, "eased past halfway: {mid}");
+        assert_eq!(fade_at(span, ms, 80.0), None);
+        let (span, ms) = fade_run(0.6, false, 200);
+        assert_eq!((span.1, ms), (0.0, 120));
+        assert!(fade_at(span, ms, 60.0).unwrap() < 0.3);
+        assert_eq!(fade_run(1.0, true, 200).1, 40, "the shortest run");
+        assert_eq!(
+            fade_run(0.5, false, 0).1,
+            1,
+            "no animation ends on the next frame"
+        );
     }
 
     #[test]
