@@ -18,6 +18,7 @@ pub mod explorerbar;
 pub mod filedlg;
 pub mod filesheet;
 pub mod finddlg;
+mod fit;
 pub mod flip;
 pub mod form;
 pub mod grouplist;

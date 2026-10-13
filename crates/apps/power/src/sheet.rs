@@ -40,7 +40,7 @@ const GX: i32 = X + 12;
 const GW: i32 = W - 24;
 const ICON_PX: i32 = 32;
 
-/// The Power Schemes columns: where "Plugged in" and "Running on batteries" start.
+/// The Power Schemes columns: where "Plugged in" and "On batteries" start.
 const COL_AC: i32 = 146;
 const COL_BAT: i32 = 262;
 const COL_W: i32 = 108;
@@ -557,7 +557,7 @@ fn schemes_page(icon: Option<Canvas>) -> Form {
         combo("profile", GX, 126, GW, &[]),
         group("settings_g", 170, 130, "Settings"),
         Item::label_at("col_ac", COL_AC, 190, COL_W, "Plugged in"),
-        Item::label_at("col_bat", COL_BAT, 190, COL_W, "Running on batteries"),
+        Item::label_at("col_bat", COL_BAT, 190, COL_W, "On batteries"),
         Item::label_at("monitor_l", GX, 218, 110, "Turn off &monitor:"),
         minutes_combo("ac_monitor", COL_AC, 214),
         minutes_combo("bat_monitor", COL_BAT, 214),
@@ -669,6 +669,31 @@ mod tests {
             &Profiles::default(),
             None,
         )
+    }
+
+    /// Every page's text fits in Tahoma and in DejaVu Sans, which is wider.
+    #[test]
+    fn every_page_fits_its_text() {
+        let s = sheet();
+        let mut over = Vec::new();
+        for family in ["Tahoma", "DejaVu Sans"] {
+            let text = reprisekit::text::TextRenderer::load(&reprisekit::theme::FontConfig {
+                family: vec![family.into()],
+                ..Default::default()
+            });
+            if !text.has_face(family) {
+                continue;
+            }
+            for page in &s.sheet.pages {
+                page.drawn_with(&reprisekit::theme::Theme::default().paint());
+                over.extend(
+                    page.overflows(&text, 11)
+                        .into_iter()
+                        .map(|o| format!("{family}: {o:?}")),
+                );
+            }
+        }
+        assert!(over.is_empty(), "{over:?}");
     }
 
     fn changed(s: &mut Sheet, id: &'static str) -> Outcome {

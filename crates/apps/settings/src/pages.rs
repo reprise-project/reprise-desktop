@@ -852,7 +852,7 @@ const DURATION_CONTROLS: [&str; 3] = ["duration_label", "desktop_animation_ms", 
 const FPS_CONTROLS: [&str; 3] = ["fps_label", "previews_fps", "fps_units"];
 
 pub fn desktops(a: Area) -> Form {
-    let mut items = vec![group(a, "desktops_group", 44, 146, "Virtual Desktops")];
+    let mut items = vec![group(a, "desktops_group", 44, 168, "Virtual Desktops")];
     items.push(Item::check("use_desktops", GX, 64, "&Use virtual desktops"));
     // Indented under the check box they depend on: `ix` is the box's x, and each item starts at its label's column.
     let ix = GX;
@@ -897,21 +897,21 @@ pub fn desktops(a: Area) -> Form {
         190,
         "Current desktop on the &Glass taskbar:",
     ));
-    indented.push(choice("pager_mark", ix + 190, 162, 134, PAGER_MARKS));
+    indented.push(choice("pager_mark", ix, 184, 134, PAGER_MARKS));
     items.extend(indented.into_iter().map(Item::under_check));
 
-    items.push(group(a, "previews_group", 200, 76, "Window Pictures"));
+    items.push(group(a, "previews_group", 222, 76, "Window Pictures"));
     items.push(Item::check(
         "preview_taskbar",
         GX,
-        224,
+        246,
         "Show live &window pictures over taskbar buttons",
     ));
     items.extend(spin(
         "fps_label",
         "previews_fps",
         GX,
-        250,
+        272,
         110,
         "Re&fresh rate:",
         (1, PREVIEW_FPS_MAX as i32),
@@ -919,7 +919,7 @@ pub fn desktops(a: Area) -> Form {
     items.push(Item::label_at(
         "fps_units",
         GX + 170,
-        250,
+        272,
         100,
         "times a second",
     ));
@@ -1177,7 +1177,7 @@ pub fn night_light(a: Area) -> Form {
     items.extend(times.map(Item::under_check));
     items.push(Item::new(
         "nl_note",
-        Rect::new(X, 272, a.w, 3 * LINE_H),
+        Rect::new(X, 272, a.w, 4 * LINE_H),
         Control::Lines(vec![
             "Sunset and sunrise are worked out for the time zone's city, or for".into(),
             "the latitude and longitude in config.toml. Each change of color".into(),
@@ -1304,7 +1304,7 @@ pub fn accessibility(a: Area) -> Form {
     items.push(
         Item::new(
             "shortcuts_note",
-            Rect::new(X, 405, a.w - 18, 2 * LINE_H),
+            Rect::new(X, 405, a.w - 18, 3 * LINE_H),
             Control::Lines(vec![
                 "Shift five times turns StickyKeys on or off, right Shift held".into(),
                 "eight seconds SlowKeys, left Alt+left Shift+Num Lock MouseKeys.".into(),
@@ -2412,6 +2412,41 @@ mod tests {
             }
             assert!(shown, "{} is on no page under any interface", b.id());
         }
+    }
+
+    /// Every page's text fits its rects under each interface, in Tahoma and in DejaVu Sans, the
+    /// default family's second face, at each text size.
+    #[test]
+    fn every_page_fits_its_text_under_every_interface() {
+        use reprisekit::interface::Interface;
+        let mut over = Vec::new();
+        for family in ["Tahoma", "DejaVu Sans"] {
+            let text = TextRenderer::load(&FontConfig {
+                family: vec![family.into()],
+                ..FontConfig::default()
+            });
+            if !text.has_face(family) {
+                continue;
+            }
+            for i in [Interface::Classic, Interface::Blue, Interface::Glass] {
+                let sheet = under(i.as_str());
+                for pct in [100, 125, 150, 175, 200] {
+                    let theme = reprisekit::interfaces::theme_for(i).with_form_text(pct);
+                    for p in Page::all() {
+                        let form = &sheet.pages[p.index()];
+                        form.drawn_with(&theme.paint());
+                        for (id, by) in form.overflows(&text, theme.fonts.size_px) {
+                            over.push(format!(
+                                "{family}, {}, {pct}%, {}: {id} {by} px over",
+                                i.as_str(),
+                                p.label()
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+        assert!(over.is_empty(), "{}", over.join("\n"));
     }
 
     fn under(interface: &str) -> PropSheet {
@@ -3898,7 +3933,7 @@ mod tests {
     fn the_desktops_page_geometry() {
         let s = built();
         let p = Page::Desktops;
-        assert_eq!(rect(&s, p, "desktops_group"), Rect::new(20, 44, 358, 146));
+        assert_eq!(rect(&s, p, "desktops_group"), Rect::new(20, 44, 358, 168));
         assert_eq!(rect(&s, p, "use_desktops"), Rect::new(32, 64, 13, 13));
         assert_eq!(rect(&s, p, "desktops_label"), Rect::new(50, 88, 206, 13));
         assert_eq!(rect(&s, p, "desktops"), Rect::new(260, 84, 50, 20));
@@ -3912,11 +3947,11 @@ mod tests {
         );
         assert_eq!(rect(&s, p, "duration_units"), Rect::new(220, 140, 60, 13));
         assert_eq!(rect(&s, p, "pager_mark_label"), Rect::new(50, 166, 190, 13));
-        assert_eq!(rect(&s, p, "pager_mark"), Rect::new(240, 162, 134, 21));
-        assert_eq!(rect(&s, p, "previews_group"), Rect::new(20, 200, 358, 76));
-        assert_eq!(rect(&s, p, "preview_taskbar"), Rect::new(32, 224, 13, 13));
-        assert_eq!(rect(&s, p, "previews_fps"), Rect::new(146, 246, 50, 20));
-        assert_eq!(rect(&s, p, "fps_units"), Rect::new(202, 250, 100, 13));
+        assert_eq!(rect(&s, p, "pager_mark"), Rect::new(50, 184, 134, 21));
+        assert_eq!(rect(&s, p, "previews_group"), Rect::new(20, 222, 358, 76));
+        assert_eq!(rect(&s, p, "preview_taskbar"), Rect::new(32, 246, 13, 13));
+        assert_eq!(rect(&s, p, "previews_fps"), Rect::new(146, 268, 50, 20));
+        assert_eq!(rect(&s, p, "fps_units"), Rect::new(202, 272, 100, 13));
         for id in ["session_restore", "session_end_processes"] {
             assert!(s.pages[p.index()].item(id).is_none(), "{id} is on Startup");
         }
