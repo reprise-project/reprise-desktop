@@ -19,9 +19,9 @@ pub const FILTERS: &Choices = &[
     ("none", "None"),
     ("grayscale", "Grayscale"),
     ("invert", "Inverted"),
-    ("deuteranopia", "Red-green (deuteranopia)"),
-    ("protanopia", "Red-green (protanopia)"),
-    ("tritanopia", "Blue-yellow (tritanopia)"),
+    ("deuteranopia", "Red-green (deutan)"),
+    ("protanopia", "Red-green (protan)"),
+    ("tritanopia", "Blue-yellow (tritan)"),
 ];
 
 pub const PREVIEW: &str = "cf_preview";
@@ -83,7 +83,7 @@ pub fn page(a: Area) -> Form {
             "cf_note",
             Rect::new(GX, TOP + 88, gw, LINE_H),
             Control::Lines(vec![
-                "Screenshots and screen sharing see the colors as they are.".into(),
+                "Screenshots and screen sharing see the original colors.".into(),
             ]),
         ),
         group(a, "mag_group", MAG_TOP, 93, "Magnifier"),

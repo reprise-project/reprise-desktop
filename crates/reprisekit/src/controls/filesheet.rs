@@ -1733,6 +1733,26 @@ mod tests {
         Theme::default().fonts.size_px
     }
 
+    /// The Summary page's labels fit their column in DejaVu Sans, which is wider than Tahoma:
+    /// the fields move right of "Comments:".
+    #[test]
+    fn the_summary_labels_fit_in_a_wider_face() {
+        let family = "DejaVu Sans";
+        let text = TextRenderer::load(&FontConfig {
+            family: vec![family.into()],
+            ..FontConfig::default()
+        });
+        if !text.has_face(family) {
+            return;
+        }
+        let page = summary_page(None);
+        page.drawn_with(&Theme::default().paint());
+        assert_eq!(page.overflows(&text, px()), Vec::new());
+        let comments = page.rect(SUMMARY_IDS[5]).unwrap();
+        assert!(comments.x > SUM_COMMENTS.x, "{comments:?}");
+        assert_eq!(comments.right(), SUM_COMMENTS.right());
+    }
+
     fn facts(is_dir: bool) -> Facts {
         Facts {
             is_dir,

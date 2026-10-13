@@ -670,6 +670,25 @@ impl TextRenderer {
         text.chars().map(|ch| self.advance(ch, bold, size_px)).sum()
     }
 
+    /// How far right of the pen `text`'s ink reaches: [`TextRenderer::measure`] less the last
+    /// glyph's blank columns after its ink (a space's whole advance).
+    pub fn ink_width(&self, text: &str, bold: bool, size_px: u32) -> i32 {
+        let Some(last) = text.chars().next_back() else {
+            return 0;
+        };
+        let pen = self.measure(text, bold, size_px) - self.advance(last, bold, size_px);
+        let ink = self
+            .with_glyph(last, bold, size_px, 1, |g| {
+                if g.width == 0 {
+                    0
+                } else {
+                    g.left + g.width as i32
+                }
+            })
+            .unwrap_or(0);
+        pen + ink.min(self.advance(last, bold, size_px))
+    }
+
     pub fn advance(&self, ch: char, bold: bool, size_px: u32) -> i32 {
         self.with_glyph(ch, bold, size_px, 1, |g| g.advance)
             .unwrap_or(0)

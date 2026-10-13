@@ -53,9 +53,9 @@ impl Filter {
             Filter::None => "None",
             Filter::Grayscale => "Grayscale",
             Filter::Invert => "Inverted",
-            Filter::Deuteranopia => "Red-green (deuteranopia)",
-            Filter::Protanopia => "Red-green (protanopia)",
-            Filter::Tritanopia => "Blue-yellow (tritanopia)",
+            Filter::Deuteranopia => "Red-green (deutan)",
+            Filter::Protanopia => "Red-green (protan)",
+            Filter::Tritanopia => "Blue-yellow (tritan)",
         }
     }
 

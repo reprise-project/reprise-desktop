@@ -15,6 +15,7 @@ use crate::controls::arrange;
 use crate::controls::calendar::{self, Calendar};
 use crate::controls::colorbutton::{self, ColorButton};
 use crate::controls::combo::{self, Combo};
+use crate::controls::fit;
 use crate::controls::hotkey::{self, HotKey};
 use crate::controls::iconlist;
 use crate::controls::listbox::{self, ListBox};
@@ -547,6 +548,9 @@ struct Rendered {
     controls: Cell<ControlMetrics>,
     /// The last draw's text size ([`Paint::text`]), which the items' rects grow by.
     text: Cell<TextUnits>,
+    /// Per item, how far the last draw moved its left edge and widened it for text wider
+    /// than its rect ([`fit::fit`]); empty while every text fits.
+    fit: RefCell<Vec<(i32, i32)>>,
     /// The last draw's scale, 0 before the first: a memo keeps its
     /// horizontal scroll in device px, which `hit` and `access` read at 1x.
     scale: Cell<i32>,
@@ -959,15 +963,31 @@ impl Form {
         ))
     }
 
-    /// Where `it` draws and takes the pointer at the last draw's text size: see [`place`].
+    /// Where `it` draws and takes the pointer at the last draw's text size: its
+    /// [`Form::flowed`] rect [`place`]d, then moved and widened for the text ([`Form::fit_text`]).
     fn at(&self, it: &Item) -> Rect {
-        place(
+        let r = place(
             it,
             self.flowed(it),
             &self.controls(),
             self.units(),
             self.origin,
-        )
+        );
+        let fit = self.rendered.fit.borrow();
+        // A copy of an item (a host's one-item form) is not one of `self.items` and keeps its rect.
+        match self
+            .items
+            .iter()
+            .position(|x| std::ptr::eq(x, it))
+            .and_then(|i| fit.get(i))
+        {
+            Some(&(dx, dw)) => Rect {
+                x: r.x + dx,
+                width: r.width + dw,
+                ..r
+            },
+            _ => r,
+        }
     }
 
     /// `it`'s 100% rect after the notes the last draw found too short for their lines
@@ -1027,6 +1047,117 @@ impl Form {
             })
             .collect();
         *self.rendered.flow.borrow_mut() = flow;
+    }
+
+    /// The rects every item takes as built, before [`Form::fit_text`] moves them and notes
+    /// flow, with what each holds for the fit.
+    fn fit_input(&self, text: &TextRenderer, px: u32) -> (Vec<Rect>, Vec<fit::Kind>) {
+        let (cm, u) = (self.controls(), self.units());
+        let measure = |s: &str| text.ink_width(&crate::text::split_mnemonic(s).0, false, px);
+        self.items
+            .iter()
+            .map(|it| {
+                let r = place(it, it.rect, &cm, u, self.origin);
+                let kind = match &it.control {
+                    Control::Label {
+                        text,
+                        align: Align::Left,
+                        ..
+                    } => fit::Kind::Text {
+                        need: measure(text),
+                    },
+                    Control::Combo(c) => {
+                        let inset = r.width - combo::layout(c, r, &cm).text.width;
+                        let widest = c.items.iter().map(|i| measure(&i.text)).max();
+                        fit::Kind::Stretch {
+                            need: widest.map_or(0, |w| w + inset),
+                        }
+                    }
+                    Control::Edit { .. }
+                    | Control::ListBox { .. }
+                    | Control::Tree(_)
+                    | Control::TrackBar(_)
+                    | Control::Memo(_) => fit::Kind::Stretch { need: 0 },
+                    Control::Button { .. } => fit::Kind::Anchored,
+                    Control::Group(_) => fit::Kind::Group,
+                    Control::GroupTitle(_)
+                    | Control::Blank
+                    | Control::Separator
+                    | Control::Rule => fit::Kind::Apart,
+                    _ => fit::Kind::Fixed,
+                };
+                (r, kind)
+            })
+            .unzip()
+    }
+
+    /// Lays the form out for the text `text` sets at `px`: a label or a combo's value wider
+    /// than its rect takes the room right of it, moving the column after it when there is too
+    /// little ([`fit::fit`]). Run by `draw` after [`Form::drawn_with`] and before
+    /// [`Form::lay_out_notes`], which rewraps the notes at the widths the fit leaves.
+    fn fit_text(&self, text: &TextRenderer, px: u32) {
+        let text = text.dialog(self.font);
+        let (rects, kinds) = self.fit_input(text, px);
+        let fits = rects.iter().zip(&kinds).all(|(r, k)| match *k {
+            fit::Kind::Text { need } | fit::Kind::Stretch { need } => need <= r.width,
+            _ => true,
+        });
+        let mut deltas = self.rendered.fit.borrow_mut();
+        deltas.clear();
+        if fits {
+            return;
+        }
+        let u = self.units();
+        let out = fit::fit(&rects, &kinds, u.len(fit::GAP), u.len(fit::PAD));
+        deltas.extend(
+            rects
+                .iter()
+                .zip(&out)
+                .map(|(a, b)| (b.x - a.x, b.width - a.width)),
+        );
+    }
+
+    /// The items whose text `text` at `px` does not fit once [`Form::fit_text`] and
+    /// [`Form::lay_out_notes`] have laid them out at 1x, with how many px it runs over: a label
+    /// or a combo's widest value wider than its rect, a check box's or radio's label running
+    /// into the next control on its row or past its group box, and a note that wraps to more
+    /// rows than it was built with, even where it flows and pushes the page down.
+    pub fn overflows(&self, text: &TextRenderer, px: u32) -> Vec<(&'static str, i32)> {
+        self.fit_text(text, px);
+        self.lay_out_notes(text, 1, px);
+        let text = text.dialog(self.font);
+        let (cm, u) = (self.controls(), self.units());
+        let measure = |s: &str| text.ink_width(&crate::text::split_mnemonic(s).0, false, px);
+        let (_, kinds) = self.fit_input(text, px);
+        let rects: Vec<Rect> = self.items.iter().map(|it| self.at(it)).collect();
+        // A check box's or radio's label may run up to its group box's frame.
+        let pad = u.len(2);
+        let mut over = Vec::new();
+        for (i, it) in self.items.iter().enumerate() {
+            let r = rects[i];
+            let by = match (&it.control, kinds[i]) {
+                (Control::Label { text, .. }, _) => measure(text) - r.width,
+                (Control::Combo(_), fit::Kind::Stretch { need }) => need - r.width,
+                (Control::Check { label, .. }, _) => {
+                    let lr = check_label_rect(r, it.indent, &cm, measure(label));
+                    lr.right() - fit::limit(&rects, &kinds, i, pad)
+                }
+                (Control::Radio { label, .. }, _) => {
+                    let lr = radio_label_rect(r, &cm, measure(label));
+                    lr.right() - fit::limit(&rects, &kinds, i, pad)
+                }
+                (Control::Lines(lines), _) => {
+                    let rows = note_lines(text, lines, r.width, px).len();
+                    let room = (it.rect.height / LINE_H) as usize;
+                    u.len(rows.saturating_sub(room) as i32 * LINE_H)
+                }
+                _ => 0,
+            };
+            if by > 0 {
+                over.push((it.id, by));
+            }
+        }
+        over
     }
 
     /// The rect item `id` was last drawn in, on the surface: its rect grown with the text and
@@ -3192,6 +3323,7 @@ fn draw_choice_label(
 pub fn draw(c: &mut Canvas, text: &TextRenderer, p: &Paint, form: &Form, cues: bool, px: u32) {
     let Paint { cs, s, .. } = *p;
     form.drawn_with(p);
+    form.fit_text(text, px);
     form.lay_out_notes(text, s, px);
     let cm = form.controls();
     let grow = p.text;
@@ -4065,6 +4197,63 @@ mod tests {
         f.focus_id("pw");
         assert!(f.focused_edit().is_some());
         assert_eq!(f.focused_edit().and_then(|e| e.copy_text()), None);
+    }
+
+    /// A label wider than its column in the font drawn moves the field after it over, which
+    /// keeps its right edge; hits and `rect` follow the draw. Text that fits moves nothing.
+    #[test]
+    fn a_label_wider_than_its_column_moves_the_field_after_it() {
+        let theme = Theme::default();
+        let text = TextRenderer::stub(11, |_| 8);
+        let form = |label: &str| {
+            Form::new(vec![
+                Item::label_at("l", 10, 14, 40, label),
+                Item::edit("e", Rect::new(54, 10, 100, 20), "", true),
+            ])
+        };
+        let mut c = Canvas::new(200, 40);
+        let fits = form("Name");
+        draw(&mut c, &text, &theme.paint(), &fits, false, 11);
+        assert_eq!(fits.rect("e"), Some(Rect::new(54, 10, 100, 20)));
+
+        let wide = form("&Long name:");
+        draw(&mut c, &text, &theme.paint(), &wide, false, 11);
+        assert_eq!(
+            wide.rect("l"),
+            Some(Rect::new(10, 14, 73, 13)),
+            "nine 8 px glyphs and the last one's ink"
+        );
+        assert_eq!(wide.rect("e"), Some(Rect::new(87, 10, 67, 20)));
+        assert_eq!(wide.hit(60, 20, &text, 11).map(|h| h.item), None);
+        assert_eq!(wide.hit(100, 20, &text, 11).map(|h| h.item), Some(1));
+        assert!(wide.overflows(&text, 11).is_empty());
+        assert_eq!(fits.overflows(&text, 11), Vec::new());
+    }
+
+    /// In a view, the fit moves a field over first and a rewrapped note above it then moves it
+    /// down; `overflows` still reports the note's extra row.
+    #[test]
+    fn a_fitted_field_under_a_rewrapped_note_moves_over_and_down() {
+        let theme = Theme::default();
+        let text = TextRenderer::stub(11, |_| 8);
+        let mut f = Form::new(vec![
+            Item::lines(
+                "note",
+                Rect::new(10, 4, 100, LINE_H),
+                &["aaaaaaaa bbbbbbbb"],
+            ),
+            Item::label_at("l", 10, 24, 40, "&Long name:"),
+            Item::edit("e", Rect::new(54, 20, 100, 20), "", true),
+        ]);
+        f.view = Some(View {
+            rect: Rect::new(0, 0, 200, 60),
+            keep: &[],
+        });
+        let mut c = Canvas::new(200, 60);
+        draw(&mut c, &text, &theme.paint(), &f, false, 11);
+        assert_eq!(f.rect("note"), Some(Rect::new(10, 4, 100, 2 * LINE_H)));
+        assert_eq!(f.rect("e"), Some(Rect::new(87, 20 + LINE_H, 67, 20)));
+        assert_eq!(f.overflows(&text, 11), vec![("note", LINE_H)]);
     }
 
     /// A form set in the second dialog font draws its items in it; the
