@@ -89,7 +89,7 @@ impl State {
             && !fixed
             && let Some(m) = self.wm.remembered.get(&app_id)
         {
-            base = m.want(first);
+            base = m.want(first, self.config.accessibility.text_size);
         }
         if !fixed
             && let Some(f) =
@@ -128,7 +128,7 @@ impl State {
     /// fitted to the primary one when that output is gone. A normal frame
     /// says so, so a state the first configure planned is not kept.
     fn regroup_want(&self, f: &Remembered) -> Want {
-        let mut want = f.want(true);
+        let mut want = f.want(true, self.config.accessibility.text_size);
         let present = self
             .scene
             .outputs()
@@ -296,6 +296,7 @@ impl State {
             width: normal.width,
             height: normal.height,
             maximized: win.maximized,
+            text_size: self.config.accessibility.text_size,
         })
     }
 

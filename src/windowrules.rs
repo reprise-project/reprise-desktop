@@ -84,12 +84,27 @@ pub struct Remembered {
     pub height: i32,
     #[serde(default)]
     pub maximized: bool,
+    /// `[accessibility] text_size` when the frame was kept.
+    #[serde(default = "full_size")]
+    pub text_size: u32,
+}
+
+fn full_size() -> u32 {
+    100
 }
 
 impl Remembered {
-    pub fn want(&self, first: bool) -> Want {
+    /// Where the app's next window opens at `text_size`: a frame kept at a larger text size
+    /// shrinks by the ratio of the two, so a window that grew with the text shrinks back with it.
+    pub fn want(&self, first: bool, text_size: u32) -> Want {
+        let shrink = |v: i32| match self.text_size {
+            kept if kept > text_size => {
+                (i64::from(v) * i64::from(text_size) / i64::from(kept)) as i32
+            }
+            _ => v,
+        };
         Want {
-            size: Some((self.width, self.height)),
+            size: Some((shrink(self.width), shrink(self.height))),
             position: Some(if first {
                 Position::At(self.x, self.y)
             } else {
@@ -159,9 +174,10 @@ mod tests {
             width: 640,
             height: 480,
             maximized: true,
+            text_size: 100,
         };
         assert_eq!(
-            m.want(true),
+            m.want(true, 100),
             Want {
                 size: Some((640, 480)),
                 position: Some(Position::At(100, 80)),
@@ -171,13 +187,41 @@ mod tests {
             }
         );
         assert_eq!(
-            m.want(false),
+            m.want(false, 100),
             Want {
                 size: Some((640, 480)),
                 position: Some(Position::Cascade),
                 ..Want::default()
             }
         );
+    }
+
+    #[test]
+    fn a_frame_kept_at_a_larger_text_size_shrinks_back() {
+        let m = Remembered {
+            output: "DP-1".into(),
+            x: 100,
+            y: 80,
+            width: 1088,
+            height: 976,
+            maximized: false,
+            text_size: 200,
+        };
+        assert_eq!(m.want(true, 100).size, Some((544, 488)));
+        assert_eq!(m.want(true, 150).size, Some((816, 732)));
+        assert_eq!(m.want(true, 200).size, Some((1088, 976)), "the same size");
+        let small = Remembered {
+            text_size: 100,
+            ..m.clone()
+        };
+        assert_eq!(
+            small.want(true, 200).size,
+            Some((1088, 976)),
+            "kept smaller: as it is"
+        );
+        let old: Remembered =
+            toml::from_str("output = \"DP-1\"\nx = 0\ny = 0\nwidth = 900\nheight = 700\n").unwrap();
+        assert_eq!(old.text_size, 100, "a frame kept before the text size was");
     }
 
     #[test]
@@ -189,8 +233,9 @@ mod tests {
             width: 640,
             height: 480,
             maximized: true,
+            text_size: 100,
         }
-        .want(true);
+        .want(true, 100);
         let rules = [
             WindowRule {
                 size: Some((800, 600)),

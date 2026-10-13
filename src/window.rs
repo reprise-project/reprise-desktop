@@ -2743,8 +2743,9 @@ mod tests {
             width: 831,
             height: 678,
             maximized: false,
+            text_size: 100,
         }
-        .want(true);
+        .want(true, 100);
         for decorated in [false, true] {
             let chrome = chrome_for(false, true, decorated, DialogTag::None);
             let (w, h) = first_configure_size(&m, &want, OPEN, screen, area, chrome)
@@ -2780,8 +2781,9 @@ mod tests {
                 width,
                 height,
                 maximized: false,
+                text_size: 100,
             }
-            .want(true)
+            .want(true, 100)
         };
         let limits = SizeLimits {
             min: (544, 528),
