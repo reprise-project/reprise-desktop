@@ -29,68 +29,7 @@ pub const PROGRAM_BROWSE: WinId = "program browse";
 /// is called (the 51 in `src/dialog.rs`'s `confirm_delete`).
 const FOLDER_TEXT_H: i32 = 51;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ConfirmKind {
-    File,
-    Folder,
-    Multiple,
-}
-
-impl ConfirmKind {
-    pub fn of(count: usize, is_dir: bool) -> ConfirmKind {
-        match (count, is_dir) {
-            (1, true) => ConfirmKind::Folder,
-            (1, false) => ConfirmKind::File,
-            _ => ConfirmKind::Multiple,
-        }
-    }
-}
-
-/// The caption, question and reserved text height for a delete prompt.
-/// `erase` (Shift+Delete, or a selection off the Recycle Bin's drive)
-/// removes rather than recycles and says so.
-pub fn confirm_prompt(
-    kind: ConfirmKind,
-    name: &str,
-    count: usize,
-    erase: bool,
-) -> (&'static str, String, Option<i32>) {
-    match (kind, erase) {
-        (ConfirmKind::File, false) => (
-            "Confirm File Delete",
-            format!("Are you sure you want to send '{name}' to the Recycle Bin?"),
-            None,
-        ),
-        (ConfirmKind::File, true) => (
-            "Confirm File Delete",
-            format!("Are you sure you want to delete '{name}'?"),
-            None,
-        ),
-        (ConfirmKind::Folder, false) => (
-            "Confirm Folder Delete",
-            format!(
-                "Are you sure you want to remove the folder '{name}' and move all its \
-                 contents to the Recycle Bin?"
-            ),
-            Some(FOLDER_TEXT_H),
-        ),
-        (ConfirmKind::Folder, true) => (
-            "Confirm Folder Delete",
-            format!("Are you sure you want to remove the folder '{name}' and all its contents?"),
-            Some(FOLDER_TEXT_H),
-        ),
-        (ConfirmKind::Multiple, false) => (
-            "Confirm Multiple File Delete",
-            format!("Are you sure you want to send these {count} items to the Recycle Bin?"),
-            None,
-        ),
-        (ConfirmKind::Multiple, true) => (
-            "Confirm Multiple File Delete",
-            format!("Are you sure you want to delete these {count} items?"),
-            None,
-        ),
-    }
-}
+pub use reprisefs::bincap::ConfirmKind;
 
 pub struct Confirm {
     pub title: &'static str,
@@ -300,7 +239,7 @@ impl Explorer {
         Reply::redraw_all()
     }
 
-    /// Raise a delete prompt over `paths` on the template its kind takes (see [`dlgtemplate`]). `empty_bin` is the Recycle Bin's Empty task, which counts the listed items since it has no paths; `bin` is the picked items of a prompt raised in the Recycle Bin, which Yes deletes for good.
+    /// Raise a delete prompt over `paths` on the template its kind takes (see [`dlgtemplate`]). `no_bin` leads with the drive having no Recycle Bin ([`reprisefs::bincap::delete_prompt`]). `empty_bin` is the Recycle Bin's Empty task, which counts the listed items since it has no paths; `bin` is the picked items of a prompt raised in the Recycle Bin, which Yes deletes for good.
     #[allow(clippy::too_many_arguments)]
     pub fn confirm_box(
         &mut self,
@@ -308,6 +247,7 @@ impl Explorer {
         name: &str,
         paths: Vec<PathBuf>,
         erase: bool,
+        no_bin: bool,
         icon: Option<Canvas>,
         empty_bin: bool,
         bin: Option<Vec<crate::fileops::BinItem>>,
@@ -317,7 +257,8 @@ impl Explorer {
         } else {
             paths.len()
         };
-        let (title, text, min_text_h) = confirm_prompt(kind, name, count, erase);
+        let (title, text) = reprisefs::bincap::delete_prompt(kind, name, count, erase, no_bin);
+        let min_text_h = (kind == ConfirmKind::Folder).then_some(FOLDER_TEXT_H);
         self.dialog = Some(Dialog::Confirm(Confirm {
             title,
             text,
@@ -888,57 +829,5 @@ impl Explorer {
             }
         }
         Reply::redraw_all()
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn one_entry_is_a_file_or_a_folder_and_more_are_multiple() {
-        assert_eq!(ConfirmKind::of(1, false), ConfirmKind::File);
-        assert_eq!(ConfirmKind::of(1, true), ConfirmKind::Folder);
-        assert_eq!(ConfirmKind::of(3, true), ConfirmKind::Multiple);
-        assert_eq!(ConfirmKind::of(0, false), ConfirmKind::Multiple);
-    }
-
-    #[test]
-    fn the_delete_prompts_read_as_expected() {
-        let (title, text, h) = confirm_prompt(ConfirmKind::File, "notes.txt", 1, false);
-        assert_eq!(title, "Confirm File Delete");
-        assert_eq!(
-            text,
-            "Are you sure you want to send 'notes.txt' to the Recycle Bin?"
-        );
-        assert_eq!(h, None);
-
-        let (_, text, _) = confirm_prompt(ConfirmKind::File, "notes.txt", 1, true);
-        assert_eq!(text, "Are you sure you want to delete 'notes.txt'?");
-
-        let (title, text, h) = confirm_prompt(ConfirmKind::Folder, "Reports", 1, false);
-        assert_eq!(title, "Confirm Folder Delete");
-        assert_eq!(
-            text,
-            "Are you sure you want to remove the folder 'Reports' and move all its \
-             contents to the Recycle Bin?"
-        );
-        assert_eq!(h, Some(51));
-
-        let (_, text, h) = confirm_prompt(ConfirmKind::Folder, "Reports", 1, true);
-        assert_eq!(
-            text,
-            "Are you sure you want to remove the folder 'Reports' and all its contents?"
-        );
-        assert_eq!(h, Some(51));
-
-        let (title, text, _) = confirm_prompt(ConfirmKind::Multiple, "", 4, false);
-        assert_eq!(title, "Confirm Multiple File Delete");
-        assert_eq!(
-            text,
-            "Are you sure you want to send these 4 items to the Recycle Bin?"
-        );
-        let (_, text, _) = confirm_prompt(ConfirmKind::Multiple, "", 4, true);
-        assert_eq!(text, "Are you sure you want to delete these 4 items?");
     }
 }
