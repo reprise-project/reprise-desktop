@@ -152,6 +152,14 @@ mod tests {
                     .into()
             )
         );
+        assert_eq!(
+            plan(Path::new("/tmp/cisco.pcf"), None, &[]),
+            Err(
+                "This is a Cisco VPN (vpnc) file, and NetworkManager's Cisco VPN (vpnc) plugin is \
+                 not installed. Install networkmanager-vpnc, then import the file again."
+                    .into()
+            )
+        );
         assert!(
             plan(Path::new("/tmp/x.vpn"), None, &[])
                 .unwrap_err()
