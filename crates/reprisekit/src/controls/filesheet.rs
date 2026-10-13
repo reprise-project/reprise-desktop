@@ -1280,11 +1280,13 @@ const BIN_ICON_Y: i32 = 40;
 const BIN_NAME: (i32, i32) = (63, 47);
 const BIN_VALUE_X: i32 = 85;
 const BIN_DATE_X: i32 = 115;
-const BIN_SEPS: [i32; 3] = [81, 166, 229];
-const BIN_BLOCKS: [i32; 3] = [94, 179, 242];
+const BIN_SEPS: [i32; 3] = [81, 166, 234];
+const BIN_BLOCKS: [i32; 3] = [94, 179, 247];
 const BIN_PITCH: i32 = 21;
+/// A date row holds a second line for a long date, as the file sheet's do.
+const BIN_DATE_PITCH: i32 = 2 * LINE_H;
 const BIN_CHECK_X: [i32; 2] = [112, 204];
-const BIN_CHECK_Y: [i32; 4] = [243, 262, 282, 301];
+const BIN_CHECK_Y: [i32; 4] = [248, 267, 287, 306];
 const BIN_RESTORE: Rect = Rect::new(265, 344, BUTTON_W, BUTTON_H);
 
 /// Read-only and Hidden show the item's own state. Archive, Compressed
@@ -1337,10 +1339,12 @@ pub fn bin_page(facts: &BinFacts, name: &str, icon: Option<Canvas>) -> Form {
         (("l_made", "v_made"), "Created:", &facts.created),
     ];
     let mut y = second;
-    for (ids, label, value) in dates {
-        if let Some(v) = value {
-            pair(ids, label, v, BIN_DATE_X, y);
-            y += BIN_PITCH;
+    for ((l, v), label, value) in dates {
+        if let Some(value) = value {
+            items.push(Item::label_at(l, LABEL_X, y, BIN_DATE_X - LABEL_X, label));
+            let r = Rect::new(BIN_DATE_X, y, SEP_RIGHT - BIN_DATE_X, BIN_DATE_PITCH);
+            items.push(Item::lines(v, r, &[value.as_str()]));
+            y += BIN_DATE_PITCH;
         }
     }
     items.push(Item::label_at(
@@ -2865,23 +2869,23 @@ mod tests {
             Some(Control::Label { .. })
         ));
         let seps = ["sep0", "sep1", "sep2"].map(&rect);
-        assert_eq!(seps.map(|r| r.y), [81, 166, 229]);
+        assert_eq!(seps.map(|r| r.y), [81, 166, 234]);
         assert!(seps.iter().all(|r| (r.x, r.right()) == (21, 339)));
         for (id, y) in [("l_type", 94), ("l_origin", 115), ("l_size", 136)] {
             assert_eq!((rect(id).x, rect(id).y), (21, y), "{id}");
         }
         assert_eq!(rect("v_origin").x, 85);
-        for (id, y) in [("l_deleted", 179), ("l_made", 200)] {
+        for (id, y) in [("l_deleted", 179), ("l_made", 205)] {
             assert_eq!((rect(id).x, rect(id).y), (21, y), "{id}");
         }
-        assert_eq!(rect("v_deleted").x, 115);
-        assert_eq!(rect("l_attr").y, 242);
+        assert_eq!(rect("v_deleted"), Rect::new(115, 179, 224, 26));
+        assert_eq!(rect("l_attr").y, 247);
         for (id, x, y) in [
-            (READ_ONLY, 112, 243),
-            (HIDDEN, 204, 243),
-            ("archive", 112, 262),
-            ("compress", 112, 282),
-            ("encrypt", 112, 301),
+            (READ_ONLY, 112, 248),
+            (HIDDEN, 204, 248),
+            ("archive", 112, 267),
+            ("compress", 112, 287),
+            ("encrypt", 112, 306),
         ] {
             assert_eq!(rect(id), Rect::new(x, y, 13, 13), "{id}");
             assert!(
@@ -2957,12 +2961,35 @@ mod tests {
             ("v_size", (85, 139)),
             ("l_deleted", (21, 181)),
             ("v_deleted", (115, 181)),
-            ("l_made", (21, 202)),
-            ("v_made", (115, 202)),
-            ("l_attr", (21, 244)),
+            ("l_made", (21, 207)),
+            ("v_made", (115, 207)),
+            ("l_attr", (21, 249)),
         ]
         .map(|(id, (x, y))| (id, (Some(x), Some(y))));
         assert_eq!(got, want);
+    }
+
+    #[test]
+    fn a_bin_items_page_fits_its_text() {
+        let date = "Wednesday, September 30, 2026, 12:00:00 PM";
+        let facts = BinFacts {
+            type_name: "OpenDocument Text Document".into(),
+            origin: "Quarterly reports".into(),
+            size: "1.23 MB".into(),
+            deleted: Some(date.into()),
+            created: Some(date.into()),
+            ..bin_facts()
+        };
+        let over = crate::interfaces::form_overflows(|_, _, _| {
+            let page = bin_page(&facts, "Quarterly report 2026.odt", None);
+            let sheet = crate::controls::propsheet::PropSheet::new(
+                &["General"],
+                vec![page],
+                (SHEET_W, BIN_SHEET_H),
+            );
+            vec![("bin item".into(), sheet.pages[0].clone())]
+        });
+        assert!(over.is_empty(), "{}", over.join("\n"));
     }
 
     #[test]
