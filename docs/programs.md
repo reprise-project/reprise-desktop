@@ -78,7 +78,8 @@ One window, 23 pages, four headings. Only one runs at a time.
     shortcuts included.
   - **Mouse:** pointer speed, double-click speed, scrolling, and the
     touchpad's tapping, scrolling and disable-while-typing.
-  - **Tablet:** what each pad button, ring and strip does.
+  - **Tablet:** what each pad button, pad key, ring, strip and dial does,
+    and how far a ring or strip turns per step.
   - **Pointers:** cursor theme and size.
   - **Accessibility:** text size, StickyKeys, SlowKeys and MouseKeys.
   - **Vision:** colour filters and the magnifier.
