@@ -1026,7 +1026,8 @@ pub fn draw_tab(
             cs.button_face,
         );
     }
-    let tr = Rect::new(r.x, r.y + s, r.width, 19 * s);
+    let h = if open { r.height - s } else { r.height + s };
+    let tr = Rect::new(r.x, r.y + s, r.width, h);
     text.draw(c, tr, label, false, cs.button_text, Align::Center, px);
 }
 
@@ -1113,6 +1114,47 @@ mod tests {
 
     fn setup() -> (Theme, TextRenderer) {
         (Theme::default(), TextRenderer::load(&FontConfig::default()))
+    }
+
+    #[test]
+    fn a_grown_tab_label_keeps_its_descenders() {
+        let (theme, text) = setup();
+        let theme = theme.with_text_size(200);
+        let p = theme.paint();
+        let px = theme.fonts.size_px;
+        let ink_rows = |c: &Canvas| {
+            let ink = theme.colors.button_text.argb();
+            (0..c.height as i32)
+                .filter(|&y| (0..c.width as i32).any(|x| c.get(x, y) == ink))
+                .count()
+        };
+        let mut free = Canvas::new(120, 80);
+        free.fill_rect(free.bounds(), theme.colors.button_face);
+        let r = Rect::new(0, 0, 120, 80);
+        text.draw(
+            &mut free,
+            r,
+            "gyp",
+            false,
+            theme.colors.button_text,
+            Align::Center,
+            px,
+        );
+        let want = ink_rows(&free);
+        let tab_h = theme.text.len(18);
+        let page = Rect::new(0, tab_h + 4, 120, 30);
+        for (open, r) in [
+            (false, Rect::new(4, 4, 80, tab_h)),
+            (true, Rect::new(2, 2, 84, tab_h + 2)),
+        ] {
+            let mut c = Canvas::new(120, 80);
+            draw_tab(&mut c, &text, &p, r, "gyp", open, page, px);
+            assert_eq!(
+                ink_rows(&c),
+                want,
+                "open {open}: every row of the label shows"
+            );
+        }
     }
 
     #[test]
