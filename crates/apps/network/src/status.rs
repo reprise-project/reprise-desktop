@@ -319,6 +319,7 @@ mod tests {
             tx_bytes: 394_394,
             wifi: None,
             hotspot: None,
+            hotspot_clients: None,
         }
     }
 
