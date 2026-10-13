@@ -271,6 +271,59 @@ pub struct FormDialog {
     /// Offset of the look's frame from the built client area (`client_shift`); set by
     /// [`FormDialog::fit_frame`].
     pub frame_d: (i32, i32),
+    /// What a plain form laid out around measured text is built from; [`Dialog::fit`] builds
+    /// it again for the text size and font it is laid out in.
+    pub measured: Option<Measured>,
+}
+
+/// A plain form whose rows and size come from its text as measured and wrapped.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Measured {
+    Replace(reprisekit::controls::replacebox::Fields),
+    EndSession(reprisekit::controls::endsession::Fields),
+    Location(reprisekit::controls::locationprompt::Fields),
+    Attributes {
+        verb: String,
+        subject: reprisekit::controls::filesheet::Subject,
+    },
+    Advanced {
+        subject: reprisekit::controls::filesheet::Subject,
+        robots: Option<[CheckState; 2]>,
+    },
+}
+
+impl Measured {
+    /// The client size at 100% and the form, for text set at `px` that grows by `u`.
+    fn build(
+        &self,
+        text: &TextRenderer,
+        px: u32,
+        u: TextUnits,
+    ) -> ((i32, i32), reprisekit::controls::form::Form) {
+        use reprisekit::controls::{endsession, filesheet, locationprompt, replacebox};
+        match self {
+            Measured::Replace(f) => (
+                replacebox::client(f, text, px, u),
+                replacebox::form(f, text, px, u),
+            ),
+            Measured::EndSession(f) => (
+                endsession::client(f, text, px, u),
+                endsession::form(f, text, px, u),
+            ),
+            Measured::Location(f) => (
+                locationprompt::client(f, text, px, u),
+                locationprompt::form(f, text, px, u),
+            ),
+            Measured::Attributes { verb, subject } => (
+                filesheet::ATTR_SIZE,
+                filesheet::attr_form(verb, *subject, text, px, u),
+            ),
+            Measured::Advanced { subject, robots } => (
+                filesheet::advanced_size(*subject),
+                filesheet::advanced_form(*subject, None, *robots, text, px, u),
+            ),
+        }
+    }
 }
 
 impl FormDialog {
@@ -283,7 +336,38 @@ impl FormDialog {
             body: FormBody::Sheet(sheet),
             kind,
             frame_d: (0, 0),
+            measured: None,
         }
+    }
+
+    /// The form `m` builds for text set at `px` that grows by `u`.
+    pub fn measured(
+        m: Measured,
+        kind: FormKind,
+        text: &TextRenderer,
+        px: u32,
+        u: TextUnits,
+    ) -> FormDialog {
+        let (size, form) = m.build(text, px, u);
+        FormDialog {
+            measured: Some(m),
+            ..FormDialog::from_client(size, form, kind)
+        }
+    }
+
+    /// Build a measured form again for text set at `px` that grows by `u`, keeping what its
+    /// controls hold; the frame is fitted again after.
+    fn remeasure(&mut self, text: &TextRenderer, px: u32, u: TextUnits) {
+        let (Some(m), FormBody::Plain(old)) = (&self.measured, &self.body) else {
+            return;
+        };
+        let ((w, h), mut form) = m.build(text, px, u);
+        form.carry(old);
+        let (x, y) = FORM_CLIENT;
+        form.origin = FORM_CLIENT;
+        self.size = (w + 2 * x, h + x + y);
+        self.body = FormBody::Plain(Box::new(form));
+        self.frame_d = (0, 0);
     }
 
     pub fn from_client(
@@ -307,6 +391,7 @@ impl FormDialog {
             body: FormBody::Plain(Box::new(form)),
             kind,
             frame_d: (0, 0),
+            measured: None,
         }
     }
 
@@ -1084,10 +1169,12 @@ impl Dialog {
         }
     }
 
-    /// Fit a form dialog to `theme`: wrapped tabs and a larger frame grow it.
+    /// Fit a form dialog to `theme`: a form laid out around measured text is built again, and
+    /// wrapped tabs and a larger frame grow it.
     pub fn fit(&mut self, theme: &Theme, text: &TextRenderer) {
         match &mut self.style {
             Style::Form(f) => {
+                f.remeasure(text, theme.fonts.size_px, theme.text);
                 let p = theme.paint();
                 f.body.pages().iter().for_each(|page| page.drawn_with(&p));
                 f.fit_tabs(text, theme.fonts.size_px);
@@ -1578,18 +1665,17 @@ impl Dialog {
         px: u32,
         u: TextUnits,
     ) -> Dialog {
-        use reprisekit::controls::filesheet;
-        let form = filesheet::advanced_form(subject, None, robots, text, px, u);
-        let size = filesheet::advanced_size(subject);
         Dialog {
             icon: Some("document-properties".into()),
             help: true,
             ..Dialog::new(
                 "Advanced Attributes",
-                Style::Form(Box::new(FormDialog::from_client(
-                    size,
-                    form,
+                Style::Form(Box::new(FormDialog::measured(
+                    Measured::Advanced { subject, robots },
                     FormKind::AdvancedAttributes(robots.is_some()),
+                    text,
+                    px,
+                    u,
                 ))),
                 Placement::Center,
             )
@@ -1604,19 +1690,20 @@ impl Dialog {
         px: u32,
         u: TextUnits,
     ) -> Dialog {
-        use reprisekit::controls::filesheet::{self, Subject};
+        use reprisekit::controls::filesheet::Subject;
         let verb = a.attrs.verbs(a.hidden());
         let subject = match a.write {
             AttrWrite::One { .. } => Subject::Folder,
             AttrWrite::Set { .. } => Subject::Set { has_dir: true },
         };
-        let form = filesheet::attr_form(&verb, subject, text, px, u);
         Dialog::new(
             "Confirm Attribute Changes",
-            Style::Form(Box::new(FormDialog::from_client(
-                filesheet::ATTR_SIZE,
-                form,
+            Style::Form(Box::new(FormDialog::measured(
+                Measured::Attributes { verb, subject },
                 FormKind::Attributes(a),
+                text,
+                px,
+                u,
             ))),
             Placement::Center,
         )
@@ -1630,15 +1717,14 @@ impl Dialog {
         px: u32,
         u: TextUnits,
     ) -> Dialog {
-        use reprisekit::controls::replacebox;
-        let form = replacebox::form(&fields, text, px, u);
-        let size = replacebox::client(&fields, text, px, u);
         Dialog::new(
             fields.title(),
-            Style::Form(Box::new(FormDialog::from_client(
-                size,
-                form,
+            Style::Form(Box::new(FormDialog::measured(
+                Measured::Replace(fields),
                 FormKind::Replace(Box::new(batch)),
+                text,
+                px,
+                u,
             ))),
             Placement::Center,
         )
@@ -1652,15 +1738,14 @@ impl Dialog {
         px: u32,
         u: TextUnits,
     ) -> Dialog {
-        use reprisekit::controls::endsession;
-        let form = endsession::form(fields, text, px, u);
-        let size = endsession::client(fields, text, px, u);
         Dialog::new(
             fields.title(),
-            Style::Form(Box::new(FormDialog::from_client(
-                size,
-                form,
+            Style::Form(Box::new(FormDialog::measured(
+                Measured::EndSession(fields.clone()),
                 FormKind::EndSession,
+                text,
+                px,
+                u,
             ))),
             Placement::Center,
         )
@@ -1675,14 +1760,14 @@ impl Dialog {
         u: TextUnits,
     ) -> Dialog {
         use reprisekit::controls::locationprompt;
-        let form = locationprompt::form(fields, text, px, u);
-        let size = locationprompt::client(fields, text, px, u);
         Dialog::new(
             locationprompt::TITLE,
-            Style::Form(Box::new(FormDialog::from_client(
-                size,
-                form,
+            Style::Form(Box::new(FormDialog::measured(
+                Measured::Location(fields.clone()),
                 FormKind::Location(desktop_id),
+                text,
+                px,
+                u,
             ))),
             Placement::Center,
         )
@@ -9577,6 +9662,122 @@ mod tests {
                 "{}",
                 d.title
             );
+        }
+    }
+
+    fn measured_forms() -> Vec<Measured> {
+        use reprisekit::controls::{endsession, locationprompt, replacebox};
+        let side = |size: &str| replacebox::Side {
+            size: size.into(),
+            modified: "modified: Monday, September 14, 2026, 3:43:53 PM".into(),
+            icon: None,
+        };
+        let replace = |subject, many| replacebox::Fields {
+            name: "Quarterly report for the board.txt".into(),
+            subject,
+            icon: None,
+            many,
+        };
+        vec![
+            Measured::Replace(replace(
+                replacebox::Subject::File {
+                    existing: Box::new(side("size: 8 bytes")),
+                    incoming: Box::new(side("size: 12.4 KB")),
+                },
+                false,
+            )),
+            Measured::Replace(replace(replacebox::Subject::Folder, true)),
+            Measured::EndSession(endsession::Fields {
+                goal: Goal::Restart,
+                rows: vec![endsession::Row {
+                    name: "Text Editor".into(),
+                    reason: "Unsaved changes".into(),
+                }],
+                icon: None,
+            }),
+            Measured::Location(locationprompt::Fields {
+                program: "Maps".into(),
+                icon: None,
+            }),
+            Measured::Attributes {
+                verb: "Hide".into(),
+                subject: Subject::Set { has_dir: true },
+            },
+            Measured::Advanced {
+                subject: Subject::Folder,
+                robots: Some([CheckState::On, CheckState::Off]),
+            },
+        ]
+    }
+
+    fn opened_measured(m: &Measured, theme: &Theme, text: &TextRenderer) -> Dialog {
+        let (px, u) = (theme.fonts.size_px, theme.text);
+        let form = FormDialog::measured(m.clone(), FormKind::EndSession, text, px, u);
+        let mut d = Dialog::new("Measured", Style::Form(Box::new(form)), Placement::Center);
+        d.fit(theme, text);
+        d
+    }
+
+    #[test]
+    fn a_measured_dialog_is_built_again_at_a_new_text_size_and_font() {
+        let Some(tahoma) = tahoma() else { return };
+        let dejavu = TextRenderer::load(&FontConfig {
+            family: vec!["DejaVu Sans".into()],
+            ..FontConfig::default()
+        });
+        let one = Theme::default();
+        let big = Theme::default().with_text_size(200);
+        let mut moves = vec![
+            ((&one, &tahoma), (&big, &tahoma)),
+            ((&big, &tahoma), (&one, &tahoma)),
+        ];
+        if dejavu.has_face("DejaVu Sans") {
+            moves.push(((&one, &dejavu), (&one, &tahoma)));
+        }
+        for (i, m) in measured_forms().iter().enumerate() {
+            for &((from, from_text), (to, to_text)) in &moves {
+                let mut d = opened_measured(m, from, from_text);
+                d.fit(to, to_text);
+                assert!(d == opened_measured(m, to, to_text), "form {i}");
+            }
+        }
+    }
+
+    #[test]
+    fn a_measured_dialog_built_again_keeps_what_its_controls_hold() {
+        use reprisekit::controls::form::Control;
+        use reprisekit::controls::{endsession, locationprompt};
+        let text = TextRenderer::load(&FontConfig::default());
+        let big = Theme::default().with_text_size(200);
+        for m in measured_forms() {
+            let mut d = opened_measured(&m, &Theme::default(), &text);
+            let Some(form) = d.form_mut().and_then(|f| f.open_page_mut()) else {
+                panic!("a plain form");
+            };
+            let rows = vec![endsession::Row {
+                name: "Mail".into(),
+                reason: String::new(),
+            }];
+            match m {
+                Measured::Location(_) => form.set_check(locationprompt::REMEMBER, false),
+                Measured::EndSession(_) => assert!(endsession::set_rows(form, &rows)),
+                _ => {}
+            }
+            let last = form.items.iter().rev().find_map(|it| match it.control {
+                Control::Button { .. } => Some(it.id),
+                _ => None,
+            });
+            form.focus_id(last.expect("a button"));
+            let before = form.clone();
+            d.fit(&big, &text);
+            let after = d.form().and_then(|f| f.open_page()).unwrap();
+            let focused = |f: &reprisekit::controls::form::Form| f.focus().map(|i| f.items[i].id);
+            assert_eq!(focused(after), focused(&before));
+            for a in &after.items {
+                if !matches!(a.control, Control::Label { .. } | Control::Lines(_)) {
+                    assert_eq!(Some(&a.control), before.item(a.id).map(|b| &b.control));
+                }
+            }
         }
     }
 
