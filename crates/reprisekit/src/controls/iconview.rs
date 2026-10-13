@@ -585,6 +585,7 @@ pub fn tint_selected(icon: &Canvas, hilight: Color) -> Canvas {
     out
 }
 
+/// The side of the drag image's square in 100% px; it grows with the text size.
 pub const DRAG_IMAGE_MAX: i32 = 256;
 
 pub const DESKTOP_DRAG_MAX: i32 = 300;
@@ -637,7 +638,10 @@ pub struct Ghost<'a> {
 }
 
 /// The image a drag of several icons carries: every icon drawn unselected in
-/// a `cell`, faded 1:2 and cut to a [`DRAG_IMAGE_MAX`] square centred on `pointer`.
+/// a `cell`, faded 1:2, within a square [`DRAG_IMAGE_MAX`] 100% px across
+/// centred on `pointer`. At 100% the square cuts through the cells at its
+/// edges; at a larger text size it keeps only the cells it holds whole, and
+/// cuts as at 100% when it holds none.
 /// Returns the image and the pointer's place in it; None when no cell reaches it.
 pub fn drag_image(
     theme: &Theme,
@@ -647,28 +651,34 @@ pub fn drag_image(
     pointer: (i32, i32),
 ) -> Option<(Canvas, (i32, i32))> {
     let s = theme.scale.max(1);
-    let cells = ghosts
+    let rect_of = |g: &Ghost| Rect::new(g.at.0, g.at.1, cell.w, cell.h);
+    let side = theme.text.len(DRAG_IMAGE_MAX);
+    let half = side / 2;
+    let window = Rect::new(pointer.0 - half, pointer.1 - half, side, side);
+    let whole: Vec<&Ghost> = ghosts
         .iter()
-        .map(|g| Rect::new(g.at.0, g.at.1, cell.w, cell.h));
-    let bounds = cells.reduce(|a, b| a.union(&b))?;
-    let half = DRAG_IMAGE_MAX / 2;
-    let window = Rect::new(
-        pointer.0 - half,
-        pointer.1 - half,
-        DRAG_IMAGE_MAX,
-        DRAG_IMAGE_MAX,
-    );
-    let r = bounds.intersect(&window);
+        .filter(|g| window.intersect(&rect_of(g)) == rect_of(g))
+        .collect();
+    let (shown, r) = if theme.text.is_one() || whole.is_empty() {
+        let bounds = ghosts.iter().map(rect_of).reduce(|a, b| a.union(&b))?;
+        let r = bounds.intersect(&window);
+        let shown = ghosts
+            .iter()
+            .filter(|g| !rect_of(g).intersect(&r).is_empty())
+            .collect();
+        (shown, r)
+    } else {
+        let r = whole
+            .iter()
+            .map(|g| rect_of(g))
+            .reduce(|a, b| a.union(&b))?;
+        (whole, r)
+    };
     if r.is_empty() {
         return None;
     }
     let mut c = Canvas::new((r.width * s) as u32, (r.height * s) as u32);
-    let reach = |g: &&Ghost| {
-        !Rect::new(g.at.0, g.at.1, cell.w, cell.h)
-            .intersect(&r)
-            .is_empty()
-    };
-    for g in ghosts.iter().filter(reach) {
+    for g in shown {
         let pos = ((g.at.0 - r.x) * s, (g.at.1 - r.y) * s);
         draw_cell_at(
             &mut c, pos, cell, theme, text, g.name, g.icon, g.shortcut, None, None,
@@ -1500,6 +1510,77 @@ mod tests {
                 "{pct}%: wider than a desktop cell's label"
             );
         }
+    }
+
+    /// A 6x6 grid of grown cells dragged from the middle of cell (2, 2).
+    #[test]
+    fn the_drag_image_square_grows_with_the_text_size_and_keeps_whole_cells() {
+        type Px = (i32, i32);
+        const EXPECTED: [(u32, Px, Px); 3] = [
+            (100, (256, 256), (128, 128)),
+            (150, (348, 285), (174, 142)),
+            (200, (450, 336), (225, 168)),
+        ];
+        let name = "Holiday photos from the hills";
+        for (pct, size, grab_at) in EXPECTED {
+            let theme = Theme::default().with_text_size(pct);
+            let t = TextRenderer::load(&theme.fonts);
+            let cell = Cell::grown(theme.text);
+            let ghosts: Vec<Ghost> = (0..36)
+                .map(|i| Ghost {
+                    at: (i % 6 * cell.w, i / 6 * cell.h),
+                    name,
+                    icon: None,
+                    shortcut: false,
+                })
+                .collect();
+            let pointer = (cell.w * 5 / 2, cell.h * 5 / 2);
+            let (img, grab) = drag_image(&theme, &t, &ghosts, cell, pointer).expect("an image");
+            assert_eq!((img.width as i32, img.height as i32), size, "{pct}%");
+            assert_eq!(grab, grab_at, "{pct}%");
+            if pct == 100 {
+                continue;
+            }
+            let mut one = Canvas::new(cell.w as u32, cell.h as u32);
+            draw_cell_at(
+                &mut one,
+                (0, 0),
+                cell,
+                &theme,
+                &t,
+                name,
+                None,
+                false,
+                None,
+                None,
+            );
+            one.fade(1, 2);
+            let origin = (pointer.0 - grab.0, pointer.1 - grab.1);
+            assert_eq!(origin, (cell.w, cell.h), "{pct}%: starts at cell (1, 1)");
+            for (col, row) in (0..3).flat_map(|c| (0..3).map(move |r| (c, r))) {
+                assert!(
+                    holds(&img, &one, (col * cell.w, row * cell.h)),
+                    "{pct}%: cell ({col}, {row}) whole"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_grown_drag_image_with_no_whole_cell_keeps_the_cut() {
+        let theme = Theme::default().with_text_size(200);
+        let t = TextRenderer::load(&theme.fonts);
+        let cell = Cell::grown(theme.text);
+        let ghosts = [Ghost {
+            at: (0, 0),
+            name: "a.txt",
+            icon: None,
+            shortcut: false,
+        }];
+        let (img, grab) =
+            drag_image(&theme, &t, &ghosts, cell, (cell.w + 200, 10)).expect("an image");
+        assert_eq!((img.width as i32, img.height as i32), (cell.w - 94, cell.h));
+        assert_eq!(grab, (256, 10));
     }
 
     #[test]
