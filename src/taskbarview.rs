@@ -699,8 +699,8 @@ impl State {
         let scale = self.draw_scale_at(Some(&bar.output));
         let p = self.bar_placement(&bar.output);
         let chevron = crate::tray::chevron_shown(self);
-        let reveal = crate::trayreveal::frame(self, bar, Instant::now());
-        bar.tray_reveal_drawn = reveal;
+        let now = Instant::now();
+        let reveal = bar.tray_reveal.x(now).max(0);
         let hidden = crate::trayreveal::hidden(self);
         let revealed = crate::trayreveal::cells(
             p.edge.is_side(),
@@ -977,6 +977,8 @@ impl State {
             let (canvas, orb) = draw(&state);
             bar.orb_up = self.upload_bar(bar, canvas, orb, held, scale);
         }
+        crate::trayreveal::follow_layout(self, bar, now);
+        bar.tray_reveal_drawn = bar.tray_reveal.x(now);
         self.scene.set_enabled(bar.tree, true);
         self.place_bar(bar);
     }

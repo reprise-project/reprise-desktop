@@ -449,6 +449,9 @@ pub struct TaskbarLayout {
     pub tray: Vec<Rect>,
     /// Leading `tray` cells that are hidden items slid out by an open run.
     pub tray_hidden: usize,
+    /// Px a tray arrow's run opens fully: [`reveal_width`] of the hidden
+    /// items that fit on the bar, whatever the run's `reveal`.
+    pub run_width: i32,
     pub tray_arrow: bool,
     pub clock: Rect,
     pub notification: Rect,
@@ -658,7 +661,8 @@ impl TaskbarLayout {
             let room = cell_x(shown_n - 1) - a.gap - a.size.0 - band_x;
             counts_hidden.min((room.max(0) / pitch) as usize)
         });
-        let open = reveal.clamp(0, reveal_width(shape, hidden));
+        let run_width = reveal_width(shape, hidden);
+        let open = reveal.clamp(0, run_width);
         let run = revealed(shape, hidden, reveal) as i32;
         let cell = |x: i32| Rect::new(x, tray_y, icon, icon);
         let mut rects: Vec<Rect> = Vec::new();
@@ -751,6 +755,7 @@ impl TaskbarLayout {
             chevron,
             tray,
             tray_hidden,
+            run_width,
             tray_arrow: shape.tray_arrow.is_some(),
             tasks_x: a.tasks,
             tasks_end: a.tasks_end,
@@ -870,14 +875,13 @@ impl TaskbarLayout {
         let foot = clock_r.y - 6;
         // An open run lays the hidden cells ahead of the shown ones, so the grid grows up from the clock.
         let arrow = shape.tray_arrow.filter(|_| chevron);
-        let hidden = match arrow {
-            Some(a) if reveal > 0 => {
-                let high = foot - band_y - a.side_size.1 - a.side_gap;
-                let rows = ((high + shape.tray_gap).max(0) / pitch) as usize;
-                counts_hidden.min((rows * per_row as usize).saturating_sub(tray_count))
-            }
-            _ => 0,
-        };
+        let fit = arrow.map_or(0, |a| {
+            let high = foot - band_y - a.side_size.1 - a.side_gap;
+            let rows = ((high + shape.tray_gap).max(0) / pitch) as usize;
+            counts_hidden.min((rows * per_row as usize).saturating_sub(tray_count))
+        });
+        let run_width = reveal_width(shape, fit);
+        let hidden = if reveal > 0 { fit } else { 0 };
         let (well_x, well_w) = if shape.well_full_height {
             (0, t)
         } else {
@@ -984,6 +988,7 @@ impl TaskbarLayout {
             chevron,
             tray,
             tray_hidden,
+            run_width,
             tray_arrow: shape.tray_arrow.is_some(),
             clock: clock_r,
             notification,
@@ -1425,6 +1430,7 @@ impl TaskbarLayout {
             chevron: self.chevron.map(|r| r.scaled(n)),
             tray: self.tray.iter().map(|r| r.scaled(n)).collect(),
             tray_hidden: self.tray_hidden,
+            run_width: self.run_width * n,
             tray_arrow: self.tray_arrow,
             clock: self.clock.scaled(n),
             notification: self.notification.scaled(n),
@@ -4887,6 +4893,34 @@ mod tests {
             "the run fills the room up to the bands' start: {arrow:?}"
         );
         assert!(l.tray_hidden < 30);
+    }
+
+    #[test]
+    fn a_capped_run_opens_fully_at_its_run_width() {
+        let m = Metrics::default();
+        let s = TaskbarShape::CLASSIC;
+        let lay =
+            |reveal| TaskbarLayout::compute(&m, &s, 400, true, arrow_counts(4, 30, reveal), 30);
+        let full = lay(reveal_width(&s, 30));
+        let run = lay(0).run_width;
+        assert!(run > 0 && run < reveal_width(&s, 30), "capped: {run}");
+        assert_eq!(full.run_width, run, "the cap does not move with the run");
+        assert_eq!(run, reveal_width(&s, full.tray_hidden));
+        let at = lay(run);
+        assert_eq!((at.chevron, &at.tray), (full.chevron, &full.tray));
+        assert_eq!(lay(run - 1).tray_hidden, full.tray_hidden - 1);
+    }
+
+    #[test]
+    fn a_shut_columns_run_width_is_what_its_open_run_shows() {
+        let shut = classic_column(Edge::Left, 60, arrow_counts(4, 60, 0), true);
+        let open = classic_column(Edge::Left, 60, arrow_counts(4, 60, 1), true);
+        assert_eq!(shut.tray_hidden, 0);
+        assert_eq!(
+            shut.run_width,
+            reveal_width(&TaskbarShape::CLASSIC, open.tray_hidden)
+        );
+        assert!(open.tray_hidden > 0 && open.tray_hidden < 60);
     }
 
     #[test]
