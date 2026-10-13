@@ -8,9 +8,10 @@ use reprisefs::thumbnails::Thumbnails;
 use reprisefs::thumbpipe;
 use smithay::reexports::calloop::channel::Sender as LoopSender;
 use std::collections::{HashMap, VecDeque};
-use std::io::BufReader;
+use std::io::{self, BufReader, Read};
+use std::os::fd::AsRawFd;
 use std::path::{Path, PathBuf};
-use std::process::{Child, ChildStdin, ChildStdout, Stdio};
+use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::time::{Duration, Instant};
 
@@ -21,8 +22,14 @@ pub type Done = (PathBuf, Canvas, (u32, u32));
 /// redraws the dialog once.
 const BATCH: Duration = Duration::from_millis(100);
 
-/// Helper failures in a row after which the rest of the queue goes without it.
+/// Helper failures in a row (a crash, a garbled answer, no answer in [`ANSWER_WITHIN`]) after
+/// which the rest of the queue goes without it.
 const GIVE_UP: u32 = 3;
+
+/// How long the helper may spend on one picture before it is killed and restarted for the rest
+/// of the queue: well past a large photo's decode on a slow machine, short enough that a picture
+/// on a dead network mount holds the others back only briefly.
+const ANSWER_WITHIN: Duration = Duration::from_secs(5);
 
 enum Msg {
     Want {
@@ -175,7 +182,7 @@ fn work(rx: Receiver<Msg>, to_loop: LoopSender<OnLoop>) {
     let edge = reprisefs::thumbnails::edge_for(reprisekit::controls::shellview::THUMB_INNER);
     let mut queue = Queue::default();
     let mut batch = Batch::default();
-    let mut helper = Fetcher::default();
+    let mut helper = Fetcher::new(helper_command, ANSWER_WITHIN);
     let (mut hits, mut asked) = (0u32, 0u32);
     loop {
         if queue.is_empty() {
@@ -240,19 +247,29 @@ fn cached(cache: Option<&Thumbnails>, path: &Path, edge: u32) -> Option<(Canvas,
 }
 
 /// The helper process, started on the first miss and stopped once the queue is empty.
-#[derive(Default)]
 struct Fetcher {
     helper: Option<Helper>,
     failures: u32,
+    command: fn() -> Command,
+    within: Duration,
 }
 
 impl Fetcher {
+    fn new(command: fn() -> Command, within: Duration) -> Fetcher {
+        Fetcher {
+            helper: None,
+            failures: 0,
+            command,
+            within,
+        }
+    }
+
     fn fetch(&mut self, path: &Path, edge: u32) -> Option<(Canvas, (u32, u32))> {
         if self.failures >= GIVE_UP {
             return None;
         }
         if self.helper.is_none() {
-            match Helper::start() {
+            match Helper::start((self.command)()) {
                 Ok(h) => self.helper = Some(h),
                 Err(e) => {
                     log::warn!("pickthumbs: cannot start {}: {e}", thumbpipe::PROGRAM);
@@ -262,7 +279,7 @@ impl Fetcher {
             }
         }
         let helper = self.helper.as_mut()?;
-        match helper.ask(path, edge) {
+        match helper.ask(path, edge, self.within) {
             Ok(thumb) => {
                 self.failures = 0;
                 let t = thumb?;
@@ -287,28 +304,32 @@ impl Fetcher {
     }
 }
 
+fn helper_command() -> Command {
+    use std::os::unix::process::CommandExt;
+    let mut c = Command::new(thumbpipe::PROGRAM);
+    c.arg(thumbpipe::FLAG);
+    crate::spawn::detach(&mut c);
+    // SAFETY: the closure runs between fork and exec and only calls setpriority, a system call
+    // that does not allocate.
+    unsafe {
+        c.pre_exec(|| {
+            // Decoding gives way to the compositor; failing to lower it is harmless.
+            libc::setpriority(libc::PRIO_PROCESS, 0, 10);
+            Ok(())
+        });
+    }
+    c
+}
+
 struct Helper {
     child: Child,
     stdin: ChildStdin,
-    stdout: BufReader<ChildStdout>,
+    stdout: BufReader<Deadline>,
 }
 
 impl Helper {
-    fn start() -> std::io::Result<Helper> {
-        use std::os::unix::process::CommandExt;
-        let mut c = std::process::Command::new(thumbpipe::PROGRAM);
-        c.arg(thumbpipe::FLAG);
-        crate::spawn::detach(&mut c);
+    fn start(mut c: Command) -> io::Result<Helper> {
         c.stdin(Stdio::piped()).stdout(Stdio::piped());
-        // SAFETY: the closure runs between fork and exec and only calls setpriority, a system
-        // call that does not allocate.
-        unsafe {
-            c.pre_exec(|| {
-                // Decoding gives way to the compositor; failing to lower it is harmless.
-                libc::setpriority(libc::PRIO_PROCESS, 0, 10);
-                Ok(())
-            });
-        }
         let mut child = c.spawn()?;
         log::info!(
             "pickthumbs: started the thumbnail helper, pid {}",
@@ -317,7 +338,11 @@ impl Helper {
         let (Some(stdin), Some(stdout)) = (child.stdin.take(), child.stdout.take()) else {
             let _ = child.kill();
             let _ = child.wait();
-            return Err(std::io::ErrorKind::BrokenPipe.into());
+            return Err(io::ErrorKind::BrokenPipe.into());
+        };
+        let stdout = Deadline {
+            out: stdout,
+            until: Instant::now(),
         };
         Ok(Helper {
             child,
@@ -326,22 +351,59 @@ impl Helper {
         })
     }
 
-    fn ask(&mut self, path: &Path, edge: u32) -> std::io::Result<Option<thumbpipe::Thumb>> {
+    /// `path`'s thumbnail, failing with `TimedOut` when the answer takes longer than `within`.
+    fn ask(
+        &mut self,
+        path: &Path,
+        edge: u32,
+        within: Duration,
+    ) -> io::Result<Option<thumbpipe::Thumb>> {
         thumbpipe::write_request(&mut self.stdin, path)?;
+        self.stdout.get_mut().until = Instant::now() + within;
         thumbpipe::read_reply(&mut self.stdout, edge)
     }
 
-    /// Closes the helper's stdin, which ends it between pictures; `kill` ends one that broke
-    /// mid-answer.
+    /// Closes the helper's stdin, which ends it between pictures; `kill` ends one that broke or
+    /// hung mid-answer.
     fn stop(self, kill: bool) {
         let Helper {
             mut child, stdin, ..
         } = self;
         drop(stdin);
-        if kill {
-            let _ = child.kill();
+        if !kill {
+            let _ = child.wait();
+            return;
         }
-        let _ = child.wait();
+        let _ = child.kill();
+        // A helper blocked on a dead mount may outlive SIGKILL for a while; the queue goes on.
+        let _ = std::thread::Builder::new()
+            .name("pickthumbs-reap".into())
+            .spawn(move || child.wait());
+    }
+}
+
+/// The helper's stdout: a read waiting past `until` fails with `TimedOut`.
+struct Deadline {
+    out: ChildStdout,
+    until: Instant,
+}
+
+impl Read for Deadline {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        let left = self.until.saturating_duration_since(Instant::now());
+        let mut fd = libc::pollfd {
+            fd: self.out.as_raw_fd(),
+            events: libc::POLLIN,
+            revents: 0,
+        };
+        let ms = i32::try_from(left.as_millis()).unwrap_or(i32::MAX);
+        // SAFETY: `fd` is one valid pollfd that outlives the call.
+        match unsafe { libc::poll(&mut fd, 1, ms) } {
+            0 => Err(io::ErrorKind::TimedOut.into()),
+            // EINTR comes back as `Interrupted`, which `read_exact` retries.
+            n if n < 0 => Err(io::Error::last_os_error()),
+            _ => self.out.read(buf),
+        }
     }
 }
 
@@ -383,6 +445,78 @@ mod tests {
         q.take(Msg::Forget(1));
         assert_eq!(drain(&mut q), [(2, 1, "/b/1.png".into())]);
         assert!(q.is_empty());
+    }
+
+    /// A helper answering each path with a 1x1 thumbnail of a 2x3 picture, which hangs on a
+    /// path holding "hang".
+    fn fake_helper() -> Command {
+        let mut c = Command::new("bash");
+        c.args([
+            "-c",
+            r"while IFS= read -r -d '' p; do
+                case $p in *hang*) exec sleep 60;; esac
+                printf '\1\0\0\0\1\0\0\0\2\0\0\0\3\0\0\0\377\0\0\377'
+            done",
+        ]);
+        c
+    }
+
+    const WITHIN: Duration = Duration::from_millis(200);
+
+    fn fetched(f: &mut Fetcher, path: &str) -> bool {
+        f.fetch(Path::new(path), 128)
+            .inspect(|(thumb, dims)| {
+                assert_eq!(*dims, (2, 3));
+                assert_eq!(thumb.pixels, [0xff00_00ff]);
+            })
+            .is_some()
+    }
+
+    fn helper_pid(f: &Fetcher) -> Option<u32> {
+        f.helper.as_ref().map(|h| h.child.id())
+    }
+
+    #[test]
+    fn a_picture_the_helper_hangs_on_is_skipped_and_the_rest_arrive() {
+        let mut f = Fetcher::new(fake_helper, WITHIN);
+        assert!(fetched(&mut f, "/pics/a.jpg"));
+        let hung = helper_pid(&f).expect("a helper");
+        let asked = Instant::now();
+        assert!(!fetched(&mut f, "/pics/hang.jpg"));
+        assert!(
+            asked.elapsed() < WITHIN * 5,
+            "gave up after {:?}",
+            asked.elapsed()
+        );
+        assert!(f.helper.is_none(), "the hung helper is dropped");
+        let proc = PathBuf::from(format!("/proc/{hung}"));
+        let killed = Instant::now();
+        while proc.exists() && killed.elapsed() < Duration::from_secs(5) {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(!proc.exists(), "the hung helper is killed and reaped");
+        assert!(fetched(&mut f, "/pics/b.jpg"));
+        assert!(fetched(&mut f, "/pics/c.jpg"));
+        assert_ne!(
+            helper_pid(&f),
+            Some(hung),
+            "a fresh helper answers the rest"
+        );
+    }
+
+    #[test]
+    fn three_hangs_in_a_row_give_up_the_rest_of_the_queue() {
+        let mut f = Fetcher::new(fake_helper, WITHIN);
+        assert!(!fetched(&mut f, "/pics/hang-1.jpg"));
+        assert!(!fetched(&mut f, "/pics/hang-2.jpg"));
+        assert!(fetched(&mut f, "/pics/a.jpg"), "an answer resets the count");
+        for n in 3..=5 {
+            assert!(!fetched(&mut f, &format!("/pics/hang-{n}.jpg")));
+        }
+        assert!(!fetched(&mut f, "/pics/b.jpg"));
+        assert!(f.helper.is_none(), "no helper is started after giving up");
+        f.idle();
+        assert!(fetched(&mut f, "/pics/c.jpg"), "the next queue tries again");
     }
 
     /// A cache under `dir` holding `pic`'s 2x1 thumbnail at 128 as `pic` stands now.
