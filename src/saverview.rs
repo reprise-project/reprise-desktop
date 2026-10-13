@@ -13,7 +13,7 @@ use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 use reprisefx::{Stroke, Strokes};
-use reprisekit::saver::{self, Kind, Mark, STEP_MS, Saver};
+use reprisekit::saver::{Kind, Mark, STEP_MS, Saver};
 use reprisescene::{BufferId, CustomElement, CustomNode, Input, RectId, TreeId};
 use smithay::{
     backend::renderer::gles::GlesRenderer,
@@ -436,8 +436,8 @@ fn decode_next(
         else {
             break;
         };
-        if let Some(l) = crate::wallpaper::load(&path, None) {
-            return (Some(path), Some(saver::fit(&l.image, w, h)));
+        if let Some(picture) = crate::wallpaper::load_fit(&path, w, h) {
+            return (Some(path), Some(picture));
         }
         current = Some(path);
     }

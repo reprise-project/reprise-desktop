@@ -117,6 +117,43 @@ pub fn load(path: &Path, cut: Option<Cut>) -> Option<Loaded> {
     if let Some(b) = builtin(path) {
         return Some(draw_builtin(b, cut));
     }
+    let d = decoded(path)?;
+    Some(reduce(d.w, d.h, |x, y| d.px(x, y), cut))
+}
+
+/// `path` fitted whole into `w` x `h` and centred on black (`saver::fit`). A JPEG decodes at the
+/// smallest DCT scale that still covers the fit, so a large photo never exists at full size.
+pub fn load_fit(path: &Path, w: u32, h: u32) -> Option<Canvas> {
+    let d = jpeg_scaled(path, w, h).or_else(|| decoded(path))?;
+    Some(reprisekit::saver::fit_from(d.w, d.h, w, h, |fw, fh| {
+        Canvas::resample_box_from(d.w, d.h, fw, fh, |x, y| d.px(x, y))
+    }))
+}
+
+/// A decoded picture: `n` bytes a pixel (1 grey, 3 RGB, 4 RGBA), rows packed.
+struct Decoded {
+    w: u32,
+    h: u32,
+    n: usize,
+    bytes: Vec<u8>,
+}
+
+impl Decoded {
+    /// Premultiplied ARGB at `x`, `y`.
+    fn px(&self, x: u32, y: u32) -> u32 {
+        let i = (y as usize * self.w as usize + x as usize) * self.n;
+        let b = &self.bytes[i..i + self.n];
+        let (r, g, bl, a) = match self.n {
+            1 => (b[0], b[0], b[0], 0xFF),
+            3 => (b[0], b[1], b[2], 0xFF),
+            _ => (b[0], b[1], b[2], b[3]),
+        };
+        let argb = (a as u32) << 24 | (r as u32) << 16 | (g as u32) << 8 | bl as u32;
+        reprisekit::icon::premultiply(argb)
+    }
+}
+
+fn decoded(path: &Path) -> Option<Decoded> {
     let img = match decode(path) {
         Ok(i) => i,
         Err(e) => {
@@ -129,25 +166,36 @@ pub fn load(path: &Path, cut: Option<Cut>) -> Option<Loaded> {
         log::warn!("wallpaper {}: refusing {w}x{h}", path.display());
         return None;
     }
-    let rgba;
-    let (bytes, n): (&[u8], usize) = match &img {
-        image::DynamicImage::ImageRgb8(b) => (b.as_raw(), 3),
-        image::DynamicImage::ImageRgba8(b) => (b.as_raw(), 4),
-        other => {
-            rgba = other.to_rgba8();
-            (rgba.as_raw(), 4)
-        }
+    let (n, bytes) = match img {
+        image::DynamicImage::ImageLuma8(b) => (1, b.into_raw()),
+        image::DynamicImage::ImageRgb8(b) => (3, b.into_raw()),
+        image::DynamicImage::ImageRgba8(b) => (4, b.into_raw()),
+        other => (4, other.to_rgba8().into_raw()),
     };
-    let px = |x: u32, y: u32| {
-        let i = (y as usize * w as usize + x as usize) * n;
-        let a = if n == 4 { bytes[i + 3] } else { 0xFF };
-        let argb = (a as u32) << 24
-            | (bytes[i] as u32) << 16
-            | (bytes[i + 1] as u32) << 8
-            | bytes[i + 2] as u32;
-        reprisekit::icon::premultiply(argb)
+    Some(Decoded { w, h, n, bytes })
+}
+
+/// A grey or RGB JPEG decoded at the smallest DCT scale (1/8 to 1) that still covers the part of
+/// `w` x `h` it fits into; None for anything else, which `decoded` then reads at full size.
+fn jpeg_scaled(path: &Path, w: u32, h: u32) -> Option<Decoded> {
+    let file = std::fs::File::open(path).ok()?;
+    let mut dec = jpeg_decoder::Decoder::new(std::io::BufReader::new(file));
+    dec.read_info().ok()?;
+    let info = dec.info()?;
+    let (sw, sh) = (info.width as u32, info.height as u32);
+    let n = match info.pixel_format {
+        jpeg_decoder::PixelFormat::L8 => 1,
+        jpeg_decoder::PixelFormat::RGB24 => 3,
+        _ => return None,
     };
-    Some(reduce(w, h, px, cut))
+    if sw == 0 || sh == 0 || sw > MAX_SIDE || sh > MAX_SIDE {
+        return None;
+    }
+    let (fw, fh) = reprisekit::saver::fit_size(sw, sh, w, h);
+    let (dw, dh) = dec.scale(fw as u16, fh as u16).ok()?;
+    let bytes = dec.decode().ok()?;
+    let (w, h) = (dw as u32, dh as u32);
+    (bytes.len() == w as usize * h as usize * n).then_some(Decoded { w, h, n, bytes })
 }
 
 /// Reduce a `sw` x `sh` picture (premultiplied ARGB via `px`) to `cut`: Stretch box-downscales,
@@ -373,5 +421,51 @@ mod tests {
         assert!(d.get((8, 8)).is_none());
         assert!(d.land(Canvas::new(16, 9)));
         assert!(d.want(&[(16, 9)]).is_empty());
+    }
+
+    fn written(name: &str, format: image::ImageFormat) -> std::path::PathBuf {
+        let img = image::RgbImage::from_pixel(64, 48, image::Rgb([0, 0, 255]));
+        let path = std::env::temp_dir().join(format!("reprise-fit-{}-{name}", std::process::id()));
+        img.save_with_format(&path, format).unwrap();
+        path
+    }
+
+    #[test]
+    fn a_jpeg_decodes_at_the_smallest_dct_scale_covering_the_fit() {
+        let path = written("scale.jpg", image::ImageFormat::Jpeg);
+        let size = |w, h| jpeg_scaled(&path, w, h).map(|d| (d.w, d.h, d.n));
+        let (eighth, half, whole) = (size(8, 6), size(20, 20), size(100, 100));
+        std::fs::remove_file(&path).unwrap();
+        assert_eq!(eighth, Some((8, 6, 3)), "fit 8x6: 1/8");
+        assert_eq!(
+            half,
+            Some((32, 24, 3)),
+            "fit 20x15: 1/4 is 16x12, short of it"
+        );
+        assert_eq!(whole, Some((64, 48, 3)), "fit 100x75: full size");
+    }
+
+    #[test]
+    fn a_fitted_photo_is_centred_on_black_from_jpeg_and_png() {
+        for (name, format) in [
+            ("fit.jpg", image::ImageFormat::Jpeg),
+            ("fit.png", image::ImageFormat::Png),
+        ] {
+            let path = written(name, format);
+            let c = load_fit(&path, 16, 16).unwrap();
+            std::fs::remove_file(&path).unwrap();
+            assert_eq!((c.width, c.height), (16, 16), "{name}");
+            assert_eq!(
+                c.get(8, 1),
+                0xFF00_0000,
+                "{name}: black above the 16x12 picture"
+            );
+            assert_eq!(c.get(8, 14), 0xFF00_0000, "{name}: black below");
+            let mid = c.get(8, 8);
+            assert!(
+                mid & 0xFF > 0xF0 && mid & 0x00FF_FF00 < 0x0010_1000,
+                "{name}: blue, got {mid:08x}"
+            );
+        }
     }
 }
