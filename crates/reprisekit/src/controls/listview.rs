@@ -84,6 +84,7 @@ pub const GROUP_RULE_Y: i32 = GROUP_TITLE_H - 1;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Column {
     pub title: String,
+    /// 100% px: the layout grows it by the text size.
     pub width: i32,
     pub right: bool,
 }
@@ -270,6 +271,11 @@ impl Layout {
     pub fn group_h(&self) -> i32 {
         self.text.len(GROUP_H)
     }
+
+    /// `col`'s width at the text size.
+    pub fn col_w(&self, col: &Column) -> i32 {
+        self.text.len(col.width)
+    }
 }
 
 pub fn layout<R: Rows, C: AsRef<[Column]>, S: Borrow<Selection>>(
@@ -280,8 +286,8 @@ pub fn layout<R: Rows, C: AsRef<[Column]>, S: Borrow<Selection>>(
     let inner = if lv.frame { r.inset(2) } else { r };
     let header = Rect::new(inner.x, inner.y, inner.width, cm.list_header);
     let (full_w, full_h) = (inner.width, inner.height - cm.list_header);
-    let total_w: i32 = lv.columns.as_ref().iter().map(|c| c.width).sum();
     let u = cm.text;
+    let total_w: i32 = lv.columns.as_ref().iter().map(|c| u.len(c.width)).sum();
     let content_h: i32 = if lv.groups.is_empty() {
         lv.rows.len() as i32 * u.len(ROW_H)
     } else {
@@ -468,7 +474,7 @@ impl<R: Rows, C: AsRef<[Column]>, S: Borrow<Selection>> ListView<R, C, S> {
         if lay.header.contains(x, y) {
             let mut cx = lay.header.x - self.left_in(lay);
             for (i, col) in self.columns.as_ref().iter().enumerate() {
-                let edge = cx + col.width;
+                let edge = cx + lay.col_w(col);
                 if (x - edge).abs() <= DIVIDER_GRAB {
                     return Hit::Divider(i);
                 }
@@ -518,7 +524,7 @@ impl<R: Rows, C: AsRef<[Column]>, S: Borrow<Selection>> ListView<R, C, S> {
     pub fn name_rect(&self, lay: &Layout, row: usize, text: &TextRenderer, px: u32) -> Rect {
         let y = lay.body.y + self.slot_y(row, lay);
         let cx = lay.body.x - self.left_in(lay);
-        let cw = self.columns.as_ref().first().map_or(0, |c| c.width);
+        let cw = self.columns.as_ref().first().map_or(0, |c| lay.col_w(c));
         let tx = match &self.checks {
             Some(_) => lay.frame.x + CHECK_X + lay.check + CHECK_TEXT_GAP,
             None => cx + NAME_X,
@@ -670,10 +676,21 @@ impl<R: Rows> ListView<R> {
         self.follow(lay);
     }
 
+    /// Set column `i` to `width` 100% px, held to [`MIN_COL_W`].
     pub fn resize_column(&mut self, i: usize, width: i32) {
         if let Some(col) = self.columns.get_mut(i) {
             col.width = width.max(MIN_COL_W);
         }
+    }
+
+    /// Give column `i` what the other columns, grown by `u`, leave of `width` px: the longest
+    /// 100% width that still fits, so the columns fill `width` without overflowing it.
+    pub fn fill_column(&mut self, i: usize, width: i32, u: TextUnits) {
+        let others: i32 = (self.columns.iter().enumerate())
+            .filter(|&(k, _)| k != i)
+            .map(|(_, c)| u.len(c.width))
+            .sum();
+        self.resize_column(i, u.within(width - others));
     }
 
     /// Move the focus by `step` rows (Home/End with a big step) and let `mods` decide the selection; shows the focus ring.
@@ -695,19 +712,20 @@ fn draw_header<R: Rows, C: AsRef<[Column]>, S: Borrow<Selection>>(
     text: &TextRenderer,
     p: &Paint,
     lv: &ListView<R, C, S>,
+    lay: &Layout,
     header: Rect,
-    left: i32,
     px: u32,
 ) {
     let Paint { cs, s, .. } = *p;
+    let left = lv.left_in(lay);
     header_widgets::draw_strip(c, p, header);
     let arrow_w = header_widgets::sort_arrow_width(p);
     let arrow_end = p.look.controls().header_arrow_end;
     let arrow_over = p.look.controls().header_arrow_over;
     let mut cx = header.x - left * s;
     for (ci, col) in lv.columns.as_ref().iter().enumerate() {
-        let r = Rect::new(cx, header.y, col.width * s, header.height);
-        cx += col.width * s;
+        let r = Rect::new(cx, header.y, lay.col_w(col) * s, header.height);
+        cx += lay.col_w(col) * s;
         if r.right() <= header.x || r.x >= header.right() {
             continue;
         }
@@ -758,10 +776,10 @@ fn draw_rows<R: Rows, C: AsRef<[Column]>, S: Borrow<Selection>>(
         for (ci, col) in lv.columns.as_ref().iter().enumerate() {
             if ci == sorted {
                 let tint = cs.window.toward(cs.window_text, SORT_TINT);
-                c.fill_rect(Rect::new(cx, body.y, col.width * s, body.height), tint);
+                c.fill_rect(Rect::new(cx, body.y, lay.col_w(col) * s, body.height), tint);
                 break;
             }
-            cx += col.width * s;
+            cx += lay.col_w(col) * s;
         }
     }
     let row_h = lay.row_h() * s;
@@ -801,7 +819,7 @@ fn draw_rows<R: Rows, C: AsRef<[Column]>, S: Borrow<Selection>>(
         );
         for (ci, col) in lv.columns.as_ref().iter().enumerate() {
             let cell = lv.rows.cell(i, ci);
-            let cw = col.width * s;
+            let cw = lay.col_w(col) * s;
             let (tx, tw) = if ci == 0 {
                 if let Some(checks) = &lv.checks {
                     let cr = check_box(lay, at).scaled(s);
@@ -940,7 +958,7 @@ pub fn draw<R: Rows, C: AsRef<[Column]>, S: Borrow<Selection>>(
     }
     let (header, body) = (lay.header.scaled(s), lay.body.scaled(s));
     let left = lv.left_in(lay);
-    c.with_clip(header, |c| draw_header(c, text, p, lv, header, left, px));
+    c.with_clip(header, |c| draw_header(c, text, p, lv, lay, header, px));
     c.with_clip(body, |c| draw_rows(c, text, p, lv, lay, body, px));
     if let Some(sb) = lay.scrollbar {
         draw_scrollbar(
@@ -1430,6 +1448,37 @@ mod tests {
         }
         assert_eq!(lv.hit(&lay, edge - DIVIDER_GRAB - 1, 5), Hit::Header(0));
         assert_eq!(lv.hit(&lay, edge + DIVIDER_GRAB + 1, 5), Hit::Header(1));
+    }
+
+    #[test]
+    fn columns_lay_out_grown_by_the_text_size() {
+        let lv = view(3);
+        let r = Rect::new(0, 0, 600, 200);
+        for (pct, k) in [(100, 1), (200, 2)] {
+            let cm = Theme::default().with_text_size(pct).controls();
+            let lay = layout(&lv, r, &cm);
+            assert_eq!(lay.total_w, k * 180, "{pct}%: the columns' width");
+            let edge = lay.header.x + k * 120;
+            assert_eq!(lv.hit(&lay, edge, 5), Hit::Divider(0), "{pct}%");
+            assert_eq!(lv.hit(&lay, edge + k * 60, 5), Hit::Divider(1), "{pct}%");
+        }
+        assert_eq!(lv.columns[0].width, 120, "laying out keeps the 100% width");
+    }
+
+    #[test]
+    fn a_filled_column_takes_what_the_grown_columns_leave() {
+        let mut lv = view(3);
+        lv.fill_column(1, 300, TextUnits::ONE);
+        assert_eq!(lv.columns[1].width, 180);
+        let cm = Theme::default().with_text_size(200).controls();
+        lv.fill_column(1, 301, cm.text);
+        assert_eq!(lv.columns[1].width, 30, "half of 301 - 240, rounded down");
+        assert_eq!(lv.columns[0].width, 120, "the other columns keep theirs");
+        let lay = layout(&lv, Rect::new(0, 0, 305, 200), &cm);
+        assert_eq!((lay.body.width, lay.total_w), (301, 300));
+        assert!(lay.hscroll.is_none());
+        lv.fill_column(1, 100, cm.text);
+        assert_eq!(lv.columns[1].width, MIN_COL_W);
     }
 
     /// A look with a 17 px scrollbar lays both bars 17 px thick; the body gives up 17 px to each.
