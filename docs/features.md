@@ -301,9 +301,10 @@ are.
   hold the right Shift for eight seconds.
 - **MouseKeys:** the keypad moves the pointer, clicks and drags; hold Ctrl
   to go faster or Shift to creep a pixel at a time. Left Alt+Left Shift+Num
-  Lock turns it on and off, with a balloon saying which.
-- Clicking the StickyKeys or MouseKeys icon in the notification area opens
-  its settings.
+  Lock turns it on and off.
+- When a shortcut turns StickyKeys, SlowKeys or MouseKeys on or off, a
+  balloon says which; clicking it opens that aid's settings. So does
+  clicking the StickyKeys or MouseKeys icon in the notification area.
 
 ## Hardware and network
 

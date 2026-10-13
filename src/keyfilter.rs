@@ -20,15 +20,6 @@ use crate::config::AccessibilityConfig;
 use crate::keyroute::{KeyPress, modifier_key};
 use crate::keys::*;
 
-/// The argv that opens Settings on the StickyKeys group.
-pub const SETTINGS_ARGV: [&str; 5] = [
-    "reprise-settings",
-    "--page",
-    "accessibility",
-    "--focus",
-    "sticky_keys",
-];
-
 /// Shift presses in a row that make the StickyKeys shortcut.
 const SHIFT_PRESSES: u32 = 5;
 /// The longest gap between two of them, in ms.
@@ -61,6 +52,50 @@ impl Aid {
             Aid::MouseKeys => "MouseKeys",
         }
     }
+
+    /// The argv that opens Settings with this aid's check box focused.
+    pub fn settings_argv(self) -> [&'static str; 5] {
+        [
+            "reprise-settings",
+            "--page",
+            "accessibility",
+            "--focus",
+            self.key(),
+        ]
+    }
+
+    fn shortcut_keys(self) -> &'static str {
+        match self {
+            Aid::StickyKeys => "Pressing Shift five times",
+            Aid::SlowKeys => "Holding the right Shift key for eight seconds",
+            Aid::MouseKeys => "Left Alt+left Shift+Num Lock",
+        }
+    }
+
+    fn what(self) -> &'static str {
+        match self {
+            Aid::StickyKeys => "Shift, Ctrl, Alt and the Super key work one key at a time.",
+            Aid::SlowKeys => "A key counts only once it has been held down for a moment.",
+            Aid::MouseKeys => {
+                "The keypad moves the pointer. Hold Ctrl to go faster or Shift to creep."
+            }
+        }
+    }
+}
+
+/// The balloon after `aid` was turned on or off: summary and body. `shortcuts`: the
+/// `[accessibility] shortcuts` switch, without which the body names no shortcut.
+fn switched_notice(aid: Aid, on: bool, shortcuts: bool) -> (String, String) {
+    let name = aid.name();
+    let keys = aid.shortcut_keys();
+    let body = match (on, shortcuts) {
+        (true, true) => format!("{} {keys} turns it off.", aid.what()),
+        (true, false) => aid.what().to_string(),
+        (false, true) => format!("{keys} turns it on again."),
+        (false, false) => "Click here to turn it on again in Settings.".to_string(),
+    };
+    let state = if on { "on" } else { "off" };
+    (format!("{name} is {state}"), body)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -533,12 +568,17 @@ impl State {
                 log::info!("{} turned off from the keyboard", aid.name());
                 self.store_aid(aid, false);
                 self.mousekeys_configured();
-                if aid == Aid::MouseKeys {
-                    self.mousekeys_switched(false);
-                }
+                self.aid_switched(aid, false);
             }
             None => {}
         }
+    }
+
+    /// Tell the user `aid` was turned on or off; a click on the balloon opens its settings.
+    pub fn aid_switched(&mut self, aid: Aid, on: bool) {
+        let (summary, body) = switched_notice(aid, on, self.config.accessibility.shortcuts);
+        let argv = aid.settings_argv().iter().map(Into::into).collect();
+        crate::notifyview::notice_opening(self, &summary, &body, argv);
     }
 
     /// Turn `aid` on or off: live at once, and in config.toml.
@@ -970,5 +1010,49 @@ mod tests {
         let fx = f.key(key(NUMLOCK, true), 1020).1;
         assert_eq!(fx.notice, Some(Notice::Off(Aid::MouseKeys)));
         assert!(!f.config().mouse_keys);
+    }
+
+    #[test]
+    fn every_aid_says_it_is_on_or_off_and_how_to_switch_it_back() {
+        for (aid, keys) in [
+            (Aid::StickyKeys, "Pressing Shift five times"),
+            (
+                Aid::SlowKeys,
+                "Holding the right Shift key for eight seconds",
+            ),
+            (Aid::MouseKeys, "Left Alt+left Shift+Num Lock"),
+        ] {
+            let (summary, body) = switched_notice(aid, true, true);
+            assert_eq!(summary, format!("{} is on", aid.name()));
+            assert!(body.starts_with(aid.what()), "{body}");
+            assert!(body.ends_with(&format!("{keys} turns it off.")), "{body}");
+            let (summary, body) = switched_notice(aid, false, true);
+            assert_eq!(summary, format!("{} is off", aid.name()));
+            assert_eq!(body, format!("{keys} turns it on again."));
+        }
+    }
+
+    #[test]
+    fn with_the_shortcuts_off_the_notice_names_no_shortcut() {
+        let (_, on) = switched_notice(Aid::StickyKeys, true, false);
+        assert_eq!(on, Aid::StickyKeys.what());
+        let (_, off) = switched_notice(Aid::StickyKeys, false, false);
+        assert_eq!(off, "Click here to turn it on again in Settings.");
+    }
+
+    #[test]
+    fn the_notice_click_opens_settings_on_the_aids_own_check_box() {
+        assert_eq!(
+            Aid::SlowKeys.settings_argv(),
+            [
+                "reprise-settings",
+                "--page",
+                "accessibility",
+                "--focus",
+                "slow_keys"
+            ]
+        );
+        assert_eq!(Aid::StickyKeys.settings_argv()[4], "sticky_keys");
+        assert_eq!(Aid::MouseKeys.settings_argv()[4], "mouse_keys");
     }
 }
