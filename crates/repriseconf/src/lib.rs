@@ -141,6 +141,54 @@ fn drives_on_insert_in(text: &str) -> String {
         .unwrap_or_else(|| "ask".into())
 }
 
+/// `[thumbnail_cache]`: whether pictures' thumbnails are kept in `$XDG_CACHE_HOME/thumbnails`,
+/// shared with other file managers, and how much room they may take.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ThumbnailCache {
+    pub enabled: bool,
+    /// The cap in MiB; past it the least recently used thumbnails go, whichever program wrote them.
+    pub max_mb: u32,
+}
+
+impl ThumbnailCache {
+    pub const DEFAULT: ThumbnailCache = ThumbnailCache {
+        enabled: true,
+        max_mb: 512,
+    };
+    /// A thumbnail is at most 64 KiB of pixels at Explorer's default `thumbnail_size` and 1 MiB
+    /// at its largest.
+    pub const MAX_MB: std::ops::RangeInclusive<u32> = 1..=4096;
+
+    pub const fn max_bytes(self) -> u64 {
+        (self.max_mb as u64) << 20
+    }
+}
+
+/// `[thumbnail_cache]`, read now: a key unset or not a bool or integer keeps its default, and
+/// `max_mb` is clamped to [`ThumbnailCache::MAX_MB`].
+pub fn thumbnail_cache() -> ThumbnailCache {
+    let text = std::fs::read_to_string(config_path()).unwrap_or_default();
+    thumbnail_cache_in(&text)
+}
+
+fn thumbnail_cache_in(text: &str) -> ThumbnailCache {
+    let d = ThumbnailCache::DEFAULT;
+    let Ok(doc) = text.parse::<DocumentMut>() else {
+        return d;
+    };
+    let mb = ThumbnailCache::MAX_MB;
+    ThumbnailCache {
+        enabled: get(&doc, &key("thumbnail_cache", "enabled"))
+            .and_then(Item::as_bool)
+            .unwrap_or(d.enabled),
+        max_mb: get(&doc, &key("thumbnail_cache", "max_mb"))
+            .and_then(Item::as_integer)
+            .map_or(d.max_mb, |v| {
+                v.clamp(i64::from(*mb.start()), i64::from(*mb.end())) as u32
+            }),
+    }
+}
+
 pub fn xdg_home(var: &str, fallback: &str) -> PathBuf {
     xdg_home_from(std::env::var_os(var), std::env::var_os("HOME"), fallback)
 }
@@ -493,6 +541,26 @@ mod tests {
             "open"
         );
         assert_eq!(drives_on_insert_in("[drives]\non_insert = true\n"), "ask");
+    }
+
+    #[test]
+    fn the_thumbnail_cache_is_on_at_512_mb_unless_set() {
+        assert_eq!(thumbnail_cache_in(""), ThumbnailCache::DEFAULT);
+        assert_eq!(
+            thumbnail_cache_in("[thumbnail_cache]\nenabled = false\n"),
+            ThumbnailCache {
+                enabled: false,
+                max_mb: 512
+            }
+        );
+        let cap =
+            |v: &str| thumbnail_cache_in(&format!("[thumbnail_cache]\nmax_mb = {v}\n")).max_mb;
+        assert_eq!(cap("64"), 64);
+        assert_eq!(cap("0"), 1);
+        assert_eq!(cap("-5"), 1);
+        assert_eq!(cap("100000"), 4096);
+        assert_eq!(cap("\"big\""), 512);
+        assert_eq!(ThumbnailCache::DEFAULT.max_bytes(), 512 << 20);
     }
 
     #[test]

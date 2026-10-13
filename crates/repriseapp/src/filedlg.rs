@@ -240,6 +240,8 @@ pub struct Host {
     clicks: DoubleClick<Option<Hit>>,
     aliases: HashMap<String, OsString>,
     thumbs: Option<Thumbs>,
+    /// `[thumbnail_cache]` as the last dialog opened: what `thumbs` keeps its pictures by.
+    cache: Option<repriseconf::ThumbnailCache>,
     pictures: Pictures,
 }
 
@@ -262,6 +264,7 @@ impl Host {
     /// draws it with that theme and sizes its window from [`FileDlg::client`].
     pub fn open(&mut self, dir: &Path, fields: Fields, u: TextUnits) -> FileDlg {
         self.folder = Some(self.folders.id(dir));
+        self.follow_cache(repriseconf::thumbnail_cache());
         let mut dlg = self.icons.dialog(fields);
         dlg.set_text(u);
         dlg
@@ -273,12 +276,24 @@ impl Host {
         if self.thumbs.is_some() {
             return;
         }
+        let cache = *self.cache.get_or_insert_with(repriseconf::thumbnail_cache);
         self.thumbs = Some(Thumbs::new(
             std::sync::Arc::new(crate::decode::Decoders::default_set()),
             thumbs::FRAME_INNER,
-            thumbs::open_cache(thumbs::CACHE_BYTES),
+            thumbs::cache_for(cache),
             wake.clone(),
         ));
+    }
+
+    /// Stops a worker started under another `[thumbnail_cache]` than `want`; the next event
+    /// starts one under `want`.
+    fn follow_cache(&mut self, want: repriseconf::ThumbnailCache) {
+        if self.cache.replace(want).is_some_and(|had| had != want)
+            && let Some(old) = self.thumbs.take()
+        {
+            // Dropping joins the worker, which first decodes what the last listing queued.
+            std::thread::spawn(move || drop(old));
+        }
     }
 
     /// Queues this listing's pictures once Views shows Thumbnails or Tiles.
@@ -1252,6 +1267,25 @@ mod tests {
             take_thumbs(&mut app, [DLG]).is_empty(),
             "nothing new to show"
         );
+    }
+
+    #[test]
+    fn a_changed_cache_setting_restarts_the_worker_at_the_next_dialog() {
+        use repriseconf::ThumbnailCache;
+        let off = ThumbnailCache {
+            enabled: false,
+            ..ThumbnailCache::DEFAULT
+        };
+        let mut h = Host::default();
+        h.follow_cache(off);
+        thumbs_without_cache(&mut h);
+        h.follow_cache(off);
+        assert!(h.thumbs.is_some(), "the same setting keeps the worker");
+        h.follow_cache(ThumbnailCache::DEFAULT);
+        assert!(h.thumbs.is_none(), "a new setting stops it");
+        h.thumbs_on(&crate::Waker::noop());
+        assert!(h.thumbs.is_some());
+        assert_eq!(h.cache, Some(ThumbnailCache::DEFAULT));
     }
 
     /// Where a colour lands in the drawn dialog: its bounding box.

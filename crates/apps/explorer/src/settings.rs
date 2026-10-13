@@ -32,40 +32,6 @@ pub struct Settings {
     /// decoded to the cache size that holds it (128, 256 or 512). Clamped to
     /// [`Settings::THUMBNAIL_SIZE`].
     pub thumbnail_size: u32,
-    pub thumbnail_cache: ThumbCacheSettings,
-}
-
-/// `[thumbnail_cache]` in `explorer.toml`: whether decoded thumbnails are
-/// kept in `$XDG_CACHE_HOME/thumbnails` (shared with other file managers)
-/// and how much room they may take. Explorer has no page for it; edit the
-/// file with Explorer closed (a closing window writes it back).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(default)]
-pub struct ThumbCacheSettings {
-    pub enabled: bool,
-    /// The cap in MiB; past it the least recently used thumbnails go,
-    /// whichever program wrote them.
-    pub max_mb: u32,
-}
-
-impl ThumbCacheSettings {
-    /// The cap's bounds in MiB. A thumbnail is at most 64 KiB of pixels at the
-    /// default `thumbnail_size` and 1 MiB at the largest; raise the cap with
-    /// the size.
-    pub const MAX_MB: std::ops::RangeInclusive<u32> = 1..=4096;
-
-    pub fn max_bytes(&self) -> u64 {
-        u64::from(self.max_mb) << 20
-    }
-}
-
-impl Default for ThumbCacheSettings {
-    fn default() -> ThumbCacheSettings {
-        ThumbCacheSettings {
-            enabled: true,
-            max_mb: 512,
-        }
-    }
 }
 
 impl Default for Settings {
@@ -86,7 +52,6 @@ impl Default for Settings {
             show_hidden: false,
             pane_open: BTreeMap::new(),
             thumbnail_size: repriseapp::thumbs::FRAME_INNER,
-            thumbnail_cache: ThumbCacheSettings::default(),
         }
     }
 }
@@ -142,8 +107,6 @@ impl Settings {
         }
         let px = Self::THUMBNAIL_SIZE;
         self.thumbnail_size = self.thumbnail_size.clamp(*px.start(), *px.end());
-        let mb = ThumbCacheSettings::MAX_MB;
-        self.thumbnail_cache.max_mb = self.thumbnail_cache.max_mb.clamp(*mb.start(), *mb.end());
         self
     }
 
@@ -220,33 +183,6 @@ mod tests {
             s.keep_window(half_again.size((side, side)), half_again);
             assert_eq!(s.window, (side, side), "{side} comes back from 150%");
         }
-    }
-
-    #[test]
-    fn the_thumbnail_cache_reads_from_its_own_table() {
-        let s = Settings::default();
-        assert_eq!(
-            s.thumbnail_cache,
-            ThumbCacheSettings {
-                enabled: true,
-                max_mb: 512
-            }
-        );
-        let s = toml::from_str::<Settings>("[thumbnail_cache]\nenabled = false\n").unwrap();
-        assert!(!s.thumbnail_cache.enabled);
-        assert_eq!(s.thumbnail_cache.max_mb, 512);
-        let cap = |mb: u32| {
-            toml::from_str::<Settings>(&format!("[thumbnail_cache]\nmax_mb = {mb}\n"))
-                .unwrap()
-                .clamped()
-                .thumbnail_cache
-                .max_mb
-        };
-        assert_eq!(cap(0), 1);
-        assert_eq!(cap(256), 256);
-        assert_eq!(cap(1_000_000), 4096);
-        let back = toml::to_string(&s).unwrap();
-        assert_eq!(toml::from_str::<Settings>(&back).unwrap(), s);
     }
 
     #[test]

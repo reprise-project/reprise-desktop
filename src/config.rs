@@ -2327,6 +2327,9 @@ struct FileConfig {
     /// `[drives]` is read by reprise-drives; accepted here so the file parses.
     #[allow(dead_code)]
     drives: Option<serde::de::IgnoredAny>,
+    /// `[thumbnail_cache]` is read by `repriseconf::thumbnail_cache`; accepted here so the file parses.
+    #[allow(dead_code)]
+    thumbnail_cache: Option<serde::de::IgnoredAny>,
     startmenu: Option<Vec<FileMenuEntry>>,
     quicklaunch: Option<Vec<FileQuickLaunch>>,
     startmenu_banner: Option<String>,
@@ -3493,6 +3496,11 @@ mod tests {
     #[test]
     fn the_portal_table_belongs_to_the_portal() {
         assert!(Config::parse("[portal]\nshortcuts_denied = [\"com.example.App\"]\n").is_ok());
+    }
+
+    #[test]
+    fn the_thumbnail_cache_table_parses() {
+        assert!(Config::parse("[thumbnail_cache]\nenabled = false\nmax_mb = 64\n").is_ok());
     }
 
     use super::*;
