@@ -166,6 +166,24 @@ pub fn replace_form(f: &ReplaceFields) -> Form {
 mod tests {
     use super::*;
 
+    #[test]
+    fn find_and_replace_fit_their_text_under_every_interface() {
+        let over = crate::interfaces::form_overflows(|_, _, _| {
+            let find = find_form(&FindFields {
+                query: "hello".into(),
+                match_case: true,
+                down: true,
+            });
+            let replace = replace_form(&ReplaceFields {
+                query: "hello".into(),
+                with: "world".into(),
+                match_case: false,
+            });
+            vec![("Find".into(), find), ("Replace".into(), replace)]
+        });
+        assert!(over.is_empty(), "{}", over.join("\n"));
+    }
+
     fn find_sample() -> FindFields {
         FindFields {
             query: "hello".into(),
