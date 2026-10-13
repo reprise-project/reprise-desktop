@@ -177,6 +177,8 @@ pub enum Key {
     Right,
     Enter,
     Delete,
+    /// The Menu key: the selected notification's actions menu.
+    Menu,
     Escape,
 }
 
@@ -191,6 +193,8 @@ pub enum Event {
     ClearGroup(String),
     Dismiss(u32),
     Invoke(u32),
+    /// Open notification `id`'s actions menu under its row (the Menu key).
+    Menu(u32),
     Close,
 }
 
@@ -374,7 +378,7 @@ impl History {
             Key::Home => i64::MIN / 2,
             Key::End => i64::MAX / 2,
             Key::Escape => return Event::Close,
-            Key::Enter | Key::Left | Key::Right | Key::Delete => {
+            Key::Enter | Key::Left | Key::Right | Key::Delete | Key::Menu => {
                 let Some(i) = self.list.selected else {
                     return Event::None;
                 };
@@ -399,6 +403,7 @@ impl History {
             (Meta::Header { .. }, Key::Delete) => Event::ClearGroup(app),
             (Meta::Note { id, live: true, .. }, Key::Enter) => Event::Invoke(id),
             (Meta::Note { id, .. }, Key::Delete) => Event::Dismiss(id),
+            (Meta::Note { id, .. }, Key::Menu) => Event::Menu(id),
             _ => Event::None,
         }
     }
@@ -480,6 +485,13 @@ impl History {
         self.pointer.clear()
     }
 
+    /// Select row `i`, scrolled into view, folding no header. True when the selection moved.
+    pub fn select(&mut self, i: usize) -> bool {
+        let was = self.list.selected;
+        self.list.select(i, ROWS as usize);
+        self.list.selected != was
+    }
+
     pub fn scroll(&mut self, rows: i64) -> bool {
         let rows = rows.clamp(i32::MIN.into(), i32::MAX.into()) as i32;
         self.list.scroll(rows, ROWS as usize)
@@ -487,6 +499,11 @@ impl History {
 
     fn list_layout(&self, cm: &ControlMetrics) -> grouplist::Layout {
         grouplist::layout(&self.list, layout(cm).list, cm)
+    }
+
+    /// Row `i`'s rect while it is scrolled into view.
+    pub fn row_rect(&self, i: usize, cm: &ControlMetrics) -> Option<Rect> {
+        grouplist::row_rect(&self.list, &self.list_layout(cm), i)
     }
 
     pub fn row_at(&self, x: i32, y: i32, cm: &ControlMetrics) -> Option<usize> {
@@ -643,6 +660,69 @@ pub fn draw(theme: &Theme, text: &TextRenderer, h: &History) -> Canvas {
     flyout::shadowed(theme, c)
 }
 
+/// The panel's `access` part: headers hold their Clear, notifications carry their time. Returns
+/// the focused node: the selected row, else the list.
+pub fn access(
+    h: &History,
+    cm: &ControlMetrics,
+    tree: &mut crate::access::Tree,
+    parent: crate::access::accesskit::NodeId,
+) -> crate::access::accesskit::NodeId {
+    use crate::access::{self, accesskit::Action, accesskit::Role, accesskit::Toggled};
+    let lay = layout(cm);
+    let check_row = Rect::new(
+        lay.check.x,
+        lay.label.y,
+        lay.label.right() - lay.check.x,
+        CHECK_ROW,
+    );
+    let dnd = access::toggle(
+        Role::CheckBox,
+        check_row,
+        DND_LABEL,
+        Toggled::from(h.dnd),
+        true,
+    );
+    tree.push(parent, "dnd", dnd);
+    let ll = h.list_layout(cm);
+    let mut focus = grouplist::access(&h.list, &ll, tree, parent, "list");
+    let list = crate::access::Tree::id_of(parent, "list");
+    let rows = tree
+        .get(list)
+        .map(|n| n.children().to_vec())
+        .unwrap_or_default();
+    for (i, (&id, m)) in rows.iter().zip(&h.meta).enumerate() {
+        let shown = grouplist::row_rect(&h.list, &ll, i);
+        if let Some(n) = tree.get_mut(id) {
+            n.add_action(Action::Focus);
+            n.add_action(Action::Click);
+            match m {
+                Meta::Header { open, .. } => n.set_expanded(*open),
+                Meta::Note { time, .. } => {
+                    n.set_description(time.as_str());
+                    n.add_action(Action::ShowContextMenu);
+                }
+            }
+        }
+        if let (Meta::Header { .. }, Some(row)) = (m, shown) {
+            let clear = access::button(header_parts(row).0, GROUP_CLEAR_LABEL, true, false);
+            tree.push(id, "clear", clear);
+        }
+    }
+    if h.list.rows.is_empty() {
+        let first = Rect::new(ll.inner.x, ll.inner.y + 4, ll.inner.width, ROW_H);
+        tree.push(list, "empty", access::label(first, EMPTY_LABEL, false));
+        focus = list;
+    }
+    let enabled = !h.list.rows.is_empty();
+    tree.push(
+        parent,
+        "clear",
+        access::button(lay.clear, CLEAR_LABEL, enabled, false),
+    );
+    focus
+}
+
 /// Four notifications from three programs, Calendar's folded, the newest Mail
 /// one selected and Do not disturb on: what the gallery and preview test draw.
 pub fn sample() -> History {
@@ -756,6 +836,11 @@ mod tests {
         let mut h = sample();
         assert_eq!(h.key(Key::Enter), Event::Invoke(4));
         assert_eq!(h.key(Key::Delete), Event::Dismiss(4));
+        assert_eq!(
+            h.key(Key::Menu),
+            Event::Menu(4),
+            "the Menu key opens its actions"
+        );
         assert_eq!(h.key(Key::Up), Event::Redraw);
         assert_eq!(h.key(Key::Delete), Event::ClearGroup("Mail".into()));
         let mut dead = sample();
@@ -1040,5 +1125,71 @@ mod tests {
             &draw(&theme, &text, &History::new()),
             "notifyhistory-empty-preview.png",
         );
+    }
+
+    #[test]
+    fn the_panel_tree_groups_its_rows_under_headers() {
+        use crate::access::accesskit::{Action, Role, Toggled};
+        let h = sample();
+        let cm = ControlMetrics::CLASSIC;
+        let mut tree = crate::access::Tree::window("", (W, layout(&cm).height));
+        let focus = access(&h, &cm, &mut tree, crate::access::ROOT);
+        let root = tree.get(crate::access::ROOT).unwrap().children().to_vec();
+        let dnd = tree.get(root[0]).unwrap();
+        assert_eq!(
+            (dnd.role(), dnd.label(), dnd.toggled()),
+            (Role::CheckBox, Some("Do not disturb"), Some(Toggled::True))
+        );
+        let clear_all = tree.get(root[2]).unwrap();
+        assert_eq!(
+            (clear_all.role(), clear_all.label()),
+            (Role::Button, Some("Clear All"))
+        );
+        assert!(!clear_all.is_disabled());
+        let rows = tree.get(root[1]).unwrap().children().to_vec();
+        assert_eq!(rows.len(), 6);
+        let mail = tree.get(rows[0]).unwrap();
+        assert_eq!(
+            (mail.label(), mail.is_expanded()),
+            (Some("Mail (2)"), Some(true))
+        );
+        let clear = tree.get(mail.children()[0]).unwrap();
+        assert_eq!((clear.role(), clear.label()), (Role::Button, Some("Clear")));
+        let ll = h.list_layout(&cm);
+        let row = grouplist::row_rect(&h.list, &ll, 0).unwrap();
+        assert_eq!(
+            clear.bounds(),
+            Some(crate::access::bounds(header_parts(row).0))
+        );
+        let calendar = tree.get(rows[5]).unwrap();
+        assert_eq!(calendar.is_expanded(), Some(false), "Calendar is folded");
+        assert_eq!(focus, rows[1], "the selected notification");
+        let note = tree.get(rows[1]).unwrap();
+        assert_eq!(note.label(), Some("3 new messages"));
+        assert_eq!(note.description(), Some("4:12 PM"));
+        assert!(note.supports_action(Action::ShowContextMenu));
+        assert!(note.supports_action(Action::Focus) && note.supports_action(Action::Click));
+        assert!(!mail.supports_action(Action::ShowContextMenu));
+    }
+
+    #[test]
+    fn an_empty_panel_says_so_and_greys_clear_all() {
+        let h = History::new();
+        let cm = ControlMetrics::CLASSIC;
+        let mut tree = crate::access::Tree::window("", (W, layout(&cm).height));
+        let focus = access(&h, &cm, &mut tree, crate::access::ROOT);
+        let list = tree.get(focus).unwrap();
+        let empty = tree.get(list.children()[0]).unwrap();
+        assert_eq!(empty.value(), Some("No notifications"));
+        let root = tree.get(crate::access::ROOT).unwrap().children().to_vec();
+        assert!(tree.get(root[2]).unwrap().is_disabled());
+    }
+
+    #[test]
+    fn select_moves_to_a_header_without_folding_it() {
+        let mut h = sample();
+        assert!(h.select(0));
+        assert_eq!((h.list.selected, labels(&h).len()), (Some(0), 6));
+        assert!(!h.select(0), "already there");
     }
 }

@@ -1,4 +1,4 @@
-//! Screen reader side of the compositor's own surfaces: one AccessKit adapter per taskbar, menu stack, switcher, dialog, launcher, clipboard history, emoji picker, calendar, tray flyout and task preview panel, speaking AT-SPI on the session's accessibility bus.
+//! Screen reader side of the compositor's own surfaces: one AccessKit adapter per taskbar, menu stack, switcher, dialog, launcher, clipboard history, emoji picker, calendar, tray flyout, task preview panel, notification history and the balloons, speaking AT-SPI on the session's accessibility bus.
 //! `accesskit_unix` runs its D-Bus side on its own thread and calls the handlers (`reprisekit::access::Handler`) there; they post a `Msg` to a calloop channel, so the loop never waits on the bus. Trees are built on the loop, in an idle pass [`touch`] queues, only for adapters a reader holds.
 //! Bounds are layout coordinates: a tree's root carries its surface's place as a transform and its controls lay out surface-local. A tree claims the focus only while its surface has the keyboard (see [`focus_of`]). The lock screen has no tree, so its password field's text stays here.
 //! A reader's action on a node runs as the click a user would give it ([`click`], `reprisekit::access::gesture`) through the pointer's press and release paths; focusing a taskbar item gives the bar the keyboard (`barkeys`).
@@ -37,6 +37,9 @@ pub enum Surface {
     TrayFlyout,
     SnapPicker,
     TaskPreview,
+    /// Always there (see `notifyview::access`), so a balloon's alert is announced.
+    Balloons,
+    NotifyCenter,
 }
 
 type Msg = reprisekit::access::Msg<Surface>;
@@ -133,6 +136,7 @@ pub struct Keyboard {
     pub start_panel: bool,
     pub clipview: bool,
     pub emojiview: bool,
+    pub notify_reply: bool,
     pub notify_center: bool,
     pub taskbar: Option<TreeId>,
     pub dialog: Option<u64>,
@@ -162,8 +166,10 @@ pub fn focus_of(k: &Keyboard) -> Option<Surface> {
         Some(Surface::ClipView)
     } else if k.emojiview {
         Some(Surface::EmojiView)
+    } else if k.notify_reply {
+        Some(Surface::Balloons)
     } else if k.notify_center {
-        None
+        Some(Surface::NotifyCenter)
     } else if let Some(t) = k.taskbar {
         Some(Surface::Taskbar(t))
     } else if let Some(id) = k.dialog {
@@ -189,6 +195,7 @@ fn keyboard(state: &State) -> Keyboard {
         start_panel: state.start_panel.is_some(),
         clipview: state.panels.clipview.is_some(),
         emojiview: state.panels.emojiview.is_some(),
+        notify_reply: crate::notifyview::reply_focused(state),
         notify_center: crate::notifycenter::is_open(state),
         taskbar: state.bar_shared.keys.map(|k| k.bar),
         dialog: state.active_dialog_id(),
@@ -255,6 +262,8 @@ fn surfaces(state: &State) -> Vec<Surface> {
         ),
         (state.task_preview.is_shown(), Surface::TaskPreview),
         (state.snap_picker.is_shown(), Surface::SnapPicker),
+        (crate::notifycenter::is_open(state), Surface::NotifyCenter),
+        (true, Surface::Balloons),
     ];
     v.extend(open.into_iter().filter_map(|(on, x)| on.then_some(x)));
     v.extend(state.dialogs.views.iter().map(|d| Surface::Dialog(d.id)));
@@ -276,6 +285,8 @@ fn tree(state: &State, surface: Surface) -> Option<Tree> {
         Surface::ClipView => state.clipview_access(),
         Surface::EmojiView => state.emoji_access(),
         Surface::Calendar => crate::calendarview::access(state),
+        Surface::NotifyCenter => crate::notifycenter::access(state),
+        Surface::Balloons => Some(crate::notifyview::access(state)),
     }
 }
 
@@ -466,7 +477,9 @@ fn lands_on(state: &State, surface: Surface, hit: &Hit) -> bool {
         | (Surface::EmojiView, Hit::EmojiView { .. })
         | (Surface::Calendar, Hit::Calendar { .. })
         | (Surface::TrayFlyout, Hit::TrayFlyout { .. })
-        | (Surface::TaskPreview, Hit::TaskPreview { .. }) => true,
+        | (Surface::TaskPreview, Hit::TaskPreview { .. })
+        | (Surface::Balloons, Hit::Notification)
+        | (Surface::NotifyCenter, Hit::NotifyCenter) => true,
         _ => false,
     }
 }
@@ -492,6 +505,10 @@ fn act(state: &mut State, surface: Surface, req: Request) {
         && *hit != reprisekit::taskbar::TaskbarHit::Nothing
     {
         state.focus_bar_item(*bar, *hit);
+        return;
+    }
+    if (req.act, &hit) == (Act::Focus, &Hit::NotifyCenter) {
+        crate::notifycenter::select_at(state, target.at.0, target.at.1);
         return;
     }
     match reprisekit::access::gesture(req.act, target) {
@@ -712,6 +729,26 @@ mod tests {
             HandOff::Keep,
             "an app's menu with none of ours open stays"
         );
+    }
+
+    #[test]
+    fn a_focused_reply_field_has_the_focus_over_the_history() {
+        let center = Keyboard {
+            notify_center: true,
+            client: true,
+            ..Keyboard::default()
+        };
+        assert_eq!(focus_of(&center), Some(Surface::NotifyCenter));
+        let reply = Keyboard {
+            notify_reply: true,
+            ..center
+        };
+        assert_eq!(focus_of(&reply), Some(Surface::Balloons));
+        let emoji = Keyboard {
+            emojiview: true,
+            ..reply
+        };
+        assert_eq!(focus_of(&emoji), Some(Surface::EmojiView));
     }
 
     #[test]
