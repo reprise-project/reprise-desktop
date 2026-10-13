@@ -28,9 +28,10 @@ use crate::config::{Action, parse_keybind};
 use crate::keys::{KEY_Alt_L, KEY_Control_L, KEY_Shift_L, KEY_Super_L};
 use crate::keys::{MOD_ALT, MOD_CTRL, MOD_LOGO, MOD_SHIFT};
 
-/// Degrees of ring travel per step.
+/// Degrees of ring travel per step, unless the entry says `ring_step`.
 const RING_STEP: f64 = 15.0;
-/// Strip travel per step, of its whole length.
+/// Strip travel per step, of its whole length, unless the entry says
+/// `strip_step`.
 const STRIP_STEP: f64 = 0.1;
 
 /// What a pad button, or one step of a ring or strip, does.
@@ -78,7 +79,7 @@ pub struct Mapping {
     pub strip_down: Option<Binding>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct PadConfig {
     /// A glob over the pad's device name.
     pub name: String,
@@ -86,6 +87,10 @@ pub struct PadConfig {
     pub base: Mapping,
     /// `[[tablet_pads.modes]]`: mode i's bindings over `base`.
     pub modes: Vec<Mapping>,
+    /// Degrees of ring travel per step.
+    pub ring_step: f64,
+    /// Strip travel per step, of its whole length.
+    pub strip_step: f64,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -135,6 +140,8 @@ pub struct FilePad {
     ring_down: Option<String>,
     strip_up: Option<String>,
     strip_down: Option<String>,
+    ring_step: Option<f64>,
+    strip_step: Option<f64>,
     modes: Option<Vec<FileMapping>>,
 }
 
@@ -187,7 +194,18 @@ impl FilePad {
         let modes = (self.modes.unwrap_or_default().into_iter().enumerate())
             .map(|(i, m)| m.parse(&format!("{at} modes #{}", i + 1)))
             .collect::<Result<_, _>>()?;
-        Ok(PadConfig { name, base, modes })
+        let step = |key: &str, v: Option<f64>, default: f64, max: f64| match v {
+            None => Ok(default),
+            Some(v) if v > 0.0 && v <= max => Ok(v),
+            Some(v) => Err(format!("{at}: {key}: {v} is not above 0 and at most {max}")),
+        };
+        Ok(PadConfig {
+            name,
+            base,
+            modes,
+            ring_step: step("ring_step", self.ring_step, RING_STEP, 360.0)?,
+            strip_step: step("strip_step", self.strip_step, STRIP_STEP, 1.0)?,
+        })
     }
 }
 
@@ -200,15 +218,16 @@ pub struct Dial {
 
 impl Dial {
     /// A ring at `pos` degrees (clockwise from the top, -1 when the finger
-    /// lifts): the steps since the last position, clockwise positive.
-    pub fn ring(&mut self, pos: f64) -> i32 {
-        self.travel(pos, |d| (d + 180.0).rem_euclid(360.0) - 180.0, RING_STEP)
+    /// lifts): the steps of `step` degrees since the last position,
+    /// clockwise positive.
+    pub fn ring(&mut self, pos: f64, step: f64) -> i32 {
+        self.travel(pos, |d| (d + 180.0).rem_euclid(360.0) - 180.0, step)
     }
 
     /// A strip at `pos` (0 at its top to 1, -1 when the finger lifts): the
-    /// steps since the last position, upward positive.
-    pub fn strip(&mut self, pos: f64) -> i32 {
-        self.travel(pos, |d| -d, STRIP_STEP)
+    /// steps of `step` since the last position, upward positive.
+    pub fn strip(&mut self, pos: f64, step: f64) -> i32 {
+        self.travel(pos, |d| -d, step)
     }
 
     fn travel(&mut self, pos: f64, delta: impl Fn(f64) -> f64, step: f64) -> i32 {
@@ -318,6 +337,9 @@ pub fn event(state: &mut State, e: TabletPadEvent) {
     else {
         return;
     };
+    let entry = find(&state.config.tablet_pads, &device.name());
+    let ring_step = entry.map_or(RING_STEP, |p| p.ring_step);
+    let strip_step = entry.map_or(STRIP_STEP, |p| p.strip_step);
     let group = e.mode_group();
     let libinput_modes = group.number_of_modes() > 1;
     let pad = &mut state.devices.pads.pads[i];
@@ -363,14 +385,14 @@ pub fn event(state: &mut State, e: TabletPadEvent) {
             let Some(dial) = pad.rings.get_mut(r.number() as usize) else {
                 return;
             };
-            let steps = dial.ring(r.position());
+            let steps = dial.ring(r.position(), ring_step);
             state.pad_steps(i, mode, steps, Control::RingUp, Control::RingDown);
         }
         TabletPadEvent::Strip(s) => {
             let Some(dial) = pad.strips.get_mut(s.number() as usize) else {
                 return;
             };
-            let steps = dial.strip(s.position());
+            let steps = dial.strip(s.position(), strip_step);
             state.pad_steps(i, mode, steps, Control::StripUp, Control::StripDown);
         }
         _ => {}
@@ -616,7 +638,9 @@ mod tests {
             PadConfig {
                 name: "*".into(),
                 base: Mapping::default(),
-                modes: vec![]
+                modes: vec![],
+                ring_step: RING_STEP,
+                strip_step: STRIP_STEP,
             }
             .mode_count(),
             1
@@ -626,25 +650,66 @@ mod tests {
     #[test]
     fn a_ring_steps_every_fifteen_degrees_across_the_top() {
         let mut d = Dial::default();
-        assert_eq!(d.ring(350.0), 0, "a touch only sets the start");
-        assert_eq!(d.ring(359.0), 0);
-        assert_eq!(d.ring(5.0), 1, "clockwise through 0 is up");
-        assert_eq!(d.ring(40.0), 2);
-        assert_eq!(d.ring(10.0), -1, "30 degrees back from 5 past a step");
-        assert_eq!(d.ring(-1.0), 0, "the finger lifts");
-        assert_eq!(d.ring(100.0), 0, "a new touch starts over");
-        assert_eq!(d.ring(60.0), -2);
-        assert_eq!(d.ring(56.0), 0, "travel under a step waits");
-        assert_eq!(d.ring(44.0), -1);
+        assert_eq!(d.ring(350.0, RING_STEP), 0, "a touch only sets the start");
+        assert_eq!(d.ring(359.0, RING_STEP), 0);
+        assert_eq!(d.ring(5.0, RING_STEP), 1, "clockwise through 0 is up");
+        assert_eq!(d.ring(40.0, RING_STEP), 2);
+        assert_eq!(
+            d.ring(10.0, RING_STEP),
+            -1,
+            "30 degrees back from 5 past a step"
+        );
+        assert_eq!(d.ring(-1.0, RING_STEP), 0, "the finger lifts");
+        assert_eq!(d.ring(100.0, RING_STEP), 0, "a new touch starts over");
+        assert_eq!(d.ring(60.0, RING_STEP), -2);
+        assert_eq!(d.ring(56.0, RING_STEP), 0, "travel under a step waits");
+        assert_eq!(d.ring(44.0, RING_STEP), -1);
+    }
+
+    #[test]
+    fn an_entry_sets_its_ring_and_strip_steps() {
+        let pads = parse("[[tablet_pads]]\nring_step = 30\nstrip_step = 0.25\n[[tablet_pads]]\n");
+        assert_eq!((pads[0].ring_step, pads[0].strip_step), (30.0, 0.25));
+        assert_eq!((pads[1].ring_step, pads[1].strip_step), (15.0, 0.1));
+        let mut d = Dial::default();
+        d.ring(0.0, 30.0);
+        assert_eq!(d.ring(75.0, 30.0), 2, "75 degrees is two steps of 30");
+        let mut d = Dial::default();
+        d.strip(1.0, 0.25);
+        assert_eq!(d.strip(0.2, 0.25), 3, "0.8 up is three steps of a quarter");
+    }
+
+    #[test]
+    fn a_step_out_of_range_says_where() {
+        let err = |text: &str| {
+            #[derive(Deserialize)]
+            struct F {
+                tablet_pads: Vec<FilePad>,
+            }
+            let f: F = toml::from_str(text).unwrap();
+            let pad = f.tablet_pads.into_iter().next().unwrap();
+            pad.parse("tablet_pads #1").unwrap_err()
+        };
+        assert_eq!(
+            err("[[tablet_pads]]\nring_step = 0"),
+            "tablet_pads #1: ring_step: 0 is not above 0 and at most 360"
+        );
+        assert!(err("[[tablet_pads]]\nring_step = 361").starts_with("tablet_pads #1: ring_step:"));
+        assert!(
+            err("[[tablet_pads]]\nstrip_step = 1.5").starts_with("tablet_pads #1: strip_step:")
+        );
+        assert!(
+            err("[[tablet_pads]]\nstrip_step = -0.1").starts_with("tablet_pads #1: strip_step:")
+        );
     }
 
     #[test]
     fn a_strip_steps_up_toward_its_top() {
         let mut d = Dial::default();
-        assert_eq!(d.strip(0.5), 0);
-        assert_eq!(d.strip(0.29), 2, "up the strip is up");
-        assert_eq!(d.strip(0.62), -3);
-        assert_eq!(d.strip(-1.0), 0);
-        assert_eq!(d.strip(0.0), 0);
+        assert_eq!(d.strip(0.5, STRIP_STEP), 0);
+        assert_eq!(d.strip(0.29, STRIP_STEP), 2, "up the strip is up");
+        assert_eq!(d.strip(0.62, STRIP_STEP), -3);
+        assert_eq!(d.strip(-1.0, STRIP_STEP), 0);
+        assert_eq!(d.strip(0.0, STRIP_STEP), 0);
     }
 }
