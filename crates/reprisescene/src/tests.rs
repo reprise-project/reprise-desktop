@@ -848,6 +848,77 @@ fn a_canvas_and_a_texture_render_cropped_and_scaled() {
 }
 
 #[test]
+fn a_clipped_tree_cuts_its_leaves_to_the_clip_as_it_moves() {
+    let mut s = TestScene::new();
+    let root = s.root();
+    let t = s.tree_create(root);
+    let b = s.buffer_create(t);
+    s.buffer_set_canvas(b, &[0; 100 * 50], 100, 50);
+    s.set_clip(t, Some(rect(0, 0, 100, 50)));
+    let geometry = |s: &TestScene, v: &View| -> Vec<Rectangle<i32, Physical>> {
+        (s.render_elements(&mut TestRenderer, v).iter())
+            .map(|e| e.geometry(v.scale))
+            .collect()
+    };
+    let v = view(300, 100);
+    assert_eq!(geometry(&s, &v), vec![prect(0, 0, 100, 50)]);
+    s.set_position(t, 60, 0);
+    s.set_clip(t, Some(rect(-60, 0, 100, 50)));
+    assert_eq!(
+        geometry(&s, &v),
+        vec![prect(60, 0, 40, 50)],
+        "cut at x = 100"
+    );
+    let els = s.render_elements(&mut TestRenderer, &v);
+    assert_eq!(
+        els[0].src(),
+        Rectangle::new((0.0, 0.0).into(), (40.0, 50.0).into()),
+        "the buffer's left part shows"
+    );
+    assert_eq!(
+        geometry(&s, &View::new(rect(0, 0, 300, 100), 2.0)),
+        vec![prect(120, 0, 80, 100)],
+        "physical at scale 2"
+    );
+    s.set_position(t, 100, 0);
+    s.set_clip(t, Some(rect(-100, 0, 100, 50)));
+    assert!(geometry(&s, &v).is_empty(), "wholly outside draws nothing");
+    s.set_clip(t, None);
+    assert_eq!(geometry(&s, &v), vec![prect(100, 0, 100, 50)]);
+}
+
+#[test]
+fn nested_clips_intersect_and_cut_hits() {
+    let mut s = TestScene::new();
+    let root = s.root();
+    let below = s.rect_create(root, (200, 200), RED);
+    let outer = s.tree_create(root);
+    s.set_clip(outer, Some(rect(0, 0, 50, 200)));
+    let inner = s.tree_create(outer);
+    s.set_position(inner, 20, 0);
+    s.set_clip(inner, Some(rect(0, 0, 100, 10)));
+    let r = s.rect_create(inner, (100, 100), RED);
+    let els = s.render_elements(&mut TestRenderer, &view(200, 200));
+    assert_eq!(els[0].geometry(Scale::from(1.0)), prect(20, 0, 30, 10));
+    assert_eq!(s.node_at(root, pt(30.0, 5.0)).unwrap().node, r.node());
+    assert_eq!(
+        s.node_at(root, pt(60.0, 5.0)).unwrap().node,
+        below.node(),
+        "past the outer clip"
+    );
+    assert_eq!(
+        s.node_at(root, pt(30.0, 20.0)).unwrap().node,
+        below.node(),
+        "past the inner clip"
+    );
+    assert_eq!(
+        s.node_at(inner, pt(60.0, 5.0)),
+        None,
+        "an ancestor's clip applies from a subtree"
+    );
+}
+
+#[test]
 fn opaque_region_is_reported_in_whole_physical_pixels() {
     let mut s = TestScene::new();
     let root = s.root();
