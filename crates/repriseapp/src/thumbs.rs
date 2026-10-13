@@ -170,8 +170,22 @@ pub fn open_cache(max_bytes: u64) -> Option<Thumbnails> {
     ))
 }
 
-/// The cap of a program that has no setting for it.
-pub const CACHE_BYTES: u64 = 512 << 20;
+/// The cap when `[thumbnail_cache] max_mb` is unset.
+pub const CACHE_BYTES: u64 = repriseconf::ThumbnailCache::DEFAULT.max_bytes();
+
+/// The shared cache as config.toml's `[thumbnail_cache]` sets it, read now. None when it is off:
+/// pictures still decode, and nothing is kept.
+pub fn configured_cache() -> Option<Thumbnails> {
+    cache_for(repriseconf::thumbnail_cache())
+}
+
+/// The shared cache as `setting` has it: None when it is off.
+pub fn cache_for(setting: repriseconf::ThumbnailCache) -> Option<Thumbnails> {
+    setting
+        .enabled
+        .then(|| open_cache(setting.max_bytes()))
+        .flatten()
+}
 
 const PROGRAM: &str = concat!("reprise-", env!("CARGO_PKG_VERSION"));
 
@@ -277,6 +291,19 @@ mod tests {
             dims: (800, 600),
             generation,
         }
+    }
+
+    #[test]
+    fn a_cache_turned_off_is_not_opened() {
+        let off = repriseconf::ThumbnailCache {
+            enabled: false,
+            ..repriseconf::ThumbnailCache::DEFAULT
+        };
+        assert!(cache_for(off).is_none());
+        assert_eq!(
+            cache_for(repriseconf::ThumbnailCache::DEFAULT).is_some(),
+            Thumbnails::default_dir().is_some()
+        );
     }
 
     #[test]
