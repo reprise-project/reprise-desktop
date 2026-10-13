@@ -433,6 +433,7 @@ impl State {
             can_switch_vt: self.backend.is_some(),
             locked: self.is_locked(),
             captured: self.inputproto.gated(),
+            saver_preview: crate::saverview::holds_keys(self),
             keyboard_interaction: self.interaction.is_keyboard(),
             bar_drag: matches!(
                 self.interaction,
