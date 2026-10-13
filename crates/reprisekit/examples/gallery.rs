@@ -4489,7 +4489,13 @@ fn render(theme: &Theme, with_blue: bool) -> Canvas {
             ghost((75, 0), "Photos"),
             ghost((0, 75), "Shortcut to Notes"),
         ];
-        if let Some((img, _)) = iconview::drag_image(theme, &text, &ghosts, (37, 37)) {
+        if let Some((img, _)) = iconview::drag_image(
+            theme,
+            &text,
+            &ghosts,
+            iconview::Cell::square(iconview::CELL),
+            (37, 37),
+        ) {
             c.blit_over(420, 9843, &img);
         }
     }
