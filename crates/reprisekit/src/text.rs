@@ -892,18 +892,28 @@ fn wrap_by(body: &str, max_w: i32, space: i32, measure: impl Fn(&str) -> i32) ->
         let mut line_w = 0;
         for word in para.split_whitespace() {
             let word_w = measure(word);
-            if line.is_empty() {
-                line.push_str(word);
-                line_w = word_w;
-            } else if line_w + space + word_w <= max_w {
+            if !line.is_empty() && line_w + space + word_w <= max_w {
                 line.push(' ');
                 line.push_str(word);
                 line_w += space + word_w;
-            } else {
-                lines.push(std::mem::take(&mut line));
-                line.push_str(word);
-                line_w = word_w;
+                continue;
             }
+            if !line.is_empty() {
+                lines.push(std::mem::take(&mut line));
+            }
+            let mut rest = word;
+            let mut rest_w = word_w;
+            while rest_w > max_w {
+                let cut = word_break(rest, max_w, &measure);
+                if cut == rest.len() {
+                    break;
+                }
+                lines.push(rest[..cut].to_string());
+                rest = &rest[cut..];
+                rest_w = measure(rest);
+            }
+            line.push_str(rest);
+            line_w = rest_w;
         }
         lines.push(line);
     }
@@ -911,6 +921,25 @@ fn wrap_by(body: &str, max_w: i32, space: i32, measure: impl Fn(&str) -> i32) ->
         lines.clear();
     }
     lines
+}
+
+/// The byte length of the head of `word` that goes on a line `max_w` wide:
+/// through the last `/`, `\`, `-`, `_` or `.` past its first char that fits,
+/// else the widest prefix, never less than one char.
+fn word_break(word: &str, max_w: i32, measure: impl Fn(&str) -> i32) -> usize {
+    let mut fits = 0;
+    let mut after_sep = 0;
+    for (i, c) in word.char_indices() {
+        let end = i + c.len_utf8();
+        if fits > 0 && measure(&word[..end]) > max_w {
+            break;
+        }
+        fits = end;
+        if i > 0 && matches!(c, '/' | '\\' | '-' | '_' | '.') {
+            after_sep = end;
+        }
+    }
+    if after_sep > 0 { after_sep } else { fits }
 }
 
 pub fn split_mnemonic(label: &str) -> (String, Option<usize>) {
@@ -1550,8 +1579,61 @@ mod tests {
             "a line takes a word that ends exactly on the column"
         );
         assert_eq!(wrap_chars("one\ntwo three", 20), vec!["one", "two three"]);
-        assert_eq!(wrap_chars("toolongword x", 4), vec!["toolongword", "x"]);
+        assert_eq!(
+            wrap_chars("toolongword x", 4),
+            vec!["tool", "ongw", "ord", "x"]
+        );
         assert!(wrap_chars("  ", 10).is_empty(), "blank text has no lines");
+    }
+
+    #[test]
+    fn wrap_chars_breaks_a_long_word_after_its_last_separator_that_fits() {
+        assert_eq!(
+            wrap_chars("in /srv/projects/Downloads/archive", 18),
+            vec!["in", "/srv/projects/", "Downloads/archive"]
+        );
+        assert_eq!(
+            wrap_chars("a_very-long.name", 7),
+            vec!["a_very-", "long.", "name"]
+        );
+        assert_eq!(wrap_chars("/abcdef", 3), vec!["/ab", "cde", "f"]);
+        assert_eq!(
+            wrap_chars("ab", 0),
+            vec!["a", "b"],
+            "a line holds one char at least"
+        );
+    }
+
+    #[test]
+    fn wrap_breaks_a_word_wider_than_the_line_at_the_widest_prefix() {
+        let r = renderer();
+        let word = "ProjectArchiveWithoutAnySpacesInItsName";
+        let max_w = r.measure(word, false, 11) / 3;
+        let lines = wrap(&r, word, max_w, 11);
+        assert!(lines.len() >= 3, "{lines:?}");
+        assert_eq!(lines.concat(), word);
+        for pair in lines.windows(2) {
+            assert!(
+                r.measure(&pair[0], false, 11) <= max_w,
+                "{pair:?} fits {max_w}"
+            );
+            let more = format!("{}{}", pair[0], pair[1].chars().next().unwrap());
+            assert!(
+                r.measure(&more, false, 11) > max_w,
+                "{more:?} is over {max_w}"
+            );
+        }
+    }
+
+    #[test]
+    fn wrap_keeps_words_that_fit_whole() {
+        let r = renderer();
+        let body = "Original folder /srv/projects/Documents";
+        let max_w = r.measure("/srv/projects/Documents", false, 11);
+        assert_eq!(
+            wrap(&r, body, max_w, 11),
+            vec!["Original folder", "/srv/projects/Documents"]
+        );
     }
 
     #[test]
