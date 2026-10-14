@@ -273,7 +273,8 @@ impl State {
 
     pub fn clip_has_files(&self) -> bool {
         match self.own_offers() {
-            Some(offers) => own_files(&offers).is_some_and(|c| c.paths.iter().any(|p| p.exists())),
+            // No stat: a file gone since is skipped by the paste.
+            Some(offers) => own_files(&offers).is_some_and(|c| !c.paths.is_empty()),
             None => files_mime(&self.clip.offered).is_some(),
         }
     }
