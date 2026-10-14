@@ -100,19 +100,43 @@ const PRESSED_FACE: [Color; 4] = [
 ];
 const GREYED_FACE: Color = Color::rgb(0xF3, 0xF4, 0xF4);
 
-pub fn parts(d: i32) -> [(Part, PartImage); 6] {
-    let bar = PartImage::new(progress_bar(d), &[State::Normal], Layout::Vertical)
+/// A part's painter at a scale.
+type Paint = fn(i32) -> PartImage;
+
+/// Each bar part with its painter.
+pub fn parts() -> [(Part, Paint); 6] {
+    [
+        (Part::ProgressBar, bar_part),
+        (Part::ProgressChunk, fill_part),
+        (Part::TrackbarTrack, track_part),
+        (Part::TrackbarThumb, thumb_part),
+        (Part::TrackbarTrackV, track_v_part),
+        (Part::TrackbarThumbV, thumb_v_part),
+    ]
+}
+
+fn bar_part(d: i32) -> PartImage {
+    PartImage::new(progress_bar(d), &[State::Normal], Layout::Vertical)
         .sizing(Insets::new(10, 7, 10, 6))
         .content(Insets::new(1, 1, 1, 1))
-        .at_scale(d);
-    let fill = PartImage::new(progress_fill(d), &[State::Normal], Layout::Vertical)
+        .at_scale(d)
+}
+
+fn fill_part(d: i32) -> PartImage {
+    PartImage::new(progress_fill(d), &[State::Normal], Layout::Vertical)
         .sizing(Insets::new(26, 6, 26, 5))
         .clip_ends()
-        .at_scale(d);
-    let track = PartImage::new(channel(3, 4, d), &[State::Normal], Layout::Vertical)
+        .at_scale(d)
+}
+
+fn track_part(d: i32) -> PartImage {
+    PartImage::new(channel(3, 4, d), &[State::Normal], Layout::Vertical)
         .sizing(Insets::new(1, 0, 1, 0))
-        .at_scale(d);
-    let thumb = PartImage {
+        .at_scale(d)
+}
+
+fn thumb_part(d: i32) -> PartImage {
+    PartImage {
         true_size: true,
         ..PartImage::new(
             stack(THUMB_STATES.map(|s| thumb(&inks(s), d))),
@@ -120,12 +144,18 @@ pub fn parts(d: i32) -> [(Part, PartImage); 6] {
             Layout::Vertical,
         )
         .at_scale(d)
-    };
-    let track_v = PartImage::new(channel(4, 3, d), &[State::Normal], Layout::Vertical)
+    }
+}
+
+fn track_v_part(d: i32) -> PartImage {
+    PartImage::new(channel(4, 3, d), &[State::Normal], Layout::Vertical)
         .sizing(Insets::new(0, 1, 0, 1))
         .outset(Insets::new(-1, 0, 1, 0))
-        .at_scale(d);
-    let thumb_v = PartImage {
+        .at_scale(d)
+}
+
+fn thumb_v_part(d: i32) -> PartImage {
+    PartImage {
         true_size: true,
         ..PartImage::new(
             stack(THUMB_STATES.map(|s| thumb_v(&inks(s), d))),
@@ -133,15 +163,7 @@ pub fn parts(d: i32) -> [(Part, PartImage); 6] {
             Layout::Vertical,
         )
         .at_scale(d)
-    };
-    [
-        (Part::ProgressBar, bar),
-        (Part::ProgressChunk, fill),
-        (Part::TrackbarTrack, track),
-        (Part::TrackbarThumb, thumb),
-        (Part::TrackbarTrackV, track_v),
-        (Part::TrackbarThumbV, thumb_v),
-    ]
+    }
 }
 
 fn stack<const N: usize>(frames: [Canvas; N]) -> Canvas {
@@ -394,7 +416,7 @@ mod tests {
     }
 
     fn part(d: i32, p: Part) -> PartImage {
-        parts(d).into_iter().find(|(q, _)| *q == p).unwrap().1
+        parts().into_iter().find(|(q, _)| *q == p).unwrap().1(d)
     }
 
     const PARTS: [Part; 6] = [

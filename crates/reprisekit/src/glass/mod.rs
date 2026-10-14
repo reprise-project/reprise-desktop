@@ -319,9 +319,13 @@ pub(crate) fn build(s: &Settings) -> Style {
 fn build_at(s: &Settings, scale: i32) -> Style {
     let is_dark = s.mode == Mode::Dark;
     let (title_ink, title) = caption_ink(s.material, s.mode);
+    let lazy = |paint: fn(&Settings, i32) -> PartImage| {
+        let s = *s;
+        move || paint(&s, scale)
+    };
     // Dark Glass remaps only the control art; the glass keeps its colour,
     // and so does the progress bar's green fill.
-    let ink = |(part, img): (Part, PartImage)| {
+    let ink = move |(part, img): (Part, PartImage)| {
         let remap = is_dark && part != Part::ProgressChunk;
         (part, if remap { dark::remap_part(img) } else { img })
     };
@@ -366,34 +370,64 @@ fn build_at(s: &Settings, scale: i32) -> Style {
         State::Disabled,
         colors(s.mode).gray_text,
     )
-    .with_part(Part::Caption, frame::caption(s, scale))
-    .with_part(Part::MaxCaption, frame::max_caption(s, scale))
-    .with_part(Part::FrameLeft, frame::frame_left(s, scale))
-    .with_part(Part::FrameRight, frame::frame_right(s, scale))
-    .with_part(Part::FrameBottom, frame::frame_bottom(s, scale))
-    .with_part(Part::WindowSheet, frame::sheet(s, scale))
-    .with_part(Part::CaptionGroup, buttons::caption_group(s, scale))
-    .with_part(Part::MaxCaptionGroup, buttons::max_caption_group(s, scale))
-    .with_part(Part::CloseButton, buttons::dialog_close(s, scale))
-    .with_part(Part::HelpButton, buttons::help_strip(s, scale))
+    .with_painted(Part::Caption, lazy(frame::caption))
+    .with_painted(Part::MaxCaption, lazy(frame::max_caption))
+    .with_painted(Part::FrameLeft, lazy(frame::frame_left))
+    .with_painted(Part::FrameRight, lazy(frame::frame_right))
+    .with_painted(Part::FrameBottom, lazy(frame::frame_bottom))
+    .with_painted(Part::WindowSheet, lazy(frame::sheet))
+    .with_painted(Part::CaptionGroup, lazy(buttons::caption_group))
+    .with_painted(Part::MaxCaptionGroup, lazy(buttons::max_caption_group))
+    .with_painted(Part::CloseButton, lazy(buttons::dialog_close))
+    .with_painted(Part::HelpButton, lazy(buttons::help_strip))
     .with_joined_help(buttons::HELP_CELL)
-    .with_part(Part::Taskbar, bar::taskbar(s, BAR_HEIGHT, scale))
-    .with_part(Part::StartButton, paint::start_button(s, scale))
-    .with_part(Part::StartAbove, paint::start_above(s, scale))
-    .with_part(Part::TaskButton, taskbutton::buttons(s, BUTTON, scale))
-    .with_part(Part::TaskStack, taskbutton::stacks(s, BUTTON, true, scale))
-    .with_part(Part::LabelRow, bar::label_row(s, BAR_HEIGHT, scale))
-    .with_part(Part::TaskLabel, taskbutton::label(s, BAR_HEIGHT, scale))
-    .with_part(
-        Part::TaskLabelEdge,
-        taskbutton::label_edges(s, BAR_HEIGHT, scale),
+    .with_painted(Part::Taskbar, lazy(|s, d| bar::taskbar(s, BAR_HEIGHT, d)))
+    .with_painted(Part::StartButton, lazy(paint::start_button))
+    .with_painted(Part::StartAbove, lazy(paint::start_above))
+    .with_painted(
+        Part::TaskButton,
+        lazy(|s, d| taskbutton::buttons(s, BUTTON, d)),
     )
-    .with_part(Part::SlotEdge, bar::slot_edge(s, BAR_HEIGHT, scale))
-    .with_part(Part::SlotLight, bar::slot_light(ICON_BUTTON.0, scale))
-    .with_part(Part::SlotBand, bar::slot_band(s, BAR_HEIGHT, scale))
-    .with_part(Part::PagerTile, taskbutton::pager_tiles(s, BUTTON, scale))
-    .with_part(Part::TrayArea, bar::tray_area(s, BAR_HEIGHT, scale))
-    .with_part(Part::ShowDesktop, bar::show_desktop(s, BAR_HEIGHT, scale))
+    .with_painted(
+        Part::TaskStack,
+        lazy(|s, d| taskbutton::stacks(s, BUTTON, true, d)),
+    )
+    .with_painted(
+        Part::LabelRow,
+        lazy(|s, d| bar::label_row(s, BAR_HEIGHT, d)),
+    )
+    .with_painted(
+        Part::TaskLabel,
+        lazy(|s, d| taskbutton::label(s, BAR_HEIGHT, d)),
+    )
+    .with_painted(
+        Part::TaskLabelEdge,
+        lazy(|s, d| taskbutton::label_edges(s, BAR_HEIGHT, d)),
+    )
+    .with_painted(
+        Part::SlotEdge,
+        lazy(|s, d| bar::slot_edge(s, BAR_HEIGHT, d)),
+    )
+    .with_painted(
+        Part::SlotLight,
+        lazy(|_, d| bar::slot_light(ICON_BUTTON.0, d)),
+    )
+    .with_painted(
+        Part::SlotBand,
+        lazy(|s, d| bar::slot_band(s, BAR_HEIGHT, d)),
+    )
+    .with_painted(
+        Part::PagerTile,
+        lazy(|s, d| taskbutton::pager_tiles(s, BUTTON, d)),
+    )
+    .with_painted(
+        Part::TrayArea,
+        lazy(|s, d| bar::tray_area(s, BAR_HEIGHT, d)),
+    )
+    .with_painted(
+        Part::ShowDesktop,
+        lazy(|s, d| bar::show_desktop(s, BAR_HEIGHT, d)),
+    )
     .with_task_glow(paint::task_glow(s))
     .with_start_bloom(orb::bloom)
     .with_task_spot(taskbutton::task_spot(s, scale))
@@ -401,16 +435,16 @@ fn build_at(s: &Settings, scale: i32) -> Style {
     .with_greyed_field_frame()
     .with_controls(controls())
     .with_default_needing_active()
-    .with_part(Part::PreviewFrame, preview::frame_part(s, scale))
-    .with_part(Part::PreviewThumb, preview::thumb_part(scale))
-    .with_part(Part::PreviewClose, popups::preview_close(scale))
-    .with_part(Part::SwitcherFrame, switcher::frame_part(s, scale))
-    .with_part(Part::SwitcherIconFrame, switcher::icon_frame_part(s, scale))
-    .with_part(Part::SwitcherSelect, switcher::select_part(scale))
-    .with_part(Part::SwitcherHot, switcher::hot_part(scale))
-    .with_part(Part::SwitcherShadow, switcher::shadow_part(scale))
-    .with_part(Part::SnapFrame, snappicker::frame_part(s, scale))
-    .with_part(Part::FlyoutShadow, flyouts::shadow_part(scale));
+    .with_painted(Part::PreviewFrame, lazy(preview::frame_part))
+    .with_painted(Part::PreviewThumb, lazy(|_, d| preview::thumb_part(d)))
+    .with_painted(Part::PreviewClose, lazy(|_, d| popups::preview_close(d)))
+    .with_painted(Part::SwitcherFrame, lazy(switcher::frame_part))
+    .with_painted(Part::SwitcherIconFrame, lazy(switcher::icon_frame_part))
+    .with_painted(Part::SwitcherSelect, lazy(|_, d| switcher::select_part(d)))
+    .with_painted(Part::SwitcherHot, lazy(|_, d| switcher::hot_part(d)))
+    .with_painted(Part::SwitcherShadow, lazy(|_, d| switcher::shadow_part(d)))
+    .with_painted(Part::SnapFrame, lazy(snappicker::frame_part))
+    .with_painted(Part::FlyoutShadow, lazy(|_, d| flyouts::shadow_part(d)));
     let style = controls::parts(scale)
         .into_iter()
         .map(ink)
@@ -419,11 +453,10 @@ fn build_at(s: &Settings, scale: i32) -> Style {
         .into_iter()
         .fold(style, |st, (part, img)| st.with_part(part, img))
         .with_text_color(Part::StartPanel, State::Normal, startpanel::right_ink(s));
-    fields::parts(scale)
+    let style = fields::parts(scale)
         .into_iter()
         .chain(sheet::parts(scale))
         .chain(scrollbar::parts(scale))
-        .chain(bars::parts(scale))
         .chain(header::parts(scale))
         .chain(statusbar::parts(scale))
         .chain(popups::parts(scale))
@@ -433,7 +466,12 @@ fn build_at(s: &Settings, scale: i32) -> Style {
         .chain(flyouts::parts(scale))
         .chain(items::parts(scale))
         .map(ink)
-        .fold(style, |st, (part, img)| st.with_part(part, img))
+        .fold(style, |st, (part, img)| st.with_part(part, img));
+    bars::parts()
+        .into_iter()
+        .fold(style, |st, (part, paint)| {
+            st.with_painted(part, move || ink((part, paint(scale))).1)
+        })
         .with_combo_edit_border()
         .with_group_label(sheet::GROUP_LABEL)
         .with_smooth_progress()
@@ -902,7 +940,7 @@ mod tests {
             .chain(fields::parts(1).into_iter().map(|(p, _)| p))
             .chain(sheet::parts(1).into_iter().map(|(p, _)| p))
             .chain(scrollbar::parts(1).into_iter().map(|(p, _)| p))
-            .chain(bars::parts(1).into_iter().map(|(p, _)| p))
+            .chain(bars::parts().into_iter().map(|(p, _)| p))
             .chain(header::parts(1).into_iter().map(|(p, _)| p))
             .chain(statusbar::parts(1).into_iter().map(|(p, _)| p))
             .chain(popups::parts(1).into_iter().map(|(p, _)| p))

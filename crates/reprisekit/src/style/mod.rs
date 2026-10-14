@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, LazyLock, Mutex};
 
 pub mod frame;
 pub(crate) mod startbloom;
@@ -985,7 +985,7 @@ pub struct Style {
     pub greyed_field_frame: bool,
     pub default_needs_active: bool,
     pub combo_edit_border: bool,
-    parts: HashMap<Part, PartImage>,
+    parts: HashMap<Part, Art>,
     pub controls: ControlMetrics,
     text_colors: HashMap<(Part, State), Color>,
     pub group_label: GroupLabel,
@@ -1023,6 +1023,9 @@ impl Clone for Rescaled {
 }
 
 type Rescale = Arc<dyn Fn(i32) -> Style + Send + Sync>;
+
+/// A part's art, painted the first time it is asked for; clones share it.
+type Art = Arc<LazyLock<PartImage, Box<dyn FnOnce() -> PartImage + Send>>>;
 
 impl Style {
     pub fn new(
@@ -1219,8 +1222,19 @@ impl Style {
         self
     }
 
-    pub fn with_part(mut self, part: Part, img: PartImage) -> Style {
-        self.parts.insert(part, img);
+    pub fn with_part(self, part: Part, img: PartImage) -> Style {
+        self.with_painted(part, move || img)
+    }
+
+    /// `part` drawn by `paint`, which runs the first time the part is asked for:
+    /// a program draws only a few of the parts its style holds.
+    pub fn with_painted(
+        mut self,
+        part: Part,
+        paint: impl FnOnce() -> PartImage + Send + 'static,
+    ) -> Style {
+        self.parts
+            .insert(part, Arc::new(LazyLock::new(Box::new(paint))));
         self
     }
 
@@ -1230,7 +1244,7 @@ impl Style {
     }
 
     pub fn part(&self, part: Part) -> Option<&PartImage> {
-        self.parts.get(&part)
+        self.parts.get(&part).map(|art| LazyLock::force(art))
     }
 
     /// Every part this style draws, in no particular order.
@@ -1512,6 +1526,22 @@ mod tests {
         assert_eq!(p.frame(State::Normal), Rect::new(0, 0, 3, 2));
         assert_eq!(p.frame(State::Hot), Rect::new(0, 2, 3, 2));
         assert_eq!(p.frame(State::Pressed), Rect::new(0, 0, 3, 2));
+    }
+
+    #[test]
+    fn a_painted_part_paints_once_on_first_ask_and_clones_share_it() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        static PAINTS: AtomicUsize = AtomicUsize::new(0);
+        let s = style().with_painted(Part::Taskbar, || {
+            PAINTS.fetch_add(1, Ordering::Relaxed);
+            PartImage::new(Canvas::new(2, 2), &[State::Normal], Layout::Vertical)
+        });
+        let copy = s.clone();
+        assert!(s.has_parts(&[Part::Taskbar]));
+        assert_eq!(PAINTS.load(Ordering::Relaxed), 0);
+        assert_eq!(s.part(Part::Taskbar).unwrap().atlas.width, 2);
+        assert_eq!(copy.part(Part::Taskbar).unwrap().atlas.width, 2);
+        assert_eq!(PAINTS.load(Ordering::Relaxed), 1);
     }
 
     #[test]
