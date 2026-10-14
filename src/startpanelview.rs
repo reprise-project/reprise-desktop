@@ -40,6 +40,7 @@ const RESULT_ICON: i32 = 16;
 const FADE_TICK: Duration = Duration::from_millis(16);
 const CROSSFADE: Duration = Duration::from_millis(350);
 const JUMP_TITLE: &str = "Recent";
+const ACCOUNTS: &str = "reprise-accounts";
 const RECENT_ITEMS: usize = 15;
 
 pub struct StartPanelView {
@@ -1044,6 +1045,10 @@ impl State {
                 }
             }
             Spot::Result(g, r) => self.start_panel_run_result(g, r),
+            Spot::Picture => {
+                self.close_start_panel();
+                self.run_action(&Action::Spawn(ACCOUNTS.into()), 0);
+            }
             _ => {}
         }
     }

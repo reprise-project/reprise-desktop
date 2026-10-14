@@ -4,7 +4,7 @@
 use super::layout::Layout;
 use super::{
     ALL_PROGRAMS, BACK, CLEAR, Mode, SEARCH_CUE, SHUT_DOWN, SHUT_DOWN_OPTIONS, Spot, StartPanel,
-    TreeRow,
+    TreeRow, USER_ACCOUNTS,
 };
 use crate::access::accesskit::{HasPopup, Node, NodeId, Role};
 use crate::access::{self, Tree};
@@ -65,7 +65,7 @@ fn item(r: Rect, label: &str) -> Node {
     n
 }
 
-/// The node for spot `s` at `r`; the picture has none (the first place names the user).
+/// The node for spot `s` at `r`.
 fn spot_node(p: &StartPanel, s: Spot, r: Rect) -> Option<Node> {
     let n = match s {
         Spot::Program(i) => {
@@ -103,7 +103,7 @@ fn spot_node(p: &StartPanel, s: Spot, r: Rect) -> Option<Node> {
             }
             n
         }
-        Spot::Picture => return None,
+        Spot::Picture => access::button(r, USER_ACCOUNTS, true, false),
         Spot::Search => {
             let mut n = access::node(Role::SearchInput, r);
             n.set_value(p.query());
@@ -125,6 +125,7 @@ fn spot_node(p: &StartPanel, s: Spot, r: Rect) -> Option<Node> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::access::accesskit::Action;
     use crate::startpanel::layout::layout;
     use crate::startpanel::tests::{place, prow, row};
     use crate::startpanel::{Key, ResultGroup};
@@ -151,6 +152,10 @@ mod tests {
         assert!(t.find(Role::MenuItem, "Documents").is_some());
         assert!(t.find(Role::Button, SHUT_DOWN).is_some());
         assert!(t.find(Role::Button, SHUT_DOWN_OPTIONS).is_some());
+        let picture = t
+            .find(Role::Button, USER_ACCOUNTS)
+            .expect("the user picture");
+        assert!(t.get(picture).unwrap().supports_action(Action::Click));
         p.key(Key::Down);
         let (_, focus) = build(&p);
         assert_eq!(focus, notepad, "the lit row has the focus");

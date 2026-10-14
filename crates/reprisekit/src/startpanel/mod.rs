@@ -14,6 +14,8 @@ pub const SHUT_DOWN: &str = "Shut down";
 pub const SHUT_DOWN_OPTIONS: &str = "Shut down options";
 pub const SEARCH_CUE: &str = "Search programs and files";
 pub const CLEAR: &str = "Clear";
+/// The program the user picture opens.
+pub const USER_ACCOUNTS: &str = "User Accounts";
 pub const NO_RESULTS: &str = "No items match your search.";
 pub const MAX_RESULTS: usize = 8;
 
@@ -1100,6 +1102,20 @@ pub(crate) mod tests {
         assert_eq!(p.picture(), Some(0), "the keyboard's place too");
         p.pointer(Some(Spot::Program(0)));
         assert_eq!(p.picture(), None, "a program row");
+    }
+
+    #[test]
+    fn a_click_on_the_user_picture_activates_it() {
+        let mut p = StartPanel::new();
+        let l = layout::layout(&p);
+        let r = l.rect(Spot::Picture).expect("Home shows the picture");
+        let at = layout::hit(&l, r.x + r.width / 2, r.y + r.height / 2);
+        assert_eq!(at, Some(Spot::Picture));
+        assert_eq!(
+            p.press(Spot::Picture, Button::Left),
+            Event::Activate(Spot::Picture)
+        );
+        assert_eq!(p.press(Spot::Picture, Button::Right), Event::None);
     }
 
     #[test]
