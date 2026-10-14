@@ -5,7 +5,7 @@
 
 use crate::Waker;
 use crate::decode::Decoders;
-use reprisefs::thumbnails::{Rgba, Thumbnails, edge_for};
+use reprisefs::thumbnails::{Cleared, Rgba, Thumbnails, edge_for};
 use reprisefs::thumbpipe;
 use reprisekit::controls::shellview;
 use reprisekit::raster::Canvas;
@@ -233,9 +233,9 @@ pub fn cache_for(setting: repriseconf::ThumbnailCache) -> Option<Thumbnails> {
 }
 
 /// Remove what every Reprise version kept in the shared cache, other programs' thumbnails left
-/// in place; returns how many files went. Blocks on the file system.
-pub fn clear_cache() -> usize {
-    Thumbnails::default_dir().map_or(0, |root| {
+/// in place. Blocks on the file system.
+pub fn clear_cache() -> Cleared {
+    Thumbnails::default_dir().map_or(Cleared::default(), |root| {
         reprisefs::thumbnails::clear_written_by(&root, PROGRAM_PREFIX)
     })
 }
