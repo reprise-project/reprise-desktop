@@ -527,16 +527,16 @@ fn collect_with(
     let mut pending: Vec<u8> = Vec::new();
     let mut buf = [0u8; 8192];
     'read: loop {
+        // Read the end conditions before draining, so a verdict sent before the
+        // cancel or the budget's end is kept.
+        let cancelled = cancel.load(Ordering::Acquire);
+        let left = q.budget.saturating_sub(started.elapsed());
         while let Ok(v) = verdicts.try_recv() {
             if take(&mut found, &mut waiting, v) {
                 break 'read;
             }
         }
-        if cancel.load(Ordering::Relaxed) {
-            break;
-        }
-        let left = q.budget.saturating_sub(started.elapsed());
-        if left.is_zero() {
+        if cancelled || left.is_zero() {
             break;
         }
         if !open {
@@ -1006,7 +1006,7 @@ mod tests {
         let stopper = cancel.clone();
         std::thread::spawn(move || {
             let _ = blocked.recv();
-            stopper.store(true, Ordering::Relaxed);
+            stopper.store(true, Ordering::Release);
         });
         let found = crate::testfs::within(move || {
             collect_with(
