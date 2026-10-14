@@ -366,6 +366,22 @@ impl FilePicker {
         Some((p.generation, shellview::thumb_px(p.scale), p.paths.clone()))
     }
 
+    /// The dialog draws at `scale`: thumbnails made at another scale are dropped, since they
+    /// would draw at the wrong size, and its pictures are fetched again. True when it changed.
+    pub fn follow_scale(&mut self, scale: i32) -> bool {
+        let p = &mut self.pictures;
+        if p.scale == scale || p.paths.is_empty() {
+            return false;
+        }
+        p.scale = scale;
+        p.generation += 1;
+        p.asked = false;
+        for e in self.dlg.entries_mut() {
+            e.thumb = None;
+        }
+        true
+    }
+
     /// Thumbnails fetched for listing `generation`: each picture shows it, and its Tiles lines
     /// its size. True when one did; a listing replaced meanwhile takes none.
     pub fn thumbs(&mut self, generation: u64, done: Vec<(PathBuf, Canvas, (u32, u32))>) -> bool {
@@ -1128,6 +1144,35 @@ mod tests {
         let frame = Rect::new(drawn.x - 2, drawn.y - 49, 192, 192);
         assert_eq!(c.get(frame.x, frame.y), theme.colors.button_face.argb());
         assert_eq!(fnv(&c, frame), 0x262c_b03d_ad0d_133d, "the scale-2 frame");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_new_draw_scale_fetches_the_pictures_again_at_its_size() {
+        let dir = sandbox("thumbs-rescale");
+        let pic = dir.join("dunes.png");
+        std::fs::write(&pic, b"never decoded here").unwrap();
+        let mut p = FilePicker::run_command(&dir, Icons::default(), true);
+        p.dlg.set_filter(1);
+        p.sync_filter();
+        settle(&mut p);
+        p.click(R, Some(filedlg::Hit::ToolBar(3)));
+        p.click(R, Some(filedlg::Hit::ViewsItem(0)));
+        let (generation, px, _) = p.take_pictures().expect("Thumbnails fetches the pictures");
+        assert_eq!(px, 94);
+        let thumb = |w| vec![(pic.clone(), Canvas::new(w, w / 2), (800, 400))];
+        assert!(p.thumbs(generation, thumb(94)));
+        assert!(!p.follow_scale(1), "the scale it fetched at");
+
+        assert!(p.follow_scale(2));
+        let shown = |p: &FilePicker| p.dlg.entries().iter().any(|e| e.thumb.is_some());
+        assert!(!shown(&p), "a scale-1 thumbnail would draw at half size");
+        let (again, px, paths) = p.take_pictures().expect("fetched again");
+        assert_eq!((px, paths), (188, vec![pic.clone()]));
+        assert!(!p.thumbs(generation, thumb(94)), "fetched at the old scale");
+        assert!(p.thumbs(again, thumb(188)));
+        let e = p.dlg.entries().iter().find(|e| e.thumb.is_some()).unwrap();
+        assert_eq!(e.thumb.as_ref().unwrap().device_size(), (188, 94));
         let _ = std::fs::remove_dir_all(&dir);
     }
 

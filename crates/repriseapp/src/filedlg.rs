@@ -195,6 +195,13 @@ pub(crate) fn thumbs_on(app: &mut dyn crate::App, win: crate::WinId, wake: &crat
     }
 }
 
+/// The file dialog in window `win`, if any, draws at `scale` ([`Host::follow_scale`]).
+pub(crate) fn follow_scale(app: &mut dyn crate::App, win: crate::WinId, scale: i32) {
+    if let Some(f) = app.drop_file_dialog(win) {
+        f.host.follow_scale(f.dlg, scale);
+    }
+}
+
 /// Hands the file dialogs in `wins` the thumbnails that arrived: the windows that show one.
 pub(crate) fn take_thumbs(
     app: &mut dyn crate::App,
@@ -255,7 +262,7 @@ struct Pictures {
     generation: u64,
     /// This listing's pictures are queued for decoding.
     asked: bool,
-    /// The icon cache's scale when listed: the thumbnails' device pixels.
+    /// The scale the window drew at when the thumbnails were asked for.
     scale: i32,
 }
 
@@ -306,7 +313,18 @@ impl Host {
         }
         p.asked = true;
         for path in &p.paths {
-            worker.request(path.clone(), p.generation, shellview::thumb_px(p.scale));
+            worker.request(path.clone(), p.generation, p.scale);
+        }
+    }
+
+    /// The dialog draws at `scale`: its pictures are asked for again at that scale, and the
+    /// thumbnails it shows stay until theirs arrive.
+    fn follow_scale(&mut self, dlg: &FileDlg, scale: i32) {
+        let p = &mut self.pictures;
+        if p.scale != scale {
+            p.scale = scale;
+            p.asked = false;
+            self.ask_thumbs(dlg);
         }
     }
 
@@ -332,7 +350,7 @@ impl Host {
                 continue;
             };
             let e = &mut dlg.entries_mut()[i];
-            e.thumb = Some(shellview::frame_thumb(d.thumb, d.dims, self.pictures.scale));
+            e.thumb = Some(shellview::frame_thumb(d.thumb, d.dims, d.scale));
             e.detail = shellview::image_detail(d.dims, &e.kind);
             shown = true;
         }
@@ -1194,6 +1212,27 @@ mod tests {
         assert_eq!(thumb.get(20, 15), PIXELS);
         assert_eq!(pic.detail, ["40 x 30".to_string(), pic.kind.clone()]);
         assert!(entry(&dlg, "notes.txt").thumb.is_none());
+    }
+
+    #[test]
+    fn a_new_draw_scale_replaces_the_thumbnails_made_at_the_old_one() {
+        let t = pictures_folder();
+        let mut icons = flat_icons(t.path());
+        let mut h = host_in(&t.path().join("list"));
+        thumbs_without_cache(&mut h);
+        let mut dlg = open_dlg(&mut h);
+        h.ensure_listed(&mut dlg, &mut icons, &|_| true);
+        view(&mut h, &mut dlg, Mode::Thumbnails);
+        settle_thumbs(&mut h, &mut dlg);
+        h.follow_scale(&dlg, 1);
+        assert!(h.thumbs.as_mut().unwrap().drain().is_empty(), "same scale");
+
+        h.follow_scale(&dlg, 2);
+        let kept = entry(&dlg, "pic.png").thumb.as_ref().expect("still shown");
+        assert_eq!(kept.scale(), 1);
+        settle_thumbs(&mut h, &mut dlg);
+        let thumb = entry(&dlg, "pic.png").thumb.as_ref().expect("the new one");
+        assert_eq!((thumb.scale(), thumb.device_size()), (2, (80, 60)));
     }
 
     /// A program with a file dialog in window `DLG` that does nothing for its thumbnails.

@@ -748,6 +748,13 @@ impl State {
         let output = v.output.clone();
         let base = self.config.theme.clone();
         let scale = self.draw_scale_at(Some(&output)).max(1);
+        let rescaled = self.dialogs.views[index]
+            .dialog
+            .picker_mut()
+            .is_some_and(|p| p.follow_scale(scale));
+        if rescaled {
+            self.run_picker_requests();
+        }
         let theme = base.scaled(scale);
         let wanted = crate::glass::wanted(&self.config);
         let preedit = active
