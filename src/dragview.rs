@@ -569,7 +569,14 @@ impl State {
         );
         let in_view = cells.iter().filter(|c| !c.3.intersect(&shown).is_empty());
         for (name, icon_name, shortcut, cell) in in_view {
-            let icon = self.icons.get_shared(icon_name, desktop::ICON_PX * scale);
+            let px = desktop::ICON_PX * scale;
+            // A desktop icon's icon file is the desktop read's to decode; the drag shows what it
+            // decoded.
+            let icon = if icons && icon_name.starts_with('/') {
+                self.icons.file_put(icon_name, px).flatten()
+            } else {
+                self.icons.get_shared(icon_name, px)
+            };
             // A desktop icon drags as it shows, selected; a menu program has no selection.
             let selected = icons.then_some(desktop::Selection {
                 ring: false,
