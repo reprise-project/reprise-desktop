@@ -102,6 +102,22 @@ pub fn draw(c: &mut Canvas, text: &TextRenderer, p: &Paint, pb: &PlacesBar, r: R
     }
 }
 
+/// How far the label lines reaching furthest run past their tile's bottom in `r` with text at
+/// `px`, at 1x, as `draw` sets them: for an audit.
+pub fn overflow(pb: &PlacesBar, text: &TextRenderer, r: Rect, pm: &PlacesMetrics, px: u32) -> i32 {
+    let max_w = r.width - 2 * BORDER - 4;
+    let step = px as i32 + 2;
+    layout(pb, r, pm)
+        .iter()
+        .zip(&pb.places)
+        .map(|(tile, place)| {
+            let lines = wrap_label(text, &place.label, max_w, px).len() as i32;
+            tile.y + pm.icon_top + ICON_PX + LABEL_GAP + lines * step - tile.bottom()
+        })
+        .max()
+        .unwrap_or(0)
+}
+
 /// The places bar's `access` part: a list of its places at their tiles,
 /// the selected one marked. Returns the node that has the focus when the
 /// bar does: the selected place, else the bar.

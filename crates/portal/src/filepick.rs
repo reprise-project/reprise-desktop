@@ -317,6 +317,33 @@ fn type_rows(input: &Input) -> Vec<String> {
     input.filters.iter().map(|f| f.label.clone()).collect()
 }
 
+/// The caller's `choices` as rows under Files of type, laid out for text at `px`, 100%.
+fn add_choices(
+    dlg: &mut FileDlg,
+    cs: &[choices::Choice],
+    text: &TextRenderer,
+    px: u32,
+    cm: &reprisekit::metrics::ControlMetrics,
+) {
+    if cs.is_empty() {
+        return;
+    }
+    let (items, bottom) = choices::choice_rows(
+        cs,
+        (filedlg::FIELD_X, filedlg::EXTRA_Y),
+        filedlg::field_w(CLIENT.0),
+        filedlg::extra_w(CLIENT.0),
+        text,
+        px,
+        reprisekit::theme::TextUnits::ONE,
+    );
+    dlg.set_extra(
+        form::Form::new(items),
+        bottom - filedlg::EXTRA_Y + EXTRA_PAD,
+        cm,
+    );
+}
+
 pub fn run_dialog() {
     let Some(input) = dialog::read_input::<Input>() else {
         return;
@@ -348,23 +375,13 @@ pub fn run_dialog() {
         host.alias(input.name.clone(), OsStr::from_bytes(raw).to_os_string());
     }
     dlg.set_filter(input.filter);
-    if !input.choices.is_empty() {
-        let w = filedlg::field_w(CLIENT.0);
-        let (items, bottom) = choices::choice_rows(
-            &input.choices,
-            filedlg::FIELD_X,
-            filedlg::EXTRA_Y,
-            w,
-            &text,
-            px,
-            reprisekit::theme::TextUnits::ONE,
-        );
-        dlg.set_extra(
-            form::Form::new(items),
-            bottom - filedlg::EXTRA_Y + EXTRA_PAD,
-            &repriseapp::start_theme().look.controls(),
-        );
-    }
+    add_choices(
+        &mut dlg,
+        &input.choices,
+        &text,
+        px,
+        &repriseapp::start_theme().look.controls(),
+    );
     let out = Arc::new(Mutex::new(Output::default()));
     repriseapp::run(Box::new(Pick {
         input,
@@ -474,5 +491,86 @@ mod tests {
             Decision::Done(vec![t.join("a (2).txt"), t.join("z.txt")])
         );
         std::fs::remove_dir_all(&t).ok();
+    }
+
+    /// A Save dialog with a long folder name, filter labels, accept label and default name, and
+    /// choices with long labels and options.
+    #[test]
+    fn a_save_dialog_with_long_choices_fits_its_text_under_every_interface() {
+        use reprisekit::controls::filedlg::{Crumb, Folder};
+        let combo = |id: &str, label: &str, options: &[&str]| choices::Choice {
+            id: id.into(),
+            label: label.into(),
+            options: options
+                .iter()
+                .enumerate()
+                .map(|(i, o)| (i.to_string(), o.to_string()))
+                .collect(),
+            initial: "0".into(),
+        };
+        let cs = [
+            choices::Choice {
+                id: "open".into(),
+                label: "Open the exported picture in the image viewer when it is done".into(),
+                options: Vec::new(),
+                initial: "true".into(),
+            },
+            combo(
+                "encoding",
+                "Character encoding:",
+                &[
+                    "Unicode (UTF-8)",
+                    "Western European (Windows-1252)",
+                    "Central European (ISO-8859-2)",
+                ],
+            ),
+            combo(
+                "endings",
+                "Line endings for the saved file:",
+                &["Unix and macOS (LF)", "Windows (CR LF)"],
+            ),
+        ];
+        let over = reprisekit::interfaces::overflows(|i, theme, text| {
+            let base = reprisekit::interfaces::theme_for(i);
+            let mut dlg = FileDlg::new(
+                Fields {
+                    title: "Export Image".into(),
+                    accept_label: dialog::mnemonic("_Export Selected Layers"),
+                    filters: vec![
+                        "Images (*.png, *.jpg, *.jpeg, *.gif, *.bmp, *.webp, *.svg)".into(),
+                        "All Files".into(),
+                    ],
+                    mode: DlgMode::Save,
+                    multiple: false,
+                },
+                repriseapp::filedlg::places(),
+            );
+            dlg.set_listing(Folder {
+                id: 1,
+                parent: Some(0),
+                crumbs: vec![Crumb {
+                    id: 1,
+                    label: "Quarterly Reports for the Northern Region (final drafts, 2026)".into(),
+                    depth: 0,
+                    icon: None,
+                }],
+                entries: Vec::new(),
+            });
+            dlg.set_file_name("Quarterly report for the northern region, second draft.png");
+            add_choices(
+                &mut dlg,
+                &cs,
+                text,
+                base.fonts.size_px,
+                &base.look.controls(),
+            );
+            dlg.set_text(theme.text);
+            dlg.drawn_with(&theme.paint());
+            dlg.overflows(text, theme.fonts.size_px)
+                .into_iter()
+                .map(|(part, by)| ("Save".to_string(), part, by))
+                .collect()
+        });
+        assert!(over.is_empty(), "{}", over.join("\n"));
     }
 }

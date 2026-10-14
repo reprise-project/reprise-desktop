@@ -130,8 +130,15 @@ pub fn build_form(
         bottom = Some(y + h);
     }
     if !input.choices.is_empty() {
-        let (rows, end) =
-            choices::choice_rows(&input.choices, TEXT_X, next_y(bottom), col, text, px, u);
+        let (rows, end) = choices::choice_rows(
+            &input.choices,
+            (TEXT_X, next_y(bottom)),
+            col,
+            col,
+            text,
+            px,
+            u,
+        );
         items.extend(rows);
         bottom = Some(end);
     }
