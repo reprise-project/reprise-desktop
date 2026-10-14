@@ -198,13 +198,15 @@ impl Snapping {
         work: Rect,
         shift: bool,
         bar: Option<Rect>,
+        outer: Edges,
         armed: &mut bool,
         x: i32,
         y: i32,
         live: &dyn Fn(WindowId) -> bool,
     ) -> Option<(Target, Rect)> {
         let (_, explicit, zones) = self.active_target(output, work, live);
-        let target = crate::snap::armed_target(armed, work, &zones, explicit, shift, bar, x, y)?;
+        let target =
+            crate::snap::armed_target(armed, work, &zones, explicit, shift, bar, outer, x, y)?;
         // As `target_layout` picks the layout, worked out once per motion.
         let rect = match target {
             Target::Maximize => work,
@@ -919,7 +921,11 @@ impl State {
         let live = self.snap_live();
         let live = |m| live.contains(&m);
         let shift = (self.seat.get_keyboard()).is_some_and(|k| k.modifier_state().shift);
-        (self.wm.snap).outlined_target(&out.name(), work, shift, bar, armed, x, y, &live)
+        let outputs: Vec<Rect> = (self.scene.outputs().iter())
+            .map(|o| self.layout_box(Some(o)))
+            .collect();
+        let outer = crate::snap::outer_sides(self.layout_box(Some(&out)), &outputs, x, y);
+        (self.wm.snap).outlined_target(&out.name(), work, shift, bar, outer, armed, x, y, &live)
     }
 
     /// The release of a move: the snap bar's lit tile, else the drop. A restore afterwards goes
@@ -1315,12 +1321,33 @@ mod tests {
         assert_eq!(layout, halves(), "the halves, as with no layout");
         assert!(!explicit, "no zone targets");
         assert_eq!(
-            s.outlined_target("DP-1", WORK, true, None, &mut true, 500, 300, &away),
+            s.outlined_target(
+                "DP-1",
+                WORK,
+                true,
+                None,
+                crate::snap::EVERY_SIDE,
+                &mut true,
+                500,
+                300,
+                &away
+            ),
             None,
             "a release off the edges drops nowhere"
         );
         assert!(
-            (s.outlined_target("DP-1", WORK, true, None, &mut true, 500, 300, &all)).is_some(),
+            (s.outlined_target(
+                "DP-1",
+                WORK,
+                true,
+                None,
+                crate::snap::EVERY_SIDE,
+                &mut true,
+                500,
+                300,
+                &all
+            ))
+            .is_some(),
             "with `a` on screen it drops into a quarter"
         );
         s.apply(b, "DP-1", quarters, true, true, WORK, 1, away);
@@ -1410,7 +1437,17 @@ mod tests {
         s.move_splits(a, WORK, &[(true, 960, 1100)]);
         // A release in the top-right corner.
         let (target, outline) = s
-            .outlined_target("DP-1", WORK, true, None, &mut true, 1919, 0, &all)
+            .outlined_target(
+                "DP-1",
+                WORK,
+                true,
+                None,
+                crate::snap::EVERY_SIDE,
+                &mut true,
+                1919,
+                0,
+                &all,
+            )
             .unwrap();
         assert_eq!(target, Target::Corner { quarter: 2 });
         assert_eq!(
