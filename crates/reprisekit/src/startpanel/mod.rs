@@ -440,6 +440,24 @@ impl StartPanel {
         }
     }
 
+    /// Relists the places as `rows`: the focus, light, hot spot and picture on a place go where
+    /// `follow` maps them; a focus it maps nowhere goes back to the search field.
+    pub fn relist_places(&mut self, rows: Vec<PlaceRow>, follow: impl Fn(usize) -> Option<usize>) {
+        self.places = rows;
+        let n = self.places.len();
+        let to = |i: usize| follow(i).filter(|&j| j < n);
+        if let Some(Spot::Place(i)) = self.hot {
+            self.hot = to(i).map(Spot::Place);
+        }
+        if let Some(Spot::Place(i)) = self.lit {
+            self.lit = to(i).map(Spot::Place);
+        }
+        if let Spot::Place(i) = self.focus {
+            self.focus = to(i).map_or(Spot::Search, Spot::Place);
+        }
+        self.pictured = self.pictured.and_then(to);
+    }
+
     pub fn set_results(&mut self, groups: Vec<ResultGroup>) {
         self.results = groups
             .into_iter()
@@ -1048,6 +1066,50 @@ pub(crate) mod tests {
         assert_eq!(p.lit(), Some(Spot::Jump(0)), "no row left below: the last");
         p.relist_jump(Vec::new(), |_| None);
         assert_eq!((p.mode(), p.lit()), (Mode::Home, Some(Spot::Program(0))));
+    }
+
+    #[test]
+    fn relisted_places_keep_the_focus_light_hot_spot_and_picture_on_their_rows() {
+        let names = |n: &[&str]| n.iter().map(|s| place(s)).collect::<Vec<_>>();
+        let relist = |p: &mut StartPanel, old: &[&str], new: &[&str]| {
+            p.relist_places(names(new), |i| {
+                crate::selection::follow(old, new, i, |_| true)
+            })
+        };
+        let mut p = StartPanel::new();
+        let all = ["Home", "Documents", "Pictures", "Music", "Recent Items"];
+        p.places = names(&all);
+        p.key(Key::Right);
+        p.key(Key::Down);
+        p.key(Key::Down);
+        p.key(Key::Down);
+        p.pointer(Some(Spot::Place(1)));
+        assert_eq!(p.focus(), Spot::Place(3));
+        assert_eq!(p.picture(), Some(1), "the hot spot pictures Documents");
+
+        let no_pictures = ["Home", "Documents", "Music", "Recent Items"];
+        relist(&mut p, &all, &no_pictures);
+        assert_eq!(p.focus(), Spot::Place(2), "Music kept the focus");
+        assert_eq!(p.hot(), Some(Spot::Place(1)), "Documents kept the hot spot");
+        assert_eq!(p.picture(), Some(1));
+
+        let no_documents = ["Home", "Music", "Recent Items"];
+        relist(&mut p, &no_pictures, &no_documents);
+        assert_eq!(
+            p.hot(),
+            Some(Spot::Place(1)),
+            "the next row took the hot spot"
+        );
+        assert_eq!(p.picture(), Some(1), "and the picture");
+        p.pointer(None);
+        assert_eq!(p.lit(), Some(Spot::Place(1)), "Music kept the light");
+
+        relist(&mut p, &no_documents, &["Home", "Recent Items"]);
+        assert_eq!((p.focus(), p.lit()), (Spot::Place(1), Some(Spot::Place(1))));
+        assert_eq!(p.picture(), Some(1), "the next row, Recent Items");
+        relist(&mut p, &["Home", "Recent Items"], &["Home"]);
+        assert_eq!(p.focus(), Spot::Place(0), "no row below: the one before");
+        assert_eq!(p.picture(), Some(0));
     }
 
     #[test]

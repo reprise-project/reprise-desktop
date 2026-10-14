@@ -1,12 +1,12 @@
-//! Reads the recent files again when `recently-used.xbel` changes, so open lists take a file
-//! opened meanwhile.
+//! Reads the recent files again when `recently-used.xbel` changes, and checks the document
+//! folders again when one comes or goes, so open lists follow them.
 
 use crate::compositor::State;
 use crate::dirwatch::{DirWatch, Want};
 use inotify::WatchMask;
 use smithay::reexports::calloop::{Interest, Mode, PostAction, generic::Generic};
 use std::os::fd::{AsFd, BorrowedFd};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 struct Watch(DirWatch);
 
@@ -33,33 +33,63 @@ fn wants(xbel: &Path) -> Vec<Want> {
     }]
 }
 
+/// Each document folder's parent, waking only for the folder's name.
+fn folder_wants(dirs: &[PathBuf]) -> Vec<Want> {
+    dirs.iter()
+        .filter_map(|d| {
+            Some(Want {
+                dir: d.parent()?.to_path_buf(),
+                mask: WatchMask::CREATE
+                    | WatchMask::DELETE
+                    | WatchMask::MOVED_TO
+                    | WatchMask::MOVED_FROM,
+                only: vec![d.file_name()?.to_os_string()],
+            })
+        })
+        .collect()
+}
+
 pub fn setup(state: &mut State) {
-    let Some(xbel) = reprisefs::recent::xbel_path() else {
-        return;
-    };
+    if let Some(xbel) = reprisefs::recent::xbel_path() {
+        watch(state, "recent files", wants(&xbel), State::read_recent);
+    }
+    let dirs: Vec<PathBuf> = reprisefs::places::document_dir_paths()
+        .into_iter()
+        .map(|(d, _)| d)
+        .collect();
+    watch(
+        state,
+        "document folders",
+        folder_wants(&dirs),
+        State::check_recent,
+    );
+}
+
+/// Runs `hit` on the loop whenever an event `want` asks for arrives.
+fn watch(state: &mut State, what: &str, want: Vec<Want>, hit: fn(&mut State)) {
     let mut watch = match DirWatch::new() {
         Ok(w) => w,
         Err(e) => {
-            log::warn!("recent files watch: inotify unavailable: {e}");
+            log::warn!("{what} watch: inotify unavailable: {e}");
             return;
         }
     };
-    watch.sync(&wants(&xbel));
+    watch.sync(&want);
     let source = Generic::new(Watch(watch), Interest::READ, Mode::Level);
     let added = state.handle.insert_source(source, move |_, watch, state| {
         // SAFETY: the watch is not dropped here, only drained and
         // resynced; the source keeps its fd registered for the watch's
         // life.
         let watch = unsafe { &mut watch.get_mut().0 };
-        let hit = watch.drain();
-        watch.sync(&wants(&xbel));
-        if hit {
-            state.read_recent();
+        let changed = watch.drain();
+        watch.sync(&want);
+        if changed {
+            hit(state);
         }
         Ok(PostAction::Continue)
     });
     if let Err(e) = added {
-        log::warn!("recent files watch: {}", e.error);
+        log::warn!("{what} watch: {}", e.error);
     }
 }
 
@@ -81,5 +111,21 @@ mod tests {
         std::fs::rename(dir.join("recently-used.xbel.TMP"), &xbel).unwrap();
         assert!(w.drain(), "the xbel replaced by a rename");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_document_folder_coming_or_going_wakes_the_watch_and_a_file_beside_it_does_not() {
+        let home = std::env::temp_dir().join(format!("reprise-folderwatch-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        std::fs::create_dir_all(home.join("Music")).unwrap();
+        let mut w = DirWatch::new().unwrap();
+        w.sync(&folder_wants(&[home.join("Music"), home.join("Videos")]));
+        std::fs::write(home.join("notes.txt"), "").unwrap();
+        assert!(!w.drain(), "a file beside the folders");
+        std::fs::remove_dir(home.join("Music")).unwrap();
+        assert!(w.drain(), "Music deleted");
+        std::fs::create_dir(home.join("Videos")).unwrap();
+        assert!(w.drain(), "Videos made");
+        let _ = std::fs::remove_dir_all(&home);
     }
 }
