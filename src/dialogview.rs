@@ -1718,10 +1718,14 @@ impl State {
                 mime,
             } => self.apply_open_with(&path, &app, always, mime.as_deref()),
             Outcome::ChangeDefault(path) => {
-                // A symlink's Change... asks for the type of its target.
-                let real = std::fs::canonicalize(&path).unwrap_or(path);
-                let d = self.choose_program(&real, true);
-                self.open_dialog_over(d);
+                // A symlink's Change... asks for the type of its target, resolved in a file job.
+                self.spawn_fs_job(move || {
+                    let real = std::fs::canonicalize(&path).unwrap_or(path);
+                    Box::new(move |state: &mut State| {
+                        let d = state.choose_program(&real, true);
+                        state.open_dialog_over(d);
+                    })
+                });
             }
             Outcome::SetDefault { path, app, mime } => {
                 self.apply_set_default(&path, &app, mime.as_deref())

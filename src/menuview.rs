@@ -101,6 +101,7 @@ pub enum MenuKind {
     File {
         commands: Vec<Option<DesktopCommand>>,
         path: PathBuf,
+        facts: crate::desktop::FileFacts,
     },
     /// A grouped taskbar button's popup (`taskbar::window_list`): `button` is the
     /// taskbar button index it hangs off, so clicking it again toggles the list shut.
@@ -153,6 +154,7 @@ pub enum MenuPick {
     File {
         command: DesktopCommand,
         path: PathBuf,
+        facts: crate::desktop::FileFacts,
     },
     WindowList {
         windows: Vec<WindowId>,
@@ -221,10 +223,15 @@ impl MenuKind {
                 },
                 None => MenuPick::Nothing,
             },
-            MenuKind::File { commands, path } => match commands.get(idx).cloned().flatten() {
+            MenuKind::File {
+                commands,
+                path,
+                facts,
+            } => match commands.get(idx).cloned().flatten() {
                 Some(command) => MenuPick::File {
                     command,
                     path: path.clone(),
+                    facts: facts.clone(),
                 },
                 None => MenuPick::Nothing,
             },
@@ -822,12 +829,21 @@ impl State {
                 let (items, commands) = self.desktop_submenu(command, &output, apps)?;
                 return Some((items, MenuKind::Desktop { commands, target }, true));
             }
-            MenuKind::File { commands, path } => {
-                let path = path.clone();
+            MenuKind::File {
+                commands,
+                path,
+                facts,
+            } => {
+                let (path, facts) = (path.clone(), facts.clone());
                 let command = commands.get(row).cloned().flatten()?;
                 let apps = |s: &Self| s.open_with_apps_for(&path);
                 let (items, commands) = self.desktop_submenu(command, &output, apps)?;
-                return Some((items, MenuKind::File { commands, path }, true));
+                let kind = MenuKind::File {
+                    commands,
+                    path,
+                    facts,
+                };
+                return Some((items, kind, true));
             }
             _ => {}
         }
@@ -1901,7 +1917,11 @@ impl State {
                 QuickCommand::Delete => self.quick_remove(&file),
             },
             MenuPick::Desktop { command, target } => self.desktop_command(command, target),
-            MenuPick::File { command, path } => self.file_command(command, path),
+            MenuPick::File {
+                command,
+                path,
+                facts,
+            } => self.file_command(command, path, &facts),
             MenuPick::WindowList { windows, row } => self.window_list_activate(&windows, row),
             MenuPick::Jump { row, target } => self.jump_activate(row, &target),
             MenuPick::NotifyAction { id, key } => crate::notifyview::invoke(self, id, &key),

@@ -36,52 +36,74 @@ pub fn file_menu(m: IconMenu, mime: Option<&str>) -> (Vec<MenuItem>, Vec<Option<
     (items, commands)
 }
 
-/// The launcher rows of a found `path`: Allow Launching for an untrusted
+/// The launcher rows of a found path from its `facts`: Allow Launching for an untrusted
 /// application `.desktop` file, Run as... for a trusted one.
-fn found_menu(path: &Path, is_dir: bool) -> IconMenu {
-    if is_dir {
+fn found_menu(facts: &desktop::FileFacts) -> IconMenu {
+    if facts.is_dir {
         return IconMenu {
-            is_dir,
+            is_dir: true,
             ..IconMenu::default()
         };
     }
-    let target = desktop::file_target(path);
     IconMenu {
-        allow_launching: desktop::can_allow_launching_at(path, &target),
-        launcher: matches!(target, Target::Launch(_)),
+        allow_launching: facts.allow_launching,
+        launcher: matches!(facts.target, Target::Launch(_)),
         ..IconMenu::default()
     }
 }
 
 impl State {
+    /// The menu of a found `path`, built from the `facts` its search read.
     pub(crate) fn file_menu_rows(
         &self,
         path: &Path,
+        facts: &desktop::FileFacts,
     ) -> (Vec<MenuItem>, Vec<Option<DesktopCommand>>) {
-        let is_dir = path.is_dir();
-        let mime = (!is_dir)
-            .then(|| self.with_mime(|db| apps::mime_of_in(db, path)))
-            .flatten();
-        file_menu(found_menu(path, is_dir), mime.as_deref())
+        let mime = (!facts.is_dir)
+            .then(|| path.file_name())
+            .flatten()
+            .and_then(|n| self.with_mime(|db| db.mime_of_name(&n.to_string_lossy())));
+        file_menu(found_menu(facts), mime.as_deref())
     }
 
-    /// The program run when a found `path` is opened: its icon's on the desktop.
-    pub(crate) fn found_open_argv(&self, path: &Path) -> Vec<std::ffi::OsString> {
-        let target = desktop::file_target(path);
-        self.with_mime(|db| desktop::open_argv(&target, db, &self.app_index, &self.config.terminal))
+    /// The program run when a found `path` is opened, from its `facts`: its icon's on the desktop.
+    pub(crate) fn found_open_argv(
+        &self,
+        path: &Path,
+        facts: &desktop::FileFacts,
+    ) -> Vec<std::ffi::OsString> {
+        match &facts.target {
+            Target::Open(dir) if facts.is_dir => apps::open_folder_argv(dir),
+            Target::Open(file) => {
+                let mime = (path.file_name())
+                    .and_then(|n| self.with_mime(|db| db.mime_of_name(&n.to_string_lossy())));
+                let default = mime
+                    .as_deref()
+                    .and_then(|m| reprisefs::props::default_app_entry(m, &self.app_index));
+                reprisefs::props::open_file_argv(file, default, &self.config.terminal)
+            }
+            target => self.with_mime(|db| {
+                desktop::open_argv(target, db, &self.app_index, &self.config.terminal)
+            }),
+        }
     }
 
-    /// Row `cmd` of `file_menu` picked for `path`.
-    pub(crate) fn file_command(&mut self, cmd: DesktopCommand, path: PathBuf) {
+    /// Row `cmd` of `file_menu` picked for `path`, whose `facts` built the menu.
+    pub(crate) fn file_command(
+        &mut self,
+        cmd: DesktopCommand,
+        path: PathBuf,
+        facts: &desktop::FileFacts,
+    ) {
         use DesktopCommand as Dc;
         let source = || vec![DragSource::file(path.clone())];
         match cmd {
             Dc::Open | Dc::Explore => {
-                let argv = self.found_open_argv(&path);
+                let argv = self.found_open_argv(&path, facts);
                 self.spawn_argv_activated(&argv);
             }
             Dc::AllowLaunching => {
-                if found_menu(&path, path.is_dir()).allow_launching {
+                if facts.allow_launching {
                     self.allow_launching(&[path]);
                 }
             }
@@ -93,14 +115,20 @@ impl State {
                 self.open_dialog(d);
             }
             Dc::SendToDest(row) => {
-                let existing: Vec<String> = path
-                    .parent()
-                    .and_then(|d| std::fs::read_dir(d).ok())
-                    .into_iter()
-                    .flatten()
-                    .filter_map(|e| e.ok()?.file_name().into_string().ok())
-                    .collect();
-                self.send_sources_to(row, &source(), &existing, None);
+                // The names beside the file, which a Send To to the same folder numbers past.
+                let dir = path.parent().map(Path::to_path_buf);
+                self.spawn_fs_job(move || {
+                    let existing: Vec<String> = dir
+                        .and_then(|d| std::fs::read_dir(d).ok())
+                        .into_iter()
+                        .flatten()
+                        .filter_map(|e| e.ok()?.file_name().into_string().ok())
+                        .collect();
+                    Box::new(move |state: &mut State| {
+                        let source = vec![DragSource::file(path)];
+                        state.send_sources_to(row, &source, &existing, None);
+                    })
+                });
             }
             Dc::Cut | Dc::Copy => {
                 if self.is_locked() {
@@ -177,6 +205,27 @@ mod tests {
                 _ => None,
             })
             .collect()
+    }
+
+    /// A found path's menu comes from the facts its search read, with no stat: a path that is
+    /// gone keeps the folder or launcher rows it was found with.
+    #[test]
+    fn a_found_paths_menu_comes_from_its_facts() {
+        let gone = Path::new("/nonexistent/reprise-found/tool.desktop");
+        let rows = |facts: &desktop::FileFacts| file_menu(found_menu(facts), None).1;
+        let folder = desktop::FileFacts {
+            is_dir: true,
+            ..desktop::FileFacts::plain(gone)
+        };
+        assert!(rows(&folder).contains(&Some(DesktopCommand::Explore)));
+        let untrusted = desktop::FileFacts {
+            allow_launching: true,
+            ..desktop::FileFacts::plain(gone)
+        };
+        assert!(rows(&untrusted).contains(&Some(DesktopCommand::AllowLaunching)));
+        assert!(
+            !rows(&desktop::FileFacts::plain(gone)).contains(&Some(DesktopCommand::AllowLaunching))
+        );
     }
 
     #[test]
@@ -269,7 +318,7 @@ mod tests {
         )
         .unwrap();
         let rows = |path: &Path| {
-            let (items, commands) = file_menu(found_menu(path, false), None);
+            let (items, commands) = file_menu(found_menu(&desktop::file_facts(path)), None);
             (labels(&items), commands)
         };
         let (items, commands) = rows(&path);
