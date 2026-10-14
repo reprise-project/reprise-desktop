@@ -293,20 +293,6 @@ impl IconTheme {
         }
     }
 
-    /// The first of `files` that is a file directly in `dir`, by stat.
-    fn file_in(dir: &Path, files: &[OsString]) -> Option<PathBuf> {
-        files.iter().map(|f| dir.join(f)).find(|p| p.is_file())
-    }
-
-    /// The same through `listings[i]`, read on first use.
-    fn file_in_listed(&self, i: usize, dir: &Path, files: &[OsString]) -> Option<PathBuf> {
-        let listing = self.listings[i].get_or_init(|| list_files(dir));
-        files
-            .iter()
-            .find(|f| listing.contains(*f))
-            .map(|f| dir.join(f))
-    }
-
     pub fn lookup(&self, name: &str, size: i32, scale: i32) -> Option<PathBuf> {
         self.lookup_with_extra(name, size, scale, &[])
     }
@@ -320,45 +306,66 @@ impl IconTheme {
         scale: i32,
         extra: &[PathBuf],
     ) -> Option<PathBuf> {
+        self.find_with_extra(name, size, scale, extra, Some)
+    }
+
+    /// The first of `name`'s files, best first, that `take` turns into a value: the one
+    /// [`IconTheme::lookup_with_extra`] picks, then the next-best sizes and the later themes.
+    pub fn find_with_extra<T>(
+        &self,
+        name: &str,
+        size: i32,
+        scale: i32,
+        extra: &[PathBuf],
+        mut take: impl FnMut(PathBuf) -> Option<T>,
+    ) -> Option<T> {
         let files = EXTENSIONS.map(|ext| OsString::from(format!("{name}.{ext}")));
         for dir in extra {
-            if let Some(p) = Self::file_in(dir, &files) {
-                return Some(p);
+            for p in files.iter().map(|f| dir.join(f)).filter(|p| p.is_file()) {
+                if let Some(t) = take(p) {
+                    return Some(t);
+                }
             }
         }
         // One theme at a time in chain order: a themed icon, even a size mismatch, beats an
-        // inherited exact one.
+        // inherited exact one. After the exact sizes comes the closest, but a bigger icon
+        // scaled down beats a smaller one scaled up: upscaled bitmaps blur.
         for group in &self.groups {
-            for (d, i) in self.dirs[group.clone()].iter().zip(group.clone()) {
-                if d.matches(size, scale)
-                    && let Some(p) = self.file_in_listed(i, &d.path, &files)
-                {
-                    return Some(p);
+            let (mut order, mut rest): (Vec<usize>, Vec<usize>) = group
+                .clone()
+                .partition(|&i| self.dirs[i].matches(size, scale));
+            rest.sort_by_key(|&i| {
+                let d = &self.dirs[i];
+                (d.upscales(size, scale), d.distance(size, scale))
+            });
+            order.extend(rest);
+            for i in order {
+                for p in self.files_listed(i, &self.dirs[i].path, &files) {
+                    if let Some(t) = take(p) {
+                        return Some(t);
+                    }
                 }
-            }
-            // Closest size, but a bigger icon scaled down beats a smaller one scaled up:
-            // upscaled bitmaps blur.
-            let mut best: Option<((bool, i32), PathBuf)> = None;
-            for (d, i) in self.dirs[group.clone()].iter().zip(group.clone()) {
-                let dist = (d.upscales(size, scale), d.distance(size, scale));
-                if best.as_ref().is_some_and(|(b, _)| dist >= *b) {
-                    continue;
-                }
-                if let Some(p) = self.file_in_listed(i, &d.path, &files) {
-                    best = Some((dist, p));
-                }
-            }
-            if let Some((_, p)) = best {
-                return Some(p);
             }
         }
         // Fallback: a bare file directly in a root.
         for (i, root) in self.roots.iter().enumerate() {
-            if let Some(p) = self.file_in_listed(self.dirs.len() + i, root, &files) {
-                return Some(p);
+            for p in self.files_listed(self.dirs.len() + i, root, &files) {
+                if let Some(t) = take(p) {
+                    return Some(t);
+                }
             }
         }
         None
+    }
+
+    /// Those of `files` directly in `dir`, through `listings[i]`, read on first use.
+    fn files_listed(&self, i: usize, dir: &Path, files: &[OsString]) -> Vec<PathBuf> {
+        let listing = self.listings[i].get_or_init(|| list_files(dir));
+        files
+            .iter()
+            .filter(|f| listing.contains(*f))
+            .map(|f| dir.join(f))
+            .collect()
     }
 }
 
@@ -834,13 +841,16 @@ impl IconCache {
         self.theme.chain.first().cloned().unwrap_or_default()
     }
 
-    /// Whether the theme chain has `name` at all (looked up at 32 px, which the spec's fallback
-    /// widens to any size).
+    /// Whether the theme chain has a file of `name` that decodes, at any size: a name whose
+    /// files are all broken gives way to the next name a caller tries.
     pub fn has(&self, name: &str) -> bool {
         if let Some(&known) = self.known.borrow().get(name) {
             return known;
         }
-        let found = self.theme.lookup(name, 32, 1).is_some();
+        let found = self
+            .theme
+            .find_with_extra(name, 32, 1, &[], |p| decode(&p, 32))
+            .is_some();
         let mut known = self.known.borrow_mut();
         // Peer-driven names: bounded like the cache's misses, dropped whole at the cap.
         if known.len() >= HIT_CAP {
@@ -870,8 +880,8 @@ impl IconCache {
             return hit.clone();
         }
         let dpx = px * self.scale;
-        let path = if name.starts_with('/') {
-            Some(PathBuf::from(name))
+        let canvas = if name.starts_with('/') {
+            decode(Path::new(name), dpx as u32)
         } else {
             // Some `.desktop` files carry an extension in `Icon=`; the spec says to strip it.
             let bare = name
@@ -880,16 +890,16 @@ impl IconCache {
                 .or_else(|| name.strip_suffix(".xpm"))
                 .unwrap_or(name);
             // Theme lookup is in device pixels at scale 1: a 32 px request at 2x and a 32 px
-            // icon at 1x want the same file.
-            let found = self.theme.lookup_with_extra(bare, dpx, 1, extra);
+            // icon at 1x want the same file. A file that fails to decode gives way to the next.
+            let found = self
+                .theme
+                .find_with_extra(bare, dpx, 1, extra, |p| decode(&p, dpx as u32));
             if found.is_none() {
-                log::debug!("no icon named \"{bare}\" at {dpx} px");
+                log::debug!("no icon named \"{bare}\" decodes at {dpx} px");
             }
             found
         };
-        let canvas = path
-            .and_then(|p| decode(&p, dpx as u32))
-            .map(|c| Arc::new(c.at_scale(self.scale)));
+        let canvas = canvas.map(|c| Arc::new(c.at_scale(self.scale)));
         self.insert(key, canvas.clone());
         canvas
     }
@@ -1776,12 +1786,95 @@ mod tests {
     #[test]
     fn has_remembers_its_answer_per_name() {
         let root = fixture("t8", "test", INDEX, &["32x32/apps/app.png"]);
+        write_png(
+            &root.join("test/32x32/apps/app.png"),
+            1,
+            1,
+            &[255, 0, 0, 255],
+        );
         let cache = IconCache::new(IconTheme::load("test", std::slice::from_ref(&root)));
         assert!(cache.has("app"));
         assert!(!cache.has("nope"));
         fs::remove_dir_all(&root).unwrap();
         assert!(cache.has("app"), "answered from memory, not the disk");
         assert!(!cache.has("nope"));
+    }
+
+    /// A file that fails to decode gives way to the name's next-best size, then to the next
+    /// theme's file; the lookup still names the best file.
+    #[test]
+    fn a_broken_file_gives_way_to_the_next_candidate() {
+        let root = fixture(
+            "broken",
+            "test",
+            INDEX,
+            &[
+                "32x32/apps/app.png",
+                "32x32/apps/gone.png",
+                "16x16/apps/app.png",
+            ],
+        );
+        let (test, hicolor) = (root.join("test"), root.join("hicolor"));
+        fs::write(test.join("32x32/apps/app.png"), b"not a png").unwrap();
+        fs::write(test.join("32x32/apps/gone.png"), b"not a png").unwrap();
+        write_png(&test.join("16x16/apps/app.png"), 1, 1, &[255, 0, 0, 255]);
+        fs::create_dir_all(hicolor.join("48x48/apps")).unwrap();
+        fs::write(
+            hicolor.join("index.theme"),
+            "[Icon Theme]\nName=Hicolor\nDirectories=48x48/apps\n\n[48x48/apps]\nSize=48\nType=Fixed\n",
+        )
+        .unwrap();
+        write_png(
+            &hicolor.join("48x48/apps/gone.png"),
+            1,
+            1,
+            &[0, 0, 255, 255],
+        );
+        let theme = IconTheme::load("test", std::slice::from_ref(&root));
+        assert_eq!(
+            theme.lookup("app", 32, 1),
+            Some(test.join("32x32/apps/app.png"))
+        );
+        let mut cache = IconCache::new(theme);
+        assert_eq!(
+            cache.get("app", 32).map(|c| c.get(16, 16)),
+            Some(0xFFFF_0000)
+        );
+        assert_eq!(
+            cache.get("gone", 32).map(|c| c.get(16, 16)),
+            Some(0xFF00_00FF)
+        );
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// A name whose every file fails to decode is not carried, so a caller moves on to its next
+    /// name; one broken size among good ones still counts.
+    #[test]
+    fn has_answers_no_for_a_name_with_only_broken_files() {
+        let root = fixture(
+            "has-broken",
+            "test",
+            INDEX,
+            &[
+                "32x32/apps/broken.png",
+                "32x32/apps/half.png",
+                "16x16/apps/legacy.xpm",
+            ],
+        );
+        let apps = root.join("test/32x32/apps");
+        fs::write(apps.join("broken.png"), b"not a png").unwrap();
+        fs::write(apps.join("half.png"), b"not a png").unwrap();
+        write_png(
+            &root.join("test/16x16/apps/half.png"),
+            1,
+            1,
+            &[255, 0, 0, 255],
+        );
+        let cache = IconCache::new(IconTheme::load("test", std::slice::from_ref(&root)));
+        assert!(!cache.has("broken"));
+        assert!(!cache.has("legacy"), "xpm is not decoded");
+        assert!(cache.has("half"));
+        fs::remove_dir_all(&root).unwrap();
     }
 
     #[test]
