@@ -122,15 +122,24 @@ pub enum SearchOwner {
 #[derive(Default)]
 pub struct FileSearch {
     pub files: Vec<PathBuf>,
-    /// Which found paths are folders, as the search's job found them: rows ask this rather than
-    /// the file system, which may not answer for a found file.
-    pub dirs: std::collections::HashSet<PathBuf>,
+    /// What each found path is, as the search's job read it: rows, menus and opening ask this
+    /// rather than the file system, which may not answer for a found file.
+    pub facts: std::collections::HashMap<PathBuf, crate::desktop::FileFacts>,
     generation: u64,
     cancel: Option<Arc<AtomicBool>>,
     timer: Option<RegistrationToken>,
 }
 
 impl FileSearch {
+    pub fn is_dir(&self, p: &Path) -> bool {
+        self.facts.get(p).is_some_and(|f| f.is_dir)
+    }
+
+    /// What found path `p` is; a plain file when the search did not read it.
+    pub fn facts_of(&self, p: &Path) -> crate::desktop::FileFacts {
+        (self.facts.get(p).cloned()).unwrap_or_else(|| crate::desktop::FileFacts::plain(p))
+    }
+
     pub fn new() -> Self {
         Self {
             generation: next_generation(),
@@ -298,8 +307,10 @@ impl State {
                 .take(max)
                 .map(|i| paths[i].clone())
                 .collect();
-            let dirs = best.iter().filter(|p| p.is_dir()).cloned().collect();
-            Box::new(move |state: &mut State| state.files_found(o, generation, best, dirs))
+            let facts = (best.iter())
+                .map(|p| (p.clone(), crate::desktop::file_facts(p)))
+                .collect();
+            Box::new(move |state: &mut State| state.files_found(o, generation, best, facts))
         });
     }
 
@@ -308,7 +319,7 @@ impl State {
         o: SearchOwner,
         generation: u64,
         paths: Vec<PathBuf>,
-        dirs: std::collections::HashSet<PathBuf>,
+        facts: std::collections::HashMap<PathBuf, crate::desktop::FileFacts>,
     ) {
         let Some(f) = self.file_search_mut(o) else {
             return;
@@ -317,7 +328,7 @@ impl State {
             return;
         }
         f.cancel = None;
-        f.dirs = dirs;
+        f.facts = facts;
         match o {
             SearchOwner::Launcher => {
                 self.show_launcher_files(paths);

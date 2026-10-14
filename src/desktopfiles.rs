@@ -39,10 +39,14 @@ fn delete_each(
 }
 
 impl State {
-    /// The Open With chooser for `path`: programs that take its MIME type, its default under "Recommended Programs:", the rest under "Other Programs:". `set_default` is the sheet's Change..., which only writes the file type's default.
+    /// The Open With chooser for the file `path`: programs that take its MIME type (by its name,
+    /// with no stat), its default under "Recommended Programs:", the rest under "Other
+    /// Programs:". `set_default` is the sheet's Change..., which only writes the file type's
+    /// default.
     pub fn choose_program(&mut self, path: &Path, set_default: bool) -> Dialog {
         let apps: &[reprisefs::apps::AppEntry] = &self.app_index;
-        let mime = reprisefs::apps::mime_of(path);
+        let mime = (path.file_name())
+            .and_then(|n| reprisefs::apps::mime_globs().mime_of_name(&n.to_string_lossy()));
         let default = mime
             .as_deref()
             .and_then(|m| reprisefs::props::default_app(m, apps));

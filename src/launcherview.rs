@@ -218,8 +218,16 @@ impl State {
                 let Some(path) = v.search.files.get(i).cloned() else {
                     return;
                 };
-                let (items, commands) = self.file_menu_rows(&path);
-                (items, MenuKind::File { commands, path })
+                let facts = v.search.facts_of(&path);
+                let (items, commands) = self.file_menu_rows(&path, &facts);
+                (
+                    items,
+                    MenuKind::File {
+                        commands,
+                        path,
+                        facts,
+                    },
+                )
             }
             Pick::Calc | Pick::Setting(_) => return,
         };
@@ -259,7 +267,7 @@ impl State {
                         .search
                         .files
                         .get(i)
-                        .map(|p| Launch::Argv(self.found_open_argv(p))),
+                        .map(|p| Launch::Argv(self.found_open_argv(p, &v.search.facts_of(p)))),
                 };
                 self.close_launcher();
                 match launch {
@@ -388,16 +396,7 @@ impl State {
         };
         let rows: Vec<FileRow> = paths
             .iter()
-            .map(|p| {
-                file_row(
-                    p,
-                    v.search.dirs.contains(p),
-                    home.as_deref(),
-                    mime,
-                    icons,
-                    px,
-                )
-            })
+            .map(|p| file_row(p, v.search.is_dir(p), home.as_deref(), mime, icons, px))
             .collect();
         v.search.files = paths;
         v.model.set_files(rows);
@@ -472,7 +471,7 @@ impl State {
                         &empty
                     }
                 };
-                file_icon_name(p, v.search.dirs.contains(p), mime, icons)
+                file_icon_name(p, v.search.is_dir(p), mime, icons)
             }),
             None => None,
         }

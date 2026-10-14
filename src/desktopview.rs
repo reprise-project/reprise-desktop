@@ -1580,7 +1580,8 @@ impl State {
         }
     }
 
-    /// The programs registered for `path`'s type: desktop-file id and name.
+    /// The programs registered for the type of the file `path` (by its name, with no stat):
+    /// desktop-file id and name.
     pub(crate) fn open_with_apps_for(&self, path: &Path) -> Vec<(String, String)> {
         let empty;
         let mime = match self.desktop.as_ref() {
@@ -1591,7 +1592,8 @@ impl State {
             }
         };
         let index = &self.app_index;
-        apps::mime_of_in(mime, path)
+        (path.file_name())
+            .and_then(|n| mime.mime_of_name(&n.to_string_lossy()))
             .map(|mime| apps::open_with(index, &mime))
             .unwrap_or_default()
             .into_iter()
