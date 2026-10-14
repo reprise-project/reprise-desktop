@@ -31,6 +31,13 @@ const GIVE_UP: u32 = 3;
 /// on a dead network mount holds the others back only briefly.
 const ANSWER_WITHIN: Duration = Duration::from_secs(5);
 
+/// How long the worker waits on a picture's stat before the picture keeps its icon.
+const STAT_WITHIN: Duration = Duration::from_secs(2);
+
+/// Stats given up on and still blocked, past which pictures keep their icons without a stat
+/// until one returns: each holds a thread.
+const MAX_STUCK_STATS: usize = 2;
+
 enum Msg {
     Want {
         dialog: u64,
@@ -183,6 +190,7 @@ fn work(rx: Receiver<Msg>, to_loop: LoopSender<OnLoop>) {
     let mut queue = Queue::default();
     let mut batch = Batch::default();
     let mut helper = Fetcher::new(helper_command, ANSWER_WITHIN);
+    let stat = Stat::new(|p| std::fs::metadata(p), STAT_WITHIN);
     let (mut hits, mut asked) = (0u32, 0u32);
     loop {
         if queue.is_empty() {
@@ -207,7 +215,16 @@ fn work(rx: Receiver<Msg>, to_loop: LoopSender<OnLoop>) {
         if !batch.holds(&job) {
             batch.flush(&to_loop);
         }
-        let thumb = match cached(cache.as_ref(), &job.path, edge) {
+        let meta = match stat.of(&job.path) {
+            Ok(m) => m,
+            Err(e) => {
+                if e.kind() == io::ErrorKind::TimedOut {
+                    log::warn!("pickthumbs: {}: {e}", job.path.display());
+                }
+                continue;
+            }
+        };
+        let thumb = match cached(cache.as_ref(), &job.path, &meta, edge) {
             Some(hit) => {
                 hits += 1;
                 Some(hit)
@@ -238,12 +255,63 @@ fn cache_for(setting: repriseconf::ThumbnailCache) -> Option<Thumbnails> {
 /// `path`'s thumbnail fitted inside an `edge` square and the picture's size, from `cache`. An
 /// entry for an older copy of the file, or without the picture's size (Tiles shows it), is a
 /// miss.
-fn cached(cache: Option<&Thumbnails>, path: &Path, edge: u32) -> Option<(Canvas, (u32, u32))> {
-    let meta = std::fs::metadata(path).ok()?;
-    let hit = cache?.get(path, &meta, edge)?;
+fn cached(
+    cache: Option<&Thumbnails>,
+    path: &Path,
+    meta: &std::fs::Metadata,
+    edge: u32,
+) -> Option<(Canvas, (u32, u32))> {
+    let hit = cache?.get(path, meta, edge)?;
     let dims = hit.dims?;
     let thumb = reprisekit::icontheme::png_to_canvas(&hit.png, edge).ok()?;
     Some((thumb, dims))
+}
+
+/// A picture's stat on a thread of its own, given up after `within`: a picture on a dead mount
+/// holds the worker that long at most.
+struct Stat {
+    stat: fn(&Path) -> io::Result<std::fs::Metadata>,
+    within: Duration,
+    /// Stats started and not yet returned.
+    running: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+}
+
+impl Stat {
+    fn new(stat: fn(&Path) -> io::Result<std::fs::Metadata>, within: Duration) -> Stat {
+        Stat {
+            stat,
+            within,
+            running: Default::default(),
+        }
+    }
+
+    /// `path`'s metadata, or `TimedOut` when it takes longer than `within` or
+    /// [`MAX_STUCK_STATS`] earlier stats are still blocked.
+    fn of(&self, path: &Path) -> io::Result<std::fs::Metadata> {
+        use std::sync::atomic::Ordering;
+        if self.running.load(Ordering::Acquire) >= MAX_STUCK_STATS {
+            return Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                format!("{MAX_STUCK_STATS} stats have not returned"),
+            ));
+        }
+        let (tx, rx) = std::sync::mpsc::sync_channel(1);
+        let (stat, running, path) = (self.stat, self.running.clone(), path.to_path_buf());
+        running.fetch_add(1, Ordering::AcqRel);
+        let spawned = std::thread::Builder::new()
+            .name("pickthumbs-stat".into())
+            .spawn(move || {
+                let meta = stat(&path);
+                running.fetch_sub(1, Ordering::AcqRel);
+                let _ = tx.send(meta);
+            });
+        if let Err(e) = spawned {
+            self.running.fetch_sub(1, Ordering::AcqRel);
+            return Err(e);
+        }
+        rx.recv_timeout(self.within)
+            .unwrap_or_else(|_| Err(io::ErrorKind::TimedOut.into()))
+    }
 }
 
 /// The helper process, started on the first miss and stopped once the queue is empty.
@@ -519,6 +587,60 @@ mod tests {
         assert!(fetched(&mut f, "/pics/c.jpg"), "the next queue tries again");
     }
 
+    /// A stat that blocks on a named pipe until a writer opens it, as a stat on a dead mount
+    /// blocks.
+    fn open_then_stat(p: &Path) -> io::Result<std::fs::Metadata> {
+        std::fs::File::open(p)?;
+        std::fs::metadata(p)
+    }
+
+    /// A stat that does not return is given up after its deadline; past [`MAX_STUCK_STATS`] of
+    /// them every picture is given up at once, until the blocked stats return.
+    #[test]
+    fn a_stat_that_hangs_is_given_up_and_bounded() {
+        use std::os::unix::fs::OpenOptionsExt;
+        let dir = std::env::temp_dir().join(format!("reprise-pickstat-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let (hang, pic) = (dir.join("hang.jpg"), dir.join("dunes.jpg"));
+        std::fs::write(&pic, b"a picture").unwrap();
+        let c = std::ffi::CString::new(hang.as_os_str().as_encoded_bytes()).unwrap();
+        // SAFETY: `c` is a valid NUL-terminated path for the call's duration.
+        assert_eq!(unsafe { libc::mkfifo(c.as_ptr(), 0o600) }, 0);
+        let stat = Stat::new(open_then_stat, WITHIN);
+        assert!(stat.of(&pic).is_ok());
+        for _ in 0..MAX_STUCK_STATS {
+            let asked = Instant::now();
+            let e = stat.of(&hang).unwrap_err();
+            assert_eq!(e.kind(), io::ErrorKind::TimedOut);
+            assert!(
+                asked.elapsed() < WITHIN * 5,
+                "gave up after {:?}",
+                asked.elapsed()
+            );
+        }
+        let asked = Instant::now();
+        let e = stat.of(&pic).unwrap_err();
+        assert_eq!(
+            e.kind(),
+            io::ErrorKind::TimedOut,
+            "refused while stats hang"
+        );
+        assert!(asked.elapsed() < WITHIN, "refused at once");
+
+        let end = Instant::now() + Duration::from_secs(5);
+        while stat.running.load(std::sync::atomic::Ordering::Acquire) > 0 {
+            assert!(Instant::now() < end, "the blocked stats return");
+            let _ = std::fs::OpenOptions::new()
+                .write(true)
+                .custom_flags(libc::O_NONBLOCK)
+                .open(&hang);
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert!(stat.of(&pic).is_ok(), "stats run again");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     /// A cache under `dir` holding `pic`'s 2x1 thumbnail at 128 as `pic` stands now.
     fn cache_with(dir: &Path, pic: &Path, dims: (u32, u32)) -> Thumbnails {
         let mut cache = Thumbnails::at(dir.join("thumbnails"), "test", 1 << 20);
@@ -550,14 +672,21 @@ mod tests {
         let pic = dir.join("dunes.jpg");
         std::fs::write(&pic, b"a picture").unwrap();
         let cache = cache_with(&dir, &pic, (640, 320));
-        let (thumb, dims) = cached(Some(&cache), &pic, 128).expect("a hit");
+        let meta = |p: &Path| std::fs::metadata(p).unwrap();
+        let (thumb, dims) = cached(Some(&cache), &pic, &meta(&pic), 128).expect("a hit");
         assert_eq!(dims, (640, 320));
         assert_eq!((thumb.width, thumb.height), (2, 1));
         assert_eq!(thumb.pixels, [0xffff_0000, 0xff00_00ff]);
-        assert!(cached(None, &pic, 128).is_none(), "no cache, no hit");
+        assert!(
+            cached(None, &pic, &meta(&pic), 128).is_none(),
+            "no cache, no hit"
+        );
         let other = dir.join("meadow.jpg");
         std::fs::write(&other, b"another picture").unwrap();
-        assert!(cached(Some(&cache), &other, 128).is_none(), "no entry");
+        assert!(
+            cached(Some(&cache), &other, &meta(&other), 128).is_none(),
+            "no entry"
+        );
         let earlier = std::time::SystemTime::now() - Duration::from_secs(3600);
         std::fs::File::options()
             .write(true)
@@ -565,7 +694,10 @@ mod tests {
             .unwrap()
             .set_modified(earlier)
             .unwrap();
-        assert!(cached(Some(&cache), &pic, 128).is_none(), "a stale mtime");
+        assert!(
+            cached(Some(&cache), &pic, &meta(&pic), 128).is_none(),
+            "a stale mtime"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
