@@ -228,12 +228,17 @@ const PROGRAM: &str = concat!("reprise-", env!("CARGO_PKG_VERSION"));
 /// cannot read skips the cache both ways, so nobody else's thumbnail of
 /// it shows. The stat comes before the read, so a picture changed in
 /// between is kept under its old stamp and simply misses next time.
+/// Anything but a regular file (a named pipe, a device) is never opened, since the open or the
+/// read may never return.
 fn thumbnail(
     decoders: &Decoders,
     edge: u32,
     cache: Option<&mut Thumbnails>,
     path: &std::path::Path,
 ) -> Option<(Canvas, (u32, u32))> {
+    if std::fs::metadata(path).is_ok_and(|m| !m.is_file()) {
+        return None;
+    }
     let stat = std::fs::File::open(path).and_then(|f| f.metadata());
     let cached = cache.zip(stat.ok());
     if let Some((cache, meta)) = &cached {
@@ -424,6 +429,27 @@ mod tests {
             count.load(std::sync::atomic::Ordering::SeqCst),
             2,
             "the second ask is a cache hit"
+        );
+    }
+
+    #[test]
+    fn a_named_pipe_is_not_opened() {
+        let dir = tempfile::tempdir().unwrap();
+        let fifo = dir.path().join("pipe.png");
+        let made = std::process::Command::new("mkfifo")
+            .arg(&fifo)
+            .status()
+            .unwrap();
+        assert!(made.success());
+        let (tx, rx) = channel();
+        std::thread::spawn(move || {
+            let _ = tx.send(thumbnail(&Decoders::default_set(), 128, None, &fifo).is_none());
+        });
+        let answer = rx.recv_timeout(std::time::Duration::from_secs(5));
+        assert_eq!(
+            answer,
+            Ok(true),
+            "no thumbnail, without waiting for a writer"
         );
     }
 
