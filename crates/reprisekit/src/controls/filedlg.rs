@@ -7,7 +7,8 @@
 //! [`Event::NeedPlace`] with a places tile index); the host answers with
 //! [`FileDlg::set_listing`].
 //!
-//! The client opens at `CLIENT` and resizes no smaller (see `set_size`).
+//! The client opens at `CLIENT` and resizes no narrower; a host window held shorter than
+//! that takes the height out of the shell view (see `set_size`).
 //! Folders list by Name ascending; a Details column click re-sorts
 //! (`shellview::sort_by_column`) and the sort carries to the next folder.
 //! The Views popup is a [`menu`](super::menu) context menu with a radio
@@ -310,7 +311,7 @@ pub struct FileDlg {
     focus: Focus,
     views_open: bool,
     extra: Option<(form::Form, i32)>,
-    /// The client size the host's window has now, no smaller than
+    /// The client size the host's window has now, no narrower than
     /// `min_client`; see `set_size`.
     size: (i32, i32),
     /// The File name text the user typed or the host set, as opposed to
@@ -545,14 +546,14 @@ impl FileDlg {
             }
         }
         self.extra = Some((form, h));
-        self.set_size(self.size);
+        self.grow_to_min();
     }
 
     pub fn extra(&self) -> Option<&form::Form> {
         self.extra.as_ref().map(|(f, _)| f)
     }
 
-    /// The client size the dialog opens at and shrinks to no further:
+    /// The client size the dialog opens at and a host's window minimum:
     /// `CLIENT` with the extra rows.
     pub fn min_client(&self) -> (i32, i32) {
         let u = self.text;
@@ -566,22 +567,39 @@ impl FileDlg {
     /// the same [`Theme::text`]. The client grows to the new minimum.
     pub fn set_text(&mut self, u: TextUnits) {
         self.text = u;
-        self.set_size(self.size);
+        self.grow_to_min();
+    }
+
+    fn grow_to_min(&mut self) {
+        let min = self.min_client();
+        self.size = (self.size.0.max(min.0), self.size.1.max(min.1));
     }
 
     pub fn client(&self) -> (i32, i32) {
         self.size
     }
 
+    /// The host window's client size. A width under `min_client`'s is taken as that; a
+    /// height under it (an output too short for the dialog) is laid out by `grow`.
     pub fn set_size(&mut self, size: (i32, i32)) {
-        let min = self.min_client();
-        self.size = (size.0.max(min.0), size.1.max(min.1));
+        self.size = (size.0.max(self.min_client().0), size.1);
     }
 
-    /// How far `r` is taller than `min_client`: the shell view and the
-    /// places bar grow by it, and every row under them moves down by it.
-    fn grow(&self, r: Rect) -> i32 {
-        (r.height - self.min_client().1).max(0)
+    /// How far `r` is taller than `min_client`: the shell view and the places bar grow by
+    /// it, and every row under them moves down by it. A shorter `r` shrinks them by up to
+    /// `shrink`, so the rows under them stay inside it.
+    fn grow(&self, r: Rect, cm: &ControlMetrics) -> i32 {
+        (r.height - self.min_client().1).max(-self.shrink(cm))
+    }
+
+    /// How far the dialog lays out shorter than `min_client`: the places bar down to its
+    /// last tile, the shell view down to half its opening height.
+    fn shrink(&self, cm: &ControlMetrics) -> i32 {
+        let u = |v: i32| cm.text.len(v);
+        let tiles = self.places.places.len() as i32 * cm.places.tile;
+        let places = u(SHELL_Y + PLACES_H) - u(SHELL_Y) - tiles;
+        let shell = (u(SHELL_Y + SHELL_H) - u(SHELL_Y)) / 2;
+        places.min(shell).max(0)
     }
 
     fn extra_list_open(&self) -> bool {
@@ -873,7 +891,7 @@ impl FileDlg {
 
     fn layout(&self, text: &TextRenderer, px: u32, r: Rect, cm: &ControlMetrics) -> Layout {
         let client = r;
-        let dy = self.grow(r);
+        let dy = self.grow(r, cm);
         let r = rows(r, cm);
         // 100% lengths at the text size; the toolbar's buttons and the icons keep their px.
         let u = |v: i32| cm.text.len(v);
@@ -1000,7 +1018,7 @@ impl FileDlg {
     }
 
     fn shell_layout(&self, r: Rect, cm: &ControlMetrics) -> shellview::Layout {
-        let dy = self.grow(r);
+        let dy = self.grow(r, cm);
         let r = rows(r, cm);
         let u = |v: i32| cm.text.len(v);
         let shell_w = (r.width - u(SHELL_X) - u(MARGIN)).max(0);
@@ -1355,7 +1373,12 @@ impl FileDlg {
             return Some(Hit::FileType(h));
         }
         if let Some((f, _)) = &self.extra
-            && let Some(h) = f.hit(x - r.x, y - rows(r, &lay_cm).y - self.grow(r), text, px)
+            && let Some(h) = f.hit(
+                x - r.x,
+                y - rows(r, &lay_cm).y - self.grow(r, &lay_cm),
+                text,
+                px,
+            )
         {
             return Some(Hit::Extra(h));
         }
@@ -1830,8 +1853,9 @@ impl FileDlg {
         );
 
         if let Some((f, _)) = &self.extra {
-            let rows = rows(r, &self.drawn.0.get());
-            let dy = self.grow(r);
+            let cm = self.drawn.0.get();
+            let rows = rows(r, &cm);
+            let dy = self.grow(r, &cm);
             let mut shifted = f.clone();
             shifted.origin = (rows.x, rows.y + dy);
             if self.focus != Focus::Extra {
@@ -2814,14 +2838,60 @@ mod tests {
     }
 
     #[test]
-    fn set_size_stops_at_the_opening_size() {
+    fn set_size_keeps_the_opening_width_and_takes_the_height() {
         let mut d = with_extra();
         let min = d.min_client();
         assert_eq!(d.client(), min);
         d.set_size((100, 100));
-        assert_eq!(d.client(), min, "no smaller than it opened");
+        assert_eq!(d.client(), (min.0, 100));
         d.set_size((min.0 + 168, min.1 + 55));
         assert_eq!(d.client(), (min.0 + 168, min.1 + 55));
+    }
+
+    /// At 200% with six places and the extra rows, a window held 150 px shorter than the
+    /// minimum: the shell view and places bar give the height, the rows under them stay inside.
+    #[test]
+    fn a_window_shorter_than_the_minimum_keeps_every_row_inside_it() {
+        let t = text();
+        let u = TextUnits::new(22, 11);
+        let cm = ControlMetrics::CLASSIC.grown(u);
+        let mut d = with_extra();
+        d.places.places = (0..6)
+            .map(|i| Place {
+                label: format!("Place {i}"),
+                icon: None,
+                enabled: true,
+            })
+            .collect();
+        d.set_text(u);
+        let cs = ColorScheme::default();
+        d.drawn_with(&Paint {
+            text: u,
+            ..classic_paint(&cs, 1)
+        });
+        let (w, h) = d.min_client();
+        let base = d.layout(&t, 22, Rect::new(0, 0, w, h), &cm);
+        let short = Rect::new(0, 0, w, h - 150);
+        d.set_size((w, h - 150));
+        assert_eq!(d.client(), (w, h - 150));
+        let lay = d.layout(&t, 22, short, &cm);
+        assert_eq!(lay.shell.frame.height, base.shell.frame.height - 150);
+        assert_eq!(lay.places.height, base.places.height - 150);
+        assert_eq!(lay.filetype.field.y, base.filetype.field.y - 150);
+        assert_eq!(lay.cancel.y, base.cancel.y - 150);
+        let hit = d.hit(&t, 22, short, 2 * FIELD_X + 5, 2 * (EXTRA_Y + 20) - 150 + 5);
+        assert!(
+            matches!(hit, Some(Hit::Extra(h)) if h.item == 1),
+            "got {hit:?}"
+        );
+
+        let tiles = 6 * cm.places.tile;
+        let lay = d.layout(&t, 22, Rect::new(0, 0, w, 100), &cm);
+        assert_eq!(lay.places.height, tiles, "the places bar keeps its tiles");
+        assert_eq!(
+            lay.shell.frame.height,
+            base.shell.frame.height - (base.places.height - tiles)
+        );
     }
 
     /// Grown by (168, 55): the places bar takes the height, the shell view
