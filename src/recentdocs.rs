@@ -37,6 +37,8 @@ pub struct RecentDocs {
     found: Arc<Mutex<HashMap<PathBuf, Found>>>,
     /// A check is running; another is not started until it answers.
     checking: bool,
+    /// A check was asked for while one ran: check again when it answers.
+    recheck: bool,
 }
 
 impl Default for RecentDocs {
@@ -54,6 +56,7 @@ impl RecentDocs {
             check_after_read: false,
             found: Arc::default(),
             checking: false,
+            recheck: false,
         }
     }
 
@@ -83,8 +86,11 @@ impl RecentDocs {
 
     /// The document folders that were not found missing.
     pub fn document_dirs(&self) -> Vec<(PathBuf, &'static str)> {
-        reprisefs::places::document_dir_paths()
-            .into_iter()
+        self.found_dirs(reprisefs::places::document_dir_paths())
+    }
+
+    fn found_dirs(&self, dirs: Vec<(PathBuf, &'static str)>) -> Vec<(PathBuf, &'static str)> {
+        dirs.into_iter()
             .filter(|(dir, _)| matches!(self.found(dir), None | Some(Found::Dir)))
             .collect()
     }
@@ -165,10 +171,12 @@ impl State {
         }
     }
 
-    /// Checks the bookmarks and document folders off the loop, unless a check is running.
-    fn check_recent(&mut self) {
+    /// Checks the bookmarks and document folders off the loop, or once more after the check
+    /// under way.
+    pub fn check_recent(&mut self) {
         let files = self.config.recent_files;
         let Some(paths) = self.recent.paths_to_check(files) else {
+            self.recent.recheck = true;
             return;
         };
         let found = self.recent.found.clone();
@@ -176,7 +184,11 @@ impl State {
             check(paths, &found, |p| std::fs::metadata(p));
             Box::new(|s: &mut State| {
                 s.recent.checking = false;
+                if std::mem::take(&mut s.recent.recheck) {
+                    s.check_recent();
+                }
                 s.relist_recent();
+                s.relist_start_places();
             })
         });
     }
@@ -335,6 +347,48 @@ mod tests {
         job.join().unwrap();
         assert_eq!(docs.current(10), [kept], "the pipe is not a file");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_document_folder_found_gone_drops_its_start_place_and_one_made_comes_back() {
+        let home = std::env::temp_dir().join(format!("reprise-recentdirs-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        let (documents, music) = (home.join("Documents"), home.join("Music"));
+        std::fs::create_dir_all(&documents).unwrap();
+        std::fs::create_dir_all(&music).unwrap();
+        let docs = RecentDocs::at(RecentFiles::at(None));
+        let dirs = || {
+            vec![
+                (documents.clone(), "folder-documents"),
+                (music.clone(), "folder-music"),
+            ]
+        };
+        let places = |docs: &RecentDocs| -> Vec<String> {
+            crate::startmenu::places(false, &docs.found_dirs(dirs()))
+                .into_iter()
+                .filter_map(|e| match e {
+                    crate::config::MenuEntry::Item { label, .. } => Some(label),
+                    crate::config::MenuEntry::Separator => None,
+                })
+                .take(3)
+                .collect()
+        };
+        let checked = |docs: &RecentDocs| {
+            check(
+                dirs().into_iter().map(|(d, _)| d).collect(),
+                &docs.found,
+                |p| std::fs::metadata(p),
+            )
+        };
+        checked(&docs);
+        assert_eq!(places(&docs), ["{user}", "Documents", "Music"]);
+        std::fs::remove_dir(&music).unwrap();
+        checked(&docs);
+        assert_eq!(places(&docs), ["{user}", "Documents", "Computer"]);
+        std::fs::create_dir(&music).unwrap();
+        checked(&docs);
+        assert_eq!(places(&docs), ["{user}", "Documents", "Music"]);
+        let _ = std::fs::remove_dir_all(&home);
     }
 
     fn test_output() -> smithay::output::Output {

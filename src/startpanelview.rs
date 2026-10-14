@@ -435,24 +435,9 @@ impl State {
         let px = PICTURE * self.draw_scale_at(Some(&output)).max(1);
         let user = crate::lock::current_user();
         let mut model = StartPanel::new();
-        let mut places = Vec::new();
-        let mut rule = false;
         self.refresh_recent();
-        let dirs = self.recent.document_dirs();
-        for e in crate::startmenu::places(self.config.recent_files, &dirs) {
-            let MenuEntry::Item { label, icon, .. } = &e else {
-                rule = true;
-                continue;
-            };
-            model.places.push(PlaceRow {
-                label: crate::startmenu::expand_label(label, &user),
-                picture: icon.as_deref().and_then(|n| self.icons.get(n, px)),
-                rule_before: rule,
-                submenu: e.opens_submenu(),
-            });
-            places.push(e);
-            rule = false;
-        }
+        let (rows, places) = self.start_places(px, &user);
+        model.places = rows;
         let home = std::env::var_os("HOME").map(PathBuf::from);
         model.user_picture = picture_paths(home.as_deref(), &user)
             .iter()
@@ -507,6 +492,87 @@ impl State {
         }
         self.redraw_start_panel();
         self.redraw_taskbars();
+    }
+
+    /// The panel's places for the document folders the last check left, with their `px`
+    /// pictures, and `startmenu::places()` without its rules.
+    fn start_places(&mut self, px: i32, user: &str) -> (Vec<PlaceRow>, Vec<MenuEntry>) {
+        let dirs = self.recent.document_dirs();
+        let mut rows = Vec::new();
+        let mut places = Vec::new();
+        let mut rule = false;
+        for e in crate::startmenu::places(self.config.recent_files, &dirs) {
+            let MenuEntry::Item { label, icon, .. } = &e else {
+                rule = true;
+                continue;
+            };
+            rows.push(PlaceRow {
+                label: crate::startmenu::expand_label(label, user),
+                picture: icon.as_deref().and_then(|n| self.icons.get(n, px)),
+                rule_before: rule,
+                submenu: e.opens_submenu(),
+            });
+            places.push(e);
+            rule = false;
+        }
+        (rows, places)
+    }
+
+    /// Relists the open panel's places from the last check of the document folders, in place.
+    /// A Recent Items popup moves with its row, and closes if the row is gone.
+    pub(crate) fn relist_start_places(&mut self) {
+        let Some(output) = self.start_panel.as_ref().map(|v| v.output.clone()) else {
+            return;
+        };
+        let px = PICTURE * self.draw_scale_at(Some(&output)).max(1);
+        let (rows, places) = self.start_places(px, &crate::lock::current_user());
+        let Some(v) = self.start_panel.as_mut() else {
+            return;
+        };
+        if v.places == places {
+            return;
+        }
+        let old = std::mem::replace(&mut v.places, places);
+        let new = &v.places;
+        v.model.relist_places(rows, |i| {
+            reprisekit::selection::follow(&old, new, i, |_| true)
+        });
+        let popup = matches!(
+            self.menus.first().map(|m| &m.kind),
+            Some(crate::menuview::MenuKind::Documents { dirs: false, .. })
+        );
+        let anchor = old
+            .iter()
+            .find(|e| e.opens_submenu())
+            .and_then(|e| new.iter().position(|n| n == e));
+        self.redraw_start_panel();
+        if popup {
+            match anchor.and_then(|i| self.start_spot_rect(Spot::Place(i))) {
+                Some(row) => self.move_start_popup((row.right(), row.y)),
+                None => self.close_menu(),
+            }
+        }
+        let p = self.pointer_location();
+        let spot = self.start_panel_hit(p.x, p.y);
+        self.start_panel_pointer(spot);
+    }
+
+    /// Moves the popup open off the panel to hang at `at`, as `place_popup` puts it.
+    fn move_start_popup(&mut self, at: (i32, i32)) {
+        let Some(m) = self.menus.first() else {
+            return;
+        };
+        let usable = self.usable_area(Some(&m.output));
+        let (x, y) = place_popup(at, (m.layout.width, m.layout.height), usable);
+        if (x, y) == (m.x, m.y) {
+            return;
+        }
+        let tree = m.tree;
+        if let Some(m) = self.menus.first_mut() {
+            (m.x, m.y) = (x, y);
+        }
+        self.scene.set_position(tree, x, y);
+        self.redraw_all();
     }
 
     fn list_start_programs(&mut self) {
