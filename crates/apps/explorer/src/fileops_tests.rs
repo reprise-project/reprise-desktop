@@ -700,7 +700,7 @@ fn the_bin_shows_origins_and_deletes_for_good() {
     assert_eq!(p.restore, ex.bin_item(a));
     assert!(matches!(
         p.sheet.open().item("v_origin").map(|i| &i.control),
-        Some(form::Control::Label { text, .. }) if text == "folder"
+        Some(form::Control::Lines(lines)) if lines == &["folder"]
     ));
     let pressed = propsheet::Event::Page(0, form::Event::Pressed(crate::props_dialog::RESTORE));
     ex.props_outcome(pressed, &mut ctx);
