@@ -5318,7 +5318,7 @@ mod tests {
     }
 
     #[test]
-    fn wrap_breaks_on_words_and_keeps_long_words_whole() {
+    fn wrap_breaks_on_words_and_inside_words_too_long_for_a_line() {
         let text = TextRenderer::load(&FontConfig::default());
         let px = 11;
         let one = text.measure("aaaa", false, px);
@@ -5332,8 +5332,13 @@ mod tests {
             vec!["aaaa bbbb cccc"]
         );
         assert_eq!(
-            wrap(&text, "toolongtofit x", 1, px),
-            vec!["toolongtofit", "x"]
+            wrap(
+                &text,
+                "toolongtofit",
+                text.measure("toolong", false, px),
+                px
+            ),
+            vec!["toolong", "tofit"]
         );
         assert!(wrap(&text, "   ", 100, px).is_empty());
     }

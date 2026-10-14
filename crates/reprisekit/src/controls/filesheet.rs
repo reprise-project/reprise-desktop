@@ -2976,14 +2976,25 @@ mod tests {
             created: Some(date.into()),
             ..bin_facts()
         };
+        let unbroken = BinFacts {
+            origin: "Quarterly_reports_for_the_northern_region-final_drafts".into(),
+            ..facts.clone()
+        };
         let over = crate::interfaces::form_overflows(|_, _, _| {
-            let page = bin_page(&facts, "Quarterly report 2026.odt", None);
-            let sheet = crate::controls::propsheet::PropSheet::new(
-                &["General"],
-                vec![page],
-                (SHEET_W, BIN_SHEET_H),
-            );
-            vec![("bin item".into(), sheet.pages[0].clone())]
+            [
+                ("bin item", &facts),
+                ("bin item, origin without spaces", &unbroken),
+            ]
+            .map(|(name, facts)| {
+                let page = bin_page(facts, "Quarterly report 2026.odt", None);
+                let sheet = crate::controls::propsheet::PropSheet::new(
+                    &["General"],
+                    vec![page],
+                    (SHEET_W, BIN_SHEET_H),
+                );
+                (name.into(), sheet.pages[0].clone())
+            })
+            .into()
         });
         assert!(over.is_empty(), "{}", over.join("\n"));
     }
