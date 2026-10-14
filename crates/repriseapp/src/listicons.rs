@@ -70,16 +70,27 @@ impl ListIcons {
         }
     }
 
-    /// Hands `entries` the icon files decoded for the last scale change: true when one changed.
-    /// A file that no longer decodes keeps its old icons.
-    pub fn take(&mut self, entries: &mut [Entry]) -> bool {
+    /// Hands `entries` the icon files decoded for the last scale change, and `cache` keeps them
+    /// at that scale: true when an entry changed. A file that no longer decodes keeps its old
+    /// icons.
+    pub fn take(&mut self, entries: &mut [Entry], cache: &mut IconCache) -> bool {
         let Some(art) = self.files.as_ref().and_then(|rx| rx.try_recv().ok()) else {
             return false;
         };
         self.files = None;
-        let swaps: Vec<_> = art
+        let art: Vec<_> = art
             .into_iter()
             .filter(|(_, a)| a.iter().any(Option::is_some))
+            .collect();
+        let puts = art.iter().flat_map(|(f, a)| {
+            LISTING_PX
+                .into_iter()
+                .zip(a)
+                .map(|(px, c)| (f.clone(), px, c.clone()))
+        });
+        cache.put_files_at(puts.collect(), self.scale);
+        let swaps: Vec<_> = art
+            .into_iter()
             .filter_map(|(f, a)| self.icons.put(&f, a))
             .collect();
         shellview::swap_icons(entries, &swaps);
