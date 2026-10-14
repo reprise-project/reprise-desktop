@@ -52,9 +52,9 @@ pub struct GlassCtx {
     /// Private backdrops by output and glass (a resize makes the glass a new node); the entry's
     /// `Weak` keeps the glass's address from being reused while it lives.
     beneath: RefCell<HashMap<(String, *const Glass), Beneath>>,
-    /// The elements being made are a backdrop of its own for glass above: glass draws into it at
-    /// its half resolution.
-    drawing_beneath: Cell<bool>,
+    /// The elements being made are a backdrop of its own for glass above, this many output pixels
+    /// per texel: glass draws into it at that resolution.
+    drawing_beneath: Cell<Option<i32>>,
 }
 
 struct Placed {
@@ -138,11 +138,11 @@ smithay::render_elements! {
     Cut=CropRenderElement<SceneElement<GlesRenderer>>,
 }
 
-/// `r` (output pixels) in backdrop texels, rounded out.
-fn halved(r: Rectangle<i32, Physical>) -> Rectangle<i32, Physical> {
-    let (x0, y0) = (r.loc.x.div_euclid(2), r.loc.y.div_euclid(2));
-    let x1 = (r.loc.x + r.size.w + 1).div_euclid(2);
-    let y1 = (r.loc.y + r.size.h + 1).div_euclid(2);
+/// `r` (output pixels) in texels of `d` output pixels, rounded out.
+fn shrunk(r: Rectangle<i32, Physical>, d: i32) -> Rectangle<i32, Physical> {
+    let (x0, y0) = (r.loc.x.div_euclid(d), r.loc.y.div_euclid(d));
+    let x1 = (r.loc.x + r.size.w + d - 1).div_euclid(d);
+    let y1 = (r.loc.y + r.size.h + d - 1).div_euclid(d);
     Rectangle::new((x0, y0).into(), (x1 - x0, y1 - y0).into())
 }
 
@@ -252,7 +252,8 @@ impl GlassCtx {
             let Some(b) = backdrops.get_mut(&name) else {
                 return;
             };
-            let elements = scene.backdrop_elements(renderer, &View::new(area, scale / 2.0));
+            let d = f64::from(reprisefx::blur::backdrop_downscale(scale));
+            let elements = scene.backdrop_elements(renderer, &View::new(area, scale / d));
             let needed = self.reads_on(scene, area, seen, scale);
             *self.source.borrow_mut() =
                 self.redraw(renderer, b, &elements, clear, output, Some(&needed));
@@ -378,20 +379,20 @@ impl GlassCtx {
                 continue;
             };
             let whole = Rectangle::from_size(b.backdrop.key.0);
-            let feed = reads.feed.map_or(whole, halved);
+            let d = reprisefx::blur::backdrop_downscale(scale);
+            let feed = reads.feed.map_or(whole, |f| shrunk(f, d));
             let crop = b.reuse.crop(&reads.needed, feed, whole);
-            let view = View::new(area, scale / 2.0);
-            self.drawing_beneath.set(true);
+            let view = View::new(area, scale / f64::from(d));
+            self.drawing_beneath.set(Some(d));
             let elements: Vec<Private> = scene
                 .elements_below(renderer, anchor, &view)
                 .into_iter()
                 .filter_map(|e| match crop == whole {
                     true => Some(Private::Whole(e)),
-                    false => CropRenderElement::from_element(e, Scale::from(scale / 2.0), crop)
-                        .map(Private::Cut),
+                    false => CropRenderElement::from_element(e, view.scale, crop).map(Private::Cut),
                 })
                 .collect();
-            self.drawing_beneath.set(false);
+            self.drawing_beneath.set(None);
             let look = (pass.settings, pass.quality, seen, scale.to_bits());
             let blurs = b.reuse.blurs(&reads.needed, &look);
             if let Some(source) =
@@ -417,6 +418,7 @@ impl GlassCtx {
         needed: Option<&[Rectangle<i32, Physical>]>,
     ) -> Option<Source> {
         let name = output.name();
+        let d = reprisefx::blur::backdrop_downscale(output.current_scale().fractional_scale());
         let age = usize::from(b.drawn);
         let rendered = renderer
             .bind(&mut b.texture)
@@ -432,10 +434,10 @@ impl GlassCtx {
                 b.drawn = true;
                 damage
                     .into_iter()
-                    .map(|d| {
+                    .map(|r| {
                         Rectangle::new(
-                            (d.loc.x * 2, d.loc.y * 2).into(),
-                            (d.size.w * 2, d.size.h * 2).into(),
+                            (r.loc.x * d, r.loc.y * d).into(),
+                            (r.size.w * d, r.size.h * d).into(),
                         )
                     })
                     .collect()
@@ -586,8 +588,9 @@ fn shows_glass<E: Element>(made: &[Id], elements: &[E], scale: Scale<f64>) -> bo
 
 impl OutputBackdrop {
     fn key(seen: Size<i32, Physical>, scale: f64) -> (Size<i32, Physical>, u64) {
-        let size = Size::from(((seen.w + 1) / 2, (seen.h + 1) / 2));
-        (size, (scale / 2.0).to_bits())
+        let d = reprisefx::blur::backdrop_downscale(scale);
+        let size = Size::from(((seen.w + d - 1) / d, (seen.h + d - 1) / d));
+        (size, (scale / f64::from(d)).to_bits())
     }
 
     fn new(
@@ -597,14 +600,14 @@ impl OutputBackdrop {
         name: &str,
     ) -> Option<OutputBackdrop> {
         let key = OutputBackdrop::key(seen, scale);
-        let (size, half) = (key.0, scale / 2.0);
+        let (size, view) = (key.0, f64::from_bits(key.1));
         let texture: GlesTexture = renderer
             .create_buffer(Fourcc::Abgr8888, (size.w, size.h).into())
             .map_err(|e| log::warn!("glass: no backdrop for {name}: {e}"))
             .ok()?;
         Some(OutputBackdrop {
             texture,
-            tracker: OutputDamageTracker::new(size, half, Transform::Normal),
+            tracker: OutputDamageTracker::new(size, view, Transform::Normal),
             key,
             drawn: false,
             picture: Picture::new(),
@@ -633,8 +636,8 @@ impl Reads {
         let to = |r: Rect| physical(r, at, Scale::from(scale));
         let holes: Vec<_> = pane.holes.iter().map(|&h| to(h)).collect();
         let (texel, blur) = (
-            reprisefx::blur::texel(s.blur, s.material, pass.quality),
-            reprisefx::blur::reach(s.blur, s.material, pass.quality),
+            reprisefx::blur::texel(s.blur, s.material, pass.quality, scale),
+            reprisefx::blur::reach(s.blur, s.material, pass.quality, scale),
         );
         let output = Rectangle::from_size(seen);
         let mut out = Reads {
@@ -928,7 +931,7 @@ struct GlassNode {
     ctx: Rc<GlassCtx>,
     glass: Rc<Glass>,
     /// The glass drawn into the backdrops of glass above it: its own handle, so its damage and its
-    /// half-resolution key stay apart from the screen's.
+    /// downscaled key stay apart from the screen's.
     beneath: Glass,
     pane: Pane,
     size: Size<i32, Logical>,
@@ -962,10 +965,11 @@ impl CustomNode<GlesRenderer> for GlassNode {
         // In a backdrop beneath other glass the shapes are laid out on the output and drawn whole:
         // stepped corner rows would be half a pixel tall.
         let beneath = self.ctx.drawing_beneath.get();
-        let (glass, downscale, location, scale, drawn) = if beneath {
-            let location = location.upscale(2.0);
-            let scale = Scale::from((scale.x * 2.0, scale.y * 2.0));
-            (&self.beneath, 2, location, scale, round_shapes(&self.pane))
+        let (glass, downscale, location, scale, drawn) = if let Some(d) = beneath {
+            let k = f64::from(d);
+            let location = location.upscale(k);
+            let scale = Scale::from((scale.x * k, scale.y * k));
+            (&self.beneath, d, location, scale, round_shapes(&self.pane))
         } else {
             let drawn = drawn_shapes(&self.pane, pass.settings.material, scale.x);
             (&*self.glass, 1, location, scale, drawn)
@@ -999,7 +1003,7 @@ impl CustomNode<GlesRenderer> for GlassNode {
                 downscale,
             },
         );
-        if let (Some(e), false) = (&element, beneath) {
+        if let (Some(e), None) = (&element, beneath) {
             self.ctx.made.borrow_mut().push(e.id().clone());
         }
         element.map(CustomElement::new).into_iter().collect()
@@ -1284,7 +1288,7 @@ mod tests {
                 let reads = Reads::of(&pane, (100.0, 50.0).into(), (1000, 800).into(), 1.0, &pass);
                 let feed = reads.feed.unwrap();
                 let s = &pass.settings;
-                let r = reprisefx::blur::reach(s.blur, material, quality);
+                let r = reprisefx::blur::reach(s.blur, material, quality, 1.0);
                 for n in &reads.needed {
                     let read = Rectangle::new(
                         (n.loc.x - r, n.loc.y - r).into(),
