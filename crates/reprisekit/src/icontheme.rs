@@ -898,13 +898,26 @@ impl IconCache {
 /// A file listing's icons by name at 16, 32 and 48 px (List and Details, Icons and Thumbnails,
 /// Tiles): each name is loaded once and its canvases shared by every entry wearing it.
 #[derive(Default)]
-pub struct ListingIcons(HashMap<String, [Option<std::rc::Rc<Canvas>>; 3]>);
+pub struct ListingIcons {
+    by_name: HashMap<String, [Option<std::rc::Rc<Canvas>>; 3]>,
+    device: i32,
+}
 
 impl ListingIcons {
+    /// For a host that draws on device pixels at `scale` from a scale-1 cache: every size is
+    /// fetched `scale` times as large.
+    pub fn device(scale: i32) -> ListingIcons {
+        ListingIcons {
+            by_name: HashMap::new(),
+            device: scale,
+        }
+    }
+
     pub fn get(&mut self, cache: &mut IconCache, name: &str) -> [Option<std::rc::Rc<Canvas>>; 3] {
-        self.0
+        let k = self.device.max(1);
+        self.by_name
             .entry(name.to_string())
-            .or_insert_with(|| [16, 32, 48].map(|px| cache.get(name, px).map(std::rc::Rc::new)))
+            .or_insert_with(|| [16, 32, 48].map(|px| cache.get(name, px * k).map(std::rc::Rc::new)))
             .clone()
     }
 }
