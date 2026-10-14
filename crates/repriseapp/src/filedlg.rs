@@ -14,6 +14,7 @@ use reprisekit::selection::Mods;
 use reprisekit::text::TextRenderer;
 use reprisekit::textedit::keysym;
 
+use crate::listicons::ListIcons;
 use crate::thumbs::{self, Thumbs};
 use reprisefs::folders::FolderTable;
 use reprisekit::controls::filedlg::{Crumb, Fields, FileDlg, Folder, FolderId, Hit};
@@ -101,6 +102,7 @@ struct Listing {
     aliases: Vec<(String, OsString)>,
     /// The pictures' paths; picture `i`'s entry has id `i + 1`.
     pictures: Vec<PathBuf>,
+    icons: ListingIcons,
 }
 
 /// Entries wear Explorer's icons at every size and its Tiles lines; a picture's thumbnail
@@ -184,6 +186,7 @@ fn listing_raw(
         },
         aliases,
         pictures,
+        icons: shared,
     })
 }
 
@@ -196,13 +199,19 @@ pub(crate) fn thumbs_on(app: &mut dyn crate::App, win: crate::WinId, wake: &crat
 }
 
 /// The file dialog in window `win`, if any, draws at `scale` ([`Host::follow_scale`]).
-pub(crate) fn follow_scale(app: &mut dyn crate::App, win: crate::WinId, scale: i32) {
+pub(crate) fn follow_scale(
+    app: &mut dyn crate::App,
+    win: crate::WinId,
+    scale: i32,
+    ctx: &mut crate::Ctx,
+) {
     if let Some(f) = app.drop_file_dialog(win) {
-        f.host.follow_scale(f.dlg, scale);
+        f.host.follow_scale(f.dlg, scale, &mut ctx.icons, &ctx.wake);
     }
 }
 
-/// Hands the file dialogs in `wins` the thumbnails that arrived: the windows that show one.
+/// Hands the file dialogs in `wins` the thumbnails and icon files that arrived: the windows
+/// that show one.
 pub(crate) fn take_thumbs(
     app: &mut dyn crate::App,
     wins: impl IntoIterator<Item = crate::WinId>,
@@ -250,6 +259,7 @@ pub struct Host {
     /// `[thumbnail_cache]` as the last dialog opened: what `thumbs` keeps its pictures by.
     cache: Option<repriseconf::ThumbnailCache>,
     pictures: Pictures,
+    list_icons: ListIcons,
 }
 
 /// The listed pictures and how far their thumbnails have got.
@@ -317,9 +327,18 @@ impl Host {
         }
     }
 
-    /// The dialog draws at `scale`: its pictures are asked for again at that scale, and the
-    /// thumbnails it shows stay until theirs arrive.
-    fn follow_scale(&mut self, dlg: &FileDlg, scale: i32) {
+    /// The dialog draws at `scale`, `icons`' scale: its entries wear their icons at that scale,
+    /// and its pictures are asked for again at it. The thumbnails and icon files it shows stay
+    /// until theirs arrive and `wake` fires.
+    fn follow_scale(
+        &mut self,
+        dlg: &mut FileDlg,
+        scale: i32,
+        icons: &mut IconCache,
+        wake: &crate::Waker,
+    ) {
+        self.list_icons
+            .follow(scale, icons, dlg.entries_mut(), wake);
         let p = &mut self.pictures;
         if p.scale != scale {
             p.scale = scale;
@@ -328,14 +347,15 @@ impl Host {
         }
     }
 
-    /// Hands the thumbnails that arrived to their entries: true when one did.
+    /// Hands the thumbnails and icon files that arrived to their entries: true when one did.
     fn take_thumbs(&mut self, dlg: &mut FileDlg) -> bool {
+        let icons = self.list_icons.take(dlg.entries_mut());
         let Some(worker) = &mut self.thumbs else {
-            return false;
+            return icons;
         };
         let done = worker.drain();
         if done.is_empty() {
-            return false;
+            return icons;
         }
         let at: HashMap<u64, usize> = dlg
             .entries()
@@ -344,7 +364,7 @@ impl Host {
             .filter(|(_, e)| !e.is_dir && e.id != 0)
             .map(|(i, e)| (e.id, i))
             .collect();
-        let mut shown = false;
+        let mut shown = icons;
         for d in done {
             let Some(&i) = self.pictures.ids.get(&d.path).and_then(|id| at.get(id)) else {
                 continue;
@@ -489,6 +509,7 @@ impl Host {
             self.folder = Some(id);
             self.aliases.clear();
             self.aliases.extend(l.aliases);
+            self.list_icons.listed(l.icons, icons.scale());
             let p = &mut self.pictures;
             p.generation += 1;
             p.asked = false;
@@ -1142,7 +1163,7 @@ mod tests {
         h.ask_thumbs(dlg);
     }
 
-    /// Takes thumbnails until the worker's are in.
+    /// Takes thumbnails and icon files until some are in.
     fn settle_thumbs(h: &mut Host, dlg: &mut FileDlg) {
         for _ in 0..500 {
             if h.take_thumbs(dlg) {
@@ -1150,7 +1171,7 @@ mod tests {
             }
             std::thread::sleep(std::time::Duration::from_millis(10));
         }
-        panic!("no thumbnail arrived");
+        panic!("nothing arrived");
     }
 
     fn thumbs_without_cache(h: &mut Host) {
@@ -1224,15 +1245,85 @@ mod tests {
         h.ensure_listed(&mut dlg, &mut icons, &|_| true);
         view(&mut h, &mut dlg, Mode::Thumbnails);
         settle_thumbs(&mut h, &mut dlg);
-        h.follow_scale(&dlg, 1);
+        let wake = crate::Waker::noop();
+        h.follow_scale(&mut dlg, 1, &mut icons, &wake);
         assert!(h.thumbs.as_mut().unwrap().drain().is_empty(), "same scale");
 
-        h.follow_scale(&dlg, 2);
+        icons.set_scale(2);
+        h.follow_scale(&mut dlg, 2, &mut icons, &wake);
         let kept = entry(&dlg, "pic.png").thumb.as_ref().expect("still shown");
         assert_eq!(kept.scale(), 1);
         settle_thumbs(&mut h, &mut dlg);
         let thumb = entry(&dlg, "pic.png").thumb.as_ref().expect("the new one");
         assert_eq!((thumb.scale(), thumb.device_size()), (2, (80, 60)));
+    }
+
+    /// Each size's canvas scale, device width and middle colour.
+    fn icon_sizes(e: &Entry) -> [Option<(i32, u32, u32)>; 3] {
+        [&e.icon, &e.icon32, &e.icon48].map(|c| {
+            c.as_ref().map(|c| {
+                let mid = c.get(c.width as i32 / 2, c.height as i32 / 2);
+                (c.scale(), c.device_size().0, mid)
+            })
+        })
+    }
+
+    #[test]
+    fn a_new_draw_scale_swaps_the_list_icons_without_listing_again() {
+        const OWN: u32 = 0xff80_20a0;
+        let t = pictures_folder();
+        let dir = t.path().join("list");
+        let own = t.path().join("own.png");
+        png(&own, 96, 96, OWN);
+        let directory = format!("[Desktop Entry]\nIcon={}\n", own.display());
+        std::fs::write(dir.join("sub/.directory"), directory).unwrap();
+        let mut icons = flat_icons(t.path());
+        let mut h = host_in(&dir);
+        let mut dlg = open_dlg(&mut h);
+        h.ensure_listed(&mut dlg, &mut icons, &|_| true);
+        let listing = h.pictures.generation;
+        let wake = crate::Waker::noop();
+        assert_eq!(
+            icon_sizes(entry(&dlg, "notes.txt")),
+            [
+                Some((1, 16, TEXT)),
+                Some((1, 32, TEXT)),
+                Some((1, 48, TEXT))
+            ]
+        );
+
+        icons.set_scale(2);
+        h.follow_scale(&mut dlg, 2, &mut icons, &wake);
+        assert_eq!(
+            icon_sizes(entry(&dlg, "notes.txt")),
+            [
+                Some((2, 32, TEXT)),
+                Some((2, 64, TEXT)),
+                Some((2, 96, TEXT))
+            ]
+        );
+        assert_eq!(
+            icon_sizes(entry(&dlg, "sub"))[0],
+            Some((1, 16, OWN)),
+            "an icon file keeps its old canvas until its thread decodes it"
+        );
+        settle_thumbs(&mut h, &mut dlg);
+        assert_eq!(
+            icon_sizes(entry(&dlg, "sub")),
+            [Some((2, 32, OWN)), Some((2, 64, OWN)), Some((2, 96, OWN))]
+        );
+        assert_eq!(
+            h.pictures.generation, listing,
+            "the folder is not listed again"
+        );
+
+        icons.set_scale(1);
+        h.follow_scale(&mut dlg, 1, &mut icons, &wake);
+        assert_eq!(
+            icon_sizes(entry(&dlg, "sub")),
+            [Some((1, 16, OWN)), Some((1, 32, OWN)), Some((1, 48, OWN))],
+            "the cache still holds the icon file at scale 1"
+        );
     }
 
     /// A program with a file dialog in window `DLG` that does nothing for its thumbnails.

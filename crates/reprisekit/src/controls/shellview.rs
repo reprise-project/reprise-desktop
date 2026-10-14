@@ -25,6 +25,7 @@ use crate::controls::listview;
 use crate::controls::metrics::ControlMetrics;
 use crate::controls::scrollbar;
 use crate::controls::shellgrid;
+use crate::icontheme::ListingSizes;
 use crate::look::Paint;
 use crate::look::widgets::item::{self, Mark};
 use crate::look::widgets::{draw_field_frame, draw_hscrollbar, draw_scrollbar};
@@ -37,6 +38,7 @@ use crate::theme::{Color, TextUnits};
 use accesskit::{NodeId, Role};
 use std::borrow::Cow;
 use std::cell::RefCell;
+use std::collections::HashMap;
 use std::rc::Rc;
 
 pub const ROW_H: i32 = 17;
@@ -81,6 +83,22 @@ pub struct Entry {
     /// The Original Location column's text, for a Recycle Bin item.
     pub folder: String,
     pub deleted: String,
+}
+
+/// Entries wearing a pair's old icons wear its new ones, as
+/// [`ListingIcons::refetch`](crate::icontheme::ListingIcons::refetch) and
+/// [`put`](crate::icontheme::ListingIcons::put) give them; the rest keep theirs.
+pub fn swap_icons(entries: &mut [Entry], swaps: &[(ListingSizes, ListingSizes)]) {
+    let first = |s: [&Option<Rc<Canvas>>; 3]| s.into_iter().flatten().next().map(Rc::as_ptr);
+    let new: HashMap<*const Canvas, &ListingSizes> = swaps
+        .iter()
+        .filter_map(|(old, new)| Some((first([&old[0], &old[1], &old[2]])?, new)))
+        .collect();
+    for e in entries {
+        if let Some(n) = first([&e.icon, &e.icon32, &e.icon48]).and_then(|p| new.get(&p)) {
+            [e.icon, e.icon32, e.icon48] = (*n).clone();
+        }
+    }
 }
 
 impl Entry {

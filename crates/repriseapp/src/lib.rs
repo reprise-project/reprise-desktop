@@ -9,6 +9,7 @@ pub mod fielddrop;
 pub mod filedlg;
 pub mod heads;
 pub mod keys;
+pub mod listicons;
 pub mod oneshot;
 pub mod openwith;
 mod outputmgmt;
@@ -629,6 +630,9 @@ pub trait App {
         false
     }
     fn event(&mut self, win: WinId, ev: Event, ctx: &mut Ctx) -> Reply;
+    /// Called before each draw of `win`, at `scale` device px per logical px, with
+    /// [`Ctx::icons`] at that scale: a program fetches again what it holds at another one.
+    fn follow_scale(&mut self, _win: WinId, _scale: i32, _ctx: &mut Ctx) {}
     fn draw(&mut self, win: WinId, c: &mut Canvas, ctx: &Ctx);
     /// Window `win`'s accessibility tree, from the state `draw` last drew:
     /// hang the controls' `access` parts under `reprisekit::access::ROOT` and
@@ -2333,7 +2337,8 @@ impl Host {
             .filter(|t| t.entered == Some(id))
             .and_then(|t| t.preedit().cloned());
         canvas.set_preedit(preedit);
-        filedlg::follow_scale(&mut *self.app, id, scale);
+        filedlg::follow_scale(&mut *self.app, id, scale, &mut self.ctx);
+        self.app.follow_scale(id, scale, &mut self.ctx);
         let app = &mut self.app;
         self.ctx
             .at_scale(scale, |ctx| app.draw(id, &mut canvas, ctx));

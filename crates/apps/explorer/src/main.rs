@@ -33,6 +33,7 @@ use place::{Listed, Place, list, sort_order_grouped};
 use props_dialog::{PROPS, Props};
 use repriseapp::decode::Decoders;
 use repriseapp::keys::AltArm;
+use repriseapp::listicons::ListIcons;
 use repriseapp::thumbs::{self, Thumbs};
 use repriseapp::{
     App, BTN_LEFT, BTN_RIGHT, Child, Ctx, DropForm, Event, FileDrop, MAIN, PointerInput, Reply,
@@ -209,6 +210,8 @@ pub struct Explorer {
     generation: u64,
     /// The scale the main window last drew at ([`Explorer::follow_scale`]).
     drawn_scale: i32,
+    /// The listing's icons, fetched again when the main window draws at a new scale.
+    list_icons: ListIcons,
     /// Image sizes by path, from the thumbnail worker or a header read
     /// ([`Explorer::read_dims`]). They survive a sort and a refresh and feed the
     /// Tiles detail line, the infotip and the Details pane.
@@ -341,6 +344,7 @@ impl Explorer {
             ),
             generation: 0,
             drawn_scale: 0,
+            list_icons: ListIcons::default(),
             image_dims: HashMap::new(),
             dims_asked: HashSet::new(),
             watch: match Watch::new(ctx.wake.clone()) {
@@ -543,6 +547,7 @@ impl Explorer {
                 e
             })
             .collect();
+        self.list_icons.listed(icons, ctx.icons.scale());
         let mut dims = HashMap::new();
         for (it, e) in items.iter().zip(self.sv.entries.iter_mut()) {
             let Some((size, modified, thumb)) = kept.remove(&it.path) else {
@@ -952,6 +957,14 @@ impl App for Lazy {
         })
     }
 
+    fn follow_scale(&mut self, win: WinId, scale: i32, ctx: &mut Ctx) {
+        if win == MAIN
+            && let Some(ex) = &mut self.inner
+        {
+            ex.follow_scale(scale, ctx);
+        }
+    }
+
     fn draw(&mut self, win: WinId, c: &mut Canvas, ctx: &Ctx) {
         let Some(ex) = &mut self.inner else {
             c.fill_rect(c.bounds(), ctx.theme.colors.button_face);
@@ -974,7 +987,6 @@ impl App for Lazy {
             ex.draw_props(c, ctx);
             return;
         }
-        ex.follow_scale(c.scale());
         ex.status.grip = !ctx.maximized;
         // A look that boxes its items greys the unfocused pane's selection; Classic keeps the highlight.
         let boxed = item::boxed(&ctx.theme.paint());

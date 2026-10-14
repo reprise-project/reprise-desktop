@@ -70,9 +70,13 @@ impl Explorer {
         }
     }
 
-    /// The main window draws at `scale`: thumbnails made at another one are asked for again.
-    pub fn follow_scale(&mut self, scale: i32) {
+    /// The main window draws at `scale`, `ctx.icons`' scale: the entries wear their icons at
+    /// that scale, icon files once a thread decodes them, and thumbnails made at another one are
+    /// asked for again.
+    pub fn follow_scale(&mut self, scale: i32, ctx: &mut Ctx) {
         if std::mem::replace(&mut self.drawn_scale, scale) != scale {
+            self.list_icons
+                .follow(scale, &mut ctx.icons, &mut self.sv.entries, &ctx.wake);
             self.request_thumbs(scale);
         }
     }
@@ -90,7 +94,7 @@ impl Explorer {
                 ..Default::default()
             };
         }
-        let mut dirty = tipped;
+        let mut dirty = tipped | self.list_icons.take(&mut self.sv.entries);
         let mut arrived: Vec<PathBuf> = Vec::new();
         for done in self.thumbs.drain() {
             let Some(&i) = self.item_index.get(&done.path) else {
@@ -790,11 +794,12 @@ mod tests {
             ex.wake(ctx);
         };
         deliver(&mut ex, &mut ctx, 1);
-        ex.follow_scale(1);
+        ex.follow_scale(1, &mut ctx);
         assert!(!ex.thumbs.asked(&path, 2));
         let a = index_of(&ex, "a.png");
 
-        ex.follow_scale(2);
+        ctx.icons.set_scale(2);
+        ex.follow_scale(2, &mut ctx);
         assert!(ex.thumbs.asked(&path, 2), "asked for at scale 2");
         let kept = ex.sv.entries[a].thumb.as_ref().expect("the old one shows");
         assert_eq!((kept.scale(), kept.device_size()), (1, (94, 71)));
@@ -803,6 +808,49 @@ mod tests {
         let t = ex.sv.entries[a].thumb.as_ref().expect("the new one");
         assert_eq!((t.scale(), t.device_size()), (2, (188, 142)));
         assert!(!ex.thumbs.asked(&path, 2));
+    }
+
+    #[test]
+    fn a_new_draw_scale_swaps_the_list_icons_and_keeps_the_selection() {
+        const OWN: u32 = 0xff80_20a0;
+        let mut ctx = test_ctx();
+        let (dir, mut ex) = explorer(&mut ctx);
+        let art = tempfile::tempdir().expect("a temp dir");
+        let own = art.path().join("own.png");
+        let mut c = Canvas::new(96, 96);
+        c.pixels.fill(OWN);
+        std::fs::write(&own, reprisekit::raster::to_png(&c)).expect("write");
+        let directory = format!("[Desktop Entry]\nIcon={}\n", own.display());
+        std::fs::write(dir.path().join("sub/.directory"), directory).expect("write");
+        ex.refresh(&mut ctx);
+        let sub = dir.path().join("sub");
+        ex.select_paths(std::slice::from_ref(&sub));
+        ex.follow_scale(1, &mut ctx);
+        let drawn = |ex: &Explorer| {
+            let e = &ex.sv.entries[index_of(ex, "sub")];
+            [&e.icon, &e.icon32, &e.icon48].map(|c| {
+                c.as_ref().map(|c| {
+                    let mid = c.get(c.width as i32 / 2, c.height as i32 / 2);
+                    (c.scale(), c.device_size().0, mid)
+                })
+            })
+        };
+        assert_eq!(drawn(&ex)[2], Some((1, 48, OWN)));
+
+        ctx.icons.set_scale(2);
+        ex.follow_scale(2, &mut ctx);
+        for _ in 0..500 {
+            if drawn(&ex)[0].is_some_and(|(scale, ..)| scale == 2) {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+            ex.wake(&mut ctx);
+        }
+        assert_eq!(
+            drawn(&ex),
+            [Some((2, 32, OWN)), Some((2, 64, OWN)), Some((2, 96, OWN))]
+        );
+        assert_eq!(ex.selected_paths(), [sub], "the folder is not listed again");
     }
 
     #[test]
