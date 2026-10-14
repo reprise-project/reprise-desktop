@@ -207,6 +207,8 @@ pub struct Explorer {
     /// work for a folder the user has left.
     thumbs: Thumbs,
     generation: u64,
+    /// The scale the main window last drew at ([`Explorer::follow_scale`]).
+    drawn_scale: i32,
     /// Image sizes by path, from the thumbnail worker or a header read
     /// ([`Explorer::read_dims`]). They survive a sort and a refresh and feed the
     /// Tiles detail line, the infotip and the Details pane.
@@ -338,6 +340,7 @@ impl Explorer {
                 ctx.wake.clone(),
             ),
             generation: 0,
+            drawn_scale: 0,
             image_dims: HashMap::new(),
             dims_asked: HashSet::new(),
             watch: match Watch::new(ctx.wake.clone()) {
@@ -971,6 +974,7 @@ impl App for Lazy {
             ex.draw_props(c, ctx);
             return;
         }
+        ex.follow_scale(c.scale());
         ex.status.grip = !ctx.maximized;
         // A look that boxes its items greys the unfocused pane's selection; Classic keeps the highlight.
         let boxed = item::boxed(&ctx.theme.paint());
