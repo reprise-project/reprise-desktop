@@ -128,6 +128,9 @@ pub struct DesktopEntry {
     pub path: PathBuf,
     pub shortcut: bool,
     pub kind: Kind,
+    /// Opens as a folder, a symlink to one included, as the scan found it: menus and drops ask
+    /// this instead of the file system.
+    pub is_dir: bool,
 }
 
 impl DesktopEntry {
@@ -189,6 +192,7 @@ pub fn place(name: &str) -> Option<DesktopEntry> {
     let entry = |icon: &str, target: Target, path: PathBuf| DesktopEntry {
         name: place.label(),
         label: place.label(),
+        is_dir: matches!(target, Target::Open(_)),
         icon: icon.into(),
         target,
         path,
@@ -246,6 +250,7 @@ pub fn recycle_bin(files: PathBuf, empty: bool) -> DesktopEntry {
         path: files,
         shortcut: false,
         kind: Kind::RecycleBin,
+        is_dir: false,
     }
 }
 
@@ -328,11 +333,9 @@ pub fn open_argv(
     }
 }
 
-pub fn scan(
-    dir: &Path,
-    globs: &reprisefs::apps::MimeDb,
-    has_icon: &dyn Fn(&str) -> bool,
-) -> Vec<DesktopEntry> {
+/// `dir`'s files as desktop icons. It reads the files, so a host runs it off its event loop; a
+/// plain file wears its type's generic icon until [`wear_file_icons`] picks the theme's best.
+pub fn scan(dir: &Path, globs: &reprisefs::apps::MimeDb) -> Vec<DesktopEntry> {
     let rd = match std::fs::read_dir(dir) {
         Ok(rd) => rd,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
@@ -348,55 +351,17 @@ pub fn scan(
     let mut folders = Vec::new();
     let mut files = Vec::new();
     for entry in rd.flatten() {
-        let path = entry.path();
-        // `path` keeps a name that is not UTF-8; only `name` and the label
-        // show it lossily.
         if listed.hides(&entry.file_name()) {
             continue;
         }
-        let file_name = entry.file_name().to_string_lossy().into_owned();
-        // The entry's own type comes from the listing (d_type); one stat
-        // follows a symlink, and a dangling one shows as a plain file.
+        // The entry's own type comes from the listing (d_type).
         let symlink = entry.file_type().is_ok_and(|t| t.is_symlink());
-        let meta = std::fs::metadata(&path).ok();
-        if meta.as_ref().is_some_and(|m| m.is_dir()) {
-            let icon = reprisefs::meta::folder_icon(&path).unwrap_or_else(|| "folder".into());
-            let group = if symlink { &mut files } else { &mut folders };
-            group.push(DesktopEntry {
-                label: file_name.clone(),
-                name: file_name,
-                icon,
-                target: Target::Open(path.clone()),
-                path,
-                shortcut: symlink,
-                kind: Kind::File,
-            });
-            continue;
+        let e = entry_with(entry.path(), symlink, globs);
+        if e.is_dir && !e.shortcut {
+            folders.push(e);
+        } else {
+            files.push(e);
         }
-        if let Some(sc) = meta.as_ref().and_then(|m| apps::shortcut_at(&path, m)) {
-            let (label, icon) = (sc.name().to_string(), sc.icon().to_string());
-            files.push(DesktopEntry {
-                name: file_name,
-                label,
-                icon,
-                target: shortcut_target(sc),
-                path,
-                shortcut: true,
-                kind: Kind::File,
-            });
-            continue;
-        }
-        let mime = globs.mime_of_name(&file_name);
-        let icon = icons::pick_icon(mime.as_deref(), &path, has_icon);
-        files.push(DesktopEntry {
-            label: names::label_for(&file_name, globs),
-            name: file_name,
-            icon,
-            target: Target::Open(path.clone()),
-            path,
-            shortcut: symlink,
-            kind: Kind::File,
-        });
     }
     // Ties (two launchers with one Name=, names differing only in case)
     // break on the file name: read_dir's order is the filesystem's hash
@@ -405,6 +370,74 @@ pub fn scan(
     files.sort_by_cached_key(|e| (e.shortcut_base().to_lowercase(), e.name.clone()));
     folders.extend(files);
     folders
+}
+
+/// The desktop icon for the file at `path`, as [`scan`] lists it.
+pub fn entry_at(path: &Path, globs: &reprisefs::apps::MimeDb) -> DesktopEntry {
+    let symlink = std::fs::symlink_metadata(path).is_ok_and(|m| m.file_type().is_symlink());
+    entry_with(path.to_path_buf(), symlink, globs)
+}
+
+/// One stat follows a symlink, and a dangling one shows as a plain file. `path` keeps a name that
+/// is not UTF-8; only `name` and the label show it lossily.
+fn entry_with(path: PathBuf, symlink: bool, globs: &reprisefs::apps::MimeDb) -> DesktopEntry {
+    let file_name = path
+        .file_name()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .into_owned();
+    let meta = std::fs::metadata(&path).ok();
+    if meta.as_ref().is_some_and(|m| m.is_dir()) {
+        let icon = reprisefs::meta::folder_icon(&path).unwrap_or_else(|| "folder".into());
+        return DesktopEntry {
+            label: file_name.clone(),
+            name: file_name,
+            icon,
+            target: Target::Open(path.clone()),
+            path,
+            shortcut: symlink,
+            kind: Kind::File,
+            is_dir: true,
+        };
+    }
+    if let Some(sc) = meta.as_ref().and_then(|m| apps::shortcut_at(&path, m)) {
+        let (label, icon) = (sc.name().to_string(), sc.icon().to_string());
+        return DesktopEntry {
+            name: file_name,
+            label,
+            icon,
+            target: shortcut_target(sc),
+            path,
+            shortcut: true,
+            kind: Kind::File,
+            is_dir: false,
+        };
+    }
+    let mime = globs.mime_of_name(&file_name);
+    let icon = icons::pick_icon(mime.as_deref(), &path, &|_| false);
+    DesktopEntry {
+        label: names::label_for(&file_name, globs),
+        name: file_name,
+        icon,
+        target: Target::Open(path.clone()),
+        path,
+        shortcut: symlink,
+        kind: Kind::File,
+        is_dir: false,
+    }
+}
+
+/// Gives each plain file in `entries` the first icon of its type the theme carries (`has`).
+pub fn wear_file_icons(
+    entries: &mut [DesktopEntry],
+    globs: &reprisefs::apps::MimeDb,
+    has: &dyn Fn(&str) -> bool,
+) {
+    for e in entries {
+        if e.kind == Kind::File && !e.is_dir && matches!(e.target, Target::Open(_)) {
+            e.icon = icons::pick_icon(globs.mime_of_name(&e.name).as_deref(), &e.path, has);
+        }
+    }
 }
 
 #[cfg(test)]
@@ -467,6 +500,7 @@ mod tests {
             path,
             shortcut: false,
             kind: Kind::Place(Place::Documents),
+            is_dir: false,
         };
         assert_eq!(
             place_command(&docs(PathBuf::from("/home/u/Docs"))).as_deref(),
@@ -506,6 +540,7 @@ mod tests {
             path,
             shortcut: false,
             kind: Kind::File,
+            is_dir: false,
         }
     }
 
@@ -640,7 +675,7 @@ mod tests {
         for f in ["firefox.desktop", "noicon.desktop", "broken.desktop"] {
             apps::allow_launching(&dir.join(f)).unwrap();
         }
-        let list = scan(&dir, &apps::mime_globs(), &|_| false);
+        let list = scan(&dir, &apps::mime_globs());
         let names: Vec<&str> = list.iter().map(|e| e.name.as_str()).collect();
         assert_eq!(
             names,
@@ -673,7 +708,12 @@ mod tests {
         std::fs::create_dir(dir.join("Photos.txt")).unwrap();
         let globs = reprisefs::apps::MimeDb::parse(["50:text/plain:*.txt\n"]);
         let has = |n: &str| n == "gnome-mime-text-plain";
-        let list = scan(&dir, &globs, &has);
+        let mut list = scan(&dir, &globs);
+        assert_eq!(
+            list[1].icon, "text-x-generic",
+            "the generic icon until worn"
+        );
+        wear_file_icons(&mut list, &globs, &has);
         let by = |n: &str| list.iter().find(|e| e.name == n).unwrap();
         assert_eq!(by("notes.txt").label, "notes");
         assert_eq!(by("notes.txt").icon, "gnome-mime-text-plain");
@@ -693,16 +733,16 @@ mod tests {
             files.insert(0, recycle_bin(dir.join("trash"), true));
             files
         };
-        let before = with_bin(scan(&dir, &apps::mime_globs(), &|_| false));
+        let before = with_bin(scan(&dir, &apps::mime_globs()));
         let aimed = before[1].id();
         let bin = before[0].id();
         assert_eq!(aimed, IconId::File(dir.join("b.txt")));
         std::fs::write(dir.join("a.txt"), "").unwrap();
-        let after = with_bin(scan(&dir, &apps::mime_globs(), &|_| false));
+        let after = with_bin(scan(&dir, &apps::mime_globs()));
         assert_eq!(find(&after, &aimed), Some(2), "b.txt is row 2");
         assert_eq!(find(&after, &bin), Some(0), "the Recycle Bin is row 0");
         std::fs::remove_file(dir.join("b.txt")).unwrap();
-        let gone = with_bin(scan(&dir, &apps::mime_globs(), &|_| false));
+        let gone = with_bin(scan(&dir, &apps::mime_globs()));
         assert_eq!(find(&gone, &aimed), None);
     }
 
@@ -715,7 +755,7 @@ mod tests {
             std::fs::write(dir.join(f), text).unwrap();
             apps::allow_launching(&dir.join(f)).unwrap();
         }
-        let list = scan(&dir, &apps::mime_globs(), &|_| false);
+        let list = scan(&dir, &apps::mime_globs());
         let keys: Vec<(&str, &str)> = list
             .iter()
             .map(|e| (e.name.as_str(), e.label.as_str()))
@@ -734,8 +774,7 @@ mod tests {
         assert!(
             scan(
                 Path::new("/nonexistent/reprise-desktop"),
-                &apps::MimeDb::empty(),
-                &|_| false
+                &apps::MimeDb::empty()
             )
             .is_empty()
         );
@@ -755,7 +794,7 @@ mod tests {
         std::os::unix::fs::symlink(dir.join("notes.txt"), dir.join("link.txt")).unwrap();
         std::os::unix::fs::symlink(dir.join("Reports"), dir.join("Reports link")).unwrap();
         apps::allow_launching(&dir.join("app.desktop")).unwrap();
-        let list = scan(&dir, &apps::mime_globs(), &|_| false);
+        let list = scan(&dir, &apps::mime_globs());
         let flag = |n: &str| list.iter().find(|e| e.name == n).unwrap().shortcut;
         assert!(!flag("Reports"));
         assert!(!flag("notes.txt"));
@@ -784,11 +823,7 @@ mod tests {
         let _cleanup = Cleanup(dir.clone());
         let path = dir.join(std::ffi::OsStr::from_bytes(b"caf\xe9.txt"));
         std::fs::write(&path, "").unwrap();
-        let list = scan(
-            &dir,
-            &apps::MimeDb::parse(["50:text/plain:*.txt\n"]),
-            &|_| false,
-        );
+        let list = scan(&dir, &apps::MimeDb::parse(["50:text/plain:*.txt\n"]));
         assert_eq!(list.len(), 1, "the file is listed");
         assert_eq!(list[0].path, path);
         assert_eq!(list[0].target, Target::Open(path.clone()));
@@ -818,16 +853,16 @@ mod tests {
                 && !list[0].shortcut
         };
         assert!(
-            plain(&scan(&dir, &apps::mime_globs(), &|_| false)),
+            plain(&scan(&dir, &apps::mime_globs())),
             "not executable: a file"
         );
         chmod_exec(&path);
         assert!(!apps::is_trusted(&path));
-        let list = scan(&dir, &apps::mime_globs(), &|_| false);
+        let list = scan(&dir, &apps::mime_globs());
         assert!(plain(&list), "untrusted: a file");
         assert!(can_allow_launching(&list[0]));
         apps::allow_launching(&path).unwrap();
-        let list = scan(&dir, &apps::mime_globs(), &|_| false);
+        let list = scan(&dir, &apps::mime_globs());
         assert_eq!(list[0].label, "Document");
         assert!(
             matches!(list[0].target, Target::Launch(_)),
@@ -838,7 +873,7 @@ mod tests {
         // it would not make it a launcher.
         std::fs::write(&path, "[Desktop Entry]\nType=Link\nName=x\n").unwrap();
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
-        let list = scan(&dir, &apps::mime_globs(), &|_| false);
+        let list = scan(&dir, &apps::mime_globs());
         assert!(!can_allow_launching(&list[0]));
     }
 
@@ -860,7 +895,7 @@ mod tests {
             std::fs::write(dir.join(file), text).unwrap();
             apps::allow_launching(&dir.join(file)).unwrap();
         }
-        let list = scan(&dir, &apps::mime_globs(), &|_| false);
+        let list = scan(&dir, &apps::mime_globs());
         let names: Vec<&str> = list.iter().map(|e| e.name.as_str()).collect();
         assert_eq!(names, vec!["web.desktop", "hidden.desktop", "link.desktop"]);
         assert!(
@@ -900,7 +935,7 @@ mod tests {
         );
         std::fs::write(dir.join("big.desktop"), big).unwrap();
         apps::allow_launching(&dir.join("big.desktop")).unwrap();
-        let list = scan(&dir, &apps::mime_globs(), &|_| false);
+        let list = scan(&dir, &apps::mime_globs());
         let names: Vec<&str> = list.iter().map(|e| e.name.as_str()).collect();
         assert_eq!(names, vec!["big.desktop", "pipe.desktop"]);
         assert!(
