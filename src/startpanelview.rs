@@ -41,7 +41,6 @@ const FADE_TICK: Duration = Duration::from_millis(16);
 const CROSSFADE: Duration = Duration::from_millis(350);
 const JUMP_TITLE: &str = "Recent";
 const ACCOUNTS: &str = "reprise-accounts";
-const RECENT_ITEMS: usize = 15;
 
 pub struct StartPanelView {
     pub model: StartPanel,
@@ -262,6 +261,20 @@ fn spot_app(
         }
         _ => None,
     }
+}
+
+fn jump_rows(
+    icons: &mut crate::icontheme::IconCache,
+    files: &[PathBuf],
+    px: i32,
+) -> Vec<ResultRow> {
+    files
+        .iter()
+        .map(|p| ResultRow {
+            name: file_name(p),
+            icon: icons.get(reprisefs::icons::icon_for_file(p), px),
+        })
+        .collect()
 }
 
 fn jump_file(jumps: &[Vec<PathBuf>], mode: Mode, k: usize) -> Option<&Path> {
@@ -575,15 +588,7 @@ impl State {
         v.model.jump = v
             .jumps
             .get(i)
-            .map(|files| {
-                files
-                    .iter()
-                    .map(|p| ResultRow {
-                        name: file_name(p),
-                        icon: icons.get(reprisefs::icons::icon_for_file(p), px),
-                    })
-                    .collect()
-            })
+            .map(|files| jump_rows(icons, files, px))
             .unwrap_or_default();
         v.model.jump_title = JUMP_TITLE.into();
     }
@@ -1143,25 +1148,7 @@ impl State {
         .icon_px()
             * self.draw_scale_at(Some(&output)).max(1);
         self.refresh_recent();
-        let files = self.recent.current(RECENT_ITEMS);
-        let mut items: Vec<MenuItem> = files
-            .iter()
-            .map(|p| {
-                MenuItem::entry(file_name(p))
-                    .icon(self.icons.get(reprisefs::icons::icon_for_file(p), px))
-            })
-            .collect();
-        let mut paths: Vec<Option<PathBuf>> = files.into_iter().map(Some).collect();
-        if items.is_empty() {
-            items.push(MenuItem::entry("(Empty)").enabled(false));
-            paths.push(None);
-        }
-        let tips = vec![None; paths.len()];
-        let kind = crate::menuview::MenuKind::Documents {
-            paths,
-            tips,
-            files: 0,
-        };
+        let (items, kind) = self.documents_rows(px, false);
         self.push_start_popup((row.right(), row.y), items, kind, place_popup);
     }
 
@@ -1340,21 +1327,45 @@ impl State {
         }
     }
 
-    /// Drops the files `gone` picks from the open panel's jump lists.
-    pub(crate) fn drop_gone_jumps(&mut self, gone: impl Fn(&Path) -> bool) {
-        let Some(v) = self.start_panel.as_mut() else {
+    /// Relists the open panel's jump lists from the last recent read and check, the one shown
+    /// in place.
+    pub(crate) fn relist_start_jumps(&mut self) {
+        let Some(scale) = self
+            .start_panel
+            .as_ref()
+            .map(|v| self.draw_scale_at(Some(&v.output)).max(1))
+        else {
+            return;
+        };
+        let State {
+            start_panel,
+            app_index,
+            icons,
+            config,
+            recent,
+            ..
+        } = self;
+        let Some(v) = start_panel.as_mut() else {
             return;
         };
         let mut changed = false;
-        for (k, files) in v.jumps.iter_mut().enumerate() {
-            let marks: Vec<bool> = files.iter().map(|p| gone(p)).collect();
-            if !marks.contains(&true) {
+        for (k, &app) in v.programs.iter().enumerate() {
+            let files = match app_index.get(app) {
+                Some(e) if config.recent_files => recent.for_app(crate::taskbar::JUMP_RECENT, e),
+                _ => Vec::new(),
+            };
+            let Some(old) = v.jumps.get_mut(k) else {
+                break;
+            };
+            if *old == files {
                 continue;
             }
             changed = true;
-            files.retain(|p| !gone(p));
             if v.model.mode() == Mode::Jump(k) {
-                v.model.drop_jump_rows(&marks);
+                let rows = jump_rows(icons, &files, RESULT_ICON * scale);
+                v.model.relist_jump(rows, |i| {
+                    reprisekit::selection::follow(old, &files, i, |_| true)
+                });
             }
             let row = match k.checked_sub(v.model.pinned.len()) {
                 None => v.model.pinned.get_mut(k),
@@ -1363,6 +1374,7 @@ impl State {
             if let Some(row) = row {
                 row.jump = !files.is_empty();
             }
+            *old = files;
         }
         if changed {
             crate::tooltip::hover_start_panel(self, None);

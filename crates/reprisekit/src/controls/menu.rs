@@ -423,6 +423,9 @@ pub struct MenuLayout {
     pub separator_x: i32,
     pub lit_arrow_menu_text: bool,
     pub gutter: i32,
+    /// The heights `compute_styled` gives an `Entry` row and a `Separator`, for [`relist`].
+    pub row_height: i32,
+    pub separator_h: i32,
 }
 
 impl MenuLayout {
@@ -475,6 +478,8 @@ impl MenuLayout {
             separator_x: style.separator_x,
             lit_arrow_menu_text: style.lit_arrow_menu_text,
             gutter: style.gutter,
+            row_height: style.row_height,
+            separator_h: style.separator_h,
         }
     }
 
@@ -505,67 +510,60 @@ impl MenuLayout {
             separator_x: self.separator_x * n,
             lit_arrow_menu_text: self.lit_arrow_menu_text,
             gutter: self.gutter * n,
+            row_height: self.row_height * n,
+            separator_h: self.separator_h * n,
         }
     }
 }
 
-/// Drops the rows `gone` marks from an open menu's `items` and `layout`, with any separator left
-/// first, last or after another: the rows below slide up and the width stays. `hovered` keeps
-/// its row; when that row goes it takes the row sliding into its place, else the one above, else
-/// None. Returns the kept mask, for the host's data parallel to the rows.
-pub fn remove_rows(
+/// Relists an open menu as `new_items`: a row whose key `old_keys` holds keeps its item (and
+/// icon); width and rows per column stay; the hover follows its entry (`selection::follow`).
+pub fn relist<K: PartialEq>(
     items: &mut Vec<MenuItem>,
     layout: &mut MenuLayout,
     hovered: &mut Option<usize>,
-    gone: &[bool],
-) -> Vec<bool> {
-    let mut keep: Vec<bool> = (0..items.len())
-        .map(|i| !gone.get(i).copied().unwrap_or(false))
-        .collect();
-    let mut last_kept: Option<usize> = None;
-    for i in 0..items.len() {
-        if !keep[i] {
-            continue;
-        }
-        if matches!(items[i], MenuItem::Separator)
-            && last_kept.is_none_or(|k| matches!(items[k], MenuItem::Separator))
-        {
-            keep[i] = false;
-            continue;
-        }
-        last_kept = Some(i);
-    }
-    if let Some(k) = last_kept.filter(|&k| matches!(items[k], MenuItem::Separator)) {
-        keep[k] = false;
-    }
-    let slot = hovered.map(|h| keep[..h].iter().filter(|&&k| k).count());
-    let rows_per_col = layout
-        .rows
+    old_keys: &[K],
+    new_keys: &[K],
+    new_items: Vec<MenuItem>,
+) {
+    let mut old: Vec<Option<MenuItem>> = std::mem::take(items).into_iter().map(Some).collect();
+    *items = new_keys
         .iter()
-        .take_while(|r| r.x == layout.rows[0].x)
-        .count()
-        .max(1);
-    let heights: Vec<i32> = layout
-        .rows
-        .iter()
-        .zip(&keep)
-        .filter(|(_, k)| **k)
-        .map(|(r, _)| r.height)
+        .zip(new_items)
+        .map(|(k, new)| {
+            old_keys
+                .iter()
+                .position(|o| o == k)
+                .and_then(|i| old.get_mut(i)?.take())
+                .unwrap_or(new)
+        })
         .collect();
-    let mut k = keep.iter();
-    items.retain(|_| *k.next().unwrap_or(&true));
-    let mut k = keep.iter();
-    layout.selectable.retain(|_| *k.next().unwrap_or(&true));
-    let inner_w = layout.rows.first().map_or(0, |r| r.width);
+    *hovered = hovered
+        .and_then(|h| crate::selection::follow(old_keys, new_keys, h, |j| items[j].selectable()));
+    let rows_per_col = if layout.columns > 1 {
+        layout
+            .rows
+            .iter()
+            .take_while(|r| r.x == layout.rows[0].x)
+            .count()
+            .max(1)
+    } else {
+        usize::MAX
+    };
+    let inner_w = layout.column_width - layout.inset.left - layout.inset.right;
     let inset = layout.inset;
-    let mut rows = Vec::with_capacity(heights.len());
+    let mut rows = Vec::with_capacity(items.len());
     let mut height = inset.top + inset.bottom;
     let mut columns = 0;
-    for chunk in heights.chunks(rows_per_col) {
+    for chunk in items.chunks(rows_per_col) {
         let x = layout.band + inset.left + columns * layout.column_width;
         columns += 1;
         let mut y = inset.top;
-        for &h in chunk {
+        for it in chunk {
+            let h = match it {
+                MenuItem::Entry { .. } => layout.row_height,
+                MenuItem::Separator => layout.separator_h,
+            };
             rows.push(Rect::new(x, y, inner_w, h));
             y += h;
         }
@@ -575,16 +573,10 @@ pub fn remove_rows(
     layout.width = layout.band + layout.columns as i32 * layout.column_width;
     layout.height = height;
     layout.rows = rows;
-    *hovered = slot.and_then(|s| {
-        (s < items.len() && items[s].selectable())
-            .then_some(s)
-            .or_else(|| {
-                (0..s.min(items.len()))
-                    .rev()
-                    .find(|&i| items[i].selectable())
-            })
-    });
-    keep
+    layout.selectable = items
+        .iter()
+        .map(|it| matches!(it, MenuItem::Entry { .. }))
+        .collect();
 }
 
 pub fn submenu_max_rows(m: &Metrics, usable_height: i32) -> usize {
@@ -1820,52 +1812,78 @@ mod tests {
     }
 
     #[test]
-    fn dropped_rows_close_up_and_the_hover_takes_the_row_sliding_in() {
+    fn relisted_rows_close_up_open_up_and_the_hover_keeps_its_entry() {
         let m = Metrics::default();
-        let all = vec![
+        let (a, b, c) = (
             MenuItem::entry("a.txt"),
             MenuItem::entry("b.txt"),
             MenuItem::entry("c.txt"),
-            MenuItem::Separator,
-            MenuItem::entry("Launch"),
-        ];
-        let mut items = all.clone();
+        );
+        let launch = MenuItem::entry("Launch");
+        let mut items = vec![a.clone(), b.clone(), MenuItem::Separator, launch.clone()];
         let mut layout = MenuLayout::compute(&m, &items);
         let mut hovered = Some(1);
-        let keep = remove_rows(
+        let new = vec![c.clone(), a.clone(), b.clone(), MenuItem::Separator, launch];
+        relist(
             &mut items,
             &mut layout,
             &mut hovered,
-            &[false, true, false, false, false],
+            &["a", "b", "-", "L"],
+            &["c", "a", "b", "-", "L"],
+            new.clone(),
         );
-        assert_eq!(keep, [true, false, true, true, true]);
+        assert_eq!(items, new);
         assert_eq!(layout, MenuLayout::compute(&m, &items));
-        assert_eq!(items[1], all[2]);
-        assert_eq!(hovered, Some(1), "c.txt slid under the hover");
+        assert_eq!(hovered, Some(2), "b.txt kept the hover a row down");
 
-        let mut hovered = Some(1);
-        let keep = remove_rows(&mut items, &mut layout, &mut hovered, &[true, true]);
+        relist(
+            &mut items,
+            &mut layout,
+            &mut hovered,
+            &["c", "a", "b", "-", "L"],
+            &["c", "a", "-", "L"],
+            vec![c, a, MenuItem::Separator, MenuItem::entry("Launch")],
+        );
+        assert_eq!(layout, MenuLayout::compute(&m, &items));
+        assert_eq!(hovered, Some(3), "b.txt went: Launch slid into its place");
+
+        relist(
+            &mut items,
+            &mut layout,
+            &mut hovered,
+            &["c", "a", "-", "L"],
+            &["E"],
+            vec![MenuItem::entry("(Empty)").enabled(false)],
+        );
+        assert_eq!(layout, MenuLayout::compute(&m, &items));
+        assert_eq!(hovered, None, "(Empty) takes no hover");
+    }
+
+    #[test]
+    fn a_relisted_row_keeps_its_item_and_the_width_stays() {
+        let m = Metrics::default();
+        let style = MenuStyle::compact(&m);
+        let wide = MenuStyle {
+            width: style.width + 40,
+            ..style
+        };
+        let iconed = MenuItem::entry("a.txt").icon(Some(Canvas::new(1, 1)));
+        let mut items = vec![iconed.clone()];
+        let mut layout = MenuLayout::compute_styled(&wide, &items, usize::MAX);
+        let mut hovered = None;
+        relist(
+            &mut items,
+            &mut layout,
+            &mut hovered,
+            &["a"],
+            &["b", "a"],
+            vec![MenuItem::entry("b.txt"), MenuItem::entry("a.txt")],
+        );
+        assert_eq!(items, [MenuItem::entry("b.txt"), iconed]);
         assert_eq!(
-            keep,
-            [false, false, false, true],
-            "the leading separator goes"
+            layout,
+            MenuLayout::compute_styled(&wide, &items, usize::MAX)
         );
-        assert_eq!(items, [MenuItem::entry("Launch")]);
-        assert_eq!(layout, MenuLayout::compute(&m, &items));
-        assert_eq!(hovered, Some(0));
-
-        let mut items = all.clone();
-        let mut layout = MenuLayout::compute(&m, &items);
-        let mut hovered = Some(4);
-        remove_rows(
-            &mut items,
-            &mut layout,
-            &mut hovered,
-            &[false, false, false, false, true],
-        );
-        assert_eq!(items, all[..3], "the trailing separator goes");
-        assert_eq!(hovered, Some(2), "no row below: the one above");
-        assert_eq!(layout, MenuLayout::compute(&m, &items));
     }
 
     #[test]

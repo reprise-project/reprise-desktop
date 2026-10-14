@@ -31,7 +31,7 @@ use crate::{
     raster::{Canvas, Rect},
     startmenu::{
         ContextBitmaps, MenuItem, MenuLayout, MenuStyle, StartRow, draw_menu, draw_menu_shadow,
-        enter_row, place_popup, place_submenu_inset, remove_rows, rows_for_key, shadow_reach,
+        enter_row, place_popup, place_submenu_inset, relist, rows_for_key, shadow_reach,
         step_selection, submenu_max_rows,
     },
     taskbar::{JumpRow, QuickCommand, TaskKey, TaskbarCommand, WindowListRow},
@@ -77,8 +77,9 @@ pub enum MenuKind {
     Documents {
         paths: Vec<Option<PathBuf>>,
         tips: Vec<Option<String>>,
-        /// The first recent file row; `paths.len()` when the menu lists none.
-        files: usize,
+        /// The document folders head the list (the Start menu's Documents, not Recent Items).
+        dirs: bool,
+        icon_px: i32,
     },
     Tray {
         id: String,
@@ -328,48 +329,77 @@ pub enum MenuRoot {
 }
 
 impl Menu {
-    /// Drops a Documents menu's or a jump list's rows naming a path `gone` picks; an emptied
-    /// recent file list shows (Empty). Returns whether a row went.
-    pub(crate) fn drop_gone_files(&mut self, gone: impl Fn(&std::path::Path) -> bool) -> bool {
-        let mut marks: Vec<bool> = match &self.kind {
-            MenuKind::Documents { paths, .. } => paths
-                .iter()
-                .map(|p| p.as_deref().is_some_and(&gone))
-                .collect(),
-            MenuKind::JumpList { rows, .. } => rows
-                .iter()
-                .map(|r| matches!(r, Some(JumpRow::Recent(p)) if gone(p)))
-                .collect(),
+    /// Relists a Documents menu or a jump list as `items` and `kind`, built afresh by
+    /// `documents_rows` or `jump_relisted`, in place. Returns whether a row changed.
+    pub(crate) fn relist_to(&mut self, items: Vec<MenuItem>, kind: MenuKind) -> bool {
+        match (&mut self.kind, kind) {
+            (
+                MenuKind::Documents { paths, tips, .. },
+                MenuKind::Documents {
+                    paths: new_paths,
+                    tips: new_tips,
+                    ..
+                },
+            ) => {
+                let keys = |paths: &[Option<PathBuf>],
+                            items: &[MenuItem]|
+                 -> Vec<(Option<PathBuf>, bool)> {
+                    paths
+                        .iter()
+                        .zip(items)
+                        .map(|(p, it)| (p.clone(), matches!(it, MenuItem::Separator)))
+                        .collect()
+                };
+                let (old, new) = (keys(paths, &self.items), keys(&new_paths, &items));
+                if old == new {
+                    return false;
+                }
+                relist(
+                    &mut self.items,
+                    &mut self.layout,
+                    &mut self.hovered,
+                    &old,
+                    &new,
+                    items,
+                );
+                *paths = new_paths;
+                *tips = new_tips;
+            }
+            (MenuKind::JumpList { rows, .. }, MenuKind::JumpList { rows: new_rows, .. }) => {
+                if *rows == new_rows {
+                    return false;
+                }
+                relist(
+                    &mut self.items,
+                    &mut self.layout,
+                    &mut self.hovered,
+                    rows,
+                    &new_rows,
+                    items,
+                );
+                *rows = new_rows;
+            }
             _ => return false,
-        };
-        if !marks.contains(&true) {
-            return false;
-        }
-        if let MenuKind::Documents { paths, files, .. } = &mut self.kind
-            && *files < paths.len()
-            && marks[*files..].iter().all(|&m| m)
-        {
-            self.items[*files] = MenuItem::entry("(Empty)").enabled(false);
-            paths[*files] = None;
-            marks[*files] = false;
-        }
-        let keep = remove_rows(&mut self.items, &mut self.layout, &mut self.hovered, &marks);
-        let kept = |k: &mut std::slice::Iter<bool>| *k.next().unwrap_or(&true);
-        match &mut self.kind {
-            MenuKind::Documents { paths, tips, files } => {
-                *files = keep[..*files].iter().filter(|&&k| k).count();
-                let (mut p, mut t) = (keep.iter(), keep.iter());
-                paths.retain(|_| kept(&mut p));
-                tips.retain(|_| kept(&mut t));
-            }
-            MenuKind::JumpList { rows, .. } => {
-                let mut r = keep.iter();
-                rows.retain(|_| kept(&mut r));
-            }
-            _ => {}
         }
         true
     }
+}
+
+/// An open jump list's `items` and `rows` with its recent files replaced by `recent`.
+pub(crate) fn jump_relisted(
+    items: &[MenuItem],
+    rows: &[Option<JumpRow>],
+    recent: &[PathBuf],
+) -> (Vec<MenuItem>, Vec<Option<JumpRow>>) {
+    let listed = rows
+        .iter()
+        .take_while(|r| matches!(r, Some(JumpRow::Recent(_))))
+        .count();
+    let rest = if listed > 0 { listed + 1 } else { 0 };
+    let (mut new_items, mut new_rows) = crate::taskbar::jump_recent_rows(recent);
+    new_items.extend(items.iter().skip(rest).cloned());
+    new_rows.extend(rows.iter().skip(rest).cloned());
+    (new_items, new_rows)
 }
 
 #[cfg(test)]
@@ -403,7 +433,7 @@ impl Menu {
     }
 }
 
-const RECENT_DOCUMENTS: usize = 15;
+pub(crate) const RECENT_DOCUMENTS: usize = 15;
 
 const FADE_TICK: Duration = Duration::from_millis(16);
 
@@ -951,7 +981,10 @@ impl State {
                 let apps = AppRows { apps, rows };
                 (app_items(self, &apps), MenuKind::Programs(apps))
             }
-            MenuTarget::Documents => self.documents_rows(px),
+            MenuTarget::Documents => {
+                self.refresh_recent();
+                self.documents_rows(px, true)
+            }
             MenuTarget::Submenu(entries) => {
                 let mut items = self.entry_items(&entries, px);
                 if items.is_empty() {
@@ -964,10 +997,15 @@ impl State {
         Some((items, kind, false))
     }
 
-    fn documents_rows(&mut self, px: i32) -> (Vec<MenuItem>, MenuKind) {
-        self.refresh_recent();
-        let dirs = self.recent.document_dirs();
-        let show_recent = self.config.recent_files;
+    /// A Documents menu's rows from the last recent read and check: with `with_dirs` the document
+    /// folders, then the recent files, else the recent files alone (Recent Items).
+    pub(crate) fn documents_rows(&mut self, px: i32, with_dirs: bool) -> (Vec<MenuItem>, MenuKind) {
+        let dirs = if with_dirs {
+            self.recent.document_dirs()
+        } else {
+            Vec::new()
+        };
+        let show_recent = self.config.recent_files || !with_dirs;
         let recent = if show_recent {
             self.recent.current(RECENT_DOCUMENTS)
         } else {
@@ -991,7 +1029,6 @@ impl State {
             paths.push(None);
             tips.push(None);
         }
-        let files = if show_recent { items.len() } else { usize::MAX };
         for file in &recent {
             let icon = reprisefs::icons::icon_for_file(file);
             items.push(MenuItem::entry(name(file)).icon(self.icons.get(icon, px)));
@@ -1003,8 +1040,13 @@ impl State {
             paths.push(None);
             tips.push(None);
         }
-        let files = files.min(paths.len());
-        (items, MenuKind::Documents { paths, tips, files })
+        let kind = MenuKind::Documents {
+            paths,
+            tips,
+            dirs: with_dirs,
+            icon_px: px,
+        };
+        (items, kind)
     }
 
     /// The submenu desktop row `command` opens: Arrange Icons By, New, Open
@@ -1385,17 +1427,22 @@ impl State {
             .map(Arc::unwrap_or_clone)
     }
 
+    /// The recent files a jump list for `target` lists, from the last recent read and check.
+    pub(crate) fn jump_recent(&mut self, target: &JumpTarget) -> Vec<PathBuf> {
+        match &target.entry {
+            Some(e) if self.config.recent_files => {
+                self.recent.for_app(crate::taskbar::JUMP_RECENT, e)
+            }
+            _ => Vec::new(),
+        }
+    }
+
     pub fn open_jump_list(&mut self, tree: TreeId, i: usize, at: (i32, i32)) {
         let Some(target) = self.jump_target(tree, i) else {
             return;
         };
         self.refresh_recent();
-        let recent = match &target.entry {
-            Some(e) if self.config.recent_files => {
-                self.recent.for_app(crate::taskbar::JUMP_RECENT, e)
-            }
-            _ => Vec::new(),
-        };
+        let recent = self.jump_recent(&target);
         let titles: Vec<String> = target
             .windows
             .iter()
@@ -2413,7 +2460,8 @@ mod tests {
                 None,
                 None,
             ],
-            files: 2,
+            dirs: true,
+            icon_px: 16,
         };
         assert_eq!(
             docs.tip(0).as_deref(),

@@ -61,7 +61,9 @@ the Super tap, Super+Shift+Esc and the VT switch keys can be rebound.
 - **Live program list.** A program shows up in the Start menu and the
   launcher the moment it's installed. No refresh, no logging out.
 - **Recent documents** from `recently-used.xbel`, shared with GTK and other
-  programs. `[privacy] recent_files = false` hides them everywhere.
+  programs. An open Documents menu, Recent Items or jump list takes a file
+  opened meanwhile and drops one deleted. `[privacy] recent_files = false`
+  hides them everywhere.
 - **Launcher.** Super+Space, a few letters, Enter. It fuzzy-matches programs
   and settings pages ("wifi", "touchpad"), finds files in your home folder
   from two letters on, and does sums: `2+3*4`, Enter copies 14. File search
