@@ -509,6 +509,84 @@ impl MenuLayout {
     }
 }
 
+/// Drops the rows `gone` marks from an open menu's `items` and `layout`, with any separator left
+/// first, last or after another: the rows below slide up and the width stays. `hovered` keeps
+/// its row; when that row goes it takes the row sliding into its place, else the one above, else
+/// None. Returns the kept mask, for the host's data parallel to the rows.
+pub fn remove_rows(
+    items: &mut Vec<MenuItem>,
+    layout: &mut MenuLayout,
+    hovered: &mut Option<usize>,
+    gone: &[bool],
+) -> Vec<bool> {
+    let mut keep: Vec<bool> = (0..items.len())
+        .map(|i| !gone.get(i).copied().unwrap_or(false))
+        .collect();
+    let mut last_kept: Option<usize> = None;
+    for i in 0..items.len() {
+        if !keep[i] {
+            continue;
+        }
+        if matches!(items[i], MenuItem::Separator)
+            && last_kept.is_none_or(|k| matches!(items[k], MenuItem::Separator))
+        {
+            keep[i] = false;
+            continue;
+        }
+        last_kept = Some(i);
+    }
+    if let Some(k) = last_kept.filter(|&k| matches!(items[k], MenuItem::Separator)) {
+        keep[k] = false;
+    }
+    let slot = hovered.map(|h| keep[..h].iter().filter(|&&k| k).count());
+    let rows_per_col = layout
+        .rows
+        .iter()
+        .take_while(|r| r.x == layout.rows[0].x)
+        .count()
+        .max(1);
+    let heights: Vec<i32> = layout
+        .rows
+        .iter()
+        .zip(&keep)
+        .filter(|(_, k)| **k)
+        .map(|(r, _)| r.height)
+        .collect();
+    let mut k = keep.iter();
+    items.retain(|_| *k.next().unwrap_or(&true));
+    let mut k = keep.iter();
+    layout.selectable.retain(|_| *k.next().unwrap_or(&true));
+    let inner_w = layout.rows.first().map_or(0, |r| r.width);
+    let inset = layout.inset;
+    let mut rows = Vec::with_capacity(heights.len());
+    let mut height = inset.top + inset.bottom;
+    let mut columns = 0;
+    for chunk in heights.chunks(rows_per_col) {
+        let x = layout.band + inset.left + columns * layout.column_width;
+        columns += 1;
+        let mut y = inset.top;
+        for &h in chunk {
+            rows.push(Rect::new(x, y, inner_w, h));
+            y += h;
+        }
+        height = height.max(y + inset.bottom);
+    }
+    layout.columns = (columns as usize).max(1);
+    layout.width = layout.band + layout.columns as i32 * layout.column_width;
+    layout.height = height;
+    layout.rows = rows;
+    *hovered = slot.and_then(|s| {
+        (s < items.len() && items[s].selectable())
+            .then_some(s)
+            .or_else(|| {
+                (0..s.min(items.len()))
+                    .rev()
+                    .find(|&i| items[i].selectable())
+            })
+    });
+    keep
+}
+
 pub fn submenu_max_rows(m: &Metrics, usable_height: i32) -> usize {
     (((usable_height - 2 * BORDER) / m.menu_item_height.max(1)).max(1)) as usize
 }
@@ -1739,6 +1817,55 @@ mod tests {
         }
         assert_eq!(step_selection(&items, Some(0), 1), Some(0));
         assert_eq!(step_selection(&[MenuItem::Separator], None, 1), None);
+    }
+
+    #[test]
+    fn dropped_rows_close_up_and_the_hover_takes_the_row_sliding_in() {
+        let m = Metrics::default();
+        let all = vec![
+            MenuItem::entry("a.txt"),
+            MenuItem::entry("b.txt"),
+            MenuItem::entry("c.txt"),
+            MenuItem::Separator,
+            MenuItem::entry("Launch"),
+        ];
+        let mut items = all.clone();
+        let mut layout = MenuLayout::compute(&m, &items);
+        let mut hovered = Some(1);
+        let keep = remove_rows(
+            &mut items,
+            &mut layout,
+            &mut hovered,
+            &[false, true, false, false, false],
+        );
+        assert_eq!(keep, [true, false, true, true, true]);
+        assert_eq!(layout, MenuLayout::compute(&m, &items));
+        assert_eq!(items[1], all[2]);
+        assert_eq!(hovered, Some(1), "c.txt slid under the hover");
+
+        let mut hovered = Some(1);
+        let keep = remove_rows(&mut items, &mut layout, &mut hovered, &[true, true]);
+        assert_eq!(
+            keep,
+            [false, false, false, true],
+            "the leading separator goes"
+        );
+        assert_eq!(items, [MenuItem::entry("Launch")]);
+        assert_eq!(layout, MenuLayout::compute(&m, &items));
+        assert_eq!(hovered, Some(0));
+
+        let mut items = all.clone();
+        let mut layout = MenuLayout::compute(&m, &items);
+        let mut hovered = Some(4);
+        remove_rows(
+            &mut items,
+            &mut layout,
+            &mut hovered,
+            &[false, false, false, false, true],
+        );
+        assert_eq!(items, all[..3], "the trailing separator goes");
+        assert_eq!(hovered, Some(2), "no row below: the one above");
+        assert_eq!(layout, MenuLayout::compute(&m, &items));
     }
 
     #[test]

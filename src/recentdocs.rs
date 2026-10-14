@@ -10,6 +10,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use crate::compositor::State;
+use crate::raster::Rect;
 
 /// What a path was found to be.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -112,8 +113,44 @@ impl State {
         let found = self.recent.found.clone();
         self.spawn_fs_job(move || {
             check(paths, &found, |p| std::fs::metadata(p));
-            Box::new(|state: &mut State| state.recent.checking = false)
+            Box::new(State::recent_checked)
         });
+    }
+
+    /// The check answered: the open Documents menus and jump lists drop the files it found gone.
+    fn recent_checked(&mut self) {
+        self.recent.checking = false;
+        let found = self.recent.found.clone();
+        let found = found.lock().unwrap_or_else(|e| e.into_inner());
+        let gone = |p: &Path| found.get(p) == Some(&Found::Neither);
+        let mut depth = 0;
+        while let Some(m) = self.menus.get_mut(depth) {
+            let (y, old_h) = (m.y, m.layout.height);
+            depth += 1;
+            if !m.drop_gone_files(gone) {
+                continue;
+            }
+            let (tree, x, new_h) = (m.tree, m.x, m.layout.height);
+            let output = m.output.clone();
+            let usable = self.usable_area(Some(&output));
+            let y = keep_bottom(y, old_h, new_h, usable);
+            self.menus[depth - 1].y = y;
+            self.scene.set_position(tree, x, y);
+            self.close_menus_above(depth - 1);
+            crate::tooltip::hover_menu(self, depth - 1, None);
+            self.redraw_menu(depth - 1);
+        }
+        self.drop_gone_jumps(gone);
+    }
+}
+
+/// The top of a menu shrunk from `old_h` to `new_h` at `y`: a menu standing on the bottom of the
+/// `usable` area (one opened upwards from the taskbar) keeps its bottom edge there.
+fn keep_bottom(y: i32, old_h: i32, new_h: i32, usable: Rect) -> i32 {
+    if y + old_h >= usable.bottom() {
+        y + old_h - new_h
+    } else {
+        y
     }
 }
 
@@ -196,5 +233,100 @@ mod tests {
         job.join().unwrap();
         assert_eq!(docs.current(10), [kept], "the pipe is not a file");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    fn test_output() -> smithay::output::Output {
+        smithay::output::Output::new(
+            "T-1".into(),
+            smithay::output::PhysicalProperties {
+                size: (0, 0).into(),
+                subpixel: smithay::output::Subpixel::Unknown,
+                make: "Reprise".into(),
+                model: "Test".into(),
+                serial_number: "0".into(),
+            },
+        )
+    }
+
+    /// A Documents menu opened before the check answered drops the file the check found
+    /// deleted, keeps the hover on the row sliding into its place, and shows (Empty) once its
+    /// last recent file goes.
+    #[test]
+    fn an_open_documents_menu_drops_the_files_the_check_found_gone() {
+        use crate::menuview::{Menu, MenuFrom, MenuKind};
+        use crate::startmenu::{MenuItem, MenuLayout, MenuStyle};
+        let dir = std::env::temp_dir().join(format!("reprise-recentopen-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let (a, b) = (dir.join("a.txt"), dir.join("b.txt"));
+        std::fs::write(&a, "").unwrap();
+        std::fs::write(&b, "").unwrap();
+        let xbel_path = dir.join("recently-used.xbel");
+        std::fs::write(&xbel_path, xbel(&[&a, &b])).unwrap();
+        let mut docs = RecentDocs {
+            files: RecentFiles::at(Some(xbel_path)),
+            ..Default::default()
+        };
+        let listed = docs.current(10);
+        assert_eq!(listed, [a.clone(), b.clone()]);
+
+        let mut scene = crate::compositor::DeskScene::new();
+        let kind = MenuKind::Documents {
+            paths: vec![Some(dir.clone()), None, Some(a.clone()), Some(b.clone())],
+            tips: vec![None; 4],
+            files: 2,
+        };
+        let mut menu = Menu::for_test(&mut scene, test_output(), kind, MenuFrom::Bar);
+        menu.items = vec![
+            MenuItem::entry("Documents"),
+            MenuItem::Separator,
+            MenuItem::entry("a.txt"),
+            MenuItem::entry("b.txt"),
+        ];
+        let style = MenuStyle::submenu(&crate::config::Config::default().theme);
+        menu.layout = MenuLayout::compute_styled(&style, &menu.items, usize::MAX);
+        menu.hovered = Some(2);
+
+        let checked = |docs: &mut RecentDocs| {
+            let paths = docs.paths_to_check(true).unwrap();
+            check(paths, &docs.found, |p| std::fs::metadata(p));
+            docs.checking = false;
+            let found = docs.found.lock().unwrap().clone();
+            move |p: &Path| found.get(p) == Some(&Found::Neither)
+        };
+        std::fs::remove_file(&a).unwrap();
+        assert!(menu.drop_gone_files(checked(&mut docs)));
+        assert_eq!(menu.items[2], MenuItem::entry("b.txt"));
+        assert_eq!(menu.items.len(), 3);
+        assert_eq!(menu.hovered, Some(2), "b.txt slid under the hover");
+        assert_eq!(
+            menu.layout,
+            MenuLayout::compute_styled(&style, &menu.items, usize::MAX)
+        );
+        let MenuKind::Documents { paths, files, .. } = &menu.kind else {
+            unreachable!()
+        };
+        assert_eq!((paths[2].as_deref(), *files), (Some(&*b), 2));
+        assert!(
+            !menu.drop_gone_files(checked(&mut docs)),
+            "nothing more gone"
+        );
+
+        std::fs::remove_file(&b).unwrap();
+        assert!(menu.drop_gone_files(checked(&mut docs)));
+        assert_eq!(menu.items[2], MenuItem::entry("(Empty)").enabled(false));
+        assert_eq!(menu.hovered, Some(0), "(Empty) takes no hover");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_shrunk_menu_on_the_taskbar_keeps_its_bottom_edge() {
+        let usable = Rect::new(0, 0, 800, 570);
+        assert_eq!(keep_bottom(370, 200, 150, usable), 420);
+        assert_eq!(
+            keep_bottom(100, 200, 150, usable),
+            100,
+            "a menu off the bottom keeps its top"
+        );
     }
 }
