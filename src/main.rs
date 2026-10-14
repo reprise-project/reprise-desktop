@@ -66,6 +66,7 @@ mod privacy;
 mod quickwatch;
 mod reblur;
 mod recentdocs;
+mod recentwatch;
 mod regionview;
 mod remotekeys;
 mod render;
@@ -246,6 +247,7 @@ fn run(
     configwatch::setup(&mut state);
     appindex::setup(&mut state);
     quickwatch::setup(&mut state);
+    recentwatch::setup(&mut state);
     xwayland::start(&mut state);
     event_loop.handle().insert_source(
         Generic::new(spawn::sigchld_fd()?, Interest::READ, Mode::Level),

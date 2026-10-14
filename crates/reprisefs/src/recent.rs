@@ -19,12 +19,17 @@ impl Default for RecentFiles {
     }
 }
 
+/// Where the session's `recently-used.xbel` lives.
+pub fn xbel_path() -> Option<PathBuf> {
+    let data = std::env::var_os("XDG_DATA_HOME")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/share")));
+    data.map(|d| d.join("recently-used.xbel"))
+}
+
 impl RecentFiles {
     pub fn new() -> RecentFiles {
-        let data = std::env::var_os("XDG_DATA_HOME")
-            .map(PathBuf::from)
-            .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/share")));
-        RecentFiles::at(data.map(|d| d.join("recently-used.xbel")))
+        RecentFiles::at(xbel_path())
     }
 
     pub fn at(path: Option<PathBuf>) -> RecentFiles {
