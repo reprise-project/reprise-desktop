@@ -51,8 +51,9 @@ impl Explorer {
         reply
     }
 
-    /// Queues decodes for images without a thumbnail (Thumbnails and Tiles only).
-    pub fn request_thumbs(&mut self) {
+    /// Queues decodes for images without a thumbnail (Thumbnails and Tiles only), sized for the
+    /// window's `scale`.
+    pub fn request_thumbs(&mut self, scale: i32) {
         if !matches!(self.sv.mode, Mode::Thumbnails | Mode::Tiles) {
             return;
         }
@@ -65,7 +66,7 @@ impl Explorer {
             .map(|(it, _)| it.path.clone())
             .collect();
         for path in wanted {
-            self.thumbs.request(path, r#gen);
+            self.thumbs.request(path, r#gen, shellview::thumb_px(scale));
         }
     }
 
@@ -432,7 +433,7 @@ mod tests {
         std::fs::create_dir(dir.path().join("sub")).expect("mkdir");
         let mut ex = crate::tests::test_explorer(Place::Folder(dir.path().to_path_buf()), ctx);
         ex.sv.mode = Mode::Thumbnails;
-        ex.request_thumbs();
+        ex.request_thumbs(1);
         (dir, ex)
     }
 

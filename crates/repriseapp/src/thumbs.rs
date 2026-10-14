@@ -5,7 +5,7 @@
 
 use crate::Waker;
 use crate::decode::Decoders;
-use reprisefs::thumbnails::{Rgba, Thumbnails};
+use reprisefs::thumbnails::{Rgba, Thumbnails, edge_for};
 use reprisefs::thumbpipe;
 use reprisekit::raster::Canvas;
 use std::collections::{HashSet, VecDeque};
@@ -14,11 +14,11 @@ use std::sync::Arc;
 use std::sync::mpsc::{Receiver, Sender, TryRecvError, channel};
 use std::thread::JoinHandle;
 
-pub const FRAME_INNER: u32 = reprisekit::controls::shellview::THUMB_INNER;
-
 struct Request {
     path: PathBuf,
     generation: u64,
+    /// The device pixels the thumbnail fills (`shellview::thumb_px`).
+    px: u32,
 }
 
 pub struct Done {
@@ -38,19 +38,13 @@ pub struct Thumbs {
 }
 
 impl Thumbs {
-    pub fn new(
-        decoders: Arc<Decoders>,
-        size: u32,
-        cache: Option<Thumbnails>,
-        wake: Waker,
-    ) -> Thumbs {
+    pub fn new(decoders: Arc<Decoders>, cache: Option<Thumbnails>, wake: Waker) -> Thumbs {
         let (tx, req_rx) = channel::<Request>();
         let (done_tx, rx) = channel::<Done>();
         let test_tx = done_tx.clone();
-        let edge = reprisefs::thumbnails::edge_for(size);
         let worker = std::thread::Builder::new()
             .name("thumbs".to_string())
-            .spawn(move || work(decoders, edge, cache, req_rx, done_tx, wake));
+            .spawn(move || work(decoders, cache, req_rx, done_tx, wake));
         let worker = match worker {
             Ok(h) => Some(h),
             Err(e) => {
@@ -73,7 +67,8 @@ impl Thumbs {
         self.done_tx.send(done).expect("the receiver is ours");
     }
 
-    pub fn request(&mut self, path: PathBuf, generation: u64) {
+    /// Asks for `path`'s thumbnail to fill `px` device pixels (`shellview::thumb_px`).
+    pub fn request(&mut self, path: PathBuf, generation: u64, px: u32) {
         self.generation = generation;
         if !self.pending.insert(path.clone()) {
             return;
@@ -81,7 +76,12 @@ impl Thumbs {
         let Some(tx) = &self.tx else {
             return;
         };
-        if tx.send(Request { path, generation }).is_err() {
+        let req = Request {
+            path,
+            generation,
+            px,
+        };
+        if tx.send(req).is_err() {
             log::warn!("the thumbnail worker went away");
             self.tx = None;
         }
@@ -118,7 +118,6 @@ impl Drop for Thumbs {
 
 fn work(
     decoders: Arc<Decoders>,
-    edge: u32,
     mut cache: Option<Thumbnails>,
     rx: Receiver<Request>,
     tx: Sender<Done>,
@@ -145,6 +144,7 @@ fn work(
             // never asked for again. That is deliberate: a retry costs a
             // read and a probe per pass and would never succeed. The
             // next listing clears the set.
+            let edge = edge_for(req.px);
             let Some((thumb, dims)) = thumbnail(&decoders, edge, cache.as_mut(), &req.path) else {
                 continue;
             };
@@ -180,8 +180,8 @@ fn serve(
     mut input: impl std::io::BufRead,
     mut output: impl std::io::Write,
 ) -> std::io::Result<()> {
-    let edge = reprisefs::thumbnails::edge_for(FRAME_INNER);
-    while let Some(path) = thumbpipe::read_request(&mut input)? {
+    while let Some((path, edge)) = thumbpipe::read_request(&mut input)? {
+        let edge = edge_for(edge);
         let thumb = thumbnail(decoders, edge, cache.as_deref_mut(), &path).map(|(c, dims)| {
             let (width, height) = c.device_size();
             thumbpipe::Thumb {
@@ -294,6 +294,7 @@ fn take_queued(rx: &Receiver<Request>, queue: &mut VecDeque<Request>, newest: &m
 #[cfg(test)]
 mod tests {
     use super::*;
+    use reprisekit::controls::shellview;
 
     fn stub() -> (Sender<Done>, Thumbs) {
         let (done_tx, rx) = channel::<Done>();
@@ -336,10 +337,10 @@ mod tests {
     #[test]
     fn drain_drops_a_thumbnail_from_a_folder_we_have_left() {
         let (tx, mut thumbs) = stub();
-        thumbs.request(PathBuf::from("/pics/a.png"), 1);
-        thumbs.request(PathBuf::from("/pics/b.png"), 1);
+        thumbs.request(PathBuf::from("/pics/a.png"), 1, 94);
+        thumbs.request(PathBuf::from("/pics/b.png"), 1, 94);
         thumbs.cancel_all();
-        thumbs.request(PathBuf::from("/other/c.png"), 2);
+        thumbs.request(PathBuf::from("/other/c.png"), 2, 94);
         tx.send(done("/pics/b.png", 1)).expect("send");
         tx.send(done("/other/c.png", 2)).expect("send");
         let out = thumbs.drain();
@@ -350,9 +351,9 @@ mod tests {
     #[test]
     fn the_same_path_is_only_asked_for_once() {
         let (tx, mut thumbs) = stub();
-        thumbs.request(PathBuf::from("/pics/a.png"), 1);
+        thumbs.request(PathBuf::from("/pics/a.png"), 1, 94);
         assert!(thumbs.pending.contains(&PathBuf::from("/pics/a.png")));
-        thumbs.request(PathBuf::from("/pics/a.png"), 1);
+        thumbs.request(PathBuf::from("/pics/a.png"), 1, 94);
         assert_eq!(thumbs.pending.len(), 1);
         tx.send(done("/pics/a.png", 1)).expect("send");
         assert_eq!(thumbs.drain().len(), 1);
@@ -413,7 +414,7 @@ mod tests {
         std::fs::write(&bad, b"FAKE BAD picture").unwrap();
         let mut asked = Vec::new();
         for p in [&src, &bad, &src] {
-            thumbpipe::write_request(&mut asked, p).unwrap();
+            thumbpipe::write_request(&mut asked, p, 128).unwrap();
         }
         let mut answers = Vec::new();
         serve(&decoders, Some(&mut cache), &asked[..], &mut answers).unwrap();
@@ -451,6 +452,123 @@ mod tests {
             Ok(true),
             "no thumbnail, without waiting for a writer"
         );
+    }
+
+    #[test]
+    fn a_frame_past_128_device_px_reads_and_writes_the_large_entries() {
+        let edge = |scale| edge_for(shellview::thumb_px(scale));
+        assert_eq!([edge(1), edge(2), edge(3)], [128, 256, 512]);
+        let (dir, src, decoders, count, mut cache) = counted(b"FAKE picture");
+        let held = |size: &str| {
+            std::fs::read_dir(dir.path().join("cache").join(size)).map_or(0, |d| d.count())
+        };
+        let mut asked = Vec::new();
+        thumbpipe::write_request(&mut asked, &src, shellview::thumb_px(2)).unwrap();
+        let mut answers = Vec::new();
+        serve(&decoders, Some(&mut cache), &asked[..], &mut answers).unwrap();
+        assert!(
+            thumbpipe::read_reply(&mut &answers[..], 256)
+                .unwrap()
+                .is_some()
+        );
+        assert_eq!((held("normal"), held("large")), (0, 1));
+        thumbnail(&decoders, edge(2), Some(&mut cache), &src).expect("cached");
+        assert_eq!(count.load(std::sync::atomic::Ordering::SeqCst), 1);
+        thumbnail(&decoders, edge(1), Some(&mut cache), &src).expect("decoded");
+        assert_eq!(count.load(std::sync::atomic::Ordering::SeqCst), 2);
+        assert_eq!((held("normal"), held("large")), (1, 1));
+    }
+
+    /// A 1024x512 picture whose red climbs by one every four columns, fitted inside `max`.
+    struct Ramp;
+
+    impl crate::decode::ImageDecoder for Ramp {
+        fn probe(&self, bytes: &[u8]) -> bool {
+            bytes.starts_with(b"RAMP")
+        }
+        fn decode(&self, _: &[u8], max: (u32, u32)) -> Option<crate::decode::Decoded> {
+            let (w, h) = reprisekit::raster::fit_size(1024, 512, max);
+            let row = (0..w).map(|x| 0xff00_4080 | (x * 256 / w) << 16);
+            let pixels = std::iter::repeat_n(row, h as usize).flatten().collect();
+            Some(crate::decode::Decoded {
+                canvas: Canvas::from_pixels(w, h, pixels),
+                width: 1024,
+                height: 512,
+            })
+        }
+    }
+
+    /// The ramp picture's Thumbnails cell at scale 2, drawn from a thumbnail fetched at `edge`,
+    /// and the frame's device pixels.
+    fn cell_at_scale_2(edge: u32) -> (Canvas, reprisekit::raster::Rect) {
+        use reprisekit::controls::shellview::{Entry, Mode, ShellView};
+        let dir = tempfile::tempdir().unwrap();
+        let pic = dir.path().join("ramp.fake");
+        std::fs::write(&pic, b"RAMP").unwrap();
+        let mut decoders = Decoders::default_set();
+        decoders.register(Box::new(Ramp));
+        let (thumb, dims) = thumbnail(&decoders, edge, None, &pic).expect("decoded");
+        let sv = ShellView {
+            mode: Mode::Thumbnails,
+            entries: vec![Entry {
+                thumb: Some(shellview::frame_thumb(thumb, dims, 2)),
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        let theme = reprisekit::theme::Theme::default();
+        let text = reprisekit::text::TextRenderer::load(&theme.fonts);
+        let r = reprisekit::raster::Rect::new(0, 0, 140, 150);
+        let cm = reprisekit::metrics::ControlMetrics::CLASSIC;
+        let lay = shellview::layout(&sv, r, &cm);
+        let mut c = Canvas::with_scale(r.width as u32, r.height as u32, 2);
+        let px = theme.fonts.size_px;
+        shellview::draw(&mut c, &text, &theme.paint(), &sv, &lay, None, px);
+        let ramp: Vec<(i32, i32)> = (0..c.pixels.len() as i32)
+            .filter(|&i| c.pixels[i as usize] & 0xff00_ffff == 0xff00_4080)
+            .map(|i| (i % 280, i / 280))
+            .collect();
+        let (x0, y0) = ramp
+            .iter()
+            .fold((i32::MAX, i32::MAX), |m, &(x, y)| (m.0.min(x), m.1.min(y)));
+        let (x1, y1) = ramp
+            .iter()
+            .fold((0, 0), |m, &(x, y)| (m.0.max(x), m.1.max(y)));
+        assert_eq!(
+            (x1 - x0 + 1, y1 - y0 + 1),
+            (188, 94),
+            "fitted inside the frame"
+        );
+        let frame = reprisekit::raster::Rect::new(x0 - 2, y0 - 48, 192, 192);
+        let at = |x: i32, y: i32| c.pixels[(y * 280 + x) as usize];
+        let (border, inside) = (theme.colors.button_face.argb(), theme.colors.window.argb());
+        for (x, y) in [(frame.x, frame.y), (frame.right() - 1, frame.bottom() - 1)] {
+            assert_eq!(at(x, y), border, "the frame's 2 px border at {x},{y}");
+        }
+        assert_eq!(at(frame.x + 2, frame.y + 2), inside);
+        assert_eq!(at(frame.x + 1, frame.y + 1), border);
+        (c, frame)
+    }
+
+    #[test]
+    fn a_thumbnail_cell_at_scale_2_draws_every_device_column_of_the_picture() {
+        let shades = |edge| {
+            let (c, frame) = cell_at_scale_2(edge);
+            let y = frame.y + frame.height / 2;
+            let row = &c.pixels[(y * 280 + frame.x + 2) as usize..][..188];
+            let shades = 1 + row.windows(2).filter(|p| p[0] != p[1]).count();
+            let hash = (frame.y..frame.bottom())
+                .flat_map(|y| (frame.x..frame.right()).map(move |x| (x, y)))
+                .fold(0xcbf2_9ce4_8422_2325u64, |h, (x, y)| {
+                    (h ^ u64::from(c.pixels[(y * 280 + x) as usize])).wrapping_mul(0x0100_0000_01b3)
+                });
+            (shades, hash)
+        };
+        let (large, hash) = shades(edge_for(shellview::thumb_px(2)));
+        assert_eq!(large, 188, "one shade per device column");
+        assert_eq!(hash, 0x399e_f26a_352b_475d, "the scale-2 frame");
+        let (normal, _) = shades(128);
+        assert_eq!(normal, 128, "a 128 px thumbnail stretched over 188 columns");
     }
 
     #[test]

@@ -1,7 +1,7 @@
 //! The pipe to the thumbnail helper, which decodes pictures in a process of its own so its
-//! host never runs a picture decoder. The host writes a picture's path and a NUL on the helper's
-//! stdin; the helper answers each path in order on its stdout with a [`Thumb`], or an empty answer
-//! for a file it cannot decode.
+//! host never runs a picture decoder. The host writes the square to fit (a little-endian word),
+//! the picture's path and a NUL on the helper's stdin; the helper answers each path in order on
+//! its stdout with a [`Thumb`], or an empty answer for a file it cannot decode.
 
 use std::ffi::OsString;
 use std::io::{self, BufRead, Read, Write};
@@ -22,22 +22,28 @@ pub struct Thumb {
     pub dims: (u32, u32),
 }
 
-pub fn write_request(w: &mut impl Write, path: &Path) -> io::Result<()> {
+pub fn write_request(w: &mut impl Write, path: &Path, edge: u32) -> io::Result<()> {
+    w.write_all(&edge.to_le_bytes())?;
     w.write_all(path.as_os_str().as_bytes())?;
     w.write_all(&[0])?;
     w.flush()
 }
 
-/// The next path asked for; None once the host has closed the pipe.
-pub fn read_request(r: &mut impl BufRead) -> io::Result<Option<PathBuf>> {
-    let mut buf = Vec::new();
-    if r.read_until(0, &mut buf)? == 0 {
+/// The next path asked for and the square its thumbnail fits in; None once the host has closed
+/// the pipe.
+pub fn read_request(r: &mut impl BufRead) -> io::Result<Option<(PathBuf, u32)>> {
+    if r.fill_buf()?.is_empty() {
         return Ok(None);
     }
+    let mut edge = [0u8; 4];
+    r.read_exact(&mut edge)?;
+    let mut buf = Vec::new();
+    r.read_until(0, &mut buf)?;
     if buf.pop() != Some(0) {
         return Err(io::ErrorKind::UnexpectedEof.into());
     }
-    Ok(Some(PathBuf::from(OsString::from_vec(buf))))
+    let path = PathBuf::from(OsString::from_vec(buf));
+    Ok(Some((path, u32::from_le_bytes(edge))))
 }
 
 /// Four little-endian words (width, height, the picture's width and height), then the pixels as
@@ -95,15 +101,20 @@ mod tests {
     fn requests_come_back_in_order_until_the_pipe_closes() {
         let odd = Path::new(std::ffi::OsStr::from_bytes(b"/pics/caf\xe9.png"));
         let mut pipe = Vec::new();
-        write_request(&mut pipe, Path::new("/pics/a b.jpg")).unwrap();
-        write_request(&mut pipe, odd).unwrap();
+        write_request(&mut pipe, Path::new("/pics/a b.jpg"), 128).unwrap();
+        write_request(&mut pipe, odd, 256).unwrap();
         let mut r = io::Cursor::new(pipe);
         assert_eq!(
-            read_request(&mut r).unwrap().as_deref(),
-            Some(Path::new("/pics/a b.jpg"))
+            read_request(&mut r).unwrap(),
+            Some((PathBuf::from("/pics/a b.jpg"), 128))
         );
-        assert_eq!(read_request(&mut r).unwrap().as_deref(), Some(odd));
+        assert_eq!(
+            read_request(&mut r).unwrap(),
+            Some((odd.to_path_buf(), 256))
+        );
         assert_eq!(read_request(&mut r).unwrap(), None);
+        let cut = read_request(&mut io::Cursor::new(b"\x80\0\0\0/pics"));
+        assert_eq!(cut.unwrap_err().kind(), io::ErrorKind::UnexpectedEof);
     }
 
     #[test]

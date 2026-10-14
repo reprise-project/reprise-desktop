@@ -279,7 +279,6 @@ impl Host {
         let cache = *self.cache.get_or_insert_with(repriseconf::thumbnail_cache);
         self.thumbs = Some(Thumbs::new(
             std::sync::Arc::new(crate::decode::Decoders::default_set()),
-            thumbs::FRAME_INNER,
             thumbs::cache_for(cache),
             wake.clone(),
         ));
@@ -307,7 +306,7 @@ impl Host {
         }
         p.asked = true;
         for path in &p.paths {
-            worker.request(path.clone(), p.generation);
+            worker.request(path.clone(), p.generation, shellview::thumb_px(p.scale));
         }
     }
 
@@ -1139,7 +1138,6 @@ mod tests {
     fn thumbs_without_cache(h: &mut Host) {
         h.thumbs = Some(Thumbs::new(
             std::sync::Arc::new(crate::decode::Decoders::default_set()),
-            thumbs::FRAME_INNER,
             None,
             crate::Waker::noop(),
         ));

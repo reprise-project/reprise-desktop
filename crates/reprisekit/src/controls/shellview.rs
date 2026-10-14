@@ -325,6 +325,11 @@ pub fn image_detail(dims: (u32, u32), kind: &str) -> Vec<String> {
 /// The square inside [`THUMB_FRAME`]'s 1 px border that a thumbnail fits in.
 pub const THUMB_INNER: u32 = (THUMB_FRAME - 2) as u32;
 
+/// The device pixels [`THUMB_INNER`] covers at `scale`: the size a thumbnail is fetched at.
+pub fn thumb_px(scale: i32) -> u32 {
+    THUMB_INNER * scale.max(1) as u32
+}
+
 /// `thumb` of a `dims` picture as an [`Entry::thumb`]: fitted inside [`THUMB_INNER`], never past
 /// the picture's own size, in device pixels at `scale`.
 pub fn frame_thumb(thumb: Canvas, dims: (u32, u32), scale: i32) -> Canvas {
