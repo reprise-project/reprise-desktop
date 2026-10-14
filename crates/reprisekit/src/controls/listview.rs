@@ -693,6 +693,13 @@ impl<R: Rows> ListView<R> {
         self.resize_column(i, u.within(width - others));
     }
 
+    /// [`Self::fill_column`] to what a list laid out in `rect` keeps beside its vertical bar,
+    /// so a list that scrolls grows no horizontal bar.
+    pub fn fill_beside_bar(&mut self, i: usize, rect: Rect, cm: &ControlMetrics) {
+        let inner = if self.frame { rect.inset(2) } else { rect };
+        self.fill_column(i, inner.width - cm.scroll, cm.text);
+    }
+
     /// Move the focus by `step` rows (Home/End with a big step) and let `mods` decide the selection; shows the focus ring.
     pub fn step(&mut self, step: i64, lay: &Layout, mods: Mods) -> bool {
         let Some(to) = step_index(self.selection.focus, step, self.rows.len()) else {
@@ -1479,6 +1486,32 @@ mod tests {
         assert!(lay.hscroll.is_none());
         lv.fill_column(1, 100, cm.text);
         assert_eq!(lv.columns[1].width, MIN_COL_W);
+    }
+
+    #[test]
+    fn a_column_filled_beside_the_bar_leaves_a_scrolled_list_one_bar() {
+        let r = Rect::new(0, 0, 304, 100);
+        for (pct, scroll) in [(100, 16), (100, 17), (150, 16), (200, 17)] {
+            let cm = ControlMetrics {
+                scroll,
+                ..Theme::default().with_text_size(pct).controls()
+            };
+            let mut lv = view(40);
+            lv.fill_beside_bar(1, r, &cm);
+            let lay = layout(&lv, r, &cm);
+            assert!(lay.scrollbar.is_some(), "{pct}% {scroll}");
+            assert!(
+                lay.hscroll.is_none(),
+                "no horizontal bar at {pct}% {scroll}"
+            );
+            assert!(
+                lay.body.width - lay.total_w <= 2,
+                "filled to the bar at {pct}% {scroll}"
+            );
+        }
+        let mut lv = view(1);
+        lv.fill_beside_bar(1, r, &ControlMetrics::CLASSIC);
+        assert_eq!(lv.columns[1].width, 300 - 16 - 120);
     }
 
     /// A look with a 17 px scrollbar lays both bars 17 px thick; the body gives up 17 px to each.
