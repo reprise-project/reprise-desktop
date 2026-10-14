@@ -279,6 +279,10 @@ pub struct Settings {
     pub debug_overlay_in_captures: bool,
     /// `[launcher] search_files`.
     pub launcher_files: bool,
+    /// `[thumbnail_cache] enabled` and `max_mb`, the cap in MiB
+    /// ([`repriseconf::ThumbnailCache::MAX_MB`]; the up-down clamps a value outside it).
+    pub thumbnail_cache: bool,
+    pub thumbnail_max_mb: i64,
 
     /// `[workspaces] count`, 1 to [`DESKTOPS_MAX`]; 1 turns virtual
     /// desktops off.
@@ -500,6 +504,8 @@ impl Default for Settings {
             debug_overlay: false,
             debug_overlay_in_captures: false,
             launcher_files: true,
+            thumbnail_cache: repriseconf::ThumbnailCache::DEFAULT.enabled,
+            thumbnail_max_mb: repriseconf::ThumbnailCache::DEFAULT.max_mb as i64,
 
             desktops: DESKTOPS_DEFAULT,
             desktop_animation: "none".into(),
@@ -976,6 +982,8 @@ fn fields() -> Vec<Field> {
             lens!(debug_overlay_in_captures),
         ),
         Field::Flag(k("launcher", "search_files"), lens!(launcher_files)),
+        Field::Flag(k("thumbnail_cache", "enabled"), lens!(thumbnail_cache)),
+        Field::Int(k("thumbnail_cache", "max_mb"), lens!(thumbnail_max_mb)),
         Field::Int(k("workspaces", "count"), lens!(desktops)),
         Field::Text(k("workspaces", "animation"), lens!(desktop_animation)),
         Field::Int(k("workspaces", "animation_ms"), lens!(desktop_animation_ms)),
@@ -2175,6 +2183,8 @@ size_px = 12
             debug_overlay: true,
             debug_overlay_in_captures: true,
             launcher_files: false,
+            thumbnail_cache: false,
+            thumbnail_max_mb: 64,
             desktops: 1,
             desktop_animation: "slide-vertical".into(),
             desktop_animation_ms: 350,

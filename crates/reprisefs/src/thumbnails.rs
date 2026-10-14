@@ -275,6 +275,48 @@ impl Thumbnails {
     }
 }
 
+/// Remove the size directories' entries whose `Software` key starts with `program`, and the
+/// failures under `fail/<program>*`, leaving every other program's; returns how many files went.
+/// Only each file's first [`HEAD`] bytes are read, since [`Thumbnails`] writes its text ahead of
+/// the pixels.
+pub fn clear_written_by(root: &Path, program: &str) -> usize {
+    let ours = |entry: &Path| {
+        let mut head = Vec::new();
+        std::fs::File::open(entry)
+            .and_then(|f| f.take(HEAD).read_to_end(&mut head))
+            .is_ok()
+            && text_chunks(&head)
+                .is_some_and(|t| key(&t, "Software").is_some_and(|v| v.starts_with(program)))
+    };
+    let pngs = |dir: PathBuf| {
+        std::fs::read_dir(dir)
+            .into_iter()
+            .flatten()
+            .filter_map(Result::ok)
+            .map(|e| e.path())
+            .filter(|p| p.extension().is_some_and(|x| x == "png") && p.is_file())
+    };
+    let mut gone = SIZES
+        .iter()
+        .flat_map(|(dir, _)| pngs(root.join(dir)))
+        .filter(|p| ours(p))
+        .filter(|p| std::fs::remove_file(p).is_ok())
+        .count();
+    let fails = std::fs::read_dir(root.join("fail")).into_iter().flatten();
+    for dir in fails.filter_map(Result::ok) {
+        if dir.file_name().as_bytes().starts_with(program.as_bytes()) {
+            gone += pngs(dir.path())
+                .filter(|p| std::fs::remove_file(p).is_ok())
+                .count();
+            let _ = std::fs::remove_dir(dir.path());
+        }
+    }
+    gone
+}
+
+/// How much of an entry [`clear_written_by`] reads for its `Software` key.
+const HEAD: u64 = 16 << 10;
+
 /// `path` as the standard names it: `file://` and the absolute path,
 /// every byte outside `A-Z a-z 0-9 ! $ & ' ( ) * + , - . / : = @ _ ~`
 /// percent-encoded in upper-case hex. That is the set GLib leaves
@@ -459,6 +501,28 @@ mod tests {
             file_uri(Path::new("/!$&'()*+,-.:=@_~")),
             "file:///!$&'()*+,-.:=@_~"
         );
+    }
+
+    #[test]
+    fn clearing_removes_only_the_programs_own_entries_and_failures() {
+        let (dir, src, mut cache) = setup(1 << 20);
+        let meta = std::fs::metadata(&src).unwrap();
+        put(&mut cache, &src, &meta);
+        cache.put_failed(&src, &meta);
+        let other = dir.path().join("b.png");
+        std::fs::write(&other, b"another picture").unwrap();
+        let other_meta = std::fs::metadata(&other).unwrap();
+        let mut theirs = Thumbnails::at(cache.root.clone(), "gnome-thumbnail-factory", 1 << 20);
+        put(&mut theirs, &other, &other_meta);
+        theirs.put_failed(&other, &other_meta);
+
+        assert_eq!(clear_written_by(&cache.root, "reprise-"), 2);
+        assert!(cache.get(&src, &meta, EDGE).is_none());
+        assert!(!cache.failed(&src, &meta));
+        assert!(!cache.fail_dir().exists(), "the empty failure folder goes");
+        assert!(theirs.get(&other, &other_meta, EDGE).is_some());
+        assert!(theirs.failed(&other, &other_meta));
+        assert_eq!(clear_written_by(&cache.root, "reprise-"), 0);
     }
 
     #[test]

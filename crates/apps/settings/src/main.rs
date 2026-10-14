@@ -1,6 +1,6 @@
 //! Reprise Settings: a property sheet over `config.toml` and the XDG autostart directories.
 //!
-//! Pages are listed in `registry::GROUPS`; `--page night-light` opens on one (`--focus mouse_keys` then focuses a control there), and a second start hands its page to the running sheet (`reprisebus::instance`). OK and Apply rewrite `config.toml` with `toml_edit` and the autostart files; a change written elsewhere while the sheet is open is reread (`configwatch`). The Startup list's Add... and Remove, Quick Launch changes and the Advanced page's Forget act at once. The Display page goes through wlr-output-management (`repriseapp::heads`); only a Yes on the Monitor Settings question writes `[[outputs]]`.
+//! Pages are listed in `registry::GROUPS`; `--page night-light` opens on one (`--focus mouse_keys` then focuses a control there), and a second start hands its page to the running sheet (`reprisebus::instance`). OK and Apply rewrite `config.toml` with `toml_edit` and the autostart files; a change written elsewhere while the sheet is open is reread (`configwatch`). The Startup list's Add... and Remove, Quick Launch changes and the Advanced page's Forget and Clear act at once. The Display page goes through wlr-output-management (`repriseapp::heads`); only a Yes on the Monitor Settings question writes `[[outputs]]`.
 
 mod additem;
 mod appearancepage;
@@ -2085,6 +2085,14 @@ impl SettingsApp {
                 defaultspage::CHANGE => self.open_chooser(),
                 defaultspage::RESTORE => self.restore_default(),
                 pages::FORGET => self.forget_location(),
+                pages::THUMBS_CLEAR => {
+                    // Off the loop: a full cache is thousands of files.
+                    std::thread::spawn(|| {
+                        let n = repriseapp::thumbs::clear_cache();
+                        log::info!("thumbnail cache: cleared {n} files");
+                    });
+                    Reply::none()
+                }
                 pages::SC_ADD => {
                     self.open_shortcut(None);
                     Reply::redraw_all()
