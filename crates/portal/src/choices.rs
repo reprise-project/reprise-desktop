@@ -96,13 +96,15 @@ pub fn parse_choices(v: &Value<'_>) -> Vec<Choice> {
         .collect()
 }
 
-/// The rows for `choices` stacked from `y`, and the y under the last row, in 100% units for
-/// text set at `px` that grows by `u`.
+/// The rows for `choices` stacked from `(x, y)`, and the y under the last row, in 100% units for
+/// text set at `px` that grows by `u`. The combos end `w` px from `x`, or `room` px (at least
+/// `w`) for one whose widest option needs it; the form's text may run `room` px from `x`, and a
+/// check box's label longer than that ends in an ellipsis.
 pub fn choice_rows(
     choices: &[Choice],
-    x: i32,
-    y: i32,
+    (x, y): (i32, i32),
     w: i32,
+    room: i32,
     text: &TextRenderer,
     px: u32,
     u: TextUnits,
@@ -116,13 +118,15 @@ pub fn choice_rows(
         // A form label reads `&` as an access key; a caller's is text,
         // on one line.
         let plain = crate::dialog::one_line(&c.label);
-        let label = plain.replace('&', "&&");
         if c.options.is_empty() {
+            let check_label = ControlMetrics::CLASSIC.check_label;
+            let fits = text.ellipsize(&plain, u.len(room - check_label), false, px);
+            // The rect spans the room so the form lets the label run that far.
             items.push(Item::new(
                 IDS[i],
-                Rect::new(x, y, CHECK, CHECK),
+                Rect::new(x, y, room, CHECK),
                 Control::Check {
-                    label,
+                    label: fits.replace('&', "&&"),
                     checked: c.initial == "true",
                     enabled: true,
                     mixed: None,
@@ -131,13 +135,6 @@ pub fn choice_rows(
             bottom = y + CHECK;
             y += CHECK_PITCH;
         } else {
-            let label_w = u.design(text.measure(&plain, false, px) + 1).min(w / 2);
-            items.push(Item::label(
-                LABEL_IDS[i],
-                Rect::new(x, y + (COMBO_H - LINE_H) / 2, label_w, LINE_H),
-                &label,
-            ));
-            let cx = x + label_w + LABEL_GAP;
             let names: Vec<String> = c
                 .options
                 .iter()
@@ -149,10 +146,28 @@ pub fn choice_rows(
                 .iter()
                 .position(|(id, _)| *id == c.initial)
                 .unwrap_or(0);
+            let combo = Combo::new(&names, start, names.len().min(DROP_ROWS));
+            let probe = Rect::new(0, 0, w, COMBO_H);
+            let inset = w - combo::layout(&combo, probe, &ControlMetrics::CLASSIC)
+                .text
+                .width;
+            let widest = names.iter().map(|n| text.measure(n, false, px)).max();
+            let need = u.design(widest.unwrap_or(0)) + inset;
+            // The label takes what it needs while the combo keeps its need or half the room.
+            let most = room - LABEL_GAP - need.min(room / 2);
+            let label_w = u.design(text.measure(&plain, false, px) + 1).min(most);
+            let shown = text.ellipsize(&plain, u.len(label_w), false, px);
+            items.push(Item::label(
+                LABEL_IDS[i],
+                Rect::new(x, y + (COMBO_H - LINE_H) / 2, label_w, LINE_H),
+                &shown.replace('&', "&&"),
+            ));
+            let cx = x + label_w + LABEL_GAP;
+            let right = if cx + need > x + w { x + room } else { x + w };
             items.push(Item::new(
                 IDS[i],
-                Rect::new(cx, y, x + w - cx, COMBO_H),
-                Control::Combo(Combo::new(&names, start, names.len().min(DROP_ROWS))),
+                Rect::new(cx, y, right - cx, COMBO_H),
+                Control::Combo(combo),
             ));
             bottom = y + COMBO_H;
             y += COMBO_PITCH;
@@ -220,7 +235,7 @@ mod tests {
 
     fn rows(cs: &[Choice]) -> (Form, i32) {
         let text = TextRenderer::load(&FontConfig::default());
-        let (items, bottom) = choice_rows(cs, 54, 90, 326, &text, 11, TextUnits::ONE);
+        let (items, bottom) = choice_rows(cs, (54, 90), 326, 326, &text, 11, TextUnits::ONE);
         (Form::new(items), bottom)
     }
 
@@ -237,6 +252,77 @@ mod tests {
             "combo label at the text column"
         );
         assert_eq!(bottom, 131, "bottom is the combo's (110 + 21)");
+    }
+
+    /// The file dialog's rows: combos end with the fields (246 px from x) unless an option needs
+    /// the room to the right margin (354 px).
+    #[test]
+    fn a_combo_takes_the_room_only_for_an_option_that_needs_it() {
+        let text = TextRenderer::load(&FontConfig::default());
+        let long = Choice {
+            options: vec![(
+                "w".into(),
+                "Western European (Windows-1252, ISO-8859-15)".into(),
+            )],
+            ..combo("enc", "a")
+        };
+        let (items, _) = choice_rows(
+            &[combo("mode", "a"), long],
+            (195, 451),
+            246,
+            354,
+            &text,
+            11,
+            TextUnits::ONE,
+        );
+        let f = Form::new(items);
+        assert_eq!(f.item("choice0").unwrap().rect.right(), 195 + 246);
+        assert_eq!(f.item("choice1").unwrap().rect.right(), 195 + 354);
+    }
+
+    #[test]
+    fn a_label_longer_than_the_room_ends_in_an_ellipsis() {
+        let text = TextRenderer::load(&FontConfig::default());
+        let words = "Open the exported picture in the image viewer once it is written to disk";
+        let check = Choice {
+            label: words.into(),
+            ..check("open", "true")
+        };
+        let labelled = Choice {
+            label: words.into(),
+            ..combo("mode", "a")
+        };
+        let (items, _) = choice_rows(
+            &[check, labelled],
+            (0, 0),
+            246,
+            354,
+            &text,
+            11,
+            TextUnits::ONE,
+        );
+        let f = Form::new(items);
+        let Control::Check { label, .. } = &f.item("choice0").unwrap().control else {
+            panic!("a check box");
+        };
+        assert!(label.ends_with("..."), "{label}");
+        let check_label = ControlMetrics::CLASSIC.check_label;
+        assert!(text.measure(label, false, 11) <= 354 - check_label);
+        assert_eq!(
+            f.item("choice0").unwrap().rect.width,
+            354,
+            "the rect spans the room"
+        );
+        let Control::Label { text: shown, .. } = &f.item("choice1-label").unwrap().control else {
+            panic!("a label");
+        };
+        assert!(shown.ends_with("..."), "{shown}");
+        let combo = f.item("choice1").unwrap().rect;
+        assert_eq!(combo.right(), 354, "the combo ends at the room's edge");
+        assert!(
+            combo.width >= text.measure("Second", false, 11) + 20,
+            "and keeps its need"
+        );
     }
 
     #[test]

@@ -82,6 +82,25 @@ pub fn sample_theme(
 pub fn form_overflows(
     mut build: impl FnMut(Interface, &Theme, &TextRenderer) -> Vec<(String, controls::form::Form)>,
 ) -> Vec<String> {
+    overflows(|i, theme, text| {
+        let mut over = Vec::new();
+        for (name, form) in build(i, theme, text) {
+            form.drawn_with(&theme.paint());
+            for (id, by) in form.overflows(text, theme.fonts.size_px) {
+                over.push((name.clone(), id, by));
+            }
+        }
+        over
+    })
+}
+
+/// What `check` finds running over, by surface name, part and px, for each interface, its
+/// theme at every text size and the text it is measured with, in Tahoma (where installed) and
+/// DejaVu Sans: one line per part, empty when all the text fits. For an audit test of a
+/// control that lays out its own text.
+pub fn overflows(
+    mut check: impl FnMut(Interface, &Theme, &TextRenderer) -> Vec<(String, &'static str, i32)>,
+) -> Vec<String> {
     let mut over = Vec::new();
     for family in ["Tahoma", "DejaVu Sans"] {
         let text = TextRenderer::load(&FontConfig {
@@ -94,14 +113,11 @@ pub fn form_overflows(
         for i in [Interface::Classic, Interface::Blue, Interface::Glass] {
             for pct in [100, 125, 150, 175, 200] {
                 let theme = theme_for(i).with_form_text(pct);
-                for (name, form) in build(i, &theme, &text) {
-                    form.drawn_with(&theme.paint());
-                    for (id, by) in form.overflows(&text, theme.fonts.size_px) {
-                        over.push(format!(
-                            "{family}, {}, {pct}%, {name}: {id} {by} px over",
-                            i.as_str()
-                        ));
-                    }
+                for (name, id, by) in check(i, &theme, &text) {
+                    over.push(format!(
+                        "{family}, {}, {pct}%, {name}: {id} {by} px over",
+                        i.as_str()
+                    ));
                 }
             }
         }

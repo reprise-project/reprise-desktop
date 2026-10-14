@@ -148,6 +148,12 @@ pub fn field_w(client_w: i32) -> i32 {
     client_w - MARGIN - BUTTON_W - FIELD_BUTTON_GAP - FIELD_X
 }
 
+/// How far an extra row may run from `FIELD_X` in a client `client_w` wide: to the right
+/// margin, under the buttons.
+pub fn extra_w(client_w: i32) -> i32 {
+    client_w - MARGIN - FIELD_X
+}
+
 const SHELL_H: i32 = FILENAME_Y - GAP_ROW - SHELL_Y;
 /// The Look in field's icon (the current crumb's) sits 6 px in and 3
 /// down; the name starts 4 px past it.
@@ -901,7 +907,9 @@ impl FileDlg {
         let lookin_x = r.x + u(LOOKIN_X);
         let lookin_w = (toolbar_x - u(TOOLBAR_GAP) - lookin_x).max(0);
         let lookin_field = Rect::new(lookin_x, r.y + u(LOOKIN_Y), lookin_w, lookin_h);
+        let list_right = client.right() - u(MARGIN);
         let mut lookin = combo::layout(&self.lookin, lookin_field, cm);
+        combo::widen_list(&self.lookin, &mut lookin, text, px, list_right);
         if self.crumb_icon().is_some() {
             let shift = LOOKIN_ICON_X + LOOKIN_ICON_PX + LOOKIN_ICON_GAP - 2;
             lookin.text.x += shift;
@@ -922,7 +930,11 @@ impl FileDlg {
             text.measure("File name:", false, px)
                 .max(text.measure("Files of type:", false, px));
         let field_x = r.x + u(FIELD_X);
-        let (button_w, button_h) = (u(BUTTON_W), u(BUTTON_H));
+        // Accept and Cancel share a width, grown past 75 px for a label that needs it.
+        let label_need = [self.fields.accept_label.as_str(), "Cancel"]
+            .map(|l| text.measure(&crate::text::split_mnemonic(l).0, false, px) + u(6));
+        let button_w = label_need.into_iter().fold(u(BUTTON_W), i32::max);
+        let button_h = u(BUTTON_H);
         let accept_x = r.right() - u(MARGIN) - button_w;
         let field_w = (accept_x - u(FIELD_BUTTON_GAP) - field_x).max(0);
 
@@ -949,6 +961,7 @@ impl FileDlg {
         // The row sits near the client's bottom edge, and a list drawn
         // past it could not be clicked: it opens above the field instead.
         let mut filetype = combo::layout(&self.filetype, filetype_field, cm);
+        combo::widen_list(&self.filetype, &mut filetype, text, px, list_right);
         if filetype.list.bottom() > client.bottom() {
             let dy = filetype.field.y - filetype.list.bottom();
             filetype.list.y += dy;
@@ -1682,8 +1695,7 @@ impl FileDlg {
     /// Draws the client area into `r`; the title bar is the host's chrome.
     pub fn draw(&self, c: &mut Canvas, text: &TextRenderer, p: &Paint, r: Rect, px: u32) {
         let Paint { cs, s, .. } = *p;
-        self.drawn.0.set(p.look.controls().grown(p.text));
-        self.drawn.1.set(p.look.lights_pointer());
+        self.drawn_with(p);
         let lay = self.layout(text, px, r, &self.drawn.0.get());
         c.fill_rect(r.scaled(s), cs.button_face);
 
@@ -1826,7 +1838,6 @@ impl FileDlg {
                 shifted.set_focus(None);
             }
             form::draw(c, text, p, &shifted, true, px);
-            f.drawn_with(p);
         }
         if self.lookin.open.is_some() {
             combo::draw_list(
@@ -1878,6 +1889,87 @@ impl FileDlg {
 }
 
 impl FileDlg {
+    /// The texts that run past their boxes in the client at its size with text at `px`, as the
+    /// last [`FileDlg::draw`] or [`FileDlg::drawn_with`] laid it out, by name and how many px
+    /// over, for an audit: a label into its field, a button's label to its sides less 3 px
+    /// each, a place's lines past its tile, and the extra rows' [`form::Form::overflows`] and
+    /// any of them past the client's right margin. The combos' values and rows and the places'
+    /// lines end in an ellipsis where they run out of room.
+    pub fn overflows(&self, text: &TextRenderer, px: u32) -> Vec<(&'static str, i32)> {
+        let cm = self.drawn.0.get();
+        let u = cm.text;
+        let client = Rect::new(0, 0, self.size.0, self.size.1);
+        let lay = self.layout(text, px, client, &cm);
+        let width = |s: &str| text.measure(&crate::text::split_mnemonic(s).0, false, px);
+        let mut over = Vec::new();
+        let mut put = |name: &'static str, by: i32| {
+            if by > 0 {
+                over.push((name, by));
+            }
+        };
+        put(
+            "look in label",
+            lay.lookin_label.right() - lay.lookin.field.x,
+        );
+        put(
+            "file name label",
+            lay.filename_label.right() - lay.filename.x,
+        );
+        if self.has_types() {
+            put(
+                "files of type label",
+                lay.filetype_label.right() - lay.filetype.field.x,
+            );
+        }
+        let button = |label: &str, r: Rect| width(label) - (r.width - u.len(6));
+        put("accept", button(&self.fields.accept_label, lay.accept));
+        put("cancel", button("Cancel", lay.cancel));
+        put(
+            "places",
+            placesbar::overflow(&self.places, text, lay.places, &cm.places, px),
+        );
+        if let Some((f, _)) = &self.extra {
+            let mut f = f.clone();
+            f.origin = (0, 0);
+            // The rows are laid out at 100% from the client's opening width.
+            let right = u.len(CLIENT.0 - MARGIN) + client.width - u.len(CLIENT.0);
+            let end = |id: &str| {
+                let it = f.item(id)?;
+                let r = f.rect(id)?;
+                Some(match &it.control {
+                    form::Control::Check { label, .. } => r.x + cm.check_label + width(label),
+                    _ => r.right(),
+                })
+            };
+            for (id, by) in f.overflows(text, px) {
+                // A combo that fills the room ellipsizes what is still wider.
+                let combo = matches!(
+                    f.item(id).map(|it| &it.control),
+                    Some(form::Control::Combo(_))
+                );
+                if !(combo && f.rect(id).is_some_and(|r| r.right() >= right)) {
+                    over.push((id, by));
+                }
+            }
+            for it in &f.items {
+                if let Some(by) = end(it.id).map(|e| e - right).filter(|&by| by > 0) {
+                    over.push((it.id, by));
+                }
+            }
+        }
+        over
+    }
+
+    /// Lays the dialog out with `p`'s look and text size from here on, as [`FileDlg::draw`]
+    /// does: for `hit`, `access` and [`FileDlg::overflows`] before a draw.
+    pub fn drawn_with(&self, p: &Paint) {
+        self.drawn.0.set(p.look.controls().grown(p.text));
+        self.drawn.1.set(p.look.lights_pointer());
+        if let Some((f, _)) = &self.extra {
+            f.drawn_with(p);
+        }
+    }
+
     /// The dialog's `access` part, laid out in `r` like [`FileDlg::draw`].
     pub fn access(&self, tree: &mut Tree, r: Rect, text: &TextRenderer, px: u32) {
         let root = access::ROOT;
@@ -3613,5 +3705,122 @@ mod tests {
         assert!(d.drag_leave());
         assert!(!d.drag_tick(&t, px, R), "no drag, no step");
         assert_ne!(dropping.pixels, shot(&d).pixels);
+    }
+
+    /// A folder `label` names, files of `filters` and an `accept` button, in `mode`.
+    fn long_inputs(mode: DlgMode, accept: &str, label: &str, filters: &[&str]) -> FileDlg {
+        let places = [
+            "My Recent Documents",
+            "Alexandra-Katharina's Home",
+            "Desktop",
+            "Documents",
+            "Downloads",
+            "Computer",
+        ];
+        let mut d = FileDlg::new(
+            Fields {
+                title: accept.into(),
+                accept_label: accept.into(),
+                filters: filters.iter().map(|f| f.to_string()).collect(),
+                mode,
+                multiple: false,
+            },
+            places
+                .iter()
+                .map(|l| Place {
+                    label: l.to_string(),
+                    icon: None,
+                    enabled: true,
+                })
+                .collect(),
+        );
+        let mut f = folder(1, Some(0), vec![dir("Drafts"), file("notes.txt")]);
+        f.crumbs[0].label = label.into();
+        d.set_listing(f);
+        d
+    }
+
+    #[test]
+    fn every_file_dialog_fits_its_text_under_every_interface() {
+        let folder = "Quarterly Reports for the Northern Region (final drafts, 2026)";
+        let filters = [
+            "Images (*.png, *.jpg, *.jpeg, *.gif, *.bmp, *.webp, *.svg)",
+            "OpenDocument Text and Word Processor Documents (*.odt;*.docx)",
+            "All Files (*.*)",
+        ];
+        let over = crate::interfaces::overflows(|_, theme, text| {
+            let mut save = long_inputs(DlgMode::Save, "&Save", folder, &filters);
+            save.set_file_name(
+                "Quarterly report for the northern region, second draft with comments.odt",
+            );
+            let dialogs = [
+                (
+                    "Open",
+                    long_inputs(DlgMode::Open, "&Open", folder, &filters),
+                ),
+                ("Save", save),
+                (
+                    "Folder",
+                    long_inputs(DlgMode::Folder, "Select Folder", folder, &[]),
+                ),
+            ];
+            let mut over = Vec::new();
+            for (name, mut d) in dialogs {
+                d.set_text(theme.text);
+                d.drawn_with(&theme.paint());
+                for (part, by) in d.overflows(text, theme.fonts.size_px) {
+                    over.push((name.to_string(), part, by));
+                }
+            }
+            over
+        });
+        assert!(over.is_empty(), "{}", over.join("\n"));
+    }
+
+    /// The open lists widen to their widest row as far as the right margin; the fields stay.
+    #[test]
+    fn the_lists_widen_to_their_widest_row_up_to_the_right_margin() {
+        let t = text();
+        let cm = ControlMetrics::CLASSIC;
+        let images = "Images (*.png, *.jpg, *.jpeg, *.gif, *.bmp, *.webp, *.svg)";
+        let d = long_inputs(
+            DlgMode::Open,
+            "Open",
+            "Reports",
+            &[images, "All Files (*.*)"],
+        );
+        let lay = d.layout(&t, 11, R, &cm);
+        let list = lay.filetype.list;
+        assert_eq!(lay.filetype.field.width, field_w(CLIENT.0));
+        assert_eq!(list.x, FIELD_X);
+        assert_eq!(list.width, 1 + 2 + t.measure(images, false, 11) + 3);
+        assert!(list.right() < CLIENT.0 - MARGIN);
+        assert_eq!(
+            lay.lookin.list.width, lay.lookin.field.width,
+            "a short folder name"
+        );
+
+        let longer = format!("{images} {images}");
+        let d = long_inputs(DlgMode::Open, "Open", &longer, &[&longer]);
+        let lay = d.layout(&t, 11, R, &cm);
+        assert_eq!(lay.filetype.list.right(), CLIENT.0 - MARGIN);
+        assert_eq!(lay.lookin.list.right(), CLIENT.0 - MARGIN);
+    }
+
+    /// Open and Cancel share their width: 75 px, or what a longer label needs.
+    #[test]
+    fn a_long_accept_label_widens_both_buttons_and_narrows_the_fields() {
+        let t = text();
+        let cm = ControlMetrics::CLASSIC;
+        let lay = sample().layout(&t, 11, R, &cm);
+        assert_eq!((lay.accept.width, lay.cancel.width), (BUTTON_W, BUTTON_W));
+        let label = "Import Selected Layers";
+        let d = long_inputs(DlgMode::Open, label, "Reports", &["All Files (*.*)"]);
+        let lay = d.layout(&t, 11, R, &cm);
+        let w = t.measure(label, false, 11) + 6;
+        assert!(w > BUTTON_W);
+        assert_eq!((lay.accept.width, lay.cancel.width), (w, w));
+        assert_eq!(lay.accept.right(), CLIENT.0 - MARGIN);
+        assert_eq!(lay.filename.right(), lay.accept.x - FIELD_BUTTON_GAP);
     }
 }
