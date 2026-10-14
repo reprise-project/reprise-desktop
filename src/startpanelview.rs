@@ -10,6 +10,7 @@ use reprisekit::startpanel::{
     TreeRow,
 };
 use reprisekit::taskbar::{Edge, StartMenuDock};
+use reprisekit::textedit::{Preedit, TextSpot};
 use reprisescene::{BufferId, Input, TreeId};
 use smithay::output::Output;
 use smithay::reexports::calloop::RegistrationToken;
@@ -74,8 +75,37 @@ pub struct StartPanelView {
     backdrop: Backdrop,
     buffer: BufferId,
     drawn: Option<Drawn>,
+    rasters: Rasters,
     crossfades: Vec<Crossfade>,
     crossfade_timer: Option<RegistrationToken>,
+}
+
+/// What a panel canvas is drawn from, besides the look.
+#[derive(Clone, PartialEq)]
+struct RasterKey {
+    model: StartPanel,
+    pressed: Option<Spot>,
+    caret: bool,
+    preedit: Option<Preedit>,
+    scale: i32,
+}
+
+/// The last two canvases drawn, so a caret blink back to a drawn state reuses its canvas.
+#[derive(Default)]
+struct Rasters(Vec<(RasterKey, Rc<Canvas>, Option<TextSpot>)>);
+
+impl Rasters {
+    fn find(&self, key: &RasterKey) -> Option<(Rc<Canvas>, Option<TextSpot>)> {
+        let (_, canvas, spot) = self.0.iter().find(|(k, ..)| k == key)?;
+        Some((canvas.clone(), spot.clone()))
+    }
+
+    fn keep(&mut self, key: RasterKey, canvas: Rc<Canvas>, spot: Option<TextSpot>) {
+        if self.0.len() == 2 {
+            self.0.remove(0);
+        }
+        self.0.push((key, canvas, spot));
+    }
 }
 
 struct Drawn {
@@ -479,6 +509,7 @@ impl State {
             backdrop: Backdrop::new(&self.glass),
             buffer,
             drawn: None,
+            rasters: Rasters::default(),
             crossfades: Vec::new(),
             crossfade_timer: None,
         });
@@ -1465,23 +1496,40 @@ impl State {
             (lay.panel.width, lay.panel.height),
         );
         let scale = self.draw_scale_at(Some(&v.output)).max(1);
-        let theme = self.config.theme.scaled(scale);
         let pane = crate::glass::wanted(&self.config).then(|| panel_pane(&lay));
         let sl = lay.scaled(scale);
         let fades = self.config.theme.metrics.menu_fade_ms > 0;
-        let mut canvas = Canvas::new(sl.canvas.width as u32, sl.canvas.height as u32);
-        canvas.set_preedit(self.ime_field_preedit(crate::caret::Editor::StartPanel));
-        reprisekit::interfaces::draw_start_panel(
-            &mut canvas,
-            &theme,
-            &self.config.glass,
-            &self.start_panel_text,
-            &v.model,
-            &sl,
-            v.pressed,
-            self.caret.on,
-        );
-        let spot = canvas.take_spot();
+        let key = RasterKey {
+            model: v.model.clone(),
+            pressed: v.pressed,
+            caret: self.caret.on,
+            preedit: self.ime_field_preedit(crate::caret::Editor::StartPanel),
+            scale,
+        };
+        let (raster, spot) = match v.rasters.find(&key) {
+            Some(drawn) => drawn,
+            None => {
+                let theme = self.config.theme.scaled(scale);
+                let mut canvas = Canvas::new(sl.canvas.width as u32, sl.canvas.height as u32);
+                canvas.set_preedit(key.preedit.clone());
+                reprisekit::interfaces::draw_start_panel(
+                    &mut canvas,
+                    &theme,
+                    &self.config.glass,
+                    &self.start_panel_text,
+                    &v.model,
+                    &sl,
+                    v.pressed,
+                    self.caret.on,
+                );
+                let spot = canvas.take_spot();
+                let raster = Rc::new(canvas);
+                if let Some(v) = self.start_panel.as_mut() {
+                    v.rasters.keep(key, raster.clone(), spot.clone());
+                }
+                (raster, spot)
+            }
+        };
         let origin = (at.0 + lay.canvas.x, at.1 + lay.canvas.y);
         self.ime_field_drawn(crate::caret::Editor::StartPanel, spot, origin, scale);
         let State {
@@ -1521,16 +1569,22 @@ impl State {
                 start: now,
             }));
         }
-        let size = (canvas.width, canvas.height);
+        let size = (raster.width, raster.height);
         v.crossfades
             .retain(|f| now - f.start < CROSSFADE && (f.from.width, f.from.height) == size);
-        for f in &v.crossfades {
-            let t = (now - f.start).as_secs_f32() / CROSSFADE.as_secs_f32();
-            canvas.mix(&f.from, f.rect, 1.0 - t);
-        }
+        let canvas = if v.crossfades.is_empty() {
+            raster
+        } else {
+            let mut canvas = (*raster).clone();
+            for f in &v.crossfades {
+                let t = (now - f.start).as_secs_f32() / CROSSFADE.as_secs_f32();
+                canvas.mix(&f.from, f.rect, 1.0 - t);
+            }
+            Rc::new(canvas)
+        };
         upload_scaled(scene, v.buffer, &canvas, scale);
         v.drawn = Some(Drawn {
-            canvas: Rc::new(canvas),
+            canvas,
             mode,
             picture,
         });
@@ -1539,6 +1593,14 @@ impl State {
         }
         self.redraw_all();
         crate::access::touch(self);
+    }
+
+    /// The look changed under the open panel: draw it again from scratch.
+    pub fn retheme_start_panel(&mut self) {
+        if let Some(v) = self.start_panel.as_mut() {
+            v.rasters = Rasters::default();
+        }
+        self.redraw_start_panel();
     }
 
     pub fn start_panel_access(&self) -> Option<reprisekit::access::Tree> {
@@ -1579,6 +1641,42 @@ mod tests {
             mime_types: Vec::new(),
             shown: true,
         }
+    }
+
+    #[test]
+    fn a_caret_blink_reuses_the_canvas_drawn_for_that_phase_until_the_panel_changes() {
+        let key = |caret: bool, model: &StartPanel| RasterKey {
+            model: model.clone(),
+            pressed: None,
+            caret,
+            preedit: None,
+            scale: 1,
+        };
+        let model = StartPanel::new();
+        let (on, off) = (Rc::new(Canvas::new(2, 2)), Rc::new(Canvas::new(2, 2)));
+        let mut r = Rasters::default();
+        r.keep(key(true, &model), on.clone(), None);
+        r.keep(key(false, &model), off.clone(), None);
+        let found = |r: &Rasters, k: &RasterKey| r.find(k).map(|(c, _)| c);
+        assert!(found(&r, &key(true, &model)).is_some_and(|c| Rc::ptr_eq(&c, &on)));
+        assert!(found(&r, &key(false, &model)).is_some_and(|c| Rc::ptr_eq(&c, &off)));
+        let mut typed = model.clone();
+        typed.paste("a");
+        assert!(
+            found(&r, &key(true, &typed)).is_none(),
+            "a changed panel draws again"
+        );
+        let pressed = RasterKey {
+            pressed: Some(Spot::Search),
+            ..key(true, &model)
+        };
+        assert!(found(&r, &pressed).is_none(), "a press draws again");
+        r.keep(key(true, &typed), on.clone(), None);
+        assert!(
+            found(&r, &key(true, &model)).is_none(),
+            "two canvases are kept"
+        );
+        assert!(found(&r, &key(false, &model)).is_some());
     }
 
     #[test]

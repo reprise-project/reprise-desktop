@@ -1340,6 +1340,25 @@ fn a_new_canvas_damages_the_buffer() {
 }
 
 #[test]
+fn a_redrawn_canvas_damages_only_the_box_around_its_changed_pixels() {
+    let mut s = TestScene::new();
+    let root = s.root();
+    let b = s.buffer_create(root);
+    s.set_position(b, 10, 10);
+    let mut pixels = vec![0; 20 * 10];
+    s.buffer_set_canvas(b, &pixels, 20, 10);
+    let mut t = Tracker::new(100, 100, 1.0);
+    t.frame(&s);
+    s.buffer_set_canvas(b, &pixels, 20, 10);
+    assert!(t.frame(&s).is_empty(), "the same pixels damage nothing");
+    pixels[2 * 20 + 3] = 1;
+    pixels[5 * 20 + 7] = 1;
+    s.buffer_set_canvas(b, &pixels, 20, 10);
+    let d = t.frame(&s);
+    assert!(covers_exactly(&d, &[prect(13, 12, 5, 4)]), "{d:?}");
+}
+
+#[test]
 fn a_new_texture_damages_whole_or_where_told() {
     let mut s = TestScene::new();
     let root = s.root();

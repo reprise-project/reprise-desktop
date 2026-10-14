@@ -589,7 +589,8 @@ impl<R: Renderer, D> Scene<R, D> {
 
     /// Show a canvas: `width * height` ARGB8888 premultiplied pixels, row
     /// by row. The same size as the last canvas keeps the node's element
-    /// and damages it whole; another size makes a new element.
+    /// and damages the box around the pixels that changed; another size
+    /// makes a new element.
     pub fn buffer_set_canvas(&mut self, buffer: BufferId, pixels: &[u32], width: i32, height: i32) {
         let Some(b) = self.buffer_mut(buffer) else {
             return;
@@ -605,12 +606,7 @@ impl<R: Renderer, D> Scene<R, D> {
         let size = Size::<i32, BufferCoords>::from((width, height));
         if let (Pixels::Canvas(m), true) = (&mut b.pixels, b.buffer_size == size) {
             let mut ctx = m.render();
-            let _ = ctx.draw(|mem| {
-                for (d, s) in mem.as_chunks_mut::<4>().0.iter_mut().zip(pixels) {
-                    d.copy_from_slice(&s.to_le_bytes());
-                }
-                Ok::<_, ()>(vec![Rectangle::from_size(size)])
-            });
+            let _ = ctx.draw(|mem| Ok::<_, ()>(copy_changed(mem, pixels, width as usize)));
         } else {
             let bytes: Vec<u8> = pixels.iter().flat_map(|p| p.to_le_bytes()).collect();
             b.pixels = Pixels::Canvas(MemoryRenderBuffer::from_slice(
@@ -757,4 +753,33 @@ pub(crate) fn meet(
             .intersection(r)
             .unwrap_or_else(|| Rectangle::new(c.loc, Size::default())),
     }
+}
+
+/// Copies `pixels` (rows `width` long) over `mem`, little-endian, writing only the pixels that
+/// differ; returns the box around them, or nothing when none did.
+fn copy_changed(mem: &mut [u8], pixels: &[u32], width: usize) -> Vec<Rectangle<i32, BufferCoords>> {
+    let (mut x0, mut x1, mut y0, mut y1) = (width, 0, usize::MAX, 0);
+    let rows = mem
+        .chunks_exact_mut(width * 4)
+        .zip(pixels.chunks_exact(width));
+    for (y, (dst, src)) in rows.enumerate() {
+        let dst = dst.as_chunks_mut::<4>().0;
+        let differs = |(d, s): (&[u8; 4], &u32)| u32::from_le_bytes(*d) != *s;
+        let Some(first) = dst.iter().zip(src).position(differs) else {
+            continue;
+        };
+        let last = width - dst.iter().zip(src).rev().position(differs).unwrap_or(0);
+        for (d, s) in dst[first..last].iter_mut().zip(&src[first..last]) {
+            *d = s.to_le_bytes();
+        }
+        (x0, x1) = (x0.min(first), x1.max(last));
+        (y0, y1) = (y0.min(y), y + 1);
+    }
+    if y0 == usize::MAX {
+        return Vec::new();
+    }
+    vec![Rectangle::new(
+        (x0 as i32, y0 as i32).into(),
+        ((x1 - x0) as i32, (y1 - y0) as i32).into(),
+    )]
 }
