@@ -822,6 +822,14 @@ impl IconCache {
         }
     }
 
+    /// Icon file `path` at `px` as [`IconCache::put_file`] left it, without reading the file:
+    /// None when it was never put at this size and scale (or was dropped since).
+    pub fn file_put(&self, path: &str, px: i32) -> Option<Option<Arc<Canvas>>> {
+        self.cache
+            .get(&(cache_key(path, &[]), px, self.scale))
+            .cloned()
+    }
+
     pub fn theme_name(&self) -> String {
         self.theme.chain.first().cloned().unwrap_or_default()
     }
@@ -1448,6 +1456,31 @@ mod tests {
             cache.get(name, 32),
             None,
             "a size not put in reads the file"
+        );
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// `file_put` answers only what was put in, never reading the file: a size not put in is
+    /// None though the file is there to decode.
+    #[test]
+    fn file_put_never_reads_the_file() {
+        let root = fixture("file-put", "test", INDEX, &[]);
+        let pic = root.join("cover.png");
+        write_png(&pic, 1, 1, &[255, 0, 0, 255]);
+        let mut cache = IconCache::new(IconTheme::load("test", std::slice::from_ref(&root)));
+        let name = pic.to_str().unwrap();
+        let decoded = decode_file(&pic, 16, cache.scale());
+        cache.put_file(name, 16, decoded.clone());
+        assert_eq!(
+            cache.file_put(name, 16).flatten().as_deref(),
+            decoded.as_ref()
+        );
+        assert_eq!(cache.file_put(name, 32), None);
+        cache.put_file(name, 48, None);
+        assert_eq!(
+            cache.file_put(name, 48),
+            Some(None),
+            "a failed decode is kept"
         );
         fs::remove_dir_all(&root).unwrap();
     }
