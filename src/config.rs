@@ -2658,7 +2658,19 @@ impl Config {
             cfg.theme.fonts.shell_dlg = f.shell_dlg.filter(|s| !s.trim().is_empty());
         }
         if let Some(binds) = file.keybinds {
-            cfg.keybinds = binds
+            for b in &binds {
+                parse_keybind(&b.keys)?;
+            }
+            let layered = repriseconf::keybind::layered(
+                binds,
+                |b| (&b.keys, &b.action),
+                |keys, action| FileKeybind {
+                    keys: keys.into(),
+                    action: action.into(),
+                    command: None,
+                },
+            );
+            cfg.keybinds = layered
                 .iter()
                 .map(|b| {
                     let (mods, keysym) = parse_keybind(&b.keys)?;
@@ -4146,6 +4158,47 @@ mod tests {
         assert_eq!(CursorConfig::default().resolve(junk).1, 24);
     }
 
+    /// The action the first bind on `keys` runs, as a key press finds it.
+    fn action_on(c: &Config, keys: &str) -> Option<Action> {
+        let (mods, keysym) = parse_keybind(keys).unwrap();
+        (c.keybinds.iter())
+            .find(|b| b.mods == mods && b.keysym == keysym)
+            .map(|b| b.action.clone())
+    }
+
+    #[test]
+    fn a_keybinds_list_layers_over_the_defaults() {
+        let defaults = Config::default().keybinds;
+        let c = Config::parse("[[keybinds]]\nkeys = \"Super+F9\"\naction = \"lock\"\n").unwrap();
+        assert_eq!(c.keybinds[..defaults.len()], defaults[..]);
+        assert_eq!(action_on(&c, "Super+F9"), Some(Action::Lock));
+
+        let c = Config::parse("[[keybinds]]\nkeys = \"super+Q\"\naction = \"minimize\"\n").unwrap();
+        assert_eq!(c.keybinds.len(), defaults.len());
+        assert_eq!(action_on(&c, "Super+q"), Some(Action::Minimize));
+
+        let c = Config::parse("[[keybinds]]\nkeys = \"Super+Tab\"\naction = \"none\"\n").unwrap();
+        assert_eq!(c.keybinds.len(), defaults.len() - 1);
+        assert_eq!(action_on(&c, "Super+Tab"), None);
+        assert!(
+            Config::parse("[[keybinds]]\nkeys = \"Super+Nope\"\naction = \"none\"\n").is_err(),
+            "a none entry's keys still have to parse"
+        );
+    }
+
+    #[test]
+    fn an_old_full_keybinds_list_gains_super_tab() {
+        let text: String = (repriseconf::keybind::DEFAULTS.iter())
+            .filter(|(keys, _)| *keys != "Super+Tab")
+            .map(|(keys, action)| {
+                format!("[[keybinds]]\nkeys = \"{keys}\"\naction = \"{action}\"\n")
+            })
+            .collect();
+        let c = Config::parse(&text).unwrap();
+        assert_eq!(c.keybinds, Config::default().keybinds);
+        assert_eq!(action_on(&c, "Super+Tab"), Some(Action::Flip));
+    }
+
     #[test]
     fn keybind_parsing() {
         let (mods, sym) = parse_keybind("Super+Shift+E").unwrap();
@@ -4480,7 +4533,10 @@ mod tests {
             );
         }
         let bind = Config::parse("[[keybinds]]\nkeys = \"Super+n\"\naction = \"night-light\"\n");
-        assert_eq!(bind.unwrap().keybinds[0].action, Action::NightLight);
+        assert_eq!(
+            action_on(&bind.unwrap(), "Super+n"),
+            Some(Action::NightLight)
+        );
     }
 
     #[test]
@@ -4858,7 +4914,7 @@ mod tests {
         .unwrap();
         assert_eq!(c.power.reboot, "loginctl reboot");
         assert_eq!(c.power.standby, "systemctl suspend");
-        assert!(matches!(c.keybinds[0].action, Action::TurnOff));
+        assert_eq!(action_on(&c, "Super+F4"), Some(Action::TurnOff));
         assert!(matches!(
             &c.startmenu[0],
             MenuEntry::Item {
@@ -4885,7 +4941,7 @@ mod tests {
                 .any(|b| b.action == Action::Lock && b.mods == MOD_LOGO && b.keysym == KEY_l)
         );
         let c = Config::parse("[[keybinds]]\nkeys = \"Super+F12\"\naction = \"lock\"\n").unwrap();
-        assert!(matches!(c.keybinds[0].action, Action::Lock));
+        assert_eq!(action_on(&c, "Super+F12"), Some(Action::Lock));
     }
 
     #[test]
@@ -4934,9 +4990,12 @@ action = "exit"
         assert_eq!(c.theme.metrics.frame_width, 4);
         assert_eq!(c.theme.fonts.family, vec!["DejaVu Sans".to_string()]);
         assert!(c.theme.fonts.antialias);
-        assert_eq!(c.keybinds.len(), 2);
-        assert!(matches!(&c.keybinds[0].action, Action::Spawn(s) if s == "kitty"));
-        assert!(matches!(c.keybinds[1].action, Action::Close));
+        assert_eq!(c.keybinds.len(), 40);
+        assert_eq!(
+            action_on(&c, "Super+t"),
+            Some(Action::Spawn("kitty".into()))
+        );
+        assert_eq!(action_on(&c, "Super+w"), Some(Action::Close));
         assert_eq!(c.startmenu.len(), 3);
         assert!(matches!(
             &c.startmenu[0],

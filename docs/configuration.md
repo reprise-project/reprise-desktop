@@ -38,7 +38,7 @@ lists them. Glass's `[glass]` section is documented there too.
 | `[privacy]` | recent files and location |
 | `[thumbnail_cache]` | whether pictures' thumbnails are kept, and the cap |
 | `[debug]` | the debug overlay |
-| `[[keybinds]]` | every shortcut |
+| `[[keybinds]]` | shortcuts, layered over the defaults; `action = "none"` unbinds a chord |
 | `[[startmenu]]`, `startmenu_style` | the Classic Start menu's rows, and which Start menu you get |
 | `[[outputs]]` | per-monitor mode, scale, rotation and position |
 
