@@ -129,13 +129,18 @@ impl State {
                     .file_name()
                     .map_or_else(String::new, |n| n.to_string_lossy().into_owned());
                 let p = self.pointer_location();
-                match reprisefs::props::glance(&path, &name, &self.app_index) {
-                    Ok(info) => {
-                        let icon = self.file_icon_name(&path, info.is_dir);
-                        self.open_properties(&info, &icon, (p.x as i32, p.y as i32));
-                    }
-                    Err(err) => log::warn!("properties: {}: {err}", path.display()),
-                }
+                let at = (p.x as i32, p.y as i32);
+                let apps = self.app_index.clone();
+                self.spawn_fs_job(move || {
+                    let info = reprisefs::props::glance(&path, &name, &apps);
+                    Box::new(move |state: &mut State| match info {
+                        Ok(info) => {
+                            let icon = state.file_icon_name(&path, info.is_dir);
+                            state.open_properties(&info, &icon, at);
+                        }
+                        Err(err) => log::warn!("properties: {}: {err}", path.display()),
+                    })
+                });
             }
             _ => {}
         }

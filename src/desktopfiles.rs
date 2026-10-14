@@ -261,51 +261,44 @@ impl State {
         self.ask_delete(files, label, true);
     }
 
-    /// Properties aimed at icon `index` of a multi-selection: the combined sheet over the set's files, `index` first. False when fewer than two files remain, for the icon's own sheet.
-    fn open_icon_set_properties(&mut self, index: usize) -> bool {
+    /// Properties aimed at icon `index`: the combined sheet over its selection's files, `index`
+    /// first, when two or more read; else the icon's own sheet. The files are read in a file job,
+    /// as one may sit on a mount that never answers.
+    pub fn open_icon_properties(&mut self, index: usize) {
         let set = self.selection_around(index);
-        let (Some(view), true) = (self.desktop.as_ref(), set.len() > 1) else {
-            return false;
+        let Some(view) = self.desktop.as_ref() else {
+            return;
         };
-        let apps: &[reprisefs::apps::AppEntry] = &self.app_index;
-        let items: Vec<reprisefs::props::FileInfo> =
+        let (Some(e), Some(cell)) = (view.entries.get(index), view.cells.get(index)) else {
+            return;
+        };
+        let (own, icon, at) = (
+            (e.path.clone(), e.label.clone()),
+            e.icon.clone(),
+            (cell.x, cell.y),
+        );
+        let files: Vec<(PathBuf, String)> = if set.len() > 1 {
             crate::desktopview::aimed_in(&view.entries, &set, index, true)
                 .into_iter()
                 .map(|i| &view.entries[i])
                 .filter(|e| e.kind == desktop::Kind::File)
-                .filter_map(|e| {
-                    reprisefs::props::glance(&e.path, &e.label, apps)
-                        .map_err(|err| log::warn!("properties: {}: {err}", e.path.display()))
-                        .ok()
-                })
-                .collect();
-        let (Some(first), Some(cell)) = (items.first(), view.cells.get(index)) else {
-            return false;
+                .map(|e| (e.path.clone(), e.label.clone()))
+                .collect()
+        } else {
+            Vec::new()
         };
-        if items.len() < 2 {
-            return false;
-        }
-        let (name, at) = (first.name.clone(), (cell.x, cell.y));
-        let info = reprisefs::props::glance_set(&items);
-        self.open_set_properties(&info, &name, at);
-        true
-    }
-
-    pub fn open_icon_properties(&mut self, index: usize) {
-        if self.open_icon_set_properties(index) {
-            return;
-        }
-        let Some((info, icon, at)) = self.desktop.as_ref().and_then(|view| {
-            let e = view.entries.get(index)?;
-            let cell = view.cells.get(index)?;
-            let info = reprisefs::props::glance(&e.path, &e.label, &self.app_index)
-                .map_err(|err| log::warn!("properties: {}: {err}", e.path.display()))
-                .ok()?;
-            Some((info, e.icon.clone(), (cell.x, cell.y)))
-        }) else {
-            return;
-        };
-        self.open_properties(&info, &icon, at);
+        let apps = self.app_index.clone();
+        self.spawn_fs_job(move || {
+            let read = glance_aimed(&own, &files, &apps);
+            Box::new(move |state: &mut State| match read {
+                Some(Glanced::One(info)) => state.open_properties(&info, &icon, at),
+                Some(Glanced::Set(items)) => {
+                    let info = reprisefs::props::glance_set(&items);
+                    state.open_set_properties(&info, &items[0].name, at);
+                }
+                None => {}
+            })
+        });
     }
 
     pub fn open_icon_chooser(&mut self, index: usize) {
@@ -328,32 +321,70 @@ impl State {
         }) else {
             return;
         };
-        let Some(bins) = reprisefs::trash::Bins::system() else {
-            return;
-        };
-        let drives = crate::binprops::drives(&bins, &places::mounted_drives());
-        let sheet = crate::binprops::BinSheet::new(bins.policy, drives);
-        self.open_dialog(crate::binprops::dialog(sheet, at, &icon));
+        // Each drive's size is a statvfs, which a mount that never answers holds.
+        self.spawn_fs_job(move || {
+            let read = reprisefs::trash::Bins::system().map(|bins| {
+                let drives = crate::binprops::drives(&bins, &places::mounted_drives());
+                (bins.policy, drives)
+            });
+            Box::new(move |state: &mut State| {
+                if let Some((policy, drives)) = read {
+                    let sheet = crate::binprops::BinSheet::new(policy, drives);
+                    state.open_dialog(crate::binprops::dialog(sheet, at, &icon));
+                }
+            })
+        });
     }
 
+    /// Empty Recycle Bin: asks to delete what the bins hold, counted in a file job.
     pub fn ask_empty_bin(&mut self) {
-        let Some(bins) = reprisefs::trash::Bins::system() else {
-            return;
-        };
-        let (count, first) = bins
-            .files_dirs()
-            .iter()
-            .map(|files| places::trash_contents(files))
-            .fold((0, None::<String>), |(n, first), (m, other)| {
-                let first = match (first, other) {
-                    (Some(a), Some(b)) => Some(a.min(b)),
-                    (a, b) => a.or(b),
-                };
-                (n + m, first)
-            });
-        if count > 0 {
-            self.open_dialog(Dialog::confirm_empty_bin(count, first.as_deref()));
-        }
+        self.spawn_fs_job(|| {
+            let (count, first) = reprisefs::trash::Bins::system()
+                .map(|bins| bins.files_dirs())
+                .unwrap_or_default()
+                .iter()
+                .map(|files| places::trash_contents(files))
+                .fold((0, None::<String>), |(n, first), (m, other)| {
+                    let first = match (first, other) {
+                        (Some(a), Some(b)) => Some(a.min(b)),
+                        (a, b) => a.or(b),
+                    };
+                    (n + m, first)
+                });
+            Box::new(move |state: &mut State| {
+                if count > 0 {
+                    state.open_dialog(Dialog::confirm_empty_bin(count, first.as_deref()));
+                }
+            })
+        });
+    }
+}
+
+/// What Properties on a desktop icon reads: the set's files when two or more read, else the
+/// icon's own.
+#[derive(Debug)]
+enum Glanced {
+    One(Box<reprisefs::props::FileInfo>),
+    Set(Vec<reprisefs::props::FileInfo>),
+}
+
+/// Reads the files of `set` (`(path, label)`, the aimed icon first), falling back to the aimed
+/// icon `own` alone when fewer than two read.
+fn glance_aimed(
+    own: &(PathBuf, String),
+    set: &[(PathBuf, String)],
+    apps: &[reprisefs::apps::AppEntry],
+) -> Option<Glanced> {
+    let glance = |(path, label): &(PathBuf, String)| {
+        reprisefs::props::glance(path, label, apps)
+            .map_err(|err| log::warn!("properties: {}: {err}", path.display()))
+            .ok()
+    };
+    let items: Vec<reprisefs::props::FileInfo> = set.iter().filter_map(glance).collect();
+    if items.len() >= 2 {
+        Some(Glanced::Set(items))
+    } else {
+        glance(own).map(|info| Glanced::One(Box::new(info)))
     }
 }
 
@@ -412,5 +443,33 @@ mod tests {
             None
         );
         assert_eq!(lone_file(&entries, &[path("gone.txt")]), None);
+    }
+
+    /// Properties on a selection reads its files off the loop: two that read give the combined
+    /// sheet; a set left with one (a file gone meanwhile) gives the aimed icon's own sheet.
+    #[test]
+    fn properties_on_a_set_falls_back_to_the_aimed_icon() {
+        let dir = std::env::temp_dir().join(format!("reprise-glance-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let named = |n: &str| (dir.join(n), n.to_string());
+        std::fs::write(dir.join("a.txt"), "a").unwrap();
+        std::fs::write(dir.join("b.txt"), "bb").unwrap();
+        let (a, b, gone) = (named("a.txt"), named("b.txt"), named("gone.txt"));
+        let names = |g: Option<Glanced>| match g {
+            Some(Glanced::Set(items)) => items.into_iter().map(|i| i.name).collect(),
+            Some(Glanced::One(info)) => vec![format!("one {}", info.name)],
+            None => Vec::new(),
+        };
+        assert_eq!(
+            names(glance_aimed(&a, &[a.clone(), gone.clone(), b.clone()], &[])),
+            ["a.txt", "b.txt"]
+        );
+        assert_eq!(
+            names(glance_aimed(&a, &[a.clone(), gone.clone()], &[])),
+            ["one a.txt"]
+        );
+        assert!(glance_aimed(&gone, &[], &[]).is_none());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
