@@ -99,7 +99,9 @@ pub fn draw(c: &mut Canvas, text: &TextRenderer, p: &Paint, sb: &StatusBar, r: R
             continue;
         }
         let t = Rect::new(pr.x + pad * s, pr.y, pr.width - pad * s, pr.height);
-        text.draw(c, t, &panel.text, false, cs.button_text, Align::Left, px);
+        let room = t.width - panel.pad * s;
+        let shown = text.ellipsize(&panel.text, room, false, px);
+        text.draw(c, t, &shown, false, cs.button_text, Align::Left, px);
     }
     if sb.grip {
         widgets::draw_grip(c, p, bar, grip_rect(r).scaled(s));
@@ -243,6 +245,40 @@ mod tests {
             first,
             p.x + EXPECTED_TEXT_X + bearing,
             "a panel's text starts 11 px inside it"
+        );
+    }
+
+    /// At 200% text a first pane's text too long for it ends in "..." a pad short
+    /// of its right edge, leaving its last columns and the next pane bare.
+    #[test]
+    fn a_long_pane_text_ellipsizes_at_its_own_edge() {
+        let theme = Theme::default();
+        let cs = &theme.colors;
+        let text = TextRenderer::load(&FontConfig::default());
+        let u = TextUnits::new(22, 11);
+        let p = Paint {
+            text: u,
+            ..classic_paint(cs, 1)
+        };
+        let mut sb = explorer_bar(false);
+        sb.panels[0].text = "Original Location: /home/u/a/long/folder/path/that/runs/on".into();
+        sb.panels[1].text = "6 bytes".into();
+        let h = u.len(HEIGHT);
+        let r = Rect::new(0, 0, 900, h);
+        let mut c = Canvas::new(900, h as u32);
+        c.fill_rect(c.bounds(), cs.button_face);
+        draw(&mut c, &text, &p, &sb, r, u.px(11));
+        let lay = layout(&sb, r, u);
+        let inked = |x: i32| (0..h).any(|y| c.get(x, y) == cs.button_text.argb());
+        let last = (lay[0].x..lay[0].right()).rev().find(|&x| inked(x));
+        let last = last.expect("the first pane's text inks something");
+        assert!(
+            last < lay[0].right() - EXPLORER_TEXT_PAD,
+            "the first pane's text ends {EXPLORER_TEXT_PAD} px inside it, at {last}"
+        );
+        assert!(
+            last > lay[0].right() - 20,
+            "the first pane's text runs to its edge in \"...\", ending at {last}"
         );
     }
 
