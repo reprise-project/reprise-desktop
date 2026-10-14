@@ -310,7 +310,7 @@ pub fn route(modes: &Modes, k: &KeyPress, binds: &[Keybind], globals: &[GlobalBi
         let route = if modes.switcher_open {
             switcher_key(k, binds)
         } else if modes.menus_open {
-            menu_key(k)
+            switch_bind(modes, k, binds).unwrap_or_else(|| menu_key(k))
         } else if k.has(KEY_Escape) {
             KeyRoute::DragCancel
         } else {
@@ -371,13 +371,16 @@ pub fn route(modes: &Modes, k: &KeyPress, binds: &[Keybind], globals: &[GlobalBi
         arm_super,
         fire_super,
     };
-    // An open menu stack owns the keyboard: every press drives it.
+    // An open menu stack owns the keyboard: every press drives it, except
+    // the switchers' binds, which close it (`run_action`) and switch.
+    let switch = || switch_bind(modes, k, binds);
     if modes.menus_open && k.pressed {
-        return with(menu_key(k));
+        return with(switch().unwrap_or_else(|| menu_key(k)));
     }
     // The launcher, the Glass Start menu, the clipboard history popup and
     // the emoji picker each own every press while open, except their own
-    // bind, which toggles them shut the way it opened them.
+    // bind, which toggles them shut the way it opened them, and the
+    // switchers' binds, as a menu.
     let own = |action: Action| {
         k.lower.iter().any(|&lower| {
             binds
@@ -414,7 +417,7 @@ pub fn route(modes: &Modes, k: &KeyPress, binds: &[Keybind], globals: &[GlobalBi
         return with(if own(Action::StartMenu) {
             KeyRoute::Binds(vec![Action::StartMenu])
         } else {
-            KeyRoute::StartPanel
+            switch().unwrap_or(KeyRoute::StartPanel)
         });
     }
     // The clock's popup takes only Escape, which closes it; everything
@@ -430,21 +433,21 @@ pub fn route(modes: &Modes, k: &KeyPress, binds: &[Keybind], globals: &[GlobalBi
         return with(if own(Action::Launcher) {
             KeyRoute::Binds(vec![Action::Launcher])
         } else {
-            KeyRoute::Launcher
+            switch().unwrap_or(KeyRoute::Launcher)
         });
     }
     if modes.clipview_open && k.pressed {
         return with(if own(Action::ClipboardHistory) {
             KeyRoute::Binds(vec![Action::ClipboardHistory])
         } else {
-            KeyRoute::ClipView
+            switch().unwrap_or(KeyRoute::ClipView)
         });
     }
     if modes.emojiview_open && k.pressed {
         return with(if own(Action::EmojiPicker) {
             KeyRoute::Binds(vec![Action::EmojiPicker])
         } else {
-            KeyRoute::EmojiView
+            switch().unwrap_or(KeyRoute::EmojiView)
         });
     }
     // A balloon's reply field, once clicked, takes every press but the
@@ -490,13 +493,7 @@ pub fn route(modes: &Modes, k: &KeyPress, binds: &[Keybind], globals: &[GlobalBi
     // text), except the switchers' binds: Alt+Tab leaves a dialog as it
     // leaves a window, and so does Super+Tab.
     if modes.dialog_has_keyboard && k.pressed {
-        let switch = (!modes.dialog_modal)
-            .then(|| bound(k, binds).into_iter().find(opens_switcher))
-            .flatten();
-        return with(match switch {
-            Some(a) => KeyRoute::Binds(vec![a]),
-            None => KeyRoute::Dialog,
-        });
+        return with(switch().unwrap_or(KeyRoute::Dialog));
     }
     // An inline desktop rename likewise owns every press.
     if modes.renaming && k.pressed {
@@ -587,6 +584,16 @@ fn switcher_key(k: &KeyPress, binds: &[Keybind]) -> KeyRoute {
 /// the 3D one.
 fn opens_switcher(a: &Action) -> bool {
     matches!(a, Action::Cycle | Action::Flip)
+}
+
+/// The switcher bind `k` matches, as a route, unless a Welcome panel has
+/// the keyboard (it keeps even those).
+fn switch_bind(modes: &Modes, k: &KeyPress, binds: &[Keybind]) -> Option<KeyRoute> {
+    if modes.dialog_has_keyboard && modes.dialog_modal {
+        return None;
+    }
+    let a = bound(k, binds).into_iter().find(opens_switcher)?;
+    Some(KeyRoute::Binds(vec![a]))
 }
 
 /// A press in the open menu stack: its first keysym that is not Super.
@@ -1034,6 +1041,68 @@ mod tests {
         m.dialog_modal = true;
         assert_eq!(r(&m, &alt_tab), KeyRoute::Dialog);
         assert_eq!(r(&m, &super_tab), KeyRoute::Dialog);
+    }
+
+    #[test]
+    fn the_switcher_binds_pass_an_open_start_menu_menu_or_popup() {
+        let open = [
+            Modes {
+                menus_open: true,
+                ..Modes::default()
+            },
+            Modes {
+                start_panel_open: true,
+                ..Modes::default()
+            },
+            Modes {
+                start_panel_open: true,
+                menus_open: true,
+                ..Modes::default()
+            },
+            Modes {
+                launcher_open: true,
+                ..Modes::default()
+            },
+            Modes {
+                clipview_open: true,
+                ..Modes::default()
+            },
+            Modes {
+                emojiview_open: true,
+                ..Modes::default()
+            },
+            Modes {
+                menus_open: true,
+                dragging: true,
+                ..Modes::default()
+            },
+        ];
+        for m in open {
+            assert_eq!(
+                r(&m, &press(KEY_Tab, MOD_ALT)),
+                KeyRoute::Binds(vec![Action::Cycle]),
+                "{m:?}"
+            );
+            assert_eq!(
+                r(&m, &press(KEY_Tab, MOD_LOGO)),
+                KeyRoute::Binds(vec![Action::Flip]),
+                "{m:?}"
+            );
+            assert!(
+                !matches!(r(&m, &press(KEY_r, MOD_LOGO)), KeyRoute::Binds(_)),
+                "other binds stay with the popup: {m:?}"
+            );
+        }
+        let welcome = Modes {
+            menus_open: true,
+            dialog_has_keyboard: true,
+            dialog_modal: true,
+            ..Modes::default()
+        };
+        assert_eq!(
+            r(&welcome, &press(KEY_Tab, MOD_ALT)),
+            KeyRoute::Menu(KEY_Tab)
+        );
     }
 
     #[test]
