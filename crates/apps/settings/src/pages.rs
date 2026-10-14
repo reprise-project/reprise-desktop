@@ -24,7 +24,7 @@ use reprisekit::look::Paint;
 use reprisekit::raster::{Canvas, Rect};
 use reprisekit::text::TextRenderer;
 use reprisekit::textedit::TextEdit;
-use reprisekit::theme::{Color, FontConfig, TextUnits, Theme};
+use reprisekit::theme::{Color, FontConfig, Theme};
 use reprisekit::trackbar::{self, TrackBar};
 
 use crate::model::{
@@ -177,13 +177,12 @@ pub const ADD: &str = "add";
 pub const REMOVE: &str = "remove";
 
 /// The Startup page's autostart list: 11 rows under its header at
-/// [`Area::MIN`], more with extra page height. The widths fill the 354 px
-/// header, Location last and smallest; a wider list gives Command the rest
-/// ([`fit_list_columns`]).
+/// [`Area::MIN`], more with extra page height; the rest scroll, so Command
+/// takes what the other columns and the scrollbar leave ([`fit_list_columns`]).
 pub fn list(a: Area) -> Rect {
     Rect::new(X, 44, a.w, 208 + a.dh)
 }
-pub const COLUMNS: [(&str, i32); 3] = [("Startup Item", 164), ("Command", 130), ("Location", 60)];
+pub const COLUMNS: [(&str, i32); 3] = [("Startup Item", 164), ("Command", 114), ("Location", 60)];
 
 /// The Advanced page's list of remembered location answers, under its check,
 /// with Forget beside it. Three rows show at [`Area::MIN`]; the rest scroll,
@@ -2235,8 +2234,12 @@ pub fn new_list() -> ListView {
     }
 }
 
-pub fn fit_list_columns(lv: &mut ListView, rect: Rect, u: TextUnits) {
-    lv.fill_column(1, rect.width - 4, u);
+pub fn fit_list_columns(
+    lv: &mut ListView,
+    cm: &reprisekit::controls::metrics::ControlMetrics,
+    rect: Rect,
+) {
+    lv.fill_beside_bar(1, rect, cm);
 }
 
 pub fn fill_list(lv: &mut ListView, entries: &[Entry], checks: &[bool]) {
@@ -2274,7 +2277,7 @@ pub fn fit_shortcut_columns(
     cm: &reprisekit::controls::metrics::ControlMetrics,
     rect: Rect,
 ) {
-    lv.fill_column(1, rect.width - 4 - cm.scroll, cm.text);
+    lv.fill_beside_bar(1, rect, cm);
 }
 
 /// Refill `lv` from `s` in [`crate::model::row`]'s order: the desktop's binds
@@ -2322,7 +2325,7 @@ pub fn fit_location_columns(
     cm: &reprisekit::controls::metrics::ControlMetrics,
     rect: Rect,
 ) {
-    lv.fill_column(0, rect.width - 4 - cm.scroll, cm.text);
+    lv.fill_beside_bar(0, rect, cm);
 }
 
 pub fn fill_locations(lv: &mut ListView, answers: &[(String, bool)]) {
@@ -4773,8 +4776,61 @@ mod tests {
             &reprisekit::controls::metrics::ControlMetrics::CLASSIC,
         );
         assert_eq!(lay.header, Rect::new(22, 46, 354, listview::HEADER_H));
-        assert_eq!(COLUMNS.iter().map(|c| c.1).sum::<i32>(), lay.header.width);
         assert_eq!(lay.rows, 11, "11 rows of 17 px under the header");
+        assert_eq!(
+            COLUMNS.iter().map(|c| c.1).sum::<i32>(),
+            lay.header.width - 16,
+            "the columns leave the 16 px bar its room"
+        );
+    }
+
+    #[test]
+    fn a_startup_list_that_scrolls_draws_only_the_vertical_bar() {
+        use reprisekit::interface::Interface;
+        let text = TextRenderer::load(&FontConfig::default());
+        let entries: Vec<Entry> = (0..30)
+            .map(|i| Entry {
+                id: format!("item{i}"),
+                name: format!("Item {i}"),
+                exec: format!("/usr/bin/item{i} --tray"),
+                exec_line: format!("/usr/bin/item{i} --tray"),
+                hidden: false,
+                only_show_in: Vec::new(),
+                not_show_in: Vec::new(),
+                try_exec: None,
+                path: None,
+                terminal: false,
+                user: true,
+            })
+            .collect();
+        for i in [Interface::Classic, Interface::Blue, Interface::Glass] {
+            for pct in [100, 150, 200] {
+                let theme = reprisekit::interfaces::theme_for(i).with_text_size(pct);
+                let cm = theme.controls();
+                let r = theme.text.rect(list(Area::MIN));
+                let mut lv = new_list();
+                fill_list(&mut lv, &entries, &[true; 30]);
+                fit_list_columns(&mut lv, &cm, r);
+                let lay = listview::layout(&lv, r, &cm);
+                let at = format!("{i:?} {pct}%");
+                assert!(lay.hscroll.is_none(), "{at}: no horizontal bar");
+                let bar = lay.scrollbar.expect("a vertical bar");
+                assert_eq!(bar.right(), r.right() - 2, "{at}");
+                let mut c = Canvas::new((r.right() + 2) as u32, (r.bottom() + 2) as u32);
+                draw_list(&mut c, &text, &theme, &lv, r, theme.fonts.size_px, 1);
+                let window = theme.colors.window.argb();
+                assert_eq!(
+                    c.get(lay.body.x + lay.body.width / 2, r.bottom() - 3),
+                    window,
+                    "{at}: the last row runs down to the frame"
+                );
+                assert_ne!(
+                    c.get(bar.x + bar.width / 2, bar.bottom() - 3),
+                    window,
+                    "{at}: the bar"
+                );
+            }
+        }
     }
 
     #[test]

@@ -265,6 +265,8 @@ struct SettingsApp {
     desktops: Vec<String>,
     /// The list's own `checks` are the pending state.
     list: ListView,
+    /// The list width, bar width and text units the Startup columns were last filled to.
+    list_fit: Option<(i32, i32, TextUnits)>,
     list_focus: bool,
 
     shortcuts: ListView,
@@ -410,10 +412,6 @@ impl SettingsApp {
             };
             self.sheet.pages[p.index()].take_layout(&template, offset);
         }
-        // Command takes the Startup list's new width; a column the user
-        // dragged keeps its width until the window resizes.
-        let list = self.on_page(pages::list(a));
-        pages::fit_list_columns(&mut self.list, list, self.units);
         self.preview_for = None;
         self.sheet.reveal_open();
         self.sheet.fit_height(shown.1);
@@ -493,6 +491,7 @@ impl SettingsApp {
                 std::env::var("XDG_CURRENT_DESKTOP").ok().as_deref(),
             ),
             list: pages::new_list(),
+            list_fit: None,
             list_focus: false,
             shortcuts: pages::new_shortcut_list(),
             shortcuts_focus: false,
@@ -2921,6 +2920,14 @@ impl SettingsApp {
         pages::fit_shortcut_columns(&mut self.shortcuts, cm, shortcuts);
         defaultspage::fit_columns(&mut self.types, cm, types);
         pages::fit_location_columns(&mut self.locations, cm, locations);
+        // A Startup column the user dragged keeps its width until the list, its bar or the text
+        // size changes.
+        let list = self.on_page(pages::list(a));
+        let fit = Some((list.width, cm.scroll, cm.text));
+        if self.list_fit != fit {
+            self.list_fit = fit;
+            pages::fit_list_columns(&mut self.list, cm, list);
+        }
     }
 
     fn paint(&mut self, win: WinId, c: &mut Canvas, ctx: &Ctx) {
