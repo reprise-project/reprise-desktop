@@ -130,6 +130,7 @@ mod lock;
 mod lockfinger;
 mod lockview;
 mod magnifier;
+mod malloc;
 mod mapfocus;
 mod migrate;
 mod osdview;
@@ -190,6 +191,7 @@ struct Cli {
 }
 
 fn main() {
+    malloc::pin_mmap_threshold();
     spawn::block_signals();
     // zbus logs every served call at info and Smithay its GL devices; RUST_LOG
     // turns them back on.
