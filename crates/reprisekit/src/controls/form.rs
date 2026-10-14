@@ -1140,7 +1140,7 @@ impl Form {
     /// or a combo's widest value wider than its rect, a check box's or radio's label running
     /// into the next control on its row or past its group box, and a note that wraps to more
     /// rows than it was built with, even where it flows and pushes the page down, or keeps a
-    /// line wider than its rect (a word too long to wrap).
+    /// line wider than its rect.
     pub fn overflows(&self, text: &TextRenderer, px: u32) -> Vec<(&'static str, i32)> {
         self.fit_text(text, px);
         self.lay_out_notes(text, 1, px);
@@ -4353,15 +4353,17 @@ mod tests {
     /// A note line with a word wider than its rect runs over by the word's excess, though it
     /// wraps to no more rows.
     #[test]
-    fn a_note_word_wider_than_its_rect_overflows() {
+    fn a_note_word_wider_than_its_rect_breaks_inside_its_rect() {
         let text = TextRenderer::stub(11, |_| 8);
+        let body = ["aaaaaaaaaaaaaa b".to_string()];
+        assert_eq!(*note_lines(&text, &body, 100, 11), ["aaaaaaaaaaaa", "aa b"]);
         let f = Form::new(vec![Item::lines(
             "note",
             Rect::new(10, 4, 100, 2 * LINE_H),
-            &["aaaaaaaaaaaaaa b"],
+            &[&body[0]],
         )]);
         f.drawn_with(&Theme::default().paint());
-        assert_eq!(f.overflows(&text, 11), vec![("note", 14 * 8 - 100)]);
+        assert!(f.overflows(&text, 11).is_empty());
     }
 
     /// A form set in the second dialog font draws its items in it; the
