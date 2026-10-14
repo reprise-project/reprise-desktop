@@ -14,6 +14,7 @@
 use crate::dialog::Outcome;
 use crate::raster::{Canvas, Rect};
 use reprisefs::listing::Row;
+use reprisekit::art::viewsicon;
 use reprisekit::controls::filedlg::{self, Crumb, Event, Fields, FileDlg, Folder, FolderId};
 use reprisekit::controls::form::Key;
 use reprisekit::controls::placesbar::Place;
@@ -25,6 +26,8 @@ use reprisekit::textedit::EditKey;
 use std::path::{Path, PathBuf};
 
 pub const TOOLBAR: [&str; 4] = ["go-previous", "go-up", "folder-new", "view-list"];
+/// Few themes carry `view-list`: without it Views gets the drawn icon at the dialog's scale.
+const TOOLBAR_VIEWS: usize = 3;
 
 /// What the picker is for: which filters it offers, which files it lists,
 /// and where the pick goes.
@@ -81,7 +84,15 @@ pub fn icons(cache: &mut IconCache, scale: i32) -> Icons {
             .iter()
             .map(|p| cache.get(p.icon, 32 * scale))
             .collect(),
-        toolbar: TOOLBAR.iter().map(|i| cache.get(i, 16 * scale)).collect(),
+        toolbar: TOOLBAR
+            .iter()
+            .map(|i| cache.get(i, 16 * scale))
+            .enumerate()
+            .map(|(n, icon)| match icon {
+                None if n == TOOLBAR_VIEWS => Some(viewsicon::draw16_at(scale).at_scale(1)),
+                icon => icon,
+            })
+            .collect(),
         folder: cache.get("folder", 16 * scale),
         scale,
     }
@@ -787,6 +798,24 @@ mod tests {
 
     fn cache() -> IconCache {
         IconCache::new(reprisekit::icontheme::IconTheme::load("test", &[]))
+    }
+
+    #[test]
+    fn views_without_a_theme_icon_draws_at_the_dialogs_scale() {
+        for scale in [1, 2] {
+            let views = icons(&mut cache(), scale).toolbar[TOOLBAR_VIEWS]
+                .clone()
+                .expect("the drawn Views icon");
+            assert_eq!(
+                (views.width, views.height, views.scale()),
+                (16 * scale as u32, 16 * scale as u32, 1)
+            );
+            assert_eq!(
+                views.pixels,
+                viewsicon::draw16_at(scale).pixels,
+                "scale {scale}"
+            );
+        }
     }
 
     /// Runs the picker's queued requests the way the host's thread would,
