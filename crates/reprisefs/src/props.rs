@@ -793,6 +793,23 @@ pub fn open_argv(
     }
 }
 
+/// [`open_argv`] for a `path` the caller knows is a file, with no stat: its type comes from
+/// its name.
+pub fn open_file_argv(
+    path: &Path,
+    globs: &MimeDb,
+    apps: &[AppEntry],
+    terminal: &str,
+) -> Vec<std::ffi::OsString> {
+    let mime = path
+        .file_name()
+        .and_then(|n| globs.mime_of_name(&n.to_string_lossy()));
+    match mime.as_deref().and_then(|m| default_app_entry(m, apps)) {
+        Some(app) => apps::open_argv(app, terminal, path),
+        None => vec!["xdg-open".into(), path.into()],
+    }
+}
+
 /// [`open_argv`] with `path`'s default program looked up from `globs` and `apps`. Everything that opens a file on its own comes here.
 pub fn open_argv_in(
     path: &Path,
