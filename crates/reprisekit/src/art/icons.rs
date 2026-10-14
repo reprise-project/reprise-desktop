@@ -64,9 +64,15 @@ impl Icon {
     }
 
     pub fn canvas(&'static self) -> Canvas {
+        self.canvas_at(1)
+    }
+
+    /// The icon on a canvas at `scale`, each pixel a `scale` x `scale` cell.
+    pub fn canvas_at(&'static self, scale: i32) -> Canvas {
         let (w, h) = self.size();
-        let mut c = Canvas::new(w, h);
-        self.paint(&mut c, 0, 0, 1);
+        let mut c = Canvas::with_scale(w, h, scale);
+        let s = c.scale();
+        c.in_device_px(|c| self.paint(c, 0, 0, s));
         c
     }
 
@@ -265,6 +271,7 @@ mod tests {
         }
         out.push(("views 24".into(), viewsicon::draw24()));
         out.push(("views 16".into(), viewsicon::draw16()));
+        out.push(("views 16 at 2".into(), viewsicon::draw16_at(2)));
         for on in [false, true] {
             out.push((format!("bt {on}"), bticon::draw(on)));
             out.push((format!("bt32 {on}"), bticon::draw32(on)));
@@ -361,6 +368,7 @@ mod tests {
         ("net limited WirelessOff", 0xa9fc_64d2_183e_cac2),
         ("views 24", 0xc293_f6ee_9b9b_f228),
         ("views 16", 0x3a44_b8ae_188d_f1cc),
+        ("views 16 at 2", 0xaaeb_8b01_7371_cff7),
         ("bt false", 0x297d_e668_7983_10cc),
         ("bt32 false", 0x1fab_49c3_6fb5_b0c4),
         ("bt true", 0xf468_7a86_0ab3_986c),

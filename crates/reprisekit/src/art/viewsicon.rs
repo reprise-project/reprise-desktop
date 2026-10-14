@@ -19,6 +19,11 @@ pub fn draw16() -> Canvas {
     icons::VIEWS_16.canvas()
 }
 
+/// [`draw16`] on a canvas at `scale`, for a host drawing in device pixels.
+pub fn draw16_at(scale: i32) -> Canvas {
+    icons::VIEWS_16.canvas_at(scale)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -79,6 +84,18 @@ mod tests {
             "bottom-right tile to (18, 18)"
         );
         assert_eq!(px(&c, 11, 10), Some(BODY), "white gutter at x 11..=12");
+    }
+
+    #[test]
+    fn at_scale_2_each_pixel_is_a_2x2_cell() {
+        let (one, two) = (draw16_at(1), draw16_at(2));
+        assert_eq!(one.pixels, draw16().pixels, "scale 1 is the 16 px icon");
+        assert_eq!((two.width, two.height, two.scale()), (16, 16, 2));
+        assert_eq!(two.device_size(), (32, 32));
+        for (i, &p) in two.pixels.iter().enumerate() {
+            let (x, y) = ((i % 32) as i32, (i / 32) as i32);
+            assert_eq!(p, one.get(x / 2, y / 2), "device pixel ({x}, {y})");
+        }
     }
 
     #[test]
