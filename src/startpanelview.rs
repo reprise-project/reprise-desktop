@@ -51,7 +51,6 @@ pub struct StartPanelView {
     /// Leading `model.frequent` rows from launch history; the rest are starters.
     launched: usize,
     jumps: Vec<Vec<PathBuf>>,
-    recent: reprisefs::recent::RecentFiles,
     new_pins: Vec<String>,
     /// Parallel to `model.tree`; None for a folder.
     tree_apps: Vec<Option<usize>>,
@@ -424,7 +423,9 @@ impl State {
         let mut model = StartPanel::new();
         let mut places = Vec::new();
         let mut rule = false;
-        for e in crate::startmenu::places(self.config.recent_files) {
+        self.refresh_recent();
+        let dirs = self.recent.document_dirs();
+        for e in crate::startmenu::places(self.config.recent_files, &dirs) {
             let MenuEntry::Item { label, icon, .. } = &e else {
                 rule = true;
                 continue;
@@ -460,7 +461,6 @@ impl State {
             programs: Vec::new(),
             launched: 0,
             jumps: Vec::new(),
-            recent: reprisefs::recent::RecentFiles::new(),
             new_pins: Vec::new(),
             tree_apps: Vec::new(),
             result_apps: Vec::new(),
@@ -509,6 +509,7 @@ impl State {
             app_index,
             icons,
             config,
+            recent,
             ..
         } = self;
         let Some(v) = start_panel.as_mut() else {
@@ -521,7 +522,6 @@ impl State {
             &pinned,
         );
         let programs: Vec<usize> = pinned.iter().chain(&frequent).copied().collect();
-        let recent = &mut v.recent;
         v.jumps = programs
             .iter()
             .map(|&i| {
@@ -1137,10 +1137,8 @@ impl State {
         )
         .icon_px()
             * self.draw_scale_at(Some(&output)).max(1);
-        let files = match self.start_panel.as_mut() {
-            Some(v) => v.recent.current(RECENT_ITEMS),
-            None => return,
-        };
+        self.refresh_recent();
+        let files = self.recent.current(RECENT_ITEMS);
         let mut items: Vec<MenuItem> = files
             .iter()
             .map(|p| {

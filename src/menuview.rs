@@ -902,10 +902,11 @@ impl State {
     }
 
     fn documents_rows(&mut self, px: i32) -> (Vec<MenuItem>, MenuKind) {
-        let dirs = reprisefs::places::document_dirs();
+        self.refresh_recent();
+        let dirs = self.recent.document_dirs();
         let show_recent = self.config.recent_files;
         let recent = if show_recent {
-            reprisefs::recent::RecentFiles::new().current(RECENT_DOCUMENTS)
+            self.recent.current(RECENT_DOCUMENTS)
         } else {
             Vec::new()
         };
@@ -1323,9 +1324,10 @@ impl State {
         let Some(target) = self.jump_target(tree, i) else {
             return;
         };
+        self.refresh_recent();
         let recent = match &target.entry {
             Some(e) if self.config.recent_files => {
-                reprisefs::recent::RecentFiles::new().for_app(crate::taskbar::JUMP_RECENT, e)
+                self.recent.for_app(crate::taskbar::JUMP_RECENT, e)
             }
             _ => Vec::new(),
         };
@@ -1415,7 +1417,7 @@ impl State {
     pub(crate) fn open_recent_with(&mut self, entry: Option<&AppEntry>, path: &std::path::Path) {
         let argv = match entry {
             Some(e) => reprisefs::apps::open_argv(e, &self.config.terminal, path),
-            None => self.open_argv(path),
+            None => self.open_file_argv(path),
         };
         self.spawn_argv_activated(&argv);
     }
@@ -1877,7 +1879,15 @@ impl State {
             MenuPick::Run(a) => self.run_action(&a, 0),
             MenuPick::App(a) => self.launch_app(&a),
             MenuPick::Document(d) => {
-                let argv = self.open_argv(&d);
+                // Documents lists the document folders, then recent files; neither is stat'ed.
+                let folder = reprisefs::places::document_dir_paths()
+                    .iter()
+                    .any(|(dir, _)| *dir == d);
+                let argv = if folder {
+                    reprisefs::apps::open_folder_argv(&d)
+                } else {
+                    self.open_file_argv(&d)
+                };
                 self.spawn_argv_activated(&argv);
             }
             MenuPick::Window { window, row } => self.window_menu_action(window, row),
@@ -1908,12 +1918,10 @@ impl State {
         }
     }
 
-    pub fn open_argv(&self, path: &std::path::Path) -> Vec<std::ffi::OsString> {
-        let mime = reprisefs::apps::mime_of(path);
-        let default = mime
-            .as_deref()
-            .and_then(|m| reprisefs::props::default_app_entry(m, &self.app_index));
-        reprisefs::props::open_argv(path, default, &self.config.terminal)
+    /// The argument vector that opens the recent file `path`, with no stat.
+    pub fn open_file_argv(&self, path: &std::path::Path) -> Vec<std::ffi::OsString> {
+        let globs = reprisefs::apps::mime_globs();
+        reprisefs::props::open_file_argv(path, &globs, &self.app_index, &self.config.terminal)
     }
 
     fn taskbar_command(&mut self, cmd: TaskbarCommand) {

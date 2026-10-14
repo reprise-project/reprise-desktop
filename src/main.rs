@@ -65,6 +65,7 @@ mod popupgrab;
 mod privacy;
 mod quickwatch;
 mod reblur;
+mod recentdocs;
 mod regionview;
 mod remotekeys;
 mod render;
@@ -235,6 +236,7 @@ fn run(
     sandbox::set_trusted(&state.config.clipboard.trusted_apps);
     desktopview::setup(&mut state);
     dialogview::setup(&mut state);
+    state.refresh_recent();
     state.keyboard_setup();
     toolkits::refresh(&mut state);
     tray::setup(&mut state);

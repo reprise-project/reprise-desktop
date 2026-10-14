@@ -105,14 +105,6 @@ pub fn parse_user_dir(text: &str, home: &Path, key: &str) -> Option<PathBuf> {
     None
 }
 
-/// The user directories the Start menu's Documents submenu and folder picture rules list, with icon names; only those that exist.
-pub fn document_dirs() -> Vec<(PathBuf, &'static str)> {
-    document_dir_paths()
-        .into_iter()
-        .filter(|(dir, _)| dir.is_dir())
-        .collect()
-}
-
 /// The folders a listing gives their own icon: home (`user-home`) and [`document_dir_paths`].
 pub fn special_folders() -> Vec<(PathBuf, &'static str)> {
     let home = std::env::var_os("HOME").map(|h| (PathBuf::from(h), "user-home"));
@@ -121,7 +113,8 @@ pub fn special_folders() -> Vec<(PathBuf, &'static str)> {
     out
 }
 
-/// [`document_dirs`] whether or not they exist, from one read and no stat: what a listing matches its folders against.
+/// The user directories with their icon names, whether or not they exist, from one read and no
+/// stat: the Start menus' document folders, and what a listing matches its folders against.
 pub fn document_dir_paths() -> Vec<(PathBuf, &'static str)> {
     const DIRS: [(&str, &str, &str); 5] = [
         ("DOCUMENTS", "Documents", "folder-documents"),

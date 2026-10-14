@@ -42,16 +42,23 @@ impl RecentFiles {
     /// `current`, keeping only the files an application `entry` recorded
     /// using (see `used_by_app`): a taskbar button's jump list.
     pub fn for_app(&mut self, limit: usize, entry: &AppEntry) -> Vec<PathBuf> {
-        self.used_by(limit, |b| {
-            b.apps
-                .iter()
-                .any(|(name, exec)| used_by_app(name, exec, entry))
-        })
+        self.used_by(limit, |b| used_by_entry(b, entry))
     }
 
     pub fn used_by(&mut self, limit: usize, keep: impl Fn(&Bookmark) -> bool) -> Vec<PathBuf> {
+        self.bookmarks()
+            .iter()
+            .filter(|b| keep(b) && b.path.is_file())
+            .take(limit)
+            .map(|b| b.path.clone())
+            .collect()
+    }
+
+    /// Every bookmark, newest first, whether or not its file still exists. Stats and reads only
+    /// the xbel file.
+    pub fn bookmarks(&mut self) -> &[Bookmark] {
         let Some(path) = &self.path else {
-            return Vec::new();
+            return &[];
         };
         // Stat before reading: a write in between leaves an old stamp, so
         // the next call parses again.
@@ -64,13 +71,15 @@ impl RecentFiles {
                 .unwrap_or_default();
             self.stamp = stamp;
         }
-        self.parsed
-            .iter()
-            .filter(|b| keep(b) && b.path.is_file())
-            .take(limit)
-            .map(|b| b.path.clone())
-            .collect()
+        &self.parsed
     }
+}
+
+/// Whether the application `entry` recorded using bookmark `b` (see `used_by_app`).
+pub fn used_by_entry(b: &Bookmark, entry: &AppEntry) -> bool {
+    b.apps
+        .iter()
+        .any(|(name, exec)| used_by_app(name, exec, entry))
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
