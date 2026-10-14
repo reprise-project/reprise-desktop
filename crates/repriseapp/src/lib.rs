@@ -81,7 +81,7 @@ use std::cell::RefCell;
 use std::ffi::{OsStr, OsString};
 use std::io::Read;
 use std::os::unix::ffi::OsStrExt;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::rc::Rc;
 use std::sync::Arc;
@@ -454,6 +454,31 @@ fn decode_uri(uri: &str) -> PathBuf {
         i += 1;
     }
     PathBuf::from(OsStr::from_bytes(&out))
+}
+
+/// Run `argv` as a process of its own in working directory `dir` (the caller's when `None`), no
+/// shell between, reaped in the background: a [`Reply::spawn`] for a caller that needs the exec's
+/// error, as a program file that will not start reports it.
+pub fn spawn_in(argv: &[OsString], dir: Option<&Path>) -> std::io::Result<()> {
+    let Some((program, args)) = argv.split_first() else {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "empty command line",
+        ));
+    };
+    let mut c = Command::new(program);
+    c.args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    if let Some(dir) = dir {
+        c.current_dir(dir);
+    }
+    let mut child = c.spawn()?;
+    std::thread::spawn(move || {
+        let _ = child.wait();
+    });
+    Ok(())
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -2276,22 +2301,8 @@ impl Host {
     }
 
     fn spawn(&mut self, argv: &[OsString]) {
-        let Some((program, args)) = argv.split_first() else {
-            return;
-        };
-        match Command::new(program)
-            .args(args)
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-        {
-            Ok(mut child) => {
-                std::thread::spawn(move || {
-                    let _ = child.wait();
-                });
-            }
-            Err(e) => log::warn!("spawn {argv:?}: {e}"),
+        if let Err(e) = spawn_in(argv, None) {
+            log::warn!("spawn {argv:?}: {e}");
         }
     }
 

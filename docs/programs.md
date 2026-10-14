@@ -27,9 +27,10 @@ The file manager, and the default for folders.
   make a shortcut. Drop a link from a browser and you get a link file.
 - **Recycle Bin** on the freedesktop trash, shared with every other Linux
   program, with Restore and the original location of everything in it.
-- **Properties** (Alt+Enter): size, dates, Read-only and Hidden, a Summary
-  tab whose title, author and keywords live in the file's extended
-  attributes, a Shortcut tab for launchers and a Change Icon for folders.
+- **Properties** (Alt+Enter): size, dates, Read-only, Hidden and
+  Executable, a Summary tab whose title, author and keywords live in the
+  file's extended attributes, a Shortcut tab for launchers and a Change Icon
+  for folders.
   Select several files for one sheet that covers them all.
 - **Thumbnails** decode in the background into the freedesktop thumbnail
   cache, shared with other file managers: its 128 px `normal` size at scale

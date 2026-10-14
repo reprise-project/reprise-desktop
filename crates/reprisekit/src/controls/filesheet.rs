@@ -22,6 +22,10 @@ pub struct Facts {
     pub modified: String,
     pub accessed: String,
     pub read_only: bool,
+    /// The owner's execute bit; a folder's box is unticked and greyed.
+    pub executable: bool,
+    /// The Executable box takes a click.
+    pub can_set_executable: bool,
     /// The name starts with a dot, which is what hides a file here.
     pub hidden: bool,
 }
@@ -43,6 +47,7 @@ pub const CALCULATING: &str = "Calculating...";
 pub const NAME: &str = "name";
 pub const READ_ONLY: &str = "readonly";
 pub const HIDDEN: &str = "hidden";
+pub const EXECUTABLE: &str = "executable";
 pub const ADVANCED: &str = "advanced";
 pub const CHANGE: &str = "change";
 pub const COUNT: &str = "count";
@@ -133,12 +138,21 @@ pub enum Row {
     /// that starts indeterminate has three states. A file's two boxes
     /// share a line; a folder's and a set's stack. A folder's Read-only
     /// starts indeterminate, since the bit means nothing for the folder
-    /// itself.
+    /// itself. A file's and a folder's Executable goes on a line of its
+    /// own below them; a set has none.
     Attributes {
         read_only: CheckState,
         hidden: CheckState,
+        executable: Option<Executable>,
         subject: Subject,
     },
+}
+
+/// The Executable box: ticked, and whether it takes a click.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Executable {
+    pub on: bool,
+    pub enabled: bool,
 }
 
 fn tick(on: bool) -> CheckState {
@@ -217,6 +231,10 @@ pub fn rows(facts: &Facts) -> Vec<Row> {
             tick(facts.read_only)
         },
         hidden: tick(facts.hidden),
+        executable: Some(Executable {
+            on: facts.executable && !facts.is_dir,
+            enabled: facts.can_set_executable && !facts.is_dir,
+        }),
         subject: if facts.is_dir {
             Subject::Folder
         } else {
@@ -246,6 +264,7 @@ pub fn set_rows(facts: &SetFacts) -> Vec<Row> {
         Row::Attributes {
             read_only: facts.read_only,
             hidden: facts.hidden,
+            executable: None,
             subject: Subject::Set {
                 has_dir: facts.has_dir,
             },
@@ -258,13 +277,24 @@ fn button(id: &'static str, rect: Rect, text: &str, enabled: bool) -> Item {
 }
 
 fn check(id: &'static str, x: i32, y: i32, label: &str, state: CheckState) -> Item {
+    check_enabled(id, x, y, label, state, true)
+}
+
+fn check_enabled(
+    id: &'static str,
+    x: i32,
+    y: i32,
+    label: &str,
+    state: CheckState,
+    enabled: bool,
+) -> Item {
     Item::new(
         id,
         Rect::new(x, y, CHECK, CHECK),
         Control::Check {
             label: label.to_string(),
             checked: state == CheckState::On,
-            enabled: true,
+            enabled,
             mixed: (state == CheckState::Mixed).then_some(true),
         },
     )
@@ -368,6 +398,7 @@ pub fn general_page(
             Row::Attributes {
                 read_only,
                 hidden,
+                executable,
                 subject,
             } => {
                 // A set with a folder in it drops the label's colon.
@@ -391,6 +422,16 @@ pub fn general_page(
                     _ => (CHECK_X, by + CHECK_PITCH),
                 };
                 items.push(check(HIDDEN, hx, hy, "&Hidden", *hidden));
+                if let Some(x) = executable {
+                    items.push(check_enabled(
+                        EXECUTABLE,
+                        CHECK_X,
+                        hy + CHECK_PITCH,
+                        "&Executable",
+                        tick(x.on),
+                        x.enabled,
+                    ));
+                }
                 let (right, w) = match subject {
                     Subject::Folder => (ROW_BUTTON_RIGHT, ROW_BUTTON_W),
                     _ => (FILE_ADVANCED_RIGHT, BUTTON_W),
@@ -1393,6 +1434,11 @@ pub fn hidden(page: &Form) -> bool {
     page.checked(HIDDEN).unwrap_or(false)
 }
 
+/// The Executable box's tick; false on a page without one.
+pub fn executable(page: &Form) -> bool {
+    page.checked(EXECUTABLE).unwrap_or(false)
+}
+
 pub fn hidden_state(page: &Form) -> CheckState {
     page.check_state(HIDDEN).unwrap_or_default()
 }
@@ -1815,6 +1861,8 @@ mod tests {
             modified: "Monday, September 14, 2026, 3:43:53 PM".into(),
             accessed: "Sunday, September 20, 2026, 12:24:12 PM".into(),
             read_only: false,
+            executable: false,
+            can_set_executable: !is_dir,
             hidden: false,
         }
     }
@@ -2749,6 +2797,96 @@ mod tests {
         file.key(Key::Space);
         file.key(Key::Space);
         assert_eq!(read_only(&file), CheckState::Off, "a file's box flips");
+    }
+
+    fn exec_page(is_dir: bool, executable: bool, can_set_executable: bool) -> Form {
+        let f = Facts {
+            executable,
+            can_set_executable,
+            ..facts(is_dir)
+        };
+        general_page(&rows(&f), "hi.sh", None, None).0
+    }
+
+    fn exec_enabled(page: &Form) -> bool {
+        matches!(
+            page.item(EXECUTABLE).map(|i| &i.control),
+            Some(Control::Check { enabled: true, .. })
+        )
+    }
+
+    #[test]
+    fn the_executable_box_shows_the_bit_and_greys_where_it_cannot_change() {
+        let mut file = exec_page(false, false, true);
+        assert!(!executable(&file) && exec_enabled(&file));
+        file.focus_id(EXECUTABLE);
+        file.key(Key::Space);
+        assert!(executable(&file), "a click ticks it");
+        file.key(Key::Space);
+        assert!(!executable(&file), "two states only");
+        let theirs = exec_page(false, true, false);
+        assert!(
+            executable(&theirs) && !exec_enabled(&theirs),
+            "greyed, ticked"
+        );
+        let folder = exec_page(true, true, true);
+        assert!(
+            !executable(&folder) && !exec_enabled(&folder),
+            "a folder's is greyed"
+        );
+        assert!(
+            set_page(false).0.item(EXECUTABLE).is_none(),
+            "a set has none"
+        );
+        let rect = |p: &Form| p.item(EXECUTABLE).unwrap().rect;
+        assert_eq!(rect(&file), Rect::new(94, 366, 13, 13), "under Read-only");
+        assert_eq!(rect(&folder), Rect::new(94, 324, 13, 13), "under Hidden");
+    }
+
+    fn fnv_in(c: &Canvas, r: Rect) -> u64 {
+        (r.y..r.bottom())
+            .flat_map(|y| (r.x..r.right()).map(move |x| (x, y)))
+            .fold(0xcbf2_9ce4_8422_2325_u64, |h, (x, y)| {
+                c.get(x, y).to_le_bytes().iter().fold(h, |h, &b| {
+                    (h ^ u64::from(b)).wrapping_mul(0x0000_0100_0000_01b3)
+                })
+            })
+    }
+
+    #[test]
+    fn the_executable_box_draws_in_each_look() {
+        use crate::interface::Interface;
+        let t = text();
+        if !crate::text::test_tahoma() {
+            return;
+        }
+        let mut got = Vec::new();
+        for look in [Interface::Classic, Interface::Blue, Interface::Glass] {
+            let theme = crate::interfaces::theme_for(look);
+            for enabled in [true, false] {
+                let page = exec_page(false, true, enabled);
+                let height = 478;
+                let mut c = Canvas::new(SHEET_W as u32, height as u32);
+                c.fill_rect(c.bounds(), theme.colors.button_face);
+                crate::controls::form::draw(&mut c, &t, &theme.paint(), &page, false, px());
+                let r = page.item(EXECUTABLE).unwrap().rect;
+                let area = Rect::new(r.x - 2, r.y - 2, 90, r.height + 4);
+                got.push((look, enabled, format!("{:016x}", fnv_in(&c, area))));
+            }
+        }
+        for pair in got.chunks(2) {
+            assert_ne!(pair[0].2, pair[1].2, "{:?}: greyed differs", pair[0].0);
+        }
+        let want = [
+            (Interface::Classic, true, "14484dec4f17638c"),
+            (Interface::Classic, false, "bce9ff417d9f497c"),
+            (Interface::Blue, true, "d0b4098443f797c2"),
+            (Interface::Blue, false, "612c64f3812bf888"),
+            (Interface::Glass, true, "c462e8ee9d2f134e"),
+            (Interface::Glass, false, "f908158d64544474"),
+        ]
+        .map(|(look, enabled, h)| (look, enabled, h.to_string()));
+        assert_eq!(got, want);
     }
 
     #[test]

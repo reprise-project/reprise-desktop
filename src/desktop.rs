@@ -12,6 +12,8 @@ pub const DRAG_PX: i32 = 4;
 pub enum Target {
     Launch(AppEntry),
     Open(PathBuf),
+    /// A program file ([`reprisefs::program::is_program`]): opening runs it in its own folder.
+    Run(PathBuf),
     Uri(String),
 }
 
@@ -170,7 +172,7 @@ impl DesktopEntry {
         match self.target {
             Target::Launch(_) => true,
             Target::Uri(_) => self.kind == Kind::File,
-            Target::Open(_) => false,
+            Target::Open(_) | Target::Run(_) => false,
         }
     }
 
@@ -246,6 +248,7 @@ pub fn place_argv(entry: &DesktopEntry) -> Option<Vec<String>> {
         (_, Kind::RecycleBin) => explorer("Recycle Bin"),
         (_, Kind::Place(Place::Computer)) => explorer("Computer"),
         (Target::Open(path), _) => explorer(path.to_str()?),
+        (Target::Run(path), _) => vec![path.to_str()?.to_string()],
         (Target::Uri(uri), _) => vec!["xdg-open".to_string(), uri.clone()],
     })
 }
@@ -347,14 +350,23 @@ pub fn file_facts(path: &Path) -> FileFacts {
 }
 
 /// What opening the file or folder at `path` does, as its icon would in the
-/// desktop folder: a trusted launcher runs, a link opens its URL.
+/// desktop folder: a trusted launcher runs, a link opens its URL, a program runs.
 pub fn file_target(path: &Path) -> Target {
-    match std::fs::metadata(path)
-        .ok()
-        .and_then(|m| apps::shortcut_at(path, &m))
-    {
+    let Ok(meta) = std::fs::metadata(path) else {
+        return Target::Open(path.to_path_buf());
+    };
+    match apps::shortcut_at(path, &meta) {
         Some(sc) => shortcut_target(sc),
-        None => Target::Open(path.to_path_buf()),
+        None => plain_target(path, &meta),
+    }
+}
+
+/// What opening a file that is no shortcut does: runs a program, opens anything else.
+fn plain_target(path: &Path, meta: &std::fs::Metadata) -> Target {
+    if reprisefs::program::is_program(path, meta) {
+        Target::Run(path.to_path_buf())
+    } else {
+        Target::Open(path.to_path_buf())
     }
 }
 
@@ -375,6 +387,7 @@ pub fn open_argv(
     match target {
         Target::Launch(app) => apps::launch_argv(app, terminal),
         Target::Open(path) => reprisefs::props::open_argv_in(path, mime, programs, terminal),
+        Target::Run(path) => reprisefs::program::run_argv(path),
         Target::Uri(uri) => vec!["xdg-open".into(), uri.into()],
     }
 }
@@ -476,7 +489,10 @@ fn entry_with(
     }
     let mime = globs.mime_of_name(&file_name);
     let icon = icons::pick_icon(mime.as_deref(), &path, &|_| false);
-    let target = Target::Open(path.clone());
+    let target = match &meta {
+        Some(m) => plain_target(&path, m),
+        None => Target::Open(path.clone()),
+    };
     DesktopEntry {
         label: names::label_for(&file_name, globs, shown),
         allow_launching: can_allow_launching_at(&path, &target),
@@ -497,7 +513,8 @@ pub fn wear_file_icons(
     has: &dyn Fn(&str) -> bool,
 ) {
     for e in entries {
-        if e.kind == Kind::File && !e.is_dir && matches!(e.target, Target::Open(_)) {
+        if e.kind == Kind::File && !e.is_dir && matches!(e.target, Target::Open(_) | Target::Run(_))
+        {
             e.icon = icons::pick_icon(globs.mime_of_name(&e.name).as_deref(), &e.path, has);
         }
     }
@@ -1169,5 +1186,49 @@ mod tests {
         assert!(matches!(file_target(&path), Target::Launch(_)));
         assert!(!can_allow_launching_at(&path, &file_target(&path)));
         assert_eq!(argv(), ["reprise-tool", "--go"]);
+    }
+
+    #[test]
+    fn an_executable_script_or_binary_runs_and_anything_else_opens() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = fixture("programs");
+        let _cleanup = Cleanup(dir.clone());
+        let put = |name: &str, bytes: &[u8], mode: u32| {
+            let p = dir.join(name);
+            std::fs::write(&p, bytes).unwrap();
+            std::fs::set_permissions(&p, std::fs::Permissions::from_mode(mode)).unwrap();
+            p
+        };
+        let script = put("hi.sh", b"#!/bin/sh\ntouch ran\n", 0o755);
+        let elf = put("tool", b"\x7fELF\x02\x01\x01\0", 0o755);
+        let photo = put("photo.png", b"\x89PNG\r\n\x1a\n", 0o755);
+        let plain = put("plain.sh", b"#!/bin/sh\n", 0o644);
+        let launcher = put(
+            "app.desktop",
+            b"[Desktop Entry]\nType=Application\nName=App\nExec=app\n",
+            0o644,
+        );
+        std::fs::create_dir(dir.join("Photos")).unwrap();
+        let globs = reprisefs::apps::MimeDb::parse(["50:image/png:*.png\n"]);
+        let list = scan(&dir, &globs, names::Extensions::Hide);
+        let target = |n: &str| list.iter().find(|e| e.name == n).unwrap().target.clone();
+        assert_eq!(target("hi.sh"), Target::Run(script.clone()));
+        assert_eq!(target("tool"), Target::Run(elf.clone()));
+        assert_eq!(target("photo.png"), Target::Open(photo.clone()));
+        assert_eq!(target("plain.sh"), Target::Open(plain.clone()));
+        assert_eq!(target("Photos"), Target::Open(dir.join("Photos")));
+        assert_eq!(target("app.desktop"), Target::Open(launcher.clone()));
+        apps::allow_launching(&launcher).unwrap();
+        assert!(matches!(file_target(&launcher), Target::Launch(_)));
+        for p in [&script, &elf, &photo, &plain] {
+            let from_scan = target(&p.file_name().unwrap().to_string_lossy());
+            assert_eq!(file_target(p), from_scan, "{}", p.display());
+        }
+        let argv = |t: &Target| open_argv(t, &globs, &[], "foot");
+        assert_eq!(argv(&target("hi.sh")), [script.into_os_string()]);
+        assert_eq!(
+            argv(&target("photo.png")),
+            ["xdg-open".into(), photo.into_os_string()]
+        );
     }
 }

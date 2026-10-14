@@ -481,18 +481,31 @@ pub fn spawn_argv_in<S: AsRef<std::ffi::OsStr> + std::fmt::Debug>(
     env: &SessionEnv,
     token: Option<&str>,
 ) {
+    if let Err(e) = try_spawn_argv_in(argv, dir, env, token) {
+        log::error!("spawn {argv:?}: {e}");
+    }
+}
+
+/// [`spawn_argv_in`] that hands back why the program did not start (the exec's own error, such
+/// as a missing interpreter). Waits for the exec, so a program on a hung mount blocks the caller.
+pub fn try_spawn_argv_in<S: AsRef<std::ffi::OsStr> + std::fmt::Debug>(
+    argv: &[S],
+    dir: Option<&std::path::Path>,
+    env: &SessionEnv,
+    token: Option<&str>,
+) -> std::io::Result<()> {
     let Some((program, args)) = argv.split_first() else {
-        log::error!("spawn: empty command line");
-        return;
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "empty command line",
+        ));
     };
     let what = program.as_ref().to_string_lossy();
     let mut c = command_argv(program, args, env, token);
     if let Some(dir) = dir {
         c.current_dir(dir);
     }
-    if let Err(e) = start(c, &what) {
-        log::error!("spawn {argv:?}: {e}");
-    }
+    start(c, &what)
 }
 
 /// Start `c` detached, hand its pid to `reap_children` and record the launch for `mapfocus`;

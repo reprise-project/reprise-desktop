@@ -250,7 +250,7 @@ impl State {
                 let apps = &self.app_index;
                 enum Launch {
                     App(reprisefs::apps::AppEntry),
-                    Argv(Vec<std::ffi::OsString>),
+                    File(std::path::PathBuf, crate::desktop::FileFacts),
                     Copy(String),
                     Setting(Setting),
                 }
@@ -267,12 +267,12 @@ impl State {
                         .search
                         .files
                         .get(i)
-                        .map(|p| Launch::Argv(self.found_open_argv(p, &v.search.facts_of(p)))),
+                        .map(|p| Launch::File(p.clone(), v.search.facts_of(p))),
                 };
                 self.close_launcher();
                 match launch {
                     Some(Launch::App(entry)) => self.launch_app(&entry),
-                    Some(Launch::Argv(argv)) => self.spawn_argv_activated(&argv),
+                    Some(Launch::File(path, facts)) => self.open_found(&path, &facts),
                     Some(Launch::Copy(answer)) => self.clip_copy(&answer),
                     Some(Launch::Setting(s)) => self.open_setting(s),
                     None => {}
