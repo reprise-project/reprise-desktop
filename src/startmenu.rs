@@ -47,19 +47,19 @@ impl State {
 
 /// The Glass Start menu's right column, top to bottom: the home folder
 /// (labelled with the user's name), the Documents, Pictures and Music
-/// folders that exist, a rule, Recent Items (with `recent`, `[privacy]
+/// folders of `dirs` (the document folders that exist), a rule, Recent Items (with `recent`, `[privacy]
 /// recent_files`), Computer, a rule, Control Panel, Printers, Run... and
 /// Help and Support. Each row has an icon and an infotip.
-pub fn places(recent: bool) -> Vec<MenuEntry> {
+pub fn places(recent: bool, dirs: &[(std::path::PathBuf, &str)]) -> Vec<MenuEntry> {
     use crate::config::{CONTROL_PANEL_TIP, HELP, MenuTarget, PRINTERS, PRINTERS_TIP};
     use reprisefs::places::ShellPlace;
     let mut v = vec![
         MenuEntry::spawn("{user}", "user-home", "reprise-explorer \"$HOME\"")
             .tipped(ShellPlace::Home.tip()),
     ];
-    for (dir, icon) in reprisefs::places::document_dirs() {
+    for (dir, icon) in dirs {
         if !matches!(
-            icon,
+            *icon,
             "folder-documents" | "folder-pictures" | "folder-music"
         ) {
             continue;
@@ -335,7 +335,7 @@ mod tests {
     /// The rows of `places`, the folders left out (which exist depends on
     /// the machine), a rule as "-".
     fn rows(recent: bool) -> Vec<String> {
-        places(recent)
+        places(recent, &[])
             .iter()
             .filter_map(|e| match e {
                 MenuEntry::Separator => Some("-".to_string()),
@@ -409,7 +409,7 @@ mod tests {
 
     #[test]
     fn every_place_has_a_tip_and_a_picture() {
-        for e in places(true) {
+        for e in places(true, &reprisefs::places::document_dir_paths()) {
             if let MenuEntry::Item {
                 label, tip, icon, ..
             } = e
@@ -438,7 +438,7 @@ mod tests {
         );
         assert!(!rows(false).iter().any(|r| r == "Recent Items"));
         assert!(
-            places(true)
+            places(true, &[])
                 .iter()
                 .filter(|e| e.opens_submenu())
                 .all(|e| matches!(e, MenuEntry::Item { label, .. } if label == "Recent Items")),
