@@ -214,7 +214,7 @@ pub fn fit_columns(
     cm: &reprisekit::controls::metrics::ControlMetrics,
     rect: Rect,
 ) {
-    lv.fill_column(2, rect.width - 4 - cm.scroll, cm.text);
+    lv.fill_beside_bar(2, rect, cm);
 }
 
 /// A terminal the Terminal combo offers: its name, and the command the
