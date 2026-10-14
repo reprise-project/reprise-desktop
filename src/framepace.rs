@@ -9,7 +9,8 @@
 //! Renders follow the refresh too: an empty frame that asks for the next holds
 //! it back a refresh interval (`next_render`), so an animation never renders
 //! faster than the screen shows. A frame that is not shown sends no presentation
-//! feedback.
+//! feedback. An animation slower than the screen asks for its next frame at the
+//! first refresh it is due by (`ask_at`).
 
 use std::time::{Duration, Instant};
 
@@ -53,6 +54,26 @@ pub fn render_wait(not_before: Option<Instant>, now: Instant) -> Option<Duration
     not_before
         .map(|t| t.saturating_duration_since(now))
         .filter(|d| !d.is_zero())
+}
+
+/// The wait before asking for a frame that must not start before `at`: None when the next render
+/// (the `pending` flip's, or one now) comes after it, else until the first refresh from `at` on.
+pub fn ask_at(
+    at: Instant,
+    now: Instant,
+    flip: Option<Instant>,
+    pending: bool,
+    interval: Duration,
+) -> Option<Duration> {
+    let refresh_from = |t: Instant| match flip {
+        Some(f) if t > f && !interval.is_zero() => {
+            let n = (t - f).as_nanos().div_ceil(interval.as_nanos());
+            f + interval * u32::try_from(n).unwrap_or(u32::MAX)
+        }
+        _ => t,
+    };
+    let next = if pending { refresh_from(now) } else { now };
+    (at > next).then(|| refresh_from(at).saturating_duration_since(now))
 }
 
 #[derive(Default)]
@@ -142,6 +163,45 @@ mod tests {
         assert_eq!(render_wait(held, t + HZ60), None);
         assert_eq!(render_wait(held, t + ms(40)), None);
         assert_eq!(render_wait(None, t), None);
+    }
+
+    #[test]
+    fn a_frame_due_by_the_next_render_is_asked_for_now() {
+        let flip = Instant::now();
+        let now = flip + ms(1);
+        assert_eq!(ask_at(now, now, Some(flip), false, HZ60), None, "due now");
+        assert_eq!(
+            ask_at(flip + ms(12), now, Some(flip), true, HZ60),
+            None,
+            "the pending flip comes after it"
+        );
+        assert_eq!(ask_at(flip, now, None, false, HZ60), None, "already past");
+    }
+
+    #[test]
+    fn a_later_frame_waits_for_the_first_refresh_from_it() {
+        let flip = Instant::now();
+        let now = flip + ms(1);
+        assert_eq!(
+            ask_at(flip + ms(20), now, Some(flip), true, HZ60),
+            Some(2 * HZ60 - ms(1)),
+            "past the pending flip: the refresh after"
+        );
+        assert_eq!(
+            ask_at(flip + ms(5), now, Some(flip), false, HZ60),
+            Some(HZ60 - ms(1)),
+            "nothing pending: still at a refresh"
+        );
+        assert_eq!(
+            ask_at(flip + 2 * HZ60, now, Some(flip), false, HZ60),
+            Some(2 * HZ60 - ms(1)),
+            "a refresh itself"
+        );
+        assert_eq!(
+            ask_at(now + ms(5), now, None, false, HZ60),
+            Some(ms(5)),
+            "no flip seen: at the time itself"
+        );
     }
 
     #[test]

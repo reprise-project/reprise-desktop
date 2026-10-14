@@ -80,7 +80,9 @@ the Background page's monitor show a built-in like any picture.
 Desktop water ripples the wallpaper: the pointer leaves a wake over bare
 desktop, and clicks, dropped icons and windows opening, closing or moving make
 waves. The lock screen's picture ripples too. It pauses under a fullscreen
-window. The desktop menu's Next desktop background skips the slideshow ahead.
+window. The screen draws the water only in the frames it steps in, so a
+`water_rate` below the refresh rate draws fewer frames. The desktop menu's Next
+desktop background skips the slideshow ahead.
 
 ## Screen saver
 

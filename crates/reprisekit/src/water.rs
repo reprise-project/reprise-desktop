@@ -389,6 +389,11 @@ impl Clock {
         }
         n as u32
     }
+
+    /// Seconds from the last `steps` until a frame there runs a step at `hz`.
+    pub fn until_step(&self, hz: f32) -> f32 {
+        (1.0 - self.owed).max(0.0) / hz
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -559,6 +564,28 @@ mod tests {
             .map(|i| c.steps(if i % 3 == 0 { 2.0 } else { 1.0 } / 60.0, 240.0))
             .sum();
         assert_eq!(n, 320, "240 Hz on 60 Hz frames, every third one late");
+    }
+
+    #[test]
+    fn frames_at_until_step_each_run_one_step() {
+        for hz in [30.0, 45.0, 60.0, 144.0] {
+            let mut c = Clock::default();
+            let mut dt = 0.0;
+            for i in 0..200 {
+                let n = c.steps(dt, hz);
+                assert!(i == 0 || n == 1, "{hz} Hz frame {i} ran {n} steps");
+                dt = c.until_step(hz) + 1e-4;
+                assert!(dt <= 1.0 / hz + 2e-4, "{hz} Hz waits {dt} s");
+            }
+        }
+        let mut c = Clock::default();
+        c.steps(0.0, 30.0);
+        assert_eq!(c.until_step(30.0), 0.5 / 30.0, "half a step in hand");
+        assert_eq!(
+            c.steps(0.4 / 30.0, 30.0),
+            0,
+            "a frame before it steps nothing"
+        );
     }
 
     #[test]

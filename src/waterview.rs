@@ -7,7 +7,7 @@
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::rc::Rc;
-use std::time::{Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use reprisefx::water::{Pool, WaterFx};
 use reprisekit::water::{
@@ -77,10 +77,12 @@ struct PaneState {
     clock: Clock,
     rain: Rain,
     obstacles: Vec<Rectangle<i32, Physical>>,
-    /// Covered as of the last `wants_frame`: frames drawn meanwhile step nothing.
+    /// Covered as of the last `prepare`: frames drawn meanwhile step nothing.
     covered: bool,
     /// The last step; None steps 0 s next (just made, or uncovered).
     last: Option<Instant>,
+    /// The step rate of the last step.
+    hz: f32,
     running: bool,
     size: Size<i32, Physical>,
     node: Option<CustomId>,
@@ -106,6 +108,7 @@ impl PaneState {
             rain: Rain::new(seed),
             obstacles: Vec::new(),
             last: None,
+            hz: REFERENCE_HZ,
             covered: false,
             running: false,
             size: Size::default(),
@@ -313,15 +316,14 @@ impl WaterCtx {
         }
     }
 
-    /// Whether a pane of `output` moves and wants the next frame. An uncovered desktop pane under
-    /// Rain gets its due drops here.
-    pub fn wants_frame(&self, output: &Output, covered: bool, now: Instant) -> bool {
-        self.wants(&output.name(), covered, now)
+    /// Before `output`'s frame: note whether its desktop is `covered` and lay Rain's due drops on an
+    /// uncovered desktop pane.
+    pub fn prepare(&self, output: &Output, covered: bool, now: Instant) {
+        self.prepare_named(&output.name(), covered, now);
     }
 
-    fn wants(&self, name: &str, covered: bool, now: Instant) -> bool {
+    fn prepare_named(&self, name: &str, covered: bool, now: Instant) {
         let rain = self.preset.get().and_then(|p| p.rain);
-        let mut want = false;
         for ((n, pane), p) in self.panes.borrow_mut().iter_mut() {
             if n != name || p.failed {
                 continue;
@@ -343,15 +345,33 @@ impl WaterCtx {
                     p.running = true;
                 }
             }
-            want |=
-                !p.queue.is_empty() || p.running || (p.previous.is_some() && p.fade < 1.0) || rains;
         }
-        want
     }
 
-    #[cfg(test)]
-    fn wants_frame_named(&self, name: &str, covered: bool) -> bool {
-        self.wants(name, covered, Instant::now())
+    /// When a pane of `output` next changes: a fade at once, a moving field at its next step. None
+    /// while every pane is still, covered or failed.
+    pub fn next_step(&self, output: &Output) -> Option<Instant> {
+        self.next_step_named(&output.name(), Instant::now())
+    }
+
+    fn next_step_named(&self, name: &str, now: Instant) -> Option<Instant> {
+        let rain = self.preset.get().is_some_and(|p| p.rain.is_some());
+        self.panes
+            .borrow()
+            .iter()
+            .filter(|((n, _), p)| n == name && !p.failed && !p.covered)
+            .filter_map(|((_, pane), p)| {
+                if p.pending.is_some() || (p.previous.is_some() && p.fade < 1.0) {
+                    return Some(now);
+                }
+                let rains = *pane == Pane::Desktop && rain;
+                if !(p.running || rains || !p.queue.is_empty()) {
+                    return None;
+                }
+                let last = p.last.unwrap_or(now);
+                Some(last + Duration::from_secs_f32(p.clock.until_step(p.hz)))
+            })
+            .min()
     }
 
     /// Step `output`'s fields for the frame about to be built. True when a pane failed: its node
@@ -374,6 +394,7 @@ impl WaterCtx {
                 continue;
             }
             p.size = size;
+            p.hz = hz;
             let rains = *pane == Pane::Desktop && preset.rain.is_some();
             let Some(fx) = fx.as_ref() else {
                 p.failed = true;
@@ -595,7 +616,8 @@ impl State {
         }
     }
 
-    /// Ask for the next frame on `output` while its water moves.
+    /// Before `output`'s frame is built: show the wallpaper again under a pane that failed and note
+    /// what covers the desktop. The frame's end asks for the next step's (`WaterCtx::next_step`).
     pub fn water_frame(&mut self, output: &Output) {
         if !self.water_on() {
             return;
@@ -607,9 +629,7 @@ impl State {
         }
         let b = self.layout_box(Some(output));
         let covered = self.is_locked() || crate::saverview::running(self) || self.fullscreen_on(b);
-        if self.water.wants_frame(output, covered, Instant::now()) {
-            crate::backend::schedule(self, output);
-        }
+        self.water.prepare(output, covered, Instant::now());
     }
 
     /// Hand `pane` of `out` the picture it draws, composed at the output's size (imported at its
@@ -981,6 +1001,13 @@ mod tests {
     use super::*;
     use reprisekit::water::{Splash, Water};
 
+    /// The frame `DP-1`'s water asks for after one begun `covered` or not.
+    fn wants(ctx: &WaterCtx, covered: bool) -> Option<Instant> {
+        let now = Instant::now();
+        ctx.prepare_named("DP-1", covered, now);
+        ctx.next_step_named("DP-1", now)
+    }
+
     fn ctx_with(outputs: &[&str]) -> Rc<WaterCtx> {
         let ctx = WaterCtx::new();
         ctx.configure(
@@ -1030,21 +1057,35 @@ mod tests {
         ctx.splash("DP-1", Pane::Desktop, Splash::disc((1.0, 1.0), 2.0, -0.5));
         ctx.configure(None, std::iter::empty());
         assert!(ctx.pane_keys().is_empty());
-        assert!(
-            !ctx.wants_frame_named("DP-1", false),
-            "nothing left to step"
-        );
+        assert_eq!(wants(&ctx, false), None, "nothing left to step");
     }
 
     #[test]
     fn a_splash_asks_for_a_frame() {
         let ctx = ctx_with(&["DP-1"]);
-        assert!(
-            !ctx.wants_frame_named("DP-1", false),
-            "still water asks for nothing"
-        );
+        assert_eq!(wants(&ctx, false), None, "still water asks for nothing");
         ctx.splash("DP-1", Pane::Desktop, Splash::disc((1.0, 1.0), 2.0, -0.5));
-        assert!(ctx.wants_frame_named("DP-1", false));
+        assert!(wants(&ctx, false).is_some());
+    }
+
+    #[test]
+    fn a_moving_field_asks_for_the_frame_of_its_next_step() {
+        let ctx = ctx_with(&["DP-1"]);
+        ctx.splash("DP-1", Pane::Desktop, Splash::disc((1.0, 1.0), 2.0, -0.5));
+        let t0 = Instant::now();
+        {
+            let mut panes = ctx.panes.borrow_mut();
+            let p = panes.get_mut(&("DP-1".to_string(), Pane::Desktop)).unwrap();
+            p.hz = 30.0;
+            p.last = Some(t0);
+            assert_eq!(p.clock.steps(1.0 / 30.0, 30.0), 1);
+        }
+        let at = ctx.next_step_named("DP-1", t0).unwrap();
+        let wait = at.duration_since(t0).as_secs_f32();
+        assert!(
+            (wait - 0.5 / 30.0).abs() < 1e-4,
+            "a step at 30 Hz is due when the clock owes one, not at the next refresh: {wait}"
+        );
     }
 
     #[test]
@@ -1144,16 +1185,13 @@ mod tests {
             [("DP-1".to_string(), Pane::Desktop)].into_iter(),
         );
         let key = ("DP-1".to_string(), Pane::Desktop);
-        assert!(
-            ctx.wants_frame_named("DP-1", false),
-            "rain asks the first step"
-        );
+        assert!(wants(&ctx, false).is_some(), "rain asks the first step");
         assert!(
             ctx.panes.borrow()[&key].queue.is_empty(),
             "no drop before the first step sizes the pane"
         );
         ctx.panes.borrow_mut().get_mut(&key).unwrap().size = Size::from((1920, 1080));
-        ctx.wants_frame_named("DP-1", false);
+        wants(&ctx, false);
         assert_eq!(
             ctx.panes.borrow()[&key].queue.len(),
             1,
@@ -1169,17 +1207,15 @@ mod tests {
             [("DP-1".to_string(), Pane::Desktop)].into_iter(),
         );
         assert!(
-            ctx.wants_frame_named("DP-1", false),
+            wants(&ctx, false).is_some(),
             "rain keeps the desktop moving"
         );
-        assert!(
-            !ctx.wants_frame_named("DP-1", true),
+        assert_eq!(
+            wants(&ctx, true),
+            None,
             "but not under a fullscreen window, drop queued or not"
         );
         ctx.splash("DP-1", Pane::Desktop, Splash::disc((1.0, 1.0), 2.0, -0.5));
-        assert!(
-            !ctx.wants_frame_named("DP-1", true),
-            "nor for a splash while covered"
-        );
+        assert_eq!(wants(&ctx, true), None, "nor for a splash while covered");
     }
 }
