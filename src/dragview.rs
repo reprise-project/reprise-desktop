@@ -714,7 +714,7 @@ impl State {
                             .then_some(DropTarget::Trash);
                     }
                     if let Target::Open(p) = &entry.target
-                        && p.is_dir()
+                        && entry.is_dir
                     {
                         return Some(DropTarget::Folder(p.clone()));
                     }
@@ -1218,6 +1218,7 @@ mod tests {
             path: PathBuf::from(name),
             shortcut: false,
             kind,
+            is_dir: false,
         };
         let entries = [
             entry("notes.txt", desktop::Kind::RecycleBin),
@@ -1419,7 +1420,7 @@ mod tests {
             file: app_file.clone(),
         };
         put_in(&app, &desk, DropOp::Copy, &[], None, None).unwrap();
-        let entries = desktop::scan(&desk, &reprisefs::apps::MimeDb::empty(), &|_| false);
+        let entries = desktop::scan(&desk, &reprisefs::apps::MimeDb::empty());
         for name in ["Shortcut to notes.txt.desktop", "firefox.desktop"] {
             let e = entries.iter().find(|e| e.name == name);
             assert!(

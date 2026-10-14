@@ -372,6 +372,7 @@ mod tests {
             path,
             shortcut: false,
             kind: desktop::Kind::File,
+            is_dir: false,
         }
     }
 

@@ -692,6 +692,11 @@ pub fn open_argv_for(path: &Path) -> Vec<OsString> {
     vec![opener_for(path).into(), path.into()]
 }
 
+/// Explorer on `dir`, for a caller that already knows it is a folder.
+pub fn open_folder_argv(dir: &Path) -> Vec<OsString> {
+    vec!["reprise-explorer".into(), dir.into()]
+}
+
 /// Explorer on the folder `path` sits in, with `path` selected.
 pub fn open_location_argv(path: &Path) -> Vec<OsString> {
     vec!["reprise-explorer".into(), "--select".into(), path.into()]

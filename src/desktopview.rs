@@ -85,7 +85,10 @@ pub struct DesktopView {
     pub positions: BTreeMap<String, (i32, i32)>,
     pub auto_arrange: bool,
     pub(crate) system_names: BTreeMap<String, String>,
-    pub(crate) mime: apps::MimeDb,
+    pub(crate) mime: std::sync::Arc<apps::MimeDb>,
+    /// A rescan is reading the folder off the loop; `rescan_again` asks for one more after it.
+    scanning: bool,
+    rescan_again: bool,
     pub(crate) send_to: Vec<reprisefs::sendto::SendToRow>,
     pub(crate) drives: places::MountedDrives,
 }
@@ -527,6 +530,64 @@ fn listed(
     entries
 }
 
+/// The desktop's icons as [`listed`] gives them, read from the file system: the places'
+/// folders, the Recycle Bin's fullness and the desktop folder's files.
+fn read_icons(
+    dir: &Path,
+    mime: &apps::MimeDb,
+    names: &BTreeMap<String, String>,
+    system_icons: &[String],
+    show_files: bool,
+) -> Vec<DesktopEntry> {
+    let mut entries = listed(
+        system_icons,
+        show_files,
+        |name| {
+            if name == "recycle-bin" {
+                let files = places::trash_dir()?;
+                let empty = reprisefs::trash::Bins::system().is_none_or(|b| b.all_empty());
+                Some(desktop::recycle_bin(files, empty))
+            } else {
+                let e = desktop::place_shown(name, names);
+                if e.is_none() && desktop::Place::from_config(name).is_none() {
+                    log::warn!("desktop: unknown system icon {name:?}");
+                }
+                e
+            }
+        },
+        || desktop::scan(dir, mime),
+    );
+    for e in &mut entries {
+        if let (desktop::Kind::Place(_), Target::Open(p)) = (e.kind, &e.target) {
+            e.is_dir = p.is_dir();
+        }
+    }
+    entries
+}
+
+/// The icon files `entries` wear (a folder's or a launcher's `Icon=/...`), each decoded at `px`.
+fn icon_files(
+    entries: &[DesktopEntry],
+    px: i32,
+) -> Vec<(String, Option<reprisekit::raster::Canvas>)> {
+    let mut files: Vec<&str> = entries
+        .iter()
+        .map(|e| e.icon.as_str())
+        .filter(|i| i.starts_with('/'))
+        .collect();
+    files.sort_unstable();
+    files.dedup();
+    files
+        .into_iter()
+        .map(|f| {
+            (
+                f.to_string(),
+                reprisekit::icontheme::decode_file(Path::new(f), px, 1),
+            )
+        })
+        .collect()
+}
+
 fn migrate_launcher_keys(
     entries: &[DesktopEntry],
     positions: &mut BTreeMap<String, (i32, i32)>,
@@ -756,7 +817,9 @@ pub fn setup(state: &mut State) {
         positions: persisted.desktop_positions,
         auto_arrange: persisted.auto_arrange,
         system_names: persisted.system_icon_names,
-        mime: apps::mime_globs(),
+        mime: std::sync::Arc::new(apps::mime_globs()),
+        scanning: false,
+        rescan_again: false,
         send_to: Vec::new(),
         drives: places::MountedDrives::new(),
     });
@@ -850,17 +913,21 @@ impl State {
         }
     }
 
+    /// Reads the desktop's icons off the loop, since a file on the desktop may sit on a mount that
+    /// never answers; the icons on screen stay until the read lands. One read runs at a time.
     pub fn rescan_desktop(&mut self) {
+        let first = self.first_output();
+        let px = ICON_PX * self.draw_scale_at(first.as_ref());
         let State {
             desktop: Some(view),
             config,
-            icons,
             ..
         } = self
         else {
             return;
         };
-        // Watch before reading, so a change between the two is not missed.
+        // Watch before reading, so a change between the two is not missed. The watched folders
+        // are local: the desktop folder, its parent and the Recycle Bin's folders.
         if let Some(w) = view.watch.as_mut() {
             w.sync(&watch_wants(
                 &view.dir,
@@ -868,24 +935,45 @@ impl State {
                 &config.system_icons,
             ));
         }
-        let entries = listed(
-            &config.system_icons,
-            config.desktop_icons,
-            |name| {
-                if name == "recycle-bin" {
-                    let files = places::trash_dir()?;
-                    let empty = reprisefs::trash::Bins::system().is_none_or(|b| b.all_empty());
-                    Some(desktop::recycle_bin(files, empty))
-                } else {
-                    let e = desktop::place_shown(name, &view.system_names);
-                    if e.is_none() && desktop::Place::from_config(name).is_none() {
-                        log::warn!("desktop: unknown system icon {name:?}");
-                    }
-                    e
-                }
-            },
-            || desktop::scan(&view.dir, &view.mime, &|n| icons.has(n)),
+        if view.scanning {
+            view.rescan_again = true;
+            return;
+        }
+        view.scanning = true;
+        let (dir, mime, names) = (
+            view.dir.clone(),
+            view.mime.clone(),
+            view.system_names.clone(),
         );
+        let (system_icons, show_files) = (config.system_icons.clone(), config.desktop_icons);
+        self.spawn_fs_job(move || {
+            let entries = read_icons(&dir, &mime, &names, &system_icons, show_files);
+            let art = icon_files(&entries, px);
+            Box::new(move |state| state.desktop_scanned(entries, art, px))
+        });
+    }
+
+    /// A desktop read is done: its icon files go into the icon cache, its plain files wear the
+    /// theme's icons, and the icons on screen are replaced.
+    fn desktop_scanned(
+        &mut self,
+        mut entries: Vec<DesktopEntry>,
+        art: Vec<(String, Option<reprisekit::raster::Canvas>)>,
+        px: i32,
+    ) {
+        let State {
+            desktop: Some(view),
+            icons,
+            ..
+        } = self
+        else {
+            return;
+        };
+        view.scanning = false;
+        for (file, canvas) in art {
+            icons.put_file(&file, px, canvas);
+        }
+        desktop::wear_file_icons(&mut entries, &view.mime, &|n| icons.has(n));
         let old = std::mem::replace(&mut view.entries, entries);
         let moved = remap(&old, &view.entries);
         let remap = |i: &usize| moved.get(*i).copied().flatten();
@@ -903,7 +991,11 @@ impl State {
         if migrate_launcher_keys(&view.entries, &mut view.positions) {
             crate::state::save_desktop(view.auto_arrange, &view.positions);
         }
+        let again = std::mem::take(&mut view.rescan_again);
         self.relayout_desktop();
+        if again {
+            self.rescan_desktop();
+        }
     }
 
     pub fn relayout_desktop(&mut self) {
@@ -1385,8 +1477,8 @@ impl State {
         };
         aimed_in(&view.entries, &self.selection_around(index), index, true)
             .into_iter()
+            .filter(|&i| !view.entries[i].is_dir)
             .map(|i| view.entries[i].path.clone())
-            .filter(|p| !p.is_dir())
             .collect()
     }
 
@@ -1418,6 +1510,8 @@ impl State {
                 Some(argv) => argv.into_iter().map(Into::into).collect(),
                 None => return,
             },
+            // No stat: the folder may be a mount that does not answer.
+            Target::Open(dir) if entry.is_dir => apps::open_folder_argv(dir),
             target => {
                 desktop::open_argv(target, &view.mime, &self.app_index, &self.config.terminal)
             }
@@ -1444,11 +1538,11 @@ impl State {
             }
             Kind::Place(place) => place_menu(place, matches!(entry.target, Target::Open(_))),
             Kind::File => {
-                let is_dir = entry.path.is_dir();
+                let is_dir = entry.is_dir;
                 let (print, edit) = if is_dir {
                     (false, false)
                 } else {
-                    let mime = apps::mime_of_in(&view.mime, &entry.path);
+                    let mime = view.mime.mime_of_name(&entry.name);
                     reprisefs::props::verbs(mime.as_deref(), reprisefs::props::has_lp())
                 };
                 icon_menu(IconMenu {
@@ -1905,7 +1999,40 @@ mod tests {
             path,
             shortcut: false,
             kind: desktop::Kind::File,
+            is_dir: false,
         }
+    }
+
+    /// A desktop read, which runs off the loop, says which icons are folders (a link to one
+    /// included) and decodes the icon files they wear, so drops, menus and the first draw ask
+    /// neither the folders nor the files again.
+    #[test]
+    fn a_desktop_read_marks_folders_and_decodes_their_icon_files() {
+        let dir = std::env::temp_dir().join(format!("reprise-desk-read-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("Art")).unwrap();
+        std::fs::write(dir.join("notes.txt"), "").unwrap();
+        std::os::unix::fs::symlink(dir.join("Art"), dir.join("Art link")).unwrap();
+        let pic = dir.join(".cover.png");
+        image::RgbaImage::from_pixel(64, 64, image::Rgba([0x20, 0xa0, 0x40, 0xff]))
+            .save(&pic)
+            .unwrap();
+        reprisefs::meta::set_folder_icon(&dir.join("Art"), pic.to_str()).unwrap();
+        let entries = read_icons(&dir, &apps::MimeDb::empty(), &BTreeMap::new(), &[], true);
+        let dirs: Vec<(&str, bool)> = entries
+            .iter()
+            .map(|e| (e.name.as_str(), e.is_dir))
+            .collect();
+        assert_eq!(
+            dirs,
+            [("Art", true), ("Art link", true), ("notes.txt", false)]
+        );
+        let art = icon_files(&entries, 32);
+        assert_eq!(art.len(), 1, "one file for the folder and its link");
+        assert_eq!(art[0].0, pic.to_str().unwrap());
+        let decoded = art[0].1.as_ref().expect("the picture");
+        assert_eq!((decoded.width, decoded.get(8, 8)), (32, 0xff20_a040));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// `desktop_icons` off hides only the folder's files: the system icons
@@ -2011,6 +2138,7 @@ mod tests {
             path: PathBuf::from(name),
             shortcut: false,
             kind: desktop::Kind::File,
+            is_dir: false,
         };
         let bin = DesktopEntry {
             kind: desktop::Kind::RecycleBin,
@@ -2041,6 +2169,7 @@ mod tests {
             path: PathBuf::from(file),
             shortcut: true,
             kind: desktop::Kind::File,
+            is_dir: false,
         };
         let plain = |name: &str| DesktopEntry {
             name: name.into(),
@@ -2050,6 +2179,7 @@ mod tests {
             path: PathBuf::from(name),
             shortcut: false,
             kind: desktop::Kind::File,
+            is_dir: false,
         };
         let entries = [
             launcher("firefox.desktop", "Firefox"),
