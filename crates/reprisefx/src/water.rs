@@ -136,16 +136,29 @@ impl Pool {
         ];
         let src = Rectangle::from_size(size.to_f64());
         let full = Rectangle::from_size((size.w, size.h).into());
-        nearest(r, |r| {
-            blur::pass_from(r, &front, src, back, Some(&fx.step), &uniforms, &[full])
-        })?;
         let inside: Vec<_> = obstacles
             .iter()
             .filter_map(|o| o.intersection(full))
             .collect();
-        if !inside.is_empty() {
-            fill(r, &fx.rest, back, &inside)?;
-        }
+        // One frame for the step and the obstacles: each frame's finish costs a submission.
+        nearest(r, |r| {
+            let mut target = r.bind(back)?;
+            let mut frame = r.render(&mut target, (size.w, size.h).into(), Transform::Normal)?;
+            frame.render_texture_from_to(
+                &front,
+                src,
+                full,
+                &[full],
+                &[full],
+                Transform::Normal,
+                1.0,
+                Some(&fx.step),
+                &uniforms,
+            )?;
+            rest_in(&mut frame, &fx.rest, &inside)?;
+            let _ = frame.finish()?;
+            Ok(())
+        })?;
         std::mem::swap(&mut self.front, &mut self.back);
         self.steps = self.steps.wrapping_add(1);
         Ok(())
@@ -253,23 +266,35 @@ fn fill(
     let size = to.size();
     let mut target = r.bind(to)?;
     let mut frame = r.render(&mut target, (size.w, size.h).into(), Transform::Normal)?;
-    let src = Rectangle::from_size((1.0, 1.0).into());
-    for p in parts {
-        let local = [Rectangle::from_size(p.size)];
-        frame.render_texture_from_to(
-            rest,
-            src,
-            *p,
-            &local,
-            &local,
-            Transform::Normal,
-            1.0,
-            None,
-            &[],
-        )?;
-    }
+    rest_in(&mut frame, rest, parts)?;
     let _ = frame.finish()?;
     Ok(())
+}
+
+fn rest_in(
+    frame: &mut GlesFrame<'_, '_>,
+    rest: &GlesTexture,
+    parts: &[Rectangle<i32, Physical>],
+) -> Result<(), GlesError> {
+    let Some(bounds) = parts.iter().copied().reduce(|a, b| a.merge(b)) else {
+        return Ok(());
+    };
+    // One draw over the parts' bounds, clipped to the parts.
+    let local: Vec<_> = parts
+        .iter()
+        .map(|p| Rectangle::new(p.loc - bounds.loc, p.size))
+        .collect();
+    frame.render_texture_from_to(
+        rest,
+        Rectangle::from_size((1.0, 1.0).into()),
+        bounds,
+        &local,
+        &local,
+        Transform::Normal,
+        1.0,
+        None,
+        &[],
+    )
 }
 
 impl Pool {
