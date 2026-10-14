@@ -179,7 +179,31 @@ impl State {
     /// move that fails keeps it. A file gone since it was cut or copied is
     /// skipped.
     fn paste_clip(&mut self, clip: FileClip, target: &DropTarget, shortcut: bool) {
-        let paths: Vec<PathBuf> = clip.paths.iter().filter(|p| p.exists()).cloned().collect();
+        let dir = self.desktop.as_ref().map(|v| v.dir.clone());
+        let target = target.clone();
+        // A clipboard file may sit on a mount that never answers.
+        self.spawn_fs_job(move || {
+            let paths: Vec<PathBuf> = clip.paths.iter().filter(|p| p.exists()).cloned().collect();
+            let here = match &dir {
+                Some(dir) => crate::dragview::in_folder(paths.clone(), dir),
+                None => Default::default(),
+            };
+            Box::new(move |state: &mut State| {
+                state.paste_found(paths, clip.cut, &here, &target, shortcut)
+            })
+        });
+    }
+
+    /// [`Self::paste_clip`] once `paths` holds the clipboard's files that still exist and `here`
+    /// those of them in the desktop folder.
+    fn paste_found(
+        &mut self,
+        paths: Vec<PathBuf>,
+        cut: bool,
+        here: &std::collections::HashSet<PathBuf>,
+        target: &DropTarget,
+        shortcut: bool,
+    ) {
         if paths.is_empty() {
             return;
         }
@@ -187,21 +211,14 @@ impl State {
             Some(view) => clip_sources(&view.entries, &paths),
             None => clip_sources(&[], &paths),
         };
-        let op = match (shortcut, clip.cut) {
+        let op = match (shortcut, cut) {
             (true, _) => DropOp::Shortcut,
             (_, true) => DropOp::Move,
             (_, false) => DropOp::Copy,
         };
-        self.perform_all(&sources, target, op);
-        if op == DropOp::Move
-            && let DropTarget::Desktop(_) = target
-            && let Some(view) = self.desktop.as_ref()
-        {
-            let dir = view.dir.clone();
-            let in_place: Vec<PathBuf> = paths
-                .into_iter()
-                .filter(|p| reprisefs::ops::same_folder(p, &dir))
-                .collect();
+        self.put_all(&sources, target, op, here);
+        if op == DropOp::Move && matches!(target, DropTarget::Desktop(_)) {
+            let in_place: Vec<PathBuf> = paths.into_iter().filter(|p| here.contains(p)).collect();
             self.cut_moved(&in_place);
         }
     }

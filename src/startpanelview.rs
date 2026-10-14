@@ -1175,7 +1175,7 @@ impl State {
             }
             StartRow::PinTaskbar(a) => {
                 if let Some(src) = entry(self, a).and_then(|e| reprisefs::apps::find_file(&e.id)) {
-                    self.quick_add(&src, None);
+                    self.quick_add(vec![src], None);
                 }
             }
             StartRow::UnpinTaskbar(a) => {

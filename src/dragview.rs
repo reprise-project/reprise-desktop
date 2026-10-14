@@ -10,7 +10,7 @@
 //! File work runs off the loop (`fsjobs`), one batch per folder at a time. A name the target already holds
 //! asks first (Confirm File/Folder Replace); a failed drop says why in an error box.
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
 
 use reprisefs::apps::AppEntry;
@@ -182,6 +182,15 @@ pub fn left_drop_op(grabbed: &DragSource, target: &DropTarget) -> DropOp {
 /// move about it (a file would go into ~/Desktop and vanish); another program's drag passes no sources, so it is refused.
 fn takes_cell(show_files: bool, sources: &[DragSource]) -> bool {
     show_files || (!sources.is_empty() && sources.iter().all(DragSource::is_system))
+}
+
+/// The `files` that sit directly in `dir`, through links alike. Resolves each file's folder, so a
+/// host runs it off its event loop.
+pub(crate) fn in_folder(files: Vec<PathBuf>, dir: &Path) -> HashSet<PathBuf> {
+    files
+        .into_iter()
+        .filter(|p| reprisefs::ops::same_folder(p, dir))
+        .collect()
 }
 
 fn desktop_entry_named(entries: &[desktop::DesktopEntry], name: &str) -> Option<usize> {
@@ -742,11 +751,45 @@ impl State {
             log::info!("desktop: a drop under the lock is refused");
             return;
         }
+        let files: Vec<PathBuf> = sources
+            .iter()
+            .filter_map(|s| match s {
+                DragSource::File { path, .. } => Some(path.clone()),
+                _ => None,
+            })
+            .collect();
+        match (target, self.desktop.as_ref()) {
+            (DropTarget::Desktop(_), Some(view)) if !files.is_empty() => {
+                // Whether a file sits in the desktop folder resolves links, which a file on a
+                // mount that never answers holds.
+                let dir = view.dir.clone();
+                let (sources, target) = (sources.to_vec(), target.clone());
+                self.spawn_fs_job(move || {
+                    let here = in_folder(files, &dir);
+                    Box::new(move |state: &mut State| state.put_all(&sources, &target, op, &here))
+                });
+            }
+            _ => self.put_all(sources, target, op, &HashSet::new()),
+        }
+    }
+
+    /// [`Self::perform_all`] once `here` holds the files of `sources` that sit in the desktop
+    /// folder.
+    pub(crate) fn put_all(
+        &mut self,
+        sources: &[DragSource],
+        target: &DropTarget,
+        op: DropOp,
+        here: &HashSet<PathBuf>,
+    ) {
+        if self.is_locked() {
+            log::info!("desktop: a drop under the lock is refused");
+            return;
+        }
         match target {
             DropTarget::Quick(slot) => {
-                for (n, source) in sources.iter().enumerate() {
-                    self.quick_add(source.path(), Some(*slot + n));
-                }
+                let srcs = sources.iter().map(|s| s.path().to_path_buf()).collect();
+                self.quick_add(srcs, Some(*slot));
             }
             // The same questions as Delete: Confirm File Delete, and whether to take a place off the desktop.
             DropTarget::Trash => match bin_drop(sources) {
@@ -780,9 +823,7 @@ impl State {
                 let index_of = |s: &DragSource| match s {
                     DragSource::Icon { id, .. } => desktop::find(&view.entries, id),
                     // Another program's file already on the desktop is one of its icons, found by name.
-                    DragSource::File { path, name }
-                        if reprisefs::ops::same_folder(path, &view.dir) =>
-                    {
+                    DragSource::File { path, name } if here.contains(path) => {
                         desktop_entry_named(&view.entries, name)
                     }
                     DragSource::App { .. } | DragSource::File { .. } => None,
@@ -836,9 +877,7 @@ impl State {
                             }
                         }
                         // Another program's file already on the desktop moves to the drop cell as its icon would.
-                        (DragSource::File { path, name }, DropOp::Move)
-                            if reprisefs::ops::same_folder(path, &dir) =>
-                        {
+                        (DragSource::File { path, name }, DropOp::Move) if here.contains(path) => {
                             if !auto {
                                 places.push((name.clone(), cell));
                             }
