@@ -55,6 +55,37 @@ fn placement(output: &Output) -> &Placement {
         .expect("inserted above")
 }
 
+/// The box an output was last laid out at, in its user data; None before its first layout
+/// and once it leaves.
+struct LaidOut(Cell<Option<Rect>>);
+
+fn laid_out(output: &Output) -> &LaidOut {
+    output
+        .user_data()
+        .insert_if_missing(|| LaidOut(Cell::new(None)));
+    output.user_data().get::<LaidOut>().expect("inserted above")
+}
+
+/// How far each of `frames` moves when the outputs went from the boxes `before` to `after`
+/// (keyed alike): a frame whose centre lay on an output that is still laid out moves with
+/// that output's top-left. None for a frame that stays.
+pub fn carried<K: PartialEq>(
+    frames: &[Rect],
+    before: &[(K, Rect)],
+    after: &[(K, Rect)],
+) -> Vec<Option<(i32, i32)>> {
+    frames
+        .iter()
+        .map(|f| {
+            let (cx, cy) = (f.x + f.width / 2, f.y + f.height / 2);
+            let (k, old) = before.iter().find(|(_, r)| r.contains(cx, cy))?;
+            let (_, new) = after.iter().find(|(n, _)| n == k)?;
+            let d = (new.x - old.x, new.y - old.y);
+            (d != (0, 0)).then_some(d)
+        })
+        .collect()
+}
+
 /// Put `output` at layout `pos` for good, or back to automatic placement with None.
 pub fn set_placement(output: &Output, pos: Option<Point<i32, Logical>>) {
     placement(output).0.set(pos);
@@ -149,6 +180,7 @@ impl State {
         self.close_overview();
         self.finish_window_anims();
         self.magnifier.retain(self.scene.outputs());
+        laid_out(output).0.set(None);
         let bar = self
             .bars
             .iter()
@@ -436,10 +468,52 @@ impl State {
                 (placement(o).0.get().map(|p| (p.x, p.y)), size)
             })
             .collect();
+        let before: Vec<(Output, Rect)> = outputs
+            .iter()
+            .filter_map(|o| Some((o.clone(), laid_out(o).0.get()?)))
+            .collect();
         for (o, (x, y)) in outputs.iter().zip(place(&asked)) {
             if o.current_location() != Point::from((x, y)) {
                 o.change_current_state(None, None, None, Some((x, y).into()));
             }
+        }
+        let after: Vec<(Output, Rect)> = outputs
+            .iter()
+            .map(|o| (o.clone(), self.layout_box(Some(o))))
+            .collect();
+        for (o, r) in &after {
+            laid_out(o).0.set(Some(*r));
+        }
+        self.carry_windows(&before, &after);
+    }
+
+    /// Windows keep their place on an output that moved in the layout (an arrangement change, or
+    /// an output left of it growing): each moves by its output's move, restore boxes included.
+    fn carry_windows(&mut self, before: &[(Output, Rect)], after: &[(Output, Rect)]) {
+        let windows: Vec<(WindowId, Rect)> = self
+            .windows
+            .iter()
+            .filter(|w| w.mapped && !w.override_redirect)
+            .map(|w| (w.id, w.frame_rect()))
+            .collect();
+        let frames: Vec<Rect> = windows.iter().map(|w| w.1).collect();
+        let moves = carried(&frames, before, after);
+        for ((w, r), d) in windows.into_iter().zip(moves) {
+            let Some((dx, dy)) = d else {
+                continue;
+            };
+            if let Some(win) = self.win_mut(w) {
+                let shift = |b: &mut Option<Rect>| {
+                    if let Some(b) = b.as_mut() {
+                        b.x += dx;
+                        b.y += dy;
+                    }
+                };
+                shift(&mut win.saved);
+                shift(&mut win.saved_fullscreen);
+                shift(&mut win.snapped);
+            }
+            self.move_to(w, r.x + dx, r.y + dy);
         }
     }
 
@@ -580,6 +654,45 @@ pub fn pick_mode(modes: &[ModeInfo], want: Option<&OutputMode>) -> Option<usize>
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn windows_move_with_the_output_their_centre_lies_on() {
+        let before = [
+            ("A", Rect::new(0, 0, 1920, 1080)),
+            ("B", Rect::new(1920, 0, 4096, 2160)),
+        ];
+        // B goes left of A and A down beside its middle.
+        let after = [
+            ("A", Rect::new(4096, 531, 1920, 1080)),
+            ("B", Rect::new(0, 0, 4096, 2160)),
+        ];
+        let frames = [
+            Rect::new(100, 100, 500, 400),
+            Rect::new(2100, 150, 500, 400),
+            Rect::new(1500, 100, 500, 400),
+            Rect::new(-900, 100, 500, 400),
+        ];
+        assert_eq!(
+            carried(&frames, &before, &after),
+            vec![Some((4096, 531)), Some((-1920, 0)), Some((4096, 531)), None],
+            "on A, on B, straddling with its centre on A, on no output"
+        );
+        assert_eq!(
+            carried(&frames, &before, &before),
+            vec![None; 4],
+            "nothing moved"
+        );
+        assert_eq!(
+            carried(&frames, &before, &after[..1]),
+            vec![Some((4096, 531)), None, Some((4096, 531)), None],
+            "B left the layout: its windows are rescue_offscreen's"
+        );
+        assert_eq!(
+            carried(&frames, &[], &after),
+            vec![None; 4],
+            "no layout before"
+        );
+    }
 
     #[test]
     fn chrome_draws_at_the_scale_rounded_up() {

@@ -249,6 +249,7 @@ are.
 - **Multiple monitors,** each with its own mode, scale, rotation and
   adaptive sync. Reprise Settings arranges them by dragging numbered screens
   or moving the picked one with Ctrl+arrows, and a change you don't confirm reverts after 15 seconds.
+  Windows move with the monitor they are on.
 - **Fractional scaling** from 1 to 4 in quarter steps, per monitor. Programs
   that support it draw at the exact scale.
 - **Night light** from sunset to sunrise, worked out from your time zone, or
