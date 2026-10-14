@@ -1558,6 +1558,7 @@ impl State {
         path: std::path::PathBuf,
         renamed: Option<std::path::PathBuf>,
         written: &dialog::Written,
+        header: Option<crate::desktop::DesktopEntry>,
         close: bool,
     ) {
         if let Some(to) = &renamed {
@@ -1573,14 +1574,19 @@ impl State {
         match &written.reread {
             // A rewritten shortcut's sheet is rebuilt, its header wearing the icon the desktop gives it now.
             Some(info) => {
+                // The desktop may still list the file under its name before a rename.
+                let on_desktop = self.desktop.as_ref().filter(|v| {
+                    v.entries
+                        .iter()
+                        .any(|e| e.path == written.path || e.path == path)
+                });
+                let worn = on_desktop.zip(header).map(|(v, mut e)| {
+                    let has = |n: &str| self.icons.has(n);
+                    crate::desktop::wear_file_icons(std::slice::from_mut(&mut e), &v.mime, &has);
+                    e.icon
+                });
                 let d = &mut self.dialogs.views[i].dialog;
-                let icon = self
-                    .desktop
-                    .as_ref()
-                    .and_then(|v| v.entries.iter().find(|e| e.path == written.path))
-                    .map(|e| e.icon.clone())
-                    .or_else(|| d.icon.clone())
-                    .unwrap_or_default();
+                let icon = worn.or_else(|| d.icon.clone()).unwrap_or_default();
                 d.sheet_reread(info, &icon);
                 self.refit_dialog(i);
             }
@@ -2181,6 +2187,7 @@ impl State {
             .flatten()
             .and_then(|v| v.dialog.sheet_name())
             .map(|name| (name.to_string(), self.app_index.clone()));
+        let mime = self.desktop.as_ref().map(|v| v.mime.clone());
         self.spawn_fs_job(move || {
             let Props {
                 path,
@@ -2237,6 +2244,12 @@ impl State {
             let reread = reread
                 .filter(|_| launcher_ok)
                 .and_then(|(name, apps)| reprisefs::props::glance(&now, &name, &apps).ok());
+            // The header wears the icon the desktop gives the rewritten file, read here rather
+            // than waiting on the desktop's rescan.
+            let header = reread
+                .as_ref()
+                .zip(mime)
+                .map(|(_, mime)| crate::desktop::entry_at(&now, &mime));
             let written = dialog::Written {
                 path: now,
                 attrs: if attrs_ok { attrs } else { Default::default() },
@@ -2252,7 +2265,7 @@ impl State {
                     state.rescan_desktop();
                 }
                 let ok = failed.is_none();
-                state.finish_properties(sheet, path, renamed, &written, close && ok);
+                state.finish_properties(sheet, path, renamed, &written, header, close && ok);
                 if let Some(text) = failed {
                     state.open_dialog_over_id(Dialog::error("Properties", text), sheet);
                 }
