@@ -9324,7 +9324,7 @@ mod tests {
             .unwrap_or_else(|_| std::env::temp_dir());
         let mut picker = crate::filepick::FilePicker::run_command(
             &dir,
-            crate::filepick::icons(&mut icons),
+            crate::filepick::icons(&mut icons, 1),
             true,
         );
         for r in picker.take_requests() {

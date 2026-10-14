@@ -751,7 +751,7 @@ impl State {
         let rescaled = self.dialogs.views[index]
             .dialog
             .picker_mut()
-            .is_some_and(|p| p.follow_scale(scale));
+            .is_some_and(|p| p.follow_scale(scale, &mut self.icons));
         if rescaled {
             self.run_picker_requests();
         }
@@ -1483,12 +1483,13 @@ impl State {
             .map(std::path::PathBuf::from)
             .filter(|p| p.is_dir())
             .unwrap_or_else(|| std::path::PathBuf::from("/"));
-        let icons = crate::filepick::icons(&mut self.icons);
+        let pos = self.pointer_location();
+        let out = self.output_at(pos.x, pos.y);
+        let scale = self.draw_scale_at(out.as_ref());
+        let icons = crate::filepick::icons(&mut self.icons, scale);
         let picker =
             crate::filepick::FilePicker::run_command(&start, icons, self.config.recent_files);
         let mut d = Dialog::browse(picker);
-        let pos = self.pointer_location();
-        let out = self.output_at(pos.x, pos.y);
         let area = self.usable_area(out.as_ref());
         let edge = out
             .as_ref()
@@ -1501,7 +1502,12 @@ impl State {
 
     /// The Open With chooser's Browse...: "Open With..." on `/usr/bin`, cascaded 3 px right and 22 px below the chooser.
     fn browse_program(&mut self) {
-        let icons = crate::filepick::icons(&mut self.icons);
+        let scale = self
+            .dialogs
+            .views
+            .last()
+            .map_or(1, |v| self.draw_scale_at(Some(&v.output)));
+        let icons = crate::filepick::icons(&mut self.icons, scale);
         let picker = crate::filepick::FilePicker::program(
             std::path::Path::new("/usr/bin"),
             icons,

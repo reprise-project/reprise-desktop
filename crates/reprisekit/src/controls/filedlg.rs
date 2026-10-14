@@ -691,6 +691,26 @@ impl FileDlg {
         }
     }
 
+    /// Replace the places tiles' icons, in the order `new` took the tiles.
+    pub fn set_place_icons(&mut self, icons: Vec<Option<Canvas>>) {
+        for (place, icon) in self.places.places.iter_mut().zip(icons) {
+            place.icon = icon;
+        }
+    }
+
+    /// Replace the Look in folders' icons, in the listing's crumb order.
+    pub fn set_crumb_icons(&mut self, icons: Vec<Option<Canvas>>) {
+        for ((crumb, item), icon) in self
+            .crumbs
+            .iter_mut()
+            .zip(self.lookin.items.iter_mut())
+            .zip(icons)
+        {
+            item.icon = icon.clone();
+            crumb.icon = icon;
+        }
+    }
+
     fn sync_toolbar(&mut self) {
         if let toolbar::Item::Button { enabled, .. } = &mut self.toolbar.items[TOOLBAR_BACK] {
             *enabled = !self.history.is_empty();
