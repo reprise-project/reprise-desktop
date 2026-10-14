@@ -222,6 +222,15 @@ pub fn cache_for(setting: repriseconf::ThumbnailCache) -> Option<Thumbnails> {
         .flatten()
 }
 
+/// Remove what every Reprise version kept in the shared cache, other programs' thumbnails left
+/// in place; returns how many files went. Blocks on the file system.
+pub fn clear_cache() -> usize {
+    Thumbnails::default_dir().map_or(0, |root| {
+        reprisefs::thumbnails::clear_written_by(&root, PROGRAM_PREFIX)
+    })
+}
+
+const PROGRAM_PREFIX: &str = "reprise-";
 const PROGRAM: &str = concat!("reprise-", env!("CARGO_PKG_VERSION"));
 
 /// `path`'s thumbnail at `edge` and its size, from `cache` or decoded into it. A file the stat

@@ -33,7 +33,7 @@ use crate::model::{
     TOOLKIT_REPRISE, WATER_STYLES,
 };
 use crate::registry::Page;
-use repriseconf::{Lens, lens};
+use repriseconf::{Lens, ThumbnailCache, lens};
 
 /// The client every page is built for at [`Area::MIN`]; the sheet puts each page right of its list ([`PropSheet::on_page`]).
 pub const CLIENT: (i32, i32) = (398, 528);
@@ -197,6 +197,12 @@ pub const DEBUG_IN_CAPTURES: &str = "debug_overlay_in_captures";
 pub const FORGET: &str = "location_forget";
 pub const WATER: &str = "wallpaper_water";
 pub const WATER_STYLE: &str = "water_style";
+/// The Advanced page's thumbnail cache check, its size row (greyed while the cache is off) and
+/// Clear, which removes the thumbnails Reprise kept.
+pub const THUMBS: &str = "thumbnail_cache";
+pub const THUMBS_MB: &str = "thumbnail_max_mb";
+const THUMBS_SIZE: [&str; 2] = ["thumbnail_size_label", THUMBS_MB];
+pub const THUMBS_CLEAR: &str = "thumbnail_clear";
 
 /// The Keyboard page's Shortcuts list, inside its group box under the layout
 /// fields. Four rows show at [`Area::MIN`], more with extra page height; the
@@ -278,7 +284,7 @@ pub(crate) fn button(id: &'static str, x: i32, y: i32, text: &str) -> Item {
 
 /// The task manager, the switches with no page of their own, the location
 /// answers programs were given (a [`ListView`] the host draws over the page at
-/// [`locations`]) and the config file itself. The terminal is picked on
+/// [`locations`]), the thumbnail cache and the config file itself. The terminal is picked on
 /// Default Programs. The list takes the page's extra height.
 pub fn advanced(a: Area) -> Form {
     let dh = a.dh;
@@ -341,9 +347,34 @@ pub fn advanced(a: Area) -> Form {
     );
     items.push(Item::check(WATER, X, 344 + dh, "Desktop &water"));
     items.push(choice(WATER_STYLE, X + 112, 340 + dh, 100, WATER_STYLES));
+    items.push(Item::check(
+        THUMBS,
+        X,
+        366 + dh,
+        "Keep &thumbnails of pictures",
+    ));
+    let mb = ThumbnailCache::MAX_MB;
+    items.extend(
+        spin(
+            THUMBS_SIZE[0],
+            THUMBS_MB,
+            X,
+            392 + dh,
+            70,
+            "Si&ze in MB:",
+            (*mb.start() as i32, *mb.end() as i32),
+        )
+        .map(Item::under_check),
+    );
+    items.push(button(
+        THUMBS_CLEAR,
+        a.right() - BUTTON_W,
+        386 + dh,
+        "Clea&r",
+    ));
     items.push(Item::new(
         "note",
-        Rect::new(X, 374 + dh, a.w - BUTTON_W - 8, 2 * LINE_H),
+        Rect::new(X, 418 + dh, a.w - BUTTON_W - 8, 2 * LINE_H),
         Control::Lines(vec![
             "Keys no page sets are edited in".into(),
             "config.toml itself.".into(),
@@ -352,7 +383,7 @@ pub fn advanced(a: Area) -> Form {
     items.push(button(
         EDIT_FILE,
         a.right() - BUTTON_W,
-        374 + dh,
+        418 + dh,
         "&Edit File...",
     ));
     Form::new(items)
@@ -1594,6 +1625,8 @@ fn binds() -> Vec<Bind> {
         Bind::Flag(DEBUG_OVERLAY, lens!(debug_overlay)),
         Bind::Flag(DEBUG_IN_CAPTURES, lens!(debug_overlay_in_captures)),
         Bind::Flag("launcher_files", lens!(launcher_files)),
+        Bind::Flag(THUMBS, lens!(thumbnail_cache)),
+        Bind::Num(THUMBS_MB, lens!(thumbnail_max_mb)),
         Bind::Text("font_family", lens!(font_family)),
         Bind::Num("font_size_px", lens!(font_size_px)),
         Bind::Flag("font_antialias", lens!(font_antialias)),
@@ -1880,7 +1913,8 @@ pub fn write_form(form: &mut Form, s: &Settings) {
 /// sample redrawn; the Background page greys the position without a wallpaper
 /// and shows the look's desktop colour on its Color button; the Taskbar page
 /// greys the auto-hide triggers while auto-hide is off, and the Advanced page
-/// the debug overlay's captures check while the overlay is off. Runs from
+/// the debug overlay's captures check while the overlay is off and the thumbnail cache's size
+/// while the cache is off. Runs from
 /// `write` and after every read-back.
 pub fn follow(sheet: &mut PropSheet, s: &Settings) {
     crate::appearancepage::follow(sheet, s);
@@ -1959,7 +1993,11 @@ pub fn follow(sheet: &mut PropSheet, s: &Settings) {
         tb.set_enabled(id, s.taskbar_auto_hide);
     }
     tb.set_enabled(TRAY_CUSTOMIZE, s.taskbar_tray_overflow);
-    sheet.pages[Page::Advanced.index()].set_enabled(DEBUG_IN_CAPTURES, s.debug_overlay);
+    let adv = &mut sheet.pages[Page::Advanced.index()];
+    adv.set_enabled(DEBUG_IN_CAPTURES, s.debug_overlay);
+    for id in THUMBS_SIZE {
+        adv.set_enabled(id, s.thumbnail_cache);
+    }
     let count = s.layouts().len();
     let picked = layout_selection(sheet);
     let page = &mut sheet.pages[Page::Keyboard.index()];
@@ -3316,8 +3354,11 @@ mod tests {
         );
         assert_eq!(rect(&s, p, DEBUG_OVERLAY), Rect::new(20, 300, 13, 13));
         assert_eq!(rect(&s, p, DEBUG_IN_CAPTURES), Rect::new(38, 322, 13, 13));
-        assert_eq!(rect(&s, p, "note"), Rect::new(20, 374, 275, 26));
-        assert_eq!(rect(&s, p, EDIT_FILE), Rect::new(303, 374, 75, 23));
+        assert_eq!(rect(&s, p, THUMBS), Rect::new(20, 366, 13, 13));
+        assert_eq!(rect(&s, p, THUMBS_MB), Rect::new(112, 388, 50, 20));
+        assert_eq!(rect(&s, p, THUMBS_CLEAR), Rect::new(303, 386, 75, 23));
+        assert_eq!(rect(&s, p, "note"), Rect::new(20, 418, 275, 26));
+        assert_eq!(rect(&s, p, EDIT_FILE), Rect::new(303, 418, 75, 23));
         for id in ["banner_label", "startmenu_banner", "start_icon"] {
             assert!(s.pages[p.index()].item(id).is_none(), "{id} is on Taskbar");
         }
@@ -3355,6 +3396,68 @@ mod tests {
         assert_eq!(got.wallpaper_water, "off");
         tick(&mut s, &mut got, Page::Advanced, WATER, true);
         assert_eq!(got.wallpaper_water, "rain");
+    }
+
+    fn thumbs_mb(s: &PropSheet) -> &UpDown {
+        match &s.pages[Page::Advanced.index()]
+            .item(THUMBS_MB)
+            .unwrap()
+            .control
+        {
+            Control::UpDown(u) => u,
+            _ => panic!("{THUMBS_MB} is an up-down"),
+        }
+    }
+
+    #[test]
+    fn the_thumbnail_cache_row_reads_and_writes_its_keys() {
+        let mut got = crate::model::load("[thumbnail_cache]\nenabled = false\nmax_mb = 64\n");
+        let mut s = with(&got);
+        let p = Page::Advanced;
+        assert_eq!(thumbs_mb(&s).value(), 64);
+        for id in THUMBS_SIZE {
+            assert!(!enabled_on(&s, p, id), "{id} greyed with the cache off");
+        }
+        let base = got.clone();
+        tick(&mut s, &mut got, p, THUMBS, true);
+        for id in THUMBS_SIZE {
+            assert!(enabled_on(&s, p, id), "{id} lit with the cache on");
+        }
+        if let Some(Control::UpDown(u)) = s.pages[p.index()]
+            .item_mut(THUMBS_MB)
+            .map(|i| &mut i.control)
+        {
+            u.set(128);
+        }
+        read_one(&s, THUMBS_MB, &mut got);
+        let text = "[thumbnail_cache]\nenabled = false\nmax_mb = 64\n";
+        let out = crate::model::save(text, &got, &base).expect("parses");
+        assert_eq!(
+            out, "[thumbnail_cache]\nmax_mb = 128\n",
+            "on is the default, so its key goes"
+        );
+        let back = crate::model::load(&out);
+        assert_eq!((back.thumbnail_cache, back.thumbnail_max_mb), (true, 128));
+    }
+
+    #[test]
+    fn the_thumbnail_cache_size_keeps_to_the_range_the_cache_reads() {
+        let mut got = crate::model::load("[thumbnail_cache]\nmax_mb = 9000\n");
+        let mut s = with(&got);
+        let u = thumbs_mb(&s);
+        assert_eq!((u.min, u.max), (1, 4096));
+        assert_eq!(u.value(), 4096, "shown clamped");
+        assert_eq!(got.thumbnail_max_mb, 9000, "left in the file until touched");
+        if let Some(Control::UpDown(u)) = s.pages[Page::Advanced.index()]
+            .item_mut(THUMBS_MB)
+            .map(|i| &mut i.control)
+        {
+            u.set(0);
+        }
+        read_one(&s, THUMBS_MB, &mut got);
+        assert_eq!(got.thumbnail_max_mb, 1);
+        s = with(&Settings::default());
+        assert_eq!(thumbs_mb(&s).value(), 512, "the cache's default");
     }
 
     #[test]
