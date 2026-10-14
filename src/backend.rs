@@ -95,6 +95,9 @@ struct Surface {
     idle_scheduled: bool,
     callback_timer: Option<RegistrationToken>,
     render_timer: Option<RegistrationToken>,
+    /// Asks for the frame desktop water steps next in (`schedule_at`).
+    step_timer: Option<RegistrationToken>,
+    last_flip: Option<std::time::Instant>,
     pace: crate::framepace::Pace,
     frames: u32,
     held: u32,
@@ -460,6 +463,8 @@ pub fn enable(state: &mut State, output: &Output, index: usize) -> bool {
             idle_scheduled: false,
             callback_timer: None,
             render_timer: None,
+            step_timer: None,
+            last_flip: None,
             pace: Default::default(),
             frames: 0,
             held: 0,
@@ -492,6 +497,7 @@ pub fn disable(state: &mut State, output: &Output) -> bool {
         drm_output,
         callback_timer,
         render_timer,
+        step_timer,
         ..
     } = s;
     drop(drm_output);
@@ -503,7 +509,10 @@ pub fn disable(state: &mut State, output: &Output) -> bool {
             vrr_capable,
         },
     );
-    for t in [callback_timer, render_timer].into_iter().flatten() {
+    for t in [callback_timer, render_timer, step_timer]
+        .into_iter()
+        .flatten()
+    {
         state.handle.remove(t);
     }
     state.scene.remove_output(&output);
@@ -709,6 +718,62 @@ fn request(state: &mut State, output: &Output, ask: Ask) {
     });
 }
 
+/// Ask for a frame on `output` that starts at or after `at` (`framepace::ask_at`). A wait already
+/// armed stands.
+pub fn schedule_at(state: &mut State, output: &Output, at: std::time::Instant) {
+    let Some(crtc) = crtc_of(output) else {
+        return;
+    };
+    let Some(s) = state
+        .backend
+        .as_mut()
+        .and_then(|b| b.surfaces.get_mut(&crtc))
+    else {
+        return;
+    };
+    if s.step_timer.is_some() {
+        return;
+    }
+    let interval = crate::framepace::interval(output.current_mode().map_or(0, |m| m.refresh));
+    let now = std::time::Instant::now();
+    let Some(wait) = crate::framepace::ask_at(at, now, s.last_flip, s.pending_vblank, interval)
+    else {
+        request(state, output, Ask::Scene);
+        return;
+    };
+    let token = state
+        .handle
+        .insert_source(Timer::from_duration(wait), move |_, _, state| {
+            let output = state
+                .backend
+                .as_mut()
+                .and_then(|b| b.surfaces.get_mut(&crtc))
+                .map(|s| {
+                    s.step_timer = None;
+                    s.output.clone()
+                });
+            if let Some(output) = output {
+                request(state, &output, Ask::Scene);
+            }
+            TimeoutAction::Drop
+        });
+    match token {
+        Ok(t) => {
+            if let Some(s) = state
+                .backend
+                .as_mut()
+                .and_then(|b| b.surfaces.get_mut(&crtc))
+            {
+                s.step_timer = Some(t);
+            }
+        }
+        Err(e) => {
+            log::warn!("step timer: {}", e.error);
+            request(state, output, Ask::Scene);
+        }
+    }
+}
+
 pub fn schedule_all(state: &mut State, ask: Ask) {
     let outputs: Vec<Output> = state.scene.outputs().to_vec();
     for o in &outputs {
@@ -750,6 +815,7 @@ fn vblank(state: &mut State, crtc: crtc::Handle, meta: Option<&DrmEventMetadata>
         Err(e) => log::warn!("{}: frame submit: {e:?}", s.output.name()),
     }
     s.pending_vblank = false;
+    s.last_flip = Some(std::time::Instant::now());
     if counting {
         s.stats.flipped(time, s.needs_redraw);
     }
@@ -907,6 +973,9 @@ fn render(state: &mut State, crtc: crtc::Handle) {
     finish(state, crtc, &output, drawn, empty, held, started);
     if state.magnifier.panning(&output) || water_fell {
         schedule(state, &output);
+    }
+    if let Some(at) = state.water.next_step(&output) {
+        schedule_at(state, &output, at);
     }
 }
 
