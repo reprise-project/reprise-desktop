@@ -31,8 +31,8 @@ use crate::{
     raster::{Canvas, Rect},
     startmenu::{
         ContextBitmaps, MenuItem, MenuLayout, MenuStyle, StartRow, draw_menu, draw_menu_shadow,
-        enter_row, place_popup, place_submenu_inset, rows_for_key, shadow_reach, step_selection,
-        submenu_max_rows,
+        enter_row, place_popup, place_submenu_inset, remove_rows, rows_for_key, shadow_reach,
+        step_selection, submenu_max_rows,
     },
     taskbar::{JumpRow, QuickCommand, TaskKey, TaskbarCommand, WindowListRow},
     text::split_mnemonic,
@@ -77,6 +77,8 @@ pub enum MenuKind {
     Documents {
         paths: Vec<Option<PathBuf>>,
         tips: Vec<Option<String>>,
+        /// The first recent file row; `paths.len()` when the menu lists none.
+        files: usize,
     },
     Tray {
         id: String,
@@ -323,6 +325,51 @@ pub enum MenuRoot {
     JumpList(usize),
     TaskOverflow(TreeId),
     Other,
+}
+
+impl Menu {
+    /// Drops a Documents menu's or a jump list's rows naming a path `gone` picks; an emptied
+    /// recent file list shows (Empty). Returns whether a row went.
+    pub(crate) fn drop_gone_files(&mut self, gone: impl Fn(&std::path::Path) -> bool) -> bool {
+        let mut marks: Vec<bool> = match &self.kind {
+            MenuKind::Documents { paths, .. } => paths
+                .iter()
+                .map(|p| p.as_deref().is_some_and(&gone))
+                .collect(),
+            MenuKind::JumpList { rows, .. } => rows
+                .iter()
+                .map(|r| matches!(r, Some(JumpRow::Recent(p)) if gone(p)))
+                .collect(),
+            _ => return false,
+        };
+        if !marks.contains(&true) {
+            return false;
+        }
+        if let MenuKind::Documents { paths, files, .. } = &mut self.kind
+            && *files < paths.len()
+            && marks[*files..].iter().all(|&m| m)
+        {
+            self.items[*files] = MenuItem::entry("(Empty)").enabled(false);
+            paths[*files] = None;
+            marks[*files] = false;
+        }
+        let keep = remove_rows(&mut self.items, &mut self.layout, &mut self.hovered, &marks);
+        let kept = |k: &mut std::slice::Iter<bool>| *k.next().unwrap_or(&true);
+        match &mut self.kind {
+            MenuKind::Documents { paths, tips, files } => {
+                *files = keep[..*files].iter().filter(|&&k| k).count();
+                let (mut p, mut t) = (keep.iter(), keep.iter());
+                paths.retain(|_| kept(&mut p));
+                tips.retain(|_| kept(&mut t));
+            }
+            MenuKind::JumpList { rows, .. } => {
+                let mut r = keep.iter();
+                rows.retain(|_| kept(&mut r));
+            }
+            _ => {}
+        }
+        true
+    }
 }
 
 #[cfg(test)]
@@ -944,6 +991,7 @@ impl State {
             paths.push(None);
             tips.push(None);
         }
+        let files = if show_recent { items.len() } else { usize::MAX };
         for file in &recent {
             let icon = reprisefs::icons::icon_for_file(file);
             items.push(MenuItem::entry(name(file)).icon(self.icons.get(icon, px)));
@@ -955,7 +1003,8 @@ impl State {
             paths.push(None);
             tips.push(None);
         }
-        (items, MenuKind::Documents { paths, tips })
+        let files = files.min(paths.len());
+        (items, MenuKind::Documents { paths, tips, files })
     }
 
     /// The submenu desktop row `command` opens: Arrange Icons By, New, Open
@@ -2364,6 +2413,7 @@ mod tests {
                 None,
                 None,
             ],
+            files: 2,
         };
         assert_eq!(
             docs.tip(0).as_deref(),

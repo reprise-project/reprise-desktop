@@ -1152,7 +1152,11 @@ impl State {
             paths.push(None);
         }
         let tips = vec![None; paths.len()];
-        let kind = crate::menuview::MenuKind::Documents { paths, tips };
+        let kind = crate::menuview::MenuKind::Documents {
+            paths,
+            tips,
+            files: 0,
+        };
         self.push_start_popup((row.right(), row.y), items, kind, place_popup);
     }
 
@@ -1328,6 +1332,36 @@ impl State {
             (Ok(t), Some(v)) => v.fade = Some(t),
             (Ok(t), None) => self.handle.remove(t),
             (Err(e), _) => log::warn!("start panel fade timer: {}", e.error),
+        }
+    }
+
+    /// Drops the files `gone` picks from the open panel's jump lists.
+    pub(crate) fn drop_gone_jumps(&mut self, gone: impl Fn(&Path) -> bool) {
+        let Some(v) = self.start_panel.as_mut() else {
+            return;
+        };
+        let mut changed = false;
+        for (k, files) in v.jumps.iter_mut().enumerate() {
+            let marks: Vec<bool> = files.iter().map(|p| gone(p)).collect();
+            if !marks.contains(&true) {
+                continue;
+            }
+            changed = true;
+            files.retain(|p| !gone(p));
+            if v.model.mode() == Mode::Jump(k) {
+                v.model.drop_jump_rows(&marks);
+            }
+            let row = match k.checked_sub(v.model.pinned.len()) {
+                None => v.model.pinned.get_mut(k),
+                Some(f) => v.model.frequent.get_mut(f),
+            };
+            if let Some(row) = row {
+                row.jump = !files.is_empty();
+            }
+        }
+        if changed {
+            crate::tooltip::hover_start_panel(self, None);
+            self.redraw_start_panel();
         }
     }
 

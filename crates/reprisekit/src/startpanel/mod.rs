@@ -411,6 +411,38 @@ impl StartPanel {
         Event::Redraw
     }
 
+    /// Drops the jump list rows `gone` marks. A lit row that goes passes the light to the row
+    /// sliding into its place, else the one above; an emptied list goes back to Home, lighting
+    /// its program row if a jump row was lit.
+    pub fn drop_jump_rows(&mut self, gone: &[bool]) {
+        let goes = |j: usize| gone.get(j).copied().unwrap_or(false);
+        let kept = |k: usize| (0..k).filter(|&j| !goes(j)).count();
+        let mut j = 0;
+        self.jump.retain(|_| {
+            j += 1;
+            !goes(j - 1)
+        });
+        if matches!(self.hot, Some(Spot::Jump(_))) {
+            self.hot = None;
+        }
+        let Some(Spot::Jump(k)) = self.lit else {
+            if self.jump.is_empty()
+                && let Mode::Jump(_) = self.mode
+            {
+                self.set_mode(Mode::Home);
+            }
+            return;
+        };
+        match (self.jump.len(), self.mode) {
+            (0, Mode::Jump(i)) => {
+                self.set_mode(Mode::Home);
+                self.light(Spot::Program(i));
+            }
+            (0, _) => self.lit = None,
+            (n, _) => self.lit = Some(Spot::Jump(kept(k).min(n - 1))),
+        }
+    }
+
     pub fn set_results(&mut self, groups: Vec<ResultGroup>) {
         self.results = groups
             .into_iter()
@@ -995,6 +1027,28 @@ pub(crate) mod tests {
         assert_eq!(p.mode(), Mode::Jump(0));
         assert_eq!(p.lit(), Some(Spot::Jump(0)));
         assert_eq!(p.key(Key::Left), Event::Redraw);
+        assert_eq!((p.mode(), p.lit()), (Mode::Home, Some(Spot::Program(0))));
+    }
+
+    #[test]
+    fn dropped_jump_rows_pass_the_light_on_and_an_emptied_list_goes_home() {
+        let row = |name: &str| ResultRow {
+            name: name.into(),
+            icon: None,
+        };
+        let mut p = StartPanel::new();
+        p.frequent = vec![prow("Notepad", true)];
+        p.jump = vec![row("a.txt"), row("b.txt"), row("c.txt")];
+        p.key(Key::Down);
+        p.key(Key::Right);
+        p.key(Key::Down);
+        assert_eq!(p.lit(), Some(Spot::Jump(1)));
+        p.drop_jump_rows(&[false, true, false]);
+        assert_eq!(p.jump, [row("a.txt"), row("c.txt")]);
+        assert_eq!(p.lit(), Some(Spot::Jump(1)), "c.txt slid under the light");
+        p.drop_jump_rows(&[false, true]);
+        assert_eq!(p.lit(), Some(Spot::Jump(0)), "no row below: the one above");
+        p.drop_jump_rows(&[true]);
         assert_eq!((p.mode(), p.lit()), (Mode::Home, Some(Spot::Program(0))));
     }
 
