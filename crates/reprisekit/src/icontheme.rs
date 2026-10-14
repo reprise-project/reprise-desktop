@@ -668,16 +668,13 @@ pub fn decode(path: &Path, px: u32) -> Option<Canvas> {
     if px == 0 || px > MAX_ICON_DIMENSION {
         return None;
     }
-    // Decide on the extension before opening: a client-supplied path like `/dev/zero` must not
+    // Gate on the extension before opening: a client-supplied path like `/dev/zero` must not
     // be read.
-    let svg = match path.extension().and_then(|e| e.to_str()) {
-        Some(e) if e.eq_ignore_ascii_case("png") => false,
-        Some(e) if e.eq_ignore_ascii_case("svg") => true,
-        _ => {
-            log::debug!("icon {}: unsupported file type", path.display());
-            return None;
-        }
-    };
+    let ext = path.extension().and_then(|e| e.to_str());
+    if !ext.is_some_and(|e| e.eq_ignore_ascii_case("png") || e.eq_ignore_ascii_case("svg")) {
+        log::debug!("icon {}: unsupported file type", path.display());
+        return None;
+    }
     let bytes = match read_icon_file(path) {
         Ok(b) => b,
         Err(e) => {
@@ -685,10 +682,11 @@ pub fn decode(path: &Path, px: u32) -> Option<Canvas> {
             return None;
         }
     };
-    if svg {
-        decode_svg(path, &bytes, px)
-    } else {
+    // The content picks the decoder: themes ship PNGs named `.svg`.
+    if bytes.starts_with(PNG_SIGNATURE) {
         decode_png(path, &bytes, px)
+    } else {
+        decode_svg(path, &bytes, px)
     }
 }
 
@@ -698,6 +696,8 @@ pub fn decode_file(path: &Path, px: i32, scale: i32) -> Option<Canvas> {
     let dpx = u32::try_from(px.checked_mul(scale.max(1))?).ok()?;
     decode(path, dpx).map(|c| c.at_scale(scale))
 }
+
+const PNG_SIGNATURE: &[u8] = b"\x89PNG\r\n\x1a\n";
 
 const MAX_ICON_BYTES: u64 = 8 << 20;
 
@@ -1463,6 +1463,94 @@ mod tests {
         assert!(decode(&s, 16).is_none());
         fs::remove_file(&p).unwrap();
         fs::remove_file(&s).unwrap();
+    }
+
+    #[test]
+    fn decode_picks_the_format_from_the_content() {
+        let p = tmp("png-inside.svg");
+        write_png(&p, 2, 2, &[0, 0, 255, 255].repeat(4));
+        let c = decode(&p, 4).unwrap();
+        assert_eq!(c.get(1, 1), 0xFF00_00FF);
+        let s = tmp("svg-inside.png");
+        fs::write(
+            &s,
+            r##"<svg xmlns="http://www.w3.org/2000/svg" width="4" height="4"><rect width="4" height="4" fill="#ff0000"/></svg>"##,
+        )
+        .unwrap();
+        assert_eq!(decode(&s, 4).unwrap().get(1, 1), 0xFFFF_0000);
+        fs::remove_file(&p).unwrap();
+        fs::remove_file(&s).unwrap();
+    }
+
+    /// Fixed 24 and 48 directories plus a Scalable 16..512 one holding a PNG named `.svg`: a 16
+    /// px request is in the scalable range, and its file is scaled down to 16.
+    #[test]
+    fn a_size_only_the_scalable_range_covers_loads_its_file_scaled() {
+        let index = "[Icon Theme]\nName=T\nDirectories=24x24/mimetypes,48x48/mimetypes,128x128/mimetypes\n\n[24x24/mimetypes]\nSize=24\nType=Fixed\n\n[48x48/mimetypes]\nSize=48\nType=Fixed\n\n[128x128/mimetypes]\nSize=128\nMinSize=16\nMaxSize=512\nType=Scalable\n";
+        let root = fixture("t19", "test", index, &[]);
+        let dir = root.join("test");
+        for (sub, side, rgba) in [
+            ("24x24/mimetypes/pic.png", 24, [255, 0, 0, 255]),
+            ("48x48/mimetypes/pic.png", 48, [0, 255, 0, 255]),
+            ("128x128/mimetypes/pic.svg", 128, [0, 0, 255, 255]),
+        ] {
+            let p = dir.join(sub);
+            fs::create_dir_all(p.parent().unwrap()).unwrap();
+            write_png(&p, side, side, &rgba.repeat((side * side) as usize));
+        }
+        let mut cache = IconCache::new(IconTheme::load("test", std::slice::from_ref(&root)));
+        for (px, want) in [(16, 0xFF00_00FF), (24, 0xFFFF_0000), (48, 0xFF00_FF00)] {
+            let c = cache
+                .get("pic", px)
+                .unwrap_or_else(|| panic!("pic at {px}"));
+            assert_eq!(
+                (c.width, c.get(px / 2, px / 2)),
+                (px as u32, want),
+                "{px} px"
+            );
+        }
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// The chain runs through the theme's own parents before `hicolor`, even when `hicolor` has
+    /// the exact size.
+    #[test]
+    fn inherited_themes_come_before_hicolor() {
+        let root =
+            std::env::temp_dir().join(format!("reprise-icons-t20-{}-chain", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        let test_index = "[Icon Theme]\nName=Test\nInherits=parent\nDirectories=16x16/apps\n\n[16x16/apps]\nSize=16\nType=Fixed\n";
+        let parent_index = "[Icon Theme]\nName=Parent\nDirectories=32x32/apps\n\n[32x32/apps]\nSize=32\nType=Fixed\n";
+        let hicolor_index = "[Icon Theme]\nName=Hicolor\nDirectories=16x16/apps\n\n[16x16/apps]\nSize=16\nType=Fixed\n";
+        for (theme, index, files) in [
+            ("test", test_index, &[][..]),
+            ("parent", parent_index, &["32x32/apps/both.png"][..]),
+            (
+                "hicolor",
+                hicolor_index,
+                &["16x16/apps/both.png", "16x16/apps/last.png"][..],
+            ),
+        ] {
+            let dir = root.join(theme);
+            fs::create_dir_all(&dir).unwrap();
+            fs::write(dir.join("index.theme"), index).unwrap();
+            for f in files {
+                let p = dir.join(f);
+                fs::create_dir_all(p.parent().unwrap()).unwrap();
+                fs::write(&p, b"").unwrap();
+            }
+        }
+        let t = IconTheme::load("test", std::slice::from_ref(&root));
+        assert_eq!(t.chain, ["test", "parent", "hicolor"]);
+        assert_eq!(
+            t.lookup("both", 16, 1),
+            Some(root.join("parent/32x32/apps/both.png"))
+        );
+        assert_eq!(
+            t.lookup("last", 16, 1),
+            Some(root.join("hicolor/16x16/apps/last.png"))
+        );
+        fs::remove_dir_all(&root).unwrap();
     }
 
     #[test]
