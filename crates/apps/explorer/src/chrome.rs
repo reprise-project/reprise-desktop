@@ -57,6 +57,13 @@ impl Explorer {
 
     /// The address drop's places: the shell tree, one row a place, the Desktop's places in the Folders tree's order with the drives under Computer.
     pub(crate) fn build_address(&mut self, ctx: &mut Ctx) {
+        let (rows, places) = self.address_rows(ctx);
+        let go = chrome_icon(ctx, &["go-jump", "go-next"], 20);
+        self.address = AddressBar::new(rows, 0, go);
+        self.address_places = places;
+    }
+
+    fn address_rows(&self, ctx: &mut Ctx) -> (Vec<ListItem>, Vec<Place>) {
         let mut shell: Vec<(String, Place, i32, &'static str)> = vec![(
             "Desktop".into(),
             Place::Desktop,
@@ -79,9 +86,22 @@ impl Explorer {
             rows.push(ListItem::shell(text, ctx.icons.get(icon, 16), indent));
             places.push(place);
         }
-        let go = chrome_icon(ctx, &["go-jump", "go-next"], 20);
-        self.address = AddressBar::new(rows, 0, go);
-        self.address_places = places;
+        (rows, places)
+    }
+
+    /// The toolbar, address bar, Folders tree, status bar and task pane fetch their icons again
+    /// from `ctx.icons`, now at another scale; what they show and their states stay.
+    pub(crate) fn rescale_chrome(&mut self, ctx: &mut Ctx) {
+        self.build_toolbar(ctx);
+        let (rows, _) = self.address_rows(ctx);
+        for (item, row) in self.address.combo.items.iter_mut().zip(rows) {
+            item.icon = row.icon;
+        }
+        self.address.combo.icon = ctx.icons.get(self.place.icon_name(), 16);
+        self.address.go_icon = chrome_icon(ctx, &["go-jump", "go-next"], 20);
+        crate::foldertree::refetch_icons(&mut self.tree, &self.tree_places, &mut ctx.icons);
+        self.pane_key = None;
+        self.refresh_chrome(ctx);
     }
 
     /// The status panels, task pane and toolbar's enabled states, which every navigation and selection

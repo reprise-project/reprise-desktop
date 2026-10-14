@@ -70,11 +70,12 @@ impl Explorer {
         }
     }
 
-    /// The main window draws at `scale`, `ctx.icons`' scale: the entries wear their icons at
-    /// that scale, icon files once a thread decodes them, and thumbnails made at another one are
-    /// asked for again.
+    /// The main window draws at `scale`, `ctx.icons`' scale: the chrome and the entries wear
+    /// their icons at that scale, icon files once a thread decodes them, and thumbnails made at
+    /// another one are asked for again.
     pub fn follow_scale(&mut self, scale: i32, ctx: &mut Ctx) {
         if std::mem::replace(&mut self.drawn_scale, scale) != scale {
+            self.rescale_chrome(ctx);
             self.list_icons
                 .follow(scale, &mut ctx.icons, &mut self.sv.entries, &ctx.wake);
             self.request_thumbs(scale);
@@ -808,6 +809,113 @@ mod tests {
         let t = ex.sv.entries[a].thumb.as_ref().expect("the new one");
         assert_eq!((t.scale(), t.device_size()), (2, (188, 142)));
         assert!(!ex.thumbs.asked(&path, 2));
+    }
+
+    /// A theme carrying every name the window's chrome asks for, each a flat square at 16, 24,
+    /// 32 and 48 px.
+    fn chrome_theme(root: &Path) -> reprisekit::icontheme::IconCache {
+        const NAMES: &str = "go-previous go-next go-up go-jump folder folder-open view-list \
+             user-desktop folder-documents user-home computer user-trash user-trash-full \
+             folder-new folder-remote folder-copy edit-copy edit-cut edit-delete edit-rename \
+             edit-undo mail-send preferences-system system-software-install web-browser \
+             drive-harddisk drive-removable-media media-optical document-properties";
+        let theme = root.join("flat");
+        let dirs = ["16x16/apps", "24x24/apps", "32x32/apps", "48x48/apps"];
+        let mut index = format!("[Icon Theme]\nName=Flat\nDirectories={}\n", dirs.join(","));
+        for (d, px) in dirs.iter().zip([16u32, 24, 32, 48]) {
+            index += &format!("\n[{d}]\nSize={px}\nType=Fixed\n");
+            std::fs::create_dir_all(theme.join(d)).expect("mkdir");
+            let mut c = Canvas::new(px, px);
+            c.pixels.fill(0xff20_8040);
+            let png = reprisekit::raster::to_png(&c);
+            for name in NAMES.split_whitespace() {
+                std::fs::write(theme.join(d).join(format!("{name}.png")), &png).expect("write");
+            }
+        }
+        std::fs::write(theme.join("index.theme"), index).expect("write");
+        reprisekit::icontheme::IconCache::new(reprisekit::icontheme::IconTheme::load(
+            "flat",
+            &[root.to_path_buf()],
+        ))
+    }
+
+    /// The scales of every icon the toolbar, address bar, Folders tree, status bar and task pane
+    /// wear.
+    fn chrome_scales(ex: &Explorer) -> Vec<i32> {
+        fn tree(nodes: &[reprisekit::controls::treeview::Node], out: &mut Vec<i32>) {
+            for n in nodes {
+                out.extend(
+                    [&n.icon, &n.open_icon]
+                        .into_iter()
+                        .flatten()
+                        .map(Canvas::scale),
+                );
+                tree(&n.children, out);
+            }
+        }
+        let mut out = Vec::new();
+        for item in &ex.toolbar.items {
+            if let reprisekit::controls::toolbar::Item::Button { icon, .. }
+            | reprisekit::controls::toolbar::Item::DropButton { icon, .. } = item
+            {
+                out.extend(icon.as_ref().map(Canvas::scale));
+            }
+        }
+        let a = &ex.address;
+        out.extend(
+            a.combo
+                .items
+                .iter()
+                .filter_map(|i| i.icon.as_ref())
+                .map(Canvas::scale),
+        );
+        out.extend(
+            [&a.combo.icon, &a.go_icon]
+                .into_iter()
+                .flatten()
+                .map(Canvas::scale),
+        );
+        tree(&ex.tree.roots, &mut out);
+        out.extend(
+            ex.status
+                .panels
+                .iter()
+                .filter_map(|p| p.icon.as_ref())
+                .map(Canvas::scale),
+        );
+        for s in &ex.taskpane.sections {
+            if let taskpane::Body::Links(rows) = &s.body {
+                out.extend(
+                    rows.iter()
+                        .filter_map(|r| r.icon.as_ref())
+                        .map(Canvas::scale),
+                );
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn a_new_draw_scale_fetches_the_chrome_icons_again() {
+        let art = tempfile::tempdir().expect("a temp dir");
+        let mut ctx = test_ctx();
+        ctx.icons = chrome_theme(art.path());
+        let (_dir, mut ex) = explorer(&mut ctx);
+        ex.follow_scale(1, &mut ctx);
+        let at_1 = chrome_scales(&ex);
+        assert!(at_1.len() > 15, "the chrome wears {} icons", at_1.len());
+        assert!(at_1.iter().all(|&s| s == 1));
+
+        ctx.icons.set_scale(2);
+        ex.follow_scale(2, &mut ctx);
+        let at_2 = chrome_scales(&ex);
+        assert_eq!(at_2.len(), at_1.len());
+        let left = at_2.iter().filter(|&&s| s != 2).count();
+        assert_eq!(left, 0, "of {} icons, these stay at scale 1", at_2.len());
+
+        ctx.icons.set_scale(1);
+        ex.follow_scale(1, &mut ctx);
+        assert_eq!(chrome_scales(&ex), at_1);
     }
 
     #[test]
