@@ -923,7 +923,7 @@ impl State {
             Copy(String),
             App(Box<AppEntry>),
             Setting(Setting),
-            File(Vec<std::ffi::OsString>),
+            File(std::path::PathBuf, crate::desktop::FileFacts),
         }
         let run = match v.result_kinds.get(g) {
             Some(ResultKind::Calc) => v.answer.clone().map(Run::Copy),
@@ -937,7 +937,7 @@ impl State {
                 .search
                 .files
                 .get(r)
-                .map(|p| Run::File(self.found_open_argv(p, &v.search.facts_of(p)))),
+                .map(|p| Run::File(p.clone(), v.search.facts_of(p))),
             None => None,
         };
         self.close_start_panel();
@@ -945,7 +945,7 @@ impl State {
             Some(Run::Copy(answer)) => self.clip_copy(&answer),
             Some(Run::App(entry)) => self.launch_app(&entry),
             Some(Run::Setting(s)) => self.open_setting(s),
-            Some(Run::File(argv)) => self.spawn_argv_activated(&argv),
+            Some(Run::File(path, facts)) => self.open_found(&path, &facts),
             None => {}
         }
     }

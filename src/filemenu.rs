@@ -88,6 +88,18 @@ impl State {
         }
     }
 
+    /// Open a found `path` as its `facts` say: a program runs, anything else opens with
+    /// [`Self::found_open_argv`].
+    pub(crate) fn open_found(&mut self, path: &Path, facts: &desktop::FileFacts) {
+        match &facts.target {
+            Target::Run(file) => self.run_program(file),
+            _ => {
+                let argv = self.found_open_argv(path, facts);
+                self.spawn_argv_activated(&argv);
+            }
+        }
+    }
+
     /// Row `cmd` of `file_menu` picked for `path`, whose `facts` built the menu.
     pub(crate) fn file_command(
         &mut self,
@@ -98,10 +110,7 @@ impl State {
         use DesktopCommand as Dc;
         let source = || vec![DragSource::file(path.clone())];
         match cmd {
-            Dc::Open | Dc::Explore => {
-                let argv = self.found_open_argv(&path, facts);
-                self.spawn_argv_activated(&argv);
-            }
+            Dc::Open | Dc::Explore => self.open_found(&path, facts),
             Dc::AllowLaunching => {
                 if facts.allow_launching {
                     self.allow_launching(&[path]);

@@ -42,6 +42,8 @@ pub fn facts(info: &FileInfo, is_12h: bool) -> Facts {
         modified: format_time(info.modified, is_12h),
         accessed: format_time(info.accessed, is_12h),
         read_only: info.read_only,
+        executable: info.executable,
+        can_set_executable: info.can_set_executable,
         hidden: info.hidden,
     }
 }
@@ -193,6 +195,14 @@ impl Props {
         }
     }
 
+    pub fn executable(&self) -> Option<bool> {
+        if self.set.is_some() {
+            return None;
+        }
+        let now = filesheet::executable(self.general());
+        (now != self.info.executable).then_some(now)
+    }
+
     fn set_moves(&self) -> (Option<bool>, Option<bool>) {
         match &self.set {
             Some(set) => filesheet::set_moves(
@@ -259,6 +269,7 @@ impl Props {
             read_only: self.read_only(),
             backup,
             index,
+            executable: self.executable(),
         }
     }
 

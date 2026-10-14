@@ -26,6 +26,10 @@ pub struct FileInfo {
     pub modified: i64,
     pub accessed: i64,
     pub read_only: bool,
+    /// A file's owner execute bit; false for a folder.
+    pub executable: bool,
+    /// Whether the Executable box can change it ([`can_set_executable`]).
+    pub can_set_executable: bool,
     pub hidden: bool,
     pub listed: bool,
     /// A symlink or a launcher: the second tab is Compatibility, not Summary.
@@ -265,6 +269,10 @@ pub fn glance_in(
         modified: secs(own.modified()).unwrap_or(0),
         accessed: secs(own.accessed()).unwrap_or(0),
         read_only: meta.mode() & 0o200 == 0,
+        executable: !is_dir && meta.mode() & 0o100 != 0,
+        can_set_executable: !is_dir
+            && !is_shortcut
+            && can_set_executable(meta.uid(), Mount::of(path)),
         hidden: crate::hidden::is_hidden(path),
         listed: crate::hidden::is_listed(path),
         is_shortcut,
@@ -293,6 +301,85 @@ pub fn set_read_only(path: &Path, on: bool) -> std::io::Result<()> {
 
 fn read_only_mode(mode: u32, on: bool) -> u32 {
     if on { mode & !0o222 } else { mode | 0o200 }
+}
+
+/// Write the Executable attribute: setting gives the owner execute, and group and other execute
+/// where they can read; clearing takes every execute bit. A file system that keeps no execute
+/// bit can report success and change nothing, so the mode is read back.
+pub fn set_executable(path: &Path, on: bool) -> std::io::Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    let mode = std::fs::metadata(path)?.permissions().mode();
+    let new = executable_mode(mode, on);
+    if new == mode {
+        return Ok(());
+    }
+    std::fs::set_permissions(path, PermissionsExt::from_mode(new))?;
+    let now = std::fs::metadata(path)?.permissions().mode();
+    if now & 0o111 != new & 0o111 {
+        return Err(std::io::Error::other(
+            "This file system cannot mark files as executable.",
+        ));
+    }
+    Ok(())
+}
+
+fn executable_mode(mode: u32, on: bool) -> u32 {
+    if on {
+        mode | 0o100 | ((mode & 0o044) >> 2)
+    } else {
+        mode & !0o111
+    }
+}
+
+/// What a file's mount allows of its execute bit, from `statfs`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Mount {
+    pub read_only: bool,
+    pub noexec: bool,
+    /// FAT, exFAT or NTFS: modes are fixed by the mount options.
+    pub fixed_modes: bool,
+}
+
+impl Mount {
+    /// `path`'s mount, or the default (everything allowed) where it cannot be read; a write then
+    /// reports what went wrong.
+    pub fn of(path: &Path) -> Mount {
+        use std::os::unix::ffi::OsStrExt;
+        let Ok(c) = std::ffi::CString::new(path.as_os_str().as_bytes()) else {
+            return Mount::default();
+        };
+        let mut vfs = std::mem::MaybeUninit::<libc::statvfs>::uninit();
+        let mut fs = std::mem::MaybeUninit::<libc::statfs>::uninit();
+        // SAFETY: `c` is NUL-terminated and each out-param points at room for its struct.
+        let read = unsafe {
+            libc::statvfs(c.as_ptr(), vfs.as_mut_ptr()) == 0
+                && libc::statfs(c.as_ptr(), fs.as_mut_ptr()) == 0
+        };
+        if !read {
+            return Mount::default();
+        }
+        // SAFETY: both calls returned 0, so they filled their structs.
+        let (vfs, fs) = unsafe { (vfs.assume_init(), fs.assume_init()) };
+        const FIXED_MODES: [libc::__fsword_t; 4] = [
+            0x4d44,      // FAT
+            0x2011_bab0, // exFAT
+            0x7366_746e, // NTFS (ntfs3)
+            0x5346_544e, // NTFS (ntfs)
+        ];
+        Mount {
+            read_only: vfs.f_flag & libc::ST_RDONLY != 0,
+            noexec: vfs.f_flag & libc::ST_NOEXEC != 0,
+            fixed_modes: FIXED_MODES.contains(&fs.f_type),
+        }
+    }
+}
+
+/// Whether the Executable box takes a click on a file owned by `owner` (a uid) on `mount`: the user
+/// owns it (or is root), and the mount is writable, runs programs and keeps modes.
+pub fn can_set_executable(owner: u32, mount: Mount) -> bool {
+    // SAFETY: geteuid has no preconditions.
+    let me = unsafe { libc::geteuid() };
+    (owner == me || me == 0) && !mount.read_only && !mount.noexec && !mount.fixed_modes
 }
 
 /// `set_read_only` down a whole tree. The walk goes by directory fd and never follows a link, so an entry swapped for a symlink mid-walk is skipped; `path` itself is followed.
@@ -530,6 +617,8 @@ pub fn attr_verbs(read_only: Option<bool>, hidden: Option<bool>) -> String {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct AttrMoves {
     pub read_only: Option<bool>,
+    /// A single file's Executable box; a folder's and a set's never move.
+    pub executable: Option<bool>,
     pub backup: Option<bool>,
     pub index: Option<bool>,
 }
@@ -569,6 +658,9 @@ pub fn write_attrs(path: &Path, moves: &AttrMoves, tree: bool) -> std::io::Resul
         } else {
             set_read_only(path, on)
         });
+    }
+    if let Some(on) = moves.executable {
+        note(set_executable(path, on));
     }
     let robots = [
         (crate::meta::BACKUP, moves.backup),
@@ -1639,6 +1731,7 @@ mod tests {
             read_only: Some(true),
             backup: None,
             index: Some(false),
+            ..Default::default()
         };
         assert_eq!(moves.verbs(Some(true)), "set read-only, hide, unset index");
         assert!(AttrMoves::default().is_empty());
@@ -1714,6 +1807,72 @@ mod tests {
         assert_eq!(mode(), 0o644, "only the owner's write bit comes back");
         assert!(!inspect(&f, "a", &[]).unwrap().read_only);
         std::fs::remove_dir_all(&base).unwrap();
+    }
+
+    #[test]
+    fn executable_sets_execute_where_a_class_can_read_and_clears_all() {
+        use std::os::unix::fs::PermissionsExt;
+        let base = std::env::temp_dir().join(format!("reprise-exec-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(&base).unwrap();
+        let f = base.join("hi.sh");
+        std::fs::write(&f, "#!/bin/sh\n").unwrap();
+        let mode = || std::fs::metadata(&f).unwrap().permissions().mode() & 0o777;
+        for (from, want) in [
+            (0o644, 0o755),
+            (0o640, 0o750),
+            (0o600, 0o700),
+            (0o604, 0o705),
+        ] {
+            std::fs::set_permissions(&f, PermissionsExt::from_mode(from)).unwrap();
+            let info = inspect(&f, "hi", &[]).unwrap();
+            assert!(!info.executable && info.can_set_executable, "{from:o}");
+            set_executable(&f, true).unwrap();
+            assert_eq!(mode(), want, "{from:o} made executable");
+            assert!(inspect(&f, "hi", &[]).unwrap().executable);
+            set_executable(&f, false).unwrap();
+            assert_eq!(mode(), from, "{want:o} made not executable");
+        }
+        let moves = AttrMoves {
+            executable: Some(true),
+            ..Default::default()
+        };
+        write_item(&f, &moves, None, false).unwrap();
+        assert_eq!(mode(), 0o705, "write_item writes the Executable move");
+        let folder = inspect(&base, "base", &[]).unwrap();
+        assert!(!folder.executable && !folder.can_set_executable, "a folder");
+        std::fs::remove_dir_all(&base).unwrap();
+    }
+
+    #[test]
+    fn the_executable_box_greys_off_the_users_files_and_on_mounts_that_cannot_take_it() {
+        // SAFETY: geteuid has no preconditions.
+        let me = unsafe { libc::geteuid() };
+        let mine = Mount::default();
+        assert!(can_set_executable(me, mine));
+        if me != 0 {
+            assert!(!can_set_executable(me + 1, mine), "another user's file");
+        }
+        for mount in [
+            Mount {
+                read_only: true,
+                ..mine
+            },
+            Mount {
+                noexec: true,
+                ..mine
+            },
+            Mount {
+                fixed_modes: true,
+                ..mine
+            },
+        ] {
+            assert!(!can_set_executable(me, mount), "{mount:?}");
+        }
+        assert!(
+            !Mount::of(&std::env::temp_dir()).fixed_modes,
+            "the temp folder keeps modes"
+        );
     }
 
     #[test]

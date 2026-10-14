@@ -10,11 +10,13 @@ const RO_TRUE: reprisefs::props::AttrMoves = reprisefs::props::AttrMoves {
     read_only: Some(true),
     backup: None,
     index: None,
+    executable: None,
 };
 const RO_FALSE: reprisefs::props::AttrMoves = reprisefs::props::AttrMoves {
     read_only: Some(false),
     backup: None,
     index: None,
+    executable: None,
 };
 use reprisekit::controls::form::Item;
 use reprisekit::raster::Canvas;
@@ -51,6 +53,8 @@ fn info(is_dir: bool) -> FileInfo {
         modified: 1_757_000_000,
         accessed: 1_757_000_000,
         read_only: false,
+        executable: false,
+        can_set_executable: !is_dir,
         hidden: false,
         listed: false,
         is_shortcut: false,
@@ -627,6 +631,29 @@ fn apply_follows_the_name_and_the_read_only_box() {
     assert!(p.dirty());
     assert_eq!(p.read_only(), Some(true));
     assert_eq!(p.title(), "New Text Document Properties");
+}
+
+/// The Executable box writes the execute bit when it moves off the file's; a folder's is greyed.
+#[test]
+fn executable_writes_only_when_it_moves() {
+    use reprisekit::controls::filesheet::EXECUTABLE;
+    let mut p = props(info(false));
+    assert_eq!(p.executable(), None);
+    p.sheet.open_mut().set_check(EXECUTABLE, true);
+    assert_eq!(p.executable(), Some(true));
+    assert_eq!(p.attrs().executable, Some(true));
+    assert!(p.dirty());
+    p.sheet.open_mut().set_check(EXECUTABLE, false);
+    assert!(!p.dirty());
+    let folder = props(info(true));
+    assert!(matches!(
+        folder.general().item(EXECUTABLE).map(|i| &i.control),
+        Some(Control::Check {
+            enabled: false,
+            checked: false,
+            ..
+        })
+    ));
 }
 
 /// Ticking Hidden asks for the dotted name; a folder's Read-only writes nothing until it leaves the indeterminate state.
