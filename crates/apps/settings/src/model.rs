@@ -108,8 +108,8 @@ pub const ACTIONS: [&str; 60] = [
     "wifi",
 ];
 
-/// The compositor's default binds, the list a file without `[[keybinds]]`
-/// runs with (`repriseconf::keybind::DEFAULTS`).
+/// The compositor's default binds (`repriseconf::keybind::DEFAULTS`), which
+/// a file's `[[keybinds]]` layer over.
 fn default_shortcuts() -> Vec<Shortcut> {
     (repriseconf::keybind::DEFAULTS.iter())
         .map(|(k, a)| Shortcut::new(k, a, ""))
@@ -414,9 +414,8 @@ pub struct Settings {
     /// `pointer` or `pointer+focus`.
     pub magnifier_follow: String,
 
-    /// The whole `[[keybinds]]` list: the file's, or the compositor's
-    /// defaults when it has none. A file list replaces the defaults
-    /// outright, so this is always the complete set.
+    /// Every bind the compositor runs with: the file's `[[keybinds]]`
+    /// layered over the defaults. Saved as the entries that differ from them.
     pub shortcuts: Vec<Shortcut>,
     /// `[[global_shortcuts]]` and `[portal] shortcuts_denied`: written by
     /// reprise-portal; the sheet edits keys and forgets programs.
@@ -1234,7 +1233,11 @@ pub fn load(text: &str) -> Settings {
         }
     }
     if let Some(list) = get(&doc, &KEYBINDS).and_then(read_shortcuts) {
-        s.shortcuts = list;
+        s.shortcuts = repriseconf::keybind::layered(
+            list,
+            |b| (&b.keys, &b.action),
+            |k, a| Shortcut::new(k, a, ""),
+        );
     }
     if let Some(list) = get(&doc, &GLOBALS).and_then(Item::as_array_of_tables) {
         s.programs = read_programs(list);
@@ -1285,6 +1288,25 @@ fn read_shortcuts(item: &Item) -> Option<Vec<Shortcut>> {
             })
             .collect(),
     )
+}
+
+/// The `[[keybinds]]` entries that layer over the defaults into `binds`:
+/// each default chord `binds` holds otherwise (or "none" when it holds
+/// nothing there), then the binds on no default chord.
+fn keybind_entries(binds: &[Shortcut]) -> Vec<Shortcut> {
+    use repriseconf::keybind::{DEFAULTS, NONE, same};
+    let mut out = Vec::new();
+    for &(keys, action) in DEFAULTS {
+        let mine: Vec<&Shortcut> = binds.iter().filter(|b| same(&b.keys, keys)).collect();
+        match mine[..] {
+            [] => out.push(Shortcut::new(keys, NONE, "")),
+            [b] if *b == Shortcut::new(keys, action, "") => {}
+            _ => out.extend(mine.into_iter().cloned()),
+        }
+    }
+    let on_a_default = |b: &Shortcut| DEFAULTS.iter().any(|(k, _)| same(&b.keys, k));
+    out.extend(binds.iter().filter(|b| !on_a_default(b)).cloned());
+    out
 }
 
 fn shortcut_tables(list: &[Shortcut]) -> ArrayOfTables {
@@ -1430,13 +1452,14 @@ pub fn save(text: &str, want: &Settings, base: &Settings) -> Result<String, Stri
     for table in shrunk {
         remove_if_empty(&mut doc, table);
     }
-    // The list is written whole or not at all: the compositor reads it the
-    // same way, and a table's comments do not survive a rewrite anyway.
+    // The list is written whole or not at all: a table's comments do not
+    // survive a rewrite anyway.
     if want.shortcuts != base.shortcuts && want.shortcuts != have.shortcuts {
-        if want.shortcuts == def.shortcuts {
+        let entries = keybind_entries(&want.shortcuts);
+        if entries.is_empty() {
             remove(&mut doc, &KEYBINDS);
         } else {
-            doc[KEYBINDS.name] = Item::ArrayOfTables(shortcut_tables(&want.shortcuts));
+            doc[KEYBINDS.name] = Item::ArrayOfTables(shortcut_tables(&entries));
         }
     }
     // Merged per entry: the portal writes these too.
@@ -2375,34 +2398,62 @@ size_px = 12
     }
 
     #[test]
-    fn a_keybinds_table_in_the_file_replaces_the_whole_list() {
-        let text = "[[keybinds]]\nkeys = \"Super+t\"\naction = \"spawn\"\ncommand = \"foot\"\n";
+    fn a_keybinds_table_in_the_file_layers_over_the_defaults() {
+        let text = "[[keybinds]]\nkeys = \"Super+t\"\naction = \"spawn\"\ncommand = \"foot\"\n\n\
+                    [[keybinds]]\nkeys = \"Super+q\"\naction = \"none\"\n\n\
+                    [[keybinds]]\nkeys = \"Super+F9\"\naction = \"lock\"\n";
         let s = load(text);
-        assert_eq!(s.shortcuts, vec![Shortcut::new("Super+t", "spawn", "foot")]);
+        let mut want = default_shortcuts();
+        let t = want.iter().position(|b| b.keys == "Super+t").unwrap();
+        want[t] = Shortcut::new("Super+t", "spawn", "foot");
+        want.retain(|b| b.keys != "Super+q");
+        want.push(Shortcut::new("Super+F9", "lock", ""));
+        assert_eq!(s.shortcuts, want);
     }
 
     #[test]
-    fn shortcuts_save_as_keybinds_tables_and_go_when_back_to_default() {
+    fn shortcuts_save_what_differs_from_the_defaults_and_go_when_back_to_default() {
         let mut s = load(SAMPLE);
-        s.shortcuts.push(Shortcut::new("Super+t", "spawn", "foot"));
+        s.shortcuts.push(Shortcut::new("Super+F9", "spawn", "foot"));
         let out = saved(SAMPLE, &s);
         assert!(
             out.starts_with(SAMPLE),
             "the rest of the file is untouched: {out}"
         );
-        assert!(out.contains("[[keybinds]]\nkeys = \"Super+Return\"\naction = \"terminal\"\n"));
-        assert!(out.contains(
-            "[[keybinds]]\nkeys = \"Super+t\"\naction = \"spawn\"\ncommand = \"foot\"\n"
-        ));
-        assert!(
-            !out.contains("command = \"\""),
-            "no empty command key: {out}"
+        assert_eq!(
+            out[SAMPLE.len()..].trim(),
+            "[[keybinds]]\nkeys = \"Super+F9\"\naction = \"spawn\"\ncommand = \"foot\"",
+            "no default is copied into the file"
         );
         assert_eq!(load(&out), s);
 
-        s.shortcuts.pop();
-        let out = saved(&out, &s);
+        let mut removed = s.clone();
+        removed.shortcuts.retain(|b| b.keys != "Super+q");
+        removed.shortcuts[2] = Shortcut::new("Alt+Tab", "flip", "");
+        let out = save(&out, &removed, &s).unwrap();
+        assert!(
+            out.contains("[[keybinds]]\nkeys = \"Super+q\"\naction = \"none\"\n"),
+            "a removed default is written as none: {out}"
+        );
+        assert!(out.contains("[[keybinds]]\nkeys = \"Alt+Tab\"\naction = \"flip\"\n"));
+        assert_eq!(load(&out), removed);
+
+        let out = save(&out, &load(SAMPLE), &removed).unwrap();
         assert!(!out.contains("keybinds"), "{out}");
+    }
+
+    #[test]
+    fn a_files_none_survives_a_rewrite_of_its_keybinds() {
+        let text = "[[keybinds]]\nkeys = \"Super+l\"\naction = \"none\"\n";
+        let base = load(text);
+        let mut want = base.clone();
+        want.shortcuts.push(Shortcut::new("Super+F9", "lock", ""));
+        let out = save(text, &want, &base).unwrap();
+        assert!(
+            out.contains("[[keybinds]]\nkeys = \"Super+l\"\naction = \"none\"\n"),
+            "{out}"
+        );
+        assert_eq!(load(&out), want);
     }
 
     #[test]
