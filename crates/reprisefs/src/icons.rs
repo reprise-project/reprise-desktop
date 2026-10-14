@@ -66,14 +66,28 @@ pub fn item_icon(
     specials: &[(PathBuf, &'static str)],
     has: &dyn Fn(&str) -> bool,
 ) -> String {
+    let own = (it.is_dir && it.shortcut.is_none())
+        .then(|| crate::meta::folder_icon(&it.path))
+        .flatten();
+    item_icon_with(it, own.as_deref(), specials, has)
+}
+
+/// [`item_icon`] with the folder's own icon (`meta::folder_icon`) read beforehand, so a host that
+/// must not touch the file system can read it with the listing.
+pub fn item_icon_with(
+    it: &Item,
+    own: Option<&str>,
+    specials: &[(PathBuf, &'static str)],
+    has: &dyn Fn(&str) -> bool,
+) -> String {
     if let Some(sc) = &it.shortcut {
         return sc.icon().to_string();
     }
     if it.is_dir {
-        if let Some(own) = crate::meta::folder_icon(&it.path)
-            && can_wear(&own, has)
+        if let Some(own) = own
+            && can_wear(own, has)
         {
-            return own;
+            return own.to_string();
         }
         for (dir, icon) in specials {
             if *dir == it.path {

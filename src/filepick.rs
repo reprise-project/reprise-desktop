@@ -63,12 +63,14 @@ impl Purpose {
 
 /// The dialog's own icons, fetched by the host: the places tiles at 32 px in
 /// `reprisefs::places::dialog_places`' order, the toolbar's buttons at 16 in `TOOLBAR`'s, and the
-/// Look in folder. The listing's come from the cache handed to [`FilePicker::reply`].
+/// Look in folder. The listing's come from the cache handed to [`FilePicker::reply`]; `scale` is
+/// that cache's scale, at which a listing's icon files are decoded.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Icons {
     pub places: Vec<Option<Canvas>>,
     pub toolbar: Vec<Option<Canvas>>,
     pub folder: Option<Canvas>,
+    pub scale: i32,
 }
 
 pub fn icons(cache: &mut IconCache) -> Icons {
@@ -79,8 +81,12 @@ pub fn icons(cache: &mut IconCache) -> Icons {
             .collect(),
         toolbar: TOOLBAR.iter().map(|i| cache.get(i, 16)).collect(),
         folder: cache.get("folder", 16),
+        scale: cache.scale(),
     }
 }
+
+/// The listing's icon sizes: List and Details, Icons and Thumbnails, Tiles.
+const LISTING_PX: [i32; 3] = [16, 32, 48];
 
 /// The Browse dialog: the dialog, its folder table and icons.
 #[derive(Clone, Debug, PartialEq)]
@@ -139,6 +145,8 @@ pub struct Request {
     /// The lookup is a typed pattern's folder part: a folder is entered
     /// and the dialog takes `pattern`; anything else is no pick.
     folder_only: bool,
+    /// The icon cache's scale, at which icon files the listing names are decoded.
+    scale: i32,
 }
 
 impl Request {
@@ -164,14 +172,27 @@ impl Request {
                 _ => Found::Missing,
             }
         };
+        let art = match &found {
+            Found::Folder(rows) => icon_files(rows, self.scale),
+            _ => Vec::new(),
+        };
         Reply {
             seq: self.seq,
             id: self.id,
             path: self.path,
             pattern: self.folder_only.then_some(self.pattern).flatten(),
             found,
+            art,
         }
     }
+}
+
+/// A listed row and, for a folder, its own icon (`.directory`'s `Icon=`), read on the job's
+/// thread: a subfolder may be a mount point that never answers.
+#[derive(Debug)]
+struct Listed {
+    row: Row,
+    own_icon: Option<String>,
 }
 
 /// What a [`Request`] found, for [`FilePicker::reply`].
@@ -184,13 +205,16 @@ pub struct Reply {
     /// dialog takes once that is a folder.
     pattern: Option<String>,
     found: Found,
+    /// Icon files the listing's rows wear (a folder's or a launcher's `Icon=/...`), decoded at
+    /// [`LISTING_PX`] on the job's thread: the file may be anywhere, a dead mount included.
+    art: Vec<(String, [Option<Canvas>; 3])>,
 }
 
 #[derive(Debug)]
 enum Found {
     /// `listing::Row` rather than `Entry`, which holds `Rc` icons and so
     /// cannot come back from the thread that read the folder.
-    Folder(Vec<Row>),
+    Folder(Vec<Listed>),
     File,
     Missing,
 }
@@ -261,6 +285,7 @@ impl FilePicker {
             exts: self.purpose.exts(self.filter),
             pattern: typed.or(self.dlg.wildcard()).map(str::to_string),
             folder_only: typed.is_some(),
+            scale: self.icons.scale,
         };
         if let Some(same) = self.pending.iter().find(|p| p.same_work(&req)) {
             return same.seq;
@@ -288,6 +313,11 @@ impl FilePicker {
             }
             self.opening = None;
         }
+        for (file, art) in r.art {
+            for (px, canvas) in LISTING_PX.into_iter().zip(art) {
+                cache.put_file(&file, px, canvas);
+            }
+        }
         match r.found {
             Found::Folder(rows) => {
                 // A typed folder is newer than any listing still pending.
@@ -295,7 +325,7 @@ impl FilePicker {
                 let id = r.id.unwrap_or_else(|| self.folders.id(&r.path));
                 self.recent = if reprisefs::places::is_recent(&r.path) {
                     rows.iter()
-                        .map(|r| (r.item.name.clone(), r.item.path.clone()))
+                        .map(|l| (l.row.item.name.clone(), l.row.item.path.clone()))
                         .collect()
                 } else {
                     Default::default()
@@ -384,13 +414,17 @@ impl FilePicker {
     /// `rows` as the dialog's entries, with Explorer's icons and Tiles lines, except that a
     /// program wears the executable's icon; a `folders` handle on every subfolder so entering
     /// one resolves, and [`Pictures`]' id on every picture. Returns the pictures' paths too.
-    fn entries(&mut self, rows: Vec<Row>, cache: &mut IconCache) -> (Vec<Entry>, Vec<PathBuf>) {
+    fn entries(&mut self, rows: Vec<Listed>, cache: &mut IconCache) -> (Vec<Entry>, Vec<PathBuf>) {
         let specials = reprisefs::places::special_folders();
         let names: Vec<String> = rows
             .iter()
-            .map(|r| match &r.item {
+            .map(|l| match &l.row.item {
                 it if it.exec && !it.is_dir => "application-x-executable".to_string(),
-                it => reprisefs::icons::item_icon(it, &specials, &|n| cache.has(n)),
+                it => {
+                    reprisefs::icons::item_icon_with(it, l.own_icon.as_deref(), &specials, &|n| {
+                        cache.has(n)
+                    })
+                }
             })
             .collect();
         let mut shared = ListingIcons::default();
@@ -398,7 +432,7 @@ impl FilePicker {
         let entries = rows
             .into_iter()
             .zip(names)
-            .map(|(r, name)| {
+            .map(|(Listed { row: r, .. }, name)| {
                 let it = r.item;
                 let [icon, icon32, icon48] = shared.get(cache, &name);
                 let id = if it.is_dir {
@@ -617,8 +651,8 @@ static GLOBS: std::sync::LazyLock<reprisefs::apps::MimeDb> =
 /// else those with an extension in `exts`, the executable ones for an
 /// empty `exts`, all of them for `None`, as `listing::dialog_rows` orders
 /// them.
-fn read_folder(dir: &Path, exts: Option<&[&str]>, pattern: Option<&str>) -> Vec<Row> {
-    reprisefs::listing::dialog_rows(dir, &GLOBS, |i| {
+fn read_folder(dir: &Path, exts: Option<&[&str]>, pattern: Option<&str>) -> Vec<Listed> {
+    let rows = reprisefs::listing::dialog_rows(dir, &GLOBS, |i| {
         i.is_dir
             || match (pattern, exts) {
                 (Some(p), _) => filedlg::pattern_keeps(p, &i.name),
@@ -626,7 +660,38 @@ fn read_folder(dir: &Path, exts: Option<&[&str]>, pattern: Option<&str>) -> Vec<
                 (None, Some([])) => i.exec,
                 (None, Some(exts)) => has_ext(&i.path, exts),
             }
-    })
+    });
+    rows.into_iter()
+        .map(|row| {
+            let it = &row.item;
+            let own_icon = (it.is_dir && it.shortcut.is_none())
+                .then(|| reprisefs::meta::folder_icon(&it.path))
+                .flatten();
+            Listed { row, own_icon }
+        })
+        .collect()
+}
+
+/// The icon files `rows` wear, each decoded once at every listing size.
+fn icon_files(rows: &[Listed], scale: i32) -> Vec<(String, [Option<Canvas>; 3])> {
+    let mut files: Vec<&str> = rows
+        .iter()
+        .filter_map(|l| match &l.row.item.shortcut {
+            Some(sc) => Some(sc.icon()),
+            None => l.own_icon.as_deref(),
+        })
+        .filter(|name| name.starts_with('/'))
+        .collect();
+    files.sort_unstable();
+    files.dedup();
+    files
+        .into_iter()
+        .map(|f| {
+            let art =
+                LISTING_PX.map(|px| reprisekit::icontheme::decode_file(Path::new(f), px, scale));
+            (f.to_string(), art)
+        })
+        .collect()
 }
 
 fn has_ext(p: &Path, exts: &[&str]) -> bool {
@@ -803,6 +868,7 @@ mod tests {
                 path: PathBuf::from(reprisefs::places::RECENT),
                 pattern: None,
                 found: Found::Folder(read_folder(&dir, Some(&[]), None)),
+                art: Vec::new(),
             },
             &mut cache(),
         );
@@ -900,6 +966,46 @@ mod tests {
         assert_eq!(names(&p), ["Pictures", "dunes"]);
         p.event(Event::NeedListing(here));
         assert_eq!(p.take_requests().len(), 1, "an answered read is read again");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A subfolder's own icon, and an icon file it names, are read with the listing on the
+    /// job's thread: the reply wears them even when the folders and the file are gone by the
+    /// time the listing lands, so the loop never opens them (a dead mount would hang it).
+    #[test]
+    fn a_folders_own_icon_comes_with_the_listing() {
+        let dir = sandbox("own-icon");
+        let (folder, music, cover) = (0xff20_40c0, 0xffc0_4020, 0xff20_a040);
+        let mut icons = flat_icons(
+            &dir.join(".icons"),
+            &[("folder", folder), ("folder-music", music)],
+        );
+        let art = dir.join("Art");
+        let pic = dir.join("cover.png");
+        image::RgbaImage::from_pixel(48, 48, image::Rgba([0x20, 0xa0, 0x40, 0xff]))
+            .save(&pic)
+            .unwrap();
+        std::fs::create_dir(&art).unwrap();
+        reprisefs::meta::set_folder_icon(&dir.join("Pictures"), Some("folder-music")).unwrap();
+        reprisefs::meta::set_folder_icon(&art, pic.to_str()).unwrap();
+        let mut p = FilePicker::run_command(&dir, Icons::default(), true);
+        let replies: Vec<Reply> = p.take_requests().into_iter().map(Request::run).collect();
+        std::fs::remove_dir_all(dir.join("Pictures")).unwrap();
+        std::fs::remove_dir_all(&art).unwrap();
+        std::fs::remove_file(&pic).unwrap();
+        for r in replies {
+            p.reply(r, &mut icons);
+        }
+        let worn = |name: &str| {
+            let e = p.dlg.entries().iter().find(|e| e.name == name).unwrap();
+            [&e.icon, &e.icon32, &e.icon48].map(|c| c.as_ref().map(|c| c.get(8, 8)))
+        };
+        assert_eq!(
+            worn("Pictures"),
+            [Some(music); 3],
+            "Pictures wears folder-music"
+        );
+        assert_eq!(worn("Art"), [Some(cover); 3], "Art wears its picture");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

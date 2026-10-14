@@ -692,6 +692,13 @@ pub fn decode(path: &Path, px: u32) -> Option<Canvas> {
     }
 }
 
+/// Icon file `path`'s image as [`IconCache::get`] loads it for `px` at `scale`, for a host that
+/// reads user files off its event loop and hands the result to [`IconCache::put_file`].
+pub fn decode_file(path: &Path, px: i32, scale: i32) -> Option<Canvas> {
+    let dpx = u32::try_from(px.checked_mul(scale.max(1))?).ok()?;
+    decode(path, dpx).map(|c| c.at_scale(scale))
+}
+
 const MAX_ICON_BYTES: u64 = 8 << 20;
 
 /// Read an icon file without stalling on a peer-chosen path: non-blocking open (FIFO), regular
@@ -805,6 +812,14 @@ impl IconCache {
     /// `get` without the copy.
     pub fn get_shared(&mut self, name: &str, px: i32) -> Option<Arc<Canvas>> {
         self.shared(name, px, &[])
+    }
+
+    /// Takes icon file `path`'s image at `px`, made by [`decode_file`] at this cache's scale, so
+    /// `get(path, px)` answers without reading the file.
+    pub fn put_file(&mut self, path: &str, px: i32, canvas: Option<Canvas>) {
+        if path.starts_with('/') && px > 0 {
+            self.insert((cache_key(path, &[]), px, self.scale), canvas.map(Arc::new));
+        }
     }
 
     pub fn theme_name(&self) -> String {
@@ -1414,6 +1429,27 @@ mod tests {
         );
         fs::remove_file(&p).unwrap();
         fs::remove_file(&png).unwrap();
+    }
+
+    /// An icon file decoded elsewhere answers `get` without the file being read again.
+    #[test]
+    fn a_file_put_in_answers_without_reading_the_file() {
+        let root = fixture("put", "test", INDEX, &[]);
+        let pic = root.join("cover.png");
+        write_png(&pic, 1, 1, &[255, 0, 0, 255]);
+        let mut cache = IconCache::new(IconTheme::load("test", std::slice::from_ref(&root)));
+        let name = pic.to_str().unwrap();
+        let decoded = decode_file(&pic, 16, cache.scale());
+        assert!(decoded.is_some());
+        cache.put_file(name, 16, decoded.clone());
+        fs::remove_file(&pic).unwrap();
+        assert_eq!(cache.get(name, 16), decoded);
+        assert_eq!(
+            cache.get(name, 32),
+            None,
+            "a size not put in reads the file"
+        );
+        fs::remove_dir_all(&root).unwrap();
     }
 
     #[test]
