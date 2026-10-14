@@ -112,28 +112,45 @@ pub struct Loaded {
 }
 
 /// Decode `path` (JPEG, PNG or BMP) to a premultiplied canvas reduced to `cut`
-/// (see `reduce`), or None with a log line. Only the decoder's buffer is held at full size.
+/// (see `reduce`), or None with a log line. Under a Stretch cut a JPEG decodes at the smallest
+/// DCT scale covering it; Center and Tile show pixels 1:1, so they decode at full size.
 pub fn load(path: &Path, cut: Option<Cut>) -> Option<Loaded> {
     if let Some(b) = builtin(path) {
         return Some(draw_builtin(b, cut));
     }
-    let d = decoded(path)?;
-    Some(reduce(d.w, d.h, |x, y| d.px(x, y), cut))
+    let d = decoded_for(path, cut)?;
+    let mut loaded = reduce(d.w, d.h, |x, y| d.px(x, y), cut);
+    if (d.w, d.h) != d.full {
+        loaded.cut = cut;
+    }
+    Some(loaded)
+}
+
+fn decoded_for(path: &Path, cut: Option<Cut>) -> Option<Decoded> {
+    match cut {
+        Some(c) if c.position == Position::Stretch => {
+            jpeg_scaled(path, |_, _| (c.w, c.h)).or_else(|| decoded(path))
+        }
+        _ => decoded(path),
+    }
 }
 
 /// `path` fitted whole into `w` x `h` and centred on black (`saver::fit`). A JPEG decodes at the
 /// smallest DCT scale that still covers the fit, so a large photo never exists at full size.
 pub fn load_fit(path: &Path, w: u32, h: u32) -> Option<Canvas> {
-    let d = jpeg_scaled(path, w, h).or_else(|| decoded(path))?;
+    let fit = |sw, sh| reprisekit::saver::fit_size(sw, sh, w, h);
+    let d = jpeg_scaled(path, fit).or_else(|| decoded(path))?;
     Some(reprisekit::saver::fit_from(d.w, d.h, w, h, |fw, fh| {
         Canvas::resample_box_from(d.w, d.h, fw, fh, |x, y| d.px(x, y))
     }))
 }
 
-/// A decoded picture: `n` bytes a pixel (1 grey, 3 RGB, 4 RGBA), rows packed.
+/// A decoded picture: `n` bytes a pixel (1 grey, 3 RGB, 4 RGBA), rows packed. `full` is the
+/// file's own size, larger than `w` x `h` when decoded at a reduced scale.
 struct Decoded {
     w: u32,
     h: u32,
+    full: (u32, u32),
     n: usize,
     bytes: Vec<u8>,
 }
@@ -172,12 +189,18 @@ fn decoded(path: &Path) -> Option<Decoded> {
         image::DynamicImage::ImageRgba8(b) => (4, b.into_raw()),
         other => (4, other.to_rgba8().into_raw()),
     };
-    Some(Decoded { w, h, n, bytes })
+    Some(Decoded {
+        w,
+        h,
+        full: (w, h),
+        n,
+        bytes,
+    })
 }
 
-/// A grey or RGB JPEG decoded at the smallest DCT scale (1/8 to 1) that still covers the part of
-/// `w` x `h` it fits into; None for anything else, which `decoded` then reads at full size.
-fn jpeg_scaled(path: &Path, w: u32, h: u32) -> Option<Decoded> {
+/// A grey or RGB JPEG decoded at the smallest DCT scale (1/8 to 1) whose both sides reach
+/// `cover(full width, full height)`; None for anything else, which `decoded` then reads at full size.
+fn jpeg_scaled(path: &Path, cover: impl FnOnce(u32, u32) -> (u32, u32)) -> Option<Decoded> {
     let file = std::fs::File::open(path).ok()?;
     let mut dec = jpeg_decoder::Decoder::new(std::io::BufReader::new(file));
     dec.read_info().ok()?;
@@ -191,11 +214,25 @@ fn jpeg_scaled(path: &Path, w: u32, h: u32) -> Option<Decoded> {
     if sw == 0 || sh == 0 || sw > MAX_SIDE || sh > MAX_SIDE {
         return None;
     }
-    let (fw, fh) = reprisekit::saver::fit_size(sw, sh, w, h);
-    let (dw, dh) = dec.scale(fw as u16, fh as u16).ok()?;
+    let (cw, ch) = cover(sw, sh);
+    let eighths = |len: u32, k: u32| (len * k).div_ceil(8);
+    let k = [1, 2, 4, 8]
+        .into_iter()
+        .find(|&k| eighths(sw, k) >= cw && eighths(sh, k) >= ch)
+        .unwrap_or(8);
+    // The decoder takes a scale when either side reaches the request, so ask for both sides at `k`.
+    let (dw, dh) = dec
+        .scale(eighths(sw, k) as u16, eighths(sh, k) as u16)
+        .ok()?;
     let bytes = dec.decode().ok()?;
     let (w, h) = (dw as u32, dh as u32);
-    (bytes.len() == w as usize * h as usize * n).then_some(Decoded { w, h, n, bytes })
+    (bytes.len() == w as usize * h as usize * n).then_some(Decoded {
+        w,
+        h,
+        full: (sw, sh),
+        n,
+        bytes,
+    })
 }
 
 /// Reduce a `sw` x `sh` picture (premultiplied ARGB via `px`) to `cut`: Stretch box-downscales,
@@ -433,7 +470,10 @@ mod tests {
     #[test]
     fn a_jpeg_decodes_at_the_smallest_dct_scale_covering_the_fit() {
         let path = written("scale.jpg", image::ImageFormat::Jpeg);
-        let size = |w, h| jpeg_scaled(&path, w, h).map(|d| (d.w, d.h, d.n));
+        let size = |w, h| {
+            jpeg_scaled(&path, |sw, sh| reprisekit::saver::fit_size(sw, sh, w, h))
+                .map(|d| (d.w, d.h, d.n))
+        };
         let (eighth, half, whole) = (size(8, 6), size(20, 20), size(100, 100));
         std::fs::remove_file(&path).unwrap();
         assert_eq!(eighth, Some((8, 6, 3)), "fit 8x6: 1/8");
@@ -443,6 +483,31 @@ mod tests {
             "fit 20x15: 1/4 is 16x12, short of it"
         );
         assert_eq!(whole, Some((64, 48, 3)), "fit 100x75: full size");
+    }
+
+    #[test]
+    fn a_stretched_jpeg_decodes_at_the_smallest_scale_covering_both_sides() {
+        let path = written("stretch.jpg", image::ImageFormat::Jpeg);
+        let cut = |position, w, h| Some(Cut { position, w, h });
+        let size = |c| decoded_for(&path, c).map(|d| (d.w, d.h, d.full));
+        let quarter = size(cut(Position::Stretch, 16, 12));
+        let wide = size(cut(Position::Stretch, 30, 6));
+        let centred = size(cut(Position::Center, 16, 12));
+        let loaded = load(&path, cut(Position::Stretch, 16, 12)).unwrap();
+        std::fs::remove_file(&path).unwrap();
+        assert_eq!(quarter, Some((16, 12, (64, 48))), "16x12 from 1/4");
+        assert_eq!(
+            wide,
+            Some((32, 24, (64, 48))),
+            "30 wide needs 1/2 though 6 high fits 1/8"
+        );
+        assert_eq!(centred, Some((64, 48, (64, 48))), "Center shows pixels 1:1");
+        assert_eq!((loaded.image.width, loaded.image.height), (16, 12));
+        assert_eq!(
+            loaded.cut,
+            cut(Position::Stretch, 16, 12),
+            "a scaled decode covers only its own cut"
+        );
     }
 
     #[test]
