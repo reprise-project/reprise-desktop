@@ -14,7 +14,13 @@ pub fn chrome_icon(ctx: &mut Ctx, names: &[&str], px: i32) -> Option<Canvas> {
         }
     }
     log::debug!("icon theme has none of {names:?} at {px} px: placeholder");
-    Some(reprisekit::classic::widgets::placeholder(px, px))
+    let s = ctx.icons.scale().max(1);
+    let device = (px * s) as u32;
+    Some(
+        reprisekit::classic::widgets::placeholder(px, px)
+            .resample_box(device, device)
+            .at_scale(s),
+    )
 }
 
 pub fn sheet_folder_icon(icon: &str, has: &dyn Fn(&str) -> bool) -> String {
@@ -29,6 +35,15 @@ pub fn sheet_folder_icon(icon: &str, has: &dyn Fn(&str) -> bool) -> String {
 mod tests {
     use super::*;
     use std::path::Path;
+
+    #[test]
+    fn the_placeholder_is_drawn_at_the_cache_scale() {
+        let mut ctx = crate::tests::test_ctx();
+        ctx.icons.set_scale(2);
+        let c = chrome_icon(&mut ctx, &["no-such-icon"], 24).expect("a placeholder");
+        assert_eq!((c.width, c.height, c.scale()), (24, 24, 2));
+        assert_eq!(c.device_size(), (48, 48));
+    }
 
     #[test]
     fn a_sheet_shows_the_standard_folder_for_an_icon_the_theme_lacks() {
