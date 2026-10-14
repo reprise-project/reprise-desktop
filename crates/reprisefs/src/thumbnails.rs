@@ -6,14 +6,14 @@
 //!
 //! Pictures inside the cache, and pictures that already fit the size, are not stored. Directories are 0700 and entries 0600; an entry lands by renaming a temp file beside it, so readers never see half of one.
 //!
-//! The size directories and the program's failures are held under a cap: past it, the least recently used entries go (a hit touches its file's mtime), whichever program wrote them. The size is re-measured before a trim, since other programs write there too.
+//! The size directories and the program's failures are held under a cap: past it, the least recently used entries go (a hit touches its file's mtime), whichever program wrote them. Other programs write there too, so the size is re-measured before a trim and every [`REMEASURE`] between writes.
 
 use std::fs::Metadata;
 use std::io::{Read, Write};
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt};
 use std::path::{Path, PathBuf};
-use std::time::SystemTime;
+use std::time::{Duration, Instant, SystemTime};
 
 const SIZES: [(&str, u32); 4] = [
     ("normal", 128),
@@ -41,6 +41,10 @@ fn max_entry(edge: u32) -> u64 {
 /// trimmed again on every single write.
 const TRIM_TO: (u64, u64) = (9, 10);
 
+/// How long a measured size stands, kept up to date by this process's
+/// own writes, before a write measures the directories again.
+const REMEASURE: Duration = Duration::from_secs(30);
+
 pub struct Hit {
     /// The entry's PNG. Its text has been checked; its pixels have not,
     /// so decode them with a cap of the size asked for.
@@ -62,9 +66,9 @@ pub struct Thumbnails {
     /// `Software` key and the temp file prefix.
     program: String,
     max_bytes: u64,
-    /// What the trimmed directories hold, in bytes: measured on the first
-    /// write, then kept up to date by this process's own writes.
-    used: Option<u64>,
+    /// What the trimmed directories hold, in bytes, and when that was
+    /// measured: on the first write and every [`REMEASURE`] after.
+    used: Option<(u64, Instant)>,
     seq: u64,
 }
 
@@ -186,11 +190,11 @@ impl Thumbnails {
             log::debug!("thumbnail cache: could not write {}: {e}", entry.display());
             return;
         }
-        let used = match self.used {
-            Some(u) => u.saturating_sub(old) + len,
-            None => self.measure(),
+        let (used, at) = match self.used {
+            Some((u, at)) if at.elapsed() < REMEASURE => (u.saturating_sub(old) + len, at),
+            _ => (self.measure(), Instant::now()),
         };
-        self.used = Some(used);
+        self.used = Some((used, at));
         if used > self.max_bytes {
             self.trim();
         }
@@ -271,7 +275,7 @@ impl Thumbnails {
                 used = used.saturating_sub(len);
             }
         }
-        self.used = Some(used);
+        self.used = Some((used, Instant::now()));
     }
 }
 
@@ -433,7 +437,6 @@ fn encode(thumb: &Rgba, text: &[(&str, String)]) -> Result<Vec<u8>, png::Encodin
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::time::Duration;
 
     const EDGE: u32 = 128;
     /// A picture's own size, larger than [`EDGE`] so its thumbnail is kept.
@@ -723,6 +726,35 @@ mod tests {
         assert!(cache.get(&srcs[1].0, &srcs[1].1, EDGE).is_none());
         assert!(cache.get(&srcs[2].0, &srcs[2].1, EDGE).is_some());
         assert!(cache.get(&p, &m, EDGE).is_some());
+        assert!(cache.measure() <= cache.max_bytes);
+    }
+
+    #[test]
+    fn another_programs_entries_count_toward_the_cap_once_the_size_is_stale() {
+        let (dir, src, mut cache) = setup(1 << 20);
+        let meta = std::fs::metadata(&src).unwrap();
+        put(&mut cache, &src, &meta);
+        let one = cache.measure();
+        cache.max_bytes = one * 3 + one / 2;
+        let mut theirs = Thumbnails::at(cache.root.clone(), "someone-else-2.0", 1 << 20);
+        for name in ["q0.png", "q1.png", "q2.png", "q3.png"] {
+            let p = dir.path().join(name);
+            std::fs::write(&p, b"x").unwrap();
+            put(&mut theirs, &p, &std::fs::metadata(&p).unwrap());
+        }
+        assert!(cache.measure() > cache.max_bytes);
+
+        let p = dir.path().join("mine.png");
+        std::fs::write(&p, b"x").unwrap();
+        put(&mut cache, &p, &std::fs::metadata(&p).unwrap());
+        assert!(
+            cache.measure() > cache.max_bytes,
+            "a fresh size counts only this program's writes"
+        );
+
+        let (used, at) = cache.used.unwrap();
+        cache.used = Some((used, at - REMEASURE));
+        put(&mut cache, &p, &std::fs::metadata(&p).unwrap());
         assert!(cache.measure() <= cache.max_bytes);
     }
 }
