@@ -21,7 +21,7 @@ use smithay::{
         renderer::{
             Bind, Color32F, Offscreen,
             damage::OutputDamageTracker,
-            element::{Element, Id},
+            element::{Element, Id, RenderElement, utils::CropRenderElement},
             gles::{GlesRenderer, GlesTexture},
         },
     },
@@ -49,7 +49,9 @@ pub struct GlassCtx {
     made: RefCell<Vec<Id>>,
     nodes: RefCell<Vec<Placed>>,
     own: RefCell<Vec<(Rc<Glass>, Source)>>,
-    beneath: RefCell<HashMap<(String, CustomId), Beneath>>,
+    /// Private backdrops by output and glass (a resize makes the glass a new node); the entry's
+    /// `Weak` keeps the glass's address from being reused while it lives.
+    beneath: RefCell<HashMap<(String, *const Glass), Beneath>>,
     /// The elements being made are a backdrop of its own for glass above: glass draws into it at
     /// its half resolution.
     drawing_beneath: Cell<bool>,
@@ -64,11 +66,88 @@ struct Placed {
 struct Beneath {
     backdrop: OutputBackdrop,
     glass: Weak<Glass>,
+    reuse: Reuse,
+}
+
+/// How many updates a private backdrop outlives its last use: glass dragged past other glass
+/// resumes it, its damage tracker drawing only what changed in between.
+const KEEP_IDLE: u32 = 120;
+
+/// When glass draws from its private backdrop and where that backdrop's picture blurs.
+#[derive(Debug, Default)]
+struct Reuse {
+    /// What the glass read in the last update that drew it from the backdrop, and under which look.
+    last: Option<(Vec<Rectangle<i32, Physical>>, Look)>,
+    /// Updates of the output since then.
+    idle: u32,
+}
+
+/// What a picture's blur depends on besides the backdrop: settings, quality, output size and scale.
+type Look = (Settings, Quality, Size<i32, Physical>, u64);
+
+impl Reuse {
+    /// Where this update blurs for glass reading `needed`: everywhere once it moved or resized
+    /// under the same look, so a dragged glass's backdrop blurs once, not at each new place.
+    fn blurs<'a>(
+        &self,
+        needed: &'a [Rectangle<i32, Physical>],
+        look: &Look,
+    ) -> Option<&'a [Rectangle<i32, Physical>]> {
+        match &self.last {
+            Some((last, l)) if l == look && last != needed => None,
+            _ => Some(needed),
+        }
+    }
+
+    /// The part of the backdrop to draw (texels): `feed` while the glass stays put, `whole` once
+    /// it moved. A new part needs no more: the tracker redraws each element whose cut changed.
+    fn crop(
+        &self,
+        needed: &[Rectangle<i32, Physical>],
+        feed: Rectangle<i32, Physical>,
+        whole: Rectangle<i32, Physical>,
+    ) -> Rectangle<i32, Physical> {
+        match &self.last {
+            Some((last, _)) if last != needed => whole,
+            _ => feed,
+        }
+    }
+
+    fn drawn(&mut self, needed: &[Rectangle<i32, Physical>], look: Look) {
+        self.last = Some((needed.to_vec(), look));
+        self.idle = 0;
+    }
+
+    /// Whether the glass drew from it in the last update.
+    fn in_use(&self) -> bool {
+        self.last.is_some() && self.idle == 0
+    }
+
+    /// Whether to keep it after an update that did not draw from it.
+    fn kept(&mut self) -> bool {
+        self.idle += 1;
+        self.idle <= KEEP_IDLE
+    }
+}
+
+smithay::render_elements! {
+    /// What a private backdrop draws: the scene below its glass, cut to the part its glass reads
+    /// while the glass stays put.
+    Private<=GlesRenderer>;
+    Whole=SceneElement<GlesRenderer>,
+    Cut=CropRenderElement<SceneElement<GlesRenderer>>,
+}
+
+/// `r` (output pixels) in backdrop texels, rounded out.
+fn halved(r: Rectangle<i32, Physical>) -> Rectangle<i32, Physical> {
+    let (x0, y0) = (r.loc.x.div_euclid(2), r.loc.y.div_euclid(2));
+    let x1 = (r.loc.x + r.size.w + 1).div_euclid(2);
+    let y1 = (r.loc.y + r.size.h + 1).div_euclid(2);
+    Rectangle::new((x0, y0).into(), (x1 - x0, y1 - y0).into())
 }
 
 /// A shown glass node in stacking order, with what its glass reads.
 struct Stacked {
-    node: CustomId,
     glass: Rc<Glass>,
     anchor: NodeId,
     reads: Reads,
@@ -220,7 +299,6 @@ impl GlassCtx {
                 let at = (at - area.loc).to_f64().to_physical(scale);
                 let reads = Reads::of(&n.pane, at, seen, scale, &pass);
                 Some(Stacked {
-                    node: n.node,
                     glass,
                     anchor,
                     reads,
@@ -248,7 +326,7 @@ impl GlassCtx {
             {
                 continue;
             }
-            let key = (name.clone(), n.node);
+            let key = (name.clone(), Rc::as_ptr(&glass));
             if beneath
                 .get(&key)
                 .is_none_or(|b| b.backdrop.key != OutputBackdrop::key(seen, scale))
@@ -257,30 +335,54 @@ impl GlassCtx {
                     continue;
                 };
                 let glass = Rc::downgrade(&glass);
-                beneath.insert(key.clone(), Beneath { backdrop, glass });
+                let reuse = Reuse::default();
+                beneath.insert(
+                    key.clone(),
+                    Beneath {
+                        backdrop,
+                        glass,
+                        reuse,
+                    },
+                );
             }
-            let Some(b) = beneath.get_mut(&key).map(|b| &mut b.backdrop) else {
+            let Some(b) = beneath.get_mut(&key) else {
                 continue;
             };
+            let whole = Rectangle::from_size(b.backdrop.key.0);
+            let feed = reads.feed.map_or(whole, halved);
+            let crop = b.reuse.crop(&reads.needed, feed, whole);
             let view = View::new(area, scale / 2.0);
             self.drawing_beneath.set(true);
-            let elements = scene.elements_below(renderer, anchor, &view);
+            let elements: Vec<Private> = scene
+                .elements_below(renderer, anchor, &view)
+                .into_iter()
+                .filter_map(|e| match crop == whole {
+                    true => Some(Private::Whole(e)),
+                    false => CropRenderElement::from_element(e, Scale::from(scale / 2.0), crop)
+                        .map(Private::Cut),
+                })
+                .collect();
             self.drawing_beneath.set(false);
+            let look = (pass.settings, pass.quality, seen, scale.to_bits());
+            let blurs = b.reuse.blurs(&reads.needed, &look);
             if let Some(source) =
-                self.redraw(renderer, b, &elements, clear, output, Some(&reads.needed))
+                self.redraw(renderer, &mut b.backdrop, &elements, clear, output, blurs)
             {
+                b.reuse.drawn(&reads.needed, look);
                 self.own.borrow_mut().push((glass, source));
                 used.push(key);
             }
         }
-        beneath.retain(|k, _| k.0 != name || used.contains(k));
+        beneath.retain(|k, b| {
+            k.0 != name || used.contains(k) || (b.reuse.kept() && b.glass.strong_count() > 0)
+        });
     }
 
-    fn redraw(
+    fn redraw<E: RenderElement<GlesRenderer>>(
         &self,
         renderer: &mut GlesRenderer,
         b: &mut OutputBackdrop,
-        elements: &[SceneElement<GlesRenderer>],
+        elements: &[E],
         clear: Color32F,
         output: &Output,
         needed: Option<&[Rectangle<i32, Physical>]>,
@@ -353,9 +455,11 @@ impl GlassCtx {
             *self.source.borrow_mut() = b.picture.source();
             let mut own = self.own.borrow_mut();
             for ((o, _), b) in self.beneath.borrow().iter() {
-                if let (true, Some(g), Some(s)) =
-                    (*o == name, b.glass.upgrade(), b.backdrop.picture.source())
-                {
+                if let (true, Some(g), Some(s)) = (
+                    *o == name && b.reuse.in_use(),
+                    b.glass.upgrade(),
+                    b.backdrop.picture.source(),
+                ) {
                     own.push((g, s));
                 }
             }
@@ -393,7 +497,7 @@ impl GlassCtx {
                 .beneath
                 .borrow()
                 .iter()
-                .any(|((o, _), b)| shown(o) && b.backdrop.picture.is_stale())
+                .any(|((o, _), b)| shown(o) && b.reuse.in_use() && b.backdrop.picture.is_stale())
             || self
                 .glasses
                 .borrow()
@@ -413,7 +517,7 @@ impl GlassCtx {
         }
         for ((o, _), b) in self.beneath.borrow_mut().iter_mut() {
             let shown = backdrops.get(o).is_some_and(|b| !b.hidden);
-            if shown && b.backdrop.picture.is_stale() {
+            if shown && b.reuse.in_use() && b.backdrop.picture.is_stale() {
                 b.backdrop.picture.refresh();
                 any = true;
             }
@@ -483,6 +587,9 @@ impl OutputBackdrop {
 struct Reads {
     needed: Vec<Rectangle<i32, Physical>>,
     reach: Vec<Rectangle<i32, Physical>>,
+    /// The bounds of `reach` grown by the blur's reach again: what a private backdrop draws while
+    /// its glass stays put. None for glass off the output.
+    feed: Option<Rectangle<i32, Physical>>,
 }
 
 impl Reads {
@@ -504,6 +611,7 @@ impl Reads {
         let mut out = Reads {
             needed: Vec::new(),
             reach: Vec::new(),
+            feed: None,
         };
         for shape in &pane.shapes {
             let r = to(shape.rect);
@@ -520,6 +628,18 @@ impl Reads {
                 out.reach.extend(grow(bend + blur));
             }
         }
+        out.feed = out
+            .reach
+            .iter()
+            .copied()
+            .reduce(|a, b| a.merge(b))
+            .and_then(|r| {
+                Rectangle::new(
+                    (r.loc.x - blur, r.loc.y - blur).into(),
+                    (r.size.w + 2 * blur, r.size.h + 2 * blur).into(),
+                )
+                .intersection(output)
+            });
         out
     }
 }
@@ -1117,6 +1237,41 @@ mod tests {
         assert!(has(&reads.needed, 100 + g.total.0 / 2, 52), "the caption");
     }
 
+    #[test]
+    fn a_frames_glass_is_fed_from_past_what_its_blur_reads() {
+        let m = reprisekit::theme::Theme::default().metrics;
+        let g = FrameGeometry::layout(&m, 400, 300, false, Chrome::WINDOW);
+        let pane = frame_pane(&g, CORNER, false);
+        for material in [Material::Frosted, Material::Smoked, Material::Molten] {
+            for quality in [Quality::Full, Quality::Coarse] {
+                let pass = Pass {
+                    settings: Settings {
+                        material,
+                        ..Settings::default()
+                    },
+                    quality,
+                    ..Pass::default()
+                };
+                let reads = Reads::of(&pane, (100.0, 50.0).into(), (1000, 800).into(), 1.0, &pass);
+                let feed = reads.feed.unwrap();
+                let s = &pass.settings;
+                let r = reprisefx::blur::reach(s.blur, material, quality);
+                for n in &reads.needed {
+                    let read = Rectangle::new(
+                        (n.loc.x - r, n.loc.y - r).into(),
+                        (n.size.w + 2 * r, n.size.h + 2 * r).into(),
+                    )
+                    .intersection(Rectangle::from_size((1000, 800).into()))
+                    .unwrap();
+                    assert!(
+                        feed.contains_rect(read),
+                        "{material:?} {quality:?}: {read:?}"
+                    );
+                }
+            }
+        }
+    }
+
     fn test_output() -> Output {
         let o = Output::new(
             "test".into(),
@@ -1307,8 +1462,13 @@ mod tests {
         let windows = scene.tree_create(root);
         let (_, lower) = glass_window(&mut scene, &ctx, windows, (20, 20), (120, 80), None);
         let (upper, _upper) = glass_window(&mut scene, &ctx, windows, (100, 60), (120, 80), None);
-        let lower = lower.node.unwrap();
-        let own = |ctx: &GlassCtx| ctx.beneath.borrow().contains_key(&("test".into(), lower));
+        let lower = Rc::as_ptr(&lower.glass);
+        let own = |ctx: &GlassCtx| {
+            ctx.beneath
+                .borrow()
+                .get(&("test".into(), lower))
+                .is_some_and(|b| b.reuse.in_use())
+        };
         red_at(&mut renderer, &ctx, &scene, Material::Frosted, &[]);
         assert!(own(&ctx), "under the upper glass");
         scene.set_position(upper, 200, 120);
@@ -1359,5 +1519,228 @@ mod tests {
             !shows_glass(&[], &[solid(0, 0, 200, 200, 1.0)], s),
             "no glass at all"
         );
+    }
+
+    fn rects(r: &[(i32, i32, i32, i32)]) -> Vec<Rectangle<i32, Physical>> {
+        r.iter()
+            .map(|&(x, y, w, h)| Rectangle::new((x, y).into(), (w, h).into()))
+            .collect()
+    }
+
+    #[test]
+    fn a_private_backdrop_draws_what_feeds_its_glass_while_it_stays_put() {
+        let here = rects(&[(10, 10, 100, 60)]);
+        let there = rects(&[(30, 10, 100, 60)]);
+        let feed = Rectangle::new((0, 0).into(), (70, 50).into());
+        let whole = Rectangle::from_size((320, 100).into());
+        let look = look(Material::Frosted);
+        let mut reuse = Reuse::default();
+        assert_eq!(reuse.crop(&here, feed, whole), feed, "first drawn");
+        reuse.drawn(&here, look);
+        assert_eq!(reuse.crop(&here, feed, whole), feed, "put");
+        assert_eq!(reuse.crop(&there, feed, whole), whole, "moved: all of it");
+        reuse.drawn(&there, look);
+        assert_eq!(reuse.crop(&there, feed, whole), feed, "put again");
+    }
+
+    fn look(material: Material) -> Look {
+        let settings = Settings {
+            material,
+            ..Settings::default()
+        };
+        (settings, Quality::Full, (640, 200).into(), 1f64.to_bits())
+    }
+
+    #[test]
+    fn a_private_backdrop_blurs_where_its_glass_reads_until_the_glass_moves() {
+        let here = rects(&[(10, 10, 100, 60)]);
+        let there = rects(&[(30, 10, 100, 60)]);
+        let look = look(Material::Frosted);
+        let mut reuse = Reuse::default();
+        assert_eq!(reuse.blurs(&here, &look), Some(&here[..]), "first drawn");
+        reuse.drawn(&here, look);
+        assert_eq!(reuse.blurs(&here, &look), Some(&here[..]), "put");
+        assert_eq!(reuse.blurs(&there, &look), None, "moved: all of it, once");
+        reuse.drawn(&there, look);
+        assert_eq!(reuse.blurs(&there, &look), Some(&there[..]));
+    }
+
+    #[test]
+    fn a_new_look_blurs_where_the_glass_reads_even_as_it_moves() {
+        let here = rects(&[(10, 10, 100, 60)]);
+        let there = rects(&[(30, 10, 100, 60)]);
+        let mut reuse = Reuse::default();
+        reuse.drawn(&here, look(Material::Molten));
+        let frosted = look(Material::Frosted);
+        assert_eq!(reuse.blurs(&there, &frosted), Some(&there[..]));
+        let coarse = (frosted.0, Quality::Coarse, frosted.2, frosted.3);
+        assert_eq!(reuse.blurs(&there, &coarse), Some(&there[..]));
+    }
+
+    #[test]
+    fn a_private_backdrop_outlives_its_use_for_a_while_without_being_drawn_from() {
+        let here = rects(&[(10, 10, 100, 60)]);
+        let look = look(Material::Frosted);
+        let mut reuse = Reuse::default();
+        assert!(!reuse.in_use(), "never drawn");
+        reuse.drawn(&here, look);
+        assert!(reuse.in_use());
+        assert!(reuse.kept());
+        assert!(!reuse.in_use(), "unused this update");
+        for _ in 1..KEEP_IDLE {
+            assert!(reuse.kept());
+        }
+        assert!(!reuse.kept(), "dropped after {KEEP_IDLE} updates");
+        reuse.drawn(&here, look);
+        assert!(
+            reuse.in_use() && reuse.kept(),
+            "a use starts the count again"
+        );
+    }
+
+    /// What `glass_over_glass_draws_each_frame_as_a_fresh_start_would` lays out: a lower window with a
+    /// caption and a sheet of glass, an upper window with glass, over a desktop with a stripe.
+    #[derive(Clone, Copy)]
+    struct Layout {
+        stripe: [f32; 4],
+        /// Over the bare clear colour right of the desktop.
+        patch: (i32, i32),
+        lower: (i32, i32),
+        upper: (i32, i32),
+        upper_size: (i32, i32),
+        lower_on_top: bool,
+        material: Material,
+    }
+
+    type Step = (&'static str, fn(&mut Layout));
+
+    struct Laid {
+        scene: DeskScene,
+        ctx: Rc<GlassCtx>,
+        stripe: reprisescene::RectId,
+        patch: reprisescene::RectId,
+        lower: (TreeId, Backdrop, TreeId),
+        upper: (TreeId, Backdrop, TreeId),
+    }
+
+    fn lay(l: &Layout, renderer: &mut GlesRenderer) -> Laid {
+        let ctx = GlassCtx::new();
+        ctx.set_renderer(renderer);
+        let mut scene = DeskScene::new();
+        let root = scene.root();
+        let desktop = scene.tree_create(root);
+        scene.rect_create(desktop, (430, 200), [1.0; 4]);
+        let stripe = scene.rect_create(desktop, (640, 30), l.stripe);
+        scene.set_position(stripe, 0, 60);
+        let patch = scene.rect_create(desktop, (90, 30), [0.9, 0.8, 0.1, 1.0]);
+        scene.set_position(patch, l.patch.0, l.patch.1);
+        let windows = scene.tree_create(root);
+        let mut window = |at: (i32, i32), size: (i32, i32), caption: bool| {
+            let window = scene.tree_create(windows);
+            scene.set_position(window, at.0, at.1);
+            let chrome = scene.tree_create(window);
+            leave_out(&mut scene, chrome);
+            if caption {
+                scene.rect_create(chrome, (size.0, 20), [0.0, 0.0, 0.3, 1.0]);
+            }
+            let mut glass = Backdrop::new(&ctx);
+            glass.set(&mut scene, &ctx, chrome, Some(sheet_pane(size, &[])));
+            (window, glass, chrome)
+        };
+        let lower = window(l.lower, (150, 110), true);
+        let upper = window(l.upper, l.upper_size, false);
+        if l.lower_on_top {
+            scene.raise_to_top(lower.0);
+        }
+        Laid {
+            scene,
+            ctx,
+            stripe,
+            patch,
+            lower,
+            upper,
+        }
+    }
+
+    fn frame(renderer: &mut GlesRenderer, laid: &Laid, material: Material) -> Vec<u32> {
+        let output = test_output_of(640, 200);
+        let settings = Settings {
+            material,
+            ..Settings::default()
+        };
+        let clear = Color32F::from([0.0, 0.0, 0.0, 1.0]);
+        laid.ctx.begin(&output, settings, Quality::Full, false);
+        laid.ctx
+            .update_backdrop(renderer, &laid.scene, &output, clear, true);
+        let elements = laid.scene.render_elements_for(renderer, &output);
+        let mut target = crate::offscreen::Target::new(renderer, (640, 200).into(), 1.0).unwrap();
+        target.render(renderer, &elements).unwrap();
+        target.read(renderer).unwrap().pixels
+    }
+
+    #[test]
+    fn glass_over_glass_draws_each_frame_as_a_fresh_start_would() {
+        let Ok(mut renderer) = reprisefx::headless::renderer() else {
+            eprintln!("skipped: no renderer");
+            return;
+        };
+        let mut l = Layout {
+            stripe: [0.8, 0.1, 0.1, 1.0],
+            patch: (520, 120),
+            lower: (20, 20),
+            upper: (100, 50),
+            upper_size: (150, 110),
+            lower_on_top: false,
+            material: Material::Frosted,
+        };
+        let mut live = lay(&l, &mut renderer);
+        let steps: [Step; 13] = [
+            ("as laid", |_| {}),
+            ("the upper dragged", |l| l.upper = (110, 56)),
+            ("dragged on", |l| l.upper = (124, 64)),
+            ("off the lower glass", |l| l.upper = (460, 60)),
+            ("the stripe beneath changed while apart", |l| {
+                l.stripe = [0.1, 0.7, 0.1, 1.0]
+            }),
+            ("back over it", |l| l.upper = (110, 56)),
+            ("the lower raised", |l| l.lower_on_top = true),
+            ("the upper resized", |l| l.upper_size = (120, 90)),
+            ("Molten", |l| l.material = Material::Molten),
+            ("the lower moved", |l| l.lower = (60, 30)),
+            ("Frosted again", |l| l.material = Material::Frosted),
+            ("a patch far from both moved", |l| l.patch = (540, 10)),
+            ("both moved where the patch was", |l| {
+                l.lower = (470, 100);
+                l.upper = (490, 110);
+            }),
+        ];
+        for (what, step) in steps {
+            step(&mut l);
+            let s = &mut live.scene;
+            s.rect_set_color(live.stripe, l.stripe);
+            s.set_position(live.patch, l.patch.0, l.patch.1);
+            s.set_position(live.lower.0, l.lower.0, l.lower.1);
+            s.set_position(live.upper.0, l.upper.0, l.upper.1);
+            let top = if l.lower_on_top {
+                live.lower.0
+            } else {
+                live.upper.0
+            };
+            s.raise_to_top(top);
+            let pane = Some(sheet_pane(l.upper_size, &[]));
+            live.upper.1.set(s, &live.ctx, live.upper.2, pane);
+            let drawn = frame(&mut renderer, &live, l.material);
+            let start = lay(&l, &mut renderer);
+            let fresh = frame(&mut renderer, &start, l.material);
+            if what.ends_with("apart") {
+                let kept = live.ctx.beneath.borrow();
+                assert!(
+                    kept.len() == 2 && kept.values().all(|b| !b.reuse.in_use()),
+                    "both private backdrops kept, unused"
+                );
+            }
+            let differ = drawn.iter().zip(&fresh).filter(|(a, b)| a != b).count();
+            assert_eq!(differ, 0, "{what}: pixels unlike a fresh start's");
+        }
     }
 }
