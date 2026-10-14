@@ -552,10 +552,19 @@ impl State {
                     self.close(w);
                 }
             }
-            Action::Flip if bind_mods != 0 && self.flip_wanted() => self.open_flip(bind_mods),
             Action::Cycle | Action::Flip => {
-                let start = self.switcher_start(self.switch_entries().len());
-                if bind_mods != 0 && start.is_some() {
+                // The keys reach here past an open menu or popup
+                // (`keyroute::switch_bind`); it closes first.
+                self.close_menu();
+                self.close_start_panel();
+                self.close_launcher();
+                self.close_clipview();
+                self.close_emoji();
+                if *a == Action::Flip && bind_mods != 0 && self.flip_wanted() {
+                    self.open_flip(bind_mods);
+                } else if bind_mods != 0
+                    && self.switcher_start(self.switch_entries().len()).is_some()
+                {
                     self.open_switcher(bind_mods);
                 } else {
                     self.cycle_focus();
