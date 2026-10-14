@@ -59,6 +59,9 @@ pkgver() {
 
 build() {
   cd reprise
+  # Panic locations carry absolute source paths: map the build tree and the
+  # cargo home (registry and git checkouts) to fixed prefixes.
+  export RUSTFLAGS="${RUSTFLAGS:-} --remap-path-prefix=$srcdir=/usr/src/debug/$pkgbase --remap-path-prefix=${CARGO_HOME:-$HOME/.cargo}=/cargo"
   # Named explicitly: the workspace has a root package, so a bare `cargo build --release` would skip the programs package() installs.
   cargo build --release --locked -p reprise -p reprise-portal \
     -p reprise-notepad -p reprise-explorer -p reprise-about -p reprise-sound -p reprise-volume -p reprise-settings -p reprise-power -p reprise-datetime -p reprise-accounts -p reprise-network -p reprise-bluetooth -p reprise-drives -p reprise-polkit -p reprise-updates -p reprise-printers
