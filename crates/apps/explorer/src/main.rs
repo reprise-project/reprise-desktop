@@ -814,8 +814,9 @@ impl Explorer {
 
     /// Run the program file at `path` in its own folder; one that does not start gets a message box.
     fn run_program(&mut self, path: &Path, ctx: &mut Ctx) -> Reply {
-        let argv = reprisefs::program::run_argv(path);
-        match repriseapp::spawn_in(&argv, path.parent()) {
+        let terminal = repriseconf::terminal();
+        let argv = reprisefs::program::run_argv(path, &terminal, repriseconf::script_terminal());
+        match argv.and_then(|argv| repriseapp::spawn_in(&argv, path.parent())) {
             Ok(()) => Reply::redraw(),
             Err(e) => {
                 log::warn!("run {}: {e}", path.display());

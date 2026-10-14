@@ -93,8 +93,9 @@ One window, 23 pages, four headings. Only one runs at a time.
     lock screen's wallpaper.
   - **Startup:** autostart entries and session restore.
   - **Default Programs:** browser, mail, music, video, photos, text editor,
-    file manager, terminal, what a plugged-in drive does, and the program
-    for every file type.
+    file manager, terminal, what a plugged-in drive does, whether a
+    script's window stays open when it ends, and the program for every file
+    type.
   - **Advanced:** clipboard history, screenshots, recent files, location,
     desktop water, the debug overlay, the thumbnail cache (Clear removes
     only the thumbnails Reprise kept and says how much went), and an Edit File... button for when

@@ -1591,15 +1591,17 @@ impl State {
         self.spawn_argv_activated(&argv);
     }
 
-    /// Run the program file at `path` in its own folder. The exec waits on the file's mount, so it
-    /// runs off the loop; a program that does not start gets an error box.
+    /// Run the program file at `path` in its own folder, a script in the terminal. The exec waits
+    /// on the file's mount, so it runs off the loop; a program that does not start gets an error box.
     pub(crate) fn run_program(&mut self, path: &Path) {
         let token = self.new_activation_token();
         let env = self.env.clone();
         let path = path.to_path_buf();
+        let (terminal, end) = (self.config.terminal.clone(), self.config.script_terminal);
         self.spawn_fs_job(move || {
-            let argv = reprisefs::program::run_argv(&path);
-            let started = crate::spawn::try_spawn_argv_in(&argv, path.parent(), &env, Some(&token));
+            let started = reprisefs::program::run_argv(&path, &terminal, end).and_then(|argv| {
+                crate::spawn::try_spawn_argv_in(&argv, path.parent(), &env, Some(&token))
+            });
             Box::new(move |state: &mut State| {
                 // A child that exited before its pid was recorded left a SIGCHLD that found nothing.
                 crate::spawn::reap_children();

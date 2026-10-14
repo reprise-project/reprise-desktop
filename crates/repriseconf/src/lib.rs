@@ -41,7 +41,23 @@ macro_rules! lens {
     };
 }
 
+static CONFIG_PATH: std::sync::Mutex<Option<PathBuf>> = std::sync::Mutex::new(None);
+
+/// Points [`config_path`] at `path` for the whole process, so a program's tests never read the
+/// developer's own file.
+#[doc(hidden)]
+pub fn set_config_path(path: Option<PathBuf>) {
+    *CONFIG_PATH.lock().unwrap_or_else(|e| e.into_inner()) = path;
+}
+
 pub fn config_path() -> PathBuf {
+    if let Some(path) = CONFIG_PATH
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone()
+    {
+        return path;
+    }
     xdg_home("XDG_CONFIG_HOME", ".config")
         .join("reprise")
         .join("config.toml")
@@ -139,6 +155,37 @@ fn drives_on_insert_in(text: &str) -> String {
                 .map(String::from)
         })
         .unwrap_or_else(|| "ask".into())
+}
+
+/// The top-level `terminal`, read now: the command a program in a terminal runs under.
+pub fn terminal() -> String {
+    let text = std::fs::read_to_string(config_path()).unwrap_or_default();
+    terminal_in(&text)
+}
+
+fn terminal_in(text: &str) -> String {
+    let doc = text.parse::<DocumentMut>().ok();
+    doc.as_ref()
+        .and_then(|d| get(d, &key("", "terminal"))?.as_str())
+        .unwrap_or(reprisefs::apps::DEFAULT_TERMINAL)
+        .to_string()
+}
+
+/// The top-level `script_terminal`, read now: "stay" when unset or invalid.
+pub fn script_terminal() -> reprisefs::program::ScriptEnd {
+    let text = std::fs::read_to_string(config_path()).unwrap_or_default();
+    script_terminal_in(&text)
+}
+
+fn script_terminal_in(text: &str) -> reprisefs::program::ScriptEnd {
+    text.parse::<DocumentMut>()
+        .ok()
+        .and_then(|d| {
+            get(&d, &key("", "script_terminal"))?
+                .as_str()
+                .and_then(reprisefs::program::ScriptEnd::parse)
+        })
+        .unwrap_or_default()
 }
 
 /// `[thumbnail_cache]`: whether pictures' thumbnails are kept in `$XDG_CACHE_HOME/thumbnails`,
@@ -541,6 +588,25 @@ mod tests {
             "open"
         );
         assert_eq!(drives_on_insert_in("[drives]\non_insert = true\n"), "ask");
+    }
+
+    #[test]
+    fn a_script_runs_in_the_terminal_key_and_stays_unless_set_to_close() {
+        use reprisefs::program::ScriptEnd;
+        assert_eq!(terminal_in(""), "alacritty");
+        assert_eq!(script_terminal_in(""), ScriptEnd::Stay);
+        let text = "terminal = \"foot -o x=1\"\nscript_terminal = \"close\"\n[drives]\nterminal = \"st\"\n";
+        assert_eq!(terminal_in(text), "foot -o x=1");
+        assert_eq!(script_terminal_in(text), ScriptEnd::Close);
+        assert_eq!(
+            terminal_in("[drives]\nterminal = \"st\"\n"),
+            "alacritty",
+            "top-level keys only"
+        );
+        assert_eq!(
+            script_terminal_in("script_terminal = \"later\"\n"),
+            ScriptEnd::Stay
+        );
     }
 
     #[test]

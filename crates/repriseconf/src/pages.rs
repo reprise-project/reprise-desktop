@@ -206,6 +206,7 @@ impl Page {
                 "browser",
                 "mail",
                 "terminal",
+                "scripts",
                 "open with",
                 "file types",
             ],

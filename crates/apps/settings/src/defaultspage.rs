@@ -1,4 +1,5 @@
 //! The Default Programs page: a combo per kind of program, what a plugged-in drive does (`[drives] on_insert`),
+//! whether a script's terminal stays open when it ends (`script_terminal`),
 //! every file type with its program, a filter, and Change... and Restore Default. Defaults live in the mime-apps lists ([`reprisefs::props`]); edits wait in
 //! [`Defaults::edits`] until Apply and go to the user's `mimeapps.list`.
 
@@ -111,6 +112,8 @@ pub const TERMINAL: &str = "dp_terminal";
 const TERMINAL_LABEL: &str = "dp_terminal_label";
 pub const DRIVE_INSERT: &str = "dp_drive_insert";
 const DRIVE_INSERT_LABEL: &str = "dp_drive_insert_label";
+pub const SCRIPT_END: &str = "dp_script_end";
+const SCRIPT_END_LABEL: &str = "dp_script_end_label";
 const DRIVE_LABEL_W: i32 = 140;
 pub const FILTER: &str = "dp_filter";
 pub const CHANGE: &str = "dp_change";
@@ -124,7 +127,7 @@ const LABEL_W: i32 = 96;
 const DROP_ROWS: usize = 12;
 
 pub fn list(a: Area) -> Rect {
-    Rect::new(X, 289, a.w, 128 + a.dh)
+    Rect::new(X, 312, a.w, 128 + a.dh)
 }
 pub const COLUMNS: [(&str, i32); 3] = [("Type", 90), ("Description", 140), ("Opens With", 108)];
 const RESTORE_W: i32 = 96;
@@ -165,6 +168,21 @@ pub fn page(a: Area) -> Form {
         y - 4,
         a.combo(Area::MIN.w - DRIVE_LABEL_W - 4),
         crate::model::DRIVE_INSERTS,
+    ));
+    let y = y + ROW_STEP;
+    items.push(Item::label_at(
+        SCRIPT_END_LABEL,
+        X,
+        y,
+        DRIVE_LABEL_W,
+        "When a &script ends:",
+    ));
+    items.push(crate::pages::choice(
+        SCRIPT_END,
+        X + DRIVE_LABEL_W + 4,
+        y - 4,
+        a.combo(Area::MIN.w - DRIVE_LABEL_W - 4),
+        crate::model::SCRIPT_ENDS,
     ));
     let y = list.y - 22;
     items.push(Item::label_at("dp_types_label", X, y, 120, "File types:"));
@@ -894,10 +912,12 @@ pub(crate) mod tests {
         assert_eq!(at(TERMINAL), Rect::new(120, 205, 258, 21));
         assert_eq!(at(DRIVE_INSERT_LABEL), Rect::new(20, 232, 140, 13));
         assert_eq!(at(DRIVE_INSERT), Rect::new(164, 228, 214, 21));
-        assert_eq!(at("dp_types_label"), Rect::new(20, 267, 120, 13));
-        assert_eq!(at(FILTER), Rect::new(228, 263, 150, 20));
-        assert_eq!(at(CHANGE), Rect::new(201, 423, 75, 23));
-        assert_eq!(at(RESTORE), Rect::new(282, 423, 96, 23));
+        assert_eq!(at(SCRIPT_END_LABEL), Rect::new(20, 255, 140, 13));
+        assert_eq!(at(SCRIPT_END), Rect::new(164, 251, 214, 21));
+        assert_eq!(at("dp_types_label"), Rect::new(20, 290, 120, 13));
+        assert_eq!(at(FILTER), Rect::new(228, 286, 150, 20));
+        assert_eq!(at(CHANGE), Rect::new(201, 446, 75, 23));
+        assert_eq!(at(RESTORE), Rect::new(282, 446, 96, 23));
         assert_eq!(
             at(RESTORE).right(),
             list(Area::MIN).right(),
@@ -907,10 +927,58 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn the_script_row_pins_its_pixels_in_every_look() {
+        if !reprisekit::text::test_tahoma() {
+            return;
+        }
+        use reprisekit::controls::form;
+        use reprisekit::interface::Interface;
+        use reprisekit::raster::Canvas;
+        fn fnv(c: &Canvas) -> u64 {
+            c.pixels.iter().fold(0xcbf29ce484222325, |h, p| {
+                (h ^ *p as u64).wrapping_mul(0x100000001b3)
+            })
+        }
+        let row = Rect::new(X, 251, 358, 21);
+        let mut got = Vec::new();
+        for i in [Interface::Classic, Interface::Blue, Interface::Glass] {
+            let theme = reprisekit::interfaces::theme_for(i);
+            let text = reprisekit::text::TextRenderer::load(&theme.fonts);
+            let mut hashes = [0; 2];
+            for (k, hash) in hashes.iter_mut().enumerate() {
+                let mut f = page(Area::MIN);
+                f.set_combo(SCRIPT_END, k);
+                let mut c = Canvas::new(row.right() as u32, row.bottom() as u32);
+                c.fill_rect(c.bounds(), theme.colors.button_face);
+                form::draw(
+                    &mut c,
+                    &text,
+                    &theme.paint(),
+                    &f,
+                    false,
+                    theme.fonts.size_px,
+                );
+                *hash = fnv(&c.copy_rect(row));
+            }
+            assert_ne!(hashes[0], hashes[1], "{i:?}: each choice shows its text");
+            got.push(hashes);
+        }
+        assert_eq!(
+            got,
+            [
+                [0xc3fdac5f80ffde45, 0xb27f9e19039ad678],
+                [0xe3854151f8c565c6, 0x3806333260ae309f],
+                [0xc874dd913e0019a3, 0x538adfb3d94f93ca],
+            ],
+            "Classic, Blue, Glass: keep open, close"
+        );
+    }
+
+    #[test]
     fn the_page_draws_the_list_under_a_dropped_combo() {
         let cs = reprisekit::theme::Theme::default().colors;
         let (c, list, terminal) = drawn(false);
-        assert_eq!((list.x, list.y), (166, 289));
+        assert_eq!((list.x, list.y), (166, 312));
         let header = (list.x + 80, list.y + 6);
         let row = |r: i32| list.y + 2 + 17 + 17 * r + 8;
         let lit = |c: &reprisekit::raster::Canvas, y| {

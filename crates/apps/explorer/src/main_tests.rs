@@ -17,6 +17,20 @@ pub(crate) fn test_ctx() -> Ctx {
             std::env::set_var("XDG_STATE_HOME", &state);
             std::env::set_var("XDG_CACHE_HOME", state.join("cache"));
         }
+        // A script opened in a test runs under this terminal, which records its arguments.
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::create_dir_all(&state).expect("mkdir");
+        let term = state.join("term");
+        let argv = state.join("term-argv");
+        let script = format!(
+            "#!/bin/sh\nprintf '%s\\n' \"$@\" >'{}'\nshift\nexec \"$@\"\n",
+            argv.display()
+        );
+        std::fs::write(&term, script).expect("write");
+        std::fs::set_permissions(&term, std::fs::Permissions::from_mode(0o755)).expect("chmod");
+        let config = state.join("config.toml");
+        std::fs::write(&config, format!("terminal = \"{}\"\n", term.display())).expect("write");
+        repriseconf::set_config_path(Some(config));
     });
     Ctx {
         theme: Theme::default(),
@@ -2197,6 +2211,20 @@ fn opening_an_executable_script_runs_it_in_its_folder() {
         std::thread::sleep(std::time::Duration::from_millis(10));
     }
     assert!(ex.dialog.is_none());
+    let state = std::env::temp_dir().join(format!("reprise-explorer-tests-{}", std::process::id()));
+    let term_argv = std::fs::read_to_string(state.join("term-argv")).expect("the terminal ran");
+    let a_sh = dir.path().join("a.sh");
+    let term_argv: Vec<&str> = term_argv.lines().collect();
+    assert_eq!(
+        term_argv[..3],
+        ["-e", "sh", "-c"],
+        "the config's terminal keeps it open"
+    );
+    assert_eq!(
+        term_argv.last(),
+        a_sh.to_str().as_ref(),
+        "the script is the last argument"
+    );
 
     open(1, &mut ex);
     match ex.dialog.take().expect("the error box is up") {
