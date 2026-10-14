@@ -1396,7 +1396,7 @@ impl State {
             }
             JumpRow::Pin => {
                 if let Some(src) = &target.source {
-                    self.quick_add(src, None);
+                    self.quick_add(vec![src.clone()], None);
                 }
             }
             JumpRow::Unpin => {
@@ -2028,18 +2028,34 @@ impl State {
         self.redraw_taskbars();
     }
 
-    pub(crate) fn quick_add(&mut self, src: &std::path::Path, slot: Option<usize>) {
+    /// Adds Quick Launch buttons for `srcs` from `slot` on (the end without one), once a file job
+    /// has read each (a dragged `.desktop` file, or whether it is a folder) and written its
+    /// button's file.
+    pub(crate) fn quick_add(&mut self, srcs: Vec<std::path::PathBuf>, slot: Option<usize>) {
         let Some(dir) = reprisefs::quicklaunch::dir() else {
             return;
         };
-        let Some(file) = crate::quicklaunch::add(&dir, src) else {
-            return;
-        };
+        self.spawn_fs_job(move || {
+            let files: Vec<Option<String>> = srcs
+                .iter()
+                .map(|src| crate::quicklaunch::add(&dir, src))
+                .collect();
+            Box::new(move |state: &mut State| state.quick_added(&files, slot))
+        });
+    }
+
+    fn quick_added(&mut self, files: &[Option<String>], slot: Option<usize>) {
         self.quick_reload();
-        let len = self.quicklaunch.len();
-        if let Some(from) = self.quicklaunch.iter().position(|q| q.file == file) {
-            crate::taskbar::move_button(&mut self.quicklaunch, from, slot.unwrap_or(len));
-            self.quick_order_changed();
+        for (n, file) in files.iter().enumerate() {
+            let Some(file) = file else {
+                continue;
+            };
+            let len = self.quicklaunch.len();
+            if let Some(from) = self.quicklaunch.iter().position(|q| q.file == *file) {
+                let to = slot.map_or(len, |s| s + n);
+                crate::taskbar::move_button(&mut self.quicklaunch, from, to);
+                self.quick_order_changed();
+            }
         }
         self.redraw_taskbars();
     }

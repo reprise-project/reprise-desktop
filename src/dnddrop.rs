@@ -278,6 +278,41 @@ fn split(
     (files, links)
 }
 
+/// A drop's items sorted against its target: read off the loop, as it stats the files and resolves
+/// their folders, which a file on a mount that never answers holds.
+#[derive(Debug)]
+struct Sorted {
+    files: Vec<DragSource>,
+    links: Vec<(String, Option<String>)>,
+    /// The first file sits on the target folder's file system.
+    same: bool,
+    /// Every file sits in the target folder already.
+    in_place: bool,
+    /// The files that sit in the target folder.
+    here: std::collections::HashSet<std::path::PathBuf>,
+}
+
+/// `items` dropped on `target`, whose folder is `dir`.
+fn sort(items: Vec<Dropped>, target: &DropTarget, dir: Option<&std::path::Path>) -> Sorted {
+    let (files, links) = split(items, target);
+    let same = files
+        .first()
+        .is_none_or(|f| dir.is_none_or(|d| reprisefs::ops::same_device(f.path(), d)));
+    let paths: Vec<std::path::PathBuf> = files.iter().map(|f| f.path().to_path_buf()).collect();
+    let here = match dir {
+        Some(d) => crate::dragview::in_folder(paths.clone(), d),
+        None => Default::default(),
+    };
+    let in_place = !paths.is_empty() && paths.iter().all(|p| here.contains(p));
+    Sorted {
+        files,
+        links,
+        same,
+        in_place,
+        here,
+    }
+}
+
 fn same_path(a: &std::path::Path, b: &std::path::Path) -> bool {
     match (std::fs::canonicalize(a), std::fs::canonicalize(b)) {
         (Ok(a), Ok(b)) => a == b,
@@ -450,23 +485,35 @@ impl State {
             }
         };
         source.send(mime, write);
+        let target = (self.dnd.drops.receiving.iter())
+            .find(|r| r.id == id)
+            .map(|r| r.target.clone());
+        let Some(target) = target else {
+            return;
+        };
+        let dir = match &target {
+            DropTarget::Folder(dir) => Some(dir.clone()),
+            DropTarget::Desktop(_) => self.desktop.as_ref().map(|v| v.dir.clone()),
+            DropTarget::Quick(_) | DropTarget::Trash => None,
+        };
         self.spawn_fs_job(move || {
             let got = reprisefs::pipe::read_bounded(&read, MAX_BYTES, READ_TIMEOUT)
-                .and_then(|bytes| items(mime, &bytes));
+                .and_then(|bytes| items(mime, &bytes))
+                .map(|items| sort(items, &target, dir.as_deref()));
             Box::new(move |state| state.drop_received(id, got))
         });
     }
 
     /// The source hears the drop is done (or cancelled) with the action taken,
     /// then the drop is carried out. A drop the menu asks about ends once answered.
-    fn drop_received(&mut self, id: u64, got: std::io::Result<Vec<Dropped>>) {
+    fn drop_received(&mut self, id: u64, got: std::io::Result<Sorted>) {
         let drops = &mut self.dnd.drops.receiving;
         let Some(i) = drops.iter().position(|r| r.id == id) else {
             return;
         };
         let mut r = drops.remove(i);
-        let items = match got {
-            Ok(items) => items,
+        let sorted = match got {
+            Ok(sorted) => sorted,
             Err(e) => {
                 log::warn!("drop: reading the dragged data as {}: {e}", r.mime);
                 if r.mime == dropdata::FILE_TRANSFER && r.uris && r.source.alive() {
@@ -476,26 +523,17 @@ impl State {
                     self.receive_drop(id, &source, dropdata::URI_LIST);
                     return;
                 }
-                Vec::new()
+                sort(Vec::new(), &DropTarget::Trash, None)
             }
         };
         let target = r.target.clone();
-        let (files, links) = split(items, &target);
-        let dir = match &target {
-            DropTarget::Folder(dir) => Some(dir.clone()),
-            DropTarget::Desktop(_) => self.desktop.as_ref().map(|v| v.dir.clone()),
-            DropTarget::Quick(_) | DropTarget::Trash => None,
-        };
-        let same = files.first().is_none_or(|f| {
-            dir.as_deref()
-                .is_none_or(|d| reprisefs::ops::same_device(f.path(), d))
-        });
-        let in_place = !files.is_empty()
-            && dir.as_deref().is_some_and(|d| {
-                files
-                    .iter()
-                    .all(|f| reprisefs::ops::same_folder(f.path(), d))
-            });
+        let Sorted {
+            files,
+            links,
+            same,
+            in_place,
+            here,
+        } = sorted;
         let allowed = r.allowed;
         let plan = if files.is_empty() {
             Plan::Link
@@ -515,7 +553,7 @@ impl State {
                 if action.is_some() {
                     self.put_links(links, &target);
                     if !files.is_empty() {
-                        self.perform_all(&files, &target, op);
+                        self.put_all(&files, &target, op, &here);
                     }
                 }
             }
@@ -789,6 +827,36 @@ mod tests {
         );
         std::fs::remove_dir_all(&t).unwrap();
         assert!(files.is_empty());
+    }
+
+    /// The read job sorts a drop's files against the target folder: a file reached through a
+    /// link is in it, a file elsewhere is not, and the drop is in place only when all are.
+    #[test]
+    fn a_drop_is_sorted_against_its_folder_in_the_read_job() {
+        let t = std::env::temp_dir().join(format!("reprise-dndsort-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&t);
+        std::fs::create_dir_all(t.join("real")).unwrap();
+        std::fs::create_dir_all(t.join("other")).unwrap();
+        std::os::unix::fs::symlink(t.join("real"), t.join("link")).unwrap();
+        let (inside, outside) = (t.join("link/a.txt"), t.join("other/b.txt"));
+        std::fs::write(t.join("real/a.txt"), "").unwrap();
+        std::fs::write(&outside, "").unwrap();
+        let target = DropTarget::Desktop((0, 0));
+        let dir = t.join("real");
+        let one = sort(vec![Dropped::File(inside.clone())], &target, Some(&dir));
+        assert!(one.in_place && one.same);
+        assert_eq!(
+            one.here.into_iter().collect::<Vec<_>>(),
+            std::slice::from_ref(&inside)
+        );
+        let two = sort(
+            vec![Dropped::File(inside.clone()), Dropped::File(outside)],
+            &target,
+            Some(&dir),
+        );
+        assert!(!two.in_place);
+        assert_eq!(two.here.into_iter().collect::<Vec<_>>(), [inside]);
+        std::fs::remove_dir_all(&t).unwrap();
     }
 
     #[test]
