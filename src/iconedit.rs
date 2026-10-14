@@ -373,8 +373,8 @@ impl State {
 
     /// Finish a rename: rename the file to the edited name
     /// (`desktop::rename_file`), rewrite a launcher's `Name=`, or relabel a
-    /// place, unless the name is empty or unchanged. A name the file
-    /// system refuses leaves the file as it was and an error box says why.
+    /// place, unless the name is empty or unchanged. The file work runs in a file job; a name the
+    /// file system refuses leaves the file as it was and an error box says why.
     pub fn commit_rename(&mut self) {
         let Some(view) = self.desktop.as_mut() else {
             return;
@@ -386,45 +386,46 @@ impl State {
         let Some(view) = self.desktop.as_mut() else {
             return;
         };
-        let typed = edit.text.trim();
-        let mut save = false;
-        let mut moved = None;
-        let mut refused = None;
-        if let Some(entry) = view.entries.get(index) {
-            if let desktop::Kind::Place(place) = entry.kind {
-                save = desktop::rename_place(&mut view.system_names, place, typed);
-            } else if entry.label_is_name_key() {
-                // A launcher's or a link's label is its `Name=`; the file
-                // keeps its name.
-                if !typed.is_empty()
-                    && typed != entry.label
-                    && let Err(e) = reprisefs::apps::set_launcher_name(&entry.path, typed)
-                {
+        let typed = edit.text.trim().to_string();
+        let Some(entry) = view.entries.get(index).cloned() else {
+            self.relayout_desktop();
+            return;
+        };
+        if let desktop::Kind::Place(place) = entry.kind {
+            if desktop::rename_place(&mut view.system_names, place, &typed) {
+                crate::state::save_system_names(&view.system_names);
+                self.rescan_desktop();
+            } else {
+                self.relayout_desktop();
+            }
+            return;
+        }
+        if entry.label_is_name_key() && (typed.is_empty() || typed == entry.label) {
+            self.relayout_desktop();
+            return;
+        }
+        // The file may sit on a mount that never answers: the label shows the old name until the
+        // rename lands.
+        self.relayout_desktop();
+        self.spawn_fs_job(move || {
+            let done = if entry.label_is_name_key() {
+                // A launcher's or a link's label is its `Name=`; the file keeps its name.
+                if let Err(e) = reprisefs::apps::set_launcher_name(&entry.path, &typed) {
                     log::warn!("desktop: rename {} failed: {e}", entry.path.display());
                 }
+                Ok(None)
             } else {
-                match desktop::rename_file(entry, typed) {
-                    Ok(to) => moved = to.map(|to| (entry.path.clone(), to)),
-                    Err(text) => {
-                        log::warn!("desktop: rename {}: {text}", entry.path.display());
-                        refused = Some(text);
-                    }
+                desktop::rename_file(&entry, &typed)
+            };
+            Box::new(move |state: &mut State| match done {
+                Ok(Some(to)) => state.renamed(&entry.path, &to),
+                Ok(None) => state.rescan_desktop(),
+                Err(text) => {
+                    log::warn!("desktop: rename {}: {text}", entry.path.display());
+                    state.open_dialog(crate::dialog::Dialog::error("Rename", text));
                 }
-            }
-        }
-        if save {
-            crate::state::save_system_names(&view.system_names);
-        }
-        if let Some(text) = refused {
-            self.open_dialog(crate::dialog::Dialog::error("Rename", text));
-        }
-        if let Some((from, to)) = moved {
-            self.renamed(&from, &to);
-        } else if save {
-            self.rescan_desktop();
-        } else {
-            self.relayout_desktop();
-        }
+            })
+        });
     }
 
     pub fn cancel_rename(&mut self) {
@@ -474,6 +475,7 @@ mod tests {
             shortcut: false,
             kind: desktop::Kind::File,
             is_dir: false,
+            allow_launching: false,
         }
     }
 

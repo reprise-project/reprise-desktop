@@ -1483,19 +1483,26 @@ impl State {
     }
 
     /// Allow Launching on `paths`, the first failure in an error box.
+    /// Marks `paths` executable and trusted in a file job; the first that fails says why once it
+    /// answers.
     pub(crate) fn allow_launching(&mut self, paths: &[PathBuf]) {
-        let failed = paths
-            .iter()
-            .find_map(|p| apps::allow_launching(p).err().map(|e| (p, e)));
-        if let Some((path, e)) = failed {
-            let name = path
-                .file_name()
-                .unwrap_or(path.as_os_str())
-                .to_string_lossy();
-            let text = format!("Cannot allow {name} to launch: {e}");
-            self.open_dialog(crate::dialog::Dialog::error("Allow Launching", text));
-        }
-        self.rescan_desktop();
+        let paths = paths.to_vec();
+        self.spawn_fs_job(move || {
+            let failed = paths
+                .iter()
+                .find_map(|p| apps::allow_launching(p).err().map(|e| (p.clone(), e)));
+            Box::new(move |state: &mut State| {
+                if let Some((path, e)) = failed {
+                    let name = path
+                        .file_name()
+                        .unwrap_or(path.as_os_str())
+                        .to_string_lossy();
+                    let text = format!("Cannot allow {name} to launch: {e}");
+                    state.open_dialog(crate::dialog::Dialog::error("Allow Launching", text));
+                }
+                state.rescan_desktop();
+            })
+        });
     }
 
     pub fn open_icon(&mut self, index: usize) {
@@ -1510,8 +1517,15 @@ impl State {
                 Some(argv) => argv.into_iter().map(Into::into).collect(),
                 None => return,
             },
-            // No stat: the folder may be a mount that does not answer.
+            // No stat: the file or folder may be on a mount that does not answer.
             Target::Open(dir) if entry.is_dir => apps::open_folder_argv(dir),
+            Target::Open(file) => {
+                let mime = view.mime.mime_of_name(&entry.name);
+                let default = mime
+                    .as_deref()
+                    .and_then(|m| reprisefs::props::default_app_entry(m, &self.app_index));
+                reprisefs::props::open_file_argv(file, default, &self.config.terminal)
+            }
             target => {
                 desktop::open_argv(target, &view.mime, &self.app_index, &self.config.terminal)
             }
@@ -1533,9 +1547,8 @@ impl State {
         let view = self.desktop.as_ref()?;
         let entry = view.entries.get(index)?;
         Some(match entry.kind {
-            Kind::RecycleBin => {
-                bin_menu(reprisefs::trash::Bins::system().is_none_or(|b| b.all_empty()))
-            }
+            // The scan's fullness, which its icon shows.
+            Kind::RecycleBin => bin_menu(entry.icon == "user-trash"),
             Kind::Place(place) => place_menu(place, matches!(entry.target, Target::Open(_))),
             Kind::File => {
                 let is_dir = entry.is_dir;
@@ -1549,7 +1562,7 @@ impl State {
                     is_dir,
                     print,
                     edit,
-                    allow_launching: !is_dir && desktop::can_allow_launching(entry),
+                    allow_launching: entry.allow_launching,
                     launcher: matches!(entry.target, Target::Launch(_)),
                     in_set: self.selection_around(index).len() > 1,
                 })
@@ -1670,10 +1683,13 @@ impl State {
         let existing: Vec<String> = view.entries.iter().map(|e| e.name.clone()).collect();
         let name = names::new_folder_name(&existing);
         let path = view.dir.join(&name);
-        match std::fs::create_dir(&path) {
-            Ok(()) => self.created(&name, at),
-            Err(e) => log::warn!("desktop: could not create {}: {e}", path.display()),
-        }
+        self.spawn_fs_job(move || {
+            let made = std::fs::create_dir(&path);
+            Box::new(move |state: &mut State| match made {
+                Ok(()) => state.created(&name, at),
+                Err(e) => log::warn!("desktop: could not create {}: {e}", path.display()),
+            })
+        });
     }
 
     /// Create an empty text file at the first free "New Text Document.txt", "New Text
@@ -1686,13 +1702,17 @@ impl State {
         let Some(view) = self.desktop.as_ref() else {
             return;
         };
-        match ops::create_new_numbered(&view.dir, "New Text Document.txt") {
-            Ok((_, path)) => {
-                let name = path.file_name().unwrap_or_default().to_string_lossy();
-                self.created(&name, at)
-            }
-            Err(e) => log::warn!("desktop: could not create a text document: {e}"),
-        }
+        let dir = view.dir.clone();
+        self.spawn_fs_job(move || {
+            let made = ops::create_new_numbered(&dir, "New Text Document.txt");
+            Box::new(move |state: &mut State| match made {
+                Ok((_, path)) => {
+                    let name = path.file_name().unwrap_or_default().to_string_lossy();
+                    state.created(&name, at)
+                }
+                Err(e) => log::warn!("desktop: could not create a text document: {e}"),
+            })
+        });
     }
 
     /// Run a desktop-menu command; `aim` is the icon it was aimed at, which may have
@@ -1708,7 +1728,7 @@ impl State {
         }
     }
 
-    /// Print each of `paths` with `lp`, or open it in the text/plain
+    /// Print each of `paths` (files, not folders) with `lp`, or open it in the text/plain
     /// default whatever its own type.
     pub(crate) fn print_or_edit(&mut self, paths: Vec<PathBuf>, print: bool) {
         let editor = reprisefs::props::default_app_entry("text/plain", &self.app_index).cloned();
@@ -1716,7 +1736,7 @@ impl State {
             let argv = if print {
                 vec!["lp".into(), path.into_os_string()]
             } else {
-                reprisefs::props::open_argv(&path, editor.as_ref(), &self.config.terminal)
+                reprisefs::props::open_file_argv(&path, editor.as_ref(), &self.config.terminal)
             };
             self.spawn_argv_activated(&argv);
         }
@@ -1801,7 +1821,7 @@ impl State {
                     Some(view) => aimed_in(&view.entries, &set, i, true)
                         .into_iter()
                         .map(|i| &view.entries[i])
-                        .filter(|e| desktop::can_allow_launching(e))
+                        .filter(|e| e.allow_launching)
                         .map(|e| e.path.clone())
                         .collect(),
                     None => Vec::new(),
@@ -2000,6 +2020,7 @@ mod tests {
             shortcut: false,
             kind: desktop::Kind::File,
             is_dir: false,
+            allow_launching: false,
         }
     }
 
@@ -2139,6 +2160,7 @@ mod tests {
             shortcut: false,
             kind: desktop::Kind::File,
             is_dir: false,
+            allow_launching: false,
         };
         let bin = DesktopEntry {
             kind: desktop::Kind::RecycleBin,
@@ -2170,6 +2192,7 @@ mod tests {
             shortcut: true,
             kind: desktop::Kind::File,
             is_dir: false,
+            allow_launching: false,
         };
         let plain = |name: &str| DesktopEntry {
             name: name.into(),
@@ -2180,6 +2203,7 @@ mod tests {
             shortcut: false,
             kind: desktop::Kind::File,
             is_dir: false,
+            allow_launching: false,
         };
         let entries = [
             launcher("firefox.desktop", "Firefox"),

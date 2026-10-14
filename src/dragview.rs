@@ -1219,6 +1219,7 @@ mod tests {
             shortcut: false,
             kind,
             is_dir: false,
+            allow_launching: false,
         };
         let entries = [
             entry("notes.txt", desktop::Kind::RecycleBin),

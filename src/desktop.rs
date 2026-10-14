@@ -131,6 +131,8 @@ pub struct DesktopEntry {
     /// Opens as a folder, a symlink to one included, as the scan found it: menus and drops ask
     /// this instead of the file system.
     pub is_dir: bool,
+    /// An untrusted application `.desktop` file, as the scan read it: the menu's Allow Launching.
+    pub allow_launching: bool,
 }
 
 impl DesktopEntry {
@@ -193,6 +195,7 @@ pub fn place(name: &str) -> Option<DesktopEntry> {
         name: place.label(),
         label: place.label(),
         is_dir: matches!(target, Target::Open(_)),
+        allow_launching: false,
         icon: icon.into(),
         target,
         path,
@@ -251,6 +254,7 @@ pub fn recycle_bin(files: PathBuf, empty: bool) -> DesktopEntry {
         shortcut: false,
         kind: Kind::RecycleBin,
         is_dir: false,
+        allow_launching: false,
     }
 }
 
@@ -280,15 +284,9 @@ pub fn document_tip(icon: &str) -> Option<&'static str> {
     })
 }
 
-/// Whether Allow Launching applies to `entry`: a file in the desktop
-/// folder, shown as a plain file, that holds a displayable application.
-/// Reads the file (a regular file of at most 64 KiB, opened without
-/// blocking; see `apps::read_desktop_file`).
-pub fn can_allow_launching(entry: &DesktopEntry) -> bool {
-    entry.kind == Kind::File && can_allow_launching_at(&entry.path, &entry.target)
-}
-
-/// [`can_allow_launching`] for a file at `path` opening `target`, in any folder.
+/// Whether Allow Launching applies to a file at `path` opening `target`: shown as a plain file,
+/// it holds a displayable application. Reads the file (a regular file of at most 64 KiB, opened
+/// without blocking; see `apps::read_desktop_file`), so a host asks it off its event loop.
 pub fn can_allow_launching_at(path: &Path, target: &Target) -> bool {
     let name = path
         .file_name()
@@ -398,6 +396,7 @@ fn entry_with(path: PathBuf, symlink: bool, globs: &reprisefs::apps::MimeDb) -> 
             shortcut: symlink,
             kind: Kind::File,
             is_dir: true,
+            allow_launching: false,
         };
     }
     if let Some(sc) = meta.as_ref().and_then(|m| apps::shortcut_at(&path, m)) {
@@ -411,15 +410,18 @@ fn entry_with(path: PathBuf, symlink: bool, globs: &reprisefs::apps::MimeDb) -> 
             shortcut: true,
             kind: Kind::File,
             is_dir: false,
+            allow_launching: false,
         };
     }
     let mime = globs.mime_of_name(&file_name);
     let icon = icons::pick_icon(mime.as_deref(), &path, &|_| false);
+    let target = Target::Open(path.clone());
     DesktopEntry {
         label: names::label_for(&file_name, globs),
+        allow_launching: can_allow_launching_at(&path, &target),
         name: file_name,
         icon,
-        target: Target::Open(path.clone()),
+        target,
         path,
         shortcut: symlink,
         kind: Kind::File,
@@ -501,6 +503,7 @@ mod tests {
             shortcut: false,
             kind: Kind::Place(Place::Documents),
             is_dir: false,
+            allow_launching: false,
         };
         assert_eq!(
             place_command(&docs(PathBuf::from("/home/u/Docs"))).as_deref(),
@@ -541,6 +544,7 @@ mod tests {
             shortcut: false,
             kind: Kind::File,
             is_dir: false,
+            allow_launching: false,
         }
     }
 
@@ -860,7 +864,7 @@ mod tests {
         assert!(!apps::is_trusted(&path));
         let list = scan(&dir, &apps::mime_globs());
         assert!(plain(&list), "untrusted: a file");
-        assert!(can_allow_launching(&list[0]));
+        assert!(list[0].allow_launching);
         apps::allow_launching(&path).unwrap();
         let list = scan(&dir, &apps::mime_globs());
         assert_eq!(list[0].label, "Document");
@@ -868,13 +872,13 @@ mod tests {
             matches!(list[0].target, Target::Launch(_)),
             "trusted: a launcher"
         );
-        assert!(!can_allow_launching(&list[0]), "already a launcher");
+        assert!(!list[0].allow_launching, "already a launcher");
         // A .desktop that is no application never gets the row: trusting
         // it would not make it a launcher.
         std::fs::write(&path, "[Desktop Entry]\nType=Link\nName=x\n").unwrap();
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
         let list = scan(&dir, &apps::mime_globs());
-        assert!(!can_allow_launching(&list[0]));
+        assert!(!list[0].allow_launching);
     }
 
     #[test]
