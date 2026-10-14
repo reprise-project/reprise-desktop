@@ -800,12 +800,10 @@ impl State {
                 .map(|s| s.icon(app_index).and_then(|n| icons.get(&n, px))),
         );
         with_mime(desktop.as_ref(), |mime| {
-            icon_rows.extend(
-                v.search
-                    .files
-                    .iter()
-                    .map(|p| file_row(p, home.as_deref(), mime, icons, px).icon),
-            );
+            icon_rows.extend(v.search.files.iter().map(|p| {
+                let is_dir = v.search.dirs.contains(p);
+                file_row(p, is_dir, home.as_deref(), mime, icons, px).icon
+            }));
         });
         let rows = groups.iter_mut().flat_map(|g| g.rows.iter_mut());
         for (row, icon) in rows.zip(icon_rows) {

@@ -388,7 +388,16 @@ impl State {
         };
         let rows: Vec<FileRow> = paths
             .iter()
-            .map(|p| file_row(p, home.as_deref(), mime, icons, px))
+            .map(|p| {
+                file_row(
+                    p,
+                    v.search.dirs.contains(p),
+                    home.as_deref(),
+                    mime,
+                    icons,
+                    px,
+                )
+            })
             .collect();
         v.search.files = paths;
         v.model.set_files(rows);
@@ -463,7 +472,7 @@ impl State {
                         &empty
                     }
                 };
-                file_icon_name(p, mime, icons)
+                file_icon_name(p, v.search.dirs.contains(p), mime, icons)
             }),
             None => None,
         }

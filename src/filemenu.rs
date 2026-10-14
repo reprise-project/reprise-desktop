@@ -131,7 +131,7 @@ impl State {
                 let p = self.pointer_location();
                 match reprisefs::props::glance(&path, &name, &self.app_index) {
                     Ok(info) => {
-                        let icon = self.file_icon_name(&path);
+                        let icon = self.file_icon_name(&path, info.is_dir);
                         self.open_properties(&info, &icon, (p.x as i32, p.y as i32));
                     }
                     Err(err) => log::warn!("properties: {}: {err}", path.display()),
@@ -147,8 +147,8 @@ impl State {
         self.spawn_argv_activated(&apps::open_location_argv(path));
     }
 
-    fn file_icon_name(&self, path: &Path) -> String {
-        self.with_mime(|db| crate::search::file_icon_name(path, db, &self.icons))
+    fn file_icon_name(&self, path: &Path, is_dir: bool) -> String {
+        self.with_mime(|db| crate::search::file_icon_name(path, is_dir, db, &self.icons))
     }
 
     /// `f` over the desktop's MIME database, an empty one without a desktop.
