@@ -131,7 +131,13 @@ impl Page {
                 "scheme",
                 "dark mode",
             ],
-            Page::Background => &["wallpaper", "picture", "lock screen", "slideshow"],
+            Page::Background => &[
+                "wallpaper",
+                "picture",
+                "lock screen",
+                "slideshow",
+                "extensions",
+            ],
             Page::ScreenSaver => &["screensaver", "starfield", "mystify", "photos", "idle"],
             Page::Display => &[
                 "monitor",

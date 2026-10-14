@@ -1567,6 +1567,11 @@ fn binds() -> Vec<Bind> {
         Bind::Text("task_manager", lens!(task_manager)),
         Bind::Text("startmenu_banner", lens!(startmenu_banner)),
         Bind::Flag("desktop_icons", lens!(desktop_icons)),
+        Bind::Named(
+            crate::backgroundpage::EXTENSIONS,
+            lens!(desktop_extensions),
+            crate::model::DESKTOP_EXTENSIONS,
+        ),
         Bind::Flag("start_icon", lens!(start_icon)),
         Bind::Flag("adaptive_sync", lens!(adaptive_sync)),
         Bind::Flag("switcher_preview", lens!(switcher_preview)),
@@ -1951,7 +1956,8 @@ pub fn write_form(form: &mut Form, s: &Settings) {
 /// shows a live picture, and the count and animation without "Use virtual
 /// desktops". The Appearance page is rebuilt for the pending interface and its
 /// sample redrawn; the Background page greys the position without a wallpaper
-/// and shows the look's desktop colour on its Color button; the Taskbar page
+/// and the file name extensions without the desktop's files, and shows the look's desktop
+/// colour on its Color button; the Taskbar page
 /// greys the auto-hide triggers while auto-hide is off, and the Advanced page
 /// the debug overlay's captures check while the overlay is off and the thumbnail cache's size
 /// while the cache is off. Runs from
@@ -3662,12 +3668,12 @@ mod tests {
             rect(&s, p, backgroundpage::BROWSE),
             Rect::new(303, 264, 75, 23)
         );
-        assert_eq!(rect(&s, p, "slideshow_group"), Rect::new(20, 358, 358, 70));
+        assert_eq!(rect(&s, p, "slideshow_group"), Rect::new(20, 393, 358, 70));
         assert_eq!(
             rect(&s, p, backgroundpage::INTERVAL),
-            Rect::new(166, 378, 120, 21)
+            Rect::new(166, 413, 120, 21)
         );
-        assert_eq!(rect(&s, p, "slideshow_shuffle"), Rect::new(32, 404, 13, 13));
+        assert_eq!(rect(&s, p, "slideshow_shuffle"), Rect::new(32, 439, 13, 13));
         assert_eq!(rect(&s, p, "position_label"), Rect::new(219, 310, 75, 13));
         assert_eq!(
             rect(&s, p, "wallpaper_position"),
@@ -3675,7 +3681,12 @@ mod tests {
         );
         assert_eq!(rect(&s, p, "color_label"), Rect::new(303, 310, 75, 13));
         assert_eq!(rect(&s, p, "background"), Rect::new(303, 326, 75, 21));
-        assert_eq!(rect(&s, p, "icons_group"), Rect::new(20, 222, 191, 125));
+        assert_eq!(rect(&s, p, "icons_group"), Rect::new(20, 222, 191, 160));
+        assert_eq!(rect(&s, p, "extensions_label"), Rect::new(32, 334, 167, 13));
+        assert_eq!(
+            rect(&s, p, backgroundpage::EXTENSIONS),
+            Rect::new(32, 350, 167, 21)
+        );
         for (i, id) in ["documents", "computer", "home", "desktop_icons"]
             .into_iter()
             .enumerate()
@@ -3715,6 +3726,25 @@ mod tests {
             ..Settings::default()
         });
         assert!(enabled_on(&s, p, "wallpaper_position") && enabled_on(&s, p, "position_label"));
+    }
+
+    #[test]
+    fn the_extensions_combo_writes_its_key_and_greys_without_the_files() {
+        let p = Page::Background;
+        let mut got = Settings::default();
+        let mut s = with(&got);
+        assert!(enabled_on(&s, p, backgroundpage::EXTENSIONS));
+        pick(&mut s, &mut got, p, backgroundpage::EXTENSIONS, 1);
+        assert_eq!(got.desktop_extensions, "hide_launchers");
+        pick(&mut s, &mut got, p, backgroundpage::EXTENSIONS, 2);
+        assert_eq!(got.desktop_extensions, "show");
+        tick(&mut s, &mut got, p, "desktop_icons", false);
+        assert!(
+            !enabled_on(&s, p, backgroundpage::EXTENSIONS)
+                && !enabled_on(&s, p, "extensions_label")
+        );
+        tick(&mut s, &mut got, p, "desktop_icons", true);
+        assert!(enabled_on(&s, p, backgroundpage::EXTENSIONS));
     }
 
     /// The Color button shows the desktop colour the interface and scheme give until one is picked, and follows a scheme picked meanwhile.
@@ -4947,6 +4977,7 @@ mod tests {
     fn values_go_in_and_come_back_out() {
         let want = Settings {
             desktop_icons: false,
+            desktop_extensions: "show".into(),
             wallpaper_position: "tile".into(),
             background: "#336699".into(),
             system_icons: vec!["computer".into(), "recycle-bin".into()],

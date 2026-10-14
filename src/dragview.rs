@@ -1517,7 +1517,11 @@ mod tests {
             file: app_file.clone(),
         };
         put_in(&app, &desk, DropOp::Copy, &[], None, None).unwrap();
-        let entries = desktop::scan(&desk, &reprisefs::apps::MimeDb::empty());
+        let entries = desktop::scan(
+            &desk,
+            &reprisefs::apps::MimeDb::empty(),
+            reprisefs::names::Extensions::Hide,
+        );
         for name in ["Shortcut to notes.txt.desktop", "firefox.desktop"] {
             let e = entries.iter().find(|e| e.name == name);
             assert!(

@@ -541,6 +541,7 @@ fn read_icons(
     names: &BTreeMap<String, String>,
     system_icons: &[String],
     show_files: bool,
+    shown: reprisefs::names::Extensions,
 ) -> Vec<DesktopEntry> {
     let mut entries = listed(
         system_icons,
@@ -558,7 +559,7 @@ fn read_icons(
                 e
             }
         },
-        || desktop::scan(dir, mime),
+        || desktop::scan(dir, mime, shown),
     );
     for e in &mut entries {
         if let (desktop::Kind::Place(_), Target::Open(p)) = (e.kind, &e.target) {
@@ -950,9 +951,13 @@ impl State {
             view.mime.clone(),
             view.system_names.clone(),
         );
-        let (system_icons, show_files) = (config.system_icons.clone(), config.desktop_icons);
+        let (system_icons, show_files, shown) = (
+            config.system_icons.clone(),
+            config.desktop_icons,
+            config.desktop_extensions,
+        );
         self.spawn_fs_job(move || {
-            let entries = read_icons(&dir, &mime, &names, &system_icons, show_files);
+            let entries = read_icons(&dir, &mime, &names, &system_icons, show_files, shown);
             let art = icon_files(&entries, px);
             Box::new(move |state| state.desktop_scanned(entries, art, px))
         });
@@ -2066,7 +2071,14 @@ mod tests {
             .save(&pic)
             .unwrap();
         reprisefs::meta::set_folder_icon(&dir.join("Art"), pic.to_str()).unwrap();
-        let entries = read_icons(&dir, &apps::MimeDb::empty(), &BTreeMap::new(), &[], true);
+        let entries = read_icons(
+            &dir,
+            &apps::MimeDb::empty(),
+            &BTreeMap::new(),
+            &[],
+            true,
+            reprisefs::names::Extensions::Hide,
+        );
         let dirs: Vec<(&str, bool)> = entries
             .iter()
             .map(|e| (e.name.as_str(), e.is_dir))

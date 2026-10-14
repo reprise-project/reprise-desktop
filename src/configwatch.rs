@@ -60,7 +60,9 @@ pub fn diff(old: &Config, new: &Config) -> Changes {
         // A new interface brings its own caption and Start fonts.
         fonts: old.theme.fonts != new.theme.fonts || old.interface != new.interface,
         icons: old.icons.theme != new.icons.theme,
-        desktop: old.system_icons != new.system_icons || old.desktop_icons != new.desktop_icons,
+        desktop: old.system_icons != new.system_icons
+            || old.desktop_icons != new.desktop_icons
+            || old.desktop_extensions != new.desktop_extensions,
         keyboard: old.keyboard != new.keyboard,
         cursor: old.cursor != new.cursor,
         pointers: old.mouse != new.mouse
@@ -624,7 +626,7 @@ mod tests {
     }
 
     #[test]
-    fn system_icons_and_desktop_icons_rescan() {
+    fn system_icons_desktop_icons_and_extensions_rescan() {
         let old = Config::default();
         let mut new = old.clone();
         new.system_icons = vec!["recycle-bin".into()];
@@ -635,6 +637,9 @@ mod tests {
         assert!(d.desktop);
         assert!(!d.workspaces);
         assert!(diff(&new, &old).desktop);
+        let mut new = old.clone();
+        new.desktop_extensions = reprisefs::names::Extensions::Show;
+        assert!(diff(&old, &new).desktop);
     }
 
     #[test]

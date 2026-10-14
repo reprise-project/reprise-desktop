@@ -61,15 +61,43 @@ pub fn shortcut_name(name: &str, existing: &[String]) -> String {
     unique_name(&format!("Shortcut to {base}"), &taken)
 }
 
-/// A file's desktop label: hides the extension of a registered file type
-/// ("New Text Document" for `New Text Document.txt`), keeps an unknown one
-/// (`notes.foo`). A type is known when the shared-mime-info `globs`
-/// (`apps::mime_globs`) match; only the last extension goes (`a.tar.gz` -> `a.tar`).
-pub fn label_for(file_name: &str, globs: &MimeDb) -> String {
+/// Which extensions desktop labels hide: `desktop_extensions` in config.toml.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Extensions {
+    /// Every registered file type's ([`label_for`]).
+    #[default]
+    Hide,
+    /// Only `.desktop`.
+    HideLaunchers,
+    Show,
+}
+
+impl Extensions {
+    pub fn parse(s: &str) -> Option<Extensions> {
+        Some(match s {
+            "hide" => Extensions::Hide,
+            "hide_launchers" => Extensions::HideLaunchers,
+            "show" => Extensions::Show,
+            _ => return None,
+        })
+    }
+}
+
+/// A file's desktop label under `shown`. [`Extensions::Hide`] hides the extension of a registered
+/// file type ("New Text Document" for `New Text Document.txt`) and keeps an unknown one
+/// (`notes.foo`); a type is known when the shared-mime-info `globs` (`apps::mime_globs`) match.
+/// Only the last extension goes (`a.tar.gz` -> `a.tar`), and a name that is all extension
+/// (`.txt`) keeps it.
+pub fn label_for(file_name: &str, globs: &MimeDb, shown: Extensions) -> String {
     let path = Path::new(file_name);
     let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
     let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("");
-    if ext.is_empty() || stem.is_empty() || apps::mime_of_in(globs, path).is_none() {
+    let hides = match shown {
+        Extensions::Hide => apps::mime_of_in(globs, path).is_some(),
+        Extensions::HideLaunchers => ext == "desktop",
+        Extensions::Show => false,
+    };
+    if ext.is_empty() || stem.is_empty() || !hides {
         return file_name.to_string();
     }
     stem.to_string()
@@ -178,15 +206,52 @@ mod tests {
     #[test]
     fn label_hides_a_known_extension() {
         let globs = MimeDb::parse(["50:text/plain:*.txt\n50:application/gzip:*.gz\n"]);
+        let label = |name| label_for(name, &globs, Extensions::Hide);
+        assert_eq!(label("New Text Document.txt"), "New Text Document");
+        assert_eq!(label("a.tar.gz"), "a.tar");
+        assert_eq!(label("notes.foo"), "notes.foo");
+        assert_eq!(label("README"), "README");
+        assert_eq!(label("foo."), "foo.");
+        assert_eq!(label(".txt"), ".txt");
+    }
+
+    #[test]
+    fn hide_launchers_hides_only_desktop_and_show_hides_nothing() {
+        let globs = MimeDb::parse([
+            "50:text/plain:*.txt\n50:application/gzip:*.gz\n50:application/x-desktop:*.desktop\n",
+        ]);
+        for (name, launchers, show) in [
+            ("report.txt", "report.txt", "report.txt"),
+            ("archive.tar.gz", "archive.tar.gz", "archive.tar.gz"),
+            ("app.desktop", "app", "app.desktop"),
+            ("app.tar.desktop", "app.tar", "app.tar.desktop"),
+            (".desktop", ".desktop", ".desktop"),
+            (".bashrc", ".bashrc", ".bashrc"),
+            ("README", "README", "README"),
+        ] {
+            assert_eq!(
+                label_for(name, &globs, Extensions::HideLaunchers),
+                launchers,
+                "hide_launchers: {name}"
+            );
+            assert_eq!(
+                label_for(name, &globs, Extensions::Show),
+                show,
+                "show: {name}"
+            );
+        }
+    }
+
+    #[test]
+    fn extensions_parse_the_config_spellings() {
+        assert_eq!(Extensions::parse("hide"), Some(Extensions::Hide));
         assert_eq!(
-            label_for("New Text Document.txt", &globs),
-            "New Text Document"
+            Extensions::parse("hide_launchers"),
+            Some(Extensions::HideLaunchers)
         );
-        assert_eq!(label_for("a.tar.gz", &globs), "a.tar");
-        assert_eq!(label_for("notes.foo", &globs), "notes.foo");
-        assert_eq!(label_for("README", &globs), "README");
-        assert_eq!(label_for("foo.", &globs), "foo.");
-        assert_eq!(label_for(".txt", &globs), ".txt");
+        assert_eq!(Extensions::parse("show"), Some(Extensions::Show));
+        assert_eq!(Extensions::parse("Show"), None);
+        assert_eq!(Extensions::default(), Extensions::Hide);
     }
 
     #[test]

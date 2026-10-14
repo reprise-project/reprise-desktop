@@ -5,6 +5,7 @@ terminal = "alacritty"
 startmenu_banner = "Reprise Desktop"   # text of the vertical band on the Start menu's left edge
 # startmenu_style = "glass"   # the Start menu: "classic" (the band and the [[startmenu]] entries) or "glass" (programs, search and places in two columns); default: glass under the Glass interface, else classic
 desktop_icons = true          # icons for the files in ~/Desktop (XDG_DESKTOP_DIR); false hides them and the desktop takes no files, the system icons stay
+# desktop_extensions = "hide"  # file name extensions in desktop labels: "hide" (every registered type's), "hide_launchers" (only .desktop) or "show"
 start_icon = false            # the Start button's logo: the icon theme's start-here (true) or the Reprise mark (false)
 adaptive_sync = false         # variable refresh rate on every output that supports it; an [[outputs]] entry overrides it, and the Display page of Reprise Settings sets that one
 system_icons = ["documents", "computer", "home", "recycle-bin"]   # the desktop's system icons, in order; home is your home folder

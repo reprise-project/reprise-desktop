@@ -1207,6 +1207,7 @@ pub struct Config {
     pub idle_battery: IdleOverrides,
     pub power: PowerConfig,
     pub desktop_icons: bool,
+    pub desktop_extensions: reprisefs::names::Extensions,
     pub start_icon: bool,
     /// The desktop's system icons, in order: `documents`, `computer`, `home`,
     /// `recycle-bin`. Old `my-documents`/`my-computer` read as the new names.
@@ -1551,6 +1552,7 @@ impl Default for Config {
             idle_battery: IdleOverrides::default(),
             power: PowerConfig::default(),
             desktop_icons: true,
+            desktop_extensions: reprisefs::names::Extensions::Hide,
             start_icon: false,
             system_icons: ["documents", "computer", "home", "recycle-bin"]
                 .iter()
@@ -2341,6 +2343,7 @@ struct FileConfig {
     idle: Option<FileIdle>,
     power: Option<FilePower>,
     desktop_icons: Option<bool>,
+    desktop_extensions: Option<String>,
     start_icon: Option<bool>,
     system_icons: Option<Vec<String>>,
     wallpaper: Option<FileWallpaper>,
@@ -2702,6 +2705,11 @@ impl Config {
         }
         if let Some(v) = file.desktop_icons {
             cfg.desktop_icons = v;
+        }
+        if let Some(v) = file.desktop_extensions {
+            cfg.desktop_extensions = reprisefs::names::Extensions::parse(&v).ok_or_else(|| {
+                format!("desktop_extensions = {v:?} is not hide, hide_launchers or show")
+            })?;
         }
         if let Some(v) = file.start_icon {
             cfg.start_icon = v;
@@ -5241,6 +5249,22 @@ command = "gedit"
                 .unwrap()
                 .launcher_files
         );
+    }
+
+    #[test]
+    fn desktop_extensions_default_to_hide_and_read_each_mode() {
+        use reprisefs::names::Extensions;
+        assert_eq!(Config::default().desktop_extensions, Extensions::Hide);
+        for (text, want) in [
+            ("hide", Extensions::Hide),
+            ("hide_launchers", Extensions::HideLaunchers),
+            ("show", Extensions::Show),
+        ] {
+            let c = Config::parse(&format!("desktop_extensions = \"{text}\"\n")).unwrap();
+            assert_eq!(c.desktop_extensions, want, "{text}");
+        }
+        let err = Config::parse("desktop_extensions = \"all\"\n").unwrap_err();
+        assert!(err.contains("hide, hide_launchers or show"), "{err}");
     }
 
     #[test]

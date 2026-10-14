@@ -17,7 +17,7 @@ use reprisekit::theme::Color;
 use reprisekit::wallpaper::{Position, compose};
 use reprisekit::wallpapers::{self, Builtin, Design, Variant};
 
-use crate::model::{POSITIONS, SLIDE_INTERVALS, Settings, WALLPAPER_MODES};
+use crate::model::{DESKTOP_EXTENSIONS, POSITIONS, SLIDE_INTERVALS, Settings, WALLPAPER_MODES};
 use crate::pages::{Area, GX, X, button, choice};
 use crate::wallpapers::expand;
 
@@ -25,6 +25,11 @@ pub const MONITOR: &str = "monitor";
 pub const MODE: &str = "wallpaper_mode";
 pub const WALLPAPER: &str = "wallpaper";
 pub const BROWSE: &str = "browse";
+/// The file name extensions combo and its label, greyed while the desktop shows no files.
+pub const EXTENSIONS: &str = "desktop_extensions";
+const EXTENSIONS_LABEL: &str = "extensions_label";
+/// The Slideshow group's top at [`Area::MIN`], 11 px under the Desktop icons group.
+const SLIDE_Y: i32 = 393;
 /// The slideshow's interval combo and Shuffle check, and the group round
 /// them, greyed for one picture.
 pub const INTERVAL: &str = "slideshow_interval";
@@ -167,32 +172,34 @@ pub fn page(a: Area) -> Form {
                 schemes::PALETTE.to_vec(),
             )),
         ),
-        Item::group("icons_group", Rect::new(X, 222, 191, 125), "Desktop icons"),
+        Item::group("icons_group", Rect::new(X, 222, 191, 160), "Desktop icons"),
         Item::check("documents", GX, 244, "&Documents"),
         Item::check("computer", GX, 266, "Co&mputer"),
         Item::check("home", GX, 288, &home_check()),
         Item::check("desktop_icons", GX, 310, "&Show the files in ~/Desktop"),
+        Item::label_at(EXTENSIONS_LABEL, GX, 334, 167, "File name e&xtensions:"),
+        choice(EXTENSIONS, GX, 350, 167, DESKTOP_EXTENSIONS),
         Item::group(
             "slideshow_group",
-            Rect::new(X, 358 + dh, a.w, 70),
+            Rect::new(X, SLIDE_Y + dh, a.w, 70),
             "Slideshow",
         ),
         Item::label_at(
             "interval_label",
             GX,
-            382 + dh,
+            SLIDE_Y + 24 + dh,
             130,
             "Change picture &every:",
         ),
         Item::combo(
             INTERVAL,
             GX + 134,
-            378 + dh,
+            SLIDE_Y + 20 + dh,
             120,
             &intervals,
             intervals.len(),
         ),
-        Item::check("slideshow_shuffle", GX, 404 + dh, "Sh&uffle"),
+        Item::check("slideshow_shuffle", GX, SLIDE_Y + 46 + dh, "Sh&uffle"),
     ])
 }
 
@@ -417,6 +424,8 @@ pub fn follow(form: &mut Form, s: &Settings) {
     for id in SLIDE_CONTROLS {
         form.set_enabled(id, show);
     }
+    form.set_enabled(EXTENSIONS_LABEL, s.desktop_icons);
+    form.set_enabled(EXTENSIONS, s.desktop_icons);
     if s.background.is_empty()
         && let Some(Control::Color(b)) = form.item_mut("background").map(|i| &mut i.control)
     {
@@ -427,6 +436,64 @@ pub fn follow(form: &mut Form, s: &Settings) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The Desktop icons group's extensions row on Show, and greyed with the files off. The rows
+    /// above are left out: the Home check box reads the user's name.
+    #[test]
+    fn the_desktop_icons_group_pins_its_pixels_in_every_look() {
+        if !reprisekit::text::test_tahoma() {
+            return;
+        }
+        use reprisekit::controls::form;
+        use reprisekit::interface::Interface;
+        fn fnv(c: &Canvas) -> u64 {
+            c.pixels.iter().fold(0xcbf29ce484222325, |h, p| {
+                (h ^ *p as u64).wrapping_mul(0x100000001b3)
+            })
+        }
+        let row = Rect::new(X, 330, 191, 52);
+        let mut got = Vec::new();
+        for i in [Interface::Classic, Interface::Blue, Interface::Glass] {
+            let theme = reprisekit::interfaces::theme_for(i);
+            let text = reprisekit::text::TextRenderer::load(&theme.fonts);
+            let mut hashes = [0; 2];
+            for (k, files) in [true, false].into_iter().enumerate() {
+                let mut f = page(Area::MIN);
+                let s = Settings {
+                    desktop_icons: files,
+                    desktop_extensions: "show".into(),
+                    ..Settings::default()
+                };
+                follow(&mut f, &s);
+                f.set_combo(EXTENSIONS, 2);
+                let mut c = Canvas::new(row.right() as u32, row.bottom() as u32);
+                c.fill_rect(c.bounds(), theme.colors.button_face);
+                form::draw(
+                    &mut c,
+                    &text,
+                    &theme.paint(),
+                    &f,
+                    false,
+                    theme.fonts.size_px,
+                );
+                hashes[k] = fnv(&c.copy_rect(row));
+            }
+            assert_ne!(
+                hashes[0], hashes[1],
+                "{i:?}: the combo greys with the files off"
+            );
+            got.push(hashes);
+        }
+        assert_eq!(
+            got,
+            [
+                [0xa9cc8b84ed350ffe, 0x66f605a354ffe528],
+                [0x058be053ad8eaf77, 0x9aebc2626f26bc70],
+                [0xf241b02b1fdb815c, 0x110665e0b085858e],
+            ],
+            "Classic, Blue, Glass: shown, greyed"
+        );
+    }
 
     #[test]
     fn the_list_names_each_picture_and_picks_the_pending_one() {
