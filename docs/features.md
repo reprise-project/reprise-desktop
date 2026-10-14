@@ -163,7 +163,9 @@ the Super tap, Super+Shift+Esc and the VT switch keys can be rebound.
 
 - **Icons** you can drag around, rename with F2, delete to the trash,
   refresh with F5 and right-click. Documents, Computer, Home and Recycle Bin are there if you
-  want them, and the files in `~/Desktop` too.
+  want them, and the files in `~/Desktop` too. Labels hide file name extensions, only
+  `.desktop`, or none (`desktop_extensions`); renaming a shown extension selects the name
+  before it.
 - **Trusted launchers.** A `.desktop` file on the desktop, or one the
   launcher finds, runs only once you've marked it trusted (Allow Launching),
   so a download can't pose as a program.

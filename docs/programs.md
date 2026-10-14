@@ -54,7 +54,8 @@ One window, 23 pages, four headings. Only one runs at a time.
   - **Appearance:** interface and colour scheme. Under Glass: mode,
     material, frame, transparency, blur, reflections and colour intensity.
   - **Background:** a picture or a slideshow, its position, the desktop
-    colour and which icons sit on the desktop.
+    colour, which icons sit on the desktop and whether their labels show
+    file name extensions.
   - **Screen Saver:** the saver, its settings and a live preview.
   - **Display:** arrange monitors by dragging them, or pick one with the
     arrows and move it with Ctrl+arrows to the next edge that way, Identify,

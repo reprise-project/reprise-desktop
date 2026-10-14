@@ -2206,6 +2206,7 @@ impl State {
             .and_then(|v| v.dialog.sheet_name())
             .map(|name| (name.to_string(), self.app_index.clone()));
         let mime = self.desktop.as_ref().map(|v| v.mime.clone());
+        let shown = self.config.desktop_extensions;
         self.spawn_fs_job(move || {
             let Props {
                 path,
@@ -2267,7 +2268,7 @@ impl State {
             let header = reread
                 .as_ref()
                 .zip(mime)
-                .map(|(_, mime)| crate::desktop::entry_at(&now, &mime));
+                .map(|(_, mime)| crate::desktop::entry_at(&now, &mime, shown));
             let written = dialog::Written {
                 path: now,
                 attrs: if attrs_ok { attrs } else { Default::default() },

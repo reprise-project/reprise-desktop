@@ -3,7 +3,7 @@
 
 use std::path::{Path, PathBuf};
 
-use reprisekit::textedit::{EditKey, TextEdit};
+use reprisekit::textedit::EditKey;
 use smithay::input::keyboard::Keycode;
 
 use crate::{
@@ -240,8 +240,7 @@ impl State {
     }
 
     /// Begin renaming icon `index`: its label becomes an editable box
-    /// holding the current name, all selected. The Recycle Bin keeps its
-    /// name.
+    /// holding the current name (`desktop::rename_edit`). The Recycle Bin keeps its name.
     pub fn begin_rename(&mut self, index: usize) {
         let Some(view) = self.desktop.as_mut() else {
             return;
@@ -252,7 +251,10 @@ impl State {
         if entry.kind == desktop::Kind::RecycleBin {
             return;
         }
-        view.rename = Some((index, TextEdit::new(entry.label.clone(), true)));
+        view.rename = Some((
+            index,
+            desktop::rename_edit(entry, self.config.desktop_extensions),
+        ));
         view.rename_clicks.reset();
         view.rename_drop = None;
         view.selection.set_only(Some(index));
