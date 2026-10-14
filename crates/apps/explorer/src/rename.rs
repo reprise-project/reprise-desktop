@@ -4,23 +4,6 @@ use reprisefs::listing::Item;
 use reprisefs::names::{Verdict, failed_text, verdict};
 use reprisekit::textedit::{TextEdit, keysym};
 
-/// A file's stem is selected, as `Path::file_stem` has it: a leading dot is
-/// part of the stem (`.bashrc` has no extension to keep).
-pub fn initial_edit(name: &str, is_dir: bool) -> TextEdit {
-    let mut ed = TextEdit::new(name, true);
-    if is_dir {
-        return ed;
-    }
-    let stem = std::path::Path::new(name)
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .unwrap_or(name);
-    if !stem.is_empty() && stem.len() < name.len() {
-        ed.set_selection(0, stem.len());
-    }
-    ed
-}
-
 impl Explorer {
     pub(crate) fn after_rename(
         &mut self,
@@ -56,7 +39,7 @@ impl Explorer {
         self.focus = Focus::View;
         self.sv.edit = Some((
             i,
-            initial_edit(it.label(), it.is_dir || it.shortcut.is_some()),
+            TextEdit::rename(it.label(), it.is_dir || it.shortcut.is_some()),
         ));
         self.refresh_chrome(ctx);
         Reply::redraw()
@@ -126,24 +109,5 @@ impl Explorer {
             return self.message_box("Rename", failed_text(it.label(), &e), ctx);
         }
         self.refresh(ctx)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn a_file_opens_with_its_stem_selected_and_a_folder_with_all_of_it() {
-        let ed = initial_edit("notes.txt", false);
-        assert_eq!(ed.selection(), 0..5);
-        let ed = initial_edit("Reports", true);
-        assert_eq!(ed.selection(), 0.."Reports".len());
-        let ed = initial_edit("README", false);
-        assert!(ed.all_selected());
-        let ed = initial_edit(".bashrc", false);
-        assert!(ed.all_selected());
-        let ed = initial_edit("a.tar.gz", false);
-        assert_eq!(ed.selection(), 0.."a.tar".len());
     }
 }

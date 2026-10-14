@@ -159,6 +159,8 @@ pub struct Settings {
     /// the Glass interface, Classic otherwise (`for_interface`).
     pub startmenu_style: String,
     pub desktop_icons: bool,
+    /// `desktop_extensions`: one of [`DESKTOP_EXTENSIONS`]' values.
+    pub desktop_extensions: String,
     pub start_icon: bool,
     pub adaptive_sync: bool,
     /// `[switcher] preview`: a live picture of the selected window in the
@@ -438,6 +440,7 @@ impl Default for Settings {
             startmenu_banner: "Reprise Desktop".into(),
             startmenu_style: "classic".into(),
             desktop_icons: true,
+            desktop_extensions: "hide".into(),
             start_icon: false,
             adaptive_sync: false,
             switcher_preview: true,
@@ -826,6 +829,14 @@ pub const POSITIONS: &Choices = &[
 /// Mirrors `reprisekit::water::Water::parse`.
 pub const WATER_STYLES: &Choices = &[("calm", "Calm"), ("lively", "Lively"), ("rain", "Rain")];
 
+/// The Background page's file name extensions combo. Mirrors `Extensions::parse` in
+/// `reprisefs::names`.
+pub const DESKTOP_EXTENSIONS: &Choices = &[
+    ("hide", "Hide"),
+    ("hide_launchers", "Hide for launchers only"),
+    ("show", "Show"),
+];
+
 /// Default Programs' plugged-in drive combo. Mirrors `OnInsert::parse` in reprise-drives.
 pub const DRIVE_INSERTS: &Choices = &[
     ("ask", "Ask what to do"),
@@ -905,6 +916,7 @@ fn fields() -> Vec<Field> {
         Field::Text(k("", "startmenu_banner"), lens!(startmenu_banner)),
         Field::Text(k("", "startmenu_style"), lens!(startmenu_style)),
         Field::Flag(k("", "desktop_icons"), lens!(desktop_icons)),
+        Field::Text(k("", "desktop_extensions"), lens!(desktop_extensions)),
         Field::Flag(k("", "start_icon"), lens!(start_icon)),
         Field::Flag(k("", "adaptive_sync"), lens!(adaptive_sync)),
         Field::Flag(k("previews", "taskbar"), lens!(preview_taskbar)),
@@ -2147,6 +2159,7 @@ size_px = 12
             startmenu_banner: "Reprise".into(),
             startmenu_style: "classic".into(),
             desktop_icons: false,
+            desktop_extensions: "hide_launchers".into(),
             start_icon: false,
             adaptive_sync: true,
             switcher_preview: false,
@@ -2513,6 +2526,26 @@ size_px = 12
         want.desktop_animation_ms = 200;
         let out = save(&out, &want, &base).expect("parses");
         assert_eq!(out, "", "the emptied [workspaces] goes too");
+    }
+
+    #[test]
+    fn the_desktop_extensions_round_trip_and_the_default_leaves_the_file() {
+        assert_eq!(load("").desktop_extensions, "hide");
+        let base = load("");
+        let mut show = base.clone();
+        show.desktop_extensions = "show".into();
+        let text = saved("", &show);
+        assert_eq!(text, "desktop_extensions = \"show\"\n");
+        assert_eq!(load(&text).desktop_extensions, "show");
+        let mut launchers = load(&text);
+        launchers.desktop_extensions = "hide_launchers".into();
+        assert_eq!(
+            saved(&text, &launchers),
+            "desktop_extensions = \"hide_launchers\"\n"
+        );
+        let mut hide = load(&text);
+        hide.desktop_extensions = "hide".into();
+        assert_eq!(saved(&text, &hide), "", "the default removes the key");
     }
 
     #[test]

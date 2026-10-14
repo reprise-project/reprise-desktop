@@ -321,6 +321,23 @@ impl TextEdit {
         }
     }
 
+    /// A rename box holding `name`: all of it selected when `whole`, else its stem as
+    /// `Path::file_stem` has it (a leading dot is part of the stem: `.bashrc` has no extension).
+    pub fn rename(name: &str, whole: bool) -> TextEdit {
+        let mut ed = TextEdit::new(name, true);
+        if whole {
+            return ed;
+        }
+        let stem = std::path::Path::new(name)
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or(name);
+        if !stem.is_empty() && stem.len() < name.len() {
+            ed.set_selection(0, stem.len());
+        }
+        ed
+    }
+
     pub fn secret() -> TextEdit {
         TextEdit {
             text: String::with_capacity(SECRET_CAPACITY),
@@ -864,6 +881,18 @@ mod tests {
         assert_eq!(words::word_span_at(t, 1), 0..4, "word plus its spaces");
         assert_eq!(words::word_span_at(t, 3), 2..4, "a run of spaces");
         assert_eq!(words::word_span_at(t, 99), 7..t.len(), "clamped");
+    }
+
+    #[test]
+    fn a_rename_selects_the_stem_unless_whole() {
+        assert_eq!(TextEdit::rename("notes.txt", false).selection(), 0..5);
+        assert!(TextEdit::rename("Reports.d", true).all_selected());
+        assert!(TextEdit::rename("README", false).all_selected());
+        assert!(TextEdit::rename(".bashrc", false).all_selected());
+        assert_eq!(
+            TextEdit::rename("a.tar.gz", false).selection(),
+            0.."a.tar".len()
+        );
     }
 
     fn e(text: &str) -> TextEdit {

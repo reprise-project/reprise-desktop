@@ -117,6 +117,20 @@ pub fn rename_file(entry: &DesktopEntry, typed: &str) -> Result<Option<PathBuf>,
     }
 }
 
+/// The rename box for `entry`, holding its label. Under [`names::Extensions::Hide`] all of it is
+/// selected; otherwise a file whose label shows its extension has the stem selected.
+pub fn rename_edit(
+    entry: &DesktopEntry,
+    shown: names::Extensions,
+) -> reprisekit::textedit::TextEdit {
+    let whole = shown == names::Extensions::Hide
+        || entry.kind != Kind::File
+        || entry.is_dir
+        || entry.label_is_name_key()
+        || !entry.hidden_ext().is_empty();
+    reprisekit::textedit::TextEdit::rename(&entry.label, whole)
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DesktopEntry {
     /// The file name on disk, lossy when it is not UTF-8 (a system icon's
@@ -367,7 +381,11 @@ pub fn open_argv(
 
 /// `dir`'s files as desktop icons. It reads the files, so a host runs it off its event loop; a
 /// plain file wears its type's generic icon until [`wear_file_icons`] picks the theme's best.
-pub fn scan(dir: &Path, globs: &reprisefs::apps::MimeDb) -> Vec<DesktopEntry> {
+pub fn scan(
+    dir: &Path,
+    globs: &reprisefs::apps::MimeDb,
+    shown: names::Extensions,
+) -> Vec<DesktopEntry> {
     let rd = match std::fs::read_dir(dir) {
         Ok(rd) => rd,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
@@ -388,7 +406,7 @@ pub fn scan(dir: &Path, globs: &reprisefs::apps::MimeDb) -> Vec<DesktopEntry> {
         }
         // The entry's own type comes from the listing (d_type).
         let symlink = entry.file_type().is_ok_and(|t| t.is_symlink());
-        let e = entry_with(entry.path(), symlink, globs);
+        let e = entry_with(entry.path(), symlink, globs, shown);
         if e.is_dir && !e.shortcut {
             folders.push(e);
         } else {
@@ -405,14 +423,23 @@ pub fn scan(dir: &Path, globs: &reprisefs::apps::MimeDb) -> Vec<DesktopEntry> {
 }
 
 /// The desktop icon for the file at `path`, as [`scan`] lists it.
-pub fn entry_at(path: &Path, globs: &reprisefs::apps::MimeDb) -> DesktopEntry {
+pub fn entry_at(
+    path: &Path,
+    globs: &reprisefs::apps::MimeDb,
+    shown: names::Extensions,
+) -> DesktopEntry {
     let symlink = std::fs::symlink_metadata(path).is_ok_and(|m| m.file_type().is_symlink());
-    entry_with(path.to_path_buf(), symlink, globs)
+    entry_with(path.to_path_buf(), symlink, globs, shown)
 }
 
 /// One stat follows a symlink, and a dangling one shows as a plain file. `path` keeps a name that
 /// is not UTF-8; only `name` and the label show it lossily.
-fn entry_with(path: PathBuf, symlink: bool, globs: &reprisefs::apps::MimeDb) -> DesktopEntry {
+fn entry_with(
+    path: PathBuf,
+    symlink: bool,
+    globs: &reprisefs::apps::MimeDb,
+    shown: names::Extensions,
+) -> DesktopEntry {
     let file_name = path
         .file_name()
         .unwrap_or_default()
@@ -451,7 +478,7 @@ fn entry_with(path: PathBuf, symlink: bool, globs: &reprisefs::apps::MimeDb) -> 
     let icon = icons::pick_icon(mime.as_deref(), &path, &|_| false);
     let target = Target::Open(path.clone());
     DesktopEntry {
-        label: names::label_for(&file_name, globs),
+        label: names::label_for(&file_name, globs, shown),
         allow_launching: can_allow_launching_at(&path, &target),
         name: file_name,
         icon,
@@ -713,7 +740,7 @@ mod tests {
         for f in ["firefox.desktop", "noicon.desktop", "broken.desktop"] {
             apps::allow_launching(&dir.join(f)).unwrap();
         }
-        let list = scan(&dir, &apps::mime_globs());
+        let list = scan(&dir, &apps::mime_globs(), names::Extensions::Hide);
         let names: Vec<&str> = list.iter().map(|e| e.name.as_str()).collect();
         assert_eq!(
             names,
@@ -746,7 +773,7 @@ mod tests {
         std::fs::create_dir(dir.join("Photos.txt")).unwrap();
         let globs = reprisefs::apps::MimeDb::parse(["50:text/plain:*.txt\n"]);
         let has = |n: &str| n == "gnome-mime-text-plain";
-        let mut list = scan(&dir, &globs);
+        let mut list = scan(&dir, &globs, names::Extensions::Hide);
         assert_eq!(
             list[1].icon, "text-x-generic",
             "the generic icon until worn"
@@ -771,16 +798,16 @@ mod tests {
             files.insert(0, recycle_bin(dir.join("trash"), true));
             files
         };
-        let before = with_bin(scan(&dir, &apps::mime_globs()));
+        let before = with_bin(scan(&dir, &apps::mime_globs(), names::Extensions::Hide));
         let aimed = before[1].id();
         let bin = before[0].id();
         assert_eq!(aimed, IconId::File(dir.join("b.txt")));
         std::fs::write(dir.join("a.txt"), "").unwrap();
-        let after = with_bin(scan(&dir, &apps::mime_globs()));
+        let after = with_bin(scan(&dir, &apps::mime_globs(), names::Extensions::Hide));
         assert_eq!(find(&after, &aimed), Some(2), "b.txt is row 2");
         assert_eq!(find(&after, &bin), Some(0), "the Recycle Bin is row 0");
         std::fs::remove_file(dir.join("b.txt")).unwrap();
-        let gone = with_bin(scan(&dir, &apps::mime_globs()));
+        let gone = with_bin(scan(&dir, &apps::mime_globs(), names::Extensions::Hide));
         assert_eq!(find(&gone, &aimed), None);
     }
 
@@ -793,7 +820,7 @@ mod tests {
             std::fs::write(dir.join(f), text).unwrap();
             apps::allow_launching(&dir.join(f)).unwrap();
         }
-        let list = scan(&dir, &apps::mime_globs());
+        let list = scan(&dir, &apps::mime_globs(), names::Extensions::Hide);
         let keys: Vec<(&str, &str)> = list
             .iter()
             .map(|e| (e.name.as_str(), e.label.as_str()))
@@ -812,7 +839,8 @@ mod tests {
         assert!(
             scan(
                 Path::new("/nonexistent/reprise-desktop"),
-                &apps::MimeDb::empty()
+                &apps::MimeDb::empty(),
+                names::Extensions::Hide
             )
             .is_empty()
         );
@@ -832,7 +860,7 @@ mod tests {
         std::os::unix::fs::symlink(dir.join("notes.txt"), dir.join("link.txt")).unwrap();
         std::os::unix::fs::symlink(dir.join("Reports"), dir.join("Reports link")).unwrap();
         apps::allow_launching(&dir.join("app.desktop")).unwrap();
-        let list = scan(&dir, &apps::mime_globs());
+        let list = scan(&dir, &apps::mime_globs(), names::Extensions::Hide);
         let flag = |n: &str| list.iter().find(|e| e.name == n).unwrap().shortcut;
         assert!(!flag("Reports"));
         assert!(!flag("notes.txt"));
@@ -861,7 +889,11 @@ mod tests {
         let _cleanup = Cleanup(dir.clone());
         let path = dir.join(std::ffi::OsStr::from_bytes(b"caf\xe9.txt"));
         std::fs::write(&path, "").unwrap();
-        let list = scan(&dir, &apps::MimeDb::parse(["50:text/plain:*.txt\n"]));
+        let list = scan(
+            &dir,
+            &apps::MimeDb::parse(["50:text/plain:*.txt\n"]),
+            names::Extensions::Hide,
+        );
         assert_eq!(list.len(), 1, "the file is listed");
         assert_eq!(list[0].path, path);
         assert_eq!(list[0].target, Target::Open(path.clone()));
@@ -891,16 +923,16 @@ mod tests {
                 && !list[0].shortcut
         };
         assert!(
-            plain(&scan(&dir, &apps::mime_globs())),
+            plain(&scan(&dir, &apps::mime_globs(), names::Extensions::Hide)),
             "not executable: a file"
         );
         chmod_exec(&path);
         assert!(!apps::is_trusted(&path));
-        let list = scan(&dir, &apps::mime_globs());
+        let list = scan(&dir, &apps::mime_globs(), names::Extensions::Hide);
         assert!(plain(&list), "untrusted: a file");
         assert!(list[0].allow_launching);
         apps::allow_launching(&path).unwrap();
-        let list = scan(&dir, &apps::mime_globs());
+        let list = scan(&dir, &apps::mime_globs(), names::Extensions::Hide);
         assert_eq!(list[0].label, "Document");
         assert!(
             matches!(list[0].target, Target::Launch(_)),
@@ -911,7 +943,7 @@ mod tests {
         // it would not make it a launcher.
         std::fs::write(&path, "[Desktop Entry]\nType=Link\nName=x\n").unwrap();
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
-        let list = scan(&dir, &apps::mime_globs());
+        let list = scan(&dir, &apps::mime_globs(), names::Extensions::Hide);
         assert!(!list[0].allow_launching);
     }
 
@@ -933,7 +965,7 @@ mod tests {
             std::fs::write(dir.join(file), text).unwrap();
             apps::allow_launching(&dir.join(file)).unwrap();
         }
-        let list = scan(&dir, &apps::mime_globs());
+        let list = scan(&dir, &apps::mime_globs(), names::Extensions::Hide);
         let names: Vec<&str> = list.iter().map(|e| e.name.as_str()).collect();
         assert_eq!(names, vec!["web.desktop", "hidden.desktop", "link.desktop"]);
         assert!(
@@ -955,6 +987,143 @@ mod tests {
         );
     }
 
+    #[test]
+    fn each_extensions_mode_labels_and_renames_the_desktop_files() {
+        use names::Extensions::{Hide, HideLaunchers, Show};
+        let dir = fixture("extensions");
+        let _cleanup = Cleanup(dir.clone());
+        for f in [
+            "report.pdf",
+            "archive.tar.gz",
+            ".profile.txt",
+            "notes.desktop",
+        ] {
+            std::fs::write(dir.join(f), "").unwrap();
+        }
+        std::fs::create_dir(dir.join("Photos.d")).unwrap();
+        let app = dir.join("app.desktop");
+        std::fs::write(
+            &app,
+            "[Desktop Entry]\nType=Application\nName=Editor\nExec=true\n",
+        )
+        .unwrap();
+        apps::allow_launching(&app).unwrap();
+        let globs = apps::MimeDb::parse([concat!(
+            "50:application/pdf:*.pdf\n50:application/gzip:*.gz\n",
+            "50:text/plain:*.txt\n50:application/x-desktop:*.desktop\n",
+        )]);
+        // (file, label, the stem selected when the label shows the extension) per mode.
+        let want = [
+            (
+                Hide,
+                [
+                    ("report.pdf", "report", 0..6),
+                    ("archive.tar.gz", "archive.tar", 0..11),
+                    ("notes.desktop", "notes", 0..5),
+                ],
+            ),
+            (
+                HideLaunchers,
+                [
+                    ("report.pdf", "report.pdf", 0..6),
+                    ("archive.tar.gz", "archive.tar.gz", 0..11),
+                    ("notes.desktop", "notes", 0..5),
+                ],
+            ),
+            (
+                Show,
+                [
+                    ("report.pdf", "report.pdf", 0..6),
+                    ("archive.tar.gz", "archive.tar.gz", 0..11),
+                    ("notes.desktop", "notes.desktop", 0..5),
+                ],
+            ),
+        ];
+        for (mode, files) in want {
+            let list = scan(&dir, &globs, mode);
+            let by = |n: &str| list.iter().find(|e| e.name == n).unwrap();
+            assert!(
+                list.iter().all(|e| e.name != ".profile.txt"),
+                "{mode:?}: a dot file stays hidden"
+            );
+            for (file, label, sel) in files {
+                let e = by(file);
+                assert_eq!(e.label, label, "{mode:?}: {file}");
+                assert_eq!(
+                    format!("{}{}", e.label, e.hidden_ext()),
+                    file,
+                    "{mode:?}: {file}"
+                );
+                let edit = rename_edit(e, mode);
+                assert_eq!(edit.text, label, "{mode:?}: {file}'s rename box");
+                let sel = if mode == Hide { 0..label.len() } else { sel };
+                assert_eq!(edit.selection(), sel, "{mode:?}: {file}'s selection");
+            }
+            let folder = by("Photos.d");
+            assert_eq!(folder.label, "Photos.d", "{mode:?}");
+            assert!(rename_edit(folder, mode).all_selected(), "{mode:?}");
+            let launcher = by("app.desktop");
+            assert_eq!(
+                launcher.label, "Editor",
+                "{mode:?}: a launcher shows its Name="
+            );
+            assert!(rename_edit(launcher, mode).all_selected(), "{mode:?}");
+        }
+        let shown = scan(&dir, &globs, Show);
+        let report = shown.iter().find(|e| e.name == "report.pdf").unwrap();
+        assert_eq!(
+            rename_file(report, "summary.txt"),
+            Ok(Some(dir.join("summary.txt"))),
+            "a shown extension is the typed one"
+        );
+        let hidden = scan(&dir, &globs, Hide);
+        let archive = hidden.iter().find(|e| e.name == "archive.tar.gz").unwrap();
+        assert_eq!(
+            rename_file(archive, "backup"),
+            Ok(Some(dir.join("backup.gz"))),
+            "a hidden extension is kept"
+        );
+    }
+
+    /// The label of `archive.tar.gz` and its rename box under Show, at scale 1.
+    #[test]
+    fn a_shown_extension_pins_the_label_and_the_rename_box() {
+        if !reprisekit::text::test_tahoma() {
+            return;
+        }
+        use reprisekit::textedit::Caret;
+        fn fnv(c: &reprisekit::raster::Canvas) -> u64 {
+            c.pixels.iter().fold(0xcbf29ce484222325, |h, p| {
+                (h ^ *p as u64).wrapping_mul(0x100000001b3)
+            })
+        }
+        let dir = fixture("shown-pixels");
+        let _cleanup = Cleanup(dir.clone());
+        std::fs::write(dir.join("archive.tar.gz"), "").unwrap();
+        let globs = apps::MimeDb::parse(["50:application/gzip:*.gz\n"]);
+        let theme = reprisekit::theme::Theme::default();
+        let text = reprisekit::text::TextRenderer::load(&theme.fonts);
+        let drawn = |shown| {
+            let e = scan(&dir, &globs, shown).remove(0);
+            let edit = rename_edit(&e, shown);
+            let cell = draw_cell(&theme, &text, &e.label, None, false, None, None, None);
+            let rename = draw_cell(
+                &theme,
+                &text,
+                &e.label,
+                None,
+                false,
+                None,
+                Some((&edit, Caret::Shown)),
+                None,
+            );
+            [fnv(&cell), fnv(&rename)]
+        };
+        let show = drawn(names::Extensions::Show);
+        assert_ne!(show, drawn(names::Extensions::Hide), "the extension shows");
+        assert_eq!(show, [0xbc4146243175562c, 0x0018bc62529b17fc]);
+    }
+
     /// An executable FIFO named `*.desktop` would block `open(2)` forever,
     /// and a launcher past 64 KiB is not read at all: both show as plain
     /// files.
@@ -973,7 +1142,7 @@ mod tests {
         );
         std::fs::write(dir.join("big.desktop"), big).unwrap();
         apps::allow_launching(&dir.join("big.desktop")).unwrap();
-        let list = scan(&dir, &apps::mime_globs());
+        let list = scan(&dir, &apps::mime_globs(), names::Extensions::Hide);
         let names: Vec<&str> = list.iter().map(|e| e.name.as_str()).collect();
         assert_eq!(names, vec!["big.desktop", "pipe.desktop"]);
         assert!(
