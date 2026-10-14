@@ -287,7 +287,7 @@ fn smoked_over_white_is_darker_and_an_unfocused_window_keeps_it_dark() {
 /// The blurred row through a black-to-white edge at `x = w/2`, with no
 /// tint: the distance between where it passes 15.9% and 84.1% of white,
 /// which is two sigmas of the blur on screen.
-fn edge_spread(r: &mut Rig, blur: u8, quality: Quality) -> f64 {
+fn edge_spread(r: &mut Rig, blur: u8, quality: Quality, scale: f64) -> f64 {
     let (w, h) = (r.size.w, r.size.h);
     let back = r.backdrop(|x, _| if x < w / 2 { [0; 3] } else { [255; 3] });
     let s = Settings {
@@ -299,10 +299,16 @@ fn edge_spread(r: &mut Rig, blur: u8, quality: Quality) -> f64 {
     let mut f = r.frame(&shapes, &[], &s);
     f.surface = None;
     f.quality = quality;
+    f.scale = scale;
     let el = glass.element(&r.fx, &f).unwrap();
     r.frames = 0;
     let (p, _) = r.render(vec![el], &back);
     let row: Vec<f64> = (0..w).map(|x| f64::from(p.at(x, h / 2)[0])).collect();
+    crossing_width(&row)
+}
+
+/// The distance between where `row` passes 15.9% and 84.1% of white.
+fn crossing_width(row: &[f64]) -> f64 {
     let cross = |level: f64| {
         let i = row
             .iter()
@@ -322,15 +328,20 @@ fn each_strength_spreads_an_edge_by_its_sigma() {
         // On screen: the Gaussian at twice its half-resolution sigma, with
         // the 2x2 mean and the linear upscale adding about one pixel².
         let want = 2.0 * (4.0 * sigma * sigma + 1.0).sqrt();
-        let got = edge_spread(&mut r, blur, Quality::Full);
+        let got = edge_spread(&mut r, blur, Quality::Full, 1.0);
         assert!(
             (got - want).abs() <= 0.08 * want,
             "blur {blur}: the edge spreads over {want:.1} px, got {got:.1}"
         );
-        let coarse = edge_spread(&mut r, blur, Quality::Coarse);
+        let coarse = edge_spread(&mut r, blur, Quality::Coarse, 1.0);
         assert!(
             (coarse - want).abs() <= 0.15 * want,
             "blur {blur}, coarse: about {want:.1} px, got {coarse:.1}"
+        );
+        let two = edge_spread(&mut r, blur, Quality::Full, 2.0);
+        assert!(
+            (two - want).abs() <= 0.15 * want,
+            "blur {blur}, scale 2: about {want:.1} px, got {two:.1}"
         );
     }
 }
@@ -357,7 +368,7 @@ fn a_bright_spot_spreads_no_farther_than_the_reach() {
         let el = glass.element(&r.fx, &f).unwrap();
         r.frames = 0;
         let (p, _) = r.render(vec![el], &back);
-        let reach = blur::reach(blur, Material::Frosted, Quality::Full);
+        let reach = blur::reach(blur, Material::Frosted, Quality::Full, 1.0);
         let sigma = 2.0 * blur::sigma(blur, Material::Frosted);
         let lit = |d: i32| p.at(128 + d, 120)[0];
         assert!(
@@ -429,7 +440,11 @@ fn a_rounded_corner_leaves_its_outside_clear() {
 }
 
 fn half_backdrop(r: &mut Rig, f: impl Fn(i32, i32) -> [u8; 3]) -> GlesTexture {
-    let (w, h) = ((r.size.w + 1) / 2, (r.size.h + 1) / 2);
+    downscaled_backdrop(r, 2, f)
+}
+
+fn downscaled_backdrop(r: &mut Rig, d: i32, f: impl Fn(i32, i32) -> [u8; 3]) -> GlesTexture {
+    let (w, h) = ((r.size.w + d - 1) / d, (r.size.h + d - 1) / d);
     let bytes: Vec<u8> = (0..h)
         .flat_map(|y| (0..w).map(move |x| (x, y)))
         .flat_map(|(x, y)| {
@@ -465,6 +480,51 @@ fn blur_into(
         .update(&mut r.renderer, &r.fx, &u)
         .expect("the picture blurs");
     picture.source().expect("a drawn picture")
+}
+
+#[test]
+fn at_scale_2_a_quarter_backdrop_blurs_to_the_spread_of_a_half_one() {
+    let Some(mut r) = rig(400, 40) else { return };
+    let s = Settings {
+        blur: 3,
+        ..plain(Material::Frosted)
+    };
+    let shapes = [Shape::rect(rect(0, 0, 400, 40))];
+    let black = r.backdrop(|_, _| [0; 3]);
+    let mut spread = |scale: f64| {
+        let d = blur::backdrop_downscale(scale);
+        let back = downscaled_backdrop(&mut r, d, |x, _| [if x < 200 / d { 0 } else { 255 }; 3]);
+        let u = Update {
+            backdrop: &back,
+            changed: &[],
+            settings: &s,
+            quality: Quality::Full,
+            needed: None,
+            output: r.size,
+            scale,
+            hold: false,
+        };
+        let mut picture = Picture::new();
+        picture
+            .update(&mut r.renderer, &r.fx, &u)
+            .expect("the picture blurs");
+        let src = picture.source().expect("a drawn picture");
+        let f = GlassFrame {
+            source: Some(&src),
+            surface: None,
+            scale,
+            ..r.frame(&shapes, &[], &s)
+        };
+        r.frames = 0;
+        let (p, _) = r.render(vec![Glass::new().element(&r.fx, &f).unwrap()], &black);
+        let row: Vec<f64> = (0..400).map(|x| f64::from(p.at(x, 20)[0])).collect();
+        crossing_width(&row)
+    };
+    let (one, two) = (spread(1.0), spread(2.0));
+    assert!(
+        (two - one).abs() <= 0.15 * one,
+        "the edge spreads over {one:.1} px at scale 1, {two:.1} at scale 2"
+    );
 }
 
 #[test]

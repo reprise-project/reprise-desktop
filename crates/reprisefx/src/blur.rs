@@ -1,6 +1,7 @@
 //! The blur: what lies behind a piece of glass, copied out of the frame
-//! being drawn at half its resolution, blurred by a separable Gaussian in
-//! two passes, with the reflection streaks laid over it.
+//! being drawn at half its resolution (a quarter at output scale 2 and
+//! up), blurred by a separable Gaussian in two passes, with the reflection
+//! streaks laid over it.
 //!
 //! The copy out of the frame (`blit`) follows niri's
 //! `src/render_helpers/framebuffer_effect.rs` (GPL-3.0).
@@ -28,7 +29,8 @@ pub enum Quality {
     /// While a window is dragged or sized with `[glass] fast_drag` on: at a
     /// quarter of the resolution, the same spread. A sigma at or below
     /// `[glass] blur = 1`'s is too light to lose half its texels, so it
-    /// stays at the full blur.
+    /// stays at the full blur. At output scale 2 and up the full blur is
+    /// already this coarse.
     Coarse,
 }
 
@@ -48,18 +50,25 @@ pub fn sigma(blur: u8, material: Material) -> f32 {
     }
 }
 
+/// Output pixels per texel of the backdrop a host draws for an output at
+/// `scale`: at 2 and up the output's pixels are small enough that a
+/// quarter of them holds all the blur shows.
+pub fn backdrop_downscale(scale: f64) -> i32 {
+    if scale >= 2.0 { 4 } else { 2 }
+}
+
 /// How far the blur reads, in physical pixels: what changes this close to
 /// glass shows in it, and the glass element reaches this far past its
 /// shapes so the frame there is drawn before it is copied. A blurred texel
 /// reads `2·pairs` texels either way, and the downscale and the linear
 /// upscale one more each.
-pub fn reach(blur: u8, material: Material, quality: Quality) -> i32 {
-    let p = Plan::new(blur, material, quality);
+pub fn reach(blur: u8, material: Material, quality: Quality, scale: f64) -> i32 {
+    let p = Plan::new(blur, material, quality, scale);
     p.factor * (2 * p.pairs as i32 + 2)
 }
 
-pub fn texel(blur: u8, material: Material, quality: Quality) -> i32 {
-    Plan::new(blur, material, quality).factor
+pub fn texel(blur: u8, material: Material, quality: Quality, scale: f64) -> i32 {
+    Plan::new(blur, material, quality, scale).factor
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -70,12 +79,16 @@ pub(crate) struct Plan {
 }
 
 impl Plan {
-    pub fn new(blur: u8, material: Material, quality: Quality) -> Plan {
+    /// The blur on an output at `scale`: the same spread in physical
+    /// pixels on every grid, `sigma` being in texels of `factor` pixels.
+    pub fn new(blur: u8, material: Material, quality: Quality, scale: f64) -> Plan {
         let s = sigma(blur, material);
-        let (factor, sigma) = match quality {
-            Quality::Coarse if s > SIGMA[0] => (4, s / 2.0),
-            _ => (2, s),
+        let coarse = match quality {
+            Quality::Coarse if s > SIGMA[0] => 4,
+            _ => 2,
         };
+        let factor = coarse.max(backdrop_downscale(scale));
+        let sigma = s * 2.0 / factor as f32;
         Plan {
             factor,
             sigma,
@@ -366,11 +379,11 @@ mod tests {
     #[test]
     fn reach_grows_with_the_strength() {
         let r: Vec<i32> = (1..=5)
-            .map(|b| reach(b, Material::Frosted, Quality::Full))
+            .map(|b| reach(b, Material::Frosted, Quality::Full, 1.0))
             .collect();
         assert_eq!(r, vec![20, 28, 40, 52, 64]);
         let c: Vec<i32> = (1..=5)
-            .map(|b| reach(b, Material::Frosted, Quality::Coarse))
+            .map(|b| reach(b, Material::Frosted, Quality::Coarse, 1.0))
             .collect();
         assert_eq!(
             c,
@@ -378,13 +391,13 @@ mod tests {
             "the coarse blur's wider texels"
         );
         assert_eq!(
-            reach(0, Material::Frosted, Quality::Full),
-            reach(1, Material::Frosted, Quality::Full),
+            reach(0, Material::Frosted, Quality::Full, 1.0),
+            reach(1, Material::Frosted, Quality::Full, 1.0),
             "below range is the lightest"
         );
         assert_eq!(
-            reach(9, Material::Frosted, Quality::Full),
-            reach(5, Material::Frosted, Quality::Full),
+            reach(9, Material::Frosted, Quality::Full, 1.0),
+            reach(5, Material::Frosted, Quality::Full, 1.0),
             "above range is the strongest"
         );
     }
@@ -393,20 +406,41 @@ mod tests {
 
     #[test]
     fn the_coarse_blur_halves_the_texels_and_the_sigma() {
-        let full = Plan::new(3, F, Quality::Full);
-        let coarse = Plan::new(3, F, Quality::Coarse);
+        let full = Plan::new(3, F, Quality::Full, 1.0);
+        let coarse = Plan::new(3, F, Quality::Coarse, 1.0);
         assert_eq!((full.factor, coarse.factor), (2, 4));
         assert_eq!(coarse.sigma * 2.0, full.sigma, "the same spread on screen");
         assert!(coarse.pairs < full.pairs, "fewer reads per pass");
         assert_eq!(
-            Plan::new(1, F, Quality::Coarse),
-            Plan::new(1, F, Quality::Full),
+            Plan::new(1, F, Quality::Coarse, 1.0),
+            Plan::new(1, F, Quality::Full, 1.0),
             "blur 1 stays full"
         );
-        assert!(Plan::new(5, F, Quality::Full).pairs <= MAX_PAIRS);
+        assert!(Plan::new(5, F, Quality::Full, 1.0).pairs <= MAX_PAIRS);
         assert_eq!(quality(true, true), Quality::Coarse);
         assert_eq!(quality(true, false), Quality::Full);
         assert_eq!(quality(false, true), Quality::Full);
+    }
+
+    #[test]
+    fn at_scale_2_the_full_blur_is_the_coarse_one_on_a_quarter_backdrop() {
+        assert_eq!((backdrop_downscale(1.0), backdrop_downscale(1.75)), (2, 2));
+        assert_eq!((backdrop_downscale(2.0), backdrop_downscale(3.0)), (4, 4));
+        for b in 1..=5u8 {
+            let one = Plan::new(b, F, Quality::Full, 1.0);
+            let two = Plan::new(b, F, Quality::Full, 2.0);
+            assert_eq!(two.factor, 4);
+            assert_eq!(
+                two.sigma * 4.0,
+                one.sigma * 2.0,
+                "blur {b}: the same spread in output pixels"
+            );
+            assert_eq!(Plan::new(b, F, Quality::Coarse, 2.0), two, "blur {b}");
+        }
+        assert_eq!(
+            reach(2, F, Quality::Full, 2.0),
+            reach(2, F, Quality::Coarse, 1.0)
+        );
     }
 
     #[test]
@@ -415,14 +449,14 @@ mod tests {
             assert_eq!(sigma(b, Material::Molten), sigma(b, F) * MOLTEN_SIGMA);
             assert_eq!(sigma(b, Material::Smoked), sigma(b, F));
         }
-        let m = |b, q| Plan::new(b, Material::Molten, q);
+        let m = |b, q| Plan::new(b, Material::Molten, q, 1.0);
         assert_eq!(
             m(2, Quality::Coarse),
             m(2, Quality::Full),
             "Molten at blur 2 is lighter than blur 1: no coarse blur"
         );
         assert_eq!(m(3, Quality::Coarse).factor, 4);
-        assert!(reach(2, Material::Molten, Quality::Full) < reach(2, F, Quality::Full));
+        assert!(reach(2, Material::Molten, Quality::Full, 1.0) < reach(2, F, Quality::Full, 1.0));
     }
 
     #[test]
