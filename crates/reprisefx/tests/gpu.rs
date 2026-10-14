@@ -14,7 +14,9 @@ use smithay::backend::allocator::Fourcc;
 use smithay::backend::renderer::damage::OutputDamageTracker;
 use smithay::backend::renderer::element::Kind;
 use smithay::backend::renderer::element::texture::{TextureBuffer, TextureRenderElement};
-use smithay::backend::renderer::element::utils::{Relocate, RelocateRenderElement};
+use smithay::backend::renderer::element::utils::{
+    CropRenderElement, Relocate, RelocateRenderElement,
+};
 use smithay::backend::renderer::gles::{GlesRenderer, GlesTexture, ffi};
 use smithay::backend::renderer::{Bind, ExportMem, ImportMem, Offscreen};
 use smithay::render_elements;
@@ -27,6 +29,7 @@ render_elements! {
     Moved=RelocateRenderElement<GlassElement>,
     MovedBack=RelocateRenderElement<TextureRenderElement<GlesTexture>>,
     Card=FlipCardElement,
+    Cropped=CropRenderElement<GlassElement>,
 }
 
 struct Rig {
@@ -538,6 +541,48 @@ fn a_source_is_drawn_in_place_of_the_frame_and_only_its_changes_redraw() {
         before.at(250, 150),
         "far from it the glass is as it was"
     );
+}
+
+#[test]
+fn glass_over_a_source_cut_to_a_crop_draws_there_what_it_draws_whole() {
+    let Some(mut r) = rig(320, 200) else { return };
+    let black = r.backdrop(|_, _| [0; 3]);
+    let s = plain(Material::Molten);
+    let mut picture = Picture::new();
+    let stripes = half_backdrop(&mut r, |x, y| {
+        [(x * 9 % 256) as u8, (y * 5 % 256) as u8, 90]
+    });
+    let src = blur_into(
+        &mut r,
+        &mut picture,
+        &stripes,
+        &[],
+        &s,
+        Quality::Full,
+        false,
+    );
+    let shapes = [Shape {
+        rect: rect(20, 20, 240, 160),
+        radii: [12.0; 4],
+    }];
+    let holes = [rect(40, 50, 200, 110)];
+    let f = GlassFrame {
+        source: Some(&src),
+        ..r.frame(&shapes, &holes, &s)
+    };
+    let whole = Glass::new().element(&r.fx, &f).unwrap();
+    let (want, _) = r.render(vec![whole], &black);
+    let crop = rect(13, 31, 150, 90);
+    let glass = Glass::new().element(&r.fx, &f).unwrap();
+    let cut = CropRenderElement::from_element(glass, 1.0, crop).unwrap();
+    r.frames = 0;
+    let (got, _) = r.render_elements(&[El::Cropped(cut), El::Back(back_element(&black))]);
+    for y in crop.loc.y..crop.loc.y + crop.size.h {
+        for x in crop.loc.x..crop.loc.x + crop.size.w {
+            assert_eq!(got.at(x, y), want.at(x, y), "at ({x}, {y})");
+        }
+    }
+    assert_eq!(got.at(200, 30), [0; 3], "past the crop the frame shows");
 }
 
 /// Blurring the changed parts of a picture gives what blurring all of it

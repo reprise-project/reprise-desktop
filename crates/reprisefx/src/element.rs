@@ -16,7 +16,7 @@ use smithay::backend::renderer::utils::{
 };
 use smithay::backend::renderer::{Frame, FrameContext, ImportMem, Texture};
 use smithay::utils::user_data::UserDataMap;
-use smithay::utils::{Buffer, Physical, Rectangle, Scale, Size, Transform};
+use smithay::utils::{Buffer, Physical, Point, Rectangle, Scale, Size, Transform};
 
 use crate::blur::{self, Capture, Levels, Plan, Quality, Streaks};
 use crate::lens::Lens;
@@ -488,7 +488,7 @@ impl RenderElement<GlesRenderer> for GlassElement {
     fn draw(
         &self,
         frame: &mut GlesFrame<'_, '_>,
-        _src: Rectangle<f64, Buffer>,
+        src: Rectangle<f64, Buffer>,
         dst: Rectangle<i32, Physical>,
         damage: &[Rectangle<i32, Physical>],
         _opaque_regions: &[Rectangle<i32, Physical>],
@@ -507,7 +507,10 @@ impl RenderElement<GlesRenderer> for GlassElement {
             (None, None) => return Ok(()),
         };
         let space = Space::new(frame.transformation(), frame.output_size());
-        let offset = dst.loc - self.geometry.loc;
+        // `src` is the part of the geometry drawn (one buffer unit per target pixel): a crop moves
+        // `dst` by as much, and the shapes stay where they are.
+        let cut: Point<i32, Physical> = (src.loc.x.round() as i32, src.loc.y.round() as i32).into();
+        let offset = dst.loc - cut - self.geometry.loc;
         let tex = picture.size();
         let kx = f64::from(tex.w) / f64::from(c.size.w);
         let ky = f64::from(tex.h) / f64::from(c.size.h);
