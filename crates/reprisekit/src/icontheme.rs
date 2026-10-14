@@ -248,12 +248,12 @@ fn parse_index(theme_dir: &Path) -> (Vec<String>, Vec<DirEntry>) {
         return (Vec::new(), Vec::new());
     };
     let lines = ini_lines(&text);
-    let get = |section: &str, key: &str| -> Option<&str> {
-        lines
-            .iter()
-            .find(|(s, k, _)| s == section && k == key)
-            .map(|(_, _, v)| v.as_str())
-    };
+    // The first of a repeated key wins.
+    let mut values: HashMap<(&str, &str), &str> = HashMap::with_capacity(lines.len());
+    for (s, k, v) in &lines {
+        values.entry((s.as_str(), k.as_str())).or_insert(v.as_str());
+    }
+    let get = |section: &str, key: &str| values.get(&(section, key)).copied();
     let inherits: Vec<String> = get("Icon Theme", "Inherits")
         .map(|v| {
             v.split(',')
@@ -391,12 +391,13 @@ impl IconTheme {
             // Every subdirectory any root's index names: a theme's directories count in every
             // root, with or without an `index.theme` there.
             let mut subdirs: Vec<(PathBuf, DirEntry)> = Vec::new();
+            let mut seen: HashSet<PathBuf> = HashSet::new();
             for root in roots.iter() {
                 let base = root.join(&theme);
                 let (inherits, d) = parse_index(&base);
                 for e in d {
                     let rel = e.path.strip_prefix(&base).unwrap_or(&e.path).to_path_buf();
-                    if !subdirs.iter().any(|(r, _)| *r == rel) {
+                    if seen.insert(rel.clone()) {
                         subdirs.push((rel, e));
                     }
                 }
@@ -1246,6 +1247,16 @@ mod tests {
         );
         fs::remove_dir_all(&user).unwrap();
         fs::remove_dir_all(&system).unwrap();
+    }
+
+    #[test]
+    fn a_repeated_key_keeps_its_first_value_and_a_repeated_directory_counts_once() {
+        let index = "[Icon Theme]\nDirectories=16x16/apps,16x16/apps\n\n[16x16/apps]\nSize=16\nSize=32\nType=Fixed\n";
+        let root = fixture("t21", "test", index, &[]);
+        let t = IconTheme::load("test", std::slice::from_ref(&root));
+        let test: Vec<_> = t.dirs[t.groups[0].clone()].iter().map(|d| d.size).collect();
+        assert_eq!(test, [16]);
+        fs::remove_dir_all(&root).unwrap();
     }
 
     #[test]
