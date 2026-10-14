@@ -755,6 +755,9 @@ pub struct IconCache {
     /// Entries of `cache` that are hits and misses, kept for the caps.
     hits: usize,
     misses: usize,
+    hit_cap: usize,
+    /// Times the hits were dropped at the cap; see [`IconCache::hit_drops`].
+    hit_drops: u64,
 }
 
 /// Names come from peers, so both sets are bounded: past the cap the set is dropped and
@@ -771,6 +774,8 @@ impl IconCache {
             known: RefCell::new(HashMap::new()),
             hits: 0,
             misses: 0,
+            hit_cap: HIT_CAP,
+            hit_drops: 0,
         }
     }
 
@@ -798,11 +803,14 @@ impl IconCache {
         let (count, cap) = if miss {
             (&mut self.misses, MISS_CAP)
         } else {
-            (&mut self.hits, HIT_CAP)
+            (&mut self.hits, self.hit_cap)
         };
         if *count >= cap {
             self.cache.retain(|_, v| v.is_none() != miss);
             *count = 0;
+            if !miss {
+                self.hit_drops += 1;
+            }
         }
         *count += 1;
         match self.cache.insert(key, canvas) {
@@ -827,6 +835,12 @@ impl IconCache {
         if path.starts_with('/') && px > 0 {
             self.insert((cache_key(path, &[]), px, self.scale), canvas.map(Arc::new));
         }
+    }
+
+    /// Bumped each time the cap drops every hit, files put in included: a host that saw it
+    /// change since its puts reads again what [`IconCache::file_put`] no longer has.
+    pub fn hit_drops(&self) -> u64 {
+        self.hit_drops
     }
 
     /// Icon file `path` at `px` as [`IconCache::put_file`] left it, without reading the file:
@@ -1505,6 +1519,31 @@ mod tests {
             Some(None),
             "a failed decode is kept"
         );
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// A file put in and then dropped at the hit cap is gone from `file_put`, and `hit_drops`
+    /// says so; a failed decode put in is a miss and stays.
+    #[test]
+    fn a_file_dropped_at_the_hit_cap_shows_in_hit_drops() {
+        let root = fixture("file-drop", "test", INDEX, &[]);
+        let pic = root.join("cover.png");
+        write_png(&pic, 1, 1, &[255, 0, 0, 255]);
+        let mut cache = IconCache::new(IconTheme::load("test", std::slice::from_ref(&root)));
+        cache.hit_cap = 4;
+        let name = pic.to_str().unwrap();
+        cache.put_file(name, 16, decode_file(&pic, 16, cache.scale()));
+        cache.put_file("/nowhere/broken.png", 16, None);
+        let drops = cache.hit_drops();
+        for px in 17..20 {
+            cache.put_file(name, px, decode_file(&pic, px, cache.scale()));
+        }
+        assert!(cache.file_put(name, 16).flatten().is_some());
+        assert_eq!(cache.hit_drops(), drops, "under the cap");
+        cache.put_file(name, 20, decode_file(&pic, 20, cache.scale()));
+        assert_eq!(cache.file_put(name, 16), None);
+        assert_eq!(cache.hit_drops(), drops + 1);
+        assert_eq!(cache.file_put("/nowhere/broken.png", 16), Some(None));
         fs::remove_dir_all(&root).unwrap();
     }
 

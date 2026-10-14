@@ -89,8 +89,9 @@ pub struct DesktopView {
     /// A rescan is reading the folder off the loop; `rescan_again` asks for one more after it.
     scanning: bool,
     rescan_again: bool,
-    /// The icon size the last read decoded the icon files at.
-    icons_px: i32,
+    /// The icon size the last read decoded the icon files at, and the icon cache's
+    /// `hit_drops` after it put them in: a change in either means a read again.
+    icons_read: (i32, u64),
     pub(crate) send_to: Vec<reprisefs::sendto::SendToRow>,
     pub(crate) drives: places::MountedDrives,
 }
@@ -823,7 +824,7 @@ pub fn setup(state: &mut State) {
         mime: std::sync::Arc::new(apps::mime_globs()),
         scanning: false,
         rescan_again: false,
-        icons_px: 0,
+        icons_read: (0, 0),
         send_to: Vec::new(),
         drives: places::MountedDrives::new(),
     });
@@ -974,10 +975,10 @@ impl State {
             return;
         };
         view.scanning = false;
-        view.icons_px = px;
         for (file, canvas) in art {
             icons.put_file(&file, px, canvas);
         }
+        view.icons_read = (px, icons.hit_drops());
         desktop::wear_file_icons(&mut entries, &view.mime, &|n| icons.has(n));
         let old = std::mem::replace(&mut view.entries, entries);
         let moved = remap(&old, &view.entries);
@@ -1119,7 +1120,8 @@ impl State {
         if let Some((_, theme)) = view.drawn_theme.as_ref() {
             for r in &redraw {
                 // Icon files are decoded by the desktop's read, never here: one not decoded at
-                // this size (the scale changed) shows no picture until a read decodes it.
+                // this size (the scale changed, or the cache dropped it) shows no picture until
+                // a read decodes it.
                 let mut icon = if r.icon.starts_with('/') {
                     let put = self.icons.file_put(&r.icon, px);
                     if put.is_none() {
@@ -1164,7 +1166,7 @@ impl State {
             }
         }
         changed |= !redraw.is_empty();
-        let reread = undecoded && view.icons_px != px;
+        let reread = undecoded && view.icons_read != (px, self.icons.hit_drops());
         self.desktop = Some(view);
         if reread {
             self.rescan_desktop();
