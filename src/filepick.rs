@@ -96,6 +96,9 @@ pub struct FilePicker {
     filter: usize,
     /// Requests made since the host last took them.
     requests: Vec<Request>,
+    /// Requests made and not yet answered. A request equal to one of them takes its number
+    /// instead of another job, so relisting a folder that never answers strands no more threads.
+    pending: Vec<Request>,
     /// The last request's number: every request takes the next.
     seq: u64,
     /// The folder listing still wanted and the typed name still being
@@ -139,6 +142,15 @@ pub struct Request {
 }
 
 impl Request {
+    /// Asks for the same file system work, whatever its number.
+    fn same_work(&self, o: &Request) -> bool {
+        self.id == o.id
+            && self.path == o.path
+            && self.exts == o.exts
+            && self.pattern == o.pattern
+            && self.folder_only == o.folder_only
+    }
+
     /// Reads the folder or looks the name up. Blocks for as long as the
     /// file system does.
     pub fn run(self) -> Reply {
@@ -220,6 +232,7 @@ impl FilePicker {
             icons,
             filter: 0,
             requests: Vec::new(),
+            pending: Vec::new(),
             seq: 0,
             listing: None,
             opening: None,
@@ -241,15 +254,21 @@ impl FilePicker {
     /// typed pattern whose folder part `path` is, listed through in place
     /// of the dialog's own filter.
     fn request(&mut self, id: Option<FolderId>, path: PathBuf, typed: Option<&str>) -> u64 {
-        self.seq += 1;
-        self.requests.push(Request {
-            seq: self.seq,
+        let mut req = Request {
+            seq: 0,
             id,
             path,
             exts: self.purpose.exts(self.filter),
             pattern: typed.or(self.dlg.wildcard()).map(str::to_string),
             folder_only: typed.is_some(),
-        });
+        };
+        if let Some(same) = self.pending.iter().find(|p| p.same_work(&req)) {
+            return same.seq;
+        }
+        self.seq += 1;
+        req.seq = self.seq;
+        self.pending.push(req.clone());
+        self.requests.push(req);
         self.seq
     }
 
@@ -257,6 +276,7 @@ impl FilePicker {
     /// name enters its folder or is the pick. A reply that a later navigation made stale changes
     /// nothing.
     pub fn reply(&mut self, r: Reply, cache: &mut IconCache) -> Outcome {
+        self.pending.retain(|p| p.seq != r.seq);
         if r.id.is_some() {
             if self.listing != Some(r.seq) {
                 return Outcome::Nothing;
@@ -855,6 +875,31 @@ mod tests {
         }
         assert_eq!(p.current(), Some(dir.join("Pictures").as_path()));
         assert_eq!(names(&p), ["meadow"]);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Relisting a folder whose listing has not answered asks for no second job: the first
+    /// one's reply fills the dialog, so a folder on a dead mount strands one thread, not one per
+    /// relist.
+    #[test]
+    fn relisting_a_folder_still_being_read_queues_no_second_read() {
+        let dir = sandbox("relist");
+        let mut p = FilePicker::run_command(&dir, Icons::default(), true);
+        let first = p.take_requests();
+        assert_eq!(first.len(), 1);
+        let here = p.dlg.folder().unwrap();
+        p.event(Event::NeedListing(here));
+        p.event(Event::NeedListing(here));
+        assert!(
+            p.take_requests().is_empty(),
+            "the pending read serves the relists"
+        );
+        for r in first {
+            assert_eq!(p.reply(r.run(), &mut cache()), Outcome::Redraw);
+        }
+        assert_eq!(names(&p), ["Pictures", "dunes"]);
+        p.event(Event::NeedListing(here));
+        assert_eq!(p.take_requests().len(), 1, "an answered read is read again");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
