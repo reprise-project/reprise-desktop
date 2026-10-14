@@ -155,7 +155,7 @@ impl ThumbnailCache {
         enabled: true,
         max_mb: 512,
     };
-    /// A thumbnail is at most 64 KiB of pixels at Explorer's default `thumbnail_size` and 1 MiB
+    /// A thumbnail is at most 64 KiB of pixels at scale 1, 256 KiB at scale 2 and 1 MiB
     /// at its largest.
     pub const MAX_MB: std::ops::RangeInclusive<u32> = 1..=4096;
 

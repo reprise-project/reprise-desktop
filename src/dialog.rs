@@ -9323,7 +9323,7 @@ mod tests {
             true,
         );
         for r in picker.take_requests() {
-            picker.reply(r.run(), &mut icons);
+            picker.reply(r.run(), &mut icons, 1);
         }
         let d = Dialog::browse(picker);
         let l = DialogLayout::compute(&theme, &text, &d);

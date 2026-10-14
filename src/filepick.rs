@@ -126,7 +126,7 @@ struct Pictures {
     generation: u64,
     /// This listing's pictures went to the host.
     asked: bool,
-    /// The icon cache's scale when listed: the thumbnails' device pixels.
+    /// The scale the dialog drew at when listed: the thumbnails' device pixels.
     scale: i32,
 }
 
@@ -297,10 +297,10 @@ impl FilePicker {
         self.seq
     }
 
-    /// A finished [`Request`]: the listing lands, its entries wearing `cache`'s icons, or a typed
-    /// name enters its folder or is the pick. A reply that a later navigation made stale changes
-    /// nothing.
-    pub fn reply(&mut self, r: Reply, cache: &mut IconCache) -> Outcome {
+    /// A finished [`Request`]: the listing lands, its entries wearing `cache`'s icons and its
+    /// thumbnails sized for a dialog drawn at `scale`, or a typed name enters its folder or is the
+    /// pick. A reply that a later navigation made stale changes nothing.
+    pub fn reply(&mut self, r: Reply, cache: &mut IconCache, scale: i32) -> Outcome {
         self.pending.retain(|p| p.seq != r.seq);
         if r.id.is_some() {
             if self.listing != Some(r.seq) {
@@ -333,7 +333,7 @@ impl FilePicker {
                 let (entries, pictures) = self.entries(rows, cache);
                 self.show(id, &r.path, entries);
                 self.pictures.paths = pictures;
-                self.pictures.scale = cache.scale();
+                self.pictures.scale = scale.max(1);
                 match (&r.pattern, r.id) {
                     (Some(p), _) => self.dlg.apply_wildcard(p),
                     // The field empties once the folder is entered.
@@ -353,16 +353,17 @@ impl FilePicker {
         }
     }
 
-    /// The listing's pictures and their generation, once, when Views shows Thumbnails or Tiles:
-    /// the host fetches their thumbnails off the loop and hands them to [`FilePicker::thumbs`].
-    pub fn take_pictures(&mut self) -> Option<(u64, Vec<PathBuf>)> {
+    /// The listing's generation, the device pixels its thumbnails fill and its pictures, once,
+    /// when Views shows Thumbnails or Tiles: the host fetches their thumbnails off the loop and
+    /// hands them to [`FilePicker::thumbs`].
+    pub fn take_pictures(&mut self) -> Option<(u64, u32, Vec<PathBuf>)> {
         let p = &mut self.pictures;
         let shown = matches!(self.dlg.view(), Mode::Thumbnails | Mode::Tiles);
         if p.asked || !shown || p.paths.is_empty() {
             return None;
         }
         p.asked = true;
-        Some((p.generation, p.paths.clone()))
+        Some((p.generation, shellview::thumb_px(p.scale), p.paths.clone()))
     }
 
     /// Thumbnails fetched for listing `generation`: each picture shows it, and its Tiles lines
@@ -389,7 +390,9 @@ impl FilePicker {
                 continue;
             };
             let e = &mut self.dlg.entries_mut()[i];
-            e.thumb = Some(shellview::frame_thumb(thumb, dims, self.pictures.scale));
+            // The dialog draws on device pixels, so the thumbnail is a scale-1 canvas that size.
+            let thumb = shellview::frame_thumb(thumb, dims, self.pictures.scale).at_scale(1);
+            e.thumb = Some(thumb);
             e.detail = shellview::image_detail(dims, &e.kind);
             shown = true;
         }
@@ -720,7 +723,7 @@ mod tests {
     fn settle_with(p: &mut FilePicker, icons: &mut IconCache) -> Outcome {
         let mut out = Outcome::Nothing;
         for r in p.take_requests() {
-            match p.reply(r.run(), icons) {
+            match p.reply(r.run(), icons, 1) {
                 Outcome::Nothing => {}
                 o => out = o,
             }
@@ -871,6 +874,7 @@ mod tests {
                 art: Vec::new(),
             },
             &mut cache(),
+            1,
         );
         assert!(!p.dlg.can_go_up(), "Recent has no folder above it");
         p.dlg.set_file_name("nope");
@@ -934,7 +938,7 @@ mod tests {
         assert_eq!(settle(&mut p), Outcome::Redraw);
         for r in slow {
             assert_eq!(
-                p.reply(r.run(), &mut cache()),
+                p.reply(r.run(), &mut cache(), 1),
                 Outcome::Nothing,
                 "stale reply changes nothing"
             );
@@ -961,7 +965,7 @@ mod tests {
             "the pending read serves the relists"
         );
         for r in first {
-            assert_eq!(p.reply(r.run(), &mut cache()), Outcome::Redraw);
+            assert_eq!(p.reply(r.run(), &mut cache(), 1), Outcome::Redraw);
         }
         assert_eq!(names(&p), ["Pictures", "dunes"]);
         p.event(Event::NeedListing(here));
@@ -994,7 +998,7 @@ mod tests {
         std::fs::remove_dir_all(&art).unwrap();
         std::fs::remove_file(&pic).unwrap();
         for r in replies {
-            p.reply(r, &mut icons);
+            p.reply(r, &mut icons, 1);
         }
         let worn = |name: &str| {
             let e = p.dlg.entries().iter().find(|e| e.name == name).unwrap();
@@ -1094,6 +1098,39 @@ mod tests {
         hit.map(|(l, t, r, b)| Rect::new(l, t, r - l + 1, b - t + 1))
     }
 
+    /// At scale 2 the pictures are fetched for the frame's 188 device pixels and fill it there.
+    #[test]
+    fn a_scale_2_listing_draws_its_thumbnails_at_the_frames_device_size() {
+        const SAND: u32 = 0xffd2_b48c;
+        let dir = sandbox("thumbs-2x");
+        let pic = dir.join("dunes.png");
+        std::fs::write(&pic, b"never decoded here").unwrap();
+        let mut p = FilePicker::run_command(&dir, Icons::default(), true);
+        p.dlg.set_filter(1);
+        p.sync_filter();
+        for r in p.take_requests() {
+            p.reply(r.run(), &mut cache(), 2);
+        }
+        p.click(R, Some(filedlg::Hit::ToolBar(3)));
+        p.click(R, Some(filedlg::Hit::ViewsItem(0)));
+        let (generation, px, _) = p.take_pictures().expect("Thumbnails fetches the pictures");
+        assert_eq!(px, 188, "the frame's inside at scale 2");
+        let large = Canvas::from_pixels(256, 128, vec![SAND; 256 * 128]);
+        assert!(p.thumbs(generation, vec![(pic.clone(), large, (800, 400))]));
+
+        let theme = reprisekit::theme::Theme::default().scaled(2);
+        let text = reprisekit::text::TextRenderer::load(&theme.fonts);
+        let mut c = Canvas::new(R.width as u32 * 2, R.height as u32 * 2);
+        p.dlg
+            .draw(&mut c, &text, &theme.paint(), R, theme.fonts.size_px);
+        let drawn = found(&c, SAND).expect("the thumbnail is drawn");
+        assert_eq!((drawn.width, drawn.height), (188, 94));
+        let frame = Rect::new(drawn.x - 2, drawn.y - 49, 192, 192);
+        assert_eq!(c.get(frame.x, frame.y), theme.colors.button_face.argb());
+        assert_eq!(fnv(&c, frame), 0x262c_b03d_ad0d_133d, "the scale-2 frame");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     /// Thumbnails asks for the listing's pictures once; their thumbnails fill the frames, at the
     /// size that fits there, and give the picture's size to Tiles. A relisted folder drops the
     /// earlier listing's.
@@ -1111,8 +1148,9 @@ mod tests {
         p.click(R, Some(filedlg::Hit::ToolBar(3)));
         p.click(R, Some(filedlg::Hit::ViewsItem(0)));
         assert_eq!(p.dlg.view(), Mode::Thumbnails);
-        let (generation, paths) = p.take_pictures().expect("Thumbnails fetches the pictures");
+        let (generation, px, paths) = p.take_pictures().expect("Thumbnails fetches the pictures");
         assert_eq!(paths, std::slice::from_ref(&pic));
+        assert_eq!(px, 94, "the frame's inside at scale 1");
         assert_eq!(p.take_pictures(), None, "once per listing");
         let thumb = || {
             vec![(
@@ -1149,7 +1187,7 @@ mod tests {
 
         p.event(Event::NeedListing(p.dlg.folder().unwrap()));
         settle(&mut p);
-        let (relisted, _) = p.take_pictures().expect("the new listing's pictures");
+        let (relisted, ..) = p.take_pictures().expect("the new listing's pictures");
         assert!(relisted > generation);
         assert!(!p.thumbs(generation, thumb()), "the earlier listing's");
         let _ = std::fs::remove_dir_all(&dir);
