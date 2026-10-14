@@ -894,6 +894,7 @@ fn set_changes(
         read_only,
         backup,
         index,
+        executable: None,
     };
     (attrs, hidden)
 }
@@ -926,10 +927,12 @@ fn props_changes(
         state => Some(state.is_on()),
     };
     let [backup, index] = robots_moves(base.robots, base.adv);
+    let executable = filesheet::executable(form);
     let attrs = reprisefs::props::AttrMoves {
         read_only,
         backup,
         index,
+        executable: (executable != base.executable).then_some(executable),
     };
     (rename, attrs, (hidden != base.hidden).then_some(hidden))
 }
@@ -1026,6 +1029,8 @@ pub struct SheetBase {
     pub ext: String,
     /// The file's read-only bit, or indeterminate on a folder.
     pub read_only: CheckState,
+    /// The Executable box as it opened (unticked on a folder).
+    pub executable: bool,
     pub hidden: bool,
     pub listed: bool,
     pub is_dir: bool,
@@ -1324,6 +1329,9 @@ impl Dialog {
         base.path = w.path.clone();
         if let Some(on) = w.attrs.read_only {
             base.read_only = state(on);
+        }
+        if let Some(on) = w.attrs.executable {
+            base.executable = on;
         }
         // A cleared Hidden took the name off the folder's .hidden.
         if let Some(h) = w.hidden {
@@ -1959,6 +1967,8 @@ impl Dialog {
             modified: format_time(info.modified, is_12h),
             accessed: format_time(info.accessed, is_12h),
             read_only: info.read_only,
+            executable: info.executable,
+            can_set_executable: info.can_set_executable,
             hidden: info.hidden,
         };
         // The field shows the file name less the extension the icon hides
@@ -1991,6 +2001,11 @@ impl Dialog {
                 .pages
                 .iter()
                 .find_map(|p| p.check_state(filesheet::READ_ONLY))
+                .unwrap_or_default(),
+            executable: sheet
+                .pages
+                .iter()
+                .find_map(|p| p.checked(filesheet::EXECUTABLE))
                 .unwrap_or_default(),
             hidden: info.hidden,
             listed: info.listed,
@@ -7187,6 +7202,8 @@ mod tests {
             modified: 1_788_998_400,
             accessed: 1_788_998_400,
             read_only: false,
+            executable: false,
+            can_set_executable: true,
             hidden: false,
             listed: false,
             is_shortcut: false,
@@ -7354,6 +7371,52 @@ mod tests {
                 reprisefs::props::format_size(8192),
                 "2 Files, 1 Folder".to_string(),
             ]
+        );
+    }
+
+    #[test]
+    fn the_executable_box_writes_the_execute_bit_and_greys_when_it_cannot() {
+        use reprisekit::controls::filesheet::EXECUTABLE;
+        use reprisekit::controls::propsheet::APPLY;
+        let path: std::path::PathBuf = "/home/u/Desktop/New Text Document.txt".into();
+        let exec = |on: bool| reprisefs::props::AttrMoves {
+            executable: Some(on),
+            ..Default::default()
+        };
+        let mut d = Dialog::properties(&file_info(), "text-x-generic", (0, 0));
+        assert_eq!(press_control(&mut d, EXECUTABLE), Outcome::Redraw);
+        assert_eq!(
+            press_control(&mut d, APPLY),
+            Outcome::Properties {
+                path: path.clone(),
+                name: None,
+                attrs: exec(true),
+                hidden: None,
+                folder_icon: None,
+                summary: Vec::new(),
+                launcher: Vec::new(),
+                close: false,
+                recurse: None,
+            }
+        );
+        d.sheet_applied(&Written {
+            path: path.clone(),
+            attrs: exec(true),
+            ..Default::default()
+        });
+        press_control(&mut d, EXECUTABLE);
+        assert!(
+            matches!(press_control(&mut d, APPLY), Outcome::Properties { attrs, .. } if attrs == exec(false)),
+            "the written state is the new start"
+        );
+        let mut theirs = file_info();
+        (theirs.executable, theirs.can_set_executable) = (true, false);
+        let mut d = Dialog::properties(&theirs, "text-x-generic", (0, 0));
+        assert!(reprisekit::controls::filesheet::executable(sheet_form(&d)));
+        press_control(&mut d, EXECUTABLE);
+        assert!(
+            reprisekit::controls::filesheet::executable(sheet_form(&d)),
+            "a greyed box takes no click"
         );
     }
 

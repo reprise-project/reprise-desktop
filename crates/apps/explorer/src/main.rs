@@ -696,10 +696,31 @@ impl Explorer {
         if let Some(place) = folder_place(&it) {
             return self.go(place, ctx);
         }
+        if it.exec
+            && it.shortcut.is_none()
+            && std::fs::metadata(&it.path)
+                .is_ok_and(|m| reprisefs::program::is_program(&it.path, &m))
+        {
+            return self.run_program(&it.path, ctx);
+        }
         Reply {
             redraw: true,
             spawn: vec![self.open_argv_for(&it)],
             ..Default::default()
+        }
+    }
+
+    /// Run the program file at `path` in its own folder; one that does not start gets a message box.
+    fn run_program(&mut self, path: &Path, ctx: &mut Ctx) -> Reply {
+        let argv = reprisefs::program::run_argv(path);
+        match repriseapp::spawn_in(&argv, path.parent()) {
+            Ok(()) => Reply::redraw(),
+            Err(e) => {
+                log::warn!("run {}: {e}", path.display());
+                let name = path.file_name().unwrap_or_default().to_string_lossy();
+                let text = reprisefs::program::run_failed_text(&name, &e);
+                self.message_box(&name, text, ctx)
+            }
         }
     }
 

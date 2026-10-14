@@ -1547,6 +1547,10 @@ impl State {
                 Some(argv) => argv.into_iter().map(Into::into).collect(),
                 None => return,
             },
+            Target::Run(file) => {
+                let file = file.clone();
+                return self.run_program(&file);
+            }
             // No stat: the file or folder may be on a mount that does not answer.
             Target::Open(dir) if entry.is_dir => apps::open_folder_argv(dir),
             Target::Open(file) => {
@@ -1561,6 +1565,28 @@ impl State {
             }
         };
         self.spawn_argv_activated(&argv);
+    }
+
+    /// Run the program file at `path` in its own folder. The exec waits on the file's mount, so it
+    /// runs off the loop; a program that does not start gets an error box.
+    pub(crate) fn run_program(&mut self, path: &Path) {
+        let token = self.new_activation_token();
+        let env = self.env.clone();
+        let path = path.to_path_buf();
+        self.spawn_fs_job(move || {
+            let argv = reprisefs::program::run_argv(&path);
+            let started = crate::spawn::try_spawn_argv_in(&argv, path.parent(), &env, Some(&token));
+            Box::new(move |state: &mut State| {
+                // A child that exited before its pid was recorded left a SIGCHLD that found nothing.
+                crate::spawn::reap_children();
+                if let Err(e) = started {
+                    log::warn!("run {}: {e}", path.display());
+                    let name = path.file_name().unwrap_or_default().to_string_lossy();
+                    let text = reprisefs::program::run_failed_text(&name, &e);
+                    state.open_dialog(crate::dialog::Dialog::error(&name, text));
+                }
+            })
+        });
     }
 
     pub(crate) fn open_selection(&mut self, index: usize) {

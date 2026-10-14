@@ -2160,3 +2160,59 @@ fn a_folder_above_the_shown_one_renamed_is_followed_and_moved_away_is_left_for_t
     assert_eq!(ex.place, Place::Folder(top.path().to_path_buf()));
     assert!(!ex.history.can_back());
 }
+
+/// Opening an executable script runs it in its own folder; a +x picture and a script without
+/// the execute bit open in their programs, and a script whose interpreter is missing gets a box.
+#[test]
+fn opening_an_executable_script_runs_it_in_its_folder() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().expect("a temp dir");
+    let put = |name: &str, bytes: &[u8], mode: u32| {
+        let p = dir.path().join(name);
+        std::fs::write(&p, bytes).expect("write");
+        std::fs::set_permissions(&p, std::fs::Permissions::from_mode(mode)).expect("chmod");
+        p
+    };
+    put("a.sh", b"#!/bin/sh\ntouch ran\n", 0o755);
+    put("b.sh", b"#!/no/such/shell\n", 0o755);
+    let photo = put("c.png", b"\x89PNG\r\n\x1a\n", 0o755);
+    let plain = put("d.sh", b"#!/bin/sh\ntouch ran\n", 0o644);
+    let mut ctx = test_ctx();
+    let mut ex = test_explorer(Place::Folder(dir.path().to_path_buf()), &mut ctx);
+    let names: Vec<&str> = ex.sv.entries.iter().map(|e| e.name.as_str()).collect();
+    assert_eq!(names, ["a.sh", "b.sh", "c.png", "d.sh"]);
+    let mut open = |i: usize, ex: &mut Explorer| {
+        ex.sv.selection.set_only(Some(i));
+        ex.open_selected(&mut ctx)
+    };
+
+    assert!(open(0, &mut ex).spawn.is_empty(), "run, not opened");
+    let marker = dir.path().join("ran");
+    let end = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while !marker.exists() {
+        assert!(
+            std::time::Instant::now() < end,
+            "the script ran in its folder"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    assert!(ex.dialog.is_none());
+
+    open(1, &mut ex);
+    match ex.dialog.take().expect("the error box is up") {
+        crate::dialogs::Dialog::Message { title, text } => {
+            assert_eq!(title, "b.sh");
+            assert_eq!(
+                text,
+                "Cannot run b.sh: The program that runs it was not found."
+            );
+        }
+        _ => panic!("a failed run raises a message box"),
+    }
+
+    for (i, path) in [(2, photo), (3, plain)] {
+        let spawn = open(i, &mut ex).spawn;
+        assert_eq!(spawn.len(), 1);
+        assert_eq!(spawn[0].last(), Some(&path.into_os_string()), "opened");
+    }
+}

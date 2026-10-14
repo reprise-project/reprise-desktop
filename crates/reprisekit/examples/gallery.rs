@@ -3552,6 +3552,8 @@ fn render(theme: &Theme, with_blue: bool) -> Canvas {
             modified: "Today, September 23, 2026, 9:41:07 AM".into(),
             accessed: "Today, September 23, 2026, 10:02:15 AM".into(),
             read_only: true,
+            executable: false,
+            can_set_executable: true,
             hidden: false,
         };
         let (page, height) =
