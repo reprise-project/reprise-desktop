@@ -1,6 +1,6 @@
-//! The check of a `[[keybinds]]` `keys` string the settings sheet and compositor agree on: the
-//! compositor rejects a key name xkb does not know and a rejected keybind fails the whole config,
-//! so the sheet must refuse it first.
+//! `[[keybinds]]` as the settings sheet, portal and compositor agree on: the defaults a file's list
+//! layers over, chord comparison, and the `keys` check (a key xkb does not know fails the whole
+//! config in the compositor, so the sheet refuses it first).
 
 use std::ffi::{CString, c_char, c_int};
 
@@ -190,6 +190,36 @@ pub fn same(a: &str, b: &str) -> bool {
     }
 }
 
+/// The action that unbinds a chord, the defaults' included.
+pub const NONE: &str = "none";
+
+/// The binds a `[[keybinds]]` list runs with, layered over [`DEFAULTS`]: the entries on a
+/// default's chord take its place (a [`NONE`] entry binds nothing), every other default stays,
+/// and the remaining entries follow in file order. `bind` reads an entry's keys and action.
+pub fn layered<T>(
+    entries: Vec<T>,
+    bind: impl Fn(&T) -> (&str, &str),
+    default: impl Fn(&'static str, &'static str) -> T,
+) -> Vec<T> {
+    let mut rest: Vec<Option<T>> = entries.into_iter().map(Some).collect();
+    let mut out = Vec::new();
+    let binds = |e: &T| bind(e).1 != NONE;
+    for &(keys, action) in DEFAULTS {
+        let mut replaced = false;
+        for slot in &mut rest {
+            if slot.as_ref().is_some_and(|e| same(bind(e).0, keys)) {
+                replaced = true;
+                out.extend(slot.take().filter(|e| binds(e)));
+            }
+        }
+        if !replaced {
+            out.push(default(keys, action));
+        }
+    }
+    out.extend(rest.into_iter().flatten().filter(|e| binds(e)));
+    out
+}
+
 pub fn modifier_only(keys: &str) -> bool {
     split(keys).is_some_and(|(_, key)| MODIFIER_KEYS.iter().any(|m| key.eq_ignore_ascii_case(m)))
 }
@@ -267,6 +297,59 @@ mod tests {
         assert!(modifier_only("Super_L"));
         assert!(!modifier_only("Shift+a"));
         assert!(!modifier_only("Pause"));
+    }
+
+    fn run(file: &[(&'static str, &'static str)]) -> Vec<(&'static str, &'static str)> {
+        layered(file.to_vec(), |&(k, a)| (k, a), |k, a| (k, a))
+    }
+
+    #[test]
+    fn no_entries_give_the_defaults() {
+        assert_eq!(run(&[]), DEFAULTS);
+    }
+
+    #[test]
+    fn an_entry_on_a_new_chord_is_added_after_every_default() {
+        let out = run(&[("Super+F9", "lock")]);
+        assert_eq!(out[..DEFAULTS.len()], *DEFAULTS);
+        assert_eq!(out[DEFAULTS.len()..], [("Super+F9", "lock")]);
+    }
+
+    #[test]
+    fn an_entry_on_a_default_chord_takes_its_place() {
+        let out = run(&[("super+Q", "minimize")]);
+        assert_eq!(out.len(), DEFAULTS.len());
+        assert_eq!(out[1], ("super+Q", "minimize"));
+        assert!(!out.contains(&("Super+q", "close")));
+    }
+
+    #[test]
+    fn none_unbinds_a_default_chord() {
+        let out = run(&[("Win+Tab", NONE)]);
+        assert_eq!(out.len(), DEFAULTS.len() - 1);
+        assert!(!out.iter().any(|&(k, _)| same(k, "Super+Tab")));
+        assert!(!out.iter().any(|&(_, a)| a == NONE));
+    }
+
+    #[test]
+    fn a_rebound_action_keeps_its_default_chord() {
+        let out = run(&[("Super+x", "close")]);
+        assert!(out.contains(&("Super+q", "close")));
+        assert!(out.contains(&("Super+x", "close")));
+        let out = run(&[("Super+x", "close"), ("Super+q", NONE)]);
+        assert!(
+            !out.contains(&("Super+q", "close")),
+            "none frees the old chord"
+        );
+        assert!(out.contains(&("Super+x", "close")));
+    }
+
+    #[test]
+    fn an_old_full_list_gains_a_default_it_lacks() {
+        let old: Vec<_> = (DEFAULTS.iter().copied())
+            .filter(|&(k, _)| k != "Super+Tab")
+            .collect();
+        assert_eq!(run(&old), DEFAULTS);
     }
 
     #[test]

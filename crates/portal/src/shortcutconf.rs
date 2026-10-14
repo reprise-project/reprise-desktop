@@ -111,25 +111,33 @@ pub fn trigger_keys(trigger: &str) -> Option<String> {
         .then_some(keys)
 }
 
-/// Whether `keys` is free for a program: not the desktop's (reserved, a
-/// file bind or, without `[[keybinds]]`, a default one) and not another
+/// Whether `keys` is free for a program: not the desktop's (reserved, or a
+/// bind of `[[keybinds]]` layered over the defaults) and not another
 /// entry's. Chords compare by keysym, as the compositor takes them.
 fn free(doc: &DocumentMut, keys: &str) -> bool {
     if repriseconf::keybind::reserved(keys) {
         return false;
     }
-    let file_binds: Option<Vec<String>> = doc
-        .get("keybinds")
+    let file_binds: Vec<(String, String)> = (doc.get("keybinds"))
         .and_then(Item::as_array_of_tables)
-        .map(|a| a.iter().map(|t| str_of(t, "keys").to_string()).collect());
-    let binds = file_binds.unwrap_or_else(|| {
-        repriseconf::keybind::DEFAULTS
-            .iter()
-            .map(|(k, _)| k.to_string())
-            .collect()
-    });
+        .map(|a| {
+            a.iter()
+                .map(|t| {
+                    (
+                        str_of(t, "keys").to_string(),
+                        str_of(t, "action").to_string(),
+                    )
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let binds = repriseconf::keybind::layered(
+        file_binds,
+        |(k, a)| (k, a),
+        |k, a| (k.to_string(), a.to_string()),
+    );
     let same = |b: &str| repriseconf::keybind::same(b, keys);
-    !binds.iter().any(|b| same(b)) && !tables(doc).any(|t| same(str_of(t, "keys")))
+    !binds.iter().any(|(b, _)| same(b)) && !tables(doc).any(|t| same(str_of(t, "keys")))
 }
 
 fn assign(doc: &DocumentMut, trigger: &str) -> String {
@@ -297,20 +305,26 @@ mod tests {
         let got = bind(&mut d, "b", &[w("y", "F9"), w("z", "ALT+Tab")]);
         assert_eq!(got[0].keys, "", "F9 is a's");
         assert_eq!(got[1].keys, "", "Alt+Tab is a default bind");
-        let mut d = doc("[[keybinds]]\nkeys = \"Super+t\"\naction = \"terminal\"\n");
+        let mut d = doc("[[keybinds]]\nkeys = \"Alt+Tab\"\naction = \"none\"\n\n\
+             [[keybinds]]\nkeys = \"Super+F9\"\naction = \"terminal\"\n");
         assert_eq!(
             bind(&mut d, "c", &[w("t", "ALT+Tab")])[0].keys,
             "Alt+Tab",
-            "the file's binds replace the defaults"
+            "none frees a default chord"
         );
-        assert_eq!(bind(&mut d, "c", &[w("u", "LOGO+t")])[0].keys, "");
+        assert_eq!(bind(&mut d, "c", &[w("u", "LOGO+F9")])[0].keys, "");
+        assert_eq!(
+            bind(&mut d, "c", &[w("v", "LOGO+t")])[0].keys,
+            "",
+            "the other defaults stay"
+        );
     }
 
     #[test]
     fn a_trigger_naming_a_taken_keysym_another_way_is_left_unassigned() {
-        let mut d = doc("[[keybinds]]\nkeys = \"Super+Prior\"\naction = \"terminal\"\n");
+        let mut d = doc("[[keybinds]]\nkeys = \"Ctrl+Shift+Prior\"\naction = \"terminal\"\n");
         assert_eq!(
-            bind(&mut d, "a", &[w("x", "LOGO+Page_Up")])[0].keys,
+            bind(&mut d, "a", &[w("x", "CTRL+SHIFT+Page_Up")])[0].keys,
             "",
             "Page_Up is Prior"
         );

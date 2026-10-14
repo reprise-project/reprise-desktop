@@ -437,6 +437,15 @@ suspend_after = 0            # run [power] standby
 #                            # shows its zones. After a snap, the other zones offer the desktop's
 #                            # other windows to fill them.
 
+# The [[keybinds]] below are the defaults. A list in your file layers over
+# them: an entry on a default's keys (compared by key and modifiers, so
+# "super+Q" is Super+q) replaces that bind, and every other default stays.
+# action = "none" leaves its keys unbound, a default's included. Binding an
+# action to other keys keeps its default keys too; a "none" frees them.
+#[[keybinds]]
+#keys = "Super+q"
+#action = "none"
+
 [[keybinds]]
 keys = "Super+Return"
 action = "terminal"
@@ -453,9 +462,7 @@ action = "close"
 keys = "Alt+Tab"
 action = "cycle"
 
-[[keybinds]]                 # the 3D switcher under Glass ([switcher] flip), else as Alt+Tab;
-                             # a [[keybinds]] list replaces every default bind, so an older
-                             # config gets no Super+Tab until it adds this one
+[[keybinds]]                 # the 3D switcher under Glass ([switcher] flip), else as Alt+Tab
 keys = "Super+Tab"
 action = "flip"
 

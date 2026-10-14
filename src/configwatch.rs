@@ -523,6 +523,29 @@ mod tests {
     }
 
     #[test]
+    fn a_reload_reads_the_keybinds_layered_over_the_defaults() {
+        let path =
+            std::env::temp_dir().join(format!("reprise-keybinds-{}.toml", std::process::id()));
+        std::fs::write(
+            &path,
+            "[[keybinds]]\nkeys = \"Super+Return\"\naction = \"terminal\"\n\n\
+             [[keybinds]]\nkeys = \"Super+q\"\naction = \"none\"\n",
+        )
+        .unwrap();
+        let cfg = read(&path).expect("the file parses");
+        std::fs::remove_file(&path).unwrap();
+        let on = |keys: &str| {
+            let (mods, keysym) = crate::config::parse_keybind(keys).unwrap();
+            (cfg.keybinds.iter())
+                .find(|b| b.mods == mods && b.keysym == keysym)
+                .map(|b| b.action.clone())
+        };
+        assert_eq!(on("Super+Tab"), Some(crate::config::Action::Flip));
+        assert_eq!(on("Super+q"), None);
+        assert_eq!(on("Alt+F4"), Some(crate::config::Action::Close));
+    }
+
+    #[test]
     fn a_save_through_a_symlinked_config_is_seen() {
         let root = std::env::temp_dir().join(format!("reprise-configwatch-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
