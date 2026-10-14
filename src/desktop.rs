@@ -298,6 +298,40 @@ pub fn can_allow_launching_at(path: &Path, target: &Target) -> bool {
             .is_ok_and(|text| apps::parse_desktop(&text, &name).is_some())
 }
 
+/// What a file or folder found outside the desktop is, for its menu and for opening it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FileFacts {
+    pub is_dir: bool,
+    /// What opening it does ([`file_target`]).
+    pub target: Target,
+    /// [`can_allow_launching_at`].
+    pub allow_launching: bool,
+}
+
+impl FileFacts {
+    /// A plain file at `path`, for a path whose facts were never read.
+    pub fn plain(path: &Path) -> FileFacts {
+        FileFacts {
+            is_dir: false,
+            target: Target::Open(path.to_path_buf()),
+            allow_launching: false,
+        }
+    }
+}
+
+/// The [`FileFacts`] of `path`. Stats it and reads a `.desktop` file, so a host asks it off its
+/// event loop.
+pub fn file_facts(path: &Path) -> FileFacts {
+    let is_dir = path.is_dir();
+    let target = file_target(path);
+    let allow_launching = !is_dir && can_allow_launching_at(path, &target);
+    FileFacts {
+        is_dir,
+        target,
+        allow_launching,
+    }
+}
+
 /// What opening the file or folder at `path` does, as its icon would in the
 /// desktop folder: a trusted launcher runs, a link opens its URL.
 pub fn file_target(path: &Path) -> Target {

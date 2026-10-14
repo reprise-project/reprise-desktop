@@ -801,7 +801,7 @@ impl State {
         );
         with_mime(desktop.as_ref(), |mime| {
             icon_rows.extend(v.search.files.iter().map(|p| {
-                let is_dir = v.search.dirs.contains(p);
+                let is_dir = v.search.is_dir(p);
                 file_row(p, is_dir, home.as_deref(), mime, icons, px).icon
             }));
         });
@@ -834,7 +834,7 @@ impl State {
                 .search
                 .files
                 .get(r)
-                .map(|p| Run::File(self.found_open_argv(p))),
+                .map(|p| Run::File(self.found_open_argv(p, &v.search.facts_of(p)))),
             None => None,
         };
         self.close_start_panel();
