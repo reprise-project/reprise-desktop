@@ -321,6 +321,8 @@ struct SettingsApp {
     folder_icon: Option<Canvas>,
     thumbs: Vec<Option<Canvas>>,
     thumbing: Option<Receiver<Vec<Option<Canvas>>>>,
+    /// The Advanced page's Clear, under way.
+    clearing: Option<Receiver<reprisefs::thumbnails::Cleared>>,
     requests: Option<instance::Requests>,
     waker: Option<Waker>,
     /// Set by the `configwatch` thread when `config.toml` changed on disk.
@@ -538,6 +540,7 @@ impl SettingsApp {
             folder_icon: None,
             thumbs: Vec::new(),
             thumbing: None,
+            clearing: None,
             requests: None,
             waker: None,
             config_touched: Arc::default(),
@@ -1058,6 +1061,21 @@ impl SettingsApp {
                 }
                 changed = true;
             }
+        }
+        let cleared = match &self.clearing {
+            Some(rx) => match take(rx) {
+                Ok(c) => c.map(pages::Clearing::Done),
+                Err(()) => {
+                    log::warn!("the thumbnail cache clear ended without a result");
+                    Some(pages::Clearing::Failed)
+                }
+            },
+            None => None,
+        };
+        if let Some(ended) = cleared {
+            self.clearing = None;
+            pages::show_clearing(&mut self.sheet.pages[Page::Advanced.index()], ended);
+            changed = true;
         }
         let done = match &self.decoding {
             Some((path, rx)) => match take(rx) {
@@ -2085,13 +2103,14 @@ impl SettingsApp {
                 defaultspage::CHANGE => self.open_chooser(),
                 defaultspage::RESTORE => self.restore_default(),
                 pages::FORGET => self.forget_location(),
-                pages::THUMBS_CLEAR => {
+                pages::THUMBS_CLEAR if self.clearing.is_none() => {
                     // Off the loop: a full cache is thousands of files.
-                    std::thread::spawn(|| {
-                        let n = repriseapp::thumbs::clear_cache();
-                        log::info!("thumbnail cache: cleared {n} files");
-                    });
-                    Reply::none()
+                    self.clearing = Some(self.spawn(repriseapp::thumbs::clear_cache));
+                    pages::show_clearing(
+                        &mut self.sheet.pages[Page::Advanced.index()],
+                        pages::Clearing::Running,
+                    );
+                    Reply::redraw()
                 }
                 pages::SC_ADD => {
                     self.open_shortcut(None);

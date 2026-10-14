@@ -95,7 +95,7 @@ One window, 23 pages, four headings. Only one runs at a time.
     for every file type.
   - **Advanced:** clipboard history, screenshots, recent files, location,
     desktop water, the debug overlay, the thumbnail cache (Clear removes
-    only the thumbnails Reprise kept), and an Edit File... button for when
+    only the thumbnails Reprise kept and says how much went), and an Edit File... button for when
     you'd rather just open `config.toml`.
 
 When `config.toml` changes while Settings is open (an editor, or a key aid's

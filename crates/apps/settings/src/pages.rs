@@ -8,6 +8,8 @@
 //! and lengthens the page. The sheet moves every page right of its list.
 
 use reprisefs::autostart::Entry;
+use reprisefs::props::short_size;
+use reprisefs::thumbnails::Cleared;
 use reprisefs::xkb::{Layout, MAX_LAYOUTS};
 use reprisekit::classic::widgets::{BUTTON_GAP, BUTTON_H, BUTTON_W, LINE_H};
 use reprisekit::controls::combo;
@@ -197,12 +199,43 @@ pub const DEBUG_IN_CAPTURES: &str = "debug_overlay_in_captures";
 pub const FORGET: &str = "location_forget";
 pub const WATER: &str = "wallpaper_water";
 pub const WATER_STYLE: &str = "water_style";
-/// The Advanced page's thumbnail cache check, its size row (greyed while the cache is off) and
-/// Clear, which removes the thumbnails Reprise kept.
+/// The Advanced page's thumbnail cache check, its size row (greyed while the cache is off),
+/// Clear, which removes the thumbnails Reprise kept, and the line saying what Clear removed.
 pub const THUMBS: &str = "thumbnail_cache";
 pub const THUMBS_MB: &str = "thumbnail_max_mb";
 const THUMBS_SIZE: [&str; 2] = ["thumbnail_size_label", THUMBS_MB];
 pub const THUMBS_CLEAR: &str = "thumbnail_clear";
+pub const THUMBS_CLEARED: &str = "thumbnail_cleared";
+
+/// Where the Advanced page's Clear is: running, or ended with what it removed or without a
+/// result.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Clearing {
+    Running,
+    Done(Cleared),
+    Failed,
+}
+
+/// Clear is greyed while a clear runs, and the line beside it says so; once it ends, the line
+/// says what it removed.
+pub fn show_clearing(page: &mut Form, state: Clearing) {
+    page.set_enabled(THUMBS_CLEAR, state != Clearing::Running);
+    page.set_text(THUMBS_CLEARED, &cleared_text(state));
+}
+
+fn cleared_text(state: Clearing) -> String {
+    match state {
+        Clearing::Running => "Clearing...".into(),
+        Clearing::Failed => "Couldn't clear the thumbnails.".into(),
+        Clearing::Done(Cleared { files: 0, .. }) => "Nothing to remove.".into(),
+        Clearing::Done(Cleared { files: 1, bytes }) => {
+            format!("Removed 1 file, {}.", short_size(bytes))
+        }
+        Clearing::Done(Cleared { files, bytes }) => {
+            format!("Removed {files} files, {}.", short_size(bytes))
+        }
+    }
+}
 
 /// The Keyboard page's Shortcuts list, inside its group box under the layout
 /// fields. Four rows show at [`Area::MIN`], more with extra page height; the
@@ -366,6 +399,14 @@ pub fn advanced(a: Area) -> Form {
         )
         .map(Item::under_check),
     );
+    let cleared_x = X + 184;
+    items.push(Item::value_at(
+        THUMBS_CLEARED,
+        cleared_x,
+        366 + dh,
+        a.right() - cleared_x,
+        "",
+    ));
     items.push(button(
         THUMBS_CLEAR,
         a.right() - BUTTON_W,
@@ -3461,6 +3502,96 @@ mod tests {
     }
 
     #[test]
+    fn clear_greys_while_it_runs_then_says_what_went() {
+        let mut s = built();
+        let page = &mut s.pages[Page::Advanced.index()];
+        let clear_lit = |page: &Form| {
+            matches!(
+                page.item(THUMBS_CLEAR).unwrap().control,
+                Control::Button { enabled: true, .. }
+            )
+        };
+        let line = |page: &Form| match &page.item(THUMBS_CLEARED).unwrap().control {
+            Control::Label { text, .. } => text.clone(),
+            _ => panic!("a label"),
+        };
+        assert!(clear_lit(page));
+        assert_eq!(line(page), "");
+        show_clearing(page, Clearing::Running);
+        assert!(!clear_lit(page));
+        assert_eq!(line(page), "Clearing...");
+        let done = |files, bytes| Clearing::Done(Cleared { files, bytes });
+        show_clearing(page, done(214, 1_384_448));
+        assert!(clear_lit(page));
+        assert_eq!(line(page), "Removed 214 files, 1.32 MB.");
+        show_clearing(page, done(1, 900));
+        assert_eq!(line(page), "Removed 1 file, 900 bytes.");
+        show_clearing(page, done(0, 0));
+        assert_eq!(line(page), "Nothing to remove.");
+        show_clearing(page, Clearing::Failed);
+        assert!(clear_lit(page));
+        assert_eq!(line(page), "Couldn't clear the thumbnails.");
+    }
+
+    /// The Clear row idle, clearing and done, Classic at 100%; every result line fits.
+    #[test]
+    fn the_clear_row_pixels() {
+        if !reprisekit::text::test_tahoma() {
+            return;
+        }
+        let theme = Theme::default();
+        let text = TextRenderer::load(&FontConfig::default());
+        let px = theme.fonts.size_px;
+        let mut page = advanced(Area::MIN);
+        let line = page.item(THUMBS_CLEARED).unwrap().rect;
+        let widest = Clearing::Done(Cleared {
+            files: 99_999,
+            bytes: 999 << 30,
+        });
+        for state in [widest, Clearing::Failed] {
+            let line_text = cleared_text(state);
+            assert!(
+                text.measure(&line_text, false, px) <= line.width,
+                "{line_text}"
+            );
+        }
+        let clear = page.item(THUMBS_CLEAR).unwrap().rect;
+        let row = Rect::new(line.x, line.y, line.width, clear.bottom() - line.y);
+        let hash = |page: &Form| {
+            let mut c = Canvas::new(row.right() as u32 + 8, row.bottom() as u32 + 8);
+            c.fill_rect(c.bounds(), theme.colors.button_face);
+            form::draw(&mut c, &text, &theme.paint(), page, false, px);
+            let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+            for y in row.y..row.bottom() {
+                for x in row.x..row.right() {
+                    h = (h ^ u64::from(c.get(x, y))).wrapping_mul(0x100_0000_01b3);
+                }
+            }
+            h
+        };
+        let idle = hash(&page);
+        show_clearing(&mut page, Clearing::Running);
+        let clearing = hash(&page);
+        show_clearing(
+            &mut page,
+            Clearing::Done(Cleared {
+                files: 214,
+                bytes: 1_384_448,
+            }),
+        );
+        let done = hash(&page);
+        assert_eq!(
+            [idle, clearing, done],
+            [
+                7_897_640_068_597_891_350,
+                2_251_566_719_493_853_932,
+                14_478_241_142_069_230_046
+            ],
+            "idle, clearing, done"
+        );
+    }
+
+    #[test]
     fn the_debug_overlay_checks() {
         let mut got = Settings::default();
         let mut s = with(&got);
@@ -5027,6 +5158,13 @@ mod tests {
             crate::displaypage::test_head("HDMI-A-1"),
         ]);
         crate::displaypage::refresh(&mut sheet, &display);
+        show_clearing(
+            &mut sheet.pages[Page::Advanced.index()],
+            Clearing::Done(Cleared {
+                files: 214,
+                bytes: 1_384_448,
+            }),
+        );
         for p in Page::all() {
             sheet.tabs.open = p.index();
             sheet.reveal_open();
