@@ -174,13 +174,42 @@ impl GlassCtx {
                 return;
             };
             let elements = scene.backdrop_elements(renderer, &View::new(area, scale / 2.0));
-            *self.source.borrow_mut() = self.redraw(renderer, b, &elements, clear, output, None);
+            let needed = self.reads_on(scene, area, seen, scale);
+            *self.source.borrow_mut() =
+                self.redraw(renderer, b, &elements, clear, output, Some(&needed));
         }
         if self.pass.get().settings.blur_frames {
             self.update_beneath(renderer, scene, output, clear);
         } else {
             self.beneath.borrow_mut().retain(|(o, _), _| *o != name);
         }
+    }
+
+    /// The output pixels the glass shown on the output at `area` reads from its picture: only
+    /// changes there are blurred, the rest wait until glass reads them.
+    fn reads_on(
+        &self,
+        scene: &DeskScene,
+        area: Rectangle<i32, Logical>,
+        seen: Size<i32, Physical>,
+        scale: f64,
+    ) -> Vec<Rectangle<i32, Physical>> {
+        let pass = self.pass.get();
+        self.nodes
+            .borrow()
+            .iter()
+            .filter(|n| n.glass.strong_count() > 0 && scene.is_alive(n.node))
+            .filter_map(|n| {
+                let Some((at, true)) = scene.coords(n.node) else {
+                    return None;
+                };
+                Rectangle::new(at, n.pane.extent()).overlaps(area).then(|| {
+                    let at = (at - area.loc).to_f64().to_physical(scale);
+                    Reads::of(&n.pane, at, seen, scale, &pass).needed
+                })
+            })
+            .flatten()
+            .collect()
     }
 
     fn update_beneath(
@@ -1346,6 +1375,57 @@ mod tests {
             red[0] < 80,
             "the middle glass shows the black caption beneath it, through the top glass too: {}",
             red[0]
+        );
+    }
+
+    #[test]
+    fn a_change_away_from_glass_is_blurred_once_glass_reads_it() {
+        let Ok(mut renderer) = reprisefx::headless::renderer() else {
+            eprintln!("skipped: no renderer");
+            return;
+        };
+        let scene_with = |ctx: &Rc<GlassCtx>| {
+            let mut scene = DeskScene::new();
+            let root = scene.root();
+            let desktop = scene.tree_create(root);
+            scene.rect_create(desktop, (320, 200), [1.0; 4]);
+            let spot = scene.tree_create(desktop);
+            scene.set_position(spot, 240, 20);
+            scene.rect_create(spot, (60, 40), [0.0, 0.0, 0.0, 1.0]);
+            scene.set_enabled(spot, false);
+            let windows = scene.tree_create(root);
+            let (window, glass) =
+                glass_window(&mut scene, ctx, windows, (10, 120), (100, 60), None);
+            (scene, spot, window, glass)
+        };
+        let points: Vec<(i32, i32)> = (0..10).map(|i| (226 + i * 9, 30)).collect();
+        let ctx = GlassCtx::new();
+        ctx.set_renderer(&mut renderer);
+        let (mut scene, spot, window, _glass) = scene_with(&ctx);
+        red_at(&mut renderer, &ctx, &scene, Material::Frosted, &[]);
+        scene.set_enabled(spot, true);
+        red_at(&mut renderer, &ctx, &scene, Material::Frosted, &[]);
+        scene.set_position(window, 210, 0);
+        let moved = red_at(&mut renderer, &ctx, &scene, Material::Frosted, &points);
+        let fresh_ctx = GlassCtx::new();
+        fresh_ctx.set_renderer(&mut renderer);
+        let (mut fresh, spot, window, _glass) = scene_with(&fresh_ctx);
+        fresh.set_enabled(spot, true);
+        fresh.set_position(window, 210, 0);
+        let fresh = red_at(
+            &mut renderer,
+            &fresh_ctx,
+            &fresh,
+            Material::Frosted,
+            &points,
+        );
+        assert!(
+            moved.iter().any(|&r| r < 200),
+            "the spot shows blurred: {moved:?}"
+        );
+        assert_eq!(
+            moved, fresh,
+            "as blurred as a first frame of the same scene"
         );
     }
 
