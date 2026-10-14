@@ -73,6 +73,7 @@ pub mod taskpreview;
 pub mod text;
 pub mod textedit;
 pub mod theme;
+mod themecache;
 pub mod toolkit;
 pub mod trackbar;
 pub mod trayflyout;

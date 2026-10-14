@@ -68,6 +68,10 @@ theme has its own license.
   `~/.local/share/icons`, or pick it on the Fonts & Icons page.
 - Adwaita, Breeze and Papirus look out of period but cover almost every name
   Reprise asks for.
+- Programs start faster with a theme that has an `icon-theme.cache`: Reprise
+  reads it instead of listing the theme's directories, and lists only those
+  changed since it was written. Package hooks write it; for a theme you copied
+  in, run `gtk-update-icon-cache ~/.local/share/icons/<theme>`.
 - A missing icon falls back to a drawn generic glyph. A few spots have no
   fallback yet and show a magenta square with a black border, on purpose: it
   marks missing art, and the fix is a freedesktop icon name that fits.

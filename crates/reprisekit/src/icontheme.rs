@@ -1,13 +1,14 @@
-//! freedesktop icon theme lookup: `index.theme` parsing, the inherits chain
-//! and the size-matching rules from the Icon Theme Specification.
+//! freedesktop icon theme lookup: `index.theme` parsing, the inherits chain and the size-matching
+//! rules from the Icon Theme Specification, read through each theme's current `icon-theme.cache`.
 
 use crate::icon::premultiply;
 use crate::raster::Canvas;
+use crate::themecache::{self, ThemeCache};
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 
 /// Env var carrying the icon theme name from the compositor; clients without it load `hicolor`.
 pub const ENV: &str = "REPRISE_ICONS";
@@ -84,6 +85,7 @@ impl DirEntry {
 }
 
 const EXTENSIONS: [&str; 3] = ["png", "svg", "xpm"];
+const EXTENSION_FLAGS: [u16; 3] = [themecache::PNG, themecache::SVG, themecache::XPM];
 
 pub struct IconTheme {
     /// Theme names in lookup order: configured, its inherits, `hicolor`, then breeze and
@@ -94,9 +96,130 @@ pub struct IconTheme {
     /// a time.
     groups: Vec<std::ops::Range<usize>>,
     roots: Vec<PathBuf>,
-    /// File names per entry of `dirs`, then `roots`, listed on first visit so a miss costs a
+    /// Each theme's directory under each root, and the one each entry of `dirs` is in.
+    homes: Vec<Home>,
+    dir_home: Vec<usize>,
+    /// What each entry of `dirs`, then `roots`, holds, read on first visit so a miss costs a
     /// hash probe instead of a stat. `extra` directories are not cached.
-    listings: Vec<OnceLock<HashSet<OsString>>>,
+    listings: Vec<OnceLock<Listing>>,
+}
+
+/// One theme's directory under one root.
+struct Home {
+    path: PathBuf,
+    state: OnceLock<HomeState>,
+}
+
+enum HomeState {
+    /// Not a directory when first visited: none of its size directories exist.
+    Missing,
+    /// No usable `icon-theme.cache`: size directories are listed, after the entries of each
+    /// directory above them, so one that doesn't exist costs no probe.
+    Listed(Mutex<HashMap<PathBuf, HashSet<OsString>>>),
+    /// Answered from the cache, with which ancestors of a size directory are unchanged since
+    /// the cache was written.
+    Cached(ThemeCache, Mutex<HashMap<PathBuf, bool>>),
+    /// Every size directory listed on its own.
+    #[cfg(test)]
+    Direct,
+}
+
+enum Listing {
+    Names(HashSet<OsString>),
+    /// A directory unchanged since its home's cache was written, by its index there.
+    Cached(u16),
+}
+
+impl Home {
+    fn state(&self) -> &HomeState {
+        self.state.get_or_init(|| {
+            if !self.path.is_dir() {
+                HomeState::Missing
+            } else if let Some(cache) = ThemeCache::open(&self.path) {
+                HomeState::Cached(cache, Mutex::new(HashMap::new()))
+            } else {
+                HomeState::Listed(Mutex::new(HashMap::new()))
+            }
+        })
+    }
+
+    /// What size directory `dir` holds: listed, or from the cache when the cache still
+    /// describes it.
+    fn listing(&self, dir: &Path) -> Listing {
+        match self.state() {
+            HomeState::Missing => Listing::Names(HashSet::new()),
+            HomeState::Listed(entries) => self.listed(entries, dir),
+            HomeState::Cached(cache, unchanged) => self
+                .cached(cache, unchanged, dir)
+                .unwrap_or_else(|| Listing::Names(list_files(dir))),
+            #[cfg(test)]
+            HomeState::Direct => Listing::Names(list_files(dir)),
+        }
+    }
+
+    /// `dir` listed, or empty without a probe when a directory above it lacks the next step;
+    /// `entries` keeps each of those directories' entry names.
+    fn listed(&self, entries: &Mutex<HashMap<PathBuf, HashSet<OsString>>>, dir: &Path) -> Listing {
+        let rel = dir.strip_prefix(&self.path).unwrap_or(dir);
+        if !rel
+            .components()
+            .all(|c| matches!(c, std::path::Component::Normal(_)))
+        {
+            return Listing::Names(list_files(dir));
+        }
+        let mut entries = entries.lock().unwrap_or_else(|e| e.into_inner());
+        let mut parent = PathBuf::new();
+        for part in rel.iter() {
+            let names = entries
+                .entry(parent.clone())
+                .or_insert_with(|| list_entries(&self.path.join(&parent)));
+            if !names.contains(part) {
+                return Listing::Names(HashSet::new());
+            }
+            parent.push(part);
+        }
+        drop(entries);
+        Listing::Names(list_files(dir))
+    }
+
+    /// None when `dir` changed after `cache` was written. A directory the cache doesn't name
+    /// had no icons then, if it existed: its ancestors are unchanged too.
+    fn cached(
+        &self,
+        cache: &ThemeCache,
+        unchanged: &Mutex<HashMap<PathBuf, bool>>,
+        dir: &Path,
+    ) -> Option<Listing> {
+        let Ok(meta) = std::fs::metadata(dir) else {
+            return Some(Listing::Names(HashSet::new()));
+        };
+        if !meta.is_dir() {
+            return Some(Listing::Names(HashSet::new()));
+        }
+        if meta.modified().ok()? > cache.mtime {
+            return None;
+        }
+        let rel = dir.strip_prefix(&self.path).ok()?;
+        if let Some(i) = cache.dir(rel.to_str()?) {
+            return Some(Listing::Cached(i));
+        }
+        let mut unchanged = unchanged.lock().unwrap_or_else(|e| e.into_inner());
+        for parent in rel
+            .ancestors()
+            .skip(1)
+            .filter(|p| !p.as_os_str().is_empty())
+        {
+            let fresh = *unchanged.entry(parent.to_path_buf()).or_insert_with(|| {
+                std::fs::metadata(self.path.join(parent))
+                    .and_then(|m| m.modified())
+                    .is_ok_and(|t| t <= cache.mtime)
+            });
+            if !fresh {
+                return None;
+            }
+        }
+        Some(Listing::Names(HashSet::new()))
+    }
 }
 
 fn ini_lines(text: &str) -> Vec<(String, String, String)> {
@@ -219,10 +342,16 @@ impl IconTheme {
     /// Adwaita. Directories merge across roots, so a user override still sees the system copy's
     /// dirs.
     pub fn load(name: &str, roots: &[PathBuf]) -> IconTheme {
-        let mut chain: Vec<String> = Vec::new();
-        let mut dirs: Vec<DirEntry> = Vec::new();
-        let mut groups: Vec<std::ops::Range<usize>> = Vec::new();
-        Self::walk(name, roots, &mut chain, &mut dirs, &mut groups);
+        let mut theme = IconTheme {
+            chain: Vec::new(),
+            dirs: Vec::new(),
+            groups: Vec::new(),
+            roots: roots.to_vec(),
+            homes: Vec::new(),
+            dir_home: Vec::new(),
+            listings: Vec::new(),
+        };
+        theme.walk(name);
         // Fallbacks beyond `hicolor` so standard names (`system-run`, ...) resolve with a bare
         // `hicolor`; only added when a root has their index, with their parents.
         for fallback in ["hicolor", "breeze", "Adwaita"] {
@@ -230,30 +359,27 @@ impl IconTheme {
                 .iter()
                 .any(|r| r.join(fallback).join("index.theme").is_file());
             if fallback == "hicolor" || installed {
-                Self::walk(fallback, roots, &mut chain, &mut dirs, &mut groups);
+                theme.walk(fallback);
             }
         }
-        let listings = (0..dirs.len() + roots.len())
+        theme.listings = (0..theme.dirs.len() + roots.len())
             .map(|_| OnceLock::new())
             .collect();
-        IconTheme {
-            chain,
-            dirs,
-            groups,
-            roots: roots.to_vec(),
-            listings,
-        }
+        theme
     }
 
     /// Append `name` and its `Inherits` chain (depth first, skipping known themes) to
-    /// `chain`/`dirs`/`groups`.
-    fn walk(
-        name: &str,
-        roots: &[PathBuf],
-        chain: &mut Vec<String>,
-        dirs: &mut Vec<DirEntry>,
-        groups: &mut Vec<std::ops::Range<usize>>,
-    ) {
+    /// `chain`/`dirs`/`groups`, with a home per theme and root.
+    fn walk(&mut self, name: &str) {
+        let IconTheme {
+            chain,
+            dirs,
+            groups,
+            roots,
+            homes,
+            dir_home,
+            ..
+        } = self;
         let mut pending: Vec<String> = vec![name.to_string()];
         while let Some(theme) = pending.pop() {
             if chain.contains(&theme) {
@@ -265,7 +391,7 @@ impl IconTheme {
             // Every subdirectory any root's index names: a theme's directories count in every
             // root, with or without an `index.theme` there.
             let mut subdirs: Vec<(PathBuf, DirEntry)> = Vec::new();
-            for root in roots {
+            for root in roots.iter() {
                 let base = root.join(&theme);
                 let (inherits, d) = parse_index(&base);
                 for e in d {
@@ -276,12 +402,17 @@ impl IconTheme {
                 }
                 inherits_all.extend(inherits);
             }
-            for root in roots {
+            for root in roots.iter() {
                 let base = root.join(&theme);
                 dirs.extend(subdirs.iter().map(|(rel, e)| DirEntry {
                     path: base.join(rel),
                     ..e.clone()
                 }));
+                dir_home.resize(dirs.len(), homes.len());
+                homes.push(Home {
+                    path: base,
+                    state: OnceLock::new(),
+                });
             }
             groups.push(start..dirs.len());
             // Reversed so the first `Inherits` entry pops first.
@@ -340,7 +471,7 @@ impl IconTheme {
             });
             order.extend(rest);
             for i in order {
-                for p in self.files_listed(i, &self.dirs[i].path, &files) {
+                for p in self.files_listed(i, &self.dirs[i].path, name, &files) {
                     if let Some(t) = take(p) {
                         return Some(t);
                     }
@@ -349,7 +480,7 @@ impl IconTheme {
         }
         // Fallback: a bare file directly in a root.
         for (i, root) in self.roots.iter().enumerate() {
-            for p in self.files_listed(self.dirs.len() + i, root, &files) {
+            for p in self.files_listed(self.dirs.len() + i, root, name, &files) {
                 if let Some(t) = take(p) {
                     return Some(t);
                 }
@@ -358,14 +489,32 @@ impl IconTheme {
         None
     }
 
-    /// Those of `files` directly in `dir`, through `listings[i]`, read on first use.
-    fn files_listed(&self, i: usize, dir: &Path, files: &[OsString]) -> Vec<PathBuf> {
-        let listing = self.listings[i].get_or_init(|| list_files(dir));
-        files
-            .iter()
-            .filter(|f| listing.contains(*f))
-            .map(|f| dir.join(f))
-            .collect()
+    /// Those of `files`, `name` with each of [`EXTENSIONS`], directly in `dir`, through
+    /// `listings[i]`, read on first use.
+    fn files_listed(&self, i: usize, dir: &Path, name: &str, files: &[OsString]) -> Vec<PathBuf> {
+        let listing = self.listings[i].get_or_init(|| match self.dir_home.get(i) {
+            Some(&h) => self.homes[h].listing(dir),
+            None => Listing::Names(list_files(dir)),
+        });
+        match listing {
+            Listing::Names(names) => files
+                .iter()
+                .filter(|f| names.contains(*f))
+                .map(|f| dir.join(f))
+                .collect(),
+            Listing::Cached(d) => {
+                let HomeState::Cached(cache, _) = self.homes[self.dir_home[i]].state() else {
+                    unreachable!("a cached listing comes from a cached home");
+                };
+                let flags = cache.flags(name, *d);
+                files
+                    .iter()
+                    .zip(EXTENSION_FLAGS)
+                    .filter(|&(_, f)| flags & f != 0)
+                    .map(|(file, _)| dir.join(file))
+                    .collect()
+            }
+        }
     }
 }
 
@@ -379,6 +528,13 @@ fn list_files(dir: &Path) -> HashSet<OsString> {
                 .map(|e| e.file_name())
                 .collect()
         })
+        .unwrap_or_default()
+}
+
+/// Every entry name directly in `dir`; empty if unreadable.
+fn list_entries(dir: &Path) -> HashSet<OsString> {
+    std::fs::read_dir(dir)
+        .map(|rd| rd.filter_map(Result::ok).map(|e| e.file_name()).collect())
         .unwrap_or_default()
 }
 
@@ -2000,5 +2156,342 @@ mod tests {
         assert_eq!(ca.get(4, 4), 0xFFFF_0000);
         assert_eq!(cb.get(4, 4), 0xFF00_00FF);
         fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// `theme` reading every size directory from disk, as without any `icon-theme.cache`.
+    fn listing_only(theme: IconTheme) -> IconTheme {
+        for home in &theme.homes {
+            assert!(home.state.set(HomeState::Direct).is_ok());
+        }
+        theme
+    }
+
+    /// Writes `theme_dir/icon-theme.cache` as `gtk-update-icon-cache` would: every directory
+    /// below it holding a regular `.png`, `.svg` or `.xpm` file, symlinks followed.
+    fn write_cache(theme_dir: &Path) {
+        use std::collections::BTreeMap;
+        let mut dirs: Vec<String> = Vec::new();
+        let mut icons: BTreeMap<String, Vec<(u16, u16)>> = BTreeMap::new();
+        let mut pending = vec![PathBuf::new()];
+        while let Some(rel) = pending.pop() {
+            let mut found: BTreeMap<String, u16> = BTreeMap::new();
+            for entry in fs::read_dir(theme_dir.join(&rel)).unwrap() {
+                let file = entry.unwrap().file_name().into_string().unwrap();
+                let path = theme_dir.join(&rel).join(&file);
+                if path.is_dir() {
+                    pending.push(rel.join(&file));
+                } else if !rel.as_os_str().is_empty() && path.is_file() {
+                    for (ext, flag) in EXTENSIONS.iter().zip(EXTENSION_FLAGS) {
+                        if let Some(stem) = file.strip_suffix(&format!(".{ext}")) {
+                            *found.entry(stem.to_string()).or_default() |= flag;
+                        }
+                    }
+                }
+            }
+            if !found.is_empty() {
+                let d = dirs.len() as u16;
+                dirs.push(rel.to_str().unwrap().to_string());
+                for (name, flags) in found {
+                    icons.entry(name).or_default().push((d, flags));
+                }
+            }
+        }
+        let buckets = icons.len().max(1) as u32;
+        let mut out: Vec<u8> = vec![0, 1, 0, 0];
+        let put = |out: &mut Vec<u8>, at: usize, v: u32| {
+            out[at..at + 4].copy_from_slice(&v.to_be_bytes());
+        };
+        out.extend([0; 8]);
+        put(&mut out, 4, 12);
+        out.extend(buckets.to_be_bytes());
+        out.extend(std::iter::repeat_n(0xff, 4 * buckets as usize));
+        for (name, images) in &icons {
+            let head = 16 + 4 * (themecache::hash(name.as_bytes()) % buckets) as usize;
+            let at = out.len();
+            out.extend(&out[head..head + 4].to_vec());
+            out.extend([0; 8]);
+            put(&mut out, head, at as u32);
+            let len = out.len() as u32;
+            put(&mut out, at + 4, len);
+            out.extend(name.as_bytes());
+            out.push(0);
+            let len = out.len() as u32;
+            put(&mut out, at + 8, len);
+            out.extend((images.len() as u32).to_be_bytes());
+            for (d, flags) in images {
+                out.extend(d.to_be_bytes());
+                out.extend(flags.to_be_bytes());
+                out.extend([0; 4]);
+            }
+        }
+        let list = out.len();
+        put(&mut out, 8, list as u32);
+        out.extend((dirs.len() as u32).to_be_bytes());
+        out.extend(std::iter::repeat_n(0, 4 * dirs.len()));
+        for (i, dir) in dirs.iter().enumerate() {
+            let len = out.len() as u32;
+            put(&mut out, list + 4 + 4 * i, len);
+            out.extend(dir.as_bytes());
+            out.push(0);
+        }
+        fs::write(theme_dir.join(themecache::FILE), out).unwrap();
+    }
+
+    fn set_mtime(path: &Path, t: std::time::SystemTime) {
+        fs::File::open(path).unwrap().set_modified(t).unwrap();
+    }
+
+    /// Every directory under `dir`, `dir` included.
+    fn all_dirs(dir: &Path) -> Vec<PathBuf> {
+        let mut out = vec![dir.to_path_buf()];
+        let mut i = 0;
+        while i < out.len() {
+            for e in fs::read_dir(&out[i]).unwrap().map(Result::unwrap) {
+                if e.file_type().unwrap().is_dir() {
+                    out.push(e.path());
+                }
+            }
+            i += 1;
+        }
+        out
+    }
+
+    /// A system root with `test` (fresh cache) inheriting `base` (no cache) inheriting `hicolor`
+    /// (cache stale in two directories), and a user root whose `test` has a cache older than
+    /// its directory.
+    fn cached_fixture(tag: &str) -> (PathBuf, PathBuf) {
+        let top = std::env::temp_dir().join(format!("reprise-icons-{}-{tag}", std::process::id()));
+        let _ = fs::remove_dir_all(&top);
+        let (system, user) = (top.join("system"), top.join("user"));
+        let dirs = "16x16/apps,22x22/apps,24x24/apps,32x32/apps,48x48/apps,64x64/apps,scalable/apps,16x16@2/apps";
+        let sections = "[16x16/apps]\nSize=16\nType=Fixed\n\n[22x22/apps]\nSize=22\nType=Fixed\n\n[24x24/apps]\nSize=24\n\n[32x32/apps]\nSize=32\nType=Fixed\n\n[48x48/apps]\nSize=48\nType=Fixed\n\n[64x64/apps]\nSize=64\nType=Fixed\n\n[scalable/apps]\nSize=48\nMinSize=8\nMaxSize=512\nType=Scalable\n\n[16x16@2/apps]\nSize=16\nScale=2\nType=Fixed\n";
+        let themes: [(&Path, &str, &str, &[&str]); 4] = [
+            (
+                &system,
+                "test",
+                "base",
+                &[
+                    "16x16/apps/a.png",
+                    "16x16/apps/b.svg",
+                    "16x16/apps/both.png",
+                    "16x16/apps/both.svg",
+                    "24x24/apps/t.xpm",
+                    "24x24/apps/t.png",
+                    "32x32/apps/a.png",
+                    "48x48/apps/x.svgz",
+                    "scalable/apps/s.svg",
+                    "scalable/apps/a.svg",
+                    "16x16@2/apps/a.png",
+                    "16x16@2/apps/b.png",
+                ],
+            ),
+            (&user, "test", "", &["16x16/apps/u.png", "32x32/apps/a.svg"]),
+            (
+                &system,
+                "base",
+                "hicolor",
+                &[
+                    "16x16/apps/b.png",
+                    "16x16/apps/base.png",
+                    "32x32/apps/base.svg",
+                    "scalable/apps/u.svg",
+                ],
+            ),
+            (
+                &system,
+                "hicolor",
+                "",
+                &[
+                    "16x16/apps/h.png",
+                    "16x16/apps/gone.png",
+                    "48x48/apps/h.png",
+                    "scalable/apps/h.svg",
+                    "scalable/apps/t.svg",
+                ],
+            ),
+        ];
+        for (root, theme, inherits, files) in themes {
+            let dir = root.join(theme);
+            fs::create_dir_all(&dir).unwrap();
+            if root == system {
+                let index = format!(
+                    "[Icon Theme]\nName={theme}\nInherits={inherits}\nDirectories={dirs}\n\n{sections}"
+                );
+                fs::write(dir.join("index.theme"), index).unwrap();
+            }
+            for f in files {
+                let p = dir.join(f);
+                fs::create_dir_all(p.parent().unwrap()).unwrap();
+                fs::write(&p, b"").unwrap();
+            }
+        }
+        std::os::unix::fs::symlink("gone.png", system.join("test/16x16/apps/dangling.png"))
+            .unwrap();
+        fs::write(system.join("bare.png"), b"").unwrap();
+        for theme in [
+            system.join("test"),
+            system.join("hicolor"),
+            user.join("test"),
+        ] {
+            write_cache(&theme);
+        }
+        let written = std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(2_000_000);
+        let before = written - std::time::Duration::from_secs(1000);
+        for dir in all_dirs(&top) {
+            set_mtime(&dir, before);
+        }
+        for theme in [
+            system.join("test"),
+            system.join("hicolor"),
+            user.join("test"),
+        ] {
+            set_mtime(&theme.join(themecache::FILE), written);
+        }
+        // Changed after the caches were written.
+        fs::remove_file(system.join("hicolor/16x16/apps/gone.png")).unwrap();
+        fs::write(system.join("hicolor/48x48/apps/late.png"), b"").unwrap();
+        fs::create_dir_all(system.join("test/22x22/apps")).unwrap();
+        fs::write(system.join("test/22x22/apps/new.png"), b"").unwrap();
+        // Backdated like a copy keeping times: only its new parent shows the change.
+        set_mtime(&system.join("test/22x22/apps"), before);
+        set_mtime(&system.join("test"), before);
+        set_mtime(
+            &user.join("test"),
+            written + std::time::Duration::from_secs(1),
+        );
+        (system, user)
+    }
+
+    /// A file a lookup can use: `decode` refuses anything but a regular file.
+    fn regular(p: PathBuf) -> Option<PathBuf> {
+        p.is_file().then_some(p)
+    }
+
+    const NAMES: [&str; 17] = [
+        "a",
+        "b",
+        "both",
+        "t",
+        "s",
+        "u",
+        "x",
+        "base",
+        "h",
+        "gone",
+        "late",
+        "new",
+        "dangling",
+        "bare",
+        "index",
+        "icon-theme",
+        "nothing",
+    ];
+
+    #[test]
+    fn a_theme_cache_picks_the_files_the_listings_pick() {
+        let (system, user) = cached_fixture("t19");
+        let roots = [user.clone(), system.clone()];
+        let cached = IconTheme::load("test", &roots);
+        let listed = listing_only(IconTheme::load("test", &roots));
+        for name in NAMES {
+            for size in [8, 16, 20, 22, 24, 32, 40, 48, 64, 96, 256, 600] {
+                for scale in [1, 2] {
+                    let want = listed.find_with_extra(name, size, scale, &[], regular);
+                    let got = cached.find_with_extra(name, size, scale, &[], regular);
+                    assert_eq!(got, want, "{name} at {size}@{scale}");
+                    if name != "dangling" {
+                        assert_eq!(
+                            cached.lookup(name, size, scale),
+                            listed.lookup(name, size, scale),
+                            "{name} at {size}@{scale}"
+                        );
+                    }
+                }
+            }
+        }
+        assert_eq!(
+            cached.lookup("late", 48, 1),
+            Some(system.join("hicolor/48x48/apps/late.png"))
+        );
+        assert_eq!(
+            cached.lookup("new", 22, 1),
+            Some(system.join("test/22x22/apps/new.png"))
+        );
+        assert_eq!(
+            cached.lookup("u", 16, 1),
+            Some(user.join("test/16x16/apps/u.png"))
+        );
+        // The listing names a dangling link that never decodes; the cache skips it.
+        assert_eq!(
+            listed.lookup("dangling", 16, 1),
+            Some(system.join("test/16x16/apps/dangling.png"))
+        );
+        assert_eq!(cached.lookup("dangling", 16, 1), None);
+        fs::remove_dir_all(system.parent().unwrap()).unwrap();
+    }
+
+    #[test]
+    fn only_directories_that_exist_and_changed_since_the_cache_are_listed() {
+        let (system, user) = cached_fixture("t20");
+        let t = IconTheme::load("test", &[user.clone(), system.clone()]);
+        assert!(t.lookup("nothing", 16, 1).is_none());
+        let listing = |dir: &Path| {
+            let i = t.dirs.iter().position(|d| d.path == dir).unwrap();
+            t.listings[i].get().unwrap()
+        };
+        let names = |dir: &Path| match listing(dir) {
+            Listing::Names(n) => {
+                let mut n: Vec<_> = n.iter().map(|f| f.to_str().unwrap()).collect();
+                n.sort();
+                Some(n)
+            }
+            Listing::Cached(_) => None,
+        };
+        assert!(names(&system.join("test/16x16/apps")).is_none());
+        assert!(names(&system.join("hicolor/scalable/apps")).is_none());
+        assert_eq!(
+            names(&system.join("test/22x22/apps")),
+            Some(vec!["new.png"])
+        );
+        assert_eq!(
+            names(&system.join("hicolor/48x48/apps")),
+            Some(vec!["h.png", "late.png"])
+        );
+        assert_eq!(
+            names(&system.join("hicolor/16x16/apps")),
+            Some(vec!["h.png"])
+        );
+        assert_eq!(names(&user.join("test/16x16/apps")), Some(vec!["u.png"]));
+        assert_eq!(names(&user.join("base/16x16/apps")), Some(vec![]));
+        assert!(matches!(
+            t.homes[t.dir_home[t
+                .dirs
+                .iter()
+                .position(|d| d.path == user.join("base/16x16/apps"))
+                .unwrap()]]
+            .state(),
+            HomeState::Missing
+        ));
+        let base = t
+            .homes
+            .iter()
+            .find(|h| h.path == system.join("base"))
+            .unwrap();
+        let HomeState::Listed(entries) = base.state() else {
+            panic!("base has no cache");
+        };
+        let mut above: Vec<String> = entries
+            .lock()
+            .unwrap()
+            .keys()
+            .map(|k| k.to_str().unwrap().to_string())
+            .collect();
+        above.sort();
+        assert_eq!(
+            above,
+            ["", "16x16", "32x32", "scalable"],
+            "only parents that exist"
+        );
+        fs::remove_dir_all(system.parent().unwrap()).unwrap();
     }
 }
