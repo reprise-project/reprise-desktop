@@ -428,6 +428,7 @@ pub fn retheme(state: &mut State) {
     for depth in 0..state.menus.len() {
         state.redraw_menu(depth);
     }
+    state.retheme_start_panel();
     state.refit_wallpaper();
     crate::layer::outputs_changed(state);
     state.relayout_desktop();
