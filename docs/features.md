@@ -144,7 +144,8 @@ the Super tap, Super+Shift+Esc and the VT switch keys can be rebound.
 - **Alt+Tab.** A grid of icons with a live picture of the selected window,
   or live pictures of every window. Minimized windows and dialogs are in the
   list, the desktop can be too, and resting on an entry peeks at it. Four
-  picture sizes, for big screens and bad eyes.
+  picture sizes, for big screens and bad eyes. Pressed over an open Start
+  menu, menu or popup, it closes that and switches.
 - **3D switcher.** Glass only: Super+Tab tilts every window into a stack. See
   [interfaces](interfaces.md#glass-only).
 - **Window overview.** Super+W, a hot corner (`[overview] hot_corner`) or
