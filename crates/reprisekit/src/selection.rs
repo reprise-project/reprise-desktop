@@ -153,6 +153,20 @@ fn shift_index(index: Option<usize>, removed: usize) -> Option<usize> {
         other => other,
     }
 }
+/// Where a highlight on old row `at` goes among the `new` rows `takes` accepts: its own key, else
+/// the next old row still listed, else the one before.
+pub fn follow<K: PartialEq>(
+    old: &[K],
+    new: &[K],
+    at: usize,
+    takes: impl Fn(usize) -> bool,
+) -> Option<usize> {
+    let find = |i: usize| (0..new.len()).find(|&j| new[j] == old[i] && takes(j));
+    let at = at.min(old.len().checked_sub(1)?);
+    find(at)
+        .or_else(|| (at + 1..old.len()).find_map(find))
+        .or_else(|| (0..at).rev().find_map(find))
+}
 
 pub fn scroll_into_view(top: &mut usize, i: usize, visible: usize) {
     let visible = visible.max(1);
@@ -462,5 +476,15 @@ mod tests {
     fn band_spans_the_points_exclusive_of_the_higher() {
         assert_eq!(band((10, 10), (3, 4)), Rect::new(3, 4, 7, 6));
         assert_eq!(band((3, 4), (10, 10)), Rect::new(3, 4, 7, 6));
+    }
+
+    #[test]
+    fn follow_keeps_the_entry_else_takes_the_next_then_the_one_before() {
+        let old = ["a", "b", "c"];
+        assert_eq!(follow(&old, &["x", "a", "b", "c"], 1, |_| true), Some(2));
+        assert_eq!(follow(&old, &["a", "c"], 1, |_| true), Some(1));
+        assert_eq!(follow(&old, &["a", "b"], 2, |_| true), Some(1));
+        assert_eq!(follow(&old, &["a", "c"], 1, |j| j == 0), Some(0));
+        assert_eq!(follow(&old, &["x"], 0, |_| true), None);
     }
 }

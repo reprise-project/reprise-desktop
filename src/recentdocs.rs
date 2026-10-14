@@ -1,6 +1,6 @@
 //! The recent files and document folders the Start menus and jump lists show. A recent file can
-//! sit on a mount that never answers, so what each path is comes from a file job: the loop reads
-//! the bookmarks and what the last check found, and shows a path not checked yet.
+//! sit on a mount that never answers, so the bookmarks and what each path is come from file jobs:
+//! the loop shows what the last read and check found, a path not checked yet included.
 
 use reprisefs::apps::AppEntry;
 use reprisefs::recent::{Bookmark, RecentFiles};
@@ -10,6 +10,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use crate::compositor::State;
+use crate::menuview::{MenuKind, jump_relisted};
 use crate::raster::Rect;
 
 /// What a path was found to be.
@@ -22,9 +23,15 @@ enum Found {
 
 type Stat = fn(&Path) -> io::Result<std::fs::Metadata>;
 
-#[derive(Default)]
 pub struct RecentDocs {
-    files: RecentFiles,
+    /// None while a read job has it.
+    files: Option<RecentFiles>,
+    /// The bookmarks the last read found, newest first.
+    marks: Vec<Bookmark>,
+    /// The xbel changed while a read was out: read again when it answers.
+    reread: bool,
+    /// A check waits for the read under way.
+    check_after_read: bool,
     /// Filled by the check job one path at a time, so a path that hangs keeps only itself and
     /// the paths after it unchecked.
     found: Arc<Mutex<HashMap<PathBuf, Found>>>,
@@ -32,16 +39,32 @@ pub struct RecentDocs {
     checking: bool,
 }
 
+impl Default for RecentDocs {
+    fn default() -> RecentDocs {
+        RecentDocs::at(RecentFiles::new())
+    }
+}
+
 impl RecentDocs {
+    fn at(files: RecentFiles) -> RecentDocs {
+        RecentDocs {
+            files: Some(files),
+            marks: Vec::new(),
+            reread: false,
+            check_after_read: false,
+            found: Arc::default(),
+            checking: false,
+        }
+    }
+
     fn found(&self, path: &Path) -> Option<Found> {
         self.found.lock().ok()?.get(path).copied()
     }
 
     /// The newest `limit` bookmarks `keep` takes that were not found missing or a folder.
-    fn pick(&mut self, limit: usize, keep: impl Fn(&Bookmark) -> bool) -> Vec<PathBuf> {
-        let marks = self.files.bookmarks();
+    fn pick(&self, limit: usize, keep: impl Fn(&Bookmark) -> bool) -> Vec<PathBuf> {
         let found = self.found.lock().unwrap_or_else(|e| e.into_inner());
-        marks
+        self.marks
             .iter()
             .filter(|b| keep(b) && matches!(found.get(&b.path), None | Some(Found::File)))
             .take(limit)
@@ -49,12 +72,12 @@ impl RecentDocs {
             .collect()
     }
 
-    pub fn current(&mut self, limit: usize) -> Vec<PathBuf> {
+    pub fn current(&self, limit: usize) -> Vec<PathBuf> {
         self.pick(limit, |_| true)
     }
 
     /// `current`, keeping only the files the application `entry` used: its jump list.
-    pub fn for_app(&mut self, limit: usize, entry: &AppEntry) -> Vec<PathBuf> {
+    pub fn for_app(&self, limit: usize, entry: &AppEntry) -> Vec<PathBuf> {
         self.pick(limit, |b| reprisefs::recent::used_by_entry(b, entry))
     }
 
@@ -78,9 +101,17 @@ impl RecentDocs {
             .map(|(dir, _)| dir)
             .collect();
         if files {
-            paths.extend(self.files.bookmarks().iter().map(|b| b.path.clone()));
+            paths.extend(self.marks.iter().map(|b| b.path.clone()));
         }
         Some(paths)
+    }
+
+    /// Takes what a read found; true when the bookmarks changed.
+    fn take_read(&mut self, files: RecentFiles, marks: Vec<Bookmark>) -> bool {
+        self.files = Some(files);
+        let changed = self.marks != marks;
+        self.marks = marks;
+        changed
     }
 }
 
@@ -103,9 +134,39 @@ fn check(paths: Vec<PathBuf>, found: &Mutex<HashMap<PathBuf, Found>>, stat: Stat
 }
 
 impl State {
-    /// Checks the recent files and document folders off the loop, unless a check is running. The
-    /// menus opened meanwhile show what the last check found.
+    /// Reads the recent files again, then checks them and the document folders, all off the
+    /// loop; open lists are relisted as each answers.
     pub fn refresh_recent(&mut self) {
+        self.recent.check_after_read = true;
+        self.read_recent();
+    }
+
+    /// Reads `recently-used.xbel` off the loop, or once more after the read under way.
+    pub fn read_recent(&mut self) {
+        let Some(mut files) = self.recent.files.take() else {
+            self.recent.reread = true;
+            return;
+        };
+        self.spawn_fs_job(move || {
+            let marks = files.bookmarks().to_vec();
+            Box::new(move |s: &mut State| s.recent_read(files, marks))
+        });
+    }
+
+    fn recent_read(&mut self, files: RecentFiles, marks: Vec<Bookmark>) {
+        let changed = self.recent.take_read(files, marks);
+        if std::mem::take(&mut self.recent.reread) {
+            self.read_recent();
+        } else if std::mem::take(&mut self.recent.check_after_read) {
+            self.check_recent();
+        }
+        if changed {
+            self.relist_recent();
+        }
+    }
+
+    /// Checks the bookmarks and document folders off the loop, unless a check is running.
+    fn check_recent(&mut self) {
         let files = self.config.recent_files;
         let Some(paths) = self.recent.paths_to_check(files) else {
             return;
@@ -113,21 +174,49 @@ impl State {
         let found = self.recent.found.clone();
         self.spawn_fs_job(move || {
             check(paths, &found, |p| std::fs::metadata(p));
-            Box::new(State::recent_checked)
+            Box::new(|s: &mut State| {
+                s.recent.checking = false;
+                s.relist_recent();
+            })
         });
     }
 
-    /// The check answered: the open Documents menus and jump lists drop the files it found gone.
-    fn recent_checked(&mut self) {
-        self.recent.checking = false;
-        let found = self.recent.found.clone();
-        let found = found.lock().unwrap_or_else(|e| e.into_inner());
-        let gone = |p: &Path| found.get(p) == Some(&Found::Neither);
+    /// Relists the open Documents menus and jump lists, the Start panel's included, from the last
+    /// read and check.
+    fn relist_recent(&mut self) {
         let mut depth = 0;
-        while let Some(m) = self.menus.get_mut(depth) {
+        while depth < self.menus.len() {
+            let m = &self.menus[depth];
             let (y, old_h) = (m.y, m.layout.height);
+            let fresh = match &m.kind {
+                MenuKind::Documents { dirs, icon_px, .. } => {
+                    Some(self.documents_rows(*icon_px, *dirs))
+                }
+                MenuKind::JumpList {
+                    rows,
+                    target,
+                    button,
+                } => {
+                    let (rows, target, button) = (rows.clone(), target.clone(), *button);
+                    let recent = self.jump_recent(&target);
+                    let (items, rows) = jump_relisted(&self.menus[depth].items, &rows, &recent);
+                    Some((
+                        items,
+                        MenuKind::JumpList {
+                            rows,
+                            target,
+                            button,
+                        },
+                    ))
+                }
+                _ => None,
+            };
             depth += 1;
-            if !m.drop_gone_files(gone) {
+            let Some((items, kind)) = fresh else {
+                continue;
+            };
+            let m = &mut self.menus[depth - 1];
+            if !m.relist_to(items, kind) {
                 continue;
             }
             let (tree, x, new_h) = (m.tree, m.x, m.layout.height);
@@ -140,23 +229,25 @@ impl State {
             crate::tooltip::hover_menu(self, depth - 1, None);
             self.redraw_menu(depth - 1);
         }
-        self.drop_gone_jumps(gone);
+        self.relist_start_jumps();
     }
 }
 
-/// The top of a menu shrunk from `old_h` to `new_h` at `y`: a menu standing on the bottom of the
-/// `usable` area (one opened upwards from the taskbar) keeps its bottom edge there.
+/// The top of a menu at `y` resized from `old_h` to `new_h`: one standing on the `usable` area's
+/// bottom (opened up from the taskbar) keeps its bottom edge, and none grows past it.
 fn keep_bottom(y: i32, old_h: i32, new_h: i32, usable: Rect) -> i32 {
     if y + old_h >= usable.bottom() {
         y + old_h - new_h
     } else {
-        y
+        y.min(usable.bottom() - new_h)
     }
+    .max(usable.y)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::startmenu::{MenuItem, MenuLayout, MenuStyle};
     use std::time::{Duration, Instant};
 
     fn xbel(paths: &[&Path]) -> String {
@@ -172,6 +263,19 @@ mod tests {
             })
             .collect();
         format!("<xbel>{marks}</xbel>")
+    }
+
+    /// What `State::read_recent` does off the loop and back on it.
+    fn read(docs: &mut RecentDocs) -> bool {
+        let mut files = docs.files.take().unwrap();
+        let marks = files.bookmarks().to_vec();
+        docs.take_read(files, marks)
+    }
+
+    fn checked(docs: &mut RecentDocs) {
+        let paths = docs.paths_to_check(true).unwrap();
+        check(paths, &docs.found, |p| std::fs::metadata(p));
+        docs.checking = false;
     }
 
     fn open_then_stat(p: &Path) -> io::Result<std::fs::Metadata> {
@@ -201,10 +305,8 @@ mod tests {
         let xbel_path = dir.join("recently-used.xbel");
         let order = [&*kept, &*gone, &*folder, &*hang, &*later];
         std::fs::write(&xbel_path, xbel(&order)).unwrap();
-        let mut docs = RecentDocs {
-            files: RecentFiles::at(Some(xbel_path)),
-            ..Default::default()
-        };
+        let mut docs = RecentDocs::at(RecentFiles::at(Some(xbel_path)));
+        read(&mut docs);
         assert_eq!(docs.current(10).len(), 5, "nothing checked: all listed");
 
         let paths = docs.paths_to_check(true).unwrap();
@@ -248,81 +350,148 @@ mod tests {
         )
     }
 
-    /// A Documents menu opened before the check answered drops the file the check found
-    /// deleted, keeps the hover on the row sliding into its place, and shows (Empty) once its
-    /// last recent file goes.
+    /// The rows `State::documents_rows` builds under one document folder.
+    fn documents(dir: &Path, files: &[PathBuf]) -> (Vec<MenuItem>, MenuKind) {
+        let name = |p: &Path| p.file_name().unwrap().to_string_lossy().into_owned();
+        let mut items = vec![MenuItem::entry(name(dir)), MenuItem::Separator];
+        let mut paths = vec![Some(dir.to_path_buf()), None];
+        for f in files {
+            items.push(MenuItem::entry(name(f)));
+            paths.push(Some(f.clone()));
+        }
+        if files.is_empty() {
+            items.push(MenuItem::entry("(Empty)").enabled(false));
+            paths.push(None);
+        }
+        let tips = vec![None; paths.len()];
+        let kind = MenuKind::Documents {
+            paths,
+            tips,
+            dirs: true,
+            icon_px: 16,
+        };
+        (items, kind)
+    }
+
     #[test]
-    fn an_open_documents_menu_drops_the_files_the_check_found_gone() {
-        use crate::menuview::{Menu, MenuFrom, MenuKind};
-        use crate::startmenu::{MenuItem, MenuLayout, MenuStyle};
+    fn an_open_documents_menu_takes_new_files_and_drops_gone_ones_in_place() {
+        use crate::menuview::{Menu, MenuFrom};
         let dir = std::env::temp_dir().join(format!("reprise-recentopen-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
-        let (a, b) = (dir.join("a.txt"), dir.join("b.txt"));
-        std::fs::write(&a, "").unwrap();
-        std::fs::write(&b, "").unwrap();
+        let [a, b, c, d] = ["a.txt", "b.txt", "c.txt", "d.txt"].map(|n| dir.join(n));
+        for f in [&a, &b, &c, &d] {
+            std::fs::write(f, "").unwrap();
+        }
         let xbel_path = dir.join("recently-used.xbel");
         std::fs::write(&xbel_path, xbel(&[&a, &b])).unwrap();
-        let mut docs = RecentDocs {
-            files: RecentFiles::at(Some(xbel_path)),
-            ..Default::default()
-        };
-        let listed = docs.current(10);
-        assert_eq!(listed, [a.clone(), b.clone()]);
+        let mut docs = RecentDocs::at(RecentFiles::at(Some(xbel_path.clone())));
+        read(&mut docs);
 
         let mut scene = crate::compositor::DeskScene::new();
-        let kind = MenuKind::Documents {
-            paths: vec![Some(dir.clone()), None, Some(a.clone()), Some(b.clone())],
-            tips: vec![None; 4],
-            files: 2,
-        };
+        let (items, kind) = documents(&dir, &docs.current(3));
         let mut menu = Menu::for_test(&mut scene, test_output(), kind, MenuFrom::Bar);
-        menu.items = vec![
-            MenuItem::entry("Documents"),
-            MenuItem::Separator,
-            MenuItem::entry("a.txt"),
-            MenuItem::entry("b.txt"),
-        ];
         let style = MenuStyle::submenu(&crate::config::Config::default().theme);
-        menu.layout = MenuLayout::compute_styled(&style, &menu.items, usize::MAX);
-        menu.hovered = Some(2);
-
-        let checked = |docs: &mut RecentDocs| {
-            let paths = docs.paths_to_check(true).unwrap();
-            check(paths, &docs.found, |p| std::fs::metadata(p));
-            docs.checking = false;
-            let found = docs.found.lock().unwrap().clone();
-            move |p: &Path| found.get(p) == Some(&Found::Neither)
+        menu.layout = MenuLayout::compute_styled(&style, &items, usize::MAX);
+        menu.items = items;
+        menu.hovered = Some(3);
+        let relist = |menu: &mut Menu, docs: &RecentDocs| {
+            let (items, kind) = documents(&dir, &docs.current(3));
+            menu.relist_to(items, kind)
         };
-        std::fs::remove_file(&a).unwrap();
-        assert!(menu.drop_gone_files(checked(&mut docs)));
-        assert_eq!(menu.items[2], MenuItem::entry("b.txt"));
-        assert_eq!(menu.items.len(), 3);
-        assert_eq!(menu.hovered, Some(2), "b.txt slid under the hover");
+        let listed = |menu: &Menu| -> Vec<Option<PathBuf>> {
+            let MenuKind::Documents { paths, .. } = &menu.kind else {
+                unreachable!()
+            };
+            paths[2..].to_vec()
+        };
+
+        std::fs::write(&xbel_path, xbel(&[&c, &a, &b])).unwrap();
+        assert!(read(&mut docs));
+        assert!(relist(&mut menu, &docs));
+        assert_eq!(
+            listed(&menu),
+            [Some(c.clone()), Some(a.clone()), Some(b.clone())]
+        );
+        assert_eq!(menu.items[2], MenuItem::entry("c.txt"));
+        assert_eq!(menu.hovered, Some(4), "b.txt kept the hover a row down");
         assert_eq!(
             menu.layout,
             MenuLayout::compute_styled(&style, &menu.items, usize::MAX)
         );
-        let MenuKind::Documents { paths, files, .. } = &menu.kind else {
-            unreachable!()
-        };
-        assert_eq!((paths[2].as_deref(), *files), (Some(&*b), 2));
-        assert!(
-            !menu.drop_gone_files(checked(&mut docs)),
-            "nothing more gone"
-        );
+        assert!(!read(&mut docs), "the xbel did not change");
+        assert!(!relist(&mut menu, &docs));
 
-        std::fs::remove_file(&b).unwrap();
-        assert!(menu.drop_gone_files(checked(&mut docs)));
+        std::fs::write(&xbel_path, xbel(&[&d, &c, &a, &b])).unwrap();
+        read(&mut docs);
+        assert!(relist(&mut menu, &docs));
+        assert_eq!(
+            listed(&menu),
+            [Some(d.clone()), Some(c.clone()), Some(a.clone())],
+            "b.txt pushed past the limit"
+        );
+        assert_eq!(menu.hovered, Some(4), "the hover took a.txt above");
+
+        std::fs::remove_file(&c).unwrap();
+        checked(&mut docs);
+        assert!(relist(&mut menu, &docs));
+        assert_eq!(
+            listed(&menu),
+            [Some(d.clone()), Some(a.clone()), Some(b.clone())]
+        );
+        assert_eq!(menu.hovered, Some(3), "a.txt slid up under the hover");
+
+        for f in [&a, &b, &d] {
+            std::fs::remove_file(f).unwrap();
+        }
+        checked(&mut docs);
+        assert!(relist(&mut menu, &docs));
         assert_eq!(menu.items[2], MenuItem::entry("(Empty)").enabled(false));
+        assert_eq!(menu.items.len(), 3);
         assert_eq!(menu.hovered, Some(0), "(Empty) takes no hover");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
-    fn a_shrunk_menu_on_the_taskbar_keeps_its_bottom_edge() {
+    fn a_relisted_jump_list_swaps_only_its_recent_files() {
+        use crate::taskbar::JumpRow;
+        let (a, c) = (PathBuf::from("/srv/a.txt"), PathBuf::from("/srv/c.txt"));
+        let tail = || {
+            (
+                vec![MenuItem::entry("Notepad"), MenuItem::entry("Pin")],
+                vec![Some(JumpRow::Launch), Some(JumpRow::Pin)],
+            )
+        };
+        let (items, rows) = tail();
+        let (items, rows) = jump_relisted(&items, &rows, std::slice::from_ref(&a));
+        assert_eq!(
+            rows,
+            [
+                Some(JumpRow::Recent(a.clone())),
+                None,
+                Some(JumpRow::Launch),
+                Some(JumpRow::Pin)
+            ]
+        );
+        let (items, rows) = jump_relisted(&items, &rows, &[c.clone(), a.clone()]);
+        assert_eq!(
+            rows[..3],
+            [Some(JumpRow::Recent(c)), Some(JumpRow::Recent(a)), None]
+        );
+        assert_eq!(items[3..], tail().0);
+        assert_eq!(jump_relisted(&items, &rows, &[]), tail());
+    }
+
+    #[test]
+    fn a_relisted_menu_on_the_taskbar_keeps_its_bottom_edge() {
         let usable = Rect::new(0, 0, 800, 570);
         assert_eq!(keep_bottom(370, 200, 150, usable), 420);
+        assert_eq!(keep_bottom(370, 200, 250, usable), 320, "grown upwards");
+        assert_eq!(
+            keep_bottom(300, 200, 300, usable),
+            270,
+            "a menu grown past the bottom moves up"
+        );
         assert_eq!(
             keep_bottom(100, 200, 150, usable),
             100,
