@@ -1280,13 +1280,12 @@ const BIN_ICON_Y: i32 = 40;
 const BIN_NAME: (i32, i32) = (63, 47);
 const BIN_VALUE_X: i32 = 85;
 const BIN_DATE_X: i32 = 115;
-const BIN_SEPS: [i32; 3] = [81, 166, 234];
-const BIN_BLOCKS: [i32; 3] = [94, 179, 247];
-const BIN_PITCH: i32 = 21;
-/// A date row holds a second line for a long date, as the file sheet's do.
-const BIN_DATE_PITCH: i32 = 2 * LINE_H;
+const BIN_SEPS: [i32; 3] = [81, 176, 244];
+const BIN_BLOCKS: [i32; 3] = [94, 189, 257];
+/// The type, origin and date rows hold a second line for a long value.
+const BIN_WRAP_PITCH: i32 = 2 * LINE_H;
 const BIN_CHECK_X: [i32; 2] = [112, 204];
-const BIN_CHECK_Y: [i32; 4] = [248, 267, 287, 306];
+const BIN_CHECK_Y: [i32; 4] = [258, 277, 297, 316];
 const BIN_RESTORE: Rect = Rect::new(265, 344, BUTTON_W, BUTTON_H);
 
 /// Read-only and Hidden show the item's own state. Archive, Compressed
@@ -1308,43 +1307,39 @@ pub fn bin_page(facts: &BinFacts, name: &str, icon: Option<Canvas>) -> Form {
             Control::Separator,
         ));
     }
-    let mut pair = |ids: (&'static str, &'static str), label, value: &str, x, y| {
-        items.push(Item::label_at(ids.0, LABEL_X, y, x - LABEL_X, label));
-        items.push(Item::label_at(ids.1, x, y, SEP_RIGHT - x, value));
+    // A row that wraps holds two lines; Size keeps one.
+    let mut row = |(l, v): (&'static str, &'static str), label, value: &str, x, y, wraps| {
+        items.push(Item::label_at(l, LABEL_X, y, x - LABEL_X, label));
+        let w = SEP_RIGHT - x;
+        if wraps {
+            items.push(Item::lines(v, Rect::new(x, y, w, BIN_WRAP_PITCH), &[value]));
+            y + BIN_WRAP_PITCH
+        } else {
+            items.push(Item::label_at(v, x, y, w, value));
+            y + LINE_H
+        }
     };
     let [first, second, attrs] = BIN_BLOCKS;
-    pair(
-        ("l_type", "v_type"),
-        "Type:",
-        &facts.type_name,
-        BIN_VALUE_X,
-        first,
-    );
-    pair(
-        ("l_origin", "v_origin"),
-        "Origin:",
-        &facts.origin,
-        BIN_VALUE_X,
-        first + BIN_PITCH,
-    );
-    pair(
+    let types = ("l_type", "v_type");
+    let y = row(types, "Type:", &facts.type_name, BIN_VALUE_X, first, true);
+    let origins = ("l_origin", "v_origin");
+    let y = row(origins, "Origin:", &facts.origin, BIN_VALUE_X, y, true);
+    row(
         ("l_size", "v_size"),
         "Size:",
         &facts.size,
         BIN_VALUE_X,
-        first + 2 * BIN_PITCH,
+        y,
+        false,
     );
     let dates = [
         (("l_deleted", "v_deleted"), "Deleted:", &facts.deleted),
         (("l_made", "v_made"), "Created:", &facts.created),
     ];
     let mut y = second;
-    for ((l, v), label, value) in dates {
+    for (ids, label, value) in dates {
         if let Some(value) = value {
-            items.push(Item::label_at(l, LABEL_X, y, BIN_DATE_X - LABEL_X, label));
-            let r = Rect::new(BIN_DATE_X, y, SEP_RIGHT - BIN_DATE_X, BIN_DATE_PITCH);
-            items.push(Item::lines(v, r, &[value.as_str()]));
-            y += BIN_DATE_PITCH;
+            y = row(ids, label, value, BIN_DATE_X, y, true);
         }
     }
     items.push(Item::label_at(
@@ -2869,23 +2864,24 @@ mod tests {
             Some(Control::Label { .. })
         ));
         let seps = ["sep0", "sep1", "sep2"].map(&rect);
-        assert_eq!(seps.map(|r| r.y), [81, 166, 234]);
+        assert_eq!(seps.map(|r| r.y), [81, 176, 244]);
         assert!(seps.iter().all(|r| (r.x, r.right()) == (21, 339)));
-        for (id, y) in [("l_type", 94), ("l_origin", 115), ("l_size", 136)] {
+        for (id, y) in [("l_type", 94), ("l_origin", 120), ("l_size", 146)] {
             assert_eq!((rect(id).x, rect(id).y), (21, y), "{id}");
         }
-        assert_eq!(rect("v_origin").x, 85);
-        for (id, y) in [("l_deleted", 179), ("l_made", 205)] {
+        assert_eq!(rect("v_type"), Rect::new(85, 94, 254, 26));
+        assert_eq!(rect("v_origin"), Rect::new(85, 120, 254, 26));
+        for (id, y) in [("l_deleted", 189), ("l_made", 215)] {
             assert_eq!((rect(id).x, rect(id).y), (21, y), "{id}");
         }
-        assert_eq!(rect("v_deleted"), Rect::new(115, 179, 224, 26));
-        assert_eq!(rect("l_attr").y, 247);
+        assert_eq!(rect("v_deleted"), Rect::new(115, 189, 224, 26));
+        assert_eq!(rect("l_attr").y, 257);
         for (id, x, y) in [
-            (READ_ONLY, 112, 248),
-            (HIDDEN, 204, 248),
-            ("archive", 112, 267),
-            ("compress", 112, 287),
-            ("encrypt", 112, 306),
+            (READ_ONLY, 112, 258),
+            (HIDDEN, 204, 258),
+            ("archive", 112, 277),
+            ("compress", 112, 297),
+            ("encrypt", 112, 316),
         ] {
             assert_eq!(rect(id), Rect::new(x, y, 13, 13), "{id}");
             assert!(
@@ -2908,7 +2904,7 @@ mod tests {
         };
         let page = bin_page(&facts, "x", None);
         assert!(page.item("l_deleted").is_none());
-        assert_eq!(page.item("l_made").map(|i| i.rect.y), Some(179));
+        assert_eq!(page.item("l_made").map(|i| i.rect.y), Some(189));
     }
 
     #[test]
@@ -2955,15 +2951,15 @@ mod tests {
             (NAME, (63, 49)),
             ("l_type", (21, 97)),
             ("v_type", (85, 96)),
-            ("l_origin", (21, 118)),
-            ("v_origin", (85, 117)),
-            ("l_size", (21, 139)),
-            ("v_size", (85, 139)),
-            ("l_deleted", (21, 181)),
-            ("v_deleted", (115, 181)),
-            ("l_made", (21, 207)),
-            ("v_made", (115, 207)),
-            ("l_attr", (21, 249)),
+            ("l_origin", (21, 123)),
+            ("v_origin", (85, 122)),
+            ("l_size", (21, 149)),
+            ("v_size", (85, 149)),
+            ("l_deleted", (21, 191)),
+            ("v_deleted", (115, 191)),
+            ("l_made", (21, 217)),
+            ("v_made", (115, 217)),
+            ("l_attr", (21, 259)),
         ]
         .map(|(id, (x, y))| (id, (Some(x), Some(y))));
         assert_eq!(got, want);
@@ -2973,8 +2969,8 @@ mod tests {
     fn a_bin_items_page_fits_its_text() {
         let date = "Wednesday, September 30, 2026, 12:00:00 PM";
         let facts = BinFacts {
-            type_name: "OpenDocument Text Document".into(),
-            origin: "Quarterly reports".into(),
+            type_name: "Encapsulated PostScript image with a TIFF preview".into(),
+            origin: "Quarterly reports for the northern region (final drafts, 2026)".into(),
             size: "1.23 MB".into(),
             deleted: Some(date.into()),
             created: Some(date.into()),
