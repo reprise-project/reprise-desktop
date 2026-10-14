@@ -2333,6 +2333,7 @@ impl Host {
             .filter(|t| t.entered == Some(id))
             .and_then(|t| t.preedit().cloned());
         canvas.set_preedit(preedit);
+        filedlg::follow_scale(&mut *self.app, id, scale);
         let app = &mut self.app;
         self.ctx
             .at_scale(scale, |ctx| app.draw(id, &mut canvas, ctx));

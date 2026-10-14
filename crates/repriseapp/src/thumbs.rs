@@ -7,6 +7,7 @@ use crate::Waker;
 use crate::decode::Decoders;
 use reprisefs::thumbnails::{Rgba, Thumbnails, edge_for};
 use reprisefs::thumbpipe;
+use reprisekit::controls::shellview;
 use reprisekit::raster::Canvas;
 use std::collections::{HashSet, VecDeque};
 use std::path::PathBuf;
@@ -17,8 +18,8 @@ use std::thread::JoinHandle;
 struct Request {
     path: PathBuf,
     generation: u64,
-    /// The device pixels the thumbnail fills (`shellview::thumb_px`).
-    px: u32,
+    /// The draw scale the thumbnail is for.
+    scale: i32,
 }
 
 pub struct Done {
@@ -26,12 +27,14 @@ pub struct Done {
     pub thumb: Canvas,
     pub dims: (u32, u32),
     pub generation: u64,
+    /// The draw scale it was asked for: `thumb` fills [`shellview::thumb_px`] of it.
+    pub scale: i32,
 }
 
 pub struct Thumbs {
     tx: Option<Sender<Request>>,
     rx: Receiver<Done>,
-    pending: HashSet<PathBuf>,
+    pending: HashSet<(PathBuf, i32)>,
     generation: u64,
     worker: Option<JoinHandle<()>>,
     done_tx: Sender<Done>,
@@ -67,10 +70,11 @@ impl Thumbs {
         self.done_tx.send(done).expect("the receiver is ours");
     }
 
-    /// Asks for `path`'s thumbnail to fill `px` device pixels (`shellview::thumb_px`).
-    pub fn request(&mut self, path: PathBuf, generation: u64, px: u32) {
+    /// Asks for `path`'s thumbnail for a window drawn at `scale`; a path already asked for at
+    /// another scale is asked for again.
+    pub fn request(&mut self, path: PathBuf, generation: u64, scale: i32) {
         self.generation = generation;
-        if !self.pending.insert(path.clone()) {
+        if !self.pending.insert((path.clone(), scale)) {
             return;
         }
         let Some(tx) = &self.tx else {
@@ -79,12 +83,17 @@ impl Thumbs {
         let req = Request {
             path,
             generation,
-            px,
+            scale,
         };
         if tx.send(req).is_err() {
             log::warn!("the thumbnail worker went away");
             self.tx = None;
         }
+    }
+
+    /// Whether `path`'s thumbnail for `scale` is asked for and has not arrived.
+    pub fn asked(&self, path: &std::path::Path, scale: i32) -> bool {
+        self.pending.contains(&(path.to_path_buf(), scale))
     }
 
     pub fn cancel_all(&mut self) {
@@ -96,7 +105,7 @@ impl Thumbs {
         loop {
             match self.rx.try_recv() {
                 Ok(done) => {
-                    self.pending.remove(&done.path);
+                    self.pending.remove(&(done.path.clone(), done.scale));
                     if done.generation == self.generation {
                         out.push(done);
                     }
@@ -144,7 +153,7 @@ fn work(
             // never asked for again. That is deliberate: a retry costs a
             // read and a probe per pass and would never succeed. The
             // next listing clears the set.
-            let edge = edge_for(req.px);
+            let edge = edge_for(shellview::thumb_px(req.scale));
             let Some((thumb, dims)) = thumbnail(&decoders, edge, cache.as_mut(), &req.path) else {
                 continue;
             };
@@ -153,6 +162,7 @@ fn work(
                 thumb,
                 dims,
                 generation: req.generation,
+                scale: req.scale,
             };
             if tx.send(done).is_err() {
                 return;
@@ -303,7 +313,6 @@ fn take_queued(rx: &Receiver<Request>, queue: &mut VecDeque<Request>, newest: &m
 #[cfg(test)]
 mod tests {
     use super::*;
-    use reprisekit::controls::shellview;
 
     fn stub() -> (Sender<Done>, Thumbs) {
         let (done_tx, rx) = channel::<Done>();
@@ -327,6 +336,7 @@ mod tests {
             thumb: Canvas::new(1, 1),
             dims: (800, 600),
             generation,
+            scale: 1,
         }
     }
 
@@ -346,10 +356,10 @@ mod tests {
     #[test]
     fn drain_drops_a_thumbnail_from_a_folder_we_have_left() {
         let (tx, mut thumbs) = stub();
-        thumbs.request(PathBuf::from("/pics/a.png"), 1, 94);
-        thumbs.request(PathBuf::from("/pics/b.png"), 1, 94);
+        thumbs.request(PathBuf::from("/pics/a.png"), 1, 1);
+        thumbs.request(PathBuf::from("/pics/b.png"), 1, 1);
         thumbs.cancel_all();
-        thumbs.request(PathBuf::from("/other/c.png"), 2, 94);
+        thumbs.request(PathBuf::from("/other/c.png"), 2, 1);
         tx.send(done("/pics/b.png", 1)).expect("send");
         tx.send(done("/other/c.png", 2)).expect("send");
         let out = thumbs.drain();
@@ -360,9 +370,9 @@ mod tests {
     #[test]
     fn the_same_path_is_only_asked_for_once() {
         let (tx, mut thumbs) = stub();
-        thumbs.request(PathBuf::from("/pics/a.png"), 1, 94);
-        assert!(thumbs.pending.contains(&PathBuf::from("/pics/a.png")));
-        thumbs.request(PathBuf::from("/pics/a.png"), 1, 94);
+        thumbs.request(PathBuf::from("/pics/a.png"), 1, 1);
+        assert!(thumbs.pending.contains(&(PathBuf::from("/pics/a.png"), 1)));
+        thumbs.request(PathBuf::from("/pics/a.png"), 1, 1);
         assert_eq!(thumbs.pending.len(), 1);
         tx.send(done("/pics/a.png", 1)).expect("send");
         assert_eq!(thumbs.drain().len(), 1);

@@ -51,8 +51,8 @@ impl Explorer {
         reply
     }
 
-    /// Queues decodes for images without a thumbnail (Thumbnails and Tiles only), sized for the
-    /// window's `scale`.
+    /// Queues decodes for images without a thumbnail at the window's `scale` (Thumbnails and
+    /// Tiles only). One made at another scale shows until its replacement arrives.
     pub fn request_thumbs(&mut self, scale: i32) {
         if !matches!(self.sv.mode, Mode::Thumbnails | Mode::Tiles) {
             return;
@@ -62,11 +62,18 @@ impl Explorer {
             .items
             .iter()
             .zip(&self.sv.entries)
-            .filter(|(it, e)| it.is_image() && e.thumb.is_none())
+            .filter(|(it, e)| it.is_image() && e.thumb.as_ref().is_none_or(|t| t.scale() != scale))
             .map(|(it, _)| it.path.clone())
             .collect();
         for path in wanted {
-            self.thumbs.request(path, r#gen, shellview::thumb_px(scale));
+            self.thumbs.request(path, r#gen, scale);
+        }
+    }
+
+    /// The main window draws at `scale`: thumbnails made at another one are asked for again.
+    pub fn follow_scale(&mut self, scale: i32) {
+        if std::mem::replace(&mut self.drawn_scale, scale) != scale {
+            self.request_thumbs(scale);
         }
     }
 
@@ -92,8 +99,7 @@ impl Explorer {
             self.image_dims.insert(done.path.clone(), done.dims);
             let kind = self.items[i].kind.clone();
             if let Some(e) = self.sv.entries.get_mut(i) {
-                let scale = ctx.icons.scale();
-                e.thumb = Some(shellview::frame_thumb(done.thumb, done.dims, scale));
+                e.thumb = Some(shellview::frame_thumb(done.thumb, done.dims, done.scale));
                 e.detail = shellview::image_detail(done.dims, &kind);
             }
             arrived.push(done.path);
@@ -691,6 +697,7 @@ mod tests {
             thumb: Canvas::new(4, 3),
             dims: (800, 600),
             generation: ex.generation,
+            scale: 1,
         });
         let reply = ex.wake(&mut ctx);
 
@@ -757,6 +764,7 @@ mod tests {
             thumb: Canvas::new(4, 3),
             dims: (800, 600),
             generation: ex.generation,
+            scale: 1,
         });
         ex.wake(&mut ctx);
 
@@ -764,6 +772,37 @@ mod tests {
         assert_eq!(ex.sv.entries[a].name, "a.png");
         let others = (0..ex.sv.entries.len()).filter(|&i| i != a);
         assert!(others.into_iter().all(|i| ex.sv.entries[i].thumb.is_none()));
+    }
+
+    #[test]
+    fn a_new_draw_scale_asks_again_and_keeps_the_old_thumbnail_until_then() {
+        let mut ctx = test_ctx();
+        let (dir, mut ex) = explorer(&mut ctx);
+        let path = dir.path().join("a.png");
+        let deliver = |ex: &mut Explorer, ctx: &mut Ctx, scale: i32| {
+            ex.thumbs.deliver(Done {
+                path: path.clone(),
+                thumb: Canvas::new(400, 300),
+                dims: (800, 600),
+                generation: ex.generation,
+                scale,
+            });
+            ex.wake(ctx);
+        };
+        deliver(&mut ex, &mut ctx, 1);
+        ex.follow_scale(1);
+        assert!(!ex.thumbs.asked(&path, 2));
+        let a = index_of(&ex, "a.png");
+
+        ex.follow_scale(2);
+        assert!(ex.thumbs.asked(&path, 2), "asked for at scale 2");
+        let kept = ex.sv.entries[a].thumb.as_ref().expect("the old one shows");
+        assert_eq!((kept.scale(), kept.device_size()), (1, (94, 71)));
+
+        deliver(&mut ex, &mut ctx, 2);
+        let t = ex.sv.entries[a].thumb.as_ref().expect("the new one");
+        assert_eq!((t.scale(), t.device_size()), (2, (188, 142)));
+        assert!(!ex.thumbs.asked(&path, 2));
     }
 
     #[test]
@@ -778,6 +817,7 @@ mod tests {
                 thumb: Canvas::new(4, 3),
                 dims: (800, 600),
                 generation: ex.generation,
+                scale: 1,
             });
         }
         ex.wake(&mut ctx);
