@@ -78,6 +78,9 @@ build() {
   export RUSTUP_TOOLCHAIN=stable
   # Keeps packaging out of the working tree's target/.
   export CARGO_TARGET_DIR="$srcdir/target"
+  # Panic locations carry absolute source paths: map the build tree and the
+  # cargo home (registry and git checkouts) to fixed prefixes.
+  export RUSTFLAGS="${RUSTFLAGS:-} --remap-path-prefix=$srcdir=/usr/src/debug/$pkgbase --remap-path-prefix=${CARGO_HOME:-$HOME/.cargo}=/cargo"
   # Named explicitly: the workspace has a root package, so a bare build
   # would build only that.
   cargo build --release --locked -p reprise -p reprise-portal \
