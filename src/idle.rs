@@ -284,22 +284,42 @@ pub fn notify_activity(state: &mut State) {
     crate::power::hint(state, crate::power::Hint::Idle(idle));
 }
 
-/// Tell the idle-notify clients of activity: at once when they last heard
-/// `NOTIFY_EVERY` ago or more, else from a timer when that much has passed.
-fn notify_clients(state: &mut State) {
-    let left = (state.idle.notified_at).and_then(|t| NOTIFY_EVERY.checked_sub(t.elapsed()));
-    let Some(left) = left else {
-        if let Some(t) = state.idle.notify_timer.take() {
-            state.handle.remove(t);
-        }
-        state.idle.notified_at = Some(Instant::now());
-        let seat = state.seat.clone();
-        state.idle.notifier.notify_activity(&seat);
-        return;
-    };
-    if state.idle.notify_timer.is_some() {
-        return;
+/// When activity reaches the idle-notify clients.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Notify {
+    Now,
+    After(Duration),
+    /// The armed timer carries it.
+    Armed,
+}
+
+/// Activity `since` the clients last heard (None: never), with a timer
+/// `armed` or not: at once when they last heard `NOTIFY_EVERY` ago or more,
+/// else from a timer when that much has passed.
+fn notify_step(since: Option<Duration>, armed: bool) -> Notify {
+    // An armed timer stays even once due: its expiry may already be queued
+    // in this dispatch, and calloop warns about an event for a removed source.
+    if armed {
+        return Notify::Armed;
     }
+    match since.and_then(|t| NOTIFY_EVERY.checked_sub(t)) {
+        None => Notify::Now,
+        Some(left) => Notify::After(left),
+    }
+}
+
+fn notify_clients(state: &mut State) {
+    let since = state.idle.notified_at.map(|t| t.elapsed());
+    let left = match notify_step(since, state.idle.notify_timer.is_some()) {
+        Notify::Armed => return,
+        Notify::Now => {
+            state.idle.notified_at = Some(Instant::now());
+            let seat = state.seat.clone();
+            state.idle.notifier.notify_activity(&seat);
+            return;
+        }
+        Notify::After(left) => left,
+    };
     let timer = Timer::from_duration(left);
     match state.handle.insert_source(timer, |_, _, state| {
         state.idle.notify_timer = None;
@@ -598,6 +618,31 @@ impl OutputPowerHandler for State {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn activity_reaches_the_clients_at_most_every_notify_interval() {
+        assert_eq!(notify_step(None, false), Notify::Now, "first activity");
+        assert_eq!(
+            notify_step(Some(Duration::from_millis(20)), false),
+            Notify::After(Duration::from_millis(30))
+        );
+        assert_eq!(
+            notify_step(Some(Duration::from_millis(80)), false),
+            Notify::Now
+        );
+    }
+
+    #[test]
+    fn activity_with_a_timer_armed_leaves_it_to_the_timer_even_once_due() {
+        assert_eq!(
+            notify_step(Some(Duration::from_millis(20)), true),
+            Notify::Armed
+        );
+        assert_eq!(
+            notify_step(Some(Duration::from_millis(80)), true),
+            Notify::Armed
+        );
+    }
 
     fn cfg(lock: u32, off: u32) -> IdleConfig {
         IdleConfig {
