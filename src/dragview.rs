@@ -148,6 +148,10 @@ pub struct DragState {
     pub button: u32,
     image: Option<BufferId>,
     offset: (i32, i32),
+    /// Where the image was grabbed and the scale it is drawn at: crossing to an output of another
+    /// scale draws it again from the same grab.
+    grab: Point<f64, Logical>,
+    image_scale: i32,
     /// Armed on a program row: the row to activate if the button comes up without a drag.
     row: Option<ProgramPress>,
     pub seat: bool,
@@ -176,6 +180,12 @@ pub fn left_drop_op(grabbed: &DragSource, target: &DropTarget) -> DropOp {
         (DragSource::App { .. }, _) => DropOp::Copy,
         _ => DropOp::Shortcut,
     }
+}
+
+/// The scale to draw a drag image at again, drawn at `drawn` and now over an output drawn at
+/// `here`; None keeps it (same scale, or off every output).
+fn redraw_scale(drawn: i32, here: Option<i32>) -> Option<i32> {
+    here.filter(|&s| s != drawn)
 }
 
 /// Whether a drop of `sources` may land on a desktop cell. With `show_files` false only system icons
@@ -407,6 +417,8 @@ impl State {
             button,
             image: None,
             offset: (0, 0),
+            grab: pos,
+            image_scale: 1,
             row,
             seat: false,
             water_last: None,
@@ -454,6 +466,19 @@ impl State {
     }
 
     pub fn place_drag_image(&mut self, pos: Point<f64, Logical>) {
+        let here = self
+            .output_at(pos.x, pos.y)
+            .map(|o| self.draw_scale_at(Some(&o)));
+        let redraw = self.drags.armed.as_ref().and_then(|d| {
+            d.image?;
+            redraw_scale(d.image_scale, here).map(|scale| (d.grab, scale))
+        });
+        if let Some((grab, scale)) = redraw {
+            if let Some(image) = self.drags.armed.as_mut().and_then(|d| d.image.take()) {
+                self.scene.destroy(image);
+            }
+            self.draw_drag_image(grab, scale);
+        }
         let Some((image, (ox, oy))) = self
             .drags
             .armed
@@ -504,6 +529,15 @@ impl State {
         let scale = self
             .draw_scale_at(self.output_at(pos.x, pos.y).as_ref())
             .max(1);
+        if let Some(d) = self.drags.armed.as_mut() {
+            d.grab = pos;
+        }
+        self.draw_drag_image(pos, scale);
+        self.place_drag_image(pos);
+    }
+
+    /// Draw the image grabbed at `pos` at `scale` into a fresh buffer.
+    fn draw_drag_image(&mut self, pos: Point<f64, Logical>, scale: i32) {
         let theme = self.config.theme.scaled(scale);
         let (x, y) = (pos.x as i32, pos.y as i32);
         let Some(d) = self.drags.armed.as_ref() else {
@@ -605,8 +639,8 @@ impl State {
         if let Some(d) = self.drags.armed.as_mut() {
             d.image = Some(image);
             d.offset = offset;
+            d.image_scale = scale;
         }
-        self.place_drag_image(pos);
     }
 
     /// End the desktop's own drag and take its state, the image gone: whether it had started, and what it carried. None when none was armed.
@@ -1160,6 +1194,22 @@ impl State {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_drag_image_is_drawn_again_over_an_output_of_another_scale() {
+        assert_eq!(
+            redraw_scale(1, Some(2)),
+            Some(2),
+            "scale 1 to a scale-2 output"
+        );
+        assert_eq!(redraw_scale(2, Some(1)), Some(1), "and back");
+        assert_eq!(redraw_scale(2, Some(2)), None, "same scale");
+        assert_eq!(
+            redraw_scale(2, None),
+            None,
+            "off every output it keeps its drawing"
+        );
+    }
 
     fn fixture(name: &str) -> PathBuf {
         let base = std::env::temp_dir().join(format!("reprise-drag-{name}-{}", std::process::id()));
