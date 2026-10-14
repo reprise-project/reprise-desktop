@@ -412,6 +412,31 @@ pub fn layout(combo: &Combo, field: Rect, cm: &ControlMetrics) -> Layout {
     }
 }
 
+/// Widens `lay`'s open list past its field to the width its widest row's text takes at `px`,
+/// to `right` at most; a row still wider ends in an ellipsis when drawn.
+pub fn widen_list(combo: &Combo, lay: &mut Layout, text: &TextRenderer, px: u32, right: i32) {
+    let shell = shell(&combo.items);
+    let need = combo
+        .items
+        .iter()
+        .map(|it| {
+            let start = match shell {
+                true => LIST_ICON_X + it.indent * INDENT_STEP + 16 + ICON_GAP,
+                false => 2,
+            };
+            1 + start + text.measure(&it.text, false, px) + 3
+        })
+        .max()
+        .unwrap_or(0)
+        + lay.scrollbar.map_or(0, |sb| sb.width);
+    let width = need.min(right - lay.list.x).max(lay.list.width);
+    let grow = width - lay.list.width;
+    lay.list.width = width;
+    if let Some(sb) = &mut lay.scrollbar {
+        sb.x += grow;
+    }
+}
+
 /// What a point lands on. The open list covers whatever is under it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Hit {
@@ -612,6 +637,7 @@ pub fn draw(
         }
     }
     let tr = lay.text.scaled(s);
+    let value = fitted(text, combo.text(), tr.width, px);
     if !combo.enabled {
         // Under a style's edit border the ring of what sits behind the
         // combo runs 3 px left of the drop button, inside the text rect's
@@ -636,7 +662,7 @@ pub fn draw(
                 text,
                 p,
                 tr,
-                combo.text(),
+                &value,
                 Align::Left,
                 px,
                 Some(crate::style::Part::EditBorder),
@@ -662,7 +688,7 @@ pub fn draw(
             draw_edit_drop_point(c, text, edit, tr, px, p, first, at);
         }
     } else if list_button {
-        text.draw(c, tr, combo.value(), false, cs.button_text, Align::Left, px);
+        text.draw(c, tr, &value, false, cs.button_text, Align::Left, px);
         if focus && cue && combo.open.is_none() {
             // It starts where the highlight would (3 px in, or past an
             // icon a host draws over the field and moves the highlight
@@ -688,22 +714,14 @@ pub fn draw(
         // row.
         let hl = match lay.icon {
             Some(_) => {
-                let w = text.measure(combo.value(), false, px);
+                let w = text.measure(&value, false, px);
                 let h = p.text.len(LINE_H) * s;
                 Rect::new(tr.x, tr.y + (tr.height - h) / 2, w.min(tr.width), h)
             }
             None => lay.highlight.scaled(s),
         };
         c.fill_rect(hl, cs.hilight);
-        text.draw(
-            c,
-            tr,
-            combo.value(),
-            false,
-            cs.hilight_text,
-            Align::Left,
-            px,
-        );
+        text.draw(c, tr, &value, false, cs.hilight_text, Align::Left, px);
         if cue {
             // The field's ring alternates the inverted highlight with
             // ink; the second pass, its origin off by one, takes the
@@ -712,9 +730,18 @@ pub fn draw(
             draw_focus_ring_screen(c, hl, s, cs.button_text, (1, 0));
         }
     } else {
-        text.draw(c, tr, combo.value(), false, cs.button_text, Align::Left, px);
+        text.draw(c, tr, &value, false, cs.button_text, Align::Left, px);
     }
     draw_combo_drop(c, p, lay.drop.scaled(s), combo.enabled, lit.drop, editable);
+}
+
+/// `s` whole while its ink fits `width`, else cut to an ellipsis.
+fn fitted<'t>(text: &TextRenderer, s: &'t str, width: i32, px: u32) -> std::borrow::Cow<'t, str> {
+    if text.ink_width(s, false, px) <= width {
+        s.into()
+    } else {
+        text.ellipsize(s, width, false, px)
+    }
 }
 
 /// Where a click at logical `x` puts an editable combo's caret (a byte index); `px` and `s` are what `draw` got.
@@ -777,7 +804,8 @@ pub fn draw_list(
             let line = p.text.len(LINE_H) * s;
             let ty = r.y + (r.height - line) / 2;
             let tr = Rect::new(r.x + 2 * s, ty, r.width - 2 * s, line);
-            text.draw(c, tr, &items[i].text, false, fg, Align::Left, px);
+            let label = fitted(text, &items[i].text, tr.width, px);
+            text.draw(c, tr, &label, false, fg, Align::Left, px);
             continue;
         }
         let ix = r.x + (LIST_ICON_X + items[i].indent * INDENT_STEP) * s;
@@ -785,7 +813,8 @@ pub fn draw_list(
             c.blit_over(ix, r.y, icon);
         }
         let tx = ix + (16 + ICON_GAP) * s;
-        let tw = text.measure(&items[i].text, false, px);
+        let label = fitted(text, &items[i].text, inner.right() - s - tx, px);
+        let tw = text.measure(&label, false, px);
         if highlighted == Some(i) {
             let hl = Rect::new(tx - s, r.y + s, tw + 2 * s, r.height - s).intersect(&inner);
             c.fill_rect(hl, bg);
@@ -793,7 +822,7 @@ pub fn draw_list(
             draw_focus_ring_screen(c, hl, s, cs.hilight.inverted(), (0, 0));
         }
         let tr = Rect::new(tx, r.y + s, (inner.right() - tx).max(0), r.height);
-        text.draw(c, tr, &items[i].text, false, fg, Align::Left, px);
+        text.draw(c, tr, &label, false, fg, Align::Left, px);
     }
 }
 
@@ -1588,5 +1617,67 @@ mod tests {
         );
         assert!(bar.count() >= 8, "a line tall");
         assert_ne!(plain.pixels, after.pixels);
+    }
+
+    /// Whether the ink on `back` in `r` ends in dots: the last 7 columns that ink anything (two
+    /// dots) ink at most two rows, where a letter cut at the edge would ink many.
+    fn ends_in_dots(c: &Canvas, r: Rect, back: u32) -> bool {
+        let inked: Vec<(i32, i32)> = (r.x..r.right())
+            .flat_map(|x| (r.y..r.bottom()).map(move |y| (x, y)))
+            .filter(|&(x, y)| c.get(x, y) != back)
+            .collect();
+        let last = inked.iter().map(|p| p.0).max().unwrap_or(r.x);
+        let rows: std::collections::HashSet<i32> = inked
+            .iter()
+            .filter(|p| p.0 > last - 7)
+            .map(|p| p.1)
+            .collect();
+        !inked.is_empty() && rows.len() <= 2
+    }
+
+    #[test]
+    fn a_value_or_row_wider_than_its_room_ends_in_an_ellipsis() {
+        let theme = Theme::default();
+        let text = TextRenderer::load(&FontConfig::default());
+        let cs = &theme.colors;
+        let long = "Images (*.png, *.jpg, *.jpeg, *.gif, *.bmp, *.webp, *.svg)";
+        let c = Combo::new(&[long, "All Files"], 0, 2);
+        let l = layout(&c, Rect::new(0, 0, 160, COMBO_H), &ControlMetrics::CLASSIC);
+        let mut canvas = Canvas::new(160, COMBO_H as u32);
+        let p = classic_paint(cs, 1);
+        draw(
+            &mut canvas,
+            &text,
+            &p,
+            &c,
+            &l,
+            false,
+            true,
+            Caret::Unfocused,
+            ComboLit::IDLE,
+            11,
+        );
+        assert!(ends_in_dots(&canvas, l.text, cs.window.argb()), "the field");
+
+        let list = Rect::new(0, 0, 160, 2 * ControlMetrics::CLASSIC.combo_row + 2);
+        let mut canvas = Canvas::new(160, list.height as u32);
+        draw_list(
+            &mut canvas,
+            &text,
+            &p,
+            &c.items,
+            None,
+            0,
+            2,
+            list,
+            None,
+            None,
+            11,
+        );
+        let first = Rect::new(1, 1, 158, ControlMetrics::CLASSIC.combo_row);
+        assert!(
+            ends_in_dots(&canvas, first, cs.window.argb()),
+            "the first row"
+        );
     }
 }
