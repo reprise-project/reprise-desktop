@@ -179,6 +179,34 @@ fn an_obstacle_stays_flat_and_reflects() {
 }
 
 #[test]
+fn an_obstacle_is_laid_flat_after_the_step_it_holds() {
+    let Some((mut r, fx)) = rig() else { return };
+    let blocks: [Rectangle<i32, Physical>; 2] = [
+        Rectangle::new((10, 12).into(), (6, 6).into()),
+        Rectangle::new((18, 4).into(), (3, 9).into()),
+    ];
+    let splash = [Splash::disc((14.5, 12.5), 7.0, -0.8)];
+    let mut open = pool(&mut r, &fx, 32, 32);
+    open.step(&mut r, &fx, &splash, &[], calm()).unwrap();
+    let mut walled = pool(&mut r, &fx, 32, 32);
+    walled.step(&mut r, &fx, &splash, &blocks, calm()).unwrap();
+    let (open, walled) = (
+        open.heights(&mut r).unwrap(),
+        walled.heights(&mut r).unwrap(),
+    );
+    for y in 0..32 {
+        for x in 0..32 {
+            let want = if blocks.iter().any(|b| b.contains((x, y))) {
+                0.0
+            } else {
+                at(&open, 32, x, y)
+            };
+            assert_eq!(at(&walled, 32, x, y), want, "at {x},{y}");
+        }
+    }
+}
+
+#[test]
 fn damping_settles_the_field() {
     let Some((mut r, fx)) = rig() else { return };
     let mut p = pool(&mut r, &fx, 32, 32);
