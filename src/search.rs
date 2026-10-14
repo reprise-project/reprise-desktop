@@ -122,6 +122,9 @@ pub enum SearchOwner {
 #[derive(Default)]
 pub struct FileSearch {
     pub files: Vec<PathBuf>,
+    /// Which found paths are folders, as the search's job found them: rows ask this rather than
+    /// the file system, which may not answer for a found file.
+    pub dirs: std::collections::HashSet<PathBuf>,
     generation: u64,
     cancel: Option<Arc<AtomicBool>>,
     timer: Option<RegistrationToken>,
@@ -171,10 +174,11 @@ pub(crate) fn tilde(dir: &Path, home: Option<&Path>) -> String {
 
 pub(crate) fn file_icon_name(
     p: &Path,
+    is_dir: bool,
     mime: &reprisefs::apps::MimeDb,
     icons: &crate::icontheme::IconCache,
 ) -> String {
-    if p.is_dir() {
+    if is_dir {
         return "folder".to_string();
     }
     let m = p
@@ -185,6 +189,7 @@ pub(crate) fn file_icon_name(
 
 pub(crate) fn file_row(
     p: &Path,
+    is_dir: bool,
     home: Option<&Path>,
     mime: &reprisefs::apps::MimeDb,
     icons: &mut crate::icontheme::IconCache,
@@ -194,7 +199,7 @@ pub(crate) fn file_row(
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_default();
-    let icon = file_icon_name(p, mime, icons);
+    let icon = file_icon_name(p, is_dir, mime, icons);
     FileRow {
         name,
         folder: p.parent().map(|d| tilde(d, home)).unwrap_or_default(),
@@ -293,11 +298,18 @@ impl State {
                 .take(max)
                 .map(|i| paths[i].clone())
                 .collect();
-            Box::new(move |state: &mut State| state.files_found(o, generation, best))
+            let dirs = best.iter().filter(|p| p.is_dir()).cloned().collect();
+            Box::new(move |state: &mut State| state.files_found(o, generation, best, dirs))
         });
     }
 
-    fn files_found(&mut self, o: SearchOwner, generation: u64, paths: Vec<PathBuf>) {
+    fn files_found(
+        &mut self,
+        o: SearchOwner,
+        generation: u64,
+        paths: Vec<PathBuf>,
+        dirs: std::collections::HashSet<PathBuf>,
+    ) {
         let Some(f) = self.file_search_mut(o) else {
             return;
         };
@@ -305,6 +317,7 @@ impl State {
             return;
         }
         f.cancel = None;
+        f.dirs = dirs;
         match o {
             SearchOwner::Launcher => {
                 self.show_launcher_files(paths);
@@ -318,6 +331,18 @@ impl State {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A found row's icon comes from what the search's job found, with no stat: a path that does
+    /// not exist wears the folder icon when it was found as a folder.
+    #[test]
+    fn a_found_rows_icon_asks_no_stat() {
+        let theme = reprisekit::icontheme::IconTheme::load("test", &[]);
+        let icons = reprisekit::icontheme::IconCache::new(theme);
+        let mime = reprisefs::apps::MimeDb::empty();
+        let gone = Path::new("/nonexistent/reprise-found/Reports");
+        assert_eq!(file_icon_name(gone, true, &mime, &icons), "folder");
+        assert_eq!(file_icon_name(gone, false, &mime, &icons), "text-x-generic");
+    }
 
     fn app(name: &str, shown: bool) -> AppEntry {
         AppEntry {
