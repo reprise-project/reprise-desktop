@@ -89,6 +89,8 @@ pub struct DesktopView {
     /// A rescan is reading the folder off the loop; `rescan_again` asks for one more after it.
     scanning: bool,
     rescan_again: bool,
+    /// The icon size the last read decoded the icon files at.
+    icons_px: i32,
     pub(crate) send_to: Vec<reprisefs::sendto::SendToRow>,
     pub(crate) drives: places::MountedDrives,
 }
@@ -754,6 +756,7 @@ impl CellKey<'_> {
 }
 
 struct Redraw {
+    index: usize,
     node: BufferId,
     cell: Rect,
     label: String,
@@ -820,6 +823,7 @@ pub fn setup(state: &mut State) {
         mime: std::sync::Arc::new(apps::mime_globs()),
         scanning: false,
         rescan_again: false,
+        icons_px: 0,
         send_to: Vec::new(),
         drives: places::MountedDrives::new(),
     });
@@ -970,6 +974,7 @@ impl State {
             return;
         };
         view.scanning = false;
+        view.icons_px = px;
         for (file, canvas) in art {
             icons.put_file(&file, px, canvas);
         }
@@ -1095,6 +1100,7 @@ impl State {
             }
             view.drawn[i] = Some(key.into_owned());
             redraw.push(Redraw {
+                index: i,
                 node: view.nodes[i],
                 cell: *cell,
                 label: e.label.clone(),
@@ -1108,9 +1114,22 @@ impl State {
                 editing: editing.map(|(ed, on)| (ed.clone(), on)),
             });
         }
+        let px = ICON_PX * scale;
+        let mut undecoded = false;
         if let Some((_, theme)) = view.drawn_theme.as_ref() {
             for r in &redraw {
-                let mut icon = self.icons.get_shared(&r.icon, ICON_PX * scale);
+                // Icon files are decoded by the desktop's read, never here: one not decoded at
+                // this size (the scale changed) shows no picture until a read decodes it.
+                let mut icon = if r.icon.starts_with('/') {
+                    let put = self.icons.file_put(&r.icon, px);
+                    if put.is_none() {
+                        view.drawn[r.index] = None;
+                        undecoded = true;
+                    }
+                    put.flatten()
+                } else {
+                    self.icons.get_shared(&r.icon, px)
+                };
                 if r.cut
                     && let Some(ic) = icon.as_mut()
                 {
@@ -1145,7 +1164,11 @@ impl State {
             }
         }
         changed |= !redraw.is_empty();
+        let reread = undecoded && view.icons_px != px;
         self.desktop = Some(view);
+        if reread {
+            self.rescan_desktop();
+        }
         if let Some((spot, origin)) = spot {
             self.ime_field_drawn(crate::caret::Editor::Rename, spot, origin, scale);
         }
