@@ -52,10 +52,19 @@ const TOOLBAR_ICONS: [&str; 4] = ["go-previous", "go-up", "folder-new", "view-li
 pub struct Icons {
     pub places: [Option<Canvas>; 6],
     pub toolbar: [Option<Canvas>; 4],
+    /// The cache's scale when they were fetched.
+    scale: i32,
 }
 
 impl Icons {
+    /// Fetches the icons not yet held, all of them again when `icons` is at another scale.
     pub fn prime(&mut self, icons: &mut IconCache) {
+        if self.scale != icons.scale() {
+            *self = Icons {
+                scale: icons.scale(),
+                ..Icons::default()
+            };
+        }
         for (icon, place) in self.places.iter_mut().zip(dialog_places()) {
             if icon.is_none() {
                 *icon = icons.get(place.icon, 32);
@@ -77,10 +86,14 @@ impl Icons {
     }
 
     pub fn dialog(&self, fields: Fields) -> FileDlg {
-        let [back, up, new_folder, views] = self.toolbar.clone();
         let mut dlg = FileDlg::new(fields, self.places());
-        dlg.set_toolbar_icons(back, up, new_folder, views);
+        self.set_toolbar(&mut dlg);
         dlg
+    }
+
+    fn set_toolbar(&self, dlg: &mut FileDlg) {
+        let [back, up, new_folder, views] = self.toolbar.clone();
+        dlg.set_toolbar_icons(back, up, new_folder, views);
     }
 }
 
@@ -260,6 +273,8 @@ pub struct Host {
     cache: Option<repriseconf::ThumbnailCache>,
     pictures: Pictures,
     list_icons: ListIcons,
+    /// The scale the dialog's places tiles and toolbar wear their icons at.
+    icons_scale: i32,
 }
 
 /// The listed pictures and how far their thumbnails have got.
@@ -283,6 +298,7 @@ impl Host {
         self.folder = Some(self.folders.id(dir));
         self.follow_cache(repriseconf::thumbnail_cache());
         let mut dlg = self.icons.dialog(fields);
+        self.icons_scale = 0;
         dlg.set_text(u);
         dlg
     }
@@ -327,9 +343,9 @@ impl Host {
         }
     }
 
-    /// The dialog draws at `scale`, `icons`' scale: its entries wear their icons at that scale,
-    /// and its pictures are asked for again at it. The thumbnails and icon files it shows stay
-    /// until theirs arrive and `wake` fires.
+    /// The dialog draws at `scale`, `icons`' scale: its places, toolbar and entries wear their
+    /// icons at that scale, and its pictures are asked for again at it. The thumbnails and icon
+    /// files it shows stay until theirs arrive and `wake` fires.
     fn follow_scale(
         &mut self,
         dlg: &mut FileDlg,
@@ -337,6 +353,11 @@ impl Host {
         icons: &mut IconCache,
         wake: &crate::Waker,
     ) {
+        if std::mem::replace(&mut self.icons_scale, scale) != scale {
+            self.icons.prime(icons);
+            dlg.set_place_icons(self.icons.places.to_vec());
+            self.icons.set_toolbar(dlg);
+        }
         self.list_icons
             .follow(scale, icons, dlg.entries_mut(), wake);
         let p = &mut self.pictures;
@@ -1107,6 +1128,8 @@ mod tests {
                 ("folder", FOLDER),
                 ("text-x-generic", TEXT),
                 ("image-x-generic", PICTURE),
+                ("computer", FOLDER),
+                ("go-up", FOLDER),
             ] {
                 png(&theme.join(d).join(format!("{name}.png")), px, px, argb);
             }
@@ -1256,6 +1279,35 @@ mod tests {
         settle_thumbs(&mut h, &mut dlg);
         let thumb = entry(&dlg, "pic.png").thumb.as_ref().expect("the new one");
         assert_eq!((thumb.scale(), thumb.device_size()), (2, (80, 60)));
+    }
+
+    #[test]
+    fn a_new_draw_scale_fetches_the_places_and_toolbar_icons_again() {
+        let t = pictures_folder();
+        let mut icons = flat_icons(t.path());
+        let mut h = host_in(&t.path().join("list"));
+        h.icons.prime(&mut icons);
+        let mut dlg = open_dlg(&mut h);
+        let wake = crate::Waker::noop();
+        let fresh = |icons: &mut IconCache| {
+            let mut f = Host::default();
+            f.icons.prime(icons);
+            let scales =
+                [&f.icons.places[5], &f.icons.toolbar[1]].map(|c| c.as_ref().map(Canvas::scale));
+            (open_dlg(&mut f), scales)
+        };
+
+        h.follow_scale(&mut dlg, 1, &mut icons, &wake);
+        icons.set_scale(2);
+        h.icons.prime(&mut icons);
+        h.follow_scale(&mut dlg, 2, &mut icons, &wake);
+        let (want, scales) = fresh(&mut icons);
+        assert_eq!(scales, [Some(2), Some(2)], "Computer's tile and Up");
+        assert!(dlg == want, "the dialog wears the scale 2 icons");
+
+        icons.set_scale(1);
+        h.follow_scale(&mut dlg, 1, &mut icons, &wake);
+        assert!(dlg == fresh(&mut icons).0, "and the scale 1 ones again");
     }
 
     /// Each size's canvas scale, device width and middle colour.

@@ -6,6 +6,7 @@
 use crate::place::{self, Place, list};
 use reprisekit::controls::treeview::{Node, TreeView};
 use reprisekit::icontheme::IconCache;
+use reprisekit::raster::Canvas;
 use std::path::PathBuf;
 
 /// What building or filling a tree needs to know about the world, borrowed from whichever host owns
@@ -33,13 +34,7 @@ fn tree_node(
     icons: &mut IconCache,
 ) -> Node {
     let id = places.len() as u64;
-    let name = place.icon_name();
-    let icon = icons.get(name, 16);
-    let open_icon = if name == "folder" {
-        icons.get("folder-open", 16).or_else(|| icon.clone())
-    } else {
-        icon.clone()
-    };
+    let (icon, open_icon) = node_icons(&place, icons);
     places.push(place);
     Node {
         label: label.to_string(),
@@ -50,6 +45,31 @@ fn tree_node(
         children: Vec::new(),
         id,
     }
+}
+
+/// A node's closed and open icons at `icons`' scale.
+fn node_icons(place: &Place, icons: &mut IconCache) -> (Option<Canvas>, Option<Canvas>) {
+    let name = place.icon_name();
+    let icon = icons.get(name, 16);
+    let open_icon = if name == "folder" {
+        icons.get("folder-open", 16).or_else(|| icon.clone())
+    } else {
+        icon.clone()
+    };
+    (icon, open_icon)
+}
+
+/// Every node fetches its icons again from `icons`, now at another scale.
+pub fn refetch_icons(tree: &mut TreeView, places: &[Place], icons: &mut IconCache) {
+    fn walk(nodes: &mut [Node], places: &[Place], icons: &mut IconCache) {
+        for n in nodes {
+            if let Some(place) = places.get(n.id as usize) {
+                (n.icon, n.open_icon) = node_icons(place, icons);
+            }
+            walk(&mut n.children, places, icons);
+        }
+    }
+    walk(&mut tree.roots, places, icons);
 }
 
 /// Build a tree rooted at the Desktop, its own node expanded and filled, and the root selected.
