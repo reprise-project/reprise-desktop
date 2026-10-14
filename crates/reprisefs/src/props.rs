@@ -793,18 +793,13 @@ pub fn open_argv(
     }
 }
 
-/// [`open_argv`] for a `path` the caller knows is a file, with no stat: its type comes from
-/// its name.
+/// [`open_argv`] for a `path` the caller knows is a file, with no stat.
 pub fn open_file_argv(
     path: &Path,
-    globs: &MimeDb,
-    apps: &[AppEntry],
+    default: Option<&AppEntry>,
     terminal: &str,
 ) -> Vec<std::ffi::OsString> {
-    let mime = path
-        .file_name()
-        .and_then(|n| globs.mime_of_name(&n.to_string_lossy()));
-    match mime.as_deref().and_then(|m| default_app_entry(m, apps)) {
+    match default {
         Some(app) => apps::open_argv(app, terminal, path),
         None => vec!["xdg-open".into(), path.into()],
     }
@@ -1348,6 +1343,23 @@ mod tests {
         );
         assert_eq!(argv(&svg, None)[0], "xdg-open");
         assert_eq!(argv(dir.path(), Some(&viewer))[0], "reprise-explorer");
+    }
+
+    /// A caller that knows the path is a file gets its program without a stat, which a file on a
+    /// mount that does not answer would hold: even a folder by that name opens as a file.
+    #[test]
+    fn open_file_argv_asks_the_file_system_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let viewer = AppEntry {
+            exec_line: "viewer %F".into(),
+            ..app("viewer.desktop", &["image/svg+xml"])
+        };
+        let argv = |d| open_file_argv(dir.path(), d, "foot");
+        assert_eq!(
+            argv(Some(&viewer)),
+            ["viewer".into(), dir.path().as_os_str().to_owned()]
+        );
+        assert_eq!(argv(None)[0], "xdg-open");
     }
 
     #[test]
