@@ -404,6 +404,7 @@ mod tests {
             shortcut: false,
             kind: desktop::Kind::File,
             is_dir: false,
+            allow_launching: false,
         }
     }
 
