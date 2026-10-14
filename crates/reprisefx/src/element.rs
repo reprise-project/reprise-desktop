@@ -120,8 +120,8 @@ pub struct GlassFrame<'a> {
     /// The output's blurred backdrop to draw from (`Picture::source`); None copies and blurs the frame.
     /// With one the shapes must be output-local.
     pub source: Option<&'a Source>,
-    /// Output pixels per pixel of the target: 1 on the output, 2 in a half-resolution backdrop
-    /// (glass beneath other glass). Shapes, holes, output and scale stay the output's. Above 1 the
+    /// Output pixels per pixel of the target: 1 on the output, [`blur::backdrop_downscale`] in a
+    /// backdrop (glass beneath other glass). Shapes, holes, output and scale stay the output's. Above 1 the
     /// glass needs a source.
     pub downscale: i32,
 }
@@ -177,7 +177,7 @@ impl Glass {
         // copied; glass over a source draws only its shapes.
         let reach = match f.source {
             Some(_) => 0,
-            None => blur::reach(f.settings.blur, material, f.quality) + bend,
+            None => blur::reach(f.settings.blur, material, f.quality, f.scale) + bend,
         };
         let bounds = f.shapes.iter().map(|s| s.rect).reduce(|a, b| a.merge(b))?;
         if bounds.is_empty() {
@@ -188,7 +188,7 @@ impl Glass {
             (bounds.size.w + 2 * reach, bounds.size.h + 2 * reach).into(),
         );
         let geometry = shrink(area, k);
-        let plan = Plan::new(f.settings.blur, material, f.quality);
+        let plan = Plan::new(f.settings.blur, material, f.quality, f.scale);
         let tint = f.surface.map(|s| Tint::new(f.settings, s));
         let drawn = key(f, area, plan, tint, &lenses);
         let hold = f.hold && !self.refresh.replace(false);

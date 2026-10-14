@@ -11,7 +11,8 @@
 //!
 //! 1. capture: blit the element's part of the framebuffer, grown to the
 //!    downscaled grid ([`blur::capture_rect`]), into a half-resolution
-//!    texture (a quarter for the coarse blur); two Gaussian passes
+//!    texture (a quarter for the coarse blur or at output scale 2 and up);
+//!    two Gaussian passes
 //!    ([`blur::SIGMA`] per `[glass] blur`); blend the streaks
 //!    (`reprisekit::glass::streak`) over the result. The textures live in
 //!    the tracker's per-element cache and are remade only when their size changes.
@@ -40,9 +41,10 @@
 //!   and holes in output-local physical pixels, `[glass]` settings, tint
 //!   surface, output size and scale, opacity, quality, hold, the picture's
 //!   source if any). Put the element directly below the chrome it backs.
-//! - Glass beneath other glass, drawn into that glass's own half-resolution
-//!   backdrop: a second [`Glass`] with [`GlassFrame::downscale`] 2, the
-//!   shapes laid out on the output, and a source.
+//! - Glass beneath other glass, drawn into that glass's own backdrop: a
+//!   second [`Glass`] with [`GlassFrame::downscale`] the
+//!   [`blur::backdrop_downscale`], the shapes laid out on the output, and a
+//!   source.
 //!
 //! `[glass] fast_drag`: pass [`blur::quality`]`(dragging, fast_drag)`. A
 //! quality change changes the element's commit, so the drag's end re-blurs

@@ -1,12 +1,13 @@
 //! One output's backdrop blurred once for every piece of glass on it.
 //!
 //! A host that draws its own backdrop per output (the desktop beneath
-//! glass at half the output's resolution, upright) hands it to the
-//! output's [`Picture`] after each render, with where it changed. The
-//! picture redraws only the texels that read a changed one: the coarse
-//! blur's 2:1 step over the change, the horizontal pass over it grown by
-//! the blur's reach across, the vertical pass and the streaks over it
-//! grown both ways. Every other texel keeps its blur.
+//! glass at [`blur::backdrop_downscale`] of the output's resolution,
+//! upright) hands it to the output's [`Picture`] after each render, with
+//! where it changed. The picture redraws only the texels that read a
+//! changed one: the coarse blur's 2:1 step over the change, the
+//! horizontal pass over it grown by the blur's reach across, the vertical
+//! pass and the streaks over it grown both ways. Every other texel keeps
+//! its blur.
 //!
 //! A picture may serve only part of the output ([`Update::needed`]: the
 //! glass of one window over another's frame): it then blurs only the
@@ -38,8 +39,9 @@ const PENDING_KEPT: usize = 16;
 const DAMAGE_AGE: usize = 8;
 
 /// An output's backdrop, blurred and streaked, at the blur's resolution
-/// (half the output's, a quarter for the coarse blur). Make one per
-/// output and update it after every render of the backdrop.
+/// (half the output's, a quarter for the coarse blur or at scale 2 and
+/// up). Make one per output and update it after every render of the
+/// backdrop.
 #[derive(Debug)]
 pub struct Picture {
     id: u64,
@@ -96,8 +98,9 @@ impl Key {
 /// What one update of a [`Picture`] takes.
 #[derive(Clone, Copy, Debug)]
 pub struct Update<'a> {
-    /// The backdrop: the output as seen at half its resolution
-    /// (`(w + 1) / 2` by `(h + 1) / 2`), upright.
+    /// The backdrop: the output as seen at `1 / d` of its resolution
+    /// (`(w + d - 1) / d` by `(h + d - 1) / d`), upright, with `d` the
+    /// [`blur::backdrop_downscale`] of `scale`.
     pub backdrop: &'a GlesTexture,
     /// Where the backdrop changed since the last update, output physical
     /// pixels as seen.
@@ -151,7 +154,7 @@ impl Picture {
     ) -> Result<(), GlesError> {
         let s = u.settings;
         let key = Key {
-            plan: Plan::new(s.blur, s.material, u.quality),
+            plan: Plan::new(s.blur, s.material, u.quality, u.scale),
             output: u.output,
             scale: u.scale.to_bits(),
             streaks: streak::shown(s),
@@ -185,7 +188,8 @@ impl Picture {
             self.pending = Rectangle::subtract_rects_many_in_place(left, reads.iter().copied());
             self.compact();
         }
-        if f > 2 {
+        let d = blur::backdrop_downscale(u.scale);
+        if f > d {
             blur::fit(&mut self.small, renderer, out)?;
         } else {
             self.small = None;
@@ -215,7 +219,8 @@ impl Picture {
         let from = match self.small.clone() {
             Some(mut small) => {
                 // Each texel the mean of the 2x2 backdrop texels under it.
-                let src = Rectangle::from_size((f64::from(out.w * 2), f64::from(out.h * 2)).into());
+                let k = f / d;
+                let src = Rectangle::from_size((f64::from(out.w * k), f64::from(out.h * k)).into());
                 let level = texels(&parts.level);
                 blur::pass_from(renderer, u.backdrop, src, &mut small, None, &[], &level)?;
                 small
@@ -441,7 +446,7 @@ mod tests {
 
     fn key(blur: u8) -> Key {
         Key {
-            plan: Plan::new(blur, Material::Frosted, Quality::Full),
+            plan: Plan::new(blur, Material::Frosted, Quality::Full, 1.0),
             output: (400, 300).into(),
             scale: 1f64.to_bits(),
             streaks: false,
