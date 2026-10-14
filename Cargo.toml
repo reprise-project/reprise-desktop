@@ -51,8 +51,8 @@ serde = "1"
 # release) plus a fix to `Rectangle::subtract_rects_many_in_place`, without
 # which the damage tracker redraws overlapping windows on every frame. Back
 # to upstream once the fix is merged there.
-smithay = { git = "https://github.com/reprise-project/smithay.git", rev = "d7165f2da2b34434108b23796eff5a45fd70e4cc", default-features = false }
-smithay-drm-extras = { git = "https://github.com/reprise-project/smithay.git", rev = "d7165f2da2b34434108b23796eff5a45fd70e4cc" }
+smithay = { git = "https://github.com/reprise-project/smithay.git", rev = "0849337f8f8af2b917fac47e4cd77bb3559c9c62", default-features = false }
+smithay-drm-extras = { git = "https://github.com/reprise-project/smithay.git", rev = "0849337f8f8af2b917fac47e4cd77bb3559c9c62" }
 tempfile = "3"
 toml = "1"
 toml_edit = "0.25"
