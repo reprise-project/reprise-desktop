@@ -8,6 +8,8 @@ use crate::style::{PanelSpec, Part, State, Style};
 use crate::theme::{Color, Theme};
 
 pub const INK: Color = Color::rgb(0xFF, 0xFF, 0xFF);
+/// Ink for text that cannot be used, on glass.
+pub const DIM_INK: Color = Color::rgb(0xC0, 0xC0, 0xC0);
 
 /// The style a panel in `theme` draws its glass with, and the panel's spec; None without glass.
 pub fn glass(theme: &Theme) -> Option<(&Style, PanelSpec)> {

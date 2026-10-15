@@ -88,6 +88,8 @@ pub enum SceneOwner {
     ClipView,
     EmojiView,
     Calendar,
+    /// The displays cell's panel (`displaysview`); hits resolve to its parts.
+    Displays,
     /// A debug overlay panel (`debugview`); it takes no pointer input.
     Debug,
 }
@@ -326,6 +328,7 @@ pub struct State {
     pub start_backing: reprisekit::glass::startpanel::Backing,
     pub panels: crate::panels::Panels,
     pub osd: crate::osdview::OsdView,
+    pub displays: crate::displays::Displays,
     pub debug: crate::debugview::DebugView,
     pub identify: crate::identifyview::IdentifyView,
     pub live_previews: crate::livepreview::LivePreviews,
@@ -349,6 +352,7 @@ pub struct State {
     /// (`sessionend`).
     pub ending: Option<crate::sessionend::Ending>,
     pub calendar: crate::calendarview::CalendarState,
+    pub displays_view: crate::displaysview::DisplaysViewState,
 }
 
 impl State {
@@ -575,6 +579,7 @@ impl State {
             start_backing: Default::default(),
             panels: Default::default(),
             osd: Default::default(),
+            displays: Default::default(),
             debug: Default::default(),
             identify: Default::default(),
             live_previews: Default::default(),
@@ -591,6 +596,7 @@ impl State {
             session: crate::session::Session::load(),
             ending: None,
             calendar: Default::default(),
+            displays_view: Default::default(),
             config,
             config_path,
             dh,

@@ -10,8 +10,10 @@
 //!
 //! [`ControlMetrics::flyout_border`]: crate::metrics::ControlMetrics::flyout_border
 
+use crate::paint::Paint;
 use crate::raster::{Canvas, EdgeStyle, Insets, Rect};
 use crate::style::{FlyoutLook, Part, State, Style};
+use crate::text::{Align, TextRenderer};
 use crate::theme::{Color, Theme};
 
 pub const EDGE: i32 = 2;
@@ -108,6 +110,29 @@ pub fn draw_panel(theme: &Theme, c: &mut Canvas, all: Rect, fill: Color, under: 
             c.edge_t(all, EdgeStyle::WindowRaised, cs, s);
             all.inset(EDGE * s)
         }
+    }
+}
+
+/// A link's `label` from the left of `r` (device px), in the style's page link ink or `hot_light`,
+/// underlined one row under the baseline when `underline`. [`crate::look::widgets`] re-exports it.
+pub fn draw_link(
+    c: &mut Canvas,
+    text: &TextRenderer,
+    p: &Paint,
+    r: Rect,
+    label: &str,
+    underline: bool,
+    px: u32,
+) {
+    let ink = p
+        .look
+        .style()
+        .and_then(|st| st.page)
+        .map_or(p.cs.hot_light, |inks| inks.link);
+    text.draw(c, r, label, false, ink, Align::Left, px);
+    if underline && let Some(base) = text.baseline(r, false, px) {
+        let w = text.measure(label, false, px);
+        c.fill_rect(Rect::new(r.x, base + p.s, w, p.s), ink);
     }
 }
 
