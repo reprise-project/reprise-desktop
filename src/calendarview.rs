@@ -17,6 +17,7 @@
 use crate::compositor::{SceneOwner, State};
 use crate::glass::{self, Backdrop};
 use crate::output::upload_scaled;
+use crate::raster::{Canvas, Rect};
 use reprisekit::access::accesskit::Role;
 use reprisekit::access::{ROOT, Tree};
 use reprisekit::controls::calendar::{self, Calendar, PopupHit};
@@ -27,6 +28,7 @@ use reprisescene::{BufferId, TreeId};
 use smithay::output::Output;
 use smithay::reexports::calloop::RegistrationToken;
 use smithay::reexports::calloop::timer::{TimeoutAction, Timer};
+use smithay::utils::{Buffer as BufferCoords, Rectangle};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 const PROPERTIES: &str = "reprise-datetime";
@@ -56,6 +58,15 @@ struct CalendarView {
     output: Output,
     /// Moves the analog clock on each second; none in a look without one.
     tick: Option<RegistrationToken>,
+    /// What the buffer shows, and the popup without the clock beneath it, at `scale`: a tick
+    /// redraws only the clock's square from them.
+    drawn: Option<Drawn>,
+}
+
+struct Drawn {
+    shown: Canvas,
+    base: Canvas,
+    scale: i32,
 }
 
 fn since_epoch() -> Duration {
@@ -170,6 +181,7 @@ fn open(state: &mut State, bar: TreeId) {
         at: (x, top),
         output,
         tick: None,
+        drawn: None,
     });
     if ticks {
         arm_tick(state);
@@ -186,7 +198,7 @@ fn arm_tick(state: &mut State) {
                     return TimeoutAction::Drop;
                 };
                 v.model.now = Some(now());
-                redraw(state);
+                tick(state);
                 TimeoutAction::ToDuration(to_next_second())
             });
     match token {
@@ -255,18 +267,54 @@ fn redraw(state: &mut State) {
     };
     let scale = state.draw_scale_at(Some(&v.output)).max(1);
     let theme = state.config.theme.scaled(scale);
-    let canvas = calendar::draw_popup(&theme, &state.text, &v.model, v.hot);
+    let base = calendar::draw_popup_base(&theme, &state.text, &v.model, v.hot);
+    let mut shown = base.clone();
+    if let Some(now) = v.model.now {
+        calendar::draw_popup_clock(&theme, &mut shown, &base, now);
+    }
     let size = calendar::popup_size(&state.config.theme.controls());
     let pane = glass::flyout_glass(&state.config, size);
     let Some(v) = state.calendar.view.as_mut() else {
         return;
     };
     let scene = &mut state.scene;
-    upload_scaled(scene, v.buffer, &canvas, scale);
+    upload_scaled(scene, v.buffer, &shown, scale);
+    v.drawn = Some(Drawn { shown, base, scale });
     glass::place_flyout(scene, v.buffer, &state.config.theme, size);
     v.glass.set(scene, &state.glass, v.glass_tree, pane);
     state.redraw_all();
     crate::access::touch(state);
+}
+
+/// The clock moved on a second: only its square is drawn, compared and uploaded.
+fn tick(state: &mut State) {
+    let Some(v) = state.calendar.view.as_ref() else {
+        return;
+    };
+    let scale = state.draw_scale_at(Some(&v.output)).max(1);
+    if v.drawn.as_ref().is_none_or(|d| d.scale != scale) {
+        return redraw(state);
+    }
+    let theme = state.config.theme.scaled(scale);
+    let (Some(v), Some(clock)) = (state.calendar.view.as_mut(), calendar::popup_clock(&theme))
+    else {
+        return;
+    };
+    let (Some(d), Some(now)) = (v.drawn.as_mut(), v.model.now) else {
+        return;
+    };
+    calendar::draw_popup_clock(&theme, &mut d.shown, &d.base, now);
+    let (w, h) = (d.shown.width as i32, d.shown.height as i32);
+    state
+        .scene
+        .buffer_set_canvas_within(v.buffer, &d.shown.pixels, w, h, buffer_box(clock));
+    let output = v.output.clone();
+    crate::backend::schedule(state, &output);
+}
+
+/// `r` (canvas px) as a scene buffer box.
+fn buffer_box(r: Rect) -> Rectangle<i32, BufferCoords> {
+    Rectangle::new((r.x, r.y).into(), (r.width, r.height).into())
 }
 
 /// The popup's tree for a screen reader: the month buttons and the grid,
