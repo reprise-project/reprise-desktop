@@ -77,6 +77,8 @@ mod screenshot;
 mod session;
 mod sessionend;
 mod sessionlock;
+mod shake;
+mod shakeview;
 mod shmtex;
 mod shortcutinhibit;
 mod snapshot;

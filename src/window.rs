@@ -1246,6 +1246,10 @@ impl State {
     }
 
     pub fn track_move(&mut self, w: WindowId) {
+        if crate::shakeview::shaking(self, w) {
+            crate::shakeview::hold_drops(self);
+            return;
+        }
         // Held over a caption, the window joins its group on release and snaps nowhere.
         if self.track_tab_drop(w) {
             log::debug!(target: "reprise::snapbarview", "motion {w:?}: over a caption, no bar");

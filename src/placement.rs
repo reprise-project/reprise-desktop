@@ -12,6 +12,7 @@ use crate::windowrules::{Remembered, Want, WindowState};
 pub struct Wm {
     pub remembered: BTreeMap<String, Remembered>,
     pub snap: crate::snapview::Snapping,
+    pub shake: crate::shakeview::Shaking,
 }
 
 impl Wm {
@@ -19,6 +20,7 @@ impl Wm {
         Wm {
             remembered: crate::state::load().window_geometry,
             snap: Default::default(),
+            shake: Default::default(),
         }
     }
 }

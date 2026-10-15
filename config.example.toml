@@ -406,6 +406,9 @@ suspend_after = 0            # run [power] standby
 #                            # further than the size the program opens at
 # tabs = true                # a window dragged onto another's title bar joins its tab group;
 #                            # false: no tab groups, and turning it off splits the open ones
+# shake = "auto"             # shaking a window by its title bar minimizes the other windows on its
+#                            # screen and desktop; shaking it again brings them back. "auto" is on
+#                            # under Glass and off under Classic and Blue; true or false sets it
 
 # [session]
 # restore = false            # true: the apps open at Log Off, Turn Off or Restart start again at

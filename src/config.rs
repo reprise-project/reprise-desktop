@@ -1238,6 +1238,8 @@ pub struct Config {
     pub accessibility: AccessibilityConfig,
     pub remember_windows: bool,
     pub window_tabs: bool,
+    /// `[windows] shake`, resolved against the interface.
+    pub window_shake: bool,
     pub session: SessionConfig,
     pub window_rules: Vec<WindowRule>,
     pub tablet_pads: Vec<crate::tabletpad::PadConfig>,
@@ -1584,6 +1586,7 @@ impl Default for Config {
             accessibility: AccessibilityConfig::default(),
             remember_windows: true,
             window_tabs: true,
+            window_shake: false,
             session: SessionConfig::default(),
             window_rules: Vec::new(),
             tablet_pads: Vec::new(),
@@ -1927,6 +1930,15 @@ struct FileEffects {
 struct FileWindows {
     remember: Option<bool>,
     tabs: Option<bool>,
+    shake: Option<AutoFlag>,
+}
+
+/// A key that takes true, false or "auto" (the interface's default).
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum AutoFlag {
+    Flag(bool),
+    Word(String),
 }
 
 #[derive(Deserialize, Default)]
@@ -2572,6 +2584,7 @@ impl Config {
                 .ok_or_else(|| format!("startmenu_style = {s:?} is not classic or glass"))?;
         }
         cfg.switcher = SwitcherConfig::default_for(cfg.interface);
+        cfg.window_shake = cfg.interface == Interface::Glass;
         cfg.effects = EffectsConfig::default_for(cfg.interface);
         if let Some(t) = file.taskbar {
             if let Some(p) = t.position {
@@ -3110,6 +3123,16 @@ impl Config {
             }
             if let Some(v) = w.tabs {
                 cfg.window_tabs = v;
+            }
+            match w.shake {
+                Some(AutoFlag::Flag(v)) => cfg.window_shake = v,
+                Some(AutoFlag::Word(w)) if w == "auto" => {}
+                Some(AutoFlag::Word(w)) => {
+                    return Err(format!(
+                        "[windows] shake = {w:?} is not true, false or \"auto\""
+                    ));
+                }
+                None => {}
             }
         }
         if let Some(s) = file.session {
@@ -5622,6 +5645,20 @@ command = "gedit"
         assert!(Config::parse("").unwrap().window_snapping.bar);
         let c = Config::parse("[window_snapping]\nbar = false\n").unwrap();
         assert!(!c.window_snapping.bar);
+    }
+
+    #[test]
+    fn window_shake_is_on_under_glass_alone_unless_set() {
+        let shake = |text: &str| Config::parse(text).unwrap().window_shake;
+        let glass = "[appearance]\ninterface = \"glass\"\n";
+        assert!(!shake(""));
+        assert!(!shake("[appearance]\ninterface = \"blue\"\n"));
+        assert!(shake(glass));
+        assert!(shake(&format!("{glass}[windows]\nshake = \"auto\"\n")));
+        assert!(!shake(&format!("{glass}[windows]\nshake = false\n")));
+        assert!(shake("[windows]\nshake = true\n"));
+        let bad = Config::parse("[windows]\nshake = \"yes\"\n").unwrap_err();
+        assert!(bad.contains("[windows] shake"), "{bad}");
     }
 
     #[test]

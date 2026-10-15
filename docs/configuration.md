@@ -27,7 +27,7 @@ lists them. Glass's `[glass]` section is documented there too.
 | `[effects]` | animations and fades |
 | `[switcher]`, `[overview]` | Alt+Tab, the 3D switcher, the window overview |
 | `[workspaces]` | virtual desktops and their animation |
-| `[window_snapping]`, `[windows]` | snapping, layouts, tabs, window memory |
+| `[window_snapping]`, `[windows]` | snapping, layouts, tabs, shake, window memory |
 | `[[window_rules]]` | per-program size, place, desktop and state |
 | `[session]` | session restore and leftover programs |
 | `[keyboard]`, `[mouse]`, `[touchpad]`, `[touchscreen]`, `[gestures]` | input |
