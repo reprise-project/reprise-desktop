@@ -8166,8 +8166,9 @@ fn render_snap_layouts() -> Canvas {
         suggestion: true,
         filled: vec![(0, "Untitled - Notepad".into())],
     };
-    let cells: Vec<CellSpec> = [vec![suggestion], fixed].concat();
-    let bar_cells = cells.clone();
+    let bar_order = [0, 1, 3, 4, 2, 5].map(|i| fixed[i].clone());
+    let cells: Vec<CellSpec> = [vec![suggestion.clone()], fixed].concat();
+    let bar_cells: Vec<CellSpec> = [vec![suggestion], bar_order.to_vec()].concat();
     let mut app = Canvas::new(16, 16);
     app.fill_rect(app.bounds(), Color::rgb(0x31, 0x6A, 0xC5));
     for (k, i) in [Interface::Classic, Interface::Blue, Interface::Glass]

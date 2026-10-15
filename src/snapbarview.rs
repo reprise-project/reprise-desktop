@@ -39,11 +39,14 @@ struct Bar {
     hot: Option<Zone>,
     live: bool,
     drawn: Option<Option<Zone>>,
+    /// Where the bar was last placed, so a settled bar is not placed again every frame.
+    placed: Option<Rect>,
     tree: TreeId,
     glass_tree: TreeId,
     glass: Backdrop,
     buffer: BufferId,
-    thumb: Option<(TreeId, ThumbId)>,
+    /// The window's live picture under the pointer, its tree and its height.
+    thumb: Option<(TreeId, ThumbId, i32)>,
 }
 
 /// A settled motion of a move of `w` with the pointer at (`x`, `y`): the bar of the output under it follows; returns the lit zone's rect where a pick lands, which the caller outlines instead of any drop.
@@ -252,6 +255,7 @@ fn create(state: &mut State, w: WindowId, out: &Output, now: Instant) {
         hot: None,
         live: false,
         drawn: None,
+        placed: None,
         tree,
         glass_tree,
         glass: Backdrop::new(&state.glass),
@@ -275,10 +279,14 @@ fn place(state: &mut State) {
     }
 }
 
-/// Put `b` where its slide is: its tree at the part inside the usable area, the buffer showing that part of the row (redrawn only when the lit tile changed), the glass under it.
+/// Put `b` where its slide is: its tree at the part inside the usable area, the buffer showing that part of the row (redrawn only when the lit tile changed), the glass under it. Nothing to do when neither moved nor the lit tile changed.
 fn place_bar(state: &mut State, b: &mut Bar) {
     let now = Instant::now();
     let r = b.model.rect(now);
+    if b.placed == Some(r) && b.drawn == Some(b.hot) {
+        return;
+    }
+    b.placed = Some(r);
     let visible = r.intersect(&b.work);
     let (tree, buffer, s) = (b.tree, b.buffer, b.scale);
     if visible.is_empty() {
@@ -345,10 +353,10 @@ fn set_thumb(state: &mut State, on: bool) {
             };
             state.scene.set_enabled(wtree, false);
             if let Some(b) = state.snap_bar.shown.as_mut() {
-                b.thumb = Some((tree, id));
+                b.thumb = Some((tree, id, well.height));
             }
         }
-        (false, Some((tree, id))) => {
+        (false, Some((tree, id, _))) => {
             state.thumb_drop(id);
             state.scene.destroy(tree);
             let here = state.on_current_desktop(w);
@@ -366,11 +374,18 @@ fn set_thumb(state: &mut State, on: bool) {
     state.redraw_all();
 }
 
+/// The caller schedules the bar's output; a thumbnail reaching past it redraws the others too.
 fn move_thumb(state: &mut State, x: i32, y: i32) {
-    if let Some((tree, _)) = state.snap_bar.shown.as_ref().and_then(|b| b.thumb) {
-        state
-            .scene
-            .set_position(tree, x - THUMB_W / 2, y + THUMB_DY);
+    let Some(b) = state.snap_bar.shown.as_ref() else {
+        return;
+    };
+    let Some((tree, _, h)) = b.thumb else {
+        return;
+    };
+    let r = Rect::new(x - THUMB_W / 2, y + THUMB_DY, THUMB_W, h);
+    let inside = state.layout_box(Some(&b.output)).intersect(&r) == r;
+    state.scene.set_position(tree, r.x, r.y);
+    if !inside {
         state.redraw_all();
     }
 }

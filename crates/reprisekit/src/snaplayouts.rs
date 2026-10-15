@@ -215,6 +215,42 @@ fn boundaries(start: i32, size: i32, weights: &[f64]) -> Vec<i32> {
     out
 }
 
+/// A suggestion with its left half filled, then the six built-in layouts over a 1920x1050 area.
+#[cfg(test)]
+pub(crate) fn sample_cells() -> Vec<CellSpec> {
+    let cols = |cuts: &[i32]| -> Vec<Rect> {
+        cuts.windows(2)
+            .map(|p| Rect::new(p[0], 0, p[1] - p[0], 1050))
+            .collect()
+    };
+    let spec = |zones| CellSpec {
+        zones,
+        ..CellSpec::default()
+    };
+    vec![
+        CellSpec {
+            zones: cols(&[0, 960, 1920]),
+            suggestion: true,
+            filled: vec![(0, "Notepad".into())],
+        },
+        spec(cols(&[0, 960, 1920])),
+        spec(cols(&[0, 1280, 1920])),
+        spec(cols(&[0, 640, 1280, 1920])),
+        spec(vec![
+            Rect::new(0, 0, 960, 1050),
+            Rect::new(960, 0, 960, 525),
+            Rect::new(960, 525, 960, 525),
+        ]),
+        spec(vec![
+            Rect::new(0, 0, 960, 525),
+            Rect::new(0, 525, 960, 525),
+            Rect::new(960, 0, 960, 525),
+            Rect::new(960, 525, 960, 525),
+        ]),
+        spec(cols(&[0, 480, 1440, 1920])),
+    ]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

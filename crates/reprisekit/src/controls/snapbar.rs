@@ -13,8 +13,9 @@ pub const PEEK: i32 = 11;
 pub const DROP: i32 = 24;
 /// Round an expanded bar: the pointer inside keeps it down.
 pub const MARGIN: i32 = 12;
-/// Sliding in or out, and down.
+/// Sliding to collapsed or hidden.
 pub const SLIDE_MS: u32 = 150;
+/// Sliding down to expanded.
 pub const EXPAND_MS: u32 = 200;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -245,6 +246,33 @@ mod tests {
         assert!(b.live(t1 + Duration::from_millis(200)));
         b.end(t1 + Duration::from_millis(200));
         assert!(!b.live(t1 + Duration::from_millis(200)), "sliding out");
+    }
+
+    #[test]
+    fn a_first_motion_in_the_strip_drops_straight_down_over_200_ms() {
+        let t0 = Instant::now();
+        let mut b = SnapBar::new(WORK, SIZE, t0);
+        assert!(b.motion(900, 5, t0));
+        assert_eq!(b.stage(), Stage::Expanded);
+        assert_eq!(b.rect(t0).y, -90);
+        assert!(!b.settled(t0 + Duration::from_millis(199)));
+        assert_eq!(b.rect(t0 + Duration::from_millis(200)).y, 24);
+        assert!(b.live(t0 + Duration::from_millis(200)));
+    }
+
+    #[test]
+    fn expanding_mid_slide_starts_from_where_the_bar_is() {
+        let t0 = Instant::now();
+        let mut b = SnapBar::new(WORK, SIZE, t0);
+        b.motion(900, 300, t0);
+        let t1 = t0 + Duration::from_millis(75);
+        let mid = b.rect(t1).y;
+        assert_eq!(mid, -80);
+        b.motion(900, 5, t1);
+        assert_eq!(b.rect(t1).y, mid, "no jump");
+        assert!(b.rect(t1 + Duration::from_millis(100)).y > mid);
+        assert!(!b.settled(t1 + Duration::from_millis(199)));
+        assert_eq!(b.rect(t1 + Duration::from_millis(200)).y, 24);
     }
 
     #[test]

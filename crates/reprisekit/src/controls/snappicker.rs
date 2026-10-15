@@ -184,42 +184,6 @@ mod tests {
     use crate::interfaces::theme_for;
     use crate::theme::Color;
 
-    fn sample() -> Vec<CellSpec> {
-        let cols = |cuts: &[i32]| -> Vec<Rect> {
-            cuts.windows(2)
-                .map(|p| Rect::new(p[0], 0, p[1] - p[0], 1050))
-                .collect()
-        };
-        let spec = |zones| CellSpec {
-            zones,
-            ..CellSpec::default()
-        };
-        let stack = vec![
-            Rect::new(0, 0, 960, 1050),
-            Rect::new(960, 0, 960, 525),
-            Rect::new(960, 525, 960, 525),
-        ];
-        let quarters = vec![
-            Rect::new(0, 0, 960, 525),
-            Rect::new(0, 525, 960, 525),
-            Rect::new(960, 0, 960, 525),
-            Rect::new(960, 525, 960, 525),
-        ];
-        vec![
-            CellSpec {
-                zones: cols(&[0, 960, 1920]),
-                suggestion: true,
-                filled: vec![(0, "Notepad".into())],
-            },
-            spec(cols(&[0, 960, 1920])),
-            spec(cols(&[0, 1280, 1920])),
-            spec(cols(&[0, 640, 1280, 1920])),
-            spec(stack),
-            spec(quarters),
-            spec(cols(&[0, 480, 1440, 1920])),
-        ]
-    }
-
     const WORK: (i32, i32) = (1920, 1050);
 
     fn icon() -> Canvas {
@@ -230,7 +194,7 @@ mod tests {
 
     #[test]
     fn the_arrows_walk_the_free_zones_and_enter_picks() {
-        let l = PickerLayout::compute(Shape::Grid, WORK, &sample());
+        let l = PickerLayout::compute(Shape::Grid, WORK, &sample_cells());
         let mut p = SnapPicker::default();
         assert_eq!(p.key(&l, Key::Enter), Event::None, "nothing lit");
         assert_eq!(p.key(&l, Key::Right), Event::Redraw);
@@ -266,7 +230,7 @@ mod tests {
     fn classic_draws_flat_tiles_on_its_raised_panel() {
         let t = Theme::default();
         let cs = &t.colors;
-        let l = PickerLayout::compute(Shape::Grid, WORK, &sample());
+        let l = PickerLayout::compute(Shape::Grid, WORK, &sample_cells());
         let i = icon();
         let c = draw(&t, &l, &[((0, 0), &i)], Some((0, 1)));
         assert_eq!((c.width as i32, c.height as i32), (344, 242));
@@ -296,7 +260,7 @@ mod tests {
     fn classic_doubles_at_scale_2() {
         let t1 = Theme::default();
         let t2 = t1.scaled(2);
-        let l = PickerLayout::compute(Shape::Grid, WORK, &sample());
+        let l = PickerLayout::compute(Shape::Grid, WORK, &sample_cells());
         let a = draw(&t1, &l, &[], Some((5, 2)));
         let b = draw(&t2, &l.scaled(2), &[], Some((5, 2)));
         for y in 0..l.height {
@@ -310,7 +274,7 @@ mod tests {
     fn blue_draws_flat_tiles_in_its_colours() {
         let t = theme_for(Interface::Blue);
         let cs = &t.colors;
-        let l = PickerLayout::compute(Shape::Grid, WORK, &sample());
+        let l = PickerLayout::compute(Shape::Grid, WORK, &sample_cells());
         let c = draw(&t, &l, &[], Some((2, 1)));
         let lit = l.tiles[2][1];
         assert_eq!(c.get(lit.x + 3, lit.y + 3), cs.hilight.argb());
@@ -325,7 +289,7 @@ mod tests {
     #[test]
     fn the_bar_row_draws_every_cell_in_one_row() {
         let t = Theme::default();
-        let l = PickerLayout::compute(Shape::Row, WORK, &sample());
+        let l = PickerLayout::compute(Shape::Row, WORK, &sample_cells());
         let c = draw(&t, &l, &[], Some((6, 2)));
         assert_eq!(
             (c.width as i32, c.height as i32),
@@ -337,9 +301,9 @@ mod tests {
 
     #[test]
     fn access_counts_layouts_and_names_filled_zones() {
-        let l = PickerLayout::compute(Shape::Grid, WORK, &sample());
+        let l = PickerLayout::compute(Shape::Grid, WORK, &sample_cells());
         let mut tree = Tree::window("Snap layouts", (l.width, l.height));
-        let focus = access(&l, &sample(), Some((5, 3)), &mut tree, access::ROOT);
+        let focus = access(&l, &sample_cells(), Some((5, 3)), &mut tree, access::ROOT);
         assert!(
             tree.find(Role::Group, "Layout 1 of 7, suggestion")
                 .is_some()
