@@ -12,6 +12,7 @@ use std::sync::{Arc, Mutex};
 use crate::compositor::State;
 use crate::menuview::{MenuKind, jump_relisted};
 use crate::raster::Rect;
+use crate::startmenu::{MenuItem, MenuLayout};
 
 /// What a path was found to be.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -227,15 +228,19 @@ impl State {
             let Some((items, kind)) = fresh else {
                 continue;
             };
+            let usable = self.usable_area(Some(&self.menus[depth - 1].output));
+            let (text, size_px) = (&self.text, self.config.theme.fonts.size_px);
             let m = &mut self.menus[depth - 1];
-            if !m.relist_to(items, kind) {
+            let fit = |l: &MenuLayout, items: &[MenuItem]| {
+                l.fit_column(text, items, size_px, usable.width)
+            };
+            if !m.relist_to(items, kind, fit) {
                 continue;
             }
-            let (tree, x, new_h) = (m.tree, m.x, m.layout.height);
-            let output = m.output.clone();
-            let usable = self.usable_area(Some(&output));
+            let (tree, new_w, new_h) = (m.tree, m.layout.width, m.layout.height);
+            let x = m.x.min(usable.right() - new_w).max(usable.x);
             let y = keep_bottom(y, old_h, new_h, usable);
-            self.menus[depth - 1].y = y;
+            (m.x, m.y) = (x, y);
             self.scene.set_position(tree, x, y);
             self.close_menus_above(depth - 1);
             crate::tooltip::hover_menu(self, depth - 1, None);
@@ -259,7 +264,7 @@ fn keep_bottom(y: i32, old_h: i32, new_h: i32, usable: Rect) -> i32 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::startmenu::{MenuItem, MenuLayout, MenuStyle};
+    use crate::startmenu::MenuStyle;
     use std::time::{Duration, Instant};
 
     fn xbel(paths: &[&Path]) -> String {
@@ -451,7 +456,7 @@ mod tests {
         menu.hovered = Some(3);
         let relist = |menu: &mut Menu, docs: &RecentDocs| {
             let (items, kind) = documents(&dir, &docs.current(3));
-            menu.relist_to(items, kind)
+            menu.relist_to(items, kind, |l, _| l.column_width)
         };
         let listed = |menu: &Menu| -> Vec<Option<PathBuf>> {
             let MenuKind::Documents { paths, .. } = &menu.kind else {

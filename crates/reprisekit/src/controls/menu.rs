@@ -350,33 +350,42 @@ impl MenuStyle {
         size_px: u32,
         max_width: i32,
     ) -> MenuStyle {
-        let longest = items
-            .iter()
-            .map(|it| match it {
-                MenuItem::Entry {
-                    label,
-                    bold,
-                    shortcut,
-                    ..
-                } => {
-                    let sc = shortcut
-                        .as_deref()
-                        .map(|sc| {
-                            text.measure(sc, false, size_px) + SHORTCUT_GAP + self.shortcut_pad
-                        })
-                        .unwrap_or(self.right_pad);
-                    text.measure(label, *bold, size_px) + sc
-                }
-                MenuItem::Separator => self.right_pad,
-            })
-            .max()
-            .unwrap_or(self.right_pad);
+        let longest = longest_row(text, items, size_px, self.right_pad, self.shortcut_pad);
         let needed = self.band + self.inset.left + self.text_x + longest + self.inset.right;
         MenuStyle {
             width: needed.min(max_width).max(self.width),
             ..self
         }
     }
+}
+
+/// The widest row of `items` from its text's start to the menu's inner right edge.
+fn longest_row(
+    text: &TextRenderer,
+    items: &[MenuItem],
+    size_px: u32,
+    right_pad: i32,
+    shortcut_pad: i32,
+) -> i32 {
+    items
+        .iter()
+        .map(|it| match it {
+            MenuItem::Entry {
+                label,
+                bold,
+                shortcut,
+                ..
+            } => {
+                let sc = shortcut
+                    .as_deref()
+                    .map(|sc| text.measure(sc, false, size_px) + SHORTCUT_GAP + shortcut_pad)
+                    .unwrap_or(right_pad);
+                text.measure(label, *bold, size_px) + sc
+            }
+            MenuItem::Separator => right_pad,
+        })
+        .max()
+        .unwrap_or(right_pad)
 }
 
 const CHECK_GLYPH: [&str; 7] = [
@@ -426,6 +435,9 @@ pub struct MenuLayout {
     /// The heights `compute_styled` gives an `Entry` row and a `Separator`, for [`relist`].
     pub row_height: i32,
     pub separator_h: i32,
+    /// The style's paddings past a label, for [`MenuLayout::fit_column`].
+    pub right_pad: i32,
+    pub shortcut_pad: i32,
 }
 
 impl MenuLayout {
@@ -480,7 +492,23 @@ impl MenuLayout {
             gutter: style.gutter,
             row_height: style.row_height,
             separator_h: style.separator_h,
+            right_pad: style.right_pad,
+            shortcut_pad: style.shortcut_pad,
         }
+    }
+
+    /// The column width `items` need, as [`MenuStyle::fit`] widens it, up to a menu `max_width`
+    /// wide; never narrower than the columns now. For [`relist`].
+    pub fn fit_column(
+        &self,
+        text: &TextRenderer,
+        items: &[MenuItem],
+        size_px: u32,
+        max_width: i32,
+    ) -> i32 {
+        let longest = longest_row(text, items, size_px, self.right_pad, self.shortcut_pad);
+        let needed = self.band + self.inset.left + self.text_x + longest + self.inset.right;
+        (needed.min(max_width) - self.band).max(self.column_width)
     }
 
     /// Index of the entry under (x, y); separators and borders return None.
@@ -512,12 +540,15 @@ impl MenuLayout {
             gutter: self.gutter * n,
             row_height: self.row_height * n,
             separator_h: self.separator_h * n,
+            right_pad: self.right_pad * n,
+            shortcut_pad: self.shortcut_pad * n,
         }
     }
 }
 
-/// Relists an open menu as `new_items`: a row whose key `old_keys` holds keeps its item (and
-/// icon); width and rows per column stay; the hover follows its entry (`selection::follow`).
+/// Relists an open menu as `new_items` in columns `column_width` wide (normally
+/// [`MenuLayout::fit_column`]): a row whose key `old_keys` holds keeps its item (and icon); rows
+/// per column stay; the hover follows its entry (`selection::follow`).
 pub fn relist<K: PartialEq>(
     items: &mut Vec<MenuItem>,
     layout: &mut MenuLayout,
@@ -525,6 +556,7 @@ pub fn relist<K: PartialEq>(
     old_keys: &[K],
     new_keys: &[K],
     new_items: Vec<MenuItem>,
+    column_width: i32,
 ) {
     let mut old: Vec<Option<MenuItem>> = std::mem::take(items).into_iter().map(Some).collect();
     *items = new_keys
@@ -550,6 +582,7 @@ pub fn relist<K: PartialEq>(
     } else {
         usize::MAX
     };
+    layout.column_width = column_width;
     let inner_w = layout.column_width - layout.inset.left - layout.inset.right;
     let inset = layout.inset;
     let mut rows = Vec::with_capacity(items.len());
@@ -1824,6 +1857,7 @@ mod tests {
         let mut layout = MenuLayout::compute(&m, &items);
         let mut hovered = Some(1);
         let new = vec![c.clone(), a.clone(), b.clone(), MenuItem::Separator, launch];
+        let column = layout.column_width;
         relist(
             &mut items,
             &mut layout,
@@ -1831,10 +1865,13 @@ mod tests {
             &["a", "b", "-", "L"],
             &["c", "a", "b", "-", "L"],
             new.clone(),
+            column,
         );
         assert_eq!(items, new);
         assert_eq!(layout, MenuLayout::compute(&m, &items));
         assert_eq!(hovered, Some(2), "b.txt kept the hover a row down");
+
+        let column = layout.column_width;
 
         relist(
             &mut items,
@@ -1843,9 +1880,12 @@ mod tests {
             &["c", "a", "b", "-", "L"],
             &["c", "a", "-", "L"],
             vec![c, a, MenuItem::Separator, MenuItem::entry("Launch")],
+            column,
         );
         assert_eq!(layout, MenuLayout::compute(&m, &items));
         assert_eq!(hovered, Some(3), "b.txt went: Launch slid into its place");
+
+        let column = layout.column_width;
 
         relist(
             &mut items,
@@ -1854,6 +1894,7 @@ mod tests {
             &["c", "a", "-", "L"],
             &["E"],
             vec![MenuItem::entry("(Empty)").enabled(false)],
+            column,
         );
         assert_eq!(layout, MenuLayout::compute(&m, &items));
         assert_eq!(hovered, None, "(Empty) takes no hover");
@@ -1871,6 +1912,7 @@ mod tests {
         let mut items = vec![iconed.clone()];
         let mut layout = MenuLayout::compute_styled(&wide, &items, usize::MAX);
         let mut hovered = None;
+        let column = layout.column_width;
         relist(
             &mut items,
             &mut layout,
@@ -1878,11 +1920,63 @@ mod tests {
             &["a"],
             &["b", "a"],
             vec![MenuItem::entry("b.txt"), MenuItem::entry("a.txt")],
+            column,
         );
         assert_eq!(items, [MenuItem::entry("b.txt"), iconed]);
         assert_eq!(
             layout,
             MenuLayout::compute_styled(&wide, &items, usize::MAX)
+        );
+    }
+
+    #[test]
+    fn a_relisted_longer_name_widens_the_menu_as_an_open_would() {
+        let m = Metrics {
+            menu_width: 180,
+            ..wide_metrics()
+        };
+        let text = TextRenderer::load(&FontConfig::default());
+        let style = MenuStyle::submenu(&th(&m));
+        let short = vec![MenuItem::entry("a.txt")];
+        let mut items = short.clone();
+        let mut layout =
+            MenuLayout::compute_styled(&style.fit(&text, &items, 11, 640), &items, usize::MAX);
+        let mut hovered = None;
+        let long = vec![
+            MenuItem::entry(format!("{}.txt", "x".repeat(40))),
+            MenuItem::entry("a.txt"),
+        ];
+        let column = layout.fit_column(&text, &long, 11, 640);
+        relist(
+            &mut items,
+            &mut layout,
+            &mut hovered,
+            &["a"],
+            &["x", "a"],
+            long.clone(),
+            column,
+        );
+        let opened =
+            MenuLayout::compute_styled(&style.fit(&text, &long, 11, 640), &long, usize::MAX);
+        assert!(
+            opened.width > m.menu_width,
+            "the long name needs a wider menu"
+        );
+        assert_eq!(layout, opened);
+
+        let column = layout.fit_column(&text, &short, 11, 640);
+        relist(
+            &mut items,
+            &mut layout,
+            &mut hovered,
+            &["x", "a"],
+            &["a"],
+            short,
+            column,
+        );
+        assert_eq!(
+            layout.width, opened.width,
+            "a relist never narrows the menu"
         );
     }
 
