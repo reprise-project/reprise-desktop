@@ -81,8 +81,20 @@ impl Status {
         g.set_text("sent", &thousands(d.tx_bytes));
         g.set_text("received", &thousands(d.rx_bytes));
         if self.wifi {
-            let strength = d.wifi.as_ref().map(|w| w.strength).unwrap_or(0);
-            g.set_picture("signal", bars(strength));
+            // A radio hosting a hotspot has no signal of its own: its row names the hotspot.
+            match d.hotspot_summary() {
+                Some(hotspot) => {
+                    g.set_text("signal_l", "Hotspot:");
+                    g.set_text("hotspot", &hotspot);
+                    g.set_picture("signal", Canvas::new(0, 0));
+                }
+                None => {
+                    let strength = d.wifi.as_ref().map(|w| w.strength).unwrap_or(0);
+                    g.set_text("signal_l", "Signal Strength:");
+                    g.set_text("hotspot", "");
+                    g.set_picture("signal", bars(strength));
+                }
+            }
         }
         let (addr, mask, gateway) = match &d.ip4 {
             Some(ip) => (
@@ -230,6 +242,7 @@ fn general_page(wifi: bool) -> Form {
             ),
             Some(bars(0)),
         ));
+        items.push(Item::value_at("hotspot", VALUE_X, ROWS[3], VALUE_W, ""));
     }
     items.extend([
         Item::group("activity_g", Rect::new(GX, 195, GW, 135), "Activity"),
@@ -336,6 +349,14 @@ mod tests {
         }
     }
 
+    fn hotspot() -> nm::Device {
+        nm::Device {
+            hotspot: Some("Desk".into()),
+            hotspot_clients: Some(2),
+            ..wireless()
+        }
+    }
+
     fn text(page: &Form, id: &str) -> String {
         match &page.item(id).unwrap_or_else(|| panic!("no {id}")).control {
             Control::Label { text, .. } => text.clone(),
@@ -365,18 +386,22 @@ mod tests {
     #[test]
     fn the_status_pages_fit_their_text() {
         let over = reprisekit::interfaces::form_overflows(|_, _, _| {
-            [("wired", wired()), ("wireless", wireless())]
-                .into_iter()
-                .flat_map(|(kind, d)| {
-                    let s = Status::new(&d).sheet;
-                    let tabs = s
-                        .tabs
-                        .labels
-                        .into_iter()
-                        .map(move |t| format!("{kind} {t}"));
-                    tabs.zip(s.pages)
-                })
-                .collect()
+            [
+                ("wired", wired()),
+                ("wireless", wireless()),
+                ("hotspot", hotspot()),
+            ]
+            .into_iter()
+            .flat_map(|(kind, d)| {
+                let s = Status::new(&d).sheet;
+                let tabs = s
+                    .tabs
+                    .labels
+                    .into_iter()
+                    .map(move |t| format!("{kind} {t}"));
+                tabs.zip(s.pages)
+            })
+            .collect()
         });
         assert!(over.is_empty(), "{}", over.join("\n"));
     }
@@ -559,6 +584,22 @@ mod tests {
         assert_eq!(text(p, "mask"), "");
         assert_eq!(text(p, "gateway"), "");
         assert_eq!(note_lines(p)[0], "Not connected");
+    }
+
+    #[test]
+    fn a_hotspot_takes_the_signal_row() {
+        let mut s = Status::new(&hotspot());
+        let g = &s.sheet.pages[TAB_GENERAL];
+        assert_eq!(text(g, "signal_l"), "Hotspot:");
+        assert_eq!(text(g, "hotspot"), "Desk (2 devices)");
+        assert_eq!(picture_of(g, "signal").width, 0, "no bars");
+        assert_eq!(rect(g, "hotspot").y, rect(g, "signal_l").y);
+
+        s.refresh(&wireless());
+        let g = &s.sheet.pages[TAB_GENERAL];
+        assert_eq!(text(g, "signal_l"), "Signal Strength:");
+        assert_eq!(text(g, "hotspot"), "");
+        assert_eq!(picture_of(g, "signal").width as i32, signalbars::WIDTH);
     }
 
     #[test]
