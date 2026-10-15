@@ -130,7 +130,7 @@ impl State {
             return;
         };
         let area = self.desktop_area();
-        let cell = desktop::cell_at(desktop::Cell::square(desktop::CELL), area, cell.x, cell.y);
+        let cell = desktop::cell_at(self.desktop_grid(), area, cell.x, cell.y);
         self.perform_all(sources, &DropTarget::Desktop(cell), DropOp::Shortcut);
     }
 
@@ -159,7 +159,7 @@ impl State {
     pub fn paste_on_desktop(&mut self, at: Option<(i32, i32)>, shortcut: bool) {
         let area = self.desktop_area();
         let at = at.unwrap_or((area.x, area.y));
-        let cell = desktop::cell_at(desktop::Cell::square(desktop::CELL), area, at.0, at.1);
+        let cell = desktop::cell_at(self.desktop_grid(), area, at.0, at.1);
         self.paste_files(DropTarget::Desktop(cell), shortcut);
     }
 
@@ -322,7 +322,7 @@ impl State {
             return false;
         };
         let theme = &self.config.theme;
-        let lay = desktop::edit_layout(theme, &self.text, edit, desktop::CELL);
+        let lay = desktop::edit_layout(theme, &self.text, edit, self.desktop_grid().w);
         let (x, y) = (lx as i32 - cell.x, ly as i32 - cell.y);
         if !lay.rect.contains(x, y) {
             self.commit_rename();
@@ -363,7 +363,7 @@ impl State {
             return;
         };
         let theme = &self.config.theme;
-        let lay = desktop::edit_layout(theme, &self.text, edit, desktop::CELL);
+        let lay = desktop::edit_layout(theme, &self.text, edit, self.desktop_grid().w);
         let i = lay.index_at(
             &self.text,
             theme.fonts.size_px,

@@ -598,6 +598,7 @@ fn icon_files(
 /// there (`cells` runs parallel to `entries`) or an earlier answer landed there since the last
 /// read, else the free cell nearest it. A late answer never evicts an icon.
 fn landing_cell(
+    grid: desktop::Cell,
     area: Rect,
     entries: &[DesktopEntry],
     cells: &[Rect],
@@ -605,15 +606,14 @@ fn landing_cell(
     name: &str,
     wanted: (i32, i32),
 ) -> (i32, i32) {
-    let square = desktop::Cell::square(desktop::CELL);
     let taken: std::collections::HashSet<(i32, i32)> = entries
         .iter()
         .zip(cells)
         .filter(|(e, _)| e.name != name)
-        .map(|(_, r)| desktop::cell_at(square, area, r.x, r.y))
+        .map(|(_, r)| desktop::cell_at(grid, area, r.x, r.y))
         .chain(landed.iter().copied())
         .collect();
-    desktop::free_cell_near(area, &taken, wanted)
+    desktop::free_cell_near(grid, area, &taken, wanted)
 }
 
 fn migrate_launcher_keys(
@@ -1041,6 +1041,7 @@ impl State {
         };
         let caret_on = self.caret.on && self.editor() == Some(crate::caret::Editor::Rename);
         let preedit = self.ime_field_preedit(crate::caret::Editor::Rename);
+        let grid = self.desktop_grid();
         let mut spot = None;
         // A Cut file shows its icon at half strength until it is pasted.
         let cut: Vec<PathBuf> = self
@@ -1054,14 +1055,10 @@ impl State {
         view.cells = if out.is_none() {
             Vec::new()
         } else if view.auto_arrange {
-            desktop::layout(
-                desktop::Cell::square(desktop::CELL),
-                area,
-                view.entries.len(),
-            )
+            desktop::layout(grid, area, view.entries.len())
         } else {
             let names: Vec<&str> = view.entries.iter().map(|e| e.name.as_str()).collect();
-            desktop::layout_free(area, &names, &view.positions)
+            desktop::layout_free(grid, area, &names, &view.positions)
         };
         let count = view.cells.len();
         let mut changed = view.nodes.len() != count;
@@ -1073,9 +1070,7 @@ impl State {
         while view.nodes.len() < count {
             view.nodes.push(self.scene.buffer_create(view.tree));
         }
-        // The labels stay at 100% text: the grid's cells are fixed pixels,
-        // and a larger label would run into the next icon.
-        let base = &self.config.base_theme;
+        let base = &self.config.theme;
         if view
             .drawn_theme
             .as_ref()
@@ -1183,8 +1178,7 @@ impl State {
                 // A rename box wider than the cell comes back on a wider
                 // canvas centred on the cell; it goes on top of its
                 // neighbours.
-                let extra =
-                    (canvas.width as i32 - ICON_PX.max(desktop::CELL) * scale) / (2 * scale.max(1));
+                let extra = (canvas.width as i32 - grid.w * scale) / (2 * scale.max(1));
                 self.scene.set_position(r.node, r.cell.x - extra, r.cell.y);
                 if editing.is_some() {
                     self.scene.raise_to_top(r.node);
@@ -1479,7 +1473,7 @@ impl State {
             SendTo::DesktopShortcut => {
                 let area = self.desktop_area();
                 let (x, y) = beside.unwrap_or((area.x, area.y));
-                let cell = desktop::cell_at(desktop::Cell::square(desktop::CELL), area, x, y);
+                let cell = desktop::cell_at(self.desktop_grid(), area, x, y);
                 self.perform_all(
                     sources,
                     &crate::dragview::DropTarget::Desktop(cell),
@@ -1687,6 +1681,11 @@ impl State {
             .collect()
     }
 
+    /// The desktop's grid cell, grown with the text size like its labels.
+    pub(crate) fn desktop_grid(&self) -> desktop::Cell {
+        desktop::Cell::grown(self.config.theme.text)
+    }
+
     pub(crate) fn desktop_auto_arrange(&self) -> bool {
         self.desktop.as_ref().is_some_and(|d| d.auto_arrange)
     }
@@ -1696,15 +1695,18 @@ impl State {
         self.relayout_desktop();
     }
 
-    /// Remember grid cell `cell` for the icon called `name` and save it, without
-    /// redrawing.
+    /// Remember grid cell `cell` for the icon called `name` and save it, in 100% cells
+    /// ([`desktop::to_saved`]), without redrawing.
     pub(crate) fn pin_icon(&mut self, name: &str, cell: (i32, i32)) {
+        let grid = self.desktop_grid();
         let Some(view) = self.desktop.as_mut() else {
             return;
         };
         // One icon per cell: whoever held it before falls back into the flow.
-        view.positions.retain(|_, c| *c != cell);
-        view.positions.insert(name.to_string(), cell);
+        view.positions
+            .retain(|_, c| desktop::from_saved(grid, *c) != cell);
+        view.positions
+            .insert(name.to_string(), desktop::to_saved(grid, cell));
         crate::state::save_desktop(view.auto_arrange, &view.positions);
     }
 
@@ -1731,11 +1733,19 @@ impl State {
     /// Pin `name`, which an answer from the file jobs just put on the desktop, to `cell`, or to
     /// the free cell nearest it when an icon took `cell` while the answer was pending.
     pub(crate) fn land_icon(&mut self, name: &str, cell: (i32, i32)) {
-        let area = self.desktop_area();
+        let (area, grid) = (self.desktop_area(), self.desktop_grid());
         let Some(view) = self.desktop.as_mut() else {
             return;
         };
-        let cell = landing_cell(area, &view.entries, &view.cells, &view.landed, name, cell);
+        let cell = landing_cell(
+            grid,
+            area,
+            &view.entries,
+            &view.cells,
+            &view.landed,
+            name,
+            cell,
+        );
         view.landed.push(cell);
         self.pin_icon(name, cell);
     }
@@ -1746,8 +1756,7 @@ impl State {
         let area = self.desktop_area();
         let auto = self.desktop.as_ref().is_none_or(|v| v.auto_arrange);
         if let Some((x, y)) = at.filter(|_| !auto && area.width > 0) {
-            let square = desktop::Cell::square(desktop::CELL);
-            self.land_icon(name, desktop::cell_at(square, area, x, y));
+            self.land_icon(name, desktop::cell_at(self.desktop_grid(), area, x, y));
         }
         self.rescan_desktop();
     }
@@ -1883,7 +1892,7 @@ impl State {
                 // right click.
                 let area = self.desktop_area();
                 let at = self.desktop_menu_at.unwrap_or((area.x, area.y));
-                let cell = desktop::cell_at(desktop::Cell::square(desktop::CELL), area, at.0, at.1);
+                let cell = desktop::cell_at(self.desktop_grid(), area, at.0, at.1);
                 let target = crate::dragview::DropTarget::Desktop(cell);
                 self.paste_files(target, cmd == Dc::PasteShortcut);
             }
@@ -2288,22 +2297,22 @@ mod tests {
         let entries = [plain("New Folder")];
         let cells = [at((2, 1))];
         assert_eq!(
-            landing_cell(area, &entries, &cells, &[], "report.pdf", (2, 1)),
+            landing_cell(square, area, &entries, &cells, &[], "report.pdf", (2, 1)),
             (2, 2),
             "the paste goes to the next free cell"
         );
         assert_eq!(
-            landing_cell(area, &entries, &cells, &[], "New Folder", (2, 1)),
+            landing_cell(square, area, &entries, &cells, &[], "New Folder", (2, 1)),
             (2, 1),
             "an icon is not in its own way"
         );
         assert_eq!(
-            landing_cell(area, &[], &[], &[(2, 1)], "report.pdf", (2, 1)),
+            landing_cell(square, area, &[], &[], &[(2, 1)], "report.pdf", (2, 1)),
             (2, 2),
             "a cell landed in before the read shows it is taken"
         );
         assert_eq!(
-            landing_cell(area, &entries, &cells, &[], "report.pdf", (4, 0)),
+            landing_cell(square, area, &entries, &cells, &[], "report.pdf", (4, 0)),
             (4, 0)
         );
     }
