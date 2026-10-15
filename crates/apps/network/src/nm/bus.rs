@@ -953,10 +953,9 @@ async fn rekey(
     security.insert("key-mgmt".into(), Value::from(key_mgmt));
     security.insert("psk".into(), Value::from(psk));
     security.insert("psk-flags".into(), Value::from(0u32));
-    p.call_method("Update", &(settings,))
+    call_auth::<_, ()>(&p, "Update", &(settings,))
         .await
         .map(|_| ())
-        .map_err(clean)
 }
 
 /// `Device.Disconnect`; Disable and Repair only log its error, since a device already down refuses
@@ -1142,18 +1141,23 @@ async fn act(conn: &Connection, cmd: &Cmd) -> Result<(), Failure> {
                     let owner = new_profile_owner(conn).await;
                     let key_mgmt = ap_key_mgmt(conn, ap).await;
                     let manager = proxy(conn, MANAGER_PATH, NAME).await?;
-                    manager
-                        .call_method(
-                            "AddAndActivateConnection",
-                            &(
-                                wifi_settings(ssid, psk.map(|p| &**p), key_mgmt, owner.as_deref()),
-                                opath(device)?,
-                                opath(ap)?,
-                            ),
-                        )
-                        .await
-                        .map(|_| ())
-                        .map_err(clean)
+                    call_auth::<
+                        _,
+                        (
+                            zbus::zvariant::OwnedObjectPath,
+                            zbus::zvariant::OwnedObjectPath,
+                        ),
+                    >(
+                        &manager,
+                        "AddAndActivateConnection",
+                        &(
+                            wifi_settings(ssid, psk.map(|p| &**p), key_mgmt, owner.as_deref()),
+                            opath(device)?,
+                            opath(ap)?,
+                        ),
+                    )
+                    .await
+                    .map(|_| ())
                 }
             }
         }
@@ -1675,5 +1679,127 @@ mod tests {
         let start = std::time::Instant::now();
         handle.quit();
         assert!(start.elapsed() < QUIT_WAIT, "quit waited for the timeout");
+    }
+
+    type Calls = std::sync::Arc<std::sync::Mutex<Vec<(&'static str, bool)>>>;
+
+    fn interactive(hdr: &zbus::message::Header<'_>) -> bool {
+        hdr.primary()
+            .flags()
+            .contains(zbus::message::Flags::AllowInteractiveAuth)
+    }
+
+    /// NetworkManager with one saved Wi-Fi profile, "Home", recording which calls may prompt.
+    struct FakeNm(Calls);
+
+    #[zbus::interface(name = "org.freedesktop.NetworkManager")]
+    impl FakeNm {
+        fn activate_connection(
+            &self,
+            #[zbus(header)] hdr: zbus::message::Header<'_>,
+            _connection: zbus::zvariant::OwnedObjectPath,
+            _device: zbus::zvariant::OwnedObjectPath,
+            _ap: zbus::zvariant::OwnedObjectPath,
+        ) -> zbus::zvariant::OwnedObjectPath {
+            self.0
+                .lock()
+                .unwrap()
+                .push(("ActivateConnection", interactive(&hdr)));
+            zbus::zvariant::OwnedObjectPath::try_from("/a/1").unwrap()
+        }
+
+        fn add_and_activate_connection(
+            &self,
+            #[zbus(header)] hdr: zbus::message::Header<'_>,
+            _settings: HashMap<String, Props>,
+            _device: zbus::zvariant::OwnedObjectPath,
+            _ap: zbus::zvariant::OwnedObjectPath,
+        ) -> (
+            zbus::zvariant::OwnedObjectPath,
+            zbus::zvariant::OwnedObjectPath,
+        ) {
+            self.0
+                .lock()
+                .unwrap()
+                .push(("AddAndActivateConnection", interactive(&hdr)));
+            let path = |p: &str| zbus::zvariant::OwnedObjectPath::try_from(p).unwrap();
+            (path("/c/2"), path("/a/2"))
+        }
+    }
+
+    struct FakeSettings;
+
+    #[zbus::interface(name = "org.freedesktop.NetworkManager.Settings")]
+    impl FakeSettings {
+        fn list_connections(&self) -> Vec<zbus::zvariant::OwnedObjectPath> {
+            vec![zbus::zvariant::OwnedObjectPath::try_from(HOME).unwrap()]
+        }
+    }
+
+    struct FakeProfile(Calls);
+
+    #[zbus::interface(name = "org.freedesktop.NetworkManager.Settings.Connection")]
+    impl FakeProfile {
+        fn get_settings(&self) -> HashMap<String, Props> {
+            HashMap::from([(
+                "802-11-wireless".to_string(),
+                props(vec![("ssid", Value::from(b"Home".to_vec()))]),
+            )])
+        }
+
+        fn update(
+            &self,
+            #[zbus(header)] hdr: zbus::message::Header<'_>,
+            _settings: HashMap<String, Props>,
+        ) {
+            self.0.lock().unwrap().push(("Update", interactive(&hdr)));
+        }
+    }
+
+    const HOME: &str = "/org/freedesktop/NetworkManager/Settings/1";
+
+    /// polkit refuses a call that needs a password unless it may ask for one.
+    #[test]
+    fn every_call_of_a_wifi_join_may_raise_the_password_prompt() {
+        let calls = Calls::default();
+        let (a, b) = std::os::unix::net::UnixStream::pair().unwrap();
+        let recorded = calls.clone();
+        zbus::block_on(async move {
+            let (server, client) = futures_util::future::join(
+                zbus::connection::Builder::async_io_unix_stream(a)
+                    .server(zbus::Guid::generate())
+                    .unwrap()
+                    .p2p()
+                    .serve_at(MANAGER_PATH, FakeNm(recorded.clone()))
+                    .unwrap()
+                    .serve_at(SETTINGS_PATH, FakeSettings)
+                    .unwrap()
+                    .serve_at(HOME, FakeProfile(recorded))
+                    .unwrap()
+                    .build(),
+                zbus::connection::Builder::async_io_unix_stream(b)
+                    .p2p()
+                    .build(),
+            )
+            .await;
+            let (_server, client) = (server.unwrap(), client.unwrap());
+            let connect = |ssid: &str| Cmd::Connect {
+                device: DEV.into(),
+                ap: "/".into(),
+                ssid: ssid.into(),
+                psk: Some(Psk::new("new key")),
+            };
+            act(&client, &connect("Home")).await.unwrap();
+            act(&client, &connect("Cafe")).await.unwrap();
+        });
+        assert_eq!(
+            *calls.lock().unwrap(),
+            vec![
+                ("Update", true),
+                ("ActivateConnection", true),
+                ("AddAndActivateConnection", true),
+            ],
+            "a rekeyed profile, then a new one"
+        );
     }
 }
