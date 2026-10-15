@@ -6,7 +6,7 @@ use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
 use crate::{Event, PointerInput};
-use reprisefs::listing::Item;
+use reprisefs::listing::{Item, Row};
 use reprisekit::controls::filedlg::DlgMode;
 use reprisekit::controls::form;
 use reprisekit::raster::Rect;
@@ -14,7 +14,8 @@ use reprisekit::selection::Mods;
 use reprisekit::text::TextRenderer;
 use reprisekit::textedit::keysym;
 
-use crate::listicons::ListIcons;
+use crate::listicons::{ListIcons, ReadIcons};
+use crate::listjob::Job;
 use crate::thumbs::{self, Thumbs};
 use reprisefs::folders::FolderTable;
 use reprisekit::controls::filedlg::{Crumb, Fields, FileDlg, Folder, FolderId, Hit};
@@ -97,18 +98,6 @@ impl Icons {
     }
 }
 
-/// The listing of folder `id` for `FileDlg::set_listing`, hidden entries left out; `None` when `id`
-/// does not resolve. Every subfolder gets its own handle in `folders`.
-pub fn listing(
-    folders: &mut FolderTable,
-    id: FolderId,
-    icons: &mut IconCache,
-    folders_only: bool,
-    keep: &dyn Fn(&Item) -> bool,
-) -> Option<Folder> {
-    listing_raw(folders, id, icons, folders_only, keep).map(|l| l.folder)
-}
-
 struct Listing {
     folder: Folder,
     /// Names shown for paths they don't spell: non-UTF-8 names and My Recent Documents' files.
@@ -118,28 +107,56 @@ struct Listing {
     icons: ListingIcons,
 }
 
-/// Entries wear Explorer's icons at every size and its Tiles lines; a picture's thumbnail
-/// arrives later ([`take_thumbs`]).
-fn listing_raw(
-    folders: &mut FolderTable,
-    id: FolderId,
-    icons: &mut IconCache,
-    folders_only: bool,
-    keep: &dyn Fn(&Item) -> bool,
-) -> Option<Listing> {
-    let path = folders.path(id)?.to_path_buf();
+/// A folder's rows and their icons as a listing's thread read them ([`read`]).
+struct Read {
+    path: PathBuf,
+    rows: Vec<Row>,
+    icons: ReadIcons,
+}
+
+/// Folder `path`'s rows, hidden entries and those `keep` refuses left out, with their icons read
+/// at `scale`. Runs on a listing's thread: any of it may sit on a mount that never answers.
+fn read(path: PathBuf, keep: impl FnMut(&Item) -> bool, scale: i32) -> Read {
     let globs = reprisefs::apps::mime_globs();
-    let rows = reprisefs::listing::dialog_rows(&path, &globs, |i| {
-        if folders_only {
-            i.is_dir
-        } else {
-            i.is_dir || keep(i)
-        }
-    });
+    let rows = reprisefs::listing::dialog_rows(&path, &globs, keep);
+    let icons = ReadIcons::read(rows.iter().map(|r| &r.item), scale);
+    Read { path, rows, icons }
+}
+
+/// What a listing keeps: every folder, and in a file dialog the entries a `typed` pattern
+/// accepts, else those `keep` does.
+fn picks(
+    folders_only: bool,
+    typed: Option<String>,
+    keep: impl Fn(&Item) -> bool,
+) -> impl Fn(&Item) -> bool {
+    move |i| {
+        i.is_dir
+            || (!folders_only
+                && match &typed {
+                    Some(p) => reprisekit::controls::filedlg::pattern_keeps(p, &i.name),
+                    None => keep(i),
+                })
+    }
+}
+
+/// Folder `id`'s `read` as the dialog lists it. Entries wear Explorer's icons at every size and
+/// its Tiles lines; a picture's thumbnail arrives later ([`take_thumbs`]). Every subfolder gets
+/// its own handle in `folders`.
+fn listing(folders: &mut FolderTable, id: FolderId, read: Read, icons: &mut IconCache) -> Listing {
+    let Read {
+        path,
+        rows,
+        icons: read_icons,
+    } = read;
+    read_icons.put(icons);
     let specials = reprisefs::places::special_folders();
     let names: Vec<String> = rows
         .iter()
-        .map(|r| reprisefs::icons::item_icon(&r.item, &specials, &|n| icons.has(n)))
+        .zip(&read_icons.own)
+        .map(|(r, own)| {
+            reprisefs::icons::item_icon_with(&r.item, own.as_deref(), &specials, &|n| icons.has(n))
+        })
         .collect();
     let mut shared = ListingIcons::default();
     let mut aliases: Vec<(String, OsString)> = Vec::new();
@@ -185,7 +202,7 @@ fn listing_raw(
         .collect();
     let parent = reprisefs::places::dialog_parent(&path).map(|p| folders.id(p));
     let label = reprisefs::places::dialog_label(&path);
-    Some(Listing {
+    Listing {
         folder: Folder {
             id,
             parent,
@@ -200,7 +217,7 @@ fn listing_raw(
         aliases,
         pictures,
         icons: shared,
-    })
+    }
 }
 
 /// Starts thumbnails for the file dialog in window `win` ([`crate::App::drop_file_dialog`]):
@@ -238,7 +255,7 @@ pub(crate) fn take_thumbs(
         .collect()
 }
 
-pub fn type_keep(dlg: &FileDlg) -> impl Fn(&Item) -> bool + 'static {
+pub fn type_keep(dlg: &FileDlg) -> impl Fn(&Item) -> bool + Clone + Send + 'static {
     let pattern = dlg.picked_pattern();
     move |i| {
         pattern
@@ -276,7 +293,18 @@ pub struct Host {
     list_icons: ListIcons,
     /// The scale the dialog's places tiles and toolbar wear their icons at.
     icons_scale: i32,
+    /// Wakes the program's loop when a late listing lands ([`Host::take_thumbs`]).
+    wake: Option<crate::Waker>,
+    /// A folder still being read after [`LIST_WAIT`]; the dialog shows the one before.
+    reading: Option<(FolderId, Job<Read>)>,
 }
+
+/// How long the dialog waits for a listing before it goes on. Tests wait as long as it takes.
+const LIST_WAIT: std::time::Duration = if cfg!(test) {
+    std::time::Duration::from_secs(60)
+} else {
+    crate::listjob::WAIT
+};
 
 /// The listed pictures and how far their thumbnails have got.
 #[derive(Default)]
@@ -307,6 +335,7 @@ impl Host {
     /// Starts the worker that decodes the listed pictures for Thumbnails and Tiles, once; `wake`
     /// fires as they arrive and [`Host::take_thumbs`] shows them.
     fn thumbs_on(&mut self, wake: &crate::Waker) {
+        self.wake.get_or_insert_with(|| wake.clone());
         if self.thumbs.is_some() {
             return;
         }
@@ -372,6 +401,15 @@ impl Host {
     /// Hands the thumbnails and icon files that arrived to their entries, the icon files to
     /// `cache` too: true when one did.
     fn take_thumbs(&mut self, dlg: &mut FileDlg, cache: &mut IconCache) -> bool {
+        if let Some((id, read)) = self
+            .reading
+            .as_ref()
+            .and_then(|(id, j)| Some((*id, j.take()?)))
+        {
+            self.reading = None;
+            self.show_read(dlg, id, read, cache);
+            return true;
+        }
         let icons = self.list_icons.take(dlg.entries_mut(), cache);
         let Some(worker) = &mut self.thumbs else {
             return icons;
@@ -515,48 +553,60 @@ impl Host {
         }
     }
 
-    pub fn list(
-        &mut self,
-        dlg: &mut FileDlg,
-        id: FolderId,
-        icons: &mut IconCache,
-        keep: &dyn Fn(&Item) -> bool,
-    ) {
+    /// Lists folder `id` in `dlg`, keeping the folders and the entries `keep` (or a typed
+    /// pattern) accepts. The folder is read on a thread; one that takes longer than
+    /// [`LIST_WAIT`] lands later through [`Host::take_thumbs`], the dialog showing the folder
+    /// before until then.
+    pub fn list<K>(&mut self, dlg: &mut FileDlg, id: FolderId, icons: &mut IconCache, keep: &K)
+    where
+        K: Fn(&Item) -> bool + Clone + Send + 'static,
+    {
+        let Some(path) = self.folders.path(id).map(Path::to_path_buf) else {
+            return;
+        };
         let folders_only = dlg.mode() == DlgMode::Folder;
         let typed = dlg.wildcard().map(str::to_string);
-        let keep = |i: &Item| match &typed {
-            Some(p) => reprisekit::controls::filedlg::pattern_keeps(p, &i.name),
-            None => keep(i),
-        };
-        if let Some(l) = listing_raw(&mut self.folders, id, icons, folders_only, &keep) {
-            self.folder = Some(id);
-            self.aliases.clear();
-            self.aliases.extend(l.aliases);
-            self.list_icons.listed(l.icons, icons.scale());
-            let p = &mut self.pictures;
-            p.generation += 1;
-            p.asked = false;
-            p.scale = icons.scale();
-            p.ids = (1..)
-                .zip(&l.pictures)
-                .map(|(id, path)| (path.clone(), id))
-                .collect();
-            p.paths = l.pictures;
-            if let Some(t) = &mut self.thumbs {
-                t.cancel_all();
+        let keep = picks(folders_only, typed, keep.clone());
+        let scale = icons.scale();
+        let job = Job::spawn(self.wake.as_ref(), move || read(path, keep, scale));
+        match job.wait(LIST_WAIT) {
+            Some(r) => {
+                self.reading = None;
+                self.show_read(dlg, id, r, icons);
             }
-            dlg.set_listing(l.folder);
-            self.ask_thumbs(dlg);
+            None => self.reading = Some((id, job)),
         }
     }
 
-    pub fn ensure_listed(
-        &mut self,
-        dlg: &mut FileDlg,
-        icons: &mut IconCache,
-        keep: &dyn Fn(&Item) -> bool,
-    ) {
+    fn show_read(&mut self, dlg: &mut FileDlg, id: FolderId, read: Read, icons: &mut IconCache) {
+        let l = listing(&mut self.folders, id, read, icons);
+        self.folder = Some(id);
+        self.aliases.clear();
+        self.aliases.extend(l.aliases);
+        self.list_icons.listed(l.icons, icons.scale());
+        let p = &mut self.pictures;
+        p.generation += 1;
+        p.asked = false;
+        p.scale = icons.scale();
+        p.ids = (1..)
+            .zip(&l.pictures)
+            .map(|(id, path)| (path.clone(), id))
+            .collect();
+        p.paths = l.pictures;
+        if let Some(t) = &mut self.thumbs {
+            t.cancel_all();
+        }
+        dlg.set_listing(l.folder);
+        self.ask_thumbs(dlg);
+    }
+
+    /// Lists the dialog's folder once, unless it is still being read.
+    pub fn ensure_listed<K>(&mut self, dlg: &mut FileDlg, icons: &mut IconCache, keep: &K)
+    where
+        K: Fn(&Item) -> bool + Clone + Send + 'static,
+    {
         if dlg.folder().is_none()
+            && self.reading.is_none()
             && let Some(id) = self.folder
         {
             self.list(dlg, id, icons, keep);
@@ -609,6 +659,19 @@ pub fn taken(path: &Path) -> bool {
 mod tests {
     use super::*;
     use reprisekit::controls::filedlg::CLIENT;
+
+    /// Folder `id` as [`Host::list`] lists it, read on the test's thread.
+    fn listed(
+        folders: &mut FolderTable,
+        id: FolderId,
+        icons: &mut IconCache,
+        folders_only: bool,
+        keep: impl Fn(&Item) -> bool,
+    ) -> Folder {
+        let path = folders.path(id).expect("the id resolves").to_path_buf();
+        let r = read(path, picks(folders_only, None, keep), icons.scale());
+        listing(folders, id, r, icons).folder
+    }
 
     fn host_in(t: &Path) -> Host {
         let mut h = Host::default();
@@ -888,14 +951,14 @@ mod tests {
         let mut icons = IconCache::new(reprisekit::icontheme::IconTheme::load("test", &[]));
         let names = |f: Folder| f.entries.iter().map(|e| e.name.clone()).collect::<Vec<_>>();
         let none = |_: &reprisefs::listing::Item| false;
-        let f = listing(&mut folders, id, &mut icons, false, &none).unwrap();
+        let f = listed(&mut folders, id, &mut icons, false, none);
         assert_eq!(
             names(f),
             vec!["sub"],
             "a filter that keeps nothing still keeps folders"
         );
         let all = |_: &reprisefs::listing::Item| true;
-        let f = listing(&mut folders, id, &mut icons, true, &all).unwrap();
+        let f = listed(&mut folders, id, &mut icons, true, all);
         assert_eq!(names(f), vec!["sub"], "folder mode lists folders only");
         std::fs::remove_dir_all(&t).ok();
     }
@@ -1010,14 +1073,20 @@ mod tests {
         let mut folders = FolderTable::default();
         let id = folders.id(&t);
         let mut icons = IconCache::new(reprisekit::icontheme::IconTheme::load("test", &[]));
-        let f = listing(&mut folders, id, &mut icons, false, &|_| true).expect("the id resolves");
+        let f = listed(&mut folders, id, &mut icons, false, |_| true);
         let mut names: Vec<_> = f.entries.iter().map(|e| e.name.as_str()).collect();
         names.sort();
         assert_eq!(names, ["a.txt", "sub"]);
         let sub = f.entries.iter().find(|e| e.is_dir).expect("sub");
         assert_eq!(folders.path(sub.id), Some(t.join("sub").as_path()));
         assert_eq!(f.parent.and_then(|p| folders.path(p)), t.parent());
-        assert!(listing(&mut folders, 99, &mut icons, false, &|_| true).is_none());
+        let mut h = Host::default();
+        let mut dlg = open_dlg(&mut h);
+        h.list(&mut dlg, 99, &mut icons, &|_: &Item| true);
+        assert!(
+            dlg.folder().is_none(),
+            "an id that does not resolve lists nothing"
+        );
         std::fs::remove_dir_all(&t).ok();
     }
 
@@ -1387,6 +1456,48 @@ mod tests {
             [Some((2, 32, OWN)), Some((2, 64, OWN)), Some((2, 96, OWN))],
             "the cache kept the icon file the thread decoded at scale 2"
         );
+    }
+
+    /// A folder still being read leaves the dialog as it was and its loop free; the listing
+    /// lands once the read answers, wearing the folder icon and icon file its thread read though
+    /// both are gone by then.
+    #[test]
+    fn a_late_listing_lands_with_the_icons_its_thread_read() {
+        const OWN: u32 = 0xff80_20a0;
+        let t = pictures_folder();
+        let dir = t.path().join("list");
+        let own = t.path().join("own.png");
+        png(&own, 96, 96, OWN);
+        let directory = format!("[Desktop Entry]\nIcon={}\n", own.display());
+        std::fs::write(dir.join("sub/.directory"), directory).unwrap();
+        let mut icons = flat_icons(t.path());
+        let mut h = host_in(&dir);
+        let mut dlg = open_dlg(&mut h);
+        let id = h.folder.unwrap();
+        let read = read(dir.clone(), |_: &Item| true, icons.scale());
+        std::fs::remove_file(dir.join("sub/.directory")).unwrap();
+        std::fs::remove_file(&own).unwrap();
+        let (answer, gate) = std::sync::mpsc::channel::<()>();
+        h.reading = Some((
+            id,
+            Job::spawn(None, move || {
+                gate.recv().ok();
+                read
+            }),
+        ));
+
+        h.ensure_listed(&mut dlg, &mut icons, &|_: &Item| true);
+        assert!(dlg.folder().is_none(), "the dialog waits for the read");
+        assert!(!h.take_thumbs(&mut dlg, &mut icons), "nothing has landed");
+
+        answer.send(()).unwrap();
+        settle_thumbs(&mut h, &mut dlg, &mut icons);
+        assert_eq!(dlg.folder(), Some(id));
+        assert_eq!(
+            icon_sizes(entry(&dlg, "sub")),
+            [Some((1, 16, OWN)), Some((1, 32, OWN)), Some((1, 48, OWN))]
+        );
+        assert_eq!(icon_sizes(entry(&dlg, "notes.txt"))[0], Some((1, 16, TEXT)));
     }
 
     /// A program with a file dialog in window `DLG` that does nothing for its thumbnails.

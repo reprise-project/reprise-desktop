@@ -21,7 +21,6 @@ use reprisekit::theme::Theme;
 use std::ffi::OsStr;
 use std::os::unix::ffi::OsStrExt;
 use std::path::PathBuf;
-use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 
 const MSGBOX: WinId = "msgbox";
@@ -84,22 +83,22 @@ struct Pick {
     forms: Theme,
     msg: Option<(MsgBox, Option<PathBuf>)>,
     out: Arc<Mutex<Output>>,
-    mime_tree: Rc<MimeTree>,
+    mime_tree: Arc<MimeTree>,
 }
 
 impl Pick {
-    fn keep_owned(&self) -> Box<dyn Fn(&reprisefs::listing::Item) -> bool> {
+    fn keep_owned(&self) -> impl Fn(&reprisefs::listing::Item) -> bool + Clone + Send + 'static {
         let f = self.input.filters.get(self.dlg.filter()).cloned();
         let tree = self.mime_tree.clone();
-        Box::new(move |i| {
+        move |i: &reprisefs::listing::Item| {
             f.as_ref()
                 .is_none_or(|f| f.keeps(&i.name, i.mime.as_deref(), &tree))
-        })
+        }
     }
 
     fn list(&mut self, id: FolderId, ctx: &mut Ctx) {
         let keep = self.keep_owned();
-        self.host.list(&mut self.dlg, id, &mut ctx.icons, &*keep);
+        self.host.list(&mut self.dlg, id, &mut ctx.icons, &keep);
     }
 
     fn finish(&mut self, paths: Vec<PathBuf>) -> Reply {
@@ -243,7 +242,7 @@ impl App for Pick {
         }
         let keep = self.keep_owned();
         self.host
-            .ensure_listed(&mut self.dlg, &mut ctx.icons, &*keep);
+            .ensure_listed(&mut self.dlg, &mut ctx.icons, &keep);
         match self.host.event(
             &mut self.dlg,
             &ev,
@@ -392,7 +391,7 @@ pub fn run_dialog() {
         forms: dialog::start_forms(),
         msg: None,
         out: out.clone(),
-        mime_tree: Rc::new(MimeTree::load()),
+        mime_tree: Arc::new(MimeTree::load()),
     }));
     let out = out.lock().unwrap().clone();
     match toml::to_string(&out) {
