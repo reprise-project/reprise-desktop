@@ -499,11 +499,11 @@ fn entry_with(
         };
     }
     let mime = globs.mime_of_name(&file_name);
-    let icon = icons::pick_icon(mime.as_deref(), &path, &|_| false);
     let target = match &meta {
         Some(m) => plain_target(&path, m),
         None => Target::Open(path.clone()),
     };
+    let icon = file_icon(mime.as_deref(), &path, &target, &|_| false);
     DesktopEntry {
         label: names::label_for(&file_name, globs, shown),
         allow_launching: can_allow_launching_at(&path, &target),
@@ -526,8 +526,26 @@ pub fn wear_file_icons(
     for e in entries {
         if e.kind == Kind::File && !e.is_dir && matches!(e.target, Target::Open(_) | Target::Run(_))
         {
-            e.icon = icons::pick_icon(globs.mime_of_name(&e.name).as_deref(), &e.path, has);
+            e.icon = file_icon(
+                globs.mime_of_name(&e.name).as_deref(),
+                &e.path,
+                &e.target,
+                has,
+            );
         }
+    }
+}
+
+/// A plain file's icon: a program's when opening runs it, else its type's.
+fn file_icon(
+    mime: Option<&str>,
+    path: &Path,
+    target: &Target,
+    has: &dyn Fn(&str) -> bool,
+) -> String {
+    match target {
+        Target::Run(_) => icons::pick_program_icon(mime, path, has),
+        _ => icons::pick_icon(mime, path, has),
     }
 }
 
@@ -815,6 +833,31 @@ mod tests {
         assert_eq!(by("odd.zzzq").label, "odd.zzzq");
         assert_eq!(by("odd.zzzq").hidden_ext(), "");
         assert_eq!(by("Photos.txt").label, "Photos.txt");
+    }
+
+    #[test]
+    fn a_program_wears_the_program_icon_and_a_plain_script_its_type() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = fixture("program_icon");
+        let _cleanup = Cleanup(dir.clone());
+        for (name, mode) in [("run.sh", 0o755), ("read.sh", 0o644)] {
+            std::fs::write(dir.join(name), "#!/bin/sh\n").unwrap();
+            std::fs::set_permissions(dir.join(name), std::fs::Permissions::from_mode(mode))
+                .unwrap();
+        }
+        let globs = reprisefs::apps::MimeDb::parse(["50:application/x-shellscript:*.sh\n"]);
+        let has = |n: &str| n == "application-x-executable" || n == "application-x-shellscript";
+        let mut list = scan(&dir, &globs, names::Extensions::Hide);
+        wear_file_icons(&mut list, &globs, &has);
+        let by = |n: &str| list.iter().find(|e| e.name == n).unwrap();
+        assert_eq!(by("run.sh").icon, "application-x-executable");
+        assert_eq!(by("read.sh").icon, "application-x-shellscript");
+        wear_file_icons(&mut list, &globs, &|n| n == "application-x-shellscript");
+        assert_eq!(
+            list.iter().find(|e| e.name == "run.sh").unwrap().icon,
+            "application-x-shellscript",
+            "a theme without a program icon gives the type's"
+        );
     }
 
     #[test]

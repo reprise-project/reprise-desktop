@@ -875,6 +875,7 @@ mod tests {
             is_dir,
             is_link: false,
             exec: false,
+            program: false,
             hidden: false,
             size,
             modified: Some(1_158_329_100),

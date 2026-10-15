@@ -172,6 +172,9 @@ the Super tap, Super+Shift+Esc and the VT switch keys can be rebound.
 - **Trusted launchers.** A `.desktop` file on the desktop, or one the
   launcher finds, runs only once you've marked it trusted (Allow Launching),
   so a download can't pose as a program.
+- **Program icons.** A file that runs when opened (below) wears the theme's
+  program icon (`application-x-executable`) on the desktop, in Explorer and
+  in file dialogs.
 - **Programs and scripts.** A file with its Executable box ticked
   (Properties) that holds a script (`#!`) or a binary runs when you open it,
   in its own folder, here and in Explorer. A script runs in your terminal,

@@ -58,9 +58,23 @@ pub fn pick_icon(mime: Option<&str>, path: &Path, has: &dyn Fn(&str) -> bool) ->
         .unwrap_or_else(|| "text-x-generic".to_string())
 }
 
+/// The names a program file ([`crate::program::is_program`]) wears, best first: it runs when opened.
+const PROGRAM_ICONS: [&str; 2] = [
+    "application-x-executable",
+    "gnome-mime-application-x-executable",
+];
+
+/// [`pick_icon`] for a program file: the first of [`PROGRAM_ICONS`] the theme carries, else its type's icon.
+pub fn pick_program_icon(mime: Option<&str>, path: &Path, has: &dyn Fn(&str) -> bool) -> String {
+    match PROGRAM_ICONS.iter().find(|n| has(n)) {
+        Some(n) => n.to_string(),
+        None => pick_icon(mime, path, has),
+    }
+}
+
 /// The theme icon name a listing gives `it`: a shortcut's own icon, a folder's `.directory` icon (a
 /// theme name `has` answers for, or an image path), the folder `specials` ([`crate::places::special_folders`])
-/// and drive rows, else [`pick_icon`] down the MIME chain.
+/// and drive rows, a program's icon ([`pick_program_icon`]), else [`pick_icon`] down the MIME chain.
 pub fn item_icon(
     it: &Item,
     specials: &[(PathBuf, &'static str)],
@@ -95,6 +109,9 @@ pub fn item_icon_with(
             }
         }
         return it.drive.map_or("folder", |k| k.icon()).to_string();
+    }
+    if it.program {
+        return pick_program_icon(it.mime.as_deref(), &it.path, has);
     }
     pick_icon(it.mime.as_deref(), &it.path, has)
 }
@@ -171,6 +188,7 @@ mod tests {
             is_dir,
             is_link: false,
             exec: false,
+            program: false,
             hidden: false,
             size: 0,
             modified: None,
@@ -193,6 +211,16 @@ mod tests {
         );
         assert_eq!(icon(&item(false, None, Some("text/plain"))), "text-plain");
         assert_eq!(icon(&item(false, None, None)), "text-x-generic");
+        let program = Item {
+            program: true,
+            ..item(false, None, Some("application/x-shellscript"))
+        };
+        assert_eq!(icon(&program), "application-x-executable");
+        let lacks = |n: &str| n != "application-x-executable";
+        assert_eq!(
+            item_icon(&program, &[], &lacks),
+            "gnome-mime-application-x-executable"
+        );
     }
 
     #[test]
@@ -204,6 +232,7 @@ mod tests {
             is_dir: true,
             is_link: false,
             exec: false,
+            program: false,
             hidden: false,
             size: 0,
             modified: None,
@@ -230,6 +259,7 @@ mod tests {
             is_dir: false,
             is_link: false,
             exec: false,
+            program: false,
             hidden: false,
             size: 0,
             modified: None,
