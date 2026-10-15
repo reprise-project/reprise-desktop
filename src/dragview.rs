@@ -1001,7 +1001,7 @@ impl State {
             Box::new(move |state| {
                 for (name, cell) in landed {
                     if let Some(cell) = cell {
-                        state.pin_icon(&name, cell);
+                        state.land_icon(&name, cell);
                     }
                 }
                 state.show_drop_failure(failed);
@@ -1157,7 +1157,7 @@ impl State {
                 // `landed` is a prefix of `puts`: the batch stops at its first failure.
                 for (name, ((_, cell, _), _)) in landed.iter().zip(&puts) {
                     if let Some(cell) = cell {
-                        state.pin_icon(name, *cell);
+                        state.land_icon(name, *cell);
                     }
                 }
                 if op == DropOp::Move {
