@@ -102,8 +102,8 @@ pub fn form_clipboard(focused: Option<form::FocusedEdit>, ev: &Event) -> Reply {
 /// hit-tested and clicked, motion tracked, a release released, Leave clearing
 /// what the pointer lit, a drop on a field ([`crate::fielddrop`]) heard as the
 /// open page's, a tick stepping a held scrollbar arrow. `None` is an event the host answers
-/// itself. First the sheet fits the window ([`PropSheet::fit`]): a window cut short or narrow
-/// scrolls the page. While an arrow is held the host keeps ticking ([`Ctx::want_tick`]).
+/// itself. First the sheet fits the window ([`PropSheet::fit`], [`PropSheet::fit_tabs`]): a
+/// window cut short or narrow scrolls the page, and one cut narrow wraps the tabs to it. While an arrow is held the host keeps ticking ([`Ctx::want_tick`]).
 pub fn sheet_input(sheet: &mut PropSheet, ev: &Event, ctx: &Ctx) -> Option<propsheet::Event> {
     let out = sheet_event(sheet, ev, ctx);
     if sheet.ticking() {
@@ -117,6 +117,7 @@ fn sheet_event(sheet: &mut PropSheet, ev: &Event, ctx: &Ctx) -> Option<propsheet
     let (ox, oy) = sheet.origin();
     sheet.fit((u.within(ctx.size.0 - ox), u.within(ctx.size.1 - oy)));
     let px = sheet.open().units().px(ctx.base_px());
+    sheet.fit_tabs(&ctx.text, px);
     Some(match ev {
         Event::Tick if sheet.ticking() => sheet.tick(std::time::Instant::now()),
         Event::Key(k) => {
@@ -246,7 +247,10 @@ mod tests {
             at_pick: false,
             text_size: 100,
         };
-        let page = Form::new(vec![Item::label("l", Rect::new(20, 50, 100, 13), "Label")]);
+        let page = Form::new(vec![
+            Item::label("l", Rect::new(20, 50, 100, 13), "Label"),
+            Item::label("low", Rect::new(20, 370, 100, 13), "Low"),
+        ]);
         let mut sheet = PropSheet::new(&["General"], vec![page], (398, 424));
         let _ = sheet_input(&mut sheet, &Event::Pointer(PointerInput::Leave), &ctx);
         assert!(!ctx.want_tick.take());
