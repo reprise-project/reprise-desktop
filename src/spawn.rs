@@ -232,19 +232,67 @@ impl SessionEnv {
 }
 
 /// Publish the display sockets to the systemd user manager and D-Bus activation environment, so
-/// bus-activated services find the compositor. Called once the socket exists, when `DISPLAY` is
-/// known and when colours change. Best effort.
+/// bus-activated services find the compositor. [`begin_session`] publishes first; this runs when
+/// `DISPLAY` is known and when colours change. Best effort.
 pub fn export_session_env(env: &SessionEnv) {
-    let mut c = std::process::Command::new("dbus-update-activation-environment");
-    c.arg("--systemd");
-    for (k, v) in env.pairs() {
-        c.arg(format!("{k}={v}"));
-    }
+    let argv = export_argv(env);
+    let mut c = std::process::Command::new(&argv[0]);
+    c.args(&argv[1..]);
     // Not waited on: the tool round-trips the bus, and colour changes call this from the event
     // loop.
     if let Err(e) = start(c, "dbus-update-activation-environment") {
         log::warn!("dbus-update-activation-environment: {e}; portals may not find the display");
     }
+}
+
+fn export_argv(env: &SessionEnv) -> Vec<String> {
+    let mut argv = vec![
+        "dbus-update-activation-environment".to_string(),
+        "--systemd".into(),
+    ];
+    argv.extend(env.pairs().into_iter().map(|(k, v)| format!("{k}={v}")));
+    argv
+}
+
+/// Reprise's session target (data/systemd). It binds `graphical-session.target`, so units wanted
+/// by or part of that target run with the session.
+const SESSION_TARGET: &str = "reprise-session.target";
+
+/// The commands that open the session `env` describes, in order: publish the variables, stop the
+/// target a crashed session left active (its units hold the old display), start the target. A
+/// nested run only publishes: `graphical-session.target` is the parent's.
+pub fn begin_commands(env: &SessionEnv) -> Vec<Vec<String>> {
+    let mut out = vec![export_argv(env)];
+    if env.parent.is_empty() {
+        // `graphical-session.target` by name: it stops when unneeded only after the stop job,
+        // so the start that follows would keep it and its units running.
+        let stop = ["stop", SESSION_TARGET, "graphical-session.target"];
+        let start = ["--no-block", "start", SESSION_TARGET];
+        for args in [&stop[..], &start[..]] {
+            let mut c = vec!["systemctl".to_string(), "--user".into()];
+            c.extend(args.iter().map(|a| a.to_string()));
+            out.push(c);
+        }
+    }
+    out
+}
+
+/// Run `begin_commands` in order on a thread of its own: each waits for the last, so the
+/// target's units start with the variables published.
+pub fn begin_session(env: &SessionEnv) {
+    let cmds = begin_commands(env);
+    std::thread::spawn(move || {
+        for argv in cmds {
+            let mut c = std::process::Command::new(&argv[0]);
+            c.args(&argv[1..]);
+            detach(&mut c);
+            match c.status() {
+                Ok(st) if !st.success() => log::warn!("{argv:?} exited with {st}"),
+                Ok(_) => {}
+                Err(e) => log::warn!("{argv:?}: {e}"),
+            }
+        }
+    });
 }
 
 /// The GTK portal backend's unit; it draws GTK3's print dialog (`Print=gtk` in
@@ -332,8 +380,8 @@ fn own_session(get: impl Fn(&str) -> Option<String>) -> Option<String> {
 const PORTAL_UNITS: [&str; 2] = ["reprise-portal.service", "xdg-desktop-portal.service"];
 
 /// The commands that end the session `env` published, in order: unset (or restore the parent's)
-/// variables in the systemd user manager, stop the portal backend, and the frontend too unless
-/// nested (it reads `XDG_CURRENT_DESKTOP` once, so a survivor would route the next desktop's
+/// variables in the systemd user manager, stop the portal backend, and the session target and
+/// frontend too unless nested (it reads `XDG_CURRENT_DESKTOP` once, so a survivor would route the next desktop's
 /// dialogs here). dbus-broker defers to systemd, so that is all to undo. With `end_processes`
 /// and not nested, the app scopes stop too, and a session of our own is terminated last: logind
 /// leaves its processes running without `KillUserProcesses`, e.g. a windowless Deskflow server.
@@ -357,12 +405,12 @@ pub fn end_commands(env: &SessionEnv, end_processes: bool) -> Vec<Vec<String>> {
     }
     let mut stop = user("stop");
     stop.insert(2, "--no-block".into());
-    let units = if env.parent.is_empty() {
-        &PORTAL_UNITS[..]
+    if env.parent.is_empty() {
+        stop.push(SESSION_TARGET.into());
+        stop.extend(PORTAL_UNITS.iter().map(|u| u.to_string()));
     } else {
-        &PORTAL_UNITS[..1]
-    };
-    stop.extend(units.iter().map(|u| u.to_string()));
+        stop.push(PORTAL_UNITS[0].into());
+    }
     if end_processes && env.parent.is_empty() {
         stop.push(reprisefs::scope::PATTERN.into());
     }
@@ -718,10 +766,50 @@ mod tests {
         assert_eq!(app(""), None);
     }
 
-    /// A session of its own unsets every variable it can publish, set or
-    /// not, then stops the portal backend, the frontend and its app scopes.
+    /// A session of its own publishes its variables before it starts the
+    /// session target, stopping one a crashed session left first; a nested
+    /// run leaves the parent's target alone.
     #[test]
-    fn a_login_session_ends_by_unsetting_and_stopping_the_portals_and_app_scopes() {
+    fn a_login_session_begins_by_publishing_then_restarting_the_session_target() {
+        let cmds = begin_commands(&env(None));
+        assert_eq!(cmds.len(), 3);
+        assert_eq!(
+            &cmds[0][..2],
+            &argv(&["dbus-update-activation-environment", "--systemd"])[..]
+        );
+        assert!(cmds[0].contains(&"WAYLAND_DISPLAY=wayland-9".to_string()));
+        assert_eq!(
+            cmds[1],
+            argv(&[
+                "systemctl",
+                "--user",
+                "stop",
+                "reprise-session.target",
+                "graphical-session.target"
+            ])
+        );
+        assert_eq!(
+            cmds[2],
+            argv(&[
+                "systemctl",
+                "--user",
+                "--no-block",
+                "start",
+                "reprise-session.target"
+            ])
+        );
+        let nested = SessionEnv {
+            parent: vec![("WAYLAND_DISPLAY", "wayland-0".into())],
+            ..env(None)
+        };
+        assert_eq!(begin_commands(&nested), vec![export_argv(&nested)]);
+    }
+
+    /// A session of its own unsets every variable it can publish, set or
+    /// not, then stops the session target, the portal backend, the frontend
+    /// and its app scopes.
+    #[test]
+    fn a_login_session_ends_by_unsetting_and_stopping_the_target_portals_and_app_scopes() {
         let every = [
             "WAYLAND_DISPLAY",
             "XDG_CURRENT_DESKTOP",
@@ -751,6 +839,7 @@ mod tests {
                     "--user",
                     "--no-block",
                     "stop",
+                    "reprise-session.target",
                     "reprise-portal.service",
                     "xdg-desktop-portal.service",
                     "app-reprise-*.scope",
@@ -816,6 +905,7 @@ mod tests {
                 "--user",
                 "--no-block",
                 "stop",
+                "reprise-session.target",
                 "reprise-portal.service",
                 "xdg-desktop-portal.service",
             ]))
