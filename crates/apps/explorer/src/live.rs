@@ -82,7 +82,7 @@ impl Explorer {
         }
     }
 
-    /// `Event::Wake`: a put, job, tip walk or late listing finished, thumbnails arrived, or
+    /// `Event::Wake`: a put, job, tip walk, late listing or Folders node read finished, thumbnails arrived, or
     /// the watch or UDisks2 saw a change (which re-lists), or the folder left (which follows it). A closing window quits here
     /// once its work is done.
     pub fn wake(&mut self, ctx: &mut Ctx) -> Reply {
@@ -95,7 +95,9 @@ impl Explorer {
                 ..Default::default()
             };
         }
-        let mut dirty = tipped | self.list_icons.take(&mut self.sv.entries, &mut ctx.icons);
+        let mut dirty = tipped
+            | self.take_fills(ctx)
+            | self.list_icons.take(&mut self.sv.entries, &mut ctx.icons);
         let mut arrived: Vec<PathBuf> = Vec::new();
         for done in self.thumbs.drain() {
             let Some(&i) = self.item_index.get(&done.path) else {

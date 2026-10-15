@@ -151,6 +151,47 @@ fn refilling_a_node_does_not_grow_the_place_table() {
     assert_eq!(ex.tree_places.len(), live(&ex.tree.roots));
 }
 
+/// A Folders node whose read does not answer (a dead mount) stays open and empty, is not read a
+/// second time while it waits, and fills on the wake after the read lands.
+#[test]
+fn a_folders_node_read_late_fills_on_a_later_wake() {
+    let dir = tempfile::Builder::new()
+        .prefix("tree")
+        .tempdir()
+        .expect("a temp dir shown in the tree");
+    let sub = dir.path().join("sub");
+    std::fs::create_dir_all(sub.join("inner")).expect("mkdir");
+    let mut ctx = test_ctx();
+    let mut ex = test_explorer(Place::Folder(dir.path().to_path_buf()), &mut ctx);
+    let place = Place::Folder(sub);
+    let path = ex.tree_path_of(&place).expect("sub's node");
+    ex.tree.node_mut(&path).expect("node").expanded = true;
+    let read = ex.kids_reader(&path, place.clone());
+    let (answer, gate) = std::sync::mpsc::channel::<()>();
+    let job = repriseapp::listjob::Job::spawn(None, move || {
+        gate.recv().ok();
+        read()
+    });
+    ex.filling.push((place.clone(), job));
+
+    ex.fill_node(path.clone(), &mut ctx);
+    assert_eq!(ex.filling.len(), 1, "the node is read once");
+    assert!(ex.tree.node(&path).expect("node").children.is_empty());
+
+    answer.send(()).expect("send");
+    for _ in 0..500 {
+        if ex.filling.is_empty() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        ex.wake(&mut ctx);
+    }
+    let node = ex.tree.node(&path).expect("node");
+    assert!(node.expanded, "the node stays open");
+    let labels: Vec<&str> = node.children.iter().map(|n| n.label.as_str()).collect();
+    assert_eq!(labels, ["inner"]);
+}
+
 /// Computer's view and its tree node read the drives scanned at the
 /// last `/proc/mounts` change: neither stats the mounts again.
 #[test]

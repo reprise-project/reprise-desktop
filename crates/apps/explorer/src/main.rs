@@ -100,7 +100,7 @@ pub struct Tip {
 }
 
 /// How long a listing is waited for before the window goes on. Tests wait as long as it takes.
-const LIST_WAIT: std::time::Duration = if cfg!(test) {
+pub(crate) const LIST_WAIT: std::time::Duration = if cfg!(test) {
     std::time::Duration::from_secs(60)
 } else {
     repriseapp::listjob::WAIT
@@ -232,6 +232,8 @@ pub struct Explorer {
     /// A place still being read after [`LIST_WAIT`]; the listing before stays until it lands
     /// ([`Explorer::take_read`]).
     reading: Option<(Place, Job<Read>)>,
+    /// Folders nodes still being read after [`LIST_WAIT`] ([`Explorer::fill_node`]).
+    filling: Vec<(Place, Job<foldertree::Kids>)>,
     /// Image sizes by path, from the thumbnail worker or a header read
     /// ([`Explorer::read_dims`]). They survive a sort and a refresh and feed the
     /// Tiles detail line, the infotip and the Details pane.
@@ -366,6 +368,7 @@ impl Explorer {
             drawn_scale: 0,
             list_icons: ListIcons::default(),
             reading: None,
+            filling: Vec::new(),
             image_dims: HashMap::new(),
             dims_asked: HashSet::new(),
             watch: match Watch::new(ctx.wake.clone()) {

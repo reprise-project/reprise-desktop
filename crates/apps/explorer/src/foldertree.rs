@@ -145,7 +145,7 @@ fn opens(p: &Place, inp: &Inputs) -> bool {
 }
 
 /// [`fill`] with the node's children already read.
-fn fill_with(
+pub fn fill_with(
     tree: &mut TreeView,
     places: &mut Vec<Place>,
     path: Vec<usize>,
