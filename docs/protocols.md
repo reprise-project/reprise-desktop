@@ -96,5 +96,8 @@ GeoClue2 agent.
 
 Reprise publishes its session to the systemd user manager and the D-Bus
 activation environment, and takes it back out when it exits, so the next
-desktop you log into starts clean. `loginctl lock-session` locks the screen.
+desktop you log into starts clean. Once the variables are published it starts
+`reprise-session.target`, which binds `graphical-session.target`, so user units
+wanted by or `PartOf` that target run with the session; Log Off and exit stop
+it. `loginctl lock-session` locks the screen.
 XDG autostart honours `OnlyShowIn`, `NotShowIn`, `Hidden` and `TryExec`.
