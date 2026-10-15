@@ -1,17 +1,20 @@
 //! Identify's numbers: the Display page names the outputs in its order
 //! (`org.reprise.Tray.Identify`), and each one in the layout shows its
 //! number, from 1, as a `reprisekit::controls::arrange` badge in its
-//! middle for 2 s. The badges sit in `layers.overlay` and let the pointer
-//! through. A second Identify replaces the first.
+//! middle for 2 s, on a glass backdrop under a look with glass. The badges
+//! sit in `layers.overlay` and let the pointer through. A second Identify
+//! replaces the first.
 
 use std::time::Duration;
 
 use reprisekit::controls::arrange::{self, BADGE};
-use reprisescene::{BufferId, Input};
+use reprisekit::look::panel;
+use reprisescene::{Input, TreeId};
 use smithay::reexports::calloop::RegistrationToken;
 use smithay::reexports::calloop::timer::{TimeoutAction, Timer};
 
 use crate::compositor::State;
+use crate::glass::{Backdrop, Pane, PaneShape};
 use crate::output::upload_scaled;
 use crate::raster::Rect;
 
@@ -20,8 +23,14 @@ const HOLD: Duration = Duration::from_secs(2);
 /// The badges while shown, and the timer that takes them away.
 #[derive(Default)]
 pub struct IdentifyView {
-    badges: Vec<BufferId>,
+    badges: Vec<Badge>,
     timer: Option<RegistrationToken>,
+}
+
+struct Badge {
+    tree: TreeId,
+    glass_tree: TreeId,
+    backdrop: Backdrop,
 }
 
 /// Where a badge goes on an output whose layout box is `b`: its middle.
@@ -48,13 +57,36 @@ pub fn show(state: &mut State, names: &[String]) {
         let scale = state.draw_scale_at(Some(&out)).max(1);
         let theme = state.config.theme.scaled(scale);
         let canvas = arrange::draw_badge(&theme, &state.text, k as u32 + 1);
+        let m = panel::margin(&state.config.theme);
         let at = badge_origin(b);
+        let pane = match state.config.theme.glass() {
+            Some(g) if crate::glass::wanted(&state.config) => Some(Pane {
+                shapes: vec![PaneShape {
+                    rect: Rect::new(0, 0, BADGE, BADGE),
+                    corner: g.panel.corner,
+                    square_bottom: false,
+                    square_top: false,
+                }],
+                holes: Vec::new(),
+            }),
+            _ => None,
+        };
         let scene = &mut state.scene;
-        let buffer = scene.buffer_create(state.layers.overlay);
-        scene.set_position(buffer, at.0, at.1);
+        let tree = scene.tree_create(state.layers.overlay);
+        crate::glass::leave_out(scene, tree);
+        scene.set_position(tree, at.0, at.1);
+        let glass_tree = scene.tree_create(tree);
+        let mut backdrop = Backdrop::new(&state.glass);
+        backdrop.set(scene, &state.glass, glass_tree, pane);
+        let buffer = scene.buffer_create(tree);
+        scene.set_position(buffer, -m.left, -m.top);
         scene.set_input(buffer, Input::Passthrough);
         upload_scaled(scene, buffer, &canvas, scale);
-        state.identify.badges.push(buffer);
+        state.identify.badges.push(Badge {
+            tree,
+            glass_tree,
+            backdrop,
+        });
     }
     if state.identify.badges.is_empty() {
         return;
@@ -81,8 +113,10 @@ pub fn hide(state: &mut State) {
     if state.identify.badges.is_empty() {
         return;
     }
-    for b in std::mem::take(&mut state.identify.badges) {
-        state.scene.destroy(b);
+    for mut b in std::mem::take(&mut state.identify.badges) {
+        b.backdrop
+            .set(&mut state.scene, &state.glass, b.glass_tree, None);
+        state.scene.destroy(b.tree);
     }
     state.redraw_all();
 }
