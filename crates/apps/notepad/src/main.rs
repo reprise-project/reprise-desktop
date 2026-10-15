@@ -2389,6 +2389,40 @@ mod tests {
     }
 
     #[test]
+    fn under_glass_the_menu_bar_is_clear_over_the_frames_glass() {
+        use reprisekit::interface::Interface;
+        let mut ctx = test_ctx();
+        ctx.size = (400, 300);
+        let np = Notepad::new(None);
+        for (look, rows) in [
+            (Interface::Classic, 0),
+            (Interface::Blue, 0),
+            (Interface::Glass, 1),
+        ] {
+            ctx.theme = reprisekit::interfaces::theme_for(look);
+            let mut c = Canvas::new(400, 300);
+            np.draw_main(&mut c, &ctx);
+            let bar = np.bar_layout(&ctx).bar;
+            let alpha = c.get(390, bar.y + bar.height / 2) >> 24;
+            assert_eq!(
+                c.take_glass_top(),
+                rows * bar.bottom(),
+                "{look:?} glass rows"
+            );
+            assert_eq!(
+                alpha,
+                0xFF * (1 - rows as u32),
+                "{look:?} bar past its titles"
+            );
+            assert_eq!(
+                c.get(200, bar.bottom() + 20) >> 24,
+                0xFF,
+                "{look:?} the text box"
+            );
+        }
+    }
+
+    #[test]
     fn the_text_boxs_scrollbar_lights_under_the_pointer_and_a_leave_clears_it() {
         use reprisekit::pointer::Interaction;
         let mut ctx = test_ctx();
