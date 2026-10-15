@@ -3,6 +3,8 @@
 //! every file type with its program, a filter, and Change... and Restore Default. Defaults live in the mime-apps lists ([`reprisefs::props`]); edits wait in
 //! [`Defaults::edits`] until Apply and go to the user's `mimeapps.list`.
 
+use std::path::Path;
+
 use reprisefs::apps::AppEntry;
 use reprisefs::mimetree::MimeTree;
 use reprisefs::props;
@@ -323,6 +325,23 @@ impl Defaults {
 
     pub fn current(&self, mime: &str) -> Option<usize> {
         props::default_in_lists(&self.lists, &self.tree, mime, &self.apps)
+    }
+
+    /// The program id for chooser row `id`. A program file Browse... picked
+    /// (its path) gets a desktop entry for `mime` in applications folder
+    /// `dir` (`None`: no home) and joins the programs.
+    pub fn chosen(&mut self, id: &str, mime: &str, dir: Option<&Path>) -> std::io::Result<String> {
+        if !Path::new(id).is_absolute() {
+            return Ok(id.to_string());
+        }
+        let dir = dir.ok_or_else(|| std::io::Error::other("no home directory"))?;
+        let entry = reprisefs::apps::program_entry_in(dir, Path::new(id), Some(mime))?;
+        let id = entry.id.clone();
+        match self.apps.iter_mut().find(|a| a.id == id) {
+            Some(a) => *a = entry,
+            None => self.apps.push(entry),
+        }
+        Ok(id)
     }
 
     /// Whether the user's list names a program for `mime`, edits
@@ -730,6 +749,34 @@ pub(crate) mod tests {
 
     fn id_of(d: &Defaults, mime: &str) -> Option<String> {
         d.current(mime).map(|i| d.apps[i].id.clone())
+    }
+
+    #[test]
+    fn a_browsed_program_gets_an_entry_and_becomes_the_default() {
+        let dir = std::env::temp_dir().join(format!("reprise-dp-browse-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let mut d = defaults();
+        let n = d.apps.len();
+        assert_eq!(
+            d.chosen("notepad.desktop", "text/plain", None).unwrap(),
+            "notepad.desktop",
+            "an installed program is taken as it is"
+        );
+        let id = d.chosen("/opt/view", "text/plain", Some(&dir)).unwrap();
+        assert_eq!(id, "reprise-userapp-view.desktop");
+        assert!(dir.join(&id).is_file(), "the entry is written");
+        d.set("text/plain", Some(&id));
+        assert_eq!(
+            d.current("text/plain").map(|i| d.apps[i].id.as_str()),
+            Some(id.as_str())
+        );
+        assert_eq!(
+            d.chosen("/opt/view", "text/x-rust", Some(&dir)).unwrap(),
+            id
+        );
+        assert_eq!(d.apps.len(), n + 1, "picked again: the entry is reused");
+        assert_eq!(d.apps[n].mime_types, ["text/plain", "text/x-rust"]);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
