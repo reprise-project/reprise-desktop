@@ -624,7 +624,7 @@ impl State {
     }
 
     fn spot_moved(&mut self, tree: TreeId) {
-        let spot = (self.config.theme.look.style()).is_some_and(|s| s.task_spot.is_some());
+        let spot = (self.config.theme.look.style()).is_some_and(|s| s.task_spot().is_some());
         let Some(bar) = self.bar(tree).filter(|_| spot) else {
             return;
         };

@@ -718,7 +718,7 @@ mod tests {
             for part in [Part::StartButton, Part::StartAbove] {
                 assert_eq!(two.part(part).unwrap().scale, 2, "{h} px {part:?}");
             }
-            let spot = two.task_spot.as_ref().unwrap();
+            let spot = two.task_spot().unwrap();
             assert_eq!((spot.button.base.scale, spot.button.gain.scale), (2, 2));
         }
         let theme = crate::interfaces::theme_for(crate::interface::Interface::Glass).scaled(2);

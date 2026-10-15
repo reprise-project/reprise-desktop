@@ -984,7 +984,7 @@ pub struct Style {
     pub glass: Option<GlassSpec>,
     pub caption_title: CaptionTitle,
     pub task_glow: Option<TaskGlow>,
-    pub task_spot: Option<TaskSpot>,
+    task_spot: Option<Spot>,
     pub task_nudge: bool,
     pub greyed_field_frame: bool,
     pub default_needs_active: bool,
@@ -1030,6 +1030,9 @@ type Rescale = Arc<dyn Fn(i32) -> Style + Send + Sync>;
 
 /// A part's art, painted the first time it is asked for; clones share it.
 type Art = Arc<LazyLock<PartImage, Box<dyn FnOnce() -> PartImage + Send>>>;
+
+/// The lit task buttons' art, painted the first time it is asked for; clones share it.
+type Spot = Arc<LazyLock<TaskSpot, Box<dyn FnOnce() -> TaskSpot + Send>>>;
 
 impl Style {
     pub fn new(
@@ -1132,8 +1135,24 @@ impl Style {
     }
 
     pub fn with_task_spot(mut self, t: Option<TaskSpot>) -> Style {
-        self.task_spot = t;
+        self.task_spot = None;
+        match t {
+            Some(t) => self.with_painted_task_spot(move || t),
+            None => self,
+        }
+    }
+
+    /// The lit task buttons drawn by `paint`, which runs the first time they are asked for.
+    pub fn with_painted_task_spot(
+        mut self,
+        paint: impl FnOnce() -> TaskSpot + Send + 'static,
+    ) -> Style {
+        self.task_spot = Some(Arc::new(LazyLock::new(Box::new(paint))));
         self
+    }
+
+    pub fn task_spot(&self) -> Option<&TaskSpot> {
+        self.task_spot.as_deref().map(LazyLock::force)
     }
 
     pub fn without_task_nudge(mut self) -> Style {

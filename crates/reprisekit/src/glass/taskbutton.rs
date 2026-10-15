@@ -871,26 +871,26 @@ pub fn glowing_label_edge(edges: &PartImage, state: State, n: usize, c: Color) -
 
 /// The 40 px bar's lit task buttons: [`SPOT`] over the frames of [`buttons`],
 /// [`label`] and [`stacks`] without the spot. Held is the active, lit frame.
-pub fn task_spot(s: &Settings, n: i32) -> Option<TaskSpot> {
+pub fn task_spot(s: &Settings, n: i32) -> TaskSpot {
     let h = super::BAR_HEIGHT;
     let size = (super::ICON_BUTTON.0, h);
-    Some(TaskSpot {
+    TaskSpot {
         fit: SPOT,
         button: spot_buttons(s, size, n),
         labelled: Some(spot_label(s, h, n)),
         edges: Some(spot_stacks(s, size, n)),
-    })
+    }
 }
 
 /// The small bar's lit task buttons, as [`task_spot`] on its 44x30 frames; its stacked edges keep their own pairs.
-pub(crate) fn small_task_spot(s: &Settings, n: i32) -> Option<TaskSpot> {
+pub(crate) fn small_task_spot(s: &Settings, n: i32) -> TaskSpot {
     let size = (super::SMALL_ICON_BUTTON.0, super::SMALL_TASKBAR_HEIGHT);
-    Some(TaskSpot {
+    TaskSpot {
         fit: SPOT,
         button: spot_buttons(s, size, n),
         labelled: None,
         edges: None,
-    })
+    }
 }
 
 #[cfg(test)]
@@ -922,8 +922,8 @@ mod tests {
     }
 
     fn parts(s: &Settings, n: i32) -> Vec<(&'static str, PartImage)> {
-        let spot = task_spot(s, n).unwrap();
-        let small = small_task_spot(s, n).unwrap();
+        let spot = task_spot(s, n);
+        let small = small_task_spot(s, n);
         let labelled = spot.labelled.unwrap();
         let edges = spot.edges.unwrap();
         vec![
@@ -1429,8 +1429,8 @@ mod tests {
     #[test]
     fn the_spots_gain_follows_the_frames_shape() {
         let s = Settings::default();
-        let spot = task_spot(&s, 1).unwrap();
-        let small = small_task_spot(&s, 1).unwrap();
+        let spot = task_spot(&s, 1);
+        let small = small_task_spot(&s, 1);
         let (label, edges) = (spot.labelled.unwrap(), spot.edges.unwrap());
         for (what, f, d, open) in [
             ("button", &spot.button, &ICONS, false),
@@ -1548,8 +1548,8 @@ mod tests {
     #[test]
     fn the_spots_frames_are_laid_out_as_their_parts() {
         let s = Settings::default();
-        let spot = task_spot(&s, 1).unwrap();
-        let small = small_task_spot(&s, 1).unwrap();
+        let spot = task_spot(&s, 1);
+        let small = small_task_spot(&s, 1);
         let edges = spot.edges.as_ref().unwrap();
         let labelled = spot.labelled.as_ref().unwrap();
         for (what, f, part) in [

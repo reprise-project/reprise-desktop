@@ -299,7 +299,10 @@ fn small(full: Style, s: &Settings, scale: i32) -> Style {
         .without_part(Part::TaskLabel)
         .without_part(Part::TaskLabelEdge)
         .with_task_glow(paint::small_task_glow(s))
-        .with_task_spot(taskbutton::small_task_spot(s, scale));
+        .with_painted_task_spot({
+            let s = *s;
+            move || taskbutton::small_task_spot(&s, scale)
+        });
     st.taskbar.labelled = LabelledButton::CLASSIC;
     st.taskbar.icon_button = Some(SMALL_ICON_BUTTON);
     st.taskbar.task_icon = crate::icon::ICON_SIZE;
@@ -323,6 +326,7 @@ fn build_at(s: &Settings, scale: i32) -> Style {
         let s = *s;
         move || paint(&s, scale)
     };
+    let owned = *s;
     // Dark Glass remaps only the control art; the glass keeps its colour,
     // and so does the progress bar's green fill.
     let ink = move |(part, img): (Part, PartImage)| {
@@ -430,7 +434,7 @@ fn build_at(s: &Settings, scale: i32) -> Style {
     )
     .with_task_glow(paint::task_glow(s))
     .with_start_bloom(orb::bloom)
-    .with_task_spot(taskbutton::task_spot(s, scale))
+    .with_painted_task_spot(move || taskbutton::task_spot(&owned, scale))
     .without_task_nudge()
     .with_greyed_field_frame()
     .with_controls(controls())
@@ -445,28 +449,12 @@ fn build_at(s: &Settings, scale: i32) -> Style {
     .with_painted(Part::SwitcherShadow, lazy(|_, d| switcher::shadow_part(d)))
     .with_painted(Part::SnapFrame, lazy(snappicker::frame_part))
     .with_painted(Part::FlyoutShadow, lazy(|_, d| flyouts::shadow_part(d)));
-    let style = controls::parts(scale)
-        .into_iter()
-        .map(ink)
-        .fold(style, |st, (part, img)| st.with_part(part, img));
-    let style = startpanel::parts(s, scale)
-        .into_iter()
-        .fold(style, |st, (part, img)| st.with_part(part, img))
+    let style = GROUPS.into_iter().fold(style, |st, (parts, paint)| {
+        st.with_painted_group(parts, move || paint(scale).into_iter().map(ink).collect())
+    });
+    let style = style
+        .with_painted_group(&startpanel::PARTS, move || startpanel::parts(&owned, scale))
         .with_text_color(Part::StartPanel, State::Normal, startpanel::right_ink(s));
-    let style = fields::parts(scale)
-        .into_iter()
-        .chain(sheet::parts(scale))
-        .chain(scrollbar::parts(scale))
-        .chain(header::parts(scale))
-        .chain(statusbar::parts(scale))
-        .chain(popups::parts(scale))
-        .chain(toolbar::parts(scale))
-        .chain(menus::parts(scale))
-        .chain(balloon::parts(scale))
-        .chain(flyouts::parts(scale))
-        .chain(items::parts(scale))
-        .map(ink)
-        .fold(style, |st, (part, img)| st.with_part(part, img));
     bars::parts()
         .into_iter()
         .fold(style, |st, (part, paint)| {
@@ -483,8 +471,105 @@ fn build_at(s: &Settings, scale: i32) -> Style {
         .with_caption_tabs(caption_tabs(title_ink))
         .with_balloon(balloon::look(s.mode, fields::drop_list(s.mode).shadow))
         .with_flyout(flyouts::look())
-        .with_part(Part::DesktopItem, items::desktop_part(scale))
+        .with_painted(Part::DesktopItem, move || items::desktop_part(scale))
 }
+
+/// A group of control parts and the painter that draws them together at a scale.
+type Group = (&'static [Part], fn(i32) -> Vec<(Part, PartImage)>);
+
+/// Glass's control parts, each group painted the first time one of its parts is drawn.
+const GROUPS: [Group; 12] = [
+    (&[Part::CheckBox, Part::Radio], |d| {
+        controls::parts(d).into()
+    }),
+    (
+        &[
+            Part::EditBorder,
+            Part::ComboList,
+            Part::ComboDrop,
+            Part::SpinUp,
+            Part::SpinDown,
+        ],
+        |d| fields::parts(d).into(),
+    ),
+    (
+        &[
+            Part::PushButton,
+            Part::GroupBox,
+            Part::TabItem,
+            Part::TabPane,
+        ],
+        |d| sheet::parts(d).into(),
+    ),
+    (
+        &[
+            Part::ScrollArrowUp,
+            Part::ScrollArrowDown,
+            Part::ScrollArrowLeft,
+            Part::ScrollArrowRight,
+            Part::ScrollThumbV,
+            Part::ScrollThumbH,
+            Part::ScrollGripV,
+            Part::ScrollGripH,
+            Part::ScrollTrackV,
+            Part::ScrollTrackH,
+        ],
+        |d| scrollbar::parts(d).into(),
+    ),
+    (
+        &[
+            Part::HeaderItem,
+            Part::HeaderFiller,
+            Part::HeaderSortArrow,
+            Part::ListBorder,
+            Part::WellFrame,
+        ],
+        |d| header::parts(d).into(),
+    ),
+    (&[Part::StatusBar, Part::StatusPane, Part::SizeBox], |d| {
+        statusbar::parts(d).into()
+    }),
+    (
+        &[
+            Part::Tooltip,
+            Part::CalendarBand,
+            Part::PlacesBar,
+            Part::CalendarFrame,
+            Part::PlacesTile,
+        ],
+        |d| popups::parts(d).into(),
+    ),
+    (
+        &[
+            Part::ToolbarButton,
+            Part::ToolbarDrop,
+            Part::ToolbarSeparator,
+            Part::Rebar,
+            Part::RebarBand,
+            Part::RebarGripper,
+        ],
+        |d| toolbar::parts(d).into(),
+    ),
+    (
+        &[
+            Part::MenuItem,
+            Part::MenuCheck,
+            Part::MenuCheckMark,
+            Part::MenuRadioMark,
+            Part::MenuBar,
+            Part::MenuBarItem,
+        ],
+        |d| menus::parts(d).into(),
+    ),
+    (&[Part::BalloonClose], |d| balloon::parts(d).into()),
+    (
+        &[Part::CalendarToday, Part::CalendarPrev, Part::CalendarNext],
+        |d| flyouts::parts(d).into(),
+    ),
+    (&[Part::ListItem, Part::TreeExpander], |d| {
+        items::parts(d).into()
+    }),
+];
 
 /// Glass's caption tabs for titles inked `ink` (the focused window's, the
 /// others'): rounded 3 px washes over the glass, white under dark titles
@@ -929,6 +1014,19 @@ mod tests {
             centre, 0xFF1D_1C1D,
             "a normal push button's centre is 1C1C1C, its lower gloss"
         );
+    }
+
+    #[test]
+    fn each_group_paints_exactly_the_parts_it_names() {
+        let start = |d| startpanel::parts(&Settings::default(), d);
+        let groups = GROUPS
+            .into_iter()
+            .chain([(&startpanel::PARTS[..], start as fn(i32) -> _)]);
+        for (names, paint) in groups {
+            let painted: Vec<Part> = paint(1).into_iter().map(|(p, _)| p).collect();
+            assert_eq!(painted.len(), names.len(), "{names:?}");
+            assert!(names.iter().all(|p| painted.contains(p)), "{names:?}");
+        }
     }
 
     #[test]

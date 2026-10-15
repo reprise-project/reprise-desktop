@@ -114,6 +114,35 @@ fn panel(s: &Settings, d: i32) -> PartImage {
     .at_scale(d)
 }
 
+/// The parts [`parts`] paints.
+pub(crate) const PARTS: [Part; 25] = [
+    Part::StartPanel,
+    Part::StartPane,
+    Part::StartJumpPane,
+    Part::StartHotLeft,
+    Part::StartNewPin,
+    Part::StartHotAll,
+    Part::StartHotSplit,
+    Part::StartHotJump,
+    Part::StartLitResult,
+    Part::StartHotRight,
+    Part::StartRuleLeft,
+    Part::StartRuleRight,
+    Part::StartJumpRule,
+    Part::StartSearchRule,
+    Part::StartShutdown,
+    Part::StartShutdownArrow,
+    Part::StartShutdownLight,
+    Part::StartShutdownArrowLight,
+    Part::StartSearchField,
+    Part::StartMagnifier,
+    Part::StartClear,
+    Part::StartTriangleRight,
+    Part::StartTriangleLeft,
+    Part::StartRowArrow,
+    Part::StartPictureFrame,
+];
+
 pub(crate) fn parts(s: &Settings, d: i32) -> Vec<(Part, PartImage)> {
     let mut parts = vec![(Part::StartPanel, panel(s, d))];
     parts.extend(super::startparts::parts(s, d));
