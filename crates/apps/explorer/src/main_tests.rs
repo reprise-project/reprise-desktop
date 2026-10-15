@@ -328,6 +328,7 @@ fn item(name: &str, is_dir: bool, size: u64, kind: &str, modified: Option<i64>) 
         is_dir,
         is_link: false,
         exec: false,
+        program: false,
         hidden: false,
         size,
         modified,
