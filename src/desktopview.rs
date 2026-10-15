@@ -92,6 +92,8 @@ pub struct DesktopView {
     /// The icon size the last read decoded the icon files at, and the icon cache's
     /// `file_drops` after it put them in: a change in either means a read again.
     icons_read: (i32, u64),
+    /// Cells answers pinned since the last read finished, which `cells` does not show yet.
+    landed: Vec<(i32, i32)>,
     pub(crate) send_to: Vec<reprisefs::sendto::SendToRow>,
     pub(crate) drives: places::MountedDrives,
 }
@@ -592,6 +594,28 @@ fn icon_files(
         .collect()
 }
 
+/// The cell an answer landing `name` at `wanted` takes: `wanted` unless another icon is laid out
+/// there (`cells` runs parallel to `entries`) or an earlier answer landed there since the last
+/// read, else the free cell nearest it. A late answer never evicts an icon.
+fn landing_cell(
+    area: Rect,
+    entries: &[DesktopEntry],
+    cells: &[Rect],
+    landed: &[(i32, i32)],
+    name: &str,
+    wanted: (i32, i32),
+) -> (i32, i32) {
+    let square = desktop::Cell::square(desktop::CELL);
+    let taken: std::collections::HashSet<(i32, i32)> = entries
+        .iter()
+        .zip(cells)
+        .filter(|(e, _)| e.name != name)
+        .map(|(_, r)| desktop::cell_at(square, area, r.x, r.y))
+        .chain(landed.iter().copied())
+        .collect();
+    desktop::free_cell_near(area, &taken, wanted)
+}
+
 fn migrate_launcher_keys(
     entries: &[DesktopEntry],
     positions: &mut BTreeMap<String, (i32, i32)>,
@@ -826,6 +850,7 @@ pub fn setup(state: &mut State) {
         scanning: false,
         rescan_again: false,
         icons_read: (0, 0),
+        landed: Vec::new(),
         send_to: Vec::new(),
         drives: places::MountedDrives::new(),
     });
@@ -980,6 +1005,7 @@ impl State {
             return;
         };
         view.scanning = false;
+        view.landed.clear();
         icons.put_files(art.into_iter().map(|(f, c)| (f, px, c)).collect());
         view.icons_read = (px, icons.file_drops());
         desktop::wear_file_icons(&mut entries, &view.mime, &|n| icons.has(n));
@@ -1696,32 +1722,26 @@ impl State {
         self.relayout_desktop();
     }
 
-    /// A new item `name` exists on disk: pin it to the free cell nearest `at` (unless
-    /// Auto Arrange flows it), then rescan once.
+    /// Pin `name`, which an answer from the file jobs just put on the desktop, to `cell`, or to
+    /// the free cell nearest it when an icon took `cell` while the answer was pending.
+    pub(crate) fn land_icon(&mut self, name: &str, cell: (i32, i32)) {
+        let area = self.desktop_area();
+        let Some(view) = self.desktop.as_mut() else {
+            return;
+        };
+        let cell = landing_cell(area, &view.entries, &view.cells, &view.landed, name, cell);
+        view.landed.push(cell);
+        self.pin_icon(name, cell);
+    }
+
+    /// A new item `name` exists on disk: land it in the cell under `at` (unless Auto Arrange
+    /// flows it), then rescan once.
     fn created(&mut self, name: &str, at: Option<(i32, i32)>) {
-        let area = self
-            .first_output()
-            .map(|o| self.usable_area(Some(&o)))
-            .filter(|a| a.width > 0);
-        let cell = self.desktop.as_ref().and_then(|view| {
-            let ((x, y), area) = (at?, area?);
-            if view.auto_arrange {
-                return None;
-            }
+        let area = self.desktop_area();
+        let auto = self.desktop.as_ref().is_none_or(|v| v.auto_arrange);
+        if let Some((x, y)) = at.filter(|_| !auto && area.width > 0) {
             let square = desktop::Cell::square(desktop::CELL);
-            let taken: std::collections::HashSet<(i32, i32)> = view
-                .cells
-                .iter()
-                .map(|r| desktop::cell_at(square, area, r.x, r.y))
-                .collect();
-            Some(desktop::free_cell_near(
-                area,
-                &taken,
-                desktop::cell_at(square, area, x, y),
-            ))
-        });
-        if let Some(cell) = cell {
-            self.pin_icon(name, cell);
+            self.land_icon(name, desktop::cell_at(square, area, x, y));
         }
         self.rescan_desktop();
     }
@@ -2235,6 +2255,47 @@ mod tests {
             remap(&old, &new),
             [Some(2), None, Some(0)],
             "b.txt moves to row 2, c.txt is gone, the bin moves to row 0"
+        );
+    }
+
+    /// New Folder lands in a cell while a paste aimed at it waits on a mount that does not
+    /// answer: the paste, landing after, takes the next free cell and the folder keeps its own.
+    #[test]
+    fn a_late_answer_never_takes_a_cell_an_icon_landed_in_meanwhile() {
+        let plain = |name: &str| DesktopEntry {
+            name: name.into(),
+            label: name.into(),
+            icon: "folder".into(),
+            target: Target::Open(PathBuf::from(name)),
+            path: PathBuf::from(name),
+            shortcut: false,
+            kind: desktop::Kind::File,
+            is_dir: true,
+            allow_launching: false,
+        };
+        let area = Rect::new(0, 0, 800, 600);
+        let square = desktop::Cell::square(desktop::CELL);
+        let at = |c: (i32, i32)| desktop::cell_rect(square, area, c.0, c.1);
+        let entries = [plain("New Folder")];
+        let cells = [at((2, 1))];
+        assert_eq!(
+            landing_cell(area, &entries, &cells, &[], "report.pdf", (2, 1)),
+            (2, 2),
+            "the paste goes to the next free cell"
+        );
+        assert_eq!(
+            landing_cell(area, &entries, &cells, &[], "New Folder", (2, 1)),
+            (2, 1),
+            "an icon is not in its own way"
+        );
+        assert_eq!(
+            landing_cell(area, &[], &[], &[(2, 1)], "report.pdf", (2, 1)),
+            (2, 2),
+            "a cell landed in before the read shows it is taken"
+        );
+        assert_eq!(
+            landing_cell(area, &entries, &cells, &[], "report.pdf", (4, 0)),
+            (4, 0)
         );
     }
 
