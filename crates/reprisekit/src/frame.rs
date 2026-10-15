@@ -150,6 +150,12 @@ pub struct FrameGeometry {
     pub group: Option<Rect>,
     pub client: Rect,
     pub chrome: Chrome,
+    /// How many of the client's top rows the frame's glass runs down under (the client's blur
+    /// region, `ext-background-effect-v1`); 0 for none. Only a look with [`Part::ClientGlass`]
+    /// draws it.
+    ///
+    /// [`Part::ClientGlass`]: crate::style::Part::ClientGlass
+    pub glass_top: i32,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -244,6 +250,15 @@ impl FrameGeometry {
             group,
             client,
             chrome,
+            glass_top: 0,
+        }
+    }
+
+    /// This frame with its glass run `rows` down the client's top, at most the client's height.
+    pub fn with_glass_top(self, rows: i32) -> FrameGeometry {
+        FrameGeometry {
+            glass_top: rows.clamp(0, self.client.height),
+            ..self
         }
     }
 
@@ -262,6 +277,7 @@ impl FrameGeometry {
             group: self.group.map(|r| r.scaled(n)),
             client: self.client.scaled(n),
             chrome: self.chrome,
+            glass_top: self.glass_top * n,
         }
     }
 
@@ -295,6 +311,7 @@ impl FrameGeometry {
             group: self.group.map(mv),
             client: mv(self.client),
             chrome: self.chrome,
+            glass_top: self.glass_top,
         }
     }
 
