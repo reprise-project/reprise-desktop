@@ -15,6 +15,7 @@ mod hotspot;
 mod import;
 mod keydlg;
 mod nm;
+mod ovpn;
 mod stations;
 mod status;
 mod tray;
@@ -48,6 +49,7 @@ const VPN: WinId = "vpn";
 const IMPORT: WinId = "import";
 const HOTSPOT: WinId = "hotspot";
 const NOTICE: WinId = "notice";
+const BROWSE_TITLE: &str = "Choose File";
 
 /// Where the sign-in balloon sends the browser when NetworkManager has no
 /// check address of its own.
@@ -55,6 +57,7 @@ const FALLBACK_CHECK_URI: &str = "http://nmcheck.gnome.org/check_network_status.
 
 enum VpnWin {
     WireGuard(vpnsheet::WgSheet),
+    OpenVpn(vpnsheet::OvpnSheet),
     Plugin(vpnsheet::PluginSheet),
 }
 
@@ -62,6 +65,7 @@ impl VpnWin {
     fn sheet(&self) -> &PropSheet {
         match self {
             VpnWin::WireGuard(s) => &s.sheet,
+            VpnWin::OpenVpn(s) => &s.sheet,
             VpnWin::Plugin(s) => &s.sheet,
         }
     }
@@ -69,6 +73,7 @@ impl VpnWin {
     fn sheet_mut(&mut self) -> &mut PropSheet {
         match self {
             VpnWin::WireGuard(s) => &mut s.sheet,
+            VpnWin::OpenVpn(s) => &mut s.sheet,
             VpnWin::Plugin(s) => &mut s.sheet,
         }
     }
@@ -76,6 +81,7 @@ impl VpnWin {
     fn title(&self) -> String {
         match self {
             VpnWin::WireGuard(s) => s.window_title(),
+            VpnWin::OpenVpn(s) => s.window_title(),
             VpnWin::Plugin(s) => s.window_title(),
         }
     }
@@ -105,6 +111,8 @@ struct NetApp {
     vpn: Option<VpnWin>,
     import: Option<FileDlg>,
     import_host: Host,
+    /// The file dialog is the OpenVPN sheet's Browse... for this field, not Import.
+    browse_for: Option<&'static str>,
     hotspot: Option<hotspot::HotspotDialog>,
     notice: Option<Notice>,
     /// The message box's font, loaded in `start`: `children` sizes its window without a `Ctx`.
@@ -335,11 +343,9 @@ impl NetApp {
     }
 
     fn open_import(&mut self, u: TextUnits) {
-        let home = std::env::var_os("HOME")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| PathBuf::from("/"));
+        self.browse_for = None;
         self.import = Some(self.import_host.open(
-            &home,
+            &home_dir(),
             Fields {
                 title: "Import".into(),
                 accept_label: "Open".into(),
@@ -352,6 +358,41 @@ impl NetApp {
             },
             u,
         ));
+    }
+
+    /// The OpenVPN sheet's Browse... for `field`: the file dialog opens where its file is.
+    fn open_browse(&mut self, field: &'static str, u: TextUnits) {
+        let Some(VpnWin::OpenVpn(s)) = &self.vpn else {
+            return;
+        };
+        let start = s
+            .path_of(field)
+            .and_then(|p| p.parent().map(PathBuf::from))
+            .filter(|d| d.is_dir())
+            .unwrap_or_else(home_dir);
+        self.browse_for = Some(field);
+        self.import = Some(self.import_host.open(
+            &start,
+            Fields {
+                title: BROWSE_TITLE.into(),
+                accept_label: "Open".into(),
+                mode: DlgMode::Open,
+                multiple: false,
+                filters: vec![
+                    "Certificates and Keys (*.crt;*.pem;*.key)".into(),
+                    "All Files (*.*)".into(),
+                ],
+            },
+            u,
+        ));
+    }
+
+    fn file_title(&self) -> &'static str {
+        if self.browse_for.is_some() {
+            BROWSE_TITLE
+        } else {
+            "Import"
+        }
     }
 
     /// A file picked in Import: a WireGuard file opens in its sheet, any
@@ -440,6 +481,15 @@ impl NetApp {
                         nm::VpnEdit::WireGuard { conn_path, cfg } => {
                             VpnWin::WireGuard(vpnsheet::WgSheet::new(&cfg, Some(conn_path)))
                         }
+                        nm::VpnEdit::Plugin {
+                            conn_path,
+                            name,
+                            kind,
+                            data,
+                        } if kind == "openvpn" => VpnWin::OpenVpn(vpnsheet::OvpnSheet::new(
+                            &conn_path,
+                            &ovpn::from_data(&name, &data),
+                        )),
                         nm::VpnEdit::Plugin {
                             conn_path,
                             name,
@@ -634,6 +684,7 @@ impl NetApp {
             };
             match w {
                 VpnWin::WireGuard(s) => s.event(ev),
+                VpnWin::OpenVpn(s) => s.event(ev),
                 VpnWin::Plugin(s) => s.event(ev),
             }
         };
@@ -663,8 +714,24 @@ impl NetApp {
                         conn_path: s.conn_path,
                         name,
                         data,
+                        secrets: vec![],
                     });
                 }
+                Reply::redraw_all()
+            }
+            vpnsheet::Outcome::SaveOpenVpn(cfg) => {
+                if let Some(VpnWin::OpenVpn(s)) = self.vpn.take() {
+                    self.send(nm::Cmd::SavePluginVpn {
+                        conn_path: s.conn_path,
+                        name: cfg.name.clone(),
+                        data: ovpn::to_data(&cfg),
+                        secrets: ovpn::secrets(&cfg),
+                    });
+                }
+                Reply::redraw_all()
+            }
+            vpnsheet::Outcome::Browse(field) => {
+                self.open_browse(field, ctx.forms().text);
                 Reply::redraw_all()
             }
         }
@@ -761,10 +828,16 @@ impl NetApp {
             Step::Out(_) => return Reply::redraw(),
         };
         self.import = None;
-        match picked {
-            Some(Ok(path)) => self.import_file(path),
-            Some(Err(msg)) => self.tell("Import", &msg),
-            None => {}
+        let title = self.file_title();
+        match (picked, self.browse_for.take()) {
+            (Some(Ok(path)), Some(field)) => {
+                if let Some(VpnWin::OpenVpn(s)) = &mut self.vpn {
+                    s.set_path(field, &path.to_string_lossy());
+                }
+            }
+            (Some(Ok(path)), None) => self.import_file(path),
+            (Some(Err(msg)), _) => self.tell(title, &msg),
+            (None, _) => {}
         }
         Reply::redraw_all()
     }
@@ -1017,7 +1090,7 @@ impl App for NetApp {
         if self.import.is_some() {
             out.push(Child {
                 id: IMPORT,
-                title: "Import".into(),
+                title: self.file_title().into(),
                 size: self.import.as_ref().map_or(filedlg::CLIENT, |d| d.client()),
                 fixed: false,
                 modal: true,
@@ -1275,6 +1348,12 @@ impl App for NetApp {
 /// A message box's text wrapped to lines the box keeps narrow.
 fn wrap(text: &str) -> String {
     reprisekit::text::wrap_chars(text, 60).join("\n")
+}
+
+fn home_dir() -> PathBuf {
+    std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("/"))
 }
 
 fn hotspot_clients(d: &nm::Device) -> Option<usize> {

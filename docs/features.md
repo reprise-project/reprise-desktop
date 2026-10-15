@@ -332,8 +332,9 @@ are.
   the default output and input, and the track that's playing with its
   buttons. Volume Control has balance, a Recording view and bass and treble
   where the card has them.
-- **Network.** Wi-Fi, wired and VPN through NetworkManager. WireGuard has its
-  own editor, other VPNs import through NetworkManager's plugins, and Create
+- **Network.** Wi-Fi, wired and VPN through NetworkManager. WireGuard and
+  OpenVPN have their own editors (gateway, sign-in, certificates and keys,
+  passwords), other VPNs import through NetworkManager's plugins, and Create
   Hotspot shares your connection. A captive portal gets a "Sign in to the
   network" balloon.
 - **Bluetooth.** Pairing, connections and device batteries, from the tray.
