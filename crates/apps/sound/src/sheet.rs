@@ -1676,11 +1676,11 @@ mod tests {
         snap.apps
             .push(app("mystery-player", "Mystery Player", &[93], 0.3, false));
         let mut s = sheet(&snap);
-        let mut cache = IconCache::new(IconTheme::load(
+        let cache = IconCache::new(IconTheme::load(
             &std::env::var(reprisekit::icontheme::ENV).unwrap_or_else(|_| "hicolor".into()),
             &IconTheme::default_roots(),
         ));
-        let icons = crate::appicons::Resolver::default().icons(&snap.apps, &mut cache);
+        let icons = crate::appicons::Resolver::default().icons(&snap.apps, &cache);
         s.set_app_icons(icons);
         s.open(APPS);
         let mut c = Canvas::new(CLIENT.0 as u32, CLIENT.1 as u32);

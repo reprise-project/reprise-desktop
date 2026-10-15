@@ -187,7 +187,7 @@ impl Sound {
     }
 
     fn push_app_icons(&mut self, ctx: &mut Ctx) {
-        self.icons = self.app_icons.icons(&self.snapshot.apps, &mut ctx.icons);
+        self.icons = self.app_icons.icons(&self.snapshot.apps, &ctx.icons);
         if let Some(s) = &mut self.sheet {
             s.set_app_icons(self.icons.clone());
         }
@@ -525,6 +525,8 @@ impl Sound {
             self.recent.note(id, v, Instant::now());
         }
         if let Some(at) = self.gate.due(Instant::now(), interval(ctx)) {
+            // A program installed since it started playing finds its icon when the popup opens.
+            self.push_app_icons(ctx);
             let mix = self.popup_mix();
             self.flyout = Some(Open {
                 at,
