@@ -1,7 +1,7 @@
 use crate::access::{self, Tree, accesskit};
 use crate::classic::widgets::draw_focus_ring;
-use crate::look::Paint;
 use crate::look::widgets::draw_field_frame;
+use crate::look::{Paint, panel};
 use crate::raster::{Canvas, EdgeStyle, Rect};
 use crate::text::{Align, TextRenderer};
 use crate::theme::Theme;
@@ -450,18 +450,29 @@ pub fn access(
     id
 }
 
+/// Identify's number for an output: a raised box, or under glass a glass panel with white
+/// digits whose canvas reaches [`panel::margin`] past the badge.
 pub fn draw_badge(theme: &Theme, text: &TextRenderer, number: u32) -> Canvas {
     let p = theme.paint();
     let (cs, s) = (p.cs, p.s);
+    let size = theme.fonts.size_px * 12;
+    let digits = number.to_string();
+    if let Some((style, spec)) = panel::glass(theme) {
+        return panel::draw(style, spec, BADGE, BADGE, s, |c| {
+            let b = c.bounds();
+            let x = (b.width - text.measure(&digits, true, size)) / 2;
+            let baseline = text.baseline(b, true, size).unwrap_or(b.bottom());
+            text.draw_run_over(c, x, baseline, b, &digits, true, panel::INK, size);
+        });
+    }
     let mut c = Canvas::new((BADGE * s) as u32, (BADGE * s) as u32);
     c.fill_rect(c.bounds(), cs.button_face);
     c.edge_t(c.bounds(), EdgeStyle::WindowRaised, cs, s);
-    let size = theme.fonts.size_px * 12;
     let b = c.bounds();
     text.draw(
         &mut c,
         b,
-        &number.to_string(),
+        &digits,
         true,
         cs.button_text,
         Align::Center,
@@ -723,5 +734,28 @@ mod tests {
             .filter(|&y| c.get(BADGE / 2, y) == cs.button_text.argb())
             .count();
         assert!(mid > 10, "the stem of the 1 runs down the middle: {mid} px");
+    }
+
+    #[test]
+    fn under_glass_the_badge_is_a_glass_panel_with_white_digits() {
+        let theme = crate::interfaces::theme_for(crate::interface::Interface::Glass);
+        let text = TextRenderer::load(&theme.fonts);
+        let c = draw_badge(&theme, &text, 1);
+        let m = panel::margin(&theme);
+        assert_eq!(
+            (c.width as i32, c.height as i32),
+            (BADGE + m.left + m.right, BADGE + m.top + m.bottom),
+            "the badge and its shadow"
+        );
+        let a = |x: i32, y: i32| c.get(m.left + x, m.top + y) >> 24;
+        assert!(a(20, 20) > 0 && a(20, 20) < 0xFF, "translucent glass");
+        assert_eq!(c.get(0, 0) >> 24, 0, "nothing past the shadow's corner");
+        let white = panel::INK.argb();
+        let mid = (70..130)
+            .filter(|&y| c.get(m.left + BADGE / 2, m.top + y) == white)
+            .count();
+        assert!(mid > 10, "the white stem of the 1: {mid} px");
+        let c2 = draw_badge(&theme.scaled(2), &text, 1);
+        assert_eq!((c2.width, c2.height), (c.width * 2, c.height * 2));
     }
 }

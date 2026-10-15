@@ -225,8 +225,9 @@ fn render_monitors(with_blue: bool) -> Canvas {
     }
     let (ww, wh) = (358, 108);
     let col = ww + BADGE + 30;
+    let m = reprisekit::look::panel::margin(&themes[themes.len() - 1]);
     let mut c = Canvas::new(
-        (themes.len() as i32 * col + 10) as u32,
+        (themes.len() as i32 * col + 10 + m.left + m.right) as u32,
         (2 * wh + 30) as u32,
     );
     c.fill_rect(c.bounds(), Color::rgb(58, 110, 165));
