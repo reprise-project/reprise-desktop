@@ -397,6 +397,40 @@ pub fn popup_hit(cm: &ControlMetrics, x: i32, y: i32) -> PopupHit {
 /// The arrow `hot` names is drawn lit where the look lights it. Under a
 /// look that frames its flyouts as windows the title is regular weight.
 pub fn draw_popup(theme: &Theme, text: &TextRenderer, cal: &Calendar, hot: PopupHit) -> Canvas {
+    let mut c = draw_popup_base(theme, text, cal, hot);
+    if let Some(now) = cal.now {
+        let base = c.clone();
+        draw_popup_clock(theme, &mut c, &base, now);
+    }
+    c
+}
+
+/// The analog clock's square in a canvas [`draw_popup`] drew at `theme`'s scale, device px;
+/// none in a look without one.
+pub fn popup_clock(theme: &Theme) -> Option<Rect> {
+    let s = theme.scale.max(1);
+    let m = flyout::margin(theme).scaled(s);
+    let r = popup_layout(&theme.controls()).clock?.scaled(s);
+    Some(Rect::new(r.x + m.left, r.y + m.top, r.width, r.height))
+}
+
+/// Moves the analog clock in `c`, a popup drawn from `base` ([`draw_popup_base`]), to `now`:
+/// only the pixels inside [`popup_clock`] change.
+pub fn draw_popup_clock(theme: &Theme, c: &mut Canvas, base: &Canvas, now: (u32, u32, u32)) {
+    if let Some(r) = popup_clock(theme) {
+        c.clear_rect(r);
+        c.blit_over(r.x, r.y, &base.copy_rect(r));
+        draw_clock_face(c, &theme.paint(), r, now);
+    }
+}
+
+/// [`draw_popup`] without the analog clock, for [`draw_popup_clock`] to draw over.
+pub fn draw_popup_base(
+    theme: &Theme,
+    text: &TextRenderer,
+    cal: &Calendar,
+    hot: PopupHit,
+) -> Canvas {
     let p = &theme.paint();
     let cs = p.cs;
     let s = p.s;
@@ -437,9 +471,6 @@ pub fn draw_popup(theme: &Theme, text: &TextRenderer, cal: &Calendar, hot: Popup
         px,
     );
     draw(&mut c, text, p, cal, &lay.grid, false, px);
-    if let (Some(r), Some(now)) = (lay.clock, cal.now) {
-        draw_clock_face(&mut c, p, r.scaled(s), now);
-    }
     flyout::shadowed(theme, c)
 }
 
@@ -855,6 +886,44 @@ mod tests {
             tree.nodes().any(|(_, n)| n.label() == Some("Clock")),
             "the clock is named"
         );
+    }
+
+    /// A tick redraws the clock's square over the drawn popup, and the result is the popup drawn
+    /// whole at the new time.
+    #[test]
+    fn a_tick_changes_only_the_clock_and_matches_a_whole_redraw() {
+        use crate::interface::Interface;
+        let glass = crate::interfaces::theme_for(Interface::Glass);
+        let m = crate::flyout::margin(&glass);
+        assert_eq!(
+            popup_clock(&glass),
+            Some(Rect::new(m.left + 186, m.top + 32, 129, 129))
+        );
+        assert_eq!(popup_clock(&Theme::default()), None);
+        let text = TextRenderer::load(&FontConfig::default());
+        for s in [1, 2] {
+            let theme = glass.scaled(s);
+            let clock = popup_clock(&theme).unwrap();
+            let mut cal = Calendar::new(2026, 10, None, 0);
+            cal.today = Some((2026, 10, 16));
+            let base = draw_popup_base(&theme, &text, &cal, PopupHit::Panel);
+            cal.now = Some((10, 9, 30));
+            let mut shown = draw_popup(&theme, &text, &cal, PopupHit::Panel);
+            let before = shown.clone();
+            cal.now = Some((10, 9, 31));
+            draw_popup_clock(&theme, &mut shown, &base, (10, 9, 31));
+            let changed = before.differing_rect(&shown);
+            assert!(!changed.is_empty(), "scale {s}: the second hand moves");
+            assert_eq!(
+                changed.intersect(&clock),
+                changed,
+                "scale {s}: only the clock's square changes"
+            );
+            assert!(
+                shown.pixels == draw_popup(&theme, &text, &cal, PopupHit::Panel).pixels,
+                "scale {s}: the same pixels as the popup drawn at 10:09:31"
+            );
+        }
     }
 
     #[test]
