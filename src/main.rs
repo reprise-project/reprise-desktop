@@ -143,7 +143,6 @@ mod quicklaunch;
 mod retitle;
 mod saverview;
 mod search;
-mod slideshow;
 mod snap;
 mod snapbarview;
 mod snappickerview;

@@ -447,7 +447,7 @@ fn decode_next(
     let mut current = current.map(Path::to_path_buf);
     for _ in 0..list.len().min(8) {
         let Some(path) =
-            crate::slideshow::next(&list, current.as_deref(), true, crate::slideshow::roll())
+            reprisefs::pictures::next(&list, current.as_deref(), true, reprisefs::pictures::roll())
         else {
             break;
         };

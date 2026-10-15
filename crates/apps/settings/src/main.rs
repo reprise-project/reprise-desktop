@@ -313,7 +313,9 @@ struct SettingsApp {
     saver_dlg: Option<saverdlg::SaverDialog>,
     saver_preview: Option<(saverpage::Preview, std::time::Instant)>,
     saver_ticking: bool,
-    saver_photos: Option<(String, Receiver<Vec<Canvas>>)>,
+    saver_photos: Option<(String, Receiver<Vec<PathBuf>>)>,
+    /// The Photos preview's next picture, decoding.
+    saver_photo: Option<Receiver<Option<(PathBuf, Canvas)>>>,
     add_to_quick: bool,
 
     quick_dir: Option<PathBuf>,
@@ -532,6 +534,7 @@ impl SettingsApp {
             saver_preview: None,
             saver_ticking: false,
             saver_photos: None,
+            saver_photo: None,
             menu_icons_due: true,
             add_to_quick: false,
             quick_dir: reprisefs::quicklaunch::dir(),
@@ -1795,6 +1798,7 @@ impl SettingsApp {
         if stale {
             let p = saverpage::Preview::new(kind, options, &ctx.text);
             self.saver_preview = Some((p, std::time::Instant::now()));
+            self.saver_photo = None;
         }
         self.want_saver_photos();
         let Some((p, last)) = self.saver_preview.as_mut() else {
@@ -1804,12 +1808,30 @@ impl SettingsApp {
             && folder == &self.want.saver_folder
             && let Ok(Some(pics)) = take(rx)
         {
-            p.photos = pics;
+            p.files = pics;
             self.saver_photos = None;
+        }
+        if let Some(rx) = &self.saver_photo
+            && let Ok(Some(got)) = take(rx)
+        {
+            if let Some((path, picture)) = got {
+                p.show_photo(path, &picture);
+            }
+            self.saver_photo = None;
         }
         let ms = last.elapsed().as_millis() as u64;
         *last = std::time::Instant::now();
         let frame = p.frame(ms);
+        if p.wants_photo() {
+            let (files, current) = (p.files.clone(), p.current.clone());
+            self.saver_photo = Some(self.spawn(move || {
+                saverpage::pick_photo(&files, current.as_deref(), reprisefs::pictures::roll, |f| {
+                    Decoders::default_set()
+                        .decode_file(f, (304, 224))
+                        .map(|d| d.canvas)
+                })
+            }));
+        }
         saverpage::show(&mut self.sheet.pages[Page::ScreenSaver.index()], frame);
         true
     }
@@ -1820,33 +1842,15 @@ impl SettingsApp {
         };
         let folder = self.want.saver_folder.clone();
         let have = self.saver_photos.as_ref().map(|(f, _)| f == &folder);
-        if p.kind != reprisekit::saver::Kind::Photos || !p.photos.is_empty() || have == Some(true) {
+        if p.kind != reprisekit::saver::Kind::Photos || !p.files.is_empty() || have == Some(true) {
             return;
         }
-        let pictures = self.wallpapers.clone();
         let dir = wallpapers::expand(&folder)
             .or_else(|| reprisefs::places::user_dir("PICTURES", "Pictures"));
         let rx = self.spawn(move || {
-            let Some(dir) = dir else {
-                return Vec::new();
-            };
-            let mut files: Vec<PathBuf> = std::fs::read_dir(&dir)
-                .map(|rd| rd.flatten().map(|e| e.path()).collect())
-                .unwrap_or_default();
-            files.retain(|p| wallpapers::is_picture(p));
-            if files.is_empty() {
-                files = pictures
-                    .into_iter()
-                    .filter(|p| p.starts_with(&dir))
-                    .collect();
-            }
-            files.sort();
-            files
-                .iter()
-                .take(3)
-                .filter_map(|f| Decoders::default_set().decode_file(f, (304, 224)))
-                .map(|d| d.canvas)
-                .collect()
+            dir.as_deref()
+                .map(reprisefs::pictures::in_folder)
+                .unwrap_or_default()
         });
         self.saver_photos = Some((folder, rx));
     }
