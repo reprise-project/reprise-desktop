@@ -472,6 +472,21 @@ impl Snapping {
         }
     }
 
+    /// Members `desktop_of` puts on another desktop than their group's leave it; None (a window
+    /// on every desktop, or gone) stays.
+    pub fn leave_other_desktops(&mut self, desktop_of: impl Fn(WindowId) -> Option<usize>) {
+        let moved: Vec<WindowId> = (self.groups.iter())
+            .flat_map(|g| {
+                (g.members.iter())
+                    .filter(|&&(_, m)| desktop_of(m).is_some_and(|d| d != g.desktop))
+                    .map(|&(_, m)| m)
+            })
+            .collect();
+        for w in moved {
+            self.leave_group(w);
+        }
+    }
+
     /// A keyboard size of `w` was committed; any moved side took it off its zone, so it leaves
     /// its group. Runs before `end_group_resize`.
     pub fn end_key_resize(&mut self, w: WindowId, origin: Rect, edges: Edges) {
@@ -1352,6 +1367,30 @@ mod tests {
         );
         s.apply(b, "DP-1", quarters, true, true, WORK, 1, away);
         assert_ne!(s.group_of(b), s.group_of(a), "`b` joins no hidden group");
+    }
+
+    #[test]
+    fn a_member_moved_to_another_desktop_leaves_its_group() {
+        let (a, b, c) = (WindowId::next(), WindowId::next(), WindowId::next());
+        let mut s = Snapping::default();
+        let g = s.new_group(a, "DP-1", &halves(), Splits::new(&halves(), WORK), 0);
+        s.join_group(a, b, 1);
+        s.join_group(a, c, 1);
+        let on = |b_at: Option<usize>| move |w: WindowId| if w == b { b_at } else { Some(0) };
+        s.leave_other_desktops(on(None));
+        assert_eq!(s.group_of(b), Some(g), "on every desktop: stays");
+        s.leave_other_desktops(on(Some(0)));
+        assert_eq!(s.group_of(b), Some(g), "still on the group's desktop");
+        s.leave_other_desktops(on(Some(1)));
+        assert_eq!(s.group_of(b), None, "moved to the second desktop");
+        assert_eq!(s.group_of(a), Some(g));
+        assert_eq!(s.group_of(c), Some(g));
+        s.leave_other_desktops(|_| Some(1));
+        assert_eq!(s.group_of(a), None);
+        assert!(
+            !s.active.contains_key(&k("DP-1")),
+            "the layout went with the last member"
+        );
     }
 
     #[test]
