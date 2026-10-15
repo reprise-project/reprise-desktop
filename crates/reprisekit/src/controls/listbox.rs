@@ -293,14 +293,15 @@ pub fn draw(
         if let Some(bg) = bg {
             c.fill_rect(Rect::new(tx - 2 * s, y, tw + 4 * s, rh).intersect(&row), bg);
         }
-        let tr = Rect::new(tx, y, (inner.right() - tx).max(0), rh).intersect(&row);
-        text.draw(c, tr, &lb.items[i], false, fg, Align::Left, px);
+        // A partly shown row keeps the baseline of a whole one; only the clip shrinks.
+        let tr = Rect::new(tx, y, (inner.right() - tx).max(0), rh);
+        text.draw_clipped(c, tr, row, &lb.items[i], false, fg, Align::Left, px);
         if let Some(d) = lb.detail.get(i).filter(|d| !d.is_empty()) {
             let dx = tx + tw + DETAIL_GAP * s;
             let dw = (inner.right() - dx - 2 * s).max(0);
             let shown = text.ellipsize(d, dw, false, px);
-            let dr = Rect::new(dx, y, dw, rh).intersect(&row);
-            text.draw(c, dr, &shown, false, cs.gray_text, Align::Left, px);
+            let dr = Rect::new(dx, y, dw, rh);
+            text.draw_clipped(c, dr, row, &shown, false, cs.gray_text, Align::Left, px);
         }
         y += rh;
     }
@@ -479,6 +480,40 @@ mod tests {
         assert_eq!(c.get(46, 275), cs.hilight.argb(), "17 rows tall");
         assert_eq!(c.get(46, 276), cs.window.argb());
         assert_eq!(c.get(45, 265), cs.window.argb());
+    }
+
+    #[test]
+    fn a_partly_shown_last_row_shows_the_top_of_the_whole_row() {
+        let theme = Theme::default();
+        let text = TextRenderer::load(&FontConfig::default());
+        let cs = &theme.colors;
+        let rows = ["Ridges (blue)", "Terraces (spring)", "Terraces (dusk)"];
+        let mut lb = ListBox::new(rows.map(String::from).to_vec(), None);
+        lb.detail = vec!["Reprise".into(); 3];
+        let paint = classic_paint(cs, 1);
+        let drawn = |height: i32| {
+            let l = layout(&lb, Rect::new(0, 0, 200, height), &ControlMetrics::CLASSIC);
+            let mut c = Canvas::new(200, 60);
+            draw(&mut c, &text, &paint, &lb, &l, &[], None, 11);
+            (c, l.inner)
+        };
+        let (whole, _) = drawn(4 + 2 * 17);
+        let (cut, inner) = drawn(4 + 17 + 9);
+        let ink = |c: &Canvas| {
+            (inner.x..inner.right())
+                .flat_map(|x| (inner.y + 17..inner.bottom()).map(move |y| (x, y)))
+                .filter(|&(x, y)| c.get(x, y) != cs.window.argb())
+                .collect::<Vec<_>>()
+        };
+        assert!(
+            !ink(&whole).is_empty(),
+            "the second row has ink in its top 9 px"
+        );
+        assert_eq!(
+            ink(&cut),
+            ink(&whole),
+            "the cut row shows the whole row's top 9 px"
+        );
     }
 
     /// A row's check box takes the icon's place, 3 px in and 2 px down,
