@@ -113,7 +113,8 @@ interface = "classic"        # classic | blue | glass; an unknown value falls ba
 #                            # or the taskbar's shows them blurred; false: one blur less
 #                            # per such glass
 # blur_rate = 30             # at most this many times a second a program drawing
-#                            # next to the glass (a video) blurs into it again; 0: every frame
+#                            # next to the glass (a video) or desktop water blurs
+#                            # into it again; 0: every frame
 # mode = "light"             # light | dark
 # material = "frosted"       # frosted | smoked (darker, white titles) | molten (bent edges)
 # frame = "rounded"          # rounded | square (flat, separate caption buttons)

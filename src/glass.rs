@@ -160,6 +160,10 @@ struct OutputBackdrop {
     drawn: bool,
     picture: Picture,
     hidden: bool,
+    /// The settings and quality of the last update that drew it.
+    look: Option<(Settings, Quality)>,
+    /// A held frame left it as it was: what changed since waits for the next blur.
+    skipped: bool,
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -257,6 +261,9 @@ impl GlassCtx {
             let needed = self.reads_on(scene, area, seen, scale);
             *self.source.borrow_mut() =
                 self.redraw(renderer, b, &elements, clear, output, Some(&needed));
+            let pass = self.pass.get();
+            b.look = Some((pass.settings, pass.quality));
+            b.skipped = false;
         }
         if self.pass.get().settings.blur_frames {
             self.update_beneath(renderer, scene, output, clear);
@@ -480,10 +487,19 @@ impl GlassCtx {
         wanted: bool,
     ) {
         let name = output.name();
+        let pass = self.pass.get();
+        let same = |b: &OutputBackdrop| {
+            let seen = pass.output;
+            let scale = output.current_scale().fractional_scale();
+            b.key == OutputBackdrop::key(seen, scale)
+                && b.look == Some((pass.settings, pass.quality))
+        };
         if wanted
-            && let Some(b) = self.backdrops.borrow().get(&name)
-            && b.hidden
+            && let Some(b) = self.backdrops.borrow_mut().get_mut(&name)
+            && (b.hidden || (pass.hold && b.drawn && same(b)))
         {
+            // A held blur shows the picture as it was, so its backdrops need no drawing either.
+            b.skipped |= !b.hidden;
             *self.source.borrow_mut() = b.picture.source();
             let mut own = self.own.borrow_mut();
             for ((o, _), b) in self.beneath.borrow().iter() {
@@ -524,7 +540,7 @@ impl GlassCtx {
         let shown = |o: &String| backdrops.get(o).is_some_and(|b| !b.hidden);
         backdrops
             .values()
-            .any(|b| !b.hidden && b.picture.is_stale())
+            .any(|b| !b.hidden && (b.skipped || b.picture.is_stale()))
             || self
                 .beneath
                 .borrow()
@@ -542,7 +558,8 @@ impl GlassCtx {
         let mut any = false;
         let mut backdrops = self.backdrops.borrow_mut();
         for b in backdrops.values_mut() {
-            if !b.hidden && b.picture.is_stale() {
+            if !b.hidden && (b.skipped || b.picture.is_stale()) {
+                b.skipped = false;
                 b.picture.refresh();
                 any = true;
             }
@@ -613,6 +630,8 @@ impl OutputBackdrop {
             drawn: false,
             picture: Picture::new(),
             hidden: false,
+            look: None,
+            skipped: false,
         })
     }
 }
@@ -1616,6 +1635,66 @@ mod tests {
             moved, fresh,
             "as blurred as a first frame of the same scene"
         );
+    }
+
+    /// The red channel of the output backdrop's texel at output pixel `at`.
+    fn backdrop_red(renderer: &mut GlesRenderer, ctx: &GlassCtx, at: (i32, i32)) -> u32 {
+        use smithay::backend::renderer::{ExportMem, Texture};
+        let mut t = ctx.backdrops.borrow()["test"].texture.clone();
+        let size = t.size();
+        let fb = renderer.bind(&mut t).unwrap();
+        let mapping = renderer
+            .copy_framebuffer(&fb, Rectangle::from_size(size), Fourcc::Abgr8888)
+            .unwrap();
+        drop(fb);
+        let bytes = renderer.map_texture(&mapping).unwrap();
+        let (x, y) = (at.0 / 2, at.1 / 2);
+        u32::from(bytes[((y * size.w + x) * 4) as usize])
+    }
+
+    #[test]
+    fn a_held_frame_leaves_the_backdrop_undrawn_until_the_next_blur() {
+        let Ok(mut renderer) = reprisefx::headless::renderer() else {
+            eprintln!("skipped: no renderer");
+            return;
+        };
+        let ctx = GlassCtx::new();
+        ctx.set_renderer(&mut renderer);
+        let mut scene = DeskScene::new();
+        let root = scene.root();
+        let desktop = scene.tree_create(root);
+        scene.rect_create(desktop, (320, 200), [1.0; 4]);
+        let spot = scene.tree_create(desktop);
+        scene.set_position(spot, 40, 40);
+        scene.rect_create(spot, (60, 40), [0.0, 0.0, 0.0, 1.0]);
+        scene.set_enabled(spot, false);
+        let windows = scene.tree_create(root);
+        let _glass = glass_window(&mut scene, &ctx, windows, (20, 20), (120, 80), None);
+        let output = test_output_of(320, 200);
+        let settings = Settings {
+            streaks: false,
+            ..Settings::default()
+        };
+        let clear = Color32F::from([0.0, 0.0, 0.0, 1.0]);
+        let frame = |renderer: &mut GlesRenderer, scene: &DeskScene, hold: bool| {
+            ctx.begin(&output, settings, Quality::Full, hold);
+            ctx.update_screen_backdrop(renderer, scene, &output, clear, true);
+        };
+        frame(&mut renderer, &scene, false);
+        scene.set_enabled(spot, true);
+        frame(&mut renderer, &scene, true);
+        assert!(
+            backdrop_red(&mut renderer, &ctx, (70, 60)) > 230,
+            "the held frame drew nothing into the backdrop"
+        );
+        assert!(ctx.any_stale(), "the skipped change waits for a blur");
+        assert!(ctx.refresh_stale());
+        frame(&mut renderer, &scene, false);
+        assert!(
+            backdrop_red(&mut renderer, &ctx, (70, 60)) < 20,
+            "the next free frame draws the spot"
+        );
+        assert!(!ctx.any_stale());
     }
 
     #[test]

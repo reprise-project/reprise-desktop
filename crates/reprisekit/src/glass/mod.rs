@@ -151,8 +151,8 @@ pub struct Settings {
     /// Glass over another window's frame, a dialog's or the taskbar shows it blurred,
     /// at the cost of a blur of its own; off, glass shows what lies under that chrome.
     pub blur_frames: bool,
-    /// At most how many times a second what clients draw near the glass re-blurs
-    /// it; 0 for every frame.
+    /// At most how many times a second what clients draw near the glass, or desktop
+    /// water, re-blurs it; 0 for every frame.
     pub blur_rate: u16,
     /// How strongly the Start orb's icon glows, 0 to 100 percent; 0 draws none.
     /// Drawn by the taskbar (`TaskbarState::orb_glow`), so styles are shared.
