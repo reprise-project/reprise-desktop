@@ -29,7 +29,8 @@ pub enum Refusal {
     /// The password was refused, or polkit allows no one.
     Denied,
     /// The service stopped waiting for the password prompt and answered
-    /// `NoReply`; systemd's services wait 25 s.
+    /// `NoReply` (systemd's services wait 25 s), or the caller's own method
+    /// timeout ran out first.
     TimedOut,
 }
 
@@ -39,8 +40,8 @@ pub const TIMED_OUT: &str =
 
 const NO_REPLY: &str = "org.freedesktop.DBus.Error.NoReply";
 
-/// The refusal `e` is, when its error name passes `refused` or is `NoReply`;
-/// None for any other error. `dismissed`, normally [`dismissed`], is asked only for a
+/// The refusal `e` is, when its error name passes `refused` or is `NoReply`, or
+/// it is the connection's method timeout; None for any other error. `dismissed`, normally [`dismissed`], is asked only for a
 /// refusal, since asking forgets the dismissal.
 pub fn refusal(
     e: &zbus::Error,
@@ -49,6 +50,9 @@ pub fn refusal(
 ) -> Option<Refusal> {
     match e {
         zbus::Error::MethodError(name, _, _) if name.as_str() == NO_REPLY => {
+            Some(Refusal::TimedOut)
+        }
+        zbus::Error::InputOutput(io) if io.kind() == std::io::ErrorKind::TimedOut => {
             Some(Refusal::TimedOut)
         }
         zbus::Error::MethodError(name, _, _) if refused(name.as_str()) => Some(if dismissed() {
@@ -101,5 +105,21 @@ mod tests {
             || panic!("asking forgets a dismissal a timeout has no claim to"),
         );
         assert_eq!(timed_out, Some(Refusal::TimedOut));
+    }
+
+    #[test]
+    fn the_callers_own_method_timeout_is_a_timed_out_prompt() {
+        let io = zbus::Error::from(std::io::Error::new(
+            std::io::ErrorKind::TimedOut,
+            "timed out",
+        ));
+        let timed_out = refusal(
+            &io,
+            |_| true,
+            || panic!("asking forgets a dismissal a timeout has no claim to"),
+        );
+        assert_eq!(timed_out, Some(Refusal::TimedOut));
+        let reset = zbus::Error::from(std::io::Error::from(std::io::ErrorKind::ConnectionReset));
+        assert_eq!(refusal(&reset, |_| true, || false), None);
     }
 }

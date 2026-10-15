@@ -321,6 +321,14 @@ pub fn classify(name: &str, message: &str) -> Error {
 
 impl From<zbus::Error> for Error {
     fn from(e: zbus::Error) -> Error {
+        let timed_out = reprisebus::polkit::refusal(&e, |_| false, || false)
+            == Some(reprisebus::polkit::Refusal::TimedOut);
+        if timed_out {
+            return Error {
+                kind: ErrorKind::Other,
+                message: reprisebus::polkit::TIMED_OUT.into(),
+            };
+        }
         match &e {
             zbus::Error::MethodError(name, detail, _) => {
                 classify(name.as_str(), detail.as_deref().unwrap_or(""))
@@ -777,6 +785,17 @@ pub(crate) mod tests {
             classify("org.freedesktop.UDisks2.Error.Failed", "x").kind,
             ErrorKind::Other
         );
+    }
+
+    #[test]
+    fn a_prompt_left_open_past_the_call_timeout_says_to_try_again() {
+        let io = zbus::Error::from(std::io::Error::new(
+            std::io::ErrorKind::TimedOut,
+            "timed out",
+        ));
+        assert_eq!(Error::from(io).message, reprisebus::polkit::TIMED_OUT);
+        let other = zbus::Error::from(std::io::Error::from(std::io::ErrorKind::ConnectionReset));
+        assert_ne!(Error::from(other).message, reprisebus::polkit::TIMED_OUT);
     }
 
     #[test]

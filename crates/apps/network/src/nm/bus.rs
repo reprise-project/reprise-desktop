@@ -734,6 +734,7 @@ fn auth_failure(e: zbus::Error, dismissed: impl FnOnce() -> bool) -> Failure {
     let refused = |n: &str| n.ends_with(".PermissionDenied");
     match reprisebus::polkit::refusal(&e, refused, dismissed) {
         Some(reprisebus::polkit::Refusal::Dismissed) => Failure::Dismissed,
+        Some(reprisebus::polkit::Refusal::TimedOut) => reprisebus::polkit::TIMED_OUT.into(),
         _ => clean(e),
     }
 }
@@ -1338,6 +1339,16 @@ mod tests {
             ran(&join(), Err(refused)),
             Wake::Ran { error: Some(_), .. }
         ));
+    }
+
+    #[test]
+    fn a_prompt_left_open_past_the_call_timeout_says_to_try_again() {
+        let io = zbus::Error::from(std::io::Error::new(
+            std::io::ErrorKind::TimedOut,
+            "timed out",
+        ));
+        let failure = auth_failure(io, || panic!("a timeout is no dismissal"));
+        assert_eq!(failure, Failure::Text(reprisebus::polkit::TIMED_OUT.into()));
     }
 
     #[test]
