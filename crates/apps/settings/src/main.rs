@@ -4076,10 +4076,10 @@ mod tests {
     }
 
     /// At 200% on a 1080-line screen the work area is shorter than the smallest sheet: the
-    /// sheet keeps the pages it was built with, its buttons sit inside the window and the page
-    /// scrolls.
+    /// sheet keeps the pages it was built with and its buttons sit inside the window. Every page's
+    /// controls end above the window's bottom, so no page scrolls.
     #[test]
-    fn at_200_percent_a_window_shorter_than_the_sheet_scrolls_its_page() {
+    fn at_200_percent_a_window_shorter_than_the_sheet_keeps_its_buttons_in_it() {
         let mut app = app("resize-200");
         let mut ctx = test_ctx();
         ctx.text_size = 200;
@@ -4104,8 +4104,12 @@ mod tests {
             let b = app.sheet.open().rect(id).unwrap();
             assert!(b.bottom() <= 1026, "{id} at {b:?} shows");
         }
-        let l = app.sheet.layout(&ctx.text, ctx.forms().fonts.size_px);
-        assert!(l.bar.is_some(), "the page scrolls");
+        for pg in Page::all() {
+            app.sheet.tabs.open = pg.index();
+            app.draw(MAIN, &mut c, &ctx);
+            let l = app.sheet.layout(&ctx.text, ctx.forms().fonts.size_px);
+            assert_eq!(l.bar, None, "{pg:?} ends above the window's bottom");
+        }
     }
 
     /// At 200% on a screen 1000 px wide the smallest sheet is wider than the window: the
