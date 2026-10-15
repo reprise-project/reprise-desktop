@@ -6,6 +6,7 @@ mod balloon;
 mod bar;
 mod bars;
 mod buttons;
+mod clock;
 mod controls;
 pub mod dark;
 mod fields;
@@ -435,6 +436,7 @@ fn build_at(s: &Settings, scale: i32) -> Style {
     )
     .with_task_glow(paint::task_glow(s))
     .with_start_bloom(orb::bloom)
+    .with_clock_face(clock::painter(s.mode))
     .with_painted_task_spot(move || taskbutton::task_spot(&owned, scale))
     .without_task_nudge()
     .with_greyed_field_frame()
@@ -724,7 +726,8 @@ pub const CORNER: &[i32] = &[5, 3, 2, 1, 1, 1];
 /// line sits a pixel higher, both lines, its second line under its first.
 /// A list header is 24 px with its sort arrow over the title, and a
 /// status bar 23 px. An open combo list's rows are 15 px. A places bar tile is
-/// 63 px, its icon 2 px down and its label 1 px under it.
+/// 63 px, its icon 2 px down and its label 1 px under it. The clock popup
+/// has a 129 px analog clock beside its month.
 /// The rebar starts flush with the client's top, draws no line over its
 /// first band, and closes off with its own line in the row under it; the
 /// row after that is the view's, where a list's header starts.
@@ -747,6 +750,7 @@ fn controls() -> ControlMetrics {
             icon_top: 2,
             label_gap: 1,
         },
+        clock_face: clock::SIDE,
         rebar: RebarMetrics {
             top: 0,
             first_line: false,

@@ -6177,18 +6177,25 @@ fn render_glass_flyouts(theme: &Theme) -> Canvas {
     use reprisekit::emoji::{EmojiFont, Entry, catalog};
     let text = TextRenderer::load(&FontConfig::default());
     let px = theme.fonts.size_px;
-    let mut c = blurred_stripes(950, 610);
+    let mut c = blurred_stripes(950, 810);
     let mut cal = calendar::Calendar::new(2026, 10, None, 0);
     cal.today = Some((2026, 10, 6));
     let m = reprisekit::flyout::margin(theme);
     let at =
         |c: &mut Canvas, x: i32, y: i32, panel: &Canvas| c.blit_over(x - m.left, y - m.top, panel);
-    at(
-        &mut c,
-        20,
-        20,
-        &calendar::draw_popup(theme, &text, &cal, calendar::PopupHit::Prev),
-    );
+    // The clock popup at 10:09:30 with the previous-month arrow lit, and at 3:45:15 PM.
+    for (x, now, hot) in [
+        (20, (10, 9, 30), calendar::PopupHit::Prev),
+        (420, (15, 45, 15), calendar::PopupHit::Panel),
+    ] {
+        cal.now = Some(now);
+        at(
+            &mut c,
+            x,
+            620,
+            &calendar::draw_popup(theme, &text, &cal, hot),
+        );
+    }
     at(
         &mut c,
         250,

@@ -54,6 +54,8 @@ pub struct ControlMetrics {
     /// The border round a flyout's contents ([`crate::flyout`]): 2 for Classic's raised edge, wider
     /// for a look that frames it as a small window.
     pub flyout_border: i32,
+    /// The side of the analog clock beside the clock popup's calendar; 0 for none.
+    pub clock_face: i32,
     /// The task pane's group bands.
     pub task: TaskMetrics,
     pub bar: BarMetrics,
@@ -419,6 +421,7 @@ impl ControlMetrics {
         header_arrow_over: false,
         status_bar: 22,
         flyout_border: 2,
+        clock_face: 0,
         task: TaskMetrics::CLASSIC,
         bar: BarMetrics::CLASSIC,
         rebar: RebarMetrics::CLASSIC,
