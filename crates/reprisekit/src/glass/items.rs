@@ -8,6 +8,10 @@
 //! without the focus (D8D7D8 round F7F8F8 to E3E4E4), and the focus alone (the
 //! 7A9BCD outline round a white line, nothing inside).
 //!
+//! A places bar tile lights, is selected and is selected under the pointer with the same
+//! boxes; held, it sinks into a grey box (A6A7A7 round 8C8D8D to CFCFCF, a CACBCB to E6E6E6
+//! fill).
+//!
 //! A selected desktop icon stands in a see-through box (outline at 90%, line at
 //! 83%, fill at 75%), so the wallpaper shows through.
 //!
@@ -40,6 +44,7 @@ const HOT: LightBox = opaque(0xB6D1FB, (0xFCFDFE, 0xF1F6FE), (0xFAFBFD, 0xEAF2FD
 const SELECTED: LightBox = opaque(0x81A5DC, (0xF0F6FE, 0xDDEBFE), (0xEAF3FE, 0xCDE1FE));
 const SELECTED_HOT: LightBox = opaque(0x7A9BCD, (0xEAF3FD, 0xDAE7FD), (0xDBE9FC, 0xBFD7FC));
 const SELECTED_DIM: LightBox = opaque(0xD8D7D8, (0xFAF9FB, 0xEFEEEF), (0xF7F8F8, 0xE3E4E4));
+const PRESSED: LightBox = opaque(0xA6A7A7, (0x8C8D8D, 0xCFCFCF), (0xCACBCB, 0xE6E6E6));
 const FOCUS: LightBox = LightBox {
     outline: ink(0x7A9BCD, 255),
     line: Some((ink(0xFFFFFF, 128), ink(0xFFFFFF, 128))),
@@ -84,9 +89,10 @@ fn boxes(boxes: &[(&LightBox, State)], d: i32) -> PartImage {
 /// (7, 8) ([`Part::TreeExpander`]).
 const EXPANDER: i32 = 16;
 
-/// The list items' boxes and the tree's expanders (remapped in dark
-/// Glass with the rest of the control art), painted at `d`.
-pub fn parts(d: i32) -> [(Part, PartImage); 2] {
+/// The list items' boxes, the tree's expanders and the places bar's tiles, each standing
+/// 1 px in from the bar's sides (remapped in dark Glass with the rest of the control art),
+/// painted at `d`.
+pub fn parts(d: i32) -> [(Part, PartImage); 3] {
     let items = boxes(
         &[
             (&HOT, State::Hot),
@@ -113,7 +119,21 @@ pub fn parts(d: i32) -> [(Part, PartImage); 2] {
         Layout::Vertical,
     )
     .at_scale(d);
-    [(Part::ListItem, items), (Part::TreeExpander, expanders)]
+    let places = boxes(
+        &[
+            (&HOT, State::Hot),
+            (&SELECTED, State::Checked),
+            (&SELECTED_HOT, State::CheckedHot),
+            (&PRESSED, State::Pressed),
+        ],
+        d,
+    )
+    .outset(Insets::new(-1, 0, -1, 0));
+    [
+        (Part::ListItem, items),
+        (Part::TreeExpander, expanders),
+        (Part::PlacesTile, places),
+    ]
 }
 
 /// The selected desktop icon's box; the same in light and dark Glass, as it
@@ -495,7 +515,7 @@ mod tests {
         use crate::style::{Part, State};
         let states = [State::Normal, State::Hot, State::Checked, State::CheckedHot];
         for d in [1, 2] {
-            let [_, (p, img)] = super::parts(d);
+            let [_, (p, img), _] = super::parts(d);
             assert_eq!(p, Part::TreeExpander);
             assert_eq!(img.scale, d);
             let frames: Vec<Canvas> = states
@@ -546,6 +566,104 @@ mod tests {
         assert_eq!(
             got,
             [0xa440_b690_e410_5295, 0x8808_50c4_7a5f_329d],
+            "{got:#x?}"
+        );
+    }
+
+    /// A 63 px places tile in each state at scale `d`, over the bar's panel: the plain tile
+    /// first.
+    fn places_tiles(d: i32) -> Vec<Canvas> {
+        use crate::look::widgets::placesbar::{draw_panel, draw_tile};
+        use crate::style::State;
+        let theme = theme_for(Interface::Glass).scaled(d);
+        let p = theme.paint();
+        let r = Rect::new(0, 0, 87, 63).scaled(d);
+        [
+            None,
+            Some(State::Hot),
+            Some(State::Checked),
+            Some(State::CheckedHot),
+            Some(State::Pressed),
+        ]
+        .into_iter()
+        .map(|state| {
+            let mut c = Canvas::new(r.width as u32, r.height as u32);
+            draw_panel(&mut c, &p, r);
+            if let Some(state) = state {
+                draw_tile(&mut c, &p, r, state);
+            }
+            c
+        })
+        .collect()
+    }
+
+    /// A places tile stands 1 px in from the bar's sides with its corners round: lit, selected
+    /// and selected under the pointer in the list items' boxes, held in a grey box; at 2 its
+    /// round corners are soft.
+    #[test]
+    fn glass_places_tiles_box_each_state() {
+        for d in [1, 2] {
+            let tiles = places_tiles(d);
+            for i in 0..tiles.len() {
+                for j in i + 1..tiles.len() {
+                    assert_ne!(
+                        tiles[i].pixels, tiles[j].pixels,
+                        "states {i} and {j} at {d}"
+                    );
+                }
+            }
+            let panel = tiles[0].get(40 * d, 30 * d);
+            for (t, outline, fill) in [
+                (&tiles[1], 0xB6D1FB, 0xFAFBFD),
+                (&tiles[2], 0x81A5DC, 0xEAF3FE),
+                (&tiles[3], 0x7A9BCD, 0xDBE9FC),
+                (&tiles[4], 0xA6A7A7, 0xCACBCB),
+            ] {
+                assert_eq!(t.get(40 * d, 0), rgb(outline), "the outline's top at {d}");
+                assert_eq!(t.get(d, 30 * d), rgb(outline), "its left side at {d}");
+                assert_eq!(
+                    t.get(86 * d - 1, 30 * d),
+                    rgb(outline),
+                    "its right side at {d}"
+                );
+                assert_eq!(t.get(40 * d, 63 * d - 1), rgb(outline), "its foot at {d}");
+                assert_eq!(t.get(d - 1, 30 * d), panel, "the bar beside it at {d}");
+                assert_eq!(t.get(87 * d - 1, 30 * d), panel, "and on its right at {d}");
+                assert_ne!(t.get(d, 0), rgb(outline), "a round corner at {d}");
+                near("the fill's top", t.get(40 * d, 2 * d), fill, 3);
+                if d == 2 {
+                    let mixed = |p: u32| p != panel && p != rgb(outline);
+                    assert!(
+                        (0..3).any(|y| (2..5).any(|x| mixed(t.get(x, y)))),
+                        "a soft corner at 2"
+                    );
+                }
+            }
+        }
+    }
+
+    /// The places tiles keep their pixels at scale 1 and 2.
+    #[test]
+    fn places_tiles_pin_at_scale_1_and_2() {
+        let got: Vec<u64> = [1, 2]
+            .into_iter()
+            .flat_map(places_tiles)
+            .map(|c| fnv(&c))
+            .collect();
+        assert_eq!(
+            got,
+            [
+                0x8596_f6f1_8efb_500f,
+                0x9651_6955_a462_5b11,
+                0x6994_4fd5_a3d2_cea4,
+                0x4f57_ad5f_e3fb_332c,
+                0x5c9b_6cbc_8714_4c18,
+                0xa251_54e6_e15a_d59d,
+                0x0663_ff28_9b81_81b5,
+                0x08bb_9426_d447_6ca5,
+                0x1b22_45c7_9c7b_6cdd,
+                0xba2c_91d4_f5d1_c8e9,
+            ],
             "{got:#x?}"
         );
     }

@@ -1,4 +1,4 @@
-//! Glass's tooltip box, the calendar's weekday band and frame, the file dialog's places bar and selected tile, and the thumbnail popup's close button. The tooltip and close button are drawn at the style's scale, the rest at the design's size.
+//! Glass's tooltip box, the calendar's weekday band and frame, the file dialog's places bar, and the thumbnail popup's close button. The tooltip and close button are drawn at the style's scale, the rest at the design's size.
 
 use crate::raster::{Canvas, Insets};
 use crate::shape::{
@@ -17,14 +17,6 @@ pub const BAND_RULE: Color = Color::rgb(0xF4, 0xF5, 0xF5);
 
 pub const CALENDAR_LINE: Color = Color::rgb(0x94, 0x95, 0x95);
 
-pub const TILE_LINE: Color = Color::rgb(0xAA, 0xAB, 0xAB);
-pub const TILE_SHADE: Color = Color::rgb(0x6F, 0x6F, 0x6F);
-pub const TILE_SIDE_FOOT: Color = Color::rgb(0xBB, 0xBA, 0xBB);
-pub const TILE_FACE_TOP: Color = Color::rgb(0xC1, 0xC2, 0xC2);
-pub const TILE_FACE: Color = Color::rgb(0xE3, 0xE2, 0xE3);
-pub const TILE_FOOT: Color = Color::rgb(0x78, 0x79, 0x79);
-pub const TILE_FADE: i32 = 26;
-
 pub const BAND_RULE_INSET: i32 = 5;
 
 pub const TIP_LINE: Color = Color::rgb(0x72, 0x73, 0x73);
@@ -42,7 +34,7 @@ const TIP_SHADOW_FADE: f64 = 1.5;
 const TIP_SHADOW_FROM: (i32, i32) = (5, 4);
 
 /// Where the shadow starts: 5 px in from the box's left edge, 4 px down, so it is whole by the stretching rows and columns.
-pub fn parts(d: i32) -> [(Part, PartImage); 5] {
+pub fn parts(d: i32) -> [(Part, PartImage); 4] {
     // The parts that are the same in every glass colour; the tooltip is painted at `d`.
     let tip = PartImage::new(tooltip(d), &[State::Normal], Layout::Vertical)
         .sizing(Insets::new(10, 9, 14, 11))
@@ -59,7 +51,6 @@ pub fn parts(d: i32) -> [(Part, PartImage); 5] {
         (Part::CalendarBand, band()),
         (Part::PlacesBar, places),
         (Part::CalendarFrame, calendar_frame()),
-        (Part::PlacesTile, tile()),
     ]
 }
 
@@ -190,57 +181,6 @@ fn calendar_frame() -> PartImage {
     img
 }
 
-fn premul(c: Color, a: u8) -> u32 {
-    let m = |v: u8| (u32::from(v) * u32::from(a) + 127) / 255;
-    u32::from(a) << 24 | m(c.r) << 16 | m(c.g) << 8 | m(c.b)
-}
-
-fn lerp(a: Color, b: Color, k: f32) -> Color {
-    a.toward(b, (k.clamp(0.0, 1.0) * 255.0).round() as u8)
-}
-
-/// The selected tile's frame (`Checked`), 59 rows by five columns: outline, side, face, side, outline. The face column and the rows from its last lightening one to the foot stretch. It stands 1 px in from either side of the bar.
-fn tile() -> PartImage {
-    const H: i32 = 59;
-    const W: i32 = 5;
-    let mut a = Canvas::new(W as u32, H as u32);
-    let sides = H - 5;
-    for y in 0..H {
-        let (edge, side, face) = match y {
-            0 => (premul(TILE_LINE, 0xC0), TILE_LINE, TILE_LINE),
-            1 => (
-                TILE_LINE.argb(),
-                TILE_SHADE.toward(TILE_LINE, 51),
-                TILE_SHADE,
-            ),
-            y if y == H - 2 => (
-                premul(TILE_LINE, 0x40),
-                TILE_SIDE_FOOT.toward(TILE_FOOT, 128),
-                TILE_FACE,
-            ),
-            y if y == H - 1 => (0, TILE_LINE, TILE_FOOT),
-            y => (
-                TILE_LINE.argb(),
-                lerp(TILE_SHADE, TILE_SIDE_FOOT, (y - 2) as f32 / sides as f32),
-                lerp(
-                    TILE_FACE_TOP,
-                    TILE_FACE,
-                    (y - 2) as f32 / (TILE_FADE - 1) as f32,
-                ),
-            ),
-        };
-        for (x, px) in [edge, side.argb(), face.argb(), side.argb(), edge]
-            .into_iter()
-            .enumerate()
-        {
-            a.put_raw(x as i32, y, px);
-        }
-    }
-    PartImage::new(a, &[State::Checked], Layout::Vertical)
-        .sizing(Insets::new(2, 2 + TILE_FADE, 2, 2))
-        .outset(Insets::new(-1, 0, -1, 0))
-}
-
 /// The weekday band: Normal white, Disabled clear, each over the [`BAND_RULE`] row along its foot. A frame is 11x3; its middle column stretches.
 fn band() -> PartImage {
     let (w, h) = (2 * BAND_RULE_INSET + 1, 3);
@@ -274,7 +214,7 @@ mod tests {
     use crate::interface::Interface;
     use crate::interfaces::{theme_for, theme_with};
     use crate::look::styled::fixture::doubles_at_scale_1;
-    use crate::look::widgets::placesbar::{draw_panel, draw_selected};
+    use crate::look::widgets::placesbar::draw_panel;
     use crate::look::widgets::tooltip;
     use crate::look::widgets::{draw_calendar_band, draw_calendar_frame};
     use crate::raster::Rect;
@@ -441,35 +381,6 @@ mod tests {
     }
 
     #[test]
-    fn the_glass_selected_places_tile_is_sunk_into_a_grey_box() {
-        let theme = theme_for(Interface::Glass);
-        let mut c = Canvas::new(91, 69);
-        c.fill_rect(c.bounds(), theme.colors.button_face);
-        let bar = Rect::new(2, 2, 87, 65);
-        draw_panel(&mut c, &theme.paint(), bar);
-        draw_selected(&mut c, &theme.paint(), bar);
-        let (l, r, top, foot) = (3, 87, 2, 66);
-        pin(&c, 2, 30, 0xF3F4F4, "the bar left of the box");
-        pin(&c, 88, 30, 0xF3F4F4, "the bar right of it");
-        pin(&c, l, top, 0xBCBDBD, "the top-left corner blends");
-        pin(&c, r, top, 0xBCBDBD, "the top-right corner blends");
-        pin(&c, 40, top, 0xAAABAB, "the outline's top");
-        pin(&c, l, 30, 0xAAABAB, "its left side");
-        pin(&c, r, 30, 0xAAABAB, "its right side");
-        pin(&c, 40, top + 1, 0x6F6F6F, "the line along the top");
-        pin(&c, l + 1, top + 1, 0x7B7B7B, "its ends");
-        pin(&c, l + 1, top + 2, 0x6F6F6F, "the left side starts dark");
-        pin(&c, r - 1, top + 2, 0x6F6F6F, "and so does the right");
-        pin(&c, l + 1, foot - 2, 0xBBBABB, "the side ends light");
-        pin(&c, 40, top + 2, 0xC1C2C2, "the face's first row");
-        pin(&c, 40, top + 27, 0xE3E2E3, "the face after 26 rows");
-        pin(&c, 40, foot - 1, 0xE3E2E3, "the face over the foot");
-        pin(&c, 40, foot, 0x787979, "the line closing the foot");
-        pin(&c, l, foot - 1, 0xE1E1E1, "the outline fading");
-        pin(&c, l, foot, 0xF3F4F4, "and gone beside the foot");
-    }
-
-    #[test]
     fn the_glass_popup_parts_double_at_scale_2() {
         for theme in [theme_for(Interface::Glass), dark()] {
             let draw = |s: i32| {
@@ -480,7 +391,6 @@ mod tests {
                 draw_calendar_band(&mut c, &p, Rect::new(70, 20, 40, 18).scaled(s), false);
                 draw_panel(&mut c, &p, Rect::new(112, 2, 6, 36).scaled(s));
                 draw_calendar_frame(&mut c, &p, Rect::new(40, 40, 30, 20).scaled(s), true);
-                draw_selected(&mut c, &p, Rect::new(2, 40, 30, 65).scaled(s));
                 c
             };
             let name = theme.look.style().unwrap().name;

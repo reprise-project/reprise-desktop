@@ -24,6 +24,7 @@ pub(super) fn metrics() -> PlacesMetrics {
     PlacesMetrics {
         tile: 71,
         icon_top: 5,
+        ..PlacesMetrics::CLASSIC
     }
 }
 
