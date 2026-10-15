@@ -659,6 +659,12 @@ pub trait App {
     /// Called before each draw of `win`, at `scale` device px per logical px, with
     /// [`Ctx::icons`] at that scale: a program fetches again what it holds at another one.
     fn follow_scale(&mut self, _win: WinId, _scale: i32, _ctx: &mut Ctx) {}
+    /// The image of the drag window `win` started ([`Reply::start_drag`]), drawn again at
+    /// `scale` for an output of another scale, with [`Ctx::icons`] at that scale. None keeps the
+    /// image it has.
+    fn drag_image(&mut self, _win: WinId, _scale: i32, _ctx: &mut Ctx) -> Option<Canvas> {
+        None
+    }
     fn draw(&mut self, win: WinId, c: &mut Canvas, ctx: &Ctx);
     /// Window `win`'s accessibility tree, from the state `draw` last drew:
     /// hang the controls' `access` parts under `reprisekit::access::ROOT` and
@@ -2491,7 +2497,9 @@ impl CompositorHandler for Host {
         surface: &wl_surface::WlSurface,
         factor: i32,
     ) {
-        self.rescale(surface, None, Some(factor));
+        if !self.rescale_drag_icon(surface, factor) {
+            self.rescale(surface, None, Some(factor));
+        }
     }
     fn transform_changed(
         &mut self,
@@ -2896,7 +2904,7 @@ struct Outgoing {
     action: Option<DragAction>,
     dropped: bool,
     transfers: reprisebus::filetransfer::Transfers,
-    _icon: Option<DragIcon>,
+    icon: Option<DragIcon>,
     source: DragSource,
 }
 
@@ -2914,7 +2922,32 @@ impl Drop for DragIcon {
     }
 }
 
+/// An shm buffer holding `image`'s device pixels.
+fn icon_buffer(image: &Canvas, shm: &Shm) -> Option<(Buffer, SlotPool)> {
+    let (dw, dh) = image.device_size();
+    if dw == 0 || dh == 0 || dw > MAX_SIDE as u32 || dh > MAX_SIDE as u32 {
+        return None;
+    }
+    let (dw, dh) = (dw as i32, dh as i32);
+    let mut pool = SlotPool::new((dw * dh * 4) as usize, shm).ok()?;
+    let (buffer, pixels) = pool
+        .create_buffer(dw, dh, dw * 4, wl_shm::Format::Argb8888)
+        .ok()?;
+    copy_pixels(pixels, &image.pixels);
+    Some((buffer, pool))
+}
+
 impl DragIcon {
+    /// Shows a buffer drawn at another scale; the grab, in logical px, stays where it was.
+    fn redraw(&self) {
+        self.surface.set_buffer_scale(self.scale);
+        if self.buffer.attach_to(&self.surface).is_err() {
+            return;
+        }
+        self.surface.damage_buffer(0, 0, i32::MAX, i32::MAX);
+        self.surface.commit();
+    }
+
     /// Runs after `start_drag`, so the compositor's icon sees the offset commit.
     fn show(&self) {
         let (gx, gy) = self.grab;
@@ -3021,22 +3054,13 @@ impl Host {
             action: None,
             dropped: false,
             transfers,
-            _icon: icon,
+            icon,
             source,
         });
     }
 
     fn drag_icon(&self, image: &Canvas, grab: (i32, i32)) -> Option<DragIcon> {
-        let (dw, dh) = image.device_size();
-        if dw == 0 || dh == 0 || dw > MAX_SIDE as u32 || dh > MAX_SIDE as u32 {
-            return None;
-        }
-        let (dw, dh) = (dw as i32, dh as i32);
-        let mut pool = SlotPool::new((dw * dh * 4) as usize, &self.shm).ok()?;
-        let (buffer, pixels) = pool
-            .create_buffer(dw, dh, dw * 4, wl_shm::Format::Argb8888)
-            .ok()?;
-        copy_pixels(pixels, &image.pixels);
+        let (buffer, pool) = icon_buffer(image, &self.shm)?;
         Some(DragIcon {
             surface: self.compositor.create_surface(&self.qh),
             buffer,
@@ -3044,6 +3068,37 @@ impl Host {
             scale: image.scale(),
             grab,
         })
+    }
+
+    /// The compositor shows drag icon `surface` at `factor` now: the program draws its image
+    /// again at that scale. False when `surface` is no drag icon.
+    fn rescale_drag_icon(&mut self, surface: &wl_surface::WlSurface, factor: i32) -> bool {
+        let Some(out) = &self.drag_out else {
+            return false;
+        };
+        let Some(icon) = out.icon.as_ref().filter(|i| &i.surface == surface) else {
+            return false;
+        };
+        let scale = factor.max(1);
+        if icon.scale == scale {
+            return true;
+        }
+        let win = out.win;
+        self.ctx.icons.set_scale(scale);
+        let image = self.app.drag_image(win, scale, &mut self.ctx);
+        if let Some(image) = image.filter(|i| i.scale() == scale)
+            && let Some((buffer, pool)) = icon_buffer(&image, &self.shm)
+            && let Some(icon) = self.drag_out.as_mut().and_then(|o| o.icon.as_mut())
+        {
+            // The old buffer goes once the new one is committed.
+            let _old = (
+                std::mem::replace(&mut icon.buffer, buffer),
+                std::mem::replace(&mut icon._pool, pool),
+            );
+            icon.scale = scale;
+            icon.redraw();
+        }
+        true
     }
 
     fn drag_ended(&mut self, out: Outgoing, finished: bool) {

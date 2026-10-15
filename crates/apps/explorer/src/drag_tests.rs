@@ -785,7 +785,7 @@ fn the_drag_image_stacks_every_dragged_icon() {
             .collect();
         let at = centre(&ex, &ctx, index_of(&ex, "a.txt"));
         press(&mut ex, &mut ctx, at, BTN_LEFT);
-        let (img, grab) = ex.drag_image(&ctx).expect("an image");
+        let (img, grab) = ex.drag_image(&mut ctx, 1).expect("an image");
 
         let bounds = cells
             .iter()
@@ -818,6 +818,57 @@ fn the_drag_image_stacks_every_dragged_icon() {
     }
 }
 
+/// Drawn again at another scale the image is that scale's, its icons fetched at it rather than
+/// the listing's stretched, and the pointer holds the same point of it.
+#[test]
+fn the_drag_image_draws_again_at_another_scale() {
+    const SMALL: u32 = 0xffc0_2020;
+    const BIG: u32 = 0xff20_40c0;
+    let themes = tempfile::tempdir().expect("a temp dir");
+    let theme = themes.path().join("flat");
+    let mut index = "[Icon Theme]\nName=Flat\nDirectories=32x32/places,64x64/places\n".to_string();
+    for (px, argb) in [(32u32, SMALL), (64, BIG)] {
+        let dir = format!("{px}x{px}/places");
+        index += &format!("\n[{dir}]\nSize={px}\nType=Fixed\n");
+        std::fs::create_dir_all(theme.join(&dir)).expect("mkdir");
+        let mut c = Canvas::new(px, px);
+        c.pixels.fill(argb);
+        let png = reprisekit::raster::to_png(&c);
+        std::fs::write(theme.join(&dir).join("folder.png"), png).expect("png");
+    }
+    std::fs::write(theme.join("index.theme"), index).expect("index");
+    let mut ctx = test_ctx();
+    ctx.icons = reprisekit::icontheme::IconCache::new(reprisekit::icontheme::IconTheme::load(
+        "flat",
+        &[themes.path().to_path_buf()],
+    ));
+    let (_dir, mut ex) = explorer(&mut ctx);
+    select(&mut ex, &["Box"]);
+    let c = cell(&ex, &ctx, index_of(&ex, "Box"));
+    let at = centre(&ex, &ctx, index_of(&ex, "Box"));
+    press(&mut ex, &mut ctx, at, BTN_LEFT);
+    let (one, grab) = ex.drag_image(&mut ctx, 1).expect("an image");
+    let (two, grab2) = ex.drag_image(&mut ctx, 2).expect("an image at scale 2");
+
+    assert_eq!(grab2, grab);
+    assert_eq!(two.scale(), 2);
+    assert_eq!((two.width, two.height), (one.width, one.height));
+    // The folder icon's middle, in the image's logical px.
+    let (x, y) = (
+        c.x - (at.0 - grab.0) + 21 + 16,
+        c.y - (at.1 - grab.1) + 2 + 16,
+    );
+    let rgb = |img: &Canvas, s: i32| {
+        let dw = img.device_size().0 as i32;
+        let [_, r, _, b] = img.pixels[(y * s * dw + x * s) as usize].to_be_bytes();
+        (r, b)
+    };
+    let (r, b) = rgb(&one, 1);
+    assert!(r > b, "scale 1 wears the 32 px folder");
+    let (r, b) = rgb(&two, 2);
+    assert!(b > r, "scale 2 wears the 64 px folder");
+}
+
 /// At a larger text size every mode's image is made of whole grown icon cells inside the grown square: the dragged cells in the icon modes, the pressed entry's centred on the press in List and Details.
 #[test]
 fn the_drag_image_grows_with_the_text_size() {
@@ -838,7 +889,7 @@ fn the_drag_image_grows_with_the_text_size() {
             select(&mut ex, &["a.txt", "Box", "Crate"]);
             let at = centre(&ex, &ctx, index_of(&ex, "a.txt"));
             press(&mut ex, &mut ctx, at, BTN_LEFT);
-            let (img, grab) = ex.drag_image(&ctx).expect("an image");
+            let (img, grab) = ex.drag_image(&mut ctx, 1).expect("an image");
             let side = 256 * pct as i32 / 100;
             let window = Rect::new(at.0 - side / 2, at.1 - side / 2, side, side);
             let bounds = if matches!(mode, Mode::List | Mode::Details) {

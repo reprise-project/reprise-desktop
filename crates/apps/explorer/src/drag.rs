@@ -251,7 +251,7 @@ impl Explorer {
             return Reply::none();
         }
         let (image, grab) = self
-            .drag_image(ctx)
+            .drag_image(ctx, self.drawn_scale)
             .unwrap_or_else(|| (Canvas::new(0, 0), (0, 0)));
         let d = self.drag.as_mut().expect("still armed");
         d.started = true;
@@ -262,14 +262,16 @@ impl Explorer {
         })
     }
 
-    pub(crate) fn drag_image(&self, ctx: &Ctx) -> Option<(Canvas, (i32, i32))> {
+    /// The dragged entries' image drawn at `scale`, and the point of it the pointer holds.
+    pub(crate) fn drag_image(&self, ctx: &mut Ctx, scale: i32) -> Option<(Canvas, (i32, i32))> {
         let d = self.drag.as_ref()?;
+        let s = scale.max(1);
         let lay = self.layout(ctx);
         let sl = self.view_layout(lay.view, ctx);
-        let icon_of = |e: &shellview::Entry| match self.sv.mode {
-            Mode::Tiles => e.icon48.clone(),
-            Mode::Thumbnails | Mode::Icons => e.icon32.clone(),
-            Mode::List | Mode::Details => e.icon.clone(),
+        let (px, icon_of): (i32, fn(&shellview::Entry) -> _) = match self.sv.mode {
+            Mode::Tiles => (48, |e| e.icon48.clone()),
+            Mode::Thumbnails | Mode::Icons => (32, |e| e.icon32.clone()),
+            Mode::List | Mode::Details => (16, |e| e.icon.clone()),
         };
         let cell = iconview::Cell::grown(ctx.theme.text);
         let flat = matches!(self.sv.mode, Mode::List | Mode::Details);
@@ -286,10 +288,20 @@ impl Explorer {
                 .filter_map(|&i| sl.cells.get(i).map(|c| (i, (c.x, c.y))))
                 .collect()
         };
-        let icons: Vec<_> = shown
+        let drawn = ctx.icons.scale();
+        ctx.icons.set_scale(s);
+        let icons: Vec<Option<Canvas>> = shown
             .iter()
-            .map(|&(i, _)| self.sv.entries.get(i).and_then(icon_of))
+            .map(|&(i, _)| {
+                let worn = self.sv.entries.get(i).and_then(icon_of)?;
+                let icon = match worn.scale() == s {
+                    true => None,
+                    false => self.list_icons.fetch(&worn, px, &mut ctx.icons),
+                };
+                Some(device_px(icon.unwrap_or_else(|| (*worn).clone()), s))
+            })
             .collect();
+        ctx.icons.set_scale(drawn);
         let ghosts: Vec<Ghost> = shown
             .iter()
             .zip(&icons)
@@ -298,7 +310,7 @@ impl Explorer {
                 Some(Ghost {
                     at,
                     name: &e.name,
-                    icon: icon.as_deref(),
+                    icon: icon.as_ref(),
                     shortcut: e.link,
                 })
             })
@@ -306,9 +318,10 @@ impl Explorer {
         // `draw_cell`'s unselected label is drawn for the desktop, where
         // the text is white; in the view it sits on white, so the colour
         // is swapped the way `shellgrid` swaps it for the same call.
-        let mut theme = ctx.theme.clone();
+        let mut theme = ctx.theme.scaled(s);
         theme.colors.desktop_text = theme.colors.window_text;
-        iconview::drag_image(&theme, &ctx.text, &ghosts, cell, d.origin)
+        let (image, grab) = iconview::drag_image(&theme, &ctx.text, &ghosts, cell, d.origin)?;
+        Some((image.at_scale(s), grab))
     }
 
     pub(crate) fn drag_release(&mut self, x: i32, y: i32, ctx: &mut Ctx) -> Reply {
@@ -786,3 +799,14 @@ fn writable_dir(place: &Place) -> Option<PathBuf> {
 #[cfg(test)]
 #[path = "drag_tests.rs"]
 mod tests;
+
+/// `icon` as `s` device px per logical px, one canvas px each: what a theme scaled to `s` draws.
+fn device_px(icon: Canvas, s: i32) -> Canvas {
+    let k = icon.scale().max(1);
+    let (dw, dh) = icon.device_size();
+    let flat = icon.at_scale(1);
+    if k == s {
+        return flat;
+    }
+    flat.resample_box(dw * s as u32 / k as u32, dh * s as u32 / k as u32)
+}

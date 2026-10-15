@@ -1088,6 +1088,11 @@ impl App for Lazy {
         }
     }
 
+    fn drag_image(&mut self, win: WinId, scale: i32, ctx: &mut Ctx) -> Option<Canvas> {
+        let ex = self.inner.as_ref().filter(|_| win == MAIN)?;
+        ex.drag_image(ctx, scale).map(|(image, _)| image)
+    }
+
     fn draw(&mut self, win: WinId, c: &mut Canvas, ctx: &Ctx) {
         let Some(ex) = &mut self.inner else {
             c.fill_rect(c.bounds(), ctx.theme.colors.button_face);
