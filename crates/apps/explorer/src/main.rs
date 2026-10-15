@@ -33,7 +33,8 @@ use place::{Listed, Place, list, sort_order_grouped};
 use props_dialog::{PROPS, Props};
 use repriseapp::decode::Decoders;
 use repriseapp::keys::AltArm;
-use repriseapp::listicons::ListIcons;
+use repriseapp::listicons::{ListIcons, ReadIcons};
+use repriseapp::listjob::Job;
 use repriseapp::thumbs::{self, Thumbs};
 use repriseapp::{
     App, BTN_LEFT, BTN_RIGHT, Child, Ctx, DropForm, Event, FileDrop, MAIN, PointerInput, Reply,
@@ -96,6 +97,22 @@ pub struct Tip {
     pub at: (i32, i32),
     pub lines: Vec<String>,
     pub plain: bool,
+}
+
+/// How long a listing is waited for before the window goes on. Tests wait as long as it takes.
+const LIST_WAIT: std::time::Duration = if cfg!(test) {
+    std::time::Duration::from_secs(60)
+} else {
+    repriseapp::listjob::WAIT
+};
+
+/// A place as a listing's thread read it ([`Explorer::show`]), with the children of the
+/// Folders nodes the walk to it fills.
+pub(crate) struct Read {
+    place: Place,
+    listed: Listed,
+    icons: ReadIcons,
+    tree: Vec<(Place, foldertree::Kids)>,
 }
 
 pub struct Explorer {
@@ -212,6 +229,9 @@ pub struct Explorer {
     drawn_scale: i32,
     /// The listing's icons, fetched again when the main window draws at a new scale.
     list_icons: ListIcons,
+    /// A place still being read after [`LIST_WAIT`]; the listing before stays until it lands
+    /// ([`Explorer::take_read`]).
+    reading: Option<(Place, Job<Read>)>,
     /// Image sizes by path, from the thumbnail worker or a header read
     /// ([`Explorer::read_dims`]). They survive a sort and a refresh and feed the
     /// Tiles detail line, the infotip and the Details pane.
@@ -345,6 +365,7 @@ impl Explorer {
             generation: 0,
             drawn_scale: 0,
             list_icons: ListIcons::default(),
+            reading: None,
             image_dims: HashMap::new(),
             dims_asked: HashSet::new(),
             watch: match Watch::new(ctx.wake.clone()) {
@@ -439,6 +460,8 @@ impl Explorer {
     /// is a refresh: Enter on unchanged address text re-lists the folder.
     pub fn go(&mut self, place: Place, ctx: &mut Ctx) -> Reply {
         if place == self.place {
+            // Going where the window already is drops a place still being read.
+            self.reading = None;
             return self.refresh(ctx);
         }
         self.history.visit(place.clone());
@@ -448,6 +471,24 @@ impl Explorer {
     /// Re-list the current place, keeping the selection by path and leaving the
     /// history alone: F5, View > Refresh, and Enter on the address already shown.
     pub fn refresh(&mut self, ctx: &mut Ctx) -> Reply {
+        if self.reading.as_ref().is_some_and(|(p, _)| *p != self.place) {
+            // The place being read is newer than the listing shown.
+            return Reply::none();
+        }
+        let here = self.place.clone();
+        if here == Place::Computer {
+            self.mounts_seen.clear();
+        }
+        self.keeping_view(ctx, |ex, ctx| ex.show(here, ctx))
+    }
+
+    /// Runs `list`, a listing of the place shown, keeping the selection, a rename in progress
+    /// and the scroll position.
+    fn keeping_view(
+        &mut self,
+        ctx: &mut Ctx,
+        list: impl FnOnce(&mut Self, &mut Ctx) -> Reply,
+    ) -> Reply {
         let chosen = self.selected_paths();
         // The folder watch fires refreshes unasked; they keep the scroll position.
         let (top, left) = (self.sv.top, self.sv.left);
@@ -458,11 +499,7 @@ impl Explorer {
             .edit
             .as_ref()
             .and_then(|(i, ed)| self.items.get(*i).map(|it| (it.path.clone(), ed.clone())));
-        let here = self.place.clone();
-        if here == Place::Computer {
-            self.mounts_seen.clear();
-        }
-        let reply = self.show(here, ctx);
+        let reply = list(self, ctx);
         self.select_paths(&chosen);
         if let Some((path, ed)) = editing
             && let Some(j) = self.index_of(&path)
@@ -474,23 +511,88 @@ impl Explorer {
         reply
     }
 
+    /// Lists `place`. Its folder is read on a thread; one that takes longer than [`LIST_WAIT`]
+    /// lands later through [`Explorer::take_read`], the window showing the listing before
+    /// until then.
     pub fn show(&mut self, place: Place, ctx: &mut Ctx) -> Reply {
         if !self.sync_drives(ctx) && place == Place::Computer {
             self.sync_volumes();
         }
-        let Listed { items, groups, .. } = list(
-            &place,
-            &self.globs,
-            self.settings.show_hidden,
-            &self.drives,
-            &self.volumes,
-        );
+        let job = Job::spawn(Some(&ctx.wake), self.reader(place.clone(), ctx));
+        match job.wait(LIST_WAIT) {
+            Some(read) => {
+                self.reading = None;
+                self.show_read(read, ctx)
+            }
+            None => {
+                self.reading = Some((place, job));
+                Reply::none()
+            }
+        }
+    }
+
+    /// The read of `place` for a listing's thread.
+    pub(crate) fn reader(&self, place: Place, ctx: &Ctx) -> impl FnOnce() -> Read + Send + 'static {
+        let (globs, show_hidden) = (self.globs.clone(), self.settings.show_hidden);
+        let (drives, volumes) = (self.drives.clone(), self.volumes.clone());
+        let mounts = self.drive_mounts.clone();
+        let to_fill = foldertree::to_fill(&self.tree, &self.tree_places, &place, &mounts);
+        let scale = ctx.icons.scale();
+        move || {
+            let listed = list(&place, &globs, show_hidden, &drives, &volumes);
+            let icons = ReadIcons::read(&listed.items, scale);
+            let inp = foldertree::Inputs {
+                show_hidden,
+                drives: &drives,
+                volumes: &volumes,
+                drive_mounts: &mounts,
+            };
+            let tree = to_fill
+                .into_iter()
+                .map(|p| {
+                    let kids = foldertree::read_kids(&p, &inp, &[]);
+                    (p, kids)
+                })
+                .collect();
+            Read {
+                place,
+                listed,
+                icons,
+                tree,
+            }
+        }
+    }
+
+    /// Shows a place read late ([`Explorer::show`]), keeping the view when it is the one shown.
+    pub(crate) fn take_read(&mut self, ctx: &mut Ctx) -> Option<Reply> {
+        let read = self.reading.as_ref()?.1.take()?;
+        self.reading = None;
+        Some(if read.place == self.place {
+            self.keeping_view(ctx, |ex, ctx| ex.show_read(read, ctx))
+        } else {
+            self.show_read(read, ctx)
+        })
+    }
+
+    fn show_read(&mut self, read: Read, ctx: &mut Ctx) -> Reply {
+        let Read {
+            place,
+            listed: Listed { items, groups, .. },
+            icons: read_icons,
+            tree,
+        } = read;
         self.set_columns(&place);
         let is_12h = reprisefs::locale::is_12h();
-        // Resolved up front: `item_icon` asks what the theme carries, and the icons below want the cache mutable.
+        read_icons.put(&mut ctx.icons);
+        // Resolved up front: `item_icon_with` asks what the theme carries, and the icons below want the cache mutable.
         let names: Vec<String> = items
             .iter()
-            .map(|it| reprisefs::icons::item_icon(it, &self.specials, &|n| ctx.icons.has(n)))
+            .zip(&read_icons.own)
+            .map(|(it, own)| {
+                reprisefs::icons::item_icon_with(it, own.as_deref(), &self.specials, &|n| {
+                    ctx.icons.has(n)
+                })
+            })
             .collect();
         // A re-listing of the same place keeps the thumbnails of unchanged images,
         // so a download finishing in a picture folder doesn't redecode the rest.
@@ -592,7 +694,7 @@ impl Explorer {
 
         let icon = ctx.icons.get(place.icon_name(), 16);
         self.address.set_place(&place.address(), icon);
-        self.tree_follow(&place, ctx);
+        self.tree_follow_with(&place, tree, ctx);
         self.refresh_chrome(ctx);
         // The listing is new: every earlier thumbnail request is stale.
         self.generation += 1;
