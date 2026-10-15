@@ -2808,10 +2808,13 @@ mod tests {
         let text = TextRenderer::load(&FontConfig::default());
         let theme = Theme::default();
         let (px, p) = (theme.fonts.size_px, theme.paint());
+        // The second line is the wider, so in any face it no longer fits once the first line's
+        // last word wraps onto it.
         let lines = [
             "Sunset and sunrise are worked out",
-            "for the time zone's city.",
+            "for the time zone's city, not this machine's.",
         ];
+        assert!(text.measure(lines[1], false, px) > text.measure(lines[0], false, px));
         let w = text.measure(lines[0], false, px) - 20;
         let page = Form::new(vec![
             Item::lines("note", Rect::new(20, 330, w, 2 * LINE_H), &lines),
