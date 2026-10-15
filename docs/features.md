@@ -176,8 +176,9 @@ the Super tap, Super+Shift+Esc and the VT switch keys can be rebound.
   (Properties) that holds a script (`#!`) or a binary runs when you open it,
   in its own folder, here and in Explorer. A script runs in your terminal,
   which waits for Enter after it ends unless `script_terminal = "close"`
-  (Settings > Default Programs); a binary runs on its own. Edit and Open
-  With still open it in an editor; any other executable file opens as usual.
+  (Settings > Default Programs) and the script succeeded; a binary runs on
+  its own. Edit and Open With still open it in an editor; any other
+  executable file opens as usual.
 - **Wallpaper** centred, tiled or stretched, or a slideshow of a folder that
   crossfades every so often. The desktop menu skips to the next picture.
 - **Desktop water.** The wallpaper ripples like a pond: the pointer leaves a
