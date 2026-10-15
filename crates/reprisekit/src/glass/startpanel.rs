@@ -271,12 +271,20 @@ fn draw_contents(
     let s = l.scale.max(1);
     let o = l.canvas;
     let at = |r: Rect| Rect::new(r.x - o.x, r.y - o.y, r.width, r.height);
-    let off = |r: Rect, (dx, dy): (i32, i32)| (r.x - o.x + dx * s, r.y - o.y + dy * s);
+    let g = search::Grow { s, u: p.text };
+    let off = |r: Rect, (dx, dy): (i32, i32)| (r.x - o.x + g.len(dx), r.y - o.y + g.len(dy));
+    // An icon or glyph keeps its size as the text grows; its centre moves with the rest.
+    let kept = |r: Rect, (dx, dy): (i32, i32), (w, h): (i32, i32)| {
+        (r.x - o.x + g.kept(dx, w), r.y - o.y + g.kept(dy, h))
+    };
+    let icon_size = |c: &Canvas| (c.width as i32 / s, c.height as i32 / s);
+    let glyph_at =
+        |r: Rect, off: (i32, i32), part: Part| kept(r, off, search::glyph_size(style, part));
     let mode = p.mode();
     let lit = p.lit();
     let light = matches!(mode, Mode::Jump(_) | Mode::Search);
     let mut d = Draw { canvas, style, s };
-    let size = TEXT_PX * s as u32;
+    let size = g.px(TEXT_PX);
     let right = style
         .text_color(Part::StartPanel, State::Normal)
         .unwrap_or(ink(INK_RIGHT));
@@ -303,12 +311,12 @@ fn draw_contents(
             Spot::Program(i) => {
                 let Some(row) = p.program(i) else { continue };
                 let (bx, by) = off(r, at::PROGRAM_BOX);
-                let b = Rect::new(bx, by, r.width, at::PROGRAM_BOX_H * s);
+                let b = Rect::new(bx, by, r.width, g.len(at::PROGRAM_BOX_H));
                 let is_lit = lit == Some(spot) || jump_row == Some(i);
                 if is_lit {
                     d.part(b, Part::StartHotLeft, State::Normal);
                     if row.jump {
-                        let x = b.x + at::SPLIT_X * s;
+                        let x = b.x + g.len(at::SPLIT_X);
                         d.part(
                             Rect::new(x, b.y, 3 * s, b.height),
                             Part::StartHotSplit,
@@ -319,19 +327,20 @@ fn draw_contents(
                     d.part(b, Part::StartNewPin, State::Normal);
                 }
                 if let Some(icon) = &row.icon {
-                    let (x, y) = off(r, at::PROGRAM_ICON);
+                    let (x, y) = kept(r, at::PROGRAM_ICON, icon_size(icon));
                     d.canvas.blit_over(x, y, icon);
                 }
                 let right = if row.jump {
-                    at::SPLIT_X
+                    g.len(at::SPLIT_X)
                 } else {
-                    r.width / s - 4
+                    r.width - 4 * s
                 };
-                let clip = at(Rect::new(r.x, r.y, right * s, r.height));
+                let clip = at(Rect::new(r.x, r.y, right, r.height));
                 let (x, y) = off(r, (at::PROGRAM_PEN, at::PROGRAM_BASE));
                 d.line(text, x, y, clip, &row.name, ink(INK_PROGRAM), size);
                 if row.jump {
-                    d.glyph(off(r, at::ROW_ARROW), Part::StartRowArrow);
+                    let arrow = Part::StartRowArrow;
+                    d.glyph(glyph_at(r, at::ROW_ARROW, arrow), arrow);
                 }
             }
             Spot::AllPrograms => {
@@ -343,7 +352,7 @@ fn draw_contents(
                 } else {
                     (ALL_PROGRAMS, at::ALL_PEN, Part::StartTriangleRight)
                 };
-                d.glyph(off(r, at::TRIANGLE), part);
+                d.glyph(glyph_at(r, at::TRIANGLE, part), part);
                 let (x, y) = off(r, (pen, at::ALL_BASE));
                 d.line(text, x, y, row_clip(r), label, ink(INK_STRONG), size);
             }
@@ -358,29 +367,30 @@ fn draw_contents(
                 };
                 let indent = depth * crate::startpanel::layout::TREE_INDENT;
                 if let Some(icon) = icon {
-                    let (x, y) = off(r, (at::TREE_ICON.0 + indent, at::TREE_ICON.1));
+                    let off = (at::TREE_ICON.0 + indent, at::TREE_ICON.1);
+                    let (x, y) = kept(r, off, icon_size(icon));
                     d.canvas.blit_over(x, y, icon);
                 }
                 let (x, y) = off(r, (at::TREE_PEN + indent, at::TREE_BASE));
                 d.line(text, x, y, row_clip(r), name, ink(INK_STRONG), size);
             }
-            Spot::Result(g, k) => {
-                let Some(row) = p.results.get(g).and_then(|g| g.rows.get(k)) else {
+            Spot::Result(gi, k) => {
+                let Some(row) = p.results.get(gi).and_then(|grp| grp.rows.get(k)) else {
                     continue;
                 };
                 let lit = lit == Some(spot);
                 let icon = row.icon.as_ref();
-                search::result(d.canvas, style, text, at(r), icon, &row.name, lit, s);
+                search::result(d.canvas, style, text, at(r), icon, &row.name, lit, g);
             }
             Spot::Jump(k) => {
                 let Some(row) = p.jump.get(k) else { continue };
                 if lit == Some(spot) {
                     let (bx, by) = off(r, at::JUMP_BOX);
-                    let b = Rect::new(bx, by, r.width, at::JUMP_BOX_H * s);
+                    let b = Rect::new(bx, by, r.width, g.len(at::JUMP_BOX_H));
                     d.part(b, Part::StartHotJump, State::Normal);
                 }
                 if let Some(icon) = &row.icon {
-                    let (x, y) = off(r, at::JUMP_ICON);
+                    let (x, y) = kept(r, at::JUMP_ICON, icon_size(icon));
                     d.canvas.blit_over(x, y, icon);
                 }
                 let (x, y) = off(r, (at::JUMP_PEN, at::JUMP_BASE));
@@ -396,7 +406,8 @@ fn draw_contents(
                 let (x, y) = off(r, (at::PLACE_PEN, at::PLACE_BASE));
                 d.line(text, x, y, row_clip(r), &place.label, right, size);
                 if place.submenu {
-                    d.inked(off(r, at::PLACE_ARROW), &glyph::ARROW, right);
+                    let size = (glyph::ARROW.w, glyph::ARROW.h);
+                    d.inked(kept(r, at::PLACE_ARROW, size), &glyph::ARROW, right);
                 }
             }
             Spot::Search => {
@@ -411,7 +422,7 @@ fn draw_contents(
                     p.edit(),
                     focused,
                     caret,
-                    s,
+                    g,
                 );
             }
             Spot::Shutdown => {
@@ -440,8 +451,8 @@ fn draw_contents(
                     }
                 }
                 let w = text.measure(SHUT_DOWN, false, size);
-                let x = r.x - o.x + (at::SHUT_W * s - w) / 2;
-                let y = r.y - o.y + at::SHUT_BASE * s;
+                let x = r.x - o.x + (g.len(at::SHUT_W) - w) / 2;
+                let y = r.y - o.y + g.len(at::SHUT_BASE);
                 let color = if light { ink(INK_STRONG) } else { right };
                 d.line(text, x, y, at(r), SHUT_DOWN, color, size);
             }
@@ -450,8 +461,10 @@ fn draw_contents(
                     .picture()
                     .and_then(|i| p.places.get(i))
                     .and_then(|pl| pl.picture.as_ref());
+                // The frame keeps its size, so the picture keeps its place in it.
+                let (fx, fy) = (r.x - o.x + at::PICTURE.0 * s, r.y - o.y + at::PICTURE.1 * s);
                 let pic = |c: &Canvas| {
-                    let (x, y) = off(r, at::PICTURE);
+                    let (x, y) = (fx, fy);
                     let half = |n: u32| (at::PICTURE_PX * s - n as i32) / 2;
                     (x + half(c.width), y + half(c.height))
                 };
@@ -465,7 +478,7 @@ fn draw_contents(
                         if let Some(c) = &p.user_picture {
                             // On white, so a see-through picture hides
                             // the panel's edge behind it.
-                            let (x, y) = off(r, at::PICTURE);
+                            let (x, y) = (fx, fy);
                             let side = at::PICTURE_PX * s;
                             d.canvas
                                 .fill_rect(Rect::new(x, y, side, side), Color::rgb(255, 255, 255));
@@ -479,15 +492,15 @@ fn draw_contents(
         }
     }
 
-    for &(g, r) in &l.headers {
+    for &(gi, r) in &l.headers {
         let pane_clip = at(l.pane);
         match mode {
             Mode::Jump(_) => {
                 let (x, y) = off(r, (0, at::JUMP_HEAD_BASE));
                 let w = d.line(text, x, y, pane_clip, &p.jump_title, ink(INK_HEADER), size);
-                let x0 = x + w + at::JUMP_RULE_GAP * s;
-                let x1 = at::JUMP_RULE_END * s + s - o.x;
-                let ry = r.y - o.y + at::JUMP_RULE_Y * s;
+                let x0 = x + w + g.len(at::JUMP_RULE_GAP);
+                let x1 = g.len(at::JUMP_RULE_END) + s - o.x;
+                let ry = r.y - o.y + g.len(at::JUMP_RULE_Y);
                 d.part(
                     Rect::new(x0, ry, x1 - x0, s),
                     Part::StartJumpRule,
@@ -495,10 +508,10 @@ fn draw_contents(
                 );
             }
             Mode::Search => {
-                let Some(group) = p.results.get(g) else {
+                let Some(group) = p.results.get(gi) else {
                     continue;
                 };
-                search::header(d.canvas, style, text, at(r), pane_clip, &group.title, s);
+                search::header(d.canvas, style, text, at(r), pane_clip, &group.title, g);
             }
             _ => {}
         }
@@ -507,7 +520,7 @@ fn draw_contents(
         let w = text.measure(NO_RESULTS, false, size);
         let pane = at(l.pane);
         let x = pane.x + (pane.width - w) / 2;
-        let y = pane.y + at::NONE_BASE * s;
+        let y = pane.y + g.len(at::NONE_BASE);
         d.line(text, x, y, pane, NO_RESULTS, ink(INK_GREYED), size);
     }
 }
@@ -1524,6 +1537,70 @@ mod tests {
             assert!(inks_near(&d, recent, INK_HEADER), "Recent");
             assert!(!inks_near(&d, recent, INK_STRONG), "not in black");
         }
+    }
+
+    /// At 200% the rows double with their text: the lit row's box runs down the grown row, a
+    /// name's ink stands twice as tall and the panel is twice the size.
+    #[test]
+    fn at_200_percent_the_rows_and_their_text_grow() {
+        let ink_rows = |d: &Drawn, r: Rect| {
+            (r.y..r.bottom())
+                .filter(|&y| {
+                    (r.x..r.right()).any(|x| {
+                        let px = d.at(x, y);
+                        [16, 8, 0].iter().all(|&sh| (px >> sh) & 0xFF < 0x60)
+                    })
+                })
+                .count()
+        };
+        let small = render(&sample(Mode::Home, Some(Spot::Program(1))), None);
+        let mut p = sample(Mode::Home, Some(Spot::Program(1)));
+        p.text = crate::theme::TextUnits::new(22, 11);
+        let d = render(&p, None);
+        assert_eq!(d.l.panel.height, 2 * small.l.panel.height);
+        let lit = d.l.rect(Spot::Program(1)).unwrap();
+        assert_ne!(
+            d.at(lit.x + 4, lit.bottom() - 6),
+            WHITE,
+            "the box runs down the row"
+        );
+        let next = d.l.rect(Spot::Program(2)).unwrap();
+        assert_eq!(
+            d.at(next.x + 4, next.y + 40),
+            WHITE,
+            "the next row is not boxed"
+        );
+        if face() {
+            let at_100 = ink_rows(&small, small.l.rect(Spot::Program(2)).unwrap());
+            let at_200 = ink_rows(&d, next);
+            assert!(
+                at_200 >= 2 * at_100 - 2 && at_100 > 0,
+                "{at_200} ink rows at 200%, {at_100} at 100%"
+            );
+        }
+    }
+
+    /// A kept frame drawn at 100% is not reused for the grown panel: the backed draw at 200%
+    /// matches a fresh one.
+    #[test]
+    fn a_backed_draw_follows_the_text_size() {
+        let text = TextRenderer::load(&font());
+        let style = super::super::style(&Settings::default());
+        let draw_at = |back: Option<&mut Backing>, p: &StartPanel| {
+            let l = layout(p);
+            let mut c = Canvas::new(l.canvas.width as u32, l.canvas.height as u32);
+            match back {
+                Some(b) => draw_backed(b, &mut c, &style, &text, p, &l, None, true),
+                None => draw(&mut c, &style, &text, p, &l, None, true),
+            }
+            c.pixels
+        };
+        let home = sample(Mode::Home, None);
+        let mut grown = sample(Mode::Home, None);
+        grown.text = crate::theme::TextUnits::new(22, 11);
+        let mut back = Backing::default();
+        draw_at(Some(&mut back), &home);
+        assert_eq!(draw_at(Some(&mut back), &grown), draw_at(None, &grown));
     }
 
     #[test]
