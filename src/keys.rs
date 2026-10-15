@@ -38,6 +38,11 @@ pub fn to_lower(sym: u32) -> u32 {
     xkb_keysym_to_lower(sym)
 }
 
+/// The character a keysym types; None for a function key.
+pub fn key_char(sym: u32) -> Option<char> {
+    smithay::input::keyboard::Keysym::new(sym).key_char()
+}
+
 /// F13 to F24 by the keycode of the key, for the keys a keymap gives other keysyms (evdev's F22 is
 /// XF86TouchpadOn): a bind on "F22" still fires from the key named F22.
 pub fn function_key_for(xkb_code: u32) -> Option<u32> {
