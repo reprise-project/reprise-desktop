@@ -149,6 +149,9 @@ pub struct StartPanel {
     /// The text size the panel is laid out and drawn at: its layout grows by it, icons, glyphs and
     /// the user picture keep their size.
     pub text: TextUnits,
+    /// The most height the panel may stand at its text size, the user picture's overhang
+    /// left out; None: no limit. Program rows come off the list until it fits.
+    pub room: Option<i32>,
     /// Private so every write goes through `key` or `paste`, which keep
     /// the mode in step with the query.
     edit: TextEdit,
@@ -186,6 +189,7 @@ impl StartPanel {
             jump: Vec::new(),
             jump_title: String::new(),
             text: TextUnits::default(),
+            room: None,
             edit: TextEdit::new("", false),
             mode: Mode::Home,
             before_search: Mode::Home,

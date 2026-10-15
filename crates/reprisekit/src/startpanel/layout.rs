@@ -1,6 +1,7 @@
 //! Where the Start panel's parts go in each mode, and which spot a point falls on. Panel coordinates: the glass's top-left is (0, 0); the user picture stands above it, so the canvas starts above 0.
 //! The panel stands 411x476 at 100% text and grows with the text size ([`StartPanel::text`]).
 //! With both pinned and frequent programs the rule between them adds 4 px and everything from All Programs down moves with it; program rows that do not fit above the All Programs rule are not shown.
+//! On a screen too short for the panel ([`StartPanel::room`]) program rows come off the list, 38 px each, and everything from All Programs down moves up with them.
 
 use super::{Mode, Spot, StartPanel};
 use crate::raster::Rect;
@@ -122,13 +123,31 @@ pub fn hit(l: &Layout, x: i32, y: i32) -> Option<Spot> {
 }
 
 /// How far the parts from All Programs down sit below their place in a
-/// 476 tall panel: the pinned rows' rule, when there is one.
+/// 476 tall panel: the pinned rows' rule, when there is one, less the program
+/// rows taken off to fit [`StartPanel::room`].
 fn grow(p: &StartPanel) -> i32 {
+    pin_rule(p) - PROGRAM_H * rows_cut(p)
+}
+
+fn pin_rule(p: &StartPanel) -> i32 {
     if p.pinned.is_empty() || p.frequent.is_empty() {
         0
     } else {
         PIN_RULE_H
     }
+}
+
+/// How many program rows come off the bottom of the list so the panel stands in
+/// [`StartPanel::room`] at its text size; one row always stays.
+fn rows_cut(p: &StartPanel) -> i32 {
+    let Some(room) = p.room else {
+        return 0;
+    };
+    let tall = H + pin_rule(p);
+    let most = (ALL_RULE_Y - PROGRAM_TOP) / PROGRAM_H - 1;
+    (0..most)
+        .find(|n| p.text.len(tall - n * PROGRAM_H) <= room)
+        .unwrap_or(most)
 }
 
 fn down(r: Rect, by: i32) -> Rect {
@@ -430,6 +449,38 @@ mod tests {
         assert_eq!(l.rect(Spot::AllPrograms), Some(Rect::new(11, 399, 246, 23)));
         assert_eq!(l.pane.bottom(), 471, "the pane grows with the panel");
         assert_eq!(programs_shown(&p), 10);
+    }
+
+    #[test]
+    fn a_short_room_takes_program_rows_off_and_moves_the_bottom_up() {
+        let mut p = StartPanel::new();
+        p.frequent = (0..12).map(|k| prow(&format!("App {k}"), false)).collect();
+        p.room = Some(H - 1);
+        let l = layout(&p);
+        assert_eq!(l.panel.height, H - PROGRAM_H, "a whole row comes off");
+        assert_eq!(programs_shown(&p), 9);
+        assert_eq!(l.rect(Spot::AllPrograms), Some(Rect::new(11, 357, 246, 23)));
+        assert_eq!(l.rect(Spot::Search), Some(Rect::new(21, 396, 222, 22)));
+        assert_eq!(l.rect(Spot::Shutdown), Some(Rect::new(267, 396, 72, 22)));
+        assert_eq!(l.pane.bottom(), 429, "the pane ends with the panel");
+        assert_eq!(tree_capacity(&p), 18);
+
+        p.text = TextUnits::new(22, 11);
+        p.room = Some(700);
+        let l = layout(&p);
+        assert_eq!(
+            (l.panel.height, programs_shown(&p)),
+            (2 * (H - 4 * PROGRAM_H), 6),
+            "at 200% four rows come off a 700 px room"
+        );
+        assert_eq!(
+            l.picture.unwrap().y,
+            -OVERHANG,
+            "the picture keeps its overhang"
+        );
+
+        p.room = Some(10);
+        assert_eq!(programs_shown(&p), 1, "one row always stays");
     }
 
     #[test]

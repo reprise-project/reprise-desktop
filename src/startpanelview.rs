@@ -380,6 +380,26 @@ fn panel_origin(
     }
 }
 
+/// The most height a panel by bar `p` stands in at [`panel_origin`] whole on `area`, with the
+/// user picture's overhang on the screen.
+fn panel_room(dock: StartMenuDock, p: &BarPlacement, area: Rect) -> i32 {
+    let (dock, bar) = p.start_dock(dock);
+    let (top, bottom) = match p.edge {
+        Edge::Bottom => (
+            area.y + layout::OVERHANG,
+            dock.menu_at(p.edge, (bar.y, bar.bottom()), 0),
+        ),
+        Edge::Top => (
+            dock.menu_at(p.edge, (bar.y, bar.bottom()), 0)
+                .max(area.y)
+                .max(bar.y + layout::OVERHANG),
+            area.bottom(),
+        ),
+        Edge::Left | Edge::Right => (area.y + layout::OVERHANG, area.bottom()),
+    };
+    bottom - top
+}
+
 fn shutdown_options_at(edge: Edge, arrow: Rect, size: (i32, i32), usable: Rect) -> (i32, i32) {
     let h = size.1;
     let drops = edge != Edge::Bottom;
@@ -1499,13 +1519,22 @@ impl State {
         let Some(start) = self.bar(v.bar).map(|b| b.layout.start) else {
             return;
         };
-        let lay = layout::layout(&v.model);
         let p = self.bar_placement(&v.output);
+        let area = self.usable_area(Some(&v.output));
+        let dock = self.config.theme.taskbar_shape().start_menu;
+        let room = Some(panel_room(dock, &p, area));
+        if let Some(v) = self.start_panel.as_mut() {
+            v.model.room = room;
+        }
+        let Some(v) = self.start_panel.as_ref() else {
+            return;
+        };
+        let lay = layout::layout(&v.model);
         let at = panel_origin(
-            self.config.theme.taskbar_shape().start_menu,
+            dock,
             &p,
             (p.shown.x + start.x, p.shown.y + start.y),
-            self.usable_area(Some(&v.output)),
+            area,
             (lay.panel.width, lay.panel.height),
         );
         let scale = self.draw_scale_at(Some(&v.output)).max(1);
@@ -1957,6 +1986,33 @@ mod tests {
         )
         .1;
         assert_eq!((y, y - layout::OVERHANG), (26, 0));
+    }
+
+    /// On a 768-line screen a panel as tall as its room stands whole by every bar, its picture
+    /// on the screen.
+    #[test]
+    fn a_panel_of_its_room_stands_whole_with_its_picture_on_the_screen() {
+        let screen = Rect::new(0, 0, 1024, 768);
+        for edge in [Edge::Bottom, Edge::Top, Edge::Left, Edge::Right] {
+            let (p, area) = bar_on(screen, edge);
+            let start = (p.shown.x, p.shown.y);
+            for dock in [StartMenuDock::OnTop, StartMenuDock::Into(4)] {
+                let h = panel_room(dock, &p, area);
+                let (_, y) = panel_origin(dock, &p, start, area, (layout::W, h));
+                assert!(
+                    y - layout::OVERHANG >= 0,
+                    "{edge:?} {dock:?}: picture at {y}"
+                );
+                assert!(y + h <= screen.bottom(), "{edge:?} {dock:?}");
+            }
+        }
+        let (bottom, area) = bar_on(screen, Edge::Bottom);
+        assert_eq!(
+            panel_room(StartMenuDock::OnTop, &bottom, area),
+            728 - layout::OVERHANG
+        );
+        let (top, area) = bar_on(screen, Edge::Top);
+        assert_eq!(panel_room(StartMenuDock::OnTop, &top, area), 768 - 40);
     }
 
     #[test]
