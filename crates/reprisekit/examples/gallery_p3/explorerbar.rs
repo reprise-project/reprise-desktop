@@ -34,7 +34,7 @@ pub fn draw(c: &mut Canvas, theme: &Theme, text: &TextRenderer, r: Rect) {
                 enabled: true,
             })
             .collect(),
-        selected: None,
+        ..PlacesBar::default()
     };
     let bar = Rect::new(r.x + 240, r.y + 8, placesbar::WIDTH, 2 * placesbar::TILE_H);
     placesbar::draw(c, text, &p, &pb, bar, px);
