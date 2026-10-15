@@ -1359,6 +1359,43 @@ fn a_redrawn_canvas_damages_only_the_box_around_its_changed_pixels() {
 }
 
 #[test]
+fn a_canvas_set_within_a_box_compares_and_damages_only_there() {
+    let mut s = TestScene::new();
+    let root = s.root();
+    let b = s.buffer_create(root);
+    s.set_position(b, 10, 10);
+    let blank = vec![0; 20 * 10];
+    assert_eq!(
+        s.buffer_set_canvas(b, &blank, 20, 10),
+        Rectangle::new((0, 0).into(), (20, 10).into()),
+        "a new canvas changes whole"
+    );
+    let mut t = Tracker::new(100, 100, 1.0);
+    t.frame(&s);
+    let mut caret = blank.clone();
+    for y in 2..7 {
+        caret[y * 20 + 4] = 1;
+    }
+    let changed = s.buffer_set_canvas(b, &caret, 20, 10);
+    assert_eq!(changed, Rectangle::new((4, 2).into(), (1, 5).into()));
+    t.frame(&s);
+    let mut stray = blank.clone();
+    stray[9 * 20 + 19] = 1;
+    assert_eq!(
+        s.buffer_set_canvas_within(b, &stray, 20, 10, changed),
+        changed,
+        "a pixel outside the box is not compared"
+    );
+    assert!(covers_exactly(&t.frame(&s), &[prect(14, 12, 1, 5)]));
+    assert_eq!(
+        s.buffer_set_canvas_within(b, &caret, 20, 10, Rectangle::default()),
+        Rectangle::default(),
+        "an empty box compares nothing"
+    );
+    assert!(t.frame(&s).is_empty());
+}
+
+#[test]
 fn a_new_texture_damages_whole_or_where_told() {
     let mut s = TestScene::new();
     let root = s.root();
