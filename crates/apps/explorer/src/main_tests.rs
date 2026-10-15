@@ -2139,6 +2139,7 @@ fn under_glass_the_rebar_is_clear_over_the_frames_glass() {
     assert_eq!(lay.etch_y, 78, "the closing line sits under the glass");
     let mut c = Canvas::new(792, 573);
     window::draw(&ex, &mut c, &ctx);
+    assert_eq!(c.take_glass_top(), 78, "the drawn rebar reports its rows");
     let gap = lay.menu.bottom();
     assert_eq!(c.get(400, gap) >> 24, 0, "the rows between bands are clear");
     assert_eq!(c.get(780, 40) >> 24, 0, "the toolbar band past its buttons");

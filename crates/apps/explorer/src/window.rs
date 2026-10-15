@@ -268,9 +268,11 @@ pub fn draw(ex: &Explorer, c: &mut Canvas, ctx: &Ctx) {
         &rb,
         lay.rebar,
     );
-    let glass = ex.glass_top(ctx) > 0;
+    let glass_top = ex.glass_top(ctx);
+    let glass = glass_top > 0;
     if glass {
         c.clear_rect(lay.rebar);
+        c.report_glass_top(glass_top);
     }
     if let Some(r) = lay.toolbar {
         let rects = toolbar::layout(&ex.toolbar, &ctx.text, px, r, &ctx.theme.controls());

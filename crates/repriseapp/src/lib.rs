@@ -661,12 +661,6 @@ pub trait App {
     fn text_sized(&self) -> bool {
         false
     }
-    /// How many rows at the top of window `win` the frame's glass runs down under, under a look
-    /// whose frame has it ([`reprisekit::look::client_glass`]); the program draws them clear
-    /// where the glass should show. Read after each draw.
-    fn glass_top(&self, _win: WinId, _ctx: &Ctx) -> i32 {
-        0
-    }
     fn event(&mut self, win: WinId, ev: Event, ctx: &mut Ctx) -> Reply;
     /// Called before each draw of `win`, at `scale` device px per logical px, with
     /// [`Ctx::icons`] at that scale: a program fetches again what it holds at another one.
@@ -2425,8 +2419,9 @@ impl Host {
         let app = &mut self.app;
         self.ctx
             .at_scale(scale, |ctx| app.draw(id, &mut canvas, ctx));
+        let glass_top = canvas.take_glass_top();
         let glass_top = match reprisekit::look::client_glass(&self.ctx.theme, true) {
-            Some(_) => self.app.glass_top(id, &self.ctx).clamp(0, h),
+            Some(_) => glass_top.clamp(0, h),
             None => 0,
         };
         self.ctx.theme.active = true;
