@@ -538,9 +538,12 @@ pub fn lpoptions_folders() -> Vec<std::path::PathBuf> {
 }
 
 fn own_default() -> Option<String> {
-    let system = std::fs::read_to_string(std::path::Path::new(SYSTEM_LPOPTIONS).join("lpoptions"))
-        .unwrap_or_default();
-    own_default_in(&lpoptions_text(), &system)
+    own_default_in(&lpoptions_text(), &system_lpoptions_text())
+}
+
+fn system_lpoptions_text() -> String {
+    std::fs::read_to_string(std::path::Path::new(SYSTEM_LPOPTIONS).join("lpoptions"))
+        .unwrap_or_default()
 }
 
 /// The default an lpoptions file names, the user's before the system's.
@@ -964,11 +967,17 @@ pub fn rename(c: &Client, old: &str, new: &str, s: &Snapshot) -> Result<()> {
         }));
         calls
     })?;
-    let text = lpoptions_text();
-    if user_default(&text).as_deref() == Some(old) {
-        write_lpoptions(&with_user_default(&text, new))?;
+    if let Some(text) = renamed_default(&lpoptions_text(), &system_lpoptions_text(), old, new) {
+        write_lpoptions(&text)?;
     }
     Ok(())
+}
+
+/// The user's lpoptions `user` after printer `old` became `new`, when the default it or the
+/// system's lpoptions `system` names was `old`: the system's file is not the user's to write, so
+/// the user's own default takes the new name. None when the default was another printer.
+fn renamed_default(user: &str, system: &str, old: &str, new: &str) -> Option<String> {
+    (own_default_in(user, system).as_deref() == Some(old)).then(|| with_user_default(user, new))
 }
 
 /// The `*-default` attributes a renamed queue keeps: color and quality,
@@ -1464,6 +1473,30 @@ mod tests {
             "the system's lpoptions names it when the user's does not"
         );
         assert_eq!(own_default_in("", ""), None);
+    }
+
+    #[test]
+    fn a_rename_carries_the_default_the_system_lpoptions_names() {
+        let system = "Default Laser\nDest Laser media=a4\n";
+        assert_eq!(
+            renamed_default("", system, "Laser", "Office").as_deref(),
+            Some("Default Office\n"),
+            "the user's own default takes the new name"
+        );
+        assert_eq!(
+            renamed_default("Dest Other sides=one-sided\n", system, "Laser", "Office").as_deref(),
+            Some("Default Office\nDest Other sides=one-sided\n")
+        );
+        assert_eq!(
+            renamed_default("Default Laser\n", "", "Laser", "Office").as_deref(),
+            Some("Default Office\n")
+        );
+        assert_eq!(
+            renamed_default("Default Inkjet\n", system, "Laser", "Office"),
+            None,
+            "the user's default is another printer"
+        );
+        assert_eq!(renamed_default("", system, "Inkjet", "Office"), None);
     }
 
     #[test]
