@@ -1,6 +1,6 @@
-//! Caps how often client content re-blurs glass (`[glass] blur_rate`). Frames
-//! asked for only by client commits and the pointer reuse the last blur until
-//! the cap is up; any other ask blurs at once.
+//! Caps how often client content and desktop water re-blur glass (`[glass] blur_rate`). Frames
+//! asked for only by client commits, water steps and the pointer reuse the last blur until the
+//! cap is up; any other ask blurs at once.
 
 use std::time::Duration;
 
