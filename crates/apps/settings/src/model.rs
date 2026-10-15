@@ -301,6 +301,8 @@ pub struct Settings {
     pub remember_windows: bool,
     /// `[windows] tabs`.
     pub window_tabs: bool,
+    /// `[windows] shake`; "auto" reads as the interface's default.
+    pub window_shake: bool,
     /// `[session] restore`.
     pub session_restore: bool,
     /// `[session] end_processes`.
@@ -518,6 +520,7 @@ impl Default for Settings {
             pager_mark: "light".into(),
             remember_windows: true,
             window_tabs: true,
+            window_shake: false,
             session_restore: false,
             session_end_processes: true,
 
@@ -638,6 +641,7 @@ impl Settings {
             s.switcher_desktop = true;
             s.switcher_peek = true;
             s.switcher_flip = true;
+            s.window_shake = true;
         }
         s
     }
@@ -1011,6 +1015,7 @@ fn fields() -> Vec<Field> {
         Field::Text(k("workspaces", "pager"), lens!(pager_mark)),
         Field::Flag(k("windows", "remember"), lens!(remember_windows)),
         Field::Flag(k("windows", "tabs"), lens!(window_tabs)),
+        Field::Flag(k("windows", "shake"), lens!(window_shake)),
         Field::Flag(k("session", "restore"), lens!(session_restore)),
         Field::Flag(k("session", "end_processes"), lens!(session_end_processes)),
         Field::List(k("fonts", "family"), lens!(font_family)),
@@ -2162,6 +2167,24 @@ size_px = 12
     }
 
     #[test]
+    fn window_shake_follows_the_interface_and_auto_reads_as_its_default() {
+        assert!(Settings::for_interface("glass").window_shake);
+        assert!(!Settings::for_interface("classic").window_shake);
+        assert!(!Settings::for_interface("blue").window_shake);
+        let glass = "[appearance]\ninterface = \"glass\"\n";
+        assert!(load(&format!("{glass}[windows]\nshake = \"auto\"\n")).window_shake);
+        assert!(!load(&format!("{glass}[windows]\nshake = false\n")).window_shake);
+        let base = load(glass);
+        let off = Settings {
+            window_shake: false,
+            ..base.clone()
+        };
+        let text = save(glass, &off, &base).unwrap();
+        assert!(text.contains("shake = false"), "{text}");
+        assert!(!save(&text, &base, &off).unwrap().contains("shake"));
+    }
+
+    #[test]
     fn save_round_trips_every_field() {
         let s = Settings {
             terminal: "kitty".into(),
@@ -2238,6 +2261,7 @@ size_px = 12
             pager_mark: "tile".into(),
             remember_windows: false,
             window_tabs: false,
+            window_shake: true,
             session_restore: true,
             session_end_processes: false,
             font_family: "Verdana".into(),

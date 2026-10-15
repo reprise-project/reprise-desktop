@@ -861,7 +861,7 @@ pub fn power(a: Area) -> Form {
 /// How windows snap, tab and come back: the Snapping group holds
 /// `[window_snapping]`'s drag snapping, the snap layouts on the maximize
 /// button, the snap bar a drag shows (greyed with drag snapping off) and the
-/// layouts they offer; Tabs and Placement holds `[windows]`.
+/// layouts they offer; Tabs and Placement holds `[windows]`, shaking included.
 pub fn windows(a: Area) -> Form {
     let gw = a.gw();
     Form::new(vec![
@@ -893,7 +893,7 @@ pub fn windows(a: Area) -> Form {
             gw,
             "Empty for the built-in six, e.g. 1|1 2|1 1:2|1:2",
         ),
-        group(a, "tabs_group", 200, 72, "Tabs and Placement"),
+        group(a, "tabs_group", 200, 96, "Tabs and Placement"),
         Item::check(
             "window_tabs",
             GX,
@@ -905,6 +905,12 @@ pub fn windows(a: Area) -> Form {
             GX,
             246,
             "Re&member where each program's window was closed",
+        ),
+        Item::check(
+            "window_shake",
+            GX,
+            270,
+            "&Shake a window by its title bar to minimize the others",
         ),
     ])
 }
@@ -1647,6 +1653,7 @@ fn binds() -> Vec<Bind> {
         Bind::Named("pager_mark", lens!(pager_mark), PAGER_MARKS),
         Bind::Flag("remember_windows", lens!(remember_windows)),
         Bind::Flag("window_tabs", lens!(window_tabs)),
+        Bind::Flag("window_shake", lens!(window_shake)),
         Bind::Flag("session_restore", lens!(session_restore)),
         Bind::Flag("session_end_processes", lens!(session_end_processes)),
         Bind::Named(
@@ -4763,25 +4770,28 @@ mod tests {
         assert_eq!(rect(&s, p, "snap_picker"), Rect::new(32, 90, 13, 13));
         assert_eq!(rect(&s, p, "snap_bar"), Rect::new(32, 114, 13, 13));
         assert_eq!(rect(&s, p, "snap_layouts"), Rect::new(120, 138, 246, 20));
-        assert_eq!(rect(&s, p, "tabs_group"), Rect::new(20, 200, 358, 72));
+        assert_eq!(rect(&s, p, "tabs_group"), Rect::new(20, 200, 358, 96));
         assert_eq!(rect(&s, p, "window_tabs"), Rect::new(32, 222, 13, 13));
         assert_eq!(rect(&s, p, "remember_windows"), Rect::new(32, 246, 13, 13));
+        assert_eq!(rect(&s, p, "window_shake"), Rect::new(32, 270, 13, 13));
         inside_page(&s, p);
     }
 
     #[test]
-    fn the_windows_page_reads_back_tabs_the_picker_the_bar_and_the_layouts() {
+    fn the_windows_page_reads_back_tabs_shaking_the_picker_the_bar_and_the_layouts() {
         let want = Settings {
             window_tabs: false,
             snap_picker: false,
             snap_bar: false,
             snap_layouts: "1|1 2-1:2".into(),
             remember_windows: false,
+            window_shake: true,
             ..Settings::default()
         };
         let s = with(&want);
         let p = &s.pages[Page::Windows.index()];
         assert_eq!(p.checked("window_tabs"), Some(false));
+        assert_eq!(p.checked("window_shake"), Some(true));
         assert_eq!(p.checked("snap_picker"), Some(false));
         assert_eq!(p.checked("snap_bar"), Some(false));
         let mut got = Settings::default();
