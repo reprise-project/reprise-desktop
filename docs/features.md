@@ -131,7 +131,8 @@ the Super tap, Super+Shift+Esc and the VT switch keys can be rebound.
   windows, live. Pick one, or press Esc and carry on.
 - **Snap groups.** Drag the edge between two snapped windows and both
   resize. Each desktop keeps its own layout, and snapped windows keep their
-  zones when the taskbar moves.
+  zones when the taskbar moves. A window moved to another desktop leaves its
+  group.
 - **From the keyboard.** Super and Left or Right step a window through the
   zones and on to the next screen. Super+Up steps up, then maximizes; Super+
   Down steps down, restores, then gives back the size from before the snap.
