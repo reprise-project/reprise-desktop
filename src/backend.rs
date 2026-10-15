@@ -95,7 +95,7 @@ struct Surface {
     idle_scheduled: bool,
     callback_timer: Option<RegistrationToken>,
     render_timer: Option<RegistrationToken>,
-    /// Asks for the frame desktop water steps next in (`schedule_at`).
+    /// Asks for the frame desktop water steps next in (`schedule_step`).
     step_timer: Option<RegistrationToken>,
     last_flip: Option<std::time::Instant>,
     pace: crate::framepace::Pace,
@@ -718,9 +718,10 @@ fn request(state: &mut State, output: &Output, ask: Ask) {
     });
 }
 
-/// Ask for a frame on `output` that starts at or after `at` (`framepace::ask_at`). A wait already
-/// armed stands.
-pub fn schedule_at(state: &mut State, output: &Output, at: std::time::Instant) {
+/// Ask for a desktop water step's frame on `output` that starts at or after `at`
+/// (`framepace::ask_at`). A wait already armed stands. Glass re-blurs the moving water at
+/// `[glass] blur_rate`, like a program's content.
+pub fn schedule_step(state: &mut State, output: &Output, at: std::time::Instant) {
     let Some(crtc) = crtc_of(output) else {
         return;
     };
@@ -738,7 +739,7 @@ pub fn schedule_at(state: &mut State, output: &Output, at: std::time::Instant) {
     let now = std::time::Instant::now();
     let Some(wait) = crate::framepace::ask_at(at, now, s.last_flip, s.pending_vblank, interval)
     else {
-        request(state, output, Ask::Scene);
+        request(state, output, Ask::Content);
         return;
     };
     let token = state
@@ -753,7 +754,7 @@ pub fn schedule_at(state: &mut State, output: &Output, at: std::time::Instant) {
                     s.output.clone()
                 });
             if let Some(output) = output {
-                request(state, &output, Ask::Scene);
+                request(state, &output, Ask::Content);
             }
             TimeoutAction::Drop
         });
@@ -769,7 +770,7 @@ pub fn schedule_at(state: &mut State, output: &Output, at: std::time::Instant) {
         }
         Err(e) => {
             log::warn!("step timer: {}", e.error);
-            request(state, output, Ask::Scene);
+            request(state, output, Ask::Content);
         }
     }
 }
@@ -975,7 +976,7 @@ fn render(state: &mut State, crtc: crtc::Handle) {
         schedule(state, &output);
     }
     if let Some(at) = state.water.next_step(&output) {
-        schedule_at(state, &output, at);
+        schedule_step(state, &output, at);
     }
 }
 

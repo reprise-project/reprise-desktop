@@ -95,7 +95,7 @@ Glass has no colour schemes. It has a `[glass]` section instead:
 | `streaks` | the diagonal reflections on Frosted glass | `true` |
 | `fast_drag` | a cheaper blur while a window is dragged or sized; at output scale 2 and up the blur is always this one | `true` |
 | `blur_frames` | glass over another window's frame and glass, a dialog's or the taskbar's shows them blurred; `false` saves a blur per such piece of glass | `true` |
-| `blur_rate` | at most this many re-blurs a second of a busy program next to the glass, `0` for every frame | 30 |
+| `blur_rate` | at most this many re-blurs a second of a busy program next to the glass or of desktop water, `0` for every frame | 30 |
 | `orb_glow` | how strongly the Start button's icon glows, 0 (none) to 100 | 100 |
 
 - **Dark mode** turns controls, dialogs, menus and titles dark and tells
