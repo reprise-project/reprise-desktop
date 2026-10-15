@@ -96,6 +96,26 @@ pub fn draw(
     banded: bool,
     px: u32,
 ) {
+    draw_on(
+        c, text, p, lay, titles, open, hot, underline, banded, !banded, px,
+    );
+}
+
+/// [`draw`], with the bar's own strip behind the titles only when `strip`.
+#[allow(clippy::too_many_arguments)]
+fn draw_on(
+    c: &mut Canvas,
+    text: &TextRenderer,
+    p: &Paint,
+    lay: &Layout,
+    titles: &[Title],
+    open: Option<usize>,
+    hot: Option<usize>,
+    underline: bool,
+    banded: bool,
+    strip: bool,
+    px: u32,
+) {
     let Paint { cs, s, .. } = *p;
     let flat = p.look.style().is_some_and(|st| st.flat_menus);
     let bm = p.look.controls().menubar;
@@ -105,14 +125,14 @@ pub fn draw(
         && st.has_parts(&[Part::MenuBar, Part::MenuBarItem])
     {
         return draw_framed(
-            c, text, p, st, lay, titles, open, hot, underline, banded, px,
+            c, text, p, st, lay, titles, open, hot, underline, banded, strip, px,
         );
     }
-    if !banded {
-        let strip = if flat { cs.menu_bar } else { cs.button_face };
-        c.fill_rect(lay.bar.scaled(s), strip);
+    if strip {
+        let face = if flat { cs.menu_bar } else { cs.button_face };
+        c.fill_rect(lay.bar.scaled(s), face);
     }
-    if !banded && bm.line > 0 {
+    if strip && bm.line > 0 {
         let b = lay.bar;
         let line = Rect::new(b.x, b.bottom() - bm.line, b.width, bm.line);
         c.fill_rect(line.scaled(s), cs.window);
@@ -161,12 +181,13 @@ fn draw_framed(
     hot: Option<usize>,
     underline: bool,
     banded: bool,
+    strip: bool,
     px: u32,
 ) {
     use crate::look::styled::menu as look;
     let Paint { cs, s, .. } = *p;
     let m = *p.look.controls().menubar.titles(banded);
-    if !banded {
+    if strip {
         look::draw_bar(st, c, lay.bar.scaled(s), s);
     }
     let ink = if p.active { cs.menu_text } else { cs.gray_text };
@@ -898,8 +919,23 @@ impl Bar {
         theme: &crate::theme::Theme,
         lay: &Layout,
     ) {
-        self.draw_titles(c, text, theme, lay);
+        if self.on_glass(theme, lay) {
+            c.clear_rect(lay.bar);
+            self.draw_titles_on(c, text, theme, lay, false);
+            crate::look::glow_on_glass(c, theme, lay.bar);
+            c.report_glass_top(lay.bar.bottom());
+        } else {
+            self.draw_titles(c, text, theme, lay);
+        }
         self.draw_popup(c, text, theme);
+    }
+
+    /// A window's own bar across its top, under a look whose frame runs down under the client,
+    /// is drawn clear over the frame's glass.
+    fn on_glass(&self, theme: &crate::theme::Theme, lay: &Layout) -> bool {
+        !self.banded
+            && (lay.bar.x, lay.bar.y) == (0, 0)
+            && crate::look::client_glass(theme, true).is_some()
     }
 
     /// The bar's titles alone, without the open menu ([`Bar::draw_popup`]).
@@ -910,10 +946,21 @@ impl Bar {
         theme: &crate::theme::Theme,
         lay: &Layout,
     ) {
+        self.draw_titles_on(c, text, theme, lay, !self.banded);
+    }
+
+    fn draw_titles_on(
+        &self,
+        c: &mut Canvas,
+        text: &TextRenderer,
+        theme: &crate::theme::Theme,
+        lay: &Layout,
+        strip: bool,
+    ) {
         let px = theme.fonts.size_px;
         let p = &theme.paint();
         let shown = self.open.or(self.active);
-        draw(
+        draw_on(
             c,
             text,
             p,
@@ -923,6 +970,7 @@ impl Bar {
             self.hot,
             self.underline,
             self.banded,
+            strip,
             px,
         );
     }
@@ -1259,5 +1307,47 @@ mod bar_tests {
             !b.hover(e.x + 2, e.y + 2, &lay),
             "nor does hovering while it is down"
         );
+    }
+
+    #[test]
+    fn a_bar_across_the_top_draws_clear_over_glass_and_reports_its_rows() {
+        use crate::interface::Interface;
+        use crate::interfaces::theme_for;
+        let text = TextRenderer::load(&FontConfig::default());
+        let b = bar();
+        let draw_at = |theme: &Theme, top: i32| {
+            let client = Rect::new(0, top, 200, 60);
+            let lay = b.layout(&text, theme.fonts.size_px, client, &theme.controls());
+            let mut c = Canvas::new(200, 60);
+            c.fill_rect(c.bounds(), crate::theme::Color::rgb(1, 2, 3));
+            b.draw(&mut c, &text, theme, &lay);
+            let rows = c.take_glass_top();
+            (c, lay, rows)
+        };
+        let glass = theme_for(Interface::Glass);
+        let (c, lay, rows) = draw_at(&glass, 0);
+        assert_eq!(rows, lay.bar.bottom(), "the bar's rows are reported");
+        assert_eq!(c.get(190, lay.bar.y + 2) >> 24, 0, "clear past the titles");
+        let f = lay.frames[0];
+        let inked = (f.x..f.right()).any(|x| (f.y..f.bottom()).any(|y| c.get(x, y) >> 24 == 0xFF));
+        assert!(inked, "the first title is inked");
+
+        let (c, lay, rows) = draw_at(&glass, 10);
+        assert_eq!(rows, 0, "a bar lower down reports nothing");
+        assert_ne!(
+            c.get(190, lay.bar.y + 2),
+            0xFF01_0203,
+            "and keeps its strip"
+        );
+
+        for look in [Interface::Classic, Interface::Blue] {
+            let theme = theme_for(look);
+            let (c, lay, rows) = draw_at(&theme, 0);
+            assert_eq!(rows, 0, "{look:?} reports no glass");
+            let mut plain = Canvas::new(200, 60);
+            plain.fill_rect(plain.bounds(), crate::theme::Color::rgb(1, 2, 3));
+            b.draw_titles(&mut plain, &text, &theme, &lay);
+            assert_eq!(c.pixels, plain.pixels, "{look:?} draws its strip as before");
+        }
     }
 }

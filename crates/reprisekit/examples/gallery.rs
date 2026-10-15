@@ -5546,16 +5546,37 @@ fn render_glass_dark_captions(theme: &Theme) -> Canvas {
     c
 }
 
-/// Two Glass windows over the stripes whose frame runs 30 rows down under the client's top, the
-/// focused one first, 950x110: the frame's glass there, labels glowing over it, the client below.
+/// Two Glass windows over the stripes, the focused one first, 950x110, each with a menu bar
+/// across its client's top: the bar clear over the frame's glass, its titles glowing, the client
+/// below.
 fn render_glass_client_glass(theme: &Theme) -> Canvas {
+    use reprisekit::controls::menubar::Bar;
     let text = TextRenderer::load(&FontConfig::default());
     let style = theme.look.style().unwrap();
     let caption_text = TextRenderer::load(&style.caption_text.font());
     let mut c = blurred_stripes(950, 110);
+    let bar = Bar::new(vec![
+        ("&File", vec![]),
+        ("&Edit", vec![]),
+        ("&View", vec![]),
+        ("F&avorites", vec![]),
+    ]);
     for (i, active) in [true, false].into_iter().enumerate() {
-        let g = FrameGeometry::layout(&theme.metrics, 424, 50, false, Chrome::WINDOW)
-            .with_glass_top(30);
+        let g = FrameGeometry::layout(&theme.metrics, 424, 50, false, Chrome::WINDOW);
+        let themed = Theme {
+            active,
+            ..theme.clone()
+        };
+        let mut client = Canvas::new(g.client.width as u32, g.client.height as u32);
+        client.fill_rect(client.bounds(), theme.colors.button_face);
+        let lay = bar.layout(
+            &text,
+            theme.fonts.size_px,
+            client.bounds(),
+            &theme.controls(),
+        );
+        bar.draw(&mut client, &text, &themed, &lay);
+        let g = g.with_glass_top(client.take_glass_top());
         let st = FrameState {
             title: "Documents",
             active,
@@ -5567,36 +5588,13 @@ fn render_glass_client_glass(theme: &Theme) -> Canvas {
         };
         let mut f = Canvas::new(g.total.0 as u32, g.total.1 as u32);
         look::draw_frame(&mut f, theme, &text, &caption_text, &g, &st);
-        let band = Rect::new(g.client.x, g.client.y, g.client.width, g.glass_top);
         let glass = look::client_glass(theme, active).unwrap();
-        let mut labels = Canvas::new(f.width, f.height);
-        text.draw(
-            &mut labels,
-            Rect::new(band.x + 8, band.y, 300, band.height),
-            "File   Edit   View   Favorites",
-            false,
-            theme.colors.menu_text,
-            Align::Left,
-            theme.fonts.size_px,
-        );
-        let themed = Theme {
-            active,
-            ..theme.clone()
-        };
-        look::glow_on_glass(&mut labels, &themed, band);
-        for y in band.y..band.bottom() {
-            for x in band.x..band.right() {
+        for y in g.client.y..g.client.y + g.glass_top {
+            for x in g.client.x..g.client.right() {
                 f.put_raw(x, y, glass);
             }
         }
-        f.blit_over(0, 0, &labels);
-        let below = Rect::new(
-            band.x,
-            band.bottom(),
-            band.width,
-            g.client.height - g.glass_top,
-        );
-        f.fill_rect(below, theme.colors.button_face);
+        f.blit_over(g.client.x, g.client.y, &client);
         c.blit_over(15 + 470 * i as i32, 10, &f);
     }
     c

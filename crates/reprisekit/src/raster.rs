@@ -261,6 +261,8 @@ pub struct Canvas {
     /// Boxed like `spot`: canvases are held by value and rarely carry either.
     preedit: Option<Box<Preedit>>,
     spot: Option<Box<TextSpot>>,
+    /// Rows at the top drawn clear for the frame's glass ([`Canvas::report_glass_top`]).
+    glass_top: i32,
 }
 
 /// One premultiplied pixel with all four channels scaled by `num / den`.
@@ -329,6 +331,7 @@ impl Canvas {
             scale,
             preedit: None,
             spot: None,
+            glass_top: 0,
         }
     }
 
@@ -344,6 +347,7 @@ impl Canvas {
             scale: 1,
             preedit: None,
             spot: None,
+            glass_top: 0,
         }
     }
 
@@ -372,6 +376,16 @@ impl Canvas {
 
     pub fn take_spot(&mut self) -> Option<TextSpot> {
         self.spot.take().map(|s| *s)
+    }
+
+    /// The top `rows` of a window's canvas are drawn clear for the frame's glass to show
+    /// through ([`crate::look::client_glass`]); the host reads the deepest report of a frame.
+    pub fn report_glass_top(&mut self, rows: i32) {
+        self.glass_top = self.glass_top.max(rows);
+    }
+
+    pub fn take_glass_top(&mut self) -> i32 {
+        std::mem::take(&mut self.glass_top)
     }
 
     pub fn scale(&self) -> i32 {

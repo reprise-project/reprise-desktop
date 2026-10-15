@@ -950,13 +950,6 @@ impl App for Lazy {
         true
     }
 
-    fn glass_top(&self, win: WinId, ctx: &Ctx) -> i32 {
-        match &self.inner {
-            Some(ex) if win == MAIN => ex.glass_top(ctx),
-            _ => 0,
-        }
-    }
-
     fn children(&self) -> Vec<Child> {
         match &self.inner {
             Some(ex) if !ex.closing => ex.children(),
