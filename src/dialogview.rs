@@ -2201,7 +2201,8 @@ impl State {
     /// Summary fields, launcher keys, folder icon, attributes and Hidden lists (`reprisefs::props::write_item`,
     /// whole tree with `tree`), then the rename to `name`. `finish_properties` follows on the loop.
     fn write_properties(&mut self, sheet: Option<u64>, w: Props, tree: bool, close: bool) {
-        let reread = (!w.launcher.is_empty())
+        let reread = w
+            .rereads()
             .then(|| self.dialogs.views.iter().find(|v| Some(v.id) == sheet))
             .flatten()
             .and_then(|v| v.dialog.sheet_name())
@@ -2260,9 +2261,10 @@ impl State {
             });
             let icon = folder_icon.is_some() || !launcher.is_empty();
             let now = renamed.clone().unwrap_or_else(|| path.clone());
-            // A new target can change the header icon, Opens with, Description, Target rows and tabs.
+            // A new target or execute bit can change the header icon, Opens with, Description,
+            // Target rows and tabs.
             let reread = reread
-                .filter(|_| launcher_ok)
+                .filter(|_| launcher_ok && attrs_ok)
                 .and_then(|(name, apps)| reprisefs::props::glance(&now, &name, &apps).ok());
             // The header wears the icon the desktop gives the rewritten file, read here rather
             // than waiting on the desktop's rescan.
@@ -2330,6 +2332,14 @@ struct Props {
     summary: Vec<(usize, String)>,
     folder_icon: Option<Option<String>>,
     launcher: Vec<(reprisefs::launcher::Key, String)>,
+}
+
+impl Props {
+    /// Whether the sheet is read again once this lands: launcher keys and the execute bit
+    /// decide its rows.
+    fn rereads(&self) -> bool {
+        !self.launcher.is_empty() || self.attrs.executable.is_some()
+    }
 }
 
 /// The client area out of the full raster `canvas` (drawn at `scale`) and its logical rect; None without a frame.
@@ -2505,5 +2515,31 @@ mod tests {
     fn a_child_whose_parent_closed_raises_alone() {
         let links = [(0, None), (5, Some(9)), (2, None)];
         assert_eq!(raise_order(&links, 1), vec![0, 2, 1]);
+    }
+
+    #[test]
+    fn a_write_of_the_execute_bit_or_launcher_keys_reads_the_sheet_again() {
+        let props = |attrs: reprisefs::props::AttrMoves, launcher| super::Props {
+            path: "/home/u/Desktop/run.sh".into(),
+            name: None,
+            attrs,
+            hidden: None,
+            summary: Vec::new(),
+            folder_icon: None,
+            launcher,
+        };
+        let attrs = |read_only, executable| reprisefs::props::AttrMoves {
+            read_only,
+            executable,
+            ..Default::default()
+        };
+        assert!(props(attrs(None, Some(false)), Vec::new()).rereads());
+        assert!(props(attrs(None, Some(true)), Vec::new()).rereads());
+        let link = vec![(reprisefs::launcher::Key::Link, "a".to_string())];
+        assert!(props(attrs(None, None), link).rereads());
+        assert!(
+            !props(attrs(Some(true), None), Vec::new()).rereads(),
+            "Read-only changes no row"
+        );
     }
 }
