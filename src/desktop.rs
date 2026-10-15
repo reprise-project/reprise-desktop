@@ -377,7 +377,8 @@ fn shortcut_target(sc: apps::Shortcut) -> Target {
     }
 }
 
-/// The argument vector that opens a file's `target`, run with no shell.
+/// The argument vector that opens a file's `target`, run with no shell. A program's is its bare
+/// path: hosts start a [`Target::Run`] through `run_program`, which puts a script in a terminal.
 pub fn open_argv(
     target: &Target,
     mime: &apps::MimeDb,
@@ -387,7 +388,7 @@ pub fn open_argv(
     match target {
         Target::Launch(app) => apps::launch_argv(app, terminal),
         Target::Open(path) => reprisefs::props::open_argv_in(path, mime, programs, terminal),
-        Target::Run(path) => reprisefs::program::run_argv(path),
+        Target::Run(path) => vec![path.into()],
         Target::Uri(uri) => vec!["xdg-open".into(), uri.into()],
     }
 }

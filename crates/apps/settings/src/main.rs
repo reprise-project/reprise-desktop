@@ -1507,7 +1507,7 @@ impl SettingsApp {
     }
 
     fn defaults_changed(&mut self, id: &str) -> Reply {
-        if id == defaultspage::DRIVE_INSERT {
+        if id == defaultspage::DRIVE_INSERT || id == defaultspage::SCRIPT_END {
             pages::read_one(&self.sheet, id, &mut self.want);
             self.sync_apply();
             return Reply::redraw();
@@ -3358,6 +3358,35 @@ mod tests {
         assert_eq!(winstate::slideshow(&state), name(&trips));
         mode(&mut a, 1);
         assert_eq!(a.want.slideshow, name(&trips), "the folder picked before");
+    }
+
+    #[test]
+    fn the_script_combo_shows_and_writes_script_terminal() {
+        let dir = tmp("script-end");
+        let path = dir.join("config.toml");
+        std::fs::write(&path, "terminal = \"foot\"\n").unwrap();
+        let mut a = SettingsApp::open(path.clone());
+        let dp = Page::DefaultPrograms.index();
+        let combo = |a: &SettingsApp| a.sheet.pages[dp].combo_selected(defaultspage::SCRIPT_END);
+        assert_eq!(combo(&a), Some(0), "Keep its window open");
+        let pick = |a: &mut SettingsApp, row| {
+            a.sheet.pages[dp].set_combo(defaultspage::SCRIPT_END, row);
+            a.sheet_event(propsheet::Event::Page(
+                dp,
+                form::Event::Changed(defaultspage::SCRIPT_END),
+            ));
+            assert!(a.apply());
+            std::fs::read_to_string(&path).unwrap()
+        };
+        assert_eq!(
+            pick(&mut a, 1),
+            "terminal = \"foot\"\nscript_terminal = \"close\"\n"
+        );
+        assert_eq!(
+            pick(&mut a, 0),
+            "terminal = \"foot\"\n",
+            "Keep its window open is the default and removes the key"
+        );
     }
 
     #[test]
