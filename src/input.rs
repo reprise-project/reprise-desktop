@@ -1925,6 +1925,12 @@ fn caption_double(
     matches!(hit, FrameHit::Title | FrameHit::Icon) && clicks.press((window, hit), click)
 }
 
+/// An interaction on `window` was cancelled: a caption or icon click on it no longer pairs, one on
+/// another window still does.
+pub(crate) fn caption_cancelled(clicks: &mut DoubleClick<(WindowId, FrameHit)>, window: WindowId) {
+    clicks.forget_if(|(w, _)| *w == window);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1955,6 +1961,49 @@ mod tests {
         );
         assert!(!press(FrameHit::Title, BTN_LEFT, 100, 5000));
         assert!(!press(FrameHit::Title, BTN_LEFT, 105, 5100), "5 px off");
+    }
+
+    #[test]
+    fn a_cancel_on_another_window_keeps_the_caption_click_pairing() {
+        let m = reprisekit::theme::Metrics::default();
+        let (w, other) = (WindowId::next(), WindowId::next());
+        let mut clicks = DoubleClick::default();
+        caption_double(
+            &mut clicks,
+            w,
+            FrameHit::Title,
+            BTN_LEFT,
+            m.click(100, 10, 1000),
+        );
+        caption_cancelled(&mut clicks, other);
+        assert!(
+            caption_double(
+                &mut clicks,
+                w,
+                FrameHit::Title,
+                BTN_LEFT,
+                m.click(100, 10, 1100)
+            ),
+            "another window's cancel leaves the first click"
+        );
+        caption_double(
+            &mut clicks,
+            w,
+            FrameHit::Title,
+            BTN_LEFT,
+            m.click(100, 10, 3000),
+        );
+        caption_cancelled(&mut clicks, w);
+        assert!(
+            !caption_double(
+                &mut clicks,
+                w,
+                FrameHit::Title,
+                BTN_LEFT,
+                m.click(100, 10, 3100)
+            ),
+            "its own window's cancel forgets it"
+        );
     }
 
     #[test]

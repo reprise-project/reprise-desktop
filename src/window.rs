@@ -2258,7 +2258,7 @@ impl State {
             win.pressed = None;
             win.resize_anchor = None;
         }
-        self.caption_clicks.reset();
+        crate::input::caption_cancelled(&mut self.caption_clicks, w);
     }
 
     pub fn set_resizing(&mut self, w: WindowId, on: bool) {
