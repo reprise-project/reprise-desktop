@@ -2551,16 +2551,27 @@ mod tests {
                 "light row {y}"
             );
         }
-        assert_eq!(at(150, 142), cs.button_shadow.argb(), "Target's frame top");
-        assert_eq!(at(150, 143), cs.button_dk_shadow.argb());
-        assert_eq!(at(100, 150), cs.button_shadow.argb(), "Target's frame left");
+        // A label wider than its column under another face moves the fields over.
+        let target = s.open().rect(SHORTCUT_IDS[0]).unwrap();
+        let (mid_x, mid_y) = (target.x + target.width / 4, target.y + 8);
         assert_eq!(
-            at(150, 164),
+            at(mid_x, target.y),
+            cs.button_shadow.argb(),
+            "Target's frame top"
+        );
+        assert_eq!(at(mid_x, target.y + 1), cs.button_dk_shadow.argb());
+        assert_eq!(
+            at(target.x, mid_y),
+            cs.button_shadow.argb(),
+            "Target's frame left"
+        );
+        assert_eq!(
+            at(mid_x, target.bottom() - 1),
             cs.button_hilight.argb(),
             "Target's frame bottom"
         );
         assert_eq!(
-            at(339, 150),
+            at(target.right() - 1, mid_y),
             cs.button_hilight.argb(),
             "Target's frame right"
         );
@@ -2572,6 +2583,7 @@ mod tests {
         if !crate::text::test_tahoma() {
             return;
         }
+        assert_eq!(target, Rect::new(100, 142, 240, 23), "Target's field");
         let ink_top = |x0: i32, x1: i32, y0: i32| {
             (y0..y0 + 13)
                 .find(|&y| (x0..x1).any(|x| at(x, y) == cs.button_text.argb()))
