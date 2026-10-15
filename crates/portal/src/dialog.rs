@@ -29,8 +29,7 @@ use std::sync::mpsc::{Receiver, TryRecvError};
 /// stdout once it exits 0. None when it fails to start or exits non-zero, or
 /// when `cancel` is set (a frontend Close), which kills it. Blocks until the child is gone.
 pub fn run(args: &[&str], input: &str, cancel: &AtomicBool) -> Option<String> {
-    let exe = std::env::current_exe().ok()?;
-    run_cmd(Command::new(exe), args, input, None, cancel)
+    run_cmd(own_exe(), args, input, None, cancel)
 }
 
 /// `run`, keeping stdin open: `input` and each document arriving on `updates`
@@ -41,8 +40,15 @@ pub fn run_live(
     updates: Receiver<String>,
     cancel: &AtomicBool,
 ) -> Option<String> {
-    let exe = std::env::current_exe().ok()?;
-    run_cmd(Command::new(exe), args, input, Some(updates), cancel)
+    run_cmd(own_exe(), args, input, Some(updates), cancel)
+}
+
+/// Our running image through /proc/self/exe, which still execs after an
+/// upgrade replaced the file, where the path would be " (deleted)".
+fn own_exe() -> Command {
+    let mut cmd = Command::new("/proc/self/exe");
+    cmd.arg0("reprise-portal");
+    cmd
 }
 
 /// `run` for any command. Stdout is read on a thread so a large answer never
