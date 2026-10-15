@@ -12,6 +12,8 @@ pub struct Entry {
     pub time: i64,
     pub open: bool,
     pub sender_gone: bool,
+    /// Answered from its balloon's reply row.
+    pub replied: bool,
 }
 
 impl Entry {
@@ -47,6 +49,7 @@ impl Log {
                 time,
                 open: true,
                 sender_gone: false,
+                replied: false,
             },
         );
         if !looking {
@@ -69,6 +72,12 @@ impl Log {
         match self.entries.iter_mut().find(|e| e.n.id == id) {
             Some(e) => std::mem::replace(&mut e.open, false),
             None => false,
+        }
+    }
+
+    pub fn mark_replied(&mut self, id: u32) {
+        if let Some(e) = self.entries.iter_mut().find(|e| e.n.id == id) {
+            e.replied = true;
         }
     }
 
@@ -199,6 +208,23 @@ mod tests {
         let ids: Vec<u32> = log.entries.iter().map(|e| e.n.id).collect();
         assert_eq!(ids, [2]);
         assert_eq!(log.unseen, 1);
+    }
+
+    #[test]
+    fn a_replied_entry_keeps_its_mark_once_closed_until_replaced() {
+        let mut log = Log::default();
+        log.record(&note(1), 0, false);
+        log.record(&note(2), 0, false);
+        log.mark_replied(1);
+        log.close(1);
+        let e = log.get(1).unwrap();
+        assert!(e.replied && !e.open);
+        assert!(!log.get(2).unwrap().replied);
+        log.record(&note(1), 1, false);
+        assert!(
+            !log.get(1).unwrap().replied,
+            "a new message under the same id"
+        );
     }
 
     #[test]

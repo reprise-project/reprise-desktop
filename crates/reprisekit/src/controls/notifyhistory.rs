@@ -13,8 +13,8 @@
 //!   it sent, an arrow that points down while the group is open and
 //!   right while it is folded, and a 44x16 Clear button at the row's
 //!   right end. The group's notifications follow, newest first, the time
-//!   each came right-aligned in grey. The group with the newest
-//!   notification comes first.
+//!   each came right-aligned in grey, after "Replied," once answered from
+//!   its balloon. The group with the newest notification comes first.
 //! - **Clear All**: a 75x23 push button 8 px under the list, greyed with
 //!   nothing to clear.
 
@@ -47,12 +47,15 @@ const GROUP_TRAIL: i32 = GROUP_CLEAR_INSET + GROUP_CLEAR_W + ARROW_GAP + ARROW_C
 /// A notification's time: right-aligned 4 px in from the row's end, in a
 /// 60 px column its message stays clear of.
 const TIME_W: i32 = 60;
+/// A replied notification's time column, room for "Replied, 12:59 PM".
+const REPLIED_TIME_W: i32 = 110;
 const TIME_INSET: i32 = 4;
 const DND_LABEL: &str = "Do not disturb";
 const CLEAR_LABEL: &str = "Clear All";
 const GROUP_CLEAR_LABEL: &str = "Clear";
 const EMPTY_LABEL: &str = "No notifications";
 const COLLAPSED_LABEL: &str = "collapsed";
+const REPLIED_LABEL: &str = "Replied";
 /// A group's name when the program gave none.
 const NO_APP: &str = "Other";
 
@@ -65,12 +68,21 @@ pub struct Entry {
     pub message: String,
     pub time: String,
     pub live: bool,
+    pub replied: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum Meta {
-    Header { app: String, open: bool },
-    Note { id: u32, time: String, live: bool },
+    Header {
+        app: String,
+        open: bool,
+    },
+    Note {
+        id: u32,
+        time: String,
+        live: bool,
+        replied: bool,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -141,6 +153,19 @@ pub fn layout(cm: &ControlMetrics) -> Layout {
         list,
         clear,
         height: clear.bottom() + pad,
+    }
+}
+
+fn time_w(replied: bool) -> i32 {
+    if replied { REPLIED_TIME_W } else { TIME_W }
+}
+
+/// A notification's grey time text, "Replied, " ahead of it once answered.
+fn time_text(time: &str, replied: bool) -> std::borrow::Cow<'_, str> {
+    if replied {
+        format!("{REPLIED_LABEL}, {time}").into()
+    } else {
+        time.into()
     }
 }
 
@@ -260,9 +285,10 @@ impl History {
                     id: e.id,
                     time: e.time.clone(),
                     live: e.live,
+                    replied: e.replied,
                 });
                 icons.push(None);
-                trail.push(TIME_W);
+                trail.push(time_w(e.replied));
             }
         }
         let n = rows.len();
@@ -618,12 +644,13 @@ pub fn draw(theme: &Theme, text: &TextRenderer, h: &History) -> Canvas {
                     px,
                 );
             }
-            Meta::Note { time, .. } => {
-                let r = Rect::new(row.right() - TIME_W, row.y, TIME_W - TIME_INSET, ROW_H);
+            Meta::Note { time, replied, .. } => {
+                let w = time_w(*replied);
+                let r = Rect::new(row.right() - w, row.y, w - TIME_INSET, ROW_H);
                 text.draw(
                     &mut c,
                     r.scaled(s),
-                    time,
+                    &time_text(time, *replied),
                     false,
                     cs.gray_text,
                     Align::Right,
@@ -705,8 +732,8 @@ pub fn access(
                         n.set_description(COLLAPSED_LABEL);
                     }
                 }
-                Meta::Note { time, .. } => {
-                    n.set_description(time.as_str());
+                Meta::Note { time, replied, .. } => {
+                    n.set_description(time_text(time, *replied));
                     n.add_action(Action::ShowContextMenu);
                 }
             }
@@ -730,8 +757,8 @@ pub fn access(
     focus
 }
 
-/// Four notifications from three programs, Calendar's folded, the newest Mail
-/// one selected and Do not disturb on: what the gallery and preview test draw.
+/// Four notifications from three programs, the older Mail one replied, Calendar's folded,
+/// the newest Mail one selected and Do not disturb on: what the gallery and preview test draw.
 pub fn sample() -> History {
     let entry = |id, app: &str, message: &str, time: &str, live| Entry {
         id,
@@ -740,13 +767,17 @@ pub fn sample() -> History {
         message: message.into(),
         time: time.into(),
         live,
+        replied: false,
     };
     let mut h = History::new();
     h.folded.insert("Calendar".into());
     h.set_entries(vec![
         entry(4, "Mail", "3 new messages", "4:12 PM", true),
         entry(3, "Updates", "Updates are ready", "3:58 PM", true),
-        entry(2, "Mail", "Lunch on Friday?", "1:05 PM", true),
+        Entry {
+            replied: true,
+            ..entry(2, "Mail", "Lunch on Friday?", "1:05 PM", false)
+        },
         entry(1, "Calendar", "Stand-up in 5 minutes", "9:55 AM", false),
     ]);
     h.list.select(1, ROWS as usize);
@@ -810,6 +841,7 @@ mod tests {
             message: "Hi".into(),
             time: "1:00 PM".into(),
             live: true,
+            replied: false,
         }]);
         assert_eq!(labels(&h), ["Other (1)", "Hi"]);
     }
@@ -896,6 +928,7 @@ mod tests {
                 message: "Hey".into(),
                 time: "4:20 PM".into(),
                 live: true,
+                replied: false,
             },
         );
         h.set_entries(entries);
@@ -936,6 +969,7 @@ mod tests {
                 message: format!("m{i}"),
                 time: String::new(),
                 live: true,
+                replied: false,
             })
             .collect();
         h.set_entries(entries);
@@ -1063,6 +1097,35 @@ mod tests {
         assert_eq!(c.get(r1.right() - 2, r1.y + 2), cs.window.argb());
     }
 
+    #[test]
+    fn a_replied_notification_says_so_ahead_of_its_time() {
+        let theme = Theme::default();
+        let text = TextRenderer::load(&FontConfig::default());
+        let h = sample();
+        let c = draw(&theme, &text, &h);
+        let ll = h.list_layout(&ControlMetrics::CLASSIC);
+        let r2 = grouplist::row_rect(&h.list, &ll, 2).unwrap();
+        assert_eq!(labels(&h)[2], "Lunch on Friday?");
+        let grey = theme.colors.gray_text.argb();
+        let inked =
+            |x0: i32, x1: i32| (x0..x1).any(|x| (r2.y..r2.bottom()).any(|y| c.get(x, y) == grey));
+        let label = text.measure("Replied, 12:59 PM", false, theme.fonts.size_px);
+        assert!(
+            label <= REPLIED_TIME_W - TIME_INSET,
+            "the column fits: {label}"
+        );
+        assert!(
+            inked(r2.right() - REPLIED_TIME_W, r2.right() - TIME_W),
+            "grey left of the plain time column"
+        );
+        assert!(!inked(r2.x, r2.right() - REPLIED_TIME_W));
+        assert_eq!(
+            h.list.trail[2], REPLIED_TIME_W,
+            "the message stays clear of the label"
+        );
+        assert_eq!(h.list.trail[1], TIME_W);
+    }
+
     /// Blue and Glass draw the panel through their own button and check
     /// box parts; the rows sit where Classic's do.
     #[test]
@@ -1176,6 +1239,8 @@ mod tests {
         let note = tree.get(rows[1]).unwrap();
         assert_eq!(note.label(), Some("3 new messages"));
         assert_eq!(note.description(), Some("4:12 PM"));
+        let replied = tree.get(rows[2]).unwrap();
+        assert_eq!(replied.description(), Some("Replied, 1:05 PM"));
         assert!(note.supports_action(Action::ShowContextMenu));
         assert!(note.supports_action(Action::Focus) && note.supports_action(Action::Click));
         assert!(!mail.supports_action(Action::ShowContextMenu));
