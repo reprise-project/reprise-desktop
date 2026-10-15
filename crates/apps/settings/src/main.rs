@@ -396,14 +396,14 @@ impl SettingsApp {
     /// takes it (no smaller than its smallest), every page takes the
     /// layout its builder gives it there, and the Pointers preview is
     /// drawn again at its new size. What the controls hold stays. A window
-    /// shorter than the smallest sheet shows it scrolled. True when
+    /// smaller than the smallest sheet shows it scrolled. True when
     /// anything moved.
     fn fit_window(&mut self, size: (i32, i32)) -> bool {
         let (u, min) = (self.units, Area::MIN.sheet_size());
         let shown = (u.within(size.0), u.within(size.1));
         let size = (shown.0.max(min.0), shown.1.max(min.1));
         if size == self.sheet.size {
-            return self.sheet.fit_height(shown.1);
+            return self.sheet.fit(shown);
         }
         self.sheet.resize(size);
         let a = self.area();
@@ -431,7 +431,7 @@ impl SettingsApp {
         }
         self.preview_for = None;
         self.sheet.reveal_open();
-        self.sheet.fit_height(shown.1);
+        self.sheet.fit(shown);
         true
     }
 
@@ -2380,14 +2380,25 @@ impl SettingsApp {
         Some((list, hit))
     }
 
+    /// Whether (`x`, `y`) is on the side list where it shows: in its rect and off the page's
+    /// scrollbars and edges while the page scrolls.
+    fn over_side_list(&mut self, x: i32, y: i32, ctx: &Ctx) -> bool {
+        let px = self.sheet.open().units().px(ctx.theme.fonts.size_px);
+        self.sheet.reaches_page(x, y, &ctx.text, px)
+            && self
+                .side_list()
+                .is_some_and(|(_, rect, _)| rect.contains(x, y))
+    }
+
     /// Light the side list's header column under the pointer; true when that changed what draws.
     fn list_hover(&mut self, x: i32, y: i32, ctx: &Ctx) -> bool {
         let cm = ctx.forms().controls();
         let styled = ctx.styled();
+        let over = self.over_side_list(x, y, ctx);
         let Some((list, rect, _)) = self.side_list() else {
             return false;
         };
-        let column = if styled && rect.contains(x, y) {
+        let column = if styled && over {
             let lay = listview::layout(list, rect, &cm);
             list.hit(&lay, x, y).column()
         } else {
@@ -2884,11 +2895,7 @@ impl SettingsApp {
             }) => {
                 // A combo's list dropped over the side list covers it.
                 let dropped = self.sheet.open().popup_open();
-                if !dropped
-                    && self
-                        .side_list()
-                        .is_some_and(|(_, rect, _)| rect.contains(x, y))
-                {
+                if !dropped && self.over_side_list(x, y, ctx) {
                     return self.list_press(x, y, time, ctx);
                 }
                 let hit = self.sheet.hit(x, y, &ctx.text, px);
@@ -2934,12 +2941,12 @@ impl SettingsApp {
                 if ev != propsheet::Event::None {
                     return self.sheet_event(ev);
                 }
+                if !self.over_side_list(x, y, ctx) {
+                    return Reply::none();
+                }
                 let Some((list, rect, _)) = self.side_list() else {
                     return Reply::none();
                 };
-                if !rect.contains(x, y) {
-                    return Reply::none();
-                }
                 let lay = listview::layout(list, rect, &ctx.forms().controls());
                 if list.scroll(rows as i64, &lay) {
                     Reply::redraw()
@@ -3257,8 +3264,10 @@ mod tests {
         }
     }
 
-    /// A left press at `time` on side list row `row`, found by walking down the list's body.
+    /// A left press at `time` on side list row `row`, found by walking down the list's body, in a
+    /// window that shows the whole sheet.
     fn press_side_row(a: &mut SettingsApp, ctx: &mut Ctx, row: usize, time: u32) {
+        ctx.size = (1920, 1080);
         let (list, rect, _) = a.side_list().expect("a page with a side list");
         let lay = listview::layout(list, rect, &ctx.forms().controls());
         let x = lay.body.x + 8;
@@ -4027,6 +4036,68 @@ mod tests {
         }
         let l = app.sheet.layout(&ctx.text, ctx.forms().fonts.size_px);
         assert!(l.bar.is_some(), "the page scrolls");
+    }
+
+    /// At 200% on a screen 1000 px wide the smallest sheet is wider than the window: the
+    /// buttons keep to the window's corner, and the page scrolls sideways to its right column.
+    #[test]
+    fn at_200_percent_a_window_narrower_than_the_sheet_scrolls_its_page_sideways() {
+        let mut app = app("narrow-200");
+        let mut ctx = test_ctx();
+        ctx.text_size = 200;
+        ctx.size = (1000, 1026);
+        app.sheet.tabs.open = Page::Background.index();
+        app.event(MAIN, Event::Resized, &mut ctx);
+        let mut c = Canvas::new(1000, 1026);
+        app.draw(MAIN, &mut c, &ctx);
+        let client = app.sheet.client();
+        assert!(client.0 <= 1000, "{client:?} fits the window");
+        let l = app.sheet.layout(&ctx.text, ctx.forms().fonts.size_px);
+        assert!(l.apply.right() <= 1000, "Apply at {:?} shows", l.apply);
+        let hbar = l.hbar.expect("the page scrolls sideways");
+        let browse = app.sheet.open().rect(backgroundpage::BROWSE).unwrap();
+        assert!(
+            browse.right() > hbar.right(),
+            "Browse... starts past the page's edge"
+        );
+        app.sheet
+            .wheel(Some(propsheet::Hit::PageHBar(BarHit::Track)), 100);
+        let browse = app.sheet.open().rect(backgroundpage::BROWSE).unwrap();
+        let bar = l.bar.map_or(hbar.right(), |b| b.x);
+        assert!(browse.right() <= bar, "{browse:?} shows");
+    }
+
+    /// On a page cut narrow and short the Keyboard page's shortcut list runs on under the page's
+    /// scrollbar: a press on its arrow there scrolls the page, and the list keeps its selection.
+    #[test]
+    fn the_page_scrollbar_over_the_side_list_scrolls_the_page() {
+        let mut app = app("bar-over-list");
+        let mut ctx = test_ctx();
+        ctx.text_size = 200;
+        ctx.size = (1000, 700);
+        app.sheet.tabs.open = Page::Keyboard.index();
+        app.event(MAIN, Event::Resized, &mut ctx);
+        let mut c = Canvas::new(1000, 700);
+        app.draw(MAIN, &mut c, &ctx);
+        let bar = app.sheet.layout(&ctx.text, ctx.forms().fonts.size_px).bar;
+        let bar = bar.expect("the page scrolls");
+        let list = app.on_page(pages::shortcuts(app.area()));
+        let y = bar.bottom() - 4;
+        assert!(
+            list.contains(bar.x + 2, y),
+            "{list:?} runs under the down arrow of {bar:?}"
+        );
+        let selected = app.shortcuts.selection.focus;
+        let press = PointerInput::Press {
+            x: bar.x + 2,
+            y,
+            button: BTN_LEFT,
+            time: 0,
+            mods: repriseapp::Mods::default(),
+        };
+        app.event(MAIN, Event::Pointer(press), &mut ctx);
+        assert!(app.sheet.page_offset().1 < 0, "the page scrolled down");
+        assert_eq!(app.shortcuts.selection.focus, selected);
     }
 
     #[test]

@@ -166,28 +166,45 @@ impl ThumbDrag {
     }
 }
 
-/// A page taller than the view it shows through, scrolled in its 100% px under a bar down the
-/// view's side: how much it is cut and scrolled, the held thumb, the lit part and a held arrow.
-/// The owner holds `top` to its range and moves its content by it. An arrow steps [`LINE_H`],
-/// the track a view.
+/// A page taller (or, [`PageScroll::across`], wider) than the view it shows through, scrolled in
+/// its 100% px under a bar down the view's side (along its bottom): how much it is cut and
+/// scrolled, the held thumb, the lit part and a held arrow. The owner holds `top` to its range
+/// and moves its content by it. An arrow steps [`LINE_H`], the track a view.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct PageScroll {
-    /// How much taller than its view the page was built.
+    /// How much taller (wider) than its view the page was built.
     pub short: i32,
-    /// How far the page is scrolled up: 0 to the owner's range.
+    /// How far the page is scrolled up (left): 0 to the owner's range.
     pub top: i32,
+    horizontal: bool,
     drag: ThumbDrag,
     bars: Pointer<ScrollHit>,
     repeat: ArrowRepeat,
 }
 
 impl PageScroll {
-    /// A press on part `hit` of the bar over a view `visible` tall: the top it asks for. A held
+    /// A page scrolled sideways under a bar along the view's bottom.
+    pub fn across() -> PageScroll {
+        PageScroll {
+            horizontal: true,
+            ..PageScroll::default()
+        }
+    }
+
+    fn axis(&self) -> Axis {
+        if self.horizontal {
+            Axis::Horizontal
+        } else {
+            Axis::Vertical
+        }
+    }
+
+    /// A press on part `hit` of the bar over a view `visible` long: the top it asks for. A held
     /// arrow repeats on [`PageScroll::tick`]; a thumb is grabbed.
     pub fn press(&mut self, hit: BarHit, visible: i32) -> i32 {
         self.bars.press(hit.part(), matches!(hit, BarHit::Thumb(_)));
         self.repeat.press(hit);
-        let by = self.drag.press(Axis::Vertical, hit);
+        let by = self.drag.press(self.axis(), hit);
         self.top + by.by(LINE_H as i64, visible as i64) as i32
     }
 
@@ -202,7 +219,7 @@ impl PageScroll {
     ) -> Option<i32> {
         let pos = self
             .drag
-            .pos(Axis::Vertical, parts, at, visible as usize, total as usize)?;
+            .pos(self.axis(), parts, at, visible as usize, total as usize)?;
         Some(pos as i32)
     }
 
@@ -251,10 +268,10 @@ impl PageScroll {
         self.bars.lit()
     }
 
-    /// The bar's parts in `bar`, over a view `visible` of a page `total` tall.
+    /// The bar's parts in `bar`, over a view `visible` of a page `total` long.
     pub fn parts(&self, bar: Rect, visible: i32, total: i32, thumb_min: i32) -> ScrollParts {
         let (top, visible, total) = (self.top as usize, visible as usize, total as usize);
-        scrollbar_parts(bar, 1, top, visible, total, false, thumb_min)
+        scrollbar_parts(bar, 1, top, visible, total, self.horizontal, thumb_min)
     }
 
     /// How far the page scrolls so the span `r` (top, bottom) shows whole in the view from

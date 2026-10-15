@@ -218,7 +218,7 @@ impl AttrConfirm {
 /// the sheet's buttons along the bottom), or one plain form.
 #[derive(Clone, Debug, PartialEq)]
 pub enum FormBody {
-    Sheet(PropSheet),
+    Sheet(Box<PropSheet>),
     Plain(Box<reprisekit::controls::form::Form>),
 }
 
@@ -333,7 +333,7 @@ impl FormDialog {
         let (w, h) = sheet.size;
         FormDialog {
             size: (w + 2 * x, h + x + y),
-            body: FormBody::Sheet(sheet),
+            body: FormBody::Sheet(Box::new(sheet)),
             kind,
             frame_d: (0, 0),
             measured: None,
@@ -428,14 +428,14 @@ impl FormDialog {
 
     pub fn sheet(&self) -> Option<&PropSheet> {
         match &self.body {
-            FormBody::Sheet(s) => Some(s),
+            FormBody::Sheet(s) => Some(&**s),
             FormBody::Plain(_) => None,
         }
     }
 
     pub fn sheet_mut(&mut self) -> Option<&mut PropSheet> {
         match &mut self.body {
-            FormBody::Sheet(s) => Some(s),
+            FormBody::Sheet(s) => Some(&mut **s),
             FormBody::Plain(_) => None,
         }
     }
@@ -3812,7 +3812,7 @@ impl DialogLayout {
                 FormBody::Sheet(s) => s.hit(x, y, text, px).and_then(|h| match h {
                     Hit::Tab(i) => Some(DialogHit::Tab(i)),
                     Hit::Control(h) => Some(DialogHit::Control(h)),
-                    Hit::ListBar(_) | Hit::List | Hit::PageBar(_) => None,
+                    Hit::ListBar(_) | Hit::List | Hit::PageBar(_) | Hit::PageHBar(_) => None,
                 }),
                 FormBody::Plain(form) => form.hit(x, y, text, px).map(DialogHit::Control),
             };

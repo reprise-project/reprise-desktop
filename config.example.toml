@@ -389,7 +389,7 @@ suspend_after = 0            # run [power] standby
 #                            # When it changes, an open window at its program's own size
 #                            # takes the program's size at the new text size, larger or
 #                            # smaller; one the user resized keeps its size, no smaller than
-#                            # its new minimum. A sheet taller than the screen scrolls its page.
+#                            # its new minimum. A sheet larger than the screen scrolls its page.
 # color_filter = "none"      # the whole screen through a filter: "grayscale", "invert", or a
 #                            # correction for "deuteranopia", "protanopia" or "tritanopia";
 #                            # screenshots and screen sharing stay unfiltered
