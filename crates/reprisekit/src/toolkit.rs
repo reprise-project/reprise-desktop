@@ -1,7 +1,7 @@
-//! The GTK3 theme and Qt palette `[toolkits] ... = "reprise"` hands GTK and Qt programs, generated
+//! The GTK theme and Qt palette `[toolkits] ... = "reprise"` hands GTK and Qt programs, generated
 //! from the colour scheme in force. Pure text: the compositor writes it where GTK, qt6ct and qt5ct
-//! read it. GTK3 gets recoloured Adwaita plus `gtk3.css`; Qt gets a qt5ct/qt6ct scheme of the 21
-//! `QPalette` roles.
+//! read it. GTK3 gets recoloured Adwaita plus `gtk3.css`, GTK4 its recoloured Default sheet plus
+//! `gtk3.css` and `gtk4.css`; Qt gets a qt5ct/qt6ct scheme of the 21 `QPalette` roles.
 
 use crate::interface::Interface;
 use crate::theme::{Color, ColorScheme, FontConfig};
@@ -9,6 +9,7 @@ use crate::theme::{Color, ColorScheme, FontConfig};
 pub mod gtk4;
 
 const GTK3_RULES: &str = include_str!("toolkit/gtk3.css");
+const GTK4_RULES: &str = include_str!("toolkit/gtk4.css");
 
 /// The first line of every file Reprise writes for qt5ct/qt6ct; a `qt6ct.conf` without it is the
 /// user's own and stays.
@@ -19,11 +20,33 @@ fn hex(c: Color) -> String {
 }
 
 pub fn gtk3_css(cs: &ColorScheme, interface: Interface) -> String {
-    let mut out = recoloured_adwaita(cs, interface);
+    let adwaita = if cs.is_dark() {
+        "gtk-contained-dark.css"
+    } else {
+        "gtk-contained.css"
+    };
+    let sheet = format!("resource:///org/gtk/libgtk/theme/Adwaita/{adwaita}");
+    let mut out = recoloured(cs, interface, &sheet, &[GTK3_RULES]);
     if interface == Interface::Classic {
         out += &crate::classic::gtk3::bevels(cs);
     }
     out
+}
+
+/// The generated theme's `gtk-4.0/gtk.css`: GTK4's own Default sheet with GTK3's named colours
+/// and rules laid over it, plus rules for the nodes only GTK4 has. libadwaita ignores the theme.
+pub fn gtk4_theme_css(cs: &ColorScheme, interface: Interface) -> String {
+    let default = if cs.is_dark() {
+        "Default-dark.css"
+    } else {
+        "Default-light.css"
+    };
+    recoloured(
+        cs,
+        interface,
+        &format!("resource:///org/gtk/libgtk/theme/Default/{default}"),
+        &[GTK3_RULES, GTK4_RULES],
+    )
 }
 
 pub fn gtk3_assets(cs: &ColorScheme, interface: Interface) -> Vec<(String, Vec<u8>)> {
@@ -37,14 +60,9 @@ pub fn gtk3_assets(cs: &ColorScheme, interface: Interface) -> Vec<(String, Vec<u
         .collect()
 }
 
-/// Adwaita (dark sheet when the scheme is dark), then the named colours and rules that read them.
-/// Glass has no caption colour, so its header bars take the face.
-fn recoloured_adwaita(cs: &ColorScheme, interface: Interface) -> String {
-    let adwaita = if cs.is_dark() {
-        "gtk-contained-dark.css"
-    } else {
-        "gtk-contained.css"
-    };
+/// `sheet` imported, then the named colours and `rules` that read them. Glass has no caption
+/// colour, so its header bars take the face.
+fn recoloured(cs: &ColorScheme, interface: Interface, sheet: &str, rules: &[&str]) -> String {
     let glass = interface == Interface::Glass;
     let (caption, caption_text, inactive, inactive_text) = if glass {
         (
@@ -78,8 +96,8 @@ fn recoloured_adwaita(cs: &ColorScheme, interface: Interface) -> String {
         ("theme_unfocused_selected_bg_color", cs.hilight),
         ("theme_unfocused_selected_fg_color", cs.hilight_text),
         ("unfocused_insensitive_color", cs.gray_text),
-        ("borders", cs.button_shadow),
-        ("unfocused_borders", cs.button_shadow),
+        ("borders", gtk4::border(cs)),
+        ("unfocused_borders", gtk4::border(cs)),
         ("link_color", cs.hot_light),
         ("content_view_bg", cs.window),
         ("text_view_bg", cs.window),
@@ -102,13 +120,15 @@ fn recoloured_adwaita(cs: &ColorScheme, interface: Interface) -> String {
     ];
     let mut out = format!(
         "/* Reprise: generated from the look in force and rewritten when it changes. */\n\
-         @import url(\"resource:///org/gtk/libgtk/theme/Adwaita/{adwaita}\");\n\n"
+         @import url(\"{sheet}\");\n\n"
     );
     for (name, c) in named {
         out += &format!("@define-color {name} {};\n", hex(c));
     }
     out.push('\n');
-    out += GTK3_RULES;
+    for r in rules {
+        out += r;
+    }
     let gradient = match interface {
         Interface::Classic => Some("to right"),
         Interface::Blue => Some("to top"),
@@ -257,11 +277,46 @@ mod tests {
             .filter_map(|l| l.strip_prefix("@define-color "))
             .filter_map(|l| l.split(' ').next())
             .collect();
-        for word in GTK3_RULES.split(|c: char| !(c.is_alphanumeric() || c == '_' || c == '@')) {
+        let rules = [GTK3_RULES, GTK4_RULES].concat();
+        for word in rules.split(|c: char| !(c.is_alphanumeric() || c == '_' || c == '@')) {
             if let Some(name) = word.strip_prefix('@') {
                 assert!(defined.contains(&name), "@{name} is not defined");
             }
         }
+    }
+
+    #[test]
+    fn gtk4_lays_the_same_colours_over_its_default_sheet() {
+        let cs = ColorScheme::default();
+        let css = gtk4_theme_css(&cs, Interface::Classic);
+        assert_eq!(
+            css.lines().nth(1),
+            Some("@import url(\"resource:///org/gtk/libgtk/theme/Default/Default-light.css\");")
+        );
+        let gtk3 = gtk3_css(&cs, Interface::Classic);
+        let named = |t: &str| -> Vec<String> {
+            t.lines()
+                .filter(|l| l.starts_with("@define-color "))
+                .map(String::from)
+                .collect()
+        };
+        assert_eq!(named(&css), named(&gtk3));
+        assert!(css.contains(GTK3_RULES) && css.contains(GTK4_RULES));
+        assert!(css.contains("linear-gradient(to right, #0a246a, #a6caf0)"));
+        let dark = crate::schemes::scheme("Tokyo Night").unwrap();
+        assert!(gtk4_theme_css(&dark, Interface::Glass).contains("Default/Default-dark.css"));
+    }
+
+    #[test]
+    fn high_contrast_black_borders_show_on_black() {
+        let hcb = crate::schemes::scheme("High Contrast Black").unwrap();
+        assert_eq!(
+            line(
+                &gtk3_css(&hcb, Interface::Classic),
+                "@define-color borders "
+            ),
+            format!("@define-color borders {};", hex(hcb.button_hilight))
+        );
     }
 
     #[test]
@@ -307,9 +362,9 @@ mod tests {
         assert_eq!(
             got,
             [
-                0xb5f8_6215_bb74_2f37,
-                0x8ef7_17bc_ea9c_4680,
-                0xfeee_8e55_72ee_7ede
+                0x4acb_34a6_e7be_0e13,
+                0x25ab_10b6_3047_d7b4,
+                0x5295_21fb_c8f4_6c10
             ],
             "{got:#x?}"
         );

@@ -23,6 +23,9 @@ const OWN_PAIR: f64 = 2.5;
 /// Under this contrast between a card's paper and its face, cards, sheets and
 /// popovers get their own edge; the high-contrast schemes sit at 1:1.
 const CARD_GROUND: f64 = 1.05;
+/// The least contrast a border keeps against the face and the paper; High Contrast Black's
+/// black shadow on black falls back to its grey highlight.
+const BORDER_LEAST: f64 = 1.5;
 
 const SQUARE_WINDOWS: &[&str] = &[
     "window.dialog.message.csd",
@@ -104,7 +107,7 @@ pub fn colors(cs: &ColorScheme, interface: Interface) -> Vec<(&'static str, Colo
     } else {
         (DESTRUCTIVE_LIGHT, DESTRUCTIVE_TEXT_LIGHT)
     };
-    vec![
+    let mut colors = vec![
         ("accent_bg_color", cs.hilight),
         (
             "accent_fg_color",
@@ -142,11 +145,11 @@ pub fn colors(cs: &ColorScheme, interface: Interface) -> Vec<(&'static str, Colo
         ("sidebar_bg_color", cs.window),
         ("sidebar_fg_color", cs.window_text),
         ("sidebar_backdrop_color", cs.window),
-        ("sidebar_border_color", cs.button_shadow),
+        ("sidebar_border_color", border(cs)),
         ("secondary_sidebar_bg_color", cs.window),
         ("secondary_sidebar_fg_color", cs.window_text),
         ("secondary_sidebar_backdrop_color", cs.window),
-        ("secondary_sidebar_border_color", cs.button_shadow),
+        ("secondary_sidebar_border_color", border(cs)),
         ("card_bg_color", cs.window),
         ("card_fg_color", cs.window_text),
         ("dialog_bg_color", cs.button_face),
@@ -155,8 +158,22 @@ pub fn colors(cs: &ColorScheme, interface: Interface) -> Vec<(&'static str, Colo
         ("popover_fg_color", cs.menu_text),
         ("thumbnail_bg_color", cs.window),
         ("thumbnail_fg_color", cs.window_text),
-        ("border_color", cs.button_shadow),
-    ]
+        ("border_color", border(cs)),
+    ];
+    if edge(cs).is_some() {
+        // Boxed-list rows part on the card's shade, a faint black that vanishes on black paper.
+        colors.push(("card_shade_color", border(cs)));
+    }
+    colors
+}
+
+/// The scheme's border colour: its shadow, unless that vanishes on the face or the paper.
+pub(super) fn border(cs: &ColorScheme) -> Color {
+    readable(
+        &[cs.button_shadow, cs.button_hilight, cs.window_text],
+        &[cs.button_face, cs.window],
+        BORDER_LEAST,
+    )
 }
 
 fn edge(cs: &ColorScheme) -> Option<Color> {
@@ -304,6 +321,29 @@ mod tests {
         );
         let hcb = schemes::scheme("High Contrast Black").unwrap();
         assert_eq!(get(&hcb, Interface::Classic, "accent_color"), WHITE);
+    }
+
+    #[test]
+    fn high_contrast_black_parts_its_sidebars_and_list_rows_in_grey() {
+        let hcb = schemes::scheme("High Contrast Black").unwrap();
+        for name in ["border_color", "sidebar_border_color", "card_shade_color"] {
+            assert_eq!(
+                get(&hcb, Interface::Classic, name),
+                hcb.button_hilight,
+                "{name}"
+            );
+        }
+        let std = ColorScheme::default();
+        assert_eq!(
+            get(&std, Interface::Classic, "border_color"),
+            std.button_shadow
+        );
+        assert!(
+            !colors(&std, Interface::Classic)
+                .iter()
+                .any(|(n, _)| *n == "card_shade_color"),
+            "the card's own shade stands"
+        );
     }
 
     #[test]

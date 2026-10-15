@@ -318,7 +318,7 @@ treeview ~ scrollbar.vertical { border-top-color: @borders; }
 /* Check boxes, radios and switches */
 check, radio, check:backdrop, radio:backdrop {
   color: @theme_text_color;
-  border-color: @reprise_shadow;
+  border-color: @borders;
   background-image: image(@theme_base_color);
   box-shadow: none;
 }
@@ -486,7 +486,7 @@ treeview.view header button:hover { background-color: shade(@theme_bg_color, 1.0
 /* Frames, separators, side bars, tool and info bars */
 frame > border, .frame, frame > border:backdrop, .frame:backdrop { border-color: @borders; }
 actionbar > revealer > box, actionbar > revealer > box:backdrop { border-color: @borders; }
-separator { background: alpha(@reprise_shadow, 0.6); }
+separator { background: alpha(@borders, 0.6); }
 paned > separator, paned > separator:backdrop { background-image: image(@borders); }
 paned > separator.wide, paned > separator.wide:backdrop {
   background-color: @theme_bg_color;
