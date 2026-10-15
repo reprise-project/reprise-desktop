@@ -1182,6 +1182,14 @@ impl ListingIcons {
         (swaps, files)
     }
 
+    /// The name whose canvases include `worn`.
+    pub fn name_of(&self, worn: &std::rc::Rc<Canvas>) -> Option<&str> {
+        self.by_name
+            .iter()
+            .find(|(_, sizes)| sizes.iter().flatten().any(|c| std::rc::Rc::ptr_eq(c, worn)))
+            .map(|(name, _)| name.as_str())
+    }
+
     /// Icon file `path` as the host decoded it at [`LISTING_PX`]: its old and new canvases, or
     /// None when no entry wears it.
     pub fn put(
