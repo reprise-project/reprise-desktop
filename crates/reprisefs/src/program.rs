@@ -45,6 +45,7 @@ pub enum ScriptEnd {
     /// Waits for Enter after the script, so its output can be read.
     #[default]
     Stay,
+    /// Closes when the script succeeds; a failure still waits for Enter.
     Close,
 }
 
@@ -60,6 +61,8 @@ impl ScriptEnd {
 
 /// Run by `sh -c` with the script's path as `$0`, so no path is ever part of the shell text.
 const STAY: &str = r#""$0"; s=$?; echo; [ "$s" -eq 0 ] || echo "The script ended with status $s."; printf 'Press Enter to close.'; read -r _"#;
+/// [`STAY`] that exits at once when the script succeeds, so a failure is never closed unread.
+const CLOSE: &str = r#""$0"; s=$?; [ "$s" -eq 0 ] && exit; echo; echo "The script ended with status $s."; printf 'Press Enter to close.'; read -r _"#;
 
 /// The argument vector that runs the program at `path`, which must be absolute: a bare name
 /// would be looked up on `PATH`. A script runs in `terminal` (the `terminal` key), which `end`
@@ -79,10 +82,11 @@ pub fn run_argv(path: &Path, terminal: &str, end: ScriptEnd) -> io::Result<Vec<O
         use std::os::unix::ffi::OsStrExt;
         executable(Path::new(std::ffi::OsStr::from_bytes(interpreter)))?;
     }
-    let argv = match end {
-        ScriptEnd::Close => vec![path.into()],
-        ScriptEnd::Stay => vec!["sh".into(), "-c".into(), STAY.into(), path.into()],
+    let wrapper = match end {
+        ScriptEnd::Close => CLOSE,
+        ScriptEnd::Stay => STAY,
     };
+    let argv = vec!["sh".into(), "-c".into(), wrapper.into(), path.into()];
     Ok(crate::apps::in_terminal(terminal, argv))
 }
 
@@ -171,7 +175,7 @@ mod tests {
         let argv = |path: &Path, end| run_argv(path, "foot --title x", end).unwrap();
         assert_eq!(
             argv(&script, ScriptEnd::Close),
-            os(&["foot", "--title", "x", "-e", p])
+            os(&["foot", "--title", "x", "-e", "sh", "-c", CLOSE, p])
         );
         assert_eq!(
             argv(&script, ScriptEnd::Stay),
@@ -219,6 +223,42 @@ mod tests {
             "a clean exit shows no status, and the script gets its own path"
         );
         let _ = std::fs::remove_dir_all(d.parent().unwrap());
+    }
+
+    #[test]
+    fn the_close_wrapper_waits_only_when_the_script_fails() {
+        use std::io::Write;
+        let d = dir("close");
+        let run = |name: &str, body: &[u8]| {
+            let script = file(&d, name, body, 0o755);
+            let mut child = std::process::Command::new("sh")
+                .args(["-c", CLOSE])
+                .arg(&script)
+                .stdin(std::process::Stdio::piped())
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::null())
+                .spawn()
+                .unwrap();
+            child.stdin.take().unwrap().write_all(b"\n").unwrap();
+            let out = child.wait_with_output().unwrap();
+            (String::from_utf8(out.stdout).unwrap(), out.status.code())
+        };
+        assert_eq!(
+            run("ok.sh", b"#!/bin/sh\necho done\n"),
+            ("done\n".into(), Some(0)),
+            "a clean exit closes without a prompt"
+        );
+        assert_eq!(
+            run("bad.sh", b"#!/bin/sh\nif then\n").0,
+            "\nThe script ended with status 2.\nPress Enter to close.",
+            "a syntax error"
+        );
+        assert_eq!(
+            run("env.sh", b"#!/usr/bin/env no-such-interpreter-x\n").0,
+            "\nThe script ended with status 127.\nPress Enter to close.",
+            "a missing `env` interpreter"
+        );
+        let _ = std::fs::remove_dir_all(&d);
     }
 
     #[test]
