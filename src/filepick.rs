@@ -325,11 +325,17 @@ impl FilePicker {
     /// pick. A reply that a later navigation made stale changes nothing.
     pub fn reply(&mut self, r: Reply, cache: &mut IconCache, scale: i32) -> Outcome {
         self.pending.retain(|p| p.seq != r.seq);
-        for (file, art) in &r.art {
-            for (px, canvas) in LISTING_PX.into_iter().zip(art) {
-                cache.put_file(file, px * r.scale, canvas.clone());
-            }
-        }
+        cache.put_files(
+            r.art
+                .iter()
+                .flat_map(|(file, art)| {
+                    LISTING_PX
+                        .into_iter()
+                        .zip(art)
+                        .map(|(px, c)| (file.clone(), px * r.scale, c.clone()))
+                })
+                .collect(),
+        );
         if self.restyling.is_some_and(|seq| seq == r.seq) {
             self.restyling = None;
             if let Found::Folder(rows) = r.found {
