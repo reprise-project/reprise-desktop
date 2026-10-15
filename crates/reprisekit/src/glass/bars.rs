@@ -154,16 +154,18 @@ fn track_v_part(d: i32) -> PartImage {
         .at_scale(d)
 }
 
+/// Fills its rect, the body over the rect's width and the shadow a column past it;
+/// rows 3 and 6 share any extra height so the gloss's split stays central.
 fn thumb_v_part(d: i32) -> PartImage {
-    PartImage {
-        true_size: true,
-        ..PartImage::new(
-            stack(THUMB_STATES.map(|s| thumb_v(&inks(s), d))),
-            &THUMB_STATES,
-            Layout::Vertical,
-        )
-        .at_scale(d)
-    }
+    PartImage::new(
+        stack(THUMB_STATES.map(|s| thumb_v(&inks(s), d))),
+        &THUMB_STATES,
+        Layout::Vertical,
+    )
+    .sizing(Insets::new(4, 3, 4, 4))
+    .two_bands(3, 6)
+    .outset(Insets::new(1, 0, 1, 0))
+    .at_scale(d)
 }
 
 fn stack<const N: usize>(frames: [Canvas; N]) -> Canvas {
@@ -1077,5 +1079,58 @@ mod tests {
             crate::classic::trackbar::draw_held(&mut b, &theme.paint(), &lay, enabled, held);
             assert!(a == b, "{enabled} {focused} {ptr:?}: Classic's");
         }
+    }
+
+    /// Every state of the upright thumb drawn into a `w` x `h` rect at
+    /// (1, 0), one under the other, on a canvas a column wider each side.
+    fn thumb_v_in(w: i32, h: i32, d: i32) -> Canvas {
+        let img = part(d, Part::TrackbarThumbV);
+        let n = THUMB_STATES.len() as i32;
+        let mut c = Canvas::new(((w + 2) * d) as u32, (h * n * d) as u32);
+        for (i, &s) in THUMB_STATES.iter().enumerate() {
+            let r = Rect::new(1, i as i32 * h, w, h).scaled(d);
+            img.blit(&mut c, img.frame(s), r, d);
+        }
+        c
+    }
+
+    #[test]
+    fn the_upright_thumb_at_its_own_size_is_its_frames() {
+        for d in [1, 2] {
+            let img = part(d, Part::TrackbarThumbV);
+            let c = thumb_v_in(21, 11, d);
+            assert_eq!(
+                c.width, img.atlas.width,
+                "the frame spans the rect and one column each side"
+            );
+            assert!(c.pixels == img.atlas.pixels, "at {d}");
+        }
+    }
+
+    #[test]
+    fn the_upright_thumb_fills_the_volume_popups_25_by_15_rect() {
+        for d in [1, 2] {
+            let c = thumb_v_in(25, 15, d);
+            let a = |x: i32, y: i32| c.get(x * d, y * d) >> 24;
+            for (x, y) in [(1, 7), (25, 7), (13, 0), (13, 13)] {
+                assert_eq!(a(x, y), 255, "at {d}: ({x}, {y}) is the thumb's");
+            }
+            assert_eq!(a(0, 7), 0, "at {d}: nothing left of the rect");
+            assert!(
+                a(26, 7) > 0,
+                "at {d}: the shadow a column right of the rect"
+            );
+            assert!(a(13, 14) > 0, "at {d}: the shadow on the rect's last row");
+        }
+    }
+
+    #[test]
+    fn the_upright_thumb_in_the_volume_popups_rect_pins_at_scale_1_and_2() {
+        let got = [1, 2].map(|d| fnv(&thumb_v_in(25, 15, d)));
+        assert_eq!(
+            got,
+            [0x2522_b843_7459_39e3, 0x0095_cd52_39b7_8d03],
+            "{got:#x?}"
+        );
     }
 }
