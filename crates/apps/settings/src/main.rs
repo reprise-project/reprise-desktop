@@ -242,6 +242,21 @@ enum Pick {
     Autostart,
     Wallpaper,
     SlideFolder,
+    /// The Open With chooser's Browse...: a program file.
+    Program,
+}
+
+/// The file dialog's listing filter for `pick`.
+fn pick_keep(
+    pick: Pick,
+    d: &FileDlg,
+) -> impl Fn(&reprisefs::listing::Item) -> bool + Clone + Send + 'static {
+    let typed = type_keep(d);
+    let programs = repriseapp::openwith::programs_keep(d.filter());
+    move |i| match pick {
+        Pick::Program => programs(i),
+        _ => typed(i),
+    }
 }
 
 /// The longest 100% length that grows to no more than `v`.
@@ -1549,7 +1564,7 @@ impl SettingsApp {
         Reply::redraw()
     }
 
-    /// Change...: the Open With chooser over the picked type, "Always use" ticked and fixed, Browse... greyed.
+    /// Change...: the Open With chooser over the picked type, "Always use" ticked and fixed.
     fn open_chooser(&mut self) -> Reply {
         let Some(d) = &self.defaults else {
             return Reply::none();
@@ -1581,7 +1596,6 @@ impl SettingsApp {
             on: true,
             enabled: false,
         };
-        ow.browse_enabled = false;
         self.chooser = Some(Chooser {
             mime: t.mime.clone(),
             ow,
@@ -1607,7 +1621,11 @@ impl SettingsApp {
             }
         };
         match out {
-            openwith::Event::None | openwith::Event::Browse => Reply::none(),
+            openwith::Event::None => Reply::none(),
+            openwith::Event::Browse => {
+                self.open_add(Pick::Program);
+                Reply::redraw_all()
+            }
             openwith::Event::Redraw => Reply::redraw(),
             openwith::Event::Cancel => {
                 self.chooser = None;
@@ -1616,6 +1634,19 @@ impl SettingsApp {
             openwith::Event::Choose { id, .. } => {
                 let mime = c.mime.clone();
                 self.chooser = None;
+                let dir = reprisefs::apps::user_applications_dir();
+                let chosen = match self.defaults.as_mut() {
+                    Some(d) => d.chosen(&id, &mime, dir.as_deref()),
+                    None => Ok(id.clone()),
+                };
+                let id = match chosen {
+                    Ok(id) => id,
+                    Err(e) => {
+                        log::warn!("no desktop entry for {id}: {e}");
+                        self.fail(&format!("Cannot use '{id}': {e}."));
+                        return Reply::redraw_all();
+                    }
+                };
                 if let Some(d) = self.defaults.as_mut() {
                     let now = d.current(&mime).map(|i| d.apps[i].id.as_str());
                     if now != Some(id.as_str()) {
@@ -1626,6 +1657,20 @@ impl SettingsApp {
                 self.sync_apply();
                 Reply::redraw_all()
             }
+        }
+    }
+
+    /// Browse... picked `path`: it joins the chooser's list, selected.
+    fn browsed_program(&mut self, path: &std::path::Path) {
+        let Some(c) = self.chooser.as_mut() else {
+            return;
+        };
+        match repriseapp::openwith::program_pick(path) {
+            Some(p) => {
+                c.ow.add_program(p);
+                c.icons_due = true;
+            }
+            None => log::warn!("{} is not UTF-8, cannot run it", path.display()),
         }
     }
 
@@ -2380,7 +2425,7 @@ impl SettingsApp {
         Some(Reply::redraw())
     }
 
-    /// Open the file dialog for `pick`: Add... at home, Browse... at Pictures.
+    /// Open the file dialog for `pick`: Add... at home, Browse... at Pictures or, for a program, its folder.
     fn open_add(&mut self, pick: Pick) {
         self.add_for = pick;
         let (dir, fields) = match pick {
@@ -2421,6 +2466,10 @@ impl SettingsApp {
                     filters: Vec::new(),
                 },
             ),
+            Pick::Program => (
+                PathBuf::from(repriseapp::openwith::PROGRAMS_DIR),
+                repriseapp::openwith::browse_fields(),
+            ),
         };
         // The sheet's last draw carries the text size the dialog grows by.
         let u = self.sheet.open().units();
@@ -2438,7 +2487,7 @@ impl SettingsApp {
             return Reply::none();
         };
         let host = &mut self.add_host;
-        let keep = type_keep(d);
+        let keep = pick_keep(pick, d);
         host.ensure_listed(d, &mut ctx.icons, &keep);
         match host.event(
             d,
@@ -2457,7 +2506,7 @@ impl SettingsApp {
                 Reply::redraw()
             }
             Step::Out(FileEvent::FilterChanged(_)) => {
-                let keep = type_keep(d);
+                let keep = pick_keep(pick, d);
                 if let Some(id) = host.folder {
                     host.list(d, id, &mut ctx.icons, &keep);
                 }
@@ -2491,6 +2540,11 @@ impl SettingsApp {
                                 Some(why) => self.fail(&why),
                                 None => self.browsed(path),
                             },
+                            Pick::Program if !path.is_file() => {
+                                log::warn!("{} is not a file", path.display());
+                                return Reply::none();
+                            }
+                            Pick::Program => self.browsed_program(&path),
                             Pick::SlideFolder => {}
                         }
                         self.sync_apply();
@@ -2550,6 +2604,7 @@ impl App for SettingsApp {
                     Pick::Autostart => "Add",
                     Pick::Wallpaper => "Browse",
                     Pick::SlideFolder => "Browse for Folder",
+                    Pick::Program => "Browse",
                 }
                 .into(),
                 size: filedlg::CLIENT,
@@ -3245,6 +3300,45 @@ mod tests {
         a.chooser = None;
         enter(&mut a, &ctx);
         assert_eq!(mime(&a), Some(double), "Enter opens it for the same type");
+    }
+
+    #[test]
+    fn browse_in_the_chooser_picks_a_program_file_into_its_list() {
+        let mut a = app("types-browse");
+        let mut ctx = test_ctx();
+        a.open_page(Page::DefaultPrograms, None);
+        a.defaults = Some(defaultspage::tests::defaults());
+        a.refill_defaults();
+        press_side_row(&mut a, &mut ctx, 1, 1000);
+        enter(&mut a, &ctx);
+        assert!(a.chooser.is_some());
+        let alt_b = Event::Key(KeyInput {
+            sym: 'b' as u32,
+            utf8: Some("b".into()),
+            mods: repriseapp::Mods {
+                alt: true,
+                ..Default::default()
+            },
+            edit: reprisekit::textedit::key_for('b' as u32, false, false, Some("b")),
+        });
+        a.event(CHOOSER_WIN, alt_b, &mut ctx);
+        assert!(
+            a.add.is_some() && a.add_for == Pick::Program,
+            "Browse... opens the file dialog"
+        );
+        let kids = a.children();
+        assert!(kids.iter().any(|k| k.id == ADD_WIN && k.modal));
+        assert!(
+            kids.iter().any(|k| k.id == CHOOSER_WIN),
+            "the chooser stays up under it"
+        );
+        a.browsed_program(std::path::Path::new("/opt/view"));
+        let picked = a
+            .chooser
+            .as_ref()
+            .and_then(|c| c.ow.chosen())
+            .map(|p| p.id.clone());
+        assert_eq!(picked.as_deref(), Some("/opt/view"));
     }
 
     #[test]

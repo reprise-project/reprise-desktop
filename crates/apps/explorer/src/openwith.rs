@@ -1,15 +1,14 @@
 use crate::Explorer;
 use crate::dialogs::{Dialog, ProgramBrowse};
 use repriseapp::filedlg::{Host, Resolved, Step};
+use repriseapp::openwith::{PROGRAMS_DIR, browse_fields, program_pick, programs_keep as keep};
 use repriseapp::{Ctx, Event, Reply};
-use reprisekit::controls::filedlg::{DlgMode, Event as FileEvent, Fields};
-use reprisekit::controls::openwith::{self, OpenWith, Program};
+use reprisekit::controls::filedlg::Event as FileEvent;
+use reprisekit::controls::openwith::{self, OpenWith};
 use reprisekit::icontheme::IconCache;
 use reprisekit::look::Paint;
 use reprisekit::raster::Canvas;
 use std::path::Path;
-
-const PROGRAMS_DIR: &str = "/usr/bin";
 
 pub fn chooser_row_icons(ow: &OpenWith, icons: &mut IconCache) -> Vec<Option<Canvas>> {
     ow.list
@@ -17,27 +16,6 @@ pub fn chooser_row_icons(ow: &OpenWith, icons: &mut IconCache) -> Vec<Option<Can
         .iter()
         .map(|r| openwith::icon_name(r).and_then(|n| icons.get(n, 16)))
         .collect()
-}
-
-/// A picked program file as a chooser row: its path is its id, its file
-/// name its label. `None` for a path that is not UTF-8, which cannot be
-/// run as a command line.
-pub fn program_pick(path: &Path) -> Option<Program> {
-    let id = path.to_str()?.to_string();
-    let name = path
-        .file_name()
-        .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_else(|| id.clone());
-    Some(Program {
-        id,
-        name,
-        icon: Some(openwith::PROGRAM_ICON.into()),
-    })
-}
-
-/// Folders stay regardless, through `Host::list`'s own `is_dir` check.
-fn keep(filter: usize) -> impl Fn(&reprisefs::listing::Item) -> bool + Clone + Send + 'static {
-    move |i| filter != 0 || i.exec
 }
 
 impl Explorer {
@@ -62,17 +40,7 @@ impl Explorer {
             openwith::Event::Browse => {
                 let mut host = Host::default();
                 host.icons.prime(&mut ctx.icons);
-                let dlg = host.open(
-                    Path::new(PROGRAMS_DIR),
-                    Fields {
-                        title: "Browse".into(),
-                        accept_label: "Open".into(),
-                        filters: vec!["Programs".into(), "All Files".into()],
-                        mode: DlgMode::Open,
-                        multiple: false,
-                    },
-                    self.forms.text,
-                );
+                let dlg = host.open(Path::new(PROGRAMS_DIR), browse_fields(), self.forms.text);
                 if let Some(Dialog::ChooseProgram(cp)) = self.dialog.as_mut() {
                     cp.browse = Some(ProgramBrowse { host, dlg });
                 }

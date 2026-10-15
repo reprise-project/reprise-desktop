@@ -1461,24 +1461,6 @@ fn chooser_ok_runs_the_program_on_release() {
 }
 
 #[test]
-fn a_program_path_becomes_a_program_named_by_its_file() {
-    let p =
-        crate::openwith::program_pick(std::path::Path::new("/usr/bin/nano")).expect("a UTF-8 path");
-    assert_eq!(p.id, "/usr/bin/nano");
-    assert_eq!(p.name, "nano");
-    assert_eq!(
-        p.icon.as_deref(),
-        Some(reprisekit::controls::openwith::PROGRAM_ICON)
-    );
-    use std::os::unix::ffi::OsStrExt;
-    let odd = std::path::Path::new(std::ffi::OsStr::from_bytes(b"/usr/bin/a\xffb"));
-    assert!(
-        crate::openwith::program_pick(odd).is_none(),
-        "a path that is not UTF-8 is refused"
-    );
-}
-
-#[test]
 fn ok_on_a_browsed_program_runs_it_on_the_file() {
     let dir = tempfile::tempdir().expect("a temp dir");
     std::fs::write(dir.path().join("b.txt"), "").unwrap();
