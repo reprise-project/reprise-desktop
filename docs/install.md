@@ -18,6 +18,11 @@ Wayland session:
 On Arch, `packaging/arch/PKGBUILD` packages the compositor, the programs, the
 session file, the PAM files and the portal backend.
 
+Every push to main also publishes a package as the
+[Nightly release](https://github.com/reprise-project/reprise-desktop/releases/tag/nightly):
+
+    sudo pacman -U https://github.com/reprise-project/reprise-desktop/releases/download/nightly/reprise-nightly-x86_64.pkg.tar.zst
+
 ## Requirements
 
 ### To build
