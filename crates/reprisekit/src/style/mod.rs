@@ -1103,6 +1103,12 @@ impl Style {
         st
     }
 
+    /// Drops the styles [`Style::at_scale`] kept for the scales `keep` turns down.
+    pub fn keep_scales(&self, keep: impl Fn(i32) -> bool) {
+        let mut kept = self.rescaled.0.lock().unwrap_or_else(|e| e.into_inner());
+        kept.retain(|(n, _)| keep(*n));
+    }
+
     pub fn with_text_size(self: &Arc<Style>, pct: u32) -> Arc<Style> {
         if pct == 100 {
             return self.clone();
@@ -1880,6 +1886,20 @@ mod tests {
         assert!(
             crate::look::styled::fixture::doubles_at_scale_1(&one, &two),
             "{what}: the s = 2 draw is the s = 1 draw with every pixel a 2x2 block"
+        );
+    }
+
+    #[test]
+    fn a_scale_no_longer_kept_builds_its_style_again() {
+        let st = Arc::new(style().with_rescale(|_| style()));
+        let two = st.at_scale(2);
+        assert!(Arc::ptr_eq(&two, &st.at_scale(2)), "scale 2 is kept");
+        st.keep_scales(|n| n == 2);
+        assert!(Arc::ptr_eq(&two, &st.at_scale(2)), "still in use");
+        st.keep_scales(|n| n == 1);
+        assert!(
+            !Arc::ptr_eq(&two, &st.at_scale(2)),
+            "dropped, then built again"
         );
     }
 

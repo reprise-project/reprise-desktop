@@ -405,6 +405,7 @@ impl State {
     /// clients, pointer).
     pub fn update_layout(&mut self) {
         self.place_outputs();
+        self.drop_unused_scales();
         self.settle_moves();
         crate::layer::outputs_changed(self);
         self.refit_maximized();
@@ -611,6 +612,19 @@ impl State {
                     crate::barplace::place_hiding(b, tb.position, t, tb.auto_hide.then_some(0.0));
                 crate::barplace::usable(b, &p)
             })
+    }
+
+    /// Lets the look forget the art it drew for scales no output runs at any more.
+    fn drop_unused_scales(&self) {
+        let used: Vec<i32> = self
+            .scene
+            .outputs()
+            .iter()
+            .map(|o| self.draw_scale_at(Some(o)))
+            .collect();
+        if let reprisekit::look::Look::Styled(s) = &self.config.theme.look {
+            s.keep_scales(|n| used.contains(&n));
+        }
     }
 
     pub fn draw_scale_at(&self, output: Option<&Output>) -> i32 {
