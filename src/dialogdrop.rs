@@ -157,7 +157,7 @@ impl State {
         let (index, edit) = view.rename.as_ref()?;
         let cell = view.cells.get(*index)?;
         let theme = &self.config.theme;
-        let lay = crate::desktop::edit_layout(theme, &self.text, edit, crate::desktop::CELL);
+        let lay = crate::desktop::edit_layout(theme, &self.text, edit, self.desktop_grid().w);
         let (x, y) = (pos.x as i32 - cell.x, pos.y as i32 - cell.y);
         if !lay.rect.contains(x, y) {
             return None;

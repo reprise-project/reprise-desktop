@@ -1,6 +1,6 @@
-//! The icon view: the desktop grid of 75 px cells, each an icon over a wrapped
-//! label, with selection, shortcut arrow, in-place rename box and arrow-key
-//! rules. Pure drawing and geometry; the host decides what the icons stand for.
+//! The icon view: the desktop grid of 75 px cells (grown with the text size, [`Cell::grown`]),
+//! each an icon over a wrapped label, with selection, shortcut arrow, in-place rename box and
+//! arrow-key rules. Pure drawing and geometry; the host decides what the icons stand for.
 
 use std::ops::Range;
 
@@ -57,12 +57,34 @@ pub fn cell_at(cell: Cell, area: Rect, x: i32, y: i32) -> (i32, i32) {
     (col, row)
 }
 
+/// The cell an icon saved at `saved`, a cell of the 100% grid, takes in a grid of `cell`s: the
+/// one holding the saved cell's centre. Saved positions stay in 100% cells, so they survive the
+/// grid growing with the text size.
+pub fn from_saved(cell: Cell, (c, r): (i32, i32)) -> (i32, i32) {
+    (
+        (c * CELL + CELL / 2).div_euclid(cell.w),
+        (r * CELL + CELL / 2).div_euclid(cell.h),
+    )
+}
+
+/// The 100% cell to save for an icon at `at` in a grid of `cell`s: the one holding its centre,
+/// which [`from_saved`] maps back to `at`.
+pub fn to_saved(cell: Cell, (c, r): (i32, i32)) -> (i32, i32) {
+    (
+        (c * cell.w + cell.w / 2).div_euclid(CELL),
+        (r * cell.h + cell.h / 2).div_euclid(CELL),
+    )
+}
+
+/// The icons `names` in a grid of `cell`s over `area`: each at its saved position
+/// ([`from_saved`]), or the free cell nearest it when an earlier icon took that cell; the rest,
+/// and those saved past the grid's end, flow into the free cells down the columns.
 pub fn layout_free(
+    cell: Cell,
     area: Rect,
     names: &[&str],
     positions: &std::collections::BTreeMap<String, (i32, i32)>,
 ) -> Vec<Rect> {
-    let cell = Cell::square(CELL);
     let (cols, rows) = (
         columns(cell, area) as i32,
         rows_per_column(cell, area) as i32,
@@ -71,11 +93,18 @@ pub fn layout_free(
     let mut cells: Vec<Option<(i32, i32)>> = names
         .iter()
         .map(|n| {
-            let &(c, r) = positions.get(*n)?;
-            if c < 0 || r < 0 || c >= cols || r >= rows || !taken.insert((c, r)) {
+            let &saved = positions.get(*n)?;
+            let (c, r) = from_saved(cell, saved);
+            if saved.0 < 0 || saved.1 < 0 || c >= cols || r >= rows {
                 return None;
             }
-            Some((c, r))
+            let at = if taken.contains(&(c, r)) {
+                free_cell_near(cell, area, &taken, (c, r))
+            } else {
+                (c, r)
+            };
+            taken.insert(at);
+            Some(at)
         })
         .collect();
     let mut next = 0;
@@ -99,11 +128,11 @@ pub fn layout_free(
 }
 
 pub fn free_cell_near(
+    cell: Cell,
     area: Rect,
     taken: &std::collections::HashSet<(i32, i32)>,
     want: (i32, i32),
 ) -> (i32, i32) {
-    let cell = Cell::square(CELL);
     let (cols, rows) = (
         columns(cell, area) as i32,
         rows_per_column(cell, area) as i32,
@@ -324,8 +353,8 @@ impl EditLayout {
     }
 }
 
-/// One desktop cell at `theme.scale`: the icon (already sized to `ICON_PX *
-/// scale`) near the top, the name below on up to two centred lines. A selected
+/// One desktop cell at `theme.scale`, grown with `theme.text` ([`Cell::grown`]): the icon
+/// (already sized to `ICON_PX * scale`) near the top, the name below on up to two centred lines. A selected
 /// cell blends the icon with `hilight`, fills the label in `hilight_text` and,
 /// once the keyboard has been used, draws the dotted focus ring. A look with its
 /// own desktop box ([`crate::style::Part::DesktopItem`]) draws that instead.
@@ -343,17 +372,19 @@ pub fn draw_cell(
     rename: Option<(&TextEdit, Caret)>,
     preedit: Option<&Preedit>,
 ) -> Canvas {
-    let size = CELL * theme.scale.max(1);
+    let cell = Cell::grown(theme.text);
+    let s = theme.scale.max(1);
+    let size = cell.w * s;
     let extra = rename.map_or(0, |(edit, _)| {
-        let r = edit_layout(theme, text, edit, CELL).rect;
+        let r = edit_layout(theme, text, edit, cell.w).rect;
         (-r.x).max(r.right() - size).max(0)
     });
-    let mut c = Canvas::new((size + 2 * extra) as u32, size as u32);
+    let mut c = Canvas::new((size + 2 * extra) as u32, (cell.h * s) as u32);
     c.set_preedit(preedit.cloned());
     draw_cell_at(
         &mut c,
         (extra, 0),
-        Cell::square(CELL),
+        cell,
         theme,
         text,
         name,
@@ -698,23 +729,24 @@ mod tests {
     fn free_layout_honours_positions_and_fills_the_rest_column_major() {
         use std::collections::BTreeMap;
         let area = Rect::new(0, 0, 400, 240); // 5 columns, 3 rows
+        let square = Cell::square(CELL);
         let mut pos = BTreeMap::new();
         pos.insert("b".to_string(), (2, 1));
-        pos.insert("c".to_string(), (2, 1)); // taken by b: falls back
-        pos.insert("d".to_string(), (9, 0)); // off the grid: falls back
-        let cells = layout_free(area, &["a", "b", "c", "d", "e"], &pos);
-        assert_eq!(cells[1], cell_rect(Cell::square(CELL), area, 2, 1));
-        assert_eq!(cells[0], cell_rect(Cell::square(CELL), area, 0, 0));
-        assert_eq!(cells[2], cell_rect(Cell::square(CELL), area, 0, 1));
-        assert_eq!(cells[3], cell_rect(Cell::square(CELL), area, 0, 2));
-        assert_eq!(cells[4], cell_rect(Cell::square(CELL), area, 1, 0));
+        pos.insert("c".to_string(), (2, 1)); // taken by b: the next free cell down
+        pos.insert("d".to_string(), (9, 0)); // off the grid: flows
+        let cells = layout_free(square, area, &["a", "b", "c", "d", "e"], &pos);
+        assert_eq!(cells[1], cell_rect(square, area, 2, 1));
+        assert_eq!(cells[2], cell_rect(square, area, 2, 2));
+        assert_eq!(cells[0], cell_rect(square, area, 0, 0));
+        assert_eq!(cells[3], cell_rect(square, area, 0, 1));
+        assert_eq!(cells[4], cell_rect(square, area, 0, 2));
         assert_eq!(
-            layout_free(area, &["a", "b"], &BTreeMap::new()),
-            layout(Cell::square(CELL), area, 2)
+            layout_free(square, area, &["a", "b"], &BTreeMap::new()),
+            layout(square, area, 2)
         );
         pos.clear();
         pos.insert("a".to_string(), (0, 1));
-        let cells = layout_free(area, &["a", "b", "c"], &pos);
+        let cells = layout_free(square, area, &["a", "b", "c"], &pos);
         assert_eq!(cells[1], cell_rect(Cell::square(CELL), area, 0, 0));
         assert_eq!(cells[2], cell_rect(Cell::square(CELL), area, 0, 2));
     }
@@ -767,10 +799,22 @@ mod tests {
         );
         assert_eq!(cell_at(Cell::square(CELL), area, 9999, -50), (4, 0));
         let taken = std::collections::HashSet::from([(1, 0), (1, 1)]);
-        assert_eq!(free_cell_near(area, &taken, (0, 0)), (0, 0));
-        assert_eq!(free_cell_near(area, &taken, (1, 0)), (1, 2));
-        assert_eq!(free_cell_near(area, &taken, (4, 2)), (4, 2));
-        assert_eq!(free_cell_near(area, &taken, (-1, 1)), (4, 1));
+        assert_eq!(
+            free_cell_near(Cell::square(CELL), area, &taken, (0, 0)),
+            (0, 0)
+        );
+        assert_eq!(
+            free_cell_near(Cell::square(CELL), area, &taken, (1, 0)),
+            (1, 2)
+        );
+        assert_eq!(
+            free_cell_near(Cell::square(CELL), area, &taken, (4, 2)),
+            (4, 2)
+        );
+        assert_eq!(
+            free_cell_near(Cell::square(CELL), area, &taken, (-1, 1)),
+            (4, 1)
+        );
     }
 
     #[test]
@@ -1390,6 +1434,76 @@ mod tests {
         assert_eq!(rows_per_column(cell, area), 2);
         assert_eq!(columns(cell, area), 4);
         assert_eq!(cell_at(cell, area, 80, 80), (1, 1));
+    }
+
+    /// At 200% the grid's cells are 150x112. A saved 100% cell maps to the grown cell holding its
+    /// centre and back; a column of five saved icons stays a column, its neighbours that share a
+    /// grown cell taking the next ones down; at 100% the mapping changes nothing.
+    #[test]
+    fn saved_positions_survive_the_grid_growing() {
+        use std::collections::BTreeMap;
+        let big = Cell::grown(TextUnits::new(22, 11));
+        assert_eq!(big, Cell { w: 150, h: 112 });
+        assert_eq!(Cell::grown(TextUnits::default()), Cell::square(CELL));
+        for c in 0..12 {
+            for r in 0..9 {
+                assert_eq!(from_saved(big, to_saved(big, (c, r))), (c, r), "({c}, {r})");
+                let square = Cell::square(CELL);
+                assert_eq!(from_saved(square, (c, r)), (c, r));
+                assert_eq!(to_saved(square, (c, r)), (c, r));
+            }
+        }
+        assert_eq!(from_saved(big, (3, 5)), (1, 3));
+        let area = Rect::new(0, 0, 1920, 1040);
+        let names = ["a", "b", "c", "d", "e", "far"];
+        let mut pos: BTreeMap<String, (i32, i32)> = (0..5)
+            .map(|r| (names[r].to_string(), (0, r as i32)))
+            .collect();
+        pos.insert("far".into(), (20, 3));
+        let cells = layout_free(big, area, &names, &pos);
+        let at = |i: usize| cell_at(big, area, cells[i].x, cells[i].y);
+        assert_eq!(
+            (0..5).map(at).collect::<Vec<_>>(),
+            [(0, 0), (0, 1), (0, 2), (0, 3), (0, 4)]
+        );
+        assert_eq!(at(5), from_saved(big, (20, 3)), "{:?}", at(5));
+        assert_eq!(at(5), (10, 2));
+    }
+
+    /// A cell drawn at 200% text is the grown 150x112 with its label set at the grown font: the
+    /// icon keeps its 32 px at the top, the name's ink stands under it, taller than at 100%.
+    #[test]
+    fn a_cell_grows_with_the_text_and_its_label_with_it() {
+        let t = TextRenderer::load(&FontConfig::default());
+        let ink_rows = |c: &Canvas| {
+            (0..c.height as i32)
+                .filter(|&y| (0..c.width as i32).any(|x| c.get(x, y) >> 24 > 0x80))
+                .collect::<Vec<_>>()
+        };
+        let small = draw_cell(
+            &Theme::default(),
+            &t,
+            "Notes",
+            None,
+            false,
+            None,
+            None,
+            None,
+        );
+        let theme = Theme::default().with_form_text(200);
+        let c = draw_cell(&theme, &t, "Notes", None, false, None, None, None);
+        assert_eq!((c.width, c.height), (150, 112));
+        let label = |c: &Canvas| {
+            let rows = ink_rows(c);
+            let below: Vec<i32> = rows.into_iter().filter(|&y| y >= LABEL_TOP).collect();
+            below.last().unwrap_or(&0) - below.first().unwrap_or(&0)
+        };
+        assert!(
+            label(&c) > label(&small) * 3 / 2,
+            "the label stands {} rows at 200%, {} at 100%",
+            label(&c),
+            label(&small)
+        );
     }
 
     fn ghost_cell(theme: &Theme, t: &TextRenderer, name: &str) -> Canvas {
