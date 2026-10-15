@@ -331,7 +331,13 @@ pub enum MenuRoot {
 impl Menu {
     /// Relists a Documents menu or a jump list as `items` and `kind`, built afresh by
     /// `documents_rows` or `jump_relisted`, in place. Returns whether a row changed.
-    pub(crate) fn relist_to(&mut self, items: Vec<MenuItem>, kind: MenuKind) -> bool {
+    /// `fit` gives the column width the new rows need (`MenuLayout::fit_column`).
+    pub(crate) fn relist_to(
+        &mut self,
+        items: Vec<MenuItem>,
+        kind: MenuKind,
+        fit: impl Fn(&MenuLayout, &[MenuItem]) -> i32,
+    ) -> bool {
         match (&mut self.kind, kind) {
             (
                 MenuKind::Documents { paths, tips, .. },
@@ -354,6 +360,7 @@ impl Menu {
                 if old == new {
                     return false;
                 }
+                let column = fit(&self.layout, &items);
                 relist(
                     &mut self.items,
                     &mut self.layout,
@@ -361,6 +368,7 @@ impl Menu {
                     &old,
                     &new,
                     items,
+                    column,
                 );
                 *paths = new_paths;
                 *tips = new_tips;
@@ -369,6 +377,7 @@ impl Menu {
                 if *rows == new_rows {
                     return false;
                 }
+                let column = fit(&self.layout, &items);
                 relist(
                     &mut self.items,
                     &mut self.layout,
@@ -376,6 +385,7 @@ impl Menu {
                     rows,
                     &new_rows,
                     items,
+                    column,
                 );
                 *rows = new_rows;
             }
