@@ -27,6 +27,8 @@ use reprisekit::theme::{FontConfig, Theme};
 const ERROR_WIN: WinId = "error";
 const VOLUME_CONTROL: &str = "reprise-volume";
 const FLYOUT_WIN: WinId = "flyout";
+/// Master's icon in the popup, as the Volume Control window shows it.
+const SPEAKER: &str = "audio-volume-high";
 
 #[derive(Default)]
 struct Sound {
@@ -60,6 +62,8 @@ struct Sound {
     /// The icons of the programs playing now, by `App::key`: the sheet's
     /// list and the popup's columns both show them.
     icons: BTreeMap<String, appicons::AppIcon>,
+    /// Master's icon in the popup.
+    speaker: Option<Canvas>,
     /// The last volume the tray wheel or the popup wrote per node. The
     /// snapshot lags a write, so while it settles this stands in for the
     /// snapshot's own volume, and a wheel burst or key repeat on either
@@ -90,13 +94,14 @@ fn pick(list: &[pipewire::Device], name: Option<&str>) -> Option<usize> {
 }
 
 /// The popup's view of a snapshot: master is the tray's sink, programs
-/// carry their 16 px icon from `icons` (keyed by `App::key`).
+/// carry their 32 px icon from `icons` (keyed by `App::key`).
 fn mix(snap: &pipewire::Snapshot, icons: &BTreeMap<String, appicons::AppIcon>) -> volumepopup::Mix {
     let output = pick(&snap.sinks, snap.default_sink.as_deref());
     let master = output.map_or_else(Default::default, |i| volumepopup::Level {
         pos: track_pos(snap.sinks[i].volume),
         mute: snap.sinks[i].mute,
         live: true,
+        icon: None,
     });
     let labels = |list: &[pipewire::Device]| list.iter().map(|d| d.label.clone()).collect();
     volumepopup::Mix {
@@ -112,7 +117,7 @@ fn mix(snap: &pipewire::Snapshot, icons: &BTreeMap<String, appicons::AppIcon>) -
             .map(|a| volumepopup::AppLevel {
                 key: a.key.clone(),
                 label: a.label.clone(),
-                icon: icons.get(&a.key).and_then(|i| i.small.clone()),
+                icon: icons.get(&a.key).and_then(|i| i.large.clone()),
                 pos: track_pos(a.volume),
                 mute: a.mute,
             })
@@ -127,10 +132,11 @@ fn anchor(at: (i32, i32), origin: (i32, i32)) -> (i32, i32) {
     (at.0 - origin.0, at.1 - origin.1)
 }
 
+/// The popup grows with the text size as the program's forms do.
 fn flyout_layout(f: &Open, ctx: &Ctx) -> volumepopup::Layout {
     volumepopup::layout(
         &f.popup,
-        &ctx.theme,
+        &ctx.forms(),
         &ctx.text,
         anchor(f.at, ctx.origin),
         f.edge,
@@ -188,6 +194,7 @@ impl Sound {
 
     fn push_app_icons(&mut self, ctx: &mut Ctx) {
         self.icons = self.app_icons.icons(&self.snapshot.apps, &ctx.icons);
+        self.speaker = ctx.icons.get(SPEAKER, 32);
         if let Some(s) = &mut self.sheet {
             s.set_app_icons(self.icons.clone());
         }
@@ -202,6 +209,7 @@ impl Sound {
     /// track.
     fn popup_mix(&self) -> volumepopup::Mix {
         let mut m = mix(&self.snapshot, &self.icons);
+        m.master.icon = self.speaker.clone();
         m.playing = self.playing.as_ref().map(|(_, np)| np.clone());
         if m.master.live
             && let Some(v) = self.written(&self.nodes(&volumepopup::Channel::Master))
@@ -634,9 +642,8 @@ impl App for Sound {
             FLYOUT_WIN => {
                 if let Some(f) = &self.flyout {
                     let lay = flyout_layout(f, ctx);
-                    let focus =
-                        f.popup
-                            .access(&lay, &ctx.text, ctx.theme.fonts.size_px, tree, ROOT);
+                    let px = ctx.forms().fonts.size_px;
+                    let focus = f.popup.access(&lay, &ctx.text, px, tree, ROOT);
                     tree.set_focus(focus);
                 }
             }
@@ -658,7 +665,7 @@ impl App for Sound {
             // The canvas arrives transparent; only the panel is drawn.
             if let Some(f) = &self.flyout {
                 let lay = flyout_layout(f, ctx);
-                volumepopup::draw(c, &ctx.theme, &ctx.text, &f.popup, &lay);
+                volumepopup::draw(c, &ctx.forms(), &ctx.text, &f.popup, &lay);
             }
             return;
         }
@@ -784,7 +791,8 @@ mod tests {
             volumepopup::Level {
                 pos: 10,
                 mute: false,
-                live: true
+                live: true,
+                icon: None,
             }
         );
         let keys: Vec<_> = m.apps.iter().map(|a| (a.key.as_str(), a.pos)).collect();
@@ -820,13 +828,13 @@ mod tests {
     }
 
     #[test]
-    fn a_program_gets_its_small_icon() {
-        let icon = Canvas::new(16, 16);
+    fn a_program_gets_its_large_icon() {
+        let icon = Canvas::new(32, 32);
         let icons = BTreeMap::from([(
             "mpv".to_string(),
             appicons::AppIcon {
-                small: Some(icon.clone()),
-                large: None,
+                small: Some(Canvas::new(16, 16)),
+                large: Some(icon.clone()),
             },
         )]);
         let m = mix(&snap(), &icons);

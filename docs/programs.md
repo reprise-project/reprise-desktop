@@ -116,8 +116,11 @@ display change applies first, then asks whether to keep it, and reverts after
 ## Volume and sound
 
 - **The speaker icon.** One click for a popup with the master volume, a
-  slider for each program, the default output and input, and the track
-  that's playing with its buttons. Double-click for the sheet.
+  slider for each program with its icon, its level in percent and a speaker
+  button that mutes it, the default output and input, and the track that's
+  playing with its buttons. Six programs fit side by side; more scroll while
+  master stays put. The wheel over a column turns it. Double-click for the
+  sheet.
 - **Sounds and Audio Devices.** Set the default devices, disable one you
   never use, and on the Applications tab give each program its own volume.
   Each one has its icon, so you can find the program that started shouting.

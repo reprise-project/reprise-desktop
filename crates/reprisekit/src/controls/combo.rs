@@ -335,16 +335,20 @@ pub const EDIT_TEXT_X: i32 = 6;
 
 /// Where the open list goes under `field`: its rows plus a 1 px border above and below (a shadow falls outside).
 pub fn list_rect(combo: &Combo, field: Rect, cm: &ControlMetrics) -> Rect {
+    list_rect_rows(combo, field, combo.row_h(cm))
+}
+
+fn list_rect_rows(combo: &Combo, field: Rect, row_h: i32) -> Rect {
     let n = combo.visible() as i32;
-    Rect::new(
-        field.x,
-        field.bottom(),
-        field.width,
-        n * combo.row_h(cm) + 2,
-    )
+    Rect::new(field.x, field.bottom(), field.width, n * row_h + 2)
 }
 
 pub fn layout(combo: &Combo, field: Rect, cm: &ControlMetrics) -> Layout {
+    layout_rows(combo, field, cm, combo.row_h(cm))
+}
+
+/// [`layout`] with the open list's rows `row_h` tall; draw it with [`draw_list_rows`].
+pub fn layout_rows(combo: &Combo, field: Rect, cm: &ControlMetrics, row_h: i32) -> Layout {
     let inner = field.inset(2);
     let drop = Rect::new(
         inner.right() - cm.combo_drop,
@@ -390,7 +394,7 @@ pub fn layout(combo: &Combo, field: Rect, cm: &ControlMetrics) -> Layout {
             inner.height,
         ),
     };
-    let list = list_rect(combo, field, cm);
+    let list = list_rect_rows(combo, field, row_h);
     let scrollbar = (combo.items.len() > combo.rows).then(|| {
         Rect::new(
             list.right() - 1 - cm.scroll,
@@ -408,7 +412,7 @@ pub fn layout(combo: &Combo, field: Rect, cm: &ControlMetrics) -> Layout {
         list,
         scrollbar,
         thumb_min: cm.thumb_min,
-        row_h: combo.row_h(cm),
+        row_h,
     }
 }
 
@@ -777,6 +781,39 @@ pub fn draw_list(
     bar: Lit<ScrollHit>,
     px: u32,
 ) {
+    let row_h = items_row_h(items, &p.look.controls().grown(p.text));
+    draw_list_rows(
+        c,
+        text,
+        p,
+        items,
+        highlighted,
+        top,
+        rows,
+        list,
+        scrollbar,
+        bar,
+        px,
+        row_h,
+    );
+}
+
+/// [`draw_list`] with rows `row_h` tall, for a list laid out by [`layout_rows`].
+#[allow(clippy::too_many_arguments)]
+pub fn draw_list_rows(
+    c: &mut Canvas,
+    text: &TextRenderer,
+    p: &Paint,
+    items: &[ListItem],
+    highlighted: Option<usize>,
+    top: usize,
+    rows: usize,
+    list: Rect,
+    scrollbar: Option<Rect>,
+    bar: Lit<ScrollHit>,
+    px: u32,
+    row_h: i32,
+) {
     let Paint { cs, s, .. } = *p;
     let l = list.scaled(s);
     draw_drop_list(c, p, l);
@@ -787,7 +824,7 @@ pub fn draw_list(
         draw_scrollbar(c, p, sb, top, rows, items.len(), bar);
     }
     let shell = shell(items);
-    let rh = items_row_h(items, &p.look.controls().grown(p.text)) * s;
+    let rh = row_h * s;
     for (row, i) in (top..items.len().min(top + rows)).enumerate() {
         let r = Rect::new(inner.x, inner.y + row as i32 * rh, inner.width, rh);
         let (bg, fg) = if highlighted == Some(i) {

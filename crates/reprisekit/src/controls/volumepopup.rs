@@ -1,8 +1,8 @@
-//! The speaker's volume popup: a raised flyout ([`crate::flyout`]) over the tray with Output and Input device combos on top and, under a separator, a column for master and one per program playing sound.
+//! The speaker's volume popup: a raised flyout ([`crate::flyout`]) over the tray with Output and Input device combos on top and, under a separator, master's column, an etched line and a column per program playing sound.
 //!
-//! Columns are 72 px wide: the program's 16 px icon, its name ("Volume" on master), a vertical trackbar (one position per 5 %, loudest on top) and the Mute box 28 px left of the channel. Past five programs a scrollbar scrolls them a column at a time. The panel is at least 216 px wide.
+//! Columns are 96 px wide: the 32 px icon, the name ("Volume" on master), the level in percent, a vertical trackbar (one position per 5 %, loudest on top) and a 30x26 speaker button that mutes; a muted column greys its trackbar and level. Six programs fit side by side; past six a scrollbar under them scrolls them a column at a time while master stays. The device combos are 360 px wide. Lengths are at 100% text and grow with it; icons, glyphs, the thumb and the scrollbar keep their size.
 //!
-//! While a media player is active a strip under a second separator shows the title over the artist and Previous, Play or Pause and Next buttons (24x22, greyed when the player cannot act). Text is set in the second dialog font (`DialogFont::ShellDlg`).
+//! While a media player is active a strip under a second separator shows the title over the artist and Previous, Play or Pause and Next buttons (32x28, greyed when the player cannot act). Text is set in the second dialog font (`DialogFont::ShellDlg`).
 //!
 //! The host owns the devices and the writes: it hands the popup a [`Mix`] with [`VolumePopup::sync`] and acts on the [`Event`]s at once; there is no Apply.
 
@@ -15,61 +15,70 @@ use crate::controls::form;
 use crate::flyout;
 use crate::look::Paint;
 use crate::look::widgets::{
-    MediaGlyph, draw_checkbox, draw_checkbox_disabled, draw_disabled_label, draw_focus_ring,
-    draw_hscrollbar, draw_label, draw_media_button, draw_vertical_trackbar,
+    MediaGlyph, draw_disabled_label, draw_focus_ring, draw_glyph_button, draw_hscrollbar,
+    draw_label, draw_media_button, draw_vertical_trackbar,
 };
 use crate::metrics::ControlMetrics;
 use crate::pointer::{Interaction, Lit, Pointer, WHEEL_ROWS};
 use crate::raster::{Canvas, Rect};
-use crate::style::Part as StylePart;
+use crate::shape::Glyph;
 use crate::taskbar::Edge;
 use crate::text::{Align, DialogFont, TextRenderer};
 use crate::textedit::Caret;
-use crate::theme::Theme;
+use crate::theme::{TextUnits, Theme};
 use crate::trackbar::{self, TrackBar};
 use accesskit::{NodeId, Role};
 use std::cell::Cell;
 
 /// Trackbar positions: 0 to 20, one per 5 % of volume.
 pub const STEPS: usize = 21;
-pub const COL_W: i32 = 72;
+pub const COL_W: i32 = 96;
+/// Between two program columns.
+const COL_GAP: i32 = 6;
 /// Program columns shown side by side; past this a scrollbar runs under
 /// them.
-pub const MAX_SHOWN: usize = 5;
-/// The panel's narrowest: room for the Output and Input rows.
-const MIN_W: i32 = 216;
-/// Inside the panel's 2 px raised edge, all round.
-const MARGIN: i32 = 8;
+pub const MAX_SHOWN: usize = 6;
+/// From the panel's outer edge in to its parts, all round.
+const MARGIN: i32 = 12;
 const COMBO_H: i32 = 21;
-const COMBO_GAP: i32 = 4;
-const LABEL_GAP: i32 = 6;
-const SEP_GAP: i32 = 6;
+const COMBO_GAP: i32 = 6;
+const LABEL_GAP: i32 = 8;
+/// The Output and Input labels' column, at its narrowest.
+const LABEL_W: i32 = 52;
+/// The Output and Input combos' width.
+const FIELD_W: i32 = 360;
+const SEP_GAP: i32 = 10;
 const SEP_H: i32 = 2;
-/// A column, from its top: the 16 px icon, the name row under it, the
-/// trackbar, then the Mute row 8 px under the trackbar.
-const ICON: i32 = 16;
-const NAME_Y: i32 = 16;
+/// Either side of the etched line between master and the programs.
+const DIVIDER_GAP: i32 = 6;
+/// A column, from its top: the icon, the name and level rows under it,
+/// the trackbar, then the speaker button under the trackbar.
+const ICON: i32 = 32;
+const NAME_Y: i32 = ICON + 6;
 const ROW_H: i32 = 13;
-const TRACK_Y: i32 = NAME_Y + 25;
-const TRACK_H: i32 = 65;
-const MUTE_Y: i32 = TRACK_Y + TRACK_H + 17;
-const COL_H: i32 = MUTE_Y + ROW_H;
-/// The Mute box, left of the volume channel.
-const MUTE_X: i32 = 28;
-/// Under the columns, the raised edge included.
-const BOTTOM: i32 = 6;
-/// A program's name is cut to this width, leaving 2 px clear on either
-/// side of the centred text.
-const NAME_W: i32 = COL_W - 4;
-const BAR_GAP: i32 = 4;
+const LEVEL_Y: i32 = NAME_Y + ROW_H + 1;
+const TRACK_Y: i32 = LEVEL_Y + ROW_H + 8;
+const TRACK_H: i32 = 140;
+/// The thumb, its width past the look's own.
+const THUMB_WIDER: i32 = 4;
+const THUMB_H: i32 = 15;
+const MUTE_Y: i32 = TRACK_Y + TRACK_H + 8;
+const MUTE_W: i32 = 30;
+const MUTE_H: i32 = 26;
+/// The speaker glyph's box.
+const SPEAKER: i32 = 16;
+const COL_H: i32 = MUTE_Y + MUTE_H;
+/// A program's name and level leave 2 px clear on either side of the
+/// centred text.
+const NAME_PAD: i32 = 2;
+const BAR_GAP: i32 = 8;
 /// Rows an open device list shows before it scrolls.
 const LIST_ROWS: usize = 8;
-const RING_PAD: i32 = 1;
 /// The now-playing strip: its height, and its transport buttons.
-const STRIP_H: i32 = 28;
-const MEDIA_W: i32 = 24;
-const MEDIA_H: i32 = 22;
-const MEDIA_GAP: i32 = 2;
+const STRIP_H: i32 = 34;
+const MEDIA_W: i32 = 32;
+const MEDIA_H: i32 = 28;
+const MEDIA_GAP: i32 = 4;
 
 pub const VOLUME: &str = "Volume";
 pub const MUTE: &str = "Mute";
@@ -131,6 +140,8 @@ pub struct Level {
     pub mute: bool,
     /// False with no device: the column greys.
     pub live: bool,
+    /// Master's 32 px icon.
+    pub icon: Option<Canvas>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -138,6 +149,7 @@ pub struct AppLevel {
     /// What ties the program's streams together (`pipewire::App::key`).
     pub key: String,
     pub label: String,
+    /// The program's 32 px icon.
     pub icon: Option<Canvas>,
     pub pos: usize,
     pub mute: bool,
@@ -200,7 +212,7 @@ impl Column {
         Column {
             key: None,
             label: VOLUME.into(),
-            icon: None,
+            icon: level.icon.clone(),
             volume,
             mute: level.mute,
         }
@@ -263,12 +275,14 @@ pub struct VolumePopup {
 #[derive(Clone, Debug)]
 pub struct ColumnLayout {
     pub rect: Rect,
-    /// The program's icon; `None` on master and on a program without one.
+    /// The column's icon; `None` on a column without one.
     pub icon: Option<Rect>,
     pub label: Rect,
+    /// The level in percent, under the name.
+    pub level: Rect,
     pub track: trackbar::Layout,
-    pub check: Rect,
-    pub mute_label: Rect,
+    /// The speaker button that mutes.
+    pub mute: Rect,
 }
 
 #[derive(Clone, Debug)]
@@ -279,6 +293,8 @@ pub struct Layout {
     pub input_label: Rect,
     pub input: combo::Layout,
     pub separator: Rect,
+    /// The etched line between master and the programs; `None` with no program.
+    pub divider: Option<Rect>,
     /// One per `columns` entry; `None` for a program scrolled out of view.
     pub columns: Vec<Option<ColumnLayout>>,
     pub bar: Option<Rect>,
@@ -315,37 +331,34 @@ pub enum Hit {
     Outside,
 }
 
-fn column_layout(
-    col: &Column,
-    text: &TextRenderer,
-    px: u32,
-    cm: &ControlMetrics,
-    x: i32,
-    y: i32,
-) -> ColumnLayout {
-    let mute_w = text.measure(MUTE, false, px);
-    let track = trackbar::layout_vertical_with(
+/// A column's parts with its top-left at (`x`, `y`), its lengths grown by `u`.
+fn column_layout(col: &Column, cm: &ControlMetrics, u: TextUnits, x: i32, y: i32) -> ColumnLayout {
+    let l = |v| u.len(v);
+    let w = l(COL_W);
+    let thumb = (cm.vtrack_thumb + THUMB_WIDER, THUMB_H);
+    let track = trackbar::layout_vertical_sized(
         &col.volume,
-        x + (COL_W - trackbar::vertical_width(cm.vtrack_thumb)) / 2,
-        y + TRACK_Y,
-        TRACK_H,
-        cm.vtrack_thumb,
+        x + (w - trackbar::vertical_width(thumb.0)) / 2,
+        y + l(TRACK_Y),
+        l(TRACK_H),
+        thumb,
     );
-    let mx = track.channel.x - MUTE_X;
+    let (mw, mh) = (l(MUTE_W), l(MUTE_H));
     ColumnLayout {
-        rect: Rect::new(x, y, COL_W, COL_H),
+        rect: Rect::new(x, y, w, l(COL_H)),
         icon: col
             .icon
             .as_ref()
-            .map(|_| Rect::new(x + (COL_W - ICON) / 2, y, ICON, ICON)),
-        label: Rect::new(x, y + NAME_Y, COL_W, ROW_H),
+            .map(|_| Rect::new(x + (w - ICON) / 2, y + (l(ICON) - ICON) / 2, ICON, ICON)),
+        label: Rect::new(x, y + l(NAME_Y), w, l(ROW_H)),
+        level: Rect::new(x, y + l(LEVEL_Y), w, l(ROW_H)),
         track,
-        check: Rect::new(mx, y + MUTE_Y, cm.check, cm.check),
-        mute_label: Rect::new(mx + cm.check_label, y + MUTE_Y, mute_w, ROW_H),
+        mute: Rect::new(x + (w - mw) / 2, y + l(MUTE_Y), mw, mh),
     }
 }
 
 /// Lay the panel out with its edge nearest the taskbar centred on `anchor`, kept inside `bounds`.
+/// Lengths grow by `theme.text`.
 pub fn layout(
     vp: &VolumePopup,
     theme: &Theme,
@@ -356,30 +369,45 @@ pub fn layout(
 ) -> Layout {
     let text = text.dialog(DialogFont::ShellDlg);
     let px = theme.fonts.size_px;
-    let cm = theme.look.controls();
+    let cm = theme.controls();
+    let u = theme.text;
+    let l = |v| u.len(v);
     let apps = vp.columns.len() - 1;
-    let shown = apps.min(MAX_SHOWN);
+    let shown = apps.min(MAX_SHOWN) as i32;
     let scrolls = apps > MAX_SHOWN;
     // A flyout border wider than Classic's edge moves everything in.
     let e = cm.flyout_border - flyout::EDGE;
-    let margin = MARGIN + e;
-    let w = (2 * margin + COL_W * (1 + shown as i32)).max(MIN_W + 2 * e);
+    let margin = l(MARGIN) + e;
+    let (col_w, gap) = (l(COL_W), l(COL_GAP));
+    let programs_w = shown * col_w + (shown - 1).max(0) * gap;
+    let divider_w = if shown > 0 {
+        2 * l(DIVIDER_GAP) + SEP_H
+    } else {
+        0
+    };
+    let label_w = text
+        .measure(OUTPUT, false, px)
+        .max(text.measure(INPUT, false, px))
+        .max(l(LABEL_W));
+    let rows_w = label_w + l(LABEL_GAP) + l(FIELD_W);
+    let w = 2 * margin + (col_w + divider_w + programs_w).max(rows_w);
+    let bar_h = if scrolls { l(BAR_GAP) + cm.scroll } else { 0 };
+    let strip_h = if vp.playing.is_some() {
+        l(SEP_GAP) + SEP_H + l(SEP_GAP) + l(STRIP_H)
+    } else {
+        0
+    };
     let h = margin
-        + COMBO_H
-        + COMBO_GAP
-        + COMBO_H
-        + SEP_GAP
+        + l(COMBO_H)
+        + l(COMBO_GAP)
+        + l(COMBO_H)
+        + l(SEP_GAP)
         + SEP_H
-        + SEP_GAP
-        + COL_H
-        + BOTTOM
-        + e
-        + if scrolls { BAR_GAP + cm.scroll } else { 0 }
-        + if vp.playing.is_some() {
-            SEP_GAP + SEP_H + SEP_GAP + STRIP_H
-        } else {
-            0
-        };
+        + l(SEP_GAP)
+        + l(COL_H)
+        + bar_h
+        + strip_h
+        + margin;
     // Across the bar the near edge is on the anchor; along it the panel is
     // centred on the anchor, kept inside `bounds`.
     let centred_x = (anchor.0 - w / 2).min(bounds.right() - w).max(bounds.x);
@@ -390,76 +418,72 @@ pub fn layout(
         Edge::Left => (anchor.0.min(bounds.right() - w).max(bounds.x), centred_y),
         Edge::Right => ((anchor.0 - w).max(bounds.x), centred_y),
     };
-    let label_w = text
-        .measure(OUTPUT, false, px)
-        .max(text.measure(INPUT, false, px));
-    let fx = x + margin + label_w + LABEL_GAP;
-    let fw = x + w - margin - fx;
+    let combo_h = l(COMBO_H);
+    let fx = x + margin + label_w + l(LABEL_GAP);
     let oy = y + margin;
-    let iy = oy + COMBO_H + COMBO_GAP;
-    let row = |ry: i32| Rect::new(x + margin, ry + (COMBO_H - ROW_H) / 2, label_w, ROW_H);
-    let sy = iy + COMBO_H + SEP_GAP;
-    let cy = sy + SEP_H + SEP_GAP;
+    let iy = oy + combo_h + l(COMBO_GAP);
+    let row_h = l(ROW_H);
+    let row = |ry: i32| Rect::new(x + margin, ry + (combo_h - row_h) / 2, label_w, row_h);
+    let sy = iy + combo_h + l(SEP_GAP);
+    let cy = sy + SEP_H + l(SEP_GAP);
     let cx = x + margin;
+    let px0 = cx + col_w + divider_w;
     let columns = vp
         .columns
         .iter()
         .enumerate()
         .map(|(i, c)| {
-            let slot = match i.checked_sub(1) {
-                None => Some(0),
-                Some(a) => {
-                    (a >= vp.first && a < vp.first + shown).then(|| 1 + (a - vp.first) as i32)
-                }
+            let at = match i.checked_sub(1) {
+                None => Some(cx),
+                Some(a) => (a >= vp.first && a < vp.first + MAX_SHOWN)
+                    .then(|| px0 + (a - vp.first) as i32 * (col_w + gap)),
             };
-            slot.map(|s| column_layout(c, text, px, &cm, cx + COL_W * s, cy))
+            at.map(|ax| column_layout(c, &cm, u, ax, cy))
         })
         .collect();
+    let field = |fy: i32| Rect::new(fx, fy, l(FIELD_W), combo_h);
+    let foot = cy + l(COL_H) + bar_h;
     Layout {
         panel: Rect::new(x, y, w, h),
         output_label: row(oy),
-        output: combo::layout(&vp.output, Rect::new(fx, oy, fw, COMBO_H), &cm),
+        output: combo::layout_rows(&vp.output, field(oy), &cm, cm.list_row),
         input_label: row(iy),
-        input: combo::layout(&vp.input, Rect::new(fx, iy, fw, COMBO_H), &cm),
+        input: combo::layout_rows(&vp.input, field(iy), &cm, cm.list_row),
         separator: Rect::new(x + margin, sy, w - 2 * margin, SEP_H),
+        divider: (shown > 0).then(|| Rect::new(cx + col_w + l(DIVIDER_GAP), cy, SEP_H, l(COL_H))),
         columns,
-        bar: scrolls.then(|| {
-            Rect::new(
-                cx + COL_W,
-                cy + COL_H + BAR_GAP,
-                COL_W * shown as i32,
-                cm.scroll,
-            )
-        }),
+        bar: scrolls.then(|| Rect::new(px0, cy + l(COL_H) + l(BAR_GAP), programs_w, cm.scroll)),
         bar_thumb_min: cm.thumb_min,
-        strip: vp.playing.as_ref().map(|np| {
-            let foot = cy + COL_H + if scrolls { BAR_GAP + cm.scroll } else { 0 };
-            strip_layout(np, x + margin, foot + SEP_GAP, w - 2 * margin)
-        }),
+        strip: vp
+            .playing
+            .as_ref()
+            .map(|np| strip_layout(np, u, x + margin, foot + l(SEP_GAP), w - 2 * margin)),
     }
 }
 
-fn strip_layout(np: &NowPlaying, x: i32, sy: i32, w: i32) -> StripLayout {
-    let y = sy + SEP_H + SEP_GAP;
-    let bw = 3 * MEDIA_W + 2 * MEDIA_GAP;
-    let bx = x + w - bw;
-    let by = y + (STRIP_H - MEDIA_H) / 2;
-    let tw = bx - LABEL_GAP - x;
+fn strip_layout(np: &NowPlaying, u: TextUnits, x: i32, sy: i32, w: i32) -> StripLayout {
+    let l = |v| u.len(v);
+    let (strip_h, row_h) = (l(STRIP_H), l(ROW_H));
+    let (bw, bh, gap) = (l(MEDIA_W), l(MEDIA_H), l(MEDIA_GAP));
+    let y = sy + SEP_H + l(SEP_GAP);
+    let bx = x + w - (3 * bw + 2 * gap);
+    let by = y + (strip_h - bh) / 2;
+    let tw = bx - l(LABEL_GAP) - x;
     let (title, artist) = if np.artist.is_empty() {
-        (Rect::new(x, y + (STRIP_H - ROW_H) / 2, tw, ROW_H), None)
+        (Rect::new(x, y + (strip_h - row_h) / 2, tw, row_h), None)
     } else {
-        let ty = y + (STRIP_H - 2 * ROW_H) / 2;
+        let ty = y + (strip_h - 2 * row_h) / 2;
         (
-            Rect::new(x, ty, tw, ROW_H),
-            Some(Rect::new(x, ty + ROW_H, tw, ROW_H)),
+            Rect::new(x, ty, tw, row_h),
+            Some(Rect::new(x, ty + row_h, tw, row_h)),
         )
     };
     StripLayout {
         separator: Rect::new(x, sy, w, SEP_H),
-        rect: Rect::new(x, y, w, STRIP_H),
+        rect: Rect::new(x, y, w, strip_h),
         title,
         artist,
-        buttons: [0, 1, 2].map(|i| Rect::new(bx + i * (MEDIA_W + MEDIA_GAP), by, MEDIA_W, MEDIA_H)),
+        buttons: [0, 1, 2].map(|i| Rect::new(bx + i * (bw + gap), by, bw, bh)),
     }
 }
 
@@ -507,13 +531,7 @@ pub fn hit(vp: &VolumePopup, lay: &Layout, x: i32, y: i32) -> Hit {
         if let Some(h) = trackbar::hit(&cl.track, x, y) {
             return Hit::Track(i, h);
         }
-        let row = Rect::new(
-            cl.check.x,
-            cl.check.y,
-            cl.mute_label.right() - cl.check.x,
-            ROW_H,
-        );
-        if row.contains(x, y) {
+        if cl.mute.contains(x, y) {
             return Hit::Mute(i);
         }
         if cl.rect.contains(x, y) {
@@ -575,6 +593,9 @@ pub fn draw(c: &mut Canvas, theme: &Theme, text: &TextRenderer, vp: &VolumePopup
     }
     let sep = lay.separator;
     c.etched_divider_t(sep.x, sep.right() - 1, sep.y, cs, 1);
+    if let Some(d) = lay.divider {
+        c.etched_vline_t(d.x, d.y, d.bottom(), cs, 1);
+    }
     for (i, (col, cl)) in vp.columns.iter().zip(&lay.columns).enumerate() {
         if let Some(cl) = cl {
             draw_column(c, text, p, vp, i, col, cl, px);
@@ -593,7 +614,7 @@ pub fn draw(c: &mut Canvas, theme: &Theme, text: &TextRenderer, vp: &VolumePopup
     }
     if let Some(d) = vp.open_list() {
         let (combo, cl) = (vp.combo(d), lay.combo(d));
-        combo::draw_list(
+        combo::draw_list_rows(
             c,
             text,
             p,
@@ -605,8 +626,14 @@ pub fn draw(c: &mut Canvas, theme: &Theme, text: &TextRenderer, vp: &VolumePopup
             cl.scrollbar,
             None,
             px,
+            cl.row_h,
         );
     }
+}
+
+/// A column's level in percent.
+fn level_text(col: &Column) -> String {
+    format!("{}%", col.volume.pos * 100 / (STEPS - 1))
 }
 
 #[expect(clippy::too_many_arguments)]
@@ -640,56 +667,49 @@ fn draw_column(
         );
     } else {
         // A program's name is plain text: an `&` in it is no access key.
-        let name = text.ellipsize(&col.label, NAME_W, false, px);
+        let name = text.ellipsize(&col.label, cl.label.width - 2 * NAME_PAD, false, px);
         text.draw(c, cl.label, &name, false, cs.button_text, Align::Center, px);
+    }
+    let level = level_text(col);
+    if live && !col.mute {
+        text.draw(
+            c,
+            cl.level,
+            &level,
+            false,
+            cs.button_text,
+            Align::Center,
+            px,
+        );
+    } else {
+        draw_disabled_label(c, text, p, cl.level, &level, Align::Center, px, None);
     }
     draw_vertical_trackbar(
         c,
         p,
         &cl.track,
-        live,
+        live && !col.mute,
         vp.focus == Focus::Thumb(i),
         vp.ptr.of(Part::Thumb(i)),
     );
-    if live {
-        // A held box draws hot until the release flips it.
-        let ptr = match vp.ptr.of(Part::Mute(i)) {
-            Interaction::Pressed => Interaction::Hot,
-            other => other,
-        };
-        draw_checkbox(c, p, cl.check, col.mute, ptr);
-        draw_label(
-            c,
-            text,
-            p,
-            cl.mute_label,
-            MUTE,
-            cs.button_text,
-            Align::Left,
-            px,
-        );
+    let glyph = if col.mute {
+        Glyph::SpeakerMuted
     } else {
-        draw_checkbox_disabled(c, p, cl.check, col.mute);
-        draw_disabled_label(
-            c,
-            text,
-            p,
-            cl.mute_label,
-            MUTE,
-            Align::Left,
-            px,
-            Some(StylePart::CheckBox),
-        );
-    }
-    if vp.cues && live {
-        let ring = match vp.focus {
-            Focus::Thumb(f) if f == i => Some(cl.track.bounds),
-            Focus::Mute(f) if f == i => Some(cl.mute_label.inset(-RING_PAD)),
-            _ => None,
-        };
-        if let Some(ring) = ring {
-            draw_focus_ring(c, p, ring, cs.button_text);
-        }
+        Glyph::Speaker
+    };
+    draw_glyph_button(
+        c,
+        text,
+        p,
+        cl.mute,
+        (glyph, SPEAKER),
+        live,
+        vp.ptr.of(Part::Mute(i)),
+        live && vp.cues && vp.focus == Focus::Mute(i),
+        px,
+    );
+    if vp.cues && live && vp.focus == Focus::Thumb(i) {
+        draw_focus_ring(c, p, cl.track.bounds, cs.button_text);
     }
 }
 
@@ -1317,16 +1337,16 @@ impl VolumePopup {
             if let Some(n) = tree.get_mut(slider) {
                 n.push_labelled_by(label);
             }
+            let mut level = access::node(Role::Label, cl.level);
+            level.set_value(level_text(col));
+            if !live {
+                level.set_disabled();
+            }
+            tree.push(g, "level", level);
             let mute = tree.push(
                 g,
                 "mute",
-                access::toggle(
-                    Role::CheckBox,
-                    cl.check.union(&cl.mute_label),
-                    MUTE,
-                    col.mute.into(),
-                    live,
-                ),
+                access::toggle(Role::Button, cl.mute, MUTE, col.mute.into(), live),
             );
             match self.focus {
                 Focus::Thumb(f) if f == i => focus = slider,
@@ -1387,6 +1407,7 @@ mod tests {
                 pos: 10,
                 mute: false,
                 live: true,
+                icon: None,
             },
             outputs: vec!["Speakers".into(), "Headphones".into()],
             output: Some(0),
@@ -1399,7 +1420,12 @@ mod tests {
 
     fn master(pos: usize, mute: bool, live: bool) -> Mix {
         Mix {
-            master: Level { pos, mute, live },
+            master: Level {
+                pos,
+                mute,
+                live,
+                icon: None,
+            },
             ..Default::default()
         }
     }
@@ -1429,11 +1455,12 @@ mod tests {
     }
 
     #[test]
-    fn with_no_programs_the_panel_is_216_wide() {
+    fn with_no_programs_the_panel_is_444_wide() {
         let vp = VolumePopup::new(&mix(&[]));
         let l = lay(&vp);
-        assert_eq!(l.panel, Rect::new(852, 842, 216, 210));
-        assert_eq!(col(&l, 0).rect, Rect::new(860, 910, 72, 136));
+        assert_eq!(l.panel, Rect::new(738, 711, 444, 341));
+        assert_eq!(col(&l, 0).rect, Rect::new(750, 793, 96, 247));
+        assert_eq!(l.divider, None, "no programs, no line after master");
     }
 
     #[test]
@@ -1452,68 +1479,85 @@ mod tests {
         let text = TextRenderer::load(&theme.fonts);
         let screen = Rect::new(0, 0, 1920, 1080);
         let l = layout(&vp, &theme, &text, (960, 28), Edge::Top, screen);
-        assert_eq!(l.panel, Rect::new(852, 28, 216, 210));
-        assert_eq!(col(&l, 0).rect, Rect::new(860, 96, 72, 136));
+        assert_eq!(l.panel, Rect::new(738, 28, 444, 341));
+        assert_eq!(col(&l, 0).rect, Rect::new(750, 110, 96, 247));
         let low = layout(&vp, &theme, &text, (960, 1000), Edge::Top, screen);
         assert_eq!(low.panel.bottom(), 1080, "kept inside the bounds");
     }
 
     #[test]
-    fn each_program_adds_a_72_px_column() {
+    fn programs_stand_102_px_apart_past_an_etched_line_after_master() {
         let vp = VolumePopup::new(&mix(&[app("firefox", 16), app("mpv", 8)]));
         let l = lay(&vp);
-        assert_eq!(l.panel, Rect::new(844, 842, 232, 210));
-        assert_eq!(col(&l, 0).rect.x, 852);
-        assert_eq!(col(&l, 1).rect.x, 924);
-        assert_eq!(col(&l, 2).rect.x, 996);
+        assert_eq!(l.panel, Rect::new(738, 711, 444, 341), "the combos' width");
+        assert_eq!(col(&l, 0).rect.x, 750);
+        assert_eq!(l.divider, Some(Rect::new(852, 793, 2, 247)));
+        assert_eq!(col(&l, 1).rect.x, 860);
+        assert_eq!(col(&l, 2).rect.x, 962);
         assert_eq!(l.bar, None);
     }
 
     #[test]
-    fn a_column_stacks_icon_name_trackbar_and_mute() {
+    fn master_and_six_programs_fit_740_px() {
+        let apps: Vec<_> = (0..6).map(|i| app(&format!("p{i}"), 10)).collect();
+        let vp = VolumePopup::new(&mix(&apps));
+        let l = lay(&vp);
+        assert_eq!(l.panel, Rect::new(590, 711, 740, 341));
+        assert_eq!(col(&l, 6).rect.right(), l.panel.right() - 12);
+        assert_eq!(l.bar, None, "six fit without a scrollbar");
+    }
+
+    #[test]
+    fn a_column_stacks_icon_name_level_trackbar_and_speaker() {
         let mut a = app("firefox", 16);
-        a.icon = Some(Canvas::new(16, 16));
+        a.icon = Some(Canvas::new(32, 32));
         let vp = VolumePopup::new(&mix(&[a]));
         let l = lay(&vp);
         let c = col(&l, 1);
-        assert_eq!(c.icon, Some(Rect::new(c.rect.x + 28, 910, 16, 16)));
-        assert_eq!(c.label, Rect::new(c.rect.x, 926, 72, 13));
-        assert_eq!(c.track.bounds, Rect::new(c.rect.x + 20, 951, 31, 65));
-        assert_eq!(c.track.channel.y - c.label.y, 25);
-        assert!(c.track.ticks.len() == STEPS && !c.track.ticked, "no ticks");
-        assert_eq!(c.check.y, 1033);
-        assert_eq!(c.check.y - c.track.channel.bottom(), 17);
+        let x = c.rect.x;
+        assert_eq!(c.icon, Some(Rect::new(x + 32, 793, 32, 32)));
+        assert_eq!(c.label, Rect::new(x, 831, 96, 13));
+        assert_eq!(c.level, Rect::new(x, 845, 96, 13));
+        assert_eq!(c.track.bounds, Rect::new(x + 30, 866, 35, 140));
         assert_eq!(
-            l.panel.bottom() - c.check.bottom(),
-            6,
-            "4 px in from the edge"
+            (c.track.thumb.width, c.track.thumb.height),
+            (25, 15),
+            "a thumb 4 px wider than the look's and 15 tall"
         );
-        assert_eq!(col(&l, 0).icon, None, "master has no icon");
+        assert!(c.track.ticks.len() == STEPS && !c.track.ticked, "no ticks");
+        assert_eq!(c.mute, Rect::new(x + 33, 1014, 30, 26));
+        assert_eq!(l.panel.bottom() - c.mute.bottom(), 12);
+        assert_eq!(col(&l, 0).icon, None, "master without an icon has none");
     }
 
     #[test]
-    fn the_mute_box_sits_28_px_left_of_the_channel() {
-        let vp = VolumePopup::new(&mix(&[]));
-        let c = col(&lay(&vp), 0).clone();
-        assert_eq!(c.check.width, 13);
-        assert_eq!(c.check.x, c.track.channel.x - 28);
-        assert_eq!(c.check.x, c.rect.x + 5);
-        assert_eq!(c.mute_label.x, c.check.x + 18);
+    fn the_thumb_stays_on_the_channel_at_either_end() {
+        let mut vp = VolumePopup::new(&mix(&[]));
+        for pos in [0, STEPS - 1] {
+            vp.columns[0].volume.set(pos);
+            let t = col(&lay(&vp), 0).track.clone();
+            assert!(
+                t.thumb.y >= t.channel.y && t.thumb.bottom() <= t.channel.bottom(),
+                "position {pos}: {:?} inside {:?}",
+                t.thumb,
+                t.channel
+            );
+        }
     }
 
     #[test]
-    fn past_five_programs_a_scrollbar_runs_under_them() {
+    fn past_six_programs_a_scrollbar_runs_under_them() {
         let apps: Vec<_> = (0..7).map(|i| app(&format!("p{i}"), 10)).collect();
         let vp = VolumePopup::new(&mix(&apps));
         let l = lay(&vp);
-        assert_eq!(l.panel, Rect::new(736, 822, 448, 230));
-        assert_eq!(l.bar, Some(Rect::new(744 + 72, 890 + 136 + 4, 360, 16)));
-        assert!(l.columns[1..=5].iter().all(Option::is_some));
-        assert!(l.columns[6..].iter().all(Option::is_none));
+        assert_eq!(l.panel, Rect::new(590, 687, 740, 365));
+        assert_eq!(l.bar, Some(Rect::new(712, 769 + 247 + 8, 606, 16)));
+        assert!(l.columns[1..=6].iter().all(Option::is_some));
+        assert!(l.columns[7..].iter().all(Option::is_none));
     }
 
     #[test]
-    fn the_combos_fill_the_rows_right_of_the_widest_label() {
+    fn the_combos_are_360_wide_right_of_the_widest_label() {
         let vp = VolumePopup::new(&mix(&[]));
         let theme = Theme::default();
         let text = TextRenderer::load(&theme.fonts);
@@ -1521,13 +1565,23 @@ mod tests {
         let px = theme.fonts.size_px;
         let label_w = text
             .measure(OUTPUT, false, px)
-            .max(text.measure(INPUT, false, px));
+            .max(text.measure(INPUT, false, px))
+            .max(52);
         assert_eq!(
             l.output.field,
-            Rect::new(852 + 8 + label_w + 6, 850, 216 - 16 - label_w - 6, 21)
+            Rect::new(738 + 12 + label_w + 8, 723, 360, 21)
         );
-        assert_eq!(l.input.field.y, 875);
-        assert_eq!(l.separator, Rect::new(860, 902, 200, 2));
+        assert_eq!(l.input.field.y, 750);
+        assert_eq!(l.separator, Rect::new(750, 781, 420, 2));
+    }
+
+    #[test]
+    fn a_device_list_has_list_rows() {
+        let vp = VolumePopup::new(&mix(&[]));
+        let l = lay(&vp);
+        let rows = ControlMetrics::CLASSIC.list_row;
+        assert_eq!(l.output.row_h, rows);
+        assert_eq!(l.output.list.height, 2 * rows + 2, "two outputs");
     }
 
     #[test]
@@ -1566,11 +1620,11 @@ mod tests {
 
     #[test]
     fn sync_clamps_the_scroll_to_the_programs_left() {
-        let apps: Vec<_> = (0..8).map(|i| app(&format!("p{i}"), 10)).collect();
+        let apps: Vec<_> = (0..9).map(|i| app(&format!("p{i}"), 10)).collect();
         let mut vp = VolumePopup::new(&mix(&apps));
         vp.first = 3;
         let l = lay(&vp);
-        vp.sync(&l, &mix(&apps[..6]));
+        vp.sync(&l, &mix(&apps[..7]));
         assert_eq!(vp.first, 1);
         let l = lay(&vp);
         vp.sync(&l, &mix(&apps[..2]));
@@ -1609,7 +1663,7 @@ mod tests {
         let l = lay(&vp);
         let (x, y) = mid(col(&l, 1).track.thumb);
         assert_eq!(hit(&vp, &l, x, y), Hit::Track(1, trackbar::Hit::Thumb));
-        let (x, y) = mid(col(&l, 1).check);
+        let (x, y) = mid(col(&l, 1).mute);
         assert_eq!(hit(&vp, &l, x, y), Hit::Mute(1));
         let (x, y) = mid(col(&l, 1).label);
         assert_eq!(hit(&vp, &l, x, y), Hit::Column(1));
@@ -1643,7 +1697,7 @@ mod tests {
         let (x, y) = mid(col(&l, 0).track.thumb);
         assert_eq!(vp.press(&l, x, y), Event::None);
         assert!(!vp.dragging());
-        let (x, y) = mid(col(&l, 0).check);
+        let (x, y) = mid(col(&l, 0).mute);
         assert_eq!(vp.press(&l, x, y), Event::None);
         assert_eq!(vp.release(), Event::None);
         assert!(!vp.columns[0].mute);
@@ -1667,7 +1721,7 @@ mod tests {
             hit(&vp, &l, x, t.thumb.bottom() + 5),
             Hit::Track(0, trackbar::Hit::Left)
         );
-        let (x, y) = mid(col(&l, 0).mute_label);
+        let (x, y) = mid(col(&l, 0).mute);
         assert_eq!(hit(&vp, &l, x, y), Hit::Mute(0));
         let (x, y) = mid(col(&l, 0).label);
         assert_eq!(hit(&vp, &l, x, y), Hit::Column(0));
@@ -1733,29 +1787,25 @@ mod tests {
         let (x, y) = mid(col(&l, 0).track.thumb);
         vp.motion(&l, x, y);
         assert_eq!(vp.ptr.of(Part::Thumb(0)), Interaction::Hot);
-        // One position is 2 or 3 px: the 11 px thumb is still under it
-        // after two.
+        // One position is 6 or 7 px: the 15 px thumb is still under it
+        // after one.
         assert_eq!(
             vp.key(&l, form::Key::Up),
             Event::Volume(Channel::Master, 11)
         );
-        assert_eq!(
-            vp.key(&l, form::Key::Up),
-            Event::Volume(Channel::Master, 12)
-        );
         assert_eq!(vp.ptr.of(Part::Thumb(0)), Interaction::Hot);
         assert_eq!(
             vp.key(&l, form::Key::Up),
-            Event::Volume(Channel::Master, 13)
+            Event::Volume(Channel::Master, 12)
         );
         assert_eq!(
             vp.ptr.of(Part::Thumb(0)),
             Interaction::Idle,
-            "the thumb moved 8 px up, off the pointer"
+            "the thumb moved 12 px up, off the pointer"
         );
         assert_eq!(
             vp.key(&l, form::Key::Down),
-            Event::Volume(Channel::Master, 12)
+            Event::Volume(Channel::Master, 11)
         );
         assert_eq!(
             vp.ptr.of(Part::Thumb(0)),
@@ -1833,7 +1883,7 @@ mod tests {
     fn a_click_on_mute_flips_it_on_the_release() {
         let mut vp = VolumePopup::new(&master(10, false, true));
         let l = lay(&vp);
-        let (x, y) = mid(col(&l, 0).mute_label);
+        let (x, y) = mid(col(&l, 0).mute);
         assert_eq!(vp.press(&l, x, y), Event::Redraw);
         assert!(!vp.columns[0].mute, "nothing flips on the press");
         assert_eq!(vp.release(), Event::Mute(Channel::Master, true));
@@ -1949,7 +1999,7 @@ mod tests {
     fn a_program_mute_flips_on_release() {
         let mut vp = VolumePopup::new(&mix(&[app("mpv", 8)]));
         let l = lay(&vp);
-        let (x, y) = mid(col(&l, 1).check);
+        let (x, y) = mid(col(&l, 1).mute);
         vp.press(&l, x, y);
         assert_eq!(vp.release(), Event::Mute(Channel::App("mpv".into()), true));
     }
@@ -2119,12 +2169,12 @@ mod tests {
 
     #[test]
     fn focusing_a_hidden_program_scrolls_it_into_view() {
-        let apps: Vec<_> = (0..7).map(|i| app(&format!("p{i}"), 10)).collect();
+        let apps: Vec<_> = (0..8).map(|i| app(&format!("p{i}"), 10)).collect();
         let mut vp = VolumePopup::new(&mix(&apps));
         let l = lay(&vp);
-        vp.focus = Focus::Mute(5);
+        vp.focus = Focus::Mute(6);
         vp.key(&l, form::Key::Tab { back: false });
-        assert_eq!(vp.focus, Focus::Thumb(6));
+        assert_eq!(vp.focus, Focus::Thumb(7));
         assert_eq!(vp.first, 1);
         vp.focus = Focus::Thumb(0);
         vp.key(&l, form::Key::Tab { back: false });
@@ -2141,7 +2191,7 @@ mod tests {
 
     #[test]
     fn the_bar_arrows_scroll_the_programs() {
-        let apps: Vec<_> = (0..7).map(|i| app(&format!("p{i}"), 10)).collect();
+        let apps: Vec<_> = (0..8).map(|i| app(&format!("p{i}"), 10)).collect();
         let mut vp = VolumePopup::new(&mix(&apps));
         let l = lay(&vp);
         let bar = l.bar.unwrap();
@@ -2149,7 +2199,7 @@ mod tests {
         vp.release();
         assert_eq!(vp.first, 1);
         let l = lay(&vp);
-        assert!(l.columns[1].is_none() && l.columns[6].is_some() && l.columns[7].is_none());
+        assert!(l.columns[1].is_none() && l.columns[7].is_some() && l.columns[8].is_none());
         vp.press(&l, bar.right() - 4, bar.y + 4);
         vp.release();
         vp.press(&l, bar.right() - 4, bar.y + 4);
@@ -2161,7 +2211,7 @@ mod tests {
 
     #[test]
     fn the_wheel_over_the_bar_scrolls_the_programs() {
-        let apps: Vec<_> = (0..7).map(|i| app(&format!("p{i}"), 10)).collect();
+        let apps: Vec<_> = (0..8).map(|i| app(&format!("p{i}"), 10)).collect();
         let mut vp = VolumePopup::new(&mix(&apps));
         let l = lay(&vp);
         let (x, y) = mid(l.bar.unwrap());
@@ -2180,16 +2230,16 @@ mod tests {
 
     #[test]
     fn the_bar_track_pages_and_the_thumb_drags() {
-        let apps: Vec<_> = (0..12).map(|i| app(&format!("p{i}"), 10)).collect();
+        let apps: Vec<_> = (0..14).map(|i| app(&format!("p{i}"), 10)).collect();
         let mut vp = VolumePopup::new(&mix(&apps));
         let l = lay(&vp);
         let bar = l.bar.unwrap();
         vp.press(&l, bar.right() - 20, bar.y + 4);
         vp.release();
-        assert_eq!(vp.first, 5, "a page is five columns");
+        assert_eq!(vp.first, 6, "a page is six columns");
         vp.press(&l, bar.right() - 20, bar.y + 4);
         vp.release();
-        assert_eq!(vp.first, 7, "clamped at the last page");
+        assert_eq!(vp.first, 8, "clamped at the last page");
         let l = lay(&vp);
         let thumb = bar_parts(&vp, &l, bar).thumb.unwrap();
         let (x, y) = mid(thumb);
@@ -2211,7 +2261,7 @@ mod tests {
         assert!(vp.output.open.is_some());
         vp.release();
         let l = lay(&vp);
-        let row = l.output.list.y + 1 + vp.output.row_h(&ControlMetrics::CLASSIC) + 2;
+        let row = l.output.list.y + 1 + l.output.row_h + 2;
         assert_eq!(
             vp.press(&l, l.output.list.x + 10, row),
             Event::Default(Dir::Output, 1)
@@ -2227,7 +2277,7 @@ mod tests {
         vp.press(&l, x, y);
         vp.release();
         let l = lay(&vp);
-        let (x, y) = mid(col(&l, 1).check);
+        let (x, y) = mid(col(&l, 1).mute);
         assert_eq!(vp.press(&l, x, y), Event::Redraw);
         assert!(!matches!(vp.release(), Event::Mute(..)));
         assert!(vp.input.open.is_none());
@@ -2384,14 +2434,14 @@ mod tests {
         let mut vp = VolumePopup::new(&mix(&apps));
         let l = lay(&vp);
         vp.ptr.press(Some(Part::Bar(ScrollHit::Forward)), false);
-        vp.sync(&l, &mix(&apps[..6]));
+        vp.sync(&l, &mix(&apps[..7]));
         assert_eq!(
             vp.ptr.held(),
             Some(Part::Bar(ScrollHit::Forward)),
-            "six programs keep the bar and its press"
+            "seven programs keep the bar and its press"
         );
-        vp.sync(&l, &mix(&apps[..5]));
-        assert_eq!(vp.ptr.lit(), None, "five programs: the bar went");
+        vp.sync(&l, &mix(&apps[..6]));
+        assert_eq!(vp.ptr.lit(), None, "six programs: the bar went");
         vp.ptr.press(Some(Part::Combo(Dir::Output)), false);
         vp.sync(&l, &mix(&apps[..5]));
         assert_eq!(
@@ -2420,7 +2470,7 @@ mod tests {
             .count()
     }
 
-    /// With a second dialog font of 9 px a glyph loaded, "Output:" sizes the label column at 63 px, "Mute" is 36 px, and master's "Volume" inks six pens from 9 px in.
+    /// With a second dialog font of 9 px a glyph loaded, "Output:" sizes the label column at 63 px and master's "Volume" inks six pens from 21 px in.
     #[test]
     fn the_text_is_set_in_the_second_dialog_font() {
         let theme = Theme::default();
@@ -2436,7 +2486,6 @@ mod tests {
             Rect::new(0, 0, 1920, 1080),
         );
         assert_eq!(l.output_label.width, 63, "Output: in the second font");
-        assert_eq!(col(&l, 0).mute_label.width, 36, "Mute in the second font");
         let mut c = Canvas::new(1920, 1080);
         draw(&mut c, &theme, &text, &vp, &l);
         let name = col(&l, 0).label;
@@ -2445,7 +2494,7 @@ mod tests {
             .filter(|&x| (name.y..name.bottom()).any(|y| c.get(x, y) == ink))
             .map(|x| x - name.x)
             .collect();
-        assert_eq!(pens, [9, 18, 27, 36, 45, 54], "Volume's six pens");
+        assert_eq!(pens, [21, 30, 39, 48, 57, 66], "Volume's six pens");
     }
 
     #[test]
@@ -2467,10 +2516,9 @@ mod tests {
                 cs.button_shadow.argb(),
                 "column {i} channel"
             );
-            let m = col(&l, i).mute_label;
             assert!(
-                inked(&c, m, cs.button_text.argb()) > 0,
-                "column {i} says Mute"
+                inked(&c, col(&l, i).mute, cs.button_text.argb()) > 0,
+                "column {i} draws its speaker"
             );
         }
         assert_eq!(
@@ -2491,8 +2539,8 @@ mod tests {
     fn a_program_icon_draws_centred_over_its_name() {
         let theme = Theme::default();
         let mut a = app("mpv", 8);
-        let mut icon = Canvas::new(16, 16);
-        icon.fill_rect(Rect::new(0, 0, 16, 16), theme.colors.hilight);
+        let mut icon = Canvas::new(32, 32);
+        icon.fill_rect(Rect::new(0, 0, 32, 32), theme.colors.hilight);
         a.icon = Some(icon);
         let vp = VolumePopup::new(&mix(&[a]));
         let (c, l) = drawn(&theme, &vp);
@@ -2519,7 +2567,7 @@ mod tests {
             .filter(|&y| c.get(next.x + 1, y) == ink)
             .count();
         assert_eq!(spill, 0, "no text spills into the next column");
-        let gutter = (COL_W - NAME_W) / 2;
+        let gutter = NAME_PAD;
         let left = Rect::new(label.x, label.y, gutter, label.height);
         assert_eq!(inked(&c, left, ink), 0, "clear on the left");
         let right = Rect::new(label.right() - gutter, label.y, gutter, label.height);
@@ -2799,19 +2847,17 @@ mod tests {
                 .unwrap_or_default();
             let roles: Vec<_> = kids.iter().map(|&k| role(&tree, k)).collect();
             assert!(roles.contains(&Some(Role::Slider)), "{name}: a slider");
-            assert!(roles.contains(&Some(Role::CheckBox)), "{name}: Mute");
+            assert!(roles.contains(&Some(Role::Button)), "{name}: Mute");
         }
         vp.focus = Focus::Input;
         let (tree, focus) = accessed(&vp, &l);
         assert_eq!(Some(focus), tree.find(Role::ComboBox, "Input"));
         vp.focus = Focus::Mute(2);
         let (tree, focus) = accessed(&vp, &l);
-        assert_eq!(role(&tree, focus), Some(Role::CheckBox));
+        assert_eq!(role(&tree, focus), Some(Role::Button));
         assert_eq!(
             tree.get(focus).map(|n| n.bounds()),
-            Some(Some(access::bounds(
-                col(&l, 2).check.union(&col(&l, 2).mute_label)
-            ))),
+            Some(Some(access::bounds(col(&l, 2).mute))),
             "the focus is on the second program's Mute"
         );
     }
@@ -2820,7 +2866,7 @@ mod tests {
     #[test]
     #[ignore]
     fn render_volumepopup() {
-        let (w, h) = (240, 240);
+        let (w, h) = (480, 420);
         let mut c = Canvas::new(4 * w as u32, 2 * h as u32);
         let classic = Theme::default();
         let blue = theme_for(Interface::Blue);
@@ -2903,27 +2949,27 @@ mod tests {
     fn a_player_adds_the_strip_under_the_columns() {
         let vp = VolumePopup::new(&with_track(&[], track(true)));
         let l = lay(&vp);
-        assert_eq!(l.panel, Rect::new(852, 800, 216, 252), "42 px taller");
+        assert_eq!(l.panel, Rect::new(738, 655, 444, 397), "56 px taller");
         let st = l.strip.as_ref().expect("a strip");
         let foot = col(&l, 0).rect.bottom();
-        assert_eq!(st.separator, Rect::new(860, foot + 6, 200, 2));
-        assert_eq!(st.rect, Rect::new(860, foot + 14, 200, 28));
+        assert_eq!(st.separator, Rect::new(750, foot + 10, 420, 2));
+        assert_eq!(st.rect, Rect::new(750, foot + 22, 420, 34));
         assert_eq!(
             st.buttons,
             [
-                Rect::new(984, foot + 17, 24, 22),
-                Rect::new(1010, foot + 17, 24, 22),
-                Rect::new(1036, foot + 17, 24, 22),
+                Rect::new(1066, foot + 25, 32, 28),
+                Rect::new(1102, foot + 25, 32, 28),
+                Rect::new(1138, foot + 25, 32, 28),
             ]
         );
-        assert_eq!(st.title, Rect::new(860, foot + 15, 118, 13));
-        assert_eq!(st.artist, Some(Rect::new(860, foot + 28, 118, 13)));
-        assert_eq!(st.rect.bottom() + BOTTOM, l.panel.bottom());
+        assert_eq!(st.title, Rect::new(750, foot + 26, 308, 13));
+        assert_eq!(st.artist, Some(Rect::new(750, foot + 39, 308, 13)));
+        assert_eq!(st.rect.bottom() + MARGIN, l.panel.bottom());
         let mut np = track(true);
         np.artist.clear();
         let vp = VolumePopup::new(&with_track(&[], np));
         let st = lay(&vp).strip.expect("a strip");
-        assert_eq!(st.title.y, st.rect.y + 7, "a lone title is centred");
+        assert_eq!(st.title.y, st.rect.y + 10, "a lone title is centred");
         assert_eq!(st.artist, None);
     }
 
@@ -2934,8 +2980,8 @@ mod tests {
         let l = lay(&vp);
         let bar = l.bar.expect("a scrollbar");
         let st = l.strip.expect("a strip");
-        assert_eq!(st.separator.y, bar.bottom() + 6);
-        assert_eq!(st.rect.bottom() + BOTTOM, l.panel.bottom());
+        assert_eq!(st.separator.y, bar.bottom() + 10);
+        assert_eq!(st.rect.bottom() + MARGIN, l.panel.bottom());
     }
 
     #[test]
@@ -3017,14 +3063,14 @@ mod tests {
         assert_eq!(vp.playing, None);
         assert_eq!(vp.focus, Focus::Thumb(0), "the strip went");
         assert!(lay(&vp).strip.is_none());
-        assert_eq!(lay(&vp).panel.height, 210, "back to the bare panel");
+        assert_eq!(lay(&vp).panel.height, 341, "back to the bare panel");
     }
 
     /// The strip in Classic: the etched separator, the title and artist,
     /// the raised buttons, and their glyphs. Play is 4 columns from 7
-    /// rows down to 1, centred: from (10, 7) in a 24x22 button. Pause is
-    /// two 2 px bars from (9, 7). A greyed Previous is etched, its 2 px bar
-    /// in shadow at (9, 7) with a hilight copy a pixel down and right.
+    /// rows down to 1, centred: from (14, 10) in a 32x28 button. Pause is
+    /// two 2 px bars from (13, 10). A greyed Previous is etched, its 2 px bar
+    /// in shadow at (13, 10) with a hilight copy a pixel down and right.
     #[test]
     fn the_strip_draws_its_text_and_glyph_buttons_in_classic() {
         let theme = Theme::default();
@@ -3051,7 +3097,7 @@ mod tests {
         let face = cs.button_face.argb();
         let play = st.button(Transport::PlayPause);
         assert_eq!(c.get(play.x, play.y), cs.button_hilight.argb(), "raised");
-        let (gx, gy) = (play.x + 10, play.y + 7);
+        let (gx, gy) = (play.x + 14, play.y + 10);
         let column = |c: &Canvas, x: i32| (gy..gy + 7).filter(|&y| c.get(x, y) == ink).count();
         assert_eq!(
             (0..5).map(|k| column(&c, gx + k)).collect::<Vec<_>>(),
@@ -3060,11 +3106,11 @@ mod tests {
         );
         assert_eq!(c.get(gx + 3, gy + 2), face);
         let prev = st.button(Transport::Previous);
-        assert_eq!(c.get(prev.x + 9, prev.y + 7), cs.button_shadow.argb());
-        assert_eq!(c.get(prev.x + 10, prev.y + 14), cs.button_hilight.argb());
+        assert_eq!(c.get(prev.x + 13, prev.y + 10), cs.button_shadow.argb());
+        assert_eq!(c.get(prev.x + 14, prev.y + 17), cs.button_hilight.argb());
         assert_eq!(inked(&c, prev, ink), 0, "greyed: no black ink");
         let next = st.button(Transport::Next);
-        let (nx, ny) = (next.x + 9, next.y + 7);
+        let (nx, ny) = (next.x + 13, next.y + 10);
         assert_eq!(
             (0..6)
                 .map(|k| (ny..ny + 7).filter(|&y| c.get(nx + k, y) == ink).count())
@@ -3076,7 +3122,7 @@ mod tests {
         let vp = VolumePopup::new(&with_track(&[], track(true)));
         let (c, l) = drawn(&theme, &vp);
         let play = l.strip.as_ref().unwrap().button(Transport::PlayPause);
-        let (px0, py0) = (play.x + 9, play.y + 7);
+        let (px0, py0) = (play.x + 13, play.y + 10);
         assert_eq!(
             (0..6)
                 .map(|k| (py0..py0 + 7).filter(|&y| c.get(px0 + k, y) == ink).count())
@@ -3102,12 +3148,12 @@ mod tests {
         );
         let ink = cs.button_text.argb();
         assert_eq!(
-            c.get(play.x + 11, play.y + 8),
+            c.get(play.x + 15, play.y + 11),
             ink,
             "the glyph moved a pixel"
         );
-        assert_eq!(c.get(play.x + 11, play.y + 14), ink);
-        assert_ne!(c.get(play.x + 10, play.y + 7), ink);
+        assert_eq!(c.get(play.x + 15, play.y + 17), ink);
+        assert_ne!(c.get(play.x + 14, play.y + 10), ink);
     }
 
     #[test]
@@ -3142,7 +3188,7 @@ mod tests {
                     pixels(&cc, cst.button(t)),
                     "{look:?}: {t:?} wears its own art"
                 );
-                let glyph = Rect::new(r.x + 9, r.y + 7, 6, 7);
+                let glyph = Rect::new(r.x + 13, r.y + 10, 6, 7);
                 let inked_glyph = inked(&c, glyph, ink);
                 if t == Transport::Next {
                     assert_eq!(inked_glyph, 0, "{look:?}: greyed Next is not inked");
@@ -3196,6 +3242,141 @@ mod tests {
     }
 
     #[test]
+    fn a_muted_column_greys_its_level_and_thumb_and_crosses_its_speaker() {
+        let theme = Theme::default();
+        let cs = &theme.colors;
+        let mut muted = app("mpv", 16);
+        muted.mute = true;
+        let vp = VolumePopup::new(&mix(&[app("firefox", 16), muted]));
+        let (c, l) = drawn(&theme, &vp);
+        let ink = cs.button_text.argb();
+        let (on, off) = (col(&l, 1), col(&l, 2));
+        assert!(inked(&c, on.level, ink) > 0, "80% in black");
+        assert_eq!(inked(&c, off.level, ink), 0, "a muted level greys");
+        let thumb = |r: Rect| inked(&c, r.inset(2), cs.button_hilight.argb());
+        assert_eq!(thumb(on.track.thumb), 0, "a plain face");
+        assert!(thumb(off.track.thumb) > 0, "a muted thumb is speckled");
+        let glyph = |cl: &ColumnLayout| {
+            let r = cl.mute;
+            (r.x..r.right())
+                .flat_map(|x| (r.y..r.bottom()).map(move |y| (x, y)))
+                .map(|(x, y)| c.get(x, y))
+                .collect::<Vec<_>>()
+        };
+        assert_ne!(
+            glyph(on),
+            glyph(off),
+            "the speaker and the crossed one differ"
+        );
+        assert!(
+            inked(&c, off.mute, ink) > 0,
+            "a muted speaker is still black"
+        );
+    }
+
+    #[test]
+    fn a_level_reads_in_percent() {
+        let vp = VolumePopup::new(&mix(&[app("mpv", 13)]));
+        let l = lay(&vp);
+        let (tree, _) = accessed(&vp, &l);
+        let levels: Vec<_> = tree
+            .nodes()
+            .filter(|(_, n)| n.role() == Role::Label && n.bounds().is_some())
+            .filter_map(|(_, n)| n.value().map(str::to_string))
+            .filter(|v| v.ends_with('%'))
+            .collect();
+        assert_eq!(levels, ["50%", "65%"]);
+    }
+
+    #[test]
+    fn the_speaker_button_is_a_toggle_named_mute() {
+        let mut a = app("mpv", 8);
+        a.mute = true;
+        let vp = VolumePopup::new(&mix(&[a]));
+        let l = lay(&vp);
+        let (tree, _) = accessed(&vp, &l);
+        let toggled: Vec<_> = tree
+            .nodes()
+            .filter(|(_, n)| n.role() == Role::Button && n.label() == Some(MUTE))
+            .map(|(_, n)| n.toggled())
+            .collect();
+        assert_eq!(
+            toggled,
+            [
+                Some(accesskit::Toggled::False),
+                Some(accesskit::Toggled::True)
+            ]
+        );
+    }
+
+    #[test]
+    fn at_200_percent_the_parts_grow_and_icons_glyphs_and_thumbs_keep_their_size() {
+        let theme = Theme::default().with_form_text(200);
+        let mut a = app("mpv", 8);
+        a.icon = Some(Canvas::new(32, 32));
+        let vp = VolumePopup::new(&mix(&[a]));
+        let l = lay_with(&vp, &theme, (960, 1052));
+        let one = lay(&vp);
+        let (c, c1) = (col(&l, 1), col(&one, 1));
+        assert_eq!(c.rect.width, 192);
+        assert_eq!(c.rect.height, 494);
+        assert_eq!(c.track.channel.height, 280);
+        assert_eq!((c.mute.width, c.mute.height), (60, 52));
+        assert_eq!(c.icon.map(|r| (r.width, r.height)), Some((32, 32)));
+        let size = |r: Rect| (r.width, r.height);
+        assert_eq!(size(c.track.thumb), size(c1.track.thumb));
+        assert_eq!(l.output.field.width, 720);
+        assert_eq!(l.output.row_h, 2 * one.output.row_h);
+        assert_eq!(l.bar, None);
+    }
+
+    fn fnv(c: &Canvas) -> u64 {
+        c.pixels.iter().fold(0xcbf2_9ce4_8422_2325, |h, &p| {
+            (h ^ u64::from(p)).wrapping_mul(0x0100_0000_01b3)
+        })
+    }
+
+    /// Two programs, the second muted, the focus ring on the first's thumb, at scale 1 and 2.
+    #[test]
+    fn the_popup_is_pinned_in_each_look_at_scale_1_and_2() {
+        if !crate::text::test_tahoma() {
+            return;
+        }
+        let mut muted = app("mpv", 8);
+        muted.mute = true;
+        let mut vp = VolumePopup::new(&mix(&[app("firefox", 16), muted]));
+        vp.focus = Focus::Thumb(1);
+        vp.cues = true;
+        let mut got = Vec::new();
+        for look in [Interface::Classic, Interface::Blue, Interface::Glass] {
+            let base = theme_for(look);
+            let text = TextRenderer::load(&base.fonts);
+            for s in [1, 2] {
+                let theme = Theme {
+                    look: base.look.at_scale(s),
+                    ..base.clone()
+                };
+                let bounds = Rect::new(0, 0, 480, 380);
+                let l = layout(&vp, &theme, &text, (240, 376), Edge::Bottom, bounds);
+                let mut c = Canvas::with_scale(480, 380, s);
+                draw(&mut c, &theme, &text, &vp, &l);
+                got.push((look, s, fnv(&c)));
+            }
+        }
+        assert_eq!(
+            got,
+            [
+                (Interface::Classic, 1, 3894922826410907653),
+                (Interface::Classic, 2, 1200130322201881305),
+                (Interface::Blue, 1, 746860588023199850),
+                (Interface::Blue, 2, 16821871500524533471),
+                (Interface::Glass, 1, 9091362091301184355),
+                (Interface::Glass, 2, 4401777967945655351),
+            ]
+        );
+    }
+
+    #[test]
     fn beside_a_side_bar_the_panel_stands_off_its_edge_level_with_the_icon() {
         let vp = VolumePopup::new(&mix(&[]));
         let theme = Theme::default();
@@ -3204,13 +3385,13 @@ mod tests {
         let left = layout(&vp, &theme, &text, (60, 500), Edge::Left, screen);
         assert_eq!(
             left.panel,
-            Rect::new(60, 500 - 105, 216, 210),
+            Rect::new(60, 500 - 170, 444, 341),
             "its left edge on the bar's, centred on the icon"
         );
         let right = layout(&vp, &theme, &text, (1860, 1050), Edge::Right, screen);
         assert_eq!(
             right.panel,
-            Rect::new(1860 - 216, 1080 - 210, 216, 210),
+            Rect::new(1860 - 444, 1080 - 341, 444, 341),
             "its right edge on the bar's, kept above the output's foot"
         );
     }

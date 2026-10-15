@@ -1,6 +1,6 @@
 //! Glyphs drawn from geometry at any scale: arrows, chevrons, the tick,
-//! the cross, the bullet and the plus, minus and dash bars, each in a
-//! `size` x `size` design-pixel box.
+//! the cross, the bullet, the plus, minus and dash bars and the speaker
+//! (sounding or crossed out), each in a `size` x `size` design-pixel box.
 
 use super::cover::{ellipse, polygon, segments};
 use super::{Px, scale};
@@ -20,6 +20,10 @@ pub enum Glyph {
     Plus,
     Minus,
     Dash,
+    /// A speaker facing right with two sound waves.
+    Speaker,
+    /// The speaker with a cross where the waves were.
+    SpeakerMuted,
 }
 
 type Pt = (f64, f64);
@@ -70,6 +74,34 @@ fn shape(g: Glyph, size: i32, weight: f64) -> Shape {
             let vy = s - vx;
             let dy = ((s - vy) / 2.0).floor();
             lines(vec![vec![(0.0, vy - vx + dy), (vx, vy + dy), (s, dy)]])
+        }
+        Glyph::Speaker | Glyph::SpeakerMuted => {
+            // Drawn on a 16 px grid: a 3x6 box and a cone flaring to 14
+            // rows, then the waves or the cross in the right third.
+            let k = s / 16.0;
+            let at = |pts: &[Pt]| pts.iter().map(|&(x, y)| (x * k, y * k)).collect();
+            let lines = if g == Glyph::Speaker {
+                vec![
+                    at(&[(10.5, 5.5), (11.5, 6.5), (11.5, 9.5), (10.5, 10.5)]),
+                    at(&[(12.5, 2.5), (14.5, 4.5), (14.5, 11.5), (12.5, 13.5)]),
+                ]
+            } else {
+                vec![
+                    at(&[(10.0, 5.0), (16.0, 11.0)]),
+                    at(&[(16.0, 5.0), (10.0, 11.0)]),
+                ]
+            };
+            Shape {
+                lines,
+                solid: Some(Solid::Polygon(at(&[
+                    (1.0, 5.0),
+                    (4.0, 5.0),
+                    (8.0, 1.0),
+                    (8.0, 15.0),
+                    (4.0, 11.0),
+                    (1.0, 11.0),
+                ]))),
+            }
         }
         Glyph::Bullet => Shape {
             lines: Vec::new(),
@@ -244,6 +276,50 @@ mod tests {
         let right = glyph(Glyph::ArrowRight, 9, 1, 1.0, BLACK);
         assert_eq!(alpha(&down, 4, 6), 255, "the down arrow's tip row");
         assert_eq!(alpha(&right, 6, 4), 255, "the right arrow's tip column");
+    }
+
+    #[test]
+    fn the_speaker_has_a_solid_box_and_the_muted_one_a_cross_for_waves() {
+        let on = glyph(Glyph::Speaker, 16, 1, 1.0, BLACK);
+        let off = glyph(Glyph::SpeakerMuted, 16, 1, 1.0, BLACK);
+        for c in [&on, &off] {
+            let body: Vec<u32> = (1..4).map(|x| alpha(c, x, 8)).collect();
+            assert_eq!(body, [255, 255, 255], "the box");
+            assert_eq!(alpha(c, 7, 2), 255, "the cone's flare");
+            assert_eq!(
+                alpha(c, 9, 8),
+                0,
+                "clear between the cone and the right third"
+            );
+        }
+        assert_eq!(alpha(&on, 11, 8), 255, "the inner wave");
+        assert_eq!(alpha(&on, 14, 8), 255, "the outer wave");
+        assert_eq!(alpha(&off, 13, 8), 255, "the cross's middle");
+        let cols = |c: &Canvas, xs: std::ops::Range<i32>| {
+            xs.flat_map(|x| (0..16).map(move |y| (x, y)))
+                .map(|(x, y)| alpha(c, x, y))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(cols(&on, 0..9), cols(&off, 0..9), "the same speaker");
+        assert_ne!(cols(&on, 9..16), cols(&off, 9..16), "waves or a cross");
+        for (g, c) in [(Glyph::Speaker, &on), (Glyph::SpeakerMuted, &off)] {
+            for line in &shape(g, 16, 1.0).lines {
+                for w in line.windows(2) {
+                    assert!(
+                        along(w[0], w[1], 1)
+                            .iter()
+                            .any(|&(x, y)| alpha(c, x, y) == 255),
+                        "{g:?}: segment {:?} has a solid pixel",
+                        (w[0], w[1])
+                    );
+                }
+            }
+        }
+        let two = glyph(Glyph::Speaker, 16, 2, 1.0, BLACK);
+        assert!(
+            two.pixels.iter().any(|p| (1..255).contains(&(p >> 24))),
+            "the cone's flare is smooth at 2"
+        );
     }
 
     #[test]

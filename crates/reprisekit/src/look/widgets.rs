@@ -774,16 +774,60 @@ pub fn draw_media_button(
     let (w, h) = (if glyph == MediaGlyph::Play { 4 } else { 6 }, 7);
     let x = r.x + (r.width - w * s) / 2 + shift;
     let y = r.y + (r.height - h * s) / 2 + shift;
-    if enabled {
-        draw_media_glyph(c, x, y, s, glyph, p.cs.button_text);
-    } else if let Some(ink) = style.and_then(|st| st.text_color(Part::PushButton, State::Disabled))
-    {
-        draw_media_glyph(c, x, y, s, glyph, ink);
-    } else if styled {
-        draw_media_glyph(c, x, y, s, glyph, p.cs.gray_text);
+    ink_button_glyph(p, enabled, |d, ink| {
+        draw_media_glyph(c, x + d, y + d, s, glyph, ink)
+    });
+}
+
+/// A push button with `glyph` in a `size` px box centred instead of a label, inked as
+/// [`draw_media_button`] inks its glyph. The glyph is drawn from shapes at the canvas's scale.
+#[expect(clippy::too_many_arguments)]
+pub fn draw_glyph_button(
+    c: &mut Canvas,
+    text: &TextRenderer,
+    p: &Paint,
+    r: Rect,
+    (glyph, size): (crate::shape::Glyph, i32),
+    enabled: bool,
+    ptr: Interaction,
+    focus: bool,
+    px: u32,
+) {
+    draw_button(c, text, p, r, "", false, ptr, enabled, focus, px);
+    let s = p.s;
+    let styled = p
+        .look
+        .style()
+        .is_some_and(|st| st.part(Part::PushButton).is_some());
+    let shift = if !styled && ptr == Interaction::Pressed {
+        s
     } else {
-        draw_media_glyph(c, x + s, y + s, s, glyph, p.cs.button_hilight);
-        draw_media_glyph(c, x, y, s, glyph, p.cs.button_shadow);
+        0
+    };
+    let x = r.x + (r.width - size * s) / 2 + shift;
+    let y = r.y + (r.height - size * s) / 2 + shift;
+    let cs = c.scale();
+    ink_button_glyph(p, enabled, |d, ink| {
+        let g = crate::shape::glyph(glyph, size, s * cs, 1.0, crate::shape::premul(ink, 255));
+        c.blit_over(x + d, y + d, &g.at_scale(cs));
+    });
+}
+
+/// Calls `ink` with an offset and a colour for each pass of a button glyph: once in the button's
+/// text colour; greyed, once in the style's Disabled push button ink if any, else once in grey
+/// text under a style, else etched: hilight a pixel down and right, then shadow over it.
+fn ink_button_glyph(p: &Paint, enabled: bool, mut ink: impl FnMut(i32, Color)) {
+    let style = p.look.style();
+    let styled = style.is_some_and(|st| st.part(Part::PushButton).is_some());
+    if enabled {
+        ink(0, p.cs.button_text);
+    } else if let Some(c) = style.and_then(|st| st.text_color(Part::PushButton, State::Disabled)) {
+        ink(0, c);
+    } else if styled {
+        ink(0, p.cs.gray_text);
+    } else {
+        ink(p.s, p.cs.button_hilight);
+        ink(0, p.cs.button_shadow);
     }
 }
 
