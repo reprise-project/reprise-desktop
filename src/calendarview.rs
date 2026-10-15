@@ -8,7 +8,8 @@
 //! read-only. A double click on the clock closes it and opens Date and
 //! Time Properties instead. Under a look that frames its flyouts as
 //! windows the arrow under the pointer lights, and the border has the
-//! blurred backdrop under it.
+//! blurred backdrop under it. A look with an analog clock beside the month
+//! ticks it each second while the popup is open.
 //!
 //! The lock closes it as it engages; an output going away closes the one
 //! it opened.
@@ -24,6 +25,9 @@ use reprisekit::pointer::DoubleClick;
 use reprisekit::text::TextRenderer;
 use reprisescene::{BufferId, TreeId};
 use smithay::output::Output;
+use smithay::reexports::calloop::RegistrationToken;
+use smithay::reexports::calloop::timer::{TimeoutAction, Timer};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 const PROPERTIES: &str = "reprise-datetime";
 
@@ -50,14 +54,36 @@ struct CalendarView {
     at: (i32, i32),
     /// The output whose clock opened it, for its scale.
     output: Output,
+    /// Moves the analog clock on each second; none in a look without one.
+    tick: Option<RegistrationToken>,
+}
+
+fn since_epoch() -> Duration {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
 }
 
 fn today() -> (i32, u32, u32) {
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |d| d.as_secs() as i64);
-    let tm = reprisefs::locale::localtime(now);
+    let tm = reprisefs::locale::localtime(since_epoch().as_secs() as i64);
     (tm.tm_year + 1900, (tm.tm_mon + 1) as u32, tm.tm_mday as u32)
+}
+
+/// The local time of day: hour 0..23, minute, second.
+fn now() -> (u32, u32, u32) {
+    let tm = reprisefs::locale::localtime(since_epoch().as_secs() as i64);
+    let field = |v: i32| v.max(0) as u32;
+    (
+        field(tm.tm_hour),
+        field(tm.tm_min),
+        field(tm.tm_sec).min(59),
+    )
+}
+
+/// Until just past the next whole second, so a tick reads the second it was armed for.
+fn to_next_second() -> Duration {
+    let into = since_epoch().subsec_nanos();
+    Duration::from_nanos(u64::from(1_000_000_000 - into) + 5_000_000)
 }
 
 pub fn is_open(state: &State) -> bool {
@@ -113,6 +139,8 @@ fn open(state: &mut State, bar: TreeId) {
     let (y, m, d) = today();
     let mut model = Calendar::new(y, m, None, reprisefs::locale::first_weekday());
     model.today = Some((y, m, d));
+    let ticks = state.config.theme.controls().clock_face > 0;
+    model.now = ticks.then(now);
     let b = state.layout_box(Some(&output));
     let p = state.bar_placement(&output);
     let (w, h) = calendar::popup_size(&state.config.theme.controls());
@@ -141,14 +169,43 @@ fn open(state: &mut State, bar: TreeId) {
         hot: PopupHit::Panel,
         at: (x, top),
         output,
+        tick: None,
     });
+    if ticks {
+        arm_tick(state);
+    }
     redraw(state);
+}
+
+fn arm_tick(state: &mut State) {
+    let token =
+        state
+            .handle
+            .insert_source(Timer::from_duration(to_next_second()), |_, _, state| {
+                let Some(v) = state.calendar.view.as_mut() else {
+                    return TimeoutAction::Drop;
+                };
+                v.model.now = Some(now());
+                redraw(state);
+                TimeoutAction::ToDuration(to_next_second())
+            });
+    match token {
+        Ok(t) => {
+            if let Some(v) = state.calendar.view.as_mut() {
+                v.tick = Some(t);
+            }
+        }
+        Err(e) => log::warn!("calendar clock: no timer: {}", e.error),
+    }
 }
 
 pub fn close(state: &mut State) {
     let Some(v) = state.calendar.view.take() else {
         return;
     };
+    if let Some(t) = v.tick {
+        state.handle.remove(t);
+    }
     state.scene.destroy(v.tree);
     state.redraw_all();
     crate::access::touch(state);

@@ -338,6 +338,14 @@ pub fn draw_calendar_arrow(c: &mut Canvas, p: &Paint, r: Rect, arrow: Arrow, hot
     classic::widgets::draw_arrow_button(c, p, r, arrow, true)
 }
 
+/// The clock popup's analog clock at `time` (hour 0..23, minute, second) in the square `r`
+/// (device px). Classic has none and draws nothing.
+pub fn draw_clock_face(c: &mut Canvas, p: &Paint, r: Rect, time: (u32, u32, u32)) {
+    if let Some(paint) = p.look.style().and_then(|st| st.clock_face) {
+        c.blit_over(r.x, r.y, &paint(time, r.width / p.s.max(1), p.s));
+    }
+}
+
 /// A month calendar's weekday band in `r`; returns the ink of the day
 /// letters: the style's band part and text colour, else Classic's button
 /// shadow band with face-coloured letters.

@@ -288,6 +288,7 @@ fn controls(v: Variant) -> ControlMetrics {
         header_arrow_over: false,
         status_bar: 23,
         flyout_border: 2,
+        clock_face: 0,
         task: controls::task_metrics(v),
         bar: controls::bar_metrics(),
         rebar: controls::rebar_metrics(v),
