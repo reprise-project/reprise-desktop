@@ -20,6 +20,8 @@ pub struct Item {
     pub is_dir: bool,
     pub is_link: bool,
     pub exec: bool,
+    /// Runs when opened ([`crate::program::is_program`]), so it wears a program's icon.
+    pub program: bool,
     pub hidden: bool,
     /// Bytes and the modification time; a symlink's are its own, not
     /// its target's.
@@ -102,6 +104,10 @@ fn item_with(p: &Path, is_link: bool, listed: &hidden::Listed, globs: &MimeDb) -
     let exec = meta
         .as_ref()
         .is_some_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0);
+    let program = exec
+        && meta
+            .as_ref()
+            .is_some_and(|m| crate::program::is_program(p, m));
     let name = p
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
@@ -139,6 +145,7 @@ fn item_with(p: &Path, is_link: bool, listed: &hidden::Listed, globs: &MimeDb) -
         is_dir,
         is_link,
         exec,
+        program,
         hidden,
         size,
         modified,
@@ -360,6 +367,32 @@ mod tests {
         assert_eq!(link.size, "mfolder".len() as u64);
         assert!(items[0].is_folder());
     }
+    #[test]
+    fn a_program_is_an_executable_script_or_elf_file() {
+        let t = tempfile::tempdir().unwrap();
+        let put = |n: &str, bytes: &[u8], m: u32| {
+            std::fs::write(t.path().join(n), bytes).unwrap();
+            std::fs::set_permissions(t.path().join(n), std::fs::Permissions::from_mode(m)).unwrap();
+        };
+        put("elf", b"\x7fELF\x02", 0o755);
+        put("photo.png", b"\x89PNG", 0o755);
+        put("plain.sh", b"#!/bin/sh\n", 0o644);
+        put("run.sh", b"#!/bin/sh\n", 0o755);
+        let program: Vec<(String, bool)> = read_dir(t.path(), &MimeDb::empty())
+            .into_iter()
+            .map(|i| (i.name, i.program))
+            .collect();
+        assert_eq!(
+            program,
+            [
+                ("elf".into(), true),
+                ("photo.png".into(), false),
+                ("plain.sh".into(), false),
+                ("run.sh".into(), true),
+            ]
+        );
+    }
+
     #[test]
     fn exec_is_a_regular_file_with_an_execute_bit() {
         let t = tempfile::tempdir().unwrap();
