@@ -59,7 +59,7 @@ pub fn run(state: &State) -> Vec<Entry> {
     for e in &run {
         log::info!("autostart: {}", e.id);
         let argv = e.argv(&state.config.terminal);
-        crate::spawn::spawn_argv_in(&argv, e.path.as_deref(), &state.env, None);
+        crate::spawn::spawn_argv_in(&argv, Some(&e.id), e.path.as_deref(), &state.env, None);
     }
     run
 }

@@ -131,6 +131,16 @@ impl State {
         let token = self.new_activation_token();
         crate::spawn::spawn_argv(argv, &self.env, Some(&token))
     }
+
+    /// `spawn_argv_activated` for a command built from the desktop entry `app`.
+    pub fn spawn_app_activated<S: AsRef<std::ffi::OsStr> + std::fmt::Debug>(
+        &mut self,
+        argv: &[S],
+        app: &str,
+    ) {
+        let token = self.new_activation_token();
+        crate::spawn::spawn_argv_in(argv, Some(app), None, &self.env, Some(&token))
+    }
 }
 
 #[cfg(test)]
