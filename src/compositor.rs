@@ -322,6 +322,8 @@ pub struct State {
     pub lock: crate::lockview::LockScreen,
     pub launcher: Option<crate::launcherview::LauncherView>,
     pub start_panel: Option<crate::startpanelview::StartPanelView>,
+    /// The Start panel's frame, kept between opens so an open skips drawing it again.
+    pub start_backing: reprisekit::glass::startpanel::Backing,
     pub panels: crate::panels::Panels,
     pub osd: crate::osdview::OsdView,
     pub debug: crate::debugview::DebugView,
@@ -570,6 +572,7 @@ impl State {
             lock: crate::lockview::LockScreen::new(&dh),
             launcher: None,
             start_panel: None,
+            start_backing: Default::default(),
             panels: Default::default(),
             osd: Default::default(),
             debug: Default::default(),
