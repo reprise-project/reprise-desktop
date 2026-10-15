@@ -97,7 +97,8 @@ pub enum SceneOwner {
 /// layer-shell's top layer, the taskbar, a fullscreen window, the desktop
 /// switch animation, the menu tree, Start's orb over its menu, the
 /// layer-shell overlay tree, and finally the lock screen, above everything
-/// else.
+/// else. The overlay tree is left out of the glass backdrop: what lies on
+/// top of every glass (drag images, a client's dim) must not blur into it.
 pub struct Layers {
     pub background: TreeId,
     pub bottom: TreeId,
@@ -123,10 +124,10 @@ pub struct Layers {
 }
 
 impl Layers {
-    fn new(scene: &mut DeskScene) -> Layers {
+    pub(crate) fn new(scene: &mut DeskScene) -> Layers {
         let root = scene.root();
         let mut t = || scene.tree_create(root);
-        Layers {
+        let layers = Layers {
             background: t(),
             bottom: t(),
             windows: t(),
@@ -140,7 +141,9 @@ impl Layers {
             overlay: t(),
             lock: t(),
             saver: t(),
-        }
+        };
+        crate::glass::leave_out(scene, layers.overlay);
+        layers
     }
 }
 

@@ -1827,4 +1827,36 @@ mod tests {
             assert_eq!(differ, 0, "{what}: pixels unlike a fresh start's");
         }
     }
+
+    #[test]
+    fn what_lies_in_the_overlay_layer_does_not_blur_into_glass_beneath_it() {
+        let Ok(mut renderer) = reprisefx::headless::renderer() else {
+            eprintln!("skipped: no renderer");
+            return;
+        };
+        let ctx = GlassCtx::new();
+        ctx.set_renderer(&mut renderer);
+        let mut scene = DeskScene::new();
+        let layers = crate::compositor::Layers::new(&mut scene);
+        scene.rect_create(layers.background, (320, 200), [1.0; 4]);
+        let bar = scene.tree_create(layers.taskbar);
+        scene.set_position(bar, 20, 20);
+        leave_out(&mut scene, bar);
+        let mut glass = Backdrop::new(&ctx);
+        glass.set(&mut scene, &ctx, bar, Some(sheet_pane((280, 120), &[])));
+        let ghost = scene.rect_create(layers.overlay, (40, 40), [0.0, 0.0, 0.0, 1.0]);
+        scene.set_position(ghost, 140, 60);
+        let red = red_at(
+            &mut renderer,
+            &ctx,
+            &scene,
+            Material::Frosted,
+            &[(160, 80), (134, 80), (40, 80)],
+        );
+        assert_eq!(red[0], 0, "the drag image shows");
+        assert_eq!(
+            red[1], red[2],
+            "no halo: the glass beside it reads as the glass far from it"
+        );
+    }
 }
