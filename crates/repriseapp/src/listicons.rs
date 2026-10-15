@@ -1,6 +1,7 @@
 //! The icons a folder listing wears, fetched again when its window draws at a new scale.
 
 use std::path::Path;
+use std::rc::Rc;
 use std::sync::mpsc::{Receiver, channel};
 
 use crate::Waker;
@@ -86,6 +87,21 @@ impl ListIcons {
             scale,
             files: None,
         };
+    }
+
+    /// `worn`, an icon an entry wears at `px`, from `cache` at the cache's scale: a theme icon
+    /// fetched, an icon file only as the cache already holds it. None when the listing does not
+    /// know `worn` or the cache has no such file.
+    pub fn fetch(&self, worn: &Rc<Canvas>, px: i32, cache: &mut IconCache) -> Option<Canvas> {
+        let name = self.icons.name_of(worn)?;
+        if name.starts_with('/') {
+            cache
+                .file_put(name, px)
+                .flatten()
+                .map(std::sync::Arc::unwrap_or_clone)
+        } else {
+            cache.get(name, px)
+        }
     }
 
     /// The window draws at `scale`, `cache`'s scale: `entries` wear its theme icons now, and the
