@@ -208,7 +208,9 @@ pub fn glance_in(
             .and_then(|to| apps::mime_of_in(db, &to)),
         _ => None,
     };
-    let opens_with_entry = if is_dir {
+    // A program runs when opened, so it opens with nothing; its sheet names it instead.
+    let program = !is_dir && crate::program::is_program(path, &meta);
+    let opens_with_entry = if is_dir || program {
         None
     } else {
         mime.or(target_mime)
@@ -228,6 +230,7 @@ pub fn glance_in(
             }
             _ => name.to_string(),
         }),
+        _ if program => Some(name.to_string()),
         _ => None,
     };
     let own = if symlink { &link } else { &meta };
@@ -1789,6 +1792,38 @@ mod tests {
         let bare = glance_in(&link, "Song", &[], &db).unwrap();
         assert_eq!(bare.opens_with, None);
         assert_eq!(bare.description.as_deref(), Some("song.rtest"));
+    }
+
+    /// Open runs an executable script, so its sheet names the script instead of the editor its type
+    /// opens in; the same script without the execute bit opens there.
+    #[test]
+    fn an_executable_script_opens_with_nothing_and_is_described_by_its_name() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let f = dir.path().join("hi.sh");
+        std::fs::write(&f, "#!/bin/sh\n").unwrap();
+        let db = apps::MimeDb::parse(["50:application/x-shellscript:*.sh\n"]);
+        let editor = AppEntry {
+            name: "Editor".into(),
+            exec_line: "editor %f".into(),
+            terminal: false,
+            id: "editor.desktop".into(),
+            icon: Some("text-editor".into()),
+            startup_wm_class: None,
+            categories: Vec::new(),
+            mime_types: vec!["application/x-shellscript".into()],
+            shown: true,
+        };
+        let apps = [editor];
+        std::fs::set_permissions(&f, PermissionsExt::from_mode(0o644)).unwrap();
+        let plain = glance_in(&f, "hi", &apps, &db).unwrap();
+        assert_eq!(plain.opens_with.as_deref(), Some("Editor"));
+        assert_eq!(plain.description, None);
+        std::fs::set_permissions(&f, PermissionsExt::from_mode(0o755)).unwrap();
+        let program = glance_in(&f, "hi", &apps, &db).unwrap();
+        assert_eq!(program.opens_with, None);
+        assert_eq!(program.opens_with_icon, None);
+        assert_eq!(program.description.as_deref(), Some("hi"));
     }
 
     #[test]
