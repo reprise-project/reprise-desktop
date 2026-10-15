@@ -638,17 +638,31 @@ impl Host {
             },
         };
         let path = reprisefs::ops::lexical(&raw);
-        if path.is_dir() {
-            return Ok(Resolved::Folder(self.folders.id(&path), path));
-        }
-        match path.parent() {
-            Some(p) if p.is_dir() => Ok(Resolved::File(path)),
-            _ => Err(format!(
+        let probe = |p: &Path| (p.is_dir(), p.parent().is_some_and(Path::is_dir));
+        match folders_within(&path, RESOLVE_WAIT, probe) {
+            None => Err(format!("{} is not responding.", path.display())),
+            Some((true, _)) => Ok(Resolved::Folder(self.folders.id(&path), path)),
+            Some((false, true)) => Ok(Resolved::File(path)),
+            Some((false, false)) => Err(format!(
                 "The folder {} does not exist.",
                 path.parent().unwrap_or(&path).display()
             )),
         }
     }
+}
+
+/// How long [`Host::resolve`] waits on a typed path's folders before it calls them dead.
+const RESOLVE_WAIT: std::time::Duration = std::time::Duration::from_secs(2);
+
+/// `probe(path)` run on a thread, so a mount that stopped answering hangs the thread and not the
+/// loop: `None` when it has not answered within `wait`.
+fn folders_within(
+    path: &Path,
+    wait: std::time::Duration,
+    probe: impl FnOnce(&Path) -> (bool, bool) + Send + 'static,
+) -> Option<(bool, bool)> {
+    let path = path.to_path_buf();
+    Job::spawn(None, move || probe(&path)).wait(wait)
 }
 
 pub fn taken(path: &Path) -> bool {
@@ -865,6 +879,23 @@ mod tests {
         let mut h = host_in(&t);
         assert!(matches!(h.resolve("~"), Ok(Resolved::Folder(_, p)) if p == home));
         std::fs::remove_dir_all(&t).ok();
+    }
+
+    #[test]
+    fn a_folder_probe_that_never_answers_gives_up_after_the_wait() {
+        let (_keep, hang) = std::sync::mpsc::channel::<()>();
+        let start = std::time::Instant::now();
+        let wait = std::time::Duration::from_millis(50);
+        let got = folders_within(Path::new("/srv/dead"), wait, move |_| {
+            hang.recv().ok();
+            (true, true)
+        });
+        assert_eq!(got, None);
+        assert!(start.elapsed() < std::time::Duration::from_secs(5));
+        assert_eq!(
+            folders_within(Path::new("/"), wait * 100, |p| (p.is_dir(), false)),
+            Some((true, false))
+        );
     }
 
     #[test]

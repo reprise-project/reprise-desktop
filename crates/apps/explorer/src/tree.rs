@@ -1,7 +1,8 @@
-use crate::Explorer;
 use crate::foldertree::{self, Inputs, Kids};
 use crate::place::Place;
+use crate::{Explorer, LIST_WAIT};
 use repriseapp::Ctx;
+use repriseapp::listjob::Job;
 use reprisekit::controls::treeview;
 use std::path::PathBuf;
 
@@ -16,20 +17,89 @@ impl Explorer {
         foldertree::build(&mut self.tree, &mut self.tree_places, &inp, &mut ctx.icons);
     }
 
+    /// Reads a Folders node's children on a thread. One that takes longer than [`LIST_WAIT`] (a
+    /// dead mount) fills on a later wake ([`Explorer::take_fills`]), the node open and empty until then.
     pub fn fill_node(&mut self, path: Vec<usize>, ctx: &mut Ctx) {
+        let Some(place) = self.place_of(&path) else {
+            return;
+        };
+        if self.filling.iter().any(|(p, _)| *p == place) {
+            return;
+        }
+        let job = Job::spawn(Some(&ctx.wake), self.kids_reader(&path, place.clone()));
+        match job.wait(LIST_WAIT) {
+            Some(kids) => self.fill_read(&place, kids, ctx),
+            None => self.filling.push((place, job)),
+        }
+    }
+
+    /// The read of the children of the node at `path`, standing for `place`, for a thread.
+    pub(crate) fn kids_reader(
+        &self,
+        path: &[usize],
+        place: Place,
+    ) -> impl FnOnce() -> Kids + Send + 'static {
+        let known: Vec<Place> = self
+            .tree
+            .node(path)
+            .map(|n| {
+                n.children
+                    .iter()
+                    .map(|c| self.tree_places[c.id as usize].clone())
+                    .collect()
+            })
+            .unwrap_or_default();
+        let show_hidden = self.settings.show_hidden;
+        let (drives, volumes) = (self.drives.clone(), self.volumes.clone());
+        let mounts = self.drive_mounts.clone();
+        move || {
+            let inp = Inputs {
+                show_hidden,
+                drives: &drives,
+                volumes: &volumes,
+                drive_mounts: &mounts,
+            };
+            let known: Vec<&Place> = known.iter().collect();
+            foldertree::read_kids(&place, &inp, &known)
+        }
+    }
+
+    /// Fills the node standing for `place` from `kids`, if the tree still holds it.
+    fn fill_read(&mut self, place: &Place, kids: Kids, ctx: &mut Ctx) {
+        let Some(path) = self.tree_path_of(place) else {
+            return;
+        };
         let inp = Inputs {
             show_hidden: self.settings.show_hidden,
             drives: &self.drives,
             volumes: &self.volumes,
             drive_mounts: &self.drive_mounts,
         };
-        foldertree::fill(
+        foldertree::fill_with(
             &mut self.tree,
             &mut self.tree_places,
             path,
+            kids,
             &inp,
             &mut ctx.icons,
         );
+    }
+
+    /// Fills the nodes whose late reads ([`Explorer::fill_node`]) answered: true when one did.
+    pub(crate) fn take_fills(&mut self, ctx: &mut Ctx) -> bool {
+        let mut done = Vec::new();
+        self.filling.retain(|(place, job)| match job.take() {
+            Some(kids) => {
+                done.push((place.clone(), kids));
+                false
+            }
+            None => true,
+        });
+        let filled = !done.is_empty();
+        for (place, kids) in done {
+            self.fill_read(&place, kids, ctx);
+        }
+        filled
     }
 
     pub fn place_of(&self, path: &[usize]) -> Option<Place> {
