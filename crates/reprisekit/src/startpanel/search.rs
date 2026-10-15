@@ -1,6 +1,7 @@
 //! The Start panel's search mode, piece by piece, through a style's `Part::Start*` parts: the search
 //! field, a result row and a group's header. The Glass Start panel and the launcher (under a look with
-//! glass) draw with them. Every rect is in device pixels at scale `s`; the offsets in [`at`] are design pixels.
+//! glass) draw with them. Every rect is in device pixels; the offsets in [`at`] are design pixels at
+//! 100% text, grown and scaled through a [`Grow`].
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -10,7 +11,7 @@ use crate::raster::{Canvas, Rect};
 use crate::style::{Part, State, Style};
 use crate::text::TextRenderer;
 use crate::textedit::{TextEdit, edit_first_visible};
-use crate::theme::{Color, FontConfig};
+use crate::theme::{Color, FontConfig, TextUnits};
 
 pub const TEXT_PX: u32 = 12;
 /// A search group's header, a size up: its capitals stand 11 rows tall.
@@ -23,6 +24,38 @@ pub const INK_STRONG: u32 = 0x000000;
 pub const INK_CUE: u32 = 0x6D6D6D;
 pub const INK_GREYED: u32 = 0x6D6D6D;
 pub const INK_GROUP: u32 = 0x1E3287;
+
+/// How design pixels land on the canvas: grown by the text size `u`, then times the scale `s`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Grow {
+    pub s: i32,
+    pub u: TextUnits,
+}
+
+impl Grow {
+    /// Scale `s` at 100% text.
+    pub fn at(s: i32) -> Grow {
+        Grow {
+            s,
+            u: TextUnits::default(),
+        }
+    }
+
+    pub fn len(self, v: i32) -> i32 {
+        self.u.len(v) * self.s
+    }
+
+    /// A font size of `px` at 100%.
+    pub fn px(self, px: u32) -> u32 {
+        self.u.px(px) * self.s as u32
+    }
+
+    /// Where a thing `size` design px long that keeps its size starts, for one placed `off` in at
+    /// 100%: its centre moves with the text.
+    pub fn kept(self, off: i32, size: i32) -> i32 {
+        (self.u.len(off + size / 2) - size / 2) * self.s
+    }
+}
 
 pub fn ink(rgb: u32) -> Color {
     Color::rgb((rgb >> 16) as u8, (rgb >> 8) as u8, rgb as u8)
@@ -88,6 +121,14 @@ pub fn line(
     face.measure(&shown, false, size)
 }
 
+/// A glyph part's size in design pixels; (0, 0) when the style lacks it.
+pub fn glyph_size(style: &Style, part: Part) -> (i32, i32) {
+    style.part(part).map_or((0, 0), |img| {
+        let f = img.frame(State::Normal);
+        (f.width / img.scale, f.height / img.scale)
+    })
+}
+
 pub fn glyph(canvas: &mut Canvas, style: &Style, (x, y): (i32, i32), part: Part, s: i32) {
     let Some(img) = style.part(part) else {
         return;
@@ -121,10 +162,11 @@ pub fn field(
     edit: &TextEdit,
     focused: bool,
     caret: bool,
-    s: i32,
+    g: Grow,
 ) {
-    let size = TEXT_PX * s as u32;
-    let from_right = |x: i32| r.width - (FIELD.0 - x) * s;
+    let s = g.s;
+    let size = g.px(TEXT_PX);
+    let from_right = |x: i32| r.width - g.len(FIELD.0 - x);
     style.draw(
         canvas,
         r.inset(-s),
@@ -152,16 +194,16 @@ pub fn field(
     let caret = caret && bar_on;
     let query = edit.text.as_str();
     let (cx, cy, ch) = at::CARET;
-    let row = Rect::new(r.x, r.y + cy * s, r.width, ch * s);
-    let mut bar = Rect::new(r.x + cx * s, row.y, s, row.height);
+    let row = Rect::new(r.x, r.y + g.len(cy), r.width, g.len(ch));
+    let mut bar = Rect::new(r.x + g.len(cx), row.y, s, row.height);
     if query.is_empty() {
-        let (x, y) = (r.x + at::CUE_PEN * s, r.y + at::CUE_BASE * s);
+        let (x, y) = (r.x + g.len(at::CUE_PEN), r.y + g.len(at::CUE_BASE));
         line(canvas, cue, x, y, clip, SEARCH_CUE, ink(INK_CUE), size);
         if caret && focused {
             canvas.fill_rect(bar, ink(INK_STRONG));
         }
     } else {
-        let (pen, y) = (r.x + at::TYPED_PEN * s, r.y + at::CUE_BASE * s);
+        let (pen, y) = (r.x + g.len(at::TYPED_PEN), r.y + g.len(at::CUE_BASE));
         let room = clip.right() - pen - s;
         let first = edit_first_visible(text, edit, room, size, 0);
         let x_of = |i: usize| pen + text.measure(&query[first..i.max(first)], false, size);
@@ -198,7 +240,7 @@ pub fn field(
             let ul = Rect::new(x0, y + s, x1 - x0, s).intersect(&clip);
             canvas.fill_rect(ul, ink(INK_STRONG));
         }
-        let x = x_of(edit.caret().min(query.len())) + (cx - at::TYPED_PEN) * s;
+        let x = x_of(edit.caret().min(query.len())) + g.len(cx) - g.len(at::TYPED_PEN);
         bar.x = x.min(clip.right() - s);
         if caret && focused && x < clip.right() {
             canvas.fill_rect(Rect::new(x, row.y, s, row.height), ink(INK_STRONG));
@@ -212,7 +254,9 @@ pub fn field(
     } else {
         (Part::StartClear, at::CLEAR)
     };
-    glyph(canvas, style, (r.x + from_right(gx), r.y + gy * s), part, s);
+    let (w, h) = glyph_size(style, part);
+    let x = r.right() - g.kept(FIELD.0 - gx - w, w) - w * s;
+    glyph(canvas, style, (x, r.y + g.kept(gy, h)), part, s);
 }
 
 /// A result row `r`: [`Part::StartLitResult`]'s 22 px box across it when `lit`, the 16 px `icon` and
@@ -226,19 +270,21 @@ pub fn result(
     icon: Option<&Canvas>,
     name: &str,
     lit: bool,
-    s: i32,
+    g: Grow,
 ) -> i32 {
+    let s = g.s;
     if lit {
-        let b = Rect::new(r.x, r.y, r.width, at::RESULT_BOX_H * s);
+        let b = Rect::new(r.x, r.y, r.width, g.len(at::RESULT_BOX_H));
         style.draw(canvas, b, Part::StartLitResult, State::Normal, s);
     }
     if let Some(icon) = icon {
         let (x, y) = at::RESULT_ICON;
-        canvas.blit_over(r.x + x * s, r.y + y * s, icon);
+        let (w, h) = (icon.width as i32 / s, icon.height as i32 / s);
+        canvas.blit_over(r.x + g.kept(x, w), r.y + g.kept(y, h), icon);
     }
     let clip = Rect::new(r.x, r.y, r.width - 2 * s, r.height);
-    let (x, y) = (r.x + at::RESULT_PEN * s, r.y + at::RESULT_BASE * s);
-    let size = TEXT_PX * s as u32;
+    let (x, y) = (r.x + g.len(at::RESULT_PEN), r.y + g.len(at::RESULT_BASE));
+    let size = g.px(TEXT_PX);
     x + line(canvas, text, x, y, clip, name, ink(INK_STRONG), size)
 }
 
@@ -251,14 +297,15 @@ pub fn header(
     r: Rect,
     clip: Rect,
     title: &str,
-    s: i32,
+    g: Grow,
 ) {
-    let (x, y) = (r.x, r.y + at::HEAD_BASE * s);
-    let px = HEADER_PX * s as u32;
+    let s = g.s;
+    let (x, y) = (r.x, r.y + g.len(at::HEAD_BASE));
+    let px = g.px(HEADER_PX);
     let w = line(canvas, text, x, y, clip, title, ink(INK_GROUP), px);
-    let x0 = x + w + at::HEAD_RULE_GAP * s;
+    let x0 = x + w + g.len(at::HEAD_RULE_GAP);
     let x1 = r.right() + s;
-    let ry = r.y + at::HEAD_RULE_Y * s;
+    let ry = r.y + g.len(at::HEAD_RULE_Y);
     style.draw(
         canvas,
         Rect::new(x0, ry, x1 - x0, s),
@@ -284,7 +331,17 @@ mod tests {
         let draw = |preedit: Option<Preedit>, focused: bool| {
             let mut c = Canvas::new(240, 32);
             c.set_preedit(preedit);
-            field(&mut c, &st, &text, &text, r, &edit, focused, true, 1);
+            field(
+                &mut c,
+                &st,
+                &text,
+                &text,
+                r,
+                &edit,
+                focused,
+                true,
+                Grow::at(1),
+            );
             c
         };
         let mut plain = draw(None, true);
@@ -328,7 +385,7 @@ mod tests {
         let edit = TextEdit::new("ab", false);
         let mut c = Canvas::new(240, 32);
         c.set_preedit(Preedit::new("ni".into(), 0, 2));
-        field(&mut c, &st, &text, &text, r, &edit, true, true, 1);
+        field(&mut c, &st, &text, &text, r, &edit, true, true, Grow::at(1));
         let (ab, ni) = (
             text.measure("ab", false, TEXT_PX),
             text.measure("ni", false, TEXT_PX),

@@ -1,5 +1,6 @@
 //! Where the Start panel's parts go in each mode, and which spot a point falls on. Panel coordinates: the glass's top-left is (0, 0); the user picture stands above it, so the canvas starts above 0.
-//! The panel stands 411x476. With both pinned and frequent programs the rule between them adds 4 px and everything from All Programs down moves with it; program rows that do not fit above the All Programs rule are not shown.
+//! The panel stands 411x476 at 100% text and grows with the text size ([`StartPanel::text`]).
+//! With both pinned and frequent programs the rule between them adds 4 px and everything from All Programs down moves with it; program rows that do not fit above the All Programs rule are not shown.
 
 use super::{Mode, Spot, StartPanel};
 use crate::raster::Rect;
@@ -181,7 +182,62 @@ pub fn jumps_shown(p: &StartPanel) -> usize {
     p.jump.len().min((room / JUMP_ROW_H).max(0) as usize)
 }
 
+/// Where the parts go at the panel's text size: the 100% layout with every rect grown
+/// ([`crate::theme::TextUnits::rect`]). Rules keep their thickness, the tree's bar its width at the rows' right,
+/// and the user picture's frame its size, centred where the grown frame would be.
 pub fn layout(p: &StartPanel) -> Layout {
+    let l = layout_100(p);
+    let u = p.text;
+    if u.is_one() {
+        return l;
+    }
+    let kept = |r: Rect| {
+        let mid = u.len(r.x + r.width / 2);
+        Rect::new(mid - r.width / 2, r.y, r.width, r.height)
+    };
+    let tree_bar = l.tree_bar.map(|r| {
+        let g = u.rect(r);
+        Rect::new(g.right() - r.width, g.y, r.width, g.height)
+    });
+    let spots = l
+        .spots
+        .iter()
+        .map(|&(k, r)| {
+            let g = match k {
+                Spot::Picture => kept(r),
+                _ => u.rect(r),
+            };
+            match (k, tree_bar) {
+                (Spot::Tree(_), Some(bar)) => (k, Rect::new(g.x, g.y, bar.x - g.x, g.height)),
+                _ => (k, g),
+            }
+        })
+        .collect();
+    let rules = l
+        .rules
+        .iter()
+        .map(|&r| {
+            let g = u.rect(r);
+            Rect::new(g.x, u.len(r.y), g.width, r.height)
+        })
+        .collect();
+    let panel = u.rect(l.panel);
+    let picture = l.picture.map(kept);
+    Layout {
+        panel,
+        canvas: picture.map_or(panel, |r| panel.union(&r)),
+        pane: u.rect(l.pane),
+        jump_pane: l.jump_pane.map(|r| u.rect(r)),
+        spots,
+        rules,
+        headers: l.headers.iter().map(|&(g, r)| (g, u.rect(r))).collect(),
+        picture,
+        tree_bar,
+        scale: l.scale,
+    }
+}
+
+fn layout_100(p: &StartPanel) -> Layout {
     let g = grow(p);
     let mode = p.mode();
     let panel = Rect::new(
@@ -322,6 +378,7 @@ mod tests {
     use crate::startpanel::tests::{place, prow, row};
     use crate::startpanel::{Key, ResultGroup, TreeRow};
     use crate::textedit::EditKey;
+    use crate::theme::TextUnits;
 
     #[test]
     fn home_puts_the_pane_rows_and_buttons_where_the_design_says() {
@@ -491,5 +548,46 @@ mod tests {
         assert_eq!(hit(&l, 30, 30), Some(Spot::Program(0)));
         assert_eq!(hit(&l, 330, 0), Some(Spot::Picture));
         assert_eq!(hit(&l, 2, 2), None, "the glass edge");
+    }
+
+    /// At 200% every part's rect doubles and as many rows show; the rules keep their pixel, the
+    /// picture's frame its 64x62 centred where the doubled frame would be.
+    #[test]
+    fn at_200_percent_the_panel_grows_and_its_rules_and_picture_keep_their_size() {
+        let mut p = StartPanel::new();
+        p.frequent = (0..12).map(|k| prow(&format!("App {k}"), false)).collect();
+        p.text = TextUnits::new(22, 11);
+        let l = layout(&p);
+        assert_eq!(l.panel, Rect::new(0, 0, 2 * W, 2 * H));
+        assert_eq!(l.pane, Rect::new(18, 18, 500, 916));
+        assert_eq!(l.rect(Spot::Program(1)), Some(Rect::new(22, 96, 492, 76)));
+        assert_eq!(l.rect(Spot::Search), Some(Rect::new(42, 868, 444, 44)));
+        assert_eq!(l.rect(Spot::Shutdown), Some(Rect::new(534, 868, 144, 44)));
+        assert_eq!(programs_shown(&p), 10);
+        assert_eq!(l.rules, [Rect::new(40, 782, 464, 1)], "a pixel thick");
+        let frame = Rect::new(640, -OVERHANG, 64, 62);
+        assert_eq!(l.picture, Some(frame));
+        assert_eq!(l.rect(Spot::Picture), Some(frame));
+        assert_eq!(l.canvas, Rect::new(0, -OVERHANG, 2 * W, 2 * H + OVERHANG));
+        assert_eq!(hit(&l, 30, 100), Some(Spot::Program(1)));
+    }
+
+    /// The tree's bar keeps its 16 px at the grown rows' right, and the rows reach it.
+    #[test]
+    fn at_200_percent_the_tree_bar_keeps_its_width() {
+        let mut p = StartPanel::new();
+        p.tree = (0..25)
+            .map(|k| TreeRow::App {
+                name: format!("App {k}"),
+                icon: None,
+                depth: 0,
+            })
+            .collect();
+        p.set_mode(Mode::Programs);
+        p.text = TextUnits::new(22, 11);
+        assert_eq!(tree_capacity(&p), 20);
+        let l = layout(&p);
+        assert_eq!(l.tree_bar, Some(Rect::new(500, 20, 16, 760)));
+        assert_eq!(l.rect(Spot::Tree(1)), Some(Rect::new(22, 58, 478, 38)));
     }
 }

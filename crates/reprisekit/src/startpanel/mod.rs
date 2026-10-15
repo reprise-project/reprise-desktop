@@ -7,6 +7,7 @@ pub mod search;
 
 use crate::raster::Canvas;
 use crate::textedit::{EditKey, TextEdit};
+use crate::theme::TextUnits;
 
 pub const ALL_PROGRAMS: &str = "All Programs";
 pub const BACK: &str = "Back";
@@ -145,6 +146,9 @@ pub struct StartPanel {
     pub results: Vec<ResultGroup>,
     pub jump: Vec<ResultRow>,
     pub jump_title: String,
+    /// The text size the panel is laid out and drawn at: its layout grows by it, icons, glyphs and
+    /// the user picture keep their size.
+    pub text: TextUnits,
     /// Private so every write goes through `key` or `paste`, which keep
     /// the mode in step with the query.
     edit: TextEdit,
@@ -181,6 +185,7 @@ impl StartPanel {
             results: Vec::new(),
             jump: Vec::new(),
             jump_title: String::new(),
+            text: TextUnits::default(),
             edit: TextEdit::new("", false),
             mode: Mode::Home,
             before_search: Mode::Home,

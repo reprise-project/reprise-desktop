@@ -589,7 +589,17 @@ fn glass_body(
     let face = crate::look::caption_text(style);
     let cue = search::italic(&style.caption_text.font());
     let field = lay.field.scaled(s);
-    search::field(c, style, &face, &cue, field, &l.edit, true, caret, s);
+    search::field(
+        c,
+        style,
+        &face,
+        &cue,
+        field,
+        &l.edit,
+        true,
+        caret,
+        search::Grow::at(s),
+    );
     let Some(pane) = lay.list else {
         return;
     };
@@ -600,12 +610,12 @@ fn glass_body(
         let r = r.scaled(s);
         if let Some(h) = l.heading(i) {
             let title = format!("{h} ({})", l.heading_rows(h));
-            search::header(c, style, &face, r, pane, &title, s);
+            search::header(c, style, &face, r, pane, &title, search::Grow::at(s));
             continue;
         }
         let (name, lit) = (&l.list.items[i], l.list.selected == Some(i));
         let icon = l.icons.get(i).and_then(Option::as_ref);
-        let end = search::result(c, style, &face, r, icon, name, lit, s);
+        let end = search::result(c, style, &face, r, icon, name, lit, search::Grow::at(s));
         if let Some(d) = l.list.detail.get(i).filter(|d| !d.is_empty()) {
             let x = end + listbox::DETAIL_GAP * s;
             let y = r.y + search::at::RESULT_BASE * s;
