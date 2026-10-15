@@ -1546,8 +1546,8 @@ impl State {
                 self.spawn_app_activated(&argv, &e.id);
             }
             None => {
-                let argv = self.open_file_argv(path);
-                self.spawn_argv_activated(&argv);
+                let open = self.open_file(path);
+                self.spawn_opening_activated(&open);
             }
         }
     }
@@ -2011,12 +2011,15 @@ impl State {
             MenuPick::Document(d) => {
                 // Documents lists the document folders, then recent files; neither is stat'ed.
                 let folder = self.recent.is_document_dir(&d);
-                let argv = if folder {
-                    reprisefs::apps::open_folder_argv(&d)
+                let open = if folder {
+                    reprisefs::props::Opening {
+                        argv: reprisefs::apps::open_folder_argv(&d),
+                        app: None,
+                    }
                 } else {
-                    self.open_file_argv(&d)
+                    self.open_file(&d)
                 };
-                self.spawn_argv_activated(&argv);
+                self.spawn_opening_activated(&open);
             }
             MenuPick::Window { window, row } => self.window_menu_action(window, row),
             MenuPick::Taskbar(cmd) => self.taskbar_command(cmd),
@@ -2050,14 +2053,14 @@ impl State {
         }
     }
 
-    /// The argument vector that opens the recent file `path`, with no stat.
-    pub fn open_file_argv(&self, path: &std::path::Path) -> Vec<std::ffi::OsString> {
+    /// How the recent file `path` opens, with no stat.
+    pub fn open_file(&self, path: &std::path::Path) -> reprisefs::props::Opening {
         let mime = (path.file_name())
             .and_then(|n| reprisefs::apps::mime_globs().mime_of_name(&n.to_string_lossy()));
         let default = mime
             .as_deref()
             .and_then(|m| reprisefs::props::default_app_entry(m, &self.app_index));
-        reprisefs::props::open_file_argv(path, default, &self.config.terminal)
+        reprisefs::props::open_file(path, default, &self.config.terminal)
     }
 
     fn taskbar_command(&mut self, cmd: TaskbarCommand) {

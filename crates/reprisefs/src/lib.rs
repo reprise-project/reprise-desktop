@@ -28,6 +28,7 @@ pub mod props;
 pub mod quicklaunch;
 pub mod recent;
 pub mod replace;
+pub mod scope;
 pub mod search;
 pub mod sendto;
 pub mod sysinfo;

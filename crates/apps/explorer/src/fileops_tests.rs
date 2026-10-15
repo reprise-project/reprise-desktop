@@ -7,6 +7,7 @@ use crate::place::Place;
 use crate::tests::test_ctx;
 use reprisefs::apps::AppEntry;
 use reprisefs::sendto::SendToRow;
+use std::ffi::OsString;
 
 /// Alt+`c` as the seat delivers it: the access key `chooser_event` reads off `KeyInput`.
 fn key_event_alt(c: char) -> repriseapp::Event {
@@ -1347,9 +1348,10 @@ fn close_when_idle_quits_at_once() {
     assert!(!ex.closing);
 }
 
-/// Open With on one entry of a multi-selection runs the program and raises the chooser on the entry the menu was built for.
+/// Open With on one entry of a multi-selection runs the program in its app scope and raises the
+/// chooser on the entry the menu was built for.
 #[test]
-fn open_with_acts_on_the_entry_the_menu_was_built_for() {
+fn open_with_runs_the_program_as_its_entry_on_the_entry_the_menu_was_built_for() {
     let dir = tempfile::tempdir().expect("a temp dir");
     std::fs::write(dir.path().join("a.txt"), "1").expect("write");
     std::fs::write(dir.path().join("b.txt"), "2").expect("write");
@@ -1372,6 +1374,11 @@ fn open_with_acts_on_the_entry_the_menu_was_built_for() {
     assert_eq!(
         argv.last(),
         Some(&dir.path().join("b.txt").into_os_string())
+    );
+    assert_eq!(
+        reply.spawn_app.as_deref(),
+        Some("editor.desktop"),
+        "in the program's app scope"
     );
 
     ex.run(Command::ChooseProgram, &mut ctx);
@@ -1449,6 +1456,7 @@ fn chooser_ok_runs_the_program_on_release() {
     let reply = ex.dialog_event(release, &mut ctx);
     let argv = reply.spawn.first().expect("the release runs the program");
     assert_eq!(argv.last(), Some(&path.clone().into_os_string()));
+    assert_eq!(reply.spawn_app.as_deref(), Some("editor.desktop"));
     assert!(ex.dialog.is_none(), "the chooser closes");
 }
 
