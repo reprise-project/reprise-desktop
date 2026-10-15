@@ -87,6 +87,9 @@ desktop and stays out of the way when it's missing.
   tray icon. An account in CUPS's admin group (`SystemGroup` in
   `/etc/cups/cups-files.conf`, `wheel` on most systems) manages printers
   without a password, since Reprise talks to CUPS over its local socket.
+  Reprise follows CUPS through its D-Bus events, so cupsd may exit when idle,
+  even with Printers open; it does so only with `WebInterface No` in
+  `/etc/cups/cupsd.conf`.
 - cups-filters, for driverless IPP Everywhere and AirPrint printers
 - cups-pk-helper, so accounts outside CUPS's admin group can manage printers
   after the admin password prompt
