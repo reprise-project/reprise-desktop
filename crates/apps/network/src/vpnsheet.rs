@@ -1,6 +1,8 @@
 //! The VPN Properties sheets: a WireGuard connection's two pages (interface,
-//! and peers in a list with the selected one's fields under it) and a plugin
-//! VPN's one page (name and `key = value` settings). Both hand back what to save.
+//! and peers in a list with the selected one's fields under it), an OpenVPN
+//! connection's two (gateway and sign-in, then certificates and keys), and any
+//! other plugin VPN's one page (name and `key = value` settings). Each hands
+//! back what to save.
 
 use std::cell::Cell;
 
@@ -12,6 +14,7 @@ use reprisekit::raster::Rect;
 use reprisekit::textedit::TextEdit;
 
 use crate::nm::{self, Psk};
+use crate::ovpn;
 use crate::wg::{self, Field};
 
 pub const CLIENT: (i32, i32) = (420, 384);
@@ -51,6 +54,9 @@ pub enum Outcome {
         name: String,
         data: Vec<(String, String)>,
     },
+    SaveOpenVpn(Box<ovpn::Config>),
+    /// A Browse... button: pick a file for edit field `id`.
+    Browse(&'static str),
     /// OK found something wrong; the sheet stays open on that field and
     /// the host says why.
     Problem(String),
@@ -637,6 +643,276 @@ impl PluginSheet {
     }
 }
 
+pub const OVPN_TABS: [&str; 2] = ["General", "Authentication"];
+const TAB_GENERAL: usize = 0;
+const TAB_AUTH: usize = 1;
+const BROWSE_W: i32 = 75;
+pub const KEEP_PASSWORD_CUE: &str = "Leave empty to keep the saved password";
+const STATIC_GROUP: Rect = Rect::new(12, ROW_Y + 4 * PITCH + 2, CLIENT.0 - 24, 4 * PITCH + 34);
+const STATIC_ROW_Y: i32 = STATIC_GROUP.y + 22;
+
+fn orow(i: i32) -> i32 {
+    ROW_Y + i * PITCH
+}
+
+fn olabel(id: &'static str, i: i32, text: &str) -> Item {
+    Item::label_at(id, LABEL_X, orow(i) + LABEL_DY, LABEL_W, text)
+}
+
+/// A file field: its label, the path and a Browse... button at the right.
+fn file_row(id: &'static str, browse: &'static str, y: i32, text: &str) -> [Item; 2] {
+    [
+        edit(id, FIELD_X, y, FIELD_W - BROWSE_W - 6, text, false),
+        Item::button_at(
+            browse,
+            FIELD_RIGHT - BROWSE_W,
+            y - (BUTTON_H - FIELD_H) / 2,
+            BROWSE_W,
+            "Browse...",
+            true,
+        ),
+    ]
+}
+
+fn static_label(id: &'static str, i: i32, text: &str) -> Item {
+    Item::label_at(
+        id,
+        PEER_LABEL_X,
+        STATIC_ROW_Y + i * PITCH + LABEL_DY,
+        FIELD_X - PEER_LABEL_X - 2,
+        text,
+    )
+}
+
+fn general_page(cfg: &ovpn::Config) -> Form {
+    let types: Vec<&str> = ovpn::Auth::ALL.iter().map(|a| a.label()).collect();
+    let mut f = Form::new(vec![
+        olabel("name_l", 0, "Connection &name:"),
+        edit("name", FIELD_X, orow(0), FIELD_W, &cfg.name, false),
+        olabel("gateway_l", 1, "&Gateway:"),
+        edit("gateway", FIELD_X, orow(1), FIELD_W, &cfg.gateway, false),
+        olabel("type_l", 2, "&Type:"),
+        Item::combo("type", FIELD_X, orow(2), FIELD_W, &types, types.len()),
+        olabel("user_l", 3, "&User name:"),
+        edit("user", FIELD_X, orow(3), FIELD_W, &cfg.user, false),
+        olabel("password_l", 4, "&Password:"),
+        edit("password", FIELD_X, orow(4), FIELD_W, "", true),
+        Item::lines_at(
+            "note",
+            LABEL_X,
+            orow(5) + 8,
+            FIELD_RIGHT - LABEL_X,
+            &[
+                "Separate several gateways with commas.",
+                "Settings not shown here are kept as they are.",
+            ],
+        ),
+    ]);
+    f.set_combo("type", cfg.auth.index());
+    set_cue(&mut f, "password", KEEP_PASSWORD_CUE);
+    f
+}
+
+fn auth_page(cfg: &ovpn::Config) -> Form {
+    let mut items = vec![olabel("ca_l", 0, "&CA certificate:")];
+    items.extend(file_row("ca", "ca_browse", orow(0), &cfg.ca));
+    items.push(olabel("cert_l", 1, "&User certificate:"));
+    items.extend(file_row("cert", "cert_browse", orow(1), &cfg.cert));
+    items.push(olabel("key_l", 2, "Private &key:"));
+    items.extend(file_row("key", "key_browse", orow(2), &cfg.key));
+    items.push(olabel("keypass_l", 3, "Key &password:"));
+    items.push(edit("keypass", FIELD_X, orow(3), FIELD_W, "", true));
+    items.push(Item::group("static_g", STATIC_GROUP, "Static key"));
+    items.push(static_label("static_l", 0, "Key &file:"));
+    items.extend(file_row(
+        "static",
+        "static_browse",
+        STATIC_ROW_Y,
+        &cfg.static_key,
+    ));
+    items.push(static_label("direction_l", 1, "&Direction:"));
+    items.push(Item::combo(
+        "direction",
+        FIELD_X,
+        STATIC_ROW_Y + PITCH,
+        70,
+        &ovpn::DIRECTIONS,
+        ovpn::DIRECTIONS.len(),
+    ));
+    items.push(static_label("local_l", 2, "&Local IP:"));
+    items.push(edit(
+        "local",
+        FIELD_X,
+        STATIC_ROW_Y + 2 * PITCH,
+        FIELD_W - 12,
+        &cfg.local_ip,
+        false,
+    ));
+    items.push(static_label("remote_l", 3, "&Remote IP:"));
+    items.push(edit(
+        "remote",
+        FIELD_X,
+        STATIC_ROW_Y + 3 * PITCH,
+        FIELD_W - 12,
+        &cfg.remote_ip,
+        false,
+    ));
+    let mut f = Form::new(items);
+    f.set_combo("direction", cfg.direction);
+    set_cue(&mut f, "keypass", KEEP_PASSWORD_CUE);
+    f
+}
+
+/// Which page and Browse... button each file field has.
+const FILE_FIELDS: [(&str, &str); 4] = [
+    ("ca_browse", "ca"),
+    ("cert_browse", "cert"),
+    ("key_browse", "key"),
+    ("static_browse", "static"),
+];
+
+/// An OpenVPN connection's sheet. The type greys the fields it does not use; their values stay
+/// and are saved as they are.
+pub struct OvpnSheet {
+    pub sheet: PropSheet,
+    pub conn_path: String,
+    rest: Vec<(String, String)>,
+}
+
+impl OvpnSheet {
+    pub fn new(conn_path: &str, cfg: &ovpn::Config) -> OvpnSheet {
+        let pages = vec![general_page(cfg), auth_page(cfg)];
+        let mut s = OvpnSheet {
+            sheet: PropSheet::with_buttons(&OVPN_TABS, pages, CLIENT, Buttons::OkCancel),
+            conn_path: conn_path.to_string(),
+            rest: cfg.rest.clone(),
+        };
+        s.sync_enabled();
+        s.sheet.pages[TAB_GENERAL].focus_id("name");
+        s
+    }
+
+    pub fn window_title(&self) -> String {
+        format!(
+            "{} Properties",
+            text_of(&self.sheet.pages[TAB_GENERAL], "name")
+        )
+    }
+
+    fn auth(&self) -> ovpn::Auth {
+        let i = self.sheet.pages[TAB_GENERAL]
+            .combo_selected("type")
+            .unwrap_or(0);
+        ovpn::Auth::ALL.get(i).copied().unwrap_or_default()
+    }
+
+    fn sync_enabled(&mut self) {
+        let a = self.auth();
+        let g = &mut self.sheet.pages[TAB_GENERAL];
+        for id in ["user_l", "user", "password_l", "password"] {
+            g.set_enabled(id, a.user());
+        }
+        let p = &mut self.sheet.pages[TAB_AUTH];
+        for id in ["ca_l", "ca", "ca_browse"] {
+            p.set_enabled(id, a.ca());
+        }
+        for id in [
+            "cert_l",
+            "cert",
+            "cert_browse",
+            "key_l",
+            "key",
+            "key_browse",
+            "keypass_l",
+            "keypass",
+        ] {
+            p.set_enabled(id, a.certs());
+        }
+        for id in [
+            "static_l",
+            "static",
+            "static_browse",
+            "direction_l",
+            "direction",
+            "local_l",
+            "local",
+            "remote_l",
+            "remote",
+        ] {
+            p.set_enabled(id, a == ovpn::Auth::StaticKey);
+        }
+    }
+
+    pub fn config(&self) -> ovpn::Config {
+        let g = &self.sheet.pages[TAB_GENERAL];
+        let p = &self.sheet.pages[TAB_AUTH];
+        let t = |f: &Form, id| text_of(f, id).trim().to_string();
+        ovpn::Config {
+            name: t(g, "name"),
+            gateway: t(g, "gateway"),
+            auth: self.auth(),
+            user: t(g, "user"),
+            password: Psk::new(text_of(g, "password")),
+            ca: t(p, "ca"),
+            cert: t(p, "cert"),
+            key: t(p, "key"),
+            cert_pass: Psk::new(text_of(p, "keypass")),
+            static_key: t(p, "static"),
+            direction: p.combo_selected("direction").unwrap_or(0),
+            local_ip: t(p, "local"),
+            remote_ip: t(p, "remote"),
+            rest: self.rest.clone(),
+        }
+    }
+
+    /// The file field `id` names, if it names one.
+    pub fn path_of(&self, id: &str) -> Option<std::path::PathBuf> {
+        let t = text_of(&self.sheet.pages[TAB_AUTH], id).trim();
+        (!t.is_empty()).then(|| t.into())
+    }
+
+    /// The file picked for field `id` by its Browse... button.
+    pub fn set_path(&mut self, id: &str, path: &str) {
+        let p = &mut self.sheet.pages[TAB_AUTH];
+        set_field(p, id, path);
+        p.focus_id(id);
+    }
+
+    pub fn event(&mut self, ev: propsheet::Event) -> Outcome {
+        match ev {
+            propsheet::Event::Cancel | propsheet::Event::Page(_, form::Event::Cancel) => {
+                Outcome::Close
+            }
+            propsheet::Event::Ok | propsheet::Event::Page(_, form::Event::Default) => {
+                let cfg = self.config();
+                match ovpn::check(&cfg) {
+                    Some((id, text)) => {
+                        let tab = if ["name", "gateway", "user"].contains(&id) {
+                            TAB_GENERAL
+                        } else {
+                            TAB_AUTH
+                        };
+                        self.sheet.open_tab(tab);
+                        self.sheet.pages[tab].focus_id(id);
+                        Outcome::Problem(text.into())
+                    }
+                    None => Outcome::SaveOpenVpn(Box::new(cfg)),
+                }
+            }
+            propsheet::Event::Page(TAB_GENERAL, form::Event::Changed("type")) => {
+                self.sync_enabled();
+                Outcome::Redraw
+            }
+            propsheet::Event::Page(TAB_AUTH, form::Event::Pressed(b)) => FILE_FIELDS
+                .iter()
+                .find(|(button, _)| *button == b)
+                .map_or(Outcome::Redraw, |(_, id)| Outcome::Browse(id)),
+            propsheet::Event::None | propsheet::Event::Page(_, form::Event::None) => Outcome::None,
+            _ => Outcome::Redraw,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -689,10 +965,12 @@ mod tests {
             let plugin = PluginSheet::new("/Settings/3", "Work", "openvpn", &[])
                 .sheet
                 .pages;
+            let openvpn = OvpnSheet::new("/Settings/5", &ovpn_cfg()).sheet.pages;
             TABS.iter()
                 .map(|t| t.to_string())
                 .zip(wg)
                 .chain(plugin.into_iter().map(|p| ("plugin".into(), p)))
+                .chain(OVPN_TABS.iter().map(|t| t.to_string()).zip(openvpn))
                 .collect()
         });
         assert!(over.is_empty(), "{}", over.join("\n"));
@@ -918,8 +1196,9 @@ mod tests {
     #[test]
     fn the_pages_fit_the_sheet() {
         let s = WgSheet::new(&cfg(), None);
+        let o = OvpnSheet::new("/Settings/5", &ovpn_cfg());
         let page_bottom = CLIENT.1 - 36;
-        for page in &s.sheet.pages {
+        for page in s.sheet.pages.iter().chain(&o.sheet.pages) {
             for item in &page.items {
                 if matches!(item.id, propsheet::OK | propsheet::CANCEL) {
                     continue;
@@ -980,6 +1259,147 @@ mod tests {
         );
     }
 
+    fn ovpn_cfg() -> ovpn::Config {
+        ovpn::from_data(
+            "Office",
+            &[
+                ("connection-type".into(), "password-tls".into()),
+                ("remote".into(), "vpn.example.org:1194".into()),
+                ("username".into(), "u".into()),
+                ("ca".into(), "/srv/vpn/ca.crt".into()),
+                ("cert".into(), "/srv/vpn/u.crt".into()),
+                ("key".into(), "/srv/vpn/u.key".into()),
+                ("dev".into(), "tun".into()),
+            ],
+        )
+    }
+
+    fn live(f: &Form, id: &str) -> bool {
+        match &f.item(id).unwrap().control {
+            Control::Edit { enabled, .. } | Control::Button { enabled, .. } => *enabled,
+            Control::Combo(c) => c.enabled,
+            other => panic!("{id} is {other:?}"),
+        }
+    }
+
+    #[test]
+    fn ok_on_an_untouched_openvpn_sheet_saves_it_as_loaded() {
+        let mut s = OvpnSheet::new("/Settings/5", &ovpn_cfg());
+        assert_eq!(s.window_title(), "Office Properties");
+        assert_eq!(
+            s.event(propsheet::Event::Ok),
+            Outcome::SaveOpenVpn(Box::new(ovpn_cfg()))
+        );
+        assert_eq!(
+            cue_of(&s.sheet.pages[TAB_GENERAL], "password"),
+            KEEP_PASSWORD_CUE
+        );
+    }
+
+    #[test]
+    fn the_type_greys_the_fields_it_does_not_use() {
+        let mut s = OvpnSheet::new("/Settings/5", &ovpn_cfg());
+        let (g, a) = (TAB_GENERAL, TAB_AUTH);
+        assert!(live(&s.sheet.pages[g], "user") && live(&s.sheet.pages[a], "cert"));
+        assert!(!live(&s.sheet.pages[a], "static_browse"));
+        for (auth, user, ca, certs, stat) in [
+            (ovpn::Auth::Tls, false, true, true, false),
+            (ovpn::Auth::Password, true, true, false, false),
+            (ovpn::Auth::StaticKey, false, false, false, true),
+        ] {
+            s.sheet.pages[g].set_combo("type", auth.index());
+            s.event(propsheet::Event::Page(g, form::Event::Changed("type")));
+            let (gp, ap) = (&s.sheet.pages[g], &s.sheet.pages[a]);
+            assert_eq!(live(gp, "password"), user, "{auth:?} password");
+            assert_eq!(live(ap, "ca_browse"), ca, "{auth:?} CA");
+            assert_eq!(live(ap, "keypass"), certs, "{auth:?} key password");
+            assert_eq!(live(ap, "direction"), stat, "{auth:?} direction");
+        }
+        assert_eq!(
+            s.config().cert,
+            "/srv/vpn/u.crt",
+            "a greyed field keeps its value"
+        );
+    }
+
+    #[test]
+    fn browse_names_its_field_and_the_pick_fills_it() {
+        let mut s = OvpnSheet::new("/Settings/5", &ovpn_cfg());
+        assert_eq!(
+            s.event(propsheet::Event::Page(
+                TAB_AUTH,
+                form::Event::Pressed("key_browse")
+            )),
+            Outcome::Browse("key")
+        );
+        s.set_path("key", "/srv/vpn/new.key");
+        assert_eq!(s.config().key, "/srv/vpn/new.key");
+        assert_eq!(
+            s.path_of("ca"),
+            Some(std::path::PathBuf::from("/srv/vpn/ca.crt"))
+        );
+    }
+
+    #[test]
+    fn a_typed_password_saves_and_a_missing_file_keeps_the_sheet_open_on_it() {
+        let mut s = OvpnSheet::new("/Settings/5", &ovpn_cfg());
+        set_field(&mut s.sheet.pages[TAB_GENERAL], "password", "hunter2");
+        match s.event(propsheet::Event::Ok) {
+            Outcome::SaveOpenVpn(c) => assert_eq!(&*c.password, "hunter2"),
+            other => panic!("{other:?}"),
+        }
+        set_field(&mut s.sheet.pages[TAB_AUTH], "ca", " ");
+        assert_eq!(
+            s.event(propsheet::Event::Ok),
+            Outcome::Problem("Choose the CA certificate file.".into())
+        );
+        assert_eq!(s.sheet.tabs.open, TAB_AUTH);
+        let f = &s.sheet.pages[TAB_AUTH];
+        assert_eq!(f.focus(), f.index_of("ca"));
+    }
+
+    /// The Authentication page's pixels: live file fields in the window colour beside raised
+    /// Browse... buttons, the static key's greyed fields in the button face.
+    #[test]
+    fn the_openvpn_authentication_page_draws_live_and_greyed_fields() {
+        let theme = reprisekit::theme::Theme::default();
+        let text = reprisekit::text::TextRenderer::load(&reprisekit::theme::FontConfig::default());
+        let mut s = OvpnSheet::new("/Settings/5", &ovpn_cfg());
+        s.sheet.open_tab(TAB_AUTH);
+        let mut c = Canvas::new(CLIENT.0 as u32, CLIENT.1 as u32);
+        c.fill_rect(c.bounds(), theme.colors.button_face);
+        propsheet::draw(
+            &mut c,
+            &text,
+            &theme.paint(),
+            &s.sheet,
+            true,
+            theme.fonts.size_px,
+        );
+        let f = &s.sheet.pages[TAB_AUTH];
+        let rgb = |x, y| c.get(x, y) & 0xffffff;
+        let face = |id: &str| {
+            let r = f.item(id).unwrap().rect;
+            rgb(r.right() - 4, r.y + 3)
+        };
+        let window = theme.colors.window.argb() & 0xffffff;
+        let button = theme.colors.button_face.argb() & 0xffffff;
+        assert_eq!(face("ca"), window, "a live file field");
+        assert_eq!(face("static"), button, "a greyed file field");
+        assert_eq!(face("local"), button, "a greyed address");
+        let b = f.item("ca_browse").unwrap().rect;
+        assert_eq!(
+            rgb(b.x, b.y),
+            theme.colors.button_hilight.argb() & 0xffffff,
+            "Browse...'s raised top-left edge"
+        );
+        let ca = f.item("ca").unwrap().rect;
+        assert!(
+            (ca.x + 4..ca.right() - 4).any(|x| rgb(x, ca.y + ca.height / 2) == 0),
+            "the CA path's ink"
+        );
+    }
+
     /// Writes target/vpn-sheet-*.png, for eyeballing the layout.
     #[test]
     #[ignore]
@@ -1021,5 +1441,23 @@ mod tests {
             theme.fonts.size_px,
         );
         reprisekit::raster::write_preview(&c, "vpn-sheet-plugin.png");
+        let mut o = OvpnSheet::new("/Settings/5", &ovpn_cfg());
+        for (i, name) in ["vpn-sheet-openvpn.png", "vpn-sheet-openvpn-auth.png"]
+            .iter()
+            .enumerate()
+        {
+            o.sheet.open_tab(i);
+            let mut c = Canvas::new(CLIENT.0 as u32, CLIENT.1 as u32);
+            c.fill_rect(c.bounds(), theme.colors.button_face);
+            propsheet::draw(
+                &mut c,
+                &text,
+                &theme.paint(),
+                &o.sheet,
+                true,
+                theme.fonts.size_px,
+            );
+            reprisekit::raster::write_preview(&c, name);
+        }
     }
 }

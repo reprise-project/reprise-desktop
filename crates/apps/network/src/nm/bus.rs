@@ -1012,6 +1012,23 @@ async fn load_vpn(conn: &Connection, conn_path: &str) -> Result<VpnEdit, Failure
     })
 }
 
+/// A plugin VPN's saved `vpn.secrets`, which may prompt. A changed secret goes back to `Update`
+/// with these, so the ones the sheet left alone are sent as they were.
+async fn vpn_secrets(
+    conn: &Connection,
+    conn_path: &str,
+) -> Result<HashMap<String, String>, Failure> {
+    let p = proxy(conn, conn_path, CONNECTION_IFACE).await?;
+    let all = call_auth::<_, HashMap<String, Props>>(&p, "GetSecrets", &("vpn",))
+        .await?
+        .unwrap_or_default();
+    Ok(all
+        .get("vpn")
+        .and_then(|v| v.get("secrets"))
+        .and_then(|s| HashMap::<String, String>::try_from(s.clone()).ok())
+        .unwrap_or_default())
+}
+
 fn hotspot_settings(
     ssid: &str,
     psk: &str,
@@ -1221,9 +1238,17 @@ async fn act(conn: &Connection, cmd: &Cmd) -> Result<(), Failure> {
             conn_path,
             name,
             data,
+            secrets,
         } => {
             let current = settings_of(conn, conn_path).await?;
-            update(conn, conn_path, plugin_update(current, name, data)).await
+            let secrets = if secrets.is_empty() {
+                HashMap::new()
+            } else {
+                let mut all = vpn_secrets(conn, conn_path).await?;
+                all.extend(secrets.iter().map(|(k, v)| (k.clone(), v.to_string())));
+                all
+            };
+            update(conn, conn_path, plugin_update(current, name, data, secrets)).await
         }
         Cmd::DeleteVpn(conn_path) => {
             let p = proxy(conn, conn_path, CONNECTION_IFACE).await?;

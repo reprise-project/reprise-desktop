@@ -506,10 +506,12 @@ pub enum Cmd {
         conn_path: Option<String>,
         cfg: Box<crate::wg::Config>,
     },
+    /// `secrets` are new `vpn.secrets` values; the saved ones not named stay.
     SavePluginVpn {
         conn_path: String,
         name: String,
         data: Vec<(String, String)>,
+        secrets: Vec<(String, Psk)>,
     },
     DeleteVpn(String),
     Import {
@@ -668,21 +670,25 @@ pub fn merge_groups(
 }
 
 /// `current` (a plugin VPN's `GetSettings`) renamed to `name` with its
-/// `vpn.data` replaced by `data`; every other setting stays. No secret
-/// goes back, so NetworkManager keeps the stored ones.
+/// `vpn.data` replaced by `data`; every other setting stays. With no
+/// `secrets` none goes back, so NetworkManager keeps the stored ones; else
+/// `secrets` is the whole `vpn.secrets`.
 pub fn plugin_update(
     current: HashMap<String, Props>,
     name: &str,
     data: &[(String, String)],
+    secrets: HashMap<String, String>,
 ) -> crate::wg::Settings {
     let mut out = owned_to_values(current);
     out.entry("connection".into())
         .or_default()
         .insert("id".into(), name.trim().to_string().into());
     let dict: HashMap<String, String> = data.iter().cloned().collect();
-    out.entry("vpn".into())
-        .or_default()
-        .insert("data".into(), dict.into());
+    let vpn = out.entry("vpn".into()).or_default();
+    vpn.insert("data".into(), dict.into());
+    if !secrets.is_empty() {
+        vpn.insert("secrets".into(), secrets.into());
+    }
     out
 }
 
@@ -1133,7 +1139,13 @@ mod tests {
                 ],
             }
         );
-        let s = plugin_update(current, "Office", &[("remote".into(), "b.example".into())]);
+        let s = plugin_update(
+            current,
+            "Office",
+            &[("remote".into(), "b.example".into())],
+            HashMap::new(),
+        );
+        assert!(!s["vpn"].contains_key("secrets"), "no secret goes back");
         assert_eq!(s["connection"]["id"], Value::from("Office"));
         assert_eq!(s["connection"]["uuid"], Value::from("abcd"));
         assert_eq!(
