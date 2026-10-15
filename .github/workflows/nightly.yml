@@ -1,0 +1,69 @@
+name: nightly
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+# One run at a time; a newer commit cancels the run in progress.
+concurrency:
+  group: nightly
+  cancel-in-progress: true
+permissions:
+  contents: write
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    container: archlinux:latest
+    env:
+      CARGO_INCREMENTAL: 0
+    steps:
+      - name: Install build tools
+        run: |
+          pacman -Syu --noconfirm
+          pacman -S --noconfirm --needed base-devel git github-cli
+      - uses: actions/checkout@v7
+        with:
+          # pkgver counts the commits.
+          fetch-depth: 0
+      # makepkg refuses root; -s installs the PKGBUILD's depends through sudo.
+      - name: Create build user
+        run: |
+          useradd -m builder
+          echo 'builder ALL=(ALL) NOPASSWD: ALL' > /etc/sudoers.d/builder
+      - uses: actions/cache@v6
+        with:
+          path: |
+            /home/builder/.cargo/registry
+            /home/builder/.cargo/git
+            /home/builder/makepkg/build/reprise/src/target
+          key: nightly-${{ hashFiles('Cargo.lock') }}-${{ github.sha }}
+          restore-keys: |
+            nightly-${{ hashFiles('Cargo.lock') }}-
+            nightly-
+      # checkout and caches come back owned by root.
+      - run: chown -R builder "$GITHUB_WORKSPACE" /home/builder
+      - name: Build package
+        run: >-
+          runuser -u builder -- env HOME=/home/builder REPRISE_MAKEPKG_DIR=/home/builder/makepkg
+          packaging/arch/local/build.sh -s --noconfirm
+      # The tag moves to this commit and the asset keeps one name, so the download URL is stable.
+      - name: Publish the Nightly release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          pkg=$(ls /home/builder/makepkg/pkg/reprise-[0-9]*.pkg.tar.zst)
+          asset=reprise-nightly-x86_64.pkg.tar.zst
+          cp "$pkg" "$asset"
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          git tag -f nightly "$GITHUB_SHA"
+          git push -f origin refs/tags/nightly
+          url="https://github.com/$GH_REPO/releases/download/nightly/$asset"
+          notes="$(basename "$pkg"), built from $GITHUB_SHA.
+
+              sudo pacman -U $url"
+          if gh release view nightly >/dev/null 2>&1; then
+            gh release upload nightly "$asset" --clobber
+            gh release edit nightly --notes "$notes"
+          else
+            gh release create nightly "$asset" --title Nightly --prerelease --notes "$notes"
+          fi
