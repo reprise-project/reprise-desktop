@@ -359,7 +359,8 @@ are.
   a program needs root. The password goes to polkit, never to the program.
 - **Location.** Reprise is the geoclue agent. It asks before a sandboxed
   program gets your location, remembers the answer if you like, and one
-  switch turns location off for everyone.
+  switch turns location off for everyone. A prompt left unanswered for 24 s
+  closes and the program is refused.
 
 ## Sharing and remote access
 

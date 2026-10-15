@@ -50,6 +50,10 @@ const EXACT: u32 = 8;
 /// How long the thread waits for the bus before it tries again, and how
 /// often the pin's state is read again while it shows.
 const RETRY: Duration = Duration::from_secs(5);
+/// How long `AuthorizeApp` waits for the prompt. geoclue calls with the
+/// default D-Bus timeout (25 s); answering just before it lets geoclue hear
+/// the refusal, and the prompt closes with it.
+const ANSWER_WITHIN: Duration = Duration::from_secs(24);
 
 pub struct Ask {
     pub desktop_id: String,
@@ -58,6 +62,8 @@ pub struct Ask {
 
 enum FromAgent {
     Ask(Ask),
+    /// An `AuthorizeApp` for this desktop id gave up waiting.
+    Expired(String),
     /// geoclue's `InUse`, and the desktop ids of the clients known to be
     /// active.
     Usage {
@@ -86,6 +92,7 @@ impl Location {
             };
             match msg {
                 FromAgent::Ask(ask) => asked(state, ask),
+                FromAgent::Expired(id) => expired(state, &id),
                 FromAgent::Usage { in_use, apps } => {
                     let l = &mut state.location;
                     if (in_use, &apps) != (l.in_use, &l.apps) {
@@ -239,6 +246,41 @@ pub fn answer(state: &mut State, desktop_id: &str, a: Answer) {
     }
 }
 
+/// Drop the callers that stopped waiting; true when none is left.
+fn abandoned(replies: &mut Vec<async_channel::Sender<bool>>) -> bool {
+    replies.retain(|r| !r.is_closed());
+    replies.is_empty()
+}
+
+/// An `AuthorizeApp` about `desktop_id` gave up: once no caller waits on
+/// its prompt any more, the prompt closes unanswered.
+fn expired(state: &mut State, desktop_id: &str) {
+    let Some(at) = state
+        .location
+        .pending
+        .iter_mut()
+        .position(|(id, replies)| id == desktop_id && abandoned(replies))
+    else {
+        return;
+    };
+    state.location.pending.remove(at);
+    log::info!("location for {desktop_id:?}: no answer in time, refused");
+    if let Some((i, _)) = prompts(state).into_iter().find(|(_, id)| id == desktop_id) {
+        state.close_dialog_at(i);
+    }
+}
+
+/// The prompt's answer, a refusal when the prompt went away unanswered, or
+/// `None` when nothing came within `limit`.
+async fn answer_within(answer: &async_channel::Receiver<bool>, limit: Duration) -> Option<bool> {
+    let got = async { Some(answer.recv().await.unwrap_or(false)) };
+    let late = async {
+        async_io::Timer::after(limit).await;
+        None
+    };
+    futures_lite::future::or(got, late).await
+}
+
 struct Agent {
     tx: Sender<FromAgent>,
     max: Arc<AtomicU32>,
@@ -250,15 +292,21 @@ impl Agent {
     /// accuracy it asked for is what it gets.
     async fn authorize_app(&self, desktop_id: String, req_accuracy_level: u32) -> (bool, u32) {
         let (reply, answer) = async_channel::bounded(1);
-        if self
-            .tx
-            .send(FromAgent::Ask(Ask { desktop_id, reply }))
-            .is_err()
-        {
+        let ask = Ask {
+            desktop_id: desktop_id.clone(),
+            reply,
+        };
+        if self.tx.send(FromAgent::Ask(ask)).is_err() {
             return (false, 0);
         }
-        // A prompt that went away without an answer drops the sender.
-        let allow = answer.recv().await.unwrap_or(false);
+        let allow = match answer_within(&answer, ANSWER_WITHIN).await {
+            Some(allow) => allow,
+            None => {
+                drop(answer);
+                let _ = self.tx.send(FromAgent::Expired(desktop_id));
+                false
+            }
+        };
         (allow, if allow { req_accuracy_level } else { 0 })
     }
 
@@ -511,6 +559,29 @@ impl Prop {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_unanswered_prompt_gives_up_and_a_closed_one_refuses() {
+        let short = Duration::from_millis(20);
+        let (tx, rx) = async_channel::bounded(1);
+        assert_eq!(zbus::block_on(answer_within(&rx, short)), None);
+        tx.try_send(true).unwrap();
+        assert_eq!(zbus::block_on(answer_within(&rx, short)), Some(true));
+        drop(tx);
+        assert_eq!(zbus::block_on(answer_within(&rx, short)), Some(false));
+    }
+
+    #[test]
+    fn a_prompt_is_abandoned_only_once_every_caller_stopped_waiting() {
+        let (first, first_rx) = async_channel::bounded::<bool>(1);
+        let (second, second_rx) = async_channel::bounded::<bool>(1);
+        let mut replies = vec![first, second];
+        drop(first_rx);
+        assert!(!abandoned(&mut replies), "the second caller still waits");
+        assert_eq!(replies.len(), 1);
+        drop(second_rx);
+        assert!(abandoned(&mut replies));
+    }
 
     #[test]
     fn the_switch_refuses_and_a_remembered_answer_stands() {
