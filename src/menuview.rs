@@ -2002,9 +2002,7 @@ impl State {
             MenuPick::App(a) => self.launch_app(&a),
             MenuPick::Document(d) => {
                 // Documents lists the document folders, then recent files; neither is stat'ed.
-                let folder = reprisefs::places::document_dir_paths()
-                    .iter()
-                    .any(|(dir, _)| *dir == d);
+                let folder = self.recent.is_document_dir(&d);
                 let argv = if folder {
                     reprisefs::apps::open_folder_argv(&d)
                 } else {

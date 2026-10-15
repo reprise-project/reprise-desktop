@@ -53,16 +53,21 @@ pub fn setup(state: &mut State) {
     if let Some(xbel) = reprisefs::recent::xbel_path() {
         watch(state, "recent files", wants(&xbel), State::read_recent);
     }
-    let dirs: Vec<PathBuf> = reprisefs::places::document_dir_paths()
-        .into_iter()
-        .map(|(d, _)| d)
-        .collect();
-    watch(
-        state,
-        "document folders",
-        folder_wants(&dirs),
-        State::check_recent,
-    );
+    // user-dirs.dirs is read off the loop, as the checks read it.
+    state.spawn_fs_job(|| {
+        let dirs: Vec<PathBuf> = reprisefs::places::document_dir_paths()
+            .into_iter()
+            .map(|(d, _)| d)
+            .collect();
+        Box::new(move |state: &mut State| {
+            watch(
+                state,
+                "document folders",
+                folder_wants(&dirs),
+                State::check_recent,
+            )
+        })
+    });
 }
 
 /// Runs `hit` on the loop whenever an event `want` asks for arrives.
