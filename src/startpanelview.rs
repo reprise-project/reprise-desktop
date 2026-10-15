@@ -1409,9 +1409,9 @@ impl State {
                 if t >= 1.0 {
                     v.fade = None;
                 }
-                let tree = v.tree;
+                let (tree, output) = (v.tree, v.output.clone());
                 state.scene.set_opacity(tree, t);
-                state.redraw_all();
+                crate::backend::schedule(state, &output);
                 if t >= 1.0 {
                     TimeoutAction::Drop
                 } else {
@@ -1590,10 +1590,11 @@ impl State {
             mode,
             picture,
         });
+        let output = v.output.clone();
         if !v.crossfades.is_empty() {
             self.arm_start_panel_crossfade();
         }
-        self.redraw_all();
+        crate::backend::schedule(self, &output);
         crate::access::touch(self);
     }
 
