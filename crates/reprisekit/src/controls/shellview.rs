@@ -1148,7 +1148,7 @@ pub fn draw(
         let boxed = item::draw_item(c, p, item_box, mark);
         if let Some(icon) = shellgrid::entry_icon(entry, Mode::List) {
             let dy = (cell.height - ICON_PX) / 2 * s;
-            c.blit_over(cell_s.x, cell_s.y + dy, &icon);
+            c.blit_over_clipped(cell_s.x, cell_s.y + dy, &icon, visible_s);
         }
         let label = label_full.intersect(&visible_s);
         if label.is_empty() {
@@ -1165,7 +1165,7 @@ pub fn draw(
         } else {
             cs.window_text
         };
-        text.draw(c, label, &shown, false, fg, Align::Left, px);
+        text.draw_clipped(c, label_full, label, &shown, false, fg, Align::Left, px);
     }
     if let Some(hb) = lay.hscroll {
         draw_hscrollbar(
@@ -1546,6 +1546,47 @@ pub(crate) mod tests {
             c.get(other.x + EXPECTED_ICON_PX + 2, other.y + 2),
             cs.window.argb()
         );
+    }
+
+    #[test]
+    fn a_column_scrolled_part_way_off_draws_shifted_and_clipped_to_the_body() {
+        let theme = Theme::default();
+        let cs = &theme.colors;
+        let (text, px) = rend();
+        let mut sv = view(12);
+        let red = Color::rgb(0xff, 0, 0);
+        for e in &mut sv.entries {
+            e.icon = Some(std::rc::Rc::new(square(16, red)));
+        }
+        let r = Rect::new(0, 0, 320, 80);
+        let drawn = |sv: &ShellView| {
+            let lay = layout(sv, r, &ControlMetrics::CLASSIC);
+            let mut c = Canvas::new(320, 80);
+            draw(&mut c, &text, &classic_paint(cs, 1), sv, &lay, None, px);
+            (c, lay.body)
+        };
+        let (whole, body) = drawn(&sv);
+        // 10 px puts the icon across the frame, 30 px cuts into the label.
+        for left in [10, 30] {
+            sv.left = left;
+            let (scrolled, _) = drawn(&sv);
+            for y in body.y..body.bottom() {
+                for x in body.x..body.x + COL_W - left {
+                    assert_eq!(
+                        scrolled.get(x, y),
+                        whole.get(x + left, y),
+                        "({x}, {y}): the first column moved {left} px left"
+                    );
+                }
+                for x in 0..body.x {
+                    assert_ne!(
+                        scrolled.get(x, y),
+                        red.argb(),
+                        "({x}, {y}): no icon on the frame"
+                    );
+                }
+            }
+        }
     }
 
     /// Stepping to a cell beyond the visible columns scrolls it into view.
