@@ -171,7 +171,7 @@ fn draw_task_button(
     span: Span,
     s: i32,
 ) {
-    let lit = style.task_spot.as_ref().filter(|_| is_lit(state));
+    let lit = style.task_spot().filter(|_| is_lit(state));
     let frames = lit.and_then(|t| match part {
         Part::TaskLabel => t.labelled.as_ref(),
         _ => Some(&t.button),
@@ -582,8 +582,7 @@ pub fn draw_taskbar(
             pointer: pointer(*r),
         };
         let lit_edges = style
-            .task_spot
-            .as_ref()
+            .task_spot()
             .filter(|_| is_lit(button_state))
             .and_then(|t| Some(&t.fit).zip(t.edges.as_ref()))
             .filter(|(_, f)| f.base.states.contains(&edges_in));
@@ -1700,14 +1699,10 @@ mod tests {
             }
             s.task_spot = at.task_spot.clone();
         }
-        let fit = &mut s
-            .task_spot
-            .as_mut()
-            .expect("Glass buttons light a spot")
-            .fit;
-        fit.halo.peak = 0.0;
-        fit.core.peak = 0.0;
-        s
+        let mut spot = s.task_spot().expect("Glass buttons light a spot").clone();
+        spot.fit.halo.peak = 0.0;
+        spot.fit.core.peak = 0.0;
+        s.with_task_spot(Some(spot))
     }
 
     fn brightest(lit: &Canvas, bare: &Canvas, x0: i32, cols: std::ops::Range<i32>, y: i32) -> i32 {
@@ -1862,7 +1857,7 @@ mod tests {
     }
 
     fn label_in(c: &mut Canvas, s: &Style, frame: Rect, state: State, sc: i32) {
-        let lit = s.task_spot.as_ref().filter(|_| is_lit(state));
+        let lit = s.task_spot().filter(|_| is_lit(state));
         match lit.and_then(|t| Some(&t.fit).zip(t.labelled.as_ref())) {
             Some((fit, f)) => {
                 let span = Span {
@@ -2052,14 +2047,7 @@ mod tests {
     fn a_lit_labelled_glass_button_glows_in_its_icons_colour() {
         let cyan = crate::theme::Color::rgb(113, 164, 168);
         let unlit = glass_unlit_spot();
-        let base = &unlit
-            .task_spot
-            .as_ref()
-            .unwrap()
-            .labelled
-            .as_ref()
-            .unwrap()
-            .base;
+        let base = &unlit.task_spot().unwrap().labelled.as_ref().unwrap().base;
         for (active, hot, held, state) in [
             ([false; 3], Some(1), None, State::Hot),
             ([false, true, false], Some(1), None, State::CheckedHot),
@@ -2159,7 +2147,7 @@ mod tests {
         let cyan = crate::theme::Color::rgb(113, 164, 168);
         let theme = theme_for(Interface::Glass);
         let s = theme.look.style().unwrap();
-        let lit = s.task_spot.as_ref().unwrap().labelled.as_ref().unwrap();
+        let lit = s.task_spot().unwrap().labelled.as_ref().unwrap();
         let (base, gain, glowing, edges) = (
             &lit.base,
             &lit.gain,
@@ -2393,14 +2381,7 @@ mod tests {
     fn lit_edges_at(s: &Style, sc: i32) {
         let cyan = crate::theme::Color::rgb(113, 164, 168);
         let unlit = glass_unlit_spot_at(sc);
-        let pairs = &unlit
-            .task_spot
-            .as_ref()
-            .unwrap()
-            .edges
-            .as_ref()
-            .unwrap()
-            .base;
+        let pairs = &unlit.task_spot().unwrap().edges.as_ref().unwrap().base;
         let mut bar = Canvas::new(1920 * sc as u32, 40 * sc as u32);
         s.draw(
             &mut bar,
@@ -3341,7 +3322,7 @@ mod tests {
     fn the_spot_stays_inside_the_frame() {
         let s = crate::glass::build(&Default::default());
         let unlit = glass_unlit_spot();
-        let spot = s.task_spot.as_ref().unwrap();
+        let spot = s.task_spot().unwrap();
         let yellow = crate::theme::Color::rgb(0xF0, 0xC8, 0x40);
         let states = [
             (State::Hot, false, None),
@@ -3505,7 +3486,7 @@ mod tests {
         use crate::style::{Layout, SpotFrames};
         use crate::theme::Color;
         let s = crate::glass::build(&Default::default());
-        let fit = s.task_spot.as_ref().unwrap().fit;
+        let fit = s.task_spot().unwrap().fit;
         assert_eq!(
             fit.halo.colour(None),
             [136.0; 3],
