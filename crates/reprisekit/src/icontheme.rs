@@ -1020,10 +1020,16 @@ impl IconCache {
     /// [`IconCache::put_file`] for one read's files at once: they all land, the cap dropping
     /// the files put in before them at most once, never one of these.
     pub fn put_files(&mut self, files: Vec<(String, i32, Option<Canvas>)>) {
+        self.put_files_at(files, self.scale);
+    }
+
+    /// [`IconCache::put_files`] for images decoded at `scale`, which may no longer be the
+    /// cache's own.
+    pub fn put_files_at(&mut self, files: Vec<(String, i32, Option<Canvas>)>, scale: i32) {
         let files: Vec<_> = files
             .into_iter()
             .filter(|(path, px, _)| path.starts_with('/') && *px > 0)
-            .map(|(path, px, canvas)| ((cache_key(&path, &[]), px, self.scale), canvas))
+            .map(|(path, px, canvas)| ((cache_key(&path, &[]), px, scale), canvas))
             .collect();
         let decoded = files.iter().filter(|(_, c)| c.is_some()).count();
         self.make_room(Kind::File, decoded);

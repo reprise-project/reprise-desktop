@@ -1113,7 +1113,7 @@ pub fn run(app: Box<dyn App>) {
         .insert_source(ping_source, |(), &mut (), host: &mut Host| {
             host.send(MAIN, Event::Wake);
             let wins: Vec<WinId> = host.slots.iter().map(|s| s.id).collect();
-            for win in filedlg::take_thumbs(&mut *host.app, wins) {
+            for win in filedlg::take_thumbs(&mut *host.app, wins, &mut host.ctx.icons) {
                 host.mark_dirty(win);
             }
         })

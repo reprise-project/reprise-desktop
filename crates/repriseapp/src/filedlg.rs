@@ -228,11 +228,12 @@ pub(crate) fn follow_scale(
 pub(crate) fn take_thumbs(
     app: &mut dyn crate::App,
     wins: impl IntoIterator<Item = crate::WinId>,
+    icons: &mut IconCache,
 ) -> Vec<crate::WinId> {
     wins.into_iter()
         .filter(|&win| {
             app.drop_file_dialog(win)
-                .is_some_and(|f| f.host.take_thumbs(f.dlg))
+                .is_some_and(|f| f.host.take_thumbs(f.dlg, icons))
         })
         .collect()
 }
@@ -368,9 +369,10 @@ impl Host {
         }
     }
 
-    /// Hands the thumbnails and icon files that arrived to their entries: true when one did.
-    fn take_thumbs(&mut self, dlg: &mut FileDlg) -> bool {
-        let icons = self.list_icons.take(dlg.entries_mut());
+    /// Hands the thumbnails and icon files that arrived to their entries, the icon files to
+    /// `cache` too: true when one did.
+    fn take_thumbs(&mut self, dlg: &mut FileDlg, cache: &mut IconCache) -> bool {
+        let icons = self.list_icons.take(dlg.entries_mut(), cache);
         let Some(worker) = &mut self.thumbs else {
             return icons;
         };
@@ -1187,9 +1189,9 @@ mod tests {
     }
 
     /// Takes thumbnails and icon files until some are in.
-    fn settle_thumbs(h: &mut Host, dlg: &mut FileDlg) {
+    fn settle_thumbs(h: &mut Host, dlg: &mut FileDlg, icons: &mut IconCache) {
         for _ in 0..500 {
-            if h.take_thumbs(dlg) {
+            if h.take_thumbs(dlg, icons) {
                 return;
             }
             std::thread::sleep(std::time::Duration::from_millis(10));
@@ -1249,7 +1251,7 @@ mod tests {
         assert!(!h.pictures.asked, "List decodes nothing");
         view(&mut h, &mut dlg, Mode::Tiles);
         assert!(h.pictures.asked);
-        settle_thumbs(&mut h, &mut dlg);
+        settle_thumbs(&mut h, &mut dlg, &mut icons);
         let pic = entry(&dlg, "pic.png");
         let thumb = pic.thumb.as_ref().expect("the picture's thumbnail");
         assert_eq!((thumb.width, thumb.height), (40, 30), "never upscaled");
@@ -1267,7 +1269,7 @@ mod tests {
         let mut dlg = open_dlg(&mut h);
         h.ensure_listed(&mut dlg, &mut icons, &|_| true);
         view(&mut h, &mut dlg, Mode::Thumbnails);
-        settle_thumbs(&mut h, &mut dlg);
+        settle_thumbs(&mut h, &mut dlg, &mut icons);
         let wake = crate::Waker::noop();
         h.follow_scale(&mut dlg, 1, &mut icons, &wake);
         assert!(h.thumbs.as_mut().unwrap().drain().is_empty(), "same scale");
@@ -1276,7 +1278,7 @@ mod tests {
         h.follow_scale(&mut dlg, 2, &mut icons, &wake);
         let kept = entry(&dlg, "pic.png").thumb.as_ref().expect("still shown");
         assert_eq!(kept.scale(), 1);
-        settle_thumbs(&mut h, &mut dlg);
+        settle_thumbs(&mut h, &mut dlg, &mut icons);
         let thumb = entry(&dlg, "pic.png").thumb.as_ref().expect("the new one");
         assert_eq!((thumb.scale(), thumb.device_size()), (2, (80, 60)));
     }
@@ -1359,7 +1361,7 @@ mod tests {
             Some((1, 16, OWN)),
             "an icon file keeps its old canvas until its thread decodes it"
         );
-        settle_thumbs(&mut h, &mut dlg);
+        settle_thumbs(&mut h, &mut dlg, &mut icons);
         assert_eq!(
             icon_sizes(entry(&dlg, "sub")),
             [Some((2, 32, OWN)), Some((2, 64, OWN)), Some((2, 96, OWN))]
@@ -1375,6 +1377,15 @@ mod tests {
             icon_sizes(entry(&dlg, "sub")),
             [Some((1, 16, OWN)), Some((1, 32, OWN)), Some((1, 48, OWN))],
             "the cache still holds the icon file at scale 1"
+        );
+
+        std::fs::remove_file(&own).unwrap();
+        icons.set_scale(2);
+        h.follow_scale(&mut dlg, 2, &mut icons, &wake);
+        assert_eq!(
+            icon_sizes(entry(&dlg, "sub")),
+            [Some((2, 32, OWN)), Some((2, 64, OWN)), Some((2, 96, OWN))],
+            "the cache kept the icon file the thread decoded at scale 2"
         );
     }
 
@@ -1435,7 +1446,7 @@ mod tests {
         view(host, dlg, Mode::Thumbnails);
         let mut redrawn = Vec::new();
         for _ in 0..500 {
-            redrawn = take_thumbs(&mut app, [crate::MAIN, DLG]);
+            redrawn = take_thumbs(&mut app, [crate::MAIN, DLG], &mut icons);
             if !redrawn.is_empty() {
                 break;
             }
@@ -1444,7 +1455,7 @@ mod tests {
         assert_eq!(redrawn, [DLG], "the dialog's window redraws");
         assert!(entry(&app.dlg, "pic.png").thumb.is_some());
         assert!(
-            take_thumbs(&mut app, [DLG]).is_empty(),
+            take_thumbs(&mut app, [DLG], &mut icons).is_empty(),
             "nothing new to show"
         );
     }
@@ -1516,7 +1527,7 @@ mod tests {
             e.detail.clear();
         }
         assert_ne!(drawn(&bare), tiles, "the kind and size lines are drawn");
-        settle_thumbs(&mut h, &mut dlg);
+        settle_thumbs(&mut h, &mut dlg, &mut icons);
         assert!(
             found(&drawn(&dlg), PICTURE).is_some(),
             "Tiles keeps the icon"

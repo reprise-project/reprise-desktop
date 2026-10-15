@@ -95,7 +95,7 @@ impl Explorer {
                 ..Default::default()
             };
         }
-        let mut dirty = tipped | self.list_icons.take(&mut self.sv.entries);
+        let mut dirty = tipped | self.list_icons.take(&mut self.sv.entries, &mut ctx.icons);
         let mut arrived: Vec<PathBuf> = Vec::new();
         for done in self.thumbs.drain() {
             let Some(&i) = self.item_index.get(&done.path) else {
