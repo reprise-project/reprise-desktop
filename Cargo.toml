@@ -47,12 +47,13 @@ log = "0.4"
 pipewire = "0.10"
 png = "0.18"
 serde = "1"
-# Pinned to a commit on our fork: master 118e34ff (far ahead of the last
+# Pinned to a commit on our fork: upstream master (far ahead of the last
 # release) plus a fix to `Rectangle::subtract_rects_many_in_place`, without
-# which the damage tracker redraws overlapping windows on every frame. Back
-# to upstream once the fix is merged there.
-smithay = { git = "https://github.com/reprise-project/smithay.git", rev = "0849337f8f8af2b917fac47e4cd77bb3559c9c62", default-features = false }
-smithay-drm-extras = { git = "https://github.com/reprise-project/smithay.git", rev = "0849337f8f8af2b917fac47e4cd77bb3559c9c62" }
+# which the damage tracker redraws overlapping windows on every frame, and
+# `DrmCompositor::reposition_cursor` for pointer-only frames. Back to
+# upstream once both are merged there.
+smithay = { git = "https://github.com/reprise-project/smithay.git", rev = "62c7876686855271cb2e34f394aa1eecd3206b1f", default-features = false }
+smithay-drm-extras = { git = "https://github.com/reprise-project/smithay.git", rev = "62c7876686855271cb2e34f394aa1eecd3206b1f" }
 tempfile = "3"
 toml = "1"
 toml_edit = "0.25"
