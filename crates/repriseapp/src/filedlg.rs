@@ -297,6 +297,9 @@ pub struct Host {
     wake: Option<crate::Waker>,
     /// A folder still being read after [`LIST_WAIT`]; the dialog shows the one before.
     reading: Option<(FolderId, Job<Read>)>,
+    /// A typed path whose folders did not answer within [`RESOLVE_WAIT`]; the next resolve of
+    /// the same path waits on it again instead of starting another probe.
+    probing: Option<(PathBuf, Job<(bool, bool)>)>,
 }
 
 /// How long the dialog waits for a listing before it goes on. Tests wait as long as it takes.
@@ -638,12 +641,19 @@ impl Host {
             },
         };
         let path = reprisefs::ops::lexical(&raw);
-        let probe = |p: &Path| (p.is_dir(), p.parent().is_some_and(Path::is_dir));
-        match folders_within(&path, RESOLVE_WAIT, probe) {
-            None => Err(format!("{} is not responding.", path.display())),
-            Some((true, _)) => Ok(Resolved::Folder(self.folders.id(&path), path)),
-            Some((false, true)) => Ok(Resolved::File(path)),
-            Some((false, false)) => Err(format!(
+        let job = match self.probing.take() {
+            Some((p, job)) if p == path => job,
+            _ => probe_folders(&path),
+        };
+        let Some(found) = job.wait(RESOLVE_WAIT) else {
+            let err = format!("{} is not responding.", path.display());
+            self.probing = Some((path, job));
+            return Err(err);
+        };
+        match found {
+            (true, _) => Ok(Resolved::Folder(self.folders.id(&path), path)),
+            (false, true) => Ok(Resolved::File(path)),
+            (false, false) => Err(format!(
                 "The folder {} does not exist.",
                 path.parent().unwrap_or(&path).display()
             )),
@@ -654,15 +664,13 @@ impl Host {
 /// How long [`Host::resolve`] waits on a typed path's folders before it calls them dead.
 const RESOLVE_WAIT: std::time::Duration = std::time::Duration::from_secs(2);
 
-/// `probe(path)` run on a thread, so a mount that stopped answering hangs the thread and not the
-/// loop: `None` when it has not answered within `wait`.
-fn folders_within(
-    path: &Path,
-    wait: std::time::Duration,
-    probe: impl FnOnce(&Path) -> (bool, bool) + Send + 'static,
-) -> Option<(bool, bool)> {
+/// Whether `path` is a folder and whether its parent is, read on a listing thread so a mount
+/// that stopped answering hangs the thread and not the loop.
+fn probe_folders(path: &Path) -> Job<(bool, bool)> {
     let path = path.to_path_buf();
-    Job::spawn(None, move || probe(&path)).wait(wait)
+    Job::spawn(None, move || {
+        (path.is_dir(), path.parent().is_some_and(Path::is_dir))
+    })
 }
 
 pub fn taken(path: &Path) -> bool {
@@ -882,20 +890,30 @@ mod tests {
     }
 
     #[test]
-    fn a_folder_probe_that_never_answers_gives_up_after_the_wait() {
-        let (_keep, hang) = std::sync::mpsc::channel::<()>();
+    fn a_typed_path_that_does_not_answer_is_probed_once() {
+        let t = tmp("dead");
+        let mut h = host_in(&t);
+        let (answer, gate) = std::sync::mpsc::channel::<()>();
+        h.probing = Some((
+            t.join("gone"),
+            Job::spawn(None, move || {
+                gate.recv().ok();
+                (true, true)
+            }),
+        ));
         let start = std::time::Instant::now();
-        let wait = std::time::Duration::from_millis(50);
-        let got = folders_within(Path::new("/srv/dead"), wait, move |_| {
-            hang.recv().ok();
-            (true, true)
-        });
-        assert_eq!(got, None);
-        assert!(start.elapsed() < std::time::Duration::from_secs(5));
         assert_eq!(
-            folders_within(Path::new("/"), wait * 100, |p| (p.is_dir(), false)),
-            Some((true, false))
+            h.resolve("gone"),
+            Err(format!("{} is not responding.", t.join("gone").display()))
         );
+        assert!(start.elapsed() < std::time::Duration::from_secs(30));
+        answer.send(()).unwrap();
+        assert!(
+            matches!(h.resolve("gone"), Ok(Resolved::Folder(_, p)) if p == t.join("gone")),
+            "the second Enter takes the first probe's answer"
+        );
+        assert!(h.probing.is_none());
+        std::fs::remove_dir_all(&t).ok();
     }
 
     #[test]
