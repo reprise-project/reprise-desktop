@@ -1248,6 +1248,7 @@ impl State {
     pub fn track_move(&mut self, w: WindowId) {
         // Held over a caption, the window joins its group on release and snaps nowhere.
         if self.track_tab_drop(w) {
+            log::debug!(target: "reprise::snapbarview", "motion {w:?}: over a caption, no bar");
             self.hide_snap_outline();
             crate::snapbarview::end(self);
             if let Interaction::Move { snap, .. } = &mut self.interaction {

@@ -41,6 +41,8 @@ struct Bar {
     drawn: Option<Option<Zone>>,
     /// Where the bar was last placed, so a settled bar is not placed again every frame.
     placed: Option<Rect>,
+    /// Whether any of it lies inside the usable area, for the shown and hidden log lines.
+    visible: bool,
     tree: TreeId,
     glass_tree: TreeId,
     glass: Backdrop,
@@ -51,11 +53,26 @@ struct Bar {
 
 /// A settled motion of a move of `w` with the pointer at (`x`, `y`): the bar of the output under it follows; returns the lit zone's rect where a pick lands, which the caller outlines instead of any drop.
 pub fn motion(state: &mut State, w: WindowId, x: f64, y: f64) -> Option<Rect> {
-    let on = state.config.window_snapping.enabled
-        && state.config.window_snapping.bar
-        && matches!(state.interaction, Interaction::Move { window, bar: true, .. } if window == w)
-        && state.win(w).is_some_and(|x| x.snappable());
-    let out = state.output_exactly_at(x, y).filter(|_| on);
+    let snapping = &state.config.window_snapping;
+    let off = if !snapping.enabled {
+        Some("window_snapping off")
+    } else if !snapping.bar {
+        Some("window_snapping bar off")
+    } else if !matches!(state.interaction, Interaction::Move { window, bar: true, .. } if window == w)
+    {
+        Some("move without bar")
+    } else if !state.win(w).is_some_and(|x| x.snappable()) {
+        Some("window not snappable")
+    } else {
+        None
+    };
+    let (px, py) = (x.floor() as i32, y.floor() as i32);
+    let out = state.output_exactly_at(x, y).filter(|_| off.is_none());
+    match (off, &out) {
+        (Some(why), _) => log::debug!("motion {w:?} at {px},{py}: {why}"),
+        (None, None) => log::debug!("motion {w:?} at {px},{py}: no output there"),
+        _ => {}
+    }
     let now = Instant::now();
     if (state.snap_bar.shown.as_ref())
         .is_some_and(|b| b.window != w || Some(&b.output) != out.as_ref())
@@ -63,15 +80,30 @@ pub fn motion(state: &mut State, w: WindowId, x: f64, y: f64) -> Option<Rect> {
         leave(state, now);
     }
     let out = out?;
-    let (px, py) = (x.floor() as i32, y.floor() as i32);
     if state.snap_bar.shown.is_none() {
-        if !snapbar::wanted(state.usable_area(Some(&out)), py) {
+        let work = state.usable_area(Some(&out));
+        if !snapbar::wanted(work, py) {
+            log::debug!(
+                "motion {w:?} at {px},{py} on {} usable {}: below the top third",
+                out.name(),
+                area(work)
+            );
             return None;
         }
         create(state, w, &out, now);
     }
-    let b = state.snap_bar.shown.as_mut()?;
-    b.model.motion(px, py, now);
+    let Some(b) = state.snap_bar.shown.as_mut() else {
+        log::debug!("motion {w:?} at {px},{py} on {}: no bar", out.name());
+        return None;
+    };
+    let moved = b.model.motion(px, py, now);
+    log::debug!(
+        "motion {w:?} at {px},{py} on {} usable {}: {:?}{}",
+        out.name(),
+        area(b.work),
+        b.model.stage(),
+        if moved { " (changed)" } else { "" }
+    );
     let r = b.model.rect(now);
     b.live = b.model.live(now);
     let hot = b.live.then(|| b.layout.hit(px - r.x, py - r.y)).flatten();
@@ -121,6 +153,7 @@ fn leave(state: &mut State, now: Instant) {
     let Some(mut b) = state.snap_bar.shown.take() else {
         return;
     };
+    log::debug!("bar on {} leaves", b.output.name());
     if !state.scene.outputs().contains(&b.output) {
         state.scene.destroy(b.tree);
         state.redraw_all();
@@ -154,7 +187,9 @@ pub fn end(state: &mut State) {
         return;
     }
     b.hot = None;
-    b.model.end(Instant::now());
+    if b.model.end(Instant::now()) {
+        log::debug!("bar on {} ends", out.name());
+    }
     place(state);
     crate::backend::schedule(state, &out);
 }
@@ -229,6 +264,11 @@ pub fn forget_window(state: &mut State, w: WindowId) {
 fn create(state: &mut State, w: WindowId, out: &Output, now: Instant) {
     let work = state.usable_area(Some(out));
     if work.width <= 0 || work.height <= 0 {
+        log::debug!(
+            "no bar on {}: usable area {} is empty",
+            out.name(),
+            area(work)
+        );
         return;
     }
     let (picks, specs): (Vec<PickCell>, Vec<CellSpec>) = cells_for(state, w, out, work, true);
@@ -243,6 +283,14 @@ fn create(state: &mut State, w: WindowId, out: &Output, now: Instant) {
     let glass_tree = scene.tree_create(tree);
     let buffer = scene.buffer_create(tree);
     scene.set_input(buffer, Input::Passthrough);
+    log::debug!(
+        "bar created on {} usable {}, {} layouts, row {}x{}",
+        out.name(),
+        area(work),
+        picks.len(),
+        layout.width,
+        layout.height
+    );
     state.snap_bar.shown = Some(Bar {
         window: w,
         output: out.clone(),
@@ -256,6 +304,7 @@ fn create(state: &mut State, w: WindowId, out: &Output, now: Instant) {
         live: false,
         drawn: None,
         placed: None,
+        visible: false,
         tree,
         glass_tree,
         glass: Backdrop::new(&state.glass),
@@ -267,6 +316,7 @@ fn create(state: &mut State, w: WindowId, out: &Output, now: Instant) {
 fn destroy(state: &mut State) {
     set_thumb(state, false);
     if let Some(b) = state.snap_bar.shown.take() {
+        log::debug!("bar on {} removed", b.output.name());
         state.scene.destroy(b.tree);
         state.redraw_all();
     }
@@ -290,8 +340,16 @@ fn place_bar(state: &mut State, b: &mut Bar) {
     let visible = r.intersect(&b.work);
     let (tree, buffer, s) = (b.tree, b.buffer, b.scale);
     if visible.is_empty() {
+        if b.visible {
+            b.visible = false;
+            log::debug!("bar on {} hidden", b.output.name());
+        }
         state.scene.set_enabled(tree, false);
         return;
+    }
+    if !b.visible {
+        b.visible = true;
+        log::debug!("bar on {} shown at {}", b.output.name(), area(visible));
     }
     if b.drawn != Some(b.hot) {
         let theme = state.config.theme.scaled(s);
@@ -388,4 +446,9 @@ fn move_thumb(state: &mut State, x: i32, y: i32) {
     if !inside {
         state.redraw_all();
     }
+}
+
+/// `r` as `WxH+X+Y` for the log.
+fn area(r: Rect) -> String {
+    format!("{}x{}+{}+{}", r.width, r.height, r.x, r.y)
 }

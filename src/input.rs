@@ -1501,6 +1501,12 @@ impl State {
         } else {
             (cx, cy)
         };
+        let bar = title && free && self.buttons_down > 0;
+        log::debug!(
+            target: "reprise::snapbarview",
+            "begin_move {w:?}: bar={bar} (title={title} free={free} buttons_down={})",
+            self.buttons_down
+        );
         // A snapped, maximized or fullscreen window keeps its rect until
         // `repoint` sees the cursor leave the press, so a click leaves it.
         self.interaction = Interaction::Move {
@@ -1513,7 +1519,7 @@ impl State {
             press,
             snap: None,
             armed: false,
-            bar: title && free && self.buttons_down > 0,
+            bar,
         };
         self.wm.snap.begin_move(w);
         self.clear_pointer_focus();
