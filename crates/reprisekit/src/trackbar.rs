@@ -99,15 +99,16 @@ pub struct Layout {
     pub vertical: bool,
 }
 
-/// Each position's offset along a track `len` px long from position 0's end: rounded, or with
-/// `floor` (a vertical track, counted up from its bottom) the fraction dropped.
-fn offsets(tb: &TrackBar, len: i32, floor: bool) -> Vec<i32> {
-    let track = (len - 2 * TRACK_INSET - 1).max(0);
+/// Each position's offset along a track `len` px long from position 0's end, `inset` px in from
+/// either end: rounded, or with `floor` (a vertical track, counted up from its bottom) the
+/// fraction dropped.
+fn offsets(tb: &TrackBar, len: i32, floor: bool, inset: i32) -> Vec<i32> {
+    let track = (len - 2 * inset - 1).max(0);
     let n = tb.count.max(1) as i32;
     let half = if floor { 0 } else { n - 1 };
     (0..n)
         .map(|i| {
-            TRACK_INSET
+            inset
                 + if n > 1 {
                     (i * track * 2 + half) / (2 * (n - 1))
                 } else {
@@ -120,7 +121,10 @@ fn offsets(tb: &TrackBar, len: i32, floor: bool) -> Vec<i32> {
 /// Lay a trackbar out with its top-left at (`x`, `y`) and its channel `w` wide.
 pub fn layout(tb: &TrackBar, x: i32, y: i32, w: i32) -> Layout {
     let channel = Rect::new(x, y + CHANNEL_Y, w, CHANNEL_H);
-    let ticks: Vec<i32> = offsets(tb, w, false).into_iter().map(|o| x + o).collect();
+    let ticks: Vec<i32> = offsets(tb, w, false, TRACK_INSET)
+        .into_iter()
+        .map(|o| x + o)
+        .collect();
     let cx = ticks[tb.pos.min(ticks.len() - 1)];
     let thumb = Rect::new(cx - THUMB_W / 2, y, THUMB_W, THUMB_H);
     Layout {
@@ -144,14 +148,26 @@ pub fn layout_vertical(tb: &TrackBar, x: i32, y: i32, h: i32) -> Layout {
 /// [`ControlMetrics::vtrack_thumb`](crate::metrics::ControlMetrics::vtrack_thumb)): the trackbar is
 /// [`vertical_width`] of it, and the channel stays down the thumb's middle.
 pub fn layout_vertical_with(tb: &TrackBar, x: i32, y: i32, h: i32, thumb_w: i32) -> Layout {
+    layout_vertical_sized(tb, x, y, h, (thumb_w, VTHUMB_H))
+}
+
+/// [`layout_vertical_with`] with a thumb `w` x `h`: the end positions stay far enough in that
+/// the thumb never leaves the channel's ends.
+pub fn layout_vertical_sized(
+    tb: &TrackBar,
+    x: i32,
+    y: i32,
+    h: i32,
+    (thumb_w, thumb_h): (i32, i32),
+) -> Layout {
     let channel = Rect::new(x + VTHUMB_X + (thumb_w - CHANNEL_H) / 2, y, CHANNEL_H, h);
     let bottom = y + h - 1;
-    let ticks: Vec<i32> = offsets(tb, h, true)
+    let ticks: Vec<i32> = offsets(tb, h, true, TRACK_INSET.max(thumb_h / 2))
         .into_iter()
         .map(|o| bottom - o)
         .collect();
     let cy = ticks[tb.pos.min(ticks.len() - 1)];
-    let thumb = Rect::new(x + VTHUMB_X, cy - VTHUMB_H / 2, thumb_w, VTHUMB_H);
+    let thumb = Rect::new(x + VTHUMB_X, cy - thumb_h / 2, thumb_w, thumb_h);
     Layout {
         bounds: Rect::new(x, y, vertical_width(thumb_w), h),
         channel,

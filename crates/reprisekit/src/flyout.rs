@@ -37,11 +37,11 @@ pub fn margin(theme: &Theme) -> Insets {
     look(theme).map_or(Insets::ZERO, |(_, f)| f.shadow)
 }
 
-/// A window's border all round `all` (device px), `f` device px wide, through `style`'s frame parts at
+/// A window's border all round `all` (in `c`'s px), `f` px wide, through `style`'s frame parts at
 /// scale `s`, laid over what `c` holds. The top border is the bottom one turned over.
 pub fn draw_border(c: &mut Canvas, style: &Style, all: Rect, f: i32, s: i32) {
     let (w, h) = (all.width, all.height);
-    let mut b = Canvas::new(w.max(1) as u32, h.max(1) as u32);
+    let mut b = c.scratch(w.max(1) as u32, h.max(1) as u32);
     style.draw(
         &mut b,
         Rect::new(0, h - f, w, f),
@@ -49,7 +49,7 @@ pub fn draw_border(c: &mut Canvas, style: &Style, all: Rect, f: i32, s: i32) {
         State::Normal,
         s,
     );
-    let mut top = Canvas::new(w.max(1) as u32, f.max(1) as u32);
+    let mut top = c.scratch(w.max(1) as u32, f.max(1) as u32);
     style.draw(
         &mut top,
         Rect::new(0, 0, w, f),
@@ -57,10 +57,11 @@ pub fn draw_border(c: &mut Canvas, style: &Style, all: Rect, f: i32, s: i32) {
         State::Normal,
         s,
     );
-    for y in 0..f {
-        for x in 0..w {
-            b.put_raw(x, y, top.get(x, f - 1 - y));
-        }
+    let dw = top.device_size().0 as usize;
+    let df = (f.max(0) * top.scale()) as usize;
+    for y in 0..df {
+        let from = (df - 1 - y) * dw;
+        b.pixels[y * dw..(y + 1) * dw].copy_from_slice(&top.pixels[from..from + dw]);
     }
     let side = h - 2 * f;
     style.draw(
@@ -92,7 +93,7 @@ pub fn draw_panel(theme: &Theme, c: &mut Canvas, all: Rect, fill: Color, under: 
             match under {
                 Backdrop::Blurred => draw_border(c, st, all, f, s),
                 Backdrop::None => {
-                    let mut b = Canvas::new(all.width.max(1) as u32, all.height.max(1) as u32);
+                    let mut b = c.scratch(all.width.max(1) as u32, all.height.max(1) as u32);
                     let bounds = b.bounds();
                     draw_border(&mut b, st, bounds, f, s);
                     opaque_over(&mut b, fl.opaque_under);
