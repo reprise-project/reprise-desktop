@@ -144,12 +144,6 @@ fn delete_planned(
     })
 }
 
-/// The terminal a `Terminal=true` program is wrapped in; a program cannot read the compositor's
-/// config, so the environment decides.
-fn terminal() -> String {
-    std::env::var("TERMINAL").unwrap_or_else(|_| apps::DEFAULT_TERMINAL.to_string())
-}
-
 impl Explorer {
     pub fn clipboard(&mut self, cut: bool, ctx: &mut Ctx) -> Reply {
         let paths = self.selected_paths();
@@ -813,11 +807,14 @@ impl Explorer {
 
     pub fn open_argv_for(&self, it: &Item) -> Vec<OsString> {
         match it.shortcut.as_deref() {
-            Some(apps::Shortcut::App(app)) => apps::launch_argv(app, &terminal()),
+            Some(apps::Shortcut::App(app)) => apps::launch_argv(app, &repriseconf::terminal()),
             Some(apps::Shortcut::Link(link)) => vec!["xdg-open".into(), link.url.clone().into()],
-            None => {
-                reprisefs::props::open_argv_in(&it.path, &self.globs, &self.app_index, &terminal())
-            }
+            None => reprisefs::props::open_argv_in(
+                &it.path,
+                &self.globs,
+                &self.app_index,
+                &repriseconf::terminal(),
+            ),
         }
     }
 
@@ -856,7 +853,11 @@ impl Explorer {
         };
         Reply {
             redraw: true,
-            spawn: vec![reprisefs::apps::open_argv(app, &terminal(), &path)],
+            spawn: vec![reprisefs::apps::open_argv(
+                app,
+                &repriseconf::terminal(),
+                &path,
+            )],
             ..Default::default()
         }
     }
@@ -946,7 +947,11 @@ impl Explorer {
         }
         Reply {
             redraw_all: true,
-            spawn: vec![reprisefs::apps::open_argv(&app, &terminal(), &c.path)],
+            spawn: vec![reprisefs::apps::open_argv(
+                &app,
+                &repriseconf::terminal(),
+                &c.path,
+            )],
             ..Default::default()
         }
     }

@@ -1587,6 +1587,11 @@ fn binds() -> Vec<Bind> {
             lens!(drive_insert),
             crate::model::DRIVE_INSERTS,
         ),
+        Bind::Named(
+            crate::defaultspage::SCRIPT_END,
+            lens!(script_terminal),
+            crate::model::SCRIPT_ENDS,
+        ),
         Bind::Named("hot_corner", lens!(hot_corner), HOT_CORNERS),
         Bind::Flag("screenshot_save", lens!(screenshot_save)),
         Bind::Flag("clipboard_history", lens!(clipboard_history)),

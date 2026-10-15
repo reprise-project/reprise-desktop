@@ -153,6 +153,8 @@ pub fn program_text(p: &ProgramShortcut, name: &str) -> String {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Settings {
     pub terminal: String,
+    /// `script_terminal`: one of [`SCRIPT_ENDS`]' values.
+    pub script_terminal: String,
     pub task_manager: String,
     pub startmenu_banner: String,
     /// `startmenu_style`: one of [`STARTMENU_STYLES`]' values. Glass under
@@ -436,6 +438,7 @@ impl Default for Settings {
     fn default() -> Self {
         Settings {
             terminal: reprisefs::apps::DEFAULT_TERMINAL.into(),
+            script_terminal: "stay".into(),
             task_manager: String::new(),
             startmenu_banner: "Reprise Desktop".into(),
             startmenu_style: "classic".into(),
@@ -845,6 +848,12 @@ pub const DRIVE_INSERTS: &Choices = &[
     ("nothing", "Do nothing"),
 ];
 
+/// Default Programs' script combo. Mirrors `ScriptEnd::parse` in `reprisefs::program`.
+pub const SCRIPT_ENDS: &Choices = &[
+    ("stay", "Keep its window open"),
+    ("close", "Close its window"),
+];
+
 /// The system icons the Background page ticks, in the desktop's order,
 /// and the Recycle Bin, which always follows them. Mirror
 /// `Config::default`'s `system_icons`.
@@ -912,6 +921,7 @@ const INTERFACE: Key = k("appearance", "interface");
 fn fields() -> Vec<Field> {
     vec![
         Field::Text(k("", "terminal"), lens!(terminal)),
+        Field::Text(k("", "script_terminal"), lens!(script_terminal)),
         Field::Text(k("", "task_manager"), lens!(task_manager)),
         Field::Text(k("", "startmenu_banner"), lens!(startmenu_banner)),
         Field::Text(k("", "startmenu_style"), lens!(startmenu_style)),
@@ -2155,6 +2165,7 @@ size_px = 12
     fn save_round_trips_every_field() {
         let s = Settings {
             terminal: "kitty".into(),
+            script_terminal: "close".into(),
             task_manager: "htop".into(),
             startmenu_banner: "Reprise".into(),
             startmenu_style: "classic".into(),
@@ -2546,6 +2557,24 @@ size_px = 12
         let mut hide = load(&text);
         hide.desktop_extensions = "hide".into();
         assert_eq!(saved(&text, &hide), "", "the default removes the key");
+    }
+
+    #[test]
+    fn the_script_end_round_trips_and_the_default_leaves_the_file() {
+        assert_eq!(load("").script_terminal, "stay");
+        let foot = "terminal = \"foot\"\n";
+        let mut close = load(foot);
+        close.script_terminal = "close".into();
+        let text = saved(foot, &close);
+        assert_eq!(text, "terminal = \"foot\"\nscript_terminal = \"close\"\n");
+        assert_eq!(load(&text).script_terminal, "close");
+        let mut stay = load(&text);
+        stay.script_terminal = "stay".into();
+        assert_eq!(
+            saved(&text, &stay),
+            "terminal = \"foot\"\n",
+            "the default removes the key"
+        );
     }
 
     #[test]

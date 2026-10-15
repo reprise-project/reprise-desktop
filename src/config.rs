@@ -1184,6 +1184,7 @@ impl TaskbarConfig {
 #[derive(Clone, Debug, PartialEq)]
 pub struct Config {
     pub terminal: String,
+    pub script_terminal: reprisefs::program::ScriptEnd,
     pub task_manager: Option<String>,
     /// Retired keys (`renderer`, `outputs.<name>.hdr`, `.color_profile`), kept so
     /// an older file loads; [`Config::warn_retired`] names them.
@@ -1526,6 +1527,7 @@ impl Default for Config {
     fn default() -> Self {
         Config {
             terminal: reprisefs::apps::DEFAULT_TERMINAL.into(),
+            script_terminal: reprisefs::program::ScriptEnd::Stay,
             task_manager: None,
             retired: Vec::new(),
             theme: Theme::default(),
@@ -2312,6 +2314,7 @@ struct FileScreensaver {
 #[serde(deny_unknown_fields)]
 struct FileConfig {
     terminal: Option<String>,
+    script_terminal: Option<String>,
     task_manager: Option<String>,
     /// Retired, as `FileOutput::hdr`.
     renderer: Option<serde::de::IgnoredAny>,
@@ -2473,6 +2476,10 @@ impl Config {
         let mut cfg = Config::default();
         if let Some(t) = file.terminal {
             cfg.terminal = t;
+        }
+        if let Some(v) = file.script_terminal {
+            cfg.script_terminal = reprisefs::program::ScriptEnd::parse(&v)
+                .ok_or_else(|| format!("script_terminal = {v:?} is not stay or close"))?;
         }
         cfg.task_manager = file.task_manager;
         if file.renderer.is_some() {
@@ -5249,6 +5256,17 @@ command = "gedit"
                 .unwrap()
                 .launcher_files
         );
+    }
+
+    #[test]
+    fn script_terminal_defaults_to_stay_and_reads_close() {
+        use reprisefs::program::ScriptEnd;
+        assert_eq!(Config::default().script_terminal, ScriptEnd::Stay);
+        let c = Config::parse("script_terminal = \"close\"\n").unwrap();
+        assert_eq!(c.script_terminal, ScriptEnd::Close);
+        let c = Config::parse("script_terminal = \"stay\"\n").unwrap();
+        assert_eq!(c.script_terminal, ScriptEnd::Stay);
+        assert!(Config::parse("script_terminal = \"open\"\n").is_err());
     }
 
     #[test]
