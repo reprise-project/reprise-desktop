@@ -21,7 +21,9 @@ The file manager, and the default for folders.
 - **File operations** run in the background, so a big copy doesn't freeze
   anything. Cut, Copy, Paste (with Yes to All), Paste Shortcut, New Folder,
   rename with F2, Move To, Copy To, Open With, and Send To a zip file, the
-  desktop, a mail or a removable drive. Ctrl+Z undoes the last one.
+  desktop, a mail or a removable drive. Ctrl+Z undoes the last one; undoing a
+  copy its Recycle Bin can't take (a drive set to remove files immediately,
+  or too big) asks before deleting it permanently.
 - **Drag and drop** between Explorer windows, the desktop and other
   programs, Flatpaks included. A right-drag asks whether to copy, move or
   make a shortcut. Drop a link from a browser and you get a link file.

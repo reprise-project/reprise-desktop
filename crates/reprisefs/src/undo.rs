@@ -79,12 +79,32 @@ impl Undoable {
     /// at its first failure, so what is left is exactly what was not
     /// reversed, ready to be pushed back and retried. `bins` are where an
     /// undone copy or new file goes; the `files/` path of each item their cap
-    /// erases to make room joins `purged`.
-    fn reverse(&mut self, bins: Option<&trash::Bins>, purged: &mut Vec<PathBuf>) -> io::Result<()> {
+    /// erases to make room joins `purged`. An item its bin refuses ([`NoBin`]) fails the reversal
+    /// unless `erase`, which removes it for good.
+    fn reverse(
+        &mut self,
+        bins: Option<&trash::Bins>,
+        erase: bool,
+        purged: &mut Vec<PathBuf>,
+    ) -> io::Result<()> {
         let mut trash_in = |path: &Path| {
             let bins =
                 bins.ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "no trash directory"))?;
-            bins.trash(path).map(|(_, gone)| purged.extend(gone))
+            match bins.trash(path) {
+                Ok((_, gone)) => {
+                    purged.extend(gone);
+                    Ok(())
+                }
+                Err(e) if NoBin::refuses(&e) && erase => crate::ops::erase(path),
+                Err(e) if NoBin::refuses(&e) => Err(io::Error::new(
+                    e.kind(),
+                    NoBin {
+                        path: path.to_path_buf(),
+                        reason: e,
+                    },
+                )),
+                Err(e) => Err(e),
+            }
         };
         match self {
             Undoable::Move { from, to, listed } => {
@@ -117,7 +137,7 @@ impl Undoable {
             }
             Undoable::Batch(items) => {
                 while let Some(last) = items.last_mut() {
-                    last.reverse(bins, purged)?;
+                    last.reverse(bins, erase, purged)?;
                     items.pop();
                 }
                 Ok(())
@@ -125,6 +145,51 @@ impl Undoable {
         }
     }
 }
+
+/// Why Undo stopped at a copied or new item: its Recycle Bin refuses it (its drive removes files
+/// immediately, or it is too big). The entry stays on the stack for [`UndoStack::undo_erasing`].
+#[derive(Debug)]
+pub struct NoBin {
+    pub path: PathBuf,
+    reason: io::Error,
+}
+
+impl NoBin {
+    /// Whether [`trash::Bins::trash`] refused with nothing moved for one of those reasons.
+    fn refuses(e: &io::Error) -> bool {
+        matches!(
+            e.kind(),
+            io::ErrorKind::Unsupported | io::ErrorKind::FileTooLarge
+        )
+    }
+
+    pub fn of(e: &io::Error) -> Option<&NoBin> {
+        e.get_ref()?.downcast_ref()
+    }
+
+    /// The question before Undo erases: about this item, or about every item the entry still
+    /// removes when `many`.
+    pub fn question(&self, many: bool) -> String {
+        if many {
+            return "The items Undo removes cannot go to the Recycle Bin. Do you want to delete them permanently?".to_string();
+        }
+        let name = crate::bincap::label(&self.path);
+        match self.reason.kind() {
+            io::ErrorKind::FileTooLarge => crate::bincap::too_big_text(&name),
+            _ => format!(
+                "'{name}' is on a drive that removes files immediately. Do you want to delete it permanently?"
+            ),
+        }
+    }
+}
+
+impl std::fmt::Display for NoBin {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.reason.fmt(f)
+    }
+}
+
+impl std::error::Error for NoBin {}
 
 #[derive(Default)]
 pub struct UndoStack(Vec<Undoable>);
@@ -175,15 +240,31 @@ impl UndoStack {
     /// failed single operation is dropped; a failed batch goes back on the
     /// stack holding the members it did not reverse, so Undo again picks up
     /// where it stopped.
+    /// An entry stopped by [`NoBin`] stays whole for [`UndoStack::undo_erasing`].
     pub fn undo(&mut self) -> Option<io::Result<()>> {
-        self.undo_in(trash::Bins::system().as_ref())
+        self.undo_in(trash::Bins::system().as_ref(), false)
     }
 
-    fn undo_in(&mut self, bins: Option<&trash::Bins>) -> Option<io::Result<()>> {
+    /// [`UndoStack::undo`] removing for good each copied or new item its Recycle Bin refuses.
+    pub fn undo_erasing(&mut self) -> Option<io::Result<()>> {
+        self.undo_in(trash::Bins::system().as_ref(), true)
+    }
+
+    /// Whether the entry Undo would reverse next holds more than one item.
+    pub fn many(&self) -> bool {
+        matches!(self.0.last(), Some(Undoable::Batch(items)) if items.len() > 1)
+    }
+
+    fn undo_in(&mut self, bins: Option<&trash::Bins>, erase: bool) -> Option<io::Result<()>> {
         let mut entry = self.0.pop()?;
         let mut purged = Vec::new();
-        let done = entry.reverse(bins, &mut purged);
-        if done.is_err() && matches!(&entry, Undoable::Batch(items) if !items.is_empty()) {
+        let done = entry.reverse(bins, erase, &mut purged);
+        let keep = match &done {
+            Ok(()) => false,
+            Err(e) if NoBin::of(e).is_some() => true,
+            Err(_) => matches!(&entry, Undoable::Batch(items) if !items.is_empty()),
+        };
+        if keep {
             self.0.push(entry);
         }
         self.forget_gone(&purged);
@@ -292,9 +373,9 @@ mod tests {
         u.retain_non_trash();
 
         assert_eq!(u.label(), Some("Undo Rename"));
-        u.undo_in(None);
+        u.undo_in(None, false);
         assert_eq!(u.label(), Some("Undo Copy"), "the copy is still here");
-        u.undo_in(None);
+        u.undo_in(None, false);
         assert_eq!(u.label(), None);
     }
 
@@ -319,7 +400,7 @@ mod tests {
         u.push(Undoable::Trash(b.clone()));
         u.push(Undoable::Copied(item("c")));
 
-        u.undo_in(Some(&bins)).unwrap().unwrap();
+        u.undo_in(Some(&bins), false).unwrap().unwrap();
 
         assert!(!t.path().join("Trash/files/a").exists(), "a made room");
         assert_eq!(u.0.len(), 1, "a's undo went with it");
@@ -346,7 +427,7 @@ mod tests {
         trash::restore_free(&trash::trashed(&restored).unwrap()).unwrap();
         u.forget_gone(&[restored]);
 
-        u.undo_in(None).unwrap().unwrap();
+        u.undo_in(None, false).unwrap().unwrap();
         assert_eq!(fs::read_to_string(path("b.txt")).unwrap(), "b.txt");
         assert_eq!(u.label(), None);
     }
@@ -404,7 +485,7 @@ mod tests {
         let mut u = UndoStack::default();
         u.push(Undoable::New(dir.clone()));
 
-        u.undo_in(None).unwrap().unwrap();
+        u.undo_in(None, false).unwrap().unwrap();
 
         assert!(!dir.exists());
     }
@@ -421,7 +502,7 @@ mod tests {
         u.push(Undoable::Copied(dir.clone()));
         assert_eq!(u.label(), Some("Undo Copy"));
 
-        u.undo_in(Some(&trash::Bins::new(root.clone(), Vec::new())))
+        u.undo_in(Some(&trash::Bins::new(root.clone(), Vec::new())), false)
             .unwrap()
             .unwrap();
 
@@ -430,6 +511,41 @@ mod tests {
             fs::read_to_string(root.join("files/Photos/a.jpg")).unwrap(),
             "a"
         );
+        assert_eq!(u.label(), None);
+    }
+
+    /// A copy onto a drive that removes files immediately is not erased by Undo unasked: Undo fails
+    /// naming it, keeps the entry, and only Undo with erasing removes the copies, none into the bin.
+    #[test]
+    fn undo_of_a_copy_its_bin_refuses_waits_for_erasing() {
+        let t = tempfile::tempdir().unwrap();
+        let root = t.path().join("Trash");
+        let (a, b) = (t.path().join("a.txt"), t.path().join("b.txt"));
+        fs::write(&a, "a").unwrap();
+        fs::write(&b, "b").unwrap();
+        let mut bins = trash::Bins::new(root.clone(), Vec::new());
+        bins.policy.global.remove_immediately = true;
+
+        let mut u = UndoStack::default();
+        u.push_all(vec![
+            Undoable::Copied(a.clone()),
+            Undoable::Copied(b.clone()),
+        ]);
+        let err = u.undo_in(Some(&bins), false).unwrap().unwrap_err();
+
+        let no_bin = NoBin::of(&err).expect("the bin refused it");
+        assert_eq!(no_bin.path, b);
+        assert_eq!(
+            no_bin.question(false),
+            "'b.txt' is on a drive that removes files immediately. Do you want to delete it permanently?"
+        );
+        assert!(a.exists() && b.exists(), "nothing erased unasked");
+        assert_eq!(u.label(), Some("Undo Copy"), "the entry stays");
+        assert!(u.many());
+
+        u.undo_in(Some(&bins), true).unwrap().unwrap();
+        assert!(!a.exists() && !b.exists());
+        assert!(!root.join("files").exists(), "nothing went to the bin");
         assert_eq!(u.label(), None);
     }
 
@@ -444,7 +560,7 @@ mod tests {
         u.push(Undoable::New(file.clone()));
         assert_eq!(u.label(), Some("Undo New"));
 
-        u.undo_in(Some(&trash::Bins::new(root.clone(), Vec::new())))
+        u.undo_in(Some(&trash::Bins::new(root.clone(), Vec::new())), false)
             .unwrap()
             .unwrap();
 
