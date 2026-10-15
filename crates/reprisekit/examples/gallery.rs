@@ -69,6 +69,7 @@ fn main() {
             &render_orb_glow(n.max(1)),
             "reprisekit-gallery-orb-glow-glass.png",
         );
+        write_volume_popups(true, n.max(1));
         return;
     }
     if let Ok(pct) = std::env::var("REPRISE_GALLERY_TEXT_SIZE") {
@@ -125,6 +126,7 @@ fn main() {
         &render_stats_panel(with_blue),
         "reprisekit-gallery-stats-panel.png",
     );
+    write_volume_popups(with_blue, 1);
     if with_blue {
         write_preview(
             &render_tray_arrow_schemes(1),
@@ -3249,32 +3251,6 @@ fn render(theme: &Theme, with_blue: bool) -> Canvas {
     }
 
     {
-        let mut vp = volumepopup::VolumePopup::new(&sample_mix(7));
-        vp.first = 1;
-        let lay = volumepopup::layout(
-            &vp,
-            theme,
-            &text,
-            (700, 3540),
-            reprisekit::taskbar::Edge::Bottom,
-            Rect::new(441, 3300, 509, 244),
-        );
-        volumepopup::draw(&mut c, theme, &text, &vp, &lay);
-        let mut vp = volumepopup::VolumePopup::new(&sample_mix(2));
-        vp.focus = volumepopup::Focus::Thumb(1);
-        vp.cues = true;
-        let lay = volumepopup::layout(
-            &vp,
-            theme,
-            &text,
-            (825, 3772),
-            reprisekit::taskbar::Edge::Bottom,
-            Rect::new(701, 3546, 249, 233),
-        );
-        volumepopup::draw(&mut c, theme, &text, &vp, &lay);
-    }
-
-    {
         let lay = tooltip::notify_layout(
             theme,
             &text,
@@ -5961,7 +5937,7 @@ fn render_glass_toolbars(theme: &Theme) -> Canvas {
     c
 }
 
-/// Glass's progress bars, trackbars and a dialog's ? box, 950x430, in each state, plus the speaker's volume popup.
+/// Glass's progress bars, trackbars and a dialog's ? box, 950x430, in each state.
 fn render_glass_ranges(theme: &Theme) -> Canvas {
     let text = TextRenderer::load(&FontConfig::default());
     let p = theme.paint();
@@ -6047,16 +6023,6 @@ fn render_glass_ranges(theme: &Theme) -> Canvas {
         );
         draw_vertical_trackbar(&mut c, &p, &lay, enabled, focused, ptr);
     }
-    let vp = volumepopup::VolumePopup::new(&sample_mix(2));
-    let lay = volumepopup::layout(
-        &vp,
-        theme,
-        &text,
-        (436, 424),
-        reprisekit::taskbar::Edge::Bottom,
-        Rect::new(0, 0, 950, 430),
-    );
-    volumepopup::draw(&mut c, theme, &text, &vp, &lay);
     c
 }
 
@@ -6170,7 +6136,7 @@ fn render_glass_balloons(theme: &Theme) -> Canvas {
     c
 }
 
-/// The flyouts as windows over the stripes: calendar, notification history, volume popup, clipboard history, emoji panel and a colour button's popup.
+/// The flyouts as windows over the stripes: calendar, notification history, clipboard history, emoji panel and a colour button's popup.
 fn render_glass_flyouts(theme: &Theme) -> Canvas {
     use reprisekit::controls::cliphistory::{self, ClipHistory, Row};
     use reprisekit::controls::{calendar, emojipicker};
@@ -6202,16 +6168,6 @@ fn render_glass_flyouts(theme: &Theme) -> Canvas {
         20,
         &notifyhistory::draw(theme, &text, &notifyhistory::sample()),
     );
-    let vp = volumepopup::VolumePopup::new(&sample_mix(2));
-    let lay = volumepopup::layout(
-        &vp,
-        theme,
-        &text,
-        (810, 300),
-        reprisekit::taskbar::Edge::Bottom,
-        Rect::new(680, 20, 260, 300),
-    );
-    volumepopup::draw(&mut c, theme, &text, &vp, &lay);
     let rows = ["cargo build --release", "Image, 1920x1080", "hello world"]
         .into_iter()
         .enumerate()
@@ -6400,7 +6356,7 @@ fn render_glass_popup_parts(theme: &Theme) -> Canvas {
 /// The volume popup's now-playing strip in each look: playing with an artist, Pause focused (top); paused with a long title, Previous greyed and Next held (bottom).
 fn render_now_playing() -> Canvas {
     use volumepopup::{NowPlaying, Transport};
-    let (w, h) = (250, 290);
+    let (w, h) = (480, 430);
     let mut c = Canvas::new(3 * w as u32, 2 * h as u32);
     c.fill_rect(c.bounds(), Theme::default().colors.background);
     for (i, look) in [Interface::Classic, Interface::Blue, Interface::Glass]
@@ -6462,11 +6418,14 @@ fn sample_mix(apps: usize) -> volumepopup::Mix {
         ("Podcasts", 14, false, Color::rgb(150, 60, 190)),
         ("Terminal Bell", 10, false, Color::rgb(60, 60, 60)),
     ];
+    let mut speaker = Canvas::new(32, 32);
+    speaker.fill_rect(Rect::new(2, 2, 28, 28), Color::rgb(85, 85, 85));
     volumepopup::Mix {
         master: volumepopup::Level {
             pos: 14,
             mute: false,
             live: true,
+            icon: Some(speaker),
         },
         outputs: vec!["Speakers".into(), "Headphones".into()],
         output: Some(0),
@@ -6477,8 +6436,8 @@ fn sample_mix(apps: usize) -> volumepopup::Mix {
             .iter()
             .take(apps)
             .map(|&(name, pos, mute, colour)| {
-                let mut icon = Canvas::new(16, 16);
-                icon.fill_rect(Rect::new(1, 1, 14, 14), colour);
+                let mut icon = Canvas::new(32, 32);
+                icon.fill_rect(Rect::new(2, 2, 28, 28), colour);
                 volumepopup::AppLevel {
                     key: name.to_lowercase(),
                     label: name.into(),
@@ -6488,6 +6447,66 @@ fn sample_mix(apps: usize) -> volumepopup::Mix {
                 }
             })
             .collect(),
+    }
+}
+
+/// The speaker's volume popup in `theme` at scale `n`, 950x840: seven programs scrolled by one
+/// with a player's strip, then two programs with the focus ring on a thumb, and the Output list
+/// open.
+fn render_volume_popup(theme: &Theme, n: i32) -> Canvas {
+    let text = TextRenderer::load(&FontConfig::default());
+    // As a program draws: logical lengths on a canvas `n` device px each, the look's parts at `n`.
+    let theme = &Theme {
+        look: theme.look.at_scale(n),
+        ..theme.clone()
+    };
+    let mut c = Canvas::with_scale(950, 840, n);
+    c.fill_rect(c.bounds(), theme.colors.background);
+    let edge = reprisekit::taskbar::Edge::Bottom;
+    let mut seven = sample_mix(7);
+    seven.playing = Some(volumepopup::NowPlaying {
+        title: "Evening Mix".into(),
+        artist: "The Band".into(),
+        playing: true,
+        can_previous: true,
+        can_next: true,
+        can_play: true,
+        can_pause: true,
+    });
+    let mut vp = volumepopup::VolumePopup::new(&seven);
+    vp.first = 1;
+    let lay = volumepopup::layout(&vp, theme, &text, (475, 455), edge, c.bounds());
+    volumepopup::draw(&mut c, theme, &text, &vp, &lay);
+    let mut vp = volumepopup::VolumePopup::new(&sample_mix(2));
+    vp.focus = volumepopup::Focus::Thumb(1);
+    vp.cues = true;
+    let lay = volumepopup::layout(&vp, theme, &text, (237, 830), edge, c.bounds());
+    volumepopup::draw(&mut c, theme, &text, &vp, &lay);
+    let mut m = sample_mix(2);
+    m.outputs = (1..=10).map(|i| format!("Output {i}")).collect();
+    let mut vp = volumepopup::VolumePopup::new(&m);
+    vp.output.toggle();
+    let lay = volumepopup::layout(&vp, theme, &text, (712, 830), edge, c.bounds());
+    volumepopup::draw(&mut c, theme, &text, &vp, &lay);
+    c
+}
+
+/// The volume popup's pages at scale `n`: Classic, and Blue and Glass `with_blue`.
+fn write_volume_popups(with_blue: bool, n: i32) {
+    let at = if n == 1 {
+        String::new()
+    } else {
+        format!("-x{n}")
+    };
+    let mut looks = vec![("", Interface::Classic)];
+    if with_blue {
+        looks.extend([("-blue", Interface::Blue), ("-glass", Interface::Glass)]);
+    }
+    for (name, look) in looks {
+        write_preview(
+            &render_volume_popup(&interfaces::theme_for(look), n),
+            &format!("reprisekit-gallery-volume-popup{name}{at}.png"),
+        );
     }
 }
 
