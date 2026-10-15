@@ -465,6 +465,7 @@ impl State {
         let px = PICTURE * self.draw_scale_at(Some(&output)).max(1);
         let user = crate::lock::current_user();
         let mut model = StartPanel::new();
+        model.text = self.config.theme.text;
         self.refresh_recent();
         let (rows, places) = self.start_places(px, &user);
         model.places = rows;
@@ -1596,10 +1597,12 @@ impl State {
         crate::access::touch(self);
     }
 
-    /// The look changed under the open panel: draw it again from scratch.
+    /// The look or the text size changed under the open panel: draw it again from scratch.
     pub fn retheme_start_panel(&mut self) {
         self.start_backing = Default::default();
+        let text = self.config.theme.text;
         if let Some(v) = self.start_panel.as_mut() {
+            v.model.text = text;
             v.rasters = Rasters::default();
         }
         self.redraw_start_panel();
