@@ -52,6 +52,7 @@ const DND_LABEL: &str = "Do not disturb";
 const CLEAR_LABEL: &str = "Clear All";
 const GROUP_CLEAR_LABEL: &str = "Clear";
 const EMPTY_LABEL: &str = "No notifications";
+const COLLAPSED_LABEL: &str = "collapsed";
 /// A group's name when the program gave none.
 const NO_APP: &str = "Other";
 
@@ -697,7 +698,13 @@ pub fn access(
             n.add_action(Action::Focus);
             n.add_action(Action::Click);
             match m {
-                Meta::Header { open, .. } => n.set_expanded(*open),
+                Meta::Header { open, .. } => {
+                    n.set_expanded(*open);
+                    // The AT-SPI bridge maps no `expanded`; screen readers hear the fold here.
+                    if !open {
+                        n.set_description(COLLAPSED_LABEL);
+                    }
+                }
                 Meta::Note { time, .. } => {
                     n.set_description(time.as_str());
                     n.add_action(Action::ShowContextMenu);
@@ -1163,6 +1170,8 @@ mod tests {
         );
         let calendar = tree.get(rows[5]).unwrap();
         assert_eq!(calendar.is_expanded(), Some(false), "Calendar is folded");
+        assert_eq!(calendar.description(), Some("collapsed"));
+        assert_eq!(mail.description(), None, "an open group says nothing");
         assert_eq!(focus, rows[1], "the selected notification");
         let note = tree.get(rows[1]).unwrap();
         assert_eq!(note.label(), Some("3 new messages"));
