@@ -187,12 +187,17 @@ impl Device {
     /// "Hotspot: Desk (2 devices)" while the hotspot is up, without the count when it is not
     /// known.
     pub fn hotspot_line(&self) -> Option<String> {
+        self.hotspot_summary().map(|h| format!("Hotspot: {h}"))
+    }
+
+    /// [`Device::hotspot_line`] without its "Hotspot: " label.
+    pub fn hotspot_summary(&self) -> Option<String> {
         let ssid = self.hotspot.as_ref()?;
         Some(match self.hotspot_clients {
-            None => format!("Hotspot: {ssid}"),
-            Some(0) => format!("Hotspot: {ssid} (no devices)"),
-            Some(1) => format!("Hotspot: {ssid} (1 device)"),
-            Some(n) => format!("Hotspot: {ssid} ({n} devices)"),
+            None => ssid.clone(),
+            Some(0) => format!("{ssid} (no devices)"),
+            Some(1) => format!("{ssid} (1 device)"),
+            Some(n) => format!("{ssid} ({n} devices)"),
         })
     }
 }
