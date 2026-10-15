@@ -2,6 +2,8 @@
 //! combo, Settings... and Preview, and the minutes of no input that start it
 //! (`[idle] blank_after`, shown in seconds on the Power page).
 
+use std::path::{Path, PathBuf};
+
 use reprisekit::classic::assets::MONITOR_SCREEN;
 use reprisekit::classic::widgets::BUTTON_W;
 use reprisekit::controls::form::{Control, Form, Item, Screen};
@@ -107,8 +109,10 @@ pub struct Preview {
     pub saver: Saver,
     pub kind: Kind,
     pub options: Options,
-    pub photos: Vec<Canvas>,
-    next_photo: usize,
+    /// The Photos folder's pictures, as the full-screen saver lists them.
+    pub files: Vec<PathBuf>,
+    /// The picture shown last, which the next pick skips.
+    pub current: Option<PathBuf>,
 }
 
 pub fn screen_size() -> (u32, u32) {
@@ -124,24 +128,51 @@ impl Preview {
             saver: Saver::new(kind, &options, w, h, 7, text),
             kind,
             options,
-            photos: Vec::new(),
-            next_photo: 0,
+            files: Vec::new(),
+            current: None,
         }
     }
 
     pub fn frame(&mut self, ms: u64) -> Canvas {
         self.saver.advance(ms);
-        if !self.photos.is_empty() && self.saver.take_photo_request() {
-            let (w, h) = screen_size();
-            let p = &self.photos[self.next_photo % self.photos.len()];
-            self.saver.push_photo(saver::fit(p, w, h));
-            self.next_photo += 1;
-        }
         let (w, h) = screen_size();
         let mut c = Canvas::new(w, h);
         self.saver.draw(&mut c);
         c
     }
+}
+
+impl Preview {
+    /// Whether Photos wants its next picture; once true, it waits for [`Preview::show_photo`].
+    pub fn wants_photo(&mut self) -> bool {
+        !self.files.is_empty() && self.saver.take_photo_request()
+    }
+
+    pub fn show_photo(&mut self, path: PathBuf, picture: &Canvas) {
+        let (w, h) = screen_size();
+        self.current = Some(path);
+        self.saver.push_photo(saver::fit(picture, w, h));
+    }
+}
+
+/// The next picture for Photos: one of `files` at random but `current`, as full screen picks,
+/// with `decode` skipping a file that does not decode (eight tries at most). `roll` gives each try
+/// its dice.
+pub fn pick_photo(
+    files: &[PathBuf],
+    current: Option<&Path>,
+    mut roll: impl FnMut() -> u32,
+    mut decode: impl FnMut(&Path) -> Option<Canvas>,
+) -> Option<(PathBuf, Canvas)> {
+    let mut current = current.map(Path::to_path_buf);
+    for _ in 0..files.len().min(8) {
+        let path = reprisefs::pictures::next(files, current.as_deref(), true, roll())?;
+        if let Some(picture) = decode(&path) {
+            return Some((path, picture));
+        }
+        current = Some(path);
+    }
+    None
 }
 
 pub fn show(form: &mut Form, frame: Canvas) {
@@ -201,6 +232,39 @@ mod tests {
             Control::UpDown(u) => assert_eq!(u.value(), 5, "300 s is 5 minutes"),
             _ => unreachable!(),
         }
+    }
+
+    #[test]
+    fn a_photo_is_any_picture_in_the_folder_but_the_one_shown() {
+        let files: Vec<PathBuf> = ["a.jpg", "b.jpg", "c.jpg", "d.jpg", "e.jpg"]
+            .map(PathBuf::from)
+            .to_vec();
+        let decode = |_: &Path| Some(Canvas::new(1, 1));
+        let picks: Vec<PathBuf> = (0..5)
+            .filter_map(|r| pick_photo(&files, None, || r, decode).map(|(p, _)| p))
+            .collect();
+        assert_eq!(
+            picks, files,
+            "every picture can come up, past the first three"
+        );
+        for r in 0..8 {
+            let (p, _) = pick_photo(&files, Some(Path::new("e.jpg")), || r, decode).unwrap();
+            assert_ne!(p, PathBuf::from("e.jpg"), "roll {r}");
+        }
+    }
+
+    #[test]
+    fn a_picture_that_does_not_decode_is_skipped() {
+        let files: Vec<PathBuf> = ["bad.jpg", "good.jpg"].map(PathBuf::from).to_vec();
+        let mut rolls = [0, 0].into_iter();
+        let got = pick_photo(
+            &files,
+            None,
+            || rolls.next().unwrap_or(0),
+            |p| (p == Path::new("good.jpg")).then(|| Canvas::new(1, 1)),
+        );
+        assert_eq!(got.map(|(p, _)| p), Some(PathBuf::from("good.jpg")));
+        assert!(pick_photo(&files, None, || 0, |_| None).is_none());
     }
 
     #[test]

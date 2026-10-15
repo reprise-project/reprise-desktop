@@ -370,8 +370,8 @@ impl State {
             .name("slideshow".into())
             .spawn(move || {
                 let list = reprisefs::pictures::in_folder(&folder);
-                let roll = crate::slideshow::roll();
-                let _ = tx.send(crate::slideshow::next(
+                let roll = reprisefs::pictures::roll();
+                let _ = tx.send(reprisefs::pictures::next(
                     &list,
                     current.as_deref(),
                     shuffle,
