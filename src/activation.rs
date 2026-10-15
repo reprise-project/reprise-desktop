@@ -124,6 +124,14 @@ impl State {
         crate::spawn::spawn(cmd, &self.env, Some(&token))
     }
 
+    /// `spawn_activated` for a command typed or bound by hand, in its [`crate::spawn::command_app`]
+    /// scope.
+    pub fn spawn_command_activated(&mut self, cmd: &str) -> bool {
+        let app = crate::spawn::command_app(cmd, &self.app_index);
+        let token = self.new_activation_token();
+        crate::spawn::spawn_in(cmd, app.as_deref(), &self.env, Some(&token))
+    }
+
     pub fn spawn_argv_activated<S: AsRef<std::ffi::OsStr> + std::fmt::Debug>(
         &mut self,
         argv: &[S],

@@ -456,7 +456,13 @@ fn with_session_env(c: &mut std::process::Command, env: &SessionEnv, token: Opti
 
 /// Returns whether the shell started; what it runs may still fail.
 pub fn spawn(cmd: &str, env: &SessionEnv, token: Option<&str>) -> bool {
-    match start(command(cmd, env, token), cmd) {
+    spawn_in(cmd, None, env, token)
+}
+
+/// `spawn` in the app scope of `app`, as [`spawn_argv_in`] does.
+pub fn spawn_in(cmd: &str, app: Option<&str>, env: &SessionEnv, token: Option<&str>) -> bool {
+    let argv = in_scope(&["sh", "-c", cmd], app);
+    match start(command_argv(&argv[0], &argv[1..], env, token), cmd) {
         Ok(()) => true,
         Err(e) => {
             log::error!("spawn {cmd:?}: {e}");
@@ -498,28 +504,44 @@ pub fn try_spawn_argv_in<S: AsRef<std::ffi::OsStr> + std::fmt::Debug>(
     env: &SessionEnv,
     token: Option<&str>,
 ) -> std::io::Result<()> {
-    let Some((program, args)) = argv.split_first() else {
+    let Some(program) = argv.first() else {
         return Err(std::io::Error::new(
             std::io::ErrorKind::InvalidInput,
             "empty command line",
         ));
     };
     let what = program.as_ref().to_string_lossy();
-    let mut c = match app.filter(|_| user_manager_running()) {
-        Some(app) => {
-            let mut scoped: Vec<std::ffi::OsString> = scope_argv(app, &unit_suffix())
-                .into_iter()
-                .map(Into::into)
-                .collect();
-            scoped.extend(argv.iter().map(|a| a.as_ref().to_os_string()));
-            command_argv(&scoped[0], &scoped[1..], env, token)
-        }
-        None => command_argv(program, args, env, token),
-    };
+    let argv = in_scope(argv, app);
+    let mut c = command_argv(&argv[0], &argv[1..], env, token);
     if let Some(dir) = dir {
         c.current_dir(dir);
     }
     start(c, &what)
+}
+
+/// `argv` behind the [`scope_argv`] prefix of `app`, or alone without an app or a user manager.
+fn in_scope<S: AsRef<std::ffi::OsStr>>(argv: &[S], app: Option<&str>) -> Vec<std::ffi::OsString> {
+    let scope = app.filter(|_| user_manager_running());
+    let prefix = scope.map(|app| scope_argv(app, &unit_suffix()));
+    (prefix.into_iter().flatten().map(Into::into))
+        .chain(argv.iter().map(|a| a.as_ref().to_os_string()))
+        .collect()
+}
+
+/// The app scope of shell command `cmd`: the id of the entry in `apps` named like the program it
+/// runs or whose `Exec` runs that program, else the program's own name (systemd's
+/// `basename(argv[0])` fallback). None when it starts through a launcher such as `sh` or `env`.
+pub fn command_app(cmd: &str, apps: &[reprisefs::apps::AppEntry]) -> Option<String> {
+    let program = crate::session::program(cmd)?;
+    let program = program.trim_matches('\'');
+    if program.contains('=') {
+        return None;
+    }
+    let entry = reprisefs::apps::entry_for_app_id(apps, program, |_| true).or_else(|| {
+        apps.iter()
+            .find(|e| crate::session::program(&e.exec_line).as_deref() == Some(program))
+    });
+    Some(entry.map_or_else(|| program.to_string(), |e| e.id.clone()))
 }
 
 /// Prefix that execs a command, same pid, in `app-reprise-<app>-<suffix>.scope`; the id is
@@ -684,6 +706,33 @@ mod tests {
                 "--",
             ])
         );
+    }
+
+    #[test]
+    fn a_typed_or_bound_command_scopes_as_its_entry_else_its_program() {
+        let entry = |id: &str, exec: &str| {
+            let text = format!("[Desktop Entry]\nType=Application\nName=N\nExec={exec}\n");
+            reprisefs::apps::parse_desktop(&text, id).unwrap()
+        };
+        let apps = [
+            entry("org.deskflow.deskflow.desktop", "deskflow"),
+            entry("foot-server.desktop", "foot --server"),
+            entry("foot.desktop", "foot"),
+        ];
+        let app = |cmd: &str| command_app(cmd, &apps);
+        assert_eq!(
+            app("deskflow").as_deref(),
+            Some("org.deskflow.deskflow.desktop")
+        );
+        assert_eq!(app("/usr/bin/foot -e top").as_deref(), Some("foot.desktop"));
+        assert_eq!(app("'/usr/bin/foot'").as_deref(), Some("foot.desktop"));
+        assert_eq!(
+            app("firefox https://example.org").as_deref(),
+            Some("firefox")
+        );
+        assert_eq!(app("sh -c 'foot; foot'"), None);
+        assert_eq!(app("GDK_BACKEND=x11 foot"), None);
+        assert_eq!(app(""), None);
     }
 
     #[test]

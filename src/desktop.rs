@@ -17,6 +17,16 @@ pub enum Target {
     Uri(String),
 }
 
+impl Target {
+    /// The desktop entry id a launch runs as, which names its app scope.
+    pub fn app(&self) -> Option<&str> {
+        match self {
+            Target::Launch(app) => Some(&app.id),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Kind {
     #[default]
@@ -1183,10 +1193,16 @@ mod tests {
         assert_eq!(file_target(&path), Target::Open(path.clone()));
         assert!(can_allow_launching_at(&path, &file_target(&path)));
         assert_eq!(argv(), ["xdg-open".into(), path.clone().into_os_string()]);
+        assert_eq!(file_target(&path).app(), None);
         apps::allow_launching(&path).unwrap();
         assert!(matches!(file_target(&path), Target::Launch(_)));
         assert!(!can_allow_launching_at(&path, &file_target(&path)));
         assert_eq!(argv(), ["reprise-tool", "--go"]);
+        assert_eq!(
+            file_target(&path).app(),
+            Some("tool.desktop"),
+            "its app scope"
+        );
     }
 
     #[test]

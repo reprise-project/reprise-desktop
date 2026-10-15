@@ -541,12 +541,12 @@ impl State {
     pub fn run_action(&mut self, a: &Action, bind_mods: u32) {
         match a {
             Action::Spawn(cmd) => {
-                self.spawn_activated(cmd);
+                self.spawn_command_activated(cmd);
             }
             Action::Exec { argv, app } => self.spawn_app_activated(argv, app),
             Action::Terminal => {
                 let cmd = self.config.terminal.clone();
-                self.spawn_activated(&cmd);
+                self.spawn_command_activated(&cmd);
             }
             Action::Exit => {
                 crate::sessionend::begin(self, reprisekit::controls::endsession::Goal::LogOff, None)
