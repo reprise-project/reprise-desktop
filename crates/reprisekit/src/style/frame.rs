@@ -1111,9 +1111,8 @@ mod tests {
         let mut icon = Canvas::new(16, 16);
         icon.fill_rect(icon.bounds(), crate::theme::Color::rgb(0xFF, 0, 0xFF));
         let magenta = icon.get(0, 0);
-        let base = theme_for(Interface::Glass);
-        let top_row = |pct: u32| {
-            let theme = base.with_text_size(pct);
+        let top_row = |look: Interface, pct: u32| {
+            let theme = theme_for(look).with_text_size(pct);
             let s = theme.look.style().unwrap();
             let g = FrameGeometry::layout(&theme.metrics, 800, 400, false, Chrome::WINDOW);
             let text = TextRenderer::load(&s.caption_text.font());
@@ -1126,9 +1125,13 @@ mod tests {
             let row = (0..g.client.y).find(|&y| c.get(8, y) == magenta);
             (row.expect("the icon shows"), g.caption.height)
         };
-        let (y, h) = top_row(100);
-        let (big_y, big_h) = top_row(200);
-        assert_eq!(big_y - y, (big_h - h) / 2);
+        for look in [Interface::Glass, Interface::Blue] {
+            let (y, h) = top_row(look, 100);
+            for pct in [150, 200] {
+                let (big_y, big_h) = top_row(look, pct);
+                assert_eq!(big_y - y, (big_h - h) / 2, "{look:?} {pct}%");
+            }
+        }
     }
 
     #[test]

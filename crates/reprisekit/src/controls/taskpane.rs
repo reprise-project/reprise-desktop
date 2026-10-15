@@ -531,10 +531,10 @@ mod tests {
         assert!(lay.scrollbar.is_none());
     }
 
-    /// At 150% and 200% a title band grows with the text. Classic's chevrons stay centred down
-    /// it; Blue's fold button keeps its art at the band's top, where a 100% band draws it.
+    /// At 150% and 200% a title band grows with the text. Classic's chevrons and Blue's fold
+    /// button move down half the growth, staying centred; Blue's band keeps its top rows.
     #[test]
-    fn a_grown_title_band_keeps_its_chevrons_and_button() {
+    fn a_grown_title_band_keeps_its_chevrons_and_button_centred() {
         let (_, text) = renderer();
         for (pct, px) in [(150, 17), (200, 22)] {
             let u = crate::theme::TextUnits::new(px, 11);
@@ -570,14 +570,32 @@ mod tests {
             draw_band(&mut one, &text, &blue, r, px);
             let mut big = Canvas::new(186, band as u32);
             draw_band(&mut big, &text, &blue, Rect::new(0, 0, 186, band), px);
+            let mark = crate::blue::Variant::Blue
+                .scheme()
+                .task_collapse
+                .normal
+                .mark
+                .unwrap()
+                .argb();
+            let marks = |c: &Canvas, h: i32| -> Vec<(i32, i32)> {
+                (0..h)
+                    .flat_map(|y| (186 - 24..186).map(move |x| (x, y)))
+                    .filter(|&(x, y)| c.get(x, y) == mark)
+                    .collect()
+            };
+            let down = (band - native) / 2;
+            let moved: Vec<(i32, i32)> = marks(&one, native)
+                .into_iter()
+                .map(|(x, y)| (x, y + down))
+                .collect();
+            assert!(!moved.is_empty(), "{pct}%: the chevrons show");
+            assert_eq!(
+                marks(&big, band),
+                moved,
+                "{pct}%: the chevrons move down half the growth"
+            );
             for y in 0..native - 2 {
-                for x in 186 - 24..186 {
-                    assert_eq!(
-                        big.get(x, y),
-                        one.get(x, y),
-                        "{pct}%: the button at ({x}, {y})"
-                    );
-                }
+                assert_eq!(big.get(100, y), one.get(100, y), "{pct}%: the band at {y}");
             }
             let fill = big.get(100, native - 2);
             assert_eq!(

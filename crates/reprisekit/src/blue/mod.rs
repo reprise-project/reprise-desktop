@@ -465,6 +465,8 @@ mod tests {
         Part::TaskGroupBody,
         Part::TaskCollapse,
         Part::TaskExpand,
+        Part::TaskCollapseMark,
+        Part::TaskExpandMark,
     ];
 
     /// Every part in every variant, each frame, drawn at s = 2 is its s = 1 draw doubled, at

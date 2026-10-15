@@ -26,10 +26,10 @@ pub fn draw_header(
     ptr: Interaction,
     px: u32,
 ) -> bool {
-    let button = if open {
-        Part::TaskCollapse
+    let (button, mark) = if open {
+        (Part::TaskCollapse, Part::TaskCollapseMark)
     } else {
-        Part::TaskExpand
+        (Part::TaskExpand, Part::TaskExpandMark)
     };
     let (Some(_), Some(img)) = (st.part(Part::TaskGroupHeader), st.part(button)) else {
         return false;
@@ -40,14 +40,13 @@ pub fn draw_header(
     // An atlas painted at scale holds `scale` pixels per design pixel.
     let frame = img.frame(state);
     let (w, h) = (frame.width / img.scale * s, frame.height / img.scale * s);
-    let at = Rect::new(r.right() - w, r.y, w, h);
     if r.height == h {
-        st.draw(c, at, button, state, s);
-    } else {
-        // A band grown with the text keeps the button's art at its top, less the art's last
-        // two rows, where the header's stretched fill row takes over.
-        let clip = Rect::new(at.x, at.y, w, (h - 2 * s).min(r.height));
-        c.with_clip(clip, |c| st.draw(c, at, button, state, s));
+        st.draw(c, Rect::new(r.right() - w, r.y, w, h), button, state, s);
+    } else if st.part(mark).is_some() {
+        // A band grown with the text moves the button down by half its growth, drawn without
+        // the band's 100% rows behind it.
+        let y = r.y + (r.height - h) / 2;
+        st.draw(c, Rect::new(r.right() - w, y, w, h), mark, state, s);
     }
     let lit = if state == State::Normal {
         State::Normal
