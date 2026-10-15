@@ -2,7 +2,8 @@
 //! seat handler decodes a press once into a `KeyPress`, snapshots the modal
 //! state into `Modes`, and `route` says what happens. Nothing here touches
 //! Smithay, so the ordering rules (a lock beats a menu beats a dialog beats
-//! a bind beats the client) are plain data and tested as such. The power,
+//! a bind beats the client, but a modified bind passes a menu) are plain
+//! data and tested as such. The power,
 //! sleep and media keys are the machine's, ahead of the lock and a capture,
 //! except the wifi key, which the lock takes.
 //! VT switches come ahead of both, and Super+Shift+Escape stays local under
@@ -310,7 +311,7 @@ pub fn route(modes: &Modes, k: &KeyPress, binds: &[Keybind], globals: &[GlobalBi
         let route = if modes.switcher_open {
             switcher_key(k, binds)
         } else if modes.menus_open {
-            switch_bind(modes, k, binds).unwrap_or_else(|| menu_key(k))
+            menu_press(modes, k, binds)
         } else if k.has(KEY_Escape) {
             KeyRoute::DragCancel
         } else {
@@ -371,11 +372,9 @@ pub fn route(modes: &Modes, k: &KeyPress, binds: &[Keybind], globals: &[GlobalBi
         arm_super,
         fire_super,
     };
-    // An open menu stack owns the keyboard: every press drives it, except
-    // the switchers' binds, which close it (`run_action`) and switch.
     let switch = || switch_bind(modes, k, binds);
     if modes.menus_open && k.pressed {
-        return with(switch().unwrap_or_else(|| menu_key(k)));
+        return with(menu_press(modes, k, binds));
     }
     // The launcher, the Glass Start menu, the clipboard history popup and
     // the emoji picker each own every press while open, except their own
@@ -594,6 +593,37 @@ fn switch_bind(modes: &Modes, k: &KeyPress, binds: &[Keybind]) -> Option<KeyRout
     }
     let a = bound(k, binds).into_iter().find(opens_switcher)?;
     Some(KeyRoute::Binds(vec![a]))
+}
+
+/// A press over the open menu stack. A bind with Ctrl, Alt or Super runs
+/// (the menus close first, `keyboard`), unless a Welcome panel has the
+/// keyboard; during a drag only those `runs_during_drag` allows. Any other
+/// press drives the menu, but a letter or digit under Super, or under Ctrl
+/// outside a drag (where Ctrl picks the drop action), is no access key.
+fn menu_press(modes: &Modes, k: &KeyPress, binds: &[Keybind]) -> KeyRoute {
+    let welcome = modes.dialog_has_keyboard && modes.dialog_modal;
+    if !welcome && k.mods & !MOD_SHIFT != 0 {
+        let actions: Vec<Action> = bound(k, binds)
+            .into_iter()
+            .filter(|a| !modes.dragging || runs_during_drag(a))
+            .collect();
+        if !actions.is_empty() {
+            return KeyRoute::Binds(actions);
+        }
+    }
+    let held = if modes.dragging {
+        MOD_LOGO
+    } else {
+        MOD_LOGO | MOD_CTRL
+    };
+    match menu_key(k) {
+        KeyRoute::Menu(sym)
+            if k.mods & held != 0 && key_char(sym).is_some_and(char::is_alphanumeric) =>
+        {
+            KeyRoute::Swallow
+        }
+        r => r,
+    }
 }
 
 /// A press in the open menu stack: its first keysym that is not Super.
@@ -1088,9 +1118,10 @@ mod tests {
                 KeyRoute::Binds(vec![Action::Flip]),
                 "{m:?}"
             );
-            assert!(
-                !matches!(r(&m, &press(KEY_r, MOD_LOGO)), KeyRoute::Binds(_)),
-                "other binds stay with the popup: {m:?}"
+            assert_eq!(
+                matches!(r(&m, &press(KEY_r, MOD_LOGO)), KeyRoute::Binds(_)),
+                m.menus_open,
+                "other binds pass a menu but stay with a popup: {m:?}"
             );
         }
         let welcome = Modes {
@@ -1239,13 +1270,107 @@ mod tests {
             ..Modes::default()
         };
         let k = KeyPress {
-            syms: vec![KEY_Super_L, KEY_a],
-            lower: vec![KEY_Super_L, KEY_a],
+            syms: vec![KEY_Super_L, KEY_Down],
+            lower: vec![KEY_Super_L, KEY_Down],
             mods: MOD_LOGO,
             pressed: true,
         };
-        assert_eq!(r(&m, &k), KeyRoute::Menu(KEY_a));
+        assert_eq!(r(&m, &k), KeyRoute::Menu(KEY_Down));
         assert_eq!(r(&m, &press(KEY_Super_L, MOD_LOGO)), KeyRoute::Swallow);
+    }
+
+    fn menu_binds() -> Vec<Keybind> {
+        let bind = |mods, keysym, action| Keybind {
+            mods,
+            keysym,
+            action,
+        };
+        vec![
+            bind(MOD_LOGO, KEY_l, Action::Lock),
+            bind(MOD_LOGO, KEY_d, Action::ShowDesktop),
+            bind(MOD_LOGO, KEY_Left, Action::Snap(crate::snap::Dir::Left)),
+            bind(MOD_CTRL, KEY_Escape, Action::StartMenu),
+            bind(MOD_ALT, KEY_F4, Action::Close),
+            bind(0, KEY_Print, Action::Screenshot),
+        ]
+    }
+
+    #[test]
+    fn a_modified_bind_runs_over_an_open_menu() {
+        let m = Modes {
+            menus_open: true,
+            ..Modes::default()
+        };
+        let rm = |k: &KeyPress| route(&m, k, &menu_binds(), &[]).route;
+        for (sym, mods, a) in [
+            (KEY_l, MOD_LOGO, Action::Lock),
+            (KEY_d, MOD_LOGO, Action::ShowDesktop),
+            (KEY_Left, MOD_LOGO, Action::Snap(crate::snap::Dir::Left)),
+            (KEY_Escape, MOD_CTRL, Action::StartMenu),
+            (KEY_F4, MOD_ALT, Action::Close),
+        ] {
+            assert_eq!(rm(&press(sym, mods)), KeyRoute::Binds(vec![a]));
+        }
+        assert_eq!(
+            rm(&press(KEY_Print, 0)),
+            KeyRoute::Menu(KEY_Print),
+            "a bare bind stays the menu's"
+        );
+    }
+
+    #[test]
+    fn a_letter_under_ctrl_or_super_is_no_access_key() {
+        let m = Modes {
+            menus_open: true,
+            ..Modes::default()
+        };
+        let rm = |m: &Modes, k: &KeyPress| route(m, k, &menu_binds(), &[]).route;
+        assert_eq!(rm(&m, &press(KEY_r, MOD_CTRL)), KeyRoute::Swallow);
+        assert_eq!(rm(&m, &press(KEY_r, MOD_LOGO)), KeyRoute::Swallow);
+        assert_eq!(rm(&m, &press(KEY_1, MOD_CTRL)), KeyRoute::Swallow);
+        assert_eq!(rm(&m, &press(KEY_r, 0)), KeyRoute::Menu(KEY_r));
+        assert_eq!(rm(&m, &press(KEY_R, MOD_SHIFT)), KeyRoute::Menu(KEY_R));
+        assert_eq!(rm(&m, &press(KEY_r, MOD_ALT)), KeyRoute::Menu(KEY_r));
+        assert_eq!(rm(&m, &press(KEY_Down, MOD_CTRL)), KeyRoute::Menu(KEY_Down));
+        let drag = Modes {
+            dragging: true,
+            ..m.clone()
+        };
+        assert_eq!(
+            rm(&drag, &press(KEY_r, MOD_CTRL)),
+            KeyRoute::Menu(KEY_r),
+            "Ctrl held for a copy keeps the access keys"
+        );
+        assert_eq!(rm(&drag, &press(KEY_r, MOD_LOGO)), KeyRoute::Swallow);
+    }
+
+    #[test]
+    fn during_a_drag_only_drag_binds_pass_a_menu() {
+        let m = Modes {
+            menus_open: true,
+            dragging: true,
+            ..Modes::default()
+        };
+        let rm = |k: &KeyPress| route(&m, k, &menu_binds(), &[]).route;
+        assert_eq!(
+            rm(&press(KEY_d, MOD_LOGO)),
+            KeyRoute::Binds(vec![Action::ShowDesktop])
+        );
+        assert_eq!(rm(&press(KEY_l, MOD_LOGO)), KeyRoute::Swallow);
+        assert_eq!(rm(&press(KEY_F4, MOD_ALT)), KeyRoute::Menu(KEY_F4));
+    }
+
+    #[test]
+    fn a_welcome_panel_keeps_the_binds_from_a_menu() {
+        let m = Modes {
+            menus_open: true,
+            dialog_has_keyboard: true,
+            dialog_modal: true,
+            ..Modes::default()
+        };
+        let rm = |k: &KeyPress| route(&m, k, &menu_binds(), &[]).route;
+        assert_eq!(rm(&press(KEY_l, MOD_LOGO)), KeyRoute::Swallow);
+        assert_eq!(rm(&press(KEY_Left, MOD_LOGO)), KeyRoute::Menu(KEY_Left));
     }
 
     #[test]
