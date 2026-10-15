@@ -228,7 +228,7 @@ critical_action = "hibernate"   # nothing | standby | hibernate | turnoff; a sle
 always_show_icon = false     # reprise-power's tray icon on a machine without a battery too
 
 [idle]                       # seconds of no input; 0 disables the step
-blank_after = 0              # start the [screensaver] over every output until input
+blank_after = 0              # start the [screensaver] over every output until input; a fullscreen window holds it off
 lock_after = 600             # lock the screen
 lock_fade = 0                # dim the desktop to grey over this many seconds before the lock
 screen_off_after = 900       # power every output off; any input turns them back on

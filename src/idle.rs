@@ -5,7 +5,8 @@
 //! before that), power every output off after `screen_off_after`, run the
 //! standby command after `suspend_after`, all paused while the session is
 //! unlocked and any client holds an idle inhibitor or an
-//! `org.freedesktop.ScreenSaver` cookie.
+//! `org.freedesktop.ScreenSaver` cookie. A fullscreen window on screen holds
+//! off only the saver; the other steps keep their timeouts.
 //! The timeouts are `Config::idle_for` the current power source
 //! (`power::PowerState::on_battery`).
 
@@ -77,11 +78,12 @@ impl Steps {
     /// Milliseconds from now until the next idle deadline, or `None` when
     /// nothing is pending: every timeout disabled, every pending step
     /// already fired, or `inhibited`. `elapsed_ms` is the time since the
-    /// last input.
+    /// last input; `saver_ms` the saver's own count, `None` while it is held.
     pub fn next_deadline_ms(
         &self,
         cfg: &IdleConfig,
         elapsed_ms: u64,
+        saver_ms: Option<u64>,
         inhibited: bool,
     ) -> Option<u64> {
         if inhibited {
@@ -98,7 +100,10 @@ impl Steps {
         [
             pending(s(cfg.lock_after), self.locked_fired),
             pending(s(cfg.screen_off_after), self.screen_off),
-            pending(s(cfg.blank_after), self.blanked),
+            saver_ms.and_then(|ms| {
+                (cfg.blank_after > 0 && !self.blanked)
+                    .then(|| s(cfg.blank_after).saturating_sub(ms))
+            }),
             pending(s(cfg.suspend_after), self.suspended),
             pending(dim_after_ms(cfg), self.dimming),
         ]
@@ -131,6 +136,12 @@ pub struct IdleState {
     /// Set by the tray's ScreenSaver service (`tray::screensaver`).
     pub bus_inhibited: bool,
     since_activity: Instant,
+    /// The later of the last input and the end of the last fullscreen hold:
+    /// the saver counts from here, so it does not start the moment a video
+    /// leaves fullscreen.
+    saver_since: Instant,
+    /// What `inhibition_changed` last saw of `saver_held`.
+    was_saver_held: bool,
     /// What `inhibition_changed` last told the notifier, so only a real
     /// change restarts the countdown.
     was_inhibited: bool,
@@ -163,6 +174,8 @@ impl IdleState {
             inhibitors: Vec::new(),
             bus_inhibited: false,
             since_activity: Instant::now(),
+            saver_since: Instant::now(),
+            was_saver_held: false,
             was_inhibited: false,
             steps: Steps::default(),
             deadline_current: false,
@@ -227,12 +240,43 @@ fn inhibited(state: &State) -> bool {
     state.idle.bus_inhibited || state.idle.inhibitors.iter().any(|(s, _)| shows(state, s))
 }
 
+/// Whether a fullscreen window shows, which holds the saver off. A video
+/// player without an idle inhibitor counts; the lock covers it.
+fn saver_held(state: &State) -> bool {
+    !state.is_locked()
+        && state
+            .windows
+            .iter()
+            .any(|w| w.fullscreen && w.mapped && !w.hidden() && state.on_current_desktop(w.id))
+}
+
+/// The saver's elapsed ms, `None` while a fullscreen window holds it off.
+fn saver_ms(state: &State) -> Option<u64> {
+    (!saver_held(state)).then(|| state.idle.saver_since.elapsed().as_millis() as u64)
+}
+
 /// Tell idle-notify clients, and restart our own countdown from zero once
 /// the last inhibitor goes away (time spent inhibited does not count).
 /// Called when an inhibitor comes or goes, when a window maps, unmaps or
 /// minimizes, when the desktop shown changes, and when the session locks
 /// or unlocks, since those change which inhibitors count.
 pub fn inhibition_changed(state: &mut State) {
+    let held = saver_held(state);
+    if held != state.idle.was_saver_held {
+        log::info!(
+            "idle: saver {}",
+            if held {
+                "held by a fullscreen window"
+            } else {
+                "released"
+            }
+        );
+        state.idle.was_saver_held = held;
+        if !held {
+            state.idle.saver_since = Instant::now();
+        }
+        arm(state);
+    }
     let inhibited = inhibited(state);
     if inhibited == state.idle.was_inhibited {
         return;
@@ -249,6 +293,7 @@ pub fn inhibition_changed(state: &mut State) {
     state.idle.notifier.set_is_inhibited(inhibited);
     if !inhibited {
         state.idle.since_activity = Instant::now();
+        state.idle.saver_since = Instant::now();
     }
     arm(state);
 }
@@ -259,6 +304,7 @@ pub fn notify_activity(state: &mut State) {
     notify_clients(state);
     let idle = &mut state.idle;
     idle.since_activity = Instant::now();
+    idle.saver_since = idle.since_activity;
     let steps = &mut idle.steps;
     let mut changed = steps.locked_fired || steps.suspended || steps.dimming;
     steps.locked_fired = false;
@@ -338,10 +384,12 @@ fn config(state: &State) -> IdleConfig {
 
 pub fn arm(state: &mut State) {
     let elapsed = state.idle.since_activity.elapsed().as_millis() as u64;
-    let next = state
-        .idle
-        .steps
-        .next_deadline_ms(&config(state), elapsed, inhibited(state));
+    let next = state.idle.steps.next_deadline_ms(
+        &config(state),
+        elapsed,
+        saver_ms(state),
+        inhibited(state),
+    );
     if let Some(t) = state.idle.timer.take() {
         state.handle.remove(t);
     }
@@ -364,7 +412,8 @@ fn fired(state: &mut State) {
     let elapsed = state.idle.since_activity.elapsed().as_millis() as u64;
     let cfg = config(state);
     let due = |after_s: u32| after_s > 0 && elapsed >= after_s as u64 * 1000;
-    if due(cfg.blank_after) && !state.idle.steps.blanked {
+    let saver_due = saver_ms(state).is_some_and(|ms| ms >= cfg.blank_after as u64 * 1000);
+    if cfg.blank_after > 0 && saver_due && !state.idle.steps.blanked {
         state.idle.steps.blanked = true;
         log::info!("idle for {}s: blanking", cfg.blank_after);
         blank(state, true);
@@ -661,7 +710,7 @@ mod tests {
             ..cfg(0, 0)
         };
         assert_eq!(
-            Steps::default().next_deadline_ms(&c, 1000, false),
+            Steps::default().next_deadline_ms(&c, 1000, Some(1000), false),
             Some(29_000)
         );
         assert_eq!(
@@ -669,7 +718,7 @@ mod tests {
                 suspended: true,
                 ..Steps::default()
             }
-            .next_deadline_ms(&c, 1000, false),
+            .next_deadline_ms(&c, 1000, Some(1000), false),
             None
         );
     }
@@ -682,7 +731,7 @@ mod tests {
         };
         assert_eq!(dim_after_ms(&c), 55_000);
         assert_eq!(
-            Steps::default().next_deadline_ms(&c, 1000, false),
+            Steps::default().next_deadline_ms(&c, 1000, Some(1000), false),
             Some(54_000)
         );
         assert_eq!(
@@ -690,7 +739,7 @@ mod tests {
                 dimming: true,
                 ..Steps::default()
             }
-            .next_deadline_ms(&c, 56_000, false),
+            .next_deadline_ms(&c, 56_000, Some(56_000), false),
             Some(4_000)
         );
         assert_eq!(
@@ -712,15 +761,15 @@ mod tests {
     #[test]
     fn earliest_pending_deadline_wins() {
         assert_eq!(
-            Steps::default().next_deadline_ms(&cfg(600, 900), 0, false),
+            Steps::default().next_deadline_ms(&cfg(600, 900), 0, Some(0), false),
             Some(600_000)
         );
         assert_eq!(
-            Steps::default().next_deadline_ms(&cfg(600, 900), 100_000, false),
+            Steps::default().next_deadline_ms(&cfg(600, 900), 100_000, Some(100_000), false),
             Some(500_000)
         );
         assert_eq!(
-            Steps::default().next_deadline_ms(&cfg(600, 30), 0, false),
+            Steps::default().next_deadline_ms(&cfg(600, 30), 0, Some(0), false),
             Some(30_000)
         );
     }
@@ -732,7 +781,7 @@ mod tests {
                 locked_fired: true,
                 ..Steps::default()
             }
-            .next_deadline_ms(&cfg(600, 900), 600_000, false),
+            .next_deadline_ms(&cfg(600, 900), 600_000, Some(600_000), false),
             Some(300_000)
         );
         assert_eq!(
@@ -741,15 +790,15 @@ mod tests {
                 screen_off: true,
                 ..Steps::default()
             }
-            .next_deadline_ms(&cfg(600, 900), 900_000, false),
+            .next_deadline_ms(&cfg(600, 900), 900_000, Some(900_000), false),
             None
         );
         assert_eq!(
-            Steps::default().next_deadline_ms(&cfg(600, 900), 700_000, false),
+            Steps::default().next_deadline_ms(&cfg(600, 900), 700_000, Some(700_000), false),
             Some(0)
         );
         assert_eq!(
-            Steps::default().next_deadline_ms(&cfg(600, 900), 1_000_000, false),
+            Steps::default().next_deadline_ms(&cfg(600, 900), 1_000_000, Some(1_000_000), false),
             Some(0)
         );
         assert_eq!(
@@ -757,7 +806,7 @@ mod tests {
                 screen_off: true,
                 ..Steps::default()
             }
-            .next_deadline_ms(&cfg(600, 30), 30_000, false),
+            .next_deadline_ms(&cfg(600, 30), 30_000, Some(30_000), false),
             Some(570_000)
         );
     }
@@ -786,21 +835,49 @@ mod tests {
     }
 
     #[test]
+    fn a_held_saver_leaves_the_lock_and_screen_off_on_their_timeouts() {
+        let c = IdleConfig {
+            blank_after: 60,
+            ..cfg(600, 900)
+        };
+        assert_eq!(
+            Steps::default().next_deadline_ms(&c, 100_000, None, false),
+            Some(500_000)
+        );
+        assert_eq!(
+            Steps::default().next_deadline_ms(&c, 100_000, Some(100_000), false),
+            Some(0)
+        );
+    }
+
+    #[test]
+    fn the_saver_counts_from_the_end_of_its_hold() {
+        let c = IdleConfig {
+            blank_after: 60,
+            ..cfg(600, 900)
+        };
+        assert_eq!(
+            Steps::default().next_deadline_ms(&c, 300_000, Some(10_000), false),
+            Some(50_000)
+        );
+    }
+
+    #[test]
     fn zero_disables_and_inhibit_pauses() {
         assert_eq!(
-            Steps::default().next_deadline_ms(&cfg(0, 900), 0, false),
+            Steps::default().next_deadline_ms(&cfg(0, 900), 0, Some(0), false),
             Some(900_000)
         );
         assert_eq!(
-            Steps::default().next_deadline_ms(&cfg(600, 0), 0, false),
+            Steps::default().next_deadline_ms(&cfg(600, 0), 0, Some(0), false),
             Some(600_000)
         );
         assert_eq!(
-            Steps::default().next_deadline_ms(&cfg(0, 0), 0, false),
+            Steps::default().next_deadline_ms(&cfg(0, 0), 0, Some(0), false),
             None
         );
         assert_eq!(
-            Steps::default().next_deadline_ms(&cfg(600, 900), 0, true),
+            Steps::default().next_deadline_ms(&cfg(600, 900), 0, Some(0), true),
             None
         );
     }
