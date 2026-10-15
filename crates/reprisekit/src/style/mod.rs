@@ -1242,6 +1242,27 @@ impl Style {
         self
     }
 
+    /// `parts` drawn together by `paint`, which runs the first time any of them is
+    /// asked for and must yield each of them.
+    pub fn with_painted_group(
+        self,
+        parts: &[Part],
+        paint: impl FnOnce() -> Vec<(Part, PartImage)> + Send + 'static,
+    ) -> Style {
+        let group = Arc::new(LazyLock::new(move || {
+            Mutex::new(paint().into_iter().collect::<HashMap<_, _>>())
+        }));
+        parts.iter().fold(self, |st, &part| {
+            let group = group.clone();
+            st.with_painted(part, move || {
+                let mut painted = group.lock().unwrap_or_else(|e| e.into_inner());
+                painted
+                    .remove(&part)
+                    .unwrap_or_else(|| panic!("the group's painter yields no {part:?}"))
+            })
+        })
+    }
+
     pub fn without_part(mut self, part: Part) -> Style {
         self.parts.remove(&part);
         self
@@ -1545,6 +1566,22 @@ mod tests {
         assert_eq!(PAINTS.load(Ordering::Relaxed), 0);
         assert_eq!(s.part(Part::Taskbar).unwrap().atlas.width, 2);
         assert_eq!(copy.part(Part::Taskbar).unwrap().atlas.width, 2);
+        assert_eq!(PAINTS.load(Ordering::Relaxed), 1);
+    }
+
+    #[test]
+    fn a_painted_group_paints_once_when_its_first_part_is_asked_for() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        static PAINTS: AtomicUsize = AtomicUsize::new(0);
+        let img = |w| PartImage::new(Canvas::new(w, 2), &[State::Normal], Layout::Vertical);
+        let s = style().with_painted_group(&[Part::Taskbar, Part::TrayArea], move || {
+            PAINTS.fetch_add(1, Ordering::Relaxed);
+            vec![(Part::Taskbar, img(2)), (Part::TrayArea, img(3))]
+        });
+        assert!(s.has_parts(&[Part::Taskbar, Part::TrayArea]));
+        assert_eq!(PAINTS.load(Ordering::Relaxed), 0);
+        assert_eq!(s.part(Part::TrayArea).unwrap().atlas.width, 3);
+        assert_eq!(s.part(Part::Taskbar).unwrap().atlas.width, 2);
         assert_eq!(PAINTS.load(Ordering::Relaxed), 1);
     }
 

@@ -151,50 +151,53 @@ fn build(v: Variant, scale: i32) -> Style {
     .with_text_color(Part::TaskButton, State::Checked, inks.task_checked)
     .with_text_color(Part::TaskButton, State::CheckedHot, inks.task_checked_hot)
     .with_text_color(Part::TaskButton, State::Pressed, inks.task_pressed)
-    .with_part(Part::Caption, frame::caption(v.scheme(), scale))
-    .with_part(Part::MaxCaption, frame::max_caption(v.scheme(), scale))
-    .with_part(Part::FrameLeft, frame::frame_left(v.scheme(), scale))
-    .with_part(Part::FrameRight, frame::frame_right(v.scheme(), scale))
-    .with_part(Part::FrameBottom, frame::frame_bottom(v.scheme(), scale))
-    .with_part(
-        Part::MinButton,
-        capbutton::caption_button(v.scheme(), capbutton::Glyph::Minimize, scale),
-    )
-    .with_part(
-        Part::MaxButton,
-        capbutton::caption_button(v.scheme(), capbutton::Glyph::Maximize, scale),
-    )
-    .with_part(
-        Part::RestoreButton,
-        capbutton::caption_button(v.scheme(), capbutton::Glyph::Restore, scale),
-    )
-    .with_part(
-        Part::CloseButton,
-        capbutton::caption_button(v.scheme(), capbutton::Glyph::Close, scale),
-    )
-    .with_part(Part::Taskbar, bar::taskbar(v.scheme(), scale))
-    .with_part(Part::StartButton, start::start_button(v.scheme(), scale))
-    .with_part(Part::TaskButton, taskbutton::task_button(v, scale))
-    .with_part(Part::TrayArea, bar::tray_area(v.scheme(), scale));
+    .with_painted(Part::Caption, move || frame::caption(v.scheme(), scale))
+    .with_painted(Part::MaxCaption, move || {
+        frame::max_caption(v.scheme(), scale)
+    })
+    .with_painted(Part::FrameLeft, move || {
+        frame::frame_left(v.scheme(), scale)
+    })
+    .with_painted(Part::FrameRight, move || {
+        frame::frame_right(v.scheme(), scale)
+    })
+    .with_painted(Part::FrameBottom, move || {
+        frame::frame_bottom(v.scheme(), scale)
+    });
+    let style = [
+        (Part::MinButton, capbutton::Glyph::Minimize),
+        (Part::MaxButton, capbutton::Glyph::Maximize),
+        (Part::RestoreButton, capbutton::Glyph::Restore),
+        (Part::CloseButton, capbutton::Glyph::Close),
+    ]
+    .into_iter()
+    .fold(style, |st, (part, glyph)| {
+        st.with_painted(part, move || {
+            capbutton::caption_button(v.scheme(), glyph, scale)
+        })
+    })
+    .with_painted(Part::Taskbar, move || bar::taskbar(v.scheme(), scale))
+    .with_painted(Part::StartButton, move || {
+        start::start_button(v.scheme(), scale)
+    })
+    .with_painted(Part::TaskButton, move || taskbutton::task_button(v, scale))
+    .with_painted(Part::TrayArea, move || bar::tray_area(v.scheme(), scale));
     let style = controls::toolbar::inks(v)
         .into_iter()
         .fold(style, |st, (part, state, ink)| {
             st.with_text_color(part, state, ink)
         });
-    // Control modules own disjoint parts, so the parallel painters never collide.
-    let mut seen = std::collections::HashSet::new();
-    let style = controls::all(v, scale)
+    let style = controls::eager(v)
         .into_iter()
-        .fold(style, |st, (part, img)| {
+        .fold(style, |st, (part, img)| st.with_part(part, img));
+    let style = controls::GROUPS
+        .into_iter()
+        .fold(style, |st, (parts, paint)| {
             debug_assert!(
-                seen.insert(part),
-                "blue control part {part:?} is built twice"
+                !parts.iter().any(|&p| st.has_parts(&[p])),
+                "blue control parts {parts:?} collide with a part already in the style"
             );
-            debug_assert!(
-                st.part(part).is_none(),
-                "blue control part {part:?} collides with a part already in the style"
-            );
-            st.with_part(part, img)
+            st.with_painted_group(parts, move || paint(v, scale))
         });
     let style = controls::inks(v)
         .into_iter()

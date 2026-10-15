@@ -1,7 +1,5 @@
 //! One file per control, each building its own atlas of parts from Blue's
-//! palette data next to the pixels that draw it. `all()` gathers every
-//! part built so far in one colour variant, in file order, for
-//! [`crate::blue::build`] to hand to [`crate::style::Style::with_part`].
+//! palette data next to the pixels that draw it.
 
 mod button;
 pub(super) mod calendar;
@@ -34,30 +32,83 @@ use crate::metrics::{
 use crate::style::{Part, PartImage, State};
 use crate::theme::Color;
 
-pub(super) fn all(v: Variant, scale: i32) -> Vec<(Part, PartImage)> {
-    let mut parts = Vec::new();
-    parts.extend(button::parts(v, scale));
-    parts.extend(checkbox::parts(v, scale));
-    parts.extend(radio::parts(v, scale));
-    parts.extend(groupbox::parts(v, scale));
-    parts.extend(scrollbar::parts(v, scale));
-    parts.extend(field::parts(v));
-    parts.extend(combodrop::parts(v, scale));
-    parts.extend(tab::parts(v, scale));
-    parts.extend(progress::parts(v, scale));
-    parts.extend(trackbar::parts(v, scale));
-    parts.extend(spin::parts(v, scale));
-    parts.extend(help::parts(v, scale));
-    parts.extend(sizebox::parts(v, scale));
+/// A control module's parts and the painter that draws them together at a scale.
+pub(super) type Group = (&'static [Part], fn(Variant, i32) -> Vec<(Part, PartImage)>);
+
+/// Each control module whose parts are painted at their first use, in file order.
+pub(super) const GROUPS: [Group; 19] = [
+    (&[Part::PushButton], button::parts),
+    (&[Part::CheckBox], checkbox::parts),
+    (&[Part::Radio], radio::parts),
+    (&[Part::GroupBox], groupbox::parts),
+    (
+        &[
+            Part::ScrollArrowUp,
+            Part::ScrollArrowDown,
+            Part::ScrollArrowLeft,
+            Part::ScrollArrowRight,
+            Part::ScrollThumbV,
+            Part::ScrollThumbH,
+            Part::ScrollGripV,
+            Part::ScrollGripH,
+            Part::ScrollTrackV,
+            Part::ScrollTrackH,
+        ],
+        scrollbar::parts,
+    ),
+    (&[Part::ComboDrop], combodrop::parts),
+    (&[Part::TabItem, Part::TabPane], tab::parts),
+    (&[Part::ProgressBar, Part::ProgressChunk], progress::parts),
+    (
+        &[
+            Part::TrackbarTrack,
+            Part::TrackbarThumb,
+            Part::TrackbarTrackV,
+            Part::TrackbarThumbV,
+        ],
+        trackbar::parts,
+    ),
+    (&[Part::SpinUp, Part::SpinDown], spin::parts),
+    (&[Part::HelpButton], help::parts),
+    (&[Part::SizeBox], sizebox::parts),
+    (
+        &[
+            Part::ToolbarButton,
+            Part::ToolbarDrop,
+            Part::ToolbarSeparator,
+        ],
+        toolbar::parts,
+    ),
+    (&[Part::Rebar, Part::RebarBand], rebar::parts),
+    (
+        &[Part::HeaderItem, Part::HeaderFiller, Part::HeaderSortArrow],
+        header::parts,
+    ),
+    (&[Part::StatusBar, Part::StatusPane], statusbar::parts),
+    (
+        &[
+            Part::TaskPane,
+            Part::TaskGroupHeader,
+            Part::TaskGroupBody,
+            Part::TaskCollapse,
+            Part::TaskExpand,
+            Part::TaskCollapseMark,
+            Part::TaskExpandMark,
+        ],
+        taskpane::parts,
+    ),
+    (
+        &[Part::ExplorerBarHeader, Part::ExplorerBarClose],
+        explorerbar::parts,
+    ),
+    (&[Part::PlacesBar], placesbar::parts),
+];
+
+/// The parts cheap enough to paint with the style; which ones depends on the variant.
+pub(super) fn eager(v: Variant) -> Vec<(Part, PartImage)> {
+    let mut parts = field::parts(v);
     parts.extend(calendar::parts(v));
-    parts.extend(toolbar::parts(v, scale));
-    parts.extend(rebar::parts(v, scale));
-    parts.extend(header::parts(v, scale));
-    parts.extend(statusbar::parts(v, scale));
     parts.extend(tooltip::parts(v));
-    parts.extend(taskpane::parts(v, scale));
-    parts.extend(explorerbar::parts(v, scale));
-    parts.extend(placesbar::parts(v, scale));
     parts
 }
 
@@ -124,6 +175,17 @@ pub(super) fn menubar_metrics() -> MenuBarMetrics {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn each_group_paints_exactly_the_parts_it_names() {
+        for v in Variant::ALL {
+            for (names, paint) in GROUPS {
+                let painted: Vec<Part> = paint(v, 1).into_iter().map(|(p, _)| p).collect();
+                assert_eq!(painted.len(), names.len(), "{v:?} {names:?}");
+                assert!(names.iter().all(|p| painted.contains(p)), "{v:?} {names:?}");
+            }
+        }
+    }
 
     #[test]
     fn a_greyed_label_inks_each_variants_own_grey() {
