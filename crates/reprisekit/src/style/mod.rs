@@ -1016,6 +1016,7 @@ pub struct Style {
     pub caption_tabs: Option<CaptionTabLook>,
     pub(crate) tray_arrow: Option<Arc<trayarrow::TrayArrowArt>>,
     pub(crate) start_bloom: Option<Arc<startbloom::StartBloom>>,
+    pub(crate) clock_face: Option<ClockPainter>,
     pub chrome_colors: Option<ColorScheme>,
     rescale: Option<Rescale>,
     rescaled: Rescaled,
@@ -1031,6 +1032,10 @@ impl Clone for Rescaled {
 }
 
 type Rescale = Arc<dyn Fn(i32) -> Style + Send + Sync>;
+
+/// Paints the clock popup's analog clock at `time` (hour 0..23, minute, second), `side` design px
+/// square, at scale `d`.
+pub(crate) type ClockPainter = fn(time: (u32, u32, u32), side: i32, d: i32) -> Canvas;
 
 /// A part's art, painted the first time it is asked for; clones share it.
 type Art = Arc<LazyLock<PartImage, Box<dyn FnOnce() -> PartImage + Send>>>;
@@ -1081,6 +1086,7 @@ impl Style {
             caption_tabs: None,
             tray_arrow: None,
             start_bloom: None,
+            clock_face: None,
             chrome_colors: None,
             balloon: None,
             flyout: None,
@@ -1212,6 +1218,11 @@ impl Style {
 
     pub(crate) fn with_tray_arrow(mut self, art: trayarrow::TrayArrowArt) -> Style {
         self.tray_arrow = Some(Arc::new(art));
+        self
+    }
+
+    pub(crate) fn with_clock_face(mut self, paint: ClockPainter) -> Style {
+        self.clock_face = Some(paint);
         self
     }
 
