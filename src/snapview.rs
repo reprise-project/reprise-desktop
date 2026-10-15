@@ -1147,9 +1147,10 @@ impl State {
             KeyStep::Zone(i) => self.key_into_zone(&out, w, i, maximized),
             KeyStep::NextOutput => {
                 let b = self.layout_box(Some(&out));
-                let x = if dir == Dir::Left { b.x - 1 } else { b.right() };
-                let Some(next) =
-                    (self.output_exactly_at(f64::from(x), f64::from(cy))).filter(|n| *n != out)
+                let outs = self.scene.outputs().to_vec();
+                let boxes: Vec<Rect> = outs.iter().map(|o| self.layout_box(Some(o))).collect();
+                let Some(next) = crate::snap::beside(b, &boxes, dir == Dir::Right, r, cy)
+                    .map(|i| outs[i].clone())
                 else {
                     return;
                 };
@@ -1695,6 +1696,27 @@ mod tests {
         s.apply(d, "DP-1", halves(), true, true, WORK, 0, shown);
         assert_eq!(s.group_of(a), None, "a on screen is covered");
         assert_eq!(s.group_of(d), s.group_of(b));
+    }
+
+    #[test]
+    fn a_drop_into_a_layout_on_another_output_starts_a_group_there() {
+        let (a, b) = (WindowId::next(), WindowId::next());
+        let mut s = Snapping::default();
+        s.apply(a, "DP-1", halves(), true, true, WORK, 0, all);
+        s.join_group(a, b, 1);
+        let first = s.group_of(a);
+        s.apply(b, "DP-2", halves(), false, true, WORK, 0, all);
+        let second = s.group_of(b);
+        assert!(second.is_some() && second != first, "not DP-1's group");
+        assert_eq!(s.member_zone(b, "DP-2", &all), Some(0));
+        assert_eq!(s.group_of(a), first, "DP-1 keeps its group");
+        assert!(s.active.contains_key(&k("DP-1")));
+        s.apply(a, "DP-2", halves(), false, true, WORK, 1, all);
+        assert_eq!(s.group_of(a), second, "joins the group on DP-2");
+        assert!(
+            !s.active.contains_key(&k("DP-1")),
+            "DP-1's layout went with its last window"
+        );
     }
 
     #[test]

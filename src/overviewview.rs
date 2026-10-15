@@ -50,7 +50,8 @@ pub struct OverviewView {
     pub model: Overview,
     pub windows: Vec<WindowId>,
     /// One grid per output, its area the output's box in layout
-    /// coordinates; `grids[i]` draws `layouts[i]`.
+    /// coordinates; `grids[i]` draws `layouts[i]`. Snap assist has exactly
+    /// one, over its zone.
     layouts: Vec<OverviewLayout>,
     grids: Vec<Grid>,
     /// Snap assist: the window the picker snapped, and the zones still

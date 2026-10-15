@@ -188,6 +188,23 @@ pub fn edge_zone(work: Rect, zones: &[Rect], left: bool, y: i32) -> Option<usize
     })
 }
 
+/// Which of `boxes` lies past `out`'s right side (`right`) or left side for a window spanning
+/// `span`: one touching that side and sharing a row with the span, nearest row `y` first.
+pub fn beside(out: Rect, boxes: &[Rect], right: bool, span: Rect, y: i32) -> Option<usize> {
+    let off = |b: &Rect| (b.y - y).max(y - (b.bottom() - 1)).max(0);
+    (boxes.iter().enumerate())
+        .filter(|(_, b)| {
+            if right {
+                b.x == out.right()
+            } else {
+                b.right() == out.x
+            }
+        })
+        .filter(|(_, b)| b.y < span.bottom() && span.y < b.bottom())
+        .min_by_key(|(_, b)| off(b))
+        .map(|(i, _)| i)
+}
+
 /// Every side of an output, for a lone output.
 #[cfg(test)]
 pub const EVERY_SIDE: Edges = Edges(15);
@@ -828,6 +845,33 @@ mod tests {
 
     fn zl(s: &str) -> ZoneLayout {
         ZoneLayout::parse(s).unwrap()
+    }
+
+    #[test]
+    fn the_output_beside_is_found_by_the_window_span_not_its_centre() {
+        let out = Rect::new(0, 0, 1920, 1080);
+        // Lower by 600 px: the window's centre row (400) is above it.
+        let low = Rect::new(1920, 600, 1920, 1080);
+        let left = Rect::new(-1280, 0, 1280, 1024);
+        let boxes = [out, low, left];
+        let window = Rect::new(900, 100, 1000, 700);
+        assert_eq!(beside(out, &boxes, true, window, 450), Some(1));
+        assert_eq!(beside(out, &boxes, false, window, 450), Some(2));
+        let high = Rect::new(900, 0, 1000, 500);
+        assert_eq!(beside(out, &boxes, true, high, 250), None, "no shared row");
+        let upper = Rect::new(1920, -1080, 1920, 1080);
+        let both = [out, low, upper];
+        let tall = Rect::new(900, -50, 1000, 1100);
+        assert_eq!(
+            beside(out, &both, true, tall, 500),
+            Some(1),
+            "nearest the row"
+        );
+        assert_eq!(
+            beside(out, &both, true, tall, -10),
+            Some(2),
+            "holding the row"
+        );
     }
 
     #[test]
