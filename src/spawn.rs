@@ -331,13 +331,16 @@ fn own_session(get: impl Fn(&str) -> Option<String>) -> Option<String> {
 /// Reprise's portal backend unit and the portal frontend that routes to it.
 const PORTAL_UNITS: [&str; 2] = ["reprise-portal.service", "xdg-desktop-portal.service"];
 
+/// Every app scope `scope_argv` names, as a `systemctl` pattern.
+const APP_SCOPES: &str = "app-reprise-*.scope";
+
 /// The commands that end the session `env` published, in order: unset (or restore the parent's)
 /// variables in the systemd user manager, stop the portal backend, and the frontend too unless
 /// nested (it reads `XDG_CURRENT_DESKTOP` once, so a survivor would route the next desktop's
-/// dialogs here). dbus-broker defers to systemd, so that is all to undo. Last, a session of our
-/// own is terminated: logind leaves its processes running without `KillUserProcesses`, e.g. a
-/// windowless Deskflow server.
-pub fn end_commands(env: &SessionEnv) -> Vec<Vec<String>> {
+/// dialogs here). dbus-broker defers to systemd, so that is all to undo. With `end_processes`
+/// and not nested, the app scopes stop too, and a session of our own is terminated last: logind
+/// leaves its processes running without `KillUserProcesses`, e.g. a windowless Deskflow server.
+pub fn end_commands(env: &SessionEnv, end_processes: bool) -> Vec<Vec<String>> {
     let user = |verb: &str| vec!["systemctl".to_string(), "--user".into(), verb.into()];
     let mut out = Vec::new();
     if !env.parent.is_empty() {
@@ -363,8 +366,11 @@ pub fn end_commands(env: &SessionEnv) -> Vec<Vec<String>> {
         &PORTAL_UNITS[..1]
     };
     stop.extend(units.iter().map(|u| u.to_string()));
+    if end_processes && env.parent.is_empty() {
+        stop.push(APP_SCOPES.into());
+    }
     out.push(stop);
-    if let Some(id) = &env.logind_session {
+    if end_processes && let Some(id) = &env.logind_session {
         out.push(vec![
             "loginctl".into(),
             "terminate-session".into(),
@@ -374,19 +380,40 @@ pub fn end_commands(env: &SessionEnv) -> Vec<Vec<String>> {
     out
 }
 
-/// Run `end_commands` as the compositor exits, giving all of them `END_WAIT` together. Best
-/// effort: failures are logged, never waited on past the deadline.
-pub fn end_session_env(env: &SessionEnv) {
-    const END_WAIT: std::time::Duration = std::time::Duration::from_secs(2);
-    let deadline = std::time::Instant::now() + END_WAIT;
-    for argv in end_commands(env) {
+/// Run `end_commands` as the compositor exits.
+pub fn end_session_env(env: &SessionEnv, end_processes: bool) {
+    run_waited(end_commands(env, end_processes));
+}
+
+/// The command that stops the app scopes a previous session left behind when it crashed, before
+/// this one starts any. None when nested (the scopes are the parent's) or with `end_processes`
+/// off (they were left on purpose).
+pub fn stale_scopes_command(env: &SessionEnv, end_processes: bool) -> Option<Vec<String>> {
+    (end_processes && env.parent.is_empty()).then(|| {
+        ["systemctl", "--user", "--no-block", "stop", APP_SCOPES]
+            .map(String::from)
+            .to_vec()
+    })
+}
+
+/// Run `stale_scopes_command`, waited on so its pattern matches only scopes that existed before.
+pub fn stop_stale_scopes(env: &SessionEnv, end_processes: bool) {
+    run_waited(Vec::from_iter(stale_scopes_command(env, end_processes)));
+}
+
+/// Run `cmds` in order, giving all of them `WAIT` together. Best effort: failures are logged,
+/// never waited on past the deadline.
+fn run_waited(cmds: Vec<Vec<String>>) {
+    const WAIT: std::time::Duration = std::time::Duration::from_secs(2);
+    let deadline = std::time::Instant::now() + WAIT;
+    for argv in cmds {
         let mut c = std::process::Command::new(&argv[0]);
         c.args(&argv[1..]);
         detach(&mut c);
         let mut child = match c.spawn() {
             Ok(child) => child,
             Err(e) => {
-                log::warn!("{argv:?}: {e}; the session's variables stay published");
+                log::warn!("{argv:?}: {e}");
                 return;
             }
         };
@@ -749,9 +776,9 @@ mod tests {
     }
 
     /// A session of its own unsets every variable it can publish, set or
-    /// not, then stops the portal backend and frontend.
+    /// not, then stops the portal backend, the frontend and its app scopes.
     #[test]
-    fn a_login_session_ends_by_unsetting_and_stopping_the_portals() {
+    fn a_login_session_ends_by_unsetting_and_stopping_the_portals_and_app_scopes() {
         let every = [
             "WAYLAND_DISPLAY",
             "XDG_CURRENT_DESKTOP",
@@ -773,7 +800,7 @@ mod tests {
         let mut unset = argv(&["systemctl", "--user", "unset-environment"]);
         unset.extend(every.iter().map(|s| s.to_string()));
         assert_eq!(
-            end_commands(&env(None)),
+            end_commands(&env(None), true),
             vec![
                 unset,
                 argv(&[
@@ -783,6 +810,7 @@ mod tests {
                     "stop",
                     "reprise-portal.service",
                     "xdg-desktop-portal.service",
+                    "app-reprise-*.scope",
                 ]),
             ]
         );
@@ -807,7 +835,7 @@ mod tests {
             ..env(None)
         };
         assert_eq!(
-            end_commands(&e).last(),
+            end_commands(&e, true).last(),
             Some(&argv(&["loginctl", "terminate-session", "3"]))
         );
         let tty = |k: &str| match k {
@@ -821,8 +849,60 @@ mod tests {
         };
         assert_eq!(own_session(nested), None);
         assert!(
-            !end_commands(&env(None)).iter().any(|c| c[0] == "loginctl"),
+            !end_commands(&env(None), true)
+                .iter()
+                .any(|c| c[0] == "loginctl"),
             "no session, nothing terminated"
+        );
+    }
+
+    /// `end_processes = false` leaves the login session and the app scopes
+    /// running; the portals still stop.
+    #[test]
+    fn without_end_processes_the_app_scopes_and_session_outlive_the_end() {
+        let e = SessionEnv {
+            logind_session: Some("3".into()),
+            ..env(None)
+        };
+        let cmds = end_commands(&e, false);
+        assert!(!cmds.iter().any(|c| c[0] == "loginctl"));
+        assert_eq!(
+            cmds.last(),
+            Some(&argv(&[
+                "systemctl",
+                "--user",
+                "--no-block",
+                "stop",
+                "reprise-portal.service",
+                "xdg-desktop-portal.service",
+            ]))
+        );
+        assert_eq!(stale_scopes_command(&e, false), None);
+    }
+
+    /// Scopes a crashed session left are stopped before the next one starts
+    /// any; a nested run leaves its parent's alone.
+    #[test]
+    fn a_session_starts_by_stopping_app_scopes_left_by_the_last() {
+        assert_eq!(
+            stale_scopes_command(&env(None), true),
+            Some(argv(&[
+                "systemctl",
+                "--user",
+                "--no-block",
+                "stop",
+                "app-reprise-*.scope",
+            ]))
+        );
+        let nested = SessionEnv {
+            parent: vec![("WAYLAND_DISPLAY", "wayland-0".into())],
+            ..env(None)
+        };
+        assert_eq!(stale_scopes_command(&nested, true), None);
+        assert!(
+            !end_commands(&nested, true)
+                .concat()
+                .contains(&"app-reprise-*.scope".to_string())
         );
     }
 
@@ -846,7 +926,7 @@ mod tests {
             parent,
             ..env(None)
         };
-        let cmds = end_commands(&e);
+        let cmds = end_commands(&e, true);
         assert_eq!(
             cmds[0],
             argv(&[
