@@ -15,7 +15,7 @@ use reprisescene::{BufferId, Input, TreeId};
 use smithay::output::Output;
 use smithay::reexports::calloop::RegistrationToken;
 use smithay::reexports::calloop::timer::{TimeoutAction, Timer};
-use smithay::utils::{Logical, Point};
+use smithay::utils::{Buffer as BufferCoords, Logical, Point, Rectangle};
 
 use crate::barplace::BarPlacement;
 use crate::compositor::{SceneOwner, State};
@@ -24,7 +24,6 @@ use crate::dialogview::DialogKey;
 use crate::glass::{Backdrop, Pane, PaneShape};
 use crate::input::{BTN_LEFT, BTN_RIGHT};
 use crate::keys;
-use crate::output::upload_scaled;
 use crate::raster::{Canvas, Rect};
 use crate::search::{
     CALC_ICON, FileSearch, SearchOwner, Setting, calc_row, file_row, rank_settings, word_starts,
@@ -112,6 +111,19 @@ struct Drawn {
     canvas: Rc<Canvas>,
     mode: Mode,
     picture: Option<usize>,
+    /// The canvas shown before, and the box (canvas pixels) where the two differ.
+    before: Option<(Rc<Canvas>, Rectangle<i32, BufferCoords>)>,
+}
+
+impl Drawn {
+    /// Where `next` can differ from this canvas: the box from the last change when `next` is the
+    /// canvas shown before it, as a caret blink shows; None when it may differ anywhere.
+    fn differs_within(&self, next: &Rc<Canvas>) -> Option<Rectangle<i32, BufferCoords>> {
+        self.before
+            .as_ref()
+            .filter(|(c, _)| Rc::ptr_eq(c, next))
+            .map(|&(_, r)| r)
+    }
 }
 
 struct Crossfade {
@@ -1584,11 +1596,18 @@ impl State {
             }
             Rc::new(canvas)
         };
-        upload_scaled(scene, v.buffer, &canvas, scale);
+        let shown = v.drawn.take();
+        let (w, h) = (canvas.width as i32, canvas.height as i32);
+        let changed = match shown.as_ref().and_then(|d| d.differs_within(&canvas)) {
+            Some(within) => scene.buffer_set_canvas_within(v.buffer, &canvas.pixels, w, h, within),
+            None => scene.buffer_set_canvas(v.buffer, &canvas.pixels, w, h),
+        };
+        scene.buffer_set_dest_size(v.buffer, Some((w / scale, h / scale).into()));
         v.drawn = Some(Drawn {
             canvas,
             mode,
             picture,
+            before: shown.map(|d| (d.canvas, changed)),
         });
         let output = v.output.clone();
         if !v.crossfades.is_empty() {
@@ -1626,6 +1645,21 @@ mod tests {
     use super::*;
     use reprisekit::startpanel::ProgramRow;
     use reprisekit::textedit::EditKey;
+
+    #[test]
+    fn a_blink_back_to_the_canvas_before_compares_only_the_box_they_differ_in() {
+        let (on, off) = (Rc::new(Canvas::new(8, 4)), Rc::new(Canvas::new(8, 4)));
+        let caret = Rectangle::new((3, 1).into(), (1, 2).into());
+        let drawn = Drawn {
+            canvas: off.clone(),
+            mode: Mode::Home,
+            picture: None,
+            before: Some((on.clone(), caret)),
+        };
+        assert_eq!(drawn.differs_within(&on), Some(caret));
+        assert_eq!(drawn.differs_within(&Rc::new(Canvas::new(8, 4))), None);
+        assert_eq!(drawn.differs_within(&off), None);
+    }
 
     fn press(sym: u32, mods: u32) -> DialogKey {
         DialogKey {
