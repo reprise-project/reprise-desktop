@@ -416,6 +416,8 @@ impl State {
         crate::tray::forget_output(self);
         crate::trayflyout::output_gone(self);
         crate::calendarview::output_gone(self);
+        crate::displaysview::output_gone(self);
+        crate::displays::outputs_changed(self);
         crate::taskpreview::output_gone(self);
         crate::snappickerview::output_gone(self);
         crate::tooltip::output_gone(self);

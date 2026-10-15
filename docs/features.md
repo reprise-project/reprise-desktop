@@ -275,9 +275,13 @@ are.
 - **Fractional scaling** from 1 to 4 in quarter steps, per monitor. Programs
   that support it draw at the exact scale.
 - **Night light** from sunset to sunrise, worked out from your time zone, or
-  on a schedule. Each change fades over half an hour. A tray icon pauses it.
-- **Brightness keys** for the laptop screen, the keyboard backlight and
-  external monitors over DDC/CI.
+  on a schedule. Each change fades over half an hour. A check box in the
+  displays panel pauses it.
+- A **displays icon** in the tray: scroll over it to dim or brighten every
+  display at once; click it for a slider per display and the night light
+  switch; right-click for night light's menu. The brightness keys change every
+  display, and the on-screen display shows a line per display. The keyboard
+  backlight has keys of its own.
 - **Explicit sync** for the drivers that need it, NVIDIA's among them.
 
 ## Input

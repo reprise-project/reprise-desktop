@@ -1,7 +1,8 @@
-//! The tray cells the compositor draws itself: the StickyKeys, MouseKeys and keyboard layout indicators before the StatusNotifier items, and after them the night light, the notification bell and the privacy indicators nearest the clock. A new indicator is one more variant here.
+//! The tray cells the compositor draws itself: the StickyKeys, MouseKeys and keyboard layout indicators before the StatusNotifier items, and after them the displays cell, the notification bell and the privacy indicators nearest the clock. A new indicator is one more variant here.
 
 use crate::compositor::State;
 use crate::input::{BTN_LEFT, BTN_RIGHT};
+use crate::media::Value;
 use crate::raster::{Canvas, Rect};
 use reprisekit::classic::indicator;
 use smithay::output::Output;
@@ -12,7 +13,8 @@ pub enum Builtin {
     /// MouseKeys, while it is on: which button the keys click, and whether it is held.
     MouseKeys,
     Layout,
-    NightLight,
+    /// Every display's brightness and night light: the sun, warm while night light is warming.
+    Displays,
     Notifications,
     Sharing,
     Microphone,
@@ -41,7 +43,7 @@ pub fn shown(state: &State) -> Vec<Builtin> {
             crate::mousekeys::shown(&state.key_input.mouse_keys),
         ),
         (Builtin::Layout, state.key_input.layouts.switchable()),
-        (Builtin::NightLight, crate::nightlight::shown(&state.night)),
+        (Builtin::Displays, crate::displays::cell_shown(state)),
         (Builtin::Notifications, state.notify.log.bell_shown()),
         (Builtin::Sharing, state.privacy.sharing_shown()),
         (Builtin::Microphone, state.privacy.mic_shown()),
@@ -82,7 +84,10 @@ pub fn icon(state: &mut State, b: Builtin, px: i32) -> Option<Canvas> {
                 size,
             ))
         }
-        Builtin::NightLight => Some(crate::nightlight::icon(state, px)),
+        Builtin::Displays => Some(indicator::draw_sun(
+            px,
+            crate::nightlight::warming(&state.night),
+        )),
         Builtin::Sharing => Some(indicator::draw_record(px)),
         Builtin::Microphone => Some(indicator::draw_microphone(px)),
         Builtin::Camera => Some(indicator::draw_camera(px)),
@@ -100,7 +105,7 @@ pub fn label(state: &State, b: Builtin) -> Option<String> {
         Builtin::StickyKeys => Some(crate::keyfilter::tip(&state.key_input.aids)),
         Builtin::MouseKeys => Some(crate::mousekeys::tip(&state.key_input.mouse_keys)),
         Builtin::Layout => Some(state.key_input.layouts.active()?.description.clone()),
-        Builtin::NightLight => Some(crate::nightlight::tip(&state.night)),
+        Builtin::Displays => Some(crate::displays::tip(state)),
         Builtin::Notifications => Some(bell_tip(state.notify.log.unseen, state.notify.log.dnd)),
         Builtin::Sharing => Some(state.privacy.sharing_tip()),
         Builtin::Microphone => Some(state.privacy.mic_tip()),
@@ -126,8 +131,9 @@ fn bell_tip(unseen: usize, dnd: bool) -> String {
 pub fn click(state: &mut State, output: &Output, b: Builtin, cell: Rect, button: u32) {
     match b {
         Builtin::Layout if button == BTN_LEFT => state.open_layout_menu(output, cell),
-        Builtin::NightLight if button == BTN_LEFT => crate::nightlight::toggle_pause(state),
-        Builtin::NightLight if button == BTN_RIGHT => {
+        Builtin::Displays if button == BTN_LEFT => crate::displaysview::toggle(state, output, cell),
+        Builtin::Displays if button == BTN_RIGHT => {
+            crate::displaysview::close(state);
             crate::nightlight::open_menu(state, output, cell)
         }
         Builtin::Notifications if matches!(button, BTN_LEFT | BTN_RIGHT) => {
@@ -143,12 +149,24 @@ pub fn click(state: &mut State, output: &Output, b: Builtin, cell: Rect, button:
         Builtin::StickyKeys
         | Builtin::MouseKeys
         | Builtin::Layout
-        | Builtin::NightLight
+        | Builtin::Displays
         | Builtin::Notifications
         | Builtin::Sharing
         | Builtin::Microphone
         | Builtin::Camera
         | Builtin::Location => {}
+    }
+}
+
+/// A wheel step on cell `b`, with the axis event's `discrete` and `continuous` (see [`crate::displays::wheel_steps`]): the displays cell steps every display's brightness up or down.
+pub fn scroll(state: &mut State, b: Builtin, horizontal: bool, discrete: i32, continuous: f64) {
+    if b != Builtin::Displays || horizontal {
+        return;
+    }
+    let steps = crate::displays::wheel_steps(discrete, continuous, &mut state.displays.wheel);
+    if steps != 0 {
+        crate::displays::step(state, None, Value::Brightness, steps);
+        state.show_display_osd(Value::Brightness);
     }
 }
 
@@ -158,7 +176,7 @@ pub fn menu_open(state: &State, b: Builtin) -> bool {
     matches!(
         (b, state.menus.first().map(|m| &m.kind)),
         (Builtin::Layout, Some(MenuKind::Layouts))
-            | (Builtin::NightLight, Some(MenuKind::NightLight(_)))
+            | (Builtin::Displays, Some(MenuKind::NightLight(_)))
     )
 }
 

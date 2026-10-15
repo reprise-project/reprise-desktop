@@ -116,6 +116,9 @@ pub enum Hit {
     Calendar {
         hit: reprisekit::controls::calendar::PopupHit,
     },
+    Displays {
+        hit: reprisekit::controls::displaypanel::Hit,
+    },
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -274,6 +277,8 @@ pub enum Interaction {
     /// A notification balloon's action button, or the history's check box
     /// or Clear All, held down: it acts on the release over it.
     NotifyPress,
+    /// A slider on the displays panel held: it follows the pointer until the release.
+    DisplaysSlide,
 }
 
 impl Interaction {
@@ -303,6 +308,7 @@ impl Interaction {
             | Interaction::DialogResize { .. }
             | Interaction::DialogPress
             | Interaction::NotifyPress
+            | Interaction::DisplaysSlide
             | Interaction::Idle => false,
         }
     }
@@ -449,8 +455,8 @@ impl State {
 
     /// A wheel or scroll frame, from the backend or an EIS sender: a tray
     /// icon's, the notification history's (`tray_axis`), a dialog's, the
-    /// emoji picker's or the clipboard history's when the pointer is over
-    /// one, else the client's under the pointer.
+    /// emoji picker's, the clipboard history's or the displays panel's when
+    /// the pointer is over one, else the client's under the pointer.
     pub fn handle_axis(&mut self, frame: AxisFrame) {
         self.settle_pointer();
         // The wheel rolls the 3D switcher; the Alt+Tab panel and region
@@ -473,6 +479,12 @@ impl State {
         }
         if matches!(hit, Hit::ClipView { .. }) {
             self.clipview_wheel(frame.v120.map_or(0, |v| v.1), frame.axis.1);
+            return;
+        }
+        if matches!(hit, Hit::Displays { .. }) {
+            let pos = self.pointer_location();
+            let discrete = frame.v120.map_or(0, |v| v.1);
+            crate::displaysview::wheel(self, pos.x, pos.y, discrete, frame.axis.1);
             return;
         }
         if let Hit::Dialog { index, button } = &hit
@@ -673,6 +685,10 @@ impl State {
             Some(SceneOwner::Calendar) => {
                 let hit = crate::calendarview::hit(self, pos.x, pos.y);
                 return Hit::Calendar { hit };
+            }
+            Some(SceneOwner::Displays) => {
+                let hit = crate::displaysview::hit(self, pos.x, pos.y);
+                return Hit::Displays { hit };
             }
             None => None,
         };
@@ -929,6 +945,11 @@ impl State {
                 crate::notifycenter::drag(self, pos.x, pos.y);
                 return;
             }
+            Interaction::DisplaysSlide => {
+                self.pointer_motion(None, pos, time);
+                crate::displaysview::drag(self, pos.x);
+                return;
+            }
             Interaction::Idle => {}
         }
         let hit = self.scene_hit(pos);
@@ -994,6 +1015,11 @@ impl State {
             _ => None,
         };
         crate::calendarview::hover(self, calendar_hit);
+        let displays_hit = match hit {
+            Hit::Displays { hit } => Some(hit),
+            _ => None,
+        };
+        crate::displaysview::hover(self, displays_hit);
         // The Alt+Tab panel owns the pointer while it is up: what lies
         // around it gets neither focus nor hover.
         let owned = (self.switcher.is_open() && !matches!(hit, Hit::Switcher { .. }))
@@ -1102,7 +1128,8 @@ impl State {
             | Hit::TrayFlyout { .. }
             | Hit::Notification
             | Hit::NotifyCenter
-            | Hit::Calendar { .. } => {
+            | Hit::Calendar { .. }
+            | Hit::Displays { .. } => {
                 self.pointer_motion(None, pos, time);
                 self.set_cursor("default");
             }
@@ -1247,6 +1274,17 @@ impl State {
         if !matches!(hit, Hit::Calendar { .. }) {
             crate::calendarview::close(self);
         }
+        // The displays cell toggles its panel itself (`builtin::click`).
+        let displays_cell_hit = match hit {
+            Hit::Taskbar {
+                bar,
+                hit: TaskbarHit::Tray(i),
+            } => crate::tray::is_displays_cell(self, bar, i),
+            _ => false,
+        };
+        if !matches!(hit, Hit::Displays { .. }) && !displays_cell_hit {
+            crate::displaysview::close(self);
+        }
         // A tray cell decides itself whether an open menu closes or
         // toggles (`tray::click`).
         if !matches!(
@@ -1376,6 +1414,11 @@ impl State {
                 crate::trayflyout::press(self, cell, button);
             }
             Hit::Calendar { hit } => crate::calendarview::clicked(self, hit),
+            Hit::Displays { .. } => {
+                if button == BTN_LEFT {
+                    crate::displaysview::press(self, pos.x, pos.y);
+                }
+            }
             // A left click on a cell activates its window; any other
             // press on the panel just closes it.
             Hit::TaskPreview { cell } if button == BTN_LEFT => {
@@ -1713,6 +1756,7 @@ impl State {
                 crate::notifyview::release(self, pos.x, pos.y);
                 crate::notifycenter::release(self, pos.x, pos.y);
             }
+            Interaction::DisplaysSlide => crate::displaysview::release(self),
             Interaction::DialogMove { .. }
             | Interaction::DialogResize { .. }
             | Interaction::Idle => {}
@@ -1765,6 +1809,7 @@ impl State {
                 crate::notifyview::cancel_press(self);
                 crate::notifycenter::cancel_press(self);
             }
+            Interaction::DisplaysSlide => crate::displaysview::release(self),
             Interaction::FieldDrag { .. } => {}
         }
         self.restore_keyboard(was);

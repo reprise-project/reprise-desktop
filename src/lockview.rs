@@ -275,6 +275,7 @@ pub fn engage(state: &mut State) {
     crate::trayreveal::collapse_all(state);
     crate::notifycenter::close(state);
     crate::calendarview::close(state);
+    crate::displaysview::close(state);
     // The panel would sit under the lock cover but its caret timer would keep redrawing it.
     state.close_launcher();
     state.close_start_panel();

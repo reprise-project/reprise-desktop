@@ -140,6 +140,7 @@ fn owned_open(state: &State, bar: &Bar) -> bool {
     popup_on(state, out)
         || state.start_panel_bar() == Some(bar.tree)
         || crate::calendarview::open_on(state).as_ref() == Some(out)
+        || crate::displaysview::open_on(state).as_ref() == Some(out)
         || crate::trayflyout::open_on(state).as_ref() == Some(out)
         || crate::trayreveal::holds(bar)
         || crate::notifycenter::open_on(state).as_ref() == Some(out)

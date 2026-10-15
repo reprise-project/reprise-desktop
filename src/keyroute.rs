@@ -91,6 +91,8 @@ pub struct Modes {
     pub region_open: bool,
     /// The clock's month popup is open.
     pub calendar_open: bool,
+    /// The displays cell's panel is open.
+    pub displays_open: bool,
     /// The seat carries a drag between programs (`dnd`).
     pub dragging: bool,
     /// The tray's hidden icons flyout is open.
@@ -163,6 +165,8 @@ pub enum KeyRoute {
     Region(u32),
     /// Escape closes the clock's month popup.
     CalendarClose,
+    /// The displays cell's panel takes the press.
+    Displays,
     /// Escape closes the tray's hidden icons flyout.
     TrayFlyoutClose,
     /// The taskbar with the keyboard takes the press (its first keysym).
@@ -427,6 +431,20 @@ pub fn route(modes: &Modes, k: &KeyPress, binds: &[Keybind], globals: &[GlobalBi
     // The hidden icons flyout likewise.
     if modes.tray_flyout_open && k.pressed && k.has(KEY_Escape) {
         return with(KeyRoute::TrayFlyoutClose);
+    }
+    // The displays panel takes every press that is not a bind or a global
+    // shortcut, as the notification history: lock and screenshot work over it.
+    if modes.displays_open && k.pressed {
+        let actions = bound(k, binds);
+        if !actions.is_empty() {
+            return with(KeyRoute::Binds(actions));
+        }
+        let hits = bound_global(k, globals);
+        return with(if hits.is_empty() {
+            KeyRoute::Displays
+        } else {
+            KeyRoute::Global(hits)
+        });
     }
     if modes.launcher_open && k.pressed {
         return with(if own(Action::Launcher) {
@@ -1510,6 +1528,42 @@ mod tests {
             r(&Modes::default(), &press(KEY_v, MOD_LOGO)),
             KeyRoute::Binds(vec![Action::ClipboardHistory])
         );
+    }
+
+    #[test]
+    fn binds_and_global_shortcuts_run_over_the_displays_panel() {
+        let m = Modes {
+            displays_open: true,
+            ..Modes::default()
+        };
+        let rd = |k: &KeyPress| route(&m, k, &menu_binds(), &talk()).route;
+        assert_eq!(
+            rd(&press(KEY_l, MOD_LOGO)),
+            KeyRoute::Binds(vec![Action::Lock])
+        );
+        assert_eq!(
+            rd(&press(KEY_Print, 0)),
+            KeyRoute::Binds(vec![Action::Screenshot])
+        );
+        assert_eq!(rd(&press(KEY_Pause, 0)), hit());
+        assert_eq!(rd(&press(KEY_Right, 0)), KeyRoute::Displays);
+    }
+
+    #[test]
+    fn the_displays_panel_takes_the_keys_but_not_the_switcher() {
+        let m = Modes {
+            displays_open: true,
+            ..Modes::default()
+        };
+        for sym in [KEY_Return, KEY_Tab, KEY_Escape, KEY_Left] {
+            assert_eq!(r(&m, &press(sym, 0)), KeyRoute::Displays, "{sym:#x}");
+        }
+        assert_eq!(
+            r(&m, &press(KEY_Tab, MOD_ALT)),
+            KeyRoute::Binds(vec![Action::Cycle]),
+            "Alt+Tab still switches"
+        );
+        assert_eq!(r(&m, &release(KEY_Left)), KeyRoute::Client);
     }
 
     #[test]

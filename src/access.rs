@@ -1,4 +1,4 @@
-//! Screen reader side of the compositor's own surfaces: one AccessKit adapter per taskbar, menu stack, switcher, dialog, launcher, clipboard history, emoji picker, calendar, tray flyout, task preview panel, notification history and the balloons, speaking AT-SPI on the session's accessibility bus.
+//! Screen reader side of the compositor's own surfaces: one AccessKit adapter per taskbar, menu stack, switcher, dialog, launcher, clipboard history, emoji picker, calendar, displays panel, tray flyout, task preview panel, notification history and the balloons, speaking AT-SPI on the session's accessibility bus.
 //! `accesskit_unix` runs its D-Bus side on its own thread and calls the handlers (`reprisekit::access::Handler`) there; they post a `Msg` to a calloop channel, so the loop never waits on the bus. Trees are built on the loop, in an idle pass [`touch`] queues, only for adapters a reader holds.
 //! Bounds are layout coordinates: a tree's root carries its surface's place as a transform and its controls lay out surface-local. A tree claims the focus only while its surface has the keyboard (see [`focus_of`]). The lock screen has no tree, so its password field's text stays here.
 //! A reader's action on a node runs as the click a user would give it ([`click`], `reprisekit::access::gesture`) through the pointer's press and release paths; focusing a taskbar item gives the bar the keyboard (`barkeys`).
@@ -34,6 +34,7 @@ pub enum Surface {
     ClipView,
     EmojiView,
     Calendar,
+    Displays,
     TrayFlyout,
     SnapPicker,
     TaskPreview,
@@ -138,6 +139,7 @@ pub struct Keyboard {
     pub emojiview: bool,
     pub notify_reply: bool,
     pub notify_center: bool,
+    pub displays: bool,
     pub taskbar: Option<TreeId>,
     pub dialog: Option<u64>,
     pub calendar: bool,
@@ -160,6 +162,8 @@ pub fn focus_of(k: &Keyboard) -> Option<Surface> {
         Some(Surface::Menus)
     } else if k.start_panel {
         Some(Surface::StartPanel)
+    } else if k.displays {
+        Some(Surface::Displays)
     } else if k.launcher {
         Some(Surface::Launcher)
     } else if k.clipview {
@@ -197,6 +201,7 @@ fn keyboard(state: &State) -> Keyboard {
         emojiview: state.panels.emojiview.is_some(),
         notify_reply: crate::notifyview::reply_focused(state),
         notify_center: crate::notifycenter::is_open(state),
+        displays: crate::displaysview::is_open(state),
         taskbar: state.bar_shared.keys.map(|k| k.bar),
         dialog: state.active_dialog_id(),
         calendar: crate::calendarview::is_open(state),
@@ -256,6 +261,7 @@ fn surfaces(state: &State) -> Vec<Surface> {
         (state.panels.clipview.is_some(), Surface::ClipView),
         (state.panels.emojiview.is_some(), Surface::EmojiView),
         (crate::calendarview::is_open(state), Surface::Calendar),
+        (crate::displaysview::is_open(state), Surface::Displays),
         (
             crate::trayflyout::open_on(state).is_some(),
             Surface::TrayFlyout,
@@ -285,6 +291,7 @@ fn tree(state: &State, surface: Surface) -> Option<Tree> {
         Surface::ClipView => state.clipview_access(),
         Surface::EmojiView => state.emoji_access(),
         Surface::Calendar => crate::calendarview::access(state),
+        Surface::Displays => crate::displaysview::access(state),
         Surface::NotifyCenter => crate::notifycenter::access(state),
         Surface::Balloons => Some(crate::notifyview::access(state)),
     }
@@ -476,6 +483,7 @@ fn lands_on(state: &State, surface: Surface, hit: &Hit) -> bool {
         | (Surface::ClipView, Hit::ClipView { .. })
         | (Surface::EmojiView, Hit::EmojiView { .. })
         | (Surface::Calendar, Hit::Calendar { .. })
+        | (Surface::Displays, Hit::Displays { .. })
         | (Surface::TrayFlyout, Hit::TrayFlyout { .. })
         | (Surface::TaskPreview, Hit::TaskPreview { .. })
         | (Surface::Balloons, Hit::Notification)

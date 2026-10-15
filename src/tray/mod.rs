@@ -1189,10 +1189,12 @@ fn click_command(id: String, at: (i32, i32), button: u32, has_menu: bool) -> Opt
     Some(TrayCommand::Click { id, x, y, kind })
 }
 
-/// A wheel step on tray cell `index`: handed straight to the item as
-/// `Scroll`, leaving an open menu alone. `discrete` and `continuous` are the
-/// axis event's (see [`wheel_steps`]); the sub-notch remainder is kept for
-/// the next event over the same cell and axis.
+/// A wheel step on tray cell `index`: a built-in cell's goes to
+/// [`builtin::scroll`], an item's straight to the item as `Scroll`, leaving
+/// an open menu alone. `discrete` and `continuous` are the axis event's (see
+/// [`wheel_steps`]). An item's sub-notch remainder is kept for the next event
+/// over the same cell and axis; the displays cell keeps its own in
+/// [`crate::displays::Displays::wheel`].
 pub fn scroll(
     state: &mut State,
     bar: TreeId,
@@ -1201,6 +1203,12 @@ pub fn scroll(
     discrete: i32,
     continuous: f64,
 ) {
+    if let Cell::Builtin(k) = cell_at(state, bar, index) {
+        if let Some(&b) = builtin::shown(state).get(k) {
+            builtin::scroll(state, b, horizontal, discrete, continuous);
+        }
+        return;
+    }
     let leading = leading(state);
     let revealed = state.bar(bar).map_or(0, |b| b.layout.tray_hidden);
     let Some(tray) = state.tray.as_mut() else {
@@ -1224,6 +1232,15 @@ pub fn wheel_left(state: &mut State) {
     if let Some(t) = state.tray.as_mut() {
         t.wheel = None;
     }
+    state.displays.wheel = (0, 0.0);
+}
+
+/// Whether tray cell `index` on `bar` is the displays cell.
+pub fn is_displays_cell(state: &State, bar: TreeId, index: usize) -> bool {
+    let Cell::Builtin(k) = cell_at(state, bar, index) else {
+        return false;
+    };
+    builtin::shown(state).get(k) == Some(&builtin::Builtin::Displays)
 }
 
 impl State {
@@ -1272,7 +1289,7 @@ impl State {
     }
 }
 
-/// Whole wheel notches an axis event carries for a StatusNotifierItem,
+/// Whole wheel notches an axis event carries, positive away from the user,
 /// plus the 120ths left over for the next event.
 ///
 /// Wayland counts a wheel step positive towards the user (down, or right),
