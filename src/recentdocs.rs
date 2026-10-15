@@ -40,6 +40,9 @@ pub struct RecentDocs {
     checking: bool,
     /// A check was asked for while one ran: check again when it answers.
     recheck: bool,
+    /// The document folders with their icon names as the last check read them from
+    /// `user-dirs.dirs`, whether or not they exist.
+    dirs: Vec<(PathBuf, &'static str)>,
 }
 
 impl Default for RecentDocs {
@@ -58,6 +61,7 @@ impl RecentDocs {
             found: Arc::default(),
             checking: false,
             recheck: false,
+            dirs: Vec::new(),
         }
     }
 
@@ -85,9 +89,14 @@ impl RecentDocs {
         self.pick(limit, |b| reprisefs::recent::used_by_entry(b, entry))
     }
 
-    /// The document folders that were not found missing.
+    /// The document folders that were not found missing; none before the first check.
     pub fn document_dirs(&self) -> Vec<(PathBuf, &'static str)> {
-        self.found_dirs(reprisefs::places::document_dir_paths())
+        self.found_dirs(self.dirs.clone())
+    }
+
+    /// Whether `path` is one of the document folders, found or not.
+    pub fn is_document_dir(&self, path: &Path) -> bool {
+        self.dirs.iter().any(|(d, _)| d == path)
     }
 
     fn found_dirs(&self, dirs: Vec<(PathBuf, &'static str)>) -> Vec<(PathBuf, &'static str)> {
@@ -96,21 +105,15 @@ impl RecentDocs {
             .collect()
     }
 
-    /// The paths a check asks about (the document folders, and the bookmarks with `files`), or
-    /// None while a check is running.
+    /// The bookmarks a check asks about besides the document folders (none without `files`),
+    /// or None while a check is running.
     fn paths_to_check(&mut self, files: bool) -> Option<Vec<PathBuf>> {
         if self.checking {
             return None;
         }
         self.checking = true;
-        let mut paths: Vec<PathBuf> = reprisefs::places::document_dir_paths()
-            .into_iter()
-            .map(|(dir, _)| dir)
-            .collect();
-        if files {
-            paths.extend(self.marks.iter().map(|b| b.path.clone()));
-        }
-        Some(paths)
+        let marks = self.marks.iter().filter(|_| files);
+        Some(marks.map(|b| b.path.clone()).collect())
     }
 
     /// Takes what a read found; true when the bookmarks changed.
@@ -120,6 +123,20 @@ impl RecentDocs {
         self.marks = marks;
         changed
     }
+}
+
+/// Reads the document folders, then [`check`]s them and `paths`; returns the folders read.
+/// Runs off the loop: `user-dirs.dirs` lives in the home folder, which may be a network mount.
+fn check_with_dirs(
+    paths: Vec<PathBuf>,
+    found: &Mutex<HashMap<PathBuf, Found>>,
+    stat: Stat,
+    read_dirs: impl FnOnce() -> Vec<(PathBuf, &'static str)>,
+) -> Vec<(PathBuf, &'static str)> {
+    let dirs = read_dirs();
+    let asked = dirs.iter().map(|(d, _)| d.clone()).chain(paths).collect();
+    check(asked, found, stat);
+    dirs
 }
 
 /// Stats `paths` in order into `found`, then drops what `found` holds of other paths.
@@ -182,8 +199,14 @@ impl State {
         };
         let found = self.recent.found.clone();
         self.spawn_fs_job(move || {
-            check(paths, &found, |p| std::fs::metadata(p));
+            let dirs = check_with_dirs(
+                paths,
+                &found,
+                |p| std::fs::metadata(p),
+                reprisefs::places::document_dir_paths,
+            );
             Box::new(|s: &mut State| {
+                s.recent.dirs = dirs;
                 s.recent.checking = false;
                 if std::mem::take(&mut s.recent.recheck) {
                     s.check_recent();
@@ -393,6 +416,46 @@ mod tests {
         std::fs::create_dir(&music).unwrap();
         checked(&docs);
         assert_eq!(places(&docs), ["{user}", "Documents", "Music"]);
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    /// The document folders come from the check's own read of `user-dirs.dirs`: none before
+    /// the first check answers, then the ones it read that exist, and the list follows a folder
+    /// moved in `user-dirs.dirs` at the next check.
+    #[test]
+    fn the_document_folders_are_read_by_the_check_not_on_the_loop() {
+        let home = std::env::temp_dir().join(format!("reprise-userdirs-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        std::fs::create_dir_all(home.join("Documents")).unwrap();
+        std::fs::create_dir_all(home.join("Papers")).unwrap();
+        let mut docs = RecentDocs::at(RecentFiles::at(None));
+        assert_eq!(docs.document_dirs(), [], "nothing read yet");
+
+        let first = || {
+            vec![
+                (home.join("Documents"), "folder-documents"),
+                (home.join("Music"), "folder-music"),
+            ]
+        };
+        let moved = || vec![(home.join("Papers"), "folder-documents")];
+        let paths = docs.paths_to_check(false).unwrap();
+        assert_eq!(paths, Vec::<PathBuf>::new());
+        docs.dirs = check_with_dirs(paths, &docs.found, |p| std::fs::metadata(p), first);
+        docs.checking = false;
+        assert_eq!(
+            docs.document_dirs(),
+            [(home.join("Documents"), "folder-documents")],
+            "Music does not exist"
+        );
+        assert!(docs.is_document_dir(&home.join("Music")));
+
+        let paths = docs.paths_to_check(false).unwrap();
+        docs.dirs = check_with_dirs(paths, &docs.found, |p| std::fs::metadata(p), moved);
+        assert_eq!(
+            docs.document_dirs(),
+            [(home.join("Papers"), "folder-documents")]
+        );
+        assert!(!docs.is_document_dir(&home.join("Documents")));
         let _ = std::fs::remove_dir_all(&home);
     }
 
