@@ -546,13 +546,9 @@ impl State {
         let view = self.desktop.as_ref();
         // Every cell to draw: name, icon, shortcut arrow and offset from the image's top-left (layout px).
         let mut cells: Vec<(String, String, bool, Rect)> = Vec::new();
-        let mut offset = (desktop::CELL / 2, desktop::CELL / 2);
-        let around = Rect::new(
-            x - desktop::CELL / 2,
-            y - desktop::CELL / 2,
-            desktop::CELL,
-            desktop::CELL,
-        );
+        let grid = self.desktop_grid();
+        let mut offset = (grid.w / 2, grid.h / 2);
+        let around = Rect::new(x - grid.w / 2, y - grid.h / 2, grid.w, grid.h);
         for source in &d.sources {
             match source {
                 DragSource::Icon { id, name, .. } => {
@@ -773,7 +769,7 @@ impl State {
                     return None;
                 }
                 Some(DropTarget::Desktop(desktop::cell_at(
-                    desktop::Cell::square(desktop::CELL),
+                    self.desktop_grid(),
                     self.desktop_area(),
                     pos.x as i32,
                     pos.y as i32,
@@ -858,9 +854,8 @@ impl State {
                 let dir = view.dir.clone();
                 let existing: Vec<String> = view.entries.iter().map(|e| e.name.clone()).collect();
                 let auto = view.auto_arrange;
-                let grid_of = |r: &Rect| {
-                    desktop::cell_at(desktop::Cell::square(desktop::CELL), area, r.x, r.y)
-                };
+                let grid = self.desktop_grid();
+                let grid_of = |r: &Rect| desktop::cell_at(grid, area, r.x, r.y);
                 let index_of = |s: &DragSource| match s {
                     DragSource::Icon { id, .. } => desktop::find(&view.entries, id),
                     // Another program's file already on the desktop is one of its icons, found by name.
@@ -906,7 +901,7 @@ impl State {
                         }
                         _ => *cell,
                     };
-                    let cell = desktop::free_cell_near(area, &taken, wanted);
+                    let cell = desktop::free_cell_near(grid, area, &taken, wanted);
                     taken.insert(cell);
                     match (source, op) {
                         (DragSource::Icon { .. }, DropOp::Move) => {
@@ -957,19 +952,19 @@ impl State {
         let (dir, cells) = match target {
             DropTarget::Folder(dir) => (dir.clone(), vec![None; links.len()]),
             DropTarget::Desktop(cell) => {
-                let area = self.desktop_area();
+                let (area, grid) = (self.desktop_area(), self.desktop_grid());
                 let Some(view) = self.desktop.as_ref() else {
                     return;
                 };
                 let mut taken: std::collections::HashSet<(i32, i32)> = view
                     .cells
                     .iter()
-                    .map(|r| desktop::cell_at(desktop::Cell::square(desktop::CELL), area, r.x, r.y))
+                    .map(|r| desktop::cell_at(grid, area, r.x, r.y))
                     .collect();
                 let cells = links
                     .iter()
                     .map(|_| {
-                        let c = desktop::free_cell_near(area, &taken, *cell);
+                        let c = desktop::free_cell_near(grid, area, &taken, *cell);
                         taken.insert(c);
                         (!view.auto_arrange).then_some(c)
                     })

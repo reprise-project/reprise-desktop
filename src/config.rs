@@ -1196,9 +1196,6 @@ pub struct Config {
     pub retired: Vec<String>,
     /// Includes `[accessibility] text_size`.
     pub theme: Theme,
-    /// `theme` before the text size, for what keeps 100% text: the desktop icon grid and the
-    /// dialogs that do not grow with it (`Dialog::grows`).
-    pub base_theme: Theme,
     pub keybinds: Vec<Keybind>,
     pub global_shortcuts: Vec<GlobalShortcut>,
     pub startmenu: Vec<MenuEntry>,
@@ -1536,7 +1533,6 @@ impl Default for Config {
             task_manager: None,
             retired: Vec::new(),
             theme: Theme::default(),
-            base_theme: Theme::default(),
             keybinds: repriseconf::keybind::DEFAULTS
                 .iter()
                 .map(|(keys, action)| {
@@ -3367,7 +3363,6 @@ impl Config {
             }
         }
         // Last: the text size scales the theme `[metrics]` and `[fonts]` made.
-        cfg.base_theme = cfg.theme.clone();
         cfg.theme = cfg.theme.with_text_size(cfg.accessibility.text_size);
         Ok(cfg)
     }
