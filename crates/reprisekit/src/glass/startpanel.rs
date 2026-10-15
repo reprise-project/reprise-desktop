@@ -948,6 +948,17 @@ mod tests {
         (r.y..r.bottom()).any(|y| (r.x..r.right()).any(|x| d.at(x, y) == 0xFF00_0000 | rgb))
     }
 
+    /// Whether a pixel in `r` is within 2 of `rgb` on every channel: a thin stem's coverage can
+    /// stop one short of full.
+    fn inks_near(d: &Drawn, r: Rect, rgb: u32) -> bool {
+        let near = |px: u32| {
+            [16, 8, 0]
+                .iter()
+                .all(|&sh| ((px >> sh) as u8).abs_diff((rgb >> sh) as u8) <= 2)
+        };
+        (r.y..r.bottom()).any(|y| (r.x..r.right()).any(|x| near(d.at(x, y))))
+    }
+
     fn face() -> bool {
         let text = TextRenderer::load(&font());
         let found = ["Segoe UI", "Noto Sans", "DejaVu Sans"]
@@ -1400,7 +1411,9 @@ mod tests {
         assert_eq!(d.at(489, 200), light, "the light line");
         assert_eq!(d.at(490, 200), outline, "the outline");
         if face() {
-            assert!(inks(&d, Rect::new(274, 16, 40, 9), INK_HEADER), "Recent");
+            let recent = Rect::new(274, 16, 40, 9);
+            assert!(inks_near(&d, recent, INK_HEADER), "Recent");
+            assert!(!inks_near(&d, recent, INK_STRONG), "not in black");
         }
     }
 
