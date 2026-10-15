@@ -411,8 +411,9 @@ suspend_after = 0            # run [power] standby
 #                            # back in their own frames with the same tab shown; only apps with a
 #                            # Start menu entry
 # exclude = ["foot"]         # app ids never started again. Globs: * and ?. X11: the class.
-# end_processes = true       # Log Off ends every program left in the login session, windowless ones
-#                            # too; false leaves them running (a display manager login only)
+# end_processes = true       # Log Off ends every program Reprise started and, after a display
+#                            # manager login, every one left in the login session, windowless
+#                            # ones too; false leaves them running
 
 # [[window_rules]]           # every rule that matches applies, in file order; later ones win,
 # app_id = "foot"            # and a rule beats the remembered place. Globs: * and ?. X11: the class.

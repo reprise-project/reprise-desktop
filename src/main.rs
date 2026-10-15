@@ -237,6 +237,7 @@ fn run(
         event_loop.get_signal(),
     )?;
     sandbox::set_trusted(&state.config.clipboard.trusted_apps);
+    spawn::stop_stale_scopes(&state.env, state.config.session.end_processes);
     desktopview::setup(&mut state);
     dialogview::setup(&mut state);
     state.refresh_recent();
@@ -313,15 +314,13 @@ fn run(
 
 /// After the loop stopped: clients go with the display, the session's variables
 /// leave the user manager, the state file lands. `[session] end_processes =
-/// false` leaves the login session and its processes alone.
+/// false` leaves the login session and the app scopes alone.
 fn shutdown(state: State, event_loop: EventLoop<'static, State>) {
-    let mut env = state.env.clone();
-    if !state.config.session.end_processes {
-        env.logind_session = None;
-    }
+    let env = state.env.clone();
+    let end_processes = state.config.session.end_processes;
     drop(state);
     drop(event_loop);
-    spawn::end_session_env(&env);
+    spawn::end_session_env(&env, end_processes);
     state::flush();
     log::info!("shut down");
 }
