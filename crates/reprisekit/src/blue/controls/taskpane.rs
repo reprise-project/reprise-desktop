@@ -209,11 +209,16 @@ fn chevrons(lines: &[[(f64, f64); 3]; 2], x: f64, y: f64, d: i32) -> f64 {
         .fold(0.0, f64::max)
 }
 
-fn button(band: &Band, f: &Face, lines: &[[(f64, f64); 3]; 2], d: i32) -> Canvas {
+/// The fold button over its stretch of `band`, or over nothing when `backed` is false.
+fn button(band: &Band, f: &Face, lines: &[[(f64, f64); 3]; 2], backed: bool, d: i32) -> Canvas {
     let x0 = BAND_W - BUTTON_W;
     let ink = solid(f.mark.unwrap_or(f.rim));
     shape::draw(BUTTON_W, band.h as i32, d, |x, y| {
-        let mut p = band.paint(x, y, x0, d);
+        let mut p = if backed {
+            band.paint(x, y, x0, d)
+        } else {
+            shape::CLEAR
+        };
         if let Some(halo) = f.halo {
             p = disc(f, halo, x, y, d, p);
         }
@@ -253,12 +258,15 @@ pub(super) fn parts(v: Variant, d: i32) -> Vec<(Part, PartImage)> {
     });
 
     let c = &s.task_collapse;
-    let collapse = stack(&[
-        button(&band, &c.normal, &UP, d),
-        button(&band, &c.hot, &UP, d),
-        button(&band, &c.pressed, &UP, d),
-    ]);
-    let expand = button(&band, &s.task_expand.normal, &DOWN, d);
+    let collapse = |backed| {
+        stack(&[
+            button(&band, &c.normal, &UP, backed, d),
+            button(&band, &c.hot, &UP, backed, d),
+            button(&band, &c.pressed, &UP, backed, d),
+        ])
+    };
+    let expand = |backed| button(&band, &s.task_expand.normal, &DOWN, backed, d);
+    let fold_states = [State::Normal, State::Hot, State::Pressed];
 
     let image =
         |a: Canvas, states: &[State]| PartImage::new(a, states, Layout::Vertical).at_scale(d);
@@ -277,11 +285,10 @@ pub(super) fn parts(v: Variant, d: i32) -> Vec<(Part, PartImage)> {
             Part::TaskGroupBody,
             image(body, &[State::Normal]).sizing(Insets::new(1, 0, 1, 1)),
         ),
-        (
-            Part::TaskCollapse,
-            image(collapse, &[State::Normal, State::Hot, State::Pressed]),
-        ),
-        (Part::TaskExpand, image(expand, &[State::Normal])),
+        (Part::TaskCollapse, image(collapse(true), &fold_states)),
+        (Part::TaskExpand, image(expand(true), &[State::Normal])),
+        (Part::TaskCollapseMark, image(collapse(false), &fold_states)),
+        (Part::TaskExpandMark, image(expand(false), &[State::Normal])),
     ]
 }
 
@@ -344,12 +351,14 @@ mod tests {
         c
     }
 
-    const PARTS: [Part; 5] = [
+    const PARTS: [Part; 7] = [
         Part::TaskPane,
         Part::TaskGroupHeader,
         Part::TaskGroupBody,
         Part::TaskCollapse,
         Part::TaskExpand,
+        Part::TaskCollapseMark,
+        Part::TaskExpandMark,
     ];
 
     #[test]
@@ -398,6 +407,30 @@ mod tests {
                     let corner = frame(&fold, i).get(BUTTON_W * d - 1, 0);
                     assert_eq!(corner >> 24, 0, "{v:?} at {d}: frame {i} corner");
                 }
+            }
+        }
+    }
+
+    #[test]
+    fn a_fold_mark_is_the_button_without_the_band() {
+        for v in Variant::ALL {
+            for d in [1, 2] {
+                let (fold, mark) = (
+                    frame(&part(v, d, Part::TaskCollapse), 0),
+                    frame(&part(v, d, Part::TaskCollapseMark), 0),
+                );
+                assert_eq!(mark.get(0, 0) >> 24, 0, "{v:?} at {d}: clear behind");
+                let ink = shape::pack(solid(v.scheme().task_collapse.normal.mark.unwrap()));
+                let inked = |c: &Canvas| -> Vec<usize> {
+                    (0..c.pixels.len())
+                        .filter(|&i| c.pixels[i] == ink)
+                        .collect()
+                };
+                assert_eq!(
+                    inked(&mark),
+                    inked(&fold),
+                    "{v:?} at {d}: the same chevrons"
+                );
             }
         }
     }
@@ -502,71 +535,99 @@ mod tests {
             "Blue 1 TaskGroupBody b9c4689111795d6f",
             "Blue 1 TaskCollapse 1737956df23b7476",
             "Blue 1 TaskExpand 6a76c31f07a5b6df",
+            "Blue 1 TaskCollapseMark 6d7c7417cfe97134",
+            "Blue 1 TaskExpandMark 0886b969f0284075",
             "Blue 2 TaskPane c01f09bf3aadfd3e",
             "Blue 2 TaskGroupHeader 2b4dbc5db9364cb2",
             "Blue 2 TaskGroupBody 9b1383fa0adeda4f",
             "Blue 2 TaskCollapse c5069efc2bf50fc5",
             "Blue 2 TaskExpand 6707ccf7e7c4925c",
+            "Blue 2 TaskCollapseMark cb648273868254d3",
+            "Blue 2 TaskExpandMark 128c60224fc9440a",
             "Olive 1 TaskPane ddd4a6e10b66a469",
             "Olive 1 TaskGroupHeader aa4867524a694eaf",
             "Olive 1 TaskGroupBody eb6282be448cad2d",
             "Olive 1 TaskCollapse cf95f58db61905ec",
             "Olive 1 TaskExpand 16f54fd9ac343cd3",
+            "Olive 1 TaskCollapseMark ced61a859dd8cf34",
+            "Olive 1 TaskExpandMark 79f35c2d44f39db7",
             "Olive 2 TaskPane 64b96016d0bf2b26",
             "Olive 2 TaskGroupHeader aa80f171a8aee5e0",
             "Olive 2 TaskGroupBody 2c1b295716f856ef",
             "Olive 2 TaskCollapse 16d2a8710485a834",
             "Olive 2 TaskExpand 8b69585c9f130ea8",
+            "Olive 2 TaskCollapseMark 46b8d3a8b49c47bb",
+            "Olive 2 TaskExpandMark 8a932d5c55e90533",
             "Silver 1 TaskPane 10d3053f5e2a824b",
             "Silver 1 TaskGroupHeader baec17e51d89cdd1",
             "Silver 1 TaskGroupBody 73c71434620db498",
             "Silver 1 TaskCollapse 6fbc31eb6d60364c",
             "Silver 1 TaskExpand 0dc0e98a21ff3c48",
+            "Silver 1 TaskCollapseMark 064dd35980f8aef3",
+            "Silver 1 TaskExpandMark 10154315d3b7e21b",
             "Silver 2 TaskPane b540e72524ed476a",
             "Silver 2 TaskGroupHeader c3fe20b9d9d3adf7",
             "Silver 2 TaskGroupBody c7ca63e4b9570f67",
             "Silver 2 TaskCollapse 5867e8051604027d",
             "Silver 2 TaskExpand 5d31cb68cbe72c9f",
+            "Silver 2 TaskCollapseMark d85ac8feb6e32dbf",
+            "Silver 2 TaskExpandMark 3a71019c8f8bb8a1",
             "Slate 1 TaskPane 585063609a0563d3",
             "Slate 1 TaskGroupHeader c553ffcb6a9a501a",
             "Slate 1 TaskGroupBody ebbe1c7b843a8b0d",
             "Slate 1 TaskCollapse 6ca56cb4171b2c5f",
             "Slate 1 TaskExpand 01a3052a65342a6e",
+            "Slate 1 TaskCollapseMark 7d97da05c90613cc",
+            "Slate 1 TaskExpandMark 3a4b5051c1144a46",
             "Slate 2 TaskPane 3841a4649858851e",
             "Slate 2 TaskGroupHeader cb7f7771359815f2",
             "Slate 2 TaskGroupBody 14210559af5e5b07",
             "Slate 2 TaskCollapse 3615d48cef86bccf",
             "Slate 2 TaskExpand 3720ea82dfc275e7",
+            "Slate 2 TaskCollapseMark c11fbae1d25f582f",
+            "Slate 2 TaskExpandMark a1017bd9db3c116b",
             "Sapphire 1 TaskPane b7160e4bcdb65a43",
             "Sapphire 1 TaskGroupHeader a590c0b748f7381b",
             "Sapphire 1 TaskGroupBody 2065d2dfe260bd47",
             "Sapphire 1 TaskCollapse c3c6e0dc3472a1f9",
             "Sapphire 1 TaskExpand 27132ae539bc192b",
+            "Sapphire 1 TaskCollapseMark a494fa3471a33e20",
+            "Sapphire 1 TaskExpandMark fcf80bfa3fed40aa",
             "Sapphire 2 TaskPane a8dabaa728c60cd2",
             "Sapphire 2 TaskGroupHeader 2848b7a082cba2fe",
             "Sapphire 2 TaskGroupBody ff2dc1f2b6f224ef",
             "Sapphire 2 TaskCollapse 26d48021e5681b7b",
             "Sapphire 2 TaskExpand f907cfd70d366b5f",
+            "Sapphire 2 TaskCollapseMark 5cb2f357a537f897",
+            "Sapphire 2 TaskExpandMark 62ba4305f8045c53",
             "Obsidian 1 TaskPane df0c17f8f76528ed",
             "Obsidian 1 TaskGroupHeader 7782715effb0ea72",
             "Obsidian 1 TaskGroupBody c45688bfc13136b7",
             "Obsidian 1 TaskCollapse 69715252292d543c",
             "Obsidian 1 TaskExpand 2c462cf3a4843931",
+            "Obsidian 1 TaskCollapseMark e74cd71446754d04",
+            "Obsidian 1 TaskExpandMark a823dc9ff336654e",
             "Obsidian 2 TaskPane b9f7c838d7b156f6",
             "Obsidian 2 TaskGroupHeader d28870b3a5c391ce",
             "Obsidian 2 TaskGroupBody 1bcb5026ed7f3aef",
             "Obsidian 2 TaskCollapse dcde2426ebe94905",
             "Obsidian 2 TaskExpand 1f5a24c298c33f21",
+            "Obsidian 2 TaskCollapseMark 9cbabb6148f880e7",
+            "Obsidian 2 TaskExpandMark 7404420620b07263",
             "Ember 1 TaskPane f634532821178187",
             "Ember 1 TaskGroupHeader 801bc31c3e278712",
             "Ember 1 TaskGroupBody 107f63d5820c5f9f",
             "Ember 1 TaskCollapse 79ea9fdc92e03c3a",
             "Ember 1 TaskExpand 1f0fd497ac1c63b0",
+            "Ember 1 TaskCollapseMark 5d51a2b597687b04",
+            "Ember 1 TaskExpandMark 80c19e302e7bcf6e",
             "Ember 2 TaskPane b3fa1119b76f7962",
             "Ember 2 TaskGroupHeader 68d520fed07d4966",
             "Ember 2 TaskGroupBody ccb7d6206f8797f7",
             "Ember 2 TaskCollapse 9dbb0c5800ea0d2b",
             "Ember 2 TaskExpand bd4e3b48a2da5687",
+            "Ember 2 TaskCollapseMark a327837f8ec7393f",
+            "Ember 2 TaskExpandMark e385be1ad1b08bbb",
         ];
         assert_eq!(got, want);
     }
