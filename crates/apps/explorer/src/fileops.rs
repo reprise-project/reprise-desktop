@@ -640,15 +640,7 @@ impl Explorer {
                 let is_dir = path.is_dir() && !path.is_symlink();
                 let kind = ConfirmKind::of(1, is_dir);
                 let text = reprisefs::bincap::too_big_text(&reprisefs::bincap::label(path));
-                let icon = crate::chrome_icon(
-                    ctx,
-                    if is_dir {
-                        &["folder"]
-                    } else {
-                        &["text-x-generic"]
-                    },
-                    32,
-                );
+                let icon = question_icon(ctx, is_dir);
                 let reply = self.confirm_box(kind, "", Vec::new(), true, false, icon, false, None);
                 if let Some(Dialog::Confirm(c)) = self.dialog.as_mut() {
                     c.text = text;
@@ -985,8 +977,18 @@ impl Explorer {
     }
 
     pub fn undo_last(&mut self, ctx: &mut Ctx) -> Reply {
+        self.undo_with(false, ctx)
+    }
+
+    /// Undo, with `erase` removing for good what the Recycle Bin refuses. Without it such an item
+    /// stops the undo and asks first.
+    pub(crate) fn undo_with(&mut self, erase: bool, ctx: &mut Ctx) -> Reply {
         let dirs = self.undos.undo_dirs();
-        let Some(done) = self.undos.undo() else {
+        let done = match erase {
+            true => self.undos.undo_erasing(),
+            false => self.undos.undo(),
+        };
+        let Some(done) = done else {
             return Reply::none();
         };
         self.sync_undo();
@@ -994,9 +996,24 @@ impl Explorer {
             self.refill_tree_node(&Place::from_path(&d), ctx);
         }
         let reply = self.refresh(ctx);
-        match done {
-            Ok(()) => reply,
-            Err(e) => self.message_box("Error", format!("Cannot undo: {e}"), ctx),
+        let Err(e) = done else {
+            return reply;
+        };
+        match reprisefs::undo::NoBin::of(&e) {
+            Some(no_bin) => {
+                let many = self.undos.many();
+                let is_dir = no_bin.path.is_dir() && !no_bin.path.is_symlink();
+                let text = no_bin.question(many);
+                let kind = ConfirmKind::of(if many { 2 } else { 1 }, is_dir);
+                let icon = question_icon(ctx, is_dir);
+                let reply = self.confirm_box(kind, "", Vec::new(), true, false, icon, false, None);
+                if let Some(Dialog::Confirm(c)) = self.dialog.as_mut() {
+                    c.text = text;
+                    c.undo_erase = true;
+                }
+                reply
+            }
+            None => self.message_box("Error", format!("Cannot undo: {e}"), ctx),
         }
     }
 
@@ -1045,3 +1062,13 @@ impl Explorer {
 #[cfg(test)]
 #[path = "fileops_tests.rs"]
 mod tests;
+
+/// The 32 px picture a delete question about one file or folder shows.
+fn question_icon(ctx: &mut Ctx, is_dir: bool) -> Option<reprisekit::raster::Canvas> {
+    let names: &[&str] = if is_dir {
+        &["folder"]
+    } else {
+        &["text-x-generic"]
+    };
+    crate::chrome_icon(ctx, names, 32)
+}

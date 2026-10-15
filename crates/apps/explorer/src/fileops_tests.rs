@@ -454,6 +454,48 @@ fn remove_immediately_erases_and_the_prompt_can_be_turned_off() {
     assert!(!home.path().join("Trash/files").exists(), "nothing trashed");
 }
 
+/// Undo of a copy onto a drive that removes files immediately asks before erasing the copy: No
+/// keeps it and the Undo row, Yes erases it with nothing put in the bin.
+#[test]
+fn undo_of_a_copy_on_a_remove_immediately_drive_asks_then_erases() {
+    use reprisekit::controls::form;
+    let _guard = TRASH_ENV.lock().unwrap_or_else(|e| e.into_inner());
+    let home = tempfile::tempdir().expect("a temp dir");
+    let data_home = DataHome::set(home.path());
+    data_home.recycle_bin("remove_immediately = true\n");
+    let dir = home.path().join("folder");
+    std::fs::create_dir(&dir).expect("mkdir");
+    let copy = dir.join("copy.txt");
+    std::fs::write(&copy, "1").expect("write");
+    let mut ctx = test_ctx();
+    let mut ex = crate::tests::test_explorer(Place::Folder(dir.clone()), &mut ctx);
+    ex.undos
+        .push(reprisefs::undo::Undoable::Copied(copy.clone()));
+    ex.sync_undo();
+
+    ex.run(Command::Undo, &mut ctx);
+    let Some(Dialog::Confirm(c)) = &ex.dialog else {
+        panic!("the question is up")
+    };
+    assert_eq!(
+        c.text,
+        "'copy.txt' is on a drive that removes files immediately. Do you want to delete it permanently?"
+    );
+    assert_eq!(c.buttons(), ["&Yes", "&No"]);
+    let no = reprisekit::controls::msgbox::button_id(1);
+    ex.dialog_outcome(form::Event::Pressed(no), &mut ctx);
+    assert!(ex.dialog.is_none());
+    assert!(copy.exists(), "No keeps the copy");
+    assert_eq!(ex.undo, Some("Copy"), "and the Undo row");
+
+    ex.run(Command::Undo, &mut ctx);
+    ex.dialog_outcome(form::Event::Default, &mut ctx);
+    assert!(ex.dialog.is_none());
+    assert!(!copy.exists(), "Yes erases it");
+    assert!(!home.path().join("Trash/files").exists(), "nothing trashed");
+    assert_eq!(ex.undo, None);
+}
+
 /// Restore in the Recycle Bin puts the selected item back (with nothing selected, the rest). Undo no
 /// longer offers to restore what Restore already put back.
 #[test]

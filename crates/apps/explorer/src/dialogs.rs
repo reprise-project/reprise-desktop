@@ -52,6 +52,9 @@ pub struct Confirm {
     /// erases it and No leaves it, and a batch of more than one item
     /// adds Yes to All and Cancel. The answers go to this batch.
     pub too_big: Option<reprisefs::bincap::TooBig>,
+    /// Undo stopped at an item its Recycle Bin refuses: Yes undoes again, erasing it
+    /// ([`reprisefs::undo::UndoStack::undo_erasing`]).
+    pub undo_erase: bool,
 }
 
 impl Confirm {
@@ -275,6 +278,7 @@ impl Explorer {
             bin,
             focus: None,
             too_big: None,
+            undo_erase: false,
         }));
         Reply::redraw_all()
     }
@@ -769,6 +773,7 @@ impl Explorer {
             }
             Answer::Accept => match self.dialog.take() {
                 Some(Dialog::Confirm(c)) if c.empty_bin => self.empty_bin_now(ctx),
+                Some(Dialog::Confirm(c)) if c.undo_erase => self.undo_with(true, ctx),
                 Some(Dialog::Confirm(Confirm {
                     bin: Some(items), ..
                 })) => self.erase_from_bin(items, ctx),
