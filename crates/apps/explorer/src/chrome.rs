@@ -56,11 +56,14 @@ impl Explorer {
     }
 
     /// The address drop's places: the shell tree, one row a place, the Desktop's places in the Folders tree's order with the drives under Computer.
+    /// The field names `self.place`, which a window still reading its first folder already holds.
     pub(crate) fn build_address(&mut self, ctx: &mut Ctx) {
         let (rows, places) = self.address_rows(ctx);
         let go = chrome_icon(ctx, &["go-jump", "go-next"], 20);
         self.address = AddressBar::new(rows, 0, go);
         self.address_places = places;
+        let icon = ctx.icons.get(self.place.icon_name(), 16);
+        self.address.set_place(&self.place.address(), icon);
     }
 
     fn address_rows(&self, ctx: &mut Ctx) -> (Vec<ListItem>, Vec<Place>) {
