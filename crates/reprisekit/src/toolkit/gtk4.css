@@ -1,0 +1,61 @@
+
+/* The nodes only GTK4's Default sheet has; GTK3's rules above already reach the shared ones. */
+
+/* Views and lists */
+textview > text, textview > text:backdrop, listview, listview:backdrop,
+columnview, columnview:backdrop, gridview, gridview:backdrop,
+editablelabel > stack > text {
+  color: @theme_text_color;
+  background-color: @theme_base_color;
+}
+listview > row:selected, listview:not(:focus-within) > row:selected, gridview > child:selected,
+columnview > listview > row:selected, .navigation-sidebar > row:selected,
+.navigation-sidebar > row:selected:hover, stacksidebar row:selected, stacksidebar row:selected:hover {
+  color: @theme_selected_fg_color;
+  background-color: @theme_selected_bg_color;
+}
+columnview > header > button, columnview > header > button:hover, columnview > header > button:backdrop {
+  color: @theme_fg_color;
+  border-color: @borders;
+  background-color: @theme_bg_color;
+  background-image: none;
+}
+.toolbar, .toolbar:backdrop { background-color: @theme_bg_color; }
+
+/* Popovers and menus */
+popover.background > contents, popover.background > arrow,
+popover.menu.background > contents, popover.menu > arrow {
+  color: @reprise_menu_text;
+  background-color: @reprise_menu;
+  border-color: @borders;
+}
+popover.background > contents separator { background-color: @borders; }
+popover.menu modelbutton:hover, popover.menu modelbutton:selected,
+popover.menu modelbutton:selected:active {
+  color: @reprise_menu_hilight_text;
+  background-color: @reprise_menu_hilight;
+}
+menubar > item:hover, menubar > item:selected {
+  color: @reprise_menu_hilight_text;
+  background-color: @reprise_menu_hilight;
+  box-shadow: none;
+}
+
+/* Default's child selectors outrank GTK3's descendant ones above, so these repeat them */
+progressbar > trough, scale > trough, scale > trough > fill {
+  border-color: @borders;
+  background-color: shade(@theme_bg_color, 0.92);
+}
+scale > trough > fill { background-color: @borders; }
+progressbar > trough > progress, scale > trough > highlight {
+  border-color: shade(@theme_selected_bg_color, 0.8);
+  background-color: @theme_selected_bg_color;
+}
+levelbar > trough > block.high, levelbar > trough > block:not(.empty) {
+  border-color: @theme_selected_bg_color;
+  background-color: @theme_selected_bg_color;
+}
+levelbar > trough > block.empty {
+  border-color: alpha(@theme_fg_color, 0.2);
+  background-color: shade(@theme_bg_color, 0.92);
+}

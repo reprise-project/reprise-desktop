@@ -1,4 +1,5 @@
-//! `[toolkits]`: writes the generated GTK3 theme and Qt palette at start and on every retheme.
+//! `[toolkits]`: writes the generated GTK theme (GTK3 and GTK4) and Qt palette at start and on
+//! every retheme.
 //!
 //! GTK3 reloads its theme only when `gtk-theme` names another one, so a new look goes into the
 //! [`GTK_SLOTS`] directory GTK is not reading and the portal then names that one. A Qt tool's conf
@@ -85,16 +86,17 @@ pub fn update(generated: &mut Generated, cfg: &Config, dirs: &Dirs) {
     if cfg.toolkits.gtk_theme == TOOLKIT_REPRISE {
         let css = toolkit::gtk3_css(colors, cfg.interface);
         if let Some(slot) = generated.gtk_slot_for(&css) {
-            let dir = dirs
-                .data_home
-                .join("themes")
-                .join(GTK_SLOTS[slot])
-                .join("gtk-3.0");
+            let theme = dirs.data_home.join("themes").join(GTK_SLOTS[slot]);
+            let dir = theme.join("gtk-3.0");
+            let gtk4 = toolkit::gtk4_theme_css(colors, cfg.interface);
             // The pictures first: GTK reads them once the CSS names them.
             let written = toolkit::gtk3_assets(colors, cfg.interface)
                 .iter()
                 .try_for_each(|(rel, bytes)| write_bytes_if_changed(&dir.join(rel), bytes))
-                .and_then(|()| write_if_changed(&dir.join("gtk.css"), &css));
+                .and_then(|()| write_if_changed(&theme.join("gtk-4.0/gtk.css"), &gtk4))
+                // GTK4 reads gtk-dark.css instead under a dark colour scheme.
+                .and_then(|_| write_if_changed(&theme.join("gtk-4.0/gtk-dark.css"), &gtk4))
+                .and_then(|_| write_if_changed(&dir.join("gtk.css"), &css));
             match written {
                 Ok(_) => {
                     generated.gtk = Some(slot);
@@ -228,6 +230,16 @@ mod tests {
         assert_eq!(
             std::fs::read_to_string(&first).unwrap(),
             toolkit::gtk3_css(&cfg.theme.colors, cfg.interface)
+        );
+        assert_eq!(
+            std::fs::read_to_string(d.data_home.join("themes/Reprise/gtk-4.0/gtk.css")).ok(),
+            Some(toolkit::gtk4_theme_css(&cfg.theme.colors, cfg.interface)),
+            "GTK4 reads the same theme"
+        );
+        assert_eq!(
+            std::fs::read_to_string(d.data_home.join("themes/Reprise/gtk-4.0/gtk-dark.css")).ok(),
+            Some(toolkit::gtk4_theme_css(&cfg.theme.colors, cfg.interface)),
+            "and under a dark colour scheme"
         );
         for (rel, bytes) in toolkit::gtk3_assets(&cfg.theme.colors, cfg.interface) {
             let file = d.data_home.join("themes/Reprise/gtk-3.0").join(&rel);
