@@ -181,7 +181,8 @@ the Super tap, Super+Shift+Esc and the VT switch keys can be rebound.
   which waits for Enter after it ends unless `script_terminal = "close"`
   (Settings > Default Programs) and the script succeeded; a binary runs on
   its own. Edit and Open With still open it in an editor; any other
-  executable file opens as usual.
+  executable file opens as usual. Its Properties sheet has no Opens with row
+  and shows its name as the Description.
 - **Wallpaper** centred, tiled or stretched, or a slideshow of a folder that
   crossfades every so often. The desktop menu skips to the next picture.
 - **Desktop water.** The wallpaper ripples like a pond: the pointer leaves a
