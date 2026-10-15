@@ -277,7 +277,7 @@ fn run(
         "running on WAYLAND_DISPLAY={}",
         state.socket().to_string_lossy()
     );
-    spawn::export_session_env(&state.env);
+    spawn::begin_session(&state.env);
     spawn::theme_portal_gtk(
         &state.env,
         tray::settings::Appearance::live(&state).gtk_theme(),
