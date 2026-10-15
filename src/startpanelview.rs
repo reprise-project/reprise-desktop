@@ -1512,7 +1512,8 @@ impl State {
                 let theme = self.config.theme.scaled(scale);
                 let mut canvas = Canvas::new(sl.canvas.width as u32, sl.canvas.height as u32);
                 canvas.set_preedit(key.preedit.clone());
-                reprisekit::interfaces::draw_start_panel(
+                reprisekit::interfaces::draw_start_panel_backed(
+                    &mut self.start_backing,
                     &mut canvas,
                     &theme,
                     &self.config.glass,
@@ -1597,6 +1598,7 @@ impl State {
 
     /// The look changed under the open panel: draw it again from scratch.
     pub fn retheme_start_panel(&mut self) {
+        self.start_backing = Default::default();
         if let Some(v) = self.start_panel.as_mut() {
             v.rasters = Rasters::default();
         }

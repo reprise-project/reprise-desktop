@@ -310,6 +310,24 @@ pub fn draw_start_panel(
     pressed: Option<startpanel::Spot>,
     caret: bool,
 ) {
+    let mut back = glass::startpanel::Backing::default();
+    draw_start_panel_backed(&mut back, canvas, theme, glass, text, p, l, pressed, caret);
+}
+
+/// [`draw_start_panel`] onto a clear `canvas`, reusing the frame `back` kept from an earlier
+/// draw of the same size and look ([`glass::startpanel::draw_backed`]).
+#[expect(clippy::too_many_arguments)]
+pub fn draw_start_panel_backed(
+    back: &mut glass::startpanel::Backing,
+    canvas: &mut Canvas,
+    theme: &Theme,
+    glass: &glass::Settings,
+    text: &TextRenderer,
+    p: &StartPanel,
+    l: &startpanel::layout::Layout,
+    pressed: Option<startpanel::Spot>,
+    caret: bool,
+) {
     let style = match &theme.look {
         Look::Styled(s) if s.glass.is_some() && glass.transparency => s.clone(),
         _ => glass::style(&glass::Settings {
@@ -318,7 +336,7 @@ pub fn draw_start_panel(
         })
         .at_scale(l.scale.max(1)),
     };
-    glass::startpanel::draw(canvas, &style, text, p, l, pressed, caret);
+    glass::startpanel::draw_backed(back, canvas, &style, text, p, l, pressed, caret);
     if let Some(bar) = l.tree_bar {
         let look = Look::Styled(style.clone());
         let paint = Paint {

@@ -17,6 +17,7 @@ use crate::startpanel::{
 use crate::style::{Layout as Stack, Part, PartImage, State, Style};
 use crate::text::TextRenderer;
 use crate::theme::{Color, FontConfig};
+use std::sync::Arc;
 
 pub const PANEL_CORNER: &[i32] = &[5, 3, 2, 1, 1];
 
@@ -185,7 +186,80 @@ mod at {
     pub const TREE_BASE: i32 = 15;
 }
 
+/// The panel's frame and left pane as drawn on a clear canvas for one size, scale and style.
+/// Kept across draws (and opens), it saves the two largest parts' blits on every later draw.
+#[derive(Default)]
+pub struct Backing(Option<Backed>);
+
+struct Backed {
+    style: Arc<Style>,
+    panel: Rect,
+    pane: Rect,
+    canvas: Canvas,
+}
+
+/// The frame and left pane's rects on `l`'s canvas.
+fn backing_rects(l: &Layout) -> (Rect, Rect) {
+    let o = l.canvas;
+    let at = |r: Rect| Rect::new(r.x - o.x, r.y - o.y, r.width, r.height);
+    (at(l.panel), at(l.pane.inset(-2 * l.scale.max(1))))
+}
+
 pub fn draw(
+    canvas: &mut Canvas,
+    style: &Style,
+    text: &TextRenderer,
+    p: &StartPanel,
+    l: &Layout,
+    pressed: Option<Spot>,
+    caret: bool,
+) {
+    let (panel, pane) = backing_rects(l);
+    let s = l.scale.max(1);
+    style.draw(canvas, panel, Part::StartPanel, State::Normal, s);
+    style.draw(canvas, pane, Part::StartPane, State::Normal, s);
+    draw_contents(canvas, style, text, p, l, pressed, caret);
+}
+
+/// [`draw`] onto a clear `canvas`, its frame and left pane copied from `back` when `back` holds
+/// them for this size and style, else drawn and kept there.
+#[allow(clippy::too_many_arguments)]
+pub fn draw_backed(
+    back: &mut Backing,
+    canvas: &mut Canvas,
+    style: &Arc<Style>,
+    text: &TextRenderer,
+    p: &StartPanel,
+    l: &Layout,
+    pressed: Option<Spot>,
+    caret: bool,
+) {
+    let (panel, pane) = backing_rects(l);
+    let fits = |b: &Backed| {
+        Arc::ptr_eq(&b.style, style)
+            && (b.panel, b.pane) == (panel, pane)
+            && b.canvas.pixels.len() == canvas.pixels.len()
+            && (b.canvas.width, b.canvas.height) == (canvas.width, canvas.height)
+    };
+    match &back.0 {
+        Some(b) if fits(b) => canvas.pixels.copy_from_slice(&b.canvas.pixels),
+        _ => {
+            let s = l.scale.max(1);
+            style.draw(canvas, panel, Part::StartPanel, State::Normal, s);
+            style.draw(canvas, pane, Part::StartPane, State::Normal, s);
+            back.0 = Some(Backed {
+                style: style.clone(),
+                panel,
+                pane,
+                canvas: canvas.clone(),
+            });
+        }
+    }
+    draw_contents(canvas, style, text, p, l, pressed, caret);
+}
+
+/// Everything over the frame and left pane.
+fn draw_contents(
     canvas: &mut Canvas,
     style: &Style,
     text: &TextRenderer,
@@ -207,8 +281,6 @@ pub fn draw(
         .text_color(Part::StartPanel, State::Normal)
         .unwrap_or(ink(INK_RIGHT));
 
-    d.part(at(l.panel), Part::StartPanel, State::Normal);
-    d.part(at(l.pane.inset(-2 * s)), Part::StartPane, State::Normal);
     if let Some(j) = l.jump_pane {
         d.part(at(j), Part::StartJumpPane, State::Normal);
     }
@@ -573,6 +645,43 @@ mod tests {
         let mut c = Canvas::new(l.canvas.width as u32, l.canvas.height as u32);
         draw(&mut c, &style, &text, p, &l, pressed, true);
         Drawn { c, l }
+    }
+
+    #[test]
+    fn a_backed_draw_matches_a_fresh_one_and_a_new_style_draws_its_own_frame() {
+        let text = TextRenderer::load(&font());
+        let blue = super::super::style(&Settings::default());
+        let red = super::super::style(&Settings {
+            color: Color::rgb(201, 24, 15),
+            intensity: 75,
+            ..Settings::default()
+        });
+        let blank = |l: &Layout| Canvas::new(l.canvas.width as u32, l.canvas.height as u32);
+        let fresh = |style: &Style, p: &StartPanel| {
+            let l = layout(p);
+            let mut c = blank(&l);
+            draw(&mut c, style, &text, p, &l, None, true);
+            c.pixels
+        };
+        let backed = |back: &mut Backing, style: &Arc<Style>, p: &StartPanel| {
+            let l = layout(p);
+            let mut c = blank(&l);
+            draw_backed(back, &mut c, style, &text, p, &l, None, true);
+            c.pixels
+        };
+        let (home, search) = (sample(Mode::Home, None), sample(Mode::Search, None));
+        let jump = sample(Mode::Jump(1), Some(Spot::Jump(0)));
+        let mut back = Backing::default();
+        assert_eq!(backed(&mut back, &blue, &home), fresh(&blue, &home));
+        assert!(back.0.is_some(), "the frame is kept");
+        assert_eq!(backed(&mut back, &blue, &search), fresh(&blue, &search));
+        assert_eq!(backed(&mut back, &blue, &jump), fresh(&blue, &jump));
+        assert_ne!(fresh(&red, &home), fresh(&blue, &home));
+        assert_eq!(
+            backed(&mut back, &red, &home),
+            fresh(&red, &home),
+            "another style draws its own frame"
+        );
     }
 
     fn plain(s: &Settings) -> u32 {
