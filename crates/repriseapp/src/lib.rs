@@ -495,6 +495,9 @@ pub struct Reply {
     /// token is sent: a launched window takes focus as a child of the
     /// focused caller.
     pub spawn: Vec<Vec<OsString>>,
+    /// The desktop entry id `spawn` runs as: each process starts in that app's scope
+    /// (`reprisefs::scope`).
+    pub spawn_app: Option<String>,
     pub copy_files: Option<FileClip>,
     /// Arrives as `Event::PastedFiles` on the window this reply is for.
     pub paste_files: bool,
@@ -1566,7 +1569,10 @@ impl Host {
             self.paste_files(win);
         }
         for argv in reply.spawn {
-            self.spawn(&argv);
+            self.spawn(&reprisefs::scope::in_scope(
+                &argv,
+                reply.spawn_app.as_deref(),
+            ));
         }
         if let Some(accept) = reply.drag_accept {
             self.drag_accept(win, accept);

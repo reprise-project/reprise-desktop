@@ -17,7 +17,6 @@ use reprisefs::undo::Undoable;
 use reprisekit::controls::openwith::{self, Check, OpenWith, Program};
 use reprisekit::controls::replacebox;
 use reprisekit::raster::Canvas;
-use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
 /// An item picked in the Recycle Bin: its entry under `files/` and the record it was listed with;
@@ -805,11 +804,18 @@ impl Explorer {
         self.put_all(&paths, &dir, &|_| Some(op), false, ctx)
     }
 
-    pub fn open_argv_for(&self, it: &Item) -> Vec<OsString> {
+    pub fn open_for(&self, it: &Item) -> reprisefs::props::Opening {
+        use reprisefs::props::Opening;
         match it.shortcut.as_deref() {
-            Some(apps::Shortcut::App(app)) => apps::launch_argv(app, &repriseconf::terminal()),
-            Some(apps::Shortcut::Link(link)) => vec!["xdg-open".into(), link.url.clone().into()],
-            None => reprisefs::props::open_argv_in(
+            Some(apps::Shortcut::App(app)) => Opening {
+                argv: apps::launch_argv(app, &repriseconf::terminal()),
+                app: Some(app.id.clone()),
+            },
+            Some(apps::Shortcut::Link(link)) => Opening {
+                argv: vec!["xdg-open".into(), link.url.clone().into()],
+                app: None,
+            },
+            None => reprisefs::props::open_in(
                 &it.path,
                 &self.globs,
                 &self.app_index,
@@ -858,6 +864,7 @@ impl Explorer {
                 &repriseconf::terminal(),
                 &path,
             )],
+            spawn_app: Some(app.id.clone()),
             ..Default::default()
         }
     }
@@ -952,6 +959,7 @@ impl Explorer {
                 &repriseconf::terminal(),
                 &c.path,
             )],
+            spawn_app: Some(app.id),
             ..Default::default()
         }
     }

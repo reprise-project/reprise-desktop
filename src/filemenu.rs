@@ -6,6 +6,7 @@
 use std::path::{Path, PathBuf};
 
 use reprisefs::apps;
+use reprisefs::props::Opening;
 use reprisekit::controls::menu::MenuItem;
 
 use crate::compositor::State;
@@ -66,39 +67,38 @@ impl State {
         file_menu(found_menu(facts), mime.as_deref())
     }
 
-    /// The program run when a found `path` is opened, from its `facts`: its icon's on the desktop.
-    pub(crate) fn found_open_argv(
-        &self,
-        path: &Path,
-        facts: &desktop::FileFacts,
-    ) -> Vec<std::ffi::OsString> {
+    /// How a found `path` opens, from its `facts`: as its icon on the desktop would.
+    pub(crate) fn found_opening(&self, path: &Path, facts: &desktop::FileFacts) -> Opening {
         match &facts.target {
-            Target::Open(dir) if facts.is_dir => apps::open_folder_argv(dir),
+            Target::Open(dir) if facts.is_dir => Opening {
+                argv: apps::open_folder_argv(dir),
+                app: None,
+            },
             Target::Open(file) => {
                 let mime = (path.file_name())
                     .and_then(|n| self.with_mime(|db| db.mime_of_name(&n.to_string_lossy())));
                 let default = mime
                     .as_deref()
                     .and_then(|m| reprisefs::props::default_app_entry(m, &self.app_index));
-                reprisefs::props::open_file_argv(file, default, &self.config.terminal)
+                reprisefs::props::open_file(file, default, &self.config.terminal)
             }
-            target => self.with_mime(|db| {
-                desktop::open_argv(target, db, &self.app_index, &self.config.terminal)
-            }),
+            target => Opening {
+                argv: self.with_mime(|db| {
+                    desktop::open_argv(target, db, &self.app_index, &self.config.terminal)
+                }),
+                app: target.app().map(str::to_string),
+            },
         }
     }
 
-    /// Open a found `path` as its `facts` say: a program runs, anything else opens with
-    /// [`Self::found_open_argv`].
+    /// Open a found `path` as its `facts` say: a program runs, anything else opens as
+    /// [`Self::found_opening`] says.
     pub(crate) fn open_found(&mut self, path: &Path, facts: &desktop::FileFacts) {
         match &facts.target {
             Target::Run(file) => self.run_program(file),
             _ => {
-                let argv = self.found_open_argv(path, facts);
-                match facts.target.app() {
-                    Some(app) => self.spawn_app_activated(&argv, app),
-                    None => self.spawn_argv_activated(&argv),
-                }
+                let open = self.found_opening(path, facts);
+                self.spawn_opening_activated(&open);
             }
         }
     }

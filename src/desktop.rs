@@ -397,7 +397,7 @@ pub fn open_argv(
 ) -> Vec<std::ffi::OsString> {
     match target {
         Target::Launch(app) => apps::launch_argv(app, terminal),
-        Target::Open(path) => reprisefs::props::open_argv_in(path, mime, programs, terminal),
+        Target::Open(path) => reprisefs::props::open_in(path, mime, programs, terminal).argv,
         Target::Run(path) => vec![path.into()],
         Target::Uri(uri) => vec!["xdg-open".into(), uri.into()],
     }

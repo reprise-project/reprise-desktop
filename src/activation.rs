@@ -140,6 +140,14 @@ impl State {
         crate::spawn::spawn_argv(argv, &self.env, Some(&token))
     }
 
+    /// Open a path as `open` says, in its program's app scope when it has one.
+    pub fn spawn_opening_activated(&mut self, open: &reprisefs::props::Opening) {
+        match &open.app {
+            Some(app) => self.spawn_app_activated(&open.argv, app),
+            None => self.spawn_argv_activated(&open.argv),
+        }
+    }
+
     /// `spawn_argv_activated` for a command built from the desktop entry `app`.
     pub fn spawn_app_activated<S: AsRef<std::ffi::OsStr> + std::fmt::Debug>(
         &mut self,

@@ -873,40 +873,43 @@ pub fn default_app_entry<'a>(mime: &str, apps: &'a [AppEntry]) -> Option<&'a App
     default_app(mime, apps).map(|i| &apps[i])
 }
 
-/// The argument vector that opens `path`: a folder in Explorer, a file in its type's default program `default`, else `xdg-open`.
-pub fn open_argv(
-    path: &Path,
-    default: Option<&AppEntry>,
-    terminal: &str,
-) -> Vec<std::ffi::OsString> {
+/// How a `path` the caller knows is a file opens in `default`, else `xdg-open`, with no stat.
+pub fn open_file(path: &Path, default: Option<&AppEntry>, terminal: &str) -> Opening {
     match default {
-        Some(app) if !path.is_dir() => apps::open_argv(app, terminal, path),
-        _ => apps::open_argv_for(path),
+        Some(app) => Opening {
+            argv: apps::open_argv(app, terminal, path),
+            app: Some(app.id.clone()),
+        },
+        None => Opening {
+            argv: vec!["xdg-open".into(), path.into()],
+            app: None,
+        },
     }
 }
 
-/// [`open_argv`] for a `path` the caller knows is a file, with no stat.
-pub fn open_file_argv(
-    path: &Path,
-    default: Option<&AppEntry>,
-    terminal: &str,
-) -> Vec<std::ffi::OsString> {
-    match default {
-        Some(app) => apps::open_argv(app, terminal, path),
-        None => vec!["xdg-open".into(), path.into()],
-    }
+/// A command that opens a path, and the desktop entry id it runs as (its app scope): the default
+/// program's, None for Explorer or `xdg-open`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Opening {
+    pub argv: Vec<std::ffi::OsString>,
+    pub app: Option<String>,
 }
 
-/// [`open_argv`] with `path`'s default program looked up from `globs` and `apps`. Everything that opens a file on its own comes here.
-pub fn open_argv_in(
-    path: &Path,
-    globs: &MimeDb,
-    apps: &[AppEntry],
-    terminal: &str,
-) -> Vec<std::ffi::OsString> {
+/// How `path` opens, with its default program looked up from `globs` and `apps`. Everything that
+/// opens a file on its own comes here.
+pub fn open_in(path: &Path, globs: &MimeDb, apps: &[AppEntry], terminal: &str) -> Opening {
     let mime = apps::mime_of_in(globs, path);
     let default = mime.as_deref().and_then(|m| default_app_entry(m, apps));
-    open_argv(path, default, terminal)
+    match default.filter(|_| !path.is_dir()) {
+        Some(app) => Opening {
+            argv: apps::open_argv(app, terminal, path),
+            app: Some(app.id.clone()),
+        },
+        None => Opening {
+            argv: apps::open_argv_for(path),
+            app: None,
+        },
+    }
 }
 
 pub fn default_app(mime: &str, apps: &[AppEntry]) -> Option<usize> {
@@ -1419,43 +1422,30 @@ mod tests {
         assert_eq!(without_default("", "text/plain"), "");
     }
 
-    #[test]
-    fn open_takes_the_types_default_program() {
-        let dir = tempfile::tempdir().unwrap();
-        let svg = dir.path().join("a.svg");
-        std::fs::write(&svg, "<svg/>").unwrap();
-        let viewer = AppEntry {
-            exec_line: "viewer %F".into(),
-            ..app("viewer.desktop", &["image/svg+xml"])
-        };
-        let argv = |p: &Path, d| open_argv(p, d, "foot");
-        assert_eq!(
-            argv(&svg, Some(&viewer)),
-            ["viewer".into(), svg.clone().into_os_string()]
-        );
-        assert_eq!(argv(&svg, None)[0], "xdg-open");
-        assert_eq!(argv(dir.path(), Some(&viewer))[0], "reprise-explorer");
-    }
-
     /// A caller that knows the path is a file gets its program without a stat, which a file on a
     /// mount that does not answer would hold: even a folder by that name opens as a file.
     #[test]
-    fn open_file_argv_asks_the_file_system_nothing() {
+    fn open_file_asks_the_file_system_nothing() {
         let dir = tempfile::tempdir().unwrap();
         let viewer = AppEntry {
             exec_line: "viewer %F".into(),
             ..app("viewer.desktop", &["image/svg+xml"])
         };
-        let argv = |d| open_file_argv(dir.path(), d, "foot");
+        let open = |d| open_file(dir.path(), d, "foot");
         assert_eq!(
-            argv(Some(&viewer)),
-            ["viewer".into(), dir.path().as_os_str().to_owned()]
+            open(Some(&viewer)),
+            Opening {
+                argv: vec!["viewer".into(), dir.path().as_os_str().to_owned()],
+                app: Some("viewer.desktop".into()),
+            },
+            "in the program's app scope"
         );
-        assert_eq!(argv(None)[0], "xdg-open");
+        assert_eq!(open(None).argv[0], "xdg-open");
+        assert_eq!(open(None).app, None);
     }
 
     #[test]
-    fn open_argv_in_looks_up_the_types_default_program() {
+    fn open_in_looks_up_the_types_default_program_and_runs_as_it() {
         let dir = tempfile::tempdir().unwrap();
         let song = dir.path().join("song.rtest");
         let other = dir.path().join("song.rtother");
@@ -1464,13 +1454,24 @@ mod tests {
             exec_line: "player %f".into(),
             ..app("player.desktop", &["application/x-reprise-test"])
         };
-        let argv = |p: &Path| open_argv_in(p, &db, std::slice::from_ref(&player), "foot");
+        let open = |p: &Path| open_in(p, &db, std::slice::from_ref(&player), "foot");
         assert_eq!(
-            argv(&song),
-            ["player".into(), song.clone().into_os_string()]
+            open(&song),
+            Opening {
+                argv: vec!["player".into(), song.clone().into_os_string()],
+                app: Some("player.desktop".into()),
+            }
         );
-        assert_eq!(argv(&other), ["xdg-open".into(), other.into_os_string()]);
-        assert_eq!(argv(dir.path())[0], "reprise-explorer");
+        assert_eq!(
+            open(&other),
+            Opening {
+                argv: vec!["xdg-open".into(), other.into_os_string()],
+                app: None,
+            }
+        );
+        let folder = open(dir.path());
+        assert_eq!(folder.argv[0], "reprise-explorer");
+        assert_eq!(folder.app, None);
     }
 
     fn app(id: &str, mimes: &[&str]) -> AppEntry {
