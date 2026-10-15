@@ -32,8 +32,8 @@ use reprisekit::classic::widgets::{
 use reprisekit::classic::{indicator, snapframe};
 use reprisekit::controls::rebar;
 use reprisekit::controls::{
-    aboutbox, addressbar, browsefolder, colorbutton, colorpick, combo, dlgtemplate, endsession,
-    explorerbar, filedlg, filesheet, finddlg,
+    aboutbox, addressbar, browsefolder, colorbutton, colorpick, combo, displaypanel, dlgtemplate,
+    endsession, explorerbar, filedlg, filesheet, finddlg,
     form::{self, Control, Item},
     grouplist, infotip, launcher, listbox, listview, locationprompt, menubar, mixer, msgbox,
     multiedit, notifyhistory, osd, placesbar, regionselect, replacebox, shellview, switcher,
@@ -3177,6 +3177,13 @@ fn render(theme: &Theme, with_blue: bool) -> Canvas {
             &panel,
         );
     }
+
+    c.blit_canvas(20, 6190, &osd::draw_lines(theme, &text, &display_lines()));
+    c.blit_canvas(
+        20,
+        6320,
+        &displaypanel::draw(theme, &text, &display_panel(0)),
+    );
 
     {
         let l = switcher::SwitcherLayout::compute(3, 1, Rect::new(580, 3150, 330, 107), false);
@@ -7950,11 +7957,59 @@ fn render_start_panel() -> Canvas {
     c
 }
 
-/// The media keys' panel and the launcher in Glass over the stripes.
+fn display_lines() -> osd::Lines {
+    use osd::Level;
+    let line = |icon, label: &str, level| osd::Line {
+        icon,
+        label: label.to_string(),
+        level,
+    };
+    osd::Lines {
+        title: "Brightness".to_string(),
+        lines: vec![
+            line(
+                &reprisekit::art::icons::LAPTOP,
+                "Built-in display",
+                Level::At(60),
+            ),
+            line(
+                &reprisekit::art::icons::MONITOR,
+                "DELL U2720Q",
+                Level::At(40),
+            ),
+            line(&reprisekit::art::icons::MONITOR, "LG 27GL850", Level::Fixed),
+        ],
+    }
+}
+
+/// The displays flyout for [`display_lines`] with night light on, after `tabs` presses of Tab.
+fn display_panel(tabs: usize) -> displaypanel::DisplayPanel {
+    let rows = display_lines()
+        .lines
+        .into_iter()
+        .map(|l| displaypanel::Row {
+            label: l.label,
+            icon: l.icon,
+            level: l.level,
+        })
+        .collect();
+    let night = displaypanel::Night {
+        enabled: true,
+        on: true,
+        state: "until 07:00".to_string(),
+    };
+    let mut p = displaypanel::DisplayPanel::new(rows, night);
+    for _ in 0..tabs {
+        p.key(displaypanel::Key::Tab);
+    }
+    p
+}
+
+/// The media keys' panel, the displays flyout and the launcher in Glass over the stripes.
 fn render_glass_popups() -> Canvas {
     let text = TextRenderer::load(&FontConfig::default());
     let theme = interfaces::theme_for(Interface::Glass);
-    let mut c = blurred_stripes(1000, 500);
+    let mut c = blurred_stripes(1000, 760);
     let m = reprisekit::look::panel::margin(&theme);
     let mut icon = Canvas::new(32, 32);
     icon.fill_rect(Rect::new(4, 6, 24, 20), Color::rgb(80, 193, 255));
@@ -7974,6 +8029,11 @@ fn render_glass_popups() -> Canvas {
         let (x, y) = (30 + (i as i32 % 2) * 300, 30 + (i as i32 / 2) * 100);
         c.blit_over(x - m.left, y - m.top, &panel);
     }
+    let panel = osd::draw_lines(&theme, &text, &display_lines());
+    c.blit_over(630 - m.left, 30 - m.top, &panel);
+    let fm = reprisekit::flyout::margin(&theme);
+    let panel = displaypanel::draw(&theme, &text, &display_panel(2));
+    c.blit_over(30 - fm.left, 430 - fm.top, &panel);
     let empty = launcher::Launcher::new();
     let panel = launcher::draw(&theme, &text, &empty, Some(&icon), true, None);
     c.blit_over(30 - m.left, 250 - m.top, &panel);

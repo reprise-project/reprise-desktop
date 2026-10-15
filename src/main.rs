@@ -22,6 +22,8 @@ mod constraint;
 mod cursor;
 mod desktops;
 mod devices;
+mod displays;
+mod displaysview;
 mod dnd;
 mod dnddrop;
 mod dndsource;

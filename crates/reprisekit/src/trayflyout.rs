@@ -5,7 +5,7 @@ use crate::access::accesskit::{NodeId, Role};
 use crate::access::{self, Tree};
 use crate::icon::ICON_SIZE;
 use crate::raster::{Canvas, EdgeStyle, Rect};
-use crate::text::{Align, TextRenderer};
+use crate::text::TextRenderer;
 use crate::theme::Theme;
 
 pub const COLS: usize = 4;
@@ -112,24 +112,17 @@ fn draw_panel(
         let page = theme.look.style().and_then(|st| st.page);
         // The band runs from the panel's left edge to its right and foot.
         let band = Rect::new(f, l.y, layout.width - 2 * f, layout.height - f - l.y);
-        let ink = match page {
-            Some(inks) => {
-                c.fill_rect(band, inks.band);
-                for (k, row) in inks.band_rule.iter().enumerate() {
-                    let y = band.y + k as i32 * s;
-                    c.fill_rect(Rect::new(band.x, y, band.width, s), *row);
-                }
-                inks.link
+        if let Some(inks) = page {
+            c.fill_rect(band, inks.band);
+            for (k, row) in inks.band_rule.iter().enumerate() {
+                let y = band.y + k as i32 * s;
+                c.fill_rect(Rect::new(band.x, y, band.width, s), *row);
             }
-            None => cs.hot_light,
-        };
+        }
         let px = theme.fonts.size_px;
         let w = text.measure(LINK, false, px);
         let tr = Rect::new(band.x + (band.width - w) / 2, band.y, w, band.height);
-        text.draw(&mut c, tr, LINK, false, ink, Align::Left, px);
-        if link_hot && let Some(base) = text.baseline(tr, false, px) {
-            c.fill_rect(Rect::new(tr.x, base + s, w, s), ink);
-        }
+        crate::flyout::draw_link(&mut c, text, &theme.paint(), tr, LINK, link_hot, px);
     }
     c
 }

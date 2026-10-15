@@ -335,7 +335,10 @@ fn report(state: &mut State, r: Report) {
             state.power.sleep_delay = Some(fd);
         }
         Report::Sleeping => sleeping(state),
-        Report::Resumed => crate::nightlight::update(state),
+        Report::Resumed => {
+            crate::nightlight::update(state);
+            crate::displays::reread(state);
+        }
         Report::Lock => {
             log::info!("power: logind asks for the lock");
             crate::lockview::lock(state);

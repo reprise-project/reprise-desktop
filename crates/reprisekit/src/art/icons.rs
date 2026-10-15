@@ -198,6 +198,12 @@ icons! {
     /// The MouseKeys mask, 16x16: black outline, the button insides in
     /// greys (left 64, middle 96, right 128).
     MOUSE_KEYS = "mouse-keys.png";
+    /// The sun line sketch, 16x16: a one-ink mask in black.
+    SUN = "sun.png";
+    /// A laptop: an open lid with blue glass over a flat base, 16x16.
+    LAPTOP = "display-laptop.png";
+    /// A monitor with blue glass on a neck and foot, 16x16.
+    MONITOR = "display-monitor.png";
     /// The shortcut arrow box, 11x11.
     SHORTCUT = "shortcut.png";
     /// The red exclamation disc for Confirm Delete, 12x12.
@@ -300,6 +306,9 @@ mod tests {
                     ));
                 }
             }
+            for warm in [false, true] {
+                out.push((format!("sun {px} {warm}"), indicator::draw_sun(px, warm)));
+            }
             for (unseen, dnd) in [(0, false), (3, false), (12, false), (0, true), (5, true)] {
                 out.push((
                     format!("bell {px} {unseen} {dnd}"),
@@ -307,6 +316,9 @@ mod tests {
                 ));
             }
         }
+        out.push(("display laptop".into(), LAPTOP.canvas()));
+        out.push(("display monitor".into(), MONITOR.canvas()));
+        out.push(("display laptop at 2".into(), LAPTOP.canvas_at(2)));
         for s in [1, 2] {
             out.push((format!("shortcut {s}"), iconview::shortcut_overlay(s)));
         }
@@ -390,6 +402,8 @@ mod tests {
         ("mousekeys 16 Middle true", 0xef34_1f8b_368b_0a64),
         ("mousekeys 16 Right false", 0x4561_633e_78ba_2299),
         ("mousekeys 16 Right true", 0xbdf4_4b26_0e73_0919),
+        ("sun 16 false", 0x7ca5_e6f5_a0a6_a184),
+        ("sun 16 true", 0x45b4_8983_a154_d1e4),
         ("bell 16 0 false", 0xc74b_9556_28ff_d32e),
         ("bell 16 3 false", 0x8090_aa8a_f78d_52c3),
         ("bell 16 12 false", 0x36f1_3da7_34c1_0e3e),
@@ -409,11 +423,16 @@ mod tests {
         ("mousekeys 32 Middle true", 0xb410_a9d9_094f_8504),
         ("mousekeys 32 Right false", 0x7da6_6c70_0c45_6be4),
         ("mousekeys 32 Right true", 0xc320_7565_fe25_89e4),
+        ("sun 32 false", 0x8cfc_53a0_94d2_7784),
+        ("sun 32 true", 0x026b_8a71_b6b5_f704),
         ("bell 32 0 false", 0xf4d9_d0f9_cc07_bc4c),
         ("bell 32 3 false", 0x0daf_f465_c78b_490c),
         ("bell 32 12 false", 0x31a5_087d_c587_5ffc),
         ("bell 32 0 true", 0x05fa_0943_a292_7a44),
         ("bell 32 5 true", 0xd3ed_1aae_cc74_bfec),
+        ("display laptop", 0x02de_19cb_a27f_653d),
+        ("display monitor", 0x139f_fe0a_53fa_168d),
+        ("display laptop at 2", 0x42da_aa69_2abf_7ba7),
         ("shortcut 1", 0x7c7b_041e_2a2f_c211),
         ("shortcut 2", 0xb3f3_d648_7aa2_e244),
     ];

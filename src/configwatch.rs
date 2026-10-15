@@ -387,6 +387,7 @@ fn close_bar_popups(state: &mut State) {
     state.close_start_panel();
     state.close_menu();
     crate::calendarview::close(state);
+    crate::displaysview::close(state);
     crate::trayflyout::close(state);
     crate::trayreveal::collapse_all(state);
     crate::taskpreview::hide(state);

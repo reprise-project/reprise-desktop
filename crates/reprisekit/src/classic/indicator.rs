@@ -1,5 +1,5 @@
 //! The tray icons the compositor draws itself (StickyKeys, MouseKeys, layout name, notification
-//! bell, privacy indicators), drawn from strokes, text or the PNGs in [`icons`] so they need no
+//! bell, privacy indicators, the Displays sun), drawn from strokes, text or the PNGs in [`icons`] so they need no
 //! icon theme.
 
 use crate::art::icons::{self, Icon};
@@ -84,6 +84,16 @@ pub fn draw_camera(px: i32) -> Canvas {
 
 pub fn draw_location(px: i32) -> Canvas {
     draw_icon(px, &icons::LOCATION, Some)
+}
+
+pub const SUN_INK: Color = Color::rgb(0, 0, 0);
+pub const SUN_WARM: Color = Color::rgb(0xD0, 0x7A, 0x00);
+
+/// The Displays sun in a `px` square: black, or orange while the night light is warming.
+pub fn draw_sun(px: i32, warm: bool) -> Canvas {
+    draw_icon(px, &icons::SUN, |_| {
+        Some(if warm { SUN_WARM } else { SUN_INK })
+    })
 }
 
 /// The StickyKeys indicator in a `px` square; keys in `held` (wlr modifier bits: Shift 1, Ctrl 4,
@@ -194,6 +204,25 @@ mod tests {
     const BELL_OUTLINE: Color = Color::rgb(96, 64, 0);
     const BELL_FILL: Color = Color::rgb(255, 204, 0);
     const BELL_HILIGHT: Color = Color::rgb(255, 244, 192);
+
+    #[test]
+    fn the_warm_sun_swaps_only_its_ink() {
+        for px in [16, 32] {
+            let (cold, warm) = (draw_sun(px, false), draw_sun(px, true));
+            assert_eq!((cold.width, cold.height), (px as u32, px as u32));
+            for (c, w) in cold.pixels.iter().zip(&warm.pixels) {
+                assert_eq!(c >> 24, w >> 24, "same shape at {px}");
+                if c >> 24 == 0xFF {
+                    assert_eq!(*c, SUN_INK.argb());
+                    assert_eq!(*w, SUN_WARM.argb());
+                }
+            }
+            assert!(
+                cold.pixels.iter().any(|p| p >> 24 == 0xFF),
+                "the sun has ink"
+            );
+        }
+    }
 
     #[test]
     fn the_layout_square_carries_its_short_name() {

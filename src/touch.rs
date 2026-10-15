@@ -307,6 +307,7 @@ impl State {
             && self.panels.emojiview.is_none()
             && self.panels.region.is_none()
             && !crate::calendarview::is_open(self)
+            && !crate::displaysview::is_open(self)
             && !crate::notifycenter::is_open(self)
             && crate::trayflyout::open_on(self).is_none()
             && !self.switcher.is_open()

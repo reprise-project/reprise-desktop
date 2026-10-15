@@ -16,16 +16,13 @@ use crate::compositor::State;
 use crate::config::{NightLightConfig, NightSchedule};
 use crate::gammacontrol::{GammaControlHandler, GammaControlState};
 use crate::menuview::{MenuFrom, MenuKind};
-use crate::raster::{Canvas, Rect};
+use crate::raster::Rect;
 use crate::startmenu::{MenuItem, MenuLayout, MenuStyle, submenu_max_rows};
 use schedule::{LocalClock, Plan};
 
 pub use color::NEUTRAL;
 
 const SETTINGS: [&str; 3] = ["reprise-settings", "--page", "night-light"];
-
-const ICONS: [&str; 3] = ["night-light", "weather-clear-night", "night-light-symbolic"];
-const PAUSED_ICONS: [&str; 2] = ["night-light-disabled", "night-light-disabled-symbolic"];
 
 /// The entries per channel a client's ramp has on an output with no gamma
 /// table: the size wlr-gamma-control clients usually use.
@@ -47,6 +44,8 @@ pub struct NightLight {
     cfg: NightLightConfig,
     pub paused_until: Option<i64>,
     pub kelvin: Option<u32>,
+    /// When the warming now on is gone (the night's end plus its fade); None while not warming.
+    warm_until: Option<i64>,
     next_start: Option<i64>,
     zone: Option<String>,
     zone_place: Option<(f64, f64)>,
@@ -61,6 +60,7 @@ impl NightLight {
             cfg: NightLightConfig::default(),
             paused_until: None,
             kelvin: None,
+            warm_until: None,
             next_start: None,
             zone: None,
             zone_place: None,
@@ -166,7 +166,7 @@ pub fn update(state: &mut State) {
     let cfg = state.config.night_light.clone();
     let nl = &mut state.night;
     let before = nl.kelvin;
-    let shown_before = (nl.cfg.enabled, nl.paused_until.is_some());
+    let shown_before = (nl.cfg.enabled, nl.paused_until.is_some(), warming(nl));
     if cfg != nl.cfg {
         if cfg.enabled != nl.cfg.enabled || cfg.schedule != nl.cfg.schedule {
             nl.paused_until = None;
@@ -186,9 +186,11 @@ pub fn update(state: &mut State) {
         };
         let k = schedule::kelvin(level, nl.cfg.temperature);
         nl.kelvin = (k < NEUTRAL).then_some(k);
+        nl.warm_until = warming(nl).then(|| schedule::pause_until(now, &nights));
         nl.next_start = schedule::next_start(now, &nights);
     } else {
         nl.kelvin = None;
+        nl.warm_until = None;
         nl.next_start = None;
     }
     if nl.kelvin != before {
@@ -197,9 +199,10 @@ pub fn update(state: &mut State) {
             None => log::info!("night light: neutral"),
         }
     }
-    let shown = (nl.cfg.enabled, nl.paused_until.is_some());
+    let shown = (nl.cfg.enabled, nl.paused_until.is_some(), warming(nl));
     apply_all(state);
     if shown != shown_before {
+        crate::displaysview::refresh(state);
         state.redraw_taskbars();
     }
 }
@@ -288,7 +291,7 @@ pub fn outputs_changed(state: &mut State) {
 }
 
 /// Pause until the night now on (or the next one) is over, or resume:
-/// the tray cell's click and menu, and the keybind.
+/// the displays cell's menu and the keybind.
 pub fn toggle_pause(state: &mut State) {
     let now = now();
     let nl = &mut state.night;
@@ -310,25 +313,53 @@ pub fn toggle_pause(state: &mut State) {
     update(state);
 }
 
-pub fn shown(nl: &NightLight) -> bool {
+/// Pause (`paused` true) or resume; nothing while night light is off or already so.
+pub fn set_paused(state: &mut State, paused: bool) {
+    let nl = &state.night;
+    if nl.cfg.enabled && nl.paused_until.is_some() != paused {
+        toggle_pause(state);
+    }
+}
+
+pub fn enabled(nl: &NightLight) -> bool {
     nl.cfg.enabled
 }
 
-/// The tray cell, `px` square: the theme's night icon, its paused form or
-/// the same icon at half strength while paused, the placeholder when the
-/// theme has none.
-pub fn icon(state: &mut State, px: i32) -> Canvas {
-    let paused = state.night.paused_until.is_some();
-    let icons = &mut state.icons;
-    let mut find = |names: &[&str]| names.iter().find_map(|n| icons.get(n, px));
-    if paused && let Some(c) = find(&PAUSED_ICONS) {
-        return c;
+/// Enabled, not paused, and the screen warmer than neutral now.
+pub fn warming(nl: &NightLight) -> bool {
+    nl.cfg.enabled && nl.paused_until.is_none() && nl.kelvin.is_some()
+}
+
+pub fn panel_night(nl: &NightLight) -> reprisekit::controls::displaypanel::Night {
+    reprisekit::controls::displaypanel::Night {
+        enabled: nl.cfg.enabled,
+        on: nl.cfg.enabled && nl.paused_until.is_none(),
+        state: panel_text(
+            nl.cfg.enabled,
+            nl.paused_until,
+            nl.warm_until,
+            nl.next_start,
+        ),
     }
-    let mut c = find(&ICONS).unwrap_or_else(|| reprisekit::classic::widgets::placeholder(px, px));
-    if paused {
-        c.fade(1, 2);
+}
+
+/// The text beside the panel's check box: off, the pause's end, the warming's end, else the next start.
+fn panel_text(
+    enabled: bool,
+    paused_until: Option<i64>,
+    warm_until: Option<i64>,
+    next_start: Option<i64>,
+) -> String {
+    let time = crate::taskbar::time_text;
+    if !enabled {
+        return "Off".into();
     }
-    c
+    match (paused_until, warm_until, next_start) {
+        (Some(t), _, _) => format!("Paused until {}", time(t)),
+        (None, Some(t), _) => format!("until {}", time(t)),
+        (None, None, Some(t)) => format!("from {}", time(t)),
+        (None, None, None) => String::new(),
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -337,9 +368,9 @@ pub enum Row {
     Settings,
 }
 
-/// The tray cell's menu, opened from `cell` (layout coordinates) on
+/// The displays cell's menu, opened from `cell` (layout coordinates) on
 /// `output` on the screen side of the bar: Pause (or Resume), then
-/// Settings....
+/// Settings...; Settings... alone while night light is off.
 pub fn open_menu(state: &mut State, output: &Output, cell: Rect) {
     if state.layout_box(Some(output)).width <= 0 {
         return;
@@ -349,12 +380,21 @@ pub fn open_menu(state: &mut State, output: &Output, cell: Rect) {
     } else {
         "&Pause"
     };
-    let items = vec![
-        MenuItem::item(pause).bold(true),
-        MenuItem::Separator,
-        MenuItem::item("&Settings..."),
-    ];
-    let rows = vec![Some(Row::Pause), None, Some(Row::Settings)];
+    let (items, rows) = if state.night.cfg.enabled {
+        (
+            vec![
+                MenuItem::item(pause).bold(true),
+                MenuItem::Separator,
+                MenuItem::item("&Settings..."),
+            ],
+            vec![Some(Row::Pause), None, Some(Row::Settings)],
+        )
+    } else {
+        (
+            vec![MenuItem::item("&Settings...").bold(true)],
+            vec![Some(Row::Settings)],
+        )
+    };
     let usable = state.usable_area(Some(output));
     let m = &state.config.theme.metrics;
     let style = MenuStyle::context_for(&state.config.theme, &items).fit(
@@ -385,8 +425,12 @@ pub fn open_menu(state: &mut State, output: &Output, cell: Rect) {
 pub fn pick(state: &mut State, row: Row) {
     match row {
         Row::Pause => toggle_pause(state),
-        Row::Settings => state.spawn_argv_activated(&SETTINGS),
+        Row::Settings => open_settings(state),
     }
+}
+
+pub fn open_settings(state: &mut State) {
+    state.spawn_argv_activated(&SETTINGS);
 }
 
 pub fn tip(nl: &NightLight) -> String {
@@ -446,6 +490,15 @@ impl GammaControlHandler for State {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_panel_says_until_when_warming_paused_or_off() {
+        assert_eq!(panel_text(false, None, None, None), "Off");
+        assert!(panel_text(true, Some(0), None, None).starts_with("Paused until "));
+        assert!(panel_text(true, None, Some(0), Some(0)).starts_with("until "));
+        assert!(panel_text(true, None, None, Some(0)).starts_with("from "));
+        assert_eq!(panel_text(true, None, None, None), "");
+    }
 
     #[test]
     fn the_tip_says_pause_then_temperature_then_start() {

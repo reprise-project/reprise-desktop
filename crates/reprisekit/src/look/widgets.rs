@@ -4,6 +4,7 @@
 
 use crate::classic;
 use crate::classic::widgets::{Arrow, CheckState, ScrollHit};
+pub use crate::flyout::draw_link;
 use crate::look::Paint;
 use crate::look::styled;
 use crate::raster::{Canvas, EdgeStyle, Rect};

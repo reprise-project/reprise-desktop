@@ -290,6 +290,7 @@ impl State {
                     | KeyRoute::StartPanel
                     | KeyRoute::ClipView
                     | KeyRoute::EmojiView
+                    | KeyRoute::Displays
                     | KeyRoute::NotifyReply => {
                         field_key = Some(crate::dialogview::DialogKey::of(mods, &h));
                         false
@@ -406,6 +407,11 @@ impl State {
             }
             KeyRoute::Region(sym) => self.region_key(sym),
             KeyRoute::CalendarClose => crate::calendarview::close(self),
+            KeyRoute::Displays => {
+                if let Some(k) = field_key {
+                    crate::displaysview::key(self, &k);
+                }
+            }
             KeyRoute::Rename => self.rename_key(code, &k.syms),
             KeyRoute::IconMove(dir) => self.navigate(dir),
             KeyRoute::IconOpen(i) => self.open_selection(i),
@@ -484,6 +490,7 @@ impl State {
             emojiview_open: self.panels.emojiview.is_some(),
             region_open: self.panels.region.is_some(),
             calendar_open: crate::calendarview::is_open(self),
+            displays_open: crate::displaysview::is_open(self),
             dragging: self.drag_running(),
             tray_flyout_open: crate::trayflyout::open_on(self).is_some(),
             taskbar_keys: self.bar_shared.keys.is_some(),

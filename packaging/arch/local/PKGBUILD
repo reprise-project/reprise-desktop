@@ -45,7 +45,7 @@ optdepends=('ttf-tahoma: Wine'\''s Tahoma, the UI font the layouts are tuned for
             'polkit: the password prompt behind pkexec, udisks and NetworkManager system actions (reprise-polkit)'
             'gnome-keyring: saved passwords for browsers and other programs, unlocked through PAM (pam_gnome_keyring) at login and by the lock screen password, and the Secret portal for sandboxed programs'
             'fprintd: fingerprint unlock on the lock screen, and in the admin password prompt when the polkit-1 PAM stack has pam_fprintd'
-            'ddcutil: the brightness keys on an external monitor, over DDC/CI'
+            'ddcutil: external monitors'\'' brightness over DDC/CI'
             'at-spi2-core: screen readers (Orca) in Reprise and its programs'
             'libx11: the Compose files behind dead keys and the Compose key in the lock screen password'
             'hwdata: graphics card names in About Reprise (pci.ids)'
