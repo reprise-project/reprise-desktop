@@ -90,7 +90,7 @@ pub struct DesktopView {
     scanning: bool,
     rescan_again: bool,
     /// The icon size the last read decoded the icon files at, and the icon cache's
-    /// `hit_drops` after it put them in: a change in either means a read again.
+    /// `file_drops` after it put them in: a change in either means a read again.
     icons_read: (i32, u64),
     pub(crate) send_to: Vec<reprisefs::sendto::SendToRow>,
     pub(crate) drives: places::MountedDrives,
@@ -980,10 +980,8 @@ impl State {
             return;
         };
         view.scanning = false;
-        for (file, canvas) in art {
-            icons.put_file(&file, px, canvas);
-        }
-        view.icons_read = (px, icons.hit_drops());
+        icons.put_files(art.into_iter().map(|(f, c)| (f, px, c)).collect());
+        view.icons_read = (px, icons.file_drops());
         desktop::wear_file_icons(&mut entries, &view.mime, &|n| icons.has(n));
         let old = std::mem::replace(&mut view.entries, entries);
         let moved = remap(&old, &view.entries);
@@ -1171,7 +1169,7 @@ impl State {
             }
         }
         changed |= !redraw.is_empty();
-        let reread = undecoded && view.icons_read != (px, self.icons.hit_drops());
+        let reread = undecoded && view.icons_read != (px, self.icons.file_drops());
         self.desktop = Some(view);
         if reread {
             self.rescan_desktop();

@@ -909,18 +909,37 @@ pub struct IconCache {
     scale: i32,
     /// `has` answers by name: folder scans ask per candidate name per file.
     known: RefCell<HashMap<String, bool>>,
-    /// Entries of `cache` that are hits and misses, kept for the caps.
-    hits: usize,
-    misses: usize,
-    hit_cap: usize,
-    /// Times the hits were dropped at the cap; see [`IconCache::hit_drops`].
-    hit_drops: u64,
+    /// Entries of `cache` by [`Kind`], kept for the caps.
+    counts: [usize; 3],
+    file_cap: usize,
+    /// Times the icon files were dropped at their cap; see [`IconCache::file_drops`].
+    file_drops: u64,
 }
 
-/// Names come from peers, so both sets are bounded: past the cap the set is dropped and
-/// rebuilt. Misses are counted apart so made-up names never evict the icons on screen.
+/// Names come from peers, so every set is bounded: past its cap a set is dropped whole and
+/// rebuilt. Each kind is counted apart, so made-up names never evict the icons on screen and
+/// theme lookups never evict the icon files a host decoded off its loop.
 const HIT_CAP: usize = 2048;
 const MISS_CAP: usize = 512;
+const FILE_CAP: usize = 2048;
+
+/// What a `cache` entry counts against: a theme icon, a miss, or an icon file decoded.
+#[derive(Clone, Copy, PartialEq)]
+enum Kind {
+    Hit = 0,
+    Miss = 1,
+    File = 2,
+}
+
+impl Kind {
+    fn of(key: &str, canvas: &Option<Arc<Canvas>>) -> Kind {
+        match canvas {
+            None => Kind::Miss,
+            Some(_) if key.starts_with('/') => Kind::File,
+            Some(_) => Kind::Hit,
+        }
+    }
+}
 
 impl IconCache {
     pub fn new(theme: IconTheme) -> IconCache {
@@ -929,10 +948,9 @@ impl IconCache {
             cache: HashMap::new(),
             scale: 1,
             known: RefCell::new(HashMap::new()),
-            hits: 0,
-            misses: 0,
-            hit_cap: HIT_CAP,
-            hit_drops: 0,
+            counts: [0; 3],
+            file_cap: FILE_CAP,
+            file_drops: 0,
         }
     }
 
@@ -956,24 +974,31 @@ impl IconCache {
     }
 
     fn insert(&mut self, key: (String, i32, i32), canvas: Option<Arc<Canvas>>) {
-        let miss = canvas.is_none();
-        let (count, cap) = if miss {
-            (&mut self.misses, MISS_CAP)
-        } else {
-            (&mut self.hits, self.hit_cap)
+        self.make_room(Kind::of(&key.0, &canvas), 1);
+        self.insert_unchecked(key, canvas);
+    }
+
+    /// Drops every entry of `kind` unless `n` more fit under its cap.
+    fn make_room(&mut self, kind: Kind, n: usize) {
+        let cap = match kind {
+            Kind::Hit => HIT_CAP,
+            Kind::Miss => MISS_CAP,
+            Kind::File => self.file_cap,
         };
-        if *count >= cap {
-            self.cache.retain(|_, v| v.is_none() != miss);
-            *count = 0;
-            if !miss {
-                self.hit_drops += 1;
+        if self.counts[kind as usize] + n > cap {
+            self.cache.retain(|k, v| Kind::of(&k.0, v) != kind);
+            self.counts[kind as usize] = 0;
+            if kind == Kind::File {
+                self.file_drops += 1;
             }
         }
-        *count += 1;
-        match self.cache.insert(key, canvas) {
-            Some(None) => self.misses -= 1,
-            Some(Some(_)) => self.hits -= 1,
-            None => {}
+    }
+
+    fn insert_unchecked(&mut self, key: (String, i32, i32), canvas: Option<Arc<Canvas>>) {
+        let kind = Kind::of(&key.0, &canvas);
+        self.counts[kind as usize] += 1;
+        if let Some(old) = self.cache.insert(key.clone(), canvas) {
+            self.counts[Kind::of(&key.0, &old) as usize] -= 1;
         }
     }
 
@@ -989,15 +1014,29 @@ impl IconCache {
     /// Takes icon file `path`'s image at `px`, made by [`decode_file`] at this cache's scale, so
     /// `get(path, px)` answers without reading the file.
     pub fn put_file(&mut self, path: &str, px: i32, canvas: Option<Canvas>) {
-        if path.starts_with('/') && px > 0 {
-            self.insert((cache_key(path, &[]), px, self.scale), canvas.map(Arc::new));
+        self.put_files(vec![(path.to_string(), px, canvas)]);
+    }
+
+    /// [`IconCache::put_file`] for one read's files at once: they all land, the cap dropping
+    /// the files put in before them at most once, never one of these.
+    pub fn put_files(&mut self, files: Vec<(String, i32, Option<Canvas>)>) {
+        let files: Vec<_> = files
+            .into_iter()
+            .filter(|(path, px, _)| path.starts_with('/') && *px > 0)
+            .map(|(path, px, canvas)| ((cache_key(&path, &[]), px, self.scale), canvas))
+            .collect();
+        let decoded = files.iter().filter(|(_, c)| c.is_some()).count();
+        self.make_room(Kind::File, decoded);
+        self.make_room(Kind::Miss, files.len() - decoded);
+        for (key, canvas) in files {
+            self.insert_unchecked(key, canvas.map(Arc::new));
         }
     }
 
-    /// Bumped each time the cap drops every hit, files put in included: a host that saw it
-    /// change since its puts reads again what [`IconCache::file_put`] no longer has.
-    pub fn hit_drops(&self) -> u64 {
-        self.hit_drops
+    /// Bumped each time the cap drops every icon file put in: a host that saw it change since
+    /// its puts reads again what [`IconCache::file_put`] no longer has.
+    pub fn file_drops(&self) -> u64 {
+        self.file_drops
     }
 
     /// Icon file `path` at `px` as [`IconCache::put_file`] left it, without reading the file:
@@ -1736,28 +1775,56 @@ mod tests {
         fs::remove_dir_all(&root).unwrap();
     }
 
-    /// A file put in and then dropped at the hit cap is gone from `file_put`, and `hit_drops`
+    /// A file put in and then dropped at the file cap is gone from `file_put`, and `file_drops`
     /// says so; a failed decode put in is a miss and stays.
     #[test]
-    fn a_file_dropped_at_the_hit_cap_shows_in_hit_drops() {
+    fn a_file_dropped_at_the_file_cap_shows_in_file_drops() {
         let root = fixture("file-drop", "test", INDEX, &[]);
         let pic = root.join("cover.png");
         write_png(&pic, 1, 1, &[255, 0, 0, 255]);
         let mut cache = IconCache::new(IconTheme::load("test", std::slice::from_ref(&root)));
-        cache.hit_cap = 4;
+        cache.file_cap = 4;
         let name = pic.to_str().unwrap();
         cache.put_file(name, 16, decode_file(&pic, 16, cache.scale()));
         cache.put_file("/nowhere/broken.png", 16, None);
-        let drops = cache.hit_drops();
+        let drops = cache.file_drops();
         for px in 17..20 {
             cache.put_file(name, px, decode_file(&pic, px, cache.scale()));
         }
         assert!(cache.file_put(name, 16).flatten().is_some());
-        assert_eq!(cache.hit_drops(), drops, "under the cap");
+        assert_eq!(cache.file_drops(), drops, "under the cap");
         cache.put_file(name, 20, decode_file(&pic, 20, cache.scale()));
         assert_eq!(cache.file_put(name, 16), None);
-        assert_eq!(cache.hit_drops(), drops + 1);
+        assert_eq!(cache.file_drops(), drops + 1);
         assert_eq!(cache.file_put("/nowhere/broken.png", 16), Some(None));
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// One read's files past the file cap all land, and theme lookups past the hit cap leave
+    /// them in place.
+    #[test]
+    fn a_read_past_the_file_cap_keeps_every_file() {
+        let root = fixture("file-batch", "test", INDEX, &[]);
+        let pic = root.join("cover.png");
+        write_png(&pic, 1, 1, &[255, 0, 0, 255]);
+        let mut cache = IconCache::new(IconTheme::load("test", std::slice::from_ref(&root)));
+        cache.file_cap = 4;
+        let name = pic.to_str().unwrap();
+        let read: Vec<_> = (16..22)
+            .map(|px| (name.to_string(), px, decode_file(&pic, px, cache.scale())))
+            .collect();
+        cache.put_files(read);
+        assert!(
+            (16..22).all(|px| cache.file_put(name, px).flatten().is_some()),
+            "every file of the read is in"
+        );
+        let drops = cache.file_drops();
+        let icon = Arc::new(decode_file(&pic, 16, 1).unwrap());
+        for i in 0..=HIT_CAP {
+            cache.insert((format!("app{i}"), 16, 1), Some(icon.clone()));
+        }
+        assert!((16..22).all(|px| cache.file_put(name, px).flatten().is_some()));
+        assert_eq!(cache.file_drops(), drops);
         fs::remove_dir_all(&root).unwrap();
     }
 
@@ -2030,7 +2097,7 @@ mod tests {
             assert!(cache.get(&format!("nope-{i}"), 32).is_none());
         }
         assert!(cache.len() <= MISS_CAP + 1, "{} entries", cache.len());
-        assert_eq!(cache.hits + cache.misses, cache.len());
+        assert_eq!(cache.counts.iter().sum::<usize>(), cache.len());
         assert!(cache.get("app", 32).is_some());
         fs::remove_dir_all(&root).unwrap();
     }
