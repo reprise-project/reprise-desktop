@@ -380,6 +380,7 @@ fn build_at(s: &Settings, scale: i32) -> Style {
     .with_painted(Part::FrameRight, lazy(frame::frame_right))
     .with_painted(Part::FrameBottom, lazy(frame::frame_bottom))
     .with_painted(Part::WindowSheet, lazy(frame::sheet))
+    .with_painted(Part::ClientGlass, lazy(frame::client_glass))
     .with_painted(Part::CaptionGroup, lazy(buttons::caption_group))
     .with_painted(Part::MaxCaptionGroup, lazy(buttons::max_caption_group))
     .with_painted(Part::CloseButton, lazy(buttons::dialog_close))
@@ -1405,6 +1406,7 @@ mod tests {
             Part::FrameRight,
             Part::FrameBottom,
             Part::WindowSheet,
+            Part::ClientGlass,
             Part::CaptionGroup,
             Part::MaxCaptionGroup,
             Part::CloseButton,

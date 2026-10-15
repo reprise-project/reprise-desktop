@@ -484,6 +484,21 @@ pub fn sheet(s: &Settings, d: i32) -> PartImage {
 
 pub const SHEET: i32 = 2 * SIDE + 1;
 
+/// The client's light and dark edges inside the frame, in design px.
+const CLIENT_EDGES: i32 = 2;
+
+/// The frame's plain glass under the client's top, Normal then Inactive, painted at `d`: one
+/// design pixel stretched, laid [`CLIENT_EDGES`] past the left, top and right over the client's
+/// edges, which give way to glass there.
+pub fn client_glass(s: &Settings, d: i32) -> PartImage {
+    frames(s, (1, 1), d, |p, _, _| p.px(Ring::Glass, 0.0)).outset(Insets::new(
+        CLIENT_EDGES,
+        CLIENT_EDGES,
+        CLIENT_EDGES,
+        0,
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -733,6 +748,51 @@ mod tests {
             let got = [1, 2].map(|d| fnv(&sheet(&s, d)));
             assert_eq!(got, want, "{material:?} {frame:?}: {got:X?}");
         }
+    }
+
+    #[test]
+    fn client_glass_is_the_frames_plain_glass_laid_over_the_client_edges() {
+        for (k, (_, state)) in SURFACES.into_iter().enumerate() {
+            for d in [1, 2] {
+                let img = client_glass(&Settings::default(), d);
+                assert!(
+                    (0..d).all(|x| (0..d).all(|y| at(&img, state, x, y) == art::PLAIN[k])),
+                    "{state:?} at scale {d}: plain glass"
+                );
+            }
+        }
+        let img = client_glass(&Settings::default(), 1);
+        assert_eq!(
+            img.outset,
+            Insets::new(CLIENT_EDGES, CLIENT_EDGES, CLIENT_EDGES, 0),
+            "over the client's edges beside and above, none below"
+        );
+        let opaque = Settings {
+            transparency: false,
+            ..Settings::default()
+        };
+        assert_eq!(
+            at(&client_glass(&opaque, 1), State::Normal, 0, 0),
+            0xFFB0_C9E6,
+            "opaque as the frame's plain glass is"
+        );
+    }
+
+    #[test]
+    fn client_glass_keeps_its_pixels_in_each_material() {
+        let got = [Material::Frosted, Material::Smoked, Material::Molten].map(|material| {
+            let s = Settings {
+                material,
+                ..Settings::default()
+            };
+            [1, 2].map(|d| fnv(&client_glass(&s, d)))
+        });
+        let want = [
+            [0xD6C9_6FCC_DFB0_0A84, 0x3CD3_AEE4_9B07_8B15],
+            [0x7542_D690_08B5_0B29, 0x0C48_F624_358D_9065],
+            [0xF755_0E91_5CDB_520B, 0x7ECF_8D47_39DC_8475],
+        ];
+        assert_eq!(got, want, "Frosted, Smoked, Molten: {got:X?}");
     }
 
     #[test]

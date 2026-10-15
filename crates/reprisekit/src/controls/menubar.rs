@@ -898,6 +898,18 @@ impl Bar {
         theme: &crate::theme::Theme,
         lay: &Layout,
     ) {
+        self.draw_titles(c, text, theme, lay);
+        self.draw_popup(c, text, theme);
+    }
+
+    /// The bar's titles alone, without the open menu ([`Bar::draw_popup`]).
+    pub fn draw_titles(
+        &self,
+        c: &mut Canvas,
+        text: &TextRenderer,
+        theme: &crate::theme::Theme,
+        lay: &Layout,
+    ) {
         let px = theme.fonts.size_px;
         let p = &theme.paint();
         let shown = self.open.or(self.active);
@@ -913,6 +925,10 @@ impl Bar {
             self.banded,
             px,
         );
+    }
+
+    /// The open menu, if any.
+    pub fn draw_popup(&self, c: &mut Canvas, text: &TextRenderer, theme: &crate::theme::Theme) {
         if let Some(popup) = &self.popup {
             popup.draw(c, theme, text, true);
         }

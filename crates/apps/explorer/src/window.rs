@@ -17,8 +17,8 @@
 //! toolbar band y 24..61 (38 px), address band y 64..85, no closing line;
 //! the bars and the view start at y 86.
 //!
-//! Glass's starts at y 0 too, on one flat colour: menu y 0..21, toolbar
-//! y 24..53, address y 56..77, closing line y 78. The view's Details
+//! Glass's starts at y 0 too, clear over the frame's glass: menu y 0..21,
+//! toolbar y 24..53, address y 56..77, closing line y 78. The view's Details
 //! header starts at y 79, the bars and the view's body at y 80.
 //!
 //! [`RebarMetrics`]: reprisekit::metrics::RebarMetrics
@@ -268,6 +268,10 @@ pub fn draw(ex: &Explorer, c: &mut Canvas, ctx: &Ctx) {
         &rb,
         lay.rebar,
     );
+    let glass = ex.glass_top(ctx) > 0;
+    if glass {
+        c.clear_rect(lay.rebar);
+    }
     if let Some(r) = lay.toolbar {
         let rects = toolbar::layout(&ex.toolbar, &ctx.text, px, r, &ctx.theme.controls());
         toolbar::draw(
@@ -300,6 +304,11 @@ pub fn draw(ex: &Explorer, c: &mut Canvas, ctx: &Ctx) {
             px,
         );
     }
+    let ml = ex.bar_layout(ctx);
+    if glass {
+        ex.bar.draw_titles(c, &ctx.text, &ctx.theme, &ml);
+        reprisekit::look::glow_on_glass(c, &ctx.theme, lay.rebar);
+    }
     rebar::draw_closing_line(
         c,
         &Paint {
@@ -325,8 +334,11 @@ pub fn draw(ex: &Explorer, c: &mut Canvas, ctx: &Ctx) {
         );
     }
 
-    let ml = ex.bar_layout(ctx);
-    ex.bar.draw(c, &ctx.text, &ctx.theme, &ml);
+    if glass {
+        ex.bar.draw_popup(c, &ctx.text, &ctx.theme);
+    } else {
+        ex.bar.draw(c, &ctx.text, &ctx.theme, &ml);
+    }
     if let Some(r) = lay.address {
         let al = addressbar::layout(&ex.address, &ctx.text, px, r, &ctx.theme.controls());
         addressbar::draw_list(
