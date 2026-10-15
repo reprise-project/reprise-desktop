@@ -137,7 +137,10 @@ pub fn parse(text: &str, id: &str, terminal: &str) -> Option<QuickLaunchEntry> {
     let is_action = |a: &str| Action::from_parts(a, None).is_ok();
     Some(match reprisefs::quicklaunch::button(text, id, is_action)? {
         Button::App(app) => QuickLaunchEntry {
-            action: Action::Exec(apps::launch_argv(&app, terminal)),
+            action: Action::Exec {
+                argv: apps::launch_argv(&app, terminal),
+                app: app.id.clone(),
+            },
             label: app.name,
             icon: app.icon,
         },
@@ -169,8 +172,11 @@ mod tests {
         }
     }
 
-    fn exec(argv: &[&str]) -> Action {
-        Action::Exec(argv.iter().map(Into::into).collect())
+    fn exec(argv: &[&str], app: &str) -> Action {
+        Action::Exec {
+            argv: argv.iter().map(Into::into).collect(),
+            app: app.into(),
+        }
     }
 
     fn entry(label: &str, action: Action) -> QuickLaunchEntry {
@@ -227,11 +233,11 @@ mod tests {
         );
         let t = apps::launcher_text("Files", None, apps::Launch::Exec("nautilus 100%")).unwrap();
         let p = parse(&t, "b.desktop", "foot").unwrap();
-        assert_eq!(p.action, exec(&["nautilus", "100%"]));
+        assert_eq!(p.action, exec(&["nautilus", "100%"], "b.desktop"));
         assert_eq!(p.icon, None);
         let text = "[Desktop Entry]\nType=Application\nName=Top\nExec=htop\nTerminal=true\n";
         let p = parse(text, "htop.desktop", "foot").unwrap();
-        assert_eq!(p.action, exec(&["foot", "-e", "htop"]));
+        assert_eq!(p.action, exec(&["foot", "-e", "htop"], "htop.desktop"));
         assert!(parse("[Desktop Entry]\nName=Nothing\n", "n.desktop", "foot").is_none());
     }
 
@@ -269,7 +275,7 @@ mod tests {
         assert_eq!(notes.entry.icon.as_deref(), Some("text-x-generic"));
         assert_eq!(
             notes.entry.action,
-            exec(&["xdg-open", &doc.to_string_lossy()])
+            exec(&["xdg-open", &doc.to_string_lossy()], &added)
         );
         let sub = dir.join("Reports");
         std::fs::create_dir(&sub).unwrap();
@@ -280,7 +286,7 @@ mod tests {
         assert_eq!(reports.entry.icon.as_deref(), Some("folder"));
         assert_eq!(
             reports.entry.action,
-            exec(&["reprise-explorer", &sub.to_string_lossy()])
+            exec(&["reprise-explorer", &sub.to_string_lossy()], &added_dir)
         );
         remove(&dir, &added_dir);
         std::fs::remove_dir(&sub).unwrap();

@@ -13,8 +13,12 @@ use std::str::FromStr;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Action {
     Spawn(String),
-    /// An argument vector run with no shell (a Quick Launch application entry, `reprisefs::apps::launch_argv`).
-    Exec(Vec<std::ffi::OsString>),
+    /// An argument vector run with no shell (a Quick Launch application entry, `reprisefs::apps::launch_argv`),
+    /// and the desktop entry id it came from.
+    Exec {
+        argv: Vec<std::ffi::OsString>,
+        app: String,
+    },
     Terminal,
     Close,
     Cycle,
@@ -74,7 +78,7 @@ impl Action {
     /// None for `Spawn` and `Exec`, which are commands, not names.
     pub fn name(&self) -> Option<&'static str> {
         Some(match self {
-            Action::Spawn(_) | Action::Exec(_) => return None,
+            Action::Spawn(_) | Action::Exec { .. } => return None,
             Action::Terminal => "terminal",
             Action::Close => "close",
             Action::Cycle => "cycle",
@@ -143,7 +147,7 @@ impl Action {
     pub fn launch(&self) -> Option<reprisefs::apps::Launch<'_>> {
         Some(match self {
             Action::Spawn(cmd) => reprisefs::apps::Launch::Exec(cmd),
-            Action::Exec(_) => return None,
+            Action::Exec { .. } => return None,
             a => reprisefs::apps::Launch::Action(a.name().unwrap_or_default()),
         })
     }

@@ -219,7 +219,7 @@ impl State {
         self.launches.record(&entry.id);
         crate::state::save_start(&self.launches);
         let argv = reprisefs::apps::launch_argv(entry, &self.config.terminal);
-        self.spawn_argv_activated(&argv);
+        self.spawn_app_activated(&argv, &entry.id);
     }
 }
 

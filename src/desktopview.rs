@@ -1567,6 +1567,12 @@ impl State {
             return;
         };
         let argv: Vec<std::ffi::OsString> = match &entry.target {
+            Target::Launch(app) => {
+                let argv = apps::launch_argv(app, &self.config.terminal);
+                let app = app.id.clone();
+                self.spawn_app_activated(&argv, &app);
+                return;
+            }
             Target::Uri(_) => match desktop::place_argv(entry) {
                 Some(argv) => argv.into_iter().map(Into::into).collect(),
                 None => return,
@@ -1584,9 +1590,6 @@ impl State {
                     .and_then(|m| reprisefs::props::default_app_entry(m, &self.app_index));
                 reprisefs::props::open_file_argv(file, default, &self.config.terminal)
             }
-            target => {
-                desktop::open_argv(target, &view.mime, &self.app_index, &self.config.terminal)
-            }
         };
         self.spawn_argv_activated(&argv);
     }
@@ -1600,7 +1603,7 @@ impl State {
         let (terminal, end) = (self.config.terminal.clone(), self.config.script_terminal);
         self.spawn_fs_job(move || {
             let started = reprisefs::program::run_argv(&path, &terminal, end).and_then(|argv| {
-                crate::spawn::try_spawn_argv_in(&argv, path.parent(), &env, Some(&token))
+                crate::spawn::try_spawn_argv_in(&argv, None, path.parent(), &env, Some(&token))
             });
             Box::new(move |state: &mut State| {
                 // A child that exited before its pid was recorded left a SIGCHLD that found nothing.
@@ -1802,7 +1805,7 @@ impl State {
         };
         for path in paths {
             let argv = apps::open_argv(&app, &self.config.terminal, &path);
-            self.spawn_argv_activated(&argv);
+            self.spawn_app_activated(&argv, &app.id);
         }
     }
 
