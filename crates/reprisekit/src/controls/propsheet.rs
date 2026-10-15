@@ -374,7 +374,8 @@ impl PropSheet {
     }
 
     /// How far right and down the open page's controls reach unscrolled, at 100%, up to where
-    /// the inside of the page as built ends: a rect built past that edge is not scrolled to.
+    /// the inside of the page as built ends, lower by what rewrapped notes pushed down
+    /// ([`Form::flowed`]): a rect built past that edge is not scrolled to.
     fn reach(&self) -> (i32, i32) {
         let Some(page) = self.pages.get(self.tabs.open) else {
             return (0, 0);
@@ -393,7 +394,7 @@ impl PropSheet {
         let (w, h) = self.size;
         (
             right.min(w - MARGIN - PAGE_EDGE),
-            bottom.min(h - PAGE_BOTTOM - PAGE_EDGE),
+            bottom.min(h - PAGE_BOTTOM - PAGE_EDGE + self.flowed_down()),
         )
     }
 
@@ -404,7 +405,7 @@ impl PropSheet {
         let (right, bottom) = self.inside_end();
         let (reach, low) = self.reach();
         let bar = self.bar_len();
-        let v = self.built_range() > 0;
+        let v = low > bottom;
         let h = reach > right - if v { bar } else { 0 };
         (v || (h && low > bottom - bar), h)
     }
@@ -428,20 +429,14 @@ impl PropSheet {
         (visible, visible + self.hrange())
     }
 
-    /// How far the page scrolls down at 100%: what the client cut off the sheet, how much
-    /// further down the open page's controls reach than they were built to
-    /// ([`Form::flowed`]), and the sideways bar's width when that bar shows. A page whose
-    /// controls only reach under that bar scrolls just far enough to show them.
+    /// How far the page scrolls down at 100%: as far as its controls reach past its bottom
+    /// ([`PropSheet::reach`]), less the sideways bar's width while that shows.
     fn range(&self) -> i32 {
-        let (v, h) = self.bars();
-        if !v {
+        if !self.bars().0 {
             return 0;
         }
-        let bar = if h { self.bar_len() } else { 0 };
-        match self.built_range() {
-            0 => (self.reach().1 - (self.inside_end().1 - bar)).max(0),
-            built => built + bar,
-        }
+        let bar = if self.bars().1 { self.bar_len() } else { 0 };
+        (self.reach().1 - (self.inside_end().1 - bar)).max(0)
     }
 
     /// How far the page scrolls sideways at 100%: as far as its controls reach past its right
@@ -451,11 +446,11 @@ impl PropSheet {
         (self.reach().0 - (self.inside_end().0 - v)).max(0)
     }
 
-    /// How far down the page scrolls as it was built: what the client cut off the sheet, and
-    /// how much further down the controls reach than they were built to ([`Form::flowed`]).
-    fn built_range(&self) -> i32 {
+    /// How much further down the open page's controls reach than they were built to
+    /// ([`Form::flowed`]), at 100%.
+    fn flowed_down(&self) -> i32 {
         let Some(page) = self.pages.get(self.tabs.open) else {
-            return self.scroll.short;
+            return 0;
         };
         let bottom = |r: fn(&Form, &Item) -> Rect| {
             page.items
@@ -465,7 +460,7 @@ impl PropSheet {
                 .max()
                 .unwrap_or(0)
         };
-        self.scroll.short + (bottom(Form::flowed) - bottom(|_, it| it.rect)).max(0)
+        (bottom(Form::flowed) - bottom(|_, it| it.rect)).max(0)
     }
 
     /// Scroll the page's controls so `top` 100% px of the page are above it, held to
@@ -543,14 +538,14 @@ impl PropSheet {
         }
     }
 
-    /// How many rows the tabs take at `px` across the page.
+    /// How many rows the tabs take at `px` across the page as it shows.
     fn tab_rows(&self, text: &TextRenderer, px: u32) -> i32 {
         if self.is_list() {
             return 1;
         }
         let text = text.dialog(self.font);
         let u = self.units();
-        let width = u.len(self.size.0 - MARGIN) - u.len(MARGIN);
+        let width = u.len(self.shown().0 - MARGIN) - u.len(MARGIN);
         tabstrip::row_count(text, px, &self.tabs, width) as i32
     }
 
@@ -559,19 +554,26 @@ impl PropSheet {
         tabstrip::ROW_H * (self.tab_rows(text, px) - 1)
     }
 
-    /// Make room for tabs that wrap onto more rows: the sheet grows by the extra
-    /// rows' height and every control, buttons included, moves down. Call with the
-    /// renderer the sheet is drawn with, before sizing the window from
-    /// [`PropSheet::size`]. Idempotent. Returns how far the controls moved.
+    /// Make room for tabs that wrap onto more rows across the page as it shows: the sheet
+    /// grows by the extra rows' height and every control, buttons included, moves down. A
+    /// sheet [`PropSheet::fit`] cut keeps its client and scrolls through the rows' height.
+    /// Call with the renderer the sheet is drawn with, before sizing the window from
+    /// [`PropSheet::size`], and again after each [`PropSheet::fit`]. Idempotent. Returns how
+    /// far the controls moved.
     pub fn fit_tabs(&mut self, text: &TextRenderer, px: u32) -> i32 {
         let dy = self.rows_below(text, px) - self.page_dy;
         if dy != 0 {
+            let cut = (self.hscroll.short, self.scroll.short) != (0, 0);
+            let client = self.shown();
             self.size.1 += dy;
             self.page_dy += dy;
             for page in &mut self.pages {
                 shift(page, 0, dy);
             }
             self.sync_view();
+            if cut {
+                self.fit(client);
+            }
         }
         dy
     }
@@ -1409,6 +1411,15 @@ mod tests {
     use crate::text::Align;
     use crate::theme::{FontConfig, Theme};
 
+    /// A 398x424 sheet whose page's controls reach its bottom.
+    fn tall_sheet() -> PropSheet {
+        let page = Form::new(vec![
+            Item::check("top", 20, 50, "Top"),
+            Item::check("low", 20, 424 - PAGE_BOTTOM - PAGE_EDGE - 13, "Low"),
+        ]);
+        PropSheet::new(&["General"], vec![page], (398, 424))
+    }
+
     fn sheet(labels: &[&str], size: (i32, i32)) -> PropSheet {
         let pages = labels
             .iter()
@@ -1896,6 +1907,62 @@ mod tests {
         let mut one = sheet(&["Themes", "Desktop"], (398, 424));
         assert_eq!(one.fit_tabs(&text, px), 0);
         assert_eq!(one.size, (398, 424));
+    }
+
+    /// Tabs on one row across the sheet as built wrap onto two in a client cut narrower: the
+    /// page starts a row lower, the buttons keep to the client's bottom, and a client as wide
+    /// as the sheet takes the row back.
+    #[test]
+    fn a_narrow_client_wraps_the_tabs_to_its_width() {
+        let text = TextRenderer::load(&FontConfig::default());
+        let theme = Theme::default();
+        let px = theme.fonts.size_px;
+        let labels = [
+            "General",
+            "Sharing",
+            "Customize",
+            "Security",
+            "Previous Versions",
+            "Summary",
+            "Compatibility",
+        ];
+        let mut s = sheet(&labels, (700, 424));
+        s.drawn_with(&theme.paint());
+        assert_eq!(s.fit_tabs(&text, px), 0);
+        s.fit((361, 424));
+        assert_eq!(s.fit_tabs(&text, px), 18);
+        assert_eq!(s.fit_tabs(&text, px), 0, "idempotent");
+        assert_eq!(s.client(), (361, 424), "the client keeps its size");
+        let l = s.layout(&text, px);
+        assert!(
+            l.tabs.iter().all(|t| t.right() <= 361 - MARGIN),
+            "every tab shows: {:?}",
+            l.tabs
+        );
+        assert_eq!(l.page.y, 46, "the page starts under the second row");
+        assert_eq!(l.ok.bottom(), 424 - BUTTON_BOTTOM);
+        assert_eq!(s.open().rect("check").unwrap().y, 68);
+
+        s.fit((700, 424));
+        assert_eq!(s.fit_tabs(&text, px), -18);
+        assert_eq!(s.size, (700, 424));
+        assert_eq!(s.page_offset(), (0, 0));
+        assert_eq!(s.layout(&text, px).ok.bottom(), 424 - BUTTON_BOTTOM);
+    }
+
+    /// A page cut short above where its last control ends shows whole: no scrollbar, and
+    /// the wheel moves nothing.
+    #[test]
+    fn a_page_cut_short_scrolls_no_further_than_its_last_control() {
+        let text = TextRenderer::load(&FontConfig::default());
+        let theme = Theme::default();
+        let px = theme.fonts.size_px;
+        let mut s = sheet(&["General"], (398, 424));
+        s.drawn_with(&theme.paint());
+        assert!(s.fit((398, 200)));
+        assert_eq!(s.layout(&text, px).bar, None, "Check shows whole");
+        assert_eq!(s.wheel(None, 3), Event::None);
+        assert_eq!(s.page_offset(), (0, 0));
     }
 
     /// A sheet is set in its first page's font, every page and the tabs
@@ -2732,7 +2799,7 @@ mod tests {
 
     /// A 398x424 sheet shown 300 tall at 200%: the buttons keep to the client's bottom, the page
     /// ends above them with a scrollbar, a control below the page's end neither draws nor takes
-    /// the pointer there, and the wheel or Tab onto it scrolls it into view.
+    /// the pointer there, and the wheel or Tab onto it scrolls it into view, no further.
     #[test]
     fn a_short_client_keeps_its_buttons_and_scrolls_the_page() {
         let theme = Theme::default().with_form_text(200);
@@ -2771,8 +2838,8 @@ mod tests {
         assert_eq!(s.wheel(None, 100), Event::Redraw);
         assert_eq!(
             s.page_offset(),
-            (0, -124),
-            "scrolled through all 124 px cut"
+            (0, -101),
+            "scrolled until Low's bottom meets the page's"
         );
         let low = s.open().rect("low").unwrap();
         assert!(
@@ -2817,8 +2884,8 @@ mod tests {
         assert!(text.measure(lines[1], false, px) > text.measure(lines[0], false, px));
         let w = text.measure(lines[0], false, px) - 20;
         let page = Form::new(vec![
-            Item::lines("note", Rect::new(20, 330, w, 2 * LINE_H), &lines),
-            Item::check("low", 20, 360, "Low"),
+            Item::lines("note", Rect::new(20, 340, w, 2 * LINE_H), &lines),
+            Item::check("low", 20, 373, "Low"),
         ]);
         let mut s = PropSheet::new(&["General"], vec![page], (398, 424));
         s.drawn_with(&p);
@@ -2827,7 +2894,7 @@ mod tests {
         draw(&mut c, &text, &p, &s, false, px);
         let note = s.open().rect("note").unwrap();
         assert_eq!(note.height, 3 * LINE_H, "the note takes its third line");
-        assert_eq!(s.open().rect("low").unwrap().y, 360 + LINE_H);
+        assert_eq!(s.open().rect("low").unwrap().y, 373 + LINE_H);
         assert_eq!(s.open().rect(OK).unwrap(), s.layout(&text, px).ok);
         assert!(s.layout(&text, px).bar.is_some(), "the page scrolls");
         assert_eq!(s.page_span().1 - s.page_span().0, LINE_H);
@@ -2835,8 +2902,8 @@ mod tests {
         assert_eq!(s.page_offset().1, -LINE_H, "through the pushed line");
 
         let roomy = Form::new(vec![
-            Item::lines("note", Rect::new(20, 330, 360, 2 * LINE_H), &lines),
-            Item::check("low", 20, 360, "Low"),
+            Item::lines("note", Rect::new(20, 340, 360, 2 * LINE_H), &lines),
+            Item::check("low", 20, 373, "Low"),
         ]);
         s.set_page(0, roomy);
         draw(&mut c, &text, &p, &s, false, px);
@@ -2844,7 +2911,7 @@ mod tests {
         assert_eq!(s.page_offset().1, 0, "nothing left to scroll");
         assert_eq!(
             s.open().rect("low").unwrap().y,
-            360,
+            373,
             "a note that fits moves nothing"
         );
         assert_eq!(s.layout(&text, px).bar, None);
@@ -2855,7 +2922,7 @@ mod tests {
     fn the_page_scrollbar_scrolls_the_page() {
         let text = TextRenderer::load(&FontConfig::default());
         let px = Theme::default().fonts.size_px;
-        let mut s = sheet(&["General"], (398, 424));
+        let mut s = tall_sheet();
         s.drawn_with(&Theme::default().paint());
         s.fit((398, 300));
         let bar = s.layout(&text, px).bar.unwrap();
@@ -2882,7 +2949,7 @@ mod tests {
         use crate::controls::scrollbar::{REPEAT_AFTER, REPEAT_EVERY};
         let text = TextRenderer::load(&FontConfig::default());
         let px = Theme::default().fonts.size_px;
-        let mut s = sheet(&["General"], (398, 424));
+        let mut s = tall_sheet();
         s.drawn_with(&Theme::default().paint());
         s.fit((398, 300));
         let bar = s.layout(&text, px).bar.unwrap();
@@ -2984,6 +3051,7 @@ mod tests {
         let at = |right: i32| {
             let page = Form::new(vec![
                 Item::check("top", 20, 50, "Top"),
+                Item::check("low", 20, 373, "Low"),
                 Item::button(
                     "flush",
                     Rect::new(right - 75, 100, 75, 23),
