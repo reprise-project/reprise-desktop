@@ -798,7 +798,8 @@ pub fn parse_hhmm(s: &str) -> Option<u32> {
 pub struct SessionConfig {
     pub restore: bool,
     pub exclude: Vec<String>,
-    /// Log Off ends every process left in the login session, windowless ones too.
+    /// Log Off ends every app scope Reprise started and every process left in the login session,
+    /// windowless ones too.
     pub end_processes: bool,
 }
 
