@@ -331,9 +331,6 @@ fn own_session(get: impl Fn(&str) -> Option<String>) -> Option<String> {
 /// Reprise's portal backend unit and the portal frontend that routes to it.
 const PORTAL_UNITS: [&str; 2] = ["reprise-portal.service", "xdg-desktop-portal.service"];
 
-/// Every app scope `scope_argv` names, as a `systemctl` pattern.
-const APP_SCOPES: &str = "app-reprise-*.scope";
-
 /// The commands that end the session `env` published, in order: unset (or restore the parent's)
 /// variables in the systemd user manager, stop the portal backend, and the frontend too unless
 /// nested (it reads `XDG_CURRENT_DESKTOP` once, so a survivor would route the next desktop's
@@ -367,7 +364,7 @@ pub fn end_commands(env: &SessionEnv, end_processes: bool) -> Vec<Vec<String>> {
     };
     stop.extend(units.iter().map(|u| u.to_string()));
     if end_processes && env.parent.is_empty() {
-        stop.push(APP_SCOPES.into());
+        stop.push(reprisefs::scope::PATTERN.into());
     }
     out.push(stop);
     if end_processes && let Some(id) = &env.logind_session {
@@ -390,9 +387,15 @@ pub fn end_session_env(env: &SessionEnv, end_processes: bool) {
 /// off (they were left on purpose).
 pub fn stale_scopes_command(env: &SessionEnv, end_processes: bool) -> Option<Vec<String>> {
     (end_processes && env.parent.is_empty()).then(|| {
-        ["systemctl", "--user", "--no-block", "stop", APP_SCOPES]
-            .map(String::from)
-            .to_vec()
+        [
+            "systemctl",
+            "--user",
+            "--no-block",
+            "stop",
+            reprisefs::scope::PATTERN,
+        ]
+        .map(String::from)
+        .to_vec()
     })
 }
 
@@ -488,7 +491,7 @@ pub fn spawn(cmd: &str, env: &SessionEnv, token: Option<&str>) -> bool {
 
 /// `spawn` in the app scope of `app`, as [`spawn_argv_in`] does.
 pub fn spawn_in(cmd: &str, app: Option<&str>, env: &SessionEnv, token: Option<&str>) -> bool {
-    let argv = in_scope(&["sh", "-c", cmd], app);
+    let argv = reprisefs::scope::in_scope(&["sh", "-c", cmd], app);
     match start(command_argv(&argv[0], &argv[1..], env, token), cmd) {
         Ok(()) => true,
         Err(e) => {
@@ -538,7 +541,7 @@ pub fn try_spawn_argv_in<S: AsRef<std::ffi::OsStr> + std::fmt::Debug>(
         ));
     };
     let what = program.as_ref().to_string_lossy();
-    let argv = in_scope(argv, app);
+    let argv = reprisefs::scope::in_scope(argv, app);
     let mut c = command_argv(&argv[0], &argv[1..], env, token);
     if let Some(dir) = dir {
         c.current_dir(dir);
@@ -546,19 +549,14 @@ pub fn try_spawn_argv_in<S: AsRef<std::ffi::OsStr> + std::fmt::Debug>(
     start(c, &what)
 }
 
-/// `argv` behind the [`scope_argv`] prefix of `app`, or alone without an app or a user manager.
-fn in_scope<S: AsRef<std::ffi::OsStr>>(argv: &[S], app: Option<&str>) -> Vec<std::ffi::OsString> {
-    let scope = app.filter(|_| user_manager_running());
-    let prefix = scope.map(|app| scope_argv(app, &unit_suffix()));
-    (prefix.into_iter().flatten().map(Into::into))
-        .chain(argv.iter().map(|a| a.as_ref().to_os_string()))
-        .collect()
-}
-
 /// The app scope of shell command `cmd`: the id of the entry in `apps` named like the program it
 /// runs or whose `Exec` runs that program, else the program's own name (systemd's
-/// `basename(argv[0])` fallback). None when it starts through a launcher such as `sh` or `env`.
+/// `basename(argv[0])` fallback). `gtk-launch <id>` takes the entry it names. None when it starts
+/// through another launcher such as `sh` or `env`.
 pub fn command_app(cmd: &str, apps: &[reprisefs::apps::AppEntry]) -> Option<String> {
+    if let Some(id) = gtk_launch_id(cmd) {
+        return reprisefs::apps::entry_for_app_id(apps, &id, |_| true).map(|e| e.id.clone());
+    }
     let program = crate::session::program(cmd)?;
     let program = program.trim_matches('\'');
     if program.contains('=') {
@@ -571,49 +569,15 @@ pub fn command_app(cmd: &str, apps: &[reprisefs::apps::AppEntry]) -> Option<Stri
     Some(entry.map_or_else(|| program.to_string(), |e| e.id.clone()))
 }
 
-/// Prefix that execs a command, same pid, in `app-reprise-<app>-<suffix>.scope`; the id is
-/// unit-escaped so its dashes stay apart from the launcher and suffix (systemd's app naming).
-fn scope_argv(app: &str, suffix: &str) -> Vec<String> {
-    let app = app.strip_suffix(".desktop").unwrap_or(app);
-    vec![
-        "systemd-run".into(),
-        "--user".into(),
-        "--scope".into(),
-        "--quiet".into(),
-        "--collect".into(),
-        "--slice=app.slice".into(),
-        format!("--unit=app-reprise-{}-{suffix}", unit_escape(app)),
-        "--".into(),
-    ]
-}
-
-/// `systemd-escape` for one name part.
-fn unit_escape(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
-    for (i, b) in s.bytes().enumerate() {
-        if b.is_ascii_alphanumeric() || b == b':' || b == b'_' || (b == b'.' && i > 0) {
-            out.push(b as char);
-        } else {
-            out.push_str(&format!("\\x{b:02x}"));
-        }
+/// The entry id `gtk-launch [options] <id> [uris]` names, `.desktop` optional.
+fn gtk_launch_id(cmd: &str) -> Option<String> {
+    let argv = reprisefs::apps::exec_argv(cmd);
+    let (program, args) = argv.split_first()?;
+    if program.rsplit('/').next() != Some("gtk-launch") {
+        return None;
     }
-    out
-}
-
-/// Two instances of one app need two scopes.
-fn unit_suffix() -> String {
-    static NEXT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
-    let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    format!("{:x}{n:x}", std::process::id())
-}
-
-/// Without a user manager `systemd-run --user` fails, so the command runs unscoped.
-fn user_manager_running() -> bool {
-    static UP: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *UP.get_or_init(|| {
-        std::env::var_os("XDG_RUNTIME_DIR")
-            .is_some_and(|d| std::path::Path::new(&d).join("systemd/private").exists())
-    })
+    let id = args.iter().find(|a| !a.starts_with('-'))?;
+    Some(id.strip_suffix(".desktop").unwrap_or(id).to_string())
 }
 
 /// Start `c` detached, hand its pid to `reap_children` and record the launch for `mapfocus`;
@@ -719,23 +683,6 @@ mod tests {
     }
 
     #[test]
-    fn a_desktop_entry_launch_runs_in_an_app_scope_named_by_its_id() {
-        assert_eq!(
-            scope_argv("org.deskflow.deskflow.desktop", "1a"),
-            argv(&[
-                "systemd-run",
-                "--user",
-                "--scope",
-                "--quiet",
-                "--collect",
-                "--slice=app.slice",
-                "--unit=app-reprise-org.deskflow.deskflow-1a",
-                "--",
-            ])
-        );
-    }
-
-    #[test]
     fn a_typed_or_bound_command_scopes_as_its_entry_else_its_program() {
         let entry = |id: &str, exec: &str| {
             let text = format!("[Desktop Entry]\nType=Application\nName=N\nExec={exec}\n");
@@ -758,21 +705,17 @@ mod tests {
             Some("firefox")
         );
         assert_eq!(app("sh -c 'foot; foot'"), None);
+        assert_eq!(
+            app("gtk-launch org.deskflow.deskflow").as_deref(),
+            Some("org.deskflow.deskflow.desktop")
+        );
+        assert_eq!(
+            app("/usr/bin/gtk-launch -v foot.desktop /tmp/a").as_deref(),
+            Some("foot.desktop")
+        );
+        assert_eq!(app("gtk-launch missing"), None);
         assert_eq!(app("GDK_BACKEND=x11 foot"), None);
         assert_eq!(app(""), None);
-    }
-
-    #[test]
-    fn scope_ids_escape_dashes_and_other_bytes() {
-        assert_eq!(unit_escape("reprise-settings"), "reprise\\x2dsettings");
-        assert_eq!(unit_escape("a b/c"), "a\\x20b\\x2fc");
-        assert_eq!(unit_escape(".hidden"), "\\x2ehidden");
-        assert_eq!(unit_escape("org.kde.ark"), "org.kde.ark");
-    }
-
-    #[test]
-    fn launch_scopes_get_distinct_suffixes() {
-        assert_ne!(unit_suffix(), unit_suffix());
     }
 
     /// A session of its own unsets every variable it can publish, set or

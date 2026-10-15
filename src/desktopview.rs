@@ -1588,7 +1588,8 @@ impl State {
                 let default = mime
                     .as_deref()
                     .and_then(|m| reprisefs::props::default_app_entry(m, &self.app_index));
-                reprisefs::props::open_file_argv(file, default, &self.config.terminal)
+                let open = reprisefs::props::open_file(file, default, &self.config.terminal);
+                return self.spawn_opening_activated(&open);
             }
         };
         self.spawn_argv_activated(&argv);
@@ -1814,12 +1815,15 @@ impl State {
     pub(crate) fn print_or_edit(&mut self, paths: Vec<PathBuf>, print: bool) {
         let editor = reprisefs::props::default_app_entry("text/plain", &self.app_index).cloned();
         for path in paths {
-            let argv = if print {
-                vec!["lp".into(), path.into_os_string()]
+            let open = if print {
+                reprisefs::props::Opening {
+                    argv: vec!["lp".into(), path.into_os_string()],
+                    app: None,
+                }
             } else {
-                reprisefs::props::open_file_argv(&path, editor.as_ref(), &self.config.terminal)
+                reprisefs::props::open_file(&path, editor.as_ref(), &self.config.terminal)
             };
-            self.spawn_argv_activated(&argv);
+            self.spawn_opening_activated(&open);
         }
     }
 

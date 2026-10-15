@@ -1146,14 +1146,11 @@ impl SettingsApp {
     fn edit_file(&self) -> Reply {
         let apps = reprisefs::apps::scan(&reprisefs::apps::default_dirs());
         let globs = reprisefs::apps::mime_globs();
+        let open = reprisefs::props::open_in(&self.path, &globs, &apps, &self.want.terminal);
         Reply {
             redraw: true,
-            spawn: vec![reprisefs::props::open_argv_in(
-                &self.path,
-                &globs,
-                &apps,
-                &self.want.terminal,
-            )],
+            spawn: vec![open.argv],
+            spawn_app: open.app,
             ..Default::default()
         }
     }

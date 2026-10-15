@@ -805,9 +805,11 @@ impl Explorer {
         {
             return self.run_program(&it.path, ctx);
         }
+        let open = self.open_for(&it);
         Reply {
             redraw: true,
-            spawn: vec![self.open_argv_for(&it)],
+            spawn: vec![open.argv],
+            spawn_app: open.app,
             ..Default::default()
         }
     }
