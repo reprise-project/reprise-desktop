@@ -543,7 +543,7 @@ impl State {
             Action::Spawn(cmd) => {
                 self.spawn_activated(cmd);
             }
-            Action::Exec(argv) => self.spawn_argv_activated(argv),
+            Action::Exec { argv, app } => self.spawn_app_activated(argv, app),
             Action::Terminal => {
                 let cmd = self.config.terminal.clone();
                 self.spawn_activated(&cmd);

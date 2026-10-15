@@ -471,17 +471,20 @@ pub fn spawn_argv<S: AsRef<std::ffi::OsStr> + std::fmt::Debug>(
     env: &SessionEnv,
     token: Option<&str>,
 ) {
-    spawn_argv_in(argv, None, env, token);
+    spawn_argv_in(argv, None, None, env, token);
 }
 
-/// `spawn_argv` in working directory `dir`, or reprise's own when `None`.
+/// `spawn_argv` in working directory `dir`, or reprise's own when `None`. `app`, the desktop
+/// entry id the command came from, puts the process in an `app-reprise-<app>-*.scope`, where
+/// xdg-desktop-portal reads a host app's id.
 pub fn spawn_argv_in<S: AsRef<std::ffi::OsStr> + std::fmt::Debug>(
     argv: &[S],
+    app: Option<&str>,
     dir: Option<&std::path::Path>,
     env: &SessionEnv,
     token: Option<&str>,
 ) {
-    if let Err(e) = try_spawn_argv_in(argv, dir, env, token) {
+    if let Err(e) = try_spawn_argv_in(argv, app, dir, env, token) {
         log::error!("spawn {argv:?}: {e}");
     }
 }
@@ -490,6 +493,7 @@ pub fn spawn_argv_in<S: AsRef<std::ffi::OsStr> + std::fmt::Debug>(
 /// as a missing interpreter). Waits for the exec, so a program on a hung mount blocks the caller.
 pub fn try_spawn_argv_in<S: AsRef<std::ffi::OsStr> + std::fmt::Debug>(
     argv: &[S],
+    app: Option<&str>,
     dir: Option<&std::path::Path>,
     env: &SessionEnv,
     token: Option<&str>,
@@ -501,11 +505,66 @@ pub fn try_spawn_argv_in<S: AsRef<std::ffi::OsStr> + std::fmt::Debug>(
         ));
     };
     let what = program.as_ref().to_string_lossy();
-    let mut c = command_argv(program, args, env, token);
+    let mut c = match app.filter(|_| user_manager_running()) {
+        Some(app) => {
+            let mut scoped: Vec<std::ffi::OsString> = scope_argv(app, &unit_suffix())
+                .into_iter()
+                .map(Into::into)
+                .collect();
+            scoped.extend(argv.iter().map(|a| a.as_ref().to_os_string()));
+            command_argv(&scoped[0], &scoped[1..], env, token)
+        }
+        None => command_argv(program, args, env, token),
+    };
     if let Some(dir) = dir {
         c.current_dir(dir);
     }
     start(c, &what)
+}
+
+/// Prefix that execs a command, same pid, in `app-reprise-<app>-<suffix>.scope`; the id is
+/// unit-escaped so its dashes stay apart from the launcher and suffix (systemd's app naming).
+fn scope_argv(app: &str, suffix: &str) -> Vec<String> {
+    let app = app.strip_suffix(".desktop").unwrap_or(app);
+    vec![
+        "systemd-run".into(),
+        "--user".into(),
+        "--scope".into(),
+        "--quiet".into(),
+        "--collect".into(),
+        "--slice=app.slice".into(),
+        format!("--unit=app-reprise-{}-{suffix}", unit_escape(app)),
+        "--".into(),
+    ]
+}
+
+/// `systemd-escape` for one name part.
+fn unit_escape(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for (i, b) in s.bytes().enumerate() {
+        if b.is_ascii_alphanumeric() || b == b':' || b == b'_' || (b == b'.' && i > 0) {
+            out.push(b as char);
+        } else {
+            out.push_str(&format!("\\x{b:02x}"));
+        }
+    }
+    out
+}
+
+/// Two instances of one app need two scopes.
+fn unit_suffix() -> String {
+    static NEXT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+    let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    format!("{:x}{n:x}", std::process::id())
+}
+
+/// Without a user manager `systemd-run --user` fails, so the command runs unscoped.
+fn user_manager_running() -> bool {
+    static UP: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *UP.get_or_init(|| {
+        std::env::var_os("XDG_RUNTIME_DIR")
+            .is_some_and(|d| std::path::Path::new(&d).join("systemd/private").exists())
+    })
 }
 
 /// Start `c` detached, hand its pid to `reap_children` and record the launch for `mapfocus`;
@@ -608,6 +667,36 @@ mod tests {
 
     fn argv(v: &[&str]) -> Vec<String> {
         v.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn a_desktop_entry_launch_runs_in_an_app_scope_named_by_its_id() {
+        assert_eq!(
+            scope_argv("org.deskflow.deskflow.desktop", "1a"),
+            argv(&[
+                "systemd-run",
+                "--user",
+                "--scope",
+                "--quiet",
+                "--collect",
+                "--slice=app.slice",
+                "--unit=app-reprise-org.deskflow.deskflow-1a",
+                "--",
+            ])
+        );
+    }
+
+    #[test]
+    fn scope_ids_escape_dashes_and_other_bytes() {
+        assert_eq!(unit_escape("reprise-settings"), "reprise\\x2dsettings");
+        assert_eq!(unit_escape("a b/c"), "a\\x20b\\x2fc");
+        assert_eq!(unit_escape(".hidden"), "\\x2ehidden");
+        assert_eq!(unit_escape("org.kde.ark"), "org.kde.ark");
+    }
+
+    #[test]
+    fn launch_scopes_get_distinct_suffixes() {
+        assert_ne!(unit_suffix(), unit_suffix());
     }
 
     /// A session of its own unsets every variable it can publish, set or

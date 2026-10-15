@@ -1914,7 +1914,8 @@ impl State {
                     log::warn!("open with: could not set the default for {mime}: {e}");
                 }
                 let argv = reprisefs::apps::open_argv(entry, &self.config.terminal, path);
-                self.spawn_argv_from_dialog(&argv);
+                let app = entry.id.clone();
+                self.spawn_app_activated(&argv, &app);
             }
             // A browsed program not made default runs by path with the file as its one argument.
             None if app.starts_with('/') => {

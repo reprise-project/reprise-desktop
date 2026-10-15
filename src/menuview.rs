@@ -1412,7 +1412,10 @@ impl State {
         };
         let launch = match (pin, &entry) {
             (Some(q), _) => Some(q.entry.action.clone()),
-            (None, Some(e)) => Some(Action::Exec(reprisefs::apps::launch_argv(e, terminal))),
+            (None, Some(e)) => Some(Action::Exec {
+                argv: reprisefs::apps::launch_argv(e, terminal),
+                app: e.id.clone(),
+            }),
             (None, None) => None,
         };
         let source = match pin {
@@ -1537,11 +1540,16 @@ impl State {
     }
 
     pub(crate) fn open_recent_with(&mut self, entry: Option<&AppEntry>, path: &std::path::Path) {
-        let argv = match entry {
-            Some(e) => reprisefs::apps::open_argv(e, &self.config.terminal, path),
-            None => self.open_file_argv(path),
-        };
-        self.spawn_argv_activated(&argv);
+        match entry {
+            Some(e) => {
+                let argv = reprisefs::apps::open_argv(e, &self.config.terminal, path);
+                self.spawn_app_activated(&argv, &e.id);
+            }
+            None => {
+                let argv = self.open_file_argv(path);
+                self.spawn_argv_activated(&argv);
+            }
+        }
     }
 
     pub fn open_window_list(&mut self, tree: TreeId, i: usize) {

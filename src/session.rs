@@ -505,7 +505,7 @@ pub fn restore(state: &mut State, autostarted: &[Entry]) {
     for (s, e) in &start {
         log::info!("session: restoring {} ({})", s.app_id, e.id);
         let argv = reprisefs::apps::launch_argv(e, &state.config.terminal);
-        crate::spawn::spawn_argv(&argv, &state.env, None);
+        crate::spawn::spawn_argv_in(&argv, Some(&e.id), None, &state.env, None);
         regrouping.started(&s.app_id);
     }
     let started: Vec<&SavedApp> = start.iter().map(|(s, _)| *s).collect();
@@ -533,7 +533,7 @@ pub fn settle_restart(state: &mut State, app_id: &str) {
         );
         let argv = reprisefs::apps::launch_argv(e, &state.config.terminal);
         for _ in 0..n {
-            crate::spawn::spawn_argv(&argv, &state.env, None);
+            crate::spawn::spawn_argv_in(&argv, Some(&e.id), None, &state.env, None);
         }
         TimeoutAction::Drop
     });
