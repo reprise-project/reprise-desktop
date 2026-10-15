@@ -89,6 +89,9 @@ desktop background skips the slideshow ahead.
 `[screensaver] name` picks what `[idle] blank_after` starts: `blank` (the
 default), `starfield`, `mystify`, `logo` or `photos`. It covers every screen
 and hides the pointer until the next input, and `[idle] lock_after` locks the session underneath.
+A fullscreen window holds the saver off and it counts again from when the
+window leaves fullscreen; the lock, screen off and suspend steps keep their
+timeouts unless a program inhibits idle.
 `speed` (1 to 10), `stars`, `shapes`, `cycle_colors`, `folder` (for Photos;
 Pictures when left out) and `photo_seconds` tune them.
 

@@ -1567,6 +1567,7 @@ impl State {
             }
         }
         self.restack();
+        crate::idle::inhibition_changed(self);
     }
 
     /// Raise windows owned by `w` above it, recursively.
