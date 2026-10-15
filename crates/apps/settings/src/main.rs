@@ -259,6 +259,45 @@ fn pick_keep(
     }
 }
 
+/// A remembered location answer: from Reprise's own prompt (`location.toml`), or for a Flatpak
+/// program from the Location portal's permission store.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct LocationAnswer {
+    id: String,
+    allow: bool,
+    portal: bool,
+}
+
+/// The location list's answers: the prompt's, then the portal's.
+fn location_answers(
+    agent: std::collections::BTreeMap<String, bool>,
+    portal: Vec<(String, bool)>,
+) -> Vec<LocationAnswer> {
+    let agent = agent.into_iter().map(|(id, allow)| LocationAnswer {
+        id,
+        allow,
+        portal: false,
+    });
+    let portal = portal.into_iter().map(|(id, allow)| LocationAnswer {
+        id,
+        allow,
+        portal: true,
+    });
+    agent.chain(portal).collect()
+}
+
+/// The Location portal's answers; none when the permission store does not answer. Tests leave
+/// the session bus alone.
+fn portal_location_answers() -> Vec<(String, bool)> {
+    if cfg!(test) {
+        return Vec::new();
+    }
+    reprisebus::permissions::location_answers().unwrap_or_else(|e| {
+        log::warn!("no Flatpak location answers from the permission store: {e}");
+        Vec::new()
+    })
+}
+
 /// The longest 100% length that grows to no more than `v`.
 fn take<T>(rx: &Receiver<T>) -> Result<Option<T>, ()> {
     match rx.try_recv() {
@@ -297,7 +336,10 @@ struct SettingsApp {
 
     locations: ListView,
     locations_focus: bool,
-    location_ids: Vec<String>,
+    location_answers: Vec<LocationAnswer>,
+    /// Each location row's icon name, looked up once `location_icons_due`.
+    location_icons: Vec<Option<String>>,
+    location_icons_due: bool,
     location_file: PathBuf,
 
     pads: Vec<reprisebus::tray::Pad>,
@@ -524,7 +566,9 @@ impl SettingsApp {
             chooser: None,
             locations: pages::new_location_list(),
             locations_focus: false,
-            location_ids: Vec::new(),
+            location_answers: Vec::new(),
+            location_icons: Vec::new(),
+            location_icons_due: false,
             location_file: repriseconf::location::path(),
             xkb,
             add_layout: None,
@@ -1193,21 +1237,30 @@ impl SettingsApp {
     }
 
     fn reload_locations(&mut self) {
-        let answers = repriseconf::location::load_from(&self.location_file);
+        let answers = location_answers(
+            repriseconf::location::load_from(&self.location_file),
+            portal_location_answers(),
+        );
         let entries = if answers.is_empty() {
             Vec::new()
         } else {
             reprisefs::apps::scan(&reprisefs::apps::default_dirs())
         };
+        let found: Vec<_> = answers
+            .iter()
+            .map(|a| reprisefs::apps::entry_for_app_id(&entries, &a.id, |_| true))
+            .collect();
         let rows: Vec<(String, bool)> = answers
             .iter()
-            .map(|(id, &allow)| {
-                let name = reprisefs::apps::entry_for_app_id(&entries, id, |_| true)
-                    .map_or_else(|| id.clone(), |e| e.name.clone());
-                (name, allow)
-            })
+            .zip(&found)
+            .map(|(a, e)| (e.map_or_else(|| a.id.clone(), |e| e.name.clone()), a.allow))
             .collect();
-        self.location_ids = answers.into_keys().collect();
+        self.location_icons = found
+            .iter()
+            .map(|e| e.and_then(|e| e.icon.clone()))
+            .collect();
+        self.location_icons_due = true;
+        self.location_answers = answers;
         pages::fill_locations(&mut self.locations, &rows);
         self.sync_forget();
     }
@@ -1217,13 +1270,20 @@ impl SettingsApp {
         self.sheet.pages[Page::Advanced.index()].set_enabled(pages::FORGET, on);
     }
 
-    /// Forget drops the picked answer from the state file at once; it waits for no Apply.
+    /// Forget drops the picked answer at once, from the state file or the portal's permission
+    /// store; it waits for no Apply.
     fn forget_location(&mut self) -> Reply {
-        let Some(id) = (self.locations.selection.focus).and_then(|i| self.location_ids.get(i))
+        let Some(a) = (self.locations.selection.focus).and_then(|i| self.location_answers.get(i))
         else {
             return Reply::none();
         };
-        if let Err(e) = repriseconf::location::forget_in(&self.location_file, id) {
+        let id = &a.id;
+        let forgot = if a.portal {
+            reprisebus::permissions::forget_location(id).map_err(|e| e.to_string())
+        } else {
+            repriseconf::location::forget_in(&self.location_file, id).map_err(|e| e.to_string())
+        };
+        if let Err(e) = forgot {
             log::warn!("forget the location answer for {id}: {e}");
             self.fail("The location answer could not be forgotten.");
         }
@@ -1912,6 +1972,16 @@ impl SettingsApp {
         }
         if let Some(d) = self.add_item.as_mut().filter(|d| d.icons_due) {
             d.set_icons(&mut get);
+        }
+        if self.location_icons_due {
+            for (row, name) in self.locations.rows.iter_mut().zip(&self.location_icons) {
+                row.icon = name
+                    .as_deref()
+                    .and_then(&mut get)
+                    .or_else(|| get(openwith::PROGRAM_ICON))
+                    .map(std::rc::Rc::new);
+            }
+            self.location_icons_due = false;
         }
         if let Some(c) = self.chooser.as_mut().filter(|c| c.icons_due) {
             c.row_icons =
@@ -4194,6 +4264,23 @@ mod tests {
             form::Control::Button { enabled, .. } => *enabled,
             _ => panic!("Forget is a button"),
         }
+    }
+
+    #[test]
+    fn location_answers_list_the_prompts_then_the_portals() {
+        let agent = std::collections::BTreeMap::from([("org.example.Weather".to_string(), false)]);
+        let portal = vec![("org.gnome.Maps".to_string(), true)];
+        let got: Vec<(String, bool, bool)> = location_answers(agent, portal)
+            .into_iter()
+            .map(|a| (a.id, a.allow, a.portal))
+            .collect();
+        assert_eq!(
+            got,
+            [
+                ("org.example.Weather".to_string(), false, false),
+                ("org.gnome.Maps".to_string(), true, true),
+            ]
+        );
     }
 
     #[test]

@@ -25,6 +25,7 @@ pub mod appearance;
 pub mod filetransfer;
 pub mod fprint;
 pub mod instance;
+pub mod permissions;
 pub mod polkit;
 pub mod tray;
 

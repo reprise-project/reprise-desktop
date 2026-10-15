@@ -364,7 +364,9 @@ are.
 - **Location.** Reprise is the geoclue agent. It asks before a sandboxed
   program gets your location, remembers the answer if you like, and one
   switch turns location off for everyone. A prompt left unanswered for 24 s
-  closes and the program is refused.
+  closes and the program is refused. Settings > Advanced lists the
+  remembered answers, with the Flatpak programs' Location portal answers,
+  and Forget drops one.
 
 ## Sharing and remote access
 
