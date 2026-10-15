@@ -119,7 +119,7 @@ pub fn pick_tabs(groups: &[SavedTabs], saved: &[SavedApp]) -> Vec<SavedTabs> {
 const LAUNCHERS: &[&str] = &["env", "sh", "bash", "flatpak", "snap", "gtk-launch"];
 
 /// The program an `Exec` line runs, without its directory; None for a `LAUNCHERS` one.
-fn program(exec: &str) -> Option<String> {
+pub(crate) fn program(exec: &str) -> Option<String> {
     let argv = reprisefs::apps::exec_argv(exec);
     let first = argv.first()?;
     let name = first.rsplit('/').next().unwrap_or(first);

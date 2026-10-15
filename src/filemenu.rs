@@ -95,7 +95,10 @@ impl State {
             Target::Run(file) => self.run_program(file),
             _ => {
                 let argv = self.found_open_argv(path, facts);
-                self.spawn_argv_activated(&argv);
+                match facts.target.app() {
+                    Some(app) => self.spawn_app_activated(&argv, app),
+                    None => self.spawn_argv_activated(&argv),
+                }
             }
         }
     }

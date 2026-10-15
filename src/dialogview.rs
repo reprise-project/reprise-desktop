@@ -1718,7 +1718,7 @@ impl State {
                 self.close_dialog();
                 dialog::remember(&mut self.dialogs.run_history, &cmd);
                 crate::state::save_dialogs(&self.dialogs.run_history);
-                self.spawn_from_dialog(&cmd);
+                self.spawn_command_activated(&cmd);
             }
             Outcome::Act(a) => {
                 self.close_dialog();
