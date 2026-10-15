@@ -1,8 +1,11 @@
 //! The Open With chooser's input as every host reads it: keys, clicks, motion
 //! and the wheel; keys bring out the keyboard cues.
 
+use std::path::Path;
+
+use reprisekit::controls::filedlg::{DlgMode, Fields};
 use reprisekit::controls::form;
-use reprisekit::controls::openwith::{self, Hit, Layout, OpenWith};
+use reprisekit::controls::openwith::{self, Hit, Layout, OpenWith, Program};
 use reprisekit::cues::Cues;
 use reprisekit::pointer::DoubleClick;
 use reprisekit::textedit::keysym;
@@ -99,11 +102,49 @@ impl ChooserInput {
     }
 }
 
+/// Where the chooser's Browse... opens its file dialog.
+pub const PROGRAMS_DIR: &str = "/usr/bin";
+
+/// The file dialog the chooser's Browse... opens at [`PROGRAMS_DIR`].
+pub fn browse_fields() -> Fields {
+    Fields {
+        title: "Browse".into(),
+        accept_label: "Open".into(),
+        filters: vec!["Programs".into(), "All Files".into()],
+        mode: DlgMode::Open,
+        multiple: false,
+    }
+}
+
+/// The Browse... dialog's listing filter: its first filter keeps executables
+/// only. Folders stay regardless, through `Host::list`'s own `is_dir` check.
+pub fn programs_keep(
+    filter: usize,
+) -> impl Fn(&reprisefs::listing::Item) -> bool + Clone + Send + 'static {
+    move |i| filter != 0 || i.exec
+}
+
+/// A picked program file as a chooser row: its path is its id, its file
+/// name its label. `None` for a path that is not UTF-8, which cannot be
+/// run as a command line.
+pub fn program_pick(path: &Path) -> Option<Program> {
+    let id = path.to_str()?.to_string();
+    let name = path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| id.clone());
+    Some(Program {
+        id,
+        name,
+        icon: Some(openwith::PROGRAM_ICON.into()),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::{KeyInput, Mods};
-    use reprisekit::controls::openwith::{Focus, Program};
+    use reprisekit::controls::openwith::Focus;
     use reprisekit::raster::Rect;
     use reprisekit::text::TextRenderer;
     use reprisekit::theme::FontConfig;
@@ -368,5 +409,19 @@ mod tests {
             "a paste or an IME commit does not type-ahead (the cues are out already)"
         );
         assert_eq!(ow.chosen().map(|p| p.id.as_str()), Some("alpha"));
+    }
+
+    #[test]
+    fn a_program_path_becomes_a_program_named_by_its_file() {
+        let p = program_pick(Path::new("/usr/bin/nano")).expect("a UTF-8 path");
+        assert_eq!(p.id, "/usr/bin/nano");
+        assert_eq!(p.name, "nano");
+        assert_eq!(p.icon.as_deref(), Some(openwith::PROGRAM_ICON));
+        use std::os::unix::ffi::OsStrExt;
+        let odd = Path::new(std::ffi::OsStr::from_bytes(b"/usr/bin/a\xffb"));
+        assert!(
+            program_pick(odd).is_none(),
+            "a path that is not UTF-8 is refused"
+        );
     }
 }
