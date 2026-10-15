@@ -3368,10 +3368,10 @@ mod tests {
             [
                 (Interface::Classic, 1, 3894922826410907653),
                 (Interface::Classic, 2, 1200130322201881305),
-                (Interface::Blue, 1, 746860588023199850),
-                (Interface::Blue, 2, 16821871500524533471),
-                (Interface::Glass, 1, 9091362091301184355),
-                (Interface::Glass, 2, 4401777967945655351),
+                (Interface::Blue, 1, 12055996091189837898),
+                (Interface::Blue, 2, 7254310312881324019),
+                (Interface::Glass, 1, 14204876082109196823),
+                (Interface::Glass, 2, 18269360693100279155),
             ]
         );
     }

@@ -15,8 +15,9 @@
 //! toward the right, and a point under it narrowing at 45 degrees to the
 //! tip, lined inside by a 2 px band in the cap's colour.
 //! [`Part::TrackbarThumbV`] is a 22x11 box thumb: a 1 px outline round a
-//! pale body shading down, with a 2 px cap down each end. No greyed box
-//! thumb is drawn anywhere, so its Disabled repeats Normal.
+//! pale body shading down, with a 2 px cap down each end. It stretches to
+//! fill a larger rect. No greyed box thumb is drawn anywhere, so its
+//! Disabled repeats Normal.
 
 use crate::blue::Variant;
 use crate::blue::scheme::{Face, Grad};
@@ -37,6 +38,9 @@ const BOX_R: f64 = 1.5;
 /// Where the box thumb's caps end: columns 1 and 2 on the left, 19 and
 /// 20 on the right.
 const BOX_CAP_IN: f64 = 3.0;
+/// A box thumb fills its rect: the columns between the caps and the row
+/// across the pale body (row 4) stretch.
+const BOX_SIZING: Insets = Insets::new(3, 4, 3, 6);
 
 const THUMB_W: i32 = 11;
 const THUMB_H: i32 = 21;
@@ -77,13 +81,13 @@ pub(super) fn parts(v: Variant, d: i32) -> Vec<(Part, PartImage)> {
     thumb.true_size = true;
 
     let b = &s.trackbar_thumb_v;
-    let mut thumb_v = PartImage::new(
+    let thumb_v = PartImage::new(
         stack([&b.normal, &b.hot, &b.pressed, &b.normal].map(|f| box_thumb(f, d))),
         &THUMB_STATES,
         Layout::Vertical,
     )
+    .sizing(BOX_SIZING)
     .at_scale(d);
-    thumb_v.true_size = true;
 
     vec![
         (Part::TrackbarTrack, track),
@@ -573,5 +577,92 @@ mod tests {
             (31, 23, 21),
             "Classic's upright trackbar is as before"
         );
+    }
+
+    /// Every state of `v`'s box thumb drawn into a `w` x `h` rect, one
+    /// under the other.
+    fn box_in(v: Variant, w: i32, h: i32, d: i32) -> Canvas {
+        let img = part(v, d, Part::TrackbarThumbV);
+        let n = THUMB_STATES.len() as i32;
+        let mut c = Canvas::new((w * d) as u32, (h * n * d) as u32);
+        for (i, &s) in THUMB_STATES.iter().enumerate() {
+            let r = crate::raster::Rect::new(0, i as i32 * h, w, h).scaled(d);
+            img.blit(&mut c, img.frame(s), r, d);
+        }
+        c
+    }
+
+    #[test]
+    fn the_box_thumb_at_its_own_size_is_its_frames() {
+        for v in Variant::ALL {
+            for d in [1, 2] {
+                let img = part(v, d, Part::TrackbarThumbV);
+                assert!(
+                    box_in(v, BOX_W, BOX_H, d).pixels == img.atlas.pixels,
+                    "{v:?} at {d}"
+                );
+            }
+        }
+    }
+
+    /// The volume popup's thumb is 26x15 under Blue: the box reaches each
+    /// edge, its caps stay 2 px wide and its corners stay clear.
+    #[test]
+    fn the_box_thumb_fills_the_volume_popups_26_by_15_rect() {
+        for v in Variant::ALL {
+            for d in [1, 2] {
+                let c = box_in(v, 26, 15, d);
+                let px = |x: i32, y: i32| c.get(x * d, y * d);
+                for (x, y) in [(0, 7), (25, 7), (13, 0), (13, 14)] {
+                    assert_eq!(alpha(px(x, y)), 255, "{v:?} at {d}: ({x}, {y})");
+                }
+                assert!(alpha(c.get(0, 0)) < 255, "{v:?} at {d}: a rounded corner");
+                assert!(px(1, 7) != px(3, 7), "{v:?} at {d}: the left cap");
+                assert!(px(24, 7) != px(22, 7), "{v:?} at {d}: the right cap");
+                assert!(
+                    px(3, 7) == px(22, 7),
+                    "{v:?} at {d}: one body between the caps"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn the_box_thumb_in_the_volume_popups_rect_pins_at_scale_1_and_2() {
+        let got: Vec<(Variant, [u64; 2])> = Variant::ALL
+            .into_iter()
+            .map(|v| (v, [1, 2].map(|d| fnv(&box_in(v, 26, 15, d)))))
+            .collect();
+        let want = [
+            (
+                Variant::Blue,
+                [0x08C6_8AE9_AD30_B1A2, 0x5426_EF12_36C3_811E],
+            ),
+            (
+                Variant::Olive,
+                [0x8336_CFCF_3700_B8E9, 0x9BC5_06F8_A00A_5C50],
+            ),
+            (
+                Variant::Silver,
+                [0xB423_928C_D018_5A02, 0x31E5_57AD_426C_75FE],
+            ),
+            (
+                Variant::Slate,
+                [0x0BB6_C90C_4CD0_80DB, 0x16FA_1BBF_C372_DB9E],
+            ),
+            (
+                Variant::Sapphire,
+                [0x0BB6_C90C_4CD0_80DB, 0x16FA_1BBF_C372_DB9E],
+            ),
+            (
+                Variant::Obsidian,
+                [0x0BB6_C90C_4CD0_80DB, 0x16FA_1BBF_C372_DB9E],
+            ),
+            (
+                Variant::Ember,
+                [0x21D6_9E0A_F0A2_A742, 0xC2A0_C1E1_1419_7A70],
+            ),
+        ];
+        assert_eq!(got, want, "{got:#x?}");
     }
 }
