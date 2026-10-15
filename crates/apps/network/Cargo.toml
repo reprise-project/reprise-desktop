@@ -27,3 +27,6 @@ libc.workspace = true
 log.workspace = true
 env_logger.workspace = true
 getrandom = "0.4"
+
+[dev-dependencies]
+zbus = { workspace = true, features = ["p2p"] }
