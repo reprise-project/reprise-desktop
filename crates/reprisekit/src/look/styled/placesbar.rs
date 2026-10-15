@@ -1,4 +1,4 @@
-//! Places bar panel and selected tile through the style's parts; drawers return
+//! Places bar panel and tile frames through the style's parts; drawers return
 //! `false` when the style lacks one.
 
 use crate::raster::{Canvas, Rect};
@@ -12,11 +12,11 @@ pub fn draw_panel(st: &Style, c: &mut Canvas, r: Rect, s: i32) -> bool {
     true
 }
 
-pub fn draw_selected(st: &Style, c: &mut Canvas, band: Rect, s: i32) -> bool {
+pub fn draw_tile(st: &Style, c: &mut Canvas, band: Rect, state: State, s: i32) -> bool {
     if st.part(Part::PlacesTile).is_none() {
         return false;
     }
-    st.draw(c, band, Part::PlacesTile, State::Checked, s);
+    st.draw(c, band, Part::PlacesTile, state, s);
     true
 }
 

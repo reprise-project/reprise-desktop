@@ -108,13 +108,16 @@ pub struct PlacesMetrics {
     pub tile: i32,
     /// An icon's top, from its tile's.
     pub icon_top: i32,
+    /// From the icon's bottom to the label's first line.
+    pub label_gap: i32,
 }
 
 impl PlacesMetrics {
-    /// Classic's: 65 px tiles, each icon 3 px down.
+    /// Classic's: 65 px tiles, each icon 3 px down and its label 3 px under it.
     pub const CLASSIC: PlacesMetrics = PlacesMetrics {
         tile: 65,
         icon_top: 3,
+        label_gap: 3,
     };
 
     /// Tiles whose label, under the 32 px icon, grows by `u`.

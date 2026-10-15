@@ -2356,6 +2356,7 @@ fn render(theme: &Theme, with_blue: bool) -> Canvas {
         })
         .collect(),
         selected: Some(3),
+        ..Default::default()
     };
     let places_r = Rect::new(700, 510, placesbar::WIDTH, 5 * placesbar::TILE_H);
     placesbar::draw(
@@ -6308,24 +6309,26 @@ fn render_glass_popup_parts(theme: &Theme) -> Canvas {
         );
         calendar::draw(&mut c, &text, &p, &cal, &lay, false, px);
     }
-    let places = placesbar::PlacesBar {
-        places: ["Recent Places", "Desktop"]
-            .iter()
-            .map(|l| placesbar::Place {
-                label: (*l).into(),
-                icon: None,
-                enabled: true,
-            })
-            .collect(),
-        selected: Some(1),
+    // Left bar: the first place lit, the second selected; right bar: the first held, the
+    // second selected under the pointer.
+    let mut icon = Canvas::new(32, 32);
+    icon.fill_rect(Rect::new(3, 5, 26, 22), Color::rgb(0xE8, 0xC0, 0x50));
+    let place = |l: &str| placesbar::Place {
+        label: l.into(),
+        icon: Some(icon.clone()),
+        enabled: true,
     };
-    let r = Rect::new(
-        740,
-        10,
-        placesbar::WIDTH,
-        2 * theme.look.controls().places.tile,
-    );
-    placesbar::draw(&mut c, &text, &p, &places, r, px);
+    let tile = theme.look.controls().places.tile;
+    for (i, (selected, hot, pressed)) in [(1, 0, None), (1, 1, Some(0))].into_iter().enumerate() {
+        let places = placesbar::PlacesBar {
+            places: vec![place("My Recent Documents"), place("Desktop")],
+            selected: Some(selected),
+            hot: Some(hot),
+            pressed,
+        };
+        let r = Rect::new(740 + i as i32 * 95, 10, placesbar::WIDTH, 2 * tile);
+        placesbar::draw(&mut c, &text, &p, &places, r, px);
+    }
     c
 }
 

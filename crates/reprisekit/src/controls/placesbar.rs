@@ -2,11 +2,11 @@
 //! left edge (My Recent Documents, Desktop, My Documents, My Computer, My
 //! Network Places).
 //!
-//! The panel and the selected tile's frame are the look's
+//! The panel and the tiles' frames are the look's
 //! ([`crate::look::widgets::placesbar`]): Classic a sunken `button_shadow`
 //! panel with the selected tile inside a one-pixel sunken frame, Blue a light
-//! panel in a pale frame, Glass a flat panel with the selected tile sunk into
-//! a grey box.
+//! panel in a pale frame, Glass a flat panel whose tiles light, select and
+//! sink in boxes of their own.
 
 use crate::access::{self, Tree, accesskit};
 use crate::classic::widgets::draw_disabled_label;
@@ -14,6 +14,7 @@ use crate::controls::iconview::wrap_label;
 use crate::look::Paint;
 use crate::metrics::PlacesMetrics;
 use crate::raster::{Canvas, Rect};
+use crate::style::State;
 use crate::text::{Align, TextRenderer};
 use accesskit::{NodeId, Role};
 
@@ -25,8 +26,6 @@ pub const WIDTH: i32 = 87;
 pub const TILE_H: i32 = PlacesMetrics::CLASSIC.tile;
 
 pub const ICON_PX: i32 = 32;
-
-const LABEL_GAP: i32 = 3;
 
 /// The panel's own border thickness on each side, unscaled: the two
 /// rings `EdgeStyle::ButtonSunken` draws (`ring_t` at `t` then `t` again
@@ -43,11 +42,34 @@ pub struct Place {
     pub enabled: bool,
 }
 
-/// The bar's state: its places and which one is selected.
-#[derive(Clone, Debug, PartialEq)]
+/// The bar's state: its places, which one is selected, which one is under the pointer and
+/// which one the held button went down on.
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct PlacesBar {
     pub places: Vec<Place>,
     pub selected: Option<usize>,
+    pub hot: Option<usize>,
+    pub pressed: Option<usize>,
+}
+
+impl PlacesBar {
+    /// Tile `i`'s look: held, then selected (lit or not), then lit; `None` for a plain tile.
+    pub fn state(&self, i: usize) -> Option<State> {
+        let (selected, hot) = (self.selected == Some(i), self.hot == Some(i));
+        match () {
+            _ if self.pressed == Some(i) => Some(State::Pressed),
+            _ if selected && hot => Some(State::CheckedHot),
+            _ if selected => Some(State::Checked),
+            _ if hot => Some(State::Hot),
+            _ => None,
+        }
+    }
+
+    /// Lights tile `i` (`None` for none). True when that changed.
+    pub fn hover(&mut self, i: Option<usize>) -> bool {
+        let i = i.filter(|&i| self.places.get(i).is_some_and(|p| p.enabled));
+        std::mem::replace(&mut self.hot, i) != i
+    }
 }
 
 /// Each tile's rect inside `r`, stacked top to bottom. The panel's border
@@ -63,9 +85,8 @@ pub fn hit(rects: &[Rect], x: i32, y: i32) -> Option<usize> {
     rects.iter().position(|r| r.contains(x, y))
 }
 
-/// The bar: the look's panel, then each tile's icon and up to two centred
-/// label lines (`iconview::wrap_label`), and the look's frame on the
-/// selected tile.
+/// The bar: the look's panel, then each tile's frame for its [`PlacesBar::state`], icon and
+/// up to two centred label lines (`iconview::wrap_label`).
 pub fn draw(c: &mut Canvas, text: &TextRenderer, p: &Paint, pb: &PlacesBar, r: Rect, px: u32) {
     let Paint { cs, s, .. } = *p;
     let pm = p.look.controls().grown(p.text).places;
@@ -77,9 +98,9 @@ pub fn draw(c: &mut Canvas, text: &TextRenderer, p: &Paint, pb: &PlacesBar, r: R
     for (i, place) in pb.places.iter().enumerate() {
         let tile_y = sr.y + i as i32 * pm.tile * s;
         let tile_h = pm.tile * s;
-        if pb.selected == Some(i) {
+        if let Some(state) = pb.state(i) {
             let band = Rect::new(sr.x, tile_y, sr.width, tile_h);
-            crate::look::widgets::placesbar::draw_selected(c, p, band);
+            crate::look::widgets::placesbar::draw_tile(c, p, band, state);
         }
         if let Some(icon) = &place.icon {
             let ix = content_x + (content_w - icon.width as i32) / 2;
@@ -88,7 +109,7 @@ pub fn draw(c: &mut Canvas, text: &TextRenderer, p: &Paint, pb: &PlacesBar, r: R
         }
         let max_w = content_w - 4 * s;
         let lines = wrap_label(text, &place.label, max_w, px);
-        let label_y = tile_y + (pm.icon_top + ICON_PX + LABEL_GAP) * s;
+        let label_y = tile_y + (pm.icon_top + ICON_PX + pm.label_gap) * s;
         for (j, line) in lines.iter().enumerate() {
             let ly = label_y + j as i32 * step;
             let lr = Rect::new(content_x, ly, content_w, step);
@@ -112,7 +133,7 @@ pub fn overflow(pb: &PlacesBar, text: &TextRenderer, r: Rect, pm: &PlacesMetrics
         .zip(&pb.places)
         .map(|(tile, place)| {
             let lines = wrap_label(text, &place.label, max_w, px).len() as i32;
-            tile.y + pm.icon_top + ICON_PX + LABEL_GAP + lines * step - tile.bottom()
+            tile.y + pm.icon_top + ICON_PX + pm.label_gap + lines * step - tile.bottom()
         })
         .max()
         .unwrap_or(0)
@@ -289,6 +310,70 @@ mod tests {
         }
     }
 
+    #[test]
+    fn a_tile_shows_held_then_selected_then_lit() {
+        let mut pb = sample();
+        pb.places[4].enabled = false;
+        assert_eq!(pb.state(0), None);
+        assert!(pb.hover(Some(0)), "lighting a place is a change");
+        assert!(!pb.hover(Some(0)), "lighting it again is not");
+        assert_eq!(pb.state(0), Some(State::Hot));
+        pb.selected = Some(0);
+        assert_eq!(pb.state(0), Some(State::CheckedHot));
+        assert!(pb.hover(Some(1)));
+        assert_eq!(pb.state(0), Some(State::Checked));
+        assert_eq!(pb.state(1), Some(State::Hot));
+        pb.pressed = Some(1);
+        assert_eq!(pb.state(1), Some(State::Pressed));
+        assert!(pb.hover(Some(4)), "a greyed place does not light");
+        assert_eq!(pb.hot, None);
+        assert!(!pb.hover(None));
+    }
+
+    /// Classic frames the selected tile only: a lit one stays plain.
+    #[test]
+    fn classic_leaves_a_lit_tile_plain() {
+        let theme = Theme::default();
+        let text = TextRenderer::load(&FontConfig::default());
+        let r = Rect::new(0, 0, WIDTH, 5 * TILE_H);
+        let draw_with = |hot| {
+            let mut c = Canvas::new(WIDTH as u32, (5 * TILE_H) as u32);
+            let pb = PlacesBar { hot, ..sample() };
+            draw(&mut c, &text, &classic_paint(&theme.colors, 1), &pb, r, 11);
+            c
+        };
+        assert_eq!(draw_with(Some(1)).pixels, draw_with(None).pixels);
+    }
+
+    /// Under Glass a tile is 63 px, its icon 2 px down and its label's first line 1 px under
+    /// the icon.
+    #[test]
+    fn glass_tiles_are_63_px_with_the_icon_2_px_down() {
+        use crate::theme::Color;
+        const ICON: Color = Color::rgb(1, 2, 3);
+        let theme = crate::interfaces::theme_for(crate::interface::Interface::Glass);
+        let pm = theme.look.controls().places;
+        assert_eq!((pm.tile, pm.icon_top, pm.label_gap), (63, 2, 1));
+        let text = TextRenderer::load(&theme.fonts);
+        let mut pb = sample();
+        let mut icon = Canvas::new(ICON_PX as u32, ICON_PX as u32);
+        icon.fill_rect(icon.bounds(), ICON);
+        for p in &mut pb.places {
+            p.icon = Some(icon.clone());
+        }
+        let r = Rect::new(0, 0, WIDTH, 5 * 63);
+        assert_eq!(layout(&pb, r, &pm)[1], Rect::new(0, 63, WIDTH, 63));
+        let mut c = Canvas::new(WIDTH as u32, (5 * 63) as u32);
+        draw(&mut c, &text, &theme.paint(), &pb, r, theme.fonts.size_px);
+        let x = WIDTH / 2;
+        for (y, want) in [(1, false), (2, true), (33, true), (34, false)] {
+            for tile in [0, 1, 4] {
+                let y = tile * 63 + y;
+                assert_eq!(c.get(x, y) == ICON.argb(), want, "tile {tile} row {y}");
+            }
+        }
+    }
+
     /// Writes target/placesbar-blue-preview.png: the five places, no
     /// icons, 338 px tall.
     #[test]
@@ -308,6 +393,33 @@ mod tests {
         crate::raster::write_preview(&c, "placesbar-blue-preview.png");
     }
 
+    /// Writes target/placesbar-glass-preview.png: the five places with icons, the first lit,
+    /// the third selected and the fourth held.
+    #[test]
+    #[ignore]
+    fn render_placesbar_glass() {
+        let mut icon = Canvas::new(ICON_PX as u32, ICON_PX as u32);
+        icon.fill_rect(
+            Rect::new(3, 5, 26, 22),
+            crate::theme::Color::rgb(0xE8, 0xC0, 0x50),
+        );
+        let mut pb = PlacesBar {
+            selected: Some(2),
+            hot: Some(0),
+            pressed: Some(3),
+            ..sample()
+        };
+        for p in &mut pb.places {
+            p.icon = Some(icon.clone());
+        }
+        let theme = crate::interfaces::theme_for(crate::interface::Interface::Glass);
+        let text = TextRenderer::load(&theme.fonts);
+        let r = Rect::new(0, 0, WIDTH, 5 * 63);
+        let mut out = Canvas::new(WIDTH as u32, r.height as u32);
+        draw(&mut out, &text, &theme.paint(), &pb, r, theme.fonts.size_px);
+        crate::raster::write_preview(&out, "placesbar-glass-preview.png");
+    }
+
     fn sample() -> PlacesBar {
         PlacesBar {
             places: [
@@ -324,7 +436,7 @@ mod tests {
                 enabled: true,
             })
             .collect(),
-            selected: None,
+            ..PlacesBar::default()
         }
     }
 }

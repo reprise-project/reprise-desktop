@@ -42,7 +42,7 @@ mod twice;
 
 use std::sync::{Arc, Mutex, OnceLock};
 
-use crate::metrics::{ControlMetrics, RebarMetrics};
+use crate::metrics::{ControlMetrics, PlacesMetrics, RebarMetrics};
 use crate::raster::Rect;
 use crate::style::{
     CaptionTitle, GlassSpec, PanelSpec, Part, PartImage, State, Style, TextSpec, TrackMarks,
@@ -535,7 +535,6 @@ const GROUPS: [Group; 12] = [
             Part::CalendarBand,
             Part::PlacesBar,
             Part::CalendarFrame,
-            Part::PlacesTile,
         ],
         |d| popups::parts(d).into(),
     ),
@@ -566,9 +565,10 @@ const GROUPS: [Group; 12] = [
         &[Part::CalendarToday, Part::CalendarPrev, Part::CalendarNext],
         |d| flyouts::parts(d).into(),
     ),
-    (&[Part::ListItem, Part::TreeExpander], |d| {
-        items::parts(d).into()
-    }),
+    (
+        &[Part::ListItem, Part::TreeExpander, Part::PlacesTile],
+        |d| items::parts(d).into(),
+    ),
 ];
 
 /// Glass's caption tabs for titles inked `ink` (the focused window's, the
@@ -722,7 +722,8 @@ pub const CORNER: &[i32] = &[5, 3, 2, 1, 1, 1];
 /// box's or circle's left edge. A check box label that runs onto a second
 /// line sits a pixel higher, both lines, its second line under its first.
 /// A list header is 24 px with its sort arrow over the title, and a
-/// status bar 23 px. An open combo list's rows are 15 px.
+/// status bar 23 px. An open combo list's rows are 15 px. A places bar tile is
+/// 63 px, its icon 2 px down and its label 1 px under it.
 /// The rebar starts flush with the client's top, draws no line over its
 /// first band, and closes off with its own line in the row under it; the
 /// row after that is the view's, where a list's header starts.
@@ -740,6 +741,11 @@ fn controls() -> ControlMetrics {
         status_bar: 23,
         combo_row: 15,
         flyout_border: 8,
+        places: PlacesMetrics {
+            tile: 63,
+            icon_top: 2,
+            label_gap: 1,
+        },
         rebar: RebarMetrics {
             top: 0,
             first_line: false,

@@ -465,7 +465,7 @@ impl FileDlg {
             filetype,
             places: PlacesBar {
                 places,
-                selected: None,
+                ..PlacesBar::default()
             },
             folder: None,
             parent: None,
@@ -1494,6 +1494,7 @@ impl FileDlg {
                 }
                 self.focus = Focus::Places;
                 self.places.selected = Some(i);
+                self.places.pressed = Some(i);
                 Event::NeedPlace(i)
             }
             Some(Hit::Shell(h)) => {
@@ -1672,20 +1673,21 @@ impl FileDlg {
         }
     }
 
-    /// Ends a press on a toolbar button or a Details column title, the only
+    /// Ends a press on a toolbar button, a Details column title or a place, the only
     /// presses the dialog tracks.
     pub fn release(&mut self) -> Event {
         let column = self.shell.header.holding();
         self.shell.header.release();
-        if self.toolbar.pressed.take().is_some() || (column && self.drawn.1.get()) {
+        let place = self.places.pressed.take().is_some();
+        if self.toolbar.pressed.take().is_some() || ((column || place) && self.drawn.1.get()) {
             Event::Redraw
         } else {
             Event::None
         }
     }
 
-    /// The pointer moved to (`x`, `y`) in `r`: the Details column title
-    /// under it lights, or the held one follows it. A redraw only when
+    /// The pointer moved to (`x`, `y`) in `r`: the Details column title or the place
+    /// under it lights, or the held title follows it. A redraw only when
     /// that changed and the look draws it lit.
     pub fn motion(&mut self, text: &TextRenderer, px: u32, r: Rect, x: i32, y: i32) -> Event {
         let hit = self.hit(text, px, r, x, y);
@@ -1718,12 +1720,16 @@ impl FileDlg {
             Some(Hit::Shell(shellview::Hit::Header(i))) => Some(i),
             _ => None,
         };
-        let changed = self.shell.header.motion(column);
+        let place = match hit {
+            Some(Hit::Places(i)) => Some(i),
+            _ => None,
+        };
+        let changed = self.shell.header.motion(column) | self.places.hover(place);
         self.lit(changed)
     }
 
     pub fn leave(&mut self) -> Event {
-        let changed = self.shell.header.leave();
+        let changed = self.shell.header.leave() | self.places.hover(None);
         self.lit(changed)
     }
 
@@ -3477,6 +3483,27 @@ mod tests {
         assert!(matches!(out, Event::NeedPlace(0)), "got {out:?}");
         let out = d.key(R, form::Key::Enter, None, Mods::default());
         assert!(matches!(out, Event::NeedPlace(0)), "got {out:?}");
+    }
+
+    /// Under a look that lights the pointer a place lights under it and shows held until the
+    /// button comes up; Classic asks for no redraw.
+    #[test]
+    fn a_place_lights_under_the_pointer_and_shows_held() {
+        use crate::interface::Interface;
+        for (i, lit) in [(Interface::Glass, true), (Interface::Classic, false)] {
+            let mut d = sample();
+            d.drawn_with(&crate::interfaces::theme_for(i).paint());
+            let redraw = |e: Event| matches!(e, Event::Redraw);
+            assert_eq!(redraw(d.hover(Some(Hit::Places(0)))), lit, "{i:?} lights");
+            assert_eq!(d.places.hot, Some(0));
+            assert!(!redraw(d.hover(Some(Hit::Places(0)))), "{i:?} stays lit");
+            d.click(R, Some(Hit::Places(0)), Mods::default());
+            assert_eq!(d.places.pressed, Some(0), "{i:?} held");
+            assert_eq!(redraw(d.release()), lit, "{i:?} let go");
+            assert_eq!(d.places.pressed, None);
+            assert_eq!(redraw(d.leave()), lit, "{i:?} left");
+            assert_eq!(d.places.hot, None);
+        }
     }
 
     #[test]
