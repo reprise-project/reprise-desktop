@@ -56,6 +56,18 @@ pub(crate) fn test_explorer(start: Place, ctx: &mut Ctx) -> Explorer {
     Explorer::with_settings(start, Settings::default(), Vec::new(), None, ctx)
 }
 
+/// The address drop is built before the first listing lands and again when the mounts change; it
+/// names the window's place, never the drop's first row.
+#[test]
+fn a_rebuilt_address_drop_names_the_place_shown() {
+    let dir = tempfile::tempdir().expect("a temp dir");
+    let mut ctx = test_ctx();
+    let place = Place::Folder(dir.path().to_path_buf());
+    let mut ex = test_explorer(place.clone(), &mut ctx);
+    ex.build_address(&mut ctx);
+    assert_eq!(ex.address.text(), place.address());
+}
+
 #[test]
 fn navigating_to_the_current_address_re_lists_the_folder() {
     let dir = tempfile::tempdir().expect("a temp dir");
