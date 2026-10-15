@@ -14,7 +14,8 @@ use crate::notifier::{self, Lease};
 const FAST: Duration = Duration::from_secs(2);
 /// While a window is up or a job waits with the notifier. cupsd's D-Bus notifier sends from one
 /// subscription only, so another program's with fewer events (no `job-progress`) can hold it.
-const SAFETY: Duration = Duration::from_secs(30);
+/// Longer than cupsd's 60 s idle exit, so an open window lets it exit.
+const SAFETY: Duration = Duration::from_secs(5 * 60);
 /// Idle with no notifier: enough for the tray icon to come up for a job a program sent.
 const SLOW: Duration = Duration::from_secs(20);
 /// Idle with the notifier: how often the lease is looked at; cupsd is asked only when it is due.
@@ -455,6 +456,19 @@ mod tests {
         assert_eq!(schedule(false, false, false), (SLOW, true));
         assert_eq!(schedule(true, false, false), (FAST, true));
         assert_eq!(schedule(false, true, false), (FAST, true));
+    }
+
+    #[test]
+    fn with_the_notifier_no_tick_reads_cupsd_before_it_may_idle_exit() {
+        // cupsd's default IdleExitTimeout under socket activation.
+        const CUPSD_IDLE_EXIT: Duration = Duration::from_secs(60);
+        for (watching, busy) in [(true, false), (false, true), (true, true)] {
+            let (wait, reads) = schedule(watching, busy, true);
+            assert!(
+                !reads || wait > CUPSD_IDLE_EXIT,
+                "a read every {wait:?} keeps cupsd from exiting after {CUPSD_IDLE_EXIT:?} idle"
+            );
+        }
     }
 
     #[test]
