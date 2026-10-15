@@ -19,10 +19,11 @@
 //! Tabs that wrap onto more rows push the page down 18 px a row; a host calls
 //! [`PropSheet::fit_tabs`] to grow the sheet by as much.
 //!
-//! A client shorter than the sheet was built for ([`PropSheet::fit_height`]) keeps the buttons
-//! along its bottom and scrolls the page's controls under the look's scrollbar, down the page's
-//! right edge. A page whose notes rewrapped onto more lines ([`Form::flowed`]) scrolls through
-//! what they pushed past its end the same way.
+//! A client smaller than the sheet was built for ([`PropSheet::fit`]) keeps the buttons in its
+//! bottom-right corner and scrolls the page's controls under the look's scrollbars, down the
+//! page's right edge and along its bottom. A page whose notes rewrapped onto more lines
+//! ([`Form::flowed`]) scrolls through what they pushed past its end the same way. A bar takes
+//! its width from the page, so a control under it brings in the other bar.
 //!
 //! Pages are built in the client's coordinates (outer minus the 3 px frame and
 //! 21 px caption) for 100% text. A host that draws the sheet inside a frame of
@@ -43,7 +44,7 @@ use crate::controls::pagelist::{self, PageList};
 use crate::controls::scrollbar::PageScroll;
 use crate::controls::tabstrip::{self, TabStrip};
 use crate::look::Paint;
-use crate::look::widgets::{draw_page, draw_scrollbar, group_label_ink};
+use crate::look::widgets::{draw_hscrollbar, draw_page, draw_scrollbar, group_label_ink};
 use crate::raster::{Canvas, Rect};
 use crate::text::{Align, DialogFont, TextRenderer};
 use crate::theme::TextUnits;
@@ -93,9 +94,11 @@ pub struct PropSheet {
     /// The dialog font the whole sheet is set in: its first page's.
     pub font: DialogFont,
     pub nav: Nav,
-    /// The page's scroll in a client shorter than the sheet ([`PropSheet::fit_height`]), at
-    /// 100%: `short` is how much shorter than `size` the client is.
+    /// The page's scroll in a client shorter than the sheet ([`PropSheet::fit`]), at 100%:
+    /// `short` is how much shorter than `size` the client is.
     scroll: PageScroll,
+    /// The page's sideways scroll in a client narrower than the sheet, as `scroll`.
+    hscroll: PageScroll,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -113,8 +116,10 @@ pub enum Hit {
     Tab(usize),
     ListBar(BarHit),
     List,
-    /// The page's scrollbar, in a client shorter than the sheet.
+    /// The page's scrollbar, while the page scrolls ([`PropSheet::fit`]).
     PageBar(BarHit),
+    /// The page's sideways scrollbar, along its bottom.
+    PageHBar(BarHit),
     Control(form::Hit),
 }
 
@@ -128,8 +133,10 @@ pub struct Layout {
     pub ok: Rect,
     pub cancel: Rect,
     pub apply: Rect,
-    /// The page's scrollbar, while the page scrolls ([`PropSheet::fit_height`]).
+    /// The page's scrollbar, while the page scrolls ([`PropSheet::fit`]).
     pub bar: Option<Rect>,
+    /// The page's sideways scrollbar, while the page scrolls sideways.
+    pub hbar: Option<Rect>,
 }
 
 fn buttons(size: (i32, i32)) -> (Rect, Rect, Rect) {
@@ -176,6 +183,7 @@ impl PropSheet {
             font: pages.first().map(|p| p.font).unwrap_or_default(),
             nav: Nav::Tabs,
             scroll: PageScroll::default(),
+            hscroll: PageScroll::across(),
         };
         sheet.pages = pages.into_iter().map(|p| sheet.dress(p, false)).collect();
         sheet
@@ -203,6 +211,7 @@ impl PropSheet {
             font: pages.first().map(|p| p.font).unwrap_or_default(),
             nav: Nav::List(PageList::new(groups)),
             scroll: PageScroll::default(),
+            hscroll: PageScroll::across(),
         };
         sheet.pages = pages.into_iter().map(|p| sheet.dress(p, false)).collect();
         sheet
@@ -219,12 +228,18 @@ impl PropSheet {
     /// How far every page's rects have moved from where they were built, at 100%: the list's
     /// advance, the rows of tabs and the page's scroll. The origin is the pages' [`Form::origin`].
     pub fn page_offset(&self) -> (i32, i32) {
-        (self.page_dx(), self.page_dy - self.scroll.top)
+        (
+            self.page_dx() - self.hscroll.top,
+            self.page_dy - self.scroll.top,
+        )
     }
 
-    /// The client size at 100%: [`PropSheet::size`] less what [`PropSheet::fit_height`] cut.
+    /// The client size at 100%: [`PropSheet::size`] less what [`PropSheet::fit`] cut.
     fn shown(&self) -> (i32, i32) {
-        (self.size.0, self.size.1 - self.scroll.short)
+        (
+            self.size.0 - self.hscroll.short,
+            self.size.1 - self.scroll.short,
+        )
     }
 
     fn dress(&self, mut page: Form, apply: bool) -> Form {
@@ -308,41 +323,90 @@ impl PropSheet {
     }
 
     /// The client size at the text size the sheet was last drawn at: [`PropSheet::size`] grown,
-    /// less what [`PropSheet::fit_height`] cut.
+    /// less what [`PropSheet::fit`] cut.
     pub fn client(&self) -> (i32, i32) {
         self.units().size(self.shown())
     }
 
-    /// Show the sheet in a client `h` tall at 100%. Shorter than [`PropSheet::size`], the
-    /// buttons keep to the client's bottom and the page scrolls through the rest; as tall or
-    /// taller, the sheet is whole. Idempotent; true when anything moved.
-    pub fn fit_height(&mut self, h: i32) -> bool {
-        let short = (self.size.1 - h).max(0);
-        let dy = short - self.scroll.short;
-        if dy != 0 {
-            self.scroll.short = short;
-            self.move_buttons(0, -dy);
+    /// Show the sheet in a client of `size` at 100%. Smaller than [`PropSheet::size`], the
+    /// buttons keep to the client's bottom-right corner and the page scrolls through the rest;
+    /// as large or larger, the sheet is whole. Idempotent; true when anything moved.
+    pub fn fit(&mut self, size: (i32, i32)) -> bool {
+        let short = ((self.size.0 - size.0).max(0), (self.size.1 - size.1).max(0));
+        let (dx, dy) = (short.0 - self.hscroll.short, short.1 - self.scroll.short);
+        if (dx, dy) != (0, 0) {
+            self.hscroll.short = short.0;
+            self.scroll.short = short.1;
+            self.move_buttons(-dx, -dy);
         }
-        let top = self.scroll.top;
-        self.scroll_to(top) || dy != 0
+        let (left, top) = (self.hscroll.top, self.scroll.top);
+        let moved = self.scroll_to(top) | self.scroll_across(left);
+        moved || (dx, dy) != (0, 0)
     }
 
-    /// The page's controls' 100% rects that show through the page: inside its bevel, from
-    /// where the page starts to where it ends now.
+    /// The page's controls' 100% rects that show through the page: inside its bevel and off its
+    /// scrollbars, from where the page starts to where it ends now.
     fn view(&self) -> form::View {
-        let (w, h) = self.shown();
-        let top = self.page_top();
+        let (right, bottom) = self.inside_end();
+        let (v, h) = self.bars();
+        let bar = self.bar_len();
+        let top = self.page_top() + PAGE_EDGE;
         let x = MARGIN + self.page_dx() + PAGE_EDGE;
-        let bottom = h - PAGE_BOTTOM - PAGE_EDGE;
+        let right = right - if v { bar } else { 0 };
+        let bottom = bottom - if h { bar } else { 0 };
         form::View {
-            rect: Rect::new(
-                x,
-                top + PAGE_EDGE,
-                w - MARGIN - PAGE_EDGE - x,
-                bottom - top - PAGE_EDGE,
-            ),
+            rect: Rect::new(x, top, right - x, bottom - top),
             keep: BUTTON_IDS,
         }
+    }
+
+    /// Where the inside of the page's bevel ends right and down now, at 100%.
+    fn inside_end(&self) -> (i32, i32) {
+        let (w, h) = self.shown();
+        (w - MARGIN - PAGE_EDGE, h - PAGE_BOTTOM - PAGE_EDGE)
+    }
+
+    /// The page's scrollbars' width at 100%: the look's, as the layout reserves it.
+    fn bar_len(&self) -> i32 {
+        self.pages
+            .get(self.tabs.open)
+            .map_or(0, |p| p.units().design(p.controls().scroll))
+    }
+
+    /// How far right and down the open page's controls reach unscrolled, at 100%, up to where
+    /// the inside of the page as built ends: a rect built past that edge is not scrolled to.
+    fn reach(&self) -> (i32, i32) {
+        let Some(page) = self.pages.get(self.tabs.open) else {
+            return (0, 0);
+        };
+        let (right, bottom) = page
+            .items
+            .iter()
+            .filter(|it| !is_button(it))
+            .map(|it| page.flowed(it))
+            .fold((0, 0), |(right, bottom), r| {
+                (
+                    right.max(r.right() + self.hscroll.top),
+                    bottom.max(r.bottom() + self.scroll.top),
+                )
+            });
+        let (w, h) = self.size;
+        (
+            right.min(w - MARGIN - PAGE_EDGE),
+            bottom.min(h - PAGE_BOTTOM - PAGE_EDGE),
+        )
+    }
+
+    /// Which of the page's scrollbars show: down its right edge, along its bottom. A page cut
+    /// short scrolls down; one whose controls reach past its right edge, or under the bar down
+    /// it, scrolls sideways, and then down too if its controls reach under that bar.
+    fn bars(&self) -> (bool, bool) {
+        let (right, bottom) = self.inside_end();
+        let (reach, low) = self.reach();
+        let bar = self.bar_len();
+        let v = self.built_range() > 0;
+        let h = reach > right - if v { bar } else { 0 };
+        (v || (h && low > bottom - bar), h)
     }
 
     /// The page's top at 100%, under the rows of tabs.
@@ -352,15 +416,47 @@ impl PropSheet {
 
     /// How much of the page shows and how tall its controls reach, at 100%.
     fn page_span(&self) -> (i32, i32) {
-        let visible = self.shown().1 - PAGE_BOTTOM - self.page_top();
+        let h = if self.bars().1 { self.bar_len() } else { 0 };
+        let visible = self.shown().1 - PAGE_BOTTOM - self.page_top() - h;
         (visible, visible + self.range())
     }
 
-    /// How far the page scrolls at 100%: what the client cut off the sheet, and how much
+    /// How much of the page shows across and how wide its controls reach, at 100%.
+    fn page_hspan(&self) -> (i32, i32) {
+        let v = if self.bars().0 { self.bar_len() } else { 0 };
+        let visible = self.shown().0 - 2 * MARGIN - self.page_dx() - v;
+        (visible, visible + self.hrange())
+    }
+
+    /// How far the page scrolls down at 100%: what the client cut off the sheet, how much
     /// further down the open page's controls reach than they were built to
-    /// ([`Form::flowed`]).
+    /// ([`Form::flowed`]), and the sideways bar's width when that bar shows. A page whose
+    /// controls only reach under that bar scrolls just far enough to show them.
     fn range(&self) -> i32 {
-        let page = self.open();
+        let (v, h) = self.bars();
+        if !v {
+            return 0;
+        }
+        let bar = if h { self.bar_len() } else { 0 };
+        match self.built_range() {
+            0 => (self.reach().1 - (self.inside_end().1 - bar)).max(0),
+            built => built + bar,
+        }
+    }
+
+    /// How far the page scrolls sideways at 100%: as far as its controls reach past its right
+    /// edge, less the bar down it while that shows.
+    fn hrange(&self) -> i32 {
+        let v = if self.bars().0 { self.bar_len() } else { 0 };
+        (self.reach().0 - (self.inside_end().0 - v)).max(0)
+    }
+
+    /// How far down the page scrolls as it was built: what the client cut off the sheet, and
+    /// how much further down the controls reach than they were built to ([`Form::flowed`]).
+    fn built_range(&self) -> i32 {
+        let Some(page) = self.pages.get(self.tabs.open) else {
+            return self.scroll.short;
+        };
         let bottom = |r: fn(&Form, &Item) -> Rect| {
             page.items
                 .iter()
@@ -378,13 +474,28 @@ impl PropSheet {
         let top = top.clamp(0, self.range());
         let dy = top - self.scroll.top;
         self.scroll.top = top;
+        self.shift_controls(0, -dy);
+        dy != 0
+    }
+
+    /// Scroll the page's controls so `left` 100% px of the page are left of it, held to
+    /// `0..=hrange`. True when they moved.
+    fn scroll_across(&mut self, left: i32) -> bool {
+        let left = left.clamp(0, self.hrange());
+        let dx = left - self.hscroll.top;
+        self.hscroll.top = left;
+        self.shift_controls(-dx, 0);
+        dx != 0
+    }
+
+    fn shift_controls(&mut self, dx: i32, dy: i32) {
         for page in &mut self.pages {
             for it in page.items.iter_mut().filter(|it| !is_button(it)) {
-                it.rect.y -= dy;
+                it.rect.x += dx;
+                it.rect.y += dy;
             }
         }
         self.sync_view();
-        dy != 0
     }
 
     fn sync_view(&mut self) {
@@ -397,7 +508,7 @@ impl PropSheet {
     /// Scroll the page so its focused control shows whole, as little as it takes. True when
     /// the controls moved.
     fn reveal_focus(&mut self) -> bool {
-        if self.range() == 0 || self.tabs.focused {
+        if self.tabs.focused || !self.scrolls() {
             return false;
         }
         let page = self.open();
@@ -412,7 +523,15 @@ impl PropSheet {
         let (top, (visible, _)) = (self.page_top() + PAGE_EDGE, self.page_span());
         let bottom = top + visible - 2 * PAGE_EDGE;
         let to = self.scroll.top + PageScroll::reveal((top, bottom), (r.y, r.bottom()));
-        self.scroll_to(to)
+        let (left, (across, _)) = (MARGIN + self.page_dx() + PAGE_EDGE, self.page_hspan());
+        let right = left + across - 2 * PAGE_EDGE;
+        let across = self.hscroll.top + PageScroll::reveal((left, right), (r.x, r.right()));
+        self.scroll_to(to) | self.scroll_across(across)
+    }
+
+    /// Whether the page scrolls either way.
+    fn scrolls(&self) -> bool {
+        self.bars() != (false, false)
     }
 
     fn move_buttons(&mut self, dx: i32, dy: i32) {
@@ -482,7 +601,8 @@ impl PropSheet {
         };
         let x = ox + u.len(MARGIN + self.page_dx());
         let bottom = oy + u.len(h - self.scroll.short - PAGE_BOTTOM);
-        Rect::new(x, top, ox + u.len(w - MARGIN) - x, bottom - top)
+        let right = ox + u.len(w - self.hscroll.short - MARGIN);
+        Rect::new(x, top, right - x, bottom - top)
     }
 
     fn strip(&self) -> (i32, i32) {
@@ -537,7 +657,7 @@ impl PropSheet {
                 (Vec::new(), self.list_layout(), title)
             }
         };
-        let bar = self.bar_in(page);
+        let (bar, hbar) = self.bars_in(page);
         Layout {
             strip,
             page,
@@ -548,39 +668,52 @@ impl PropSheet {
             cancel,
             apply,
             bar,
+            hbar,
         }
     }
 
-    /// The page's scrollbar down the right edge of `page`, while the page scrolls.
-    fn bar_in(&self, page: Rect) -> Option<Rect> {
-        (self.range() > 0).then(|| {
-            let w = self.open().controls().scroll;
-            Rect::new(
-                page.right() - PAGE_EDGE - w,
-                page.y + PAGE_EDGE,
-                w,
-                page.height - 2 * PAGE_EDGE,
-            )
-        })
+    /// The page's scrollbars in `page`, while the page scrolls: down its right edge, and along
+    /// its bottom up to the first.
+    fn bars_in(&self, page: Rect) -> (Option<Rect>, Option<Rect>) {
+        let (v, h) = self.bars();
+        let w = self.open().controls().scroll;
+        let inside = page.inset(PAGE_EDGE);
+        let (vw, hw) = (if v { w } else { 0 }, if h { w } else { 0 });
+        let bar = Rect::new(inside.right() - w, inside.y, w, inside.height - hw);
+        let hbar = Rect::new(inside.x, inside.bottom() - w, inside.width - vw, w);
+        (v.then_some(bar), h.then_some(hbar))
     }
 
-    /// The page's scrollbar under the rows of tabs the sheet has made room for.
-    fn bar(&self) -> Option<Rect> {
-        self.bar_in(self.page(self.page_dy / tabstrip::ROW_H + 1))
+    /// The page's scrollbars under the rows of tabs the sheet has made room for.
+    fn page_bars(&self) -> (Option<Rect>, Option<Rect>) {
+        self.bars_in(self.page(self.page_dy / tabstrip::ROW_H + 1))
     }
 
-    /// A press on part `hit` of the page's scrollbar: an arrow scrolls a line, the track a
-    /// page, the thumb is grabbed.
-    fn page_bar_press(&mut self, hit: BarHit) {
-        let (visible, _) = self.page_span();
-        let to = self.scroll.press(hit, visible);
-        self.scroll_to(to);
+    /// A press on part `hit` of the page's scrollbar (its sideways one when `across`): an arrow
+    /// scrolls a line, the track a page, the thumb is grabbed.
+    fn page_bar_press(&mut self, hit: BarHit, across: bool) {
+        if across {
+            let (visible, _) = self.page_hspan();
+            let to = self.hscroll.press(hit, visible);
+            self.scroll_across(to);
+        } else {
+            let (visible, _) = self.page_span();
+            let to = self.scroll.press(hit, visible);
+            self.scroll_to(to);
+        }
     }
 
-    /// The pointer at (`x`, `y`) while the page's thumb is held: the page follows it. `None`
-    /// unless the thumb is held, else whether the page moved.
+    /// The pointer at (`x`, `y`) while a page thumb is held: the page follows it. `None`
+    /// unless a thumb is held, else whether the page moved.
     fn page_bar_drag(&mut self, x: i32, y: i32) -> Option<bool> {
-        let parts = self.bar_parts(self.bar()?);
+        let (bar, hbar) = self.page_bars();
+        if self.hscroll.holding() {
+            let parts = self.hbar_parts(hbar?);
+            let (visible, total) = self.page_hspan();
+            let left = self.hscroll.drag(&parts, (x, y), visible, total)?;
+            return Some(self.scroll_across(left));
+        }
+        let parts = self.bar_parts(bar?);
         let (visible, total) = self.page_span();
         let top = self.scroll.drag(&parts, (x, y), visible, total)?;
         Some(self.scroll_to(top))
@@ -593,10 +726,24 @@ impl PropSheet {
         self.scroll.parts(bar, visible, total, thumb_min)
     }
 
-    /// The page's inside on the surface while it scrolls, for a host that draws its own
-    /// controls on the page: they clip to it. None while the page shows whole.
+    /// The page's sideways scrollbar's parts, laid out in `bar`.
+    fn hbar_parts(&self, bar: Rect) -> ScrollParts {
+        let (visible, total) = self.page_hspan();
+        let thumb_min = self.open().controls().thumb_min;
+        self.hscroll.parts(bar, visible, total, thumb_min)
+    }
+
+    /// The page's inside off its scrollbars on the surface while it scrolls, for a host that
+    /// draws its own controls on the page: they clip to it. None while the page shows whole.
     pub fn page_clip(&self, text: &TextRenderer, px: u32) -> Option<Rect> {
-        (self.range() > 0).then(|| self.layout(text, px).page.inset(PAGE_EDGE))
+        if !self.scrolls() {
+            return None;
+        }
+        let l = self.layout(text, px);
+        let r = l.page.inset(PAGE_EDGE);
+        let w = l.bar.map_or(0, |b| b.width);
+        let h = l.hbar.map_or(0, |b| b.height);
+        Some(Rect::new(r.x, r.y, r.width - w, r.height - h))
     }
 
     /// `r`, in the coordinates the open page was built in, where the sheet shows it on the
@@ -612,13 +759,9 @@ impl PropSheet {
     }
 
     /// Whether the pointer at (`x`, `y`) reaches a control a host draws on the page: always while
-    /// the page shows whole, else inside [`PropSheet::page_clip`] and off the page's scrollbar.
+    /// the page shows whole, else inside [`PropSheet::page_clip`].
     pub fn reaches_page(&self, x: i32, y: i32, text: &TextRenderer, px: u32) -> bool {
-        if self.range() == 0 {
-            return true;
-        }
-        let l = self.layout(text, px);
-        l.page.inset(PAGE_EDGE).contains(x, y) && !l.bar.is_some_and(|b| b.contains(x, y))
+        self.page_clip(text, px).is_none_or(|r| r.contains(x, y))
     }
 
     /// The page list's rects in list mode, which need no text; its scrollbar has the
@@ -692,6 +835,7 @@ impl PropSheet {
         if r == StripKey::Turned {
             self.reveal_open();
             self.scroll_to(0);
+            self.scroll_across(0);
         }
         r
     }
@@ -702,6 +846,7 @@ impl PropSheet {
         if r == StripKey::Turned {
             self.reveal_open();
             self.scroll_to(0);
+            self.scroll_across(0);
         }
         r
     }
@@ -771,6 +916,9 @@ impl PropSheet {
         if let Some(bar) = l.bar.filter(|b| b.contains(x, y)) {
             return Some(Hit::PageBar(bar_hit(&self.bar_parts(bar), x, y, false)));
         }
+        if let Some(bar) = l.hbar.filter(|b| b.contains(x, y)) {
+            return Some(Hit::PageHBar(bar_hit(&self.hbar_parts(bar), x, y, true)));
+        }
         self.open().hit(x, y, text, px).map(Hit::Control)
     }
 
@@ -787,7 +935,11 @@ impl PropSheet {
                 return Event::Redraw;
             }
             Some(Hit::PageBar(b)) => {
-                self.page_bar_press(b);
+                self.page_bar_press(b, false);
+                return Event::Redraw;
+            }
+            Some(Hit::PageHBar(b)) => {
+                self.page_bar_press(b, true);
                 return Event::Redraw;
             }
             Some(Hit::List) => return Event::None,
@@ -806,11 +958,14 @@ impl PropSheet {
             Some(Hit::ListBar(b)) => Some(b),
             _ => None,
         };
-        let page_bar = match hit {
-            Some(Hit::PageBar(b)) => Some(b),
-            _ => None,
+        let (page_bar, page_hbar) = match hit {
+            Some(Hit::PageBar(b)) => (Some(b), None),
+            Some(Hit::PageHBar(b)) => (None, Some(b)),
+            _ => (None, None),
         };
-        let lit = self.on_list(|list, _| list.bar_hover(bar)) | self.scroll.motion(page_bar);
+        let lit = self.on_list(|list, _| list.bar_hover(bar))
+            | self.scroll.motion(page_bar)
+            | self.hscroll.motion(page_hbar);
         if let Some(moved) = self.page_bar_drag(x, y) {
             return if moved || lit {
                 Event::Redraw
@@ -845,8 +1000,10 @@ impl PropSheet {
             let moved = self.on_list(|list, lay| list.scroll(rows * pagelist::ROW_H, lay));
             return if moved { Event::Redraw } else { Event::None };
         }
-        if let Some(Hit::PageBar(_)) = hit {
-            return self.wheel_page(rows);
+        match hit {
+            Some(Hit::PageBar(_)) => return self.wheel_page(rows),
+            Some(Hit::PageHBar(_)) => return self.wheel_across(rows),
+            _ => {}
         }
         let i = self.tabs.open;
         match self.pages[i].wheel(control(hit), rows) {
@@ -855,8 +1012,12 @@ impl PropSheet {
         }
     }
 
-    /// The wheel scrolls a page that shows in part a line a row.
+    /// The wheel scrolls a page that shows in part a line a row: down, or sideways on a page
+    /// that scrolls only that way.
     fn wheel_page(&mut self, rows: i32) -> Event {
+        if self.range() == 0 {
+            return self.wheel_across(rows);
+        }
         let to = self.scroll.top + rows * LINE_H;
         if self.scroll_to(to) {
             Event::Redraw
@@ -865,8 +1026,18 @@ impl PropSheet {
         }
     }
 
+    fn wheel_across(&mut self, rows: i32) -> Event {
+        let to = self.hscroll.top + rows * LINE_H;
+        if self.scroll_across(to) {
+            Event::Redraw
+        } else {
+            Event::None
+        }
+    }
+
     pub fn leave(&mut self) -> Event {
-        let bar = self.on_list(|list, _| list.bar_leave()) | self.scroll.leave();
+        let bar =
+            self.on_list(|list, _| list.bar_leave()) | self.scroll.leave() | self.hscroll.leave();
         let i = self.tabs.open;
         let lit = (self.tabs.hover(None) && self.pages[i].styled()) || bar;
         let ev = self.pages[i].leave();
@@ -881,7 +1052,7 @@ impl PropSheet {
             Nav::List(list) => list.bar_release(),
             Nav::Tabs => false,
         };
-        let bar = self.scroll.release() || bar;
+        let bar = self.scroll.release() | self.hscroll.release() || bar;
         let i = self.tabs.open;
         let ev = self.pages[i].release();
         match self.event(i, ev) {
@@ -893,12 +1064,18 @@ impl PropSheet {
     /// Whether the page list or the page has a scrollbar arrow held: the host sends
     /// [`PropSheet::tick`] until it lets go.
     pub fn ticking(&self) -> bool {
-        self.scroll.ticking() || matches!(&self.nav, Nav::List(list) if list.repeating())
+        self.scroll.ticking()
+            || self.hscroll.ticking()
+            || matches!(&self.nav, Nav::List(list) if list.repeating())
     }
 
     /// A host tick at `now`: a held arrow steps once it repeats, while the pointer is on it.
     pub fn tick(&mut self, now: std::time::Instant) -> Event {
-        let page = self.scroll.tick(now).is_some_and(|to| self.scroll_to(to));
+        let page = self.scroll.tick(now).is_some_and(|to| self.scroll_to(to))
+            | self
+                .hscroll
+                .tick(now)
+                .is_some_and(|to| self.scroll_across(to));
         if self.on_list(|list, lay| list.bar_tick(now, lay)) || page {
             Event::Redraw
         } else {
@@ -1165,6 +1342,20 @@ pub fn draw(
             p,
             bar.scaled(s),
             top,
+            visible as usize,
+            total as usize,
+            lit,
+        );
+    }
+    if let Some(bar) = l.hbar {
+        let (visible, total) = sheet.page_hspan();
+        let left = sheet.hscroll.top as usize;
+        let lit = sheet.hscroll.lit();
+        draw_hscrollbar(
+            c,
+            p,
+            bar.scaled(s),
+            left,
             visible as usize,
             total as usize,
             lit,
@@ -2554,8 +2745,8 @@ mod tests {
         ]);
         let mut s = PropSheet::new(&["General"], vec![page], (398, 424));
         s.drawn_with(&p);
-        assert!(s.fit_height(300));
-        assert!(!s.fit_height(300), "idempotent");
+        assert!(s.fit((398, 300)));
+        assert!(!s.fit((398, 300)), "idempotent");
         assert_eq!(
             s.size,
             (398, 424),
@@ -2605,7 +2796,7 @@ mod tests {
             "Tab onto Low brings it into view"
         );
 
-        assert!(s.fit_height(424));
+        assert!(s.fit((398, 424)));
         assert_eq!(s.page_offset(), (0, 0), "a whole sheet does not scroll");
         assert_eq!(s.layout(&text, px).bar, None);
     }
@@ -2628,7 +2819,7 @@ mod tests {
         ]);
         let mut s = PropSheet::new(&["General"], vec![page], (398, 424));
         s.drawn_with(&p);
-        assert!(!s.fit_height(424), "the sheet is whole");
+        assert!(!s.fit((398, 424)), "the sheet is whole");
         let mut c = Canvas::new(398, 424);
         draw(&mut c, &text, &p, &s, false, px);
         let note = s.open().rect("note").unwrap();
@@ -2646,7 +2837,7 @@ mod tests {
         ]);
         s.set_page(0, roomy);
         draw(&mut c, &text, &p, &s, false, px);
-        s.fit_height(424);
+        s.fit((398, 424));
         assert_eq!(s.page_offset().1, 0, "nothing left to scroll");
         assert_eq!(
             s.open().rect("low").unwrap().y,
@@ -2663,7 +2854,7 @@ mod tests {
         let px = Theme::default().fonts.size_px;
         let mut s = sheet(&["General"], (398, 424));
         s.drawn_with(&Theme::default().paint());
-        s.fit_height(300);
+        s.fit((398, 300));
         let bar = s.layout(&text, px).bar.unwrap();
         let down = s.hit(bar.x + 2, bar.bottom() - 3, &text, px);
         assert_eq!(down, Some(Hit::PageBar(BarHit::Forward)));
@@ -2690,7 +2881,7 @@ mod tests {
         let px = Theme::default().fonts.size_px;
         let mut s = sheet(&["General"], (398, 424));
         s.drawn_with(&Theme::default().paint());
-        s.fit_height(300);
+        s.fit((398, 300));
         let bar = s.layout(&text, px).bar.unwrap();
         let (x, y) = (bar.x + 2, bar.bottom() - 3);
         let down = s.hit(x, y, &text, px);
@@ -2713,5 +2904,128 @@ mod tests {
         );
         s.release();
         assert!(!s.ticking());
+    }
+
+    /// A 398x424 sheet shown 300 wide at 200%: the buttons keep to the client's bottom-right
+    /// corner, the page ends at its right edge with a bar along its bottom, and the bar's arrow,
+    /// or Tab onto a control past that edge, scrolls the page sideways.
+    #[test]
+    fn a_narrow_client_keeps_its_buttons_and_scrolls_the_page_sideways() {
+        let theme = Theme::default().with_form_text(200);
+        let (u, px) = (theme.text, theme.fonts.size_px);
+        let text = TextRenderer::load(&FontConfig::default());
+        let p = theme.paint();
+        let page = Form::new(vec![
+            Item::check("left", 20, 50, "Left"),
+            Item::button("right", Rect::new(300, 50, 75, 23), "Right", true, false),
+        ]);
+        let mut s = PropSheet::new(&["General"], vec![page], (398, 424));
+        s.drawn_with(&p);
+        assert!(s.fit((300, 424)));
+        assert!(!s.fit((300, 424)), "idempotent");
+        assert_eq!(
+            s.size,
+            (398, 424),
+            "the pages keep the size they were built for"
+        );
+        assert_eq!(s.client(), (u.len(300), u.len(424)));
+        let l = s.layout(&text, px);
+        assert_eq!(l.apply.right(), u.len(300 - MARGIN));
+        assert_eq!(l.page.right(), u.len(300 - MARGIN));
+        assert_eq!(l.bar, None, "the page shows whole down");
+        let hbar = l.hbar.expect("a page cut narrow has a sideways bar");
+        assert_eq!(hbar.bottom(), l.page.bottom() - PAGE_EDGE);
+        assert_eq!(hbar.right(), l.page.right() - PAGE_EDGE);
+        let mut c = Canvas::new(u.len(300) as u32, u.len(424) as u32);
+        draw(&mut c, &text, &p, &s, false, px);
+        let right = s.open().rect("right").unwrap();
+        assert!(
+            right.right() > hbar.right(),
+            "Right reaches past the page's edge"
+        );
+
+        let arrow = s.hit(hbar.right() - 3, hbar.y + 2, &text, px);
+        assert_eq!(arrow, Some(Hit::PageHBar(BarHit::Forward)));
+        assert_eq!(s.click(arrow), Event::Redraw);
+        s.release();
+        assert_eq!(s.page_offset(), (-LINE_H, 0));
+
+        s.open_mut().focus_id("left");
+        s.key(form::Key::Tab { back: false }, None);
+        assert_eq!(
+            s.open().focus().map(|i| s.open().items[i].id),
+            Some("right")
+        );
+        let right = s.open().rect("right").unwrap();
+        assert!(
+            right.right() <= hbar.right(),
+            "Tab onto Right brings it into view: {right:?}"
+        );
+        assert_eq!(s.open().rect(OK).unwrap(), l.ok, "the buttons stay put");
+
+        assert!(s.fit((398, 424)));
+        assert_eq!(s.page_offset(), (0, 0), "a whole sheet does not scroll");
+        assert_eq!(s.layout(&text, px).hbar, None);
+    }
+
+    /// A page cut short at 200% scrolls under a bar down its right edge. A control flush with
+    /// that edge would lie under the bar, so the page scrolls sideways by the bar's width as
+    /// well; one that keeps the page's margin leaves the page whole across.
+    #[test]
+    fn the_page_scrollbar_covers_no_control() {
+        let theme = Theme::default().with_form_text(200);
+        let (u, px) = (theme.text, theme.fonts.size_px);
+        let text = TextRenderer::load(&FontConfig::default());
+        let p = theme.paint();
+        let edge = 398 - MARGIN - PAGE_EDGE;
+        let at = |right: i32| {
+            let page = Form::new(vec![
+                Item::check("top", 20, 50, "Top"),
+                Item::button(
+                    "flush",
+                    Rect::new(right - 75, 100, 75, 23),
+                    "Flush",
+                    true,
+                    false,
+                ),
+            ]);
+            let mut s = PropSheet::new(&["General"], vec![page], (398, 424));
+            s.drawn_with(&p);
+            s.fit((398, 300));
+            s
+        };
+        let mut s = at(edge);
+        let l = s.layout(&text, px);
+        let bar = l.bar.expect("a page cut short has a scrollbar");
+        let hbar = l
+            .hbar
+            .expect("a control under the bar brings in the sideways bar");
+        assert_eq!(hbar.right(), bar.x, "the bars meet at the corner");
+        assert_eq!(bar.bottom(), hbar.y);
+        assert_eq!(s.hrange(), u.design(s.open().controls().scroll));
+        assert_eq!(
+            s.wheel(Some(Hit::PageHBar(BarHit::Track)), 100),
+            Event::Redraw
+        );
+        let flush = s.open().rect("flush").unwrap();
+        assert!(
+            flush.right() <= bar.x,
+            "{flush:?} clears the bar at {bar:?}"
+        );
+        let mut c = Canvas::new(u.len(398) as u32, u.len(300) as u32);
+        draw(&mut c, &text, &p, &s, false, px);
+
+        let s = at(edge - 12);
+        assert!(s.layout(&text, px).bar.is_some());
+        assert_eq!(s.layout(&text, px).hbar, None, "the margin holds the bar");
+
+        let mut s = at(edge + 30);
+        s.fit((398, 424));
+        let l = s.layout(&text, px);
+        assert_eq!(
+            (l.bar, l.hbar),
+            (None, None),
+            "a whole sheet does not scroll to a rect built past its page"
+        );
     }
 }

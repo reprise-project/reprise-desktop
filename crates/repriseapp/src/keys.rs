@@ -102,8 +102,8 @@ pub fn form_clipboard(focused: Option<form::FocusedEdit>, ev: &Event) -> Reply {
 /// hit-tested and clicked, motion tracked, a release released, Leave clearing
 /// what the pointer lit, a drop on a field ([`crate::fielddrop`]) heard as the
 /// open page's, a tick stepping a held scrollbar arrow. `None` is an event the host answers
-/// itself. First the sheet fits the window's height ([`PropSheet::fit_height`]): a window cut
-/// short scrolls the page. While an arrow is held the host keeps ticking ([`Ctx::want_tick`]).
+/// itself. First the sheet fits the window ([`PropSheet::fit`]): a window cut short or narrow
+/// scrolls the page. While an arrow is held the host keeps ticking ([`Ctx::want_tick`]).
 pub fn sheet_input(sheet: &mut PropSheet, ev: &Event, ctx: &Ctx) -> Option<propsheet::Event> {
     let out = sheet_event(sheet, ev, ctx);
     if sheet.ticking() {
@@ -114,7 +114,8 @@ pub fn sheet_input(sheet: &mut PropSheet, ev: &Event, ctx: &Ctx) -> Option<props
 
 fn sheet_event(sheet: &mut PropSheet, ev: &Event, ctx: &Ctx) -> Option<propsheet::Event> {
     let u = ctx.form_units();
-    sheet.fit_height(u.within(ctx.size.1 - sheet.origin().1));
+    let (ox, oy) = sheet.origin();
+    sheet.fit((u.within(ctx.size.0 - ox), u.within(ctx.size.1 - oy)));
     let px = sheet.open().units().px(ctx.base_px());
     Some(match ev {
         Event::Tick if sheet.ticking() => sheet.tick(std::time::Instant::now()),
