@@ -1,7 +1,8 @@
 //! Protocols that only shape how a surface is drawn: viewporter,
-//! fractional-scale, single-pixel-buffer, content-type, alpha-modifier and
-//! linux-drm-syncobj. Smithay keeps their state on the surface; Reprise adds
-//! the globals, a first preferred scale and the commit blockers.
+//! fractional-scale, single-pixel-buffer, content-type, alpha-modifier,
+//! ext-background-effect (`crate::clientglass`) and linux-drm-syncobj.
+//! Smithay keeps their state on the surface; Reprise adds the globals, a
+//! first preferred scale and the commit blockers.
 //!
 //! A commit with a dmabuf waits for the buffer to be ready before it
 //! applies: on its explicit-sync acquire point when it set one, else on
@@ -16,6 +17,7 @@ use smithay::{
     },
     wayland::{
         alpha_modifier::AlphaModifierState,
+        background_effect::BackgroundEffectState,
         compositor::{
             BufferAssignment, CompositorHandler, SurfaceAttributes, add_blocker,
             add_pre_commit_hook, with_states,
@@ -46,6 +48,8 @@ pub struct SurfaceProtos {
     content_type: ContentTypeState,
     #[allow(dead_code)]
     alpha_modifier: AlphaModifierState,
+    #[allow(dead_code)]
+    background_effect: BackgroundEffectState,
     syncobj: Option<DrmSyncobjState>,
 }
 
@@ -57,6 +61,7 @@ impl SurfaceProtos {
             single_pixel_buffer: SinglePixelBufferState::new::<State>(dh),
             content_type: ContentTypeState::new::<State>(dh),
             alpha_modifier: AlphaModifierState::new::<State>(dh),
+            background_effect: BackgroundEffectState::new::<State>(dh),
             syncobj: None,
         }
     }

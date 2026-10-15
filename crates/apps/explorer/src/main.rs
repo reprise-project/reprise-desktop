@@ -409,6 +409,19 @@ impl Explorer {
         )
     }
 
+    /// How many rows of the window's top the frame's glass shows through: the rebar, under a
+    /// look whose frame runs down under the client.
+    pub fn glass_top(&self, ctx: &Ctx) -> i32 {
+        if reprisekit::look::client_glass(&ctx.theme, true).is_none() {
+            return 0;
+        }
+        let lay = self.layout(ctx);
+        match lay.rebar.y == lay.client.y {
+            true => lay.rebar.bottom() - lay.client.y,
+            false => 0,
+        }
+    }
+
     /// Rebuilt only when the view's geometry or the look's control sizes changed.
     pub fn view_layout(&self, frame: Rect, ctx: &Ctx) -> Rc<shellview::Layout> {
         self.sv_layout.get(&self.sv, frame, &ctx.theme.controls())
@@ -935,6 +948,13 @@ impl App for Lazy {
 
     fn text_sized(&self) -> bool {
         true
+    }
+
+    fn glass_top(&self, win: WinId, ctx: &Ctx) -> i32 {
+        match &self.inner {
+            Some(ex) if win == MAIN => ex.glass_top(ctx),
+            _ => 0,
+        }
     }
 
     fn children(&self) -> Vec<Child> {

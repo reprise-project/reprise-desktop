@@ -50,7 +50,9 @@ compositor drops them.
 - **Surfaces:** `wp_viewporter`, `wp_fractional_scale_manager_v1`,
   `wp_single_pixel_buffer_manager_v1`, `wp_content_type_manager_v1`,
   `wp_alpha_modifier_v1`, `wp_presentation`, `wp_linux_drm_syncobj_manager_v1`
-  (when the GPU supports it)
+  (when the GPU supports it), `ext_background_effect_manager_v1` (under Glass,
+  a framed window's blur region gets the frame's glass, blurred and tinted, and
+  a region across the window's top runs the frame down into it unbroken)
 - **Input:** `zwp_pointer_constraints_v1`, `zwp_relative_pointer_manager_v1`,
   `zwp_pointer_gestures_v1`, `wp_cursor_shape_manager_v1`,
   `zwp_tablet_manager_v2`, `zwp_keyboard_shortcuts_inhibit_manager_v1`,

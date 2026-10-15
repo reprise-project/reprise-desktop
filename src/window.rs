@@ -328,7 +328,6 @@ pub struct Window {
     pub tree: TreeId,
     /// Shadow, backdrop and frame, below `content`; left out of what glass blurs
     /// (`glass::leave_out`).
-    #[allow(dead_code)]
     pub chrome: TreeId,
     /// The shadow's eight pieces; shown only under Glass around a restored frame.
     pub shadow: [BufferId; 8],
@@ -339,6 +338,10 @@ pub struct Window {
     pub frame: [BufferId; 4],
     /// A sheet's plain glass interior, one pixel stretched.
     sheet: BufferId,
+    /// The client's blur region (`clientglass::region`), client coordinates.
+    pub blur: Vec<Rect>,
+    /// The frame's glass under each `blur` rect while Glass draws it, one pixel stretched.
+    client_glass: Vec<BufferId>,
     /// `draw_sheet` drew the window as a sheet and `unsheet` has not put
     /// its frame's nodes back yet.
     pub sheeted: bool,
@@ -700,6 +703,8 @@ impl State {
             glass: Backdrop::new(&self.glass),
             frame,
             sheet,
+            blur: Vec::new(),
+            client_glass: Vec::new(),
             sheeted: false,
             content,
             surface,
@@ -764,13 +769,19 @@ impl State {
 
     pub fn relayout(&mut self, w: WindowId) {
         let m = self.config.theme.metrics.clone();
+        let opens = reprisekit::look::client_glass(&self.config.theme, true).is_some();
         let Some(win) = self.win_mut(w) else {
             return;
         };
         let (cw, ch) = win.client_size();
         win.client_w = cw;
         win.client_h = ch;
-        win.geom = FrameGeometry::layout(&m, cw, ch, win.maximized, win.chrome());
+        let glass_top = match opens {
+            true => crate::clientglass::glass_top(&win.blur, cw),
+            false => 0,
+        };
+        win.geom = FrameGeometry::layout(&m, cw, ch, win.maximized, win.chrome())
+            .with_glass_top(glass_top);
         let (tree, content, surface, frame, on) = (
             win.tree,
             win.content,
@@ -1069,13 +1080,18 @@ impl State {
 
     fn place_backdrop(&mut self, w: WindowId) {
         let sheet = self.is_sheet(w);
+        self.place_client_glass(w, sheet);
         let pane = match self.config.theme.glass() {
             Some(g) if self.config.glass.transparency => self
                 .win(w)
                 .filter(|win| sheet || win.has_frame())
                 .map(|win| match sheet {
                     true => sheet_pane(win.geom.total, g.corner),
-                    false => frame_pane(&win.geom, g.corner, win.maximized),
+                    false => {
+                        let mut p = frame_pane(&win.geom, g.corner, win.maximized);
+                        p.holes = client_holes(win.geom.client, &win.blur);
+                        p
+                    }
                 }),
             _ => None,
         };
@@ -1090,6 +1106,40 @@ impl State {
             win.glass.set(scene, glass, win.backdrop, pane);
             stack_shadow(scene, &win.shadow, win.backdrop, over);
         }
+    }
+
+    /// Lay the frame's glass under the client's blur region when the look has it and the window
+    /// shows its frame; the client is then left out of what glass blurs, so its own glass reads
+    /// what lies behind the window.
+    fn place_client_glass(&mut self, w: WindowId, sheet: bool) {
+        let active = self.win(w).is_some_and(|x| x.is_active(self.focused)) && !self.switcher.cards;
+        let px = reprisekit::look::client_glass(&self.config.theme, active);
+        let State { scene, windows, .. } = self;
+        let Some(win) = windows.iter_mut().find(|x| x.id == w) else {
+            return;
+        };
+        let rects: Vec<Rect> = match px {
+            Some(_) if win.has_frame() && !sheet => win.blur.clone(),
+            _ => Vec::new(),
+        };
+        while win.client_glass.len() > rects.len() {
+            if let Some(b) = win.client_glass.pop() {
+                scene.destroy(b);
+            }
+        }
+        while win.client_glass.len() < rects.len() {
+            let b = scene.buffer_create(win.chrome);
+            scene.set_input(b, Input::Passthrough);
+            win.client_glass.push(b);
+        }
+        let c = win.geom.client;
+        for (&b, r) in win.client_glass.iter().zip(&rects) {
+            scene.buffer_set_canvas(b, &[px.unwrap_or(0)], 1, 1);
+            scene.buffer_set_dest_size(b, Some((r.width, r.height).into()));
+            scene.set_position(b, c.x + r.x, c.y + r.y);
+        }
+        let leave_out = !rects.is_empty() && crate::glass::wanted(&self.config);
+        scene.set_in_backdrop(win.content, !leave_out);
     }
 
     /// Show the shadow under Glass; none for maximized, frameless or non-Glass windows, and a sheet
@@ -1721,6 +1771,13 @@ impl State {
     }
 
     fn commit_buffer(&mut self, w: WindowId, caps_changed: bool) {
+        let Some(win) = self.win_mut(w) else {
+            return;
+        };
+        let blur =
+            crate::clientglass::region(win.wl_surface(), win.geometry_origin(), win.client_size());
+        let reglassed = blur != win.blur;
+        win.blur = blur;
         let Some(win) = self.win(w) else {
             return;
         };
@@ -1747,6 +1804,9 @@ impl State {
         let resized = win.client_size() != (win.client_w, win.client_h)
             || (win.surface_origin() != self.scene_surface_origin(w));
         let was = win.frame_rect();
+        if reglassed && !resized {
+            self.relayout(w);
+        }
         if resized {
             self.relayout(w);
             self.keep_grown_inside(w, was);
@@ -2391,6 +2451,20 @@ pub(crate) fn client_limits(limits: (i32, i32, i32, i32)) -> SizeLimits {
 /// Stack the shadow pieces just under the glass `backdrop` or (`over`) just above it, frame strips
 /// on top. Molten's lens reads past the frame edge, so a shadow under the glass bends into the
 /// caption as a dark line.
+/// The parts of `client` (frame coordinates) the frame's glass leaves clear: all of it but the
+/// `blur` rects (client coordinates).
+fn client_holes(client: Rect, blur: &[Rect]) -> Vec<Rect> {
+    let r = |x: Rect| Rectangle::<i32, Logical>::new((x.x, x.y).into(), (x.width, x.height).into());
+    let glass = blur
+        .iter()
+        .map(|b| r(Rect::new(client.x + b.x, client.y + b.y, b.width, b.height)));
+    r(client)
+        .subtract_rects(glass)
+        .into_iter()
+        .map(|h| Rect::new(h.loc.x, h.loc.y, h.size.w, h.size.h))
+        .collect()
+}
+
 fn stack_shadow(scene: &mut DeskScene, shadow: &[BufferId; 8], backdrop: TreeId, over: bool) {
     let Some(parent) = scene.parent(backdrop) else {
         return;
@@ -2571,6 +2645,20 @@ mod tests {
     use super::*;
     use crate::raster::Rect;
     use crate::theme::Metrics;
+
+    #[test]
+    fn the_frames_glass_leaves_clear_only_the_client_outside_its_blur_region() {
+        let client = Rect::new(8, 30, 400, 300);
+        assert_eq!(
+            client_holes(client, &[]),
+            vec![client],
+            "no region: the whole client"
+        );
+        let holes = client_holes(client, &[Rect::new(0, 0, 400, 78)]);
+        assert_eq!(holes, vec![Rect::new(8, 108, 400, 222)], "below the band");
+        let holes = client_holes(client, &[Rect::new(0, 0, 400, 300)]);
+        assert!(holes.is_empty(), "a region over all of it: {holes:?}");
+    }
 
     #[test]
     fn modal_end_follows_the_chain_to_its_last_dialog() {

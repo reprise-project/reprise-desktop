@@ -12,6 +12,7 @@ mod calendarview;
 mod camdev;
 mod capture;
 mod caret;
+mod clientglass;
 mod clipboard;
 mod cliphistory;
 mod clipview;

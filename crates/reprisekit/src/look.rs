@@ -63,6 +63,44 @@ pub fn draw_sheet(canvas: &mut Canvas, theme: &Theme, r: Rect) {
     }
 }
 
+/// The frame's plain glass where it runs down under a client's top
+/// ([`FrameGeometry::glass_top`]), focused or not, as one premultiplied pixel; None in a look
+/// whose frame never does.
+pub fn client_glass(theme: &Theme, active: bool) -> Option<u32> {
+    use crate::style::{Part, State};
+    let p = theme.look.style()?.part(Part::ClientGlass)?;
+    let f = p.frame(if active {
+        State::Normal
+    } else {
+        State::Inactive
+    });
+    Some(p.atlas.get(f.x, f.y))
+}
+
+/// Lay the caption title's glow (or dark Glass's edge) under whatever is drawn in `r` over clear
+/// [`client_glass`], so labels and icons there read on any tint; nothing in a look without one.
+pub fn glow_on_glass(canvas: &mut Canvas, theme: &Theme, r: Rect) {
+    let Some(glow) = theme.look.style().and_then(|s| s.caption_title.glow) else {
+        return;
+    };
+    let ink = canvas.copy_rect(r);
+    let (w, h) = ink.device_size();
+    let (w, h) = (w as usize, h as usize);
+    let coverage: Vec<u8> = ink.pixels.iter().map(|&p| (p >> 24) as u8).collect();
+    let s = canvas.scale();
+    let alpha = (glow.alpha)(&crate::style::GlowMask {
+        coverage: &coverage,
+        width: w,
+        height: h,
+        rows: (0, h),
+        active: theme.active,
+        scale: theme.scale.max(1) * s,
+    });
+    canvas.clear_rect(r);
+    canvas.blit_mask_over(r.x * s, r.y * s, w, h, &alpha, glow.color, r);
+    canvas.blit_over(r.x, r.y, &ink);
+}
+
 /// Dispatch the taskbar to Classic or a skinned [`Style`]. `text` renders every run; `start_text` the Start label. The keyboard's item (`state.focus`) gets a dotted ring; the tray arrow lights instead.
 pub fn draw_taskbar(
     canvas: &mut Canvas,
@@ -362,6 +400,28 @@ mod tests {
         assert!(theme_for(Interface::Glass).look.lights_pointer());
         let bare = crate::look::styled::fixture::one_part_look(crate::style::Part::Caption);
         assert!(!bare.lights_pointer(), "a style with no lit control art");
+    }
+
+    #[test]
+    fn ink_on_glass_glows_in_the_titles_glow_and_keeps_its_own_pixels() {
+        let ink = |c: &mut Canvas| {
+            c.fill_rect(Rect::new(20, 8, 10, 4), crate::theme::Color::rgb(0, 0, 0))
+        };
+        let band = Rect::new(0, 0, 60, 20);
+        let mut c = Canvas::new(60, 20);
+        ink(&mut c);
+        glow_on_glass(&mut c, &theme_for(Interface::Glass), band);
+        assert_eq!(c.get(25, 10), 0xFF00_0000, "the ink stays");
+        let halo = c.get(25, 6);
+        assert!(halo >> 24 > 0, "a glow just above it: {halo:08X}");
+        assert_eq!(halo & 0xFF, halo >> 24, "white, premultiplied");
+        assert_eq!(c.get(55, 18), 0, "clear far from it");
+
+        let mut classic = Canvas::new(60, 20);
+        ink(&mut classic);
+        let before = classic.pixels.clone();
+        glow_on_glass(&mut classic, &theme_for(Interface::Classic), band);
+        assert_eq!(classic.pixels, before, "no glow in a look without one");
     }
 
     #[test]

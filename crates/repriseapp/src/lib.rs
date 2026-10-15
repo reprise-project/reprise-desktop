@@ -19,6 +19,9 @@ pub mod thumbs;
 pub mod unlock;
 
 use smithay_client_toolkit::reexports::calloop::channel as reprise_channel;
+use smithay_client_toolkit::reexports::protocols::ext::background_effect::v1::client::{
+    ext_background_effect_manager_v1, ext_background_effect_surface_v1,
+};
 use smithay_client_toolkit::reexports::protocols::wp::{
     fractional_scale::v1::client::{wp_fractional_scale_manager_v1, wp_fractional_scale_v1},
     keyboard_shortcuts_inhibit::zv1::client::{
@@ -658,6 +661,12 @@ pub trait App {
     fn text_sized(&self) -> bool {
         false
     }
+    /// How many rows at the top of window `win` the frame's glass runs down under, under a look
+    /// whose frame has it ([`reprisekit::look::client_glass`]); the program draws them clear
+    /// where the glass should show. Read after each draw.
+    fn glass_top(&self, _win: WinId, _ctx: &Ctx) -> i32 {
+        0
+    }
     fn event(&mut self, win: WinId, ev: Event, ctx: &mut Ctx) -> Reply;
     /// Called before each draw of `win`, at `scale` device px per logical px, with
     /// [`Ctx::icons`] at that scale: a program fetches again what it holds at another one.
@@ -1016,6 +1025,13 @@ pub fn run(app: Box<dyn App>) {
     let tag_manager = globals
         .bind::<xdg_toplevel_tag_manager_v1::XdgToplevelTagManagerV1, _, _>(&qh, 1..=1, NoEvents)
         .ok();
+    let effects = globals
+        .bind::<ext_background_effect_manager_v1::ExtBackgroundEffectManagerV1, _, _>(
+            &qh,
+            1..=1,
+            NoEvents,
+        )
+        .ok();
     // The main window itself is `sync_main`'s, so a program that starts
     // hidden never gets a surface for it.
     let ((w, h), _) = opening_size(&*app);
@@ -1059,6 +1075,7 @@ pub fn run(app: Box<dyn App>) {
         importer_v1,
         wm_dialog,
         tag_manager,
+        effects,
         outputs: None,
         inhibit_manager,
         seat: None,
@@ -1243,6 +1260,9 @@ struct Slot {
     modal: bool,
     caption: Caption,
     access: access::SlotAccess,
+    /// The window's blur region object and the glass rows across its width it last set.
+    glass: Option<ext_background_effect_surface_v1::ExtBackgroundEffectSurfaceV1>,
+    glass_top: (i32, i32),
 }
 
 impl Drop for Slot {
@@ -1252,6 +1272,9 @@ impl Drop for Slot {
         }
         if let Some(f) = self.scaling.fraction.take() {
             f.destroy();
+        }
+        if let Some(g) = self.glass.take() {
+            g.destroy();
         }
     }
 }
@@ -1338,6 +1361,7 @@ struct Host {
     importer_v2: Option<zxdg_importer_v2::ZxdgImporterV2>,
     importer_v1: Option<zxdg_importer_v1::ZxdgImporterV1>,
     tag_manager: Option<xdg_toplevel_tag_manager_v1::XdgToplevelTagManagerV1>,
+    effects: Option<ext_background_effect_manager_v1::ExtBackgroundEffectManagerV1>,
     outputs: Option<outputmgmt::Outputs>,
     inhibit_manager:
         Option<zwp_keyboard_shortcuts_inhibit_manager_v1::ZwpKeyboardShortcutsInhibitManagerV1>,
@@ -1715,6 +1739,8 @@ impl Host {
                 modal: false,
                 caption,
                 access: access::SlotAccess::new(MAIN, &self.a11y),
+                glass: None,
+                glass_top: (0, 0),
             },
         );
     }
@@ -1905,6 +1931,8 @@ impl Host {
                 modal: c.modal,
                 caption,
                 access: access::SlotAccess::new(c.id, &self.a11y),
+                glass: None,
+                glass_top: (0, 0),
             });
         }
         let mut resized = Vec::new();
@@ -2034,6 +2062,8 @@ impl Host {
             modal: false,
             caption: Caption::Window,
             access: access::SlotAccess::new(f.id, &self.a11y),
+            glass: None,
+            glass_top: (0, 0),
         });
     }
 
@@ -2319,6 +2349,35 @@ impl Host {
         }
     }
 
+    /// Set slot `i`'s blur region to its top `rows.1` rows across its `rows.0` width, for the
+    /// commit that follows; none at 0.
+    fn set_glass_top(&mut self, i: usize, rows: (i32, i32), qh: &QueueHandle<Host>) {
+        let Some(effects) = &self.effects else {
+            return;
+        };
+        let s = &mut self.slots[i];
+        let had = s.glass_top.1 > 0;
+        if s.glass_top == rows || (!had && rows.1 == 0) {
+            return;
+        }
+        s.glass_top = rows;
+        let surface = s.window.wl_surface();
+        let effect = s
+            .glass
+            .get_or_insert_with(|| effects.get_background_effect(surface, qh, NoEvents));
+        if rows.1 == 0 {
+            effect.set_blur_region(None);
+            return;
+        }
+        match smithay_client_toolkit::compositor::Region::new(&self.compositor) {
+            Ok(region) => {
+                region.add(0, 0, rows.0, rows.1);
+                effect.set_blur_region(Some(region.wl_region()));
+            }
+            Err(e) => log::warn!("blur region: {e}"),
+        }
+    }
+
     fn draw(&mut self, id: WinId, qh: &QueueHandle<Host>) {
         let Some(i) = self.slots.iter().position(|s| s.id == id) else {
             return;
@@ -2366,7 +2425,12 @@ impl Host {
         let app = &mut self.app;
         self.ctx
             .at_scale(scale, |ctx| app.draw(id, &mut canvas, ctx));
+        let glass_top = match reprisekit::look::client_glass(&self.ctx.theme, true) {
+            Some(_) => self.app.glass_top(id, &self.ctx).clamp(0, h),
+            None => 0,
+        };
         self.ctx.theme.active = true;
+        self.set_glass_top(i, (w, glass_top), qh);
         let spot = canvas.take_spot();
         if let Some(t) = self.text_input.as_mut() {
             t.sync(id, spot);
@@ -3677,6 +3741,8 @@ macro_rules! no_events {
 }
 
 no_events!(
+    ext_background_effect_manager_v1::ExtBackgroundEffectManagerV1,
+    ext_background_effect_surface_v1::ExtBackgroundEffectSurfaceV1,
     zxdg_importer_v2::ZxdgImporterV2,
     zxdg_importer_v1::ZxdgImporterV1,
     xdg_wm_dialog_v1::XdgWmDialogV1,

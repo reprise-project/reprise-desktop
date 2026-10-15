@@ -24,6 +24,10 @@ pub enum Part {
     /// rect (Normal focused, Inactive otherwise), while a peek hides it. A
     /// look without it keeps the frame.
     WindowSheet,
+    /// The frame's plain glass where it runs down under the client's top
+    /// ([`crate::frame::FrameGeometry::glass_top`]), Normal focused, Inactive
+    /// otherwise. Its outset covers the client's edges beside and above it.
+    ClientGlass,
     MinButton,
     MaxButton,
     RestoreButton,

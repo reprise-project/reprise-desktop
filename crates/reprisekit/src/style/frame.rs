@@ -64,6 +64,20 @@ pub fn draw_frame(
             s,
         );
     }
+    if geom.glass_top > 0
+        && let Some(p) = style.part(Part::ClientGlass)
+    {
+        let c = geom.client;
+        let band = Rect::new(c.x, c.y, c.width, geom.glass_top);
+        let o = p.outset.scaled(s);
+        canvas.clear_rect(Rect::new(
+            band.x - o.left,
+            band.y - o.top,
+            band.width + o.left + o.right,
+            band.height + o.top,
+        ));
+        style.draw(canvas, band, Part::ClientGlass, band_state, s);
+    }
 
     if !state.tabbed {
         draw_title(canvas, style, theme, caption_text, geom, state);
@@ -1309,6 +1323,89 @@ mod tests {
                     );
                 }
             }
+        }
+    }
+
+    #[test]
+    fn glass_run_under_the_clients_top_opens_its_edges_beside_and_above() {
+        let theme = theme_for(Interface::Glass);
+        let s = theme.look.style().unwrap();
+        let text = TextRenderer::load(&s.caption_text.font());
+        for maximized in [false, true] {
+            let g = FrameGeometry::layout(&theme.metrics, 400, 300, maximized, Chrome::WINDOW);
+            let open = g.with_glass_top(60);
+            for active in [true, false] {
+                let st = FrameState {
+                    title: "",
+                    ..state(active, maximized)
+                };
+                let draw = |g: &FrameGeometry| {
+                    let mut c = Canvas::new(g.total.0 as u32, g.total.1 as u32);
+                    draw_frame(&mut c, s, &theme, &text, g, &st);
+                    c
+                };
+                let (shut, wide) = (draw(&g), draw(&open));
+                let glass = crate::look::client_glass(&theme, active).unwrap();
+                let c = g.client;
+                let what = format!("maximized {maximized}, active {active}");
+                for y in [c.y - 2, c.y - 1] {
+                    assert_ne!(shut.get(c.x + 100, y), glass, "{what}: row {y} is an edge");
+                    assert_eq!(wide.get(c.x + 100, y), glass, "{what}: row {y} opens");
+                }
+                assert_eq!(
+                    wide.get(c.x + 100, c.y - 3),
+                    shut.get(c.x + 100, c.y - 3),
+                    "{what}: the caption above the edges"
+                );
+                assert_eq!(
+                    wide.get(c.x + 5, c.y + 5),
+                    0,
+                    "{what}: the client stays clear"
+                );
+                if maximized {
+                    continue;
+                }
+                for x in [c.x - 2, c.x - 1, c.right(), c.right() + 1] {
+                    assert_eq!(
+                        wide.get(x, c.y + 30),
+                        glass,
+                        "{what}: column {x} beside the glass"
+                    );
+                    assert_eq!(
+                        wide.get(x, c.y + 60),
+                        shut.get(x, c.y + 60),
+                        "{what}: column {x} below it keeps its edge"
+                    );
+                }
+                assert_eq!(
+                    wide.get(c.x - 3, c.y + 30),
+                    shut.get(c.x - 3, c.y + 30),
+                    "{what}: the border outside the edges"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_frame_without_client_glass_ignores_the_glass_top() {
+        for look in [Interface::Blue, Interface::Classic] {
+            let theme = theme_for(look);
+            let g = FrameGeometry::layout(&theme.metrics, 300, 200, false, Chrome::WINDOW);
+            let text = TextRenderer::load(&theme.fonts);
+            let draw = |g: &FrameGeometry| {
+                let mut c = Canvas::new(g.total.0 as u32, g.total.1 as u32);
+                crate::look::draw_frame(&mut c, &theme, &text, &text, g, &state(true, false));
+                c
+            };
+            assert_eq!(
+                draw(&g).pixels,
+                draw(&g.with_glass_top(50)).pixels,
+                "{look:?}"
+            );
+            assert!(
+                crate::look::client_glass(&theme, true).is_none(),
+                "{look:?}"
+            );
         }
     }
 

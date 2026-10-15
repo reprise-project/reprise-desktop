@@ -2122,6 +2122,36 @@ fn under_glass_the_closing_line_sits_above_the_list_header() {
 }
 
 #[test]
+fn under_glass_the_rebar_is_clear_over_the_frames_glass() {
+    use reprisekit::interface::Interface;
+    let dir = tempfile::tempdir().expect("a temp dir");
+    let mut ctx = test_ctx();
+    ctx.size = (792, 573);
+    for look in [Interface::Classic, Interface::Blue] {
+        ctx.theme = reprisekit::interfaces::theme_for(look);
+        let ex = test_explorer(Place::Folder(dir.path().to_path_buf()), &mut ctx);
+        assert_eq!(ex.glass_top(&ctx), 0, "{look:?} keeps its rebar opaque");
+    }
+    ctx.theme = reprisekit::interfaces::theme_for(Interface::Glass);
+    let ex = test_explorer(Place::Folder(dir.path().to_path_buf()), &mut ctx);
+    let lay = ex.layout(&ctx);
+    assert_eq!(ex.glass_top(&ctx), 78, "menu, toolbar and address bands");
+    assert_eq!(lay.etch_y, 78, "the closing line sits under the glass");
+    let mut c = Canvas::new(792, 573);
+    window::draw(&ex, &mut c, &ctx);
+    let gap = lay.menu.bottom();
+    assert_eq!(c.get(400, gap) >> 24, 0, "the rows between bands are clear");
+    assert_eq!(c.get(780, 40) >> 24, 0, "the toolbar band past its buttons");
+    let field = lay.address.expect("the address bar");
+    assert_eq!(
+        c.get(field.x + field.width / 2, field.y + field.height / 2) >> 24,
+        0xFF,
+        "the address field stays opaque"
+    );
+    assert_eq!(c.get(400, lay.etch_y) >> 24, 0xFF, "the closing line");
+}
+
+#[test]
 fn computer_gains_and_loses_a_locked_stick_as_udisks_reports_it() {
     use reprisefs::udisks::{Disk, Snapshot, Volume};
     let mut ctx = test_ctx();
