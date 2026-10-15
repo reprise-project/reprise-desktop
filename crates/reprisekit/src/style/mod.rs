@@ -108,6 +108,10 @@ pub enum Part {
     TaskGroupBody,
     TaskCollapse,
     TaskExpand,
+    /// [`Part::TaskCollapse`] without the band behind it, for a band grown with the text.
+    TaskCollapseMark,
+    /// [`Part::TaskExpand`] without the band behind it, for a band grown with the text.
+    TaskExpandMark,
     ExplorerBarHeader,
     ExplorerBarClose,
     PlacesBar,
