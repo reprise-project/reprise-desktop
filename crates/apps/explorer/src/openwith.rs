@@ -36,7 +36,7 @@ pub fn program_pick(path: &Path) -> Option<Program> {
 }
 
 /// Folders stay regardless, through `Host::list`'s own `is_dir` check.
-fn keep(filter: usize) -> impl Fn(&reprisefs::listing::Item) -> bool {
+fn keep(filter: usize) -> impl Fn(&reprisefs::listing::Item) -> bool + Clone + Send + 'static {
     move |i| filter != 0 || i.exec
 }
 

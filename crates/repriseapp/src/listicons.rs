@@ -4,11 +4,70 @@ use std::path::Path;
 use std::sync::mpsc::{Receiver, channel};
 
 use crate::Waker;
+use reprisefs::listing::Item;
 use reprisekit::controls::shellview::{self, Entry};
 use reprisekit::icontheme::{IconCache, LISTING_PX, ListingIcons, decode_file};
 use reprisekit::raster::Canvas;
 
 type Art = Vec<(String, [Option<Canvas>; 3])>;
+
+/// Puts `art`, decoded at `scale`, into `cache` in one batch.
+fn put_art(cache: &mut IconCache, art: &[(String, [Option<Canvas>; 3])], scale: i32) {
+    let puts = art.iter().flat_map(|(file, a)| {
+        LISTING_PX
+            .into_iter()
+            .zip(a)
+            .map(|(px, c)| (file.clone(), px, c.clone()))
+    });
+    cache.put_files_at(puts.collect(), scale);
+}
+
+/// What a listing's thread reads for its rows' icons, beside the rows: each folder's own icon
+/// (`.directory`'s `Icon=`), and the icon files the rows name decoded at [`LISTING_PX`]. A
+/// subfolder may be a mount point, and an icon file may be anywhere, that never answers.
+#[derive(Debug, Default)]
+pub struct ReadIcons {
+    /// Row `i`'s own icon, for `reprisefs::icons::item_icon_with`.
+    pub own: Vec<Option<String>>,
+    art: Art,
+    scale: i32,
+}
+
+impl ReadIcons {
+    /// Reads `items`' own icons and decodes the icon files they name at `scale`.
+    pub fn read<'a>(items: impl IntoIterator<Item = &'a Item>, scale: i32) -> ReadIcons {
+        let mut files: Vec<String> = Vec::new();
+        let own = items
+            .into_iter()
+            .map(|it| {
+                let own = (it.is_dir && it.shortcut.is_none())
+                    .then(|| reprisefs::meta::folder_icon(&it.path))
+                    .flatten();
+                let named = match &it.shortcut {
+                    Some(sc) => Some(sc.icon()),
+                    None => own.as_deref(),
+                };
+                files.extend(named.filter(|n| n.starts_with('/')).map(str::to_string));
+                own
+            })
+            .collect();
+        files.sort_unstable();
+        files.dedup();
+        let art = files
+            .into_iter()
+            .map(|f| {
+                let a = LISTING_PX.map(|px| decode_file(Path::new(&f), px, scale));
+                (f, a)
+            })
+            .collect();
+        ReadIcons { own, art, scale }
+    }
+
+    /// Hands `cache` the decoded icon files, so fetching the rows' icons reads none of them.
+    pub fn put(&self, cache: &mut IconCache) {
+        put_art(cache, &self.art, self.scale);
+    }
+}
 
 /// An Explorer or file dialog listing's icons: a new draw scale swaps the entries' icons without
 /// listing the folder again, theme icons at once and icon files once a thread decodes them.
@@ -82,13 +141,7 @@ impl ListIcons {
             .into_iter()
             .filter(|(_, a)| a.iter().any(Option::is_some))
             .collect();
-        let puts = art.iter().flat_map(|(f, a)| {
-            LISTING_PX
-                .into_iter()
-                .zip(a)
-                .map(|(px, c)| (f.clone(), px, c.clone()))
-        });
-        cache.put_files_at(puts.collect(), self.scale);
+        put_art(cache, &art, self.scale);
         let swaps: Vec<_> = art
             .into_iter()
             .filter_map(|(f, a)| self.icons.put(&f, a))

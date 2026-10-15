@@ -1,5 +1,5 @@
 use crate::Explorer;
-use crate::foldertree::{self, Inputs};
+use crate::foldertree::{self, Inputs, Kids};
 use crate::place::Place;
 use repriseapp::Ctx;
 use reprisekit::controls::treeview;
@@ -71,18 +71,25 @@ impl Explorer {
     }
 
     pub fn tree_follow(&mut self, place: &Place, ctx: &mut Ctx) {
+        self.tree_follow_with(place, Vec::new(), ctx);
+    }
+
+    /// [`Explorer::tree_follow`] with the children of some places on the way already read
+    /// ([`foldertree::read_kids`]).
+    pub fn tree_follow_with(&mut self, place: &Place, read: Vec<(Place, Kids)>, ctx: &mut Ctx) {
         let inp = Inputs {
             show_hidden: self.settings.show_hidden,
             drives: &self.drives,
             volumes: &self.volumes,
             drive_mounts: &self.drive_mounts,
         };
-        foldertree::follow(
+        foldertree::follow_with(
             &mut self.tree,
             &mut self.tree_places,
             place,
             &inp,
             &mut ctx.icons,
+            read,
         );
         if let Some(frame) = self.layout(ctx).tree {
             let tl = treeview::layout(

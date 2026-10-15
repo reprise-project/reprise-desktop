@@ -82,7 +82,7 @@ impl Explorer {
         }
     }
 
-    /// `Event::Wake`: a put, job or tip walk finished, thumbnails arrived, or
+    /// `Event::Wake`: a put, job, tip walk or late listing finished, thumbnails arrived, or
     /// the watch or UDisks2 saw a change (which re-lists), or the folder left (which follows it). A closing window quits here
     /// once its work is done.
     pub fn wake(&mut self, ctx: &mut Ctx) -> Reply {
@@ -111,7 +111,10 @@ impl Explorer {
             dirty = true;
         }
         // A finished put already re-listed; its reply may carry an error box.
-        let put = job.or(put).filter(|r| *r != Reply::none());
+        let put = job
+            .or(put)
+            .or(self.take_read(ctx))
+            .filter(|r| *r != Reply::none());
         if let Some(from) = self.watch.as_mut().and_then(|w| w.take_gone()) {
             let r = self.follow_gone(&from, ctx);
             return put.unwrap_or(r);
@@ -916,6 +919,43 @@ mod tests {
         ctx.icons.set_scale(1);
         ex.follow_scale(1, &mut ctx);
         assert_eq!(chrome_scales(&ex), at_1);
+    }
+
+    /// A place still being read leaves the window on the listing before, refreshes included,
+    /// and shows once the read answers.
+    #[test]
+    fn a_late_listing_lands_and_the_one_before_stays_until_then() {
+        let mut ctx = test_ctx();
+        let (dir, mut ex) = explorer(&mut ctx);
+        let sub = dir.path().join("sub");
+        std::fs::write(sub.join("inner.txt"), "x").expect("write");
+        let place = Place::Folder(sub);
+        let read = ex.reader(place.clone(), &ctx);
+        let (answer, gate) = std::sync::mpsc::channel::<()>();
+        ex.reading = Some((
+            place.clone(),
+            repriseapp::listjob::Job::spawn(None, move || {
+                gate.recv().ok();
+                read()
+            }),
+        ));
+        let before = ex.place.clone();
+
+        assert_eq!(ex.refresh(&mut ctx), Reply::none(), "the read is newer");
+        assert_eq!(ex.place, before);
+        index_of(&ex, "a.png");
+
+        answer.send(()).expect("send");
+        for _ in 0..500 {
+            if ex.place == place {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+            ex.wake(&mut ctx);
+        }
+        assert_eq!(ex.place, place);
+        index_of(&ex, "inner.txt");
+        assert!(ex.reading.is_none());
     }
 
     #[test]

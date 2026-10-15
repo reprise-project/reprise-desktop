@@ -96,14 +96,29 @@ pub fn fill(
     let Some(node) = tree.node(&path) else {
         return;
     };
-    let place = places[node.id as usize].clone();
+    let known: Vec<&Place> = node
+        .children
+        .iter()
+        .map(|n| &places[n.id as usize])
+        .collect();
+    let kids = read_kids(&places[node.id as usize], inp, &known);
+    fill_with(tree, places, path, kids, inp, icons);
+}
+
+/// A node's children as [`read_kids`] read them: label, place, and whether the child opens
+/// (`None` for one the node already held, which keeps its own).
+pub type Kids = Vec<(String, Place, Option<bool>)>;
+
+/// The file system half of [`fill`]: `place`'s children, and for those not in `known` whether
+/// they hold a folder. A host reads them off its loop for [`follow_with`].
+pub fn read_kids(place: &Place, inp: &Inputs, known: &[&Place]) -> Kids {
     let mut kids: Vec<(String, Place)> = Vec::new();
-    match &place {
+    match place {
         Place::Desktop => {
             for p in DESKTOP_PLACES {
                 kids.push((p.title(), p));
             }
-            kids.extend(subfolders(&place, inp));
+            kids.extend(subfolders(place, inp));
         }
         Place::Computer => {
             kids.extend(place::computer_tree_children(&list(
@@ -115,8 +130,29 @@ pub fn fill(
             )));
         }
         Place::RecycleBin => {}
-        _ => kids.extend(subfolders(&place, inp)),
+        _ => kids.extend(subfolders(place, inp)),
     }
+    kids.into_iter()
+        .map(|(label, p)| {
+            let opens = (!known.contains(&&p)).then(|| opens(&p, inp));
+            (label, p, opens)
+        })
+        .collect()
+}
+
+fn opens(p: &Place, inp: &Inputs) -> bool {
+    *p != Place::RecycleBin && p.path().is_none_or(|dir| has_subfolder(&dir, inp))
+}
+
+/// [`fill`] with the node's children already read.
+fn fill_with(
+    tree: &mut TreeView,
+    places: &mut Vec<Place>,
+    path: Vec<usize>,
+    kids: Kids,
+    inp: &Inputs,
+    icons: &mut IconCache,
+) {
     let mut old: Vec<Option<Node>> = tree
         .node_mut(&path)
         .map(|n| {
@@ -129,19 +165,20 @@ pub fn fill(
     let place_at = |n: &Option<Node>| n.as_ref().map(|n| &places[n.id as usize]);
     let was: Vec<Option<usize>> = kids
         .iter()
-        .map(|(_, p)| old.iter().position(|n| place_at(n) == Some(p)))
+        .map(|(_, p, _)| old.iter().position(|n| place_at(n) == Some(p)))
         .collect();
     let nodes: Vec<Node> = kids
         .into_iter()
         .zip(&was)
-        .map(|((label, p), was)| match was.and_then(|i| old[i].take()) {
-            Some(n) => Node { label, ..n },
-            None => {
-                let expandable =
-                    p != Place::RecycleBin && p.path().is_none_or(|dir| has_subfolder(&dir, inp));
-                tree_node(places, &label, p, expandable, icons)
-            }
-        })
+        .map(
+            |((label, p, opened), was)| match was.and_then(|i| old[i].take()) {
+                Some(n) => Node { label, ..n },
+                None => {
+                    let expandable = opened.unwrap_or_else(|| opens(&p, inp));
+                    tree_node(places, &label, p, expandable, icons)
+                }
+            },
+        )
         .collect();
     let depth = path.len();
     if let Some(sel) = tree.selected.as_mut()
@@ -281,6 +318,38 @@ pub fn follow(
     inp: &Inputs,
     icons: &mut IconCache,
 ) {
+    follow_with(tree, places, place, inp, icons, Vec::new());
+}
+
+/// The places whose nodes [`follow`] fills on its way to `place`: from the first one not yet
+/// read, every place left on the chain.
+pub fn to_fill(tree: &TreeView, places: &[Place], place: &Place, mounts: &[PathBuf]) -> Vec<Place> {
+    let chain = place.chain_in(mounts);
+    let mut path: Vec<usize> = Vec::new();
+    for (k, want) in chain.iter().enumerate() {
+        let Some(i) = child_index(tree, places, &path, want) else {
+            break;
+        };
+        path.push(i);
+        if tree
+            .node(&path)
+            .is_some_and(|n| n.has_children && n.children.is_empty())
+        {
+            return chain[k..].to_vec();
+        }
+    }
+    Vec::new()
+}
+
+/// [`follow`], filling a node from `read` ([`read_kids`] of its place) when it holds the place.
+pub fn follow_with(
+    tree: &mut TreeView,
+    places: &mut Vec<Place>,
+    place: &Place,
+    inp: &Inputs,
+    icons: &mut IconCache,
+    mut read: Vec<(Place, Kids)>,
+) {
     let chain = place.chain_in(inp.drive_mounts);
     let mut path: Vec<usize> = Vec::new();
     for want in &chain {
@@ -296,7 +365,13 @@ pub fn follow(
             _ => false,
         };
         if fill_it {
-            fill(tree, places, path.clone(), inp, icons);
+            match read.iter().position(|(p, _)| p == want) {
+                Some(k) => {
+                    let kids = read.swap_remove(k).1;
+                    fill_with(tree, places, path.clone(), kids, inp, icons);
+                }
+                None => fill(tree, places, path.clone(), inp, icons),
+            }
         }
     }
     if !path.is_empty() {
@@ -416,6 +491,54 @@ mod tests {
         };
         assert_eq!(boxes(false), want(false), "hidden files hidden");
         assert_eq!(boxes(true), want(true), "hidden files shown");
+    }
+
+    /// The walk fills its nodes from children read beforehand (on a listing's thread) without
+    /// reading the folders again: it reaches the folder though the folders are gone by then.
+    #[test]
+    fn follow_with_fills_from_children_read_beforehand() {
+        let home = tempfile::tempdir().expect("a temp home");
+        std::fs::create_dir_all(home.path().join("a/b/c")).expect("mkdir a/b/c");
+        let root_drive = Drive {
+            mount: PathBuf::from("/"),
+            device: "/dev/sda1".into(),
+            fs: "ext4".into(),
+            label: None,
+            removable: false,
+            optical: false,
+            total: 1,
+            free: 1,
+        };
+        let volumes = Snapshot::default();
+        let mounts = [PathBuf::from("/")];
+        let inp = Inputs {
+            show_hidden: true,
+            drives: std::slice::from_ref(&root_drive),
+            volumes: &volumes,
+            drive_mounts: &mounts,
+        };
+        let mut icons = IconCache::new(reprisekit::icontheme::IconTheme::load("test", &[]));
+        let mut tree = TreeView::default();
+        let mut places: Vec<Place> = Vec::new();
+        build(&mut tree, &mut places, &inp, &mut icons);
+        let target = Place::Folder(home.path().join("a/b"));
+        let read: Vec<(Place, Kids)> = to_fill(&tree, &places, &target, &mounts)
+            .into_iter()
+            .map(|p| {
+                let kids = read_kids(&p, &inp, &[]);
+                (p, kids)
+            })
+            .collect();
+        assert!(read.iter().any(|(p, _)| *p == target), "the target is read");
+        std::fs::remove_dir_all(home.path().join("a")).expect("rm a");
+
+        follow_with(&mut tree, &mut places, &target, &inp, &mut icons, read);
+        let selected = tree.selected.as_deref().expect("a selection");
+        assert_eq!(place_of(&tree, &places, selected), Some(target));
+        assert!(
+            tree.node(selected).is_some_and(|n| n.children.len() == 1),
+            "b holds c as read"
+        );
     }
 
     /// `follow` walks Desktop, Computer and the "/" drive down to a deep folder, expanding and

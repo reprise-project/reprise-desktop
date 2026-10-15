@@ -10,6 +10,7 @@ pub mod filedlg;
 pub mod heads;
 pub mod keys;
 pub mod listicons;
+pub mod listjob;
 pub mod oneshot;
 pub mod openwith;
 mod outputmgmt;
