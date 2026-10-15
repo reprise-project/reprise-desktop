@@ -650,8 +650,8 @@ fn collapse_idle(state: &mut State) {
     ));
 }
 
-/// Send `text` as the active balloon's reply: `NotificationReplied` fires, and the notification
-/// closes unless it is resident, whose balloon goes.
+/// Send `text` as the active balloon's reply: `NotificationReplied` fires, the history marks it
+/// replied, and the notification closes unless it is resident, whose balloon goes.
 fn send_reply(state: &mut State, text: String) {
     let Some((id, resident)) = state
         .notify
@@ -663,6 +663,7 @@ fn send_reply(state: &mut State, text: String) {
         return;
     };
     crate::tray::send(state, TrayCommand::Replied { id, text });
+    state.notify.log.mark_replied(id);
     if resident {
         drop_balloon(state, id);
         changed(state);

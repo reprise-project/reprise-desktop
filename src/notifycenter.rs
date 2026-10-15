@@ -131,6 +131,7 @@ pub fn refresh(state: &mut State) {
             },
             time: crate::taskbar::time_text(e.time),
             live: e.can_invoke(DEFAULT_ACTION),
+            replied: e.replied,
         })
         .collect();
     let dnd = log.dnd;
