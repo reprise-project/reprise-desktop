@@ -811,6 +811,7 @@ impl State {
                     self.water_edge_moved(old);
                 }
                 self.drag_to(window, (cx - dx) as i32, y);
+                crate::shakeview::motion(self, window, pos);
                 return;
             }
             Interaction::Resize {
@@ -1522,6 +1523,7 @@ impl State {
             bar,
         };
         self.wm.snap.begin_move(w);
+        crate::shakeview::begin(self, w, title && self.buttons_down > 0);
         self.clear_pointer_focus();
         self.set_cursor("move");
     }

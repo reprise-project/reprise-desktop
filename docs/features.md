@@ -90,6 +90,11 @@ the Super tap, Super+Shift+Esc and the VT switch keys can be rebound.
   before. Each tab keeps its own taskbar button and Alt+Tab entry. Other
   taskbars and docks see a hidden tab as minimized; activating it there
   shows it in its group.
+- **Shake.** Drag a window by its caption and shake it quickly from side to
+  side, or up and down: every other window on that screen and desktop
+  minimizes. Shake it again to bring back the ones it minimized. Windows
+  kept on top and the shaken window's own dialogs stay. On by default under
+  Glass (`[windows] shake`, or the Windows page of Reprise Settings).
 - **Window memory.** A program opens where its last window closed: same
   screen, same size, maximized if it was.
 - **Window rules** in the config match windows by app id and title, with
