@@ -60,7 +60,7 @@ pub struct GlassCtx {
 struct Placed {
     node: CustomId,
     glass: Weak<Glass>,
-    pane: Pane,
+    pane: Rc<RefCell<Pane>>,
 }
 
 struct Beneath {
@@ -283,9 +283,10 @@ impl GlassCtx {
                 let Some((at, true)) = scene.coords(n.node) else {
                     return None;
                 };
-                Rectangle::new(at, n.pane.extent()).overlaps(area).then(|| {
+                let pane = n.pane.borrow();
+                Rectangle::new(at, pane.extent()).overlaps(area).then(|| {
                     let at = (at - area.loc).to_f64().to_physical(scale);
-                    Reads::of(&n.pane, at, seen, scale, &pass).needed
+                    Reads::of(&pane, at, seen, scale, &pass).needed
                 })
             })
             .flatten()
@@ -327,7 +328,7 @@ impl GlassCtx {
                     return None;
                 };
                 let at = (at - area.loc).to_f64().to_physical(scale);
-                let reads = Reads::of(&n.pane, at, seen, scale, &pass);
+                let reads = Reads::of(&n.pane.borrow(), at, seen, scale, &pass);
                 Some(Stacked {
                     glass,
                     anchor,
@@ -811,8 +812,8 @@ pub fn place_flyout(
 }
 
 /// `pane`'s shapes as drawn at `scale`, with corner radii (tl, tr, br, bl): whole and rounded under
-/// Molten or above scale 1, else cut into the table's rows. A square-bottomed shape keeps square
-/// bottom corners in both.
+/// Molten or above scale 1, else cut into the table's rows. A square-bottomed or square-topped
+/// shape keeps those corners square in both.
 pub(crate) fn drawn_shapes(pane: &Pane, material: Material, scale: f64) -> Vec<(Rect, [f32; 4])> {
     let fine = crate::output::draw_scale(scale as f32) > 1;
     if material == Material::Molten || fine {
@@ -823,13 +824,13 @@ pub(crate) fn drawn_shapes(pane: &Pane, material: Material, scale: f64) -> Vec<(
         .flat_map(|s| {
             let r = s.rect;
             // Square-bottomed: the top half of a shape twice as tall. Square-topped: the bottom half.
-            let h = if s.square_bottom || s.square_top {
-                2 * r.height
-            } else {
-                r.height
+            let (corner, h, skip) = match (s.square_top, s.square_bottom) {
+                (true, true) => (&[][..], r.height, 0),
+                (true, false) => (s.corner, 2 * r.height, r.height),
+                (false, true) => (s.corner, 2 * r.height, 0),
+                (false, false) => (s.corner, r.height, 0),
             };
-            let skip = if s.square_top { r.height } else { 0 };
-            rounded_rects(r.width, h, s.corner)
+            rounded_rects(r.width, h, corner)
                 .into_iter()
                 .filter_map(move |p| {
                     let y0 = p.y.max(skip);
@@ -876,7 +877,8 @@ pub fn physical(
 
 pub struct Backdrop {
     glass: Rc<Glass>,
-    node: Option<CustomId>,
+    /// The node, the tree it is in and its pane, which a new pane updates in place.
+    node: Option<(CustomId, TreeId, Rc<RefCell<Pane>>)>,
     pane: Option<Pane>,
 }
 
@@ -901,27 +903,35 @@ impl Backdrop {
         if pane == self.pane {
             return;
         }
-        if let Some(node) = self.node.take() {
+        if let (Some(p), Some((node, t, shared))) = (&pane, &self.node)
+            && *t == tree
+            && scene.is_alive(*node)
+        {
+            *shared.borrow_mut() = p.clone();
+            self.pane = pane;
+            return;
+        }
+        if let Some((node, _, _)) = self.node.take() {
             scene.destroy(node);
         }
         if let Some(p) = &pane {
+            let shared = Rc::new(RefCell::new(p.clone()));
             let node = scene.custom_create(
                 tree,
                 Box::new(GlassNode {
                     ctx: ctx.clone(),
                     glass: self.glass.clone(),
                     beneath: Glass::new(),
-                    size: p.extent(),
-                    pane: p.clone(),
+                    pane: shared.clone(),
                 }),
             );
             scene.set_input(node, Input::Passthrough);
             ctx.nodes.borrow_mut().push(Placed {
                 node,
                 glass: Rc::downgrade(&self.glass),
-                pane: p.clone(),
+                pane: shared.clone(),
             });
-            self.node = Some(node);
+            self.node = Some((node, tree, shared));
         }
         self.pane = pane;
     }
@@ -933,13 +943,12 @@ struct GlassNode {
     /// The glass drawn into the backdrops of glass above it: its own handle, so its damage and its
     /// downscaled key stay apart from the screen's.
     beneath: Glass,
-    pane: Pane,
-    size: Size<i32, Logical>,
+    pane: Rc<RefCell<Pane>>,
 }
 
 impl CustomNode<GlesRenderer> for GlassNode {
     fn size(&self) -> Size<i32, Logical> {
-        self.size
+        self.pane.borrow().extent()
     }
 
     fn in_backdrop_below(&self) -> bool {
@@ -965,13 +974,14 @@ impl CustomNode<GlesRenderer> for GlassNode {
         // In a backdrop beneath other glass the shapes are laid out on the output and drawn whole:
         // stepped corner rows would be half a pixel tall.
         let beneath = self.ctx.drawing_beneath.get();
+        let pane = self.pane.borrow();
         let (glass, downscale, location, scale, drawn) = if let Some(d) = beneath {
             let k = f64::from(d);
             let location = location.upscale(k);
             let scale = Scale::from((scale.x * k, scale.y * k));
-            (&self.beneath, d, location, scale, round_shapes(&self.pane))
+            (&self.beneath, d, location, scale, round_shapes(&pane))
         } else {
-            let drawn = drawn_shapes(&self.pane, pass.settings.material, scale.x);
+            let drawn = drawn_shapes(&pane, pass.settings.material, scale.x);
             (&*self.glass, 1, location, scale, drawn)
         };
         let shapes: Vec<Shape> = drawn
@@ -981,8 +991,7 @@ impl CustomNode<GlesRenderer> for GlassNode {
                 radii: radii.map(|r| r * scale.x as f32),
             })
             .collect();
-        let holes: Vec<Rectangle<i32, Physical>> = self
-            .pane
+        let holes: Vec<Rectangle<i32, Physical>> = pane
             .holes
             .iter()
             .map(|&r| physical(r, location, scale))
@@ -1178,6 +1187,22 @@ mod tests {
             drawn_shapes(&pane, Material::Molten, 1.0),
             vec![(Rect::new(10, 20, 40, 30), [3.0, 3.0, 0.0, 0.0])]
         );
+    }
+
+    #[test]
+    fn a_shape_square_at_both_ends_is_one_rect() {
+        let pane = Pane {
+            shapes: vec![PaneShape {
+                rect: Rect::new(10, 20, 40, 30),
+                corner: &[3, 1],
+                square_bottom: true,
+                square_top: true,
+            }],
+            holes: Vec::new(),
+        };
+        let whole = vec![(Rect::new(10, 20, 40, 30), [0.0; 4])];
+        assert_eq!(drawn_shapes(&pane, Material::Frosted, 1.0), whole);
+        assert_eq!(drawn_shapes(&pane, Material::Molten, 1.0), whole);
     }
 
     #[test]

@@ -83,50 +83,16 @@ pub fn draw(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::snaplayouts::{CellSpec, PickerLayout, Shape};
+    use crate::snaplayouts::{PickerLayout, Shape, sample_cells};
     use std::sync::Arc;
 
     fn style() -> Arc<Style> {
         super::super::style(&Settings::default())
     }
 
-    fn sample() -> Vec<CellSpec> {
-        let cols = |cuts: &[i32]| -> Vec<Rect> {
-            cuts.windows(2)
-                .map(|p| Rect::new(p[0], 0, p[1] - p[0], 1050))
-                .collect()
-        };
-        let spec = |zones| CellSpec {
-            zones,
-            ..CellSpec::default()
-        };
-        vec![
-            CellSpec {
-                zones: cols(&[0, 960, 1920]),
-                suggestion: true,
-                filled: vec![(0, "Notepad".into())],
-            },
-            spec(cols(&[0, 960, 1920])),
-            spec(cols(&[0, 1280, 1920])),
-            spec(cols(&[0, 640, 1280, 1920])),
-            spec(vec![
-                Rect::new(0, 0, 960, 1050),
-                Rect::new(960, 0, 960, 525),
-                Rect::new(960, 525, 960, 525),
-            ]),
-            spec(vec![
-                Rect::new(0, 0, 960, 525),
-                Rect::new(0, 525, 960, 525),
-                Rect::new(960, 0, 960, 525),
-                Rect::new(960, 525, 960, 525),
-            ]),
-            spec(cols(&[0, 480, 1440, 1920])),
-        ]
-    }
-
     #[test]
     fn glass_draws_a_sheet_translucent_tiles_and_a_lit_one() {
-        let l = PickerLayout::compute(Shape::Grid, (1920, 1050), &sample());
+        let l = PickerLayout::compute(Shape::Grid, (1920, 1050), &sample_cells());
         let hilight = Color::rgb(0x33, 0x99, 0xFF);
         let mut c = Canvas::new(l.width as u32, l.height as u32);
         draw(&mut c, &style(), hilight, &l, &[], Some((0, 1)));
@@ -136,9 +102,9 @@ mod tests {
         let lit = l.tiles[0][1];
         assert_eq!(c.get(lit.x + 6, lit.y + 6), hilight.argb());
         let free = l.tiles[1][0];
-        assert_ne!(
-            c.get(free.x + 6, free.y + 6),
-            sheet,
+        let light = |p: u32| (0..4).map(|i| (p >> (8 * i)) & 0xFF).sum::<u32>();
+        assert!(
+            light(c.get(free.x + 6, free.y + 6)) > light(sheet),
             "a tile lighter than the sheet"
         );
         let filled = l.tiles[0][0];

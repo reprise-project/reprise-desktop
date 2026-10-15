@@ -783,7 +783,8 @@ impl State {
                 let (cx, cy) = (pos.x, pos.y);
                 let slop = f64::from(crate::desktop::DRAG_PX);
                 let held = (cx - press.0).abs() < slop && (cy - press.1).abs() < slop;
-                if held && self.fitted(window) {
+                let grouped = self.wm.snap.group_of(window).is_some();
+                if held && (self.fitted(window) || grouped) {
                     return;
                 }
                 // Moved off its zone for real, not jittered: out of its
