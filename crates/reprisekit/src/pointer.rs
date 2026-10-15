@@ -236,6 +236,13 @@ impl<P: Copy + Eq> DoubleClick<P> {
     pub fn reset(&mut self) {
         self.last = None;
     }
+
+    /// Forget the last press only if it was on a part `on` picks.
+    pub fn forget_if(&mut self, on: impl FnOnce(&P) -> bool) {
+        if self.last.as_ref().is_some_and(|(p, _)| on(p)) {
+            self.last = None;
+        }
+    }
 }
 
 #[cfg(test)]
@@ -431,6 +438,20 @@ mod tests {
         reset.press(A, at(40, 40, 1000));
         reset.reset();
         assert!(!reset.press(A, at(40, 40, 1100)), "a reset forgets");
+    }
+
+    #[test]
+    fn forget_if_forgets_only_a_press_on_a_picked_part() {
+        let mut d = DoubleClick::default();
+        d.press(A, at(40, 40, 1000));
+        d.forget_if(|p| *p == B);
+        assert!(
+            d.press(A, at(40, 40, 1100)),
+            "a press on A survives forgetting B"
+        );
+        d.press(A, at(40, 40, 2000));
+        d.forget_if(|p| *p == A);
+        assert!(!d.press(A, at(40, 40, 2100)), "forgetting A forgets it");
     }
 
     #[test]
