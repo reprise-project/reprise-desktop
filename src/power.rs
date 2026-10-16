@@ -372,7 +372,9 @@ fn sleeping(state: &mut State) {
     let outputs: Vec<Output> = state.scene.outputs().to_vec();
     let mut armed = Vec::new();
     for o in outputs {
-        if crate::backend::output_power(state, &o) == Some(true) {
+        if crate::backend::output_power(state, &o) == Some(true)
+            && !crate::backend::stalled(state, &o)
+        {
             crate::backend::schedule(state, &o);
             armed.push(o);
         }
@@ -451,6 +453,17 @@ pub fn presented(state: &mut State, output: &Output) {
     wait.presented(output);
     if wait.done() {
         release_sleep(state, "the cover is on every output");
+    }
+}
+
+/// `output`'s commit stalled (`backend::stalled`): a sleep stops waiting for its cover.
+pub fn stalled(state: &mut State, output: &Output) {
+    let Some(wait) = state.power.cover_wait.as_mut() else {
+        return;
+    };
+    wait.forget(output);
+    if wait.done() {
+        release_sleep(state, "the cover is on every output that is not stalled");
     }
 }
 
