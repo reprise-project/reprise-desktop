@@ -4,14 +4,11 @@
 use crate::Explorer;
 use repriseapp::{Child, Ctx, Event, PointerInput, Reply, WinId};
 use reprisefs::progress::{Phase as JobPhase, Snapshot};
-use reprisekit::controls::copyprogress::{CopyProgress, Kind, Outcome, Phase, Status};
+use reprisekit::controls::copyprogress::{CopyProgress, Kind, Outcome, Phase, SHOW_AFTER, Status};
 use reprisekit::look::Paint;
 use reprisekit::theme::Color;
-use std::time::Duration;
 
 pub const COPY: WinId = "copy progress";
-/// A put done sooner than this never shows the dialog.
-pub(crate) const SHOW_AFTER: Duration = Duration::from_millis(500);
 
 /// The dialog of the running put, once it is up.
 pub(crate) struct Shown {
@@ -201,17 +198,7 @@ impl Explorer {
         }
         let (summary, body) = match failed {
             Some((title, text)) => (title.to_string(), text.clone()),
-            None => {
-                let verb = match shown.cp.kind {
-                    Kind::Copy => "Copied",
-                    Kind::Move => "Moved",
-                };
-                let noun = if landed == 1 { "item" } else { "items" };
-                (
-                    format!("{verb} {landed} {noun}"),
-                    format!("{verb} {landed} {noun} to {}", shown.cp.to),
-                )
-            }
+            None => shown.cp.ended_note(landed),
         };
         std::thread::spawn(move || {
             if let Err(e) = reprisebus::notify::notify("Explorer", "folder", &summary, &body) {

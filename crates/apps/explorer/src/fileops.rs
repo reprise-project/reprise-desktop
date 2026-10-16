@@ -326,7 +326,7 @@ impl Explorer {
         let job = PutJob::start(pending.items, pending.dir.clone(), move || wake.wake());
         let wake = ctx.wake.clone();
         std::thread::spawn(move || {
-            std::thread::sleep(crate::copydlg::SHOW_AFTER);
+            std::thread::sleep(reprisekit::controls::copyprogress::SHOW_AFTER);
             wake.wake();
         });
         self.put = Some(Put {

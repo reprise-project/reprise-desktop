@@ -7,7 +7,7 @@
 //! drops on the desktop's own targets still end in [`State::perform_all`] or the drop menu. A system icon's
 //! drag stays on the desktop and ends in [`State::drag_finish`].
 //!
-//! File work runs off the loop (`fsjobs`), one batch per folder at a time. A name the target already holds
+//! File work runs on a put job (`putview`), one batch per folder at a time. A name the target already holds
 //! asks first (Confirm File/Folder Replace); a failed drop says why in an error box.
 
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -62,7 +62,7 @@ impl DragSource {
         }
     }
 
-    fn name(&self) -> &str {
+    pub(crate) fn name(&self) -> &str {
         match self {
             DragSource::Icon { name, .. } | DragSource::File { name, .. } => name,
             DragSource::App { entry, .. } => &entry.name,
@@ -105,7 +105,7 @@ fn bin_drop(sources: &[DragSource]) -> Option<BinDrop> {
 
 /// A shortcut to a system icon: its icon and the command opening its place (`desktop::place_command`; None when not UTF-8).
 #[derive(Clone, Debug, PartialEq, Eq)]
-struct PlaceLink {
+pub(crate) struct PlaceLink {
     icon: String,
     command: Option<String>,
 }
@@ -177,7 +177,9 @@ pub struct Drags {
     pub over: Option<(DropTarget, Answer)>,
     pub pending_drop: Option<(Vec<DragSource>, DropTarget)>,
     /// Batches waiting per folder; a folder with a batch running has an entry (empty when none waits).
-    put_queues: HashMap<PathBuf, VecDeque<QueuedPut>>,
+    pub(crate) put_queues: HashMap<PathBuf, VecDeque<QueuedPut>>,
+    /// The batch running per folder.
+    pub(crate) running: HashMap<PathBuf, crate::putview::Running>,
 }
 
 /// What a left drop of `grabbed` on `target` does with no modifier: move an icon about the desktop or
@@ -222,7 +224,7 @@ fn desktop_entry_named(entries: &[desktop::DesktopEntry], name: &str) -> Option<
 
 /// One source of a batch: its desktop cell (None in a folder or with auto-arrange) and the place a
 /// shortcut to a system icon opens.
-type Put = (DragSource, Option<(i32, i32)>, Option<PlaceLink>);
+pub(crate) type Put = (DragSource, Option<(i32, i32)>, Option<PlaceLink>);
 
 /// A drop's file work into one folder, held while the replace prompt asks about clashing names (`reprisefs::replace`).
 #[derive(Clone, Debug, PartialEq)]
@@ -269,60 +271,22 @@ impl Batch {
 }
 
 pub struct QueuedPut {
-    dir: PathBuf,
-    op: DropOp,
-    puts: Vec<(Put, Option<reprisefs::replace::Seen>)>,
-    existing: Vec<String>,
+    pub(crate) dir: PathBuf,
+    pub(crate) op: DropOp,
+    pub(crate) puts: Vec<(Put, Option<reprisefs::replace::Seen>)>,
+    pub(crate) existing: Vec<String>,
 }
 
-type Failure = (&'static str, String);
+pub(crate) type Failure = (&'static str, String);
 
-/// `put_in` each source into `dir` in order, stopping at the first failure; each replaces what holds
-/// its name only if told to, never a name this batch itself put there (that one lands numbered).
-/// Returns the file names that landed, each also pushed onto `existing`, and the failure's error box.
-fn put_each<'a>(
-    items: impl Iterator<
-        Item = (
-            &'a DragSource,
-            Option<&'a PlaceLink>,
-            Option<reprisefs::replace::Seen>,
-        ),
-    >,
-    dir: &Path,
-    op: DropOp,
-    existing: &mut Vec<String>,
-) -> (Vec<String>, Option<Failure>) {
-    let mut landed: Vec<String> = Vec::new();
-    for (source, link, replace) in items {
-        let name = source.path().file_name().map(|n| n.to_string_lossy());
-        let ours = name.is_some_and(|n| landed.iter().any(|l| *l == n));
-        match put_in(source, dir, op, existing, link, replace.filter(|_| !ours)) {
-            Ok(name) => {
-                existing.push(name.clone());
-                landed.push(name);
-            }
-            Err(e) => {
-                log::warn!("drop into {}: {e}", dir.display());
-                return (landed, Some(op.failure(source.name(), &e)));
-            }
-        }
-    }
-    (landed, None)
-}
-
-/// Copy, move or make a shortcut to `source` inside `dir`, named past `existing`, over a name `dir`
-/// holds only with `replace`. Returns the landed file name. A Start menu program is always copied (its
-/// file belongs to the system). A shortcut to a system icon opens `link`'s place.
-fn put_in(
+/// The launcher text of a shortcut named `name` to `source`; a shortcut to a system icon opens
+/// `link`'s place.
+pub(crate) fn shortcut_text(
     source: &DragSource,
-    dir: &Path,
-    op: DropOp,
-    existing: &[String],
     link: Option<&PlaceLink>,
-    replace: Option<reprisefs::replace::Seen>,
-) -> Result<String, reprisefs::ops::PutError> {
-    let is_app = matches!(source, DragSource::App { .. });
-    let shortcut = |name: &str| {
+    name: &str,
+) -> Option<String> {
+    {
         let (icon, command) = match (source, link) {
             (_, Some(link)) => (Some(link.icon.clone()), link.command.clone()),
             (DragSource::App { entry, .. }, None) => {
@@ -346,7 +310,23 @@ fn put_in(
             icon.as_deref(),
             reprisefs::apps::Launch::Exec(command.as_deref()?),
         )
-    };
+    }
+}
+
+/// Copy, move or make a shortcut to `source` inside `dir`, named past `existing`, over a name `dir`
+/// holds only with `replace`, as a put's job does. A Start menu program is always copied (its file
+/// belongs to the system).
+#[cfg(test)]
+fn put_in(
+    source: &DragSource,
+    dir: &Path,
+    op: DropOp,
+    existing: &[String],
+    link: Option<&PlaceLink>,
+    replace: Option<reprisefs::replace::Seen>,
+) -> Result<String, reprisefs::ops::PutError> {
+    let is_app = matches!(source, DragSource::App { .. });
+    let shortcut = |name: &str| shortcut_text(source, link, name);
     reprisefs::ops::put_in_with(
         source.path(),
         source.name(),
@@ -798,7 +778,7 @@ impl State {
     }
 
     /// Do the drop of `sources` (the grabbed one first): a drag's, or a Paste's, Send To's or Create
-    /// Shortcut's. File work runs on `fsjobs`; the desktop's watch redraws once a file lands, and the
+    /// Shortcut's. File work runs on a put job; the desktop's watch redraws once a file lands, and the
     /// chosen cell is recorded when its name comes back. The first failure stops the batch. On a desktop
     /// cell the grabbed icon lands there and the others keep their grid offsets, falling to the next free cell if taken.
     pub fn perform_all(&mut self, sources: &[DragSource], target: &DropTarget, op: DropOp) {
@@ -1030,7 +1010,7 @@ impl State {
         });
     }
 
-    /// Carry out `batch` once every name it would land on is settled, the file work on `fsjobs`. A clash
+    /// Carry out `batch` once every name it would land on is settled, the file work on a put job. A clash
     /// asks first: sizes and dates are read off the loop, then the replace prompt answers via [`Self::replace_answered`].
     fn ask_then_put(&mut self, batch: Batch) {
         use reprisefs::replace::{Clash, Step, Verdict};
@@ -1132,74 +1112,10 @@ impl State {
         crate::dialog::Dialog::confirm_replace(fields, batch, &self.text, t.fonts.size_px, t.text)
     }
 
-    fn show_drop_failure(&mut self, failed: Option<Failure>) {
+    pub(crate) fn show_drop_failure(&mut self, failed: Option<Failure>) {
         if let Some((title, text)) = failed {
             log::warn!("{title}: {text}");
             self.open_dialog(crate::dialog::Dialog::error(title, text));
-        }
-    }
-
-    /// Run `q` on `fsjobs`; when done, the next batch for the same folder starts ([`Self::put_done`]).
-    /// One batch per folder at a time, so two drops never race for a name.
-    fn spawn_put(&mut self, q: QueuedPut) {
-        let QueuedPut {
-            dir,
-            op,
-            puts,
-            mut existing,
-        } = q;
-        let key = dir.clone();
-        let spawned = self.spawn_fs_job(move || {
-            // However the work ends the folder's queue moves on; a panic is caught and reported as a failure.
-            let run = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                let items = puts
-                    .iter()
-                    .map(|((s, _, link), replace)| (s, link.as_ref(), *replace));
-                put_each(items, &dir, op, &mut existing)
-            }));
-            let (landed, failed) = run.unwrap_or_else(|_| {
-                log::error!("drop into {}: the file work panicked", dir.display());
-                let what = puts.first().map_or("", |((s, _, _), _)| s.name());
-                (
-                    Vec::new(),
-                    Some(op.failure(what, &"The operation stopped.")),
-                )
-            });
-            Box::new(move |state| {
-                state.put_done(&dir);
-                // `landed` is a prefix of `puts`: the batch stops at its first failure.
-                for (name, ((_, cell, _), _)) in landed.iter().zip(&puts) {
-                    if let Some(cell) = cell {
-                        state.land_icon(name, *cell);
-                    }
-                }
-                if op == DropOp::Move {
-                    let moved: Vec<PathBuf> = puts
-                        .iter()
-                        .take(landed.len())
-                        .map(|((s, _, _), _)| s.path().to_path_buf())
-                        .collect();
-                    state.cut_moved(&moved);
-                }
-                state.show_drop_failure(failed);
-            })
-        });
-        if !spawned {
-            self.put_done(&key);
-        }
-    }
-
-    fn put_done(&mut self, dir: &Path) {
-        let next = self
-            .drags
-            .put_queues
-            .get_mut(dir)
-            .and_then(|q| q.pop_front());
-        match next {
-            Some(q) => self.spawn_put(q),
-            None => {
-                self.drags.put_queues.remove(dir);
-            }
         }
     }
 }
@@ -1349,45 +1265,6 @@ mod tests {
         ];
         assert_eq!(desktop_entry_named(&entries, "notes.txt"), Some(2));
         assert_eq!(desktop_entry_named(&entries, "notes"), None);
-    }
-
-    #[test]
-    fn put_each_stops_at_the_first_failure_with_its_error_box() {
-        let base = fixture("puteach");
-        let _c = Cleanup(base.clone());
-        let reports = base.join("Reports");
-        let inner = reports.join("Inner");
-        std::fs::create_dir_all(&inner).unwrap();
-        let notes = base.join("notes.txt");
-        std::fs::write(&notes, "hi").unwrap();
-        let icon = |path: &Path, name: &str| DragSource::Icon {
-            id: desktop::IconId::File(path.to_path_buf()),
-            path: path.to_path_buf(),
-            name: name.into(),
-        };
-        let sources = [
-            icon(&notes, "notes.txt"),
-            icon(&reports, "Reports"),
-            icon(&notes, "x"),
-        ];
-        let mut existing = Vec::new();
-        let (landed, failed) = put_each(
-            sources.iter().map(|s| (s, None, None)),
-            &inner,
-            DropOp::Move,
-            &mut existing,
-        );
-        assert_eq!(landed, ["notes.txt"]);
-        assert_eq!(existing, ["notes.txt"]);
-        assert_eq!(
-            failed,
-            Some((
-                "Error Moving File or Folder",
-                "Cannot move Reports: The destination folder is a subfolder of the source folder."
-                    .to_string()
-            ))
-        );
-        assert!(inner.join("notes.txt").exists() && reports.exists());
     }
 
     #[test]
@@ -1685,39 +1562,5 @@ mod tests {
             batch.asker.answer(Answer::No).clone(),
             Step::Done(v) if matches!(v[..], [Verdict::Skip, Verdict::Put])
         ));
-    }
-
-    /// Two sources of one drop share a name, both told to replace: the second lands numbered rather than replacing the first.
-    #[test]
-    fn put_each_never_replaces_its_own_item() {
-        let base = fixture("twice");
-        let _c = Cleanup(base.clone());
-        let (one, two, dest) = (base.join("one"), base.join("two"), base.join("dest"));
-        for d in [&one, &two, &dest] {
-            std::fs::create_dir_all(d).unwrap();
-        }
-        std::fs::write(one.join("x.txt"), "one").unwrap();
-        std::fs::write(two.join("x.txt"), "two").unwrap();
-        std::fs::write(dest.join("x.txt"), "old").unwrap();
-        let icon = |path: PathBuf| DragSource::Icon {
-            id: desktop::IconId::File(path.clone()),
-            path,
-            name: "x.txt".into(),
-        };
-        let sources = [icon(one.join("x.txt")), icon(two.join("x.txt"))];
-        let seen = reprisefs::replace::Seen::of(&dest.join("x.txt"));
-        let (landed, failed) = put_each(
-            sources.iter().map(|s| (s, None, seen)),
-            &dest,
-            DropOp::Move,
-            &mut Vec::new(),
-        );
-        assert_eq!(failed, None);
-        assert_eq!(landed, ["x.txt", "x (2).txt"]);
-        assert_eq!(std::fs::read_to_string(dest.join("x.txt")).unwrap(), "one");
-        assert_eq!(
-            std::fs::read_to_string(dest.join("x (2).txt")).unwrap(),
-            "two"
-        );
     }
 }
