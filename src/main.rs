@@ -11,6 +11,7 @@ mod calc;
 mod calendarview;
 mod camdev;
 mod capture;
+mod captureborder;
 mod caret;
 mod clientglass;
 mod clipboard;
