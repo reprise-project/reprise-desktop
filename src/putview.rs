@@ -223,13 +223,20 @@ impl State {
                 .filter(|&id| Some(id) != before);
             return Some(id.unwrap_or(u64::MAX));
         };
-        if let Some(i) = self.dialogs.views.iter().position(|v| v.id == id)
-            && self.dialogs.views[i]
-                .dialog
-                .copy_mut()
-                .is_some_and(|c| c.cp.update(st, ms))
-        {
+        let Some(i) = self.dialogs.views.iter().position(|v| v.id == id) else {
+            return Some(id);
+        };
+        let d = &mut self.dialogs.views[i].dialog;
+        let button = |d: &Dialog| {
+            d.task_progress()
+                .map(|p| ((p.fraction * 100.0) as u32, p.paused))
+        };
+        let was = button(d);
+        if d.copy_mut().is_some_and(|c| c.cp.update(st, ms)) {
             self.redraw_dialog(i);
+        }
+        if button(&self.dialogs.views[i].dialog) != was {
+            self.redraw_taskbars();
         }
         Some(id)
     }

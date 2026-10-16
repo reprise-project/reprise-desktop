@@ -1,9 +1,9 @@
 //! The dialogs on the scene (`State::dialogs`, a stack; the top one has the keyboard), placed on the
 //! output under the pointer, with key and pointer routing. Model, layout and drawing live in `dialog.rs`.
 //!
-//! Each dialog is one tree in `layers.menu`: `content` (the client area, the only part the glass
-//! backdrop sees), the frame's `Backdrop`, then the buffer. A Welcome panel stands over a still of its
-//! output (`output_still`) that fades to grey.
+//! Each dialog is one tree in `layers.menu` (`layers.windows` for a windowed one): `content` (the
+//! client area, the only part the glass backdrop sees), the frame's `Backdrop`, then the buffer. A
+//! Welcome panel stands over a still of its output (`output_still`) that fades to grey.
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -75,6 +75,9 @@ pub struct DialogView {
     pub cues: Cues,
     /// A Welcome panel's fade-in timer, while it fades.
     fade: Option<RegistrationToken>,
+    /// A windowed dialog minimised from its task button: its tree is off and it sits at the
+    /// bottom of the stack.
+    pub minimized: bool,
 }
 
 impl DialogView {
@@ -140,6 +143,15 @@ fn raise_order(links: &[(u64, Option<u64>)], index: usize) -> Vec<usize> {
     let top = root(index);
     let (family, rest): (Vec<usize>, Vec<usize>) = (0..links.len()).partition(|&i| root(i) == top);
     rest.into_iter().chain(family).collect()
+}
+
+/// The layer a dialog's tree stands in: among the windows when [`Dialog::windowed`], else over them.
+fn dialog_layer(d: &Dialog, layers: &crate::compositor::Layers) -> TreeId {
+    if d.windowed() {
+        layers.windows
+    } else {
+        layers.menu
+    }
 }
 
 /// Where a dialog of `size` at `origin` goes when its output's usable area becomes `area`: moved as
@@ -355,7 +367,7 @@ impl State {
             Placement::At(x, y) => keep_inside((x, y), layout.size, area),
         };
         let welcome = matches!(d.style, Style::Welcome);
-        let tree = self.scene.tree_create(self.layers.menu);
+        let tree = self.scene.tree_create(dialog_layer(&d, &self.layers));
         self.scene
             .set_data(tree, Some(SceneOwner::Dialog(self.dialogs.views.len())));
         // Only `content` shows in the backdrop.
@@ -389,6 +401,7 @@ impl State {
             still_canvas: None,
             cues: Cues::opened(self.key_input.last_key_input),
             fade: None,
+            minimized: false,
         };
         self.dialogs.views.push(view);
         self.activate_dialogs();
@@ -433,8 +446,21 @@ impl State {
         }
     }
 
-    /// Raise dialog `index` with its family (`raise_order`) and give the keyboard to the top one.
+    /// Raise dialog `index` with its family (`raise_order`) and give the keyboard to the top one; a
+    /// minimised one is restored first.
     fn raise_dialog(&mut self, index: usize) {
+        let Some(v) = self.dialogs.views.get_mut(index) else {
+            return;
+        };
+        let restored = std::mem::take(&mut v.minimized);
+        let (tree, windowed) = (v.tree, v.dialog.windowed());
+        if restored {
+            self.scene.set_enabled(tree, true);
+        }
+        // Over the windows even when it already tops the dialogs' stack.
+        if windowed {
+            self.scene.raise_to_top(tree);
+        }
         let links: Vec<(u64, Option<u64>)> = self
             .dialogs
             .views
@@ -450,24 +476,59 @@ impl State {
                 .collect();
             self.dialogs.views = order.iter().filter_map(|&i| old[i].take()).collect();
             self.renumber_dialogs();
+            // A windowed dialog that moved down keeps its place among the windows.
             for i in first..self.dialogs.views.len() {
-                let tree = self.dialogs.views[i].tree;
-                self.scene.raise_to_top(tree);
+                let v = &self.dialogs.views[i];
+                if !v.dialog.windowed() {
+                    self.scene.raise_to_top(v.tree);
+                }
             }
         }
-        if self.activate_dialogs() || first_moved.is_some() {
+        if self.activate_dialogs() || first_moved.is_some() || restored {
             self.restart_caret();
             self.redraw_dialogs();
             self.sync_dialog_tasks(false);
         }
+        if restored {
+            self.redraw_all();
+        }
     }
 
-    /// Whether the top dialog has the keyboard; a Welcome panel always does.
+    /// Minimise windowed dialog `id`: its tree goes off and it drops to the bottom of the stack,
+    /// so the keyboard passes to the dialog now on top or, with none shown, to the top window.
+    pub fn minimize_dialog(&mut self, id: u64) {
+        let Some(i) = self.dialogs.views.iter().position(|v| v.id == id) else {
+            return;
+        };
+        if self.dialogs.views[i].minimized || !self.dialogs.views[i].dialog.windowed() {
+            return;
+        }
+        let mut v = self.dialogs.views.remove(i);
+        v.minimized = true;
+        self.scene.set_enabled(v.tree, false);
+        self.dialogs.views.insert(0, v);
+        self.settle_dialogs();
+        self.redraw_dialogs();
+        self.sync_dialog_tasks(false);
+        self.redraw_all();
+    }
+
+    /// A left click on dialog `id`'s task button: an active windowed dialog minimises, any other
+    /// comes up with the keyboard.
+    pub fn task_dialog_click(&mut self, id: u64) {
+        let windowed = (self.dialogs.views.iter()).any(|v| v.id == id && v.dialog.windowed());
+        if windowed && self.active_dialog_id() == Some(id) {
+            self.minimize_dialog(id);
+        } else {
+            self.focus_dialog(id);
+        }
+    }
+
+    /// Whether the top dialog has the keyboard; a Welcome panel always does, a minimised one never.
     pub fn dialog_has_keyboard(&self) -> bool {
-        self.dialogs
-            .views
-            .last()
-            .is_some_and(|v| self.dialogs.active || matches!(v.dialog.style, Style::Welcome))
+        self.dialogs.views.last().is_some_and(|v| {
+            !v.minimized && (self.dialogs.active || matches!(v.dialog.style, Style::Welcome))
+        })
     }
 
     /// The active dialog: the top one while it has the keyboard. Its task button draws pushed in.
@@ -554,10 +615,11 @@ impl State {
         self.sync_dialog_tasks(on_taskbar);
     }
 
-    /// After dialogs left the stack: redraw the new top, or return the keyboard to the windows.
+    /// After dialogs left the stack or went minimised: redraw the new top, or return the keyboard
+    /// to the windows when no dialog is shown.
     fn settle_dialogs(&mut self) {
         self.renumber_dialogs();
-        if self.dialogs.views.is_empty() {
+        if self.dialogs.views.last().is_none_or(|v| v.minimized) {
             self.stop_caret();
             if self.dialogs.active {
                 self.dialogs.active = false;
@@ -2410,6 +2472,59 @@ mod tests {
     use crate::raster::Rect;
     use reprisekit::controls::form::Key;
     use reprisekit::controls::openwith::{Program, ROWS};
+
+    #[test]
+    fn a_windowed_dialog_stacks_with_the_windows_and_others_stand_over_them() {
+        use crate::compositor::{DeskScene, Layers};
+        use reprisekit::controls::copyprogress::{CopyProgress, Kind};
+        use reprisescene::TreeId;
+        let mut scene = DeskScene::new();
+        let layers = Layers::new(&mut scene);
+        let cp = CopyProgress::new(
+            Kind::Copy,
+            "Downloads",
+            "KINGSTON",
+            crate::theme::Color::rgb(0, 0, 0),
+        );
+        let copy = Dialog::copy_progress(cp, "/media/KINGSTON".into());
+        let run = Dialog::run(&[]);
+        let put = |scene: &mut DeskScene, layer: TreeId| {
+            let tree = scene.tree_create(layer);
+            let b = scene.buffer_create(tree);
+            scene.buffer_set_canvas(b, &[0xff00_0000; 16 * 16], 16, 16);
+            tree
+        };
+        let dialog = put(&mut scene, super::dialog_layer(&copy, &layers));
+        let window = put(&mut scene, layers.windows);
+        let top = |scene: &DeskScene| {
+            let hit = scene
+                .node_at(scene.root(), (8.0, 8.0).into())
+                .expect("a hit");
+            scene.parent(hit.node).expect("a tree")
+        };
+        assert_eq!(
+            top(&scene),
+            window,
+            "the window raised last covers the dialog"
+        );
+        scene.raise_to_top(dialog);
+        assert_eq!(top(&scene), dialog, "the dialog comes up over the window");
+        scene.raise_to_top(window);
+        assert_eq!(top(&scene), window, "a clicked window goes over it again");
+        scene.raise_to_top(dialog);
+        scene.set_enabled(dialog, false);
+        assert_eq!(top(&scene), window, "minimised, it lets the window show");
+
+        let menu = super::dialog_layer(&run, &layers);
+        assert_eq!(menu, layers.menu);
+        let run_tree = put(&mut scene, menu);
+        scene.raise_to_top(window);
+        assert_eq!(
+            top(&scene),
+            run_tree,
+            "a dialog that is not windowed stays over the windows"
+        );
+    }
 
     #[test]
     fn a_glass_dialogs_backdrop_covers_its_frame_only() {
