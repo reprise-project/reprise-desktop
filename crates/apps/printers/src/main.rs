@@ -1045,7 +1045,7 @@ impl App for PrintersApp {
 }
 
 fn main() {
-    env_logger::init();
+    reprisebus::journal::init_logger("error");
     let tray_only = std::env::args().any(|a| a == "--tray");
     repriseapp::run(Box::new(PrintersApp::new(tray_only)));
 }

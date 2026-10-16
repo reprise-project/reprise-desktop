@@ -1022,7 +1022,7 @@ impl App for BtApp {
 }
 
 fn main() {
-    env_logger::init();
+    reprisebus::journal::init_logger("error");
     let tray_only = std::env::args().any(|a| a == "--tray");
     repriseapp::run(Box::new(BtApp::new(tray_only)));
 }

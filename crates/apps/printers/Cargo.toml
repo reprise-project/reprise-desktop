@@ -25,4 +25,3 @@ inotify.workspace = true
 zbus.workspace = true
 serde.workspace = true
 log.workspace = true
-env_logger.workspace = true

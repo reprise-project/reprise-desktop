@@ -479,7 +479,7 @@ impl PowerApp {
 }
 
 fn main() {
-    env_logger::init();
+    reprisebus::journal::init_logger("error");
     let tray_only = std::env::args().any(|a| a == "--tray");
     repriseapp::run(Box::new(PowerApp {
         hidden: tray_only,

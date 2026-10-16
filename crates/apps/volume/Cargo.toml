@@ -21,7 +21,7 @@ reprisekit = { path = "../../reprisekit" }
 serde = { workspace = true, features = ["derive"] }
 toml.workspace = true
 log.workspace = true
-env_logger.workspace = true
+reprisebus = { path = "../../reprisebus" }
 
 [dev-dependencies]
 tempfile.workspace = true

@@ -2031,7 +2031,7 @@ impl Notepad {
 }
 
 fn main() {
-    env_logger::init();
+    reprisebus::journal::init_logger("error");
     let path = std::env::args_os().nth(1).map(std::path::PathBuf::from);
     let mut notepad = Notepad::new(path);
     notepad.forms = repriseapp::start_forms();

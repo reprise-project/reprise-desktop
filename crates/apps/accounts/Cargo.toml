@@ -22,4 +22,3 @@ zbus.workspace = true
 serde.workspace = true
 libc.workspace = true
 log.workspace = true
-env_logger.workspace = true

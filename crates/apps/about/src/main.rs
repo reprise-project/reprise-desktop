@@ -217,7 +217,7 @@ impl App for AboutBox {
 }
 
 fn main() {
-    env_logger::init();
+    reprisebus::journal::init_logger("error");
     repriseapp::run(Box::new(AboutBox::new(SystemFacts::read())));
 }
 

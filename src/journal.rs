@@ -2,8 +2,9 @@
 //! compositor writes to a journald stream (`sd_journal_stream_fd`) named `reprise`, and each
 //! program it spawns gets a stream named after its app.
 
+use reprisebus::journal::stream_id;
 use std::io::Write as _;
-use std::os::fd::{AsFd, AsRawFd, BorrowedFd, OwnedFd};
+use std::os::fd::{AsFd, AsRawFd, OwnedFd};
 use std::sync::atomic::{AtomicBool, Ordering};
 
 const SOCKET: &str = "/run/systemd/journal/stdout";
@@ -22,7 +23,7 @@ pub fn init() -> bool {
     {
         return false;
     }
-    if std::env::var("JOURNAL_STREAM").is_ok_and(|v| Some(v) == stream_id(stderr.as_fd())) {
+    if reprisebus::journal::on_stream() {
         ON.store(true, Ordering::Relaxed);
         return true;
     }
@@ -55,29 +56,6 @@ pub fn stream_for(identifier: &str) -> Option<(OwnedFd, String)> {
     Some((fd, id))
 }
 
-/// One log record as journal stream lines: each line prefixed with its syslog priority.
-pub fn format(level: log::Level, target: &str, msg: &str) -> String {
-    let p = priority(level);
-    let mut out = String::new();
-    for (i, line) in msg.split('\n').enumerate() {
-        if i == 0 {
-            out.push_str(&format!("<{p}>{target}: {line}\n"));
-        } else {
-            out.push_str(&format!("<{p}>{line}\n"));
-        }
-    }
-    out
-}
-
-fn priority(level: log::Level) -> u8 {
-    match level {
-        log::Level::Error => 3,
-        log::Level::Warn => 4,
-        log::Level::Info => 6,
-        log::Level::Debug | log::Level::Trace => 7,
-    }
-}
-
 /// The stream protocol's header: identifier, unit id, default priority (info), level prefix on,
 /// no forwarding to syslog, kmsg or console.
 fn header(identifier: &str) -> String {
@@ -92,15 +70,6 @@ fn open(identifier: &str) -> std::io::Result<OwnedFd> {
     Ok(s.into())
 }
 
-/// `<dev>:<ino>` of `fd`, the form `JOURNAL_STREAM` names a stream in.
-fn stream_id(fd: BorrowedFd) -> Option<String> {
-    // SAFETY: stat is plain data, valid zeroed.
-    let mut st: libc::stat = unsafe { std::mem::zeroed() };
-    // SAFETY: fd is open for the borrow and fstat writes only into st.
-    let ok = unsafe { libc::fstat(fd.as_raw_fd(), &mut st) } == 0;
-    ok.then(|| format!("{}:{}", st.st_dev, st.st_ino))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -113,22 +82,5 @@ mod tests {
     #[test]
     fn a_newline_in_the_identifier_cannot_shift_the_header() {
         assert_eq!(header("a\nb"), "ab\n\n6\n1\n0\n0\n0\n");
-    }
-
-    #[test]
-    fn log_levels_map_to_syslog_priorities() {
-        assert_eq!(format(log::Level::Error, "t", "m"), "<3>t: m\n");
-        assert_eq!(format(log::Level::Warn, "t", "m"), "<4>t: m\n");
-        assert_eq!(format(log::Level::Info, "t", "m"), "<6>t: m\n");
-        assert_eq!(format(log::Level::Debug, "t", "m"), "<7>t: m\n");
-        assert_eq!(format(log::Level::Trace, "t", "m"), "<7>t: m\n");
-    }
-
-    #[test]
-    fn every_line_of_a_multiline_record_keeps_its_priority() {
-        assert_eq!(
-            format(log::Level::Warn, "reprise::drm", "commit failed\n  retry"),
-            "<4>reprise::drm: commit failed\n<4>  retry\n"
-        );
     }
 }

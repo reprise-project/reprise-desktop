@@ -848,8 +848,7 @@ async fn serve(
 fn main() {
     // zbus logs every call it serves at info, with the whole message; RUST_LOG
     // still turns it back on.
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info,zbus=warn"))
-        .init();
+    reprisebus::journal::init_logger("info,zbus=warn");
     if std::env::args().any(|a| a == "--pick") {
         picker::run_dialog();
         return;

@@ -25,7 +25,10 @@ A session started from a login manager logs to the user journal under
 
 Each program Reprise starts (the tray helpers, autostart entries, launches)
 logs under its desktop entry id, such as `reprise-sound`, or under its
-program name when it has no entry. Started from a terminal, Reprise logs to
+program name when it has no entry. Reprise's own programs mark their lines
+with the same priorities, so `-t reprise-sound -p warning` lists that
+program's warnings and errors; the apps and tray helpers log errors only
+unless `RUST_LOG` says otherwise. Started from a terminal, Reprise logs to
 the terminal and its programs inherit it; `REPRISE_LOG_STDERR=1` keeps the
 log on stderr anywhere. `RUST_LOG` sets the level, as in
 `RUST_LOG=reprise=debug`.

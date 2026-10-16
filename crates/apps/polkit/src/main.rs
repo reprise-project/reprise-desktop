@@ -414,7 +414,7 @@ impl App for PolkitApp {
 }
 
 fn main() {
-    env_logger::init();
+    reprisebus::journal::init_logger("error");
     repriseapp::run(Box::new(PolkitApp::default()));
 }
 
