@@ -76,6 +76,7 @@ use crate::{
 type Allocator = GbmAllocator<DrmDeviceFd>;
 type Exporter = GbmFramebufferExporter<DrmDeviceFd>;
 type Compositor = DrmCompositor<Allocator, Exporter, (), DrmDeviceFd>;
+type Scanout = commit::Scanout<Compositor>;
 /// A vblank's time, sequence and presentation kind.
 type Flip = (Duration, u64, wp_presentation_feedback::Kind);
 
@@ -126,7 +127,7 @@ struct Surface {
     vrr_on: bool,
     global: GlobalId,
     thread: commit::Thread<Work>,
-    compositor: Arc<Mutex<Compositor>>,
+    compositor: Arc<Mutex<Scanout>>,
     track: commit::Track<Flip>,
     /// The frame on the commit thread.
     flight: Option<InFlight>,
@@ -168,7 +169,7 @@ struct InFlight {
 
 /// Main's lock of an output's compositor. Main locks only while the output's thread is idle
 /// (`Track::busy` false), so this never waits; debug builds assert it.
-fn lock(c: &Mutex<Compositor>) -> MutexGuard<'_, Compositor> {
+fn lock(c: &Mutex<Scanout>) -> MutexGuard<'_, Scanout> {
     match c.try_lock() {
         Ok(g) => g,
         Err(TryLockError::Poisoned(p)) => p.into_inner(),
@@ -199,7 +200,7 @@ struct Out {
 
 /// The commit thread's side of an output: its compositor and the device.
 struct Kms {
-    compositor: Arc<Mutex<Compositor>>,
+    compositor: Arc<Mutex<Scanout>>,
     fd: DrmDeviceFd,
     crtc: crtc::Handle,
 }
@@ -217,11 +218,11 @@ impl commit::Committer for Kms {
         };
         let gamma = match (kind, work) {
             (commit::Kind::Flip { .. }, _) => {
-                c().queue_frame(()).map_err(|e| format!("{e:?}"))?;
+                c().queue_frame()?;
                 None
             }
             (commit::Kind::Clear, _) => {
-                c().clear().map_err(|e| e.to_string())?;
+                c().clear()?;
                 None
             }
             (commit::Kind::Gamma, Work::Gamma { gamma, wanted }) => {
@@ -237,6 +238,22 @@ impl commit::Committer for Kms {
             (kind, _) => return Err(format!("{kind:?} without its work")),
         };
         Ok(Out { gamma })
+    }
+}
+
+impl commit::Frames for Compositor {
+    fn queue(&mut self) -> Result<(), String> {
+        self.queue_frame(()).map_err(|e| format!("{e:?}"))
+    }
+
+    fn submitted(&mut self) -> Result<(), String> {
+        self.frame_submitted()
+            .map(drop)
+            .map_err(|e| format!("{e:?}"))
+    }
+
+    fn clear(&mut self) -> Result<(), String> {
+        DrmCompositor::clear(self).map_err(|e| e.to_string())
     }
 }
 
@@ -665,7 +682,7 @@ pub fn enable(state: &mut State, output: &Output, index: usize) -> bool {
         .vrr_supported(connector)
         .is_ok_and(|v| v != VrrSupport::NotSupported);
     let vrr_on = compositor.vrr_enabled();
-    let compositor = Arc::new(Mutex::new(compositor));
+    let compositor = Arc::new(Mutex::new(Scanout::new(compositor)));
     let delay = b
         .delay
         .as_deref()
@@ -993,8 +1010,8 @@ fn activate(state: &mut State) {
 
 /// Once the session is back, quiet and no commit is out: read back each CRTC's gamma, turn
 /// off every CRTC, connector and plane (another master may have left a CRTC lit on a connector
-/// one of ours now claims, which fails every later commit), then re-read each output's state
-/// and drop its buffers.
+/// one of ours now claims, which fails every later commit), then re-read each output's state,
+/// drop its buffers and the frame whose vblank `Track::reset` forgot.
 fn reset_device(state: &mut State) {
     let Some(b) = state.backend.as_mut() else {
         return;
@@ -1025,6 +1042,9 @@ fn reset_device(state: &mut State) {
             log::warn!("{}: reset state: {e}", s.output.name());
         }
         c.reset_buffers();
+        if let Err(e) = c.frame_submitted() {
+            log::warn!("{}: drop pending frame: {e}", s.output.name());
+        }
     }
     let crtcs: Vec<crtc::Handle> = b.surfaces.keys().copied().collect();
     for crtc in crtcs {
@@ -1486,7 +1506,7 @@ fn flipped(state: &mut State, crtc: crtc::Handle, (time, seq, kind): Flip) {
     };
     let submitted = lock(&s.compositor).frame_submitted();
     if let Err(e) = submitted {
-        log::warn!("{}: frame submit: {e:?}", s.output.name());
+        log::warn!("{}: frame submit: {e}", s.output.name());
     }
     if let Some(mut feedback) = s.presenting.take() {
         let refresh = s.output.current_mode().map_or(60_000, |m| m.refresh.max(1));
