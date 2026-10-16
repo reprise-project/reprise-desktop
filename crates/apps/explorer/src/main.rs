@@ -242,6 +242,9 @@ pub struct Explorer {
     /// A place still being read after [`LIST_WAIT`]; the listing before stays until it lands
     /// ([`Explorer::take_read`]).
     reading: Option<Reading>,
+    /// Reads of places left before they landed, one per key: a visit back joins its read
+    /// instead of starting another, so visits to a dead folder hold one listing thread.
+    left: Vec<Reading>,
     /// Folders nodes still being read after [`LIST_WAIT`] ([`Explorer::fill_node`]).
     filling: Vec<(Place, Job<foldertree::Kids>)>,
     /// Image sizes by path, from the thumbnail worker or a header read
@@ -378,6 +381,7 @@ impl Explorer {
             drawn_scale: 0,
             list_icons: ListIcons::default(),
             reading: None,
+            left: Vec::new(),
             filling: Vec::new(),
             image_dims: HashMap::new(),
             dims_asked: HashSet::new(),
@@ -487,8 +491,8 @@ impl Explorer {
     pub fn go(&mut self, place: Place, ctx: &mut Ctx) -> Reply {
         if place == self.place {
             // Going where the window already is drops another place still being read.
-            if self.reading.as_ref().is_some_and(|r| r.key.0 != place) {
-                self.reading = None;
+            if let Some(r) = self.reading.take_if(|r| r.key.0 != place) {
+                self.leave(r);
             }
             return self.refresh(ctx);
         }
@@ -547,9 +551,16 @@ impl Explorer {
             self.sync_volumes();
         }
         let key = (place, self.settings.show_hidden, ctx.icons.scale());
-        let (job, again) = match self.reading.take() {
-            Some(r) if r.key == key => (r.job, true),
-            _ => (
+        if let Some(r) = self.reading.take_if(|r| r.key != key) {
+            self.leave(r);
+        }
+        let joined = self.reading.take().or_else(|| {
+            let i = self.left.iter().position(|r| r.key == key)?;
+            Some(self.left.swap_remove(i))
+        });
+        let (job, again) = match joined {
+            Some(r) => (r.job, true),
+            None => (
                 Job::spawn(Some(&ctx.wake), self.reader(key.0.clone(), ctx)),
                 false,
             ),
@@ -566,6 +577,15 @@ impl Explorer {
                 self.reading = Some(Reading { key, job, again });
                 Reply::none()
             }
+        }
+    }
+
+    /// Keeps `r`, a read of a place navigated away from, for a visit back to join, dropping the
+    /// left reads that have landed.
+    fn leave(&mut self, r: Reading) {
+        self.left.retain(|l| l.job.take().is_none());
+        if r.job.take().is_none() {
+            self.left.push(r);
         }
     }
 

@@ -962,6 +962,46 @@ mod tests {
     }
 
     #[test]
+    fn a_visit_back_to_a_folder_left_mid_read_joins_that_read() {
+        let mut ctx = test_ctx();
+        let (dir, mut ex) = explorer(&mut ctx);
+        let home = ex.place.clone();
+        let place = Place::Folder(dir.path().join("sub"));
+        let before = ex.reader(place.clone(), &ctx)();
+        let (answer, gate) = std::sync::mpsc::channel::<()>();
+        ex.reading = Some(crate::Reading {
+            key: (place.clone(), ex.settings.show_hidden, ctx.icons.scale()),
+            job: repriseapp::listjob::Job::spawn(None, move || {
+                gate.recv().ok();
+                before
+            }),
+            again: false,
+        });
+
+        ex.go(home.clone(), &mut ctx);
+        assert!(ex.reading.is_none());
+        assert_eq!(ex.left.len(), 1, "the read left behind is kept");
+
+        std::fs::write(dir.path().join("sub/late.txt"), "x").expect("write");
+        answer.send(()).expect("send");
+        ex.go(place.clone(), &mut ctx);
+        assert_eq!(ex.place, place);
+        assert!(ex.left.is_empty());
+        assert!(
+            ex.items.iter().all(|it| it.name != "late.txt"),
+            "the visit is answered by the read it joined"
+        );
+        for _ in 0..500 {
+            if ex.reading.is_none() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+            ex.wake(&mut ctx);
+        }
+        index_of(&ex, "late.txt");
+    }
+
+    #[test]
     fn a_refresh_of_a_folder_being_read_waits_on_that_read_then_reads_it_once_more() {
         let mut ctx = test_ctx();
         let (dir, mut ex) = explorer(&mut ctx);
