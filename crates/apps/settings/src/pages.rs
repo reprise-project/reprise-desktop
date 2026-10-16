@@ -383,10 +383,24 @@ pub fn advanced(a: Area) -> Form {
     );
     items.push(Item::check(WATER, X, 344 + dh, "Desktop &water"));
     items.push(choice(WATER_STYLE, X + 112, 340 + dh, 100, WATER_STYLES));
+    items.push(Item::label_at(
+        "water_note",
+        X + 12,
+        364 + dh,
+        a.w - 12,
+        "With Ink, Glow, Sparks or Neon, dragging on the desktop",
+    ));
+    items.push(Item::label_at(
+        "water_note_2",
+        X + 12,
+        377 + dh,
+        a.w - 12,
+        "stirs the fluid instead of drawing a selection box.",
+    ));
     items.push(Item::check(
         THUMBS,
         X,
-        366 + dh,
+        392 + dh,
         "Keep &thumbnails of pictures",
     ));
     let mb = ThumbnailCache::MAX_MB;
@@ -395,7 +409,7 @@ pub fn advanced(a: Area) -> Form {
             THUMBS_SIZE[0],
             THUMBS_MB,
             X,
-            392 + dh,
+            418 + dh,
             70,
             "Si&ze in MB:",
             (*mb.start() as i32, *mb.end() as i32),
@@ -406,19 +420,19 @@ pub fn advanced(a: Area) -> Form {
     items.push(Item::value_at(
         THUMBS_CLEARED,
         cleared_x,
-        366 + dh,
+        392 + dh,
         a.right() - cleared_x,
         "",
     ));
     items.push(button(
         THUMBS_CLEAR,
         a.right() - BUTTON_W,
-        386 + dh,
+        412 + dh,
         "Clea&r",
     ));
     items.push(Item::new(
         "note",
-        Rect::new(X, 418 + dh, a.w - BUTTON_W - 8, 2 * LINE_H),
+        Rect::new(X, 444 + dh, a.w - BUTTON_W - 8, 2 * LINE_H),
         Control::Lines(vec![
             "Keys no page sets are edited in".into(),
             "config.toml itself.".into(),
@@ -427,7 +441,7 @@ pub fn advanced(a: Area) -> Form {
     items.push(button(
         EDIT_FILE,
         a.right() - BUTTON_W,
-        418 + dh,
+        444 + dh,
         "&Edit File...",
     ));
     Form::new(items)
@@ -2020,7 +2034,10 @@ pub fn follow(sheet: &mut PropSheet, s: &Settings) {
     sp.set_enabled("switcher_size_label", thumbnails);
     sp.set_enabled("switcher_size", thumbnails);
     sp.set_enabled("switcher_flip", s.interface == "glass");
-    sheet.pages[Page::Advanced.index()].set_enabled(WATER_STYLE, s.wallpaper_water != "off");
+    let water = &mut sheet.pages[Page::Advanced.index()];
+    for id in [WATER_STYLE, "water_note", "water_note_2"] {
+        water.set_enabled(id, s.wallpaper_water != "off");
+    }
     let wp = &mut sheet.pages[Page::Windows.index()];
     for id in DRAG_SNAP_CONTROLS {
         wp.set_enabled(id, s.snap_enabled);
@@ -3451,15 +3468,56 @@ mod tests {
         );
         assert_eq!(rect(&s, p, DEBUG_OVERLAY), Rect::new(20, 300, 13, 13));
         assert_eq!(rect(&s, p, DEBUG_IN_CAPTURES), Rect::new(38, 322, 13, 13));
-        assert_eq!(rect(&s, p, THUMBS), Rect::new(20, 366, 13, 13));
-        assert_eq!(rect(&s, p, THUMBS_MB), Rect::new(112, 388, 50, 20));
-        assert_eq!(rect(&s, p, THUMBS_CLEAR), Rect::new(303, 386, 75, 23));
-        assert_eq!(rect(&s, p, "note"), Rect::new(20, 418, 275, 26));
-        assert_eq!(rect(&s, p, EDIT_FILE), Rect::new(303, 418, 75, 23));
+        assert_eq!(rect(&s, p, THUMBS), Rect::new(20, 392, 13, 13));
+        assert_eq!(rect(&s, p, THUMBS_MB), Rect::new(112, 414, 50, 20));
+        assert_eq!(rect(&s, p, THUMBS_CLEAR), Rect::new(303, 412, 75, 23));
+        assert_eq!(rect(&s, p, "note"), Rect::new(20, 444, 275, 26));
+        assert_eq!(rect(&s, p, EDIT_FILE), Rect::new(303, 444, 75, 23));
         for id in ["banner_label", "startmenu_banner", "start_icon"] {
             assert!(s.pages[p.index()].item(id).is_none(), "{id} is on Taskbar");
         }
         inside_page(&s, p);
+    }
+
+    #[test]
+    fn water_styles_list_the_fluids() {
+        let keys: Vec<_> = WATER_STYLES.iter().map(|c| c.0).collect();
+        assert_eq!(
+            keys,
+            ["calm", "lively", "rain", "ink", "glow", "sparks", "neon"]
+        );
+        let labels: Vec<_> = WATER_STYLES.iter().skip(3).map(|c| c.1).collect();
+        assert_eq!(labels, ["Ink", "Glow", "Sparks", "Neon"]);
+        for (key, _) in WATER_STYLES {
+            assert!(reprisekit::water::Water::parse(key).is_some(), "{key}");
+        }
+    }
+
+    #[test]
+    fn water_note_sits_under_the_style_combo_and_greys_when_off() {
+        let mut s = built();
+        let p = Page::Advanced;
+        let combo = rect(&s, p, WATER_STYLE);
+        let (a, b) = (rect(&s, p, "water_note"), rect(&s, p, "water_note_2"));
+        assert!(
+            a.y >= combo.bottom() && b.y >= a.bottom(),
+            "{a:?} {b:?} under {combo:?}"
+        );
+        let page = &s.pages[p.index()];
+        let Control::Label { text, .. } = &page.item("water_note").unwrap().control else {
+            panic!("the note is a label");
+        };
+        assert!(text.starts_with("With Ink, Glow, Sparks or Neon"));
+        inside_page(&s, p);
+        let mut want = Settings {
+            wallpaper_water: "off".into(),
+            ..Settings::default()
+        };
+        follow(&mut s, &want);
+        assert!(!enabled_on(&s, p, "water_note") && !enabled_on(&s, p, "water_note_2"));
+        want.wallpaper_water = "ink".into();
+        follow(&mut s, &want);
+        assert!(enabled_on(&s, p, "water_note") && enabled_on(&s, p, "water_note_2"));
     }
 
     #[test]

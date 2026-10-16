@@ -52,7 +52,7 @@ lists them. Glass's `[glass]` section is documented there too.
 | `interval` | minutes per picture, 1 to 1440 | 30 |
 | `shuffle` | random order instead of by name | `false` |
 | `lock_screen` | the picture behind the lock dialog too | off under Classic, on under Blue and Glass |
-| `water` | `off`, `calm`, `lively` or `rain` | `off` |
+| `water` | `off`, `calm`, `lively`, `rain`, `ink`, `glow`, `sparks` or `neon` | `off` |
 | `water_rate` | `refresh` (each screen's refresh rate) or 30 to 240 times a second | `refresh` |
 
 Reprise draws its built-in wallpapers in code at each screen's size, so they
@@ -86,6 +86,30 @@ about 30 frames a second, each running the steps since the last, so its
 ripples keep their speed; a wake, click or moving window brings back a frame
 per step for two seconds. The desktop menu's Next desktop background skips the
 slideshow ahead.
+
+`ink`, `glow`, `sparks` and `neon` swap the ripples for a fluid that the
+pointer and fingers stir. Ink is soft coloured dye with a glow; it alternates
+between a light flavour (deep colours on a pale backdrop) and a dark one (vivid
+colours on a deep backdrop) each time the fluid starts fresh. Glow draws the
+fluid as bright outlines with a shifting rainbow rim. Sparks is dim fluid
+carrying glittering sparks. Neon is light streaks over a faint tile grid that
+lights where the flow passes.
+
+- Drag on empty desktop with the left mouse button or any number of fingers to
+  stir; plain mouse movement leaves a faint wake. Each finger gets its own
+  colour. The mouse's colour drifts along a stroke and each new press starts on
+  the next colour. Icons work as usual, but dragging on empty desktop stirs
+  instead of drawing a selection box.
+- A tap makes a burst, a finger held still keeps pouring, a flick throws a long
+  jet, two fingers twisting make a whirlpool, and a double tap (or a
+  double-click on empty desktop) clears the fluid.
+- While the fluid is live the wallpaper dims toward the style's backdrop. After
+  the last touch the fluid keeps drifting for about a minute, then fades back to
+  the wallpaper over about another minute and stops drawing.
+- The lock screen keeps the Calm ripples. `water_rate` also sets the fluid's
+  step rate.
+- The fluid styles need OpenGL ES 3 with half-float render targets. Without
+  them the desktop shows the plain wallpaper.
 
 ## Screen saver
 

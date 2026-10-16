@@ -12,6 +12,10 @@ pub enum Water {
     Calm,
     Lively,
     Rain,
+    Ink,
+    Glow,
+    Sparks,
+    Neon,
 }
 
 impl Water {
@@ -21,6 +25,10 @@ impl Water {
             "calm" => Some(Water::Calm),
             "lively" => Some(Water::Lively),
             "rain" => Some(Water::Rain),
+            "ink" => Some(Water::Ink),
+            "glow" => Some(Water::Glow),
+            "sparks" => Some(Water::Sparks),
+            "neon" => Some(Water::Neon),
             _ => None,
         }
     }
@@ -31,6 +39,10 @@ impl Water {
             Water::Calm => "calm",
             Water::Lively => "lively",
             Water::Rain => "rain",
+            Water::Ink => "ink",
+            Water::Glow => "glow",
+            Water::Sparks => "sparks",
+            Water::Neon => "neon",
         }
     }
 
@@ -43,7 +55,7 @@ impl Water {
             rain: None,
         };
         match self {
-            Water::Off => None,
+            Water::Off | Water::Ink | Water::Glow | Water::Sparks | Water::Neon => None,
             Water::Calm => Some(calm),
             Water::Lively => Some(Preset {
                 damping: 0.995,
@@ -57,6 +69,21 @@ impl Water {
                 ..calm
             }),
         }
+    }
+
+    pub fn fluid(self) -> Option<crate::fluid::Profile> {
+        use crate::fluid::Profile;
+        match self {
+            Water::Ink => Some(Profile::Ink),
+            Water::Glow => Some(Profile::Glow),
+            Water::Sparks => Some(Profile::Sparks),
+            Water::Neon => Some(Profile::Neon),
+            _ => None,
+        }
+    }
+
+    pub fn is_fluid(self) -> bool {
+        self.fluid().is_some()
     }
 }
 
@@ -395,6 +422,19 @@ impl Clock {
         n as u32
     }
 
+    /// As `steps`, for a sim too costly to catch up: up to the steps a frame at `refresh` Hz runs
+    /// at `hz`, at most two; a frame owing more runs one and drops the rest.
+    pub fn steps_no_catch_up(&mut self, dt: f32, hz: f32, refresh: f32) -> u32 {
+        let most = ((hz / refresh).ceil() as u32).clamp(1, 2);
+        match self.steps(dt, hz) {
+            n if n <= most => n,
+            _ => {
+                self.owed = 0.5;
+                1
+            }
+        }
+    }
+
     /// Seconds from the last `steps` until a frame there runs a step at `hz`.
     pub fn until_step(&self, hz: f32) -> f32 {
         self.until_steps(1, hz)
@@ -442,6 +482,23 @@ impl Rain {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn fluid_styles_parse_and_round_trip() {
+        for s in ["ink", "glow", "sparks", "neon", "INK"] {
+            assert_eq!(Water::parse(s).unwrap().name(), s.to_ascii_lowercase());
+        }
+    }
+
+    #[test]
+    fn fluid_styles_have_no_ripple_preset() {
+        use crate::fluid::Profile;
+        assert!(Water::Ink.preset().is_none());
+        assert_eq!(Water::Ink.fluid(), Some(Profile::Ink));
+        assert!(Water::Ink.is_fluid());
+        assert!(Water::Calm.fluid().is_none());
+        assert!(!Water::Calm.is_fluid());
+    }
+
     use super::*;
 
     #[test]
@@ -570,6 +627,52 @@ mod tests {
         assert_eq!(c.steps(5.0, 144.0), 10, "the same 67 ms at 144 Hz");
         let mut c = Clock::default();
         assert_eq!(c.steps(5.0, 30.0), 2, "and at 30 Hz");
+    }
+
+    #[test]
+    fn a_late_frame_runs_one_step_without_catch_up() {
+        let mut c = Clock::default();
+        assert_eq!(c.steps_no_catch_up(1.0 / 60.0, 60.0, 60.0), 1);
+        assert_eq!(
+            c.steps_no_catch_up(2.0 / 60.0, 60.0, 60.0),
+            1,
+            "one frame late"
+        );
+        assert_eq!(
+            c.steps_no_catch_up(1.0 / 60.0, 60.0, 60.0),
+            1,
+            "the late time is dropped"
+        );
+        let n: Vec<u32> = (0..30)
+            .map(|_| c.steps_no_catch_up(1.0 / 30.0, 60.0, 60.0))
+            .collect();
+        assert!(
+            n.iter().all(|&k| k == 1),
+            "30 fps frames at a 60 Hz rate: {n:?}"
+        );
+        assert_eq!(c.steps_no_catch_up(5.0, 60.0, 60.0), 1, "a stall");
+        assert_eq!(c.steps_no_catch_up(0.0, 60.0, 60.0), 0, "drops the rest");
+    }
+
+    #[test]
+    fn a_rate_above_refresh_runs_two_steps_a_frame_at_most() {
+        let mut c = Clock::default();
+        let n: Vec<u32> = (0..60)
+            .map(|_| c.steps_no_catch_up(1.0 / 60.0, 120.0, 60.0))
+            .collect();
+        assert!(n.iter().all(|&k| k == 2), "120 Hz on 60 Hz frames: {n:?}");
+        let n: u32 = (0..60)
+            .map(|_| c.steps_no_catch_up(1.0 / 60.0, 240.0, 60.0))
+            .sum();
+        assert_eq!(
+            n, 60,
+            "240 Hz on 60 Hz frames: four due is too many, one a frame"
+        );
+        let mut c = Clock::default();
+        let n: Vec<u32> = (0..4)
+            .map(|_| c.steps_no_catch_up(1.0 / 60.0, 30.0, 60.0))
+            .collect();
+        assert_eq!(n, [1, 0, 1, 0], "a 30 Hz rate steps every other frame");
     }
 
     #[test]
