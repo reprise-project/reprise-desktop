@@ -44,6 +44,12 @@ pub struct FrameStats {
     pub rects: u32,
     /// Damaged physical pixels, overlaps counted twice.
     pub area: u64,
+    /// Commits the output's thread finished; handoff is main to thread and back, less the ioctl.
+    pub commits: u32,
+    pub handoff_total: Duration,
+    pub handoff_max: Duration,
+    pub ioctl_total: Duration,
+    pub ioctl_max: Duration,
     last_flip: Option<Duration>,
     /// A frame was waiting at the last flip: the next flip follows it
     /// back to back, so the time between them is a frame time, not idle.
@@ -63,6 +69,15 @@ impl FrameStats {
         self.damaged += 1;
         self.rects += rects;
         self.area += area;
+    }
+
+    /// A commit took `ioctl` in the kernel and `handoff` getting there and back.
+    pub fn committed(&mut self, handoff: Duration, ioctl: Duration) {
+        self.commits += 1;
+        self.handoff_total += handoff;
+        self.handoff_max = self.handoff_max.max(handoff);
+        self.ioctl_total += ioctl;
+        self.ioctl_max = self.ioctl_max.max(ioctl);
     }
 
     /// A page flip at `at` (monotonic); `waiting` says a frame is already
@@ -135,6 +150,18 @@ pub fn rows(stats: &FrameStats, secs: f64, own: u32, pixels: u64, totals: &Total
     } else {
         none()
     };
+    let commits = if frames && stats.commits > 0 {
+        let n = f64::from(stats.commits);
+        format!(
+            "{:.2} + {:.2} ms avg, {:.2} + {:.2} max",
+            ms(stats.handoff_total) / n,
+            ms(stats.ioctl_total) / n,
+            ms(stats.handoff_max),
+            ms(stats.ioctl_max)
+        )
+    } else {
+        none()
+    };
     let rss = totals
         .rss
         .map_or_else(none, |b| format!("{:.1} MB", b as f64 / (1024.0 * 1024.0)));
@@ -145,6 +172,7 @@ pub fn rows(stats: &FrameStats, secs: f64, own: u32, pixels: u64, totals: &Total
         ),
         Row::new("CPU/render", cpu),
         Row::new("Flip interval", flips),
+        Row::new("Handoff + commit", commits),
         Row::new("Damage", damage),
         Row::new("Clients", totals.clients.to_string()),
         Row::new("Windows", totals.windows.to_string()),
@@ -417,6 +445,8 @@ mod tests {
             s.rendered(ms(cpu));
             s.damage(2, 1000);
         }
+        s.committed(Duration::from_micros(50), ms(1));
+        s.committed(Duration::from_micros(150), ms(3));
         s.flipped(ms(0), true);
         s.flipped(ms(16), true);
         s.flipped(ms(36), false);
@@ -437,6 +467,7 @@ mod tests {
                 ("Renders/s", "4"),
                 ("CPU/render", "2.0 ms avg, 3.0 max"),
                 ("Flip interval", "18.0 ms avg, 20.0 max"),
+                ("Handoff + commit", "0.10 + 2.00 ms avg, 0.15 + 3.00 max"),
                 ("Damage", "2.0 rects, 10.0% area"),
                 ("Clients", "3"),
                 ("Windows", "2"),
@@ -453,10 +484,10 @@ mod tests {
         s.damage(1, 500);
         let r = rows(&s, 0.5, 1, 10_000, &Totals::default());
         assert_eq!(r[0].value, "0");
-        for row in &r[1..4] {
+        for row in &r[1..5] {
             assert_eq!(row.value, "-", "{} shows nothing", row.label);
         }
-        assert_eq!(r[7].value, "-", "no /proc, no memory figure");
+        assert_eq!(r[8].value, "-", "no /proc, no memory figure");
     }
 
     #[test]

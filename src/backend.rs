@@ -4,11 +4,14 @@
 //! are driven (`Backend::surfaces`) or parked (`Backend::parked`) is `output`'s call;
 //! the backend only enables, disables, changes mode (`set_mode`) or VRR (`set_vrr`).
 //! One GPU, no leases, no multi-GPU copies. Each driven CRTC owns its `DrmCompositor`; a
-//! modeset is never committed outside an output's own frame.
+//! modeset is never committed outside an output's own frame. Main renders; each output's
+//! commit thread (`commit`) runs the frame's KMS commit.
+
+mod commit;
 
 use std::{
     collections::HashMap,
-    sync::{Arc, Mutex, MutexGuard, PoisonError},
+    sync::{Arc, Mutex, MutexGuard, PoisonError, TryLockError},
     time::Duration,
 };
 
@@ -40,6 +43,7 @@ use smithay::{
     reexports::{
         calloop::{
             Interest, Mode, PostAction, RegistrationToken,
+            channel::{Event as ChannelEvent, Sender, channel},
             generic::Generic,
             timer::{TimeoutAction, Timer},
         },
@@ -67,8 +71,9 @@ use crate::{
 
 type Allocator = GbmAllocator<DrmDeviceFd>;
 type Exporter = GbmFramebufferExporter<DrmDeviceFd>;
-type FrameData = Option<OutputPresentationFeedback>;
-type Compositor = DrmCompositor<Allocator, Exporter, FrameData, DrmDeviceFd>;
+type Compositor = DrmCompositor<Allocator, Exporter, (), DrmDeviceFd>;
+/// A vblank's time, sequence and presentation kind.
+type Flip = (Duration, u64, wp_presentation_feedback::Kind);
 
 const COLOR_FORMATS: [Fourcc; 2] = [Fourcc::Xrgb8888, Fourcc::Argb8888];
 
@@ -82,6 +87,11 @@ pub struct Backend {
     exporter: Exporter,
     gbm: GbmDevice<DrmDeviceFd>,
     render_formats: Vec<DrmFormat>,
+    replies: Sender<(crtc::Handle, commit::Done)>,
+    /// `REPRISE_COMMIT_DELAY` as the session started.
+    delay: Option<String>,
+    /// The session came back: reset the device once no commit is out (`reset_device`).
+    reset: bool,
     scanner: DrmScanner,
     surfaces: HashMap<crtc::Handle, Surface>,
     parked: HashMap<crtc::Handle, Parked>,
@@ -95,8 +105,16 @@ struct Surface {
     vrr_capable: bool,
     vrr_on: bool,
     global: GlobalId,
+    /// Declared before `compositor`: it joins first, so main drops the last reference.
+    thread: commit::Thread,
     compositor: Arc<Mutex<Compositor>>,
-    pending_vblank: bool,
+    track: commit::Track<Flip>,
+    /// The frame on the commit thread.
+    flight: Option<InFlight>,
+    /// The flipped frame's feedback, presented at its vblank.
+    presenting: Option<OutputPresentationFeedback>,
+    /// Commit timings since the last frame-rate log line.
+    commit_times: Vec<commit::Times>,
     needs_redraw: bool,
     pointer_only: bool,
     pointer_shown: bool,
@@ -118,8 +136,36 @@ struct Surface {
     hw: Hw,
 }
 
+/// A frame sent to the commit thread, finished on its `Done`.
+struct InFlight {
+    started: std::time::Instant,
+    held: Option<Duration>,
+    feedback: Option<OutputPresentationFeedback>,
+}
+
+/// Main's lock of an output's compositor. Main locks only while the output's thread is idle
+/// (`Track::busy` false), so this never waits; debug builds assert it.
 fn lock(c: &Mutex<Compositor>) -> MutexGuard<'_, Compositor> {
-    c.lock().unwrap_or_else(PoisonError::into_inner)
+    match c.try_lock() {
+        Ok(g) => g,
+        Err(TryLockError::Poisoned(p)) => p.into_inner(),
+        Err(TryLockError::WouldBlock) => {
+            debug_assert!(false, "main locked a compositor its commit thread holds");
+            c.lock().unwrap_or_else(PoisonError::into_inner)
+        }
+    }
+}
+
+/// The commit thread's side of an output's compositor.
+struct Kms(Arc<Mutex<Compositor>>);
+
+impl commit::Committer for Kms {
+    fn commit(&mut self, kind: commit::Kind) -> Result<(), String> {
+        let mut c = self.0.lock().unwrap_or_else(PoisonError::into_inner);
+        match kind {
+            commit::Kind::Flip { .. } => c.queue_frame(()).map_err(|e| format!("{e:?}")),
+        }
+    }
 }
 
 struct Parked {
@@ -233,6 +279,15 @@ pub fn init(state: &mut State) -> Result<(), Box<dyn std::error::Error>> {
             DrmEvent::VBlank(crtc) => vblank(state, crtc, meta.as_ref()),
             DrmEvent::Error(e) => log::error!("drm: {e}"),
         })?;
+    let (replies, done) = channel::<(crtc::Handle, commit::Done)>();
+    state
+        .handle
+        .insert_source(done, |event, _, state| {
+            if let ChannelEvent::Msg((crtc, done)) = event {
+                committed(state, crtc, done);
+            }
+        })
+        .map_err(|e| e.error)?;
     let udev = UdevBackend::new(&seat)?;
     state
         .handle
@@ -260,6 +315,9 @@ pub fn init(state: &mut State) -> Result<(), Box<dyn std::error::Error>> {
         exporter,
         gbm,
         render_formats,
+        replies,
+        delay: std::env::var(commit::Delay::VAR).ok(),
+        reset: false,
         scanner: DrmScanner::new(),
         surfaces: HashMap::new(),
         parked: HashMap::new(),
@@ -441,13 +499,35 @@ pub fn enable(state: &mut State, output: &Output, index: usize) -> bool {
             return false;
         }
     };
+    let vrr_capable = compositor
+        .vrr_supported(connector)
+        .is_ok_and(|v| v != VrrSupport::NotSupported);
+    let vrr_on = compositor.vrr_enabled();
+    let compositor = Arc::new(Mutex::new(compositor));
+    let delay = b
+        .delay
+        .as_deref()
+        .and_then(|v| commit::Delay::parse(v, &name));
+    if let Some(d) = delay {
+        log::warn!(
+            "{name}: {} makes each commit wait {d:?}",
+            commit::Delay::VAR
+        );
+    }
+    let kms = Kms(Arc::clone(&compositor));
+    let thread = match commit::Thread::spawn(&name, crtc, kms, delay, b.replies.clone()) {
+        Ok(t) => t,
+        Err(e) => {
+            log::warn!("{name}: no commit thread: {e}");
+            if let Some(old) = old {
+                output.change_current_state(Some(old), None, None, None);
+            }
+            return false;
+        }
+    };
     let Some(p) = b.parked.remove(&crtc) else {
         return false;
     };
-    let vrr_capable = compositor
-        .vrr_supported(p.connector.handle())
-        .is_ok_and(|v| v != VrrSupport::NotSupported);
-    let vrr_on = compositor.vrr_enabled();
     let global = output.create_global::<State>(&state.dh);
     log::info!(
         "output {name} {}x{}@{:.3} scale {} {:?}",
@@ -465,8 +545,12 @@ pub fn enable(state: &mut State, output: &Output, index: usize) -> bool {
             vrr_capable,
             vrr_on,
             global,
-            compositor: Arc::new(Mutex::new(compositor)),
-            pending_vblank: false,
+            thread,
+            compositor,
+            track: commit::Track::default(),
+            flight: None,
+            presenting: None,
+            commit_times: Vec::new(),
             needs_redraw: true,
             scene_changed: true,
             pointer_only: false,
@@ -548,12 +632,14 @@ pub fn disable(state: &mut State, output: &Output) -> bool {
         connector,
         vrr_capable,
         global,
+        thread,
         compositor,
         callback_timer,
         render_timer,
         step_timer,
         ..
     } = s;
+    drop(thread);
     drop(compositor);
     b.parked.insert(
         crtc,
@@ -604,6 +690,10 @@ pub fn set_mode(state: &mut State, output: &Output, index: usize) -> bool {
     if output.current_mode() == Some(mode) {
         return true;
     }
+    if s.track.busy() {
+        log::warn!("{}: display busy, mode change refused", output.name());
+        return false;
+    }
     if let Err(e) = lock(&s.compositor).use_mode(drm_mode) {
         log::warn!(
             "{}: mode {}x{}@{:.3} refused: {e}",
@@ -644,6 +734,13 @@ pub fn set_vrr(state: &mut State, output: &Output, on: bool) -> bool {
     if on && !s.vrr_capable {
         log::warn!(
             "output {}: adaptive sync asked for, not supported",
+            output.name()
+        );
+        return false;
+    }
+    if s.track.busy() {
+        log::warn!(
+            "output {}: display busy, adaptive sync unchanged",
             output.name()
         );
         return false;
@@ -698,15 +795,10 @@ fn activate(state: &mut State) {
     if let Err(e) = b.drm.activate(false) {
         log::error!("drm activate: {e}");
     }
+    b.reset = true;
     let dev = &b.drm;
     for (&crtc, s) in b.surfaces.iter_mut() {
-        let mut c = lock(&s.compositor);
-        if let Err(e) = c.reset_state() {
-            log::warn!("{}: reset state: {e}", s.output.name());
-        }
-        c.reset_buffers();
-        drop(c);
-        s.pending_vblank = false;
+        s.track.reset();
         s.hw.unlit = true;
         // Another DRM master may have left its own LUT; reading it back is not a commit.
         if let Some(Some(g)) = s.hw.gamma {
@@ -717,7 +809,12 @@ fn activate(state: &mut State) {
             }
         }
     }
-    let crtcs: Vec<crtc::Handle> = b.surfaces.keys().copied().collect();
+    reset_device(state);
+    let crtcs: Vec<crtc::Handle> = state
+        .backend
+        .iter()
+        .flat_map(|b| b.surfaces.keys().copied())
+        .collect();
     for crtc in crtcs {
         flush_gamma(state, crtc);
     }
@@ -727,6 +824,30 @@ fn activate(state: &mut State) {
         crate::nightlight::output_on(state, &output);
     }
     schedule_all(state, Ask::Scene);
+}
+
+/// Once the session is back and no commit is out: turn off every CRTC, connector and plane
+/// (another master may have left a CRTC lit on a connector one of ours now claims, which
+/// fails every later commit), then re-read each output's state and drop its buffers.
+fn reset_device(state: &mut State) {
+    let Some(b) = state.backend.as_mut() else {
+        return;
+    };
+    if !b.reset || !b.session.is_active() || b.surfaces.values().any(|s| s.track.busy()) {
+        return;
+    }
+    b.reset = false;
+    if let Err(e) = b.drm.reset_state() {
+        log::warn!("drm reset: {e}");
+    }
+    for s in b.surfaces.values() {
+        let mut c = lock(&s.compositor);
+        if let Err(e) = c.reset_state() {
+            log::warn!("{}: reset state: {e}", s.output.name());
+        }
+        c.reset_buffers();
+    }
+    render_waiting(state);
 }
 
 pub fn schedule(state: &mut State, output: &Output) {
@@ -775,7 +896,19 @@ fn request(state: &mut State, output: &Output, ask: Ask) {
     s.needs_redraw = asked.redraw;
     s.pointer_only = asked.pointer_only;
     s.scene_changed = asked.scene;
-    if s.pending_vblank || s.idle_scheduled {
+    queue_render(state, crtc);
+}
+
+/// Render `crtc` from an idle callback, unless one is armed or a frame is in flight.
+fn queue_render(state: &mut State, crtc: crtc::Handle) {
+    let Some(s) = state
+        .backend
+        .as_mut()
+        .and_then(|b| b.surfaces.get_mut(&crtc))
+    else {
+        return;
+    };
+    if !s.track.idle() || s.idle_scheduled {
         return;
     }
     s.idle_scheduled = true;
@@ -810,7 +943,7 @@ pub fn schedule_step(state: &mut State, output: &Output, at: std::time::Instant)
     }
     let interval = crate::framepace::interval(output.current_mode().map_or(0, |m| m.refresh));
     let now = std::time::Instant::now();
-    let Some(wait) = crate::framepace::ask_at(at, now, s.last_flip, s.pending_vblank, interval)
+    let Some(wait) = crate::framepace::ask_at(at, now, s.last_flip, !s.track.idle(), interval)
     else {
         request(state, output, Ask::Content);
         return;
@@ -870,7 +1003,21 @@ fn flip_time(
 }
 
 fn vblank(state: &mut State, crtc: crtc::Handle, meta: Option<&DrmEventMetadata>) {
-    let (time, seq, kind) = flip_time(state, meta);
+    let flip = flip_time(state, meta);
+    let Some(s) = state
+        .backend
+        .as_mut()
+        .and_then(|b| b.surfaces.get_mut(&crtc))
+    else {
+        return;
+    };
+    if let Some(flip) = s.track.vblank(flip) {
+        flipped(state, crtc, flip);
+    }
+}
+
+/// The frame queued on `crtc` reached the screen at `flip`.
+fn flipped(state: &mut State, crtc: crtc::Handle, (time, seq, kind): Flip) {
     let counting = state.config.debug.overlay;
     let Some(s) = state
         .backend
@@ -880,16 +1027,14 @@ fn vblank(state: &mut State, crtc: crtc::Handle, meta: Option<&DrmEventMetadata>
         return;
     };
     let submitted = lock(&s.compositor).frame_submitted();
-    match submitted {
-        Ok(Some(Some(mut feedback))) => {
-            let refresh = s.output.current_mode().map_or(60_000, |m| m.refresh.max(1));
-            let refresh = Duration::from_micros(1_000_000_000 / refresh as u64);
-            feedback.presented::<_, Monotonic>(time, Refresh::fixed(refresh), seq, kind);
-        }
-        Ok(_) => {}
-        Err(e) => log::warn!("{}: frame submit: {e:?}", s.output.name()),
+    if let Err(e) = submitted {
+        log::warn!("{}: frame submit: {e:?}", s.output.name());
     }
-    s.pending_vblank = false;
+    if let Some(mut feedback) = s.presenting.take() {
+        let refresh = s.output.current_mode().map_or(60_000, |m| m.refresh.max(1));
+        let refresh = Duration::from_micros(1_000_000_000 / refresh as u64);
+        feedback.presented::<_, Monotonic>(time, Refresh::fixed(refresh), seq, kind);
+    }
     s.last_flip = Some(std::time::Instant::now());
     if counting {
         s.stats.flipped(time, s.needs_redraw);
@@ -1025,6 +1170,8 @@ fn render(state: &mut State, crtc: crtc::Handle) {
     let shared = Arc::clone(&s.compositor);
     let mut compositor = lock(&shared);
     let rendered = compositor.render_frame(&mut b.renderer, &elements, clear, FrameFlags::DEFAULT);
+    let modeset = compositor.surface().commit_pending();
+    let mut feedback = None;
     let drawn = match rendered {
         Ok(r) => {
             scene.update_surfaces(&output, &r.states);
@@ -1037,19 +1184,8 @@ fn render(state: &mut State, crtc: crtc::Handle) {
                 {
                     count_damage(s, &e.damage, &output);
                 }
-                let feedback = scene.take_presentation_feedback(&output, &r.states);
-                match compositor.queue_frame(Some(feedback)) {
-                    Ok(()) => {
-                        s.pending_vblank = true;
-                        s.hw.unlit = false;
-                        count_frame(s, config.debug.overlay, started);
-                        true
-                    }
-                    Err(e) => {
-                        log::warn!("{}: queue frame: {e:?}", output.name());
-                        false
-                    }
-                }
+                feedback = Some(scene.take_presentation_feedback(&output, &r.states));
+                true
             }
         }
         Err(e) => {
@@ -1064,7 +1200,14 @@ fn render(state: &mut State, crtc: crtc::Handle) {
         s.held += 1;
     }
     let held = crate::reblur::catch_up(held, water.next_step(&output).is_some());
-    finish(state, crtc, &output, drawn, empty, held, started);
+    let flight = InFlight {
+        started,
+        held,
+        feedback,
+    };
+    if !(drawn && send_flip(s, modeset, flight)) {
+        finish(state, crtc, &output, false, empty, held, started);
+    }
     if state.magnifier.panning(&output) || water_fell {
         schedule(state, &output);
     }
@@ -1090,7 +1233,6 @@ fn pointer_frame(
         saver,
         cursors,
         magnifier,
-        config,
         ..
     } = state;
     let cursor = crate::saverview::cursor(saver, cursor);
@@ -1116,23 +1258,110 @@ fn pointer_frame(
     };
     let mut compositor = lock(&s.compositor);
     let moved = compositor.reposition_cursor(element);
-    let queued = match moved {
-        CursorMove::Unavailable => return None,
-        CursorMove::Unchanged => return Some(false),
-        CursorMove::Prepared => compositor.queue_frame(None),
-    };
+    let modeset = compositor.surface().commit_pending();
     drop(compositor);
-    match queued {
-        Ok(()) => {
-            s.pending_vblank = true;
-            s.hw.unlit = false;
-            count_frame(s, config.debug.overlay, started);
-            Some(true)
+    match moved {
+        CursorMove::Unavailable => None,
+        CursorMove::Unchanged => Some(false),
+        CursorMove::Prepared => {
+            let flight = InFlight {
+                started,
+                held: None,
+                feedback: None,
+            };
+            Some(send_flip(s, modeset, flight))
         }
-        Err(e) => {
-            log::warn!("{}: queue pointer frame: {e:?}", output.name());
-            Some(false)
+    }
+}
+
+/// Hand the frame `compositor` has ready to the output's commit thread; false when the thread
+/// is gone. The frame finishes on its `Done` (`committed`).
+fn send_flip(s: &mut Surface, modeset: bool, flight: InFlight) -> bool {
+    let kind = commit::Kind::Flip { modeset };
+    s.track.sent(kind, std::time::Instant::now());
+    if !s.thread.send(commit::Job::Run(kind)) {
+        log::error!("{}: the commit thread is gone", s.output.name());
+        s.track.unsent();
+        return false;
+    }
+    s.flight = Some(flight);
+    true
+}
+
+/// The commit thread finished `done` on `crtc`.
+fn committed(state: &mut State, crtc: crtc::Handle, done: commit::Done) {
+    let overlay = state.config.debug.overlay;
+    let Some(s) = state
+        .backend
+        .as_mut()
+        .and_then(|b| b.surfaces.get_mut(&crtc))
+    else {
+        return;
+    };
+    if let commit::Phase::Busy { since, .. } = s.track.phase() {
+        let t = commit::Times {
+            to_thread: done.started.saturating_duration_since(since),
+            ioctl: done.ended.saturating_duration_since(done.started),
+            to_main: done.ended.elapsed(),
+        };
+        if overlay {
+            s.stats.committed(t.to_thread + t.to_main, t.ioctl);
         }
+        if log::log_enabled!(log::Level::Debug) {
+            s.commit_times.push(t);
+        }
+    }
+    let ok = done.result.is_ok();
+    if let Err(e) = &done.result {
+        let commit::Kind::Flip { modeset } = done.kind;
+        let what = if modeset { "modeset" } else { "queue frame" };
+        log::warn!("{}: {what}: {e}", s.output.name());
+    }
+    let after = s.track.done(ok);
+    let mut flight = s.flight.take();
+    let feedback = flight.as_mut().and_then(|f| f.feedback.take());
+    if ok {
+        s.hw.unlit = false;
+        s.presenting = feedback;
+    } else if let Some(mut f) = feedback {
+        f.discarded();
+    }
+    let output = s.output.clone();
+    if after.off {
+        power_off(state, crtc);
+    }
+    if let Some(f) = flight {
+        if ok
+            && let Some(s) = state
+                .backend
+                .as_mut()
+                .and_then(|b| b.surfaces.get_mut(&crtc))
+        {
+            count_frame(s, overlay, f.started);
+        }
+        finish(state, crtc, &output, ok, false, f.held, f.started);
+    }
+    match after.vblank {
+        Some(flip) => flipped(state, crtc, flip),
+        None => queue_render(state, crtc),
+    }
+    reset_device(state);
+    if done.kind.blocking() {
+        render_waiting(state);
+    }
+}
+
+/// Render every output that asked for a frame while something held them all.
+fn render_waiting(state: &mut State) {
+    let waiting: Vec<crtc::Handle> = state
+        .backend
+        .iter()
+        .flat_map(|b| &b.surfaces)
+        .filter(|(_, s)| s.needs_redraw)
+        .map(|(c, _)| *c)
+        .collect();
+    for c in waiting {
+        queue_render(state, c);
     }
 }
 
@@ -1211,7 +1440,9 @@ fn held_back(state: &mut State, crtc: crtc::Handle) -> bool {
 fn due(state: &State, crtc: crtc::Handle) -> Option<Output> {
     let b = state.backend.as_ref()?;
     let s = b.surfaces.get(&crtc)?;
-    (!s.pending_vblank && !s.hw.off && b.session.is_active()).then(|| s.output.clone())
+    let others = b.surfaces.values().map(|o| &o.track);
+    (commit::render_due(&s.track, others) && !b.reset && !s.hw.off && b.session.is_active())
+        .then(|| s.output.clone())
 }
 
 fn count_frame(s: &mut Surface, overlay: bool, started: std::time::Instant) {
@@ -1226,12 +1457,17 @@ fn count_frame(s: &mut Surface, overlay: bool, started: std::time::Instant) {
     s.frames += 1;
     if s.frames == 120 {
         let secs = now.duration_since(from).as_secs_f64().max(1e-3);
+        let t = commit::tail(&s.commit_times);
         log::debug!(
-            "{}: 120 frames in {secs:.2} s ({:.1}/s), {} held the glass's blur",
+            "{}: 120 frames in {secs:.2} s ({:.1}/s), {} held the glass's blur; commit p99 {} us to the thread, {} us in the kernel, {} us back",
             s.output.name(),
             119.0 / secs,
-            s.held
+            s.held,
+            t.to_thread.as_micros(),
+            t.ioctl.as_micros(),
+            t.to_main.as_micros()
         );
+        s.commit_times.clear();
         s.frames = 0;
         s.held = 0;
         s.counted_from = None;
@@ -1418,7 +1654,7 @@ impl CrtcNow {
             active,
             off: s.hw.off,
             unlit: s.hw.unlit,
-            flipping: s.pending_vblank,
+            flipping: !s.track.idle(),
         }
     }
 
@@ -1670,7 +1906,6 @@ pub fn set_output_power(state: &mut State, output: &Output, on: bool) -> bool {
     let Some((b, crtc)) = surface_of(state, output) else {
         return false;
     };
-    let active = b.session.is_active();
     let Some(s) = b.surfaces.get_mut(&crtc) else {
         return false;
     };
@@ -1679,6 +1914,7 @@ pub fn set_output_power(state: &mut State, output: &Output, on: bool) -> bool {
     }
     if on {
         s.hw.off = false;
+        s.track.power_on();
         s.hw.unlit = true;
         s.hw.link_tries = 0;
         log::info!("{}: power on", output.name());
@@ -1686,14 +1922,30 @@ pub fn set_output_power(state: &mut State, output: &Output, on: bool) -> bool {
         schedule(state, output);
         return true;
     }
+    if !s.track.power_off() {
+        s.hw.off = true;
+        log::info!("{}: power off once its commit is done", output.name());
+        return true;
+    }
+    power_off(state, crtc)
+}
+
+/// Clear `crtc` (when the session is ours) and mark it off; false when the kernel refused.
+fn power_off(state: &mut State, crtc: crtc::Handle) -> bool {
+    let Some(b) = state.backend.as_mut() else {
+        return false;
+    };
+    let active = b.session.is_active();
+    let Some(s) = b.surfaces.get_mut(&crtc) else {
+        return false;
+    };
     if active && let Err(e) = lock(&s.compositor).clear() {
-        log::warn!("{}: power off: {e}", output.name());
+        log::warn!("{}: power off: {e}", s.output.name());
         return false;
     }
     s.hw.off = true;
-    s.pending_vblank = false;
     let timer = s.callback_timer.take();
-    log::info!("{}: power off", output.name());
+    log::info!("{}: power off", s.output.name());
     if let Some(t) = timer {
         state.handle.remove(t);
     }
