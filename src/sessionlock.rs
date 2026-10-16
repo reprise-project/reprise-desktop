@@ -246,7 +246,7 @@ impl SessionLockHandler for State {
             .scene
             .outputs()
             .iter()
-            .filter(|o| self.layout_box(Some(o)).width > 0)
+            .filter(|o| self.layout_box(Some(o)).width > 0 && !crate::backend::stalled(self, o))
             .cloned()
             .collect();
         let c = ClientLock {
@@ -363,6 +363,17 @@ pub fn presented(state: &mut State, output: &Output) {
         return;
     };
     wait.presented(output);
+    if wait.done() {
+        send_locked(state);
+    }
+}
+
+/// `output`'s commit stalled (`backend::stalled`): `locked` stops waiting for its cover.
+pub fn stalled(state: &mut State, output: &Output) {
+    let Some(wait) = client(state).and_then(|c| c.wait.as_mut()) else {
+        return;
+    };
+    wait.forget(output);
     if wait.done() {
         send_locked(state);
     }

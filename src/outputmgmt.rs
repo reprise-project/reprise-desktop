@@ -276,6 +276,10 @@ pub fn resolve(
 /// Run a resolved configuration head by head, stopping at the first failure
 /// (earlier heads stay applied), then lay out once.
 fn apply(state: &mut State, reqs: Vec<(String, HeadRequest)>) -> bool {
+    if !crate::backend::quiet(state) {
+        log::warn!("output management: display busy, configuration refused");
+        return false;
+    }
     let mut ok = true;
     for (name, req) in reqs {
         let output = crate::backend::heads(state)

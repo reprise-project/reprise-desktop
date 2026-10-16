@@ -34,11 +34,23 @@ impl Kind {
     }
 }
 
-/// Whether an output whose commits `own` tracks may render, given every output's `all`: its
-/// own thread is idle and no thread is in a blocking commit, whose locks the frame's plane test
-/// and flip would wait on.
-pub fn render_due<'a, M: 'a>(own: &Track<M>, all: impl IntoIterator<Item = &'a Track<M>>) -> bool {
-    own.idle() && !all.into_iter().any(Track::blocking)
+/// How long a job may sit in the kernel, or a flip wait for its vblank, before the output is
+/// stalled (`Track::stall`).
+pub const STALL: Duration = Duration::from_secs(2);
+/// After this long without its vblank a flip's commit has left the kernel's commit list (its
+/// 10 s flip_done wait, plus slack).
+pub const FLIP_LOST: Duration = Duration::from_secs(11);
+/// The longest wait between modeset tries (`Track::retry_at`).
+pub const BACKOFF_MAX: Duration = Duration::from_secs(30);
+
+/// Whether main may issue ioctls that take every modeset lock (any output's plane test, property
+/// reads, probes): no blocking job, stall, flip lost 2-11 s ago or `retiring` thread.
+pub fn quiet<'a, M: 'a>(
+    all: impl IntoIterator<Item = &'a Track<M>>,
+    retiring: bool,
+    now: Instant,
+) -> bool {
+    !retiring && all.into_iter().all(|t| t.quiet(now))
 }
 
 pub enum Job<P> {
@@ -228,8 +240,8 @@ pub enum Phase {
     Idle,
     /// A job is on the thread, sent at `since`.
     Busy { kind: Kind, since: Instant },
-    /// The flip went to the kernel; its vblank has not come.
-    Flipping,
+    /// The flip went to the kernel at `since`; its vblank has not come.
+    Flipping { since: Instant },
 }
 
 /// What main does once a `Done` ended `Busy`.
@@ -239,6 +251,8 @@ pub struct After<M> {
     pub off: bool,
     /// A vblank that came during `Busy`, to handle now; the output is idle again.
     pub vblank: Option<M>,
+    /// A modeset failed or stalled: the next one waits this long (`Track::retry_at`).
+    pub backoff: Option<Duration>,
 }
 
 /// Main's view of one output's commits. `M` is a vblank's metadata.
@@ -248,6 +262,10 @@ pub struct Track<M> {
     vblank: Option<M>,
     reset: bool,
     off: bool,
+    stalled: bool,
+    /// Modeset failures in a row, and when the next modeset may go.
+    tries: u32,
+    retry_at: Option<Instant>,
 }
 
 impl<M> Default for Track<M> {
@@ -257,6 +275,9 @@ impl<M> Default for Track<M> {
             vblank: None,
             reset: false,
             off: false,
+            stalled: false,
+            tries: 0,
+            retry_at: None,
         }
     }
 }
@@ -274,9 +295,42 @@ impl<M> Track<M> {
         matches!(self.phase, Phase::Busy { .. })
     }
 
-    /// A blocking commit is on the thread.
-    pub fn blocking(&self) -> bool {
-        matches!(self.phase, Phase::Busy { kind, .. } if kind.blocking())
+    /// How long the job has been on the thread, or the flip waited for its vblank.
+    pub fn waited(&self, now: Instant) -> Option<Duration> {
+        match self.phase {
+            Phase::Idle => None,
+            Phase::Busy { since, .. } | Phase::Flipping { since } => {
+                Some(now.saturating_duration_since(since))
+            }
+        }
+    }
+
+    fn quiet(&self, now: Instant) -> bool {
+        let waited = self.waited(now).unwrap_or_default();
+        match self.phase {
+            Phase::Idle => true,
+            Phase::Busy { kind, .. } => !kind.blocking() && waited <= STALL,
+            Phase::Flipping { .. } => waited <= STALL || waited > FLIP_LOST,
+        }
+    }
+
+    /// True once, when the job or flip has waited past `STALL`; the output stays `stalled`
+    /// until it ends.
+    pub fn stall(&mut self, now: Instant) -> bool {
+        if self.stalled || self.waited(now).is_none_or(|w| w <= STALL) {
+            return false;
+        }
+        self.stalled = true;
+        true
+    }
+
+    pub fn stalled(&self) -> bool {
+        self.stalled
+    }
+
+    /// When the next modeset may go after failed or stalled ones.
+    pub fn retry_at(&self) -> Option<Instant> {
+        self.retry_at
     }
 
     /// A job went to the thread. A frame goes only from `Idle`; a power-off also from
@@ -284,28 +338,44 @@ impl<M> Track<M> {
     pub fn sent(&mut self, kind: Kind, now: Instant) {
         debug_assert!(!self.busy(), "one job at a time per output");
         self.phase = Phase::Busy { kind, since: now };
+        self.stalled = false;
     }
 
     /// The job was never queued (the thread is gone).
     pub fn unsent(&mut self) {
-        self.phase = Phase::Idle;
+        self.idle_now();
     }
 
-    /// The thread finished the job; `ok` says the commit took.
-    pub fn done(&mut self, ok: bool) -> After<M> {
-        let flip = matches!(
-            self.phase,
-            Phase::Busy {
-                kind: Kind::Flip { .. },
-                ..
-            }
-        );
-        let reset = std::mem::take(&mut self.reset);
-        self.phase = if flip && ok && !reset {
-            Phase::Flipping
-        } else {
-            Phase::Idle
+    fn idle_now(&mut self) {
+        self.phase = Phase::Idle;
+        self.stalled = false;
+    }
+
+    /// The thread finished the job at `now`; `ok` says the commit took. A failed or stalled
+    /// modeset backs the next one off 1, 2, 4 ... `BACKOFF_MAX` s; one in time clears it.
+    pub fn done(&mut self, ok: bool, now: Instant) -> After<M> {
+        let (kind, waited) = match self.phase {
+            Phase::Busy { kind, since } => (Some(kind), now.saturating_duration_since(since)),
+            _ => (None, Duration::ZERO),
         };
+        let flip = matches!(kind, Some(Kind::Flip { .. }));
+        let mut backoff = None;
+        if kind == Some(Kind::Flip { modeset: true }) {
+            if ok && waited <= STALL {
+                self.tries = 0;
+                self.retry_at = None;
+            } else {
+                let wait = Duration::from_secs(1 << self.tries.min(5)).min(BACKOFF_MAX);
+                self.tries = self.tries.saturating_add(1);
+                self.retry_at = Some(now + wait);
+                backoff = Some(wait);
+            }
+        }
+        let reset = std::mem::take(&mut self.reset);
+        self.idle_now();
+        if flip && ok && !reset {
+            self.phase = Phase::Flipping { since: now };
+        }
         let vblank = self.vblank.take().filter(|_| !reset && (ok || !flip));
         if vblank.is_some() {
             self.phase = Phase::Idle;
@@ -313,6 +383,7 @@ impl<M> Track<M> {
         After {
             off: std::mem::take(&mut self.off),
             vblank,
+            backoff,
         }
     }
 
@@ -322,7 +393,7 @@ impl<M> Track<M> {
             self.vblank = Some(meta);
             return None;
         }
-        self.phase = Phase::Idle;
+        self.idle_now();
         Some(meta)
     }
 
@@ -333,7 +404,7 @@ impl<M> Track<M> {
             self.reset = true;
             return false;
         }
-        self.phase = Phase::Idle;
+        self.idle_now();
         self.vblank = None;
         true
     }
@@ -377,33 +448,11 @@ mod tests {
         assert!(t.idle());
         t.sent(FLIP, Instant::now());
         assert!(!t.idle() && t.busy());
-        t.done(true);
-        assert_eq!(t.phase(), Phase::Flipping);
+        t.done(true, Instant::now());
+        assert!(matches!(t.phase(), Phase::Flipping { .. }));
         assert!(!t.idle() && !t.busy());
         assert_eq!(t.vblank(7), Some(7));
         assert!(t.idle());
-    }
-
-    #[test]
-    fn a_blocking_commit_anywhere_holds_every_outputs_render() {
-        let idle = Track::<u32>::default();
-        let mut flipping = Track::<u32>::default();
-        flipping.sent(FLIP, Instant::now());
-        assert!(
-            render_due(&idle, [&idle, &flipping]),
-            "a page flip blocks nobody else"
-        );
-        assert!(
-            !render_due(&flipping, [&idle, &flipping]),
-            "nor renders twice"
-        );
-        for kind in [MODESET, Kind::Clear, Kind::Gamma, Kind::Retrain] {
-            let mut other = Track::<u32>::default();
-            other.sent(kind, Instant::now());
-            assert!(!render_due(&idle, [&idle, &other]), "{kind:?}");
-            other.done(false);
-            assert!(render_due(&idle, [&idle, &other]), "{kind:?} done");
-        }
     }
 
     #[test]
@@ -411,7 +460,7 @@ mod tests {
         let mut t = busy();
         assert_eq!(t.vblank(7), None, "not before the Done");
         assert!(t.busy());
-        let after = t.done(true);
+        let after = t.done(true, Instant::now());
         assert_eq!(after.vblank, Some(7));
         assert!(t.idle(), "the replayed vblank ends the flip");
     }
@@ -420,7 +469,7 @@ mod tests {
     fn a_failed_commit_is_idle_and_drops_a_stray_vblank() {
         let mut t = busy();
         t.vblank(7);
-        let after = t.done(false);
+        let after = t.done(false, Instant::now());
         assert_eq!(after.vblank, None);
         assert!(t.idle());
     }
@@ -429,14 +478,18 @@ mod tests {
     fn a_clear_sent_while_flipping_replays_the_flips_vblank() {
         let mut t = Track::<u32>::default();
         t.sent(FLIP, Instant::now());
-        t.done(true);
+        t.done(true, Instant::now());
         assert!(t.power_off(), "no job out while flipping");
         t.sent(Kind::Clear, Instant::now());
         assert_eq!(t.vblank(7), None);
-        assert_eq!(t.done(false).vblank, Some(7), "even when the clear failed");
+        assert_eq!(
+            t.done(false, Instant::now()).vblank,
+            Some(7),
+            "even when the clear failed"
+        );
         assert!(t.idle());
         t.sent(Kind::Clear, Instant::now());
-        t.done(true);
+        t.done(true, Instant::now());
         assert!(t.idle(), "a clear never leaves the output flipping");
     }
 
@@ -446,21 +499,23 @@ mod tests {
         assert!(!t.reset(), "not while the thread has the compositor");
         assert!(!t.power_off());
         t.vblank(7);
-        let after = t.done(true);
+        let after = t.done(true, Instant::now());
         assert_eq!(
             after,
             After {
                 off: true,
-                vblank: None
+                vblank: None,
+                backoff: None
             },
             "the old flip's vblank is gone with the reset"
         );
         assert!(t.idle());
         assert_eq!(
-            t.done(true),
+            t.done(true, Instant::now()),
             After {
                 off: false,
-                vblank: None
+                vblank: None,
+                backoff: None
             }
         );
     }
@@ -470,16 +525,105 @@ mod tests {
         let mut t = busy();
         t.power_off();
         t.power_on();
-        assert!(!t.done(true).off);
+        assert!(!t.done(true, Instant::now()).off);
     }
 
     #[test]
     fn a_reset_runs_at_once_off_the_thread() {
         let mut t = Track::<u32>::default();
         t.sent(FLIP, Instant::now());
-        t.done(true);
+        t.done(true, Instant::now());
         assert!(t.reset(), "a flipping output has no job out");
         assert!(t.idle());
+    }
+
+    fn secs(s: f64) -> Duration {
+        Duration::from_secs_f64(s)
+    }
+
+    #[test]
+    fn an_output_stalls_once_past_two_seconds_until_its_job_ends() {
+        let t0 = Instant::now();
+        let mut t = Track::<u32>::default();
+        t.sent(MODESET, t0);
+        assert!(!t.stall(t0 + secs(1.9)) && !t.stalled());
+        assert!(t.stall(t0 + secs(2.1)), "labelled when it passes 2 s");
+        assert!(!t.stall(t0 + secs(5.0)), "and only once");
+        assert!(t.stalled());
+        t.done(true, t0 + secs(6.0));
+        assert!(!t.stalled(), "the Done ends it");
+        assert!(
+            !t.stall(t0 + secs(7.0)),
+            "a flip just queued is not stalled"
+        );
+        assert!(t.stall(t0 + secs(8.1)), "a flip 2 s without its vblank is");
+        t.vblank(7);
+        assert!(!t.stalled());
+    }
+
+    #[test]
+    fn quiet_means_no_blocking_job_no_stall_and_no_lost_flip_held() {
+        let t0 = Instant::now();
+        let idle = Track::<u32>::default();
+        assert!(quiet([&idle], false, t0));
+        assert!(
+            !quiet([&idle], true, t0),
+            "a thread dropping its compositor"
+        );
+        for kind in [MODESET, Kind::Clear, Kind::Gamma, Kind::Retrain] {
+            let mut t = Track::<u32>::default();
+            t.sent(kind, t0);
+            assert!(!quiet([&idle, &t], false, t0), "{kind:?}");
+            t.done(false, t0);
+            assert!(quiet([&idle, &t], false, t0), "{kind:?} done");
+        }
+        let mut flip = Track::<u32>::default();
+        flip.sent(FLIP, t0);
+        assert!(
+            quiet([&flip], false, t0 + secs(1.0)),
+            "a page flip in the ioctl"
+        );
+        assert!(
+            !quiet([&flip], false, t0 + secs(2.5)),
+            "a page flip 2 s in the ioctl"
+        );
+        flip.done(true, t0);
+        for (at, want) in [(1.9, true), (2.1, false), (10.9, false), (11.1, true)] {
+            assert_eq!(
+                quiet([&flip], false, t0 + secs(at)),
+                want,
+                "flip waiting {at} s for its vblank"
+            );
+        }
+    }
+
+    #[test]
+    fn a_failed_or_stalled_modeset_backs_off_up_to_thirty_seconds() {
+        let t0 = Instant::now();
+        let mut t = Track::<u32>::default();
+        let mut waits = Vec::new();
+        for _ in 0..7 {
+            t.sent(MODESET, t0);
+            let after = t.done(false, t0);
+            assert_eq!(t.retry_at(), after.backoff.map(|w| t0 + w));
+            waits.push(after.backoff.unwrap().as_secs());
+        }
+        assert_eq!(waits, [1, 2, 4, 8, 16, 30, 30]);
+        t.sent(MODESET, t0);
+        assert_eq!(t.done(true, t0 + secs(0.5)).backoff, None);
+        assert_eq!(t.retry_at(), None, "a modeset that took clears it");
+        t.sent(MODESET, t0);
+        assert_eq!(
+            t.done(true, t0 + secs(3.0)).backoff,
+            Some(secs(1.0)),
+            "one that took 3 s backs off too"
+        );
+        for kind in [FLIP, Kind::Clear, Kind::Gamma, Kind::Retrain] {
+            let mut t = Track::<u32>::default();
+            t.sent(kind, t0);
+            assert_eq!(t.done(false, t0).backoff, None, "{kind:?}");
+            assert_eq!(t.retry_at(), None, "{kind:?}");
+        }
     }
 
     #[test]

@@ -90,12 +90,18 @@ pub struct Backend {
     replies: Sender<(crtc::Handle, commit::Reply<Out>)>,
     /// Disabled outputs whose threads still hold their compositors.
     retiring: HashMap<crtc::Handle, std::thread::JoinHandle<()>>,
-    /// CRTCs refused while retiring, enabled again once their thread ends.
+    /// CRTCs refused while retiring or not quiet, enabled again once quiet (`on_quiet`).
     reenable: std::collections::HashSet<crtc::Handle>,
     /// `REPRISE_COMMIT_DELAY` as the session started.
     delay: Option<String>,
     /// The session came back: reset the device once no commit is out (`reset_device`).
     reset: bool,
+    /// A uevent or the session's return asked for a connector scan, run once quiet.
+    rescan: bool,
+    /// The config before a reload whose output changes wait for quiet.
+    config_from: Option<Box<crate::config::Config>>,
+    /// Checks for stalled outputs while any has a job or flip out (`watch`).
+    watch: Option<RegistrationToken>,
     scanner: DrmScanner,
     surfaces: HashMap<crtc::Handle, Surface>,
     parked: HashMap<crtc::Handle, Parked>,
@@ -349,8 +355,13 @@ pub fn init(state: &mut State) -> Result<(), Box<dyn std::error::Error>> {
         .handle
         .insert_source(udev, move |event, _, state| match event {
             UdevEvent::Changed { device_id } if device_id == node.dev_id() => {
-                scan_connectors(state);
-                check_links(state);
+                if let Some(b) = state.backend.as_mut() {
+                    b.rescan = true;
+                    if !b.quiet() {
+                        log::info!("display busy: the connector scan waits for it");
+                    }
+                }
+                on_quiet(state);
             }
             UdevEvent::Added { path, .. } => {
                 log::info!(
@@ -376,6 +387,9 @@ pub fn init(state: &mut State) -> Result<(), Box<dyn std::error::Error>> {
         reenable: Default::default(),
         delay: std::env::var(commit::Delay::VAR).ok(),
         reset: false,
+        rescan: false,
+        config_from: None,
+        watch: None,
         scanner: DrmScanner::new(),
         surfaces: HashMap::new(),
         parked: HashMap::new(),
@@ -393,6 +407,7 @@ fn scan_connectors(state: &mut State) {
     let Some(b) = state.backend.as_mut() else {
         return;
     };
+    gated(b, "connector scan");
     let events = match b.scanner.scan_connectors(&b.drm) {
         Ok(events) => events,
         Err(e) => {
@@ -444,6 +459,7 @@ fn connector_connected(state: &mut State, connector: connector::Info, crtc: crtc
         log::warn!("{name}: no modes");
         return;
     }
+    gated(b, "EDID read");
     let info = display_info::for_connector(&b.drm, connector.handle());
     let field = |f: Option<String>| f.unwrap_or_else(|| "Unknown".into());
     let (w_mm, h_mm) = connector.size().unwrap_or((0, 0));
@@ -545,6 +561,12 @@ pub fn enable(state: &mut State, output: &Output, index: usize) -> bool {
         b.reenable.insert(crtc);
         return false;
     }
+    if !b.quiet() {
+        log::warn!("{}: display busy; enabling it once quiet", output.name());
+        b.reenable.insert(crtc);
+        return false;
+    }
+    gated(b, "output enable");
     let connector = p.connector.handle();
     let name = output.name();
     let mode = WlMode::from(drm_mode);
@@ -765,6 +787,7 @@ pub fn set_mode(state: &mut State, output: &Output, index: usize) -> bool {
     let Some(b) = state.backend.as_mut() else {
         return false;
     };
+    let quiet = b.quiet();
     let Some(s) = b.surfaces.get_mut(&crtc) else {
         return false;
     };
@@ -775,7 +798,7 @@ pub fn set_mode(state: &mut State, output: &Output, index: usize) -> bool {
     if output.current_mode() == Some(mode) {
         return true;
     }
-    if s.track.busy() {
+    if !quiet || s.track.busy() {
         log::warn!("{}: display busy, mode change refused", output.name());
         return false;
     }
@@ -806,11 +829,11 @@ pub fn set_vrr(state: &mut State, output: &Output, on: bool) -> bool {
     let Some(crtc) = crtc_of(output) else {
         return false;
     };
-    let Some(s) = state
-        .backend
-        .as_mut()
-        .and_then(|b| b.surfaces.get_mut(&crtc))
-    else {
+    let Some(b) = state.backend.as_mut() else {
+        return false;
+    };
+    let quiet = b.quiet();
+    let Some(s) = b.surfaces.get_mut(&crtc) else {
         return false;
     };
     if s.vrr_on == on {
@@ -823,7 +846,7 @@ pub fn set_vrr(state: &mut State, output: &Output, on: bool) -> bool {
         );
         return false;
     }
-    if s.track.busy() {
+    if !quiet || s.track.busy() {
         log::warn!(
             "output {}: display busy, adaptive sync unchanged",
             output.name()
@@ -881,11 +904,36 @@ fn activate(state: &mut State) {
         log::error!("drm activate: {e}");
     }
     b.reset = true;
-    let dev = &b.drm;
-    for (&crtc, s) in b.surfaces.iter_mut() {
+    b.rescan = true;
+    for s in b.surfaces.values_mut() {
         s.track.reset();
         s.hw.unlit = true;
-        // Another DRM master may have left its own LUT; reading it back is not a commit.
+    }
+    crate::inputqueue::take_queued(state, libinput);
+    on_quiet(state);
+    for output in state.scene.outputs().to_vec() {
+        crate::nightlight::output_on(state, &output);
+    }
+    schedule_all(state, Ask::Scene);
+}
+
+/// Once the session is back, quiet and no commit is out: read back each CRTC's gamma, turn
+/// off every CRTC, connector and plane (another master may have left a CRTC lit on a connector
+/// one of ours now claims, which fails every later commit), then re-read each output's state
+/// and drop its buffers.
+fn reset_device(state: &mut State) {
+    let Some(b) = state.backend.as_mut() else {
+        return;
+    };
+    let busy = b.surfaces.values().any(|s| s.track.busy());
+    if !b.reset || !b.session.is_active() || busy || !b.quiet() {
+        return;
+    }
+    gated(b, "device reset");
+    b.reset = false;
+    let dev = &b.drm;
+    for (&crtc, s) in b.surfaces.iter_mut() {
+        // Another DRM master may have left its own LUT.
         if let Some(g) = s.hw.gamma {
             let ours = s.hw.lut.take();
             s.hw.lut = read_lut(dev, crtc, &g, ours.clone());
@@ -894,35 +942,6 @@ fn activate(state: &mut State) {
             }
         }
     }
-    reset_device(state);
-    let crtcs: Vec<crtc::Handle> = state
-        .backend
-        .iter()
-        .flat_map(|b| b.surfaces.keys().copied())
-        .collect();
-    for crtc in crtcs {
-        flush_gamma(state, crtc);
-    }
-    crate::inputqueue::take_queued(state, libinput);
-    scan_connectors(state);
-    for output in state.scene.outputs().to_vec() {
-        crate::nightlight::output_on(state, &output);
-    }
-    schedule_all(state, Ask::Scene);
-}
-
-/// Once the session is back and no commit is out: turn off every CRTC, connector and plane
-/// (another master may have left a CRTC lit on a connector one of ours now claims, which
-/// fails every later commit), then re-read each output's state and drop its buffers.
-fn reset_device(state: &mut State) {
-    let Some(b) = state.backend.as_mut() else {
-        return;
-    };
-    let busy = b.surfaces.values().any(|s| s.track.busy()) || !b.retiring.is_empty();
-    if !b.reset || !b.session.is_active() || busy {
-        return;
-    }
-    b.reset = false;
     if let Err(e) = b.drm.reset_state() {
         log::warn!("drm reset: {e}");
     }
@@ -933,7 +952,184 @@ fn reset_device(state: &mut State) {
         }
         c.reset_buffers();
     }
+    let crtcs: Vec<crtc::Handle> = b.surfaces.keys().copied().collect();
+    for crtc in crtcs {
+        flush_gamma(state, crtc);
+    }
     render_waiting(state);
+}
+
+impl Backend {
+    /// No commit holds the kernel's modeset locks (`commit::quiet`).
+    fn quiet(&self) -> bool {
+        let tracks = self.surfaces.values().map(|s| &s.track);
+        commit::quiet(tracks, !self.retiring.is_empty(), std::time::Instant::now())
+    }
+
+    /// The session is ours and its return has been handled (`reset_device`).
+    fn settled(&self) -> bool {
+        self.session.is_active() && !self.reset
+    }
+
+    fn deferred(&self) -> bool {
+        self.reset
+            || self.rescan
+            || !self.reenable.is_empty()
+            || self.config_from.is_some()
+            || self.surfaces.values().any(|s| s.hw.retrain)
+    }
+}
+
+/// Main is about to issue `op`, an ioctl that takes every modeset lock.
+fn gated(b: &Backend, op: &str) {
+    debug_assert!(b.quiet(), "{op} while a commit holds the modeset locks");
+}
+
+/// Whether main may change outputs now; else output changes are refused ("display busy") or
+/// wait (`defer_output_config`).
+pub fn quiet(state: &State) -> bool {
+    state.backend.as_ref().is_none_or(Backend::quiet)
+}
+
+/// Keep the config from before a reload whose output changes wait for quiet; of several
+/// reloads meanwhile, the first one's.
+pub fn defer_output_config(state: &mut State, old: &crate::config::Config) {
+    if let Some(b) = state.backend.as_mut() {
+        log::info!("display busy: the configured output changes wait for it");
+        b.config_from.get_or_insert_with(|| Box::new(old.clone()));
+    }
+}
+
+/// `output`'s job or flip has waited past `commit::STALL`.
+pub fn stalled(state: &State, output: &Output) -> bool {
+    crtc_of(output)
+        .and_then(|c| state.backend.as_ref()?.surfaces.get(&c))
+        .is_some_and(|s| s.track.stalled())
+}
+
+/// Run the device work that waited for quiet (`Backend::deferred`). A step that sends a
+/// blocking job leaves the rest for its `Done`.
+fn on_quiet(state: &mut State) {
+    let ready = |state: &State| {
+        state
+            .backend
+            .as_ref()
+            .is_some_and(|b| b.deferred() && b.quiet() && b.session.is_active())
+    };
+    if !ready(state) {
+        return;
+    }
+    reset_device(state);
+    if ready(state)
+        && state
+            .backend
+            .as_mut()
+            .is_some_and(|b| std::mem::take(&mut b.rescan))
+    {
+        log::debug!("connector scan");
+        scan_connectors(state);
+        check_links(state);
+    }
+    while ready(state) {
+        let Some(b) = state.backend.as_mut() else {
+            return;
+        };
+        let Some(&crtc) = b.reenable.iter().find(|c| !b.retiring.contains_key(c)) else {
+            break;
+        };
+        b.reenable.remove(&crtc);
+        if let Some(output) = b.parked.get(&crtc).map(|p| p.output.clone()) {
+            state.set_in_layout(&output, true);
+        }
+    }
+    if ready(state)
+        && let Some(old) = state.backend.as_mut().and_then(|b| b.config_from.take())
+        && state.apply_output_config(&old)
+    {
+        state.update_layout();
+    }
+    let crtcs: Vec<crtc::Handle> = state
+        .backend
+        .iter()
+        .flat_map(|b| b.surfaces.keys().copied())
+        .collect();
+    for crtc in crtcs {
+        retrain_link(state, crtc);
+    }
+    watch(state);
+}
+
+/// How often `watch` looks for stalled outputs.
+const WATCH_EVERY: Duration = Duration::from_millis(500);
+
+/// Look for stalled outputs every `WATCH_EVERY` while any output has a job or flip out.
+fn watch(state: &mut State) {
+    let Some(b) = state.backend.as_ref() else {
+        return;
+    };
+    if b.watch.is_some() || b.surfaces.values().all(|s| s.track.idle()) {
+        return;
+    }
+    let token = state
+        .handle
+        .insert_source(Timer::from_duration(WATCH_EVERY), |_, _, state| {
+            if watch_tick(state) {
+                return TimeoutAction::ToDuration(WATCH_EVERY);
+            }
+            if let Some(b) = state.backend.as_mut() {
+                b.watch = None;
+            }
+            TimeoutAction::Drop
+        });
+    match token {
+        Ok(t) => {
+            if let Some(b) = state.backend.as_mut() {
+                b.watch = Some(t);
+            }
+        }
+        Err(e) => log::warn!("stall watch: {}", e.error),
+    }
+}
+
+/// Label outputs past `commit::STALL`: lock and sleep stop waiting for their cover, their
+/// clients get a frame callback each tick. False once nothing is out.
+fn watch_tick(state: &mut State) -> bool {
+    let now = std::time::Instant::now();
+    let Some(b) = state.backend.as_mut() else {
+        return false;
+    };
+    let mut stalled = Vec::new();
+    let mut throttled = Vec::new();
+    for (&crtc, s) in b.surfaces.iter_mut() {
+        if s.track.stall(now) {
+            let name = s.output.name();
+            match s.track.phase() {
+                commit::Phase::Busy { kind, .. } => {
+                    log::warn!("{name}: {kind:?} still in the kernel after 2 s")
+                }
+                _ => log::warn!("{name}: no vblank 2 s after its flip"),
+            }
+            stalled.push(s.output.clone());
+        }
+        if s.track.stalled() && s.callback_timer.is_none() {
+            throttled.push(crtc);
+        }
+    }
+    for output in &stalled {
+        crate::sessionlock::stalled(state, output);
+        crate::power::stalled(state, output);
+    }
+    for crtc in throttled {
+        callbacks_after_a_frame(state, crtc, false);
+    }
+    on_quiet(state);
+    if quiet(state) {
+        render_waiting(state);
+    }
+    state
+        .backend
+        .as_ref()
+        .is_some_and(|b| b.surfaces.values().any(|s| !s.track.idle()))
 }
 
 pub fn schedule(state: &mut State, output: &Output) {
@@ -1133,6 +1329,7 @@ fn flipped(state: &mut State, crtc: crtc::Handle, (time, seq, kind): Flip) {
     if redraw {
         render(state, crtc);
     }
+    watch(state);
 }
 
 fn render(state: &mut State, crtc: crtc::Handle) {
@@ -1153,7 +1350,11 @@ fn render(state: &mut State, crtc: crtc::Handle) {
         if std::mem::take(&mut s.pointer_only)
             && let Some(drawn) = pointer_frame(state, crtc, &output, started)
         {
-            finish(state, crtc, &output, drawn, !drawn, None, started);
+            // A queued cursor frame finishes on its `Done` (`committed`).
+            if !drawn {
+                finish(state, crtc, &output, false, true, None, started);
+            }
+            watch(state);
             return;
         }
     }
@@ -1301,6 +1502,7 @@ fn render(state: &mut State, crtc: crtc::Handle) {
     if let Some(at) = state.water.next_step(&output) {
         schedule_step(state, &output, at);
     }
+    watch(state);
 }
 
 /// A frame asked for by pointer motion alone (`Ask::Pointer`): when the last
@@ -1392,15 +1594,7 @@ fn retired(state: &mut State, crtc: crtc::Handle) {
         let _ = h.join();
         log::debug!("{crtc:?}: its commit thread dropped the compositor and ended");
     }
-    let output = b
-        .reenable
-        .remove(&crtc)
-        .then(|| b.parked.get(&crtc).map(|p| p.output.clone()))
-        .flatten();
-    if let Some(output) = output {
-        state.set_in_layout(&output, true);
-    }
-    reset_device(state);
+    on_quiet(state);
     render_waiting(state);
 }
 
@@ -1414,6 +1608,17 @@ fn committed(state: &mut State, crtc: crtc::Handle, done: commit::Done<Out>) {
     else {
         return;
     };
+    let waited = s.track.waited(done.ended);
+    if s.track.stalled()
+        && let Some(w) = waited
+    {
+        let kind = done.kind;
+        log::warn!(
+            "{}: {kind:?} returned after {:.1} s",
+            s.output.name(),
+            w.as_secs_f64()
+        );
+    }
     if let commit::Phase::Busy { since, .. } = s.track.phase() {
         let t = commit::Times {
             to_thread: done.started.saturating_duration_since(since),
@@ -1448,7 +1653,13 @@ fn committed(state: &mut State, crtc: crtc::Handle, done: commit::Done<Out>) {
         (Ok(_), _) => {}
     }
     let gamma_failed = !ok && done.kind == commit::Kind::Gamma;
-    let after = s.track.done(ok);
+    let after = s.track.done(ok, std::time::Instant::now());
+    if let Some(wait) = after.backoff {
+        log::warn!(
+            "{name}: the next modeset waits {} s (failed or slow)",
+            wait.as_secs()
+        );
+    }
     let flipped_frame = matches!(done.kind, commit::Kind::Flip { .. });
     let mut flight = s.flight.take().filter(|_| flipped_frame);
     let feedback = flight.as_mut().and_then(|f| f.feedback.take());
@@ -1484,10 +1695,11 @@ fn committed(state: &mut State, crtc: crtc::Handle, done: commit::Done<Out>) {
             queue_render(state, crtc);
         }
     }
-    reset_device(state);
-    if done.kind.blocking() {
+    on_quiet(state);
+    if done.kind.blocking() || waited.is_some_and(|w| w > commit::STALL) {
         render_waiting(state);
     }
+    watch(state);
 }
 
 /// Render every output that asked for a frame while something held them all.
@@ -1543,8 +1755,12 @@ fn held_back(state: &mut State, crtc: crtc::Handle) -> bool {
     else {
         return false;
     };
-    let Some(wait) = crate::framepace::render_wait(s.pace.not_before, std::time::Instant::now())
-    else {
+    let retry = s
+        .track
+        .retry_at()
+        .filter(|_| lock(&s.compositor).surface().commit_pending());
+    let not_before = s.pace.not_before.max(retry);
+    let Some(wait) = crate::framepace::render_wait(not_before, std::time::Instant::now()) else {
         s.pace.not_before = None;
         return false;
     };
@@ -1579,14 +1795,8 @@ fn held_back(state: &mut State, crtc: crtc::Handle) -> bool {
 fn due(state: &State, crtc: crtc::Handle) -> Option<Output> {
     let b = state.backend.as_ref()?;
     let s = b.surfaces.get(&crtc)?;
-    let others = b.surfaces.values().map(|o| &o.track);
-    let retiring = !b.retiring.is_empty();
-    (commit::render_due(&s.track, others)
-        && !retiring
-        && !b.reset
-        && !s.hw.off
-        && b.session.is_active())
-    .then(|| s.output.clone())
+    (s.track.idle() && b.quiet() && !b.reset && !s.hw.off && b.session.is_active())
+        .then(|| s.output.clone())
 }
 
 fn count_frame(s: &mut Surface, overlay: bool, started: std::time::Instant, cursor_only: bool) {
@@ -1690,7 +1900,7 @@ fn callbacks_after_a_frame(state: &mut State, crtc: crtc::Handle, shown: bool) {
             };
             s.callback_timer = None;
             // A commit since asked for a frame: its callback waits for that frame, or the client would draw again before the screen showed its last.
-            if (s.needs_redraw || s.idle_scheduled) && !s.hw.off && active {
+            if (s.needs_redraw || s.idle_scheduled) && !s.hw.off && !s.track.stalled() && active {
                 return TimeoutAction::Drop;
             }
             callbacks_done(state, crtc);
@@ -1906,6 +2116,7 @@ fn check_links(state: &mut State) {
     let Some(b) = state.backend.as_mut() else {
         return;
     };
+    gated(b, "link-status read");
     let dev = &b.drm;
     let mut due = Vec::new();
     for (&crtc, s) in b.surfaces.iter_mut() {
@@ -1942,12 +2153,14 @@ fn retrain_link(state: &mut State, crtc: crtc::Handle) {
     let Some(b) = state.backend.as_mut() else {
         return;
     };
-    let active = b.session.is_active();
+    let active = b.settled();
+    let quiet = b.quiet();
     let dev = &b.drm;
     let Some(s) = b.surfaces.get_mut(&crtc) else {
         return;
     };
-    if !s.hw.retrain || !CrtcNow::of(active, s).ready() {
+    // Reading link-status takes every modeset lock: it waits for quiet (`on_quiet`).
+    if !s.hw.retrain || !quiet || !CrtcNow::of(active, s).ready() {
         return;
     }
     s.hw.retrain = false;
@@ -2092,7 +2305,9 @@ pub fn set_output_power(state: &mut State, output: &Output, on: bool) -> bool {
         log::info!("{}: power off once its commit is done", output.name());
         return true;
     }
-    power_off(state, crtc)
+    let off = power_off(state, crtc);
+    watch(state);
+    off
 }
 
 /// Mark `crtc` off and, when the session is ours, have its thread clear the CRTC.
@@ -2136,7 +2351,7 @@ pub fn set_gamma(state: &mut State, output: &Output, ramp: Option<&[u16]>) -> bo
     let Some((b, crtc)) = surface_of(state, output) else {
         return false;
     };
-    let active = b.session.is_active();
+    let active = b.settled();
     let Some(s) = b.surfaces.get_mut(&crtc) else {
         return false;
     };
@@ -2159,7 +2374,9 @@ pub fn set_gamma(state: &mut State, output: &Output, ramp: Option<&[u16]>) -> bo
         }
         GammaStep::Commit => {
             s.hw.wanted_lut = None;
-            commit_gamma(s, wanted)
+            let sent = commit_gamma(s, wanted);
+            watch(state);
+            sent
         }
     }
 }
@@ -2169,7 +2386,7 @@ fn flush_gamma(state: &mut State, crtc: crtc::Handle) {
     let Some(b) = state.backend.as_mut() else {
         return;
     };
-    let active = b.session.is_active();
+    let active = b.settled();
     let Some(s) = b.surfaces.get_mut(&crtc) else {
         return;
     };
