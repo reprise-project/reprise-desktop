@@ -41,6 +41,7 @@ pub fn draw_button(
     focus: bool,
     px: u32,
 ) {
+    let label = &*p.label(label);
     if let Some(st) = p.look.style()
         && styled::button::draw_button(st, c, text, p, r, label, default, ptr, enabled, focus, px)
     {
@@ -95,6 +96,7 @@ pub fn draw_disabled_label(
     px: u32,
     part: Option<Part>,
 ) {
+    let label = &*p.label(label);
     if let (Some(st), Some(part)) = (p.look.style(), part) {
         let ink = st
             .text_color(part, State::Disabled)
@@ -194,7 +196,7 @@ pub fn draw_group_box(
     px: u32,
 ) {
     if let Some(st) = p.look.style()
-        && styled::groupbox::draw_group_box(st, c, text, p, g, label_r, label, px)
+        && styled::groupbox::draw_group_box(st, c, text, p, g, label_r, &p.label(label), px)
     {
         return;
     }
@@ -652,7 +654,8 @@ pub fn draw_vertical_trackbar(
     classic::trackbar::draw_held(c, p, lay, enabled, thumb == Interaction::Pressed)
 }
 
-/// A line of static text with its access key underlined, the same in every look.
+/// A line of static text with its access key underlined while [`Paint::access_keys`], the same
+/// in every look.
 #[expect(clippy::too_many_arguments)]
 pub fn draw_label(
     c: &mut Canvas,
@@ -664,7 +667,7 @@ pub fn draw_label(
     align: Align,
     px: u32,
 ) {
-    classic::widgets::draw_label(c, text, r, label, false, ink, align, px, p.s)
+    classic::widgets::draw_label(c, text, r, &p.label(label), false, ink, align, px, p.s)
 }
 
 /// The dotted focus rectangle on `ring`'s edge, the same in every look.
@@ -1043,6 +1046,7 @@ mod tests {
             s: 1,
             back: crate::look::Backdrop::Face,
             active: true,
+            access_keys: true,
             text: crate::theme::TextUnits::ONE,
         };
         let r = Rect::new(2, 2, 16, 16);

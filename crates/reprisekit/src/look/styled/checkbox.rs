@@ -120,6 +120,7 @@ mod tests {
             s: 1,
             back: crate::look::Backdrop::Face,
             active: true,
+            access_keys: true,
             text: crate::theme::TextUnits::ONE,
         };
         let mut c = Canvas::new(13, 13);
@@ -383,6 +384,7 @@ mod tests {
                 s,
                 back: crate::look::Backdrop::Face,
                 active: true,
+                access_keys: true,
                 text: crate::theme::TextUnits::ONE,
             };
             let mut c = Canvas::new(36 * s as u32, 17 * s as u32);

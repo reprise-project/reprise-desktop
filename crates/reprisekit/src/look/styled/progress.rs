@@ -226,6 +226,7 @@ mod tests {
             s: 1,
             back: crate::look::Backdrop::Face,
             active: true,
+            access_keys: true,
             text: crate::theme::TextUnits::ONE,
         };
         let r = Rect::new(2, 2, 100, 16);

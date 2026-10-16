@@ -71,7 +71,8 @@ impl<A: Clone> Popup<A> {
     }
 
     pub fn draw(&self, c: &mut Canvas, ctx: &Ctx) {
-        self.chain.draw(c, &ctx.theme, &ctx.text, true);
+        self.chain
+            .draw(c, &ctx.theme, &ctx.text, ctx.theme.access_keys);
     }
 
     pub fn access(&self, tree: &mut Tree, parent: NodeId) -> NodeId {

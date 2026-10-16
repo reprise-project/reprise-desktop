@@ -119,9 +119,20 @@ pub struct Paint<'a> {
     pub active: bool,
     /// How a form laid out for 100% text grows ([`Theme::text`]).
     pub text: crate::theme::TextUnits,
+    /// Whether labels underline their access keys ([`Theme::access_keys`]).
+    pub access_keys: bool,
 }
 
 impl<'a> Paint<'a> {
+    /// `label` as drawn: without its access key's marker while the underlines hide.
+    pub fn label<'l>(&self, label: &'l str) -> std::borrow::Cow<'l, str> {
+        crate::cues::Cues {
+            focus: false,
+            keys: self.access_keys,
+        }
+        .label(label)
+    }
+
     pub fn on_page(&self, page: Rect) -> Paint<'a> {
         Paint {
             back: Backdrop::Page(page),
@@ -154,6 +165,7 @@ pub(crate) fn classic_paint(cs: &ColorScheme, s: i32) -> Paint<'_> {
         back: Backdrop::Face,
         active: true,
         text: crate::theme::TextUnits::ONE,
+        access_keys: true,
     }
 }
 
@@ -174,6 +186,7 @@ impl Theme {
             back: Backdrop::Face,
             active: self.active,
             text: self.text,
+            access_keys: self.access_keys,
         }
     }
 

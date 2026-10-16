@@ -983,7 +983,7 @@ impl Bar {
     /// The open menu, if any.
     pub fn draw_popup(&self, c: &mut Canvas, text: &TextRenderer, theme: &crate::theme::Theme) {
         if let Some(popup) = &self.popup {
-            popup.draw(c, theme, text, true);
+            popup.draw(c, theme, text, self.underline);
         }
     }
 }
@@ -1137,6 +1137,41 @@ mod bar_tests {
         assert_eq!(b.hovered(), Some(2), "Exit");
         b.key(Key::Right, &lay, &text, m, px);
         assert_eq!(b.open, Some(1));
+    }
+
+    #[test]
+    fn a_menu_underlines_its_keys_only_when_the_keyboard_opened_it() {
+        let text = TextRenderer::load(&FontConfig::default());
+        let theme = Theme::default();
+        let (m, px) = (&theme, theme.fonts.size_px);
+        let lay = Layout::compute(
+            &text,
+            px,
+            Rect::new(0, 0, 300, 200),
+            &bar().titles,
+            &MenuTitles::CLASSIC,
+        );
+        // The bar's open menu as drawn, and the same popup drawn with the underlines.
+        let drawn = |b: &Bar| {
+            let mut c = Canvas::new(300, 200);
+            b.draw_popup(&mut c, &text, &theme);
+            let mut keys = Canvas::new(300, 200);
+            b.popup
+                .as_ref()
+                .unwrap()
+                .draw(&mut keys, &theme, &text, true);
+            (c.pixels, keys.pixels)
+        };
+        let mut by_pointer = bar();
+        let f = lay.frames[0];
+        by_pointer.press(f.x + 3, f.y + 3, &lay, &text, m, px);
+        let (shown, keys) = drawn(&by_pointer);
+        assert!(shown != keys, "opened with the pointer: no underlines");
+        let mut by_key = bar();
+        by_key.key(Key::Char('f', true), &lay, &text, m, px);
+        assert_eq!(by_key.open, Some(0));
+        let (shown, keys) = drawn(&by_key);
+        assert!(shown == keys, "opened with Alt+F: underlined");
     }
 
     #[test]

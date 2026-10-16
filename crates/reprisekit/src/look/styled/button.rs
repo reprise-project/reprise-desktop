@@ -115,6 +115,7 @@ mod tests {
             s: 1,
             back: crate::look::Backdrop::Face,
             active: true,
+            access_keys: true,
             text: crate::theme::TextUnits::ONE,
         };
         let text = TextRenderer::load(&FontConfig::default());
@@ -666,6 +667,7 @@ mod tests {
                 s: 2,
                 back: crate::look::Backdrop::Face,
                 active: true,
+                access_keys: true,
                 text: crate::theme::TextUnits::ONE,
             };
             let mut c = Canvas::new(150, 46);
