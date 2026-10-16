@@ -81,8 +81,11 @@ Desktop water ripples the wallpaper: the pointer leaves a wake over bare
 desktop, and clicks, dropped icons and windows opening, closing or moving make
 waves. The lock screen's picture ripples too. It pauses under a fullscreen
 window. The screen draws the water only in the frames it steps in, so a
-`water_rate` below the refresh rate draws fewer frames. The desktop menu's Next
-desktop background skips the slideshow ahead.
+`water_rate` below the refresh rate draws fewer frames. Rain on its own draws
+about 30 frames a second, each running the steps since the last, so its
+ripples keep their speed; a wake, click or moving window brings back a frame
+per step for two seconds. The desktop menu's Next desktop background skips the
+slideshow ahead.
 
 ## Screen saver
 

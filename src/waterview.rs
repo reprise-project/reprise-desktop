@@ -11,8 +11,8 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use reprisefx::water::{Pool, WaterFx};
 use reprisekit::water::{
-    Clock, Energy, Preset, Queue, REFERENCE_HZ, Rain, Rate, SPLASHES_PER_STEP, Splash, Step, Water,
-    field_point, field_size,
+    Clock, Energy, Preset, Queue, REFERENCE_HZ, Rain, Rate, SPLASHES_PER_STEP, STIRRED_SECS,
+    Splash, Step, Water, field_point, field_size, rain_steps_per_frame,
 };
 use reprisescene::{BufferId, CustomElement, CustomId, CustomNode, Input, TreeId};
 use smithay::{
@@ -83,6 +83,8 @@ struct PaneState {
     last: Option<Instant>,
     /// The step rate of the last step.
     hz: f32,
+    /// When the last splash other than rain was queued.
+    stirred: Option<Instant>,
     running: bool,
     size: Size<i32, Physical>,
     node: Option<CustomId>,
@@ -109,6 +111,7 @@ impl PaneState {
             obstacles: Vec::new(),
             last: None,
             hz: REFERENCE_HZ,
+            stirred: None,
             covered: false,
             running: false,
             size: Size::default(),
@@ -300,6 +303,7 @@ impl WaterCtx {
             if !p.running {
                 p.last = None;
             }
+            p.stirred = Some(Instant::now());
             push(&mut p.queue);
             p.running = true;
         }
@@ -348,8 +352,9 @@ impl WaterCtx {
         }
     }
 
-    /// When a pane of `output` next changes: a fade at once, a moving field at its next step. None
-    /// while every pane is still, covered or failed.
+    /// When a pane of `output` next changes: a fade at once, a moving field at its next step, rain
+    /// that nothing else stirred at its next [`reprisekit::water::RAIN_FPS`] frame. None while every
+    /// pane is still, covered or failed.
     pub fn next_step(&self, output: &Output) -> Option<Instant> {
         self.next_step_named(&output.name(), Instant::now())
     }
@@ -368,8 +373,16 @@ impl WaterCtx {
                 if !(p.running || rains || !p.queue.is_empty()) {
                     return None;
                 }
+                let calm = p
+                    .stirred
+                    .is_none_or(|t| now.saturating_duration_since(t).as_secs_f32() >= STIRRED_SECS);
+                let steps = if rains && calm {
+                    rain_steps_per_frame(p.hz)
+                } else {
+                    1
+                };
                 let last = p.last.unwrap_or(now);
-                Some(last + Duration::from_secs_f32(p.clock.until_step(p.hz)))
+                Some(last + Duration::from_secs_f32(p.clock.until_steps(steps, p.hz)))
             })
             .min()
     }
@@ -1085,6 +1098,39 @@ mod tests {
         assert!(
             (wait - 0.5 / 30.0).abs() < 1e-4,
             "a step at 30 Hz is due when the clock owes one, not at the next refresh: {wait}"
+        );
+    }
+
+    #[test]
+    fn rain_alone_asks_for_frames_at_rain_fps_and_a_splash_for_every_step() {
+        let ctx = WaterCtx::new();
+        ctx.configure(
+            Water::Rain.preset(),
+            [("DP-1".to_string(), Pane::Desktop)].into_iter(),
+        );
+        let key = ("DP-1".to_string(), Pane::Desktop);
+        let t0 = Instant::now();
+        let wait = |ctx: &WaterCtx| {
+            {
+                let mut panes = ctx.panes.borrow_mut();
+                let p = panes.get_mut(&key).unwrap();
+                p.hz = 60.0;
+                p.last = Some(t0);
+                p.clock = Clock::default();
+            }
+            let at = ctx.next_step_named("DP-1", t0).unwrap();
+            at.duration_since(t0).as_secs_f32()
+        };
+        let rain = wait(&ctx);
+        assert!(
+            (rain - 1.5 / 60.0).abs() < 1e-4,
+            "rain's next frame runs two 60 Hz steps: {rain}"
+        );
+        ctx.splash("DP-1", Pane::Desktop, Splash::disc((1.0, 1.0), 2.0, -0.5));
+        let stirred = wait(&ctx);
+        assert!(
+            (stirred - 0.5 / 60.0).abs() < 1e-4,
+            "a splash on the rain asks for every step: {stirred}"
         );
     }
 
