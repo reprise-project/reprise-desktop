@@ -92,6 +92,10 @@ fn main() {
             &render_glass_clock_popup(pct),
             &format!("reprisekit-gallery-glass-clock-popup-{pct}.png"),
         );
+        write_preview(
+            &render_launchers(pct),
+            &format!("reprisekit-gallery-launcher-{pct}.png"),
+        );
         return;
     }
     let with_blue = std::env::var("REPRISE_GALLERY_LOOK").as_deref() != Ok("classic");
@@ -8140,6 +8144,31 @@ fn render_glass_launcher(pct: u32) -> Canvas {
     let (w, h) = (panel.width as i32, panel.height as i32);
     let mut c = blurred_stripes(w + 60 - m.left - m.right, h + 60 - m.top - m.bottom);
     c.blit_over(30 - m.left, 30 - m.top, &panel);
+    c
+}
+
+/// The Classic and Blue launchers side by side with every kind of row at `pct` text.
+fn render_launchers(pct: u32) -> Canvas {
+    let text = TextRenderer::load(&FontConfig::default());
+    let l = launcher_sample();
+    let mut icon = Canvas::new(32, 32);
+    icon.fill_rect(Rect::new(4, 6, 24, 20), Color::rgb(80, 193, 255));
+    let panels: Vec<Canvas> = [Interface::Classic, Interface::Blue]
+        .iter()
+        .map(|&i| {
+            let theme = interfaces::theme_for(i).with_text_size(pct);
+            launcher::draw(&theme, &text, &l, Some(&icon), true, None)
+        })
+        .collect();
+    let w = panels.iter().map(|p| p.width as i32 + 30).sum::<i32>() + 30;
+    let h = panels.iter().map(|p| p.height as i32).max().unwrap_or(0) + 60;
+    let mut c = Canvas::new(w as u32, h as u32);
+    c.fill_rect(c.bounds(), Color::rgb(58, 110, 165));
+    let mut x = 30;
+    for p in &panels {
+        c.blit_over(x, 30, p);
+        x += p.width as i32 + 30;
+    }
     c
 }
 
