@@ -70,6 +70,7 @@ pub fn frame(mut st: Style, n: i32) -> Style {
         .with_part(Part::MaxCaptionGroup, group(&ink, true, n))
         .with_part(Part::CloseButton, lone(&ink, Glyph::Close, n))
         .with_part(Part::HelpButton, lone(&ink, Glyph::Help, n))
+        .with_part(Part::MinCloseGroup, min_close(&ink, n))
 }
 
 struct Ink {
@@ -231,32 +232,59 @@ fn group(ink: &Ink, maximized: bool, n: i32) -> PartImage {
     } else {
         CAPTION_GROUP.restored
     };
-    let (w, h) = (
-        CAPTION_GROUP.widths.iter().sum::<i32>() * n,
-        place.height * n,
-    );
-    let top = h - FILL_H * n;
-    let glyphs = [
-        Glyph::Minimize,
-        if maximized {
-            Glyph::Restore
-        } else {
-            Glyph::Maximize
-        },
-        Glyph::Close,
+    let middle = if maximized {
+        Glyph::Restore
+    } else {
+        Glyph::Maximize
+    };
+    let cells = [
+        (Glyph::Minimize, MIN_W),
+        (middle, MIN_W),
+        (Glyph::Close, CLOSE_W),
     ];
-    let mut a = Canvas::new(w as u32, (h * GROUP_FRAMES.len() as i32) as u32);
-    for (i, &(state, lit_one)) in GROUP_FRAMES.iter().enumerate() {
+    strip(ink, &cells, place.height, &GROUP_FRAMES, n)
+}
+
+/// [`GROUP_FRAMES`] with minimize and close only, for `Part::MinCloseGroup`.
+const MIN_CLOSE_FRAMES: [(State, Option<usize>); 8] = [
+    (State::Normal, None),
+    (State::Inactive, None),
+    (State::Hot, Some(0)),
+    (State::Hot, Some(1)),
+    (State::Pressed, Some(0)),
+    (State::Pressed, Some(1)),
+    (State::InactiveHot, Some(0)),
+    (State::InactiveHot, Some(1)),
+];
+
+fn min_close(ink: &Ink, n: i32) -> PartImage {
+    let cells = [(Glyph::Minimize, MIN_W), (Glyph::Close, CLOSE_W)];
+    let h = CAPTION_GROUP.restored.height;
+    strip(ink, &cells, h, &MIN_CLOSE_FRAMES, n)
+}
+
+/// `cells` (glyph, width) side by side in rows `height` tall, one frame per entry of `frames`.
+fn strip(
+    ink: &Ink,
+    cells: &[(Glyph, i32)],
+    height: i32,
+    frames: &[(State, Option<usize>)],
+    n: i32,
+) -> PartImage {
+    let (w, h) = (cells.iter().map(|c| c.1).sum::<i32>() * n, height * n);
+    let top = h - FILL_H * n;
+    let mut a = Canvas::new(w as u32, (h * frames.len() as i32) as u32);
+    for (i, &(state, lit_one)) in frames.iter().enumerate() {
         let (lit, active) = lit_of(state);
         let mut x = 0;
-        for (b, (&g, &bw)) in glyphs.iter().zip(&CAPTION_GROUP.widths).enumerate() {
+        for (b, &(g, bw)) in cells.iter().enumerate() {
             let l = if lit_one == Some(b) { lit } else { Lit::Rest };
             let r = Rect::new(x, i as i32 * h + top, bw * n, FILL_H * n);
             button(&mut a, r, g, l, active, ink, n);
             x += bw * n;
         }
     }
-    let states: Vec<State> = GROUP_FRAMES.iter().map(|&(s, _)| s).collect();
+    let states: Vec<State> = frames.iter().map(|&(s, _)| s).collect();
     PartImage::new(a, &states, Layout::Vertical).at_scale(n)
 }
 

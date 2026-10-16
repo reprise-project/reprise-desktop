@@ -29,7 +29,7 @@ use crate::output::upload_scaled;
 use crate::raster::{Canvas, Rect};
 use crate::textedit::EditKey;
 use crate::window::keep_inside;
-use reprisekit::frame::Edges;
+use reprisekit::frame::{CaptionButton, Edges};
 
 #[derive(Default)]
 pub struct Dialogs {
@@ -955,15 +955,15 @@ impl State {
         Some(tree)
     }
 
-    /// The pointer moved onto dialog `index`'s close box when `over` is `Some((index, true))`; a styled
-    /// look redraws on hot changes, Classic does not.
-    pub fn dialog_hover_close(&mut self, over: Option<(usize, bool)>) {
+    /// The pointer moved onto dialog `index`'s caption button `b` when `over` is
+    /// `Some((index, Some(b)))`; a styled look redraws on hot changes, Classic does not.
+    pub fn dialog_hover_caption(&mut self, over: Option<(usize, Option<CaptionButton>)>) {
         let styled = self.config.theme.look.style().is_some();
         for i in 0..self.dialogs.views.len() {
-            let hot = styled && over == Some((i, true));
+            let hot = (over.filter(|o| styled && o.0 == i)).and_then(|o| o.1);
             let v = &mut self.dialogs.views[i];
-            if v.dialog.close_hot != hot {
-                v.dialog.close_hot = hot;
+            if v.dialog.caption_hot != hot {
+                v.dialog.caption_hot = hot;
                 if styled {
                     self.redraw_dialog(i);
                 }
@@ -1175,8 +1175,10 @@ impl State {
         let lights = self.config.theme.look.lights_pointer();
         let v = &mut self.dialogs.views[top];
         let outcome = match hit {
-            Some(DialogHit::Close) => {
-                v.dialog.press_close();
+            Some(h @ (DialogHit::Close | DialogHit::Minimize)) => {
+                if let Some(b) = dialog::caption_button(Some(h)) {
+                    v.dialog.press_caption(b);
+                }
                 self.interaction = Interaction::DialogPress;
                 Outcome::Redraw
             }
@@ -1388,8 +1390,8 @@ impl State {
             }
             return;
         }
-        if v.dialog.close_box.holding() {
-            if v.dialog.drag_close(matches!(over, Some(DialogHit::Close))) {
+        if v.dialog.caption_box.holding() {
+            if v.dialog.drag_caption(over) {
                 self.redraw_dialog(i);
             }
             return;
@@ -1464,12 +1466,16 @@ impl State {
         let over = self.dialog_hit(i, pos.x, pos.y);
         let styled = self.config.theme.look.lights_pointer();
         let v = &mut self.dialogs.views[i];
-        if v.dialog.close_box.holding() {
-            v.dialog.drag_close(matches!(over, Some(DialogHit::Close)));
-            let outcome = if v.dialog.release_close() {
-                Outcome::Close
-            } else {
-                Outcome::Redraw
+        if v.dialog.caption_box.holding() {
+            v.dialog.drag_caption(over);
+            let outcome = match v.dialog.release_caption() {
+                Some(CaptionButton::Close) => Outcome::Close,
+                Some(CaptionButton::Minimize) => {
+                    let id = v.id;
+                    self.minimize_dialog(id);
+                    return;
+                }
+                _ => Outcome::Redraw,
             };
             self.apply_dialog(outcome);
             return;
