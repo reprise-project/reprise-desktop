@@ -471,7 +471,10 @@ pub fn enable(state: &mut State, output: &Output, index: usize) -> bool {
             counted_from: None,
             stats: Default::default(),
             damage_seen: None,
-            hw: Hw::default(),
+            hw: Hw {
+                unlit: true,
+                ..Hw::default()
+            },
         },
     );
     state.scene.add_output(output);
@@ -644,9 +647,23 @@ fn activate(state: &mut State) {
     if let Err(e) = b.drm.lock().activate(false) {
         log::error!("drm activate: {e}");
     }
-    for s in b.surfaces.values_mut() {
+    let dev = b.drm.device();
+    for (&crtc, s) in b.surfaces.iter_mut() {
         s.drm_output.reset_buffers();
         s.pending_vblank = false;
+        s.hw.unlit = true;
+        // Another DRM master may have left its own LUT; reading it back is not a commit.
+        if let Some(Some(g)) = s.hw.gamma {
+            let ours = s.hw.lut.take();
+            s.hw.lut = read_lut(dev, crtc, &g, ours.clone());
+            if s.hw.lut.is_none() && s.hw.wanted_lut.is_none() {
+                s.hw.wanted_lut = ours;
+            }
+        }
+    }
+    let crtcs: Vec<crtc::Handle> = b.surfaces.keys().copied().collect();
+    for crtc in crtcs {
+        flush_gamma(state, crtc);
     }
     crate::inputqueue::take_queued(state, libinput);
     scan_connectors(state);
@@ -821,6 +838,7 @@ fn vblank(state: &mut State, crtc: crtc::Handle, meta: Option<&DrmEventMetadata>
         s.stats.flipped(time, s.needs_redraw);
     }
     let (output, redraw) = (s.output.clone(), s.needs_redraw);
+    flush_gamma(state, crtc);
     crate::power::presented(state, &output);
     crate::sessionlock::presented(state, &output);
     if redraw {
@@ -966,6 +984,7 @@ fn render(state: &mut State, crtc: crtc::Handle) {
                     match s.drm_output.queue_frame(Some(feedback)) {
                         Ok(()) => {
                             s.pending_vblank = true;
+                            s.hw.unlit = false;
                             count_frame(s, config.debug.overlay, started);
                             true
                         }
@@ -1043,6 +1062,7 @@ fn pointer_frame(
         CursorMove::Prepared => match s.drm_output.queue_frame(None) {
             Ok(()) => {
                 s.pending_vblank = true;
+                s.hw.unlit = false;
                 count_frame(s, config.debug.overlay, started);
                 Some(true)
             }
@@ -1297,6 +1317,70 @@ impl Backend {
 struct Hw {
     off: bool,
     gamma: Option<Option<Gamma>>,
+    /// What the CRTC's gamma holds; None while unknown.
+    lut: Option<Lut>,
+    /// The ramp waiting for the CRTC to take it (`gamma_step`).
+    wanted_lut: Option<Lut>,
+    /// Powered on or activated, and no frame queued since: the next commit is a modeset.
+    unlit: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum Lut {
+    Identity,
+    Ramp(Vec<u16>),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum GammaStep {
+    Skip,
+    Wait,
+    Commit,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct CrtcNow {
+    active: bool,
+    off: bool,
+    unlit: bool,
+    flipping: bool,
+}
+
+impl CrtcNow {
+    fn of(active: bool, s: &Surface) -> CrtcNow {
+        CrtcNow {
+            active,
+            off: s.hw.off,
+            unlit: s.hw.unlit,
+            flipping: s.pending_vblank,
+        }
+    }
+}
+
+/// A gamma set is a blocking commit: it waits while the session is away, the output is off, a flip is in
+/// flight, or no frame was queued since power-on. A LUT another master left (`held` None) is replaced before
+/// that first frame, which would show it.
+fn gamma_step(wanted: &Lut, held: Option<&Lut>, crtc: CrtcNow) -> GammaStep {
+    if held == Some(wanted) {
+        return GammaStep::Skip;
+    }
+    let ready = crtc.active && !crtc.off && !crtc.flipping && (!crtc.unlit || held.is_none());
+    if ready {
+        GammaStep::Commit
+    } else {
+        GammaStep::Wait
+    }
+}
+
+/// What a CRTC whose GAMMA_LUT reads `value` holds, given the blob we last put there (`ours`, holding `held`).
+fn lut_from_blob(value: u64, ours: Option<u64>, held: Option<Lut>) -> Option<Lut> {
+    if value == 0 {
+        Some(Lut::Identity)
+    } else if ours == Some(value) {
+        held
+    } else {
+        None
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -1346,6 +1430,18 @@ fn find_gamma(dev: &DrmDevice, crtc: crtc::Handle) -> Option<Gamma> {
     }
     let size = dev.get_crtc(crtc).ok()?.gamma_length();
     (size > 1).then_some(Gamma::Legacy { size })
+}
+
+/// What the CRTC's gamma holds now: GAMMA_LUT is read back, a legacy table is unknown.
+fn read_lut(dev: &DrmDevice, crtc: crtc::Handle, gamma: &Gamma, held: Option<Lut>) -> Option<Lut> {
+    use smithay::reexports::drm::control::Device as _;
+    let Gamma::Lut { prop, blob, .. } = *gamma else {
+        return None;
+    };
+    let props = dev.get_properties(crtc).ok()?;
+    let (handles, values) = props.as_props_and_values();
+    let i = handles.iter().position(|&h| h == prop)?;
+    lut_from_blob(values[i], blob, held)
 }
 
 fn create_blob(dev: &DrmDevice, data: &[u8]) -> std::io::Result<u64> {
@@ -1408,7 +1504,9 @@ pub fn set_output_power(state: &mut State, output: &Output, on: bool) -> bool {
     }
     if on {
         s.hw.off = false;
+        s.hw.unlit = true;
         log::info!("{}: power on", output.name());
+        flush_gamma(state, crtc);
         schedule(state, output);
         return true;
     }
@@ -1443,27 +1541,86 @@ pub fn gamma_size(state: &State, output: &Output) -> Option<usize> {
     gamma.map(|g| g.size() as usize)
 }
 
+/// Put `ramp` (None: identity) on `output`'s CRTC, now or once it is ready; nothing when it holds it already.
+/// False when the output has no gamma table or the CRTC refused the ramp.
 pub fn set_gamma(state: &mut State, output: &Output, ramp: Option<&[u16]>) -> bool {
-    use smithay::reexports::drm::control::{Device as _, property};
     let Some((b, crtc)) = surface_of(state, output) else {
         return false;
     };
-    if !b.session.is_active() {
-        return false;
-    }
+    let active = b.session.is_active();
     let dev = b.drm.device();
     let Some(s) = b.surfaces.get_mut(&crtc) else {
         return false;
     };
-    let gamma = s.hw.gamma.get_or_insert_with(|| find_gamma(dev, crtc));
-    let Some(g) = gamma.as_mut() else {
+    let hw = &mut s.hw;
+    if hw.gamma.is_none() {
+        let gamma = find_gamma(dev, crtc);
+        hw.lut = gamma.and_then(|g| read_lut(dev, crtc, &g, None));
+        hw.gamma = Some(gamma);
+    }
+    let Some(Some(g)) = hw.gamma else {
         return false;
     };
-    let size = g.size() as usize;
-    if ramp.is_some_and(|r| r.len() != size * 3) {
+    if ramp.is_some_and(|r| r.len() != g.size() as usize * 3) {
         log::warn!("{}: gamma ramp of the wrong length", output.name());
         return false;
     }
+    let wanted = ramp.map_or(Lut::Identity, |r| Lut::Ramp(r.to_vec()));
+    match gamma_step(&wanted, s.hw.lut.as_ref(), CrtcNow::of(active, s)) {
+        GammaStep::Skip => {
+            s.hw.wanted_lut = None;
+            true
+        }
+        GammaStep::Wait => {
+            s.hw.wanted_lut = Some(wanted);
+            true
+        }
+        GammaStep::Commit => {
+            s.hw.wanted_lut = None;
+            commit_gamma(dev, crtc, &mut s.hw, wanted, output)
+        }
+    }
+}
+
+/// Put a ramp that waited on the CRTC if it can take it now (`gamma_step`).
+fn flush_gamma(state: &mut State, crtc: crtc::Handle) {
+    let Some(b) = state.backend.as_mut() else {
+        return;
+    };
+    let active = b.session.is_active();
+    let dev = b.drm.device();
+    let Some(s) = b.surfaces.get_mut(&crtc) else {
+        return;
+    };
+    let Some(wanted) = s.hw.wanted_lut.take() else {
+        return;
+    };
+    match gamma_step(&wanted, s.hw.lut.as_ref(), CrtcNow::of(active, s)) {
+        GammaStep::Skip => {}
+        GammaStep::Wait => s.hw.wanted_lut = Some(wanted),
+        GammaStep::Commit => {
+            let output = s.output.clone();
+            commit_gamma(dev, crtc, &mut s.hw, wanted, &output);
+        }
+    }
+}
+
+fn commit_gamma(
+    dev: &DrmDevice,
+    crtc: crtc::Handle,
+    hw: &mut Hw,
+    wanted: Lut,
+    output: &Output,
+) -> bool {
+    use smithay::reexports::drm::control::{Device as _, property};
+    let Some(Some(g)) = hw.gamma.as_mut() else {
+        return false;
+    };
+    let size = g.size() as usize;
+    let ramp = match &wanted {
+        Lut::Ramp(r) => Some(r.as_slice()),
+        Lut::Identity => None,
+    };
     let result = match g {
         Gamma::Lut { prop, blob, .. } => {
             let new = match ramp {
@@ -1510,7 +1667,11 @@ pub fn set_gamma(state: &mut State, output: &Output, ramp: Option<&[u16]>) -> bo
         }
     };
     match result {
-        Ok(()) => true,
+        Ok(()) => {
+            log::debug!("{}: gamma set", output.name());
+            hw.lut = Some(wanted);
+            true
+        }
         Err(e) => {
             log::warn!("{}: set gamma: {e}", output.name());
             false
@@ -1520,7 +1681,7 @@ pub fn set_gamma(state: &mut State, output: &Output, ramp: Option<&[u16]>) -> bo
 
 #[cfg(test)]
 mod tests {
-    use super::{Ask, Asked};
+    use super::{Ask, Asked, CrtcNow, GammaStep, Lut, gamma_step, lut_from_blob};
 
     fn asked(asks: &[Ask]) -> Asked {
         let mut a = Asked::default();
@@ -1547,5 +1708,108 @@ mod tests {
         a.redraw = false;
         a.add(Ask::Pointer);
         assert!(a.pointer_only, "a stale pointer_only=false does not stick");
+    }
+
+    const READY: CrtcNow = CrtcNow {
+        active: true,
+        off: false,
+        unlit: false,
+        flipping: false,
+    };
+
+    fn not_ready() -> [(CrtcNow, &'static str); 4] {
+        [
+            (
+                CrtcNow {
+                    active: false,
+                    ..READY
+                },
+                "session away",
+            ),
+            (CrtcNow { off: true, ..READY }, "output off"),
+            (
+                CrtcNow {
+                    flipping: true,
+                    ..READY
+                },
+                "flip in flight",
+            ),
+            (
+                CrtcNow {
+                    unlit: true,
+                    ..READY
+                },
+                "no frame since power-on",
+            ),
+        ]
+    }
+
+    #[test]
+    fn a_ramp_the_crtc_holds_is_never_committed() {
+        let warm = Lut::Ramp(vec![1, 2, 3]);
+        for (crtc, _) in not_ready().into_iter().chain([(READY, "ready")]) {
+            assert_eq!(
+                gamma_step(&Lut::Identity, Some(&Lut::Identity), crtc),
+                GammaStep::Skip
+            );
+            assert_eq!(gamma_step(&warm, Some(&warm), crtc), GammaStep::Skip);
+        }
+    }
+
+    #[test]
+    fn a_new_ramp_commits_on_a_ready_crtc_else_waits() {
+        let warm = Lut::Ramp(vec![1, 2, 3]);
+        let warmer = Lut::Ramp(vec![1, 2, 2]);
+        assert_eq!(
+            gamma_step(&warm, Some(&Lut::Identity), READY),
+            GammaStep::Commit
+        );
+        assert_eq!(gamma_step(&warmer, Some(&warm), READY), GammaStep::Commit);
+        assert_eq!(
+            gamma_step(&Lut::Identity, Some(&warm), READY),
+            GammaStep::Commit
+        );
+        for (crtc, why) in not_ready() {
+            assert_eq!(
+                gamma_step(&warm, Some(&Lut::Identity), crtc),
+                GammaStep::Wait,
+                "{why}"
+            );
+        }
+    }
+
+    #[test]
+    fn another_masters_lut_is_replaced_before_the_first_frame() {
+        let unlit = CrtcNow {
+            unlit: true,
+            ..READY
+        };
+        assert_eq!(gamma_step(&Lut::Identity, None, unlit), GammaStep::Commit);
+        for (crtc, why) in not_ready().into_iter().take(3) {
+            assert_eq!(
+                gamma_step(&Lut::Identity, None, crtc),
+                GammaStep::Wait,
+                "{why}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_gamma_lut_reads_back_as_identity_ours_or_unknown() {
+        let warm = Lut::Ramp(vec![1, 2, 3]);
+        assert_eq!(
+            lut_from_blob(0, Some(7), Some(warm.clone())),
+            Some(Lut::Identity)
+        );
+        assert_eq!(
+            lut_from_blob(7, Some(7), Some(warm.clone())),
+            Some(warm.clone())
+        );
+        assert_eq!(
+            lut_from_blob(9, Some(7), Some(warm)),
+            None,
+            "another master's blob"
+        );
+        assert_eq!(lut_from_blob(9, None, None), None);
     }
 }
