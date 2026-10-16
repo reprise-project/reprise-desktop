@@ -34,6 +34,11 @@ it.
   with `scripts/pixels-unchanged.sh [--with-blue] BASE`. It renders the
   gallery and the preview tests on BASE and on your tree and lists every
   PNG that differs.
+- **Pinned hashes.** Tests that call `pins::check` keep their image hashes
+  in `crates/reprisekit/tests/pins/`, one `key hash` line per image. After a
+  deliberate drawing change, or a new Blue scheme,
+  `REPRISE_BLESS=1 cargo test -p reprisekit` rewrites those files; review
+  their diff like code.
 - **Dependency changes.** After changing a dependency or a feature in any
   `Cargo.toml`, run `scripts/kit-units`. It must report one reprisekit
   unit; otherwise add the missing features to `crates/reprisekit-pins`.

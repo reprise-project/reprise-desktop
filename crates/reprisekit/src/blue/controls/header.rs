@@ -238,128 +238,15 @@ mod tests {
 
     #[test]
     fn header_pins_at_scale_1_and_2() {
-        let want: [(Variant, [u64; 6]); 10] = [
-            (
-                Variant::Blue,
-                [
-                    0x1bcb2a907d043cd9,
-                    0x211598e8b73d8a5e,
-                    0x5d4bcd6a67462034,
-                    0x913eac9c5ee830e7,
-                    0xc257e25cd45a06e7,
-                    0xba1c6e9e73250867,
-                ],
-            ),
-            (
-                Variant::Olive,
-                [
-                    0x417147862d64cfbe,
-                    0x211598e8b73d8a5e,
-                    0x5d4bcd6a67462034,
-                    0x5fcf96bb8585d3d0,
-                    0xc257e25cd45a06e7,
-                    0xba1c6e9e73250867,
-                ],
-            ),
-            (
-                Variant::Silver,
-                [
-                    0x28c4d11bec73d07b,
-                    0xdd2184d7dce10b4e,
-                    0x5d4bcd6a67462034,
-                    0xb856cdaf57badd36,
-                    0x024190f1d16ab8af,
-                    0xba1c6e9e73250867,
-                ],
-            ),
-            (
-                Variant::Slate,
-                [
-                    0x383445c4c24eb354,
-                    0x45b10ce40a6045af,
-                    0x7d9179b98a44bf34,
-                    0xe168c68dfbdc93c9,
-                    0x983b1f8c7a37cc7f,
-                    0x986defb730230be7,
-                ],
-            ),
-            (
-                Variant::Sapphire,
-                [
-                    0x508970216ff9a0b6,
-                    0x05849484f434a042,
-                    0xadc1f93844499518,
-                    0x2da198413e3a52a9,
-                    0x40be134b9311df67,
-                    0x6abc37e2324b99f7,
-                ],
-            ),
-            (
-                Variant::Obsidian,
-                [
-                    0x508970216ff9a0b6,
-                    0x05849484f434a042,
-                    0xadc1f93844499518,
-                    0x2da198413e3a52a9,
-                    0x40be134b9311df67,
-                    0x6abc37e2324b99f7,
-                ],
-            ),
-            (
-                Variant::Ember,
-                [
-                    0x383445c4c24eb354,
-                    0x45b10ce40a6045af,
-                    0xab56ca6e7f8a6e84,
-                    0xe168c68dfbdc93c9,
-                    0x983b1f8c7a37cc7f,
-                    0xff1d544a56e481e7,
-                ],
-            ),
-            (
-                Variant::Cobalt,
-                [
-                    0x508970216ff9a0b6,
-                    0x05849484f434a042,
-                    0xadc1f93844499518,
-                    0x2da198413e3a52a9,
-                    0x40be134b9311df67,
-                    0x6abc37e2324b99f7,
-                ],
-            ),
-            (
-                Variant::Carbon,
-                [
-                    0x508970216ff9a0b6,
-                    0x05849484f434a042,
-                    0xadc1f93844499518,
-                    0x2da198413e3a52a9,
-                    0x40be134b9311df67,
-                    0x6abc37e2324b99f7,
-                ],
-            ),
-            (
-                Variant::Steel,
-                [
-                    0x9ca48910dc7ca6f3,
-                    0xdd2184d7dce10b4e,
-                    0x5d4bcd6a67462034,
-                    0x6c0ff21875b51f4d,
-                    0x024190f1d16ab8af,
-                    0xba1c6e9e73250867,
-                ],
-            ),
-        ];
-        for (v, hashes) in want {
-            let got = [1, 2].map(|d| {
-                [Part::HeaderItem, Part::HeaderFiller, Part::HeaderSortArrow]
-                    .map(|p| fnv(&part(v, d, p)))
-            });
-            let got = [
-                got[0][0], got[0][1], got[0][2], got[1][0], got[1][1], got[1][2],
-            ];
-            assert_eq!(got, hashes, "{v:?}");
+        let mut got = Vec::new();
+        for v in Variant::ALL {
+            for d in [1, 2] {
+                for p in [Part::HeaderItem, Part::HeaderFiller, Part::HeaderSortArrow] {
+                    got.push((format!("{v:?} {p:?} {d}"), fnv(&part(v, d, p))));
+                }
+            }
         }
+        crate::pins::check("blue/header", &got);
     }
 
     #[test]

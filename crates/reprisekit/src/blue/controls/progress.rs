@@ -160,56 +160,15 @@ mod tests {
 
     #[test]
     fn progress_parts_pin_at_scale_1_and_2() {
-        const LIGHT: [u64; 2] = [0x569f_9805_207f_1eb2, 0x4f46_2251_171c_004b];
-        const GREY: [u64; 2] = [0xafdc_afa0_2895_a8f2, 0x353b_6ad5_ded9_ad8b];
-        const SLATE: [u64; 2] = [0x5f64_ace7_2bb9_80a4, 0xbfe2_580b_921a_8087];
-        let pin = |bar: [u64; 2], chunk: [u64; 2]| [bar[0], bar[1], chunk[0], chunk[1]];
-        let want: [(Variant, [u64; 4]); 10] = [
-            (
-                Variant::Blue,
-                pin(LIGHT, [0x5019_c2f5_4ecf_ceeb, 0x6f3e_2405_1682_cb89]),
-            ),
-            (
-                Variant::Olive,
-                pin(LIGHT, [0xa45c_69b4_fad3_5a8b, 0x0301_e094_298a_7329]),
-            ),
-            (
-                Variant::Silver,
-                pin(LIGHT, [0x1d23_8ad0_f92b_0d33, 0x014a_7a59_dd6f_51f9]),
-            ),
-            (Variant::Slate, pin(GREY, SLATE)),
-            (Variant::Sapphire, pin(GREY, SLATE)),
-            (Variant::Obsidian, pin(GREY, SLATE)),
-            (
-                Variant::Ember,
-                pin(GREY, [0x03ef_c33c_b2e7_c4d3, 0xadec_b100_7565_f439]),
-            ),
-            (
-                Variant::Cobalt,
-                pin(GREY, [0x100e_616f_7028_4c34, 0xf7f3_5ceb_32ed_ad27]),
-            ),
-            (
-                Variant::Carbon,
-                pin(GREY, [0x0ebb_ab23_143e_cd0c, 0x7eb7_af7b_2101_b117]),
-            ),
-            (
-                Variant::Steel,
-                pin(LIGHT, [0xcce8_27be_b548_970b, 0x69a4_f717_0302_ebd9]),
-            ),
-        ];
-        let got = want.map(|(v, _)| {
-            let h = |d, p| fnv(&part(v, d, p).atlas);
-            (
-                v,
-                [
-                    h(1, Part::ProgressBar),
-                    h(2, Part::ProgressBar),
-                    h(1, Part::ProgressChunk),
-                    h(2, Part::ProgressChunk),
-                ],
-            )
-        });
-        assert_eq!(got, want);
+        let mut got = Vec::new();
+        for v in Variant::ALL {
+            for d in [1, 2] {
+                for p in [Part::ProgressBar, Part::ProgressChunk] {
+                    got.push((format!("{v:?} {p:?} {d}"), fnv(&part(v, d, p).atlas)));
+                }
+            }
+        }
+        crate::pins::check("blue/progress", &got);
     }
 
     #[test]
