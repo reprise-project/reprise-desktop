@@ -427,8 +427,15 @@ dialogs. [More in programs.md](programs.md#explorer).
 - **Third-party tools work.** Panels, lockers, idle daemons, clipboard
   managers, pagers, gamma tools and display configurators work through the
   usual protocols. See [protocols.md](protocols.md).
-- **A debug overlay** (`[debug] overlay`) shows frame times, damage, clients
+- **A debug overlay** (`[debug] overlay`) shows frame times, commit times, damage, clients
   and memory in the corner of each screen. For when you want to know why.
+- **A stuck display commit leaves Reprise running.** Each monitor's frames go
+  to the kernel from that monitor's own thread, so input, programs, the lock
+  screen and VT switches carry on while a driver holds a commit. Other
+  monitors wait for a mode change to finish, as the kernel holds their locks
+  through it. `REPRISE_COMMIT_DELAY=<connector>:<ms>` in Reprise's
+  environment makes every commit on that connector wait `ms` first
+  (`HDMI-A-1:5000:modeset` only its modesets), to try it.
 
 ## Not yet
 
