@@ -4,6 +4,7 @@
 //! of one output; at most one job is outstanding per output.
 
 use std::{
+    ops::{Deref, DerefMut},
     sync::mpsc,
     thread::JoinHandle,
     time::{Duration, Instant},
@@ -88,6 +89,82 @@ pub trait Committer: Send + 'static {
     type Payload: Send + 'static;
     type Output: Send + 'static;
     fn commit(&mut self, kind: Kind, payload: Self::Payload) -> Result<Self::Output, String>;
+}
+
+/// The frame calls of an output's compositor. Smithay's `DrmCompositor` queues a frame behind
+/// one still waiting for its vblank and commits it from `submitted`.
+pub trait Frames {
+    /// Commit the rendered frame (`queue_frame`).
+    fn queue(&mut self) -> Result<(), String>;
+    /// The pending frame reached the screen (`frame_submitted`).
+    fn submitted(&mut self) -> Result<(), String>;
+    /// Power the CRTC off, dropping any pending frame.
+    fn clear(&mut self) -> Result<(), String>;
+}
+
+/// An output's compositor and whether a frame it committed still waits for its vblank. A
+/// frame is never queued behind a pending one, so `submitted`, which main calls, never
+/// commits.
+pub struct Scanout<C> {
+    compositor: C,
+    pending: bool,
+}
+
+impl<C: Frames> Scanout<C> {
+    pub fn new(compositor: C) -> Self {
+        Scanout {
+            compositor,
+            pending: false,
+        }
+    }
+
+    /// Commits the rendered frame; fails while the last one waits for its vblank.
+    pub fn queue_frame(&mut self) -> Result<(), String> {
+        off_main();
+        if self.pending {
+            return Err("the last frame still waits for its vblank".into());
+        }
+        self.compositor.queue()?;
+        self.pending = true;
+        Ok(())
+    }
+
+    /// The pending frame, if any, reached the screen or never will (a session reset).
+    pub fn frame_submitted(&mut self) -> Result<(), String> {
+        if !std::mem::take(&mut self.pending) {
+            return Ok(());
+        }
+        self.compositor.submitted()
+    }
+
+    pub fn clear(&mut self) -> Result<(), String> {
+        off_main();
+        self.compositor.clear()?;
+        self.pending = false;
+        Ok(())
+    }
+}
+
+/// Frames are committed on the output's thread only (main renders and assigns planes).
+fn off_main() {
+    debug_assert_ne!(
+        std::thread::current().name(),
+        Some("main"),
+        "main committed a frame"
+    );
+}
+
+impl<C> Deref for Scanout<C> {
+    type Target = C;
+    fn deref(&self) -> &C {
+        &self.compositor
+    }
+}
+
+impl<C> DerefMut for Scanout<C> {
+    fn deref_mut(&mut self) -> &mut C {
+        &mut self.compositor
+    }
 }
 
 /// `REPRISE_COMMIT_DELAY=<connector>:<ms>[:modeset]`: that output's thread sleeps `ms` before
@@ -382,7 +459,7 @@ impl<M> Track<M> {
         if flip && ok && !reset {
             self.phase = Phase::Flipping { since: now };
         }
-        let vblank = self.vblank.take().filter(|_| !reset && (ok || !flip));
+        let vblank = self.vblank.take().filter(|_| ok || !flip);
         if vblank.is_some() {
             self.phase = Phase::Idle;
         }
@@ -403,8 +480,9 @@ impl<M> Track<M> {
         Some(meta)
     }
 
-    /// The session came back: a flip in flight will not complete. Forgotten now when no job
-    /// is out (true), else when its `Done` comes.
+    /// The session came back: a flip in flight may never see its vblank. Forgotten now when no
+    /// job is out (true), else when its `Done` comes; a vblank that came during the job is still
+    /// handed on, as that commit took. The compositor's pending frame is dropped separately.
     pub fn reset(&mut self) -> bool {
         if self.busy() {
             self.reset = true;
@@ -504,7 +582,6 @@ mod tests {
         let mut t = busy();
         assert!(!t.reset(), "not while the thread has the compositor");
         assert!(!t.power_off());
-        t.vblank(7);
         let after = t.done(true, Instant::now());
         assert_eq!(
             after,
@@ -512,10 +589,9 @@ mod tests {
                 off: true,
                 vblank: None,
                 backoff: None
-            },
-            "the old flip's vblank is gone with the reset"
+            }
         );
-        assert!(t.idle());
+        assert!(t.idle(), "a flip from before the reset is not waited for");
         assert_eq!(
             t.done(true, Instant::now()),
             After {
@@ -524,6 +600,91 @@ mod tests {
                 backoff: None
             }
         );
+    }
+
+    #[test]
+    fn a_vblank_that_came_during_a_commit_outliving_a_reset_is_handed_on() {
+        let mut t = Track::<u32>::default();
+        t.sent(MODESET, Instant::now());
+        assert!(!t.reset());
+        assert_eq!(t.vblank(7), None);
+        assert_eq!(t.done(true, Instant::now()).vblank, Some(7));
+        assert!(t.idle());
+    }
+
+    /// Smithay's `DrmCompositor`: a frame queued behind a pending one is committed by
+    /// `submitted`.
+    #[derive(Default)]
+    struct Drm {
+        pending: bool,
+        queued: bool,
+        commits: u32,
+    }
+
+    impl Drm {
+        fn submit(&mut self) {
+            self.queued = false;
+            self.pending = true;
+            self.commits += 1;
+        }
+    }
+
+    impl Frames for Drm {
+        fn queue(&mut self) -> Result<(), String> {
+            self.queued = true;
+            if !self.pending {
+                self.submit();
+            }
+            Ok(())
+        }
+        fn submitted(&mut self) -> Result<(), String> {
+            self.pending = false;
+            if self.queued {
+                self.submit();
+            }
+            Ok(())
+        }
+        fn clear(&mut self) -> Result<(), String> {
+            self.pending = false;
+            self.queued = false;
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn a_frame_is_never_queued_behind_one_waiting_for_its_vblank() {
+        let mut s = Scanout::new(Drm::default());
+        s.queue_frame().unwrap();
+        assert_eq!(s.commits, 1);
+        assert!(s.queue_frame().is_err());
+        assert!(!s.queued);
+        s.frame_submitted().unwrap();
+        s.frame_submitted().unwrap();
+        assert_eq!(s.commits, 1, "the vblank commits nothing");
+        s.queue_frame().unwrap();
+        assert_eq!(s.commits, 2);
+        s.clear().unwrap();
+        s.queue_frame().unwrap();
+        assert_eq!(s.commits, 3, "a clear drops the pending frame");
+    }
+
+    #[test]
+    fn the_frame_a_reset_forgot_is_dropped_before_the_next_one() {
+        let mut t = Track::<u32>::default();
+        let mut s = Scanout::new(Drm::default());
+        t.sent(MODESET, Instant::now());
+        assert!(!t.reset(), "the session came back during the modeset");
+        s.queue_frame().unwrap();
+        t.done(true, Instant::now());
+        assert!(t.idle(), "its flip is forgotten");
+        assert!(
+            s.queue_frame().is_err(),
+            "the compositor still waits for it"
+        );
+        s.frame_submitted().unwrap();
+        t.sent(MODESET, Instant::now());
+        s.queue_frame().unwrap();
+        assert_eq!(s.commits, 2, "the next modeset reaches the kernel");
     }
 
     #[test]
