@@ -32,6 +32,10 @@ the Super tap, Super+Shift+Esc and the VT switch keys can be rebound.
   keep updating, and an idle window costs nothing.
 - **Peek.** Rest on a preview, or on the Show desktop strip, and every other
   window fades down to its frame.
+- **Progress on the button.** A program that reports its progress (Explorer
+  copying, any program using the LauncherEntry convention) fills its task
+  button as it goes: a soft green fill in Glass, a thin bar along the bottom in
+  Classic and Blue, amber or grey while paused.
 - **Spring-loaded buttons.** Drag a file over a task button, wait half a
   second, and its window comes up so you can drop into it.
 - **Cascade and tile.** The taskbar's menu cascades or tiles the windows,

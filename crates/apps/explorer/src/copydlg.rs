@@ -9,6 +9,8 @@ use reprisekit::look::Paint;
 use reprisekit::theme::Color;
 
 pub const COPY: WinId = "copy progress";
+/// The desktop file a task button's progress is sent for.
+pub(crate) const DESKTOP_ID: &str = "reprise-explorer";
 
 /// The dialog of the running put, once it is up.
 pub(crate) struct Shown {
@@ -91,7 +93,17 @@ impl Explorer {
         };
         let ms = put.started.elapsed().as_millis() as u64;
         let st = status(put.job.progress(), waiting);
-        put.shown.as_mut().is_some_and(|s| s.cp.update(st, ms))
+        let Some(shown) = put.shown.as_mut() else {
+            return false;
+        };
+        let redraw = shown.cp.update(st, ms);
+        let fraction = shown.cp.fraction();
+        let now = ((fraction * 100.0) as u32, shown.cp.status.paused);
+        if put.published != Some(now) {
+            put.published = Some(now);
+            reprisebus::launcher::update(DESKTOP_ID, Some((fraction, now.1)));
+        }
+        redraw
     }
 
     pub(crate) fn copy_event(&mut self, ev: Event, ctx: &mut Ctx) -> Reply {

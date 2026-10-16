@@ -7,6 +7,7 @@ pub mod progress;
 pub mod rebar;
 pub mod snapframe;
 pub mod taskbar;
+pub mod taskprogress;
 pub mod toolbar;
 pub mod trackbar;
 pub mod widgets;
