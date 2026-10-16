@@ -67,6 +67,7 @@ mod peek;
 mod pointers;
 mod popupgrab;
 mod privacy;
+mod putview;
 mod quickwatch;
 mod reblur;
 mod recentdocs;

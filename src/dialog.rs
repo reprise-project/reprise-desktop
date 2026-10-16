@@ -11,6 +11,7 @@ use reprisekit::classic::widgets::{
     BUTTON_GAP, BUTTON_H, BUTTON_W, BarHit, CheckState, LINE_H, draw_label,
 };
 use reprisekit::controls::combo::{self, Combo};
+use reprisekit::controls::copyprogress::{self, CopyProgress};
 use reprisekit::controls::dlgtemplate::{self, KEY_AID_TEXT_H, Template};
 use reprisekit::controls::endsession::Goal;
 use reprisekit::controls::form::{FocusedEdit, Key};
@@ -130,6 +131,16 @@ pub enum Style {
     EndProgram,
     /// The `traycustomize` control in a fixed frame.
     TrayCustomize(Box<TrayCustomize>),
+    /// A desktop copy or move's progress: the `copyprogress` control in a fixed frame.
+    Copy(Box<CopyDialog>),
+}
+
+/// The progress of the put into `dir`; `units` is the text growth its control is laid out for.
+#[derive(Clone, Debug, PartialEq)]
+pub struct CopyDialog {
+    pub cp: CopyProgress,
+    pub dir: std::path::PathBuf,
+    pub units: reprisekit::theme::TextUnits,
 }
 
 /// What a folder's or a set's Properties sheet asked to write, held back
@@ -1208,6 +1219,11 @@ impl Dialog {
                 self.title = t.wording.title().into();
             }
             Style::Browse(p) => p.dlg.set_text(theme.text),
+            Style::Copy(c) => {
+                c.cp.follow(&theme.paint());
+                c.units = theme.text;
+                self.title = c.cp.title().into();
+            }
             _ => {}
         }
     }
@@ -1225,6 +1241,7 @@ impl Dialog {
                 FormKind::Replace(b) => Some(b.identity()),
                 _ => None,
             },
+            Style::Copy(c) => Some(c.dir.as_path()),
             _ => None,
         };
         (self.title.as_str(), path)
@@ -1257,6 +1274,20 @@ impl Dialog {
     pub(crate) fn chooser_mut(&mut self) -> Option<&mut Chooser> {
         match &mut self.style {
             Style::Chooser(c) => Some(&mut **c),
+            _ => None,
+        }
+    }
+
+    pub fn copy(&self) -> Option<&CopyDialog> {
+        match &self.style {
+            Style::Copy(c) => Some(c),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn copy_mut(&mut self) -> Option<&mut CopyDialog> {
+        match &mut self.style {
+            Style::Copy(c) => Some(c),
             _ => None,
         }
     }
@@ -1506,6 +1537,10 @@ impl Dialog {
 pub enum Outcome {
     Nothing,
     Redraw,
+    /// The copy progress dialog's Pause (true) or Resume (false).
+    CopyPause(bool),
+    /// The copy progress dialog's Cancel, Escape or close box.
+    CopyCancel,
     /// Redraw after recomputing the layout: the open tab changed, and a
     /// tab's rect depends on which one is open.
     Relayout,
@@ -1877,6 +1912,26 @@ impl Dialog {
                 })),
                 Placement::Center,
             )
+        }
+    }
+
+    pub fn copy_progress(cp: CopyProgress, dir: std::path::PathBuf) -> Dialog {
+        let title = cp.title();
+        let c = CopyDialog {
+            cp,
+            dir,
+            units: Default::default(),
+        };
+        Dialog::new(title, Style::Copy(Box::new(c)), Placement::Center)
+    }
+
+    fn copy_outcome(o: copyprogress::Outcome) -> Outcome {
+        match o {
+            copyprogress::Outcome::None => Outcome::Nothing,
+            copyprogress::Outcome::Redraw => Outcome::Redraw,
+            copyprogress::Outcome::Resized => Outcome::Relayout,
+            copyprogress::Outcome::Pause(on) => Outcome::CopyPause(on),
+            copyprogress::Outcome::Cancel => Outcome::CopyCancel,
         }
     }
 
@@ -2502,6 +2557,23 @@ impl Dialog {
             Key::DocEdge { end: true, select } => Key::Edit(EditKey::End { select }),
             k => k,
         };
+        if let Some(c) = self.copy_mut() {
+            let key = match key {
+                Key::Edit(k) => match reprisekit::controls::form::flat_key(&k) {
+                    Some(k) => k,
+                    None => return Outcome::Nothing,
+                },
+                k => k,
+            };
+            let out = match key {
+                Key::Access(ch) if ch.eq_ignore_ascii_case(&'d') => c.cp.toggle_details(),
+                k => {
+                    let ev = c.cp.form.key(k);
+                    c.cp.event(ev)
+                }
+            };
+            return Self::copy_outcome(out);
+        }
         if let Some(t) = self.tray_mut() {
             // Nothing in it edits text: a space is Space.
             let key = match key {
@@ -2634,6 +2706,10 @@ impl Dialog {
         if let Some(t) = self.tray_mut() {
             return Self::tray_outcome(t.release(tray_part(over)));
         }
+        if let Some(c) = self.copy_mut() {
+            let ev = c.cp.form.release();
+            return Self::copy_outcome(c.cp.event(ev));
+        }
         let Some(f) = self.form_mut() else {
             return Outcome::Nothing;
         };
@@ -2661,6 +2737,20 @@ impl Dialog {
         }
         if let Some(t) = self.tray_mut() {
             return Self::tray_outcome(t.click(tray_part(hit)));
+        }
+        if let Some(c) = self.copy_mut() {
+            let out = match hit {
+                Some(DialogHit::CopyDetails) => c.cp.toggle_details(),
+                Some(DialogHit::Control(h)) => {
+                    let ev = c.cp.form.click(Some(h));
+                    c.cp.event(ev)
+                }
+                _ => {
+                    let ev = c.cp.form.click(None);
+                    c.cp.event(ev)
+                }
+            };
+            return Self::copy_outcome(out);
         }
         if hit == Some(DialogHit::Drop) && self.field.is_some() {
             // The drop button draws held until the release, and the
@@ -3215,6 +3305,13 @@ impl Dialog {
         if let Some(t) = self.tray_mut() {
             redraw |= t.motion(tray_part(over)) != traycustomize::Event::None && styled;
         }
+        if let Some(c) = self.copy_mut() {
+            let on = match over {
+                Some(DialogHit::Control(h)) => Some(h),
+                _ => None,
+            };
+            redraw |= c.cp.form.motion(x, y, on) != reprisekit::controls::form::Event::None;
+        }
         if let Some(f) = self.form_mut() {
             let holding = f.open_page().is_some_and(|p| p.holding());
             let tab = match over {
@@ -3243,6 +3340,9 @@ impl Dialog {
         }
         if let Some(t) = self.tray_mut() {
             redraw |= t.leave() != traycustomize::Event::None && styled;
+        }
+        if let Some(c) = self.copy_mut() {
+            redraw |= c.cp.form.leave() != reprisekit::controls::form::Event::None;
         }
         if let Some(f) = self.form_mut() {
             if let Some(s) = f.sheet_mut() {
@@ -3365,6 +3465,8 @@ pub enum DialogHit {
     Browse(reprisekit::controls::filedlg::Hit),
     Chooser(openwith::Hit),
     Tray(traycustomize::Hit),
+    /// The copy progress dialog's More/Fewer details toggle.
+    CopyDetails,
 }
 
 /// The frame every dialog is built for: a fixed dialog border is 3 px
@@ -3468,6 +3570,9 @@ impl DialogLayout {
             Style::Chooser(_) => Self::compute_chooser(),
             Style::TrayCustomize(t) => {
                 return Self::compute_client(t.client()).framed(theme, d.help);
+            }
+            Style::Copy(c) => {
+                return Self::compute_client(theme.text.size(c.cp.client())).framed(theme, d.help);
             }
             Style::Browse(p) => return Self::compute_browse(theme, d.help, p.dlg.client()),
             Style::EndProgram => Self::compute_end_program(theme, text.dialog(d.font()), d),
@@ -3849,6 +3954,14 @@ impl DialogLayout {
             let lay = t.layout(text, px, (client.x, client.y));
             return t.hit(&lay, x, y).map(DialogHit::Tray);
         }
+        if let (Some(c), Some(client)) = (d.copy(), self.page) {
+            // The control is laid out from its own origin, the client's corner.
+            let (lx, ly) = (x - client.x, y - client.y);
+            if c.cp.on_toggle(lx, ly, c.units) {
+                return Some(DialogHit::CopyDetails);
+            }
+            return c.cp.form.hit(lx, ly, text, px).map(DialogHit::Control);
+        }
         if let (Some(f), Some(fr)) = (d.field.as_ref(), self.field)
             && f.combo.open.is_some()
         {
@@ -4100,6 +4213,58 @@ pub fn draw(
         draw_list(&mut c, &paint, text, f, l, layout.scrollbar(d), px);
     }
     c
+}
+
+/// The copy progress control of `c` into `client` of a dialog drawn at `scale`, from the unscaled
+/// `theme`: the control draws on a canvas of the output's scale.
+pub fn draw_copy(
+    canvas: &mut Canvas,
+    theme: &Theme,
+    text: &TextRenderer,
+    c: &CopyDialog,
+    client: Rect,
+    scale: i32,
+    active: bool,
+) {
+    let mut page = Canvas::with_scale(client.width as u32, client.height as u32, scale);
+    let paint = Paint {
+        active,
+        s: 1,
+        ..theme.paint()
+    };
+    c.cp.draw(&mut page, text, &paint, theme.fonts.size_px);
+    canvas.blit_canvas(client.x * scale, client.y * scale, &page.at_scale(1));
+}
+
+/// The copy progress control's nodes under `ROOT`, moved from its own origin to `client`'s.
+pub fn access_copy(
+    c: &CopyDialog,
+    client: Rect,
+    theme: &Theme,
+    text: &TextRenderer,
+    tree: &mut reprisekit::access::Tree,
+) {
+    use reprisekit::access::ROOT;
+    let before: std::collections::HashSet<_> = tree.nodes().map(|(id, _)| id).collect();
+    c.cp.access(tree, text, &theme.paint(), theme.fonts.size_px);
+    let added: Vec<_> = tree
+        .nodes()
+        .map(|(id, _)| id)
+        .filter(|id| *id != ROOT && !before.contains(id))
+        .collect();
+    let (dx, dy) = (f64::from(client.x), f64::from(client.y));
+    for id in added {
+        if let Some(n) = tree.get_mut(id)
+            && let Some(b) = n.bounds()
+        {
+            n.set_bounds(reprisekit::access::accesskit::Rect::new(
+                b.x0 + dx,
+                b.y0 + dy,
+                b.x1 + dx,
+                b.y1 + dy,
+            ));
+        }
+    }
 }
 
 /// `d`'s `access` part under the dialog node `ROOT`, in dialog
@@ -9920,6 +10085,29 @@ mod tests {
         let mut d = Dialog::new("Measured", Style::Form(Box::new(form)), Placement::Center);
         d.fit(theme, text);
         d
+    }
+
+    #[test]
+    fn the_copy_dialog_answers_its_keys_and_close_box_as_the_put_controls() {
+        use reprisekit::controls::copyprogress::{CopyProgress, Kind};
+        let theme = Theme::default();
+        let text = TextRenderer::load(&FontConfig::default());
+        let cp = CopyProgress::new(Kind::Copy, "Downloads", "KINGSTON", Color::rgb(0, 0, 0));
+        let mut d = Dialog::copy_progress(cp, "/media/KINGSTON".into());
+        d.fit(&theme, &text);
+        assert_eq!(d.title, "Copying...");
+        assert_eq!(d.key(Key::Access('p')), Outcome::CopyPause(true));
+        assert_eq!(d.key(Key::Escape), Outcome::CopyCancel);
+
+        let layout = DialogLayout::compute(&theme, &text, &d);
+        let client = layout.page.expect("a client");
+        assert_eq!((client.width, client.height), d.copy().unwrap().cp.client());
+        let px = theme.fonts.size_px;
+        let cancel = (client.right() - 20, client.bottom() - 15);
+        let hit = layout.hit(&d, cancel.0, cancel.1, &text, px);
+        assert!(matches!(hit, Some(DialogHit::Control(_))), "{hit:?}");
+        d.click(hit);
+        assert_eq!(d.release(hit), Outcome::CopyCancel);
     }
 
     #[test]

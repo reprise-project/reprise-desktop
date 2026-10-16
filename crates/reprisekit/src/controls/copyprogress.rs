@@ -59,10 +59,13 @@ pub enum Outcome {
 const SETTLE_MS: u64 = 1000;
 /// The rate is read over at least this long.
 const RATE_MS: u64 = 500;
-/// The flight's frame time: it moves at about 15 frames a second.
-const FRAME_MS: u64 = 66;
+/// The flight's frame time: it moves at about 15 frames a second. A host ticks the dialog at it.
+pub const FRAME_MS: u64 = 66;
+/// A put done sooner than this never shows the dialog.
+pub const SHOW_AFTER: std::time::Duration = std::time::Duration::from_millis(500);
 const STEPS: usize = 100;
 
+#[derive(Clone, Debug, PartialEq)]
 pub struct CopyProgress {
     pub kind: Kind,
     /// The source and destination folders' names.
@@ -343,10 +346,27 @@ impl CopyProgress {
             .then(|| Rect::new(MARGIN, self.buttons_y() + 3, TOGGLE_W, TOGGLE_ICON))
     }
 
+    /// Whether (`x`, `y`) is on the details toggle.
+    pub fn on_toggle(&self, x: i32, y: i32, u: TextUnits) -> bool {
+        self.toggle_rect().is_some_and(|r| u.rect(r).contains(x, y))
+    }
+
     /// A press at (`x`, `y`) on the details toggle.
     pub fn press(&mut self, x: i32, y: i32, u: TextUnits) -> Option<Outcome> {
-        let r = u.rect(self.toggle_rect()?);
-        r.contains(x, y).then(|| self.toggle_details())
+        self.on_toggle(x, y, u).then(|| self.toggle_details())
+    }
+
+    /// The balloon's summary and body for a put that landed `landed` items.
+    pub fn ended_note(&self, landed: usize) -> (String, String) {
+        let verb = match self.kind {
+            Kind::Copy => "Copied",
+            Kind::Move => "Moved",
+        };
+        let noun = if landed == 1 { "item" } else { "items" };
+        (
+            format!("{verb} {landed} {noun}"),
+            format!("{verb} {landed} {noun} to {}", self.to),
+        )
     }
 
     pub fn draw(&self, c: &mut Canvas, text: &TextRenderer, p: &Paint, px: u32) {

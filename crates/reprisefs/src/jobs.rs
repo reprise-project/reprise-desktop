@@ -44,6 +44,16 @@ pub struct PutJob {
 
 impl PutJob {
     pub fn start(items: Vec<PutItem>, dir: PathBuf, wake: impl Fn() + Send + 'static) -> PutJob {
+        Self::start_past(items, dir, Vec::new(), wake)
+    }
+
+    /// [`Self::start`], with `taken` counted among `dir`'s names when a copy or shortcut is named.
+    pub fn start_past(
+        items: Vec<PutItem>,
+        dir: PathBuf,
+        taken: Vec<String>,
+        wake: impl Fn() + Send + 'static,
+    ) -> PutJob {
         let (tx, events) = mpsc::channel();
         let meter = Arc::new(Meter::default());
         let m = meter.clone();
@@ -66,6 +76,7 @@ impl PutJob {
                 };
                 m.set_phase(Phase::Copying);
                 let mut existing = existing_names(&dir);
+                existing.extend(taken);
                 let mut ours = std::collections::HashSet::new();
                 let mut done = Totals::default();
                 let mut wrote = false;
