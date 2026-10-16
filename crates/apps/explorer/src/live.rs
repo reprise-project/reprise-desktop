@@ -116,6 +116,7 @@ impl Explorer {
         let put = job
             .or(put)
             .or(self.take_read(ctx))
+            .or(self.take_checked(ctx))
             .filter(|r| *r != Reply::none());
         if let Some(from) = self.watch.as_mut().and_then(|w| w.take_gone()) {
             let r = self.follow_gone(&from, ctx);
