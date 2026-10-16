@@ -1522,9 +1522,10 @@ impl State {
         let p = self.bar_placement(&v.output);
         let area = self.usable_area(Some(&v.output));
         let dock = self.config.theme.taskbar_shape().start_menu;
-        let room = Some(panel_room(dock, &p, area));
+        let room = (area.width, panel_room(dock, &p, area));
+        let text = self.config.theme.text;
         if let Some(v) = self.start_panel.as_mut() {
-            v.model.room = room;
+            v.model.fit(text, room);
         }
         let Some(v) = self.start_panel.as_ref() else {
             return;

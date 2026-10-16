@@ -1,7 +1,8 @@
 //! Where the Start panel's parts go in each mode, and which spot a point falls on. Panel coordinates: the glass's top-left is (0, 0); the user picture stands above it, so the canvas starts above 0.
 //! The panel stands 411x476 at 100% text and grows with the text size ([`StartPanel::text`]).
 //! With both pinned and frequent programs the rule between them adds 4 px and everything from All Programs down moves with it; program rows that do not fit above the All Programs rule are not shown.
-//! On a screen too short for the panel ([`StartPanel::room`]) program rows come off the list, 38 px each, and everything from All Programs down moves up with them.
+//! On a screen too short for the panel ([`StartPanel::room`]) program rows come off the list, 38 px each, and everything from All Programs down moves up with them; the places close up to fit above Shut down.
+//! On a screen too narrow for it the text size steps down ([`StartPanel::fit`]) and the jump pane narrows.
 
 use super::{Mode, Spot, StartPanel};
 use crate::raster::Rect;
@@ -62,6 +63,7 @@ const PLACE_W: i32 = 138;
 const PLACE_TOP: i32 = 44;
 const PLACE_H: i32 = 33;
 const PLACE_PITCH: i32 = 35;
+const PLACE_PITCH_LEAST: i32 = 22;
 const PLACE_RULE_H: i32 = 3;
 const PLACE_RULE_X: i32 = 274;
 const PLACE_RULE_W: i32 = 124;
@@ -140,7 +142,7 @@ fn pin_rule(p: &StartPanel) -> i32 {
 /// How many program rows come off the bottom of the list so the panel stands in
 /// [`StartPanel::room`] at its text size; one row always stays.
 fn rows_cut(p: &StartPanel) -> i32 {
-    let Some(room) = p.room else {
+    let Some((_, room)) = p.room else {
         return 0;
     };
     let tall = H + pin_rule(p);
@@ -148,6 +150,30 @@ fn rows_cut(p: &StartPanel) -> i32 {
     (0..most)
         .find(|n| p.text.len(tall - n * PROGRAM_H) <= room)
         .unwrap_or(most)
+}
+
+/// The places' pitch: 35, closer on a panel too short to stack them all above Shut down, but
+/// never under 22; places that still do not fit are not shown.
+fn place_pitch(p: &StartPanel) -> i32 {
+    let n = p.places.len() as i32;
+    let rules = p.places.iter().skip(1).filter(|pl| pl.rule_before).count() as i32;
+    let gap = PLACE_PITCH - PLACE_H;
+    let room = SHUTDOWN.y + grow(p) - PLACE_TOP - rules * PLACE_RULE_H + gap;
+    (room / n.max(1)).clamp(PLACE_PITCH_LEAST, PLACE_PITCH)
+}
+
+/// How far a closed-up place's text and arrow sit above their place in a 33 px row.
+pub fn place_lift(p: &StartPanel) -> i32 {
+    (PLACE_PITCH - place_pitch(p)) / 2
+}
+
+/// How much narrower the jump pane is so the Jump panel stands in [`StartPanel::room`]'s width;
+/// the panel never gets narrower than the Home one.
+fn jump_squeeze(p: &StartPanel) -> i32 {
+    let Some((room, _)) = p.room else {
+        return 0;
+    };
+    (JUMP_W - p.text.within(room)).clamp(0, JUMP_W - W)
 }
 
 fn down(r: Rect, by: i32) -> Rect {
@@ -191,7 +217,7 @@ fn jump_pane(p: &StartPanel) -> Rect {
     Rect::new(
         JUMP_PANE.x,
         JUMP_PANE.y,
-        JUMP_PANE.width,
+        JUMP_PANE.width - jump_squeeze(p),
         JUMP_PANE.height + grow(p),
     )
 }
@@ -259,15 +285,20 @@ pub fn layout(p: &StartPanel) -> Layout {
 fn layout_100(p: &StartPanel) -> Layout {
     let g = grow(p);
     let mode = p.mode();
+    let squeeze = jump_squeeze(p);
     let panel = Rect::new(
         0,
         0,
-        if let Mode::Jump(_) = mode { JUMP_W } else { W },
+        if let Mode::Jump(_) = mode {
+            JUMP_W - squeeze
+        } else {
+            W
+        },
         H + g,
     );
     let pane_w = match mode {
         Mode::Search => SEARCH_PANE_W,
-        Mode::Jump(_) => JUMP_PANE_W,
+        Mode::Jump(_) => JUMP_PANE_W - squeeze,
         Mode::Home | Mode::Programs => PANE.width,
     };
     let pane = Rect::new(PANE.x, PANE.y, pane_w, PANE.height + g);
@@ -346,17 +377,19 @@ fn layout_100(p: &StartPanel) -> Layout {
     match mode {
         Mode::Home | Mode::Programs => {
             let mut y = PLACE_TOP;
+            let pitch = place_pitch(p);
+            let h = pitch - (PLACE_PITCH - PLACE_H);
             for (i, place) in p.places.iter().enumerate() {
                 let rule = place.rule_before && i > 0;
                 let top = if rule { y + PLACE_RULE_H } else { y };
-                if top + PLACE_H > SHUTDOWN.y + g {
+                if top + h > SHUTDOWN.y + g {
                     break;
                 }
                 if rule {
                     rules.push(Rect::new(PLACE_RULE_X, y, PLACE_RULE_W, PLACE_RULE_LINE));
                 }
-                spots.push((Spot::Place(i), Rect::new(PLACE_X, top, PLACE_W, PLACE_H)));
-                y = top + PLACE_PITCH;
+                spots.push((Spot::Place(i), Rect::new(PLACE_X, top, PLACE_W, h)));
+                y = top + pitch;
             }
             picture = Some(PICTURE_FRAME);
             spots.push((Spot::Picture, PICTURE_FRAME));
@@ -364,11 +397,12 @@ fn layout_100(p: &StartPanel) -> Layout {
         Mode::Jump(_) => {
             let jp = jump_pane(p);
             jump = Some(jp);
-            headers.push((0, Rect::new(JUMP_X, JUMP_HEADER_Y, JUMP_ROW_W, JUMP_ROW_H)));
+            let row_w = JUMP_ROW_W - squeeze;
+            headers.push((0, Rect::new(JUMP_X, JUMP_HEADER_Y, row_w, JUMP_ROW_H)));
             let top = JUMP_HEADER_Y + JUMP_ROW_H;
             spots.extend((0..jumps_shown(p)).map(|k| {
                 let y = top + k as i32 * JUMP_ROW_H;
-                (Spot::Jump(k), Rect::new(JUMP_X, y, JUMP_ROW_W, JUMP_ROW_H))
+                (Spot::Jump(k), Rect::new(JUMP_X, y, row_w, JUMP_ROW_H))
             }));
         }
         Mode::Search => {}
@@ -455,7 +489,7 @@ mod tests {
     fn a_short_room_takes_program_rows_off_and_moves_the_bottom_up() {
         let mut p = StartPanel::new();
         p.frequent = (0..12).map(|k| prow(&format!("App {k}"), false)).collect();
-        p.room = Some(H - 1);
+        p.room = Some((1024, H - 1));
         let l = layout(&p);
         assert_eq!(l.panel.height, H - PROGRAM_H, "a whole row comes off");
         assert_eq!(programs_shown(&p), 9);
@@ -466,7 +500,7 @@ mod tests {
         assert_eq!(tree_capacity(&p), 18);
 
         p.text = TextUnits::new(22, 11);
-        p.room = Some(700);
+        p.room = Some((1024, 700));
         let l = layout(&p);
         assert_eq!(
             (l.panel.height, programs_shown(&p)),
@@ -479,8 +513,96 @@ mod tests {
             "the picture keeps its overhang"
         );
 
-        p.room = Some(10);
+        p.room = Some((1024, 10));
         assert_eq!(programs_shown(&p), 1, "one row always stays");
+    }
+
+    fn ten_places() -> Vec<crate::startpanel::PlaceRow> {
+        let mut v: Vec<_> = (0..10).map(|k| place(&format!("Place {k}"))).collect();
+        v[4].rule_before = true;
+        v[7].rule_before = true;
+        v
+    }
+
+    #[test]
+    fn on_a_short_room_the_places_close_up_to_22_px_and_all_ten_show() {
+        let mut p = StartPanel::new();
+        p.frequent = (0..12).map(|k| prow(&format!("App {k}"), false)).collect();
+        p.places = ten_places();
+        assert_eq!(place_lift(&p), 0);
+        assert_eq!(l_place(&p, 9), Some(Rect::new(266, 365, 138, 33)));
+
+        p.room = Some((1024, 340));
+        let l = layout(&p);
+        let shutdown = l.rect(Spot::Shutdown).unwrap();
+        assert_eq!(shutdown.y, 434 - 4 * PROGRAM_H);
+        assert_eq!(place_pitch(&p), 23);
+        assert_eq!(
+            place_lift(&p),
+            6,
+            "text and arrow move up into the 21 px row"
+        );
+        assert_eq!(l.rect(Spot::Place(1)), Some(Rect::new(266, 67, 138, 21)));
+        let last = l.rect(Spot::Place(9)).expect("all ten places show");
+        assert!(last.bottom() <= shutdown.y, "{last:?} above {shutdown:?}");
+        assert!(l.rules.contains(&Rect::new(274, 136, 124, 2)));
+
+        p.room = Some((1024, 10));
+        assert_eq!(place_pitch(&p), PLACE_PITCH_LEAST);
+        let l = layout(&p);
+        let shown = (0..10)
+            .filter(|&i| l.rect(Spot::Place(i)).is_some())
+            .count();
+        assert!(shown < 10, "places that do not fit at 22 px are left out");
+        assert!(
+            l.rect(Spot::Place(shown - 1)).unwrap().bottom() <= l.rect(Spot::Shutdown).unwrap().y
+        );
+    }
+
+    fn l_place(p: &StartPanel, i: usize) -> Option<Rect> {
+        layout(p).rect(Spot::Place(i))
+    }
+
+    #[test]
+    fn a_narrow_room_steps_the_text_size_down_and_narrows_the_jump_pane() {
+        let mut p = StartPanel::new();
+        p.frequent = vec![prow("Notepad", true)];
+        p.places = ten_places();
+        p.jump = vec![row("a.txt")];
+        let two = TextUnits::new(22, 11);
+        p.fit(two, (1920, 1080));
+        assert_eq!(p.text, two, "room enough");
+        assert_eq!(layout(&p).panel.width, 2 * W);
+
+        p.fit(two, (800, 600));
+        assert_eq!(p.text, TextUnits::new(21, 11));
+        assert!(layout(&p).panel.width <= 800);
+        p.set_mode(Mode::Jump(0));
+        let l = layout(&p);
+        assert!(l.panel.width <= 800, "{:?}", l.panel);
+        assert_eq!(l.pane.right(), l.jump_pane.unwrap().right());
+        assert_eq!(
+            l.rect(Spot::Jump(0)).unwrap().right(),
+            l.headers[0].1.right()
+        );
+
+        p.fit(TextUnits::ONE, (450, 600));
+        let l = layout(&p);
+        assert_eq!(l.panel.width, 450);
+        assert_eq!(l.jump_pane, Some(Rect::new(259, 9, 223 - 41, 413)));
+        assert_eq!(
+            l.rect(Spot::Jump(0)),
+            Some(Rect::new(274, 34, 204 - 41, 22))
+        );
+
+        p.fit(TextUnits::ONE, (300, 600));
+        assert_eq!(
+            layout(&p).panel.width,
+            W,
+            "never narrower than the Home panel"
+        );
+        p.set_mode(Mode::Home);
+        assert_eq!(layout(&p).panel.width, W);
     }
 
     #[test]

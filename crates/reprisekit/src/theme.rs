@@ -450,6 +450,19 @@ impl TextUnits {
     pub fn size(self, (w, h): (i32, i32)) -> (i32, i32) {
         (self.len(w), self.len(h))
     }
+
+    /// The largest text size up to this one, never under 100%, at which `v` 100% px grow to at
+    /// most `room`.
+    pub fn fitting(self, v: i32, room: i32) -> TextUnits {
+        if self.len(v) <= room || self.px <= self.base {
+            return self;
+        }
+        (self.base..self.px)
+            .rev()
+            .map(|px| TextUnits::new(px, self.base))
+            .find(|u| u.len(v) <= room)
+            .unwrap_or(TextUnits::ONE)
+    }
 }
 
 /// Colors, metrics and fonts plus the output scale the metrics are expressed
@@ -626,6 +639,17 @@ mod tests {
         assert_eq!(t.text, big);
         assert_eq!(t.scaled(2).paint().text, big);
         assert!(Theme::default().with_text_size(100).text.is_one());
+    }
+
+    #[test]
+    fn fitting_steps_the_text_size_down_to_the_room_and_no_further_than_100_percent() {
+        let two = TextUnits::new(22, 11);
+        assert_eq!(two.fitting(411, 822), two, "room enough");
+        assert_eq!(two.fitting(411, 800), TextUnits::new(21, 11));
+        assert_eq!(two.fitting(411, 800).len(411), 785);
+        assert!(two.fitting(411, 400).is_one());
+        let small = TextUnits::new(10, 11);
+        assert_eq!(small.fitting(411, 300), small, "never grows a smaller text");
     }
 
     #[test]

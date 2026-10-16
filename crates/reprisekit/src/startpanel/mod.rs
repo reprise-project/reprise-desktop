@@ -149,9 +149,9 @@ pub struct StartPanel {
     /// The text size the panel is laid out and drawn at: its layout grows by it, icons, glyphs and
     /// the user picture keep their size.
     pub text: TextUnits,
-    /// The most height the panel may stand at its text size, the user picture's overhang
-    /// left out; None: no limit. Program rows come off the list until it fits.
-    pub room: Option<i32>,
+    /// The most width and height the panel may stand at its text size, the user picture's
+    /// overhang left out; None: no limit. Set through [`StartPanel::fit`].
+    pub room: Option<(i32, i32)>,
     /// Private so every write goes through `key` or `paste`, which keep
     /// the mode in step with the query.
     edit: TextEdit,
@@ -198,6 +198,13 @@ impl StartPanel {
             lit: None,
             pictured: None,
         }
+    }
+
+    /// Lays the panel out for `room` (width, height): `text` steps down, never under 100%, until
+    /// the Home panel is no wider than the room; program rows come off until it is no taller.
+    pub fn fit(&mut self, text: TextUnits, room: (i32, i32)) {
+        self.text = text.fitting(layout::W, room.0);
+        self.room = Some(room);
     }
 
     pub fn mode(&self) -> Mode {
