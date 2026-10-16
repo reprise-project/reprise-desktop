@@ -174,6 +174,19 @@ impl State {
         self.clip_files(move |state, clip| state.paste_clip(clip, &target, shortcut));
     }
 
+    /// Paste on a launcher: the clipboard's files open in `app`, as Open With would open them.
+    pub fn paste_open(&mut self, app: reprisefs::apps::AppEntry) {
+        if self.is_locked() {
+            return;
+        }
+        self.clip_files(move |state, clip| {
+            for path in &clip.paths {
+                let argv = reprisefs::apps::open_argv(&app, &state.config.terminal, path);
+                state.spawn_app_activated(&argv, &app.id);
+            }
+        });
+    }
+
     /// [`Self::paste_files`] once the files are known. A cut file leaves
     /// Reprise's clipboard once it has moved ([`Self::cut_moved`]), so a
     /// move that fails keeps it. A file gone since it was cut or copied is
