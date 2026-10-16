@@ -231,16 +231,18 @@ mod tests {
         let d = dir("close");
         let run = |name: &str, body: &[u8]| {
             let script = file(&d, name, body, 0o755);
-            let mut child = std::process::Command::new("sh")
+            // Enter is queued before the start: a clean exit never reads it and may be gone
+            // before a later write, which would fail with EPIPE.
+            let (enter, mut key) = std::io::pipe().unwrap();
+            key.write_all(b"\n").unwrap();
+            drop(key);
+            let out = std::process::Command::new("sh")
                 .args(["-c", CLOSE])
                 .arg(&script)
-                .stdin(std::process::Stdio::piped())
-                .stdout(std::process::Stdio::piped())
+                .stdin(enter)
                 .stderr(std::process::Stdio::null())
-                .spawn()
+                .output()
                 .unwrap();
-            child.stdin.take().unwrap().write_all(b"\n").unwrap();
-            let out = child.wait_with_output().unwrap();
             (String::from_utf8(out.stdout).unwrap(), out.status.code())
         };
         assert_eq!(
