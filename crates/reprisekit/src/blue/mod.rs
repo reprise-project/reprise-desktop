@@ -37,11 +37,12 @@ pub enum Variant {
     Sapphire,
     Obsidian,
     Ember,
+    Cobalt,
 }
 
 impl Variant {
     /// Every variant in declaration order, the order a scheme list shows: `v as usize` indexes it.
-    pub const ALL: [Variant; 7] = [
+    pub const ALL: [Variant; 8] = [
         Variant::Blue,
         Variant::Olive,
         Variant::Silver,
@@ -49,6 +50,7 @@ impl Variant {
         Variant::Sapphire,
         Variant::Obsidian,
         Variant::Ember,
+        Variant::Cobalt,
     ];
 
     pub fn name(self) -> &'static str {
@@ -60,6 +62,7 @@ impl Variant {
             Variant::Sapphire => "Sapphire",
             Variant::Obsidian => "Obsidian",
             Variant::Ember => "Ember",
+            Variant::Cobalt => "Cobalt",
         }
     }
 
@@ -76,6 +79,7 @@ impl Variant {
             Variant::Sapphire => "sapphire",
             Variant::Obsidian => "obsidian",
             Variant::Ember => "ember",
+            Variant::Cobalt => "cobalt",
         }
     }
 
@@ -99,6 +103,7 @@ impl Variant {
             Variant::Sapphire => "Blue Sapphire",
             Variant::Obsidian => "Blue Obsidian",
             Variant::Ember => "Blue Ember",
+            Variant::Cobalt => "Blue Cobalt",
         }
     }
 }
@@ -658,6 +663,7 @@ mod tests {
             (Variant::Sapphire, 99),
             (Variant::Obsidian, 99),
             (Variant::Ember, 99),
+            (Variant::Cobalt, 99),
         ] {
             let st = style_for(v);
             assert_eq!(st.metrics.start_button_width, w, "{v:?}");

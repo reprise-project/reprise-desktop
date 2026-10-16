@@ -360,6 +360,16 @@ mod tests {
             ("ember", "frame_right", 2, 0xeab3d4e91b0af19d),
             ("ember", "frame_bottom", 1, 0xd8b40266d60f5add),
             ("ember", "frame_bottom", 2, 0xb0c0e50169bd2652),
+            ("cobalt", "caption", 1, 0x82ad54589f78fe2a),
+            ("cobalt", "caption", 2, 0xbf211758f88ad6f4),
+            ("cobalt", "max_caption", 1, 0x5ced566e153f0204),
+            ("cobalt", "max_caption", 2, 0x8974f40b53950b77),
+            ("cobalt", "frame_left", 1, 0x53d68b63034151b1),
+            ("cobalt", "frame_left", 2, 0xf4ef41a0b84d53fd),
+            ("cobalt", "frame_right", 1, 0xd65ac57c1b4e76c1),
+            ("cobalt", "frame_right", 2, 0x07aa17340bfe99fd),
+            ("cobalt", "frame_bottom", 1, 0x42965d50f8bde4e3),
+            ("cobalt", "frame_bottom", 2, 0x1a9edbb40ca80c69),
         ];
         let mut got = Vec::new();
         for v in Variant::ALL {

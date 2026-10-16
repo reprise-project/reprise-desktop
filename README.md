@@ -21,7 +21,7 @@ comes in three looks, and you can switch between them without logging out:
   when you press them. Thirty-two colour schemes, from Brick to Tokyo Night,
   because even nostalgia deserves a dark mode.
 - **Reprise Blue.** Glossy caption buttons, a rounded Start button and a
-  taskbar with a gradient on it. Seven schemes, from Blue to Obsidian. The
+  taskbar with a gradient on it. Eight schemes, from Blue to Cobalt. The
   computer looks like it's about to tell you it's ready to use.
 - **Reprise Glass.** Translucent frames over a blur of whatever's behind
   them, a Start orb, window shadows, a 3D window switcher and a dark mode.

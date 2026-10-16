@@ -235,6 +235,10 @@ mod tests {
             "Ember 1 ExplorerBarClose d97663b55f19a0aa",
             "Ember 2 ExplorerBarHeader 5cefbf1b1ff040f6",
             "Ember 2 ExplorerBarClose c3816e3cf4dcbddf",
+            "Cobalt 1 ExplorerBarHeader 172252632873fa77",
+            "Cobalt 1 ExplorerBarClose 2339226a1ef2c876",
+            "Cobalt 2 ExplorerBarHeader 3b9f903b86eaec7a",
+            "Cobalt 2 ExplorerBarClose abc4af1845075270",
         ];
         assert_eq!(got, want, "pins:\n{}", got.join("\n"));
     }

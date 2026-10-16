@@ -349,6 +349,12 @@ mod tests {
             "Ember 2 Normal 31d8eb2ffbbfb47c",
             "Ember 2 Hot 9d3ea1993d2183a0",
             "Ember 2 Pressed 35a80b8ede16f91d",
+            "Cobalt 1 Normal b04c8068eb5b758a",
+            "Cobalt 1 Hot 3c4e7435ebcc1a1c",
+            "Cobalt 1 Pressed 6c95f6ed0b0fbc3e",
+            "Cobalt 2 Normal 1aa9d1fd55fd095e",
+            "Cobalt 2 Hot 5f562256ec27c96a",
+            "Cobalt 2 Pressed f364d196c7603946",
         ];
         assert_eq!(got, want, "Start pill hashes per scheme, scale and state");
     }

@@ -628,6 +628,20 @@ mod tests {
             "Ember 2 TaskExpand bd4e3b48a2da5687",
             "Ember 2 TaskCollapseMark a327837f8ec7393f",
             "Ember 2 TaskExpandMark e385be1ad1b08bbb",
+            "Cobalt 1 TaskPane 5e6ea78c32a31a65",
+            "Cobalt 1 TaskGroupHeader 4a248edd0daa733a",
+            "Cobalt 1 TaskGroupBody 4164e8a4178e0fe8",
+            "Cobalt 1 TaskCollapse 0630e65aa16c52c6",
+            "Cobalt 1 TaskExpand 168aaba17309f1c9",
+            "Cobalt 1 TaskCollapseMark e803a24fd205366c",
+            "Cobalt 1 TaskExpandMark cc6d454a5503371e",
+            "Cobalt 2 TaskPane d58bc9b1da9e052e",
+            "Cobalt 2 TaskGroupHeader fd65fc5f35941382",
+            "Cobalt 2 TaskGroupBody 65683eaa5da4a957",
+            "Cobalt 2 TaskCollapse 559801ab54831414",
+            "Cobalt 2 TaskExpand 8b3e440a691bc524",
+            "Cobalt 2 TaskCollapseMark 0489529eda5d9c77",
+            "Cobalt 2 TaskExpandMark e197de0f552d2353",
         ];
         assert_eq!(got, want);
     }

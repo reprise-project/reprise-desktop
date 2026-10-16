@@ -10,8 +10,8 @@ use crate::style::{Layout, PartImage, State};
 const RADIUS: f64 = 2.0;
 
 /// How far the body sits in from the frame's left, top, right and bottom
-/// edges in the glossy schemes (slate, sapphire, obsidian, ember): one
-/// pixel of the bar shows round the sides and top, none under it. Navy,
+/// edges in the glossy schemes (slate, sapphire, obsidian, ember, cobalt):
+/// one pixel of the bar shows round the sides and top, none under it. Navy,
 /// olive green and silver fill the frame.
 const GLOSS_INSET: [i32; 4] = [1, 1, 1, 0];
 
@@ -38,7 +38,11 @@ fn stops(g: Grad) -> Vec<(f64, Px)> {
 
 fn inset(v: Variant) -> [i32; 4] {
     match v {
-        Variant::Slate | Variant::Sapphire | Variant::Obsidian | Variant::Ember => GLOSS_INSET,
+        Variant::Slate
+        | Variant::Sapphire
+        | Variant::Obsidian
+        | Variant::Ember
+        | Variant::Cobalt => GLOSS_INSET,
         Variant::Blue | Variant::Olive | Variant::Silver => [0; 4],
     }
 }
@@ -170,6 +174,7 @@ mod tests {
             (Variant::Sapphire, 12),
             (Variant::Obsidian, 12),
             (Variant::Ember, 13),
+            (Variant::Cobalt, 12),
         ] {
             let (one, two) = (task_button(v, 1), task_button(v, 2));
             let f = one.frame(State::Normal);

@@ -191,7 +191,7 @@ mod tests {
             .into_iter()
             .map(|v| (v, [fnv(&part(v, 1)), fnv(&part(v, 2))]))
             .collect();
-        let want: [(Variant, [u64; 2]); 7] = [
+        let want: [(Variant, [u64; 2]); 8] = [
             (Variant::Blue, [3779598193147821126, 16455731398898575776]),
             (Variant::Olive, [8204549873019638842, 2223000614753538460]),
             (Variant::Silver, [14545375529455236018, 1260758399300977047]),
@@ -205,6 +205,7 @@ mod tests {
                 [15655336059566156223, 3625015956340176215],
             ),
             (Variant::Ember, [5319559610858569370, 2405021278666821556]),
+            (Variant::Cobalt, [15655336059566156223, 3625015956340176215]),
         ];
         assert_eq!(got, want, "FNV-1a of (w, h, pixels) at d=1 and d=2");
     }
@@ -379,6 +380,7 @@ mod tests {
             Variant::Sapphire,
             Variant::Obsidian,
             Variant::Ember,
+            Variant::Cobalt,
         ] {
             let (short, tall) = (draw(v, 17), draw(v, 18));
             // The frame's row `seam` lands at y = 2 + seam.

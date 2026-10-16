@@ -24,11 +24,13 @@ const ARROW_W: i32 = 9;
 const ARROW_ROWS: (f64, f64) = (7.0, 12.0);
 const EDGE_IN: f64 = 1e-6;
 
-/// The title's box inside a column in `v`; the header's 6 px text margin applies inside it. Navy, olive green and silver: 3 px in on the left, rows 2 to 18. Slate, Sapphire and Obsidian start it at the left edge; Ember ends it on row 16.
+/// The title's box inside a column in `v`; the header's 6 px text margin applies inside it. Navy, olive green and silver: 3 px in on the left, rows 2 to 18. Slate, Sapphire, Obsidian and Cobalt start it at the left edge; Ember ends it on row 16.
 fn title(v: Variant) -> Insets {
     match v {
         Variant::Blue | Variant::Olive | Variant::Silver => Insets::new(3, 2, 0, 1),
-        Variant::Slate | Variant::Sapphire | Variant::Obsidian => Insets::new(0, 2, 0, 1),
+        Variant::Slate | Variant::Sapphire | Variant::Obsidian | Variant::Cobalt => {
+            Insets::new(0, 2, 0, 1)
+        }
         Variant::Ember => Insets::new(3, 2, 0, 3),
     }
 }
@@ -229,7 +231,7 @@ mod tests {
 
     #[test]
     fn header_pins_at_scale_1_and_2() {
-        let want: [(Variant, [u64; 6]); 7] = [
+        let want: [(Variant, [u64; 6]); 8] = [
             (
                 Variant::Blue,
                 [
@@ -305,6 +307,17 @@ mod tests {
                     0xe168c68dfbdc93c9,
                     0x983b1f8c7a37cc7f,
                     0xff1d544a56e481e7,
+                ],
+            ),
+            (
+                Variant::Cobalt,
+                [
+                    0x508970216ff9a0b6,
+                    0x05849484f434a042,
+                    0xadc1f93844499518,
+                    0x2da198413e3a52a9,
+                    0x40be134b9311df67,
+                    0x6abc37e2324b99f7,
                 ],
             ),
         ];

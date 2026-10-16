@@ -452,6 +452,12 @@ mod tests {
             "Ember ToolbarButton 2: 83a6ebeb67c30360",
             "Ember ToolbarDrop 2: 83a6ebeb67c30360",
             "Ember ToolbarSeparator 2: 5fd6553bf4b82169",
+            "Cobalt ToolbarButton 1: 7f3b755710236e9c",
+            "Cobalt ToolbarDrop 1: 7f3b755710236e9c",
+            "Cobalt ToolbarSeparator 1: 78f5e2c7fc78980a",
+            "Cobalt ToolbarButton 2: a237dd4f7aa8debf",
+            "Cobalt ToolbarDrop 2: a237dd4f7aa8debf",
+            "Cobalt ToolbarSeparator 2: 5fd6553bf4b82169",
         ];
         assert_eq!(got, want);
     }

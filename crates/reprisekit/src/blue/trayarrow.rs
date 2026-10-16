@@ -641,6 +641,30 @@ mod tests {
                     0xdc6e6086b9cd2198,
                 ],
             ),
+            (
+                Variant::Cobalt,
+                1,
+                [
+                    0x0655965f522a9032,
+                    0x132b3dcf3583f067,
+                    0xb97c5e51b87f4bbf,
+                    0x9c400d485abe9bca,
+                    0x8b23aa0d0bf533c3,
+                    0x47e41a3afbc60b0f,
+                ],
+            ),
+            (
+                Variant::Cobalt,
+                2,
+                [
+                    0x208273efeb0ee594,
+                    0xca09f1e5bd18f461,
+                    0xdcc510e18a2b2006,
+                    0x3d00ce827fe06270,
+                    0xd5d9ed03f20711f1,
+                    0x6db3f0c0dfa10b02,
+                ],
+            ),
         ];
         assert_eq!(got.as_slice(), want);
     }

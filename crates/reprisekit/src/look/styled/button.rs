@@ -321,6 +321,7 @@ mod tests {
             Variant::Silver,
             Variant::Sapphire,
             Variant::Obsidian,
+            Variant::Cobalt,
         ] {
             let (r, _, b) = ch(variant_button(v, DEFAULT).get(10, 20));
             assert!(b > r + 0x40, "{v:?} default ring is blue");

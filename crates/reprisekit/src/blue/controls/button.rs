@@ -8,7 +8,7 @@
 //! - The edge: in navy, olive green and silver the scheme's translucent
 //!   halo along the top and sides and a pale lit line along the bottom,
 //!   so the button sits on a dialog, a tab page or a dark band alike;
-//!   sapphire and obsidian the halo all round; slate and ember an opaque
+//!   sapphire, obsidian and cobalt the halo all round; slate and ember an opaque
 //!   edge in the dialog's face.
 //! - The border, 1 px.
 //! - Two band rings: on the hot and default buttons a 2 px ring in the
@@ -63,7 +63,7 @@ enum Edge {
 fn edge(v: Variant) -> (Edge, f64) {
     match v {
         Variant::Blue | Variant::Olive | Variant::Silver => (Edge::Lit, ROUND),
-        Variant::Sapphire | Variant::Obsidian => (Edge::Halo, SQUARE),
+        Variant::Sapphire | Variant::Obsidian | Variant::Cobalt => (Edge::Halo, SQUARE),
         Variant::Slate | Variant::Ember => (Edge::Solid, SQUARE),
     }
 }
@@ -329,6 +329,10 @@ mod tests {
             (
                 Variant::Ember,
                 [0x0b6d_0512_9f4c_e1f8, 0x362f_22f4_3b2d_33b8],
+            ),
+            (
+                Variant::Cobalt,
+                [0x48f9_48b4_ab9a_18ab, 0x2a6f_0b15_cb00_d37d],
             ),
         ];
         for (v, hashes) in want {

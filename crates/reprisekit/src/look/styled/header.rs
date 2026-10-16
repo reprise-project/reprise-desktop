@@ -154,7 +154,7 @@ mod tests {
         }
     }
 
-    /// At rest a Slate, Sapphire, Obsidian or Ember column is flat over one
+    /// At rest a Slate, Sapphire, Obsidian, Ember or Cobalt column is flat over one
     /// darker row, its divider one column down its last from row 3 to row
     /// 15, fading out over rows 2 and 16, at every width.
     #[test]
@@ -164,6 +164,7 @@ mod tests {
             Variant::Sapphire,
             Variant::Obsidian,
             Variant::Ember,
+            Variant::Cobalt,
         ] {
             let face = top(faces(v).normal.down);
             for w in [20, 96, 180] {
@@ -215,7 +216,7 @@ mod tests {
         }
     }
 
-    /// Under the pointer a Slate, Sapphire, Obsidian or Ember column pales
+    /// Under the pointer a Slate, Sapphire, Obsidian, Ember or Cobalt column pales
     /// and keeps its divider, over a flat band above its bottom row.
     #[test]
     fn a_later_scheme_column_under_the_pointer_lights_a_flat_band() {
@@ -224,6 +225,7 @@ mod tests {
             Variant::Sapphire,
             Variant::Obsidian,
             Variant::Ember,
+            Variant::Cobalt,
         ] {
             let face = top(faces(v).hot.down);
             let w = 96;
@@ -280,6 +282,7 @@ mod tests {
             (Variant::Sapphire, Rect::new(0, 2, 120, 17)),
             (Variant::Obsidian, Rect::new(0, 2, 120, 17)),
             (Variant::Ember, Rect::new(3, 2, 117, 15)),
+            (Variant::Cobalt, Rect::new(0, 2, 120, 17)),
         ] {
             let theme = blue_theme(v);
             let rest = draw_item(&mut c, &theme.paint(), r, Interaction::Idle, false);
