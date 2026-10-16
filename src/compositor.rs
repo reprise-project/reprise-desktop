@@ -236,6 +236,8 @@ pub struct State {
     /// What the record dot and the microphone and camera indicators show
     /// (`privacy`).
     pub privacy: crate::privacy::Privacy,
+    /// The red border around what is captured (`captureborder`).
+    pub capture_border: crate::captureborder::CaptureBorder,
     /// The geoclue agent: its prompts and the location pin (`location`).
     pub location: crate::location::Location,
     /// The DRM session, GPU and connectors; None only while starting.
@@ -512,6 +514,7 @@ impl State {
                 crate::desktops::Desktops::new(config.workspaces),
             ),
             privacy: crate::privacy::Privacy::start(&handle),
+            capture_border: Default::default(),
             location: crate::location::Location::start(&handle, config.location),
             backend: None,
             // A slideshow picks its first picture once the loop runs.

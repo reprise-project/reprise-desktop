@@ -857,6 +857,7 @@ fn render(state: &mut State, crtc: crtc::Handle) {
     state.water_frame(&output);
     crate::autohideview::frame(state, &output);
     crate::snapbarview::frame(state, &output);
+    let border = crate::captureborder::elements(state, &output);
     let pointer = state.pointer_location();
     let focus = state.magnifier_focus(&output);
     let State {
@@ -931,6 +932,17 @@ fn render(state: &mut State, crtc: crtc::Handle) {
         drop(elements);
         glass.update_backdrop(&mut b.renderer, scene, &output, clear, wanted);
         elements = build(&mut b.renderer);
+    }
+    if !border.is_empty() {
+        use smithay::backend::renderer::element::Element;
+        let below_pointer = elements
+            .iter()
+            .position(|e| e.kind() != smithay::backend::renderer::element::Kind::Cursor)
+            .unwrap_or(elements.len());
+        elements.splice(
+            below_pointer..below_pointer,
+            border.into_iter().map(OutputElement::Border),
+        );
     }
     b.shm_textures.update(&mut b.renderer);
     let mut empty = false;

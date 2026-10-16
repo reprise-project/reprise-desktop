@@ -1228,6 +1228,7 @@ pub struct Config {
     pub clipboard: ClipboardConfig,
     pub recent_files: bool,
     pub location: bool,
+    pub capture_border: bool,
     pub debug: DebugConfig,
     pub launcher_files: bool,
     pub night_light: NightLightConfig,
@@ -1576,6 +1577,7 @@ impl Default for Config {
             clipboard: ClipboardConfig::default(),
             recent_files: true,
             location: true,
+            capture_border: true,
             debug: DebugConfig::default(),
             launcher_files: true,
             night_light: NightLightConfig::default(),
@@ -1879,6 +1881,7 @@ struct FileSwitcher {
 struct FilePrivacy {
     recent_files: Option<bool>,
     location: Option<bool>,
+    capture_border: Option<bool>,
 }
 
 #[derive(Deserialize, Default)]
@@ -3007,6 +3010,9 @@ impl Config {
             }
             if let Some(v) = p.location {
                 cfg.location = v;
+            }
+            if let Some(v) = p.capture_border {
+                cfg.capture_border = v;
             }
         }
         if let Some(d) = file.debug {
@@ -5258,6 +5264,16 @@ command = "gedit"
             !Config::parse("[privacy]\nlocation = false\n")
                 .unwrap()
                 .location
+        );
+    }
+
+    #[test]
+    fn capture_border_default_on_and_privacy_turns_it_off() {
+        assert!(Config::default().capture_border);
+        assert!(
+            !Config::parse("[privacy]\ncapture_border = false\n")
+                .unwrap()
+                .capture_border
         );
     }
 

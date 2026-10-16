@@ -369,6 +369,9 @@ are.
 - **Indicators.** A red dot while the screen is shared, a microphone while a
   program records, a camera while one films and a pin while one reads your
   location. The tooltips name the program.
+- **Capture border.** A red border on the screen around the screen, window
+  or area being recorded or shared. Recordings never show it, and a single
+  screenshot draws none. Settings > Advanced turns it off.
 - **Prompts.** Screen sharing, remote control, input capture, location and
   camera access all ask first. Cancel or Deny is the default button, so a
   stray Enter never grants anything.

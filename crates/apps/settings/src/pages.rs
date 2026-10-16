@@ -188,7 +188,7 @@ pub const COLUMNS: [(&str, i32); 3] = [("Startup Item", 164), ("Command", 114), 
 /// with Forget beside it. Three rows show at [`Area::MIN`]; the rest scroll,
 /// so Program takes what Location and the scrollbar leave ([`fit_location_columns`]).
 pub fn locations(a: Area) -> Rect {
-    Rect::new(X, 198, a.w - BUTTON_W - 8, 90 + a.dh)
+    Rect::new(X, 220, a.w - BUTTON_W - 8, 68 + a.dh)
 }
 pub const LOCATION_COLUMNS: [(&str, i32); 2] = [("Program", 185), ("Location", 70)];
 pub const PRIVACY_LOCATION: &str = "privacy_location";
@@ -346,6 +346,10 @@ pub fn advanced(a: Area) -> Form {
             "recent_files",
             "Show recently used &files in menus and file dialogs",
         ),
+        (
+            "capture_border",
+            "Show a red &border around what is being shared",
+        ),
     ];
     for (i, (id, text)) in checks.into_iter().enumerate() {
         items.push(Item::check(id, X, 88 + 22 * i as i32, text));
@@ -353,7 +357,7 @@ pub fn advanced(a: Area) -> Form {
     items.push(Item::check(
         PRIVACY_LOCATION,
         X,
-        176,
+        198,
         "Let programs ask for your &location",
     ));
     items.push(button(
@@ -1677,6 +1681,7 @@ fn binds() -> Vec<Bind> {
         ),
         Bind::Flag("recent_files", lens!(recent_files)),
         Bind::Flag(PRIVACY_LOCATION, lens!(location)),
+        Bind::Flag("capture_border", lens!(capture_border)),
         Bind::Water(WATER, lens!(wallpaper_water)),
         Bind::WaterStyle(WATER_STYLE, lens!(wallpaper_water)),
         Bind::Flag(DEBUG_OVERLAY, lens!(debug_overlay)),
@@ -3405,14 +3410,15 @@ mod tests {
         assert_eq!(rect(&s, p, "clipboard_history"), Rect::new(20, 110, 13, 13));
         assert_eq!(rect(&s, p, "screenshot_save"), Rect::new(20, 132, 13, 13));
         assert_eq!(rect(&s, p, "recent_files"), Rect::new(20, 154, 13, 13));
-        assert_eq!(rect(&s, p, PRIVACY_LOCATION), Rect::new(20, 176, 13, 13));
-        assert_eq!(locations(Area::MIN), Rect::new(20, 198, 275, 90));
+        assert_eq!(rect(&s, p, "capture_border"), Rect::new(20, 176, 13, 13));
+        assert_eq!(rect(&s, p, PRIVACY_LOCATION), Rect::new(20, 198, 13, 13));
+        assert_eq!(locations(Area::MIN), Rect::new(20, 220, 275, 68));
         assert_eq!(rect(&s, p, WATER), Rect::new(20, 344, 13, 13));
         assert_eq!(
             rect(&s, p, WATER_STYLE),
             Rect::new(132, 340, 100, combo::COMBO_H)
         );
-        assert_eq!(rect(&s, p, FORGET), Rect::new(303, 198, 75, 23));
+        assert_eq!(rect(&s, p, FORGET), Rect::new(303, 220, 75, 23));
         assert!(
             s.pages[p.index()].item("desktop_icons").is_none(),
             "desktop_icons is on Background"
