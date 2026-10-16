@@ -1191,8 +1191,8 @@ pub fn run(app: Box<dyn App>) {
 
     loop {
         // Everything that dirties a slot is a source here, so nothing needs polling.
-        if let Err(e) = event_loop.dispatch(None, &mut host) {
-            log::error!("wayland connection lost: {e}; exiting");
+        if let Err(e) = turn(&mut event_loop, &mut host, &conn) {
+            log::error!("{e}; exiting");
             std::process::exit(1);
         }
         let ready: Vec<WinId> = host
@@ -1210,6 +1210,22 @@ pub fn run(app: Box<dyn App>) {
         if host.exit {
             break;
         }
+    }
+}
+
+/// Runs one turn of a loop holding a `WaylandSource`. The source logs and drops a
+/// protocol error, and the closed socket then stays readable, so the stored error ends the loop here.
+fn turn<D>(
+    event_loop: &mut EventLoop<'_, D>,
+    data: &mut D,
+    conn: &Connection,
+) -> Result<(), String> {
+    event_loop
+        .dispatch(None, data)
+        .map_err(|e| format!("wayland connection lost: {e}"))?;
+    match conn.protocol_error() {
+        Some(e) => Err(format!("wayland protocol error: {e}")),
+        None => Ok(()),
     }
 }
 
@@ -4777,5 +4793,32 @@ mod tests {
             }
         }
         panic!("the ping never reached the loop");
+    }
+
+    #[test]
+    fn a_protocol_error_ends_the_loop_instead_of_spinning() {
+        use std::io::Write;
+        use std::os::unix::net::UnixStream;
+        let (client, mut server) = UnixStream::pair().expect("socket pair");
+        let conn = Connection::from_socket(client).expect("connection");
+        let mut event_loop: EventLoop<()> = EventLoop::try_new().expect("event loop");
+        WaylandSource::new(conn.clone(), conn.new_event_queue::<()>())
+            .insert(event_loop.handle())
+            .expect("wayland source");
+        // wl_display.error(object 1, code 0, "boom"), then the compositor hangs up.
+        let words: [u32; 7] = [1, 28 << 16, 1, 0, 5, u32::from_le_bytes(*b"boom"), 0];
+        let bytes: Vec<u8> = words.iter().flat_map(|w| w.to_le_bytes()).collect();
+        server.write_all(&bytes).expect("error event");
+        drop(server);
+        for _ in 0..100 {
+            if let Err(e) = turn(&mut event_loop, &mut (), &conn) {
+                assert!(
+                    e.contains("protocol error"),
+                    "the loop ends on the protocol error, got {e}"
+                );
+                return;
+            }
+        }
+        panic!("the loop kept turning after the protocol error");
     }
 }
