@@ -773,8 +773,13 @@ impl State {
         let key = icon_key(&v.dialog, scale);
         if v.icons.as_ref().map(|(k, _)| k) != Some(&key) {
             let mut get = |n: &Option<String>, px: i32| n.as_deref().and_then(|n| cache.get(n, px));
+            let set = key.icon.as_deref() == Some(reprisekit::controls::filesheet::SET_ICON);
             let icons = DialogIcons {
-                icon: get(&key.icon, px),
+                icon: if set {
+                    Some(reprisekit::controls::filesheet::set_picture(scale))
+                } else {
+                    get(&key.icon, px)
+                },
                 caption: get(&key.icon, theme.icon_size()),
                 buttons: key.buttons.iter().map(|n| get(n, px)).collect(),
                 logo: if key.logo {

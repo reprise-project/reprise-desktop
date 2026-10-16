@@ -149,6 +149,8 @@ pub enum DesktopCommand {
     Paste,
     PasteShortcut,
     PasteInto,
+    /// Paste on a launcher: the clipboard's files open in its program.
+    PasteOpen,
     ArrangeIcons,
     New,
     ArrangeByName,
@@ -310,9 +312,10 @@ pub struct IconMenu {
 
 /// A file's or folder's context menu. A file gets its verbs (`print`, `edit`) and
 /// Open With, and Allow Launching with `allow_launching`. A launcher gets a greyed
-/// Run as... under Open: a program runs in the session of the logged-in user and
-/// another user's program cannot reach its display. A folder gets Explore, the
-/// greyed Sharing and Security... (no sheet behind it), and Paste under Copy. On
+/// Run as... under Open (a program runs in the session of the logged-in user and
+/// another user's program cannot reach its display), no Open With, and Paste under
+/// Copy. A folder gets Explore, the greyed Sharing and Security... (no sheet behind
+/// it), and Paste under Copy. On
 /// an icon `in_set` of a multi-selection it is the same menu less Sharing and
 /// Security..., its rows acting on the whole set but for Explore, Paste, Rename
 /// and Properties.
@@ -335,7 +338,9 @@ pub fn icon_menu(m: IconMenu) -> (Vec<MenuItem>, Vec<Option<DesktopCommand>>) {
         if m.edit {
             rows.push((entry("&Edit"), Some(Edit)));
         }
-        rows.push((entry("Open Wit&h").submenu(true), Some(OpenWith)));
+        if !m.launcher {
+            rows.push((entry("Open Wit&h").submenu(true), Some(OpenWith)));
+        }
         if m.allow_launching {
             rows.push((entry("Allow &Launching"), Some(AllowLaunching)));
         }
@@ -349,6 +354,8 @@ pub fn icon_menu(m: IconMenu) -> (Vec<MenuItem>, Vec<Option<DesktopCommand>>) {
     ]);
     if m.is_dir {
         rows.push((entry("&Paste"), Some(PasteInto)));
+    } else if m.launcher {
+        rows.push((entry("&Paste"), Some(PasteOpen)));
     }
     rows.extend([
         SEP,
@@ -1904,6 +1911,17 @@ impl State {
                     self.paste_files(crate::dragview::DropTarget::Folder(dir), false);
                 }
             }
+            Dc::PasteOpen => {
+                let app = target
+                    .and_then(|i| self.desktop.as_ref()?.entries.get(i))
+                    .and_then(|e| match &e.target {
+                        Target::Launch(app) => Some(app.clone()),
+                        _ => None,
+                    });
+                if let Some(app) = app {
+                    self.paste_open(app);
+                }
+            }
             Dc::AllowLaunching => {
                 let Some(i) = target else {
                     return;
@@ -2715,13 +2733,47 @@ mod tests {
                 ..
             }
         ));
-        assert_eq!(&commands[..3], &[Some(Open), None, Some(OpenWith)]);
+        assert_eq!(&commands[..3], &[Some(Open), None, None]);
         let (items, _) = icon_menu(IconMenu::default());
         assert!(
             items
                 .iter()
                 .all(|i| !matches!(i, MenuItem::Entry { label, .. } if label == "Run as..."))
         );
+    }
+
+    #[test]
+    fn a_launcher_has_paste_under_copy_and_no_open_with() {
+        use DesktopCommand::*;
+        let (items, commands) = icon_menu(IconMenu {
+            launcher: true,
+            edit: true,
+            ..Default::default()
+        });
+        assert_eq!(
+            commands,
+            vec![
+                Some(Open),
+                None,
+                Some(Edit),
+                None,
+                Some(SendTo),
+                None,
+                Some(Cut),
+                Some(Copy),
+                Some(PasteOpen),
+                None,
+                Some(CreateShortcut),
+                Some(Trash),
+                Some(Rename),
+                None,
+                Some(IconProperties)
+            ]
+        );
+        assert!(matches!(
+            &items[8],
+            MenuItem::Entry { label, enabled: true, mnemonic: Some(0), .. } if label == "Paste"
+        ));
     }
 
     #[test]

@@ -11,7 +11,7 @@ use reprisekit::classic::widgets::CheckState;
 use reprisekit::controls::filesheet;
 pub use reprisekit::controls::filesheet::{
     ADV_CANCEL, ADV_OK, ADVANCED, ATTR_CANCEL, ATTR_OK, ATTR_SIZE, BIN_SHEET_H, CALCULATING,
-    CHANGE, Facts, ICON_PX, READ_ONLY, RESTORE, Row, SET_ICON, SHEET_W, attr_tree_picked, bin_page,
+    CHANGE, Facts, ICON_PX, READ_ONLY, RESTORE, Row, SHEET_W, attr_tree_picked, bin_page,
     general_page,
 };
 use reprisekit::controls::form::{Control, Form};

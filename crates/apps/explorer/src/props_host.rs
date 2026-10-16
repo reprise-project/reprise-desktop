@@ -3,9 +3,9 @@
 
 use crate::Explorer;
 use crate::props_dialog::{
-    ADVANCED, AttrConfirm, BIN_SHEET_H, CHANGE, ICON_PX, PROPS, Props, READ_ONLY, RESTORE,
-    SET_ICON, SHEET_W, attr_form, attr_tree_picked, bin_facts, bin_page, folder_has_contents,
-    general_page, rows, set_facts,
+    ADVANCED, AttrConfirm, BIN_SHEET_H, CHANGE, ICON_PX, PROPS, Props, READ_ONLY, RESTORE, SHEET_W,
+    attr_form, attr_tree_picked, bin_facts, bin_page, folder_has_contents, general_page, rows,
+    set_facts,
 };
 use repriseapp::{Child, Ctx, Event, Reply};
 use reprisefs::props::{AttrMoves, FileInfo};
@@ -246,7 +246,7 @@ impl Explorer {
                 })
             });
         }
-        let icon = ctx.icons.get(SET_ICON, ICON_PX);
+        let icon = Some(filesheet::set_picture(ctx.icons.scale()));
         let facts = set_facts(&set);
         let (page, height) = general_page(&filesheet::set_rows(&facts), "", icon, None);
         let over = filesheet::Over::Set {

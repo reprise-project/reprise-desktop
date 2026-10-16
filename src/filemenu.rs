@@ -155,6 +155,11 @@ impl State {
                 }
             }
             Dc::PasteInto => self.paste_files(DropTarget::Folder(path), false),
+            Dc::PasteOpen => {
+                if let Target::Launch(app) = &facts.target {
+                    self.paste_open(app.clone());
+                }
+            }
             Dc::CreateShortcut => {
                 if let Some(dir) = path.parent().map(Path::to_path_buf) {
                     self.perform_all(&source(), &DropTarget::Folder(dir), DropOp::Shortcut);
