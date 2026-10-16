@@ -166,8 +166,8 @@ pub fn hints(mut raw: HashMap<String, Hint<'_>>) -> Hints<'_> {
 
 const MAX_IMAGE_SIDE: i32 = 8192;
 
-const IMAGE_SIZES: [i32; 2] = [16, 32];
-
+/// `image-data` decoded at each of [`super::NOTIFY_SIZES`], fitted inside
+/// a square canvas with its aspect kept and the rest clear.
 pub fn image_sources(img: &ImageData) -> Vec<IconSource> {
     let ok = (1..=MAX_IMAGE_SIDE).contains(&img.width)
         && (1..=MAX_IMAGE_SIDE).contains(&img.height)
@@ -192,15 +192,25 @@ pub fn image_sources(img: &ImageData) -> Vec<IconSource> {
         let a = if ch == 4 { p[3] } else { 0xFF };
         reprisekit::icon::premultiply(u32::from_be_bytes([a, p[0], p[1], p[2]]))
     };
-    IMAGE_SIZES
+    super::NOTIFY_SIZES
         .iter()
         .map(|&px| {
-            let c: Canvas =
-                Canvas::resample_box_from(w as u32, h as u32, px as u32, px as u32, pixel);
+            let side = px as u32;
+            let fit = |n: usize| ((n as u64 * side as u64 / w.max(h) as u64) as u32).max(1);
+            let (fw, fh) = (fit(w), fit(h));
+            let img: Canvas = Canvas::resample_box_from(w as u32, h as u32, fw, fh, pixel);
+            let mut out = Canvas::new(side, side);
+            let (ox, oy) = ((side - fw) / 2, (side - fh) / 2);
+            for y in 0..fh {
+                let to = ((oy + y) * side + ox) as usize;
+                let from = (y * fw) as usize;
+                out.pixels[to..to + fw as usize]
+                    .copy_from_slice(&img.pixels[from..from + fw as usize]);
+            }
             IconSource {
-                width: c.width,
-                height: c.height,
-                pixels: c.pixels,
+                width: out.width,
+                height: out.height,
+                pixels: out.pixels,
             }
         })
         .collect()
@@ -327,6 +337,40 @@ mod tests {
         to_bytes(ctxt, &map).unwrap().to_vec()
     }
 
+    fn rgba(w: i32, h: i32) -> ImageData<'static> {
+        let data: &'static [u8] = vec![255u8; (w * h * 4) as usize].leak();
+        ImageData {
+            width: w,
+            height: h,
+            stride: w * 4,
+            alpha: true,
+            bits: 8,
+            channels: 4,
+            data,
+        }
+    }
+
+    #[test]
+    fn image_data_decodes_at_every_notification_size() {
+        let srcs = image_sources(&rgba(40, 40));
+        assert_eq!(
+            srcs.iter().map(|s| s.width).collect::<Vec<_>>(),
+            [16, 32, 48, 96]
+        );
+    }
+
+    #[test]
+    fn a_wide_image_keeps_its_aspect() {
+        let s = &image_sources(&rgba(160, 90))[3];
+        assert_eq!((s.width, s.height), (96, 96), "square canvas");
+        assert_eq!(s.pixels[0] >> 24, 0, "letterbox rows are clear");
+        assert_eq!(
+            s.pixels[48 * 96 + 48] >> 24,
+            0xFF,
+            "the picture fills the middle"
+        );
+    }
+
     #[test]
     fn hints_read_urgency_flags_names_and_image_data() {
         let pixels: Vec<u8> = vec![255, 0, 0, 255, 0, 0, 255, 128];
@@ -354,10 +398,13 @@ mod tests {
         assert_eq!((img.width, img.height, img.channels), (2, 1, 4));
         assert_eq!(img.data, &pixels[..]);
         let src = image_sources(&img);
-        assert_eq!(src.iter().map(|s| s.width).collect::<Vec<_>>(), [16, 32]);
-        assert_eq!(src[0].pixels[0], 0xFFFF_0000);
         assert_eq!(
-            src[0].pixels[15],
+            src.iter().map(|s| s.width).collect::<Vec<_>>(),
+            [16, 32, 48, 96]
+        );
+        assert_eq!(src[0].pixels[4 * 16], 0xFFFF_0000);
+        assert_eq!(
+            src[0].pixels[4 * 16 + 15],
             reprisekit::icon::premultiply(0x8000_00FF)
         );
     }
@@ -389,7 +436,10 @@ mod tests {
             channels: ch,
             data: &data,
         };
-        assert_eq!(image_sources(&img(2, 1, 8, 4)).len(), 2);
+        assert_eq!(
+            image_sources(&img(2, 1, 8, 4)).len(),
+            crate::tray::NOTIFY_SIZES.len()
+        );
         assert!(image_sources(&img(2, 2, 8, 4)).is_empty(), "short by a row");
         assert!(
             image_sources(&img(2, 1, 4, 4)).is_empty(),
@@ -397,7 +447,11 @@ mod tests {
         );
         assert!(image_sources(&img(0, 1, 8, 4)).is_empty());
         assert!(image_sources(&img(1_000_000, 1, 8, 4)).is_empty());
-        assert_eq!(image_sources(&img(2, 2, 6, 3)).len(), 2, "RGB rows of 6");
+        assert_eq!(
+            image_sources(&img(2, 2, 6, 3)).len(),
+            crate::tray::NOTIFY_SIZES.len(),
+            "RGB rows of 6"
+        );
     }
 
     #[test]

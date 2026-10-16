@@ -17,6 +17,7 @@ mod glyph;
 mod header;
 mod items;
 mod menus;
+pub mod notify;
 mod orb;
 pub mod overview;
 pub mod page;
@@ -105,6 +106,27 @@ impl Material {
     }
 }
 
+/// `[glass] notification_style`: the notification sheet's shape.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum NotifyStyle {
+    #[default]
+    Lozenge,
+}
+
+impl NotifyStyle {
+    pub const ALL: [NotifyStyle; 1] = [NotifyStyle::Lozenge];
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            NotifyStyle::Lozenge => "lozenge",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<NotifyStyle> {
+        NotifyStyle::ALL.into_iter().find(|m| m.as_str() == s)
+    }
+}
+
 /// `[glass] frame`: the window decorations' shape. Rounded has a caption with
 /// rounded corners and joined glossy buttons; Square has square corners and flat,
 /// separate caption buttons.
@@ -167,6 +189,7 @@ pub struct Settings {
     pub mode: Mode,
     pub material: Material,
     pub frame: Frame,
+    pub notification: NotifyStyle,
 }
 
 pub const BLUR_MAX: u8 = 5;
@@ -217,6 +240,7 @@ impl Default for Settings {
             mode: Mode::Light,
             material: Material::Frosted,
             frame: Frame::Rounded,
+            notification: NotifyStyle::default(),
         }
     }
 }
@@ -252,6 +276,7 @@ fn cached(s: &Settings, small_bar: bool) -> Arc<Style> {
         blur_frames: Settings::default().blur_frames,
         blur_rate: Settings::default().blur_rate,
         orb_glow: Settings::default().orb_glow,
+        notification: NotifyStyle::default(),
         ..*s
     };
     styles.get_or_insert_with((key, small_bar), || {
@@ -505,6 +530,7 @@ fn build_at(s: &Settings, scale: i32) -> Style {
         .with_selection_box(selbox::BOX)
         .with_caption_tabs(caption_tabs(title_ink))
         .with_balloon(balloon::look(s.mode, fields::drop_list(s.mode).shadow))
+        .with_notify(notify::look(s.mode))
         .with_flyout(flyouts::look())
         .with_painted(Part::DesktopItem, move || items::desktop_part(scale))
 }

@@ -121,7 +121,7 @@ pub fn refresh(state: &mut State) {
         .map(|e| Entry {
             id: e.n.id,
             app: e.n.app.clone(),
-            icon: crate::tray::closest(&e.n.icon, px)
+            icon: crate::tray::closest(e.n.balloon_icon(), px)
                 .or_else(|| state.icons.get("dialog-information", px))
                 .map(Rc::new),
             message: if e.n.summary.is_empty() {
