@@ -123,7 +123,9 @@ the Super tap, Super+Shift+Esc and the VT switch keys can be rebound.
   that side, to the top to maximize it, into a corner for a quarter. Esc
   during the drag puts it back. With several screens only the outer edges
   of the whole arrangement snap: a window carried from one screen to the
-  next lands where you let it go.
+  next lands where you let it go. `[window_snapping] distance`, or Snap
+  distance from edges on the Windows page, sets how near an edge the drag
+  has to come.
 - **Snap layouts.** Rest on a maximize button, or press Super+Z, for six
   ways to split the screen: halves, two thirds and a third, thirds, a half
   and two quarters, quarters, and a wide middle column. A portrait screen

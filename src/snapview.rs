@@ -189,13 +189,14 @@ impl Snapping {
         (layout, explicit, zones)
     }
 
-    /// The drop a release at (`x`, `y`) makes, and the rect its outline shows (the zone, or
-    /// `work` to maximize).
+    /// The drop a release at (`x`, `y`) makes with edge bands `band` px deep, and the rect its
+    /// outline shows (the zone, or `work` to maximize).
     #[allow(clippy::too_many_arguments)]
     pub fn outlined_target(
         &self,
         output: &str,
         work: Rect,
+        band: i32,
         shift: bool,
         bar: Option<Rect>,
         outer: Edges,
@@ -205,8 +206,9 @@ impl Snapping {
         live: &dyn Fn(WindowId) -> bool,
     ) -> Option<(Target, Rect)> {
         let (_, explicit, zones) = self.active_target(output, work, live);
-        let target =
-            crate::snap::armed_target(armed, work, &zones, explicit, shift, bar, outer, x, y)?;
+        let target = crate::snap::armed_target(
+            armed, work, &zones, band, explicit, shift, bar, outer, x, y,
+        )?;
         // As `target_layout` picks the layout, worked out once per motion.
         let rect = match target {
             Target::Maximize => work,
@@ -940,7 +942,19 @@ impl State {
             .map(|o| self.layout_box(Some(o)))
             .collect();
         let outer = crate::snap::outer_sides(self.layout_box(Some(&out)), &outputs, x, y);
-        (self.wm.snap).outlined_target(&out.name(), work, shift, bar, outer, armed, x, y, &live)
+        let band = self.config.window_snapping.distance;
+        (self.wm.snap).outlined_target(
+            &out.name(),
+            work,
+            band,
+            shift,
+            bar,
+            outer,
+            armed,
+            x,
+            y,
+            &live,
+        )
     }
 
     /// The release of a move: the snap bar's lit tile, else the drop. A restore afterwards goes
@@ -1340,6 +1354,7 @@ mod tests {
             s.outlined_target(
                 "DP-1",
                 WORK,
+                crate::snap::BAND,
                 true,
                 None,
                 crate::snap::EVERY_SIDE,
@@ -1355,6 +1370,7 @@ mod tests {
             (s.outlined_target(
                 "DP-1",
                 WORK,
+                crate::snap::BAND,
                 true,
                 None,
                 crate::snap::EVERY_SIDE,
@@ -1480,6 +1496,7 @@ mod tests {
             .outlined_target(
                 "DP-1",
                 WORK,
+                crate::snap::BAND,
                 true,
                 None,
                 crate::snap::EVERY_SIDE,
