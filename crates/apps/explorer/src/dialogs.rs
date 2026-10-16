@@ -375,6 +375,7 @@ impl Explorer {
             },
             PROGRAM_BROWSE | crate::props_dialog::PROPS => Caption::Help,
             crate::browse::ERROR => Caption::Prompt,
+            crate::copydlg::COPY => Caption::Prompt,
             _ => Caption::Window,
         }
     }
@@ -435,6 +436,7 @@ impl Explorer {
             });
         }
         out.extend(self.props_child());
+        out.extend(self.copy_child());
         out
     }
 

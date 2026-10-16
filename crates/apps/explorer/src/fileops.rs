@@ -28,17 +28,19 @@ pub struct BinItem {
 }
 
 pub(crate) struct Put {
-    job: PutJob,
-    dir: PathBuf,
-    ops: Vec<ItemOp>,
+    pub(crate) job: PutJob,
+    pub(crate) dir: PathBuf,
+    pub(crate) ops: Vec<ItemOp>,
     batch: Vec<Undoable>,
     landed: Vec<PathBuf>,
     select_landed: bool,
+    pub(crate) started: std::time::Instant,
+    pub(crate) shown: Option<crate::copydlg::Shown>,
 }
 
 pub(crate) type JobDone = Box<dyn FnOnce(&mut Explorer, &mut Ctx) -> Reply + Send>;
 
-type ItemOp = (PathBuf, DropOp, String);
+pub(crate) type ItemOp = (PathBuf, DropOp, String);
 
 pub struct PendingPut {
     pub(crate) items: Vec<PutItem>,
@@ -322,6 +324,11 @@ impl Explorer {
     fn start_put(&mut self, pending: PendingPut, ops: Vec<ItemOp>, ctx: &Ctx) {
         let wake = ctx.wake.clone();
         let job = PutJob::start(pending.items, pending.dir.clone(), move || wake.wake());
+        let wake = ctx.wake.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(crate::copydlg::SHOW_AFTER);
+            wake.wake();
+        });
         self.put = Some(Put {
             job,
             dir: pending.dir,
@@ -329,6 +336,8 @@ impl Explorer {
             batch: Vec::new(),
             landed: Vec::new(),
             select_landed: pending.select_landed,
+            started: std::time::Instant::now(),
+            shown: None,
         });
     }
 
@@ -370,6 +379,11 @@ impl Explorer {
             return Some(Reply::none());
         }
         let put = self.put.take()?;
+        if let Some(shown) = &put.shown
+            && !put.job.cancelled()
+        {
+            self.copy_ended(shown, put.landed.len(), failed.as_ref());
+        }
         self.undos.push_all(put.batch);
         self.sync_undo();
         if put.landed.iter().any(|p| p.is_dir()) {

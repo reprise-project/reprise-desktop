@@ -105,7 +105,15 @@ pub(crate) fn copy_new(from: &Path, to: &Path) -> io::Result<()> {
         .open(to)?;
     // `create_new` made `to`, so it is ours to remove on failure.
     (|| {
-        io::copy(&mut src, &mut dst)?;
+        match crate::progress::current() {
+            Some(meter) => {
+                meter.set_current(from.file_name().unwrap_or_default());
+                copy_metered(&mut src, &dst, &meter)?
+            }
+            None => {
+                io::copy(&mut src, &mut dst)?;
+            }
+        }
         dst.set_permissions(src.metadata()?.permissions())?;
         if crate::apps::is_trusted(from) {
             crate::apps::set_trusted_fd(&dst)?;
@@ -115,6 +123,74 @@ pub(crate) fn copy_new(from: &Path, to: &Path) -> io::Result<()> {
     .inspect_err(|_| {
         let _ = std::fs::remove_file(to);
     })
+}
+
+/// [`copy_new`] under a put's meter: 1 MiB chunks through `copy_file_range` (else read and
+/// write), each counted, paused and cancellable, a large file flushed as it goes.
+fn copy_metered(
+    src: &mut std::fs::File,
+    dst: &std::fs::File,
+    meter: &crate::progress::Meter,
+) -> io::Result<()> {
+    use std::io::{Read, Write};
+    use std::os::fd::AsRawFd;
+    const CHUNK: usize = 1 << 20;
+    let mut buf = Vec::new();
+    let mut back = crate::progress::Writeback::new();
+    let mut len = 0u64;
+    let mut out = dst;
+    let mut ranged = true;
+    loop {
+        let n = if ranged {
+            // SAFETY: both fds are open; null offsets use and advance each file's own position.
+            let n = unsafe {
+                libc::copy_file_range(
+                    src.as_raw_fd(),
+                    std::ptr::null_mut(),
+                    dst.as_raw_fd(),
+                    std::ptr::null_mut(),
+                    CHUNK,
+                    0,
+                )
+            };
+            if n >= 0 {
+                n as usize
+            } else {
+                let e = io::Error::last_os_error();
+                match e.raw_os_error() {
+                    Some(libc::EINTR) => continue,
+                    Some(libc::EXDEV | libc::ENOSYS | libc::EOPNOTSUPP | libc::EINVAL)
+                        if len == 0 =>
+                    {
+                        ranged = false;
+                        continue;
+                    }
+                    _ => return Err(e),
+                }
+            }
+        } else {
+            if buf.is_empty() {
+                let size = src.metadata().map_or(0, |m| m.len());
+                buf = vec![0; size.clamp(1 << 16, CHUNK as u64) as usize];
+            }
+            match src.read(&mut buf) {
+                Ok(n) => {
+                    out.write_all(&buf[..n])?;
+                    n
+                }
+                Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
+                Err(e) => return Err(e),
+            }
+        };
+        if n == 0 {
+            break;
+        }
+        len += n as u64;
+        back.advance(dst, len);
+        meter.wrote(n as u64)?;
+    }
+    meter.wrote_file(dst, len, back.used());
+    Ok(())
 }
 
 /// The bytes of the regular file at `path` (a link to one is followed), at most
