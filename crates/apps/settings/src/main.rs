@@ -652,10 +652,15 @@ impl SettingsApp {
 
     /// Re-read the autostart directories; unapplied checks are dropped, the files changed under them.
     fn rescan(&mut self) {
+        // An entry a unit of the session starts is not listed: its check could not stop the unit.
+        let units = reprisebus::units::session_programs();
         self.entries = reprisefs::autostart::scan(
             &reprisefs::autostart::system_dirs(),
             &reprisefs::autostart::config_home(),
         );
+        self.entries.retain(|e| {
+            !reprisefs::autostart::left_to_systemd(e, &units, reprisefs::autostart::find_program)
+        });
         // Checked means it starts here: a system entry fenced off by
         // `OnlyShowIn` is listed unchecked, the way the compositor skips it.
         self.applied_checks = self

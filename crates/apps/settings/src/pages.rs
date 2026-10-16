@@ -4952,6 +4952,7 @@ mod tests {
                 try_exec: None,
                 path: None,
                 terminal: false,
+                under_systemd: false,
                 user: true,
             })
             .collect();
@@ -5342,6 +5343,7 @@ mod tests {
             try_exec: None,
             path: None,
             terminal: false,
+            under_systemd: false,
             user: *user,
         })
         .collect();
