@@ -76,6 +76,7 @@ mod tests {
             Variant::Sapphire,
             Variant::Obsidian,
             Variant::Ember,
+            Variant::Cobalt,
         ] {
             let theme = blue_theme(v);
             let p = theme.paint();

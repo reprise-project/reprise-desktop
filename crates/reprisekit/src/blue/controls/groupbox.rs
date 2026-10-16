@@ -75,7 +75,7 @@ mod tests {
 
     #[test]
     fn group_box_pins_at_scale_1_and_2() {
-        let want: [(Variant, [u64; 2]); 7] = [
+        let want: [(Variant, [u64; 2]); 8] = [
             (
                 Variant::Blue,
                 [0x6d60_4c2e_4f9e_a2bc, 0x5912_f229_0939_7607],
@@ -102,6 +102,10 @@ mod tests {
             ),
             (
                 Variant::Ember,
+                [0x975a_cfeb_fd05_6ffc, 0x2185_1587_6b85_80c7],
+            ),
+            (
+                Variant::Cobalt,
                 [0x975a_cfeb_fd05_6ffc, 0x2185_1587_6b85_80c7],
             ),
         ];

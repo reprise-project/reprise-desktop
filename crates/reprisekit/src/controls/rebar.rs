@@ -135,7 +135,7 @@ mod tests {
         assert_eq!(height(&rb, &m), BLUE_HEIGHT);
     }
 
-    /// In Slate, Sapphire and Obsidian each band's content sits 2 px under
+    /// In Slate, Sapphire, Obsidian and Cobalt each band's content sits 2 px under
     /// its line: the menu band at 2, the lines at 24 and 66, 92 px in all.
     /// Ember keeps navy's bands.
     #[test]
@@ -146,6 +146,7 @@ mod tests {
             (Variant::Sapphire, [2, 28, 70], 92),
             (Variant::Obsidian, [2, 28, 70], 92),
             (Variant::Ember, BLUE_CONTENT, BLUE_HEIGHT),
+            (Variant::Cobalt, [2, 28, 70], 92),
         ] {
             let m = interfaces::blue_theme(v).look.controls().rebar;
             let rects = layout(&rb, Rect::new(0, 0, 792, h), &m);
