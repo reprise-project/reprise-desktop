@@ -33,6 +33,9 @@ pub const OLIVE: Scheme = Scheme {
         menu_hilight: Color::rgb(0x8E, 0x9E, 0x6D),
         menu_bar: Color::rgb(0xEB, 0xEA, 0xD7),
         hot_light: Color::rgb(0x06, 0x00, 0x7C),
+        menu_band: Color::rgb(0x4B, 0x5A, 0x2A),
+        gradient_menu_band: Color::rgb(0x6F, 0x86, 0x4E),
+        menu_band_top: Color::rgb(0x1F, 0x26, 0x10),
     },
     inks: Inks {
         title: Color::rgb(0xFF, 0xFF, 0xFF),

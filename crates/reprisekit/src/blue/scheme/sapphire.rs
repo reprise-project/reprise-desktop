@@ -34,6 +34,9 @@ pub const SAPPHIRE: Scheme = Scheme {
         menu_hilight: Color::rgb(0x33, 0x5E, 0xA8),
         menu_bar: Color::rgb(0xEB, 0xE9, 0xED),
         hot_light: Color::rgb(0x00, 0x00, 0x80),
+        menu_band: Color::rgb(0x1C, 0x3A, 0x78),
+        gradient_menu_band: Color::rgb(0x33, 0x5E, 0xA8),
+        menu_band_top: Color::rgb(0x0A, 0x18, 0x38),
     },
     inks: Inks {
         title: Color::rgb(0xFF, 0xFF, 0xFF),

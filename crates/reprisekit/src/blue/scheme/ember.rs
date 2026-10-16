@@ -34,6 +34,9 @@ pub const EMBER: Scheme = Scheme {
         menu_hilight: Color::rgb(0xBE, 0xBE, 0xBE),
         menu_bar: Color::rgb(0xDC, 0xDC, 0xDC),
         hot_light: Color::rgb(0x00, 0x00, 0x80),
+        menu_band: Color::rgb(0x2A, 0x2A, 0x2A),
+        gradient_menu_band: Color::rgb(0x74, 0x74, 0x74),
+        menu_band_top: Color::rgb(0x00, 0x00, 0x00),
     },
     inks: Inks {
         title: Color::rgb(0xFF, 0xFF, 0xFF),

@@ -33,6 +33,9 @@ pub const CARBON: Scheme = Scheme {
         menu_hilight: Color::rgb(0xA4, 0x63, 0x13),
         menu_bar: Color::rgb(0xEB, 0xE9, 0xED),
         hot_light: Color::rgb(0x3B, 0x1F, 0x00),
+        menu_band: Color::rgb(0x24, 0x20, 0x1B),
+        gradient_menu_band: Color::rgb(0xA4, 0x63, 0x13),
+        menu_band_top: Color::rgb(0x00, 0x00, 0x00),
     },
     inks: Inks {
         title: Color::rgb(0xFF, 0xFF, 0xFF),

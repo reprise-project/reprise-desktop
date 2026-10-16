@@ -34,6 +34,9 @@ pub const COBALT: Scheme = Scheme {
         menu_hilight: Color::rgb(0x00, 0x33, 0x7C),
         menu_bar: Color::rgb(0xEB, 0xE9, 0xED),
         hot_light: Color::rgb(0x00, 0x00, 0x37),
+        menu_band: Color::rgb(0x00, 0x28, 0x5F),
+        gradient_menu_band: Color::rgb(0x2E, 0x64, 0xC0),
+        menu_band_top: Color::rgb(0x00, 0x0F, 0x26),
     },
     inks: Inks {
         title: Color::rgb(0xFF, 0xFF, 0xFF),
