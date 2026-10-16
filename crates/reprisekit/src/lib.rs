@@ -57,6 +57,8 @@ pub mod look;
 pub mod metrics;
 pub mod overview;
 pub mod paint;
+#[cfg(test)]
+mod pins;
 pub mod pointer;
 pub mod raster;
 pub mod saver;

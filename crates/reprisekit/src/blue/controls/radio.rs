@@ -287,35 +287,10 @@ mod tests {
     /// Each scheme's atlas at d = 1 and 2, hashed with its size.
     #[test]
     fn radio_pins_at_scale_1_and_2() {
-        let got = PINS.map(|(v, d, _)| (v, d, fnv(&radio(v, d))));
-        assert!(
-            got == PINS,
-            "pins changed; now:\n{}",
-            got.map(|(v, d, h)| format!("(Variant::{v:?}, {d}, {h:#018x}),"))
-                .join("\n")
-        );
+        let got: Vec<_> = Variant::ALL
+            .into_iter()
+            .flat_map(|v| [1, 2].map(|d| (format!("{v:?} {d}"), fnv(&radio(v, d)))))
+            .collect();
+        crate::pins::check("blue/radio", &got);
     }
-
-    const PINS: [(Variant, i32, u64); 20] = [
-        (Variant::Blue, 1, 0x67f782257de9c673),
-        (Variant::Blue, 2, 0x2f89408403baa09a),
-        (Variant::Olive, 1, 0x67f782257de9c673),
-        (Variant::Olive, 2, 0x2f89408403baa09a),
-        (Variant::Silver, 1, 0x67f782257de9c673),
-        (Variant::Silver, 2, 0x2f89408403baa09a),
-        (Variant::Slate, 1, 0xcb2660acb3593be7),
-        (Variant::Slate, 2, 0xe67cff9caecb62b4),
-        (Variant::Sapphire, 1, 0xcb2660acb3593be7),
-        (Variant::Sapphire, 2, 0xe67cff9caecb62b4),
-        (Variant::Obsidian, 1, 0xcb2660acb3593be7),
-        (Variant::Obsidian, 2, 0xe67cff9caecb62b4),
-        (Variant::Ember, 1, 0x2f2625a1e277da1e),
-        (Variant::Ember, 2, 0xa1bb40b35b80e52c),
-        (Variant::Cobalt, 1, 0xd348381bd6611eba),
-        (Variant::Cobalt, 2, 0x516f04107dd52d6a),
-        (Variant::Carbon, 1, 0xcb2660acb3593be7),
-        (Variant::Carbon, 2, 0xe67cff9caecb62b4),
-        (Variant::Steel, 1, 0xc1b141f9e53746e1),
-        (Variant::Steel, 2, 0xc0bef381f16efbdd),
-    ];
 }

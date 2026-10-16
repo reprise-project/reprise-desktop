@@ -86,50 +86,11 @@ mod tests {
     /// height, pixels).
     #[test]
     fn size_box_pins_at_scale_1_and_2() {
-        let want: [(Variant, [u64; 2]); 10] = [
-            (
-                Variant::Blue,
-                [0x369b_22dd_5ce2_859d, 0xafc0_30a0_790a_de65],
-            ),
-            (
-                Variant::Olive,
-                [0x369b_22dd_5ce2_859d, 0xafc0_30a0_790a_de65],
-            ),
-            (
-                Variant::Silver,
-                [0x369b_22dd_5ce2_859d, 0xafc0_30a0_790a_de65],
-            ),
-            (
-                Variant::Slate,
-                [0x7761_5d96_182c_f4cd, 0x18cf_3ba6_f73d_5ca5],
-            ),
-            (
-                Variant::Sapphire,
-                [0x7761_5d96_182c_f4cd, 0x18cf_3ba6_f73d_5ca5],
-            ),
-            (
-                Variant::Obsidian,
-                [0x7761_5d96_182c_f4cd, 0x18cf_3ba6_f73d_5ca5],
-            ),
-            (
-                Variant::Ember,
-                [0x7761_5d96_182c_f4cd, 0x18cf_3ba6_f73d_5ca5],
-            ),
-            (
-                Variant::Cobalt,
-                [0x7761_5d96_182c_f4cd, 0x18cf_3ba6_f73d_5ca5],
-            ),
-            (
-                Variant::Carbon,
-                [0x7761_5d96_182c_f4cd, 0x18cf_3ba6_f73d_5ca5],
-            ),
-            (
-                Variant::Steel,
-                [0x369b_22dd_5ce2_859d, 0xafc0_30a0_790a_de65],
-            ),
-        ];
-        let got = want.map(|(v, _)| (v, [fnv(&atlas(v, 1).atlas), fnv(&atlas(v, 2).atlas)]));
-        assert_eq!(got, want, "{got:#x?}");
+        let got: Vec<_> = Variant::ALL
+            .into_iter()
+            .flat_map(|v| [1, 2].map(|d| (format!("{v:?} {d}"), fnv(&atlas(v, d).atlas))))
+            .collect();
+        crate::pins::check("blue/size_box", &got);
     }
 
     #[test]

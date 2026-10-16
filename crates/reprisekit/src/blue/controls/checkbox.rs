@@ -317,35 +317,10 @@ mod tests {
 
     #[test]
     fn check_box_pins_at_scale_1_and_2() {
-        let got = PINS.map(|(v, d, _)| (v, d, fnv(&check_box(v, d))));
-        assert!(
-            got == PINS,
-            "pins changed; now:\n{}",
-            got.map(|(v, d, h)| format!("(Variant::{v:?}, {d}, {h:#018x}),"))
-                .join("\n")
-        );
+        let got: Vec<_> = Variant::ALL
+            .into_iter()
+            .flat_map(|v| [1, 2].map(|d| (format!("{v:?} {d}"), fnv(&check_box(v, d)))))
+            .collect();
+        crate::pins::check("blue/check_box", &got);
     }
-
-    const PINS: [(Variant, i32, u64); 20] = [
-        (Variant::Blue, 1, 0xd931a3cbbe9e63b8),
-        (Variant::Blue, 2, 0x349b4cac9bf90e62),
-        (Variant::Olive, 1, 0xd931a3cbbe9e63b8),
-        (Variant::Olive, 2, 0x349b4cac9bf90e62),
-        (Variant::Silver, 1, 0xf2730b61020c77cf),
-        (Variant::Silver, 2, 0x54defad4b8b6cb06),
-        (Variant::Slate, 1, 0xf47f60553d41f9eb),
-        (Variant::Slate, 2, 0x46a37933b1b3005b),
-        (Variant::Sapphire, 1, 0xf47f60553d41f9eb),
-        (Variant::Sapphire, 2, 0x46a37933b1b3005b),
-        (Variant::Obsidian, 1, 0xf47f60553d41f9eb),
-        (Variant::Obsidian, 2, 0x46a37933b1b3005b),
-        (Variant::Ember, 1, 0x5536416c72a84c0c),
-        (Variant::Ember, 2, 0x8c4efdd042a17379),
-        (Variant::Cobalt, 1, 0xa1de5c18217922a4),
-        (Variant::Cobalt, 2, 0xe98a707980ee53a0),
-        (Variant::Carbon, 1, 0xf47f60553d41f9eb),
-        (Variant::Carbon, 2, 0x46a37933b1b3005b),
-        (Variant::Steel, 1, 0xc1d0e1a6b1d99033),
-        (Variant::Steel, 2, 0xacabc9639b661b62),
-    ];
 }

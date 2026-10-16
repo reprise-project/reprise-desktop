@@ -465,103 +465,15 @@ mod tests {
 
     #[test]
     fn trackbar_pins_at_scale_1_and_2() {
-        let got: Vec<(Variant, Part, i32, u64)> = Variant::ALL
-            .into_iter()
-            .flat_map(|v| {
-                ALL.into_iter().flat_map(move |p| {
-                    [1, 2]
-                        .into_iter()
-                        .map(move |d| (v, p, d, fnv(&part(v, d, p).atlas)))
-                })
-            })
-            .collect();
-        #[rustfmt::skip]
-        let want: [(Variant, Part, i32, u64); 80] = [
-            (Variant::Blue, Part::TrackbarTrack, 1, 0x823B33891E42D044),
-            (Variant::Blue, Part::TrackbarTrack, 2, 0xB95246B76E4B53BB),
-            (Variant::Blue, Part::TrackbarThumb, 1, 0xC9C27E57F1ED0E8B),
-            (Variant::Blue, Part::TrackbarThumb, 2, 0xEF9409D8F30975C8),
-            (Variant::Blue, Part::TrackbarTrackV, 1, 0x384F5CA22015A0AB),
-            (Variant::Blue, Part::TrackbarTrackV, 2, 0x78C5B18D0EE82899),
-            (Variant::Blue, Part::TrackbarThumbV, 1, 0x575BE34B14D1A3DE),
-            (Variant::Blue, Part::TrackbarThumbV, 2, 0x88A9DB312DF70E16),
-            (Variant::Olive, Part::TrackbarTrack, 1, 0x823B33891E42D044),
-            (Variant::Olive, Part::TrackbarTrack, 2, 0xB95246B76E4B53BB),
-            (Variant::Olive, Part::TrackbarThumb, 1, 0xAEB34036DB65021F),
-            (Variant::Olive, Part::TrackbarThumb, 2, 0xED8D377B85617356),
-            (Variant::Olive, Part::TrackbarTrackV, 1, 0x384F5CA22015A0AB),
-            (Variant::Olive, Part::TrackbarTrackV, 2, 0x78C5B18D0EE82899),
-            (Variant::Olive, Part::TrackbarThumbV, 1, 0x162AD965F8F7A785),
-            (Variant::Olive, Part::TrackbarThumbV, 2, 0xBC518A103DE988C8),
-            (Variant::Silver, Part::TrackbarTrack, 1, 0x823B33891E42D044),
-            (Variant::Silver, Part::TrackbarTrack, 2, 0xB95246B76E4B53BB),
-            (Variant::Silver, Part::TrackbarThumb, 1, 0x18866176AC45CCA5),
-            (Variant::Silver, Part::TrackbarThumb, 2, 0xEC4BC3E0508437BB),
-            (Variant::Silver, Part::TrackbarTrackV, 1, 0x384F5CA22015A0AB),
-            (Variant::Silver, Part::TrackbarTrackV, 2, 0x78C5B18D0EE82899),
-            (Variant::Silver, Part::TrackbarThumbV, 1, 0xF1471A70F9C2FFDE),
-            (Variant::Silver, Part::TrackbarThumbV, 2, 0x2E5618F1EAD7F996),
-            (Variant::Slate, Part::TrackbarTrack, 1, 0x0C0799B268CC7F74),
-            (Variant::Slate, Part::TrackbarTrack, 2, 0x88FC38F5B07E4107),
-            (Variant::Slate, Part::TrackbarThumb, 1, 0x65AB7A7564CBF978),
-            (Variant::Slate, Part::TrackbarThumb, 2, 0xCD1E5B5DF4EFBE04),
-            (Variant::Slate, Part::TrackbarTrackV, 1, 0x58EBD49C9175BFAF),
-            (Variant::Slate, Part::TrackbarTrackV, 2, 0x20EF6F6E1EA262A1),
-            (Variant::Slate, Part::TrackbarThumbV, 1, 0x8B126FEE4AED2BD7),
-            (Variant::Slate, Part::TrackbarThumbV, 2, 0x453DF1151A343716),
-            (Variant::Sapphire, Part::TrackbarTrack, 1, 0x0C0799B268CC7F74),
-            (Variant::Sapphire, Part::TrackbarTrack, 2, 0x88FC38F5B07E4107),
-            (Variant::Sapphire, Part::TrackbarThumb, 1, 0x65AB7A7564CBF978),
-            (Variant::Sapphire, Part::TrackbarThumb, 2, 0xCD1E5B5DF4EFBE04),
-            (Variant::Sapphire, Part::TrackbarTrackV, 1, 0x58EBD49C9175BFAF),
-            (Variant::Sapphire, Part::TrackbarTrackV, 2, 0x20EF6F6E1EA262A1),
-            (Variant::Sapphire, Part::TrackbarThumbV, 1, 0x8B126FEE4AED2BD7),
-            (Variant::Sapphire, Part::TrackbarThumbV, 2, 0x453DF1151A343716),
-            (Variant::Obsidian, Part::TrackbarTrack, 1, 0x0C0799B268CC7F74),
-            (Variant::Obsidian, Part::TrackbarTrack, 2, 0x88FC38F5B07E4107),
-            (Variant::Obsidian, Part::TrackbarThumb, 1, 0x65AB7A7564CBF978),
-            (Variant::Obsidian, Part::TrackbarThumb, 2, 0xCD1E5B5DF4EFBE04),
-            (Variant::Obsidian, Part::TrackbarTrackV, 1, 0x58EBD49C9175BFAF),
-            (Variant::Obsidian, Part::TrackbarTrackV, 2, 0x20EF6F6E1EA262A1),
-            (Variant::Obsidian, Part::TrackbarThumbV, 1, 0x8B126FEE4AED2BD7),
-            (Variant::Obsidian, Part::TrackbarThumbV, 2, 0x453DF1151A343716),
-            (Variant::Ember, Part::TrackbarTrack, 1, 0x0C0799B268CC7F74),
-            (Variant::Ember, Part::TrackbarTrack, 2, 0x88FC38F5B07E4107),
-            (Variant::Ember, Part::TrackbarThumb, 1, 0xB959529FC70F8D45),
-            (Variant::Ember, Part::TrackbarThumb, 2, 0x0781C49FA82D041C),
-            (Variant::Ember, Part::TrackbarTrackV, 1, 0x58EBD49C9175BFAF),
-            (Variant::Ember, Part::TrackbarTrackV, 2, 0x20EF6F6E1EA262A1),
-            (Variant::Ember, Part::TrackbarThumbV, 1, 0x8587DF4745530A6E),
-            (Variant::Ember, Part::TrackbarThumbV, 2, 0x74521CAC3D76A528),
-            (Variant::Cobalt, Part::TrackbarTrack, 1, 0x0C0799B268CC7F74),
-            (Variant::Cobalt, Part::TrackbarTrack, 2, 0x88FC38F5B07E4107),
-            (Variant::Cobalt, Part::TrackbarThumb, 1, 0xF7205C67CB9D598D),
-            (Variant::Cobalt, Part::TrackbarThumb, 2, 0x27E1C2B91F6B637E),
-            (Variant::Cobalt, Part::TrackbarTrackV, 1, 0x58EBD49C9175BFAF),
-            (Variant::Cobalt, Part::TrackbarTrackV, 2, 0x20EF6F6E1EA262A1),
-            (Variant::Cobalt, Part::TrackbarThumbV, 1, 0x4863539AB637CBB0),
-            (Variant::Cobalt, Part::TrackbarThumbV, 2, 0xD74959AC3C050C3F),
-            (Variant::Carbon, Part::TrackbarTrack, 1, 0x0C0799B268CC7F74),
-            (Variant::Carbon, Part::TrackbarTrack, 2, 0x88FC38F5B07E4107),
-            (Variant::Carbon, Part::TrackbarThumb, 1, 0x65AB7A7564CBF978),
-            (Variant::Carbon, Part::TrackbarThumb, 2, 0xCD1E5B5DF4EFBE04),
-            (Variant::Carbon, Part::TrackbarTrackV, 1, 0x58EBD49C9175BFAF),
-            (Variant::Carbon, Part::TrackbarTrackV, 2, 0x20EF6F6E1EA262A1),
-            (Variant::Carbon, Part::TrackbarThumbV, 1, 0x8B126FEE4AED2BD7),
-            (Variant::Carbon, Part::TrackbarThumbV, 2, 0x453DF1151A343716),
-            (Variant::Steel, Part::TrackbarTrack, 1, 0x823B33891E42D044),
-            (Variant::Steel, Part::TrackbarTrack, 2, 0xB95246B76E4B53BB),
-            (Variant::Steel, Part::TrackbarThumb, 1, 0x43F4A804C1BD50AE),
-            (Variant::Steel, Part::TrackbarThumb, 2, 0xDDC985FAADF3832F),
-            (Variant::Steel, Part::TrackbarTrackV, 1, 0x384F5CA22015A0AB),
-            (Variant::Steel, Part::TrackbarTrackV, 2, 0x78C5B18D0EE82899),
-            (Variant::Steel, Part::TrackbarThumbV, 1, 0xBA270921A5A061AD),
-            (Variant::Steel, Part::TrackbarThumbV, 2, 0x4CDB9232D59E843E),
-        ];
-        assert_eq!(got.len(), want.len());
-        for (w, g) in want.iter().zip(&got) {
-            assert_eq!(w, g, "{:?} {:?} at {}", w.0, w.1, w.2);
+        let mut got = Vec::new();
+        for v in Variant::ALL {
+            for d in [1, 2] {
+                for p in ALL {
+                    got.push((format!("{v:?} {p:?} {d}"), fnv(&part(v, d, p).atlas)));
+                }
+            }
         }
+        crate::pins::check("blue/trackbar", &got);
     }
 
     /// Under Blue an upright trackbar is 32 wide: the 22 px box thumb at
@@ -653,52 +565,10 @@ mod tests {
 
     #[test]
     fn the_box_thumb_in_the_volume_popups_rect_pins_at_scale_1_and_2() {
-        let got: Vec<(Variant, [u64; 2])> = Variant::ALL
+        let got: Vec<_> = Variant::ALL
             .into_iter()
-            .map(|v| (v, [1, 2].map(|d| fnv(&box_in(v, 26, 15, d)))))
+            .flat_map(|v| [1, 2].map(|d| (format!("{v:?} {d}"), fnv(&box_in(v, 26, 15, d)))))
             .collect();
-        let want = [
-            (
-                Variant::Blue,
-                [0x08C6_8AE9_AD30_B1A2, 0x5426_EF12_36C3_811E],
-            ),
-            (
-                Variant::Olive,
-                [0x8336_CFCF_3700_B8E9, 0x9BC5_06F8_A00A_5C50],
-            ),
-            (
-                Variant::Silver,
-                [0xB423_928C_D018_5A02, 0x31E5_57AD_426C_75FE],
-            ),
-            (
-                Variant::Slate,
-                [0x0BB6_C90C_4CD0_80DB, 0x16FA_1BBF_C372_DB9E],
-            ),
-            (
-                Variant::Sapphire,
-                [0x0BB6_C90C_4CD0_80DB, 0x16FA_1BBF_C372_DB9E],
-            ),
-            (
-                Variant::Obsidian,
-                [0x0BB6_C90C_4CD0_80DB, 0x16FA_1BBF_C372_DB9E],
-            ),
-            (
-                Variant::Ember,
-                [0x21D6_9E0A_F0A2_A742, 0xC2A0_C1E1_1419_7A70],
-            ),
-            (
-                Variant::Cobalt,
-                [0x53C4_C3CD_80E7_991C, 0x6E43_174D_AD4D_B9A7],
-            ),
-            (
-                Variant::Carbon,
-                [0x0BB6_C90C_4CD0_80DB, 0x16FA_1BBF_C372_DB9E],
-            ),
-            (
-                Variant::Steel,
-                [0x3224_CD55_42E3_7BE1, 0x4E42_659B_913D_52F6],
-            ),
-        ];
-        assert_eq!(got, want, "{got:#x?}");
+        crate::pins::check("blue/volume_box_thumb", &got);
     }
 }

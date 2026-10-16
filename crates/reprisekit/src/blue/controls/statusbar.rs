@@ -174,115 +174,18 @@ mod tests {
         )
     }
 
-    /// Each scheme's bar and pane at scale 1 and 2, as FNV-1a hashes of
-    /// (width, height, pixels): [bar 1, bar 2, pane 1, pane 2].
+    /// Each scheme's bar and pane at scale 1 and 2, as FNV-1a hashes of (width, height, pixels).
     #[test]
     fn status_parts_pin_at_scale_1_and_2() {
-        let want: [(Variant, [u64; 4]); 10] = [
-            (
-                Variant::Blue,
-                [
-                    0x26a6_3e7a_70e8_885f,
-                    0xc3ef_d340_8747_37fe,
-                    0x345f_4c33_58d6_f40f,
-                    0x70a8_e232_a792_36fd,
-                ],
-            ),
-            (
-                Variant::Olive,
-                [
-                    0x66a5_acfc_c0da_061d,
-                    0x59a9_0a19_ad78_0025,
-                    0xa864_78be_b447_735e,
-                    0xedfe_cca9_de47_9b1d,
-                ],
-            ),
-            (
-                Variant::Silver,
-                [
-                    0x46bb_332e_1b2d_f1cf,
-                    0x0455_01f6_d6a4_3960,
-                    0x1a44_e373_d7d1_ce2d,
-                    0x53aa_96d6_d037_c73d,
-                ],
-            ),
-            (
-                Variant::Slate,
-                [
-                    0xa13c_31ff_30ea_a6f6,
-                    0x0b55_34d1_9b18_3523,
-                    0x25a1_8c18_34c6_bdaf,
-                    0x29d6_854f_9f58_5d0d,
-                ],
-            ),
-            (
-                Variant::Sapphire,
-                [
-                    0xf1f9_912d_e5c5_3906,
-                    0x9223_af80_4aee_0003,
-                    0x25a1_8c18_34c6_bdaf,
-                    0x29d6_854f_9f58_5d0d,
-                ],
-            ),
-            (
-                Variant::Obsidian,
-                [
-                    0xf1f9_912d_e5c5_3906,
-                    0x9223_af80_4aee_0003,
-                    0x25a1_8c18_34c6_bdaf,
-                    0x29d6_854f_9f58_5d0d,
-                ],
-            ),
-            (
-                Variant::Ember,
-                [
-                    0xa13c_31ff_30ea_a6f6,
-                    0x0b55_34d1_9b18_3523,
-                    0x25a1_8c18_34c6_bdaf,
-                    0x29d6_854f_9f58_5d0d,
-                ],
-            ),
-            (
-                Variant::Cobalt,
-                [
-                    0xf1f9_912d_e5c5_3906,
-                    0x9223_af80_4aee_0003,
-                    0x25a1_8c18_34c6_bdaf,
-                    0x29d6_854f_9f58_5d0d,
-                ],
-            ),
-            (
-                Variant::Carbon,
-                [
-                    0xf1f9_912d_e5c5_3906,
-                    0x9223_af80_4aee_0003,
-                    0x25a1_8c18_34c6_bdaf,
-                    0x29d6_854f_9f58_5d0d,
-                ],
-            ),
-            (
-                Variant::Steel,
-                [
-                    0x46bb_332e_1b2d_f1cf,
-                    0x0455_01f6_d6a4_3960,
-                    0x1a44_e373_d7d1_ce2d,
-                    0x53aa_96d6_d037_c73d,
-                ],
-            ),
-        ];
-        let got = want.map(|(v, _)| {
-            let h = |d, p| fnv(&part(v, d, p).atlas);
-            (
-                v,
-                [
-                    h(1, Part::StatusBar),
-                    h(2, Part::StatusBar),
-                    h(1, Part::StatusPane),
-                    h(2, Part::StatusPane),
-                ],
-            )
-        });
-        assert_eq!(got, want, "{got:#x?}");
+        let mut got = Vec::new();
+        for v in Variant::ALL {
+            for d in [1, 2] {
+                for p in [Part::StatusBar, Part::StatusPane] {
+                    got.push((format!("{v:?} {p:?} {d}"), fnv(&part(v, d, p).atlas)));
+                }
+            }
+        }
+        crate::pins::check("blue/status_bar", &got);
     }
 
     /// At `d` both parts are `d` times their design size, their nine-grid

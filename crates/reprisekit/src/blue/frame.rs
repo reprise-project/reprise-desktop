@@ -286,124 +286,20 @@ mod tests {
         px >> 24
     }
 
-    /// On a deliberate change, the failure prints the whole table to paste back.
     #[test]
     fn frame_parts_pin_at_scale_1_and_2() {
-        let want: &[(&str, &str, i32, u64)] = &[
-            ("blue", "caption", 1, 0xd4dcfa1570cb3543),
-            ("blue", "caption", 2, 0x0e084ab9b357b1e4),
-            ("blue", "max_caption", 1, 0xd4ea4229575491c0),
-            ("blue", "max_caption", 2, 0x1b295761f23a9119),
-            ("blue", "frame_left", 1, 0x38a74b4987af6cc1),
-            ("blue", "frame_left", 2, 0x95c0d8e10fd78b3d),
-            ("blue", "frame_right", 1, 0x5076572ecf057529),
-            ("blue", "frame_right", 2, 0x4061235fa3f916fd),
-            ("blue", "frame_bottom", 1, 0x4f2dfd34770c31a6),
-            ("blue", "frame_bottom", 2, 0x2984f5cd2d4cbb8a),
-            ("olive", "caption", 1, 0x18b158b9c93717cf),
-            ("olive", "caption", 2, 0xc96226d20a1479b6),
-            ("olive", "max_caption", 1, 0xc962eaafee73afe0),
-            ("olive", "max_caption", 2, 0xdb6a1b8b9ac8b409),
-            ("olive", "frame_left", 1, 0x8b4db6329c4bcb09),
-            ("olive", "frame_left", 2, 0x507068cd516588fd),
-            ("olive", "frame_right", 1, 0x9282350f3d7bf501),
-            ("olive", "frame_right", 2, 0xe03937196d5e77bd),
-            ("olive", "frame_bottom", 1, 0xf1fc5ac65be7c682),
-            ("olive", "frame_bottom", 2, 0xafbc7fb3ebe387f2),
-            ("silver", "caption", 1, 0x1d6f0c41f7c64281),
-            ("silver", "caption", 2, 0x5ac9afa5f9960e5c),
-            ("silver", "max_caption", 1, 0xdf8799e9915203a1),
-            ("silver", "max_caption", 2, 0xa11ff71a1f5e6b32),
-            ("silver", "frame_left", 1, 0x744d2a211ce967c9),
-            ("silver", "frame_left", 2, 0xa741fde70319cbfd),
-            ("silver", "frame_right", 1, 0x5254ac02b9b8e0a1),
-            ("silver", "frame_right", 2, 0xec8f0d1d74b31e7d),
-            ("silver", "frame_bottom", 1, 0x7c6204868e7c094f),
-            ("silver", "frame_bottom", 2, 0xb3f4efdaa1e8f8e1),
-            ("slate", "caption", 1, 0xc63b1d5ef4e1cf63),
-            ("slate", "caption", 2, 0xbe1ccd3f783ccde7),
-            ("slate", "max_caption", 1, 0x7ed59327ef582a8c),
-            ("slate", "max_caption", 2, 0x092d4bf744bbe813),
-            ("slate", "frame_left", 1, 0x2c77e5c1e7ef4081),
-            ("slate", "frame_left", 2, 0x73b68d68a2d4bd5d),
-            ("slate", "frame_right", 1, 0x65cf4ce5b5d5d989),
-            ("slate", "frame_right", 2, 0xd76678f02b8d94fd),
-            ("slate", "frame_bottom", 1, 0x75305a4f1713fe51),
-            ("slate", "frame_bottom", 2, 0x2b8d278055ac7916),
-            ("sapphire", "caption", 1, 0x5d380dcbe070a24a),
-            ("sapphire", "caption", 2, 0xa8cc2e56ab1fad38),
-            ("sapphire", "max_caption", 1, 0xd7b5a34f8c6a2a92),
-            ("sapphire", "max_caption", 2, 0xa2614cda77e763e7),
-            ("sapphire", "frame_left", 1, 0x770caa0c200dd3b1),
-            ("sapphire", "frame_left", 2, 0x954ddcb668c6477d),
-            ("sapphire", "frame_right", 1, 0xfc1bef8eec6b1e91),
-            ("sapphire", "frame_right", 2, 0x4b84d15b289d22fd),
-            ("sapphire", "frame_bottom", 1, 0x5b8e8b8a382f13db),
-            ("sapphire", "frame_bottom", 2, 0x4835f1f215f8f949),
-            ("obsidian", "caption", 1, 0x56aba6e6911a0a0b),
-            ("obsidian", "caption", 2, 0x844c44e94c1105d6),
-            ("obsidian", "max_caption", 1, 0xe0e5a200df367c1f),
-            ("obsidian", "max_caption", 2, 0x04082174b0b275b7),
-            ("obsidian", "frame_left", 1, 0x2005abea25b7f589),
-            ("obsidian", "frame_left", 2, 0x44306f07fcc6d0bd),
-            ("obsidian", "frame_right", 1, 0x12212d2f113d2ba9),
-            ("obsidian", "frame_right", 2, 0x6c3530c949c7473d),
-            ("obsidian", "frame_bottom", 1, 0x905dc56843ecc663),
-            ("obsidian", "frame_bottom", 2, 0x0887698f26be7ae9),
-            ("ember", "caption", 1, 0xe4af3d6326a3b01a),
-            ("ember", "caption", 2, 0x9424d76416bef3bb),
-            ("ember", "max_caption", 1, 0x07119f9f443fdd5a),
-            ("ember", "max_caption", 2, 0xdca316f935d8a733),
-            ("ember", "frame_left", 1, 0x8e71a9b24f811039),
-            ("ember", "frame_left", 2, 0xf9780364ba0eff5d),
-            ("ember", "frame_right", 1, 0x3311d1fd2048dd09),
-            ("ember", "frame_right", 2, 0xeab3d4e91b0af19d),
-            ("ember", "frame_bottom", 1, 0xd8b40266d60f5add),
-            ("ember", "frame_bottom", 2, 0xb0c0e50169bd2652),
-            ("cobalt", "caption", 1, 0x82ad54589f78fe2a),
-            ("cobalt", "caption", 2, 0xbf211758f88ad6f4),
-            ("cobalt", "max_caption", 1, 0x5ced566e153f0204),
-            ("cobalt", "max_caption", 2, 0x8974f40b53950b77),
-            ("cobalt", "frame_left", 1, 0x53d68b63034151b1),
-            ("cobalt", "frame_left", 2, 0xf4ef41a0b84d53fd),
-            ("cobalt", "frame_right", 1, 0xd65ac57c1b4e76c1),
-            ("cobalt", "frame_right", 2, 0x07aa17340bfe99fd),
-            ("cobalt", "frame_bottom", 1, 0x42965d50f8bde4e3),
-            ("cobalt", "frame_bottom", 2, 0x1a9edbb40ca80c69),
-            ("carbon", "caption", 1, 0x45e9ed14663e454e),
-            ("carbon", "caption", 2, 0x85d51544b3c6da95),
-            ("carbon", "max_caption", 1, 0x55b2f7b99957972f),
-            ("carbon", "max_caption", 2, 0xbfb1ec529f44eb57),
-            ("carbon", "frame_left", 1, 0xeea8121971bd2eb1),
-            ("carbon", "frame_left", 2, 0x9f111e0a4bd28efd),
-            ("carbon", "frame_right", 1, 0xdab6db70b0ecd2d1),
-            ("carbon", "frame_right", 2, 0xbb31f44e5c55a4fd),
-            ("carbon", "frame_bottom", 1, 0xb7187e63b5fd10cb),
-            ("carbon", "frame_bottom", 2, 0x371299f780739049),
-            ("steel", "caption", 1, 0x1dc7ff23eaf668ec),
-            ("steel", "caption", 2, 0x0bd6226b7db2cf1b),
-            ("steel", "max_caption", 1, 0x8d16ddc7763e4b26),
-            ("steel", "max_caption", 2, 0x9978db49fe188bfa),
-            ("steel", "frame_left", 1, 0x0168cfa6e410ee69),
-            ("steel", "frame_left", 2, 0xdc66a9df7c29a2dd),
-            ("steel", "frame_right", 1, 0xfa748dfad6a21609),
-            ("steel", "frame_right", 2, 0x83fbd3f75156dabd),
-            ("steel", "frame_bottom", 1, 0xafc3bd5fe7459ea4),
-            ("steel", "frame_bottom", 2, 0xd73b99bafabb0167),
-        ];
         let mut got = Vec::new();
         for v in Variant::ALL {
-            for (name, paint) in PARTS {
-                for d in [1, 2] {
-                    got.push((v.as_str(), name, d, fnv(&paint(v.scheme(), d).atlas)));
+            for d in [1, 2] {
+                for (name, paint) in PARTS {
+                    got.push((
+                        format!("{v:?} {name} {d}"),
+                        fnv(&paint(v.scheme(), d).atlas),
+                    ));
                 }
             }
         }
-        let table: String = got
-            .iter()
-            .map(|(v, p, d, h)| format!("            ({v:?}, {p:?}, {d}, 0x{h:016x}),\n"))
-            .collect();
-        assert!(got == want, "frame part hashes changed:\n{table}");
+        crate::pins::check("blue/frame", &got);
     }
 
     #[test]

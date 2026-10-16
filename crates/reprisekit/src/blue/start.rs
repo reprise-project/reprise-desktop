@@ -302,72 +302,10 @@ mod tests {
                 let img = start_button(v.scheme(), d);
                 for st in STATES {
                     let (w, h, px) = frame_of(&img, st);
-                    got.push(format!("{v:?} {d} {st:?} {:016x}", fnv(w, h, &px)));
+                    got.push((format!("{v:?} {d} {st:?}"), fnv(w, h, &px)));
                 }
             }
         }
-        let want: &[&str] = &[
-            "Blue 1 Normal 2392b7033ada4a79",
-            "Blue 1 Hot af8e50775cfeaa13",
-            "Blue 1 Pressed 4fdf711c9e3bbfef",
-            "Blue 2 Normal d69df7d204510c67",
-            "Blue 2 Hot 37bb97d826ff6a5f",
-            "Blue 2 Pressed 4a172cd29dce6eab",
-            "Olive 1 Normal 41aed340972fb803",
-            "Olive 1 Hot 247a2ee2e4996e0f",
-            "Olive 1 Pressed 0e58ec87a816bb74",
-            "Olive 2 Normal 010c74ac5212e1dc",
-            "Olive 2 Hot a33cb5ca0d20625c",
-            "Olive 2 Pressed 0cf257e9d4eb4d51",
-            "Silver 1 Normal 4076c4bcd1701b38",
-            "Silver 1 Hot cd2c23001a44042c",
-            "Silver 1 Pressed ddb0491237353e87",
-            "Silver 2 Normal d659858f2c82e05a",
-            "Silver 2 Hot 6ccca5a7ad552fc8",
-            "Silver 2 Pressed 3cf9749a8d2d1008",
-            "Slate 1 Normal 5fc6f5f18403332c",
-            "Slate 1 Hot 2e692c6759aaaaae",
-            "Slate 1 Pressed de782a90d0b55b33",
-            "Slate 2 Normal 9a557e47ae63ab9c",
-            "Slate 2 Hot fea0a94ce8c652e4",
-            "Slate 2 Pressed e9f6b720adb678b5",
-            "Sapphire 1 Normal 738d1824b3d8c756",
-            "Sapphire 1 Hot c9d13340e6531e08",
-            "Sapphire 1 Pressed b6dca1f8e7ea1b1c",
-            "Sapphire 2 Normal 5f07b6f9c2416848",
-            "Sapphire 2 Hot c8912fbf03c2aade",
-            "Sapphire 2 Pressed 598d5ce38d3f99de",
-            "Obsidian 1 Normal 72d3629d95f80e2f",
-            "Obsidian 1 Hot 774d3c02b30a81e5",
-            "Obsidian 1 Pressed b7ce1c6ddb4344c9",
-            "Obsidian 2 Normal 3681b30341068fe7",
-            "Obsidian 2 Hot 3ab9fca963b60efb",
-            "Obsidian 2 Pressed 3e876dde52d6c91d",
-            "Ember 1 Normal 05838c2917bd985e",
-            "Ember 1 Hot aeb910b8ff1234d6",
-            "Ember 1 Pressed 99d411919a656903",
-            "Ember 2 Normal 31d8eb2ffbbfb47c",
-            "Ember 2 Hot 9d3ea1993d2183a0",
-            "Ember 2 Pressed 35a80b8ede16f91d",
-            "Cobalt 1 Normal b04c8068eb5b758a",
-            "Cobalt 1 Hot 3c4e7435ebcc1a1c",
-            "Cobalt 1 Pressed 6c95f6ed0b0fbc3e",
-            "Cobalt 2 Normal 1aa9d1fd55fd095e",
-            "Cobalt 2 Hot 5f562256ec27c96a",
-            "Cobalt 2 Pressed f364d196c7603946",
-            "Carbon 1 Normal 597e123d53a503c7",
-            "Carbon 1 Hot 34ad59079c9a66f3",
-            "Carbon 1 Pressed 8000ec6bbcf9b9f9",
-            "Carbon 2 Normal a2a860054d19b74a",
-            "Carbon 2 Hot 5f55224dafd8f36c",
-            "Carbon 2 Pressed d8fa6a5d073f9d1f",
-            "Steel 1 Normal 3fc558f0f22b63ee",
-            "Steel 1 Hot 62cc1ff12bfb1689",
-            "Steel 1 Pressed fa35160862c749e0",
-            "Steel 2 Normal 01a4ebaa58f34c24",
-            "Steel 2 Hot 733c93c4cd641755",
-            "Steel 2 Pressed 78c129e501388ff4",
-        ];
-        assert_eq!(got, want, "Start pill hashes per scheme, scale and state");
+        crate::pins::check("blue/start_pill", &got);
     }
 }

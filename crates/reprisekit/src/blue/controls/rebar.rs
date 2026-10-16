@@ -160,108 +160,15 @@ mod tests {
 
     #[test]
     fn rebar_pins_at_scale_1_and_2() {
-        let want: [(Variant, [u64; 4]); 10] = [
-            (
-                Variant::Blue,
-                [
-                    0x8d7e919b16cf0c3b,
-                    0x2e2d7989cb987f94,
-                    0xb9ea95dc1000a761,
-                    0x378fc45603f1eec3,
-                ],
-            ),
-            (
-                Variant::Olive,
-                [
-                    0x8d7e919b16cf0c3b,
-                    0x2e2d7989cb987f94,
-                    0xb9ea95dc1000a761,
-                    0x378fc45603f1eec3,
-                ],
-            ),
-            (
-                Variant::Silver,
-                [
-                    0x02f2060fcfe629b7,
-                    0xd5555043c43cae75,
-                    0xb9ea95dc1000a761,
-                    0x378fc45603f1eec3,
-                ],
-            ),
-            (
-                Variant::Slate,
-                [
-                    0x39c1c16eed6e8e77,
-                    0x55db844d2d91ca95,
-                    0x221848b77a31edc9,
-                    0xa3852e3d97c059fb,
-                ],
-            ),
-            (
-                Variant::Sapphire,
-                [
-                    0x5c18e2541baf7cd4,
-                    0x5d60bb1ff0df8139,
-                    0x6506ae63d400f32b,
-                    0x5835cd7bf850573b,
-                ],
-            ),
-            (
-                Variant::Obsidian,
-                [
-                    0x5c18e2541baf7cd4,
-                    0x5d60bb1ff0df8139,
-                    0x6506ae63d400f32b,
-                    0x5835cd7bf850573b,
-                ],
-            ),
-            (
-                Variant::Ember,
-                [
-                    0xcc73d0111c8e4504,
-                    0x546b4610a9ae9b65,
-                    0x044881221d36f702,
-                    0xad4a8407cd59bd23,
-                ],
-            ),
-            (
-                Variant::Cobalt,
-                [
-                    0x5c18e2541baf7cd4,
-                    0x5d60bb1ff0df8139,
-                    0x6506ae63d400f32b,
-                    0x5835cd7bf850573b,
-                ],
-            ),
-            (
-                Variant::Carbon,
-                [
-                    0x5c18e2541baf7cd4,
-                    0x5d60bb1ff0df8139,
-                    0x6506ae63d400f32b,
-                    0x5835cd7bf850573b,
-                ],
-            ),
-            (
-                Variant::Steel,
-                [
-                    0x02f2060fcfe629b7,
-                    0xd5555043c43cae75,
-                    0xb9ea95dc1000a761,
-                    0x378fc45603f1eec3,
-                ],
-            ),
-        ];
         let mut got = Vec::new();
-        for (v, _) in want {
-            let mut h = [0; 4];
-            for (i, d) in [1, 2].into_iter().enumerate() {
-                h[i] = fnv(&part(v, Part::Rebar, d).atlas);
-                h[2 + i] = fnv(&part(v, Part::RebarBand, d).atlas);
+        for v in Variant::ALL {
+            for d in [1, 2] {
+                for p in [Part::Rebar, Part::RebarBand] {
+                    got.push((format!("{v:?} {p:?} {d}"), fnv(&part(v, p, d).atlas)));
+                }
             }
-            got.push((v, h));
         }
-        assert_eq!(got, want, "rebar hashes: {got:#x?}");
+        crate::pins::check("blue/rebar", &got);
     }
 
     #[test]

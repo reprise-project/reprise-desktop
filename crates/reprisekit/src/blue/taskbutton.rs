@@ -137,32 +137,11 @@ mod tests {
 
     #[test]
     fn task_button_pins_at_scale_1_and_2() {
-        let want: [(Variant, u64, u64); 7] = [
-            (Variant::Blue, 0xCE2B_2120_8196_01E6, 0x06CF_F971_39D9_403D),
-            (Variant::Olive, 0x1B44_34D0_3779_E596, 0x1D49_AA83_6491_DE2A),
-            (
-                Variant::Silver,
-                0xF9A5_F1CC_C2A4_7136,
-                0xC6E3_CAFE_E14F_9E9A,
-            ),
-            (Variant::Slate, 0x9579_F9EE_75AF_EDB8, 0xADDF_3378_35F6_3C96),
-            (
-                Variant::Sapphire,
-                0xD64A_5D50_7A65_8319,
-                0x6FA9_1C68_8EE0_E825,
-            ),
-            (
-                Variant::Obsidian,
-                0x3E8E_9C35_9035_659D,
-                0x6E3B_6960_F22E_1670,
-            ),
-            (Variant::Ember, 0x5785_778C_2917_0D35, 0xB5D9_C427_E99B_67B8),
-        ];
-        let got: Vec<_> = want
-            .iter()
-            .map(|&(v, _, _)| (v, fnv(&task_button(v, 1)), fnv(&task_button(v, 2))))
+        let got: Vec<_> = Variant::ALL
+            .into_iter()
+            .flat_map(|v| [1, 2].map(|d| (format!("{v:?} {d}"), fnv(&task_button(v, d)))))
             .collect();
-        assert_eq!(got, want);
+        crate::pins::check("blue/task_button", &got);
     }
 
     #[test]
