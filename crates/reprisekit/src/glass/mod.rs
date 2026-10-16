@@ -455,6 +455,11 @@ fn build_at(s: &Settings, scale: i32) -> Style {
     let style = GROUPS.into_iter().fold(style, |st, (parts, paint)| {
         st.with_painted_group(parts, move || paint(scale).into_iter().map(ink).collect())
     });
+    let style = if is_dark {
+        style.with_painted(Part::PlacesTile, move || items::dark_places(scale))
+    } else {
+        style
+    };
     let style = style
         .with_painted_group(&startpanel::PARTS, move || startpanel::parts(&owned, scale))
         .with_text_color(Part::StartPanel, State::Normal, startpanel::right_ink(s));
