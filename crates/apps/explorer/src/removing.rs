@@ -174,6 +174,7 @@ impl Explorer {
         }
         let r = self.removing.take()?;
         r.progress.ended(r.done, r.failed.as_ref());
+        self.publish_task_progress();
         if r.purpose == Purpose::Empty && r.failed.is_none() && !r.progress.meter.cancelled() {
             self.undos.retain_non_trash();
         }

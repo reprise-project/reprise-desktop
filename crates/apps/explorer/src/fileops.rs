@@ -371,6 +371,7 @@ impl Explorer {
         let mut put = self.put.take()?;
         let failed = put.failed.take();
         put.progress.ended(put.landed.len(), failed.as_ref());
+        self.publish_task_progress();
         self.undos.push_all(put.batch);
         self.sync_undo();
         if put.landed.iter().any(|p| p.is_dir()) {
