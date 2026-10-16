@@ -30,7 +30,11 @@ const BLOCK_H: i32 = 7;
 /// Slate, Sapphire, Obsidian and Cobalt, 2 px in the others.
 fn gap(v: Variant) -> i32 {
     match v {
-        Variant::Slate | Variant::Sapphire | Variant::Obsidian | Variant::Cobalt => 1,
+        Variant::Slate
+        | Variant::Sapphire
+        | Variant::Obsidian
+        | Variant::Cobalt
+        | Variant::Carbon => 1,
         Variant::Blue | Variant::Olive | Variant::Silver | Variant::Ember => 2,
     }
 }
@@ -160,7 +164,7 @@ mod tests {
         const GREY: [u64; 2] = [0xafdc_afa0_2895_a8f2, 0x353b_6ad5_ded9_ad8b];
         const SLATE: [u64; 2] = [0x5f64_ace7_2bb9_80a4, 0xbfe2_580b_921a_8087];
         let pin = |bar: [u64; 2], chunk: [u64; 2]| [bar[0], bar[1], chunk[0], chunk[1]];
-        let want: [(Variant, [u64; 4]); 8] = [
+        let want: [(Variant, [u64; 4]); 9] = [
             (
                 Variant::Blue,
                 pin(LIGHT, [0x5019_c2f5_4ecf_ceeb, 0x6f3e_2405_1682_cb89]),
@@ -183,6 +187,10 @@ mod tests {
             (
                 Variant::Cobalt,
                 pin(GREY, [0x100e_616f_7028_4c34, 0xf7f3_5ceb_32ed_ad27]),
+            ),
+            (
+                Variant::Carbon,
+                pin(GREY, [0x0ebb_ab23_143e_cd0c, 0x7eb7_af7b_2101_b117]),
             ),
         ];
         let got = want.map(|(v, _)| {
@@ -323,6 +331,7 @@ mod tests {
             Variant::Slate,
             Variant::Ember,
             Variant::Cobalt,
+            Variant::Carbon,
         ];
         let mut seen = Vec::new();
         for v in own {
@@ -332,7 +341,11 @@ mod tests {
         for v in Variant::ALL {
             let gap = part(v, 1, Part::ProgressChunk).atlas.width as i32 - BLOCK_W;
             let want = match v {
-                Variant::Slate | Variant::Sapphire | Variant::Obsidian | Variant::Cobalt => 1,
+                Variant::Slate
+                | Variant::Sapphire
+                | Variant::Obsidian
+                | Variant::Cobalt
+                | Variant::Carbon => 1,
                 _ => 2,
             };
             assert_eq!(gap, want, "{v:?}'s gap");

@@ -86,7 +86,7 @@ mod tests {
     /// height, pixels).
     #[test]
     fn size_box_pins_at_scale_1_and_2() {
-        let want: [(Variant, [u64; 2]); 8] = [
+        let want: [(Variant, [u64; 2]); 9] = [
             (
                 Variant::Blue,
                 [0x369b_22dd_5ce2_859d, 0xafc0_30a0_790a_de65],
@@ -117,6 +117,10 @@ mod tests {
             ),
             (
                 Variant::Cobalt,
+                [0x7761_5d96_182c_f4cd, 0x18cf_3ba6_f73d_5ca5],
+            ),
+            (
+                Variant::Carbon,
                 [0x7761_5d96_182c_f4cd, 0x18cf_3ba6_f73d_5ca5],
             ),
         ];

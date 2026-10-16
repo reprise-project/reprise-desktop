@@ -10,9 +10,9 @@ use crate::style::{Layout, PartImage, State};
 const RADIUS: f64 = 2.0;
 
 /// How far the body sits in from the frame's left, top, right and bottom
-/// edges in the glossy schemes (slate, sapphire, obsidian, ember, cobalt):
-/// one pixel of the bar shows round the sides and top, none under it. Navy,
-/// olive green and silver fill the frame.
+/// edges in the glossy schemes (slate, sapphire, obsidian, ember, cobalt,
+/// carbon): one pixel of the bar shows round the sides and top, none under
+/// it. Navy, olive green and silver fill the frame.
 const GLOSS_INSET: [i32; 4] = [1, 1, 1, 0];
 
 /// The frames in atlas order; a held button draws its checked face.
@@ -42,7 +42,8 @@ fn inset(v: Variant) -> [i32; 4] {
         | Variant::Sapphire
         | Variant::Obsidian
         | Variant::Ember
-        | Variant::Cobalt => GLOSS_INSET,
+        | Variant::Cobalt
+        | Variant::Carbon => GLOSS_INSET,
         Variant::Blue | Variant::Olive | Variant::Silver => [0; 4],
     }
 }
@@ -175,6 +176,7 @@ mod tests {
             (Variant::Obsidian, 12),
             (Variant::Ember, 13),
             (Variant::Cobalt, 12),
+            (Variant::Carbon, 12),
         ] {
             let (one, two) = (task_button(v, 1), task_button(v, 2));
             let f = one.frame(State::Normal);

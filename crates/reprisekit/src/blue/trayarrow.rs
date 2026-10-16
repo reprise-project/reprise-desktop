@@ -665,6 +665,30 @@ mod tests {
                     0x6db3f0c0dfa10b02,
                 ],
             ),
+            (
+                Variant::Carbon,
+                1,
+                [
+                    0x006c66f299681d08,
+                    0x5f441d711044fdf8,
+                    0xf67222539217706c,
+                    0x42fdd8ce86af5268,
+                    0xbb3296d7808bb424,
+                    0xab84a72a3dfd6b0c,
+                ],
+            ),
+            (
+                Variant::Carbon,
+                2,
+                [
+                    0xa13918d9c12d2b1b,
+                    0x474ba20522eb48ef,
+                    0x332e6117989e7f43,
+                    0xd1c04742c12973b7,
+                    0x8a214f2ab35edc87,
+                    0xda6cc504c344c4eb,
+                ],
+            ),
         ];
         assert_eq!(got.as_slice(), want);
     }

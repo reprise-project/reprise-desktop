@@ -28,9 +28,11 @@ const EDGE_IN: f64 = 1e-6;
 fn title(v: Variant) -> Insets {
     match v {
         Variant::Blue | Variant::Olive | Variant::Silver => Insets::new(3, 2, 0, 1),
-        Variant::Slate | Variant::Sapphire | Variant::Obsidian | Variant::Cobalt => {
-            Insets::new(0, 2, 0, 1)
-        }
+        Variant::Slate
+        | Variant::Sapphire
+        | Variant::Obsidian
+        | Variant::Cobalt
+        | Variant::Carbon => Insets::new(0, 2, 0, 1),
         Variant::Ember => Insets::new(3, 2, 0, 3),
     }
 }
@@ -231,7 +233,7 @@ mod tests {
 
     #[test]
     fn header_pins_at_scale_1_and_2() {
-        let want: [(Variant, [u64; 6]); 8] = [
+        let want: [(Variant, [u64; 6]); 9] = [
             (
                 Variant::Blue,
                 [
@@ -311,6 +313,17 @@ mod tests {
             ),
             (
                 Variant::Cobalt,
+                [
+                    0x508970216ff9a0b6,
+                    0x05849484f434a042,
+                    0xadc1f93844499518,
+                    0x2da198413e3a52a9,
+                    0x40be134b9311df67,
+                    0x6abc37e2324b99f7,
+                ],
+            ),
+            (
+                Variant::Carbon,
                 [
                     0x508970216ff9a0b6,
                     0x05849484f434a042,

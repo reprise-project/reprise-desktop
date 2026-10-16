@@ -147,6 +147,7 @@ mod tests {
             (Variant::Obsidian, [2, 28, 70], 92),
             (Variant::Ember, BLUE_CONTENT, BLUE_HEIGHT),
             (Variant::Cobalt, [2, 28, 70], 92),
+            (Variant::Carbon, [2, 28, 70], 92),
         ] {
             let m = interfaces::blue_theme(v).look.controls().rebar;
             let rects = layout(&rb, Rect::new(0, 0, 792, h), &m);

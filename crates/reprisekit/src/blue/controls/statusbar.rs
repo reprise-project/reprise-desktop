@@ -175,7 +175,7 @@ mod tests {
     /// (width, height, pixels): [bar 1, bar 2, pane 1, pane 2].
     #[test]
     fn status_parts_pin_at_scale_1_and_2() {
-        let want: [(Variant, [u64; 4]); 8] = [
+        let want: [(Variant, [u64; 4]); 9] = [
             (
                 Variant::Blue,
                 [
@@ -241,6 +241,15 @@ mod tests {
             ),
             (
                 Variant::Cobalt,
+                [
+                    0xf1f9_912d_e5c5_3906,
+                    0x9223_af80_4aee_0003,
+                    0x25a1_8c18_34c6_bdaf,
+                    0x29d6_854f_9f58_5d0d,
+                ],
+            ),
+            (
+                Variant::Carbon,
                 [
                     0xf1f9_912d_e5c5_3906,
                     0x9223_af80_4aee_0003,

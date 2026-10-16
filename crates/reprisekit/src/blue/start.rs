@@ -355,6 +355,12 @@ mod tests {
             "Cobalt 2 Normal 1aa9d1fd55fd095e",
             "Cobalt 2 Hot 5f562256ec27c96a",
             "Cobalt 2 Pressed f364d196c7603946",
+            "Carbon 1 Normal 597e123d53a503c7",
+            "Carbon 1 Hot 34ad59079c9a66f3",
+            "Carbon 1 Pressed 8000ec6bbcf9b9f9",
+            "Carbon 2 Normal a2a860054d19b74a",
+            "Carbon 2 Hot 5f55224dafd8f36c",
+            "Carbon 2 Pressed d8fa6a5d073f9d1f",
         ];
         assert_eq!(got, want, "Start pill hashes per scheme, scale and state");
     }

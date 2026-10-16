@@ -2766,7 +2766,8 @@ mod tests {
                 "Sapphire",
                 "Obsidian",
                 "Ember",
-                "Cobalt"
+                "Cobalt",
+                "Carbon"
             ]
         );
         assert!(

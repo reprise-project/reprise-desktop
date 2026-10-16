@@ -642,6 +642,20 @@ mod tests {
             "Cobalt 2 TaskExpand 8b3e440a691bc524",
             "Cobalt 2 TaskCollapseMark 0489529eda5d9c77",
             "Cobalt 2 TaskExpandMark e197de0f552d2353",
+            "Carbon 1 TaskPane 296610cdaaea2a7b",
+            "Carbon 1 TaskGroupHeader e858d3b0d9fad53a",
+            "Carbon 1 TaskGroupBody 56571f90c0cbbe1a",
+            "Carbon 1 TaskCollapse 7fc4d247767e6d8d",
+            "Carbon 1 TaskExpand 0584c87217598edd",
+            "Carbon 1 TaskCollapseMark 44549ba180bc1110",
+            "Carbon 1 TaskExpandMark 75ff1da34b73200a",
+            "Carbon 2 TaskPane 31beb68496c65502",
+            "Carbon 2 TaskGroupHeader 2e34d6b680997332",
+            "Carbon 2 TaskGroupBody 948a169ca2c8424f",
+            "Carbon 2 TaskCollapse 9f59a9eb0716b681",
+            "Carbon 2 TaskExpand d6ce1a16c28187b5",
+            "Carbon 2 TaskCollapseMark 17bcb516c6db3427",
+            "Carbon 2 TaskExpandMark 7eb36168ba3a1ba3",
         ];
         assert_eq!(got, want);
     }

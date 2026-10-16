@@ -14,7 +14,7 @@ These share the project's license, GPL-3.0-or-later:
 - **Controls and chrome drawn in code:** Reprise Blue and Reprise Glass hold
   no bitmaps. Every part is drawn at the output scale from shapes (rounded
   boxes, discs, gradients and stroked glyphs, in `crates/reprisekit/src/shape/`)
-  and named colours: Blue's from its eight schemes in
+  and named colours: Blue's from its nine schemes in
   `crates/reprisekit/src/blue/scheme/`, Glass's from the `[glass]` settings.
   That covers caption buttons, check marks, radio buttons, arrows and other
   glyphs; Blue's frames, taskbar, Start button, tray and controls; Glass's

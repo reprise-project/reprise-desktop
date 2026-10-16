@@ -129,7 +129,7 @@ mod tests {
             .iter()
             .map(|&v| (v, fnv(&atlas(v, 1)), fnv(&atlas(v, 2))))
             .collect();
-        let want: [(Variant, u64, u64); 8] = [
+        let want: [(Variant, u64, u64); 9] = [
             (Variant::Blue, 3969084999834761493, 4799614750075183387),
             (Variant::Olive, 3969084999834761493, 4799614750075183387),
             (Variant::Silver, 3969084999834761493, 4799614750075183387),
@@ -146,6 +146,7 @@ mod tests {
             ),
             (Variant::Ember, 15724431930943416073, 10510917493418624306),
             (Variant::Cobalt, 15724431930943416073, 10510917493418624306),
+            (Variant::Carbon, 15724431930943416073, 10510917493418624306),
         ];
         assert_eq!(got, want);
     }
