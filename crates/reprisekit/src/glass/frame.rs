@@ -487,16 +487,50 @@ pub const SHEET: i32 = 2 * SIDE + 1;
 /// The client's light and dark edges inside the frame, in design px.
 const CLIENT_EDGES: i32 = 2;
 
-/// The frame's plain glass under the client's top, Normal then Inactive, painted at `d`: one
-/// design pixel stretched, laid [`CLIENT_EDGES`] past the left, top and right over the client's
-/// edges, which give way to glass there.
+/// Rows of [`client_glass`], its outset row included: the caption's sheen carried down under
+/// the client is gone by the last, which a deeper band stretches.
+pub const CLIENT_ROWS: i32 = 110;
+
+/// [`CAPTION_SHEEN`] carried on down under the client's top, no longer cut at the band's foot.
+const CLIENT_SHEEN: Ends = Ends {
+    fade: (
+        (BAND - CLIENT_EDGES + CLIENT_ROWS) as f64,
+        (BAND - CLIENT_EDGES + CLIENT_ROWS) as f64 + 1.0,
+    ),
+    ..CAPTION_SHEEN
+};
+
+/// The frame's glass under a restored window's top, Normal then Inactive, painted at `d`: the
+/// caption's glass and the sheen at each end carried down past the band, [`CLIENT_ROWS`] tall,
+/// laid [`CLIENT_EDGES`] past the left, top and right over the client's edges to give way to
+/// the glass there. Like the caption, its ends stay fixed and its plain middle stretches.
 pub fn client_glass(s: &Settings, d: i32) -> PartImage {
-    frames(s, (1, 1), d, |p, _, _| p.px(Ring::Glass, 0.0)).outset(Insets::new(
-        CLIENT_EDGES,
-        CLIENT_EDGES,
-        CLIENT_EDGES,
-        0,
-    ))
+    let w = 2 * END + 2;
+    let (left, top) = (SIDE - CLIENT_EDGES, BAND - CLIENT_EDGES);
+    let far = w + 2 * left - 1;
+    frames(s, (w, CLIENT_ROWS), d, |p, x, y| {
+        let (x, y) = (
+            centre(x, d) + f64::from(left),
+            centre(y, d) + f64::from(top),
+        );
+        let sheen = CLIENT_SHEEN
+            .at_point(x, y)
+            .max(CLIENT_SHEEN.at_point(f64::from(far) - x, y));
+        p.px(Ring::Glass, sheen)
+    })
+    .sizing(Insets::new(END, CLIENT_ROWS - 1, END, 0))
+    .split_ends()
+    .outset(client_outset())
+}
+
+/// A maximized window's glass under its top: [`max_caption`]'s plain glass, one design pixel
+/// stretched, Normal then Inactive, painted at `d`.
+pub fn max_client_glass(s: &Settings, d: i32) -> PartImage {
+    frames(s, (1, 1), d, |p, _, _| p.px(Ring::Glass, 0.0)).outset(client_outset())
+}
+
+fn client_outset() -> Insets {
+    Insets::new(CLIENT_EDGES, CLIENT_EDGES, CLIENT_EDGES, 0)
 }
 
 #[cfg(test)]
@@ -784,17 +818,17 @@ mod tests {
     }
 
     #[test]
-    fn client_glass_is_the_frames_plain_glass_laid_over_the_client_edges() {
+    fn max_client_glass_is_the_frames_plain_glass_laid_over_the_client_edges() {
         for (k, (_, state)) in SURFACES.into_iter().enumerate() {
             for d in [1, 2] {
-                let img = client_glass(&Settings::default(), d);
+                let img = max_client_glass(&Settings::default(), d);
                 assert!(
                     (0..d).all(|x| (0..d).all(|y| at(&img, state, x, y) == art::PLAIN[k])),
                     "{state:?} at scale {d}: plain glass"
                 );
             }
         }
-        let img = client_glass(&Settings::default(), 1);
+        let img = max_client_glass(&Settings::default(), 1);
         assert_eq!(
             img.outset,
             Insets::new(CLIENT_EDGES, CLIENT_EDGES, CLIENT_EDGES, 0),
@@ -805,9 +839,48 @@ mod tests {
             ..Settings::default()
         };
         assert_eq!(
-            at(&client_glass(&opaque, 1), State::Normal, 0, 0),
+            at(&max_client_glass(&opaque, 1), State::Normal, 0, 0),
             0xFFB0_C9E6,
             "opaque as the frame's plain glass is"
+        );
+    }
+
+    #[test]
+    fn client_glass_carries_the_captions_end_sheen_down_to_plain_glass() {
+        let s = Settings::default();
+        let cap = caption(&s, 1);
+        for (k, (_, state)) in SURFACES.into_iter().enumerate() {
+            let plain = art::PLAIN[k];
+            for d in [1, 2] {
+                let img = client_glass(&s, d);
+                let px = |x: i32, y: i32| at(&img, state, x * d, y * d);
+                let what = format!("{state:?} at scale {d}");
+                assert_ne!(px(0, 0), plain, "{what}: the end's top is sheened");
+                assert_eq!(px(END, 0), plain, "{what}: plain glass past the end");
+                assert_eq!(px(0, CLIENT_ROWS - 1), plain, "{what}: the sheen is gone");
+                assert_eq!(px(0, 0), px(2 * END + 1, 0), "{what}: both ends alike");
+            }
+            let img = client_glass(&s, 1);
+            for x in [0, 20, 60, 120] {
+                let (below, above) = (at(&img, state, x, 0), at(&cap, state, x + SIDE - 2, 27));
+                let near = (0..4)
+                    .all(|i| (below >> (8 * i) & 0xFF).abs_diff(above >> (8 * i) & 0xFF) <= 4);
+                assert!(
+                    near,
+                    "{state:?} column {x}: {below:08X} carries on {above:08X}"
+                );
+            }
+        }
+        let img = client_glass(&s, 1);
+        assert_eq!(
+            img.outset,
+            Insets::new(CLIENT_EDGES, CLIENT_EDGES, CLIENT_EDGES, 0),
+            "over the client's edges beside and above, none below"
+        );
+        assert_eq!(
+            img.sizing,
+            Insets::new(END, CLIENT_ROWS - 1, END, 0),
+            "fixed ends and rows, the last row stretching"
         );
     }
 
@@ -818,14 +891,26 @@ mod tests {
                 material,
                 ..Settings::default()
             };
-            [1, 2].map(|d| fnv(&client_glass(&s, d)))
+            [1, 2].map(|d| [fnv(&client_glass(&s, d)), fnv(&max_client_glass(&s, d))])
         });
         let want = [
-            [0xD6C9_6FCC_DFB0_0A84, 0x3CD3_AEE4_9B07_8B15],
-            [0x7542_D690_08B5_0B29, 0x0C48_F624_358D_9065],
-            [0xF755_0E91_5CDB_520B, 0x7ECF_8D47_39DC_8475],
+            [
+                [0x4787_5A5E_F15B_DA6D, 0xD6C9_6FCC_DFB0_0A84],
+                [0x13D7_BAC6_2753_11CD, 0x3CD3_AEE4_9B07_8B15],
+            ],
+            [
+                [0x1AB6_329F_A262_8915, 0x7542_D690_08B5_0B29],
+                [0x4F79_DFDF_84D1_2091, 0x0C48_F624_358D_9065],
+            ],
+            [
+                [0x3925_0BDD_7575_F885, 0xF755_0E91_5CDB_520B],
+                [0x3765_9B57_6106_0319, 0x7ECF_8D47_39DC_8475],
+            ],
         ];
-        assert_eq!(got, want, "Frosted, Smoked, Molten: {got:X?}");
+        assert_eq!(
+            got, want,
+            "Frosted, Smoked, Molten, sheened then plain: {got:X?}"
+        );
     }
 
     #[test]

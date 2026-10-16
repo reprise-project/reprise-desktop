@@ -58,6 +58,17 @@ pub fn draw_separator(c: &mut Canvas, p: &Paint, big: bool, r: Rect) {
     classic::toolbar::draw_separator(c, p, big, r)
 }
 
+/// A separator in its slot `r` over the frame's glass: the style's [`Part::GlassSeparator`],
+/// else as [`draw_separator`] draws it.
+pub fn draw_glass_separator(c: &mut Canvas, p: &Paint, big: bool, r: Rect) {
+    match p.look.style() {
+        Some(st) if st.part(Part::GlassSeparator).is_some() => {
+            st.draw(c, r, Part::GlassSeparator, State::Normal, p.s);
+        }
+        _ => draw_separator(c, p, big, r),
+    }
+}
+
 /// How far a button's icon, label and arrow move right and down in
 /// `state`: one pixel held in every look, and latched down too under a
 /// style with toolbar parts.

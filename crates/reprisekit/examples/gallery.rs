@@ -5606,12 +5606,8 @@ fn render_glass_client_glass(theme: &Theme) -> Canvas {
         };
         let mut f = Canvas::new(g.total.0 as u32, g.total.1 as u32);
         look::draw_frame(&mut f, theme, &text, &caption_text, &g, &st);
-        let glass = look::client_glass(theme, active).unwrap();
-        for y in g.client.y..g.client.y + g.glass_top {
-            for x in g.client.x..g.client.right() {
-                f.put_raw(x, y, glass);
-            }
-        }
+        let band = Rect::new(g.client.x, g.client.y, g.client.width, g.glass_top);
+        look::draw_client_glass(&mut f, &themed, band, false);
         f.blit_over(g.client.x, g.client.y, &client);
         c.blit_over(15 + 470 * i as i32, 10, &f);
     }

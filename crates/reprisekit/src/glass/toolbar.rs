@@ -220,6 +220,31 @@ fn separator() -> PartImage {
     ))
 }
 
+/// The separator's lines over the frame's glass: translucent, so they etch whatever glass lies
+/// behind in either mode.
+const GLASS_SEP_DARK: u32 = 0x3300_0000;
+const GLASS_SEP_LIGHT: u32 = 0x8080_8080;
+
+/// [`separator`] over the frame's glass, painted at `d`: its dark line and light line
+/// [`GLASS_SEP_DARK`] and [`GLASS_SEP_LIGHT`].
+pub fn glass_separator(d: i32) -> PartImage {
+    let h = 2 * SEP_INSET + 1;
+    let mut a = Canvas::new((SEP_W * d) as u32, (h * d) as u32);
+    for (x, px) in [(SEP_X, GLASS_SEP_DARK), (SEP_X + 1, GLASS_SEP_LIGHT)] {
+        for (dx, dy) in (0..d).flat_map(|dx| (0..d).map(move |dy| (dx, dy))) {
+            a.put_raw(x * d + dx, SEP_INSET * d + dy, px);
+        }
+    }
+    PartImage::new(a, &[State::Normal], Layout::Vertical)
+        .sizing(Insets::new(
+            SEP_X + 2,
+            SEP_INSET,
+            SEP_W - SEP_X - 2,
+            SEP_INSET,
+        ))
+        .at_scale(d)
+}
+
 fn gripper() -> PartImage {
     let mut a = Canvas::new(3, GRIP.len() as u32);
     for (y, row) in GRIP.iter().enumerate() {

@@ -46,7 +46,8 @@ use std::sync::{Arc, Mutex, OnceLock};
 use crate::metrics::{ControlMetrics, PlacesMetrics, RebarMetrics};
 use crate::raster::Rect;
 use crate::style::{
-    CaptionTitle, GlassSpec, PanelSpec, Part, PartImage, State, Style, TextSpec, TrackMarks,
+    CaptionTitle, GlassSpec, PanelSpec, Part, PartImage, State, Style, TextSpec, TitleGlow,
+    TrackMarks,
 };
 use crate::taskbar::{ClockBox, LabelledButton, OrbRise, StartMenuDock, TaskbarShape};
 use crate::theme::{CaptionGroup, Color, ColorScheme, GroupPlace, Metrics};
@@ -351,6 +352,7 @@ fn build_at(s: &Settings, scale: i32) -> Style {
         },
     })
     .with_caption_title(title)
+    .with_label_glow(label_glow(s.material, s.mode))
     .with_chrome_colors(colors(Mode::Light))
     .with_text_color(Part::CheckBox, State::Disabled, greyed_choice_text(s.mode))
     .with_text_color(Part::Radio, State::Disabled, greyed_choice_text(s.mode))
@@ -382,6 +384,11 @@ fn build_at(s: &Settings, scale: i32) -> Style {
     .with_painted(Part::FrameBottom, lazy(frame::frame_bottom))
     .with_painted(Part::WindowSheet, lazy(frame::sheet))
     .with_painted(Part::ClientGlass, lazy(frame::client_glass))
+    .with_painted(Part::MaxClientGlass, lazy(frame::max_client_glass))
+    .with_painted(
+        Part::GlassSeparator,
+        lazy(|_, d| toolbar::glass_separator(d)),
+    )
     .with_painted(Part::CaptionGroup, lazy(buttons::caption_group))
     .with_painted(Part::MaxCaptionGroup, lazy(buttons::max_caption_group))
     .with_painted(Part::CloseButton, lazy(buttons::dialog_close))
@@ -832,7 +839,7 @@ pub const CAPTION_TITLE_DARK: CaptionTitle = CaptionTitle {
 /// [`CAPTION_TITLE_DARK`]'s black edge on dark glass (dark mode, and
 /// Smoked in either mode).
 pub fn caption_ink(material: Material, mode: Mode) -> ([Color; 2], CaptionTitle) {
-    if mode == Mode::Light && material != Material::Smoked {
+    if light_glass(material, mode) {
         ([Color::rgb(0, 0, 0); 2], CAPTION_TITLE)
     } else {
         (
@@ -840,6 +847,19 @@ pub fn caption_ink(material: Material, mode: Mode) -> ([Color; 2], CaptionTitle)
             CAPTION_TITLE_DARK,
         )
     }
+}
+
+/// The halo under labels a client inks in [`caption_ink`] over its frame's glass: the title's
+/// white glow on light glass, [`paint::LABEL_HALO_DARK`] under white labels on dark glass.
+pub fn label_glow(material: Material, mode: Mode) -> TitleGlow {
+    match light_glass(material, mode) {
+        true => paint::TITLE_GLOW,
+        false => paint::LABEL_HALO_DARK,
+    }
+}
+
+fn light_glass(material: Material, mode: Mode) -> bool {
+    mode == Mode::Light && material != Material::Smoked
 }
 
 /// The window title: the caption face at 12 px (9 pt), no shadow, in `ink`
@@ -1105,6 +1125,28 @@ mod tests {
             "the dark title's edge is black"
         );
         assert_eq!((glow.reach)(1), 3, "and reaches 3 px past the text");
+    }
+
+    #[test]
+    fn labels_on_dark_glass_get_a_black_halo_and_on_light_glass_a_white_glow() {
+        let white = Color::rgb(0xFF, 0xFF, 0xFF);
+        for material in [Material::Frosted, Material::Molten] {
+            assert_eq!(
+                label_glow(material, Mode::Light).color,
+                white,
+                "{material:?}"
+            );
+        }
+        for (material, mode) in [
+            (Material::Smoked, Mode::Light),
+            (Material::Frosted, Mode::Dark),
+            (Material::Molten, Mode::Dark),
+        ] {
+            let halo = label_glow(material, mode);
+            let what = format!("{material:?} {mode:?}");
+            assert_eq!(halo.color, Color::rgb(0, 0, 0), "{what}: a black halo");
+            assert_eq!((halo.reach)(1), 4, "{what}: reaching 4 px");
+        }
     }
 
     /// The contrast between a Smoked window's title and the edge under it
@@ -1419,6 +1461,7 @@ mod tests {
             Part::FrameBottom,
             Part::WindowSheet,
             Part::ClientGlass,
+            Part::MaxClientGlass,
             Part::CaptionGroup,
             Part::MaxCaptionGroup,
             Part::CloseButton,

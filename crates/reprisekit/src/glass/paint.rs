@@ -114,6 +114,16 @@ pub const TITLE_GLOW_DARK: TitleGlow = TitleGlow {
     ..TITLE_GLOW
 };
 
+/// Under white labels a client draws over its frame's glass in dark mode (menu titles, toolbar
+/// buttons): [`TITLE_GLOW_DARK`]'s edge over a faint dark cloud ([`HALO`]), so
+/// they read over the pale glass and its sheen.
+pub const LABEL_HALO_DARK: TitleGlow = TitleGlow {
+    reach: halo_reach,
+    color: Color::rgb(0, 0, 0),
+    alpha: label_halo,
+    ..TITLE_GLOW
+};
+
 struct GlowShape {
     /// Spread before the blur, at scale 1.
     spread: i32,
@@ -135,6 +145,14 @@ const EDGE: GlowShape = GlowShape {
     spread: 0,
     gain: 3.0,
     states: [(0.75, 1.4), (0.85, 1.4)],
+};
+
+/// The faint dark cloud of [`LABEL_HALO_DARK`]: blurred about 2 px, so it fades out within a
+/// menu bar's rows.
+const HALO: GlowShape = GlowShape {
+    spread: 0,
+    gain: 1.5,
+    states: [(0.35, 2.0), (0.35, 2.0)],
 };
 
 impl GlowShape {
@@ -161,6 +179,11 @@ pub fn glow_reach(scale: i32) -> i32 {
 /// How far [`TITLE_GLOW_DARK`] reaches: 3 px at scale 1.
 pub fn edge_reach(scale: i32) -> i32 {
     EDGE.reach(scale)
+}
+
+/// How far [`LABEL_HALO_DARK`] reaches at `scale`: its cloud's reach.
+pub fn halo_reach(scale: i32) -> i32 {
+    HALO.reach(scale)
 }
 
 /// Radii of three box blurs whose sum has variance `sigma`^2 as near as odd widths allow: the
@@ -201,7 +224,20 @@ pub fn title_edge(m: &GlowMask) -> Arc<[u8]> {
         .get(m, |m| glow_alpha(&EDGE, m))
 }
 
-/// How many glows [`title_glow`] and [`title_edge`] each keep, oldest dropped first. An entry
+/// [`LABEL_HALO_DARK`]'s alpha for `m`, kept like [`title_glow`]'s.
+pub fn label_halo(m: &GlowMask) -> Arc<[u8]> {
+    static HALOS: Mutex<GlowCache> = Mutex::new(GlowCache::new());
+    HALOS.lock().unwrap_or_else(|e| e.into_inner()).get(m, |m| {
+        let edge = glow_alpha(&EDGE, m);
+        let mut cloud = glow_alpha(&HALO, m);
+        for (c, e) in cloud.iter_mut().zip(edge) {
+            *c = (*c).max(e);
+        }
+        cloud
+    })
+}
+
+/// How many glows [`title_glow`], [`title_edge`] and [`label_halo`] each keep, oldest dropped first. An entry
 /// holds two bytes per mask pixel: about 9 KB for a short title, 300 KB across a maximized 3840
 /// px window at scale 2, so at most about 5 MB for 16.
 const GLOW_CACHE_CAP: usize = 16;
