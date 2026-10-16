@@ -9,6 +9,7 @@
 
 mod commit;
 mod inputfds;
+mod reset;
 
 use std::{
     collections::HashMap,
@@ -101,7 +102,9 @@ pub struct Backend {
     /// `REPRISE_COMMIT_DELAY` as the session started.
     delay: Option<String>,
     /// The session came back: reset the device once no commit is out (`reset_device`).
-    reset: bool,
+    back: reset::Return,
+    /// The `commit-device` thread, which runs the reset's commit.
+    device: DeviceThread,
     /// A hotplug uevent asked for a connector scan, run once quiet; one that came while the
     /// session was away runs on its return.
     rescan: bool,
@@ -133,6 +136,8 @@ struct Surface {
     flight: Option<InFlight>,
     /// The flipped frame's feedback, presented at its vblank.
     presenting: Option<OutputPresentationFeedback>,
+    /// When the last frame that took went to the kernel.
+    lit_at: Option<std::time::Instant>,
     /// Commit timings since the last frame-rate log line.
     commit_times: Vec<commit::Times>,
     needs_redraw: bool,
@@ -257,6 +262,12 @@ impl commit::Frames for Compositor {
     }
 }
 
+/// The thread that turns the whole device off after a session return, and main's view of it.
+struct DeviceThread {
+    thread: commit::Thread<Vec<reset::Keep>>,
+    track: commit::Track<Flip>,
+}
+
 struct Parked {
     output: Output,
     connector: connector::Info,
@@ -378,6 +389,23 @@ pub fn init(state: &mut State) -> Result<(), Box<dyn std::error::Error>> {
             ChannelEvent::Closed => {}
         })
         .map_err(|e| e.error)?;
+    let (device_replies, device_done) = channel::<((), commit::Reply<Vec<crtc::Handle>>)>();
+    state
+        .handle
+        .insert_source(device_done, |event, _, state| {
+            if let ChannelEvent::Msg(((), commit::Reply::Done(done))) = event {
+                device_reset_done(state, done);
+            }
+        })
+        .map_err(|e| e.error)?;
+    let device = reset::Device {
+        fd: drm.device_fd().clone(),
+        atomic: drm.is_atomic(),
+    };
+    let device = DeviceThread {
+        thread: commit::Thread::spawn("device", (), device, None, device_replies)?,
+        track: commit::Track::default(),
+    };
     let udev = MonitorBuilder::new()?.match_subsystem("drm")?.listen()?;
     state.handle.insert_source(
         Generic::new(udev, Interest::READ, Mode::Level),
@@ -429,7 +457,8 @@ pub fn init(state: &mut State) -> Result<(), Box<dyn std::error::Error>> {
         retiring: HashMap::new(),
         reenable: Default::default(),
         delay: std::env::var(commit::Delay::VAR).ok(),
-        reset: false,
+        back: reset::Return::default(),
+        device,
         rescan: false,
         probe: None,
         step: None,
@@ -735,6 +764,7 @@ pub fn enable(state: &mut State, output: &Output, index: usize) -> bool {
             track: commit::Track::default(),
             flight: None,
             presenting: None,
+            lit_at: None,
             commit_times: Vec::new(),
             needs_redraw: true,
             scene_changed: true,
@@ -820,7 +850,7 @@ pub fn disable(state: &mut State, output: &Output) -> bool {
         connector,
         vrr_capable,
         global,
-        thread,
+        mut thread,
         compositor,
         track,
         callback_timer,
@@ -987,6 +1017,7 @@ fn activate(state: &mut State) {
         return;
     };
     log::info!("session active");
+    b.back.activated(std::time::Instant::now());
     inputfds::release(&mut b.session, &b.input_fds);
     if b.libinput.resume().is_err() {
         log::warn!("libinput did not resume");
@@ -995,7 +1026,6 @@ fn activate(state: &mut State) {
     if let Err(e) = b.drm.activate(false) {
         log::error!("drm activate: {e}");
     }
-    b.reset = true;
     for s in b.surfaces.values_mut() {
         s.track.reset();
         s.hw.unlit = true;
@@ -1008,21 +1038,21 @@ fn activate(state: &mut State) {
     schedule_all(state, Ask::Scene);
 }
 
-/// Once the session is back, quiet and no commit is out: read back each CRTC's gamma, turn
-/// off every CRTC, connector and plane (another master may have left a CRTC lit on a connector
-/// one of ours now claims, which fails every later commit), then re-read each output's state,
-/// drop its buffers and the frame whose vblank `Track::reset` forgot.
+/// Once the session is back, quiet and no commit is out: read back each CRTC's gamma, then
+/// send the device reset (`reset::plan`) to the `commit-device` thread; `device_reset_done`
+/// finishes the outputs. Another master may have left a CRTC lit on a connector one of ours now
+/// claims, which fails every later commit.
 fn reset_device(state: &mut State) {
     let Some(b) = state.backend.as_mut() else {
         return;
     };
     let busy = b.surfaces.values().any(|s| s.track.busy());
-    if !b.reset || !b.session.is_active() || busy || !b.quiet() {
+    if !b.back.ready() || !b.session.is_active() || busy || !b.quiet() {
         return;
     }
     gated(b, "device reset");
-    b.reset = false;
     let dev = &b.drm;
+    let mut keep = Vec::new();
     for (&crtc, s) in b.surfaces.iter_mut() {
         // Another DRM master may have left its own LUT.
         if let Some(g) = s.hw.gamma {
@@ -1032,10 +1062,70 @@ fn reset_device(state: &mut State) {
                 s.hw.wanted_lut = ours;
             }
         }
+        if !s.hw.off && s.lit_at.is_some_and(|t| b.back.after_return(t)) {
+            keep.push(reset::Keep {
+                crtc,
+                connector: s.connector.handle(),
+                primary: lock(&s.compositor).surface().plane(),
+            });
+        }
     }
-    if let Err(e) = b.drm.reset_state() {
-        log::warn!("drm reset: {e}");
+    b.back.sent();
+    b.device
+        .track
+        .sent(commit::Kind::Reset, std::time::Instant::now());
+    if !b
+        .device
+        .thread
+        .send(commit::Job::Run(commit::Kind::Reset, keep))
+    {
+        log::error!("the device reset thread is gone; resetting on the main thread");
+        b.device.track.unsent();
+        b.back.done(true);
+        if let Err(e) = b.drm.reset_state() {
+            log::warn!("drm reset: {e}");
+        }
+        finish_reset(state);
     }
+    watch(state);
+}
+
+/// The device reset's commit returned: unless the session went away or came back again
+/// meanwhile, re-read each output's state, drop its buffers and the frame whose vblank
+/// `Track::reset` forgot, then let the outputs render.
+fn device_reset_done(state: &mut State, done: commit::Done<Vec<crtc::Handle>>) {
+    let Some(b) = state.backend.as_mut() else {
+        return;
+    };
+    b.device
+        .track
+        .done(done.result.is_ok(), std::time::Instant::now());
+    let took = done.ended.saturating_duration_since(done.started);
+    match &done.result {
+        Ok(kept) => log::debug!("device reset in {took:?}, left lit {kept:?}"),
+        Err(e) => log::warn!("drm reset: {e}"),
+    }
+    if b.back.done(b.session.is_active()) {
+        finish_reset(state);
+        for crtc in done.result.unwrap_or_default() {
+            let off = state
+                .backend
+                .as_ref()
+                .and_then(|b| b.surfaces.get(&crtc))
+                .is_some_and(|s| s.hw.off);
+            if off {
+                power_off(state, crtc);
+            }
+        }
+    }
+    on_quiet(state);
+}
+
+fn finish_reset(state: &mut State) {
+    let Some(b) = state.backend.as_mut() else {
+        return;
+    };
+    gated(b, "output state read");
     for s in b.surfaces.values() {
         let mut c = lock(&s.compositor);
         if let Err(e) = c.reset_state() {
@@ -1056,13 +1146,22 @@ fn reset_device(state: &mut State) {
 impl Backend {
     /// No commit holds the kernel's modeset locks (`commit::quiet`).
     fn quiet(&self) -> bool {
-        let tracks = self.surfaces.values().map(|s| &s.track);
-        commit::quiet(tracks, !self.retiring.is_empty(), std::time::Instant::now())
+        commit::quiet(
+            self.tracks(),
+            !self.retiring.is_empty(),
+            std::time::Instant::now(),
+        )
+    }
+
+    /// Every output's track and the device reset's.
+    fn tracks(&self) -> impl Iterator<Item = &commit::Track<Flip>> {
+        let outputs = self.surfaces.values().map(|s| &s.track);
+        outputs.chain(std::iter::once(&self.device.track))
     }
 
     /// The session is ours and its return has been handled (`reset_device`).
     fn settled(&self) -> bool {
-        self.session.is_active() && !self.reset
+        self.session.is_active() && !self.back.pending()
     }
 }
 
@@ -1095,7 +1194,7 @@ pub fn stalled(state: &State, output: &Output) -> bool {
     let Some(s) = crtc_of(output).and_then(|c| b.surfaces.get(&c)) else {
         return false;
     };
-    let all: Vec<_> = b.surfaces.values().map(|s| &s.track).collect();
+    let all: Vec<_> = b.tracks().collect();
     let now = std::time::Instant::now();
     commit::held(&s.track, &all, !b.retiring.is_empty(), now)
 }
@@ -1140,7 +1239,7 @@ impl Backend {
             return None;
         }
         let step = next_step(
-            self.reset,
+            self.back.ready(),
             self.rescan,
             self.probe.as_ref().map(|p| p.left.len()),
             self.reenable.iter().any(|c| !self.retiring.contains_key(c)),
@@ -1254,7 +1353,7 @@ fn watch(state: &mut State) {
     let Some(b) = state.backend.as_ref() else {
         return;
     };
-    if b.watch.is_some() || b.surfaces.values().all(|s| s.track.idle()) {
+    if b.watch.is_some() || b.tracks().all(commit::Track::idle) {
         return;
     }
     let token = state
@@ -1285,7 +1384,10 @@ fn watch_tick(state: &mut State) -> bool {
     let Some(b) = state.backend.as_mut() else {
         return false;
     };
-    let mut newly = false;
+    let mut newly = b.device.track.stall(now);
+    if newly {
+        log::warn!("the device reset is still in the kernel after 2 s");
+    }
     let mut throttled = Vec::new();
     for (&crtc, s) in b.surfaces.iter_mut() {
         if s.track.stall(now) {
@@ -1325,7 +1427,7 @@ fn watch_tick(state: &mut State) -> bool {
     state
         .backend
         .as_ref()
-        .is_some_and(|b| b.surfaces.values().any(|s| !s.track.idle()))
+        .is_some_and(|b| b.tracks().any(|t| !t.idle()))
 }
 
 pub fn schedule(state: &mut State, output: &Output) {
@@ -1836,6 +1938,7 @@ fn committed(state: &mut State, crtc: crtc::Handle, done: commit::Done<Out>) {
         (Err(e), commit::Kind::Clear) => log::warn!("{name}: power off: {e}"),
         (Err(e), commit::Kind::Gamma) => log::warn!("{name}: set gamma: {e}"),
         (Err(e), commit::Kind::Retrain) => log::warn!("{name}: link retrain: {e}"),
+        (Err(e), commit::Kind::Reset) => log::warn!("{name}: device reset: {e}"),
         (Ok(_), commit::Kind::Retrain) => log::info!("{name}: link retrained"),
         (Ok(out), commit::Kind::Gamma) => {
             log::debug!("{name}: gamma set");
@@ -1860,6 +1963,7 @@ fn committed(state: &mut State, crtc: crtc::Handle, done: commit::Done<Out>) {
     let mut flight = s.flight.take().filter(|_| flipped_frame);
     let feedback = flight.as_mut().and_then(|f| f.feedback.take());
     if ok && flipped_frame {
+        s.lit_at = Some(done.started);
         s.hw.unlit = false;
         s.presenting = feedback;
     } else if let Some(mut f) = feedback {
@@ -1991,7 +2095,7 @@ fn held_back(state: &mut State, crtc: crtc::Handle) -> bool {
 fn due(state: &State, crtc: crtc::Handle) -> Option<Output> {
     let b = state.backend.as_ref()?;
     let s = b.surfaces.get(&crtc)?;
-    (s.track.idle() && b.quiet() && !b.reset && !s.hw.off && b.session.is_active())
+    (s.track.idle() && b.quiet() && !b.back.pending() && !s.hw.off && b.session.is_active())
         .then(|| s.output.clone())
 }
 
@@ -2161,11 +2265,14 @@ impl Drop for Backend {
         let mut threads: Vec<_> = self.retiring.drain().map(|(_, h)| h).collect();
         for (_, s) in self.surfaces.drain() {
             let Surface {
-                thread, compositor, ..
+                mut thread,
+                compositor,
+                ..
             } = s;
             drop(compositor);
             threads.extend(thread.exit());
         }
+        threads.extend(self.device.thread.exit());
         let left = commit::join_until(threads, EXIT_WAIT);
         if left > 0 {
             log::warn!("{left} output(s) still in a commit at exit; leaving them to the kernel");
@@ -2563,12 +2670,14 @@ pub fn set_output_power(state: &mut State, output: &Output, on: bool) -> bool {
     off
 }
 
-/// Mark `crtc` off and, when the session is ours, have its thread clear the CRTC.
+/// Mark `crtc` off and, when the session is ours and no device reset is out, have its thread
+/// clear the CRTC.
 fn power_off(state: &mut State, crtc: crtc::Handle) -> bool {
     let Some(b) = state.backend.as_mut() else {
         return false;
     };
-    let active = b.session.is_active();
+    // During the device reset, `device_reset_done` clears an output the reset left lit.
+    let active = b.session.is_active() && !b.device.track.busy();
     let Some(s) = b.surfaces.get_mut(&crtc) else {
         return false;
     };
