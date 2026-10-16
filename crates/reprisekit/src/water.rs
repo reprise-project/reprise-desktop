@@ -105,6 +105,11 @@ pub const REFERENCE_HZ: f32 = 60.0;
 /// Reference steps' worth of time one frame may run after a stall; the rest is dropped.
 pub const MAX_CATCH_UP: u32 = 4;
 pub const SPLASHES_PER_STEP: usize = 4;
+/// The frames a second rain draws while nothing else stirs the water; each runs the steps owed
+/// since the last, so the ripples keep their speed.
+pub const RAIN_FPS: f32 = 30.0;
+/// Seconds after a wake, click or dragged edge during which rain draws every step again.
+pub const STIRRED_SECS: f32 = 2.0;
 pub const QUEUE_MAX: usize = 32;
 
 pub const WAKE_RADIUS: f32 = 3.0;
@@ -392,8 +397,18 @@ impl Clock {
 
     /// Seconds from the last `steps` until a frame there runs a step at `hz`.
     pub fn until_step(&self, hz: f32) -> f32 {
-        (1.0 - self.owed).max(0.0) / hz
+        self.until_steps(1, hz)
     }
+
+    /// Seconds from the last `steps` until a frame there runs `n` steps at `hz`.
+    pub fn until_steps(&self, n: u32, hz: f32) -> f32 {
+        (n as f32 - self.owed).max(0.0) / hz
+    }
+}
+
+/// The steps at `hz` each frame of rain runs: as many as keep it at [`RAIN_FPS`] or above.
+pub fn rain_steps_per_frame(hz: f32) -> u32 {
+    ((hz / RAIN_FPS).floor() as u32).max(1)
 }
 
 #[derive(Clone, Debug)]
@@ -586,6 +601,32 @@ mod tests {
             0,
             "a frame before it steps nothing"
         );
+    }
+
+    #[test]
+    fn rain_frames_run_the_steps_of_rain_fps() {
+        assert_eq!(rain_steps_per_frame(60.0), 2);
+        assert_eq!(rain_steps_per_frame(120.0), 4);
+        assert_eq!(
+            rain_steps_per_frame(144.0),
+            4,
+            "36 frames a second, not under 30"
+        );
+        assert_eq!(rain_steps_per_frame(30.0), 1);
+        assert_eq!(rain_steps_per_frame(45.0), 1);
+        for hz in [60.0, 120.0, 144.0] {
+            let n = rain_steps_per_frame(hz);
+            let mut c = Clock::default();
+            let mut dt = 0.0;
+            for i in 0..200 {
+                let ran = c.steps(dt, hz);
+                assert!(
+                    i == 0 || ran == n,
+                    "{hz} Hz frame {i} ran {ran} steps, not {n}"
+                );
+                dt = c.until_steps(n, hz) + 1e-4;
+            }
+        }
     }
 
     #[test]

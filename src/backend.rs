@@ -886,7 +886,10 @@ fn render(state: &mut State, crtc: crtc::Handle) {
     let reblur = crate::reblur::when(
         !std::mem::take(&mut s.scene_changed),
         s.last_blur.map(|t| now - t),
-        crate::reblur::cap(config.glass.blur_rate),
+        crate::reblur::cap(
+            config.glass.blur_rate,
+            crate::framepace::interval(output.current_mode().map_or(0, |m| m.refresh)),
+        ),
     );
     let hold = match reblur {
         Reblur::Now => {
@@ -971,6 +974,7 @@ fn render(state: &mut State, crtc: crtc::Handle) {
     if held.is_some() {
         s.held += 1;
     }
+    let held = crate::reblur::catch_up(held, water.next_step(&output).is_some());
     finish(state, crtc, &output, drawn, empty, held, started);
     if state.magnifier.panning(&output) || water_fell {
         schedule(state, &output);
