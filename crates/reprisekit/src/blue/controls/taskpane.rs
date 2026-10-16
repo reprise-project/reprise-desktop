@@ -400,7 +400,12 @@ mod tests {
 
     #[test]
     fn taskpane_fold_frames_keep_their_clear_corner() {
-        for v in [Variant::Blue, Variant::Olive, Variant::Silver] {
+        for v in [
+            Variant::Blue,
+            Variant::Olive,
+            Variant::Silver,
+            Variant::Steel,
+        ] {
             for d in [1, 2] {
                 let fold = part(v, d, Part::TaskCollapse);
                 for i in 0..3 {
@@ -474,7 +479,12 @@ mod tests {
             let header = part(v, 2, Part::TaskGroupHeader).atlas;
             assert!(partial(&header, 0, 0, 8, 8), "{v:?}: corner");
         }
-        for v in [Variant::Blue, Variant::Olive, Variant::Silver] {
+        for v in [
+            Variant::Blue,
+            Variant::Olive,
+            Variant::Silver,
+            Variant::Steel,
+        ] {
             let s = v.scheme();
             let rim = shape::pack(solid(s.task_collapse.normal.rim));
             let fold = frame(&part(v, 2, Part::TaskCollapse), 0);
@@ -493,7 +503,12 @@ mod tests {
     #[test]
     fn taskpane_disc_edge_has_no_dark_fringe() {
         let luma = |p: u32| (p >> 16 & 0xFF) + (p >> 8 & 0xFF) + (p & 0xFF);
-        for v in [Variant::Blue, Variant::Olive, Variant::Silver] {
+        for v in [
+            Variant::Blue,
+            Variant::Olive,
+            Variant::Silver,
+            Variant::Steel,
+        ] {
             let rim = shape::pack(solid(v.scheme().task_collapse.normal.rim));
             for d in [1, 2] {
                 let fold = frame(&part(v, d, Part::TaskCollapse), 0);
@@ -656,6 +671,20 @@ mod tests {
             "Carbon 2 TaskExpand d6ce1a16c28187b5",
             "Carbon 2 TaskCollapseMark 17bcb516c6db3427",
             "Carbon 2 TaskExpandMark 7eb36168ba3a1ba3",
+            "Steel 1 TaskPane e8a4999e3e7f48bb",
+            "Steel 1 TaskGroupHeader 736ad1980628e70e",
+            "Steel 1 TaskGroupBody 7dfcd436103577cb",
+            "Steel 1 TaskCollapse 3654911ffc317839",
+            "Steel 1 TaskExpand f38a278193c828e1",
+            "Steel 1 TaskCollapseMark 739bceef78294ba8",
+            "Steel 1 TaskExpandMark 9fbc0e0fa6ac33d0",
+            "Steel 2 TaskPane 856c4ba8754f03aa",
+            "Steel 2 TaskGroupHeader 0747c9e24586688c",
+            "Steel 2 TaskGroupBody ad5195959aee5a77",
+            "Steel 2 TaskCollapse 0bf396763e9674f3",
+            "Steel 2 TaskExpand 12d548b3d0f946d6",
+            "Steel 2 TaskCollapseMark 7112ad061ede8d15",
+            "Steel 2 TaskExpandMark 4d9c87e64562bf90",
         ];
         assert_eq!(got, want);
     }

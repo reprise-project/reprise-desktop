@@ -253,7 +253,7 @@ mod tests {
 
     #[test]
     fn taskbar_pins_at_scale_1_and_2() {
-        let want: [(Variant, u64, u64); 9] = [
+        let want: [(Variant, u64, u64); 10] = [
             (Variant::Blue, 15193996687725074151, 11540667176714200769),
             (Variant::Olive, 2959267727864451927, 15171665892701818529),
             (Variant::Silver, 17762414383169845903, 7074183163501350529),
@@ -263,6 +263,7 @@ mod tests {
             (Variant::Ember, 8421218600611285791, 9885140132527042417),
             (Variant::Cobalt, 12472164573214434615, 245704786129577393),
             (Variant::Carbon, 13172671654554434951, 6101179519405076641),
+            (Variant::Steel, 13647867440853678511, 13617928578165417249),
         ];
         let got: Vec<_> = want
             .iter()
@@ -279,7 +280,7 @@ mod tests {
 
     #[test]
     fn tray_area_pins_at_scale_1_and_2() {
-        let want: [(Variant, u64, u64); 9] = [
+        let want: [(Variant, u64, u64); 10] = [
             (Variant::Blue, 13044157879647584688, 5924944825070537973),
             (Variant::Olive, 8875429019001749459, 7128244762879402397),
             (Variant::Silver, 12990961943038857709, 771772578329389045),
@@ -289,6 +290,7 @@ mod tests {
             (Variant::Ember, 5716905827135175497, 1223573240082950969),
             (Variant::Cobalt, 4020037822437248522, 12387106437850534021),
             (Variant::Carbon, 1399528061877326100, 5736695741275073649),
+            (Variant::Steel, 14409713228926205222, 4816833437403837513),
         ];
         let got: Vec<_> = want
             .iter()

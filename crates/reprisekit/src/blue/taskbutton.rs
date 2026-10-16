@@ -44,7 +44,7 @@ fn inset(v: Variant) -> [i32; 4] {
         | Variant::Ember
         | Variant::Cobalt
         | Variant::Carbon => GLOSS_INSET,
-        Variant::Blue | Variant::Olive | Variant::Silver => [0; 4],
+        Variant::Blue | Variant::Olive | Variant::Silver | Variant::Steel => [0; 4],
     }
 }
 
@@ -177,6 +177,7 @@ mod tests {
             (Variant::Ember, 13),
             (Variant::Cobalt, 12),
             (Variant::Carbon, 12),
+            (Variant::Steel, 4),
         ] {
             let (one, two) = (task_button(v, 1), task_button(v, 2));
             let f = one.frame(State::Normal);

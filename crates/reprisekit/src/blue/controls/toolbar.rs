@@ -464,6 +464,12 @@ mod tests {
             "Carbon ToolbarButton 2: a237dd4f7aa8debf",
             "Carbon ToolbarDrop 2: a237dd4f7aa8debf",
             "Carbon ToolbarSeparator 2: 5fd6553bf4b82169",
+            "Steel ToolbarButton 1: f230a442806a406a",
+            "Steel ToolbarDrop 1: f230a442806a406a",
+            "Steel ToolbarSeparator 1: 9eaeb5cb576bb0af",
+            "Steel ToolbarButton 2: c6831e86ad82e662",
+            "Steel ToolbarDrop 2: c6831e86ad82e662",
+            "Steel ToolbarSeparator 2: efb6750b648b7a01",
         ];
         assert_eq!(got, want);
     }

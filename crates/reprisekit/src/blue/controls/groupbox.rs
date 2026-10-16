@@ -75,7 +75,7 @@ mod tests {
 
     #[test]
     fn group_box_pins_at_scale_1_and_2() {
-        let want: [(Variant, [u64; 2]); 9] = [
+        let want: [(Variant, [u64; 2]); 10] = [
             (
                 Variant::Blue,
                 [0x6d60_4c2e_4f9e_a2bc, 0x5912_f229_0939_7607],
@@ -111,6 +111,10 @@ mod tests {
             (
                 Variant::Carbon,
                 [0x975a_cfeb_fd05_6ffc, 0x2185_1587_6b85_80c7],
+            ),
+            (
+                Variant::Steel,
+                [0xb1b8_edf3_9b47_a2cc, 0xddd1_a36e_afbe_3df7],
             ),
         ];
         let got = want.map(|(v, _)| (v, [fnv(&atlas(v, 1).atlas), fnv(&atlas(v, 2).atlas)]));

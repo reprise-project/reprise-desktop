@@ -35,7 +35,7 @@ fn gap(v: Variant) -> i32 {
         | Variant::Obsidian
         | Variant::Cobalt
         | Variant::Carbon => 1,
-        Variant::Blue | Variant::Olive | Variant::Silver | Variant::Ember => 2,
+        Variant::Blue | Variant::Olive | Variant::Silver | Variant::Ember | Variant::Steel => 2,
     }
 }
 
@@ -164,7 +164,7 @@ mod tests {
         const GREY: [u64; 2] = [0xafdc_afa0_2895_a8f2, 0x353b_6ad5_ded9_ad8b];
         const SLATE: [u64; 2] = [0x5f64_ace7_2bb9_80a4, 0xbfe2_580b_921a_8087];
         let pin = |bar: [u64; 2], chunk: [u64; 2]| [bar[0], bar[1], chunk[0], chunk[1]];
-        let want: [(Variant, [u64; 4]); 9] = [
+        let want: [(Variant, [u64; 4]); 10] = [
             (
                 Variant::Blue,
                 pin(LIGHT, [0x5019_c2f5_4ecf_ceeb, 0x6f3e_2405_1682_cb89]),
@@ -191,6 +191,10 @@ mod tests {
             (
                 Variant::Carbon,
                 pin(GREY, [0x0ebb_ab23_143e_cd0c, 0x7eb7_af7b_2101_b117]),
+            ),
+            (
+                Variant::Steel,
+                pin(LIGHT, [0xcce8_27be_b548_970b, 0x69a4_f717_0302_ebd9]),
             ),
         ];
         let got = want.map(|(v, _)| {

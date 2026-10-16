@@ -82,7 +82,7 @@ theme = "hicolor"            # freedesktop icon theme for menus, taskbar, captio
 
 [appearance]
 interface = "classic"        # classic | blue | glass; an unknown value falls back to classic
-# color_scheme = "Brick"     # Classic: a scheme name (Reprise Settings' Appearance page lists them); Blue: "Blue", "Olive Green", "Silver", "Slate", "Sapphire", "Obsidian", "Ember", "Cobalt" or "Carbon"; Glass has none, see [glass] color
+# color_scheme = "Brick"     # Classic: a scheme name (Reprise Settings' Appearance page lists them); Blue: "Blue", "Olive Green", "Silver", "Slate", "Sapphire", "Obsidian", "Ember", "Cobalt", "Carbon" or "Steel"; Glass has none, see [glass] color
 #                            # a name from another interface falls back to that interface's default and logs a warning; Glass ignores the key
 
 # [wallpaper]                # the picture under the desktop icons, drawn over [colors] background

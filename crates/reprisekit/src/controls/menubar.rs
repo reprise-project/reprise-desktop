@@ -327,7 +327,12 @@ mod tests {
             }
             seen
         };
-        for v in [Variant::Blue, Variant::Olive, Variant::Silver] {
+        for v in [
+            Variant::Blue,
+            Variant::Olive,
+            Variant::Silver,
+            Variant::Steel,
+        ] {
             let theme = crate::interfaces::blue_theme(v);
             let grey = theme.colors.button_shadow;
             for banded in [false, true] {
