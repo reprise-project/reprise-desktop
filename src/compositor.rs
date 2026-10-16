@@ -240,6 +240,8 @@ pub struct State {
     pub capture_border: crate::captureborder::CaptureBorder,
     /// The geoclue agent: its prompts and the location pin (`location`).
     pub location: crate::location::Location,
+    /// Programs' progress for their task buttons (`launcherentry`).
+    pub launcher_entries: crate::launcherentry::Entries,
     /// The DRM session, GPU and connectors; None only while starting.
     pub backend: Option<Backend>,
     /// `[wallpaper] image` and its per-output buffers; None for the
@@ -516,6 +518,7 @@ impl State {
             privacy: crate::privacy::Privacy::start(&handle),
             capture_border: Default::default(),
             location: crate::location::Location::start(&handle, config.location),
+            launcher_entries: crate::launcherentry::Entries::start(&handle),
             backend: None,
             // A slideshow picks its first picture once the loop runs.
             wallpaper: config

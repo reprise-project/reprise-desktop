@@ -11,6 +11,7 @@ pub mod overview;
 pub mod scheme;
 mod start;
 mod taskbutton;
+mod taskprogress;
 mod trayarrow;
 
 use std::sync::{Arc, OnceLock};
@@ -152,6 +153,7 @@ fn build(v: Variant, scale: i32) -> Style {
     )
     .with_controls(controls(v))
     .with_copy_flight(copyflight::paint)
+    .with_task_progress(taskprogress::painter(v))
     .with_flat_menus()
     .with_track_marks(TrackMarks {
         ink: inks.track_tick,

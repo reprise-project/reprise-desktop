@@ -48,6 +48,7 @@ mod inputqueue;
 mod kblayout;
 mod keyboard;
 mod keyfilter;
+mod launcherentry;
 mod livepreview;
 mod location;
 mod logbridge;

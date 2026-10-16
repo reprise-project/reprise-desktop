@@ -9,6 +9,19 @@ use crate::theme::{Color, Metrics};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
+/// A task button's progress, as its program reports it through its launcher entry.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct TaskProgress {
+    /// Done, from 0 to 1.
+    pub fraction: f64,
+    pub paused: bool,
+}
+
+/// A look's art for a task button's progress: a canvas `w` x `h` design px at `d` device px each,
+/// laid over the button's face under its icon and label.
+pub type ProgressPainter =
+    Arc<dyn Fn(&TaskProgress, &crate::theme::ColorScheme, i32, i32, i32) -> Canvas + Send + Sync>;
+
 pub struct TaskEntry {
     pub title: String,
     pub active: bool,
@@ -102,6 +115,7 @@ impl Edge {
 
 pub const REVEAL_LINE: i32 = 2;
 
+#[derive(Default)]
 pub struct TaskbarState {
     pub start_pressed: bool,
     pub start_focus: bool,
@@ -123,6 +137,8 @@ pub struct TaskbarState {
     pub task_shift: Vec<i32>,
     /// The dragged task button: its index and px along the bar it is drawn at, over the others; its own slot draws empty.
     pub task_float: Option<(usize, i32)>,
+    /// Per task button, its program's progress; empty or None draws none.
+    pub task_progress: Vec<Option<TaskProgress>>,
     pub show_desktop_hot: bool,
     pub more: PopupCell,
     pub chevron: PopupCell,

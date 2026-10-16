@@ -74,6 +74,10 @@ fn main() {
             &render_copy_progress(true, n.max(1)),
             &format!("reprisekit-gallery-copy-progress@{}.png", n.max(1)),
         );
+        write_preview(
+            &render_task_progress(n.max(1)),
+            &format!("reprisekit-gallery-task-progress@{}.png", n.max(1)),
+        );
         return;
     }
     if let Ok(pct) = std::env::var("REPRISE_GALLERY_TEXT_SIZE") {
@@ -141,6 +145,10 @@ fn main() {
     write_preview(
         &render_copy_progress(with_blue, 1),
         "reprisekit-gallery-copy-progress.png",
+    );
+    write_preview(
+        &render_task_progress(1),
+        "reprisekit-gallery-task-progress.png",
     );
     write_preview(
         &render_stats_panel(with_blue),
@@ -1051,6 +1059,7 @@ fn render_show_desktop() -> Canvas {
                 task_hot_x: None,
                 task_shift: Vec::new(),
                 task_float: None,
+                task_progress: Vec::new(),
                 show_desktop_hot: hot,
                 more: Default::default(),
                 chevron: Default::default(),
@@ -1068,6 +1077,99 @@ fn render_show_desktop() -> Canvas {
 }
 
 /// A 640 px bar along the top in Classic, Blue, Glass and Glass's small bar over the stripes; the orb's buffer goes over each Glass bar.
+/// A taskbar per look with a copy running, one paused and one without progress.
+fn render_task_progress(scale: i32) -> Canvas {
+    use reprisekit::taskbar::{
+        TaskEntry, TaskProgress, TaskbarCounts, TaskbarLayout, TaskbarState,
+    };
+    let text = TextRenderer::load(&FontConfig::default());
+    let glass_dark = interfaces::theme_with(
+        Interface::Glass,
+        reprisekit::blue::Variant::default(),
+        &reprisekit::glass::Settings {
+            mode: reprisekit::glass::Mode::Dark,
+            ..reprisekit::glass::Settings::default()
+        },
+    );
+    let themes = [
+        interfaces::theme_for(Interface::Classic),
+        interfaces::blue_theme(reprisekit::blue::Variant::Blue),
+        interfaces::blue_theme(reprisekit::blue::Variant::Olive),
+        interfaces::blue_theme(reprisekit::blue::Variant::Silver),
+        interfaces::theme_for(Interface::Glass),
+        glass_dark,
+    ];
+    let (w, gap) = (560, 10);
+    let rows: Vec<Canvas> = themes
+        .iter()
+        .map(|theme| {
+            let start_text = match theme.look.style() {
+                Some(s) => TextRenderer::load(&s.start_text.font()),
+                None => TextRenderer::load(&FontConfig::default()),
+            };
+            let counts = TaskbarCounts {
+                tasks: 3,
+                ..TaskbarCounts::default()
+            };
+            let layout = TaskbarLayout::compute(
+                &theme.metrics,
+                &theme.taskbar_shape(),
+                w,
+                true,
+                counts,
+                text.measure("3:45 PM", false, theme.fonts.size_px),
+            );
+            let task = |title: &str| TaskEntry {
+                title: title.into(),
+                active: false,
+                attention: false,
+                icon: None,
+                glow: None,
+            };
+            let state = TaskbarState {
+                tasks: vec![task("Copying..."), task("Moving..."), task("Notepad")],
+                task_progress: vec![
+                    Some(TaskProgress {
+                        fraction: 0.6,
+                        paused: false,
+                    }),
+                    Some(TaskProgress {
+                        fraction: 0.35,
+                        paused: true,
+                    }),
+                    None,
+                ],
+                clock: "3:45 PM".into(),
+                ..TaskbarState::default()
+            };
+            let scaled = theme.scaled(scale);
+            let mut bar = Canvas::new((w * scale) as u32, (layout.height * scale) as u32);
+            look::draw_taskbar(
+                &mut bar,
+                &scaled,
+                &text,
+                &start_text,
+                &layout.scaled(scale),
+                &state,
+            );
+            bar
+        })
+        .collect();
+    let height = rows
+        .iter()
+        .map(|r| r.height as i32 + gap * scale)
+        .sum::<i32>()
+        + gap * scale;
+    let mut c = Canvas::new(((w + 2 * gap) * scale) as u32, height as u32);
+    c.fill_rect(c.bounds(), Color::rgb(58, 110, 165));
+    let mut y = gap * scale;
+    for r in &rows {
+        c.blit_over(gap * scale, y, r);
+        y += r.height as i32 + gap * scale;
+    }
+    c
+}
+
 fn render_taskbar_top() -> Canvas {
     use reprisekit::taskbar::{
         Edge, PagerButton, TaskEntry, TaskbarCounts, TaskbarLayout, TaskbarState,
@@ -1139,6 +1241,7 @@ fn render_taskbar_top() -> Canvas {
             task_hot_x: None,
             task_shift: Vec::new(),
             task_float: None,
+            task_progress: Vec::new(),
             show_desktop_hot: false,
             more: Default::default(),
             chevron: Default::default(),
@@ -1211,6 +1314,7 @@ fn render_taskbar_edges() -> Canvas {
         task_hot_x: None,
         task_shift: Vec::new(),
         task_float: None,
+        task_progress: Vec::new(),
         show_desktop_hot: false,
         more: Default::default(),
         chevron: Default::default(),
@@ -1374,6 +1478,7 @@ fn render_taskbar_cells() -> Canvas {
         task_hot_x: None,
         task_shift: Vec::new(),
         task_float: None,
+        task_progress: Vec::new(),
         show_desktop_hot: false,
         more: cell,
         chevron: cell,
@@ -1487,6 +1592,7 @@ fn render_tray_arrow() -> Canvas {
         task_hot_x: None,
         task_shift: Vec::new(),
         task_float: None,
+        task_progress: Vec::new(),
         show_desktop_hot: false,
         more: Default::default(),
         chevron: cell,
@@ -1645,6 +1751,7 @@ fn render_tray_arrow_schemes(n: i32) -> Canvas {
                 task_hot_x: None,
                 task_shift: Vec::new(),
                 task_float: None,
+                task_progress: Vec::new(),
                 show_desktop_hot: false,
                 more: Default::default(),
                 chevron: cell,
@@ -1717,6 +1824,7 @@ fn render_orb_glow(n: i32) -> Canvas {
                     task_hot_x: None,
                     task_shift: Vec::new(),
                     task_float: None,
+                    task_progress: Vec::new(),
                     show_desktop_hot: false,
                     more: Default::default(),
                     chevron: Default::default(),
@@ -1824,6 +1932,7 @@ fn render_taskbar_keys() -> Canvas {
                 task_hot_x: None,
                 task_shift: Vec::new(),
                 task_float: None,
+                task_progress: Vec::new(),
                 show_desktop_hot: false,
                 more: Default::default(),
                 chevron: Default::default(),
@@ -1905,6 +2014,7 @@ fn render_taskbar_hidden() -> Canvas {
                 task_hot_x: None,
                 task_shift: Vec::new(),
                 task_float: None,
+                task_progress: Vec::new(),
                 show_desktop_hot: false,
                 more: Default::default(),
                 chevron: Default::default(),
@@ -4286,6 +4396,7 @@ fn render(theme: &Theme, with_blue: bool) -> Canvas {
             task_hot_x: None,
             task_shift: Vec::new(),
             task_float: None,
+            task_progress: Vec::new(),
             show_desktop_hot: false,
             more: Default::default(),
             chevron: Default::default(),
@@ -5529,6 +5640,7 @@ fn glass_scale2_bars(c: &mut Canvas, rows: &[reprisekit::glass::Settings], top: 
             task_hot_x: Some(12),
             task_shift: Vec::new(),
             task_float: None,
+            task_progress: Vec::new(),
             show_desktop_hot: true,
             more: Default::default(),
             chevron: Default::default(),
@@ -5613,6 +5725,7 @@ fn render_glass_dark_bar(theme: &Theme) -> Canvas {
         task_hot_x: None,
         task_shift: Vec::new(),
         task_float: None,
+        task_progress: Vec::new(),
         tasks: vec![entry("xclock", false), entry("xeyes", true)],
         tray_icons: vec![],
         clock: "3:45 PM".into(),
@@ -7307,6 +7420,7 @@ fn render_glass_frames() -> Canvas {
                 task_hot_x: None,
                 task_shift: Vec::new(),
                 task_float: None,
+                task_progress: Vec::new(),
                 tasks: vec![
                     entry("Notes", false),
                     entry("Explorer", true),
@@ -7369,6 +7483,7 @@ fn render_glass_frames() -> Canvas {
             task_hot_x: None,
             task_shift: Vec::new(),
             task_float: None,
+            task_progress: Vec::new(),
             tasks: vec![],
             tray_icons: vec![
                 Some(indicator::draw_record(16).into()),
@@ -7664,6 +7779,7 @@ fn render_glass_task_rows() -> Canvas {
             task_hot_x: None,
             task_shift: Vec::new(),
             task_float: None,
+            task_progress: Vec::new(),
             tasks,
             tray_icons: vec![],
             clock: clock.into(),
@@ -7781,6 +7897,7 @@ fn render_glass_spots() -> Canvas {
             task_hot_x: Some(x),
             task_shift: Vec::new(),
             task_float: None,
+            task_progress: Vec::new(),
             tasks,
             tray_icons: vec![],
             clock: clock.into(),

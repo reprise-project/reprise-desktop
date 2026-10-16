@@ -36,6 +36,8 @@ pub(crate) struct Put {
     select_landed: bool,
     pub(crate) started: std::time::Instant,
     pub(crate) shown: Option<crate::copydlg::Shown>,
+    /// The percent and paused state last put on the task button.
+    pub(crate) published: Option<(u32, bool)>,
 }
 
 pub(crate) type JobDone = Box<dyn FnOnce(&mut Explorer, &mut Ctx) -> Reply + Send>;
@@ -338,6 +340,7 @@ impl Explorer {
             select_landed: pending.select_landed,
             started: std::time::Instant::now(),
             shown: None,
+            published: None,
         });
     }
 
@@ -379,6 +382,9 @@ impl Explorer {
             return Some(Reply::none());
         }
         let put = self.put.take()?;
+        if put.published.is_some() {
+            reprisebus::launcher::update(crate::copydlg::DESKTOP_ID, None);
+        }
         if let Some(shown) = &put.shown
             && !put.job.cancelled()
         {

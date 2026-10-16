@@ -998,6 +998,7 @@ pub struct Style {
     /// The halo under labels a client draws over its frame's glass ([`Part::ClientGlass`]).
     pub label_glow: Option<TitleGlow>,
     pub task_glow: Option<TaskGlow>,
+    pub(crate) task_progress: Option<crate::taskbar::ProgressPainter>,
     task_spot: Option<Spot>,
     pub task_nudge: bool,
     pub greyed_field_frame: bool,
@@ -1084,6 +1085,7 @@ impl Style {
             caption_title: CaptionTitle::CENTRED,
             label_glow: None,
             task_glow: None,
+            task_progress: None,
             task_spot: None,
             task_nudge: true,
             greyed_field_frame: false,
@@ -1170,6 +1172,11 @@ impl Style {
 
     pub fn with_label_glow(mut self, g: TitleGlow) -> Style {
         self.label_glow = Some(g);
+        self
+    }
+
+    pub(crate) fn with_task_progress(mut self, paint: crate::taskbar::ProgressPainter) -> Style {
+        self.task_progress = Some(paint);
         self
     }
 

@@ -192,6 +192,10 @@ pub fn draw_taskbar(
         } else {
             canvas.edge_t(*r, EdgeStyle::ButtonRaised, cs, s);
         }
+        if let Some(pr) = state.task_progress.get(i).copied().flatten() {
+            let art = crate::classic::taskprogress::paint(&pr, cs, r.width / s, r.height / s, s);
+            canvas.blit_over(r.x, r.y, &art);
+        }
         let pressed = task.active || task.attention;
         let o = if pressed { s } else { 0 };
         let icon_at = (r.x + 4 * s + o, r.y + (r.height - icon_px) / 2 + o);
@@ -352,6 +356,7 @@ mod tests {
             task_hot_x: None,
             task_shift: Vec::new(),
             task_float: None,
+            task_progress: Vec::new(),
             show_desktop_hot: false,
             more: Default::default(),
             chevron: Default::default(),
@@ -441,6 +446,7 @@ mod tests {
             task_hot_x: None,
             task_shift: Vec::new(),
             task_float: None,
+            task_progress: Vec::new(),
             show_desktop_hot: false,
             more: Default::default(),
             chevron: Default::default(),
@@ -516,6 +522,7 @@ mod tests {
             task_hot_x: None,
             task_shift: Vec::new(),
             task_float: None,
+            task_progress: Vec::new(),
             show_desktop_hot: false,
             more: Default::default(),
             chevron: Default::default(),
@@ -600,6 +607,7 @@ mod tests {
             task_hot_x: None,
             task_shift: Vec::new(),
             task_float: None,
+            task_progress: Vec::new(),
             show_desktop_hot: false,
             more: Default::default(),
             chevron: Default::default(),
@@ -659,6 +667,7 @@ mod tests {
             task_hot_x: None,
             task_shift: Vec::new(),
             task_float: None,
+            task_progress: Vec::new(),
             show_desktop_hot: false,
             more: Default::default(),
             chevron: Default::default(),
@@ -717,6 +726,7 @@ mod tests {
             task_hot_x: None,
             task_shift: Vec::new(),
             task_float: None,
+            task_progress: Vec::new(),
             show_desktop_hot: false,
             more: Default::default(),
             chevron: Default::default(),
@@ -782,6 +792,7 @@ mod tests {
             task_hot_x: None,
             task_shift: Vec::new(),
             task_float: None,
+            task_progress: Vec::new(),
             show_desktop_hot: false,
             more: Default::default(),
             chevron: Default::default(),
@@ -849,6 +860,7 @@ mod tests {
             task_hot_x: None,
             task_shift: Vec::new(),
             task_float: None,
+            task_progress: Vec::new(),
             show_desktop_hot: false,
             more: Default::default(),
             chevron: Default::default(),
@@ -911,6 +923,7 @@ mod tests {
             task_hot_x: None,
             task_shift: Vec::new(),
             task_float: None,
+            task_progress: Vec::new(),
             show_desktop_hot: false,
             more: Default::default(),
             chevron: Default::default(),
@@ -978,6 +991,7 @@ mod tests {
             task_hot_x: None,
             task_shift: Vec::new(),
             task_float: None,
+            task_progress: Vec::new(),
             show_desktop_hot: false,
             more: Default::default(),
             chevron: Default::default(),
@@ -1046,6 +1060,7 @@ mod tests {
             task_hot_x: None,
             task_shift: Vec::new(),
             task_float: None,
+            task_progress: Vec::new(),
             show_desktop_hot: false,
             more: Default::default(),
             chevron: Default::default(),
@@ -1105,6 +1120,7 @@ mod tests {
                 task_hot_x: None,
                 task_shift: Vec::new(),
                 task_float: None,
+                task_progress: Vec::new(),
                 show_desktop_hot: false,
                 more: Default::default(),
                 chevron: Default::default(),
@@ -1173,6 +1189,7 @@ mod tests {
             task_hot_x: None,
             task_shift: Vec::new(),
             task_float: None,
+            task_progress: Vec::new(),
             show_desktop_hot: false,
             more: Default::default(),
             chevron: Default::default(),
@@ -1274,6 +1291,7 @@ mod tests {
             task_hot_x: None,
             task_shift: Vec::new(),
             task_float: None,
+            task_progress: Vec::new(),
             show_desktop_hot: false,
             more: Default::default(),
             chevron: Default::default(),
@@ -1566,6 +1584,7 @@ mod tests {
             task_hot_x: None,
             task_shift: Vec::new(),
             task_float: None,
+            task_progress: Vec::new(),
             show_desktop_hot: false,
             more: Default::default(),
             chevron: Default::default(),
@@ -1758,6 +1777,7 @@ mod tests {
             task_hot_x: None,
             task_shift: Vec::new(),
             task_float: None,
+            task_progress: Vec::new(),
             show_desktop_hot: false,
             more: Default::default(),
             chevron: Default::default(),
