@@ -5,7 +5,7 @@
 //! the backend only enables, disables, changes mode (`set_mode`) or VRR (`set_vrr`).
 //! One GPU, no leases, no multi-GPU copies. Each driven CRTC owns its `DrmCompositor`; a
 //! modeset is never committed outside an output's own frame. Main renders; each output's
-//! commit thread (`commit`) runs the frame's KMS commit.
+//! commit thread (`commit`) runs its KMS commits and drops its compositor.
 
 mod commit;
 
@@ -87,7 +87,11 @@ pub struct Backend {
     exporter: Exporter,
     gbm: GbmDevice<DrmDeviceFd>,
     render_formats: Vec<DrmFormat>,
-    replies: Sender<(crtc::Handle, commit::Done)>,
+    replies: Sender<(crtc::Handle, commit::Reply<Out>)>,
+    /// Disabled outputs whose threads still hold their compositors.
+    retiring: HashMap<crtc::Handle, std::thread::JoinHandle<()>>,
+    /// CRTCs refused while retiring, enabled again once their thread ends.
+    reenable: std::collections::HashSet<crtc::Handle>,
     /// `REPRISE_COMMIT_DELAY` as the session started.
     delay: Option<String>,
     /// The session came back: reset the device once no commit is out (`reset_device`).
@@ -105,8 +109,7 @@ struct Surface {
     vrr_capable: bool,
     vrr_on: bool,
     global: GlobalId,
-    /// Declared before `compositor`: it joins first, so main drops the last reference.
-    thread: commit::Thread,
+    thread: commit::Thread<Work>,
     compositor: Arc<Mutex<Compositor>>,
     track: commit::Track<Flip>,
     /// The frame on the commit thread.
@@ -130,6 +133,8 @@ struct Surface {
     pace: crate::framepace::Pace,
     frames: u32,
     held: u32,
+    /// Frames since the last frame-rate log line that only moved the cursor plane.
+    cursor_frames: u32,
     counted_from: Option<std::time::Instant>,
     stats: crate::debugview::FrameStats,
     damage_seen: Option<CommitCounter>,
@@ -141,6 +146,8 @@ struct InFlight {
     started: std::time::Instant,
     held: Option<Duration>,
     feedback: Option<OutputPresentationFeedback>,
+    /// Only the cursor plane moved (`pointer_frame`).
+    pointer: bool,
 }
 
 /// Main's lock of an output's compositor. Main locks only while the output's thread is idle
@@ -156,15 +163,64 @@ fn lock(c: &Mutex<Compositor>) -> MutexGuard<'_, Compositor> {
     }
 }
 
-/// The commit thread's side of an output's compositor.
-struct Kms(Arc<Mutex<Compositor>>);
+/// What a job brings beyond its kind.
+enum Work {
+    None,
+    Gamma {
+        gamma: Gamma,
+        wanted: Lut,
+    },
+    Retrain {
+        conn: connector::Handle,
+        prop: smithay::reexports::drm::control::property::Handle,
+    },
+}
+
+/// A ramp the CRTC took, and the GAMMA_LUT blob now holding it.
+struct Out {
+    gamma: Option<(Lut, Option<u64>)>,
+}
+
+/// The commit thread's side of an output: its compositor and the device.
+struct Kms {
+    compositor: Arc<Mutex<Compositor>>,
+    fd: DrmDeviceFd,
+    crtc: crtc::Handle,
+}
 
 impl commit::Committer for Kms {
-    fn commit(&mut self, kind: commit::Kind) -> Result<(), String> {
-        let mut c = self.0.lock().unwrap_or_else(PoisonError::into_inner);
-        match kind {
-            commit::Kind::Flip { .. } => c.queue_frame(()).map_err(|e| format!("{e:?}")),
-        }
+    type Payload = Work;
+    type Output = Out;
+
+    fn commit(&mut self, kind: commit::Kind, work: Work) -> Result<Out, String> {
+        use smithay::reexports::drm::control::Device as _;
+        let c = || {
+            self.compositor
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+        };
+        let gamma = match (kind, work) {
+            (commit::Kind::Flip { .. }, _) => {
+                c().queue_frame(()).map_err(|e| format!("{e:?}"))?;
+                None
+            }
+            (commit::Kind::Clear, _) => {
+                c().clear().map_err(|e| e.to_string())?;
+                None
+            }
+            (commit::Kind::Gamma, Work::Gamma { gamma, wanted }) => {
+                let blob = write_gamma(&self.fd, self.crtc, gamma, &wanted)?;
+                Some((wanted, blob))
+            }
+            (commit::Kind::Retrain, Work::Retrain { conn, prop }) => {
+                self.fd
+                    .set_property(conn, prop, LINK_GOOD)
+                    .map_err(|e| e.to_string())?;
+                None
+            }
+            (kind, _) => return Err(format!("{kind:?} without its work")),
+        };
+        Ok(Out { gamma })
     }
 }
 
@@ -279,13 +335,13 @@ pub fn init(state: &mut State) -> Result<(), Box<dyn std::error::Error>> {
             DrmEvent::VBlank(crtc) => vblank(state, crtc, meta.as_ref()),
             DrmEvent::Error(e) => log::error!("drm: {e}"),
         })?;
-    let (replies, done) = channel::<(crtc::Handle, commit::Done)>();
+    let (replies, done) = channel::<(crtc::Handle, commit::Reply<Out>)>();
     state
         .handle
-        .insert_source(done, |event, _, state| {
-            if let ChannelEvent::Msg((crtc, done)) = event {
-                committed(state, crtc, done);
-            }
+        .insert_source(done, |event, _, state| match event {
+            ChannelEvent::Msg((crtc, commit::Reply::Done(done))) => committed(state, crtc, done),
+            ChannelEvent::Msg((crtc, commit::Reply::Exited)) => retired(state, crtc),
+            ChannelEvent::Closed => {}
         })
         .map_err(|e| e.error)?;
     let udev = UdevBackend::new(&seat)?;
@@ -316,6 +372,8 @@ pub fn init(state: &mut State) -> Result<(), Box<dyn std::error::Error>> {
         gbm,
         render_formats,
         replies,
+        retiring: HashMap::new(),
+        reenable: Default::default(),
         delay: std::env::var(commit::Delay::VAR).ok(),
         reset: false,
         scanner: DrmScanner::new(),
@@ -479,6 +537,14 @@ pub fn enable(state: &mut State, output: &Output, index: usize) -> bool {
     let Some(&drm_mode) = p.connector.modes().get(index) else {
         return false;
     };
+    if b.retiring.contains_key(&crtc) {
+        log::warn!(
+            "{}: its last commit has not returned; enabling it once it does",
+            output.name()
+        );
+        b.reenable.insert(crtc);
+        return false;
+    }
     let connector = p.connector.handle();
     let name = output.name();
     let mode = WlMode::from(drm_mode);
@@ -514,7 +580,13 @@ pub fn enable(state: &mut State, output: &Output, index: usize) -> bool {
             commit::Delay::VAR
         );
     }
-    let kms = Kms(Arc::clone(&compositor));
+    let kms = Kms {
+        compositor: Arc::clone(&compositor),
+        fd: b.drm.device_fd().clone(),
+        crtc,
+    };
+    let gamma = find_gamma(&b.drm, crtc);
+    let lut = gamma.and_then(|g| read_lut(&b.drm, crtc, &g, None));
     let thread = match commit::Thread::spawn(&name, crtc, kms, delay, b.replies.clone()) {
         Ok(t) => t,
         Err(e) => {
@@ -565,11 +637,14 @@ pub fn enable(state: &mut State, output: &Output, index: usize) -> bool {
             pace: Default::default(),
             frames: 0,
             held: 0,
+            cursor_frames: 0,
             counted_from: None,
             stats: Default::default(),
             damage_seen: None,
             hw: Hw {
                 unlit: true,
+                gamma,
+                lut,
                 ..Hw::default()
             },
         },
@@ -634,13 +709,23 @@ pub fn disable(state: &mut State, output: &Output) -> bool {
         global,
         thread,
         compositor,
+        track,
         callback_timer,
         render_timer,
         step_timer,
         ..
     } = s;
-    drop(thread);
+    if track.busy() {
+        log::info!(
+            "{}: disabled with a commit out; its thread finishes it first",
+            output.name()
+        );
+    }
+    // The thread then holds the last reference: it drops the compositor (a blocking clear).
     drop(compositor);
+    if let Some(h) = thread.exit() {
+        b.retiring.insert(crtc, h);
+    }
     b.parked.insert(
         crtc,
         Parked {
@@ -801,7 +886,7 @@ fn activate(state: &mut State) {
         s.track.reset();
         s.hw.unlit = true;
         // Another DRM master may have left its own LUT; reading it back is not a commit.
-        if let Some(Some(g)) = s.hw.gamma {
+        if let Some(g) = s.hw.gamma {
             let ours = s.hw.lut.take();
             s.hw.lut = read_lut(dev, crtc, &g, ours.clone());
             if s.hw.lut.is_none() && s.hw.wanted_lut.is_none() {
@@ -833,7 +918,8 @@ fn reset_device(state: &mut State) {
     let Some(b) = state.backend.as_mut() else {
         return;
     };
-    if !b.reset || !b.session.is_active() || b.surfaces.values().any(|s| s.track.busy()) {
+    let busy = b.surfaces.values().any(|s| s.track.busy()) || !b.retiring.is_empty();
+    if !b.reset || !b.session.is_active() || busy {
         return;
     }
     b.reset = false;
@@ -1204,6 +1290,7 @@ fn render(state: &mut State, crtc: crtc::Handle) {
         started,
         held,
         feedback,
+        pointer: false,
     };
     if !(drawn && send_flip(s, modeset, flight)) {
         finish(state, crtc, &output, false, empty, held, started);
@@ -1268,6 +1355,7 @@ fn pointer_frame(
                 started,
                 held: None,
                 feedback: None,
+                pointer: true,
             };
             Some(send_flip(s, modeset, flight))
         }
@@ -1277,19 +1365,47 @@ fn pointer_frame(
 /// Hand the frame `compositor` has ready to the output's commit thread; false when the thread
 /// is gone. The frame finishes on its `Done` (`committed`).
 fn send_flip(s: &mut Surface, modeset: bool, flight: InFlight) -> bool {
-    let kind = commit::Kind::Flip { modeset };
-    s.track.sent(kind, std::time::Instant::now());
-    if !s.thread.send(commit::Job::Run(kind)) {
-        log::error!("{}: the commit thread is gone", s.output.name());
-        s.track.unsent();
+    if !send_job(s, commit::Kind::Flip { modeset }, Work::None) {
         return false;
     }
     s.flight = Some(flight);
     true
 }
 
+/// Hand `kind` to the output's commit thread; false when the thread is gone.
+fn send_job(s: &mut Surface, kind: commit::Kind, work: Work) -> bool {
+    s.track.sent(kind, std::time::Instant::now());
+    if !s.thread.send(commit::Job::Run(kind, work)) {
+        log::error!("{}: the commit thread is gone", s.output.name());
+        s.track.unsent();
+        return false;
+    }
+    true
+}
+
+/// A disabled output's thread dropped its compositor and ended.
+fn retired(state: &mut State, crtc: crtc::Handle) {
+    let Some(b) = state.backend.as_mut() else {
+        return;
+    };
+    if let Some(h) = b.retiring.remove(&crtc) {
+        let _ = h.join();
+        log::debug!("{crtc:?}: its commit thread dropped the compositor and ended");
+    }
+    let output = b
+        .reenable
+        .remove(&crtc)
+        .then(|| b.parked.get(&crtc).map(|p| p.output.clone()))
+        .flatten();
+    if let Some(output) = output {
+        state.set_in_layout(&output, true);
+    }
+    reset_device(state);
+    render_waiting(state);
+}
+
 /// The commit thread finished `done` on `crtc`.
-fn committed(state: &mut State, crtc: crtc::Handle, done: commit::Done) {
+fn committed(state: &mut State, crtc: crtc::Handle, done: commit::Done<Out>) {
     let overlay = state.config.debug.overlay;
     let Some(s) = state
         .backend
@@ -1312,15 +1428,31 @@ fn committed(state: &mut State, crtc: crtc::Handle, done: commit::Done) {
         }
     }
     let ok = done.result.is_ok();
-    if let Err(e) = &done.result {
-        let commit::Kind::Flip { modeset } = done.kind;
-        let what = if modeset { "modeset" } else { "queue frame" };
-        log::warn!("{}: {what}: {e}", s.output.name());
+    let name = s.output.name();
+    match (&done.result, done.kind) {
+        (Err(e), commit::Kind::Flip { modeset: true }) => log::warn!("{name}: modeset: {e}"),
+        (Err(e), commit::Kind::Flip { .. }) => log::warn!("{name}: queue frame: {e}"),
+        (Err(e), commit::Kind::Clear) => log::warn!("{name}: power off: {e}"),
+        (Err(e), commit::Kind::Gamma) => log::warn!("{name}: set gamma: {e}"),
+        (Err(e), commit::Kind::Retrain) => log::warn!("{name}: link retrain: {e}"),
+        (Ok(_), commit::Kind::Retrain) => log::info!("{name}: link retrained"),
+        (Ok(out), commit::Kind::Gamma) => {
+            log::debug!("{name}: gamma set");
+            if let Some((lut, blob)) = out.gamma.clone() {
+                s.hw.lut = Some(lut);
+                if let Some(Gamma::Lut { blob: b, .. }) = s.hw.gamma.as_mut() {
+                    *b = blob;
+                }
+            }
+        }
+        (Ok(_), _) => {}
     }
+    let gamma_failed = !ok && done.kind == commit::Kind::Gamma;
     let after = s.track.done(ok);
-    let mut flight = s.flight.take();
+    let flipped_frame = matches!(done.kind, commit::Kind::Flip { .. });
+    let mut flight = s.flight.take().filter(|_| flipped_frame);
     let feedback = flight.as_mut().and_then(|f| f.feedback.take());
-    if ok {
+    if ok && flipped_frame {
         s.hw.unlit = false;
         s.presenting = feedback;
     } else if let Some(mut f) = feedback {
@@ -1337,13 +1469,20 @@ fn committed(state: &mut State, crtc: crtc::Handle, done: commit::Done) {
                 .as_mut()
                 .and_then(|b| b.surfaces.get_mut(&crtc))
         {
-            count_frame(s, overlay, f.started);
+            count_frame(s, overlay, f.started, f.pointer);
         }
         finish(state, crtc, &output, ok, false, f.held, f.started);
     }
+    if gamma_failed {
+        crate::nightlight::gamma_failed(state, &output);
+    }
     match after.vblank {
         Some(flip) => flipped(state, crtc, flip),
-        None => queue_render(state, crtc),
+        None => {
+            flush_gamma(state, crtc);
+            retrain_link(state, crtc);
+            queue_render(state, crtc);
+        }
     }
     reset_device(state);
     if done.kind.blocking() {
@@ -1441,11 +1580,16 @@ fn due(state: &State, crtc: crtc::Handle) -> Option<Output> {
     let b = state.backend.as_ref()?;
     let s = b.surfaces.get(&crtc)?;
     let others = b.surfaces.values().map(|o| &o.track);
-    (commit::render_due(&s.track, others) && !b.reset && !s.hw.off && b.session.is_active())
-        .then(|| s.output.clone())
+    let retiring = !b.retiring.is_empty();
+    (commit::render_due(&s.track, others)
+        && !retiring
+        && !b.reset
+        && !s.hw.off
+        && b.session.is_active())
+    .then(|| s.output.clone())
 }
 
-fn count_frame(s: &mut Surface, overlay: bool, started: std::time::Instant) {
+fn count_frame(s: &mut Surface, overlay: bool, started: std::time::Instant, cursor_only: bool) {
     if overlay {
         s.stats.rendered(started.elapsed());
     }
@@ -1455,14 +1599,16 @@ fn count_frame(s: &mut Surface, overlay: bool, started: std::time::Instant) {
     let now = std::time::Instant::now();
     let from = *s.counted_from.get_or_insert(now);
     s.frames += 1;
+    s.cursor_frames += u32::from(cursor_only);
     if s.frames == 120 {
         let secs = now.duration_since(from).as_secs_f64().max(1e-3);
         let t = commit::tail(&s.commit_times);
         log::debug!(
-            "{}: 120 frames in {secs:.2} s ({:.1}/s), {} held the glass's blur; commit p99 {} us to the thread, {} us in the kernel, {} us back",
+            "{}: 120 frames in {secs:.2} s ({:.1}/s), {} held the glass's blur, {} cursor-only; commit p99 {} us to the thread, {} us in the kernel, {} us back",
             s.output.name(),
             119.0 / secs,
             s.held,
+            s.cursor_frames,
             t.to_thread.as_micros(),
             t.ioctl.as_micros(),
             t.to_main.as_micros()
@@ -1470,6 +1616,7 @@ fn count_frame(s: &mut Surface, overlay: bool, started: std::time::Instant) {
         s.commit_times.clear();
         s.frames = 0;
         s.held = 0;
+        s.cursor_frames = 0;
         s.counted_from = None;
     }
 }
@@ -1599,6 +1746,27 @@ fn send_frame_callbacks(state: &mut State, output: &Output) {
     }
 }
 
+/// How long exit waits for the outputs' threads to drop their compositors (a blocking clear
+/// each); a thread still in the kernel after it is left running.
+const EXIT_WAIT: Duration = Duration::from_millis(500);
+
+impl Drop for Backend {
+    fn drop(&mut self) {
+        let mut threads: Vec<_> = self.retiring.drain().map(|(_, h)| h).collect();
+        for (_, s) in self.surfaces.drain() {
+            let Surface {
+                thread, compositor, ..
+            } = s;
+            drop(compositor);
+            threads.extend(thread.exit());
+        }
+        let left = commit::join_until(threads, EXIT_WAIT);
+        if left > 0 {
+            log::warn!("{left} output(s) still in a commit at exit; leaving them to the kernel");
+        }
+    }
+}
+
 impl Backend {
     pub fn import_dmabuf(&mut self, dmabuf: &smithay::backend::allocator::dmabuf::Dmabuf) -> bool {
         self.renderer.import_dmabuf(dmabuf, None).is_ok()
@@ -1614,7 +1782,8 @@ impl Backend {
 #[derive(Default)]
 struct Hw {
     off: bool,
-    gamma: Option<Option<Gamma>>,
+    /// The CRTC's gamma table, looked up when the output was enabled.
+    gamma: Option<Gamma>,
     /// What the CRTC's gamma holds; None while unknown.
     lut: Option<Lut>,
     /// The ramp waiting for the CRTC to take it (`gamma_step`).
@@ -1770,7 +1939,6 @@ fn check_links(state: &mut State) {
 
 /// Set a BAD link-status GOOD once the CRTC is ready: a blocking modeset with the current mode.
 fn retrain_link(state: &mut State, crtc: crtc::Handle) {
-    use smithay::reexports::drm::control::Device as _;
     let Some(b) = state.backend.as_mut() else {
         return;
     };
@@ -1788,10 +1956,7 @@ fn retrain_link(state: &mut State, crtc: crtc::Handle) {
         return;
     };
     s.hw.link_tries += 1;
-    match dev.set_property(conn, prop, LINK_GOOD) {
-        Ok(()) => log::info!("{}: link retrained", s.output.name()),
-        Err(e) => log::warn!("{}: link retrain: {e}", s.output.name()),
-    }
+    send_job(s, commit::Kind::Retrain, Work::Retrain { conn, prop });
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -1855,8 +2020,8 @@ fn read_lut(dev: &DrmDevice, crtc: crtc::Handle, gamma: &Gamma, held: Option<Lut
     lut_from_blob(values[i], blob, held)
 }
 
-fn create_blob(dev: &DrmDevice, data: &[u8]) -> std::io::Result<u64> {
-    use std::os::fd::{AsFd, AsRawFd};
+fn create_blob(dev: &impl std::os::fd::AsFd, data: &[u8]) -> std::io::Result<u64> {
+    use std::os::fd::AsRawFd;
     #[repr(C)]
     struct CreateBlob {
         data: u64,
@@ -1930,7 +2095,7 @@ pub fn set_output_power(state: &mut State, output: &Output, on: bool) -> bool {
     power_off(state, crtc)
 }
 
-/// Clear `crtc` (when the session is ours) and mark it off; false when the kernel refused.
+/// Mark `crtc` off and, when the session is ours, have its thread clear the CRTC.
 fn power_off(state: &mut State, crtc: crtc::Handle) -> bool {
     let Some(b) = state.backend.as_mut() else {
         return false;
@@ -1939,9 +2104,8 @@ fn power_off(state: &mut State, crtc: crtc::Handle) -> bool {
     let Some(s) = b.surfaces.get_mut(&crtc) else {
         return false;
     };
-    if active && let Err(e) = lock(&s.compositor).clear() {
-        log::warn!("{}: power off: {e}", s.output.name());
-        return false;
+    if active {
+        send_job(s, commit::Kind::Clear, Work::None);
     }
     s.hw.off = true;
     let timer = s.callback_timer.take();
@@ -1962,31 +2126,21 @@ pub fn gamma_size(state: &State, output: &Output) -> Option<usize> {
     let crtc = output.user_data().get::<OutputCrtc>()?.0;
     let b = state.backend.as_ref()?;
     let s = b.surfaces.get(&crtc)?;
-    let gamma = match s.hw.gamma {
-        Some(g) => g,
-        None => find_gamma(&b.drm, crtc),
-    };
-    gamma.map(|g| g.size() as usize)
+    s.hw.gamma.map(|g| g.size() as usize)
 }
 
 /// Put `ramp` (None: identity) on `output`'s CRTC, now or once it is ready; nothing when it holds it already.
-/// False when the output has no gamma table or the CRTC refused the ramp.
+/// False when the output has no gamma table; a ramp the kernel refuses later goes to
+/// `nightlight::gamma_failed`.
 pub fn set_gamma(state: &mut State, output: &Output, ramp: Option<&[u16]>) -> bool {
     let Some((b, crtc)) = surface_of(state, output) else {
         return false;
     };
     let active = b.session.is_active();
-    let dev = &b.drm;
     let Some(s) = b.surfaces.get_mut(&crtc) else {
         return false;
     };
-    let hw = &mut s.hw;
-    if hw.gamma.is_none() {
-        let gamma = find_gamma(dev, crtc);
-        hw.lut = gamma.and_then(|g| read_lut(dev, crtc, &g, None));
-        hw.gamma = Some(gamma);
-    }
-    let Some(Some(g)) = hw.gamma else {
+    let Some(g) = s.hw.gamma else {
         return false;
     };
     if ramp.is_some_and(|r| r.len() != g.size() as usize * 3) {
@@ -2005,7 +2159,7 @@ pub fn set_gamma(state: &mut State, output: &Output, ramp: Option<&[u16]>) -> bo
         }
         GammaStep::Commit => {
             s.hw.wanted_lut = None;
-            commit_gamma(dev, crtc, &mut s.hw, wanted, output)
+            commit_gamma(s, wanted)
         }
     }
 }
@@ -2016,7 +2170,6 @@ fn flush_gamma(state: &mut State, crtc: crtc::Handle) {
         return;
     };
     let active = b.session.is_active();
-    let dev = &b.drm;
     let Some(s) = b.surfaces.get_mut(&crtc) else {
         return;
     };
@@ -2027,52 +2180,54 @@ fn flush_gamma(state: &mut State, crtc: crtc::Handle) {
         GammaStep::Skip => {}
         GammaStep::Wait => s.hw.wanted_lut = Some(wanted),
         GammaStep::Commit => {
-            let output = s.output.clone();
-            commit_gamma(dev, crtc, &mut s.hw, wanted, &output);
+            commit_gamma(s, wanted);
         }
     }
 }
 
-fn commit_gamma(
-    dev: &DrmDevice,
-    crtc: crtc::Handle,
-    hw: &mut Hw,
-    wanted: Lut,
-    output: &Output,
-) -> bool {
-    use smithay::reexports::drm::control::{Device as _, property};
-    let Some(Some(g)) = hw.gamma.as_mut() else {
+/// Hand `wanted` to the output's commit thread (`write_gamma`); false when it is gone.
+fn commit_gamma(s: &mut Surface, wanted: Lut) -> bool {
+    let Some(gamma) = s.hw.gamma else {
         return false;
     };
-    let size = g.size() as usize;
-    let ramp = match &wanted {
+    send_job(s, commit::Kind::Gamma, Work::Gamma { gamma, wanted })
+}
+
+/// Put `wanted` on `crtc`'s gamma, on the commit thread. Returns the GAMMA_LUT blob now
+/// holding it; the one `gamma` held before is destroyed.
+fn write_gamma(
+    fd: &DrmDeviceFd,
+    crtc: crtc::Handle,
+    gamma: Gamma,
+    wanted: &Lut,
+) -> Result<Option<u64>, String> {
+    use smithay::reexports::drm::control::{Device as _, property};
+    let size = gamma.size() as usize;
+    let ramp = match wanted {
         Lut::Ramp(r) => Some(r.as_slice()),
         Lut::Identity => None,
     };
-    let result = match g {
+    match gamma {
         Gamma::Lut { prop, blob, .. } => {
             let new = match ramp {
-                Some(r) => match create_blob(dev, &lut_bytes(r, size)) {
-                    Ok(id) => Some(id),
-                    Err(e) => {
-                        log::warn!("{}: gamma blob: {e}", output.name());
-                        return false;
-                    }
-                },
+                Some(r) => Some(
+                    create_blob(fd, &lut_bytes(r, size)).map_err(|e| format!("gamma blob: {e}"))?,
+                ),
                 None => None,
             };
-            match dev.set_property(crtc, *prop, property::Value::Blob(new.unwrap_or(0)).into()) {
+            let value = property::Value::Blob(new.unwrap_or(0)).into();
+            match fd.set_property(crtc, prop, value) {
                 Ok(()) => {
-                    if let Some(old) = std::mem::replace(blob, new) {
-                        let _ = dev.destroy_property_blob(old);
+                    if let Some(old) = blob {
+                        let _ = fd.destroy_property_blob(old);
                     }
-                    Ok(())
+                    Ok(new)
                 }
                 Err(e) => {
                     if let Some(id) = new {
-                        let _ = dev.destroy_property_blob(id);
+                        let _ = fd.destroy_property_blob(id);
                     }
-                    Err(e)
+                    Err(e.to_string())
                 }
             }
         }
@@ -2091,18 +2246,9 @@ fn commit_gamma(
             };
             let (red, rest) = r.split_at(size);
             let (green, blue) = rest.split_at(size);
-            dev.set_gamma(crtc, red, green, blue)
-        }
-    };
-    match result {
-        Ok(()) => {
-            log::debug!("{}: gamma set", output.name());
-            hw.lut = Some(wanted);
-            true
-        }
-        Err(e) => {
-            log::warn!("{}: set gamma: {e}", output.name());
-            false
+            fd.set_gamma(crtc, red, green, blue)
+                .map(|()| None)
+                .map_err(|e| e.to_string())
         }
     }
 }

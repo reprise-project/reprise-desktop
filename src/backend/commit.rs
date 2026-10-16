@@ -1,6 +1,7 @@
 //! Per-output commit threads. Main renders and assigns planes; each driven CRTC's thread runs
-//! the KMS commit, so a commit stuck in the kernel stalls that output alone. `Track` is main's
-//! view of one output; at most one job is outstanding per output.
+//! the KMS commits (frames, power-off, gamma, link retrain) and finally drops the output's
+//! compositor, so a commit stuck in the kernel stalls that output alone. `Track` is main's view
+//! of one output; at most one job is outstanding per output.
 
 use std::{
     sync::mpsc,
@@ -15,14 +16,21 @@ use smithay::reexports::calloop::channel::Sender;
 pub enum Kind {
     /// Queue the rendered frame; `modeset` when it carries a mode or connector change and so
     /// commits blocking.
-    Flip { modeset: bool },
+    Flip {
+        modeset: bool,
+    },
+    /// Power the CRTC off.
+    Clear,
+    Gamma,
+    /// Set a BAD link-status back to GOOD.
+    Retrain,
 }
 
 impl Kind {
     /// Commits that wait in the kernel holding its modeset locks (on some drivers every
     /// CRTC's) until they return.
     pub fn blocking(self) -> bool {
-        self == Kind::Flip { modeset: true }
+        self != Kind::Flip { modeset: false }
     }
 }
 
@@ -33,24 +41,35 @@ pub fn render_due<'a, M: 'a>(own: &Track<M>, all: impl IntoIterator<Item = &'a T
     own.idle() && !all.into_iter().any(Track::blocking)
 }
 
-#[derive(Debug)]
-pub enum Job {
-    Run(Kind),
+pub enum Job<P> {
+    Run(Kind, P),
+    /// Drop the committer (and the compositor it holds) and end the thread.
+    Exit,
 }
 
 /// A finished job, as the thread reports it.
 #[derive(Debug)]
-pub struct Done {
+pub struct Done<O> {
     pub kind: Kind,
-    pub result: Result<(), String>,
+    pub result: Result<O, String>,
     /// Around the commit itself, after any `REPRISE_COMMIT_DELAY` sleep.
     pub started: Instant,
     pub ended: Instant,
 }
 
-/// Runs a job's commit on the thread.
+#[derive(Debug)]
+pub enum Reply<O> {
+    Done(Done<O>),
+    /// The thread dropped its committer and ended.
+    Exited,
+}
+
+/// Runs a job's commit on the thread. `Payload` is what main sends with a job, `Output` what
+/// a commit that took gives back.
 pub trait Committer: Send + 'static {
-    fn commit(&mut self, kind: Kind) -> Result<(), String>;
+    type Payload: Send + 'static;
+    type Output: Send + 'static;
+    fn commit(&mut self, kind: Kind, payload: Self::Payload) -> Result<Self::Output, String>;
 }
 
 /// `REPRISE_COMMIT_DELAY=<connector>:<ms>[:modeset]`: that output's thread sleeps `ms` before
@@ -87,31 +106,34 @@ impl Delay {
     }
 }
 
-/// An output's commit thread. Dropping it closes the job queue and waits for the thread.
-pub struct Thread {
-    jobs: Option<mpsc::Sender<Job>>,
+/// An output's commit thread. Dropping it closes the job queue; the thread ends after its
+/// current job without being waited for.
+pub struct Thread<P> {
+    jobs: mpsc::Sender<Job<P>>,
     handle: Option<JoinHandle<()>>,
 }
 
-impl Thread {
-    /// Starts `name`'s thread; every job's `Done` goes to `replies` tagged with `id`.
+impl<P: Send + 'static> Thread<P> {
+    /// Starts `name`'s thread; every job's `Done` and the final `Exited` go to `replies`
+    /// tagged with `id`.
     pub fn spawn<I, C>(
         name: &str,
         id: I,
-        mut committer: C,
+        committer: C,
         delay: Option<Delay>,
-        replies: Sender<(I, Done)>,
-    ) -> std::io::Result<Thread>
+        replies: Sender<(I, Reply<C::Output>)>,
+    ) -> std::io::Result<Thread<P>>
     where
         I: Copy + Send + 'static,
-        C: Committer,
+        C: Committer<Payload = P>,
     {
-        let (jobs, queue) = mpsc::channel::<Job>();
+        let (jobs, queue) = mpsc::channel::<Job<P>>();
         let connector = name.to_owned();
         let handle = std::thread::Builder::new()
             .name(format!("commit-{name}"))
             .spawn(move || {
-                while let Ok(Job::Run(kind)) = queue.recv() {
+                let mut committer = committer;
+                while let Ok(Job::Run(kind, payload)) = queue.recv() {
                     let delayed = delay.filter(|d| d.applies(kind));
                     if let Some(d) = delayed {
                         let ms = d.wait.as_millis();
@@ -119,12 +141,12 @@ impl Thread {
                         std::thread::sleep(d.wait);
                     }
                     let started = Instant::now();
-                    let result = committer.commit(kind);
+                    let result = committer.commit(kind, payload);
                     if let Some(d) = delayed {
                         let ms = d.wait.as_millis();
+                        let ok = result.is_ok();
                         log::info!(
-                            "{connector}: delayed commit {kind:?} ends after {ms} ms, ok {}",
-                            result.is_ok()
+                            "{connector}: delayed commit {kind:?} ends after {ms} ms, ok {ok}"
                         );
                     }
                     let done = Done {
@@ -133,29 +155,46 @@ impl Thread {
                         started,
                         ended: Instant::now(),
                     };
-                    if replies.send((id, done)).is_err() {
+                    if replies.send((id, Reply::Done(done))).is_err() {
                         break;
                     }
                 }
+                drop(committer);
+                let _ = replies.send((id, Reply::Exited));
             })?;
         Ok(Thread {
-            jobs: Some(jobs),
+            jobs,
             handle: Some(handle),
         })
     }
 
     /// Queues `job`; false when the thread is gone.
-    pub fn send(&self, job: Job) -> bool {
-        self.jobs.as_ref().is_some_and(|j| j.send(job).is_ok())
+    pub fn send(&self, job: Job<P>) -> bool {
+        self.jobs.send(job).is_ok()
+    }
+
+    /// Asks the thread to drop its committer and end once its current job is done.
+    pub fn exit(mut self) -> Option<JoinHandle<()>> {
+        let _ = self.jobs.send(Job::Exit);
+        self.handle.take()
     }
 }
 
-impl Drop for Thread {
-    fn drop(&mut self) {
-        drop(self.jobs.take());
-        if let Some(h) = self.handle.take() {
+/// Waits for `threads` until `deadline` has passed in total, then leaves the rest running.
+/// Returns how many were left.
+pub fn join_until(threads: Vec<JoinHandle<()>>, deadline: Duration) -> usize {
+    let until = Instant::now() + deadline;
+    let mut left = threads;
+    loop {
+        let (done, running): (Vec<_>, Vec<_>) = left.into_iter().partition(|h| h.is_finished());
+        for h in done {
             let _ = h.join();
         }
+        left = running;
+        if left.is_empty() || Instant::now() >= until {
+            return left.len();
+        }
+        std::thread::sleep(Duration::from_millis(5));
     }
 }
 
@@ -240,7 +279,8 @@ impl<M> Track<M> {
         matches!(self.phase, Phase::Busy { kind, .. } if kind.blocking())
     }
 
-    /// A job went to the thread.
+    /// A job went to the thread. A frame goes only from `Idle`; a power-off also from
+    /// `Flipping`, whose vblank may then come during the job.
     pub fn sent(&mut self, kind: Kind, now: Instant) {
         debug_assert!(!self.busy(), "one job at a time per output");
         self.phase = Phase::Busy { kind, since: now };
@@ -253,20 +293,20 @@ impl<M> Track<M> {
 
     /// The thread finished the job; `ok` says the commit took.
     pub fn done(&mut self, ok: bool) -> After<M> {
-        let flipped = matches!(
+        let flip = matches!(
             self.phase,
             Phase::Busy {
                 kind: Kind::Flip { .. },
                 ..
             }
-        ) && ok;
+        );
         let reset = std::mem::take(&mut self.reset);
-        self.phase = if flipped && !reset {
+        self.phase = if flip && ok && !reset {
             Phase::Flipping
         } else {
             Phase::Idle
         };
-        let vblank = self.vblank.take().filter(|_| self.phase == Phase::Flipping);
+        let vblank = self.vblank.take().filter(|_| !reset && (ok || !flip));
         if vblank.is_some() {
             self.phase = Phase::Idle;
         }
@@ -298,13 +338,12 @@ impl<M> Track<M> {
         true
     }
 
-    /// Power off: now when no job is out (true), else once it is done.
+    /// Power off: send the `Clear` now when no job is out (true), else once it is done.
     pub fn power_off(&mut self) -> bool {
         if self.busy() {
             self.off = true;
             return false;
         }
-        self.phase = Phase::Idle;
         true
     }
 
@@ -346,7 +385,7 @@ mod tests {
     }
 
     #[test]
-    fn a_modeset_anywhere_holds_every_outputs_render() {
+    fn a_blocking_commit_anywhere_holds_every_outputs_render() {
         let idle = Track::<u32>::default();
         let mut flipping = Track::<u32>::default();
         flipping.sent(FLIP, Instant::now());
@@ -358,11 +397,13 @@ mod tests {
             !render_due(&flipping, [&idle, &flipping]),
             "nor renders twice"
         );
-        let mut modeset = Track::<u32>::default();
-        modeset.sent(MODESET, Instant::now());
-        assert!(!render_due(&idle, [&idle, &modeset]));
-        modeset.done(false);
-        assert!(render_due(&idle, [&idle, &modeset]));
+        for kind in [MODESET, Kind::Clear, Kind::Gamma, Kind::Retrain] {
+            let mut other = Track::<u32>::default();
+            other.sent(kind, Instant::now());
+            assert!(!render_due(&idle, [&idle, &other]), "{kind:?}");
+            other.done(false);
+            assert!(render_due(&idle, [&idle, &other]), "{kind:?} done");
+        }
     }
 
     #[test]
@@ -382,6 +423,21 @@ mod tests {
         let after = t.done(false);
         assert_eq!(after.vblank, None);
         assert!(t.idle());
+    }
+
+    #[test]
+    fn a_clear_sent_while_flipping_replays_the_flips_vblank() {
+        let mut t = Track::<u32>::default();
+        t.sent(FLIP, Instant::now());
+        t.done(true);
+        assert!(t.power_off(), "no job out while flipping");
+        t.sent(Kind::Clear, Instant::now());
+        assert_eq!(t.vblank(7), None);
+        assert_eq!(t.done(false).vblank, Some(7), "even when the clear failed");
+        assert!(t.idle());
+        t.sent(Kind::Clear, Instant::now());
+        t.done(true);
+        assert!(t.idle(), "a clear never leaves the output flipping");
     }
 
     #[test]
@@ -418,13 +474,20 @@ mod tests {
     }
 
     #[test]
-    fn reset_and_power_off_run_at_once_off_the_thread() {
+    fn a_reset_runs_at_once_off_the_thread() {
         let mut t = Track::<u32>::default();
         t.sent(FLIP, Instant::now());
         t.done(true);
         assert!(t.reset(), "a flipping output has no job out");
         assert!(t.idle());
-        assert!(t.power_off());
+    }
+
+    #[test]
+    fn only_a_page_flip_is_nonblocking() {
+        assert!(!FLIP.blocking());
+        for k in [MODESET, Kind::Clear, Kind::Gamma, Kind::Retrain] {
+            assert!(k.blocking(), "{k:?}");
+        }
     }
 
     #[test]
@@ -456,7 +519,8 @@ mod tests {
         }
         let modesets = d("HDMI-A-1:20:modeset").unwrap();
         assert!(modesets.applies(MODESET) && !modesets.applies(FLIP));
-        assert!(d("HDMI-A-1:20").unwrap().applies(FLIP));
+        assert!(!modesets.applies(Kind::Clear));
+        assert!(d("HDMI-A-1:20").unwrap().applies(Kind::Gamma));
     }
 
     #[test]
@@ -480,11 +544,13 @@ mod tests {
         assert_eq!(tail(&[]), Times::default());
     }
 
-    /// Commits until the test releases it; the first one blocks like a modeset stuck in the kernel.
+    /// Commits once the test releases it, like a modeset stuck in the kernel.
     struct Stuck(mpsc::Receiver<()>);
 
     impl Committer for Stuck {
-        fn commit(&mut self, _: Kind) -> Result<(), String> {
+        type Payload = ();
+        type Output = ();
+        fn commit(&mut self, _: Kind, _: ()) -> Result<(), String> {
             self.0.recv().map_err(|e| e.to_string())
         }
     }
@@ -492,7 +558,9 @@ mod tests {
     struct Quick;
 
     impl Committer for Quick {
-        fn commit(&mut self, _: Kind) -> Result<(), String> {
+        type Payload = ();
+        type Output = ();
+        fn commit(&mut self, _: Kind, _: ()) -> Result<(), String> {
             Ok(())
         }
     }
@@ -502,27 +570,27 @@ mod tests {
         stuck_done: bool,
         quick_dones: Vec<Instant>,
         ticks: Vec<Instant>,
-        resend: Option<mpsc::Sender<Job>>,
+        resend: Option<mpsc::Sender<Job<()>>>,
     }
 
     #[test]
     fn a_stuck_commit_leaves_the_loop_and_other_outputs_running() {
         let mut ev: EventLoop<Loop> = EventLoop::try_new().unwrap();
-        let (replies, done) = channel::<(u8, Done)>();
+        let (replies, done) = channel::<(u8, Reply<()>)>();
         let (release, gate) = mpsc::channel();
         let stuck = Thread::spawn("A", 0u8, Stuck(gate), None, replies.clone()).unwrap();
         let quick = Thread::spawn("B", 1u8, Quick, None, replies).unwrap();
-        let (to_quick, quick_jobs) = mpsc::channel::<Job>();
+        let (to_quick, quick_jobs) = mpsc::channel::<Job<()>>();
         ev.handle()
             .insert_source(done, |event, _, data: &mut Loop| {
-                if let Event::Msg((id, done)) = event {
+                if let Event::Msg((id, Reply::Done(done))) = event {
                     assert!(done.result.is_ok());
                     if id == 0 {
                         data.stuck_done = true;
                     } else {
                         data.quick_dones.push(Instant::now());
                         if let Some(r) = &data.resend {
-                            let _ = r.send(Job::Run(FLIP));
+                            let _ = r.send(Job::Run(FLIP, ()));
                         }
                     }
                 }
@@ -541,8 +609,8 @@ mod tests {
             resend: Some(to_quick),
             ..Loop::default()
         };
-        assert!(stuck.send(Job::Run(MODESET)));
-        assert!(quick.send(Job::Run(FLIP)));
+        assert!(stuck.send(Job::Run(MODESET, ())));
+        assert!(quick.send(Job::Run(FLIP, ())));
         let start = Instant::now();
         while start.elapsed() < Duration::from_millis(200) {
             ev.dispatch(Duration::from_millis(5), &mut data).unwrap();
@@ -581,5 +649,66 @@ mod tests {
             ev.dispatch(Duration::from_millis(5), &mut data).unwrap();
         }
         assert!(data.stuck_done, "A's Done arrives once the kernel lets go");
+    }
+
+    /// Reports the thread it was dropped on.
+    struct Dropped(mpsc::Sender<std::thread::ThreadId>);
+
+    impl Committer for Dropped {
+        type Payload = ();
+        type Output = ();
+        fn commit(&mut self, _: Kind, _: ()) -> Result<(), String> {
+            Ok(())
+        }
+    }
+
+    impl Drop for Dropped {
+        fn drop(&mut self) {
+            let _ = self.0.send(std::thread::current().id());
+        }
+    }
+
+    #[test]
+    fn exit_drops_the_committer_on_its_thread_then_says_so() {
+        let mut ev: EventLoop<Vec<Reply<()>>> = EventLoop::try_new().unwrap();
+        let (replies, done) = channel::<(u8, Reply<()>)>();
+        ev.handle()
+            .insert_source(done, |event, _, got: &mut Vec<Reply<()>>| {
+                if let Event::Msg((_, r)) = event {
+                    got.push(r);
+                }
+            })
+            .unwrap();
+        let (tx, dropped_on) = mpsc::channel();
+        let t = Thread::spawn("A", 0u8, Dropped(tx), None, replies).unwrap();
+        assert!(t.send(Job::Run(Kind::Clear, ())));
+        let handle = t.exit().unwrap();
+        let worker = handle.thread().id();
+        handle.join().unwrap();
+        assert_eq!(dropped_on.recv().unwrap(), worker);
+        let mut got = Vec::new();
+        ev.dispatch(Duration::from_millis(50), &mut got).unwrap();
+        assert!(
+            matches!(got.as_slice(), [Reply::Done(_), Reply::Exited]),
+            "{got:?}"
+        );
+    }
+
+    #[test]
+    fn the_exit_deadline_leaves_a_stuck_thread_running() {
+        let (replies, _done) = channel::<(u8, Reply<()>)>();
+        let (release, gate) = mpsc::channel();
+        let stuck = Thread::spawn("A", 0u8, Stuck(gate), None, replies.clone()).unwrap();
+        let quick = Thread::spawn("B", 1u8, Quick, None, replies).unwrap();
+        assert!(stuck.send(Job::Run(Kind::Clear, ())));
+        let handles = [stuck.exit(), quick.exit()].into_iter().flatten().collect();
+        let start = Instant::now();
+        assert_eq!(join_until(handles, Duration::from_millis(100)), 1);
+        let took = start.elapsed();
+        assert!(
+            took >= Duration::from_millis(100) && took < Duration::from_secs(2),
+            "{took:?}"
+        );
+        release.send(()).unwrap();
     }
 }

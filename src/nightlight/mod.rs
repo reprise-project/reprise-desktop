@@ -276,6 +276,20 @@ fn apply(state: &mut State, output: &Output) {
     }
 }
 
+/// The kernel refused a gamma ramp on `output`: a client holding its gamma is told and let
+/// go, and night light puts its own ramp back on its next try.
+pub fn gamma_failed(state: &mut State, output: &Output) {
+    if state.night.control.fail(output) {
+        log::info!(
+            "night light: {}'s gamma client was refused; ours goes back on",
+            output.name()
+        );
+    }
+    if let Some(o) = state.night.outputs.iter_mut().find(|o| &o.output == output) {
+        o.dirty = true;
+    }
+}
+
 pub fn output_on(state: &mut State, output: &Output) {
     if let Some(o) = state.night.outputs.iter_mut().find(|o| &o.output == output) {
         o.dirty = true;

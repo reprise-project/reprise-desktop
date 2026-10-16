@@ -70,6 +70,19 @@ impl GammaControlState {
     }
 
     /// Outputs went away: their controls fail.
+    /// Sends `failed` to the client holding `output`'s gamma and lets it go; false when none did.
+    pub fn fail(&mut self, output: &Output) -> bool {
+        let before = self.controls.len();
+        self.controls.retain(|(o, c)| {
+            let keep = o != output;
+            if !keep {
+                c.failed();
+            }
+            keep
+        });
+        self.controls.len() != before
+    }
+
     pub fn retain_outputs(&mut self, live: &[Output]) {
         self.controls.retain(|(o, c)| {
             let keep = live.contains(o);
