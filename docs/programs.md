@@ -19,7 +19,9 @@ The file manager, and the default for folders.
   remove it safely. Network and FUSE mounts stay out of
   that list, so a slow server can't stall it.
 - **File operations** run in the background, so a big copy doesn't freeze
-  anything. Cut, Copy, Paste (with Yes to All), Paste Shortcut, New Folder,
+  anything. A copy, move, delete, Restore or Empty Recycle Bin that takes
+  longer than half a second shows its progress with Pause and Cancel, on the
+  desktop too. Cut, Copy, Paste (with Yes to All), Paste Shortcut, New Folder,
   rename with F2, Move To, Copy To, Open With, and Send To a zip file, the
   desktop, a mail or a removable drive. Ctrl+Z undoes the last one; undoing a
   copy its Recycle Bin can't take (a drive set to remove files immediately,

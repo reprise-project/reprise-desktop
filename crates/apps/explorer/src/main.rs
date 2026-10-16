@@ -20,6 +20,7 @@ mod place;
 mod pointer;
 mod props_dialog;
 mod props_host;
+mod removing;
 mod rename;
 mod settings;
 mod tree;
@@ -232,6 +233,8 @@ pub struct Explorer {
     pub pending_drop: Option<drag::PendingDrop>,
     pub(crate) put: Option<fileops::Put>,
     pub(crate) put_queue: std::collections::VecDeque<fileops::PendingPut>,
+    pub(crate) removing: Option<removing::Removing>,
+    pub(crate) remove_queue: std::collections::VecDeque<removing::PendingRemoval>,
     /// While a replace prompt is up: the batches whose prompts come next, and
     /// the error boxes of batches that finished meanwhile.
     pub(crate) replace_waiting:
@@ -382,6 +385,8 @@ impl Explorer {
             pending_drop: None,
             put: None,
             put_queue: std::collections::VecDeque::new(),
+            removing: None,
+            remove_queue: std::collections::VecDeque::new(),
             replace_waiting: std::collections::VecDeque::new(),
             messages_waiting: std::collections::VecDeque::new(),
             jobs_tx,
@@ -1130,7 +1135,7 @@ impl App for Lazy {
     fn children(&self) -> Vec<Child> {
         match &self.inner {
             Some(ex) if !ex.closing => ex.children(),
-            Some(ex) => ex.copy_child().into_iter().collect(),
+            Some(ex) => ex.progress_children(),
             None => Vec::new(),
         }
     }
@@ -1182,8 +1187,8 @@ impl App for Lazy {
         if win == PROPS {
             return ex.props_event(ev, ctx);
         }
-        if win == copydlg::COPY {
-            return ex.copy_event(ev, ctx);
+        if win == copydlg::COPY || win == copydlg::REMOVE {
+            return ex.progress_event(win, ev, ctx);
         }
         let reply = match ev {
             Event::Key(k) => ex.key(k, ctx),
@@ -1316,8 +1321,8 @@ impl App for Lazy {
             ex.draw_props(c, ctx);
             return;
         }
-        if win == copydlg::COPY {
-            ex.draw_copy(c);
+        if win == copydlg::COPY || win == copydlg::REMOVE {
+            ex.draw_progress(win, c);
             return;
         }
         ex.status.grip = !ctx.maximized;
@@ -1335,7 +1340,7 @@ impl App for Lazy {
         ex.follow_forms(ctx);
         match win {
             DIALOG => ex.access_dialog(tree, ctx),
-            copydlg::COPY => ex.access_copy(tree),
+            copydlg::COPY | copydlg::REMOVE => ex.access_progress(win, tree),
             PROGRAM_BROWSE => ex.access_program_browse(tree),
             browse::ERROR => ex.access_browse_error(tree),
             PROPS => {

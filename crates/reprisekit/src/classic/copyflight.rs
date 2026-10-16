@@ -15,6 +15,10 @@ pub fn palette(cs: &ColorScheme) -> Palette {
         shadow: 0,
         trail: None,
         gloss: false,
+        bin: [Color::rgb(0xC8, 0xC8, 0xC8); 2],
+        bin_rim: Color::rgb(0x50, 0x50, 0x50),
+        bin_inside: Color::rgb(0x40, 0x40, 0x40),
+        bin_rib: Color::rgb(0x90, 0x90, 0x90),
     }
 }
 

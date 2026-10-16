@@ -180,6 +180,8 @@ pub struct Drags {
     pub(crate) put_queues: HashMap<PathBuf, VecDeque<QueuedPut>>,
     /// The batch running per folder.
     pub(crate) running: HashMap<PathBuf, crate::putview::Running>,
+    /// Deletes and Empty Recycle Bin running, by a number of their own.
+    pub(crate) removals: HashMap<u64, crate::putview::Removing>,
 }
 
 /// What a left drop of `grabbed` on `target` does with no modifier: move an icon about the desktop or

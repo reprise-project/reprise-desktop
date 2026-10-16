@@ -400,10 +400,13 @@ fn render_copy_progress(with_blue: bool, scale: i32) -> Canvas {
             ..reprisekit::glass::Settings::default()
         },
     );
-    let mut boxes: Vec<(Theme, Phase, bool)> = vec![
-        (Theme::default(), Phase::Preparing, true),
-        (Theme::default(), Phase::Copying, true),
-        (Theme::default(), Phase::Finishing, true),
+    let mut boxes: Vec<(Theme, Kind, Phase, bool)> = vec![
+        (Theme::default(), Kind::Move, Phase::Preparing, true),
+        (Theme::default(), Kind::Move, Phase::Copying, true),
+        (Theme::default(), Kind::Move, Phase::Finishing, true),
+        (Theme::default(), Kind::Delete, Phase::Copying, true),
+        (Theme::default(), Kind::Empty, Phase::Copying, true),
+        (Theme::default(), Kind::Restore, Phase::Copying, true),
     ];
     if with_blue {
         for v in [
@@ -411,24 +414,27 @@ fn render_copy_progress(with_blue: bool, scale: i32) -> Canvas {
             reprisekit::blue::Variant::Olive,
             reprisekit::blue::Variant::Silver,
         ] {
-            boxes.push((interfaces::blue_theme(v), Phase::Copying, true));
+            boxes.push((interfaces::blue_theme(v), Kind::Move, Phase::Copying, true));
         }
+        let blue = interfaces::blue_theme(reprisekit::blue::Variant::Blue);
+        for kind in [Kind::Delete, Kind::Empty, Kind::Restore] {
+            boxes.push((blue.clone(), kind, Phase::Copying, true));
+        }
+        let olive = interfaces::blue_theme(reprisekit::blue::Variant::Olive);
+        boxes.push((olive, Kind::Delete, Phase::Finishing, true));
         let glass = interfaces::theme_for(Interface::Glass);
-        boxes.push((glass.clone(), Phase::Copying, true));
-        boxes.push((glass_dark, Phase::Copying, true));
-        boxes.push((glass, Phase::Copying, false));
+        boxes.push((glass.clone(), Kind::Move, Phase::Copying, true));
+        boxes.push((glass_dark, Kind::Move, Phase::Copying, true));
+        boxes.push((glass.clone(), Kind::Move, Phase::Copying, false));
+        boxes.push((glass, Kind::Delete, Phase::Copying, true));
     }
     let drawn: Vec<Canvas> = boxes
         .iter()
-        .map(|(theme, phase, details)| {
+        .map(|(theme, kind, phase, details)| {
             let text = TextRenderer::load(&theme.fonts);
             let p = theme.paint();
-            let mut cp = CopyProgress::new(
-                Kind::Move,
-                "Downloads",
-                "KINGSTON",
-                Color::rgb(0x2E, 0x8C, 0xFF),
-            );
+            let mut cp =
+                CopyProgress::new(*kind, "Downloads", "KINGSTON", Color::rgb(0x2E, 0x8C, 0xFF));
             cp.follow(&p);
             if !details {
                 cp.toggle_details();

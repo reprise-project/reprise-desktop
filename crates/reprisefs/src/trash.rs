@@ -616,9 +616,18 @@ fn info_path(files: &Path) -> io::Result<PathBuf> {
 /// since the bin lists `files/`: an info file that cannot be removed is
 /// logged and left, not an error.
 pub fn erase_trashed(files: &Path, expected: Option<&Trashed>) -> io::Result<()> {
+    erase_trashed_with(files, expected, crate::ops::erase)
+}
+
+/// [`erase_trashed`], the entry going through `erase`.
+pub(crate) fn erase_trashed_with(
+    files: &Path,
+    expected: Option<&Trashed>,
+    erase: impl Fn(&Path) -> io::Result<()>,
+) -> io::Result<()> {
     let info = info_path(files)?;
     check_listed(files, expected)?;
-    crate::ops::erase(files)?;
+    erase(files)?;
     if let Err(e) = std::fs::remove_file(&info)
         && e.kind() != io::ErrorKind::NotFound
     {
@@ -662,6 +671,14 @@ pub fn restore_free(t: &Trashed) -> io::Result<PathBuf> {
 /// info file with no data left goes too, and so does the
 /// `directorysizes` cache.
 pub fn empty_in(root: &Path) -> io::Result<usize> {
+    empty_with(root, crate::ops::erase)
+}
+
+/// [`empty_in`], each entry going through `erase`; an `Interrupted` from it stops at once.
+pub(crate) fn empty_with(
+    root: &Path,
+    erase: impl Fn(&Path) -> io::Result<()>,
+) -> io::Result<usize> {
     let (files_dir, info_dir) = (root.join("files"), root.join("info"));
     let mut count = 0;
     let mut failed = 0;
@@ -678,10 +695,11 @@ pub fn empty_in(root: &Path) -> io::Result<usize> {
         for entry in rd.flatten() {
             let mut info = entry.file_name();
             info.push(".trashinfo");
-            match crate::ops::erase(&entry.path())
+            match erase(&entry.path())
                 .and_then(|()| gone(std::fs::remove_file(info_dir.join(info))))
             {
                 Ok(()) => count += 1,
+                Err(e) if e.kind() == io::ErrorKind::Interrupted => return Err(e),
                 Err(e) => fail(e),
             }
         }

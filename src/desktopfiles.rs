@@ -2,7 +2,8 @@
 
 use std::path::{Path, PathBuf};
 
-use reprisefs::{ops, places};
+use reprisefs::places;
+use reprisefs::removal::Removal;
 
 use crate::compositor::State;
 use crate::desktop::{self, DesktopEntry};
@@ -29,13 +30,6 @@ fn lone_file(entries: &[DesktopEntry], files: &[PathBuf]) -> Option<usize> {
     entries
         .iter()
         .position(|e| e.kind == desktop::Kind::File && &e.path == path)
-}
-
-fn delete_each(
-    items: impl Iterator<Item = (PathBuf, reprisefs::bincap::Plan)>,
-) -> Option<(PathBuf, std::io::Error)> {
-    let mut items = items;
-    items.find_map(|(p, plan)| ops::delete(&p, plan).err().map(|e| (p, e)))
 }
 
 impl State {
@@ -151,14 +145,14 @@ impl State {
         });
     }
 
-    /// Delete `paths` off the loop: to the trash, or for good with `erase`. Trashing first asks one at a time about items too big for their Recycle Bin ([`State::too_big_step`]). The first failure stops the rest and an error box says why.
+    /// Delete `paths` on a removal job: to the trash, or for good with `erase`. Trashing first asks one at a time about items too big for their Recycle Bin ([`State::too_big_step`]). The first failure stops the rest and an error box says why.
     pub fn delete_paths(&mut self, paths: Vec<PathBuf>, erase: bool) {
         use reprisefs::bincap::{Plan, TooBig, TooBigStep};
         self.spawn_fs_job(move || -> OnLoop {
+            let bins = reprisefs::trash::Bins::system();
             let plan = if erase {
                 paths.into_iter().map(|p| (p, Plan::Erase)).collect()
             } else {
-                let bins = reprisefs::trash::Bins::system();
                 let measured = paths
                     .iter()
                     .map(|p| bins.as_ref().and_then(|b| b.measure(p)))
@@ -169,9 +163,25 @@ impl State {
                     _ => return Box::new(move |state| state.too_big_step(asker)),
                 }
             };
-            let failed = delete_each(plan.into_iter());
-            Box::new(move |state| state.delete_failed(failed))
+            Box::new(move |state| state.delete_planned(plan, bins))
         });
+    }
+
+    fn delete_planned(
+        &mut self,
+        plan: Vec<(PathBuf, reprisefs::bincap::Plan)>,
+        bins: Option<reprisefs::trash::Bins>,
+    ) {
+        use reprisekit::controls::copyprogress::Kind;
+        let erase = plan
+            .iter()
+            .all(|(_, p)| matches!(p, reprisefs::bincap::Plan::Erase));
+        let (paths, items) = plan
+            .into_iter()
+            .map(|(p, plan)| (p.clone(), Removal::planned(p, plan)))
+            .unzip();
+        let kind = if erase { Kind::Erase } else { Kind::Delete };
+        self.start_removal(items, paths, bins, kind);
     }
 
     /// The next step of a Delete holding items too big for their Recycle Bin: the next question, the batch deleted as answered, or nothing after Cancel.
@@ -185,38 +195,26 @@ impl State {
             }
             TooBigStep::Done(plan) => {
                 self.spawn_fs_job(move || -> OnLoop {
-                    let failed = delete_each(plan.into_iter());
-                    Box::new(move |state| state.delete_failed(failed))
+                    let bins = reprisefs::trash::Bins::system();
+                    Box::new(move |state| state.delete_planned(plan, bins))
                 });
             }
             TooBigStep::Cancelled => {}
         }
     }
 
-    fn delete_failed(&mut self, failed: Option<(PathBuf, std::io::Error)>) {
-        let Some((path, e)) = failed else {
-            return;
-        };
-        log::warn!("desktop: could not delete {}: {e}", path.display());
-        let name = path
-            .file_name()
-            .unwrap_or(path.as_os_str())
-            .to_string_lossy();
-        let text = format!("Cannot delete {name}: {e}");
-        self.open_dialog(Dialog::error("Error Deleting File or Folder", text));
-    }
-
-    /// Empty the Recycle Bin, the home trash and each drive's, off the loop. The watch flips its icon; a failure says why in an error box.
+    /// Empty the Recycle Bin, the home trash and each drive's, on a removal job. The watch flips its icon; a failure says why in an error box.
     pub fn empty_bin(&mut self) {
         self.spawn_fs_job(move || -> OnLoop {
-            let emptied = reprisefs::trash::Bins::system()
-                .ok_or_else(|| std::io::Error::other("cannot find the Recycle Bin"))
-                .and_then(|bins| bins.empty());
-            Box::new(move |state| match emptied {
-                Ok(n) => log::info!("desktop: emptied the Recycle Bin ({n} items)"),
-                Err(e) => {
-                    log::warn!("desktop: could not empty the Recycle Bin: {e}");
-                    let text = format!("Cannot empty the Recycle Bin: {e}");
+            let roots = reprisefs::trash::Bins::system().map(|b| b.roots());
+            Box::new(move |state| match roots {
+                Some(roots) => {
+                    let items = roots.iter().cloned().map(Removal::Empty).collect();
+                    let kind = reprisekit::controls::copyprogress::Kind::Empty;
+                    state.start_removal(items, roots, None, kind);
+                }
+                None => {
+                    let text = "Cannot empty the Recycle Bin: cannot find the Recycle Bin".into();
                     state.open_dialog(Dialog::error("Error Deleting File or Folder", text));
                 }
             })

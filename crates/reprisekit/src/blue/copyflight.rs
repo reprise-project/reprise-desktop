@@ -4,6 +4,11 @@ use crate::copyart::{self, Flight, Palette};
 use crate::raster::Canvas;
 use crate::theme::{Color, ColorScheme};
 
+/// The bin's can is a cool grey leaning toward the scheme's highlight by these shares (of 255).
+const BIN_LIT: Color = Color::rgb(0xF4, 0xF6, 0xFA);
+const BIN_SHADE: Color = Color::rgb(0x9C, 0xA6, 0xB6);
+const BIN_TINT: (u8, u8) = (28, 56);
+
 fn palette(cs: &ColorScheme) -> Palette {
     Palette {
         back: [Color::rgb(0xF6, 0xD3, 0x7A), Color::rgb(0xD9, 0xA4, 0x3A)],
@@ -15,6 +20,13 @@ fn palette(cs: &ColorScheme) -> Palette {
         shadow: 50,
         trail: Some(cs.hilight),
         gloss: true,
+        bin: [
+            BIN_LIT.toward(cs.hilight, BIN_TINT.0),
+            BIN_SHADE.toward(cs.hilight, BIN_TINT.1),
+        ],
+        bin_rim: Color::rgb(0x5E, 0x6A, 0x7E).toward(cs.hilight, BIN_TINT.1),
+        bin_inside: Color::rgb(0x34, 0x3C, 0x4A),
+        bin_rib: Color::rgb(0x84, 0x90, 0xA4).toward(cs.hilight, BIN_TINT.1),
     }
 }
 

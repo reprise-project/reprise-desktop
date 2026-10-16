@@ -28,6 +28,7 @@ pub mod progress;
 pub mod props;
 pub mod quicklaunch;
 pub mod recent;
+pub mod removal;
 pub mod replace;
 pub mod scope;
 pub mod search;

@@ -87,7 +87,8 @@ impl Explorer {
     /// once its work is done.
     pub fn wake(&mut self, ctx: &mut Ctx) -> Reply {
         let put = self.poll_put(ctx);
-        self.show_copy_dialog();
+        let removed = self.poll_removal(ctx);
+        self.show_progress_dialogs();
         let job = self.poll_jobs(ctx);
         let tipped = self.poll_tip_walk(ctx);
         if self.closing && !self.busy() {
@@ -115,6 +116,7 @@ impl Explorer {
         }
         // A finished put already re-listed; its reply may carry an error box.
         let put = job
+            .or(removed)
             .or(put)
             .or(self.take_read(ctx))
             .or(self.take_checked(ctx))
