@@ -42,6 +42,7 @@ pub mod controls;
 pub mod cues;
 pub mod emoji;
 pub mod flip;
+pub mod fluid;
 pub mod flyout;
 mod fontfallback;
 pub mod frame;

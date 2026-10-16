@@ -840,7 +840,15 @@ pub const POSITIONS: &Choices = &[
 
 /// Settings > Advanced's desktop water styles; unchecked is "off".
 /// Mirrors `reprisekit::water::Water::parse`.
-pub const WATER_STYLES: &Choices = &[("calm", "Calm"), ("lively", "Lively"), ("rain", "Rain")];
+pub const WATER_STYLES: &Choices = &[
+    ("calm", "Calm"),
+    ("lively", "Lively"),
+    ("rain", "Rain"),
+    ("ink", "Ink"),
+    ("glow", "Glow"),
+    ("sparks", "Sparks"),
+    ("neon", "Neon"),
+];
 
 /// The Background page's file name extensions combo. Mirrors `Extensions::parse` in
 /// `reprisefs::names`.

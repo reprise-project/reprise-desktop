@@ -6012,6 +6012,7 @@ command = "gedit"
         assert_eq!(w("[wallpaper]\nwater = \"calm\"\n"), Ok(Water::Calm));
         assert_eq!(w("[wallpaper]\nwater = \"Lively\"\n"), Ok(Water::Lively));
         assert_eq!(w("[wallpaper]\nwater = \"rain\"\n"), Ok(Water::Rain));
+        assert_eq!(w("[wallpaper]\nwater = \"glow\"\n"), Ok(Water::Glow));
         assert!(w("[wallpaper]\nwater = \"storm\"\n").is_err());
     }
 

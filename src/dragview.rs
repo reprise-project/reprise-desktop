@@ -510,7 +510,7 @@ impl State {
             self.scene.set_position(image, at.0, at.1);
             self.redraw_content();
         }
-        if !self.water_on() {
+        if !self.ripples_on() {
             return;
         }
         let last = self
