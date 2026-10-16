@@ -1345,6 +1345,35 @@ fn the_empty_bin_prompt_counts_the_bin() {
     }
 }
 
+#[test]
+fn cancel_drops_the_pastes_waiting_behind_the_running_one() {
+    let dir = tempfile::tempdir().expect("a temp dir");
+    std::fs::write(dir.path().join("a.txt"), "1").expect("write");
+    std::fs::write(dir.path().join("b.txt"), "2").expect("write");
+    let mut ctx = test_ctx();
+    let mut ex = crate::tests::test_explorer(Place::Folder(dir.path().to_path_buf()), &mut ctx);
+    for name in ["a.txt", "b.txt"] {
+        ex.run(Command::Paste, &mut ctx);
+        ex.pasted(
+            FileClip {
+                cut: false,
+                paths: vec![dir.path().join(name)],
+            },
+            &mut ctx,
+        );
+    }
+    assert_eq!(ex.put_queue.len(), 1, "the second paste waits");
+
+    ex.cancel_puts();
+    assert!(ex.put_queue.is_empty());
+    ex.finish_puts(&mut ctx);
+
+    assert!(
+        !dir.path().join("Copy of b.txt").exists(),
+        "the waiting paste never runs"
+    );
+}
+
 /// Close during a copy hides the window and quits once the copy has landed and recorded its undo.
 #[test]
 fn close_waits_for_a_copy_in_flight() {

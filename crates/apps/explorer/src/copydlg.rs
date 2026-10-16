@@ -150,12 +150,20 @@ impl Explorer {
                 Reply::redraw()
             }
             Outcome::Cancel => {
-                put.job.set_paused(false);
-                put.job.cancel();
+                self.cancel_puts();
                 Reply::redraw()
             }
             Outcome::Redraw | Outcome::Resized => Reply::redraw(),
             Outcome::None => Reply::none(),
+        }
+    }
+
+    /// Cancel: the running put stops inside its file and the pastes queued behind it never start.
+    pub(crate) fn cancel_puts(&mut self) {
+        self.put_queue.clear();
+        if let Some(put) = &self.put {
+            put.job.set_paused(false);
+            put.job.cancel();
         }
     }
 
