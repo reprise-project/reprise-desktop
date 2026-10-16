@@ -138,7 +138,32 @@ pub fn expand_label(label: &str, user: &str) -> String {
     label.replace("{user}", user)
 }
 
-pub fn step_selection(items: &[MenuItem], current: Option<usize>, step: i32) -> Option<usize> {
+/// Which rows the arrow keys stop on.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum KeyStops {
+    /// Enabled entries only: greyed rows are passed over.
+    Enabled,
+    /// Every entry, greyed ones too, as the pointer lights them; Enter on a greyed row does nothing.
+    Entries,
+}
+
+impl KeyStops {
+    /// A look with its own menus (Glass) stops on greyed rows; Classic and Blue pass over them.
+    pub fn of(theme: &Theme) -> KeyStops {
+        if theme.look.style().is_some_and(|st| st.menu.is_some()) {
+            KeyStops::Entries
+        } else {
+            KeyStops::Enabled
+        }
+    }
+}
+
+pub fn step_selection(
+    items: &[MenuItem],
+    current: Option<usize>,
+    step: i32,
+    stops: KeyStops,
+) -> Option<usize> {
     let n = items.len() as i32;
     if n == 0 {
         return None;
@@ -150,7 +175,10 @@ pub fn step_selection(items: &[MenuItem], current: Option<usize>, step: i32) -> 
     };
     (1..=n)
         .map(|k| (start + k * step).rem_euclid(n) as usize)
-        .find(|&i| items[i].selectable())
+        .find(|&i| match stops {
+            KeyStops::Enabled => items[i].selectable(),
+            KeyStops::Entries => matches!(items[i], MenuItem::Entry { .. }),
+        })
 }
 
 pub fn default_row(items: &[MenuItem]) -> Option<usize> {
@@ -829,7 +857,7 @@ impl PopupMenu {
             at.1.min(cx.within.bottom() - layout.height)
                 .max(cx.within.y);
         let hovered = by_keyboard
-            .then(|| step_selection(&items, None, 1))
+            .then(|| step_selection(&items, None, 1, KeyStops::of(cx.theme)))
             .flatten();
         PopupMenu {
             levels: vec![Level {
@@ -895,7 +923,7 @@ impl PopupMenu {
         let row_abs = Rect::new(prect.x + r.x, prect.y + r.y, r.width, r.height);
         let (x, y) = place_submenu(prect, row_abs, (layout.width, layout.height), cx.within);
         let hovered = by_keyboard
-            .then(|| step_selection(&items, None, 1))
+            .then(|| step_selection(&items, None, 1, KeyStops::of(cx.theme)))
             .flatten();
         self.levels.truncate(level + 1);
         self.levels.push(Level {
@@ -947,7 +975,8 @@ impl PopupMenu {
             MenuKey::Up | MenuKey::Down => {
                 let step = if key == MenuKey::Down { 1 } else { -1 };
                 let level = &mut self.levels[last];
-                level.hovered = step_selection(&level.items, level.hovered, step);
+                level.hovered =
+                    step_selection(&level.items, level.hovered, step, KeyStops::of(cx.theme));
                 MenuAction::Redraw
             }
             MenuKey::Right => match self.levels[last].hovered {
@@ -1017,6 +1046,13 @@ impl PopupMenu {
         let Some(row) = row else {
             return MenuAction::Redraw;
         };
+        if !self.levels[level]
+            .items
+            .get(row)
+            .is_some_and(MenuItem::selectable)
+        {
+            return MenuAction::None;
+        }
         if self.levels[level].opens_submenu(row) {
             if !self.child_open_for(level, Some(row)) {
                 self.open_child(tree, level, row, cx, true);
@@ -1821,16 +1857,31 @@ mod tests {
     #[test]
     fn step_selection_wraps_and_skips_separators() {
         let mut items = items(); // Terminal, ---, Shut Down...
-        assert_eq!(step_selection(&items, None, 1), Some(0));
-        assert_eq!(step_selection(&items, None, -1), Some(2));
-        assert_eq!(step_selection(&items, Some(0), 1), Some(2));
-        assert_eq!(step_selection(&items, Some(2), 1), Some(0));
-        assert_eq!(step_selection(&items, Some(0), -1), Some(2));
+        assert_eq!(step_selection(&items, None, 1, KeyStops::Enabled), Some(0));
+        assert_eq!(step_selection(&items, None, -1, KeyStops::Enabled), Some(2));
+        assert_eq!(
+            step_selection(&items, Some(0), 1, KeyStops::Enabled),
+            Some(2)
+        );
+        assert_eq!(
+            step_selection(&items, Some(2), 1, KeyStops::Enabled),
+            Some(0)
+        );
+        assert_eq!(
+            step_selection(&items, Some(0), -1, KeyStops::Enabled),
+            Some(2)
+        );
         if let MenuItem::Entry { enabled, .. } = &mut items[2] {
             *enabled = false;
         }
-        assert_eq!(step_selection(&items, Some(0), 1), Some(0));
-        assert_eq!(step_selection(&[MenuItem::Separator], None, 1), None);
+        assert_eq!(
+            step_selection(&items, Some(0), 1, KeyStops::Enabled),
+            Some(0)
+        );
+        assert_eq!(
+            step_selection(&[MenuItem::Separator], None, 1, KeyStops::Enabled),
+            None
+        );
     }
 
     #[test]
@@ -2831,6 +2882,56 @@ mod tests {
         let mut p = PopupMenu::open(&t, (100, 50), &cx, false);
         assert_eq!(p.key(&t, MenuKey::Enter, &cx), MenuAction::Redraw);
         assert_eq!(p.hovered(), None);
+    }
+
+    #[test]
+    fn glass_arrow_keys_light_greyed_rows_and_enter_on_one_does_nothing() {
+        use crate::interface::Interface;
+        let edit = || {
+            vec![
+                MenuItem::item("&Undo").enabled(false),
+                MenuItem::Separator,
+                MenuItem::item("Cu&t").enabled(false),
+                MenuItem::item("&Paste"),
+            ]
+        };
+        let text = TextRenderer::load(&FontConfig::default());
+        let t = MenuTree::flat(edit());
+        let glass = crate::interfaces::theme_for(Interface::Glass);
+        assert_eq!(KeyStops::of(&glass), KeyStops::Entries);
+        let cx = nested_ctx(&glass, &text);
+        let mut p = PopupMenu::open(&t, (100, 50), &cx, true);
+        assert_eq!(
+            p.hovered(),
+            Some(0),
+            "opened from the keys on a greyed Undo"
+        );
+        assert_eq!(p.key(&t, MenuKey::Enter, &cx), MenuAction::None);
+        assert_eq!(p.depth(), 1, "the menu stays open");
+        p.key(&t, MenuKey::Down, &cx);
+        assert_eq!(
+            p.hovered(),
+            Some(2),
+            "Down passes the separator onto a greyed Cut"
+        );
+        p.key(&t, MenuKey::Down, &cx);
+        assert_eq!(p.key(&t, MenuKey::Enter, &cx), MenuAction::Chosen(vec![3]));
+        let (x, y) = row_point(&p, 0, 2);
+        assert_eq!(
+            p.click(&t, x, y, &cx),
+            MenuAction::None,
+            "a click on a greyed row"
+        );
+
+        for interface in [Interface::Classic, Interface::Blue] {
+            let theme = crate::interfaces::theme_for(interface);
+            assert_eq!(KeyStops::of(&theme), KeyStops::Enabled, "{interface:?}");
+            let cx = nested_ctx(&theme, &text);
+            let mut p = PopupMenu::open(&t, (100, 50), &cx, true);
+            assert_eq!(p.hovered(), Some(3), "{interface:?} opens on Paste");
+            p.key(&t, MenuKey::Up, &cx);
+            assert_eq!(p.hovered(), Some(3), "{interface:?} skips the greyed rows");
+        }
     }
 
     #[test]
