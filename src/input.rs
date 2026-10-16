@@ -313,17 +313,11 @@ impl Interaction {
         }
     }
 
-    /// Whether this holds a taskbar button (a task, a Quick Launch button,
-    /// the tray arrow) or drags a band: `end_taskbar_press` and
-    /// `cancel_taskbar_press` take these.
-    pub fn is_taskbar_press(self) -> bool {
-        matches!(
-            self,
-            Interaction::TaskPress { .. }
-                | Interaction::QuickPress { .. }
-                | Interaction::ArrowPress { .. }
-                | Interaction::Band { .. }
-        )
+    /// Whether another button's press ends this gesture before it acts
+    /// (`State::press`). A move or size from the window menu holds no
+    /// button: a press commits it instead.
+    pub fn ends_on_press(self) -> bool {
+        self != Interaction::Idle && !self.is_keyboard()
     }
 
     /// Whether this move or size was started from the window menu and so
@@ -366,12 +360,6 @@ fn press_closes_start_panel(hit: &Hit) -> bool {
                 ..
             }
     )
-}
-
-/// Whether a press on `hit` first ends a gesture another button still
-/// holds (`State::cancel_interaction`): the desktop starts its own.
-fn press_ends_gesture(hit: &Hit) -> bool {
-    matches!(hit, Hit::Desktop { .. })
 }
 
 impl State {
@@ -1242,11 +1230,11 @@ impl State {
         if self.drag_running() {
             return;
         }
-        // A second button lets go of a held taskbar button or band first,
-        // so it neither acts nor stays drawn held.
-        if self.interaction.is_taskbar_press() {
-            let was = std::mem::take(&mut self.interaction);
-            self.cancel_taskbar_press(was);
+        // A second button ends the gesture another button holds before it
+        // acts, so a surface it opens or a gesture it starts never runs
+        // beside a held move, size, drag or press.
+        if self.interaction.ends_on_press() {
+            self.cancel_interaction();
         }
         let mods = self
             .seat
@@ -1325,9 +1313,6 @@ impl State {
         }
         if !matches!(hit, Hit::EmojiView { .. }) {
             self.close_emoji();
-        }
-        if press_ends_gesture(&hit) {
-            self.cancel_interaction();
         }
         match hit {
             // A window under a modal dialog takes no press on its frame
@@ -2110,7 +2095,7 @@ mod tests {
     }
 
     #[test]
-    fn a_second_press_lets_go_of_the_held_taskbar_buttons_and_bands_only() {
+    fn a_second_press_ends_every_gesture_a_button_holds() {
         let scene = crate::compositor::DeskScene::new();
         let bar = scene.root();
         let held = [
@@ -2134,19 +2119,41 @@ mod tests {
                 band: crate::taskbar::Band::Tasks,
                 dx: 0,
             },
-        ];
-        for i in held {
-            assert!(i.is_taskbar_press(), "{i:?} is let go of");
-        }
-        for i in [
-            Interaction::Idle,
             Interaction::NotifyPress,
             Interaction::DialogPress,
             Interaction::Marquee,
+            Interaction::DisplaysSlide,
             Interaction::BarWidth { bar, grab: 0 },
-        ] {
-            assert!(!i.is_taskbar_press(), "{i:?} is not a taskbar press");
+            Interaction::Drag {
+                x0: 0.0,
+                y0: 0.0,
+                started: false,
+            },
+            Interaction::Resize {
+                window: WindowId::next(),
+                edges: Edges::LEFT,
+                start: Rect::new(0, 0, 10, 10),
+                cx: 0.0,
+                cy: 0.0,
+                keyboard: None,
+            },
+        ];
+        for i in held {
+            assert!(i.ends_on_press(), "{i:?} ends");
         }
+        let keyboard = Interaction::Resize {
+            window: WindowId::next(),
+            edges: Edges::NONE,
+            start: Rect::new(0, 0, 10, 10),
+            cx: 0.0,
+            cy: 0.0,
+            keyboard: Some(Rect::new(0, 0, 10, 10)),
+        };
+        assert!(
+            !keyboard.ends_on_press(),
+            "a window-menu size commits on a press"
+        );
+        assert!(!Interaction::Idle.ends_on_press());
     }
 
     #[test]
@@ -2169,18 +2176,6 @@ mod tests {
         assert!(!press_closes_start_panel(&Hit::StartPanel { spot: None }));
         assert!(press_closes_start_panel(&Hit::Nothing));
         assert!(press_closes_start_panel(&Hit::Desktop { index: None }));
-    }
-
-    #[test]
-    fn only_a_desktop_press_ends_a_gesture_another_button_holds() {
-        assert!(press_ends_gesture(&Hit::Desktop { index: None }));
-        assert!(press_ends_gesture(&Hit::Desktop { index: Some(0) }));
-        assert!(!press_ends_gesture(&Hit::Nothing));
-        assert!(!press_ends_gesture(&Hit::StartPanel { spot: None }));
-        assert!(!press_ends_gesture(&Hit::Menu {
-            depth: 0,
-            row: Some(1)
-        }));
     }
 
     use crate::theme::Metrics;
