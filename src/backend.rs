@@ -3,21 +3,25 @@
 //! drawn only when asked for (`schedule`), at most one per vblank. Which connectors
 //! are driven (`Backend::surfaces`) or parked (`Backend::parked`) is `output`'s call;
 //! the backend only enables, disables, changes mode (`set_mode`) or VRR (`set_vrr`).
-//! One GPU, no leases, no multi-GPU copies.
+//! One GPU, no leases, no multi-GPU copies. Each driven CRTC owns its `DrmCompositor`; a
+//! modeset is never committed outside an output's own frame.
 
-use std::{collections::HashMap, time::Duration};
+use std::{
+    collections::HashMap,
+    sync::{Arc, Mutex, MutexGuard, PoisonError},
+    time::Duration,
+};
 
 use smithay::{
     backend::{
         allocator::{
-            Fourcc,
+            Format as DrmFormat, Fourcc, Modifier,
             gbm::{GbmAllocator, GbmBufferFlags, GbmDevice},
         },
         drm::{
             DrmDevice, DrmDeviceFd, DrmEvent, DrmEventMetadata, DrmEventTime, DrmNode, VrrSupport,
-            compositor::{CursorMove, FrameFlags, PrimaryPlaneElement},
+            compositor::{CursorMove, DrmCompositor, FrameFlags, PrimaryPlaneElement},
             exporter::gbm::GbmFramebufferExporter,
-            output::{DrmOutput, DrmOutputManager, DrmOutputRenderElements},
         },
         egl::{EGLContext, EGLDevice, EGLDisplay},
         input::InputEvent,
@@ -64,14 +68,20 @@ use crate::{
 type Allocator = GbmAllocator<DrmDeviceFd>;
 type Exporter = GbmFramebufferExporter<DrmDeviceFd>;
 type FrameData = Option<OutputPresentationFeedback>;
-type OutputManager = DrmOutputManager<Allocator, Exporter, FrameData, DrmDeviceFd>;
+type Compositor = DrmCompositor<Allocator, Exporter, FrameData, DrmDeviceFd>;
+
+const COLOR_FORMATS: [Fourcc; 2] = [Fourcc::Xrgb8888, Fourcc::Argb8888];
 
 pub struct Backend {
     pub session: LibSeatSession,
     libinput: Libinput,
     pub renderer: GlesRenderer,
     pub render_node: DrmNode,
-    drm: OutputManager,
+    drm: DrmDevice,
+    allocator: Allocator,
+    exporter: Exporter,
+    gbm: GbmDevice<DrmDeviceFd>,
+    render_formats: Vec<DrmFormat>,
     scanner: DrmScanner,
     surfaces: HashMap<crtc::Handle, Surface>,
     parked: HashMap<crtc::Handle, Parked>,
@@ -83,8 +93,9 @@ struct Surface {
     output: Output,
     connector: connector::Info,
     vrr_capable: bool,
+    vrr_on: bool,
     global: GlobalId,
-    drm_output: DrmOutput<Allocator, Exporter, FrameData, DrmDeviceFd>,
+    compositor: Arc<Mutex<Compositor>>,
     pending_vblank: bool,
     needs_redraw: bool,
     pointer_only: bool,
@@ -105,6 +116,10 @@ struct Surface {
     stats: crate::debugview::FrameStats,
     damage_seen: Option<CommitCounter>,
     hw: Hw,
+}
+
+fn lock(c: &Mutex<Compositor>) -> MutexGuard<'_, Compositor> {
+    c.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
 struct Parked {
@@ -164,22 +179,21 @@ pub fn init(state: &mut State) -> Result<(), Box<dyn std::error::Error>> {
     state.water.set_renderer(&mut renderer);
 
     let shm_textures = crate::shmtex::ShmTextures::new(gbm.clone(), &renderer);
-    let render_formats = renderer.egl_context().dmabuf_render_formats().clone();
-    let drm = DrmOutputManager::new(
-        drm,
-        GbmAllocator::new(
-            gbm.clone(),
-            GbmBufferFlags::RENDERING | GbmBufferFlags::SCANOUT,
-        ),
-        GbmFramebufferExporter::new(gbm.clone(), Some(render_node).into()),
-        Some(gbm),
-        [Fourcc::Xrgb8888, Fourcc::Argb8888],
-        render_formats,
+    let render_formats = renderer
+        .egl_context()
+        .dmabuf_render_formats()
+        .iter()
+        .copied()
+        .collect();
+    let allocator = GbmAllocator::new(
+        gbm.clone(),
+        GbmBufferFlags::RENDERING | GbmBufferFlags::SCANOUT,
     );
+    let exporter = GbmFramebufferExporter::new(gbm.clone(), Some(render_node).into());
 
     state
         .surface_protos
-        .init_syncobj(&state.dh, drm.device().device_fd().clone());
+        .init_syncobj(&state.dh, drm.device_fd().clone());
     state.shm_state.update_formats(renderer.shm_formats());
     let feedback =
         DmabufFeedbackBuilder::new(render_node.dev_id(), renderer.dmabuf_formats()).build()?;
@@ -242,6 +256,10 @@ pub fn init(state: &mut State) -> Result<(), Box<dyn std::error::Error>> {
         renderer,
         render_node,
         drm,
+        allocator,
+        exporter,
+        gbm,
+        render_formats,
         scanner: DrmScanner::new(),
         surfaces: HashMap::new(),
         parked: HashMap::new(),
@@ -259,7 +277,7 @@ fn scan_connectors(state: &mut State) {
     let Some(b) = state.backend.as_mut() else {
         return;
     };
-    let events = match b.scanner.scan_connectors(b.drm.device()) {
+    let events = match b.scanner.scan_connectors(&b.drm) {
         Ok(events) => events,
         Err(e) => {
             log::warn!("connector scan: {e}");
@@ -310,7 +328,7 @@ fn connector_connected(state: &mut State, connector: connector::Info, crtc: crtc
         log::warn!("{name}: no modes");
         return;
     }
-    let info = display_info::for_connector(b.drm.device(), connector.handle());
+    let info = display_info::for_connector(&b.drm, connector.handle());
     let field = |f: Option<String>| f.unwrap_or_else(|| "Unknown".into());
     let (w_mm, h_mm) = connector.size().unwrap_or((0, 0));
     let output = Output::new(
@@ -375,7 +393,7 @@ pub fn heads(state: &State) -> Vec<Head> {
             modes: mode_infos(&s.connector),
             current: current(&s.output, &s.connector),
             vrr_capable: s.vrr_capable,
-            vrr_on: s.drm_output.with_compositor(|c| c.vrr_enabled()),
+            vrr_on: s.vrr_on,
         })
         .chain(b.parked.values().map(|p| Head {
             output: p.output.clone(),
@@ -403,21 +421,13 @@ pub fn enable(state: &mut State, output: &Output, index: usize) -> bool {
     let Some(&drm_mode) = p.connector.modes().get(index) else {
         return false;
     };
+    let connector = p.connector.handle();
     let name = output.name();
     let mode = WlMode::from(drm_mode);
     let old = output.current_mode();
     output.change_current_state(Some(mode), None, None, None);
-    let global = output.create_global::<State>(&state.dh);
-    let drm_output = match b.drm.lock().initialize_output::<_, OutputElement>(
-        crtc,
-        drm_mode,
-        &[p.connector.handle()],
-        output,
-        None,
-        &mut b.renderer,
-        &DrmOutputRenderElements::default(),
-    ) {
-        Ok(o) => o,
+    let compositor = match new_compositor(b, crtc, drm_mode, connector, output) {
+        Ok(c) => c,
         Err(e) => {
             log::warn!(
                 "{name}: cannot drive it at {}x{}@{:.3}: {e}",
@@ -425,7 +435,6 @@ pub fn enable(state: &mut State, output: &Output, index: usize) -> bool {
                 mode.size.h,
                 f64::from(mode.refresh) / 1000.0
             );
-            state.dh.remove_global::<State>(global);
             if let Some(old) = old {
                 output.change_current_state(Some(old), None, None, None);
             }
@@ -435,9 +444,11 @@ pub fn enable(state: &mut State, output: &Output, index: usize) -> bool {
     let Some(p) = b.parked.remove(&crtc) else {
         return false;
     };
-    let vrr_capable = drm_output
-        .with_compositor(|c| c.vrr_supported(p.connector.handle()))
+    let vrr_capable = compositor
+        .vrr_supported(p.connector.handle())
         .is_ok_and(|v| v != VrrSupport::NotSupported);
+    let vrr_on = compositor.vrr_enabled();
+    let global = output.create_global::<State>(&state.dh);
     log::info!(
         "output {name} {}x{}@{:.3} scale {} {:?}",
         mode.size.w,
@@ -452,8 +463,9 @@ pub fn enable(state: &mut State, output: &Output, index: usize) -> bool {
             output: output.clone(),
             connector: p.connector,
             vrr_capable,
+            vrr_on,
             global,
-            drm_output,
+            compositor: Arc::new(Mutex::new(compositor)),
             pending_vblank: false,
             needs_redraw: true,
             scene_changed: true,
@@ -483,6 +495,44 @@ pub fn enable(state: &mut State, output: &Output, index: usize) -> bool {
     true
 }
 
+/// A compositor for `crtc` at `mode`, retried with implicit modifiers when the explicit ones
+/// leave no working primary plane. Its first frame commits the modeset.
+fn new_compositor(
+    b: &mut Backend,
+    crtc: crtc::Handle,
+    mode: smithay::reexports::drm::control::Mode,
+    connector: connector::Handle,
+    output: &Output,
+) -> Result<Compositor, String> {
+    let mut new = |implicit: bool| {
+        let surface = b
+            .drm
+            .create_surface(crtc, mode, &[connector])
+            .map_err(|e| e.to_string())?;
+        let formats = b
+            .render_formats
+            .iter()
+            .copied()
+            .filter(|f| !implicit || f.modifier == Modifier::Invalid);
+        Compositor::new(
+            output,
+            surface,
+            None,
+            b.allocator.clone(),
+            b.exporter.clone(),
+            COLOR_FORMATS,
+            formats,
+            b.drm.cursor_size(),
+            Some(b.gbm.clone()),
+        )
+        .map_err(|e| e.to_string())
+    };
+    new(false).or_else(|e| {
+        log::warn!("{}: {e}; trying implicit modifiers", output.name());
+        new(true)
+    })
+}
+
 pub fn disable(state: &mut State, output: &Output) -> bool {
     let Some(crtc) = crtc_of(output) else {
         return false;
@@ -498,13 +548,13 @@ pub fn disable(state: &mut State, output: &Output) -> bool {
         connector,
         vrr_capable,
         global,
-        drm_output,
+        compositor,
         callback_timer,
         render_timer,
         step_timer,
         ..
     } = s;
-    drop(drm_output);
+    drop(compositor);
     b.parked.insert(
         crtc,
         Parked {
@@ -554,11 +604,7 @@ pub fn set_mode(state: &mut State, output: &Output, index: usize) -> bool {
     if output.current_mode() == Some(mode) {
         return true;
     }
-    if let Err(e) = s.drm_output.use_mode::<_, OutputElement>(
-        drm_mode,
-        &mut b.renderer,
-        &DrmOutputRenderElements::default(),
-    ) {
+    if let Err(e) = lock(&s.compositor).use_mode(drm_mode) {
         log::warn!(
             "{}: mode {}x{}@{:.3} refused: {e}",
             output.name(),
@@ -592,7 +638,7 @@ pub fn set_vrr(state: &mut State, output: &Output, on: bool) -> bool {
     else {
         return false;
     };
-    if s.drm_output.with_compositor(|c| c.vrr_enabled()) == on {
+    if s.vrr_on == on {
         return true;
     }
     if on && !s.vrr_capable {
@@ -602,8 +648,12 @@ pub fn set_vrr(state: &mut State, output: &Output, on: bool) -> bool {
         );
         return false;
     }
-    match s.drm_output.with_compositor(|c| c.use_vrr(on)) {
-        Ok(()) => true,
+    let result = lock(&s.compositor).use_vrr(on);
+    match result {
+        Ok(()) => {
+            s.vrr_on = on;
+            true
+        }
         Err(e) => {
             log::warn!("output {}: adaptive sync: {e:?}", output.name());
             false
@@ -645,12 +695,17 @@ fn activate(state: &mut State) {
         log::warn!("libinput did not resume");
     }
     let libinput = b.libinput.clone();
-    if let Err(e) = b.drm.lock().activate(false) {
+    if let Err(e) = b.drm.activate(false) {
         log::error!("drm activate: {e}");
     }
-    let dev = b.drm.device();
+    let dev = &b.drm;
     for (&crtc, s) in b.surfaces.iter_mut() {
-        s.drm_output.reset_buffers();
+        let mut c = lock(&s.compositor);
+        if let Err(e) = c.reset_state() {
+            log::warn!("{}: reset state: {e}", s.output.name());
+        }
+        c.reset_buffers();
+        drop(c);
         s.pending_vblank = false;
         s.hw.unlit = true;
         // Another DRM master may have left its own LUT; reading it back is not a commit.
@@ -824,7 +879,8 @@ fn vblank(state: &mut State, crtc: crtc::Handle, meta: Option<&DrmEventMetadata>
     else {
         return;
     };
-    match s.drm_output.frame_submitted() {
+    let submitted = lock(&s.compositor).frame_submitted();
+    match submitted {
         Ok(Some(Some(mut feedback))) => {
             let refresh = s.output.current_mode().map_or(60_000, |m| m.refresh.max(1));
             let refresh = Duration::from_micros(1_000_000_000 / refresh as u64);
@@ -966,42 +1022,42 @@ fn render(state: &mut State, crtc: crtc::Handle) {
     }
     b.shm_textures.update(&mut b.renderer);
     let mut empty = false;
-    let drawn =
-        match s
-            .drm_output
-            .render_frame(&mut b.renderer, &elements, clear, FrameFlags::DEFAULT)
-        {
-            Ok(r) => {
-                scene.update_surfaces(&output, &r.states);
-                if r.is_empty {
-                    empty = true;
-                    false
-                } else {
-                    if config.debug.overlay
-                        && let PrimaryPlaneElement::Swapchain(e) = &r.primary_element
-                    {
-                        count_damage(s, &e.damage, &output);
+    let shared = Arc::clone(&s.compositor);
+    let mut compositor = lock(&shared);
+    let rendered = compositor.render_frame(&mut b.renderer, &elements, clear, FrameFlags::DEFAULT);
+    let drawn = match rendered {
+        Ok(r) => {
+            scene.update_surfaces(&output, &r.states);
+            if r.is_empty {
+                empty = true;
+                false
+            } else {
+                if config.debug.overlay
+                    && let PrimaryPlaneElement::Swapchain(e) = &r.primary_element
+                {
+                    count_damage(s, &e.damage, &output);
+                }
+                let feedback = scene.take_presentation_feedback(&output, &r.states);
+                match compositor.queue_frame(Some(feedback)) {
+                    Ok(()) => {
+                        s.pending_vblank = true;
+                        s.hw.unlit = false;
+                        count_frame(s, config.debug.overlay, started);
+                        true
                     }
-                    let feedback = scene.take_presentation_feedback(&output, &r.states);
-                    match s.drm_output.queue_frame(Some(feedback)) {
-                        Ok(()) => {
-                            s.pending_vblank = true;
-                            s.hw.unlit = false;
-                            count_frame(s, config.debug.overlay, started);
-                            true
-                        }
-                        Err(e) => {
-                            log::warn!("{}: queue frame: {e:?}", output.name());
-                            false
-                        }
+                    Err(e) => {
+                        log::warn!("{}: queue frame: {e:?}", output.name());
+                        false
                     }
                 }
             }
-            Err(e) => {
-                log::warn!("{}: render: {e:?}", output.name());
-                false
-            }
-        };
+        }
+        Err(e) => {
+            log::warn!("{}: render: {e:?}", output.name());
+            false
+        }
+    };
+    drop(compositor);
     drop(elements);
     let held = hold.filter(|_| glass.any_stale());
     if held.is_some() {
@@ -1058,21 +1114,25 @@ fn pointer_frame(
     let [element] = elements.as_slice() else {
         return None;
     };
-    match s.drm_output.reposition_cursor(element) {
-        CursorMove::Unavailable => None,
-        CursorMove::Unchanged => Some(false),
-        CursorMove::Prepared => match s.drm_output.queue_frame(None) {
-            Ok(()) => {
-                s.pending_vblank = true;
-                s.hw.unlit = false;
-                count_frame(s, config.debug.overlay, started);
-                Some(true)
-            }
-            Err(e) => {
-                log::warn!("{}: queue pointer frame: {e:?}", output.name());
-                Some(false)
-            }
-        },
+    let mut compositor = lock(&s.compositor);
+    let moved = compositor.reposition_cursor(element);
+    let queued = match moved {
+        CursorMove::Unavailable => return None,
+        CursorMove::Unchanged => return Some(false),
+        CursorMove::Prepared => compositor.queue_frame(None),
+    };
+    drop(compositor);
+    match queued {
+        Ok(()) => {
+            s.pending_vblank = true;
+            s.hw.unlit = false;
+            count_frame(s, config.debug.overlay, started);
+            Some(true)
+        }
+        Err(e) => {
+            log::warn!("{}: queue pointer frame: {e:?}", output.name());
+            Some(false)
+        }
     }
 }
 
@@ -1441,7 +1501,7 @@ fn check_links(state: &mut State) {
     let Some(b) = state.backend.as_mut() else {
         return;
     };
-    let dev = b.drm.device();
+    let dev = &b.drm;
     let mut due = Vec::new();
     for (&crtc, s) in b.surfaces.iter_mut() {
         let status = link_status(dev, s.connector.handle()).map(|(_, v)| v);
@@ -1479,7 +1539,7 @@ fn retrain_link(state: &mut State, crtc: crtc::Handle) {
         return;
     };
     let active = b.session.is_active();
-    let dev = b.drm.device();
+    let dev = &b.drm;
     let Some(s) = b.surfaces.get_mut(&crtc) else {
         return;
     };
@@ -1626,7 +1686,7 @@ pub fn set_output_power(state: &mut State, output: &Output, on: bool) -> bool {
         schedule(state, output);
         return true;
     }
-    if active && let Err(e) = s.drm_output.with_compositor(|c| c.clear()) {
+    if active && let Err(e) = lock(&s.compositor).clear() {
         log::warn!("{}: power off: {e}", output.name());
         return false;
     }
@@ -1652,7 +1712,7 @@ pub fn gamma_size(state: &State, output: &Output) -> Option<usize> {
     let s = b.surfaces.get(&crtc)?;
     let gamma = match s.hw.gamma {
         Some(g) => g,
-        None => find_gamma(b.drm.device(), crtc),
+        None => find_gamma(&b.drm, crtc),
     };
     gamma.map(|g| g.size() as usize)
 }
@@ -1664,7 +1724,7 @@ pub fn set_gamma(state: &mut State, output: &Output, ramp: Option<&[u16]>) -> bo
         return false;
     };
     let active = b.session.is_active();
-    let dev = b.drm.device();
+    let dev = &b.drm;
     let Some(s) = b.surfaces.get_mut(&crtc) else {
         return false;
     };
@@ -1704,7 +1764,7 @@ fn flush_gamma(state: &mut State, crtc: crtc::Handle) {
         return;
     };
     let active = b.session.is_active();
-    let dev = b.drm.device();
+    let dev = &b.drm;
     let Some(s) = b.surfaces.get_mut(&crtc) else {
         return;
     };
