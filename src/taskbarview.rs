@@ -1,7 +1,7 @@
 use std::{
     borrow::Cow,
     cell::RefCell,
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     hash::{Hash, Hasher},
     sync::Arc,
     time::{Duration, Instant},
@@ -915,14 +915,26 @@ impl State {
         });
         bar.task_hot_x_drawn = bar.task_hot_x.filter(|_| spot);
         let (task_shift, task_float) = taskslide::draw_state(bar, Instant::now());
+        let pid = |w: WindowId| self.client_pid(w).and_then(|p| u32::try_from(p).ok());
+        let any_shown = self.launcher_entries.any_shown();
+        let owners: HashSet<u32> = match any_shown {
+            true => self.windows.iter().filter_map(|w| pid(w.id)).collect(),
+            false => HashSet::new(),
+        };
         let task_progress = (bar.buttons.iter().zip(&bar.dialogs))
             .map(|(wins, dialog)| {
                 if let Some(id) = dialog {
                     return (dialogs.iter().find(|d| d.id == *id)).and_then(|d| d.progress);
                 }
+                if !any_shown {
+                    return None;
+                }
                 wins.iter().find_map(|id| {
                     let w = self.windows.iter().find(|w| w.id == *id)?;
-                    self.launcher_entries.progress(&w.app_id(), &self.app_index)
+                    let entries = &self.launcher_entries;
+                    entries.progress(pid(w.id), &w.app_id(), &self.app_index, |p| {
+                        owners.contains(&p)
+                    })
                 })
             })
             .collect();
