@@ -389,6 +389,8 @@ pub struct Settings {
     /// `[window_snapping] layouts`: the specs apart by spaces or commas,
     /// empty for the built-in six.
     pub snap_layouts: String,
+    /// `[window_snapping] distance`: px from a screen edge where a drag snaps.
+    pub snap_distance: i64,
 
     pub nl_enabled: bool,
     /// Kelvin at night.
@@ -588,6 +590,7 @@ impl Default for Settings {
             snap_picker: true,
             snap_bar: true,
             snap_layouts: String::new(),
+            snap_distance: SNAP_DISTANCE_DEFAULT,
 
             nl_enabled: false,
             nl_temperature: 4000,
@@ -895,6 +898,11 @@ pub fn glass_swatch(v: &str) -> Option<&'static str> {
 pub const DESKTOPS_DEFAULT: i64 = 4;
 pub const DESKTOPS_MAX: i64 = 16;
 
+/// `[window_snapping] distance`'s default and ceiling. Mirror `snap::BAND` and
+/// `SNAP_DISTANCE_MAX` in `src/config.rs`.
+pub const SNAP_DISTANCE_DEFAULT: i64 = 30;
+pub const SNAP_DISTANCE_MAX: i64 = 100;
+
 /// Longest `[workspaces] animation_ms`. Mirrors `SWITCH_MS_MAX`.
 pub const SWITCH_MS_MAX: i64 = 2000;
 
@@ -1083,6 +1091,7 @@ fn fields() -> Vec<Field> {
         Field::Flag(k("window_snapping", "picker"), lens!(snap_picker)),
         Field::Flag(k("window_snapping", "bar"), lens!(snap_bar)),
         Field::Words(k("window_snapping", "layouts"), lens!(snap_layouts)),
+        Field::Int(k("window_snapping", "distance"), lens!(snap_distance)),
         Field::Flag(k("night_light", "enabled"), lens!(nl_enabled)),
         Field::Int(k("night_light", "temperature"), lens!(nl_temperature)),
         Field::Text(k("night_light", "schedule"), lens!(nl_schedule)),
@@ -2324,6 +2333,7 @@ size_px = 12
             snap_picker: false,
             snap_bar: false,
             snap_layouts: "1|1 2-1:2".into(),
+            snap_distance: 15,
             nl_enabled: true,
             nl_temperature: 3400,
             nl_schedule: "fixed".into(),
@@ -2370,6 +2380,7 @@ size_px = 12
         assert!(d.snap_picker);
         assert!(d.snap_bar);
         assert_eq!(d.snap_layouts, "", "the built-in six");
+        assert_eq!(d.snap_distance, 30);
     }
 
     #[test]

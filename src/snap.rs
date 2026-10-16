@@ -158,7 +158,8 @@ fn layouts_of(work: Rect, specs: &[&str]) -> Vec<ZoneLayout> {
         .collect()
 }
 
-/// How far in from the usable area's edges a title-bar drag snaps.
+/// `[window_snapping] distance`'s default: how far in from the usable area's edges a
+/// title-bar drag snaps.
 pub const BAND: i32 = 30;
 
 /// Zone order: top-left, bottom-left, top-right, bottom-right.
@@ -225,17 +226,24 @@ pub fn outer_sides(out: Rect, others: &[Rect], x: i32, y: i32) -> Edges {
         .fold(Edges::NONE, |a, (side, _)| a | side)
 }
 
-/// The drop at (`x`, `y`) in `work`'s edge bands; only the `outer` sides snap.
-pub fn edge_target(work: Rect, zones: &[Rect], outer: Edges, x: i32, y: i32) -> Option<Target> {
+/// The drop at (`x`, `y`) in `work`'s edge bands, `band` px deep; only the `outer` sides snap.
+pub fn edge_target(
+    work: Rect,
+    zones: &[Rect],
+    band: i32,
+    outer: Edges,
+    x: i32,
+    y: i32,
+) -> Option<Target> {
     let open = |side: Edges| outer.contains(side);
-    let left = open(Edges::LEFT) && x < work.x + BAND;
-    let right = open(Edges::RIGHT) && x >= work.right() - BAND;
-    let top = open(Edges::TOP) && y < work.y + BAND;
-    let bottom = open(Edges::BOTTOM) && y >= work.bottom() - BAND;
-    let near_side = (open(Edges::LEFT) && x < work.x + 2 * BAND)
-        || (open(Edges::RIGHT) && x >= work.right() - 2 * BAND);
-    let near_end = (open(Edges::TOP) && y < work.y + 2 * BAND)
-        || (open(Edges::BOTTOM) && y >= work.bottom() - 2 * BAND);
+    let left = open(Edges::LEFT) && x < work.x + band;
+    let right = open(Edges::RIGHT) && x >= work.right() - band;
+    let top = open(Edges::TOP) && y < work.y + band;
+    let bottom = open(Edges::BOTTOM) && y >= work.bottom() - band;
+    let near_side = (open(Edges::LEFT) && x < work.x + 2 * band)
+        || (open(Edges::RIGHT) && x >= work.right() - 2 * band);
+    let near_end = (open(Edges::TOP) && y < work.y + 2 * band)
+        || (open(Edges::BOTTOM) && y >= work.bottom() - 2 * band);
     if ((left || right) && near_end) || ((top || bottom) && near_side) {
         let col = usize::from(x >= work.x + work.width / 2);
         let row = usize::from(y >= work.y + work.height / 2);
@@ -257,6 +265,7 @@ pub fn edge_target(work: Rect, zones: &[Rect], outer: Edges, x: i32, y: i32) -> 
 pub fn target_at(
     work: Rect,
     zones: &[Rect],
+    band: i32,
     explicit: bool,
     shift: bool,
     bar: Option<Rect>,
@@ -267,7 +276,7 @@ pub fn target_at(
     if bar.is_some_and(|b| b.contains(x, y)) {
         return None;
     }
-    edge_target(work, zones, outer, x, y).or_else(|| {
+    edge_target(work, zones, band, outer, x, y).or_else(|| {
         if !explicit || !shift {
             return None;
         }
@@ -283,6 +292,7 @@ pub fn armed_target(
     armed: &mut bool,
     work: Rect,
     zones: &[Rect],
+    band: i32,
     explicit: bool,
     shift: bool,
     bar: Option<Rect>,
@@ -290,11 +300,11 @@ pub fn armed_target(
     x: i32,
     y: i32,
 ) -> Option<Target> {
-    *armed |= edge_target(work, zones, outer, x, y).is_none();
+    *armed |= edge_target(work, zones, band, outer, x, y).is_none();
     if !*armed {
         return None;
     }
-    target_at(work, zones, explicit, shift, bar, outer, x, y)
+    target_at(work, zones, band, explicit, shift, bar, outer, x, y)
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -881,8 +891,26 @@ mod tests {
         let outputs = [a, b];
         let (work_a, work_b) = (Rect::new(0, 0, 1920, 1032), Rect::new(1920, 0, 1920, 1392));
         let (halves_a, halves_b) = (zl("1|1").zones(work_a), zl("1|1").zones(work_b));
-        let on_a = |x, y| edge_target(work_a, &halves_a, outer_sides(a, &outputs, x, y), x, y);
-        let on_b = |x, y| edge_target(work_b, &halves_b, outer_sides(b, &outputs, x, y), x, y);
+        let on_a = |x, y| {
+            edge_target(
+                work_a,
+                &halves_a,
+                BAND,
+                outer_sides(a, &outputs, x, y),
+                x,
+                y,
+            )
+        };
+        let on_b = |x, y| {
+            edge_target(
+                work_b,
+                &halves_b,
+                BAND,
+                outer_sides(b, &outputs, x, y),
+                x,
+                y,
+            )
+        };
         assert_eq!(on_a(1919, 500), None, "the right side of a is shared");
         assert_eq!(on_b(1920, 500), None, "the left side of b is shared");
         assert_eq!(on_a(0, 500), Some(Target::Zone { zone: 0 }));
@@ -907,31 +935,31 @@ mod tests {
     fn the_edges_snap_to_the_outer_zones_and_the_top_maximizes() {
         let halves = zl("1|1").zones(WORK);
         assert_eq!(
-            edge_target(WORK, &halves, EVERY_SIDE, 0, 500),
+            edge_target(WORK, &halves, BAND, EVERY_SIDE, 0, 500),
             Some(Target::Zone { zone: 0 })
         );
         assert_eq!(
-            edge_target(WORK, &halves, EVERY_SIDE, 29, 500),
+            edge_target(WORK, &halves, BAND, EVERY_SIDE, 29, 500),
             Some(Target::Zone { zone: 0 }),
             "the band is 30 px"
         );
-        assert_eq!(edge_target(WORK, &halves, EVERY_SIDE, 30, 500), None);
+        assert_eq!(edge_target(WORK, &halves, BAND, EVERY_SIDE, 30, 500), None);
         assert_eq!(
-            edge_target(WORK, &halves, EVERY_SIDE, 1919, 500),
+            edge_target(WORK, &halves, BAND, EVERY_SIDE, 1919, 500),
             Some(Target::Zone { zone: 1 })
         );
         assert_eq!(
-            edge_target(WORK, &halves, EVERY_SIDE, 900, 0),
+            edge_target(WORK, &halves, BAND, EVERY_SIDE, 900, 0),
             Some(Target::Maximize)
         );
         assert_eq!(
-            edge_target(WORK, &halves, EVERY_SIDE, 900, 1031),
+            edge_target(WORK, &halves, BAND, EVERY_SIDE, 900, 1031),
             None,
             "the bottom edge snaps nothing"
         );
         let stack = zl("1|1:2").zones(WORK);
         assert_eq!(
-            edge_target(WORK, &stack, EVERY_SIDE, 1919, 700),
+            edge_target(WORK, &stack, BAND, EVERY_SIDE, 1919, 700),
             Some(Target::Zone { zone: 2 })
         );
     }
@@ -940,24 +968,39 @@ mod tests {
     fn the_corners_give_quarters_and_reach_thirty_px_along_each_edge() {
         let halves = zl("1|1").zones(WORK);
         let q = |quarter| Some(Target::Corner { quarter });
-        assert_eq!(edge_target(WORK, &halves, EVERY_SIDE, 0, 0), q(0));
+        assert_eq!(edge_target(WORK, &halves, BAND, EVERY_SIDE, 0, 0), q(0));
         assert_eq!(
-            edge_target(WORK, &halves, EVERY_SIDE, 5, 59),
+            edge_target(WORK, &halves, BAND, EVERY_SIDE, 5, 59),
             q(0),
             "30 px down the side"
         );
         assert_eq!(
-            edge_target(WORK, &halves, EVERY_SIDE, 59, 5),
+            edge_target(WORK, &halves, BAND, EVERY_SIDE, 59, 5),
             q(0),
             "30 px along the top"
         );
         assert_eq!(
-            edge_target(WORK, &halves, EVERY_SIDE, 5, 60),
+            edge_target(WORK, &halves, BAND, EVERY_SIDE, 5, 60),
             Some(Target::Zone { zone: 0 })
         );
-        assert_eq!(edge_target(WORK, &halves, EVERY_SIDE, 0, 1031), q(1));
-        assert_eq!(edge_target(WORK, &halves, EVERY_SIDE, 1919, 0), q(2));
-        assert_eq!(edge_target(WORK, &halves, EVERY_SIDE, 1919, 1031), q(3));
+        assert_eq!(edge_target(WORK, &halves, BAND, EVERY_SIDE, 0, 1031), q(1));
+        assert_eq!(edge_target(WORK, &halves, BAND, EVERY_SIDE, 1919, 0), q(2));
+        assert_eq!(
+            edge_target(WORK, &halves, BAND, EVERY_SIDE, 1919, 1031),
+            q(3)
+        );
+    }
+
+    #[test]
+    fn a_shallower_band_snaps_closer_to_the_edges_and_corners() {
+        let halves = zl("1|1").zones(WORK);
+        let at = |x, y| edge_target(WORK, &halves, 15, EVERY_SIDE, x, y);
+        assert_eq!(at(14, 500), Some(Target::Zone { zone: 0 }));
+        assert_eq!(at(15, 500), None);
+        assert_eq!(at(900, 14), Some(Target::Maximize));
+        assert_eq!(at(900, 15), None);
+        assert_eq!(at(5, 29), Some(Target::Corner { quarter: 0 }));
+        assert_eq!(at(5, 30), Some(Target::Zone { zone: 0 }));
     }
 
     #[test]
@@ -970,7 +1013,7 @@ mod tests {
             vec![Rect::new(0, 0, 1100, 1032), Rect::new(1100, 0, 820, 1032)]
         );
         assert_eq!(
-            edge_target(WORK, &zones, EVERY_SIDE, 0, 400),
+            edge_target(WORK, &zones, BAND, EVERY_SIDE, 0, 400),
             Some(Target::Zone { zone: 0 })
         );
         // A split within SNUG of the dragged edge moves too; the outer edges never do.
@@ -1028,25 +1071,25 @@ mod tests {
     fn zone_targets_need_an_explicit_layout_and_shift_and_the_edges_win() {
         let thirds = zl("1|1|1").zones(WORK);
         assert_eq!(
-            target_at(WORK, &thirds, false, true, None, EVERY_SIDE, 960, 500),
+            target_at(WORK, &thirds, BAND, false, true, None, EVERY_SIDE, 960, 500),
             None
         );
         assert_eq!(
-            target_at(WORK, &thirds, true, false, None, EVERY_SIDE, 960, 500),
+            target_at(WORK, &thirds, BAND, true, false, None, EVERY_SIDE, 960, 500),
             None,
             "a plain drag drops freely over the middle"
         );
         assert_eq!(
-            target_at(WORK, &thirds, true, true, None, EVERY_SIDE, 960, 500),
+            target_at(WORK, &thirds, BAND, true, true, None, EVERY_SIDE, 960, 500),
             Some(Target::Zone { zone: 1 })
         );
         assert_eq!(
-            target_at(WORK, &thirds, true, true, None, EVERY_SIDE, 10, 500),
+            target_at(WORK, &thirds, BAND, true, true, None, EVERY_SIDE, 10, 500),
             Some(Target::Zone { zone: 0 }),
             "the band, not the zone under it"
         );
         assert_eq!(
-            target_at(WORK, &thirds, true, false, None, EVERY_SIDE, 10, 500),
+            target_at(WORK, &thirds, BAND, true, false, None, EVERY_SIDE, 10, 500),
             Some(Target::Zone { zone: 0 }),
             "edge snaps need no Shift"
         );
@@ -1058,14 +1101,14 @@ mod tests {
         let mut armed = false;
         assert_eq!(
             armed_target(
-                &mut armed, WORK, &halves, false, false, None, EVERY_SIDE, 900, 5
+                &mut armed, WORK, &halves, BAND, false, false, None, EVERY_SIDE, 900, 5
             ),
             None,
             "grabbed in the top band"
         );
         assert_eq!(
             armed_target(
-                &mut armed, WORK, &halves, false, false, None, EVERY_SIDE, 300, 5
+                &mut armed, WORK, &halves, BAND, false, false, None, EVERY_SIDE, 300, 5
             ),
             None,
             "slid along the top band"
@@ -1073,14 +1116,14 @@ mod tests {
         assert!(!armed, "not armed inside a band");
         assert_eq!(
             armed_target(
-                &mut armed, WORK, &halves, false, false, None, EVERY_SIDE, 900, 500
+                &mut armed, WORK, &halves, BAND, false, false, None, EVERY_SIDE, 900, 500
             ),
             None
         );
         assert!(armed, "armed outside the bands");
         assert_eq!(
             armed_target(
-                &mut armed, WORK, &halves, false, false, None, EVERY_SIDE, 900, 5
+                &mut armed, WORK, &halves, BAND, false, false, None, EVERY_SIDE, 900, 5
             ),
             Some(Target::Maximize),
             "back in the top band"
@@ -1092,12 +1135,12 @@ mod tests {
         let halves = zl("1|1").zones(WORK);
         let bar = Some(Rect::new(513, -79, 894, 90));
         assert_eq!(
-            target_at(WORK, &halves, true, true, bar, EVERY_SIDE, 900, 5),
+            target_at(WORK, &halves, BAND, true, true, bar, EVERY_SIDE, 900, 5),
             None,
             "the strip, not the top edge"
         );
         assert_eq!(
-            target_at(WORK, &halves, true, true, bar, EVERY_SIDE, 300, 5),
+            target_at(WORK, &halves, BAND, true, true, bar, EVERY_SIDE, 300, 5),
             Some(Target::Maximize),
             "beside the bar"
         );
