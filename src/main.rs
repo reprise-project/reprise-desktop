@@ -204,17 +204,7 @@ fn main() {
     spawn::block_signals();
     // zbus logs every served call at info and Smithay its GL devices; RUST_LOG
     // turns them back on.
-    let mut logger = env_logger::Builder::from_env(
-        env_logger::Env::default().default_filter_or("info,zbus=warn,smithay=warn"),
-    );
-    if journal::init() {
-        logger.format(|buf, r| {
-            use std::io::Write as _;
-            let text = journal::format(r.level(), r.target(), &r.args().to_string());
-            buf.write_all(text.as_bytes())
-        });
-    }
-    logger.init();
+    reprisebus::journal::builder("info,zbus=warn,smithay=warn", journal::init()).init();
     logbridge::install();
     let cli = Cli::parse();
     if let Some(user) = cli.fingerprint_conversation.as_deref() {

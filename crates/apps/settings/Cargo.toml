@@ -23,4 +23,3 @@ toml_edit.workspace = true
 inotify.workspace = true
 xcursor = "0.3"
 log.workspace = true
-env_logger.workspace = true

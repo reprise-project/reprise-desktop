@@ -23,4 +23,3 @@ futures-util.workspace = true
 repriseconf = { path = "../../repriseconf" }
 toml_edit.workspace = true
 log.workspace = true
-env_logger.workspace = true

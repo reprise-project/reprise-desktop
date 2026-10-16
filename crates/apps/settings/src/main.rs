@@ -3276,7 +3276,7 @@ impl SettingsApp {
 }
 
 fn main() {
-    env_logger::init();
+    reprisebus::journal::init_logger("error");
     let page = page_arg(std::env::args().skip(1));
     let action = page.as_ref().map(|(p, focus)| {
         let params = std::iter::once(p.slug()).chain(focus.clone()).collect();

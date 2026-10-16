@@ -28,4 +28,3 @@ async-io = "2"
 inotify.workspace = true
 libc.workspace = true
 log.workspace = true
-env_logger.workspace = true

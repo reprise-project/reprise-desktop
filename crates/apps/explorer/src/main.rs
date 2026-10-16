@@ -1403,7 +1403,7 @@ fn parse_args(args: impl IntoIterator<Item = std::ffi::OsString>) -> Start {
 }
 
 fn main() {
-    env_logger::init();
+    reprisebus::journal::init_logger("error");
     if std::env::args_os()
         .nth(1)
         .is_some_and(|a| a == reprisefs::thumbpipe::FLAG)

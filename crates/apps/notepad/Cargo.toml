@@ -18,7 +18,7 @@ repriseapp = { path = "../../repriseapp" }
 reprisekit = { path = "../../reprisekit" }
 reprisefs = { path = "../../reprisefs" }
 log.workspace = true
-env_logger.workspace = true
+reprisebus = { path = "../../reprisebus" }
 
 [dev-dependencies]
 tempfile.workspace = true

@@ -725,7 +725,7 @@ impl Sound {
 }
 
 fn main() {
-    env_logger::init();
+    reprisebus::journal::init_logger("error");
     let tray_only = std::env::args().any(|a| a == "--tray");
     repriseapp::run(Box::new(Sound {
         hidden: tray_only,

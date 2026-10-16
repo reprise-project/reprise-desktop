@@ -23,4 +23,3 @@ async-channel.workspace = true
 zbus.workspace = true
 futures-util.workspace = true
 log.workspace = true
-env_logger.workspace = true
