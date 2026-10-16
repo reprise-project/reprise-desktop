@@ -353,7 +353,7 @@ mod tests {
     }
 
     #[test]
-    fn the_glass_calendar_frame_is_one_979797_line() {
+    fn the_glass_calendar_frame_is_one_949595_line() {
         let theme = theme_for(Interface::Glass);
         for enabled in [true, false] {
             let mut c = Canvas::new(166, 134);
