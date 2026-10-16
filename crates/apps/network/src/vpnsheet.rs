@@ -648,6 +648,16 @@ const TAB_GENERAL: usize = 0;
 const TAB_AUTH: usize = 1;
 const BROWSE_W: i32 = 75;
 pub const KEEP_PASSWORD_CUE: &str = "Leave empty to keep the saved password";
+/// The cue of a password the profile leaves to a secret agent.
+pub const ASKED_PASSWORD_CUE: &str = "Not saved; type it to connect";
+
+fn password_cue(cfg: &ovpn::Config, flags_key: &str) -> &'static str {
+    if cfg.asked(flags_key) {
+        ASKED_PASSWORD_CUE
+    } else {
+        KEEP_PASSWORD_CUE
+    }
+}
 const STATIC_GROUP: Rect = Rect::new(12, ROW_Y + 4 * PITCH + 2, CLIENT.0 - 24, 4 * PITCH + 34);
 const STATIC_ROW_Y: i32 = STATIC_GROUP.y + 22;
 
@@ -709,7 +719,7 @@ fn general_page(cfg: &ovpn::Config) -> Form {
         ),
     ]);
     f.set_combo("type", cfg.auth.index());
-    set_cue(&mut f, "password", KEEP_PASSWORD_CUE);
+    set_cue(&mut f, "password", password_cue(cfg, "password-flags"));
     f
 }
 
@@ -759,7 +769,7 @@ fn auth_page(cfg: &ovpn::Config) -> Form {
     ));
     let mut f = Form::new(items);
     f.set_combo("direction", cfg.direction);
-    set_cue(&mut f, "keypass", KEEP_PASSWORD_CUE);
+    set_cue(&mut f, "keypass", password_cue(cfg, "cert-pass-flags"));
     f
 }
 
@@ -887,7 +897,7 @@ impl OvpnSheet {
                 let cfg = self.config();
                 match ovpn::check(&cfg) {
                     Some((id, text)) => {
-                        let tab = if ["name", "gateway", "user"].contains(&id) {
+                        let tab = if ["name", "gateway", "user", "password"].contains(&id) {
                             TAB_GENERAL
                         } else {
                             TAB_AUTH
@@ -1294,6 +1304,26 @@ mod tests {
             cue_of(&s.sheet.pages[TAB_GENERAL], "password"),
             KEEP_PASSWORD_CUE
         );
+    }
+
+    #[test]
+    fn a_password_left_to_an_agent_says_so_and_ok_asks_for_it() {
+        let mut cfg = ovpn_cfg();
+        cfg.rest.push(("password-flags".into(), "1".into()));
+        let mut s = OvpnSheet::new("/Settings/5", &cfg);
+        assert_eq!(
+            cue_of(&s.sheet.pages[TAB_GENERAL], "password"),
+            ASKED_PASSWORD_CUE
+        );
+        assert_eq!(
+            cue_of(&s.sheet.pages[TAB_AUTH], "keypass"),
+            KEEP_PASSWORD_CUE
+        );
+        s.sheet.open_tab(TAB_AUTH);
+        assert!(matches!(s.event(propsheet::Event::Ok), Outcome::Problem(_)));
+        assert_eq!(s.sheet.tabs.open, TAB_GENERAL);
+        let f = &s.sheet.pages[TAB_GENERAL];
+        assert_eq!(f.focus(), f.index_of("password"));
     }
 
     #[test]
