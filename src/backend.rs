@@ -8,6 +8,7 @@
 //! commit thread (`commit`) runs its KMS commits and drops its compositor.
 
 mod commit;
+mod inputfds;
 
 use std::{
     collections::HashMap,
@@ -28,7 +29,7 @@ use smithay::{
         },
         egl::{EGLContext, EGLDevice, EGLDisplay},
         input::InputEvent,
-        libinput::{LibinputInputBackend, LibinputSessionInterface},
+        libinput::LibinputInputBackend,
         renderer::{
             ImportDma, ImportMemWl,
             gles::{Capability, GlesRenderer},
@@ -80,6 +81,7 @@ const COLOR_FORMATS: [Fourcc; 2] = [Fourcc::Xrgb8888, Fourcc::Argb8888];
 pub struct Backend {
     pub session: LibSeatSession,
     libinput: Libinput,
+    input_fds: inputfds::Held,
     pub renderer: GlesRenderer,
     pub render_node: DrmNode,
     drm: DrmDevice,
@@ -309,8 +311,9 @@ pub fn init(state: &mut State) -> Result<(), Box<dyn std::error::Error>> {
     let dmabuf_global =
         dmabuf_state.create_global_with_default_feedback::<State>(&state.dh, &feedback);
 
+    let input_fds = inputfds::Held::default();
     let mut libinput =
-        Libinput::new_with_udev::<LibinputSessionInterface<LibSeatSession>>(session.clone().into());
+        Libinput::new_with_udev(inputfds::InputFds::new(session.clone(), input_fds.clone()));
     libinput
         .udev_assign_seat(&seat)
         .map_err(|()| format!("libinput: cannot assign seat {seat}"))?;
@@ -375,6 +378,7 @@ pub fn init(state: &mut State) -> Result<(), Box<dyn std::error::Error>> {
     state.backend = Some(Backend {
         session,
         libinput,
+        input_fds,
         renderer,
         render_node,
         drm,
@@ -896,6 +900,7 @@ fn activate(state: &mut State) {
         return;
     };
     log::info!("session active");
+    inputfds::release(&mut b.session, &b.input_fds);
     if b.libinput.resume().is_err() {
         log::warn!("libinput did not resume");
     }
