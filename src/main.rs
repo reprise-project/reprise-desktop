@@ -45,6 +45,7 @@ mod imefield;
 mod input;
 mod inputcapture;
 mod inputqueue;
+mod journal;
 mod kblayout;
 mod keyboard;
 mod keyfilter;
@@ -203,10 +204,17 @@ fn main() {
     spawn::block_signals();
     // zbus logs every served call at info and Smithay its GL devices; RUST_LOG
     // turns them back on.
-    env_logger::Builder::from_env(
+    let mut logger = env_logger::Builder::from_env(
         env_logger::Env::default().default_filter_or("info,zbus=warn,smithay=warn"),
-    )
-    .init();
+    );
+    if journal::init() {
+        logger.format(|buf, r| {
+            use std::io::Write as _;
+            let text = journal::format(r.level(), r.target(), &r.args().to_string());
+            buf.write_all(text.as_bytes())
+        });
+    }
+    logger.init();
     logbridge::install();
     let cli = Cli::parse();
     if let Some(user) = cli.fingerprint_conversation.as_deref() {

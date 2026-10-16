@@ -2462,7 +2462,7 @@ fn builtin_path(
 }
 
 const UNREADABLE_NOTICE: &str = "Reprise could not read config.toml and started with the \
-                                 defaults. The session log names the error.";
+                                 defaults. `journalctl --user -t reprise` names the error.";
 
 impl Config {
     pub fn default_path() -> PathBuf {
@@ -3436,7 +3436,7 @@ impl Config {
                 let keys: Vec<&str> = dropped.iter().map(|(k, _)| k.as_str()).collect();
                 let notice = format!(
                     "Reprise ignored {} in config.toml and used the defaults there. \
-                     The session log names the errors.",
+                     `journalctl --user -t reprise` names the errors.",
                     keys.join(", ")
                 );
                 (c, Some(notice))

@@ -15,6 +15,21 @@ Wayland session:
 
     ./target/release/reprise --startup alacritty
 
+### Logs
+
+A session started from a login manager logs to the user journal under
+`reprise`, with each log level as its journal priority:
+
+    journalctl --user -b -t reprise
+    journalctl --user -b -t reprise -p warning
+
+Each program Reprise starts (the tray helpers, autostart entries, launches)
+logs under its desktop entry id, such as `reprise-sound`, or under its
+program name when it has no entry. Started from a terminal, Reprise logs to
+the terminal and its programs inherit it; `REPRISE_LOG_STDERR=1` keeps the
+log on stderr anywhere. `RUST_LOG` sets the level, as in
+`RUST_LOG=reprise=debug`.
+
 On Arch, `packaging/arch/PKGBUILD` packages the compositor, the programs, the
 session file, the PAM files and the portal backend.
 
