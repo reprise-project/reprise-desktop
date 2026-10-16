@@ -30,9 +30,9 @@ use crate::{
     output::upload_scaled,
     raster::{Canvas, Rect},
     startmenu::{
-        ContextBitmaps, MenuItem, MenuLayout, MenuStyle, StartRow, draw_menu, draw_menu_shadow,
-        enter_row, place_popup, place_submenu_inset, relist, rows_for_key, shadow_reach,
-        step_selection, submenu_max_rows,
+        ContextBitmaps, KeyStops, MenuItem, MenuLayout, MenuStyle, StartRow, draw_menu,
+        draw_menu_shadow, enter_row, place_popup, place_submenu_inset, relist, rows_for_key,
+        shadow_reach, step_selection, submenu_max_rows,
     },
     taskbar::{JumpRow, QuickCommand, TaskKey, TaskbarCommand, WindowListRow},
     text::split_mnemonic,
@@ -483,7 +483,12 @@ fn row_has_submenu(items: &[MenuItem], row: usize) -> bool {
 /// or the bold default), Left/Escape close, a letter jumps to its access key
 /// and runs it when unique. None for a key the menu ignores.
 #[expect(non_upper_case_globals)] // xkb keysym names in patterns
-fn key_act(items: &[MenuItem], current: Option<usize>, sym: u32) -> Option<KeyAct> {
+fn key_act(
+    items: &[MenuItem],
+    current: Option<usize>,
+    sym: u32,
+    stops: KeyStops,
+) -> Option<KeyAct> {
     use keys::*;
     let open_or_run = |row: usize| {
         if row_has_submenu(items, row) {
@@ -493,10 +498,10 @@ fn key_act(items: &[MenuItem], current: Option<usize>, sym: u32) -> Option<KeyAc
         }
     };
     Some(match sym {
-        KEY_Down | KEY_KP_Down => KeyAct::Select(step_selection(items, current, 1)),
-        KEY_Up | KEY_KP_Up => KeyAct::Select(step_selection(items, current, -1)),
-        KEY_Home | KEY_KP_Home => KeyAct::Select(step_selection(items, None, 1)),
-        KEY_End | KEY_KP_End => KeyAct::Select(step_selection(items, None, -1)),
+        KEY_Down | KEY_KP_Down => KeyAct::Select(step_selection(items, current, 1, stops)),
+        KEY_Up | KEY_KP_Up => KeyAct::Select(step_selection(items, current, -1, stops)),
+        KEY_Home | KEY_KP_Home => KeyAct::Select(step_selection(items, None, 1, stops)),
+        KEY_End | KEY_KP_End => KeyAct::Select(step_selection(items, None, -1, stops)),
         KEY_Escape => KeyAct::CloseTopmost,
         KEY_Left | KEY_KP_Left => KeyAct::CloseSubmenu,
         KEY_Right | KEY_KP_Right => match current.filter(|&r| row_has_submenu(items, r)) {
@@ -1846,7 +1851,7 @@ impl State {
         let Some(items) = self.menus.get(depth + 1).map(|m| &m.items) else {
             return;
         };
-        let first = step_selection(items, None, 1);
+        let first = step_selection(items, None, 1, KeyStops::of(&self.config.theme));
         self.set_menu_hover(depth + 1, first);
     }
 
@@ -1858,7 +1863,12 @@ impl State {
         self.enter_menu_keys();
         let act = {
             let menu = &self.menus[depth];
-            key_act(&menu.items, menu.hovered, sym)
+            key_act(
+                &menu.items,
+                menu.hovered,
+                sym,
+                KeyStops::of(&self.config.theme),
+            )
         };
         if let Some(act) = act {
             self.apply_menu_key(depth, act);
@@ -2365,7 +2375,7 @@ mod tests {
         );
         let (items, rows) = crate::startmenu::shutdown_menu(false);
         assert_eq!(
-            key_act(&items, Some(0), keys::KEY_Escape),
+            key_act(&items, Some(0), keys::KEY_Escape, KeyStops::Enabled),
             Some(KeyAct::CloseTopmost)
         );
         let kind = MenuKind::StartPanel { rows };
@@ -2530,20 +2540,26 @@ mod tests {
         };
         for sym in [KEY_Return, KEY_KP_Enter] {
             assert_eq!(
-                key_act(&rows(true), None, sym),
+                key_act(&rows(true), None, sym, KeyStops::Enabled),
                 Some(KeyAct::SelectAnd(1, Box::new(KeyAct::Activate(1))))
             );
             assert_eq!(
-                key_act(&rows(true), Some(0), sym),
+                key_act(&rows(true), Some(0), sym, KeyStops::Enabled),
                 Some(KeyAct::Activate(0))
             );
-            assert_eq!(key_act(&rows(false), None, sym), Some(KeyAct::Nothing));
+            assert_eq!(
+                key_act(&rows(false), None, sym, KeyStops::Enabled),
+                Some(KeyAct::Nothing)
+            );
         }
         let plain = [MenuItem::item("&Open"), MenuItem::item("&Delete")];
-        assert_eq!(key_act(&plain, None, KEY_Return), Some(KeyAct::Nothing));
+        assert_eq!(
+            key_act(&plain, None, KEY_Return, KeyStops::Enabled),
+            Some(KeyAct::Nothing)
+        );
         let sub = [MenuItem::item("Send &To").bold(true).submenu(true)];
         assert_eq!(
-            key_act(&sub, None, KEY_Return),
+            key_act(&sub, None, KEY_Return, KeyStops::Enabled),
             Some(KeyAct::SelectAnd(0, Box::new(KeyAct::OpenSubmenu(0))))
         );
     }
@@ -2557,16 +2573,19 @@ mod tests {
             MenuItem::item("&Details"),
         ];
         assert_eq!(
-            key_act(&items, None, KEY_o),
+            key_act(&items, None, KEY_o, KeyStops::Enabled),
             Some(KeyAct::SelectAnd(0, Box::new(KeyAct::Activate(0))))
         );
-        assert_eq!(key_act(&items, None, KEY_d), Some(KeyAct::Select(Some(1))));
         assert_eq!(
-            key_act(&items, Some(1), KEY_d),
+            key_act(&items, None, KEY_d, KeyStops::Enabled),
+            Some(KeyAct::Select(Some(1)))
+        );
+        assert_eq!(
+            key_act(&items, Some(1), KEY_d, KeyStops::Enabled),
             Some(KeyAct::Select(Some(2)))
         );
         assert_eq!(
-            key_act(&items, None, KEY_Escape),
+            key_act(&items, None, KEY_Escape, KeyStops::Enabled),
             Some(KeyAct::CloseTopmost)
         );
     }
