@@ -272,7 +272,11 @@ fn surfaces(state: &State) -> Vec<Surface> {
         (true, Surface::Balloons),
     ];
     v.extend(open.into_iter().filter_map(|(on, x)| on.then_some(x)));
-    v.extend(state.dialogs.views.iter().map(|d| Surface::Dialog(d.id)));
+    v.extend(
+        (state.dialogs.views.iter())
+            .filter(|d| !d.minimized)
+            .map(|d| Surface::Dialog(d.id)),
+    );
     v
 }
 
