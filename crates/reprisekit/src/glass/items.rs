@@ -600,7 +600,7 @@ mod tests {
         );
     }
 
-    /// A 63 px places tile in each state at scale `d`, over the bar's panel: the plain tile
+    /// A 59 px places tile in each state at scale `d`, over the bar's panel: the plain tile
     /// first.
     fn places_tiles(d: i32) -> Vec<Canvas> {
         tiles_in(&theme_for(Interface::Glass), d)
@@ -622,7 +622,7 @@ mod tests {
         use crate::style::State;
         let theme = theme.scaled(d);
         let p = theme.paint();
-        let r = Rect::new(0, 0, 87, 63).scaled(d);
+        let r = Rect::new(0, 0, 87, 59).scaled(d);
         [
             None,
             Some(State::Hot),
@@ -671,7 +671,7 @@ mod tests {
                     rgb(outline),
                     "its right side at {d}"
                 );
-                assert_eq!(t.get(40 * d, 63 * d - 1), rgb(outline), "its foot at {d}");
+                assert_eq!(t.get(40 * d, 59 * d - 1), rgb(outline), "its foot at {d}");
                 assert_eq!(t.get(d - 1, 30 * d), panel, "the bar beside it at {d}");
                 assert_eq!(t.get(87 * d - 1, 30 * d), panel, "and on its right at {d}");
                 assert_ne!(t.get(d, 0), rgb(outline), "a round corner at {d}");
@@ -698,16 +698,16 @@ mod tests {
         assert_eq!(
             got,
             [
-                0x8596_f6f1_8efb_500f,
-                0x9651_6955_a462_5b11,
-                0x6994_4fd5_a3d2_cea4,
-                0x4f57_ad5f_e3fb_332c,
-                0x5c9b_6cbc_8714_4c18,
-                0xa251_54e6_e15a_d59d,
-                0x0663_ff28_9b81_81b5,
-                0x08bb_9426_d447_6ca5,
-                0x1b22_45c7_9c7b_6cdd,
-                0xba2c_91d4_f5d1_c8e9,
+                0x0c11_96a0_7783_8abb,
+                0x1958_c77f_3214_0ebd,
+                0xbb4f_1f1e_c673_ef84,
+                0x3759_03fa_c9b1_30cc,
+                0xa793_dba8_2f82_94b8,
+                0x0a73_de09_a9f5_b6a5,
+                0x7b05_21b7_205c_cdd1,
+                0x0a34_a3f3_44d4_f271,
+                0x8052_c5cb_e09c_6481,
+                0xa195_d9f4_6dea_5805,
             ],
             "{got:#x?}"
         );
@@ -756,16 +756,16 @@ mod tests {
         assert_eq!(
             got,
             [
-                0x9c94_f221_2954_17da,
-                0xfcbe_2c00_40c2_5c0c,
-                0xa73c_825f_f36f_c86c,
-                0x0e63_0b32_c788_03d0,
-                0x81ed_9af2_6688_1c47,
-                0xacf9_f6e1_2423_3e0d,
-                0x39d0_a06c_f14e_f121,
-                0x39a0_ebce_63e3_e3ad,
-                0x4e05_2f9d_45ae_67c5,
-                0x53f3_4a11_420a_ec0d,
+                0xd97b_6337_936e_14ee,
+                0xfc89_093a_9162_4708,
+                0x5568_f687_c81c_5f82,
+                0x3d8c_b3b7_1a17_4aec,
+                0xc381_206a_4271_525d,
+                0x3f3d_1b0d_8ae0_7615,
+                0xb88d_ba0b_f506_8301,
+                0xb03b_4cb9_ae51_bb05,
+                0xc626_ad8a_26c9_1159,
+                0x577b_c710_d045_ac31,
             ],
             "{got:#x?}"
         );

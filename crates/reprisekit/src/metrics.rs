@@ -112,6 +112,8 @@ pub struct PlacesMetrics {
     pub icon_top: i32,
     /// From the icon's bottom to the label's first line.
     pub label_gap: i32,
+    /// From one wrapped label line's top to the next, past the text size.
+    pub line_lead: i32,
 }
 
 impl PlacesMetrics {
@@ -120,6 +122,7 @@ impl PlacesMetrics {
         tile: 65,
         icon_top: 3,
         label_gap: 3,
+        line_lead: 2,
     };
 
     /// Tiles whose label, under the 32 px icon, grows by `u`.
