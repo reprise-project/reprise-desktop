@@ -68,6 +68,9 @@ pub struct Modes {
     /// That dialog is a Welcome panel, which keeps even the switcher's
     /// bind.
     pub dialog_modal: bool,
+    /// That dialog stands among the windows (`Dialog::windowed`), so Show
+    /// Desktop reaches past it.
+    pub dialog_windowed: bool,
     pub launcher_open: bool,
     /// The window overview is open, and whether it is snap assist, which
     /// lets the snap binds through.
@@ -508,8 +511,12 @@ pub fn route(modes: &Modes, k: &KeyPress, binds: &[Keybind], globals: &[GlobalBi
     }
     // The dialog with the keyboard takes every press (its field wants the
     // text), except the switchers' binds: Alt+Tab leaves a dialog as it
-    // leaves a window, and so does Super+Tab.
+    // leaves a window, and so does Super+Tab. A windowed dialog lets Show
+    // Desktop through as well.
     if modes.dialog_has_keyboard && k.pressed {
+        if modes.dialog_windowed && own(Action::ShowDesktop) {
+            return with(KeyRoute::Binds(vec![Action::ShowDesktop]));
+        }
         return with(switch().unwrap_or(KeyRoute::Dialog));
     }
     // An inline desktop rename likewise owns every press.
@@ -1108,7 +1115,7 @@ mod tests {
     }
 
     #[test]
-    fn the_switcher_bind_passes_a_dialog_but_not_a_welcome_panel() {
+    fn the_switcher_bind_passes_a_dialog_and_show_desktop_a_windowed_one_but_not_a_welcome_panel() {
         let mut m = Modes {
             dialog_has_keyboard: true,
             ..Modes::default()
@@ -1119,6 +1126,22 @@ mod tests {
         assert_eq!(r(&m, &super_tab), KeyRoute::Binds(vec![Action::Flip]));
         // Other binds still go to the dialog.
         assert_eq!(r(&m, &press(KEY_r, MOD_LOGO)), KeyRoute::Dialog);
+        let mut with_sd = binds();
+        with_sd.push(Keybind {
+            mods: MOD_LOGO,
+            keysym: KEY_d,
+            action: Action::ShowDesktop,
+        });
+        let super_d = |m: &Modes| route(m, &press(KEY_d, MOD_LOGO), &with_sd, &[]).route;
+        assert_eq!(super_d(&m), KeyRoute::Dialog);
+        m.dialog_windowed = true;
+        assert_eq!(
+            super_d(&m),
+            KeyRoute::Binds(vec![Action::ShowDesktop]),
+            "a windowed dialog lets Show Desktop through"
+        );
+        assert_eq!(r(&m, &press(KEY_r, MOD_LOGO)), KeyRoute::Dialog);
+        m.dialog_windowed = false;
         m.dialog_modal = true;
         assert_eq!(r(&m, &alt_tab), KeyRoute::Dialog);
         assert_eq!(r(&m, &super_tab), KeyRoute::Dialog);

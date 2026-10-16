@@ -38,6 +38,9 @@ pub enum Part {
     /// button order.
     CaptionGroup,
     MaxCaptionGroup,
+    /// A windowed dialog's minimize and close boxes joined, framed as [`Part::CaptionGroup`]'s
+    /// first and last buttons.
+    MinCloseGroup,
     Taskbar,
     StartButton,
     StartAbove,

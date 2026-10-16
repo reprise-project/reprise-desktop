@@ -411,6 +411,11 @@ fn draw_buttons(
         let (part, r, glow) = match geom.chrome.buttons {
             ButtonSet::MinMaxClose if state.maximized => (Part::MaxCaptionGroup, strip, state.glow),
             ButtonSet::MinMaxClose => (Part::CaptionGroup, strip, state.glow),
+            ButtonSet::MinClose => {
+                let [min, _, close] = geom.buttons;
+                let r = Rect::new(min.x, close.y, close.right() - min.x, close.height);
+                (Part::MinCloseGroup, r.intersect(&strip), state.glow)
+            }
             ButtonSet::Close => (
                 Part::CloseButton,
                 geom.buttons[2].intersect(&strip),
@@ -427,7 +432,10 @@ fn draw_buttons(
             State::InactiveHot
         };
         // A strip lists its lit and held frames once per button.
-        let n_of = |b| CaptionButton::ALL.iter().position(|&k| k == b).unwrap_or(0);
+        let n_of = |b| match geom.chrome.buttons {
+            ButtonSet::MinClose => usize::from(b == CaptionButton::Close),
+            _ => CaptionButton::ALL.iter().position(|&k| k == b).unwrap_or(0),
+        };
         if let Some(b) = state.pressed {
             let st = if state.active {
                 State::Pressed

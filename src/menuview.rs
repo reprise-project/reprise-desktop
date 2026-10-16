@@ -14,7 +14,7 @@ use std::{
 
 use reprisefs::apps::AppEntry;
 use reprisekit::taskbar::{Edge, StartMenuDock};
-use reprisescene::{BufferId, Input, TreeId};
+use reprisescene::{BufferId, Input, NodeId, TreeId};
 use smithay::{
     output::Output,
     reexports::calloop::timer::{TimeoutAction, Timer},
@@ -2175,16 +2175,32 @@ impl State {
         }
     }
 
+    /// Show Desktop: with any task window or windowed dialog shown, minimise them all; with none,
+    /// restore them all in the stacking order they had.
     pub fn toggle_show_desktop(&mut self) {
         crate::peek::leave(self);
-        let all = self.task_windows();
-        let any_visible = all
-            .iter()
-            .any(|&w| self.win(w).is_some_and(|x| !x.hidden()));
-        for w in all {
-            let minimized = self.win(w).is_some_and(|x| x.minimized);
-            if minimized != any_visible {
-                self.set_minimized(w, any_visible);
+        let mut items: Vec<(TreeId, Shown)> = (self.task_windows().into_iter())
+            .filter_map(|w| Some((self.win(w)?.tree, Shown::Window(w))))
+            .collect();
+        let dialogs = self.dialogs.views.iter().filter(|v| v.dialog.windowed());
+        items.extend(dialogs.map(|v| (v.tree(), Shown::Dialog(v.id))));
+        let any_visible = items.iter().any(|&(_, it)| match it {
+            Shown::Window(w) => self.win(w).is_some_and(|x| !x.hidden()),
+            Shown::Dialog(id) => (self.dialogs.views.iter()).any(|v| v.id == id && !v.minimized),
+        });
+        if !any_visible {
+            items = restore_order(self.scene.children(self.layers.windows), items);
+        }
+        for (_, it) in items {
+            match it {
+                Shown::Window(w) => {
+                    let minimized = self.win(w).is_some_and(|x| x.minimized);
+                    if minimized != any_visible {
+                        self.set_minimized(w, any_visible);
+                    }
+                }
+                Shown::Dialog(id) if any_visible => self.minimize_dialog(id),
+                Shown::Dialog(id) => self.focus_dialog(id),
             }
         }
     }
@@ -2244,6 +2260,20 @@ impl State {
     }
 }
 
+/// What Show Desktop minimises and restores.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Shown {
+    Window(WindowId),
+    Dialog(u64),
+}
+
+/// `items` bottom first by their trees' place in `stack` (the windows layer's children), trees in
+/// another layer first: restoring each in turn raises it, leaving them stacked as they were.
+fn restore_order<T>(stack: &[NodeId], mut items: Vec<(TreeId, T)>) -> Vec<(TreeId, T)> {
+    items.sort_by_key(|(tree, _)| stack.iter().position(|&n| n == NodeId::from(*tree)));
+    items
+}
+
 /// Whether picking `pick` closes the Glass Start menu as well. A menu open
 /// with the panel is one of its popups: a pick closes the panel too, but
 /// for the panel's own rows, which decide (`start_row`). A menu key never
@@ -2265,6 +2295,22 @@ fn stack_name(kind: &MenuKind) -> &'static str {
 mod tests {
     use super::*;
     use crate::keys::{KEY_KP_Enter, KEY_Return};
+
+    #[test]
+    fn show_desktop_restores_bottom_first_as_they_were_stacked() {
+        let mut scene = crate::compositor::DeskScene::new();
+        let layer = scene.tree_create(scene.root());
+        let other = scene.tree_create(scene.root());
+        let [a, dialog, b] = [0; 3].map(|_| scene.tree_create(layer));
+        let on_top = scene.tree_create(other);
+        scene.raise_to_top(a);
+        let items = vec![(a, 'a'), (b, 'b'), (on_top, 't'), (dialog, 'd')];
+        let order: Vec<char> = super::restore_order(scene.children(layer), items)
+            .into_iter()
+            .map(|(_, c)| c)
+            .collect();
+        assert_eq!(order, ['t', 'd', 'b', 'a']);
+    }
 
     #[test]
     fn an_overflow_rows_pick_names_its_bar_and_button() {

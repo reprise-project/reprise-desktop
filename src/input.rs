@@ -995,7 +995,7 @@ impl State {
             self.clear_menu_hover();
         }
         if !matches!(hit, Hit::Dialog { .. }) {
-            self.dialog_hover_close(None);
+            self.dialog_hover_caption(None);
             self.dialog_hover(None);
         }
         if !matches!(hit, Hit::Switcher { .. }) {
@@ -1099,8 +1099,8 @@ impl State {
                     _ => None,
                 };
                 crate::tooltip::hover_dialog(self, index, b);
-                let close = matches!(button, Some(crate::dialog::DialogHit::Close));
-                self.dialog_hover_close(Some((index, close)));
+                let caption = crate::dialog::caption_button(button);
+                self.dialog_hover_caption(Some((index, caption)));
                 self.dialog_hover(Some((index, button)));
             }
             Hit::Switcher { cell } => {

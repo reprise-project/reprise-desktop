@@ -210,8 +210,11 @@ pub fn caption_fit(theme: &Theme, title: &str, chrome: Chrome) -> i32 {
             let room = if chrome.icon {
                 classic::frame::title_rect(&g, 1)
             } else {
-                let n =
-                    i32::from(chrome.buttons.has(CaptionButton::Close)) + i32::from(chrome.help);
+                let n = [CaptionButton::Minimize, CaptionButton::Close]
+                    .into_iter()
+                    .filter(|&b| chrome.buttons.has(b))
+                    .count() as i32
+                    + i32::from(chrome.help);
                 classic::widgets::caption_title_rect(g.caption, n, 1)
             };
             let text = loaded(theme.fonts.clone());
@@ -227,7 +230,7 @@ pub fn caption_fit(theme: &Theme, title: &str, chrome: Chrome) -> i32 {
     PROBE - room + need
 }
 
-/// A dialog's frame over a client of button face: border, caption, the close box when `geom.chrome` has one, and the ? box left of it when `help` is `Some`. Classic's dialog caption has no icon and its ? box ignores the pointer; a styled look draws its usual frame and help button part, else Classic's ? box.
+/// A dialog's frame over a client of button face: border, caption, the minimize and close boxes `geom.chrome` has, and the ? box left of close when `help` is `Some`. Classic's dialog caption has no icon and its ? box ignores the pointer; a styled look draws its usual frame and help button part, else Classic's ? box.
 pub fn draw_dialog_frame(
     c: &mut Canvas,
     theme: &Theme,
@@ -244,10 +247,15 @@ pub fn draw_dialog_frame(
             let all = Rect::new(geom.origin.0, geom.origin.1, geom.total.0, geom.total.1);
             c.fill_rect(all, cs.button_face);
             c.edge_t(all, EdgeStyle::WindowRaised, cs, s);
-            let close = geom.chrome.buttons.has(CaptionButton::Close);
-            let buttons: Vec<(Rect, Glyph)> = close
-                .then_some((geom.buttons[2], Glyph::Close))
-                .into_iter()
+            let shown = [
+                (CaptionButton::Minimize, Glyph::Minimize),
+                (CaptionButton::Close, Glyph::Close),
+            ]
+            .into_iter()
+            .filter(|&(b, _)| geom.chrome.buttons.has(b));
+            let buttons: Vec<(Rect, Glyph, CaptionButton)> =
+                shown.map(|(b, g)| (geom.button_rect(b), g, b)).collect();
+            let drawn: Vec<(Rect, Glyph)> = (buttons.iter().map(|&(r, g, _)| (r, g)))
                 .chain(help_box)
                 .collect();
             classic::widgets::draw_caption(
@@ -257,19 +265,12 @@ pub fn draw_dialog_frame(
                 geom.caption,
                 state.title,
                 state.active,
-                &buttons,
+                &drawn,
                 theme.fonts.size_px,
                 s,
             );
-            if close && state.pressed == Some(CaptionButton::Close) {
-                classic::widgets::draw_caption_button(
-                    c,
-                    cs,
-                    geom.buttons[2],
-                    Glyph::Close,
-                    true,
-                    s,
-                );
+            for (r, g, _) in buttons.iter().filter(|b| state.pressed == Some(b.2)) {
+                classic::widgets::draw_caption_button(c, cs, *r, *g, true, s);
             }
         }
         Look::Styled(style) => {
@@ -829,5 +830,153 @@ mod tests {
             *theme.paint().look == Look::Classic,
             "the default theme paints Classic"
         );
+    }
+
+    /// Classic, every Blue scheme, Glass light and dark and the Square frame, by name.
+    fn windowed_themes() -> Vec<(String, Theme)> {
+        use crate::glass::{Frame, Mode, Settings};
+        use crate::interfaces::{blue_theme, theme_with};
+        let mut all = vec![("classic".to_string(), Theme::default())];
+        for v in crate::blue::Variant::ALL {
+            all.push((format!("blue {v:?}"), blue_theme(v)));
+        }
+        for (name, mode, frame) in [
+            ("glass light", Mode::Light, Frame::Rounded),
+            ("glass dark", Mode::Dark, Frame::Rounded),
+            ("glass square", Mode::Light, Frame::Square),
+        ] {
+            let s = Settings {
+                mode,
+                frame,
+                ..Settings::default()
+            };
+            let t = theme_with(Interface::Glass, crate::blue::Variant::Blue, &s);
+            all.push((name.to_string(), t));
+        }
+        all
+    }
+
+    /// A windowed dialog's frame round a 240x60 client at scale `s`, untitled so no font shows.
+    fn windowed_frame(
+        theme: &Theme,
+        s: i32,
+        active: bool,
+        hot: Option<CaptionButton>,
+        pressed: Option<CaptionButton>,
+    ) -> (Canvas, FrameGeometry) {
+        let g = FrameGeometry::layout(&theme.metrics, 240, 60, false, Chrome::WINDOWED_DIALOG)
+            .scaled(s);
+        let theme = theme.scaled(s);
+        let text = loaded(theme.fonts.clone());
+        let st = FrameState {
+            title: "",
+            active,
+            maximized: false,
+            pressed,
+            glow: Glow::lit(hot),
+            icon: None,
+            tabbed: false,
+        };
+        let mut c = Canvas::new(g.total.0 as u32, g.total.1 as u32);
+        draw_dialog_frame(&mut c, &theme, &text, &g, &st, None);
+        (c, g)
+    }
+
+    fn fnv(c: &Canvas) -> u64 {
+        let words = [c.width, c.height]
+            .into_iter()
+            .chain(c.pixels.iter().copied());
+        words
+            .flat_map(u32::to_le_bytes)
+            .fold(0xcbf2_9ce4_8422_2325, |h, b| {
+                (h ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3)
+            })
+    }
+
+    const MIN: Option<CaptionButton> = Some(CaptionButton::Minimize);
+    const CLOSE: Option<CaptionButton> = Some(CaptionButton::Close);
+
+    #[test]
+    fn windowed_dialog_frames_pin_in_every_look_at_scale_1_and_2() {
+        let mut got = Vec::new();
+        for (name, theme) in windowed_themes() {
+            for s in [1, 2] {
+                for (state, active, hot, pressed) in [
+                    ("rest", true, None, None),
+                    ("inactive", false, None, None),
+                    ("minimize hot", true, MIN, None),
+                    ("minimize pressed", true, None, MIN),
+                    ("close hot", true, CLOSE, None),
+                ] {
+                    let (c, _) = windowed_frame(&theme, s, active, hot, pressed);
+                    got.push((format!("{name} {state} {s}"), fnv(&c)));
+                }
+            }
+        }
+        crate::pins::check("look/windowed_dialog_frame", &got);
+    }
+
+    #[test]
+    fn a_windowed_dialogs_minimize_box_lights_and_presses_inside_its_box() {
+        for (name, theme) in windowed_themes() {
+            for s in [1, 2] {
+                let (rest, g) = windowed_frame(&theme, s, true, None, None);
+                let min = g.button_rect(CaptionButton::Minimize);
+                let mut states = vec![("pressed", windowed_frame(&theme, s, true, None, MIN).0)];
+                if theme.look.style().is_some() {
+                    states.push(("hot", windowed_frame(&theme, s, true, MIN, None).0));
+                }
+                for (what, c) in states {
+                    let differs = |r: Rect| {
+                        (r.y..r.bottom())
+                            .any(|y| (r.x..r.right()).any(|x| c.get(x, y) != rest.get(x, y)))
+                    };
+                    assert!(
+                        differs(min),
+                        "{name} at {s}: {what} changes the minimize box"
+                    );
+                    let left = Rect::new(0, 0, min.x - 3 * s, g.total.1);
+                    assert!(
+                        !differs(left),
+                        "{name} at {s}: {what} leaves the caption left of it"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_rounded_glass_windowed_dialog_draws_its_min_close_strip_from_minimize_to_close() {
+        use crate::style::{Part, State};
+        let rounded = windowed_themes().into_iter();
+        for (name, theme) in rounded.filter(|t| t.0 == "glass light" || t.0 == "glass dark") {
+            for s in [1, 2] {
+                let scaled = theme.scaled(s);
+                let style = scaled.look.style().unwrap();
+                for (active, hot, pressed, state, n) in [
+                    (true, None, None, State::Normal, 0),
+                    (false, None, None, State::Inactive, 0),
+                    (true, MIN, None, State::Hot, 0),
+                    (true, CLOSE, None, State::Hot, 1),
+                    (true, None, MIN, State::Pressed, 0),
+                ] {
+                    let (c, g) = windowed_frame(&theme, s, active, hot, pressed);
+                    let [min, _, close] = g.buttons;
+                    assert_eq!(close.right() - min.x, 78 * s, "{name}: one 78 px strip");
+                    let strip = Rect::new(0, 0, 78 * s, 20 * s);
+                    let mut want = Canvas::new(strip.width as u32, strip.height as u32);
+                    style.draw_nth(&mut want, strip, Part::MinCloseGroup, state, n, s);
+                    for y in 0..strip.height {
+                        for x in 0..strip.width {
+                            assert_eq!(
+                                c.get(min.x + x, close.y + y),
+                                want.get(x, y),
+                                "{name} at {s}: {state:?} {n}, ({x}, {y}) of the strip"
+                            );
+                        }
+                    }
+                }
+            }
+        }
     }
 }

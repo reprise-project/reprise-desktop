@@ -408,6 +408,7 @@ fn build_at(s: &Settings, scale: i32) -> Style {
     .with_painted(Part::MaxCaptionGroup, lazy(buttons::max_caption_group))
     .with_painted(Part::CloseButton, lazy(buttons::dialog_close))
     .with_painted(Part::HelpButton, lazy(buttons::help_strip))
+    .with_painted(Part::MinCloseGroup, lazy(buttons::min_close))
     .with_joined_help(buttons::HELP_CELL)
     .with_painted(Part::Taskbar, lazy(|s, d| bar::taskbar(s, BAR_HEIGHT, d)))
     .with_painted(Part::StartButton, lazy(paint::start_button))

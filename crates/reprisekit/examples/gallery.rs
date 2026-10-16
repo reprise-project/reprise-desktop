@@ -78,6 +78,10 @@ fn main() {
             &render_task_progress(n.max(1)),
             &format!("reprisekit-gallery-task-progress@{}.png", n.max(1)),
         );
+        write_preview(
+            &render_windowed_dialog(n.max(1)),
+            &format!("reprisekit-gallery-windowed-dialog@{}.png", n.max(1)),
+        );
         return;
     }
     if let Ok(pct) = std::env::var("REPRISE_GALLERY_TEXT_SIZE") {
@@ -161,6 +165,10 @@ fn main() {
             "reprisekit-gallery-tray-arrow-blue-schemes.png",
         );
         write_preview(&render_orb_glow(1), "reprisekit-gallery-orb-glow-glass.png");
+        write_preview(
+            &render_windowed_dialog(1),
+            "reprisekit-gallery-windowed-dialog.png",
+        );
         write_preview(&render_glass(), "reprisekit-gallery-glass.png");
         write_preview(&render_glass_dark(), "reprisekit-gallery-glass-dark.png");
         write_preview(
@@ -463,6 +471,69 @@ fn render_copy_progress(with_blue: bool, scale: i32) -> Canvas {
     for (i, b) in drawn.iter().enumerate() {
         let (col, row) = ((i % cols) as i32, (i / cols) as i32);
         c.blit_canvas(10 + col * cell_w, 10 + row * cell_h, b);
+    }
+    c
+}
+
+/// A windowed dialog's frame at `scale`, one row per look (Classic, Blue, Olive, Silver, Glass
+/// light and dark, the Square frame): at rest, minimize hot, minimize held, inactive.
+fn render_windowed_dialog(scale: i32) -> Canvas {
+    use reprisekit::blue::Variant;
+    use reprisekit::glass::{Frame, Mode, Settings};
+    let glass = |mode, frame| {
+        let s = Settings {
+            mode,
+            frame,
+            ..Settings::default()
+        };
+        interfaces::theme_with(Interface::Glass, Variant::default(), &s)
+    };
+    let looks = [
+        Theme::default(),
+        interfaces::blue_theme(Variant::Blue),
+        interfaces::blue_theme(Variant::Olive),
+        interfaces::blue_theme(Variant::Silver),
+        glass(Mode::Light, Frame::Rounded),
+        glass(Mode::Dark, Frame::Rounded),
+        glass(Mode::Light, Frame::Square),
+    ];
+    let min = Some(CaptionButton::Minimize);
+    let states = [
+        (true, None, None),
+        (true, min, None),
+        (true, None, min),
+        (false, None, None),
+    ];
+    let (cw, ch) = (200, 40);
+    let totals = looks
+        .iter()
+        .map(|t| FrameGeometry::layout(&t.metrics, cw, ch, false, Chrome::WINDOWED_DIALOG).total);
+    let cell = totals.fold((0, 0), |c, t| (c.0.max(t.0 + 20), c.1.max(t.1 + 20)));
+    let mut c = Canvas::new(
+        ((states.len() as i32 * cell.0 + 20) * scale) as u32,
+        ((looks.len() as i32 * cell.1 + 20) * scale) as u32,
+    );
+    c.fill_rect(c.bounds(), Color::rgb(58, 110, 165));
+    for (row, theme) in looks.iter().enumerate() {
+        let g = FrameGeometry::layout(&theme.metrics, cw, ch, false, Chrome::WINDOWED_DIALOG)
+            .scaled(scale);
+        let theme = theme.scaled(scale);
+        let text = TextRenderer::load(&theme.fonts);
+        for (col, &(active, hot, pressed)) in states.iter().enumerate() {
+            let mut f = Canvas::new(g.total.0 as u32, g.total.1 as u32);
+            let st = FrameState {
+                title: "Copying...",
+                active,
+                maximized: false,
+                pressed,
+                glow: Glow::lit(hot),
+                icon: None,
+                tabbed: false,
+            };
+            look::draw_dialog_frame(&mut f, &theme, &text, &g, &st, None);
+            let (x, y) = (10 + col as i32 * cell.0, 10 + row as i32 * cell.1);
+            c.blit_over(x * scale, y * scale, &f);
+        }
     }
     c
 }

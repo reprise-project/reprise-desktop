@@ -1,4 +1,4 @@
-//! Glass caption buttons on the Rounded frame, drawn from the glass settings: the minimize/maximize/close strip, a dialog's close box and its ? box.
+//! Glass caption buttons on the Rounded frame, drawn from the glass settings: the minimize/maximize/close strip, a dialog's close box, its ? box and a windowed dialog's minimize box.
 
 use super::frame::Under;
 use super::glyph::{self, Glyph};
@@ -45,6 +45,11 @@ const HELP: Strip = Strip {
     width: 78,
     cells: &[(2, 28, Glyph::Help), (30, 75, Glyph::Close)],
     dividers: &[29],
+};
+
+const MIN_CLOSE: Strip = Strip {
+    cells: &[(2, 28, Glyph::Minimize), (30, 75, Glyph::Close)],
+    ..HELP
 };
 
 /// Restored strip rows: it hangs from the caption's light line (row 0); bodies on rows 1 to 16, light line 17, outline 18, halo 19. A maximized strip omits row 0.
@@ -685,6 +690,11 @@ pub const HELP_CELL: i32 = 30;
 /// A dialog's ? box joined to its close box, 78x20, one frame per box, the ? box's first.
 pub fn help_strip(s: &Settings, n: i32) -> PartImage {
     frames(s, &HELP, &HELP_FRAMES, false, n)
+}
+
+/// A windowed dialog's minimize box joined to its close box, 78x20, in [`HELP_FRAMES`] order.
+pub fn min_close(s: &Settings, n: i32) -> PartImage {
+    frames(s, &MIN_CLOSE, &HELP_FRAMES, false, n)
 }
 
 const HELP_FRAMES: [(State, Option<usize>); 8] = [

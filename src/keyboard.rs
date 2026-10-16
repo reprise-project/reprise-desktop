@@ -485,6 +485,7 @@ impl State {
             menus_open: !self.menus.is_empty(),
             dialog_has_keyboard: self.dialog_has_keyboard(),
             dialog_modal: self.dialog_is_modal(),
+            dialog_windowed: (self.dialogs.views.last()).is_some_and(|v| v.dialog.windowed()),
             launcher_open: self.launcher.is_some(),
             overview_open: self.overview.view.is_some(),
             snap_assist_open: self.snap_assist_open(),

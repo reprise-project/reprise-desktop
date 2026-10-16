@@ -75,6 +75,8 @@ impl CaptionButton {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ButtonSet {
     MinMaxClose,
+    /// A windowed dialog's: minimize stands in the ? box's slot ([`FrameGeometry::help_box`]).
+    MinClose,
     Close,
     None,
 }
@@ -83,6 +85,7 @@ impl ButtonSet {
     pub fn has(self, b: CaptionButton) -> bool {
         match self {
             ButtonSet::MinMaxClose => true,
+            ButtonSet::MinClose => b != CaptionButton::Maximize,
             ButtonSet::Close => b == CaptionButton::Close,
             ButtonSet::None => false,
         }
@@ -122,6 +125,10 @@ impl Chrome {
     };
     pub const PROMPT: Chrome = Chrome {
         icon: false,
+        ..Chrome::DIALOG
+    };
+    pub const WINDOWED_DIALOG: Chrome = Chrome {
+        buttons: ButtonSet::MinClose,
         ..Chrome::DIALOG
     };
 }
@@ -241,7 +248,7 @@ impl FrameGeometry {
             }
             None => (None, caption_buttons(m, caption, 2)),
         };
-        FrameGeometry {
+        let mut g = FrameGeometry {
             frame: f,
             total,
             origin: (0, 0),
@@ -251,7 +258,11 @@ impl FrameGeometry {
             client,
             chrome,
             glass_top: 0,
+        };
+        if chrome.buttons == ButtonSet::MinClose {
+            g.buttons[0] = g.help_box();
         }
+        g
     }
 
     /// This frame with its glass run `rows` down the client's top, at most the client's height.
@@ -778,6 +789,27 @@ mod tests {
         assert_eq!(hit(176), FrameHit::Title);
         assert_eq!(g.hit(180, 0, &m), FrameHit::Resize(Edges::TOP));
         assert_eq!(g.hit(180, 10, &m), FrameHit::Title);
+    }
+
+    #[test]
+    fn a_windowed_dialogs_minimize_box_takes_the_help_box_slot() {
+        for m in [Metrics::default(), joined()] {
+            let help = FrameGeometry::layout(&m, 200, 100, false, Chrome::HELP_DIALOG);
+            let g = FrameGeometry::layout(&m, 200, 100, false, Chrome::WINDOWED_DIALOG);
+            let min = g.button_rect(CaptionButton::Minimize);
+            assert_eq!(min, help.help_box(), "minimize where the ? box would be");
+            assert_eq!(g.buttons[2], help.buttons[2], "close stays put");
+            assert_eq!(
+                g.hit(min.x, min.y, &m),
+                FrameHit::Button(CaptionButton::Minimize)
+            );
+            assert_eq!(
+                g.hit(g.buttons[2].right() - 1, g.buttons[2].y, &m),
+                FrameHit::Button(CaptionButton::Close)
+            );
+            assert!(!g.chrome.buttons.has(CaptionButton::Maximize));
+            assert_eq!(g.scaled(2).buttons[0], min.scaled(2));
+        }
     }
 
     #[test]
