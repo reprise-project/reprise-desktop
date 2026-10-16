@@ -153,12 +153,7 @@ pub fn draw_popup(
     match &menu {
         Some(m) => {
             crate::look::styled::menu::draw_shadow(m, c, popup, s);
-            c.fill_rect(popup, cs.menu);
-            c.ring_t(popup, m.frame, m.frame, s);
-            for i in 1..3 {
-                let r = popup.inset(i * s);
-                c.ring_t(r, m.ring, m.ring, s);
-            }
+            crate::look::styled::menu::draw_frame(m, c, popup, cs.menu, s);
         }
         None => {
             c.fill_rect(popup, cs.button_face);

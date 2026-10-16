@@ -524,6 +524,22 @@ impl Metrics {
 }
 
 impl Theme {
+    /// This theme with its style's Shut down options menu as its menu; the theme itself when the
+    /// style has none. Call it on a scaled theme: a rescaled style is built afresh.
+    pub fn for_options_menu(&self) -> Theme {
+        let Some((st, m)) = self
+            .look
+            .style()
+            .and_then(|st| Some((st, st.options_menu?)))
+        else {
+            return self.clone();
+        };
+        Theme {
+            look: crate::paint::Look::Styled(std::sync::Arc::new(st.clone().with_menu(m))),
+            ..self.clone()
+        }
+    }
+
     /// Metrics and font size multiplied by `n`, `scale` set to `n`, and
     /// the look's style at `n` ([`crate::paint::Look::at_scale`]). Always
     /// derived from the scale-1 theme in `Config`, never from an already

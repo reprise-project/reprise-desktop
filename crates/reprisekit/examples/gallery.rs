@@ -6071,7 +6071,7 @@ fn render_glass_ranges(theme: &Theme) -> Canvas {
     c
 }
 
-/// Glass's menus on white: the menu bars and context menu of `gallery_p3::menu`, and a desktop menu with its View submenu open.
+/// Glass's menus on white: the menu bars and context menu of `gallery_p3::menu`, a desktop menu with its View submenu open, and the Start panel's Shut down options with Restart lit.
 fn render_glass_menus(theme: &Theme) -> Canvas {
     let text = TextRenderer::load(&FontConfig::default());
     let mut c = Canvas::new(950, 290);
@@ -6111,6 +6111,29 @@ fn render_glass_menus(theme: &Theme) -> Canvas {
         chain.key(&desk, MenuKey::Down, &cx);
     }
     chain.draw(&mut c, theme, &text, true);
+
+    let options = theme.for_options_menu();
+    let mut shut = MenuTree::new();
+    for item in [
+        MenuItem::item("&Log off"),
+        MenuItem::item("L&ock"),
+        MenuItem::Separator,
+        MenuItem::item("&Restart"),
+        MenuItem::Separator,
+        MenuItem::item("&Sleep"),
+        MenuItem::item("&Hibernate"),
+    ] {
+        shut.push(item);
+    }
+    let cx = MenuCtx {
+        theme: &options,
+        ..cx
+    };
+    let mut chain = PopupMenu::open(&shut, (410, 10), &cx, false);
+    for _ in 0..3 {
+        chain.key(&shut, MenuKey::Down, &cx);
+    }
+    chain.draw(&mut c, &options, &text, true);
     c
 }
 

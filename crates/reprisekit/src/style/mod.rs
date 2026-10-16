@@ -837,7 +837,10 @@ fn erf(x: f64) -> f64 {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct MenuLook {
     pub frame: Color,
-    pub ring: Color,
+    /// The two rows inside the frame; None leaves them face.
+    pub ring: Option<Color>,
+    /// None: the scheme's menu colour.
+    pub face: Option<Color>,
     pub row: i32,
     pub separator: i32,
     pub gutter: i32,
@@ -853,6 +856,7 @@ pub struct MenuLook {
     pub greyed: Color,
     pub check_at: (i32, i32),
     pub radio_at: (i32, i32),
+    /// None: the menu casts no shadow.
     pub shadow: Option<&'static DropShadow>,
 }
 
@@ -1011,6 +1015,8 @@ pub struct Style {
     pub drop_list: Option<DropList>,
     pub balloon: Option<BalloonLook>,
     pub menu: Option<MenuLook>,
+    /// The Start panel's Shut down options menu, when it differs from [`Style::menu`].
+    pub options_menu: Option<MenuLook>,
     pub selection_box: Option<SelectionBox>,
     pub flyout: Option<FlyoutLook>,
     pub caption_tabs: Option<CaptionTabLook>,
@@ -1082,6 +1088,7 @@ impl Style {
             page: None,
             drop_list: None,
             menu: None,
+            options_menu: None,
             selection_box: None,
             caption_tabs: None,
             tray_arrow: None,
@@ -1208,6 +1215,11 @@ impl Style {
 
     pub fn with_menu(mut self, m: MenuLook) -> Style {
         self.menu = Some(m);
+        self
+    }
+
+    pub fn with_options_menu(mut self, m: MenuLook) -> Style {
+        self.options_menu = Some(m);
         self
     }
 

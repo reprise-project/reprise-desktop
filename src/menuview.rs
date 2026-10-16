@@ -308,6 +308,8 @@ pub struct Menu {
     pub kind: MenuKind,
     pub from: MenuFrom,
     pub parent_row: Option<usize>,
+    /// Laid out and drawn with the style's Shut down options look ([`reprisekit::theme::Theme::for_options_menu`]).
+    options_look: bool,
     opened: Instant,
 }
 
@@ -438,6 +440,7 @@ impl Menu {
             kind,
             from,
             parent_row: None,
+            options_look: false,
             opened: Instant::now(),
         }
     }
@@ -617,6 +620,7 @@ impl State {
             kind,
             from,
             parent_row: None,
+            options_look: false,
             opened: Instant::now(),
         });
         if fade {
@@ -631,6 +635,11 @@ impl State {
         };
         let scale = self.draw_scale_at(Some(&m.output));
         let theme = self.config.theme.scaled(scale);
+        let theme = if m.options_look {
+            theme.for_options_menu()
+        } else {
+            theme
+        };
         let layout = m.layout.scaled(scale);
         let mut canvas = Canvas::new(layout.width.max(1) as u32, layout.height.max(1) as u32);
         draw_menu(
@@ -1208,11 +1217,26 @@ impl State {
         from: MenuFrom,
         place: impl FnOnce((i32, i32), (i32, i32), Rect) -> (i32, i32),
     ) {
+        self.push_context_menu_looked(at, items, kind, from, place, false);
+    }
+
+    /// [`State::push_context_menu_placed`], with the Shut down options look when `options_look`.
+    pub(crate) fn push_context_menu_looked(
+        &mut self,
+        at: (i32, i32),
+        items: Vec<MenuItem>,
+        kind: MenuKind,
+        from: MenuFrom,
+        place: impl FnOnce((i32, i32), (i32, i32), Rect) -> (i32, i32),
+        options_look: bool,
+    ) {
         let Some(output) = self.output_at(at.0 as f64, at.1 as f64) else {
             return;
         };
         let usable = self.usable_area(Some(&output));
-        let style = MenuStyle::context_for(&self.config.theme, &items).fit(
+        let options = options_look.then(|| self.config.theme.for_options_menu());
+        let theme = options.as_ref().unwrap_or(&self.config.theme);
+        let style = MenuStyle::context_for(theme, &items).fit(
             &self.text,
             &items,
             self.config.theme.fonts.size_px,
@@ -1221,6 +1245,9 @@ impl State {
         let layout = MenuLayout::compute_styled(&style, &items, usize::MAX);
         let pos = place(at, (layout.width, layout.height), usable);
         self.push_menu(0, pos, layout, items, output, kind, from);
+        if let Some(m) = self.menus.last_mut() {
+            m.options_look = options_look;
+        }
         self.redraw_menu(0);
     }
 
