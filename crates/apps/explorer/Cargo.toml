@@ -23,7 +23,6 @@ serde = { workspace = true, features = ["derive"] }
 toml.workspace = true
 inotify.workspace = true
 log.workspace = true
-env_logger.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

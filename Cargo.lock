@@ -1950,7 +1950,6 @@ dependencies = [
  "async-io",
  "async-process",
  "clap",
- "env_logger",
  "futures-lite",
  "futures-util",
  "image",
@@ -1987,9 +1986,9 @@ dependencies = [
 name = "reprise-about"
 version = "0.1.0"
 dependencies = [
- "env_logger",
  "log",
  "repriseapp",
+ "reprisebus",
  "reprisekit",
 ]
 
@@ -1997,7 +1996,6 @@ dependencies = [
 name = "reprise-accounts"
 version = "0.1.0"
 dependencies = [
- "env_logger",
  "libc",
  "log",
  "repriseapp",
@@ -2013,7 +2011,6 @@ name = "reprise-bluetooth"
 version = "0.1.0"
 dependencies = [
  "async-channel",
- "env_logger",
  "futures-util",
  "log",
  "repriseapp",
@@ -2028,7 +2025,6 @@ dependencies = [
 name = "reprise-datetime"
 version = "0.1.0"
 dependencies = [
- "env_logger",
  "log",
  "repriseapp",
  "reprisebus",
@@ -2042,9 +2038,9 @@ dependencies = [
 name = "reprise-drives"
 version = "0.1.0"
 dependencies = [
- "env_logger",
  "log",
  "repriseapp",
+ "reprisebus",
  "repriseconf",
  "reprisefs",
  "reprisekit",
@@ -2057,7 +2053,6 @@ dependencies = [
 name = "reprise-explorer"
 version = "0.1.0"
 dependencies = [
- "env_logger",
  "inotify",
  "log",
  "repriseapp",
@@ -2075,7 +2070,6 @@ name = "reprise-network"
 version = "0.1.0"
 dependencies = [
  "async-channel",
- "env_logger",
  "futures-util",
  "getrandom",
  "libc",
@@ -2093,9 +2087,9 @@ dependencies = [
 name = "reprise-notepad"
 version = "0.1.0"
 dependencies = [
- "env_logger",
  "log",
  "repriseapp",
+ "reprisebus",
  "reprisefs",
  "reprisekit",
  "tempfile",
@@ -2107,7 +2101,6 @@ version = "0.1.0"
 dependencies = [
  "async-channel",
  "blocking",
- "env_logger",
  "libc",
  "log",
  "repriseapp",
@@ -2125,7 +2118,6 @@ dependencies = [
  "async-channel",
  "async-io",
  "blocking",
- "env_logger",
  "futures-lite",
  "gbm",
  "image",
@@ -2153,7 +2145,6 @@ dependencies = [
 name = "reprise-power"
 version = "0.1.0"
 dependencies = [
- "env_logger",
  "futures-util",
  "log",
  "repriseapp",
@@ -2169,7 +2160,6 @@ dependencies = [
 name = "reprise-printers"
 version = "0.1.0"
 dependencies = [
- "env_logger",
  "inotify",
  "libc",
  "log",
@@ -2186,7 +2176,6 @@ dependencies = [
 name = "reprise-settings"
 version = "0.1.0"
 dependencies = [
- "env_logger",
  "inotify",
  "log",
  "repriseapp",
@@ -2202,12 +2191,12 @@ dependencies = [
 name = "reprise-sound"
 version = "0.1.0"
 dependencies = [
- "env_logger",
  "futures-util",
  "libc",
  "log",
  "repriseapp",
  "repriseaudio",
+ "reprisebus",
  "repriseconf",
  "reprisefs",
  "reprisekit",
@@ -2221,7 +2210,6 @@ name = "reprise-updates"
 version = "0.1.0"
 dependencies = [
  "async-io",
- "env_logger",
  "futures-util",
  "inotify",
  "libc",
@@ -2239,10 +2227,10 @@ dependencies = [
 name = "reprise-volume"
 version = "0.1.0"
 dependencies = [
- "env_logger",
  "log",
  "repriseapp",
  "repriseaudio",
+ "reprisebus",
  "repriseconf",
  "reprisekit",
  "serde",
@@ -2282,6 +2270,7 @@ dependencies = [
 name = "reprisebus"
 version = "0.1.0"
 dependencies = [
+ "env_logger",
  "futures-util",
  "libc",
  "log",

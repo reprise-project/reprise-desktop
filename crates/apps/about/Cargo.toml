@@ -17,4 +17,4 @@ path = "src/main.rs"
 repriseapp = { path = "../../repriseapp" }
 reprisekit = { path = "../../reprisekit" }
 log.workspace = true
-env_logger.workspace = true
+reprisebus = { path = "../../reprisebus" }

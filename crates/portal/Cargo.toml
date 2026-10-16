@@ -25,7 +25,6 @@ toml.workspace = true
 blocking.workspace = true
 async-io = "2"
 log.workspace = true
-env_logger.workspace = true
 libc.workspace = true
 png.workspace = true
 image.workspace = true

@@ -109,7 +109,6 @@ accesskit_unix.workspace = true
 toml_edit.workspace = true
 libc.workspace = true
 log.workspace = true
-env_logger.workspace = true
 clap = { version = "4", features = ["derive"] }
 serde = { workspace = true, features = ["derive"] }
 toml.workspace = true
