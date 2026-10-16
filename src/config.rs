@@ -431,7 +431,11 @@ pub struct SnapConfig {
     pub picker: bool,
     pub bar: bool,
     pub layouts: Vec<crate::snap::ZoneLayout>,
+    /// Logical px from the usable area's edge where a drag snaps; corners reach twice as far.
+    pub distance: i32,
 }
+
+pub const SNAP_DISTANCE_MAX: i32 = 100;
 
 impl Default for SnapConfig {
     fn default() -> Self {
@@ -440,6 +444,7 @@ impl Default for SnapConfig {
             picker: true,
             bar: true,
             layouts: Vec::new(),
+            distance: crate::snap::BAND,
         }
     }
 }
@@ -1823,6 +1828,7 @@ struct FileSnapping {
     picker: Option<bool>,
     bar: Option<bool>,
     layouts: Option<Vec<String>>,
+    distance: Option<i64>,
     /// The snap grid's keys, read only to be ignored: the grid is gone.
     #[allow(dead_code)]
     threshold: Option<serde::de::IgnoredAny>,
@@ -2908,6 +2914,16 @@ impl Config {
                     .map(|s| crate::snap::ZoneLayout::parse(s))
                     .collect::<Result<_, _>>()
                     .map_err(|e| format!("window_snapping: layouts: {e}"))?;
+            }
+            if let Some(d) = s.distance {
+                cfg.window_snapping.distance = i32::try_from(d)
+                    .ok()
+                    .filter(|d| (1..=SNAP_DISTANCE_MAX).contains(d))
+                    .ok_or_else(|| {
+                        format!(
+                            "window_snapping: distance must be between 1 and {SNAP_DISTANCE_MAX}, got {d}"
+                        )
+                    })?;
             }
         }
         if let Some(v) = file.screenshot.and_then(|s| s.save) {
@@ -5654,6 +5670,17 @@ command = "gedit"
             Config::parse("[window_snapping]\nbogus = 1\n").is_err(),
             "a typo still fails"
         );
+    }
+
+    #[test]
+    fn window_snapping_distance_defaults_to_the_band_and_is_bounded() {
+        assert_eq!(Config::parse("").unwrap().window_snapping.distance, 30);
+        let c = Config::parse("[window_snapping]\ndistance = 15\n").unwrap();
+        assert_eq!(c.window_snapping.distance, 15);
+        for bad in [0, 101] {
+            let text = format!("[window_snapping]\ndistance = {bad}\n");
+            assert!(Config::parse(&text).is_err(), "distance {bad} is refused");
+        }
     }
 
     #[test]

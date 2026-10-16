@@ -442,6 +442,7 @@ suspend_after = 0            # run [power] standby
 # enabled = true             # drag snapping; the Super+arrow binds always work
 # picker = true              # resting on a maximize button shows the snap layouts; Super+z always does
 # bar = true                 # with enabled, dragging a title bar toward the top shows the snap layouts in a bar there
+# distance = 30              # px from a screen edge where a drag snaps, 1 to 100; corners reach twice as far
 # layouts = ["1|1", "2|1", "1|1:2"]  # the flyout's and the bar's layouts, up to 6; unset gives six built-in ones.
 #                            # Columns' weights joined by |, or rows' by -; weight:n cuts that one
 #                            # into n: "2|1" is two thirds and a third, "1-1:2" a top half over two

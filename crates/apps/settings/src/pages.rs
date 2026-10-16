@@ -30,9 +30,9 @@ use reprisekit::trackbar::{self, TrackBar};
 use crate::model::{
     CURSOR_SIZES, Choices, DESKTOPS_DEFAULT, DESKTOPS_MAX, EFFECTS_MS_MAX, FONT_SMOOTHINGS,
     HOT_CORNERS, INTERFACES, PAGER_MARKS, POSITIONS, PREVIEW_FPS_MAX, QT_PLATFORM_THEMES,
-    REPRISE_TOOLKIT_ROW, STARTMENU_STYLES, SWITCH_ANIMATIONS, SWITCH_MS_MAX, SWITCHER_SIZES,
-    SWITCHER_STYLES, Settings, TASKBAR_BUTTONS, TASKBAR_POSITIONS, TEXT_SIZES, TOOLKIT_AUTO,
-    TOOLKIT_REPRISE, WATER_STYLES,
+    REPRISE_TOOLKIT_ROW, SNAP_DISTANCE_MAX, STARTMENU_STYLES, SWITCH_ANIMATIONS, SWITCH_MS_MAX,
+    SWITCHER_SIZES, SWITCHER_STYLES, Settings, TASKBAR_BUTTONS, TASKBAR_POSITIONS, TEXT_SIZES,
+    TOOLKIT_AUTO, TOOLKIT_REPRISE, WATER_STYLES,
 };
 use crate::registry::Page;
 use repriseconf::{Lens, ThumbnailCache, lens};
@@ -863,13 +863,14 @@ pub fn power(a: Area) -> Form {
 }
 
 /// How windows snap, tab and come back: the Snapping group holds
-/// `[window_snapping]`'s drag snapping, the snap layouts on the maximize
-/// button, the snap bar a drag shows (greyed with drag snapping off) and the
-/// layouts they offer; Tabs and Placement holds `[windows]`, shaking included.
+/// `[window_snapping]`'s drag snapping and how near an edge it starts (greyed
+/// with drag snapping off), the snap layouts on the maximize button, the snap
+/// bar a drag shows (greyed too) and the layouts they offer; Tabs and Placement
+/// holds `[windows]`, shaking included.
 pub fn windows(a: Area) -> Form {
     let gw = a.gw();
-    Form::new(vec![
-        group(a, "snap_group", 44, 144, "Snapping"),
+    let mut items = vec![
+        group(a, "snap_group", 44, 172, "Snapping"),
         Item::check(
             "snap_enabled",
             GX,
@@ -888,36 +889,57 @@ pub fn windows(a: Area) -> Form {
             114,
             "Show snap layouts in a &bar when dragging a title bar up",
         ),
-        Item::label_at("snap_layouts_label", GX, 142, 84, "&Custom layouts:"),
-        edit("snap_layouts", GX + 88, 138, gw - 88),
+    ];
+    items.extend(spin(
+        "snap_distance_label",
+        "snap_distance",
+        GX,
+        142,
+        150,
+        "Snap distance from &edges:",
+        (1, SNAP_DISTANCE_MAX as i32),
+    ));
+    items.extend([
+        Item::label_at("snap_distance_units", GX + 210, 142, 30, "px"),
+        Item::label_at("snap_layouts_label", GX, 170, 84, "&Custom layouts:"),
+        edit("snap_layouts", GX + 88, 166, gw - 88),
         Item::label_at(
             "snap_layouts_note",
             GX,
-            164,
+            192,
             gw,
             "Empty for the built-in six, e.g. 1|1 2|1 1:2|1:2",
         ),
-        group(a, "tabs_group", 200, 96, "Tabs and Placement"),
+        group(a, "tabs_group", 228, 96, "Tabs and Placement"),
         Item::check(
             "window_tabs",
             GX,
-            222,
+            250,
             "Drop a window on a title bar to group them as &tabs",
         ),
         Item::check(
             "remember_windows",
             GX,
-            246,
+            274,
             "Re&member where each program's window was closed",
         ),
         Item::check(
             "window_shake",
             GX,
-            270,
+            298,
             "&Shake a window by its title bar to minimize the others",
         ),
-    ])
+    ]);
+    Form::new(items)
 }
+
+/// The Windows page controls that grey with drag snapping off.
+const DRAG_SNAP_CONTROLS: [&str; 4] = [
+    "snap_bar",
+    "snap_distance_label",
+    "snap_distance",
+    "snap_distance_units",
+];
 
 /// The virtual desktop controls that grey with one desktop; the duration's also grey without an
 /// animation, and the preview rate's while nothing shows a live picture.
@@ -1749,6 +1771,7 @@ fn binds() -> Vec<Bind> {
         Bind::Flag("snap_picker", lens!(snap_picker)),
         Bind::Flag("snap_bar", lens!(snap_bar)),
         Bind::Text("snap_layouts", lens!(snap_layouts)),
+        Bind::Num("snap_distance", lens!(snap_distance)),
         Bind::Flag("nl_enabled", lens!(nl_enabled)),
         Bind::Kelvin("nl_temperature", lens!(nl_temperature)),
         Bind::Radio("nl_sun", lens!(nl_schedule), "sun"),
@@ -1998,7 +2021,10 @@ pub fn follow(sheet: &mut PropSheet, s: &Settings) {
     sp.set_enabled("switcher_size", thumbnails);
     sp.set_enabled("switcher_flip", s.interface == "glass");
     sheet.pages[Page::Advanced.index()].set_enabled(WATER_STYLE, s.wallpaper_water != "off");
-    sheet.pages[Page::Windows.index()].set_enabled("snap_bar", s.snap_enabled);
+    let wp = &mut sheet.pages[Page::Windows.index()];
+    for id in DRAG_SNAP_CONTROLS {
+        wp.set_enabled(id, s.snap_enabled);
+    }
     let dp = &mut sheet.pages[Page::Desktops.index()];
     for id in FPS_CONTROLS {
         dp.set_enabled(id, live);
@@ -4533,17 +4559,21 @@ mod tests {
     }
 
     #[test]
-    fn the_snap_bar_greys_with_drag_snapping_off() {
+    fn the_snap_bar_and_distance_grey_with_drag_snapping_off() {
         let p = Page::Windows;
         let off = Settings {
             snap_enabled: false,
             ..Settings::default()
         };
         let mut s = with(&off);
-        assert!(!enabled_on(&s, p, "snap_bar"), "greyed: it needs drags");
+        for id in DRAG_SNAP_CONTROLS {
+            assert!(!enabled_on(&s, p, id), "{id} greys: it needs drags");
+        }
         assert_eq!(s.pages[p.index()].checked("snap_bar"), Some(true));
         follow(&mut s, &Settings::default());
-        assert!(enabled_on(&s, p, "snap_bar"));
+        for id in DRAG_SNAP_CONTROLS {
+            assert!(enabled_on(&s, p, id), "{id} follows drag snapping back on");
+        }
     }
 
     #[test]
@@ -4774,25 +4804,35 @@ mod tests {
     fn the_windows_page_geometry() {
         let s = built();
         let p = Page::Windows;
-        assert_eq!(rect(&s, p, "snap_group"), Rect::new(20, 44, 358, 144));
+        assert_eq!(rect(&s, p, "snap_group"), Rect::new(20, 44, 358, 172));
         assert_eq!(rect(&s, p, "snap_enabled"), Rect::new(32, 66, 13, 13));
         assert_eq!(rect(&s, p, "snap_picker"), Rect::new(32, 90, 13, 13));
         assert_eq!(rect(&s, p, "snap_bar"), Rect::new(32, 114, 13, 13));
-        assert_eq!(rect(&s, p, "snap_layouts"), Rect::new(120, 138, 246, 20));
-        assert_eq!(rect(&s, p, "tabs_group"), Rect::new(20, 200, 358, 96));
-        assert_eq!(rect(&s, p, "window_tabs"), Rect::new(32, 222, 13, 13));
-        assert_eq!(rect(&s, p, "remember_windows"), Rect::new(32, 246, 13, 13));
-        assert_eq!(rect(&s, p, "window_shake"), Rect::new(32, 270, 13, 13));
+        assert_eq!(
+            rect(&s, p, "snap_distance_label"),
+            Rect::new(32, 142, 150, 13)
+        );
+        assert_eq!(rect(&s, p, "snap_distance").y, 138);
+        assert_eq!(
+            rect(&s, p, "snap_distance_units"),
+            Rect::new(242, 142, 30, 13)
+        );
+        assert_eq!(rect(&s, p, "snap_layouts"), Rect::new(120, 166, 246, 20));
+        assert_eq!(rect(&s, p, "tabs_group"), Rect::new(20, 228, 358, 96));
+        assert_eq!(rect(&s, p, "window_tabs"), Rect::new(32, 250, 13, 13));
+        assert_eq!(rect(&s, p, "remember_windows"), Rect::new(32, 274, 13, 13));
+        assert_eq!(rect(&s, p, "window_shake"), Rect::new(32, 298, 13, 13));
         inside_page(&s, p);
     }
 
     #[test]
-    fn the_windows_page_reads_back_tabs_shaking_the_picker_the_bar_and_the_layouts() {
+    fn the_windows_page_reads_back_tabs_shaking_the_picker_the_bar_the_distance_and_the_layouts() {
         let want = Settings {
             window_tabs: false,
             snap_picker: false,
             snap_bar: false,
             snap_layouts: "1|1 2-1:2".into(),
+            snap_distance: 15,
             remember_windows: false,
             window_shake: true,
             ..Settings::default()
