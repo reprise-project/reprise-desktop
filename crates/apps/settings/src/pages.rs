@@ -2783,9 +2783,14 @@ mod tests {
             ..Settings::default()
         };
         let mut s = with(&got);
-        assert_eq!(rows(&s, p, "glass_notification_style").0[0], "Lozenge");
+        assert_eq!(
+            rows(&s, p, "glass_notification_style").0[..2],
+            ["Lozenge", "Halo"]
+        );
         pick(&mut s, &mut got, p, "glass_notification_style", 0);
         assert_eq!(got.glass_notification_style, "lozenge");
+        pick(&mut s, &mut got, p, "glass_notification_style", 1);
+        assert_eq!(got.glass_notification_style, "halo");
         assert!(
             under("classic").pages[p.index()]
                 .item("glass_notification_style")

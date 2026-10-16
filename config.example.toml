@@ -118,7 +118,7 @@ interface = "classic"        # classic | blue | glass; an unknown value falls ba
 # mode = "light"             # light | dark
 # material = "frosted"       # frosted | smoked (darker, white titles) | molten (bent edges)
 # frame = "rounded"          # rounded | square (flat, separate caption buttons)
-# notification_style = "lozenge"  # lozenge (more styles below as they land)
+# notification_style = "lozenge"  # lozenge | halo (the app icon breaks out of the top-left edge)
 # orb_glow = 100             # 0 to 100: how strongly the Start button's icon glows; 0: none
 
 # [taskbar]                  # a key left out follows the interface: Glass's

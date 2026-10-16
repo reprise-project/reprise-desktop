@@ -16,6 +16,7 @@ use reprisekit::controls::tooltip::{
     ReplyField, ReplyKey, access_parts, draw_notify_balloon, notify_hit, notify_layout,
     place_notify,
 };
+use reprisekit::glass::notify::WELL_CORNER;
 use reprisekit::icon::IconSource;
 use reprisekit::style::{NotifyLook, SheetShape};
 use reprisekit::taskbar::Edge;
@@ -30,14 +31,14 @@ use crate::caret::Editor;
 use crate::compositor::{DeskScene, SceneOwner, State};
 use crate::config::EffectsConfig;
 use crate::dialogview::DialogKey;
-use crate::glass::{Backdrop, GlassCtx, Pane};
+use crate::glass::{Backdrop, GlassCtx, Pane, PaneShape};
 use crate::input::BTN_LEFT;
 use crate::notifylog::Log;
 use crate::output::upload_scaled;
 use crate::raster::Rect;
 use crate::startmenu::MenuItem;
 use crate::text::TextRenderer;
-use crate::theme::Theme;
+use crate::theme::{Color, Theme};
 use crate::tray::notify::{DEFAULT_ACTION, INLINE_REPLY, Urgency};
 use crate::tray::{Notification, TrayCommand};
 
@@ -55,6 +56,9 @@ const REPLY_IDLE: Duration = Duration::from_secs(120);
 const AGE_TICK: Duration = Duration::from_secs(60);
 
 const NOTIFY_TICK: Duration = Duration::from_millis(16);
+
+/// Logical px.
+const TINT_PX: i32 = 48;
 
 /// freedesktop `NotificationClosed` reason codes.
 pub const REASON_EXPIRED: u32 = 1;
@@ -183,6 +187,8 @@ struct Balloon {
     pointer_in: bool,
     /// Counts the balloons shown, so each is a new node to a screen reader.
     serial: u64,
+    /// `None` until read under a look with sheets.
+    tint: Option<Option<Color>>,
     glass: SheetGlass,
     /// What the buffer shows; `None` redraws it on the next paint.
     painted: Option<Painted>,
@@ -589,10 +595,12 @@ pub fn show(state: &mut State, n: Notification) {
 fn replace(state: &mut State, i: usize, n: Notification) {
     let sheets = sheets(state);
     let ms = timeout_ms(&n);
+    let scale = state.notify.stack[i].scale;
+    let tint = sheet_tint(&state.config.theme, &n.app_icon, scale);
     let v = &mut state.notify;
     v.shown += 1;
     let serial = v.shown;
-    let focused = renew(&mut v.stack[i], n, serial);
+    let focused = renew(&mut v.stack[i], n, serial, tint);
     restart(
         v,
         i,
@@ -610,11 +618,17 @@ fn replace(state: &mut State, i: usize, n: Notification) {
 }
 
 /// `b` shows `n` as new, on the same tree; returns its kept reply row's focus.
-fn renew(b: &mut Balloon, n: Notification, serial: u64) -> Option<bool> {
+fn renew(
+    b: &mut Balloon,
+    n: Notification,
+    serial: u64,
+    tint: Option<Option<Color>>,
+) -> Option<bool> {
     if n.reply.is_none() {
         b.reply = None;
     }
     b.item = Item::Note(n);
+    b.tint = tint;
     b.shown_at = Instant::now();
     b.serial = serial;
     b.held = None;
@@ -653,9 +667,7 @@ fn fold(state: &mut State, n: Notification) {
     let sheets = sheets(state);
     let v = &mut state.notify;
     if let Some(i) = v.stack.iter().position(|b| b.item.burst_of(&app)) {
-        if let Item::Burst(b) = &mut v.stack[i].item {
-            b.add(&n);
-        }
+        join_burst(&mut v.stack[i], &n, &state.config.theme);
         v.stack[i].painted = None;
         restart(v, i, Some(DEFAULT_MS), sheets);
         paint(state);
@@ -1572,7 +1584,42 @@ fn sheet_glass(lay: &SheetLayout, look: &NotifyLook, scale: i32) -> Pane {
             (fp.width / scale, fp.height / scale),
             (look.corner)(lay.shape),
         ),
+        SheetShape::Halo => {
+            let logical = |r: Rect| {
+                Rect::new(
+                    (r.x - fp.x) / scale,
+                    (r.y - fp.y) / scale,
+                    r.width / scale,
+                    r.height / scale,
+                )
+            };
+            let (icon, sheet) = (logical(lay.icon), logical(lay.sheet));
+            let well = Rect::new(icon.x, icon.y, icon.width, sheet.y - icon.y);
+            Pane {
+                shapes: vec![
+                    PaneShape {
+                        rect: well,
+                        corner: &WELL_CORNER,
+                        square_bottom: true,
+                        square_top: false,
+                    },
+                    PaneShape {
+                        rect: sheet,
+                        corner: (look.corner)(lay.shape),
+                        square_bottom: false,
+                        square_top: false,
+                    },
+                ],
+                holes: vec![],
+            }
+        }
     }
+}
+
+/// `None` for a look without sheets, `Some(None)` for a grey icon or none.
+fn sheet_tint(theme: &Theme, app_icon: &[IconSource], scale: i32) -> Option<Option<Color>> {
+    let look = theme.look.style().and_then(|st| st.notify)?;
+    Some(crate::tray::closest(app_icon, TINT_PX * scale).and_then(|icon| (look.colour)(&icon)))
 }
 
 /// A sheet's app line time: "now", then minutes, then hours.
@@ -1631,6 +1678,7 @@ fn new_balloon(state: &mut State, item: Item) -> Option<Balloon> {
     } else {
         Motion::settled_at(now)
     };
+    let tint = sheet_tint(&state.config.theme, item.app_icon(), scale);
     let scene = &mut state.scene;
     let tree = scene.tree_create(state.layers.overlay);
     crate::glass::leave_out(scene, tree);
@@ -1656,6 +1704,7 @@ fn new_balloon(state: &mut State, item: Item) -> Option<Balloon> {
         reply: None,
         pointer_in: false,
         serial: state.notify.shown,
+        tint,
         glass: SheetGlass::default(),
         painted: None,
     })
@@ -1701,6 +1750,7 @@ pub fn reposition(state: &mut State) {
         return;
     }
     trim(state);
+    retint(&mut state.notify.stack, &state.config.theme);
     for b in &mut state.notify.stack {
         b.painted = None;
     }
@@ -1710,6 +1760,27 @@ pub fn reposition(state: &mut State) {
 /// An output went away: sheets still leaving go at once (`update_layout` has moved the stack).
 pub fn output_removed(state: &mut State) {
     drop_leaving(state);
+}
+
+/// The look may have changed: a balloon shown under Classic or Blue takes its Glass tint. An icon
+/// is decoded only for a balloon not yet tinted, as autohide repositions often.
+fn retint(stack: &mut [Balloon], theme: &Theme) {
+    let sheets = theme.look.style().and_then(|st| st.notify).is_some();
+    for b in stack {
+        if !sheets || b.tint.is_none() {
+            b.tint = sheet_tint(theme, b.item.app_icon(), b.scale);
+        }
+    }
+}
+
+/// Burst `b` takes `n`; its first app icon tints it.
+fn join_burst(b: &mut Balloon, n: &Notification, theme: &Theme) {
+    if let Item::Burst(burst) = &mut b.item {
+        if burst.app_icon.is_empty() {
+            b.tint = sheet_tint(theme, &n.app_icon, b.scale);
+        }
+        burst.add(n);
+    }
 }
 
 /// Lays out, places and draws every balloon and the chip, and arms the clocks and the app line
@@ -1869,7 +1940,16 @@ fn paint_one(state: &mut State, i: usize, drawn: Drawn, at: (i32, i32)) {
                     app: app.as_ref(),
                     picture: picture.as_ref(),
                 };
-                kept.draw(&theme, &state.text, lay, icons, None, pushed, b.hot, reply)
+                kept.draw(
+                    &theme,
+                    &state.text,
+                    lay,
+                    icons,
+                    b.tint.flatten(),
+                    pushed,
+                    b.hot,
+                    reply,
+                )
             });
             let look = theme.look.style().and_then(|st| st.notify);
             let pane = look
@@ -2235,6 +2315,7 @@ pub fn action_items(actions: &[(String, String)]) -> Vec<MenuItem> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use reprisekit::glass::notify::HALO_CORNER;
     use reprisekit::interface::Interface;
     use reprisekit::interfaces::theme_for;
 
@@ -2284,6 +2365,146 @@ mod tests {
             Rect::new(0, 0, 360, lay.footprint.height / 2)
         );
         assert_eq!(pane.shapes[0].corner.len(), 25);
+    }
+
+    fn halo_sheet_layout(scale: i32) -> (SheetLayout, NotifyLook) {
+        let t = theme_for(Interface::Glass).scaled(scale);
+        let item = Item::Note(note(1, "Mail"));
+        let Drawn::Sheet(lay) = lay_out(
+            &t,
+            &text(),
+            &item,
+            false,
+            Edge::Bottom,
+            SheetShape::Halo,
+            false,
+            "now",
+        ) else {
+            panic!()
+        };
+        (lay, t.look.style().unwrap().notify.unwrap())
+    }
+
+    #[test]
+    fn the_halo_pane_covers_the_breakout_without_overlap() {
+        let (lay, look) = halo_sheet_layout(1);
+        let pane = sheet_glass(&lay, &look, 1);
+        assert_eq!(pane.shapes.len(), 2);
+        assert_eq!(pane.shapes[0].rect, Rect::new(9, 0, 50, 25));
+        assert!(pane.shapes.iter().all(|s| s.rect.x >= 0 && s.rect.y >= 0));
+        assert!(!pane.shapes[0].rect.intersects(pane.shapes[1].rect));
+        assert_eq!(pane.shapes[1].rect.bottom(), lay.footprint.height);
+    }
+
+    #[test]
+    fn the_halo_pane_is_the_well_top_and_the_sheet_in_logical_px() {
+        let (lay, look) = halo_sheet_layout(2);
+        let pane = sheet_glass(&lay, &look, 2);
+        let [well, sheet] = &pane.shapes[..] else {
+            panic!("{pane:?}")
+        };
+        assert_eq!(
+            (well.rect, well.corner.len(), well.square_bottom),
+            (Rect::new(9, 0, 50, 25), WELL_CORNER.len(), true)
+        );
+        assert_eq!(
+            (sheet.rect, sheet.corner.len(), sheet.square_bottom),
+            (
+                Rect::new(0, 25, 360, lay.sheet.height / 2),
+                HALO_CORNER.len(),
+                false
+            )
+        );
+    }
+
+    #[test]
+    fn a_coloured_app_icon_tints_its_sheet_and_a_grey_one_does_not() {
+        let icon = |px: u32| {
+            [IconSource {
+                width: 48,
+                height: 48,
+                pixels: vec![px; 48 * 48],
+            }]
+        };
+        let glass = theme_for(Interface::Glass);
+        assert_eq!(
+            sheet_tint(&glass, &icon(0xFFD0_3030), 2),
+            Some(Some(Color::rgb(0xD0, 0x30, 0x30)))
+        );
+        assert_eq!(sheet_tint(&glass, &icon(0xFF80_8080), 1), Some(None));
+        assert_eq!(sheet_tint(&glass, &[], 1), Some(None));
+        assert_eq!(sheet_tint(&Theme::default(), &icon(0xFFD0_3030), 1), None);
+    }
+
+    fn red_icon() -> Vec<IconSource> {
+        vec![IconSource {
+            width: 48,
+            height: 48,
+            pixels: vec![0xFFD0_3030; 48 * 48],
+        }]
+    }
+
+    #[test]
+    fn a_burst_takes_its_tint_from_its_first_app_icon() {
+        let glass = theme_for(Interface::Glass);
+        let mut scene = crate::compositor::DeskScene::new();
+        let mut b = balloon(&mut scene, 1);
+        b.item = Item::Burst(Burst::new("Mail"));
+        join_burst(&mut b, &note(2, "Mail"), &glass);
+        assert_eq!(b.tint, Some(None));
+        let mut red = note(3, "Mail");
+        red.app_icon = red_icon();
+        join_burst(&mut b, &red, &glass);
+        assert_eq!(b.tint, Some(Some(Color::rgb(0xD0, 0x30, 0x30))));
+        let mut blue = note(4, "Mail");
+        blue.app_icon = vec![IconSource {
+            width: 48,
+            height: 48,
+            pixels: vec![0xFF30_60D0; 48 * 48],
+        }];
+        join_burst(&mut b, &blue, &glass);
+        assert_eq!(
+            b.tint,
+            Some(Some(Color::rgb(0xD0, 0x30, 0x30))),
+            "the first icon's"
+        );
+    }
+
+    #[test]
+    fn a_balloon_shown_before_a_switch_to_glass_takes_its_tint() {
+        let mut scene = crate::compositor::DeskScene::new();
+        let mut b = balloon(&mut scene, 1);
+        let mut n = note(1, "Mail");
+        n.app_icon = red_icon();
+        b.item = Item::Note(n);
+        let mut stack = [b];
+        retint(&mut stack, &Theme::default());
+        assert_eq!(stack[0].tint, None);
+        retint(&mut stack, &theme_for(Interface::Glass));
+        assert_eq!(stack[0].tint, Some(Some(Color::rgb(0xD0, 0x30, 0x30))));
+        retint(&mut stack, &Theme::default());
+        assert_eq!(stack[0].tint, None, "back to Classic");
+    }
+
+    #[test]
+    fn a_tinted_balloon_keeps_its_tint_through_a_reposition_under_glass() {
+        let glass = theme_for(Interface::Glass);
+        let mut scene = crate::compositor::DeskScene::new();
+        let mut b = balloon(&mut scene, 1);
+        let mut n = note(1, "Mail");
+        n.app_icon = red_icon();
+        b.item = Item::Note(n);
+        b.tint = Some(Some(Color::rgb(0x30, 0x60, 0xD0)));
+        let mut stack = [b];
+        retint(&mut stack, &glass);
+        assert_eq!(
+            stack[0].tint,
+            Some(Some(Color::rgb(0x30, 0x60, 0xD0))),
+            "the icon is not read again"
+        );
+        stack[0].tint = Some(None);
+        retint(&mut stack, &glass);
+        assert_eq!(stack[0].tint, Some(None), "a grey icon is not read again");
     }
 
     #[test]
@@ -2527,6 +2748,7 @@ mod tests {
             reply: None,
             pointer_in: false,
             serial: u64::from(id),
+            tint: None,
             glass: SheetGlass::default(),
             painted: None,
         }
@@ -2598,6 +2820,25 @@ mod tests {
             hovered(&v),
             "held while the older sheet slides under the pointer"
         );
+    }
+
+    #[test]
+    fn a_halo_breakout_holds_the_stack_and_the_corner_beside_it_does_not() {
+        let mut scene = crate::compositor::DeskScene::new();
+        let mut b = balloon(&mut scene, 1);
+        b.at = (100, 600);
+        b.drawn = Some(Drawn::Sheet(halo_sheet_layout(1).0));
+        let mut v = NotifyView {
+            stack: vec![b],
+            ..NotifyView::default()
+        };
+        let now = Instant::now();
+        let (well, beside) = ((130.0, 610.0), (400.0, 610.0));
+        point_at(&mut v, well.0, well.1, true, now);
+        assert!(hovered(&v), "the well above the sheet is the sheet");
+        assert!(!hold_at(&mut v, well.0, well.1, now));
+        assert!(hold_at(&mut v, beside.0, beside.1, now));
+        assert!(!hovered(&v), "the bare corner right of the well lets go");
     }
 
     #[test]
@@ -2710,7 +2951,7 @@ mod tests {
         let trees: Vec<TreeId> = stack.iter().map(|b| b.tree).collect();
         let mut n = note(2, "Mail");
         n.summary = "edited".into();
-        renew(&mut stack[1], n, 9);
+        renew(&mut stack[1], n, 9, None);
         let ids: Vec<u32> = stack
             .iter()
             .filter_map(|b| b.item.note())
