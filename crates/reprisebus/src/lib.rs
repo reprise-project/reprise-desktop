@@ -19,7 +19,8 @@
 //! prompt was dismissed. [`launcher`] shows a program's progress on its
 //! task button. [`journal`] starts the logger with journal priorities.
 //! The last six share a program's one blocking session bus connection
-//! ([`session`]).
+//! ([`session`]), as does [`units`], which lists the programs the systemd user
+//! manager starts with the session.
 
 pub mod a11y;
 pub mod appearance;
@@ -32,6 +33,7 @@ pub mod notify;
 pub mod permissions;
 pub mod polkit;
 pub mod tray;
+pub mod units;
 
 use futures_util::future::ready;
 use futures_util::stream::{BoxStream, SelectAll, StreamExt};

@@ -107,3 +107,7 @@ desktop you log into starts clean. Once the variables are published it starts
 wanted by or `PartOf` that target run with the session; Log Off and exit stop
 it. `loginctl lock-session` locks the screen.
 XDG autostart honours `OnlyShowIn`, `NotShowIn`, `Hidden` and `TryExec`.
+An entry marked `X-systemd-skip=true` or `X-GNOME-HiddenUnderSystemd=true`
+whose program a user unit of the session runs (one `reprise-session.target`
+pulls in, such as `spice-vdagent.service`) is left to that unit and not listed
+on the Startup page; with no such unit it starts like any other entry.

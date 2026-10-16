@@ -1,5 +1,6 @@
 //! Launch child processes with the compositor's display sockets exported.
 
+use reprisebus::units::SESSION_TARGET;
 use std::os::unix::process::CommandExt;
 use std::sync::Mutex;
 
@@ -261,10 +262,6 @@ fn export_argv(env: &SessionEnv) -> Vec<String> {
     argv.extend(env.pairs().into_iter().map(|(k, v)| format!("{k}={v}")));
     argv
 }
-
-/// Reprise's session target (data/systemd). It binds `graphical-session.target`, so units wanted
-/// by or part of that target run with the session.
-const SESSION_TARGET: &str = "reprise-session.target";
 
 /// The commands that open the session `env` describes, in order: publish the variables, stop the
 /// target a crashed session left active (its units hold the old display), start the target. A
