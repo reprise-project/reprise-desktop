@@ -462,6 +462,14 @@ mod tests {
             "Ember Restore 2 7ad256fffa037ca2",
             "Ember Close 1 0c605bac683b71ee",
             "Ember Close 2 abd1e7f3925dee0b",
+            "Cobalt Minimize 1 ae5cce909fb5c22c",
+            "Cobalt Minimize 2 72968f2d6e75e5aa",
+            "Cobalt Maximize 1 d3decb18a96dd51d",
+            "Cobalt Maximize 2 3d735a7d6babd956",
+            "Cobalt Restore 1 6f7372a1afffb543",
+            "Cobalt Restore 2 83f57c576cc6baa0",
+            "Cobalt Close 1 1c9d1d14df803e20",
+            "Cobalt Close 2 f447ae7482532b9c",
         ];
         assert_eq!(got, want, "pins:\n{}", got.join("\n"));
     }

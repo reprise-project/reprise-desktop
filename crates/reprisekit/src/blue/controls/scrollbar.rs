@@ -656,7 +656,7 @@ mod tests {
         }
     }
 
-    const PINS: [(Variant, i32, [u64; 10]); 14] = [
+    const PINS: [(Variant, i32, [u64; 10]); 16] = [
         (
             Variant::Blue,
             1,
@@ -879,6 +879,38 @@ mod tests {
                 0x18c7_aeab_9735_6a8d,
                 0xa57e_caa1_4ebe_afc1,
                 0x4012_632d_09aa_f701,
+            ],
+        ),
+        (
+            Variant::Cobalt,
+            1,
+            [
+                0x5fa1_0dca_4415_3d0c,
+                0xbf92_05a7_fba0_9a07,
+                0xc975_5671_ac85_f238,
+                0x3ee3_cf2c_f2db_71e0,
+                0x4fa3_f1b9_1fe3_0932,
+                0x6b61_2bbd_3224_ea76,
+                0xbc70_ce05_ee4b_0c62,
+                0xfb19_3ea2_afe0_34a1,
+                0xcc4d_994d_a1b6_d511,
+                0x5e76_0dd6_45de_1a44,
+            ],
+        ),
+        (
+            Variant::Cobalt,
+            2,
+            [
+                0x0085_150f_501b_3586,
+                0xc16c_6f8f_41cd_b32c,
+                0x4c5a_42db_0603_9966,
+                0xe98a_04d2_fc32_d9f4,
+                0x47db_b5ef_8412_044d,
+                0xfe87_6669_1e4c_0345,
+                0x9a91_c51a_4f71_53cb,
+                0x1431_8bb8_dbf4_fe0d,
+                0xb98f_b2ba_e2e4_4e91,
+                0x3585_3b6d_c4d0_159d,
             ],
         ),
     ];

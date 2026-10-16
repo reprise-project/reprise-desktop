@@ -418,6 +418,7 @@ mod tests {
             (Variant::Slate, Part::SpinUp, 1),
             (Variant::Sapphire, Part::SpinDown, 1),
             (Variant::Ember, Part::SpinDown, 1),
+            (Variant::Cobalt, Part::SpinDown, 1),
         ] {
             let (short, tall) = (draw(v, part, H), draw(v, part, H + 2));
             for x in 0..W {
@@ -571,6 +572,22 @@ mod tests {
             "Ember SpinDown Hot 2 bcc44137fc3f8aed",
             "Ember SpinDown Pressed 2 27c46b0544205bfd",
             "Ember SpinDown Disabled 2 213fd73dfaa280c8",
+            "Cobalt SpinUp Normal 1 f2eb90198b194ae6",
+            "Cobalt SpinUp Hot 1 61e0f078a005b0e7",
+            "Cobalt SpinUp Pressed 1 d8005c71b061239c",
+            "Cobalt SpinUp Disabled 1 7538ca7b3592986b",
+            "Cobalt SpinUp Normal 2 0d04a01046f5988a",
+            "Cobalt SpinUp Hot 2 5f5fa0cd5dd0ca30",
+            "Cobalt SpinUp Pressed 2 134b1ad09c0be932",
+            "Cobalt SpinUp Disabled 2 1d2b33e7f4141bde",
+            "Cobalt SpinDown Normal 1 dd2ddeb7b9e45198",
+            "Cobalt SpinDown Hot 1 80892ec66a1d2143",
+            "Cobalt SpinDown Pressed 1 e15db21b3d0d7b66",
+            "Cobalt SpinDown Disabled 1 7f3edc081a519fd5",
+            "Cobalt SpinDown Normal 2 05d84b0fc1cb6de6",
+            "Cobalt SpinDown Hot 2 e54e7e7f8db59a43",
+            "Cobalt SpinDown Pressed 2 3f9c90da12a4c9ba",
+            "Cobalt SpinDown Disabled 2 d4c8e1f9afdfc221",
         ];
         assert_eq!(got, want);
     }
