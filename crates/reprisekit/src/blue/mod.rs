@@ -5,6 +5,7 @@
 mod bar;
 mod capbutton;
 mod controls;
+mod copyflight;
 mod frame;
 pub mod overview;
 pub mod scheme;
@@ -150,6 +151,7 @@ fn build(v: Variant, scale: i32) -> Style {
         taskbar_shape(),
     )
     .with_controls(controls(v))
+    .with_copy_flight(copyflight::paint)
     .with_flat_menus()
     .with_track_marks(TrackMarks {
         ink: inks.track_tick,

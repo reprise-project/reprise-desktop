@@ -24,6 +24,7 @@ pub mod pictures;
 pub mod pipe;
 pub mod places;
 pub mod program;
+pub mod progress;
 pub mod props;
 pub mod quicklaunch;
 pub mod recent;

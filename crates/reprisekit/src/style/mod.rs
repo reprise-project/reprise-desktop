@@ -1028,6 +1028,9 @@ pub struct Style {
     pub(crate) tray_arrow: Option<Arc<trayarrow::TrayArrowArt>>,
     pub(crate) start_bloom: Option<Arc<startbloom::StartBloom>>,
     pub(crate) clock_face: Option<ClockPainter>,
+    pub(crate) copy_flight: Option<crate::copyart::FlightPainter>,
+    /// The copy dialog drawn as a page with a throughput graph instead of the flight.
+    pub copy_graph: Option<crate::copyart::GraphLook>,
     pub chrome_colors: Option<ColorScheme>,
     rescale: Option<Rescale>,
     rescaled: Rescaled,
@@ -1099,6 +1102,8 @@ impl Style {
             tray_arrow: None,
             start_bloom: None,
             clock_face: None,
+            copy_flight: None,
+            copy_graph: None,
             chrome_colors: None,
             balloon: None,
             flyout: None,
@@ -1245,6 +1250,16 @@ impl Style {
 
     pub(crate) fn with_clock_face(mut self, paint: ClockPainter) -> Style {
         self.clock_face = Some(paint);
+        self
+    }
+
+    pub(crate) fn with_copy_flight(mut self, paint: crate::copyart::FlightPainter) -> Style {
+        self.copy_flight = Some(paint);
+        self
+    }
+
+    pub(crate) fn with_copy_graph(mut self, look: crate::copyart::GraphLook) -> Style {
+        self.copy_graph = Some(look);
         self
     }
 

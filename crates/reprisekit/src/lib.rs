@@ -39,6 +39,7 @@ pub mod blue;
 pub mod classic;
 pub mod colorfilter;
 pub mod controls;
+pub mod copyart;
 pub mod cues;
 pub mod emoji;
 pub mod flip;

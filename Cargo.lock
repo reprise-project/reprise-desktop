@@ -2061,6 +2061,7 @@ dependencies = [
  "inotify",
  "log",
  "repriseapp",
+ "reprisebus",
  "repriseconf",
  "reprisefs",
  "reprisekit",

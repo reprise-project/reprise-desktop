@@ -5,6 +5,7 @@
 mod browse;
 mod chrome;
 mod commands;
+mod copydlg;
 mod dialogs;
 mod drag;
 mod fileops;
@@ -1129,7 +1130,8 @@ impl App for Lazy {
     fn children(&self) -> Vec<Child> {
         match &self.inner {
             Some(ex) if !ex.closing => ex.children(),
-            _ => Vec::new(),
+            Some(ex) => ex.copy_child().into_iter().collect(),
+            None => Vec::new(),
         }
     }
 
@@ -1179,6 +1181,9 @@ impl App for Lazy {
         }
         if win == PROPS {
             return ex.props_event(ev, ctx);
+        }
+        if win == copydlg::COPY {
+            return ex.copy_event(ev, ctx);
         }
         let reply = match ev {
             Event::Key(k) => ex.key(k, ctx),
@@ -1311,6 +1316,10 @@ impl App for Lazy {
             ex.draw_props(c, ctx);
             return;
         }
+        if win == copydlg::COPY {
+            ex.draw_copy(c);
+            return;
+        }
         ex.status.grip = !ctx.maximized;
         // A look that boxes its items greys the unfocused pane's selection; Classic keeps the highlight.
         let boxed = item::boxed(&ctx.theme.paint());
@@ -1326,6 +1335,7 @@ impl App for Lazy {
         ex.follow_forms(ctx);
         match win {
             DIALOG => ex.access_dialog(tree, ctx),
+            copydlg::COPY => ex.access_copy(tree),
             PROGRAM_BROWSE => ex.access_program_browse(tree),
             browse::ERROR => ex.access_browse_error(tree),
             PROPS => {

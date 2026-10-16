@@ -1,4 +1,5 @@
 pub mod assets;
+pub mod copyflight;
 pub mod frame;
 pub mod gtk3;
 pub mod indicator;

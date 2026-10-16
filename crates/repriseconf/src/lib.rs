@@ -79,6 +79,15 @@ fn recent_files_in(text: &str) -> bool {
         .unwrap_or(true)
 }
 
+/// `[glass] color` as written (a colour's name or "#RRGGBB"), read now; `None` when unset.
+pub fn glass_color() -> Option<String> {
+    let text = std::fs::read_to_string(config_path()).unwrap_or_default();
+    let doc = text.parse::<DocumentMut>().ok()?;
+    get(&doc, &key("glass", "color"))
+        .and_then(Item::as_str)
+        .map(String::from)
+}
+
 pub fn shell_dlg() -> Option<String> {
     let text = std::fs::read_to_string(config_path()).unwrap_or_default();
     shell_dlg_in(&text)
