@@ -1,7 +1,7 @@
 //! Programs' progress on their task buttons through `com.canonical.Unity.LauncherEntry`: a program
-//! sends `Update(app_uri, properties)` and its windows' buttons draw `progress` while
-//! `progress-visible` holds. `progress-paused` is Reprise's own key. A sender leaving the bus
-//! takes its entries with it.
+//! sends `Update(app_uri, properties)` and the buttons of the sender process's windows draw
+//! `progress` while `progress-visible` holds; a sender with no window of its own lights its app's
+//! buttons. `progress-paused` is Reprise's own key. A sender leaving the bus takes its entries.
 
 use std::collections::HashMap;
 use std::time::Duration;
@@ -22,6 +22,7 @@ const RETRY: Duration = Duration::from_secs(5);
 enum Msg {
     Update {
         sender: String,
+        pid: u32,
         app: String,
         props: Props,
     },
@@ -38,16 +39,20 @@ struct Props {
 
 #[derive(Clone, Debug, Default, PartialEq)]
 struct Entry {
-    sender: String,
+    pid: u32,
     progress: f64,
     visible: bool,
     paused: bool,
+    /// When `visible` last turned on, on the [`Entries`] clock.
+    since: u64,
 }
 
-/// The entries by app key: the desktop file's id without `.desktop`, lower case.
+/// The entries by sender and app key (the desktop file's id without `.desktop`, lower case), so
+/// two processes of one program keep their own.
 #[derive(Default)]
 pub struct Entries {
-    by_app: HashMap<String, Entry>,
+    by_sender: HashMap<(String, String), Entry>,
+    clock: u64,
 }
 
 /// The app key of `uri` (`application://<id>.desktop`).
@@ -81,46 +86,78 @@ impl Entries {
         Entries::default()
     }
 
-    /// Take `msg` in; true when a button's progress changed.
+    /// Take `msg` in; true when a button's progress may have changed.
     fn apply(&mut self, msg: Msg) -> bool {
         match msg {
-            Msg::Update { sender, app, props } => {
-                let e = self.by_app.entry(app).or_default();
+            Msg::Update {
+                sender,
+                pid,
+                app,
+                props,
+            } => {
+                self.clock += 1;
+                let e = self.by_sender.entry((sender, app)).or_default();
                 let before = e.clone();
-                e.sender = sender;
+                e.pid = pid;
                 e.progress = props.progress.unwrap_or(e.progress).clamp(0.0, 1.0);
                 e.visible = props.visible.unwrap_or(e.visible);
                 e.paused = props.paused.unwrap_or(e.paused);
+                if e.visible && !before.visible {
+                    e.since = self.clock;
+                }
                 let shown = |e: &Entry| e.visible.then_some((e.progress, e.paused));
                 shown(&before) != shown(e)
             }
             Msg::Gone(sender) => {
-                let before = self.by_app.len();
-                self.by_app.retain(|_, e| e.sender != sender);
-                self.by_app.len() != before
+                let before = self.by_sender.len();
+                self.by_sender.retain(|(s, _), _| *s != sender);
+                self.by_sender.len() != before
             }
         }
     }
 
-    /// The progress of the program behind a window of `app_id`: its entry under the app id itself,
-    /// else under the desktop file `index` finds for it.
-    pub fn progress(&self, app_id: &str, index: &[AppEntry]) -> Option<TaskProgress> {
-        if self.by_app.is_empty() || app_id.is_empty() {
-            return None;
-        }
-        let e = self.by_app.get(&app_id.to_ascii_lowercase()).or_else(|| {
-            let entry = reprisefs::apps::entry_for_app_id(index, app_id, |_| true)?;
-            self.by_app
-                .get(&app_key(&format!("application://{}", entry.id))?)
+    /// True when some entry shows progress.
+    pub fn any_shown(&self) -> bool {
+        self.by_sender.values().any(|e| e.visible)
+    }
+
+    /// The progress for a window of `app_id` whose client is process `pid`: what that process
+    /// sent, else what a process owning no window (`owns_window` false) sent for the app id itself
+    /// or the desktop file `index` finds for it. Of several, the one shown last wins.
+    pub fn progress(
+        &self,
+        pid: Option<u32>,
+        app_id: &str,
+        index: &[AppEntry],
+        owns_window: impl Fn(u32) -> bool,
+    ) -> Option<TaskProgress> {
+        let shown = || self.by_sender.iter().filter(|(_, e)| e.visible);
+        let own = pid.and_then(|p| latest(shown().filter(|(_, e)| e.pid == p)));
+        let e = own.or_else(|| {
+            if app_id.is_empty() {
+                return None;
+            }
+            let mut apps = vec![app_id.to_ascii_lowercase()];
+            let mut windowless = shown().filter(|(_, e)| !owns_window(e.pid)).peekable();
+            windowless.peek()?;
+            if let Some(entry) = reprisefs::apps::entry_for_app_id(index, app_id, |_| true) {
+                apps.extend(app_key(&format!("application://{}", entry.id)));
+            }
+            latest(windowless.filter(|((_, app), _)| apps.contains(app)))
         })?;
-        e.visible.then_some(TaskProgress {
+        Some(TaskProgress {
             fraction: e.progress,
             paused: e.paused,
         })
     }
 }
 
-fn update_of(msg: &zbus::Message) -> Option<Msg> {
+fn latest<'a, K>(entries: impl Iterator<Item = (K, &'a Entry)>) -> Option<&'a Entry> {
+    entries.map(|(_, e)| e).max_by_key(|e| e.since)
+}
+
+/// The sender, app key and keys of an `Update`.
+fn update_of(msg: &zbus::Message) -> Option<(String, String, Props)> {
     let sender = msg.header().sender()?.to_string();
     let (uri, props) = msg
         .body()
@@ -135,11 +172,12 @@ fn update_of(msg: &zbus::Message) -> Option<Msg> {
             _ => {}
         }
     }
-    Some(Msg::Update {
-        sender,
-        app: app_key(&uri)?,
-        props: p,
-    })
+    Some((sender, app_key(&uri)?, p))
+}
+
+enum Seen {
+    Update(zbus::Message),
+    Gone(String),
 }
 
 /// The thread: follow every `Update` on the session bus, and every unique name leaving it. A bus
@@ -162,16 +200,51 @@ async fn follow(tx: &Sender<Msg>) -> zbus::Result<()> {
         .build();
     let updates = zbus::MessageStream::for_match_rule(rule, &conn, None)
         .await?
-        .filter_map(|m| std::future::ready(m.ok().as_ref().and_then(update_of)));
+        .filter_map(|m| std::future::ready(m.ok().map(Seen::Update)));
     let dbus = zbus::fdo::DBusProxy::new(&conn).await?;
     let gone = dbus.receive_name_owner_changed().await?.filter_map(|s| {
         std::future::ready(s.args().ok().and_then(|a| {
             let name = a.name().to_string();
-            (name.starts_with(':') && a.new_owner().is_none()).then_some(Msg::Gone(name))
+            (name.starts_with(':') && a.new_owner().is_none()).then_some(Seen::Gone(name))
         }))
     });
     let mut all = stream::select(updates.boxed(), gone.boxed());
-    while let Some(msg) = all.next().await {
+    // Each sender's pid, asked once. A sender whose pid cannot be had has left the bus, so its
+    // updates are dropped rather than kept with no Gone to come.
+    let mut pids: HashMap<String, u32> = HashMap::new();
+    while let Some(seen) = all.next().await {
+        let msg = match seen {
+            Seen::Gone(name) => match pids.remove(&name) {
+                Some(_) => Msg::Gone(name),
+                None => continue,
+            },
+            Seen::Update(m) => {
+                let Some((sender, app, props)) = update_of(&m) else {
+                    continue;
+                };
+                let pid = match pids.get(&sender) {
+                    Some(&pid) => pid,
+                    None => {
+                        let Ok(name) = zbus::names::BusName::try_from(sender.as_str()) else {
+                            continue;
+                        };
+                        match dbus.get_connection_unix_process_id(name).await {
+                            Ok(pid) => *pids.entry(sender.clone()).or_insert(pid),
+                            Err(e) => {
+                                log::debug!("launcher entries: no pid for {sender}: {e}");
+                                continue;
+                            }
+                        }
+                    }
+                };
+                Msg::Update {
+                    sender,
+                    pid,
+                    app,
+                    props,
+                }
+            }
+        };
         if tx.send(msg).is_err() {
             return Ok(());
         }
@@ -183,9 +256,16 @@ async fn follow(tx: &Sender<Msg>) -> zbus::Result<()> {
 mod tests {
     use super::*;
 
-    fn update(sender: &str, app: &str, progress: Option<f64>, visible: Option<bool>) -> Msg {
+    fn update(
+        sender: &str,
+        pid: u32,
+        app: &str,
+        progress: Option<f64>,
+        visible: Option<bool>,
+    ) -> Msg {
         Msg::Update {
             sender: sender.into(),
+            pid,
             app: app.into(),
             props: Props {
                 progress,
@@ -193,6 +273,17 @@ mod tests {
                 paused: None,
             },
         }
+    }
+
+    fn shown(fraction: f64) -> Option<TaskProgress> {
+        Some(TaskProgress {
+            fraction,
+            paused: false,
+        })
+    }
+
+    fn no_windows(_: u32) -> bool {
+        false
     }
 
     #[test]
@@ -209,19 +300,61 @@ mod tests {
     fn progress_shows_while_visible_keeps_left_out_keys_and_leaves_with_its_sender() {
         let mut e = Entries::default();
         assert!(
-            !e.apply(update(":1.5", "app", Some(0.3), None)),
+            !e.apply(update(":1.5", 50, "app", Some(0.3), None)),
             "not visible yet"
         );
-        assert!(e.apply(update(":1.5", "app", None, Some(true))));
-        assert_eq!(
-            e.progress("App", &[]),
-            Some(TaskProgress {
-                fraction: 0.3,
-                paused: false
-            })
-        );
+        assert!(e.apply(update(":1.5", 50, "app", None, Some(true))));
+        assert_eq!(e.progress(None, "App", &[], no_windows), shown(0.3));
         assert!(!e.apply(Msg::Gone(":1.9".into())), "another sender left");
         assert!(e.apply(Msg::Gone(":1.5".into())));
-        assert_eq!(e.progress("app", &[]), None);
+        assert_eq!(e.progress(None, "app", &[], no_windows), None);
+    }
+
+    #[test]
+    fn two_processes_of_one_app_each_light_their_own_window() {
+        let mut e = Entries::default();
+        e.apply(update(":1.5", 50, "app", Some(0.2), Some(true)));
+        e.apply(update(":1.6", 60, "app", Some(0.7), Some(true)));
+        e.apply(update(":1.5", 50, "app", Some(0.3), None));
+        let owns = |p: u32| p == 50 || p == 60;
+        assert_eq!(e.progress(Some(50), "app", &[], owns), shown(0.3));
+        assert_eq!(e.progress(Some(60), "app", &[], owns), shown(0.7));
+        assert_eq!(
+            e.progress(Some(70), "app", &[], owns),
+            None,
+            "a third window of the app shows neither process's job"
+        );
+
+        e.apply(update(":1.6", 60, "app", None, Some(false)));
+        assert_eq!(e.progress(Some(60), "app", &[], owns), None);
+        assert_eq!(
+            e.progress(Some(50), "app", &[], owns),
+            shown(0.3),
+            "one clearing leaves the other's bar"
+        );
+        e.apply(Msg::Gone(":1.5".into()));
+        assert_eq!(e.progress(Some(50), "app", &[], owns), None);
+    }
+
+    #[test]
+    fn a_sender_with_no_window_lights_its_apps_windows_and_the_last_shown_wins() {
+        let mut e = Entries::default();
+        e.apply(update(":1.7", 70, "app", Some(0.2), Some(true)));
+        e.apply(update(":1.8", 80, "app", Some(0.6), Some(true)));
+        e.apply(update(":1.7", 70, "app", Some(0.25), None));
+        e.apply(update(":1.9", 90, "other", Some(0.9), Some(true)));
+        let owns = |p: u32| p == 50;
+        assert_eq!(
+            e.progress(Some(50), "app", &[], owns),
+            shown(0.6),
+            "the job shown last, however often the other sends"
+        );
+        e.apply(update(":1.8", 80, "app", None, Some(false)));
+        assert_eq!(e.progress(Some(50), "app", &[], owns), shown(0.25));
+        assert_eq!(
+            e.progress(Some(50), "app", &[], |p| p == 50 || p == 70),
+            None,
+            "a sender that owns a window lights only its own"
+        );
     }
 }
