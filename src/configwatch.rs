@@ -407,7 +407,7 @@ pub fn retheme(state: &mut State) {
         c.theme.colors.to_env(),
         c.interface,
         c.blue_variant,
-        c.glass.mode,
+        (c.glass.mode, c.glass.material),
         &c.icons.theme,
         c.cursor.effective(),
     ) {

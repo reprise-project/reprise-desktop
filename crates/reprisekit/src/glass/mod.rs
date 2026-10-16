@@ -131,6 +131,9 @@ impl Frame {
 /// The environment variable a compositor hands its clients `[glass] mode` in.
 pub const MODE_ENV: &str = "REPRISE_GLASS_MODE";
 
+/// The environment variable a compositor hands its clients `[glass] material` in.
+pub const MATERIAL_ENV: &str = "REPRISE_GLASS_MATERIAL";
+
 /// `[glass]`: the colour, its intensity (0..100), translucency, `blur`, the
 /// reflection streaks, `fast_drag`, `blur_frames`, `blur_rate`, `orb_glow`,
 /// `mode`, `material` and `frame`. Opaque glass needs no backdrop. Defaults: Sky

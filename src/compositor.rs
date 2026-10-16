@@ -415,7 +415,7 @@ impl State {
                 &config.theme.colors,
                 config.interface,
                 config.blue_variant,
-                config.glass.mode,
+                (config.glass.mode, config.glass.material),
                 &config.icons.theme,
                 config.cursor.effective(),
             )

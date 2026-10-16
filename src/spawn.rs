@@ -109,6 +109,7 @@ pub struct SessionEnv {
     pub interface: reprisekit::interface::Interface,
     pub blue_variant: reprisekit::blue::Variant,
     pub glass_mode: reprisekit::glass::Mode,
+    pub glass_material: reprisekit::glass::Material,
     pub icons: String,
     /// `XCURSOR_THEME` and `XCURSOR_SIZE`: the `[cursor]` theme and size, so clients draw the
     /// same pointer.
@@ -140,7 +141,7 @@ impl SessionEnv {
         colors: &reprisekit::theme::ColorScheme,
         interface: reprisekit::interface::Interface,
         blue_variant: reprisekit::blue::Variant,
-        glass_mode: reprisekit::glass::Mode,
+        (glass_mode, glass_material): (reprisekit::glass::Mode, reprisekit::glass::Material),
         icons: &str,
         cursor: (String, u32),
     ) -> SessionEnv {
@@ -155,6 +156,7 @@ impl SessionEnv {
             interface,
             blue_variant,
             glass_mode,
+            glass_material,
             icons: icons.into(),
             cursor,
             qt_platform_theme: crate::config::TOOLKIT_AUTO.into(),
@@ -176,7 +178,7 @@ impl SessionEnv {
         colors: String,
         interface: reprisekit::interface::Interface,
         blue_variant: reprisekit::blue::Variant,
-        glass_mode: reprisekit::glass::Mode,
+        (glass_mode, glass_material): (reprisekit::glass::Mode, reprisekit::glass::Material),
         icons: &str,
         cursor: (String, u32),
     ) -> bool {
@@ -184,6 +186,7 @@ impl SessionEnv {
             && interface == self.interface
             && blue_variant == self.blue_variant
             && glass_mode == self.glass_mode
+            && glass_material == self.glass_material
             && icons == self.icons
             && cursor == self.cursor
         {
@@ -193,6 +196,7 @@ impl SessionEnv {
         self.interface = interface;
         self.blue_variant = blue_variant;
         self.glass_mode = glass_mode;
+        self.glass_material = glass_material;
         self.icons = icons.into();
         self.cursor = cursor;
         true
@@ -208,6 +212,10 @@ impl SessionEnv {
             (reprisekit::interface::ENV, self.interface.as_str().into()),
             (reprisekit::blue::ENV, self.blue_variant.as_str().into()),
             (reprisekit::glass::MODE_ENV, self.glass_mode.as_str().into()),
+            (
+                reprisekit::glass::MATERIAL_ENV,
+                self.glass_material.as_str().into(),
+            ),
             (reprisekit::icontheme::ENV, self.icons.clone()),
             ("XCURSOR_THEME", self.cursor.0.clone()),
             ("XCURSOR_SIZE", self.cursor.1.to_string()),
@@ -738,6 +746,7 @@ mod tests {
             interface: reprisekit::interface::Interface::Classic,
             blue_variant: reprisekit::blue::Variant::Blue,
             glass_mode: Default::default(),
+            glass_material: Default::default(),
             icons: "retro-icons".into(),
             cursor: ("default".into(), 24),
             qt_platform_theme: "auto".into(),
@@ -841,6 +850,7 @@ mod tests {
             reprisekit::interface::ENV,
             reprisekit::blue::ENV,
             reprisekit::glass::MODE_ENV,
+            reprisekit::glass::MATERIAL_ENV,
             reprisekit::icontheme::ENV,
             "XCURSOR_THEME",
             "XCURSOR_SIZE",
@@ -1020,7 +1030,7 @@ mod tests {
         let mut e = env(None);
         let classic = reprisekit::interface::Interface::Classic;
         let navy = reprisekit::blue::Variant::Blue;
-        let light = reprisekit::glass::Mode::Light;
+        let light = (reprisekit::glass::Mode::Light, Default::default());
         let arrow = || ("default".to_string(), 24);
         assert!(
             !e.set_look("k=v".into(), classic, navy, light, "retro-icons", arrow()),
@@ -1084,26 +1094,31 @@ mod tests {
     }
 
     #[test]
-    fn the_glass_mode_is_exported_and_a_change_republishes() {
+    fn the_glass_mode_and_material_are_exported_and_a_change_republishes() {
+        use reprisekit::glass::{MATERIAL_ENV, MODE_ENV, Material, Mode};
         let mut e = env(None);
-        assert!(
-            e.pairs()
-                .contains(&(reprisekit::glass::MODE_ENV, "light".into()))
-        );
+        assert!(e.pairs().contains(&(MODE_ENV, "light".into())));
+        assert!(e.pairs().contains(&(MATERIAL_ENV, "frosted".into())));
         let (colors, cursor) = (e.colors.clone(), e.cursor.clone());
         let icons = e.icons.clone();
-        assert!(e.set_look(
-            colors,
-            e.interface,
-            e.blue_variant,
-            reprisekit::glass::Mode::Dark,
-            &icons,
-            cursor
-        ));
-        assert!(
-            e.pairs()
-                .contains(&(reprisekit::glass::MODE_ENV, "dark".into()))
-        );
+        for glass in [
+            (Mode::Dark, Material::Frosted),
+            (Mode::Dark, Material::Smoked),
+        ] {
+            assert!(
+                e.set_look(
+                    colors.clone(),
+                    e.interface,
+                    e.blue_variant,
+                    glass,
+                    &icons,
+                    cursor.clone()
+                ),
+                "{glass:?} republishes"
+            );
+        }
+        assert!(e.pairs().contains(&(MODE_ENV, "dark".into())));
+        assert!(e.pairs().contains(&(MATERIAL_ENV, "smoked".into())));
     }
 
     #[test]
