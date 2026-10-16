@@ -4,7 +4,7 @@
 use crate::access::{self, ROOT, Tree, accesskit::Role};
 use crate::classic::widgets::{BUTTON_GAP, BUTTON_H, BUTTON_W, LINE_H};
 use crate::controls::form::{self, Form, Item};
-use crate::copyart::{Flight, Graph, GraphLook, STRIP_H, Stage};
+use crate::copyart::{End, Flight, Graph, GraphLook, STRIP_H, Stage};
 use crate::look::Paint;
 use crate::look::widgets::{draw_copy_flight, draw_copy_graph, draw_progress};
 use crate::raster::{Canvas, Rect};
@@ -20,6 +20,21 @@ pub enum Kind {
     #[default]
     Copy,
     Move,
+    /// To the Recycle Bin.
+    Delete,
+    /// For good, past the Recycle Bin.
+    Erase,
+    /// Emptying the Recycle Bin.
+    Empty,
+    /// Out of the Recycle Bin back where it came from.
+    Restore,
+}
+
+impl Kind {
+    /// Whether the job is measured in items rather than bytes: a delete, Empty or Restore.
+    pub fn by_items(self) -> bool {
+        !matches!(self, Kind::Copy | Kind::Move)
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -113,6 +128,9 @@ impl CopyProgress {
         match self.kind {
             Kind::Copy => "Copying...",
             Kind::Move => "Moving...",
+            Kind::Delete | Kind::Erase => "Deleting...",
+            Kind::Empty => "Emptying the Recycle Bin...",
+            Kind::Restore => "Restoring...",
         }
     }
 
@@ -121,7 +139,7 @@ impl CopyProgress {
         if s.phase == Phase::Finishing {
             return 1.0;
         }
-        if s.total_bytes > 0 {
+        if s.total_bytes > 0 && !self.kind.by_items() {
             s.bytes as f64 / s.total_bytes as f64
         } else if s.total_items > 0 {
             s.items as f64 / s.total_items as f64
@@ -131,7 +149,17 @@ impl CopyProgress {
         .clamp(0.0, 1.0)
     }
 
-    /// Bytes a second, once the copy has run long enough to tell.
+    /// What the bar measures done and in all: items for a [`Kind::by_items`] job, else bytes.
+    fn measure(&self, s: &Status) -> (u64, u64) {
+        if self.kind.by_items() {
+            (s.items, s.total_items)
+        } else {
+            (s.bytes, s.total_bytes)
+        }
+    }
+
+    /// Bytes (items for a [`Kind::by_items`] job) a second, once the job has run long enough to
+    /// tell.
     pub fn rate(&self) -> Option<f64> {
         let settled = matches!((self.copying_since, self.clock), (Some(t), Some(now)) if now >= t + SETTLE_MS);
         (self.rate > 0.0 && settled).then_some(self.rate)
@@ -150,18 +178,19 @@ impl CopyProgress {
         }
         self.clock = Some(now_ms);
         if running {
+            let done = self.measure(&status).0;
             match self.last {
                 Some((t, b)) if now_ms >= t + RATE_MS => {
-                    let inst = status.bytes.saturating_sub(b) as f64 * 1000.0 / (now_ms - t) as f64;
+                    let inst = done.saturating_sub(b) as f64 * 1000.0 / (now_ms - t) as f64;
                     self.rate = if self.rate == 0.0 {
                         inst
                     } else {
                         0.8 * self.rate + 0.2 * inst
                     };
-                    self.last = Some((now_ms, status.bytes));
+                    self.last = Some((now_ms, done));
                 }
                 Some(_) => {}
-                None => self.last = Some((now_ms, status.bytes)),
+                None => self.last = Some((now_ms, done)),
             }
         } else {
             self.last = None;
@@ -210,8 +239,9 @@ impl CopyProgress {
             Phase::Copying if s.paused => return "Paused".into(),
             Phase::Copying => {}
         }
+        let (done, all) = self.measure(s);
         match self.rate() {
-            Some(r) => remaining_text(s.total_bytes.saturating_sub(s.bytes) as f64 / r),
+            Some(r) => remaining_text(all.saturating_sub(done) as f64 / r),
             None => "Calculating...".into(),
         }
     }
@@ -226,6 +256,9 @@ impl CopyProgress {
         match self.kind {
             Kind::Copy => "Copying",
             Kind::Move => "Moving",
+            Kind::Delete | Kind::Erase => "Deleting",
+            Kind::Empty => "Emptying",
+            Kind::Restore => "Restoring",
         }
     }
 
@@ -239,11 +272,20 @@ impl CopyProgress {
         Flight {
             ms: self.anim_ms,
             fraction: self.fraction(),
-            moving: self.kind == Kind::Move,
+            moving: self.kind != Kind::Copy,
             stage: match self.status.phase {
                 Phase::Preparing => Stage::Preparing,
                 Phase::Copying => Stage::Flying,
                 Phase::Finishing => Stage::Finishing,
+            },
+            from: match self.kind {
+                Kind::Empty | Kind::Restore => End::Bin,
+                _ => End::Folder,
+            },
+            to: match self.kind {
+                Kind::Copy | Kind::Move | Kind::Restore => End::Folder,
+                Kind::Delete => End::Bin,
+                Kind::Erase | Kind::Empty => End::Gone,
             },
         }
     }
@@ -356,16 +398,24 @@ impl CopyProgress {
         self.on_toggle(x, y, u).then(|| self.toggle_details())
     }
 
-    /// The balloon's summary and body for a put that landed `landed` items.
+    /// The balloon's summary and body for a job that dealt with `landed` items.
     pub fn ended_note(&self, landed: usize) -> (String, String) {
-        let verb = match self.kind {
-            Kind::Copy => "Copied",
-            Kind::Move => "Moved",
-        };
         let noun = if landed == 1 { "item" } else { "items" };
+        let (verb, place) = match self.kind {
+            Kind::Copy => ("Copied", format!("to {}", self.to)),
+            Kind::Move => ("Moved", format!("to {}", self.to)),
+            Kind::Delete | Kind::Erase => ("Deleted", format!("from {}", self.from)),
+            Kind::Restore => ("Restored", format!("from {}", self.from)),
+            Kind::Empty => {
+                return (
+                    "Emptied the Recycle Bin".into(),
+                    format!("Deleted {landed} {noun}"),
+                );
+            }
+        };
         (
             format!("{verb} {landed} {noun}"),
-            format!("{verb} {landed} {noun} to {}", self.to),
+            format!("{verb} {landed} {noun} {place}"),
         )
     }
 
@@ -387,6 +437,8 @@ impl CopyProgress {
         let name = match (self.status.phase, self.kind) {
             (Phase::Preparing, Kind::Copy) => "Preparing to copy...".to_string(),
             (Phase::Preparing, Kind::Move) => "Preparing to move...".to_string(),
+            (Phase::Preparing, Kind::Restore) => "Preparing to restore...".to_string(),
+            (Phase::Preparing, _) => "Preparing to delete...".to_string(),
             _ => self.status.current.clone(),
         };
         let ink = cs.button_text;
@@ -401,7 +453,11 @@ impl CopyProgress {
             px,
         );
         let r = line(FROM_Y);
-        let from_to = format!("From '{}' to '{}'", self.from, self.to);
+        let from_to = if self.kind.by_items() {
+            format!("From '{}'", self.from)
+        } else {
+            format!("From '{}' to '{}'", self.from, self.to)
+        };
         text.draw(
             c,
             r,
@@ -482,7 +538,14 @@ impl CopyProgress {
             };
             draw_copy_graph(c, p, g, &graph);
             if let Some(r) = self.rate() {
-                let label = format!("Speed: {}/s", bytes_text(r as u64));
+                let label = if self.kind.by_items() {
+                    {
+                        let n = r.round() as u64;
+                        format!("Speed: {n} {}/s", if n == 1 { "item" } else { "items" })
+                    }
+                } else {
+                    format!("Speed: {}/s", bytes_text(r as u64))
+                };
                 let lw = text.measure(&label, false, px) + 6;
                 let lh = u.len(LINE_H + 2);
                 let ry = g.y + graph.rule_y(g.height).round() as i32;
@@ -543,6 +606,9 @@ impl CopyProgress {
     fn items_left(&self) -> String {
         let s = &self.status;
         let n = s.total_items.saturating_sub(s.items);
+        if self.kind.by_items() {
+            return n.to_string();
+        }
         format!(
             "{n} ({})",
             bytes_text(s.total_bytes.saturating_sub(s.bytes))
@@ -552,6 +618,7 @@ impl CopyProgress {
     /// "Copying 12 items (1.2 GB) from Downloads to KINGSTON", the folders in the link ink.
     fn draw_header(&self, c: &mut Canvas, text: &TextRenderer, p: &Paint, r: Rect, px: u32) {
         let lead = match self.status.phase {
+            _ if self.kind.by_items() => format!("{} {} from ", self.verb(), self.items_text()),
             Phase::Preparing => format!("{} {} from ", self.verb(), self.items_text()),
             _ => format!(
                 "{} {} ({}) from ",
@@ -560,11 +627,19 @@ impl CopyProgress {
                 bytes_text(self.status.total_bytes)
             ),
         };
-        let to = " to ";
+        let to = if self.kind.by_items() { "" } else { " to " };
         let fixed = text.measure(&lead, false, px) + text.measure(to, false, px);
-        let each = ((r.width - fixed) / 2).max(0);
+        let each = if to.is_empty() {
+            (r.width - fixed).max(0)
+        } else {
+            ((r.width - fixed) / 2).max(0)
+        };
         let from = text.ellipsize(&self.from, each, false, px);
-        let dest = text.ellipsize(&self.to, each, false, px);
+        let dest = if to.is_empty() {
+            String::new()
+        } else {
+            text.ellipsize(&self.to, each, false, px).into_owned()
+        };
         let mut x = r.x;
         for (s, ink) in [
             (lead.as_str(), p.cs.window_text),
@@ -784,6 +859,40 @@ mod tests {
         }
     }
 
+    #[test]
+    fn a_delete_is_measured_in_items_and_named_by_its_kind() {
+        let mut cp = CopyProgress::new(Kind::Delete, "Downloads", "", SKY);
+        let at = |items| Status {
+            phase: Phase::Copying,
+            items,
+            total_items: 1000,
+            bytes: 900,
+            total_bytes: 1000,
+            ..Status::default()
+        };
+        cp.update(at(0), 0);
+        cp.update(at(100), 1000);
+        cp.update(at(200), 2000);
+        assert_eq!(cp.fraction(), 0.2, "items, not bytes");
+        assert_eq!(cp.remaining(), "About 10 seconds remaining");
+        assert_eq!(cp.title(), "Deleting...");
+        assert_eq!(
+            CopyProgress::new(Kind::Empty, "a", "", SKY).title(),
+            "Emptying the Recycle Bin..."
+        );
+        assert_eq!(
+            CopyProgress::new(Kind::Restore, "a", "", SKY).title(),
+            "Restoring..."
+        );
+        assert_eq!(
+            cp.ended_note(2),
+            (
+                "Deleted 2 items".to_string(),
+                "Deleted 2 items from Downloads".to_string()
+            )
+        );
+    }
+
     fn fnv(c: &Canvas) -> u64 {
         c.pixels.iter().fold(0xcbf2_9ce4_8422_2325, |h, &p| {
             (h ^ u64::from(p)).wrapping_mul(0x0100_0000_01b3)
@@ -911,10 +1020,18 @@ mod tests {
             ("copying", Stage::Flying, 0.4),
             ("finishing", Stage::Finishing, 1.0),
         ];
+        let ops = [
+            ("copy", false, End::Folder, End::Folder),
+            ("move", true, End::Folder, End::Folder),
+            ("delete", true, End::Folder, End::Bin),
+            ("erase", true, End::Folder, End::Gone),
+            ("empty", true, End::Bin, End::Gone),
+            ("restore", true, End::Bin, End::Folder),
+        ];
         let mut got = Vec::new();
         for (name, theme) in &themes {
             for (stage_name, stage, fraction) in stages {
-                for moving in [false, true] {
+                for (op, moving, from, to) in ops {
                     for s in [1, 2] {
                         let mut c = Canvas::with_scale(340, STRIP_H as u32, s);
                         let f = Flight {
@@ -922,9 +1039,10 @@ mod tests {
                             fraction,
                             moving,
                             stage,
+                            from,
+                            to,
                         };
                         draw_copy_flight(&mut c, &theme.paint(), Rect::new(0, 0, 340, STRIP_H), &f);
-                        let op = if moving { "move" } else { "copy" };
                         got.push((format!("{name} {stage_name} {op} @{s}"), fnv(&c)));
                     }
                 }

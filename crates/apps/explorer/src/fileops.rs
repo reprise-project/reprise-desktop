@@ -34,15 +34,21 @@ pub(crate) struct Put {
     batch: Vec<Undoable>,
     landed: Vec<PathBuf>,
     select_landed: bool,
-    pub(crate) started: std::time::Instant,
-    pub(crate) shown: Option<crate::copydlg::Shown>,
-    /// The percent and paused state last put on the task button.
-    pub(crate) published: Option<(u32, bool)>,
+    pub(crate) progress: crate::copydlg::Progress,
 }
 
 pub(crate) type JobDone = Box<dyn FnOnce(&mut Explorer, &mut Ctx) -> Reply + Send>;
 
 pub(crate) type ItemOp = (PathBuf, DropOp, String);
+
+/// Wake the window once a job just started may have run long enough to show its dialog.
+pub(crate) fn wake_to_show(ctx: &Ctx) {
+    let wake = ctx.wake.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(reprisekit::controls::copyprogress::SHOW_AFTER);
+        wake.wake();
+    });
+}
 
 pub struct PendingPut {
     pub(crate) items: Vec<PutItem>,
@@ -98,7 +104,7 @@ fn existing_names(dir: &Path) -> Vec<String> {
     }
 }
 
-fn file_label(path: &Path) -> String {
+pub(crate) fn file_label(path: &Path) -> String {
     path.file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_else(|| path.display().to_string())
@@ -108,42 +114,14 @@ fn file_label(path: &Path) -> String {
 /// failure. The loop pushes trashed items as one undo and drops undos for items the bin's cap
 /// erased.
 fn delete_planned(
-    bins: Option<&reprisefs::trash::Bins>,
+    bins: Option<reprisefs::trash::Bins>,
     plan: Vec<(PathBuf, reprisefs::bincap::Plan)>,
+    from: String,
 ) -> JobDone {
-    use reprisefs::bincap::Plan;
-    let mut batch = Vec::new();
-    let mut purged = Vec::new();
-    let mut failed = None;
-    for (path, plan) in &plan {
-        let done = match *plan {
-            Plan::Erase => reprisefs::ops::erase(path).map(|()| None),
-            Plan::Trash(known) => bins
-                .ok_or_else(|| std::io::Error::other("cannot find the Recycle Bin"))
-                .and_then(|b| b.trash_measured(path, known))
-                .map(|(t, gone)| {
-                    purged.extend(gone);
-                    Some(Undoable::Trash(t))
-                }),
-        };
-        match done {
-            Ok(Some(u)) => batch.push(u),
-            Ok(None) => {}
-            Err(e) => {
-                failed = Some(format!("Cannot delete {}: {e}", file_label(path)));
-                break;
-            }
-        }
-    }
     Box::new(move |ex: &mut Explorer, ctx: &mut Ctx| {
-        ex.undos.push_all(batch);
-        ex.undos.forget_gone(&purged);
-        ex.sync_undo();
-        let reply = ex.refresh(ctx);
-        match failed {
-            Some(text) => ex.message_box("Error Deleting File or Folder", text, ctx),
-            None => reply,
-        }
+        let p = crate::removing::PendingRemoval::delete(plan, bins, from);
+        ex.remove(p, ctx);
+        Reply::none()
     })
 }
 
@@ -324,13 +302,22 @@ impl Explorer {
     }
 
     fn start_put(&mut self, pending: PendingPut, ops: Vec<ItemOp>, ctx: &Ctx) {
+        use reprisekit::controls::copyprogress::Kind;
         let wake = ctx.wake.clone();
         let job = PutJob::start(pending.items, pending.dir.clone(), move || wake.wake());
-        let wake = ctx.wake.clone();
-        std::thread::spawn(move || {
-            std::thread::sleep(reprisekit::controls::copyprogress::SHOW_AFTER);
-            wake.wake();
-        });
+        wake_to_show(ctx);
+        let kind = if ops.iter().all(|(_, op, _)| *op == DropOp::Move) {
+            Kind::Move
+        } else {
+            Kind::Copy
+        };
+        let from = ops
+            .first()
+            .and_then(|(src, _, _)| src.parent())
+            .map(|p| Place::from_path(p).title())
+            .unwrap_or_default();
+        let to = Place::from_path(&pending.dir).title();
+        let progress = crate::copydlg::Progress::new(job.meter().clone(), kind, from, to);
         self.put = Some(Put {
             job,
             dir: pending.dir,
@@ -338,9 +325,7 @@ impl Explorer {
             batch: Vec::new(),
             landed: Vec::new(),
             select_landed: pending.select_landed,
-            started: std::time::Instant::now(),
-            shown: None,
-            published: None,
+            progress,
         });
     }
 
@@ -382,14 +367,7 @@ impl Explorer {
             return Some(Reply::none());
         }
         let put = self.put.take()?;
-        if put.published.is_some() {
-            reprisebus::launcher::update(crate::copydlg::DESKTOP_ID, None);
-        }
-        if let Some(shown) = &put.shown
-            && !put.job.cancelled()
-        {
-            self.copy_ended(shown, put.landed.len(), failed.as_ref());
-        }
+        put.progress.ended(put.landed.len(), failed.as_ref());
         self.undos.push_all(put.batch);
         self.sync_undo();
         if put.landed.iter().any(|p| p.is_dir()) {
@@ -453,7 +431,7 @@ impl Explorer {
     }
 
     pub(crate) fn busy(&self) -> bool {
-        self.put.is_some() || self.jobs_pending > 0
+        self.put.is_some() || self.removing.is_some() || self.jobs_pending > 0
     }
 
     /// File > Close or the close box. With work in flight the window hides and [`Explorer::wake`]
@@ -473,9 +451,12 @@ impl Explorer {
     #[cfg(test)]
     pub(crate) fn finish_puts(&mut self, ctx: &mut Ctx) -> Reply {
         let mut reply = Reply::none();
-        while self.put.is_some() || self.jobs_pending > 0 || self.tip_walk_out() {
+        while self.busy() || self.tip_walk_out() {
             std::thread::sleep(std::time::Duration::from_millis(2));
             if let Some(r) = self.poll_put(ctx) {
+                reply = r;
+            }
+            if let Some(r) = self.poll_removal(ctx) {
                 reply = r;
             }
             if self.poll_tip_walk(ctx) {
@@ -551,27 +532,7 @@ impl Explorer {
                 ctx,
             );
         };
-        self.spawn_job(ctx, move || {
-            let emptied = bins.empty();
-            Box::new(move |ex: &mut Explorer, ctx: &mut Ctx| {
-                if emptied.is_ok() {
-                    ex.undos.retain_non_trash();
-                    ex.sync_undo();
-                }
-                let reply = ex.refresh(ctx);
-                match emptied {
-                    Ok(n) => {
-                        log::info!("explorer: emptied the Recycle Bin ({n} items)");
-                        reply
-                    }
-                    Err(e) => ex.message_box(
-                        "Error Deleting File or Folder",
-                        format!("Cannot empty the Recycle Bin: {e}"),
-                        ctx,
-                    ),
-                }
-            })
-        });
+        self.remove(crate::removing::PendingRemoval::empty(bins), ctx);
         Reply::none()
     }
 
@@ -591,37 +552,7 @@ impl Explorer {
     }
 
     pub(crate) fn restore_items(&mut self, items: Vec<BinItem>, ctx: &mut Ctx) -> Reply {
-        if items.is_empty() {
-            return Reply::none();
-        }
-        self.spawn_job(ctx, move || {
-            let mut restored = Vec::new();
-            let mut failed = None;
-            for BinItem { path, record } in items {
-                let back = reprisefs::trash::check_listed(&path, record.as_ref())
-                    .and_then(|()| reprisefs::trash::trashed(&path))
-                    .and_then(|t| reprisefs::trash::restore_free(&t));
-                match back {
-                    Ok(to) => {
-                        log::info!("explorer: restored {}", to.display());
-                        restored.push(path);
-                    }
-                    Err(e) => {
-                        failed = Some(format!("Cannot restore {}: {e}", file_label(&path)));
-                        break;
-                    }
-                }
-            }
-            Box::new(move |ex: &mut Explorer, ctx: &mut Ctx| {
-                ex.undos.forget_gone(&restored);
-                ex.sync_undo();
-                let reply = ex.refresh(ctx);
-                match failed {
-                    Some(text) => ex.message_box("Error Restoring File or Folder", text, ctx),
-                    None => reply,
-                }
-            })
-        });
+        self.remove(crate::removing::PendingRemoval::from_bin(items, true), ctx);
         Reply::none()
     }
 
@@ -629,12 +560,13 @@ impl Explorer {
     /// their Recycle Bin are asked about one at a time first ([`Explorer::too_big_step`]).
     pub(crate) fn delete_now(&mut self, paths: &[PathBuf], erase: bool, ctx: &mut Ctx) -> Reply {
         let paths = paths.to_vec();
+        let from = self.place.title();
         use reprisefs::bincap::{Plan, TooBig, TooBigStep};
         self.spawn_job(ctx, move || {
             let bins = reprisefs::trash::Bins::system();
             if erase {
                 let plan = paths.into_iter().map(|p| (p, Plan::Erase)).collect();
-                return delete_planned(bins.as_ref(), plan);
+                return delete_planned(bins, plan, from);
             }
             let measured = paths
                 .iter()
@@ -642,7 +574,7 @@ impl Explorer {
                 .collect();
             let asker = TooBig::new(paths, measured);
             match asker.step() {
-                TooBigStep::Done(plan) => delete_planned(bins.as_ref(), plan),
+                TooBigStep::Done(plan) => delete_planned(bins, plan, from),
                 _ => Box::new(move |ex: &mut Explorer, ctx: &mut Ctx| ex.too_big_step(asker, ctx)),
             }
         });
@@ -669,9 +601,10 @@ impl Explorer {
                 reply
             }
             TooBigStep::Done(plan) => {
+                let from = self.place.title();
                 self.spawn_job(ctx, move || {
                     let bins = reprisefs::trash::Bins::system();
-                    delete_planned(bins.as_ref(), plan)
+                    delete_planned(bins, plan, from)
                 });
                 Reply::none()
             }
@@ -683,28 +616,7 @@ impl Explorer {
     /// re-checked against its listing. The first failure stops the rest; what went has its Delete
     /// undo dropped.
     pub(crate) fn erase_from_bin(&mut self, items: Vec<BinItem>, ctx: &mut Ctx) -> Reply {
-        self.spawn_job(ctx, move || {
-            let mut erased = Vec::new();
-            let mut failed = None;
-            for BinItem { path, record } in items {
-                match reprisefs::trash::erase_trashed(&path, record.as_ref()) {
-                    Ok(()) => erased.push(path),
-                    Err(e) => {
-                        failed = Some(format!("Cannot delete {}: {e}", file_label(&path)));
-                        break;
-                    }
-                }
-            }
-            Box::new(move |ex: &mut Explorer, ctx: &mut Ctx| {
-                ex.undos.forget_gone(&erased);
-                ex.sync_undo();
-                let reply = ex.refresh(ctx);
-                match failed {
-                    Some(text) => ex.message_box("Error Deleting File or Folder", text, ctx),
-                    None => reply,
-                }
-            })
-        });
+        self.remove(crate::removing::PendingRemoval::from_bin(items, false), ctx);
         Reply::none()
     }
 
