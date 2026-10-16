@@ -248,7 +248,7 @@ pub fn export_session_env(env: &SessionEnv) {
     c.args(&argv[1..]);
     // Not waited on: the tool round-trips the bus, and colour changes call this from the event
     // loop.
-    if let Err(e) = start(c, "dbus-update-activation-environment") {
+    if let Err(e) = start(c, "dbus-update-activation-environment", None) {
         log::warn!("dbus-update-activation-environment: {e}; portals may not find the display");
     }
 }
@@ -325,7 +325,7 @@ pub fn theme_portal_gtk(env: &SessionEnv, theme: &str) {
             c.arg("-c").arg(format!(
                 "systemctl --user daemon-reload && systemctl --user --no-block try-restart {PORTAL_GTK_UNIT}"
             ));
-            if let Err(e) = start(c, "restart xdg-desktop-portal-gtk") {
+            if let Err(e) = start(c, "restart xdg-desktop-portal-gtk", None) {
                 log::warn!("{PORTAL_GTK_UNIT}: {e}; the print dialog keeps its theme");
             }
         }
@@ -547,8 +547,16 @@ pub fn spawn(cmd: &str, env: &SessionEnv, token: Option<&str>) -> bool {
 
 /// `spawn` in the app scope of `app`, as [`spawn_argv_in`] does.
 pub fn spawn_in(cmd: &str, app: Option<&str>, env: &SessionEnv, token: Option<&str>) -> bool {
+    let name = log_name(
+        app,
+        &crate::session::program(cmd).unwrap_or_else(|| "sh".into()),
+    );
     let argv = reprisefs::scope::in_scope(&["sh", "-c", cmd], app);
-    match start(command_argv(&argv[0], &argv[1..], env, token), cmd) {
+    match start(
+        command_argv(&argv[0], &argv[1..], env, token),
+        cmd,
+        Some(&name),
+    ) {
         Ok(()) => true,
         Err(e) => {
             log::error!("spawn {cmd:?}: {e}");
@@ -597,12 +605,21 @@ pub fn try_spawn_argv_in<S: AsRef<std::ffi::OsStr> + std::fmt::Debug>(
         ));
     };
     let what = program.as_ref().to_string_lossy();
+    let name = log_name(app, &what);
     let argv = reprisefs::scope::in_scope(argv, app);
     let mut c = command_argv(&argv[0], &argv[1..], env, token);
     if let Some(dir) = dir {
         c.current_dir(dir);
     }
-    start(c, &what)
+    start(c, &what, Some(&name))
+}
+
+/// The journal identifier of a spawned program: its desktop entry id, else its file name.
+fn log_name(app: Option<&str>, program: &str) -> String {
+    match app {
+        Some(app) => app.strip_suffix(".desktop").unwrap_or(app).to_string(),
+        None => program.rsplit('/').next().unwrap_or(program).to_string(),
+    }
 }
 
 /// The app scope of shell command `cmd`: the id of the entry in `apps` named like the program it
@@ -660,9 +677,15 @@ fn gtk_launch_id(cmd: &str) -> Option<String> {
 }
 
 /// Start `c` detached, hand its pid to `reap_children` and record the launch for `mapfocus`;
-/// `what` names it in the log.
-fn start(mut c: std::process::Command, what: &str) -> std::io::Result<()> {
+/// `what` names it in the log. A `name` gives its output a journal stream of its own; without
+/// one it writes to the compositor's.
+fn start(mut c: std::process::Command, what: &str, name: Option<&str>) -> std::io::Result<()> {
     detach(&mut c);
+    if let Some((fd, stream)) = name.and_then(crate::journal::stream_for) {
+        c.env("JOURNAL_STREAM", stream);
+        c.stdout(fd.try_clone()?);
+        c.stderr(fd);
+    }
     // Dropping the `Child` does not reap.
     let child = c.spawn()?;
     CHILDREN
@@ -760,6 +783,19 @@ mod tests {
 
     fn argv(v: &[&str]) -> Vec<String> {
         v.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn a_spawned_program_logs_under_its_entry_id_else_its_file_name() {
+        assert_eq!(
+            log_name(Some("reprise-sound.desktop"), "/usr/bin/reprise-sound"),
+            "reprise-sound"
+        );
+        assert_eq!(
+            log_name(Some("org.gnome.Calculator"), "gnome-calculator"),
+            "org.gnome.Calculator"
+        );
+        assert_eq!(log_name(None, "/usr/bin/foot"), "foot");
     }
 
     #[test]
