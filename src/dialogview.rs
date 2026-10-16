@@ -829,6 +829,9 @@ impl State {
             active,
             preedit.as_ref(),
         );
+        if let (Some(c), Some(client)) = (v.dialog.copy(), v.layout.page) {
+            dialog::draw_copy(&mut canvas, &base, text, c, client, scale, active);
+        }
         // What the backdrop sees: the client area.
         let part = wanted
             .then(|| client_part(&canvas, &v.layout, scale))
@@ -881,6 +884,10 @@ impl State {
             n.set_modal();
         }
         let px = self.config.theme.fonts.size_px;
+        if let (Some(c), Some(client)) = (v.dialog.copy(), v.layout.page) {
+            dialog::access_copy(c, client, &self.config.theme, &self.text, &mut tree);
+            return Some(tree);
+        }
         let focus = dialog::access(&v.dialog, &v.layout, &self.text, px, &mut tree);
         tree.set_focus(focus);
         Some(tree)
@@ -1234,6 +1241,7 @@ impl State {
         } else if page.is_some_and(|p| p.holding())
             || v.dialog.chooser().is_some_and(|c| c.ow.holding())
             || v.dialog.tray().is_some_and(|t| t.holding())
+            || v.dialog.copy().is_some_and(|c| c.cp.form.holding())
             || v.dialog.field_lit.holding()
         {
             // A held push button acts on release.
@@ -1720,6 +1728,22 @@ impl State {
             Outcome::Redraw => self.redraw_top_dialog(),
             Outcome::Relayout => self.relayout_top_dialog(),
             Outcome::Size(edges) => self.begin_dialog_size(edges),
+            Outcome::Close | Outcome::CopyCancel
+                if self
+                    .dialogs
+                    .views
+                    .last()
+                    .is_some_and(|v| v.dialog.copy().is_some()) =>
+            {
+                let id = self.dialogs.views[self.dialogs.views.len() - 1].id;
+                self.cancel_put(id);
+            }
+            Outcome::CopyCancel => {}
+            Outcome::CopyPause(on) => {
+                if let Some(id) = self.dialogs.views.last().map(|v| v.id) {
+                    self.pause_put(id, on);
+                }
+            }
             Outcome::Close => self.close_dialog(),
             Outcome::Spawn(cmd) => {
                 self.close_dialog();
