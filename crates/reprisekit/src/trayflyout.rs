@@ -9,7 +9,9 @@ use crate::text::TextRenderer;
 use crate::theme::Theme;
 
 pub const COLS: usize = 4;
+/// A cell's side: the menu panel's, and Glass's, whose icons sit further apart.
 pub const CELL: i32 = 24;
+pub const GLASS_CELL: i32 = 32;
 const MENU_INSET: i32 = 4;
 const GLASS_PAD: i32 = 2;
 pub const LINK_H: i32 = 41;
@@ -28,19 +30,20 @@ impl FlyoutLayout {
     pub fn compute(theme: &Theme, count: usize) -> FlyoutLayout {
         let frame = crate::flyout::look(theme).map(|_| crate::flyout::border(theme));
         let inset = frame.map_or(MENU_INSET, |f| f + GLASS_PAD);
+        let cell = if frame.is_some() { GLASS_CELL } else { CELL };
         let n = count.max(1);
         let cols = if frame.is_some() { COLS } else { n.min(COLS) } as i32;
         let rows = n.div_ceil(COLS) as i32;
-        let link = frame.map(|_| Rect::new(inset, inset + rows * CELL, cols * CELL, LINK_H));
+        let link = frame.map(|_| Rect::new(inset, inset + rows * cell, cols * cell, LINK_H));
         let cells = (0..count)
             .map(|i| {
                 let (c, r) = ((i % COLS) as i32, (i / COLS) as i32);
-                Rect::new(inset + c * CELL, inset + r * CELL, CELL, CELL)
+                Rect::new(inset + c * cell, inset + r * cell, cell, cell)
             })
             .collect();
         FlyoutLayout {
-            width: 2 * inset + cols * CELL,
-            height: 2 * inset + rows * CELL + link.map_or(0, |l| l.height),
+            width: 2 * inset + cols * cell,
+            height: 2 * inset + rows * cell + link.map_or(0, |l| l.height),
             cells,
             frame,
             link,
@@ -182,13 +185,13 @@ mod tests {
     }
 
     #[test]
-    fn under_glass_the_grid_sits_inside_an_8_px_frame() {
+    fn under_glass_32_px_cells_sit_inside_an_8_px_frame() {
         let l = FlyoutLayout::compute(&glass_theme(), 1);
         assert_eq!(l.frame, Some(8));
-        assert_eq!(l.cells[0], Rect::new(10, 10, 24, 24));
-        assert_eq!((l.width, l.height), (116, 85));
-        assert_eq!(l.link, Some(Rect::new(10, 34, 96, 41)));
-        assert_eq!(l.hit(50, 40), Some(1), "the link is one past the cells");
+        assert_eq!(l.cells[0], Rect::new(10, 10, 32, 32));
+        assert_eq!((l.width, l.height), (148, 93));
+        assert_eq!(l.link, Some(Rect::new(10, 42, 128, 41)));
+        assert_eq!(l.hit(50, 50), Some(1), "the link is one past the cells");
         assert_eq!(l.hit(50, 20), None, "past the only icon");
         assert!(
             FlyoutLayout::compute(&Theme::default(), 1).link.is_none(),
@@ -217,14 +220,28 @@ mod tests {
         let l = FlyoutLayout::compute(&theme, 1);
         let c = draw_panel(&theme, &text(), &l, &[None], false);
         let alpha = |x, y| c.get(x, y) >> 24;
-        for (x, y) in [(20, 0), (0, 20), (115, 20), (20, 84)] {
+        for (x, y) in [(20, 0), (0, 20), (147, 20), (20, 92)] {
             assert!(alpha(x, y) > 0, "outline at ({x}, {y})");
         }
-        for (x, y) in [(20, 3), (3, 20), (112, 20), (20, 81)] {
+        for (x, y) in [(20, 3), (3, 20), (144, 20), (20, 89)] {
             assert!(alpha(x, y) < 255, "glass at ({x}, {y})");
         }
         assert_eq!(c.get(0, 0) >> 24, 0, "rounded corner");
         assert_eq!(c.get(20, 20), theme.colors.window.argb(), "panel");
+    }
+
+    #[test]
+    fn a_glass_icon_sits_centred_in_its_32_px_cell() {
+        let theme = glass_theme();
+        let l = FlyoutLayout::compute(&theme, 2);
+        let icon = || Some(Canvas::from_pixels(16, 16, vec![0xFFFF_0000; 256]));
+        let c = draw_panel(&theme, &text(), &l, &[icon(), icon()], false);
+        let window = theme.colors.window.argb();
+        for x0 in [18, 50] {
+            assert_eq!(c.get(x0, 18), 0xFFFF_0000, "icon at ({x0}, 18)");
+            assert_eq!(c.get(x0 + 15, 33), 0xFFFF_0000);
+            assert_eq!((c.get(x0 - 1, 18), c.get(x0 + 16, 33)), (window, window));
+        }
     }
 
     #[test]
@@ -253,16 +270,16 @@ mod tests {
         let inks = theme.look.style().and_then(|st| st.page).unwrap();
         let l = FlyoutLayout::compute(&theme, 2);
         let c = draw_panel(&theme, &text(), &l, &[None, None], false);
-        assert_eq!(c.get(8, 34), inks.band_rule[0].argb());
-        assert_eq!(c.get(107, 38), inks.band_rule[4].argb());
-        assert_eq!(c.get(8, 39), inks.band.argb());
-        assert_eq!(c.get(60, 76), inks.band.argb(), "the band's last row");
-        assert_eq!(c.get(60, 33), theme.colors.window.argb(), "the grid");
+        assert_eq!(c.get(8, 42), inks.band_rule[0].argb());
+        assert_eq!(c.get(139, 46), inks.band_rule[4].argb());
+        assert_eq!(c.get(8, 47), inks.band.argb());
+        assert_eq!(c.get(60, 84), inks.band.argb(), "the band's last row");
+        assert_eq!(c.get(60, 41), theme.colors.window.argb(), "the grid");
         let link = inks.link.argb();
-        assert!((34..77).any(|y| (8..108).any(|x| c.get(x, y) == link)));
+        assert!((42..85).any(|y| (8..140).any(|x| c.get(x, y) == link)));
         let band = inks.band.argb();
-        let ink: Vec<(i32, i32)> = (39..77)
-            .flat_map(|y| (8..108).map(move |x| (x, y)))
+        let ink: Vec<(i32, i32)> = (47..85)
+            .flat_map(|y| (8..140).map(move |x| (x, y)))
             .filter(|&(x, y)| c.get(x, y) != band)
             .collect();
         let (x0, x1) = (
@@ -274,15 +291,15 @@ mod tests {
             ink.iter().map(|p| p.1).max().unwrap(),
         );
         assert!(
-            ((x0 - 8) - (107 - x1)).abs() <= 3,
+            ((x0 - 8) - (139 - x1)).abs() <= 3,
             "centred across: {x0}..{x1}"
         );
         assert!(
-            ((y0 - 34) - (76 - y1)).abs() <= 2,
+            ((y0 - 42) - (84 - y1)).abs() <= 2,
             "centred down: {y0}..{y1}"
         );
         let hot = draw_panel(&theme, &text(), &l, &[None, None], true);
-        let under = (y1 + 1..77)
+        let under = (y1 + 1..85)
             .find(|&y| (x0 + 1..x1).all(|x| hot.get(x, y) == link))
             .expect("an underline under the link");
         assert_eq!(under, y1 + 2, "a row clear under the glyphs");

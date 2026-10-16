@@ -69,6 +69,28 @@ impl Glyph {
             smooth: self.smooth,
         }
     }
+
+    /// This glyph slanted for a family without a slanted face: each row moved right by its
+    /// height over the baseline over [`SHEAR_RISE`], rows under it left.
+    fn sheared(self) -> Glyph {
+        if self.width == 0 || self.bitmap.len() != self.width * self.height {
+            return self;
+        }
+        let shift = |row: usize| (self.top - 1 - row as i32).div_euclid(SHEAR_RISE);
+        let lo = shift(self.height - 1);
+        let width = self.width + (shift(0) - lo) as usize;
+        let mut bitmap = vec![0; width * self.height];
+        for (row, ink) in self.bitmap.chunks(self.width).enumerate() {
+            let x = row * width + (shift(row) - lo) as usize;
+            bitmap[x..x + self.width].copy_from_slice(ink);
+        }
+        Glyph {
+            bitmap,
+            width,
+            left: self.left + lo,
+            ..self
+        }
+    }
 }
 
 pub(crate) fn fixed_sizes(f: &Face) -> &[freetype::ffi::FT_Bitmap_Size] {
@@ -84,9 +106,12 @@ pub(crate) fn fixed_sizes(f: &Face) -> &[freetype::ffi::FT_Bitmap_Size] {
 struct LoadedFace {
     face: Face,
     family: String,
-    #[cfg_attr(not(test), allow(dead_code))]
+    /// Slanted: an italic or an oblique face.
     italic: bool,
 }
+
+/// A sheared glyph's rows move right a pixel for each this many over the baseline.
+const SHEAR_RISE: i32 = 4;
 
 /// The glyph cache is bounded because clients pick the drawn text (titles); past this many entries
 /// it is dropped and refilled.
@@ -122,6 +147,11 @@ pub struct TextRenderer {
     fallback: RefCell<FallbackCache<FaceFile, Face>>,
     fallback_mono: RefCell<FallbackCache<FaceFile, Face>>,
     fallback_lib: std::cell::OnceCell<Option<Library>>,
+    /// The config [`TextRenderer::load`] read, which [`TextRenderer::italic`] loads slanted.
+    config: Option<FontConfig>,
+    /// Glyphs lean as [`Glyph::sheared`] draws them: the italic of a family without one.
+    sheared: bool,
+    italic: std::cell::OnceCell<Option<Box<TextRenderer>>>,
 }
 
 fn find_face(
@@ -174,7 +204,7 @@ fn load_face(
             Some(LoadedFace {
                 face,
                 family,
-                italic: matched_style == fontdb::Style::Italic,
+                italic: matched_style != fontdb::Style::Normal,
             })
         }
         Err(e) => {
@@ -387,7 +417,8 @@ impl TextRenderer {
         if regular.is_none() {
             log::warn!("no usable font found; text will not be drawn");
         }
-        let r = TextRenderer::with_faces(regular, bold, cfg.antialias);
+        let mut r = TextRenderer::with_faces(regular, bold, cfg.antialias);
+        r.config = Some(cfg.clone());
         match cfg
             .shell_dlg
             .as_deref()
@@ -415,7 +446,31 @@ impl TextRenderer {
             fallback: RefCell::new(FallbackCache::default()),
             fallback_mono: RefCell::new(FallbackCache::default()),
             fallback_lib: std::cell::OnceCell::new(),
+            config: None,
+            sheared: false,
+            italic: std::cell::OnceCell::new(),
         }
+    }
+
+    /// These families' italic or oblique faces, loaded on first use; a family without one has
+    /// its upright glyphs sheared. Itself when it is slanted already or was not loaded from a
+    /// config.
+    pub fn italic(&self) -> &TextRenderer {
+        let Some(cfg) = self.config.as_ref().filter(|c| !c.italic) else {
+            return self;
+        };
+        self.italic
+            .get_or_init(|| {
+                let cfg = FontConfig {
+                    italic: true,
+                    ..cfg.clone()
+                };
+                let mut t = TextRenderer::load(&cfg);
+                t.sheared = !t.regular.as_ref().is_some_and(|f| f.italic);
+                t.regular.is_some().then(|| Box::new(t))
+            })
+            .as_deref()
+            .unwrap_or(self)
     }
 
     pub fn with_shell_dlg(mut self, mut second: TextRenderer) -> TextRenderer {
@@ -607,6 +662,7 @@ impl TextRenderer {
                 )
                 .unwrap_or(Glyph::EMPTY),
         };
+        let glyph = if self.sheared { glyph.sheared() } else { glyph };
         let r = f(&glyph);
         let mut cache = self.cache.borrow_mut();
         if cache.len() >= GLYPH_CAP {
@@ -1285,6 +1341,58 @@ mod tests {
                 .any(|g| g.bitmap.iter().any(|&b| b > 0 && b < 255)),
             "grayscale coverage is bilevel"
         );
+    }
+
+    #[test]
+    fn italic_is_the_families_slanted_face_when_installed() {
+        let cfg = FontConfig {
+            family: vec!["DejaVu Sans".into()],
+            ..FontConfig::default()
+        };
+        let t = TextRenderer::load(&cfg);
+        if !t.has_face("DejaVu Sans") {
+            return;
+        }
+        let slanted = t.italic();
+        assert!(slanted.is_italic(), "DejaVu Sans Oblique");
+        assert!(std::ptr::eq(slanted.italic(), slanted));
+        let none = TextRenderer::fontless();
+        assert!(std::ptr::eq(none.italic(), &none), "no config to load");
+    }
+
+    /// Tahoma has no italic face: its upright faces lean right, a stem's top ink right of
+    /// its foot.
+    #[test]
+    fn italic_shears_a_family_without_a_slanted_face() {
+        if !test_tahoma() {
+            return;
+        }
+        let t = TextRenderer::load(&FontConfig::default());
+        let slanted = t.italic();
+        assert!(!std::ptr::eq(slanted, &t));
+        assert!(!slanted.is_italic(), "no slanted face");
+        let stem = |face: &TextRenderer| {
+            let mut c = Canvas::new(20, 20);
+            face.draw(
+                &mut c,
+                Rect::new(4, 2, 16, 16),
+                "l",
+                false,
+                Color::rgb(0, 0, 0),
+                Align::Left,
+                11,
+            );
+            let ink: Vec<(i32, i32)> = (0..20)
+                .flat_map(|y| (0..20).map(move |x| (x, y)))
+                .filter(|&(x, y)| c.get(x, y) >> 24 != 0)
+                .collect();
+            let top = ink.iter().map(|p| p.1).min().unwrap();
+            let foot = ink.iter().map(|p| p.1).max().unwrap();
+            let left_at = |y: i32| ink.iter().filter(|p| p.1 == y).map(|p| p.0).min().unwrap();
+            left_at(top) - left_at(foot)
+        };
+        assert_eq!(stem(&t), 0, "upright");
+        assert!(stem(slanted) > 0, "leans right");
     }
 
     #[test]

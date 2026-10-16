@@ -10008,7 +10008,7 @@ mod tests {
         ))
     }
 
-    /// At 100% the tray's Customize page keeps its 1184x575 client on a 1080p output; at 150% it
+    /// At 100% the tray's Customize page keeps its 1184x602 client on a 1080p output; at 150% it
     /// grows with the text, and at 200% it fits the output, its page scrolling above the band.
     /// A text size change while it is open lays it out again.
     #[test]
@@ -10018,10 +10018,10 @@ mod tests {
         let mut d = tray_dialog(&glass);
         let client = |d: &Dialog| d.tray().unwrap().client();
         d.fit_in(&glass, &text, AREA_1080P);
-        assert_eq!(client(&d), (1184, 575));
+        assert_eq!(client(&d), (1184, 602));
         let big = glass.with_text_size(150);
         d.fit_in(&big, &text, AREA_1080P);
-        assert_eq!(client(&d), big.text.size((1184, 575)));
+        assert_eq!(client(&d), big.text.size((1184, 602)));
         let huge = glass.with_text_size(200);
         d.fit_in(&huge, &text, AREA_1080P);
         let l = DialogLayout::compute(&huge, &text, &d);
@@ -10038,7 +10038,7 @@ mod tests {
         assert!(tray.page_bar.is_some(), "the page scrolls");
         assert_eq!(tray.band.unwrap().bottom(), client.bottom());
         d.fit_in(&glass, &text, AREA_1080P);
-        assert_eq!(d.tray().unwrap().client(), (1184, 575), "back at 100%");
+        assert_eq!(d.tray().unwrap().client(), (1184, 602), "back at 100%");
     }
 
     /// Every compositor dialog laid out as a form, under each interface, at each text size.
