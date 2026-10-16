@@ -85,6 +85,46 @@ fn navigating_to_the_current_address_re_lists_the_folder() {
     assert!(!ex.history.can_back());
 }
 
+/// Enter on a typed folder that does not answer whether it exists (a dead mount) returns at
+/// once with the window where it was, and goes there on the wake after the answer lands.
+#[test]
+fn a_typed_folder_answering_late_opens_on_a_later_wake() {
+    let dir = tempfile::tempdir().expect("a temp dir");
+    let sub = dir.path().join("sub");
+    std::fs::create_dir(&sub).expect("mkdir");
+    let mut ctx = test_ctx();
+    let here = Place::Folder(dir.path().to_path_buf());
+    let mut ex = test_explorer(here.clone(), &mut ctx);
+    let (answer, gate) = std::sync::mpsc::channel::<()>();
+
+    let entered = std::time::Instant::now();
+    let reply = ex.navigate(
+        &sub.display().to_string(),
+        move |d| {
+            gate.recv_timeout(std::time::Duration::from_secs(20)).ok();
+            d.is_dir()
+        },
+        &mut ctx,
+    );
+    assert!(
+        entered.elapsed() < std::time::Duration::from_secs(10),
+        "Enter returns before the folder answers"
+    );
+    assert_eq!(reply, Reply::none());
+    assert_eq!(ex.place, here);
+
+    answer.send(()).expect("send");
+    for _ in 0..500 {
+        if ex.place != here {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        ex.wake(&mut ctx);
+    }
+    assert_eq!(ex.place, Place::Folder(sub));
+    assert!(ex.history.can_back());
+}
+
 #[test]
 fn a_refresh_keeps_the_selection_when_its_index_moves() {
     let dir = tempfile::tempdir().expect("a temp dir");
