@@ -64,6 +64,7 @@ use smithay_drm_extras::{
 
 use crate::{
     compositor::State,
+    config::OutputMode,
     framepace::Done,
     output::ModeInfo,
     reblur::Reblur,
@@ -2262,8 +2263,29 @@ fn link_status(
     })
 }
 
+/// The mode a BAD link trains with: None while `current` is still among `modes`, else the
+/// configured mode `want` if offered, the current size at its nearest refresh, or the
+/// preferred mode.
+fn link_mode(modes: &[ModeInfo], current: &ModeInfo, want: Option<&OutputMode>) -> Option<usize> {
+    let same = |m: &ModeInfo| {
+        (m.width, m.height, m.refresh_mhz) == (current.width, current.height, current.refresh_mhz)
+    };
+    if modes.iter().any(same) {
+        return None;
+    }
+    let size = OutputMode {
+        width: current.width,
+        height: current.height,
+        refresh_mhz: Some(current.refresh_mhz),
+    };
+    want.and_then(|w| w.pick(modes))
+        .or_else(|| size.pick(modes))
+        .or_else(|| crate::output::pick_mode(modes, None))
+}
+
 /// On a hotplug uevent the kernel expects every connector whose link-status went BAD to get a modeset with
-/// the same mode and link-status GOOD, which trains the link again (drm-kms "link-status").
+/// link-status GOOD, which trains the link again (drm-kms "link-status"): with the same mode, or a new
+/// one when the scan no longer lists it (`link_mode`), which is set first.
 fn check_links(state: &mut State) {
     let Some(b) = state.backend.as_mut() else {
         return;
@@ -2271,6 +2293,7 @@ fn check_links(state: &mut State) {
     gated(b, "link-status read");
     let dev = &b.drm;
     let mut due = Vec::new();
+    let mut switch = Vec::new();
     for (&crtc, s) in b.surfaces.iter_mut() {
         let status = link_status(dev, s.connector.handle()).map(|(_, v)| v);
         log::debug!("{}: link-status {status:?}", s.output.name());
@@ -2282,7 +2305,24 @@ fn check_links(state: &mut State) {
             LinkStep::Retrain => {
                 log::warn!("{}: link-status BAD; retraining", s.output.name());
                 s.hw.retrain = true;
-                due.push(crtc);
+                let fresh = b.scanner.connectors().get(&s.connector.handle());
+                let want = state.config.mode_for_output_name(&s.output.name());
+                let mode = fresh.zip(s.output.current_mode()).and_then(|(info, m)| {
+                    let current = ModeInfo {
+                        width: m.size.w,
+                        height: m.size.h,
+                        refresh_mhz: m.refresh,
+                        preferred: false,
+                    };
+                    link_mode(&mode_infos(info), &current, want.as_ref())
+                });
+                match (fresh, mode) {
+                    (Some(info), Some(i)) => {
+                        s.connector = info.clone();
+                        switch.push((crtc, s.output.clone(), i));
+                    }
+                    _ => due.push(crtc),
+                }
             }
             LinkStep::GiveUp => {
                 log::warn!(
@@ -2294,6 +2334,24 @@ fn check_links(state: &mut State) {
             }
             LinkStep::GaveUp => s.hw.retrain = false,
         }
+    }
+    for (crtc, output, i) in switch {
+        log::warn!(
+            "{}: its mode is gone from the connector; taking another",
+            output.name()
+        );
+        if !set_mode(state, &output, i) {
+            due.push(crtc);
+            continue;
+        }
+        if let Some(s) = state
+            .backend
+            .as_mut()
+            .and_then(|b| b.surfaces.get_mut(&crtc))
+        {
+            s.hw.unlit = true;
+        }
+        state.update_layout();
     }
     for crtc in due {
         retrain_link(state, crtc);
@@ -2625,8 +2683,8 @@ fn write_gamma(
 #[cfg(test)]
 mod tests {
     use super::{
-        Ask, Asked, CrtcNow, GammaStep, LINK_TRIES, LinkStep, Lut, Step, gamma_step, link_step,
-        lut_from_blob, next_step,
+        Ask, Asked, CrtcNow, GammaStep, LINK_TRIES, LinkStep, Lut, ModeInfo, OutputMode, Step,
+        gamma_step, link_mode, link_step, lut_from_blob, next_step,
     };
 
     fn asked(asks: &[Ask]) -> Asked {
@@ -2808,6 +2866,55 @@ mod tests {
             "a new uevent starts the scan over"
         );
         assert_eq!(next_step(false, false, Some(0), true, true), Some(Scan));
+    }
+
+    #[test]
+    fn a_link_retrains_its_mode_while_listed_else_the_closest_one() {
+        let m = |width, height, hz: i32, preferred| ModeInfo {
+            width,
+            height,
+            refresh_mhz: hz * 1000,
+            preferred,
+        };
+        let current = m(3840, 2160, 60, false);
+        let lower = [
+            m(3840, 2160, 30, false),
+            m(3840, 2160, 24, false),
+            m(1920, 1080, 60, true),
+        ];
+        let with_current = [m(1920, 1080, 60, true), current];
+        assert_eq!(
+            link_mode(&with_current, &current, None),
+            None,
+            "still listed"
+        );
+        assert_eq!(
+            link_mode(&lower, &current, None),
+            Some(0),
+            "same size, nearest refresh"
+        );
+        let want = OutputMode {
+            width: 1920,
+            height: 1080,
+            refresh_mhz: None,
+        };
+        assert_eq!(
+            link_mode(&lower, &current, Some(&want)),
+            Some(2),
+            "the configured mode"
+        );
+        let smaller = [m(2560, 1440, 60, false), m(1920, 1080, 60, true)];
+        assert_eq!(
+            link_mode(&smaller, &current, None),
+            Some(1),
+            "the preferred mode"
+        );
+        assert_eq!(
+            link_mode(&smaller[..1], &current, None),
+            Some(0),
+            "else the first"
+        );
+        assert_eq!(link_mode(&[], &current, None), None, "nothing to switch to");
     }
 
     #[test]
