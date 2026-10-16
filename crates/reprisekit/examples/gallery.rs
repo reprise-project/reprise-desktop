@@ -5560,15 +5560,18 @@ fn render_glass_dark_captions(theme: &Theme) -> Canvas {
     c
 }
 
-/// Two Glass windows over the stripes, the focused one first, 950x110, each with a menu bar
-/// across its client's top: the bar clear over the frame's glass, its titles glowing, the client
-/// below.
+/// Two Glass windows over the stripes and a white window, the focused one first, 950x110, each
+/// with a menu bar across its client's top: the bar clear over the frame's glass, its titles
+/// glowing, the client below.
 fn render_glass_client_glass(theme: &Theme) -> Canvas {
     use reprisekit::controls::menubar::Bar;
     let text = TextRenderer::load(&FontConfig::default());
     let style = theme.look.style().unwrap();
     let caption_text = TextRenderer::load(&style.caption_text.font());
     let mut c = blurred_stripes(950, 110);
+    for x in [115, 585] {
+        c.fill_rect(Rect::new(x, 0, 220, 110), Color::rgb(0xFF, 0xFF, 0xFF));
+    }
     let bar = Bar::new(vec![
         ("&File", vec![]),
         ("&Edit", vec![]),
