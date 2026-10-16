@@ -617,6 +617,29 @@ pub fn command_app(cmd: &str, apps: &[reprisefs::apps::AppEntry]) -> Option<Stri
     Some(entry.map_or_else(|| program.to_string(), |e| e.id.clone()))
 }
 
+/// The folder a Run line names when the whole line is one path: absolute or under `~`, bare or
+/// single-quoted as Browse... writes it. None for a line the shell would read as more than a path.
+pub fn command_folder(cmd: &str, home: Option<&std::path::Path>) -> Option<std::path::PathBuf> {
+    use std::path::PathBuf;
+    let cmd = cmd.trim();
+    let path = if let Some(inner) = cmd.strip_prefix('\'').and_then(|c| c.strip_suffix('\'')) {
+        let word = inner.replace("'\\''", "'");
+        if inner.replace("'\\''", "").contains('\'') {
+            return None;
+        }
+        PathBuf::from(word)
+    } else if cmd.contains(|c: char| c.is_whitespace() || "'\"\\$`;&|<>(){}*?[]".contains(c)) {
+        return None;
+    } else if cmd == "~" {
+        home?.to_path_buf()
+    } else if let Some(rest) = cmd.strip_prefix("~/") {
+        home?.join(rest)
+    } else {
+        PathBuf::from(cmd)
+    };
+    path.is_absolute().then_some(path)
+}
+
 /// The entry id `gtk-launch [options] <id> [uris]` names, `.desktop` optional.
 fn gtk_launch_id(cmd: &str) -> Option<String> {
     let argv = reprisefs::apps::exec_argv(cmd);
@@ -1265,5 +1288,29 @@ mod tests {
         let p = env(None).pairs();
         assert!(p.contains(&("XDG_SESSION_TYPE", "wayland".into())));
         assert!(p.contains(&("XDG_SEAT", "seat0".into())));
+    }
+
+    #[test]
+    fn a_run_line_naming_one_path_is_a_folder_to_check() {
+        let home = std::path::Path::new("/home/u");
+        let folder = |cmd| command_folder(cmd, Some(home));
+        let at = |p: &str| Some(std::path::PathBuf::from(p));
+        assert_eq!(folder(" /home/u/Documents "), at("/home/u/Documents"));
+        assert_eq!(folder("~"), at("/home/u"));
+        assert_eq!(folder("~/Documents"), at("/home/u/Documents"));
+        assert_eq!(folder("'/srv/my files'"), at("/srv/my files"));
+        assert_eq!(folder("'/srv/it'\\''s'"), at("/srv/it's"));
+        assert_eq!(folder("'~/Documents'"), None, "a quoted ~ is not home");
+        assert_eq!(command_folder("~/Documents", None), None);
+        for line in [
+            "foot",
+            "Documents",
+            "/usr/bin/foot -e top",
+            "/srv/a;b",
+            "'/srv/a' '/srv/b'",
+            "$HOME",
+        ] {
+            assert_eq!(folder(line), None, "{line}");
+        }
     }
 }

@@ -132,6 +132,28 @@ impl State {
         crate::spawn::spawn_in(cmd, app.as_deref(), &self.env, Some(&token))
     }
 
+    /// The Run dialog's line: one that names a folder opens it in Explorer, anything else runs
+    /// as [`State::spawn_command_activated`]. The folder is checked on a file job, so one on a
+    /// mount that does not answer never stalls the loop.
+    pub fn run_line_activated(&mut self, cmd: &str) {
+        let home = std::env::var_os("HOME").map(std::path::PathBuf::from);
+        let Some(dir) = crate::spawn::command_folder(cmd, home.as_deref()) else {
+            self.spawn_command_activated(cmd);
+            return;
+        };
+        let cmd = cmd.to_string();
+        self.spawn_fs_job(move || {
+            let is_dir = dir.is_dir();
+            Box::new(move |state: &mut State| {
+                if is_dir {
+                    state.spawn_argv_activated(&reprisefs::apps::open_folder_argv(&dir));
+                } else {
+                    state.spawn_command_activated(&cmd);
+                }
+            })
+        });
+    }
+
     pub fn spawn_argv_activated<S: AsRef<std::ffi::OsStr> + std::fmt::Debug>(
         &mut self,
         argv: &[S],
