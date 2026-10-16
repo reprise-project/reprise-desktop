@@ -12,6 +12,7 @@ use crate::raster::{Canvas, EdgeStyle, Rect};
 use crate::style::{Part, State};
 use crate::text::split_mnemonic;
 use crate::text::{Align, TextRenderer};
+use crate::theme::Color;
 use accesskit::{NodeId, Role};
 
 pub const BAR_H: i32 = 20;
@@ -97,11 +98,11 @@ pub fn draw(
     px: u32,
 ) {
     draw_on(
-        c, text, p, lay, titles, open, hot, underline, banded, !banded, px,
+        c, text, p, lay, titles, open, hot, underline, banded, None, px,
     );
 }
 
-/// [`draw`], with the bar's own strip behind the titles only when `strip`.
+/// [`draw`]; with `glass`, over clear glass: no strip, and titles at rest inked in it.
 #[allow(clippy::too_many_arguments)]
 fn draw_on(
     c: &mut Canvas,
@@ -113,11 +114,12 @@ fn draw_on(
     hot: Option<usize>,
     underline: bool,
     banded: bool,
-    strip: bool,
+    glass: Option<Color>,
     px: u32,
 ) {
     let Paint { cs, s, .. } = *p;
     let flat = p.look.style().is_some_and(|st| st.flat_menus);
+    let strip = !banded && glass.is_none();
     let bm = p.look.controls().menubar;
     let m = bm.titles(banded);
     let (pad, dy) = (m.pad, m.text_dy);
@@ -125,7 +127,7 @@ fn draw_on(
         && st.has_parts(&[Part::MenuBar, Part::MenuBarItem])
     {
         return draw_framed(
-            c, text, p, st, lay, titles, open, hot, underline, banded, strip, px,
+            c, text, p, st, lay, titles, open, hot, underline, banded, glass, px,
         );
     }
     if strip {
@@ -140,10 +142,10 @@ fn draw_on(
     let lit = open.or(hot);
     for (i, (t, r)) in titles.iter().zip(&lay.frames).enumerate() {
         let r = r.scaled(s);
-        let mut ink = if flat && !p.active {
-            cs.button_shadow
-        } else {
-            cs.menu_text
+        let mut ink = match glass {
+            Some(ink) => ink,
+            None if flat && !p.active => cs.button_shadow,
+            None => cs.menu_text,
         };
         let mut o = 0;
         if flat && lit == Some(i) {
@@ -181,24 +183,28 @@ fn draw_framed(
     hot: Option<usize>,
     underline: bool,
     banded: bool,
-    strip: bool,
+    glass: Option<Color>,
     px: u32,
 ) {
     use crate::look::styled::menu as look;
     let Paint { cs, s, .. } = *p;
     let m = *p.look.controls().menubar.titles(banded);
-    if strip {
+    if !banded && glass.is_none() {
         look::draw_bar(st, c, lay.bar.scaled(s), s);
     }
-    let ink = if p.active { cs.menu_text } else { cs.gray_text };
+    let rest = if p.active { cs.menu_text } else { cs.gray_text };
     let hot = hot.filter(|_| p.active);
     for (i, (t, r)) in titles.iter().zip(&lay.frames).enumerate() {
         let r = r.scaled(s);
-        if open == Some(i) {
+        let ink = if open == Some(i) {
             look::draw_title(st, c, r, State::Pressed, s);
+            rest
         } else if hot == Some(i) {
             look::draw_title(st, c, r, State::Hot, s);
-        }
+            rest
+        } else {
+            glass.unwrap_or(rest)
+        };
         let tr = Rect::new(
             r.x + m.pad * s,
             r.y + m.text_dy * s,
@@ -926,7 +932,7 @@ impl Bar {
     ) {
         if self.on_glass(theme, lay) {
             c.clear_rect(lay.bar);
-            self.draw_titles_on(c, text, theme, lay, false);
+            self.draw_titles_on_glass(c, text, theme, lay);
             crate::look::glow_on_glass(c, theme, lay.bar);
             c.report_glass_top(lay.bar.bottom());
         } else {
@@ -951,7 +957,21 @@ impl Bar {
         theme: &crate::theme::Theme,
         lay: &Layout,
     ) {
-        self.draw_titles_on(c, text, theme, lay, !self.banded);
+        self.draw_titles_on(c, text, theme, lay, None);
+    }
+
+    /// [`Bar::draw_titles`] over clear glass: no strip, and titles at rest in the caption
+    /// title's ink ([`crate::look::ink_on_glass`]), which reads over the glass where the
+    /// scheme's menu ink may not.
+    pub fn draw_titles_on_glass(
+        &self,
+        c: &mut Canvas,
+        text: &TextRenderer,
+        theme: &crate::theme::Theme,
+        lay: &Layout,
+    ) {
+        let ink = crate::look::ink_on_glass(theme);
+        self.draw_titles_on(c, text, theme, lay, ink);
     }
 
     fn draw_titles_on(
@@ -960,7 +980,7 @@ impl Bar {
         text: &TextRenderer,
         theme: &crate::theme::Theme,
         lay: &Layout,
-        strip: bool,
+        glass: Option<Color>,
     ) {
         let px = theme.fonts.size_px;
         let p = &theme.paint();
@@ -975,7 +995,7 @@ impl Bar {
             self.hot,
             self.underline,
             self.banded,
-            strip,
+            glass,
             px,
         );
     }
@@ -1353,6 +1373,57 @@ mod bar_tests {
             plain.fill_rect(plain.bounds(), crate::theme::Color::rgb(1, 2, 3));
             b.draw_titles(&mut plain, &text, &theme, &lay);
             assert_eq!(c.pixels, plain.pixels, "{look:?} draws its strip as before");
+        }
+    }
+
+    /// Over glass, a title at rest is inked in the caption title's ink, focused or not, at
+    /// scale 1 and 2: black on light glass, white (DEDFDF unfocused) on dark glass, never the
+    /// scheme's grey.
+    #[test]
+    fn titles_over_glass_take_the_caption_ink_focused_or_not() {
+        use crate::glass::{Material, Mode, Settings, caption_ink};
+        use crate::interface::Interface;
+        let text = TextRenderer::load(&FontConfig::default());
+        let b = bar();
+        for (material, mode) in [
+            (Material::Frosted, Mode::Light),
+            (Material::Smoked, Mode::Light),
+            (Material::Smoked, Mode::Dark),
+        ] {
+            let settings = Settings {
+                material,
+                mode,
+                ..Settings::default()
+            };
+            let base = crate::interfaces::theme_with(
+                Interface::Glass,
+                crate::blue::Variant::default(),
+                &settings,
+            );
+            let ([focused, unfocused], _) = caption_ink(material, mode);
+            for s in [1, 2] {
+                for (active, ink) in [(true, focused), (false, unfocused)] {
+                    let theme = Theme {
+                        active,
+                        look: base.look.at_scale(s),
+                        ..base.clone()
+                    };
+                    let client = Rect::new(0, 0, 200, 40);
+                    let lay = b.layout(&text, theme.fonts.size_px, client, &theme.controls());
+                    let mut c = Canvas::with_scale(200, 40, s);
+                    b.draw(&mut c, &text, &theme, &lay);
+                    let f = lay.frames[0].scaled(s);
+                    let dw = c.device_size().0 as i32;
+                    let px: Vec<u32> = (f.y..f.bottom())
+                        .flat_map(|y| (f.x..f.right()).map(move |x| (y * dw + x) as usize))
+                        .map(|i| c.pixels[i])
+                        .collect();
+                    let what = format!("{material:?} {mode:?} at {s}, active {active}");
+                    assert!(px.contains(&ink.argb()), "{what}: inked {:08X}", ink.argb());
+                    let grey = theme.colors.gray_text.argb();
+                    assert!(!px.contains(&grey), "{what}: no {grey:08X}");
+                }
+            }
         }
     }
 }

@@ -8,7 +8,7 @@ use crate::raster::{Canvas, EdgeStyle, Rect};
 use crate::style::{Style, frame as style_frame, taskbar as style_taskbar};
 use crate::taskbar::{TaskbarLayout, TaskbarState};
 use crate::text::TextRenderer;
-use crate::theme::{FontConfig, Theme};
+use crate::theme::{Color, FontConfig, Theme};
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -75,6 +75,14 @@ pub fn client_glass(theme: &Theme, active: bool) -> Option<u32> {
         State::Inactive
     });
     Some(p.atlas.get(f.x, f.y))
+}
+
+/// The caption title's ink, by whether the window is active, for labels drawn over clear
+/// [`client_glass`]; None in a look without one.
+pub fn ink_on_glass(theme: &Theme) -> Option<Color> {
+    client_glass(theme, true)?;
+    let t = &theme.look.style()?.caption_text;
+    Some(if theme.active { t.color } else { t.inactive })
 }
 
 /// Lay the caption title's glow (or dark Glass's edge) under whatever is drawn in `r` over clear
