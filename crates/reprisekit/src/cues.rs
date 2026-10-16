@@ -1,8 +1,9 @@
 //! Keyboard cues: the dotted focus rectangles and the access keys'
 //! underlines. A window opened with the pointer hides both and one opened
 //! from the keyboard shows both. Any key brings out the rectangles; Alt,
-//! alone or held with a key, brings out the underlines too. Once out, a
-//! cue stays for the window's life.
+//! alone or held with a key, brings out the underlines too. The rectangles
+//! stay for the window's life, the underlines until it loses the keyboard.
+//! A host hands `keys` to the draw as [`crate::theme::Theme::access_keys`].
 
 use std::borrow::Cow;
 
@@ -37,6 +38,11 @@ impl Cues {
         *self != before
     }
 
+    /// The window lost the keyboard: the underlines hide. Whether they were out.
+    pub fn blur(&mut self) -> bool {
+        std::mem::take(&mut self.keys)
+    }
+
     /// `label` as drawn: without its access key's marker while the
     /// underlines hide (`&&` stays a literal ampersand).
     pub fn label<'a>(&self, label: &'a str) -> Cow<'a, str> {
@@ -69,6 +75,21 @@ mod tests {
         assert_eq!(c, Cues::ALL);
         assert!(!c.key(false), "and they stay");
         assert_eq!(Cues::opened(true), Cues::ALL);
+    }
+
+    #[test]
+    fn losing_the_keyboard_hides_the_underlines_and_keeps_the_rectangles() {
+        let mut c = Cues::ALL;
+        assert!(c.blur(), "the underlines were out");
+        assert_eq!(
+            c,
+            Cues {
+                focus: true,
+                keys: false
+            }
+        );
+        assert!(!c.blur(), "nothing left to hide");
+        assert!(c.key(true), "Alt brings them back");
     }
 
     #[test]

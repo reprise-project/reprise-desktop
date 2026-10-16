@@ -340,6 +340,7 @@ mod tests {
             s: 1,
             back: crate::look::Backdrop::Face,
             active: true,
+            access_keys: true,
             text: crate::theme::TextUnits::ONE,
         };
         let (up, down) = (Rect::new(2, 2, 15, 8), Rect::new(2, 10, 15, 8));
