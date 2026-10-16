@@ -689,6 +689,30 @@ mod tests {
                     0xda6cc504c344c4eb,
                 ],
             ),
+            (
+                Variant::Steel,
+                1,
+                [
+                    0xfa8866b9ff805e90,
+                    0xe5c31a873ccc7e6f,
+                    0x8e59e3827c3962dc,
+                    0x028ebfb4b5a9db0d,
+                    0xb073a566f29e1656,
+                    0x7046c59a5e0213a6,
+                ],
+            ),
+            (
+                Variant::Steel,
+                2,
+                [
+                    0x90afbd57f945bfb4,
+                    0xbb39c2c74f273072,
+                    0xaf5e603407a7ec5e,
+                    0xebba84e475d48fcc,
+                    0x033a6b47c948f7e6,
+                    0xce7e627c52d8392c,
+                ],
+            ),
         ];
         assert_eq!(got.as_slice(), want);
     }

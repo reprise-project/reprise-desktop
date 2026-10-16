@@ -443,7 +443,12 @@ mod tests {
         let ab = bar();
         let text = TextRenderer::load(&FontConfig::default());
         use crate::blue::Variant;
-        for v in [Variant::Blue, Variant::Olive, Variant::Silver] {
+        for v in [
+            Variant::Blue,
+            Variant::Olive,
+            Variant::Silver,
+            Variant::Steel,
+        ] {
             let theme = crate::interfaces::blue_theme(v);
             let p = theme.paint();
             let lay = layout(&ab, &text, 11, BAND, &theme.look.controls());

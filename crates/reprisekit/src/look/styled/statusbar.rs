@@ -42,7 +42,10 @@ mod tests {
     }
 
     fn shaded(v: Variant) -> bool {
-        matches!(v, Variant::Blue | Variant::Olive | Variant::Silver)
+        matches!(
+            v,
+            Variant::Blue | Variant::Olive | Variant::Silver | Variant::Steel
+        )
     }
 
     #[test]

@@ -191,7 +191,7 @@ mod tests {
             .into_iter()
             .map(|v| (v, [fnv(&part(v, 1)), fnv(&part(v, 2))]))
             .collect();
-        let want: [(Variant, [u64; 2]); 9] = [
+        let want: [(Variant, [u64; 2]); 10] = [
             (Variant::Blue, [3779598193147821126, 16455731398898575776]),
             (Variant::Olive, [8204549873019638842, 2223000614753538460]),
             (Variant::Silver, [14545375529455236018, 1260758399300977047]),
@@ -207,6 +207,7 @@ mod tests {
             (Variant::Ember, [5319559610858569370, 2405021278666821556]),
             (Variant::Cobalt, [15655336059566156223, 3625015956340176215]),
             (Variant::Carbon, [15655336059566156223, 3625015956340176215]),
+            (Variant::Steel, [4422310586742569329, 12701878169192758583]),
         ];
         assert_eq!(got, want, "FNV-1a of (w, h, pixels) at d=1 and d=2");
     }

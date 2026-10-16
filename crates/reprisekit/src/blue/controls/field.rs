@@ -3,7 +3,7 @@
 //! frames stacked, Normal then Disabled, each a 2 px border (the line, then a
 //! ring just inside it). Normal's ring is clear so the caller's fill runs up to
 //! the line; Disabled is a greyed combo box's. Focus shows as the caret alone.
-//! A scheme with a `list_border` (silver) gives list boxes, views and combo
+//! A scheme with a `list_border` (silver, steel) gives list boxes, views and combo
 //! boxes [`Part::ListBorder`] instead.
 
 use crate::blue::Variant;
@@ -66,9 +66,9 @@ mod tests {
     }
 
     #[test]
-    fn only_silver_lines_its_lists_apart() {
+    fn only_silver_and_steel_line_their_lists_apart() {
         for v in Variant::ALL {
-            if v != Variant::Silver {
+            if !matches!(v, Variant::Silver | Variant::Steel) {
                 assert!(part(v, Part::ListBorder).is_none(), "{v:?}");
             }
         }

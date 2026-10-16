@@ -344,7 +344,12 @@ mod tests {
                 .text_color(Part::GroupBox, State::Normal)
                 .unwrap()
         };
-        for v in [Variant::Blue, Variant::Olive, Variant::Silver] {
+        for v in [
+            Variant::Blue,
+            Variant::Olive,
+            Variant::Silver,
+            Variant::Steel,
+        ] {
             assert_eq!(ink(v), v.scheme().inks.group_label, "{v:?} label ink");
         }
         let (navy, olive) = (ink(Variant::Blue), ink(Variant::Olive));

@@ -189,11 +189,16 @@ mod tests {
 
     /// Under Blue behind an 800 px folder window's three bands, the rebar
     /// is the background, with the beige-over-white band line on the second
-    /// and third bands and none on the first (navy, olive green, silver).
+    /// and third bands and none on the first (navy, olive green, silver, steel).
     #[test]
     fn blue_draws_its_background_and_band_lines() {
         const MARK: Color = Color::rgb(1, 2, 3);
-        for v in [Variant::Blue, Variant::Olive, Variant::Silver] {
+        for v in [
+            Variant::Blue,
+            Variant::Olive,
+            Variant::Silver,
+            Variant::Steel,
+        ] {
             let theme = interfaces::blue_theme(v);
             let rb = bands(BLUE_HEIGHTS);
             let r = Rect::new(0, 0, 792, BLUE_HEIGHT);
@@ -212,7 +217,7 @@ mod tests {
                 }
             }
             // The bottom row of navy's and olive's background is its darker edge.
-            if v != Variant::Silver {
+            if !matches!(v, Variant::Silver | Variant::Steel) {
                 let edge = s.rebar.normal.rim.argb();
                 assert_eq!(c.get(0, BLUE_HEIGHT - 1), edge, "{v:?} bottom edge");
             }
