@@ -2295,6 +2295,8 @@ impl State {
     }
 
     pub fn destroy_window(&mut self, w: WindowId) {
+        // A closing X11 menu or tooltip leaves the focus where it is.
+        let refocus = self.focused == Some(w) || !self.win(w).is_some_and(|x| x.override_redirect);
         if self.win(w).is_some_and(|x| x.mapped) {
             self.remember_window(w, true);
             self.window_closing(w);
@@ -2306,7 +2308,9 @@ impl State {
             self.scene.destroy(win.tree);
         }
         self.close_ended_programs();
-        self.focus_top();
+        if refocus {
+            self.focus_top();
+        }
         self.redraw_taskbars();
         self.redraw_all();
     }
