@@ -1125,10 +1125,11 @@ pub struct Dialog {
     /// Classic button the pointer rests on or holds; a held one draws pushed while the pointer is
     /// on it and acts on release there.
     pub pointer: Pointer<usize>,
-    pub close_hot: bool,
-    /// The close box held by the pointer; it draws pushed while the pointer is on it and closes
-    /// the dialog on release there.
-    pub close_box: Pointer<()>,
+    /// The caption button a styled look lights under the pointer.
+    pub caption_hot: Option<CaptionButton>,
+    /// The caption button (close, or a windowed dialog's minimize) held by the pointer; it draws
+    /// pushed while the pointer is on it and acts on release there.
+    pub caption_box: Pointer<CaptionButton>,
     /// Pointer on the ? box; it does nothing when clicked.
     pub help_box: Pointer<()>,
     /// Part of the text field the pointer rests on; the drop button lights only from itself.
@@ -1181,8 +1182,8 @@ impl Dialog {
             buttons: Vec::new(),
             help: false,
             pointer: Pointer::new(),
-            close_hot: false,
-            close_box: Pointer::new(),
+            caption_hot: None,
+            caption_box: Pointer::new(),
             help_box: Pointer::new(),
             field_lit: Pointer::new(),
             button_focus: None,
@@ -3226,7 +3227,7 @@ impl Dialog {
     /// overlay opened over it): whatever it held lets go without acting.
     pub fn cancel_press(&mut self) -> Outcome {
         self.pointer.clear();
-        self.close_box.clear();
+        self.caption_box.clear();
         self.help_box.clear();
         self.field_lit.clear();
         if let Some(f) = self.field.as_mut() {
@@ -3247,18 +3248,18 @@ impl Dialog {
     }
 
     /// The held box draws pushed, not hot, so dragged off it draws plain.
-    pub fn press_close(&mut self) {
-        self.close_hot = false;
-        self.close_box.press(Some(()), false);
+    pub fn press_caption(&mut self, b: CaptionButton) {
+        self.caption_hot = None;
+        self.caption_box.press(Some(b), false);
     }
 
-    pub fn drag_close(&mut self, on: bool) -> bool {
-        self.close_box.holding() && self.close_box.motion(on.then_some(()))
+    pub fn drag_caption(&mut self, over: Option<DialogHit>) -> bool {
+        self.caption_box.holding() && self.caption_box.motion(caption_button(over))
     }
 
-    /// The pointer let go of the held close box: true when it was over it, and the dialog closes.
-    pub fn release_close(&mut self) -> bool {
-        self.close_box.release().is_some()
+    /// The pointer let go of the held caption button: the button when it was over it, which acts.
+    pub fn release_caption(&mut self) -> Option<CaptionButton> {
+        self.caption_box.release()
     }
 
     /// The pointer went down on the caption's ? box: it draws pressed
@@ -3443,6 +3444,8 @@ pub struct DialogLayout {
     pub close: Option<Rect>,
     /// Caption ? button, 2 px left of the close button.
     pub help: Option<Rect>,
+    /// A windowed dialog's minimize box, where the ? button would be.
+    pub minimize: Option<Rect>,
     pub icon: Option<Rect>,
     pub lines: Vec<(Rect, String)>,
     pub field_label: Option<Rect>,
@@ -3469,6 +3472,8 @@ pub struct DialogLayout {
 pub enum DialogHit {
     Button(usize),
     Close,
+    /// A windowed dialog's minimize box.
+    Minimize,
     Help,
     Caption,
     /// A sizable frame's border (Browse's), by the edges a drag from
@@ -3486,6 +3491,15 @@ pub enum DialogHit {
     Tray(traycustomize::Hit),
     /// The copy progress dialog's More/Fewer details toggle.
     CopyDetails,
+}
+
+/// The caption button `over` is on.
+pub fn caption_button(over: Option<DialogHit>) -> Option<CaptionButton> {
+    match over? {
+        DialogHit::Close => Some(CaptionButton::Close),
+        DialogHit::Minimize => Some(CaptionButton::Minimize),
+        _ => None,
+    }
 }
 
 /// The frame every dialog is built for: a fixed dialog border is 3 px
@@ -3591,7 +3605,11 @@ impl DialogLayout {
                 return Self::compute_client(t.client()).framed(theme, d.help);
             }
             Style::Copy(c) => {
-                return Self::compute_client(theme.text.size(c.cp.client())).framed(theme, d.help);
+                return Self::compute_client(theme.text.size(c.cp.client())).framed_as(
+                    theme,
+                    d.help,
+                    Chrome::WINDOWED_DIALOG,
+                );
             }
             Style::Browse(p) => return Self::compute_browse(theme, d.help, p.dlg.client()),
             Style::EndProgram => Self::compute_end_program(theme, text.dialog(d.font()), d),
@@ -3629,7 +3647,12 @@ impl DialogLayout {
     /// A body laid out for `DIALOG_FRAME` and a `CAPTION_H` caption, put
     /// inside `theme`'s frame: the body moves by `client_shift` and the
     /// dialog grows around it.
-    fn framed(mut self, theme: &Theme, help: bool) -> DialogLayout {
+    fn framed(self, theme: &Theme, help: bool) -> DialogLayout {
+        self.framed_as(theme, help, chrome(false))
+    }
+
+    /// [`Self::framed`] in a frame with `chrome`'s caption buttons.
+    fn framed_as(mut self, theme: &Theme, help: bool, chrome: Chrome) -> DialogLayout {
         let (dx, dy) = client_shift(theme);
         let mv = |r: &mut Rect| {
             r.x += dx;
@@ -3648,7 +3671,7 @@ impl DialogLayout {
         self.buttons.iter_mut().chain(&mut self.tabs).for_each(mv);
         let f = DIALOG_FRAME;
         let (w, h) = (self.size.0 - 2 * f, self.size.1 - 2 * f - CAPTION_H);
-        let g = FrameGeometry::layout(&theme.metrics, w, h, false, chrome(false));
+        let g = FrameGeometry::layout(&theme.metrics, w, h, false, chrome);
         self.with_frame(g, help)
     }
 
@@ -3658,6 +3681,8 @@ impl DialogLayout {
             caption: g.caption,
             close: Some(g.buttons[2]),
             help: help.then_some(g.help_box()),
+            minimize: (g.chrome.buttons.has(CaptionButton::Minimize))
+                .then(|| g.button_rect(CaptionButton::Minimize)),
             frame: Some(g),
             ..self
         }
@@ -3942,6 +3967,9 @@ impl DialogLayout {
         if self.close.is_some_and(|r| r.contains(x, y)) {
             return Some(DialogHit::Close);
         }
+        if self.minimize.is_some_and(|r| r.contains(x, y)) {
+            return Some(DialogHit::Minimize);
+        }
         if self.help.is_some_and(|r| r.contains(x, y)) {
             return Some(DialogHit::Help);
         }
@@ -4099,8 +4127,11 @@ pub fn draw(
             title: &d.title,
             active,
             maximized: false,
-            pressed: (d.close_box.of(()) == Interaction::Pressed).then_some(CaptionButton::Close),
-            glow: reprisekit::frame::Glow::lit(d.close_hot.then_some(CaptionButton::Close)),
+            pressed: d
+                .caption_box
+                .lit()
+                .and_then(|(b, how)| (how == Interaction::Pressed).then_some(b)),
+            glow: reprisekit::frame::Glow::lit(d.caption_hot),
             icon: caption_icon,
             tabbed: false,
         };
@@ -9497,7 +9528,7 @@ mod tests {
         let blue = blue();
         let text = TextRenderer::load(&FontConfig::default());
         let mut d = Dialog::confirm_delete("x", std::path::Path::new("/x"), false, false, false);
-        d.close_hot = true;
+        d.caption_hot = Some(CaptionButton::Close);
         let l = DialogLayout::compute(&blue, &text, &d);
         let c = draw(
             &blue,
@@ -9528,19 +9559,22 @@ mod tests {
     #[test]
     fn the_close_box_closes_only_on_a_release_over_it() {
         let mut d = Dialog::log_off();
-        d.press_close();
-        assert_eq!(d.close_box.of(()), Interaction::Pressed);
-        assert!(d.drag_close(false), "dragged off");
-        assert_eq!(d.close_box.of(()), Interaction::Idle);
-        assert!(!d.release_close(), "a release off the box does not close");
-        assert!(!d.close_box.holding());
-        d.press_close();
-        assert!(!d.drag_close(true), "still on it");
-        assert!(d.release_close(), "a release on the box closes");
-        d.press_close();
+        d.press_caption(CaptionButton::Close);
+        assert_eq!(d.caption_box.of(CaptionButton::Close), Interaction::Pressed);
+        assert!(d.drag_caption(None), "dragged off");
+        assert_eq!(d.caption_box.of(CaptionButton::Close), Interaction::Idle);
+        assert!(
+            d.release_caption().is_none(),
+            "a release off the box does not close"
+        );
+        assert!(!d.caption_box.holding());
+        d.press_caption(CaptionButton::Close);
+        assert!(!d.drag_caption(Some(DialogHit::Close)), "still on it");
+        assert!(d.release_caption().is_some(), "a release on the box closes");
+        d.press_caption(CaptionButton::Close);
         d.cancel_press();
         assert!(
-            !d.close_box.holding(),
+            !d.caption_box.holding(),
             "a taken pointer lets go of the close box"
         );
     }
@@ -9553,7 +9587,7 @@ mod tests {
         for theme in [&classic, &blue(), &glass] {
             let mut d =
                 Dialog::confirm_delete("x", std::path::Path::new("/x"), false, false, false);
-            d.close_hot = true;
+            d.caption_hot = Some(CaptionButton::Close);
             let l = DialogLayout::compute(theme, &text, &d);
             let shot = |d: &Dialog| {
                 draw(
@@ -9582,18 +9616,18 @@ mod tests {
             };
             let plain = {
                 let mut cold = d.clone();
-                cold.close_hot = false;
+                cold.caption_hot = None;
                 pixels(&shot(&cold))
             };
             let hot = pixels(&shot(&d));
-            d.press_close();
+            d.press_caption(CaptionButton::Close);
             let held = pixels(&shot(&d));
             assert_ne!(
                 held, hot,
                 "{:?}: the held close box draws pushed",
                 theme.look
             );
-            d.drag_close(false);
+            d.drag_caption(None);
             assert_eq!(
                 pixels(&shot(&d)),
                 plain,
@@ -9603,7 +9637,7 @@ mod tests {
         }
         let mut d = Dialog::confirm_delete("x", std::path::Path::new("/x"), false, false, false);
         let l = DialogLayout::compute(&classic, &text, &d);
-        d.press_close();
+        d.press_caption(CaptionButton::Close);
         let c = draw(
             &classic,
             &text,
@@ -10130,6 +10164,36 @@ mod tests {
         assert!(matches!(hit, Some(DialogHit::Control(_))), "{hit:?}");
         d.click(hit);
         assert_eq!(d.release(hit), Outcome::CopyCancel);
+    }
+
+    #[test]
+    fn a_windowed_dialog_minimizes_from_the_box_left_of_close() {
+        use reprisekit::controls::copyprogress::{CopyProgress, Kind};
+        let text = TextRenderer::load(&FontConfig::default());
+        let glass = reprisekit::interfaces::theme_for(reprisekit::interface::Interface::Glass);
+        for theme in [Theme::default(), glass] {
+            let cp = CopyProgress::new(Kind::Copy, "Downloads", "KINGSTON", Color::rgb(0, 0, 0));
+            let mut d = Dialog::copy_progress(cp, "/media/KINGSTON".into());
+            d.fit(&theme, &text);
+            let l = DialogLayout::compute(&theme, &text, &d);
+            let g = l.frame.expect("a frame");
+            let min = l.minimize.expect("a minimize box");
+            assert_eq!(min, g.button_rect(CaptionButton::Minimize));
+            assert!(min.right() <= l.close.unwrap().x + 1, "left of close");
+            let px = theme.fonts.size_px;
+            let hit = l.hit(&d, min.x + 2, min.y + 2, &text, px);
+            assert_eq!(hit, Some(DialogHit::Minimize));
+            d.press_caption(CaptionButton::Minimize);
+            assert!(d.drag_caption(None), "dragged off");
+            assert!(d.drag_caption(hit), "back on");
+            assert_eq!(d.release_caption(), Some(CaptionButton::Minimize));
+
+            let run = DialogLayout::compute(&theme, &text, &Dialog::run(&[]));
+            assert_eq!(
+                run.minimize, None,
+                "a dialog over the windows has no minimize box"
+            );
+        }
     }
 
     #[test]
