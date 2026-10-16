@@ -1,5 +1,5 @@
-//! How far a put has got: totals from a walk of its sources, bytes and items written, pause and
-//! cancel. The put's thread writes a [`Meter`]; the host reads a [`Snapshot`].
+//! How far a put or a removal has got: totals from a walk of its sources, bytes and items done,
+//! pause and cancel. The job's thread writes a [`Meter`]; the host reads a [`Snapshot`].
 
 use std::cell::RefCell;
 use std::ffi::OsStr;
@@ -79,6 +79,16 @@ impl Meter {
         self.cancel.load(Ordering::Relaxed)
     }
 
+    /// Stop the job at its next file.
+    pub fn cancel(&self) {
+        self.cancel.store(true, Ordering::Relaxed);
+    }
+
+    /// Count one more file or link removed.
+    pub(crate) fn removed(&self) {
+        self.items.fetch_add(1, Ordering::Relaxed);
+    }
+
     pub(crate) fn set_phase(&self, p: Phase) {
         let v = match p {
             Phase::Preparing => 0,
@@ -121,7 +131,7 @@ impl Meter {
         if self.cancelled() {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::Interrupted,
-                "The copy was cancelled.",
+                "The operation was cancelled.",
             ));
         }
         Ok(())

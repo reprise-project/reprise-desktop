@@ -7,7 +7,7 @@ use crate::progress::{self, Meter, Phase, Snapshot, Totals};
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::AtomicBool;
 use std::sync::mpsc::{self, Receiver, TryRecvError};
 
 pub type ShortcutText = Box<dyn Fn(&str) -> Option<String> + Send>;
@@ -152,7 +152,11 @@ impl PutJob {
 
     /// Stops the put between two chunks of a file; what that file had written is removed.
     pub fn cancel(&self) {
-        self.meter.cancel.store(true, Ordering::Relaxed);
+        self.meter.cancel();
+    }
+
+    pub fn meter(&self) -> &Arc<Meter> {
+        &self.meter
     }
 
     pub fn set_paused(&self, on: bool) {
@@ -423,7 +427,7 @@ mod tests {
             "held after the first chunk"
         );
         assert!(dest.join("big").exists(), "the part is there while paused");
-        meter.cancel.store(true, Ordering::Relaxed);
+        meter.cancel();
         assert!(copy.join().unwrap().is_err(), "a cancelled copy fails");
         assert!(!dest.join("big").exists(), "and leaves no part behind");
     }
