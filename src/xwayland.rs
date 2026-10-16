@@ -26,6 +26,7 @@
 //! and over.
 
 mod helper;
+pub mod menus;
 mod sockets;
 
 use std::os::fd::OwnedFd;
@@ -95,6 +96,8 @@ pub struct Xwayland {
     /// The mime types of the Wayland clipboard and primary selection, for
     /// a server that starts after they were set.
     selections: [Option<Vec<String>>; 2],
+    /// The X11 menus `menus::dismiss` has pressed for.
+    pressed: Vec<X11Window>,
 }
 
 /// How long an X server must have run for its death to leave the display
@@ -125,6 +128,7 @@ impl Xwayland {
             source: None,
             started: None,
             selections: [None, None],
+            pressed: Vec::new(),
         }
     }
 
@@ -662,6 +666,8 @@ impl XwmHandler for State {
     /// Xwayland drops the surface of an unmapped window and draws a new
     /// one when it maps again, so the window goes with it.
     fn unmapped_window(&mut self, _xwm: XwmId, window: X11Surface) {
+        // A menu shown again under the same X window is owed a press again.
+        self.xwayland.pressed.retain(|&p| p != window.window_id());
         if let Some(w) = self.window_for_x11(&window) {
             self.destroy_window(w);
         }

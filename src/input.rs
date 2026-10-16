@@ -1180,6 +1180,9 @@ impl State {
             return;
         }
         if state == ButtonState::Pressed {
+            if self.buttons_down == 0 && !self.over_x11(pos) {
+                crate::xwayland::menus::dismiss(self);
+            }
             // A press takes the keyboard from the taskbar.
             self.end_bar_keys();
             self.buttons_down += 1;
@@ -1221,6 +1224,14 @@ impl State {
             self.repoint(pos, time);
         }
         self.redraw_all();
+    }
+
+    /// Whether `pos` is on an X11 program's surface, where Xwayland gets the press itself.
+    fn over_x11(&self, pos: Point<f64, Logical>) -> bool {
+        matches!(
+            self.scene_hit(pos),
+            Hit::Surface { window: Some(w), .. } if self.win(w).is_some_and(|w| w.x11().is_some())
+        )
     }
 
     pub(crate) fn press(&mut self, button: u32, pos: Point<f64, Logical>, time: InputTime) {
