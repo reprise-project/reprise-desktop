@@ -92,7 +92,11 @@ sharing.
 
 Reprise also hosts `org.freedesktop.Notifications`, the
 StatusNotifierWatcher for the tray, `org.freedesktop.ScreenSaver` and the
-GeoClue2 agent.
+GeoClue2 agent. It follows `com.canonical.Unity.LauncherEntry`'s `Update`
+signal: `progress` and `progress-visible` draw on the task buttons of the
+windows whose app id or desktop file matches the entry's
+`application://<id>.desktop`, and Reprise's own `progress-paused` key shows the
+progress as paused.
 
 ## The session
 

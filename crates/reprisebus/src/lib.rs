@@ -16,8 +16,9 @@
 //! [`filetransfer`] hands dragged files to and from sandboxed programs.
 //! [`tray`] asks the compositor to open the tray's Customize dialog, or
 //! to turn off for a critical battery. [`polkit`] asks whether a password
-//! prompt was dismissed.
-//! The last five share a program's one blocking session bus connection
+//! prompt was dismissed. [`launcher`] shows a program's progress on its
+//! task button.
+//! The last six share a program's one blocking session bus connection
 //! ([`session`]).
 
 pub mod a11y;
@@ -25,6 +26,7 @@ pub mod appearance;
 pub mod filetransfer;
 pub mod fprint;
 pub mod instance;
+pub mod launcher;
 pub mod notify;
 pub mod permissions;
 pub mod polkit;

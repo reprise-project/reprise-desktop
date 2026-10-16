@@ -626,6 +626,7 @@ mod tests {
             task_hot_x: None,
             task_shift: Vec::new(),
             task_float: None,
+            task_progress: Vec::new(),
             show_desktop_hot: false,
             more: Default::default(),
             chevron: Default::default(),

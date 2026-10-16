@@ -607,6 +607,13 @@ pub fn draw_taskbar(
             let part = Part::TaskButton;
             draw_task_button(canvas, style, task, part, *r, button_state, span, s);
         }
+        if let (Some(paint), Some(pr)) = (
+            &style.task_progress,
+            state.task_progress.get(i).copied().flatten(),
+        ) {
+            let art = paint(&pr, &theme.colors, r.width / s, r.height / s, s);
+            canvas.blit_over(r.x, r.y, &art);
+        }
         let pushed = matches!(button_state, State::Checked | State::CheckedHot) && style.task_nudge;
         let o = if pushed || held { s } else { 0 };
         let lb = style.taskbar.labelled;
@@ -996,6 +1003,7 @@ mod tests {
             task_hot_x: None,
             task_shift: Vec::new(),
             task_float: None,
+            task_progress: Vec::new(),
             show_desktop_hot: false,
             more: Default::default(),
             chevron: Default::default(),
@@ -1011,6 +1019,57 @@ mod tests {
                 .collect(),
             tray_icons: vec![],
             clock: String::new(),
+        }
+    }
+
+    /// A task's progress lands inside its own button, under the label, in Blue and Glass.
+    #[test]
+    fn a_tasks_progress_draws_inside_its_button() {
+        use crate::taskbar::{TaskProgress, TaskRow};
+        for iface in [Interface::Blue, Interface::Glass] {
+            let theme = theme_for(iface);
+            let s = theme.look.style().unwrap();
+            let counts = TaskbarCounts {
+                tasks: 2,
+                ..TaskbarCounts::default()
+            };
+            let mut layout =
+                TaskbarLayout::compute(&theme.metrics, &s.taskbar, 800, true, counts, 40);
+            layout.lay_tasks(&theme.metrics, &s.taskbar, &[0, 1], TaskRow::Shared);
+            let h = layout.height as u32;
+            let text = TextRenderer::load(&FontConfig::default());
+            let start = TextRenderer::load(&s.start_text.font());
+            let draw = |st: &TaskbarState| {
+                let mut c = Canvas::new(800, h);
+                draw_taskbar(&mut c, s, &theme, &text, &start, &layout, st);
+                c
+            };
+            let mut st = state_with_tasks(&["One", "Two"]);
+            let plain = draw(&st);
+            st.task_progress = vec![
+                None,
+                Some(TaskProgress {
+                    fraction: 0.5,
+                    paused: false,
+                }),
+            ];
+            let shown = draw(&st);
+            let changed: Vec<(i32, i32)> = (0..h as i32)
+                .flat_map(|y| (0..800).map(move |x| (x, y)))
+                .filter(|&(x, y)| plain.get(x, y) != shown.get(x, y))
+                .collect();
+            let b = layout.tasks[1];
+            assert!(!changed.is_empty(), "{iface:?} draws the progress");
+            assert!(
+                changed.iter().all(|&(x, y)| b.contains(x, y)),
+                "{iface:?} keeps it inside the second button"
+            );
+            if iface == Interface::Glass {
+                assert!(
+                    changed.iter().all(|&(x, _)| x < b.x + b.width * 3 / 4),
+                    "Glass fills only the done half"
+                );
+            }
         }
     }
 

@@ -906,6 +906,16 @@ impl State {
         });
         bar.task_hot_x_drawn = bar.task_hot_x.filter(|_| spot);
         let (task_shift, task_float) = taskslide::draw_state(bar, Instant::now());
+        let task_progress = bar
+            .buttons
+            .iter()
+            .map(|wins| {
+                wins.iter().find_map(|id| {
+                    let w = self.windows.iter().find(|w| w.id == *id)?;
+                    self.launcher_entries.progress(&w.app_id(), &self.app_index)
+                })
+            })
+            .collect();
         let state = TaskbarState {
             start_pressed: bar.start_pressed,
             start_focus: bar.start_pressed && self.menu_keys,
@@ -925,6 +935,7 @@ impl State {
             task_hot_x: bar.task_hot_x_drawn,
             task_shift,
             task_float,
+            task_progress,
             show_desktop_hot: bar.show_desktop_hot,
             more: PopupCell {
                 hot: bar.more_hot,

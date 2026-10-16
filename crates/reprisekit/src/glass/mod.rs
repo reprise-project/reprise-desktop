@@ -37,6 +37,7 @@ mod statusbar;
 pub mod streak;
 pub mod switcher;
 pub mod taskbutton;
+mod taskprogress;
 pub mod tint;
 mod toolbar;
 #[cfg(test)]
@@ -458,6 +459,7 @@ fn build_at(s: &Settings, scale: i32) -> Style {
     .with_start_bloom(orb::bloom)
     .with_clock_face(clock::painter(s.mode))
     .with_copy_graph(copygraph::look(s.mode))
+    .with_task_progress(std::sync::Arc::new(taskprogress::paint))
     .with_painted_task_spot(move || taskbutton::task_spot(&owned, scale))
     .without_task_nudge()
     .with_greyed_field_frame()
