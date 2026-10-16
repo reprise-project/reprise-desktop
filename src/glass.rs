@@ -2029,4 +2029,63 @@ mod tests {
             "no halo: the glass beside it reads as the glass far from it"
         );
     }
+
+    /// The red channel just left of a black|white edge under a sheet of glass in a tree at
+    /// `opacity`, over another window's glass when `over_glass`, and how much glass the frame drew.
+    fn faded_edge(material: Material, opacity: f32, over_glass: bool) -> Option<(u32, usize)> {
+        let mut renderer = reprisefx::headless::renderer().ok()?;
+        let ctx = GlassCtx::new();
+        ctx.set_renderer(&mut renderer);
+        let mut scene = DeskScene::new();
+        let root = scene.root();
+        let desktop = scene.tree_create(root);
+        scene.rect_create(desktop, (320, 200), [1.0; 4]);
+        scene.rect_create(desktop, (160, 200), [0.0, 0.0, 0.0, 1.0]);
+        let windows = scene.tree_create(root);
+        let _under =
+            over_glass.then(|| glass_window(&mut scene, &ctx, windows, (60, 20), (200, 160), None));
+        let sheet = scene.tree_create(root);
+        scene.set_position(sheet, 100, 50);
+        scene.set_opacity(sheet, opacity);
+        let chrome = scene.tree_create(sheet);
+        leave_out(&mut scene, chrome);
+        let mut glass = Backdrop::new(&ctx);
+        glass.set(&mut scene, &ctx, chrome, Some(sheet_pane((120, 100), &[])));
+        let red = red_at(&mut renderer, &ctx, &scene, material, &[(157, 100)])[0];
+        Some((red, ctx.made.borrow().len()))
+    }
+
+    #[test]
+    fn glass_in_a_faded_tree_blurs_in_proportion_to_the_trees_opacity() {
+        for material in [Material::Frosted, Material::Smoked, Material::Molten] {
+            for over_glass in [false, true] {
+                let Some((blurred, _)) = faded_edge(material, 1.0, over_glass) else {
+                    eprintln!("skipped: no renderer");
+                    return;
+                };
+                let (half, _) = faded_edge(material, 0.5, over_glass).unwrap();
+                let (bare, _) = faded_edge(material, 0.0, over_glass).unwrap();
+                let what = format!("{material:?}, over glass {over_glass}");
+                assert!(
+                    blurred > bare,
+                    "{what}: the glass blurs white into the black"
+                );
+                let mid = (blurred + bare) / 2;
+                assert!(
+                    half.abs_diff(mid) <= 2,
+                    "{what}: at 0.5 the edge is halfway, {mid}: {half}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn glass_in_a_tree_at_opacity_0_makes_no_element() {
+        let Some((red, made)) = faded_edge(Material::Molten, 0.0, false) else {
+            eprintln!("skipped: no renderer");
+            return;
+        };
+        assert_eq!(made, 0, "no glass element");
+        assert_eq!(red, 0, "the black shows unblurred");
+    }
 }
