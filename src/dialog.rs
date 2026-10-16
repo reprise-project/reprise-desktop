@@ -1258,10 +1258,29 @@ impl Dialog {
         })
     }
 
-    /// Whether the dialog has a taskbar button: only End Program, which stands for an unresponsive
-    /// program.
+    /// Whether the dialog has a taskbar button: End Program, which stands for an unresponsive
+    /// program, and every [`Dialog::windowed`] one.
     pub fn on_taskbar(&self) -> bool {
-        matches!(self.style, Style::EndProgram)
+        matches!(self.style, Style::EndProgram) || self.windowed()
+    }
+
+    /// Whether the dialog stands among the windows rather than over them: it goes behind the
+    /// window clicked, and its task button minimises and restores it. The copy progress dialog.
+    pub fn windowed(&self) -> bool {
+        matches!(self.style, Style::Copy(_))
+    }
+
+    /// The icon theme name its task button shows; without one it draws the fallback glyph.
+    pub fn task_icon(&self) -> Option<&str> {
+        matches!(self.style, Style::Copy(_)).then_some("system-file-manager")
+    }
+
+    /// The job's progress its task button fills with.
+    pub fn task_progress(&self) -> Option<reprisekit::taskbar::TaskProgress> {
+        self.copy().map(|c| reprisekit::taskbar::TaskProgress {
+            fraction: c.cp.fraction(),
+            paused: c.cp.status.paused,
+        })
     }
 
     pub fn chooser(&self) -> Option<&Chooser> {
@@ -7126,11 +7145,14 @@ mod tests {
     }
 
     #[test]
-    fn only_end_program_has_a_taskbar_button() {
+    fn end_program_and_windowed_dialogs_have_a_taskbar_button() {
         assert!(Dialog::end_program("foot", 4321).on_taskbar());
+        assert!(!Dialog::end_program("foot", 4321).windowed());
         assert!(!Dialog::run(&[]).on_taskbar());
         assert!(!Dialog::log_off().on_taskbar());
         assert!(!Dialog::error("Title", "Text".into()).on_taskbar());
+        assert!(!Dialog::run(&[]).windowed());
+        assert!(!Dialog::error("Title", "Text".into()).windowed());
     }
 
     #[test]
@@ -10108,6 +10130,27 @@ mod tests {
         assert!(matches!(hit, Some(DialogHit::Control(_))), "{hit:?}");
         d.click(hit);
         assert_eq!(d.release(hit), Outcome::CopyCancel);
+    }
+
+    #[test]
+    fn the_copy_dialog_is_a_windowed_task_with_the_jobs_progress() {
+        use reprisekit::controls::copyprogress::{CopyProgress, Kind, Phase, Status};
+        let mut cp = CopyProgress::new(Kind::Copy, "Downloads", "KINGSTON", Color::rgb(0, 0, 0));
+        let st = Status {
+            phase: Phase::Copying,
+            paused: true,
+            bytes: 25,
+            total_bytes: 100,
+            ..Status::default()
+        };
+        cp.update(st, 0);
+        let d = Dialog::copy_progress(cp, "/media/KINGSTON".into());
+        assert!(d.windowed());
+        assert!(d.on_taskbar());
+        assert_eq!(d.task_icon(), Some("system-file-manager"));
+        let p = d.task_progress().expect("a copy's progress");
+        assert_eq!((p.fraction, p.paused), (0.25, true));
+        assert_eq!(Dialog::end_program("foot", 4321).task_progress(), None);
     }
 
     #[test]

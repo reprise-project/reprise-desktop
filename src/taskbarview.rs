@@ -87,6 +87,8 @@ struct TaskDialog {
     place: Place,
     title: String,
     active: bool,
+    icon: Option<String>,
+    progress: Option<reprisekit::taskbar::TaskProgress>,
 }
 
 impl TaskWindows {
@@ -119,6 +121,8 @@ impl TaskWindows {
                 },
                 title: v.dialog.title.clone(),
                 active: top == Some(v.id),
+                icon: v.dialog.task_icon().map(String::from),
+                progress: v.dialog.task_progress(),
             })
             .collect();
         TaskWindows {
@@ -839,7 +843,12 @@ impl State {
                     .dialog
                     .and_then(|id| dialogs.iter().find(|d| d.id == id))
                 {
-                    return crate::taskbar::dialog_entry(&d.title, d.active);
+                    let icon = (d.icon.as_deref()).and_then(|n| icons.get_shared(n, task_px));
+                    return TaskEntry {
+                        glow: glow_of(&icon),
+                        icon,
+                        ..crate::taskbar::dialog_entry(&d.title, d.active)
+                    };
                 }
                 if group.is_empty() {
                     let name = slot.pin.and_then(|k| pin_icons.get(k).cloned().flatten());
@@ -906,10 +915,11 @@ impl State {
         });
         bar.task_hot_x_drawn = bar.task_hot_x.filter(|_| spot);
         let (task_shift, task_float) = taskslide::draw_state(bar, Instant::now());
-        let task_progress = bar
-            .buttons
-            .iter()
-            .map(|wins| {
+        let task_progress = (bar.buttons.iter().zip(&bar.dialogs))
+            .map(|(wins, dialog)| {
+                if let Some(id) = dialog {
+                    return (dialogs.iter().find(|d| d.id == *id)).and_then(|d| d.progress);
+                }
                 wins.iter().find_map(|id| {
                     let w = self.windows.iter().find(|w| w.id == *id)?;
                     self.launcher_entries.progress(&w.app_id(), &self.app_index)
@@ -1197,7 +1207,7 @@ impl State {
             TaskbarHit::Task(i) => {
                 if let Some(id) = self.task_button_dialog(tree, i) {
                     if button == BTN_LEFT {
-                        self.focus_dialog(id);
+                        self.task_dialog_click(id);
                     }
                     return;
                 }
@@ -1743,7 +1753,7 @@ impl State {
 
     pub fn task_button_click(&mut self, tree: TreeId, i: usize, list_was_open: bool) {
         if let Some(id) = self.task_button_dialog(tree, i) {
-            self.focus_dialog(id);
+            self.task_dialog_click(id);
             return;
         }
         let Some(wins) = self.bar(tree).and_then(|b| b.buttons.get(i).cloned()) else {
