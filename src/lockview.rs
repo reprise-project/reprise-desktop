@@ -347,6 +347,10 @@ fn cancel_interaction(state: &mut State) {
     match state.interaction {
         Interaction::Drag { .. } => state.drag_view_cancel(),
         Interaction::Marquee => state.end_marquee(),
+        Interaction::Stir => {
+            state.end_marquee();
+            state.stir_cancel(reprisekit::fluid::Source::Pointer);
+        }
         Interaction::BarMove { .. } | Interaction::BarWidth { .. } => state.cancel_bar_drag(),
         _ => {}
     }

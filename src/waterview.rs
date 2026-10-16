@@ -2,14 +2,16 @@
 //!
 //! A field steps only while it moves: once its [`Energy`] is idle it is flattened and left alone.
 //! A covered desktop pane (fullscreen, lock, saver) steps nothing and gets no rain. A pane whose
-//! GL work failed draws nothing and its wallpaper buffers show again.
+//! GL work failed draws nothing and its wallpaper buffers show again. Fluid styles stir desktops.
 
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::rc::Rc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+use reprisefx::fluid::{FluidFx, FluidPool};
 use reprisefx::water::{Pool, WaterFx};
+use reprisekit::fluid::{Force, Hands, Profile, Source};
 use reprisekit::water::{
     Clock, Energy, Preset, Queue, REFERENCE_HZ, Rain, Rate, SPLASHES_PER_STEP, STIRRED_SECS,
     Splash, Step, Water, field_point, field_size, rain_steps_per_frame,
@@ -29,7 +31,7 @@ use smithay::{
 
 use crate::compositor::State;
 use crate::dragview::DragSource;
-use crate::input::Hit;
+use crate::input::{Hit, Interaction};
 use crate::raster::{Canvas, Rect};
 use crate::theme::Color;
 
@@ -51,8 +53,12 @@ pub struct WaterCtx {
     /// None before the backend starts or when the programs did not compile: every pane then fails
     /// and the plain wallpaper shows.
     fx: RefCell<Option<WaterFx>>,
+    /// As `fx`, for the fluid styles' panes.
+    fluid_fx: RefCell<Option<FluidFx>>,
     panes: RefCell<HashMap<Key, PaneState>>,
-    preset: Cell<Option<Preset>>,
+    style: Cell<Water>,
+    /// The output whose desktop pane each held source stirs.
+    stirs: RefCell<HashMap<Source, String>>,
     rate: Cell<Rate>,
     /// A pane failed since `water_frame` last looked: its buffers show again.
     fell: Cell<bool>,
@@ -60,8 +66,42 @@ pub struct WaterCtx {
     edge: Cell<EdgeDrag>,
 }
 
+/// What a pane runs: ripples, or a fluid style's sim and the hands stirring it.
+enum Sim {
+    Ripples(Pool),
+    Fluid {
+        pool: Box<FluidPool>,
+        hands: Hands,
+        /// Ink's light (0) or dark (1) look; 0 for the other profiles.
+        flavour: usize,
+        last_input: Option<Instant>,
+    },
+}
+
+impl Sim {
+    fn for_pane(style: Water, pane: Pane) -> Sim {
+        match style.fluid().filter(|_| pane == Pane::Desktop) {
+            Some(profile) => Sim::Fluid {
+                pool: Box::new(FluidPool::new()),
+                hands: Hands::new(profile, 0),
+                flavour: 0,
+                last_input: None,
+            },
+            None => Sim::Ripples(Pool::new()),
+        }
+    }
+}
+
+/// The flavour a pane starting from empty takes: Ink alternates, the others have one.
+fn next_flavour(profile: Profile, flavour: usize) -> usize {
+    match profile {
+        Profile::Ink => 1 - flavour.min(1),
+        _ => 0,
+    }
+}
+
 struct PaneState {
-    pool: Pool,
+    sim: Sim,
     id: Id,
     prev_id: Id,
     pending: Option<Canvas>,
@@ -90,12 +130,16 @@ struct PaneState {
     node: Option<CustomId>,
     node_size: Size<i32, Logical>,
     failed: bool,
+    /// The fluid's clock start for `Hands` and the shaders: when the pane was made or last faded.
+    epoch: Instant,
+    /// The level shown as of the last step (`reprisekit::fluid::shown_level`).
+    level: f32,
 }
 
 impl PaneState {
-    fn new(seed: u32) -> PaneState {
+    fn new(seed: u32, sim: Sim) -> PaneState {
         PaneState {
-            pool: Pool::new(),
+            sim,
             id: Id::new(),
             prev_id: Id::new(),
             pending: None,
@@ -118,11 +162,52 @@ impl PaneState {
             node: None,
             node_size: Size::default(),
             failed: false,
+            epoch: Instant::now(),
+            level: 0.0,
         }
     }
 
     fn bump(&mut self) {
         self.wall_commit.increment();
+    }
+
+    fn import_pending(&mut self, r: &mut GlesRenderer) -> Result<(), GlesError> {
+        if let Some(c) = self.pending.take() {
+            self.texture = Some(import(r, &c)?);
+            self.bump();
+        }
+        Ok(())
+    }
+
+    /// The steps at `hz` that `now` is due; none while stopped.
+    fn due_steps(&mut self, hz: f32, now: Instant) -> u32 {
+        let dt = self
+            .last
+            .map_or(0.0, |l| now.saturating_duration_since(l).as_secs_f32());
+        self.last = Some(now);
+        if self.running {
+            self.clock.steps(dt, hz)
+        } else {
+            0
+        }
+    }
+
+    /// As `due_steps`, without catching up on late frames (`Clock::steps_no_catch_up`).
+    fn due_steps_no_catch_up(&mut self, hz: f32, refresh: f32, now: Instant) -> u32 {
+        let dt = self
+            .last
+            .map_or(0.0, |l| now.saturating_duration_since(l).as_secs_f32());
+        self.last = Some(now);
+        if self.running {
+            self.clock.steps_no_catch_up(dt, hz, refresh)
+        } else {
+            0
+        }
+    }
+
+    /// Ms since `epoch`, the clock `Hands` runs on.
+    fn ms(&self, now: Instant) -> u32 {
+        now.saturating_duration_since(self.epoch).as_millis() as u32
     }
 
     /// Import a pending picture and, unless covered, run the steps at `hz` that `now` is due and
@@ -136,23 +221,18 @@ impl PaneState {
         rains: bool,
         now: Instant,
     ) -> Result<(), GlesError> {
+        self.import_pending(r)?;
+        let Sim::Ripples(pool) = &mut self.sim else {
+            return Ok(());
+        };
         let (w, h) = field_size((self.size.w, self.size.h));
-        self.pool.fit(r, fx, (w, h).into())?;
-        if let Some(c) = self.pending.take() {
-            self.texture = Some(import(r, &c)?);
-            self.bump();
-        }
+        pool.fit(r, fx, (w, h).into())?;
         if self.covered {
             return Ok(());
         }
-        let dt = self
-            .last
-            .map_or(0.0, |l| now.saturating_duration_since(l).as_secs_f32());
-        self.last = Some(now);
-        let n = if self.running {
-            self.clock.steps(dt, hz)
-        } else {
-            0
+        let n = self.due_steps(hz, now);
+        let Sim::Ripples(pool) = &mut self.sim else {
+            return Ok(());
         };
         let step = Step::new(preset.damping, hz);
         for _ in 0..n {
@@ -168,18 +248,98 @@ impl PaneState {
                     }
                 })
                 .collect();
-            self.pool.step(r, fx, &splashes, &self.obstacles, step)?;
+            pool.step(r, fx, &splashes, &self.obstacles, step)?;
             self.energy.step(step.damping);
         }
         if n > 0 {
-            self.pool.shade(r, fx, SLOPE_GAIN)?;
+            pool.shade(r, fx, SLOPE_GAIN)?;
         }
         if self.running && self.energy.idle() && self.queue.is_empty() && !rains {
-            self.pool.flatten(r, fx)?;
+            pool.flatten(r, fx)?;
             self.running = false;
         }
         Ok(())
     }
+
+    /// As `advance`, for a fluid pane: the due steps at `hz` on `refresh` Hz frames, no catch-up,
+    /// the hands' forces in the first, a shade after them, and once faded a cleared, stopped pane.
+    fn advance_fluid(
+        &mut self,
+        r: &mut GlesRenderer,
+        fx: &FluidFx,
+        profile: Profile,
+        (hz, refresh): (f32, f32),
+        scale: f64,
+        now: Instant,
+    ) -> Result<(), GlesError> {
+        self.import_pending(r)?;
+        let Sim::Fluid { pool, .. } = &mut self.sim else {
+            return Ok(());
+        };
+        pool.fit(r, fx, self.size)?;
+        if self.covered {
+            return Ok(());
+        }
+        let dt = self
+            .last
+            .map_or(0.0, |l| now.saturating_duration_since(l).as_secs_f32());
+        let n = self.due_steps_no_catch_up(hz, refresh, now);
+        let ms = self.ms(now);
+        let time_s = now.saturating_duration_since(self.epoch).as_secs_f32();
+        let Sim::Fluid {
+            pool,
+            hands,
+            flavour,
+            last_input,
+        } = &mut self.sim
+        else {
+            return Ok(());
+        };
+        let look = profile.look();
+        let mut cleared = false;
+        for i in 0..n {
+            let forces = if i == 0 { hands.frame(ms) } else { Vec::new() };
+            cleared |= forces.contains(&Force::Clear);
+            pool.step(r, fx, &forces, scale, look, 1.0 / hz)?;
+        }
+        if cleared {
+            *flavour = next_flavour(profile, *flavour);
+            hands.set_flavour(*flavour);
+        }
+        if n > 0 {
+            pool.shade(r, fx, profile, *flavour, time_s)?;
+        }
+        let idle = idle_s(last_input, hands.holding(), now);
+        let level = if self.running && !hands.active() && reprisekit::fluid::faded(idle) {
+            pool.clear(r, fx)?;
+            *flavour = next_flavour(profile, *flavour);
+            *hands = Hands::new(profile, *flavour);
+            *last_input = None;
+            self.epoch = now;
+            self.running = false;
+            0.0
+        } else if self.running {
+            reprisekit::fluid::shown_level(self.level, reprisekit::fluid::level(idle), dt)
+        } else {
+            self.level
+        };
+        // Damage follows the commit: a fade between steps must still redraw.
+        if level != self.level {
+            self.level = level;
+            self.bump();
+        }
+        Ok(())
+    }
+}
+
+/// Idle seconds at `now` since `last_input`; a held source is input now.
+fn idle_s(last_input: &mut Option<Instant>, holding: bool, now: Instant) -> f32 {
+    if holding {
+        *last_input = Some(now);
+    }
+    last_input.map_or(f32::INFINITY, |t| {
+        now.saturating_duration_since(t).as_secs_f32()
+    })
 }
 
 fn refresh_hz(output: &Output) -> f32 {
@@ -214,24 +374,36 @@ impl WaterCtx {
             .map_err(|e| log::warn!("water: no ripples, the shaders did not compile: {e}"))
             .ok();
         *self.fx.borrow_mut() = fx;
+        let fluid = FluidFx::new(renderer)
+            .map_err(|e| match e {
+                GlesError::GLExtensionNotSupported(needs) => {
+                    log::warn!("water: no fluid, the GPU lacks {}", needs.join(", "))
+                }
+                e => log::warn!("water: no fluid, its GL setup failed: {e}"),
+            })
+            .ok();
+        *self.fluid_fx.borrow_mut() = fluid;
     }
 
-    /// Store `preset` and keep a desktop pane for each of `desktops` (desktop keys), dropping the
-    /// other desktop panes; lock panes stay. None drops every pane. Returns the dropped nodes.
+    /// Store `style` and keep a desktop pane per desktop key, dropping the rest (all of them on a
+    /// fluid or profile change, lock panes too when off). Returns the dropped nodes.
     pub fn configure(
         &self,
-        preset: Option<Preset>,
+        style: Water,
         desktops: impl Iterator<Item = (String, Pane)>,
     ) -> Vec<CustomId> {
-        self.preset.set(preset);
+        let rebuild = self.style.replace(style).fluid() != style.fluid();
+        if rebuild {
+            self.stirs.borrow_mut().clear();
+        }
         let mut panes = self.panes.borrow_mut();
-        if preset.is_none() {
+        if style == Water::Off {
             return panes.drain().filter_map(|(_, p)| p.node).collect();
         }
         let keep: Vec<Key> = desktops.filter(|(_, p)| *p == Pane::Desktop).collect();
         let mut dropped = Vec::new();
         panes.retain(|k, p| {
-            let stays = k.1 != Pane::Desktop || keep.contains(k);
+            let stays = k.1 != Pane::Desktop || (keep.contains(k) && !rebuild);
             if !stays {
                 dropped.extend(p.node);
             }
@@ -239,9 +411,17 @@ impl WaterCtx {
         });
         for k in keep {
             let n = panes.len();
-            panes.entry(k).or_insert_with(|| PaneState::new(seed(n)));
+            let sim = Sim::for_pane(style, k.1);
+            panes
+                .entry(k)
+                .or_insert_with(|| PaneState::new(seed(n), sim));
         }
         dropped
+    }
+
+    /// `[wallpaper] water` as of the last `configure`.
+    pub fn style(&self) -> Water {
+        self.style.get()
     }
 
     /// Make `pane` of `output_name` unless it exists. The lock screen's way in: `configure` makes
@@ -249,9 +429,10 @@ impl WaterCtx {
     pub fn add_pane(&self, output_name: &str, pane: Pane) {
         let mut panes = self.panes.borrow_mut();
         let n = panes.len();
+        let sim = Sim::for_pane(self.style.get(), pane);
         panes
             .entry((output_name.to_string(), pane))
-            .or_insert_with(|| PaneState::new(seed(n)));
+            .or_insert_with(|| PaneState::new(seed(n), sim));
     }
 
     /// Drop `pane` of `output_name`; returns its node, if it had one.
@@ -267,12 +448,18 @@ impl WaterCtx {
         self.rate.set(rate);
     }
 
-    /// The lock screen always ripples with Calm's damping, whatever the preset.
-    pub fn damping_for(&self, pane: Pane) -> f32 {
-        let calm = Water::Calm.preset().expect("Calm has a preset").damping;
+    /// The ripples' preset of `pane`: the lock screen ripples with Calm's damping under any style,
+    /// and as Calm under a fluid one. None while off, and for a fluid desktop.
+    fn preset_for(&self, pane: Pane) -> Option<Preset> {
+        let style = self.style.get();
+        let calm = Water::Calm.preset().expect("Calm has a preset");
         match pane {
-            Pane::Desktop => self.preset.get().map_or(calm, |p| p.damping),
-            Pane::Lock => calm,
+            Pane::Desktop => style.preset(),
+            Pane::Lock if style == Water::Off => None,
+            Pane::Lock => Some(Preset {
+                damping: calm.damping,
+                ..style.preset().unwrap_or(calm)
+            }),
         }
     }
 
@@ -299,6 +486,7 @@ impl WaterCtx {
             .panes
             .borrow_mut()
             .get_mut(&(output_name.to_string(), pane))
+            .filter(|p| matches!(p.sim, Sim::Ripples(_)))
         {
             if !p.running {
                 p.last = None;
@@ -307,6 +495,44 @@ impl WaterCtx {
             push(&mut p.queue);
             p.running = true;
         }
+    }
+
+    fn takes_stir(&self, output_name: &str) -> bool {
+        self.fluid_fx.borrow().is_some()
+            && self
+                .panes
+                .borrow()
+                .get(&(output_name.to_string(), Pane::Desktop))
+                .is_some_and(|p| !p.covered && !p.failed && matches!(p.sim, Sim::Fluid { .. }))
+    }
+
+    /// Feed the hands of `output_name`'s fluid desktop pane at ms on their clock (`input` restarts
+    /// a stopped pane). False, dropping the input, without a live uncovered pane.
+    fn stir(&self, output_name: &str, input: bool, feed: impl FnOnce(&mut Hands, u32)) -> bool {
+        let mut panes = self.panes.borrow_mut();
+        let Some(p) = panes
+            .get_mut(&(output_name.to_string(), Pane::Desktop))
+            .filter(|p| !p.covered && !p.failed)
+        else {
+            return false;
+        };
+        let now = Instant::now();
+        let ms = p.ms(now);
+        let Sim::Fluid {
+            hands, last_input, ..
+        } = &mut p.sim
+        else {
+            return false;
+        };
+        feed(hands, ms);
+        if input {
+            *last_input = Some(now);
+            if !p.running {
+                p.last = None;
+                p.running = true;
+            }
+        }
+        true
     }
 
     /// Hold `field_rects` (field texels) flat in the desktop field of `output_name`.
@@ -327,7 +553,7 @@ impl WaterCtx {
     }
 
     fn prepare_named(&self, name: &str, covered: bool, now: Instant) {
-        let rain = self.preset.get().and_then(|p| p.rain);
+        let rain = self.style.get().preset().and_then(|p| p.rain);
         for ((n, pane), p) in self.panes.borrow_mut().iter_mut() {
             if n != name || p.failed {
                 continue;
@@ -335,6 +561,9 @@ impl WaterCtx {
             p.covered = *pane == Pane::Desktop && covered;
             if p.covered {
                 p.last = None;
+                if let Sim::Fluid { hands, .. } = &mut p.sim {
+                    hands.cancel_all();
+                }
                 continue;
             }
             let rains = *pane == Pane::Desktop && rain.is_some();
@@ -360,7 +589,7 @@ impl WaterCtx {
     }
 
     fn next_step_named(&self, name: &str, now: Instant) -> Option<Instant> {
-        let rain = self.preset.get().is_some_and(|p| p.rain.is_some());
+        let rain = self.style.get().preset().is_some_and(|p| p.rain.is_some());
         self.panes
             .borrow()
             .iter()
@@ -390,17 +619,21 @@ impl WaterCtx {
     /// Step `output`'s fields for the frame about to be built. True when a pane failed: its node
     /// draws nothing from now on.
     pub fn step(&self, renderer: &mut GlesRenderer, output: &Output) -> bool {
-        let Some(preset) = self.preset.get() else {
+        let style = self.style.get();
+        if style == Water::Off {
             return false;
-        };
+        }
         let size = output
             .current_mode()
             .map(|m| output.current_transform().transform_size(m.size))
             .unwrap_or_default();
         let name = output.name();
-        let hz = self.rate.get().hz(refresh_hz(output));
+        let refresh = refresh_hz(output);
+        let hz = self.rate.get().hz(refresh);
         let now = Instant::now();
+        let scale = output.current_scale().fractional_scale();
         let fx = self.fx.borrow();
+        let fluid_fx = self.fluid_fx.borrow();
         let mut fell = false;
         for ((n, pane), p) in self.panes.borrow_mut().iter_mut() {
             if *n != name || p.failed {
@@ -408,17 +641,22 @@ impl WaterCtx {
             }
             p.size = size;
             p.hz = hz;
-            let rains = *pane == Pane::Desktop && preset.rain.is_some();
-            let Some(fx) = fx.as_ref() else {
+            let done = match (&p.sim, style.fluid(), self.preset_for(*pane)) {
+                (Sim::Fluid { .. }, Some(profile), _) => fluid_fx
+                    .as_ref()
+                    .map(|fx| p.advance_fluid(renderer, fx, profile, (hz, refresh), scale, now)),
+                (Sim::Ripples(_), _, Some(preset)) => fx.as_ref().map(|fx| {
+                    let rains = *pane == Pane::Desktop && preset.rain.is_some();
+                    p.advance(renderer, fx, &preset, hz, rains, now)
+                }),
+                _ => None,
+            };
+            let Some(done) = done else {
                 p.failed = true;
                 fell = true;
                 continue;
             };
-            let preset = Preset {
-                damping: self.damping_for(*pane),
-                ..preset
-            };
-            if let Err(e) = p.advance(renderer, fx, &preset, hz, rains, now) {
+            if let Err(e) = done {
                 log::warn!("water: {e}");
                 p.failed = true;
                 fell = true;
@@ -465,10 +703,6 @@ impl CustomNode<GlesRenderer> for WaterNode {
         scale: Scale<f64>,
         alpha: f32,
     ) -> Vec<CustomElement<GlesRenderer>> {
-        let fx = self.ctx.fx.borrow();
-        let (Some(fx), Some(preset)) = (fx.as_ref(), self.ctx.preset.get()) else {
-            return Vec::new();
-        };
         let panes = self.ctx.panes.borrow();
         let Some(p) = panes.get(&self.key).filter(|p| !p.failed) else {
             return Vec::new();
@@ -477,8 +711,38 @@ impl CustomNode<GlesRenderer> for WaterNode {
             location.to_i32_round(),
             self.size.to_physical_precise_round(scale),
         );
+        let pool = match &p.sim {
+            Sim::Ripples(pool) => pool,
+            Sim::Fluid { pool, flavour, .. } => {
+                let fx = self.ctx.fluid_fx.borrow();
+                let (Some(fx), Some(profile), Some(t)) =
+                    (fx.as_ref(), self.ctx.style.get().fluid(), &p.texture)
+                else {
+                    return Vec::new();
+                };
+                let look = profile.look();
+                return pool
+                    .element(
+                        fx,
+                        &p.id,
+                        t,
+                        p.wall_commit,
+                        geometry,
+                        look,
+                        *flavour,
+                        p.level,
+                    )
+                    .map(CustomElement::new)
+                    .into_iter()
+                    .collect();
+            }
+        };
+        let fx = self.ctx.fx.borrow();
+        let (Some(fx), Some(preset)) = (fx.as_ref(), self.ctx.preset_for(self.key.1)) else {
+            return Vec::new();
+        };
         let element = |id: &Id, t: &GlesTexture, a: f32| {
-            p.pool.element(
+            pool.element(
                 fx,
                 id,
                 t,
@@ -507,9 +771,19 @@ impl CustomNode<GlesRenderer> for WaterNode {
 }
 
 impl State {
-    /// Whether `[wallpaper] water` is on.
+    /// Whether `[wallpaper] water` is on, rippling or fluid.
     pub fn water_on(&self) -> bool {
+        self.config.wallpaper.water != Water::Off
+    }
+
+    /// Whether `[wallpaper] water` is a ripple style: windows, icons and clicks splash it.
+    pub fn ripples_on(&self) -> bool {
         self.config.wallpaper.water.preset().is_some()
+    }
+
+    /// Whether `[wallpaper] water` is a fluid style: the desktop's pointer and fingers stir it.
+    pub fn fluid_on(&self) -> bool {
+        self.config.wallpaper.water.is_fluid()
     }
 
     /// Follow `[wallpaper] water` and the outputs: a desktop pane and node per output while on,
@@ -517,17 +791,25 @@ impl State {
     /// `refit_wallpaper` and reload; cheap when nothing changed.
     pub fn water_configured(&mut self) {
         self.water.set_rate(self.config.wallpaper.water_rate);
-        let Some(preset) = self.config.wallpaper.water.preset() else {
+        let style = self.config.wallpaper.water;
+        if self.water.style().fluid() != style.fluid() {
+            self.ignore_stirring_fingers();
+            if self.interaction == Interaction::Stir {
+                self.interaction = Interaction::Idle;
+                self.end_marquee();
+            }
+        }
+        if style == Water::Off {
             if self.water.pane_keys().is_empty() {
                 return;
             }
-            for node in self.water.configure(None, std::iter::empty()) {
+            for node in self.water.configure(Water::Off, std::iter::empty()) {
                 self.scene.destroy(node);
             }
             self.water_buffers();
             self.redraw_all();
             return;
-        };
+        }
         let outputs: Vec<Output> = self.scene.outputs().to_vec();
         let keys: Vec<Key> = outputs
             .iter()
@@ -535,7 +817,7 @@ impl State {
             .map(|o| (o.name(), Pane::Desktop))
             .collect();
         let mut changed = false;
-        for node in self.water.configure(Some(preset), keys.into_iter()) {
+        for node in self.water.configure(style, keys.into_iter()) {
             self.scene.destroy(node);
             changed = true;
         }
@@ -700,7 +982,11 @@ impl State {
         if !self.pointer_free() || !matches!(self.scene_hit(to), Hit::Desktop { index: None }) {
             return;
         }
-        self.water_wake(Pane::Desktop, from, to);
+        if self.fluid_on() {
+            self.stir_hover(to);
+        } else {
+            self.water_wake(Pane::Desktop, from, to);
+        }
     }
 
     /// A press on the lock screen at `at` (layout): a click in the lock water there unless the
@@ -786,7 +1072,7 @@ impl State {
     /// lets the dragged icons' water move, the rest leave a wake from `from` while `to` is over the
     /// desktop.
     pub fn water_icon_drag(&mut self, from: Option<Point<f64, Logical>>, to: Point<f64, Logical>) {
-        if !self.water_on() {
+        if !self.ripples_on() {
             return;
         }
         match from {
@@ -798,7 +1084,7 @@ impl State {
 
     /// An icon drag dropped at `at`: a click in the water there when it fell on the desktop.
     pub fn water_icon_drop(&mut self, at: Point<f64, Logical>) {
-        if self.water_on() && self.over_desktop(at) {
+        if self.ripples_on() && self.over_desktop(at) {
             self.water_click(at);
         }
     }
@@ -823,7 +1109,7 @@ impl State {
     /// A window being dragged moves away from `from`: remembered until the frame settles
     /// (`water_edge_settle`), however many moves come first.
     pub fn water_edge_moved(&mut self, from: Rect) {
-        if self.water_on() {
+        if self.ripples_on() {
             let mut e = self.water.edge.get();
             e.moved(from);
             self.water.edge.set(e);
@@ -833,7 +1119,7 @@ impl State {
     /// The dragged window's frame is `to` for this frame: the wake from where it was at the last
     /// one, over the time since. None (no drag moved it) forgets a move a drag ended with.
     pub fn water_edge_settle(&mut self, to: Option<Rect>) {
-        if !self.water_on() {
+        if !self.ripples_on() {
             return;
         }
         let mut e = self.water.edge.get();
@@ -863,7 +1149,7 @@ impl State {
     /// Hold the desktop icons' cells flat in the first output's desktop field, where they lie,
     /// leaving out the icons a placed drag carries; the other outputs' fields get none.
     pub fn water_obstacles(&mut self) {
-        if !self.water_on() {
+        if !self.ripples_on() {
             return;
         }
         let first = self.first_output();
@@ -906,6 +1192,99 @@ impl State {
         }
     }
 
+    /// Source `s` goes down at `pos` (layout) on a fluid desktop.
+    pub fn stir_down(&mut self, s: Source, pos: Point<f64, Logical>) {
+        let Some((out, at)) = self.stir_at(pos) else {
+            return;
+        };
+        let name = out.name();
+        if self.water.stir(&name, true, |h, ms| h.down(s, at, ms)) {
+            self.water.stirs.borrow_mut().insert(s, name);
+            crate::backend::schedule(self, &out);
+        }
+    }
+
+    /// Held source `s` moves to `pos` (layout), stirring the pane it went down on.
+    pub fn stir_move(&mut self, s: Source, pos: Point<f64, Logical>) {
+        let Some(out) = self.stirred_output(s) else {
+            return;
+        };
+        let b = self.layout_box(Some(&out));
+        let at = local(b, pos);
+        if self
+            .water
+            .stir(&out.name(), true, |h, ms| h.moved(s, at, ms))
+        {
+            crate::backend::schedule(self, &out);
+        }
+    }
+
+    /// Held source `s` comes up: a tap bursts, a flick throws.
+    pub fn stir_up(&mut self, s: Source) {
+        let out = self.stirred_output(s);
+        self.water.stirs.borrow_mut().remove(&s);
+        let Some(out) = out else {
+            return;
+        };
+        if self.water.stir(&out.name(), true, |h, ms| h.up(s, ms)) {
+            crate::backend::schedule(self, &out);
+        }
+    }
+
+    /// Held source `s` ends without a tap or flick.
+    pub fn stir_cancel(&mut self, s: Source) {
+        if let Some(out) = self.stirred_output(s) {
+            self.water.stir(&out.name(), false, |h, _| h.cancel(s));
+        }
+        self.water.stirs.borrow_mut().remove(&s);
+    }
+
+    /// The pointer moves over bare desktop at `pos` (layout) with no button held.
+    pub fn stir_hover(&mut self, pos: Point<f64, Logical>) {
+        let Some((out, at)) = self.stir_at(pos) else {
+            return;
+        };
+        if self.water.stir(&out.name(), true, |h, ms| h.hover(at, ms)) {
+            crate::backend::schedule(self, &out);
+        }
+    }
+
+    /// Clear the fluid of the output under `pos` (layout).
+    pub fn stir_clear(&mut self, pos: Point<f64, Logical>) {
+        let Some((out, _)) = self.stir_at(pos) else {
+            return;
+        };
+        if self.water.stir(&out.name(), true, |h, ms| h.clear(ms)) {
+            crate::backend::schedule(self, &out);
+        }
+    }
+
+    /// Whether a source going down at `pos` (layout) would stir: a fluid desktop pane is there,
+    /// drawing and uncovered, and the GPU runs the fluid.
+    pub fn stir_takes(&self, pos: Point<f64, Logical>) -> bool {
+        self.stir_at(pos)
+            .is_some_and(|(out, _)| self.water.takes_stir(&out.name()))
+    }
+
+    fn stir_at(&self, pos: Point<f64, Logical>) -> Option<(Output, (f32, f32))> {
+        if !self.fluid_on() {
+            return None;
+        }
+        let out = self.output_at(pos.x, pos.y)?;
+        let at = local(self.layout_box(Some(&out)), pos);
+        Some((out, at))
+    }
+
+    fn stirred_output(&self, s: Source) -> Option<Output> {
+        let stirs = self.water.stirs.borrow();
+        let name = stirs.get(&s)?;
+        self.scene
+            .outputs()
+            .iter()
+            .find(|o| o.name() == *name)
+            .cloned()
+    }
+
     fn water_wake(&mut self, pane: Pane, from: Point<f64, Logical>, to: Point<f64, Logical>) {
         let Some(out) = self.output_at(to.x, to.y) else {
             return;
@@ -921,7 +1300,7 @@ impl State {
     }
 
     fn water_lay(&mut self, area: Rect, edge: bool, make: impl Fn((f64, f64), f64) -> Vec<Splash>) {
-        if !self.water_on() {
+        if !self.ripples_on() {
             return;
         }
         let outputs: Vec<Output> = self.scene.outputs().to_vec();
@@ -970,6 +1349,14 @@ impl EdgeDrag {
 /// Only beside the built-in dialog; None (a locker holds the lock or is starting) keeps it still.
 fn lock_splash_allowed(dialog: Option<Rect>, at: (f64, f64)) -> bool {
     dialog.is_some_and(|d| !d.contains(at.0.floor() as i32, at.1.floor() as i32))
+}
+
+/// `pos` (layout) in logical px of the output at `b`.
+fn local(b: Rect, pos: Point<f64, Logical>) -> (f32, f32) {
+    (
+        (pos.x - f64::from(b.x)) as f32,
+        (pos.y - f64::from(b.y)) as f32,
+    )
 }
 
 fn local_wake(origin: (f64, f64), scale: f64, from: (f64, f64), to: (f64, f64)) -> Option<Splash> {
@@ -1024,7 +1411,7 @@ mod tests {
     fn ctx_with(outputs: &[&str]) -> Rc<WaterCtx> {
         let ctx = WaterCtx::new();
         ctx.configure(
-            Water::Calm.preset(),
+            Water::Calm,
             outputs.iter().map(|o| (o.to_string(), Pane::Desktop)),
         );
         ctx
@@ -1058,7 +1445,7 @@ mod tests {
         let ctx = ctx_with(&["DP-1", "HDMI-A-1"]);
         assert_eq!(ctx.pane_keys().len(), 2);
         ctx.configure(
-            Water::Calm.preset(),
+            Water::Calm,
             [("DP-1".to_string(), Pane::Desktop)].into_iter(),
         );
         assert_eq!(ctx.pane_keys(), vec![("DP-1".to_string(), Pane::Desktop)]);
@@ -1068,7 +1455,7 @@ mod tests {
     fn turning_water_off_drops_every_pane() {
         let ctx = ctx_with(&["DP-1"]);
         ctx.splash("DP-1", Pane::Desktop, Splash::disc((1.0, 1.0), 2.0, -0.5));
-        ctx.configure(None, std::iter::empty());
+        ctx.configure(Water::Off, std::iter::empty());
         assert!(ctx.pane_keys().is_empty());
         assert_eq!(wants(&ctx, false), None, "nothing left to step");
     }
@@ -1105,7 +1492,7 @@ mod tests {
     fn rain_alone_asks_for_frames_at_rain_fps_and_a_splash_for_every_step() {
         let ctx = WaterCtx::new();
         ctx.configure(
-            Water::Rain.preset(),
+            Water::Rain,
             [("DP-1".to_string(), Pane::Desktop)].into_iter(),
         );
         let key = ("DP-1".to_string(), Pane::Desktop);
@@ -1193,16 +1580,16 @@ mod tests {
     fn the_lock_pane_settles_like_calm_under_any_preset() {
         let ctx = WaterCtx::new();
         ctx.configure(
-            Water::Lively.preset(),
+            Water::Lively,
             [("DP-1".to_string(), Pane::Desktop)].into_iter(),
         );
         ctx.add_pane("DP-1", Pane::Lock);
         assert_eq!(
-            ctx.damping_for(Pane::Lock),
+            ctx.preset_for(Pane::Lock).unwrap().damping,
             Water::Calm.preset().unwrap().damping
         );
         assert_eq!(
-            ctx.damping_for(Pane::Desktop),
+            ctx.preset_for(Pane::Desktop).unwrap().damping,
             Water::Lively.preset().unwrap().damping
         );
     }
@@ -1212,7 +1599,7 @@ mod tests {
         let ctx = ctx_with(&["DP-1"]);
         ctx.add_pane("DP-1", Pane::Lock);
         ctx.configure(
-            Water::Calm.preset(),
+            Water::Calm,
             [("DP-1".to_string(), Pane::Desktop)].into_iter(),
         );
         assert!(
@@ -1223,11 +1610,122 @@ mod tests {
         assert_eq!(ctx.pane_keys(), vec![("DP-1".to_string(), Pane::Desktop)]);
     }
 
+    fn dp1() -> Key {
+        ("DP-1".to_string(), Pane::Desktop)
+    }
+
+    fn is_fluid(ctx: &WaterCtx, key: &Key) -> bool {
+        matches!(ctx.panes.borrow()[key].sim, Sim::Fluid { .. })
+    }
+
+    #[test]
+    fn a_fluid_style_ripples_the_lock_pane_as_calm() {
+        let ctx = WaterCtx::new();
+        ctx.configure(Water::Ink, [dp1()].into_iter());
+        ctx.add_pane("DP-1", Pane::Lock);
+        assert!(is_fluid(&ctx, &dp1()));
+        assert!(!is_fluid(&ctx, &("DP-1".to_string(), Pane::Lock)));
+        assert_eq!(ctx.preset_for(Pane::Lock), Water::Calm.preset());
+        assert_eq!(ctx.preset_for(Pane::Desktop), None);
+    }
+
+    #[test]
+    fn switching_between_ripples_and_fluid_remakes_the_desktop_panes() {
+        let ctx = ctx_with(&["DP-1"]);
+        ctx.add_pane("DP-1", Pane::Lock);
+        ctx.configure(Water::Glow, [dp1()].into_iter());
+        assert!(is_fluid(&ctx, &dp1()), "ripples to fluid");
+        assert_eq!(ctx.pane_keys().len(), 2, "the lock pane stays");
+        ctx.stir("DP-1", true, |h, ms| {
+            h.down(Source::Pointer, (5.0, 5.0), ms)
+        });
+        ctx.configure(Water::Neon, [dp1()].into_iter());
+        assert!(
+            !ctx.panes.borrow()[&dp1()].running,
+            "another profile starts from empty"
+        );
+        ctx.configure(Water::Lively, [dp1()].into_iter());
+        assert!(!is_fluid(&ctx, &dp1()), "fluid to ripples");
+    }
+
+    #[test]
+    fn a_stir_starts_a_stopped_fluid_pane() {
+        let ctx = WaterCtx::new();
+        ctx.configure(Water::Sparks, [dp1()].into_iter());
+        assert_eq!(wants(&ctx, false), None, "an empty fluid asks for nothing");
+        assert!(ctx.stir("DP-1", true, |h, ms| h.hover((5.0, 5.0), ms)));
+        assert!(wants(&ctx, false).is_some());
+    }
+
+    #[test]
+    fn a_cancel_is_no_input() {
+        let ctx = WaterCtx::new();
+        ctx.configure(Water::Sparks, [dp1()].into_iter());
+        assert!(ctx.stir("DP-1", false, |h, _| h.cancel(Source::Pointer)));
+        assert_eq!(wants(&ctx, false), None);
+    }
+
+    #[test]
+    fn a_covered_fluid_pane_lets_go_and_drops_stirs() {
+        let ctx = WaterCtx::new();
+        ctx.configure(Water::Ink, [dp1()].into_iter());
+        ctx.stir("DP-1", true, |h, ms| {
+            h.down(Source::Finger(0), (5.0, 5.0), ms)
+        });
+        wants(&ctx, true);
+        let active = |ctx: &WaterCtx| match &ctx.panes.borrow()[&dp1()].sim {
+            Sim::Fluid { hands, .. } => hands.active(),
+            Sim::Ripples(_) => unreachable!(),
+        };
+        assert!(!active(&ctx), "held sources are cancelled");
+        assert!(!ctx.stir("DP-1", true, |h, ms| h.hover((1.0, 1.0), ms)));
+        assert!(!active(&ctx), "no stir while covered");
+    }
+
+    #[test]
+    fn a_fluid_pane_without_the_programs_or_failed_takes_no_stir() {
+        let ctx = WaterCtx::new();
+        ctx.configure(Water::Ink, [dp1()].into_iter());
+        assert!(!ctx.takes_stir("DP-1"), "no FluidFx: the marquee stays");
+        ctx.panes.borrow_mut().get_mut(&dp1()).unwrap().failed = true;
+        assert!(!ctx.takes_stir("DP-1"), "a failed pane");
+    }
+
+    #[test]
+    fn a_held_source_keeps_the_fluid_from_fading() {
+        let now = Instant::now();
+        let long_ago = now - Duration::from_secs(200);
+        let mut last = Some(long_ago);
+        assert_eq!(idle_s(&mut last, true, now), 0.0);
+        assert_eq!(last, Some(now), "a hold counts as input now");
+        let mut last = Some(long_ago);
+        assert_eq!(idle_s(&mut last, false, now), 200.0);
+        assert_eq!(idle_s(&mut None, false, now), f32::INFINITY);
+    }
+
+    #[test]
+    fn splashes_pass_fluid_panes_by() {
+        let ctx = WaterCtx::new();
+        ctx.configure(Water::Glow, [dp1()].into_iter());
+        ctx.splash("DP-1", Pane::Desktop, Splash::disc((1.0, 1.0), 2.0, -0.5));
+        ctx.splash_edge("DP-1", Splash::disc((1.0, 1.0), 2.0, -0.5));
+        assert_eq!(wants(&ctx, false), None);
+    }
+
+    #[test]
+    fn ink_alternates_its_flavour_and_the_others_keep_one() {
+        assert_eq!(next_flavour(Profile::Ink, 0), 1);
+        assert_eq!(next_flavour(Profile::Ink, 1), 0);
+        for p in [Profile::Glow, Profile::Sparks, Profile::Neon] {
+            assert_eq!(next_flavour(p, 0), 0, "{p:?}");
+        }
+    }
+
     #[test]
     fn rain_waits_for_the_pane_size() {
         let ctx = WaterCtx::new();
         ctx.configure(
-            Water::Rain.preset(),
+            Water::Rain,
             [("DP-1".to_string(), Pane::Desktop)].into_iter(),
         );
         let key = ("DP-1".to_string(), Pane::Desktop);
@@ -1249,7 +1747,7 @@ mod tests {
     fn rain_pauses_when_covered() {
         let ctx = WaterCtx::new();
         ctx.configure(
-            Water::Rain.preset(),
+            Water::Rain,
             [("DP-1".to_string(), Pane::Desktop)].into_iter(),
         );
         assert!(

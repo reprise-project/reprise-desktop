@@ -64,7 +64,8 @@ pub struct DesktopView {
     /// Whether the selection shows its dotted focus ring: hidden until the keyboard
     /// is used on the desktop.
     pub(crate) focus_ring: bool,
-    last_click: DoubleClick<usize>,
+    /// Pairs presses on one icon, or on empty desktop (None).
+    last_click: DoubleClick<Option<usize>>,
     /// An in-progress inline rename: the icon index and the edit.
     pub rename: Option<(usize, TextEdit)>,
     /// Left presses in the rename box, paired into the double click that selects a word.
@@ -1235,24 +1236,25 @@ impl State {
     /// A left press on the desktop at `at`: on a cell it clicks it (Ctrl toggles,
     /// Shift ranges, see `Selection::click`), and a second plain press on the same
     /// cell within `double_click_ms` opens it. A plain press on an icon of a
-    /// multi-selection keeps the set for a drag (`Press::Icon`). On empty desktop it
-    /// clears the selection (Ctrl keeps it) and arms the marquee at `at`.
+    /// multi-selection keeps the set for a drag (`Press::Icon`). On empty desktop it clears the
+    /// selection (Ctrl keeps it), arms the marquee at `at` and is true on a double click.
     pub fn desktop_press(
         &mut self,
         index: Option<usize>,
         at: (i32, i32),
         time_msec: u32,
         mods: Mods,
-    ) {
+    ) -> bool {
         let click = self.config.theme.metrics.click(at.0, at.1, time_msec);
         let Some(view) = self.desktop.as_mut() else {
-            return;
+            return false;
         };
+        let mut empty_double = false;
         let before = view.selection.clone();
         let mut open = None;
         match index.filter(|&i| i < view.entries.len()) {
             Some(i) => {
-                let double = view.last_click.press(i, click);
+                let double = view.last_click.press(Some(i), click);
                 let in_set =
                     mods == Mods::default() && view.selection.len() > 1 && view.selection.is(i);
                 view.press = in_set.then_some(Press::Icon(i));
@@ -1264,7 +1266,7 @@ impl State {
                 }
             }
             None => {
-                view.last_click.reset();
+                empty_double = view.last_click.press(None, click);
                 if !mods.ctrl {
                     view.selection.clear();
                 }
@@ -1282,6 +1284,7 @@ impl State {
         if let Some(i) = open {
             self.open_icon(i);
         }
+        empty_double
     }
 
     /// The button came up after a press that kept a multi-selection (`Press::Icon`):

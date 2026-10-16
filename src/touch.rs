@@ -3,7 +3,7 @@
 //! client without wl_touch), and while Reprise has the pointer, a finger
 //! drives the pointer: the cursor jumps to it and the left button is held
 //! until it lifts. Only a finger that lands with no other down does that;
-//! the rest are ignored until every finger is up.
+//! the rest are ignored until every finger is up. Fluid desktop: all stir.
 //!
 //! Each touchscreen covers one output: the one `[touchscreen] output`
 //! names, else the one udev tags the device with (`WL_OUTPUT`), else the
@@ -15,6 +15,7 @@
 //! down's serial, so the client may start a drag (`dnd`) or a move or size
 //! from a title bar it draws itself (`take_for_grab`).
 
+use reprisekit::fluid::Source;
 use smithay::{
     backend::input::{
         AbsolutePositionEvent, ButtonState, Device, Event, InputBackend, InputTime, TouchEvent,
@@ -41,6 +42,8 @@ pub struct TouchState {
     /// Each touchscreen's `Device::id` and the output udev tags it with.
     devices: Vec<(String, Option<String>)>,
     points: Vec<(TouchSlot, Route)>,
+    /// Where each stirring finger moved since the last frame.
+    stir_moves: Vec<(TouchSlot, Point<f64, Logical>)>,
     /// A client had touch events since the last frame.
     frame_due: bool,
 }
@@ -52,8 +55,46 @@ enum Route {
     Client { at: Point<f64, Logical> },
     /// It drives the pointer and holds the left button.
     Pointer,
+    /// It stirs the fluid desktop pane it went down on.
+    Stir,
     /// Nowhere, until it lifts.
     Ignored,
+}
+
+/// Where a finger goes that no client takes.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Landing {
+    Stir,
+    Pointer,
+    Ignored,
+}
+
+/// Where a finger landing on `hit` goes when no client takes it: bare desktop stirs while
+/// `fluid`, else a `first` finger drives the pointer.
+fn desktop_route(fluid: bool, hit: &Hit, first: bool) -> Landing {
+    match hit {
+        Hit::Desktop { index: None } if fluid => Landing::Stir,
+        _ if first => Landing::Pointer,
+        _ => Landing::Ignored,
+    }
+}
+
+/// The fluid's name for the finger in `slot`.
+fn finger(slot: TouchSlot) -> Source {
+    Source::Finger(u32::try_from(i32::from(slot)).unwrap_or(u32::MAX))
+}
+
+/// The fluid style changed: stirring fingers go nowhere until they lift.
+fn ignore_stirs(
+    points: &mut [(TouchSlot, Route)],
+    stir_moves: &mut Vec<(TouchSlot, Point<f64, Logical>)>,
+) {
+    for (_, r) in points.iter_mut() {
+        if *r == Route::Stir {
+            *r = Route::Ignored;
+        }
+    }
+    stir_moves.clear();
 }
 
 /// Which output a touchscreen maps to: `configured` when in the layout,
@@ -393,9 +434,10 @@ impl State {
         if self.route(slot).is_some() {
             return;
         }
+        self.flush_stirs();
         let pos = self.touch_point(ev);
         let time = Event::time(ev);
-        let first = self.devices.touch.points.is_empty();
+        let first = (self.devices.touch.points.iter()).all(|(_, r)| *r == Route::Stir);
         // Under a capture the input belongs to the other machine.
         let hit = if self.inputproto.gated() {
             Hit::Nothing
@@ -429,12 +471,21 @@ impl State {
                     Route::Ignored
                 }
             }
-            _ if first && !self.inputproto.gated() => {
-                self.pointer_to(pos, time);
-                self.touch_button(true, time);
-                Route::Pointer
+            _ => {
+                let fluid = !self.is_locked() && self.stir_takes(pos);
+                match desktop_route(fluid, &hit, first && !self.inputproto.gated()) {
+                    Landing::Stir => {
+                        self.stir_down(finger(slot), pos);
+                        Route::Stir
+                    }
+                    Landing::Pointer => {
+                        self.pointer_to(pos, time);
+                        self.touch_button(true, time);
+                        Route::Pointer
+                    }
+                    Landing::Ignored => Route::Ignored,
+                }
             }
-            _ => Route::Ignored,
         };
         self.devices.touch.points.push((slot, r));
     }
@@ -477,6 +528,14 @@ impl State {
                 let pos = self.touch_point(ev);
                 self.pointer_to(pos, Event::time(ev));
             }
+            Some(Route::Stir) => {
+                let pos = self.touch_point(ev);
+                let moves = &mut self.devices.touch.stir_moves;
+                match moves.iter_mut().find(|(s, _)| *s == slot) {
+                    Some((_, at)) => *at = pos,
+                    None => moves.push((slot, pos)),
+                }
+            }
             Some(Route::Ignored) | None => {}
         }
     }
@@ -486,6 +545,7 @@ impl State {
     }
 
     fn finger_up(&mut self, slot: TouchSlot, time: InputTime) {
+        self.flush_stirs();
         let points = &mut self.devices.touch.points;
         let Some(i) = points.iter().position(|(s, _)| *s == slot) else {
             return;
@@ -505,6 +565,7 @@ impl State {
                 }
             }
             Route::Pointer => self.touch_button(false, time),
+            Route::Stir => self.stir_up(finger(slot)),
             Route::Ignored => {}
         }
     }
@@ -520,6 +581,11 @@ impl State {
         match self.route(slot) {
             Some(Route::Client { .. }) => {
                 self.cancel_client_touch(time);
+                self.devices.touch.points.retain(|(s, _)| *s != slot);
+                return;
+            }
+            Some(Route::Stir) => {
+                self.drop_stir(slot);
                 self.devices.touch.points.retain(|(s, _)| *s != slot);
                 return;
             }
@@ -569,6 +635,7 @@ impl State {
 
     /// The end of a set of touch events: clients that had some get their frame.
     pub fn touch_frame(&mut self) {
+        self.flush_stirs();
         if !std::mem::take(&mut self.devices.touch.frame_due) {
             return;
         }
@@ -588,11 +655,40 @@ impl State {
         {
             self.cancel_client_touch(time);
         }
+        let points = &mut self.devices.touch.points;
+        let stirring: Vec<TouchSlot> = (points.iter())
+            .filter(|(_, r)| *r == Route::Stir)
+            .map(|(s, _)| *s)
+            .collect();
+        points.retain(|(_, r)| *r != Route::Stir);
+        for slot in stirring {
+            self.drop_stir(slot);
+        }
         let slots: Vec<TouchSlot> = self.devices.touch.points.iter().map(|(s, _)| *s).collect();
         for slot in slots {
             self.finger_up(slot, time);
         }
         self.touch_frame();
+    }
+
+    /// The stirring fingers' moves since the last frame reach the fluid together, so a twist
+    /// sees both fingers of one frame. Also runs on a down or up, for devices without frames.
+    fn flush_stirs(&mut self) {
+        for (slot, at) in std::mem::take(&mut self.devices.touch.stir_moves) {
+            self.stir_move(finger(slot), at);
+        }
+    }
+
+    /// Finger `slot` stops stirring without a tap or flick.
+    fn drop_stir(&mut self, slot: TouchSlot) {
+        self.devices.touch.stir_moves.retain(|(s, _)| *s != slot);
+        self.stir_cancel(finger(slot));
+    }
+
+    /// The fluid style changed (`water_configured`): stirring fingers stop until they lift.
+    pub fn ignore_stirring_fingers(&mut self) {
+        let touch = &mut self.devices.touch;
+        ignore_stirs(&mut touch.points, &mut touch.stir_moves);
     }
 }
 
@@ -638,6 +734,52 @@ mod tests {
             None,
             "no such finger"
         );
+    }
+
+    #[test]
+    fn second_finger_on_desktop_stirs_with_fluid() {
+        let bare = Hit::Desktop { index: None };
+        assert_eq!(desktop_route(true, &bare, false), Landing::Stir);
+        assert_eq!(desktop_route(true, &bare, true), Landing::Stir);
+    }
+
+    #[test]
+    fn finger_on_icon_drives_pointer_with_fluid() {
+        let icon = Hit::Desktop { index: Some(0) };
+        assert_eq!(desktop_route(true, &icon, true), Landing::Pointer);
+        assert_eq!(desktop_route(true, &icon, false), Landing::Ignored);
+        assert_eq!(desktop_route(true, &Hit::Nothing, true), Landing::Pointer);
+    }
+
+    #[test]
+    fn finger_on_desktop_drives_pointer_without_fluid() {
+        let bare = Hit::Desktop { index: None };
+        assert_eq!(desktop_route(false, &bare, true), Landing::Pointer);
+        assert_eq!(desktop_route(false, &bare, false), Landing::Ignored);
+    }
+
+    #[test]
+    fn style_change_ignores_stirring_fingers() {
+        let mut points = vec![
+            (slot(0), Route::Stir),
+            (slot(1), client(20.0)),
+            (slot(2), Route::Stir),
+        ];
+        let mut moved = vec![
+            (slot(0), Point::from((1.0, 2.0))),
+            (slot(2), Point::from((3.0, 4.0))),
+        ];
+        ignore_stirs(&mut points, &mut moved);
+        assert_eq!(points[0].1, Route::Ignored);
+        assert_eq!(points[1].1, client(20.0), "a client finger stays");
+        assert_eq!(points[2].1, Route::Ignored);
+        assert!(moved.is_empty(), "no buffered motion reaches the fluid");
+    }
+
+    #[test]
+    fn a_slot_without_an_id_is_its_own_finger() {
+        assert_eq!(finger(slot(3)), Source::Finger(3));
+        assert_eq!(finger(TouchSlot::from(None)), Source::Finger(u32::MAX));
     }
 
     #[test]

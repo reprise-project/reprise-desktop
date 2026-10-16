@@ -83,12 +83,17 @@
 //!   in two packed RGBA8 textures that take turns, steps it with the frame's
 //!   splashes (`reprisekit::water`) while windows hold their texels flat, and
 //!   makes its normals once per frame. [`WaterFx`] holds the programs, once per renderer.
+//! - [`fluid`]: the fluid styles' stable-fluids sim: a [`FluidPool`] of half-float grids per
+//!   output, stepped with the frame's forces (`reprisekit::fluid`). [`FluidFx`] holds the programs.
 //! - [`strokes`]: flat bars at any angle in one batch, the Starfield's stars and Mystify's lines.
 
 pub mod blur;
 pub mod colorfx;
 mod element;
 pub mod flip;
+pub mod fluid;
+mod fluid_gl;
+mod fluid_shaders;
 pub mod headless;
 pub mod lens;
 mod picture;
@@ -102,6 +107,7 @@ pub use blur::Quality;
 pub use colorfx::{ColorElement, ColorFx};
 pub use element::{Glass, GlassElement, GlassFrame, GlassFx, Shape};
 pub use flip::{FlipCard, FlipCardElement, FlipFx, mipmaps};
+pub use fluid::{FluidElement, FluidFx, FluidPool};
 pub use lens::Lens;
 pub use picture::{Picture, Source, Update};
 pub use strokes::{Stroke, StrokeElement, StrokeFx, Strokes};

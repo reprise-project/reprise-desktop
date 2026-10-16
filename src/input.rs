@@ -19,6 +19,7 @@ use smithay::{
 };
 
 use reprisekit::classic::frame::{CaptionButton, Edges, FrameGeometry, FrameHit};
+use reprisekit::fluid::Source;
 use reprisekit::pointer::{Click, DoubleClick};
 
 use reprisescene::TreeId;
@@ -256,6 +257,8 @@ pub enum Interaction {
     Drag { x0: f64, y0: f64, started: bool },
     /// A left press on empty desktop: the marquee (`desktopview`).
     Marquee,
+    /// A left press on empty desktop with a fluid water style: the pointer stirs the fluid.
+    Stir,
     /// The pointer drags a selection in an edit field (a dialog's, the
     /// desktop rename), or a form's thumb.
     FieldDrag { editor: crate::caret::Editor },
@@ -303,6 +306,7 @@ impl Interaction {
             | Interaction::BarWidth { .. }
             | Interaction::Drag { .. }
             | Interaction::Marquee
+            | Interaction::Stir
             | Interaction::FieldDrag { .. }
             | Interaction::DialogMove { .. }
             | Interaction::DialogResize { .. }
@@ -897,6 +901,11 @@ impl State {
                 self.drag_marquee(pos.x, pos.y);
                 return;
             }
+            Interaction::Stir => {
+                self.pointer_motion(None, pos, time);
+                self.stir_move(Source::Pointer, pos);
+                return;
+            }
             Interaction::FieldDrag { editor } => {
                 self.pointer_motion(None, pos, time);
                 match editor {
@@ -1482,10 +1491,21 @@ impl State {
                             ctrl: mods & keys::MOD_CTRL != 0,
                             shift: mods & keys::MOD_SHIFT != 0,
                         };
-                        self.desktop_press(index, at, time.millis(), mods);
-                        if index.is_none() {
-                            self.interaction = Interaction::Marquee;
-                            self.water_click(pos);
+                        let double = self.desktop_press(index, at, time.millis(), mods);
+                        match desktop_left(self.stir_takes(pos), index, double) {
+                            DesktopLeft::Icon => {}
+                            DesktopLeft::Marquee => {
+                                self.interaction = Interaction::Marquee;
+                                self.water_click(pos);
+                            }
+                            DesktopLeft::Stir => {
+                                self.interaction = Interaction::Stir;
+                                self.stir_down(Source::Pointer, pos);
+                            }
+                            DesktopLeft::Clear => {
+                                self.end_marquee();
+                                self.stir_clear(pos);
+                            }
                         }
                     }
                     (BTN_RIGHT, None) => self.open_desktop_menu(at),
@@ -1743,6 +1763,10 @@ impl State {
             }
             Interaction::Drag { .. } => self.drag_finish(),
             Interaction::Marquee => self.end_marquee(),
+            Interaction::Stir => {
+                self.end_marquee();
+                self.stir_up(Source::Pointer);
+            }
             Interaction::FieldDrag {
                 editor: crate::caret::Editor::Dialog,
             } => self.dialog_release(),
@@ -1804,6 +1828,10 @@ impl State {
             Interaction::BarMove { .. } | Interaction::BarWidth { .. } => self.cancel_bar_drag(),
             Interaction::Drag { .. } => self.drag_view_cancel(),
             Interaction::Marquee => self.end_marquee(),
+            Interaction::Stir => {
+                self.end_marquee();
+                self.stir_cancel(Source::Pointer);
+            }
             // A dragged or sized dialog stays as it is.
             Interaction::DialogMove { .. } | Interaction::DialogResize { .. } => {}
             Interaction::FieldDrag {
@@ -1968,6 +1996,26 @@ pub(crate) fn resize_rect(
     r
 }
 
+/// What a left press on the desktop starts.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum DesktopLeft {
+    Icon,
+    Marquee,
+    Stir,
+    Clear,
+}
+
+/// A left press on icon `index` (None: empty desktop), `double` when it pairs with the last one
+/// there. Where the fluid takes a stir, empty desktop stirs and a double click clears the fluid.
+fn desktop_left(stirs: bool, index: Option<usize>, double: bool) -> DesktopLeft {
+    match (index, stirs, double) {
+        (Some(_), _, _) => DesktopLeft::Icon,
+        (None, false, _) => DesktopLeft::Marquee,
+        (None, true, false) => DesktopLeft::Stir,
+        (None, true, true) => DesktopLeft::Clear,
+    }
+}
+
 /// Whether a press on frame part `hit` completes a double click on the caption or icon. Only left
 /// presses there pair; another button forgets the last.
 fn caption_double(
@@ -2122,6 +2170,7 @@ mod tests {
             Interaction::NotifyPress,
             Interaction::DialogPress,
             Interaction::Marquee,
+            Interaction::Stir,
             Interaction::DisplaysSlide,
             Interaction::BarWidth { bar, grab: 0 },
             Interaction::Drag {
@@ -2154,6 +2203,29 @@ mod tests {
             "a window-menu size commits on a press"
         );
         assert!(!Interaction::Idle.ends_on_press());
+    }
+
+    #[test]
+    fn fluid_press_on_empty_desktop_stirs_not_marquee() {
+        assert_eq!(desktop_left(true, None, false), DesktopLeft::Stir);
+    }
+
+    #[test]
+    fn fluid_double_click_on_empty_desktop_clears() {
+        assert_eq!(desktop_left(true, None, true), DesktopLeft::Clear);
+    }
+
+    #[test]
+    fn fluid_press_on_icon_selects_as_before() {
+        assert_eq!(desktop_left(true, Some(2), false), DesktopLeft::Icon);
+        assert_eq!(desktop_left(true, Some(2), true), DesktopLeft::Icon);
+    }
+
+    #[test]
+    fn a_press_where_no_fluid_takes_the_stir_marquees() {
+        assert_eq!(desktop_left(false, None, false), DesktopLeft::Marquee);
+        assert_eq!(desktop_left(false, None, true), DesktopLeft::Marquee);
+        assert_eq!(desktop_left(false, Some(0), false), DesktopLeft::Icon);
     }
 
     #[test]

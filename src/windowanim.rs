@@ -373,7 +373,7 @@ impl State {
     }
 
     pub(crate) fn ripple_frame(&self, w: WindowId) -> Option<Rect> {
-        if !self.water_on() {
+        if !self.ripples_on() {
             return None;
         }
         let x = self.win(w)?;

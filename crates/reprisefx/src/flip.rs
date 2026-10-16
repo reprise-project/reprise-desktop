@@ -82,7 +82,7 @@ impl FlipFx {
 
 /// Whether the context runs GLES 3 or later, with sampler objects and
 /// mipmaps of any size.
-fn gles3(gl: &ffi::Gles2) -> bool {
+pub(crate) fn gles3(gl: &ffi::Gles2) -> bool {
     // SAFETY: the context is current; GL_VERSION is a static string.
     let v = unsafe { gl.GetString(ffi::VERSION) };
     if v.is_null() || !gl.GenSamplers.is_loaded() || !gl.BindSampler.is_loaded() {
