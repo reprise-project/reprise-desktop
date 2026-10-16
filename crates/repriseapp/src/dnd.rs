@@ -13,7 +13,7 @@
 //! through the portal in place of its URI list, which names paths inside
 //! the sandbox; those files are only ever copied.
 
-use crate::{URI_LIST, decode_file_clip};
+use crate::URI_LIST;
 use reprisekit::raster::Canvas;
 use std::path::PathBuf;
 use wayland_client::protocol::wl_data_device_manager::DndAction;
@@ -249,7 +249,7 @@ pub fn portal_drop(paths: Vec<PathBuf>, kind: DropKind) -> Dropped {
 /// Decode a drop's bytes, received as `kind` in `mime` (not the portal key).
 pub fn decode_drop(bytes: &[u8], kind: DropKind, mime: &str) -> Dropped {
     match kind {
-        DropKind::Files => Dropped::Files(decode_file_clip(bytes, URI_LIST).paths),
+        DropKind::Files => Dropped::Files(reprisefs::fileclip::decode(URI_LIST, bytes).paths),
         DropKind::Uris => Dropped::Uris(reprisefs::dropdata::decode(mime, bytes)),
         DropKind::Text => Dropped::Text(String::from_utf8_lossy(bytes).into_owned()),
     }

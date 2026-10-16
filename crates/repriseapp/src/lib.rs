@@ -45,7 +45,7 @@ use smithay_client_toolkit::{
     data_device_manager::{
         DataDeviceManagerState, ReadPipe, WritePipe,
         data_device::{DataDevice, DataDeviceHandler},
-        data_offer::{DataOfferHandler, DragOffer},
+        data_offer::{DataOfferHandler, DragOffer, SelectionOffer},
         data_source::{CopyPasteSource, DataSourceHandler, DragSource},
     },
     delegate_dispatch2, delegate_registry,
@@ -82,9 +82,8 @@ use smithay_client_toolkit::{
     },
 };
 use std::cell::RefCell;
-use std::ffi::{OsStr, OsString};
+use std::ffi::OsString;
 use std::io::Read;
-use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::rc::Rc;
@@ -368,98 +367,8 @@ pub enum Event {
     },
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct FileClip {
-    pub cut: bool,
-    pub paths: Vec<PathBuf>,
-}
-
-/// `x-special/gnome-copied-files`: `cut`/`copy` on its own line, then the
-/// `file://` URIs.
-pub const GNOME_FILES: &str = "x-special/gnome-copied-files";
-/// `text/uri-list`: the portable fallback, one `file://` URI per line
-/// (`\r\n`-terminated), no cut/copy of its own.
-pub const URI_LIST: &str = "text/uri-list";
-
-/// Encode a file clip for `mime`. The `x-special` form is `cut` or `copy`
-/// followed by the paths as `file://` URIs joined with `\n`, no
-/// trailing newline; the URI-list form is each URI followed by `\r\n`.
-pub fn encode_file_clip(c: &FileClip, mime: &str) -> Vec<u8> {
-    let uris: Vec<String> = c
-        .paths
-        .iter()
-        .map(|p| format!("file://{}", reprisefs::trash::percent_encode(p)))
-        .collect();
-    if mime == GNOME_FILES {
-        let mut out = if c.cut {
-            b"cut\n".to_vec()
-        } else {
-            b"copy\n".to_vec()
-        };
-        out.extend(uris.join("\n").into_bytes());
-        out
-    } else {
-        let mut out = Vec::new();
-        for uri in uris {
-            out.extend(uri.into_bytes());
-            out.extend_from_slice(b"\r\n");
-        }
-        out
-    }
-}
-
-/// Decode a file clip from `mime`'s bytes. Lines that are blank, `#`
-/// comments or not a local `file://` URI are skipped; a URI list has no
-/// cut/copy line, so it decodes as a copy.
-pub fn decode_file_clip(bytes: &[u8], mime: &str) -> FileClip {
-    let text = String::from_utf8_lossy(bytes);
-    let mut lines = text.split('\n').map(|l| l.trim_end_matches('\r'));
-    let cut = mime == GNOME_FILES && matches!(lines.next(), Some("cut"));
-    let paths = lines
-        .filter(|l| !l.is_empty() && !l.starts_with('#'))
-        .filter_map(file_uri_path)
-        .collect();
-    FileClip { cut, paths }
-}
-
-/// The path a `file://` URI names on this machine: its host is empty or
-/// `localhost`, and its path absolute. A URI for another host is None.
-fn file_uri_path(uri: &str) -> Option<PathBuf> {
-    let rest = uri.strip_prefix("file://")?;
-    let (host, path) = rest.split_at(rest.find('/')?);
-    if !(host.is_empty() || host.eq_ignore_ascii_case("localhost")) {
-        return None;
-    }
-    Some(decode_uri(path)).filter(|p| p.is_absolute())
-}
-
-fn hex_val(b: u8) -> Option<u8> {
-    match b {
-        b'0'..=b'9' => Some(b - b'0'),
-        b'a'..=b'f' => Some(b - b'a' + 10),
-        b'A'..=b'F' => Some(b - b'A' + 10),
-        _ => None,
-    }
-}
-
-fn decode_uri(uri: &str) -> PathBuf {
-    let bytes = uri.as_bytes();
-    let mut out = Vec::with_capacity(bytes.len());
-    let mut i = 0;
-    while i < bytes.len() {
-        if bytes[i] == b'%'
-            && i + 2 < bytes.len()
-            && let (Some(hi), Some(lo)) = (hex_val(bytes[i + 1]), hex_val(bytes[i + 2]))
-        {
-            out.push(hi * 16 + lo);
-            i += 3;
-            continue;
-        }
-        out.push(bytes[i]);
-        i += 1;
-    }
-    PathBuf::from(OsStr::from_bytes(&out))
-}
+pub use reprisefs::dropdata::{GNOME_FILES, URI_LIST};
+pub use reprisefs::fileclip::FileClip;
 
 /// Run `argv` as a process of its own in working directory `dir` (the caller's when `None`), no
 /// shell between, reaped in the background: a [`Reply::spawn`] for a caller that needs the exec's
@@ -1357,7 +1266,8 @@ struct Host {
     data_device: Option<DataDevice>,
     copy_source: Option<CopyPasteSource>,
     copy_text: Arc<[u8]>,
-    copy_clip: Option<FileClip>,
+    /// The copied files, as each type they are offered as.
+    copy_clip: Option<Vec<(&'static str, Vec<u8>)>>,
     drag_out: Option<Outgoing>,
     drag_in: Option<Incoming>,
     /// A drag over a window's `App::drop_form`.
@@ -2311,9 +2221,12 @@ impl Host {
         let (Some(manager), Some(device)) = (&self.data_device_manager, &self.data_device) else {
             return;
         };
-        let source = manager.create_copy_paste_source(&self.qh, [GNOME_FILES, URI_LIST]);
+        let Some(offers) = reprisefs::fileclip::offers(&clip) else {
+            return;
+        };
+        let source = manager.create_copy_paste_source(&self.qh, offers.iter().map(|(m, _)| *m));
         source.set_selection(device, self.last_serial);
-        self.copy_clip = Some(clip);
+        self.copy_clip = Some(offers);
         self.copy_text = Arc::default();
         self.copy_source = Some(source);
     }
@@ -2338,26 +2251,49 @@ impl Host {
         self.read_offer(win, read_pipe, |buf| Event::Pasted(buf.into_text()));
     }
 
+    /// Read the clipboard's files for `win`: a cut marked in [`reprisefs::fileclip::KDE_CUT`]
+    /// first, then the files.
     fn paste_files(&mut self, win: WinId) {
-        let Some(device) = &self.data_device else {
+        use reprisefs::fileclip;
+        let Some(offer) = self.selection_offer() else {
             return;
         };
-        let Some(offer) = device.data().selection_offer() else {
+        let Some(source) = offer.with_mime_types(fileclip::source) else {
             return;
         };
-        let mime = [GNOME_FILES, URI_LIST]
-            .iter()
-            .find(|m| offer.with_mime_types(|types| types.iter().any(|t| t == *m)))
-            .map(|m| m.to_string());
-        let Some(mime) = mime else {
+        if !source.kde_cut {
+            return self.paste_files_as(win, source.files, false);
+        }
+        let Ok(read_pipe) = offer.receive(fileclip::KDE_CUT.to_string()) else {
             return;
         };
-        let Ok(read_pipe) = offer.receive(mime.clone()) else {
+        read_capped(
+            &self.loop_handle,
+            read_pipe,
+            reprisefs::pipe::PASTE_TIMEOUT,
+            move |host: &mut Host, buf| {
+                let cut = buf.is_some_and(|b| fileclip::is_cut_marker(b.bytes()));
+                host.paste_files_as(win, source.files, cut);
+            },
+        );
+    }
+
+    fn paste_files_as(&mut self, win: WinId, mime: &'static str, kde_cut: bool) {
+        let Some(offer) = self.selection_offer() else {
+            return;
+        };
+        let Ok(read_pipe) = offer.receive(mime.to_string()) else {
             return;
         };
         self.read_offer(win, read_pipe, move |buf| {
-            Event::PastedFiles(decode_file_clip(buf.bytes(), &mime))
+            let mut clip = reprisefs::fileclip::decode(mime, buf.bytes());
+            clip.cut |= kde_cut;
+            Event::PastedFiles(clip)
         });
+    }
+
+    fn selection_offer(&self) -> Option<SelectionOffer> {
+        self.data_device.as_ref()?.data().selection_offer()
     }
 
     fn read_offer(
@@ -3371,7 +3307,10 @@ impl Host {
                         }
                     });
                 } else {
-                    host.peeked(&offer, decode_file_clip(buf.bytes(), URI_LIST).paths);
+                    host.peeked(
+                        &offer,
+                        reprisefs::fileclip::decode(URI_LIST, buf.bytes()).paths,
+                    );
                 }
             },
         );
@@ -3618,9 +3557,9 @@ impl DataSourceHandler for Host {
             .is_some_and(|s| s.inner() == source);
         // A drag source that is no longer ours sends nothing, never the clipboard.
         let bytes: Arc<[u8]> = if clipboard {
-            if mime == GNOME_FILES || mime == URI_LIST {
-                match &self.copy_clip {
-                    Some(clip) => encode_file_clip(clip, &mime).into(),
+            if let Some(offers) = &self.copy_clip {
+                match offers.iter().find(|(m, _)| *m == mime) {
+                    Some((_, bytes)) => bytes.as_slice().into(),
                     None => return,
                 }
             } else {
@@ -4496,7 +4435,7 @@ mod tests {
         let list = b"file:///tmp/a%20b\r\nfile://localhost/etc/x\r\nfile://LOCALHOST/y\r\n\
             file://other/etc/passwd\r\nfile://host\r\nfile:relative\r\n";
         assert_eq!(
-            decode_file_clip(list, URI_LIST).paths,
+            reprisefs::fileclip::decode(URI_LIST, list).paths,
             vec![
                 PathBuf::from("/tmp/a b"),
                 PathBuf::from("/etc/x"),
@@ -4762,26 +4701,6 @@ mod tests {
         let (drop, make) = reconcile(&["find"], &want.iter().collect::<Vec<_>>());
         assert_eq!(drop, vec!["find"]);
         assert_eq!(make, vec![0]);
-    }
-
-    #[test]
-    fn file_clip_round_trips_both_mime_types() {
-        let c = FileClip {
-            cut: true,
-            paths: vec![PathBuf::from("/a b/c.txt")],
-        };
-        assert_eq!(
-            encode_file_clip(&c, GNOME_FILES),
-            b"cut\nfile:///a%20b/c.txt"
-        );
-        assert_eq!(encode_file_clip(&c, URI_LIST), b"file:///a%20b/c.txt\r\n");
-        assert_eq!(
-            decode_file_clip(b"copy\nfile:///x\nfile:///y", GNOME_FILES)
-                .paths
-                .len(),
-            2
-        );
-        assert!(!decode_file_clip(b"file:///x\r\n", URI_LIST).cut);
     }
 
     #[test]

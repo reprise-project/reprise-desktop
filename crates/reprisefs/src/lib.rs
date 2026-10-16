@@ -7,6 +7,7 @@ pub mod autostart;
 pub mod bincap;
 pub mod drawncache;
 pub mod dropdata;
+pub mod fileclip;
 pub mod folders;
 pub mod hidden;
 pub mod history;

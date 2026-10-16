@@ -6,7 +6,6 @@
 //! too ([`file_offers`]). X11 programs share both selections through Xwayland's
 //! window manager (`xwayland`), held as [`Owner::X11`].
 
-use std::path::PathBuf;
 use std::sync::Arc;
 
 use smithay::{
@@ -27,7 +26,9 @@ use smithay::{
     xwayland::xwm::XwmId,
 };
 
-use reprisefs::dropdata::{self, GNOME_FILES, URI_LIST};
+use reprisefs::dropdata::GNOME_FILES;
+pub use reprisefs::fileclip::FileClip;
+use reprisefs::fileclip::{self, KDE_CUT};
 use reprisefs::pipe::{PASTE_TIMEOUT, PasteBuf};
 
 use crate::compositor::State;
@@ -82,55 +83,18 @@ pub enum PasteTarget {
     NotifyReply,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct FileClip {
-    pub paths: Vec<PathBuf>,
-    pub cut: bool,
-}
-
-const PATH_TEXT_MIMES: [&str; 2] = ["text/plain;charset=utf-8", "text/plain"];
-
 pub fn file_offers(clip: &FileClip) -> Option<Vec<Offer>> {
-    if clip.paths.is_empty() {
-        return None;
-    }
-    let gnome = dropdata::encode_files(&clip.paths, GNOME_FILES)?;
-    let uris = gnome.strip_prefix(b"copy").unwrap_or(&gnome);
-    let head: &[u8] = if clip.cut { b"cut" } else { b"copy" };
-    let mut offers = vec![
-        (GNOME_FILES.to_string(), Arc::from([head, uris].concat())),
-        (
-            URI_LIST.to_string(),
-            Arc::from(dropdata::encode_files(&clip.paths, URI_LIST)?),
-        ),
-    ];
-    if let Some(text) = dropdata::encode_files(&clip.paths, dropdata::TEXT_UTF8) {
-        let text: Arc<[u8]> = Arc::from(text);
-        offers.extend(PATH_TEXT_MIMES.map(|m| (m.to_string(), text.clone())));
-    }
-    Some(offers)
-}
-
-pub fn decode_files(mime: &str, bytes: &[u8]) -> FileClip {
-    let cut = mime == GNOME_FILES && bytes.split(|&b| b == b'\n').next() == Some(b"cut");
-    let paths = dropdata::decode(mime, bytes)
-        .into_iter()
-        .filter_map(|d| match d {
-            dropdata::Dropped::File(p) => Some(p),
-            dropdata::Dropped::Url { .. } => None,
-        })
-        .collect();
-    FileClip { paths, cut }
-}
-
-pub fn files_mime(offered: &[String]) -> Option<&'static str> {
-    [GNOME_FILES, URI_LIST]
-        .into_iter()
-        .find(|m| offered.iter().any(|o| o == m))
+    let offers = fileclip::offers(clip)?;
+    Some(
+        offers
+            .into_iter()
+            .map(|(m, b)| (m.to_string(), Arc::from(b)))
+            .collect(),
+    )
 }
 
 pub fn own_files(offers: &[Offer]) -> Option<FileClip> {
-    answer(offers, GNOME_FILES).map(|b| decode_files(GNOME_FILES, b))
+    answer(offers, GNOME_FILES).map(|b| fileclip::decode(GNOME_FILES, b))
 }
 
 struct Paste {
@@ -275,11 +239,12 @@ impl State {
         match self.own_offers() {
             // No stat: a file gone since is skipped by the paste.
             Some(offers) => own_files(&offers).is_some_and(|c| !c.paths.is_empty()),
-            None => files_mime(&self.clip.offered).is_some(),
+            None => fileclip::source(&self.clip.offered).is_some(),
         }
     }
 
-    /// Read the files on the clipboard and hand them to `done` once all arrived.
+    /// Read the files on the clipboard and hand them to `done` once all arrived. A cut marked
+    /// in [`KDE_CUT`] is read first, then the files.
     pub fn clip_files(&mut self, done: impl FnOnce(&mut State, FileClip) + 'static) {
         if let Some(offers) = self.own_offers() {
             if let Some(clip) = own_files(&offers) {
@@ -287,13 +252,24 @@ impl State {
             }
             return;
         }
-        let Some(mime) = files_mime(&self.clip.offered) else {
+        let Some(source) = fileclip::source(&self.clip.offered) else {
             log::debug!("paste: the clipboard offers no files");
             return;
         };
-        self.clip_read(mime, move |state, buf| {
-            done(state, decode_files(mime, buf.bytes()))
-        });
+        let read_files = move |state: &mut State, kde_cut: bool| {
+            state.clip_read(source.files, move |state, buf| {
+                let mut clip = fileclip::decode(source.files, buf.bytes());
+                clip.cut |= kde_cut;
+                done(state, clip)
+            });
+        };
+        if source.kde_cut {
+            self.clip_read(KDE_CUT, move |state, buf| {
+                read_files(state, fileclip::is_cut_marker(buf.bytes()))
+            });
+        } else {
+            read_files(self, false);
+        }
     }
 
     pub fn own_offers(&self) -> Option<Offers> {
@@ -350,19 +326,18 @@ impl State {
         let pipe = self.handle.insert_source(
             Generic::new(read, Interest::READ, Mode::Level),
             move |_, pipe, state| {
-                match read_some(&**pipe, &mut buf) {
-                    Got::More => return Ok(PostAction::Continue),
-                    Got::TooLarge => {
-                        log::warn!("paste: the clipboard is larger than a paste; dropped");
-                    }
-                    Got::Done => {
-                        if let Some(done) = done.take() {
-                            done(state, std::mem::take(&mut buf));
-                        }
-                    }
+                let got = read_some(&**pipe, &mut buf);
+                if got == Got::More {
+                    return Ok(PostAction::Continue);
                 }
+                // Before `done`, which may start the next read.
                 if let Some(p) = state.clip.paste.take() {
                     state.handle.remove(p.timer);
+                }
+                if got == Got::TooLarge {
+                    log::warn!("paste: the clipboard is larger than a paste; dropped");
+                } else if let Some(done) = done.take() {
+                    done(state, std::mem::take(&mut buf));
                 }
                 Ok(PostAction::Remove)
             },
@@ -536,53 +511,15 @@ mod tests {
     }
 
     #[test]
-    fn files_go_out_and_come_back_as_they_were_cut_or_copied() {
+    fn desktop_files_are_offered_in_every_form_and_read_back_as_cut() {
         let clip = FileClip {
-            paths: vec!["/d/a b.txt".into(), "/d/c".into()],
+            paths: vec!["/d/a b.txt".into()],
             cut: true,
         };
-        let offers = file_offers(&clip).expect("two paths");
-        let mimes: Vec<&str> = offers.iter().map(|(m, _)| m.as_str()).collect();
-        assert_eq!(
-            mimes,
-            [
-                GNOME_FILES,
-                URI_LIST,
-                "text/plain;charset=utf-8",
-                "text/plain"
-            ]
-        );
-        assert_eq!(
-            &answer(&offers, GNOME_FILES).unwrap()[..],
-            b"cut\nfile:///d/a%20b.txt\nfile:///d/c"
-        );
-        assert_eq!(
-            &answer(&offers, "text/plain").unwrap()[..],
-            b"/d/a b.txt\n/d/c"
-        );
-        assert_eq!(own_files(&offers), Some(clip.clone()));
-        let list = answer(&offers, URI_LIST).unwrap();
-        assert_eq!(
-            decode_files(URI_LIST, list),
-            FileClip {
-                paths: clip.paths.clone(),
-                cut: false
-            }
-        );
-        let copy = FileClip { cut: false, ..clip };
-        let offers = file_offers(&copy).unwrap();
-        assert_eq!(own_files(&offers), Some(copy));
+        let offers = file_offers(&clip).expect("one path");
+        assert_eq!(answer(&offers, KDE_CUT).map(|b| &b[..]), Some(&b"1"[..]));
+        assert_eq!(own_files(&offers), Some(clip));
         assert_eq!(file_offers(&FileClip::default()), None, "nothing to offer");
-    }
-
-    #[test]
-    fn a_paste_of_files_asks_for_the_file_managers_form_first() {
-        assert_eq!(
-            files_mime(&strs(&["text/plain", URI_LIST, GNOME_FILES])),
-            Some(GNOME_FILES)
-        );
-        assert_eq!(files_mime(&strs(&["text/plain", URI_LIST])), Some(URI_LIST));
-        assert_eq!(files_mime(&strs(&["text/plain"])), None);
     }
 
     #[test]
