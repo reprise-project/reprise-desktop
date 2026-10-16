@@ -209,6 +209,20 @@ pub fn draw(
     caret: Caret,
     px: u32,
 ) {
+    draw_over_glass(c, text, p, ab, lay, px);
+    draw_field(c, text, p, ab, lay, focus, caret, px);
+}
+
+/// The label and Go of a band over its frame's glass: the host lays the label glow under them,
+/// then draws the field ([`draw_field`]), which takes none.
+pub fn draw_over_glass(
+    c: &mut Canvas,
+    text: &TextRenderer,
+    p: &Paint,
+    ab: &AddressBar,
+    lay: &Layout,
+    px: u32,
+) {
     let Paint { cs, s, .. } = *p;
     let label_ink = p
         .look
@@ -224,6 +238,21 @@ pub fn draw(
         Align::Left,
         px,
     );
+    draw_go(c, text, p, ab, lay.go.scaled(s), px);
+}
+
+/// The band's field, its combo box.
+#[allow(clippy::too_many_arguments)]
+pub fn draw_field(
+    c: &mut Canvas,
+    text: &TextRenderer,
+    p: &Paint,
+    ab: &AddressBar,
+    lay: &Layout,
+    focus: bool,
+    caret: Caret,
+    px: u32,
+) {
     combo::draw(
         c,
         text,
@@ -236,7 +265,6 @@ pub fn draw(
         combo::ComboLit::IDLE,
         px,
     );
-    draw_go(c, text, p, ab, lay.go.scaled(s), px);
 }
 
 /// Go: a flat toolbar button, its icon and label on the band's face,

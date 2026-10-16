@@ -64,19 +64,10 @@ pub fn draw_frame(
             s,
         );
     }
-    if geom.glass_top > 0
-        && let Some(p) = style.part(Part::ClientGlass)
-    {
+    if geom.glass_top > 0 {
         let c = geom.client;
         let band = Rect::new(c.x, c.y, c.width, geom.glass_top);
-        let o = p.outset.scaled(s);
-        canvas.clear_rect(Rect::new(
-            band.x - o.left,
-            band.y - o.top,
-            band.width + o.left + o.right,
-            band.height + o.top,
-        ));
-        style.draw(canvas, band, Part::ClientGlass, band_state, s);
+        draw_client_glass(canvas, style, band, state.maximized, band_state, s);
     }
 
     if !state.tabbed {
@@ -85,6 +76,37 @@ pub fn draw_frame(
     draw_buttons(canvas, style, geom, state, s);
 
     canvas.clear_rect(geom.client);
+}
+
+/// Replace `band`, a client's top rows, and the client edges its outset covers with `style`'s
+/// [`Part::ClientGlass`] (or [`Part::MaxClientGlass`]), its top rows on the band's top however
+/// deep the band. Nothing in a style without it.
+pub(crate) fn draw_client_glass(
+    canvas: &mut Canvas,
+    style: &Style,
+    band: Rect,
+    maximized: bool,
+    state: State,
+    s: i32,
+) {
+    let part = match maximized {
+        true => Part::MaxClientGlass,
+        false => Part::ClientGlass,
+    };
+    let Some(p) = style.part(part) else {
+        return;
+    };
+    let o = p.outset.scaled(s);
+    let shown = Rect::new(
+        band.x - o.left,
+        band.y - o.top,
+        band.width + o.left + o.right,
+        band.height + o.top,
+    );
+    canvas.clear_rect(shown);
+    let rows = p.frame(state).height / p.scale * s;
+    let whole = Rect::new(band.x, band.y, band.width, band.height.max(rows));
+    canvas.with_clip(shown, |c| style.draw(c, whole, part, state, s));
 }
 
 /// Where a title may run in `style`'s caption: from its left edge to the first caption button.
@@ -1345,12 +1367,21 @@ mod tests {
                     c
                 };
                 let (shut, wide) = (draw(&g), draw(&open));
-                let glass = crate::look::client_glass(&theme, active).unwrap();
                 let c = g.client;
+                let mut under = Canvas::new(g.total.0 as u32, g.total.1 as u32);
+                let band = Rect::new(c.x, c.y, c.width, 60);
+                let band_state = if active {
+                    State::Normal
+                } else {
+                    State::Inactive
+                };
+                draw_client_glass(&mut under, s, band, maximized, band_state, 1);
+                let glass = |x: i32, y: i32| under.get(x, y);
                 let what = format!("maximized {maximized}, active {active}");
                 for y in [c.y - 2, c.y - 1] {
-                    assert_ne!(shut.get(c.x + 100, y), glass, "{what}: row {y} is an edge");
-                    assert_eq!(wide.get(c.x + 100, y), glass, "{what}: row {y} opens");
+                    let x = c.x + 100;
+                    assert_ne!(shut.get(x, y), glass(x, y), "{what}: row {y} is an edge");
+                    assert_eq!(wide.get(x, y), glass(x, y), "{what}: row {y} opens");
                 }
                 assert_eq!(
                     wide.get(c.x + 100, c.y - 3),
@@ -1368,7 +1399,7 @@ mod tests {
                 for x in [c.x - 2, c.x - 1, c.right(), c.right() + 1] {
                     assert_eq!(
                         wide.get(x, c.y + 30),
-                        glass,
+                        glass(x, c.y + 30),
                         "{what}: column {x} beside the glass"
                     );
                     assert_eq!(
@@ -1382,6 +1413,50 @@ mod tests {
                     shut.get(c.x - 3, c.y + 30),
                     "{what}: the border outside the edges"
                 );
+            }
+        }
+    }
+
+    #[test]
+    fn glass_under_a_restored_clients_top_carries_on_from_the_caption_and_borders() {
+        let theme = theme_for(Interface::Glass);
+        let s = theme.look.style().unwrap();
+        let text = TextRenderer::load(&s.caption_text.font());
+        let g = FrameGeometry::layout(&theme.metrics, 600, 300, false, Chrome::WINDOW)
+            .with_glass_top(60);
+        let c = g.client;
+        let band = Rect::new(c.x, c.y, c.width, g.glass_top);
+        for active in [true, false] {
+            let st = FrameState {
+                title: "",
+                ..state(active, false)
+            };
+            let mut f = Canvas::new(g.total.0 as u32, g.total.1 as u32);
+            draw_frame(&mut f, s, &theme, &text, &g, &st);
+            let band_state = if active {
+                State::Normal
+            } else {
+                State::Inactive
+            };
+            draw_client_glass(&mut f, s, band, false, band_state, 1);
+            let near = |a: u32, b: u32| {
+                (0..4).all(|i| (a >> (8 * i) & 0xFF).abs_diff(b >> (8 * i) & 0xFF) <= 6)
+            };
+            for x in [c.x, c.x + 40, c.x + 120, c.right() - 1, c.right() - 41] {
+                let (above, below) = (f.get(x, c.y - 3), f.get(x, c.y));
+                assert!(
+                    near(above, below),
+                    "active {active}, column {x}: {above:08X} over {below:08X}"
+                );
+            }
+            for y in [c.y, c.y + 20] {
+                for (border, glass) in [(c.x - 3, c.x), (c.right() + 2, c.right() - 1)] {
+                    let (b, g) = (f.get(border, y), f.get(glass, y));
+                    assert!(
+                        near(b, g),
+                        "active {active}, row {y}: border {b:08X} beside {g:08X}"
+                    );
+                }
             }
         }
     }
