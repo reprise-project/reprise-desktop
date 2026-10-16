@@ -1,6 +1,6 @@
 //! XDG Autostart entry parsing and the text edits reprise-settings needs to hide or override one.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
@@ -21,7 +21,44 @@ pub struct Entry {
     pub try_exec: Option<String>,
     pub path: Option<PathBuf>,
     pub terminal: bool,
+    /// `X-systemd-skip` or `X-GNOME-HiddenUnderSystemd` is true: the package ships a systemd user
+    /// unit for the program, which may or may not start with this session ([`left_to_systemd`]).
+    pub under_systemd: bool,
     pub user: bool,
+}
+
+/// Whether a unit of the session starts `e`'s program, so autostart leaves it out: `e` is marked
+/// [`Entry::under_systemd`] and its program, as `find` resolves it, is one of `unit_programs`.
+pub fn left_to_systemd(
+    e: &Entry,
+    unit_programs: &HashSet<PathBuf>,
+    find: impl Fn(&str) -> Option<PathBuf>,
+) -> bool {
+    e.under_systemd
+        && exec_argv(&e.exec_line)
+            .first()
+            .and_then(|p| find(p))
+            .is_some_and(|p| unit_programs.contains(&p))
+}
+
+/// `program` as an executable file: an absolute path, or a bare name looked up in `PATH`'s
+/// directories. Symlinks are resolved, so it compares with a unit's canonical `ExecStart`.
+pub fn find_program(program: &str) -> Option<PathBuf> {
+    let is_executable = |p: &Path| {
+        std::fs::metadata(p).is_ok_and(|m| {
+            use std::os::unix::fs::PermissionsExt;
+            m.is_file() && m.permissions().mode() & 0o111 != 0
+        })
+    };
+    let p = Path::new(program);
+    let found = if p.is_absolute() {
+        Some(p.to_path_buf()).filter(|p| is_executable(p))
+    } else {
+        std::env::split_paths(&std::env::var_os("PATH")?)
+            .map(|dir| dir.join(program))
+            .find(|p| is_executable(p))
+    }?;
+    Some(std::fs::canonicalize(&found).unwrap_or(found))
 }
 
 pub fn desktop_names(xdg_current_desktop: Option<&str>) -> Vec<String> {
@@ -106,6 +143,9 @@ pub fn parse(id: &str, text: &str, user: bool) -> Option<Entry> {
         try_exec: get("TryExec").filter(|s| !s.is_empty()).map(str::to_string),
         path: get("Path").filter(|s| !s.is_empty()).map(PathBuf::from),
         terminal: get("Terminal") == Some("true"),
+        under_systemd: ["X-systemd-skip", "X-GNOME-HiddenUnderSystemd"]
+            .iter()
+            .any(|k| get(k) == Some("true")),
         user,
     })
 }
@@ -445,6 +485,78 @@ mod tests {
     fn parse_requires_exec() {
         let text = "[Desktop Entry]\nName=Applet\n";
         assert!(parse("applet", text, false).is_none());
+    }
+
+    #[test]
+    fn an_entry_is_left_to_systemd_only_when_a_session_unit_runs_its_program() {
+        let units: HashSet<PathBuf> = [PathBuf::from("/usr/bin/spice-vdagent")].into();
+        let find = |p: &str| Some(Path::new("/usr/bin").join(p.trim_start_matches("/usr/bin/")));
+        for key in ["X-systemd-skip", "X-GNOME-HiddenUnderSystemd"] {
+            let marked = format!("[Desktop Entry]\nExec=spice-vdagent\n{key}=true\n");
+            let e = parse("spice-vdagent", &marked, false).unwrap();
+            assert!(
+                left_to_systemd(&e, &units, find),
+                "{key} with its unit in the session"
+            );
+            assert!(
+                !left_to_systemd(&e, &HashSet::new(), find),
+                "{key} with no unit of the session behind it starts"
+            );
+        }
+        let unmarked = parse(
+            "spice-vdagent",
+            "[Desktop Entry]\nExec=/usr/bin/spice-vdagent\n",
+            false,
+        )
+        .unwrap();
+        assert!(
+            !left_to_systemd(&unmarked, &units, find),
+            "an unmarked entry starts"
+        );
+        let other = parse(
+            "kwallet",
+            "[Desktop Entry]\nExec=/usr/lib/pam_kwallet_init\nX-systemd-skip=true\n",
+            false,
+        )
+        .unwrap();
+        assert!(
+            !left_to_systemd(&other, &units, find),
+            "another program's unit is not its own"
+        );
+        let marked = parse(
+            "spice-vdagent",
+            "[Desktop Entry]\nExec=spice-vdagent\nX-systemd-skip=true\n",
+            false,
+        )
+        .unwrap();
+        assert!(
+            !left_to_systemd(&marked, &units, |_| None),
+            "a program not found starts as before"
+        );
+    }
+
+    #[test]
+    fn find_program_needs_an_executable_file() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("prog");
+        std::fs::write(&file, "#!/bin/sh\n").unwrap();
+        let path = file.to_str().unwrap();
+        std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o644)).unwrap();
+        assert_eq!(find_program(path), None, "a non-executable file");
+        std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let link = dir.path().join("link");
+        std::os::unix::fs::symlink(&file, &link).unwrap();
+        assert_eq!(
+            find_program(link.to_str().unwrap()),
+            Some(std::fs::canonicalize(&file).unwrap()),
+            "a symlink resolves to its target"
+        );
+        assert_eq!(
+            find_program(dir.path().to_str().unwrap()),
+            None,
+            "a directory"
+        );
     }
 
     #[test]
