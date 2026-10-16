@@ -8,8 +8,10 @@ use std::time::{Duration, Instant};
 
 use reprisekit::anim::{Ease, Tween};
 use reprisekit::controls::notifysheet::{
-    RISE, SheetContent, SheetGlass, SheetIcons, SheetLayout, access_sheet, chip_layout, draw_chip,
-    has_sheets, place_stack, pose, sheet_click, sheet_hit, sheet_layout,
+    RISE, SheetContent, SheetGlass, SheetIcons, SheetLayout, SheetOpening, WarmJob, WarmLayers,
+    access_sheet, build_warm, chip_layout, draw_chip, drip_bead, drip_bead_at, drip_bead_share,
+    drip_corner, drip_ms, drip_pose, has_sheets, open_layout, opening_shows_close, place_stack,
+    pose, sheet_click, sheet_hit, sheet_layout,
 };
 use reprisekit::controls::tooltip::{
     NOTIFY_BUTTONS, NotifyHit, NotifyLayout, NotifyParts, NotifyReply, NotifySays, ReplyEvent,
@@ -23,7 +25,7 @@ use reprisekit::taskbar::Edge;
 use reprisekit::textedit::{Caret, EditKey, TextEdit};
 use reprisescene::{BufferId, Input, TreeId};
 use smithay::reexports::calloop::{
-    RegistrationToken,
+    RegistrationToken, channel,
     timer::{TimeoutAction, Timer},
 };
 
@@ -35,7 +37,7 @@ use crate::glass::{Backdrop, GlassCtx, Pane, PaneShape};
 use crate::input::BTN_LEFT;
 use crate::notifylog::Log;
 use crate::output::upload_scaled;
-use crate::raster::Rect;
+use crate::raster::{Canvas, Rect};
 use crate::startmenu::MenuItem;
 use crate::text::TextRenderer;
 use crate::theme::{Color, Theme};
@@ -179,6 +181,8 @@ struct Balloon {
     motion: Motion,
     /// As last painted; hits and the "..." menu read it.
     drawn: Option<Drawn>,
+    /// `motion.open` as last painted.
+    open_drawn: f64,
     /// The glass under the sheet at rest, logical px from `glass_tree`.
     pane: Option<Pane>,
     held: Option<(NotifyHit, bool)>,
@@ -189,9 +193,22 @@ struct Balloon {
     serial: u64,
     /// `None` until read under a look with sheets.
     tint: Option<Option<Color>>,
+    /// A Droplet's opening layers while it opens.
+    opening: SheetOpening,
+    /// The glass bead a Droplet drips from while it arrives.
+    bead: Option<Bead>,
+    /// The last warm job sent for `opening`; a result for an earlier one is dropped.
+    warm_gen: u64,
     glass: SheetGlass,
     /// What the buffer shows; `None` redraws it on the next paint.
     painted: Option<Painted>,
+}
+
+/// `body` and `size` are logical, `body` from the canvas's top-left.
+struct Bead {
+    buffer: BufferId,
+    body: Rect,
+    size: (i32, i32),
 }
 
 impl Balloon {
@@ -239,13 +256,22 @@ impl Clock {
     }
 }
 
-/// A sheet's way in, out and between slots.
+/// A sheet's way in, out and between slots, and a Droplet's opening.
 #[derive(Clone, Copy, Debug)]
 struct Motion {
     /// 0 hidden, 1 at rest.
     k: Tween,
     /// Logical px in y from the rest position.
     offset: Tween,
+    /// 0 collapsed, 1 expanded.
+    open: Tween,
+    /// `k` runs a Droplet's arrival, posed by `drip_pose`.
+    drip: bool,
+}
+
+/// A Droplet opens while the pointer is on it or its reply row is open.
+fn open_target(hovered: bool, replying: bool) -> f64 {
+    if hovered || replying { 1.0 } else { 0.0 }
 }
 
 impl Motion {
@@ -257,16 +283,49 @@ impl Motion {
         }
     }
 
+    /// A Droplet's arrival; the overshoot lives in `drip_pose`, so `k` runs linear.
+    fn drip(e: &EffectsConfig, now: Instant) -> Motion {
+        let ms = if e.opens() {
+            drip_ms(e.window_open_ms)
+        } else {
+            0
+        };
+        Motion {
+            k: Tween::new(0.0, 1.0, now, ms, Ease::Linear),
+            drip: true,
+            ..Motion::settled_at(now)
+        }
+    }
+
     fn settled_at(now: Instant) -> Motion {
         Motion {
             k: Tween::new(1.0, 1.0, now, 0, Ease::OutCubic),
             offset: Tween::new(0.0, 0.0, now, 0, Ease::OutCubic),
+            open: Tween::new(0.0, 0.0, now, 0, Ease::OutCubic),
+            drip: false,
         }
     }
 
     fn leave(&mut self, e: &EffectsConfig, now: Instant) {
         let ms = if e.closes() { e.window_close_ms } else { 0 };
         self.k.retarget(0.0, now, ms);
+        self.drip = false;
+        let open = self.open.value(now);
+        self.open = Tween::new(open, open, now, 0, Ease::OutCubic);
+    }
+
+    /// Opens toward `to` over the window open or close time; false when already headed there.
+    fn aim_open(&mut self, to: f64, e: &EffectsConfig, now: Instant) -> bool {
+        if self.open.target() == to {
+            return false;
+        }
+        let ms = match (to > self.open.value(now), e.opens(), e.closes()) {
+            (true, true, _) => e.window_open_ms,
+            (false, _, true) => e.window_close_ms,
+            _ => 0,
+        };
+        self.open.retarget(to, now, ms);
+        true
     }
 
     /// The rest moved by `-dy`: the sheet starts where it was and eases to its new rest.
@@ -278,8 +337,13 @@ impl Motion {
         self.offset.value(now)
     }
 
-    fn settled(&self, now: Instant) -> bool {
+    /// Arrived and at its slot; a Droplet may still be opening.
+    fn placed(&self, now: Instant) -> bool {
         self.k.settled(now) && self.offset.settled(now)
+    }
+
+    fn settled(&self, now: Instant) -> bool {
+        self.placed(now) && self.open.settled(now)
     }
 }
 
@@ -331,6 +395,11 @@ pub struct NotifyView {
     /// A sheet or the chip is under the pointer, drawn or at rest, as of its last move, press or
     /// paint: a sheet sliding into a closed one's slot keeps the stack held.
     pointer_on: bool,
+    /// [`warm_openings`] waits for the loop to go idle.
+    warm_queued: bool,
+    /// The opening layers' painter thread, started by the first warm job, and its result source.
+    warmer: Option<std::sync::mpsc::Sender<(u64, u64, WarmJob)>>,
+    warm_source: Option<RegistrationToken>,
     pub log: Log,
     /// The history popup, while open.
     pub center: Option<crate::notifycenter::CenterView>,
@@ -1272,7 +1341,8 @@ fn lay_scale(state: &State) -> i32 {
 /// The pointer moved, `over` the stack or not: the part under it lights (on a sheet, its close
 /// button too) and sheets hold their clocks; crossing the replying balloon restarts `REPLY_IDLE`.
 pub fn hover(state: &mut State, x: f64, y: f64, over: bool) {
-    let (dirty, touched) = point_at(&mut state.notify, x, y, over, Instant::now());
+    let (mut dirty, touched) = point_at(&mut state.notify, x, y, over, Instant::now());
+    dirty |= aim_open(state);
     if hold_clocks(state) {
         rearm(state);
     }
@@ -1321,8 +1391,8 @@ fn hold_at(v: &mut NotifyView, x: f64, y: f64, now: Instant) -> bool {
     std::mem::replace(&mut v.pointer_on, on) != on
 }
 
-/// `stack_hit` for a press, which takes the hold first. The close spot of a sheet still sliding
-/// into place takes no press, so a repeated click on a close button spares the sheet sliding up.
+/// `stack_hit` for a press, which takes the hold first. A close spot takes no press while its sheet
+/// slides into place, sparing the sheet sliding up, or before an opening Droplet's close shows.
 fn press_target(
     v: &mut NotifyView,
     x: f64,
@@ -1330,8 +1400,11 @@ fn press_target(
     now: Instant,
 ) -> Option<(usize, Drawn, NotifyHit, i32)> {
     hold_at(v, x, y, now);
-    hit_in(v, x, y, |b| b.hit_at(now))
-        .filter(|(i, _, hit, _)| *hit != NotifyHit::Close || v.stack[*i].motion.settled(now))
+    hit_in(v, x, y, |b| b.hit_at(now)).filter(|(i, _, hit, _)| {
+        let m = &v.stack[*i].motion;
+        *hit != NotifyHit::Close
+            || m.placed(now) && (m.open.settled(now) || opening_shows_close(m.open.value(now)))
+    })
 }
 
 fn held(v: &NotifyView) -> Option<(usize, NotifyHit, bool)> {
@@ -1466,6 +1539,7 @@ fn button_labels(n: &Notification) -> Vec<&str> {
 #[derive(PartialEq)]
 struct Painted {
     drawn: Drawn,
+    open: f64,
     pushed: Option<NotifyHit>,
     hot: Option<NotifyHit>,
 }
@@ -1576,11 +1650,60 @@ fn lay_out(
     }
 }
 
+/// A Droplet's collapsed and expanded layouts; `None` for any other shape or a look without
+/// sheets.
+fn droplet_ends(
+    theme: &Theme,
+    text: &TextRenderer,
+    item: &Item,
+    replying: bool,
+    edge: Edge,
+    shape: SheetShape,
+    when: &str,
+) -> Option<[SheetLayout; 2]> {
+    if shape != SheetShape::Droplet {
+        return None;
+    }
+    let lay =
+        |replying, expanded| lay_out(theme, text, item, replying, edge, shape, expanded, when);
+    match (lay(false, false), lay(replying, true)) {
+        (Drawn::Sheet(shut), Drawn::Sheet(open)) => Some([shut, open]),
+        _ => None,
+    }
+}
+
+/// `item` laid out `t` (0..1) of the way open. A Droplet sheet also returns the collapsed and
+/// expanded layouts it opens between.
+#[expect(clippy::too_many_arguments)]
+fn lay_out_open(
+    theme: &Theme,
+    text: &TextRenderer,
+    item: &Item,
+    replying: bool,
+    edge: Edge,
+    shape: SheetShape,
+    when: &str,
+    t: f64,
+) -> (Drawn, Option<[SheetLayout; 2]>) {
+    let Some([shut, open]) = droplet_ends(theme, text, item, replying, edge, shape, when) else {
+        return (
+            lay_out(theme, text, item, replying, edge, shape, false, when),
+            None,
+        );
+    };
+    let lay = match t {
+        t if t <= 0.0 => shut.clone(),
+        t if t >= 1.0 => open.clone(),
+        t => open_layout(&shut, &open, t),
+    };
+    (Drawn::Sheet(lay), Some([shut, open]))
+}
+
 /// The glass under a sheet, logical px from the glass tree's origin at the footprint.
 fn sheet_glass(lay: &SheetLayout, look: &NotifyLook, scale: i32) -> Pane {
     let fp = lay.footprint;
     match lay.shape {
-        SheetShape::Lozenge => crate::glass::sheet_pane(
+        SheetShape::Lozenge | SheetShape::Droplet => crate::glass::sheet_pane(
             (fp.width / scale, fp.height / scale),
             (look.corner)(lay.shape),
         ),
@@ -1620,6 +1743,20 @@ fn sheet_glass(lay: &SheetLayout, look: &NotifyLook, scale: i32) -> Pane {
 fn sheet_tint(theme: &Theme, app_icon: &[IconSource], scale: i32) -> Option<Option<Color>> {
     let look = theme.look.style().and_then(|st| st.notify)?;
     Some(crate::tray::closest(app_icon, TINT_PX * scale).and_then(|icon| (look.colour)(&icon)))
+}
+
+/// Points each Droplet's opening at its [`open_target`]; true when one turned.
+fn aim_open(state: &mut State) -> bool {
+    if !sheets(state) || state.config.glass.notification.shape() != SheetShape::Droplet {
+        return false;
+    }
+    let (now, e) = (Instant::now(), state.config.effects);
+    let mut turned = false;
+    for b in &mut state.notify.stack {
+        let to = open_target(b.pointer_in, b.reply.is_some());
+        turned |= b.motion.aim_open(to, &e, now);
+    }
+    turned
 }
 
 /// A sheet's app line time: "now", then minutes, then hours.
@@ -1673,10 +1810,11 @@ fn new_balloon(state: &mut State, item: Item) -> Option<Balloon> {
     if sheets(state) && hovered(&state.notify) {
         clock.pause(now);
     }
-    let motion = if sheets(state) {
-        Motion::arrive(&state.config.effects, now)
-    } else {
-        Motion::settled_at(now)
+    let e = &state.config.effects;
+    let motion = match (sheets(state), state.config.glass.notification.shape()) {
+        (false, _) => Motion::settled_at(now),
+        (true, SheetShape::Droplet) => Motion::drip(e, now),
+        (true, SheetShape::Lozenge | SheetShape::Halo) => Motion::arrive(e, now),
     };
     let tint = sheet_tint(&state.config.theme, item.app_icon(), scale);
     let scene = &mut state.scene;
@@ -1698,6 +1836,7 @@ fn new_balloon(state: &mut State, item: Item) -> Option<Balloon> {
         clock,
         motion,
         drawn: None,
+        open_drawn: 0.0,
         pane: None,
         held: None,
         hot: None,
@@ -1705,6 +1844,9 @@ fn new_balloon(state: &mut State, item: Item) -> Option<Balloon> {
         pointer_in: false,
         serial: state.notify.shown,
         tint,
+        opening: SheetOpening::default(),
+        bead: None,
+        warm_gen: 0,
         glass: SheetGlass::default(),
         painted: None,
     })
@@ -1788,33 +1930,65 @@ fn join_burst(b: &mut Balloon, n: &Notification, theme: &Theme) {
 fn paint(state: &mut State) {
     hold_clocks(state);
     rearm(state);
+    aim_open(state);
     if state.notify.stack.is_empty() {
         state.notify.pointer_on = false;
         drop_chip(state);
         disarm_age(state);
         return;
     }
-    let Some(output) = state.first_output() else {
+    if !lay_stack(state, false) {
         return;
+    }
+    let p = state.pointer_location();
+    if hold_at(&mut state.notify, p.x, p.y, Instant::now()) && hold_clocks(state) {
+        rearm(state);
+    }
+    if replying(&state.notify).is_none() {
+        state.ime_field_drawn(Editor::NotifyReply, None, (0, 0), 1);
+    }
+    let v = &state.notify;
+    if v.stack
+        .iter()
+        .any(|b| matches!(b.drawn, Some(Drawn::Sheet(_))))
+    {
+        arm_age(state);
+    } else {
+        disarm_age(state);
+    }
+    state.redraw_all();
+    crate::access::touch(state);
+    arm_tick(state);
+    warm_openings(state);
+}
+
+/// Lays out and places every balloon and the chip. All are drawn, or with `opening_only` just
+/// the sheets whose opening moved since; false with no output.
+fn lay_stack(state: &mut State, opening_only: bool) -> bool {
+    let Some(output) = state.first_output() else {
+        return false;
     };
     let p = state.bar_placement(&output);
     let area = crate::barplace::clear_of(state.usable_area(Some(&output)), &p);
     let shape = state.config.glass.notification.shape();
-    let drawn: Vec<Drawn> = state
+    let now = Instant::now();
+    let laid: Vec<(Drawn, Option<[SheetLayout; 2]>, f64)> = state
         .notify
         .stack
         .iter()
         .map(|b| {
-            lay_out(
+            let t = b.motion.open.value(now);
+            let (d, ends) = lay_out_open(
                 &state.config.theme.scaled(b.scale),
                 &state.text,
                 &b.item,
                 b.reply.is_some(),
                 p.edge,
                 shape,
-                false,
                 &relative(b.shown_at.elapsed()),
-            )
+                t,
+            );
+            (d, ends, t)
         })
         .collect();
     let chip_scale = state.draw_scale_at(Some(&output)).max(1);
@@ -1823,26 +1997,32 @@ fn paint(state: &mut State) {
         let (w, h) = chip_layout(&theme, &state.text, more);
         (more, (w / chip_scale, h / chip_scale))
     });
-    let footprints: Vec<(i32, i32)> = drawn
+    let footprints: Vec<(i32, i32)> = laid
         .iter()
         .zip(&state.notify.stack)
-        .map(|(d, b)| {
+        .map(|((d, ..), b)| {
             let (w, h) = d.footprint();
             (w / b.scale, h / b.scale)
         })
         .collect();
     let (spots, chip_at) = place_stack(area, &footprints, chip.map(|c| c.1), p.edge);
-    let any_sheet = drawn.iter().any(|d| matches!(d, Drawn::Sheet(_)));
-    let (now, e) = (Instant::now(), state.config.effects);
+    let e = state.config.effects;
     let slide_ms = if e.opens() { e.window_open_ms } else { 0 };
     let same_edge = state.notify.edge.replace(p.edge) == Some(p.edge);
-    for (i, (d, spot)) in drawn.into_iter().zip(spots).enumerate() {
+    let opening = state
+        .notify
+        .stack
+        .iter()
+        .any(|b| !b.motion.open.settled(now));
+    for (i, ((d, ends, t), spot)) in laid.into_iter().zip(spots).enumerate() {
         let b = &mut state.notify.stack[i];
         let at = match &d {
             Drawn::Balloon(lay) => place_notify(area, lay, b.scale, p.edge),
             Drawn::Sheet(_) => spot,
         };
-        if same_edge
+        let sheet = matches!(b.drawn, Some(Drawn::Sheet(_)));
+        if !opening
+            && same_edge
             && let Some(old @ Drawn::Sheet(_)) = &b.drawn
             && b.at.0 == at.0
         {
@@ -1857,31 +2037,189 @@ fn paint(state: &mut State) {
                 slide_ms,
             );
         }
-        paint_one(state, i, d, at);
-    }
-    if replying(&state.notify).is_none() {
-        state.ime_field_drawn(Editor::NotifyReply, None, (0, 0), 1);
+        if opening_only && sheet && b.open_drawn == t {
+            b.at = at;
+            continue;
+        }
+        paint_one(state, i, d, ends, t, at);
     }
     match chip.zip(chip_at) {
         Some(((more, size), at)) => draw_chip_at(state, more, at, size, chip_scale),
         None => drop_chip(state),
     }
-    let p = state.pointer_location();
-    if hold_at(&mut state.notify, p.x, p.y, now) && hold_clocks(state) {
-        rearm(state);
-    }
-    if any_sheet {
-        arm_age(state);
-    } else {
-        disarm_age(state);
-    }
-    state.redraw_all();
-    crate::access::touch(state);
-    arm_tick(state);
+    true
 }
 
-/// Draws balloon `i` as `drawn` at `at`, logical; one drawn alike before is only placed.
-fn paint_one(state: &mut State, i: usize, drawn: Drawn, at: (i32, i32)) {
+/// A sheet whose app icon is missing shows the stock one in its slot, unless its picture fills it.
+fn slot_needs_icon(lay: &SheetLayout, has_picture: bool) -> bool {
+    !has_picture || lay.picture != Some(lay.icon)
+}
+
+/// The app icon and picture sheet `b` shows on `lay`, device px.
+fn sheet_icons(
+    icons: &mut crate::icontheme::IconCache,
+    b: &Balloon,
+    lay: &SheetLayout,
+) -> (Option<Canvas>, Option<Canvas>) {
+    let slot = lay.icon.width;
+    let picture = crate::tray::closest(b.item.image(), slot);
+    let app_px = lay.badge.map_or(slot, |r| r.width);
+    let app = crate::tray::closest(b.item.app_icon(), app_px).or_else(|| {
+        slot_needs_icon(lay, picture.is_some())
+            .then(|| icons.get("dialog-information", slot))
+            .flatten()
+    });
+    (app, picture)
+}
+
+/// Once the loop is idle, sends each Droplet at rest to have its layers for its next move warmed
+/// off the loop's thread: under the lit rim while collapsed, the plain one while open.
+fn warm_openings(state: &mut State) {
+    let droplets = sheets(state) && state.config.glass.notification.shape() == SheetShape::Droplet;
+    if !droplets || state.notify.warm_queued {
+        return;
+    }
+    state.notify.warm_queued = true;
+    state.handle.insert_idle(|state| {
+        state.notify.warm_queued = false;
+        let now = Instant::now();
+        let Some(edge) = state.notify.edge else {
+            return;
+        };
+        let shape = state.config.glass.notification.shape();
+        for i in 0..state.notify.stack.len() {
+            let mut opening = std::mem::take(&mut state.notify.stack[i].opening);
+            warm_one(state, i, &mut opening, edge, shape, now);
+            state.notify.stack[i].opening = opening;
+        }
+    });
+}
+
+fn warm_one(
+    state: &mut State,
+    i: usize,
+    opening: &mut SheetOpening,
+    edge: Edge,
+    shape: SheetShape,
+    now: Instant,
+) {
+    let b = &state.notify.stack[i];
+    // A reply field's caret blinks, which would rebuild the layers on every blink.
+    if !b.motion.settled(now) || b.reply.is_some() || !matches!(b.drawn, Some(Drawn::Sheet(_))) {
+        return;
+    }
+    let theme = state.config.theme.scaled(b.scale);
+    let when = relative(b.shown_at.elapsed());
+    let Some([shut, open]) = droplet_ends(&theme, &state.text, &b.item, false, edge, shape, &when)
+    else {
+        return;
+    };
+    let lit = b.open_drawn < 1.0;
+    let (app, picture) = sheet_icons(&mut state.icons, b, &open);
+    let icons = SheetIcons {
+        app: app.as_ref(),
+        picture: picture.as_ref(),
+    };
+    let tint = b.tint.flatten();
+    let Some(job) = opening.warm_job(&b.glass, &theme, &shut, &open, icons, tint, lit) else {
+        return;
+    };
+    let Some(tx) = warmer(state) else {
+        return;
+    };
+    let b = &mut state.notify.stack[i];
+    b.warm_gen += 1;
+    if tx.send((b.serial, b.warm_gen, job)).is_err() {
+        opening.forget_job();
+        lose_warmer(&mut state.notify);
+    }
+}
+
+/// The painter thread ended, a job's panic among the causes: the jobs it held are asked again of
+/// the next one.
+fn lose_warmer(v: &mut NotifyView) {
+    v.warmer = None;
+    for b in &mut v.stack {
+        b.opening.forget_job();
+    }
+}
+
+/// The sender to the thread that paints opening layers, started on first use; its results land
+/// through [`land_warm`].
+fn warmer(state: &mut State) -> Option<std::sync::mpsc::Sender<(u64, u64, WarmJob)>> {
+    if let Some(tx) = &state.notify.warmer {
+        return Some(tx.clone());
+    }
+    if let Some(gone) = state.notify.warm_source.take() {
+        state.handle.remove(gone);
+    }
+    let (done, landed) = channel::channel::<(u64, u64, WarmLayers)>();
+    let inserted = state
+        .handle
+        .insert_source(landed, |event, _, state| match event {
+            channel::Event::Msg((serial, generation, built)) => {
+                land_warm(&mut state.notify.stack, serial, generation, built);
+            }
+            channel::Event::Closed => lose_warmer(&mut state.notify),
+        });
+    match inserted {
+        Ok(token) => state.notify.warm_source = Some(token),
+        Err(e) => {
+            log::warn!("notify: no warm channel: {}", e.error);
+            return None;
+        }
+    }
+    let (tx, jobs) = std::sync::mpsc::channel::<(u64, u64, WarmJob)>();
+    let spawned = std::thread::Builder::new()
+        .name("notify-warm".into())
+        .spawn(move || {
+            let mut text: Option<(reprisekit::theme::FontConfig, TextRenderer)> = None;
+            for (serial, generation, job) in jobs {
+                if text.as_ref().is_none_or(|(fonts, _)| fonts != job.fonts()) {
+                    text = Some((job.fonts().clone(), TextRenderer::load(job.fonts())));
+                }
+                let Some((_, text)) = &text else {
+                    unreachable!("loaded above");
+                };
+                if done
+                    .send((serial, generation, build_warm(job, text)))
+                    .is_err()
+                {
+                    return;
+                }
+            }
+        });
+    if let Err(e) = spawned {
+        log::warn!("notify: no warm thread: {e}");
+        return None;
+    }
+    state.notify.warmer = Some(tx.clone());
+    Some(tx)
+}
+
+/// Gives balloon `serial` the layers its warm job `generation` painted, unless it left or sent a
+/// later job since; true when taken.
+fn land_warm(stack: &mut [Balloon], serial: u64, generation: u64, built: WarmLayers) -> bool {
+    match stack.iter_mut().find(|b| b.serial == serial) {
+        Some(b) if b.warm_gen == generation => {
+            b.opening.install(&mut b.glass, built);
+            true
+        }
+        _ => false,
+    }
+}
+
+/// Draws balloon `i` as `drawn` at `at`, logical, a Droplet part way open `t` of the way between
+/// its `ends`; one drawn alike before is only placed.
+fn paint_one(
+    state: &mut State,
+    i: usize,
+    drawn: Drawn,
+    ends: Option<[SheetLayout; 2]>,
+    t: f64,
+    at: (i32, i32),
+) {
+    let mut opening = std::mem::take(&mut state.notify.stack[i].opening);
     let mut kept = std::mem::take(&mut state.notify.stack[i].glass);
     let b = &state.notify.stack[i];
     let preedit = b
@@ -1894,6 +2232,7 @@ fn paint_one(state: &mut State, i: usize, drawn: Drawn, at: (i32, i32)) {
     };
     let looks = Painted {
         drawn: drawn.clone(),
+        open: t,
         pushed,
         hot: b.hot,
     };
@@ -1927,29 +2266,41 @@ fn paint_one(state: &mut State, i: usize, drawn: Drawn, at: (i32, i32)) {
         }
         Drawn::Sheet(lay) => {
             let canvas = fresh.then(|| {
-                let slot = lay.icon.width;
-                let picture = crate::tray::closest(b.item.image(), slot);
-                let app_px = lay.badge.map_or(slot, |r| r.width);
-                let app = crate::tray::closest(b.item.app_icon(), app_px).or_else(|| {
-                    picture
-                        .is_none()
-                        .then(|| state.icons.get("dialog-information", slot))
-                        .flatten()
-                });
+                let (app, picture) = sheet_icons(&mut state.icons, b, lay);
                 let icons = SheetIcons {
                     app: app.as_ref(),
                     picture: picture.as_ref(),
                 };
-                kept.draw(
-                    &theme,
-                    &state.text,
-                    lay,
-                    icons,
-                    b.tint.flatten(),
-                    pushed,
-                    b.hot,
-                    reply,
-                )
+                let builds = opening.builds();
+                let canvas = match &ends {
+                    Some([shut, open]) => opening.draw(
+                        &mut kept,
+                        &theme,
+                        &state.text,
+                        shut,
+                        open,
+                        t,
+                        icons,
+                        b.tint.flatten(),
+                        pushed,
+                        b.hot,
+                        reply,
+                    ),
+                    None => kept.draw(
+                        &theme,
+                        &state.text,
+                        lay,
+                        icons,
+                        b.tint.flatten(),
+                        pushed,
+                        b.hot,
+                        reply,
+                    ),
+                };
+                if opening.builds() > builds {
+                    log::info!("notify: an opening painted its layers in the frame");
+                }
+                canvas
             });
             let look = theme.look.style().and_then(|st| st.notify);
             let pane = look
@@ -1975,10 +2326,7 @@ fn paint_one(state: &mut State, i: usize, drawn: Drawn, at: (i32, i32)) {
         };
         state.scene.set_input(buffer, input);
     }
-    let (toward, scale_from) = (
-        toward_tray(&state.notify),
-        state.config.effects.window_scale,
-    );
+    let (edge, scale_from) = (state.notify.edge, state.config.effects.window_scale);
     let State {
         notify,
         scene,
@@ -1986,17 +2334,35 @@ fn paint_one(state: &mut State, i: usize, drawn: Drawn, at: (i32, i32)) {
         ..
     } = state;
     let b = &mut notify.stack[i];
+    b.opening = opening;
     b.glass = kept;
     b.painted = Some(looks);
     b.at = at;
     b.drawn = Some(drawn);
+    b.open_drawn = t;
     if pane.is_some() {
         b.backdrop.get_or_insert_with(|| Backdrop::new(glass));
     } else if let Some(mut gone) = b.backdrop.take() {
         gone.set(scene, glass, glass_tree, None);
     }
     b.pane = pane;
-    pose_balloon(scene, glass, b, Instant::now(), toward, scale_from);
+    if b.motion.drip
+        && b.bead.is_none()
+        && drip_bead_share(b.motion.k.value(Instant::now())) > 0.0
+        && let Some((c, body)) = drip_bead(&theme)
+    {
+        let buffer = scene.buffer_create(b.tree);
+        scene.set_input(buffer, Input::Passthrough);
+        upload_scaled(scene, buffer, &c, scale);
+        let logical =
+            |r: Rect| Rect::new(r.x / scale, r.y / scale, r.width / scale, r.height / scale);
+        b.bead = Some(Bead {
+            buffer,
+            body: logical(body),
+            size: (c.width as i32 / scale, c.height as i32 / scale),
+        });
+    }
+    pose_balloon(scene, glass, b, Instant::now(), edge, scale_from);
     if replying && let Some(canvas) = canvas.as_mut() {
         let origin = (at.0 - ox / scale, at.1 - oy / scale);
         let spot = canvas.take_spot();
@@ -2054,20 +2420,21 @@ pub fn access(state: &State) -> reprisekit::access::Tree {
     let theme = &state.config.theme;
     let edge = state.bar_placement(&output).edge;
     let shape = state.config.glass.notification.shape();
+    let now = Instant::now();
     let laid: Vec<(Drawn, Rect)> = v
         .stack
         .iter()
         .map(|b| {
             let when = relative(b.shown_at.elapsed());
-            let d = lay_out(
+            let (d, _) = lay_out_open(
                 theme,
                 &state.text,
                 &b.item,
                 b.reply.is_some(),
                 edge,
                 shape,
-                false,
                 &when,
+                b.motion.open.value(now),
             );
             let ((ox, oy), (w, h)) = (d.origin(), d.size());
             (d, Rect::new(b.at.0 - ox, b.at.1 - oy, w, h))
@@ -2163,44 +2530,84 @@ pub fn blink(state: &mut State) {
     paint(state);
 }
 
-/// +1 when the tray is below the stack, -1 above.
-fn toward_tray(v: &NotifyView) -> i32 {
-    if v.edge == Some(Edge::Top) { -1 } else { 1 }
-}
-
-/// Places `b` as its motion stands at `now`: posed about its rest, faded, its glass scaled with it.
+/// Places `b` as its motion stands at `now` by the bar on `edge`: posed about its rest, faded, its
+/// glass following. A Droplet arriving swells from a bead at the tray-side cap.
 fn pose_balloon(
     scene: &mut DeskScene,
     glass: &Rc<GlassCtx>,
     b: &mut Balloon,
     now: Instant,
-    toward_tray: i32,
+    edge: Option<Edge>,
     scale_from: f64,
 ) {
     let Some(drawn) = &b.drawn else {
         return;
     };
     let s = b.scale;
-    let ((ox, oy), (w, h)) = (drawn.origin(), drawn.size());
+    let ((ox, oy), (w, h), (fw, fh)) = (drawn.origin(), drawn.size(), drawn.footprint());
     let (ox, oy) = (ox / s, oy / s);
-    let rest = Rect::new(
-        b.at.0 - ox,
-        b.at.1 - oy + b.motion.offset(now).round() as i32,
-        w / s,
-        h / s,
-    );
-    let (r, alpha) = pose(b.motion.k.value(now), rest, RISE, toward_tray, scale_from);
+    let y = b.at.1 + b.motion.offset(now).round() as i32;
+    let rest = Rect::new(b.at.0 - ox, y - oy, w / s, h / s);
+    let k = b.motion.k.value(now);
     let ratio = |to: i32, from: i32| f64::from(to) / f64::from(from.max(1));
-    let inset = (
-        (f64::from(ox) * ratio(r.width, rest.width)).round() as i32,
-        (f64::from(oy) * ratio(r.height, rest.height)).round() as i32,
-    );
+    let times = |v: i32, k: f64| (f64::from(v) * k).round() as i32;
+    let tray_right = edge != Some(Edge::Left);
+    let (r, inset, alpha, pane, bead) = if b.motion.drip && k < 1.0 {
+        let fp = Rect::new(b.at.0, y, fw / s, fh / s);
+        let (p, alpha) = drip_pose(k, fp, tray_right);
+        let (kx, ky) = (ratio(p.width, fp.width), ratio(p.height, fp.height));
+        let inset = (times(ox, kx), times(oy, ky));
+        let r = Rect::new(
+            p.x - inset.0,
+            p.y - inset.1,
+            times(rest.width, kx),
+            times(rest.height, ky),
+        );
+        let pane = b
+            .pane
+            .as_ref()
+            .map(|_| crate::glass::sheet_pane((p.width, p.height), drip_corner(p.height)));
+        let bead = (drip_bead_at(p, tray_right), drip_bead_share(k), p);
+        (r, inset, alpha, pane, Some(bead))
+    } else {
+        let toward_tray = if edge == Some(Edge::Top) { -1 } else { 1 };
+        let (r, alpha) = pose(k, rest, RISE, toward_tray, scale_from);
+        let inset = (
+            times(ox, ratio(r.width, rest.width)),
+            times(oy, ratio(r.height, rest.height)),
+        );
+        let pane = b
+            .pane
+            .as_ref()
+            .map(|pane| crate::windowanim::scale_pane(pane, rest, r));
+        (r, inset, alpha, pane, None)
+    };
     scene.set_position(b.tree, r.x + inset.0, r.y + inset.1);
     scene.set_position(b.buffer, -inset.0, -inset.1);
     scene.buffer_set_dest_size(b.buffer, Some((r.width, r.height).into()));
     scene.set_opacity(b.tree, alpha);
-    if let (Some(backdrop), Some(pane)) = (b.backdrop.as_mut(), b.pane.as_ref()) {
-        let pane = crate::windowanim::scale_pane(pane, rest, r);
+    let share = bead.map_or(0.0, |(_, share, _)| share);
+    scene.set_opacity(b.buffer, 1.0 - share);
+    match (&b.bead, bead) {
+        (Some(bd), Some((q, share, p))) if share > 0.0 => {
+            let k = f64::from(q.height) / f64::from(bd.body.height.max(1));
+            scene.set_position(
+                bd.buffer,
+                q.x - p.x - times(bd.body.x, k),
+                q.y - p.y - times(bd.body.y, k),
+            );
+            let size = (times(bd.size.0, k), times(bd.size.1, k));
+            scene.buffer_set_dest_size(bd.buffer, Some(size.into()));
+            scene.set_opacity(bd.buffer, share);
+        }
+        (Some(_), _) => {
+            if let Some(gone) = b.bead.take() {
+                scene.destroy(gone.buffer);
+            }
+        }
+        (None, _) => {}
+    }
+    if let (Some(backdrop), Some(pane)) = (b.backdrop.as_mut(), pane) {
         backdrop.set(scene, glass, b.glass_tree, Some(pane));
     }
 }
@@ -2231,14 +2638,31 @@ fn arm_tick(state: &mut State) {
     }
 }
 
-/// Poses every sheet and takes down those done leaving; true while any still moves. Once all
-/// settle, the still pointer holds the stack only if a sheet rests under it.
+/// Redraws the Droplets opening, with the stack following their height and the hold the still
+/// pointer, poses every sheet and takes down those done leaving; true while any still moves.
 fn tick(state: &mut State) -> bool {
     let now = Instant::now();
-    let (toward, scale_from) = (
-        toward_tray(&state.notify),
-        state.config.effects.window_scale,
-    );
+    let v = &state.notify;
+    if v.stack
+        .iter()
+        .any(|b| b.motion.open.value(now) != b.open_drawn)
+    {
+        if lay_stack(state, true) {
+            let p = state.pointer_location();
+            if hold_at(&mut state.notify, p.x, p.y, now) && hold_clocks(state) {
+                rearm(state);
+            }
+        }
+        if state
+            .notify
+            .stack
+            .iter()
+            .all(|b| b.motion.open.settled(now))
+        {
+            crate::access::touch(state);
+        }
+    }
+    let (edge, scale_from) = (state.notify.edge, state.config.effects.window_scale);
     let State {
         notify,
         scene,
@@ -2246,7 +2670,7 @@ fn tick(state: &mut State) -> bool {
         ..
     } = state;
     for b in notify.stack.iter_mut().chain(notify.leaving.iter_mut()) {
-        pose_balloon(scene, glass, b, now, toward, scale_from);
+        pose_balloon(scene, glass, b, now, edge, scale_from);
     }
     let (gone, kept): (Vec<Balloon>, Vec<Balloon>) = std::mem::take(&mut notify.leaving)
         .into_iter()
@@ -2260,6 +2684,9 @@ fn tick(state: &mut State) -> bool {
     let p = state.pointer_location();
     if !moving && hold_at(&mut state.notify, p.x, p.y, now) && hold_clocks(state) {
         rearm(state);
+    }
+    if !moving {
+        warm_openings(state);
     }
     moving
 }
@@ -2742,6 +3169,7 @@ mod tests {
             clock: Clock::start(Some(DEFAULT_MS), Instant::now()),
             motion: Motion::settled_at(Instant::now()),
             drawn: None,
+            open_drawn: 0.0,
             pane: None,
             held: None,
             hot: None,
@@ -2749,9 +3177,75 @@ mod tests {
             pointer_in: false,
             serial: u64::from(id),
             tint: None,
+            opening: SheetOpening::default(),
+            bead: None,
+            warm_gen: 0,
             glass: SheetGlass::default(),
             painted: None,
         }
+    }
+
+    /// Layers a worker painted for `b`'s Droplet, the job asking for them, and whether `b` would
+    /// still send that job.
+    fn warm_layers(b: &Balloon) -> (WarmLayers, impl Fn(&mut Balloon) -> bool + use<>) {
+        let (theme, text) = (theme_for(Interface::Glass), text());
+        let ends = droplet_ends(
+            &theme,
+            &text,
+            &b.item,
+            false,
+            Edge::Bottom,
+            SheetShape::Droplet,
+            "now",
+        );
+        let [shut, open] = ends.unwrap();
+        let icons = SheetIcons::default();
+        let job = SheetOpening::default()
+            .warm_job(
+                &SheetGlass::default(),
+                &theme,
+                &shut,
+                &open,
+                icons,
+                None,
+                true,
+            )
+            .unwrap();
+        let wants = move |b: &mut Balloon| {
+            b.opening
+                .warm_job(
+                    &b.glass,
+                    &theme,
+                    &shut,
+                    &open,
+                    SheetIcons::default(),
+                    None,
+                    true,
+                )
+                .is_some()
+        };
+        (build_warm(job, &text), wants)
+    }
+
+    #[test]
+    fn a_warm_result_for_an_earlier_job_is_dropped() {
+        let mut scene = crate::compositor::DeskScene::new();
+        let mut stack = vec![balloon(&mut scene, 1)];
+        stack[0].warm_gen = 2;
+        let (built, wants) = warm_layers(&stack[0]);
+        assert!(!land_warm(&mut stack, 1, 1, built));
+        assert!(wants(&mut stack[0]), "nothing installed");
+        let (built, wants) = warm_layers(&stack[0]);
+        assert!(land_warm(&mut stack, 1, 2, built));
+        assert!(!wants(&mut stack[0]), "the current job's layers are in");
+    }
+
+    #[test]
+    fn a_warm_result_for_a_balloon_gone_is_dropped() {
+        let mut scene = crate::compositor::DeskScene::new();
+        let mut stack = vec![balloon(&mut scene, 1)];
+        let (built, _) = warm_layers(&stack[0]);
+        assert!(!land_warm(&mut stack, 9, 0, built));
     }
 
     #[test]
@@ -2890,6 +3384,113 @@ mod tests {
             f64::from(b.at.0 + c.x - ox + 2),
             f64::from(b.at.1 + c.y - oy + 2),
         )
+    }
+
+    #[test]
+    fn a_picture_beside_the_slot_leaves_the_slot_to_the_stock_icon() {
+        let theme = theme_for(Interface::Glass);
+        let mut n = note(1, "Music");
+        n.image = vec![IconSource {
+            width: 48,
+            height: 48,
+            pixels: vec![0xFF00_00FF; 48 * 48],
+        }];
+        let lay = |shape| match lay_out(
+            &theme,
+            &text(),
+            &Item::Note(n.clone()),
+            false,
+            Edge::Bottom,
+            shape,
+            false,
+            "now",
+        ) {
+            Drawn::Sheet(l) => l,
+            Drawn::Balloon(_) => unreachable!("Glass draws sheets"),
+        };
+        assert!(!slot_needs_icon(&lay(SheetShape::Lozenge), true));
+        assert!(slot_needs_icon(&lay(SheetShape::Droplet), true));
+        assert!(slot_needs_icon(&lay(SheetShape::Halo), true));
+        assert!(slot_needs_icon(&lay(SheetShape::Lozenge), false));
+    }
+
+    #[test]
+    fn a_droplet_opening_under_a_still_pointer_keeps_the_stack_held() {
+        let mut scene = crate::compositor::DeskScene::new();
+        let theme = theme_for(Interface::Glass);
+        let mut b = balloon(&mut scene, 1);
+        if let Item::Note(n) = &mut b.item {
+            n.actions = vec![("later".into(), "Later".into())];
+            n.body = "Lunch at noon? The usual place by the river. Bring the photos.".into();
+        }
+        let lay = |t| {
+            lay_out_open(
+                &theme,
+                &text(),
+                &b.item,
+                false,
+                Edge::Bottom,
+                SheetShape::Droplet,
+                "now",
+                t,
+            )
+            .0
+        };
+        let (shut, half) = (lay(0.0), lay(0.5));
+        let bottom = 1000;
+        b.at = (1550, bottom - shut.footprint().1);
+        b.drawn = Some(shut);
+        let mut v = NotifyView {
+            stack: vec![b],
+            ..NotifyView::default()
+        };
+        let (x, y) = (1700.0, f64::from(bottom - 10));
+        let now = Instant::now();
+        point_at(&mut v, x, y, true, now);
+        v.stack[0].at.1 = bottom - half.footprint().1;
+        v.stack[0].drawn = Some(half);
+        assert!(!hold_at(&mut v, x, y, now));
+        assert!(hovered(&v), "held while the sheet grows away from the bar");
+        assert!(matches!(
+            press_target(&mut v, x, y, now),
+            Some((0, _, NotifyHit::Body, _))
+        ));
+    }
+
+    #[test]
+    fn a_close_press_on_an_opening_droplet_is_taken() {
+        let mut scene = crate::compositor::DeskScene::new();
+        let (mut v, _) = sheets_at(&mut scene);
+        let now = Instant::now();
+        let began = now - Duration::from_millis(100);
+        v.stack[0].motion.open = Tween::new(0.0, 1.0, began, 250, Ease::OutCubic);
+        let (x, y) = close_spot(&v, 0);
+        assert!(matches!(
+            press_target(&mut v, x, y, now),
+            Some((0, _, NotifyHit::Close, _))
+        ));
+    }
+
+    #[test]
+    fn a_close_press_before_an_opening_droplet_shows_its_close_is_ignored() {
+        let mut scene = crate::compositor::DeskScene::new();
+        let (mut v, _) = sheets_at(&mut scene);
+        let now = Instant::now();
+        v.stack[0].motion.open = Tween::new(0.0, 1.0, now, 250, Ease::OutCubic);
+        let (x, y) = close_spot(&v, 0);
+        assert!(press_target(&mut v, x, y, now).is_none());
+    }
+
+    #[test]
+    fn a_droplet_dismissed_mid_open_is_gone_on_its_close_time() {
+        let (t0, e) = (Instant::now(), glass_effects());
+        let mut m = Motion::settled_at(t0);
+        m.aim_open(1.0, &e, t0);
+        let t1 = t0 + Duration::from_millis(10);
+        m.leave(&e, t1);
+        let gone = t1 + Duration::from_millis(u64::from(e.window_close_ms));
+        assert!(e.window_close_ms < e.window_open_ms - 10);
+        assert!(m.settled(gone));
     }
 
     #[test]
@@ -3072,6 +3673,145 @@ mod tests {
         assert!(down.settled(t0), "a stack growing down holds the top");
         follow_slot(&mut down, (40, 100), (80, 100), true, t0, 250);
         assert_eq!(down.offset(t0), -40.0);
+    }
+
+    #[test]
+    fn a_hovered_droplet_opens_and_a_replying_one_stays_open() {
+        assert_eq!(
+            [
+                open_target(true, false),
+                open_target(false, true),
+                open_target(false, false)
+            ],
+            [1.0, 1.0, 0.0]
+        );
+    }
+
+    #[test]
+    fn a_droplet_arrives_over_the_drip_time() {
+        let (t0, e) = (Instant::now(), glass_effects());
+        let m = Motion::drip(&e, t0);
+        assert!(
+            !m.settled(t0 + Duration::from_millis(599))
+                && m.settled(t0 + Duration::from_millis(600))
+        );
+        let off = EffectsConfig {
+            window_animation: false,
+            ..e
+        };
+        assert!(Motion::drip(&off, t0).settled(t0));
+    }
+
+    #[test]
+    fn a_leaving_droplet_poses_like_any_sheet() {
+        let (t0, e) = (Instant::now(), glass_effects());
+        let mut m = Motion::drip(&e, t0);
+        assert!(m.drip);
+        m.leave(&e, t0 + Duration::from_millis(100));
+        assert!(!m.drip);
+    }
+
+    #[test]
+    fn a_droplet_opens_over_the_open_time_and_closes_over_the_close_time() {
+        let (t0, e) = (Instant::now(), glass_effects());
+        let ms = Duration::from_millis;
+        let mut m = Motion::settled_at(t0);
+        assert!(m.aim_open(1.0, &e, t0));
+        assert!(!m.aim_open(1.0, &e, t0 + ms(10)), "already on its way");
+        assert!(!m.settled(t0 + ms(249)) && m.settled(t0 + ms(250)));
+        assert_eq!(m.open.value(t0 + ms(250)), 1.0);
+        let t1 = t0 + ms(300);
+        m.aim_open(0.0, &e, t1);
+        assert!(!m.settled(t1 + ms(199)));
+        assert_eq!(m.open.value(t1 + ms(200)), 0.0);
+        let off = EffectsConfig {
+            window_animation: false,
+            ..e
+        };
+        let mut m = Motion::settled_at(t0);
+        m.aim_open(1.0, &off, t0);
+        assert!(m.settled(t0));
+    }
+
+    fn droplet_note() -> Item {
+        let mut n = note(1, "Chat");
+        n.body = "Lunch at noon?\nThe usual place.\nBring the photos.".into();
+        Item::Note(n)
+    }
+
+    fn droplet_at(t: f64, shape: SheetShape) -> (SheetLayout, Option<[SheetLayout; 2]>) {
+        let (drawn, ends) = lay_out_open(
+            &theme_for(Interface::Glass),
+            &text(),
+            &droplet_note(),
+            false,
+            Edge::Bottom,
+            shape,
+            "now",
+            t,
+        );
+        let Drawn::Sheet(lay) = drawn else {
+            panic!("a sheet")
+        };
+        (lay, ends)
+    }
+
+    #[test]
+    fn an_opening_droplet_lays_out_between_its_ends() {
+        let (shut, ends) = droplet_at(0.0, SheetShape::Droplet);
+        assert!(!shut.expanded);
+        assert_eq!(shut.sheet.height, 68);
+        assert_eq!(ends.as_ref().map(|[c, _]| c), Some(&shut));
+        let (open, ends) = droplet_at(1.0, SheetShape::Droplet);
+        assert!(open.expanded);
+        assert_eq!(ends.as_ref().map(|[_, e]| e), Some(&open));
+        let (half, ends) = droplet_at(0.5, SheetShape::Droplet);
+        let [c, e] = ends.expect("both ends while it opens");
+        assert_eq!((c, &e), (shut, &open));
+        assert!(half.sheet.height > 68 && half.sheet.height < e.sheet.height);
+        let (lozenge, none) = droplet_at(0.5, SheetShape::Lozenge);
+        assert!(none.is_none() && !lozenge.expanded);
+    }
+
+    #[test]
+    fn a_droplet_opening_by_the_taskbar_keeps_its_bottom_still() {
+        let t0 = Instant::now();
+        let area = Rect::new(0, 0, 1920, 1040);
+        let size = |t| {
+            let fp = droplet_at(t, SheetShape::Droplet).0.footprint;
+            (fp.width, fp.height)
+        };
+        let (shut, open) = (size(0.0), size(1.0));
+        let slot = |s: (i32, i32)| place_stack(area, &[s], None, Edge::Bottom).0[0];
+        let (was, now_at) = (slot(shut), slot(open));
+        assert_eq!(was.1 + shut.1, now_at.1 + open.1);
+        let mut m = Motion::settled_at(t0);
+        follow_slot(&mut m, (was.1, shut.1), (now_at.1, open.1), false, t0, 250);
+        assert!(m.settled(t0), "no dip toward the taskbar");
+    }
+
+    #[test]
+    fn a_droplet_pane_is_its_footprint_with_the_droplet_corner() {
+        let t = theme_for(Interface::Glass).scaled(2);
+        let Drawn::Sheet(lay) = lay_out(
+            &t,
+            &text(),
+            &droplet_note(),
+            false,
+            Edge::Bottom,
+            SheetShape::Droplet,
+            false,
+            "now",
+        ) else {
+            panic!()
+        };
+        let pane = sheet_glass(&lay, t.look.style().unwrap().notify.as_ref().unwrap(), 2);
+        assert_eq!(pane.shapes.len(), 1);
+        assert_eq!(pane.shapes[0].rect, Rect::new(0, 0, 360, 68));
+        assert_eq!(
+            pane.shapes[0].corner,
+            &reprisekit::glass::notify::DROPLET_CORNER[..]
+        );
     }
 
     #[test]

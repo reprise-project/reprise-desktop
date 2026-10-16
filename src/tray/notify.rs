@@ -6,6 +6,7 @@ use crate::raster::Canvas;
 use reprisekit::icon::IconSource;
 use serde::de::{self, Deserialize, Deserializer, IgnoredAny, SeqAccess, Visitor};
 use std::collections::HashMap;
+use std::path::Path;
 use zbus::zvariant::{Signature, Type};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -214,6 +215,24 @@ pub fn image_sources(img: &ImageData) -> Vec<IconSource> {
             }
         })
         .collect()
+}
+
+/// A picture file the icon loader leaves alone, a JPEG cover say, as [`image_sources`] gives.
+pub fn picture_file_sources(path: &Path) -> Vec<IconSource> {
+    let Ok(img) = crate::wallpaper::decode(path) else {
+        return Vec::new();
+    };
+    let rgba = img.into_rgba8();
+    let (w, h) = (rgba.width() as i32, rgba.height() as i32);
+    image_sources(&ImageData {
+        width: w,
+        height: h,
+        stride: w * 4,
+        alpha: true,
+        bits: 8,
+        channels: 4,
+        data: rgba.as_raw(),
+    })
 }
 
 pub fn desktop_id(hint: &str) -> Option<String> {

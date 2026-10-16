@@ -107,21 +107,27 @@ impl Material {
 }
 
 /// `[glass] notification_style`: the notification sheet's shape. Halo breaks the
-/// app icon out of the sheet's top-left edge and takes the icon's colour.
+/// app icon out of the top-left edge in its colour; Droplet is one row until hovered.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub enum NotifyStyle {
     #[default]
     Lozenge,
     Halo,
+    Droplet,
 }
 
 impl NotifyStyle {
-    pub const ALL: [NotifyStyle; 2] = [NotifyStyle::Lozenge, NotifyStyle::Halo];
+    pub const ALL: [NotifyStyle; 3] = [
+        NotifyStyle::Lozenge,
+        NotifyStyle::Halo,
+        NotifyStyle::Droplet,
+    ];
 
     pub fn as_str(self) -> &'static str {
         match self {
             NotifyStyle::Lozenge => "lozenge",
             NotifyStyle::Halo => "halo",
+            NotifyStyle::Droplet => "droplet",
         }
     }
 

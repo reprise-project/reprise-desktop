@@ -489,23 +489,29 @@ fn notification_icons(
             .map(|name| decode_named_at(&mut lock(icons), &name, &[], &NOTIFY_SIZES))
             .unwrap_or_default()
     };
-    let image =
-        hints
-            .image
-            .as_ref()
-            .map(notify::image_sources)
-            .filter(|s| !s.is_empty())
-            .unwrap_or_else(|| {
-                named(hints.image_path.as_deref().map(|p| {
-                    match p.strip_prefix("file://") {
-                        Some(rest) => {
-                            String::from_utf8_lossy(&reprisefs::trash::percent_decode(rest))
-                                .into_owned()
-                        }
-                        None => p.to_string(),
-                    }
-                }))
-            });
+    let image = hints
+        .image
+        .as_ref()
+        .map(notify::image_sources)
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| {
+            let path = hints
+                .image_path
+                .as_deref()
+                .map(|p| match p.strip_prefix("file://") {
+                    Some(rest) => String::from_utf8_lossy(&reprisefs::trash::percent_decode(rest))
+                        .into_owned(),
+                    None => p.to_string(),
+                });
+            let file = path.clone().filter(|p| p.starts_with('/'));
+            let sources = named(path);
+            match file {
+                Some(file) if sources.is_empty() => {
+                    notify::picture_file_sources(std::path::Path::new(&file))
+                }
+                _ => sources,
+            }
+        });
     let app = [Some(app_icon), entry.and_then(|e| e.icon.clone())]
         .into_iter()
         .map(named)
@@ -1513,6 +1519,33 @@ mod tests {
         let (app, image) = notification_icons(&hicolor(), &hints, String::new(), None);
         assert!(app.is_empty());
         assert_eq!(image.len(), NOTIFY_SIZES.len());
+    }
+
+    #[test]
+    fn a_jpeg_image_path_is_the_picture() {
+        let dir = std::env::temp_dir().join(format!("reprise-notify-jpeg-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("cover.jpg");
+        image::RgbImage::from_pixel(60, 40, image::Rgb([0xE0, 0x6A, 0x2E]))
+            .save_with_format(&file, image::ImageFormat::Jpeg)
+            .unwrap();
+        let hints = notify::Hints {
+            image_path: Some(format!("file://{}", file.display())),
+            ..Default::default()
+        };
+        let (_, image) = notification_icons(&hicolor(), &hints, String::new(), None);
+        assert_eq!(image.len(), NOTIFY_SIZES.len());
+        let big = image.iter().max_by_key(|s| s.width).unwrap();
+        let mid = big.pixels[(big.height / 2 * big.width + big.width / 2) as usize];
+        let (r, g, b) = ((mid >> 16) & 0xFF, (mid >> 8) & 0xFF, mid & 0xFF);
+        assert!(
+            mid >> 24 == 0xFF
+                && r.abs_diff(0xE0) < 8
+                && g.abs_diff(0x6A) < 8
+                && b.abs_diff(0x2E) < 8,
+            "the cover's orange, opaque: {mid:#010x}"
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

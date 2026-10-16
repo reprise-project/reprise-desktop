@@ -7,10 +7,12 @@ use super::tooltip::{
 };
 use crate::access::Tree;
 use crate::access::accesskit::NodeId;
+use crate::anim::Ease;
+use crate::backdrop::{corner_radius, round_corner};
 use crate::classic::widgets::{draw_edit, edit_first_visible};
 use crate::paint::Paint;
 use crate::raster::{Canvas, Rect};
-use crate::shape::{pack, rounded, scale, unpack};
+use crate::shape::{mix, over, pack, rounded, scale, smooth, unpack};
 use crate::style::{NotifyLook, SQUIRCLE_ROUND, SheetShape, SheetSpec, State, Well};
 use crate::taskbar::Edge;
 use crate::text::{Align, TextRenderer, wrap};
@@ -146,8 +148,8 @@ const HALO: Frame = Frame {
     row_x: 18,
 };
 
-/// Lay out a sheet of `shape` for `c`; `expanded` shows the reply row in place of
-/// the pills. `None` when the look has no sheets ([`has_sheets`]).
+/// Lay out a sheet of `shape` for `c`; `expanded` opens a Droplet and shows the reply row in
+/// place of the pills. `None` when the look has no sheets ([`has_sheets`]).
 pub fn sheet_layout(
     theme: &Theme,
     text: &TextRenderer,
@@ -159,8 +161,98 @@ pub fn sheet_layout(
     let frame = match shape {
         SheetShape::Lozenge => &LOZENGE,
         SheetShape::Halo => &HALO,
+        SheetShape::Droplet => return Some(droplet_layout(theme, text, &look, c, expanded)),
     };
     Some(column_layout(theme, text, &look, frame, c, expanded))
+}
+
+fn app_line(c: &SheetContent) -> String {
+    if c.when.is_empty() {
+        c.app.to_string()
+    } else {
+        format!("{} \u{b7} {}", c.app, c.when)
+    }
+}
+
+/// `body` wrapped to `width`; past `NOTIFY_BODY_LINES` the last line kept ends in "...".
+fn body_lines(text: &TextRenderer, body: &str, width: i32, px: u32) -> Vec<String> {
+    let mut lines = wrap(text, body, width, px);
+    if lines.len() > NOTIFY_BODY_LINES {
+        lines.truncate(NOTIFY_BODY_LINES);
+        if let Some(last) = lines.last_mut() {
+            while !last.is_empty() && text.measure(&format!("{last}..."), false, px) > width {
+                last.pop();
+            }
+            *last = format!("{}...", last.trim_end());
+        }
+    }
+    lines
+}
+
+/// The pills or, with `reply`, the reply field and its send pill, right-aligned between
+/// `left` and `right` from `y`, design px.
+struct ActionRow {
+    buttons: Vec<Rect>,
+    labels: Vec<String>,
+    more: Option<Rect>,
+    field: Option<Rect>,
+    send: Option<Rect>,
+    shown: bool,
+}
+
+fn action_row(
+    text: &TextRenderer,
+    actions: &[&str],
+    reply: Option<NotifyReply>,
+    (left, right, y): (i32, i32, i32),
+    s: i32,
+    pill_px: u32,
+    at: impl Fn(i32, i32, i32, i32) -> Rect,
+) -> ActionRow {
+    let room = right - left;
+    let shown = actions.len().min(NOTIFY_BUTTONS);
+    let more_w = if actions.len() > NOTIFY_BUTTONS {
+        MORE_W
+    } else {
+        0
+    };
+    let mut row = ActionRow {
+        buttons: Vec::new(),
+        labels: Vec::new(),
+        more: None,
+        field: None,
+        send: None,
+        shown: true,
+    };
+    if let Some(r) = reply {
+        let sw = pill_widths(text, &[r.send], pill_px, s, room)[0];
+        let sx = right - sw;
+        row.send = Some(at(sx, y, sw, PILL_H));
+        row.field = Some(at(left, y, sx - PILL_GAP - left, PILL_H));
+    } else if shown > 0 || more_w > 0 {
+        let parts = shown + usize::from(more_w > 0);
+        let room = room - more_w - (parts as i32 - 1) * PILL_GAP;
+        let widths = pill_widths(text, &actions[..shown], pill_px, s, room);
+        let mut x = right;
+        if more_w > 0 {
+            x -= more_w;
+            row.more = Some(at(x, y, more_w, PILL_H));
+            x -= PILL_GAP;
+        }
+        for (a, w) in actions[..shown].iter().zip(&widths).rev() {
+            x -= w;
+            row.buttons.push(at(x, y, *w, PILL_H));
+            let room = (w - 2 * PILL_PAD) * s;
+            row.labels
+                .push(text.ellipsize(a, room, true, pill_px).into_owned());
+            x -= PILL_GAP;
+        }
+        row.buttons.reverse();
+        row.labels.reverse();
+    } else {
+        row.shown = false;
+    }
+    row
 }
 
 /// Pill widths, design px: label plus padding, shrunk evenly when they overrun `room`.
@@ -205,61 +297,34 @@ fn column_layout(
     };
     let (title_y, body_y) = (f.text.1, f.text.1 + TITLE_H);
 
-    let app = if c.when.is_empty() {
-        c.app.to_string()
-    } else {
-        format!("{} \u{b7} {}", c.app, c.when)
-    };
-    let app_line = text.ellipsize(&app, head_w * s, false, app_px).into_owned();
+    let app_shown = text
+        .ellipsize(&app_line(c), head_w * s, false, app_px)
+        .into_owned();
     let title = text
         .ellipsize(c.title, title_w * s, true, title_px)
         .into_owned();
-    let mut lines = wrap(text, c.body, text_w * s, body_px);
-    lines.truncate(NOTIFY_BODY_LINES);
+    let lines = body_lines(text, c.body, text_w * s, body_px);
     let text_bottom = (body_y + lines.len() as i32 * LINE_H).max(picture.map_or(0, |p| p.bottom()));
 
-    let row_w = w - f.pad - f.row_x;
     let reply = c.reply.filter(|_| expanded);
     let actions = if reply.is_some() { &[][..] } else { c.actions };
-    let shown = actions.len().min(NOTIFY_BUTTONS);
-    let more_w = if actions.len() > NOTIFY_BUTTONS {
-        MORE_W
-    } else {
-        0
-    };
     let row_y = text_bottom + ROW_GAP;
-    let right = w - f.pad;
-    let (mut buttons, mut labels, mut more, mut field, mut send) =
-        (Vec::new(), Vec::new(), None, None, None);
-    let row = if let Some(r) = reply {
-        let sw = pill_widths(text, &[r.send], pill_px, s, row_w)[0];
-        let sx = right - sw;
-        send = Some(Rect::new(sx, row_y, sw, PILL_H));
-        field = Some(Rect::new(f.row_x, row_y, sx - PILL_GAP - f.row_x, PILL_H));
-        true
-    } else if shown > 0 || more_w > 0 {
-        let parts = shown + usize::from(more_w > 0);
-        let room = row_w - more_w - (parts as i32 - 1) * PILL_GAP;
-        let widths = pill_widths(text, &actions[..shown], pill_px, s, room);
-        let mut x = right;
-        if more_w > 0 {
-            x -= more_w;
-            more = Some(Rect::new(x, row_y, more_w, PILL_H));
-            x -= PILL_GAP;
-        }
-        for (a, pw) in actions[..shown].iter().zip(&widths).rev() {
-            x -= pw;
-            buttons.push(Rect::new(x, row_y, *pw, PILL_H));
-            let room = (pw - 2 * PILL_PAD) * s;
-            labels.push(text.ellipsize(a, room, true, pill_px).into_owned());
-            x -= PILL_GAP;
-        }
-        buttons.reverse();
-        labels.reverse();
-        true
-    } else {
-        false
-    };
+    let ActionRow {
+        buttons,
+        labels,
+        more,
+        field,
+        send,
+        shown: row,
+    } = action_row(
+        text,
+        actions,
+        reply,
+        (f.row_x, w - f.pad, row_y),
+        s,
+        pill_px,
+        Rect::new,
+    );
     let bottom = if row { row_y + PILL_H } else { text_bottom };
     let h = f.slot.bottom().max(bottom) + f.pad;
 
@@ -310,13 +375,192 @@ fn column_layout(
         app_px,
         title_px,
         body_px,
-        app_line,
+        app_line: app_shown,
         app_box: at(Rect::new(f.app.0, f.app.1, head_w, APP_H)),
         title,
         labels,
         line_h: LINE_H * s,
         pill_px,
     }
+}
+
+/// The Droplet, design px: a capsule row of round slot, title and app line, one body line and
+/// the picture; expanded, the body wraps and the pills follow.
+const DROPLET_W: i32 = 360;
+const DROPLET_H: i32 = 68;
+const DROPLET_SLOT: i32 = 48;
+const DROPLET_IN: i32 = 10;
+const DROPLET_TEXT_X: i32 = DROPLET_IN + DROPLET_SLOT + DROPLET_IN;
+/// Expanded without a picture, the body stops where the end curve begins.
+const DROPLET_END: i32 = 34;
+const DROPLET_PICTURE_END: i32 = 16;
+const DROPLET_TITLE_PX: u32 = 15;
+const APP_GAP: i32 = 8;
+/// The title keeps at least this share of the head row from a long app line, fifths.
+const TITLE_SHARE: i32 = 3;
+const DROPLET_CLOSE: (i32, i32) = (DROPLET_W - DROPLET_END - CLOSE, 24);
+const DROPLET_PAD: i32 = 14;
+const DROPLET_OPEN_CLOSE: (i32, i32) = (DROPLET_W - DROPLET_PAD - CLOSE, 12);
+
+fn droplet_layout(
+    theme: &Theme,
+    text: &TextRenderer,
+    look: &NotifyLook,
+    c: &SheetContent,
+    expanded: bool,
+) -> SheetLayout {
+    let s = theme.scale.max(1);
+    let su = s as u32;
+    let m = (look.margin)(SheetShape::Droplet);
+    let (ox, oy) = (m.left * s, m.top * s);
+    let at = |x: i32, y: i32, w: i32, h: i32| Rect::new(ox + x * s, oy + y * s, w * s, h * s);
+    let (app_px, title_px, body_px, pill_px) = (
+        APP_PX * su,
+        DROPLET_TITLE_PX * su,
+        BODY_PX * su,
+        PILL_PX * su,
+    );
+    let picture_x = DROPLET_W - DROPLET_PICTURE_END - DROPLET_SLOT;
+    let text_x = DROPLET_TEXT_X;
+    let (shut_close, open_close) = if c.has_picture {
+        let x = picture_x - CLOSE_GAP - CLOSE;
+        ((x, DROPLET_CLOSE.1), (x, DROPLET_OPEN_CLOSE.1))
+    } else {
+        (DROPLET_CLOSE, DROPLET_OPEN_CLOSE)
+    };
+    let head_right = shut_close.0 - CLOSE_GAP;
+    let text_right = match (expanded, c.has_picture) {
+        (false, _) => head_right,
+        (true, true) => picture_x - DROPLET_IN,
+        (true, false) => DROPLET_W - DROPLET_END,
+    };
+    let text_w = text_right - text_x;
+
+    let has_body = c.body.split_whitespace().next().is_some();
+    let block = TITLE_H + if has_body { LINE_H } else { 0 };
+    let title_y = DROPLET_IN + (DROPLET_SLOT - block) / 2;
+    let body_y = title_y + TITLE_H;
+    let lines = match (has_body, expanded) {
+        (false, _) => Vec::new(),
+        (true, true) => body_lines(text, c.body, text_w * s, body_px),
+        (true, false) => {
+            let one = c.body.split_whitespace().collect::<Vec<_>>().join(" ");
+            vec![
+                text.ellipsize(&one, text_w * s, false, body_px)
+                    .into_owned(),
+            ]
+        }
+    };
+
+    let head = at(text_x, title_y, head_right - text_x, TITLE_H);
+    let app = app_line(c);
+    let app_w = text.measure(&app, false, app_px);
+    let gap = APP_GAP * s;
+    let room = (head.width - gap - app_w).max(head.width * TITLE_SHARE / 5);
+    let title = text.ellipsize(c.title, room, true, title_px).into_owned();
+    let used = match text.measure(&title, true, title_px) {
+        0 => 0,
+        w => w + gap,
+    };
+    let app_shown = text
+        .ellipsize(&app, head.width - used, false, app_px)
+        .into_owned();
+    let app_box = Rect::new(head.x + used, head.y, head.width - used, head.height);
+    let lift = text
+        .baseline(head, true, title_px)
+        .zip(text.baseline(app_box, false, app_px))
+        .map_or(0, |(t, a)| t - a);
+    let app_box = Rect::new(app_box.x, app_box.y + lift, app_box.width, app_box.height);
+
+    let reply = c.reply.filter(|_| expanded);
+    let actions = match (expanded, reply) {
+        (true, None) => c.actions,
+        _ => &[][..],
+    };
+    let text_bottom = body_y + lines.len() as i32 * LINE_H;
+    let row_y = text_bottom.max(DROPLET_IN + DROPLET_SLOT) + ROW_GAP;
+    let row = action_row(
+        text,
+        actions,
+        reply,
+        (text_x, DROPLET_W - DROPLET_PAD, row_y),
+        s,
+        pill_px,
+        at,
+    );
+    let h = if row.shown {
+        DROPLET_H.max(row_y + PILL_H + DROPLET_PAD)
+    } else if expanded {
+        DROPLET_H.max(text_bottom + DROPLET_PAD)
+    } else {
+        DROPLET_H
+    };
+
+    let sheet = at(0, 0, DROPLET_W, h);
+    let (close_x, close_y) = if expanded { open_close } else { shut_close };
+    let parts = NotifyParts {
+        bubble: sheet,
+        title: head,
+        body: at(text_x, body_y, text_w, lines.len().max(1) as i32 * LINE_H),
+        close: at(close_x, close_y, CLOSE, CLOSE),
+        buttons: row.buttons,
+        more: row.more,
+        field: row.field,
+        send: row.send,
+        placeholder: reply.map_or_else(String::new, |r| r.placeholder.to_string()),
+        send_label: reply.map_or_else(String::new, |r| r.send.to_string()),
+    };
+    SheetLayout {
+        width: (m.left + DROPLET_W + m.right) * s,
+        height: (m.top + m.bottom + h) * s,
+        shape: SheetShape::Droplet,
+        expanded,
+        sheet,
+        footprint: sheet,
+        icon: at(DROPLET_IN, DROPLET_IN, DROPLET_SLOT, DROPLET_SLOT),
+        well: Well::Round,
+        badge: None,
+        picture: c
+            .has_picture
+            .then(|| at(picture_x, DROPLET_IN, DROPLET_SLOT, DROPLET_SLOT)),
+        parts,
+        lines,
+        app_px,
+        title_px,
+        body_px,
+        app_line: app_shown,
+        app_box,
+        title,
+        labels: row.labels,
+        line_h: LINE_H * s,
+        pill_px,
+    }
+}
+
+/// `expanded` at `t` (0..1) of the way open from `collapsed`: its sheet, footprint and canvas
+/// as tall as the lerp of the two, less the parts that would end below the sheet.
+pub fn open_layout(collapsed: &SheetLayout, expanded: &SheetLayout, t: f64) -> SheetLayout {
+    let t = t.clamp(0.0, 1.0);
+    let lerp = |a: i32, b: i32| (f64::from(a) + f64::from(b - a) * t).round() as i32;
+    let mut lay = expanded.clone();
+    lay.sheet.height = lerp(collapsed.sheet.height, expanded.sheet.height);
+    lay.footprint.height = lerp(collapsed.footprint.height, expanded.footprint.height);
+    lay.height = lerp(collapsed.height, expanded.height);
+    let bottom = lay.sheet.bottom();
+    let fits = |r: &Rect| r.bottom() <= bottom;
+    let p = &mut lay.parts;
+    p.bubble = lay.sheet;
+    let kept: Vec<(Rect, String)> = p
+        .buttons
+        .drain(..)
+        .zip(lay.labels.drain(..))
+        .filter(|(r, _)| fits(r))
+        .collect();
+    (p.buttons, lay.labels) = kept.into_iter().unzip();
+    p.more = p.more.filter(fits);
+    p.send = p.send.filter(fits);
+    p.field = p.field.filter(fits);
+    lay
 }
 
 /// The app icon and the notification's own picture, device px.
@@ -424,6 +668,8 @@ pub fn draw_sheet(
 pub struct SheetGlass {
     kept: Vec<(GlassKey, Canvas)>,
     builds: u32,
+    /// The glass a Droplet at rest shows, kept through [`SheetGlass::keep_ends`].
+    rest: Option<GlassKey>,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -434,6 +680,18 @@ struct GlassKey {
 }
 
 impl GlassKey {
+    fn new(lay: &SheetLayout, tint: Option<Color>, lit: bool, s: i32, dark: bool) -> GlassKey {
+        GlassKey {
+            spec: sheet_spec(lay, tint, lit, s),
+            scale: s,
+            dark,
+        }
+    }
+
+    fn lit(&self) -> bool {
+        self.spec.hot_close
+    }
+
     fn under_either_rim(&self, other: &GlassKey) -> bool {
         let lit = |k: &GlassKey| GlassKey {
             spec: SheetSpec {
@@ -463,38 +721,49 @@ impl SheetGlass {
         let Some(look) = notify_look(theme) else {
             return Canvas::new(lay.width.max(1) as u32, lay.height.max(1) as u32);
         };
-        let mut c = self.glass(&look, lay, tint, hot.is_some(), theme.scale.max(1));
+        let s = theme.scale.max(1);
+        let key = GlassKey::new(lay, tint, hot.is_some(), s, look.dark);
+        self.kept.retain(|(k, _)| k.under_either_rim(&key));
+        let mut c = self.get(&look, key);
         draw_parts(&mut c, theme, text, &look, lay, icons, pushed, hot, reply);
         c
     }
 
-    /// The glass under `lay`, painted unless kept; glass for another sheet is dropped.
-    fn glass(
-        &mut self,
-        look: &NotifyLook,
-        lay: &SheetLayout,
-        tint: Option<Color>,
-        lit: bool,
-        s: i32,
-    ) -> Canvas {
-        let key = GlassKey {
-            spec: sheet_spec(lay, tint, lit, s),
-            scale: s,
-            dark: look.dark,
-        };
-        self.kept.retain(|(k, _)| k.under_either_rim(&key));
-        if let Some((_, c)) = self.kept.iter().find(|(k, _)| *k == key) {
-            return c.clone();
+    fn get(&mut self, look: &NotifyLook, key: GlassKey) -> Canvas {
+        self.ensure(look, key);
+        self.find(&key)
+            .cloned()
+            .unwrap_or_else(|| unreachable!("painted above"))
+    }
+
+    fn ensure(&mut self, look: &NotifyLook, key: GlassKey) {
+        if self.find(&key).is_none() {
+            let c = (look.sheet)(look, &key.spec, key.scale);
+            self.builds += 1;
+            self.kept.push((key, c));
         }
-        let c = (look.sheet)(look, &key.spec, s);
-        self.builds += 1;
-        self.kept.push((key, c.clone()));
-        c
+    }
+
+    fn find(&self, key: &GlassKey) -> Option<&Canvas> {
+        self.kept.iter().find(|(k, _)| k == key).map(|(_, c)| c)
+    }
+
+    /// Keeps only the glass of `ends` under the rim `lit`, and the glass at rest.
+    fn keep_ends(&mut self, ends: [GlassKey; 2], lit: bool) {
+        let rest = self.rest;
+        self.kept.retain(|(k, _)| {
+            ends.iter().any(|e| k.under_either_rim(e)) && (k.lit() == lit || Some(*k) == rest)
+        });
     }
 
     /// How many times the glass was painted.
     pub fn builds(&self) -> u32 {
         self.builds
+    }
+
+    #[cfg(test)]
+    fn bytes(&self) -> usize {
+        self.kept.iter().map(|(_, c)| c.pixels.len() * 4).sum()
     }
 }
 
@@ -512,6 +781,540 @@ fn sheet_spec(lay: &SheetLayout, tint: Option<Color>, lit: bool, s: i32) -> Shee
         hot_close: lit,
         breakout,
     }
+}
+
+/// A sheet `t` (0..1) of the way from `collapsed` to `expanded`, drawn once; see
+/// [`SheetOpening::draw`].
+#[expect(clippy::too_many_arguments)]
+pub fn draw_sheet_opening(
+    theme: &Theme,
+    text: &TextRenderer,
+    collapsed: &SheetLayout,
+    expanded: &SheetLayout,
+    t: f64,
+    icons: SheetIcons,
+    tint: Option<Color>,
+    pushed: Option<NotifyHit>,
+    hot: Option<NotifyHit>,
+    reply: Option<(&TextEdit, Caret, Option<&Preedit>)>,
+) -> Canvas {
+    SheetOpening::default().draw(
+        &mut SheetGlass::default(),
+        theme,
+        text,
+        collapsed,
+        expanded,
+        t,
+        icons,
+        tint,
+        pushed,
+        hot,
+        reply,
+    )
+}
+
+/// A Droplet's parts for opening, built when its content changes; each end's glass comes from
+/// its [`SheetGlass`]. A host keeps one per Droplet and warms it before the pointer arrives.
+#[derive(Default)]
+pub struct SheetOpening {
+    layers: Option<Layers>,
+    /// Painted here, not by [`build_warm`].
+    builds: u32,
+    /// The key and rim of the [`WarmJob`] out for these layers.
+    asked: Option<(OpeningKey, bool)>,
+}
+
+/// What [`build_warm`] needs to warm a [`SheetOpening`], owned, so it can go to a worker thread.
+pub struct WarmJob {
+    theme: Theme,
+    key: OpeningKey,
+    lit: bool,
+}
+
+/// What [`build_warm`] painted, for [`SheetOpening::install`].
+pub struct WarmLayers {
+    layers: Layers,
+    glass: Vec<(GlassKey, Canvas)>,
+    lit: bool,
+}
+
+/// Paints `job`'s layers with `text`, a renderer loaded from `job`'s fonts ([`WarmJob::fonts`]).
+pub fn build_warm(job: WarmJob, text: &TextRenderer) -> WarmLayers {
+    let WarmJob { theme, key, lit } = job;
+    let look = notify_look(&theme).expect("a job is only made under a look with sheets");
+    let (app, picture) = (key.app.clone(), key.picture.clone());
+    let icons = SheetIcons {
+        app: app.as_ref(),
+        picture: picture.as_ref(),
+    };
+    let layers = Layers::parts(key, &theme, text, &look, icons, None);
+    let glass = layers
+        .key
+        .ends(lit)
+        .map(|k| (k, (look.sheet)(&look, &k.spec, k.scale)))
+        .into();
+    WarmLayers { layers, glass, lit }
+}
+
+impl WarmJob {
+    pub fn fonts(&self) -> &crate::theme::FontConfig {
+        &self.theme.fonts
+    }
+}
+
+/// Leaves out the app line, which ages: a frame draws it on top.
+#[derive(Clone, PartialEq)]
+struct OpeningKey {
+    collapsed: SheetLayout,
+    expanded: SheetLayout,
+    scale: i32,
+    dark: bool,
+    app: Option<Canvas>,
+    picture: Option<Canvas>,
+    tint: Option<Color>,
+    reply: Option<(TextEdit, Caret, Option<Preedit>)>,
+}
+
+impl OpeningKey {
+    fn new(
+        theme: &Theme,
+        look: &NotifyLook,
+        collapsed: &SheetLayout,
+        expanded: &SheetLayout,
+        icons: SheetIcons,
+        tint: Option<Color>,
+        reply: Option<(&TextEdit, Caret, Option<&Preedit>)>,
+    ) -> OpeningKey {
+        let bare = |lay: &SheetLayout| SheetLayout {
+            app_line: String::new(),
+            ..lay.clone()
+        };
+        OpeningKey {
+            collapsed: bare(collapsed),
+            expanded: bare(expanded),
+            scale: theme.scale.max(1),
+            dark: look.dark,
+            app: icons.app.cloned(),
+            picture: icons.picture.cloned(),
+            tint,
+            reply: reply.map(|(e, c, p)| (e.clone(), c, p.cloned())),
+        }
+    }
+
+    /// The collapsed and expanded glass under the rim `lit`.
+    fn ends(&self, lit: bool) -> [GlassKey; 2] {
+        [&self.collapsed, &self.expanded]
+            .map(|lay| GlassKey::new(lay, self.tint, lit, self.scale, self.dark))
+    }
+}
+
+/// Which of the expanded pill row fits the sheet part way open.
+type Kept = (usize, bool, bool, bool);
+
+fn kept(p: &NotifyParts) -> Kept {
+    (
+        p.buttons.len(),
+        p.more.is_some(),
+        p.send.is_some(),
+        p.field.is_some(),
+    )
+}
+
+struct Layers {
+    key: OpeningKey,
+    /// The collapsed parts on clear, and the expanded ones, unlit, for each `Kept` an opening
+    /// passes through.
+    shut_parts: Canvas,
+    open_parts: Vec<(Kept, Canvas)>,
+}
+
+impl SheetOpening {
+    /// Builds what a frame needs under the rim `lit` (the pointer on the sheet) unless it is
+    /// built already; true when it painted.
+    #[expect(clippy::too_many_arguments)]
+    pub fn warm(
+        &mut self,
+        glass: &mut SheetGlass,
+        theme: &Theme,
+        text: &TextRenderer,
+        collapsed: &SheetLayout,
+        expanded: &SheetLayout,
+        icons: SheetIcons,
+        tint: Option<Color>,
+        reply: Option<(&TextEdit, Caret, Option<&Preedit>)>,
+        lit: bool,
+    ) -> bool {
+        let Some(look) = notify_look(theme) else {
+            return false;
+        };
+        let key = OpeningKey::new(theme, &look, collapsed, expanded, icons, tint, reply);
+        let glass_builds = glass.builds;
+        let mut built = false;
+        if self.layers.as_ref().is_none_or(|l| l.key != key) {
+            if self.asked.as_ref().is_some_and(|(k, _)| *k != key) {
+                self.asked = None;
+            }
+            self.layers = Some(Layers::parts(key, theme, text, &look, icons, reply));
+            built = true;
+        }
+        let Some(layers) = self.layers.as_ref() else {
+            unreachable!("built above");
+        };
+        for k in layers.key.ends(lit) {
+            glass.ensure(&look, k);
+        }
+        built |= glass.builds > glass_builds;
+        self.builds += u32::from(built);
+        built
+    }
+
+    /// What [`SheetOpening::warm`] would paint, as a job for [`build_warm`] elsewhere; `None`
+    /// when it is painted already or out as a job.
+    #[expect(clippy::too_many_arguments)]
+    pub fn warm_job(
+        &mut self,
+        glass: &SheetGlass,
+        theme: &Theme,
+        collapsed: &SheetLayout,
+        expanded: &SheetLayout,
+        icons: SheetIcons,
+        tint: Option<Color>,
+        lit: bool,
+    ) -> Option<WarmJob> {
+        let look = notify_look(theme)?;
+        let key = OpeningKey::new(theme, &look, collapsed, expanded, icons, tint, None);
+        let ready = self.layers.as_ref().is_some_and(|l| l.key == key)
+            && key.ends(lit).iter().all(|k| glass.find(k).is_some());
+        if ready
+            || self
+                .asked
+                .as_ref()
+                .is_some_and(|(k, r)| *k == key && *r == lit)
+        {
+            return None;
+        }
+        self.asked = Some((key.clone(), lit));
+        Some(WarmJob {
+            theme: theme.clone(),
+            key,
+            lit,
+        })
+    }
+
+    /// Takes what [`build_warm`] painted, unless the layers were since painted for other content;
+    /// the other rim's glass goes, but for the glass at rest.
+    pub fn install(&mut self, glass: &mut SheetGlass, built: WarmLayers) {
+        let WarmLayers {
+            layers,
+            glass: ends,
+            lit,
+        } = built;
+        let asked = self.asked.as_ref().is_some_and(|(k, _)| *k == layers.key);
+        if asked {
+            self.asked = None;
+        }
+        let same = self.layers.as_ref().is_some_and(|l| l.key == layers.key);
+        if !same && !asked {
+            return;
+        }
+        let keys = layers.key.ends(lit);
+        if !same {
+            self.layers = Some(layers);
+        }
+        for (k, c) in ends {
+            if glass.find(&k).is_none() {
+                glass.kept.push((k, c));
+            }
+        }
+        glass.keep_ends(keys, lit);
+    }
+
+    /// The job out was lost with its worker; the next [`SheetOpening::warm_job`] asks again.
+    pub fn forget_job(&mut self) {
+        self.asked = None;
+    }
+
+    /// How many times these layers were painted on the caller's thread.
+    pub fn builds(&self) -> u32 {
+        self.builds
+    }
+
+    /// The sheet `t` (0..1) of the way from `collapsed` to `expanded` on `glass`: either end as
+    /// drawn at rest, and between them the blend of [`blend_opening`] with the app line on top.
+    #[expect(clippy::too_many_arguments)]
+    pub fn draw(
+        &mut self,
+        glass: &mut SheetGlass,
+        theme: &Theme,
+        text: &TextRenderer,
+        collapsed: &SheetLayout,
+        expanded: &SheetLayout,
+        t: f64,
+        icons: SheetIcons,
+        tint: Option<Color>,
+        pushed: Option<NotifyHit>,
+        hot: Option<NotifyHit>,
+        reply: Option<(&TextEdit, Caret, Option<&Preedit>)>,
+    ) -> Canvas {
+        let open = open_layout(collapsed, expanded, t);
+        let Some(look) = notify_look(theme) else {
+            return Canvas::new(open.width.max(1) as u32, open.height.max(1) as u32);
+        };
+        let s = theme.scale.max(1);
+        let t = t.clamp(0.0, 1.0);
+        let lit = hot.is_some();
+        let ends = [collapsed, expanded].map(|lay| GlassKey::new(lay, tint, lit, s, look.dark));
+        if t <= 0.0 || t >= 1.0 {
+            // At rest the next move needs the lit rim while collapsed, the plain one while open.
+            let shut = t <= 0.0;
+            let (lay, rest) = if shut {
+                (collapsed, ends[0])
+            } else {
+                (expanded, ends[1])
+            };
+            let mut c = glass.get(&look, rest);
+            glass.rest = Some(rest);
+            glass.keep_ends(ends, shut);
+            let (hot, reply) = if shut { (None, None) } else { (hot, reply) };
+            draw_parts(&mut c, theme, text, &look, lay, icons, pushed, hot, reply);
+            return c;
+        }
+        self.warm(
+            glass, theme, text, collapsed, expanded, icons, tint, reply, lit,
+        );
+        glass.rest = None;
+        glass.keep_ends(ends, lit);
+        let Some(layers) = self.layers.as_mut() else {
+            unreachable!("warmed above");
+        };
+        let under = glass_at(glass, &layers.key, lit, open.sheet, s);
+        let want = kept(&open.parts);
+        let i = match layers.open_parts.iter().position(|(k, _)| *k == want) {
+            Some(i) => i,
+            None => {
+                let mut c =
+                    Canvas::new(expanded.width.max(1) as u32, expanded.height.max(1) as u32);
+                let bare = SheetLayout {
+                    app_line: String::new(),
+                    ..open.clone()
+                };
+                draw_parts(&mut c, theme, text, &look, &bare, icons, None, None, reply);
+                layers.open_parts.push((want, c));
+                layers.open_parts.len() - 1
+            }
+        };
+        let mut open_parts = layers.open_parts[i].1.clone();
+        let edit_empty = reply.is_none_or(|(e, ..)| e.text.trim().is_empty());
+        relight(
+            &mut open_parts,
+            text,
+            &look,
+            &open,
+            edit_empty,
+            pushed,
+            hot,
+            s,
+        );
+        let r = f64::from(corner_radius((look.corner)(open.shape))) * f64::from(s);
+        let mut c = blend_opening(
+            under,
+            &layers.shut_parts,
+            &open_parts,
+            open.sheet,
+            r,
+            opening_fades(t),
+        );
+        text.draw(
+            &mut c,
+            open.app_box,
+            &open.app_line,
+            false,
+            look.inks.app,
+            Align::Left,
+            open.app_px,
+        );
+        c
+    }
+
+    #[cfg(test)]
+    fn bytes(&self) -> usize {
+        self.layers.as_ref().map_or(0, |l| {
+            let parts = std::iter::once(&l.shut_parts).chain(l.open_parts.iter().map(|(_, c)| c));
+            parts.map(|c| c.pixels.len() * 4).sum()
+        })
+    }
+}
+
+impl Layers {
+    fn parts(
+        key: OpeningKey,
+        theme: &Theme,
+        text: &TextRenderer,
+        look: &NotifyLook,
+        icons: SheetIcons,
+        reply: Option<(&TextEdit, Caret, Option<&Preedit>)>,
+    ) -> Layers {
+        let (c, e) = (&key.collapsed, &key.expanded);
+        let clear =
+            |lay: &SheetLayout| Canvas::new(lay.width.max(1) as u32, lay.height.max(1) as u32);
+        let mut shut_parts = clear(c);
+        draw_parts(
+            &mut shut_parts,
+            theme,
+            text,
+            look,
+            c,
+            icons,
+            None,
+            None,
+            None,
+        );
+        let mut open_parts: Vec<(Kept, Canvas)> = Vec::new();
+        for i in 1..=100 {
+            let open = open_layout(c, e, f64::from(i) / 100.0);
+            let want = kept(&open.parts);
+            if open_parts.iter().all(|(k, _)| *k != want) {
+                let mut layer = clear(e);
+                draw_parts(
+                    &mut layer, theme, text, look, &open, icons, None, None, reply,
+                );
+                open_parts.push((want, layer));
+            }
+        }
+        Layers {
+            open_parts,
+            shut_parts,
+            key,
+        }
+    }
+}
+
+/// The glass under the rim `lit` for a sheet `sheet` tall: each end's caps kept and its middle
+/// row stretched or its middle cut out, then mixed by how far the height has come.
+fn glass_at(glass: &SheetGlass, key: &OpeningKey, lit: bool, sheet: Rect, s: i32) -> Canvas {
+    let [kc, ke] = key.ends(lit);
+    let (Some(c), Some(e)) = (glass.find(&kc), glass.find(&ke)) else {
+        unreachable!("warmed before a frame");
+    };
+    let body = |lay: &SheetLayout| lay.sheet.height / s * s;
+    let (hc, he, h) = (
+        body(&key.collapsed),
+        body(&key.expanded),
+        sheet.height / s * s,
+    );
+    let height = c.height as i32 + (h - hc);
+    let u = if he > hc {
+        ((h - hc) * 256 / (he - hc)).clamp(0, 256) as u32
+    } else {
+        256
+    };
+    let (cut_c, cut_e) = (sheet.y + hc / 2, sheet.y + h / 2);
+    let w = e.width as usize;
+    let mut out = Canvas::new(e.width, height.max(1) as u32);
+    fn row(c: &Canvas, y: i32) -> &[u32] {
+        let w = c.width as usize;
+        &c.pixels[y as usize * w..][..w]
+    }
+    for (y, to) in (0..height).zip(out.pixels.chunks_exact_mut(w)) {
+        let yc = if y < cut_c {
+            y
+        } else if y < cut_c + (h - hc) {
+            cut_c
+        } else {
+            y - (h - hc)
+        };
+        let ye = if y < cut_e { y } else { y + (he - h) };
+        for ((to, &a), &b) in to.iter_mut().zip(row(c, yc)).zip(row(e, ye)) {
+            *to = lerp_px(a, b, u);
+        }
+    }
+    out
+}
+
+/// `a` with `u` 256ths of `b` in its place, per premultiplied channel.
+fn lerp_px(a: u32, b: u32, u: u32) -> u32 {
+    if a == b {
+        return a;
+    }
+    (0..4).fold(0, |px, i| {
+        let (ca, cb) = ((a >> (8 * i)) & 0xFF, (b >> (8 * i)) & 0xFF);
+        px | (((ca * (256 - u) + cb * u + 128) >> 8) << (8 * i))
+    })
+}
+
+/// `glass` with the collapsed parts `gone` and the expanded parts `come` of the way in, inside
+/// the sheet `sh` of corner radius `r`; parts both draw alike stay solid.
+fn blend_opening(
+    mut out: Canvas,
+    shut: &Canvas,
+    open: &Canvas,
+    sh: Rect,
+    r: f64,
+    (gone, come): (f64, f64),
+) -> Canvas {
+    let (w, h) = (f64::from(sh.width), f64::from(sh.height));
+    let area = sh.intersect(&Rect::new(0, 0, out.width as i32, out.height as i32));
+    let layer = |c: &Canvas, x: i32, y: i32| {
+        if x < c.width as i32 && y < c.height as i32 {
+            c.get(x, y)
+        } else {
+            0
+        }
+    };
+    let k = 1.0 - gone - come;
+    for y in area.y..area.bottom() {
+        for x in area.x..area.right() {
+            let (pa, pb) = (layer(shut, x, y), layer(open, x, y));
+            if pa == 0 && pb == 0 {
+                continue;
+            }
+            let g = out.get(x, y);
+            let on = |p: u32| {
+                if p == 0 {
+                    g
+                } else {
+                    pack(over(unpack(p), unpack(g)))
+                }
+            };
+            let (a, b) = (on(pa), on(pb));
+            let inside = rounded(f64::from(x - sh.x), f64::from(y - sh.y), w, h, r);
+            if a == b && inside >= 1.0 {
+                out.put_raw(x, y, a);
+                continue;
+            }
+            let gp = unpack(g);
+            let parts = if a == b {
+                unpack(a)
+            } else {
+                let (a, b) = (unpack(a), unpack(b));
+                let ch = |g: f64, a: f64, b: f64| g * k + a * gone + b * come;
+                (
+                    ch(gp.0, a.0, b.0),
+                    std::array::from_fn(|i| ch(gp.1[i], a.1[i], b.1[i])),
+                )
+            };
+            out.put_raw(x, y, pack(mix(gp, parts, inside)));
+        }
+    }
+    out
+}
+
+/// The collapsed ink is gone by `SHUT_BY`, before the expanded ink, in from `OPEN_FROM`, is half
+/// in; the two never add past one. Parts both layers draw alike stay solid throughout.
+const SHUT_BY: f64 = 0.4;
+const OPEN_FROM: f64 = 0.2;
+
+/// Whether a sheet `t` (0..1) of the way open draws its close button.
+pub fn opening_shows_close(t: f64) -> bool {
+    opening_fades(t.clamp(0.0, 1.0)).1 > 0.0
+}
+
+/// How much of the collapsed and of the expanded parts show `t` (0..1) of the way open.
+fn opening_fades(t: f64) -> (f64, f64) {
+    (
+        (1.0 - t / SHUT_BY).max(0.0),
+        ((t - OPEN_FROM) / (1.0 - OPEN_FROM)).clamp(0.0, 1.0),
+    )
 }
 
 #[expect(clippy::too_many_arguments)]
@@ -539,6 +1342,10 @@ fn draw_parts(
             SheetShape::Halo => {
                 blit_well(c, look, Well::Round, r, s);
                 0.5
+            }
+            SheetShape::Droplet => {
+                blit_well(c, look, Well::Squircle, r, s);
+                SQUIRCLE_ROUND
             }
         };
         c.blit_over(r.x, r.y, &round_corners(pic, round * f64::from(r.width)));
@@ -600,36 +1407,121 @@ fn draw_parts(
         draw_edit(c, text, edit, inner, px, p, caret, first);
     }
 
-    let pill = |c: &mut Canvas, r: Rect, label: &str, state: State| {
-        let face = (look.pill)(look, (r.width / s, r.height / s), state, s);
-        c.blit_over(r.x, r.y, &face);
-        let ink = if state == State::Disabled {
-            inks.app
-        } else {
-            inks.title
-        };
-        text.draw(c, r, label, true, ink, Align::Center, lay.pill_px);
-    };
-    for (i, (r, label)) in lay.parts.buttons.iter().zip(&lay.labels).enumerate() {
-        pill(c, *r, label, pill_state(NotifyHit::Button(i), pushed, hot));
+    let edit_empty = edit.text.trim().is_empty();
+    for (r, label, state) in pill_row(text, lay, edit_empty, pushed, hot, s) {
+        draw_pill(c, text, look, lay, r, &label, state, s);
     }
+    if hot.is_some() {
+        draw_close(c, look, lay, pushed, hot, s);
+    }
+}
+
+/// Each pill on `lay` with its label and state.
+fn pill_row(
+    text: &TextRenderer,
+    lay: &SheetLayout,
+    edit_empty: bool,
+    pushed: Option<NotifyHit>,
+    hot: Option<NotifyHit>,
+    s: i32,
+) -> Vec<(Rect, String, State)> {
+    let mut row: Vec<_> = lay
+        .parts
+        .buttons
+        .iter()
+        .zip(&lay.labels)
+        .enumerate()
+        .map(|(i, (r, label))| {
+            (
+                *r,
+                label.clone(),
+                pill_state(NotifyHit::Button(i), pushed, hot),
+            )
+        })
+        .collect();
     if let Some(r) = lay.parts.more {
-        pill(c, r, NOTIFY_MORE, pill_state(NotifyHit::More, pushed, hot));
+        row.push((
+            r,
+            NOTIFY_MORE.to_string(),
+            pill_state(NotifyHit::More, pushed, hot),
+        ));
     }
     if let Some(r) = lay.parts.send {
-        let state = if edit.text.trim().is_empty() {
+        let state = if edit_empty {
             State::Disabled
         } else {
             pill_state(NotifyHit::Send, pushed, hot)
         };
         let room = r.width - 2 * PILL_PAD * s;
         let label = text.ellipsize(&lay.parts.send_label, room, true, lay.pill_px);
-        pill(c, r, &label, state);
+        row.push((r, label.into_owned(), state));
+    }
+    row
+}
+
+#[expect(clippy::too_many_arguments)]
+fn draw_pill(
+    c: &mut Canvas,
+    text: &TextRenderer,
+    look: &NotifyLook,
+    lay: &SheetLayout,
+    r: Rect,
+    label: &str,
+    state: State,
+    s: i32,
+) {
+    let face = (look.pill)(look, (r.width / s, r.height / s), state, s);
+    c.blit_over(r.x, r.y, &face);
+    let ink = if state == State::Disabled {
+        look.inks.app
+    } else {
+        look.inks.title
+    };
+    text.draw(c, r, label, true, ink, Align::Center, lay.pill_px);
+}
+
+fn draw_close(
+    c: &mut Canvas,
+    look: &NotifyLook,
+    lay: &SheetLayout,
+    pushed: Option<NotifyHit>,
+    hot: Option<NotifyHit>,
+    s: i32,
+) {
+    let r = lay.parts.close;
+    let state = pill_state(NotifyHit::Close, pushed, hot);
+    c.blit_over(r.x, r.y, &(look.close)(look, state, s));
+}
+
+/// `parts`, drawn unlit by [`draw_parts`] on clear, as the pointer lights them: each pill whose
+/// state differs is drawn again on its cleared rect, and the close button goes on top.
+#[expect(clippy::too_many_arguments)]
+fn relight(
+    parts: &mut Canvas,
+    text: &TextRenderer,
+    look: &NotifyLook,
+    lay: &SheetLayout,
+    edit_empty: bool,
+    pushed: Option<NotifyHit>,
+    hot: Option<NotifyHit>,
+    s: i32,
+) {
+    let unlit = pill_row(text, lay, edit_empty, None, None, s);
+    let lit = pill_row(text, lay, edit_empty, pushed, hot, s);
+    for ((r, label, state), (.., was)) in lit.into_iter().zip(unlit) {
+        if state == was {
+            continue;
+        }
+        let area = r.intersect(&Rect::new(0, 0, parts.width as i32, parts.height as i32));
+        for y in area.y..area.bottom() {
+            for x in area.x..area.right() {
+                parts.put_raw(x, y, 0);
+            }
+        }
+        draw_pill(parts, text, look, lay, r, &label, state, s);
     }
     if hot.is_some() {
-        let r = lay.parts.close;
-        let state = pill_state(NotifyHit::Close, pushed, hot);
-        c.blit_over(r.x, r.y, &(look.close)(look, state, s));
+        draw_close(parts, look, lay, pushed, hot, s);
     }
 }
 
@@ -775,6 +1667,87 @@ pub fn pose(k: f64, rest: Rect, rise: i32, toward_tray: i32, scale_from: f64) ->
         h as i32,
     );
     (r, k as f32)
+}
+
+const BEAD: i32 = 12;
+/// The drip holds its bead until `BEAD_UNTIL`, then swells; the bead is gone `BEAD_FADE` into
+/// the swell.
+const BEAD_UNTIL: f64 = 0.25;
+const BEAD_FADE: f64 = 0.3;
+
+/// The drip's duration for a sheet whose plain arrival takes `open_ms`.
+pub fn drip_ms(open_ms: u32) -> u32 {
+    open_ms * 12 / 5
+}
+
+/// A droplet `k` of the way in: a bead at the tray-side cap that swells with an overshoot into
+/// `rest`. `tray_right` is true for every edge but Left.
+pub fn drip_pose(k: f64, rest: Rect, tray_right: bool) -> (Rect, f32) {
+    let k = k.clamp(0.0, 1.0);
+    let opacity = (k / 0.1).min(1.0) as f32;
+    if k >= 1.0 {
+        return (rest, 1.0);
+    }
+    let cy = rest.y + rest.height / 2;
+    let bead_x = if tray_right {
+        rest.right() - rest.height / 2 - BEAD / 2
+    } else {
+        rest.x + rest.height / 2 - BEAD / 2
+    };
+    if k < BEAD_UNTIL {
+        return (Rect::new(bead_x, cy - BEAD / 2, BEAD, BEAD), opacity);
+    }
+    let s = ((k - BEAD_UNTIL) / (1.0 - BEAD_UNTIL)) as f32;
+    let e = f64::from(Ease::OutBack.apply(s));
+    let e_h = f64::from(Ease::OutBack.apply((s - 0.08).max(0.0) / 0.92));
+    let lerp = |a: i32, b: i32, t: f64| f64::from(a) + f64::from(b - a) * t;
+    let w = lerp(BEAD, rest.width, e).round() as i32;
+    let h = lerp(BEAD, rest.height, e_h).round() as i32;
+    let x = if tray_right {
+        lerp(bead_x + BEAD, rest.right(), e).round() as i32 - w
+    } else {
+        lerp(bead_x, rest.x, e).round() as i32
+    };
+    (Rect::new(x, cy - h / 2, w, h), opacity)
+}
+
+/// How much of a drip `k` of the way in shows as the bead, the sheet showing the rest.
+pub fn drip_bead_share(k: f64) -> f32 {
+    let swell = (k - BEAD_UNTIL) / (1.0 - BEAD_UNTIL);
+    (1.0 - smooth(swell / BEAD_FADE)) as f32
+}
+
+/// The bead's body for a drip posed at `p` ([`drip_pose`]): round, as tall as `p`, at its
+/// tray-side end.
+pub fn drip_bead_at(p: Rect, tray_right: bool) -> Rect {
+    let side = p.height.min(p.width);
+    let x = if tray_right { p.right() - side } else { p.x };
+    Rect::new(x, p.y + (p.height - side) / 2, side, side)
+}
+
+/// The glass bead a Droplet drips from and its body's rect in the canvas, device px.
+pub fn drip_bead(theme: &Theme) -> Option<(Canvas, Rect)> {
+    let look = notify_look(theme)?;
+    let s = theme.scale.max(1);
+    let c = (look.bead)(&look, BEAD, s);
+    let side = BEAD * s;
+    let at = |n: u32| (n as i32 - side) / 2;
+    let body = Rect::new(at(c.width), at(c.height), side, side);
+    Some((c, body))
+}
+
+/// The largest round corner table whose radius fits half of `height`; radius 6 below that.
+pub fn drip_corner(height: i32) -> &'static [i32] {
+    const R6: [i32; 5] = round_corner();
+    const R12: [i32; 11] = round_corner();
+    const R20: [i32; 19] = round_corner();
+    const R34: [i32; 33] = round_corner();
+    match height / 2 {
+        34.. => &R34,
+        20.. => &R20,
+        12.. => &R12,
+        _ => &R6,
+    }
 }
 
 #[cfg(test)]
@@ -1653,6 +2626,839 @@ mod tests {
         bg
     }
 
+    fn droplet(c: &SheetContent, expanded: bool) -> SheetLayout {
+        sheet_layout(
+            &theme_for(Interface::Glass),
+            &text(),
+            SheetShape::Droplet,
+            c,
+            expanded,
+        )
+        .unwrap()
+    }
+
+    const LONG_ACTS: [&str; 2] = ["Reply", "Later"];
+
+    fn long() -> SheetContent<'static> {
+        SheetContent {
+            actions: &LONG_ACTS,
+            ..content(
+                "Chat",
+                "Ana",
+                "Lunch at noon?\nThe usual place by the river.\nBring the photos.",
+            )
+        }
+    }
+
+    #[test]
+    fn a_collapsed_droplet_is_one_68_px_row() {
+        let lay = droplet(&long(), false);
+        assert_eq!(lay.sheet.height, 68);
+        assert_eq!(lay.lines.len(), 1, "body ellipsized");
+        assert!(lay.parts.buttons.is_empty());
+    }
+
+    #[test]
+    fn hover_expands_to_the_wrapped_body_and_actions() {
+        let lay = droplet(&long(), true);
+        assert_eq!((lay.lines.len(), lay.parts.buttons.len()), (3, 2));
+        assert!(lay.sheet.height > 68);
+    }
+
+    #[test]
+    fn the_droplet_picture_sits_at_the_right_end() {
+        let lay = droplet(
+            &SheetContent {
+                has_picture: true,
+                ..long()
+            },
+            false,
+        );
+        assert_eq!(
+            lay.picture,
+            Some(Rect::new(lay.sheet.right() - 64, lay.sheet.y + 10, 48, 48))
+        );
+    }
+
+    #[test]
+    fn the_droplet_icon_slot_is_round_48() {
+        let lay = droplet(&long(), false);
+        assert_eq!(
+            lay.icon,
+            Rect::new(lay.sheet.x + 10, lay.sheet.y + 10, 48, 48)
+        );
+        assert_eq!(lay.well, Well::Round);
+        assert_eq!(lay.badge, None);
+    }
+
+    #[test]
+    fn an_opening_droplet_lerps_its_height() {
+        let (c, e) = (droplet(&long(), false), droplet(&long(), true));
+        assert_eq!(open_layout(&c, &e, 0.0).sheet.height, 68);
+        assert_eq!(
+            open_layout(&c, &e, 0.5).sheet.height,
+            (f64::from(68 + e.sheet.height) / 2.0).round() as i32
+        );
+        assert!(open_layout(&c, &e, 0.0).parts.buttons.is_empty());
+        assert_eq!(open_layout(&c, &e, 1.0).sheet, e.sheet);
+    }
+
+    #[test]
+    fn the_droplet_text_column_ends_short_of_the_close_and_picture() {
+        let plain = droplet(&long(), false);
+        assert_eq!(plain.parts.body.x, plain.sheet.x + 68);
+        let close = plain.parts.close;
+        assert_eq!(plain.parts.body.right(), close.x - 4);
+        assert_eq!(plain.parts.title.right(), close.x - 4);
+        let open = droplet(&long(), true);
+        assert_eq!(open.parts.body.right(), open.sheet.right() - 34);
+        assert_eq!(
+            open.parts.title, plain.parts.title,
+            "the head row keeps its end"
+        );
+        let pic = droplet(
+            &SheetContent {
+                has_picture: true,
+                ..long()
+            },
+            false,
+        );
+        let p = pic.picture.unwrap();
+        assert_eq!(pic.parts.close.right() + 4, p.x);
+        assert_eq!(pic.parts.body.right(), pic.parts.close.x - 4);
+    }
+
+    #[test]
+    fn the_droplet_close_never_covers_the_picture() {
+        for expanded in [false, true] {
+            let lay = droplet(
+                &SheetContent {
+                    has_picture: true,
+                    ..long()
+                },
+                expanded,
+            );
+            let (c, p) = (lay.parts.close, lay.picture.unwrap());
+            assert!(
+                c.intersect(&p).is_empty(),
+                "expanded={expanded}: {c:?} on {p:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_body_cut_at_the_line_cap_ends_in_an_ellipsis() {
+        let long = "word ".repeat(400);
+        let c = content("Mail", "t", &long);
+        for lay in [lozenge(&c, false), halo(&c), droplet(&c, true)] {
+            assert_eq!(lay.lines.len(), NOTIFY_BODY_LINES);
+            let last = lay.lines.last().unwrap();
+            assert!(last.ends_with("..."), "{:?}: {last:?}", lay.shape);
+            assert!(text().measure(last, false, lay.body_px) <= lay.parts.body.width);
+        }
+        let fits = lozenge(&content("Mail", "t", "word word"), false);
+        assert_eq!(fits.lines, ["word word"]);
+    }
+
+    #[test]
+    fn the_droplet_close_spot_moves_up_when_expanded() {
+        let (c, e) = (droplet(&long(), false), droplet(&long(), true));
+        assert_eq!(
+            c.parts.close,
+            Rect::new(c.sheet.right() - 54, c.sheet.y + 24, 20, 20)
+        );
+        assert_eq!(
+            e.parts.close,
+            Rect::new(e.sheet.right() - 34, e.sheet.y + 12, 20, 20)
+        );
+        let x = c.parts.close;
+        assert_eq!(sheet_hit(&c, x.x + 2, x.y + 2), Some(NotifyHit::Close));
+    }
+
+    #[test]
+    fn a_bodyless_droplet_centres_its_title_on_the_icon() {
+        let lay = droplet(&content("Mail", "Synced", ""), false);
+        let (t, i) = (lay.parts.title, lay.icon);
+        assert_eq!(t.y + t.height / 2, i.y + i.height / 2);
+        assert!(lay.lines.is_empty());
+    }
+
+    #[test]
+    fn the_droplet_title_is_15_px() {
+        let lay = droplet(&long(), false);
+        assert_eq!((lay.app_px, lay.title_px, lay.body_px), (12, 15, 14));
+    }
+
+    #[test]
+    fn an_opening_droplet_draws_its_ends_at_0_and_1() {
+        let (theme, t) = (glass(false, 1), text());
+        let (c, e) = (droplet(&long(), false), droplet(&long(), true));
+        let icons = SheetIcons::default();
+        let draw = |lay: &SheetLayout| draw_sheet(&theme, &t, lay, icons, None, None, None, None);
+        let open =
+            |k: f64| draw_sheet_opening(&theme, &t, &c, &e, k, icons, None, None, None, None);
+        assert_eq!(
+            fnv(&open(0.0)),
+            fnv(&draw(&c)),
+            "t = 0 is the collapsed sheet"
+        );
+        assert_eq!(
+            fnv(&open(1.0)),
+            fnv(&draw(&e)),
+            "t = 1 is the expanded sheet"
+        );
+        let half = open(0.5);
+        assert_eq!(half.height as i32, open_layout(&c, &e, 0.5).height);
+    }
+
+    #[test]
+    fn an_opening_droplet_draws_no_part_it_has_dropped() {
+        let (theme, t) = (glass(false, 1), text());
+        let (c, e) = (droplet(&long(), false), droplet(&long(), true));
+        let open = open_layout(&c, &e, 0.5);
+        let pill = e.parts.buttons[0];
+        assert!(open.parts.buttons.is_empty() && pill.y < open.sheet.bottom());
+        let hot = Some(NotifyHit::Body);
+        let (mut opening, mut kept) = (SheetOpening::default(), SheetGlass::default());
+        let icons = SheetIcons::default();
+        let drawn = opening.draw(
+            &mut kept, &theme, &t, &c, &e, 0.5, icons, None, None, hot, None,
+        );
+        let key = &opening.layers.as_ref().unwrap().key;
+        let glass = glass_at(&kept, key, true, open.sheet, 1);
+        assert_eq!((drawn.width, drawn.height), (glass.width, glass.height));
+        for y in 0..drawn.height as i32 {
+            for x in 0..drawn.width as i32 {
+                let off_sheet = !open.sheet.contains(x, y);
+                let under_pill = (pill.x..pill.right()).contains(&x) && y >= pill.y;
+                if off_sheet || under_pill {
+                    assert_eq!(drawn.get(x, y), glass.get(x, y), "({x}, {y}) is glass");
+                }
+            }
+        }
+    }
+
+    fn warm(
+        opening: &mut SheetOpening,
+        kept: &mut SheetGlass,
+        c: &SheetContent,
+        lit: bool,
+    ) -> bool {
+        let (theme, t) = (glass(false, 1), text());
+        let (shut, open) = (droplet(c, false), droplet(c, true));
+        let icons = SheetIcons::default();
+        opening.warm(kept, &theme, &t, &shut, &open, icons, None, None, lit)
+    }
+
+    #[test]
+    fn a_droplet_warmed_at_rest_opens_under_any_hot_part_without_a_build() {
+        let (mut opening, mut kept) = (SheetOpening::default(), SheetGlass::default());
+        assert!(
+            warm(&mut opening, &mut kept, &long(), true),
+            "the first warm paints"
+        );
+        assert!(
+            !warm(&mut opening, &mut kept, &long(), true),
+            "a second finds it warm"
+        );
+        let (theme, t) = (glass(false, 1), text());
+        let (c, e) = (droplet(&long(), false), droplet(&long(), true));
+        let hots = [NotifyHit::Body, NotifyHit::Close, NotifyHit::Button(0)];
+        for (k, hot) in [0.1, 0.35, 0.6, 0.9]
+            .into_iter()
+            .zip(hots.into_iter().cycle())
+        {
+            let icons = SheetIcons::default();
+            opening.draw(
+                &mut kept,
+                &theme,
+                &t,
+                &c,
+                &e,
+                k,
+                icons,
+                None,
+                Some(hot),
+                Some(hot),
+                None,
+            );
+        }
+        assert_eq!(opening.builds, 1, "hover and presses reuse the warm layers");
+        let other = content("Chat", "Ben", "Running late, start without me.");
+        assert!(
+            warm(&mut opening, &mut kept, &other, true),
+            "new content paints once"
+        );
+        assert!(!warm(&mut opening, &mut kept, &other, true));
+        assert_eq!(opening.builds, 2);
+    }
+
+    fn warm_off_thread(
+        opening: &mut SheetOpening,
+        kept: &mut SheetGlass,
+        theme: &Theme,
+        c: &SheetContent,
+        lit: bool,
+    ) -> Option<()> {
+        let lay = |expanded| sheet_layout(theme, &text(), SheetShape::Droplet, c, expanded);
+        let (shut, open) = (lay(false).unwrap(), lay(true).unwrap());
+        let job = opening.warm_job(kept, theme, &shut, &open, SheetIcons::default(), None, lit)?;
+        let built = std::thread::spawn(move || {
+            build_warm(job, &TextRenderer::load(&FontConfig::default()))
+        })
+        .join()
+        .unwrap();
+        opening.install(kept, built);
+        Some(())
+    }
+
+    #[test]
+    fn a_droplet_warmed_on_a_worker_paints_nothing_on_the_callers_thread() {
+        let (theme, t) = (glass(false, 1), text());
+        let (c, e) = (droplet(&long(), false), droplet(&long(), true));
+        let (mut opening, mut kept) = (SheetOpening::default(), SheetGlass::default());
+        let icons = SheetIcons::default();
+        let ask = |opening: &mut SheetOpening| {
+            opening
+                .warm_job(&kept, &theme, &c, &e, icons, None, true)
+                .is_some()
+        };
+        assert!(ask(&mut opening));
+        assert!(!ask(&mut opening), "one job out per key and rim");
+        opening.forget_job();
+        assert!(
+            ask(&mut opening),
+            "a job lost with its worker is asked again"
+        );
+        let mut opening = SheetOpening::default();
+        warm_off_thread(&mut opening, &mut kept, &theme, &long(), true).unwrap();
+        assert!(
+            warm_off_thread(&mut opening, &mut kept, &theme, &long(), true).is_none(),
+            "warm already"
+        );
+        for (k, pushed, hot) in [
+            (0.2, None, Some(NotifyHit::Body)),
+            (0.5, Some(NotifyHit::Close), Some(NotifyHit::Close)),
+            (1.0, None, Some(NotifyHit::Button(0))),
+        ] {
+            opening.draw(
+                &mut kept, &theme, &t, &c, &e, k, icons, None, pushed, hot, None,
+            );
+        }
+        warm_off_thread(&mut opening, &mut kept, &theme, &long(), false).unwrap();
+        for k in [0.7, 0.3, 0.0] {
+            opening.draw(
+                &mut kept, &theme, &t, &c, &e, k, icons, None, None, None, None,
+            );
+        }
+        assert_eq!(
+            (opening.builds(), kept.builds()),
+            (0, 0),
+            "the worker painted the parts and both rims"
+        );
+    }
+
+    #[test]
+    fn a_droplet_keeps_its_glass_at_rest_and_the_ends_of_one_rim() {
+        let (theme, t) = (glass(false, 1), text());
+        let (c, e) = (droplet(&long(), false), droplet(&long(), true));
+        let (mut opening, mut kept) = (SheetOpening::default(), SheetGlass::default());
+        let icons = SheetIcons::default();
+        let frame = |opening: &mut SheetOpening, kept: &mut SheetGlass, k: f64, lit: bool| {
+            let hot = lit.then_some(NotifyHit::Body);
+            opening.draw(kept, &theme, &t, &c, &e, k, icons, None, None, hot, None);
+            let rims: Vec<bool> = kept.kept.iter().map(|(k, _)| k.lit()).collect();
+            rims
+        };
+        assert_eq!(frame(&mut opening, &mut kept, 0.0, false), [false]);
+        warm_off_thread(&mut opening, &mut kept, &theme, &long(), true).unwrap();
+        assert_eq!(
+            kept.kept.len(),
+            3,
+            "at rest, and both ends lit for the pointer"
+        );
+        assert_eq!(frame(&mut opening, &mut kept, 0.5, true), [true, true]);
+        assert_eq!(frame(&mut opening, &mut kept, 1.0, true), [true]);
+        warm_off_thread(&mut opening, &mut kept, &theme, &long(), false).unwrap();
+        assert_eq!(
+            kept.kept.len(),
+            3,
+            "at rest, and both ends plain for the close"
+        );
+        assert_eq!(frame(&mut opening, &mut kept, 0.5, false), [false, false]);
+    }
+
+    #[test]
+    fn an_app_line_ageing_keeps_a_droplets_layers_and_draws_on_top() {
+        let (theme, t) = (glass(false, 2), text());
+        let later = SheetContent {
+            when: "1 min ago",
+            ..long()
+        };
+        let (mut opening, mut kept) = (SheetOpening::default(), SheetGlass::default());
+        warm_off_thread(&mut opening, &mut kept, &theme, &long(), true).unwrap();
+        assert!(
+            warm_off_thread(&mut opening, &mut kept, &theme, &later, true).is_none(),
+            "no new job for an older app line"
+        );
+        let lay = |expanded| sheet_layout(&theme, &t, SheetShape::Droplet, &later, expanded);
+        let (c, e) = (lay(false).unwrap(), lay(true).unwrap());
+        let hot = Some(NotifyHit::Body);
+        let icons = SheetIcons::default();
+        let aged = opening.draw(
+            &mut kept, &theme, &t, &c, &e, 0.5, icons, None, None, hot, None,
+        );
+        let fresh = draw_sheet_opening(&theme, &t, &c, &e, 0.5, icons, None, None, hot, None);
+        assert_eq!(opening.builds(), 0);
+        assert!(aged == fresh);
+    }
+
+    #[test]
+    fn a_droplet_parts_layer_painted_in_the_frame_leaves_the_app_line_to_the_top_pass() {
+        let (theme, t) = (glass(false, 2), text());
+        let lay = |expanded| sheet_layout(&theme, &t, SheetShape::Droplet, &long(), expanded);
+        let (c, e) = (lay(false).unwrap(), lay(true).unwrap());
+        let (icons, hot) = (SheetIcons::default(), Some(NotifyHit::Body));
+        let (mut opening, mut kept) = (SheetOpening::default(), SheetGlass::default());
+        let mut frame = |opening: &mut SheetOpening| {
+            opening.draw(
+                &mut kept, &theme, &t, &c, &e, 0.9, icons, None, None, hot, None,
+            )
+        };
+        frame(&mut opening);
+        let warmed = std::mem::take(&mut opening.layers.as_mut().unwrap().open_parts);
+        frame(&mut opening);
+        let painted = &opening.layers.as_ref().unwrap().open_parts;
+        let [(key, layer)] = painted.as_slice() else {
+            panic!("one layer painted in the frame");
+        };
+        let cached = warmed.iter().find(|(k, _)| k == key).unwrap();
+        assert!(*layer == cached.1);
+    }
+
+    #[test]
+    fn a_late_warm_result_for_earlier_content_leaves_the_layers_painted_since() {
+        let (theme, t) = (glass(false, 1), text());
+        let (mut opening, mut kept) = (SheetOpening::default(), SheetGlass::default());
+        let (c, e) = (droplet(&long(), false), droplet(&long(), true));
+        let icons = SheetIcons::default();
+        let job = opening
+            .warm_job(&kept, &theme, &c, &e, icons, None, true)
+            .unwrap();
+        let other = content("Chat", "Ben", "Running late, start without me.");
+        let (oc, oe) = (droplet(&other, false), droplet(&other, true));
+        let hot = Some(NotifyHit::Body);
+        let frame = |opening: &mut SheetOpening, kept: &mut SheetGlass, k: f64| {
+            opening.draw(kept, &theme, &t, &oc, &oe, k, icons, None, None, hot, None);
+        };
+        frame(&mut opening, &mut kept, 0.3);
+        assert_eq!(
+            opening.builds(),
+            1,
+            "the new content is painted in the frame"
+        );
+        opening.install(&mut kept, build_warm(job, &t));
+        frame(&mut opening, &mut kept, 0.6);
+        assert_eq!(opening.builds(), 1, "the late result left the new layers");
+    }
+
+    #[test]
+    fn a_frame_from_worker_layers_matches_one_from_layers_painted_in_place() {
+        let (theme, t) = (glass(false, 2), text());
+        let lay = |expanded| sheet_layout(&theme, &t, SheetShape::Droplet, &long(), expanded);
+        let (c, e) = (lay(false).unwrap(), lay(true).unwrap());
+        let icons = SheetIcons::default();
+        let hot = Some(NotifyHit::Button(0));
+        let (mut there, mut there_glass) = (SheetOpening::default(), SheetGlass::default());
+        warm_off_thread(&mut there, &mut there_glass, &theme, &long(), true).unwrap();
+        let (mut here, mut here_glass) = (SheetOpening::default(), SheetGlass::default());
+        let a = there.draw(
+            &mut there_glass,
+            &theme,
+            &t,
+            &c,
+            &e,
+            0.6,
+            icons,
+            None,
+            None,
+            hot,
+            None,
+        );
+        let b = here.draw(
+            &mut here_glass,
+            &theme,
+            &t,
+            &c,
+            &e,
+            0.6,
+            icons,
+            None,
+            None,
+            hot,
+            None,
+        );
+        assert!(a == b);
+    }
+
+    #[test]
+    fn lit_parts_laid_on_the_unlit_layer_match_parts_drawn_lit() {
+        let (theme, t) = (glass(false, 2), text());
+        let look = notify_look(&theme).unwrap();
+        let e = sheet_layout(&theme, &t, SheetShape::Droplet, &long(), true).unwrap();
+        let icons = SheetIcons::default();
+        let clear = || Canvas::new(e.width as u32, e.height as u32);
+        for (pushed, hot) in [
+            (None, Some(NotifyHit::Body)),
+            (None, Some(NotifyHit::Button(1))),
+            (Some(NotifyHit::Close), Some(NotifyHit::Close)),
+        ] {
+            let mut want = clear();
+            draw_parts(&mut want, &theme, &t, &look, &e, icons, pushed, hot, None);
+            let mut got = clear();
+            draw_parts(&mut got, &theme, &t, &look, &e, icons, None, None, None);
+            relight(&mut got, &t, &look, &e, true, pushed, hot, 2);
+            assert!(got == want, "{hot:?} pushed {pushed:?}");
+        }
+    }
+
+    #[test]
+    fn an_opening_droplets_glass_stays_within_6_levels_of_the_glass_painted_at_its_height() {
+        let (theme, t) = (glass(false, 1), text());
+        let look = notify_look(&theme).unwrap();
+        let (c, e) = (droplet(&long(), false), droplet(&long(), true));
+        let (mut opening, mut kept) = (SheetOpening::default(), SheetGlass::default());
+        let icons = SheetIcons::default();
+        opening.warm(&mut kept, &theme, &t, &c, &e, icons, None, None, true);
+        let key = &opening.layers.as_ref().unwrap().key;
+        for k in [0.25, 0.5, 0.75] {
+            let open = open_layout(&c, &e, k);
+            let (got, want) = (
+                glass_at(&kept, key, true, open.sheet, 1),
+                (look.sheet)(&look, &sheet_spec(&open, None, true, 1), 1),
+            );
+            assert_eq!((got.width, got.height), (want.width, want.height));
+            let worst = got
+                .pixels
+                .iter()
+                .zip(&want.pixels)
+                .flat_map(|(&a, &b)| {
+                    (0..4).map(move |i| ((a >> (8 * i)) & 0xFF).abs_diff((b >> (8 * i)) & 0xFF))
+                })
+                .max();
+            assert!(worst <= Some(6), "t = {k}: off by {worst:?}");
+        }
+    }
+
+    /// Prints what warming an opening at rest, its first frame and later ones cost at scales 1
+    /// and 2. Run with `--release -- --ignored --nocapture`.
+    #[test]
+    #[ignore = "timing"]
+    fn opening_frame_cost() {
+        let t = text();
+        for s in [1, 2] {
+            let theme = glass(false, s);
+            let lay = |expanded| {
+                sheet_layout(&theme, &t, SheetShape::Droplet, &long(), expanded).unwrap()
+            };
+            let (c, e) = (lay(false), lay(true));
+            let hot = Some(NotifyHit::Body);
+            let (mut opening, mut kept) = (SheetOpening::default(), SheetGlass::default());
+            let at = std::time::Instant::now();
+            let icons = SheetIcons::default();
+            let job = opening
+                .warm_job(&kept, &theme, &c, &e, icons, None, true)
+                .unwrap();
+            let asked = at.elapsed();
+            let built = build_warm(job, &t);
+            let warm = at.elapsed() - asked;
+            let at = std::time::Instant::now();
+            opening.install(&mut kept, built);
+            let installed = at.elapsed();
+            let mut frame = |k: f64| {
+                let at = std::time::Instant::now();
+                opening.draw(
+                    &mut kept,
+                    &theme,
+                    &t,
+                    &c,
+                    &e,
+                    k,
+                    SheetIcons::default(),
+                    None,
+                    None,
+                    hot,
+                    None,
+                );
+                at.elapsed()
+            };
+            let first = frame(0.05);
+            let ticks: Vec<_> = (1..=9).map(|i| frame(f64::from(i) / 10.0)).collect();
+            let worst = ticks.iter().max().unwrap();
+            let last = frame(1.0);
+            println!(
+                "scale {s}: job made {asked:?}, warm on a worker {warm:?}, installed {installed:?}, first frame {first:?}, later frames up to {worst:?}, last frame {last:?}"
+            );
+        }
+    }
+
+    /// Prints a Droplet's held glass and parts at scale 2, at rest collapsed and open, each warmed
+    /// for its next move. Run with `--release -- --ignored --nocapture`.
+    #[test]
+    #[ignore = "memory"]
+    fn droplet_memory() {
+        let (theme, t) = (glass(false, 2), text());
+        let lay = |expanded| sheet_layout(&theme, &t, SheetShape::Droplet, &long(), expanded);
+        let (c, e) = (lay(false).unwrap(), lay(true).unwrap());
+        let (mut opening, mut kept) = (SheetOpening::default(), SheetGlass::default());
+        let icons = SheetIcons::default();
+        let mb = |b: usize| b as f64 / (1024.0 * 1024.0);
+        let end = |lay: &SheetLayout| lay.width as usize * lay.height as usize * 4;
+        let hot = Some(NotifyHit::Body);
+        for (k, hot) in [(0.0, None), (1.0, hot)] {
+            opening.draw(
+                &mut kept, &theme, &t, &c, &e, k, icons, None, None, hot, None,
+            );
+            warm_off_thread(&mut opening, &mut kept, &theme, &long(), k < 1.0).unwrap();
+            println!(
+                "at rest t = {k}: glass {:.2} MB, parts {:.2} MB",
+                mb(kept.bytes()),
+                mb(opening.bytes())
+            );
+        }
+        println!(
+            "one end's glass: collapsed {:.2} MB, expanded {:.2} MB",
+            mb(end(&c)),
+            mb(end(&e))
+        );
+    }
+
+    #[test]
+    fn the_collapsed_ink_is_gone_before_the_expanded_ink_is_half_in() {
+        assert_eq!(
+            (opening_fades(0.0), opening_fades(1.0)),
+            ((1.0, 0.0), (0.0, 1.0))
+        );
+        let (shut, open) = opening_fades(0.4);
+        assert!(shut == 0.0 && open < 0.5);
+        for i in 0..=20 {
+            let (a, b) = opening_fades(f64::from(i) / 20.0);
+            assert!(a + b <= 1.0, "never brighter than either end");
+        }
+    }
+
+    fn droplet_case(case: usize, theme: &Theme, t: &TextRenderer) -> Canvas {
+        let s = theme.scale;
+        let base = long();
+        let c = SheetContent {
+            has_picture: matches!(case, 3 | 5),
+            ..base
+        };
+        let lay = |expanded| sheet_layout(theme, t, SheetShape::Droplet, &c, expanded).unwrap();
+        let app = swatch(Color::rgb(0x2E, 0x7D, 0xE0), 48 * s);
+        let picture = swatch(Color::rgb(0xE0, 0x6A, 0x2E), 48 * s);
+        let icons = SheetIcons {
+            app: Some(&app),
+            picture: c.has_picture.then_some(&picture),
+        };
+        match case {
+            0 | 3 => draw_sheet(theme, t, &lay(false), icons, None, None, None, None),
+            1 => draw_sheet(
+                theme,
+                t,
+                &lay(true),
+                icons,
+                None,
+                None,
+                Some(NotifyHit::Body),
+                None,
+            ),
+            2 | 5 => draw_sheet(
+                theme,
+                t,
+                &lay(true),
+                icons,
+                None,
+                None,
+                Some(NotifyHit::Close),
+                None,
+            ),
+            _ => draw_sheet_opening(
+                theme,
+                t,
+                &lay(false),
+                &lay(true),
+                0.5,
+                icons,
+                None,
+                None,
+                Some(NotifyHit::Body),
+                None,
+            ),
+        }
+    }
+
+    const DROPLET_CASES: [&str; 6] = [
+        "collapsed",
+        "expanded",
+        "expanded, hot close",
+        "picture",
+        "opening t = 0.5",
+        "expanded, picture, hot close",
+    ];
+
+    const DROPLET_PINS: [u64; 24] = [
+        0x425bc144996b943f,
+        0x1b5e94833245fcf1,
+        0xb7ffd9c5ecc872c0,
+        0xb9b970e50ca4aeb3,
+        0x77a28eba7566d48d,
+        0x309fb736c325eb07,
+        0x7dd3e1fbb7ea804d,
+        0x5541d5a466e923f5,
+        0xd60ae18f4120a49b,
+        0x55ac48a5b7d76edf,
+        0xdd25fb326db09377,
+        0x8fcc436ede36624f,
+        0xdf9448f5843dc0db,
+        0x782d7e3e6ebd8bb2,
+        0x635209b4461c9ef5,
+        0x1374d93fde986aed,
+        0xe2695eb474531d93,
+        0x044298801479ee55,
+        0x4ea1de53291eb3c7,
+        0x3a2d8890877b5201,
+        0x54929f8ba950da9e,
+        0x7ce3739d49072a81,
+        0xd9ea5a9475d49e13,
+        0xdd1759115362f434,
+    ];
+
+    #[test]
+    fn droplet_pins() {
+        if !crate::text::test_tahoma() {
+            return;
+        }
+        let t = text();
+        let mut got = Vec::new();
+        for (case, name) in DROPLET_CASES.iter().enumerate() {
+            for dark in [false, true] {
+                for s in [1, 2] {
+                    let c = droplet_case(case, &glass(dark, s), &t);
+                    got.push((format!("{name} dark={dark} x{s}"), fnv(&c)));
+                }
+            }
+        }
+        let now: Vec<String> = got.iter().map(|(_, h)| format!("{h:#018x},")).collect();
+        for (i, (case, h)) in got.iter().enumerate() {
+            assert_eq!(*h, DROPLET_PINS[i], "{case}; now:\n{}", now.join("\n"));
+        }
+    }
+
+    /// Light then dark, each at scale 1 and 2.
+    const BEAD_PINS: [u64; 4] = [
+        0xc57c0479b1a5e635,
+        0xe326070904f5e5f3,
+        0xf58e8278f11aff6a,
+        0x96f63b889c79bf5f,
+    ];
+
+    #[test]
+    fn bead_pins() {
+        let mut got = Vec::new();
+        for dark in [false, true] {
+            for s in [1, 2] {
+                got.push(fnv(&drip_bead(&glass(dark, s)).unwrap().0));
+            }
+        }
+        let now: Vec<String> = got.iter().map(|h| format!("{h:#018x},")).collect();
+        assert_eq!(got, BEAD_PINS, "now:\n{}", now.join("\n"));
+    }
+
+    #[test]
+    fn the_bead_centres_its_round_body_in_clear_corners() {
+        let (c, body) = drip_bead(&glass(false, 2)).unwrap();
+        let (w, h) = (c.width as i32, c.height as i32);
+        assert_eq!(body.width, 24);
+        assert_eq!((body.x * 2 + body.width, body.y * 2 + body.height), (w, h));
+        for (x, y) in [(0, 0), (w - 1, 0), (0, h - 1), (w - 1, h - 1)] {
+            assert_eq!(c.get(x, y), 0, "({x}, {y}) is clear");
+        }
+        let alpha = |x: i32, y: i32| c.get(x, y) >> 24;
+        let mid = body.x + body.width / 2;
+        let corner = alpha(body.x, body.y);
+        assert!(
+            corner < alpha(mid, mid) / 2,
+            "the body square's corner is off the drop"
+        );
+        let rim = (1..body.width / 2)
+            .map(|i| alpha(body.x + i, body.y + i))
+            .collect::<Vec<_>>();
+        assert!(
+            rim.windows(2)
+                .any(|p| p[0] < p[1] && p[1] < alpha(mid, mid)),
+            "the curved edge is part covered at scale 2: {rim:?}"
+        );
+    }
+
+    #[test]
+    fn the_bead_shows_whole_until_the_swell_and_is_gone_a_third_in() {
+        assert_eq!(drip_bead_share(0.0), 1.0);
+        assert_eq!(drip_bead_share(BEAD_UNTIL), 1.0);
+        let gone = BEAD_UNTIL + BEAD_FADE * (1.0 - BEAD_UNTIL);
+        assert_eq!(drip_bead_share(gone), 0.0);
+        let mid = drip_bead_share((BEAD_UNTIL + gone) / 2.0);
+        assert!(0.0 < mid && mid < 1.0, "{mid}");
+    }
+
+    #[test]
+    fn the_bead_sits_on_the_drips_bead_then_at_its_tray_side_end() {
+        let rest = Rect::new(100, 200, 360, 68);
+        let (p, _) = drip_pose(0.1, rest, true);
+        assert_eq!(drip_bead_at(p, true), p);
+        let (p, _) = drip_pose(0.4, rest, true);
+        let b = drip_bead_at(p, true);
+        assert_eq!(
+            (b.right(), b.height, b.width),
+            (p.right(), p.height, p.height)
+        );
+        let (p, _) = drip_pose(0.4, rest, false);
+        assert_eq!(drip_bead_at(p, false).x, p.x);
+    }
+
+    #[test]
+    #[ignore]
+    fn render_beads() {
+        for dark in [false, true] {
+            for s in [1, 2] {
+                let (c, _) = drip_bead(&glass(dark, s)).unwrap();
+                let mode = if dark { "dark" } else { "light" };
+                crate::raster::write_preview(
+                    &on_backdrop(&c),
+                    &format!("notifysheet-bead-{mode}-x{s}.png"),
+                );
+            }
+        }
+    }
+
+    #[test]
+    #[ignore]
+    fn render_droplets() {
+        let t = text();
+        for dark in [false, true] {
+            for s in [1, 2] {
+                for case in 0..DROPLET_CASES.len() {
+                    let c = droplet_case(case, &glass(dark, s), &t);
+                    let mode = if dark { "dark" } else { "light" };
+                    crate::raster::write_preview(
+                        &on_backdrop(&c),
+                        &format!("notifysheet-droplet-{case}-{mode}-x{s}.png"),
+                    );
+                }
+            }
+        }
+    }
+
     #[test]
     #[ignore]
     fn render_sheets() {
@@ -1680,6 +3486,46 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn a_droplet_starts_as_a_bead_at_the_tray() {
+        let rest = Rect::new(1000, 900, 360, 68);
+        assert_eq!(
+            drip_pose(0.0, rest, true),
+            (Rect::new(1320, 928, 12, 12), 0.0)
+        );
+        assert_eq!(
+            drip_pose(0.2, rest, true),
+            (Rect::new(1320, 928, 12, 12), 1.0)
+        );
+        assert_eq!(drip_pose(0.0, rest, false).0, Rect::new(1028, 928, 12, 12));
+    }
+
+    #[test]
+    fn a_droplet_swells_past_its_size_and_settles_at_rest() {
+        let rest = Rect::new(1000, 900, 360, 68);
+        assert!(drip_pose(0.8, rest, true).0.width > 360, "overshoot");
+        assert_eq!(drip_pose(1.0, rest, true), (rest, 1.0));
+        assert_eq!(drip_pose(1.0, rest, false), (rest, 1.0));
+    }
+
+    #[test]
+    fn the_drip_takes_twelve_fifths_of_the_open_time() {
+        assert_eq!((drip_ms(250), drip_ms(0)), (600, 0));
+    }
+
+    #[test]
+    fn a_short_drip_gets_a_corner_that_fits() {
+        use crate::backdrop::corner_radius;
+        assert_eq!(
+            (
+                corner_radius(drip_corner(68)),
+                corner_radius(drip_corner(30)),
+                corner_radius(drip_corner(8))
+            ),
+            (34.0, 12.0, 6.0)
+        );
     }
 
     /// A Lozenge whose app line reads `when`, expanded to its reply row with `reply`.

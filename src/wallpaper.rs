@@ -10,7 +10,8 @@ use reprisekit::wallpapers::{self, Builtin};
 /// Largest side accepted; the decoder checks the header so oversized files are refused before allocation.
 const MAX_SIDE: u32 = 16384;
 
-fn decode(path: &Path) -> image::ImageResult<image::DynamicImage> {
+/// `path` decoded by its content, refused past `MAX_SIDE` a side before it is read whole.
+pub fn decode(path: &Path) -> image::ImageResult<image::DynamicImage> {
     let mut reader = image::ImageReader::open(path)?.with_guessed_format()?;
     let mut limits = image::Limits::default();
     limits.max_image_width = Some(MAX_SIDE);

@@ -16,6 +16,7 @@ pub static LOZENGE_CORNER: [i32; 25] = crate::backdrop::round_corner();
 pub static HALO_CORNER: [i32; 29] = crate::backdrop::round_corner();
 /// The Halo's breakout well, whose top half stands above the sheet.
 pub static WELL_CORNER: [i32; 14] = crate::backdrop::round_corner();
+pub static DROPLET_CORNER: [i32; 33] = crate::backdrop::round_corner();
 
 /// The sheet's shadows fade out inside it.
 const LOZENGE_MARGIN: Insets = Insets {
@@ -141,6 +142,7 @@ impl NotifyStyle {
         match self {
             NotifyStyle::Lozenge => SheetShape::Lozenge,
             NotifyStyle::Halo => SheetShape::Halo,
+            NotifyStyle::Droplet => SheetShape::Droplet,
         }
     }
 }
@@ -155,6 +157,7 @@ pub fn look(mode: Mode) -> NotifyLook {
         corner,
         margin,
         sheet,
+        bead,
         well,
         pill,
         close,
@@ -167,12 +170,13 @@ fn corner(shape: SheetShape) -> &'static [i32] {
     match shape {
         SheetShape::Lozenge => &LOZENGE_CORNER,
         SheetShape::Halo => &HALO_CORNER,
+        SheetShape::Droplet => &DROPLET_CORNER,
     }
 }
 
 fn margin(shape: SheetShape) -> Insets {
     match shape {
-        SheetShape::Lozenge => LOZENGE_MARGIN,
+        SheetShape::Lozenge | SheetShape::Droplet => LOZENGE_MARGIN,
         SheetShape::Halo => HALO_MARGIN,
     }
 }
@@ -210,32 +214,67 @@ fn lit(cov: impl Fn(f64, f64) -> f64, k: f64, l: &Lit) -> (Px, f64) {
     (p, c)
 }
 
-/// The share (0..1) of the rounded rect `(x0, y0, w, h, r)` blurred by `sigma` at (`px`, `py`),
-/// design px: exact across each row, integrated down the rows.
-fn blurred(px: f64, py: f64, (x0, y0, w, h, r): (f64, f64, f64, f64, f64), sigma: f64) -> f64 {
-    let (lo, hi) = ((py - 3.0 * sigma).max(y0), (py + 3.0 * sigma).min(y0 + h));
-    if lo >= hi {
-        return 0.0;
-    }
-    const N: i32 = 16;
-    let step = (hi - lo) / f64::from(N);
-    let norm = 1.0 / (sigma * (2.0 * std::f64::consts::PI).sqrt());
-    (0..N)
-        .map(|i| {
-            let y = lo + (f64::from(i) + 0.5) * step;
-            let dy = (y0 + r - y).max(y - (y0 + h - r)).max(0.0);
-            let inset = r - (r * r - dy * dy).max(0.0).sqrt();
-            let (a, b) = (x0 + inset, x0 + w - inset);
-            let across = phi((px - a) / sigma) - phi((px - b) / sigma);
-            let t = (py - y) / sigma;
-            across * norm * (-0.5 * t * t).exp() * step
-        })
-        .sum::<f64>()
-        .clamp(0.0, 1.0)
+/// The share (0..1) of the rounded rect `(x0, y0, w, h, r)` blurred by `sigma` along row `py`,
+/// design px, worked out once per row: exact across it, integrated down 16 rows.
+struct Blur {
+    sigma: f64,
+    norm: f64,
+    step: f64,
+    /// Each row's span `(a, b)` across and its weight down; none when the rect is out of reach.
+    samples: [(f64, f64, f64); Blur::N],
+    n: usize,
 }
 
-/// The share of `body` = (x, y, w, h, r) that `how` casts at (`ux`, `uy`), design px.
-fn cast(how: &Cast, ux: f64, uy: f64, (x, y, w, h, r): (f64, f64, f64, f64, f64)) -> f64 {
+impl Blur {
+    const N: usize = 16;
+
+    fn row(py: f64, (x0, y0, w, h, r): (f64, f64, f64, f64, f64), sigma: f64) -> Blur {
+        let mut blur = Blur {
+            sigma,
+            norm: 1.0 / (sigma * (2.0 * std::f64::consts::PI).sqrt()),
+            step: 0.0,
+            samples: [(0.0, 0.0, 0.0); Blur::N],
+            n: 0,
+        };
+        let (lo, hi) = ((py - 3.0 * sigma).max(y0), (py + 3.0 * sigma).min(y0 + h));
+        if lo >= hi {
+            return blur;
+        }
+        blur.step = (hi - lo) / Blur::N as f64;
+        for (i, sample) in blur.samples.iter_mut().enumerate() {
+            let y = lo + (i as f64 + 0.5) * blur.step;
+            let dy = (y0 + r - y).max(y - (y0 + h - r)).max(0.0);
+            let inset = r - (r * r - dy * dy).max(0.0).sqrt();
+            let t = (py - y) / sigma;
+            *sample = (x0 + inset, x0 + w - inset, (-0.5 * t * t).exp());
+        }
+        blur.n = Blur::N;
+        blur
+    }
+
+    /// The share at `px` on the row.
+    fn at(&self, px: f64) -> f64 {
+        let mut last: Option<(f64, f64, f64)> = None;
+        self.samples[..self.n]
+            .iter()
+            .map(|&(a, b, down)| {
+                let across = match last {
+                    Some((la, lb, v)) if (la, lb) == (a, b) => v,
+                    _ => {
+                        let v = phi((px - a) / self.sigma) - phi((px - b) / self.sigma);
+                        last = Some((a, b, v));
+                        v
+                    }
+                };
+                across * self.norm * down * self.step
+            })
+            .sum::<f64>()
+            .clamp(0.0, 1.0)
+    }
+}
+
+/// How `how` casts `body` = (x, y, w, h, r) along the row `uy`, design px.
+fn cast_row(how: &Cast, uy: f64, (x, y, w, h, r): (f64, f64, f64, f64, f64)) -> Blur {
     let s = how.spread;
     let shape = (
         x + s,
@@ -244,7 +283,7 @@ fn cast(how: &Cast, ux: f64, uy: f64, (x, y, w, h, r): (f64, f64, f64, f64, f64)
         h - 2.0 * s,
         (r - s).max(0.0),
     );
-    blurred(ux, uy, shape, how.sigma)
+    Blur::row(uy, shape, how.sigma)
 }
 
 /// `p` over `c` of its pixel with `shade` on the share it leaves uncovered.
@@ -295,7 +334,7 @@ impl Halo {
     fn of(l: &NotifyLook, spec: &SheetSpec, (sx, sy): (f64, f64)) -> Option<Halo> {
         let b = spec.breakout?;
         match spec.shape {
-            SheetShape::Lozenge => return None,
+            SheetShape::Lozenge | SheetShape::Droplet => return None,
             SheetShape::Halo => {}
         }
         let side = f64::from(b.width);
@@ -357,15 +396,39 @@ impl Halo {
 }
 
 fn sheet(l: &NotifyLook, spec: &SheetSpec, d: i32) -> Canvas {
+    let r = f64::from(corner_radius(corner(spec.shape)));
+    glass_body(l, spec, margin(spec.shape), r, d)
+}
+
+/// The bead's shadow room on every side, so the bead centres in its canvas.
+const BEAD_MARGIN: Insets = Insets {
+    left: 20,
+    top: 20,
+    right: 20,
+    bottom: 20,
+};
+
+/// A round drop `size` across in the sheet's glass: its rim, crescents, pool and shadow.
+fn bead(l: &NotifyLook, size: i32, d: i32) -> Canvas {
+    let spec = SheetSpec {
+        shape: SheetShape::Droplet,
+        size: (size, size),
+        tint: None,
+        hot_close: false,
+        breakout: None,
+    };
+    glass_body(l, &spec, BEAD_MARGIN, f64::from(size) / 2.0, d)
+}
+
+/// `spec`'s glass with corners of radius `r` design px, grown by `m`.
+fn glass_body(l: &NotifyLook, spec: &SheetSpec, m: Insets, r: f64, d: i32) -> Canvas {
     let d = d.max(1);
     let k = f64::from(d);
-    let m = margin(spec.shape);
     let f = footprint(spec);
     let (ox, oy) = (m.left - f.x, m.top - f.y);
     let (cw, ch) = (f.width + m.left + m.right, f.height + m.top + m.bottom);
     let g = sheet_glass(l);
     let (w, h) = (f64::from(spec.size.0), f64::from(spec.size.1));
-    let r = f64::from(corner_radius(corner(spec.shape)));
     let (sx, sy) = (f64::from(ox), f64::from(oy));
     let glass = Lit {
         fill: px(g.fill),
@@ -377,6 +440,7 @@ fn sheet(l: &NotifyLook, spec: &SheetSpec, d: i32) -> Canvas {
     let pool = px(g.pool);
     let body = (sx, sy, w, h, r);
     let halo = Halo::of(l, spec, (sx, sy));
+    let shadows = std::cell::RefCell::new(None::<(f64, [Blur; 2])>);
     draw(cw, ch, d, |x, y| {
         let (ux, uy) = (centre(x as i32, d) + 0.5, centre(y as i32, d) + 0.5);
         let wash = halo.as_ref().map_or(CLEAR, |hl| hl.wash((uy - sy) / h));
@@ -394,8 +458,16 @@ fn sheet(l: &NotifyLook, spec: &SheetSpec, d: i32) -> Canvas {
         let fill = over(scale(pool, lift), over(wash, glass.fill));
         let (mut p, c) = lit(cov, k, &Lit { fill, ..glass });
         if c < 1.0 {
-            let key = f64::from(g.shadow.0) * cast(&KEY_SHADOW, ux, uy, body);
-            let ambient = f64::from(g.shadow.1) * cast(&AMBIENT_SHADOW, ux, uy, body);
+            let mut shadows = shadows.borrow_mut();
+            if shadows.as_ref().is_none_or(|(row, _)| *row != uy) {
+                let rows = [&KEY_SHADOW, &AMBIENT_SHADOW].map(|how| cast_row(how, uy, body));
+                *shadows = Some((uy, rows));
+            }
+            let Some((_, [key, ambient])) = shadows.as_ref() else {
+                unreachable!("set above");
+            };
+            let key = f64::from(g.shadow.0) * key.at(ux);
+            let ambient = f64::from(g.shadow.1) * ambient.at(ux);
             let a = 255.0 - (255.0 - key) * (255.0 - ambient) / 255.0;
             p = cast_under(p, c, (a, [0.0; 3]));
         }
@@ -485,7 +557,7 @@ fn well(l: &NotifyLook, kind: Well, size: i32, d: i32) -> Canvas {
             return q;
         }
         let (ux, uy) = (centre(x as i32, d) + 0.5, centre(y as i32, d) + 0.5);
-        let share = cast(&WELL_SHADOW, ux, uy, (p, p, s, s, r));
+        let share = cast_row(&WELL_SHADOW, uy, (p, p, s, s, r)).at(ux);
         cast_under(q, c, scale(shade, share))
     })
 }
@@ -1069,6 +1141,11 @@ mod tests {
             let tinted = luma(&halo_sheet_in(Mode::Dark, Some(tint), 1));
             assert!(tinted <= plain, "{tint:?}: {tinted} over {plain}");
         }
+    }
+
+    #[test]
+    fn the_droplet_corner_steps_radius_34() {
+        assert_eq!(corner_radius(&DROPLET_CORNER), 34.0);
     }
 
     #[test]

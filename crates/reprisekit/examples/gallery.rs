@@ -6508,8 +6508,8 @@ fn render_glass_balloons(theme: &Theme) -> Canvas {
     c
 }
 
-/// Glass notification sheets over the stripes: Lozenge states and a stack with its chip, then Halo
-/// sheets tinted red and blue, with a grey icon, with a picture, and a stack.
+/// Glass notification sheets over the stripes: Lozenge, Halo and Droplet, each in its states and in
+/// a stack with its chip; the Droplet also half open and in three arrival frames.
 fn render_glass_notify_sheets(theme: &Theme) -> Canvas {
     use reprisekit::art::{logo, userpic};
     use reprisekit::controls::notifysheet::{
@@ -6520,7 +6520,7 @@ fn render_glass_notify_sheets(theme: &Theme) -> Canvas {
     use reprisekit::taskbar::Edge;
     let s = theme.scale.max(1);
     let text = TextRenderer::load(&theme.fonts);
-    let mut c = blurred_stripes(950 * s, 1320 * s);
+    let mut c = blurred_stripes(950 * s, 1900 * s);
     let slot = 46 * s;
     let mut app = Canvas::new(slot as u32, slot as u32);
     let mask = logo::coverage_any(slot as usize);
@@ -6708,6 +6708,132 @@ fn render_glass_notify_sheets(theme: &Theme) -> Canvas {
     }
     if let Some((x, y)) = chip_at {
         c.blit_over(x * s, y * s, &draw_chip(theme, &text, 2, false));
+    }
+
+    let drop_lay = |c: &SheetContent, expanded: bool| {
+        notifysheet::sheet_layout(theme, &text, SheetShape::Droplet, c, expanded)
+            .expect("Glass draws sheets")
+    };
+    let art = userpic::draw(userpic::Picture::Sunset, (48 * s) as u32);
+    let drop_icons = |with_pic: bool| SheetIcons {
+        app: Some(&app),
+        picture: with_pic.then_some(&art),
+    };
+    let note = content(
+        "New message",
+        "Lunch at noon? I booked the table by the window.",
+    );
+    let long = SheetContent {
+        app: "Chat",
+        title: "Ana",
+        body: "Lunch at noon? The usual place by the river. Bring the photos from the trip.",
+        actions: &["Reply", "Later"],
+        ..content("", "")
+    };
+    let song = SheetContent {
+        app: "Music",
+        title: "Now playing",
+        body: "Harbour Lights, from the album Night Ferry",
+        has_picture: true,
+        ..content("", "")
+    };
+    let hot = Some(NotifyHit::Body);
+    let draw_drop = |l: &SheetLayout, with_pic: bool, hot: Option<NotifyHit>| {
+        notifysheet::draw_sheet(theme, &text, l, drop_icons(with_pic), None, None, hot, None)
+    };
+    let opening = notifysheet::open_layout(&drop_lay(&long, false), &drop_lay(&long, true), 0.5);
+    let column: [(SheetLayout, Canvas); 4] = [
+        (
+            drop_lay(&note, false),
+            draw_drop(&drop_lay(&note, false), false, None),
+        ),
+        (
+            drop_lay(&long, true),
+            draw_drop(&drop_lay(&long, true), false, hot),
+        ),
+        (
+            drop_lay(&song, false),
+            draw_drop(&drop_lay(&song, false), true, None),
+        ),
+        (
+            opening,
+            notifysheet::draw_sheet_opening(
+                theme,
+                &text,
+                &drop_lay(&long, false),
+                &drop_lay(&long, true),
+                0.5,
+                drop_icons(false),
+                None,
+                None,
+                hot,
+                None,
+            ),
+        ),
+    ];
+    let mut y = 1340 * s;
+    for (l, canvas) in &column {
+        c.blit_over(0, y - l.footprint.y, canvas);
+        y += l.footprint.height + 18 * s;
+    }
+    let stack = [&note, &song, &long];
+    let lays: Vec<SheetLayout> = stack.iter().map(|c| drop_lay(c, false)).collect();
+    let footprints: Vec<(i32, i32)> = lays
+        .iter()
+        .map(|l| (l.footprint.width / s, l.footprint.height / s))
+        .collect();
+    let usable = Rect::new(470, 1340, 480, 270);
+    let (spots, chip_at) = place_stack(usable, &footprints, Some((cw / s, ch / s)), Edge::Bottom);
+    for ((l, (x, y)), sc) in lays.iter().zip(spots).zip(stack) {
+        c.blit_over(
+            x * s - l.footprint.x,
+            y * s - l.footprint.y,
+            &draw_drop(l, sc.has_picture, None),
+        );
+    }
+    if let Some((x, y)) = chip_at {
+        c.blit_over(x * s, y * s, &draw_chip(theme, &text, 2, false));
+    }
+    // Arrival frames by a bottom bar as the host poses them: the bead, then the canvas squashed
+    // with the footprint as the bead fades.
+    let bead = drop_lay(&note, false);
+    let bead_canvas = draw_drop(&bead, false, None);
+    let fp = bead.footprint;
+    let (drop, body) = notifysheet::drip_bead(theme).unwrap();
+    for (i, k) in [0.1, 0.35, 0.8].into_iter().enumerate() {
+        let rest = Rect::new(500, 1640 + i as i32 * 86, fp.width / s, fp.height / s);
+        let (p, alpha) = notifysheet::drip_pose(k, rest, true);
+        let (kx, ky) = (
+            f64::from(p.width) / f64::from(rest.width),
+            f64::from(p.height) / f64::from(rest.height),
+        );
+        let times = |v: i32, k: f64| (f64::from(v) * k).round() as i32;
+        let posed = bead_canvas.resample_box(
+            times(bead_canvas.width as i32, kx).max(1) as u32,
+            times(bead_canvas.height as i32, ky).max(1) as u32,
+        );
+        let share = notifysheet::drip_bead_share(k);
+        let fade = |a: f32| (a * 255.0).round() as u32;
+        c.blit_over_faded(
+            p.x * s - times(fp.x, kx),
+            p.y * s - times(fp.y, ky),
+            &posed,
+            fade(alpha * (1.0 - share)),
+            255,
+        );
+        let q = notifysheet::drip_bead_at(p, true);
+        let kb = f64::from(q.height * s) / f64::from(body.height);
+        let drop = drop.resample_box(
+            times(drop.width as i32, kb).max(1) as u32,
+            times(drop.height as i32, kb).max(1) as u32,
+        );
+        c.blit_over_faded(
+            q.x * s - times(body.x, kb),
+            q.y * s - times(body.y, kb),
+            &drop,
+            fade(alpha * share),
+            255,
+        );
     }
     c
 }
