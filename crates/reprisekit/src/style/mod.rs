@@ -943,6 +943,7 @@ pub struct BalloonLook {
 pub enum SheetShape {
     Lozenge,
     Halo,
+    Droplet,
 }
 
 /// A squircle well's corner radius as a share of its side; a picture in the slot rounds the same.
@@ -986,6 +987,8 @@ pub struct NotifyLook {
     pub margin: fn(SheetShape) -> Insets,
     /// `size` (and `breakout`) grown by `margin`.
     pub sheet: fn(&NotifyLook, &SheetSpec, d: i32) -> Canvas,
+    /// A round drop of the sheet's glass `size` across, centred in its canvas.
+    pub bead: fn(&NotifyLook, size: i32, d: i32) -> Canvas,
     /// `size` square grown evenly on every side for its shadow: it centres on
     /// the slot.
     pub well: fn(&NotifyLook, Well, size: i32, d: i32) -> Canvas,

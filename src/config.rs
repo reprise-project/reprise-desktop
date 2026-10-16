@@ -2584,7 +2584,9 @@ impl Config {
             if let Some(n) = g.notification_style {
                 cfg.glass.notification =
                     reprisekit::glass::NotifyStyle::parse(&n).ok_or_else(|| {
-                        format!("[glass] notification_style = {n:?} is not lozenge or halo")
+                        format!(
+                            "[glass] notification_style = {n:?} is not lozenge, halo or droplet"
+                        )
                     })?;
             }
         }
@@ -3703,10 +3705,18 @@ mod tests {
                 .notification,
             NotifyStyle::Halo
         );
+        assert_eq!(
+            Config::parse("[glass]\nnotification_style = \"droplet\"\n")
+                .unwrap()
+                .glass
+                .notification,
+            NotifyStyle::Droplet
+        );
         let err = Config::parse("[glass]\nnotification_style = \"bubble\"\n").unwrap_err();
         assert!(
-            err.to_string()
-                .contains("[glass] notification_style = \"bubble\" is not lozenge or halo"),
+            err.to_string().contains(
+                "[glass] notification_style = \"bubble\" is not lozenge, halo or droplet"
+            ),
             "{err}"
         );
     }

@@ -60,15 +60,23 @@ pub enum Ease {
     InOut,
     Linear,
     OutCubic,
+    /// Overshoots 1 by a few percent, then settles.
+    OutBack,
 }
 
 impl Ease {
-    fn apply(self, t: f32) -> f32 {
+    pub fn apply(self, t: f32) -> f32 {
         match self {
             Ease::Out => 1.0 - (1.0 - t) * (1.0 - t),
             Ease::InOut => t * t * (3.0 - 2.0 * t),
             Ease::Linear => t,
             Ease::OutCubic => 1.0 - (1.0 - t).powi(3),
+            Ease::OutBack if t <= 0.0 || t >= 1.0 => t.clamp(0.0, 1.0),
+            Ease::OutBack => {
+                const C1: f32 = 1.4;
+                let u = t - 1.0;
+                1.0 + u * u * ((C1 + 1.0) * u + C1)
+            }
         }
     }
 }
@@ -211,6 +219,19 @@ mod tests {
 
     fn at(t0: Instant, ms: u64) -> Instant {
         t0 + Duration::from_millis(ms)
+    }
+
+    #[test]
+    fn out_back_overshoots_then_settles() {
+        assert_eq!(
+            (Ease::OutBack.apply(0.0), Ease::OutBack.apply(1.0)),
+            (0.0, 1.0)
+        );
+        assert!(Ease::OutBack.apply(0.6) > 1.0);
+        let t0 = Instant::now();
+        let t = Tween::new(0.0, 1.0, t0, 100, Ease::OutBack);
+        assert!(t.value(at(t0, 60)) > 1.0);
+        assert_eq!(t.value(at(t0, 100)), 1.0);
     }
 
     #[test]
