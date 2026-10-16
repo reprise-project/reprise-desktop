@@ -57,8 +57,8 @@ fn key_of(k: &DialogKey) -> Option<Key> {
     special.or_else(|| k.edit.clone().map(Key::Char))
 }
 
-fn panel_origin(area: Rect, height: i32) -> (i32, i32) {
-    let x = area.x + (area.width - launcher::W) / 2;
+fn panel_origin(area: Rect, (width, height): (i32, i32)) -> (i32, i32) {
+    let x = area.x + (area.width - width) / 2;
     let y = area.y + (area.height - height) / 2;
     (x.max(area.x), y.max(area.y))
 }
@@ -407,9 +407,9 @@ impl State {
             return;
         };
         let lay = launcher::layout(&v.model, &self.config.theme);
-        let at = panel_origin(v.area, lay.height);
+        let at = panel_origin(v.area, (lay.width, lay.height));
         let out = self.output_at(
-            (at.0 + launcher::W / 2) as f64,
+            (at.0 + lay.width / 2) as f64,
             (at.1 + lay.height / 2) as f64,
         );
         let scale = self.draw_scale_at(out.as_ref()).max(1);
@@ -419,7 +419,7 @@ impl State {
         let pane = match self.config.theme.glass() {
             Some(g) if crate::glass::wanted(&self.config) => Some(Pane {
                 shapes: vec![PaneShape {
-                    rect: Rect::new(0, 0, launcher::W, lay.height),
+                    rect: Rect::new(0, 0, lay.width, lay.height),
                     corner: g.panel.corner,
                     square_bottom: false,
                     square_top: false,
@@ -450,7 +450,7 @@ impl State {
             v.buffer,
             Input::Rect(Rectangle::new(
                 (m.left, m.top).into(),
-                (launcher::W, lay.height).into(),
+                (lay.width, lay.height).into(),
             )),
         );
         v.backdrop.set(scene, glass, v.glass_tree, pane);
@@ -498,12 +498,8 @@ impl State {
     pub fn launcher_access(&self) -> Option<reprisekit::access::Tree> {
         use reprisekit::access::{ROOT, accesskit::Role};
         let v = self.launcher.as_ref()?;
-        let rect = Rect::new(
-            v.at.0,
-            v.at.1,
-            launcher::W,
-            launcher::layout(&v.model, &self.config.theme).height,
-        );
+        let lay = launcher::layout(&v.model, &self.config.theme);
+        let rect = Rect::new(v.at.0, v.at.1, lay.width, lay.height);
         let mut tree = crate::access::root(Role::Window, "Launcher", rect);
         let px = self.config.theme.fonts.size_px;
         let theme = &self.config.theme;
@@ -555,10 +551,10 @@ mod tests {
     fn the_panel_centres_in_the_usable_area_and_keeps_its_corner_inside() {
         let area = Rect::new(100, 0, 1820, 1040);
         assert_eq!(
-            panel_origin(area, 48),
+            panel_origin(area, (launcher::W, 48)),
             (100 + (1820 - launcher::W) / 2, (1040 - 48) / 2)
         );
         let small = Rect::new(10, 20, 300, 100);
-        assert_eq!(panel_origin(small, 400), (10, 20));
+        assert_eq!(panel_origin(small, (420, 400)), (10, 20));
     }
 }
