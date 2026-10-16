@@ -2529,12 +2529,7 @@ impl Config {
         }
         if let Some(g) = file.glass {
             if let Some(name) = g.color {
-                let color = if name.starts_with('#') {
-                    Color::parse(&name)
-                } else {
-                    reprisekit::glass::swatch(&name)
-                };
-                cfg.glass.color = color.ok_or_else(|| {
+                cfg.glass.color = reprisekit::glass::color_named(&name).ok_or_else(|| {
                     format!("[glass] color = {name:?} is neither a colour name nor #RRGGBB")
                 })?;
             }

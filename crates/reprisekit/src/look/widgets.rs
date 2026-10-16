@@ -351,6 +351,31 @@ pub fn draw_clock_face(c: &mut Canvas, p: &Paint, r: Rect, time: (u32, u32, u32)
     }
 }
 
+/// The copy dialog's flight in `r` (its height [`crate::copyart::STRIP_H`]): the style's
+/// painter, else Classic's. Drawn at the canvas's own scale, so it stays sharp at 2.
+pub fn draw_copy_flight(c: &mut Canvas, p: &Paint, r: Rect, f: &crate::copyart::Flight) {
+    let d = p.s * c.scale();
+    let paint = p
+        .look
+        .style()
+        .and_then(|st| st.copy_flight)
+        .unwrap_or(classic::copyflight::paint);
+    let art = paint(f, p.cs, r.width, d).at_scale(c.scale());
+    c.blit_over(r.x * p.s, r.y * p.s, &art);
+}
+
+/// The copy dialog's throughput graph in `r`, for a look with a [`crate::copyart::GraphLook`];
+/// false (nothing drawn) for the others.
+pub fn draw_copy_graph(c: &mut Canvas, p: &Paint, r: Rect, g: &crate::copyart::Graph) -> bool {
+    let Some(look) = p.look.style().and_then(|st| st.copy_graph) else {
+        return false;
+    };
+    let d = p.s * c.scale();
+    let art = (look.paint)(g, p.cs, r.width, r.height, d).at_scale(c.scale());
+    c.blit_over(r.x * p.s, r.y * p.s, &art);
+    true
+}
+
 /// A month calendar's weekday band in `r`; returns the ink of the day
 /// letters: the style's band part and text colour, else Classic's button
 /// shadow band with face-coloured letters.

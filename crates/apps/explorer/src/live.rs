@@ -87,6 +87,7 @@ impl Explorer {
     /// once its work is done.
     pub fn wake(&mut self, ctx: &mut Ctx) -> Reply {
         let put = self.poll_put(ctx);
+        self.show_copy_dialog();
         let job = self.poll_jobs(ctx);
         let tipped = self.poll_tip_walk(ctx);
         if self.closing && !self.busy() {

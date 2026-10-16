@@ -70,6 +70,10 @@ fn main() {
             "reprisekit-gallery-orb-glow-glass.png",
         );
         write_volume_popups(true, n.max(1));
+        write_preview(
+            &render_copy_progress(true, n.max(1)),
+            &format!("reprisekit-gallery-copy-progress@{}.png", n.max(1)),
+        );
         return;
     }
     if let Ok(pct) = std::env::var("REPRISE_GALLERY_TEXT_SIZE") {
@@ -133,6 +137,10 @@ fn main() {
     write_preview(
         &render_location_prompt(with_blue),
         "reprisekit-gallery-location-prompt.png",
+    );
+    write_preview(
+        &render_copy_progress(with_blue, 1),
+        "reprisekit-gallery-copy-progress.png",
     );
     write_preview(
         &render_stats_panel(with_blue),
@@ -358,6 +366,89 @@ fn render_location_prompt(with_blue: bool) -> Canvas {
         let mut box_c = Canvas::new(bw as u32, bh as u32);
         locationprompt::draw(&mut box_c, &text, &theme.paint(), &f, px);
         c.blit_canvas(10 + i as i32 * (w + 10), 10, &box_c);
+    }
+    c
+}
+
+/// The copy progress dialog in each look at `scale`: Classic preparing, copying and finishing a
+/// move; Blue, Olive and Silver copying; Glass light and dark with the details, and with fewer.
+fn render_copy_progress(with_blue: bool, scale: i32) -> Canvas {
+    use reprisekit::controls::copyprogress::{CopyProgress, Kind, Phase, Status};
+    let status = |phase, bytes: u64| Status {
+        phase,
+        bytes,
+        total_bytes: 1_200_000_000,
+        items: bytes / 100_000_000,
+        total_items: 12,
+        current: "holiday-2026.mkv".into(),
+        waiting: 1,
+        ..Status::default()
+    };
+    let glass_dark = interfaces::theme_with(
+        Interface::Glass,
+        reprisekit::blue::Variant::default(),
+        &reprisekit::glass::Settings {
+            mode: reprisekit::glass::Mode::Dark,
+            ..reprisekit::glass::Settings::default()
+        },
+    );
+    let mut boxes: Vec<(Theme, Phase, bool)> = vec![
+        (Theme::default(), Phase::Preparing, true),
+        (Theme::default(), Phase::Copying, true),
+        (Theme::default(), Phase::Finishing, true),
+    ];
+    if with_blue {
+        for v in [
+            reprisekit::blue::Variant::Blue,
+            reprisekit::blue::Variant::Olive,
+            reprisekit::blue::Variant::Silver,
+        ] {
+            boxes.push((interfaces::blue_theme(v), Phase::Copying, true));
+        }
+        let glass = interfaces::theme_for(Interface::Glass);
+        boxes.push((glass.clone(), Phase::Copying, true));
+        boxes.push((glass_dark, Phase::Copying, true));
+        boxes.push((glass, Phase::Copying, false));
+    }
+    let drawn: Vec<Canvas> = boxes
+        .iter()
+        .map(|(theme, phase, details)| {
+            let text = TextRenderer::load(&theme.fonts);
+            let p = theme.paint();
+            let mut cp = CopyProgress::new(
+                Kind::Move,
+                "Downloads",
+                "KINGSTON",
+                Color::rgb(0x2E, 0x8C, 0xFF),
+            );
+            cp.follow(&p);
+            if !details {
+                cp.toggle_details();
+            }
+            for k in 0..30u64 {
+                let b = k * 15_000_000 + (k % 5) * 3_000_000;
+                cp.update(status(Phase::Copying, b), k * 300 + 40);
+            }
+            cp.update(status(*phase, 450_000_000), 30 * 300 + 40);
+            let (w, h) = cp.client();
+            let mut c = Canvas::with_scale(w as u32, h as u32, scale);
+            cp.draw(&mut c, &text, &p, theme.fonts.size_px);
+            c
+        })
+        .collect();
+    let cols = 3;
+    let cell_w = drawn.iter().map(|c| c.width as i32).max().unwrap_or(0) + 10;
+    let cell_h = drawn.iter().map(|c| c.height as i32).max().unwrap_or(0) + 10;
+    let rows = drawn.len().div_ceil(cols) as i32;
+    let mut c = Canvas::with_scale(
+        (cols as i32 * cell_w + 10) as u32,
+        (rows * cell_h + 10) as u32,
+        scale,
+    );
+    c.fill_rect(c.bounds(), Color::rgb(58, 110, 165));
+    for (i, b) in drawn.iter().enumerate() {
+        let (col, row) = ((i % cols) as i32, (i / cols) as i32);
+        c.blit_canvas(10 + col * cell_w, 10 + row * cell_h, b);
     }
     c
 }

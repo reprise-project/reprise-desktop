@@ -8,6 +8,7 @@ mod bars;
 mod buttons;
 mod clock;
 mod controls;
+mod copygraph;
 pub mod dark;
 mod fields;
 mod flyouts;
@@ -181,6 +182,15 @@ pub use tint::SWATCHES;
 
 pub fn swatch(name: &str) -> Option<Color> {
     SWATCHES.iter().find(|w| w.name == name).map(|w| w.color)
+}
+
+/// `[glass] color`'s colour: a swatch's name or "#RRGGBB".
+pub fn color_named(s: &str) -> Option<Color> {
+    if s.starts_with('#') {
+        Color::parse(s)
+    } else {
+        swatch(s)
+    }
 }
 
 pub fn swatch_names() -> impl Iterator<Item = &'static str> {
@@ -447,6 +457,7 @@ fn build_at(s: &Settings, scale: i32) -> Style {
     .with_task_glow(paint::task_glow(s))
     .with_start_bloom(orb::bloom)
     .with_clock_face(clock::painter(s.mode))
+    .with_copy_graph(copygraph::look(s.mode))
     .with_painted_task_spot(move || taskbutton::task_spot(&owned, scale))
     .without_task_nudge()
     .with_greyed_field_frame()

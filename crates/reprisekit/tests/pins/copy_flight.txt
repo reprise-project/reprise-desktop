@@ -1,0 +1,132 @@
+classic preparing copy @1 301826f2557ab2d7
+classic preparing copy @2 c8e00fff6b8427a1
+classic preparing move @1 301826f2557ab2d7
+classic preparing move @2 c8e00fff6b8427a1
+classic copying copy @1 bc87ea39688b55b1
+classic copying copy @2 14a2d1b8626da34c
+classic copying move @1 573688b4781f386c
+classic copying move @2 3faa1ecf1114ee0b
+classic finishing copy @1 e3dd52257b17cee9
+classic finishing copy @2 503ae9ce32c70d11
+classic finishing move @1 bcf2b429ce31bd59
+classic finishing move @2 2fe71230422c813b
+blue Blue preparing copy @1 ef032e01072da862
+blue Blue preparing copy @2 215f860d341fcf94
+blue Blue preparing move @1 ef032e01072da862
+blue Blue preparing move @2 215f860d341fcf94
+blue Blue copying copy @1 b1e8b75dbc0a17ed
+blue Blue copying copy @2 98193a769c94b730
+blue Blue copying move @1 7cf5951955a1c880
+blue Blue copying move @2 103555a4372a88ad
+blue Blue finishing copy @1 4aa88440ed723bea
+blue Blue finishing copy @2 a439aeb621b771d3
+blue Blue finishing move @1 b35ea2aac8d0271d
+blue Blue finishing move @2 5ca86e1c8a72769a
+blue Olive preparing copy @1 56ad29f2e9c66e52
+blue Olive preparing copy @2 074533637fcbdb24
+blue Olive preparing move @1 56ad29f2e9c66e52
+blue Olive preparing move @2 074533637fcbdb24
+blue Olive copying copy @1 c33774970c2345df
+blue Olive copying copy @2 3b417ee156ebbefd
+blue Olive copying move @1 bc25bf9395c9242e
+blue Olive copying move @2 6a5da428d51d0b3c
+blue Olive finishing copy @1 c059b37709f4cb77
+blue Olive finishing copy @2 7b7c2210a800824b
+blue Olive finishing move @1 ceaeda16ed30a60c
+blue Olive finishing move @2 1d584a7e9da1df92
+blue Silver preparing copy @1 eebae21336948862
+blue Silver preparing copy @2 8bdfc1e6ffc5afcc
+blue Silver preparing move @1 eebae21336948862
+blue Silver preparing move @2 8bdfc1e6ffc5afcc
+blue Silver copying copy @1 6d2662260cd50751
+blue Silver copying copy @2 e4dfa8cbba76fc5c
+blue Silver copying move @1 c5169615fa923d96
+blue Silver copying move @2 4e74e68516b0f4dd
+blue Silver finishing copy @1 2cc7db51f60fe00a
+blue Silver finishing copy @2 e1c4920680a1b21f
+blue Silver finishing move @1 6a77cbcae885836d
+blue Silver finishing move @2 548b9be7f91179e2
+blue Slate preparing copy @1 f4c4ed5e64fa1572
+blue Slate preparing copy @2 43d00efa3c55649c
+blue Slate preparing move @1 f4c4ed5e64fa1572
+blue Slate preparing move @2 43d00efa3c55649c
+blue Slate copying copy @1 8c5046a69f2380f3
+blue Slate copying copy @2 8555bcc364f473a9
+blue Slate copying move @1 1ed7a5fc45655802
+blue Slate copying move @2 ef9ddfd42a04b714
+blue Slate finishing copy @1 fc8256b2d33f747c
+blue Slate finishing copy @2 174633c9f0a64099
+blue Slate finishing move @1 9a63ff65bcb6696f
+blue Slate finishing move @2 477d82b10d2615e0
+blue Sapphire preparing copy @1 695b994ca494f6b2
+blue Sapphire preparing copy @2 6d392779d86bc98c
+blue Sapphire preparing move @1 695b994ca494f6b2
+blue Sapphire preparing move @2 6d392779d86bc98c
+blue Sapphire copying copy @1 080bca24fc4a4240
+blue Sapphire copying copy @2 297aa8537d61f9ae
+blue Sapphire copying move @1 1d4c3402fd7d127f
+blue Sapphire copying move @2 406ac071bee6c0bb
+blue Sapphire finishing copy @1 0d6c776f3e62ac98
+blue Sapphire finishing copy @2 47f367709dacabe3
+blue Sapphire finishing move @1 f727759fa6af8aa7
+blue Sapphire finishing move @2 81e031b117cae232
+blue Obsidian preparing copy @1 70e8b613d3862c62
+blue Obsidian preparing copy @2 f1183e1399a55274
+blue Obsidian preparing move @1 70e8b613d3862c62
+blue Obsidian preparing move @2 f1183e1399a55274
+blue Obsidian copying copy @1 9b8b362cf17585b9
+blue Obsidian copying copy @2 f48a90a7187064c2
+blue Obsidian copying move @1 9cb5f84043c8c67a
+blue Obsidian copying move @2 35ea753ebe147563
+blue Obsidian finishing copy @1 b56a583b4af864d2
+blue Obsidian finishing copy @2 f1e5c15065c7c76f
+blue Obsidian finishing move @1 c4107bcf58f818d9
+blue Obsidian finishing move @2 8358a2dd6b8de02e
+blue Ember preparing copy @1 711d344167704cd2
+blue Ember preparing copy @2 568e50bc29c234a4
+blue Ember preparing move @1 711d344167704cd2
+blue Ember preparing move @2 568e50bc29c234a4
+blue Ember copying copy @1 09ecb950f2ebd8bf
+blue Ember copying copy @2 d0ea09ae4c585bcd
+blue Ember copying move @1 2036316e9af4c5b2
+blue Ember copying move @2 b26086d6f772505c
+blue Ember finishing copy @1 9409c31d35caa75c
+blue Ember finishing copy @2 b814b6e214a69a22
+blue Ember finishing move @1 8ae729b02648aceb
+blue Ember finishing move @2 ce24fe8fb7a222e7
+blue Cobalt preparing copy @1 4aa6db68b81ee9ca
+blue Cobalt preparing copy @2 7388ecc977858674
+blue Cobalt preparing move @1 4aa6db68b81ee9ca
+blue Cobalt preparing move @2 7388ecc977858674
+blue Cobalt copying copy @1 ae32eb5d159657f6
+blue Cobalt copying copy @2 a1d51307f532a3b0
+blue Cobalt copying move @1 caf91280d11b5ca5
+blue Cobalt copying move @2 f5d6b55a2c1766f1
+blue Cobalt finishing copy @1 70e11f6a241c02f8
+blue Cobalt finishing copy @2 4fd45256397ab7da
+blue Cobalt finishing move @1 713f36f32d5b210f
+blue Cobalt finishing move @2 5e25e11ac53243cb
+blue Carbon preparing copy @1 1f99f2f2b78a589a
+blue Carbon preparing copy @2 1d524044f7e14d04
+blue Carbon preparing move @1 1f99f2f2b78a589a
+blue Carbon preparing move @2 1d524044f7e14d04
+blue Carbon copying copy @1 58525cafd2bd16cc
+blue Carbon copying copy @2 d239a85244000fa7
+blue Carbon copying move @1 494e46a0c8f140cb
+blue Carbon copying move @2 c3af991137a1e076
+blue Carbon finishing copy @1 a44c22e100a3eefc
+blue Carbon finishing copy @2 d9ef0458efda79f5
+blue Carbon finishing move @1 8ad72406eb436113
+blue Carbon finishing move @2 71ad1fcebd764274
+blue Steel preparing copy @1 a1c996bcf84a0c9a
+blue Steel preparing copy @2 656725486ea4ccc4
+blue Steel preparing move @1 a1c996bcf84a0c9a
+blue Steel preparing move @2 656725486ea4ccc4
+blue Steel copying copy @1 9a551befc2c408b9
+blue Steel copying copy @2 895f367b27575b54
+blue Steel copying move @1 0658da14adfe9b98
+blue Steel copying move @2 fc20f991bfb55589
+blue Steel finishing copy @1 b9cdc7587fc79d6b
+blue Steel finishing copy @2 021fb31f0df9ac82
+blue Steel finishing move @1 7e461a9ef4ac4230
+blue Steel finishing move @2 c3fbbce5fc1438bb

@@ -11,6 +11,7 @@ pub mod cliphistory;
 pub mod colorbutton;
 pub mod colorpick;
 pub mod combo;
+pub mod copyprogress;
 pub mod displaypanel;
 pub mod dlgtemplate;
 pub mod emojipicker;
