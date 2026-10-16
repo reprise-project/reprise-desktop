@@ -12,6 +12,7 @@ mod inputfds;
 
 use std::{
     collections::HashMap,
+    ffi::OsStr,
     sync::{Arc, Mutex, MutexGuard, PoisonError, TryLockError},
     time::Duration,
 };
@@ -36,7 +37,7 @@ use smithay::{
             utils::{CommitCounter, DamageSnapshot},
         },
         session::{Event as SessionEvent, Session, libseat::LibSeatSession},
-        udev::{UdevBackend, UdevEvent, all_gpus, primary_gpu},
+        udev::{all_gpus, primary_gpu},
     },
     desktop::utils::OutputPresentationFeedback,
     output::{Mode as WlMode, Output, PhysicalProperties},
@@ -51,6 +52,7 @@ use smithay::{
         drm::control::{ModeTypeFlags, connector, crtc},
         input::Libinput,
         rustix::fs::OFlags,
+        udev::{EventType, MonitorBuilder},
         wayland_server::backend::GlobalId,
     },
     utils::{DeviceFd, Monotonic},
@@ -99,7 +101,8 @@ pub struct Backend {
     delay: Option<String>,
     /// The session came back: reset the device once no commit is out (`reset_device`).
     reset: bool,
-    /// A uevent or the session's return asked for a connector scan, run once quiet.
+    /// A hotplug uevent asked for a connector scan, run once quiet; one that came while the
+    /// session was away runs on its return.
     rescan: bool,
     /// The scan under way: its connectors are probed one per loop turn (`on_quiet`).
     probe: Option<Probe>,
@@ -358,27 +361,41 @@ pub fn init(state: &mut State) -> Result<(), Box<dyn std::error::Error>> {
             ChannelEvent::Closed => {}
         })
         .map_err(|e| e.error)?;
-    let udev = UdevBackend::new(&seat)?;
-    state
-        .handle
-        .insert_source(udev, move |event, _, state| match event {
-            UdevEvent::Changed { device_id } if device_id == node.dev_id() => {
-                if let Some(b) = state.backend.as_mut() {
-                    b.rescan = true;
-                    if !b.quiet() {
-                        log::info!("display busy: the connector scan waits for it");
+    let udev = MonitorBuilder::new()?.match_subsystem("drm")?.listen()?;
+    state.handle.insert_source(
+        Generic::new(udev, Interest::READ, Mode::Level),
+        move |_, udev, state| {
+            for event in udev.iter() {
+                match event.event_type() {
+                    EventType::Change
+                        if event.devnum() == Some(node.dev_id())
+                            && asks_scan(event.property_value("HOTPLUG")) =>
+                    {
+                        if let Some(b) = state.backend.as_mut() {
+                            b.rescan = true;
+                            if !b.quiet() {
+                                log::info!("display busy: the connector scan waits for it");
+                            }
+                        }
+                        on_quiet(state);
                     }
+                    EventType::Add
+                        if event
+                            .devnode()
+                            .and_then(|p| p.file_name())
+                            .is_some_and(|n| n.to_string_lossy().starts_with("card")) =>
+                    {
+                        log::info!(
+                            "GPU {} added; only the primary one is driven",
+                            event.syspath().display()
+                        )
+                    }
+                    _ => {}
                 }
-                on_quiet(state);
             }
-            UdevEvent::Added { path, .. } => {
-                log::info!(
-                    "GPU {} added; only the primary one is driven",
-                    path.display()
-                )
-            }
-            _ => {}
-        })?;
+            Ok(PostAction::Continue)
+        },
+    )?;
 
     state.backend = Some(Backend {
         session,
@@ -412,6 +429,13 @@ pub fn init(state: &mut State) -> Result<(), Box<dyn std::error::Error>> {
         log::warn!("no connected output on {}", path.display());
     }
     Ok(())
+}
+
+/// Whether a drm change uevent with this `HOTPLUG` value asks for a connector scan. The
+/// kernel's hotplug and connector property events carry `HOTPLUG=1`; the synthetic change a VT
+/// switch triggers so udev reapplies device access does not.
+fn asks_scan(hotplug: Option<&OsStr>) -> bool {
+    hotplug.is_some_and(|v| v == "1")
 }
 
 /// Scan the connectors with `probed`'s infos for the ones probed already; the rest are probed
@@ -955,7 +979,6 @@ fn activate(state: &mut State) {
         log::error!("drm activate: {e}");
     }
     b.reset = true;
-    b.rescan = true;
     for s in b.surfaces.values_mut() {
         s.track.reset();
         s.hw.unlit = true;
@@ -2684,7 +2707,7 @@ fn write_gamma(
 mod tests {
     use super::{
         Ask, Asked, CrtcNow, GammaStep, LINK_TRIES, LinkStep, Lut, ModeInfo, OutputMode, Step,
-        gamma_step, link_mode, link_step, lut_from_blob, next_step,
+        asks_scan, gamma_step, link_mode, link_step, lut_from_blob, next_step,
     };
 
     fn asked(asks: &[Ask]) -> Asked {
@@ -2923,5 +2946,15 @@ mod tests {
         for (crtc, why) in not_ready() {
             assert!(!crtc.ready(), "{why}");
         }
+    }
+
+    #[test]
+    fn only_a_hotplug_uevent_asks_for_a_connector_scan() {
+        assert!(asks_scan(Some("1".as_ref())), "a hotplug scans");
+        assert!(
+            !asks_scan(None),
+            "the synthetic change of a VT switch does not"
+        );
+        assert!(!asks_scan(Some("0".as_ref())));
     }
 }
