@@ -3,8 +3,8 @@
 use super::screensaver::{self, SCREENSAVER_NAME, SCREENSAVER_PATHS};
 use super::settings::{self, Appearance, SETTINGS_NAME, SETTINGS_PATH, Settings};
 use super::{
-    DEFAULT_PROP, MenuNode, Notification, Orientation, TrayCommand, TrayEvent, TrayItem,
-    decode_named, item_pixmaps, notify,
+    DEFAULT_PROP, MenuNode, NOTIFY_SIZES, Notification, Orientation, TrayCommand, TrayEvent,
+    TrayItem, decode_named, decode_named_at, item_pixmaps, notify,
 };
 use crate::icontheme::{IconCache, IconTheme};
 use futures_util::stream::{BoxStream, SelectAll, StreamExt};
@@ -314,7 +314,7 @@ impl Notifications {
         let pid = owner_pid(conn, &sender).await;
         let hints = notify::hints(hints);
         let entry = hints.desktop_entry.as_deref().and_then(desktop_entry);
-        let icon = notification_icon(&self.icons, &hints, app_icon, entry.as_ref());
+        let (app_icon, image) = notification_icons(&self.icons, &hints, app_icon, entry.as_ref());
         let app = entry.map_or(app_name, |e| e.name);
         let actions = notify::actions(&actions);
         let reply = actions
@@ -338,7 +338,8 @@ impl Notifications {
                 app: super::clip(app, super::SUMMARY_CHARS),
                 summary: super::clip(summary, super::SUMMARY_CHARS),
                 body: super::clip(notify::plain_text(&body), super::BODY_CHARS),
-                icon,
+                app_icon,
+                image,
                 expire_timeout,
                 actions,
                 urgency: hints.urgency,
@@ -475,34 +476,42 @@ fn desktop_entry(hint: &str) -> Option<reprisefs::apps::AppEntry> {
     reprisefs::apps::parse_desktop(&text, &id)
 }
 
-fn notification_icon(
+/// `(app_icon, image)`: the app icon name, else the desktop entry's icon;
+/// the `image-data` hint, else `image-path`. Each is the first that resolves.
+fn notification_icons(
     icons: &Icons,
     hints: &notify::Hints,
     app_icon: String,
     entry: Option<&reprisefs::apps::AppEntry>,
-) -> Vec<IconSource> {
-    if let Some(img) = &hints.image {
-        let sources = notify::image_sources(img);
-        if !sources.is_empty() {
-            return sources;
-        }
-    }
-    let path = hints
-        .image_path
-        .as_deref()
-        .map(|p| match p.strip_prefix("file://") {
-            Some(rest) => {
-                String::from_utf8_lossy(&reprisefs::trash::percent_decode(rest)).into_owned()
-            }
-            None => p.to_string(),
-        });
-    let entry_icon = entry.and_then(|e| e.icon.clone());
-    [path, Some(app_icon), entry_icon]
+) -> (Vec<IconSource>, Vec<IconSource>) {
+    let named = |name: Option<String>| {
+        icon_ref(name)
+            .map(|name| decode_named_at(&mut lock(icons), &name, &[], &NOTIFY_SIZES))
+            .unwrap_or_default()
+    };
+    let image =
+        hints
+            .image
+            .as_ref()
+            .map(notify::image_sources)
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| {
+                named(hints.image_path.as_deref().map(|p| {
+                    match p.strip_prefix("file://") {
+                        Some(rest) => {
+                            String::from_utf8_lossy(&reprisefs::trash::percent_decode(rest))
+                                .into_owned()
+                        }
+                        None => p.to_string(),
+                    }
+                }))
+            });
+    let app = [Some(app_icon), entry.and_then(|e| e.icon.clone())]
         .into_iter()
-        .filter_map(icon_ref)
-        .map(|name| decode_named(&mut lock(icons), &name, &[]))
+        .map(named)
         .find(|sources| !sources.is_empty())
-        .unwrap_or_default()
+        .unwrap_or_default();
+    (app, image)
 }
 
 fn item_texts(title: Option<String>, tip: Option<ToolTip>) -> (String, String) {
@@ -1458,6 +1467,71 @@ mod tests {
         let data = to_bytes(Context::new_dbus(LE, 0), &Value::from(list)).unwrap();
         let (v, _): (DeserializeValue<Pixmaps>, _) = data.deserialize().unwrap();
         assert_eq!(v.0, [(2, 1, &[7u8; 8][..])]);
+    }
+
+    fn blue_svg(tag: &str) -> String {
+        let dir = std::env::temp_dir().join(format!("reprise-notify-{tag}-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("icon.svg");
+        std::fs::write(
+            &file,
+            r##"<svg xmlns="http://www.w3.org/2000/svg" width="8" height="8"><rect width="8" height="8" fill="#00f"/></svg>"##,
+        )
+        .unwrap();
+        file.to_str().unwrap().to_string()
+    }
+
+    fn hicolor() -> Icons {
+        Arc::new(Mutex::new(IconCache::new(IconTheme::load("hicolor", &[]))))
+    }
+
+    #[test]
+    fn a_picture_does_not_replace_the_app_icon() {
+        let hints = notify::Hints {
+            image: Some(notify::ImageData {
+                width: 2,
+                height: 2,
+                stride: 6,
+                alpha: false,
+                bits: 8,
+                channels: 3,
+                data: &[0; 12],
+            }),
+            ..Default::default()
+        };
+        let (app, image) = notification_icons(&hicolor(), &hints, blue_svg("both"), None);
+        assert_eq!(app.len(), NOTIFY_SIZES.len());
+        assert_eq!(image.len(), NOTIFY_SIZES.len());
+    }
+
+    #[test]
+    fn image_path_is_the_picture_and_an_unresolved_app_icon_stays_empty() {
+        let hints = notify::Hints {
+            image_path: Some(format!("file://{}", blue_svg("path"))),
+            ..Default::default()
+        };
+        let (app, image) = notification_icons(&hicolor(), &hints, String::new(), None);
+        assert!(app.is_empty());
+        assert_eq!(image.len(), NOTIFY_SIZES.len());
+    }
+
+    #[test]
+    fn the_desktop_entry_icon_stands_in_for_a_missing_app_icon() {
+        let entry = reprisefs::apps::AppEntry {
+            name: "Mail".into(),
+            exec_line: "mail".into(),
+            terminal: false,
+            id: "mail.desktop".into(),
+            icon: Some(blue_svg("entry")),
+            startup_wm_class: None,
+            categories: Vec::new(),
+            mime_types: Vec::new(),
+            shown: true,
+        };
+        let hints = notify::Hints::default();
+        let (app, image) = notification_icons(&hicolor(), &hints, String::new(), Some(&entry));
+        assert_eq!(app.len(), NOTIFY_SIZES.len());
+        assert!(image.is_empty());
     }
 
     #[test]

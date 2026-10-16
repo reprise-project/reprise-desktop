@@ -2253,6 +2253,7 @@ struct FileGlass {
     mode: Option<String>,
     material: Option<String>,
     frame: Option<String>,
+    notification_style: Option<String>,
 }
 
 #[derive(Deserialize, Default)]
@@ -2579,6 +2580,10 @@ impl Config {
             if let Some(f) = g.frame {
                 cfg.glass.frame = reprisekit::glass::Frame::parse(&f)
                     .ok_or_else(|| format!("[glass] frame = {f:?} is not rounded or square"))?;
+            }
+            if let Some(n) = g.notification_style {
+                cfg.glass.notification = reprisekit::glass::NotifyStyle::parse(&n)
+                    .ok_or_else(|| format!("[glass] notification_style = {n:?} is not lozenge"))?;
             }
         }
         cfg.taskbar = TaskbarConfig::default_for(cfg.interface);
@@ -3673,6 +3678,24 @@ mod tests {
         );
         assert!(Config::parse("[glass]\nmaterial = \"glassy\"\n").is_err());
         assert!(Config::parse("[glass]\nframe = \"round\"\n").is_err());
+    }
+
+    #[test]
+    fn glass_notification_style_parses_and_rejects_unknown_names() {
+        use reprisekit::glass::NotifyStyle;
+        assert_eq!(
+            Config::parse("").unwrap().glass.notification,
+            NotifyStyle::Lozenge
+        );
+        assert_eq!(
+            Config::parse("[glass]\nnotification_style = \"lozenge\"\n")
+                .unwrap()
+                .glass
+                .notification,
+            NotifyStyle::Lozenge
+        );
+        let err = Config::parse("[glass]\nnotification_style = \"bubble\"\n").unwrap_err();
+        assert!(err.to_string().contains("is not lozenge"), "{err}");
     }
 
     #[test]

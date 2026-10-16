@@ -38,6 +38,7 @@ pub mod mixer;
 pub mod msgbox;
 pub mod multiedit;
 pub mod notifyhistory;
+pub mod notifysheet;
 pub mod openwith;
 pub mod osd;
 pub mod overview;

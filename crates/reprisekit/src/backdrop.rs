@@ -71,6 +71,28 @@ pub fn corner_radius(corner: &[i32]) -> f32 {
     }
 }
 
+/// A corner table for radius `N + 1`: row `i` loses the pixels whose centres
+/// lie outside the circle. Inverse of `corner_radius`.
+pub const fn round_corner<const N: usize>() -> [i32; N] {
+    let r2 = 2 * (N as i64 + 1);
+    let mut out = [0; N];
+    let mut row = 0;
+    while row < N {
+        let dy = r2 - 2 * row as i64 - 1;
+        let mut k = 0;
+        while k < N as i64 {
+            let dx = r2 - 2 * k - 1;
+            if dx * dx + dy * dy <= r2 * r2 {
+                break;
+            }
+            k += 1;
+        }
+        out[row] = k as i32;
+        row += 1;
+    }
+    out
+}
+
 pub fn grow(r: Rect, by: i32) -> Rect {
     Rect::new(r.x - by, r.y - by, r.width + 2 * by, r.height + 2 * by)
 }
@@ -93,6 +115,26 @@ mod tests {
         }
         assert!(cut(table.len()) < 0.02, "the first row past the table");
         assert_eq!(corner_radius(&[]), 0.0, "a square corner");
+    }
+
+    #[test]
+    fn a_round_corner_table_steps_its_radius() {
+        let t: [i32; 25] = round_corner();
+        assert_eq!(corner_radius(&t), 26.0);
+        assert!(
+            t.windows(2).all(|w| w[0] >= w[1]),
+            "insets shrink toward the straight edge"
+        );
+        assert_eq!(t[24], 0);
+        for (row, &got) in t.iter().enumerate() {
+            let (r, cy) = (26.0_f64, row as f64 + 0.5);
+            let outside = (0..26)
+                .filter(|&k| (r - f64::from(k) - 0.5).powi(2) + (r - cy).powi(2) > r * r)
+                .count();
+            assert_eq!(got, outside as i32, "row {row}");
+        }
+        let small: [i32; 5] = round_corner();
+        assert_eq!(small, [4, 2, 1, 1, 0], "radius 6");
     }
 
     #[test]

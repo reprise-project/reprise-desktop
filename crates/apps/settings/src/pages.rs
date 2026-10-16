@@ -1664,6 +1664,11 @@ fn binds() -> Vec<Bind> {
             lens!(glass_frame),
             crate::model::GLASS_FRAMES,
         ),
+        Bind::Named(
+            "glass_notification_style",
+            lens!(glass_notification_style),
+            crate::model::GLASS_NOTIFY_STYLES,
+        ),
         Bind::Level("glass_intensity", lens!(glass_intensity), 0),
         Bind::Flag("glass_transparency", lens!(glass_transparency)),
         Bind::Level("glass_blur", lens!(glass_blur), 1),
@@ -2711,6 +2716,11 @@ mod tests {
         assert_eq!(rect(&g, p, "glass_blur"), Rect::new(232, 350, 146, 26));
         assert_eq!(rect(&g, p, "orb_glow_label"), Rect::new(232, 406, 146, 13));
         assert_eq!(rect(&g, p, "glass_orb_glow"), Rect::new(232, 422, 146, 26));
+        assert_eq!(rect(&g, p, "notify_label"), Rect::new(20, 452, 90, 13));
+        assert_eq!(
+            rect(&g, p, "glass_notification_style"),
+            Rect::new(20, 468, 90, 21)
+        );
         inside_page(&g, p);
     }
 
@@ -2765,6 +2775,25 @@ mod tests {
     }
 
     #[test]
+    fn glass_notification_combo_writes_its_key() {
+        let p = Page::Appearance;
+        let mut got = Settings {
+            interface: "glass".into(),
+            glass_notification_style: "unlisted".into(),
+            ..Settings::default()
+        };
+        let mut s = with(&got);
+        assert_eq!(rows(&s, p, "glass_notification_style").0[0], "Lozenge");
+        pick(&mut s, &mut got, p, "glass_notification_style", 0);
+        assert_eq!(got.glass_notification_style, "lozenge");
+        assert!(
+            under("classic").pages[p.index()]
+                .item("glass_notification_style")
+                .is_none()
+        );
+    }
+
+    #[test]
     fn the_glass_rows_show_under_glass_only() {
         let glass_rows = [
             "glass_mode",
@@ -2777,6 +2806,7 @@ mod tests {
             "glass_blur",
             "glass_streaks",
             "glass_orb_glow",
+            "glass_notification_style",
         ];
         let p = Page::Appearance;
         for i in ["classic", "blue"] {

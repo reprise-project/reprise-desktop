@@ -361,9 +361,7 @@ pub fn reload(state: &mut State, cfg: Config) {
     state.update_layout();
     // The panels follow `[debug]` and are redrawn for the new look.
     crate::debugview::config_changed(state);
-    // After the usable areas moved: the balloon sits in their corner.
     if changes.bar_moved || changes.bar_hide {
-        crate::notifyview::reposition(state);
         // A window whose caption the bar now covers moves down under it;
         // a maximized or fullscreen one does when it is restored.
         let moved: Vec<(WindowId, i32, i32)> = state

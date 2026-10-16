@@ -937,6 +937,66 @@ pub struct BalloonLook {
     pub shadow: Option<&'static DropShadow>,
 }
 
+/// A notification sheet's outline. Every `match` on it is exhaustive, so a
+/// shape comes with its art.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SheetShape {
+    Lozenge,
+}
+
+/// A squircle well's corner radius as a share of its side; a picture in the slot rounds the same.
+pub const SQUIRCLE_ROUND: f64 = 0.3;
+
+/// The glass well under a notification's icon or badge.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Well {
+    Squircle,
+    Round,
+    Badge,
+}
+
+/// What a notification sheet is painted for, in design px.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SheetSpec {
+    pub shape: SheetShape,
+    pub size: (i32, i32),
+    pub tint: Option<Color>,
+    /// The pointer is over the sheet: its rim lifts.
+    pub hot_close: bool,
+    /// An icon well standing out of the sheet, from the sheet's top-left.
+    pub breakout: Option<Rect>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct NotifyInks {
+    pub title: Color,
+    pub text: Color,
+    pub app: Color,
+}
+
+/// A look's notification sheets and the parts on them. Every painter takes
+/// design px and returns a canvas of device px at `d` per design px.
+#[derive(Clone, Copy, Debug)]
+pub struct NotifyLook {
+    pub inks: NotifyInks,
+    pub dark: bool,
+    pub corner: fn(SheetShape) -> &'static [i32],
+    /// The shadow's room around the sheet and its breakout.
+    pub margin: fn(SheetShape) -> Insets,
+    /// `size` (and `breakout`) grown by `margin`.
+    pub sheet: fn(&NotifyLook, &SheetSpec, d: i32) -> Canvas,
+    /// `size` square grown evenly on every side for its shadow: it centres on
+    /// the slot.
+    pub well: fn(&NotifyLook, Well, size: i32, d: i32) -> Canvas,
+    pub pill: fn(&NotifyLook, (i32, i32), State, d: i32) -> Canvas,
+    /// The round close button, its glyph drawn.
+    pub close: fn(&NotifyLook, State, d: i32) -> Canvas,
+    /// The "+N more" chip's background; the control draws its text.
+    pub chip: fn(&NotifyLook, (i32, i32), State, d: i32) -> Canvas,
+    /// The colour an icon reads as, if it has one.
+    pub colour: fn(&Canvas) -> Option<Color>,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct FlyoutLook {
     pub shadow: Insets,
@@ -1023,6 +1083,7 @@ pub struct Style {
     pub page: Option<PageInks>,
     pub drop_list: Option<DropList>,
     pub balloon: Option<BalloonLook>,
+    pub notify: Option<NotifyLook>,
     pub menu: Option<MenuLook>,
     /// The Start panel's Shut down options menu, when it differs from [`Style::menu`].
     pub options_menu: Option<MenuLook>,
@@ -1117,6 +1178,7 @@ impl Style {
             client_glass_edges: None,
             chrome_colors: None,
             balloon: None,
+            notify: None,
             flyout: None,
             rescale: None,
             rescaled: Rescaled::default(),
@@ -1296,6 +1358,11 @@ impl Style {
 
     pub fn with_balloon(mut self, b: BalloonLook) -> Style {
         self.balloon = Some(b);
+        self
+    }
+
+    pub fn with_notify(mut self, n: NotifyLook) -> Style {
+        self.notify = Some(n);
         self
     }
 

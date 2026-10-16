@@ -208,6 +208,7 @@ impl State {
         self.close_menus_off_scene();
         self.close_start_panel_off_scene();
         self.update_layout();
+        crate::notifyview::output_removed(self);
     }
 
     /// Put `output` in the layout with its `[[outputs]]` settings, or take
@@ -439,6 +440,7 @@ impl State {
             self.refit_scale(w);
         }
         self.sync_bars();
+        crate::notifyview::reposition(self);
         for depth in 0..self.menus.len() {
             self.redraw_menu(depth);
         }

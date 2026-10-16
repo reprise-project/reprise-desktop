@@ -19,7 +19,7 @@ lists them. Glass's `[glass]` section is documented there too.
 | `[colors]`, `[metrics]` | single colours and sizes over the interface's own |
 | `[fonts]`, `[icons]`, `[cursor]` | UI font, icon theme, pointer theme |
 | `[toolkits]` | how GTK and Qt programs are themed |
-| `[glass]` | Glass's colour, material, mode and blur |
+| `[glass]` | Glass's colour, material, mode, blur and notification_style |
 | `[wallpaper]` | picture, slideshow, lock screen picture, water |
 | `[screensaver]`, `[idle]` | savers and the idle steps |
 | `[power]` | Turn Off commands, lid and buttons, battery alarms, external locker |
