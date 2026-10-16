@@ -656,7 +656,7 @@ mod tests {
         }
     }
 
-    const PINS: [(Variant, i32, [u64; 10]); 18] = [
+    const PINS: [(Variant, i32, [u64; 10]); 20] = [
         (
             Variant::Blue,
             1,
@@ -943,6 +943,38 @@ mod tests {
                 0x1431_8bb8_dbf4_fe0d,
                 0xb98f_b2ba_e2e4_4e91,
                 0x3585_3b6d_c4d0_159d,
+            ],
+        ),
+        (
+            Variant::Steel,
+            1,
+            [
+                0x40f0_dc74_a914_65e7,
+                0x3055_84e0_5e9c_46a2,
+                0x787a_907f_66cf_0b52,
+                0x9fc1_ed79_4644_e7cc,
+                0x5940_3c89_c1d7_46b4,
+                0xf3b9_50a7_7851_7e37,
+                0x59c5_9056_1677_86c2,
+                0x8b81_7233_ed82_2ff1,
+                0xff1f_c0ea_7be0_31b5,
+                0xfc0f_118f_5394_6c55,
+            ],
+        ),
+        (
+            Variant::Steel,
+            2,
+            [
+                0x5a19_da42_eecd_f121,
+                0x2138_7977_a5d3_6cc1,
+                0x77c0_c6f6_c412_9e2f,
+                0x8efd_5b21_e838_a417,
+                0xf42a_67f8_96e3_65b3,
+                0x1173_9751_0b87_7b25,
+                0x4538_a4f0_0693_c74b,
+                0x75de_f5cc_58e2_ce8d,
+                0x6136_7fee_98f4_de79,
+                0x1bac_2806_e5b3_eb35,
             ],
         ),
     ];

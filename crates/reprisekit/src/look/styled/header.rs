@@ -136,7 +136,12 @@ mod tests {
     /// columns from row 3 to row 15, at every width.
     #[test]
     fn a_blue_column_at_rest_ends_in_its_divider() {
-        for v in [Variant::Blue, Variant::Olive, Variant::Silver] {
+        for v in [
+            Variant::Blue,
+            Variant::Olive,
+            Variant::Silver,
+            Variant::Steel,
+        ] {
             let face = top(faces(v).normal.down);
             for w in [20, 96, 180] {
                 let c = item(v, w, Interaction::Idle);
@@ -199,7 +204,12 @@ mod tests {
     /// bottom-left corner is rounded.
     #[test]
     fn a_blue_column_under_the_pointer_lights_its_band() {
-        for v in [Variant::Blue, Variant::Olive, Variant::Silver] {
+        for v in [
+            Variant::Blue,
+            Variant::Olive,
+            Variant::Silver,
+            Variant::Steel,
+        ] {
             let face = top(faces(v).hot.down);
             let w = 96;
             let c = item(v, w, Interaction::Hot);

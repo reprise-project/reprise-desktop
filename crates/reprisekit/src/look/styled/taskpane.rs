@@ -146,7 +146,12 @@ mod tests {
 
     #[test]
     fn a_flat_title_band_rounds_its_corners_and_sits_its_button_on_a_disc() {
-        for v in [Variant::Blue, Variant::Olive, Variant::Silver] {
+        for v in [
+            Variant::Blue,
+            Variant::Olive,
+            Variant::Silver,
+            Variant::Steel,
+        ] {
             let c = header(v, Interaction::Idle, true, 1);
             for (x, y) in [(0, 0), (BAND_W - 1, 0)] {
                 assert_eq!(c.get(x, y), px(SENTINEL), "{v:?} corner {x},{y}");
@@ -243,7 +248,10 @@ mod tests {
             assert_eq!(link_ink(&p, true, false), i.task_link, "{v:?}");
             assert_eq!(link_ink(&p, true, true), i.task_link_hot, "{v:?}");
             assert_eq!(link_ink(&p, false, true), p.cs.gray_text, "{v:?} dead link");
-            let light_titles = !matches!(v, Variant::Blue | Variant::Olive | Variant::Silver);
+            let light_titles = !matches!(
+                v,
+                Variant::Blue | Variant::Olive | Variant::Silver | Variant::Steel
+            );
             assert_eq!(i.task_title != i.task_link, light_titles, "{v:?}");
         }
         let classic_theme = theme_for(Interface::Classic);

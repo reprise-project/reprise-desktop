@@ -443,7 +443,12 @@ mod tests {
         let r = Rect::new(0, 0, 400, 23);
         let lay = layout(&explorer_bar(true), r, TextUnits::ONE);
         use crate::blue::Variant;
-        for v in [Variant::Blue, Variant::Olive, Variant::Silver] {
+        for v in [
+            Variant::Blue,
+            Variant::Olive,
+            Variant::Silver,
+            Variant::Steel,
+        ] {
             let c = blue_bar(v, &explorer_bar(true), 400);
             for next in [lay[1].x, lay[2].x] {
                 for y in 4..=20 {

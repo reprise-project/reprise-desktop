@@ -168,14 +168,17 @@ mod tests {
 
     /// Navy, olive green and silver draw a white line after the shadow.
     fn lit(v: Variant) -> bool {
-        matches!(v, Variant::Blue | Variant::Olive | Variant::Silver)
+        matches!(
+            v,
+            Variant::Blue | Variant::Olive | Variant::Silver | Variant::Steel
+        )
     }
 
     /// Each scheme's bar and pane at scale 1 and 2, as FNV-1a hashes of
     /// (width, height, pixels): [bar 1, bar 2, pane 1, pane 2].
     #[test]
     fn status_parts_pin_at_scale_1_and_2() {
-        let want: [(Variant, [u64; 4]); 9] = [
+        let want: [(Variant, [u64; 4]); 10] = [
             (
                 Variant::Blue,
                 [
@@ -257,6 +260,15 @@ mod tests {
                     0x29d6_854f_9f58_5d0d,
                 ],
             ),
+            (
+                Variant::Steel,
+                [
+                    0x46bb_332e_1b2d_f1cf,
+                    0x0455_01f6_d6a4_3960,
+                    0x1a44_e373_d7d1_ce2d,
+                    0x53aa_96d6_d037_c73d,
+                ],
+            ),
         ];
         let got = want.map(|(v, _)| {
             let h = |d, p| fnv(&part(v, d, p).atlas);
@@ -317,7 +329,12 @@ mod tests {
             assert_ne!(two.get(100, 1), two.get(100, 2), "{v:?}: under the line");
             assert_eq!(two.get(100, 44), two.get(100, 45), "{v:?}: the last row");
         }
-        for v in [Variant::Blue, Variant::Olive, Variant::Silver] {
+        for v in [
+            Variant::Blue,
+            Variant::Olive,
+            Variant::Silver,
+            Variant::Steel,
+        ] {
             let two = part(v, 2, Part::StatusBar).atlas;
             assert!(
                 (0..50).any(|c| two.get(2 * c, 20) != two.get(2 * c + 1, 20)),

@@ -28,7 +28,7 @@ const LINE_H: i32 = 2;
 
 pub(super) fn metrics(v: Variant) -> RebarMetrics {
     let band_top = match v {
-        Variant::Blue | Variant::Olive | Variant::Silver | Variant::Ember => 0,
+        Variant::Blue | Variant::Olive | Variant::Silver | Variant::Ember | Variant::Steel => 0,
         Variant::Slate
         | Variant::Sapphire
         | Variant::Obsidian
@@ -160,7 +160,7 @@ mod tests {
 
     #[test]
     fn rebar_pins_at_scale_1_and_2() {
-        let want: [(Variant, [u64; 4]); 9] = [
+        let want: [(Variant, [u64; 4]); 10] = [
             (
                 Variant::Blue,
                 [
@@ -242,6 +242,15 @@ mod tests {
                     0x5835cd7bf850573b,
                 ],
             ),
+            (
+                Variant::Steel,
+                [
+                    0x02f2060fcfe629b7,
+                    0xd5555043c43cae75,
+                    0xb9ea95dc1000a761,
+                    0x378fc45603f1eec3,
+                ],
+            ),
         ];
         let mut got = Vec::new();
         for (v, _) in want {
@@ -291,7 +300,7 @@ mod tests {
                 let bottom = a.get(0, h - 1);
                 let flat = (0..w).all(|x| a.get(x, h - 1) == bottom);
                 let darker = channels(bottom) < channels(a.get(0, h - 1 - d)) - 30;
-                let closes = v != Variant::Silver;
+                let closes = !matches!(v, Variant::Silver | Variant::Steel);
                 assert_eq!(flat && darker, closes, "{v:?} at {d}: closing line");
             }
         }

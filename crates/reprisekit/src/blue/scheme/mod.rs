@@ -10,6 +10,7 @@ mod olive;
 mod sapphire;
 mod silver;
 mod slate;
+mod steel;
 
 pub use carbon::CARBON;
 pub use cobalt::COBALT;
@@ -20,6 +21,7 @@ pub use olive::OLIVE;
 pub use sapphire::SAPPHIRE;
 pub use silver::SILVER;
 pub use slate::SLATE;
+pub use steel::STEEL;
 
 use super::Variant;
 use crate::blue::trayarrow::{
@@ -38,6 +40,7 @@ pub fn scheme(v: Variant) -> &'static Scheme {
         Variant::Ember => &EMBER,
         Variant::Cobalt => &COBALT,
         Variant::Carbon => &CARBON,
+        Variant::Steel => &STEEL,
     }
 }
 

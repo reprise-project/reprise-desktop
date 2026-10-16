@@ -993,7 +993,12 @@ mod tests {
         let held = label_inks(&blue_folders(Variant::Blue, true, true, true, false));
         assert!(held.contains(&0xFFFFFFFF), "a held label is white");
         assert!(!held.contains(&0xFF000000), "and not black");
-        for v in [Variant::Blue, Variant::Olive, Variant::Silver] {
+        for v in [
+            Variant::Blue,
+            Variant::Olive,
+            Variant::Silver,
+            Variant::Steel,
+        ] {
             let grey = v.scheme().inks.toolbar_disabled.argb();
             let greyed = label_inks(&blue_folders(v, false, false, false, false));
             assert!(greyed.contains(&grey), "{v:?}: the greyed ink");

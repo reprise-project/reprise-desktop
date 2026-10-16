@@ -27,7 +27,9 @@ const EDGE_IN: f64 = 1e-6;
 /// The title's box inside a column in `v`; the header's 6 px text margin applies inside it. Navy, olive green and silver: 3 px in on the left, rows 2 to 18. Slate, Sapphire, Obsidian and Cobalt start it at the left edge; Ember ends it on row 16.
 fn title(v: Variant) -> Insets {
     match v {
-        Variant::Blue | Variant::Olive | Variant::Silver => Insets::new(3, 2, 0, 1),
+        Variant::Blue | Variant::Olive | Variant::Silver | Variant::Steel => {
+            Insets::new(3, 2, 0, 1)
+        }
         Variant::Slate
         | Variant::Sapphire
         | Variant::Obsidian
@@ -39,7 +41,10 @@ fn title(v: Variant) -> Insets {
 
 /// Whether `v` draws the 2 px divider and the rounded hot band (navy, olive green, silver) rather than the 1 px divider and flat band.
 fn lined(v: Variant) -> bool {
-    matches!(v, Variant::Blue | Variant::Olive | Variant::Silver)
+    matches!(
+        v,
+        Variant::Blue | Variant::Olive | Variant::Silver | Variant::Steel
+    )
 }
 
 pub(super) fn parts(v: Variant, d: i32) -> Vec<(Part, PartImage)> {
@@ -233,7 +238,7 @@ mod tests {
 
     #[test]
     fn header_pins_at_scale_1_and_2() {
-        let want: [(Variant, [u64; 6]); 9] = [
+        let want: [(Variant, [u64; 6]); 10] = [
             (
                 Variant::Blue,
                 [
@@ -331,6 +336,17 @@ mod tests {
                     0x2da198413e3a52a9,
                     0x40be134b9311df67,
                     0x6abc37e2324b99f7,
+                ],
+            ),
+            (
+                Variant::Steel,
+                [
+                    0x9ca48910dc7ca6f3,
+                    0xdd2184d7dce10b4e,
+                    0x5d4bcd6a67462034,
+                    0x6c0ff21875b51f4d,
+                    0x024190f1d16ab8af,
+                    0xba1c6e9e73250867,
                 ],
             ),
         ];
@@ -439,7 +455,12 @@ mod tests {
 
     #[test]
     fn the_lit_bands_corner_is_smooth_without_a_dark_fringe() {
-        for v in [Variant::Blue, Variant::Olive, Variant::Silver] {
+        for v in [
+            Variant::Blue,
+            Variant::Olive,
+            Variant::Silver,
+            Variant::Steel,
+        ] {
             let d = 2;
             let item = part(v, d, Part::HeaderItem);
             let hot = |x: i32, y: i32| item.atlas.get(x, ITEM_H * d + y);

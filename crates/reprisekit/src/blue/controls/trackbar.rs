@@ -476,7 +476,7 @@ mod tests {
             })
             .collect();
         #[rustfmt::skip]
-        let want: [(Variant, Part, i32, u64); 72] = [
+        let want: [(Variant, Part, i32, u64); 80] = [
             (Variant::Blue, Part::TrackbarTrack, 1, 0x823B33891E42D044),
             (Variant::Blue, Part::TrackbarTrack, 2, 0xB95246B76E4B53BB),
             (Variant::Blue, Part::TrackbarThumb, 1, 0xC9C27E57F1ED0E8B),
@@ -549,6 +549,14 @@ mod tests {
             (Variant::Carbon, Part::TrackbarTrackV, 2, 0x20EF6F6E1EA262A1),
             (Variant::Carbon, Part::TrackbarThumbV, 1, 0x8B126FEE4AED2BD7),
             (Variant::Carbon, Part::TrackbarThumbV, 2, 0x453DF1151A343716),
+            (Variant::Steel, Part::TrackbarTrack, 1, 0x823B33891E42D044),
+            (Variant::Steel, Part::TrackbarTrack, 2, 0xB95246B76E4B53BB),
+            (Variant::Steel, Part::TrackbarThumb, 1, 0x43F4A804C1BD50AE),
+            (Variant::Steel, Part::TrackbarThumb, 2, 0xDDC985FAADF3832F),
+            (Variant::Steel, Part::TrackbarTrackV, 1, 0x384F5CA22015A0AB),
+            (Variant::Steel, Part::TrackbarTrackV, 2, 0x78C5B18D0EE82899),
+            (Variant::Steel, Part::TrackbarThumbV, 1, 0xBA270921A5A061AD),
+            (Variant::Steel, Part::TrackbarThumbV, 2, 0x4CDB9232D59E843E),
         ];
         assert_eq!(got.len(), want.len());
         for (w, g) in want.iter().zip(&got) {
@@ -685,6 +693,10 @@ mod tests {
             (
                 Variant::Carbon,
                 [0x0BB6_C90C_4CD0_80DB, 0x16FA_1BBF_C372_DB9E],
+            ),
+            (
+                Variant::Steel,
+                [0x3224_CD55_42E3_7BE1, 0x4E42_659B_913D_52F6],
             ),
         ];
         assert_eq!(got, want, "{got:#x?}");

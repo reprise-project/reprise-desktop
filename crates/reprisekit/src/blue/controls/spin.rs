@@ -604,6 +604,22 @@ mod tests {
             "Carbon SpinDown Hot 2 e54e7e7f8db59a43",
             "Carbon SpinDown Pressed 2 3f9c90da12a4c9ba",
             "Carbon SpinDown Disabled 2 d4c8e1f9afdfc221",
+            "Steel SpinUp Normal 1 502bc57bb9d06f2f",
+            "Steel SpinUp Hot 1 b936596169816fe9",
+            "Steel SpinUp Pressed 1 8f6b82effedf233c",
+            "Steel SpinUp Disabled 1 745ef6793c94aedd",
+            "Steel SpinUp Normal 2 890160ed4380811b",
+            "Steel SpinUp Hot 2 b637c36ff1038448",
+            "Steel SpinUp Pressed 2 b784d42f81a944c1",
+            "Steel SpinUp Disabled 2 3ad8da5af05fe14b",
+            "Steel SpinDown Normal 1 2db79fceb28418fc",
+            "Steel SpinDown Hot 1 48f3bf6955df6487",
+            "Steel SpinDown Pressed 1 af8d11a78f655391",
+            "Steel SpinDown Disabled 1 00adebd40a8d2997",
+            "Steel SpinDown Normal 2 ace1309301c508d5",
+            "Steel SpinDown Hot 2 ecececf8698dc7f4",
+            "Steel SpinDown Pressed 2 a4caf3cb7ab9dffd",
+            "Steel SpinDown Disabled 2 90f08efd79f80bb7",
         ];
         assert_eq!(got, want);
     }
