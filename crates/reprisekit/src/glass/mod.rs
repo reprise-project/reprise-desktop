@@ -456,7 +456,9 @@ fn build_at(s: &Settings, scale: i32) -> Style {
         st.with_painted_group(parts, move || paint(scale).into_iter().map(ink).collect())
     });
     let style = if is_dark {
-        style.with_painted(Part::PlacesTile, move || items::dark_places(scale))
+        style
+            .with_painted(Part::PlacesTile, move || items::dark_places(scale))
+            .with_painted(Part::ListItem, move || items::dark_items(scale))
     } else {
         style
     };
