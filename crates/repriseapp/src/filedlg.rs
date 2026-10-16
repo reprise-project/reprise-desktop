@@ -123,6 +123,29 @@ fn read(path: PathBuf, keep: impl FnMut(&Item) -> bool, scale: i32) -> Read {
     Read { path, rows, icons }
 }
 
+/// What a folder's read depends on besides `keep`, which follows the dialog's filter. A relist
+/// with the same key while the read is in flight waits on that read instead of starting another.
+#[derive(Debug, PartialEq)]
+struct ReadKey {
+    id: FolderId,
+    folders_only: bool,
+    typed: Option<String>,
+    filter: usize,
+    scale: i32,
+}
+
+impl ReadKey {
+    fn of(dlg: &FileDlg, id: FolderId, scale: i32) -> ReadKey {
+        ReadKey {
+            id,
+            folders_only: dlg.mode() == DlgMode::Folder,
+            typed: dlg.wildcard().map(str::to_string),
+            filter: dlg.filter(),
+            scale,
+        }
+    }
+}
+
 /// What a listing keeps: every folder, and in a file dialog the entries a `typed` pattern
 /// accepts, else those `keep` does.
 fn picks(
@@ -296,7 +319,7 @@ pub struct Host {
     /// Wakes the program's loop when a late listing lands ([`Host::take_thumbs`]).
     wake: Option<crate::Waker>,
     /// A folder still being read after [`LIST_WAIT`]; the dialog shows the one before.
-    reading: Option<(FolderId, Job<Read>)>,
+    reading: Option<(ReadKey, Job<Read>)>,
     /// A typed path whose folders did not answer within [`RESOLVE_WAIT`]; the next resolve of
     /// the same path waits on it again instead of starting another probe.
     probing: Option<(PathBuf, Job<(bool, bool)>)>,
@@ -407,7 +430,7 @@ impl Host {
         if let Some((id, read)) = self
             .reading
             .as_ref()
-            .and_then(|(id, j)| Some((*id, j.take()?)))
+            .and_then(|(k, j)| Some((k.id, j.take()?)))
         {
             self.reading = None;
             self.show_read(dlg, id, read, cache);
@@ -557,9 +580,9 @@ impl Host {
     }
 
     /// Lists folder `id` in `dlg`, keeping the folders and the entries `keep` (or a typed
-    /// pattern) accepts. The folder is read on a thread; one that takes longer than
-    /// [`LIST_WAIT`] lands later through [`Host::take_thumbs`], the dialog showing the folder
-    /// before until then.
+    /// pattern) accepts; `keep` follows the dialog's filter. The folder is read on a thread; one
+    /// that takes longer than [`LIST_WAIT`] lands later through [`Host::take_thumbs`], the dialog
+    /// showing the folder before until then.
     pub fn list<K>(&mut self, dlg: &mut FileDlg, id: FolderId, icons: &mut IconCache, keep: &K)
     where
         K: Fn(&Item) -> bool + Clone + Send + 'static,
@@ -567,17 +590,18 @@ impl Host {
         let Some(path) = self.folders.path(id).map(Path::to_path_buf) else {
             return;
         };
-        let folders_only = dlg.mode() == DlgMode::Folder;
-        let typed = dlg.wildcard().map(str::to_string);
-        let keep = picks(folders_only, typed, keep.clone());
-        let scale = icons.scale();
-        let job = Job::spawn(self.wake.as_ref(), move || read(path, keep, scale));
-        match job.wait(LIST_WAIT) {
-            Some(r) => {
-                self.reading = None;
-                self.show_read(dlg, id, r, icons);
+        let key = ReadKey::of(dlg, id, icons.scale());
+        let job = match self.reading.take() {
+            Some((k, job)) if k == key => job,
+            _ => {
+                let keep = picks(key.folders_only, key.typed.clone(), keep.clone());
+                let scale = key.scale;
+                Job::spawn(self.wake.as_ref(), move || read(path, keep, scale))
             }
-            None => self.reading = Some((id, job)),
+        };
+        match job.wait(LIST_WAIT) {
+            Some(r) => self.show_read(dlg, id, r, icons),
+            None => self.reading = Some((key, job)),
         }
     }
 
@@ -1528,7 +1552,7 @@ mod tests {
         std::fs::remove_file(&own).unwrap();
         let (answer, gate) = std::sync::mpsc::channel::<()>();
         h.reading = Some((
-            id,
+            ReadKey::of(&dlg, id, icons.scale()),
             Job::spawn(None, move || {
                 gate.recv().ok();
                 read
@@ -1547,6 +1571,37 @@ mod tests {
             [Some((1, 16, OWN)), Some((1, 32, OWN)), Some((1, 48, OWN))]
         );
         assert_eq!(icon_sizes(entry(&dlg, "notes.txt"))[0], Some((1, 16, TEXT)));
+    }
+
+    #[test]
+    fn a_relist_of_a_folder_being_read_waits_on_that_read() {
+        let t = tmp("join");
+        let mut h = host_in(&t);
+        let mut icons = IconCache::new(reprisekit::icontheme::IconTheme::load("test", &[]));
+        let mut dlg = open_dlg(&mut h);
+        let id = h.folder.unwrap();
+        let in_flight = |h: &mut Host, key: ReadKey| {
+            let before = read(t.clone(), |_: &Item| true, 1);
+            h.reading = Some((key, Job::spawn(None, move || before)));
+        };
+        let names = |dlg: &FileDlg| -> Vec<String> {
+            dlg.entries().iter().map(|e| e.name.clone()).collect()
+        };
+        in_flight(&mut h, ReadKey::of(&dlg, id, icons.scale()));
+        std::fs::write(t.join("late.txt"), "").unwrap();
+
+        h.list(&mut dlg, id, &mut icons, &|_| true);
+        assert_eq!(names(&dlg), ["sub", "a.txt"], "the read in flight answers");
+        assert!(h.reading.is_none());
+
+        in_flight(&mut h, ReadKey::of(&dlg, id, icons.scale() + 1));
+        h.list(&mut dlg, id, &mut icons, &|_| true);
+        assert_eq!(
+            names(&dlg),
+            ["sub", "a.txt", "late.txt"],
+            "another scale reads again"
+        );
+        std::fs::remove_dir_all(&t).ok();
     }
 
     /// A program with a file dialog in window `DLG` that does nothing for its thumbnails.
