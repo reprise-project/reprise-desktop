@@ -95,6 +95,7 @@ pub fn draw(c: &mut Canvas, text: &TextRenderer, p: &Paint, pb: &PlacesBar, r: R
     let content_x = sr.x + BORDER * s;
     let content_w = sr.width - 2 * BORDER * s;
     let step = px as i32 + 2 * s;
+    let stride = px as i32 + pm.line_lead * s;
     for (i, place) in pb.places.iter().enumerate() {
         let tile_y = sr.y + i as i32 * pm.tile * s;
         let tile_h = pm.tile * s;
@@ -111,7 +112,7 @@ pub fn draw(c: &mut Canvas, text: &TextRenderer, p: &Paint, pb: &PlacesBar, r: R
         let lines = wrap_label(text, &place.label, max_w, px);
         let label_y = tile_y + (pm.icon_top + ICON_PX + pm.label_gap) * s;
         for (j, line) in lines.iter().enumerate() {
-            let ly = label_y + j as i32 * step;
+            let ly = label_y + j as i32 * stride;
             let lr = Rect::new(content_x, ly, content_w, step);
             if place.enabled {
                 text.draw(c, lr, line, false, cs.button_text, Align::Center, px);
@@ -128,12 +129,14 @@ pub fn draw(c: &mut Canvas, text: &TextRenderer, p: &Paint, pb: &PlacesBar, r: R
 pub fn overflow(pb: &PlacesBar, text: &TextRenderer, r: Rect, pm: &PlacesMetrics, px: u32) -> i32 {
     let max_w = r.width - 2 * BORDER - 4;
     let step = px as i32 + 2;
+    let stride = px as i32 + pm.line_lead;
     layout(pb, r, pm)
         .iter()
         .zip(&pb.places)
         .map(|(tile, place)| {
             let lines = wrap_label(text, &place.label, max_w, px).len() as i32;
-            tile.y + pm.icon_top + ICON_PX + pm.label_gap + lines * step - tile.bottom()
+            let label = (lines - 1) * stride + step;
+            tile.y + pm.icon_top + ICON_PX + pm.label_gap + label - tile.bottom()
         })
         .max()
         .unwrap_or(0)
@@ -345,15 +348,15 @@ mod tests {
         assert_eq!(draw_with(Some(1)).pixels, draw_with(None).pixels);
     }
 
-    /// Under Glass a tile is 63 px, its icon 2 px down and its label's first line 1 px under
+    /// Under Glass a tile is 59 px, its icon 2 px down and its label's first line 1 px under
     /// the icon.
     #[test]
-    fn glass_tiles_are_63_px_with_the_icon_2_px_down() {
+    fn glass_tiles_are_59_px_with_the_icon_2_px_down() {
         use crate::theme::Color;
         const ICON: Color = Color::rgb(1, 2, 3);
         let theme = crate::interfaces::theme_for(crate::interface::Interface::Glass);
         let pm = theme.look.controls().places;
-        assert_eq!((pm.tile, pm.icon_top, pm.label_gap), (63, 2, 1));
+        assert_eq!((pm.tile, pm.icon_top, pm.label_gap), (59, 2, 1));
         let text = TextRenderer::load(&theme.fonts);
         let mut pb = sample();
         let mut icon = Canvas::new(ICON_PX as u32, ICON_PX as u32);
@@ -361,14 +364,16 @@ mod tests {
         for p in &mut pb.places {
             p.icon = Some(icon.clone());
         }
-        let r = Rect::new(0, 0, WIDTH, 5 * 63);
-        assert_eq!(layout(&pb, r, &pm)[1], Rect::new(0, 63, WIDTH, 63));
-        let mut c = Canvas::new(WIDTH as u32, (5 * 63) as u32);
-        draw(&mut c, &text, &theme.paint(), &pb, r, theme.fonts.size_px);
+        let r = Rect::new(0, 0, WIDTH, 5 * 59);
+        assert_eq!(layout(&pb, r, &pm)[1], Rect::new(0, 59, WIDTH, 59));
+        let px = theme.fonts.size_px;
+        assert!(overflow(&pb, &text, r, &pm, px) <= 0, "two-line labels fit");
+        let mut c = Canvas::new(WIDTH as u32, (5 * 59) as u32);
+        draw(&mut c, &text, &theme.paint(), &pb, r, px);
         let x = WIDTH / 2;
         for (y, want) in [(1, false), (2, true), (33, true), (34, false)] {
             for tile in [0, 1, 4] {
-                let y = tile * 63 + y;
+                let y = tile * 59 + y;
                 assert_eq!(c.get(x, y) == ICON.argb(), want, "tile {tile} row {y}");
             }
         }
@@ -414,7 +419,7 @@ mod tests {
         }
         let theme = crate::interfaces::theme_for(crate::interface::Interface::Glass);
         let text = TextRenderer::load(&theme.fonts);
-        let r = Rect::new(0, 0, WIDTH, 5 * 63);
+        let r = Rect::new(0, 0, WIDTH, 5 * 59);
         let mut out = Canvas::new(WIDTH as u32, r.height as u32);
         draw(&mut out, &text, &theme.paint(), &pb, r, theme.fonts.size_px);
         crate::raster::write_preview(&out, "placesbar-glass-preview.png");
