@@ -42,7 +42,7 @@ the Super tap, Super+Shift+Esc and the VT switch keys can be rebound.
   status.
 - **Calendar.** Click the clock for the month, double-click it for Date and
   Time Properties. Under Glass an analog clock beside the month ticks each
-  second while it's open.
+  second while it's open, the time under it in hours and minutes.
 - **From the keyboard.** Super+T lands on Start and Super+B on the
   notification area. The arrows walk the buttons, Enter presses one, the Menu
   key opens its menu and Esc goes back to your window. A screen reader reads
