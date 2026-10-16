@@ -200,6 +200,17 @@ impl State {
         }
     }
 
+    /// A client that quits without destroying its toplevel has its objects destroyed in no set
+    /// order, the `wl_surface` (and with it the surface's textures) often before the
+    /// `xdg_toplevel`: a mapped window's surface going takes its closing still first.
+    pub fn closing_destroy(&mut self, surface: &WlSurface) {
+        if let Some(w) = self.window_for_surface(surface)
+            && self.win(w).is_some_and(|x| x.mapped)
+        {
+            self.window_closing(w);
+        }
+    }
+
     fn anim_shown(&self, w: WindowId) -> f64 {
         self.window_anims
             .list
