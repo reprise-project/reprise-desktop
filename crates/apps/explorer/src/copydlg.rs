@@ -1,6 +1,6 @@
 //! The progress dialogs' host half, for a put (copy, move) and a removal (delete, Empty, Restore):
 //! when each comes up, its window and events, Pause and Cancel on its job, the task button's
-//! progress, and the balloon for a job that ends while its dialog is not looked at.
+//! progress for all of them together, and the balloon for a job that ends while its dialog is not looked at.
 
 use crate::Explorer;
 use repriseapp::{Child, Ctx, Event, PointerInput, Reply, WinId};
@@ -31,8 +31,6 @@ pub(crate) struct Progress {
     pub to: String,
     pub started: Instant,
     pub shown: Option<Shown>,
-    /// The percent and paused state last put on the task button.
-    pub published: Option<(u32, bool)>,
 }
 
 pub(crate) fn status(s: Snapshot, waiting: usize) -> Status {
@@ -68,7 +66,6 @@ impl Progress {
             to,
             started: Instant::now(),
             shown: None,
-            published: None,
         }
     }
 
@@ -82,30 +79,27 @@ impl Progress {
         true
     }
 
-    /// Take the job's counts in; the task button follows once the dialog is up.
+    /// Take the job's counts in.
     fn tick(&mut self, waiting: usize) -> bool {
         let ms = self.started.elapsed().as_millis() as u64;
         let st = status(self.meter.snapshot(), waiting);
-        let Some(shown) = self.shown.as_mut() else {
-            return false;
-        };
-        let redraw = shown.cp.update(st, ms);
-        let fraction = shown.cp.fraction();
-        let now = ((fraction * 100.0) as u32, shown.cp.status.paused);
-        if self.published != Some(now) {
-            self.published = Some(now);
-            reprisebus::launcher::update(DESKTOP_ID, Some((fraction, now.1)));
-        }
-        redraw
+        self.shown.as_mut().is_some_and(|s| s.cp.update(st, ms))
     }
 
-    /// The job is over, having dealt with `done` items: the task button lets go, and a job whose
-    /// dialog was up but not focused leaves a balloon with what was done or why it stopped. A
-    /// cancelled job says nothing.
+    /// The job's share of the task button, once its dialog is up: its fraction done (0 while it
+    /// counts what it has to do) and whether it is paused.
+    fn task_state(&self) -> Option<(f64, bool)> {
+        let cp = &self.shown.as_ref()?.cp;
+        let fraction = match cp.status.phase {
+            Phase::Preparing => 0.0,
+            _ => cp.fraction(),
+        };
+        Some((fraction, cp.status.paused))
+    }
+
+    /// The job is over, having dealt with `done` items: a job whose dialog was up but not focused
+    /// leaves a balloon with what was done or why it stopped. A cancelled job says nothing.
     pub fn ended(&self, done: usize, failed: Option<&(&'static str, String)>) {
-        if self.published.is_some() {
-            reprisebus::launcher::update(DESKTOP_ID, None);
-        }
         let Some(shown) = self.shown.as_ref().filter(|s| !s.focused) else {
             return;
         };
@@ -175,7 +169,24 @@ impl Explorer {
 
     fn progress_tick(&mut self, win: WinId) -> bool {
         let waiting = self.waiting(win);
-        self.progress_mut(win).is_some_and(|p| p.tick(waiting))
+        let redraw = self.progress_mut(win).is_some_and(|p| p.tick(waiting));
+        self.publish_task_progress();
+        redraw
+    }
+
+    /// Put the jobs' [`combined`] progress on the task button when its whole percent or paused
+    /// state changes. Both jobs share one app id, so one value covers them.
+    pub(crate) fn publish_task_progress(&mut self) {
+        let jobs: Vec<_> = [COPY, REMOVE]
+            .into_iter()
+            .filter_map(|win| self.progress(win)?.task_state())
+            .collect();
+        let now = combined(&jobs);
+        let key = now.map(|(f, paused)| ((f * 100.0) as u32, paused));
+        if key != self.task_progress {
+            self.task_progress = key;
+            reprisebus::launcher::update(DESKTOP_ID, now);
+        }
     }
 
     pub(crate) fn progress_event(&mut self, win: WinId, ev: Event, ctx: &mut Ctx) -> Reply {
@@ -296,7 +307,50 @@ impl Explorer {
     }
 }
 
+/// One task button state for running jobs given as `(fraction, paused)`: their fractions averaged
+/// with equal weight (a put counts bytes, a removal items), paused only when every job is, and
+/// `None` once none runs.
+pub(crate) fn combined(jobs: &[(f64, bool)]) -> Option<(f64, bool)> {
+    if jobs.is_empty() {
+        return None;
+    }
+    let fraction = jobs.iter().map(|j| j.0).sum::<f64>() / jobs.len() as f64;
+    Some((fraction, jobs.iter().all(|j| j.1)))
+}
+
 fn stop(meter: &Meter) {
     meter.set_paused(false);
     meter.cancel();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::combined;
+
+    #[test]
+    fn two_running_jobs_average_their_fractions() {
+        assert_eq!(combined(&[(0.2, false), (0.8, false)]), Some((0.5, false)));
+    }
+
+    #[test]
+    fn one_paused_job_leaves_the_bar_running() {
+        assert_eq!(combined(&[(0.2, true), (0.8, false)]), Some((0.5, false)));
+    }
+
+    #[test]
+    fn the_bar_is_paused_only_when_every_job_is() {
+        assert_eq!(combined(&[(0.2, true), (0.8, true)]), Some((0.5, true)));
+    }
+
+    #[test]
+    fn a_preparing_job_counts_as_zero_and_keeps_the_bar() {
+        assert_eq!(combined(&[(0.0, false)]), Some((0.0, false)));
+        assert_eq!(combined(&[(0.0, false), (0.6, false)]), Some((0.3, false)));
+    }
+
+    #[test]
+    fn one_job_finishing_leaves_the_other_alone_on_the_bar() {
+        assert_eq!(combined(&[(0.4, true)]), Some((0.4, true)));
+        assert_eq!(combined(&[]), None);
+    }
 }
