@@ -88,6 +88,10 @@ fn main() {
             &render_glass_launcher(pct),
             &format!("reprisekit-gallery-glass-launcher-{pct}.png"),
         );
+        write_preview(
+            &render_glass_clock_popup(pct),
+            &format!("reprisekit-gallery-glass-clock-popup-{pct}.png"),
+        );
         return;
     }
     let with_blue = std::env::var("REPRISE_GALLERY_LOOK").as_deref() != Ok("classic");
@@ -6173,6 +6177,21 @@ fn render_glass_balloons(theme: &Theme) -> Canvas {
     c
 }
 
+/// The Glass clock popup at `pct` text over the stripes, at 10:09:30.
+fn render_glass_clock_popup(pct: u32) -> Canvas {
+    use reprisekit::controls::calendar;
+    let theme = interfaces::theme_for(Interface::Glass).with_text_size(pct);
+    let text = TextRenderer::load(&FontConfig::default());
+    let mut cal = calendar::Calendar::new(2026, 10, None, 0);
+    cal.today = Some((2026, 10, 16));
+    cal.now = Some((10, 9, 30));
+    cal.time = Some("10:09".into());
+    let panel = calendar::draw_popup(&theme, &text, &cal, calendar::PopupHit::Panel);
+    let mut c = blurred_stripes(panel.width as i32 + 40, panel.height as i32 + 40);
+    c.blit_over(20, 20, &panel);
+    c
+}
+
 /// The flyouts as windows over the stripes: calendar, notification history, clipboard history, emoji panel and a colour button's popup.
 fn render_glass_flyouts(theme: &Theme) -> Canvas {
     use reprisekit::controls::cliphistory::{self, ClipHistory, Row};
@@ -6180,18 +6199,19 @@ fn render_glass_flyouts(theme: &Theme) -> Canvas {
     use reprisekit::emoji::{EmojiFont, Entry, catalog};
     let text = TextRenderer::load(&FontConfig::default());
     let px = theme.fonts.size_px;
-    let mut c = blurred_stripes(950, 810);
+    let mut c = blurred_stripes(950, 840);
     let mut cal = calendar::Calendar::new(2026, 10, None, 0);
     cal.today = Some((2026, 10, 6));
     let m = reprisekit::flyout::margin(theme);
     let at =
         |c: &mut Canvas, x: i32, y: i32, panel: &Canvas| c.blit_over(x - m.left, y - m.top, panel);
     // The clock popup at 10:09:30 with the previous-month arrow lit, and at 3:45:15 PM.
-    for (x, now, hot) in [
-        (20, (10, 9, 30), calendar::PopupHit::Prev),
-        (420, (15, 45, 15), calendar::PopupHit::Panel),
+    for (x, now, time, hot) in [
+        (20, (10, 9, 30), "10:09", calendar::PopupHit::Prev),
+        (420, (15, 45, 15), "3:45 PM", calendar::PopupHit::Panel),
     ] {
         cal.now = Some(now);
+        cal.time = Some(time.into());
         at(
             &mut c,
             x,

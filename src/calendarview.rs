@@ -9,7 +9,8 @@
 //! Time Properties instead. Under a look that frames its flyouts as
 //! windows the arrow under the pointer lights, and the border has the
 //! blurred backdrop under it. A look with an analog clock beside the month
-//! ticks it each second while the popup is open.
+//! ticks it each second while the popup is open, and redraws the time line
+//! under it when the minute turns.
 //!
 //! The lock closes it as it engages; an output going away closes the one
 //! it opened.
@@ -91,6 +92,11 @@ fn now() -> (u32, u32, u32) {
     )
 }
 
+/// The time line under the analog clock: hours and minutes as the bar's clock words them.
+fn time_line() -> String {
+    crate::taskbar::time_text(since_epoch().as_secs() as i64)
+}
+
 /// Until just past the next whole second, so a tick reads the second it was armed for.
 fn to_next_second() -> Duration {
     let into = since_epoch().subsec_nanos();
@@ -152,6 +158,7 @@ fn open(state: &mut State, bar: TreeId) {
     model.today = Some((y, m, d));
     let ticks = state.config.theme.controls().clock_face > 0;
     model.now = ticks.then(now);
+    model.time = ticks.then(time_line);
     let b = state.layout_box(Some(&output));
     let p = state.bar_placement(&output);
     let (w, h) = calendar::popup_size(&state.config.theme.controls());
@@ -198,7 +205,13 @@ fn arm_tick(state: &mut State) {
                     return TimeoutAction::Drop;
                 };
                 v.model.now = Some(now());
-                tick(state);
+                let time = Some(time_line());
+                if v.model.time != time {
+                    v.model.time = time;
+                    redraw(state);
+                } else {
+                    tick(state);
+                }
                 TimeoutAction::ToDuration(to_next_second())
             });
     match token {
