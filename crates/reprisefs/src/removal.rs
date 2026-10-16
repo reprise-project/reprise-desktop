@@ -126,8 +126,17 @@ impl RemoveJob {
         bins: Option<Bins>,
         wake: impl Fn() + Send + 'static,
     ) -> RemoveJob {
+        Self::start_metered(items, bins, Arc::new(Meter::default()), wake)
+    }
+
+    /// [`Self::start`], counting on `meter`, so a test can pause it before the thread runs.
+    fn start_metered(
+        items: Vec<Removal>,
+        bins: Option<Bins>,
+        meter: Arc<Meter>,
+        wake: impl Fn() + Send + 'static,
+    ) -> RemoveJob {
         let (tx, events) = mpsc::channel();
-        let meter = Arc::new(Meter::default());
         let m = meter.clone();
         let spawned = std::thread::Builder::new()
             .name("reprisefs-remove".into())
@@ -284,9 +293,10 @@ mod tests {
         let t = tempfile::tempdir().unwrap();
         let a = t.path().join("a");
         tree(&a, 200);
-        let job = RemoveJob::start(vec![Removal::Erase(a.clone())], None, || {});
-        let meter = job.meter().clone();
+        let meter = Arc::new(Meter::default());
         meter.set_paused(true);
+        let job =
+            RemoveJob::start_metered(vec![Removal::Erase(a.clone())], None, meter.clone(), || {});
         let deadline = std::time::Instant::now() + Duration::from_secs(5);
         while meter.snapshot().phase != Phase::Copying {
             assert!(std::time::Instant::now() < deadline, "the walk ends");
