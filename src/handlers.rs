@@ -122,6 +122,10 @@ impl CompositorHandler for State {
             self.redraw_content();
         }
     }
+
+    fn destroyed(&mut self, surface: &WlSurface) {
+        self.closing_destroy(surface);
+    }
 }
 
 impl BufferHandler for State {
