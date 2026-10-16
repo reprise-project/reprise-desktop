@@ -6,7 +6,7 @@ use super::panel::{Corners, Panel};
 use super::tint::{Recolour, Surface};
 use super::{Settings, caption_text};
 use crate::raster::{Canvas, Insets, Rect};
-use crate::startpanel::layout::Layout;
+use crate::startpanel::layout::{self, Layout};
 use crate::startpanel::search::{self, ink};
 pub use crate::startpanel::search::{
     HEADER_PX, INK_CUE, INK_GREYED, INK_GROUP, INK_STRONG, TEXT_PX,
@@ -174,7 +174,7 @@ mod at {
     pub const JUMP_HEAD_BASE: i32 = 13;
     pub const JUMP_RULE_Y: i32 = 8;
     pub const JUMP_RULE_GAP: i32 = 4;
-    pub const JUMP_RULE_END: i32 = 479;
+    pub const JUMP_RULE_PAST: i32 = 1;
     pub const JUMP_BOX: (i32, i32) = (0, 1);
     pub const JUMP_BOX_H: i32 = 20;
     pub const JUMP_ICON: (i32, i32) = (2, 3);
@@ -403,11 +403,13 @@ fn draw_contents(
                 if lit == Some(spot) {
                     d.part(at(r), Part::StartHotRight, State::Normal);
                 }
-                let (x, y) = off(r, (at::PLACE_PEN, at::PLACE_BASE));
+                let lift = layout::place_lift(p);
+                let (x, y) = off(r, (at::PLACE_PEN, at::PLACE_BASE - lift));
                 d.line(text, x, y, row_clip(r), &place.label, right, size);
                 if place.submenu {
                     let size = (glyph::ARROW.w, glyph::ARROW.h);
-                    d.inked(kept(r, at::PLACE_ARROW, size), &glyph::ARROW, right);
+                    let (ax, ay) = at::PLACE_ARROW;
+                    d.inked(kept(r, (ax, ay - lift), size), &glyph::ARROW, right);
                 }
             }
             Spot::Search => {
@@ -499,7 +501,7 @@ fn draw_contents(
                 let (x, y) = off(r, (0, at::JUMP_HEAD_BASE));
                 let w = d.line(text, x, y, pane_clip, &p.jump_title, ink(INK_HEADER), size);
                 let x0 = x + w + g.len(at::JUMP_RULE_GAP);
-                let x1 = g.len(at::JUMP_RULE_END) + s - o.x;
+                let x1 = r.right() + g.len(at::JUMP_RULE_PAST) + s - o.x;
                 let ry = r.y - o.y + g.len(at::JUMP_RULE_Y);
                 d.part(
                     Rect::new(x0, ry, x1 - x0, s),
@@ -1536,6 +1538,54 @@ mod tests {
             let recent = Rect::new(274, 16, 40, 9);
             assert!(inks_near(&d, recent, INK_HEADER), "Recent");
             assert!(!inks_near(&d, recent, INK_STRONG), "not in black");
+        }
+    }
+
+    #[test]
+    fn a_jump_panel_narrowed_to_its_room_keeps_its_header_rule_and_frame_inside() {
+        let mut p = sample(Mode::Jump(3), None);
+        let wide = render(&p, None);
+        p.room = Some((450, 1000));
+        let d = render(&p, None);
+        assert_eq!(d.l.panel.width, 450);
+        let ry = d.l.headers[0].1.y + at::JUMP_RULE_Y;
+        let rule = wide.at(479, ry);
+        assert_eq!(d.at(438, ry), rule, "the rule ends a pixel past the header");
+        assert_ne!(d.at(439, ry), rule);
+        let (outline, light) = frame_edges(&Settings::default());
+        assert_eq!(d.at(448, 200), light, "the light line");
+        assert_eq!(d.at(449, 200), outline, "the outline");
+    }
+
+    #[test]
+    fn closed_up_places_keep_their_text_and_arrow_inside_their_rows() {
+        let mut p = sample(Mode::Home, None);
+        p.places[4].submenu = true;
+        p.room = Some((1024, 300));
+        let plain = render(&p, None);
+        p.pointer(Some(Spot::Place(5)));
+        let d = render(&p, None);
+        let row = d.l.rect(Spot::Place(5)).expect("Computer shows");
+        assert_eq!(row.height, 20, "closed up");
+        let mid = (row.x + 2, row.y + row.height / 2);
+        assert_ne!(d.at(mid.0, mid.1), plain.at(mid.0, mid.1), "the row lights");
+        if face() {
+            for k in [4, 5] {
+                let r = d.l.rect(Spot::Place(k)).unwrap();
+                let inside = Rect::new(r.x, r.y, r.width, r.height);
+                let gap = Rect::new(r.x, r.bottom(), r.width, 2);
+                assert!(inks_near(&d, inside, INK_RIGHT), "place {k} inks its row");
+                assert!(
+                    !inks_near(&d, gap, INK_RIGHT),
+                    "place {k} keeps out of the gap"
+                );
+            }
+            let r = d.l.rect(Spot::Place(4)).unwrap();
+            let arrow = Rect::new(r.x + at::PLACE_ARROW.0, r.y, 8, r.height);
+            assert!(
+                inks_near(&d, arrow, INK_RIGHT),
+                "the arrow stands in its row"
+            );
         }
     }
 
