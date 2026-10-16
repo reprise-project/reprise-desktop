@@ -1033,7 +1033,7 @@ impl PopupMenu {
     /// casts it over what lies under it first.
     pub fn draw(&self, c: &mut Canvas, theme: &Theme, text: &TextRenderer, underline: bool) {
         let s = theme.scale.max(1);
-        let look = shadow_look(theme);
+        let look = menu_look(theme);
         for level in &self.levels {
             if let Some(m) = &look {
                 let r = level.rect().scaled(s);
@@ -1157,30 +1157,28 @@ fn cut_at(full: Canvas, floor: i32) -> Canvas {
     c
 }
 
-fn shadow_look(theme: &Theme) -> Option<crate::style::MenuLook> {
-    theme
-        .look
-        .style()
-        .and_then(|st| st.menu)
-        .filter(|m| m.shadow.is_some())
+fn menu_look(theme: &Theme) -> Option<crate::style::MenuLook> {
+    theme.look.style().and_then(|st| st.menu)
 }
 
-/// Whether [`PopupMenu::draw`] casts `theme`'s menu shadow itself; a host
-/// that draws Classic's ([`draw_shadow`]) under a chain skips it then.
+/// Whether [`PopupMenu::draw`] casts `theme`'s menu shadow itself (or none, for a menu look
+/// without one); a host that draws Classic's ([`draw_shadow`]) under a chain skips it then.
 pub fn draws_own_shadow(theme: &Theme) -> bool {
-    shadow_look(theme).is_some()
+    menu_look(theme).is_some()
 }
 
 pub fn shadow_reach(theme: &Theme) -> i32 {
-    match shadow_look(theme) {
-        Some(_) => crate::style::DropShadow::N as i32 * theme.scale.max(1),
+    match menu_look(theme) {
+        Some(m) => m.shadow.map_or(0, |_| {
+            crate::style::DropShadow::N as i32 * theme.scale.max(1)
+        }),
         None => theme.metrics.menu_shadow,
     }
 }
 
 pub fn draw_menu_shadow(theme: &Theme, w: i32, h: i32, floor: i32) -> Canvas {
     let reach = shadow_reach(theme);
-    match shadow_look(theme) {
+    match menu_look(theme) {
         Some(m) => {
             let s = theme.scale.max(1);
             let mut c = Canvas::new((w + reach).max(1) as u32, (h + reach).max(1) as u32);
@@ -1473,17 +1471,7 @@ fn draw_gutter_menu(
     let s = theme.scale.max(1);
     let size = theme.fonts.size_px;
     let all = Rect::new(ox, oy, layout.width, layout.height);
-    canvas.fill_rect(all, cs.menu);
-    canvas.ring_t(all, m.frame, m.frame, s);
-    for i in 1..3 {
-        let r = Rect::new(
-            all.x + i * s,
-            all.y + i * s,
-            all.width - 2 * i * s,
-            all.height - 2 * i * s,
-        );
-        canvas.ring_t(r, m.ring, m.ring, s);
-    }
+    look::draw_frame(m, canvas, all, cs.menu, s);
     let ins = layout.inset;
     let rows_h = layout.height - ins.top - ins.bottom;
     for c in 0..layout.columns as i32 {
@@ -1520,8 +1508,9 @@ fn draw_gutter_menu(
         else {
             let line =
                 |dy: i32| Rect::new(r.x + past_divider, r.y + dy * s, r.width - past_divider, s);
-            canvas.fill_rect(line(4), m.rule.0);
-            canvas.fill_rect(line(5), m.rule.1);
+            let mid = m.separator / 2;
+            canvas.fill_rect(line(mid), m.rule.0);
+            canvas.fill_rect(line(mid + 1), m.rule.1);
             continue;
         };
         let lit = hovered == Some(i);

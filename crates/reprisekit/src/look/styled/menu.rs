@@ -2,6 +2,18 @@
 
 use crate::raster::{Canvas, Rect};
 use crate::style::{MenuLook, Part, State, Style};
+use crate::theme::Color;
+
+/// The menu's face, frame and ring over `r`; `face` stands in for a look without its own.
+pub fn draw_frame(m: &MenuLook, c: &mut Canvas, r: Rect, face: Color, s: i32) {
+    c.fill_rect(r, m.face.unwrap_or(face));
+    c.ring_t(r, m.frame, m.frame, s);
+    if let Some(ring) = m.ring {
+        for i in 1..3 {
+            c.ring_t(r.inset(i * s), ring, ring, s);
+        }
+    }
+}
 
 pub fn draw_lit_row(st: &Style, c: &mut Canvas, r: Rect, greyed: bool, s: i32) -> bool {
     if st.part(Part::MenuItem).is_none() {

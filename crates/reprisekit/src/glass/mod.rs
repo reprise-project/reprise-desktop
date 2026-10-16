@@ -475,6 +475,7 @@ fn build_at(s: &Settings, scale: i32) -> Style {
         .with_page(page::inks(s.mode))
         .with_drop_list(fields::drop_list(s.mode))
         .with_menu(menus::look(s.mode, fields::drop_list(s.mode).shadow))
+        .with_options_menu(menus::options_look(s.mode))
         .with_selection_box(selbox::BOX)
         .with_caption_tabs(caption_tabs(title_ink))
         .with_balloon(balloon::look(s.mode, fields::drop_list(s.mode).shadow))
