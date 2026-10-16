@@ -431,7 +431,8 @@ dialogs. [More in programs.md](programs.md#explorer).
   and memory in the corner of each screen. For when you want to know why.
 - **A stuck display commit leaves Reprise running.** Each monitor's frames,
   power changes and gamma go to the kernel from that monitor's own thread,
-  and exit waits at most half a second for them, so input, programs, the lock
+  the reset that turns every display off on a return from another VT from
+  one more thread, and exit waits at most half a second for them, so input, programs, the lock
   screen and VT switches carry on while a driver holds a commit. Other
   monitors wait for a mode change to finish, as the kernel holds their locks
   through it. Meanwhile hotplug scans and a reloaded config's output changes

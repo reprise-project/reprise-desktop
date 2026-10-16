@@ -25,6 +25,8 @@ pub enum Kind {
     Gamma,
     /// Set a BAD link-status back to GOOD.
     Retrain,
+    /// Turn the device off after a session return (`reset::plan`).
+    Reset,
 }
 
 impl Kind {
@@ -269,7 +271,7 @@ impl<P: Send + 'static> Thread<P> {
     }
 
     /// Asks the thread to drop its committer and end once its current job is done.
-    pub fn exit(mut self) -> Option<JoinHandle<()>> {
+    pub fn exit(&mut self) -> Option<JoinHandle<()>> {
         let _ = self.jobs.send(Job::Exit);
         self.handle.take()
     }
@@ -789,6 +791,29 @@ mod tests {
     }
 
     #[test]
+    fn the_device_reset_holds_every_output_until_its_done() {
+        let t0 = Instant::now();
+        let output = Track::<u32>::default();
+        let mut device = Track::<u32>::default();
+        device.sent(Kind::Reset, t0);
+        assert!(!quiet([&output, &device], false, t0), "no output renders");
+        assert!(!held(&output, &[&output, &device], false, t0 + secs(1.0)));
+        assert!(device.stall(t0 + secs(2.1)));
+        assert!(held(&output, &[&output, &device], false, t0 + secs(2.1)));
+        let after = device.done(true, t0 + secs(3.0));
+        assert_eq!(
+            after,
+            After {
+                off: false,
+                vblank: None,
+                backoff: None
+            }
+        );
+        assert!(device.idle(), "a reset leaves no flip waiting");
+        assert!(quiet([&output, &device], false, t0 + secs(3.0)));
+    }
+
+    #[test]
     fn a_failed_or_stalled_modeset_backs_off_up_to_thirty_seconds() {
         let t0 = Instant::now();
         let mut t = Track::<u32>::default();
@@ -820,7 +845,13 @@ mod tests {
     #[test]
     fn only_a_page_flip_is_nonblocking() {
         assert!(!FLIP.blocking());
-        for k in [MODESET, Kind::Clear, Kind::Gamma, Kind::Retrain] {
+        for k in [
+            MODESET,
+            Kind::Clear,
+            Kind::Gamma,
+            Kind::Retrain,
+            Kind::Reset,
+        ] {
             assert!(k.blocking(), "{k:?}");
         }
     }
@@ -1015,7 +1046,7 @@ mod tests {
             })
             .unwrap();
         let (tx, dropped_on) = mpsc::channel();
-        let t = Thread::spawn("A", 0u8, Dropped(tx), None, replies).unwrap();
+        let mut t = Thread::spawn("A", 0u8, Dropped(tx), None, replies).unwrap();
         assert!(t.send(Job::Run(Kind::Clear, ())));
         let handle = t.exit().unwrap();
         let worker = handle.thread().id();
@@ -1033,8 +1064,8 @@ mod tests {
     fn the_exit_deadline_leaves_a_stuck_thread_running() {
         let (replies, _done) = channel::<(u8, Reply<()>)>();
         let (release, gate) = mpsc::channel();
-        let stuck = Thread::spawn("A", 0u8, Stuck(gate), None, replies.clone()).unwrap();
-        let quick = Thread::spawn("B", 1u8, Quick, None, replies).unwrap();
+        let mut stuck = Thread::spawn("A", 0u8, Stuck(gate), None, replies.clone()).unwrap();
+        let mut quick = Thread::spawn("B", 1u8, Quick, None, replies).unwrap();
         assert!(stuck.send(Job::Run(Kind::Clear, ())));
         let handles = [stuck.exit(), quick.exit()].into_iter().flatten().collect();
         let start = Instant::now();
