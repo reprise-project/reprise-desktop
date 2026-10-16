@@ -170,6 +170,13 @@ impl Place {
     /// (case-insensitive), the text the address bar shows for `here`, `~`/`~/...`, or
     /// an absolute existing directory.
     pub fn parse_address(s: &str, here: Option<&Place>) -> Option<Place> {
+        let (place, dir) = Self::read_address(s, here)?;
+        dir.is_none_or(|d| d.is_dir()).then_some(place)
+    }
+
+    /// [`Place::parse_address`] without touching the file system: the place, and the folder
+    /// still to be checked to exist when the text is a path.
+    pub fn read_address(s: &str, here: Option<&Place>) -> Option<(Place, Option<PathBuf>)> {
         let s = s.trim();
         let lower = s.to_lowercase();
         for (name, place) in [
@@ -177,11 +184,11 @@ impl Place {
             ("recycle bin", Place::RecycleBin),
         ] {
             if lower == name {
-                return Some(place);
+                return Some((place, None));
             }
         }
         if let Some(here) = here.filter(|p| p.address() == s) {
-            return Some(here.clone());
+            return Some((here.clone(), None));
         }
         let expanded = if s == "~" {
             home()?
@@ -190,7 +197,9 @@ impl Place {
         } else {
             PathBuf::from(s)
         };
-        (expanded.is_absolute() && expanded.is_dir()).then(|| Place::from_path(&expanded))
+        expanded
+            .is_absolute()
+            .then(|| (Place::from_path(&expanded), Some(expanded)))
     }
 
     /// The places from the Desktop down to `self`: the path the Folders tree walks to

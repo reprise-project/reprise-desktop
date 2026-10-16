@@ -116,6 +116,15 @@ pub(crate) struct Reading {
     again: bool,
 }
 
+/// Typed address text waiting on whether its folder exists ([`Explorer::navigate`]).
+pub(crate) struct Checking {
+    typed: String,
+    place: Place,
+    /// The place shown at Enter: an answer landing after the window moved on is dropped.
+    from: Place,
+    job: Job<bool>,
+}
+
 /// A place as a listing's thread read it ([`Explorer::show`]), with the children of the
 /// Folders nodes the walk to it fills.
 pub(crate) struct Read {
@@ -253,6 +262,8 @@ pub struct Explorer {
     image_dims: HashMap<PathBuf, (u32, u32)>,
     /// Images whose header was sent to a job in this listing, so a file that states no size is read once.
     dims_asked: HashSet<PathBuf>,
+    /// Typed address text whose folder is still being checked ([`Explorer::navigate`]).
+    checking: Option<Checking>,
     watch: Option<Watch>,
     pub hover: Option<Hover>,
     pub tip: Option<Tip>,
@@ -385,6 +396,7 @@ impl Explorer {
             filling: Vec::new(),
             image_dims: HashMap::new(),
             dims_asked: HashSet::new(),
+            checking: None,
             watch: match Watch::new(ctx.wake.clone()) {
                 Ok(w) => Some(w),
                 Err(e) => {
@@ -498,6 +510,54 @@ impl Explorer {
         }
         self.history.visit(place.clone());
         self.show(place, ctx)
+    }
+
+    /// Goes to typed address text. Whether a typed folder exists is asked on a listing thread
+    /// through `is_dir`, so one on a dead mount never hangs the loop; an answer later than
+    /// [`repriseapp::listjob::WAIT`] lands on a wake ([`Explorer::take_checked`]).
+    pub(crate) fn navigate(
+        &mut self,
+        text: &str,
+        is_dir: impl FnOnce(&Path) -> bool + Send + 'static,
+        ctx: &mut Ctx,
+    ) -> Reply {
+        let typed = text.trim();
+        self.checking = None;
+        let Some((place, dir)) = Place::read_address(typed, Some(&self.place)) else {
+            return self.not_found(typed, ctx);
+        };
+        let Some(dir) = dir else {
+            return self.go(place, ctx);
+        };
+        let job = Job::spawn(Some(&ctx.wake), move || is_dir(&dir));
+        match job.wait(repriseapp::listjob::WAIT) {
+            Some(found) => self.checked(typed, place, found, ctx),
+            None => {
+                self.checking = Some(Checking {
+                    typed: typed.to_string(),
+                    place,
+                    from: self.place.clone(),
+                    job,
+                });
+                Reply::none()
+            }
+        }
+    }
+
+    /// Goes to a typed folder whose check ([`Explorer::navigate`]) answered late, unless the
+    /// window has moved on since.
+    pub(crate) fn take_checked(&mut self, ctx: &mut Ctx) -> Option<Reply> {
+        let found = self.checking.as_ref()?.job.take()?;
+        let c = self.checking.take()?;
+        (c.from == self.place).then(|| self.checked(&c.typed, c.place, found, ctx))
+    }
+
+    fn checked(&mut self, typed: &str, place: Place, found: bool, ctx: &mut Ctx) -> Reply {
+        if found {
+            self.go(place, ctx)
+        } else {
+            self.not_found(typed, ctx)
+        }
     }
 
     /// Re-list the current place, keeping the selection by path and leaving the

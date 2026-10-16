@@ -250,10 +250,7 @@ impl Explorer {
                 None => Reply::none(),
             },
             Command::GoTo(p) => self.go(p, ctx),
-            Command::Navigate(text) => match Place::parse_address(&text, Some(&self.place)) {
-                Some(p) => self.go(p, ctx),
-                None => self.not_found(text.trim(), ctx),
-            },
+            Command::Navigate(text) => self.navigate(&text, |d| d.is_dir(), ctx),
             Command::Refresh => self.refresh(ctx),
             Command::Open => self.open_selected(ctx),
             Command::Explore => {
