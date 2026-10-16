@@ -33,6 +33,9 @@ pub const OBSIDIAN: Scheme = Scheme {
         menu_hilight: Color::rgb(0x5E, 0x81, 0xBC),
         menu_bar: Color::rgb(0xEB, 0xE9, 0xED),
         hot_light: Color::rgb(0x00, 0x00, 0x80),
+        menu_band: Color::rgb(0x24, 0x36, 0x5A),
+        gradient_menu_band: Color::rgb(0x5E, 0x81, 0xBC),
+        menu_band_top: Color::rgb(0x10, 0x1A, 0x26),
     },
     inks: Inks {
         title: Color::rgb(0xFF, 0xFF, 0xFF),

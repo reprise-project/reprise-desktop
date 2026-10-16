@@ -2533,6 +2533,37 @@ mod tests {
     }
 
     #[test]
+    fn each_blue_schemes_start_band_pins_at_scale_1_and_2() {
+        use crate::blue::Variant;
+        let text = TextRenderer::load(&FontConfig::default());
+        let mut got = Vec::new();
+        for v in Variant::ALL {
+            for d in [1, 2] {
+                let theme = crate::interfaces::blue_theme(v).scaled(d);
+                let style = MenuStyle {
+                    width: 120 * d,
+                    ..MenuStyle::root(&theme)
+                };
+                let l = MenuLayout::compute_styled(&style, &items(), usize::MAX);
+                let mut c = Canvas::new(l.width as u32, l.height as u32);
+                draw_menu(&mut c, &theme, &text, &l, &items(), None, "", false);
+                let (inset, h) = (l.inset, l.height);
+                let band = c.copy_rect(Rect::new(
+                    inset.left,
+                    inset.top,
+                    l.band,
+                    h - inset.top - inset.bottom,
+                ));
+                let hash = band.pixels.iter().fold(0xcbf2_9ce4_8422_2325_u64, |h, &p| {
+                    (h ^ u64::from(p)).wrapping_mul(0x0000_0100_0000_01b3)
+                });
+                got.push((format!("{v:?} {d}"), hash));
+            }
+        }
+        crate::pins::check("blue/start_band", &got);
+    }
+
+    #[test]
     fn entry_constructor_defaults() {
         let e = MenuItem::entry("x");
         assert!(matches!(

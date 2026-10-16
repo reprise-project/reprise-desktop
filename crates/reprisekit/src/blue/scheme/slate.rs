@@ -33,6 +33,9 @@ pub const SLATE: Scheme = Scheme {
         menu_hilight: Color::rgb(0x3E, 0x9D, 0xE8),
         menu_bar: Color::rgb(0xEB, 0xE9, 0xED),
         hot_light: Color::rgb(0x00, 0x00, 0x80),
+        menu_band: Color::rgb(0x1E, 0x5A, 0x9E),
+        gradient_menu_band: Color::rgb(0x3E, 0x9D, 0xE8),
+        menu_band_top: Color::rgb(0x0D, 0x2A, 0x4A),
     },
     inks: Inks {
         title: Color::rgb(0xFF, 0xFF, 0xFF),

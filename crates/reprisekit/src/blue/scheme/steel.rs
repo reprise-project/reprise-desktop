@@ -34,6 +34,9 @@ pub const STEEL: Scheme = Scheme {
         menu_hilight: Color::rgb(0x4E, 0x6C, 0x8B),
         menu_bar: Color::rgb(0xE0, 0xE0, 0xEA),
         hot_light: Color::rgb(0x22, 0x4A, 0x71),
+        menu_band: Color::rgb(0x3E, 0x4C, 0x5A),
+        gradient_menu_band: Color::rgb(0x60, 0x74, 0x89),
+        menu_band_top: Color::rgb(0x1C, 0x23, 0x2A),
     },
     inks: Inks {
         title: Color::rgb(0xFF, 0xFF, 0xFF),

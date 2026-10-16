@@ -34,6 +34,9 @@ pub const SILVER: Scheme = Scheme {
         menu_hilight: Color::rgb(0xBA, 0xB5, 0xC5),
         menu_bar: Color::rgb(0xE0, 0xE0, 0xEA),
         hot_light: Color::rgb(0x60, 0x83, 0xCA),
+        menu_band: Color::rgb(0x57, 0x55, 0x65),
+        gradient_menu_band: Color::rgb(0x7A, 0x7A, 0x90),
+        menu_band_top: Color::rgb(0x26, 0x25, 0x2E),
     },
     inks: Inks {
         title: Color::rgb(0x0D, 0x0F, 0x0F),

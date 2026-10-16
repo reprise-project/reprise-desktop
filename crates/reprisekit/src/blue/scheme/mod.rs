@@ -143,10 +143,13 @@ pub struct System {
     pub menu_hilight: Color,
     pub menu_bar: Color,
     pub hot_light: Color,
+    pub menu_band: Color,
+    pub gradient_menu_band: Color,
+    pub menu_band_top: Color,
 }
 
 impl System {
-    /// These slots over Reprise Standard's for the rest (the menu bands).
+    /// These slots over Reprise Standard's for the rest (the band's text).
     pub fn colors(&self) -> ColorScheme {
         ColorScheme {
             active_title: self.active_title,
@@ -176,6 +179,9 @@ impl System {
             menu_hilight: self.menu_hilight,
             menu_bar: self.menu_bar,
             hot_light: self.hot_light,
+            menu_band: self.menu_band,
+            gradient_menu_band: self.gradient_menu_band,
+            menu_band_top: self.menu_band_top,
             ..ColorScheme::default()
         }
     }
@@ -2019,6 +2025,36 @@ mod tests {
             assert!(r.caption > 4.0, "{v:?}: {}", r.caption);
             assert!(r.tab_item > 0.0, "{v:?}: {}", r.tab_item);
             assert!(r.task_group_header >= 0.0, "{v:?}");
+        }
+    }
+
+    #[test]
+    fn the_blue_schemes_start_band_is_the_standard_navy() {
+        let (blue, standard) = (
+            Variant::Blue.scheme().system.colors(),
+            ColorScheme::default(),
+        );
+        assert_eq!(blue.menu_band, standard.menu_band);
+        assert_eq!(blue.gradient_menu_band, standard.gradient_menu_band);
+        assert_eq!(blue.menu_band_top, standard.menu_band_top);
+    }
+
+    /// Each scheme's band is its own, and dark enough all along for the white banner.
+    #[test]
+    fn every_scheme_tints_its_start_band_dark_under_a_white_banner() {
+        let band = |v: Variant| {
+            let s = v.scheme().system;
+            [s.menu_band, s.gradient_menu_band, s.menu_band_top]
+        };
+        let luma =
+            |c: Color| 0.299 * f64::from(c.r) + 0.587 * f64::from(c.g) + 0.114 * f64::from(c.b);
+        for (i, v) in Variant::ALL.into_iter().enumerate() {
+            for c in band(v) {
+                assert!(luma(c) < 140.0, "{v:?} band {c:?} is dark");
+            }
+            for w in &Variant::ALL[..i] {
+                assert_ne!(band(v), band(*w), "{v:?} and {w:?} share a band");
+            }
         }
     }
 }

@@ -1,6 +1,7 @@
 //! Two menu bars, each over a white client: the first with View under the pointer, the second with View
 //! open from the keyboard, its menu showing a submenu arrow, a check, a bullet, separators and its first
-//! row lit. Beside them, a context menu with greyed rows and a lit greyed row.
+//! row lit. Beside them, a context menu with greyed rows and a lit greyed row, and the Classic-layout
+//! Start menu with its side band.
 
 use reprisekit::controls::menu::{MenuItem, MenuLayout, MenuStyle, draw_menu_at};
 use reprisekit::controls::menubar::Bar;
@@ -69,6 +70,27 @@ pub fn draw(c: &mut Canvas, theme: &Theme, text: &TextRenderer, r: Rect) {
         &items,
         Some(1),
         "",
+        false,
+    );
+    let start = vec![
+        MenuItem::entry("Programs").submenu(true),
+        MenuItem::entry("Documents").submenu(true),
+        MenuItem::entry("Settings").submenu(true),
+        MenuItem::entry("Run..."),
+        MenuItem::Separator,
+        MenuItem::entry("Shut Down..."),
+    ];
+    let style = MenuStyle::root(theme).fit(text, &start, px, 180);
+    let l = MenuLayout::compute_styled(&style, &start, usize::MAX);
+    draw_menu_at(
+        c,
+        (r.x + 440, r.y + 10),
+        theme,
+        text,
+        &l,
+        &start,
+        None,
+        "Reprise Desktop",
         false,
     );
 }
