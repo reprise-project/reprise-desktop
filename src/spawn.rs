@@ -545,13 +545,13 @@ pub fn spawn(cmd: &str, env: &SessionEnv, token: Option<&str>) -> bool {
     spawn_in(cmd, None, env, token)
 }
 
-/// `spawn` in the app scope of `app`, as [`spawn_argv_in`] does.
+/// `spawn` in an app scope, as [`spawn_argv_in`] does.
 pub fn spawn_in(cmd: &str, app: Option<&str>, env: &SessionEnv, token: Option<&str>) -> bool {
     let name = log_name(
         app,
         &crate::session::program(cmd).unwrap_or_else(|| "sh".into()),
     );
-    let argv = reprisefs::scope::in_scope(&["sh", "-c", cmd], app);
+    let argv = reprisefs::scope::in_scope(&["sh", "-c", cmd], Some(&name));
     match start(
         command_argv(&argv[0], &argv[1..], env, token),
         cmd,
@@ -574,9 +574,11 @@ pub fn spawn_argv<S: AsRef<std::ffi::OsStr> + std::fmt::Debug>(
     spawn_argv_in(argv, None, None, env, token);
 }
 
-/// `spawn_argv` in working directory `dir`, or reprise's own when `None`. `app`, the desktop
-/// entry id the command came from, puts the process in an `app-reprise-<app>-*.scope`, where
-/// xdg-desktop-portal reads a host app's id.
+/// `spawn_argv` in working directory `dir`, or reprise's own when `None`. The process runs in
+/// `app-reprise-<name>-*.scope` (xdg-desktop-portal reads a host app's id there), `name` being
+/// `app`, the desktop entry id the command came from, else the program's name. journald
+/// rate-limits per unit of the writing process, so the scope keeps a chatty program's log from
+/// suppressing the compositor's.
 pub fn spawn_argv_in<S: AsRef<std::ffi::OsStr> + std::fmt::Debug>(
     argv: &[S],
     app: Option<&str>,
@@ -584,13 +586,16 @@ pub fn spawn_argv_in<S: AsRef<std::ffi::OsStr> + std::fmt::Debug>(
     env: &SessionEnv,
     token: Option<&str>,
 ) {
-    if let Err(e) = try_spawn_argv_in(argv, app, dir, env, token) {
+    let program = argv.first().map(|p| p.as_ref().to_string_lossy());
+    let name = program.map(|p| log_name(app, &p));
+    if let Err(e) = try_spawn_argv_in(argv, name.as_deref(), dir, env, token) {
         log::error!("spawn {argv:?}: {e}");
     }
 }
 
 /// [`spawn_argv_in`] that hands back why the program did not start (the exec's own error, such
 /// as a missing interpreter). Waits for the exec, so a program on a hung mount blocks the caller.
+/// Without an `app` it runs unscoped: behind `systemd-run` the error would be systemd-run's.
 pub fn try_spawn_argv_in<S: AsRef<std::ffi::OsStr> + std::fmt::Debug>(
     argv: &[S],
     app: Option<&str>,

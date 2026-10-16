@@ -25,13 +25,15 @@ A session started from a login manager logs to the user journal under
 
 Each program Reprise starts (the tray helpers, autostart entries, launches)
 logs under its desktop entry id, such as `reprise-sound`, or under its
-program name when it has no entry. Reprise's own programs mark their lines
-with the same priorities, so `-t reprise-sound -p warning` lists that
-program's warnings and errors; the apps and tray helpers log errors only
-unless `RUST_LOG` says otherwise. Started from a terminal, Reprise logs to
-the terminal and its programs inherit it; `REPRISE_LOG_STDERR=1` keeps the
-log on stderr anywhere. `RUST_LOG` sets the level, as in
-`RUST_LOG=reprise=debug`.
+program name when it has no entry. Each runs in an `app-reprise-*.scope` of
+the user manager, so journald's rate limit for a program that floods its log
+applies to `user@<uid>.service` and leaves the compositor's session lines
+alone. Reprise's own programs mark their lines with the same priorities, so
+`-t reprise-sound -p warning` lists that program's warnings and errors; the
+apps and tray helpers log errors only unless `RUST_LOG` says otherwise.
+Started from a terminal, Reprise logs to the terminal and its programs
+inherit it; `REPRISE_LOG_STDERR=1` keeps the log on stderr anywhere.
+`RUST_LOG` sets the level, as in `RUST_LOG=reprise=debug`.
 
 On Arch, `packaging/arch/PKGBUILD` packages the compositor, the programs, the
 session file, the PAM files and the portal backend.
