@@ -4303,8 +4303,9 @@ fn render(theme: &Theme, with_blue: bool) -> Canvas {
                 read_only,
                 hidden: CheckState::Off,
             };
+            let icon = Some(filesheet::set_picture(s));
             let (page, height) =
-                filesheet::general_page(&filesheet::set_rows(&facts), "", None, None);
+                filesheet::general_page(&filesheet::set_rows(&facts), "", icon, None);
             let sheet = PropSheet::new(&["General"], vec![page], (filesheet::SHEET_W, height));
             let (w, h) = sheet.size;
             let mut sheet_c = Canvas::new(w as u32, h as u32);

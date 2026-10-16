@@ -300,6 +300,14 @@ fn check_enabled(
     )
 }
 
+/// A set's 32 px picture at `s` device px a px; [`SET_ICON`] names its small icon.
+pub fn set_picture(s: i32) -> Canvas {
+    let s = s.max(1);
+    let mut c = Canvas::new((ICON_PX * s) as u32, (ICON_PX * s) as u32);
+    crate::art::icons::SET.paint(&mut c, 0, 0, s);
+    c
+}
+
 pub fn general_page(
     rows: &[Row],
     name: &str,
@@ -1776,6 +1784,21 @@ mod tests {
 
     fn px() -> u32 {
         Theme::default().fonts.size_px
+    }
+
+    #[test]
+    fn a_sets_picture_is_32_px_and_doubles_at_scale_2() {
+        let one = set_picture(1);
+        let two = set_picture(2);
+        assert_eq!((one.width, one.height), (32, 32));
+        assert_eq!((two.width, two.height), (64, 64));
+        for y in 0..32 {
+            for x in 0..32 {
+                assert_eq!(two.get(2 * x + 1, 2 * y + 1), one.get(x, y), "({x}, {y})");
+            }
+        }
+        assert_eq!(one.get(0, 0) >> 24, 0, "a clear corner");
+        assert_eq!(one.get(16, 20) >> 24, 255, "the pages");
     }
 
     /// The Summary page's labels fit their column in DejaVu Sans, which is wider than Tahoma:

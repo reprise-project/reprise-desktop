@@ -208,6 +208,8 @@ icons! {
     SHORTCUT = "shortcut.png";
     /// The red exclamation disc for Confirm Delete, 12x12.
     DELETE_BADGE = "delete-badge.png";
+    /// A set of files: two pages, the front one dog-eared, 32x32.
+    SET = "set.png";
 }
 
 #[cfg(test)]
@@ -321,6 +323,7 @@ mod tests {
         out.push(("display laptop at 2".into(), LAPTOP.canvas_at(2)));
         for s in [1, 2] {
             out.push((format!("shortcut {s}"), iconview::shortcut_overlay(s)));
+            out.push((format!("set {s}"), SET.canvas_at(s)));
         }
         out
     }
@@ -434,7 +437,9 @@ mod tests {
         ("display monitor", 0x139f_fe0a_53fa_168d),
         ("display laptop at 2", 0x42da_aa69_2abf_7ba7),
         ("shortcut 1", 0x7c7b_041e_2a2f_c211),
+        ("set 1", 0x2ccb_a532_cd33_a7ea),
         ("shortcut 2", 0xb3f3_d648_7aa2_e244),
+        ("set 2", 0xab70_15e5_be83_6797),
     ];
 
     #[test]
