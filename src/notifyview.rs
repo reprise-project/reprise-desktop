@@ -23,7 +23,7 @@ use reprisekit::icon::IconSource;
 use reprisekit::style::{NotifyLook, SheetShape};
 use reprisekit::taskbar::Edge;
 use reprisekit::textedit::{Caret, EditKey, TextEdit};
-use reprisescene::{BufferId, Input, TreeId};
+use reprisescene::{BufferId, Input, NodeId, TreeId};
 use smithay::reexports::calloop::{
     RegistrationToken, channel,
     timer::{TimeoutAction, Timer},
@@ -1855,6 +1855,7 @@ fn new_balloon(state: &mut State, item: Item) -> Option<Balloon> {
 fn insert(state: &mut State, at: usize, b: Balloon) {
     let v = &mut state.notify;
     v.stack.insert(at.min(v.stack.len()), b);
+    restack(&mut state.scene, &v.stack, &v.leaving, Instant::now());
     crate::autohideview::poke(state);
 }
 
@@ -2676,6 +2677,7 @@ fn tick(state: &mut State) -> bool {
         .into_iter()
         .partition(|b| b.motion.settled(now));
     notify.leaving = kept;
+    restack(scene, &notify.stack, &notify.leaving, now);
     for b in gone {
         destroy(state, b);
     }
@@ -2701,9 +2703,50 @@ fn leave(state: &mut State, mut b: Balloon) {
     }
     state.scene.set_input(b.buffer, Input::Passthrough);
     state.notify.leaving.push(b);
+    let v = &state.notify;
+    restack(&mut state.scene, &v.stack, &v.leaving, now);
     crate::autohideview::poke(state);
     crate::access::touch(state);
     arm_tick(state);
+}
+
+/// A sheet's band in the overlay, lowest first: leaving ones draw under arriving ones, and both
+/// under those resting or sliding.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+enum Band {
+    Leaving,
+    Arriving,
+    Resting,
+}
+
+fn band(m: &Motion, leaving: bool, now: Instant) -> Band {
+    if leaving {
+        Band::Leaving
+    } else if !m.k.settled(now) {
+        Band::Arriving
+    } else {
+        Band::Resting
+    }
+}
+
+/// Orders the trees of `stack` and `leaving` by `band` within the overlay slots they already
+/// hold, keeping their scene order within a band. A sheet's blur pane lives in its tree.
+fn restack(scene: &mut DeskScene, stack: &[Balloon], leaving: &[Balloon], now: Instant) {
+    let mut trees: Vec<(Band, usize, NodeId)> = stack
+        .iter()
+        .map(|b| (band(&b.motion, false, now), b.tree))
+        .chain(leaving.iter().map(|b| (Band::Leaving, b.tree)))
+        .filter_map(|(band, tree)| {
+            let at = scene
+                .children(scene.parent(tree)?)
+                .iter()
+                .position(|c| *c == tree.into())?;
+            Some((band, at, tree.into()))
+        })
+        .collect();
+    trees.sort_by_key(|&(band, at, _)| (band, at));
+    let order: Vec<NodeId> = trees.into_iter().map(|t| t.2).collect();
+    scene.reorder_in_place(&order);
 }
 
 fn drop_leaving(state: &mut State) {
@@ -3824,5 +3867,73 @@ mod tests {
         let mut own = note(OWN_ID, OWN_APP);
         own.id = OWN_ID;
         assert!(!foldable(&own));
+    }
+
+    /// Each tree's index among the scene root's children, bottom first.
+    fn depth(scene: &crate::compositor::DeskScene, b: &Balloon) -> usize {
+        let root = scene.root();
+        let at = scene
+            .children(root)
+            .iter()
+            .position(|c| *c == b.tree.into());
+        at.expect("a sheet's tree under the root")
+    }
+
+    #[test]
+    fn a_closed_sheet_goes_under_every_sheet_in_the_stack() {
+        let mut scene = crate::compositor::DeskScene::new();
+        let now = Instant::now();
+        let mut stack: Vec<Balloon> = (1..=3).map(|id| balloon(&mut scene, id)).collect();
+        let mut gone = stack.remove(1);
+        gone.motion.leave(&glass_effects(), now);
+        let leaving = vec![gone];
+        restack(&mut scene, &stack, &leaving, now);
+        let low = depth(&scene, &leaving[0]);
+        assert!(stack.iter().all(|b| depth(&scene, b) > low));
+        assert_eq!(low, 0, "the leaving tree is the lowest of the three");
+    }
+
+    #[test]
+    fn a_foreign_overlay_node_between_sheets_keeps_its_index() {
+        let mut scene = crate::compositor::DeskScene::new();
+        let now = Instant::now();
+        let mut gone = balloon(&mut scene, 1);
+        let foreign = scene.tree_create(scene.root());
+        let stack = vec![balloon(&mut scene, 2)];
+        gone.motion.leave(&glass_effects(), now);
+        let mut new = balloon(&mut scene, 3);
+        new.motion = Motion::arrive(&glass_effects(), now);
+        let stack = vec![new, stack.into_iter().next().unwrap()];
+        restack(&mut scene, &stack, &[gone], now);
+        let root = scene.root();
+        let at = scene
+            .children(root)
+            .iter()
+            .position(|c| *c == foreign.into());
+        assert_eq!(at, Some(1), "the foreign node stays second from the bottom");
+    }
+
+    #[test]
+    fn an_arriving_sheet_sits_under_resting_ones_and_over_leaving_ones() {
+        let mut scene = crate::compositor::DeskScene::new();
+        let now = Instant::now();
+        let mut leaving = vec![balloon(&mut scene, 1)];
+        leaving[0].motion.leave(&glass_effects(), now);
+        let mut stack = vec![balloon(&mut scene, 2), balloon(&mut scene, 3)];
+        let mut new = balloon(&mut scene, 4);
+        new.motion = Motion::arrive(&glass_effects(), now);
+        stack.insert(0, new);
+        restack(&mut scene, &stack, &leaving, now);
+        let order: Vec<usize> = [&leaving[0], &stack[0], &stack[1], &stack[2]]
+            .iter()
+            .map(|b| depth(&scene, b))
+            .collect();
+        assert_eq!(
+            order,
+            vec![0, 1, 2, 3],
+            "leaving, arriving, then the resting two"
+        );
+        let done = now + Duration::from_secs(10);
+        assert_eq!(band(&stack[0].motion, false, done), Band::Resting);
     }
 }

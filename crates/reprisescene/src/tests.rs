@@ -307,6 +307,30 @@ fn raise_lower_and_place_reorder_siblings() {
 }
 
 #[test]
+fn reorder_in_place_keeps_other_siblings_at_their_index() {
+    let mut s = TestScene::new();
+    let root = s.root();
+    let [a, x, b, y, c] = [0; 5].map(|_| s.tree_create(root).node());
+    s.reorder_in_place(&[c, a, b]);
+    assert_eq!(
+        s.children(root),
+        &[c, x, a, y, b],
+        "x and y stay at 1 and 3"
+    );
+    s.reorder_in_place(&[a, a, b]);
+    assert_eq!(
+        s.children(root),
+        &[c, x, a, y, b],
+        "a repeated node moves nothing"
+    );
+    let t = s.tree_create(root);
+    let inner = s.tree_create(t).node();
+    s.reorder_in_place(&[inner, a]);
+    assert_eq!(s.children(t), &[inner], "nodes of two parents move nothing");
+    assert_eq!(&s.children(root)[..5], &[c, x, a, y, b]);
+}
+
+#[test]
 fn place_needs_a_shared_parent() {
     let mut s = TestScene::new();
     let root = s.root();
