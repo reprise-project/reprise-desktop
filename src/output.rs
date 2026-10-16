@@ -347,8 +347,13 @@ impl State {
     /// `old`'s and from what it runs; runs when the config file changes. An
     /// unchanged key is left alone, so what output management set stays. A
     /// missing mode keeps the current one, and turning adaptive sync off is
-    /// always accepted. Returns whether any output's geometry changed.
+    /// always accepted. While the display is busy it all waits for
+    /// `backend::on_quiet`. Returns whether any output's geometry changed.
     pub fn apply_output_config(&mut self, old: &crate::config::Config) -> bool {
+        if !crate::backend::quiet(self) {
+            crate::backend::defer_output_config(self, old);
+            return false;
+        }
         let mut geometry_changed = false;
         for head in crate::backend::heads(self) {
             if !head.enabled {

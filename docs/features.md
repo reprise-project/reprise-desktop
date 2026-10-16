@@ -434,7 +434,11 @@ dialogs. [More in programs.md](programs.md#explorer).
   and exit waits at most half a second for them, so input, programs, the lock
   screen and VT switches carry on while a driver holds a commit. Other
   monitors wait for a mode change to finish, as the kernel holds their locks
-  through it. `REPRISE_COMMIT_DELAY=<connector>:<ms>` in Reprise's
+  through it. Meanwhile hotplug scans and a reloaded config's output changes
+  wait for it, and output-management tools are told the display is busy. A
+  monitor stuck for over 2 s no longer holds up the lock screen or sleep,
+  and a mode change that failed or took that long is tried again after 1, 2,
+  4 ... up to 30 s. `REPRISE_COMMIT_DELAY=<connector>:<ms>` in Reprise's
   environment makes every commit on that connector wait `ms` first
   (`HDMI-A-1:5000:modeset` only its modesets), to try it.
 
