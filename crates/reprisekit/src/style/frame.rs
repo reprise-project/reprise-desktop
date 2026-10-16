@@ -67,7 +67,15 @@ pub fn draw_frame(
     if geom.glass_top > 0 {
         let c = geom.client;
         let band = Rect::new(c.x, c.y, c.width, geom.glass_top);
-        draw_client_glass(canvas, style, band, state.maximized, band_state, s);
+        draw_client_glass(
+            canvas,
+            style,
+            band,
+            c.height,
+            state.maximized,
+            band_state,
+            s,
+        );
     }
 
     if !state.tabbed {
@@ -80,11 +88,13 @@ pub fn draw_frame(
 
 /// Replace `band`, a client's top rows, and the client edges its outset covers with `style`'s
 /// [`Part::ClientGlass`] (or [`Part::MaxClientGlass`]), its top rows on the band's top however
-/// deep the band. Nothing in a style without it.
+/// deep the band; a restored window's sides turn into its side borders down a client
+/// `client_h` tall. Nothing in a style without it.
 pub(crate) fn draw_client_glass(
     canvas: &mut Canvas,
     style: &Style,
     band: Rect,
+    client_h: i32,
     maximized: bool,
     state: State,
     s: i32,
@@ -106,7 +116,12 @@ pub(crate) fn draw_client_glass(
     canvas.clear_rect(shown);
     let rows = p.frame(state).height / p.scale * s;
     let whole = Rect::new(band.x, band.y, band.width, band.height.max(rows));
-    canvas.with_clip(shown, |c| style.draw(c, whole, part, state, s));
+    canvas.with_clip(shown, |c| {
+        style.draw(c, whole, part, state, s);
+        if let Some(edges) = style.client_glass_edges.as_ref().filter(|_| !maximized) {
+            edges(c, band, client_h, state, s);
+        }
+    });
 }
 
 /// Where a title may run in `style`'s caption: from its left edge to the first caption button.
@@ -1375,7 +1390,7 @@ mod tests {
                 } else {
                     State::Inactive
                 };
-                draw_client_glass(&mut under, s, band, maximized, band_state, 1);
+                draw_client_glass(&mut under, s, band, c.height, maximized, band_state, 1);
                 let glass = |x: i32, y: i32| under.get(x, y);
                 let what = format!("maximized {maximized}, active {active}");
                 for y in [c.y - 2, c.y - 1] {
@@ -1438,7 +1453,7 @@ mod tests {
             } else {
                 State::Inactive
             };
-            draw_client_glass(&mut f, s, band, false, band_state, 1);
+            draw_client_glass(&mut f, s, band, c.height, false, band_state, 1);
             let near = |a: u32, b: u32| {
                 (0..4).all(|i| (a >> (8 * i) & 0xFF).abs_diff(b >> (8 * i) & 0xFF) <= 6)
             };
@@ -1449,7 +1464,7 @@ mod tests {
                     "active {active}, column {x}: {above:08X} over {below:08X}"
                 );
             }
-            for y in [c.y, c.y + 20] {
+            for y in [c.y, c.y + 20, c.y + 40, c.y + 59] {
                 for (border, glass) in [(c.x - 3, c.x), (c.right() + 2, c.right() - 1)] {
                     let (b, g) = (f.get(border, y), f.get(glass, y));
                     assert!(
@@ -1459,6 +1474,37 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn glass_under_the_top_meets_its_side_borders_at_any_window_height() {
+        let theme = theme_for(Interface::Glass);
+        let s = theme.look.style().unwrap();
+        let text = TextRenderer::load(&s.caption_text.font());
+        let near = |a: u32, b: u32| {
+            (0..4).all(|i| (a >> (8 * i) & 0xFF).abs_diff(b >> (8 * i) & 0xFF) <= 6)
+        };
+        let mut inside = Vec::new();
+        for height in [120, 300, 900] {
+            let g = FrameGeometry::layout(&theme.metrics, 500, height, false, Chrome::WINDOW)
+                .with_glass_top(80);
+            let c = g.client;
+            let mut f = Canvas::new(g.total.0 as u32, g.total.1 as u32);
+            draw_frame(&mut f, s, &theme, &text, &g, &state(true, false));
+            let band = Rect::new(c.x, c.y, c.width, g.glass_top);
+            draw_client_glass(&mut f, s, band, c.height, false, State::Normal, 1);
+            for y in [c.y, c.y + 40, c.y + 79] {
+                for (border, glass) in [(c.x - 3, c.x), (c.right() + 2, c.right() - 1)] {
+                    let (b, g) = (f.get(border, y), f.get(glass, y));
+                    assert!(near(b, g), "{height} tall, row {y}: {b:08X} beside {g:08X}");
+                }
+            }
+            inside.push(f.get(c.x + 40, c.y + 60));
+        }
+        assert!(
+            inside.windows(2).all(|w| w[0] == w[1]),
+            "past the edges the glass is the same at any height: {inside:08X?}"
+        );
     }
 
     #[test]

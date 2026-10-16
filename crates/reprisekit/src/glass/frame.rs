@@ -27,7 +27,7 @@ use super::panel::{self, Corners, Ends, Glass};
 use super::tint::{self, Recolour, Surface};
 use super::{CORNER, Frame, Settings, art};
 use crate::backdrop::corner_radius;
-use crate::raster::{Canvas, Fill, Insets};
+use crate::raster::{Canvas, Fill, Insets, Rect};
 use crate::shape::{self, Px, centre, mix, over, pack, smooth};
 use crate::style::{Layout, PartImage, State};
 
@@ -527,6 +527,44 @@ pub fn client_glass(s: &Settings, d: i32) -> PartImage {
 /// stretched, Normal then Inactive, painted at `d`.
 pub fn max_client_glass(s: &Settings, d: i32) -> PartImage {
     frames(s, (1, 1), d, |p, _, _| p.px(Ring::Glass, 0.0)).outset(client_outset())
+}
+
+/// How far in from each side the glass under a restored window's top turns from the side
+/// border's sheen to the caption's.
+const EDGE_FADE: f64 = 24.0;
+
+/// What draws, over [`client_glass`] in `band` (a restored window's top rows, device pixels at
+/// `d` per design pixel, the client `client_h` device pixels tall), each side's
+/// [`EDGE_FADE`] px and the client edges beside them: the side border's sheen on that row,
+/// which runs down the window's height, turning into [`client_glass`]'s own.
+pub fn client_glass_edges(s: &Settings) -> impl Fn(&mut Canvas, Rect, i32, State, i32) + use<> {
+    let paints = SURFACES.map(|(surface, _)| Paint::new(s, surface));
+    move |c, band, client_h, state, d| {
+        let p = &paints[usize::from(state == State::Inactive)];
+        let fw = f64::from(band.width / d + 2 * SIDE);
+        let (o, fade) = (CLIENT_EDGES * d, (EDGE_FADE * f64::from(d)) as i32);
+        let left = -o..fade.min(band.width);
+        let right = (band.width - fade).max(fade)..band.width + o;
+        for row in -o..band.height {
+            let y = centre(row, d) + f64::from(BAND);
+            let side = p
+                .side
+                .at((f64::from(row) + 0.5) / f64::from(client_h.max(1)));
+            for col in left.clone().chain(right.clone()) {
+                let x = centre(col, d) + f64::from(SIDE);
+                let own = CLIENT_SHEEN
+                    .at_point(x, y)
+                    .max(CLIENT_SHEEN.at_point(fw - 1.0 - x, y));
+                let inward = (x - f64::from(SIDE)).min(fw - 1.0 - f64::from(SIDE) - x);
+                let w = match row < 0 {
+                    true => 0.0,
+                    false => 1.0 - smooth(inward / EDGE_FADE),
+                };
+                let sheen = own + (side - own) * w;
+                c.put_raw(band.x + col, band.y + row, p.px(Ring::Glass, sheen));
+            }
+        }
+    }
 }
 
 fn client_outset() -> Insets {
