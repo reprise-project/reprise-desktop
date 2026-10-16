@@ -1,6 +1,7 @@
 //! Blue colour schemes as named colours and metrics: one [`Scheme`] const per scheme, reached
 //! through [`Variant::scheme`]. A [`Face`] names the colours one state of a part is drawn from.
 
+mod carbon;
 mod cobalt;
 mod ember;
 mod navy;
@@ -10,6 +11,7 @@ mod sapphire;
 mod silver;
 mod slate;
 
+pub use carbon::CARBON;
 pub use cobalt::COBALT;
 pub use ember::EMBER;
 pub use navy::NAVY;
@@ -35,6 +37,7 @@ pub fn scheme(v: Variant) -> &'static Scheme {
         Variant::Obsidian => &OBSIDIAN,
         Variant::Ember => &EMBER,
         Variant::Cobalt => &COBALT,
+        Variant::Carbon => &CARBON,
     }
 }
 

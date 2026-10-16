@@ -328,6 +328,8 @@ mod tests {
         }
         let (r, g, b) = ch(variant_button(Variant::Olive, DEFAULT).get(10, 20));
         assert!(g > b && g + 0x20 > r, "olive green's default ring is green");
+        let (r, _, b) = ch(variant_button(Variant::Carbon, DEFAULT).get(10, 20));
+        assert!(r > b + 0x40, "carbon's default ring is amber");
     }
 
     #[test]

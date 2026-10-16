@@ -296,7 +296,7 @@ mod tests {
         );
     }
 
-    const PINS: [(Variant, i32, u64); 16] = [
+    const PINS: [(Variant, i32, u64); 18] = [
         (Variant::Blue, 1, 0x67f782257de9c673),
         (Variant::Blue, 2, 0x2f89408403baa09a),
         (Variant::Olive, 1, 0x67f782257de9c673),
@@ -313,5 +313,7 @@ mod tests {
         (Variant::Ember, 2, 0xa1bb40b35b80e52c),
         (Variant::Cobalt, 1, 0xd348381bd6611eba),
         (Variant::Cobalt, 2, 0x516f04107dd52d6a),
+        (Variant::Carbon, 1, 0xcb2660acb3593be7),
+        (Variant::Carbon, 2, 0xe67cff9caecb62b4),
     ];
 }

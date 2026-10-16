@@ -49,8 +49,8 @@ tabs, trackbars and the rest have their own Blue art.
 The Start menu keeps the Classic layout and band, in Blue's flat menus.
 
 Colour schemes: **Blue** (the default), Olive Green, Silver, Slate, Sapphire,
-Obsidian, Ember and Cobalt. Each brings its own art. None of them is dark;
-Blue is a daytime look.
+Obsidian, Ember, Cobalt and Carbon. Each brings its own art. None of them is
+dark; Blue is a daytime look.
 
 Blue's defaults match Classic's, except that the lock screen shows your
 wallpaper.
