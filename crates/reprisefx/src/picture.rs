@@ -272,17 +272,22 @@ impl Picture {
         Ok(())
     }
 
-    /// Keep the pending changes few: overlapping ones as their bounds, and
-    /// past [`PENDING_KEPT`] all as one, which blurs a little more once
-    /// needed.
+    /// Keep the pending changes few: overlapping ones merged, and past
+    /// [`PENDING_KEPT`] the two whose bounds add the least joined, which
+    /// blurs a little more once needed.
     fn compact(&mut self) {
         let mut p = merge(std::mem::take(&mut self.pending));
-        if p.len() > PENDING_KEPT {
-            p = p
-                .into_iter()
-                .reduce(|a, b| a.merge(b))
-                .into_iter()
-                .collect();
+        while p.len() > PENDING_KEPT {
+            let waste = |a: Rectangle<i32, Physical>, b: Rectangle<i32, Physical>| {
+                area(a.merge(b)) - area(a) - area(b)
+            };
+            let Some((i, j)) = (0..p.len())
+                .flat_map(|i| (i + 1..p.len()).map(move |j| (i, j)))
+                .min_by_key(|&(i, j)| waste(p[i], p[j]))
+            else {
+                break;
+            };
+            p[i] = p[i].merge(p.swap_remove(j));
         }
         self.pending = p;
     }
@@ -415,24 +420,32 @@ fn grow(r: Rectangle<i32, Physical>, x: i32, y: i32) -> Rectangle<i32, Physical>
     )
 }
 
-/// `rects` with every overlapping pair replaced by its bounds, until none
-/// overlap: each texel is drawn once (the streaks blend).
+/// `rects` made disjoint so each texel is drawn once (the streaks blend): an
+/// overlapping pair becomes its bounds only when those add no more than the pair shares.
 fn merge(mut rects: Vec<Rectangle<i32, Physical>>) -> Vec<Rectangle<i32, Physical>> {
-    rects.retain(|r| !r.is_empty());
-    let mut i = 0;
-    while i < rects.len() {
-        let hit = (0..rects.len()).find(|&j| j != i && rects[j].overlaps(rects[i]));
-        match hit {
-            Some(j) => {
-                let m = rects[i].merge(rects[j]);
-                rects[i] = m;
-                rects.swap_remove(j);
-                i = 0;
-            }
-            None => i += 1,
+    let mut out: Vec<Rectangle<i32, Physical>> = Vec::with_capacity(rects.len());
+    while let Some(r) = rects.pop() {
+        if r.is_empty() {
+            continue;
+        }
+        let Some(i) = out.iter().position(|o| o.overlaps(r)) else {
+            out.push(r);
+            continue;
+        };
+        let o = out[i];
+        let bounds = o.merge(r);
+        if area(bounds) <= area(o) + area(r) {
+            out.swap_remove(i);
+            rects.push(bounds);
+        } else {
+            rects.extend(r.subtract_rect(o));
         }
     }
-    rects
+    out
+}
+
+fn area(r: Rectangle<i32, Physical>) -> i64 {
+    i64::from(r.size.w) * i64::from(r.size.h)
 }
 
 #[cfg(test)]
@@ -488,5 +501,53 @@ mod tests {
                 assert!(!a.overlaps(*b), "{a:?} and {b:?}");
             }
         }
+    }
+
+    /// The four sides of a 200x150 frame at (100, 100), 8 px wide.
+    fn ring() -> Vec<Rectangle<i32, Physical>> {
+        vec![
+            r(100, 100, 200, 8),
+            r(100, 242, 200, 8),
+            r(100, 108, 8, 134),
+            r(292, 108, 8, 134),
+        ]
+    }
+
+    #[test]
+    fn a_frames_sides_blur_without_the_hole_between_them() {
+        let k = key(1);
+        let g = k.reach();
+        let p = Parts::of(&ring(), k);
+        let hole = r(108 + g, 108 + g, 184 - 2 * g, 134 - 2 * g);
+        assert!(!hole.is_empty(), "the blur reaches {g} px");
+        for part in [&p.level, &p.across, &p.picture] {
+            for (i, a) in part.iter().enumerate() {
+                assert!(!a.overlaps(hole), "{a:?} covers the hole {hole:?}");
+                for b in &part[i + 1..] {
+                    assert!(!a.overlaps(*b), "{a:?} and {b:?}");
+                }
+            }
+        }
+        let drawn: i64 = p.picture.iter().map(|r| area(*r)).sum();
+        let sides = grow(r(100, 100, 200, 150), g, g)
+            .intersection(k.extent())
+            .map_or(0, area)
+            - area(hole);
+        assert_eq!(drawn, sides, "every texel the sides reach, once");
+    }
+
+    #[test]
+    fn many_pending_changes_join_the_nearest_and_leave_far_texels_out() {
+        let mut p = Picture::new();
+        p.pending = (0..20).map(|i| r(10 + 18 * i, 10, 4, 4)).collect();
+        p.pending.push(r(10, 280, 4, 4));
+        p.compact();
+        assert!(p.pending.len() <= PENDING_KEPT, "{:?}", p.pending);
+        let far = r(150, 150, 1, 1);
+        assert!(
+            p.pending.iter().all(|q| !q.overlaps(far)),
+            "nothing between the row and the corner joins: {:?}",
+            p.pending
+        );
     }
 }
