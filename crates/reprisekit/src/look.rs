@@ -231,6 +231,16 @@ pub fn draw_dialog_frame(
                 theme.fonts.size_px,
                 s,
             );
+            if close && state.pressed == Some(CaptionButton::Close) {
+                classic::widgets::draw_caption_button(
+                    c,
+                    cs,
+                    geom.buttons[2],
+                    Glyph::Close,
+                    true,
+                    s,
+                );
+            }
         }
         Look::Styled(style) => {
             style_frame::draw_frame(c, style, theme, &caption_text(style), geom, state);
