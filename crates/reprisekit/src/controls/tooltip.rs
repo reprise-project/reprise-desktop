@@ -400,7 +400,7 @@ pub const NOTIFY_BUTTONS: usize = 3;
 const NOTIFY_ROW_GAP: i32 = 8;
 const NOTIFY_LABEL_PAD: i32 = 8;
 const NOTIFY_MORE_W: i32 = BUTTON_H;
-const NOTIFY_MORE: &str = "...";
+pub(crate) const NOTIFY_MORE: &str = "...";
 /// The reply row's field: as tall as a dialog's edit box (21 px), centred
 /// on the row a button's height tall.
 const NOTIFY_FIELD_H: i32 = 21;
@@ -622,7 +622,64 @@ pub fn notify_layout(
     }
 }
 
+/// The rects a notification's pointer and access parts use, from its canvas's top-left.
+/// `bubble` is the box under the pointer, `body` the wrapped lines' box.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct NotifyParts {
+    pub bubble: Rect,
+    pub title: Rect,
+    pub body: Rect,
+    pub close: Rect,
+    pub buttons: Vec<Rect>,
+    pub more: Option<Rect>,
+    pub field: Option<Rect>,
+    pub send: Option<Rect>,
+    pub placeholder: String,
+    pub send_label: String,
+}
+
+impl NotifyParts {
+    pub fn offset(&self, dx: i32, dy: i32) -> NotifyParts {
+        let m = |r: Rect| Rect::new(r.x + dx, r.y + dy, r.width, r.height);
+        NotifyParts {
+            bubble: m(self.bubble),
+            title: m(self.title),
+            body: m(self.body),
+            close: m(self.close),
+            buttons: self.buttons.iter().copied().map(m).collect(),
+            more: self.more.map(m),
+            field: self.field.map(m),
+            send: self.send.map(m),
+            placeholder: self.placeholder.clone(),
+            send_label: self.send_label.clone(),
+        }
+    }
+}
+
 impl NotifyLayout {
+    pub fn parts(&self) -> NotifyParts {
+        let top = self.bubble_y;
+        let tb = self.title_box;
+        let lines = self.lines.len().max(1) as i32;
+        NotifyParts {
+            bubble: Rect::new(0, top, self.bubble_w, self.bubble_h),
+            title: Rect::new(tb.x, top + tb.y, tb.width, tb.height),
+            body: Rect::new(
+                self.text_x,
+                top + self.body_y,
+                self.text_w,
+                lines * self.line_h,
+            ),
+            close: self.close,
+            buttons: self.buttons.clone(),
+            more: self.more,
+            field: self.field,
+            send: self.send,
+            placeholder: self.placeholder.clone(),
+            send_label: self.send_label.clone(),
+        }
+    }
+
     /// This balloon for a bar along `edge`: over a Bottom bar, and beside
     /// a side bar, where it sits in a foot corner by the tray, its tail
     /// hangs under the bubble; under a Top bar it rises over the bubble,
@@ -654,19 +711,24 @@ impl NotifyLayout {
 }
 
 pub fn notify_hit(lay: &NotifyLayout, x: i32, y: i32) -> NotifyHit {
-    if lay.close.contains(x, y) {
+    parts_hit(&lay.parts(), x, y)
+}
+
+/// What a notification's parts are under (`x`, `y`): the close box first, the body last.
+pub fn parts_hit(p: &NotifyParts, x: i32, y: i32) -> NotifyHit {
+    if p.close.contains(x, y) {
         return NotifyHit::Close;
     }
-    if let Some(i) = lay.buttons.iter().position(|b| b.contains(x, y)) {
+    if let Some(i) = p.buttons.iter().position(|b| b.contains(x, y)) {
         return NotifyHit::Button(i);
     }
-    if lay.more.is_some_and(|m| m.contains(x, y)) {
+    if p.more.is_some_and(|m| m.contains(x, y)) {
         return NotifyHit::More;
     }
-    if lay.field.is_some_and(|f| f.contains(x, y)) {
+    if p.field.is_some_and(|f| f.contains(x, y)) {
         return NotifyHit::Field;
     }
-    if lay.send.is_some_and(|b| b.contains(x, y)) {
+    if p.send.is_some_and(|b| b.contains(x, y)) {
         return NotifyHit::Send;
     }
     NotifyHit::Body
@@ -872,16 +934,31 @@ impl ReplyField {
     /// A press on the field of `lay` at device x `x`: the field takes the
     /// keyboard and the caret goes to the nearest character boundary.
     pub fn click(&mut self, theme: &Theme, text: &TextRenderer, lay: &NotifyLayout, x: i32) {
+        self.click_in(theme, text, lay.field, x);
+    }
+
+    /// [`ReplyField::click`] on a `field` laid out by any notification.
+    pub fn click_in(&mut self, theme: &Theme, text: &TextRenderer, field: Option<Rect>, x: i32) {
+        let s = theme.scale.max(1);
+        let inner = field.map(|f| {
+            Rect::new(
+                f.x + FIELD_PAD * s,
+                f.y,
+                f.width - 2 * FIELD_PAD * s,
+                f.height,
+            )
+        });
+        self.click_text(text, inner, theme.fonts.size_px, x);
+    }
+
+    /// A press at device x `x` on a field whose text box is `inner`, its text at `px`.
+    pub fn click_text(&mut self, text: &TextRenderer, inner: Option<Rect>, px: u32, x: i32) {
         self.focused = true;
-        let Some(f) = lay.field else {
+        let Some(inner) = inner else {
             return;
         };
-        let s = theme.scale.max(1);
-        let size = theme.fonts.size_px;
-        let inner_x = f.x + FIELD_PAD * s;
-        let inner_w = f.width - 2 * FIELD_PAD * s;
-        let first = edit_first_visible(text, &self.edit, inner_w, size, 0);
-        let at = first + index_at(text, &self.edit.text[first..], x - inner_x, size);
+        let first = edit_first_visible(text, &self.edit, inner.width, px, 0);
+        let at = first + index_at(text, &self.edit.text[first..], x - inner.x, px);
         self.edit.set_selection(at, at);
     }
 }
@@ -947,11 +1024,25 @@ pub fn access_notify(
     tree: &mut crate::access::Tree,
     parent: crate::access::accesskit::NodeId,
 ) -> crate::access::accesskit::NodeId {
+    access_parts(key, &lay.parts(), says, reply, text, px, tree, parent)
+}
+
+/// [`access_notify`] over any notification's parts `p`.
+#[allow(clippy::too_many_arguments)]
+pub fn access_parts(
+    key: impl std::hash::Hash,
+    p: &NotifyParts,
+    says: &NotifySays,
+    reply: Option<&ReplyField>,
+    text: &TextRenderer,
+    px: u32,
+    tree: &mut crate::access::Tree,
+    parent: crate::access::accesskit::NodeId,
+) -> crate::access::accesskit::NodeId {
     use crate::access::{self, accesskit::Action, accesskit::Live, accesskit::Role};
     // Peer text is plain: `&` is no access key marker.
     let plain = |s: &str| s.replace('&', "&&");
-    let top = lay.bubble_y;
-    let mut alert = access::node(Role::Alert, Rect::new(0, top, lay.bubble_w, lay.bubble_h));
+    let mut alert = access::node(Role::Alert, p.bubble);
     alert.set_label(says.spoken());
     alert.set_live(if says.urgent {
         Live::Assertive
@@ -959,27 +1050,27 @@ pub fn access_notify(
         Live::Polite
     });
     let id = tree.push(parent, ("alert", key), alert);
-    let tb = lay.title_box;
-    let title = Rect::new(tb.x, top + tb.y, tb.width, tb.height);
-    tree.push(id, "title", access::label(title, &plain(says.title), true));
+    tree.push(
+        id,
+        "title",
+        access::label(p.title, &plain(says.title), true),
+    );
     if !says.body.is_empty() {
-        let lines = lay.lines.len().max(1) as i32;
-        let r = Rect::new(lay.text_x, top + lay.body_y, lay.text_w, lines * lay.line_h);
-        let mut body = access::label(r, &plain(says.body), true);
+        let mut body = access::label(p.body, &plain(says.body), true);
         if says.opens {
             body.add_action(Action::Click);
         }
         tree.push(id, "body", body);
     }
-    for (i, &r) in lay.buttons.iter().enumerate() {
+    for (i, &r) in p.buttons.iter().enumerate() {
         let name = plain(says.actions.get(i).copied().unwrap_or_default());
         tree.push(id, ("button", i), access::button(r, &name, true, false));
     }
-    if let Some(r) = lay.more {
+    if let Some(r) = p.more {
         tree.push(id, "more", access::button(r, NOTIFY_MORE_NAME, true, false));
     }
     let mut focus = id;
-    if let (Some(f), Some(field)) = (lay.field, reply) {
+    if let (Some(f), Some(field)) = (p.field, reply) {
         let first = edit_first_visible(text, &field.edit, f.width - 2 * FIELD_PAD, px, 0);
         let fid = crate::classic::widgets::access_edit(
             &field.edit,
@@ -994,27 +1085,27 @@ pub fn access_notify(
             "reply",
         );
         if let Some(n) = tree.get_mut(fid)
-            && !lay.placeholder.is_empty()
+            && !p.placeholder.is_empty()
         {
-            n.set_placeholder(lay.placeholder.as_str());
+            n.set_placeholder(p.placeholder.as_str());
         }
         if field.focused {
             focus = fid;
         }
     }
-    if let Some(r) = lay.send {
+    if let Some(r) = p.send {
         let can = reply.is_some_and(|f| f.to_send().is_some());
-        let name = plain(&lay.send_label);
+        let name = plain(&p.send_label);
         tree.push(id, "send", access::button(r, &name, can, false));
     }
-    tree.push(id, "close", access::button(lay.close, "Close", true, false));
+    tree.push(id, "close", access::button(p.close, "Close", true, false));
     // Liveness is inherited: the parts would each be announced too.
     let parts = tree
         .get(id)
         .map(|n| n.children().to_vec())
         .unwrap_or_default();
-    for p in parts {
-        if let Some(n) = tree.get_mut(p) {
+    for k in parts {
+        if let Some(n) = tree.get_mut(k) {
             n.set_live(Live::Off);
         }
     }

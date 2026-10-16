@@ -36,7 +36,7 @@ pub fn place(rect: Rect, scale: f64, opening: bool, e: f64) -> (Rect, f32) {
     (r, k as f32)
 }
 
-fn scale_pane(pane: &Pane, from: Rect, to: Rect) -> Pane {
+pub(crate) fn scale_pane(pane: &Pane, from: Rect, to: Rect) -> Pane {
     let kx = f64::from(to.width) / f64::from(from.width.max(1));
     let ky = f64::from(to.height) / f64::from(from.height.max(1));
     let r = |r: Rect| {

@@ -104,10 +104,12 @@ pub struct Notification {
     pub summary: String,
     /// Plain text: any markup was reduced by `notify::plain_text`.
     pub body: String,
-    /// `image-data`, `image-path`, `app_icon` or the desktop entry's icon,
-    /// the first that resolves, decoded by the D-Bus thread; empty when
-    /// none does, and the balloon then draws an info glyph.
-    pub icon: Vec<IconSource>,
+    /// The `app_icon` name, else the desktop entry's icon, decoded by the
+    /// D-Bus thread; empty when neither resolves.
+    pub app_icon: Vec<IconSource>,
+    /// The `image-data` hint, else `image-path`, decoded by the D-Bus
+    /// thread; empty when neither resolves.
+    pub image: Vec<IconSource>,
     /// Milliseconds to stay up; -1 asks for the server default, 0 never
     /// expires on its own.
     pub expire_timeout: i32,
@@ -139,7 +141,8 @@ impl Notification {
             app: String::new(),
             summary,
             body,
-            icon: Vec::new(),
+            app_icon: Vec::new(),
+            image: Vec::new(),
             expire_timeout: -1,
             actions: Vec::new(),
             urgency: notify::Urgency::Normal,
@@ -148,6 +151,15 @@ impl Notification {
             sender: String::new(),
             pid: None,
             reply: None,
+        }
+    }
+
+    /// What a balloon draws as its one icon: the picture, else the app icon.
+    pub fn balloon_icon(&self) -> &[IconSource] {
+        if self.image.is_empty() {
+            &self.app_icon
+        } else {
+            &self.image
         }
     }
 
@@ -338,12 +350,25 @@ fn pixmap_to_source(w: i32, h: i32, argb_be: &[u8]) -> Option<IconSource> {
 /// at 16 px per step of output scale; past 2x the 32 px copy is scaled.
 const NAMED_SIZES: [i32; 2] = [16, 32];
 
+/// Sizes a notification's icons are decoded at; 48 and 96 px feed the Glass sheet's icon slot.
+pub const NOTIFY_SIZES: [i32; 4] = [16, 32, 48, 96];
+
 /// A peer-named icon (a theme name or an absolute path, with `extra`
 /// directories searched first) decoded at each of [`NAMED_SIZES`]. Only
 /// the D-Bus thread calls this: the file is the peer's choice, and even an
 /// SVG inside the decoder's budget can take a second to draw.
 pub fn decode_named(icons: &mut IconCache, name: &str, extra: &[PathBuf]) -> Vec<IconSource> {
-    NAMED_SIZES
+    decode_named_at(icons, name, extra, &NAMED_SIZES)
+}
+
+/// [`decode_named`] at the given `sizes`.
+pub fn decode_named_at(
+    icons: &mut IconCache,
+    name: &str,
+    extra: &[PathBuf],
+    sizes: &[i32],
+) -> Vec<IconSource> {
+    sizes
         .iter()
         .filter_map(|&px| icons.get_with_extra(name, px, extra))
         .map(|c| IconSource {
@@ -1561,6 +1586,20 @@ pub fn menu_activate(state: &mut State, depth: usize, idx: usize) {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn the_balloon_icon_is_the_picture_else_the_app_icon() {
+        let src = |w: u32| IconSource {
+            width: w,
+            height: w,
+            pixels: Vec::new(),
+        };
+        let mut n = Notification::new(1, "s".into(), "b".into());
+        n.app_icon = vec![src(16)];
+        assert_eq!(n.balloon_icon(), &n.app_icon[..]);
+        n.image = vec![src(32)];
+        assert_eq!(n.balloon_icon(), &n.image[..]);
+    }
+
     use super::*;
     use crate::startmenu::MenuItem;
 

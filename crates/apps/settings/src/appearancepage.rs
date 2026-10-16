@@ -9,7 +9,8 @@ use reprisekit::theme::{Color, ColorScheme, FontConfig, Theme};
 use reprisekit::trackbar::{self, TrackBar};
 
 use crate::model::{
-    GLASS_FRAMES, GLASS_MATERIALS, GLASS_MODES, INTERFACES, Settings, text_to_list,
+    GLASS_FRAMES, GLASS_MATERIALS, GLASS_MODES, GLASS_NOTIFY_STYLES, INTERFACES, Settings,
+    text_to_list,
 };
 use crate::pages::{Area, COMBO_MAX, TRACK_MAX, X, choice};
 use crate::registry::Page;
@@ -53,6 +54,7 @@ pub fn glass(s: &Settings) -> glass::Settings {
         mode: glass::Mode::parse(&s.glass_mode).unwrap_or_default(),
         material: glass::Material::parse(&s.glass_material).unwrap_or_default(),
         frame: glass::Frame::parse(&s.glass_frame).unwrap_or_default(),
+        notification: glass::NotifyStyle::parse(&s.glass_notification_style).unwrap_or_default(),
         intensity: s.glass_intensity.clamp(0, 100) as u8,
         transparency: s.glass_transparency,
         fast_drag: s.glass_fast_drag,
@@ -160,6 +162,14 @@ pub fn page(s: &Settings, a: Area) -> Form {
             Item::check("glass_transparency", X, y(384), "Enable &transparency"),
             Item::check("glass_fast_drag", X, y(406), "Faster &glass while dragging"),
             Item::check("glass_blur_frames", X, y(428), "Sho&w frames behind glass"),
+            Item::label_at("notify_label", X, y(452), half_w, "N&otifications:"),
+            choice(
+                "glass_notification_style",
+                X,
+                y(468),
+                half_w,
+                GLASS_NOTIFY_STYLES,
+            ),
             Item::check("glass_streaks", rx, y(384), "Show &reflections"),
             Item::label_at("intensity_label", rx, y(288), rw, "Color i&ntensity:"),
             Item::new(

@@ -204,6 +204,8 @@ pub struct Settings {
     pub glass_material: String,
     /// `[glass] frame`: one of [`GLASS_FRAMES`]' values.
     pub glass_frame: String,
+    /// `[glass] notification_style`: one of [`GLASS_NOTIFY_STYLES`]' values.
+    pub glass_notification_style: String,
     /// Not a key: `glass_color` as the file had it when it names no
     /// swatch ([`glass_swatch`]), the colour the Appearance page's Custom
     /// row stands for; empty for none.
@@ -470,6 +472,7 @@ impl Default for Settings {
             glass_mode: "light".into(),
             glass_material: "frosted".into(),
             glass_frame: "rounded".into(),
+            glass_notification_style: "lozenge".into(),
             glass_custom: String::new(),
             glass_intensity: 42,
             glass_transparency: true,
@@ -808,6 +811,9 @@ pub const GLASS_MATERIALS: &Choices = &[
     ("molten", "Molten"),
 ];
 
+/// `[glass] notification_style`. Mirrors `glass::NotifyStyle::as_str`.
+pub const GLASS_NOTIFY_STYLES: &Choices = &[("lozenge", "Lozenge")];
+
 /// `[glass] frame`. Mirrors `glass::Frame::as_str`.
 pub const GLASS_FRAMES: &Choices = &[("rounded", "Rounded"), ("square", "Square")];
 
@@ -969,6 +975,10 @@ fn fields() -> Vec<Field> {
         Field::Text(k("glass", "mode"), lens!(glass_mode)),
         Field::Text(k("glass", "material"), lens!(glass_material)),
         Field::Text(k("glass", "frame"), lens!(glass_frame)),
+        Field::Text(
+            k("glass", "notification_style"),
+            lens!(glass_notification_style),
+        ),
         Field::Int(k("glass", "intensity"), lens!(glass_intensity)),
         Field::Flag(k("glass", "transparency"), lens!(glass_transparency)),
         Field::Int(k("glass", "blur"), lens!(glass_blur)),
@@ -2006,6 +2016,22 @@ size_px = 12
     }
 
     #[test]
+    fn glass_notification_style_drops_its_default() {
+        let base = Settings::default();
+        let want = Settings {
+            glass_notification_style: "halo".into(),
+            ..base.clone()
+        };
+        let text = save("", &want, &base).unwrap();
+        assert_eq!(text, "[glass]\nnotification_style = \"halo\"\n");
+        assert_eq!(
+            save(&text, &base, &want).unwrap(),
+            "",
+            "lozenge, the default, drops the key"
+        );
+    }
+
+    #[test]
     fn appearance_defaults_match_the_compositor() {
         let d = Settings::default();
         assert_eq!(
@@ -2028,6 +2054,10 @@ size_px = 12
         assert_eq!(
             reprisekit::glass::Material::parse(&d.glass_material),
             Some(g.material)
+        );
+        assert_eq!(
+            reprisekit::glass::NotifyStyle::parse(&d.glass_notification_style),
+            Some(g.notification)
         );
         assert_eq!(
             reprisekit::glass::Frame::parse(&d.glass_frame),
@@ -2234,6 +2264,7 @@ size_px = 12
             glass_mode: "dark".into(),
             glass_material: "smoked".into(),
             glass_frame: "square".into(),
+            glass_notification_style: "lozenge".into(),
             glass_custom: "#102030".into(),
             glass_intensity: 70,
             glass_transparency: false,

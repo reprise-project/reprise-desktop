@@ -82,6 +82,27 @@ fn main() {
             &render_windowed_dialog(n.max(1)),
             &format!("reprisekit-gallery-windowed-dialog@{}.png", n.max(1)),
         );
+        for mode in [
+            reprisekit::glass::Mode::Light,
+            reprisekit::glass::Mode::Dark,
+        ] {
+            let g = reprisekit::glass::Settings {
+                mode,
+                ..reprisekit::glass::Settings::default()
+            };
+            let theme =
+                interfaces::theme_with(Interface::Glass, reprisekit::blue::Variant::default(), &g)
+                    .scaled(n.max(1));
+            let name = if mode == reprisekit::glass::Mode::Dark {
+                "dark"
+            } else {
+                "light"
+            };
+            write_preview(
+                &render_glass_notify_sheets(&theme),
+                &format!("reprisekit-gallery-glass-notify-{name}@{}.png", n.max(1)),
+            );
+        }
         return;
     }
     if let Ok(pct) = std::env::var("REPRISE_GALLERY_TEXT_SIZE") {
@@ -5369,6 +5390,7 @@ fn render_glass() -> Canvas {
         render_glass_menus(&theme),
         render_glass_marquees(&theme),
         render_glass_balloons(&theme),
+        render_glass_notify_sheets(&theme),
         render_glass_flyouts(&theme),
         render_glass_items(&theme),
         render_glass_toolbars(&theme),
@@ -5414,6 +5436,7 @@ fn render_glass_dark() -> Canvas {
         render_glass_menus(&theme),
         render_glass_marquees(&theme),
         render_glass_balloons(&theme),
+        render_glass_notify_sheets(&theme),
         render_glass_flyouts(&theme),
         render_glass_items(&theme),
         render_glass_toolbars(&theme),
@@ -6482,6 +6505,130 @@ fn render_glass_balloons(theme: &Theme) -> Canvas {
         "Ends your session and shuts down the computer so that you can safely turn off power.",
     );
     c.blit_over(8, 140, &tip);
+    c
+}
+
+/// Glass notification sheets, 950x700 over the stripes: at rest, hovered, with a picture and
+/// actions, with the reply row, and a stack of three with its "+2 more" chip.
+fn render_glass_notify_sheets(theme: &Theme) -> Canvas {
+    use reprisekit::art::{logo, userpic};
+    use reprisekit::controls::notifysheet::{
+        self, SheetContent, SheetIcons, SheetLayout, chip_layout, draw_chip, place_stack,
+    };
+    use reprisekit::controls::tooltip::{NotifyHit, NotifyReply};
+    use reprisekit::style::SheetShape;
+    use reprisekit::taskbar::Edge;
+    let s = theme.scale.max(1);
+    let text = TextRenderer::load(&theme.fonts);
+    let mut c = blurred_stripes(950 * s, 700 * s);
+    let slot = 46 * s;
+    let mut app = Canvas::new(slot as u32, slot as u32);
+    let mask = logo::coverage_any(slot as usize);
+    let clip = app.bounds();
+    app.blit_mask_over(
+        0,
+        0,
+        slot as usize,
+        slot as usize,
+        &mask,
+        Color::rgb(0x1F, 0x6F, 0xD8),
+        clip,
+    );
+    let picture = userpic::draw(userpic::Picture::Sunset, slot as u32);
+    let content = |title: &'static str, body: &'static str| SheetContent {
+        app: "Mail",
+        when: "now",
+        title,
+        body,
+        actions: &[],
+        reply: None,
+        has_picture: false,
+        has_app_icon: true,
+    };
+    let lay = |c: &SheetContent, expanded: bool| {
+        notifysheet::sheet_layout(theme, &text, SheetShape::Lozenge, c, expanded)
+            .expect("Glass draws sheets")
+    };
+    let draw =
+        |lay: &SheetLayout, with_pic: bool, hot: Option<NotifyHit>, typed: Option<&TextEdit>| {
+            let icons = SheetIcons {
+                app: Some(&app),
+                picture: with_pic.then_some(&picture),
+            };
+            let reply = typed.map(|t| (t, Caret::Shown, None));
+            notifysheet::draw_sheet(theme, &text, lay, icons, None, None, hot, reply)
+        };
+    let rest = content(
+        "New message",
+        "Lunch at noon? I booked the table by the window.",
+    );
+    let rest_lay = lay(&rest, false);
+    c.blit_over(0, 0, &draw(&rest_lay, false, None, None));
+    c.blit_over(
+        470 * s,
+        0,
+        &draw(&rest_lay, false, Some(NotifyHit::Body), None),
+    );
+    let actions = SheetContent {
+        app: "Chat",
+        title: "Ana",
+        body: "Are you coming to the review this afternoon?",
+        actions: &["Reply", "Later"],
+        has_picture: true,
+        ..content("", "")
+    };
+    let actions_lay = lay(&actions, false);
+    let row = rest_lay.height.max(170 * s);
+    c.blit_over(
+        0,
+        row,
+        &draw(&actions_lay, true, Some(NotifyHit::Button(0)), None),
+    );
+    let reply = SheetContent {
+        reply: Some(NotifyReply {
+            placeholder: "Write a reply",
+            send: "Send",
+        }),
+        ..actions
+    };
+    let typed = TextEdit::new("Sounds good", false);
+    c.blit_over(
+        470 * s,
+        row,
+        &draw(&lay(&reply, true), true, None, Some(&typed)),
+    );
+
+    let stack = [
+        content("New message", "Lunch at noon?"),
+        SheetContent {
+            app: "Calendar",
+            when: "2 min ago",
+            ..content("Review at 3 PM", "Room 4, with the design team.")
+        },
+        SheetContent {
+            app: "Downloads",
+            when: "5 min ago",
+            ..content("Download complete", "reprise-desktop.tar.zst")
+        },
+    ];
+    let lays: Vec<SheetLayout> = stack.iter().map(|c| lay(c, false)).collect();
+    let footprints: Vec<(i32, i32)> = lays
+        .iter()
+        .map(|l| (l.footprint.width / s, l.footprint.height / s))
+        .collect();
+    let (cw, ch) = chip_layout(theme, &text, 2);
+    let usable = Rect::new(0, 340, 950, 360);
+    let (spots, chip_at) = place_stack(usable, &footprints, Some((cw / s, ch / s)), Edge::Bottom);
+    for (l, (x, y)) in lays.iter().zip(spots) {
+        c.blit_over(
+            x * s - l.footprint.x,
+            y * s - l.footprint.y,
+            &draw(l, false, None, None),
+        );
+    }
+    if let Some((x, y)) = chip_at {
+        c.blit_over(x * s, y * s, &draw_chip(theme, &text, 2, false));
+    }
     c
 }
 
