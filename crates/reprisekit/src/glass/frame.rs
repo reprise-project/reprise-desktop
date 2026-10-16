@@ -722,31 +722,64 @@ mod tests {
     }
 
     #[test]
+    fn the_sheet_has_soft_cut_corners_and_two_states_at_scale_2() {
+        let img = sheet(&Settings::default(), 2);
+        assert!(
+            (0..2 * SIDE).any(|x| {
+                let a = at(&img, State::Normal, x, x) >> 24;
+                a != 0 && a != 0xFF
+            }),
+            "partial-alpha pixels on the cut corner"
+        );
+        let mid = 2 * SIDE;
+        assert_ne!(
+            at(&img, State::Normal, mid, mid),
+            at(&img, State::Inactive, mid, mid),
+            "focused and unfocused glass differ"
+        );
+        assert_eq!(
+            img.sizing,
+            Insets::new(SIDE, SIDE, SIDE, SIDE),
+            "edges in design px"
+        );
+    }
+
+    #[test]
     fn the_sheet_keeps_its_pixels_in_each_material_and_frame() {
-        for (material, frame, want) in [
+        for (mode, material, frame, want) in [
             (
+                Mode::Light,
                 Material::Frosted,
                 Frame::Rounded,
                 [0xFB7E_AE68_1F97_FEAC_u64, 0x8376_DA57_7E89_2AED],
             ),
             (
+                Mode::Light,
                 Material::Smoked,
                 Frame::Square,
                 [0x9935_69D2_DAD4_3239, 0x97F8_8FAB_346A_9EA5],
             ),
             (
+                Mode::Light,
                 Material::Molten,
                 Frame::Rounded,
                 [0xE571_96E4_329A_3B23, 0xFE08_FBCA_0A2E_9155],
             ),
+            (
+                Mode::Dark,
+                Material::Frosted,
+                Frame::Rounded,
+                [0xFB7E_AE68_1F97_FEAC, 0x8376_DA57_7E89_2AED],
+            ),
         ] {
             let s = Settings {
+                mode,
                 material,
                 frame,
                 ..Settings::default()
             };
             let got = [1, 2].map(|d| fnv(&sheet(&s, d)));
-            assert_eq!(got, want, "{material:?} {frame:?}: {got:X?}");
+            assert_eq!(got, want, "{mode:?} {material:?} {frame:?}: {got:X?}");
         }
     }
 

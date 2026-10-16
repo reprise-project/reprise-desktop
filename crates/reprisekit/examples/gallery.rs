@@ -5083,6 +5083,7 @@ fn render_glass() -> Canvas {
         render_glass_materials(reprisekit::glass::Mode::Light),
         render_glass_square_frames(),
         render_glass_client_glass(&theme),
+        render_glass_peek_sheet(&theme),
     ];
     let height = frames.height + parts.iter().map(|p| p.height).sum::<u32>();
     let mut all = Canvas::new(950, height);
@@ -5125,6 +5126,7 @@ fn render_glass_dark() -> Canvas {
         render_glass_items(&theme),
         render_glass_toolbars(&theme),
         render_glass_materials(reprisekit::glass::Mode::Dark),
+        render_glass_peek_sheet(&theme),
     ];
     let mut all = Canvas::new(950, parts.iter().map(|p| p.height).sum::<u32>());
     let mut y = 0;
@@ -5597,6 +5599,32 @@ fn render_glass_client_glass(theme: &Theme) -> Canvas {
         f.blit_over(g.client.x, g.client.y, &client);
         c.blit_over(15 + 470 * i as i32, 10, &f);
     }
+    c
+}
+
+/// An inactive window, then the sheet a peek draws in its place, over the stripes, 950x150.
+fn render_glass_peek_sheet(theme: &Theme) -> Canvas {
+    let text = TextRenderer::load(&FontConfig::default());
+    let caption_text = TextRenderer::load(&theme.look.style().unwrap().caption_text.font());
+    let mut c = blurred_stripes(950, 150);
+    let g = FrameGeometry::layout(&theme.metrics, 400, 90, false, Chrome::WINDOW);
+    let st = FrameState {
+        title: "before.txt - Notepad",
+        active: false,
+        maximized: false,
+        pressed: None,
+        glow: Glow::lit(None),
+        icon: None,
+        tabbed: false,
+    };
+    let mut f = Canvas::new(g.total.0 as u32, g.total.1 as u32);
+    look::draw_frame(&mut f, theme, &text, &caption_text, &g, &st);
+    f.fill_rect(g.client, Color::rgb(0xFF, 0xFF, 0xFF));
+    c.blit_over(15, 10, &f);
+    let mut sheet = Canvas::new(g.total.0 as u32, g.total.1 as u32);
+    let r = sheet.bounds();
+    look::draw_sheet(&mut sheet, theme, r);
+    c.blit_over(485, 10, &sheet);
     c
 }
 
