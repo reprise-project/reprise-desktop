@@ -98,7 +98,7 @@ interface = "classic"        # classic | blue | glass; an unknown value falls ba
 # interval = 30              # minutes each slideshow picture shows, 1 to 1440; the desktop menu's Next desktop background skips ahead
 # shuffle = false            # true: the slideshow picks at random instead of by file name (case ignored, numbers by value)
 # water = "off"              # off | calm | lively | rain: ripples on the wallpaper that follow the pointer, the icons and the windows; rain adds a drop every second or so
-# water_rate = "refresh"     # "refresh" | 30 to 240: steps a second; refresh steps once a frame at each output's own refresh. The screen draws the water only when it steps, so a lower rate draws fewer frames. The ripples settle and travel alike at any rate, but below 60 they travel slower, at rate/60 of their speed
+# water_rate = "refresh"     # "refresh" | 30 to 240: steps a second; refresh steps once a frame at each output's own refresh. The screen draws the water only when it steps, so a lower rate draws fewer frames. Rain alone draws at most 30 frames a second, two or more steps each, until the pointer, a click or a window stirs the water. The ripples settle and travel alike at any rate, but below 60 they travel slower, at rate/60 of their speed
 
 # [glass]                    # Reprise Glass only
 # color = "sky"              # sky twilight sea leaf lime sun pumpkin ruby fuchsia blush
