@@ -235,6 +235,8 @@ pub struct Explorer {
     pub(crate) put_queue: std::collections::VecDeque<fileops::PendingPut>,
     pub(crate) removing: Option<removing::Removing>,
     pub(crate) remove_queue: std::collections::VecDeque<removing::PendingRemoval>,
+    /// The whole percent and paused state last put on the task button.
+    pub(crate) task_progress: Option<(u32, bool)>,
     /// While a replace prompt is up: the batches whose prompts come next, and
     /// the error boxes of batches that finished meanwhile.
     pub(crate) replace_waiting:
@@ -387,6 +389,7 @@ impl Explorer {
             put_queue: std::collections::VecDeque::new(),
             removing: None,
             remove_queue: std::collections::VecDeque::new(),
+            task_progress: None,
             replace_waiting: std::collections::VecDeque::new(),
             messages_waiting: std::collections::VecDeque::new(),
             jobs_tx,
