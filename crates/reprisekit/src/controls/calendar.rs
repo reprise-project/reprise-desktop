@@ -71,6 +71,8 @@ pub struct Calendar {
     pub today: Option<(i32, u32, u32)>,
     /// The time of day the popup's analog clock shows: hour 0..23, minute, second.
     pub now: Option<(u32, u32, u32)>,
+    /// The popup's time line under the clock, worded by the host in the locale's format.
+    pub time: Option<String>,
     /// The column the week starts in: 0 Sunday .. 6 Saturday.
     pub first_weekday: u32,
     pub enabled: bool,
@@ -84,6 +86,7 @@ impl Calendar {
             day,
             today: None,
             now: None,
+            time: None,
             first_weekday: first_weekday % 7,
             enabled: true,
         };
@@ -320,22 +323,33 @@ const ARROW_W: i32 = 16;
 
 /// From the grid's right edge to the analog clock's.
 const CLOCK_GAP: i32 = 12;
+/// The time line under the clock: its row and its text, a size up from the title.
+const TIME_H: i32 = 24;
+pub const TIME_PX: u32 = 20;
+
+/// The analog clock's side at `cm.text`, kept odd so its middle is a pixel's; 0 in a look
+/// without one.
+fn clock_side(cm: &ControlMetrics) -> i32 {
+    match cm.clock_face {
+        0 => 0,
+        side => cm.text.len(side) | 1,
+    }
+}
 
 /// The popup panel's size in a look with controls `cm`: 174x162 inside
-/// Classic's 2 px edge, 12 px more each way inside an 8 px border, and wider
-/// by the analog clock and its gap in a look with one. The grid and the title
-/// row grow with `cm.text`; the clock keeps its size.
+/// Classic's 2 px edge, 12 px more each way inside an 8 px border, and in a
+/// look with an analog clock wider by the clock and its gap and taller by the
+/// time line. Everything but the border grows with `cm.text`.
 pub fn popup_size(cm: &ControlMetrics) -> (i32, i32) {
     let e = cm.flyout_border;
     let (w, h) = size(cm);
-    let clock = if cm.clock_face > 0 {
-        CLOCK_GAP + cm.clock_face
-    } else {
-        0
+    let (clock, time) = match clock_side(cm) {
+        0 => (0, 0),
+        side => (cm.text.len(CLOCK_GAP) + side, cm.text.len(TIME_H) + PAD),
     };
     (
         w + clock + 2 * (e + PAD),
-        cm.text.len(TITLE_H) + h + 2 * (e + PAD) + PAD,
+        cm.text.len(TITLE_H) + h + time + 2 * (e + PAD) + PAD,
     )
 }
 
@@ -347,6 +361,8 @@ pub struct PopupLayout {
     pub grid: Layout,
     /// The analog clock's square right of the grid, centred on it; none in a look without one.
     pub clock: Option<Rect>,
+    /// The time line's row under the grid, as wide as the clock and centred under it.
+    pub time: Option<Rect>,
 }
 
 pub fn popup_layout(cm: &ControlMetrics) -> PopupLayout {
@@ -355,20 +371,22 @@ pub fn popup_layout(cm: &ControlMetrics) -> PopupLayout {
     let (w, h) = size(cm);
     let title_h = cm.text.len(TITLE_H);
     let grid = Rect::new(x, y + title_h + PAD, w, h);
-    let side = cm.clock_face;
+    let side = clock_side(cm);
+    let clock = (side > 0).then(|| {
+        Rect::new(
+            grid.right() + cm.text.len(CLOCK_GAP),
+            grid.y + (h - side) / 2,
+            side,
+            side,
+        )
+    });
     PopupLayout {
         prev: Rect::new(x, y, ARROW_W, title_h),
         next: Rect::new(x + w - ARROW_W, y, ARROW_W, title_h),
         title: Rect::new(x + ARROW_W, y, w - 2 * ARROW_W, title_h),
         grid: layout(grid, cm),
-        clock: (side > 0).then(|| {
-            Rect::new(
-                grid.right() + CLOCK_GAP,
-                grid.y + (h - side) / 2,
-                side,
-                side,
-            )
-        }),
+        clock,
+        time: clock.map(|r| Rect::new(r.x, grid.bottom() + PAD, r.width, cm.text.len(TIME_H))),
     }
 }
 
@@ -392,8 +410,8 @@ pub fn popup_hit(cm: &ControlMetrics, x: i32, y: i32) -> PopupHit {
 
 /// The popup panel at `theme`'s scale: the flyout's panel
 /// ([`crate::flyout`]) round the title row, the grid and, in a look with one,
-/// the analog clock at `cal.now`, with its shadow round it when the look has
-/// one. Nothing is picked; today is outlined.
+/// the analog clock at `cal.now` over the time line `cal.time`, with its
+/// shadow round it when the look has one. Nothing is picked; today is outlined.
 /// The arrow `hot` names is drawn lit where the look lights it. Under a
 /// look that frames its flyouts as windows the title is regular weight.
 pub fn draw_popup(theme: &Theme, text: &TextRenderer, cal: &Calendar, hot: PopupHit) -> Canvas {
@@ -471,6 +489,18 @@ pub fn draw_popup_base(
         px,
     );
     draw(&mut c, text, p, cal, &lay.grid, false, px);
+    if let (Some(r), Some(time)) = (lay.time, &cal.time) {
+        let size = cm.text.px(TIME_PX) * s as u32;
+        text.draw(
+            &mut c,
+            r.scaled(s),
+            time,
+            false,
+            cs.button_text,
+            Align::Center,
+            size,
+        );
+    }
     flyout::shadowed(theme, c)
 }
 
@@ -519,6 +549,9 @@ pub fn popup_access(
     }
     if let Some(r) = lay.clock {
         tree.push(parent, "clock", access::named(Role::Image, r, "Clock"));
+    }
+    if let (Some(r), Some(time)) = (lay.time, &cal.time) {
+        tree.push(parent, "time", access::named(Role::Label, r, time));
     }
     let mut shown = cal.clone();
     shown.day = match cal.today {
@@ -849,18 +882,20 @@ mod tests {
         assert_eq!(Calendar::new(2026, 9, None, 0).title(), "September 2026");
     }
 
-    /// Under Glass the clock stands right of the grid, level with it, and widens the popup;
-    /// Classic has none.
+    /// Under Glass the clock stands right of the grid, level with it, and widens the popup; the
+    /// time line's row under it makes the popup 28 px taller. Classic has neither.
     #[test]
     fn a_glass_popup_shows_the_clock_beside_the_month() {
         use crate::interface::Interface;
         let glass = crate::interfaces::theme_for(Interface::Glass);
         let cm = glass.controls();
-        assert_eq!(popup_size(&cm), (327, 174));
+        assert_eq!(popup_size(&cm), (327, 174 + 28));
         let lay = popup_layout(&cm);
         assert_eq!(lay.clock, Some(Rect::new(186, 32, 129, 129)));
+        assert_eq!(lay.time, Some(Rect::new(186, 166, 129, 24)));
         assert_eq!(lay.grid.frame.y, 32);
         assert_eq!(popup_layout(&ControlMetrics::CLASSIC).clock, None);
+        assert_eq!(popup_layout(&ControlMetrics::CLASSIC).time, None);
         assert_eq!(popup_size(&ControlMetrics::CLASSIC), (174, 162));
         let text = TextRenderer::load(&FontConfig::default());
         let mut cal = Calendar::new(2026, 10, None, 0);
@@ -880,11 +915,106 @@ mod tests {
             bare.get(mid.0, mid.1),
             "the hands at 12 cross the face above its middle"
         );
-        let mut tree = Tree::new(access::node(Role::Window, Rect::new(0, 0, 327, 174)));
+        let mut tree = Tree::new(access::node(Role::Window, Rect::new(0, 0, 327, 202)));
         popup_access(&cal, &cm, &text, 11, &mut tree, crate::access::ROOT);
         assert!(
             tree.nodes().any(|(_, n)| n.label() == Some("Clock")),
             "the clock is named"
+        );
+    }
+
+    /// The time line stands centred under the clock in the title's ink, a size up; without a time
+    /// the row is bare.
+    #[test]
+    fn a_glass_popup_writes_the_time_under_the_clock() {
+        use crate::interface::Interface;
+        let glass = crate::interfaces::theme_for(Interface::Glass);
+        let text = TextRenderer::load(&FontConfig::default());
+        let m = crate::flyout::margin(&glass);
+        let r = popup_layout(&glass.controls()).time.unwrap();
+        let row = Rect::new(r.x + m.left, r.y + m.top, r.width, r.height);
+        let mut cal = Calendar::new(2026, 10, None, 0);
+        let bare = draw_popup(&glass, &text, &cal, PopupHit::Panel);
+        cal.time = Some("14:05".into());
+        let timed = draw_popup(&glass, &text, &cal, PopupHit::Panel);
+        let inked = bare.differing_rect(&timed);
+        assert!(!inked.is_empty(), "the time is written");
+        assert_eq!(inked.intersect(&row), inked, "inside its row");
+        let w = text.measure("14:05", false, TIME_PX);
+        assert!(
+            inked.width <= w && inked.width >= w * 3 / 4,
+            "{inked:?} for {w} px of text"
+        );
+        let (left, right) = (inked.x - row.x, row.right() - inked.right());
+        assert!((left - right).abs() <= 2, "centred: {left} and {right}");
+        assert!(
+            inked.height >= 12,
+            "a size up from the title: {} rows",
+            inked.height
+        );
+        let ink = glass.colors.button_text.argb();
+        assert!(
+            timed.pixels.iter().filter(|&&px| px == ink).count()
+                > bare.pixels.iter().filter(|&&px| px == ink).count(),
+            "in the title's ink"
+        );
+        let mut tree = Tree::new(access::node(Role::Window, Rect::new(0, 0, 327, 202)));
+        popup_access(
+            &cal,
+            &glass.controls(),
+            &text,
+            11,
+            &mut tree,
+            crate::access::ROOT,
+        );
+        assert!(tree.nodes().any(|(_, n)| n.label() == Some("14:05")));
+    }
+
+    /// At 200% under Glass the clock, its gap and the time line grow with the grid: the clock
+    /// keeps an odd side, still level with the grid, and the time row stays under it.
+    #[test]
+    fn a_grown_glass_popup_grows_its_clock_and_time_line() {
+        use crate::interface::Interface;
+        let glass = crate::interfaces::theme_for(Interface::Glass).with_text_size(200);
+        let cm = glass.controls();
+        let lay = popup_layout(&cm);
+        let grid = lay.grid.frame;
+        assert_eq!((grid.width, grid.height), (2 * W, 2 * H));
+        let clock = lay.clock.unwrap();
+        assert_eq!(clock, Rect::new(grid.right() + 24, grid.y, 259, 259));
+        assert_eq!(
+            lay.time,
+            Some(Rect::new(clock.x, grid.bottom() + 4, 259, 48))
+        );
+        assert_eq!(
+            popup_size(&cm),
+            (2 * W + 24 + 259 + 24, 2 * 16 + 2 * H + 48 + 4 + 28)
+        );
+        let text = TextRenderer::load(&FontConfig::default());
+        let mut cal = Calendar::new(2026, 10, None, 0);
+        cal.now = Some((10, 9, 30));
+        cal.time = Some("10:09".into());
+        let c = draw_popup(&glass, &text, &cal, PopupHit::Panel);
+        let m = crate::flyout::margin(&glass);
+        let (w, h) = popup_size(&cm);
+        assert_eq!(
+            (c.width as i32, c.height as i32),
+            (w + m.left + m.right, h + m.top + m.bottom)
+        );
+        let mut small = Calendar::new(2026, 10, None, 0);
+        small.time = cal.time.clone();
+        let g100 = crate::interfaces::theme_for(Interface::Glass);
+        let ink_h = |theme: &Theme, cal: &Calendar| {
+            let mut bare = cal.clone();
+            bare.time = None;
+            let a = draw_popup(theme, &text, &bare, PopupHit::Panel);
+            let b = draw_popup(theme, &text, cal, PopupHit::Panel);
+            a.differing_rect(&b).height
+        };
+        let (at_100, at_200) = (ink_h(&g100, &small), ink_h(&glass, &small));
+        assert!(
+            at_100 > 0 && at_200 >= 2 * at_100 - 2,
+            "{at_200} rows at 200%, {at_100} at 100%"
         );
     }
 
