@@ -100,6 +100,10 @@ pub struct Backend {
     reset: bool,
     /// A uevent or the session's return asked for a connector scan, run once quiet.
     rescan: bool,
+    /// The scan under way: its connectors are probed one per loop turn (`on_quiet`).
+    probe: Option<Probe>,
+    /// Runs the next step of the deferred work (`on_quiet`).
+    step: Option<RegistrationToken>,
     /// The config before a reload whose output changes wait for quiet.
     config_from: Option<Box<crate::config::Config>>,
     /// Checks for stalled outputs while any has a job or flip out (`watch`).
@@ -392,6 +396,8 @@ pub fn init(state: &mut State) -> Result<(), Box<dyn std::error::Error>> {
         delay: std::env::var(commit::Delay::VAR).ok(),
         reset: false,
         rescan: false,
+        probe: None,
+        step: None,
         config_from: None,
         watch: None,
         scanner: DrmScanner::new(),
@@ -400,19 +406,25 @@ pub fn init(state: &mut State) -> Result<(), Box<dyn std::error::Error>> {
         dmabuf: Some((dmabuf_state, dmabuf_global)),
         shm_textures,
     });
-    scan_connectors(state);
+    scan_connectors(state, &HashMap::new());
     if state.scene.outputs().is_empty() {
         log::warn!("no connected output on {}", path.display());
     }
     Ok(())
 }
 
-fn scan_connectors(state: &mut State) {
+/// Scan the connectors with `probed`'s infos for the ones probed already; the rest are probed
+/// now.
+fn scan_connectors(state: &mut State, probed: &HashMap<connector::Handle, connector::Info>) {
     let Some(b) = state.backend.as_mut() else {
         return;
     };
     gated(b, "connector scan");
-    let events = match b.scanner.scan_connectors(&b.drm) {
+    let dev = Probed {
+        drm: &b.drm,
+        infos: probed,
+    };
+    let events = match b.scanner.scan_connectors(&dev) {
         Ok(events) => events,
         Err(e) => {
             log::warn!("connector scan: {e}");
@@ -435,6 +447,39 @@ fn scan_connectors(state: &mut State) {
             _ => {}
         }
     }
+}
+
+/// The device, with connectors' infos from earlier probes in place of a forced probe now.
+struct Probed<'a> {
+    drm: &'a DrmDevice,
+    infos: &'a HashMap<connector::Handle, connector::Info>,
+}
+
+impl std::os::fd::AsFd for Probed<'_> {
+    fn as_fd(&self) -> std::os::fd::BorrowedFd<'_> {
+        self.drm.as_fd()
+    }
+}
+
+impl smithay::reexports::drm::Device for Probed<'_> {}
+
+impl smithay::reexports::drm::control::Device for Probed<'_> {
+    fn get_connector(
+        &self,
+        handle: connector::Handle,
+        force_probe: bool,
+    ) -> std::io::Result<connector::Info> {
+        match self.infos.get(&handle) {
+            Some(info) => Ok(info.clone()),
+            None => self.drm.get_connector(handle, force_probe),
+        }
+    }
+}
+
+/// A connector scan in steps: each connector's forced probe (an EDID read) on its own turn.
+struct Probe {
+    left: Vec<connector::Handle>,
+    infos: HashMap<connector::Handle, connector::Info>,
 }
 
 fn connector_name(c: &connector::Info) -> String {
@@ -975,14 +1020,6 @@ impl Backend {
     fn settled(&self) -> bool {
         self.session.is_active() && !self.reset
     }
-
-    fn deferred(&self) -> bool {
-        self.reset
-            || self.rescan
-            || !self.reenable.is_empty()
-            || self.config_from.is_some()
-            || self.surfaces.values().any(|s| s.hw.retrain)
-    }
 }
 
 /// Main is about to issue `op`, an ioctl that takes every modeset lock.
@@ -1019,56 +1056,150 @@ pub fn stalled(state: &State, output: &Output) -> bool {
     commit::held(&s.track, &all, !b.retiring.is_empty(), now)
 }
 
-/// Run the device work that waited for quiet (`Backend::deferred`). A step that sends a
-/// blocking job leaves the rest for its `Done`.
+/// Deferred work, in the order it runs: the device reset before the scan reads connectors
+/// again, each connector's probe, the scan of what they read, outputs enabled again, then the
+/// reloaded config's output changes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Step {
+    Reset,
+    Probe,
+    Scan,
+    Reenable,
+    Config,
+}
+
+/// The next step. `rescan` asks for a new scan, which starts over at the first probe;
+/// `unprobed` counts the connectors left to probe while one is under way.
+fn next_step(
+    reset: bool,
+    rescan: bool,
+    unprobed: Option<usize>,
+    reenable: bool,
+    config: bool,
+) -> Option<Step> {
+    match unprobed {
+        _ if reset => Some(Step::Reset),
+        _ if rescan => Some(Step::Probe),
+        Some(0) => Some(Step::Scan),
+        Some(_) => Some(Step::Probe),
+        None if reenable => Some(Step::Reenable),
+        None if config => Some(Step::Config),
+        None => None,
+    }
+}
+
+impl Backend {
+    /// The step `on_quiet` may run now. The reset also waits for every job's `Done`, which
+    /// calls `on_quiet` again.
+    fn step_due(&self) -> Option<Step> {
+        if !self.quiet() || !self.session.is_active() {
+            return None;
+        }
+        let step = next_step(
+            self.reset,
+            self.rescan,
+            self.probe.as_ref().map(|p| p.left.len()),
+            self.reenable.iter().any(|c| !self.retiring.contains_key(c)),
+            self.config_from.is_some(),
+        )?;
+        let busy = self.surfaces.values().any(|s| s.track.busy());
+        (step != Step::Reset || !busy).then_some(step)
+    }
+}
+
+/// Run the device work that waited for quiet (`Backend::step_due`), one step per loop turn so
+/// no turn holds clients' round trips for all of it. A step that sends a blocking job leaves
+/// the rest for its `Done`.
 fn on_quiet(state: &mut State) {
-    let ready = |state: &State| {
-        state
-            .backend
-            .as_ref()
-            .is_some_and(|b| b.deferred() && b.quiet() && b.session.is_active())
-    };
-    if !ready(state) {
+    let Some(b) = state.backend.as_mut() else {
         return;
-    }
-    reset_device(state);
-    if ready(state)
-        && state
-            .backend
-            .as_mut()
-            .is_some_and(|b| std::mem::take(&mut b.rescan))
-    {
-        log::debug!("connector scan");
-        scan_connectors(state);
-        check_links(state);
-    }
-    while ready(state) {
-        let Some(b) = state.backend.as_mut() else {
-            return;
-        };
-        let Some(&crtc) = b.reenable.iter().find(|c| !b.retiring.contains_key(c)) else {
-            break;
-        };
-        b.reenable.remove(&crtc);
-        if let Some(output) = b.parked.get(&crtc).map(|p| p.output.clone()) {
-            state.set_in_layout(&output, true);
+    };
+    if b.step.is_none() && b.step_due().is_some() {
+        let token = state
+            .handle
+            .insert_source(Timer::immediate(), |_, _, state| {
+                if let Some(b) = state.backend.as_mut() {
+                    b.step = None;
+                }
+                quiet_step(state);
+                on_quiet(state);
+                TimeoutAction::Drop
+            });
+        match token {
+            Ok(t) => b.step = Some(t),
+            Err(e) => log::warn!("deferred work: {}", e.error),
         }
     }
-    if ready(state)
-        && let Some(old) = state.backend.as_mut().and_then(|b| b.config_from.take())
-        && state.apply_output_config(&old)
-    {
-        state.update_layout();
-    }
-    let crtcs: Vec<crtc::Handle> = state
-        .backend
-        .iter()
-        .flat_map(|b| b.surfaces.keys().copied())
-        .collect();
+    let crtcs: Vec<crtc::Handle> = b.surfaces.keys().copied().collect();
     for crtc in crtcs {
         retrain_link(state, crtc);
     }
     watch(state);
+}
+
+fn quiet_step(state: &mut State) {
+    use smithay::reexports::drm::control::Device as _;
+    let Some(b) = state.backend.as_mut() else {
+        return;
+    };
+    let Some(step) = b.step_due() else {
+        return;
+    };
+    match step {
+        Step::Reset => reset_device(state),
+        Step::Probe => {
+            if std::mem::take(&mut b.rescan) {
+                gated(b, "connector list");
+                let left = b
+                    .drm
+                    .resource_handles()
+                    .map(|r| r.connectors().to_vec())
+                    .unwrap_or_else(|e| {
+                        log::warn!("connector scan: {e}");
+                        Vec::new()
+                    });
+                b.probe = Some(Probe {
+                    left,
+                    infos: HashMap::new(),
+                });
+            }
+            gated(b, "connector probe");
+            let Some(p) = b.probe.as_mut() else {
+                return;
+            };
+            let Some(conn) = p.left.pop() else {
+                return;
+            };
+            match b.drm.get_connector(conn, true) {
+                Ok(info) => {
+                    p.infos.insert(conn, info);
+                }
+                Err(e) => log::warn!("connector probe: {e}"),
+            }
+        }
+        Step::Scan => {
+            let probed = b.probe.take().map(|p| p.infos).unwrap_or_default();
+            log::debug!("connector scan");
+            scan_connectors(state, &probed);
+            check_links(state);
+        }
+        Step::Reenable => {
+            let Some(&crtc) = b.reenable.iter().find(|c| !b.retiring.contains_key(c)) else {
+                return;
+            };
+            b.reenable.remove(&crtc);
+            if let Some(output) = b.parked.get(&crtc).map(|p| p.output.clone()) {
+                state.set_in_layout(&output, true);
+            }
+        }
+        Step::Config => {
+            if let Some(old) = b.config_from.take()
+                && state.apply_output_config(&old)
+            {
+                state.update_layout();
+            }
+        }
+    }
 }
 
 /// How often `watch` looks for stalled outputs.
@@ -2494,8 +2625,8 @@ fn write_gamma(
 #[cfg(test)]
 mod tests {
     use super::{
-        Ask, Asked, CrtcNow, GammaStep, LINK_TRIES, LinkStep, Lut, gamma_step, link_step,
-        lut_from_blob,
+        Ask, Asked, CrtcNow, GammaStep, LINK_TRIES, LinkStep, Lut, Step, gamma_step, link_step,
+        lut_from_blob, next_step,
     };
 
     fn asked(asks: &[Ask]) -> Asked {
@@ -2643,6 +2774,40 @@ mod tests {
         }
         assert_eq!(link_step(true, LINK_TRIES), LinkStep::GiveUp);
         assert_eq!(link_step(true, LINK_TRIES + 1), LinkStep::GaveUp);
+    }
+
+    #[test]
+    fn deferred_work_runs_one_step_at_a_time_reset_probes_scan_enables_config() {
+        let mut reset = true;
+        let mut rescan = true;
+        let mut unprobed: Option<usize> = None;
+        let mut reenable = 2;
+        let mut config = true;
+        let mut steps = Vec::new();
+        while let Some(step) = next_step(reset, rescan, unprobed, reenable > 0, config) {
+            steps.push(step);
+            match step {
+                Step::Reset => reset = false,
+                Step::Probe if rescan => (rescan, unprobed) = (false, Some(2)),
+                Step::Probe => unprobed = unprobed.map(|n| n - 1),
+                Step::Scan => unprobed = None,
+                Step::Reenable => reenable -= 1,
+                Step::Config => config = false,
+            }
+            assert!(steps.len() < 20, "never ends: {steps:?}");
+        }
+        use Step::*;
+        assert_eq!(
+            steps,
+            [Reset, Probe, Probe, Probe, Scan, Reenable, Reenable, Config],
+            "the first probe step lists three connectors and probes one"
+        );
+        assert_eq!(
+            next_step(false, true, Some(1), true, true),
+            Some(Probe),
+            "a new uevent starts the scan over"
+        );
+        assert_eq!(next_step(false, false, Some(0), true, true), Some(Scan));
     }
 
     #[test]
