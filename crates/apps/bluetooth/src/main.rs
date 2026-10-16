@@ -278,13 +278,17 @@ impl BtApp {
         if let Some(s) = latest {
             self.snapshot_in(s);
         }
+        let mut activate = None;
         while let Some(raw) = self.msgs.as_ref().and_then(|rx| rx.try_recv().ok()) {
             let Some(msg) = tray::translate(raw) else {
                 continue;
             };
             match msg {
                 tray::TrayMsg::Exit => return self.quit(),
-                tray::TrayMsg::Show => self.hidden = false,
+                tray::TrayMsg::Show => {
+                    self.hidden = false;
+                    activate = self.tray.as_ref().and_then(|t| t.take_activation_token());
+                }
                 tray::TrayMsg::Add => self.open_wizard(),
                 tray::TrayMsg::TogglePower => {
                     if let Some(a) = &self.snapshot.adapter {
@@ -296,7 +300,10 @@ impl BtApp {
                 }
             }
         }
-        Reply::redraw_all()
+        Reply {
+            activate,
+            ..Reply::redraw_all()
+        }
     }
 
     fn quit(&mut self) -> Reply {
