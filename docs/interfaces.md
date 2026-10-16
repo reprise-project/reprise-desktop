@@ -91,7 +91,7 @@ Glass has no colour schemes. It has a `[glass]` section instead:
 | `mode` | `light` or `dark` | `light` |
 | `material` | `frosted`, `smoked` or `molten` | `frosted` |
 | `frame` | `rounded` or `square` | `rounded` |
-| `notification_style` | the notification sheet's shape: `lozenge`, or `halo` with the app icon breaking out of its top-left edge and the glass washed in the icon's colour | `lozenge` |
+| `notification_style` | the notification sheet's shape: `lozenge`; `halo`, with the app icon breaking out of its top-left edge and the glass washed in the icon's colour; or `droplet`, one row that opens on hover | `lozenge` |
 | `transparency` | `false` draws the glass opaque and turns the blur off | `true` |
 | `blur` | strength, 1 (least GPU work) to 5 | 2 |
 | `streaks` | the diagonal reflections on Frosted glass | `true` |
