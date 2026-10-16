@@ -2402,7 +2402,7 @@ impl Host {
         self.ctx.at_pick = at_pick((w, h), self.slots[i].picked, self.slots[i].bounds);
         self.ctx.origin = self.slots[i].origin;
         // Only the active window draws as active (a dialog's default
-        // button, under a look that shows it): a toplevel as the compositor
+        // button): a toplevel as the compositor
         // says, a flyout while it has the keyboard.
         self.ctx.theme.active = match self.slots[i].window {
             Shell::Toplevel(_) => self.slots[i].activated,
@@ -3852,22 +3852,15 @@ impl Host {
         }
     }
 
-    /// Redraw flyout `id`, which just gained or lost the keyboard, when
-    /// the look draws an inactive window's default button apart. A
-    /// toplevel redraws on the configure that changes its `activated`.
+    /// Redraw flyout `id`, which just gained or lost the keyboard, so its
+    /// default button follows. A toplevel redraws on the configure that
+    /// changes its `activated`.
     fn redraw_if_active_shows(&mut self, id: WinId) {
         let flyout = self
             .slots
             .iter()
             .any(|s| s.id == id && matches!(s.window, Shell::Layer(_)));
-        if flyout
-            && self
-                .ctx
-                .theme
-                .look
-                .style()
-                .is_some_and(|st| st.default_needs_active)
-        {
+        if flyout {
             self.mark_dirty(id);
         }
     }

@@ -662,7 +662,7 @@ mod tests {
     fn an_inactive_windows_default_button_draws_plain() {
         let theme = glass();
         let text = TextRenderer::load(&theme.fonts);
-        let inactive = |theme: &Theme| {
+        let inactive = {
             let mut c = filled(75, 23, 1, FACE);
             let p = crate::look::Paint {
                 active: false,
@@ -683,28 +683,7 @@ mod tests {
             c
         };
         let pins: Vec<_> = BUTTON_PINS.iter().map(|&(at, v)| (at, v[0])).collect();
-        assert_pixels(&inactive(&theme), "an inactive default", (0, 0), &pins);
-        let blue = theme_for(Interface::Blue);
-        let active = {
-            let mut c = filled(75, 23, 1, FACE);
-            draw_button(
-                &mut c,
-                &text,
-                &blue.paint(),
-                Rect::new(0, 0, 75, 23),
-                "",
-                true,
-                Interaction::Idle,
-                true,
-                false,
-                blue.fonts.size_px,
-            );
-            c
-        };
-        assert!(
-            inactive(&blue) == active,
-            "Blue's default button keeps its frame"
-        );
+        assert_pixels(&inactive, "an inactive default", (0, 0), &pins);
     }
 
     #[test]

@@ -27,7 +27,8 @@ pub mod tooltip;
 /// A push button. `ptr` is what the pointer does to it; Classic draws
 /// `Pressed` pushed and `Hot` at rest. A greyed label is etched on Classic's
 /// button, unless the style registers a Disabled push button ink: then it is
-/// inked once, flat, in that.
+/// inked once, flat, in that. A default button in an inactive window
+/// (`p.active` false) draws as a plain one.
 #[expect(clippy::too_many_arguments)]
 pub fn draw_button(
     c: &mut Canvas,
@@ -41,6 +42,7 @@ pub fn draw_button(
     focus: bool,
     px: u32,
 ) {
+    let default = default && p.active;
     if let Some(st) = p.look.style()
         && styled::button::draw_button(st, c, text, p, r, label, default, ptr, enabled, focus, px)
     {
@@ -930,6 +932,35 @@ mod tests {
                 let px = if inside { want.get(x - 6, y - 7) } else { 0 };
                 assert_eq!(c.get(x, y), px, "({x}, {y}) is {px:08X}");
             }
+        }
+    }
+
+    /// In every look an inactive window's default button draws as a plain
+    /// one, and an active window's draws apart from it.
+    #[test]
+    fn an_inactive_windows_default_button_draws_plain_in_every_look() {
+        for interface in [Interface::Classic, Interface::Blue, Interface::Glass] {
+            let theme = theme_for(interface);
+            let text = crate::text::TextRenderer::load(&theme.fonts);
+            let r = Rect::new(0, 0, 75, 23);
+            let button = |active, default| {
+                let p = Paint {
+                    active,
+                    ..theme.paint()
+                };
+                let mut c = Canvas::new(75, 23);
+                let (ptr, px) = (Interaction::Idle, theme.fonts.size_px);
+                draw_button(&mut c, &text, &p, r, "OK", default, ptr, true, false, px);
+                c
+            };
+            assert!(
+                button(false, true) == button(false, false),
+                "{interface:?}: inactive default is plain"
+            );
+            assert!(
+                button(true, true) != button(true, false),
+                "{interface:?}: active default is ringed"
+            );
         }
     }
 

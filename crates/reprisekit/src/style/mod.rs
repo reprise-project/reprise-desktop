@@ -995,7 +995,6 @@ pub struct Style {
     task_spot: Option<Spot>,
     pub task_nudge: bool,
     pub greyed_field_frame: bool,
-    pub default_needs_active: bool,
     pub combo_edit_border: bool,
     parts: HashMap<Part, Art>,
     pub controls: ControlMetrics,
@@ -1073,7 +1072,6 @@ impl Style {
             task_spot: None,
             task_nudge: true,
             greyed_field_frame: false,
-            default_needs_active: false,
             combo_edit_border: false,
             parts: HashMap::new(),
             controls: ControlMetrics::CLASSIC,
@@ -1270,11 +1268,6 @@ impl Style {
 
     pub fn with_flat_menus(mut self) -> Style {
         self.flat_menus = true;
-        self
-    }
-
-    pub fn with_default_needing_active(mut self) -> Style {
-        self.default_needs_active = true;
         self
     }
 
