@@ -276,6 +276,8 @@ pub struct Settings {
     /// `[privacy] location`: off, every program asking for the location
     /// is refused without a prompt.
     pub location: bool,
+    /// `[privacy] capture_border`: the red border around what is shared.
+    pub capture_border: bool,
     /// `[debug] overlay`: the stats panel in each screen's corner.
     pub debug_overlay: bool,
     /// `[debug] overlay_in_captures`: screenshots and screen sharing show
@@ -508,6 +510,7 @@ impl Default for Settings {
             taskbar_reveal_on_attention: true,
             recent_files: true,
             location: true,
+            capture_border: true,
             debug_overlay: false,
             debug_overlay_in_captures: false,
             launcher_files: true,
@@ -1001,6 +1004,7 @@ fn fields() -> Vec<Field> {
         ),
         Field::Flag(k("privacy", "recent_files"), lens!(recent_files)),
         Field::Flag(k("privacy", "location"), lens!(location)),
+        Field::Flag(k("privacy", "capture_border"), lens!(capture_border)),
         Field::Flag(k("debug", "overlay"), lens!(debug_overlay)),
         Field::Flag(
             k("debug", "overlay_in_captures"),
@@ -2250,6 +2254,7 @@ size_px = 12
             taskbar_reveal_on_attention: false,
             recent_files: false,
             location: false,
+            capture_border: false,
             debug_overlay: true,
             debug_overlay_in_captures: true,
             launcher_files: false,

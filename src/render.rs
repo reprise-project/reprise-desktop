@@ -34,6 +34,7 @@ render_elements! {
     Tint=crate::nightlight::tint::TintElement,
     Zoom=TextureRenderElement<GlesTexture>,
     Filtered=reprisefx::ColorElement,
+    Border=smithay::backend::renderer::element::solid::SolidColorRenderElement,
 }
 
 pub struct Parts<'a> {

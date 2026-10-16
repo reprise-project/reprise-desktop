@@ -295,6 +295,8 @@ suspend_after = 0            # run [power] standby
 #                            # jump lists and the file dialogs' My Recent Documents
 # location = true            # false refuses every program that asks geoclue for the
 #                            # location, without the prompt
+# capture_border = true      # a red border on the screen around each output, window
+#                            # or area being recorded or shared; never in the capture
 
 # [drives]                   # Settings > Default Programs also sets this
 # on_insert = "ask"          # what a plugged-in drive does: "ask" shows a balloon with

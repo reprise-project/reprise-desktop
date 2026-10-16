@@ -24,7 +24,7 @@ use smithay::{
             protocol::{wl_buffer::WlBuffer, wl_shm::Format},
         },
     },
-    utils::{Physical, Point, Rectangle, Size},
+    utils::{Logical, Physical, Point, Rectangle, Size},
     wayland::{Dispatch2, GlobalDispatch2, dmabuf, shm},
 };
 
@@ -76,6 +76,8 @@ where
 #[derive(Clone)]
 pub struct FrameInfo {
     pub output: Output,
+    /// The region asked for, output-local logical; None for the whole output.
+    pub region: Option<Rectangle<i32, Logical>>,
     pub region_loc: Point<i32, Physical>,
     pub buffer_size: Size<i32, Physical>,
     pub overlay_cursor: bool,
@@ -155,6 +157,7 @@ where
             FrameState::Pending {
                 info: FrameInfo {
                     output,
+                    region,
                     region_loc,
                     buffer_size,
                     overlay_cursor: overlay_cursor != 0,

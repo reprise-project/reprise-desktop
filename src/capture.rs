@@ -11,6 +11,7 @@
 //! `src/render_helpers/mod.rs` (GPL-3.0-or-later).
 
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::{Duration, Instant};
 
 use smithay::{
     backend::{
@@ -42,6 +43,7 @@ use smithay::{
 };
 
 use crate::{
+    captureborder::{Captured, WlrKey},
     compositor::State,
     render::{OutputElement, Parts, clear_color, cursor_image, output_elements},
     screencopy::{Screencopy, ScreencopyBuffer, ScreencopyHandler},
@@ -51,6 +53,8 @@ use crate::{
 /// The side of a cursor session's buffer, in logical pixels: room for
 /// the largest pointer image the themes ship.
 const CURSOR_BOX: i32 = 64;
+
+struct Opened(Instant);
 
 /// The open ext sessions and the frames waiting for an output's next frame.
 #[derive(Default)]
@@ -110,6 +114,35 @@ impl Captures {
             .count();
         (self.sessions.len() - windows, windows)
     }
+
+    /// What the ext sessions open for at least `age` show.
+    pub fn targets(&self, age: Duration) -> Vec<Captured<Output, WindowId>> {
+        self.sessions
+            .iter()
+            .filter(|s| {
+                s.user_data()
+                    .get::<Opened>()
+                    .is_some_and(|o| o.0.elapsed() >= age)
+            })
+            .filter_map(|s| match shown(&s.source())? {
+                Shown::Output(o) => Some(Captured::Output(o)),
+                Shown::Window(w) => Some(Captured::Window(w)),
+            })
+            .collect()
+    }
+
+    /// The wlr captures with a `copy_with_damage` frame waiting.
+    pub fn wlr_waiting(&self) -> Vec<WlrKey> {
+        self.waiting
+            .iter()
+            .filter_map(|w| match w {
+                Waiting::Wlr(s) if s.with_damage && s.is_alive() => {
+                    Some((s.info.output.clone(), s.info.region))
+                }
+                _ => None,
+            })
+            .collect()
+    }
 }
 
 /// `output` runs a new mode: its sessions get the new buffer size.
@@ -165,6 +198,7 @@ pub fn window_gone(state: &mut State, w: WindowId) {
     let on = Some(Shown::Window(w));
     state.captures.stop(|s| *s == on);
     crate::privacy::sessions_changed(state);
+    crate::captureborder::refresh(state);
 }
 
 fn take_waiting(state: &mut State, on: impl Fn(&Option<Shown>) -> bool) -> Vec<Waiting> {
@@ -567,16 +601,19 @@ fn delivered(session: &SessionRef) -> &AtomicBool {
 impl ScreencopyHandler for State {
     fn screencopy_frame(&mut self, screencopy: Screencopy) {
         crate::privacy::legacy_frame(self);
+        let key = (screencopy.info.output.clone(), screencopy.info.region);
         if screencopy.with_damage && screencopy.info.output.current_mode().is_some() {
             let output = screencopy.info.output.clone();
             if first_copy(&screencopy) {
-                return fill_wlr(self, screencopy);
+                fill_wlr(self, screencopy);
+            } else {
+                self.captures.waiting.push(Waiting::Wlr(screencopy));
+                crate::backend::schedule(self, &output);
             }
-            self.captures.waiting.push(Waiting::Wlr(screencopy));
-            crate::backend::schedule(self, &output);
         } else {
             fill_wlr(self, screencopy);
         }
+        crate::captureborder::wlr_frame(self, key);
     }
 }
 
@@ -647,8 +684,12 @@ impl ImageCopyCaptureHandler for State {
     }
 
     fn new_session(&mut self, session: Session) {
+        session
+            .user_data()
+            .insert_if_missing_threadsafe(|| Opened(Instant::now()));
         self.captures.sessions.push(session);
         crate::privacy::sessions_changed(self);
+        crate::captureborder::session_opened(self);
     }
 
     fn cursor_capture_constraints(
@@ -717,6 +758,7 @@ impl ImageCopyCaptureHandler for State {
         self.captures
             .waiting
             .retain(|w| !matches!(w, Waiting::Ext { session: s, .. } if *s == session));
+        crate::captureborder::refresh(self);
     }
 }
 
