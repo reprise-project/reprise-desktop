@@ -98,6 +98,9 @@ pub struct Xwayland {
     selections: [Option<Vec<String>>; 2],
     /// The X11 menus `menus::dismiss` has pressed for.
     pressed: Vec<X11Window>,
+    /// The untyped override-redirect windows that showed while an X client held the pointer
+    /// grab: menus to `menus::dismiss`.
+    grabbing: Vec<X11Window>,
 }
 
 /// How long an X server must have run for its death to leave the display
@@ -129,6 +132,7 @@ impl Xwayland {
             started: None,
             selections: [None, None],
             pressed: Vec::new(),
+            grabbing: Vec::new(),
         }
     }
 
@@ -367,6 +371,11 @@ fn start_helper(state: &mut State, display: u32) -> Option<helper::Helper> {
             ChannelEvent::Msg(helper::Back::DragActions(actions)) => {
                 state.x11_drag_actions(actions);
             }
+            ChannelEvent::Msg(helper::Back::Grabbed(window)) => {
+                if state.window_for_x11_id(window).is_some() {
+                    state.xwayland.grabbing.push(window);
+                }
+            }
             ChannelEvent::Closed => {}
         });
     if let Err(e) = source {
@@ -589,7 +598,8 @@ impl XWaylandShellHandler for State {
 
     /// Xwayland draws X11 window `x` into `wl`: it becomes a window, which
     /// maps on `wl`'s first buffer. Its frame follows its Motif hints, and
-    /// its icon is fetched.
+    /// its icon is fetched. An untyped override-redirect window may be a
+    /// menu: the helper says whether an X client holds the pointer grab.
     fn surface_associated(&mut self, _xwm: XwmId, wl: WlSurface, x: X11Surface) {
         if let Some(old) = self.window_for_x11(&x) {
             self.destroy_window(old);
@@ -597,12 +607,16 @@ impl XWaylandShellHandler for State {
         let or = x.is_override_redirect();
         let csd = !or && !decorated(&x.motif_hints());
         let id = x.window_id();
+        let untyped = x.window_type().is_none();
         let w = self.add_window(Kind::X11(Box::new(x)), wl);
         if let Some(win) = self.win_mut(w) {
             win.override_redirect = or;
             win.csd = csd;
         }
         self.xwayland.send(helper::Req::Icon(id));
+        if or && untyped {
+            self.xwayland.send(helper::Req::Grabbed(id));
+        }
         // The class and title are known now and the surface has no buffer
         // yet: the first one has the size the rules or the app's memory
         // give it.
@@ -668,6 +682,7 @@ impl XwmHandler for State {
     fn unmapped_window(&mut self, _xwm: XwmId, window: X11Surface) {
         // A menu shown again under the same X window is owed a press again.
         self.xwayland.pressed.retain(|&p| p != window.window_id());
+        self.xwayland.grabbing.retain(|&p| p != window.window_id());
         if let Some(w) = self.window_for_x11(&window) {
             self.destroy_window(w);
         }

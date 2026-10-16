@@ -278,6 +278,8 @@ impl State {
         crate::taskpreview::hide(self);
         crate::snappickerview::hide(self);
         self.taskbar_hover(None, TaskbarHit::Nothing);
+        // The keys stay with the switcher, so an open X11 menu closes here.
+        crate::xwayland::menus::dismiss(self);
         let p = self.pointer_location();
         self.repoint(p, InputTime::now());
     }

@@ -217,6 +217,8 @@ impl State {
         crate::snappickerview::hide(self);
         self.taskbar_hover(None, TaskbarHit::Nothing);
         self.switcher_peek();
+        // The keys stay with the switcher, so an open X11 menu closes here.
+        crate::xwayland::menus::dismiss(self);
         // A resting pointer over the panel shows its hover box now, and
         // one elsewhere loses the window's pointer focus. Peek follows the
         // selection only, so this starts none.

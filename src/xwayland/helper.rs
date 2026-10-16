@@ -11,7 +11,10 @@ use x11rb::{
     connection::{Connection, RequestConnection},
     protocol::{
         res::{self, ConnectionExt as _},
-        xproto::{AtomEnum, ClientMessageEvent, ConnectionExt, EventMask, InputFocus, PropMode},
+        xproto::{
+            AtomEnum, ClientMessageEvent, ConnectionExt, CreateWindowAux, EventMask, GrabMode,
+            GrabStatus, InputFocus, PropMode, WindowClass,
+        },
     },
     rust_connection::RustConnection,
     wrapper::ConnectionExt as _,
@@ -28,12 +31,15 @@ pub enum Req {
     Icon(u32),
     Property(u32, u32),
     DragActions,
+    /// Whether an X client holds the pointer grab as override-redirect `window` shows.
+    Grabbed(u32),
 }
 
 pub enum Back {
     Icon(u32, Option<IconSource>),
     Idle,
     DragActions(Vec<DndAction>),
+    Grabbed(u32),
 }
 
 pub const IDLE_GRACE: Duration = Duration::from_secs(10);
@@ -114,6 +120,22 @@ fn run(
     if !can_count {
         log::warn!("Xwayland has no X-Resource; it keeps running once started");
     }
+    // Never mapped, so a grab on it never activates: the status says only whether another
+    // client holds one, which the server checks first.
+    let probe = conn.generate_id()?;
+    conn.create_window(
+        0,
+        probe,
+        root,
+        0,
+        0,
+        1,
+        1,
+        0,
+        WindowClass::INPUT_ONLY,
+        0,
+        &CreateWindowAux::new(),
+    )?;
     let mut idle = IdleClock::default();
     let mut counted = Instant::now();
     loop {
@@ -179,6 +201,30 @@ fn run(
                     .map(|(_, action)| *action)
                     .collect();
                 if back.send(Back::DragActions(actions)).is_err() {
+                    return Ok(());
+                }
+            }
+            Req::Grabbed(window) => {
+                let status = conn
+                    .grab_pointer(
+                        false,
+                        probe,
+                        EventMask::NO_EVENT,
+                        GrabMode::ASYNC,
+                        GrabMode::ASYNC,
+                        NONE,
+                        NONE,
+                        CURRENT_TIME,
+                    )?
+                    .reply()?
+                    .status;
+                if status == GrabStatus::SUCCESS {
+                    conn.ungrab_pointer(CURRENT_TIME)?;
+                    conn.flush()?;
+                }
+                if status == GrabStatus::ALREADY_GRABBED
+                    && back.send(Back::Grabbed(window)).is_err()
+                {
                     return Ok(());
                 }
             }
