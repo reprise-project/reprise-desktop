@@ -1211,13 +1211,15 @@ impl State {
         items: Vec<MenuItem>,
         kind: crate::menuview::MenuKind,
         place: impl FnOnce((i32, i32), (i32, i32), Rect) -> (i32, i32),
+        options_look: bool,
     ) {
         if let Some(t) = self.start_panel.as_mut().and_then(|v| v.hover.take()) {
             self.handle.remove(t);
         }
         crate::tooltip::hover_start_panel(self, None);
         self.close_menu();
-        self.push_context_menu_placed(at, items, kind, crate::menuview::MenuFrom::Bar, place);
+        let from = crate::menuview::MenuFrom::Bar;
+        self.push_context_menu_looked(at, items, kind, from, place, options_look);
     }
 
     fn open_start_context(&mut self, s: Spot) {
@@ -1241,7 +1243,7 @@ impl State {
             }
         };
         let kind = crate::menuview::MenuKind::StartPanel { rows };
-        self.push_start_popup(at, items, kind, place_popup);
+        self.push_start_popup(at, items, kind, place_popup, false);
     }
 
     fn open_shutdown_options(&mut self) {
@@ -1256,9 +1258,8 @@ impl State {
             crate::startmenu::shutdown_menu(!self.config.power.hibernate.is_empty());
         let kind = crate::menuview::MenuKind::StartPanel { rows };
         let at = (arrow.right(), arrow.y);
-        self.push_start_popup(at, items, kind, |_, size, usable| {
-            shutdown_options_at(edge, arrow, size, usable)
-        });
+        let place = |_, size, usable| shutdown_options_at(edge, arrow, size, usable);
+        self.push_start_popup(at, items, kind, place, true);
     }
 
     fn open_recent_items(&mut self, i: usize) {
@@ -1279,7 +1280,7 @@ impl State {
             * self.draw_scale_at(Some(&output)).max(1);
         self.refresh_recent();
         let (items, kind) = self.documents_rows(px, false);
-        self.push_start_popup((row.right(), row.y), items, kind, place_popup);
+        self.push_start_popup((row.right(), row.y), items, kind, place_popup, false);
     }
 
     pub(crate) fn quick_file_of(&self, id: &str) -> Option<String> {

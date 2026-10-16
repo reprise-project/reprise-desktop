@@ -12,7 +12,8 @@ use crate::theme::Color;
 
 const LOOK: MenuLook = MenuLook {
     frame: Color::rgb(0x94, 0x95, 0x95),
-    ring: Color::rgb(0xF4, 0xF5, 0xF5),
+    ring: Some(Color::rgb(0xF4, 0xF5, 0xF5)),
+    face: None,
     row: 22,
     separator: 8,
     gutter: 26,
@@ -31,13 +32,40 @@ const LOOK: MenuLook = MenuLook {
     shadow: None,
 };
 
+/// The Start panel's Shut down options: a thin frame on a flat face, a light gutter, short rows
+/// and no shadow.
+const OPTIONS: MenuLook = MenuLook {
+    frame: Color::rgb(0xB4, 0xB6, 0xBA),
+    ring: None,
+    face: Some(Color::rgb(0xF3, 0xF4, 0xF5)),
+    row: 21,
+    separator: 6,
+    gutter: 24,
+    gutter_fill: Color::rgb(0xE9, 0xEA, 0xEC),
+    divider: (Color::rgb(0xE0, 0xE1, 0xE3), Color::rgb(0xFA, 0xFA, 0xFB)),
+    rule: (Color::rgb(0xD9, 0xDA, 0xDD), Color::rgb(0xFF, 0xFF, 0xFF)),
+    text_x: 31,
+    right_pad: 22,
+    shortcut_end: 16,
+    shadow: None,
+    ..LOOK
+};
+
 pub fn look(mode: Mode, shadow: Option<&'static DropShadow>) -> MenuLook {
-    let light = MenuLook { shadow, ..LOOK };
+    in_mode(mode, MenuLook { shadow, ..LOOK })
+}
+
+pub fn options_look(mode: Mode) -> MenuLook {
+    in_mode(mode, OPTIONS)
+}
+
+fn in_mode(mode: Mode, light: MenuLook) -> MenuLook {
     match mode {
         Mode::Light => light,
         Mode::Dark => MenuLook {
             frame: remap_color(light.frame),
-            ring: remap_color(light.ring),
+            ring: light.ring.map(remap_color),
+            face: light.face.map(remap_color),
             gutter_fill: remap_color(light.gutter_fill),
             divider: (remap_color(light.divider.0), remap_color(light.divider.1)),
             rule: (remap_color(light.rule.0), remap_color(light.rule.1)),
@@ -624,6 +652,121 @@ mod tests {
             0xfb913e06d0d9bc23,
         ];
         assert_eq!(got, want, "{got:#x?}");
+    }
+
+    fn options_theme(mode: super::Mode, scale: i32) -> Theme {
+        let s = super::super::Settings {
+            mode,
+            ..super::super::Settings::default()
+        };
+        let theme =
+            crate::interfaces::theme_with(Interface::Glass, crate::blue::Variant::default(), &s);
+        theme.scaled(scale).for_options_menu()
+    }
+
+    /// The Shut down options menu with its labels left blank, so its pixels hold no text,
+    /// on white with Restart lit when `lit`.
+    fn options(theme: &Theme, lit: bool) -> (Canvas, PopupMenu) {
+        let text = TextRenderer::load(&FontConfig::default());
+        let mut tree = MenuTree::new();
+        for item in [
+            MenuItem::item(""),
+            MenuItem::item(""),
+            MenuItem::Separator,
+            MenuItem::item(""),
+            MenuItem::Separator,
+            MenuItem::item(""),
+            MenuItem::item(""),
+        ] {
+            tree.push(item);
+        }
+        let s = theme.scale;
+        let mut c = Canvas::new(200 * s as u32, 200 * s as u32);
+        c.fill_rect(c.bounds(), Color::rgb(0xFF, 0xFF, 0xFF));
+        let cx = MenuCtx {
+            text: &text,
+            theme,
+            px: theme.fonts.size_px,
+            within: Rect::new(0, 0, 200, 200),
+        };
+        let mut chain = PopupMenu::open(&tree, (10, 10), &cx, false);
+        if lit {
+            for _ in 0..3 {
+                chain.key(&tree, MenuKey::Down, &cx);
+            }
+        }
+        chain.draw(&mut c, theme, &text, false);
+        (c, chain)
+    }
+
+    #[test]
+    fn the_options_menu_has_a_thin_frame_short_rows_and_no_shadow() {
+        use super::Mode;
+        let theme = options_theme(Mode::Light, 1);
+        let (c, chain) = options(&theme, false);
+        let l = &chain.levels()[0].layout;
+        let rows: Vec<i32> = l.rows.iter().map(|r| r.height).collect();
+        assert_eq!(rows, [21, 21, 6, 21, 6, 21, 21]);
+        let (x, y) = (10, 10);
+        assert_eq!(c.get(x, y + 30), rgb(0xB4B6BA), "the frame");
+        assert_eq!(c.get(x + 1, y + 30), rgb(0xF3F4F5), "no ring: the face");
+        assert_eq!(c.get(x + 3, y + 30), rgb(0xE9EAEC), "the gutter");
+        assert_eq!(c.get(x + 27, y + 30), rgb(0xE0E1E3), "the divider");
+        assert_eq!(c.get(x + 40, y + 30), rgb(0xF3F4F5), "the face");
+        let sep = y + l.rows[2].y;
+        assert_eq!(
+            c.get(x + 40, sep + 3),
+            rgb(0xD9DADD),
+            "the separator's line"
+        );
+        assert_eq!(c.get(x + 40, sep + 4), rgb(0xFFFFFF), "its light line");
+        let (right, bottom) = (x + l.width, y + l.height);
+        assert_eq!(
+            c.get(right, y + 20),
+            rgb(0xFFFFFF),
+            "no shadow at the right"
+        );
+        assert_eq!(c.get(x + 20, bottom), rgb(0xFFFFFF), "no shadow below");
+
+        let plain = theme_for(Interface::Glass);
+        assert!(plain.look.style().unwrap().menu.unwrap().shadow.is_some());
+        let (_, menu) = options(&plain, false);
+        assert!(
+            l.width < menu.levels()[0].layout.width,
+            "narrower than the other menus"
+        );
+        let dark = options_theme(Mode::Dark, 1);
+        let (d, _) = options(&dark, false);
+        assert_ne!(d.get(x + 40, y + 30), c.get(x + 40, y + 30), "a dark face");
+    }
+
+    #[test]
+    fn the_options_menu_pins_at_scale_1_and_2() {
+        use super::Mode;
+        let got: Vec<u64> = [Mode::Light, Mode::Dark]
+            .into_iter()
+            .flat_map(|m| [1, 2].map(move |s| (m, s)))
+            .flat_map(|(m, s)| {
+                let theme = options_theme(m, s);
+                [false, true].map(|lit| fnv(&options(&theme, lit).0))
+            })
+            .collect();
+        let want: [u64; 8] = [
+            0x0b893eee676d22b1,
+            0x8fd533b96b4ffb1d,
+            0x139ee9da3301412d,
+            0x989f08c9e4bfb7e5,
+            0x1e7fef25e74581f3,
+            0x1170d223d3014d13,
+            0x14d9f0f92d98b6dd,
+            0xe9fa2e0e06523c12,
+        ];
+        assert_eq!(got, want, "{got:#x?}");
+        let (one, _) = options(&options_theme(Mode::Light, 1), false);
+        let (two, _) = options(&options_theme(Mode::Light, 2), false);
+        assert_eq!(two.get(20, 60), one.get(10, 30), "the frame doubles");
+        assert_eq!(two.get(21, 60), one.get(10, 30), "the frame doubles");
+        assert_eq!(two.get(22, 60), one.get(11, 30), "then the face");
     }
 
     #[test]
