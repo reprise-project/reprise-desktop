@@ -45,6 +45,9 @@ const SELECTED: LightBox = opaque(0x81A5DC, (0xF0F6FE, 0xDDEBFE), (0xEAF3FE, 0xC
 const SELECTED_HOT: LightBox = opaque(0x7A9BCD, (0xEAF3FD, 0xDAE7FD), (0xDBE9FC, 0xBFD7FC));
 const SELECTED_DIM: LightBox = opaque(0xD8D7D8, (0xFAF9FB, 0xEFEEEF), (0xF7F8F8, 0xE3E4E4));
 const PRESSED: LightBox = opaque(0xA6A7A7, (0x8C8D8D, 0xCFCFCF), (0xCACBCB, 0xE6E6E6));
+const DARK_HOT: LightBox = opaque(0x4C6584, (0x40464E, 0x393E45), (0x3B4048, 0x353A41));
+const DARK_SELECTED: LightBox = opaque(0x3A78C4, (0x2D4D74, 0x264366), (0x28476C, 0x203B5C));
+const DARK_SELECTED_HOT: LightBox = opaque(0x5E9DE8, (0x3A6494, 0x325887), (0x345D8C, 0x2B507C));
 const FOCUS: LightBox = LightBox {
     outline: ink(0x7A9BCD, 255),
     line: Some((ink(0xFFFFFF, 128), ink(0xFFFFFF, 128))),
@@ -71,13 +74,19 @@ const BOX_H: i32 = 70;
 const BOX_GRID: Insets = Insets::new(4, 4, 4, 4);
 
 fn boxes(boxes: &[(&LightBox, State)], d: i32) -> PartImage {
+    stack(
+        boxes
+            .iter()
+            .map(|&(b, state)| (panel::light_box(b, BOX_W, BOX_H, d), state))
+            .collect(),
+        d,
+    )
+}
+
+fn stack(boxes: Vec<(Canvas, State)>, d: i32) -> PartImage {
     let mut a = Canvas::new((BOX_W * d) as u32, (BOX_H * d * boxes.len() as i32) as u32);
     for (i, (b, _)) in boxes.iter().enumerate() {
-        a.blit_over(
-            0,
-            i as i32 * BOX_H * d,
-            &panel::light_box(b, BOX_W, BOX_H, d),
-        );
+        a.blit_over(0, i as i32 * BOX_H * d, b);
     }
     let states: Vec<State> = boxes.iter().map(|b| b.1).collect();
     PartImage::new(a, &states, Layout::Vertical)
@@ -90,8 +99,8 @@ fn boxes(boxes: &[(&LightBox, State)], d: i32) -> PartImage {
 const EXPANDER: i32 = 16;
 
 /// The list items' boxes, the tree's expanders and the places bar's tiles, each standing
-/// 1 px in from the bar's sides (remapped in dark Glass with the rest of the control art),
-/// painted at `d`.
+/// 1 px in from the bar's sides (remapped in dark Glass with the rest of the control art,
+/// but for the tiles: [`dark_places`]), painted at `d`.
 pub fn parts(d: i32) -> [(Part, PartImage); 3] {
     let items = boxes(
         &[
@@ -134,6 +143,27 @@ pub fn parts(d: i32) -> [(Part, PartImage); 3] {
         (Part::TreeExpander, expanders),
         (Part::PlacesTile, places),
     ]
+}
+
+/// Dark Glass's places tiles: the remap turns the light blue boxes into near-black ones
+/// alike, so lit, selected and selected under the pointer are drawn in their own blues, each
+/// lighter and bluer than the last; held keeps the remapped grey box.
+pub fn dark_places(d: i32) -> PartImage {
+    let lit = |b: &LightBox| panel::light_box(b, BOX_W, BOX_H, d);
+    let mut held = lit(&PRESSED);
+    for p in &mut held.pixels {
+        *p = super::dark::remap_px(*p);
+    }
+    stack(
+        vec![
+            (lit(&DARK_HOT), State::Hot),
+            (lit(&DARK_SELECTED), State::Checked),
+            (lit(&DARK_SELECTED_HOT), State::CheckedHot),
+            (held, State::Pressed),
+        ],
+        d,
+    )
+    .outset(Insets::new(-1, 0, -1, 0))
 }
 
 /// The selected desktop icon's box; the same in light and dark Glass, as it
@@ -573,9 +603,24 @@ mod tests {
     /// A 63 px places tile in each state at scale `d`, over the bar's panel: the plain tile
     /// first.
     fn places_tiles(d: i32) -> Vec<Canvas> {
+        tiles_in(&theme_for(Interface::Glass), d)
+    }
+
+    fn dark_glass() -> Theme {
+        crate::interfaces::theme_with(
+            Interface::Glass,
+            crate::blue::Variant::default(),
+            &crate::glass::Settings {
+                mode: crate::glass::Mode::Dark,
+                ..crate::glass::Settings::default()
+            },
+        )
+    }
+
+    fn tiles_in(theme: &Theme, d: i32) -> Vec<Canvas> {
         use crate::look::widgets::placesbar::{draw_panel, draw_tile};
         use crate::style::State;
-        let theme = theme_for(Interface::Glass).scaled(d);
+        let theme = theme.scaled(d);
         let p = theme.paint();
         let r = Rect::new(0, 0, 87, 63).scaled(d);
         [
@@ -666,6 +711,77 @@ mod tests {
             ],
             "{got:#x?}"
         );
+    }
+
+    /// In dark Glass the lit, selected and selected-and-lit tiles stand apart: each fill is
+    /// lighter than the last and the selected ones bluer than the lit one.
+    #[test]
+    fn dark_glass_places_tiles_tell_their_states_apart() {
+        let lum = |p: u32| [16, 8, 0].map(|sh| (p >> sh) & 0xFF).iter().sum::<u32>();
+        let blue = |p: u32| (p & 0xFF) as i32 - ((p >> 16) & 0xFF) as i32;
+        for d in [1, 2] {
+            let tiles = tiles_in(&dark_glass(), d);
+            let fill = |i: usize| tiles[i].get(40 * d, 30 * d);
+            let (panel, lit, picked, both) = (fill(0), fill(1), fill(2), fill(3));
+            assert!(
+                lum(lit) > lum(panel) + 30,
+                "lit {lit:08X} over the panel {panel:08X} at {d}"
+            );
+            assert!(
+                blue(picked) > blue(lit) + 40,
+                "selected {picked:08X} bluer than lit {lit:08X} at {d}"
+            );
+            assert!(
+                lum(both) > lum(picked) + 40,
+                "selected and lit {both:08X} lighter than selected {picked:08X} at {d}"
+            );
+            for i in 1..4 {
+                assert_ne!(
+                    tiles[i].get(40 * d, 0),
+                    tiles[i % 3 + 1].get(40 * d, 0),
+                    "outlines {i} at {d}"
+                );
+            }
+        }
+    }
+
+    /// The dark places tiles keep their pixels at scale 1 and 2.
+    #[test]
+    fn dark_places_tiles_pin_at_scale_1_and_2() {
+        let got: Vec<u64> = [1, 2]
+            .into_iter()
+            .flat_map(|d| tiles_in(&dark_glass(), d))
+            .map(|c| fnv(&c))
+            .collect();
+        assert_eq!(
+            got,
+            [
+                0x9c94_f221_2954_17da,
+                0xfcbe_2c00_40c2_5c0c,
+                0xa73c_825f_f36f_c86c,
+                0x0e63_0b32_c788_03d0,
+                0x81ed_9af2_6688_1c47,
+                0xacf9_f6e1_2423_3e0d,
+                0x39d0_a06c_f14e_f121,
+                0x39a0_ebce_63e3_e3ad,
+                0x4e05_2f9d_45ae_67c5,
+                0x53f3_4a11_420a_ec0d,
+            ],
+            "{got:#x?}"
+        );
+    }
+
+    /// Writes target/glass-dark-places-preview.png: the dark places tiles plain, lit,
+    /// selected, selected and lit, held.
+    #[test]
+    #[ignore]
+    fn render_glass_dark_places_preview() {
+        let tiles = tiles_in(&dark_glass(), 2);
+        let mut out = Canvas::new(5 * 180, 130);
+        for (i, t) in tiles.iter().enumerate() {
+            out.blit_over(i as i32 * 180, 0, t);
+        }
+        crate::raster::write_preview(&out, "glass-dark-places-preview.png");
     }
 
     /// Writes target/glass-items-preview.png: lists in each state, the
