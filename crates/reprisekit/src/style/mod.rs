@@ -1031,6 +1031,7 @@ pub struct Style {
     pub(crate) copy_flight: Option<crate::copyart::FlightPainter>,
     /// The copy dialog drawn as a page with a throughput graph instead of the flight.
     pub copy_graph: Option<crate::copyart::GraphLook>,
+    pub(crate) client_glass_edges: Option<ClientGlassEdges>,
     pub chrome_colors: Option<ColorScheme>,
     rescale: Option<Rescale>,
     rescaled: Rescaled,
@@ -1049,6 +1050,10 @@ type Rescale = Arc<dyn Fn(i32) -> Style + Send + Sync>;
 
 /// Paints the clock popup's analog clock at `time` (hour 0..23, minute, second), `side` design px
 /// square, at scale `d`.
+/// Draws a look's client glass edges ([`crate::glass::frame::client_glass_edges`]): canvas,
+/// band, client height, state, scale.
+pub(crate) type ClientGlassEdges = Arc<dyn Fn(&mut Canvas, Rect, i32, State, i32) + Send + Sync>;
+
 pub(crate) type ClockPainter = fn(time: (u32, u32, u32), side: i32, d: i32) -> Canvas;
 
 /// A part's art, painted the first time it is asked for; clones share it.
@@ -1104,6 +1109,7 @@ impl Style {
             clock_face: None,
             copy_flight: None,
             copy_graph: None,
+            client_glass_edges: None,
             chrome_colors: None,
             balloon: None,
             flyout: None,
@@ -1245,6 +1251,11 @@ impl Style {
 
     pub(crate) fn with_tray_arrow(mut self, art: trayarrow::TrayArrowArt) -> Style {
         self.tray_arrow = Some(Arc::new(art));
+        self
+    }
+
+    pub(crate) fn with_client_glass_edges(mut self, paint: ClientGlassEdges) -> Style {
+        self.client_glass_edges = Some(paint);
         self
     }
 

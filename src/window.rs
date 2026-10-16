@@ -1141,7 +1141,8 @@ impl State {
         for (&b, r) in win.client_glass.iter().zip(&rects) {
             let mut canvas = Canvas::new((r.width * scale) as u32, (r.height * scale) as u32);
             let band = Rect::new(-r.x, -r.y, c.width, r.bottom()).scaled(scale);
-            reprisekit::look::draw_client_glass(&mut canvas, &theme, band, win.maximized);
+            let client_h = c.height * scale;
+            reprisekit::look::draw_client_glass(&mut canvas, &theme, band, client_h, win.maximized);
             upload_scaled(scene, b, &canvas, scale);
             scene.set_position(b, c.x + r.x, c.y + r.y);
         }

@@ -398,6 +398,7 @@ fn build_at(s: &Settings, scale: i32) -> Style {
     .with_painted(Part::WindowSheet, lazy(frame::sheet))
     .with_painted(Part::ClientGlass, lazy(frame::client_glass))
     .with_painted(Part::MaxClientGlass, lazy(frame::max_client_glass))
+    .with_client_glass_edges(Arc::new(frame::client_glass_edges(s)))
     .with_painted(
         Part::GlassSeparator,
         lazy(|_, d| toolbar::glass_separator(d)),

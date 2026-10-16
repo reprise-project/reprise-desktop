@@ -79,8 +79,15 @@ pub fn client_glass(theme: &Theme, active: bool) -> Option<u32> {
 
 /// Draw the frame's glass under a client's top into `band` (canvas pixels at the theme's
 /// scale): the client's rect from its top, as deep as the glass runs, a restored frame's sheen
-/// carried down it from the caption's ends. Nothing in a look without [`client_glass`].
-pub fn draw_client_glass(canvas: &mut Canvas, theme: &Theme, band: Rect, maximized: bool) {
+/// carried down it from the caption's ends and in from its side borders down a client
+/// `client_h` tall. Nothing in a look without [`client_glass`].
+pub fn draw_client_glass(
+    canvas: &mut Canvas,
+    theme: &Theme,
+    band: Rect,
+    client_h: i32,
+    maximized: bool,
+) {
     let Some(s) = theme.look.style() else {
         return;
     };
@@ -88,7 +95,8 @@ pub fn draw_client_glass(canvas: &mut Canvas, theme: &Theme, band: Rect, maximiz
         true => crate::style::State::Normal,
         false => crate::style::State::Inactive,
     };
-    style_frame::draw_client_glass(canvas, s, band, maximized, state, theme.scale.max(1));
+    let scale = theme.scale.max(1);
+    style_frame::draw_client_glass(canvas, s, band, client_h, maximized, state, scale);
 }
 
 /// The caption title's ink, by whether the window is active, for labels drawn over clear
