@@ -1098,7 +1098,11 @@ impl State {
         let lights = self.config.theme.look.lights_pointer();
         let v = &mut self.dialogs.views[top];
         let outcome = match hit {
-            Some(DialogHit::Close) => Outcome::Close,
+            Some(DialogHit::Close) => {
+                v.dialog.press_close();
+                self.interaction = Interaction::DialogPress;
+                Outcome::Redraw
+            }
             // The ? box does nothing but shows the press.
             Some(DialogHit::Help) => {
                 v.dialog.press_help();
@@ -1306,6 +1310,12 @@ impl State {
             }
             return;
         }
+        if v.dialog.close_box.holding() {
+            if v.dialog.drag_close(matches!(over, Some(DialogHit::Close))) {
+                self.redraw_dialog(i);
+            }
+            return;
+        }
         if v.dialog.help_box.holding() {
             if v.dialog.drag_help(matches!(over, Some(DialogHit::Help))) && styled {
                 self.redraw_dialog(i);
@@ -1376,6 +1386,16 @@ impl State {
         let over = self.dialog_hit(i, pos.x, pos.y);
         let styled = self.config.theme.look.lights_pointer();
         let v = &mut self.dialogs.views[i];
+        if v.dialog.close_box.holding() {
+            v.dialog.drag_close(matches!(over, Some(DialogHit::Close)));
+            let outcome = if v.dialog.release_close() {
+                Outcome::Close
+            } else {
+                Outcome::Redraw
+            };
+            self.apply_dialog(outcome);
+            return;
+        }
         if v.dialog.help_box.holding() {
             v.dialog.drag_help(matches!(over, Some(DialogHit::Help)));
             if v.dialog.release_help() && styled {

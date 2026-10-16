@@ -1115,6 +1115,9 @@ pub struct Dialog {
     /// on it and acts on release there.
     pub pointer: Pointer<usize>,
     pub close_hot: bool,
+    /// The close box held by the pointer; it draws pushed while the pointer is on it and closes
+    /// the dialog on release there.
+    pub close_box: Pointer<()>,
     /// Pointer on the ? box; it does nothing when clicked.
     pub help_box: Pointer<()>,
     /// Part of the text field the pointer rests on; the drop button lights only from itself.
@@ -1168,6 +1171,7 @@ impl Dialog {
             help: false,
             pointer: Pointer::new(),
             close_hot: false,
+            close_box: Pointer::new(),
             help_box: Pointer::new(),
             field_lit: Pointer::new(),
             button_focus: None,
@@ -3113,6 +3117,7 @@ impl Dialog {
     /// overlay opened over it): whatever it held lets go without acting.
     pub fn cancel_press(&mut self) -> Outcome {
         self.pointer.clear();
+        self.close_box.clear();
         self.help_box.clear();
         self.field_lit.clear();
         if let Some(f) = self.field.as_mut() {
@@ -3130,6 +3135,21 @@ impl Dialog {
             page.cancel_pointer();
         }
         Outcome::Redraw
+    }
+
+    /// The held box draws pushed, not hot, so dragged off it draws plain.
+    pub fn press_close(&mut self) {
+        self.close_hot = false;
+        self.close_box.press(Some(()), false);
+    }
+
+    pub fn drag_close(&mut self, on: bool) -> bool {
+        self.close_box.holding() && self.close_box.motion(on.then_some(()))
+    }
+
+    /// The pointer let go of the held close box: true when it was over it, and the dialog closes.
+    pub fn release_close(&mut self) -> bool {
+        self.close_box.release().is_some()
     }
 
     /// The pointer went down on the caption's ? box: it draws pressed
@@ -3946,7 +3966,7 @@ pub fn draw(
             title: &d.title,
             active,
             maximized: false,
-            pressed: None,
+            pressed: (d.close_box.of(()) == Interaction::Pressed).then_some(CaptionButton::Close),
             glow: reprisekit::frame::Glow::lit(d.close_hot.then_some(CaptionButton::Close)),
             icon: caption_icon,
             tabbed: false,
@@ -9315,6 +9335,115 @@ mod tests {
         let mut normal = Canvas::new(l.size.0 as u32, l.size.1 as u32);
         style.draw(&mut normal, r, Part::CloseButton, State::Normal, 1);
         assert_ne!(want.get(r.x + 2, r.y + 3), normal.get(r.x + 2, r.y + 3));
+    }
+
+    #[test]
+    fn the_close_box_closes_only_on_a_release_over_it() {
+        let mut d = Dialog::log_off();
+        d.press_close();
+        assert_eq!(d.close_box.of(()), Interaction::Pressed);
+        assert!(d.drag_close(false), "dragged off");
+        assert_eq!(d.close_box.of(()), Interaction::Idle);
+        assert!(!d.release_close(), "a release off the box does not close");
+        assert!(!d.close_box.holding());
+        d.press_close();
+        assert!(!d.drag_close(true), "still on it");
+        assert!(d.release_close(), "a release on the box closes");
+        d.press_close();
+        d.cancel_press();
+        assert!(
+            !d.close_box.holding(),
+            "a taken pointer lets go of the close box"
+        );
+    }
+
+    #[test]
+    fn a_held_close_box_draws_pushed_only_while_the_pointer_is_on_it() {
+        let text = TextRenderer::load(&FontConfig::default());
+        let classic = Theme::default();
+        let glass = reprisekit::interfaces::theme_for(reprisekit::interface::Interface::Glass);
+        for theme in [&classic, &blue(), &glass] {
+            let mut d =
+                Dialog::confirm_delete("x", std::path::Path::new("/x"), false, false, false);
+            d.close_hot = true;
+            let l = DialogLayout::compute(theme, &text, &d);
+            let shot = |d: &Dialog| {
+                draw(
+                    theme,
+                    &text,
+                    &l,
+                    None,
+                    None,
+                    &[],
+                    &[],
+                    None,
+                    d,
+                    true,
+                    None,
+                    Cues::NONE,
+                    true,
+                    None,
+                )
+            };
+            let r = l.close.unwrap();
+            let pixels = |c: &Canvas| -> Vec<u32> {
+                (r.y..r.bottom())
+                    .flat_map(|y| (r.x..r.right()).map(move |x| (x, y)))
+                    .map(|(x, y)| c.get(x, y))
+                    .collect()
+            };
+            let plain = {
+                let mut cold = d.clone();
+                cold.close_hot = false;
+                pixels(&shot(&cold))
+            };
+            let hot = pixels(&shot(&d));
+            d.press_close();
+            let held = pixels(&shot(&d));
+            assert_ne!(
+                held, hot,
+                "{:?}: the held close box draws pushed",
+                theme.look
+            );
+            d.drag_close(false);
+            assert_eq!(
+                pixels(&shot(&d)),
+                plain,
+                "{:?}: dragged off, it draws plain",
+                theme.look
+            );
+        }
+        let mut d = Dialog::confirm_delete("x", std::path::Path::new("/x"), false, false, false);
+        let l = DialogLayout::compute(&classic, &text, &d);
+        d.press_close();
+        let c = draw(
+            &classic,
+            &text,
+            &l,
+            None,
+            None,
+            &[],
+            &[],
+            None,
+            &d,
+            true,
+            None,
+            Cues::NONE,
+            true,
+            None,
+        );
+        let r = l.close.unwrap();
+        let cs = &classic.colors;
+        assert_eq!(
+            c.get(r.x, r.y),
+            cs.button_shadow.argb(),
+            "sunken: shadow outer top-left"
+        );
+        assert_eq!(c.get(r.x + 1, r.y + 1), cs.button_dk_shadow.argb());
+        assert_eq!(
+            c.get(r.right() - 1, r.bottom() - 1),
+            cs.button_hilight.argb()
+        );
     }
 
     #[test]
