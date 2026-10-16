@@ -53,6 +53,12 @@ pub fn quiet<'a, M: 'a>(
     !retiring && all.into_iter().all(|t| t.quiet(now))
 }
 
+/// Whether `own`'s next frame is held past `STALL`: its own job or flip stalled, or another
+/// output's stall keeps the device from going quiet, and no output renders until it is.
+pub fn held<M>(own: &Track<M>, all: &[&Track<M>], retiring: bool, now: Instant) -> bool {
+    own.stalled || (all.iter().any(|t| t.stalled) && !quiet(all.iter().copied(), retiring, now))
+}
+
 pub enum Job<P> {
     Run(Kind, P),
     /// Drop the committer (and the compositor it holds) and end the thread.
@@ -595,6 +601,30 @@ mod tests {
                 "flip waiting {at} s for its vblank"
             );
         }
+    }
+
+    #[test]
+    fn another_outputs_stall_holds_every_output_until_the_device_is_quiet() {
+        let t0 = Instant::now();
+        let idle = Track::<u32>::default();
+        let mut modeset = Track::<u32>::default();
+        modeset.sent(MODESET, t0);
+        let held = |own: &Track<u32>, other: &Track<u32>, at: f64| {
+            held(own, &[own, other], false, t0 + secs(at))
+        };
+        assert!(!held(&idle, &modeset, 1.0), "a modeset not yet stalled");
+        assert!(modeset.stall(t0 + secs(2.1)));
+        assert!(held(&modeset, &idle, 2.1));
+        assert!(held(&idle, &modeset, 2.1), "the idle output cannot render");
+        modeset.done(true, t0 + secs(3.0));
+        assert!(!held(&idle, &modeset, 3.0), "the Done ends the hold");
+        assert!(modeset.stall(t0 + secs(5.1)), "its flip lost a vblank");
+        assert!(held(&idle, &modeset, 5.1), "a stalled flip holds it too");
+        assert!(held(&modeset, &idle, 14.1));
+        assert!(
+            !held(&idle, &modeset, 14.1),
+            "a lost flip no longer holds the others"
+        );
     }
 
     #[test]

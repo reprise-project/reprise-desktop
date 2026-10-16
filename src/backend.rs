@@ -1005,11 +1005,18 @@ pub fn defer_output_config(state: &mut State, old: &crate::config::Config) {
     }
 }
 
-/// `output`'s job or flip has waited past `commit::STALL`.
+/// `output`'s next frame waits past `commit::STALL` (`commit::held`): its own job or flip,
+/// or another output's, has stalled.
 pub fn stalled(state: &State, output: &Output) -> bool {
-    crtc_of(output)
-        .and_then(|c| state.backend.as_ref()?.surfaces.get(&c))
-        .is_some_and(|s| s.track.stalled())
+    let Some(b) = state.backend.as_ref() else {
+        return false;
+    };
+    let Some(s) = crtc_of(output).and_then(|c| b.surfaces.get(&c)) else {
+        return false;
+    };
+    let all: Vec<_> = b.surfaces.values().map(|s| &s.track).collect();
+    let now = std::time::Instant::now();
+    commit::held(&s.track, &all, !b.retiring.is_empty(), now)
 }
 
 /// Run the device work that waited for quiet (`Backend::deferred`). A step that sends a
@@ -1103,7 +1110,7 @@ fn watch_tick(state: &mut State) -> bool {
     let Some(b) = state.backend.as_mut() else {
         return false;
     };
-    let mut stalled = Vec::new();
+    let mut newly = false;
     let mut throttled = Vec::new();
     for (&crtc, s) in b.surfaces.iter_mut() {
         if s.track.stall(now) {
@@ -1114,15 +1121,24 @@ fn watch_tick(state: &mut State) -> bool {
                 }
                 _ => log::warn!("{name}: no vblank 2 s after its flip"),
             }
-            stalled.push(s.output.clone());
+            newly = true;
         }
         if s.track.stalled() && s.callback_timer.is_none() {
             throttled.push(crtc);
         }
     }
-    for output in &stalled {
-        crate::sessionlock::stalled(state, output);
-        crate::power::stalled(state, output);
+    if newly {
+        let held: Vec<Output> = state
+            .scene
+            .outputs()
+            .iter()
+            .filter(|o| stalled(state, o))
+            .cloned()
+            .collect();
+        for output in &held {
+            crate::sessionlock::stalled(state, output);
+            crate::power::stalled(state, output);
+        }
     }
     for crtc in throttled {
         callbacks_after_a_frame(state, crtc, false);
