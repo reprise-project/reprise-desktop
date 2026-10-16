@@ -65,13 +65,8 @@ pub struct SheetLayout {
     pill_px: u32,
 }
 
-/// The Lozenge's metrics, design px.
-const LOZENGE_W: i32 = 360;
-const PAD: i32 = 14;
-const SLOT: i32 = 46;
-const TEXT_GAP: i32 = 12;
+/// The parts every shape shares, design px.
 const APP_PX: u32 = 12;
-const TITLE_PX: u32 = 16;
 const BODY_PX: u32 = 14;
 const APP_H: i32 = 16;
 const TITLE_H: i32 = 20;
@@ -84,7 +79,6 @@ const PILL_PAD: i32 = 14;
 const PILL_MIN: i32 = 64;
 const MORE_W: i32 = 34;
 const CLOSE: i32 = 20;
-const CLOSE_TOP: i32 = 12;
 /// The app line and title end this far short of the close button.
 const CLOSE_GAP: i32 = 4;
 const BADGE: i32 = 18;
@@ -94,6 +88,63 @@ const BADGE_IN: i32 = 4;
 const BADGE_ICON_IN: i32 = 2;
 /// The reply field's text stands in this far from its rounded ends.
 const FIELD_TEXT_IN: i32 = PILL_H / 2;
+/// A picture beside the title stands this far left of it.
+const PICTURE_GAP: i32 = 8;
+
+/// A shape's layout, design px from the sheet's top-left.
+struct Frame {
+    shape: SheetShape,
+    width: i32,
+    pad: i32,
+    /// The icon's well; a slot above the sheet's top edge breaks out of it.
+    slot: Rect,
+    well: Well,
+    /// The app line's top-left.
+    app: (i32, i32),
+    /// The title's top-left; the body runs under it from the same left.
+    text: (i32, i32),
+    title_px: u32,
+    /// The title ends short of the close button rather than at the padding.
+    title_by_close: bool,
+    close: (i32, i32),
+    /// The side of a round picture at `text`, pushing the title right of it. `None` puts the
+    /// picture in the slot with the app icon as a badge.
+    picture: Option<i32>,
+    /// The pill row's and reply field's left.
+    row_x: i32,
+}
+
+/// The icon slot inside the padding and the text column right of it.
+const LOZENGE: Frame = Frame {
+    shape: SheetShape::Lozenge,
+    width: 360,
+    pad: 14,
+    slot: Rect::new(14, 14, 46, 46),
+    well: Well::Squircle,
+    app: (72, 14),
+    text: (72, 30),
+    title_px: 16,
+    title_by_close: true,
+    close: (360 - 14 - CLOSE, 12),
+    picture: None,
+    row_x: 72,
+};
+
+/// The icon breaking half out of the top-left edge and the text full width under the app line.
+const HALO: Frame = Frame {
+    shape: SheetShape::Halo,
+    width: 360,
+    pad: 18,
+    slot: Rect::new(9, -25, 50, 50),
+    well: Well::Squircle,
+    app: (69, 8),
+    text: (18, 33),
+    title_px: 15,
+    title_by_close: false,
+    close: (360 - 16 - CLOSE, 13),
+    picture: Some(28),
+    row_x: 18,
+};
 
 /// Lay out a sheet of `shape` for `c`; `expanded` shows the reply row in place of
 /// the pills. `None` when the look has no sheets ([`has_sheets`]).
@@ -105,9 +156,11 @@ pub fn sheet_layout(
     expanded: bool,
 ) -> Option<SheetLayout> {
     let look = notify_look(theme)?;
-    Some(match shape {
-        SheetShape::Lozenge => lozenge_layout(theme, text, &look, c, expanded),
-    })
+    let frame = match shape {
+        SheetShape::Lozenge => &LOZENGE,
+        SheetShape::Halo => &HALO,
+    };
+    Some(column_layout(theme, text, &look, frame, c, expanded))
 }
 
 /// Pill widths, design px: label plus padding, shrunk evenly when they overrun `room`.
@@ -123,25 +176,34 @@ fn pill_widths(text: &TextRenderer, labels: &[&str], px: u32, s: i32, room: i32)
     w
 }
 
-fn lozenge_layout(
+fn column_layout(
     theme: &Theme,
     text: &TextRenderer,
     look: &NotifyLook,
+    f: &Frame,
     c: &SheetContent,
     expanded: bool,
 ) -> SheetLayout {
     let s = theme.scale.max(1);
     let su = s as u32;
-    let m = (look.margin)(SheetShape::Lozenge);
-    let (ox, oy) = (m.left * s, m.top * s);
-    let at = |x: i32, y: i32, w: i32, h: i32| Rect::new(ox + x * s, oy + y * s, w * s, h * s);
+    let m = (look.margin)(f.shape);
+    let w = f.width;
     let (app_px, title_px, body_px, pill_px) =
-        (APP_PX * su, TITLE_PX * su, BODY_PX * su, PILL_PX * su);
-    let text_x = PAD + SLOT + TEXT_GAP;
-    let text_w = LOZENGE_W - text_x - PAD;
-    let close_x = LOZENGE_W - PAD - CLOSE;
-    let head_w = close_x - CLOSE_GAP - text_x;
-    let (title_y, body_y) = (PAD + APP_H, PAD + APP_H + TITLE_H);
+        (APP_PX * su, f.title_px * su, BODY_PX * su, PILL_PX * su);
+    let picture = f
+        .picture
+        .filter(|_| c.has_picture)
+        .map(|side| Rect::new(f.text.0, f.text.1, side, side));
+    let text_x = picture.map_or(f.text.0, |p| p.right() + PICTURE_GAP);
+    let text_w = w - f.pad - text_x;
+    let close_x = f.close.0;
+    let head_w = close_x - CLOSE_GAP - f.app.0;
+    let title_w = if f.title_by_close {
+        close_x - CLOSE_GAP - text_x
+    } else {
+        text_w
+    };
+    let (title_y, body_y) = (f.text.1, f.text.1 + TITLE_H);
 
     let app = if c.when.is_empty() {
         c.app.to_string()
@@ -150,12 +212,13 @@ fn lozenge_layout(
     };
     let app_line = text.ellipsize(&app, head_w * s, false, app_px).into_owned();
     let title = text
-        .ellipsize(c.title, head_w * s, true, title_px)
+        .ellipsize(c.title, title_w * s, true, title_px)
         .into_owned();
     let mut lines = wrap(text, c.body, text_w * s, body_px);
     lines.truncate(NOTIFY_BODY_LINES);
-    let text_bottom = body_y + lines.len() as i32 * LINE_H;
+    let text_bottom = (body_y + lines.len() as i32 * LINE_H).max(picture.map_or(0, |p| p.bottom()));
 
+    let row_w = w - f.pad - f.row_x;
     let reply = c.reply.filter(|_| expanded);
     let actions = if reply.is_some() { &[][..] } else { c.actions };
     let shown = actions.len().min(NOTIFY_BUTTONS);
@@ -165,29 +228,29 @@ fn lozenge_layout(
         0
     };
     let row_y = text_bottom + ROW_GAP;
-    let right = LOZENGE_W - PAD;
+    let right = w - f.pad;
     let (mut buttons, mut labels, mut more, mut field, mut send) =
         (Vec::new(), Vec::new(), None, None, None);
     let row = if let Some(r) = reply {
-        let sw = pill_widths(text, &[r.send], pill_px, s, text_w)[0];
+        let sw = pill_widths(text, &[r.send], pill_px, s, row_w)[0];
         let sx = right - sw;
-        send = Some(at(sx, row_y, sw, PILL_H));
-        field = Some(at(text_x, row_y, sx - PILL_GAP - text_x, PILL_H));
+        send = Some(Rect::new(sx, row_y, sw, PILL_H));
+        field = Some(Rect::new(f.row_x, row_y, sx - PILL_GAP - f.row_x, PILL_H));
         true
     } else if shown > 0 || more_w > 0 {
         let parts = shown + usize::from(more_w > 0);
-        let room = text_w - more_w - (parts as i32 - 1) * PILL_GAP;
+        let room = row_w - more_w - (parts as i32 - 1) * PILL_GAP;
         let widths = pill_widths(text, &actions[..shown], pill_px, s, room);
         let mut x = right;
         if more_w > 0 {
             x -= more_w;
-            more = Some(at(x, row_y, more_w, PILL_H));
+            more = Some(Rect::new(x, row_y, more_w, PILL_H));
             x -= PILL_GAP;
         }
-        for (a, w) in actions[..shown].iter().zip(&widths).rev() {
-            x -= w;
-            buttons.push(at(x, row_y, *w, PILL_H));
-            let room = (w - 2 * PILL_PAD) * s;
+        for (a, pw) in actions[..shown].iter().zip(&widths).rev() {
+            x -= pw;
+            buttons.push(Rect::new(x, row_y, *pw, PILL_H));
+            let room = (pw - 2 * PILL_PAD) * s;
             labels.push(text.ellipsize(a, room, true, pill_px).into_owned());
             x -= PILL_GAP;
         }
@@ -198,45 +261,57 @@ fn lozenge_layout(
         false
     };
     let bottom = if row { row_y + PILL_H } else { text_bottom };
-    let h = (PAD + SLOT + PAD).max(bottom + PAD);
+    let h = f.slot.bottom().max(bottom) + f.pad;
 
-    let sheet = at(0, 0, LOZENGE_W, h);
-    let icon = at(PAD, PAD, SLOT, SLOT);
-    let badge = (c.has_picture && c.has_app_icon).then(|| {
+    let sheet = Rect::new(0, 0, w, h);
+    let foot = sheet.union(&f.slot);
+    let (ox, oy) = ((m.left - foot.x) * s, (m.top - foot.y) * s);
+    let at = |r: Rect| Rect::new(ox + r.x * s, oy + r.y * s, r.width * s, r.height * s);
+    let icon = at(f.slot);
+    let badge = (f.picture.is_none() && c.has_picture && c.has_app_icon).then(|| {
         let half = BADGE / 2 * s;
         let (cx, cy) = (icon.right() - BADGE_IN * s, icon.bottom() - BADGE_IN * s);
         Rect::new(cx - half, cy - half, BADGE * s, BADGE * s)
     });
     let parts = NotifyParts {
-        bubble: sheet,
-        title: at(text_x, title_y, head_w, TITLE_H),
-        body: at(text_x, body_y, text_w, lines.len().max(1) as i32 * LINE_H),
-        close: at(close_x, CLOSE_TOP, CLOSE, CLOSE),
-        buttons,
-        more,
-        field,
-        send,
+        bubble: at(sheet),
+        title: at(Rect::new(text_x, title_y, title_w, TITLE_H)),
+        body: at(Rect::new(
+            text_x,
+            body_y,
+            text_w,
+            lines.len().max(1) as i32 * LINE_H,
+        )),
+        close: at(Rect::new(close_x, f.close.1, CLOSE, CLOSE)),
+        buttons: buttons.into_iter().map(at).collect(),
+        more: more.map(at),
+        field: field.map(at),
+        send: send.map(at),
         placeholder: reply.map_or_else(String::new, |r| r.placeholder.to_string()),
         send_label: reply.map_or_else(String::new, |r| r.send.to_string()),
     };
     SheetLayout {
-        width: (m.left + LOZENGE_W + m.right) * s,
-        height: (m.top + m.bottom) * s + h * s,
-        shape: SheetShape::Lozenge,
+        width: (m.left + foot.width + m.right) * s,
+        height: (m.top + foot.height + m.bottom) * s,
+        shape: f.shape,
         expanded,
-        sheet,
-        footprint: sheet,
+        sheet: at(sheet),
+        footprint: at(foot),
         icon,
-        well: Well::Squircle,
+        well: f.well,
         badge,
-        picture: c.has_picture.then_some(icon),
+        picture: if f.picture.is_some() {
+            picture.map(at)
+        } else {
+            c.has_picture.then_some(icon)
+        },
         parts,
         lines,
         app_px,
         title_px,
         body_px,
         app_line,
-        app_box: at(text_x, PAD, head_w, APP_H),
+        app_box: at(Rect::new(f.app.0, f.app.1, head_w, APP_H)),
         title,
         labels,
         line_h: LINE_H * s,
@@ -459,8 +534,14 @@ fn draw_parts(
     if let Some((r, pic)) = picture {
         let pic = pic.copy_rect(opaque_bounds(pic));
         let pic = fitted(&pic, r.width, r.height, true);
-        let round = SQUIRCLE_ROUND * f64::from(r.width);
-        c.blit_over(r.x, r.y, &round_corners(pic, round));
+        let round = match lay.shape {
+            SheetShape::Lozenge => SQUIRCLE_ROUND,
+            SheetShape::Halo => {
+                blit_well(c, look, Well::Round, r, s);
+                0.5
+            }
+        };
+        c.blit_over(r.x, r.y, &round_corners(pic, round * f64::from(r.width)));
     }
     if let Some(app) = icons.app {
         match lay.badge.filter(|_| in_slot) {
@@ -1284,6 +1365,292 @@ mod tests {
     #[test]
     fn the_lozenge_style_draws_the_lozenge_shape() {
         assert_eq!(glass::NotifyStyle::Lozenge.shape(), SheetShape::Lozenge);
+    }
+
+    fn halo(c: &SheetContent) -> SheetLayout {
+        sheet_layout(
+            &theme_for(Interface::Glass),
+            &text(),
+            SheetShape::Halo,
+            c,
+            false,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn the_halo_style_draws_the_halo_shape() {
+        assert_eq!(glass::NotifyStyle::Halo.shape(), SheetShape::Halo);
+    }
+
+    #[test]
+    fn the_halo_icon_stands_half_outside_the_sheet() {
+        let lay = halo(&content("Mail", "New", "Hi"));
+        assert_eq!(
+            lay.icon,
+            Rect::new(lay.sheet.x + 9, lay.sheet.y - 25, 50, 50)
+        );
+        assert_eq!(
+            (lay.footprint.y, lay.footprint.bottom()),
+            (lay.icon.y, lay.sheet.bottom())
+        );
+        assert_eq!(
+            (lay.sheet.width, lay.well, lay.badge),
+            (360, Well::Squircle, None)
+        );
+    }
+
+    #[test]
+    fn the_breakout_takes_the_pointer() {
+        let lay = halo(&content("Mail", "New", "Hi"));
+        assert_eq!(
+            sheet_hit(&lay, lay.icon.x + 25, lay.icon.y + 5),
+            Some(NotifyHit::Body)
+        );
+        assert_eq!(
+            sheet_hit(&lay, lay.sheet.right() - 40, lay.icon.y + 5),
+            None,
+            "beside the well, above the sheet"
+        );
+    }
+
+    #[test]
+    fn a_halo_sender_picture_sits_beside_the_title() {
+        let with = halo(&SheetContent {
+            has_picture: true,
+            ..content("Chat", "Ana", "Lunch?")
+        });
+        let p = with.picture.unwrap();
+        assert_eq!(
+            (p.width, p.height, with.parts.title.x),
+            (28, 28, p.right() + 8)
+        );
+        assert_eq!((p.x, p.y), (with.sheet.x + 18, with.parts.title.y));
+        assert_eq!(with.parts.body.x, with.parts.title.x);
+        assert_eq!(with.badge, None, "the app icon keeps the well");
+        assert_eq!(
+            halo(&content("Chat", "Ana", "Lunch?")).parts.title.x,
+            with.sheet.x + 18
+        );
+    }
+
+    #[test]
+    fn the_halo_text_runs_full_width_under_the_app_line() {
+        let lay = halo(&content("Mail", "New", "Hi"));
+        let (sh, t) = (lay.sheet, lay.parts.title);
+        assert_eq!(lay.app_box.x, sh.x + 69);
+        assert_eq!(lay.app_box.y, sh.y + 8);
+        assert_eq!((t.y, t.right()), (sh.y + 33, sh.right() - 18));
+        assert_eq!(lay.parts.body.right(), sh.right() - 18);
+        assert_eq!((lay.app_px, lay.title_px, lay.body_px), (12, 15, 14));
+        assert_eq!(
+            lay.parts.close,
+            Rect::new(sh.right() - 36, sh.y + 13, 20, 20)
+        );
+        assert!(
+            !lay.parts.close.intersects(t),
+            "the title row clears the close button"
+        );
+        assert_eq!(sh.bottom(), lay.parts.body.bottom() + 18);
+    }
+
+    #[test]
+    fn halo_pills_span_the_sheet_under_the_body() {
+        let acts = ["Open", "Later"];
+        let lay = halo(&SheetContent {
+            actions: &acts,
+            has_picture: true,
+            ..content("Mail", "New", "Hi")
+        });
+        let b = lay.parts.buttons[1];
+        assert_eq!(b.right(), lay.sheet.right() - 18);
+        assert!(lay.parts.buttons[0].y > lay.picture.unwrap().bottom());
+        assert_eq!(lay.sheet.bottom(), b.bottom() + 18);
+        let c = SheetContent {
+            actions: &acts,
+            reply: Some(REPLY),
+            ..content("Chat", "Ana", "Lunch?")
+        };
+        let open = sheet_layout(
+            &theme_for(Interface::Glass),
+            &text(),
+            SheetShape::Halo,
+            &c,
+            true,
+        )
+        .unwrap();
+        assert_eq!(open.parts.field.unwrap().x, open.sheet.x + 18);
+    }
+
+    fn halo_case(case: usize, theme: &Theme, t: &TextRenderer) -> Canvas {
+        let s = theme.scale;
+        let acts = ["Reply", "Later"];
+        let base = content("Chat", "Ana", "Lunch at noon? The usual place.");
+        let (red, blue) = (Color::rgb(0xD0, 0x30, 0x30), Color::rgb(0x30, 0x60, 0xD0));
+        let (c, hot, tint) = match case {
+            0 => (base, None, None),
+            1 => (base, Some(NotifyHit::Close), None),
+            2 => (
+                SheetContent {
+                    actions: &acts,
+                    ..base
+                },
+                Some(NotifyHit::Button(0)),
+                None,
+            ),
+            3 => (
+                SheetContent {
+                    has_picture: true,
+                    ..base
+                },
+                None,
+                None,
+            ),
+            4 => (base, None, Some(red)),
+            _ => (base, None, Some(blue)),
+        };
+        let lay = sheet_layout(theme, t, SheetShape::Halo, &c, false).unwrap();
+        let app = disc(tint.unwrap_or(Color::rgb(0x80, 0x80, 0x80)), 48 * s);
+        let picture = swatch(Color::rgb(0xE0, 0x6A, 0x2E), 28 * s);
+        let icons = SheetIcons {
+            app: Some(&app),
+            picture: c.has_picture.then_some(&picture),
+        };
+        draw_sheet(theme, t, &lay, icons, tint, None, hot, None)
+    }
+
+    /// A round icon, clear outside the disc as a theme icon is.
+    fn disc(c: Color, side: i32) -> Canvas {
+        let r = f64::from(side) * 0.42;
+        let mid = f64::from(side) / 2.0;
+        crate::shape::draw(side, side, 1, |x, y| {
+            scale(
+                crate::shape::premul(c, 255),
+                crate::shape::ellipse(x, y, mid, mid, r, r),
+            )
+        })
+    }
+
+    const HALO_CASES: [&str; 6] = [
+        "resting",
+        "hot close",
+        "two actions",
+        "picture",
+        "red tint",
+        "blue tint",
+    ];
+
+    const HALO_PINS: [u64; 24] = [
+        0xc87baade66c86c50,
+        0xc15e81e1b26ed426,
+        0x08f7453f23193b67,
+        0x6f1a7ab14cccb98e,
+        0xd18bdae0cbfce7dd,
+        0x662a91cdd0d9eb67,
+        0xb089ae5e075f0bc6,
+        0x26fb58f810a4bf27,
+        0x8bc0bdcefce6bda7,
+        0x526bde193ecf3240,
+        0x2b96f63ca064b37a,
+        0xfbc687a88aa59f4d,
+        0x6b3812eb5fca657b,
+        0xd4e27dd1ea4ef6f3,
+        0xa58186a1c834bce6,
+        0x0c69f2445e672382,
+        0x9d409da44a21dcf5,
+        0xf6c935a74d8c9579,
+        0x62ff16259d512b5e,
+        0x53d25fb60cd67965,
+        0x2cafd025beeb7306,
+        0xa1bad3ac5ac3cf29,
+        0x4120aa3ac20c5e05,
+        0x0c4ac6dca907400a,
+    ];
+
+    #[test]
+    fn halo_pins() {
+        if !crate::text::test_tahoma() {
+            return;
+        }
+        let t = text();
+        let mut got = Vec::new();
+        for (case, name) in HALO_CASES.iter().enumerate() {
+            for dark in [false, true] {
+                for s in [1, 2] {
+                    let c = halo_case(case, &glass(dark, s), &t);
+                    got.push((format!("{name} dark={dark} x{s}"), fnv(&c)));
+                }
+            }
+        }
+        let now: Vec<String> = got.iter().map(|(_, h)| format!("{h:#018x},")).collect();
+        for (i, (case, h)) in got.iter().enumerate() {
+            assert_eq!(*h, HALO_PINS[i], "{case}; now:\n{}", now.join("\n"));
+        }
+    }
+
+    #[test]
+    fn a_halo_canvas_is_its_layout_with_the_icon_in_the_well() {
+        for s in [1, 2] {
+            let theme = glass(false, s);
+            let t = text();
+            let c = SheetContent {
+                has_picture: true,
+                ..content("Chat", "Ana", "Lunch?")
+            };
+            let lay = sheet_layout(&theme, &t, SheetShape::Halo, &c, false).unwrap();
+            let blue = Color::rgb(0x2E, 0x7D, 0xE0);
+            let (app, pic) = (
+                swatch(blue, 50 * s),
+                swatch(Color::rgb(0xE0, 0x6A, 0x2E), 28 * s),
+            );
+            let icons = SheetIcons {
+                app: Some(&app),
+                picture: Some(&pic),
+            };
+            let drawn = draw_sheet(&theme, &t, &lay, icons, Some(blue), None, None, None);
+            assert_eq!(
+                (drawn.width as i32, drawn.height as i32),
+                (lay.width, lay.height)
+            );
+            let i = lay.icon;
+            assert_eq!(drawn.get(i.x + 25 * s, i.y + 4 * s), 0xFF2E_7DE0, "x{s}");
+            let p = lay.picture.unwrap();
+            assert_eq!(drawn.get(p.x + 14 * s, p.y + 14 * s), 0xFFE0_6A2E, "x{s}");
+            assert_ne!(drawn.get(p.x, p.y), 0xFFE0_6A2E, "x{s}: a round picture");
+        }
+    }
+
+    #[test]
+    #[ignore]
+    fn render_halo_sheets() {
+        let t = text();
+        for dark in [false, true] {
+            for s in [1, 2] {
+                for case in 0..HALO_CASES.len() {
+                    let c = halo_case(case, &glass(dark, s), &t);
+                    let mode = if dark { "dark" } else { "light" };
+                    crate::raster::write_preview(
+                        &on_backdrop(&c),
+                        &format!("notifysheet-halo-{case}-{mode}-x{s}.png"),
+                    );
+                }
+            }
+        }
+    }
+
+    fn on_backdrop(c: &Canvas) -> Canvas {
+        let mut bg = Canvas::new(c.width, c.height);
+        let w = c.width as i32;
+        bg.fill_rect(
+            Rect::new(0, 0, w / 2, c.height as i32),
+            Color::rgb(0x3A, 0x6E, 0xA5),
+        );
+        bg.fill_rect(
+            Rect::new(w / 2, 0, w - w / 2, c.height as i32),
+            Color::rgb(0xC8, 0xD4, 0xE0),
+        );
+        bg.blit_canvas(0, 0, c);
+        bg
     }
 
     #[test]

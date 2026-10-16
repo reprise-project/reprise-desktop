@@ -811,8 +811,8 @@ pub const GLASS_MATERIALS: &Choices = &[
     ("molten", "Molten"),
 ];
 
-/// `[glass] notification_style`. Mirrors `glass::NotifyStyle::as_str`.
-pub const GLASS_NOTIFY_STYLES: &Choices = &[("lozenge", "Lozenge")];
+/// `[glass] notification_style`, the values of `glass::NotifyStyle::as_str`.
+pub const GLASS_NOTIFY_STYLES: &Choices = &[("lozenge", "Lozenge"), ("halo", "Halo")];
 
 /// `[glass] frame`. Mirrors `glass::Frame::as_str`.
 pub const GLASS_FRAMES: &Choices = &[("rounded", "Rounded"), ("square", "Square")];

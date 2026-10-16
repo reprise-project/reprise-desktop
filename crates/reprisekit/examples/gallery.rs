@@ -6508,8 +6508,8 @@ fn render_glass_balloons(theme: &Theme) -> Canvas {
     c
 }
 
-/// Glass notification sheets, 950x700 over the stripes: at rest, hovered, with a picture and
-/// actions, with the reply row, and a stack of three with its "+2 more" chip.
+/// Glass notification sheets over the stripes: Lozenge states and a stack with its chip, then Halo
+/// sheets tinted red and blue, with a grey icon, with a picture, and a stack.
 fn render_glass_notify_sheets(theme: &Theme) -> Canvas {
     use reprisekit::art::{logo, userpic};
     use reprisekit::controls::notifysheet::{
@@ -6520,7 +6520,7 @@ fn render_glass_notify_sheets(theme: &Theme) -> Canvas {
     use reprisekit::taskbar::Edge;
     let s = theme.scale.max(1);
     let text = TextRenderer::load(&theme.fonts);
-    let mut c = blurred_stripes(950 * s, 700 * s);
+    let mut c = blurred_stripes(950 * s, 1320 * s);
     let slot = 46 * s;
     let mut app = Canvas::new(slot as u32, slot as u32);
     let mask = logo::coverage_any(slot as usize);
@@ -6624,6 +6624,86 @@ fn render_glass_notify_sheets(theme: &Theme) -> Canvas {
             x * s - l.footprint.x,
             y * s - l.footprint.y,
             &draw(l, false, None, None),
+        );
+    }
+    if let Some((x, y)) = chip_at {
+        c.blit_over(x * s, y * s, &draw_chip(theme, &text, 2, false));
+    }
+
+    let look = theme
+        .look
+        .style()
+        .and_then(|st| st.notify)
+        .expect("Glass draws sheets");
+    let icon_in = |colour: Color| {
+        let mut icon = Canvas::new(slot as u32, slot as u32);
+        icon.blit_mask_over(0, 0, slot as usize, slot as usize, &mask, colour, clip);
+        icon
+    };
+    let red = icon_in(Color::rgb(0xD8, 0x3A, 0x2E));
+    let blue = icon_in(Color::rgb(0x1F, 0x6F, 0xD8));
+    let grey = icon_in(Color::rgb(0x8A, 0x8A, 0x8A));
+    let halo_lay = |c: &SheetContent| {
+        notifysheet::sheet_layout(theme, &text, SheetShape::Halo, c, false)
+            .expect("Glass draws sheets")
+    };
+    let halo = |lay: &SheetLayout, icon: &Canvas, with_pic: bool| {
+        let icons = SheetIcons {
+            app: Some(icon),
+            picture: with_pic.then_some(&picture),
+        };
+        let tint = (look.colour)(icon);
+        notifysheet::draw_sheet(theme, &text, lay, icons, tint, None, None, None)
+    };
+    let singles = [
+        (
+            &red,
+            false,
+            SheetContent {
+                app: "Video",
+                ..content("Recording saved", "Screen recording, 2 min 14 s.")
+            },
+        ),
+        (&blue, false, content("New message", "Lunch at noon?")),
+        (
+            &grey,
+            false,
+            SheetContent {
+                app: "System",
+                ..content("Updates installed", "Restart to finish.")
+            },
+        ),
+        (
+            &blue,
+            true,
+            SheetContent {
+                app: "Chat",
+                title: "Ana",
+                body: "Are you coming to the review this afternoon?",
+                has_picture: true,
+                ..content("", "")
+            },
+        ),
+    ];
+    let mut y = 720 * s;
+    for (icon, with_pic, content) in &singles {
+        let l = halo_lay(content);
+        c.blit_over(0, y - l.footprint.y, &halo(&l, icon, *with_pic));
+        y += l.footprint.height + 18 * s;
+    }
+    let stack = &singles[..3];
+    let lays: Vec<SheetLayout> = stack.iter().map(|(_, _, c)| halo_lay(c)).collect();
+    let footprints: Vec<(i32, i32)> = lays
+        .iter()
+        .map(|l| (l.footprint.width / s, l.footprint.height / s))
+        .collect();
+    let usable = Rect::new(470, 720, 480, 600);
+    let (spots, chip_at) = place_stack(usable, &footprints, Some((cw / s, ch / s)), Edge::Bottom);
+    for ((l, (x, y)), (icon, _, _)) in lays.iter().zip(spots).zip(stack) {
+        c.blit_over(
+            x * s - l.footprint.x,
+            y * s - l.footprint.y,
+            &halo(l, icon, false),
         );
     }
     if let Some((x, y)) = chip_at {
