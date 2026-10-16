@@ -166,11 +166,13 @@ impl Notification {
 pub enum TrayCommand {
     /// A click on the icon, reported at layout (`x`, `y`): over the
     /// icon's centre, on the bar's or flyout's edge facing the screen.
+    /// `token` goes to the item through `ProvideXdgActivationToken` first.
     Click {
         id: String,
         x: i32,
         y: i32,
         kind: ClickKind,
+        token: Option<String>,
     },
     /// A wheel step over the icon. `delta` is in wheel steps in the item's
     /// own convention, positive away from the user (up, or left).
@@ -183,9 +185,12 @@ pub enum TrayCommand {
         id: String,
         parent: i32,
     },
+    /// A menu row picked; `token` goes to the item through
+    /// `ProvideXdgActivationToken` first, as for `Click`.
     MenuEvent {
         id: String,
         item: i32,
+        token: String,
     },
     /// Tell the bus a balloon closed, so `NotificationClosed` fires.
     /// `reason` is the freedesktop code (1 expired, 2 dismissed, 3 by call).
@@ -1165,7 +1170,9 @@ pub fn click_item(
         .as_ref()
         .and_then(|t| t.item(&id))
         .is_some_and(|i| i.menu_path.is_some());
-    let Some(command) = click_command(id.clone(), at, button, has_menu) else {
+    let Some(command) = click_command(id.clone(), at, button, has_menu, || {
+        state.new_activation_token()
+    }) else {
         return;
     };
     if matches!(command, TrayCommand::GetLayout { .. })
@@ -1177,7 +1184,15 @@ pub fn click_item(
     send(state, command);
 }
 
-fn click_command(id: String, at: (i32, i32), button: u32, has_menu: bool) -> Option<TrayCommand> {
+/// An activation carries a token from `mint`, so the window it shows or
+/// raises can take focus.
+fn click_command(
+    id: String,
+    at: (i32, i32),
+    button: u32,
+    has_menu: bool,
+    mint: impl FnOnce() -> String,
+) -> Option<TrayCommand> {
     let (x, y) = at;
     let kind = match button {
         BTN_LEFT => ClickKind::Activate,
@@ -1186,7 +1201,14 @@ fn click_command(id: String, at: (i32, i32), button: u32, has_menu: bool) -> Opt
         BTN_RIGHT => ClickKind::ContextMenu,
         _ => return None,
     };
-    Some(TrayCommand::Click { id, x, y, kind })
+    let token = (kind != ClickKind::ContextMenu).then(mint);
+    Some(TrayCommand::Click {
+        id,
+        x,
+        y,
+        kind,
+        token,
+    })
 }
 
 /// A wheel step on tray cell `index`: a built-in cell's goes to
@@ -1345,7 +1367,17 @@ fn open_layout(state: &mut State, id: String, parent: i32, nodes: Vec<MenuNode>)
         // follows, so the bar the request held may hide again.
         if items.is_empty() {
             let kind = ClickKind::ContextMenu;
-            send(state, TrayCommand::Click { id, x, y, kind });
+            let token = None;
+            send(
+                state,
+                TrayCommand::Click {
+                    id,
+                    x,
+                    y,
+                    kind,
+                    token,
+                },
+            );
             crate::autohideview::poke(state);
             return;
         }
@@ -1522,7 +1554,8 @@ pub fn menu_activate(state: &mut State, depth: usize, idx: usize) {
     let id = id.clone();
     if let (true, Some(item)) = (enabled, node) {
         state.close_menu();
-        send(state, TrayCommand::MenuEvent { id, item });
+        let token = state.new_activation_token();
+        send(state, TrayCommand::MenuEvent { id, item, token });
     }
 }
 
@@ -1584,8 +1617,8 @@ mod tests {
             (BTN_MIDDLE, true, ClickKind::SecondaryActivate),
             (BTN_RIGHT, false, ClickKind::ContextMenu),
         ] {
-            match click_command("a".into(), (1849, 1050), button, has_menu) {
-                Some(TrayCommand::Click { id, x, y, kind }) => assert_eq!(
+            match click_command("a".into(), (1849, 1050), button, has_menu, || "t".into()) {
+                Some(TrayCommand::Click { id, x, y, kind, .. }) => assert_eq!(
                     (id.as_str(), x, y, kind),
                     ("a", 1849, 1050, want),
                     "{want:?} is heard at (1849, 1050)"
@@ -1595,15 +1628,35 @@ mod tests {
         }
         assert!(
             matches!(
-                click_command("a".into(), (1849, 1050), BTN_RIGHT, true),
+                click_command("a".into(), (1849, 1050), BTN_RIGHT, true, || "t".into()),
                 Some(TrayCommand::GetLayout { parent: 0, .. })
             ),
             "a right click on an item with a menu asks for the menu's layout"
         );
         assert!(
-            click_command("a".into(), (1849, 1050), 0x113, false).is_none(),
+            click_command("a".into(), (1849, 1050), 0x113, false, || "t".into()).is_none(),
             "a side button asks nothing"
         );
+    }
+
+    #[test]
+    fn an_activation_carries_a_token_and_a_context_menu_none() {
+        for (button, want) in [
+            (BTN_LEFT, Some("t")),
+            (BTN_MIDDLE, Some("t")),
+            (BTN_RIGHT, None),
+        ] {
+            match click_command("a".into(), (0, 0), button, false, || "t".into()) {
+                Some(TrayCommand::Click { token, .. }) => {
+                    assert_eq!(
+                        token.as_deref(),
+                        want,
+                        "button {button:#x} carries {want:?}"
+                    )
+                }
+                other => panic!("button {button:#x}: a click, not {other:?}"),
+            }
+        }
     }
 
     #[test]

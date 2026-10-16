@@ -701,6 +701,18 @@ async fn call_item(conn: &Connection, item: &TrayItem, method: &str, x: i32, y: 
     }
 }
 
+/// Hand the item an xdg-activation token so the window its next `Activate`
+/// or menu row shows or raises can take focus. Items without the method ignore it.
+async fn provide_token(conn: &Connection, item: &TrayItem, token: &str) {
+    if let Ok(proxy) = uncached_proxy(conn, &item.service, &item.path, ITEM_IFACE).await
+        && let Err(e) = proxy
+            .call_method("ProvideXdgActivationToken", &(token,))
+            .await
+    {
+        log::debug!("tray: ProvideXdgActivationToken on {} failed: {e}", item.id);
+    }
+}
+
 async fn call_scroll(conn: &Connection, item: &TrayItem, delta: i32, orientation: Orientation) {
     if let Ok(proxy) = uncached_proxy(conn, &item.service, &item.path, ITEM_IFACE).await
         && let Err(e) = proxy
@@ -926,10 +938,21 @@ impl Loop {
     async fn handle_command(&mut self, cmd: TrayCommand) -> bool {
         let peer = |id: &str| self.items.get(id).cloned();
         match cmd {
-            TrayCommand::Click { id, x, y, kind } => {
+            TrayCommand::Click {
+                id,
+                x,
+                y,
+                kind,
+                token,
+            } => {
                 if let Some(p) = peer(&id) {
                     let conn = self.conn.clone();
-                    self.spawn(async move { call_item(&conn, &p, kind.method(), x, y).await });
+                    self.spawn(async move {
+                        if let Some(token) = token {
+                            provide_token(&conn, &p, &token).await;
+                        }
+                        call_item(&conn, &p, kind.method(), x, y).await
+                    });
                 }
             }
             TrayCommand::Scroll {
@@ -961,10 +984,17 @@ impl Loop {
                     );
                 });
             }
-            TrayCommand::MenuEvent { id, item: node } => {
+            TrayCommand::MenuEvent {
+                id,
+                item: node,
+                token,
+            } => {
                 if let Some(p) = peer(&id) {
                     let conn = self.conn.clone();
-                    self.spawn(async move { send_menu_event(&conn, &p, node).await });
+                    self.spawn(async move {
+                        provide_token(&conn, &p, &token).await;
+                        send_menu_event(&conn, &p, node).await
+                    });
                 }
             }
             TrayCommand::NotificationClosed { id, reason } => {
