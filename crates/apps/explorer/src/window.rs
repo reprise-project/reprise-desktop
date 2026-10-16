@@ -308,7 +308,7 @@ pub fn draw(ex: &Explorer, c: &mut Canvas, ctx: &Ctx) {
     }
     let ml = ex.bar_layout(ctx);
     if glass {
-        ex.bar.draw_titles(c, &ctx.text, &ctx.theme, &ml);
+        ex.bar.draw_titles_on_glass(c, &ctx.text, &ctx.theme, &ml);
         reprisekit::look::glow_on_glass(c, &ctx.theme, lay.rebar);
     }
     rebar::draw_closing_line(
