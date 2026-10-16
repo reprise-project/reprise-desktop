@@ -34,6 +34,8 @@ pub(crate) struct Put {
     batch: Vec<Undoable>,
     landed: Vec<PathBuf>,
     select_landed: bool,
+    /// The last failure; `Failed` and `Finished` can arrive in different polls.
+    failed: Option<(&'static str, String)>,
     pub(crate) progress: crate::copydlg::Progress,
 }
 
@@ -325,13 +327,13 @@ impl Explorer {
             batch: Vec::new(),
             landed: Vec::new(),
             select_landed: pending.select_landed,
+            failed: None,
             progress,
         });
     }
 
     pub(crate) fn poll_put(&mut self, ctx: &mut Ctx) -> Option<Reply> {
         let put = self.put.as_mut()?;
-        let mut failed = None;
         let mut finished = false;
         for ev in put.job.poll() {
             match ev {
@@ -358,7 +360,7 @@ impl Explorer {
                 }
                 PutEvent::Failed { index, error } => {
                     let (_, op, name) = &put.ops[index];
-                    failed = Some(op.failure(name, &error));
+                    put.failed = Some(op.failure(name, &error));
                 }
                 PutEvent::Finished => finished = true,
             }
@@ -366,7 +368,8 @@ impl Explorer {
         if !finished {
             return Some(Reply::none());
         }
-        let put = self.put.take()?;
+        let mut put = self.put.take()?;
+        let failed = put.failed.take();
         put.progress.ended(put.landed.len(), failed.as_ref());
         self.undos.push_all(put.batch);
         self.sync_undo();
