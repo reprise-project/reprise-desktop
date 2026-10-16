@@ -942,6 +942,7 @@ pub struct BalloonLook {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SheetShape {
     Lozenge,
+    Halo,
 }
 
 /// A squircle well's corner radius as a share of its side; a picture in the slot rounds the same.

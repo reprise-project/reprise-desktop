@@ -106,19 +106,22 @@ impl Material {
     }
 }
 
-/// `[glass] notification_style`: the notification sheet's shape.
+/// `[glass] notification_style`: the notification sheet's shape. Halo breaks the
+/// app icon out of the sheet's top-left edge and takes the icon's colour.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub enum NotifyStyle {
     #[default]
     Lozenge,
+    Halo,
 }
 
 impl NotifyStyle {
-    pub const ALL: [NotifyStyle; 1] = [NotifyStyle::Lozenge];
+    pub const ALL: [NotifyStyle; 2] = [NotifyStyle::Lozenge, NotifyStyle::Halo];
 
     pub fn as_str(self) -> &'static str {
         match self {
             NotifyStyle::Lozenge => "lozenge",
+            NotifyStyle::Halo => "halo",
         }
     }
 

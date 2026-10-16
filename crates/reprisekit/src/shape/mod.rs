@@ -91,6 +91,15 @@ pub fn centre(v: i32, d: i32) -> f64 {
     (f64::from(v) + 0.5) / f64::from(d) - 0.5
 }
 
+/// How far (`x`, `y`) lies outside a `w` x `h` rect at the origin with corners rounded over `r`,
+/// negative inside, in the units it is given.
+pub fn rounded_distance(x: f64, y: f64, w: f64, h: f64, r: f64) -> f64 {
+    let r = r.min(w / 2.0).min(h / 2.0).max(0.0);
+    let qx = (x - w / 2.0).abs() - (w / 2.0 - r);
+    let qy = (y - h / 2.0).abs() - (h / 2.0 - r);
+    qx.max(0.0).hypot(qy.max(0.0)) + qx.max(qy).min(0.0) - r
+}
+
 pub fn smooth(t: f64) -> f64 {
     let t = t.clamp(0.0, 1.0);
     t * t * (3.0 - 2.0 * t)
@@ -116,6 +125,20 @@ mod tests {
     use super::*;
 
     const WHITE: Color = Color::rgb(0xFF, 0xFF, 0xFF);
+
+    #[test]
+    fn the_distance_out_of_a_rounded_rect_is_signed_and_follows_the_corner() {
+        let d = |x, y| rounded_distance(x, y, 50.0, 30.0, 10.0);
+        assert_eq!(d(25.0, -4.0), 4.0, "above the top edge");
+        assert_eq!(d(56.0, 15.0), 6.0, "right of the right edge");
+        assert_eq!(d(25.0, 5.0), -5.0, "inside, nearest the top");
+        let out = 10.0 + 5.0;
+        let diag = out / std::f64::consts::SQRT_2;
+        assert!(
+            (d(10.0 - diag, 10.0 - diag) - 5.0).abs() < 1e-9,
+            "round the corner"
+        );
+    }
 
     #[test]
     fn white_at_half_over_white_is_white() {

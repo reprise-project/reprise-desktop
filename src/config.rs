@@ -2582,8 +2582,10 @@ impl Config {
                     .ok_or_else(|| format!("[glass] frame = {f:?} is not rounded or square"))?;
             }
             if let Some(n) = g.notification_style {
-                cfg.glass.notification = reprisekit::glass::NotifyStyle::parse(&n)
-                    .ok_or_else(|| format!("[glass] notification_style = {n:?} is not lozenge"))?;
+                cfg.glass.notification =
+                    reprisekit::glass::NotifyStyle::parse(&n).ok_or_else(|| {
+                        format!("[glass] notification_style = {n:?} is not lozenge or halo")
+                    })?;
             }
         }
         cfg.taskbar = TaskbarConfig::default_for(cfg.interface);
@@ -3694,8 +3696,19 @@ mod tests {
                 .notification,
             NotifyStyle::Lozenge
         );
+        assert_eq!(
+            Config::parse("[glass]\nnotification_style = \"halo\"\n")
+                .unwrap()
+                .glass
+                .notification,
+            NotifyStyle::Halo
+        );
         let err = Config::parse("[glass]\nnotification_style = \"bubble\"\n").unwrap_err();
-        assert!(err.to_string().contains("is not lozenge"), "{err}");
+        assert!(
+            err.to_string()
+                .contains("[glass] notification_style = \"bubble\" is not lozenge or halo"),
+            "{err}"
+        );
     }
 
     #[test]

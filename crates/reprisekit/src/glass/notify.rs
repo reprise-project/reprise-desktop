@@ -6,13 +6,16 @@ use super::{Mode, NotifyStyle};
 use crate::backdrop::corner_radius;
 use crate::raster::{Canvas, Insets, Rect};
 use crate::shape::{
-    CLEAR, Px, centre, draw, ellipse, mix, over, pack, premul, rounded, scale, smooth, stroke,
-    unpack,
+    CLEAR, Px, Stops, centre, draw, ellipse, mix, over, pack, premul, rounded, rounded_distance,
+    scale, shares, smooth, stroke, unpack,
 };
 use crate::style::{NotifyInks, NotifyLook, SQUIRCLE_ROUND, SheetShape, SheetSpec, State, Well};
 use crate::theme::Color;
 
 pub static LOZENGE_CORNER: [i32; 25] = crate::backdrop::round_corner();
+pub static HALO_CORNER: [i32; 29] = crate::backdrop::round_corner();
+/// The Halo's breakout well, whose top half stands above the sheet.
+pub static WELL_CORNER: [i32; 14] = crate::backdrop::round_corner();
 
 /// The sheet's shadows fade out inside it.
 const LOZENGE_MARGIN: Insets = Insets {
@@ -21,6 +24,46 @@ const LOZENGE_MARGIN: Insets = Insets {
     right: 28,
     bottom: 40,
 };
+
+/// The well's glow reaches `GLOW_REACH` above it, inside the top margin.
+const HALO_MARGIN: Insets = Insets {
+    top: 36,
+    ..LOZENGE_MARGIN
+};
+
+/// The tint toned by `tone` ([`toned`]), at `top`, `mid` (at `WASH_MID` down) and `foot`. Dark
+/// deepens it so the light inks keep their contrast over a bright backdrop.
+struct Wash {
+    tone: f64,
+    top: u8,
+    mid: u8,
+    foot: u8,
+}
+
+const LIGHT_WASH: Wash = Wash {
+    tone: 0.35,
+    top: 195,
+    mid: 115,
+    foot: 60,
+};
+const DARK_WASH: Wash = Wash {
+    tone: -0.6,
+    top: 200,
+    mid: 80,
+    foot: 30,
+};
+const WASH_MID: f64 = 0.55;
+
+const HALO_GLOW: u8 = 191;
+/// Lifted so the glow shows over a backdrop of the icon's own hue.
+const GLOW_LIFT: f64 = 0.25;
+/// An icon without a colour glows white and leaves the glass unwashed.
+const PLAIN_GLOW: u8 = 90;
+const GLOW_REACH: f64 = 28.0;
+/// Light and dark; the ring's outer `RING_SOFT` fades out.
+const HALO_RING: (u8, u8) = (70, 50);
+const RING_W: f64 = 4.0;
+const RING_SOFT: f64 = 1.5;
 
 const WHITE: Color = Color::rgb(0xFF, 0xFF, 0xFF);
 const BLACK: Color = Color::rgb(0, 0, 0);
@@ -97,6 +140,7 @@ impl NotifyStyle {
     pub const fn shape(self) -> SheetShape {
         match self {
             NotifyStyle::Lozenge => SheetShape::Lozenge,
+            NotifyStyle::Halo => SheetShape::Halo,
         }
     }
 }
@@ -122,12 +166,14 @@ pub fn look(mode: Mode) -> NotifyLook {
 fn corner(shape: SheetShape) -> &'static [i32] {
     match shape {
         SheetShape::Lozenge => &LOZENGE_CORNER,
+        SheetShape::Halo => &HALO_CORNER,
     }
 }
 
 fn margin(shape: SheetShape) -> Insets {
     match shape {
         SheetShape::Lozenge => LOZENGE_MARGIN,
+        SheetShape::Halo => HALO_MARGIN,
     }
 }
 
@@ -228,6 +274,88 @@ fn footprint(spec: &SheetSpec) -> Rect {
     spec.breakout.map_or(body, |b| body.union(&b))
 }
 
+/// `well` is `(x, y, w, h, r)`, design px from the canvas.
+struct Halo {
+    well: (f64, f64, f64, f64, f64),
+    wash: [(f64, Px); 3],
+    /// The sheet's top glass, pool and wash, filling the whole well.
+    glass: Px,
+    glow: Px,
+    ring: Px,
+}
+
+/// `c` moved `k` of the way to white, or for a negative `k` to black.
+fn toned(c: Color, k: f64) -> Color {
+    let to = if k < 0.0 { 0.0 } else { 255.0 };
+    let t = |v: u8| (f64::from(v) + (to - f64::from(v)) * k.abs()).round() as u8;
+    Color::rgb(t(c.r), t(c.g), t(c.b))
+}
+
+impl Halo {
+    fn of(l: &NotifyLook, spec: &SheetSpec, (sx, sy): (f64, f64)) -> Option<Halo> {
+        let b = spec.breakout?;
+        match spec.shape {
+            SheetShape::Lozenge => return None,
+            SheetShape::Halo => {}
+        }
+        let side = f64::from(b.width);
+        let well = (
+            sx + f64::from(b.x),
+            sy + f64::from(b.y),
+            side,
+            f64::from(b.height),
+            SQUIRCLE_ROUND * side,
+        );
+        let (w, ring) = if l.dark {
+            (&DARK_WASH, HALO_RING.1)
+        } else {
+            (&LIGHT_WASH, HALO_RING.0)
+        };
+        let ring = premul(WHITE, ring);
+        let g = sheet_glass(l);
+        let (fill, pool) = (px(g.fill), px(g.pool));
+        Some(match spec.tint {
+            Some(t) => {
+                let c = toned(t, w.tone);
+                Halo {
+                    well,
+                    wash: [
+                        (0.0, premul(c, w.top)),
+                        (WASH_MID, premul(c, w.mid)),
+                        (1.0, premul(c, w.foot)),
+                    ],
+                    glass: over(pool, over(premul(c, w.top), fill)),
+                    glow: premul(toned(t, GLOW_LIFT), HALO_GLOW),
+                    ring,
+                }
+            }
+            None => Halo {
+                well,
+                wash: [(0.0, CLEAR); 3],
+                glass: over(pool, fill),
+                glow: premul(WHITE, PLAIN_GLOW),
+                ring,
+            },
+        })
+    }
+
+    fn wash(&self, t: f64) -> Px {
+        Stops(&self.wash).at(t)
+    }
+
+    /// `sheet` at the device pixel (`x`, `y`), middle (`ux`, `uy`), lit by the glow and ring. The
+    /// well is one glass above and over the sheet: its top wash, no glow.
+    fn light(&self, sheet: Px, x: f64, y: f64, (ux, uy): (f64, f64), k: f64) -> Px {
+        let (wx, wy, w, h, r) = self.well;
+        let out = rounded_distance(ux - wx, uy - wy, w, h, r).max(0.0);
+        let outside = 1.0 - rounded(x - wx * k, y - wy * k, w * k, h * k, r * k);
+        let glow = scale(self.glow, outside * (1.0 - smooth(out / GLOW_REACH)));
+        let ring = outside * (1.0 - smooth((out - RING_W + RING_SOFT) / RING_SOFT));
+        let behind = shares(&[(sheet, outside), (self.glass, 1.0 - outside)]);
+        over(scale(self.ring, ring), over(glow, behind))
+    }
+}
+
 fn sheet(l: &NotifyLook, spec: &SheetSpec, d: i32) -> Canvas {
     let d = d.max(1);
     let k = f64::from(d);
@@ -248,8 +376,10 @@ fn sheet(l: &NotifyLook, spec: &SheetSpec, d: i32) -> Canvas {
     };
     let pool = px(g.pool);
     let body = (sx, sy, w, h, r);
+    let halo = Halo::of(l, spec, (sx, sy));
     draw(cw, ch, d, |x, y| {
         let (ux, uy) = (centre(x as i32, d) + 0.5, centre(y as i32, d) + 0.5);
+        let wash = halo.as_ref().map_or(CLEAR, |hl| hl.wash((uy - sy) / h));
         let cov = |inset: f64, dy: f64| {
             rounded(
                 x - sx * k - inset,
@@ -261,15 +391,18 @@ fn sheet(l: &NotifyLook, spec: &SheetSpec, d: i32) -> Canvas {
         };
         let t = ((ux - sx - 0.2 * w) / (0.8 * w)).hypot((uy - sy) / (1.5 * h));
         let lift = 1.0 - smooth((t - POOL_CORE) / (1.0 - POOL_CORE));
-        let fill = over(scale(pool, lift), glass.fill);
-        let (p, c) = lit(cov, k, &Lit { fill, ..glass });
-        if c >= 1.0 {
-            return p;
+        let fill = over(scale(pool, lift), over(wash, glass.fill));
+        let (mut p, c) = lit(cov, k, &Lit { fill, ..glass });
+        if c < 1.0 {
+            let key = f64::from(g.shadow.0) * cast(&KEY_SHADOW, ux, uy, body);
+            let ambient = f64::from(g.shadow.1) * cast(&AMBIENT_SHADOW, ux, uy, body);
+            let a = 255.0 - (255.0 - key) * (255.0 - ambient) / 255.0;
+            p = cast_under(p, c, (a, [0.0; 3]));
         }
-        let key = f64::from(g.shadow.0) * cast(&KEY_SHADOW, ux, uy, body);
-        let ambient = f64::from(g.shadow.1) * cast(&AMBIENT_SHADOW, ux, uy, body);
-        let a = 255.0 - (255.0 - key) * (255.0 - ambient) / 255.0;
-        cast_under(p, c, (a, [0.0; 3]))
+        match &halo {
+            Some(h) => h.light(p, x, y, (ux, uy), k),
+            None => p,
+        }
     })
 }
 
@@ -748,6 +881,194 @@ mod tests {
     #[test]
     fn the_lozenge_corner_steps_radius_26() {
         assert_eq!(corner_radius(&LOZENGE_CORNER), 26.0);
+    }
+
+    fn solid(c: Color) -> Canvas {
+        let mut k = Canvas::new(48, 48);
+        k.fill_rect(Rect::new(0, 0, 48, 48), c);
+        k
+    }
+
+    const HALO_WELL: Rect = Rect::new(9, -25, 50, 50);
+
+    fn halo_spec(tint: Option<Color>) -> SheetSpec {
+        SheetSpec {
+            shape: SheetShape::Halo,
+            tint,
+            breakout: Some(HALO_WELL),
+            ..spec(360, 96)
+        }
+    }
+
+    fn halo_sheet_in(m: Mode, tint: Option<Color>, d: i32) -> Canvas {
+        let l = look(m);
+        (l.sheet)(&l, &halo_spec(tint), d)
+    }
+
+    fn halo_sheet(tint: Option<Color>) -> Canvas {
+        halo_sheet_in(Mode::Light, tint, 1)
+    }
+
+    /// The sheet's top-left in a Halo canvas at scale 1.
+    fn halo_origin() -> (i32, i32) {
+        let m = margin(SheetShape::Halo);
+        (m.left, m.top - HALO_WELL.y)
+    }
+
+    fn over_grey(p: u32) -> (u8, u8, u8) {
+        let p = pack(over(unpack(p), premul(Color::rgb(0x80, 0x80, 0x80), 255)));
+        ((p >> 16) as u8, (p >> 8) as u8, p as u8)
+    }
+
+    fn centre_rgb(tint: Option<Color>) -> (u8, u8, u8) {
+        let (x, y) = halo_origin();
+        over_grey(halo_sheet(tint).get(x + 180, y + 60))
+    }
+
+    #[test]
+    fn the_halo_tint_is_the_icon_colour_and_grey_icons_get_none() {
+        let look = look(Mode::Light);
+        assert_eq!(
+            (look.colour)(&solid(Color::rgb(0xD0, 0x30, 0x30))),
+            Some(Color::rgb(0xD0, 0x30, 0x30))
+        );
+        assert_eq!((look.colour)(&solid(Color::rgb(0x80, 0x80, 0x80))), None);
+    }
+
+    #[test]
+    fn halo_tints_differ_and_untinted_differs_from_tinted() {
+        let (red, blue) = (Color::rgb(0xD0, 0x30, 0x30), Color::rgb(0x30, 0x60, 0xD0));
+        let hashes: HashSet<u64> = [Some(red), Some(blue), None]
+            .map(|t| fnv(&halo_sheet(t)))
+            .into();
+        assert_eq!(hashes.len(), 3);
+        let (r, b) = (centre_rgb(Some(red)), centre_rgb(Some(blue)));
+        assert!(r.0 > r.2 && b.2 > b.0, "the wash takes the icon's colour");
+        let plain = centre_rgb(None);
+        assert_eq!(plain.0, plain.2, "no wash without a tint");
+    }
+
+    #[test]
+    fn the_halo_corner_steps_radius_30() {
+        assert_eq!(corner_radius(&HALO_CORNER), 30.0);
+    }
+
+    #[test]
+    fn the_breakout_well_corner_steps_radius_15() {
+        assert_eq!(corner_radius(&WELL_CORNER), 15.0);
+    }
+
+    #[test]
+    fn the_halo_canvas_holds_the_well_and_its_glow() {
+        let red = Color::rgb(0xD0, 0x30, 0x30);
+        for m in Mode::ALL {
+            for d in [1, 2] {
+                let c = halo_sheet_in(m, Some(red), d);
+                let mm = margin(SheetShape::Halo);
+                assert_eq!(
+                    (c.width as i32, c.height as i32),
+                    (
+                        (360 + mm.left + mm.right) * d,
+                        (96 + 25 + mm.top + mm.bottom) * d
+                    )
+                );
+                let (w, h) = (c.width as i32, c.height as i32);
+                let rim = (0..w)
+                    .flat_map(|x| [(x, 0), (x, h - 1)])
+                    .chain((0..h).flat_map(|y| [(0, y), (w - 1, y)]));
+                assert!(
+                    rim.into_iter().all(|(x, y)| c.get(x, y) >> 24 <= 1),
+                    "{m:?} x{d}: the glow fades out inside the canvas"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn the_glow_above_the_well_is_the_tint_and_white_without_one() {
+        let (x, y) = halo_origin();
+        let above = (x + HALO_WELL.x + 25, y + HALO_WELL.y - 8);
+        let red = halo_sheet(Some(Color::rgb(0xD0, 0x30, 0x30))).get(above.0, above.1);
+        let (r, g, b) = ((red >> 16) & 0xFF, (red >> 8) & 0xFF, red & 0xFF);
+        assert!(red >> 24 > 30 && r > 2 * g && r > 2 * b, "{red:#010x}");
+        let white = halo_sheet(None).get(above.0, above.1);
+        let (r, g, b) = ((white >> 16) & 0xFF, (white >> 8) & 0xFF, white & 0xFF);
+        assert!(white >> 24 > 15 && r == g && g == b, "{white:#010x}");
+        let far = halo_sheet(Some(Color::rgb(0xD0, 0x30, 0x30))).get(above.0, y - 25 - 30);
+        assert!(far >> 24 <= 1, "30 px out the glow is gone: {far:#010x}");
+    }
+
+    #[test]
+    fn the_glow_reaches_far_and_the_well_is_the_washed_glass() {
+        let (x, y) = halo_origin();
+        let mid = x + HALO_WELL.x + 25;
+        for m in Mode::ALL {
+            let c = halo_sheet_in(m, Some(Color::rgb(0xD0, 0x30, 0x30)), 1);
+            let at = |up: i32| c.get(mid, y + HALO_WELL.y - up) >> 24;
+            assert!(at(8) >= 140, "{m:?}: 8 px out the glow is {}", at(8));
+            assert!(at(20) >= 30, "{m:?}: 20 px out the glow is {}", at(20));
+            let (above, over_sheet) = (
+                c.get(mid, y + HALO_WELL.y + 12),
+                c.get(mid, y + HALO_WELL.y + 38),
+            );
+            assert_eq!(
+                above, over_sheet,
+                "{m:?}: one glass under the well, no glow"
+            );
+            let (r, _, b) = over_grey(above);
+            assert!(
+                matches!(above >> 24, 60..=245) && r > b,
+                "{m:?}: faint washed glass under the well {above:#010x}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_soft_white_ring_hugs_the_well() {
+        let (x, y) = halo_origin();
+        let mid = y + HALO_WELL.y + 12;
+        for m in Mode::ALL {
+            for tint in [Some(Color::rgb(0x20, 0x40, 0xA0)), None] {
+                let c = halo_sheet_in(m, tint, 1);
+                let green = |out: i32| (c.get(x + HALO_WELL.x - out, mid) >> 8) & 0xFF;
+                assert!(
+                    green(2) >= green(7) + 30,
+                    "{m:?} {tint:?}: ring {} past it {}",
+                    green(2),
+                    green(7)
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn the_halo_wash_is_heaviest_at_the_top_and_reads_in_both_modes() {
+        let (x, y) = halo_origin();
+        for m in Mode::ALL {
+            let red = halo_sheet_in(m, Some(Color::rgb(0xD0, 0x30, 0x30)), 1);
+            let warmth = |dy: i32| {
+                let (r, _, b) = over_grey(red.get(x + 250, y + dy));
+                i32::from(r) - i32::from(b)
+            };
+            let (top, foot) = (warmth(6), warmth(90));
+            let reads = if m == Mode::Dark { 35 } else { 45 };
+            assert!(top >= reads, "{m:?}: the top reads red, r - b = {top}");
+            assert!(top >= foot + 20, "{m:?}: top {top}, foot {foot}");
+        }
+    }
+
+    #[test]
+    fn a_dark_tint_deepens_the_glass_rather_than_lighting_it() {
+        let (x, y) = halo_origin();
+        let luma = |c: &Canvas| {
+            let (r, g, b) = over_grey(c.get(x + 250, y + 6));
+            299 * u32::from(r) + 587 * u32::from(g) + 114 * u32::from(b)
+        };
+        let plain = luma(&halo_sheet_in(Mode::Dark, None, 1));
+        for tint in [Color::rgb(0xD0, 0x30, 0x30), Color::rgb(0x58, 0x65, 0xF2)] {
+            let tinted = luma(&halo_sheet_in(Mode::Dark, Some(tint), 1));
+            assert!(tinted <= plain, "{tint:?}: {tinted} over {plain}");
+        }
     }
 
     #[test]

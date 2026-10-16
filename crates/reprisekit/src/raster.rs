@@ -37,6 +37,10 @@ impl Rect {
             (self.height - 2 * n).max(0),
         )
     }
+    /// The two share at least one pixel.
+    pub fn intersects(self, o: Rect) -> bool {
+        self.x < o.right() && o.x < self.right() && self.y < o.bottom() && o.y < self.bottom()
+    }
     pub fn intersect(&self, o: &Rect) -> Rect {
         let x0 = self.x.max(o.x);
         let y0 = self.y.max(o.y);
@@ -1312,6 +1316,14 @@ fn in_rounded(r: Rect, radius: i32, x: i32, y: i32) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rects_sharing_only_an_edge_do_not_intersect() {
+        let a = Rect::new(9, 0, 50, 25);
+        assert!(!a.intersects(Rect::new(0, 25, 360, 80)));
+        assert!(a.intersects(Rect::new(0, 24, 360, 80)));
+        assert!(!a.intersects(Rect::new(59, 0, 10, 10)));
+    }
 
     #[test]
     fn fit_size_scales_down_keeping_aspect() {
