@@ -46,7 +46,8 @@ tabs, trackbars and the rest have their own Blue art.
 
 ![Reprise Blue in the Blue scheme](screenshots/blue.png)
 
-The Start menu keeps the Classic layout and band, in Blue's flat menus.
+The Start menu keeps the Classic layout and band, in Blue's flat menus; the
+band takes its colours from the scheme.
 
 Colour schemes: **Blue** (the default), Olive Green, Silver, Slate, Sapphire,
 Obsidian, Ember, Cobalt, Carbon and Steel. Each brings its own art. None of
