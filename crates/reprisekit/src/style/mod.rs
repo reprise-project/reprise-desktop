@@ -24,10 +24,12 @@ pub enum Part {
     /// rect (Normal focused, Inactive otherwise), while a peek hides it. A
     /// look without it keeps the frame.
     WindowSheet,
-    /// The frame's plain glass where it runs down under the client's top
+    /// The frame's glass where it runs down under a restored window's top
     /// ([`crate::frame::FrameGeometry::glass_top`]), Normal focused, Inactive
     /// otherwise. Its outset covers the client's edges beside and above it.
     ClientGlass,
+    /// [`Part::ClientGlass`] for a maximized window: the frame's plain glass.
+    MaxClientGlass,
     MinButton,
     MaxButton,
     RestoreButton,
@@ -97,6 +99,8 @@ pub enum Part {
     ToolbarButton,
     ToolbarDrop,
     ToolbarSeparator,
+    /// A toolbar separator over the frame's glass, the same in every mode.
+    GlassSeparator,
     Rebar,
     RebarBand,
     RebarGripper,
@@ -991,6 +995,8 @@ pub struct Style {
     pub taskbar: TaskbarShape,
     pub glass: Option<GlassSpec>,
     pub caption_title: CaptionTitle,
+    /// The halo under labels a client draws over its frame's glass ([`Part::ClientGlass`]).
+    pub label_glow: Option<TitleGlow>,
     pub task_glow: Option<TaskGlow>,
     task_spot: Option<Spot>,
     pub task_nudge: bool,
@@ -1068,6 +1074,7 @@ impl Style {
             taskbar,
             glass: None,
             caption_title: CaptionTitle::CENTRED,
+            label_glow: None,
             task_glow: None,
             task_spot: None,
             task_nudge: true,
@@ -1147,6 +1154,11 @@ impl Style {
 
     pub fn with_caption_title(mut self, t: CaptionTitle) -> Style {
         self.caption_title = t;
+        self
+    }
+
+    pub fn with_label_glow(mut self, g: TitleGlow) -> Style {
+        self.label_glow = Some(g);
         self
     }
 

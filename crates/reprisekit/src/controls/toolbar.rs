@@ -256,6 +256,43 @@ pub fn draw(
     rects: &[Rect],
     px: u32,
 ) {
+    draw_strip(c, text, p, tb, r, rects, px, true);
+}
+
+/// [`draw`] for a strip over its frame's glass, without its separators: the host lays the
+/// label glow under the rest, then draws them ([`draw_glass_separators`]).
+pub fn draw_over_glass(
+    c: &mut Canvas,
+    text: &TextRenderer,
+    p: &Paint,
+    tb: &ToolBar,
+    r: Rect,
+    rects: &[Rect],
+    px: u32,
+) {
+    draw_strip(c, text, p, tb, r, rects, px, false);
+}
+
+/// The separators of a strip over its frame's glass, each in its `layout` rect.
+pub fn draw_glass_separators(c: &mut Canvas, p: &Paint, tb: &ToolBar, rects: &[Rect]) {
+    for (item, &rect) in tb.items.iter().zip(rects) {
+        if matches!(item, Item::Separator) {
+            look::draw_glass_separator(c, p, tb.big, rect.scaled(p.s));
+        }
+    }
+}
+
+#[expect(clippy::too_many_arguments)]
+fn draw_strip(
+    c: &mut Canvas,
+    text: &TextRenderer,
+    p: &Paint,
+    tb: &ToolBar,
+    r: Rect,
+    rects: &[Rect],
+    px: u32,
+    separators: bool,
+) {
     let s = p.s;
     let m = &p.look.controls().toolbar;
     look::draw_background(c, p, r.scaled(s));
@@ -274,7 +311,9 @@ pub fn draw(
             ..
         }) = item
         else {
-            look::draw_separator(c, p, tb.big, sr);
+            if separators {
+                look::draw_separator(c, p, tb.big, sr);
+            }
             continue;
         };
         let (icon, label, enabled) = (icon.as_ref(), label.as_deref(), *enabled);
@@ -898,6 +937,46 @@ mod tests {
         assert_eq!(c.get(BIG_SEP_INSET, 0), cs.button_face.argb());
         assert_eq!(c.get(BIG_SEP_INSET, BIG_HEIGHT - 1), cs.button_face.argb());
         assert_eq!(c.get(0, BIG_HEIGHT / 2), cs.button_face.argb());
+    }
+
+    #[test]
+    fn over_glass_a_separator_waits_for_the_host_and_draws_two_faint_lines() {
+        use crate::interface::Interface;
+        let text = renderer();
+        let tb = ToolBar {
+            items: vec![Item::Separator],
+            hot: None,
+            pressed: None,
+            latched: None,
+            big: true,
+        };
+        let r = Rect::new(0, 0, BIG_SEP_W, BIG_HEIGHT);
+        for mode in [crate::glass::Mode::Light, crate::glass::Mode::Dark] {
+            let theme = crate::interfaces::theme_with(
+                Interface::Glass,
+                Default::default(),
+                &crate::glass::Settings {
+                    mode,
+                    ..Default::default()
+                },
+            );
+            let p = theme.paint();
+            let mut c = Canvas::new(BIG_SEP_W as u32, BIG_HEIGHT as u32);
+            draw_over_glass(&mut c, &text, &p, &tb, r, &[r], 11);
+            assert!(c.pixels.iter().all(|&px| px == 0), "{mode:?}: nothing yet");
+            draw_glass_separators(&mut c, &p, &tb, &[r]);
+            let y = BIG_HEIGHT / 2;
+            let alphas: Vec<u32> = (0..BIG_SEP_W).map(|x| c.get(x, y) >> 24).collect();
+            assert_eq!(
+                alphas.iter().filter(|&&a| a != 0).count(),
+                2,
+                "{mode:?}: two lines, {alphas:?}"
+            );
+            assert!(
+                alphas.iter().all(|&a| a < 0x90),
+                "{mode:?}: both translucent, {alphas:?}"
+            );
+        }
     }
 
     #[test]

@@ -274,9 +274,14 @@ pub fn draw(ex: &Explorer, c: &mut Canvas, ctx: &Ctx) {
         c.clear_rect(lay.rebar);
         c.report_glass_top(glass_top);
     }
-    if let Some(r) = lay.toolbar {
+    let toolbar = lay.toolbar.map(|r| {
         let rects = toolbar::layout(&ex.toolbar, &ctx.text, px, r, &ctx.theme.controls());
-        toolbar::draw(
+        let draw = if glass {
+            toolbar::draw_over_glass
+        } else {
+            toolbar::draw
+        };
+        draw(
             c,
             &ctx.text,
             &Paint {
@@ -288,28 +293,35 @@ pub fn draw(ex: &Explorer, c: &mut Canvas, ctx: &Ctx) {
             &rects,
             px,
         );
-    }
-    if let Some(r) = lay.address {
+        rects
+    });
+    let paint = Paint {
+        s: 1,
+        ..ctx.theme.paint()
+    };
+    let address = lay.address.map(|r| {
         let al = addressbar::layout(&ex.address, &ctx.text, px, r, &ctx.theme.controls());
-        let focused = ex.focus == crate::Focus::Address;
-        addressbar::draw(
-            c,
-            &ctx.text,
-            &Paint {
-                s: 1,
-                ..ctx.theme.paint()
-            },
-            &ex.address,
-            &al,
-            focused,
-            reprisekit::textedit::Caret::new(focused, ctx.caret_on),
-            px,
-        );
+        addressbar::draw_over_glass(c, &ctx.text, &paint, &ex.address, &al, px);
+        al
+    });
+    let draw_field = |c: &mut Canvas| {
+        if let Some(al) = &address {
+            let focused = ex.focus == crate::Focus::Address;
+            let caret = reprisekit::textedit::Caret::new(focused, ctx.caret_on);
+            addressbar::draw_field(c, &ctx.text, &paint, &ex.address, al, focused, caret, px);
+        }
+    };
+    if !glass {
+        draw_field(c);
     }
     let ml = ex.bar_layout(ctx);
     if glass {
         ex.bar.draw_titles_on_glass(c, &ctx.text, &ctx.theme, &ml);
         reprisekit::look::glow_on_glass(c, &ctx.theme, lay.rebar);
+        if let Some(rects) = &toolbar {
+            toolbar::draw_glass_separators(c, &paint, &ex.toolbar, rects);
+        }
+        draw_field(c);
     }
     rebar::draw_closing_line(
         c,

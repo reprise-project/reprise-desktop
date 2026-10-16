@@ -68,13 +68,27 @@ pub fn draw_sheet(canvas: &mut Canvas, theme: &Theme, r: Rect) {
 /// whose frame never does.
 pub fn client_glass(theme: &Theme, active: bool) -> Option<u32> {
     use crate::style::{Part, State};
-    let p = theme.look.style()?.part(Part::ClientGlass)?;
+    let p = theme.look.style()?.part(Part::MaxClientGlass)?;
     let f = p.frame(if active {
         State::Normal
     } else {
         State::Inactive
     });
     Some(p.atlas.get(f.x, f.y))
+}
+
+/// Draw the frame's glass under a client's top into `band` (canvas pixels at the theme's
+/// scale): the client's rect from its top, as deep as the glass runs, a restored frame's sheen
+/// carried down it from the caption's ends. Nothing in a look without [`client_glass`].
+pub fn draw_client_glass(canvas: &mut Canvas, theme: &Theme, band: Rect, maximized: bool) {
+    let Some(s) = theme.look.style() else {
+        return;
+    };
+    let state = match theme.active {
+        true => crate::style::State::Normal,
+        false => crate::style::State::Inactive,
+    };
+    style_frame::draw_client_glass(canvas, s, band, maximized, state, theme.scale.max(1));
 }
 
 /// The caption title's ink, by whether the window is active, for labels drawn over clear
@@ -85,10 +99,10 @@ pub fn ink_on_glass(theme: &Theme) -> Option<Color> {
     Some(if theme.active { t.color } else { t.inactive })
 }
 
-/// Lay the caption title's glow (or dark Glass's edge) under whatever is drawn in `r` over clear
+/// Lay the look's label glow (or halo) under whatever is drawn in `r` over clear
 /// [`client_glass`], so labels and icons there read on any tint; nothing in a look without one.
 pub fn glow_on_glass(canvas: &mut Canvas, theme: &Theme, r: Rect) {
-    let Some(glow) = theme.look.style().and_then(|s| s.caption_title.glow) else {
+    let Some(glow) = theme.look.style().and_then(|s| s.label_glow) else {
         return;
     };
     let ink = canvas.copy_rect(r);

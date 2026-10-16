@@ -2204,6 +2204,16 @@ fn under_glass_the_rebar_is_clear_over_the_frames_glass() {
         0xFF,
         "the address field stays opaque"
     );
+    let x = field.x + field.width / 2;
+    let above = (0..field.y + field.height / 2)
+        .rev()
+        .find(|&y| c.get(x, y) >> 24 != 0xFF)
+        .expect("the field starts below the toolbar");
+    assert_eq!(
+        [c.get(x, above) >> 24, c.get(x, above - 1) >> 24],
+        [0, 0],
+        "no glow over the field's border"
+    );
     assert_eq!(c.get(400, lay.etch_y) >> 24, 0xFF, "the closing line");
 }
 

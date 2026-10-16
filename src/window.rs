@@ -340,7 +340,7 @@ pub struct Window {
     sheet: BufferId,
     /// The client's blur region (`clientglass::region`), client coordinates.
     pub blur: Vec<Rect>,
-    /// The frame's glass under each `blur` rect while Glass draws it, one pixel stretched.
+    /// The frame's glass under each `blur` rect while Glass draws it.
     client_glass: Vec<BufferId>,
     /// `draw_sheet` drew the window as a sheet and `unsheet` has not put
     /// its frame's nodes back yet.
@@ -1113,13 +1113,18 @@ impl State {
     /// what lies behind the window.
     fn place_client_glass(&mut self, w: WindowId, sheet: bool) {
         let active = self.win(w).is_some_and(|x| x.is_active(self.focused)) && !self.switcher.cards;
-        let px = reprisekit::look::client_glass(&self.config.theme, active);
+        let scale = self.draw_scale_for_window(w);
+        let theme = crate::theme::Theme {
+            active,
+            ..self.config.theme.scaled(scale)
+        };
+        let opens = reprisekit::look::client_glass(&theme, active).is_some();
         let State { scene, windows, .. } = self;
         let Some(win) = windows.iter_mut().find(|x| x.id == w) else {
             return;
         };
-        let rects: Vec<Rect> = match px {
-            Some(_) if win.has_frame() && !sheet => win.blur.clone(),
+        let rects: Vec<Rect> = match opens {
+            true if win.has_frame() && !sheet => win.blur.clone(),
             _ => Vec::new(),
         };
         while win.client_glass.len() > rects.len() {
@@ -1134,8 +1139,10 @@ impl State {
         }
         let c = win.geom.client;
         for (&b, r) in win.client_glass.iter().zip(&rects) {
-            scene.buffer_set_canvas(b, &[px.unwrap_or(0)], 1, 1);
-            scene.buffer_set_dest_size(b, Some((r.width, r.height).into()));
+            let mut canvas = Canvas::new((r.width * scale) as u32, (r.height * scale) as u32);
+            let band = Rect::new(-r.x, -r.y, c.width, r.bottom()).scaled(scale);
+            reprisekit::look::draw_client_glass(&mut canvas, &theme, band, win.maximized);
+            upload_scaled(scene, b, &canvas, scale);
             scene.set_position(b, c.x + r.x, c.y + r.y);
         }
         let leave_out = !rects.is_empty() && crate::glass::wanted(&self.config);
