@@ -116,9 +116,11 @@ pub(crate) struct Reading {
     again: bool,
 }
 
-/// Typed address text waiting on whether its folder exists ([`Explorer::navigate`]).
+/// Typed address text ([`Explorer::navigate`]) or the command line's place waiting on whether its
+/// folder exists.
 pub(crate) struct Checking {
-    typed: String,
+    /// None for the command line's place ([`Explorer::open`]).
+    typed: Option<String>,
     place: Place,
     /// The place shown at Enter: an answer landing after the window moved on is dropped.
     from: Place,
@@ -262,8 +264,10 @@ pub struct Explorer {
     image_dims: HashMap<PathBuf, (u32, u32)>,
     /// Images whose header was sent to a job in this listing, so a file that states no size is read once.
     dims_asked: HashSet<PathBuf>,
-    /// Typed address text whose folder is still being checked ([`Explorer::navigate`]).
+    /// Typed address text or the command line's place whose folder is still being checked.
     checking: Option<Checking>,
+    /// The `--select` entry and its folder, waiting on that folder's listing.
+    selecting: Option<(Place, PathBuf)>,
     watch: Option<Watch>,
     pub hover: Option<Hover>,
     pub tip: Option<Tip>,
@@ -397,6 +401,7 @@ impl Explorer {
             image_dims: HashMap::new(),
             dims_asked: HashSet::new(),
             checking: None,
+            selecting: None,
             watch: match Watch::new(ctx.wake.clone()) {
                 Ok(w) => Some(w),
                 Err(e) => {
@@ -531,10 +536,10 @@ impl Explorer {
         };
         let job = Job::spawn(Some(&ctx.wake), move || is_dir(&dir));
         match job.wait(repriseapp::listjob::WAIT) {
-            Some(found) => self.checked(typed, place, found, ctx),
+            Some(found) => self.checked(Some(typed), place, found, ctx),
             None => {
                 self.checking = Some(Checking {
-                    typed: typed.to_string(),
+                    typed: Some(typed.to_string()),
                     place,
                     from: self.place.clone(),
                     job,
@@ -549,14 +554,67 @@ impl Explorer {
     pub(crate) fn take_checked(&mut self, ctx: &mut Ctx) -> Option<Reply> {
         let found = self.checking.as_ref()?.job.take()?;
         let c = self.checking.take()?;
-        (c.from == self.place).then(|| self.checked(&c.typed, c.place, found, ctx))
+        (c.from == self.place).then(|| self.checked(c.typed.as_deref(), c.place, found, ctx))
     }
 
-    fn checked(&mut self, typed: &str, place: Place, found: bool, ctx: &mut Ctx) -> Reply {
-        if found {
-            self.go(place, ctx)
-        } else {
-            self.not_found(typed, ctx)
+    fn checked(&mut self, typed: Option<&str>, place: Place, found: bool, ctx: &mut Ctx) -> Reply {
+        match (typed, found) {
+            (Some(_), true) => self.go(place, ctx),
+            (Some(typed), false) => self.not_found(typed, ctx),
+            (None, true) => Reply::none(),
+            (None, false) => {
+                self.history = History::new(Place::Home);
+                self.show(Place::Home, ctx)
+            }
+        }
+    }
+
+    /// Opens the window built by `build` on the command line's [`Start`]. Its folder is checked
+    /// on a listing thread beside the first listing, as typed text is ([`Explorer::navigate`]),
+    /// so the window maps even when the folder sits on a dead mount; a missing folder opens Home.
+    fn open(
+        start: Start,
+        is_dir: impl FnOnce(&Path) -> bool + Send + 'static,
+        build: impl FnOnce(Place, &mut Ctx) -> Explorer,
+        ctx: &mut Ctx,
+    ) -> Explorer {
+        let Start { place, dir, select } = start;
+        let check = dir.map(|d| Job::spawn(Some(&ctx.wake), move || is_dir(&d)));
+        let mut ex = build(place.clone(), ctx);
+        ex.selecting = select.map(|s| (place.clone(), s));
+        if let Some(job) = check {
+            // A listing still being read means the mount is slow: the check would be too.
+            let found = match ex.reading {
+                None => job.wait(repriseapp::listjob::WAIT),
+                Some(_) => job.take(),
+            };
+            match found {
+                Some(found) => {
+                    let _ = ex.checked(None, place, found, ctx);
+                }
+                None => {
+                    ex.checking = Some(Checking {
+                        typed: None,
+                        place: place.clone(),
+                        from: place,
+                        job,
+                    })
+                }
+            }
+        }
+        ex.select_pending(ctx);
+        ex
+    }
+
+    /// Selects the command line's `--select` entry once its folder's listing has landed.
+    fn select_pending(&mut self, ctx: &mut Ctx) {
+        if self.reading.is_some() {
+            return;
+        }
+        if let Some((place, path)) = self.selecting.take()
+            && place == self.place
+        {
+            self.select_shown(&path, ctx);
         }
     }
 
@@ -705,6 +763,7 @@ impl Explorer {
         if again {
             self.read_again(ctx);
         }
+        self.select_pending(ctx);
         Some(reply)
     }
 
@@ -1038,8 +1097,7 @@ impl Explorer {
 
 /// Explorer needs the icon cache to build itself, which arrives with the first event.
 struct Lazy {
-    start: Place,
-    select: Option<PathBuf>,
+    start: Start,
     inner: Option<Explorer>,
     /// How the text grows as the program starts, for the window's opening size.
     units: TextUnits,
@@ -1049,7 +1107,7 @@ impl App for Lazy {
     fn title(&self) -> String {
         match &self.inner {
             Some(ex) => ex.place.title(),
-            None => self.start.title(),
+            None => self.start.place.title(),
         }
     }
 
@@ -1091,11 +1149,12 @@ impl App for Lazy {
 
     fn event(&mut self, win: WinId, ev: Event, ctx: &mut Ctx) -> Reply {
         if self.inner.is_none() {
-            let mut ex = Explorer::new(self.start.clone(), ctx);
-            if let Some(path) = self.select.take() {
-                ex.select_shown(&path, ctx);
-            }
-            self.inner = Some(ex);
+            self.inner = Some(Explorer::open(
+                self.start.clone(),
+                |d| d.is_dir(),
+                Explorer::new,
+                ctx,
+            ));
         }
         let ex = self.inner.as_mut().expect("built above");
         ex.follow_forms(ctx);
@@ -1285,30 +1344,44 @@ impl App for Lazy {
     }
 }
 
+/// What the command line asks for, read without touching the file system: the place, the
+/// folder still to be checked to exist, and the entry to select once it is listed.
+#[derive(Clone, Debug, PartialEq)]
+struct Start {
+    place: Place,
+    dir: Option<PathBuf>,
+    select: Option<PathBuf>,
+}
+
 /// `reprise-explorer [PLACE]` or `--select PATH`. PLACE is a folder's path or
 /// "Computer" or "Recycle Bin"; a missing or unknown one is Home. `--select`
 /// opens the folder an absolute PATH sits in with PATH selected and scrolled
 /// into view (Find Target's window).
-fn parse_args(args: impl IntoIterator<Item = std::ffi::OsString>) -> (Place, Option<PathBuf>) {
+fn parse_args(args: impl IntoIterator<Item = std::ffi::OsString>) -> Start {
     let mut args = args.into_iter();
     let first = args.next();
-    if first.as_deref() == Some("--select".as_ref()) {
-        let path = args.next().map(PathBuf::from);
-        if let Some(path) = path.filter(|p| p.is_absolute())
-            && let Some(dir) = path.parent().filter(|d| d.is_dir())
+    let (place, dir, select) = if first.as_deref() == Some("--select".as_ref()) {
+        let path = args.next().map(PathBuf::from).filter(|p| p.is_absolute());
+        match path
+            .as_deref()
+            .and_then(Path::parent)
+            .map(Path::to_path_buf)
         {
-            return (Place::from_path(dir), Some(path));
+            Some(dir) => (Place::from_path(&dir), Some(dir), path),
+            None => (Place::Home, None, None),
         }
-        return (Place::Home, None);
-    }
-    let start = first.and_then(|arg| match arg.to_str() {
-        Some(s) => Place::parse_address(s, None),
-        None => {
-            let p = PathBuf::from(arg);
-            (p.is_absolute() && p.is_dir()).then(|| Place::from_path(&p))
-        }
-    });
-    (start.unwrap_or(Place::Home), None)
+    } else {
+        let read = first.and_then(|arg| match arg.to_str() {
+            Some(s) => Place::read_address(s, None),
+            None => {
+                let p = PathBuf::from(arg);
+                p.is_absolute().then(|| (Place::from_path(&p), Some(p)))
+            }
+        });
+        let (place, dir) = read.unwrap_or((Place::Home, None));
+        (place, dir, None)
+    };
+    Start { place, dir, select }
 }
 
 fn main() {
@@ -1322,10 +1395,8 @@ fn main() {
         }
         return;
     }
-    let (start, select) = parse_args(std::env::args_os().skip(1));
     repriseapp::run(Box::new(Lazy {
-        start,
-        select,
+        start: parse_args(std::env::args_os().skip(1)),
         inner: None,
         units: repriseapp::start_forms().text,
     }));

@@ -798,7 +798,7 @@ fn a_refresh_keeps_the_scroll_position() {
 fn the_command_line_takes_a_place() {
     let dir = tempfile::tempdir().expect("a temp dir");
     let here = Place::Folder(dir.path().to_path_buf());
-    let args = |a: &[&std::ffi::OsStr]| parse_args(a.iter().map(|s| s.to_os_string())).0;
+    let args = |a: &[&std::ffi::OsStr]| parse_args(a.iter().map(|s| s.to_os_string())).place;
     assert_eq!(args(&[]), Place::Home);
     assert_eq!(args(&[dir.path().as_os_str()]), here);
     assert_eq!(args(&["Computer".as_ref()]), Place::Computer);
@@ -814,18 +814,21 @@ fn select_opens_the_folder_on_the_entry() {
     }
     let last = dir.path().join("f59.txt");
     let args = |a: &[&std::ffi::OsStr]| parse_args(a.iter().map(|s| s.to_os_string()));
-    let (place, select) = args(&["--select".as_ref(), last.as_os_str()]);
-    assert_eq!(place, Place::Folder(dir.path().to_path_buf()));
-    assert_eq!(select.as_deref(), Some(last.as_path()));
+    let start = args(&["--select".as_ref(), last.as_os_str()]);
+    assert_eq!(start.place, Place::Folder(dir.path().to_path_buf()));
+    assert_eq!(start.select.as_deref(), Some(last.as_path()));
     assert_eq!(
         args(&["--select".as_ref(), "f59.txt".as_ref()]),
-        (Place::Home, None)
+        Start {
+            place: Place::Home,
+            dir: None,
+            select: None
+        }
     );
 
     let mut ctx = test_ctx();
     let mut app = Lazy {
-        start: place,
-        select,
+        start,
         inner: None,
         units: TextUnits::ONE,
     };
@@ -851,8 +854,11 @@ fn settings_changes_defer_the_write() {
     let ex = test_explorer(Place::Folder(dir.path().to_path_buf()), &mut ctx);
     assert!(!ex.settings_dirty);
     let mut app = Lazy {
-        start: ex.place.clone(),
-        select: None,
+        start: Start {
+            place: ex.place.clone(),
+            dir: None,
+            select: None,
+        },
         inner: Some(ex),
         units: TextUnits::ONE,
     };
@@ -881,8 +887,11 @@ fn the_window_opens_at_the_text_size_and_keeps_its_size_in_100_units() {
     let mut ctx = test_ctx();
     let ex = test_explorer(Place::Folder(dir.path().to_path_buf()), &mut ctx);
     let mut app = Lazy {
-        start: ex.place.clone(),
-        select: None,
+        start: Start {
+            place: ex.place.clone(),
+            dir: None,
+            select: None,
+        },
         inner: Some(ex),
         units: TextUnits::ONE,
     };
@@ -920,8 +929,11 @@ fn a_maximized_size_is_not_saved() {
     let mut ctx = test_ctx();
     let ex = test_explorer(Place::Folder(dir.path().to_path_buf()), &mut ctx);
     let mut app = Lazy {
-        start: ex.place.clone(),
-        select: None,
+        start: Start {
+            place: ex.place.clone(),
+            dir: None,
+            select: None,
+        },
         inner: Some(ex),
         units: TextUnits::ONE,
     };
@@ -953,8 +965,11 @@ fn a_held_opening_size_keeps_the_saved_size_and_a_users_size_is_saved() {
     let mut ctx = test_ctx();
     let ex = test_explorer(Place::Folder(dir.path().to_path_buf()), &mut ctx);
     let mut app = Lazy {
-        start: ex.place.clone(),
-        select: None,
+        start: Start {
+            place: ex.place.clone(),
+            dir: None,
+            select: None,
+        },
         inner: Some(ex),
         units: TextUnits::ONE,
     };
@@ -2368,4 +2383,64 @@ fn opening_an_executable_script_runs_it_in_its_folder() {
         assert_eq!(spawn.len(), 1);
         assert_eq!(spawn[0].last(), Some(&path.into_os_string()), "opened");
     }
+}
+
+/// A command-line folder whose check has not answered opens the window there at once; a late
+/// "missing" sends it Home with nothing to go back to.
+#[test]
+fn a_start_folder_answering_late_opens_the_window_at_once() {
+    let dir = tempfile::tempdir().expect("a temp dir");
+    let gone = dir.path().join("gone");
+    let mut ctx = test_ctx();
+    let start = parse_args([gone.clone().into_os_string()]);
+    assert_eq!(start.dir.as_deref(), Some(gone.as_path()));
+    let (answer, gate) = std::sync::mpsc::channel::<()>();
+
+    let opened = std::time::Instant::now();
+    let mut ex = Explorer::open(
+        start,
+        move |d| {
+            gate.recv_timeout(std::time::Duration::from_secs(20)).ok();
+            d.is_dir()
+        },
+        test_explorer,
+        &mut ctx,
+    );
+    assert!(
+        opened.elapsed() < std::time::Duration::from_secs(10),
+        "the window opens before the folder answers"
+    );
+    assert_eq!(ex.place, Place::Folder(gone));
+
+    answer.send(()).expect("send");
+    for _ in 0..500 {
+        if ex.place == Place::Home {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        ex.wake(&mut ctx);
+    }
+    assert_eq!(ex.place, Place::Home);
+    assert!(!ex.history.can_back());
+}
+
+#[test]
+fn a_start_folder_that_answers_opens_there_and_selects_its_entry() {
+    let dir = tempfile::tempdir().expect("a temp dir");
+    let file = dir.path().join("a.txt");
+    std::fs::write(&file, "x").expect("write");
+    let mut ctx = test_ctx();
+    let open = |a: &[&std::ffi::OsStr], ctx: &mut Ctx| {
+        let start = parse_args(a.iter().map(|s| s.to_os_string()));
+        Explorer::open(start, |d| d.is_dir(), test_explorer, ctx)
+    };
+
+    let ex = open(&["--select".as_ref(), file.as_os_str()], &mut ctx);
+    assert_eq!(ex.place, Place::Folder(dir.path().to_path_buf()));
+    let i = ex.index_of(&file).expect("listed");
+    assert_eq!(ex.sv.selection.set.iter().copied().collect::<Vec<_>>(), [i]);
+
+    let missing = open(&[dir.path().join("gone").as_os_str()], &mut ctx);
+    assert_eq!(missing.place, Place::Home);
+    assert!(missing.checking.is_none());
 }
