@@ -6776,7 +6776,7 @@ fn render_tray_customize() -> Canvas {
         passive,
         behaviour,
     };
-    let mut c = Canvas::new(1204, 1006);
+    let mut c = Canvas::new(1204, 1033);
     c.fill_rect(c.bounds(), Theme::default().colors.background);
     let (mut x, mut y) = (10, 10);
     for i in [Interface::Classic, Interface::Blue, Interface::Glass] {

@@ -5,7 +5,7 @@
 //! the items and acts on [`Event`]; nothing here knows the tray.
 //!
 //! Classic's client area is 348x391 with a 330x208 list; Glass lays it out as
-//! a 1184x575 settings page with a 1000x376 list. Sizes are in the layout
+//! a 1184x602 settings page with a 1000x403 list. Sizes are in the layout
 //! consts below, at 100% text; both grow with the text size. A page wider or
 //! taller than the room its host has ([`TrayCustomize::fit`]) narrows its
 //! list and wraps its text, and scrolls above the button band.
@@ -280,10 +280,10 @@ impl Geometry {
 /// holds no group headers; `prompt` is the heading's box and `restore`
 /// the link's. The column, header and highlight fields go unused.
 const GLASS: Geometry = Geometry {
-    client: (1184, 575),
+    client: (1184, 602),
     intro: Rect::new(92, 52, 1000, 20),
     prompt: Rect::new(92, 16, 1000, 26),
-    list: Rect::new(92, 84, 1000, 376),
+    list: Rect::new(92, 84, 1000, 403),
     columns: [PAGE_BEHAVIOURS_X, 279],
     header_under: 0,
     group_h: 0,
@@ -293,10 +293,10 @@ const GLASS: Geometry = Geometry {
     highlight_h: 0,
     icon_dy: 5,
     text_dy: 0,
-    check: Some((92, 501)),
-    restore: Rect::new(92, 470, 0, 20),
-    ok: Rect::new(934, 542, 76, 23),
-    cancel: Rect::new(1016, 542, 76, 23),
+    check: Some((92, 528)),
+    restore: Rect::new(92, 497, 0, 20),
+    ok: Rect::new(934, 569, 76, 23),
+    cancel: Rect::new(1016, 569, 76, 23),
 };
 
 /// Glass's page, from the list's top-left: the rows' box's top, the
@@ -318,7 +318,7 @@ const PAGE_TIP: Rect = Rect::new(67, 19, 400, 18);
 const PAGE_CHECK_LABEL: i32 = 19;
 const PAGE_COMBO: Rect = Rect::new(PAGE_BEHAVIOURS_X, 8, 279, 23);
 /// The separator over the button band, from the client's top, and the band's height.
-const PAGE_BAND_Y: i32 = 532;
+const PAGE_BAND_Y: i32 = 559;
 const PAGE_BAND_H: i32 = 43;
 /// The page's side margins, and how far OK's and Cancel's left edges sit in from its right.
 const PAGE_MARGIN: i32 = 92;
@@ -1872,14 +1872,14 @@ impl TrayCustomize {
             c.blit_over((x0 + u.len(PAGE_ICON.0)) * s, (r.y + dy) * s, &ic);
         }
         let name_w = self.page_geo().name_w();
-        for (b, line, ink) in [
-            (PAGE_NAME, &e.name, cs.window_text),
-            (PAGE_TIP, &e.detail, inks.detail),
+        for (b, line, ink, face) in [
+            (PAGE_NAME, &e.name, cs.window_text, text),
+            (PAGE_TIP, &e.detail, inks.detail, text.italic()),
         ] {
             let b = u.rect(Rect { width: name_w, ..b });
             let tr = Rect::new(x0 + b.x, r.y + b.y, b.width, b.height).scaled(s);
-            let shown = text.ellipsize(line, tr.width, false, px);
-            text.draw(c, tr, &shown, false, ink, Align::Left, px);
+            let shown = face.ellipsize(line, tr.width, false, px);
+            face.draw(c, tr, &shown, false, ink, Align::Left, px);
         }
         let Some(&(_, field)) = lay.fields.iter().find(|(j, _)| *j == i) else {
             return;
@@ -2456,7 +2456,7 @@ mod tests {
         let theme = glass_theme();
         let cm = theme.look.controls();
         let l = t.layout(&text, theme.fonts.size_px, (0, 0));
-        assert_eq!(l.check, Some(Rect::new(92, 501, cm.check, cm.check)));
+        assert_eq!(l.check, Some(Rect::new(92, 528, cm.check, cm.check)));
         t.click(Some(Hit::AllIcons));
         t.release(Some(Hit::AllIcons));
         assert_eq!(t.all_icons, Some(true));
@@ -2544,10 +2544,10 @@ mod tests {
         let text = text();
         let theme = glass_theme();
         let l = t.layout(&text, theme.fonts.size_px, (0, 0));
-        assert_eq!(t.client(), (1184, 575));
-        assert_eq!(l.frame, Rect::new(92, 84, 1000, 376));
-        assert_eq!(l.vbar, Some(Rect::new(1074, 85, 17, 374)), "always there");
-        assert_eq!(l.body, Rect::new(93, 132, 981, 327));
+        assert_eq!(t.client(), (1184, 602));
+        assert_eq!(l.frame, Rect::new(92, 84, 1000, 403));
+        assert_eq!(l.vbar, Some(Rect::new(1074, 85, 17, 401)), "always there");
+        assert_eq!(l.body, Rect::new(93, 132, 981, 354));
         let ys: Vec<_> = l.slots.iter().map(|&(s, r)| (s, r.y, r.height)).collect();
         assert_eq!(
             ys,
@@ -2567,10 +2567,10 @@ mod tests {
             Some(0),
             "the first is focused"
         );
-        assert_eq!(l.ok, Rect::new(934, 542, 76, 23));
-        assert_eq!(l.cancel, Rect::new(1016, 542, 76, 23));
-        assert_eq!(l.band, Some(Rect::new(0, 532, 1184, 43)));
-        assert_eq!((l.restore.x, l.restore.y), (92, 470));
+        assert_eq!(l.ok, Rect::new(934, 569, 76, 23));
+        assert_eq!(l.cancel, Rect::new(1016, 569, 76, 23));
+        assert_eq!(l.band, Some(Rect::new(0, 559, 1184, 43)));
+        assert_eq!((l.restore.x, l.restore.y), (92, 497));
         assert_eq!(t.focus, Focus::Combo);
     }
 
@@ -2587,6 +2587,47 @@ mod tests {
     }
 
     #[test]
+    fn a_glass_tip_is_set_in_its_fonts_italic() {
+        let text = TextRenderer::load(&crate::theme::FontConfig {
+            family: vec!["DejaVu Sans".into()],
+            ..Default::default()
+        });
+        if !text.has_face("DejaVu Sans") {
+            return;
+        }
+        let t = sample(Wording::Glass);
+        let theme = glass_theme();
+        let px = theme.fonts.size_px;
+        let l = t.layout(&text, px, (0, 0));
+        let (w, h) = t.client();
+        let mut c = Canvas::new(w as u32, h as u32);
+        t.draw(&mut c, &text, &theme.paint(), &l, Cues::NONE, px);
+        let inks = theme.look.style().and_then(|st| st.page).unwrap();
+        let (_, row) = l.slots[0];
+        let tip = Rect::new(
+            l.frame.x + PAGE_TIP.x,
+            row.y + PAGE_TIP.y,
+            300,
+            PAGE_TIP.height,
+        );
+        let alone = |face: &TextRenderer| {
+            let mut a = Canvas::new(w as u32, h as u32);
+            a.fill_rect(tip, theme.colors.window);
+            let detail = &t.entries[0].detail;
+            face.draw(&mut a, tip, detail, false, inks.detail, Align::Left, px);
+            a
+        };
+        let same = |a: &Canvas| {
+            (tip.y..tip.bottom()).all(|y| (tip.x..tip.right()).all(|x| a.get(x, y) == c.get(x, y)))
+        };
+        assert!(
+            same(&alone(text.italic())),
+            "the tip in DejaVu Sans Oblique"
+        );
+        assert!(!same(&alone(&text)), "not upright");
+    }
+
+    #[test]
     fn the_glass_page_pixels_sit_where_the_page_draws_them() {
         if !crate::text::test_tahoma() {
             return;
@@ -2599,7 +2640,7 @@ mod tests {
         assert!(any(&c, Rect::new(80, 10, 900, 30), inks.heading.argb()));
         assert_eq!(at(Rect::new(80, 45, 1000, 25), white), Some((92, 57)));
         assert_eq!(c.get(92, 84), inks.list_frame.argb());
-        assert_eq!(c.get(1091, 459), inks.list_frame.argb());
+        assert_eq!(c.get(1091, 486), inks.list_frame.argb());
         assert_eq!(c.get(93, 85), white);
         assert_eq!(at(Rect::new(100, 95, 100, 20), white), Some((127, 106)));
         assert_eq!(
@@ -2621,23 +2662,23 @@ mod tests {
             assert_eq!(c.get(700, y), 0xFF6D_6D6D, "combo top at {y}");
             assert_eq!(c.get(700, y + 22), 0xFF6D_6D6D, "combo foot at {y}");
         }
-        assert_eq!(at(Rect::new(80, 470, 300, 20), white), Some((92, 475)));
-        assert!(any(&c, Rect::new(80, 470, 300, 20), inks.link.argb()));
-        assert_ne!(c.get(93, 502), white, "the box");
-        assert_eq!(at(Rect::new(105, 495, 300, 20), white), Some((111, 502)));
-        assert_eq!(c.get(500, 531), white);
-        assert_eq!(c.get(500, 532), inks.rule.argb());
+        assert_eq!(at(Rect::new(80, 497, 300, 20), white), Some((92, 502)));
+        assert!(any(&c, Rect::new(80, 497, 300, 20), inks.link.argb()));
+        assert_ne!(c.get(93, 529), white, "the box");
+        assert_eq!(at(Rect::new(105, 522, 300, 20), white), Some((111, 529)));
+        assert_eq!(c.get(500, 558), white);
+        assert_eq!(c.get(500, 559), inks.rule.argb());
         assert_eq!(
-            (c.get(500, 533), c.get(500, 574)),
+            (c.get(500, 560), c.get(500, 601)),
             (cs.button_face.argb(), cs.button_face.argb())
         );
         let face = cs.button_face.argb();
         assert_eq!(
-            at(Rect::new(900, 535, 284, 40), face).map(|p| p.1),
-            Some(543)
+            at(Rect::new(900, 562, 284, 40), face).map(|p| p.1),
+            Some(570)
         );
         assert_eq!(
-            ink(&c, Rect::new(900, 535, 284, 40), face).map(|b| (b.0, b.2)),
+            ink(&c, Rect::new(900, 562, 284, 40), face).map(|b| (b.0, b.2)),
             Some((935, 1090))
         );
     }
@@ -2750,10 +2791,10 @@ mod tests {
         );
         assert!(t.scroll(1));
         assert!(t.scroll(5));
-        assert_eq!(t.top, 3, "nine rows, six to a page");
+        assert_eq!(t.top, 2, "nine rows, seven to a page");
         assert!(!t.scroll(1));
         let l = t.layout(&text(), glass_theme().fonts.size_px, (0, 0));
-        assert_eq!(l.fields[0], (3, Rect::new(584, 140, 279, 23)));
+        assert_eq!(l.fields[0], (2, Rect::new(584, 140, 279, 23)));
     }
 
     /// At 125% (14 px) with every glyph 9 px wide, Classic's intro wraps onto a fourth line:
@@ -2793,22 +2834,22 @@ mod tests {
     fn a_grown_glass_page_grows_its_parts() {
         let (t, text) = grown_page(None);
         let l = t.layout(&text, 22, (0, 0));
-        assert_eq!(t.client(), (2368, 1150));
-        assert_eq!(l.frame, Rect::new(184, 168, 2000, 752));
+        assert_eq!(t.client(), (2368, 1204));
+        assert_eq!(l.frame, Rect::new(184, 168, 2000, 806));
         assert_eq!(l.body.y, 168 + 96);
         assert_eq!(l.slots[1].1.y, 168 + 96 + 96, "rows twice as tall");
         assert_eq!(l.fields[0], (0, Rect::new(184 + 984, 280, 558, 46)));
         assert_eq!(l.intro, Rect::new(184, 104, 2000, 40), "one line");
-        assert_eq!(l.ok, Rect::new(1868, 1084, 152, 46));
-        assert_eq!(l.band, Some(Rect::new(0, 1064, 2368, 86)));
-        assert_eq!(l.view, Rect::new(0, 0, 2368, 1064));
+        assert_eq!(l.ok, Rect::new(1868, 1138, 152, 46));
+        assert_eq!(l.band, Some(Rect::new(0, 1118, 2368, 86)));
+        assert_eq!(l.view, Rect::new(0, 0, 2368, 1118));
         assert_eq!(l.page_bar, None);
         assert!(t.overflows(&text, 22).is_empty());
     }
 
     /// A 1080p output at 200% has room for a 1900x1000 client: the page narrows to 1900, its
     /// Behaviors column moves in and the intro wraps onto a second line that pushes the list
-    /// down. The band keeps to the client's foot and the page above it scrolls 88 px at 100%.
+    /// down. The band keeps to the client's foot and the page above it scrolls 115 px at 100%.
     #[test]
     fn a_page_bigger_than_its_room_narrows_and_scrolls_above_its_band() {
         let (t, text) = grown_page(Some((1900, 1000)));
@@ -2816,14 +2857,14 @@ mod tests {
         assert_eq!(t.client(), (1900, 1000));
         assert_eq!(t.intro.len(), 2);
         assert_eq!(l.intro, Rect::new(184, 104, 1532, 66));
-        assert_eq!(l.frame, Rect::new(184, 194, 1532, 752));
+        assert_eq!(l.frame, Rect::new(184, 194, 1532, 806));
         assert_eq!(l.fields[0].1.x, 184 + 874);
         assert_eq!(l.band, Some(Rect::new(0, 914, 1900, 86)));
         assert_eq!(l.view, Rect::new(0, 0, 1900, 914));
         assert_eq!(l.page_bar, Some(Rect::new(1883, 0, 17, 914)));
         assert_eq!(l.ok, Rect::new(1400, 934, 152, 46));
         assert_eq!(l.cancel.x, 1564);
-        assert_eq!(t.page_scroll.short, 88);
+        assert_eq!(t.page_scroll.short, 115);
         assert!(t.overflows(&text, 22).is_empty());
     }
 
@@ -2840,7 +2881,7 @@ mod tests {
         assert!(t.wheel(Some(Hit::List), 1), "four rows show whole");
         assert_eq!(t.page_scroll.top, 78);
         assert!(t.wheel(Some(Hit::Row(0)), 1));
-        assert_eq!(t.page_scroll.top, 88, "held at the end");
+        assert_eq!(t.page_scroll.top, 115, "held at the end");
         assert!(!t.wheel(None, 1));
         assert!(t.wheel(None, -5));
         assert_eq!(t.page_scroll.top, 0);
@@ -2851,7 +2892,7 @@ mod tests {
     #[test]
     fn keyboard_focus_scrolls_the_page_to_show_the_focused_part() {
         let (mut t, _) = grown_page(Some((1900, 600)));
-        assert_eq!((t.page_scroll.short, t.page_scroll.top), (288, 0));
+        assert_eq!((t.page_scroll.short, t.page_scroll.top), (315, 0));
         let tab = |t: &mut TrayCustomize, back: bool| {
             t.key(form::Key::Tab { back });
             (t.focus, t.selected, t.page_scroll.top)
@@ -2859,11 +2900,11 @@ mod tests {
         assert_eq!(tab(&mut t, false), (Focus::Combo, Some(1), 0));
         assert_eq!(tab(&mut t, false), (Focus::Combo, Some(2), 15));
         assert_eq!(tab(&mut t, false), (Focus::Combo, Some(3), 63));
-        assert_eq!(tab(&mut t, false), (Focus::AllIcons, Some(3), 271));
-        assert_eq!(tab(&mut t, false), (Focus::Restore, Some(3), 271));
-        assert_eq!(tab(&mut t, false), (Focus::Ok, Some(3), 271));
+        assert_eq!(tab(&mut t, false), (Focus::AllIcons, Some(3), 298));
+        assert_eq!(tab(&mut t, false), (Focus::Restore, Some(3), 298));
+        assert_eq!(tab(&mut t, false), (Focus::Ok, Some(3), 298));
         t.focus = Focus::AllIcons;
-        assert_eq!(tab(&mut t, true), (Focus::Combo, Some(3), 271));
+        assert_eq!(tab(&mut t, true), (Focus::Combo, Some(3), 297));
         assert_eq!(tab(&mut t, true), (Focus::Combo, Some(2), 249));
     }
 
