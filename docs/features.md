@@ -73,7 +73,7 @@ the Super tap, Super+Shift+Esc and the VT switch keys can be rebound.
   nothing crawls your disk in the background. Right-click a row, or press
   the menu key, for the Start menu's program menu or a file's menu; Open
   file location (or Ctrl+Enter) shows the file selected in its folder.
-- **Run...** for when you know exactly what you want.
+- **Run...** for when you know exactly what you want. A folder's path (`~/Documents`) opens it in Explorer.
 
 ## Windows
 
