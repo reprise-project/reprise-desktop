@@ -3956,6 +3956,7 @@ pub fn draw(
     let dots = cues.focus && active;
     let paint = Paint {
         active,
+        access_keys: cues.keys,
         ..theme.paint()
     };
     let (w, h) = (layout.size.0 * s, layout.size.1 * s);
@@ -4041,7 +4042,7 @@ pub fn draw(
             &mut c,
             text,
             lr.scaled(s),
-            &field.label,
+            &paint.label(&field.label),
             false,
             cs.button_text,
             Align::Left,

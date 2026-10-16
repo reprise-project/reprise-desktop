@@ -520,6 +520,9 @@ impl State {
             return;
         }
         self.dialogs.active = false;
+        for v in &mut self.dialogs.views {
+            v.cues.blur();
+        }
         self.redraw_dialogs();
         self.sync_dialog_tasks(false);
     }
@@ -1445,7 +1448,7 @@ impl State {
     pub fn dialog_key(&mut self, k: &DialogKey) {
         use crate::keys::{KEY_Alt_L, KEY_Alt_R, MOD_ALT, MOD_CTRL, MOD_SHIFT};
         let alt = k.mods & MOD_ALT != 0;
-        // Any key brings out focus rectangles, Alt the underlines, for the dialog's life; bare Alt redraws here.
+        // Any key brings out focus rectangles, Alt the underlines ([`Cues::key`]); bare Alt redraws here.
         let alt_key = k.syms.iter().any(|&s| s == KEY_Alt_L || s == KEY_Alt_R);
         if let Some(v) = self.dialogs.views.last_mut()
             && v.cues.key(alt || alt_key)

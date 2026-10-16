@@ -3352,7 +3352,17 @@ fn draw_choice_label(
     let lw = text.measure(&plain, false, px);
     let r = Rect::new(lr.x, lr.y, lw + 2 * s, lr.height);
     if enabled {
-        draw_label(c, text, r, label, false, cs.button_text, Align::Left, px, s);
+        draw_label(
+            c,
+            text,
+            r,
+            &p.label(label),
+            false,
+            cs.button_text,
+            Align::Left,
+            px,
+            s,
+        );
     } else {
         draw_disabled_label(c, text, p, r, label, Align::Left, px, Some(part));
     }
@@ -3401,7 +3411,17 @@ pub fn draw(c: &mut Canvas, text: &TextRenderer, p: &Paint, form: &Form, cues: b
             } => {
                 let r = if *align == Align::Left { at_ink(r) } else { r };
                 if *enabled {
-                    draw_label(c, text, r, label, false, cs.button_text, *align, px, s);
+                    draw_label(
+                        c,
+                        text,
+                        r,
+                        &p.label(label),
+                        false,
+                        cs.button_text,
+                        *align,
+                        px,
+                        s,
+                    );
                 } else {
                     draw_disabled_label(c, text, p, r, label, *align, px, None);
                 }
@@ -3427,7 +3447,7 @@ pub fn draw(c: &mut Canvas, text: &TextRenderer, p: &Paint, form: &Form, cues: b
                 let dy = p.look.style().map_or(0, |st| st.group_label.nudge.1);
                 let r = at_ink(Rect::new(r.x, r.y + dy * s, r.width, r.height));
                 let ink = group_label_ink(p);
-                draw_label(c, text, r, title, false, ink, Align::Left, px, s);
+                draw_label(c, text, r, &p.label(title), false, ink, Align::Left, px, s);
             }
             Control::Group(label) => {
                 // A group box's label is laid out at its ink, 10 px in:
@@ -6104,6 +6124,63 @@ mod tests {
         draw(&mut c3, &text, &classic_paint(cs, 1), &f, false, 11);
         assert_eq!(c3.get(90, 115), cs.button_text.argb(), "the ring stays");
         assert!(!dotted(&c3), "the dots wait for a key");
+    }
+
+    #[test]
+    fn hidden_access_keys_drop_only_the_underline_in_every_look() {
+        use crate::interface::Interface;
+        let text = TextRenderer::load(&FontConfig::default());
+        const LABELS: [&str; 6] = [
+            "&Name:",
+            "&Group",
+            "&Check",
+            "&Radio",
+            "&Browse...",
+            "&Greyed",
+        ];
+        // Only the label at `marked` keeps its access key.
+        let form = |marked: usize| {
+            let l = |k: usize| match k == marked {
+                true => LABELS[k].to_string(),
+                false => LABELS[k].replace('&', ""),
+            };
+            Form::new(vec![
+                Item::label("label", Rect::new(10, 6, 80, 13), &l(0)),
+                Item::group("group", Rect::new(6, 26, 180, 66), &l(1)),
+                Item::check("check", 16, 42, &l(2)),
+                Item::radio("radio", 16, 62, &l(3), "r"),
+                Item::button("on", Rect::new(10, 100, 75, 23), &l(4), true, false),
+                Item::button("off", Rect::new(95, 100, 75, 23), &l(5), false, false),
+            ])
+        };
+        for i in [Interface::Classic, Interface::Blue, Interface::Glass] {
+            let theme = crate::interfaces::theme_for(i);
+            let drawn = |f: &Form, keys: bool| {
+                let p = Paint {
+                    access_keys: keys,
+                    ..theme.paint()
+                };
+                let mut c = Canvas::new(200, 130);
+                c.fill_rect(c.bounds(), p.cs.button_face);
+                draw(&mut c, &text, &p, f, false, 11);
+                c
+            };
+            for (k, label) in LABELS.iter().enumerate() {
+                let f = form(k);
+                let (hidden, shown) = (drawn(&f, false), drawn(&f, true));
+                let rows: std::collections::BTreeSet<i32> = (0..130)
+                    .flat_map(|y| (0..200).map(move |x| (x, y)))
+                    .filter(|&(x, y)| hidden.get(x, y) != shown.get(x, y))
+                    .map(|(_, y)| y)
+                    .collect();
+                // An etched (greyed Classic) underline takes its highlight's row too.
+                let (first, last) = (rows.first().copied(), rows.last().copied());
+                assert!(
+                    first.is_some_and(|f| last.is_some_and(|l| l - f <= 1)),
+                    "{i:?}: {label} differs by its underline alone, hidden or shown: rows {rows:?}"
+                );
+            }
+        }
     }
 
     #[test]

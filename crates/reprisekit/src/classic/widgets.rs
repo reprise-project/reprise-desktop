@@ -1053,7 +1053,7 @@ pub fn draw_group_box(
         c,
         text,
         label_r,
-        label,
+        &p.label(label),
         false,
         cs.button_text,
         Align::Left,

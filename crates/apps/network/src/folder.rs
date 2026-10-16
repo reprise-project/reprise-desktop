@@ -621,7 +621,8 @@ impl Folder {
             px,
         );
         if let Some(p) = &self.popup {
-            p.chain.draw(c, &ctx.theme, &ctx.text, true);
+            p.chain
+                .draw(c, &ctx.theme, &ctx.text, ctx.theme.access_keys);
         }
     }
 

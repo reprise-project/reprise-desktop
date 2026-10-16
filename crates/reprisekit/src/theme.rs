@@ -484,6 +484,9 @@ pub struct Theme {
     /// sets it for one draw and puts it back after. Draw state, not
     /// configuration: two themes that differ only here are equal.
     pub active: bool,
+    /// Whether access keys draw their underline, handed on by [`Theme::paint`]: the
+    /// window's [`crate::cues::Cues::keys`]. Draw state set and put back as `active` is.
+    pub access_keys: bool,
 }
 
 impl PartialEq for Theme {
@@ -507,6 +510,7 @@ impl Default for Theme {
             look: crate::paint::Look::Classic,
             text: TextUnits::ONE,
             active: true,
+            access_keys: true,
         }
     }
 }
@@ -554,6 +558,7 @@ impl Theme {
             look: self.look.at_scale(n),
             text: self.text,
             active: self.active,
+            access_keys: self.access_keys,
         }
     }
 
@@ -613,6 +618,7 @@ impl Theme {
             look: p.look.clone(),
             text: p.text,
             active: p.active,
+            access_keys: p.access_keys,
         }
     }
 
