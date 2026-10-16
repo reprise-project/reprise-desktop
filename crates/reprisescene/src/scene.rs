@@ -458,6 +458,31 @@ impl<R: Renderer, D> Scene<R, D> {
         self.place(node.into(), sibling.into(), 0);
     }
 
+    /// Refill the sibling slots `nodes` hold with `nodes` in the given
+    /// order, bottom first; every other sibling keeps its index. All must
+    /// share a parent and be distinct; else nothing moves.
+    pub fn reorder_in_place(&mut self, nodes: &[NodeId]) {
+        let Some(parent) = nodes.first().and_then(|n| self.node(*n)?.parent) else {
+            return;
+        };
+        if nodes
+            .iter()
+            .any(|n| self.node(*n).and_then(|n| n.parent) != Some(parent))
+        {
+            return;
+        }
+        let Some(s) = self.children_mut(parent.0) else {
+            return;
+        };
+        let slots: Vec<usize> = (0..s.len()).filter(|&i| nodes.contains(&s[i])).collect();
+        if slots.len() != nodes.len() {
+            return;
+        }
+        for (&i, &n) in slots.iter().zip(nodes) {
+            s[i] = n;
+        }
+    }
+
     fn place(&mut self, node: NodeId, sibling: NodeId, offset: usize) {
         if node == sibling {
             return;
