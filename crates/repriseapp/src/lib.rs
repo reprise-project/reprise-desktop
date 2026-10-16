@@ -105,6 +105,7 @@ pub use fielddrop::{DropForm, FileDrop};
 use reprisefs::pipe::PasteBuf;
 pub use reprisekit;
 use reprisekit::access::{Tree, accesskit};
+use reprisekit::cues::Cues;
 use reprisekit::icontheme::{IconCache, IconTheme};
 use reprisekit::raster::{Canvas, Rect};
 use reprisekit::text::TextRenderer;
@@ -1056,6 +1057,7 @@ pub fn run(app: Box<dyn App>) {
         ticking: Vec::new(),
         portal_done,
         press_serial: 0,
+        key_last: false,
         press_time: 0,
         compositor,
         xdg_shell,
@@ -1257,6 +1259,8 @@ struct Slot {
     /// The window's blur region object and the glass rows across its width it last set.
     glass: Option<ext_background_effect_surface_v1::ExtBackgroundEffectSurfaceV1>,
     glass_top: (i32, i32),
+    /// The window's keyboard cues; `keys` is drawn as `Theme::access_keys`.
+    cues: Cues,
 }
 
 impl Drop for Slot {
@@ -1340,6 +1344,8 @@ struct Host {
     portal_done: Sender<OnLoop>,
     /// The last pointer press's serial, which a drag must name.
     press_serial: u32,
+    /// The last input was a key, not a pointer press: a window opened now underlines its access keys.
+    key_last: bool,
     /// The time the last pointer press carried, real or a reader's
     /// (`access_msg`): a reader's click is stamped a second past the
     /// double-click time after it, so two never make a double click.
@@ -1735,6 +1741,7 @@ impl Host {
                 access: access::SlotAccess::new(MAIN, &self.a11y),
                 glass: None,
                 glass_top: (0, 0),
+                cues: Cues::opened(self.key_last),
             },
         );
     }
@@ -1927,6 +1934,7 @@ impl Host {
                 access: access::SlotAccess::new(c.id, &self.a11y),
                 glass: None,
                 glass_top: (0, 0),
+                cues: Cues::opened(self.key_last),
             });
         }
         let mut resized = Vec::new();
@@ -2058,6 +2066,7 @@ impl Host {
             access: access::SlotAccess::new(f.id, &self.a11y),
             glass: None,
             glass_top: (0, 0),
+            cues: Cues::opened(self.key_last),
         });
     }
 
@@ -2238,7 +2247,14 @@ impl Host {
         let input = self.key_input(&event);
         event.utf8.zeroize();
         self.ctx.caret_on = true;
+        self.key_last = true;
         let win = self.focus.unwrap_or(MAIN);
+        let alt = self.mods.alt || matches!(event.keysym, Keysym::Alt_L | Keysym::Alt_R);
+        if let Some(s) = self.slot_mut(win) {
+            let was = s.cues.keys;
+            s.cues.key(alt);
+            s.dirty |= s.cues.keys != was;
+        }
         self.send(win, Event::Key(input));
     }
 
@@ -2408,6 +2424,7 @@ impl Host {
             Shell::Toplevel(_) => self.slots[i].activated,
             Shell::Layer(_) => self.focus == Some(id),
         };
+        self.ctx.theme.access_keys = self.slots[i].cues.keys;
         let preedit = self
             .text_input
             .as_ref()
@@ -2425,6 +2442,7 @@ impl Host {
             None => 0,
         };
         self.ctx.theme.active = true;
+        self.ctx.theme.access_keys = true;
         self.set_glass_top(i, (w, glass_top), qh);
         let spot = canvas.take_spot();
         if let Some(t) = self.text_input.as_mut() {
@@ -2843,6 +2861,7 @@ impl KeyboardHandler for Host {
         }
         if let Some(s) = self.slot_mut(id) {
             s.access.adapter.update_window_focus_state(false);
+            s.dirty |= s.cues.blur();
         }
         self.redraw_if_active_shows(id);
         self.send(id, Event::Focus(false));
@@ -2926,6 +2945,7 @@ impl PointerHandler for Host {
                     self.last_serial = serial;
                     self.press_serial = serial;
                     self.press_time = time;
+                    self.key_last = false;
                     PointerInput::Press {
                         x,
                         y,
