@@ -274,34 +274,25 @@ pub fn draw(ex: &Explorer, c: &mut Canvas, ctx: &Ctx) {
         c.clear_rect(lay.rebar);
         c.report_glass_top(glass_top);
     }
-    let toolbar = lay.toolbar.map(|r| {
-        let rects = toolbar::layout(&ex.toolbar, &ctx.text, px, r, &ctx.theme.controls());
-        let draw = if glass {
-            toolbar::draw_over_glass
-        } else {
-            toolbar::draw
-        };
-        draw(
-            c,
-            &ctx.text,
-            &Paint {
-                s: 1,
-                ..ctx.theme.paint()
-            },
-            &ex.toolbar,
-            r,
-            &rects,
-            px,
-        );
-        rects
-    });
     let paint = Paint {
         s: 1,
         ..ctx.theme.paint()
     };
+    let glass_ink = glass
+        .then(|| reprisekit::look::ink_on_glass(&ctx.theme))
+        .flatten();
+    let toolbar = lay.toolbar.map(|r| {
+        let rects = toolbar::layout(&ex.toolbar, &ctx.text, px, r, &ctx.theme.controls());
+        let tb = &ex.toolbar;
+        match glass_ink {
+            Some(ink) => toolbar::draw_over_glass(c, &ctx.text, &paint, tb, r, &rects, ink, px),
+            None => toolbar::draw(c, &ctx.text, &paint, tb, r, &rects, px),
+        }
+        rects
+    });
     let address = lay.address.map(|r| {
         let al = addressbar::layout(&ex.address, &ctx.text, px, r, &ctx.theme.controls());
-        addressbar::draw_over_glass(c, &ctx.text, &paint, &ex.address, &al, px);
+        addressbar::draw_label_and_go(c, &ctx.text, &paint, &ex.address, &al, glass_ink, px);
         al
     });
     let draw_field = |c: &mut Canvas| {

@@ -841,13 +841,15 @@ fn held_size(
 
 /// The theme a program builds from the compositor's environment: the
 /// interface named by [`reprisekit::interface::ENV`] (Blue variant from
-/// [`reprisekit::blue::ENV`], Glass mode from
-/// [`reprisekit::glass::MODE_ENV`]), else [`Theme::default`]; then a
+/// [`reprisekit::blue::ENV`], Glass mode and material from
+/// [`reprisekit::glass::MODE_ENV`] and [`reprisekit::glass::MATERIAL_ENV`]), else
+/// [`Theme::default`]; then a
 /// [`reprisekit::theme::COLORS_ENV`] scheme is laid over it.
 fn theme_from_env(
     interface: Option<&str>,
     variant: Option<&str>,
     glass_mode: Option<&str>,
+    glass_material: Option<&str>,
     colors: Option<&str>,
 ) -> Theme {
     let mut theme = reprisekit::interfaces::theme_with(
@@ -856,6 +858,9 @@ fn theme_from_env(
         &reprisekit::glass::Settings {
             mode: glass_mode
                 .and_then(reprisekit::glass::Mode::parse)
+                .unwrap_or_default(),
+            material: glass_material
+                .and_then(reprisekit::glass::Material::parse)
                 .unwrap_or_default(),
             ..reprisekit::glass::Settings::default()
         },
@@ -873,6 +878,7 @@ struct Look {
     interface: Option<String>,
     blue_variant: Option<String>,
     glass_mode: Option<String>,
+    glass_material: Option<String>,
     colors: Option<String>,
     icon_theme: String,
     /// `[fonts] shell_dlg`, read from `config.toml` at the start and
@@ -893,6 +899,7 @@ impl Look {
             interface: std::env::var(reprisekit::interface::ENV).ok(),
             blue_variant: std::env::var(reprisekit::blue::ENV).ok(),
             glass_mode: std::env::var(reprisekit::glass::MODE_ENV).ok(),
+            glass_material: std::env::var(reprisekit::glass::MATERIAL_ENV).ok(),
             colors: std::env::var(reprisekit::theme::COLORS_ENV).ok(),
             icon_theme: std::env::var(reprisekit::icontheme::ENV)
                 .unwrap_or_else(|_| "hicolor".into()),
@@ -907,6 +914,7 @@ impl Look {
             self.interface.as_deref(),
             self.blue_variant.as_deref(),
             self.glass_mode.as_deref(),
+            self.glass_material.as_deref(),
             self.colors.as_deref(),
         );
         theme.fonts.shell_dlg = self.shell_dlg.clone();
@@ -951,6 +959,7 @@ impl Look {
             a::INTERFACE => self.interface.get_or_insert_default(),
             a::BLUE_VARIANT => self.blue_variant.get_or_insert_default(),
             a::GLASS_MODE => self.glass_mode.get_or_insert_default(),
+            a::GLASS_MATERIAL => self.glass_material.get_or_insert_default(),
             a::COLORS => self.colors.get_or_insert_default(),
             a::ICON_THEME => &mut self.icon_theme,
             _ => return false,
@@ -4128,7 +4137,7 @@ mod tests {
     #[test]
     fn theme_from_env_with_no_interface_is_the_default_theme() {
         assert_eq!(
-            theme_from_env(None, None, None, None),
+            theme_from_env(None, None, None, None, None),
             Theme::default(),
             "no REPRISE_INTERFACE and no REPRISE_COLORS must give Theme::default()"
         );
@@ -4136,7 +4145,7 @@ mod tests {
 
     #[test]
     fn theme_from_env_with_blue_takes_the_blue_style() {
-        let t = theme_from_env(Some("blue"), None, None, None);
+        let t = theme_from_env(Some("blue"), None, None, None, None);
         let blue = reprisekit::interfaces::theme_for(reprisekit::interface::Interface::Blue);
         assert_eq!(
             t.colors, blue.colors,
@@ -4153,19 +4162,19 @@ mod tests {
         use reprisekit::blue::Variant;
         use reprisekit::interfaces::blue_theme;
         for v in Variant::ALL {
-            let t = theme_from_env(Some("blue"), Some(v.as_str()), None, None);
+            let t = theme_from_env(Some("blue"), Some(v.as_str()), None, None, None);
             assert_eq!(t.look, blue_theme(v).look, "{v:?}");
             assert_eq!(t.colors, blue_theme(v).colors, "{v:?}");
         }
         for unknown in [None, Some("green"), Some("Silver")] {
             assert_eq!(
-                theme_from_env(Some("blue"), unknown, None, None).look,
+                theme_from_env(Some("blue"), unknown, None, None, None).look,
                 blue_theme(Variant::Blue).look,
                 "{unknown:?} is navy"
             );
         }
         assert_eq!(
-            theme_from_env(Some("classic"), Some("olive"), None, None),
+            theme_from_env(Some("classic"), Some("olive"), None, None, None),
             Theme::default(),
             "the variant means nothing outside Blue"
         );
@@ -4173,22 +4182,52 @@ mod tests {
 
     #[test]
     fn the_glass_mode_picks_dark_glass_and_anything_else_is_light() {
-        let dark = theme_from_env(Some("glass"), None, Some("dark"), None);
-        let light = theme_from_env(Some("glass"), None, None, None);
+        let dark = theme_from_env(Some("glass"), None, Some("dark"), None, None);
+        let light = theme_from_env(Some("glass"), None, None, None, None);
         assert_ne!(dark.look, light.look, "dark Glass is another look");
         assert_eq!(dark.look.style().unwrap().name, "glass-dark");
         for odd in [Some("Dark"), Some(""), Some("dim")] {
             assert_eq!(
-                theme_from_env(Some("glass"), None, odd, None).look,
+                theme_from_env(Some("glass"), None, odd, None, None).look,
                 light.look,
                 "{odd:?} is light"
             );
         }
         assert_eq!(
-            theme_from_env(Some("classic"), None, Some("dark"), None).look,
-            theme_from_env(Some("classic"), None, None, None).look,
+            theme_from_env(Some("classic"), None, Some("dark"), None, None).look,
+            theme_from_env(Some("classic"), None, None, None, None).look,
             "Classic ignores the glass mode"
         );
+    }
+
+    #[test]
+    fn smoked_glass_inks_labels_on_its_glass_white_in_either_mode() {
+        for mode in ["light", "dark"] {
+            let theme = theme_from_env(Some("glass"), None, Some(mode), Some("smoked"), None);
+            assert_eq!(
+                reprisekit::look::ink_on_glass(&theme),
+                Some(reprisekit::theme::Color::rgb(0xFF, 0xFF, 0xFF)),
+                "{mode}"
+            );
+        }
+        let frosted = theme_from_env(Some("glass"), None, Some("light"), None, None);
+        assert_eq!(
+            reprisekit::look::ink_on_glass(&frosted),
+            Some(reprisekit::theme::Color::rgb(0, 0, 0)),
+            "light Frosted inks black"
+        );
+    }
+
+    #[test]
+    fn a_glass_material_change_through_the_portal_relooks() {
+        let mut look = Look {
+            interface: Some("glass".into()),
+            ..Look::default()
+        };
+        let ink = |l: &Look| reprisekit::look::ink_on_glass(&l.theme());
+        let before = ink(&look);
+        assert!(look.set(reprisebus::appearance::GLASS_MATERIAL, "smoked".into()));
+        assert_ne!(ink(&look), before, "the ink on glass follows");
     }
 
     #[test]
@@ -4274,7 +4313,7 @@ mod tests {
 
     #[test]
     fn theme_from_env_applies_colors_over_the_blue_style() {
-        let t = theme_from_env(Some("blue"), None, None, Some("window_text=#010203"));
+        let t = theme_from_env(Some("blue"), None, None, None, Some("window_text=#010203"));
         let blue = reprisekit::interfaces::theme_for(reprisekit::interface::Interface::Blue);
         assert_eq!(
             t.colors.window_text,

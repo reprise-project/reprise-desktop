@@ -10,6 +10,7 @@ use crate::raster::{Canvas, Rect};
 use crate::style::{Part, State};
 use crate::text::{Align, TextRenderer};
 use crate::textedit::{Caret, EditKey, TextEdit};
+use crate::theme::Color;
 use accesskit::{NodeId, Role};
 
 pub const LABEL_X: i32 = 6;
@@ -209,26 +210,29 @@ pub fn draw(
     caret: Caret,
     px: u32,
 ) {
-    draw_over_glass(c, text, p, ab, lay, px);
+    draw_label_and_go(c, text, p, ab, lay, None, px);
     draw_field(c, text, p, ab, lay, focus, caret, px);
 }
 
-/// The label and Go of a band over its frame's glass: the host lays the label glow under them,
-/// then draws the field ([`draw_field`]), which takes none.
-pub fn draw_over_glass(
+/// The band's label and Go. Over its frame's glass they take `glass_ink`, the glass's own
+/// ([`crate::look::ink_on_glass`]): the host lays the label glow under them, then draws the
+/// field ([`draw_field`]), which takes none.
+pub fn draw_label_and_go(
     c: &mut Canvas,
     text: &TextRenderer,
     p: &Paint,
     ab: &AddressBar,
     lay: &Layout,
+    glass_ink: Option<Color>,
     px: u32,
 ) {
     let Paint { cs, s, .. } = *p;
-    let label_ink = p
-        .look
-        .style()
-        .and_then(|st| st.text_color(Part::RebarBand, State::Normal))
-        .unwrap_or(cs.button_text);
+    let label_ink = glass_ink.unwrap_or_else(|| {
+        p.look
+            .style()
+            .and_then(|st| st.text_color(Part::RebarBand, State::Normal))
+            .unwrap_or(cs.button_text)
+    });
     text.draw(
         c,
         lay.label.scaled(s),
@@ -238,7 +242,8 @@ pub fn draw_over_glass(
         Align::Left,
         px,
     );
-    draw_go(c, text, p, ab, lay.go.scaled(s), px);
+    let go_ink = glass_ink.filter(|_| !ab.go_hot).unwrap_or(cs.button_text);
+    draw_go(c, text, p, ab, lay.go.scaled(s), go_ink, px);
 }
 
 /// The band's field, its combo box.
@@ -272,8 +277,16 @@ pub fn draw_field(
 /// the look's [`AddressMetrics::go_frame_x`] in from each side.
 ///
 /// [`AddressMetrics::go_frame_x`]: crate::metrics::AddressMetrics::go_frame_x
-fn draw_go(c: &mut Canvas, text: &TextRenderer, p: &Paint, ab: &AddressBar, go: Rect, px: u32) {
-    let Paint { cs, s, .. } = *p;
+fn draw_go(
+    c: &mut Canvas,
+    text: &TextRenderer,
+    p: &Paint,
+    ab: &AddressBar,
+    go: Rect,
+    ink: Color,
+    px: u32,
+) {
+    let Paint { s, .. } = *p;
     if ab.go_hot {
         let dx = p.look.controls().address.go_frame_x * s;
         let frame = Rect::new(go.x + dx, go.y, go.width - 2 * dx, go.height);
@@ -292,7 +305,7 @@ fn draw_go(c: &mut Canvas, text: &TextRenderer, p: &Paint, ab: &AddressBar, go: 
         Rect::new(tx, go.y, (go.right() - tx).max(0), go.height),
         "Go",
         false,
-        cs.button_text,
+        ink,
         Align::Left,
         px,
     );
@@ -457,7 +470,8 @@ mod tests {
         ab.go_hot = true;
         let mut c = Canvas::new(792, 90);
         c.fill_rect(c.bounds(), MARK);
-        draw_go(&mut c, &text, &theme.paint(), &ab, lay.go, 11);
+        let ink = theme.colors.button_text;
+        draw_go(&mut c, &text, &theme.paint(), &ab, lay.go, ink, 11);
         for (x, lit) in [(736, false), (737, true), (787, true), (788, false)] {
             assert_eq!(c.get(x, 72) != MARK.argb(), lit, "x {x}");
         }
