@@ -4,9 +4,7 @@
 //!
 //! The frame goes Disabled, Pressed, Hot, Default, Focused, Normal, the
 //! first that holds: the pointer outranks the default and focus rings
-//! only while it is on the button. Under a style with
-//! [`Style::default_needs_active`] the default button draws no Default
-//! frame while its window is inactive.
+//! only while it is on the button.
 
 use crate::classic::widgets::{RingInk, draw_focus_ring_screen, draw_label};
 use crate::look::Paint;
@@ -40,7 +38,7 @@ pub fn draw_button(
         State::Pressed
     } else if ptr == Interaction::Hot {
         State::Hot
-    } else if default && (p.active || !st.default_needs_active) {
+    } else if default {
         State::Default
     } else if focus {
         State::Focused

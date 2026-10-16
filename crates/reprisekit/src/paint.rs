@@ -113,9 +113,8 @@ pub struct Paint<'a> {
     pub look: &'a Look,
     pub s: i32,
     pub back: Backdrop,
-    /// Whether the window painted into has the keyboard. A style with
-    /// [`Style::default_needs_active`] draws a default push button as a
-    /// plain one while it is false.
+    /// Whether the window painted into has the keyboard. While it is false
+    /// a default push button draws as a plain one.
     pub active: bool,
     /// How a form laid out for 100% text grows ([`Theme::text`]).
     pub text: crate::theme::TextUnits,

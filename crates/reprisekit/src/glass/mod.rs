@@ -441,7 +441,6 @@ fn build_at(s: &Settings, scale: i32) -> Style {
     .without_task_nudge()
     .with_greyed_field_frame()
     .with_controls(controls())
-    .with_default_needing_active()
     .with_painted(Part::PreviewFrame, lazy(preview::frame_part))
     .with_painted(Part::PreviewThumb, lazy(|_, d| preview::thumb_part(d)))
     .with_painted(Part::PreviewClose, lazy(|_, d| popups::preview_close(d)))
