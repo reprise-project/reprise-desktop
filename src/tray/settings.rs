@@ -32,6 +32,7 @@ pub struct Appearance {
     pub icon_theme: String,
     pub shell_dlg: String,
     pub glass_mode: reprisekit::glass::Mode,
+    pub glass_material: reprisekit::glass::Material,
     /// `[cursor] theme`, else `XCURSOR_THEME`, else "default".
     pub cursor_theme: String,
     /// `[cursor] size` in pixels, else `XCURSOR_SIZE`, else 24.
@@ -73,6 +74,7 @@ impl Appearance {
             icon_theme: cfg.icons.theme.clone(),
             shell_dlg: cfg.theme.fonts.shell_dlg.clone().unwrap_or_default(),
             glass_mode: cfg.glass.mode,
+            glass_material: cfg.glass.material,
             cursor_theme,
             cursor_size: cursor_size as i32,
             font_name: font_name(&cfg.theme.fonts, cfg.accessibility.text_factor()),
@@ -146,6 +148,11 @@ impl Appearance {
                 look::NAMESPACE,
                 look::GLASS_MODE,
                 Value::from(self.glass_mode.as_str()),
+            ),
+            (
+                look::NAMESPACE,
+                look::GLASS_MATERIAL,
+                Value::from(self.glass_material.as_str()),
             ),
             (
                 look::NAMESPACE,
@@ -432,7 +439,7 @@ mod tests {
         };
         assert_eq!(
             s.read_all(vec![look::NAMESPACE.into()])[look::NAMESPACE].len(),
-            8
+            9
         );
         let text = |key| String::try_from(s.lookup(look::NAMESPACE, key).unwrap()).unwrap();
         assert_eq!(text(look::INTERFACE), "blue");
@@ -441,6 +448,7 @@ mod tests {
         assert_eq!(text(look::ICON_THEME), "Papirus");
         assert_eq!(text(look::SHELL_DLG), "/usr/share/wine/fonts/sserife.fon");
         assert_eq!(text(look::GLASS_MODE), "light");
+        assert_eq!(text(look::GLASS_MATERIAL), "frosted");
         assert_eq!(text(look::TEXT_SIZE), "100");
         assert_eq!(text(look::DOUBLE_CLICK_MS), "500");
         assert!(s.lookup(look::NAMESPACE, "color-scheme").is_err());

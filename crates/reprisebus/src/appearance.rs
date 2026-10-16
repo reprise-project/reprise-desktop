@@ -24,16 +24,20 @@ pub const SHELL_DLG: &str = "shell-dlg";
 /// `[glass] mode`, `light` or `dark`, as `REPRISE_GLASS_MODE`.
 pub const GLASS_MODE: &str = "glass-mode";
 
+/// `[glass] material`, `frosted`, `smoked` or `molten`, as `REPRISE_GLASS_MATERIAL`.
+pub const GLASS_MATERIAL: &str = "glass-material";
+
 /// `[accessibility] text_size`, in percent ("150").
 pub const TEXT_SIZE: &str = "text-size";
 
 /// `[metrics] double_click_ms` in force, in ms ("500").
 pub const DOUBLE_CLICK_MS: &str = "double-click-ms";
 
-const KEYS: [&str; 8] = [
+const KEYS: [&str; 9] = [
     INTERFACE,
     BLUE_VARIANT,
     GLASS_MODE,
+    GLASS_MATERIAL,
     COLORS,
     ICON_THEME,
     SHELL_DLG,

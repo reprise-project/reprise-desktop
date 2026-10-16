@@ -9,7 +9,9 @@ use crate::look::Paint;
 use crate::look::widgets::toolbar as look;
 use crate::metrics::{ButtonPads, ControlMetrics, ToolbarMetrics};
 use crate::raster::{Canvas, Rect};
-use crate::text::TextRenderer;
+use crate::style::State;
+use crate::text::{Align, TextRenderer};
+use crate::theme::Color;
 use accesskit::{NodeId, Role};
 
 pub const BACK: &str = "back";
@@ -256,11 +258,13 @@ pub fn draw(
     rects: &[Rect],
     px: u32,
 ) {
-    draw_strip(c, text, p, tb, r, rects, px, true);
+    draw_strip(c, text, p, tb, r, rects, px, None);
 }
 
 /// [`draw`] for a strip over its frame's glass, without its separators: the host lays the
-/// label glow under the rest, then draws them ([`draw_glass_separators`]).
+/// label glow under the rest, then draws them ([`draw_glass_separators`]). Labels and arrows
+/// at rest take `ink`, the glass's own ([`crate::look::ink_on_glass`]).
+#[expect(clippy::too_many_arguments)]
 pub fn draw_over_glass(
     c: &mut Canvas,
     text: &TextRenderer,
@@ -268,9 +272,10 @@ pub fn draw_over_glass(
     tb: &ToolBar,
     r: Rect,
     rects: &[Rect],
+    ink: Color,
     px: u32,
 ) {
-    draw_strip(c, text, p, tb, r, rects, px, false);
+    draw_strip(c, text, p, tb, r, rects, px, Some(ink));
 }
 
 /// The separators of a strip over its frame's glass, each in its `layout` rect.
@@ -291,7 +296,7 @@ fn draw_strip(
     r: Rect,
     rects: &[Rect],
     px: u32,
-    separators: bool,
+    glass_ink: Option<Color>,
 ) {
     let s = p.s;
     let m = &p.look.controls().toolbar;
@@ -311,7 +316,7 @@ fn draw_strip(
             ..
         }) = item
         else {
-            if separators {
+            if glass_ink.is_none() {
                 look::draw_separator(c, p, tb.big, sr);
             }
             continue;
@@ -348,12 +353,20 @@ fn draw_strip(
         {
             let lx = icon_box.right() + pads.gap * s + off;
             let lr = Rect::new(lx, sr.y + off, sr.right() - lx, sr.height);
-            look::draw_label(c, text, p, lr, label, state, px);
+            match glass_ink {
+                Some(ink) if state == State::Normal => {
+                    text.draw(c, lr, label, false, ink, Align::Left, px);
+                }
+                _ => look::draw_label(c, text, p, lr, label, state, px),
+            }
         }
 
         if drop {
             let arrow_r = Rect::new(sr.right() - drop_w + off, sr.y + off, drop_w, sr.height);
-            let color = look::arrow_ink(p, enabled);
+            let color = match glass_ink {
+                Some(ink) if state == State::Normal => ink,
+                _ => look::arrow_ink(p, enabled),
+            };
             if tb.big {
                 let dy = if split.is_some() {
                     m.split_arrow_dy
@@ -962,7 +975,8 @@ mod tests {
             );
             let p = theme.paint();
             let mut c = Canvas::new(BIG_SEP_W as u32, BIG_HEIGHT as u32);
-            draw_over_glass(&mut c, &text, &p, &tb, r, &[r], 11);
+            let white = Color::rgb(0xFF, 0xFF, 0xFF);
+            draw_over_glass(&mut c, &text, &p, &tb, r, &[r], white, 11);
             assert!(c.pixels.iter().all(|&px| px == 0), "{mode:?}: nothing yet");
             draw_glass_separators(&mut c, &p, &tb, &[r]);
             let y = BIG_HEIGHT / 2;
@@ -977,6 +991,28 @@ mod tests {
                 "{mode:?}: both translucent, {alphas:?}"
             );
         }
+    }
+
+    #[test]
+    fn over_glass_a_label_at_rest_takes_the_glass_ink() {
+        let theme = crate::interfaces::theme_for(crate::interface::Interface::Glass);
+        let text = renderer();
+        let ink = Color::rgb(0xFF, 0x00, 0xFF);
+        let r = Rect::new(0, 0, FOLDERS_W, BIG_HEIGHT);
+        let inked = |hot: Option<usize>| {
+            let tb = ToolBar {
+                items: vec![button(FOLDERS, Some("Folders"), true)],
+                hot,
+                pressed: None,
+                latched: None,
+                big: true,
+            };
+            let mut c = Canvas::new(FOLDERS_W as u32, BIG_HEIGHT as u32);
+            draw_over_glass(&mut c, &text, &theme.paint(), &tb, r, &[r], ink, 11);
+            c.pixels.contains(&ink.argb())
+        };
+        assert!(inked(None), "at rest the label is in the glass ink");
+        assert!(!inked(Some(0)), "on its lit face it keeps the button's");
     }
 
     #[test]
