@@ -752,9 +752,10 @@ fn controls() -> ControlMetrics {
         combo_row: 15,
         flyout_border: 8,
         places: PlacesMetrics {
-            tile: 63,
+            tile: 59,
             icon_top: 2,
             label_gap: 1,
+            line_lead: 0,
         },
         clock_face: clock::SIDE,
         rebar: RebarMetrics {
