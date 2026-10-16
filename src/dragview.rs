@@ -142,6 +142,17 @@ pub enum ProgramPress {
     StartPanel(reprisekit::startpanel::Spot),
 }
 
+impl ProgramPress {
+    /// Whether the row is still on screen with `menus` menus open and the
+    /// Glass Start menu open or not (`start_panel`).
+    fn shown(self, menus: usize, start_panel: bool) -> bool {
+        match self {
+            ProgramPress::Menu { depth, .. } => menus > depth,
+            ProgramPress::StartPanel(_) => start_panel,
+        }
+    }
+}
+
 pub struct DragState {
     /// What was grabbed first, then the rest of the desktop selection (see `State::drag_sources`).
     pub sources: Vec<DragSource>,
@@ -438,6 +449,13 @@ impl State {
         if !started {
             let slop = f64::from(desktop::DRAG_PX);
             if (pos.x - x0).abs() < slop && (pos.y - y0).abs() < slop {
+                return;
+            }
+            // A row whose menu shut under the held button (a key, another
+            // press) has nothing left to drag.
+            let row = self.drags.armed.as_ref().and_then(|d| d.row);
+            if row.is_some_and(|r| !r.shown(self.menus.len(), self.start_panel.is_some())) {
+                self.cancel_interaction();
                 return;
             }
             self.interaction = Interaction::Drag {
@@ -1189,6 +1207,18 @@ impl State {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_program_row_drags_only_while_its_menu_is_open() {
+        let row = ProgramPress::Menu { depth: 1, row: 3 };
+        assert!(row.shown(2, false));
+        assert!(!row.shown(1, true), "its submenu shut");
+        assert!(!row.shown(0, false), "Start shut");
+        let spot = reprisekit::startpanel::Spot::Program(0);
+        let panel = ProgramPress::StartPanel(spot);
+        assert!(panel.shown(0, true));
+        assert!(!panel.shown(1, false), "the Glass Start menu shut");
+    }
 
     #[test]
     fn a_drag_image_is_drawn_again_over_an_output_of_another_scale() {

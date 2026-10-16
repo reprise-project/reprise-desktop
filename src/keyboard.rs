@@ -207,9 +207,16 @@ impl State {
         if let Some(arm) = routed.arm_super {
             self.key_input.super_tap_armed = arm;
         }
+        let start_tap = routed.fire_super && !self.key_input.aids.filter.config().sticky_keys;
+        if start_tap
+            || routed.route.opens_surface()
+            || chord.as_ref().is_some_and(crate::keyroute::opens_surface)
+        {
+            self.cancel_interaction();
+        }
         if routed.fire_super {
             self.key_input.super_tap_armed = false;
-            if !self.key_input.aids.filter.config().sticky_keys {
+            if start_tap {
                 self.toggle_start_from_keys();
             }
         }

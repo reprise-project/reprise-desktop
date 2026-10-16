@@ -687,6 +687,39 @@ pub fn runs_during_drag(a: &Action) -> bool {
     )
 }
 
+/// Whether a bind's action opens or shuts a surface of Reprise's own that
+/// takes the pointer: a pointer gesture still held ends before it runs
+/// (`State::cancel_interaction`).
+pub fn opens_surface(a: &Action) -> bool {
+    matches!(
+        a,
+        Action::StartMenu
+            | Action::WindowMenu
+            | Action::Launcher
+            | Action::ClipboardHistory
+            | Action::EmojiPicker
+            | Action::SnapLayouts
+            | Action::Overview
+            | Action::Cycle
+            | Action::Flip
+            | Action::ScreenshotRegion
+            | Action::FocusTaskbar
+            | Action::FocusTray
+            | Action::Run
+            | Action::LogOff
+            | Action::TurnOff
+            | Action::Exit
+            | Action::Lock
+    )
+}
+
+impl KeyRoute {
+    /// Whether this route runs a bind that `opens_surface`.
+    pub fn opens_surface(&self) -> bool {
+        matches!(self, KeyRoute::Binds(a) if a.iter().any(opens_surface))
+    }
+}
+
 /// The actions the binds give `k`, in keysym order.
 fn bound(k: &KeyPress, binds: &[Keybind]) -> Vec<Action> {
     k.lower
@@ -1862,6 +1895,43 @@ mod tests {
             Action::Terminal,
         ] {
             assert!(!runs_during_drag(&a), "{a:?} waits for the drop");
+        }
+    }
+
+    #[test]
+    fn a_bind_that_opens_a_surface_ends_a_held_gesture() {
+        use crate::desktops::Step;
+        use crate::magnifier::ZoomStep;
+        use crate::snap::Dir;
+        let menus = Modes {
+            menus_open: true,
+            ..Modes::default()
+        };
+        for m in [Modes::default(), menus] {
+            for sym in [KEY_space, KEY_v, KEY_period, KEY_r] {
+                assert!(
+                    r(&m, &press(sym, MOD_LOGO)).opens_surface(),
+                    "Super+{sym:#x} opens a surface"
+                );
+            }
+        }
+        assert!(!r(&Modes::default(), &press(KEY_a, 0)).opens_surface());
+        for a in [
+            Action::StartMenu,
+            Action::WindowMenu,
+            Action::FocusTray,
+            Action::SnapLayouts,
+        ] {
+            assert!(opens_surface(&a), "{a:?} opens a surface");
+        }
+        for a in [
+            Action::VolumeUp,
+            Action::Zoom(ZoomStep::In),
+            Action::Snap(Dir::Left),
+            Action::Desktop(Step::Next),
+            Action::Screenshot,
+        ] {
+            assert!(!opens_surface(&a), "{a:?} keeps the gesture");
         }
     }
 

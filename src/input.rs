@@ -368,6 +368,12 @@ fn press_closes_start_panel(hit: &Hit) -> bool {
     )
 }
 
+/// Whether a press on `hit` first ends a gesture another button still
+/// holds (`State::cancel_interaction`): the desktop starts its own.
+fn press_ends_gesture(hit: &Hit) -> bool {
+    matches!(hit, Hit::Desktop { .. })
+}
+
 impl State {
     pub fn process_input<B: InputBackend>(&mut self, event: InputEvent<B>) {
         if !matches!(
@@ -1309,6 +1315,9 @@ impl State {
         if !matches!(hit, Hit::EmojiView { .. }) {
             self.close_emoji();
         }
+        if press_ends_gesture(&hit) {
+            self.cancel_interaction();
+        }
         match hit {
             // A window under a modal dialog takes no press on its frame
             // either: the press brings the dialog up.
@@ -2149,6 +2158,18 @@ mod tests {
         assert!(!press_closes_start_panel(&Hit::StartPanel { spot: None }));
         assert!(press_closes_start_panel(&Hit::Nothing));
         assert!(press_closes_start_panel(&Hit::Desktop { index: None }));
+    }
+
+    #[test]
+    fn only_a_desktop_press_ends_a_gesture_another_button_holds() {
+        assert!(press_ends_gesture(&Hit::Desktop { index: None }));
+        assert!(press_ends_gesture(&Hit::Desktop { index: Some(0) }));
+        assert!(!press_ends_gesture(&Hit::Nothing));
+        assert!(!press_ends_gesture(&Hit::StartPanel { spot: None }));
+        assert!(!press_ends_gesture(&Hit::Menu {
+            depth: 0,
+            row: Some(1)
+        }));
     }
 
     use crate::theme::Metrics;
