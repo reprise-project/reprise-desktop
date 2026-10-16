@@ -319,6 +319,10 @@ mod tests {
             "Cobalt Hot 862bf56915ce1c48",
             "Cobalt Pressed ab28369672b9d2f7",
             "Cobalt Inactive 5a342402953dd939",
+            "Carbon Normal 1bfdb90861e0c071",
+            "Carbon Hot 30730bb43272226f",
+            "Carbon Pressed a864be93f9746495",
+            "Carbon Inactive 9f0dba82aa4675f7",
             "Blue Normal 40ee211c14fee9ce",
             "Blue Hot 82a810bd2decb3b9",
             "Blue Pressed 91416ef3906a7be2",
@@ -351,6 +355,10 @@ mod tests {
             "Cobalt Hot 17a04bc93969e35d",
             "Cobalt Pressed af9b9309e70bf01d",
             "Cobalt Inactive 5d90d872209f59ba",
+            "Carbon Normal 9cea1a777449db65",
+            "Carbon Hot b30f939d1beab5c1",
+            "Carbon Pressed 5e6f429ea3078fc5",
+            "Carbon Inactive a2973344ebf365ae",
         ];
         if got != want {
             panic!("pins:\n{}", got.join("\n"));

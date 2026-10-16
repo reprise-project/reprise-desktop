@@ -77,6 +77,7 @@ mod tests {
             Variant::Obsidian,
             Variant::Ember,
             Variant::Cobalt,
+            Variant::Carbon,
         ] {
             let theme = blue_theme(v);
             let p = theme.paint();

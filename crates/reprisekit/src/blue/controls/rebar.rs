@@ -29,7 +29,11 @@ const LINE_H: i32 = 2;
 pub(super) fn metrics(v: Variant) -> RebarMetrics {
     let band_top = match v {
         Variant::Blue | Variant::Olive | Variant::Silver | Variant::Ember => 0,
-        Variant::Slate | Variant::Sapphire | Variant::Obsidian | Variant::Cobalt => 2,
+        Variant::Slate
+        | Variant::Sapphire
+        | Variant::Obsidian
+        | Variant::Cobalt
+        | Variant::Carbon => 2,
     };
     RebarMetrics {
         top: 0,
@@ -156,7 +160,7 @@ mod tests {
 
     #[test]
     fn rebar_pins_at_scale_1_and_2() {
-        let want: [(Variant, [u64; 4]); 8] = [
+        let want: [(Variant, [u64; 4]); 9] = [
             (
                 Variant::Blue,
                 [
@@ -222,6 +226,15 @@ mod tests {
             ),
             (
                 Variant::Cobalt,
+                [
+                    0x5c18e2541baf7cd4,
+                    0x5d60bb1ff0df8139,
+                    0x6506ae63d400f32b,
+                    0x5835cd7bf850573b,
+                ],
+            ),
+            (
+                Variant::Carbon,
                 [
                     0x5c18e2541baf7cd4,
                     0x5d60bb1ff0df8139,
@@ -348,10 +361,14 @@ mod tests {
     }
 
     #[test]
-    fn slate_sapphire_obsidian_and_cobalt_lower_a_bands_content() {
+    fn every_scheme_keeps_its_band_top() {
         for v in Variant::ALL {
             let want = match v {
-                Variant::Slate | Variant::Sapphire | Variant::Obsidian | Variant::Cobalt => 2,
+                Variant::Slate
+                | Variant::Sapphire
+                | Variant::Obsidian
+                | Variant::Cobalt
+                | Variant::Carbon => 2,
                 _ => 0,
             };
             assert_eq!(metrics(v).band_top, want, "{v:?}");

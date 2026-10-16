@@ -63,7 +63,9 @@ enum Edge {
 fn edge(v: Variant) -> (Edge, f64) {
     match v {
         Variant::Blue | Variant::Olive | Variant::Silver => (Edge::Lit, ROUND),
-        Variant::Sapphire | Variant::Obsidian | Variant::Cobalt => (Edge::Halo, SQUARE),
+        Variant::Sapphire | Variant::Obsidian | Variant::Cobalt | Variant::Carbon => {
+            (Edge::Halo, SQUARE)
+        }
         Variant::Slate | Variant::Ember => (Edge::Solid, SQUARE),
     }
 }
@@ -333,6 +335,10 @@ mod tests {
             (
                 Variant::Cobalt,
                 [0x48f9_48b4_ab9a_18ab, 0x2a6f_0b15_cb00_d37d],
+            ),
+            (
+                Variant::Carbon,
+                [0xaa5c_4677_a848_831b, 0x2fc5_af12_6aa1_1bd5],
             ),
         ];
         for (v, hashes) in want {

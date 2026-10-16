@@ -470,6 +470,14 @@ mod tests {
             "Cobalt Restore 2 83f57c576cc6baa0",
             "Cobalt Close 1 1c9d1d14df803e20",
             "Cobalt Close 2 f447ae7482532b9c",
+            "Carbon Minimize 1 88755c1931781af9",
+            "Carbon Minimize 2 da82fe0c66b4509b",
+            "Carbon Maximize 1 616f9012908ffa54",
+            "Carbon Maximize 2 c043fda872679d55",
+            "Carbon Restore 1 11cb6822c8a48447",
+            "Carbon Restore 2 cb9431d034db0f95",
+            "Carbon Close 1 8192bbce3ddcf839",
+            "Carbon Close 2 003797d5619d6169",
         ];
         assert_eq!(got, want, "pins:\n{}", got.join("\n"));
     }

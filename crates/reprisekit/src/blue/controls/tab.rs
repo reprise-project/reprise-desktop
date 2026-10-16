@@ -190,7 +190,7 @@ mod tests {
     #[test]
     fn tab_pins_at_scale_1_and_2() {
         #[rustfmt::skip]
-        let want: [(Variant, [u64; 8]); 8] = [
+        let want: [(Variant, [u64; 8]); 9] = [
             (Variant::Blue, [0x8118af1a3c459470, 0xbc311f21fa26b33b, 0x8c5ba86beb372fab, 0x3577aeece7fa7d92, 0xd0bccdc7d9e8ee7a, 0x5ec07295e32132ef, 0x6afd2f95f7dc2b9d, 0x4710a8c6ee0770de]),
             (Variant::Olive, [0x0d978c085b47797f, 0x5b27941d3fea9f01, 0x36ca20506f4e0403, 0x3577aeece7fa7d92, 0x27b070ecb829cacc, 0x310d07ca484b8f6c, 0x4773410656eecdd5, 0x4710a8c6ee0770de]),
             (Variant::Silver, [0xd4bf32212b16d783, 0x332a32c39d7185d7, 0x8c5ba86beb372fab, 0x9e3c0b7de7a5b3c3, 0x770cdcd0870933f5, 0x0e9e42b7955fbd61, 0x6afd2f95f7dc2b9d, 0x52a4f1a1348a5bd9]),
@@ -199,6 +199,7 @@ mod tests {
             (Variant::Obsidian, [0xf2f6428de2bbd6ab, 0x4be926c1a9fa37fb, 0xedad7c4d9ae0e71b, 0xdea6b31369628a3a, 0xec839e71102dac51, 0x47c174d5c054ffdd, 0x84089dce4dcf6865, 0xdcd900bbda338f03]),
             (Variant::Ember, [0x77262e9e5c79ae4f, 0x9d11accb32fe3a34, 0x324e86c2f5561783, 0x8bc4995d4fc55107, 0x22c41544021c5739, 0xd0ab150cb2492615, 0x82287fb31907c8e5, 0xcba317ad3ee6ac78]),
             (Variant::Cobalt, [0xf2f6428de2bbd6ab, 0x4be926c1a9fa37fb, 0xedad7c4d9ae0e71b, 0xdea6b31369628a3a, 0xec839e71102dac51, 0x47c174d5c054ffdd, 0x84089dce4dcf6865, 0xdcd900bbda338f03]),
+            (Variant::Carbon, [0xf2f6428de2bbd6ab, 0x4be926c1a9fa37fb, 0xedad7c4d9ae0e71b, 0xdea6b31369628a3a, 0xec839e71102dac51, 0x47c174d5c054ffdd, 0x84089dce4dcf6865, 0xdcd900bbda338f03]),
         ];
         let got: Vec<(Variant, [u64; 8])> = Variant::ALL
             .into_iter()
