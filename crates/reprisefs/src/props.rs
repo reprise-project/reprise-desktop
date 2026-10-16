@@ -334,12 +334,13 @@ fn executable_mode(mode: u32, on: bool) -> u32 {
     }
 }
 
-/// What a file's mount allows of its execute bit, from `statfs`.
+/// What a file's mount allows of its execute bit, from `statfs` (and mountinfo for fuse).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Mount {
     pub read_only: bool,
     pub noexec: bool,
-    /// FAT, exFAT or NTFS: modes are fixed by the mount options.
+    /// FAT, exFAT or NTFS, or a `fuseblk` mount whose driver was not asked to keep modes: modes
+    /// are fixed by the mount options.
     pub fixed_modes: bool,
 }
 
@@ -369,12 +370,103 @@ impl Mount {
             0x7366_746e, // NTFS (ntfs3)
             0x5346_544e, // NTFS (ntfs)
         ];
+        const FUSE: libc::__fsword_t = 0x6573_5546;
+        let fixed_modes =
+            FIXED_MODES.contains(&fs.f_type) || fs.f_type == FUSE && fuseblk_fixed_modes(path);
         Mount {
             read_only: vfs.f_flag & libc::ST_RDONLY != 0,
             noexec: vfs.f_flag & libc::ST_NOEXEC != 0,
-            fixed_modes: FIXED_MODES.contains(&fs.f_type),
+            fixed_modes,
         }
     }
+}
+
+/// Whether `path` is on a `fuseblk` mount (ntfs-3g, exfat-fuse) whose driver keeps no modes. Only
+/// ntfs-3g's `permissions` or `acl` keeps them; mountinfo does not show either, so the driver's
+/// command line is read from /proc.
+fn fuseblk_fixed_modes(path: &Path) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    let Ok(dev) = std::fs::metadata(path).map(|m| m.dev()) else {
+        return false;
+    };
+    let Some((source, target)) = std::fs::read_to_string("/proc/self/mountinfo")
+        .ok()
+        .and_then(|info| fuseblk_mount(&info, libc::major(dev), libc::minor(dev)))
+    else {
+        return false;
+    };
+    let Ok(procs) = std::fs::read_dir("/proc") else {
+        return true;
+    };
+    !procs.flatten().any(|e| {
+        std::fs::read(e.path().join("cmdline")).is_ok_and(|cmd| {
+            let args: Vec<&str> = cmd
+                .split(|&b| b == 0)
+                .filter_map(|a| std::str::from_utf8(a).ok())
+                .collect();
+            keeps_modes(&args, &source, &target)
+        })
+    })
+}
+
+/// The source and mount point `mountinfo` (`/proc/self/mountinfo`) lists for device
+/// `major:minor`, when it is a `fuseblk` mount.
+fn fuseblk_mount(mountinfo: &str, major: u32, minor: u32) -> Option<(String, String)> {
+    let dev = format!("{major}:{minor}");
+    mountinfo.lines().find_map(|line| {
+        let (head, tail) = line.split_once(" - ")?;
+        let head: Vec<&str> = head.split(' ').collect();
+        let mut tail = tail.split(' ');
+        let (fstype, source) = (tail.next()?, tail.next()?);
+        if head.get(2) != Some(&dev.as_str()) || fstype != "fuseblk" {
+            return None;
+        }
+        Some((
+            unescape_mountinfo(source)?,
+            unescape_mountinfo(head.get(4)?)?,
+        ))
+    })
+}
+
+/// mountinfo writes a space, tab, newline and backslash as a three-digit octal escape.
+fn unescape_mountinfo(s: &str) -> Option<String> {
+    let mut out = Vec::with_capacity(s.len());
+    let b = s.as_bytes();
+    let mut i = 0;
+    while i < b.len() {
+        if b[i] == b'\\'
+            && let Some(code) = s
+                .get(i + 1..i + 4)
+                .and_then(|o| u8::from_str_radix(o, 8).ok())
+        {
+            out.push(code);
+            i += 4;
+        } else {
+            out.push(b[i]);
+            i += 1;
+        }
+    }
+    String::from_utf8(out).ok()
+}
+
+/// Whether `args`, a process's command line, is an ntfs-3g mounting `source` on `target` with
+/// `permissions` or `acl` among its `-o` options.
+fn keeps_modes(args: &[&str], source: &str, target: &str) -> bool {
+    if !(args.contains(&source) && args.contains(&target)) {
+        return false;
+    }
+    let mut opts = Vec::new();
+    let mut it = args.iter();
+    while let Some(a) = it.next() {
+        if *a == "-o" {
+            opts.extend(it.next());
+        } else if let Some(o) = a.strip_prefix("-o") {
+            opts.push(o);
+        }
+    }
+    opts.iter()
+        .flat_map(|o| o.split(','))
+        .any(|o| o == "permissions" || o == "acl")
 }
 
 /// Whether the Executable box takes a click on a file owned by `owner` (a uid) on `mount`: the user
@@ -1909,6 +2001,43 @@ mod tests {
             !Mount::of(&std::env::temp_dir()).fixed_modes,
             "the temp folder keeps modes"
         );
+    }
+
+    #[test]
+    fn a_fuseblk_mount_is_found_by_its_device_with_its_source_and_mount_point() {
+        let info = "\
+22 1 259:2 / / rw,relatime shared:1 - ext4 /dev/nvme0n1p2 rw
+40 22 7:0 / /run/media/u/My\\040Disk rw,relatime shared:20 - fuseblk /dev/loop0 rw,user_id=0
+42 22 0:54 / /srv/ssh rw,relatime shared:22 - fuse.sshfs h:/ rw,user_id=1000,group_id=1000
+";
+        assert_eq!(
+            fuseblk_mount(info, 7, 0),
+            Some(("/dev/loop0".into(), "/run/media/u/My Disk".into()))
+        );
+        assert_eq!(fuseblk_mount(info, 0, 54), None, "sshfs");
+        assert_eq!(fuseblk_mount(info, 259, 2), None, "ext4");
+        assert_eq!(fuseblk_mount(info, 0, 99), None, "a device not listed");
+    }
+
+    #[test]
+    fn an_ntfs3g_mount_keeps_modes_only_when_asked_for_permissions_or_acl() {
+        let (src, dst) = ("/dev/sdb1", "/srv/disk");
+        for (args, keeps) in [
+            (&["ntfs-3g", "-o", "uid=1000,gid=1000", src, dst][..], false),
+            (&["ntfs-3g", "-o", "rw,permissions", src, dst][..], true),
+            (&["mount.ntfs", src, dst, "-o", "acl"][..], true),
+            (&["ntfs-3g", "-opermissions", src, dst][..], true),
+            (
+                &["ntfs-3g", "-o", "permissions", src, "/srv/other"][..],
+                false,
+            ),
+            (
+                &["ntfs-3g", "-o", "permissions", "/dev/sdc1", dst][..],
+                false,
+            ),
+        ] {
+            assert_eq!(keeps_modes(args, src, dst), keeps, "{args:?}");
+        }
     }
 
     #[test]
