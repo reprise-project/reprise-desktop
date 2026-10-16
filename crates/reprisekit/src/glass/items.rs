@@ -48,6 +48,8 @@ const PRESSED: LightBox = opaque(0xA6A7A7, (0x8C8D8D, 0xCFCFCF), (0xCACBCB, 0xE6
 const DARK_HOT: LightBox = opaque(0x4C6584, (0x40464E, 0x393E45), (0x3B4048, 0x353A41));
 const DARK_SELECTED: LightBox = opaque(0x3A78C4, (0x2D4D74, 0x264366), (0x28476C, 0x203B5C));
 const DARK_SELECTED_HOT: LightBox = opaque(0x5E9DE8, (0x3A6494, 0x325887), (0x345D8C, 0x2B507C));
+/// A lit list row: lighter than [`DARK_HOT`], as the list under it is lighter than the places bar.
+const DARK_ROW_HOT: LightBox = opaque(0x56708F, (0x4A5058, 0x434951), (0x434850, 0x3D424A));
 const FOCUS: LightBox = LightBox {
     outline: ink(0x7A9BCD, 255),
     line: Some((ink(0xFFFFFF, 128), ink(0xFFFFFF, 128))),
@@ -100,7 +102,7 @@ const EXPANDER: i32 = 16;
 
 /// The list items' boxes, the tree's expanders and the places bar's tiles, each standing
 /// 1 px in from the bar's sides (remapped in dark Glass with the rest of the control art,
-/// but for the tiles: [`dark_places`]), painted at `d`.
+/// but for the items and tiles: [`dark_items`], [`dark_places`]), painted at `d`.
 pub fn parts(d: i32) -> [(Part, PartImage); 3] {
     let items = boxes(
         &[
@@ -145,25 +147,40 @@ pub fn parts(d: i32) -> [(Part, PartImage); 3] {
     ]
 }
 
-/// Dark Glass's places tiles: the remap turns the light blue boxes into near-black ones
-/// alike, so lit, selected and selected under the pointer are drawn in their own blues, each
-/// lighter and bluer than the last; held keeps the remapped grey box.
-pub fn dark_places(d: i32) -> PartImage {
+/// Dark Glass's lit, selected and selected-under-the-pointer boxes: the remap turns the
+/// light blue boxes into near-black ones alike, so these take their own blues, each lighter
+/// and bluer than the last.
+fn dark_lit(hot: &LightBox, d: i32) -> Vec<(Canvas, State)> {
     let lit = |b: &LightBox| panel::light_box(b, BOX_W, BOX_H, d);
-    let mut held = lit(&PRESSED);
-    for p in &mut held.pixels {
+    vec![
+        (lit(hot), State::Hot),
+        (lit(&DARK_SELECTED), State::Checked),
+        (lit(&DARK_SELECTED_HOT), State::CheckedHot),
+    ]
+}
+
+fn remapped(b: &LightBox, d: i32) -> Canvas {
+    let mut c = panel::light_box(b, BOX_W, BOX_H, d);
+    for p in &mut c.pixels {
         *p = super::dark::remap_px(*p);
     }
-    stack(
-        vec![
-            (lit(&DARK_HOT), State::Hot),
-            (lit(&DARK_SELECTED), State::Checked),
-            (lit(&DARK_SELECTED_HOT), State::CheckedHot),
-            (held, State::Pressed),
-        ],
-        d,
-    )
-    .outset(Insets::new(-1, 0, -1, 0))
+    c
+}
+
+/// Dark Glass's list items: [`dark_lit`]'s boxes with [`DARK_ROW_HOT`]; the dimmed selection
+/// and the focus ring keep their remapped boxes.
+pub fn dark_items(d: i32) -> PartImage {
+    let mut items = dark_lit(&DARK_ROW_HOT, d);
+    items.push((remapped(&SELECTED_DIM, d), State::Inactive));
+    items.push((remapped(&FOCUS, d), State::Focused));
+    stack(items, d)
+}
+
+/// Dark Glass's places tiles: [`dark_lit`]'s boxes; held keeps the remapped grey box.
+pub fn dark_places(d: i32) -> PartImage {
+    let mut tiles = dark_lit(&DARK_HOT, d);
+    tiles.push((remapped(&PRESSED, d), State::Pressed));
+    stack(tiles, d).outset(Insets::new(-1, 0, -1, 0))
 }
 
 /// The selected desktop icon's box; the same in light and dark Glass, as it
@@ -766,6 +783,101 @@ mod tests {
                 0xb03b_4cb9_ae51_bb05,
                 0xc626_ad8a_26c9_1159,
                 0x577b_c710_d045_ac31,
+            ],
+            "{got:#x?}"
+        );
+    }
+
+    /// A 120x20 row's box in each list state at scale `d` over the theme's window colour: the
+    /// bare row first.
+    fn rows_in(theme: &Theme, d: i32) -> Vec<Canvas> {
+        use crate::style::{Part, State};
+        let st = theme.look.style().expect("a styled look");
+        let r = Rect::new(0, 0, 120, 20).scaled(d);
+        [
+            None,
+            Some(State::Hot),
+            Some(State::Checked),
+            Some(State::CheckedHot),
+            Some(State::Inactive),
+            Some(State::Focused),
+        ]
+        .into_iter()
+        .map(|state| {
+            let mut c = Canvas::new(r.width as u32, r.height as u32);
+            c.fill_rect(r, theme.colors.window);
+            if let Some(state) = state {
+                st.draw(&mut c, r, Part::ListItem, state, d);
+            }
+            c
+        })
+        .collect()
+    }
+
+    /// In dark Glass a lit, a selected and a selected-and-lit row stand apart as the places
+    /// tiles do: lit lighter than the list, selected bluer than lit, selected-and-lit lighter
+    /// than selected.
+    #[test]
+    fn dark_glass_list_items_tell_their_states_apart() {
+        let lum = |p: u32| [16, 8, 0].map(|sh| (p >> sh) & 0xFF).iter().sum::<u32>();
+        let blue = |p: u32| (p & 0xFF) as i32 - ((p >> 16) & 0xFF) as i32;
+        for d in [1, 2] {
+            let rows = rows_in(&dark_glass(), d);
+            let fill = |i: usize| rows[i].get(60 * d, 10 * d);
+            let (list, lit, picked, both) = (fill(0), fill(1), fill(2), fill(3));
+            assert!(
+                lum(lit) > lum(list) + 30,
+                "lit {lit:08X} over the list {list:08X} at {d}"
+            );
+            assert!(
+                blue(picked) > blue(lit) + 40,
+                "selected {picked:08X} bluer than lit {lit:08X} at {d}"
+            );
+            assert!(
+                lum(both) > lum(picked) + 40,
+                "selected and lit {both:08X} lighter than selected {picked:08X} at {d}"
+            );
+        }
+    }
+
+    /// The dark rows' dimmed selection and focus ring are the light ones remapped.
+    #[test]
+    fn dark_glass_dims_and_rings_rows_with_the_remapped_boxes() {
+        for d in [1, 2] {
+            let dark = super::dark_items(d);
+            let light = crate::glass::dark::remap_part(super::parts(d)[0].1.clone());
+            assert_eq!(dark.atlas.height, light.atlas.height, "five boxes at {d}");
+            let rows = |img: &crate::style::PartImage| -> Vec<u32> {
+                let from = (3 * super::BOX_H * d * img.atlas.width as i32) as usize;
+                img.atlas.pixels[from..].to_vec()
+            };
+            assert_eq!(rows(&dark), rows(&light), "dimmed and focus boxes at {d}");
+        }
+    }
+
+    /// The dark list rows keep their pixels at scale 1 and 2.
+    #[test]
+    fn dark_list_items_pin_at_scale_1_and_2() {
+        let got: Vec<u64> = [1, 2]
+            .into_iter()
+            .flat_map(|d| rows_in(&dark_glass(), d))
+            .map(|c| fnv(&c))
+            .collect();
+        assert_eq!(
+            got,
+            [
+                0x0077_6fd3_bbb7_e749,
+                0x70bc_c80a_4150_d54d,
+                0x87a1_17e8_f96a_e1c1,
+                0xec02_fbff_d948_1f61,
+                0x4a6f_4c4c_a358_cab5,
+                0x7c72_9c2c_7142_8c31,
+                0x9fe5_67fb_8c0f_94dd,
+                0x547e_7428_0b3e_114d,
+                0xfe7b_df64_befc_681d,
+                0x6732_2bb3_0d35_a4dd,
+                0xc87e_bd39_c6de_424d,
+                0xcbe0_19d9_385a_0f3d,
             ],
             "{got:#x?}"
         );
