@@ -6,14 +6,14 @@
 //! answer ("= 14"). Under them, a greyed "Settings" heading with an etched rule
 //! over the settings rows, and once the host has found files, a "Files" heading
 //! the same way with the folder dimmed after each name. Arrows step over headings.
+//! The panel grows with the text size; the icons and bevels keep their size.
 //!
 //! Under a look with glass the panel is a piece of glass and the field and rows
 //! are the Start menu's search mode's ([`crate::startpanel::search`]): its search
 //! field with the italic cue and magnifier (the clear glyph once there is text),
 //! under it a light pane of 21 px rows, a 16 px icon and the name, the
 //! highlighted one in the lit result's box. Settings and files hang under
-//! "Settings (n)" and "Files (n)" group headers with rules. The panel grows
-//! with the text size as those parts do; the icons keep their size.
+//! "Settings (n)" and "Files (n)" group headers with rules.
 //!
 //! Pure: the host works out the rows and hands them back through `set_calc`,
 //! `set_settings`, `set_rows` and `set_files`.
@@ -432,8 +432,8 @@ const RULE_GAP: i32 = 6;
 const PANE_PAD: i32 = 4;
 const HEADER_IN: i32 = search::at::RESULT_ICON.0;
 
-/// Where the parts go, unscaled, in panel coordinates. Under a look with glass
-/// the panel is laid out for 100% text and grown by [`Theme::text`].
+/// Where the parts go, unscaled, in panel coordinates, laid out for 100% text and
+/// grown by [`Theme::text`].
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Layout {
     pub icon: Rect,
@@ -450,35 +450,48 @@ pub struct Layout {
 }
 
 pub fn layout(l: &Launcher, theme: &Theme) -> Layout {
+    let u = theme.text;
     if panel::glass(theme).is_some() {
-        return glass_layout(l, theme.text);
+        return glass_layout(l, u);
     }
-    let icon = Rect::new(PAD, (HEAD_H - ICON) / 2, ICON, ICON);
     let field_x = PAD + ICON + PAD;
     let field = Rect::new(field_x, (HEAD_H - FIELD_H) / 2, W - field_x - PAD, FIELD_H);
+    // The list box's bevel keeps its 2 px and its rows their grown height, so it
+    // holds every row whole.
     let list = (!l.list.items.is_empty()).then(|| {
-        let h = l.list.items.len() as i32 * listbox::ROW_H + 4;
-        Rect::new(PAD, HEAD_H, W - 2 * PAD, h)
+        let row_h = controls(theme).list_row;
+        let (x, right) = (u.len(PAD), u.len(W - PAD));
+        let h = l.list.items.len() as i32 * row_h + 4;
+        Rect::new(x, u.len(HEAD_H), right - x, h)
     });
     Layout {
-        icon,
-        field,
+        icon: icon_rect(u),
+        field: u.rect(field),
         list,
         rows: Vec::new(),
-        width: W,
-        height: list.map_or(HEAD_H, |r| r.bottom() + PAD),
+        width: u.len(W),
+        height: list.map_or(u.len(HEAD_H), |r| r.bottom() + u.len(PAD)),
     }
+}
+
+/// The look's control sizes at the theme's text size, as the list box lays its rows out.
+fn controls(theme: &Theme) -> crate::controls::metrics::ControlMetrics {
+    theme.look.controls().grown(theme.text)
+}
+
+/// The 32 px icon on its grown centre.
+fn icon_rect(u: TextUnits) -> Rect {
+    Rect::new(
+        u.len(PAD + ICON / 2) - ICON / 2,
+        u.len(HEAD_H / 2) - ICON / 2,
+        ICON,
+        ICON,
+    )
 }
 
 /// The glass panel at 100% text with every edge grown by `u`; the 32 px icon
 /// keeps its size, its centre moving with the rest.
 fn glass_layout(l: &Launcher, u: TextUnits) -> Layout {
-    let icon = Rect::new(
-        u.len(PAD + ICON / 2) - ICON / 2,
-        u.len(HEAD_H / 2) - ICON / 2,
-        ICON,
-        ICON,
-    );
     let field_x = PAD + ICON + PAD;
     let field_h = search::FIELD.1;
     let field = Rect::new(field_x, (HEAD_H - field_h) / 2, W - field_x - PAD, field_h);
@@ -502,7 +515,7 @@ fn glass_layout(l: &Launcher, u: TextUnits) -> Layout {
     let bottom = y + 1 + PANE_PAD;
     let list = (n > 0).then(|| Rect::new(PAD, HEAD_H, W - 2 * PAD, bottom - HEAD_H));
     Layout {
-        icon,
+        icon: icon_rect(u),
         field: u.rect(field),
         list: list.map(|r| u.rect(r)),
         rows: rows.into_iter().map(|r| u.rect(r)).collect(),
@@ -531,7 +544,7 @@ pub fn hit(l: &Launcher, x: i32, y: i32, theme: &Theme) -> Hit {
         };
     }
     if let Some(frame) = lay.list {
-        let ll = listbox::layout(&l.list, frame, &theme.look.controls());
+        let ll = listbox::layout(&l.list, frame, &controls(theme));
         if let Some(listbox::Hit::Row(i)) = listbox::hit(&l.list, &ll, x, y)
             && let Some(p) = l.pick(i)
         {
@@ -548,14 +561,14 @@ pub fn row_rect(l: &Launcher, i: usize, theme: &Theme) -> Option<Rect> {
     if !lay.rows.is_empty() {
         return lay.rows.get(i).copied();
     }
-    let ll = listbox::layout(&l.list, lay.list?, &theme.look.controls());
+    let ll = listbox::layout(&l.list, lay.list?, &controls(theme));
     let shown = i.checked_sub(l.list.top)?;
     (i < l.list.items.len() && shown < ll.visible).then(|| {
         Rect::new(
             ll.inner.x,
-            ll.inner.y + shown as i32 * listbox::ROW_H,
+            ll.inner.y + shown as i32 * ll.row_h,
             ll.inner.width,
-            listbox::ROW_H,
+            ll.row_h,
         )
     })
 }
@@ -695,14 +708,14 @@ fn body(
         first,
     );
     if let Some(frame) = lay.list {
-        let ll = listbox::layout(&l.list, frame, &theme.look.controls());
+        let ll = listbox::layout(&l.list, frame, &controls(theme));
         listbox::draw(c, text, p, &l.list, &ll, &l.icons, None, px);
         for (h, label) in (0..l.list.items.len()).filter_map(|i| Some((i, l.heading(i)?))) {
             // From past the heading's label to the list's right edge, on
             // the row's middle.
             let label_w = text.measure(label, false, px) / s;
             let x0 = ll.inner.x + listbox::TEXT_X + label_w + RULE_GAP;
-            let y = ll.inner.y + h as i32 * listbox::ROW_H + listbox::ROW_H / 2 - 1;
+            let y = ll.inner.y + h as i32 * ll.row_h + ll.row_h / 2 - 1;
             c.etched_hline_t(x0 * s, (ll.inner.right() - RULE_GAP) * s, y * s, cs, s);
         }
     }
@@ -720,7 +733,7 @@ pub fn access(
     theme: &Theme,
 ) -> accesskit::NodeId {
     let lay = layout(l, theme);
-    let cm = theme.look.controls();
+    let cm = controls(theme);
     let ll = lay.list.map(|frame| listbox::layout(&l.list, frame, &cm));
     let focus = listbox::access_filtered(
         &l.edit,
@@ -851,6 +864,82 @@ mod tests {
             t.get(focus).unwrap().bounds(),
             Some(crate::access::bounds(lit))
         );
+    }
+
+    /// At 200% under Classic and Blue the panel, field and list box rows double, the icon keeps 32 px
+    /// on its grown centre, the bevel its 2 px, a heading's rule stays on its row's middle and a
+    /// name stands twice as tall.
+    #[test]
+    fn under_classic_and_blue_the_panel_grows_with_the_text_size() {
+        use crate::interface::Interface;
+        let text = TextRenderer::load(&FontConfig::default());
+        let mut l = Launcher::new();
+        typed(&mut l, "no");
+        l.set_rows(rows(&["Notepad", "Notion"]));
+        l.set_files(files(&[("notes.txt", "~/Documents")]));
+        let n = l.list.items.len() as i32;
+        let heading = (0..l.list.items.len())
+            .find(|&i| l.heading(i).is_some())
+            .unwrap();
+        let plain = (0..2).find(|&i| l.list.selected != Some(i)).unwrap();
+        for iface in [Interface::Classic, Interface::Blue] {
+            let base = crate::interfaces::theme_for(iface);
+            let big = base.with_text_size(200);
+            let small = layout(&l, &base);
+            let lay = layout(&l, &big);
+            let twice = |r: Rect| Rect::new(2 * r.x, 2 * r.y, 2 * r.width, 2 * r.height);
+            assert_eq!(lay.width, 2 * W, "{iface:?}");
+            assert_eq!(lay.field, twice(small.field), "{iface:?}");
+            assert_eq!(lay.icon, Rect::new(32, 32, ICON, ICON), "{iface:?}");
+            let row_h = 2 * listbox::ROW_H;
+            let list = lay.list.unwrap();
+            assert_eq!(list, Rect::new(16, 2 * HEAD_H, 2 * W - 32, n * row_h + 4));
+            assert_eq!(lay.height, list.bottom() + 16, "{iface:?}");
+            for i in 0..n as usize {
+                let r = row_rect(&l, i, &big).unwrap();
+                let want = Rect::new(
+                    list.x + 2,
+                    list.y + 2 + i as i32 * row_h,
+                    list.width - 4,
+                    row_h,
+                );
+                assert_eq!(r, want, "{iface:?} row {i}");
+                let at = hit(&l, r.x + 40, r.y + row_h / 2, &big);
+                assert_eq!(
+                    at,
+                    l.pick(i).map_or(Hit::Panel, Hit::Row),
+                    "{iface:?} row {i}"
+                );
+            }
+
+            let c = draw(&big, &text, &l, None, false, None);
+            assert_eq!((c.width as i32, c.height as i32), (lay.width, lay.height));
+            let rule = row_rect(&l, heading, &big).unwrap();
+            let (x, y) = (rule.right() - 20, rule.y + row_h / 2 - 1);
+            assert_ne!(
+                c.get(x, y),
+                c.get(x, y - 4),
+                "{iface:?}: the rule on the row's middle"
+            );
+
+            let ink_rows = |c: &Canvas, r: Rect| {
+                (r.y..r.bottom())
+                    .filter(|&y| {
+                        (r.x..r.right()).any(|x| {
+                            let px = c.get(x, y);
+                            [16, 8, 0].iter().all(|&sh| (px >> sh) & 0xFF < 0x60)
+                        })
+                    })
+                    .count() as i32
+            };
+            let c100 = draw(&base, &text, &l, None, false, None);
+            let at_100 = ink_rows(&c100, row_rect(&l, plain, &base).unwrap());
+            let at_200 = ink_rows(&c, row_rect(&l, plain, &big).unwrap());
+            assert!(
+                at_100 > 0 && at_200 >= 2 * at_100 - 2,
+                "{iface:?}: {at_200} ink rows at 200%, {at_100} at 100%"
+            );
+        }
     }
 
     /// At 200% the glass panel is laid out at 100% and grown: every rect doubles, the icon keeps
