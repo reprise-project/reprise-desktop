@@ -135,7 +135,8 @@ pub fn from_data(name: &str, data: &[(String, String)]) -> Config {
 }
 
 /// `vpn.data` for `cfg`: the kept keys, the form's non-empty fields, and a typed secret's flags
-/// set to 0 so NetworkManager stores it.
+/// set to 0 so NetworkManager stores it; with no secret agent, a stored secret is the only one
+/// it can connect with.
 pub fn to_data(cfg: &Config) -> Vec<(String, String)> {
     let mut out: Vec<(String, String)> = cfg
         .rest
@@ -186,24 +187,72 @@ pub fn secrets(cfg: &Config) -> Vec<(String, Psk)> {
         .collect()
 }
 
+/// Secret flags bit 0 (agent-owned) and bit 1 (not saved): NetworkManager asks a secret agent
+/// for the secret at connect time, and this desktop runs none.
+const FLAGS_ASKED: u32 = 0x1 | 0x2;
+
+impl Config {
+    /// Whether the profile leaves the secret whose flags are `flags_key` to a secret agent, so
+    /// NetworkManager has none to connect with until one is typed here.
+    pub fn asked(&self, flags_key: &str) -> bool {
+        self.rest
+            .iter()
+            .find(|(k, _)| k == flags_key)
+            .and_then(|(_, v)| v.trim().parse::<u32>().ok())
+            .is_some_and(|f| f & FLAGS_ASKED != 0)
+    }
+}
+
 /// The first field the plugin cannot connect without, as its form id and what to say.
 pub fn check(cfg: &Config) -> Option<(&'static str, &'static str)> {
     let a = cfg.auth;
     let missing = [
-        (true, &cfg.name, "name", "Type a name for the connection."),
-        (true, &cfg.gateway, "gateway", "Type the gateway's address."),
-        (a.user(), &cfg.user, "user", "Type the user name."),
-        (a.ca(), &cfg.ca, "ca", "Choose the CA certificate file."),
+        (
+            true,
+            cfg.name.as_str(),
+            "name",
+            "Type a name for the connection.",
+        ),
+        (
+            true,
+            cfg.gateway.as_str(),
+            "gateway",
+            "Type the gateway's address.",
+        ),
+        (a.user(), cfg.user.as_str(), "user", "Type the user name."),
+        (
+            a.user() && cfg.asked("password-flags"),
+            &*cfg.password,
+            "password",
+            "Type the password. This connection does not save it.",
+        ),
+        (
+            a.ca(),
+            cfg.ca.as_str(),
+            "ca",
+            "Choose the CA certificate file.",
+        ),
         (
             a.certs(),
-            &cfg.cert,
+            cfg.cert.as_str(),
             "cert",
             "Choose your certificate file.",
         ),
-        (a.certs(), &cfg.key, "key", "Choose your private key file."),
+        (
+            a.certs(),
+            cfg.key.as_str(),
+            "key",
+            "Choose your private key file.",
+        ),
+        (
+            a.certs() && cfg.asked("cert-pass-flags"),
+            &*cfg.cert_pass,
+            "keypass",
+            "Type the private key's password. This connection does not save it.",
+        ),
         (
             a == Auth::StaticKey,
-            &cfg.static_key,
+            cfg.static_key.as_str(),
             "static",
             "Choose the static key file.",
         ),
@@ -284,6 +333,57 @@ mod tests {
         let cfg = from_data("S", &data);
         assert_eq!(cfg.direction, 2);
         assert_eq!(to_data(&cfg), data);
+    }
+
+    #[test]
+    fn check_asks_for_a_password_the_profile_leaves_to_an_agent() {
+        for flags in ["1", "2", "3"] {
+            let mut cfg = from_data(
+                "Work",
+                &pairs(&[
+                    ("connection-type", "password"),
+                    ("remote", "gw"),
+                    ("ca", "/ca"),
+                    ("username", "u"),
+                    ("password-flags", flags),
+                ]),
+            );
+            assert_eq!(check(&cfg).map(|p| p.0), Some("password"), "flags {flags}");
+            cfg.password = Psk::new("hunter2");
+            assert_eq!(check(&cfg), None, "flags {flags} with a typed password");
+        }
+        for flags in ["0", "4"] {
+            let cfg = from_data(
+                "Work",
+                &pairs(&[
+                    ("connection-type", "password"),
+                    ("remote", "gw"),
+                    ("ca", "/ca"),
+                    ("username", "u"),
+                    ("password-flags", flags),
+                ]),
+            );
+            assert_eq!(check(&cfg), None, "flags {flags}");
+        }
+    }
+
+    #[test]
+    fn check_asks_for_a_key_password_only_when_the_type_uses_the_key() {
+        let mut cfg = from_data(
+            "Work",
+            &pairs(&[
+                ("connection-type", "tls"),
+                ("remote", "gw"),
+                ("ca", "/ca"),
+                ("cert", "/c"),
+                ("key", "/k"),
+                ("cert-pass-flags", "1"),
+            ]),
+        );
+        assert_eq!(check(&cfg).map(|p| p.0), Some("keypass"));
+        cfg.auth = Auth::Password;
+        cfg.user = "u".into();
+        assert_eq!(check(&cfg), None);
     }
 
     #[test]
