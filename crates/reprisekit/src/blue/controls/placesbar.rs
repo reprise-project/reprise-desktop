@@ -125,31 +125,11 @@ mod tests {
 
     #[test]
     fn places_bar_pins_at_scale_1_and_2() {
-        let got: Vec<(Variant, u64, u64)> = Variant::ALL
-            .iter()
-            .map(|&v| (v, fnv(&atlas(v, 1)), fnv(&atlas(v, 2))))
+        let got: Vec<_> = Variant::ALL
+            .into_iter()
+            .flat_map(|v| [1, 2].map(|d| (format!("{v:?} {d}"), fnv(&atlas(v, d)))))
             .collect();
-        let want: [(Variant, u64, u64); 10] = [
-            (Variant::Blue, 3969084999834761493, 4799614750075183387),
-            (Variant::Olive, 3969084999834761493, 4799614750075183387),
-            (Variant::Silver, 3969084999834761493, 4799614750075183387),
-            (Variant::Slate, 15724431930943416073, 10510917493418624306),
-            (
-                Variant::Sapphire,
-                15724431930943416073,
-                10510917493418624306,
-            ),
-            (
-                Variant::Obsidian,
-                15724431930943416073,
-                10510917493418624306,
-            ),
-            (Variant::Ember, 15724431930943416073, 10510917493418624306),
-            (Variant::Cobalt, 15724431930943416073, 10510917493418624306),
-            (Variant::Carbon, 15724431930943416073, 10510917493418624306),
-            (Variant::Steel, 3969084999834761493, 4799614750075183387),
-        ];
-        assert_eq!(got, want);
+        crate::pins::check("blue/places_bar", &got);
     }
 
     #[test]

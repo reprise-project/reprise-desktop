@@ -302,54 +302,10 @@ mod tests {
     /// Every scheme's atlas at 1 and 2, pinned.
     #[test]
     fn push_button_pins_at_scale_1_and_2() {
-        // Ember draws slate's button and obsidian sapphire's.
-        let want = [
-            (
-                Variant::Blue,
-                [0x4b82_f4e6_2949_eab4, 0x8432_f74a_35d0_43f3],
-            ),
-            (
-                Variant::Olive,
-                [0x6d71_76d3_abd5_3706, 0x06d4_93ca_494b_7132],
-            ),
-            (
-                Variant::Silver,
-                [0x47f9_d498_7330_ca9d, 0x661b_4721_55d6_fefd],
-            ),
-            (
-                Variant::Slate,
-                [0x0b6d_0512_9f4c_e1f8, 0x362f_22f4_3b2d_33b8],
-            ),
-            (
-                Variant::Sapphire,
-                [0x48f9_48b4_ab9a_18ab, 0x2a6f_0b15_cb00_d37d],
-            ),
-            (
-                Variant::Obsidian,
-                [0x48f9_48b4_ab9a_18ab, 0x2a6f_0b15_cb00_d37d],
-            ),
-            (
-                Variant::Ember,
-                [0x0b6d_0512_9f4c_e1f8, 0x362f_22f4_3b2d_33b8],
-            ),
-            (
-                Variant::Cobalt,
-                [0x48f9_48b4_ab9a_18ab, 0x2a6f_0b15_cb00_d37d],
-            ),
-            (
-                Variant::Carbon,
-                [0xaa5c_4677_a848_831b, 0x2fc5_af12_6aa1_1bd5],
-            ),
-            (
-                Variant::Steel,
-                [0xae6c_0190_ae61_2dc4, 0x58c0_0e5e_4863_7f3e],
-            ),
-        ];
-        for (v, hashes) in want {
-            for (d, want) in [1, 2].into_iter().zip(hashes) {
-                let got = fnv(&img(v, d).atlas);
-                assert_eq!(got, want, "{v:?} at {d}: {got:#x}");
-            }
-        }
+        let got: Vec<_> = Variant::ALL
+            .into_iter()
+            .flat_map(|v| [1, 2].map(|d| (format!("{v:?} {d}"), fnv(&img(v, d).atlas))))
+            .collect();
+        crate::pins::check("blue/push_button", &got);
     }
 }

@@ -187,29 +187,11 @@ mod tests {
 
     #[test]
     fn combo_drop_pins_at_scale_1_and_2() {
-        let got: Vec<(Variant, [u64; 2])> = Variant::ALL
+        let got: Vec<_> = Variant::ALL
             .into_iter()
-            .map(|v| (v, [fnv(&part(v, 1)), fnv(&part(v, 2))]))
+            .flat_map(|v| [1, 2].map(|d| (format!("{v:?} {d}"), fnv(&part(v, d)))))
             .collect();
-        let want: [(Variant, [u64; 2]); 10] = [
-            (Variant::Blue, [3779598193147821126, 16455731398898575776]),
-            (Variant::Olive, [8204549873019638842, 2223000614753538460]),
-            (Variant::Silver, [14545375529455236018, 1260758399300977047]),
-            (Variant::Slate, [3166328381793163028, 2656914979319323568]),
-            (
-                Variant::Sapphire,
-                [15655336059566156223, 3625015956340176215],
-            ),
-            (
-                Variant::Obsidian,
-                [15655336059566156223, 3625015956340176215],
-            ),
-            (Variant::Ember, [5319559610858569370, 2405021278666821556]),
-            (Variant::Cobalt, [15655336059566156223, 3625015956340176215]),
-            (Variant::Carbon, [15655336059566156223, 3625015956340176215]),
-            (Variant::Steel, [4422310586742569329, 12701878169192758583]),
-        ];
-        assert_eq!(got, want, "FNV-1a of (w, h, pixels) at d=1 and d=2");
+        crate::pins::check("blue/combo_drop", &got);
     }
 
     #[test]

@@ -281,95 +281,14 @@ mod tests {
 
     #[test]
     fn help_box_pins_at_scale_1_and_2() {
-        let got: Vec<String> = [1, 2]
+        let got: Vec<_> = [1, 2]
             .into_iter()
-            .flat_map(each)
-            .map(|(v, s, c)| format!("{v:?} {s:?} {:016x}", fnv(&c)))
+            .flat_map(|d| {
+                each(d)
+                    .into_iter()
+                    .map(move |(v, s, c)| (format!("{v:?} {s:?} {d}"), fnv(&c)))
+            })
             .collect();
-        let want: &[&str] = &[
-            "Blue Normal 1101d6fc13fa71b4",
-            "Blue Hot 213d3f26a245267d",
-            "Blue Pressed 0129e22f2bc217f7",
-            "Blue Inactive bcb988012b6fd61c",
-            "Olive Normal cd6bd2de1f03a76b",
-            "Olive Hot ec60673dc1c441cf",
-            "Olive Pressed ed8e9b2a64021d80",
-            "Olive Inactive 33d9108ce0180bfe",
-            "Silver Normal 87fa118c6e8c056c",
-            "Silver Hot 6a97f5c142017fd4",
-            "Silver Pressed 3124253af78ec1b4",
-            "Silver Inactive 08de93106af0d179",
-            "Slate Normal 4d80543aadd74b9a",
-            "Slate Hot c8d7006f30de893a",
-            "Slate Pressed ee97c473f50af555",
-            "Slate Inactive 24de4fac13a6e2fc",
-            "Sapphire Normal e8f80eab12531f96",
-            "Sapphire Hot 3080c5d69535b7e6",
-            "Sapphire Pressed 67454bd67d667851",
-            "Sapphire Inactive a371518991b28247",
-            "Obsidian Normal 5215afc84f535cc7",
-            "Obsidian Hot 6a46f602eb08baff",
-            "Obsidian Pressed f3bb514b5c091744",
-            "Obsidian Inactive 730610612e484195",
-            "Ember Normal f440af9ec6d79547",
-            "Ember Hot 11f3d21cbd940541",
-            "Ember Pressed 8f8d88c8e48156e7",
-            "Ember Inactive 63f13d00a8029a6d",
-            "Cobalt Normal 567cd5febf38ae53",
-            "Cobalt Hot 862bf56915ce1c48",
-            "Cobalt Pressed ab28369672b9d2f7",
-            "Cobalt Inactive 5a342402953dd939",
-            "Carbon Normal 1bfdb90861e0c071",
-            "Carbon Hot 30730bb43272226f",
-            "Carbon Pressed a864be93f9746495",
-            "Carbon Inactive 9f0dba82aa4675f7",
-            "Steel Normal 8e397626b6a598ff",
-            "Steel Hot 2c56f1f2416ff158",
-            "Steel Pressed e897cfc334fd15d4",
-            "Steel Inactive 15336f5e232a3092",
-            "Blue Normal 40ee211c14fee9ce",
-            "Blue Hot 82a810bd2decb3b9",
-            "Blue Pressed 91416ef3906a7be2",
-            "Blue Inactive 92d5787b32b1d296",
-            "Olive Normal 0623bc903e48618d",
-            "Olive Hot e670c7bdc42c0679",
-            "Olive Pressed f820b997d4924f74",
-            "Olive Inactive 51cbda9d2b031fc2",
-            "Silver Normal 00238b44de54d8cb",
-            "Silver Hot 6ebdf82d58d674b2",
-            "Silver Pressed e1dc8097bb7c8ef9",
-            "Silver Inactive 0be481a3d683ad11",
-            "Slate Normal c111767e6c7cd82d",
-            "Slate Hot f40d203dcf48f418",
-            "Slate Pressed 0d5722bb03079e0d",
-            "Slate Inactive 4c8c8086d443bcce",
-            "Sapphire Normal 31bb395fa741c88c",
-            "Sapphire Hot 090a85bae1c0b428",
-            "Sapphire Pressed 90e42860d663186d",
-            "Sapphire Inactive 652d739339726480",
-            "Obsidian Normal a1ca621815669314",
-            "Obsidian Hot f2625b038bb8dcae",
-            "Obsidian Pressed 6b33cf4d38ea0e1c",
-            "Obsidian Inactive a2c06f831ac25a5e",
-            "Ember Normal 4845ee8e203009bc",
-            "Ember Hot f88d1c3f122783c2",
-            "Ember Pressed 7133c4ba02f2e65d",
-            "Ember Inactive e2447af689f7d1a2",
-            "Cobalt Normal 6487bf418b449768",
-            "Cobalt Hot 17a04bc93969e35d",
-            "Cobalt Pressed af9b9309e70bf01d",
-            "Cobalt Inactive 5d90d872209f59ba",
-            "Carbon Normal 9cea1a777449db65",
-            "Carbon Hot b30f939d1beab5c1",
-            "Carbon Pressed 5e6f429ea3078fc5",
-            "Carbon Inactive a2973344ebf365ae",
-            "Steel Normal e376e681bd473575",
-            "Steel Hot ca005099edc36770",
-            "Steel Pressed ba36bfece3f7c7a4",
-            "Steel Inactive 0b3b43ac498e2c63",
-        ];
-        if got != want {
-            panic!("pins:\n{}", got.join("\n"));
-        }
+        crate::pins::check("blue/help_box", &got);
     }
 }
