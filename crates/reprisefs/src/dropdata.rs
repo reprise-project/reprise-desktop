@@ -137,7 +137,9 @@ fn entry(uri: &str, title: Option<String>) -> Option<Dropped> {
     if let Some(rest) = uri.strip_prefix("file://") {
         // `file:///p` or `file://localhost/p`; another host is not here.
         let path = match rest.split_once('/') {
-            Some(("" | "localhost", p)) => format!("/{p}"),
+            Some((host, p)) if host.is_empty() || host.eq_ignore_ascii_case("localhost") => {
+                format!("/{p}")
+            }
             _ => return None,
         };
         let bytes = crate::trash::percent_decode(&path);
