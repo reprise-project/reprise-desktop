@@ -12,7 +12,8 @@
 //! field with the italic cue and magnifier (the clear glyph once there is text),
 //! under it a light pane of 21 px rows, a 16 px icon and the name, the
 //! highlighted one in the lit result's box. Settings and files hang under
-//! "Settings (n)" and "Files (n)" group headers with rules.
+//! "Settings (n)" and "Files (n)" group headers with rules. The panel grows
+//! with the text size as those parts do; the icons keep their size.
 //!
 //! Pure: the host works out the rows and hands them back through `set_calc`,
 //! `set_settings`, `set_rows` and `set_files`.
@@ -29,7 +30,7 @@ use crate::startpanel::search;
 use crate::style::{Part, State, Style};
 use crate::text::TextRenderer;
 use crate::textedit::{Caret, EditKey, Preedit, TextEdit};
-use crate::theme::Theme;
+use crate::theme::{TextUnits, Theme};
 
 pub const MAX_ROWS: usize = 8;
 pub const MAX_SETTINGS: usize = 4;
@@ -431,7 +432,8 @@ const RULE_GAP: i32 = 6;
 const PANE_PAD: i32 = 4;
 const HEADER_IN: i32 = search::at::RESULT_ICON.0;
 
-/// Where the parts go, unscaled, in panel coordinates.
+/// Where the parts go, unscaled, in panel coordinates. Under a look with glass
+/// the panel is laid out for 100% text and grown by [`Theme::text`].
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Layout {
     pub icon: Rect,
@@ -443,54 +445,69 @@ pub struct Layout {
     /// for the heading its group header from the capitals' top. Empty
     /// otherwise, where the list box lays its rows out.
     pub rows: Vec<Rect>,
+    pub width: i32,
     pub height: i32,
 }
 
 pub fn layout(l: &Launcher, theme: &Theme) -> Layout {
-    let glass = panel::glass(theme).is_some();
+    if panel::glass(theme).is_some() {
+        return glass_layout(l, theme.text);
+    }
     let icon = Rect::new(PAD, (HEAD_H - ICON) / 2, ICON, ICON);
     let field_x = PAD + ICON + PAD;
-    let field_h = if glass { search::FIELD.1 } else { FIELD_H };
-    let field = Rect::new(field_x, (HEAD_H - field_h) / 2, W - field_x - PAD, field_h);
-    let n = l.list.items.len();
-    let (list, rows) = if n == 0 {
-        (None, Vec::new())
-    } else if glass {
-        let (x, w) = (PAD + PANE_PAD, W - 2 * (PAD + PANE_PAD));
-        let mut y = HEAD_H + PANE_PAD;
-        let mut rows = Vec::with_capacity(n);
-        for i in 0..n {
-            if l.heading(i).is_some() {
-                if i > 0 {
-                    y += GROUP_GAP;
-                }
-                rows.push(Rect::new(x + HEADER_IN, y, w - 2 * HEADER_IN, HEADER_H));
-                y += HEADER_H;
-            } else {
-                rows.push(Rect::new(x, y, w, RESULT_H));
-                y += RESULT_H;
-            }
-        }
-        // The last lit box runs a row past its 21 px.
-        let bottom = y + 1 + PANE_PAD;
-        (
-            Some(Rect::new(PAD, HEAD_H, W - 2 * PAD, bottom - HEAD_H)),
-            rows,
-        )
-    } else {
-        let h = n as i32 * listbox::ROW_H + 4;
-        (Some(Rect::new(PAD, HEAD_H, W - 2 * PAD, h)), Vec::new())
-    };
-    let height = match list {
-        Some(r) => r.bottom() + PAD,
-        None => HEAD_H,
-    };
+    let field = Rect::new(field_x, (HEAD_H - FIELD_H) / 2, W - field_x - PAD, FIELD_H);
+    let list = (!l.list.items.is_empty()).then(|| {
+        let h = l.list.items.len() as i32 * listbox::ROW_H + 4;
+        Rect::new(PAD, HEAD_H, W - 2 * PAD, h)
+    });
     Layout {
         icon,
         field,
         list,
-        rows,
-        height,
+        rows: Vec::new(),
+        width: W,
+        height: list.map_or(HEAD_H, |r| r.bottom() + PAD),
+    }
+}
+
+/// The glass panel at 100% text with every edge grown by `u`; the 32 px icon
+/// keeps its size, its centre moving with the rest.
+fn glass_layout(l: &Launcher, u: TextUnits) -> Layout {
+    let icon = Rect::new(
+        u.len(PAD + ICON / 2) - ICON / 2,
+        u.len(HEAD_H / 2) - ICON / 2,
+        ICON,
+        ICON,
+    );
+    let field_x = PAD + ICON + PAD;
+    let field_h = search::FIELD.1;
+    let field = Rect::new(field_x, (HEAD_H - field_h) / 2, W - field_x - PAD, field_h);
+    let n = l.list.items.len();
+    let (x, w) = (PAD + PANE_PAD, W - 2 * (PAD + PANE_PAD));
+    let mut y = HEAD_H + PANE_PAD;
+    let mut rows = Vec::with_capacity(n);
+    for i in 0..n {
+        if l.heading(i).is_some() {
+            if i > 0 {
+                y += GROUP_GAP;
+            }
+            rows.push(Rect::new(x + HEADER_IN, y, w - 2 * HEADER_IN, HEADER_H));
+            y += HEADER_H;
+        } else {
+            rows.push(Rect::new(x, y, w, RESULT_H));
+            y += RESULT_H;
+        }
+    }
+    // The last lit box runs a row past its 21 px.
+    let bottom = y + 1 + PANE_PAD;
+    let list = (n > 0).then(|| Rect::new(PAD, HEAD_H, W - 2 * PAD, bottom - HEAD_H));
+    Layout {
+        icon,
+        field: u.rect(field),
+        list: list.map(|r| u.rect(r)),
+        rows: rows.into_iter().map(|r| u.rect(r)).collect(),
+        width: u.len(W),
+        height: u.len(list.map_or(HEAD_H, |r| r.bottom() + PAD)),
     }
 }
 
@@ -559,12 +576,13 @@ pub fn draw(
     let (cs, s) = (p.cs, p.s);
     let lay = layout(l, theme);
     if let Some((style, spec)) = panel::glass(theme) {
-        return panel::draw(style, spec, W, lay.height, s, |c| {
+        let g = search::Grow { s, u: theme.text };
+        return panel::draw(style, spec, lay.width, lay.height, s, |c| {
             c.set_preedit(preedit.cloned());
-            glass_body(c, style, l, &lay, icon, caret, s)
+            glass_body(c, style, l, &lay, icon, caret, g)
         });
     }
-    let mut c = Canvas::new((W * s) as u32, (lay.height * s) as u32);
+    let mut c = Canvas::new((lay.width * s) as u32, (lay.height * s) as u32);
     c.set_preedit(preedit.cloned());
     c.fill_rect(c.bounds(), cs.button_face);
     c.edge_t(c.bounds(), EdgeStyle::WindowRaised, cs, s);
@@ -572,7 +590,7 @@ pub fn draw(
     c
 }
 
-/// The icon, field and list at scale `s`, as the Start menu draws its search
+/// The icon, field and list grown by `g`, as the Start menu draws its search
 /// mode, text in `style`'s caption face.
 fn glass_body(
     c: &mut Canvas,
@@ -581,44 +599,35 @@ fn glass_body(
     lay: &Layout,
     icon: Option<&Canvas>,
     caret: bool,
-    s: i32,
+    g: search::Grow,
 ) {
+    let s = g.s;
     if let Some(ic) = icon {
         c.blit_over(lay.icon.x * s, lay.icon.y * s, ic);
     }
     let face = crate::look::caption_text(style);
     let cue = search::italic(&style.caption_text.font());
     let field = lay.field.scaled(s);
-    search::field(
-        c,
-        style,
-        &face,
-        &cue,
-        field,
-        &l.edit,
-        true,
-        caret,
-        search::Grow::at(s),
-    );
+    search::field(c, style, &face, &cue, field, &l.edit, true, caret, g);
     let Some(pane) = lay.list else {
         return;
     };
     let pane = pane.scaled(s);
     draw_pane(c, style, pane, s);
-    let size = search::TEXT_PX * s as u32;
+    let size = g.px(search::TEXT_PX);
     for (i, r) in lay.rows.iter().enumerate() {
         let r = r.scaled(s);
         if let Some(h) = l.heading(i) {
             let title = format!("{h} ({})", l.heading_rows(h));
-            search::header(c, style, &face, r, pane, &title, search::Grow::at(s));
+            search::header(c, style, &face, r, pane, &title, g);
             continue;
         }
         let (name, lit) = (&l.list.items[i], l.list.selected == Some(i));
         let icon = l.icons.get(i).and_then(Option::as_ref);
-        let end = search::result(c, style, &face, r, icon, name, lit, search::Grow::at(s));
+        let end = search::result(c, style, &face, r, icon, name, lit, g);
         if let Some(d) = l.list.detail.get(i).filter(|d| !d.is_empty()) {
-            let x = end + listbox::DETAIL_GAP * s;
-            let y = r.y + search::at::RESULT_BASE * s;
+            let x = end + g.len(listbox::DETAIL_GAP);
+            let y = r.y + g.len(search::at::RESULT_BASE);
             let clip = Rect::new(r.x, r.y, r.width - 2 * s, r.height);
             let ink = search::ink(search::INK_GREYED);
             search::line(c, &face, x, y, clip, d, ink, size);
@@ -841,6 +850,67 @@ mod tests {
         assert_eq!(
             t.get(focus).unwrap().bounds(),
             Some(crate::access::bounds(lit))
+        );
+    }
+
+    /// At 200% the glass panel is laid out at 100% and grown: every rect doubles, the icon keeps
+    /// 32 px on its grown centre, the lit box runs down its grown row and a name stands twice as tall.
+    #[test]
+    fn under_glass_the_panel_grows_with_the_text_size() {
+        let glass = crate::interfaces::theme_for(crate::interface::Interface::Glass);
+        let big = glass.with_text_size(200);
+        let text = TextRenderer::load(&FontConfig::default());
+        let mut l = Launcher::new();
+        typed(&mut l, "no");
+        l.set_rows(rows(&["Notepad", "Notion"]));
+        l.set_files(files(&[("notes.txt", "~/Documents")]));
+        l.key(Key::Down);
+        let small = layout(&l, &glass);
+        let lay = layout(&l, &big);
+        let twice = |r: Rect| Rect::new(2 * r.x, 2 * r.y, 2 * r.width, 2 * r.height);
+        assert_eq!((lay.width, lay.height), (2 * W, 2 * small.height));
+        assert_eq!(lay.field, twice(small.field));
+        assert_eq!(lay.list, small.list.map(twice));
+        let doubled: Vec<_> = small.rows.iter().map(|&r| twice(r)).collect();
+        assert_eq!(lay.rows, doubled);
+        assert_eq!(lay.icon, Rect::new(32, 32, ICON, ICON));
+
+        let c = draw(&big, &text, &l, None, false, None);
+        let m = panel::margin(&big);
+        assert_eq!(
+            (c.width as i32, c.height as i32),
+            (lay.width + m.left + m.right, lay.height + m.top + m.bottom)
+        );
+        let at = |x: i32, y: i32| c.get(m.left + x, m.top + y);
+        let white = 0xFFFF_FFFF;
+        let lit = lay.rows[1];
+        assert_ne!(
+            at(lit.x + 1, lit.bottom() - 4),
+            white,
+            "the box runs down the row"
+        );
+        assert_eq!(
+            at(lit.x + 1, lay.rows[0].bottom() - 4),
+            white,
+            "Notepad is not lit"
+        );
+
+        let ink_rows = |c: &Canvas, m: crate::raster::Insets, r: Rect| {
+            (r.y..r.bottom())
+                .filter(|&y| {
+                    (r.x..r.right()).any(|x| {
+                        let px = c.get(m.left + x, m.top + y);
+                        [16, 8, 0].iter().all(|&sh| (px >> sh) & 0xFF < 0x60)
+                    })
+                })
+                .count() as i32
+        };
+        let c100 = draw(&glass, &text, &l, None, false, None);
+        let at_100 = ink_rows(&c100, panel::margin(&glass), small.rows[0]);
+        let at_200 = ink_rows(&c, m, lay.rows[0]);
+        assert!(
+            at_100 > 0 && at_200 >= 2 * at_100 - 2,
+            "{at_200} ink rows at 200%, {at_100} at 100%"
         );
     }
 

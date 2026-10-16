@@ -84,6 +84,10 @@ fn main() {
             &render_about_system(true, pct),
             &format!("reprisekit-gallery-about-system-{pct}.png"),
         );
+        write_preview(
+            &render_glass_launcher(pct),
+            &format!("reprisekit-gallery-glass-launcher-{pct}.png"),
+        );
         return;
     }
     let with_blue = std::env::var("REPRISE_GALLERY_LOOK").as_deref() != Ok("classic");
@@ -8066,6 +8070,14 @@ fn render_glass_popups() -> Canvas {
     let composing = Preedit::new("ni hao".into(), 0, 6);
     let panel = launcher::draw(&theme, &text, &empty, Some(&icon), true, composing.as_ref());
     c.blit_over(30 - m.left, 340 - m.top, &panel);
+    let l = launcher_sample();
+    let panel = launcher::draw(&theme, &text, &l, Some(&icon), true, None);
+    c.blit_over(560 - m.left, 230 - m.top, &panel);
+    c
+}
+
+/// The launcher with an answer, programs, a setting and a file, the answer lit.
+fn launcher_sample() -> launcher::Launcher {
     let mut small = Canvas::new(16, 16);
     small.fill_rect(Rect::new(1, 1, 14, 14), Color::rgb(40, 120, 220));
     let mut l = launcher::Launcher::new();
@@ -8093,8 +8105,21 @@ fn render_glass_popups() -> Canvas {
         folder: "~/Documents".to_string(),
         icon: Some(small),
     }]);
+    l
+}
+
+/// The Glass launcher with every kind of row at `pct` text over the stripes.
+fn render_glass_launcher(pct: u32) -> Canvas {
+    let theme = interfaces::theme_for(Interface::Glass).with_text_size(pct);
+    let text = TextRenderer::load(&FontConfig::default());
+    let m = reprisekit::look::panel::margin(&theme);
+    let l = launcher_sample();
+    let mut icon = Canvas::new(32, 32);
+    icon.fill_rect(Rect::new(4, 6, 24, 20), Color::rgb(80, 193, 255));
     let panel = launcher::draw(&theme, &text, &l, Some(&icon), true, None);
-    c.blit_over(560 - m.left, 230 - m.top, &panel);
+    let (w, h) = (panel.width as i32, panel.height as i32);
+    let mut c = blurred_stripes(w + 60 - m.left - m.right, h + 60 - m.top - m.bottom);
+    c.blit_over(30 - m.left, 30 - m.top, &panel);
     c
 }
 
