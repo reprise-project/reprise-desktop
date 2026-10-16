@@ -106,6 +106,16 @@ pub(crate) const LIST_WAIT: std::time::Duration = if cfg!(test) {
     repriseapp::listjob::WAIT
 };
 
+/// A listing read still in flight. A relist with the same key waits on it instead of starting
+/// another, so relists of a folder on a dead mount hold one listing thread.
+pub(crate) struct Reading {
+    /// The place, hidden-files setting and icon scale the read was started with.
+    key: (Place, bool, i32),
+    job: Job<Read>,
+    /// A relist joined the read after it started: the folder is read once more when it lands.
+    again: bool,
+}
+
 /// A place as a listing's thread read it ([`Explorer::show`]), with the children of the
 /// Folders nodes the walk to it fills.
 pub(crate) struct Read {
@@ -231,7 +241,7 @@ pub struct Explorer {
     list_icons: ListIcons,
     /// A place still being read after [`LIST_WAIT`]; the listing before stays until it lands
     /// ([`Explorer::take_read`]).
-    reading: Option<(Place, Job<Read>)>,
+    reading: Option<Reading>,
     /// Folders nodes still being read after [`LIST_WAIT`] ([`Explorer::fill_node`]).
     filling: Vec<(Place, Job<foldertree::Kids>)>,
     /// Image sizes by path, from the thumbnail worker or a header read
@@ -476,8 +486,10 @@ impl Explorer {
     /// is a refresh: Enter on unchanged address text re-lists the folder.
     pub fn go(&mut self, place: Place, ctx: &mut Ctx) -> Reply {
         if place == self.place {
-            // Going where the window already is drops a place still being read.
-            self.reading = None;
+            // Going where the window already is drops another place still being read.
+            if self.reading.as_ref().is_some_and(|r| r.key.0 != place) {
+                self.reading = None;
+            }
             return self.refresh(ctx);
         }
         self.history.visit(place.clone());
@@ -487,7 +499,7 @@ impl Explorer {
     /// Re-list the current place, keeping the selection by path and leaving the
     /// history alone: F5, View > Refresh, and Enter on the address already shown.
     pub fn refresh(&mut self, ctx: &mut Ctx) -> Reply {
-        if self.reading.as_ref().is_some_and(|(p, _)| *p != self.place) {
+        if self.reading.as_ref().is_some_and(|r| r.key.0 != self.place) {
             // The place being read is newer than the listing shown.
             return Reply::none();
         }
@@ -534,17 +546,39 @@ impl Explorer {
         if !self.sync_drives(ctx) && place == Place::Computer {
             self.sync_volumes();
         }
-        let job = Job::spawn(Some(&ctx.wake), self.reader(place.clone(), ctx));
+        let key = (place, self.settings.show_hidden, ctx.icons.scale());
+        let (job, again) = match self.reading.take() {
+            Some(r) if r.key == key => (r.job, true),
+            _ => (
+                Job::spawn(Some(&ctx.wake), self.reader(key.0.clone(), ctx)),
+                false,
+            ),
+        };
         match job.wait(LIST_WAIT) {
             Some(read) => {
-                self.reading = None;
-                self.show_read(read, ctx)
+                let reply = self.show_read(read, ctx);
+                if again {
+                    self.read_again(ctx);
+                }
+                reply
             }
             None => {
-                self.reading = Some((place, job));
+                self.reading = Some(Reading { key, job, again });
                 Reply::none()
             }
         }
+    }
+
+    /// Starts another read of the place shown without waiting for it: what a relist that joined
+    /// an older read asked for.
+    fn read_again(&mut self, ctx: &Ctx) {
+        let place = self.place.clone();
+        let job = Job::spawn(Some(&ctx.wake), self.reader(place.clone(), ctx));
+        self.reading = Some(Reading {
+            key: (place, self.settings.show_hidden, ctx.icons.scale()),
+            job,
+            again: false,
+        });
     }
 
     /// The read of `place` for a listing's thread.
@@ -581,13 +615,17 @@ impl Explorer {
 
     /// Shows a place read late ([`Explorer::show`]), keeping the view when it is the one shown.
     pub(crate) fn take_read(&mut self, ctx: &mut Ctx) -> Option<Reply> {
-        let read = self.reading.as_ref()?.1.take()?;
-        self.reading = None;
-        Some(if read.place == self.place {
+        let read = self.reading.as_ref()?.job.take()?;
+        let again = self.reading.take().is_some_and(|r| r.again);
+        let reply = if read.place == self.place {
             self.keeping_view(ctx, |ex, ctx| ex.show_read(read, ctx))
         } else {
             self.show_read(read, ctx)
-        })
+        };
+        if again {
+            self.read_again(ctx);
+        }
+        Some(reply)
     }
 
     fn show_read(&mut self, read: Read, ctx: &mut Ctx) -> Reply {

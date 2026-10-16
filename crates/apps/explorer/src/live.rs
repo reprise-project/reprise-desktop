@@ -934,13 +934,14 @@ mod tests {
         let place = Place::Folder(sub);
         let read = ex.reader(place.clone(), &ctx);
         let (answer, gate) = std::sync::mpsc::channel::<()>();
-        ex.reading = Some((
-            place.clone(),
-            repriseapp::listjob::Job::spawn(None, move || {
+        ex.reading = Some(crate::Reading {
+            key: (place.clone(), ex.settings.show_hidden, ctx.icons.scale()),
+            job: repriseapp::listjob::Job::spawn(None, move || {
                 gate.recv().ok();
                 read()
             }),
-        ));
+            again: false,
+        });
         let before = ex.place.clone();
 
         assert_eq!(ex.refresh(&mut ctx), Reply::none(), "the read is newer");
@@ -958,6 +959,36 @@ mod tests {
         assert_eq!(ex.place, place);
         index_of(&ex, "inner.txt");
         assert!(ex.reading.is_none());
+    }
+
+    #[test]
+    fn a_refresh_of_a_folder_being_read_waits_on_that_read_then_reads_it_once_more() {
+        let mut ctx = test_ctx();
+        let (dir, mut ex) = explorer(&mut ctx);
+        let place = ex.place.clone();
+        let before = ex.reader(place.clone(), &ctx)();
+        ex.reading = Some(crate::Reading {
+            key: (place, ex.settings.show_hidden, ctx.icons.scale()),
+            job: repriseapp::listjob::Job::spawn(None, move || before),
+            again: false,
+        });
+        std::fs::write(dir.path().join("late.txt"), "x").expect("write");
+
+        ex.refresh(&mut ctx);
+        assert!(
+            ex.items.iter().all(|it| it.name != "late.txt"),
+            "the read in flight answers the refresh"
+        );
+        assert!(ex.reading.is_some(), "a read started after the refresh");
+        for _ in 0..500 {
+            if ex.reading.is_none() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+            ex.wake(&mut ctx);
+        }
+        index_of(&ex, "late.txt");
+        assert!(ex.reading.is_none(), "the second read leaves none behind");
     }
 
     #[test]
