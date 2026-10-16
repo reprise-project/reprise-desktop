@@ -224,7 +224,8 @@ pub fn init(state: &mut State) -> Result<(), Box<dyn std::error::Error>> {
         .handle
         .insert_source(udev, move |event, _, state| match event {
             UdevEvent::Changed { device_id } if device_id == node.dev_id() => {
-                scan_connectors(state)
+                scan_connectors(state);
+                check_links(state);
             }
             UdevEvent::Added { path, .. } => {
                 log::info!(
@@ -838,6 +839,7 @@ fn vblank(state: &mut State, crtc: crtc::Handle, meta: Option<&DrmEventMetadata>
         s.stats.flipped(time, s.needs_redraw);
     }
     let (output, redraw) = (s.output.clone(), s.needs_redraw);
+    retrain_link(state, crtc);
     flush_gamma(state, crtc);
     crate::power::presented(state, &output);
     crate::sessionlock::presented(state, &output);
@@ -1323,6 +1325,10 @@ struct Hw {
     wanted_lut: Option<Lut>,
     /// Powered on or activated, and no frame queued since: the next commit is a modeset.
     unlit: bool,
+    /// A uevent found the connector's link-status BAD: retrain once the CRTC is ready.
+    retrain: bool,
+    /// Retrains since the link last read GOOD or the output came on.
+    link_tries: u8,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1355,6 +1361,12 @@ impl CrtcNow {
             flipping: s.pending_vblank,
         }
     }
+
+    /// Free for a blocking commit: the session is ours, the output is on, its first frame since power-on
+    /// is queued, and no flip is in flight.
+    fn ready(self) -> bool {
+        self.active && !self.off && !self.unlit && !self.flipping
+    }
 }
 
 /// A gamma set is a blocking commit: it waits while the session is away, the output is off, a flip is in
@@ -1364,8 +1376,11 @@ fn gamma_step(wanted: &Lut, held: Option<&Lut>, crtc: CrtcNow) -> GammaStep {
     if held == Some(wanted) {
         return GammaStep::Skip;
     }
-    let ready = crtc.active && !crtc.off && !crtc.flipping && (!crtc.unlit || held.is_none());
-    if ready {
+    let crtc = CrtcNow {
+        unlit: crtc.unlit && held.is_some(),
+        ..crtc
+    };
+    if crtc.ready() {
         GammaStep::Commit
     } else {
         GammaStep::Wait
@@ -1380,6 +1395,106 @@ fn lut_from_blob(value: u64, ours: Option<u64>, held: Option<Lut>) -> Option<Lut
         held
     } else {
         None
+    }
+}
+
+/// DRM_MODE_LINK_STATUS_GOOD and _BAD.
+const LINK_GOOD: u64 = 0;
+const LINK_BAD: u64 = 1;
+/// Retrains in a row that may leave the link BAD before they stop until it reads GOOD or the output comes on.
+const LINK_TRIES: u8 = 3;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum LinkStep {
+    Good,
+    Retrain,
+    /// The last allowed retrain left it BAD: say so once.
+    GiveUp,
+    GaveUp,
+}
+
+fn link_step(bad: bool, tries: u8) -> LinkStep {
+    match (bad, tries) {
+        (false, _) => LinkStep::Good,
+        (true, t) if t < LINK_TRIES => LinkStep::Retrain,
+        (true, LINK_TRIES) => LinkStep::GiveUp,
+        (true, _) => LinkStep::GaveUp,
+    }
+}
+
+fn link_status(
+    dev: &DrmDevice,
+    conn: connector::Handle,
+) -> Option<(smithay::reexports::drm::control::property::Handle, u64)> {
+    use smithay::reexports::drm::control::Device as _;
+    let props = dev.get_properties(conn).ok()?;
+    let (handles, values) = props.as_props_and_values();
+    handles.iter().zip(values).find_map(|(&h, &v)| {
+        let info = dev.get_property(h).ok()?;
+        (info.name().to_str() == Ok("link-status")).then_some((h, v))
+    })
+}
+
+/// On a hotplug uevent the kernel expects every connector whose link-status went BAD to get a modeset with
+/// the same mode and link-status GOOD, which trains the link again (drm-kms "link-status").
+fn check_links(state: &mut State) {
+    let Some(b) = state.backend.as_mut() else {
+        return;
+    };
+    let dev = b.drm.device();
+    let mut due = Vec::new();
+    for (&crtc, s) in b.surfaces.iter_mut() {
+        let status = link_status(dev, s.connector.handle()).map(|(_, v)| v);
+        log::debug!("{}: link-status {status:?}", s.output.name());
+        match link_step(status == Some(LINK_BAD), s.hw.link_tries) {
+            LinkStep::Good => {
+                s.hw.link_tries = 0;
+                s.hw.retrain = false;
+            }
+            LinkStep::Retrain => {
+                log::warn!("{}: link-status BAD; retraining", s.output.name());
+                s.hw.retrain = true;
+                due.push(crtc);
+            }
+            LinkStep::GiveUp => {
+                log::warn!(
+                    "{}: link-status still BAD after {LINK_TRIES} retrains; leaving it",
+                    s.output.name()
+                );
+                s.hw.link_tries += 1;
+                s.hw.retrain = false;
+            }
+            LinkStep::GaveUp => s.hw.retrain = false,
+        }
+    }
+    for crtc in due {
+        retrain_link(state, crtc);
+    }
+}
+
+/// Set a BAD link-status GOOD once the CRTC is ready: a blocking modeset with the current mode.
+fn retrain_link(state: &mut State, crtc: crtc::Handle) {
+    use smithay::reexports::drm::control::Device as _;
+    let Some(b) = state.backend.as_mut() else {
+        return;
+    };
+    let active = b.session.is_active();
+    let dev = b.drm.device();
+    let Some(s) = b.surfaces.get_mut(&crtc) else {
+        return;
+    };
+    if !s.hw.retrain || !CrtcNow::of(active, s).ready() {
+        return;
+    }
+    s.hw.retrain = false;
+    let conn = s.connector.handle();
+    let Some((prop, LINK_BAD)) = link_status(dev, conn) else {
+        return;
+    };
+    s.hw.link_tries += 1;
+    match dev.set_property(conn, prop, LINK_GOOD) {
+        Ok(()) => log::info!("{}: link retrained", s.output.name()),
+        Err(e) => log::warn!("{}: link retrain: {e}", s.output.name()),
     }
 }
 
@@ -1505,6 +1620,7 @@ pub fn set_output_power(state: &mut State, output: &Output, on: bool) -> bool {
     if on {
         s.hw.off = false;
         s.hw.unlit = true;
+        s.hw.link_tries = 0;
         log::info!("{}: power on", output.name());
         flush_gamma(state, crtc);
         schedule(state, output);
@@ -1681,7 +1797,10 @@ fn commit_gamma(
 
 #[cfg(test)]
 mod tests {
-    use super::{Ask, Asked, CrtcNow, GammaStep, Lut, gamma_step, lut_from_blob};
+    use super::{
+        Ask, Asked, CrtcNow, GammaStep, LINK_TRIES, LinkStep, Lut, gamma_step, link_step,
+        lut_from_blob,
+    };
 
     fn asked(asks: &[Ask]) -> Asked {
         let mut a = Asked::default();
@@ -1811,5 +1930,30 @@ mod tests {
             "another master's blob"
         );
         assert_eq!(lut_from_blob(9, None, None), None);
+    }
+
+    #[test]
+    fn a_good_link_is_never_retrained() {
+        for tries in 0..=LINK_TRIES + 1 {
+            assert_eq!(link_step(false, tries), LinkStep::Good);
+        }
+    }
+
+    #[test]
+    fn a_bad_link_is_retrained_three_times_in_a_row_then_left() {
+        assert_eq!(LINK_TRIES, 3);
+        for tries in 0..LINK_TRIES {
+            assert_eq!(link_step(true, tries), LinkStep::Retrain, "try {tries}");
+        }
+        assert_eq!(link_step(true, LINK_TRIES), LinkStep::GiveUp);
+        assert_eq!(link_step(true, LINK_TRIES + 1), LinkStep::GaveUp);
+    }
+
+    #[test]
+    fn a_retrain_waits_for_a_ready_crtc() {
+        assert!(READY.ready());
+        for (crtc, why) in not_ready() {
+            assert!(!crtc.ready(), "{why}");
+        }
     }
 }
