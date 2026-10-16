@@ -409,6 +409,7 @@ fn draw_contents(
                 if place.submenu {
                     let size = (glyph::ARROW.w, glyph::ARROW.h);
                     let (ax, ay) = at::PLACE_ARROW;
+                    let ax = ax - layout::narrow(p);
                     d.inked(kept(r, (ax, ay - lift), size), &glyph::ARROW, right);
                 }
             }
@@ -1555,6 +1556,27 @@ mod tests {
         let (outline, light) = frame_edges(&Settings::default());
         assert_eq!(d.at(448, 200), light, "the light line");
         assert_eq!(d.at(449, 200), outline, "the outline");
+    }
+
+    #[test]
+    fn a_home_panel_narrowed_to_its_room_keeps_its_frame_and_place_arrows_inside() {
+        let mut p = sample(Mode::Home, None);
+        p.places[4].submenu = true;
+        p.fit(crate::theme::TextUnits::ONE, (400, 1000));
+        let d = render(&p, None);
+        assert_eq!(d.l.panel.width, 400);
+        let (outline, light) = frame_edges(&Settings::default());
+        assert_eq!(d.at(398, 200), light, "the light line");
+        assert_eq!(d.at(399, 200), outline, "the outline");
+        let r = d.l.rect(Spot::Place(4)).unwrap();
+        assert_eq!(r.right(), 393, "the row keeps its 7 px from the edge");
+        if face() {
+            let arrow = Rect::new(r.x + at::PLACE_ARROW.0 - 11, r.y, 8, r.height);
+            assert!(
+                inks_near(&d, arrow, INK_RIGHT),
+                "the arrow moves in with the row"
+            );
+        }
     }
 
     #[test]
