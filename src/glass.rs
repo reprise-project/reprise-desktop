@@ -242,6 +242,10 @@ impl GlassCtx {
         let seen = output.current_transform().transform_size(mode.size);
         let scale = output.current_scale().fractional_scale();
         let name = output.name();
+        let own = match self.pass.get().settings.blur_frames {
+            true => self.drawn_beneath(scene, area, seen, scale),
+            false => Vec::new(),
+        };
         {
             let mut backdrops = self.backdrops.borrow_mut();
             if backdrops
@@ -258,7 +262,7 @@ impl GlassCtx {
             };
             let d = f64::from(reprisefx::blur::backdrop_downscale(scale));
             let elements = scene.backdrop_elements(renderer, &View::new(area, scale / d));
-            let needed = self.reads_on(scene, area, seen, scale);
+            let needed = self.reads_on(scene, area, seen, scale, &own);
             *self.source.borrow_mut() =
                 self.redraw(renderer, b, &elements, clear, output, Some(&needed));
             let pass = self.pass.get();
@@ -266,26 +270,32 @@ impl GlassCtx {
             b.skipped = false;
         }
         if self.pass.get().settings.blur_frames {
-            self.update_beneath(renderer, scene, output, clear);
+            self.update_beneath(renderer, scene, output, clear, &own);
         } else {
             self.beneath.borrow_mut().retain(|(o, _), _| *o != name);
         }
     }
 
-    /// The output pixels the glass shown on the output at `area` reads from its picture: only
-    /// changes there are blurred, the rest wait until glass reads them.
+    /// The output pixels the glass shown on the output at `area` reads from its picture, glass
+    /// drawn from its own backdrop (`own`) aside: only changes there are blurred, the rest wait
+    /// until glass reads them.
     fn reads_on(
         &self,
         scene: &DeskScene,
         area: Rectangle<i32, Logical>,
         seen: Size<i32, Physical>,
         scale: f64,
+        own: &[Stacked],
     ) -> Vec<Rectangle<i32, Physical>> {
         let pass = self.pass.get();
         self.nodes
             .borrow()
             .iter()
             .filter(|n| n.glass.strong_count() > 0 && scene.is_alive(n.node))
+            .filter(|n| {
+                !own.iter()
+                    .any(|o| Weak::as_ptr(&n.glass) == Rc::as_ptr(&o.glass))
+            })
             .filter_map(|n| {
                 let Some((at, true)) = scene.coords(n.node) else {
                     return None;
@@ -300,20 +310,15 @@ impl GlassCtx {
             .collect()
     }
 
-    fn update_beneath(
+    /// The glass shown on the output at `area` that draws from a backdrop of its own, bottom
+    /// first: glass with other glass drawn above it, or with left-out chrome beneath it.
+    fn drawn_beneath(
         &self,
-        renderer: &mut GlesRenderer,
         scene: &DeskScene,
-        output: &Output,
-        clear: Color32F,
-    ) {
-        let (Some(area), Some(mode)) = (reprisescene::output_rect(output), output.current_mode())
-        else {
-            return;
-        };
-        let seen = output.current_transform().transform_size(mode.size);
-        let scale = output.current_scale().fractional_scale();
-        let name = output.name();
+        area: Rectangle<i32, Logical>,
+        seen: Size<i32, Physical>,
+        scale: f64,
+    ) -> Vec<Stacked> {
         let pass = self.pass.get();
         let mut nodes = self.nodes.borrow_mut();
         nodes.retain(|n| n.glass.strong_count() > 0 && scene.is_alive(n.node));
@@ -343,27 +348,53 @@ impl GlassCtx {
                 })
             })
             .collect();
-        let mut beneath = self.beneath.borrow_mut();
-        let mut used = Vec::new();
-        for (i, n) in stacked.iter().enumerate() {
-            let (glass, anchor, reads) = (n.glass.clone(), n.anchor, &n.reads);
-            // Glass above draws this glass from this glass's own backdrop: the output's holds the
-            // clients of the windows above it.
-            let drawn_above = stacked[i + 1..].iter().any(|u| {
-                u.anchor != anchor
-                    && u.reads
+        let own: Vec<bool> = stacked
+            .iter()
+            .enumerate()
+            .map(|(i, n)| {
+                // Glass above draws this glass from this glass's own backdrop: the output's holds
+                // the clients of the windows above it.
+                let drawn_above = stacked[i + 1..].iter().any(|u| {
+                    u.anchor != n.anchor
+                        && u.reads
+                            .reach
+                            .iter()
+                            .any(|r| n.reads.needed.iter().any(|m| m.overlaps(*r)))
+                });
+                drawn_above
+                    || n.reads
                         .reach
                         .iter()
-                        .any(|r| reads.needed.iter().any(|m| m.overlaps(*r)))
-            });
-            if !drawn_above
-                && !reads
-                    .reach
-                    .iter()
-                    .any(|r| scene.left_out_below(anchor, layout(*r, area.loc, scale)))
-            {
-                continue;
-            }
+                        .any(|r| scene.left_out_below(n.anchor, layout(*r, area.loc, scale)))
+            })
+            .collect();
+        stacked
+            .into_iter()
+            .zip(own)
+            .filter_map(|(n, own)| own.then_some(n))
+            .collect()
+    }
+
+    fn update_beneath(
+        &self,
+        renderer: &mut GlesRenderer,
+        scene: &DeskScene,
+        output: &Output,
+        clear: Color32F,
+        own: &[Stacked],
+    ) {
+        let (Some(area), Some(mode)) = (reprisescene::output_rect(output), output.current_mode())
+        else {
+            return;
+        };
+        let seen = output.current_transform().transform_size(mode.size);
+        let scale = output.current_scale().fractional_scale();
+        let name = output.name();
+        let pass = self.pass.get();
+        let mut beneath = self.beneath.borrow_mut();
+        let mut used = Vec::new();
+        for n in own {
+            let (glass, anchor, reads) = (n.glass.clone(), n.anchor, &n.reads);
             let key = (name.clone(), Rc::as_ptr(&glass));
             if beneath
                 .get(&key)
@@ -1522,6 +1553,41 @@ mod tests {
                 "{material:?}: through the upper glass the lower glass shows, not the black under it: {both}"
             );
         }
+    }
+
+    #[test]
+    fn the_outputs_blur_reads_only_for_glass_drawn_from_it() {
+        let ctx = GlassCtx::new();
+        let mut scene = DeskScene::new();
+        let root = scene.root();
+        let desktop = scene.tree_create(root);
+        scene.rect_create(desktop, (320, 200), [1.0; 4]);
+        let windows = scene.tree_create(root);
+        let _lower = glass_window(&mut scene, &ctx, windows, (20, 20), (120, 80), None);
+        let (area, seen) = (Rectangle::from_size((320, 200).into()), (320, 200).into());
+        ctx.pass.set(Pass {
+            settings: Settings {
+                blur_frames: true,
+                ..Settings::default()
+            },
+            ..Pass::default()
+        });
+        let own = ctx.drawn_beneath(&scene, area, seen, 1.0);
+        assert!(own.is_empty(), "glass alone draws from the output's blur");
+        let alone = ctx.reads_on(&scene, area, seen, 1.0, &own);
+        assert!(!alone.is_empty());
+        let (upper, _upper) = glass_window(&mut scene, &ctx, windows, (100, 60), (120, 80), None);
+        let own = ctx.drawn_beneath(&scene, area, seen, 1.0);
+        assert_eq!(
+            own.len(),
+            2,
+            "overlapping glass draws from backdrops of its own"
+        );
+        assert_eq!(ctx.reads_on(&scene, area, seen, 1.0, &own), Vec::new());
+        scene.destroy(upper);
+        let own = ctx.drawn_beneath(&scene, area, seen, 1.0);
+        assert!(own.is_empty(), "alone again");
+        assert_eq!(ctx.reads_on(&scene, area, seen, 1.0, &own), alone);
     }
 
     #[test]
