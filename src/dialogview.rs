@@ -128,6 +128,21 @@ pub fn setup(state: &mut State) {
 
 /// The stack order after raising dialog `index`: its family (parent chain up to a root dialog, and
 /// everything opened over any of them) moves to the top in current order. `links` is `(id, parent)`, bottom first.
+/// Hide the underlines of every dialog but the one at stack index `keyboard`, which has the keyboard.
+/// Whether any were out.
+fn blur_cues_without_keyboard<'a>(
+    cues: impl Iterator<Item = &'a mut Cues>,
+    keyboard: Option<usize>,
+) -> bool {
+    let mut blurred = false;
+    for (i, c) in cues.enumerate() {
+        if Some(i) != keyboard {
+            blurred |= c.blur();
+        }
+    }
+    blurred
+}
+
 fn raise_order(links: &[(u64, Option<u64>)], index: usize) -> Vec<usize> {
     let parent = |i: usize| {
         links[i]
@@ -405,6 +420,7 @@ impl State {
         };
         self.dialogs.views.push(view);
         self.activate_dialogs();
+        self.blur_dialogs_without_keyboard();
         self.restart_caret();
         self.redraw_dialogs();
         self.sync_dialog_tasks(false);
@@ -484,7 +500,9 @@ impl State {
                 }
             }
         }
-        if self.activate_dialogs() || first_moved.is_some() || restored {
+        let activated = self.activate_dialogs();
+        let blurred = self.blur_dialogs_without_keyboard();
+        if activated || blurred || first_moved.is_some() || restored {
             self.restart_caret();
             self.redraw_dialogs();
             self.sync_dialog_tasks(false);
@@ -508,6 +526,7 @@ impl State {
         self.scene.set_enabled(v.tree, false);
         self.dialogs.views.insert(0, v);
         self.settle_dialogs();
+        self.blur_dialogs_without_keyboard();
         self.redraw_dialogs();
         self.sync_dialog_tasks(false);
         self.redraw_all();
@@ -581,11 +600,17 @@ impl State {
             return;
         }
         self.dialogs.active = false;
-        for v in &mut self.dialogs.views {
-            v.cues.blur();
-        }
+        self.blur_dialogs_without_keyboard();
         self.redraw_dialogs();
         self.sync_dialog_tasks(false);
+    }
+
+    /// Keep the underlines on the dialog with the keyboard only; whether any others hid.
+    fn blur_dialogs_without_keyboard(&mut self) -> bool {
+        let keyboard = self
+            .dialog_has_keyboard()
+            .then(|| self.dialogs.views.len() - 1);
+        blur_cues_without_keyboard(self.dialogs.views.iter_mut().map(|v| &mut v.cues), keyboard)
     }
 
     fn close_dialog(&mut self) {
@@ -2473,11 +2498,29 @@ fn client_part(canvas: &Canvas, layout: &DialogLayout, scale: i32) -> Option<(Ca
 
 #[cfg(test)]
 mod tests {
-    use super::{client_part, glass_pane, raise_order, refit_origin, row_icon_names, to_local};
+    use super::{
+        blur_cues_without_keyboard, client_part, glass_pane, raise_order, refit_origin,
+        row_icon_names, to_local,
+    };
     use crate::dialog::Dialog;
     use crate::raster::Rect;
     use reprisekit::controls::form::Key;
     use reprisekit::controls::openwith::{Program, ROWS};
+
+    #[test]
+    fn only_the_dialog_with_the_keyboard_keeps_its_underlines() {
+        use reprisekit::cues::Cues;
+        let mut stack = [Cues::ALL; 3];
+        assert!(blur_cues_without_keyboard(stack.iter_mut(), Some(2)));
+        assert_eq!(stack.map(|c| c.keys), [false, false, true]);
+        assert!(stack[0].focus, "the rectangles stay");
+        assert!(
+            !blur_cues_without_keyboard(stack.iter_mut(), Some(2)),
+            "nothing left to hide"
+        );
+        assert!(blur_cues_without_keyboard(stack.iter_mut(), None));
+        assert_eq!(stack.map(|c| c.keys), [false; 3]);
+    }
 
     #[test]
     fn a_windowed_dialog_stacks_with_the_windows_and_others_stand_over_them() {
