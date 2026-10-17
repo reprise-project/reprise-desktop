@@ -400,7 +400,7 @@ fn spawn_then(
     };
     let mut c = Command::new(program);
     c.args(args)
-        .env_remove(reprisekit::cues::KEYBOARD_LAUNCH_ENV)
+        .env_remove(reprisebus::instance::KEYBOARD_LAUNCH_ENV)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
@@ -434,10 +434,11 @@ pub struct Reply {
     pub copy_files: Option<FileClip>,
     /// Arrives as `Event::PastedFiles` on the window this reply is for.
     pub paste_files: bool,
-    /// An xdg-activation token another process handed over with a request
-    /// to show the main window: presented for it, so the compositor
-    /// focuses it. Dropped while the main window is hidden.
-    pub activate: Option<String>,
+    /// What another process handed over with a request to show the main
+    /// window: its token is presented for it, so the compositor focuses it,
+    /// and a start by key brings out its cues. Dropped while the main window
+    /// is hidden.
+    pub activate: Option<reprisebus::instance::Handoff>,
     /// Start a drag of files from the window this reply is for. It must
     /// answer a pointer press still held (the host uses that press's
     /// serial); the compositor refuses it otherwise.
@@ -1012,7 +1013,7 @@ pub fn run(app: Box<dyn App>) {
         ticking: Vec::new(),
         portal_done,
         press_serial: 0,
-        key_last: std::env::var_os(reprisekit::cues::KEYBOARD_LAUNCH_ENV).is_some_and(|v| v == "1"),
+        key_last: reprisebus::instance::Handoff::from_env().by_key,
         press_time: 0,
         compositor,
         xdg_shell,
@@ -1621,10 +1622,13 @@ impl Host {
         {
             a.offer.destroy();
         }
-        if let (Some(token), Some(activation)) = (reply.activate, &self.activation)
-            && let Some(main) = self.slots.iter().find(|s| s.id == MAIN)
+        if let Some(handoff) = reply.activate
+            && let Some(main) = self.slots.iter_mut().find(|s| s.id == MAIN)
         {
-            activation.activate::<Host>(main.window.wl_surface(), token);
+            main.dirty |= main.cues.reopen(handoff.by_key);
+            if let (Some(token), Some(activation)) = (handoff.token, &self.activation) {
+                activation.activate::<Host>(main.window.wl_surface(), token);
+            }
         }
         self.drain_head_requests();
     }

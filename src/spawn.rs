@@ -500,7 +500,7 @@ pub struct Launch {
 }
 
 /// `cmd` as a `sh -c` process with the session's variables exported. `launch`'s token becomes
-/// `XDG_ACTIVATION_TOKEN` and a start by key sets [`reprisekit::cues::KEYBOARD_LAUNCH_ENV`];
+/// `XDG_ACTIVATION_TOKEN` and a start by key sets [`reprisebus::instance::KEYBOARD_LAUNCH_ENV`];
 /// without one both are removed so an inherited value never reaches a client.
 /// `DESKTOP_STARTUP_ID` is always removed.
 pub fn command(cmd: &str, env: &SessionEnv, launch: Option<&Launch>) -> std::process::Command {
@@ -544,9 +544,9 @@ fn with_session_env(c: &mut std::process::Command, env: &SessionEnv, launch: Opt
         }
     }
     if launch.is_some_and(|l| l.by_key) {
-        c.env(reprisekit::cues::KEYBOARD_LAUNCH_ENV, "1");
+        c.env(reprisebus::instance::KEYBOARD_LAUNCH_ENV, "1");
     } else {
-        c.env_remove(reprisekit::cues::KEYBOARD_LAUNCH_ENV);
+        c.env_remove(reprisebus::instance::KEYBOARD_LAUNCH_ENV);
     }
 }
 
@@ -1233,7 +1233,7 @@ mod tests {
             };
             env_of(
                 &command("true", &env(None), Some(&launch)),
-                reprisekit::cues::KEYBOARD_LAUNCH_ENV,
+                reprisebus::instance::KEYBOARD_LAUNCH_ENV,
             )
         };
         assert_eq!(key(true), Some(Some("1".into())));
@@ -1245,7 +1245,7 @@ mod tests {
         assert_eq!(
             env_of(
                 &command("true", &env(None), None),
-                reprisekit::cues::KEYBOARD_LAUNCH_ENV
+                reprisebus::instance::KEYBOARD_LAUNCH_ENV
             ),
             Some(None)
         );

@@ -1137,7 +1137,7 @@ impl SettingsApp {
         }
         while let Some(req) = self.requests.as_ref().and_then(instance::Requests::next) {
             changed |= self.request(&req);
-            activate = req.token.or(activate);
+            activate = Some(req.handoff);
         }
         if let Some(rx) = &self.scan {
             let found = match take(rx) {
@@ -3483,7 +3483,7 @@ mod tests {
     fn page_request(name: &str) -> instance::Request {
         instance::Request {
             action: Some((PAGE_ACTION.into(), vec![name.into()])),
-            token: None,
+            handoff: Default::default(),
         }
     }
 
@@ -4476,7 +4476,7 @@ mod tests {
         let mut a = app("focus-request");
         let req = |page: &str, id: &str| instance::Request {
             action: Some((PAGE_ACTION.into(), vec![page.into(), id.into()])),
-            token: None,
+            handoff: Default::default(),
         };
         let focused = |a: &SettingsApp| {
             let page = a.sheet.open();
