@@ -1,5 +1,6 @@
 //! App scopes: a program started from a desktop entry runs in `app-reprise-<id>-<n>.scope`, where
-//! xdg-desktop-portal reads a host app's id. The compositor and the programs both launch this way.
+//! xdg-desktop-portal reads a host app's id. The compositor and the programs both launch this way;
+//! a process that has to start unscoped is [`adopt`]ed after its exec.
 
 use std::ffi::{OsStr, OsString};
 
@@ -15,10 +16,49 @@ pub fn in_scope<S: AsRef<OsStr>>(argv: &[S], app: Option<&str>) -> Vec<OsString>
         .collect()
 }
 
-/// Prefix that execs a command, same pid, in `app-reprise-<app>-<suffix>.scope`; the id is
-/// unit-escaped so its dashes stay apart from the launcher and suffix (systemd's app naming).
-fn scope_argv(app: &str, suffix: &str) -> Vec<String> {
+/// Moves the running process `pid` into an app scope of its own named by `app`, for a program
+/// started unscoped to keep its exec error (behind `systemd-run` that error would be systemd-run's).
+/// Blocks on the session bus; does nothing without a user manager.
+pub fn adopt(pid: u32, app: &str) -> zbus::Result<()> {
+    if !user_manager_running() {
+        return Ok(());
+    }
+    let (unit, properties) = transient_scope(app, &unit_suffix(), pid);
+    let aux: Vec<(&str, Vec<(&str, zbus::zvariant::Value)>)> = Vec::new();
+    zbus::blocking::Connection::session()?.call_method(
+        Some("org.freedesktop.systemd1"),
+        "/org/freedesktop/systemd1",
+        Some("org.freedesktop.systemd1.Manager"),
+        "StartTransientUnit",
+        &(unit, "fail", properties, aux),
+    )?;
+    Ok(())
+}
+
+/// `StartTransientUnit`'s unit name and properties for [`adopt`]: the scope and slice
+/// [`scope_argv`] gives, with `pid` moved in.
+fn transient_scope(
+    app: &str,
+    suffix: &str,
+    pid: u32,
+) -> (String, Vec<(&'static str, zbus::zvariant::Value<'static>)>) {
+    let properties = vec![
+        ("PIDs", vec![pid].into()),
+        ("Slice", "app.slice".into()),
+        ("CollectMode", "inactive-or-failed".into()),
+    ];
+    (format!("{}.scope", unit_name(app, suffix)), properties)
+}
+
+/// `app-reprise-<app>-<suffix>`; the id is unit-escaped so its dashes stay apart from the
+/// launcher and suffix (systemd's app naming).
+fn unit_name(app: &str, suffix: &str) -> String {
     let app = app.strip_suffix(".desktop").unwrap_or(app);
+    format!("app-reprise-{}-{suffix}", unit_escape(app))
+}
+
+/// Prefix that execs a command, same pid, in the [`unit_name`] scope.
+fn scope_argv(app: &str, suffix: &str) -> Vec<String> {
     vec![
         "systemd-run".into(),
         "--user".into(),
@@ -26,7 +66,7 @@ fn scope_argv(app: &str, suffix: &str) -> Vec<String> {
         "--quiet".into(),
         "--collect".into(),
         "--slice=app.slice".into(),
-        format!("--unit=app-reprise-{}-{suffix}", unit_escape(app)),
+        format!("--unit={}", unit_name(app, suffix)),
         "--".into(),
     ]
 }
@@ -79,6 +119,21 @@ mod tests {
                 "--",
             ]
         );
+    }
+
+    #[test]
+    fn an_adopted_process_gets_the_app_scope_a_launch_would_run_in() {
+        let (unit, properties) = transient_scope("run-me.sh", "1a", 4242);
+        assert_eq!(unit, "app-reprise-run\\x2dme.sh-1a.scope");
+        assert_eq!(
+            properties,
+            [
+                ("PIDs", zbus::zvariant::Value::from(vec![4242u32])),
+                ("Slice", "app.slice".into()),
+                ("CollectMode", "inactive-or-failed".into()),
+            ]
+        );
+        assert_eq!(properties[0].1.value_signature(), "au");
     }
 
     #[test]
