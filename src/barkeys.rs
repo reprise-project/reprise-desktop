@@ -63,7 +63,7 @@ impl State {
         let was = self.bar_shared.keys.map(|k| k.bar);
         crate::autohideview::keys(self, &output, true);
         self.deactivate_dialogs();
-        self.enter_keyboard(None);
+        self.drop_window_focus();
         self.bar_shared.keys = Some(BarKeys {
             bar: tree,
             at,
@@ -136,17 +136,17 @@ impl State {
 
     /// Enter (`BTN_LEFT`) or the Menu key (`BTN_RIGHT`) on item `at` of bar
     /// `tree`: the click on the item's middle. Enter on Start opens the
-    /// Start menu as the Start key does; on the active window's own button
-    /// it hands the keyboard back to that window rather than minimizing
-    /// it. A menu it opens takes the arrows with its access keys shown,
-    /// and Escape there comes back to the bar.
+    /// Start menu as the Start key does; on the button of the window the bar
+    /// took the keyboard from it hands the keyboard back to that window. A
+    /// menu it opens takes the arrows with its access keys shown, and Escape
+    /// there comes back to the bar.
     fn bar_item_act(&mut self, tree: TreeId, at: TaskbarHit, button: u32) {
         let Some(b) = self.bar(tree) else { return };
+        let back = self.bar_shared.keys.map_or(Back::Nobody, |k| k.back);
         if button == BTN_LEFT
             && let TaskbarHit::Task(i) = at
             && b.dialogs.get(i).copied().flatten().is_none()
-            && let Some(&[w]) = b.buttons.get(i).map(Vec::as_slice)
-            && self.focused == Some(w)
+            && let Some(w) = b.buttons.get(i).and_then(|ws| returns_to(back, ws))
             && self.win(w).is_some_and(|x| !x.minimized)
         {
             self.bar_shared.keys = None;
@@ -180,6 +180,15 @@ impl State {
     }
 }
 
+/// The window Enter on a button holding `windows` hands the keyboard back
+/// to: the one the bar took it from, which is drawn inactive meanwhile.
+fn returns_to(back: Back, windows: &[WindowId]) -> Option<WindowId> {
+    match (back, windows) {
+        (Back::Window(b), &[w]) if b == w => Some(w),
+        _ => None,
+    }
+}
+
 /// Whether Enter (`BTN_LEFT`) on item `at` opens or shuts the tray run in
 /// place (`trayreveal::toggle`) rather than clicking the item's middle:
 /// on the arrow of a look that has one (`arrow_look`). A click would land
@@ -204,5 +213,19 @@ mod tests {
             "the Menu key clicks"
         );
         assert!(!enter_toggles_run(true, TaskbarHit::Clock, BTN_LEFT));
+    }
+
+    #[test]
+    fn enter_on_the_window_the_bar_took_the_keyboard_from_returns_it() {
+        let (w, other) = (WindowId::next(), WindowId::next());
+        assert_eq!(returns_to(Back::Window(w), &[w]), Some(w));
+        assert_eq!(returns_to(Back::Window(w), &[other]), None);
+        assert_eq!(
+            returns_to(Back::Window(w), &[w, other]),
+            None,
+            "a group opens its list"
+        );
+        assert_eq!(returns_to(Back::Dialog(1), &[w]), None);
+        assert_eq!(returns_to(Back::Nobody, &[w]), None);
     }
 }
