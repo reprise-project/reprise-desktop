@@ -96,7 +96,42 @@ pub struct DesktopView {
     /// Cells answers pinned since the last read finished, which `cells` does not show yet.
     landed: Vec<(i32, i32)>,
     pub(crate) send_to: Vec<reprisefs::sendto::SendToRow>,
-    pub(crate) drives: places::MountedDrives,
+    pub(crate) drives: Drives,
+}
+
+/// The drives the Send To submenu lists, as the last scan found them. A drive top can be a mount
+/// that never answers, so scans run on a file job, one at a time.
+#[derive(Debug)]
+pub(crate) struct Drives {
+    pub(crate) found: Vec<PathBuf>,
+    /// None while a scan has it.
+    scanner: Option<places::MountedDrives>,
+    /// The mount table changed during a scan: scan again when it lands.
+    again: bool,
+}
+
+impl Drives {
+    fn new(scanner: places::MountedDrives) -> Drives {
+        Drives {
+            found: Vec::new(),
+            scanner: Some(scanner),
+            again: false,
+        }
+    }
+
+    /// The scanner for a scan, or None while one runs, which then scans again when it lands.
+    fn start(&mut self) -> Option<places::MountedDrives> {
+        let scanner = self.scanner.take();
+        self.again = scanner.is_none();
+        scanner
+    }
+
+    /// Takes a scan's answer; true when another scan was asked for meanwhile.
+    fn land(&mut self, scanner: places::MountedDrives, found: Vec<PathBuf>) -> bool {
+        self.scanner = Some(scanner);
+        self.found = found;
+        std::mem::take(&mut self.again)
+    }
 }
 
 /// A rubber-band selection in progress: the press point, the selection as it
@@ -860,9 +895,10 @@ pub fn setup(state: &mut State) {
         icons_read: (0, 0),
         landed: Vec::new(),
         send_to: Vec::new(),
-        drives: places::MountedDrives::new(),
+        drives: Drives::new(places::MountedDrives::new()),
     });
     state.rescan_desktop();
+    state.scan_drives();
 }
 
 /// Poll `watch`'s fd on the loop through a copy of it, which shares the queue.
@@ -892,6 +928,7 @@ fn mounts_on_loop(state: &mut State) {
     };
     let source = Generic::new(file, Interest::READ, Mode::Edge);
     let added = state.handle.insert_source(source, |_, _, state| {
+        state.scan_drives();
         state.settle_rescan();
         Ok(PostAction::Continue)
     });
@@ -923,6 +960,23 @@ impl State {
         if view.watch.as_mut().is_some_and(|w| w.drain()) {
             self.settle_rescan();
         }
+    }
+
+    /// Scans the mounted drives on a file job for the Send To submenu, or once more after the
+    /// scan under way.
+    fn scan_drives(&mut self) {
+        let Some(mut scanner) = self.desktop.as_mut().and_then(|v| v.drives.start()) else {
+            return;
+        };
+        self.spawn_fs_job(move || {
+            let found = scanner.current().to_vec();
+            Box::new(move |state: &mut State| {
+                let again = (state.desktop.as_mut()).is_some_and(|v| v.drives.land(scanner, found));
+                if again {
+                    state.scan_drives();
+                }
+            })
+        });
     }
 
     /// Rescan once changes stop arriving for `SETTLE_MS`.
@@ -2015,6 +2069,33 @@ impl State {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn one_drive_scan_runs_at_a_time_and_a_mount_change_during_it_scans_again() {
+        let t = std::env::temp_dir().join(format!("reprise-drives-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&t);
+        let (root, table) = (t.join("media"), t.join("mounts"));
+        std::fs::create_dir_all(root.join("STICK")).unwrap();
+        let line = format!("/dev/sdb1 {} vfat rw 0 0\n", root.join("STICK").display());
+        std::fs::write(&table, line).unwrap();
+        let mut drives = Drives::new(places::MountedDrives::at(table, vec![root.clone()]));
+        let mut scanner = drives.start().unwrap();
+        assert!(drives.start().is_none(), "a scan is under way");
+        let found = scanner.current().to_vec();
+        assert!(
+            drives.found.is_empty(),
+            "nothing listed before the scan lands"
+        );
+        assert!(
+            drives.land(scanner, found),
+            "the table changed during the scan"
+        );
+        assert_eq!(drives.found, [root.join("STICK")]);
+        let scanner = drives.start().unwrap();
+        assert!(!drives.land(scanner, Vec::new()));
+        assert_eq!(drives.found, Vec::<PathBuf>::new());
+        let _ = std::fs::remove_dir_all(&t);
+    }
 
     /// A home trash made after the watch started is seen through the data
     /// folder, as is one moved away and back, and a file landing in it.
