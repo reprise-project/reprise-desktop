@@ -2400,8 +2400,11 @@ impl SettingsApp {
         Reply::redraw()
     }
 
-    /// Tab on a page with a side list: focus runs page list → side list → the form → OK → Cancel → Apply → page list. Only one dotted rectangle is ever on the sheet.
+    /// Tab on a page whose side list comes first: focus runs page list → side list → the form → OK → Cancel → Apply → page list. Only one dotted rectangle is ever on the sheet.
     fn side_tab(&mut self, back: bool) -> Reply {
+        if let Some(after) = self.side_list_after() {
+            return self.mid_list_tab(after, back);
+        }
         let held =
             self.list_focus || self.shortcuts_focus || self.types_focus || self.locations_focus;
         if held {
@@ -2429,9 +2432,52 @@ impl SettingsApp {
         self.sheet_event(ev)
     }
 
-    /// A page with a side list starts on that list (its first tab stop) unless the page list kept the focus.
-    fn tab_opened(&mut self) {
+    /// The form control a side list sitting mid-page follows in the tab order; `None` for a
+    /// list that is its page's first tab stop.
+    fn side_list_after(&self) -> Option<usize> {
+        match registry::open(&self.sheet) {
+            Page::Advanced => self.sheet.open().index_of(pages::PRIVACY_LOCATION),
+            _ => None,
+        }
+    }
+
+    /// Tab on a page whose side list sits after form control `after`: the list is the stop
+    /// between `after` and the control following it.
+    fn mid_list_tab(&mut self, after: usize, back: bool) -> Reply {
+        let held =
+            self.list_focus || self.shortcuts_focus || self.types_focus || self.locations_focus;
+        if held {
+            self.focus_side_list(false);
+            let page = self.sheet.open_mut();
+            page.set_focus(Some(after));
+            if !back {
+                page.tab_no_wrap(false);
+            }
+            return Reply::redraw();
+        }
         if !self.sheet.tabs.focused {
+            let page = self.sheet.open_mut();
+            let at = page.focus();
+            if !back && at == Some(after) {
+                self.focus_side_list(true);
+                return Reply::redraw();
+            }
+            if back && at.is_some_and(|f| f > after) {
+                page.tab_no_wrap(true);
+                if page.focus().is_some_and(|f| f <= after) {
+                    self.focus_side_list(true);
+                }
+                return Reply::redraw();
+            }
+        }
+        let ev = self.sheet.key(form::Key::Tab { back }, None);
+        self.sheet_event(ev)
+    }
+
+    /// A page whose side list is its first tab stop starts on that list unless the page list
+    /// kept the focus.
+    fn tab_opened(&mut self) {
+        if !self.sheet.tabs.focused && self.side_list_after().is_none() {
             self.focus_side_list(true);
         }
     }
@@ -3449,6 +3495,59 @@ mod tests {
             edit: None,
         };
         a.key(k, &ctx.forms().controls());
+    }
+
+    fn tab(a: &mut SettingsApp, ctx: &Ctx, back: bool) {
+        let k = KeyInput {
+            sym: reprisekit::textedit::keysym::TAB,
+            utf8: None,
+            mods: repriseapp::Mods {
+                shift: back,
+                ..Default::default()
+            },
+            edit: None,
+        };
+        a.key(k, &ctx.forms().controls());
+    }
+
+    #[test]
+    fn the_location_list_takes_its_tab_stop_after_its_check_on_the_advanced_page() {
+        let mut a = app("advanced-tab");
+        let ctx = test_ctx();
+        a.open_page(Page::Advanced, None);
+        assert!(
+            !a.locations_focus,
+            "opening the page leaves the list unfocused"
+        );
+
+        let page = a.sheet.open_mut();
+        let check = page.index_of(pages::PRIVACY_LOCATION).unwrap();
+        page.set_focus(Some(check));
+        tab(&mut a, &ctx, false);
+        assert!(
+            a.locations_focus && a.locations.focus_ring,
+            "Tab from the check enters the list"
+        );
+        assert_eq!(a.sheet.open().focus(), None, "one dotted rectangle");
+
+        tab(&mut a, &ctx, false);
+        assert!(!a.locations_focus);
+        let next = a
+            .sheet
+            .open()
+            .focus()
+            .expect("a form control after the list");
+        assert!(next > check, "Tab leaves the list onward, got item {next}");
+
+        tab(&mut a, &ctx, true);
+        assert!(a.locations_focus, "Shift+Tab comes back into the list");
+        tab(&mut a, &ctx, true);
+        assert!(!a.locations_focus);
+        assert_eq!(
+            a.sheet.open().focus(),
+            Some(check),
+            "Shift+Tab leaves it for its check"
+        );
     }
 
     #[test]
