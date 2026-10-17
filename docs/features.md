@@ -94,7 +94,8 @@ the Super tap, Super+Shift+Esc and the VT switch keys can be rebound.
   Super+\` and Super+Page Down show the next tab, Super+Page Up the one
   before. Each tab keeps its own taskbar button and Alt+Tab entry. Other
   taskbars and docks see a hidden tab as minimized; activating it there
-  shows it in its group.
+  shows it in its group. A fullscreen group stays fullscreen as you switch
+  tabs, and a hidden tab that asks for fullscreen gets it once you show it.
 - **Shake.** Drag a window by its caption and shake it quickly from side to
   side, or up and down: every other window on that screen and desktop
   minimizes. Shake it again to bring back the ones it minimized. Windows

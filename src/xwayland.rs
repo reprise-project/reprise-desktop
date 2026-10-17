@@ -572,7 +572,9 @@ impl State {
     fn x11_fullscreen(&mut self, x: &X11Surface, on: bool) {
         match self.mapped_x11(x) {
             Some(w) => {
-                self.set_fullscreen(w, on);
+                if self.tabs.ask_fullscreen(w, on) {
+                    self.set_fullscreen(w, on);
+                }
                 self.write_x11_state(w);
             }
             None => {
