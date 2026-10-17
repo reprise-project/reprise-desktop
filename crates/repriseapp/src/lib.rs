@@ -817,6 +817,8 @@ struct Look {
     shell_dlg: Option<String>,
     /// `[fonts] family`, read and followed as `shell_dlg` is; `None` keeps the interface's own.
     font_family: Option<Vec<String>>,
+    /// `[fonts] antialias`, read and followed as `shell_dlg` is; `None` keeps the interface's own.
+    antialias: Option<bool>,
     /// `[accessibility] text_size` in percent, read and followed as
     /// `shell_dlg` is, for [`Ctx::text_size`].
     text_size: u32,
@@ -837,6 +839,7 @@ impl Look {
                 .unwrap_or_else(|_| "hicolor".into()),
             shell_dlg: repriseconf::shell_dlg(),
             font_family: repriseconf::font_family(),
+            antialias: repriseconf::font_antialias(),
             text_size: repriseconf::text_size(),
             double_click_ms: repriseconf::double_click_ms(),
         }
@@ -853,6 +856,9 @@ impl Look {
         theme.fonts.shell_dlg = self.shell_dlg.clone();
         if let Some(family) = &self.font_family {
             theme.fonts.family = family.clone();
+        }
+        if let Some(antialias) = self.antialias {
+            theme.fonts.antialias = antialias;
         }
         if let Some(ms) = self.double_click_ms {
             theme.metrics.double_click_ms = ms;
@@ -879,6 +885,14 @@ impl Look {
             let family = Some(a::families(&value)).filter(|f| !f.is_empty());
             let changed = self.font_family != family;
             self.font_family = family;
+            return changed;
+        }
+        if key == a::FONT_ANTIALIAS {
+            let Ok(antialias) = value.parse() else {
+                return false;
+            };
+            let changed = self.antialias != Some(antialias);
+            self.antialias = Some(antialias);
             return changed;
         }
         if key == a::DOUBLE_CLICK_MS {
@@ -4306,6 +4320,19 @@ mod tests {
         assert_eq!(look.theme().fonts.family, ["DejaVu Sans", "Noto Sans"]);
         assert!(look.set(a::FONT_FAMILY, String::new()), "unset is a change");
         assert_eq!(look.theme().fonts.family, default);
+    }
+
+    #[test]
+    fn the_configured_antialias_reaches_the_themes_fonts() {
+        use reprisebus::appearance as a;
+        let mut look = Look::default();
+        assert!(!look.theme().fonts.antialias);
+        assert!(look.set(a::FONT_ANTIALIAS, "true".into()));
+        assert!(!look.set(a::FONT_ANTIALIAS, "true".into()));
+        assert!(!look.set(a::FONT_ANTIALIAS, "smooth".into()));
+        assert!(look.theme().fonts.antialias);
+        assert!(look.set(a::FONT_ANTIALIAS, "false".into()));
+        assert!(!look.theme().fonts.antialias);
     }
 
     #[test]
