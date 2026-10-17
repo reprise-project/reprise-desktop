@@ -345,6 +345,7 @@ pub struct Settings {
     pub hover_in_ms: i64,
     pub hover_out_ms: i64,
     pub taskbar_slide: bool,
+    pub session_fade: bool,
     pub double_click_ms: i64,
 
     pub kb_layout: String,
@@ -557,6 +558,7 @@ impl Default for Settings {
             hover_in_ms: 120,
             hover_out_ms: 250,
             taskbar_slide: false,
+            session_fade: true,
             double_click_ms: 500,
 
             kb_layout: String::new(),
@@ -1076,6 +1078,7 @@ fn fields() -> Vec<Field> {
         Field::Int(k("effects", "hover_in_ms"), lens!(hover_in_ms)),
         Field::Int(k("effects", "hover_out_ms"), lens!(hover_out_ms)),
         Field::Flag(k("effects", "taskbar_slide"), lens!(taskbar_slide)),
+        Field::Flag(k("effects", "session_fade"), lens!(session_fade)),
         Field::Int(k("metrics", "double_click_ms"), lens!(double_click_ms)),
         Field::Text(k("keyboard", "layout"), lens!(kb_layout)),
         Field::Text(k("keyboard", "variant"), lens!(kb_variant)),
@@ -1742,6 +1745,21 @@ size_px = 12
     }
 
     #[test]
+    fn the_session_fade_is_on_under_every_interface_and_written_only_off() {
+        for text in ["", "[appearance]\ninterface = \"glass\"\n"] {
+            let mut want = load(text);
+            assert!(want.session_fade, "{text:?}");
+            want.session_fade = false;
+            let out = saved(text, &want);
+            assert!(out.contains("session_fade = false"), "{out}");
+            assert_eq!(load(&out), want);
+            let mut back = want.clone();
+            back.session_fade = true;
+            assert!(!saved(&out, &back).contains("session_fade"));
+        }
+    }
+
+    #[test]
     fn effects_are_written_against_the_interfaces_defaults() {
         let text = "[appearance]\ninterface = \"glass\"\n";
         let mut want = load(text);
@@ -2345,6 +2363,7 @@ size_px = 12
             hover_in_ms: 90,
             hover_out_ms: 400,
             taskbar_slide: true,
+            session_fade: false,
             double_click_ms: 400,
             kb_layout: "hu".into(),
             kb_variant: "nodeadkeys".into(),

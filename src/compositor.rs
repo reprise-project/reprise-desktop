@@ -357,6 +357,7 @@ pub struct State {
     /// Log Off, Turn Off or Restart waiting for the programs to close
     /// (`sessionend`).
     pub ending: Option<crate::sessionend::Ending>,
+    pub session_fade: crate::sessionfade::SessionFade,
     pub calendar: crate::calendarview::CalendarState,
     pub displays_view: crate::displaysview::DisplaysViewState,
 }
@@ -604,6 +605,7 @@ impl State {
             access: crate::access::Access::new(&handle),
             session: crate::session::Session::load(),
             ending: None,
+            session_fade: crate::sessionfade::SessionFade::new(config.effects.session_fade_ms().0),
             calendar: Default::default(),
             displays_view: Default::default(),
             config,

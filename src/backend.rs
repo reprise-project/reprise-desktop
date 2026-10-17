@@ -1664,6 +1664,7 @@ fn render(state: &mut State, crtc: crtc::Handle) {
     crate::autohideview::frame(state, &output);
     crate::snapbarview::frame(state, &output);
     let border = crate::captureborder::elements(state, &output);
+    let (fade, fade_next) = crate::sessionfade::element(state, &output);
     let pointer = state.pointer_location();
     let focus = state.magnifier_focus(&output);
     let State {
@@ -1750,6 +1751,9 @@ fn render(state: &mut State, crtc: crtc::Handle) {
             border.into_iter().map(OutputElement::Border),
         );
     }
+    if let Some(fade) = fade {
+        elements.insert(0, OutputElement::Border(fade));
+    }
     b.shm_textures.update(&mut b.renderer);
     let mut empty = false;
     let shared = Arc::clone(&s.compositor);
@@ -1794,7 +1798,10 @@ fn render(state: &mut State, crtc: crtc::Handle) {
     if !(drawn && send_flip(s, modeset, flight)) {
         finish(state, crtc, &output, false, empty, held, started);
     }
-    if state.magnifier.panning(&output) || water_fell {
+    if state.magnifier.panning(&output)
+        || water_fell
+        || fade_next == crate::sessionfade::Next::Frame
+    {
         schedule(state, &output);
     }
     if let Some(at) = state.water.next_step(&output) {

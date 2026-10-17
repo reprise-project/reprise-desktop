@@ -1458,11 +1458,11 @@ pub fn startup(a: Area) -> Form {
     ])
 }
 
-/// The Effects page: window animations and the fade of hovered buttons, each
-/// a check with its two durations indented under it, then the menus' shadow and timings, then the task buttons' slide.
+/// The Effects page: window animations and the fade of hovered buttons, each a check with its two durations
+/// indented under it, and the screen's fade; then the menus' shadow and timings, then the task buttons' slide.
 pub fn effects(a: Area) -> Form {
     let range = (0, EFFECTS_MS_MAX as i32);
-    let mut items = vec![group(a, "effects_group", 44, 132, "Windows")];
+    let mut items = vec![group(a, "effects_group", 44, 158, "Windows")];
     items.push(Item::check(
         "window_animation",
         GX,
@@ -1515,12 +1515,18 @@ pub fn effects(a: Area) -> Form {
         range,
     ));
     items.extend(hover.into_iter().map(Item::under_check));
-    items.push(group(a, "menus_group", 186, 74, "Menus"));
+    items.push(Item::check(
+        "session_fade",
+        GX,
+        178,
+        "&Fade the screen at log on and log off",
+    ));
+    items.push(group(a, "menus_group", 212, 74, "Menus"));
     items.extend(spin(
         "shadow_label",
         "menu_shadow",
         GX,
-        208,
+        234,
         60,
         "&Shadow:",
         (0, 32),
@@ -1529,7 +1535,7 @@ pub fn effects(a: Area) -> Form {
         "hover_label",
         "menu_hover_ms",
         GX + 140,
-        208,
+        234,
         70,
         "Ho&ver ms:",
         (0, 9999),
@@ -1538,17 +1544,17 @@ pub fn effects(a: Area) -> Form {
         "fade_label",
         "menu_fade_ms",
         GX,
-        234,
+        260,
         60,
         "Fa&de ms:",
         (0, 9999),
     ));
-    items.push(group(a, "taskbar_group", 270, 48, "Taskbar"));
+    items.push(group(a, "taskbar_group", 296, 48, "Taskbar"));
 
     items.push(Item::check(
         "taskbar_slide",
         GX,
-        292,
+        318,
         "Slide &taskbar buttons as they are dragged",
     ));
     Form::new(items)
@@ -1758,6 +1764,7 @@ fn binds() -> Vec<Bind> {
         Bind::Num("hover_in_ms", lens!(hover_in_ms)),
         Bind::Num("hover_out_ms", lens!(hover_out_ms)),
         Bind::Flag("taskbar_slide", lens!(taskbar_slide)),
+        Bind::Flag("session_fade", lens!(session_fade)),
         Bind::Num("double_click_ms", lens!(double_click_ms)),
         Bind::Text("kb_model", lens!(kb_model)),
         Bind::Text("kb_options", lens!(kb_options)),
@@ -4433,12 +4440,13 @@ mod tests {
         assert_eq!(rect(&s, p, "hover_in_ms"), Rect::new(124, 144, 50, 20));
         assert_eq!(rect(&s, p, "out_label"), Rect::new(190, 148, 70, 13));
         assert_eq!(rect(&s, p, "hover_out_ms"), Rect::new(264, 144, 50, 20));
-        assert_eq!(rect(&s, p, "menus_group"), Rect::new(20, 186, 358, 74));
-        assert_eq!(rect(&s, p, "menu_shadow"), Rect::new(96, 204, 50, 20));
-        assert_eq!(rect(&s, p, "menu_hover_ms"), Rect::new(246, 204, 50, 20));
-        assert_eq!(rect(&s, p, "menu_fade_ms"), Rect::new(96, 230, 50, 20));
-        assert_eq!(rect(&s, p, "taskbar_group"), Rect::new(20, 270, 358, 48));
-        assert_eq!(rect(&s, p, "taskbar_slide"), Rect::new(GX, 292, 13, 13));
+        assert_eq!(rect(&s, p, "session_fade"), Rect::new(GX, 178, 13, 13));
+        assert_eq!(rect(&s, p, "menus_group"), Rect::new(20, 212, 358, 74));
+        assert_eq!(rect(&s, p, "menu_shadow"), Rect::new(96, 230, 50, 20));
+        assert_eq!(rect(&s, p, "menu_hover_ms"), Rect::new(246, 230, 50, 20));
+        assert_eq!(rect(&s, p, "menu_fade_ms"), Rect::new(96, 256, 50, 20));
+        assert_eq!(rect(&s, p, "taskbar_group"), Rect::new(20, 296, 358, 48));
+        assert_eq!(rect(&s, p, "taskbar_slide"), Rect::new(GX, 318, 13, 13));
         inside_page(&s, p);
     }
 

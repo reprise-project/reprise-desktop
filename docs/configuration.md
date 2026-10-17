@@ -168,6 +168,8 @@ Quick Launch buttons. The buttons and their order live in
 | `hover_in_ms`, `hover_out_ms` | how long | 120, 250 |
 | `taskbar_slide` | task buttons slide aside during a drag | by interface |
 | `taskbar_hide_ms` | how long auto-hide takes, 0 for at once | 200 |
+| `session_fade` | the screen fades in from black at log on and out to black when the session ends | on |
+| `session_fade_in_ms`, `session_fade_out_ms` | how long, 0 for at once | 600, 400 |
 
 ## Things to try
 

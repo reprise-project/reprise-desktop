@@ -274,7 +274,15 @@ fn finish(state: &mut State, override_inhibitors: bool) {
     go_on(state, e.goal, e.cmd, override_inhibitors);
 }
 
+/// Fade the screen out, then end: stop the compositor for Log Off, else run `cmd`.
 fn go_on(state: &mut State, goal: Goal, cmd: Option<String>, override_inhibitors: bool) {
+    crate::sessionfade::out(
+        state,
+        Box::new(move |state| act(state, goal, cmd, override_inhibitors)),
+    );
+}
+
+fn act(state: &mut State, goal: Goal, cmd: Option<String>, override_inhibitors: bool) {
     let Some(cmd) = cmd else {
         state.signal.stop();
         return;
@@ -305,6 +313,7 @@ enum Refused {
 
 fn refuse(state: &mut State, goal: Goal, why: &Refused) {
     log::warn!("session end: {goal:?} refused: {why:?}");
+    crate::sessionfade::restore(state);
     let title = match goal {
         Goal::Restart => "Restart Computer",
         Goal::TurnOff | Goal::LogOff => "Turn Off Computer",
