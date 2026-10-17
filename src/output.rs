@@ -388,8 +388,20 @@ impl State {
             crate::backend::defer_output_config(self, old);
             return false;
         }
-        if warm && (self.scale_warm.is_some() || self.start_scale_warm(old)) {
-            return false;
+        if warm {
+            if self.scale_warm.is_none() {
+                let scales: Vec<f32> = (crate::backend::heads(self).iter())
+                    .filter(|h| h.enabled)
+                    .map(|h| h.output.name())
+                    .filter(|name| crate::configwatch::output_change(old, &self.config, name).scale)
+                    .map(|name| self.config.scale_for_output_name(&name))
+                    .collect();
+                self.start_scale_warm(scales);
+            }
+            if let Some(w) = self.scale_warm.as_mut() {
+                w.old.get_or_insert_with(|| Box::new(old.clone()));
+                return false;
+            }
         }
         let mut geometry_changed = false;
         for head in crate::backend::heads(self) {
@@ -442,52 +454,32 @@ impl State {
         geometry_changed
     }
 
-    /// Paints, on a job, the art of each draw scale `old`'s reload brings that no output draws at
-    /// yet; the job's end applies the outputs against `old` and redraws as the reload does. False
-    /// when there is nothing to paint.
-    fn start_scale_warm(&mut self, old: &crate::config::Config) -> bool {
+    /// Paints, on a job, the art of the draw scales among output `scales` that no output runs at;
+    /// meanwhile `scale_warm` holds the output changes, which its end applies. Else nothing.
+    pub fn start_scale_warm(&mut self, scales: Vec<f32>) {
         let reprisekit::look::Look::Styled(style) = &self.config.theme.look else {
-            return false;
+            return;
         };
         let used: Vec<i32> = (self.scene.outputs().iter())
             .map(|o| self.draw_scale_at(Some(o)))
             .collect();
-        let mut scales = Vec::new();
-        for head in crate::backend::heads(self).iter().filter(|h| h.enabled) {
-            let name = head.output.name();
-            if !crate::configwatch::output_change(old, &self.config, &name).scale {
-                continue;
-            }
-            let n = draw_scale(quarter_scale(self.config.scale_for_output_name(&name)));
-            if !used.contains(&n) && !scales.contains(&n) {
-                scales.push(n);
-            }
-        }
+        let scales = new_draw_scales(&used, scales);
         let warm: Vec<_> = scales.iter().filter_map(|&n| style.warm(n)).collect();
         if warm.is_empty() {
-            return false;
+            return;
         }
         log::debug!("output scales {scales:?}: painting their art before the change");
         self.scale_warm = Some(ScaleWarm {
-            old: Box::new(old.clone()),
+            old: None,
+            heads: Vec::new(),
             scales,
         });
         self.spawn_fs_job(move || {
             for w in &warm {
                 w.paint();
             }
-            Box::new(|state: &mut State| {
-                let Some(w) = state.scale_warm.take() else {
-                    return;
-                };
-                // As the reload did, with the outputs at their new scale.
-                if state.apply_outputs(&w.old, false) {
-                    crate::configwatch::retheme(state);
-                    state.update_layout();
-                }
-            })
+            Box::new(finish_scale_warm)
         });
-        true
     }
 
     /// The layout changed: place the outputs, then refit the desktop to
@@ -728,12 +720,50 @@ impl State {
     }
 }
 
-/// A config reload's output changes waiting for a job painting the art of new draw scales.
+/// Output changes waiting for a job painting the art of new draw scales.
 pub struct ScaleWarm {
     /// The config before the first reload whose changes wait.
-    old: Box<crate::config::Config>,
+    old: Option<Box<crate::config::Config>>,
+    /// Output management applies, in arrival order.
+    heads: Vec<crate::outputmgmt::Pending>,
     /// Kept by `drop_unused_scales` while the job paints them.
     scales: Vec<i32>,
+}
+
+impl ScaleWarm {
+    /// Holds an output management apply until the job ends.
+    pub fn wait(&mut self, p: crate::outputmgmt::Pending) {
+        self.heads.push(p);
+    }
+}
+
+/// A scale warm's end: applies what waited, with the art of the new scales painted.
+fn finish_scale_warm(state: &mut State) {
+    let Some(w) = state.scale_warm.take() else {
+        return;
+    };
+    // As the reload did, with the outputs at their new scale.
+    if let Some(old) = w.old
+        && state.apply_outputs(&old, false)
+    {
+        crate::configwatch::retheme(state);
+        state.update_layout();
+    }
+    for p in w.heads {
+        crate::outputmgmt::answer(state, p);
+    }
+}
+
+/// The draw scales of output `scales` that are not in `used`, each once.
+fn new_draw_scales(used: &[i32], scales: impl IntoIterator<Item = f32>) -> Vec<i32> {
+    let mut out = Vec::new();
+    for s in scales {
+        let n = draw_scale(quarter_scale(s));
+        if !used.contains(&n) && !out.contains(&n) {
+            out.push(n);
+        }
+    }
+    out
 }
 
 /// An output scale as the compositor runs it: the nearest quarter step,
@@ -825,6 +855,16 @@ mod tests {
         assert_eq!(draw_scale(0.5), 1);
         assert_eq!(draw_scale(9.0), 4);
         assert_eq!(draw_scale(f32::NAN), 1);
+    }
+
+    #[test]
+    fn a_scale_change_warms_each_draw_scale_no_output_runs_at_once() {
+        assert_eq!(
+            new_draw_scales(&[1], [1.25, 1.5, 1.0, 2.2, 1.1]),
+            vec![2, 3],
+            "1.25 and 1.5 draw at 2, 2.2 runs at 2.25 and draws at 3, 1.1 runs at 1"
+        );
+        assert_eq!(new_draw_scales(&[1, 2], [2.0, 1.75]), Vec::<i32>::new());
     }
 
     fn mode(width: i32, height: i32, hz: i32, preferred: bool) -> ModeInfo {

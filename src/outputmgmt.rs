@@ -300,6 +300,42 @@ fn apply(state: &mut State, reqs: Vec<(String, HeadRequest)>) -> bool {
     ok
 }
 
+/// An applied configuration waiting for the art of the draw scales it brings
+/// (`State::start_scale_warm`).
+pub struct Pending {
+    reqs: Vec<(String, HeadRequest)>,
+    conf: ZwlrOutputConfigurationV1,
+    /// The heads' serial it was resolved against.
+    serial: u32,
+}
+
+/// Apply `p` once the art of any new draw scale it brings is painted off the main thread. The
+/// answer follows the apply either way: only then is the outcome known.
+fn apply_after_warm(state: &mut State, p: Pending) {
+    if state.scale_warm.is_none() && crate::backend::quiet(state) {
+        let scales = (p.reqs.iter())
+            .filter(|(_, r)| r.enabled)
+            .map(|(_, r)| r.scale as f32)
+            .collect();
+        state.start_scale_warm(scales);
+    }
+    match state.scale_warm.as_mut() {
+        Some(w) => w.wait(p),
+        None => answer(state, p),
+    }
+}
+
+/// Apply a waiting configuration and answer it; cancelled when the heads changed meanwhile.
+pub fn answer(state: &mut State, p: Pending) {
+    if p.serial != state.outputs_mgmt.serial {
+        p.conf.cancelled();
+    } else if apply(state, p.reqs) {
+        p.conf.succeeded();
+    } else {
+        p.conf.failed();
+    }
+}
+
 fn transform_from_wl(t: WlTransform) -> Option<Transform> {
     Some(match t {
         WlTransform::Normal => Transform::Normal,
@@ -493,11 +529,14 @@ impl Dispatch2<ZwlrOutputConfigurationV1, State> for ConfData {
                     conf.succeeded();
                     return;
                 }
-                if apply(state, reqs) {
-                    conf.succeeded();
-                } else {
-                    conf.failed();
-                }
+                apply_after_warm(
+                    state,
+                    Pending {
+                        reqs,
+                        conf: conf.clone(),
+                        serial: current,
+                    },
+                );
             }
             zwlr_output_configuration_v1::Request::Destroy => {
                 data.confs.remove(conf);
