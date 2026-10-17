@@ -325,6 +325,26 @@ pub fn keys(state: &mut State, output: &Output, start: bool) {
     refresh(state);
 }
 
+/// A key acts on bar `tree` (Enter, the Menu key): a bar still sliding in
+/// lands shown first, so the press reaches the item it names.
+pub fn land(state: &mut State, tree: TreeId) {
+    let Some(output) = state.bar(tree).map(|b| b.output.clone()) else {
+        return;
+    };
+    let Some(e) = state.bar_hide.entry_mut(&output) else {
+        return;
+    };
+    let now = Instant::now();
+    e.hide.land(now);
+    let drawn = e.hide.hidden(now);
+    if drawn == e.drawn {
+        return;
+    }
+    e.drawn = drawn;
+    state.with_bar(tree, |s, b| s.place_bar(b));
+    refresh(state);
+}
+
 /// A pointer button went down on bar `tree`. A bar not all the way out takes
 /// it as a press on its reveal line (`reveal_on_edge`). Returns whether the
 /// bar took the press.
