@@ -2085,7 +2085,7 @@ mod tests {
     }
 
     #[test]
-    fn a_preedit_range_draws_selected_with_the_caret_at_its_end() {
+    fn a_preedit_range_draws_only_underlined_with_the_caret_at_its_end() {
         let (theme, text) = setup();
         let cs = &theme.colors;
         let px = theme.fonts.size_px;
@@ -2105,14 +2105,15 @@ mod tests {
             Caret::Shown,
             0,
         );
-        let x_h = inner.x + text.measure("ni", false, px);
-        let x0 = inner.x + text.measure("nih", false, px);
+        let x0 = inner.x + text.measure("ni", false, px);
         let x1 = inner.x + text.measure("nihao", false, px);
-        let row = text.line(inner, false, px).unwrap().0;
         let hl = cs.hilight.argb();
-        assert_eq!(c.get(x0, row), hl, "ao starts on hilight");
-        assert_eq!(c.get(x1 - 1, row), hl, "ao ends on hilight");
-        assert!((x_h..x0).all(|x| c.get(x, row) != hl), "h is not selected");
+        assert!(c.pixels.iter().all(|&p| p != hl), "nothing on hilight");
+        let ul = text.baseline(inner, false, px).unwrap() + 1;
+        let ink = cs.button_text.argb();
+        assert!((x0..x1).all(|x| c.get(x, ul) == ink), "underline under hao");
+        let row = text.line(inner, false, px).unwrap().0;
+        assert_eq!(c.get(x1, row), ink, "the caret bar after hao");
         let spot = c.take_spot().expect("a focused field reports");
         assert_eq!(spot.caret.x, x1, "the caret ends the range");
     }

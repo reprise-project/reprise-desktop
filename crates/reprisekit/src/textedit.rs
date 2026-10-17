@@ -201,15 +201,15 @@ impl Caret {
     }
 }
 
-/// Text an input method is composing: drawn underlined at the focused edit's caret, not part of the text until committed. `cursor` is the byte range the input method marks (`None` hides the caret); a wider range is drawn selected.
+/// Text an input method is composing: drawn underlined at the focused edit's caret, not part of the text until committed. `cursor` is the caret's byte offset in it (`None` hides the caret).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Preedit {
     pub text: String,
-    pub cursor: Option<std::ops::Range<usize>>,
+    pub cursor: Option<usize>,
 }
 
 impl Preedit {
-    /// A preedit of `text` marking `begin..end` bytes as text-input-v3 sends it. A `begin` that is negative, past the end or inside a char hides the caret; a bad `end` leaves a plain caret at `begin`.
+    /// A preedit of `text` with the caret at `end`, from text-input-v3's `begin..end`: a range is not drawn, only its end. A `begin` that is negative, past the end or inside a char hides the caret; a bad `end` puts it at `begin`.
     pub fn new(text: String, begin: i32, end: i32) -> Option<Preedit> {
         if text.is_empty() {
             return None;
@@ -219,32 +219,26 @@ impl Preedit {
                 .ok()
                 .filter(|&c| text.is_char_boundary(c))
         };
-        let cursor = at(begin).map(|b| b..at(end).filter(|&e| e >= b).unwrap_or(b));
+        let cursor = at(begin).map(|b| at(end).filter(|&e| e >= b).unwrap_or(b));
         Some(Preedit { text, cursor })
     }
 
-    /// `text` with the preedit put in at byte `at`: the string to show, the preedit's byte range, and the range it marks.
-    pub fn splice(
-        &self,
-        text: &str,
-        at: usize,
-    ) -> (String, std::ops::Range<usize>, std::ops::Range<usize>) {
+    /// `text` with the preedit put in at byte `at`: the string to show, the preedit's byte range, and the caret's offset in the string.
+    pub fn splice(&self, text: &str, at: usize) -> (String, std::ops::Range<usize>, usize) {
         let at = text.floor_char_boundary(at);
         let mut shown = String::with_capacity(text.len() + self.text.len());
         shown.push_str(&text[..at]);
         shown.push_str(&self.text);
         shown.push_str(&text[at..]);
         let run = at..at + self.text.len();
-        let end = self.text.len();
-        let mark = self.cursor.clone().unwrap_or(end..end);
-        (shown, run, at + mark.start..at + mark.end)
+        (shown, run, at + self.cursor.unwrap_or(self.text.len()))
     }
 
-    /// `own` with the preedit put in at its caret, for a single-line painter: the edit to draw, the preedit's byte range, and whether the caret bar shows.
+    /// `own` with the preedit put in at its caret, for a single-line painter: the edit to draw (nothing selected), the preedit's byte range, and whether the caret bar shows.
     pub fn compose(&self, own: &TextEdit) -> (TextEdit, std::ops::Range<usize>, bool) {
-        let (t, run, mark) = self.splice(&own.text, own.caret());
+        let (t, run, caret) = self.splice(&own.text, own.caret());
         let mut e = TextEdit::new(t, false);
-        e.set_selection(mark.start, mark.end);
+        e.set_selection(caret, caret);
         (e, run, self.cursor.is_some())
     }
 }
@@ -1257,29 +1251,31 @@ mod tests {
     #[test]
     fn a_preedit_splices_in_at_the_caret_with_its_own_cursor() {
         let p = Preedit::new("nihao".into(), 2, 2).expect("not empty");
-        assert_eq!(p.splice("ab", 1), ("anihaob".into(), 1..6, 3..3));
+        assert_eq!(p.splice("ab", 1), ("anihaob".into(), 1..6, 3));
         let hidden = Preedit::new("你好".into(), -1, -1).expect("not empty");
         assert_eq!(hidden.cursor, None);
         let end = "你好".len();
-        assert_eq!(hidden.splice("", 0).2, end..end, "at its end");
+        assert_eq!(hidden.splice("", 0).2, end, "at its end");
         assert_eq!(Preedit::new("你".into(), 1, 1).unwrap().cursor, None);
         assert_eq!(Preedit::new(String::new(), 0, 0), None);
     }
 
     #[test]
-    fn a_preedit_range_is_selected_with_the_caret_at_its_end() {
+    fn a_preedit_range_puts_the_caret_at_its_end_and_selects_nothing() {
         let p = Preedit::new("nihao".into(), 0, 5).expect("not empty");
-        assert_eq!(p.cursor, Some(0..5));
-        assert_eq!(p.splice("ab", 1).2, 1..6);
+        assert_eq!(p.cursor, Some(5));
+        assert_eq!(p.splice("ab", 1).2, 6);
         let mut own = TextEdit::new("ab", false);
         own.place(1, false);
         let (e, run, bar) = p.compose(&own);
         assert_eq!((e.text.as_str(), run, bar), ("anihaob", 1..6, true));
-        assert_eq!((e.selection(), e.caret()), (1..6, 6));
+        assert_eq!((e.selection(), e.caret()), (6..6, 6));
+        let mid = Preedit::new("nihao".into(), 1, 3).expect("not empty");
+        assert_eq!(mid.cursor, Some(3));
         let back = Preedit::new("nihao".into(), 3, 1).expect("not empty");
-        assert_eq!(back.cursor, Some(3..3));
+        assert_eq!(back.cursor, Some(3));
         let split = Preedit::new("你好".into(), 0, 1).expect("not empty");
-        assert_eq!(split.cursor, Some(0..0));
+        assert_eq!(split.cursor, Some(0));
     }
 
     #[test]
