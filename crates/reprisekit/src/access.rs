@@ -276,13 +276,16 @@ pub enum Gesture {
     Click((f64, f64)),
     RightClick((f64, f64)),
     Hover((f64, f64)),
+    /// Give the control at the point the keyboard, as Tab would, without acting on it.
+    Focus((f64, f64)),
 }
 
 /// How a host carries out `act` on `target`: a click for Click, a right
-/// click for ContextMenu. Focus is a click only where a click does no
-/// more than Tab or the arrows would (a field, a list row, a tab) and a
-/// hover on a menu row; on a button a click would press it, so Focus is
-/// dropped there. ScrollIntoView is no gesture: the host scrolls the list
+/// click for ContextMenu. Focus is a click where a click does no more
+/// than Tab or the arrows would (a field, a list row, a tab) and a hover
+/// on a menu row; on anything else (a button, a check box) a click would
+/// act, so the host moves the keyboard there instead ([`Gesture::Focus`]).
+/// ScrollIntoView is no gesture: the host scrolls the list
 /// [`Published::reveal`] names.
 pub fn gesture(act: Act, target: Target) -> Option<Gesture> {
     let at = target.at;
@@ -304,7 +307,7 @@ pub fn gesture(act: Act, target: Target) -> Option<Gesture> {
             Role::MenuItem | Role::MenuItemCheckBox | Role::MenuItemRadio => {
                 Some(Gesture::Hover(at))
             }
-            _ => None,
+            _ => Some(Gesture::Focus(at)),
         },
         Act::ScrollIntoView => None,
     }
@@ -688,7 +691,7 @@ mod tests {
     }
 
     #[test]
-    fn a_reader_clicks_buttons_but_focuses_only_what_a_click_just_picks() {
+    fn a_readers_focus_clicks_only_what_a_click_just_picks() {
         let at = (5.0, 6.0);
         let on = |role| Target { role, at };
         assert_eq!(
@@ -699,7 +702,14 @@ mod tests {
             gesture(Act::ContextMenu, on(Role::Button)),
             Some(Gesture::RightClick(at))
         );
-        assert_eq!(gesture(Act::Focus, on(Role::Button)), None);
+        assert_eq!(
+            gesture(Act::Focus, on(Role::Button)),
+            Some(Gesture::Focus(at))
+        );
+        assert_eq!(
+            gesture(Act::Focus, on(Role::CheckBox)),
+            Some(Gesture::Focus(at))
+        );
         assert_eq!(
             gesture(Act::Focus, on(Role::TextInput)),
             Some(Gesture::Click(at))

@@ -354,6 +354,29 @@ impl StartPanel {
         }
     }
 
+    /// A reader moved the keyboard to `at`, as the arrows or Tab would: a row lights, a place or
+    /// Shut down takes the keyboard, the field takes it back. Nothing opens or runs.
+    pub fn focus_on(&mut self, at: Spot) -> Event {
+        match at {
+            Spot::Picture | Spot::Clear => Event::None,
+            Spot::Search if self.focus == Spot::Search && self.lit.is_none() => Event::None,
+            Spot::Search => {
+                self.hot = None;
+                self.lit = None;
+                self.focus = Spot::Search;
+                Event::Redraw
+            }
+            s if self.lit == Some(s) => Event::None,
+            s => {
+                if matches!(self.mode, Mode::Jump(_)) && matches!(s, Spot::Program(_)) {
+                    self.set_mode(Mode::Home);
+                }
+                self.light(s);
+                Event::Redraw
+            }
+        }
+    }
+
     /// The hover delay armed for `at` ran out. A row with a jump list
     /// opens it (another row closes an open one), All Programs opens the
     /// tree, the arrow opens the Shut down options. A fire for a spot the
@@ -1190,6 +1213,24 @@ pub(crate) mod tests {
             Event::Activate(Spot::Picture)
         );
         assert_eq!(p.press(Spot::Picture, Button::Right), Event::None);
+    }
+
+    #[test]
+    fn a_readers_focus_moves_the_keyboard_without_running_anything() {
+        let mut p = StartPanel::new();
+        p.frequent = vec![prow("Notepad", true)];
+        p.places = vec![place("Documents")];
+        assert_eq!(p.focus_on(Spot::Shutdown), Event::Redraw);
+        assert_eq!((p.focus(), p.lit()), (Spot::Shutdown, Some(Spot::Shutdown)));
+        assert_eq!(p.key(Key::Tab), Event::Redraw);
+        assert_eq!(p.focus(), Spot::ShutdownArrow, "Tab goes on from there");
+        assert_eq!(p.focus_on(Spot::Program(0)), Event::Redraw);
+        assert_eq!((p.focus(), p.lit()), (Spot::Search, Some(Spot::Program(0))));
+        assert_eq!(p.mode(), Mode::Home, "the jump list stays shut");
+        assert_eq!(p.focus_on(Spot::Program(0)), Event::None);
+        assert_eq!(p.focus_on(Spot::Picture), Event::None);
+        assert_eq!(p.focus_on(Spot::Search), Event::Redraw);
+        assert_eq!((p.focus(), p.lit()), (Spot::Search, None));
     }
 
     #[test]

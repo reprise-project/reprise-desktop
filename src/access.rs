@@ -1,7 +1,7 @@
 //! Screen reader side of the compositor's own surfaces: one AccessKit adapter per taskbar, menu stack, switcher, dialog, launcher, clipboard history, emoji picker, calendar, displays panel, tray flyout, task preview panel, notification history and the balloons, speaking AT-SPI on the session's accessibility bus.
 //! `accesskit_unix` runs its D-Bus side on its own thread and calls the handlers (`reprisekit::access::Handler`) there; they post a `Msg` to a calloop channel, so the loop never waits on the bus. Trees are built on the loop, in an idle pass [`touch`] queues, only for adapters a reader holds.
 //! Bounds are layout coordinates: a tree's root carries its surface's place as a transform and its controls lay out surface-local. A tree claims the focus only while its surface has the keyboard (see [`focus_of`]). The lock screen has no tree, so its password field's text stays here.
-//! A reader's action on a node runs as the click a user would give it ([`click`], `reprisekit::access::gesture`) through the pointer's press and release paths; focusing a taskbar item gives the bar the keyboard (`barkeys`); ScrollIntoView, or Focus on a row out of view, scrolls the row's list ([`reveal`]).
+//! A reader's action on a node runs as the click a user would give it ([`click`], `reprisekit::access::gesture`) through the pointer's press and release paths; focusing a taskbar item gives the bar the keyboard (`barkeys`), a dialog's button or a Start panel spot takes it unpressed; ScrollIntoView, or Focus on a row out of view, scrolls the row's list ([`reveal`]).
 //! The same idle pass moves the seat's keyboard for the menus, Glass Start menu, launcher and overview, reader or not: they take it from the window while open and give it back on close ([`move_keyboard`]).
 
 use reprisebus::a11y::{KeyEcho, KeyNote};
@@ -500,7 +500,8 @@ fn lands_on(state: &State, surface: Surface, hit: &Hit) -> bool {
 /// published: the click `reprisekit::access::gesture` picks, at the
 /// node's middle, if that point still lands on the surface. Focus on a
 /// taskbar item gives the bar the keyboard there; on a menu row it
-/// lights the row. ScrollIntoView, or Focus on a row out of view,
+/// lights the row; on a dialog's button or a Start panel spot it moves
+/// the keyboard there unpressed. ScrollIntoView, or Focus on a row out of view,
 /// scrolls the row's list ([`reveal`]).
 fn act(state: &mut State, surface: Surface, req: Request) {
     let published = (state.access.slots.iter())
@@ -532,6 +533,10 @@ fn act(state: &mut State, surface: Surface, req: Request) {
         crate::notifycenter::select_at(state, target.at.0, target.at.1);
         return;
     }
+    if let (Act::Focus, Hit::StartPanel { spot: Some(s) }) = (req.act, &hit) {
+        state.start_panel_focus(*s);
+        return;
+    }
     match reprisekit::access::gesture(req.act, target) {
         Some(Gesture::Click(at)) => click(state, at, BTN_LEFT),
         Some(Gesture::RightClick(at)) => click(state, at, BTN_RIGHT),
@@ -540,7 +545,24 @@ fn act(state: &mut State, surface: Surface, req: Request) {
                 state.menu_hover(depth, row);
             }
         }
+        Some(Gesture::Focus(at)) => {
+            if let Hit::Dialog { index, .. } = hit {
+                focus_dialog(state, index, at);
+            }
+        }
         None => {}
+    }
+}
+
+/// Give the keyboard to what lies at layout point `at` on dialog `index`, pressing nothing.
+fn focus_dialog(state: &mut State, index: usize, at: (f64, f64)) {
+    let px = state.config.theme.fonts.size_px;
+    let Some(v) = state.dialogs.views.get_mut(index) else {
+        return;
+    };
+    let (x, y) = (at.0 as i32 - v.x, at.1 as i32 - v.y);
+    if v.dialog.focus_at(&v.layout, x, y, &state.text, px) == crate::dialog::Outcome::Redraw {
+        state.redraw_dialog(index);
     }
 }
 

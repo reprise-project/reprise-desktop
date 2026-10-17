@@ -3040,6 +3040,65 @@ impl Dialog {
         }
     }
 
+    /// A reader moved the keyboard to what lies at dialog point (`x`, `y`), as Tab would: a form's
+    /// control, or one of the dialog's buttons. Nothing is pressed.
+    pub fn focus_at(
+        &mut self,
+        layout: &DialogLayout,
+        x: i32,
+        y: i32,
+        text: &TextRenderer,
+        px: u32,
+    ) -> Outcome {
+        match layout.hit(self, x, y, text, px) {
+            Some(DialogHit::Button(i)) => self.focus_button(i),
+            Some(DialogHit::Control(_)) => {
+                if let Some(f) = self.form_mut() {
+                    return redraw_if(match &mut f.body {
+                        FormBody::Sheet(s) => {
+                            s.focus_at(x, y, text, px)
+                                != reprisekit::controls::propsheet::Event::None
+                        }
+                        FormBody::Plain(form) => {
+                            form.focus_at(x, y, text, px) != reprisekit::controls::form::Event::None
+                        }
+                    });
+                }
+                match (self.copy_mut(), layout.page) {
+                    (Some(c), Some(client)) => {
+                        let ev = c.cp.form.focus_at(x - client.x, y - client.y, text, px);
+                        redraw_if(ev != reprisekit::controls::form::Event::None)
+                    }
+                    _ => Outcome::Nothing,
+                }
+            }
+            _ => Outcome::Nothing,
+        }
+    }
+
+    /// Button `i` takes the keyboard: in a dialog with a field it wears the focus as Tab gives it,
+    /// in one of buttons only it becomes the default as the arrows make it.
+    fn focus_button(&mut self, i: usize) -> Outcome {
+        if !self.buttons.get(i).is_some_and(|b| b.enabled) {
+            return Outcome::Nothing;
+        }
+        if let Some(f) = self.field.as_mut() {
+            if self.button_focus == Some(i) {
+                return Outcome::Nothing;
+            }
+            f.combo.open = None;
+            self.button_focus = Some(i);
+            return Outcome::Redraw;
+        }
+        if !self.buttons_only() || self.buttons[i].default {
+            return Outcome::Nothing;
+        }
+        for (k, b) in self.buttons.iter_mut().enumerate() {
+            b.default = k == i;
+        }
+        Outcome::Redraw
+    }
+
     /// A reader asked to see row `row` of the list at dialog point (`x`, `y`): a form page's list
     /// box or tree scrolls it in.
     pub fn reveal(&mut self, x: i32, y: i32, row: usize, text: &TextRenderer, px: u32) -> Outcome {
@@ -5330,6 +5389,31 @@ mod tests {
             unreachable!()
         };
         assert_eq!(c.top, 3);
+    }
+
+    #[test]
+    fn a_readers_focus_on_a_button_moves_the_keyboard_without_pressing_it() {
+        let Some(text) = tahoma() else { return };
+        let theme = Theme::default();
+        let px = theme.fonts.size_px;
+        let middle = |r: Rect| (r.x + r.width / 2, r.y + r.height / 2);
+        let mut run = Dialog::run(&history());
+        let l = DialogLayout::compute(&theme, &text, &run);
+        let (x, y) = middle(l.buttons[1]);
+        assert_eq!(run.focus_at(&l, x, y, &text, px), Outcome::Redraw);
+        assert_eq!(run.button_focus, Some(1), "Cancel wears the focus");
+        assert_eq!(run.focus_at(&l, x, y, &text, px), Outcome::Nothing);
+        assert_eq!(run.key(Key::Tab { back: false }), Outcome::Redraw);
+        assert_eq!(run.button_focus, Some(2), "Tab goes on from Cancel");
+
+        let path = std::path::Path::new("/srv/a.txt");
+        let mut ask = Dialog::confirm_delete("a.txt", path, false, false, false);
+        let l = DialogLayout::compute(&theme, &text, &ask);
+        let no = ask.buttons.iter().position(|b| !b.default).unwrap();
+        let (x, y) = middle(l.buttons[no]);
+        assert_eq!(ask.focus_at(&l, x, y, &text, px), Outcome::Redraw);
+        let defaults: Vec<bool> = ask.buttons.iter().map(|b| b.default).collect();
+        assert!(defaults[no] && defaults.iter().filter(|&&d| d).count() == 1);
     }
 
     #[test]

@@ -2969,6 +2969,13 @@ impl App for SettingsApp {
         Some(DropForm { form, px: None })
     }
 
+    fn reader_form(&mut self, win: WinId) -> Option<repriseapp::ReaderForm<'_>> {
+        if win == repriseapp::MAIN {
+            return Some(repriseapp::ReaderForm::Sheet(&mut self.sheet));
+        }
+        self.drop_form(win).map(repriseapp::ReaderForm::Form)
+    }
+
     fn drop_file_dialog(&mut self, win: WinId) -> Option<FileDrop<'_>> {
         (win == ADD_WIN).then_some(FileDrop {
             dlg: self.add.as_mut()?,

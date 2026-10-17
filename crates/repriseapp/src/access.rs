@@ -8,7 +8,12 @@
 use reprisekit::access::{Gesture, Handler, Published};
 use smithay_client_toolkit::reexports::calloop::channel::Sender;
 
-use crate::{BTN_LEFT, BTN_RIGHT, Mods, PointerInput, WinId};
+use crate::{BTN_LEFT, BTN_RIGHT, DropForm, Mods, PointerInput, WinId};
+use reprisekit::controls::{
+    form,
+    propsheet::{self, PropSheet},
+};
+use reprisekit::text::TextRenderer;
 
 pub(crate) type Msg = reprisekit::access::Msg<WinId>;
 
@@ -61,6 +66,46 @@ impl AccessState {
     }
 }
 
+/// What a screen reader's Focus and ScrollIntoView reach in a window without a click
+/// ([`crate::App::reader_form`]): a form, or a property sheet and its open page.
+pub enum ReaderForm<'a> {
+    Form(DropForm<'a>),
+    Sheet(&'a mut PropSheet),
+}
+
+impl ReaderForm<'_> {
+    /// The font size the form is drawn at, from the theme's `base`.
+    pub(crate) fn px(&self, base: u32) -> u32 {
+        match self {
+            ReaderForm::Form(d) => d.px.unwrap_or_else(|| d.form.units().px(base)),
+            ReaderForm::Sheet(s) => s.open().units().px(base),
+        }
+    }
+
+    /// Scroll row `row` of the list at (`x`, `y`) into view; true when it moved.
+    pub(crate) fn reveal(
+        self,
+        (x, y): (i32, i32),
+        row: usize,
+        text: &TextRenderer,
+        px: u32,
+    ) -> bool {
+        let form = match self {
+            ReaderForm::Form(d) => d.form,
+            ReaderForm::Sheet(s) => s.open_mut(),
+        };
+        form.reveal(x, y, row, text, px) != form::Event::None
+    }
+
+    /// Give the keyboard to the control at (`x`, `y`); true when it moved.
+    pub(crate) fn focus_at(self, (x, y): (i32, i32), text: &TextRenderer, px: u32) -> bool {
+        match self {
+            ReaderForm::Form(d) => d.form.focus_at(x, y, text, px) != form::Event::None,
+            ReaderForm::Sheet(s) => s.focus_at(x, y, text, px) != propsheet::Event::None,
+        }
+    }
+}
+
 /// The pointer input a user's click or hover would send for gesture `g`; a node's middle is
 /// rounded down to whole logical px.
 pub(crate) fn reader_input(g: Gesture, time: u32) -> Vec<PointerInput> {
@@ -85,6 +130,7 @@ pub(crate) fn reader_input(g: Gesture, time: u32) -> Vec<PointerInput> {
             x: x as i32,
             y: y as i32,
         }],
+        Gesture::Focus(_) => Vec::new(),
     }
 }
 
