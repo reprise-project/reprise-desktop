@@ -232,7 +232,9 @@ mod tests {
         use reprisekit::raster::Rect;
         let ctx = Ctx {
             theme: reprisekit::theme::Theme::default(),
-            text: reprisekit::text::TextRenderer::load(&reprisekit::theme::FontConfig::default()),
+            text: std::rc::Rc::new(reprisekit::text::TextRenderer::load(
+                &reprisekit::theme::FontConfig::default(),
+            )),
             icons: reprisekit::icontheme::IconCache::new(reprisekit::icontheme::IconTheme::load(
                 "test",
                 &[],
@@ -306,7 +308,9 @@ mod tests {
         use reprisekit::raster::Rect;
         let ctx = Ctx {
             theme: reprisekit::theme::Theme::default(),
-            text: reprisekit::text::TextRenderer::load(&reprisekit::theme::FontConfig::default()),
+            text: std::rc::Rc::new(reprisekit::text::TextRenderer::load(
+                &reprisekit::theme::FontConfig::default(),
+            )),
             icons: reprisekit::icontheme::IconCache::new(reprisekit::icontheme::IconTheme::load(
                 "test",
                 &[],
@@ -363,7 +367,9 @@ mod tests {
         use reprisekit::raster::Rect;
         let ctx = Ctx {
             theme: reprisekit::theme::Theme::default(),
-            text: reprisekit::text::TextRenderer::load(&reprisekit::theme::FontConfig::default()),
+            text: std::rc::Rc::new(reprisekit::text::TextRenderer::load(
+                &reprisekit::theme::FontConfig::default(),
+            )),
             icons: reprisekit::icontheme::IconCache::new(reprisekit::icontheme::IconTheme::load(
                 "test",
                 &[],
@@ -418,7 +424,9 @@ mod tests {
         use reprisekit::raster::{Canvas, Rect};
         let ctx = Ctx {
             theme: reprisekit::interfaces::theme_for(reprisekit::interface::Interface::Blue),
-            text: reprisekit::text::TextRenderer::load(&reprisekit::theme::FontConfig::default()),
+            text: std::rc::Rc::new(reprisekit::text::TextRenderer::load(
+                &reprisekit::theme::FontConfig::default(),
+            )),
             icons: reprisekit::icontheme::IconCache::new(reprisekit::icontheme::IconTheme::load(
                 "test",
                 &[],
@@ -565,7 +573,9 @@ mod tests {
         use reprisekit::textedit::keysym::{END, HOME};
         let ctx = Ctx {
             theme: reprisekit::theme::Theme::default(),
-            text: reprisekit::text::TextRenderer::load(&reprisekit::theme::FontConfig::default()),
+            text: std::rc::Rc::new(reprisekit::text::TextRenderer::load(
+                &reprisekit::theme::FontConfig::default(),
+            )),
             icons: reprisekit::icontheme::IconCache::new(reprisekit::icontheme::IconTheme::load(
                 "test",
                 &[],

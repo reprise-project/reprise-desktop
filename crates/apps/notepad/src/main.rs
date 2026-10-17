@@ -35,6 +35,7 @@ use reprisekit::text::TextRenderer;
 use reprisekit::textedit::{EditKey, TextEdit, keysym};
 use reprisekit::theme::{FontConfig, Theme};
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
 
 const GOTO: WinId = "goto";
 const GOTO_CLIENT: (i32, i32) = (268, 95);
@@ -204,7 +205,7 @@ struct Notepad {
     overwrite_focus: usize,
     lossy: Option<(MsgBox, String)>,
     /// Kept here because `children(&self)` has no `Ctx`.
-    dialog_text: TextRenderer,
+    dialog_text: Rc<TextRenderer>,
     /// The dialog font's px at 100%; file dialogs stay at it.
     dialog_px: u32,
     /// The forms theme with the dialog font at the text size: Find, Replace, Go To, About and the
@@ -371,7 +372,7 @@ impl Notepad {
             overwrite: None,
             overwrite_focus: 1,
             lossy: None,
-            dialog_text: TextRenderer::load(&repriseapp::start_fonts()),
+            dialog_text: repriseapp::start_text(),
             dialog_px: Theme::default().fonts.size_px,
             forms: Theme::default(),
             open: None,
@@ -1612,6 +1613,7 @@ impl App for Notepad {
     }
 
     fn event(&mut self, win: WinId, ev: Event, ctx: &mut Ctx) -> Reply {
+        self.dialog_text = ctx.text.clone();
         self.prime(ctx);
         // The keyboard is in a dialog, so a held Alt will be released there.
         if win != MAIN {
@@ -1656,6 +1658,7 @@ impl App for Notepad {
     }
 
     fn draw(&mut self, win: WinId, c: &mut Canvas, ctx: &Ctx) {
+        self.dialog_text = ctx.text.clone();
         self.follow(ctx);
         let cs = &ctx.theme.colors;
         let forms = ctx.forms();
@@ -2790,7 +2793,7 @@ mod tests {
     pub(crate) fn test_ctx() -> Ctx {
         Ctx {
             theme: Theme::default(),
-            text: tr(),
+            text: tr().into(),
             icons: reprisekit::icontheme::IconCache::new(reprisekit::icontheme::IconTheme::load(
                 "test",
                 &[],
