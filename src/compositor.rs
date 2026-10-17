@@ -214,7 +214,7 @@ pub struct State {
     /// The fade timer, while something fades.
     pub hover_timer: Option<smithay::reexports::calloop::RegistrationToken>,
     pub text: TextRenderer,
-    pub caption_text: TextRenderer,
+    pub caption_text: Rc<TextRenderer>,
     /// The move, size or caption button press the pointer is in.
     pub interaction: Interaction,
     /// Left presses on a frame's caption or icon, paired into double clicks.
@@ -696,17 +696,18 @@ pub struct Globals {
 }
 
 /// The caption renderer for `theme`'s look: the style's own font, or the
-/// body font for Classic, which sets both in it.
-pub fn caption_text(theme: &crate::theme::Theme) -> TextRenderer {
+/// body font for Classic, which sets both in it. A style's is the one the kit's
+/// popups draw with (`look::caption_text`), so the font loads once.
+pub fn caption_text(theme: &crate::theme::Theme) -> Rc<TextRenderer> {
     match theme.look.style() {
-        Some(s) => TextRenderer::load(&s.caption_text.font()),
+        Some(s) => reprisekit::look::caption_text(s),
         None => {
             // Classic sets no dialog, so it loads no second dialog font.
             let fonts = crate::theme::FontConfig {
                 shell_dlg: None,
                 ..theme.fonts.clone()
             };
-            TextRenderer::load(&fonts)
+            Rc::new(TextRenderer::load(&fonts))
         }
     }
 }
@@ -736,4 +737,19 @@ pub struct ClientState {
 impl ClientData for ClientState {
     fn initialized(&self, _client_id: ClientId) {}
     fn disconnected(&self, _client_id: ClientId, _reason: DisconnectReason) {}
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_styled_caption_renderer_is_the_one_the_kits_popups_draw_with() {
+        let theme = reprisekit::interfaces::theme_for(reprisekit::interface::Interface::Glass);
+        let style = theme.look.style().unwrap();
+        assert!(Rc::ptr_eq(
+            &caption_text(&theme),
+            &reprisekit::look::caption_text(style)
+        ));
+    }
 }
