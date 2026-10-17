@@ -681,6 +681,16 @@ pub fn command_folder(cmd: &str, home: Option<&std::path::Path>) -> Option<std::
     path.is_absolute().then_some(path)
 }
 
+/// The file `xdg-open <file>` opens; None for any other command line.
+pub fn xdg_open_file(argv: &[std::ffi::OsString]) -> Option<&std::path::Path> {
+    match argv {
+        [open, file] if open == "xdg-open" => {
+            Some(std::path::Path::new(file)).filter(|p| p.is_absolute())
+        }
+        _ => None,
+    }
+}
+
 /// The entry id `gtk-launch [options] <id> [uris]` names, `.desktop` optional.
 fn gtk_launch_id(cmd: &str) -> Option<String> {
     let argv = reprisefs::apps::exec_argv(cmd);
@@ -812,6 +822,28 @@ mod tests {
             "org.gnome.Calculator"
         );
         assert_eq!(log_name(None, "/usr/bin/foot"), "foot");
+    }
+
+    #[test]
+    fn a_document_shortcut_names_its_file_and_a_program_launcher_names_none() {
+        let argv = |exec: &str| {
+            let text = format!("[Desktop Entry]\nType=Application\nName=N\nExec={exec}\n");
+            match crate::quicklaunch::parse(&text, "n.desktop", "foot")
+                .unwrap()
+                .action
+            {
+                crate::config::Action::Exec { argv, .. } => argv,
+                a => panic!("{a:?}"),
+            }
+        };
+        let doc = argv("xdg-open \"/home/u/My notes.txt\"");
+        assert_eq!(
+            xdg_open_file(&doc),
+            Some(std::path::Path::new("/home/u/My notes.txt"))
+        );
+        assert_eq!(xdg_open_file(&argv("xdg-open https://example.org/")), None);
+        assert_eq!(xdg_open_file(&argv("xdg-open a.txt b.txt")), None);
+        assert_eq!(xdg_open_file(&argv("gedit /home/u/a.txt")), None);
     }
 
     #[test]
