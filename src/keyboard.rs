@@ -572,13 +572,15 @@ impl State {
                 }
             }
             Action::Cycle | Action::Flip => {
-                // The keys reach here past an open menu or popup
-                // (`keyroute::switch_bind`); it closes first.
+                // The keys reach here past an open menu, popup, overview or
+                // snap picker (`keyroute::switch_bind`); it closes first.
                 self.close_menu();
                 self.close_start_panel();
                 self.close_launcher();
                 self.close_clipview();
                 self.close_emoji();
+                self.close_overview();
+                crate::snappickerview::hide(self);
                 if *a == Action::Flip && bind_mods != 0 && self.flip_wanted() {
                     self.open_flip(bind_mods);
                 } else if bind_mods != 0
