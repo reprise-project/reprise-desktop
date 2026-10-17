@@ -1112,7 +1112,7 @@ impl State {
             }
             DesktopCommand::SendTo => {
                 let view = self.desktop.as_mut()?;
-                let rows = reprisefs::sendto::session_rows(view.drives.current());
+                let rows = reprisefs::sendto::session_rows(&view.drives.found);
                 let (mut items, commands) = crate::desktopview::send_to_menu(&rows);
                 for (item, r) in items.iter_mut().zip(&rows) {
                     if let MenuItem::Entry { icon, .. } = item {

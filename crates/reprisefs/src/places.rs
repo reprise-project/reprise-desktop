@@ -213,9 +213,10 @@ pub fn dialog_places(recent: bool) -> Vec<DialogPlace> {
     ]
 }
 
-/// Writable folders under `/run/media/<user>` and `/media`, sorted by name.
+/// Writable mount points under `/run/media/<user>` and `/media`, sorted by name.
 /// Read-only mounts are left out rather than offered and failed, and so are
-/// network mounts: a `stat` on a wedged one blocks the caller's loop.
+/// network mounts: a `stat` on a wedged one blocks the caller's loop. A folder
+/// there that is no mount point (one left behind by an unmount) is no drive.
 pub fn mounted_drives() -> Vec<PathBuf> {
     MountedDrives::new().current().to_vec()
 }
@@ -254,13 +255,14 @@ impl MountedDrives {
             return &self.drives;
         }
         let remote = network_mounts(&mounts);
+        let mounted: HashSet<PathBuf> = mount_table(&mounts).into_iter().map(|(p, _)| p).collect();
         self.drives = self
             .roots
             .iter()
             .filter_map(|r| std::fs::read_dir(r).ok())
             .flatten()
             .filter_map(|e| e.ok().map(|e| e.path()))
-            .filter(|p| !remote.contains(p))
+            .filter(|p| mounted.contains(p) && !remote.contains(p))
             .filter(|p| {
                 std::fs::metadata(p)
                     .is_ok_and(|m| m.is_dir() && m.permissions().mode() & 0o200 != 0)
@@ -723,13 +725,22 @@ sshfs#u@h:/ /media/ssh fuse.sshfs rw 0 0
         let t = tempfile::tempdir().unwrap();
         let (root, table) = (t.path().join("media"), t.path().join("mounts"));
         std::fs::create_dir_all(root.join("STICK")).unwrap();
-        std::fs::write(&table, "/dev/sdb1 /media/STICK vfat rw 0 0\n").unwrap();
+        let line =
+            |dev: &str, name: &str| format!("{dev} {} vfat rw 0 0\n", root.join(name).display());
+        let stick = line("/dev/sdb1", "STICK");
+        std::fs::write(&table, &stick).unwrap();
         let mut drives = MountedDrives::at(table.clone(), vec![root.clone()]);
         assert_eq!(drives.current(), [root.join("STICK")]);
         std::fs::create_dir(root.join("CARD")).unwrap();
         assert_eq!(drives.current(), [root.join("STICK")]);
-        std::fs::write(&table, "/dev/sdc1 /media/CARD vfat rw 0 0\n").unwrap();
+        std::fs::write(&table, stick.clone() + &line("/dev/sdc1", "CARD")).unwrap();
         assert_eq!(drives.current(), [root.join("CARD"), root.join("STICK")]);
+        std::fs::write(&table, line("/dev/sdc1", "CARD")).unwrap();
+        assert_eq!(
+            drives.current(),
+            [root.join("CARD")],
+            "STICK unmounted; its folder is left behind"
+        );
     }
 
     #[test]
@@ -888,6 +899,9 @@ sshfs#u@h:/ /media/ssh fuse.sshfs rw 0 0
         let mut text = b"/dev/sdb1 /media/Caf\xe9 vfat rw 0 0\n".to_vec();
         text.extend_from_slice(
             format!("srv:/x {} nfs4 rw 0 0\n", root.join("NAS").display()).as_bytes(),
+        );
+        text.extend_from_slice(
+            format!("/dev/sdc1 {} vfat rw 0 0\n", root.join("STICK").display()).as_bytes(),
         );
         std::fs::write(&table, text).unwrap();
         let mut drives = MountedDrives::at(table, vec![root.clone()]);
