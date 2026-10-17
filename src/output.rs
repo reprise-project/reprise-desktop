@@ -723,14 +723,18 @@ impl State {
     /// Paints, on a job, the popups' art at each draw scale the outputs run at, so the first
     /// Alt+Tab, preview or Start menu of a session, look or scale finds it painted.
     fn warm_popup_parts(&mut self) {
-        let reprisekit::look::Look::Styled(style) = &self.config.theme.look else {
+        if self.config.theme.look.style().is_none() {
             return;
-        };
+        }
         let mut scales: Vec<i32> = (self.scene.outputs().iter())
             .map(|o| self.draw_scale_at(Some(o)))
             .collect();
         scales.sort_unstable();
         scales.dedup();
+        self.warm_user_pictures(&scales);
+        let reprisekit::look::Look::Styled(style) = &self.config.theme.look else {
+            return;
+        };
         let warm: Vec<_> = (scales.iter())
             .filter_map(|&n| style.warm_parts(n, &POPUP_PARTS))
             .collect();
