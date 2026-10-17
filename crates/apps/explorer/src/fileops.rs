@@ -322,7 +322,9 @@ impl Explorer {
     ) -> Reply {
         match asker.step() {
             Step::Cancelled => Reply::none(),
-            Step::Ask { .. } if matches!(self.dialog, Some(Dialog::Replace(_))) => {
+            Step::Ask { .. }
+                if matches!(self.dialog, Some(Dialog::Replace(_))) || self.asking.is_some() =>
+            {
                 self.replace_waiting.push_back((pending, asker));
                 Reply::none()
             }
@@ -331,9 +333,6 @@ impl Explorer {
                 clash,
                 inside,
             } => {
-                if let Some(Dialog::Message { title, text }) = self.dialog.take() {
-                    self.messages_waiting.push_back((title, text));
-                }
                 let many = pending.items.len() > 1 || inside.is_some();
                 let item = &pending.items[index].src;
                 let (src, dir) = match &inside {
@@ -345,17 +344,29 @@ impl Explorer {
                     }
                     None => (item.clone(), pending.dir.clone()),
                 };
-                let mut fields = self.replace_fields(&src, &dir, clash, many, ctx);
-                fields.folder = inside
+                let folder = inside
                     .as_deref()
                     .map(|under| replace::merge_folder(item, under));
-                self.dialog = Some(Dialog::Replace(Box::new(ReplaceAsk {
-                    fields,
-                    asker,
+                let ask = Asking {
                     pending,
-                    focus: None,
-                })));
-                Reply::redraw_all()
+                    asker,
+                    src: src.clone(),
+                    many,
+                    folder,
+                };
+                let dest = dir.join(src.file_name().unwrap_or_default());
+                let read = move || {
+                    let is_12h = reprisefs::locale::is_12h();
+                    (clash == Clash::File)
+                        .then(|| [dest, src].map(|path| ReadSide::of(path, is_12h)))
+                };
+                match self.read_job(ctx, read) {
+                    Ok(sides) => self.open_replace(ask, sides, ctx),
+                    Err(job) => {
+                        self.asking = Some((ask, job));
+                        Reply::none()
+                    }
+                }
             }
             Step::Done(verdicts) => {
                 pending.apply(&verdicts);
@@ -372,41 +383,48 @@ impl Explorer {
         }
     }
 
-    fn replace_fields(
-        &self,
-        src: &Path,
-        dir: &Path,
-        clash: Clash,
-        many: bool,
-        ctx: &mut Ctx,
-    ) -> replacebox::Fields {
-        let is_12h = reprisefs::locale::is_12h();
-        let side = |path: &Path, ex: &Self, ctx: &mut Ctx| {
-            let (size, modified) = replace::facts(path, is_12h);
-            let icon = ex.icon_name_for(path, ctx);
+    /// Raises the replace prompt for `ask` on its sides as read ([`ReadSide`]); a message box up
+    /// waits behind it.
+    fn open_replace(&mut self, ask: Asking, sides: Option<[ReadSide; 2]>, ctx: &mut Ctx) -> Reply {
+        if let Some(Dialog::Message { title, text }) = self.dialog.take() {
+            self.messages_waiting.push_back((title, text));
+        }
+        let side = |s: ReadSide, ex: &Self, ctx: &mut Ctx| {
+            let icon = ex.icon_name_as(&s.path, s.is_dir, ctx);
             replacebox::Side {
-                size,
-                modified,
+                size: s.size,
+                modified: s.modified,
                 icon: ctx.icons.get(&icon, 32),
             }
         };
-        let subject = match clash {
-            Clash::File => {
-                let dest = dir.join(src.file_name().unwrap_or_default());
-                replacebox::Subject::File {
-                    existing: Box::new(side(&dest, self, ctx)),
-                    incoming: Box::new(side(src, self, ctx)),
-                }
-            }
-            Clash::Folder => replacebox::Subject::Folder,
+        let subject = match sides {
+            Some([existing, incoming]) => replacebox::Subject::File {
+                existing: Box::new(side(existing, self, ctx)),
+                incoming: Box::new(side(incoming, self, ctx)),
+            },
+            None => replacebox::Subject::Folder,
         };
-        replacebox::Fields {
-            name: file_label(src),
-            folder: None,
+        let fields = replacebox::Fields {
+            name: file_label(&ask.src),
+            folder: ask.folder,
             subject,
             icon: crate::chrome_icon(ctx, &["folder"], 32),
-            many,
-        }
+            many: ask.many,
+        };
+        self.dialog = Some(Dialog::Replace(Box::new(ReplaceAsk {
+            fields,
+            asker: ask.asker,
+            pending: ask.pending,
+            focus: None,
+        })));
+        Reply::redraw_all()
+    }
+
+    /// Raises the replace prompt whose sides ([`Explorer::ask_replace`]) were read late.
+    pub(crate) fn take_asking(&mut self, ctx: &mut Ctx) -> Option<Reply> {
+        let sides = self.asking.as_ref()?.1.take()?;
+        let (ask, _) = self.asking.take()?;
+        Some(self.open_replace(ask, sides, ctx))
     }
 
     fn start_put(&mut self, pending: PendingPut, ops: Vec<ItemOp>, ctx: &Ctx) {
@@ -1094,18 +1112,46 @@ impl Explorer {
             .collect()
     }
 
-    fn icon_name_for(&self, path: &Path, ctx: &mut Ctx) -> String {
-        self.icon_name_as(path, path.is_dir(), ctx)
-    }
-
-    /// [`Explorer::icon_name_for`] for a path already known to be a folder or not.
+    /// The icon of a file or folder already known to be one or the other; it reads nothing on disk.
     fn icon_name_as(&self, path: &Path, is_dir: bool, ctx: &mut Ctx) -> String {
         if is_dir {
             return "folder".to_string();
         }
-        let mime = reprisefs::apps::mime_of_in(&self.globs, path);
+        let mime = path
+            .file_name()
+            .and_then(|n| self.globs.mime_of_name(&n.to_string_lossy()));
         let has = |n: &str| ctx.icons.has(n);
         reprisefs::icons::pick_icon(mime.as_deref(), path, &has)
+    }
+}
+
+/// A replace prompt waiting on its sides: the batch, its asker, the incoming file and what the
+/// prompt says of it.
+pub(crate) struct Asking {
+    pending: PendingPut,
+    asker: Asker,
+    src: PathBuf,
+    many: bool,
+    folder: Option<String>,
+}
+
+/// One file of the replace prompt, read off the loop: its size and date lines and whether it is a folder.
+pub(crate) struct ReadSide {
+    path: PathBuf,
+    size: String,
+    modified: String,
+    is_dir: bool,
+}
+
+impl ReadSide {
+    fn of(path: PathBuf, is_12h: bool) -> ReadSide {
+        let (size, modified) = replace::facts(&path, is_12h);
+        ReadSide {
+            is_dir: path.is_dir(),
+            path,
+            size,
+            modified,
+        }
     }
 }
 

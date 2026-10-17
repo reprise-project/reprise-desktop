@@ -828,7 +828,7 @@ impl Explorer {
     /// With no box up, raise what waited for the replace prompt: the next
     /// batch's prompt first, then the error boxes, one at a time.
     pub(crate) fn show_waiting(&mut self, ctx: &mut Ctx) -> Reply {
-        while self.dialog.is_none() {
+        while self.dialog.is_none() && self.asking.is_none() {
             if let Some((pending, asker)) = self.replace_waiting.pop_front() {
                 self.ask_replace(pending, asker, ctx);
             } else if let Some((title, text)) = self.messages_waiting.pop_front() {
