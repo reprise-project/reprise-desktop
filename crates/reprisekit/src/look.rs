@@ -107,6 +107,22 @@ pub fn ink_on_glass(theme: &Theme) -> Option<Color> {
     Some(if theme.active { t.color } else { t.inactive })
 }
 
+/// `ink` greyed for a disabled label or arrow over clear [`client_glass`]: 3/5 of the way from
+/// the look's label glow, which reads over a bright backdrop where the dialog grey and its etch
+/// fade into the glow; `ink` itself in a look without a glow.
+pub fn greyed_on_glass(p: &Paint, ink: Color) -> Color {
+    let Some(glow) = p.look.style().and_then(|s| s.label_glow) else {
+        return ink;
+    };
+    let mix = |i: u8, g: u8| ((3 * u32::from(i) + 2 * u32::from(g) + 2) / 5) as u8;
+    let g = glow.color;
+    Color::rgb(mix(ink.r, g.r), mix(ink.g, g.g), mix(ink.b, g.b))
+}
+
+/// How much of a disabled icon shows over clear [`client_glass`] (num, den): more than a
+/// dialog's half, as the glow under it follows its coverage.
+pub const GREYED_ICON_ON_GLASS: (u32, u32) = (2, 3);
+
 /// Lay the look's label glow (or halo) under whatever is drawn in `r` over clear
 /// [`client_glass`], so labels and icons there read on any tint; nothing in a look without one.
 pub fn glow_on_glass(canvas: &mut Canvas, theme: &Theme, r: Rect) {
