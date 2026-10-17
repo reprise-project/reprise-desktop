@@ -847,7 +847,7 @@ impl Loop {
     /// Run `call` beside the loop, so a peer that never answers holds up only its own call.
     fn spawn(&mut self, call: impl Future<Output = ()> + Send + 'static) {
         let done = futures_util::stream::once(call).filter_map(|()| std::future::ready(None));
-        self.streams.push(done.boxed());
+        self.streams.push(pumped(&self.conn, done));
     }
 
     fn fetch(&mut self, bus: String, path: String, settle: Duration) {
@@ -876,7 +876,8 @@ impl Loop {
             let item = fetch_item(&conn, &icons, &bus, &path).await.map(Box::new);
             Wake::Fetched { key, fetch, item }
         };
-        self.streams.push(futures_util::stream::once(read).boxed());
+        self.streams
+            .push(pumped(&self.conn, futures_util::stream::once(read)));
     }
 
     async fn fetched(&mut self, key: String, fetch: u64, item: Option<Box<TrayItem>>) {
@@ -1115,8 +1116,9 @@ async fn signal_stream(
     Some(pumped(proxy.connection(), wakes))
 }
 
-/// Drain `stream` on the connection's executor, so a full zbus match queue never stops the socket
-/// while the loop is inside an await. Dropping the returned stream cancels the drain.
+/// Drain `stream` on the connection's executor, so it moves while the loop is inside an await: a
+/// full zbus match queue never stops the socket, and a call never sits on the connection's write
+/// lock until the loop polls again. Dropping the returned stream cancels the drain.
 fn pumped<T: Send + 'static>(
     conn: &Connection,
     stream: impl futures_util::Stream<Item = T> + Send + 'static,
@@ -1833,6 +1835,43 @@ mod tests {
             futures_lite::future::or(script, futures_lite::future::or(run, serve)).await
         });
         assert_eq!(added.as_deref(), Some(":1.1/answering"));
+    }
+
+    /// A bus call holds zbus's write lock until its message is out, so a read the loop started
+    /// must run while the loop awaits a call of its own, not only when the loop polls its streams.
+    #[test]
+    fn an_item_read_reaches_the_item_while_the_loop_is_busy() {
+        let (tx, _events) = std::sync::mpsc::channel();
+        // SAFETY: eventfd takes no pointers; the result is checked below.
+        let fd = unsafe { libc::eventfd(0, libc::EFD_NONBLOCK | libc::EFD_CLOEXEC) };
+        assert!(fd >= 0, "eventfd failed");
+        // SAFETY: `fd` was just opened and nothing else owns it.
+        let fd = unsafe { OwnedFd::from_raw_fd(fd) };
+        let titles = AtomicUsize::new(0);
+        zbus::block_on(async {
+            let (ours, item) = peers(Duration::from_secs(10)).await;
+            let calls = zbus::MessageStream::from(&item);
+            let mut lp = test_loop(ours, tx, fd.as_raw_fd());
+            lp.fetch(":1.1".into(), "/answering".into(), Duration::ZERO);
+            let busy = async {
+                for _ in 0..200 {
+                    if titles.load(Ordering::Relaxed) > 0 {
+                        break;
+                    }
+                    async_io::Timer::after(Duration::from_millis(10)).await;
+                }
+            };
+            let serve = async {
+                serve_items(item.clone(), calls, &titles).await;
+                std::future::pending().await
+            };
+            futures_lite::future::or(busy, serve).await;
+        });
+        assert_eq!(
+            titles.load(Ordering::Relaxed),
+            1,
+            "the Title read reached the item"
+        );
     }
 
     #[test]
