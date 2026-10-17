@@ -1084,6 +1084,140 @@ impl Hit {
     }
 }
 
+/// One List row as `draw_list_row` paints it.
+struct ListRow<'a> {
+    name: &'a str,
+    icon: Option<&'a Canvas>,
+    mark: Mark,
+    selected: bool,
+    /// False while the name is being renamed: the host draws the rename box over the label.
+    label: bool,
+}
+
+/// The label's part of an already-scaled List cell: all of it right of the icon.
+fn label_area(cell_s: Rect, s: i32) -> Rect {
+    Rect::new(
+        cell_s.x + ICON_PX * s,
+        cell_s.y,
+        (cell_s.width - ICON_PX * s).max(0),
+        cell_s.height,
+    )
+}
+
+/// `row` in the already-scaled List cell `cell_s`, clipped to `clip_s`.
+fn draw_list_row(
+    c: &mut Canvas,
+    text: &TextRenderer,
+    p: &Paint,
+    row: &ListRow,
+    cell_s: Rect,
+    clip_s: Rect,
+    px: u32,
+) {
+    let Paint { cs, s, .. } = *p;
+    let label_full = label_area(cell_s, s);
+    let shown = text.ellipsize(row.name, label_full.width, false, px);
+    // A look that boxes its items boxes the icon and name, 3 px past its ink, under both; the text stays.
+    let ink_w = text.measure(&shown, false, px);
+    let item_box = Rect::new(
+        cell_s.x,
+        cell_s.y,
+        ICON_PX * s + ink_w + 3 * s,
+        cell_s.height,
+    )
+    .intersect(&clip_s);
+    let boxed = item::draw_item(c, p, item_box, row.mark);
+    if let Some(icon) = row.icon {
+        let dy = (cell_s.height / s - ICON_PX) / 2 * s;
+        c.blit_over_clipped(cell_s.x, cell_s.y + dy, icon, clip_s);
+    }
+    let label = label_full.intersect(&clip_s);
+    if label.is_empty() || !row.label {
+        return;
+    }
+    let fg = if row.selected && !boxed {
+        c.fill_rect(label, cs.hilight);
+        cs.hilight_text
+    } else {
+        cs.window_text
+    };
+    text.draw_clipped(c, label_full, label, &shown, false, fg, Align::Left, px);
+}
+
+/// One dragged List or Details entry: its index and its 16 px icon at the image's scale.
+pub struct DragRow<'a> {
+    pub index: usize,
+    pub icon: Option<&'a Canvas>,
+}
+
+/// The image a List or Details drag of `rows` carries: each row's icon and name painted as an
+/// unselected List row where the row sits in the view, faded 1:2, keeping only the rows the body
+/// shows. Details rows take the Name column's width, from its icon. Returns the image at
+/// `theme.scale` and the point of it under `pointer`, in view coordinates; None in the icon modes.
+pub fn drag_image(
+    theme: &crate::theme::Theme,
+    text: &TextRenderer,
+    sv: &ShellView,
+    lay: &Layout,
+    rows: &[DragRow],
+    pointer: (i32, i32),
+) -> Option<(Canvas, (i32, i32))> {
+    let (body, row_of): (Rect, Box<dyn Fn(Rect) -> Rect>) = match sv.mode {
+        Mode::List => (lay.body, Box::new(|cell| cell)),
+        Mode::Details => {
+            let lv = details_listview(sv);
+            let lv_lay = listview::layout(&lv, lay.frame, &lay.controls);
+            let x = lv_lay.body.x - lv.left_in(&lv_lay) + listview::ICON_X;
+            let w = sv
+                .columns
+                .first()
+                .map_or(0, |col| lv_lay.col_w(col) - listview::ICON_X);
+            let body = lv_lay.body;
+            (
+                body,
+                Box::new(move |cell: Rect| Rect::new(x, cell.y, w, cell.height)),
+            )
+        }
+        Mode::Thumbnails | Mode::Tiles | Mode::Icons => return None,
+    };
+    let placed: Vec<(&DragRow, &Entry, Rect)> = rows
+        .iter()
+        .filter_map(|r| {
+            let cell = row_of(*lay.cells.get(r.index)?);
+            let e = sv.entries.get(r.index)?;
+            (!cell.intersect(&body).is_empty()).then_some((r, e, cell))
+        })
+        .collect();
+    let bounds = placed
+        .iter()
+        .map(|&(_, _, cell)| cell.intersect(&body))
+        .reduce(|a, b| a.union(&b))?;
+    let p = theme.paint();
+    let s = p.s;
+    let mut c = Canvas::new((bounds.width * s) as u32, (bounds.height * s) as u32);
+    let at = |r: Rect| Rect::new(r.x - bounds.x, r.y - bounds.y, r.width, r.height).scaled(s);
+    for (r, e, cell) in placed {
+        let row = ListRow {
+            name: &e.name,
+            icon: r.icon,
+            mark: Mark::default(),
+            selected: false,
+            label: true,
+        };
+        draw_list_row(
+            &mut c,
+            text,
+            &p,
+            &row,
+            at(cell),
+            at(cell.intersect(&body)),
+            theme.fonts.size_px,
+        );
+    }
+    c.fade(1, 2);
+    Some((c, (pointer.0 - bounds.x, pointer.1 - bounds.y)))
+}
+
 pub fn draw(
     c: &mut Canvas,
     text: &TextRenderer,
@@ -1124,48 +1258,21 @@ pub fn draw(
         if visible.is_empty() {
             continue;
         }
-        let selected = sv.selection.is(i) || sv.drop_target == Some(i);
-        let cell_s = cell.scaled(s);
-        let visible_s = visible.scaled(s);
-        let label_full = Rect::new(
-            cell_s.x + ICON_PX * s,
-            cell_s.y,
-            (cell_s.width - ICON_PX * s).max(0),
-            cell_s.height,
-        );
         let editing = matches!(&sv.edit, Some((j, _)) if *j == i);
-        let shown = text.ellipsize(&entry.name, label_full.width, false, px);
-        // A look that boxes its items boxes the icon and name, 3 px past its ink, under both; the text stays.
-        let ink_w = text.measure(&shown, false, px);
-        let item_box = Rect::new(
-            cell_s.x,
-            cell_s.y,
-            ICON_PX * s + ink_w + 3 * s,
-            cell_s.height,
-        )
-        .intersect(&visible_s);
-        let mark = if editing { Mark::default() } else { sv.mark(i) };
-        let boxed = item::draw_item(c, p, item_box, mark);
-        if let Some(icon) = shellgrid::entry_icon(entry, Mode::List) {
-            let dy = (cell.height - ICON_PX) / 2 * s;
-            c.blit_over_clipped(cell_s.x, cell_s.y + dy, &icon, visible_s);
-        }
-        let label = label_full.intersect(&visible_s);
-        if label.is_empty() {
-            continue;
-        }
-        if editing {
+        let icon = shellgrid::entry_icon(entry, Mode::List);
+        let row = ListRow {
+            name: &entry.name,
+            icon: icon.as_deref(),
+            mark: if editing { Mark::default() } else { sv.mark(i) },
+            selected: sv.selection.is(i) || sv.drop_target == Some(i),
+            label: !editing,
+        };
+        let (cell_s, visible_s) = (cell.scaled(s), visible.scaled(s));
+        draw_list_row(c, text, p, &row, cell_s, visible_s, px);
+        if editing && !label_area(cell_s, s).intersect(&visible_s).is_empty() {
             let label = label_rect(sv, lay, i, text, px);
             draw_rename(c, text, p, sv, i, label.scaled(s), px);
-            continue;
         }
-        let fg = if selected && !boxed {
-            c.fill_rect(label, cs.hilight);
-            cs.hilight_text
-        } else {
-            cs.window_text
-        };
-        text.draw_clipped(c, label_full, label, &shown, false, fg, Align::Left, px);
     }
     if let Some(hb) = lay.hscroll {
         draw_hscrollbar(
@@ -2356,5 +2463,143 @@ pub(crate) mod tests {
         sv.sort = Some((2, true));
         sort(&mut sv);
         assert_eq!(names(&sv), ["mfolder", "b link", "a", "c"], "Type");
+    }
+
+    /// Each picked entry's icon, its colour redrawn at `s` times its 16 px.
+    fn drag_icons(sv: &ShellView, picked: &[usize], s: i32) -> Vec<(usize, Canvas)> {
+        let n = (ICON_PX * s) as u32;
+        picked
+            .iter()
+            .map(|&i| {
+                let argb = sv.entries[i].icon.as_ref().expect("an icon").pixels[0];
+                (i, Canvas::from_pixels(n, n, vec![argb; (n * n) as usize]))
+            })
+            .collect()
+    }
+
+    fn drag_of(
+        sv: &ShellView,
+        lay: &Layout,
+        picked: &[usize],
+        pointer: (i32, i32),
+        s: i32,
+    ) -> Option<(Canvas, (i32, i32))> {
+        let icons = drag_icons(sv, picked, s);
+        let rows: Vec<DragRow> = icons
+            .iter()
+            .map(|(index, icon)| DragRow {
+                index: *index,
+                icon: Some(icon),
+            })
+            .collect();
+        let (text, _) = rend();
+        drag_image(&Theme::default().scaled(s), &text, sv, lay, &rows, pointer)
+    }
+
+    /// A List or Details drag image is each dragged row's icon and name where the row sits,
+    /// faded, held where the pointer is; Details rows start at the Name column's icon.
+    #[test]
+    fn a_rows_drag_image_holds_each_dragged_row_where_it_sits() {
+        for mode in [Mode::List, Mode::Details] {
+            let sv = sample(mode, false);
+            let lay = layout(&sv, Rect::new(0, 0, 500, 200), &ControlMetrics::CLASSIC);
+            let picked = [0, 2, 3];
+            let (x0, w) = match mode {
+                Mode::List => (lay.cells[0].x, lay.cells[0].width),
+                _ => (
+                    lay.cells[0].x + listview::ICON_X,
+                    sv.columns[0].width - listview::ICON_X,
+                ),
+            };
+            let row_h = lay.cells[0].height;
+            let pointer = (x0 + 30, lay.cells[2].y + 5);
+            let (img, grab) = drag_of(&sv, &lay, &picked, pointer, 1).expect("an image");
+            assert_eq!(
+                (img.width as i32, img.height as i32),
+                (w, 4 * row_h),
+                "{mode:?}"
+            );
+            assert_eq!(grab, (30, 2 * row_h + 5), "{mode:?}");
+            let alpha = |x: i32, y: i32| img.get(x, y) >> 24;
+            for (row, drawn) in [(0, true), (1, false), (2, true), (3, true)] {
+                let y = row * row_h;
+                let icon = alpha(8, y + 8);
+                assert_eq!(icon > 0, drawn, "{mode:?}: row {row}'s icon");
+                assert!(icon <= 128, "{mode:?}: row {row} faded");
+                let ink = (16..w).any(|x| (0..row_h).any(|dy| alpha(x, y + dy) > 0));
+                assert_eq!(ink, drawn, "{mode:?}: row {row}'s name");
+            }
+        }
+    }
+
+    /// Rows scrolled out of the body stay out of the image, and with none shown there is none.
+    #[test]
+    fn a_rows_drag_image_keeps_only_the_rows_on_screen() {
+        let mut sv = sample(Mode::Details, false);
+        sv.top = 2;
+        let lay = layout(&sv, Rect::new(0, 0, 500, 200), &ControlMetrics::CLASSIC);
+        let row_h = lay.cells[2].height;
+        let at = (lay.cells[2].x + 30, lay.cells[2].y + 4);
+        let (img, grab) = drag_of(&sv, &lay, &[0, 1, 2, 3], at, 1).expect("an image");
+        assert_eq!(img.height as i32, 2 * row_h, "rows 2 and 3");
+        assert_eq!(grab.1, 4);
+        sv.top = 4;
+        let lay = layout(&sv, Rect::new(0, 0, 500, 200), &ControlMetrics::CLASSIC);
+        assert!(
+            drag_of(&sv, &lay, &[0, 1], at, 1).is_none(),
+            "both rows scrolled off"
+        );
+        let sv = sample(Mode::Icons, false);
+        let lay = layout(&sv, Rect::new(0, 0, 500, 200), &ControlMetrics::CLASSIC);
+        assert!(
+            drag_of(&sv, &lay, &[0], at, 1).is_none(),
+            "no rows image in Icons"
+        );
+    }
+
+    /// The image's pixels in Tahoma, per mode at scale 1 and 2; scale 2 is twice the size.
+    #[test]
+    fn a_rows_drag_image_draws_its_pixels() {
+        if !crate::text::test_tahoma() {
+            return;
+        }
+        fn fnv(c: &Canvas) -> u64 {
+            let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+            let words = [c.width, c.height]
+                .into_iter()
+                .chain(c.pixels.iter().copied());
+            for w in words {
+                for b in w.to_le_bytes() {
+                    h ^= u64::from(b);
+                    h = h.wrapping_mul(0x0000_0100_0000_01b3);
+                }
+            }
+            h
+        }
+        let mut got = Vec::new();
+        for mode in [Mode::List, Mode::Details] {
+            let sv = sample(mode, false);
+            let lay = layout(&sv, Rect::new(0, 0, 500, 200), &ControlMetrics::CLASSIC);
+            let pointer = (lay.cells[2].x + 30, lay.cells[2].y + 5);
+            let (one, grab) = drag_of(&sv, &lay, &[2, 3, 5], pointer, 1).expect("an image");
+            let (two, grab2) = drag_of(&sv, &lay, &[2, 3, 5], pointer, 2).expect("at scale 2");
+            assert_eq!(grab2, grab, "{mode:?}");
+            assert_eq!(
+                (two.width, two.height),
+                (one.width * 2, one.height * 2),
+                "{mode:?}"
+            );
+            got.push(fnv(&one));
+            got.push(fnv(&two));
+        }
+        assert_eq!(
+            got,
+            [
+                5882507750434519416,
+                12420945453230247706,
+                7509144477264736716,
+                8858607519483314338
+            ]
+        );
     }
 }

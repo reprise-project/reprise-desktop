@@ -273,21 +273,15 @@ impl Explorer {
             Mode::Thumbnails | Mode::Icons => (32, |e| e.icon32.clone()),
             Mode::List | Mode::Details => (16, |e| e.icon.clone()),
         };
-        let cell = iconview::Cell::grown(ctx.theme.text);
         let flat = matches!(self.sv.mode, Mode::List | Mode::Details);
-        let shown: Vec<(usize, (i32, i32))> = if flat {
-            let (ox, oy) = d.origin;
-            let pressed = match shellview::hit(&self.sv, &sl, ox, oy) {
-                shellview::Hit::Entry(i) => i,
-                _ => *d.items.first()?,
-            };
-            vec![(pressed, (ox - cell.w / 2, oy - cell.h / 2))]
-        } else {
-            d.items
-                .iter()
-                .filter_map(|&i| sl.cells.get(i).map(|c| (i, (c.x, c.y))))
-                .collect()
-        };
+        // A List or Details image holds only the rows on screen, so a large selection fetches no icons it won't draw.
+        let shown: Vec<(usize, (i32, i32))> = d
+            .items
+            .iter()
+            .filter_map(|&i| sl.cells.get(i).map(|c| (i, *c)))
+            .filter(|(_, c)| !flat || !c.intersect(&sl.body).is_empty())
+            .map(|(i, c)| (i, (c.x, c.y)))
+            .collect();
         let drawn = ctx.icons.scale();
         ctx.icons.set_scale(s);
         let icons: Vec<Option<Canvas>> = shown
@@ -302,6 +296,20 @@ impl Explorer {
             })
             .collect();
         ctx.icons.set_scale(drawn);
+        let mut theme = ctx.theme.scaled(s);
+        if flat {
+            let rows: Vec<shellview::DragRow> = shown
+                .iter()
+                .zip(&icons)
+                .map(|(&(index, _), icon)| shellview::DragRow {
+                    index,
+                    icon: icon.as_ref(),
+                })
+                .collect();
+            let (image, grab) =
+                shellview::drag_image(&theme, &ctx.text, &self.sv, &sl, &rows, d.origin)?;
+            return Some((image.at_scale(s), grab));
+        }
         let ghosts: Vec<Ghost> = shown
             .iter()
             .zip(&icons)
@@ -318,8 +326,8 @@ impl Explorer {
         // `draw_cell`'s unselected label is drawn for the desktop, where
         // the text is white; in the view it sits on white, so the colour
         // is swapped the way `shellgrid` swaps it for the same call.
-        let mut theme = ctx.theme.scaled(s);
         theme.colors.desktop_text = theme.colors.window_text;
+        let cell = iconview::Cell::grown(ctx.theme.text);
         let (image, grab) = iconview::drag_image(&theme, &ctx.text, &ghosts, cell, d.origin)?;
         Some((image.at_scale(s), grab))
     }
