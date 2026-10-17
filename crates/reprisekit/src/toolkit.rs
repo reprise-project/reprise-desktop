@@ -344,6 +344,23 @@ mod tests {
         assert!(css.contains("  background-image: image(@theme_bg_color);\n  box-shadow"));
     }
 
+    #[test]
+    fn a_disabled_trough_keeps_its_border() {
+        let rule = |sel: &str| {
+            let at = GTK3_RULES
+                .find(sel)
+                .unwrap_or_else(|| panic!("no rule for {sel}"));
+            let open = at + GTK3_RULES[at..].find('{').unwrap();
+            &GTK3_RULES[open..open + GTK3_RULES[open..].find('}').unwrap()]
+        };
+        for sel in ["scale trough:disabled,", "scale trough:backdrop:disabled {"] {
+            assert!(
+                rule(sel).contains("border-color: @borders;"),
+                "{sel} draws its trough's outline in @borders, so it shows on the face"
+            );
+        }
+    }
+
     fn fnv(text: &str) -> u64 {
         text.bytes().fold(0xcbf2_9ce4_8422_2325, |h, b| {
             (h ^ b as u64).wrapping_mul(0x0100_0000_01b3)
@@ -362,9 +379,9 @@ mod tests {
         assert_eq!(
             got,
             [
-                0x4acb_34a6_e7be_0e13,
-                0x25ab_10b6_3047_d7b4,
-                0x5295_21fb_c8f4_6c10
+                0x8c41_ac8e_912b_923b,
+                0xf707_456c_02ae_8a7c,
+                0xd647_1260_5635_b098
             ],
             "{got:#x?}"
         );

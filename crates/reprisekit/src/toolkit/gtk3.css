@@ -387,7 +387,10 @@ progressbar trough:backdrop, scale fill:backdrop, scale trough:backdrop {
   background-color: shade(@theme_bg_color, 0.92);
 }
 progressbar trough:disabled, scale trough:disabled,
-progressbar trough:backdrop:disabled, scale trough:backdrop:disabled { background-color: @insensitive_bg_color; }
+progressbar trough:backdrop:disabled, scale trough:backdrop:disabled {
+  border-color: @borders;
+  background-color: @insensitive_bg_color;
+}
 scale fill, scale fill:backdrop { background-color: @borders; }
 progressbar progress, scale highlight, progressbar progress:backdrop, scale highlight:backdrop {
   border-color: shade(@theme_selected_bg_color, 0.8);
