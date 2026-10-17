@@ -382,9 +382,9 @@ pub enum ItemKind {
 }
 
 /// The right-click menu of an entry in the view. "Run as..." sits greyed under
-/// Open for every file. A launcher has no Open With and has Paste under Copy,
-/// opening the clipboard's files in its program. `eject` adds Eject, in a group
-/// above Cut and Copy, for a removable drive.
+/// Open for every file. A folder has Paste under Copy, into it. A launcher has
+/// no Open With and has Paste under Copy, opening the clipboard's files in its
+/// program. `eject` adds Eject, in a group above Cut and Copy, for a removable drive.
 pub fn item_menu(
     state: &MenuState,
     kind: ItemKind,
@@ -419,8 +419,13 @@ pub fn item_menu(
     m.sep();
     m.row(row("Cu&t", writable), Command::Cut);
     m.row(row("&Copy", true), Command::Copy);
-    if kind == ItemKind::Launcher {
-        m.row(row("&Paste", state.can_paste), Command::PasteOpen);
+    match kind {
+        ItemKind::Folder => m.row(
+            row("&Paste", state.can_paste && writable),
+            Command::PasteOnItem,
+        ),
+        ItemKind::Launcher => m.row(row("&Paste", state.can_paste), Command::PasteOnItem),
+        ItemKind::File => {}
     }
     m.sep();
     m.row(row("Create &Shortcut", writable), Command::CreateShortcut);

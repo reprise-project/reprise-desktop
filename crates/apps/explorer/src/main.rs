@@ -191,14 +191,11 @@ pub struct Explorer {
     /// Always true: nothing can ask the compositor what the clipboard holds
     /// without pasting, so an empty paste is a no-op.
     pub can_paste: bool,
-    pub paste_shortcut: bool,
-    /// The folder a paste was asked for, captured then: the answer arrives an
+    /// Where an asked-for paste goes, captured then: the answer arrives an
     /// event later, when the window may have moved somewhere that takes no writes.
-    pub paste_dir: Option<PathBuf>,
-    /// The launcher a paste was asked on: its program opens the clipboard's files.
-    pub paste_app: Option<reprisefs::apps::AppEntry>,
-    /// The launcher the item menu was opened on, for its Paste.
-    pub menu_launcher: Option<reprisefs::apps::AppEntry>,
+    pub paste: Option<fileops::PasteTo>,
+    /// The folder or launcher the item menu was opened on, for its Paste.
+    pub menu_paste: Option<fileops::PasteTo>,
     /// Scanned once; Open, Open With and the chooser read it.
     pub app_index: Vec<reprisefs::apps::AppEntry>,
     /// Indices into `app_index`, parallel to the Open With and Send To rows.
@@ -365,10 +362,8 @@ impl Explorer {
             undo: None,
             undos: reprisefs::undo::UndoStack::default(),
             can_paste: true,
-            paste_shortcut: false,
-            paste_dir: None,
-            paste_app: None,
-            menu_launcher: None,
+            paste: None,
+            menu_paste: None,
             app_index,
             open_with_apps: Vec::new(),
             open_with_path: None,
