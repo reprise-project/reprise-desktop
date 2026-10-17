@@ -8,8 +8,10 @@
 //! task buttons. A window that comes to show takes the frame rect and the
 //! maximized, snapped and minimized state of the one it replaces
 //! (`adopt_frame`); the hidden ones follow the shown one's moves and sizes
-//! (`follow_tabs`). A tab dragged along the caption reorders; dragged off it,
-//! it leaves the group and carries on as a move of its own window.
+//! (`follow_tabs`). Fullscreen passes the same way, and a hidden tab's own
+//! fullscreen request waits until it shows (`ask_fullscreen`). A tab
+//! dragged along the caption reorders; dragged off it, it leaves the group
+//! and carries on as a move of its own window.
 //!
 //! A window also joins a group as it maps, for session restore or a
 //! `tab_group` window rule (`tab_on_map`).
@@ -57,6 +59,9 @@ pub struct TabView {
     /// The tab the move in progress tore off its group, for Escape to put
     /// back.
     torn: Option<Torn>,
+    /// Fullscreen held for a hidden tab until it shows, with the frame its
+    /// unfullscreen goes back to when it came from the tab it replaced.
+    fullscreen_waits: Vec<(WindowId, Option<Rect>)>,
 }
 
 /// A tab torn off its group by a drag: its window, a member left in the
@@ -88,6 +93,42 @@ impl TabView {
     /// The tear-off of `w`, if the move in progress is one.
     pub fn take_torn(&mut self, w: WindowId) -> Option<Torn> {
         self.torn.take_if(|t| t.window == w)
+    }
+
+    /// A fullscreen request (`on`) or unfullscreen from `w`. A hidden tab
+    /// never takes the screen: its request waits until it shows, and its
+    /// unfullscreen drops the wait. Returns whether the request applies now.
+    pub fn ask_fullscreen(&mut self, w: WindowId, on: bool) -> bool {
+        if !self.groups.is_hidden(w) {
+            return true;
+        }
+        self.fullscreen_waits.retain(|&(x, _)| x != w);
+        if on {
+            self.fullscreen_waits.push((w, None));
+        }
+        false
+    }
+
+    /// Fullscreen tab `m` went into hiding, `lead` being the tab shown
+    /// before the change, `restore` the frame from before fullscreen.
+    /// When `m` was that tab its fullscreen passes to the one shown in its
+    /// place, so the group stays fullscreen; otherwise `m` keeps it for
+    /// when it shows.
+    fn hid_fullscreen(&mut self, m: WindowId, lead: Option<WindowId>, restore: Option<Rect>) {
+        let heir = if lead == Some(m) {
+            self.groups.shown_of(m)
+        } else {
+            m
+        };
+        self.fullscreen_waits.retain(|&(x, _)| x != heir);
+        self.fullscreen_waits.push((heir, restore));
+    }
+
+    /// The fullscreen waiting for `w`, now shown: `Some(restore)` when it
+    /// goes fullscreen.
+    fn take_fullscreen(&mut self, w: WindowId) -> Option<Option<Rect>> {
+        let i = self.fullscreen_waits.iter().position(|&(x, _)| x == w)?;
+        Some(self.fullscreen_waits.remove(i).1)
     }
 
     /// Put torn tab `t` back at its slot, showing. Returns the window
@@ -247,6 +288,11 @@ impl State {
                 if !was_hidden {
                     self.hide_tab(m);
                 }
+                if self.win(m).is_some_and(|x| x.fullscreen) {
+                    let restore = self.win_mut(m).and_then(|x| x.saved_fullscreen.take());
+                    self.set_fullscreen(m, false);
+                    self.tabs.hid_fullscreen(m, lead, restore);
+                }
             } else {
                 let lead = lead.filter(|&l| {
                     l != m
@@ -264,6 +310,19 @@ impl State {
                 }
             }
             self.redraw_frame(m);
+        }
+        for &m in members {
+            if self.tabs.groups.is_hidden(m) {
+                continue;
+            }
+            if let Some(restore) = self.tabs.take_fullscreen(m) {
+                self.set_fullscreen(m, true);
+                if let Some(r) = restore
+                    && let Some(win) = self.win_mut(m)
+                {
+                    win.saved_fullscreen = Some(r);
+                }
+            }
         }
         if let Some(f) = self.focused
             && self.tabs.groups.is_hidden(self.home(f))
@@ -430,9 +489,6 @@ impl State {
             return;
         };
         let home = self.home(f);
-        if self.win(home).is_some_and(|x| x.fullscreen) {
-            return;
-        }
         if let Some(next) = self.tabs.groups.step(home, backwards) {
             self.select_tab(next);
             self.focus_window(next);
@@ -622,6 +678,7 @@ impl State {
         if self.tabs.held.is_some_and(|h| h.0 == w) {
             self.tabs.held = None;
         }
+        self.tabs.fullscreen_waits.retain(|&(x, _)| x != w);
         let Some(g) = self.tabs.groups.group_of(w).cloned() else {
             return;
         };
@@ -984,6 +1041,69 @@ mod tests {
         assert_eq!(rule_target(open, "build"), Some(3));
         assert_eq!(rule_target(open, "mail"), None);
         assert_eq!(rule_target([(1, Some("shells"), true)], "shells"), None);
+    }
+
+    #[test]
+    fn a_hidden_tabs_fullscreen_request_waits_until_it_shows() {
+        let (a, b, lone) = (WindowId::next(), WindowId::next(), WindowId::next());
+        let mut t = TabView::default();
+        t.groups.join(b, a);
+        t.groups.select(a);
+        assert!(t.ask_fullscreen(a, true), "the shown tab goes fullscreen");
+        assert!(t.ask_fullscreen(lone, true), "a window in no group too");
+        assert!(!t.ask_fullscreen(b, true), "the hidden tab waits");
+        assert_eq!(t.take_fullscreen(a), None);
+        assert_eq!(
+            t.take_fullscreen(b),
+            Some(None),
+            "b goes fullscreen as it shows"
+        );
+        assert_eq!(t.take_fullscreen(b), None, "taken once");
+    }
+
+    #[test]
+    fn a_hidden_tabs_unfullscreen_drops_its_wait() {
+        let (a, b) = (WindowId::next(), WindowId::next());
+        let mut t = TabView::default();
+        t.groups.join(b, a);
+        t.groups.select(a);
+        assert!(!t.ask_fullscreen(b, true));
+        assert!(!t.ask_fullscreen(b, false), "b stays hidden");
+        assert_eq!(t.take_fullscreen(b), None);
+    }
+
+    #[test]
+    fn a_fullscreen_tab_switched_away_hands_the_fullscreen_to_the_tab_shown() {
+        let (a, b, c) = (WindowId::next(), WindowId::next(), WindowId::next());
+        let mut t = TabView::default();
+        t.groups.join(b, a);
+        t.groups.join(c, a);
+        t.groups.select(a);
+        let restore = Rect::new(40, 30, 640, 480);
+        t.groups.select(b);
+        t.hid_fullscreen(a, Some(a), Some(restore));
+        assert_eq!(
+            t.take_fullscreen(a),
+            None,
+            "a hidden tab holds no fullscreen"
+        );
+        assert_eq!(t.take_fullscreen(c), None);
+        assert_eq!(
+            t.take_fullscreen(b),
+            Some(Some(restore)),
+            "b fullscreen, restoring to a's frame from before"
+        );
+    }
+
+    #[test]
+    fn a_fullscreen_window_hidden_behind_another_keeps_its_fullscreen() {
+        let (a, b) = (WindowId::next(), WindowId::next());
+        let mut t = TabView::default();
+        t.groups.join(b, a);
+        t.groups.select(a);
+        t.hid_fullscreen(b, Some(a), None);
+        assert_eq!(t.take_fullscreen(a), None);
+        assert_eq!(t.take_fullscreen(b), Some(None));
     }
 
     #[test]

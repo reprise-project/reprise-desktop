@@ -406,7 +406,11 @@ impl State {
         };
         if self.win(w).is_some_and(|w| w.mapped) {
             match state {
-                xdg_toplevel::State::Fullscreen => self.set_fullscreen(w, on),
+                xdg_toplevel::State::Fullscreen => {
+                    if self.tabs.ask_fullscreen(w, on) {
+                        self.set_fullscreen(w, on);
+                    }
+                }
                 _ => self.set_maximized(w, on),
             }
         } else {

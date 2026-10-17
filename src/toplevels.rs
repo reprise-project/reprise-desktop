@@ -315,8 +315,13 @@ impl State {
             R::UnsetMaximized => self.set_maximized(w, false),
             R::SetMinimized => self.set_minimized(w, true),
             R::UnsetMinimized if !self.tabs.groups.is_hidden(w) => self.set_minimized(w, false),
-            R::SetFullscreen { .. } => self.set_fullscreen(w, true),
-            R::UnsetFullscreen => self.set_fullscreen(w, false),
+            R::SetFullscreen { .. } if self.tabs.ask_fullscreen(w, true) => {
+                self.set_fullscreen(w, true);
+            }
+            R::UnsetFullscreen if self.tabs.ask_fullscreen(w, false) => {
+                self.set_fullscreen(w, false);
+            }
+            R::SetFullscreen { .. } | R::UnsetFullscreen => {}
             // A hidden tab reads as minimized; bringing it back shows it in
             // its group's frame.
             R::Activate { .. } | R::UnsetMinimized => {
