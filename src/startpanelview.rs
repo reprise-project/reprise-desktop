@@ -539,7 +539,10 @@ impl State {
             at: (0, 0),
             tree,
             glass_tree,
-            backdrop: Backdrop::new(&self.glass),
+            backdrop: self
+                .start_backdrop
+                .take()
+                .unwrap_or_else(|| Backdrop::new(&self.glass)),
             buffer,
             drawn: None,
             rasters: Rasters::default(),
@@ -812,6 +815,7 @@ impl State {
         }
         v.backdrop
             .set(&mut self.scene, &self.glass, v.glass_tree, None);
+        self.start_backdrop = Some(v.backdrop);
         self.scene.destroy(v.tree);
         if let Some(b) = self.bar_mut(v.bar) {
             b.start_pressed = false;
