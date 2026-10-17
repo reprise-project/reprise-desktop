@@ -822,6 +822,8 @@ pub struct SheetOpening {
     builds: u32,
     /// The key and rim of the [`WarmJob`] out for these layers.
     asked: Option<(OpeningKey, bool)>,
+    /// Content whose job panicked on its worker; only [`SheetOpening::warm`] paints it.
+    failed: Option<OpeningKey>,
 }
 
 /// What [`build_warm`] needs to warm a [`SheetOpening`], owned, so it can go to a worker thread.
@@ -986,6 +988,7 @@ impl SheetOpening {
         let ready = self.layers.as_ref().is_some_and(|l| l.key == key)
             && key.ends(lit).iter().all(|k| glass.find(k).is_some());
         if ready
+            || self.failed.as_ref() == Some(&key)
             || self
                 .asked
                 .as_ref()
@@ -1032,6 +1035,11 @@ impl SheetOpening {
     /// The job out was lost with its worker; the next [`SheetOpening::warm_job`] asks again.
     pub fn forget_job(&mut self) {
         self.asked = None;
+    }
+
+    /// The job out panicked; [`SheetOpening::warm_job`] asks nothing more for its content.
+    pub fn job_failed(&mut self) {
+        self.failed = self.asked.take().map(|(k, _)| k);
     }
 
     /// How many times these layers were painted on the caller's thread.
@@ -2930,6 +2938,14 @@ mod tests {
             ask(&mut opening),
             "a job lost with its worker is asked again"
         );
+        opening.job_failed();
+        assert!(!ask(&mut opening), "a job that panicked is not asked again");
+        let other = |opening: &mut SheetOpening| {
+            let lay = |expanded| droplet(&content("Chat", "Ben", "Late."), expanded);
+            let job = opening.warm_job(&kept, &theme, &lay(false), &lay(true), icons, None, true);
+            job.is_some()
+        };
+        assert!(other(&mut opening), "other content is");
         let mut opening = SheetOpening::default();
         warm_off_thread(&mut opening, &mut kept, &theme, &long(), true).unwrap();
         assert!(
