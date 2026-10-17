@@ -1762,6 +1762,94 @@ fn the_pickers_new_folder_is_named_in_place() {
     );
 }
 
+/// Wakes `ex` until `done` holds, for a read let go of on a listing thread.
+pub(crate) fn wake_until(ex: &mut Explorer, ctx: &mut Ctx, done: impl Fn(&Explorer) -> bool) {
+    for _ in 0..500 {
+        if done(ex) {
+            return;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        ex.wake(ctx);
+    }
+    assert!(done(ex), "the read landed");
+}
+
+fn picker_making(ex: &Explorer) -> bool {
+    matches!(&ex.dialog, Some(Dialog::Browse(b)) if b.making.is_some())
+}
+
+/// The picker's Make New Folder and its rename run on a listing thread: on a folder that does not
+/// answer (a dead mount) the picker stays live, and each lands on the wake after it does.
+#[test]
+fn the_pickers_new_folder_and_rename_on_a_folder_that_answers_late_land_on_a_later_wake() {
+    let mut ctx = test_ctx();
+    let (dir, mut ex) = browse_fixture(&mut ctx);
+    ex.open_browse(false, &mut ctx);
+    let here = Some(Place::Folder(dir.path().to_path_buf()));
+    let made = dir.path().join("New Folder");
+
+    let gate = Arc::new(std::sync::RwLock::new(()));
+    let closed = gate.write().expect("lock");
+    ex.held = Some(gate.clone());
+    click_at(&mut ex, 60, 328, &mut ctx);
+    assert!(!made.exists(), "the folder waits for the thread");
+    assert_eq!(picker_pick(&ex), (here.clone(), None));
+    click_at(&mut ex, 60, 328, &mut ctx);
+    drop(closed);
+    ex.held = None;
+    wake_until(&mut ex, &mut ctx, |ex| !picker_making(ex));
+    assert_eq!(
+        picker_pick(&ex),
+        (Some(Place::Folder(made.clone())), Some("New Folder".into())),
+        "the box opens on the new folder"
+    );
+    assert!(
+        !dir.path().join("New Folder (2)").exists(),
+        "a second click while the first is on disk makes nothing"
+    );
+
+    type_in(&mut ex, "Photos", &mut ctx);
+    let closed = gate.write().expect("lock");
+    ex.held = Some(gate.clone());
+    ex.dialog_event(Event::Key(key_in(keysym::RETURN)), &mut ctx);
+    assert!(made.is_dir(), "the rename waits for the thread");
+    drop(closed);
+    ex.held = None;
+    wake_until(&mut ex, &mut ctx, |ex| !picker_making(ex));
+    let photos = dir.path().join("Photos");
+    assert!(photos.is_dir() && !made.exists(), "renamed on disk");
+    assert_eq!(
+        picker_pick(&ex),
+        (Some(Place::Folder(photos)), None),
+        "the renamed folder is the pick"
+    );
+}
+
+/// A rename refused after the wait shows its error box over the picker, and OK reopens the box.
+#[test]
+fn a_pickers_rename_refused_late_shows_the_error_box() {
+    let mut ctx = test_ctx();
+    let (dir, mut ex) = browse_fixture(&mut ctx);
+    ex.open_browse(false, &mut ctx);
+    click_at(&mut ex, 60, 328, &mut ctx);
+    type_in(&mut ex, "sub", &mut ctx);
+    let gate = Arc::new(std::sync::RwLock::new(()));
+    let closed = gate.write().expect("lock");
+    ex.held = Some(gate.clone());
+    ex.dialog_event(Event::Key(key_in(keysym::RETURN)), &mut ctx);
+    assert_eq!(picker_error(&ex), None, "no box before the answer");
+    drop(closed);
+    ex.held = None;
+    wake_until(&mut ex, &mut ctx, |ex| !picker_making(ex));
+    assert!(dir.path().join("New Folder").is_dir());
+    assert_eq!(
+        picker_error(&ex).map(|(title, _)| title),
+        Some("Error Renaming File or Folder".into())
+    );
+    ex.browse_error_event(Event::Key(key_in(keysym::RETURN)));
+    assert_eq!(picker_pick(&ex).1.as_deref(), Some("New Folder"));
+}
+
 #[test]
 fn a_click_on_move_names_the_new_folder_and_moves() {
     let mut ctx = test_ctx();

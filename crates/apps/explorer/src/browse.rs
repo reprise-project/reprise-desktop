@@ -34,12 +34,37 @@ pub struct Browse {
     pub walking: Option<(Place, Job<foldertree::Chain>)>,
     /// Opened nodes whose children are still being read.
     pub filling: Vec<(Place, Job<Kids>)>,
+    /// A Make New Folder or a rename still on disk (a dead mount); another is ignored until it lands.
+    pub making: Option<Making>,
     pub clicks: DoubleClick<Option<browsefolder::Hit>>,
     pub refused: Option<Refused>,
 }
 
 pub const ERROR: repriseapp::WinId = "browse error";
 pub const ERROR_TITLE: &str = "Error Renaming File or Folder";
+
+/// A picker write on a listing thread, with the children of the node it changed read after it.
+pub enum Making {
+    /// Make New Folder under the node standing for `under`.
+    New {
+        under: Place,
+        job: Job<Option<Result<(PathBuf, Kids), String>>>,
+    },
+    /// The folder at `from`, the node at `path`, renamed. The click that committed it is
+    /// dropped: its release has passed by the time the rename lands.
+    Rename {
+        from: PathBuf,
+        path: reprisekit::controls::treeview::Path,
+        job: Job<Renamed>,
+    },
+}
+
+pub enum Renamed {
+    Kept,
+    Refused(String),
+    /// The new path, and the children of the folder holding it.
+    Done(PathBuf, Kids),
+}
 
 pub struct Refused {
     pub path: reprisekit::controls::treeview::Path,
@@ -180,6 +205,7 @@ impl Explorer {
             judging: None,
             walking,
             filling: Vec::new(),
+            making: None,
             clicks: DoubleClick::default(),
             refused: None,
         };
@@ -303,52 +329,31 @@ impl Explorer {
                 }
                 Reply::redraw()
             }
+            browsefolder::Event::NewFolder(_) | browsefolder::Event::Rename(..)
+                if b.making.is_some() =>
+            {
+                return self.put_back_then(b, Reply::redraw(), press, ctx);
+            }
             browsefolder::Event::NewFolder(p) => {
                 let Some(place) = foldertree::place_of(&b.bf.tree, &b.places, &p) else {
                     return self.put_back(b, Reply::none());
                 };
-                let made = match writable_dir(&place) {
-                    Some(dir) => make_new_folder(&dir),
-                    None => return self.put_back(b, Reply::none()),
+                let kids = self.kids_reader_in(&b.bf.tree, &b.places, &p, place.clone());
+                let at = place.clone();
+                let make = move || {
+                    let dir = writable_dir(&at)?;
+                    Some(match make_new_folder(&dir) {
+                        Ok(made) => Ok((made, kids())),
+                        Err(e) => Err(format!("Cannot create New Folder: {e}")),
+                    })
                 };
-                let made = match made {
-                    Ok(path) => path,
-                    Err(e) => {
-                        return self.message_box(
-                            "Error Creating Folder",
-                            format!("Cannot create New Folder: {e}"),
-                            ctx,
-                        );
+                match self.read_job(ctx, make) {
+                    Ok(made) => return self.new_folder_landed(b, &place, made, ctx),
+                    Err(job) => {
+                        b.making = Some(Making::New { under: place, job });
+                        Reply::redraw()
                     }
-                };
-                foldertree::fill(
-                    &mut b.bf.tree,
-                    &mut b.places,
-                    p.clone(),
-                    &inp,
-                    &mut ctx.icons,
-                );
-                if let Some(n) = b.bf.tree.node_mut(&p) {
-                    n.expanded = n.has_children;
                 }
-                let name = made.file_name().map(|n| n.to_string_lossy().into_owned());
-                let row = b.bf.tree.node(&p).and_then(|n| {
-                    n.children
-                        .iter()
-                        .position(|c| Some(&c.label) == name.as_ref())
-                });
-                if let Some(i) = row {
-                    let lay = b.bf.layout(
-                        &self.dialog_text,
-                        self.forms.fonts.size_px,
-                        &self.forms.controls(),
-                    );
-                    b.bf.new_folder_made([p.as_slice(), &[i]].concat(), &lay);
-                }
-                self.refill_tree_node(&place, ctx);
-                self.undos.push(reprisefs::undo::Undoable::New(made));
-                self.sync_undo();
-                Reply::redraw_all()
             }
             browsefolder::Event::Rename(p, typed) => {
                 let Some(from) = foldertree::place_of(&b.bf.tree, &b.places, &p)
@@ -357,58 +362,37 @@ impl Explorer {
                 else {
                     return self.put_back_then(b, Reply::redraw(), press, ctx);
                 };
-                let Some(to) = rename_target(&from, &typed) else {
+                let parent = &p[..p.len() - 1];
+                let Some(holder) = foldertree::place_of(&b.bf.tree, &b.places, parent) else {
                     return self.put_back_then(b, Reply::redraw(), press, ctx);
                 };
-                let old = from
-                    .file_name()
-                    .map(|n| n.to_string_lossy().into_owned())
-                    .unwrap_or_default();
-                let done = match &to {
-                    Ok(to) => reprisefs::hidden::rename(&from, to)
-                        .map_err(|e| reprisefs::names::failed_text(&old, &e)),
-                    Err(why) => Err(why.clone()),
-                };
-                if let Err(text) = done {
-                    log::warn!("explorer: naming {} failed: {text}", from.display());
-                    if self.error_icon.is_none() {
-                        self.error_icon =
-                            crate::chrome_icon(ctx, &["dialog-error", "dialog-warning"], 32);
+                let kids = self.kids_reader_in(&b.bf.tree, &b.places, parent, holder);
+                let at = from.clone();
+                let rename = move || {
+                    let old = at
+                        .file_name()
+                        .map(|n| n.to_string_lossy().into_owned())
+                        .unwrap_or_default();
+                    match rename_target(&at, &typed) {
+                        None => Renamed::Kept,
+                        Some(Err(why)) => Renamed::Refused(why),
+                        Some(Ok(to)) => match reprisefs::hidden::rename(&at, &to) {
+                            Ok(()) => Renamed::Done(to, kids()),
+                            Err(e) => Renamed::Refused(reprisefs::names::failed_text(&old, &e)),
+                        },
                     }
-                    b.refused = Some(Refused {
-                        path: p,
-                        name: old,
-                        text,
-                    });
-                    return self.put_back(b, Reply::redraw_all());
+                };
+                match self.read_job(ctx, rename) {
+                    Ok(done) => {
+                        let taken = self.renamed(&mut b, &from, p, done, ctx);
+                        let press = press.filter(|_| taken);
+                        return self.put_back_then(b, Reply::redraw_all(), press, ctx);
+                    }
+                    Err(job) => {
+                        b.making = Some(Making::Rename { from, path: p, job });
+                        return self.put_back(b, Reply::redraw());
+                    }
                 }
-                let to = to.expect("renamed above");
-                let parent = p[..p.len() - 1].to_vec();
-                foldertree::fill(
-                    &mut b.bf.tree,
-                    &mut b.places,
-                    parent.clone(),
-                    &inp,
-                    &mut ctx.icons,
-                );
-                let name = to.file_name().map(|n| n.to_string_lossy().into_owned());
-                let row = b.bf.tree.node(&parent).and_then(|n| {
-                    n.children
-                        .iter()
-                        .position(|c| Some(&c.label) == name.as_ref())
-                });
-                if let Some(i) = row {
-                    b.bf.tree.selected = Some([parent.as_slice(), &[i]].concat());
-                    let lay = b.bf.layout(
-                        &self.dialog_text,
-                        self.forms.fonts.size_px,
-                        &self.forms.controls(),
-                    );
-                    b.bf.tree.follow(&lay.tree);
-                }
-                self.after_rename(&from, &to, true, ctx);
-                self.sync_browse_buttons(&mut b, ctx);
-                return self.put_back_then(b, Reply::redraw_all(), press, ctx);
             }
             browsefolder::Event::Accept(p) => {
                 let dir = foldertree::place_of(&b.bf.tree, &b.places, &p).and_then(|pl| pl.path());
@@ -427,6 +411,131 @@ impl Explorer {
         self.put_back(b, reply)
     }
 
+    /// Shows the folder Make New Folder made under `under` in its rename box, or the error.
+    fn new_folder_landed(
+        &mut self,
+        mut b: Browse,
+        under: &Place,
+        made: Option<Result<(PathBuf, Kids), String>>,
+        ctx: &mut Ctx,
+    ) -> Reply {
+        let (made, kids) = match made {
+            None => return self.put_back(b, Reply::none()),
+            Some(Ok(made)) => made,
+            Some(Err(text)) => return self.message_box("Error Creating Folder", text, ctx),
+        };
+        let inp = Inputs {
+            show_hidden: self.settings.show_hidden,
+            drives: &self.drives,
+            volumes: &self.volumes,
+            drive_mounts: &self.drive_mounts,
+        };
+        if let Some(p) = foldertree::path_of(&b.bf.tree, &b.places, under, inp.drive_mounts) {
+            foldertree::fill_with(
+                &mut b.bf.tree,
+                &mut b.places,
+                p.clone(),
+                kids,
+                &inp,
+                &mut ctx.icons,
+            );
+            if let Some(n) = b.bf.tree.node_mut(&p) {
+                n.expanded = n.has_children;
+            }
+            let name = made.file_name().map(|n| n.to_string_lossy().into_owned());
+            let row = b.bf.tree.node(&p).and_then(|n| {
+                n.children
+                    .iter()
+                    .position(|c| Some(&c.label) == name.as_ref())
+            });
+            if let Some(i) = row {
+                let lay = b.bf.layout(
+                    &self.dialog_text,
+                    self.forms.fonts.size_px,
+                    &self.forms.controls(),
+                );
+                b.bf.new_folder_made([p.as_slice(), &[i]].concat(), &lay);
+            }
+        }
+        self.refill_tree_node(under, ctx);
+        self.undos.push(reprisefs::undo::Undoable::New(made));
+        self.sync_undo();
+        self.sync_browse_buttons(&mut b, ctx);
+        self.put_back(b, Reply::redraw_all())
+    }
+
+    /// Picks the folder renamed from `from` (the node at `path` when asked) under its new name,
+    /// or keeps the refusal for the error box; false for a refusal.
+    fn renamed(
+        &mut self,
+        b: &mut Browse,
+        from: &Path,
+        path: reprisekit::controls::treeview::Path,
+        done: Renamed,
+        ctx: &mut Ctx,
+    ) -> bool {
+        let old = from
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let (to, kids) = match done {
+            Renamed::Kept => return true,
+            Renamed::Refused(text) => {
+                log::warn!("explorer: naming {} failed: {text}", from.display());
+                if self.error_icon.is_none() {
+                    self.error_icon =
+                        crate::chrome_icon(ctx, &["dialog-error", "dialog-warning"], 32);
+                }
+                b.refused = Some(Refused {
+                    path,
+                    name: old,
+                    text,
+                });
+                return false;
+            }
+            Renamed::Done(to, kids) => (to, kids),
+        };
+        let inp = Inputs {
+            show_hidden: self.settings.show_hidden,
+            drives: &self.drives,
+            volumes: &self.volumes,
+            drive_mounts: &self.drive_mounts,
+        };
+        let holder = to.parent().map(Place::from_path);
+        let parent = holder
+            .as_ref()
+            .and_then(|h| foldertree::path_of(&b.bf.tree, &b.places, h, inp.drive_mounts))
+            .or_else(|| path.split_last().map(|(_, up)| up.to_vec()));
+        if let Some(parent) = parent {
+            foldertree::fill_with(
+                &mut b.bf.tree,
+                &mut b.places,
+                parent.clone(),
+                kids,
+                &inp,
+                &mut ctx.icons,
+            );
+            let name = to.file_name().map(|n| n.to_string_lossy().into_owned());
+            let row = b.bf.tree.node(&parent).and_then(|n| {
+                n.children
+                    .iter()
+                    .position(|c| Some(&c.label) == name.as_ref())
+            });
+            if let Some(i) = row {
+                b.bf.tree.selected = Some([parent.as_slice(), &[i]].concat());
+                let lay = b.bf.layout(
+                    &self.dialog_text,
+                    self.forms.fonts.size_px,
+                    &self.forms.controls(),
+                );
+                b.bf.tree.follow(&lay.tree);
+            }
+        }
+        self.after_rename(from, &to, true, ctx);
+        self.sync_browse_buttons(b, ctx);
+        true
+    }
+
     /// Judges the picker's buttons for a new pick on a listing thread ([`Browse::judge`]).
     pub(crate) fn sync_browse_buttons(&self, b: &mut Browse, ctx: &Ctx) {
         let Some(read) = b.judge() else {
@@ -442,7 +551,7 @@ impl Explorer {
     }
 
     /// Takes the picker's reads that landed after their wait: the walk to the items' folder,
-    /// opened nodes and the pick's judging. True when one did.
+    /// opened nodes, the pick's judging and a Make New Folder or rename. True when one did.
     pub(crate) fn take_browse(&mut self, ctx: &mut Ctx) -> bool {
         let mut b = match self.dialog.take() {
             Some(Dialog::Browse(b)) => b,
@@ -506,6 +615,25 @@ impl Explorer {
             b.judging = None;
             b.bf.set_enabled(accept, new_folder);
             landed = true;
+        }
+        match b.making.take() {
+            Some(Making::New { under, job }) => match job.take() {
+                Some(made) => {
+                    // A failure's box takes the picker's place, as it does when the folder answers at once.
+                    self.new_folder_landed(b, &under, made, ctx);
+                    return true;
+                }
+                None => b.making = Some(Making::New { under, job }),
+            },
+            Some(Making::Rename { from, path, job }) => match job.take() {
+                Some(done) => {
+                    self.renamed(&mut b, &from, path, done, ctx);
+                    self.dialog = Some(Dialog::Browse(b));
+                    return true;
+                }
+                None => b.making = Some(Making::Rename { from, path, job }),
+            },
+            None => {}
         }
         self.dialog = Some(Dialog::Browse(b));
         landed
@@ -724,6 +852,7 @@ mod tests {
             judging: None,
             walking: None,
             filling: Vec::new(),
+            making: None,
             clicks: DoubleClick::default(),
             refused: None,
         };
