@@ -1364,6 +1364,36 @@ fn a_new_canvas_damages_the_buffer() {
 }
 
 #[test]
+fn a_canvas_prepared_on_another_thread_shows_its_pixels_and_damages_whole() {
+    let mut s = TestScene::new();
+    let root = s.root();
+    let b = s.buffer_create(root);
+    s.set_position(b, 10, 10);
+    s.buffer_set_canvas(b, &[0; 20 * 10], 20, 10);
+    let mut t = Tracker::new(100, 100, 1.0);
+    t.frame(&s);
+    let pixels: Vec<u32> = (0..30 * 10).map(|i| 0xff00_0000 | i).collect();
+    let shown = pixels.clone();
+    let prepared = std::thread::spawn(move || crate::Prepared::new(&shown, 30, 10))
+        .join()
+        .unwrap();
+    assert_eq!(prepared.size(), (30, 10));
+    s.buffer_set_prepared(b, prepared);
+    assert!(covers_exactly(&t.frame(&s), &[prect(10, 10, 30, 10)]));
+    assert_eq!(
+        s.buffer_set_canvas(b, &pixels, 30, 10),
+        Rectangle::default(),
+        "the same pixels set again change nothing"
+    );
+    let mut moved = pixels.clone();
+    moved[4 * 30 + 6] = 0;
+    assert_eq!(
+        s.buffer_set_canvas(b, &moved, 30, 10),
+        Rectangle::new((6, 4).into(), (1, 1).into())
+    );
+}
+
+#[test]
 fn a_redrawn_canvas_damages_only_the_box_around_its_changed_pixels() {
     let mut s = TestScene::new();
     let root = s.root();
