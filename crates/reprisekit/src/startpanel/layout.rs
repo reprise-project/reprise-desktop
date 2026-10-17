@@ -2,7 +2,7 @@
 //! The panel stands 411x476 at 100% text and grows with the text size ([`StartPanel::text`]).
 //! With both pinned and frequent programs the rule between them adds 4 px and everything from All Programs down moves with it; program rows that do not fit above the All Programs rule are not shown.
 //! On a screen too short for the panel ([`StartPanel::room`]) program rows come off the list, 38 px each, and everything from All Programs down moves up with them; the places close up to fit above Shut down.
-//! On a screen too narrow for it the text size steps down ([`StartPanel::fit`]) and the jump pane narrows; at 100% the right column narrows by up to 40 px.
+//! On a screen too narrow for it the text size steps down ([`StartPanel::fit`]) and the jump pane narrows; at 100% the right column narrows by up to 40 px, then the left one by up to 51 px.
 
 use super::{Mode, Spot, StartPanel};
 use crate::raster::Rect;
@@ -71,6 +71,8 @@ const PLACE_RULE_LINE: i32 = 2;
 
 /// The most the right column narrows at 100% text: the panel's right edge stays 10 px past the Shut down arrow.
 const NARROW_MOST: i32 = 40;
+/// The most the left column narrows past that: the panel stands 320 px wide.
+const SHIFT_MOST: i32 = 51;
 
 /// Where the parts go, in the layout's pixels (`scale` device pixels per
 /// logical one). `spots` lists every spot shown, the clear button before
@@ -179,21 +181,40 @@ pub fn narrow(p: &StartPanel) -> i32 {
     (W - p.text.within(room)).clamp(0, NARROW_MOST)
 }
 
+/// How much narrower the left column is, and how far left everything right of it moves, so the
+/// panel stands in [`StartPanel::room`]'s width once the right column is [`NARROW_MOST`] narrower;
+/// never more than [`SHIFT_MOST`].
+pub fn shift(p: &StartPanel) -> i32 {
+    let Some((room, _)) = p.room else {
+        return 0;
+    };
+    (W - NARROW_MOST - p.text.within(room)).clamp(0, SHIFT_MOST)
+}
+
 /// How much narrower the jump pane is so the Jump panel stands in [`StartPanel::room`]'s width;
 /// the panel never gets narrower than the Home one.
 fn jump_squeeze(p: &StartPanel) -> i32 {
     let Some((room, _)) = p.room else {
         return 0;
     };
-    (JUMP_W - p.text.within(room)).clamp(0, JUMP_W - W + narrow(p))
+    (JUMP_W - p.text.within(room)).clamp(0, JUMP_W - W + narrow(p) + shift(p))
 }
 
 fn down(r: Rect, by: i32) -> Rect {
     Rect::new(r.x, r.y + by, r.width, r.height)
 }
 
+fn left(r: Rect, by: i32) -> Rect {
+    Rect::new(r.x - by, r.y, r.width, r.height)
+}
+
+fn narrower(r: Rect, by: i32) -> Rect {
+    Rect::new(r.x, r.y, r.width - by, r.height)
+}
+
 fn program_rows(p: &StartPanel) -> (Vec<Rect>, Option<Rect>) {
     let g = grow(p);
+    let shift = shift(p);
     let bottom = ALL_RULE_Y + g;
     let mut y = PROGRAM_TOP;
     let mut rows = Vec::new();
@@ -203,7 +224,7 @@ fn program_rows(p: &StartPanel) -> (Vec<Rect>, Option<Rect>) {
             rule = Some(Rect::new(
                 LEFT_RULE_X,
                 y + PIN_RULE_DOWN,
-                LEFT_RULE_W,
+                LEFT_RULE_W - shift,
                 RULE_H,
             ));
             y += PIN_RULE_H;
@@ -211,7 +232,7 @@ fn program_rows(p: &StartPanel) -> (Vec<Rect>, Option<Rect>) {
         if y + PROGRAM_H > bottom {
             break;
         }
-        rows.push(Rect::new(ROW_X, y, ROW_W, PROGRAM_H));
+        rows.push(Rect::new(ROW_X, y, ROW_W - shift, PROGRAM_H));
         y += PROGRAM_H;
     }
     (rows, rule)
@@ -226,10 +247,11 @@ pub fn tree_capacity(p: &StartPanel) -> usize {
 }
 
 fn jump_pane(p: &StartPanel) -> Rect {
+    let shift = shift(p);
     Rect::new(
-        JUMP_PANE.x,
+        JUMP_PANE.x - shift,
         JUMP_PANE.y,
-        JUMP_PANE.width - jump_squeeze(p),
+        JUMP_PANE.width - jump_squeeze(p) + shift,
         JUMP_PANE.height + grow(p),
     )
 }
@@ -299,27 +321,28 @@ fn layout_100(p: &StartPanel) -> Layout {
     let mode = p.mode();
     let squeeze = jump_squeeze(p);
     let narrow = narrow(p);
+    let shift = shift(p);
     let panel = Rect::new(
         0,
         0,
         if let Mode::Jump(_) = mode {
             JUMP_W - squeeze
         } else {
-            W - narrow
+            W - narrow - shift
         },
         H + g,
     );
     let pane_w = match mode {
-        Mode::Search => SEARCH_PANE_W - narrow,
+        Mode::Search => SEARCH_PANE_W - narrow - shift,
         Mode::Jump(_) => JUMP_PANE_W - squeeze,
-        Mode::Home | Mode::Programs => PANE.width,
+        Mode::Home | Mode::Programs => PANE.width - shift,
     };
     let pane = Rect::new(PANE.x, PANE.y, pane_w, PANE.height + g);
     let mut spots = Vec::new();
     let mut rules = Vec::new();
     let mut headers = Vec::new();
     let mut tree_bar = None;
-    let all_rule = Rect::new(LEFT_RULE_X, ALL_RULE_Y + g, LEFT_RULE_W, RULE_H);
+    let all_rule = Rect::new(LEFT_RULE_X, ALL_RULE_Y + g, LEFT_RULE_W - shift, RULE_H);
 
     match mode {
         Mode::Home | Mode::Jump(_) => {
@@ -331,21 +354,21 @@ fn layout_100(p: &StartPanel) -> Layout {
             );
             rules.extend(rule);
             rules.push(all_rule);
-            spots.push((Spot::AllPrograms, down(ALL_PROGRAMS, g)));
+            spots.push((Spot::AllPrograms, down(narrower(ALL_PROGRAMS, shift), g)));
         }
         Mode::Programs => {
             let rows = p.tree_rows();
             let cap = tree_capacity(p);
             let w = if rows.len() > cap {
                 tree_bar = Some(Rect::new(
-                    TREE_BAR_X,
+                    TREE_BAR_X - shift,
                     TREE_TOP,
                     TREE_BAR_W,
                     cap as i32 * TREE_ROW_H,
                 ));
-                TREE_BAR_X - ROW_X
+                TREE_BAR_X - shift - ROW_X
             } else {
-                ROW_W
+                ROW_W - shift
             };
             let shown = rows.iter().skip(p.tree_top).take(cap);
             spots.extend(shown.enumerate().map(|(k, &i)| {
@@ -353,7 +376,7 @@ fn layout_100(p: &StartPanel) -> Layout {
                 (Spot::Tree(i), Rect::new(ROW_X, y, w, TREE_ROW_H))
             }));
             rules.push(all_rule);
-            spots.push((Spot::AllPrograms, down(ALL_PROGRAMS, g)));
+            spots.push((Spot::AllPrograms, down(narrower(ALL_PROGRAMS, shift), g)));
         }
         Mode::Search => {
             let bottom = ALL_PROGRAMS.bottom() + g;
@@ -365,13 +388,16 @@ fn layout_100(p: &StartPanel) -> Layout {
                 if y + HEADER_H > bottom {
                     break;
                 }
-                headers.push((gi, Rect::new(HEADER_X, y, HEADER_W - narrow, HEADER_H)));
+                headers.push((
+                    gi,
+                    Rect::new(HEADER_X, y, HEADER_W - narrow - shift, HEADER_H),
+                ));
                 y += HEADER_H;
                 for ri in 0..grp.rows.len() {
                     if y + RESULT_H > bottom {
                         break 'groups;
                     }
-                    let r = Rect::new(RESULT_X, y, RESULT_W - narrow, RESULT_H);
+                    let r = Rect::new(RESULT_X, y, RESULT_W - narrow - shift, RESULT_H);
                     spots.push((Spot::Result(gi, ri), r));
                     y += RESULT_H;
                 }
@@ -381,9 +407,9 @@ fn layout_100(p: &StartPanel) -> Layout {
     }
 
     if !p.query().is_empty() {
-        spots.push((Spot::Clear, down(CLEAR, g)));
+        spots.push((Spot::Clear, down(left(CLEAR, shift), g)));
     }
-    spots.push((Spot::Search, down(SEARCH, g)));
+    spots.push((Spot::Search, down(narrower(SEARCH, shift), g)));
 
     let mut picture = None;
     let mut jump = None;
@@ -400,13 +426,16 @@ fn layout_100(p: &StartPanel) -> Layout {
                 }
                 if rule {
                     let w = PLACE_RULE_W - narrow;
-                    rules.push(Rect::new(PLACE_RULE_X, y, w, PLACE_RULE_LINE));
+                    rules.push(Rect::new(PLACE_RULE_X - shift, y, w, PLACE_RULE_LINE));
                 }
-                spots.push((Spot::Place(i), Rect::new(PLACE_X, top, PLACE_W - narrow, h)));
+                spots.push((
+                    Spot::Place(i),
+                    Rect::new(PLACE_X - shift, top, PLACE_W - narrow, h),
+                ));
                 y = top + pitch;
             }
             let frame = Rect::new(
-                PICTURE_FRAME.x - narrow / 2,
+                PICTURE_FRAME.x - narrow / 2 - shift,
                 PICTURE_FRAME.y,
                 PICTURE_FRAME.width,
                 PICTURE_FRAME.height,
@@ -417,18 +446,24 @@ fn layout_100(p: &StartPanel) -> Layout {
         Mode::Jump(_) => {
             let jp = jump_pane(p);
             jump = Some(jp);
-            let row_w = JUMP_ROW_W - squeeze;
-            headers.push((0, Rect::new(JUMP_X, JUMP_HEADER_Y, row_w, JUMP_ROW_H)));
+            let row_w = JUMP_ROW_W - squeeze + shift;
+            headers.push((
+                0,
+                Rect::new(JUMP_X - shift, JUMP_HEADER_Y, row_w, JUMP_ROW_H),
+            ));
             let top = JUMP_HEADER_Y + JUMP_ROW_H;
             spots.extend((0..jumps_shown(p)).map(|k| {
                 let y = top + k as i32 * JUMP_ROW_H;
-                (Spot::Jump(k), Rect::new(JUMP_X, y, row_w, JUMP_ROW_H))
+                (
+                    Spot::Jump(k),
+                    Rect::new(JUMP_X - shift, y, row_w, JUMP_ROW_H),
+                )
             }));
         }
         Mode::Search => {}
     }
-    spots.push((Spot::Shutdown, down(SHUTDOWN, g)));
-    spots.push((Spot::ShutdownArrow, down(SHUTDOWN_ARROW, g)));
+    spots.push((Spot::Shutdown, down(left(SHUTDOWN, shift), g)));
+    spots.push((Spot::ShutdownArrow, down(left(SHUTDOWN_ARROW, shift), g)));
 
     let canvas = picture.map_or(panel, |r| panel.union(&r));
     Layout {
@@ -626,6 +661,98 @@ mod tests {
     }
 
     #[test]
+    fn a_room_under_371_narrows_the_left_column_and_moves_the_right_one_in() {
+        let mut p = StartPanel::new();
+        p.frequent = vec![prow("Notepad", false)];
+        p.places = ten_places();
+        p.jump = vec![row("a.txt")];
+
+        p.fit(TextUnits::ONE, (371, 600));
+        let l = layout(&p);
+        assert_eq!(l.panel.width, 371);
+        assert_eq!(l.pane.width, 250, "the left column keeps its width at 371");
+        assert_eq!(l.rect(Spot::ShutdownArrow).unwrap().right(), 361);
+
+        p.fit(TextUnits::ONE, (360, 600));
+        let l = layout(&p);
+        assert_eq!(l.panel.width, 360);
+        assert_eq!(l.pane.right(), 248);
+        assert_eq!(l.rect(Spot::Program(0)).unwrap().width, 235);
+        assert_eq!(l.rect(Spot::Search).unwrap().width, 211);
+        assert_eq!(l.rect(Spot::Place(0)).unwrap().x, 255);
+        assert_eq!(l.rect(Spot::Shutdown).unwrap().x, 256);
+        assert_eq!(l.rect(Spot::ShutdownArrow).unwrap().right(), 350);
+
+        p.fit(TextUnits::ONE, (320, 600));
+        let l = layout(&p);
+        assert_eq!(l.panel.width, 320);
+        assert_eq!(l.pane, Rect::new(9, 9, 199, 458));
+        assert_eq!(l.rect(Spot::Program(0)), Some(Rect::new(11, 10, 195, 38)));
+        assert_eq!(l.rect(Spot::AllPrograms), Some(Rect::new(11, 395, 195, 23)));
+        assert_eq!(l.rect(Spot::Search), Some(Rect::new(21, 434, 171, 22)));
+        assert_eq!(
+            l.rules[0],
+            Rect::new(20, 391, 181, 1),
+            "the rule over All Programs"
+        );
+        let place = l.rect(Spot::Place(0)).unwrap();
+        assert_eq!(
+            (place.x, place.right()),
+            (215, 313),
+            "7 px short of the edge"
+        );
+        let rule = l.rules.iter().find(|r| r.x > l.pane.right()).unwrap();
+        assert_eq!((rule.x, rule.width), (223, 84));
+        assert_eq!(l.picture, Some(Rect::new(233, -OVERHANG, 64, 62)));
+        assert_eq!(l.rect(Spot::Shutdown), Some(Rect::new(216, 434, 72, 22)));
+        assert_eq!(
+            l.rect(Spot::ShutdownArrow).unwrap().right(),
+            310,
+            "Shut down's arrow stays 10 px from the edge"
+        );
+        assert_eq!(l.canvas.right(), 320);
+
+        p.tree = (0..40)
+            .map(|k| TreeRow::App {
+                name: format!("App {k}"),
+                icon: None,
+                depth: 0,
+            })
+            .collect();
+        p.set_mode(Mode::Programs);
+        let l = layout(&p);
+        assert_eq!(l.tree_bar.unwrap().right(), l.pane.right() - 1);
+        assert_eq!(l.rect(Spot::Tree(0)).unwrap().right(), 191);
+
+        p.set_mode(Mode::Jump(0));
+        let l = layout(&p);
+        assert_eq!(l.panel.width, 320);
+        assert_eq!(l.jump_pane, Some(Rect::new(208, 9, 103, 413)));
+        assert_eq!(l.headers[0].1, Rect::new(223, 12, 84, 22));
+
+        p.set_mode(Mode::Home);
+        p.key(Key::Char(EditKey::Insert("n".into())));
+        p.results = vec![ResultGroup {
+            title: "Programs".into(),
+            rows: vec![row("Notepad")],
+        }];
+        let l = layout(&p);
+        assert_eq!(l.panel.width, 320);
+        assert_eq!(l.pane.right(), 311);
+        assert_eq!(l.headers[0].1.right(), 301);
+        assert_eq!(l.rect(Spot::Result(0, 0)).unwrap().right(), 305);
+        let (clear, field) = (l.rect(Spot::Clear).unwrap(), l.rect(Spot::Search).unwrap());
+        assert_eq!(
+            field.right() - clear.right(),
+            2,
+            "the clear button keeps its place in the field"
+        );
+
+        p.fit(TextUnits::ONE, (280, 600));
+        assert_eq!(layout(&p).panel.width, 320, "never past 320");
+    }
+
+    #[test]
     fn a_room_narrower_than_the_panel_at_100_percent_narrows_the_right_column() {
         let mut p = StartPanel::new();
         p.frequent = vec![prow("Notepad", false)];
@@ -664,13 +791,6 @@ mod tests {
         assert_eq!(l.pane.right(), 391);
         assert_eq!(l.headers[0].1.right(), 381);
         assert_eq!(l.rect(Spot::Result(0, 0)).unwrap().right(), 385);
-
-        p.fit(TextUnits::ONE, (300, 300));
-        assert_eq!(
-            layout(&p).panel.width,
-            W - NARROW_MOST,
-            "never past 40 px narrower"
-        );
     }
 
     #[test]

@@ -316,7 +316,7 @@ fn draw_contents(
                 if is_lit {
                     d.part(b, Part::StartHotLeft, State::Normal);
                     if row.jump {
-                        let x = b.x + g.len(at::SPLIT_X);
+                        let x = b.x + g.len(at::SPLIT_X - layout::shift(p));
                         d.part(
                             Rect::new(x, b.y, 3 * s, b.height),
                             Part::StartHotSplit,
@@ -331,7 +331,7 @@ fn draw_contents(
                     d.canvas.blit_over(x, y, icon);
                 }
                 let right = if row.jump {
-                    g.len(at::SPLIT_X)
+                    g.len(at::SPLIT_X - layout::shift(p))
                 } else {
                     r.width - 4 * s
                 };
@@ -340,7 +340,9 @@ fn draw_contents(
                 d.line(text, x, y, clip, &row.name, ink(INK_PROGRAM), size);
                 if row.jump {
                     let arrow = Part::StartRowArrow;
-                    d.glyph(glyph_at(r, at::ROW_ARROW, arrow), arrow);
+                    let (ax, ay) = at::ROW_ARROW;
+                    let ax = ax - layout::shift(p);
+                    d.glyph(glyph_at(r, (ax, ay), arrow), arrow);
                 }
             }
             Spot::AllPrograms => {
@@ -1577,6 +1579,46 @@ mod tests {
                 "the arrow moves in with the row"
             );
         }
+    }
+
+    #[test]
+    fn a_320_px_panel_keeps_its_frame_split_and_arrows_inside() {
+        let mut p = sample(Mode::Home, None);
+        p.places[4].submenu = true;
+        p.fit(crate::theme::TextUnits::ONE, (320, 1000));
+        let d = render(&p, None);
+        assert_eq!(d.l.panel.width, 320);
+        let (outline, light) = frame_edges(&Settings::default());
+        assert_eq!(d.at(318, 200), light, "the light line");
+        assert_eq!(d.at(319, 200), outline, "the outline");
+        let r = d.l.rect(Spot::Place(4)).unwrap();
+        assert_eq!(r.right(), 313, "the row keeps its 7 px from the edge");
+        if face() {
+            let arrow = Rect::new(r.x + at::PLACE_ARROW.0 - 40, r.y, 8, r.height);
+            assert!(inks_near(&d, arrow, INK_RIGHT), "the place's arrow");
+        }
+
+        p.set_mode(Mode::Jump(3));
+        p.pointer(Some(Spot::Jump(1)));
+        let d = render(&p, None);
+        assert_eq!(d.l.panel.width, 320);
+        assert_eq!(
+            d.at(179, 140),
+            part_at(Part::StartHotSplit, 1, 11),
+            "the split moves in with the row's right"
+        );
+        assert_eq!(
+            d.at(210, 109),
+            part_at(Part::StartJumpPane, 2, 100),
+            "the jump pane"
+        );
+        assert_eq!(
+            d.at(225, 62),
+            part_at(Part::StartHotJump, 2, 5),
+            "the lit jump row"
+        );
+        assert_eq!(d.at(318, 200), light, "the light line");
+        assert_eq!(d.at(319, 200), outline, "the outline");
     }
 
     #[test]
