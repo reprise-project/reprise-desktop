@@ -9,7 +9,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use reprisekit::wallpapers::Builtin;
-use reprisescene::{BufferId, Prepared};
+use reprisescene::BufferId;
 use smithay::{
     output::Output,
     reexports::calloop::{
@@ -20,6 +20,7 @@ use smithay::{
 
 use crate::{
     compositor::State,
+    dmaupload::{Staged, Uploads},
     output::upload_scaled,
     raster::{Canvas, Rect},
     theme::Color,
@@ -38,9 +39,9 @@ pub struct Wallpaper {
     loading: Option<Cut>,
     /// A built-in and its pictures, one per output device size.
     builtin: Option<(Builtin, Drawn)>,
-    /// Built-in pictures copied for the scene on the drawing thread; the first output of
-    /// a picture's size takes its copy.
-    prepared: Vec<Prepared>,
+    /// Built-in pictures made ready for the scene on the drawing thread; the first output of
+    /// a picture's size takes it.
+    staged: Vec<Staged>,
     nodes: Vec<(Output, WallpaperNode)>,
     /// The picture this one replaces, still on screen under it until this
     /// one has faded in: its buffers, and the fade's timer and start once
@@ -56,7 +57,7 @@ impl Wallpaper {
             image: None,
             loading: None,
             builtin: crate::wallpaper::builtin(path).map(|b| (b, Drawn::default())),
-            prepared: Vec::new(),
+            staged: Vec::new(),
             nodes: Vec::new(),
             fading: Vec::new(),
             fade: None,
@@ -216,9 +217,9 @@ impl State {
     /// outputs of its size compose it, unless the wallpaper changed or no
     /// output wants that size any more.
     fn draw_builtins(&mut self, path: PathBuf, b: Builtin, sizes: Vec<(u32, u32)>) {
-        let (tx, rx) = channel::channel::<(Canvas, Prepared)>();
+        let (tx, rx) = channel::channel::<(Canvas, Staged)>();
         let inserted = self.handle.insert_source(rx, move |event, _, state| {
-            let channel::Event::Msg((picture, prepared)) = event else {
+            let channel::Event::Msg((picture, staged)) = event else {
                 return;
             };
             let Some(w) = state.wallpaper.as_mut() else {
@@ -230,7 +231,7 @@ impl State {
             if let Some((_, d)) = w.builtin.as_mut()
                 && d.land(picture)
             {
-                w.prepared.push(prepared);
+                w.staged.push(staged);
                 state.refit_wallpaper();
                 crate::lockview::refit(state);
             }
@@ -239,13 +240,14 @@ impl State {
             log::warn!("wallpaper: {}", e.error);
             return;
         }
+        let uploads = self.uploads();
         let spawned = std::thread::Builder::new()
             .name("wallpaper".into())
             .spawn(move || {
                 for (w, h) in sizes {
                     let picture = crate::wallpaper::draw(b, w, h);
-                    let prepared = Prepared::new(&picture.pixels, w as i32, h as i32);
-                    if tx.send((picture, prepared)).is_err() {
+                    let staged = Staged::new(uploads.as_ref(), &picture);
+                    if tx.send((picture, staged)).is_err() {
                         return;
                     }
                 }
@@ -483,7 +485,7 @@ impl State {
             })
             .collect();
         let sizes: Vec<(u32, u32)> = shown.iter().map(|s| s.3).collect();
-        w.prepared
+        w.staged
             .retain(|p| sizes.contains(&(p.size().0 as u32, p.size().1 as u32)));
         let mut load = None;
         let mut draw = Vec::new();
@@ -590,18 +592,16 @@ impl State {
             self.scene.set_position(node.buffer, b.x, b.y);
             let canvas =
                 crate::wallpaper::composed(source, size.0, size.1, position, bg, scale as f32);
-            let prepared = w
-                .prepared
+            let staged = w
+                .staged
                 .iter()
                 .position(|p| p.size() == (size.0 as i32, size.1 as i32))
-                .map(|i| w.prepared.swap_remove(i));
-            match prepared {
-                // Borrowed: the picture is shown as drawn, so its copy is the canvas.
+                .map(|i| w.staged.swap_remove(i));
+            match staged {
+                // Borrowed: the picture is shown as drawn, so what was staged is the canvas.
                 Some(p) if matches!(canvas, Cow::Borrowed(_)) => {
-                    self.scene.buffer_set_prepared(node.buffer, p);
-                    let logical = (size.0 as i32 / scale, size.1 as i32 / scale);
-                    self.scene
-                        .buffer_set_dest_size(node.buffer, Some(logical.into()));
+                    let renderer = self.backend.as_mut().map(|b| &mut b.renderer);
+                    p.show(&mut self.scene, renderer, node.buffer, &canvas, scale);
                 }
                 _ => upload_scaled(&mut self.scene, node.buffer, &canvas, scale),
             }
@@ -639,10 +639,12 @@ impl State {
     /// Compose `image` for `out`'s `fit` on a job; it shows unless the picture or the fit wanted
     /// changed meanwhile.
     fn compose_wallpaper(&mut self, out: Output, fit: Fit, size: (u32, u32), image: Arc<Loaded>) {
+        let uploads = self.uploads();
         self.spawn_fs_job(move || {
             let (bg, position, scale) = (fit.bg, fit.position, fit.scale as f32);
             let canvas =
                 crate::wallpaper::compose(&image.image, size.0, size.1, position, bg, scale);
+            let staged = Staged::new(uploads.as_ref(), &canvas);
             Box::new(move |state: &mut State| {
                 let Some(w) = state.wallpaper.as_mut() else {
                     return;
@@ -661,11 +663,16 @@ impl State {
                 node.placed = Some(fit.rect);
                 let b = fit.rect;
                 state.scene.set_position(node.buffer, b.x, b.y);
-                upload_scaled(&mut state.scene, node.buffer, &canvas, fit.scale);
+                let renderer = state.backend.as_mut().map(|b| &mut b.renderer);
+                staged.show(&mut state.scene, renderer, node.buffer, &canvas, fit.scale);
                 state.water_wallpaper(&out, Pane::Desktop, &canvas, false);
                 state.redraw_all();
             })
         });
+    }
+
+    fn uploads(&self) -> Option<Uploads> {
+        self.backend.as_ref().map(|b| b.uploads.clone())
     }
 
     /// The wallpaper as `out` shows it, at `scale`: the lock screen's
