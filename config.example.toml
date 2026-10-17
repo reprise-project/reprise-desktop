@@ -388,7 +388,8 @@ suspend_after = 0            # run [power] standby
 # mouse_keys_acceleration = 1.0  # seconds a held key takes to reach it, 0 to 5
 # mouse_keys_num_lock = true # only while Num Lock is on; false: always
 # text_size = 100            # percent, 100 to 200 in steps of 25: the taskbar, Start menu, menus,
-#                            # captions and tooltips, the heights that hold them, dialogs, settings
+#                            # captions and tooltips, the heights that hold them (and Classic's and
+#                            # Blue's caption buttons), dialogs, settings
 #                            # pages and program forms (they grow with the text; check boxes,
 #                            # bevels and icons keep their size), the file dialog, Open With, Log
 #                            # Off and Turn Off, the windows of Explorer, Notepad, Network

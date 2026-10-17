@@ -1,7 +1,7 @@
 //! The shared Classic controls; each draws into the (already scaled) rect it is given.
 
 use crate::access::{self, Tree, accesskit};
-use crate::art::glyph::{Glyph, draw_glyph_strokes};
+use crate::art::glyph::{Glyph, draw_glyph_fitted};
 use crate::paint::Paint;
 use crate::pointer::Lit;
 pub use crate::pointer::{Axis, ScrollHit};
@@ -602,15 +602,8 @@ pub fn draw_caption_button(
     };
     c.edge_t(r, edge, cs, s);
     let o = if pressed { s } else { 0 };
-    draw_glyph_strokes(
-        c,
-        r.x + o,
-        r.y + o,
-        s,
-        glyph,
-        cs.button_text,
-        cs.button_face,
-    );
+    let at = Rect::new(r.x + o, r.y + o, r.width, r.height);
+    draw_glyph_fitted(c, at, s, glyph, cs.button_text, cs.button_face);
 }
 
 pub fn caption_ramp(width: i32, buttons: i32, s: i32) -> i32 {
@@ -1114,6 +1107,78 @@ mod tests {
 
     fn setup() -> (Theme, TextRenderer) {
         (Theme::default(), TextRenderer::load(&FontConfig::default()))
+    }
+
+    fn fnv(c: &Canvas) -> u64 {
+        let words = [c.width, c.height]
+            .into_iter()
+            .chain(c.pixels.iter().copied());
+        words
+            .flat_map(u32::to_le_bytes)
+            .fold(0xcbf2_9ce4_8422_2325, |h, b| {
+                (h ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3)
+            })
+    }
+
+    fn grown_button(pct: u32, d: i32, g: Glyph, pressed: bool) -> Canvas {
+        let t = Theme::default().with_text_size(pct).scaled(d);
+        let (w, h) = (
+            t.metrics.caption_button_width,
+            t.metrics.caption_button_height,
+        );
+        let mut c = Canvas::new(w as u32, h as u32);
+        draw_caption_button(&mut c, &t.colors, Rect::new(0, 0, w, h), g, pressed, d);
+        c
+    }
+
+    const GLYPHS: [Glyph; 5] = [
+        Glyph::Minimize,
+        Glyph::Maximize,
+        Glyph::Restore,
+        Glyph::Close,
+        Glyph::Help,
+    ];
+
+    #[test]
+    fn a_grown_maximize_box_has_even_sides() {
+        let ink = Theme::default().colors.button_text.argb();
+        for pct in [150, 200] {
+            let c = grown_button(pct, 1, Glyph::Maximize, false);
+            let mid = c.height as i32 / 2;
+            let cols: Vec<i32> = (0..c.width as i32)
+                .filter(|&x| c.get(x, mid) == ink)
+                .collect();
+            let (l, r) = (cols[0], cols[cols.len() - 1]);
+            let run = |from: i32, step: i32| {
+                (0..)
+                    .take_while(|i| c.get(from + i * step, mid) == ink)
+                    .count()
+            };
+            assert_eq!(run(l, 1), run(r, -1), "{pct}%: left and right sides alike");
+            let left = l;
+            let right = c.width as i32 - 1 - r;
+            assert!(
+                (left - right).abs() <= 1,
+                "{pct}%: centred, {left} and {right}"
+            );
+        }
+    }
+
+    #[test]
+    fn grown_caption_buttons_pin_at_150_and_200_percent() {
+        let mut got = Vec::new();
+        for pct in [150, 200] {
+            for d in [1, 2] {
+                for g in GLYPHS {
+                    for pressed in [false, true] {
+                        let c = grown_button(pct, d, g, pressed);
+                        let key = format!("{pct} {d} {g:?} {pressed}");
+                        got.push((key, fnv(&c)));
+                    }
+                }
+            }
+        }
+        crate::pins::check("classic/caption_buttons_grown", &got);
     }
 
     #[test]
