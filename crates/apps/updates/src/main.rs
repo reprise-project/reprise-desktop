@@ -169,7 +169,7 @@ impl UpdatesApp {
                 }
             }
             worker::Msg::Request(r) => {
-                // One to do now shows in the window; it balloons too when the window is hidden. One
+                // One to do now shows in the window; it balloons when the window is hidden or closes. One
                 // that finishes the update afterwards always balloons, as the install ends with it.
                 if let Some(r) = &r
                     && (self.hidden || !r.now)
@@ -391,6 +391,9 @@ impl UpdatesApp {
             }
             window::Outcome::Restart => self.restart(),
             window::Outcome::Close => {
+                if let Some(balloon) = model::closed_balloon(&self.phase) {
+                    self.notify(balloon, true);
+                }
                 self.hidden = true;
                 Reply::redraw()
             }
