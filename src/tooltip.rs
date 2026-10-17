@@ -284,18 +284,19 @@ fn show_tip(state: &mut State, target: Target, tip: &Tip, output: &Output, curso
     // A taskbar tip opens on the screen side of the bar: above the
     // pointer over a bottom bar, under it below a top bar, beside a side
     // bar level with the pointer.
-    // A caption button's tip opens under the pointer, or over it while the
-    // snap layout picker hangs under the maximize button.
     let p = state.bar_placement(output);
-    let below = match target {
-        Target::Caption(..) => !state.snap_picker.is_shown(),
-        _ => p.edge == reprisekit::taskbar::Edge::Top,
-    };
+    let below = p.edge == reprisekit::taskbar::Edge::Top;
     let beside = matches!(target, Target::Taskbar { .. }) && p.edge.is_side();
+    let caption = match target {
+        Target::Caption(w, b) => caption_button_rect(state, w, b),
+        _ => None,
+    };
     let (canvas, (x, y)) = match tip {
         Tip::Label(label) => {
             let size = tip_size(text, base, label);
-            let at = if beside {
+            let at = if let Some(button) = caption {
+                place_caption(cursor, size, screen, button, state.snap_picker.is_shown())
+            } else if beside {
                 let right = p.edge == reprisekit::taskbar::Edge::Left;
                 place_beside(cursor, p.screen_side(), right, size, screen)
             } else {
@@ -348,6 +349,33 @@ fn menu_row_rect(state: &State, depth: usize, row: usize) -> Option<Rect> {
     let m = state.menus.get(depth)?;
     let r = *m.layout.rows.get(row)?;
     Some(Rect::new(m.x + r.x, m.y + r.y, r.width, r.height))
+}
+
+/// Caption button `b` of window `w` in layout coordinates.
+fn caption_button_rect(state: &State, w: WindowId, b: CaptionButton) -> Option<Rect> {
+    let win = state.win(w)?;
+    let frame = win.frame_rect();
+    let r = win.geom.button_rect(b);
+    Some(Rect::new(frame.x + r.x, frame.y + r.y, r.width, r.height))
+}
+
+/// Where caption `button`'s tip goes: under the pointer, or above it while the snap layout
+/// `picker` hangs under the button; with no room above (a maximized window), left of the button.
+fn place_caption(
+    cursor: (i32, i32),
+    size: (i32, i32),
+    screen: Rect,
+    button: Rect,
+    picker: bool,
+) -> (i32, i32) {
+    if !picker {
+        return place(cursor, size, screen, true);
+    }
+    let above = place(cursor, size, screen, false);
+    if above.1 + size.1 < cursor.1 {
+        return above;
+    }
+    place_beside(cursor, button.x, false, size, screen)
 }
 
 /// A caption button's tip; the maximize button's names the `snap-layouts`
@@ -492,6 +520,33 @@ mod tests {
         assert_eq!(caption_tip(Maximize, false, None), "Maximize", "unbound");
         assert_eq!(caption_tip(Minimize, false, keys), "Minimize");
         assert_eq!(caption_tip(Close, true, keys), "Close");
+    }
+
+    #[test]
+    fn a_caption_tip_clears_the_button_under_the_pointer() {
+        let screen = Rect::new(0, 0, 1920, 1080);
+        let size = (120, 30);
+        let max = Rect::new(1860, 4, 21, 21);
+        let on = (1870, 14);
+        let at = place_caption(on, size, screen, max, true);
+        let tip = Rect::new(at.0, at.1, size.0, size.1);
+        assert_eq!(
+            at,
+            (1738, 0),
+            "left of the maximize button of a maximized window"
+        );
+        assert!(!tip.intersects(max), "the button stays clear");
+        let low = Rect::new(900, 300, 21, 21);
+        assert_eq!(
+            place_caption((910, 310), size, screen, low, true),
+            (909, 272),
+            "above the pointer with room there"
+        );
+        assert_eq!(
+            place_caption(on, size, screen, max, false),
+            (1799, 35),
+            "under the pointer with no picker"
+        );
     }
 
     #[test]
