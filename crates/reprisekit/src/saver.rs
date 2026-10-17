@@ -183,6 +183,21 @@ struct Photos {
     asked: bool,
 }
 
+impl Photos {
+    fn pass(&mut self, ms: u64) {
+        if self.incoming.is_some() {
+            self.fade_ms += ms;
+            if self.fade_ms >= PHOTO_FADE_MS {
+                self.shown = self.incoming.take();
+                self.fade_ms = 0;
+                self.held_ms = 0;
+            }
+        } else if self.shown.is_some() {
+            self.held_ms += ms;
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 enum Scene {
     Blank,
@@ -309,6 +324,11 @@ impl Saver {
     }
 
     pub fn advance(&mut self, ms: u64) {
+        // Photos counts its hold whole: the host sleeps through it in one wait.
+        if let Scene::Photos(p) = &mut self.scene {
+            p.pass(ms);
+            return;
+        }
         self.carry += ms;
         // A host that stalled for long (a suspend) skips ahead rather
         // than replaying every step.
@@ -385,18 +405,7 @@ impl Saver {
                     *color = (*color + 1) % LOGO_COLORS.len();
                 }
             }
-            Scene::Photos(p) => {
-                if p.incoming.is_some() {
-                    p.fade_ms += STEP_MS;
-                    if p.fade_ms >= PHOTO_FADE_MS {
-                        p.shown = p.incoming.take();
-                        p.fade_ms = 0;
-                        p.held_ms = 0;
-                    }
-                } else if p.shown.is_some() {
-                    p.held_ms += STEP_MS;
-                }
-            }
+            Scene::Photos(p) => p.pass(STEP_MS),
         }
     }
 
@@ -1047,6 +1056,26 @@ mod tests {
             s.step();
         }
         assert!(s.take_photo_request(), "the next is asked for after 3 s");
+    }
+
+    #[test]
+    fn a_photo_held_in_one_wait_asks_for_the_next_when_it_ends() {
+        let opts = Options {
+            photo_seconds: 3,
+            ..Options::default()
+        };
+        let mut s = Saver::new(Kind::Photos, &opts, 4, 2, 1, &text());
+        assert!(s.take_photo_request());
+        s.push_photo(Canvas::new(4, 2));
+        s.advance(PHOTO_FADE_MS + STEP_MS);
+        assert_eq!(s.photo_fade(), None, "the fade has ended");
+        let wait = s.photo_wait_ms().unwrap();
+        assert_eq!(wait, 3000);
+        s.advance(wait);
+        assert!(
+            s.take_photo_request(),
+            "the next is asked for after one 3 s wait"
+        );
     }
 
     #[test]
