@@ -734,8 +734,8 @@ impl Change {
 
     /// The CUPS-Add-Modify-Printer request. With the queue's `ppd`, the
     /// defaults go into its Default lines and the PPD goes up with the
-    /// request, as `lpadmin -o` sends it.
-    fn into_request(self, name: &str, ppd: Option<&[u8]>) -> Request {
+    /// request, as `lpadmin -o` sends it. The `stale` defaults are deleted.
+    fn into_request(self, name: &str, ppd: Option<&[u8]>, stale: &[String]) -> Request {
         let mut req = Request::new(CUPS_ADD_MODIFY_PRINTER)
             .op_attr("printer-uri", Value::uri(&printer_uri(name)));
         if let Some(s) = self.info {
@@ -762,6 +762,11 @@ impl Change {
             }
             _ => (None, Vec::new()),
         };
+        for k in stale {
+            if !self.defaults.iter().any(|(d, _)| d == k) {
+                req = req.printer_attr(k, Value::Empty(ipp::DELETE_ATTR));
+            }
+        }
         for (k, v) in self.defaults {
             let option = option_of(&k);
             let carried = ppd::CARRIED.contains(&option) && applied.iter().any(|a| a == option);
@@ -780,7 +785,7 @@ impl Change {
 
     /// The same change through cups-pk-helper. On a queue with a PPD,
     /// PrinterAddOption sets the Default line as `lpadmin -o` does.
-    fn calls(&self, name: &str, has_ppd: bool) -> Vec<Call> {
+    fn calls(&self, name: &str, has_ppd: bool, stale: &[String]) -> Vec<Call> {
         let n = || name.to_string();
         let mut out = Vec::new();
         if let Some(s) = &self.info {
@@ -794,6 +799,15 @@ impl Change {
         }
         if let Some(b) = self.shared {
             out.push(Call::PrinterSetShared(n(), b));
+        }
+        for k in stale {
+            if !self.defaults.iter().any(|(d, _)| d == k) {
+                out.push(Call::PrinterAddOptionDefault(
+                    n(),
+                    option_of(k).into(),
+                    Vec::new(),
+                ));
+            }
         }
         for (k, v) in &self.defaults {
             let Some(text) = value_text(v) else {
@@ -856,12 +870,34 @@ pub fn modify(c: &Client, name: &str, change: Change) -> Result<()> {
     } else {
         ppd_of(c, name)?
     };
-    let calls = change.calls(name, ppd.is_some());
+    let stale = stale_defaults(c, name).unwrap_or_else(|e| {
+        log::warn!("reading {name}'s defaults: {e:?}");
+        Vec::new()
+    });
+    let calls = change.calls(name, ppd.is_some(), &stale);
     c.admin(
-        c.call("/admin/", change.into_request(name, ppd.as_deref()))
+        c.call("/admin/", change.into_request(name, ppd.as_deref(), &stale))
             .map(drop),
         || calls,
     )
+}
+
+/// The media and sides defaults cupsd reports twice for queue `name`: a queue
+/// option an older Device Settings left beside the PPD's own default.
+fn stale_defaults(c: &Client, name: &str) -> Result<Vec<String>> {
+    let req = Request::new(GET_PRINTER_ATTRIBUTES)
+        .op_attr("printer-uri", Value::uri(&printer_uri(name)))
+        .requested(&["media-default", "sides-default"]);
+    let r = c.call("/", req)?;
+    Ok(r.first(PRINTER).map(stale_in).unwrap_or_default())
+}
+
+fn stale_in(g: &ipp::Group) -> Vec<String> {
+    ppd::CARRIED
+        .iter()
+        .map(|o| format!("{o}-default"))
+        .filter(|n| g.attrs.iter().filter(|a| a.name == *n).count() > 1)
+        .collect()
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1270,6 +1306,7 @@ impl Options {
                 Value::Str(_, s) => Some(s.clone()),
                 _ => None,
             };
+            let default = format!("{name}-default");
             Setting {
                 choices: g
                     .get(&format!("{name}-supported"))
@@ -1277,9 +1314,13 @@ impl Options {
                     .iter()
                     .filter_map(text)
                     .collect(),
+                // cupsd lists a queue option before the PPD's default of the
+                // same name; the PPD's is the one print dialogs start on.
                 default: g
-                    .get(&format!("{name}-default"))
-                    .and_then(|v| v.first())
+                    .attrs
+                    .iter()
+                    .rfind(|a| a.name == default)
+                    .and_then(|a| a.values.first())
                     .and_then(text),
             }
         };
@@ -1718,7 +1759,7 @@ mod tests {
             Call::PrinterSetDevice(n(), "socket://10.0.0.9".into()),
             Call::PrinterSetShared(n(), true),
         ];
-        let calls = change.calls("Laser", false);
+        let calls = change.calls("Laser", false, &[]);
         assert_eq!(calls[..4], fields);
         assert_eq!(
             calls[4..],
@@ -1727,7 +1768,7 @@ mod tests {
                 Call::PrinterAddOptionDefault(n(), "print-quality".into(), vec!["5".into()]),
             ]
         );
-        assert!(Change::default().calls("Laser", false).is_empty());
+        assert!(Change::default().calls("Laser", false, &[]).is_empty());
     }
 
     #[test]
@@ -1743,7 +1784,7 @@ mod tests {
         let n = || "Laser".to_string();
         let v = |s: &str| vec![s.to_string()];
         assert_eq!(
-            change.calls("Laser", true),
+            change.calls("Laser", true, &[]),
             [
                 Call::PrinterAddOption(n(), "media".into(), v("iso_a4_210x297mm")),
                 Call::PrinterAddOptionDefault(n(), "media".into(), vec![]),
@@ -1791,7 +1832,9 @@ mod tests {
             ],
             ..Change::default()
         };
-        let req = change.clone().into_request("Laser", Some(PPD.as_bytes()));
+        let req = change
+            .clone()
+            .into_request("Laser", Some(PPD.as_bytes()), &[]);
         let ppd = String::from_utf8(req.data.clone()).expect("UTF-8");
         assert!(ppd.contains("*DefaultPageSize: A4\n"));
         assert!(ppd.contains("*DefaultDuplex: None\n"));
@@ -1810,7 +1853,7 @@ mod tests {
             ]
         );
 
-        let req = change.clone().into_request("Laser", None);
+        let req = change.clone().into_request("Laser", None, &[]);
         assert!(req.data.is_empty());
         assert_eq!(printer_attrs(&req), change.defaults);
 
@@ -1818,11 +1861,61 @@ mod tests {
             defaults: vec![("media-default".into(), Value::keyword("na_letter_8.5x11in"))],
             ..Change::default()
         };
-        let req = same.into_request("Laser", Some(PPD.as_bytes()));
+        let req = same.into_request("Laser", Some(PPD.as_bytes()), &[]);
         assert!(req.data.is_empty(), "an unchanged PPD stays on the server");
         assert_eq!(
             printer_attrs(&req),
             [("media-default".into(), Value::Empty(ipp::DELETE_ATTR))]
+        );
+    }
+
+    #[test]
+    fn a_default_reported_twice_reads_as_the_ppds_and_the_next_change_deletes_the_queue_option() {
+        let g = group(vec![
+            ("media-default", vec![Value::keyword("iso_a5_148x210mm")]),
+            (
+                "sides-default",
+                vec![Value::keyword("two-sided-short-edge")],
+            ),
+            ("media-default", vec![Value::keyword("na_letter_8.5x11in")]),
+            ("sides-default", vec![Value::keyword("one-sided")]),
+        ]);
+        let o = Options::from_group(&g);
+        assert_eq!(o.media.default.as_deref(), Some("na_letter_8.5x11in"));
+        assert_eq!(o.sides.default.as_deref(), Some("one-sided"));
+        let stale = stale_in(&g);
+        assert_eq!(stale, ["media-default", "sides-default"]);
+        let once = group(vec![(
+            "media-default",
+            vec![Value::keyword("iso_a4_210x297mm")],
+        )]);
+        assert!(stale_in(&once).is_empty());
+
+        let change = Change {
+            defaults: vec![(
+                "sides-default".into(),
+                Value::keyword("two-sided-long-edge"),
+            )],
+            ..Change::default()
+        };
+        let req = change
+            .clone()
+            .into_request("Laser", Some(PPD.as_bytes()), &stale);
+        assert_eq!(
+            printer_attrs(&req),
+            [
+                ("media-default".into(), Value::Empty(ipp::DELETE_ATTR)),
+                ("sides-default".into(), Value::Empty(ipp::DELETE_ATTR)),
+            ]
+        );
+        let n = || "Laser".to_string();
+        assert_eq!(
+            change.calls("Laser", true, &stale),
+            [
+                Call::PrinterAddOptionDefault(n(), "media".into(), vec![]),
+                Call::PrinterAddOption(n(), "sides".into(), vec!["two-sided-long-edge".into()]),
+                Call::PrinterAddOptionDefault(n(), "sides".into(), vec![]),
+            ]
         );
     }
 
