@@ -5,6 +5,7 @@ use smithay::reexports::calloop::channel::{self, Event, Sender};
 use std::collections::VecDeque;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::time::{Duration, Instant};
 
 use crate::compositor::State;
 
@@ -114,6 +115,78 @@ impl FsJobs {
     }
 }
 
+/// A read that has not landed in this long (a mount not answering) lets a newer [`Reads`] read
+/// start.
+pub const STUCK: Duration = Duration::from_secs(1);
+
+/// Reads of one thing in flight at most, stuck ones included.
+pub const MAX_READS: usize = 3;
+
+/// Re-reads of one thing on file jobs, each carrying `T` (what it reads): one runs at a time,
+/// unless the running ones have been stuck past [`STUCK`]; then a newer one may start, up to
+/// [`MAX_READS`] in flight.
+pub struct Reads<T = ()> {
+    next: u64,
+    /// Each read in flight, when it started and what it reads.
+    running: Vec<(u64, Instant, T)>,
+    /// The newest read that landed.
+    landed: u64,
+}
+
+impl<T> Default for Reads<T> {
+    fn default() -> Self {
+        Reads {
+            next: 0,
+            running: Vec::new(),
+            landed: 0,
+        }
+    }
+}
+
+impl<T> Reads<T> {
+    /// A new read of `what`'s id, or None while one runs fresh or [`MAX_READS`] are in flight.
+    pub fn start(&mut self, now: Instant, what: T) -> Option<u64> {
+        let fresh =
+            (self.running.iter()).any(|(_, t, _)| now.saturating_duration_since(*t) < STUCK);
+        if fresh || self.running.len() >= MAX_READS {
+            return None;
+        }
+        self.next += 1;
+        self.running.push((self.next, now, what));
+        Some(self.next)
+    }
+
+    /// How long until a refused [`Reads::start`] may succeed, None while [`MAX_READS`] are in
+    /// flight.
+    pub fn retry_in(&self, now: Instant) -> Option<Duration> {
+        if self.running.len() >= MAX_READS {
+            return None;
+        }
+        let Some(newest) = self.running.iter().map(|(_, t, _)| *t).max() else {
+            return Some(Duration::ZERO);
+        };
+        Some(STUCK.saturating_sub(now.saturating_duration_since(newest)))
+    }
+
+    /// What each read in flight reads, and whether it is stuck at `now`.
+    pub fn in_flight(&self, now: Instant) -> impl Iterator<Item = (bool, &T)> {
+        (self.running.iter()).map(move |(_, t, w)| (now.saturating_duration_since(*t) >= STUCK, w))
+    }
+
+    /// What read `id` reads, while it is in flight.
+    pub fn reading_mut(&mut self, id: u64) -> Option<&mut T> {
+        (self.running.iter_mut()).find_map(|(i, _, w)| (*i == id).then_some(w))
+    }
+
+    /// Ends read `id`. False when a newer read landed first: its answer is stale.
+    pub fn land(&mut self, id: u64) -> bool {
+        self.running.retain(|(i, _, _)| *i != id);
+        let current = id > self.landed;
+        self.landed = self.landed.max(id);
+        current
+    }
+}
+
 impl State {
     /// Run `work` on a thread; what it returns runs on the loop afterwards. Without
     /// the channel it runs inline; returns false only if the thread fails to spawn
@@ -134,7 +207,6 @@ impl State {
 mod tests {
     use super::*;
     use std::sync::atomic::AtomicBool;
-    use std::time::{Duration, Instant};
 
     /// A named pipe in a scratch folder: opening it to read blocks until a writer opens it, as a
     /// call into a dead mount blocks.
@@ -208,5 +280,34 @@ mod tests {
         stop.store(true, Ordering::Release);
         writer.join().unwrap();
         let _ = std::fs::remove_dir_all(hang.parent().unwrap());
+    }
+
+    #[test]
+    fn a_stuck_read_lets_a_newer_one_start_up_to_max_reads() {
+        let t0 = Instant::now();
+        let mut r = Reads::default();
+        let a = r.start(t0, ()).unwrap();
+        assert_eq!(
+            r.start(t0 + STUCK / 2, ()),
+            None,
+            "the first read runs fresh"
+        );
+        assert_eq!(r.retry_in(t0 + STUCK / 2), Some(STUCK / 2));
+        let b = r.start(t0 + STUCK, ()).expect("the first read is stuck");
+        assert_eq!(r.start(t0 + STUCK, ()), None, "the second read runs fresh");
+        let c = r.start(t0 + STUCK * 2, ()).unwrap();
+        assert_eq!(
+            r.start(t0 + STUCK * 9, ()),
+            None,
+            "{MAX_READS} reads in flight"
+        );
+        assert_eq!(r.retry_in(t0 + STUCK * 9), None);
+        assert!(r.land(b), "the newest landing read is current");
+        assert!(
+            !r.land(a),
+            "an older read landing after a newer one is stale"
+        );
+        assert!(r.start(t0 + STUCK * 9, ()).is_some(), "a slot came back");
+        assert!(r.land(c));
     }
 }
