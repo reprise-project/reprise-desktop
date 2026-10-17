@@ -90,6 +90,13 @@ impl PendingPut {
     }
 }
 
+/// A batch's items as (source, op, is a folder) and their clashes in the target folder, read on a
+/// listing thread before the replace prompt.
+pub struct Checked {
+    puts: Vec<(PathBuf, DropOp, bool)>,
+    clashes: Vec<Option<replace::Found>>,
+}
+
 /// What a paste does with one path, or `None` to ignore it (a cut file pasted back into its own
 /// folder).
 pub fn plan_paste(cut: bool, shortcut: bool, src: &Path, dir: &Path) -> Option<DropOp> {
@@ -217,7 +224,8 @@ impl Explorer {
 
     /// Copy, move or link `paths` into `dir` on a `PutJob`; `plan` picks each op (`None` skips).
     /// One undo, re-list and error box per batch; a batch started while one runs waits in
-    /// `put_queue`.
+    /// `put_queue`. Which items are folders and which names clash is read on a listing thread
+    /// ([`Checked`]); a later answer (a dead mount) lands through [`Explorer::take_clashes`].
     pub(crate) fn put_all(
         &mut self,
         paths: &[PathBuf],
@@ -226,38 +234,84 @@ impl Explorer {
         select_landed: bool,
         ctx: &mut Ctx,
     ) -> Reply {
-        let mut items = Vec::new();
-        for src in paths {
-            let Some(op) = plan(src) else {
-                continue;
-            };
-            let name = file_label(src);
-            let icon = self.icon_name_for(src, ctx);
-            let command = apps::open_command_for(src);
-            items.push(PutItem {
-                src: src.clone(),
-                display_name: name.clone(),
-                is_app: false,
-                op,
-                shortcut: Box::new(move |label| {
-                    apps::launcher_text(label, Some(&icon), Launch::Exec(command.as_deref()?))
-                }),
-                replace: None,
-            });
-        }
-        if items.is_empty() {
+        let puts: Vec<(PathBuf, DropOp)> = paths
+            .iter()
+            .filter_map(|src| Some((src.clone(), plan(src)?)))
+            .collect();
+        if puts.is_empty() {
             return Reply::none();
         }
-        let asker = Asker::new(replace::clashes(
-            items.iter().map(|it| (it.src.as_path(), it.op, it.is_app)),
-            dir,
-        ));
+        let into = dir.to_path_buf();
+        let read = move || Checked {
+            clashes: replace::clashes(
+                puts.iter().map(|(src, op)| (src.as_path(), *op, false)),
+                &into,
+            ),
+            puts: puts
+                .into_iter()
+                .map(|(src, op)| {
+                    let is_dir = src.is_dir();
+                    (src, op, is_dir)
+                })
+                .collect(),
+        };
+        let to = (dir.to_path_buf(), select_landed);
+        if !self.clashing.is_empty() {
+            // Behind a batch still being checked, so the prompts come in the order pasted.
+            let job = repriseapp::listjob::Job::spawn(Some(&ctx.wake), read);
+            self.clashing.push_back((to, job));
+            return Reply::none();
+        }
+        match self.read_job(ctx, read) {
+            Ok(checked) => self.checked_put(to, checked, ctx),
+            Err(job) => {
+                self.clashing.push_back((to, job));
+                Reply::none()
+            }
+        }
+    }
+
+    /// Asks about the batches whose check ([`Explorer::put_all`]) answered late, in order.
+    pub(crate) fn take_clashes(&mut self, ctx: &mut Ctx) -> Option<Reply> {
+        let mut reply = None;
+        while let Some(checked) = self.clashing.front().and_then(|(_, job)| job.take()) {
+            let (to, _) = self.clashing.pop_front()?;
+            self.checked_put(to, checked, ctx);
+            reply = Some(Reply::redraw_all());
+        }
+        reply
+    }
+
+    fn checked_put(
+        &mut self,
+        (dir, select_landed): (PathBuf, bool),
+        c: Checked,
+        ctx: &mut Ctx,
+    ) -> Reply {
+        let items = c
+            .puts
+            .into_iter()
+            .map(|(src, op, is_dir)| {
+                let icon = self.icon_name_as(&src, is_dir, ctx);
+                let command = apps::open_command_as(&src, is_dir);
+                PutItem {
+                    display_name: file_label(&src),
+                    src,
+                    is_app: false,
+                    op,
+                    shortcut: Box::new(move |label| {
+                        apps::launcher_text(label, Some(&icon), Launch::Exec(command.as_deref()?))
+                    }),
+                    replace: None,
+                }
+            })
+            .collect();
         let pending = PendingPut {
             items,
-            dir: dir.to_path_buf(),
+            dir,
             select_landed,
         };
-        self.ask_replace(pending, asker, ctx)
+        self.ask_replace(pending, Asker::new(c.clashes), ctx)
     }
 
     pub(crate) fn ask_replace(
@@ -483,7 +537,10 @@ impl Explorer {
     }
 
     pub(crate) fn busy(&self) -> bool {
-        self.put.is_some() || self.removing.is_some() || self.jobs_pending > 0
+        self.put.is_some()
+            || !self.clashing.is_empty()
+            || self.removing.is_some()
+            || self.jobs_pending > 0
     }
 
     /// File > Close or the close box. With work in flight the window hides and [`Explorer::wake`]
@@ -1034,7 +1091,12 @@ impl Explorer {
     }
 
     fn icon_name_for(&self, path: &Path, ctx: &mut Ctx) -> String {
-        if path.is_dir() {
+        self.icon_name_as(path, path.is_dir(), ctx)
+    }
+
+    /// [`Explorer::icon_name_for`] for a path already known to be a folder or not.
+    fn icon_name_as(&self, path: &Path, is_dir: bool, ctx: &mut Ctx) -> String {
+        if is_dir {
             return "folder".to_string();
         }
         let mime = reprisefs::apps::mime_of_in(&self.globs, path);
