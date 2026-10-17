@@ -103,7 +103,7 @@ pub use dnd::{Accept, Actions, DragAction, DragOut, DropKind, Dropped, Offered, 
 pub use fielddrop::{DropForm, FileDrop};
 use reprisefs::pipe::PasteBuf;
 pub use reprisekit;
-use reprisekit::access::{Tree, accesskit};
+use reprisekit::access::{Act, Reveal, Tree, accesskit};
 use reprisekit::cues::Cues;
 use reprisekit::icontheme::{IconCache, IconTheme};
 use reprisekit::raster::{Canvas, Rect};
@@ -613,6 +613,12 @@ pub trait App {
     /// to `event`.
     fn drop_form(&mut self, _win: WinId) -> Option<DropForm<'_>> {
         None
+    }
+    /// The form in window `win` that a screen reader's Focus and ScrollIntoView reach without a
+    /// click: a row scrolls into view, a button takes the focus unpressed. Defaults to
+    /// [`App::drop_form`].
+    fn reader_form(&mut self, win: WinId) -> Option<DropForm<'_>> {
+        self.drop_form(win)
     }
     /// The file dialog in window `win`, whose File name field takes a drag of text or files as
     /// a form's field does; files go in by name, or by path from another folder. None (the
@@ -2163,9 +2169,17 @@ impl Host {
                 }
             }
             access::Msg::Act(win, req) => {
-                let target = (self.slot_mut(win))
+                let published = (self.slot_mut(win))
                     .filter(|s| s.access.state.active)
-                    .and_then(|s| s.access.state.published.target(req.node));
+                    .map(|s| &s.access.state.published);
+                let scroll = matches!(req.act, Act::ScrollIntoView | Act::Focus)
+                    .then(|| published.and_then(|p| p.reveal(req.node)))
+                    .flatten();
+                let target = published.and_then(|p| p.target(req.node));
+                if let Some(r) = scroll {
+                    self.reader_reveal(win, r);
+                    return;
+                }
                 let Some(g) = target.and_then(|t| reprisekit::access::gesture(req.act, t)) else {
                     return;
                 };
@@ -2175,6 +2189,22 @@ impl Host {
                     self.pointer(win, input);
                 }
             }
+        }
+    }
+
+    /// Scroll the list in window `win`'s reader form so the row `r` names shows.
+    fn reader_reveal(&mut self, win: WinId, r: Reveal) {
+        let base = self.ctx.base_px();
+        let Some(DropForm { form, px }) = self.app.reader_form(win) else {
+            return;
+        };
+        let px = px.unwrap_or_else(|| form.units().px(base));
+        let (x, y) = (r.at.0 as i32, r.at.1 as i32);
+        if form.reveal(x, y, r.row, &self.ctx.text, px) != reprisekit::controls::form::Event::None
+            && let Some(s) = self.slot_mut(win)
+        {
+            s.dirty = true;
+            s.access.state.dirty = true;
         }
     }
 

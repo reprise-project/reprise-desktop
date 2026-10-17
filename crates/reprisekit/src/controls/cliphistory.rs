@@ -205,6 +205,12 @@ impl ClipHistory {
     pub fn wheel(&mut self, rows: i32) -> bool {
         self.list.scroll(rows, VISIBLE)
     }
+
+    /// A reader asked to see row `i`: the list scrolls it in and the highlight stays. True when
+    /// the view moved.
+    pub fn reveal(&mut self, i: usize) -> bool {
+        self.list.reveal(i, VISIBLE)
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

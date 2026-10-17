@@ -3040,6 +3040,19 @@ impl Dialog {
         }
     }
 
+    /// A reader asked to see row `row` of the list at dialog point (`x`, `y`): a form page's list
+    /// box or tree scrolls it in.
+    pub fn reveal(&mut self, x: i32, y: i32, row: usize, text: &TextRenderer, px: u32) -> Outcome {
+        let Some(f) = self.form_mut() else {
+            return Outcome::Nothing;
+        };
+        let Some(form) = f.open_page_mut() else {
+            return Outcome::Nothing;
+        };
+        let ev = form.reveal(x, y, row, text, px);
+        f.event(ev)
+    }
+
     /// A drag at dialog point (`x`, `y`): Run's field, or a form's edit field, shows a drop
     /// caret there and takes the drag (`true`); anywhere else the drop caret goes.
     pub fn drag_over(
