@@ -181,13 +181,39 @@ pub fn keysym(name: &str) -> Option<u32> {
     (sym != 0).then_some(sym)
 }
 
+/// The modifier a modifier key holds, as `split` names it, and the key it counts as (Meta is Alt).
+fn modifier_role(key: &str) -> Option<(&'static str, &'static str)> {
+    let k = key.to_ascii_lowercase();
+    Some(match k.as_str() {
+        "shift_l" => ("shift", "Shift_L"),
+        "shift_r" => ("shift", "Shift_R"),
+        "control_l" => ("ctrl", "Control_L"),
+        "control_r" => ("ctrl", "Control_R"),
+        "alt_l" | "meta_l" => ("alt", "Alt_L"),
+        "alt_r" | "meta_r" => ("alt", "Alt_R"),
+        "super_l" => ("super", "Super_L"),
+        "super_r" => ("super", "Super_R"),
+        _ => return None,
+    })
+}
+
+/// Whether two `keys` name one chord: the same modifiers and keysym, whatever the spelling and
+/// order. A modifier-only chord counts its key among its modifiers, so "Alt+Shift_L" and
+/// "Shift+Alt_L" are one chord; with both keys in one role the sides must agree.
 pub fn same(a: &str, b: &str) -> bool {
-    match (split(a), split(b)) {
-        (Some((ma, ka)), Some((mb, kb))) => {
-            ma == mb && keysym(ka).is_some_and(|s| keysym(kb) == Some(s))
-        }
-        _ => false,
+    let (Some((ma, ka)), Some((mb, kb))) = (split(a), split(b)) else {
+        return false;
+    };
+    if let (Some((ra, sa)), Some((rb, sb))) = (modifier_role(ka), modifier_role(kb)) {
+        let held = |mut m: Vec<&'static str>, r| {
+            m.push(r);
+            m.sort_unstable();
+            m.dedup();
+            m
+        };
+        return held(ma, ra) == held(mb, rb) && (ra != rb || sa == sb);
     }
+    ma == mb && keysym(ka).is_some_and(|s| keysym(kb) == Some(s))
 }
 
 /// The action that unbinds a chord, the defaults' included.
@@ -289,6 +315,29 @@ mod tests {
             "an unknown modifier binds nothing"
         );
         assert!(!same("Nope", "Nope"), "an unknown key binds nothing");
+    }
+
+    #[test]
+    fn a_modifier_only_chord_is_one_chord_in_either_order() {
+        assert!(same("Alt+Shift_L", "Shift+Alt_L"));
+        assert!(same("shift+alt_l", "Alt+Shift_L"));
+        assert!(same("Shift+Meta_L", "Shift+Alt_L"), "Meta is Alt");
+        assert!(same("Ctrl+Alt+Shift_L", "Shift+Ctrl+Alt_L"));
+        assert!(!same("Shift+Alt_L", "Shift+Alt_R"), "the key's side counts");
+        assert!(!same("Shift+Alt_L", "Ctrl+Shift_L"));
+        assert!(!same("Shift+Alt_L", "Alt_L"));
+        assert!(!same("Ctrl+Alt+Shift_L", "Alt+Shift_L"));
+        assert!(!same("Shift+Alt_L", "Shift+a"));
+    }
+
+    #[test]
+    fn a_swapped_modifier_only_entry_replaces_the_default() {
+        let out = run(&[("Alt+Shift_L", "next-layout")]);
+        assert_eq!(out.len(), DEFAULTS.len());
+        assert!(out.contains(&("Alt+Shift_L", "next-layout")));
+        assert!(!out.contains(&("Shift+Alt_L", "next-layout")));
+        let out = run(&[("Alt+Shift_L", NONE)]);
+        assert!(!out.iter().any(|&(k, _)| k == "Shift+Alt_L"));
     }
 
     #[test]

@@ -645,7 +645,9 @@ action = "focus-tray"
 # A bind whose key is itself a modifier (Alt_L, Shift_R, Control_L,
 # Super_L, ...) is a modifier-only chord: it fires when one of its keys is
 # released and nothing else was pressed in between, in either order. This
-# one is the left Alt with either Shift: the next [keyboard] layout.
+# one is the left Alt with either Shift: the next [keyboard] layout. A bind
+# with the key and a modifier swapped ("Alt+Shift_L") counts as this chord
+# and replaces it.
 [[keybinds]]
 keys = "Shift+Alt_L"
 action = "next-layout"
