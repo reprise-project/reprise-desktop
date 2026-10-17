@@ -328,6 +328,16 @@ impl State {
         self.next_slide();
     }
 
+    /// Whether `out` shows its wallpaper, or has none to wait for.
+    pub fn wallpaper_ready(&self, out: &Output) -> bool {
+        if self.slideshow.as_ref().is_some_and(|s| s.picking) {
+            return false;
+        }
+        self.wallpaper
+            .as_ref()
+            .is_none_or(|w| w.nodes.iter().any(|(o, n)| o == out && n.fit.is_some()))
+    }
+
     /// Whether a slideshow runs (the desktop menu's "Next desktop background").
     pub fn slideshow_running(&self) -> bool {
         self.slideshow.is_some()

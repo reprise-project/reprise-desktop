@@ -676,6 +676,10 @@ pub struct EffectsConfig {
     pub hover_out_ms: u32,
     pub taskbar_slide: bool,
     pub taskbar_hide_ms: u32,
+    /// On under every interface, unlike the switches above.
+    pub session_fade: bool,
+    pub session_fade_in_ms: u32,
+    pub session_fade_out_ms: u32,
 }
 
 impl EffectsConfig {
@@ -691,6 +695,9 @@ impl EffectsConfig {
             hover_out_ms: 250,
             taskbar_slide: glass,
             taskbar_hide_ms: 200,
+            session_fade: true,
+            session_fade_in_ms: 600,
+            session_fade_out_ms: 400,
         }
     }
 
@@ -706,6 +713,16 @@ impl EffectsConfig {
     pub fn hover_ms(&self) -> (u32, u32) {
         if self.hover_fade {
             (self.hover_in_ms, self.hover_out_ms)
+        } else {
+            (0, 0)
+        }
+    }
+
+    /// (in, out) of the screen's fade at session start and end: both 0 while
+    /// `session_fade` is off.
+    pub fn session_fade_ms(&self) -> (u32, u32) {
+        if self.session_fade {
+            (self.session_fade_in_ms, self.session_fade_out_ms)
         } else {
             (0, 0)
         }
@@ -1932,6 +1949,9 @@ struct FileEffects {
     hover_out_ms: Option<i64>,
     taskbar_slide: Option<bool>,
     taskbar_hide_ms: Option<i64>,
+    session_fade: Option<bool>,
+    session_fade_in_ms: Option<i64>,
+    session_fade_out_ms: Option<i64>,
 }
 
 #[derive(Deserialize, Default)]
@@ -3118,6 +3138,9 @@ impl Config {
             if let Some(v) = e.taskbar_slide {
                 fx.taskbar_slide = v;
             }
+            if let Some(v) = e.session_fade {
+                fx.session_fade = v;
+            }
             ms(e.window_open_ms, "window_open_ms", &mut fx.window_open_ms)?;
             ms(
                 e.window_close_ms,
@@ -3130,6 +3153,16 @@ impl Config {
                 e.taskbar_hide_ms,
                 "taskbar_hide_ms",
                 &mut fx.taskbar_hide_ms,
+            )?;
+            ms(
+                e.session_fade_in_ms,
+                "session_fade_in_ms",
+                &mut fx.session_fade_in_ms,
+            )?;
+            ms(
+                e.session_fade_out_ms,
+                "session_fade_out_ms",
+                &mut fx.session_fade_out_ms,
             )?;
             if let Some(s) = e.window_scale {
                 if !(0.8..=1.0).contains(&s) {
@@ -4810,6 +4843,29 @@ mod tests {
         .effects;
         assert_eq!(off.hover_ms(), (0, 0), "no fade: both instant");
         assert!(off.opens() && !off.closes(), "0 ms is no close animation");
+    }
+
+    #[test]
+    fn the_session_fades_under_every_interface_and_the_keys_override_it() {
+        let parse = |s: &str| Config::parse(s).unwrap().effects.session_fade_ms();
+        assert_eq!(parse(""), (600, 400));
+        assert_eq!(parse("[appearance]\ninterface = \"blue\"\n"), (600, 400));
+        assert_eq!(parse("[appearance]\ninterface = \"glass\"\n"), (600, 400));
+        assert_eq!(
+            parse("[effects]\nsession_fade_in_ms = 0\nsession_fade_out_ms = 2000\n"),
+            (0, 2000)
+        );
+        assert_eq!(
+            parse("[effects]\nsession_fade = false\nsession_fade_in_ms = 900\n"),
+            (0, 0),
+            "off: both instant"
+        );
+        for bad in ["session_fade_in_ms = 2001", "session_fade_out_ms = -1"] {
+            assert!(
+                Config::parse(&format!("[effects]\n{bad}\n")).is_err(),
+                "{bad}"
+            );
+        }
     }
 
     #[test]
