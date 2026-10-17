@@ -1014,6 +1014,22 @@ fn a_right_press_without_a_drag_still_opens_the_item_menu() {
     );
 }
 
+/// A read-only place arms no drag, so its entries' menu opens on the press.
+#[test]
+fn a_right_click_in_a_read_only_place_opens_the_item_menu() {
+    let mut ctx = test_ctx();
+    let mut ex = crate::tests::test_explorer(Place::Computer, &mut ctx);
+    ex.sv.mode = Mode::Icons;
+    assert!(!ex.items.is_empty(), "Computer lists something");
+    let at = centre(&ex, &ctx, 0);
+
+    press(&mut ex, &mut ctx, at, BTN_RIGHT);
+    release(&mut ex, &mut ctx, at, BTN_RIGHT, SeatMods::default());
+
+    assert!(ex.popup.is_some(), "the drive's menu opened");
+    assert_eq!(ex.sv.selection.set.iter().copied().collect::<Vec<_>>(), [0]);
+}
+
 /// A place that takes no writes (Computer's drives, the bin's contents) has nothing to drag.
 #[test]
 fn a_press_in_a_read_only_place_arms_nothing() {

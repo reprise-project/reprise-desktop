@@ -455,6 +455,10 @@ impl Explorer {
                 if sl.cells.get(i).is_some() {
                     self.arm_drag(i, BTN_RIGHT, x, y);
                 }
+                // Without an armed drag nothing waits for the release, so the menu opens now.
+                if self.drag.is_none() {
+                    return self.entry_menu_at(i, (x, y), ctx, false);
+                }
                 return Reply::redraw();
             }
             return self.item_menu_at(x, y, ctx);
