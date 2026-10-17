@@ -29,6 +29,12 @@ impl Cues {
         if by_key { Cues::ALL } else { Cues::NONE }
     }
 
+    /// The window was asked to open while already open: from the keyboard it
+    /// shows both cues, as a fresh keyboard open does. Whether a cue came out.
+    pub fn reopen(&mut self, by_key: bool) -> bool {
+        by_key && self.key(true)
+    }
+
     /// A key went down; `alt` when it is Alt or Alt is held with it.
     /// Whether a cue came out.
     pub fn key(&mut self, alt: bool) -> bool {
@@ -75,6 +81,20 @@ mod tests {
         assert_eq!(c, Cues::ALL);
         assert!(!c.key(false), "and they stay");
         assert_eq!(Cues::opened(true), Cues::ALL);
+    }
+
+    #[test]
+    fn opening_an_open_window_from_the_keyboard_shows_both_cues() {
+        let mut blurred = Cues::ALL;
+        blurred.blur();
+        assert!(blurred.reopen(true), "the underlines come back");
+        assert_eq!(blurred, Cues::ALL);
+        assert!(!blurred.reopen(true), "nothing left to show");
+        let mut pointer = Cues::opened(false);
+        assert!(!pointer.reopen(false), "a click keeps the cues hidden");
+        assert_eq!(pointer, Cues::NONE);
+        assert!(pointer.reopen(true));
+        assert_eq!(pointer, Cues::ALL);
     }
 
     #[test]
