@@ -275,7 +275,7 @@ impl Batch {
 pub struct QueuedPut {
     pub(crate) dir: PathBuf,
     pub(crate) op: DropOp,
-    pub(crate) puts: Vec<(Put, Option<reprisefs::replace::Seen>)>,
+    pub(crate) puts: Vec<(Put, Option<reprisefs::replace::Replacing>)>,
     pub(crate) existing: Vec<String>,
 }
 
@@ -337,7 +337,12 @@ fn put_in(
         op,
         existing,
         &shortcut,
-        replace,
+        replace
+            .map(|seen| reprisefs::replace::Replacing {
+                seen,
+                files: Default::default(),
+            })
+            .as_ref(),
     )
     .map(|landed| landed.to_string_lossy().into_owned())
 }
@@ -1018,9 +1023,18 @@ impl State {
         use reprisefs::replace::{Clash, Step, Verdict};
         let verdicts = match batch.asker.step() {
             Step::Cancelled => return,
-            Step::Ask { index, clash } => {
-                let src = batch.puts[index].0.path().to_path_buf();
-                let dest = batch.dir.join(src.file_name().unwrap_or_default());
+            Step::Ask {
+                index,
+                clash,
+                inside,
+            } => {
+                let item = batch.puts[index].0.path();
+                let mut dest = batch.dir.join(item.file_name().unwrap_or_default());
+                let mut src = item.to_path_buf();
+                if let Some(under) = &inside {
+                    src.push(under);
+                    dest.push(under);
+                }
                 self.spawn_fs_job(move || {
                     let is_12h = reprisefs::locale::is_12h();
                     let facts = (clash == Clash::File).then(|| {
@@ -1030,7 +1044,7 @@ impl State {
                         )
                     });
                     Box::new(move |state| {
-                        let d = state.replace_prompt(batch, index, facts);
+                        let d = state.replace_prompt(batch, &src, facts);
                         state.open_dialog(d);
                     })
                 });
@@ -1045,12 +1059,12 @@ impl State {
             existing,
             ..
         } = batch;
-        let puts: Vec<(Put, Option<reprisefs::replace::Seen>)> = puts
+        let puts: Vec<(Put, Option<reprisefs::replace::Replacing>)> = puts
             .into_iter()
             .zip(verdicts)
             .filter_map(|(p, v)| match v {
                 Verdict::Skip => None,
-                Verdict::Replace(seen) => Some((p, Some(seen))),
+                Verdict::Replace(r) => Some((p, Some(r))),
                 Verdict::Put => Some((p, None)),
             })
             .collect();
@@ -1080,18 +1094,18 @@ impl State {
         self.ask_then_put(batch);
     }
 
-    /// Confirm File (or Folder) Replace for item `index` of `batch`: both files with their icon and,
-    /// with `facts`, their (size, date) lines, existing then incoming; None asks about a folder.
+    /// Confirm File (or Folder) Replace for `src`, an item of `batch` or a file inside one it merges:
+    /// both files with their icon and, with `facts`, their (size, date) lines, existing then
+    /// incoming; None asks about a folder.
     fn replace_prompt(
         &mut self,
         batch: Batch,
-        index: usize,
+        src: &Path,
         facts: Option<((String, String), (String, String))>,
     ) -> crate::dialog::Dialog {
         use reprisekit::controls::replacebox::{Fields, Side, Subject};
-        let src = batch.puts[index].0.path().to_path_buf();
         let name = src.file_name().unwrap_or_default().to_string_lossy();
-        let icon = self.icons.get(reprisefs::icons::icon_for_file(&src), 32);
+        let icon = self.icons.get(reprisefs::icons::icon_for_file(src), 32);
         let side = |(size, modified): (String, String)| Side {
             size,
             modified,
@@ -1108,7 +1122,14 @@ impl State {
             name: name.into_owned(),
             subject,
             icon: self.icons.get("folder", 32),
-            many: batch.puts.len() > 1,
+            many: batch.puts.len() > 1
+                || matches!(
+                    batch.asker.step(),
+                    reprisefs::replace::Step::Ask {
+                        inside: Some(_),
+                        ..
+                    }
+                ),
         };
         let t = &self.config.theme;
         crate::dialog::Dialog::confirm_replace(fields, batch, &self.text, t.fonts.size_px, t.text)

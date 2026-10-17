@@ -1,6 +1,7 @@
 //! File operations, and the argument vectors and shell quoting around them.
 
-use crate::replace::Seen;
+use crate::replace::{Replacing, Seen};
+use std::collections::BTreeMap;
 use std::ffi::{OsStr, OsString};
 use std::io;
 use std::path::{Path, PathBuf};
@@ -1148,12 +1149,14 @@ fn is_itself(src: &Path, from: &std::fs::Metadata, dest: &std::fs::Metadata) -> 
 ///
 /// A file lands only over `expect` (device and inode), the file the
 /// prompt asked about; anything else there by then stays, and the file
-/// lands numbered beside it ([`swap_in`]).
+/// lands numbered beside it ([`swap_in`]). A merge puts a file over one
+/// inside only as `files` lists it ([`Replacing::files`]).
 fn replace_into(
     src: &Path,
     dest: &Path,
     moving: bool,
     expect: (u64, u64),
+    files: &BTreeMap<PathBuf, Seen>,
     stop: &AtomicBool,
 ) -> Result<Swap, PutError> {
     use std::os::unix::fs::MetadataExt;
@@ -1181,7 +1184,7 @@ fn replace_into(
                 refuse_stuck_original(src)?;
             }
             preflight_merge(src, Some(dest), moving, crossing, 0)?;
-            merge_into(src, dest, moving, 0, stop)?;
+            merge_into(src, dest, moving, (files, Path::new("")), stop)?;
             Ok(Swap::Replaced)
         }
         (false, false) => {
@@ -1275,24 +1278,66 @@ fn too_deep() -> io::Error {
     )
 }
 
-/// Merge the entries of folder `src` into folder `dest`, which sits
-/// `depth` folders below the top. Links are merged as links.
+/// The files a merge of folder `src` into folder `dest` would put over a file, by path under
+/// `src`, each as it is now: what the prompt asks about after the folder's Yes. A tree it cannot
+/// read is cut short there, as the merge refuses it anyway ([`preflight_merge`]).
+pub(crate) fn merge_clashes(src: &Path, dest: &Path, moving: bool) -> Vec<(PathBuf, Seen)> {
+    fn walk(src: &Path, dest: &Path, rel: &Path, moving: bool, out: &mut Vec<(PathBuf, Seen)>) {
+        if rel.components().count() >= MAX_DEPTH {
+            return;
+        }
+        let Ok(rd) = std::fs::read_dir(src) else {
+            return;
+        };
+        let mut entries: Vec<_> = rd.flatten().collect();
+        entries.sort_by_key(|e| e.file_name());
+        for entry in entries {
+            let Ok(meta) = std::fs::symlink_metadata(entry.path()) else {
+                continue;
+            };
+            let kind = meta.file_type();
+            if !merges(kind, moving) {
+                continue;
+            }
+            let (to, rel) = (dest.join(entry.file_name()), rel.join(entry.file_name()));
+            let Ok(there) = std::fs::symlink_metadata(&to) else {
+                continue;
+            };
+            match (kind.is_dir(), there.is_dir()) {
+                (true, true) => walk(&entry.path(), &to, &rel, moving, out),
+                (false, false) => out.extend(Seen::of(&to).map(|seen| (rel, seen))),
+                _ => {}
+            }
+        }
+    }
+    let mut out = Vec::new();
+    walk(src, dest, Path::new(""), moving, &mut out);
+    out
+}
+
+/// Merge the entries of folder `src` into folder `dest`, `at` (`files`, the path under the top)
+/// telling which files inside are put over the file of the same name. Links are merged as links.
+/// A file not in `files`, or changed since the prompt, stays, and the one coming in stays where it
+/// was; a moved folder holding one is left behind.
 fn merge_into(
     src: &Path,
     dest: &Path,
     moving: bool,
-    depth: usize,
+    at: (&BTreeMap<PathBuf, Seen>, &Path),
     stop: &AtomicBool,
 ) -> Result<(), PutError> {
-    if depth >= MAX_DEPTH {
+    let (files, rel) = at;
+    if rel.components().count() >= MAX_DEPTH {
         return Err(too_deep().into());
     }
+    let mut kept = false;
     let entries = std::fs::read_dir(src)?.collect::<io::Result<Vec<_>>>()?;
     for entry in entries {
         if stop.load(Ordering::Relaxed) {
             return Err(cancelled());
         }
         let (from, to) = (entry.path(), dest.join(entry.file_name()));
+        let under = rel.join(entry.file_name());
         let meta = std::fs::symlink_metadata(&from)?;
         let kind = meta.file_type();
         if !merges(kind, moving) {
@@ -1312,13 +1357,17 @@ fn merge_into(
             }
             Err(e) => return Err(e.into()),
             Ok(there) if kind.is_dir() && there.is_dir() => {
-                merge_into(&from, &to, moving, depth + 1, stop)?
+                merge_into(&from, &to, moving, (files, &under), stop)?;
+                kept |= moving && from.exists();
             }
             Ok(there) if !kind.is_dir() && !there.is_dir() => {
-                use std::os::unix::fs::MetadataExt;
-                let expect = (there.dev(), there.ino());
+                let Some(seen) = files.get(&under).filter(|seen| seen.still(&to)) else {
+                    log::info!("reprisefs: merge keeps {}", to.display());
+                    kept = true;
+                    continue;
+                };
                 if let Swap::Numbered(name) | Swap::Displaced(name) =
-                    replace_file(&from, &to, &meta, moving, expect)?
+                    replace_file(&from, &to, &meta, moving, seen.id())?
                 {
                     log::info!(
                         "reprisefs: {} changed during the merge; {} is beside it",
@@ -1331,10 +1380,13 @@ fn merge_into(
             Ok(_) => return Err(PutError::Occupied),
         }
     }
-    // Everything is in `dest` by now; a folder that will not go (a file
-    // appeared in it meanwhile) is left behind rather than failing a
+    // Everything not kept is in `dest` by now; a folder that will not go (a
+    // file appeared in it meanwhile) is left behind rather than failing a
     // merge that happened.
-    if moving && let Err(e) = std::fs::remove_dir(src) {
+    if moving
+        && !kept
+        && let Err(e) = std::fs::remove_dir(src)
+    {
         log::warn!(
             "reprisefs: merged {}, but cannot remove it: {e}",
             src.display()
@@ -1442,7 +1494,7 @@ pub fn put_in_with(
     op: DropOp,
     existing: &[String],
     shortcut: &dyn Fn(&str) -> Option<String>,
-    replace: Option<Seen>,
+    replace: Option<&Replacing>,
 ) -> Result<OsString, PutError> {
     let never = AtomicBool::new(false);
     put_in_until(
@@ -1493,12 +1545,12 @@ pub(crate) fn put_in_until(
     op: DropOp,
     existing: &[String],
     shortcut: &dyn Fn(&str) -> Option<String>,
-    replace: Option<Seen>,
+    replace: Option<&Replacing>,
     stop: &AtomicBool,
 ) -> Result<Landing, PutError> {
     // Only what the prompt saw, and only by its own kind.
     let over = |dest: &Path, moving: bool| {
-        replace.filter(|seen| seen.still(dest) && same_kind(src, dest, moving))
+        replace.filter(|r| r.seen.still(dest) && same_kind(src, dest, moving))
     };
     let landing = |swap: Swap, name: OsString| match swap {
         Swap::Replaced => (name, true),
@@ -1532,8 +1584,8 @@ pub(crate) fn put_in_until(
         DropOp::Move if !is_app && same_dir => Err(PutError::SameFolder),
         DropOp::Move if !is_app => {
             let dest = dir.join(&file_name);
-            let landed = if let Some(seen) = over(&dest, true) {
-                let swap = replace_into(src, &dest, true, seen.id(), stop)?;
+            let landed = if let Some(r) = over(&dest, true) {
+                let swap = replace_into(src, &dest, true, r.seen.id(), &r.files, stop)?;
                 landing(swap, file_name)
             } else {
                 // Never `fs::rename` straight over the destination: that
@@ -1564,9 +1616,10 @@ pub(crate) fn put_in_until(
             // into its own folder, a taken name is numbered past.
             if !is_app
                 && !same_dir
-                && let Some(seen) = over(&dir.join(&name), false)
+                && let Some(r) = over(&dir.join(&name), false)
             {
-                let swap = replace_into(src, &dir.join(&name), false, seen.id(), stop)?;
+                let dest = dir.join(&name);
+                let swap = replace_into(src, &dest, false, r.seen.id(), &r.files, stop)?;
                 return Ok(Landing::new(landing(swap, name)));
             }
             let dest = copy_numbered(src, dir, &name, stop)?;
@@ -1602,6 +1655,22 @@ mod tests {
     use super::*;
     use crate::testfs::mkfifo;
     use std::fs;
+
+    /// A Yes on the prompt for what `seen` saw, with no file inside a merge answered.
+    fn yes(seen: Option<Seen>) -> Option<Replacing> {
+        seen.map(|seen| Replacing {
+            seen,
+            files: BTreeMap::new(),
+        })
+    }
+
+    /// A Yes to All on the prompt for folder `dest` with `src` merging into it.
+    fn yes_all(src: &Path, dest: &Path) -> Option<Replacing> {
+        Some(Replacing {
+            seen: Seen::of(dest)?,
+            files: merge_clashes(src, dest, false).into_iter().collect(),
+        })
+    }
 
     #[test]
     fn read_regular_refuses_a_fifo_a_folder_and_a_file_over_the_cap() {
@@ -1783,7 +1852,7 @@ mod tests {
             DropOp::Copy,
             &[],
             &sc,
-            Seen::of(&c.join(name)),
+            yes(Seen::of(&c.join(name))).as_ref(),
         );
         assert_eq!(again.unwrap(), name);
         assert_eq!(fs::read_to_string(c.join(name)).unwrap(), "again");
@@ -1919,7 +1988,7 @@ mod tests {
                 op,
                 &[],
                 &sc,
-                Seen::of(&b.join("x.txt")),
+                yes(Seen::of(&b.join("x.txt"))).as_ref(),
             )
         };
 
@@ -1959,7 +2028,7 @@ mod tests {
                 op,
                 &[],
                 &sc,
-                Seen::of(&dest.join("Reports")),
+                yes_all(&src, &dest.join("Reports")).as_ref(),
             )
         };
 
@@ -1976,6 +2045,52 @@ mod tests {
         assert_eq!(read("same.txt"), "new");
         assert_eq!(read("theirs.txt"), "theirs");
         assert!(!src.exists(), "a moved folder is removed once merged");
+    }
+
+    /// A merge puts a file over one inside only when the prompt's Yes covered it and it is still
+    /// what the prompt saw: a file answered No, or changed since, keeps its contents, and a move
+    /// leaves the incoming one in its folder.
+    #[test]
+    fn a_merge_replaces_only_the_files_answered_yes() {
+        let t = tempfile::tempdir().unwrap();
+        let (src, dest) = (t.path().join("src/R"), t.path().join("dest"));
+        for op in [DropOp::Copy, DropOp::Move] {
+            fs::create_dir_all(src.join("q1")).unwrap();
+            fs::create_dir_all(dest.join("R/q1")).unwrap();
+            for (name, new, old) in [
+                ("yes.txt", "new", "old"),
+                ("q1/no.txt", "new", "old"),
+                ("changed.txt", "new", "old"),
+            ] {
+                fs::write(src.join(name), new).unwrap();
+                fs::write(dest.join("R").join(name), old).unwrap();
+            }
+            fs::write(src.join("mine.txt"), "mine").unwrap();
+            let seen = |n: &str| Seen::of(&dest.join("R").join(n)).unwrap();
+            let answered = Replacing {
+                seen: Seen::of(&dest.join("R")).unwrap(),
+                files: [
+                    (PathBuf::from("yes.txt"), seen("yes.txt")),
+                    (PathBuf::from("changed.txt"), seen("changed.txt")),
+                ]
+                .into_iter()
+                .collect(),
+            };
+            fs::write(dest.join("R/changed.txt"), "changed since").unwrap();
+            let sc = |_: &str| None;
+            let landed = put_in_with(&src, "R", false, &dest, op, &[], &sc, Some(&answered));
+            assert_eq!(landed.unwrap(), "R", "{op:?}");
+            let read = |p: &str| fs::read_to_string(dest.join("R").join(p)).unwrap();
+            assert_eq!(read("yes.txt"), "new", "{op:?}");
+            assert_eq!(read("q1/no.txt"), "old", "{op:?}");
+            assert_eq!(read("changed.txt"), "changed since", "{op:?}");
+            assert_eq!(read("mine.txt"), "mine", "{op:?}");
+            let kept = |p: &str| src.join(p).exists();
+            assert!(kept("q1/no.txt"), "{op:?}");
+            assert!(kept("changed.txt"), "{op:?}");
+            assert_eq!(kept("yes.txt"), op == DropOp::Copy, "{op:?}");
+            fs::remove_dir_all(&dest).unwrap();
+        }
     }
 
     /// A file onto a folder, or a folder onto a file, never replaces it,
@@ -1998,7 +2113,7 @@ mod tests {
                 op,
                 &[],
                 &sc,
-                Seen::of(&b.join(name)),
+                yes(Seen::of(&b.join(name))).as_ref(),
             )
         };
         assert_eq!(put("x.txt", DropOp::Copy).unwrap(), "x (2).txt");
@@ -2028,7 +2143,7 @@ mod tests {
                 op,
                 &[],
                 &sc,
-                Seen::of(&dest.join("Reports")),
+                yes(Seen::of(&dest.join("Reports"))).as_ref(),
             )
             .unwrap_err();
             assert!(matches!(err, PutError::Occupied), "{op:?}");
@@ -2048,7 +2163,7 @@ mod tests {
             DropOp::Copy,
             &[],
             &sc,
-            Seen::of(&dest.join("Reports")),
+            yes(Seen::of(&dest.join("Reports"))).as_ref(),
         )
         .unwrap_err();
         assert!(matches!(err, PutError::Occupied), "a link onto a folder");
@@ -2073,7 +2188,7 @@ mod tests {
             DropOp::Copy,
             &[],
             &sc,
-            Seen::of(&dest.join("R")),
+            yes(Seen::of(&dest.join("R"))).as_ref(),
         )
         .unwrap_err();
         assert!(matches!(&err, PutError::Io(e) if e.kind() == io::ErrorKind::InvalidInput));
@@ -2095,7 +2210,8 @@ mod tests {
         let sc = |_: &str| None;
         for op in [DropOp::Copy, DropOp::Move] {
             let seen = Seen::of(&dest.join("R"));
-            let err = put_in_with(&src, "R", false, &dest, op, &[], &sc, seen).unwrap_err();
+            let err =
+                put_in_with(&src, "R", false, &dest, op, &[], &sc, yes(seen).as_ref()).unwrap_err();
             assert!(matches!(err, PutError::SameFile), "{op:?}");
             assert_eq!(fs::read_to_string(dest.join("R/x.txt")).unwrap(), "keep");
             assert!(!dest.join("R/a.txt").exists(), "nothing was merged");
@@ -2125,7 +2241,7 @@ mod tests {
                 op,
                 &[],
                 &sc,
-                seen,
+                yes(seen).as_ref(),
                 &AtomicBool::new(false),
             )
             .unwrap();
@@ -2155,7 +2271,16 @@ mod tests {
         }
         let sc = |_: &str| None;
         let seen = Seen::of(&dest.join("R"));
-        let err = put_in_with(&src, "R", false, &dest, DropOp::Copy, &[], &sc, seen);
+        let err = put_in_with(
+            &src,
+            "R",
+            false,
+            &dest,
+            DropOp::Copy,
+            &[],
+            &sc,
+            yes(seen).as_ref(),
+        );
         fs::set_permissions(src.join("locked"), fs::Permissions::from_mode(0o755)).unwrap();
         assert!(matches!(err, Err(PutError::Io(_))));
         assert!(!dest.join("R/a.txt").exists(), "nothing was merged");
@@ -2183,7 +2308,7 @@ mod tests {
             DropOp::Copy,
             &[],
             &sc,
-            seen,
+            yes(seen).as_ref(),
         )
         .unwrap();
         assert_eq!(fs::read_to_string(b.join("x.txt")).unwrap(), "new");
@@ -2363,7 +2488,7 @@ mod tests {
             DropOp::Copy,
             &[],
             &sc,
-            Seen::of(&dest.join("Reports")),
+            yes(Seen::of(&dest.join("Reports"))).as_ref(),
         )
         .unwrap();
         assert!(dest.join("Reports/a.txt").exists());
@@ -2390,7 +2515,7 @@ mod tests {
             DropOp::Copy,
             &[],
             &sc,
-            Seen::of(&b.join("x.txt")),
+            yes(Seen::of(&b.join("x.txt"))).as_ref(),
         )
         .unwrap();
         let meta = fs::symlink_metadata(b.join("x.txt")).unwrap();
@@ -2417,7 +2542,7 @@ mod tests {
             DropOp::Move,
             &[],
             &sc,
-            Seen::of(&b.join("x.txt")),
+            yes(Seen::of(&b.join("x.txt"))).as_ref(),
         )
         .unwrap_err();
         assert!(matches!(err, PutError::SameFile));
@@ -2448,7 +2573,7 @@ mod tests {
             DropOp::Copy,
             &[],
             &sc,
-            Seen::of(&b.join(&name)),
+            yes(Seen::of(&b.join(&name))).as_ref(),
         )
         .unwrap();
         assert_eq!(fs::read_to_string(b.join(&name)).unwrap(), "new");
@@ -2473,7 +2598,7 @@ mod tests {
             DropOp::Copy,
             &["x.txt".into()],
             &sc,
-            Seen::of(&a.join("x.txt")),
+            yes(Seen::of(&a.join("x.txt"))).as_ref(),
         )
         .unwrap();
         assert_eq!(name, "Copy of x.txt");

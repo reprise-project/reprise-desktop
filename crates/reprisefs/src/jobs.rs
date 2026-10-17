@@ -18,7 +18,7 @@ pub struct PutItem {
     pub is_app: bool,
     pub op: DropOp,
     pub shortcut: ShortcutText,
-    pub replace: Option<crate::replace::Seen>,
+    pub replace: Option<crate::replace::Replacing>,
 }
 
 #[derive(Debug)]
@@ -95,7 +95,7 @@ impl PutJob {
                             it.op,
                             &existing,
                             &*it.shortcut,
-                            it.replace.filter(|_| {
+                            it.replace.as_ref().filter(|_| {
                                 !ours.contains(&it.src.file_name().map(OsString::from))
                             }),
                             stop,
@@ -295,7 +295,10 @@ mod tests {
         std::fs::write(dest.join("x.txt"), "old").unwrap();
         let seen = crate::replace::Seen::of(&dest.join("x.txt"));
         let replacing = |src: PathBuf, op| PutItem {
-            replace: seen,
+            replace: seen.map(|seen| crate::replace::Replacing {
+                seen,
+                files: Default::default(),
+            }),
             ..item(src, op)
         };
         let (wtx, woke) = channel();
