@@ -6,7 +6,8 @@
 //! Outputs line up left to right in the order they came, at y 0, unless
 //! `[[outputs]] position` or output management placed them: placed outputs
 //! keep their position and the others follow right of the rightmost placed
-//! one (`place`).
+//! one (`place`). An output that leaves and comes back without a configured
+//! position returns to where it was placed (`Places`).
 
 use std::cell::Cell;
 
@@ -89,6 +90,26 @@ pub fn carried<K: PartialEq>(
 /// Put `output` at layout `pos` for good, or back to automatic placement with None.
 pub fn set_placement(output: &Output, pos: Option<Point<i32, Logical>>) {
     placement(output).0.set(pos);
+}
+
+/// Where each connector was placed when it left the layout, for the session: an output turned
+/// off and on, or unplugged and plugged in, comes back there unless `[[outputs]] position` says.
+#[derive(Default)]
+pub struct Places(std::collections::HashMap<String, (i32, i32)>);
+
+impl Places {
+    /// `name` left the layout placed at `at` (None: automatic).
+    pub fn left(&mut self, name: &str, at: Option<(i32, i32)>) {
+        match at {
+            Some(p) => self.0.insert(name.to_string(), p),
+            None => self.0.remove(name),
+        };
+    }
+
+    /// Where `name` goes as it comes back: `configured` if set, else where it left.
+    pub fn back(&self, name: &str, configured: Option<(i32, i32)>) -> Option<(i32, i32)> {
+        configured.or_else(|| self.0.get(name).copied())
+    }
 }
 
 /// One output as `place` sees it: its fixed position (None for automatic) and logical size.
@@ -223,7 +244,7 @@ impl State {
         if self.scene.outputs().contains(output) {
             return;
         }
-        let at = self.config.position_for_output_name(&name);
+        let at = (self.output_places).back(&name, self.config.position_for_output_name(&name));
         set_placement(output, at.map(Point::from));
         if !self.enable_configured(output) {
             log::error!("output {name}: no output state accepted, leaving it out");
@@ -234,6 +255,10 @@ impl State {
     }
 
     pub fn leave_layout(&mut self, output: &Output) {
+        if self.scene.outputs().contains(output) {
+            let at = placement(output).0.get().map(|p| (p.x, p.y));
+            self.output_places.left(&output.name(), at);
+        }
         if crate::backend::disable(self, output) {
             self.output_removed(output);
         }
@@ -312,7 +337,10 @@ impl State {
         {
             output.change_current_state(None, Some(req.transform), Some(scale), None);
         }
-        set_placement(output, req.position.map(Point::from));
+        let at = req.position.or_else(|| {
+            (self.output_places).back(&name, self.config.position_for_output_name(&name))
+        });
+        set_placement(output, at.map(Point::from));
         if driven {
             if let Some(i) = req.mode
                 && !crate::backend::set_mode(self, output, i)
@@ -869,6 +897,26 @@ mod tests {
             vec![(0, 0), (1920, 0), (3200, 0)]
         );
         assert_eq!(place(&[]), Vec::<(i32, i32)>::new());
+    }
+
+    #[test]
+    fn an_output_comes_back_where_it_was_placed_unless_configured() {
+        let mut places = Places::default();
+        assert_eq!(
+            places.back("HDMI-A-1", None),
+            None,
+            "never placed: automatic"
+        );
+        places.left("HDMI-A-1", Some((3840, 0)));
+        assert_eq!(places.back("HDMI-A-1", None), Some((3840, 0)));
+        assert_eq!(places.back("HDMI-A-2", None), None, "per connector");
+        assert_eq!(
+            places.back("HDMI-A-1", Some((0, 1080))),
+            Some((0, 1080)),
+            "a configured position wins"
+        );
+        places.left("HDMI-A-1", None);
+        assert_eq!(places.back("HDMI-A-1", None), None, "left automatic");
     }
 
     #[test]
