@@ -202,7 +202,7 @@ impl State {
     }
 
     /// `f` over the desktop's MIME database, an empty one without a desktop.
-    fn with_mime<R>(&self, f: impl FnOnce(&apps::MimeDb) -> R) -> R {
+    pub(crate) fn with_mime<R>(&self, f: impl FnOnce(&apps::MimeDb) -> R) -> R {
         match self.desktop.as_ref() {
             Some(v) => f(&v.mime),
             None => f(&apps::MimeDb::empty()),
