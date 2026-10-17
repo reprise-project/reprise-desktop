@@ -276,6 +276,9 @@ pub struct Explorer {
     dims_asked: HashSet<PathBuf>,
     /// Typed address text or the command line's place whose folder is still being checked.
     checking: Option<Checking>,
+    /// The place shown when its folder went and the check of what is left
+    /// ([`Explorer::follow_gone`]), still unanswered.
+    going: Option<(Place, Job<live::Gone>)>,
     /// The `--select` entry and its folder, waiting on that folder's listing.
     selecting: Option<(Place, PathBuf)>,
     watch: Option<Watch>,
@@ -416,6 +419,7 @@ impl Explorer {
             image_dims: HashMap::new(),
             dims_asked: HashSet::new(),
             checking: None,
+            going: None,
             selecting: None,
             watch: match Watch::new(ctx.wake.clone()) {
                 Ok(w) => Some(w),
