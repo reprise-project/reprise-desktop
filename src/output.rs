@@ -349,10 +349,18 @@ impl State {
     /// unchanged key is left alone, so what output management set stays. A
     /// missing mode keeps the current one, and turning adaptive sync off is
     /// always accepted. While the display is busy it all waits for
-    /// `backend::on_quiet`. Returns whether any output's geometry changed.
+    /// `backend::on_quiet`. A scale no output draws at yet waits while a job paints its art.
+    /// Returns whether any output's geometry changed.
     pub fn apply_output_config(&mut self, old: &crate::config::Config) -> bool {
+        self.apply_outputs(old, true)
+    }
+
+    fn apply_outputs(&mut self, old: &crate::config::Config, warm: bool) -> bool {
         if !crate::backend::quiet(self) {
             crate::backend::defer_output_config(self, old);
+            return false;
+        }
+        if warm && (self.scale_warm.is_some() || self.start_scale_warm(old)) {
             return false;
         }
         let mut geometry_changed = false;
@@ -404,6 +412,54 @@ impl State {
             }
         }
         geometry_changed
+    }
+
+    /// Paints, on a job, the art of each draw scale `old`'s reload brings that no output draws at
+    /// yet; the job's end applies the outputs against `old` and redraws as the reload does. False
+    /// when there is nothing to paint.
+    fn start_scale_warm(&mut self, old: &crate::config::Config) -> bool {
+        let reprisekit::look::Look::Styled(style) = &self.config.theme.look else {
+            return false;
+        };
+        let used: Vec<i32> = (self.scene.outputs().iter())
+            .map(|o| self.draw_scale_at(Some(o)))
+            .collect();
+        let mut scales = Vec::new();
+        for head in crate::backend::heads(self).iter().filter(|h| h.enabled) {
+            let name = head.output.name();
+            if !crate::configwatch::output_change(old, &self.config, &name).scale {
+                continue;
+            }
+            let n = draw_scale(quarter_scale(self.config.scale_for_output_name(&name)));
+            if !used.contains(&n) && !scales.contains(&n) {
+                scales.push(n);
+            }
+        }
+        let warm: Vec<_> = scales.iter().filter_map(|&n| style.warm(n)).collect();
+        if warm.is_empty() {
+            return false;
+        }
+        log::debug!("output scales {scales:?}: painting their art before the change");
+        self.scale_warm = Some(ScaleWarm {
+            old: Box::new(old.clone()),
+            scales,
+        });
+        self.spawn_fs_job(move || {
+            for w in &warm {
+                w.paint();
+            }
+            Box::new(|state: &mut State| {
+                let Some(w) = state.scale_warm.take() else {
+                    return;
+                };
+                // As the reload did, with the outputs at their new scale.
+                if state.apply_outputs(&w.old, false) {
+                    crate::configwatch::retheme(state);
+                    state.update_layout();
+                }
+            })
+        });
+        true
     }
 
     /// The layout changed: place the outputs, then refit the desktop to
@@ -631,8 +687,9 @@ impl State {
             .iter()
             .map(|o| self.draw_scale_at(Some(o)))
             .collect();
+        let warming = self.scale_warm.as_ref().map_or(&[][..], |w| &w.scales[..]);
         if let reprisekit::look::Look::Styled(s) = &self.config.theme.look {
-            s.keep_scales(|n| used.contains(&n));
+            s.keep_scales(|n| used.contains(&n) || warming.contains(&n));
         }
     }
 
@@ -641,6 +698,14 @@ impl State {
             draw_scale(o.current_scale().fractional_scale() as f32)
         })
     }
+}
+
+/// A config reload's output changes waiting for a job painting the art of new draw scales.
+pub struct ScaleWarm {
+    /// The config before the first reload whose changes wait.
+    old: Box<crate::config::Config>,
+    /// Kept by `drop_unused_scales` while the job paints them.
+    scales: Vec<i32>,
 }
 
 /// An output scale as the compositor runs it: the nearest quarter step,

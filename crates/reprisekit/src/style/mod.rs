@@ -1106,6 +1106,24 @@ pub struct Style {
     rescaled: Rescaled,
 }
 
+/// Art [`Style::warm`] found unpainted at one scale; [`Warm::paint`] paints it, on any thread.
+pub struct Warm {
+    style: Arc<Style>,
+    parts: Vec<Part>,
+    spot: bool,
+}
+
+impl Warm {
+    pub fn paint(&self) {
+        for &part in &self.parts {
+            self.style.part(part);
+        }
+        if self.spot {
+            self.style.task_spot();
+        }
+    }
+}
+
 #[derive(Default)]
 struct Rescaled(Mutex<Vec<(i32, Arc<Style>)>>);
 
@@ -1205,6 +1223,42 @@ impl Style {
         let st = Arc::new(build(n));
         kept.push((n, st.clone()));
         st
+    }
+
+    /// The art a first draw at scale `n` would paint: the parts and lit task buttons drawn at a
+    /// scale this style keeps and not yet at `n`. None when there is nothing to paint.
+    pub fn warm(self: &Arc<Style>, n: i32) -> Option<Warm> {
+        let at_n = self.at_scale(n);
+        if Arc::ptr_eq(&at_n, self) {
+            return None;
+        }
+        let kept: Vec<Arc<Style>> = {
+            let kept = self.rescaled.0.lock().unwrap_or_else(|e| e.into_inner());
+            kept.iter().map(|(_, st)| st.clone()).collect()
+        };
+        let drawn = |part: &Part| {
+            let at = |st: &Style| {
+                st.parts
+                    .get(part)
+                    .is_some_and(|a| LazyLock::get(a).is_some())
+            };
+            at(self) || kept.iter().any(|st| at(st))
+        };
+        let parts: Vec<Part> = (at_n.parts.iter())
+            .filter(|(part, art)| LazyLock::get(art).is_none() && drawn(part))
+            .map(|(part, _)| *part)
+            .collect();
+        let spot_drawn = |st: &Style| {
+            st.task_spot
+                .as_deref()
+                .is_some_and(|s| LazyLock::get(s).is_some())
+        };
+        let spot = !spot_drawn(&at_n) && (spot_drawn(self) || kept.iter().any(|st| spot_drawn(st)));
+        (!parts.is_empty() || spot).then_some(Warm {
+            style: at_n,
+            parts,
+            spot,
+        })
     }
 
     /// Drops the styles [`Style::at_scale`] kept for the scales `keep` turns down.
@@ -2026,6 +2080,41 @@ mod tests {
             crate::look::styled::fixture::doubles_at_scale_1(&one, &two),
             "{what}: the s = 2 draw is the s = 1 draw with every pixel a 2x2 block"
         );
+    }
+
+    #[test]
+    fn warm_paints_on_another_thread_the_parts_drawn_at_scale_1_and_no_others() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        static PAINTS: [AtomicUsize; 4] = [const { AtomicUsize::new(0) }; 4];
+        let painted = |n: i32| {
+            let art = |slot: usize| {
+                move || {
+                    PAINTS[slot].fetch_add(1, Ordering::SeqCst);
+                    PartImage::new(Canvas::new(2, 2), &[State::Normal], Layout::Vertical)
+                }
+            };
+            let k = 2 * (n as usize - 1);
+            style()
+                .with_painted(Part::Caption, art(k))
+                .with_painted(Part::Taskbar, art(k + 1))
+        };
+        let st = Arc::new(painted(1).with_rescale(painted));
+        assert!(st.warm(2).is_none(), "nothing drawn yet: nothing to paint");
+        st.part(Part::Caption);
+        assert!(st.warm(1).is_none(), "scale 1 is the style itself");
+        let warm = st
+            .warm(2)
+            .expect("the caption drawn at scale 1 is unpainted at scale 2");
+        std::thread::spawn(move || warm.paint()).join().unwrap();
+        let count = |slot: usize| PAINTS[slot].load(Ordering::SeqCst);
+        assert_eq!(
+            (count(2), count(3)),
+            (1, 0),
+            "scale 2: the caption, not the taskbar"
+        );
+        st.at_scale(2).part(Part::Caption);
+        assert_eq!(count(2), 1, "a draw at scale 2 finds the caption painted");
+        assert!(st.warm(2).is_none(), "scale 2 is warm");
     }
 
     #[test]
