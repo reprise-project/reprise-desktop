@@ -193,6 +193,7 @@ pub struct State {
     pub toplevels: crate::toplevels::Toplevels,
     pub activation: smithay::wayland::xdg_activation::XdgActivationState,
     pub outputs_mgmt: crate::outputmgmt::OutputMgmt,
+    pub output_places: crate::output::Places,
     /// Globals no handler reads back, kept for as long as the display.
     #[allow(dead_code)]
     pub globals: Globals,
@@ -472,6 +473,7 @@ impl State {
                 crate::sandbox::filter("ext_image_copy_capture_manager_v1"),
             ),
             outputs_mgmt: crate::outputmgmt::OutputMgmt::new(&dh),
+            output_places: Default::default(),
             clip,
             dnd: Default::default(),
             drags: Default::default(),
