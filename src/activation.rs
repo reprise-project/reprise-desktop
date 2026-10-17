@@ -187,6 +187,25 @@ impl State {
         let launch = self.new_launch();
         crate::spawn::spawn_argv_in(argv, Some(app), None, &self.env, Some(&launch))
     }
+
+    /// `spawn_app_activated` for launcher `app`. One that runs `xdg-open <file>` (a Quick Launch
+    /// document shortcut) opens the file in its default program and that program's scope, as the
+    /// file's desktop icon does.
+    pub fn spawn_launcher_activated(&mut self, argv: &[std::ffi::OsString], app: &str) {
+        if let Some(file) = crate::spawn::xdg_open_file(argv) {
+            let mime = file
+                .file_name()
+                .and_then(|n| self.with_mime(|db| db.mime_of_name(&n.to_string_lossy())));
+            if let Some(default) = mime
+                .as_deref()
+                .and_then(|m| reprisefs::props::default_app_entry(m, &self.app_index))
+            {
+                let open = reprisefs::props::open_file(file, Some(default), &self.config.terminal);
+                return self.spawn_opening_activated(&open);
+            }
+        }
+        self.spawn_app_activated(argv, app)
+    }
 }
 
 #[cfg(test)]
