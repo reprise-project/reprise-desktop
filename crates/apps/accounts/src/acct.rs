@@ -66,7 +66,7 @@ pub enum Op {
         admin: bool,
     },
     /// A PNG at `file`, which the daemon copies in. For your own account
-    /// an existing `~/.face` takes the same picture.
+    /// an existing `~/.face` and `~/.face.icon` take the same picture.
     Picture {
         path: String,
         file: PathBuf,
@@ -387,21 +387,37 @@ fn failure(name: &str, msg: Option<&str>, dismissed: impl FnOnce() -> bool) -> F
     Failure::Text("You are not allowed to make this change.".into())
 }
 
-/// Your `~/.face`, when you keep one, takes the new picture too, so the
-/// Start panel and other programs that read it first follow.
+/// Your `~/.face` and `~/.face.icon`, when you keep them, take the new
+/// picture too: the Start panel reads `~/.face` first, SDDM's greeter
+/// `~/.face.icon`.
 fn update_face(file: &Path) {
-    let Some(home) = std::env::var_os("HOME").map(PathBuf::from) else {
-        return;
-    };
-    let face = home.join(".face");
-    if std::fs::symlink_metadata(&face).is_err() {
-        return;
+    if let Some(home) = std::env::var_os("HOME") {
+        update_faces_in(Path::new(&home), file);
     }
-    let tmp = home.join(".face.new");
-    let done = std::fs::copy(file, &tmp).and_then(|_| std::fs::rename(&tmp, &face));
-    if let Err(e) = done {
-        log::warn!("~/.face: {e}");
-        let _ = std::fs::remove_file(&tmp);
+}
+
+fn update_faces_in(home: &Path, file: &Path) {
+    let face = home.join(".face");
+    for name in [".face", ".face.icon"] {
+        let dest = home.join(name);
+        let Ok(meta) = std::fs::symlink_metadata(&dest) else {
+            continue;
+        };
+        // A `.face.icon` linked to `.face` already follows it; replacing the
+        // link would only break the pairing.
+        let linked = || match (std::fs::canonicalize(&dest), std::fs::canonicalize(&face)) {
+            (Ok(a), Ok(b)) => a == b,
+            _ => false,
+        };
+        if name == ".face.icon" && meta.file_type().is_symlink() && linked() {
+            continue;
+        }
+        let tmp = home.join(format!("{name}.new"));
+        let done = std::fs::copy(file, &tmp).and_then(|_| std::fs::rename(&tmp, &dest));
+        if let Err(e) = done {
+            log::warn!("~/{name}: {e}");
+            let _ = std::fs::remove_file(&tmp);
+        }
     }
 }
 
@@ -500,5 +516,51 @@ mod tests {
         sort(&mut v);
         let order: Vec<&str> = v.iter().map(|u| u.login.as_str()).collect();
         assert_eq!(order, ["me", "al", "zed"]);
+    }
+
+    fn scratch(tag: &str) -> PathBuf {
+        let d = std::env::temp_dir().join(format!("accounts-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    #[test]
+    fn a_new_picture_replaces_only_the_face_files_you_keep() {
+        let d = scratch("faces");
+        let pic = d.join("pic.png");
+        std::fs::write(&pic, b"new").unwrap();
+        std::fs::write(d.join(".face.icon"), b"old").unwrap();
+        update_faces_in(&d, &pic);
+        assert_eq!(std::fs::read(d.join(".face.icon")).unwrap(), b"new");
+        assert!(!d.join(".face").exists(), "a missing ~/.face stays missing");
+        std::fs::write(d.join(".face"), b"old").unwrap();
+        std::fs::remove_file(d.join(".face.icon")).unwrap();
+        update_faces_in(&d, &pic);
+        assert_eq!(std::fs::read(d.join(".face")).unwrap(), b"new");
+        assert!(
+            !d.join(".face.icon").exists(),
+            "a missing ~/.face.icon stays missing"
+        );
+        std::fs::remove_dir_all(&d).unwrap();
+    }
+
+    #[test]
+    fn a_face_icon_linked_to_face_stays_a_link() {
+        let d = scratch("link");
+        let pic = d.join("pic.png");
+        std::fs::write(&pic, b"new").unwrap();
+        std::fs::write(d.join(".face"), b"old").unwrap();
+        std::os::unix::fs::symlink(".face", d.join(".face.icon")).unwrap();
+        update_faces_in(&d, &pic);
+        let icon = d.join(".face.icon");
+        assert!(
+            std::fs::symlink_metadata(&icon)
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
+        assert_eq!(std::fs::read(&icon).unwrap(), b"new");
+        std::fs::remove_dir_all(&d).unwrap();
     }
 }
