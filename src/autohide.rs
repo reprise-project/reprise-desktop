@@ -108,6 +108,14 @@ impl AutoHide {
         }
     }
 
+    /// A bar sliding in lands shown at once, for a key that acts on where it
+    /// is headed. Any other phase stays.
+    pub fn land(&mut self, now: Instant) {
+        if self.phase == Phase::Revealing {
+            self.settle(Phase::Shown, now);
+        }
+    }
+
     pub fn update(&mut self, s: Signals, r: Rules, now: Instant) {
         self.retime(r, now);
         if self.slide_end().is_some_and(|end| now >= end) {
@@ -360,6 +368,25 @@ mod tests {
             near(a.hidden(at(1000)), 1.0),
             "while it is still drawn hidden"
         );
+    }
+
+    #[test]
+    fn a_bar_sliding_in_lands_shown_at_once_and_a_hiding_one_stays() {
+        let r = rules();
+        let mut a = hidden_bar(r);
+        a.keyed(r, true, false, at(1000));
+        assert!(a.hidden(at(1050)) > 0.0, "still sliding in");
+        a.land(at(1050));
+        assert_eq!(a.phase(), Phase::Shown);
+        assert_eq!(a.hidden(at(1050)), 0.0, "drawn shown");
+        assert!(!a.moving(at(1050)));
+
+        let mut b = AutoHide::new(at(0));
+        b.update(Signals::default(), r, at(0));
+        b.update(Signals::default(), r, at(500));
+        assert_eq!(b.phase(), Phase::Hiding);
+        b.land(at(550));
+        assert_eq!(b.phase(), Phase::Hiding, "a hiding bar keeps sliding out");
     }
 
     #[test]
