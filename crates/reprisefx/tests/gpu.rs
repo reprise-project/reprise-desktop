@@ -17,8 +17,8 @@ use smithay::backend::renderer::element::texture::{TextureBuffer, TextureRenderE
 use smithay::backend::renderer::element::utils::{
     CropRenderElement, Relocate, RelocateRenderElement,
 };
-use smithay::backend::renderer::gles::{GlesRenderer, GlesTexture, ffi};
-use smithay::backend::renderer::{Bind, ExportMem, ImportMem, Offscreen};
+use smithay::backend::renderer::gles::{GlesFrame, GlesRenderer, GlesTexture, ffi};
+use smithay::backend::renderer::{Bind, Color32F, ExportMem, Frame, ImportMem, Offscreen};
 use smithay::render_elements;
 use smithay::utils::{Physical, Point, Rectangle, Size, Transform};
 
@@ -525,6 +525,55 @@ fn at_scale_2_a_quarter_backdrop_blurs_to_the_spread_of_a_half_one() {
         (two - one).abs() <= 0.15 * one,
         "the edge spreads over {one:.1} px at scale 1, {two:.1} at scale 2"
     );
+}
+
+#[test]
+fn a_backdrop_drawn_in_the_blurs_frame_blurs_as_one_drawn_before_it() {
+    let Some(mut r) = rig(320, 200) else { return };
+    let black = r.backdrop(|_, _| [0; 3]);
+    let s = plain(Material::Frosted);
+    let shapes = [Shape::rect(rect(0, 0, 320, 200))];
+    let square = |x: i32, y: i32| (40..80).contains(&x) && (30..60).contains(&y);
+    for quality in [Quality::Full, Quality::Coarse] {
+        let mut shown = Vec::new();
+        for inside in [false, true] {
+            let back = half_backdrop(&mut r, |x, y| match !inside && square(x, y) {
+                true => [255; 3],
+                false => [0; 3],
+            });
+            let u = Update {
+                backdrop: &back,
+                changed: &[],
+                settings: &s,
+                quality,
+                needed: None,
+                output: r.size,
+                scale: 1.0,
+                hold: false,
+            };
+            let mut draw = |frame: &mut GlesFrame<'_, '_>| {
+                frame.clear(Color32F::new(1.0, 1.0, 1.0, 1.0), &[rect(40, 30, 40, 30)])
+            };
+            let draw: Option<reprisefx::Drawing<'_>> = inside.then_some(&mut draw);
+            let mut picture = Picture::new();
+            picture
+                .update_drawing(&mut r.renderer, &r.fx, &u, draw)
+                .expect("the picture blurs");
+            let src = picture.source().expect("a drawn picture");
+            let f = GlassFrame {
+                source: Some(&src),
+                ..r.frame(&shapes, &[], &s)
+            };
+            r.frames = 0;
+            let (p, _) = r.render(vec![Glass::new().element(&r.fx, &f).unwrap()], &black);
+            shown.push(p.px);
+        }
+        assert!(
+            shown[0] == shown[1],
+            "{quality:?}: the square drawn in the blur's frame shows as the one uploaded"
+        );
+        assert_ne!(shown[0][90 * 320 + 120], shown[0][0], "the square shows");
+    }
 }
 
 #[test]

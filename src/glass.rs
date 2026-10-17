@@ -19,10 +19,10 @@ use smithay::{
     backend::{
         allocator::Fourcc,
         renderer::{
-            Bind, Color32F, Offscreen,
+            Bind, Color32F, Frame, Offscreen,
             damage::OutputDamageTracker,
             element::{Element, Id, RenderElement, utils::CropRenderElement},
-            gles::{GlesRenderer, GlesTexture},
+            gles::{GlesError, GlesFrame, GlesRenderer, GlesTexture},
         },
     },
     output::Output,
@@ -164,6 +164,8 @@ struct OutputBackdrop {
     look: Option<(Settings, Quality)>,
     /// A held frame left it as it was: what changed since waits for the next blur.
     skipped: bool,
+    /// The clear colour it was last drawn on: the tracker sees a change only when it draws.
+    clear: Option<Color32F>,
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -472,38 +474,50 @@ impl GlassCtx {
         needed: Option<&[Rectangle<i32, Physical>]>,
     ) -> Option<Source> {
         let name = output.name();
+        let mode = output.current_mode()?;
+        let fx = self.fx.borrow();
+        let fx = fx.as_ref()?;
         let d = reprisefx::blur::backdrop_downscale(output.current_scale().fractional_scale());
-        let age = usize::from(b.drawn);
-        let rendered = renderer
-            .bind(&mut b.texture)
-            .map_err(|e| e.to_string())
-            .and_then(|mut fb| {
-                b.tracker
-                    .render_output(renderer, &mut fb, age, elements, clear)
-                    .map(|r| r.damage.cloned().unwrap_or_default())
-                    .map_err(|e| format!("{e:?}"))
-            });
-        let changed: Vec<Rectangle<i32, Physical>> = match rendered {
-            Ok(damage) => {
-                b.drawn = true;
-                damage
-                    .into_iter()
-                    .map(|r| {
-                        Rectangle::new(
-                            (r.loc.x * d, r.loc.y * d).into(),
-                            (r.size.w * d, r.size.h * d).into(),
-                        )
-                    })
-                    .collect()
-            }
+        // Without a capturing element the damage is known before drawing, so the picture's blur
+        // can draw the backdrop inside its own frame.
+        let inside = !elements.iter().any(Element::is_framebuffer_effect);
+        let age = usize::from(b.drawn && (!inside || b.clear == Some(clear)));
+        let rendered = match inside {
+            true => b
+                .tracker
+                .damage_output(age, elements)
+                .map(|(damage, _)| damage.cloned().unwrap_or_default())
+                .map_err(|e| format!("{e:?}")),
+            false => renderer
+                .bind(&mut b.texture)
+                .map_err(|e| e.to_string())
+                .and_then(|mut fb| {
+                    b.tracker
+                        .render_output(renderer, &mut fb, age, elements, clear)
+                        .map(|r| r.damage.cloned().unwrap_or_default())
+                        .map_err(|e| format!("{e:?}"))
+                }),
+        };
+        let damage = match rendered {
+            Ok(damage) => damage,
             Err(e) => {
                 log::warn!("glass: the backdrop of {name} did not render: {e}");
                 b.drawn = false;
                 return None;
             }
         };
+        b.drawn = true;
+        b.clear = Some(clear);
+        let changed: Vec<Rectangle<i32, Physical>> = damage
+            .iter()
+            .map(|r| {
+                Rectangle::new(
+                    (r.loc.x * d, r.loc.y * d).into(),
+                    (r.size.w * d, r.size.h * d).into(),
+                )
+            })
+            .collect();
         let pass = self.pass.get();
-        let mode = output.current_mode()?;
         let update = Update {
             backdrop: &b.texture,
             changed: &changed,
@@ -514,9 +528,12 @@ impl GlassCtx {
             hold: pass.hold,
             needed,
         };
-        let fx = self.fx.borrow();
-        let fx = fx.as_ref()?;
-        if let Err(e) = b.picture.update(renderer, fx, &update) {
+        let view = Scale::from(f64::from_bits(b.key.1));
+        let mut draw =
+            |frame: &mut GlesFrame<'_, '_>| draw_damaged(frame, elements, view, &damage, clear);
+        let draw: Option<reprisefx::Drawing<'_>> =
+            (inside && !damage.is_empty()).then_some(&mut draw);
+        if let Err(e) = b.picture.update_drawing(renderer, fx, &update, draw) {
             log::warn!("glass: the backdrop of {name} did not blur: {e}");
             b.drawn = false;
             return None;
@@ -650,6 +667,60 @@ fn shows_glass<E: Element>(made: &[Id], elements: &[E], scale: Scale<f64>) -> bo
     found < made.len()
 }
 
+/// `elements` (front to back) drawn where `damage` lies into the frame's draw binding, as the
+/// damage tracker draws them: hidden parts skipped, the clear under no opaque region.
+fn draw_damaged<E: RenderElement<GlesRenderer>>(
+    frame: &mut GlesFrame<'_, '_>,
+    elements: &[E],
+    scale: Scale<f64>,
+    damage: &[Rectangle<i32, Physical>],
+    clear: Color32F,
+) -> Result<(), GlesError> {
+    let output = Rectangle::from_size(frame.output_size());
+    let mut opaque: Vec<Rectangle<i32, Physical>> = Vec::new();
+    let mut shown = Vec::new();
+    for e in elements {
+        let geometry = e.geometry(scale);
+        let Some(visible) = geometry.intersection(output) else {
+            continue;
+        };
+        if visible.subtract_rects(opaque.iter().copied()).is_empty() {
+            continue;
+        }
+        let parts: Vec<_> = damage
+            .iter()
+            .filter_map(|d| d.intersection(geometry))
+            .collect();
+        let parts = Rectangle::subtract_rects_many_in_place(parts, opaque.iter().copied());
+        let start = opaque.len();
+        opaque.extend(
+            e.opaque_regions(scale)
+                .into_iter()
+                .map(|mut r| {
+                    r.loc += geometry.loc;
+                    r
+                })
+                .filter_map(|r| r.intersection(output)),
+        );
+        shown.push((e, geometry, parts, start..opaque.len()));
+    }
+    let cleared = Rectangle::subtract_rects_many_in_place(damage.to_vec(), opaque.iter().copied());
+    frame.clear(clear, &cleared)?;
+    for (e, geometry, mut parts, own) in shown.into_iter().rev() {
+        if parts.is_empty() {
+            continue;
+        }
+        let local = |mut r: Rectangle<i32, Physical>| {
+            r.loc -= geometry.loc;
+            r
+        };
+        parts.iter_mut().for_each(|r| *r = local(*r));
+        let own: Vec<_> = opaque[own].iter().map(|r| local(*r)).collect();
+        e.draw(frame, e.src(), geometry, &parts, &own, None)?;
+    }
+    Ok(())
+}
+
 impl OutputBackdrop {
     fn key(seen: Size<i32, Physical>, scale: f64) -> (Size<i32, Physical>, u64) {
         let d = reprisefx::blur::backdrop_downscale(scale);
@@ -678,6 +749,7 @@ impl OutputBackdrop {
             hidden: false,
             look: None,
             skipped: false,
+            clear: None,
         })
     }
 }

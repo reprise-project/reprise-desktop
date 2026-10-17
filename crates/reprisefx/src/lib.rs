@@ -109,7 +109,7 @@ pub use element::{Glass, GlassElement, GlassFrame, GlassFx, Shape};
 pub use flip::{FlipCard, FlipCardElement, FlipFx, mipmaps};
 pub use fluid::{FluidElement, FluidFx, FluidPool};
 pub use lens::Lens;
-pub use picture::{Picture, Source, Update};
+pub use picture::{Drawing, Picture, Source, Update};
 pub use strokes::{Stroke, StrokeElement, StrokeFx, Strokes};
 pub use tint::Tint;
 pub use water::{Pool, WaterElement, WaterFx};
