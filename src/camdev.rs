@@ -5,9 +5,11 @@
 //! A thread keeps inotify watches on every `/dev/video*` node (and on `/dev`, for a camera
 //! plugged in later) and, after `SETTLE`, scans `/proc/*/fd` for holders and reports each with
 //! its parent chain, so the compositor can name it by a window. PipeWire and WirePlumber are
-//! left out; the PipeWire monitor names their consumers.
+//! left out; the PipeWire monitor names their consumers. A v4l2loopback node (a virtual camera)
+//! counts only once a second process holds it: its feeder alone films nothing.
 
-use std::ffi::OsStr;
+use std::collections::HashMap;
+use std::ffi::{OsStr, OsString};
 use std::path::Path;
 use std::time::Duration;
 
@@ -61,7 +63,7 @@ fn watch(tx: &Sender<Vec<Holder>>) -> std::io::Result<()> {
             let _ = ino.watches().add(entry.path(), DEVICE_MASK);
         }
     }
-    let mut last = scan(Path::new("/proc"));
+    let mut last = scan(Path::new("/proc"), Path::new("/sys"));
     let _ = tx.send(last.clone());
     let mut buf = [0u8; 4096];
     loop {
@@ -82,7 +84,7 @@ fn watch(tx: &Sender<Vec<Holder>>) -> std::io::Result<()> {
             .read_events(&mut buf)
             .is_ok_and(|mut e| e.next().is_some())
         {}
-        let now = scan(Path::new("/proc"));
+        let now = scan(Path::new("/proc"), Path::new("/sys"));
         if now != last {
             last = now;
             if tx.send(last.clone()).is_err() {
@@ -93,18 +95,30 @@ fn watch(tx: &Sender<Vec<Holder>>) -> std::io::Result<()> {
 }
 
 /// The processes under `proc` (a procfs root) holding a `/dev/video*`
-/// node open, by pid, PipeWire's own left out. Processes of other users,
-/// whose fds cannot be read, are skipped.
-pub fn scan(proc: &Path) -> Vec<Holder> {
+/// node open, by pid, PipeWire's own left out; a loopback node (per `sys`, a
+/// sysfs root) only while two or more processes hold it. Processes of other
+/// users, whose fds cannot be read, are skipped.
+pub fn scan(proc: &Path, sys: &Path) -> Vec<Holder> {
     let Ok(dir) = std::fs::read_dir(proc) else {
         return Vec::new();
     };
-    let mut pids: Vec<i32> = dir
+    let mut held: Vec<(i32, Vec<OsString>)> = dir
         .flatten()
         .filter_map(|e| e.file_name().to_str()?.parse::<i32>().ok())
-        .filter(|pid| holds_camera(&proc.join(pid.to_string())))
+        .map(|pid| (pid, camera_nodes(&proc.join(pid.to_string()))))
+        .filter(|(_, nodes)| !nodes.is_empty())
         .collect();
-    pids.sort_unstable();
+    held.sort_unstable();
+    let mut holders: HashMap<&OsStr, usize> = HashMap::new();
+    for node in held.iter().flat_map(|(_, n)| n) {
+        *holders.entry(node).or_default() += 1;
+    }
+    let counts = |node: &OsStr| holders[node] > 1 || !is_loopback(sys, node);
+    let pids: Vec<i32> = held
+        .iter()
+        .filter(|(_, nodes)| nodes.iter().any(|n| counts(n)))
+        .map(|(pid, _)| *pid)
+        .collect();
     pids.into_iter()
         .filter_map(|pid| {
             let dir = proc.join(pid.to_string());
@@ -124,15 +138,30 @@ pub fn scan(proc: &Path) -> Vec<Holder> {
         .collect()
 }
 
-fn holds_camera(pid_dir: &Path) -> bool {
+/// The `/dev/video*` nodes a process holds, each once.
+fn camera_nodes(pid_dir: &Path) -> Vec<OsString> {
     let Ok(fds) = std::fs::read_dir(pid_dir.join("fd")) else {
-        return false;
+        return Vec::new();
     };
-    fds.flatten().any(|fd| {
-        std::fs::read_link(fd.path()).is_ok_and(|t| {
-            t.parent() == Some(Path::new("/dev")) && t.file_name().is_some_and(is_camera_node)
+    let mut nodes: Vec<OsString> = fds
+        .flatten()
+        .filter_map(|fd| {
+            let t = std::fs::read_link(fd.path()).ok()?;
+            let name = t.file_name()?;
+            (t.parent() == Some(Path::new("/dev")) && is_camera_node(name))
+                .then(|| name.to_os_string())
         })
-    })
+        .collect();
+    nodes.sort_unstable();
+    nodes.dedup();
+    nodes
+}
+
+/// Whether `/dev/<node>` is a virtual device (v4l2loopback): its sysfs entry
+/// sits under `devices/virtual`, where a real camera's sits on its bus.
+fn is_loopback(sys: &Path, node: &OsStr) -> bool {
+    std::fs::read_link(sys.join("class/video4linux").join(node))
+        .is_ok_and(|t| t.components().any(|c| c.as_os_str() == "virtual"))
 }
 
 fn read_trim(path: &Path) -> String {
@@ -183,17 +212,37 @@ mod tests {
         }
     }
 
+    fn root(tag: &str) -> std::path::PathBuf {
+        let root =
+            std::env::temp_dir().join(format!("reprise-camdev-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        root
+    }
+
+    /// A fake sysfs with video0 on USB and video9 a loopback node.
+    fn sysfs(root: &Path) -> std::path::PathBuf {
+        let class = root.join("sys/class/video4linux");
+        std::fs::create_dir_all(&class).unwrap();
+        let usb = "../../devices/pci0000:00/0000:00:14.0/usb1/1-1/1-1:1.0/video4linux/video0";
+        symlink(usb, class.join("video0")).unwrap();
+        symlink(
+            "../../devices/virtual/video4linux/video9",
+            class.join("video9"),
+        )
+        .unwrap();
+        root.join("sys")
+    }
+
     #[test]
     fn holders_of_a_video_node_are_found_with_their_parents() {
-        let root = std::env::temp_dir().join(format!("reprise-camdev-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&root);
+        let root = root("holders");
         let r = root.as_path();
         process(r, 100, "firefox", 1, &["/dev/null"]);
         process(r, 120, "Isolated", 100, &["/dev/video0", "/dev/null"]);
         process(r, 200, "pipewire", 1, &["/dev/video0"]);
         process(r, 300, "foot", 1, &["/dev/pts/0", "/dev/videos"]);
         std::fs::create_dir_all(r.join("self")).unwrap();
-        let found = scan(r);
+        let found = scan(r, &sysfs(r));
         let _ = std::fs::remove_dir_all(&root);
         assert_eq!(
             found,
@@ -202,6 +251,19 @@ mod tests {
                 exe: "Isolated".into()
             }]
         );
+    }
+
+    #[test]
+    fn a_loopback_node_held_by_its_feeder_alone_is_no_camera_in_use() {
+        let root = root("loopback");
+        let r = root.as_path();
+        let sys = sysfs(r);
+        process(r, 400, "obs", 1, &["/dev/video9", "/dev/video9"]);
+        assert_eq!(scan(r, &sys), [], "the feeder alone");
+        process(r, 500, "ffplay", 1, &["/dev/video9"]);
+        let exes: Vec<String> = scan(r, &sys).into_iter().map(|h| h.exe).collect();
+        let _ = std::fs::remove_dir_all(&root);
+        assert_eq!(exes, ["obs", "ffplay"], "a reader joined the feeder");
     }
 
     #[test]
