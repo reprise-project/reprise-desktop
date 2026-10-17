@@ -573,9 +573,8 @@ impl Theme {
         if pct == 100 {
             return self.clone();
         }
-        let base = self.fonts.size_px;
         let mut t = self.with_form_text(pct);
-        let grow = line_growth(t.fonts.size_px) - line_growth(base);
+        let grow = t.line_growth();
         let m = &mut t.metrics;
         for h in [
             &mut m.caption_height,
@@ -599,6 +598,13 @@ impl Theme {
             }
         }
         t
+    }
+
+    /// How far a line of the UI font outgrows its 100% line, logical px: what
+    /// [`Theme::with_text_size`] grows the caption and the other one-line heights by.
+    pub fn line_growth(&self) -> i32 {
+        let px = self.fonts.size_px / self.scale.max(1) as u32;
+        line_growth(px) - line_growth(self.text.base_px(px))
     }
 
     /// This theme with only the UI font and [`Theme::text`] at `pct` percent: what forms laid out

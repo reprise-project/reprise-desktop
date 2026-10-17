@@ -7,7 +7,7 @@ use crate::text::TextRenderer;
 use crate::theme::Theme;
 use accesskit::{NodeId, Role};
 
-/// Logical px.
+/// Logical px at 100% text; both bounds grow with the text.
 pub const TAB_MAX: i32 = 200;
 /// When even this does not fit, the tabs take the grab room too.
 pub const TAB_MIN: i32 = 48;
@@ -128,15 +128,17 @@ pub fn layout(theme: &Theme, geom: &FrameGeometry, n: usize) -> Layout {
     let (x0, x1) = (cap.x + 2 * s, geom.title_end() - 2 * s);
     let room = (x1 - x0).max(0);
     let count = n.max(1) as i32;
-    let share = ((room - GRAB * s) / count).clamp(TAB_MIN * s, TAB_MAX * s);
+    let u = theme.text;
+    let share = ((room - GRAB * s) / count).clamp(u.len(TAB_MIN) * s, u.len(TAB_MAX) * s);
     let w = if share * count > room {
         room / count
     } else {
         share
     };
-    let margin = ((cap.height - theme.icon_size() - 6 * s) / 2).max(0);
+    let grow = theme.line_growth();
+    let margin = ((cap.height - theme.icon_size() - (6 + grow) * s) / 2).max(0);
     let (y, h) = (cap.y + margin, cap.height - 2 * margin);
-    let (cw, ch) = caption_tab_close(&theme.paint(), &theme.metrics);
+    let (cw, ch) = caption_tab_close(&theme.paint(), &theme.metrics, grow);
     let tabs: Vec<Rect> = (0..n as i32)
         .map(|i| Rect::new(x0 + i * w, y, w, h))
         .collect();
@@ -282,6 +284,82 @@ mod tests {
             (((under >> shift) & 0xFF) * (255 - a) + u32::from(s) * a + 127) / 255
         };
         (ch(24, 255) << 24) | (ch(16, color.r) << 16) | (ch(8, color.g) << 8) | ch(0, color.b)
+    }
+
+    #[test]
+    fn grown_tabs_and_their_close_boxes_grow_with_the_caption() {
+        for i in [Interface::Classic, Interface::Blue, Interface::Glass] {
+            for pct in [150, 200] {
+                let theme = theme_for(i).with_text_size(pct);
+                let grow = theme.line_growth();
+                assert!(grow > 0, "{i:?} {pct}%");
+                let g = geom(&theme, 1200);
+                let l = layout(&theme, &g, 2);
+                let (t, b) = (l.tabs[0], l.closes[0].expect("a close box"));
+                let at = format!("{i:?} {pct}%");
+                assert_eq!(t.height, (22 + grow).min(g.caption.height), "{at}: tab");
+                assert!(
+                    t.y >= g.caption.y && t.bottom() <= g.caption.bottom(),
+                    "{at}"
+                );
+                assert_eq!(t.width, theme.text.len(TAB_MAX), "{at}: widest tab");
+                if i != Interface::Classic {
+                    assert_eq!((b.width, b.height), (14 + grow, 14 + grow), "{at}: close");
+                }
+                assert!(
+                    b.y >= t.y && b.bottom() <= t.bottom(),
+                    "{at}: close in the tab"
+                );
+                assert!(
+                    (b.y - t.y) - (t.bottom() - b.bottom()) <= 1,
+                    "{at}: centred"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn grown_styled_tabs_pin_at_150_and_200_percent() {
+        let mut t = tabs(2, 0);
+        for tab in &mut t.tabs {
+            tab.title = "";
+        }
+        t.hot = Some(TabHit {
+            tab: 1,
+            close: true,
+        });
+        let mut got = Vec::new();
+        for i in [Interface::Blue, Interface::Glass] {
+            for pct in [150, 200] {
+                for s in [1, 2] {
+                    let theme = Theme {
+                        scale: s,
+                        ..theme_for(i).with_text_size(pct)
+                    };
+                    let (c, l) = draw_over(&theme, 700, &t, true);
+                    let b = l.closes[1].expect("a close box");
+                    let (bare, _) = draw_over(&theme, 700, &t, false);
+                    let mid = (b.x + b.width / 2, b.y + b.height / 2);
+                    for (x, y) in [(b.x + s, b.y + s), (b.right() - 1 - s, b.bottom() - 1 - s)] {
+                        assert_ne!(c.get(x, y), bare.get(x, y), "{i:?} {pct}% @{s}: washed");
+                    }
+                    assert_ne!(c.get(mid.0, mid.1), bare.get(mid.0, mid.1), "the cross");
+                    got.push((format!("{i:?} {pct} {s}"), fnv(&c)));
+                }
+            }
+        }
+        crate::pins::check("look/caption_tabs_grown", &got);
+    }
+
+    fn fnv(c: &Canvas) -> u64 {
+        (0..c.height as i32)
+            .flat_map(|y| (0..c.width as i32).map(move |x| (x, y)))
+            .map(|(x, y)| c.get(x, y))
+            .fold(0xcbf2_9ce4_8422_2325, |h, w| {
+                w.to_le_bytes()
+                    .iter()
+                    .fold(h, |h, &b| (h ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3))
+            })
     }
 
     #[test]

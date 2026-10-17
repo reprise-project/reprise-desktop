@@ -725,11 +725,11 @@ pub fn draw_caption_tab(
     classic::widgets::draw_caption_tab(c, text, p.cs, r, tab, window_active, px, p.s)
 }
 
-/// The size of a caption tab's close box, device px: the style's square, or
-/// Classic's caption button from `m`.
-pub fn caption_tab_close(p: &Paint, m: &crate::theme::Metrics) -> (i32, i32) {
+/// The size of a caption tab's close box, device px: the style's square grown by `grow` logical
+/// px, or Classic's caption button from `m`, which grew with the caption.
+pub fn caption_tab_close(p: &Paint, m: &crate::theme::Metrics, grow: i32) -> (i32, i32) {
     match p.look.style().and_then(|st| st.caption_tabs) {
-        Some(l) => (l.close * p.s, l.close * p.s),
+        Some(l) => ((l.close + grow) * p.s, (l.close + grow) * p.s),
         None => (m.caption_button_width, m.caption_button_height),
     }
 }

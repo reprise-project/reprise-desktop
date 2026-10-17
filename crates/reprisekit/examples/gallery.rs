@@ -6,7 +6,7 @@
 //! page. `REPRISE_GALLERY_LOOK=classic` leaves the Blue bands blank and skips
 //! the Blue, Glass and taskbar PNGs. `REPRISE_GALLERY_TEXT_SIZE=<percent>` writes
 //! only a message box, a property sheet, window controls, panes and the shell
-//! view's icon modes in each look at that text size, and About's system view.
+//! view's icon modes in each look at that text size, About's system view and the caption tabs.
 
 #[path = "gallery_p3/mod.rs"]
 mod gallery_p3;
@@ -128,6 +128,10 @@ fn main() {
         write_preview(
             &render_launchers(pct),
             &format!("reprisekit-gallery-launcher-{pct}.png"),
+        );
+        write_preview(
+            &render_caption_tabs(pct),
+            &format!("reprisekit-gallery-caption-tabs-{pct}.png"),
         );
         return;
     }
@@ -253,7 +257,7 @@ fn main() {
         write_preview(&render_backgrounds(), "reprisekit-gallery-backgrounds.png");
         write_preview(&render_savers(), "reprisekit-gallery-screensavers.png");
         write_preview(
-            &render_caption_tabs(),
+            &render_caption_tabs(100),
             "reprisekit-gallery-caption-tabs.png",
         );
         write_preview(
@@ -9301,7 +9305,7 @@ fn render_overview() -> Canvas {
 }
 
 /// Tab groups' captions in Classic, navy and silver Blue, and light and dark Glass over the stripes; the last row is Classic at scale 2.
-fn render_caption_tabs() -> Canvas {
+fn render_caption_tabs(pct: u32) -> Canvas {
     use reprisekit::controls::captiontabs::{self, CaptionTabs, TabEntry, TabHit};
     let dark = reprisekit::glass::Settings {
         mode: reprisekit::glass::Mode::Dark,
@@ -9322,6 +9326,7 @@ fn render_caption_tabs() -> Canvas {
     let mut c = blurred_stripes(950, 72 * themes.len() as i32 + 40);
     let mut y = 10;
     for (base, s) in &themes {
+        let base = &base.with_text_size(pct);
         let theme = base.scaled(*s);
         let caption_text = match theme.look.style() {
             Some(st) => TextRenderer::load(&st.caption_text.font()),
