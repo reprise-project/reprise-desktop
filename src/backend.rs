@@ -121,6 +121,7 @@ pub struct Backend {
     parked: HashMap<crtc::Handle, Parked>,
     pub dmabuf: Option<(DmabufState, DmabufGlobal)>,
     pub shm_textures: crate::shmtex::ShmTextures,
+    pub uploads: crate::dmaupload::Uploads,
 }
 
 struct Surface {
@@ -469,6 +470,9 @@ pub fn init(state: &mut State) -> Result<(), Box<dyn std::error::Error>> {
         parked: HashMap::new(),
         dmabuf: Some((dmabuf_state, dmabuf_global)),
         shm_textures,
+        uploads: crate::dmaupload::Uploads::new(
+            render_node.dev_path().unwrap_or_else(|| path.clone()),
+        ),
     });
     scan_connectors(state, &HashMap::new());
     if state.scene.outputs().is_empty() {

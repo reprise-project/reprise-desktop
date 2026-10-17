@@ -25,6 +25,7 @@ mod desktops;
 mod devices;
 mod displays;
 mod displaysview;
+mod dmaupload;
 mod dnd;
 mod dnddrop;
 mod dndsource;
