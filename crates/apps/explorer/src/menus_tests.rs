@@ -262,7 +262,7 @@ fn the_context_menus_answer_for_their_submenu_rows() {
     let apps = [("Notepad".to_string(), None), ("Browser".to_string(), None)];
     let m = item_menu(
         &s,
-        false,
+        ItemKind::File,
         false,
         &apps,
         &[("Desktop".to_string(), true, None)],
@@ -273,7 +273,7 @@ fn the_context_menus_answer_for_their_submenu_rows() {
     assert_eq!(m.command(&[3, 3]), Command::ChooseProgram);
     assert_eq!(label(m.items(), 4), "Send To");
     assert_eq!(m.command(&[4, 0]), Command::SendTo(0));
-    let m = item_menu(&s, false, false, &[], &[]);
+    let m = item_menu(&s, ItemKind::File, false, &[], &[]);
     assert_eq!(m.command(&[3, 0]), Command::ChooseProgram);
     assert!(!enabled(m.items(), 4), "Send To with no targets");
 
@@ -326,15 +326,62 @@ fn the_tree_menu_never_acts_on_the_views_selection() {
 #[test]
 fn a_folders_menu_explores_and_a_files_opens_with() {
     let s = MenuState::default();
-    let m = item_menu(&s, true, false, &[], &[]);
+    let m = item_menu(&s, ItemKind::Folder, false, &[], &[]);
     assert_eq!(label(m.items(), 1), "Explore");
     assert_eq!(m.command(&[1]), Command::Explore);
     assert_eq!(label(m.items(), 2), "Sharing and Security...");
-    let m = item_menu(&s, false, false, &[("Notepad".into(), None)], &[]);
+    let m = item_menu(&s, ItemKind::File, false, &[("Notepad".into(), None)], &[]);
     assert_eq!(label(m.items(), 1), "Run as...");
     assert!(!enabled(m.items(), 1));
     assert_eq!(label(m.items(), 3), "Open With");
     assert!(enabled(m.items(), 3));
+}
+
+#[test]
+fn a_launcher_has_paste_under_copy_and_no_open_with() {
+    let s = MenuState {
+        selection: 1,
+        can_paste: true,
+        read_only: true,
+        ..Default::default()
+    };
+    let m = item_menu(
+        &s,
+        ItemKind::Launcher,
+        false,
+        &[("Notepad".into(), None)],
+        &[],
+    );
+    let labels: Vec<&str> = (0..m.items().len()).map(|i| label(m.items(), i)).collect();
+    assert_eq!(
+        labels,
+        [
+            "Open",
+            "Run as...",
+            "",
+            "Send To",
+            "",
+            "Cut",
+            "Copy",
+            "Paste",
+            "",
+            "Create Shortcut",
+            "Delete",
+            "Rename",
+            "",
+            "Properties"
+        ]
+    );
+    assert_eq!(m.command(&[7]), Command::PasteOpen);
+    assert!(
+        enabled(m.items(), 7),
+        "Paste opens files, so a read-only place keeps it"
+    );
+    let file = item_menu(&s, ItemKind::File, false, &[], &[]);
+    assert!(
+        (0..file.items().len()).all(|i| file.command(&[i]) != Command::PasteOpen),
+        "a plain file has no Paste"
+    );
 }
 
 #[test]
@@ -345,7 +392,7 @@ fn a_read_only_place_greys_every_writing_row() {
         can_paste: true,
         ..Default::default()
     };
-    let m = item_menu(&s, false, false, &[], &[]);
+    let m = item_menu(&s, ItemKind::File, false, &[], &[]);
     for (i, _) in m.items().iter().enumerate() {
         let c = m.command(&[i]);
         if matches!(
@@ -369,7 +416,7 @@ fn send_to_rows_carry_their_icons() {
         ),
         ("Desktop (create shortcut)".to_string(), false, None),
     ];
-    let m = item_menu(&s, false, false, &[], &send_to);
+    let m = item_menu(&s, ItemKind::File, false, &[], &send_to);
     let rows = m.at(&[4]).expect("the Send To submenu").items();
     assert!(
         matches!(&rows[0], MenuItem::Entry { icon: Some(_), .. }),
@@ -387,8 +434,14 @@ fn only_a_removable_drives_menu_has_eject() {
         ..Default::default()
     };
     let has_eject = |m: &Menu| (0..m.items().len()).any(|i| m.command(&[i]) == Command::Eject);
-    assert!(!has_eject(&item_menu(&s, true, false, &[], &[])));
-    let m = item_menu(&s, true, true, &[], &[]);
+    assert!(!has_eject(&item_menu(
+        &s,
+        ItemKind::Folder,
+        false,
+        &[],
+        &[]
+    )));
+    let m = item_menu(&s, ItemKind::Folder, true, &[], &[]);
     let rows = m.items();
     let at = (0..rows.len())
         .find(|&i| m.command(&[i]) == Command::Eject)
@@ -418,7 +471,7 @@ fn a_recycle_bin_items_menu_is_restore_cut_delete_properties() {
         bin: Some(2),
         ..Default::default()
     };
-    let m = item_menu(&s, false, false, &[("Notepad".into(), None)], &[]);
+    let m = item_menu(&s, ItemKind::File, false, &[("Notepad".into(), None)], &[]);
     let rows = m.items();
     let labels: Vec<&str> = (0..rows.len()).map(|i| label(rows, i)).collect();
     assert_eq!(

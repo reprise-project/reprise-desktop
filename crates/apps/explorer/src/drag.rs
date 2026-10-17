@@ -367,15 +367,27 @@ impl Explorer {
         if !self.sv.selection.set.contains(&i) {
             self.sv.selection.set_only(Some(i));
         }
-        let is_dir = self.items.get(i).is_some_and(|it| it.is_dir);
-        let open_with = if is_dir {
-            Vec::new()
+        use crate::menus::ItemKind;
+        let item = self.items.get(i);
+        self.menu_launcher = item.and_then(|it| match it.shortcut.as_deref() {
+            Some(reprisefs::apps::Shortcut::App(app)) => Some(app.clone()),
+            _ => None,
+        });
+        let kind = if item.is_some_and(|it| it.is_dir) {
+            ItemKind::Folder
+        } else if self.menu_launcher.is_some() {
+            ItemKind::Launcher
         } else {
+            ItemKind::File
+        };
+        let open_with = if kind == ItemKind::File {
             self.build_open_with(i, ctx)
+        } else {
+            Vec::new()
         };
         let send_to = self.build_send_to(ctx);
         let eject = self.ejectable(i);
-        let menu = crate::menus::item_menu(&self.menu_state(), is_dir, eject, &open_with, &send_to);
+        let menu = crate::menus::item_menu(&self.menu_state(), kind, eject, &open_with, &send_to);
         self.popup = Some(Popup::new(at, menu, lay.client, ctx));
         Reply::redraw()
     }
