@@ -116,6 +116,13 @@ fn default_shortcuts() -> Vec<Shortcut> {
         .collect()
 }
 
+/// Whether `keys` is one of the default binds' chords, the only chords a
+/// [`repriseconf::keybind::NONE`] row unbinds.
+pub fn default_chord(keys: &str) -> bool {
+    use repriseconf::keybind::{DEFAULTS, same};
+    DEFAULTS.iter().any(|(k, _)| same(keys, k))
+}
+
 pub fn check_keys(keys: &str) -> Result<(), &'static str> {
     repriseconf::keybind::check(keys)
 }
@@ -1298,11 +1305,22 @@ pub fn load(text: &str) -> Settings {
         }
     }
     if let Some(list) = get(&doc, &KEYBINDS).and_then(read_shortcuts) {
-        s.shortcuts = repriseconf::keybind::layered(
+        use repriseconf::keybind::{NONE, layered, same};
+        // A default's "none" stays a row, shown and re-enabled from the list:
+        // `layered` drops entries it reads as "none", so it sees them as "".
+        let mut binds = layered(
             list,
-            |b| (&b.keys, &b.action),
+            |b| (&b.keys, if b.action == NONE { "" } else { &b.action }),
             |k, a| Shortcut::new(k, a, ""),
         );
+        let bound: Vec<String> = (binds.iter())
+            .filter(|b| b.action != NONE)
+            .map(|b| b.keys.clone())
+            .collect();
+        binds.retain(|b| {
+            b.action != NONE || default_chord(&b.keys) && !bound.iter().any(|k| same(k, &b.keys))
+        });
+        s.shortcuts = binds;
     }
     if let Some(list) = get(&doc, &GLOBALS).and_then(Item::as_array_of_tables) {
         s.programs = read_programs(list);
@@ -1463,10 +1481,16 @@ pub fn row(s: &Settings, i: usize) -> Option<Row> {
     }
 }
 
-/// Delete on a row: a bind goes; a program forgets every shortcut of
-/// that program, or its refusal, so it asks again.
+/// Delete on a row: a bind goes, or on a default's chord becomes "none";
+/// a program forgets every shortcut of that program, or its refusal, so it
+/// asks again.
 pub fn forget(s: &mut Settings, r: Row) {
     match r {
+        Row::Bind(i) if default_chord(&s.shortcuts[i].keys) => {
+            let sc = &mut s.shortcuts[i];
+            sc.action = repriseconf::keybind::NONE.into();
+            sc.command.clear();
+        }
         Row::Bind(i) => {
             s.shortcuts.remove(i);
         }
@@ -1632,6 +1656,9 @@ pub fn validate(s: &Settings, base: &Settings) -> Result<(), String> {
     }
     for sc in &s.shortcuts {
         check_keys(&sc.keys)?;
+        if sc.action == repriseconf::keybind::NONE && default_chord(&sc.keys) {
+            continue;
+        }
         if !ACTIONS.contains(&sc.action.as_str()) {
             return Err("A shortcut's action is not one the compositor knows.".into());
         }
@@ -2415,7 +2442,12 @@ size_px = 12
             mouse_keys_speed: 900,
             mouse_keys_acceleration: 25,
             text_size: 150,
-            shortcuts: vec![Shortcut::new("Super+t", "spawn", "foot")],
+            shortcuts: (default_shortcuts().into_iter())
+                .map(|b| match b.keys.as_str() {
+                    "Super+t" => Shortcut::new("Super+t", "spawn", "foot"),
+                    _ => b,
+                })
+                .collect(),
             // The portal adds these; the sheet only edits what is there.
             programs: Vec::new(),
             denied: Vec::new(),
@@ -2532,9 +2564,63 @@ size_px = 12
         let mut want = default_shortcuts();
         let t = want.iter().position(|b| b.keys == "Super+t").unwrap();
         want[t] = Shortcut::new("Super+t", "spawn", "foot");
-        want.retain(|b| b.keys != "Super+q");
+        let q = want.iter().position(|b| b.keys == "Super+q").unwrap();
+        want[q] = Shortcut::new("Super+q", "none", "");
         want.push(Shortcut::new("Super+F9", "lock", ""));
         assert_eq!(s.shortcuts, want);
+    }
+
+    #[test]
+    fn a_none_row_stays_only_on_a_free_default_chord() {
+        let text = "[[keybinds]]\nkeys = \"Super+F9\"\naction = \"none\"\n\n\
+                    [[keybinds]]\nkeys = \"Super+w\"\naction = \"none\"\n\n\
+                    [[keybinds]]\nkeys = \"Super+w\"\naction = \"lock\"\n";
+        let s = load(text);
+        assert!(
+            !s.shortcuts.iter().any(|b| b.action == "none"),
+            "{:?}",
+            s.shortcuts
+        );
+        assert!(s.shortcuts.contains(&Shortcut::new("Super+w", "lock", "")));
+    }
+
+    #[test]
+    fn remove_on_a_default_sets_it_to_none_and_an_action_brings_it_back() {
+        let mut s = load(SAMPLE);
+        let q = s
+            .shortcuts
+            .iter()
+            .position(|b| b.keys == "Super+q")
+            .unwrap();
+        s.shortcuts.push(Shortcut::new("Super+F9", "lock", ""));
+        let mut removed = s.clone();
+        forget(&mut removed, Row::Bind(q));
+        let last = removed.shortcuts.len() - 1;
+        forget(&mut removed, Row::Bind(last));
+        assert_eq!(removed.shortcuts[q], Shortcut::new("Super+q", "none", ""));
+        assert_eq!(removed.shortcuts.len(), s.shortcuts.len() - 1);
+        assert_eq!(validate(&removed, &s), Ok(()));
+        let out = save(SAMPLE, &removed, &load(SAMPLE)).unwrap();
+        assert_eq!(
+            out[SAMPLE.len()..].trim(),
+            "[[keybinds]]\nkeys = \"Super+q\"\naction = \"none\"",
+        );
+        assert_eq!(load(&out), removed);
+
+        let mut back = removed.clone();
+        back.shortcuts[q] = Shortcut::new("Super+q", "close", "");
+        let out = save(&out, &back, &removed).unwrap();
+        assert!(!out.contains("keybinds"), "{out}");
+        assert_eq!(load(&out).shortcuts, default_shortcuts());
+    }
+
+    #[test]
+    fn validate_takes_none_only_on_a_default_chord() {
+        let mut s = Settings::default();
+        s.shortcuts[0].action = "none".into();
+        assert_eq!(validate(&s, &Settings::default()), Ok(()));
+        s.shortcuts.push(Shortcut::new("Super+F9", "none", ""));
+        assert!(validate(&s, &Settings::default()).is_err());
     }
 
     #[test]
@@ -2554,15 +2640,28 @@ size_px = 12
         assert_eq!(load(&out), s);
 
         let mut removed = s.clone();
-        removed.shortcuts.retain(|b| b.keys != "Super+q");
+        let q = removed
+            .shortcuts
+            .iter()
+            .position(|b| b.keys == "Super+q")
+            .unwrap();
+        removed.shortcuts[q] = Shortcut::new("Super+q", "none", "");
         removed.shortcuts[2] = Shortcut::new("Alt+Tab", "flip", "");
         let out = save(&out, &removed, &s).unwrap();
         assert!(
             out.contains("[[keybinds]]\nkeys = \"Super+q\"\naction = \"none\"\n"),
-            "a removed default is written as none: {out}"
+            "a default set to none is written as none: {out}"
         );
         assert!(out.contains("[[keybinds]]\nkeys = \"Alt+Tab\"\naction = \"flip\"\n"));
-        assert_eq!(load(&out), removed);
+        let mut reread = removed.clone();
+        reread
+            .shortcuts
+            .insert(2, Shortcut::new("Alt+F4", "none", ""));
+        assert_eq!(
+            load(&out),
+            reread,
+            "a default moved off its chord reads back as none"
+        );
 
         let out = save(&out, &load(SAMPLE), &removed).unwrap();
         assert!(!out.contains("keybinds"), "{out}");

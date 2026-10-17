@@ -1416,9 +1416,23 @@ impl SettingsApp {
         Reply::redraw_all()
     }
 
-    /// OK in the Shortcut dialog: `sc` replaces the row it was opened on or is added after the binds. Returns its list row.
+    /// OK in the Shortcut dialog: `sc` replaces the row it was opened on or is added after the binds, and a "none" row on its chord goes. Returns its list row.
     fn accept_shortcut(&mut self, sc: model::Shortcut) -> usize {
-        let row = match self.shortcut_target.take() {
+        let target = self.shortcut_target.take();
+        let freed = (self.want.shortcuts.iter().enumerate()).position(|(i, o)| {
+            target != Some(model::Row::Bind(i))
+                && o.action == repriseconf::keybind::NONE
+                && repriseconf::keybind::same(&o.keys, &sc.keys)
+        });
+        let target = match (target, freed) {
+            (Some(model::Row::Bind(i)), Some(j)) if i < self.want.shortcuts.len() => {
+                self.want.shortcuts.remove(j);
+                Some(model::Row::Bind(if j < i { i - 1 } else { i }))
+            }
+            (None, Some(j)) => Some(model::Row::Bind(j)),
+            (target, _) => target,
+        };
+        let row = match target {
             Some(model::Row::Program(j)) if j < self.want.programs.len() => {
                 self.want.programs[j].keys = sc.keys;
                 self.want.shortcuts.len() + j
@@ -3427,6 +3441,38 @@ mod tests {
             .and_then(|c| c.ow.chosen())
             .map(|p| p.id.clone());
         assert_eq!(picked.as_deref(), Some("/opt/view"));
+    }
+
+    #[test]
+    fn a_bind_on_a_none_rows_keys_takes_that_row() {
+        let mut a = app("shortcut-none-row");
+        let q = (a.want.shortcuts.iter())
+            .position(|b| b.keys == "Super+q")
+            .unwrap();
+        model::forget(&mut a.want, model::Row::Bind(q));
+        let n = a.want.shortcuts.len();
+        a.open_shortcut(None);
+        assert_eq!(
+            a.accept_shortcut(model::Shortcut::new("Super+q", "lock", "")),
+            q
+        );
+        assert_eq!(a.want.shortcuts.len(), n);
+        assert_eq!(
+            a.want.shortcuts[q],
+            model::Shortcut::new("Super+q", "lock", "")
+        );
+
+        model::forget(&mut a.want, model::Row::Bind(q));
+        a.want
+            .shortcuts
+            .push(model::Shortcut::new("Super+F9", "close", ""));
+        a.open_shortcut(Some(n));
+        assert_eq!(
+            a.accept_shortcut(model::Shortcut::new("Super+q", "close", "")),
+            n - 1
+        );
+        assert_eq!(a.want.shortcuts.len(), n);
+        assert!(!a.want.shortcuts.iter().any(|b| b.action == "none"));
     }
 
     #[test]
