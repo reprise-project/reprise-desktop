@@ -30,8 +30,8 @@ pub struct Question {
 
 #[derive(Default)]
 pub struct Flow {
-    /// The VRR request out: (serial, output, value asked).
-    vrr: Option<(u32, String, bool)>,
+    /// The VRR requests out: (serial, output, value asked).
+    vrr: Vec<(u32, String, bool)>,
     /// The mode and arrangement request out: (serial, what ran, what was asked).
     mode: Option<(u32, HeadSet, HeadSet)>,
     pub question: Option<Question>,
@@ -62,7 +62,7 @@ fn keys(back: HeadConfig, asked: HeadConfig) -> OutputKeys {
 
 impl Flow {
     pub fn busy(&self) -> bool {
-        self.vrr.is_some()
+        !self.vrr.is_empty()
             || self.mode.is_some()
             || self.question.is_some()
             || !self.reverts.is_empty()
@@ -79,12 +79,12 @@ impl Flow {
                 d.primary_saved();
                 out.push(Effect::SavePrimary(p));
             }
-            if let Some(on) = ch.vrr {
+            for (head, on) in ch.vrr {
                 let cfg = HeadConfig {
                     adaptive_sync: Some(on),
                     ..HeadConfig::default()
                 };
-                self.vrr = Some((req.configure(&ch.head, cfg), ch.head.clone(), on));
+                self.vrr.push((req.configure(&head, cfg), head, on));
             }
             if !ch.set.is_empty() {
                 let serial = req.configure_all(ch.set.clone());
@@ -119,7 +119,8 @@ impl Flow {
         req: &mut HeadRequests,
     ) -> Vec<Effect> {
         let mut out = Vec::new();
-        if let Some((_, head, on)) = self.vrr.take_if(|v| v.0 == serial) {
+        if let Some(i) = self.vrr.iter().position(|v| v.0 == serial) {
+            let (_, head, on) = self.vrr.remove(i);
             if ok && self.discard {
                 let cfg = HeadConfig {
                     adaptive_sync: Some(!on),
@@ -133,7 +134,7 @@ impl Flow {
                 };
                 out.push(Effect::Save(head, keys));
             } else {
-                d.reset_vrr();
+                d.reset_vrr(&head);
                 self.close &= self.discard;
                 if !self.discard {
                     out.push(Effect::Fail(VRR_REFUSED));

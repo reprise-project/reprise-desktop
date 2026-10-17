@@ -51,11 +51,9 @@ impl Pick {
 /// What OK or Apply asks of the outputs.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Changes {
-    /// The output the page shows.
-    pub head: String,
-    /// The VRR check's new state; None when it did not move.
-    pub vrr: Option<bool>,
-    /// One configuration: the shown output's mode, transform and scale that moved and, when the
+    /// Each output whose VRR check moved, with its new state.
+    pub vrr: Vec<(String, bool)>,
+    /// One configuration: each output's mode, transform and scale that moved and, when the
     /// arrangement moved, every output's place.
     pub set: HeadSet,
     /// What the outputs in `set` run now, which a No or a timeout puts back.
@@ -68,7 +66,8 @@ pub struct Changes {
 pub struct Display {
     heads: Vec<Head>,
     monitor: usize,
-    pick: Option<Pick>,
+    /// One per head: what the page has picked for it, kept while another output is shown.
+    picks: Vec<Pick>,
     places: Vec<(i32, i32)>,
     primary_saved: Option<String>,
     primary: Option<String>,
@@ -102,12 +101,15 @@ impl Display {
     }
 
     /// The compositor's new list. A picked arrangement stays while the outputs keep their places and
-    /// sizes; an unapplied pick stays while its output runs what it ran.
+    /// sizes; an output's unapplied picks stay while it runs what it ran.
     pub fn set_heads(&mut self, heads: Vec<Head>) {
         let was = self.head().cloned();
-        let kept = self.pick.filter(|_| self.dirty());
         let old_layout = self.layout_of_heads();
         let places = std::mem::take(&mut self.places);
+        let old: Vec<(Head, Pick)> = std::mem::take(&mut self.heads)
+            .into_iter()
+            .zip(std::mem::take(&mut self.picks))
+            .collect();
         self.heads = heads.into_iter().filter(|h| h.enabled).collect();
         self.places = if self.layout_of_heads() == old_layout && places.len() == self.heads.len() {
             places
@@ -118,13 +120,13 @@ impl Display {
             .as_ref()
             .and_then(|w| self.heads.iter().position(|h| h.name == w.name))
             .unwrap_or(0);
-        self.pick = self.head().map(Pick::of);
-        if let (Some(w), Some(p), Some(h)) = (was, kept, self.head())
-            && w.name == h.name
-            && Pick::of(&w) == Pick::of(h)
-        {
-            self.pick = Some(p);
-        }
+        self.picks = (self.heads.iter())
+            .map(|h| {
+                old.iter()
+                    .find(|(o, _)| o.name == h.name && Pick::of(o) == Pick::of(h))
+                    .map_or_else(|| Pick::of(h), |(_, p)| *p)
+            })
+            .collect();
     }
 
     fn layout_of_heads(&self) -> Vec<Tile> {
@@ -174,7 +176,7 @@ impl Display {
             .iter()
             .enumerate()
             .map(|(i, h)| {
-                let size = match self.pick.filter(|_| i == self.monitor) {
+                let size = match self.picks.get(i) {
                     Some(p) => logical_size(p.mode, p.transform, p.scale),
                     None => logical_size(h.current_mode(), h.transform, h.scale),
                 };
@@ -229,14 +231,19 @@ impl Display {
     }
 
     pub fn pick(&self) -> Option<Pick> {
-        self.pick
+        self.picks.get(self.monitor).copied()
+    }
+
+    fn pick_mut(&mut self) -> Option<&mut Pick> {
+        self.picks.get_mut(self.monitor)
     }
 
     /// Whether the picks differ from what the outputs run and the file says.
     pub fn dirty(&self) -> bool {
-        self.head()
-            .zip(self.pick)
-            .is_some_and(|(h, p)| p != Pick::of(h))
+        self.heads
+            .iter()
+            .zip(&self.picks)
+            .any(|(h, p)| *p != Pick::of(h))
             || self.moved()
             || self.primary != self.primary_saved
     }
@@ -249,36 +256,38 @@ impl Display {
 
     /// The picks back to what the outputs run and the file says.
     pub fn reset(&mut self) {
-        self.pick = self.head().map(Pick::of);
+        self.picks = self.heads.iter().map(Pick::of).collect();
         self.places = self.heads.iter().map(|h| h.position).collect();
         self.primary = self.primary_saved.clone();
     }
 
-    /// The VRR check back to what the output runs.
-    pub fn reset_vrr(&mut self) {
-        let now = self.head().map(Pick::of);
-        if let (Some(p), Some(now)) = (self.pick.as_mut(), now) {
-            p.vrr = now.vrr;
+    /// Output `name`'s VRR check back to what it runs.
+    pub fn reset_vrr(&mut self, name: &str) {
+        if let Some((h, p)) = (self.heads.iter().zip(&mut self.picks)).find(|(h, _)| h.name == name)
+        {
+            p.vrr = Pick::of(h).vrr;
         }
     }
 
+    /// What Apply asks for: every output's picks that differ from what it runs. A mode is never
+    /// asked of an output that runs one outside its list ([`Display::mode_locked`]).
     pub fn changes(&self) -> Option<Changes> {
-        let h = self.head()?;
-        let p = self.pick?;
-        let now = Pick::of(h);
-        let vrr =
-            (h.adaptive_sync != AdaptiveSync::Unsupported && p.vrr != now.vrr).then_some(p.vrr);
-        let cfg = HeadConfig {
-            mode: p
-                .mode
-                .filter(|m| !self.mode_locked() && now.mode.is_none_or(|n| !n.same(m))),
-            transform: (p.transform != now.transform).then_some(p.transform),
-            scale: (p.scale != now.scale).then_some(p.scale),
-            ..HeadConfig::default()
-        };
+        let mut vrr = Vec::new();
         let mut set: HeadSet = Vec::new();
-        if cfg != HeadConfig::default() {
-            set.push((h.name.clone(), cfg));
+        for (h, p) in self.heads.iter().zip(&self.picks) {
+            let now = Pick::of(h);
+            if h.adaptive_sync != AdaptiveSync::Unsupported && p.vrr != now.vrr {
+                vrr.push((h.name.clone(), p.vrr));
+            }
+            let cfg = HeadConfig {
+                mode: p.mode.filter(|m| now.mode.is_some_and(|n| !n.same(m))),
+                transform: (p.transform != now.transform).then_some(p.transform),
+                scale: (p.scale != now.scale).then_some(p.scale),
+                ..HeadConfig::default()
+            };
+            if cfg != HeadConfig::default() {
+                set.push((h.name.clone(), cfg));
+            }
         }
         // A moved arrangement places every output, so the file and the layout agree on all of them.
         if self.moved() {
@@ -303,8 +312,7 @@ impl Display {
             .primary
             .clone()
             .filter(|_| self.primary != self.primary_saved);
-        (vrr.is_some() || !set.is_empty() || primary.is_some()).then(|| Changes {
-            head: h.name.clone(),
+        (!vrr.is_empty() || !set.is_empty() || primary.is_some()).then_some(Changes {
             vrr,
             set,
             back,
@@ -312,13 +320,11 @@ impl Display {
         })
     }
 
-    /// Show output `i`, as it runs; the mode picks for the one before go, while the arrangement and
-    /// the primary pick stay.
+    /// Show output `i` with its own picks; every output's picks, the arrangement and the primary
+    /// pick stay until Apply or Cancel.
     pub fn pick_monitor(&mut self, i: usize) {
-        if i < self.heads.len() && i != self.monitor {
+        if i < self.heads.len() {
             self.monitor = i;
-            self.pick = self.head().map(Pick::of);
-            self.resettle();
         }
     }
 
@@ -341,7 +347,7 @@ impl Display {
 
     /// The trackbar tick of the picked size.
     pub fn resolution_index(&self) -> usize {
-        let Some(m) = self.pick.and_then(|p| p.mode) else {
+        let Some(m) = self.pick().and_then(|p| p.mode) else {
             return 0;
         };
         self.resolutions()
@@ -358,13 +364,16 @@ impl Display {
         let Some(&size) = self.resolutions().get(r) else {
             return;
         };
-        let want = self.pick.and_then(|p| p.mode).map_or(0, |m| m.refresh_mhz);
+        let want = self
+            .pick()
+            .and_then(|p| p.mode)
+            .map_or(0, |m| m.refresh_mhz);
         let best = self
             .modes()
             .into_iter()
             .filter(|m| (m.width, m.height) == size)
             .min_by_key(|m| (m.refresh_mhz - want).abs());
-        if let (Some(p), Some(m)) = (self.pick.as_mut(), best) {
+        if let (Some(p), Some(m)) = (self.pick_mut(), best) {
             p.mode = Some(m);
         }
         self.resettle();
@@ -372,7 +381,7 @@ impl Display {
 
     /// The modes at the picked size, the Refresh combo's rows, and the picked one's row.
     pub fn refresh_rows(&self) -> (Vec<HeadMode>, usize) {
-        let Some(cur) = self.pick.and_then(|p| p.mode) else {
+        let Some(cur) = self.pick().and_then(|p| p.mode) else {
             return (Vec::new(), 0);
         };
         let rows: Vec<HeadMode> = self
@@ -387,7 +396,7 @@ impl Display {
     pub fn pick_refresh(&mut self, row: usize) {
         if !self.mode_locked()
             && let Some(m) = self.refresh_rows().0.get(row).copied()
-            && let Some(p) = self.pick.as_mut()
+            && let Some(p) = self.pick_mut()
         {
             p.mode = Some(m);
         }
@@ -396,7 +405,7 @@ impl Display {
 
     /// The Orientation combo's rows and the picked one's.
     pub fn orientation_rows(&self) -> (Vec<(String, Transform)>, usize) {
-        let t = self.pick.map_or(Transform::Normal, |p| p.transform);
+        let t = self.pick().map_or(Transform::Normal, |p| p.transform);
         let mut rows: Vec<(String, Transform)> = ORIENTATIONS
             .iter()
             .map(|(s, r)| (s.to_string(), *r))
@@ -410,7 +419,7 @@ impl Display {
 
     pub fn pick_orientation(&mut self, row: usize) {
         if let Some((_, t)) = self.orientation_rows().0.get(row).cloned()
-            && let Some(p) = self.pick.as_mut()
+            && let Some(p) = self.pick_mut()
         {
             p.transform = t;
         }
@@ -418,7 +427,7 @@ impl Display {
     }
 
     pub fn pick_scale(&mut self, row: usize) {
-        if let Some(p) = self.pick.as_mut() {
+        if let Some(p) = self.pick_mut() {
             p.scale = row_scale(row);
         }
         self.resettle();
@@ -429,14 +438,14 @@ impl Display {
         let can = self
             .head()
             .is_some_and(|h| h.adaptive_sync != AdaptiveSync::Unsupported);
-        if let Some(p) = self.pick.as_mut() {
+        if let Some(p) = self.pick_mut() {
             p.vrr = on && can;
         }
     }
 
     /// "1920 by 1080 pixels" under the trackbar.
     pub fn mode_label(&self) -> String {
-        match self.pick.and_then(|p| p.mode) {
+        match self.pick().and_then(|p| p.mode) {
             Some(m) => format!("{} by {} pixels", m.width, m.height),
             None => String::new(),
         }
@@ -795,8 +804,7 @@ mod tests {
         assert_eq!(
             d.changes(),
             Some(Changes {
-                head: "DP-1".into(),
-                vrr: Some(true),
+                vrr: vec![("DP-1".into(), true)],
                 set: vec![(
                     "DP-1".into(),
                     HeadConfig {
@@ -914,7 +922,6 @@ mod tests {
         assert_eq!(d.monitor(), 1, "the dropped tile is shown");
         assert!(d.dirty());
         let ch = d.changes().expect("the places moved");
-        assert_eq!(ch.head, "HDMI-A-1");
         let at: Vec<_> = ch
             .set
             .iter()
@@ -949,12 +956,58 @@ mod tests {
         );
         assert_eq!(ch.set[1].1.position, Some((960, 0)));
         d.pick_monitor(1);
+        let t = d.tiles();
         assert_eq!(
-            d.tiles()[1].pos,
-            (1920, 0),
-            "the first output's picks go, and the places with them"
+            (t[0].size, t[1].pos),
+            ((960, 540), (960, 0)),
+            "showing the second output keeps the first one's picks and the places with them"
         );
+        assert_eq!(d.changes(), Some(ch));
+        d.reset();
+        assert_eq!(d.tiles()[1].pos, (1920, 0), "Cancel puts both back");
         assert!(!d.dirty());
+    }
+
+    #[test]
+    fn each_output_keeps_its_picks_while_another_is_shown_and_apply_asks_for_all() {
+        let mut d = pair();
+        d.pick_orientation(1);
+        d.set_vrr(true);
+        d.pick_monitor(1);
+        assert_eq!(
+            d.pick(),
+            Some(Pick::of(d.head().unwrap())),
+            "the second output shows as it runs"
+        );
+        d.pick_scale(4);
+        d.pick_monitor(0);
+        assert_eq!(
+            d.pick().unwrap().transform,
+            Transform::Rotate90,
+            "the first output's pick is back"
+        );
+        assert!(d.pick().unwrap().vrr);
+        let ch = d.changes().unwrap();
+        assert_eq!(ch.vrr, vec![("DP-1".to_string(), true)]);
+        let looks: Vec<_> = (ch.set.iter())
+            .map(|(n, c)| (n.as_str(), c.transform, c.scale))
+            .collect();
+        assert_eq!(
+            looks,
+            vec![
+                ("DP-1", Some(Transform::Rotate90), None),
+                ("HDMI-A-1", None, Some(2.0)),
+            ]
+        );
+        assert_eq!(ch.back.len(), 2, "No puts both back");
+        let mut b = test_head("HDMI-A-1");
+        b.position = (1920, 0);
+        d.set_heads(vec![test_head("DP-1"), b]);
+        assert_eq!(
+            d.changes().map(|c| c.set.len()),
+            Some(2),
+            "a relist keeps them"
+        );
     }
 
     #[test]
@@ -1198,7 +1251,12 @@ mod tests {
         d.pick_monitor(0);
         assert!(d.dirty(), "the same monitor keeps its picks");
         d.pick_monitor(1);
-        assert!(!d.dirty(), "another monitor shows as it runs");
+        assert_eq!(
+            d.pick(),
+            Some(Pick::of(d.head().unwrap())),
+            "another monitor shows as it runs"
+        );
+        assert!(d.dirty(), "the first one's picks wait for Apply or Cancel");
     }
 
     #[test]
