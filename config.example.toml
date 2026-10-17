@@ -476,7 +476,7 @@ action = "close"
 
 [[keybinds]]
 keys = "Alt+F4"
-action = "close"
+action = "close"             # on the desktop, with no window focused, opens Turn Off
 
 [[keybinds]]
 keys = "Alt+Tab"

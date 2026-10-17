@@ -578,7 +578,15 @@ pub fn route(modes: &Modes, k: &KeyPress, binds: &[Keybind], globals: &[GlobalBi
         return with(KeyRoute::Client);
     }
     if k.pressed {
-        let actions = bound(k, binds);
+        let mut actions = bound(k, binds);
+        // With no window to close, the desktop's close bind opens Turn Off.
+        if modes.desktop_has_keyboard {
+            for a in &mut actions {
+                if *a == Action::Close {
+                    *a = Action::TurnOff;
+                }
+            }
+        }
         if !actions.is_empty() {
             return with(KeyRoute::Binds(actions));
         }
@@ -1367,6 +1375,25 @@ mod tests {
             bind(MOD_ALT, KEY_F4, Action::Close),
             bind(0, KEY_Print, Action::Screenshot),
         ]
+    }
+
+    #[test]
+    fn the_close_bind_on_the_desktop_opens_turn_off() {
+        let alt_f4 = press(KEY_F4, MOD_ALT);
+        let desktop = Modes {
+            desktop_has_keyboard: true,
+            has_icons: true,
+            selected_icon: Some(0),
+            ..Modes::default()
+        };
+        let routed = route(&desktop, &alt_f4, &menu_binds(), &[]);
+        assert_eq!(routed.route, KeyRoute::Binds(vec![Action::TurnOff]));
+        assert!(routed.route.opens_surface());
+        assert_eq!(
+            route(&Modes::default(), &alt_f4, &menu_binds(), &[]).route,
+            KeyRoute::Binds(vec![Action::Close]),
+            "a focused window keeps the close bind"
+        );
     }
 
     #[test]
