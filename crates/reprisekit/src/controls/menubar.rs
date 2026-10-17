@@ -729,12 +729,15 @@ impl Bar {
         by_keyboard: bool,
     ) {
         let cx = Bar::ctx(lay, text, m, px);
-        self.popup = Some(crate::controls::menu::PopupMenu::open(
+        let mut popup = crate::controls::menu::PopupMenu::open(
             &self.menus[i],
             lay.popup_origin(i),
             &cx,
             by_keyboard,
-        ));
+        );
+        // The bar's own `underline` decides: arrowing on from a pointer-opened menu keeps them hidden.
+        popup.keys = false;
+        self.popup = Some(popup);
         self.open = Some(i);
         self.active = Some(i);
         self.hot = None;
@@ -1187,6 +1190,10 @@ mod bar_tests {
         by_pointer.press(f.x + 3, f.y + 3, &lay, &text, m, px);
         let (shown, keys) = drawn(&by_pointer);
         assert!(shown != keys, "opened with the pointer: no underlines");
+        by_pointer.key(Key::Right, &lay, &text, m, px);
+        assert_eq!(by_pointer.open, Some(1));
+        let (shown, keys) = drawn(&by_pointer);
+        assert!(shown != keys, "arrowed on from the pointer: still none");
         let mut by_key = bar();
         by_key.key(Key::Char('f', true), &lay, &text, m, px);
         assert_eq!(by_key.open, Some(0));

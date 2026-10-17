@@ -26,13 +26,20 @@ pub enum Step<A> {
 
 impl<A: Clone> Popup<A> {
     /// The menu of `rows` at `(x, y)`, or `None` with nothing to show.
-    pub fn open(rows: Vec<(MenuItem, Option<A>)>, x: i32, y: i32, ctx: &Ctx) -> Option<Popup<A>> {
+    /// `by_keyboard` (Shift+F10, the Menu key) picks its first row and underlines its keys.
+    pub fn open(
+        rows: Vec<(MenuItem, Option<A>)>,
+        x: i32,
+        y: i32,
+        ctx: &Ctx,
+        by_keyboard: bool,
+    ) -> Option<Popup<A>> {
         if rows.is_empty() {
             return None;
         }
         let (items, actions): (Vec<_>, Vec<_>) = rows.into_iter().unzip();
         let tree = MenuTree::flat(items);
-        let chain = PopupMenu::open(&tree, (x, y), &menu_ctx(ctx), false);
+        let chain = PopupMenu::open(&tree, (x, y), &menu_ctx(ctx), by_keyboard);
         Some(Popup {
             tree,
             chain,

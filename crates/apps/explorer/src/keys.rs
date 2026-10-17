@@ -188,7 +188,7 @@ impl Explorer {
                 .unwrap_or((false, false));
             let folder = self.node_folder().is_some();
             let menu = menus::tree_menu(node.0, node.1, folder);
-            self.popup = Some(Popup::new(at, menu, lay.client, ctx));
+            self.popup = Some(Popup::new(at, menu, lay.client, ctx, true));
             return Reply::redraw();
         }
         let sl = self.view_layout(lay.view, ctx);
@@ -199,11 +199,11 @@ impl Explorer {
             .filter(|i| self.sv.selection.set.contains(i))
             .and_then(|i| sl.cells.get(i).map(|c| (i, *c)));
         match cell {
-            Some((i, c)) => self.entry_menu_at(i, (c.x + 8, c.bottom()), ctx),
+            Some((i, c)) => self.entry_menu_at(i, (c.x + 8, c.bottom()), ctx, true),
             None => {
                 let menu = menus::background_menu(&self.menu_state());
                 let at = (lay.view.x + 8, lay.view.y + 8);
-                self.popup = Some(Popup::new(at, menu, lay.client, ctx));
+                self.popup = Some(Popup::new(at, menu, lay.client, ctx, true));
                 Reply::redraw()
             }
         }

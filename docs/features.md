@@ -351,7 +351,8 @@ are.
 - **Access keys** underline once you press Alt, in the window you press it
   in, until that window loses the keyboard. A window opened from the keyboard
   underlines them from the start, and a menu bar opened with Alt or F10
-  underlines its menus; one opened with the mouse doesn't.
+  underlines its menus; one opened with the mouse doesn't. A context menu
+  opened with Shift+F10 or the Menu key underlines its own.
 - When a shortcut turns StickyKeys, SlowKeys or MouseKeys on or off, a
   balloon says which; clicking it opens that aid's settings. So does
   clicking the StickyKeys or MouseKeys icon in the notification area.

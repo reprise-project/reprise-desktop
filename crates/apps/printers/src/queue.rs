@@ -283,7 +283,7 @@ impl Queue {
         match press {
             Press::Row(i) if button == BTN_RIGHT => {
                 let rows = document_rows(self.jobs.get(i));
-                self.popup = Popup::open(rows, x, y, ctx);
+                self.popup = Popup::open(rows, x, y, ctx, false);
                 Outcome::Redraw
             }
             Press::Row(_) | Press::Activate(_) | Press::Background | Press::Redraw => {
@@ -373,7 +373,7 @@ impl Queue {
                 let y = lay.body.y
                     + at.map_or(0, |i| i.saturating_sub(self.list.view.top) as i32) * lay.row_h();
                 let rows = document_rows(self.selected_job());
-                self.popup = Popup::open(rows, lay.body.x + 20, y + lay.row_h(), ctx);
+                self.popup = Popup::open(rows, lay.body.x + 20, y + lay.row_h(), ctx, true);
                 Outcome::Redraw
             }
             _ => Outcome::None,

@@ -446,7 +446,7 @@ impl Folder {
             self.set_pane(s);
             return match press {
                 Press::Row(i) if button == BTN_RIGHT => {
-                    self.open_menu(Some(i), x, y, s, ctx);
+                    self.open_menu(Some(i), x, y, s, ctx, false);
                     Outcome::Redraw
                 }
                 Press::Row(_) => Outcome::Redraw,
@@ -456,7 +456,7 @@ impl Folder {
                 },
                 Press::Background => {
                     if button == BTN_RIGHT {
-                        self.open_menu(None, x, y, s, ctx);
+                        self.open_menu(None, x, y, s, ctx, false);
                     }
                     Outcome::Redraw
                 }
@@ -479,7 +479,15 @@ impl Folder {
         Outcome::None
     }
 
-    fn open_menu(&mut self, row: Option<usize>, x: i32, y: i32, s: &Snapshot, ctx: &Ctx) {
+    fn open_menu(
+        &mut self,
+        row: Option<usize>,
+        x: i32,
+        y: i32,
+        s: &Snapshot,
+        ctx: &Ctx,
+        by_keyboard: bool,
+    ) {
         let rows: Vec<(MenuItem, Option<Act>)> = match row.and_then(|i| self.names.get(i)) {
             Some(name) => match s.printer(name) {
                 Some(p) => actions(p, s, true)
@@ -504,7 +512,7 @@ impl Folder {
             ],
         };
         self.popup_for = row.and_then(|i| self.names.get(i).cloned());
-        self.popup = Popup::open(rows, x, y, ctx);
+        self.popup = Popup::open(rows, x, y, ctx, by_keyboard);
     }
 
     pub fn motion(&mut self, x: i32, y: i32, ctx: &Ctx) -> Outcome {
@@ -600,7 +608,7 @@ impl Folder {
         let y = at.map_or(lay.body.y, |i| {
             lay.body.y + i.saturating_sub(self.list.view.top) as i32 * lay.row_h()
         });
-        self.open_menu(at, lay.body.x + 20, y + lay.row_h(), s, ctx);
+        self.open_menu(at, lay.body.x + 20, y + lay.row_h(), s, ctx, true);
         Outcome::Redraw
     }
 
