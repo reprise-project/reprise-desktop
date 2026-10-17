@@ -83,6 +83,7 @@ mod screencopy;
 mod screenshot;
 mod session;
 mod sessionend;
+mod sessionfade;
 mod sessionlock;
 mod shake;
 mod shakeview;
@@ -268,7 +269,7 @@ fn run(
         |_, fd, state| {
             if let Some(sig) = spawn::read_signal(fd) {
                 log::info!("signal {sig}: shutting down");
-                state.signal.stop();
+                sessionfade::out(state, Box::new(|state| state.signal.stop()));
             }
             Ok(PostAction::Continue)
         },
