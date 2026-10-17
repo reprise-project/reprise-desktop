@@ -265,6 +265,9 @@ pub struct Explorer {
     left: Vec<Reading>,
     /// Folders nodes still being read after [`LIST_WAIT`] ([`Explorer::fill_node`]).
     filling: Vec<(Place, Job<foldertree::Kids>)>,
+    /// Holds every [`Explorer::read_job`] read until the test drops its write lock.
+    #[cfg(test)]
+    pub(crate) held: Option<Arc<std::sync::RwLock<()>>>,
     /// Image sizes by path, from the thumbnail worker or a header read
     /// ([`Explorer::read_dims`]). They survive a sort and a refresh and feed the
     /// Tiles detail line, the infotip and the Details pane.
@@ -408,6 +411,8 @@ impl Explorer {
             reading: None,
             left: Vec::new(),
             filling: Vec::new(),
+            #[cfg(test)]
+            held: None,
             image_dims: HashMap::new(),
             dims_asked: HashSet::new(),
             checking: None,
