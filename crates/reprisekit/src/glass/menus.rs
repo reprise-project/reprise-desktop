@@ -150,11 +150,11 @@ pub fn parts(d: i32) -> [(Part, PartImage); 6] {
         (Part::MenuRadioMark, one(bullet(d), &[State::Normal])),
         (
             Part::MenuBar,
-            one(bar(d), &[State::Normal]).sizing(Insets::new(1, 0, 1, 0)),
+            one(bar(d), &[State::Normal]).sizing(Insets::new(1, 0, 1, 2)),
         ),
         (
             Part::MenuBarItem,
-            one(titles, &[State::Hot, State::Pressed]).sizing(Insets::new(4, 0, 4, 0)),
+            one(titles, &[State::Hot, State::Pressed]).sizing(Insets::new(4, 4, 4, 4)),
         ),
     ]
 }
@@ -767,6 +767,82 @@ mod tests {
         assert_eq!(two.get(20, 60), one.get(10, 30), "the frame doubles");
         assert_eq!(two.get(21, 60), one.get(10, 30), "the frame doubles");
         assert_eq!(two.get(22, 60), one.get(11, 30), "then the face");
+    }
+
+    /// A title frame `h` design px tall at `d`, 30 wide.
+    fn title_at(h: i32, state: crate::style::State, d: i32) -> Canvas {
+        let theme = theme_for(Interface::Glass).scaled(d);
+        let st = theme.look.style().unwrap();
+        let mut c = Canvas::new((30 * d) as u32, (h * d) as u32);
+        let r = Rect::new(0, 0, 30 * d, h * d);
+        st.draw(&mut c, r, crate::style::Part::MenuBarItem, state, d);
+        c
+    }
+
+    fn rows_of(c: &Canvas, ys: std::ops::Range<i32>) -> Vec<u32> {
+        ys.flat_map(|y| (0..c.width as i32).map(move |x| (x, y)))
+            .map(|(x, y)| c.get(x, y))
+            .collect()
+    }
+
+    #[test]
+    fn a_grown_title_frame_keeps_its_rounded_ends() {
+        use crate::style::State;
+        let grown = |pct| theme_for(Interface::Glass).with_text_size(pct).controls();
+        for pct in [150, 200] {
+            let h = grown(pct).menubar.plain.frame_h;
+            assert!(h > 18, "{pct}%: the frame grows");
+            for d in [1, 2] {
+                for state in [State::Hot, State::Pressed] {
+                    let (native, tall) = (title_at(18, state, d), title_at(h, state, d));
+                    let ends = 4 * d;
+                    let foot = |c: &Canvas| rows_of(c, c.height as i32 - ends..c.height as i32);
+                    assert_eq!(
+                        rows_of(&tall, 0..ends),
+                        rows_of(&native, 0..ends),
+                        "{pct}% {state:?} at {d}: top"
+                    );
+                    assert_eq!(foot(&tall), foot(&native), "{pct}% {state:?} at {d}: foot");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_grown_bar_keeps_one_line_row_under_its_face() {
+        let theme = theme_for(Interface::Glass);
+        let st = theme.look.style().unwrap();
+        let mut c = Canvas::new(40, 40);
+        st.draw(
+            &mut c,
+            Rect::new(0, 0, 40, 40),
+            crate::style::Part::MenuBar,
+            crate::style::State::Normal,
+            1,
+        );
+        assert_eq!(c.get(20, 38), rgb(0xB4B9CA), "the line");
+        assert_eq!(c.get(20, 39), rgb(0xEFEEEF), "the face under it");
+        assert_ne!(c.get(20, 37), rgb(0xB4B9CA), "one line row");
+    }
+
+    #[test]
+    fn grown_title_frames_pin_at_150_and_200_percent() {
+        use crate::style::State;
+        let mut got = Vec::new();
+        for pct in [150, 200] {
+            let h = theme_for(Interface::Glass)
+                .with_text_size(pct)
+                .controls()
+                .menubar
+                .plain
+                .frame_h;
+            for d in [1, 2] {
+                for state in [State::Hot, State::Pressed] {
+                    got.push((format!("{pct} {d} {state:?}"), fnv(&title_at(h, state, d))));
+                }
+            }
+        }
+        crate::pins::check("glass/menu_titles_grown", &got);
     }
 
     #[test]
