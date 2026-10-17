@@ -1339,6 +1339,40 @@ fn browsing_leaves_the_folders_pane_alone() {
     assert_eq!(ex.tree_places, places);
 }
 
+/// The picker's walk to the items' folder and the judging of its pick read on listing threads:
+/// on a folder that does not answer (a dead mount) the picker opens at once on the Desktop with
+/// both buttons grey, and walks to the folder on the wake after the reads land.
+#[test]
+fn the_picker_opens_at_once_and_walks_to_a_folder_that_answers_late() {
+    let mut ctx = test_ctx();
+    let (dir, mut ex) = browse_fixture(&mut ctx);
+    let gate = Arc::new(std::sync::RwLock::new(()));
+    let closed = gate.write().expect("lock");
+    ex.held = Some(gate.clone());
+    ex.open_browse(true, &mut ctx);
+    let picked = |ex: &Explorer| {
+        let Some(Dialog::Browse(b)) = ex.dialog.as_ref() else {
+            panic!("the Browse dialog is what is up");
+        };
+        let at = b.bf.tree.selected.as_deref();
+        let place = at.and_then(|p| foldertree::place_of(&b.bf.tree, &b.places, p));
+        (place, b.bf.new_folder_enabled, b.walking.is_some())
+    };
+    assert_eq!(picked(&ex), (Some(Place::Desktop), false, true));
+
+    drop(closed);
+    ex.held = None;
+    for _ in 0..500 {
+        if !picked(&ex).2 {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        ex.wake(&mut ctx);
+    }
+    let here = Place::Folder(dir.path().to_path_buf());
+    assert_eq!(picked(&ex), (Some(here), true, false));
+}
+
 #[test]
 fn accept_queues_a_move_into_the_pick() {
     let mut ctx = test_ctx();
@@ -1352,7 +1386,8 @@ fn accept_queues_a_move_into_the_pick() {
     let path = foldertree::path_of(&b.bf.tree, &b.places, &sub, &mounts);
     assert!(path.is_some(), "sub has a node under its folder");
     b.bf.tree.selected = path;
-    b.sync_buttons();
+    let (accept, new_folder) = b.judge().expect("a new pick")();
+    b.bf.set_enabled(accept, new_folder);
 
     ex.dialog_event(Event::Key(key_in(keysym::RETURN)), &mut ctx);
 
