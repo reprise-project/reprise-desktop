@@ -371,7 +371,7 @@ impl Notepad {
             overwrite: None,
             overwrite_focus: 1,
             lossy: None,
-            dialog_text: TextRenderer::load(&FontConfig::default()),
+            dialog_text: TextRenderer::load(&repriseapp::start_fonts()),
             dialog_px: Theme::default().fonts.size_px,
             forms: Theme::default(),
             open: None,

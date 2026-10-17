@@ -60,7 +60,7 @@ use reprisekit::pointer::DoubleClick;
 use reprisekit::raster::{Canvas, Rect};
 use reprisekit::text::TextRenderer;
 use reprisekit::textedit::keysym;
-use reprisekit::theme::{FontConfig, TextUnits, Theme};
+use reprisekit::theme::{TextUnits, Theme};
 use settings::Settings;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -371,7 +371,7 @@ impl Explorer {
             dialog: None,
             props: None,
             error_icon: None,
-            dialog_text: TextRenderer::load(&FontConfig::default()),
+            dialog_text: TextRenderer::load(&repriseapp::start_fonts()),
             dialog_px: Theme::default().fonts.size_px,
             forms: Theme::default(),
             clicks: DoubleClick::default(),

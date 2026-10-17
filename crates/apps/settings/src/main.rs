@@ -60,7 +60,7 @@ use reprisekit::icontheme::IconTheme;
 use reprisekit::look::Paint;
 use reprisekit::raster::{Canvas, Rect};
 use reprisekit::text::TextRenderer;
-use reprisekit::theme::{FontConfig, TextUnits, Theme};
+use reprisekit::theme::{TextUnits, Theme};
 
 use crate::pages::Area;
 use crate::registry::Page;
@@ -537,7 +537,7 @@ impl SettingsApp {
             None,
             &[],
         );
-        let dialog_text = TextRenderer::load(&FontConfig::default());
+        let dialog_text = TextRenderer::load(&repriseapp::start_fonts());
         let dialog_px = Theme::default().fonts.size_px;
         let mut app = SettingsApp {
             path,
@@ -3312,6 +3312,7 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use reprisekit::theme::FontConfig;
 
     fn tmp(tag: &str) -> PathBuf {
         let p = std::env::temp_dir().join(format!(

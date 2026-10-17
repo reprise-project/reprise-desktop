@@ -813,6 +813,8 @@ struct Look {
     /// followed through the portal after: the second dialog font every
     /// renderer loads beside the UI font.
     shell_dlg: Option<String>,
+    /// `[fonts] family`, read and followed as `shell_dlg` is; `None` keeps the interface's own.
+    font_family: Option<Vec<String>>,
     /// `[accessibility] text_size` in percent, read and followed as
     /// `shell_dlg` is, for [`Ctx::text_size`].
     text_size: u32,
@@ -832,6 +834,7 @@ impl Look {
             icon_theme: std::env::var(reprisekit::icontheme::ENV)
                 .unwrap_or_else(|_| "hicolor".into()),
             shell_dlg: repriseconf::shell_dlg(),
+            font_family: repriseconf::font_family(),
             text_size: repriseconf::text_size(),
             double_click_ms: repriseconf::double_click_ms(),
         }
@@ -846,6 +849,9 @@ impl Look {
             self.colors.as_deref(),
         );
         theme.fonts.shell_dlg = self.shell_dlg.clone();
+        if let Some(family) = &self.font_family {
+            theme.fonts.family = family.clone();
+        }
         if let Some(ms) = self.double_click_ms {
             theme.metrics.double_click_ms = ms;
         }
@@ -865,6 +871,12 @@ impl Look {
             let font = Some(value).filter(|s| !s.trim().is_empty());
             let changed = self.shell_dlg != font;
             self.shell_dlg = font;
+            return changed;
+        }
+        if key == a::FONT_FAMILY {
+            let family = Some(a::families(&value)).filter(|f| !f.is_empty());
+            let changed = self.font_family != family;
+            self.font_family = family;
             return changed;
         }
         if key == a::DOUBLE_CLICK_MS {
@@ -903,6 +915,11 @@ const TEXT_MIME: &str = "text/plain;charset=utf-8";
 /// The theme `run` starts in, which a dialog built before `run` sizes itself for.
 pub fn start_theme() -> Theme {
     Look::from_env().theme()
+}
+
+/// The fonts `run` starts in, for a renderer a program loads beside [`Ctx::text`].
+pub fn start_fonts() -> reprisekit::theme::FontConfig {
+    start_theme().fonts
 }
 
 /// [`Ctx::forms`] as the program starts, for an [`App::initial_size`] asked before any event.
@@ -4246,6 +4263,18 @@ mod tests {
         assert_eq!(look.theme().fonts.shell_dlg.as_deref(), Some("Tahoma"));
         assert!(look.set(a::SHELL_DLG, String::new()), "unset is a change");
         assert_eq!(look.theme().fonts.shell_dlg, None);
+    }
+
+    #[test]
+    fn the_configured_font_family_reaches_the_themes_fonts() {
+        use reprisebus::appearance as a;
+        let mut look = Look::default();
+        let default = look.theme().fonts.family;
+        assert!(look.set(a::FONT_FAMILY, "DejaVu Sans, Noto Sans".into()));
+        assert!(!look.set(a::FONT_FAMILY, "DejaVu Sans,Noto Sans".into()));
+        assert_eq!(look.theme().fonts.family, ["DejaVu Sans", "Noto Sans"]);
+        assert!(look.set(a::FONT_FAMILY, String::new()), "unset is a change");
+        assert_eq!(look.theme().fonts.family, default);
     }
 
     #[test]

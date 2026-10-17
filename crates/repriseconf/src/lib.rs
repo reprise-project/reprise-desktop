@@ -101,6 +101,19 @@ fn shell_dlg_in(text: &str) -> Option<String> {
         .map(String::from)
 }
 
+/// `[fonts] family`, read now; `None` when unset, empty or not a list of strings.
+pub fn font_family() -> Option<Vec<String>> {
+    let text = std::fs::read_to_string(config_path()).unwrap_or_default();
+    font_family_in(&text)
+}
+
+fn font_family_in(text: &str) -> Option<Vec<String>> {
+    let doc = text.parse::<DocumentMut>().ok()?;
+    let list = get(&doc, &key("fonts", "family"))?.as_array()?;
+    let families: Option<Vec<String>> = list.iter().map(|v| v.as_str().map(String::from)).collect();
+    families.filter(|f| !f.is_empty())
+}
+
 pub fn text_size() -> u32 {
     let text = std::fs::read_to_string(config_path()).unwrap_or_default();
     text_size_in(&text)
@@ -561,6 +574,18 @@ mod tests {
         assert_eq!(
             shell_dlg_in("[fonts]\nshell_dlg = \"Some Sans\"\n").as_deref(),
             Some("Some Sans")
+        );
+    }
+
+    #[test]
+    fn the_font_family_is_read_when_a_list_of_names() {
+        assert_eq!(font_family_in(""), None);
+        assert_eq!(font_family_in("[fonts]\nfamily = []\n"), None);
+        assert_eq!(font_family_in("[fonts]\nfamily = \"DejaVu Sans\"\n"), None);
+        assert_eq!(font_family_in("[fonts]\nfamily = [\"A\", 3]\n"), None);
+        assert_eq!(
+            font_family_in("[fonts]\nfamily = [\"DejaVu Sans\", \"Noto Sans\"]\n"),
+            Some(vec!["DejaVu Sans".into(), "Noto Sans".into()])
         );
     }
 
