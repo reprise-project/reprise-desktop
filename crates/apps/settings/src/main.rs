@@ -32,6 +32,7 @@ mod winstate;
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, TryRecvError, channel};
@@ -413,7 +414,7 @@ struct SettingsApp {
     add_for: Pick,
 
     error: Option<MsgBox>,
-    dialog_text: TextRenderer,
+    dialog_text: Rc<TextRenderer>,
     dialog_px: u32,
     err_icon: Option<Canvas>,
     open_error: Option<String>,
@@ -583,7 +584,7 @@ impl SettingsApp {
             None,
             &[],
         );
-        let dialog_text = TextRenderer::load(&repriseapp::start_fonts());
+        let dialog_text = repriseapp::start_text();
         let dialog_px = Theme::default().fonts.size_px;
         let mut app = SettingsApp {
             path,
@@ -2917,6 +2918,7 @@ impl App for SettingsApp {
     }
 
     fn event(&mut self, win: WinId, ev: Event, ctx: &mut Ctx) -> Reply {
+        self.dialog_text = ctx.text.clone();
         self.controls = ctx.theme.look.controls();
         self.follow_text(ctx);
         let main = win == repriseapp::MAIN;
@@ -2975,6 +2977,7 @@ impl App for SettingsApp {
     }
 
     fn draw(&mut self, win: WinId, c: &mut Canvas, ctx: &Ctx) {
+        self.dialog_text = ctx.text.clone();
         self.follow_text(ctx);
         if win == repriseapp::MAIN {
             self.fit_window(ctx.size);
@@ -3464,7 +3467,7 @@ mod tests {
     fn test_ctx() -> Ctx {
         Ctx {
             theme: Theme::default(),
-            text: TextRenderer::load(&FontConfig::default()),
+            text: TextRenderer::load(&FontConfig::default()).into(),
             icons: reprisekit::icontheme::IconCache::new(IconTheme::load("test", &[])),
             caret_on: true,
             size: (10, 10),

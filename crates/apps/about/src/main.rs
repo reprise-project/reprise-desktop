@@ -271,7 +271,8 @@ mod tests {
     fn test_ctx(text_size: u32) -> Ctx {
         Ctx {
             theme: reprisekit::theme::Theme::default(),
-            text: reprisekit::text::TextRenderer::load(&reprisekit::theme::FontConfig::default()),
+            text: reprisekit::text::TextRenderer::load(&reprisekit::theme::FontConfig::default())
+                .into(),
             icons: reprisekit::icontheme::IconCache::new(reprisekit::icontheme::IconTheme::load(
                 "test",
                 &[],

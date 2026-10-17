@@ -113,7 +113,7 @@ impl PrintersApp {
     }
 
     fn fonts(&mut self) {
-        self.text = Some(Rc::new(TextRenderer::load(&repriseapp::start_fonts())));
+        self.text = Some(repriseapp::start_text());
     }
 
     fn send(&self, cmd: Cmd) {
@@ -891,6 +891,7 @@ impl App for PrintersApp {
     }
 
     fn event(&mut self, win: WinId, ev: Event, ctx: &mut Ctx) -> Reply {
+        self.text = Some(ctx.text.clone());
         self.forms = ctx.forms();
         if matches!(ev, Event::Wake) {
             return self.wake();
@@ -975,6 +976,7 @@ impl App for PrintersApp {
     }
 
     fn draw(&mut self, win: WinId, c: &mut Canvas, ctx: &Ctx) {
+        self.text = Some(ctx.text.clone());
         let forms = ctx.forms();
         let px = forms.fonts.size_px;
         let paint = Paint {
@@ -1057,7 +1059,8 @@ mod tests {
     pub(crate) fn test_ctx(size: (i32, i32)) -> Ctx {
         Ctx {
             theme: reprisekit::theme::Theme::default(),
-            text: reprisekit::text::TextRenderer::load(&reprisekit::theme::FontConfig::default()),
+            text: reprisekit::text::TextRenderer::load(&reprisekit::theme::FontConfig::default())
+                .into(),
             icons: reprisekit::icontheme::IconCache::new(reprisekit::icontheme::IconTheme::load(
                 "test",
                 &[],

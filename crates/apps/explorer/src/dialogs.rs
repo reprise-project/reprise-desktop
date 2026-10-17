@@ -176,6 +176,7 @@ pub(crate) use repriseapp::keys::dialog_key;
 
 impl Explorer {
     pub(crate) fn follow_forms(&mut self, ctx: &Ctx) {
+        self.dialog_text = ctx.text.clone();
         self.forms = ctx.forms();
         self.forms.fonts.size_px = self.forms.text.px(self.dialog_px);
     }

@@ -55,7 +55,7 @@ pub(crate) fn test_ctx() -> Ctx {
     test_env();
     Ctx {
         theme: Theme::default(),
-        text: TextRenderer::load(&FontConfig::default()),
+        text: TextRenderer::load(&FontConfig::default()).into(),
         icons: reprisekit::icontheme::IconCache::new(reprisekit::icontheme::IconTheme::load(
             "test",
             &[],
@@ -2627,4 +2627,18 @@ fn a_start_folder_that_answers_opens_there_and_selects_its_entry() {
     let missing = open(&[dir.path().join("gone").as_os_str()], &mut ctx);
     assert_eq!(missing.place, Place::Home);
     assert!(missing.checking.is_none());
+}
+
+#[test]
+fn the_dialogs_take_the_renderer_a_font_change_loads() {
+    let dir = tempfile::tempdir().expect("a temp dir");
+    let mut ctx = test_ctx();
+    let mut ex = test_explorer(Place::Folder(dir.path().to_path_buf()), &mut ctx);
+    ctx.text = TextRenderer::load(&FontConfig {
+        family: vec!["DejaVu Sans".into()],
+        ..FontConfig::default()
+    })
+    .into();
+    ex.follow_forms(&ctx);
+    assert!(Rc::ptr_eq(&ex.dialog_text, &ctx.text));
 }

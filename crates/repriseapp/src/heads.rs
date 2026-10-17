@@ -1023,7 +1023,8 @@ mod tests {
     fn ctx_queues_what_the_program_asks() {
         let mut ctx = crate::Ctx {
             theme: reprisekit::theme::Theme::default(),
-            text: reprisekit::text::TextRenderer::load(&reprisekit::theme::FontConfig::default()),
+            text: reprisekit::text::TextRenderer::load(&reprisekit::theme::FontConfig::default())
+                .into(),
             icons: reprisekit::icontheme::IconCache::new(reprisekit::icontheme::IconTheme::load(
                 "test",
                 &[],
