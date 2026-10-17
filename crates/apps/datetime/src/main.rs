@@ -17,7 +17,7 @@ use reprisekit::controls::{msgbox, propsheet};
 use reprisekit::look::Paint;
 use reprisekit::raster::Canvas;
 use reprisekit::text::TextRenderer;
-use reprisekit::theme::{FontConfig, Theme};
+use reprisekit::theme::Theme;
 
 use sheet::{Local, Outcome, Sheet, System};
 
@@ -191,7 +191,7 @@ impl App for DateTimeApp {
     }
 
     fn start(&mut self, waker: repriseapp::Waker) {
-        self.dialog_text = Some(TextRenderer::load(&FontConfig::default()));
+        self.dialog_text = Some(TextRenderer::load(&repriseapp::start_fonts()));
         self.asked = sheet::CLIENT;
         match timedate::read() {
             Ok((system, zones)) => {

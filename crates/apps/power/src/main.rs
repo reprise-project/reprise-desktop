@@ -24,7 +24,7 @@ use reprisekit::controls::propsheet;
 use reprisekit::look::Paint;
 use reprisekit::raster::Canvas;
 use reprisekit::text::TextRenderer;
-use reprisekit::theme::{FontConfig, Theme};
+use reprisekit::theme::Theme;
 use std::path::PathBuf;
 
 use settings::Settings;
@@ -378,7 +378,7 @@ impl App for PowerApp {
     }
 
     fn start(&mut self, waker: repriseapp::Waker) {
-        self.dialog_text = Some(TextRenderer::load(&FontConfig::default()));
+        self.dialog_text = Some(TextRenderer::load(&repriseapp::start_fonts()));
         self.asked = sheet::CLIENT;
         // The tray goes first: it takes the `reprise.power` bus name, and a second instance exits here once it has raised the first.
         match tray::start(waker.clone()) {

@@ -32,7 +32,7 @@ use reprisekit::look::Paint;
 use reprisekit::raster::Canvas;
 use reprisekit::text::TextRenderer;
 use reprisekit::textedit::keysym;
-use reprisekit::theme::{FontConfig, Theme};
+use reprisekit::theme::Theme;
 
 /// Child windows; one of each at a time.
 const WIZARD: WinId = "wizard";
@@ -96,7 +96,7 @@ impl BtApp {
     }
 
     fn fonts(&mut self) {
-        self.text = Some(Rc::new(TextRenderer::load(&FontConfig::default())));
+        self.text = Some(Rc::new(TextRenderer::load(&repriseapp::start_fonts())));
         self.forms = Theme::default();
     }
 
@@ -1033,6 +1033,7 @@ mod tests {
     use crate::bz::{Adapter, Ask, Device, Kind};
     use repriseapp::{KeyInput, MAIN};
     use reprisekit::textedit::EditKey;
+    use reprisekit::theme::FontConfig;
 
     fn app() -> BtApp {
         let mut a = BtApp::new(false);

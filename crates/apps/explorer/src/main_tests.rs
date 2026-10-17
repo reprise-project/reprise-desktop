@@ -3,6 +3,7 @@
 use super::*;
 use crate::commands::Command;
 use reprisekit::controls::treeview::{self, Node};
+use reprisekit::theme::FontConfig;
 
 /// A `Ctx` for the navigation commands; its icon theme is a name nothing carries, so every lookup answers `None`.
 pub(crate) fn test_ctx() -> Ctx {

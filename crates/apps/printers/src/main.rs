@@ -39,7 +39,7 @@ use reprisekit::controls::{form, propsheet, wizard};
 use reprisekit::look::Paint;
 use reprisekit::raster::{Canvas, Rect};
 use reprisekit::text::TextRenderer;
-use reprisekit::theme::{FontConfig, Theme};
+use reprisekit::theme::Theme;
 
 use cups::{JobState, PrinterState, Snapshot};
 use worker::{Cmd, Msg};
@@ -113,7 +113,7 @@ impl PrintersApp {
     }
 
     fn fonts(&mut self) {
-        self.text = Some(Rc::new(TextRenderer::load(&FontConfig::default())));
+        self.text = Some(Rc::new(TextRenderer::load(&repriseapp::start_fonts())));
     }
 
     fn send(&self, cmd: Cmd) {
