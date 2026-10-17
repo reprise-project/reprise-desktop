@@ -222,8 +222,16 @@ pub fn hit_part(
         })
 }
 
-/// The icon centred in `r`, shifted `off` (a held button's content moves a pixel), faded to 50% when disabled.
-fn draw_icon(c: &mut Canvas, r: Rect, icon: Option<&Canvas>, enabled: bool, off: i32) {
+/// The icon centred in `r`, shifted `off` (a held button's content moves a pixel), faded by
+/// `greyed` (num, den) when disabled.
+fn draw_icon(
+    c: &mut Canvas,
+    r: Rect,
+    icon: Option<&Canvas>,
+    enabled: bool,
+    greyed: (u32, u32),
+    off: i32,
+) {
     let Some(icon) = icon else {
         return;
     };
@@ -232,7 +240,7 @@ fn draw_icon(c: &mut Canvas, r: Rect, icon: Option<&Canvas>, enabled: bool, off:
     if enabled {
         c.blit_over(x, y, icon);
     } else {
-        c.blit_over_faded(x, y, icon, 1, 2);
+        c.blit_over_faded(x, y, icon, greyed.0, greyed.1);
     }
 }
 
@@ -263,7 +271,8 @@ pub fn draw(
 
 /// [`draw`] for a strip over its frame's glass, without its separators: the host lays the
 /// label glow under the rest, then draws them ([`draw_glass_separators`]). Labels and arrows
-/// at rest take `ink`, the glass's own ([`crate::look::ink_on_glass`]).
+/// at rest take `ink`, the glass's own ([`crate::look::ink_on_glass`]), greyed when disabled
+/// ([`crate::look::greyed_on_glass`]).
 #[expect(clippy::too_many_arguments)]
 pub fn draw_over_glass(
     c: &mut Canvas,
@@ -346,7 +355,11 @@ fn draw_strip(
         } else {
             Rect::new(sr.x, sr.y, main_w, sr.height)
         };
-        draw_icon(c, icon_box, icon, enabled, off);
+        let greyed = match glass_ink {
+            Some(_) => crate::look::GREYED_ICON_ON_GLASS,
+            None => (1, 2),
+        };
+        draw_icon(c, icon_box, icon, enabled, greyed, off);
 
         if tb.big
             && let Some(label) = label
@@ -357,6 +370,10 @@ fn draw_strip(
                 Some(ink) if state == State::Normal => {
                     text.draw(c, lr, label, false, ink, Align::Left, px);
                 }
+                Some(ink) if state == State::Disabled => {
+                    let ink = crate::look::greyed_on_glass(p, ink);
+                    text.draw(c, lr, label, false, ink, Align::Left, px);
+                }
                 _ => look::draw_label(c, text, p, lr, label, state, px),
             }
         }
@@ -365,6 +382,7 @@ fn draw_strip(
             let arrow_r = Rect::new(sr.right() - drop_w + off, sr.y + off, drop_w, sr.height);
             let color = match glass_ink {
                 Some(ink) if state == State::Normal => ink,
+                Some(ink) if state == State::Disabled => crate::look::greyed_on_glass(p, ink),
                 _ => look::arrow_ink(p, enabled),
             };
             if tb.big {
@@ -1013,6 +1031,59 @@ mod tests {
         };
         assert!(inked(None), "at rest the label is in the glass ink");
         assert!(!inked(Some(0)), "on its lit face it keeps the button's");
+    }
+
+    #[test]
+    fn over_glass_a_disabled_button_greys_its_ink_and_fades_its_icon_less() {
+        let theme = crate::interfaces::theme_for(crate::interface::Interface::Glass);
+        let p = theme.paint();
+        let text = renderer();
+        let ink = Color::rgb(0, 0, 0);
+        let greyed = Color::rgb(0x66, 0x66, 0x66);
+        assert_eq!(
+            crate::look::greyed_on_glass(&p, ink),
+            greyed,
+            "3/5 from the white glow"
+        );
+        let red = Color::rgb(0xFF, 0, 0);
+        let mut icon = Canvas::new(BIG_ICON as u32, BIG_ICON as u32);
+        icon.fill_rect(icon.bounds(), red);
+        let tb = ToolBar {
+            items: vec![Item::DropButton {
+                id: BACK,
+                icon: Some(icon),
+                label: Some("Back".into()),
+                enabled: false,
+            }],
+            hot: None,
+            pressed: None,
+            latched: None,
+            big: true,
+        };
+        let r = Rect::new(0, 0, 80, BIG_HEIGHT);
+        let rects = layout(&tb, &text, 11, r, &theme.controls());
+        let mut c = Canvas::new(80, BIG_HEIGHT as u32);
+        draw_over_glass(&mut c, &text, &p, &tb, r, &rects, ink, 11);
+        let mut faded = Canvas::new(1, 1);
+        faded.fill_rect(faded.bounds(), red);
+        faded.fade(2, 3);
+        let shown = c.pixels.iter().filter(|&&px| px == faded.pixels[0]).count();
+        assert_eq!(
+            shown,
+            (BIG_ICON * BIG_ICON) as usize,
+            "the icon shows at two thirds"
+        );
+        let inks: std::collections::BTreeSet<u32> = c
+            .pixels
+            .iter()
+            .copied()
+            .filter(|&px| px >> 24 == 0xFF)
+            .collect();
+        assert_eq!(
+            inks,
+            [greyed.argb()].into(),
+            "label and arrow in the greyed ink, with no etch"
+        );
     }
 
     #[test]
