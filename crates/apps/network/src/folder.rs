@@ -449,7 +449,7 @@ impl Folder {
                     self.set_details(s);
                     match button {
                         BTN_RIGHT => {
-                            self.open_popup(i, x, y, s, ctx);
+                            self.open_popup(i, x, y, s, ctx, false);
                             Outcome::Redraw
                         }
                         _ if activated => self.activate(i, s),
@@ -547,7 +547,8 @@ impl Folder {
         redraw((self.list.bars.release_bar() || column) && ctx.styled())
     }
 
-    /// A key. An open menu takes the arrows, Enter and Escape; otherwise Up and Down step the list and Enter acts as a double click.
+    /// A key. An open menu takes the arrows, Enter and Escape; otherwise Up and Down step the list,
+    /// Enter acts as a double click, and Shift+F10 or the Menu key opens the row's menu.
     pub fn key(&mut self, k: &KeyInput, s: &nm::Snapshot, ctx: &Ctx) -> Outcome {
         if let Some(p) = self.popup.as_mut() {
             let Some(mk) = menu_key(k) else {
@@ -567,6 +568,8 @@ impl Folder {
                 Some(i) => self.activate(i, s),
                 None => Outcome::None,
             },
+            keysym::MENU => self.keyboard_menu(&lay, s, ctx),
+            keysym::F10 if k.mods.shift => self.keyboard_menu(&lay, s, ctx),
             keysym::DELETE | keysym::KP_DELETE => {
                 match self.list.selection.single().and_then(|i| self.rows.get(i)) {
                     Some(Row::Vpn(conn)) => Outcome::VpnDelete(conn.clone()),
@@ -575,6 +578,18 @@ impl Folder {
             }
             _ => Outcome::None,
         }
+    }
+
+    /// Shift+F10 or the Menu key: the selected row's menu under its name, its first row picked.
+    fn keyboard_menu(&mut self, lay: &listview::Layout, s: &nm::Snapshot, ctx: &Ctx) -> Outcome {
+        let Some(i) = self.list.selection.single() else {
+            return Outcome::None;
+        };
+        let r = self
+            .list
+            .name_rect(lay, i, &ctx.text, ctx.theme.fonts.size_px);
+        self.open_popup(i, r.x, r.bottom(), s, ctx, true);
+        redraw(self.popup.is_some())
     }
 
     fn step(&mut self, step: i64, lay: &listview::Layout, s: &nm::Snapshot) -> Outcome {
@@ -640,7 +655,15 @@ impl Folder {
         tree.set_focus(popup.unwrap_or(row));
     }
 
-    fn open_popup(&mut self, i: usize, x: i32, y: i32, s: &nm::Snapshot, ctx: &Ctx) {
+    fn open_popup(
+        &mut self,
+        i: usize,
+        x: i32,
+        y: i32,
+        s: &nm::Snapshot,
+        ctx: &Ctx,
+        by_keyboard: bool,
+    ) {
         let Some(row) = self.rows.get(i) else {
             return;
         };
@@ -649,7 +672,7 @@ impl Folder {
             return;
         }
         let tree = MenuTree::flat(items);
-        let chain = PopupMenu::open(&tree, (x, y), &popup_ctx(ctx, client(ctx)), false);
+        let chain = PopupMenu::open(&tree, (x, y), &popup_ctx(ctx, client(ctx)), by_keyboard);
         self.popup = Some(Popup {
             tree,
             chain,
@@ -1147,6 +1170,45 @@ mod tests {
         assert_eq!(f.press(one(4, 4), BTN_LEFT, &s, &ctx), Outcome::Redraw);
         assert!(f.popup.is_none());
         assert_eq!(f.list.selection.single(), Some(1), "the click did not land");
+    }
+
+    #[test]
+    fn shift_f10_and_the_menu_key_open_the_selected_rows_menu_from_the_keyboard() {
+        let ctx = ctx();
+        let s = snapshot();
+        let mut f = folder();
+        let key = |sym, shift| KeyInput {
+            sym,
+            utf8: None,
+            mods: repriseapp::Mods {
+                shift,
+                ..Default::default()
+            },
+            edit: None,
+        };
+        let picked = |f: &Folder| f.popup.as_ref().map(|p| p.chain.levels()[0].hovered);
+        f.list.selection.set_only(None);
+        assert_eq!(f.key(&key(keysym::MENU, false), &s, &ctx), Outcome::None);
+        assert_eq!(picked(&f), None, "no row, no menu");
+        let (x, y) = row_point(&f, &ctx, 1);
+        f.press(one(x, y), BTN_LEFT, &s, &ctx);
+        assert_eq!(f.key(&key(keysym::F10, false), &s, &ctx), Outcome::None);
+        assert_eq!(picked(&f), None, "F10 alone opens no menu");
+        assert_eq!(f.key(&key(keysym::F10, true), &s, &ctx), Outcome::Redraw);
+        assert_eq!(picked(&f), Some(Some(0)), "Shift+F10 picks the first row");
+        assert_eq!(
+            f.key(&key(keysym::RETURN, false), &s, &ctx),
+            Outcome::Toggle("/dev/2".into())
+        );
+        assert_eq!(f.key(&key(keysym::MENU, false), &s, &ctx), Outcome::Redraw);
+        assert_eq!(
+            picked(&f),
+            Some(Some(0)),
+            "the Menu key picks the first row"
+        );
+        f.key(&key(keysym::ESCAPE, false), &s, &ctx);
+        f.press(one(x, y), BTN_RIGHT, &s, &ctx);
+        assert_eq!(picked(&f), Some(None), "a right click picks no row");
     }
 
     #[test]
