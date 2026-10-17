@@ -1055,6 +1055,11 @@ impl State {
         self.start_panel_event(|m| m.pointer(spot));
     }
 
+    /// A reader moved the keyboard to `spot` (`StartPanel::focus_on`).
+    pub fn start_panel_focus(&mut self, spot: Spot) {
+        self.start_panel_event(|m| m.focus_on(spot));
+    }
+
     pub(crate) fn start_panel_bar(&self) -> Option<TreeId> {
         self.start_panel.as_ref().map(|v| v.bar)
     }

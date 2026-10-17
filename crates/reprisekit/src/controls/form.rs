@@ -3143,6 +3143,20 @@ impl Form {
         if moved { Event::Redraw } else { Event::None }
     }
 
+    /// A reader moved the focus to the control at (`x`, `y`), as Tab would: a button is not
+    /// pressed, a check box not flipped, a radio not picked.
+    pub fn focus_at(&mut self, x: i32, y: i32, text: &TextRenderer, px: u32) -> Event {
+        let Some(i) = self.hit(x, y, text, px).map(|h| h.item) else {
+            return Event::None;
+        };
+        if !self.items[i].focusable() || self.focus == Some(i) {
+            return Event::None;
+        }
+        self.close_popups();
+        self.set_focus(Some(i));
+        Event::Redraw
+    }
+
     /// A reader asked to see row `row` of the list box or tree at (`x`, `y`): it scrolls in,
     /// nothing is picked.
     pub fn reveal(&mut self, x: i32, y: i32, row: usize, text: &TextRenderer, px: u32) -> Event {
@@ -6294,6 +6308,56 @@ mod tests {
         assert_eq!(row.part, Part::List(listbox::Hit::Row(1)));
         assert_eq!(f.double_click(Some(row)), Event::Default);
         assert_eq!(list(&f), Some(1));
+    }
+
+    #[test]
+    fn a_readers_focus_moves_to_a_button_or_check_box_without_acting() {
+        let mut f = Form::new(vec![
+            Item::new(
+                "wrap",
+                Rect::new(10, 10, 100, 17),
+                Control::Check {
+                    label: "Wrap".into(),
+                    checked: false,
+                    enabled: true,
+                    mixed: None,
+                },
+            ),
+            Item::new(
+                "ok",
+                Rect::new(10, 40, 75, 23),
+                Control::Button {
+                    label: "OK".into(),
+                    enabled: true,
+                    default: true,
+                },
+            ),
+            Item::new(
+                "off",
+                Rect::new(10, 70, 75, 23),
+                Control::Button {
+                    label: "Apply".into(),
+                    enabled: false,
+                    default: false,
+                },
+            ),
+        ]);
+        f.focus_id("wrap");
+        assert_eq!(f.focus_at(40, 50, &tr(), PX), Event::Redraw);
+        assert_eq!(f.focus(), Some(1));
+        assert_eq!(f.focus_at(40, 50, &tr(), PX), Event::None, "already there");
+        assert_eq!(
+            f.focus_at(40, 80, &tr(), PX),
+            Event::None,
+            "a greyed button"
+        );
+        assert_eq!(f.focus(), Some(1));
+        assert_eq!(f.focus_at(14, 18, &tr(), PX), Event::Redraw);
+        assert_eq!(f.focus(), Some(0));
+        assert!(
+            matches!(f.items[0].control, Control::Check { checked: false, .. }),
+            "the box is not flipped"
+        );
     }
 
     #[test]
