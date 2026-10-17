@@ -668,8 +668,8 @@ pub(crate) fn rewrite_launcher(path: &Path, text: &str) -> std::io::Result<()> {
     written
 }
 
-fn opener_for(path: &Path) -> &'static str {
-    if path.is_dir() {
+fn opener(is_dir: bool) -> &'static str {
+    if is_dir {
         "reprise-explorer"
     } else {
         "xdg-open"
@@ -680,7 +680,12 @@ pub const DEFAULT_TERMINAL: &str = "alacritty";
 
 /// None when `path` is not UTF-8, which no `Exec=` line can hold.
 pub fn open_command_for(path: &Path) -> Option<String> {
-    Some(command_line(&[opener_for(path), path.to_str()?]))
+    open_command_as(path, path.is_dir())
+}
+
+/// [`open_command_for`] for a path already known to be a folder or not.
+pub fn open_command_as(path: &Path, is_dir: bool) -> Option<String> {
+    Some(command_line(&[opener(is_dir), path.to_str()?]))
 }
 
 pub fn command_line<S: AsRef<str>>(argv: &[S]) -> String {
@@ -689,7 +694,7 @@ pub fn command_line<S: AsRef<str>>(argv: &[S]) -> String {
 }
 
 pub fn open_argv_for(path: &Path) -> Vec<OsString> {
-    vec![opener_for(path).into(), path.into()]
+    vec![opener(path.is_dir()).into(), path.into()]
 }
 
 /// Explorer on `dir`, for a caller that already knows it is a folder.

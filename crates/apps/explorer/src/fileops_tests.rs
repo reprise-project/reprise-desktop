@@ -1622,6 +1622,49 @@ fn asked(ex: &Explorer) -> Option<(&'static str, String)> {
     }
 }
 
+/// A paste's clashes, a merged folder's files among them, are checked on a listing thread: on a
+/// folder that does not answer (a dead mount) the prompt comes up on the wake after the check
+/// lands, and a paste made meanwhile asks after it.
+#[test]
+fn a_paste_whose_clash_check_answers_late_asks_on_a_later_wake() {
+    let mut ctx = test_ctx();
+    let t = tempfile::tempdir().expect("a temp dir");
+    let (src, dest) = (t.path().join("src"), t.path().join("dest"));
+    for d in [&src, &dest] {
+        std::fs::create_dir_all(d.join("Reports")).expect("mkdir");
+        std::fs::write(d.join("Reports/r.txt"), "x").expect("write");
+        std::fs::write(d.join("a.txt"), "x").expect("write");
+    }
+    let mut ex = crate::tests::test_explorer(Place::Folder(dest.clone()), &mut ctx);
+    let gate = std::sync::Arc::new(std::sync::RwLock::new(()));
+    let closed = gate.write().expect("lock");
+    ex.held = Some(gate.clone());
+    for name in ["Reports", "a.txt"] {
+        ex.put_all(
+            &[src.join(name)],
+            &dest,
+            &|_| Some(DropOp::Copy),
+            false,
+            &mut ctx,
+        );
+    }
+    assert_eq!(asked(&ex), None, "no prompt before the check answers");
+    assert!(ex.busy(), "a close waits for the check");
+    drop(closed);
+    ex.held = None;
+    crate::tests::wake_until(&mut ex, &mut ctx, |ex| ex.dialog.is_some());
+    assert_eq!(
+        asked(&ex),
+        Some(("Confirm Folder Replace", "Reports".to_string()))
+    );
+    ex.dialog_event(key_event_alt('n'), &mut ctx);
+    crate::tests::wake_until(&mut ex, &mut ctx, |ex| ex.clashing.is_empty());
+    assert_eq!(
+        asked(&ex),
+        Some(("Confirm File Replace", "a.txt".to_string()))
+    );
+}
+
 /// Yes replaces the first file, No keeps the second, and the folder prompt's Yes merges, asking
 /// about the file inside it the merge would replace.
 #[test]

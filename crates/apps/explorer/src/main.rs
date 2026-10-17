@@ -243,6 +243,9 @@ pub struct Explorer {
     pub pending_drop: Option<drag::PendingDrop>,
     pub(crate) put: Option<fileops::Put>,
     pub(crate) put_queue: std::collections::VecDeque<fileops::PendingPut>,
+    /// Batches being checked on a listing thread ([`fileops::Checked`]: a folder merge walks the
+    /// folder), with their target folder and whether what lands is selected, oldest first.
+    pub(crate) clashing: std::collections::VecDeque<((PathBuf, bool), Job<fileops::Checked>)>,
     pub(crate) removing: Option<removing::Removing>,
     pub(crate) remove_queue: std::collections::VecDeque<removing::PendingRemoval>,
     /// The whole percent and paused state last put on the task button.
@@ -406,6 +409,7 @@ impl Explorer {
             pending_drop: None,
             put: None,
             put_queue: std::collections::VecDeque::new(),
+            clashing: std::collections::VecDeque::new(),
             removing: None,
             remove_queue: std::collections::VecDeque::new(),
             task_progress: None,
