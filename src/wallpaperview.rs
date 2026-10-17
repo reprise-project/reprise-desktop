@@ -3,11 +3,12 @@
 //! `layers.background`, and the slideshow: every `interval` minutes a thread
 //! picks the folder's next picture and the new buffers fade in over the old.
 
+use std::borrow::Cow;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use reprisekit::wallpapers::Builtin;
-use reprisescene::BufferId;
+use reprisescene::{BufferId, Prepared};
 use smithay::{
     output::Output,
     reexports::calloop::{
@@ -36,6 +37,9 @@ pub struct Wallpaper {
     loading: Option<Cut>,
     /// A built-in and its pictures, one per output device size.
     builtin: Option<(Builtin, Drawn)>,
+    /// Built-in pictures copied for the scene on the drawing thread; the first output of
+    /// a picture's size takes its copy.
+    prepared: Vec<Prepared>,
     nodes: Vec<(Output, WallpaperNode)>,
     /// The picture this one replaces, still on screen under it until this
     /// one has faded in: its buffers, and the fade's timer and start once
@@ -51,6 +55,7 @@ impl Wallpaper {
             image: None,
             loading: None,
             builtin: crate::wallpaper::builtin(path).map(|b| (b, Drawn::default())),
+            prepared: Vec::new(),
             nodes: Vec::new(),
             fading: Vec::new(),
             fade: None,
@@ -185,9 +190,9 @@ impl State {
     /// outputs of its size compose it, unless the wallpaper changed or no
     /// output wants that size any more.
     fn draw_builtins(&mut self, path: PathBuf, b: Builtin, sizes: Vec<(u32, u32)>) {
-        let (tx, rx) = channel::channel::<Canvas>();
+        let (tx, rx) = channel::channel::<(Canvas, Prepared)>();
         let inserted = self.handle.insert_source(rx, move |event, _, state| {
-            let channel::Event::Msg(picture) = event else {
+            let channel::Event::Msg((picture, prepared)) = event else {
                 return;
             };
             let Some(w) = state.wallpaper.as_mut() else {
@@ -199,6 +204,7 @@ impl State {
             if let Some((_, d)) = w.builtin.as_mut()
                 && d.land(picture)
             {
+                w.prepared.push(prepared);
                 state.refit_wallpaper();
                 crate::lockview::refit(state);
             }
@@ -211,7 +217,9 @@ impl State {
             .name("wallpaper".into())
             .spawn(move || {
                 for (w, h) in sizes {
-                    if tx.send(crate::wallpaper::draw(b, w, h)).is_err() {
+                    let picture = crate::wallpaper::draw(b, w, h);
+                    let prepared = Prepared::new(&picture.pixels, w as i32, h as i32);
+                    if tx.send((picture, prepared)).is_err() {
                         return;
                     }
                 }
@@ -449,6 +457,8 @@ impl State {
             })
             .collect();
         let sizes: Vec<(u32, u32)> = shown.iter().map(|s| s.3).collect();
+        w.prepared
+            .retain(|p| sizes.contains(&(p.size().0 as u32, p.size().1 as u32)));
         let mut load = None;
         let mut draw = Vec::new();
         let ready = match w.builtin.as_mut() {
@@ -531,7 +541,21 @@ impl State {
             self.scene.set_position(node.buffer, b.x, b.y);
             let canvas =
                 crate::wallpaper::composed(source, size.0, size.1, position, bg, scale as f32);
-            upload_scaled(&mut self.scene, node.buffer, &canvas, scale);
+            let prepared = w
+                .prepared
+                .iter()
+                .position(|p| p.size() == (size.0 as i32, size.1 as i32))
+                .map(|i| w.prepared.swap_remove(i));
+            match prepared {
+                // Borrowed: the picture is shown as drawn, so its copy is the canvas.
+                Some(p) if matches!(canvas, Cow::Borrowed(_)) => {
+                    self.scene.buffer_set_prepared(node.buffer, p);
+                    let logical = (size.0 as i32 / scale, size.1 as i32 / scale);
+                    self.scene
+                        .buffer_set_dest_size(node.buffer, Some(logical.into()));
+                }
+                _ => upload_scaled(&mut self.scene, node.buffer, &canvas, scale),
+            }
             node.fit = Some(fit);
             changed = true;
             let out = w.nodes[i].0.clone();

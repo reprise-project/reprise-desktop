@@ -9,7 +9,9 @@ use smithay::{
         renderer::{
             Color32F, Renderer, Texture,
             element::{
-                memory::MemoryRenderBuffer, solid::SolidColorBuffer, texture::TextureRenderBuffer,
+                memory::{MemoryBuffer, MemoryRenderBuffer},
+                solid::SolidColorBuffer,
+                texture::TextureRenderBuffer,
             },
         },
     },
@@ -22,6 +24,29 @@ use crate::node::{
     BufferId, BufferNode, Content, CustomId, CustomNode, Input, Node, NodeId, NodeType, Pixels,
     RectId, RectNode, SurfaceId, SurfaceNode, TreeId,
 };
+
+/// A canvas copied into a buffer node's pixel memory, on any thread, so that
+/// [`Scene::buffer_set_prepared`] shows it without the copy.
+pub struct Prepared(MemoryRenderBuffer, Size<i32, BufferCoords>);
+
+impl Prepared {
+    /// `width * height` ARGB8888 premultiplied pixels, as for [`Scene::buffer_set_canvas`].
+    pub fn new(pixels: &[u32], width: i32, height: i32) -> Prepared {
+        let size = Size::<i32, BufferCoords>::from((width.max(0), height.max(0)));
+        let mut mem = MemoryBuffer::new(Fourcc::Argb8888, size);
+        for (d, s) in mem.as_chunks_mut::<4>().0.iter_mut().zip(pixels) {
+            *d = s.to_le_bytes();
+        }
+        Prepared(
+            MemoryRenderBuffer::from_memory(mem, 1, Transform::Normal, None),
+            size,
+        )
+    }
+
+    pub fn size(&self) -> (i32, i32) {
+        (self.1.w, self.1.h)
+    }
+}
 
 static NEXT_SCENE: AtomicU32 = AtomicU32::new(1);
 
@@ -662,17 +687,18 @@ impl<R: Renderer, D> Scene<R, D> {
             });
             changed
         } else {
-            let bytes: Vec<u8> = pixels.iter().flat_map(|p| p.to_le_bytes()).collect();
-            b.pixels = Pixels::Canvas(MemoryRenderBuffer::from_slice(
-                &bytes,
-                Fourcc::Argb8888,
-                size,
-                1,
-                Transform::Normal,
-                None,
-            ));
+            let p = Prepared::new(pixels, width, height);
+            b.pixels = Pixels::Canvas(p.0);
             b.buffer_size = size;
             Rectangle::from_size(size)
+        }
+    }
+
+    /// Show a canvas copied by [`Prepared::new`], damaged whole.
+    pub fn buffer_set_prepared(&mut self, buffer: BufferId, prepared: Prepared) {
+        if let Some(b) = self.buffer_mut(buffer) {
+            b.buffer_size = prepared.1;
+            b.pixels = Pixels::Canvas(prepared.0);
         }
     }
 

@@ -30,7 +30,7 @@ pub use node::{
 };
 pub use query::{Hit, output_rect};
 pub use render::{BufferElement, SceneElement, View};
-pub use scene::Scene;
+pub use scene::{Prepared, Scene};
 
 #[cfg(test)]
 mod tests;
