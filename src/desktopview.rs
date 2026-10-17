@@ -1599,8 +1599,9 @@ impl State {
         self.spawn_argv_activated(&argv);
     }
 
-    /// Run the program file at `path` in its own folder, a script in the terminal. The exec waits
-    /// on the file's mount, so it runs off the loop; a program that does not start gets an error box.
+    /// Run the program file at `path` in its own folder and an app scope named after it, a script in
+    /// the terminal. The exec waits on the file's mount, so it runs off the loop; a program that does
+    /// not start gets an error box.
     pub(crate) fn run_program(&mut self, path: &Path) {
         let token = self.new_activation_token();
         let env = self.env.clone();
@@ -1610,6 +1611,11 @@ impl State {
             let started = reprisefs::program::run_argv(&path, &terminal, end).and_then(|argv| {
                 crate::spawn::try_spawn_argv_in(&argv, None, path.parent(), &env, Some(&token))
             });
+            if let (Ok(pid), Some(name)) = (&started, path.file_name())
+                && let Err(e) = reprisefs::scope::adopt(*pid, &name.to_string_lossy())
+            {
+                log::warn!("app scope for {}: {e}", path.display());
+            }
             Box::new(move |state: &mut State| {
                 // A child that exited before its pid was recorded left a SIGCHLD that found nothing.
                 crate::spawn::reap_children();

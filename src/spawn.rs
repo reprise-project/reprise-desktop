@@ -554,7 +554,7 @@ pub fn spawn_in(cmd: &str, app: Option<&str>, env: &SessionEnv, token: Option<&s
         cmd,
         Some(&name),
     ) {
-        Ok(()) => true,
+        Ok(_) => true,
         Err(e) => {
             log::error!("spawn {cmd:?}: {e}");
             false
@@ -590,16 +590,17 @@ pub fn spawn_argv_in<S: AsRef<std::ffi::OsStr> + std::fmt::Debug>(
     }
 }
 
-/// [`spawn_argv_in`] that hands back why the program did not start (the exec's own error, such
-/// as a missing interpreter). Waits for the exec, so a program on a hung mount blocks the caller.
-/// Without an `app` it runs unscoped: behind `systemd-run` the error would be systemd-run's.
+/// [`spawn_argv_in`] that hands back the pid, or why the program did not start (the exec's own
+/// error, such as a missing interpreter). Waits for the exec, so a program on a hung mount blocks
+/// the caller. Without an `app` it starts unscoped, as behind `systemd-run` the error would be
+/// systemd-run's; the caller then [`reprisefs::scope::adopt`]s the pid.
 pub fn try_spawn_argv_in<S: AsRef<std::ffi::OsStr> + std::fmt::Debug>(
     argv: &[S],
     app: Option<&str>,
     dir: Option<&std::path::Path>,
     env: &SessionEnv,
     token: Option<&str>,
-) -> std::io::Result<()> {
+) -> std::io::Result<u32> {
     let Some(program) = argv.first() else {
         return Err(std::io::Error::new(
             std::io::ErrorKind::InvalidInput,
@@ -681,7 +682,7 @@ fn gtk_launch_id(cmd: &str) -> Option<String> {
 /// Start `c` detached, hand its pid to `reap_children` and record the launch for `mapfocus`;
 /// `what` names it in the log. A `name` gives its output a journal stream of its own; without
 /// one it writes to the compositor's.
-fn start(mut c: std::process::Command, what: &str, name: Option<&str>) -> std::io::Result<()> {
+fn start(mut c: std::process::Command, what: &str, name: Option<&str>) -> std::io::Result<u32> {
     detach(&mut c);
     if let Some((fd, stream)) = name.and_then(crate::journal::stream_for) {
         c.env("JOURNAL_STREAM", stream);
@@ -696,7 +697,7 @@ fn start(mut c: std::process::Command, what: &str, name: Option<&str>) -> std::i
     drop(children);
     crate::mapfocus::grant(child.id() as i32);
     log::info!("spawned {what:?}");
-    Ok(())
+    Ok(child.id())
 }
 
 /// Make `c` a child of its own: new session with no controlling terminal, stdin on `/dev/null`,
