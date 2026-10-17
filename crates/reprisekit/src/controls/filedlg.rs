@@ -28,11 +28,11 @@ use crate::controls::placesbar::{self, Place, PlacesBar};
 use crate::controls::shellview::{self, Mode, ShellView};
 use crate::controls::toolbar::{self, ToolBar};
 use crate::look::Paint;
-use crate::look::widgets::{draw_button, draw_edit_field};
+use crate::look::widgets::{draw_button, draw_edit_field, draw_label};
 use crate::pointer::{Interaction, Nav, WHEEL_ROWS};
 use crate::raster::{Canvas, Rect};
 use crate::selection::Mods;
-use crate::text::{Align, TextRenderer};
+use crate::text::{Align, TextRenderer, access_key, split_mnemonic};
 use crate::textedit::{Caret, EditKey, TextEdit};
 use crate::theme::{TextUnits, Theme};
 use accesskit::NodeId;
@@ -101,6 +101,12 @@ pub struct Fields {
 pub const CLIENT: (i32, i32) = (555, 451);
 
 const MARGIN: i32 = 6;
+const LOOKIN_LABEL: &str = "Look &in:";
+const FILENAME_LABEL: &str = "File &name:";
+const FILETYPE_LABEL: &str = "Files of &type:";
+const CANCEL: &str = "Cancel";
+/// The access keys the labels above take; the accept button picks another.
+const LABEL_KEYS: [char; 3] = ['i', 'n', 't'];
 /// Label text x: "Look in:" at 55, "File name:" and "Files of type:" at 102.
 const LOOKIN_LABEL_X: i32 = 55;
 const ROW_LABEL_X: i32 = 102;
@@ -916,7 +922,7 @@ impl FileDlg {
         // 100% lengths at the text size; the toolbar's buttons and the icons keep their px.
         let u = |v: i32| cm.text.len(v);
         let label_h = px as i32 + 2;
-        let lookin_label_w = text.measure("Look in:", false, px);
+        let lookin_label_w = text.measure(&split_mnemonic(LOOKIN_LABEL).0, false, px);
         let lookin_label = Rect::new(
             r.x + u(LOOKIN_LABEL_X),
             r.y + u(LOOKIN_Y + LABEL_DY) - 1,
@@ -964,13 +970,13 @@ impl FileDlg {
         );
         let places_rects = placesbar::layout(&self.places, places, &cm.places);
 
-        let label_w =
-            text.measure("File name:", false, px)
-                .max(text.measure("Files of type:", false, px));
+        let label_w = text
+            .measure(&split_mnemonic(FILENAME_LABEL).0, false, px)
+            .max(text.measure(&split_mnemonic(FILETYPE_LABEL).0, false, px));
         let field_x = r.x + u(FIELD_X);
         // Accept and Cancel share a width, grown past 75 px for a label that needs it.
-        let label_need = [self.fields.accept_label.as_str(), "Cancel"]
-            .map(|l| text.measure(&crate::text::split_mnemonic(l).0, false, px) + u(6));
+        let label_need = [&*self.accept_label(), CANCEL]
+            .map(|l| text.measure(&split_mnemonic(l).0, false, px) + u(6));
         let button_w = label_need.into_iter().fold(u(BUTTON_W), i32::max);
         let button_h = u(BUTTON_H);
         let accept_x = r.right() - u(MARGIN) - button_w;
@@ -1065,6 +1071,51 @@ impl FileDlg {
         let style =
             MenuStyle::context(&theme, ContextBitmaps::None).fit(text, &items, px, max_width);
         MenuLayout::compute_styled(&style, &items, usize::MAX)
+    }
+
+    /// The accept button's label with an access key: the caller's own, else
+    /// its first letter the labels' keys leave free.
+    fn accept_label(&self) -> std::borrow::Cow<'_, str> {
+        let label = &self.fields.accept_label;
+        if access_key(label).is_some() {
+            return label.into();
+        }
+        let free = label.char_indices().find(|(_, c)| {
+            c.is_alphanumeric() && c.to_lowercase().all(|l| !LABEL_KEYS.contains(&l))
+        });
+        match free {
+            Some((i, _)) => format!("{}&{}", &label[..i], &label[i..]).into(),
+            None => label.into(),
+        }
+    }
+
+    /// Alt+letter: a label's key focuses its field, the accept button's
+    /// accepts, and any other goes to the extra rows.
+    fn access_press(&mut self, ch: char) -> Event {
+        let key = ch.to_lowercase().next().unwrap_or(ch);
+        let focus = match key {
+            'i' => Focus::LookIn,
+            'n' => Focus::FileName,
+            't' if self.has_types() => Focus::FileType,
+            _ if access_key(&self.accept_label()) == Some(key) => Focus::Accept,
+            _ => {
+                let taken = self
+                    .extra
+                    .as_mut()
+                    .is_some_and(|(f, _)| f.key(form::Key::Access(ch)) != form::Event::None);
+                if !taken {
+                    return Event::None;
+                }
+                Focus::Extra
+            }
+        };
+        self.lookin.open = None;
+        self.filetype.open = None;
+        self.focus = focus;
+        if focus == Focus::Accept {
+            return self.activate(true);
+        }
+        Event::Redraw
     }
 
     fn advance_focus(&mut self, back: bool) {
@@ -1215,6 +1266,9 @@ impl FileDlg {
                 }
                 _ => Event::None,
             };
+        }
+        if let form::Key::Access(ch) = key {
+            return self.access_press(ch);
         }
         // A dropped list owns Enter and Escape: Enter commits the row (Look in
         // navigates to the crumb), Escape closes the list. Neither may reach
@@ -1748,11 +1802,12 @@ impl FileDlg {
         let lay = self.layout(text, px, r, &self.drawn.0.get());
         c.fill_rect(r.scaled(s), cs.button_face);
 
-        text.draw(
+        draw_label(
             c,
+            text,
+            p,
             lay.lookin_label.scaled(s),
-            "Look in:",
-            false,
+            LOOKIN_LABEL,
             cs.button_text,
             Align::Left,
             px,
@@ -1791,11 +1846,12 @@ impl FileDlg {
 
         shellview::draw(c, text, p, &self.shell, &lay.shell, None, px);
 
-        text.draw(
+        draw_label(
             c,
+            text,
+            p,
             lay.filename_label.scaled(s),
-            "File name:",
-            false,
+            FILENAME_LABEL,
             cs.button_text,
             Align::Left,
             px,
@@ -1834,7 +1890,7 @@ impl FileDlg {
             text,
             p,
             lay.accept.scaled(s),
-            &self.fields.accept_label,
+            &self.accept_label(),
             true,
             Interaction::Idle,
             true,
@@ -1843,11 +1899,12 @@ impl FileDlg {
         );
 
         if self.has_types() {
-            text.draw(
+            draw_label(
                 c,
+                text,
+                p,
                 lay.filetype_label.scaled(s),
-                "Files of type:",
-                false,
+                FILETYPE_LABEL,
                 cs.button_text,
                 Align::Left,
                 px,
@@ -1870,7 +1927,7 @@ impl FileDlg {
             text,
             p,
             lay.cancel.scaled(s),
-            "Cancel",
+            CANCEL,
             false,
             Interaction::Idle,
             true,
@@ -1972,8 +2029,8 @@ impl FileDlg {
             );
         }
         let button = |label: &str, r: Rect| width(label) - (r.width - u.len(6));
-        put("accept", button(&self.fields.accept_label, lay.accept));
-        put("cancel", button("Cancel", lay.cancel));
+        put("accept", button(&self.accept_label(), lay.accept));
+        put("cancel", button(CANCEL, lay.cancel));
         put(
             "places",
             placesbar::overflow(&self.places, text, lay.places, &cm.places, px),
@@ -2032,7 +2089,7 @@ impl FileDlg {
                 n.push_labelled_by(by);
             }
         };
-        let l = label(tree, "lookin label", lay.lookin_label, "Look in:");
+        let l = label(tree, "lookin label", lay.lookin_label, LOOKIN_LABEL);
         let lookin = combo::access(&self.lookin, &lay.lookin, text, px, tree, root, "lookin");
         labelled(tree, Tree::id_of(root, "lookin"), l);
         toolbar::access(
@@ -2052,7 +2109,7 @@ impl FileDlg {
             "places",
         );
         let shell = shellview::access(&self.shell, &lay.shell, text, px, tree, root, "shell");
-        let l = label(tree, "filename label", lay.filename_label, "File name:");
+        let l = label(tree, "filename label", lay.filename_label, FILENAME_LABEL);
         let first = edit_first_visible(
             text,
             &self.filename,
@@ -2076,10 +2133,10 @@ impl FileDlg {
         let accept = tree.push(
             root,
             "accept",
-            access::button(lay.accept, &self.fields.accept_label, true, true),
+            access::button(lay.accept, &self.accept_label(), true, true),
         );
         let filetype = self.has_types().then(|| {
-            let l = label(tree, "filetype label", lay.filetype_label, "Files of type:");
+            let l = label(tree, "filetype label", lay.filetype_label, FILETYPE_LABEL);
             let filetype = combo::access(
                 &self.filetype,
                 &lay.filetype,
@@ -2095,7 +2152,7 @@ impl FileDlg {
         let cancel = tree.push(
             root,
             "cancel",
-            access::button(lay.cancel, "Cancel", true, false),
+            access::button(lay.cancel, CANCEL, true, false),
         );
         let extra = self
             .extra
@@ -2141,6 +2198,80 @@ mod tests {
                 enabled: true,
             }],
         )
+    }
+
+    #[test]
+    fn alt_letters_focus_the_fields_and_press_the_accept_button() {
+        let mut d = sample();
+        let alt = |d: &mut FileDlg, c| d.key(R, form::Key::Access(c), None, Mods::default());
+        assert!(matches!(alt(&mut d, 'i'), Event::Redraw));
+        assert_eq!(d.focus, Focus::LookIn);
+        alt(&mut d, 'T');
+        assert_eq!(d.focus, Focus::FileType);
+        d.filetype.open = Some(0);
+        alt(&mut d, 'n');
+        assert_eq!(d.focus, Focus::FileName);
+        assert_eq!(d.filetype.open, None, "a key closes the dropped list");
+        assert!(matches!(alt(&mut d, 'c'), Event::None), "Cancel has no key");
+        d.filename.text = "a.txt".into();
+        match alt(&mut d, 'o') {
+            Event::Accept(names) => assert_eq!(names, ["a.txt"]),
+            other => panic!("Alt+O accepts, got {other:?}"),
+        }
+        assert_eq!(d.focus, Focus::Accept);
+    }
+
+    #[test]
+    fn the_accept_button_takes_a_key_the_labels_leave_free() {
+        let with = |label: &str| {
+            let mut d = sample();
+            d.fields.accept_label = label.into();
+            d.accept_label().into_owned()
+        };
+        assert_eq!(with("Open"), "&Open");
+        assert_eq!(with("Save"), "&Save");
+        assert_eq!(with("Import"), "I&mport", "i is Look in's");
+        assert_eq!(with("E&xport"), "E&xport", "the caller's own key stays");
+    }
+
+    #[test]
+    fn alt_underlines_the_labels_and_the_accept_button() {
+        let d = sample();
+        let t = text();
+        let theme = Theme::default();
+        let cs = &theme.colors;
+        let shot = |keys: bool| {
+            let mut c = Canvas::new(CLIENT.0 as u32, CLIENT.1 as u32);
+            let p = Paint {
+                access_keys: keys,
+                ..classic_paint(cs, 1)
+            };
+            d.draw(&mut c, &t, &p, R, 11);
+            c
+        };
+        let (off, on) = (shot(false), shot(true));
+        let lay = d.layout(&t, 11, R, &d.drawn.0.get());
+        let ink = cs.button_text.argb();
+        // Each label's key is underlined one px under the baseline, and only with Alt.
+        for (r, label) in [
+            (lay.lookin_label, LOOKIN_LABEL),
+            (lay.filename_label, FILENAME_LABEL),
+            (lay.filetype_label, FILETYPE_LABEL),
+        ] {
+            let (plain, m) = split_mnemonic(label);
+            let base = t.baseline(r, false, 11).unwrap();
+            let (dx, w) = t.span(&plain, m.unwrap(), false, 11);
+            for x in r.x + dx..r.x + dx + w {
+                assert_eq!(on.get(x, base + 1), ink, "{label}: underlined at x {x}");
+                assert_ne!(off.get(x, base + 1), ink, "{label}: bare at x {x}");
+            }
+        }
+        let differs = |r: Rect| {
+            (r.y..r.bottom()).any(|y| (r.x..r.right()).any(|x| on.get(x, y) != off.get(x, y)))
+        };
+        assert!(differs(lay.accept), "Open's O is underlined");
+        assert!(!differs(lay.cancel), "Cancel has no key");
+        assert!(!differs(lay.shell.frame), "the view is untouched");
     }
 
     #[test]
