@@ -318,6 +318,8 @@ fn draw_styled_help(
         state.glow.of(close),
     ));
     let r = geom.help_box();
+    let grown = style.at_button_side(r.height / s);
+    let style = grown.as_deref().unwrap_or(style);
     if !styled::help::draw_help_button(style, c, r, state.active, ptr, close, s) {
         classic::widgets::draw_caption_button(c, &theme.colors, r, Glyph::Help, false, s);
     }

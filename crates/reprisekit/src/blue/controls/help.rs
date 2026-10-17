@@ -39,11 +39,16 @@ fn frames(v: Variant) -> [(State, &'static Face); 4] {
 }
 
 pub(super) fn parts(v: Variant, scale: i32) -> Vec<(Part, PartImage)> {
+    parts_sized(v, scale, S)
+}
+
+/// [`parts`] with the box `side` design px square, for a caption grown with the text size.
+pub(super) fn parts_sized(v: Variant, scale: i32, side: i32) -> Vec<(Part, PartImage)> {
     let frames = frames(v);
-    let side = S * scale;
-    let mut a = Canvas::new(side as u32, (side * frames.len() as i32) as u32);
+    let px = side * scale;
+    let mut a = Canvas::new(px as u32, (px * frames.len() as i32) as u32);
     for (i, (_, face)) in frames.iter().enumerate() {
-        a.blit_over(0, i as i32 * side, &help_box(face, scale));
+        a.blit_over(0, i as i32 * px, &help_box(face, scale, side));
     }
     let states: Vec<State> = frames.iter().map(|(s, _)| *s).collect();
     let mut img = PartImage::new(a, &states, Layout::Vertical).at_scale(scale);
@@ -51,21 +56,23 @@ pub(super) fn parts(v: Variant, scale: i32) -> Vec<(Part, PartImage)> {
     vec![(Part::HelpButton, img)]
 }
 
-/// One frame of the box at `d` device px per design px.
-fn help_box(face: &Face, d: i32) -> Canvas {
+/// One frame of the box, `side` design px square, at `d` device px per design px. The mark and
+/// the corners grow with `side`, the rim stays 1 px.
+fn help_box(face: &Face, d: i32, side: i32) -> Canvas {
     let rim = shape::premul(face.rim, 255);
     let down = stops(face.down);
     let across = stops(face.across);
     let fill = Fill::new(&down, &across);
-    let px = shape::ringed(S, S, CORNER_R, 1, d, |x, y, ring| match ring {
+    let grow = f64::from(side) / f64::from(S);
+    let px = shape::ringed(side, side, CORNER_R * grow, 1, d, |x, y, ring| match ring {
         0 => rim,
-        _ => fill.at(x, y),
+        _ => fill.at(x / grow, y / grow),
     });
     let mark = face.mark.map(|c| shape::premul(c, 255));
-    let k = f64::from(d);
+    let k = f64::from(d) * grow;
     let curl = question_line(k);
-    let w = S * d;
-    shape::draw(S, S, d, |x, y| {
+    let w = side * d;
+    shape::draw(side, side, d, |x, y| {
         let under = px[(y as i32 * w + x as i32) as usize];
         match mark {
             Some(ink) => shape::over(shape::scale(ink, question(x, y, k, &curl)), under),
@@ -152,7 +159,7 @@ mod tests {
         let mut out = Vec::new();
         for v in Variant::ALL {
             for (state, face) in frames(v) {
-                out.push((v, state, help_box(face, d)));
+                out.push((v, state, help_box(face, d, S)));
             }
         }
         out
@@ -207,7 +214,7 @@ mod tests {
         for v in Variant::ALL {
             let f: Vec<u64> = frames(v)
                 .iter()
-                .map(|(_, face)| fnv(&help_box(face, 1)))
+                .map(|(_, face)| fnv(&help_box(face, 1, S)))
                 .collect();
             for i in 0..f.len() {
                 for j in i + 1..f.len() {
@@ -290,5 +297,46 @@ mod tests {
             })
             .collect();
         crate::pins::check("blue/help_box", &got);
+    }
+
+    #[test]
+    fn a_grown_box_is_its_side_with_clear_corners_smooth_at_2() {
+        for side in [28, 34] {
+            for d in [1, 2] {
+                let (_, img) = parts_sized(Variant::Blue, d, side).remove(0);
+                let n = side * d;
+                assert_eq!(
+                    (img.atlas.width, img.atlas.height),
+                    (n as u32, (4 * n) as u32)
+                );
+                for i in 0..4 {
+                    let at = |x: i32, y: i32| alpha(img.atlas.get(x, i * n + y));
+                    for (x, y) in [(0, 0), (n - 1, 0), (0, n - 1), (n - 1, n - 1)] {
+                        assert!(at(x, y) < 32, "frame {i} {side} at {d}: ({x}, {y})");
+                    }
+                    let partial = (0..4 * d)
+                        .flat_map(|y| (0..4 * d).map(move |x| (x, y)))
+                        .filter(|&(x, y)| (1..255).contains(&at(x, y)))
+                        .count();
+                    assert!(partial >= 2, "frame {i} {side} at {d}: corner smooths");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn grown_help_box_pins_at_scale_1_and_2() {
+        let mut got = Vec::new();
+        for v in Variant::ALL {
+            for (state, face) in frames(v) {
+                for side in [28, 34] {
+                    for d in [1, 2] {
+                        let c = help_box(face, d, side);
+                        got.push((format!("{v:?} {state:?} {side} {d}"), fnv(&c)));
+                    }
+                }
+            }
+        }
+        crate::pins::check("blue/help_box_grown", &got);
     }
 }

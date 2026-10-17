@@ -566,8 +566,9 @@ impl Theme {
     /// `[accessibility] text_size`): the UI font, a styled look's caption and
     /// Start text, and the heights that hold one line of it (caption, menu
     /// rows, Start menu rows, taskbar) grow, each by [`line_growth`].
-    /// Classic's Start button widens with its label; frames, caption
-    /// buttons, icons and the output scale keep their size.
+    /// Caption buttons grow as much as the caption unless the look joins them
+    /// into a [`CaptionGroup`]. Classic's Start button widens with its label;
+    /// frames, icons and the output scale keep their size.
     pub fn with_text_size(&self, pct: u32) -> Theme {
         if pct == 100 {
             return self.clone();
@@ -583,6 +584,10 @@ impl Theme {
             &mut m.taskbar_height,
         ] {
             *h += grow;
+        }
+        if m.caption_group.is_none() {
+            m.caption_button_width += grow;
+            m.caption_button_height += grow;
         }
         match &t.look {
             crate::paint::Look::Classic => {
@@ -722,7 +727,11 @@ mod tests {
         );
         assert_eq!(m.start_button_width, 71, "the label's 33 px are 50");
         assert_eq!(m.frame_width, 4, "frames keep their size");
-        assert_eq!(m.caption_button_height, 14, "so do the caption buttons");
+        assert_eq!(
+            (m.caption_button_width, m.caption_button_height),
+            (23, 21),
+            "caption buttons grow with the caption"
+        );
         assert_eq!(big.scale, 1);
         let huge = t.with_text_size(200);
         assert_eq!((huge.fonts.size_px, huge.metrics.caption_height), (22, 31));
@@ -737,6 +746,24 @@ mod tests {
             big.metrics.start_button_width, glass.metrics.start_button_width,
             "the orb keeps its size"
         );
+        let buttons = |m: &Metrics| {
+            (
+                m.caption_button_width,
+                m.caption_button_height,
+                m.caption_group,
+            )
+        };
+        for pct in [150, 200] {
+            let grown = glass.with_text_size(pct);
+            assert_eq!(
+                buttons(&grown.metrics),
+                buttons(&glass.metrics),
+                "the joined strip keeps its size"
+            );
+        }
+        let blue = crate::interfaces::theme_for(crate::interface::Interface::Blue);
+        let side = |pct| blue.with_text_size(pct).metrics.caption_button_height;
+        assert_eq!((side(100), side(150), side(200)), (21, 28, 34));
     }
 
     #[test]

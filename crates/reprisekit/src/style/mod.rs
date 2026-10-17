@@ -1104,6 +1104,8 @@ pub struct Style {
     pub chrome_colors: Option<ColorScheme>,
     rescale: Option<Rescale>,
     rescaled: Rescaled,
+    button_side: Option<ButtonSide>,
+    sided: Rescaled,
 }
 
 /// Art [`Style::warm`] found unpainted at one scale; [`Warm::paint`] paints it, on any thread.
@@ -1134,6 +1136,9 @@ impl Clone for Rescaled {
 }
 
 type Rescale = Arc<dyn Fn(i32) -> Style + Send + Sync>;
+
+/// Paints a look's caption and ? buttons `side` design px square at the style's scale.
+type ButtonSide = Arc<dyn Fn(i32) -> Vec<(Part, PartImage)> + Send + Sync>;
 
 /// Paints the clock popup's analog clock at `time` (hour 0..23, minute, second), `side` design px
 /// square, at scale `d`.
@@ -1204,12 +1209,47 @@ impl Style {
             flyout: None,
             rescale: None,
             rescaled: Rescaled::default(),
+            button_side: None,
+            sided: Rescaled::default(),
         }
     }
 
     pub fn with_rescale(mut self, build: impl Fn(i32) -> Style + Send + Sync + 'static) -> Style {
         self.rescale = Some(Arc::new(build));
         self
+    }
+
+    /// Caption buttons (and the ? box) that `paint` draws at any side, for a caption grown with the
+    /// text size ([`Style::at_button_side`]).
+    pub(crate) fn with_button_side(
+        mut self,
+        paint: impl Fn(i32) -> Vec<(Part, PartImage)> + Send + Sync + 'static,
+    ) -> Style {
+        self.button_side = Some(Arc::new(paint));
+        self
+    }
+
+    /// This style with its caption buttons `side` design px square, built once per side; `None`
+    /// when they already are or the style draws them at one size only.
+    pub fn at_button_side(&self, side: i32) -> Option<Arc<Style>> {
+        let paint = self.button_side.as_ref()?;
+        let close = self.part(Part::CloseButton)?;
+        if close.frame(State::Normal).height / close.scale == side {
+            return None;
+        }
+        let mut kept = self.sided.0.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some((_, st)) = kept.iter().find(|(k, _)| *k == side) {
+            return Some(st.clone());
+        }
+        let st = Arc::new(
+            paint(side)
+                .into_iter()
+                .fold(self.clone(), |st, (part, img)| {
+                    st.with_painted(part, move || img)
+                }),
+        );
+        kept.push((side, st.clone()));
+        Some(st)
     }
 
     pub fn at_scale(self: &Arc<Style>, n: i32) -> Arc<Style> {
