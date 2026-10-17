@@ -69,8 +69,8 @@ pub struct DialogView {
     wheel: i32,
     /// Icons the last draw used, so a caret blink skips the lookups.
     icons: Option<(IconKey, DialogIcons)>,
-    /// A job decodes icon files the icons wait for; they are looked up again when it lands.
-    decoding: bool,
+    /// Jobs decoding icon files the icons wait for; they are looked up again when one lands.
+    decodes: crate::fsjobs::Reads<IconFiles>,
     /// Last full raster without its caret, and its scale: a blink repaints the field over a clone.
     still_canvas: Option<(Canvas, i32)>,
     /// Keyboard cues: a pointer-opened dialog starts without them ([`Cues::key`]), a key-opened one has them.
@@ -286,6 +286,41 @@ fn cached(
     put.flatten().map(std::sync::Arc::unwrap_or_clone)
 }
 
+type IconFiles = Vec<(String, i32)>;
+
+#[derive(Debug, PartialEq)]
+enum Decode {
+    /// Decode job `read` for these files.
+    Start(u64, IconFiles),
+    /// Look the icons up again then: the running job will have turned stuck.
+    Retry(std::time::Duration),
+    /// Nothing to start; a job landing looks the icons up again.
+    Wait,
+}
+
+/// What a draw does with the icon files it found `undecoded`. A job hands each file to the loop
+/// as it decodes it: a file a job has yet to reach is left to it, and of a stuck job only the
+/// file it is blocked on, so a file on a dead mount holds one job, not one per draw.
+fn next_decode(
+    decodes: &mut crate::fsjobs::Reads<IconFiles>,
+    mut undecoded: IconFiles,
+    now: std::time::Instant,
+) -> Decode {
+    undecoded.sort_unstable();
+    undecoded.dedup();
+    let busy: Vec<&(String, i32)> = (decodes.in_flight(now))
+        .flat_map(|(stuck, rest)| &rest[..rest.len().min(if stuck { 1 } else { usize::MAX })])
+        .collect();
+    undecoded.retain(|f| !busy.contains(&f));
+    if undecoded.is_empty() {
+        return Decode::Wait;
+    }
+    if let Some(read) = decodes.start(now, undecoded.clone()) {
+        return Decode::Start(read, undecoded);
+    }
+    decodes.retry_in(now).map_or(Decode::Wait, Decode::Retry)
+}
+
 /// The names `redraw_dialog` resolves for `d`.
 fn icon_key(d: &Dialog, scale: i32) -> IconKey {
     IconKey {
@@ -442,7 +477,7 @@ impl State {
             row_press: DoubleClick::default(),
             wheel: 0,
             icons: None,
-            decoding: false,
+            decodes: Default::default(),
             still_canvas: None,
             cues: Cues::opened(self.key_input.last_key_input),
             fade: None,
@@ -985,41 +1020,83 @@ impl State {
         v.backdrop.set(scene, glass, v.glass_tree, pane);
         let origin = (v.x, v.y);
         let id = v.id;
-        let decode = !undecoded.is_empty() && !std::mem::replace(&mut v.decoding, true);
+        let decode = next_decode(&mut v.decodes, undecoded, std::time::Instant::now());
         if active {
             let spot = canvas.take_spot();
             self.ime_field_drawn(crate::caret::Editor::Dialog, spot, origin, scale);
         }
-        if decode {
-            self.decode_dialog_icons(id, undecoded);
+        match decode {
+            Decode::Start(read, files) => {
+                self.decode_dialog_icons(id, read, files);
+                self.relook_dialog_icons(id, crate::fsjobs::STUCK);
+            }
+            Decode::Retry(wait) => self.relook_dialog_icons(id, wait),
+            Decode::Wait => {}
         }
         self.redraw_all();
         crate::access::touch(self);
     }
 
     /// Decodes dialog `id`'s icon files on a file job, since one can sit on a mount that never
-    /// answers, then draws the dialog again with them.
-    fn decode_dialog_icons(&mut self, id: u64, mut files: Vec<(String, i32)>) {
-        files.sort_unstable();
-        files.dedup();
+    /// answers, handing each to the loop as it lands so one dead file holds back no other.
+    fn decode_dialog_icons(&mut self, id: u64, read: u64, files: IconFiles) {
+        let tx = self.fsjobs.sender();
         self.spawn_fs_job(move || {
-            let art: Vec<_> = (files.into_iter())
-                .map(|(f, px)| {
-                    let c = reprisekit::icontheme::decode_file(std::path::Path::new(&f), px, 1);
-                    (f, px, c)
-                })
-                .collect();
-            Box::new(move |state: &mut State| {
-                state.icons.put_files(art);
-                let Some(i) = state.dialogs.views.iter().position(|v| v.id == id) else {
-                    return;
-                };
-                let v = &mut state.dialogs.views[i];
-                v.decoding = false;
-                v.icons = None;
-                state.redraw_dialog(i);
-            })
+            let mut rest = Vec::new();
+            for (f, px) in files {
+                let c = reprisekit::icontheme::decode_file(std::path::Path::new(&f), px, 1);
+                let art = vec![(f, px, c)];
+                match &tx {
+                    Some(tx) => {
+                        let _ = tx.send(Box::new(move |state: &mut State| {
+                            state.dialog_icons_decoded(id, read, art, false)
+                        }));
+                    }
+                    None => rest.extend(art),
+                }
+            }
+            Box::new(move |state: &mut State| state.dialog_icons_decoded(id, read, rest, true))
         });
+    }
+
+    /// Takes icon files job `read` decoded for dialog `id`, and draws the dialog with them.
+    fn dialog_icons_decoded(
+        &mut self,
+        id: u64,
+        read: u64,
+        art: Vec<(String, i32, Option<Canvas>)>,
+        done: bool,
+    ) {
+        let files: IconFiles = art.iter().map(|(f, px, _)| (f.clone(), *px)).collect();
+        self.icons.put_files(art);
+        let Some(i) = self.dialogs.views.iter().position(|v| v.id == id) else {
+            return;
+        };
+        let v = &mut self.dialogs.views[i];
+        if done {
+            v.decodes.land(read);
+        } else if let Some(rest) = v.decodes.reading_mut(read) {
+            rest.retain(|f| !files.contains(f));
+        }
+        v.icons = None;
+        self.redraw_dialog(i);
+    }
+
+    /// Looks dialog `id`'s icons up again in `wait`, when a decode job still running will have
+    /// turned stuck and a newer one may take the files it holds back.
+    fn relook_dialog_icons(&mut self, id: u64, wait: std::time::Duration) {
+        let added = self
+            .handle
+            .insert_source(Timer::from_duration(wait), move |_, _, state| {
+                if let Some(i) = state.dialogs.views.iter().position(|v| v.id == id) {
+                    state.dialogs.views[i].icons = None;
+                    state.redraw_dialog(i);
+                }
+                TimeoutAction::Drop
+            });
+        if let Err(e) = added {
+            log::warn!("dialog icon retry timer: {e}");
+        }
     }
 
     /// Dialog `id`'s tree, placed where it stands.
@@ -2597,6 +2674,49 @@ mod tests {
             "a file that failed to decode is not tried again"
         );
     }
+
+    #[test]
+    fn an_icon_file_stuck_decoding_holds_one_job_and_the_others_decode_once_it_is_stuck() {
+        use super::{Decode, next_decode};
+        use crate::fsjobs::{Reads, STUCK};
+        let t0 = std::time::Instant::now();
+        let dead = ("/media/stick/app.png".to_string(), 32);
+        let queued = ("/srv/icons/queued.png".to_string(), 32);
+        let good = ("/srv/icons/new.png".to_string(), 32);
+        let mut decodes = Reads::default();
+        let both = vec![queued.clone(), dead.clone()];
+        let Decode::Start(held, files) = next_decode(&mut decodes, both.clone(), t0) else {
+            panic!("the first decode starts");
+        };
+        assert_eq!(files, [dead.clone(), queued.clone()]);
+        assert_eq!(
+            next_decode(&mut decodes, both.clone(), t0 + STUCK / 4),
+            Decode::Wait,
+            "files a young job has yet to decode are left to it"
+        );
+        assert_eq!(
+            next_decode(&mut decodes, vec![good.clone()], t0 + STUCK / 4),
+            Decode::Retry(STUCK * 3 / 4),
+            "a new file waits while the held decode is young"
+        );
+        assert_eq!(
+            next_decode(&mut decodes, vec![dead.clone()], t0 + STUCK * 5),
+            Decode::Wait,
+            "the file a stuck job is blocked on is not decoded again"
+        );
+        let all = vec![dead.clone(), queued.clone(), good.clone()];
+        let Decode::Start(read, files) = next_decode(&mut decodes, all, t0 + STUCK) else {
+            panic!("the other files decode once the held job is stuck");
+        };
+        assert_eq!(
+            files,
+            [good, queued],
+            "the dead file stays with the held job"
+        );
+        assert!(decodes.land(read));
+        assert!(!decodes.land(held));
+    }
+
     use reprisekit::controls::form::Key;
     use reprisekit::controls::openwith::{Program, ROWS};
 

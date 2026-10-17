@@ -451,7 +451,7 @@ fn read_pictures(paths: &[PathBuf], sizes: &[i32]) -> Vec<(i32, Option<Canvas>)>
 pub struct UserPictures {
     /// What the last read found at each device-pixel size, None where it found no picture.
     read: HashMap<i32, Option<Canvas>>,
-    reading: bool,
+    reads: crate::fsjobs::Reads,
 }
 
 impl UserPictures {
@@ -460,20 +460,21 @@ impl UserPictures {
         self.read.get(&px).map(Option::as_ref)
     }
 
-    /// The sizes a read takes, or None while one runs.
-    fn start(&mut self, mut sizes: Vec<i32>) -> Option<Vec<i32>> {
-        if self.reading {
-            return None;
-        }
+    /// The read's id and the sizes it takes, or None while one runs and is not stuck.
+    fn start(&mut self, mut sizes: Vec<i32>, now: Instant) -> Option<(u64, Vec<i32>)> {
+        let id = self.reads.start(now, ())?;
         sizes.sort_unstable();
         sizes.dedup();
-        self.reading = true;
-        Some(sizes)
+        Some((id, sizes))
     }
 
-    fn land(&mut self, found: Vec<(i32, Option<Canvas>)>) {
-        self.reading = false;
-        self.read.extend(found);
+    /// Keeps what read `id` found, unless a newer read landed first.
+    fn land(&mut self, id: u64, found: Vec<(i32, Option<Canvas>)>) -> bool {
+        let current = self.reads.land(id);
+        if current {
+            self.read.extend(found);
+        }
+        current
     }
 }
 
@@ -1564,7 +1565,7 @@ impl State {
     /// Reads the user picture at `sizes` device pixels on a file job; an open panel shows what
     /// it finds. Each Start open reads again, so a new picture shows at the next.
     pub fn read_user_pictures(&mut self, sizes: Vec<i32>) {
-        let Some(sizes) = self.start_pictures.start(sizes) else {
+        let Some((id, sizes)) = self.start_pictures.start(sizes, Instant::now()) else {
             return;
         };
         self.spawn_fs_job(move || {
@@ -1572,7 +1573,9 @@ impl State {
             let paths = picture_paths(home.as_deref(), &crate::lock::current_user());
             let found = read_pictures(&paths, &sizes);
             Box::new(move |state: &mut State| {
-                state.start_pictures.land(found);
+                if !state.start_pictures.land(id, found) {
+                    return;
+                }
                 let Some(p) = state.start_panel.as_ref() else {
                     return;
                 };
@@ -2331,17 +2334,40 @@ mod tests {
 
     #[test]
     fn one_user_picture_read_runs_at_a_time_and_opens_show_the_last_read() {
+        let t0 = Instant::now();
         let mut p = UserPictures::default();
         assert_eq!(p.at(48), None, "nothing read yet");
-        assert_eq!(p.start(vec![96, 48, 96]), Some(vec![48, 96]));
-        assert_eq!(p.start(vec![48]), None, "a read is under way");
-        p.land(vec![(48, Some(Canvas::new(48, 48))), (96, None)]);
+        let (a, sizes) = p.start(vec![96, 48, 96], t0).unwrap();
+        assert_eq!(sizes, [48, 96]);
+        assert_eq!(p.start(vec![48], t0), None, "a read is under way");
+        assert!(p.land(a, vec![(48, Some(Canvas::new(48, 48))), (96, None)]));
         assert_eq!(p.at(48).map(|c| c.map(|c| c.width)), Some(Some(48)));
         assert_eq!(p.at(96), Some(None), "read, no picture");
-        assert_eq!(p.start(vec![48]), Some(vec![48]));
-        p.land(vec![(48, None)]);
+        let (b, _) = p.start(vec![48], t0).unwrap();
+        assert!(p.land(b, vec![(48, None)]));
         assert_eq!(p.at(48), Some(None), "the picture was removed");
         assert_eq!(p.at(96), Some(None));
+    }
+
+    #[test]
+    fn a_user_picture_read_stuck_on_a_dead_home_lets_a_later_open_read_again() {
+        let stuck = crate::fsjobs::STUCK;
+        let t0 = Instant::now();
+        let mut p = UserPictures::default();
+        let (held, _) = p.start(vec![48], t0).unwrap();
+        assert_eq!(
+            p.start(vec![48], t0 + stuck / 2),
+            None,
+            "the held read is young"
+        );
+        let (b, _) = (p.start(vec![48], t0 + stuck))
+            .expect("an open after the held read turned stuck reads again");
+        assert!(p.land(b, vec![(48, Some(Canvas::new(48, 48)))]));
+        assert!(
+            !p.land(held, vec![(48, None)]),
+            "the held read landing late is stale"
+        );
+        assert_eq!(p.at(48).map(|c| c.map(|c| c.width)), Some(Some(48)));
     }
 
     #[test]
