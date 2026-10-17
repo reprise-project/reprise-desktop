@@ -89,7 +89,7 @@ impl Explorer {
         }
     }
 
-    /// `Event::Wake`: a put, job, tip walk, late listing or Folders node read finished, thumbnails arrived, or
+    /// `Event::Wake`: a put, job, tip walk, late listing, drive scan or Folders node read finished, thumbnails arrived, or
     /// the watch or UDisks2 saw a change (which re-lists), or the folder left (which follows it). A closing window quits here
     /// once its work is done.
     pub fn wake(&mut self, ctx: &mut Ctx) -> Reply {
@@ -130,6 +130,7 @@ impl Explorer {
             .or(self.take_checked(ctx))
             .or(self.take_opened(ctx))
             .or(self.take_gone(ctx))
+            .or(self.take_drives(ctx))
             .filter(|r| *r != Reply::none());
         if let Some(from) = self.watch.as_mut().and_then(|w| w.take_gone()) {
             let r = self.follow_gone(&from, ctx);
