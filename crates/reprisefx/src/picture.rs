@@ -22,7 +22,7 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use reprisekit::glass::{Settings, streak};
-use smithay::backend::renderer::gles::{GlesError, GlesRenderer, GlesTexture};
+use smithay::backend::renderer::gles::{GlesError, GlesFrame, GlesRenderer, GlesTexture};
 use smithay::backend::renderer::utils::{DamageBag, DamageSnapshot};
 use smithay::backend::renderer::{Bind, Frame, Renderer, Texture};
 use smithay::utils::{Buffer, Physical, Rectangle, Size, Transform};
@@ -127,6 +127,24 @@ impl Default for Picture {
     }
 }
 
+/// Draws into the frame's draw binding; see [`Picture::update_drawing`].
+pub type Drawing<'a> = &'a mut dyn FnMut(&mut GlesFrame<'_, '_>) -> Result<(), GlesError>;
+
+/// `draw` run in a frame of its own on `backdrop`.
+fn draw_alone(
+    renderer: &mut GlesRenderer,
+    backdrop: &GlesTexture,
+    draw: Drawing<'_>,
+) -> Result<(), GlesError> {
+    let mut backdrop = backdrop.clone();
+    let size = backdrop.size();
+    let mut target = renderer.bind(&mut backdrop)?;
+    let mut frame = renderer.render(&mut target, (size.w, size.h).into(), Transform::Normal)?;
+    draw(&mut frame)?;
+    let _ = frame.finish()?;
+    Ok(())
+}
+
 impl Picture {
     pub fn new() -> Picture {
         static NEXT: AtomicU64 = AtomicU64::new(1);
@@ -151,6 +169,19 @@ impl Picture {
         renderer: &mut GlesRenderer,
         fx: &GlassFx,
         u: &Update<'_>,
+    ) -> Result<(), GlesError> {
+        self.update_drawing(renderer, fx, u, None)
+    }
+
+    /// As [`Picture::update`], with `draw` making the backdrop's changes first: inside the blur's
+    /// frame when the picture is the backdrop's size, which saves a frame's finish, else in a
+    /// frame of its own.
+    pub fn update_drawing(
+        &mut self,
+        renderer: &mut GlesRenderer,
+        fx: &GlassFx,
+        u: &Update<'_>,
+        mut draw: Option<Drawing<'_>>,
     ) -> Result<(), GlesError> {
         let s = u.settings;
         let key = Key {
@@ -179,7 +210,7 @@ impl Picture {
         });
         let due = self.due();
         if !whole && (due.is_empty() || (u.hold && !self.refresh)) {
-            return Ok(());
+            return draw.map_or(Ok(()), |d| draw_alone(renderer, u.backdrop, d));
         }
         self.refresh = false;
         self.drawn = None;
@@ -196,6 +227,10 @@ impl Picture {
         }
         let across = blur::fit(&mut self.across, renderer, out)?;
         let mut picture = blur::fit(&mut self.picture, renderer, out)?;
+        let draw_inside = self.small.is_none() && picture.size() == u.backdrop.size();
+        if !draw_inside && let Some(d) = draw.take() {
+            draw_alone(renderer, u.backdrop, d)?;
+        }
         if self.clamped.as_ref().map(GlesTexture::tex_id) != Some(u.backdrop.tex_id()) {
             blur::clamp(renderer, u.backdrop)?;
             self.clamped = Some(u.backdrop.clone());
@@ -227,6 +262,9 @@ impl Picture {
         // costs a submission.
         let mut target = renderer.bind(&mut picture)?;
         let mut frame = renderer.render(&mut target, (out.w, out.h).into(), Transform::Normal)?;
+        if let Some(d) = draw {
+            blur::drawing_into(&mut frame, u.backdrop, d)?;
+        }
         let from = match self.small.clone() {
             Some(small) => {
                 // Each texel the mean of the 2x2 backdrop texels under it.
