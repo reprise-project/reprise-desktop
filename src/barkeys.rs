@@ -141,6 +141,7 @@ impl State {
     /// menu it opens takes the arrows with its access keys shown, and Escape
     /// there comes back to the bar.
     fn bar_item_act(&mut self, tree: TreeId, at: TaskbarHit, button: u32) {
+        crate::autohideview::land(self, tree);
         let Some(b) = self.bar(tree) else { return };
         let back = self.bar_shared.keys.map_or(Back::Nobody, |k| k.back);
         if button == BTN_LEFT
