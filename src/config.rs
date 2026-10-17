@@ -4321,6 +4321,19 @@ mod tests {
     }
 
     #[test]
+    fn a_swapped_layout_chord_replaces_the_default_one() {
+        let defaults = Config::default().keybinds;
+        let c = Config::parse("[[keybinds]]\nkeys = \"Alt+Shift_L\"\naction = \"none\"\n").unwrap();
+        assert_eq!(c.keybinds.len(), defaults.len() - 1);
+        assert_eq!(action_on(&c, "Shift+Alt_L"), None);
+
+        let c = Config::parse("[[keybinds]]\nkeys = \"Alt+Shift_L\"\naction = \"lock\"\n").unwrap();
+        assert_eq!(c.keybinds.len(), defaults.len());
+        assert_eq!(action_on(&c, "Shift+Alt_L"), None);
+        assert_eq!(action_on(&c, "Alt+Shift_L"), Some(Action::Lock));
+    }
+
+    #[test]
     fn an_old_full_keybinds_list_gains_super_tab() {
         let text: String = (repriseconf::keybind::DEFAULTS.iter())
             .filter(|(keys, _)| *keys != "Super+Tab")
