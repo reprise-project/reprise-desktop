@@ -245,6 +245,48 @@ fn a_folders_node_read_late_fills_on_a_later_wake() {
     assert_eq!(labels, ["inner"]);
 }
 
+/// A Folders node read again after a file operation (a folder made in it) reads on a listing
+/// thread: one that does not answer (a dead mount) leaves the node as it was and fills on a wake.
+#[test]
+fn a_folders_refill_that_does_not_answer_fills_on_a_later_wake() {
+    let dir = tempfile::Builder::new()
+        .prefix("tree")
+        .tempdir()
+        .expect("a temp dir shown in the tree");
+    std::fs::create_dir(dir.path().join("old")).expect("mkdir");
+    let mut ctx = test_ctx();
+    let here = Place::Folder(dir.path().to_path_buf());
+    let mut ex = test_explorer(here.clone(), &mut ctx);
+    let path = ex.tree_path_of(&here).expect("the folder's node");
+    let labels = |ex: &Explorer| -> Vec<String> {
+        let node = ex.tree.node(&path).expect("node");
+        node.children.iter().map(|n| n.label.clone()).collect()
+    };
+    assert_eq!(labels(&ex), ["old"]);
+
+    std::fs::create_dir(dir.path().join("new")).expect("mkdir");
+    let gate = Arc::new(std::sync::RwLock::new(()));
+    let closed = gate.write().expect("lock");
+    ex.held = Some(gate.clone());
+    ex.refill_tree_node(&here, &mut ctx);
+    assert_eq!(
+        labels(&ex),
+        ["old"],
+        "the node keeps its rows while the read waits"
+    );
+    assert_eq!(ex.filling.len(), 1);
+
+    drop(closed);
+    for _ in 0..500 {
+        if ex.filling.is_empty() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        ex.wake(&mut ctx);
+    }
+    assert_eq!(labels(&ex), ["new", "old"]);
+}
+
 /// Computer's view and its tree node read the drives scanned at the
 /// last `/proc/mounts` change: neither stats the mounts again.
 #[test]

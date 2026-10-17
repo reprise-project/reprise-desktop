@@ -286,26 +286,18 @@ fn child_index(tree: &TreeView, places: &[Place], path: &[usize], want: &Place) 
     level.iter().position(|n| &places[n.id as usize] == want)
 }
 
-/// Re-read the children of the node standing for `place`, when the tree holds one. A folder renamed,
-/// made or deleted in the view changes them, and [`follow`] only fills a node whose children are still empty.
-pub fn refill(
-    tree: &mut TreeView,
-    places: &mut Vec<Place>,
+/// The path of the node standing for `place` when its children are worth reading again: a folder
+/// renamed, made or deleted in the view changes them. Only an opened node (with children, or read
+/// empty) qualifies; an unopened one fills correctly when opened.
+pub fn refill_path(
+    tree: &TreeView,
+    places: &[Place],
     place: &Place,
-    inp: &Inputs,
-    icons: &mut IconCache,
-) {
-    let Some(path) = path_of(tree, places, place, inp.drive_mounts) else {
-        return;
-    };
-    // Only an opened node (with children, or read empty) is worth re-reading; an unopened one fills correctly when opened.
-    if tree
-        .node(&path)
-        .is_none_or(|n| n.children.is_empty() && n.has_children)
-    {
-        return;
-    }
-    fill(tree, places, path, inp, icons);
+    mounts: &[PathBuf],
+) -> Option<Vec<usize>> {
+    let path = path_of(tree, places, place, mounts)?;
+    let n = tree.node(&path)?;
+    (!(n.children.is_empty() && n.has_children)).then_some(path)
 }
 
 /// Walk the tree down to `place`, expanding and filling what it takes, and select it. The chain is
@@ -417,7 +409,8 @@ mod tests {
 
         std::fs::create_dir(home.path().join("a")).expect("mkdir a");
         let here = Place::Folder(home.path().to_path_buf());
-        refill(&mut tree, &mut places, &here, &inp, &mut icons);
+        let path = refill_path(&tree, &places, &here, &mounts).expect("an opened node");
+        fill(&mut tree, &mut places, path, &inp, &mut icons);
 
         let b = Place::Folder(home.path().join("b"));
         let b_path = path_of(&tree, &places, &b, &mounts).expect("b's node");

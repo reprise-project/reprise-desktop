@@ -26,10 +26,31 @@ impl Explorer {
         if self.filling.iter().any(|(p, _)| *p == place) {
             return;
         }
-        let job = Job::spawn(Some(&ctx.wake), self.kids_reader(&path, place.clone()));
+        match self.read_job(ctx, self.kids_reader(&path, place.clone())) {
+            Ok(kids) => self.fill_read(&place, kids, ctx),
+            Err(job) => self.filling.push((place, job)),
+        }
+    }
+
+    /// Runs `read` on a listing thread and waits [`LIST_WAIT`] for it; a later answer (a dead
+    /// mount) comes back as the job, for a wake to take.
+    pub(crate) fn read_job<T: Send + 'static>(
+        &self,
+        ctx: &Ctx,
+        read: impl FnOnce() -> T + Send + 'static,
+    ) -> Result<T, Job<T>> {
+        #[cfg(test)]
+        if let Some(gate) = self.held.clone() {
+            let job = Job::spawn(Some(&ctx.wake), move || {
+                drop(gate.read());
+                read()
+            });
+            return job.take().ok_or(job);
+        }
+        let job = Job::spawn(Some(&ctx.wake), read);
         match job.wait(LIST_WAIT) {
-            Some(kids) => self.fill_read(&place, kids, ctx),
-            None => self.filling.push((place, job)),
+            Some(answer) => Ok(answer),
+            None => Err(job),
         }
     }
 
@@ -123,21 +144,15 @@ impl Explorer {
         foldertree::path_of(&self.tree, &self.tree_places, place, &self.drive_mounts)
     }
 
-    /// [`Explorer::tree_follow`] only fills a node whose children are still empty.
+    /// Reads the children of the node standing for `place` again when it was opened, off the loop
+    /// as [`Explorer::fill_node`] reads: [`Explorer::tree_follow`] only fills a node whose children
+    /// are still empty. A read of the node still in flight stands for this one.
     pub fn refill_tree_node(&mut self, place: &Place, ctx: &mut Ctx) {
-        let inp = Inputs {
-            show_hidden: self.settings.show_hidden,
-            drives: &self.drives,
-            volumes: &self.volumes,
-            drive_mounts: &self.drive_mounts,
-        };
-        foldertree::refill(
-            &mut self.tree,
-            &mut self.tree_places,
-            place,
-            &inp,
-            &mut ctx.icons,
-        );
+        if let Some(path) =
+            foldertree::refill_path(&self.tree, &self.tree_places, place, &self.drive_mounts)
+        {
+            self.fill_node(path, ctx);
+        }
     }
 
     pub fn tree_follow(&mut self, place: &Place, ctx: &mut Ctx) {
