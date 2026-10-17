@@ -114,53 +114,71 @@ impl Pool {
             return Ok(());
         };
         let size = front.size();
-        let mut seg = [[0.0f32; 4]; SPLASHES_PER_STEP];
-        let mut radius = [1.0f32; 4];
-        let mut depth = [0.0f32; 4];
-        for (i, s) in splashes.iter().take(SPLASHES_PER_STEP).enumerate() {
-            seg[i] = [s.from.0, s.from.1, s.to.0, s.to.1];
-            radius[i] = s.radius.max(0.5);
-            depth[i] = s.depth;
-        }
-        let uniforms = [
-            Uniform::new("size", [size.w as f32, size.h as f32]),
-            Uniform::new("damping", step.damping),
-            Uniform::new("c2", step.c2),
-            Uniform::new("seed", (self.steps % 4096) as f32),
-            Uniform::new("seg0", seg[0]),
-            Uniform::new("seg1", seg[1]),
-            Uniform::new("seg2", seg[2]),
-            Uniform::new("seg3", seg[3]),
-            Uniform::new("radius", radius),
-            Uniform::new("depth", depth),
-        ];
-        let src = Rectangle::from_size(size.to_f64());
-        let full = Rectangle::from_size((size.w, size.h).into());
-        let inside: Vec<_> = obstacles
-            .iter()
-            .filter_map(|o| o.intersection(full))
-            .collect();
+        let inside = inside(obstacles, size);
+        let seed = self.steps;
         // One frame for the step and the obstacles: each frame's finish costs a submission.
         nearest(r, |r| {
             let mut target = r.bind(back)?;
             let mut frame = r.render(&mut target, (size.w, size.h).into(), Transform::Normal)?;
-            frame.render_texture_from_to(
-                &front,
-                src,
-                full,
-                &[full],
-                &[full],
-                Transform::Normal,
-                1.0,
-                Some(&fx.step),
-                &uniforms,
-            )?;
-            rest_in(&mut frame, &fx.rest, &inside)?;
+            draw_step(&mut frame, fx, &front, splashes, &inside, step, seed)?;
             let _ = frame.finish()?;
             Ok(())
         })?;
         std::mem::swap(&mut self.front, &mut self.back);
         self.steps = self.steps.wrapping_add(1);
+        Ok(())
+    }
+
+    /// A step for each entry of `splashes` (its splashes laid in that step), then the normals at
+    /// `gain`: all in one frame, as each frame's finish costs a submission. None when empty.
+    pub fn advance(
+        &mut self,
+        r: &mut GlesRenderer,
+        fx: &WaterFx,
+        splashes: &[Vec<Splash>],
+        obstacles: &[Rectangle<i32, Physical>],
+        step: Step,
+        gain: f32,
+    ) -> Result<(), GlesError> {
+        let (Some(front), Some(back), Some(mut normals)) =
+            (self.front.clone(), self.back.clone(), self.normals.clone())
+        else {
+            return Ok(());
+        };
+        if splashes.is_empty() {
+            return Ok(());
+        }
+        let size = front.size();
+        let inside = inside(obstacles, size);
+        let seed = self.steps;
+        // The frame's target is the normals: a texture bound as a target cannot be read until its
+        // frame ends, and the steps read each other's.
+        nearest(r, |r| {
+            let mut target = r.bind(&mut normals)?;
+            let mut frame = r.render(&mut target, (size.w, size.h).into(), Transform::Normal)?;
+            for (i, s) in splashes.iter().enumerate() {
+                let seed = seed.wrapping_add(i as u32);
+                let (from, to) = match i % 2 {
+                    0 => (&front, &back),
+                    _ => (&back, &front),
+                };
+                blur::drawing_into(&mut frame, to, |frame| {
+                    draw_step(frame, fx, from, s, &inside, step, seed)
+                })?;
+            }
+            let last = match splashes.len() % 2 {
+                1 => &back,
+                _ => &front,
+            };
+            draw_normals(&mut frame, fx, last, gain)?;
+            let _ = frame.finish()?;
+            Ok(())
+        })?;
+        if splashes.len() % 2 == 1 {
+            std::mem::swap(&mut self.front, &mut self.back);
+        }
+        self.steps = self.steps.wrapping_add(splashes.len() as u32);
+        self.shaded();
         Ok(())
     }
 
@@ -174,27 +192,21 @@ impl Pool {
             return Ok(());
         };
         let size = front.size();
-        let uniforms = [
-            Uniform::new("size", [size.w as f32, size.h as f32]),
-            Uniform::new("gain", gain),
-        ];
-        let src = Rectangle::from_size(size.to_f64());
-        let full = Rectangle::from_size((size.w, size.h).into());
         nearest(r, |r| {
-            blur::pass_from(
-                r,
-                &front,
-                src,
-                normals,
-                Some(&fx.normals),
-                &uniforms,
-                &[full],
-            )
+            let mut target = r.bind(normals)?;
+            let mut frame = r.render(&mut target, (size.w, size.h).into(), Transform::Normal)?;
+            draw_normals(&mut frame, fx, &front, gain)?;
+            let _ = frame.finish()?;
+            Ok(())
         })?;
+        self.shaded();
+        Ok(())
+    }
+
+    fn shaded(&self) {
         let mut c = self.commit.get();
         c.increment();
         self.commit.set(c);
-        Ok(())
     }
 
     pub(crate) fn normals(&self) -> Option<&GlesTexture> {
@@ -255,6 +267,93 @@ fn nearest<T>(
     r.downscale_filter(TextureFilter::Linear)?;
     r.upscale_filter(TextureFilter::Linear)?;
     out
+}
+
+/// The obstacles' parts inside a field of `size`.
+fn inside(
+    obstacles: &[Rectangle<i32, Physical>],
+    size: Size<i32, Buffer>,
+) -> Vec<Rectangle<i32, Physical>> {
+    let full = Rectangle::from_size((size.w, size.h).into());
+    obstacles
+        .iter()
+        .filter_map(|o| o.intersection(full))
+        .collect()
+}
+
+/// One step of the field in `from` with `splashes` laid in, drawn whole into the frame's
+/// target, the obstacles' parts `inside` left at rest.
+fn draw_step(
+    frame: &mut GlesFrame<'_, '_>,
+    fx: &WaterFx,
+    from: &GlesTexture,
+    splashes: &[Splash],
+    inside: &[Rectangle<i32, Physical>],
+    step: Step,
+    steps: u32,
+) -> Result<(), GlesError> {
+    let size = from.size();
+    let mut seg = [[0.0f32; 4]; SPLASHES_PER_STEP];
+    let mut radius = [1.0f32; 4];
+    let mut depth = [0.0f32; 4];
+    for (i, s) in splashes.iter().take(SPLASHES_PER_STEP).enumerate() {
+        seg[i] = [s.from.0, s.from.1, s.to.0, s.to.1];
+        radius[i] = s.radius.max(0.5);
+        depth[i] = s.depth;
+    }
+    let uniforms = [
+        Uniform::new("size", [size.w as f32, size.h as f32]),
+        Uniform::new("damping", step.damping),
+        Uniform::new("c2", step.c2),
+        Uniform::new("seed", (steps % 4096) as f32),
+        Uniform::new("seg0", seg[0]),
+        Uniform::new("seg1", seg[1]),
+        Uniform::new("seg2", seg[2]),
+        Uniform::new("seg3", seg[3]),
+        Uniform::new("radius", radius),
+        Uniform::new("depth", depth),
+    ];
+    let src = Rectangle::from_size(size.to_f64());
+    let full = Rectangle::from_size((size.w, size.h).into());
+    frame.render_texture_from_to(
+        from,
+        src,
+        full,
+        &[full],
+        &[full],
+        Transform::Normal,
+        1.0,
+        Some(&fx.step),
+        &uniforms,
+    )?;
+    rest_in(frame, &fx.rest, inside)
+}
+
+/// The normals of the field in `from` at slope `gain`, drawn whole into the frame's target.
+fn draw_normals(
+    frame: &mut GlesFrame<'_, '_>,
+    fx: &WaterFx,
+    from: &GlesTexture,
+    gain: f32,
+) -> Result<(), GlesError> {
+    let size = from.size();
+    let uniforms = [
+        Uniform::new("size", [size.w as f32, size.h as f32]),
+        Uniform::new("gain", gain),
+    ];
+    let src = Rectangle::from_size(size.to_f64());
+    let full = Rectangle::from_size((size.w, size.h).into());
+    frame.render_texture_from_to(
+        from,
+        src,
+        full,
+        &[full],
+        &[full],
+        Transform::Normal,
+        1.0,
+        Some(&fx.normals),
+        &uniforms,
+    )
 }
 
 fn fill(

@@ -635,3 +635,58 @@ fn an_unchanged_field_reports_no_damage() {
         "a new wallpaper redraws all of it"
     );
 }
+
+/// The wallpaper drawn through `p` on a 64 x 48 output.
+fn through(r: &mut GlesRenderer, fx: &WaterFx, p: &Pool, wall: &GlesTexture) -> Vec<[u8; 3]> {
+    let geo = Rectangle::from_size((64, 48).into());
+    let el = p
+        .element(
+            fx,
+            &Id::new(),
+            wall,
+            CommitCounter::default(),
+            geo,
+            12.0,
+            0.3,
+            1.0,
+        )
+        .unwrap();
+    shoot(r, el, 64, 48, Transform::Normal)
+}
+
+#[test]
+fn steps_and_normals_in_one_frame_match_a_frame_each() {
+    let Some((mut r, fx)) = rig() else { return };
+    let wall = picture(&mut r, 64, 48, checker);
+    let obstacles = [Rectangle::new((10, 2).into(), (3, 4).into())];
+    let laid = [
+        vec![Splash::disc((4.5, 4.5), 2.0, -0.8)],
+        vec![Splash::segment((2.0, 9.0), (14.0, 9.0), 1.5, 0.6)],
+        vec![],
+        vec![Splash::disc((12.5, 8.5), 1.0, 0.5)],
+        vec![],
+    ];
+    for n in [1, 2, 3, 5] {
+        let mut apart = pool(&mut r, &fx, 16, 12);
+        let mut chained = pool(&mut r, &fx, 16, 12);
+        for _ in 0..2 {
+            for s in &laid[..n] {
+                apart.step(&mut r, &fx, s, &obstacles, calm()).unwrap();
+            }
+            apart.shade(&mut r, &fx, 4.0).unwrap();
+            chained
+                .advance(&mut r, &fx, &laid[..n], &obstacles, calm(), 4.0)
+                .unwrap();
+        }
+        assert_eq!(
+            chained.heights(&mut r).unwrap(),
+            apart.heights(&mut r).unwrap(),
+            "{n} steps a frame: the same field"
+        );
+        assert_eq!(
+            through(&mut r, &fx, &chained, &wall),
+            through(&mut r, &fx, &apart, &wall),
+            "{n} steps a frame: the same normals"
+        );
+    }
+}
