@@ -956,13 +956,17 @@ impl State {
             Interaction::Idle => {}
         }
         let hit = self.scene_hit(pos);
-        // Off the taskbar, the dialogs, the desktop's icons and the Glass
-        // Start menu's spots the tip goes, and none is owed.
+        // Off the taskbar, the dialogs, the desktop's icons, the caption
+        // buttons and the Glass Start menu's spots the tip goes, and none is owed.
         if !matches!(
             hit,
             Hit::Taskbar { .. }
                 | Hit::Dialog { .. }
                 | Hit::Desktop { index: Some(_) }
+                | Hit::Frame {
+                    hit: FrameHit::Button(_),
+                    ..
+                }
                 | Hit::StartPanel { spot: Some(_) }
         ) {
             crate::tooltip::hide(self);
@@ -1064,6 +1068,7 @@ impl State {
                 self.set_cursor(name);
                 self.frame_hover(Some(window), hit);
                 crate::snappickerview::hover_frame(self, window, hit);
+                crate::tooltip::hover_caption(self, window, hit);
             }
             Hit::SnapPicker { zone } => {
                 self.pointer_motion(None, pos, time);

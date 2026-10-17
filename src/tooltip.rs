@@ -3,6 +3,7 @@
 
 use std::time::Duration;
 
+use reprisekit::classic::frame::{CaptionButton, FrameHit};
 use reprisekit::controls::tooltip::{
     INFO_BELOW_POINTER, INFO_BELOW_ROW, SHOW_MS, balloon_size, draw_balloon_tip, draw_info_tip,
     draw_tip, info_size, place, place_balloon, place_below, place_beside, task_tip, tip_size,
@@ -19,6 +20,7 @@ use crate::compositor::State;
 use crate::output::upload_scaled;
 use crate::raster::Rect;
 use crate::taskbar::TaskbarHit;
+use crate::window::WindowId;
 
 const HIDE_MS: u64 = 5000;
 
@@ -29,6 +31,7 @@ enum Target {
     Menu { depth: usize, row: usize },
     Desktop(usize),
     StartPanel(Spot),
+    Caption(WindowId, CaptionButton),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -124,6 +127,33 @@ pub fn hover_desktop(state: &mut State, index: Option<usize>) {
         let place = crate::desktop::shell_place(&view.entries.get(i)?.kind)?;
         Some(Tip::Icon(vec![place.tip().to_string()]))
     });
+}
+
+pub fn hover_caption(state: &mut State, window: WindowId, hit: FrameHit) {
+    let FrameHit::Button(button) = hit else {
+        if state.tooltip.any(|t| matches!(t, Target::Caption(..))) {
+            hide(state);
+        }
+        return;
+    };
+    rest_on(state, Target::Caption(window, button), |s| {
+        let win = s.win(window)?;
+        let snap = (button == CaptionButton::Maximize && win.snappable())
+            .then(|| snap_layouts_keys(&s.config.keybinds))
+            .flatten();
+        Some(Tip::Label(caption_tip(
+            button,
+            win.maximized,
+            snap.as_deref(),
+        )))
+    });
+}
+
+/// The `snap-layouts` bind's first chord, as an accelerator reads.
+fn snap_layouts_keys(binds: &[crate::config::Keybind]) -> Option<String> {
+    (binds.iter())
+        .find(|b| b.action == crate::config::Action::SnapLayouts)
+        .map(|b| crate::winmenu::keybind_label(b.mods, b.keysym))
 }
 
 pub fn hover_menu(state: &mut State, depth: usize, row: Option<usize>) {
@@ -230,6 +260,7 @@ fn fired(state: &mut State) {
         Target::Menu { depth, .. } => state.menus.get(depth).map(|m| m.output.clone()),
         Target::Desktop(_) => state.output_at(cursor.x, cursor.y),
         Target::StartPanel(_) => state.start_panel_output(),
+        Target::Caption(..) => state.output_at(cursor.x, cursor.y),
     };
     let Some(output) = output else {
         return;
@@ -253,8 +284,13 @@ fn show_tip(state: &mut State, target: Target, tip: &Tip, output: &Output, curso
     // A taskbar tip opens on the screen side of the bar: above the
     // pointer over a bottom bar, under it below a top bar, beside a side
     // bar level with the pointer.
+    // A caption button's tip opens under the pointer, or over it while the
+    // snap layout picker hangs under the maximize button.
     let p = state.bar_placement(output);
-    let below = p.edge == reprisekit::taskbar::Edge::Top;
+    let below = match target {
+        Target::Caption(..) => !state.snap_picker.is_shown(),
+        _ => p.edge == reprisekit::taskbar::Edge::Top,
+    };
     let beside = matches!(target, Target::Taskbar { .. }) && p.edge.is_side();
     let (canvas, (x, y)) = match tip {
         Tip::Label(label) => {
@@ -312,6 +348,21 @@ fn menu_row_rect(state: &State, depth: usize, row: usize) -> Option<Rect> {
     let m = state.menus.get(depth)?;
     let r = *m.layout.rows.get(row)?;
     Some(Rect::new(m.x + r.x, m.y + r.y, r.width, r.height))
+}
+
+/// A caption button's tip; the maximize button's names the `snap-layouts`
+/// keys on a second line when they are bound.
+fn caption_tip(button: CaptionButton, maximized: bool, snap_keys: Option<&str>) -> String {
+    let name = match button {
+        CaptionButton::Minimize => "Minimize",
+        CaptionButton::Maximize if maximized => "Restore Down",
+        CaptionButton::Maximize => "Maximize",
+        CaptionButton::Close => "Close",
+    };
+    match snap_keys {
+        Some(keys) if button == CaptionButton::Maximize => format!("{name}\nSnap layouts: {keys}"),
+        _ => name.to_string(),
+    }
 }
 
 fn chevron_tip(arrow: bool, open: bool) -> &'static str {
@@ -423,6 +474,36 @@ mod tests {
         );
         assert!(!v.holds_back(icon), "another target gets its tip");
         assert!(!v.holds_back(arrow), "and the pressed one again after that");
+    }
+
+    #[test]
+    fn the_maximize_tip_names_the_snap_layouts_keys_when_bound() {
+        use CaptionButton::{Close, Maximize, Minimize};
+        let keys = Some("Super+Z");
+        assert_eq!(
+            caption_tip(Maximize, false, keys),
+            "Maximize\nSnap layouts: Super+Z"
+        );
+        assert_eq!(
+            caption_tip(Maximize, true, Some("Ctrl+Alt+L")),
+            "Restore Down\nSnap layouts: Ctrl+Alt+L",
+            "a rebound key shows"
+        );
+        assert_eq!(caption_tip(Maximize, false, None), "Maximize", "unbound");
+        assert_eq!(caption_tip(Minimize, false, keys), "Minimize");
+        assert_eq!(caption_tip(Close, true, keys), "Close");
+    }
+
+    #[test]
+    fn the_snap_layouts_keys_read_from_the_bind() {
+        use crate::config::Config;
+        let keys = |toml: &str| snap_layouts_keys(&Config::parse(toml).unwrap().keybinds);
+        assert_eq!(keys("").as_deref(), Some("Super+Z"));
+        let unbound = "[[keybinds]]\nkeys = \"Super+z\"\naction = \"none\"\n";
+        assert_eq!(keys(unbound), None);
+        let rebound =
+            format!("{unbound}[[keybinds]]\nkeys = \"Ctrl+Alt+l\"\naction = \"snap-layouts\"\n");
+        assert_eq!(keys(&rebound).as_deref(), Some("Ctrl+Alt+L"));
     }
 
     #[test]
