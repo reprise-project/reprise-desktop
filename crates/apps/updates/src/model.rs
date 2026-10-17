@@ -369,6 +369,20 @@ pub fn request_balloon(r: &Request) -> (String, String) {
     (summary.into(), r.message.clone())
 }
 
+/// The balloon closing the window sends: a request to do now, which only the headline showed.
+pub fn closed_balloon(phase: &Phase) -> Option<(String, String)> {
+    match phase {
+        Phase::Installing {
+            request: Some(message),
+            ..
+        } => Some(request_balloon(&Request {
+            message: message.clone(),
+            now: true,
+        })),
+        _ => None,
+    }
+}
+
 /// `[power] reboot` from the config, the command the Turn Off dialog's Restart runs too.
 pub fn reboot_command(config: &str) -> String {
     config
@@ -381,6 +395,22 @@ pub fn reboot_command(config: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn closing_on_a_request_to_do_now_balloons_it_and_closing_otherwise_does_not() {
+        let installing = |request: Option<&str>| Phase::Installing {
+            fraction: Some(0.5),
+            doing: "Waiting for you".into(),
+            request: request.map(String::from),
+        };
+        let replug = "Unplug Webcam and plug it back in to continue the update.";
+        assert_eq!(
+            closed_balloon(&installing(Some(replug))),
+            Some(("Firmware update needs you".into(), replug.into()))
+        );
+        assert_eq!(closed_balloon(&installing(None)), None);
+        assert_eq!(closed_balloon(&Phase::Ready), None);
+    }
 
     fn pkg(name: &str, kind: Kind) -> Update {
         Update {
