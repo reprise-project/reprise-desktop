@@ -114,6 +114,17 @@ fn font_family_in(text: &str) -> Option<Vec<String>> {
     families.filter(|f| !f.is_empty())
 }
 
+/// `[fonts] antialias`, read now; `None` when unset or not a boolean.
+pub fn font_antialias() -> Option<bool> {
+    let text = std::fs::read_to_string(config_path()).unwrap_or_default();
+    font_antialias_in(&text)
+}
+
+fn font_antialias_in(text: &str) -> Option<bool> {
+    let doc = text.parse::<DocumentMut>().ok()?;
+    get(&doc, &key("fonts", "antialias"))?.as_bool()
+}
+
 pub fn text_size() -> u32 {
     let text = std::fs::read_to_string(config_path()).unwrap_or_default();
     text_size_in(&text)
@@ -586,6 +597,17 @@ mod tests {
         assert_eq!(
             font_family_in("[fonts]\nfamily = [\"DejaVu Sans\", \"Noto Sans\"]\n"),
             Some(vec!["DejaVu Sans".into(), "Noto Sans".into()])
+        );
+    }
+
+    #[test]
+    fn font_antialias_is_read_when_a_boolean() {
+        assert_eq!(font_antialias_in(""), None);
+        assert_eq!(font_antialias_in("[fonts]\nantialias = \"yes\"\n"), None);
+        assert_eq!(font_antialias_in("[fonts]\nantialias = true\n"), Some(true));
+        assert_eq!(
+            font_antialias_in("[fonts]\nantialias = false\n"),
+            Some(false)
         );
     }
 
