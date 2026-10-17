@@ -93,6 +93,33 @@ struct Partner {
     start: Rect,
 }
 
+/// A follower, the frame it started from, and the (dragged side, own side) pairs it rides.
+type Follower = (WindowId, Rect, Vec<(Edges, Edges)>);
+
+/// Each follower once; its frame is its first entry's.
+fn partner_sides(partners: &[Partner]) -> Vec<Follower> {
+    let mut out: Vec<Follower> = Vec::new();
+    for p in partners {
+        match out.iter_mut().find(|o| o.0 == p.window) {
+            Some(o) => o.2.push((p.side, p.edge)),
+            None => out.push((p.window, p.start, vec![(p.side, p.edge)])),
+        }
+    }
+    out
+}
+
+/// A follower that started at `start`, its sides moved onto the lines of `r` it rides
+/// (`sides`, as `partner_sides` gives them), and the edges of its own that moved.
+fn followed(start: Rect, sides: &[(Edges, Edges)], r: Rect) -> (Rect, Edges) {
+    let mut next = start;
+    let mut edges = Edges::NONE;
+    for &(side, edge) in sides {
+        next = crate::snap::follow(next, edge, crate::snap::side_at(r, side));
+        edges |= edge;
+    }
+    (next, edges)
+}
+
 impl Snapping {
     /// `w` starts its own group in zone `zone`, leaving any other.
     pub fn new_group(
@@ -489,15 +516,6 @@ impl Snapping {
         }
     }
 
-    /// A keyboard size of `w` was committed; any moved side took it off its zone, so it leaves
-    /// its group. Runs before `end_group_resize`.
-    pub fn end_key_resize(&mut self, w: WindowId, origin: Rect, edges: Edges) {
-        let moved = (self.last).is_some_and(|r| crate::snap::lone_side(origin, r, edges, &[]));
-        if moved {
-            self.leave_group(w);
-        }
-    }
-
     pub fn forget_window(&mut self, w: WindowId) {
         if let Some(output) = self.remove(w) {
             self.drop_unheld_layout(&output);
@@ -775,9 +793,18 @@ impl State {
     /// a dragged side's line come along.
     pub(crate) fn begin_group_resize(&mut self, w: WindowId, edges: Edges, start: Rect) {
         self.end_group_resize();
+        self.widen_group_resize(w, edges, start);
+    }
+
+    /// A keyboard size of `w` that began at `start` now sizes `edges`: the sides it picks one
+    /// by one bring their followers along, as a drag's do.
+    pub(crate) fn widen_group_resize(&mut self, w: WindowId, edges: Edges, start: Rect) {
         let Some(g) = self.wm.snap.group_of(w) else {
             return;
         };
+        let had = (self.wm.snap.resize)
+            .filter(|r| r.0 == w)
+            .map_or(Edges::NONE, |r| r.2);
         let mut others: Vec<(WindowId, Rect)> = Vec::new();
         for win in &self.windows {
             let free = win.mapped && !win.minimized && !win.maximized && !win.fullscreen;
@@ -791,7 +818,7 @@ impl State {
         }
         let frames: Vec<Rect> = others.iter().map(|o| o.1).collect();
         let mut partners = Vec::new();
-        for side in crate::snap::sides(edges) {
+        for side in crate::snap::sides(edges).filter(|&s| !had.contains(s)) {
             for (i, edge) in crate::snap::line_followers(start, side, &frames) {
                 partners.push(Partner {
                     window: others[i].0,
@@ -808,7 +835,7 @@ impl State {
             self.set_resizing(p.window, true);
         }
         self.wm.snap.resize = Some((w, start, edges));
-        self.wm.snap.partners = partners;
+        self.wm.snap.partners.extend(partners);
     }
 
     /// `r`, the drag's frame for its window, held back so followers keep their smallest size.
@@ -828,14 +855,14 @@ impl State {
         r
     }
 
-    /// Move each follower's side onto `r`; left and top sides are placed once the client's size
+    /// Move each follower's sides onto `r`; left and top sides are placed once the client's size
     /// lands.
     pub(crate) fn drag_partners(&mut self, r: Rect) {
         self.wm.snap.last = Some(r);
-        for p in self.wm.snap.partners.clone() {
-            let next = crate::snap::follow(p.start, p.edge, crate::snap::side_at(r, p.side));
+        for (window, start, sides) in partner_sides(&self.wm.snap.partners) {
+            let (next, edges) = followed(start, &sides, r);
             let m = &self.config.theme.metrics;
-            let Some(win) = self.win(p.window) else {
+            let Some(win) = self.win(window) else {
                 continue;
             };
             let client = FrameGeometry::client_size_for_total(
@@ -846,15 +873,40 @@ impl State {
                 win.chrome(),
             );
             let (cw, ch) = crate::snap::commit_size(client, win.size_limits());
-            let anchored = p.edge == Edges::LEFT || p.edge == Edges::TOP;
-            if let Some(win) = self.win_mut(p.window) {
+            let anchored = edges.intersects(Edges::LEFT | Edges::TOP);
+            if let Some(win) = self.win_mut(window) {
                 win.resize_anchor = anchored.then_some(crate::window::ResizeAnchor {
-                    edges: p.edge,
-                    right: p.start.right(),
-                    bottom: p.start.bottom(),
+                    edges,
+                    right: start.right(),
+                    bottom: start.bottom(),
                 });
             }
-            self.request_size(p.window, cw, ch);
+            self.request_size(window, cw, ch);
+        }
+    }
+
+    /// Escape on a keyboard size: the followers go back to where they started and the group's
+    /// zones stay.
+    pub(crate) fn cancel_group_resize(&mut self) {
+        let partners = std::mem::take(&mut self.wm.snap.partners);
+        self.wm.snap.resize = None;
+        self.wm.snap.last = None;
+        for (window, start, _) in partner_sides(&partners) {
+            self.set_resizing(window, false);
+            let m = &self.config.theme.metrics;
+            let Some(win) = self.win(window) else {
+                continue;
+            };
+            let client = FrameGeometry::client_size_for_total(
+                m,
+                start.width,
+                start.height,
+                false,
+                win.chrome(),
+            );
+            let (cw, ch) = crate::snap::commit_size(client, win.size_limits());
+            self.move_to(window, start.x, start.y);
+            self.request_size(window, cw, ch);
         }
     }
 
@@ -1786,23 +1838,43 @@ mod tests {
     }
 
     #[test]
-    fn a_keyboard_size_that_moves_a_side_leaves_the_group() {
-        let (a, b) = (WindowId::next(), WindowId::next());
-        let mut s = Snapping::default();
-        let g = s.new_group(a, "DP-1", &halves(), Splits::new(&halves(), WORK), 0);
-        s.join_group(a, b, 1);
-        let left = Rect::new(0, 0, 960, 1032);
-        // Enter with no arrow: nothing moved, the window stays.
-        s.end_key_resize(a, left, Edges::NONE);
-        assert_eq!(s.group_of(a), Some(g), "no size given");
-        s.last = Some(left);
-        s.end_key_resize(a, left, Edges::LEFT);
-        assert_eq!(s.group_of(a), Some(g), "a side picked, not moved");
-        // The outer edge pulled in by a step.
-        s.last = Some(Rect::new(24, 0, 936, 1032));
-        s.end_key_resize(a, left, Edges::LEFT);
-        assert_eq!(s.group_of(a), None, "the outer edge left the zone");
-        assert_eq!(s.group_of(b), Some(g), "the other member stays");
+    fn a_follower_riding_two_sides_takes_both_from_its_first_frame() {
+        let (tr, bl) = (WindowId::next(), WindowId::next());
+        let tr_start = Rect::new(960, 0, 960, 516);
+        let partners = [
+            Partner {
+                window: tr,
+                side: Edges::RIGHT,
+                edge: Edges::LEFT,
+                start: tr_start,
+            },
+            Partner {
+                window: bl,
+                side: Edges::BOTTOM,
+                edge: Edges::TOP,
+                start: Rect::new(0, 516, 960, 516),
+            },
+            // Picked second, after the first side had moved it.
+            Partner {
+                window: tr,
+                side: Edges::BOTTOM,
+                edge: Edges::BOTTOM,
+                start: Rect::new(1000, 0, 920, 516),
+            },
+        ];
+        let by = partner_sides(&partners);
+        assert_eq!(by.len(), 2, "each follower once");
+        let (w, start, sides) = &by[0];
+        assert_eq!((*w, *start), (tr, tr_start), "its first entry's frame");
+        let sized = Rect::new(0, 0, 1040, 600);
+        assert_eq!(
+            followed(*start, sides, sized),
+            (Rect::new(1040, 0, 880, 600), Edges::LEFT | Edges::BOTTOM)
+        );
+        assert_eq!(
+            followed(by[1].1, &by[1].2, sized),
+            (Rect::new(0, 600, 960, 432), Edges::TOP)
+        );
     }
 
     #[test]
