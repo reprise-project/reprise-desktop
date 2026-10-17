@@ -398,6 +398,8 @@ pub fn route(modes: &Modes, k: &KeyPress, binds: &[Keybind], globals: &[GlobalBi
         let snaps = bound(k, binds);
         return with(if own(Action::Overview) {
             KeyRoute::Binds(vec![Action::Overview])
+        } else if let Some(r) = switch() {
+            r
         } else if modes.snap_assist_open
             && !snaps.is_empty()
             && snaps.iter().all(|a| matches!(a, Action::Snap(_)))
@@ -408,10 +410,12 @@ pub fn route(modes: &Modes, k: &KeyPress, binds: &[Keybind], globals: &[GlobalBi
         });
     }
     // The snap layout picker the bind opened takes every press but its
-    // bind; one the pointer opened takes only Escape.
+    // bind and the switchers'; one the pointer opened takes only Escape.
     if modes.snap_picker_keys && k.pressed {
         return with(if own(Action::SnapLayouts) {
             KeyRoute::Binds(vec![Action::SnapLayouts])
+        } else if let Some(r) = switch() {
+            r
         } else {
             KeyRoute::SnapPicker(k.syms.first().copied().unwrap_or(0))
         });
@@ -2050,6 +2054,40 @@ mod tests {
         assert_eq!(
             route(&overview, &snap, &bind, &[]).route,
             KeyRoute::Overview
+        );
+    }
+
+    #[test]
+    fn alt_tab_reaches_the_switcher_past_the_overview_and_the_snap_picker() {
+        let overview = Modes {
+            overview_open: true,
+            ..Modes::default()
+        };
+        let assist = Modes {
+            snap_assist_open: true,
+            ..overview.clone()
+        };
+        let picker = Modes {
+            snap_picker_open: true,
+            snap_picker_keys: true,
+            ..Modes::default()
+        };
+        let cycle = KeyRoute::Binds(vec![Action::Cycle]);
+        for m in [&overview, &assist, &picker] {
+            assert_eq!(r(m, &press(KEY_Tab, MOD_ALT)), cycle);
+            assert_eq!(
+                r(m, &press(KEY_Tab, MOD_LOGO)),
+                KeyRoute::Binds(vec![Action::Flip])
+            );
+        }
+        assert_eq!(
+            r(&overview, &press(KEY_Tab, 0)),
+            KeyRoute::Overview,
+            "plain Tab walks the cards"
+        );
+        assert_eq!(
+            r(&picker, &press(KEY_Tab, 0)),
+            KeyRoute::SnapPicker(KEY_Tab)
         );
     }
 
