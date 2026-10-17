@@ -1694,6 +1694,10 @@ fn the_replace_prompt_asks_per_clash_and_carries_out_each_answer() {
         matches!(&ex.dialog, Some(Dialog::Replace(r)) if r.fields.many),
         "a file inside a merge offers Yes to All"
     );
+    assert!(
+        matches!(&ex.dialog, Some(Dialog::Replace(r)) if r.fields.folder.as_deref() == Some("Reports")),
+        "a file inside a merge names the folder 'Reports'"
+    );
     ex.dialog_event(key_event_alt('y'), &mut ctx);
     assert!(ex.dialog.is_none());
     ex.finish_puts(&mut ctx);

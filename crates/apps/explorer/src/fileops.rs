@@ -345,7 +345,10 @@ impl Explorer {
                     }
                     None => (item.clone(), pending.dir.clone()),
                 };
-                let fields = self.replace_fields(&src, &dir, clash, many, ctx);
+                let mut fields = self.replace_fields(&src, &dir, clash, many, ctx);
+                fields.folder = inside
+                    .as_deref()
+                    .map(|under| replace::merge_folder(item, under));
                 self.dialog = Some(Dialog::Replace(Box::new(ReplaceAsk {
                     fields,
                     asker,
@@ -399,6 +402,7 @@ impl Explorer {
         };
         replacebox::Fields {
             name: file_label(src),
+            folder: None,
             subject,
             icon: crate::chrome_icon(ctx, &["folder"], 32),
             many,

@@ -317,6 +317,14 @@ pub fn modified_text(secs: i64, is_12h: bool) -> String {
     format!("modified: {}", crate::props::format_time(secs, is_12h))
 }
 
+/// The folder the file `under` the merged folder `item` sits in, as the prompt names it: the
+/// merged folder's name and the folders below it (`Reports/2024`).
+pub fn merge_folder(item: &Path, under: &Path) -> String {
+    let mut dir = PathBuf::from(item.file_name().unwrap_or_default());
+    dir.extend(under.parent().filter(|up| !up.as_os_str().is_empty()));
+    dir.to_string_lossy().into_owned()
+}
+
 /// The size and date lines for the file at `path`; a file that cannot be
 /// read shows neither.
 pub fn facts(path: &Path, is_12h: bool) -> (String, String) {
@@ -330,6 +338,16 @@ pub fn facts(path: &Path, is_12h: bool) -> (String, String) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_merged_file_is_named_from_the_merged_folder_down() {
+        let item = Path::new("/srv/src/Reports");
+        assert_eq!(merge_folder(item, Path::new("r.txt")), "Reports");
+        assert_eq!(
+            merge_folder(item, Path::new("2024/q1/r.txt")),
+            "Reports/2024/q1"
+        );
+    }
 
     /// A clash of `kind` over a file seen as `Seen::default()`.
     fn c(kind: Clash) -> Option<Found> {
