@@ -1,6 +1,7 @@
 //! The replace prompt's decisions. A copy or move landing on a name the
 //! destination holds asks first: Confirm File Replace, or Confirm Folder Replace
-//! (a merge). The host finds each item's [`Found`] clash, walks an [`Asker`]
+//! (a merge), whose Yes then asks Confirm File Replace for each file inside the
+//! merge would put over a file. The host finds each item's [`Found`] clash, walks an [`Asker`]
 //! through the questions, and the answers become one [`Verdict`] per item for the
 //! batch ([`crate::ops::put_in_with`]). A Yes replaces only what the prompt
 //! showed: each clash keeps a [`Seen`], and a file that changed since is not
@@ -10,7 +11,8 @@
 //! launchers, which number past a taken name.
 
 use crate::ops::DropOp;
-use std::path::Path;
+use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Clash {
@@ -58,10 +60,22 @@ impl Seen {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Found {
     pub clash: Clash,
     pub seen: Seen,
+    /// A folder's files that a merge would put over a file, by path under the folder, each as
+    /// the prompt will show it.
+    pub inside: Vec<(PathBuf, Seen)>,
+}
+
+/// What a Yes puts an item over: what held its name as the prompt saw it and, for a folder
+/// merge, the files inside answered Yes, by path under the folder. A clashing file inside that is
+/// not listed stays, and the incoming one is left where it was.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Replacing {
+    pub seen: Seen,
+    pub files: BTreeMap<PathBuf, Seen>,
 }
 
 /// Whether a put asks before it lands. `same_dir`: a put into the source's own
@@ -102,9 +116,14 @@ pub fn clash_at(src: &Path, dir: &Path, op: DropOp, is_app: bool) -> Option<Foun
         src_meta.ok()?.is_dir(),
         std::fs::symlink_metadata(&dest).ok().map(|m| m.is_dir()),
     )?;
+    let inside = match clash {
+        Clash::Folder => crate::ops::merge_clashes(src, &dest, op == DropOp::Move),
+        Clash::File => Vec::new(),
+    };
     Some(Found {
         clash,
         seen: Seen::of(&dest)?,
+        inside,
     })
 }
 
@@ -134,17 +153,23 @@ pub enum Answer {
     Cancel,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Verdict {
     Put,
     /// Put it over what holds its name, if that is still what the prompt saw.
-    Replace(Seen),
+    Replace(Replacing),
     Skip,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Step {
-    Ask { index: usize, clash: Clash },
+    /// Ask about item `index`, or with `inside` about that file under the folder item `index`
+    /// merges into, after the folder's Yes.
+    Ask {
+        index: usize,
+        clash: Clash,
+        inside: Option<PathBuf>,
+    },
     Done(Vec<Verdict>),
     Cancelled,
 }
@@ -153,6 +178,8 @@ pub enum Step {
 pub struct Asker {
     clashes: Vec<Option<Found>>,
     verdicts: Vec<Verdict>,
+    /// The folder answered Yes whose files are being asked about, and how many have been.
+    merging: Option<(Replacing, usize)>,
     cancelled: bool,
 }
 
@@ -161,61 +188,117 @@ impl Asker {
         Asker {
             verdicts: Vec::with_capacity(clashes.len()),
             clashes,
+            merging: None,
             cancelled: false,
         }
         .settle(false)
     }
 
     /// Record verdicts up to the next item that needs asking. `all` (a
-    /// Yes to All) answers every remaining clash with Replace.
+    /// Yes to All) answers every remaining clash with Replace, every file inside included.
     fn settle(mut self, all: bool) -> Asker {
-        while let Some(&c) = self.clashes.get(self.verdicts.len()) {
+        while let Some(c) = self.clashes.get(self.verdicts.len()) {
             self.verdicts.push(match c {
                 None => Verdict::Put,
-                Some(f) if all => Verdict::Replace(f.seen),
+                Some(f) if all => Verdict::Replace(Replacing {
+                    seen: f.seen,
+                    files: f.inside.iter().cloned().collect(),
+                }),
                 Some(_) => break,
             });
         }
         self
     }
 
+    fn asking(&self) -> Option<&Found> {
+        self.clashes.get(self.verdicts.len())?.as_ref()
+    }
+
     pub fn step(&self) -> Step {
         if self.cancelled {
             return Step::Cancelled;
         }
-        match self.clashes.get(self.verdicts.len()) {
-            Some(Some(found)) => Step::Ask {
-                index: self.verdicts.len(),
-                clash: found.clash,
+        let index = self.verdicts.len();
+        match (self.asking(), &self.merging) {
+            (Some(found), Some((_, k))) => Step::Ask {
+                index,
+                clash: Clash::File,
+                inside: Some(found.inside[*k].0.clone()),
             },
-            _ => Step::Done(self.verdicts.clone()),
+            (Some(found), None) => Step::Ask {
+                index,
+                clash: found.clash,
+                inside: None,
+            },
+            (None, _) => Step::Done(self.verdicts.clone()),
         }
     }
 
     /// Answer the question [`Asker::step`] asked. An answer with nothing
     /// asked changes nothing.
     pub fn answer(&mut self, a: Answer) -> Step {
-        if !matches!(self.step(), Step::Ask { .. }) {
+        let Some(found) = self.asking().cloned() else {
+            return self.step();
+        };
+        if self.cancelled {
+            return self.step();
+        }
+        if a == Answer::Cancel {
+            self.cancelled = true;
             return self.step();
         }
         let this = std::mem::replace(self, Asker::new(Vec::new()));
-        *self = match a {
-            Answer::Cancel => Asker {
-                cancelled: true,
+        *self = match (this.merging.clone(), a) {
+            (None, Answer::YesToAll) => this.settle(true),
+            (Some((mut merge, k)), Answer::YesToAll) => {
+                merge.files.extend(found.inside[k..].iter().cloned());
+                let mut next = Asker {
+                    merging: None,
+                    ..this
+                };
+                next.verdicts.push(Verdict::Replace(merge));
+                next.settle(true)
+            }
+            (None, Answer::No) => this.decide(Verdict::Skip),
+            (None, _) if found.inside.is_empty() => this.decide(Verdict::Replace(Replacing {
+                seen: found.seen,
+                files: BTreeMap::new(),
+            })),
+            (None, _) => Asker {
+                merging: Some((
+                    Replacing {
+                        seen: found.seen,
+                        files: BTreeMap::new(),
+                    },
+                    0,
+                )),
                 ..this
             },
-            Answer::Yes | Answer::No => {
-                let mut next = this;
-                let seen = next.clashes[next.verdicts.len()].map(|f| f.seen);
-                next.verdicts.push(match seen {
-                    Some(seen) if a == Answer::Yes => Verdict::Replace(seen),
-                    _ => Verdict::Skip,
-                });
-                next.settle(false)
+            (Some((mut merge, k)), a) => {
+                if a == Answer::Yes {
+                    let (path, seen) = found.inside[k].clone();
+                    merge.files.insert(path, seen);
+                }
+                if k + 1 < found.inside.len() {
+                    Asker {
+                        merging: Some((merge, k + 1)),
+                        ..this
+                    }
+                } else {
+                    Asker {
+                        merging: None,
+                        ..this
+                    }
+                    .decide(Verdict::Replace(merge))
+                }
             }
-            Answer::YesToAll => this.settle(true),
         };
         self.step()
+    }
+
+    fn decide(mut self, v: Verdict) -> Asker {
+        self.verdicts.push(v);
+        self.settle(false)
     }
 }
 
@@ -253,17 +336,51 @@ mod tests {
         Some(Found {
             clash: kind,
             seen: Seen::default(),
+            inside: Vec::new(),
         })
     }
 
-    const R: Verdict = Verdict::Replace(Seen {
-        dev: 0,
-        ino: 0,
-        mtime: (0, 0),
-        ctime: (0, 0),
-        len: 0,
-        dir: false,
+    const R: Verdict = Verdict::Replace(Replacing {
+        seen: Seen {
+            dev: 0,
+            ino: 0,
+            mtime: (0, 0),
+            ctime: (0, 0),
+            len: 0,
+            dir: false,
+        },
+        files: BTreeMap::new(),
     });
+
+    /// A folder clash whose merge would put files `names` over files.
+    fn merging(names: &[&str]) -> Option<Found> {
+        Some(Found {
+            inside: names
+                .iter()
+                .map(|n| (PathBuf::from(n), Seen::default()))
+                .collect(),
+            ..c(Clash::Folder)?
+        })
+    }
+
+    fn ask(index: usize, clash: Clash, inside: Option<&str>) -> Step {
+        Step::Ask {
+            index,
+            clash,
+            inside: inside.map(PathBuf::from),
+        }
+    }
+
+    /// A merge's Replace with `names` answered Yes inside it.
+    fn merged(names: &[&str]) -> Verdict {
+        Verdict::Replace(Replacing {
+            seen: Seen::default(),
+            files: names
+                .iter()
+                .map(|n| (PathBuf::from(n), Seen::default()))
+                .collect(),
+        })
+    }
 
     #[test]
     fn only_a_copy_or_move_elsewhere_onto_the_same_kind_asks() {
@@ -373,23 +490,101 @@ mod tests {
     #[test]
     fn yes_and_no_answer_one_clash_each() {
         let mut a = Asker::new(vec![None, c(Clash::File), None, c(Clash::Folder)]);
-        assert_eq!(
-            a.step(),
-            Step::Ask {
-                index: 1,
-                clash: Clash::File
-            }
-        );
-        assert_eq!(
-            a.answer(Answer::No),
-            Step::Ask {
-                index: 3,
-                clash: Clash::Folder
-            }
-        );
+        assert_eq!(a.step(), ask(1, Clash::File, None));
+        assert_eq!(a.answer(Answer::No), ask(3, Clash::Folder, None));
         assert_eq!(
             a.answer(Answer::Yes),
             Step::Done(vec![Verdict::Put, Verdict::Skip, Verdict::Put, R])
+        );
+    }
+
+    /// A folder's Yes asks about each file inside it the merge would put over a file, and only
+    /// the files answered Yes are replaced; a folder's No asks nothing inside.
+    #[test]
+    fn a_merged_folder_asks_for_each_file_inside() {
+        let mut a = Asker::new(vec![
+            merging(&["a.txt", "q1/b.txt", "c.txt"]),
+            c(Clash::File),
+        ]);
+        assert_eq!(a.step(), ask(0, Clash::Folder, None));
+        assert_eq!(a.answer(Answer::Yes), ask(0, Clash::File, Some("a.txt")));
+        assert_eq!(a.answer(Answer::Yes), ask(0, Clash::File, Some("q1/b.txt")));
+        assert_eq!(a.answer(Answer::No), ask(0, Clash::File, Some("c.txt")));
+        assert_eq!(a.answer(Answer::Yes), ask(1, Clash::File, None));
+        assert_eq!(
+            a.answer(Answer::No),
+            Step::Done(vec![merged(&["a.txt", "c.txt"]), Verdict::Skip])
+        );
+
+        let mut a = Asker::new(vec![merging(&["a.txt"]), c(Clash::File)]);
+        assert_eq!(
+            a.answer(Answer::No),
+            ask(1, Clash::File, None),
+            "no file asked"
+        );
+    }
+
+    /// Yes to All on a file inside replaces it, the rest inside and every later clash, while the
+    /// files already answered No stay; on the folder it replaces every file inside unasked.
+    #[test]
+    fn yes_to_all_inside_a_merge_keeps_the_earlier_nos() {
+        let mut a = Asker::new(vec![
+            merging(&["a.txt", "b.txt", "c.txt"]),
+            merging(&["d.txt"]),
+        ]);
+        a.answer(Answer::Yes);
+        a.answer(Answer::No);
+        assert_eq!(
+            a.answer(Answer::YesToAll),
+            Step::Done(vec![merged(&["b.txt", "c.txt"]), merged(&["d.txt"])])
+        );
+
+        let mut a = Asker::new(vec![merging(&["a.txt", "b.txt"])]);
+        assert_eq!(
+            a.answer(Answer::YesToAll),
+            Step::Done(vec![merged(&["a.txt", "b.txt"])])
+        );
+    }
+
+    /// Cancel on a file inside a merge stops the whole batch.
+    #[test]
+    fn cancel_inside_a_merge_stops_the_batch() {
+        let mut a = Asker::new(vec![merging(&["a.txt", "b.txt"]), None]);
+        a.answer(Answer::Yes);
+        assert_eq!(a.answer(Answer::Cancel), Step::Cancelled);
+    }
+
+    /// A folder clash lists, from the disk, the files inside its merge would put over a file:
+    /// not a file only one side has, nor a file meeting a folder.
+    #[test]
+    fn a_folder_clash_lists_the_files_its_merge_would_replace() {
+        let t = tempfile::tempdir().unwrap();
+        let (a, b) = (t.path().join("a/R"), t.path().join("b/R"));
+        for d in [&a, &b] {
+            std::fs::create_dir_all(d.join("q1/deep")).unwrap();
+            std::fs::write(d.join("same.txt"), "").unwrap();
+            std::fs::write(d.join("q1/deep/low.txt"), "").unwrap();
+        }
+        std::fs::write(a.join("mine.txt"), "").unwrap();
+        std::fs::write(b.join("theirs.txt"), "").unwrap();
+        std::fs::write(a.join("odd"), "").unwrap();
+        std::fs::create_dir(b.join("odd")).unwrap();
+        let found = clash_at(&a, &t.path().join("b"), DropOp::Copy, false).expect("a clash");
+        assert_eq!(found.clash, Clash::Folder);
+        let inside: Vec<(PathBuf, Option<Seen>)> = found
+            .inside
+            .into_iter()
+            .map(|(p, seen)| (p, Some(seen)))
+            .collect();
+        assert_eq!(
+            inside,
+            [
+                (
+                    "q1/deep/low.txt".into(),
+                    Seen::of(&b.join("q1/deep/low.txt"))
+                ),
+                ("same.txt".into(), Seen::of(&b.join("same.txt"))),
+            ]
         );
     }
 

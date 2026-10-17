@@ -81,8 +81,8 @@ impl PendingPut {
         let mut v = verdicts.iter();
         self.items.retain_mut(|it| match v.next() {
             Some(Verdict::Skip) => false,
-            Some(Verdict::Replace(seen)) => {
-                it.replace = Some(*seen);
+            Some(Verdict::Replace(r)) => {
+                it.replace = Some(r.clone());
                 true
             }
             _ => true,
@@ -272,13 +272,26 @@ impl Explorer {
                 self.replace_waiting.push_back((pending, asker));
                 Reply::none()
             }
-            Step::Ask { index, clash } => {
+            Step::Ask {
+                index,
+                clash,
+                inside,
+            } => {
                 if let Some(Dialog::Message { title, text }) = self.dialog.take() {
                     self.messages_waiting.push_back((title, text));
                 }
-                let many = pending.items.len() > 1;
-                let src = pending.items[index].src.clone();
-                let fields = self.replace_fields(&src, &pending.dir, clash, many, ctx);
+                let many = pending.items.len() > 1 || inside.is_some();
+                let item = &pending.items[index].src;
+                let (src, dir) = match &inside {
+                    Some(under) => {
+                        let src = item.join(under);
+                        let landing = pending.dir.join(item.file_name().unwrap_or_default());
+                        let dir = landing.join(under.parent().unwrap_or(Path::new("")));
+                        (src, dir)
+                    }
+                    None => (item.clone(), pending.dir.clone()),
+                };
+                let fields = self.replace_fields(&src, &dir, clash, many, ctx);
                 self.dialog = Some(Dialog::Replace(Box::new(ReplaceAsk {
                     fields,
                     asker,
