@@ -701,6 +701,39 @@ fn a_rename_writes_the_file_and_keeps_it_selected() {
     assert_eq!(ex.sv.selection.set.iter().copied().collect::<Vec<_>>(), [0]);
 }
 
+/// A rename whose relist lands late (a read of the folder was already out, on a mount slow to
+/// answer) selects the item under its new name once the listing of it lands.
+#[test]
+fn a_rename_whose_relist_lands_late_keeps_the_renamed_item_selected() {
+    let dir = tempfile::tempdir().expect("a temp dir");
+    for name in ["b.txt", "c.txt"] {
+        std::fs::write(dir.path().join(name), "x").expect("write");
+    }
+    let mut ctx = test_ctx();
+    let place = Place::Folder(dir.path().to_path_buf());
+    let mut ex = test_explorer(place.clone(), &mut ctx);
+    ex.sv.selection.set_only(Some(0));
+    let before = ex.reader(place.clone(), &ctx)();
+    let (answer, gate) = std::sync::mpsc::channel::<()>();
+    ex.reading = Some(crate::Reading {
+        key: (place, ex.settings.show_hidden, ctx.icons.scale()),
+        job: repriseapp::listjob::Job::spawn(None, move || {
+            gate.recv().ok();
+            before
+        }),
+        again: false,
+    });
+
+    ex.sv.edit = Some((0, reprisekit::textedit::TextEdit::new("d.txt", false)));
+    ex.commit_rename(&mut ctx);
+    assert!(dir.path().join("d.txt").is_file());
+    answer.send(()).expect("send");
+    wake_until(&mut ex, &mut ctx, |ex| ex.reading.is_none());
+    let names: Vec<&str> = ex.items.iter().map(|it| it.name.as_str()).collect();
+    assert_eq!(names, ["c.txt", "d.txt"]);
+    assert_eq!(ex.selected_paths(), [dir.path().join("d.txt")]);
+}
+
 #[test]
 fn a_colliding_rename_is_refused_with_a_box() {
     let dir = tempfile::tempdir().expect("a temp dir");

@@ -91,7 +91,9 @@ impl Explorer {
                 self.after_rename(&it.path, &to, it.is_dir, ctx);
                 // `refresh` keeps the selection by path, and the old path is gone.
                 let reply = self.refresh(ctx);
-                if let Some(j) = self.index_of(&to) {
+                if self.reading.is_some() {
+                    self.selecting = Some((self.place.clone(), to));
+                } else if let Some(j) = self.index_of(&to) {
                     self.sv.selection.set_only(Some(j));
                     self.refresh_chrome(ctx);
                 }

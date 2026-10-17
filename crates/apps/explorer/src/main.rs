@@ -290,7 +290,7 @@ pub struct Explorer {
     going: Option<(Place, Job<live::Gone>)>,
     /// Opened files whose opening ([`Explorer::open_file`]) has not answered.
     opening: Vec<(PathBuf, Job<Opened>)>,
-    /// The `--select` entry and its folder, waiting on that folder's listing.
+    /// The `--select` entry or a renamed item, and its folder, waiting on that folder's listing.
     selecting: Option<(Place, PathBuf)>,
     watch: Option<Watch>,
     pub hover: Option<Hover>,
