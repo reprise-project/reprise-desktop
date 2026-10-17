@@ -5397,6 +5397,7 @@ fn render_glass() -> Canvas {
         render_glass_materials(reprisekit::glass::Mode::Light),
         render_glass_square_frames(),
         render_glass_client_glass(&theme),
+        render_glass_toolbar_on_glass(&theme),
         render_glass_peek_sheet(&theme),
     ];
     let height = frames.height + parts.iter().map(|p| p.height).sum::<u32>();
@@ -5423,6 +5424,7 @@ fn render_glass_dark() -> Canvas {
     let parts = [
         render_glass_dark_captions(&theme),
         render_glass_client_glass(&theme),
+        render_glass_toolbar_on_glass(&theme),
         render_glass_dark_bar(&theme),
         render_glass_choices(&theme),
         render_glass_sheet(&theme),
@@ -5914,6 +5916,70 @@ fn render_glass_client_glass(theme: &Theme) -> Canvas {
         look::draw_client_glass(&mut f, &themed, band, g.client.height, false);
         f.blit_over(g.client.x, g.client.y, &client);
         c.blit_over(15 + 470 * i as i32, 10, &f);
+    }
+    c
+}
+
+/// Explorer's toolbar strip clear over a client's glass, 950x50: over the stripes, then over a
+/// bright backdrop, Back and Forward greyed, Up and Folders live, the label glow under them.
+fn render_glass_toolbar_on_glass(theme: &Theme) -> Canvas {
+    use reprisekit::controls::toolbar::{self, Item, ToolBar};
+    let text = TextRenderer::load(&FontConfig::default());
+    let p = theme.paint();
+    let ink = look::ink_on_glass(theme).unwrap_or(theme.colors.button_text);
+    let icon = || Some(reprisekit::art::icons::COMPUTER.canvas());
+    let tb = ToolBar {
+        items: vec![
+            Item::DropButton {
+                id: toolbar::BACK,
+                icon: icon(),
+                label: Some("Back".into()),
+                enabled: false,
+            },
+            Item::DropButton {
+                id: toolbar::FORWARD,
+                icon: icon(),
+                label: Some(String::new()),
+                enabled: false,
+            },
+            Item::Button {
+                id: toolbar::UP,
+                icon: icon(),
+                label: None,
+                enabled: true,
+            },
+            Item::Separator,
+            Item::Button {
+                id: toolbar::FOLDERS,
+                icon: icon(),
+                label: Some("Folders".into()),
+                enabled: true,
+            },
+        ],
+        hot: None,
+        pressed: None,
+        latched: None,
+        big: true,
+    };
+    let mut c = blurred_stripes(950, 50);
+    c.fill_rect(Rect::new(475, 0, 475, 50), Color::rgb(0xF4, 0xF6, 0xF8));
+    for x in [15, 490] {
+        let r = Rect::new(0, 0, 440, 40);
+        let rects = toolbar::layout(&tb, &text, theme.fonts.size_px, r, &theme.controls());
+        let mut strip = Canvas::new(r.width as u32, r.height as u32);
+        toolbar::draw_over_glass(
+            &mut strip,
+            &text,
+            &p,
+            &tb,
+            r,
+            &rects,
+            ink,
+            theme.fonts.size_px,
+        );
+        look::glow_on_glass(&mut strip, theme, r);
+        toolbar::draw_glass_separators(&mut strip, &p, &tb, &rects);
+        c.blit_over(x, 5, &strip);
     }
     c
 }
