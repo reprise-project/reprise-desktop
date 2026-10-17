@@ -5938,6 +5938,7 @@ fn render_glass_client_glass(theme: &Theme) -> Canvas {
         let g = FrameGeometry::layout(&theme.metrics, 424, 50, false, Chrome::WINDOW);
         let themed = Theme {
             active,
+            access_keys: false,
             ..theme.clone()
         };
         let mut client = Canvas::new(g.client.width as u32, g.client.height as u32);
