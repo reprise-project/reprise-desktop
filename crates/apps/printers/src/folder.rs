@@ -22,7 +22,7 @@ const LIST_X: i32 = 210;
 const LIST_Y: i32 = 1;
 
 const NAME_W: i32 = 170;
-const DOCS_W: i32 = 76;
+const DOCS_W: i32 = 84;
 const STATUS_W: i32 = 130;
 const COMMENT_W: i32 = 110;
 const LOCATION_W: i32 = 100;
