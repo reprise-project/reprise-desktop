@@ -1635,6 +1635,7 @@ fn flipped(state: &mut State, crtc: crtc::Handle, (time, seq, kind): Flip) {
     flush_gamma(state, crtc);
     crate::power::presented(state, &output);
     crate::sessionlock::presented(state, &output);
+    crate::sessionfade::presented(state, &output);
     if redraw {
         render(state, crtc);
     }
@@ -2058,6 +2059,7 @@ fn finish(
         state.arm_reblur(wait);
     }
     crate::sessionlock::rendered(state, output, drawn, empty);
+    crate::sessionfade::rendered(state, output, empty);
     crate::power::rendered(state, output, drawn, empty);
     callbacks_after_a_frame(state, crtc, drawn);
     if drawn {
