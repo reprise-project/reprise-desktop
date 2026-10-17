@@ -1931,10 +1931,26 @@ pub fn reposition(state: &mut State) {
     }
     trim(state);
     retint(&mut state.notify.stack, &state.config.theme);
+    let sheets = sheets(state);
+    let droplets = sheets && state.config.glass.notification.shape() == SheetShape::Droplet;
+    shed(&mut state.notify.stack, sheets, droplets);
     for b in &mut state.notify.stack {
         b.painted = None;
     }
     display_next(state);
+}
+
+/// Frees what the look no longer draws: a Droplet's opening layers once sheets are not Droplets,
+/// and the kept glass once there are no sheets.
+fn shed(stack: &mut [Balloon], sheets: bool, droplets: bool) {
+    for b in stack {
+        if !droplets {
+            b.opening = SheetOpening::default();
+        }
+        if !sheets {
+            b.glass = SheetGlass::default();
+        }
+    }
 }
 
 /// An output went away: sheets still leaving go at once (`update_layout` has moved the stack).
@@ -3331,6 +3347,58 @@ mod tests {
         let (built, wants) = warm_layers(&stack[0]);
         assert!(land_warm(&mut stack, 1, 2, built));
         assert!(!wants(&mut stack[0]), "the current job's layers are in");
+    }
+
+    #[test]
+    fn a_switch_away_from_droplets_frees_the_layers_and_glass_the_new_look_leaves_undrawn() {
+        let mut scene = crate::compositor::DeskScene::new();
+        let mut stack = vec![balloon(&mut scene, 1)];
+        stack[0].item = droplet_note();
+        let (theme, text) = (theme_for(Interface::Glass), text());
+        let ends = droplet_ends(
+            &theme,
+            &text,
+            &stack[0].item,
+            false,
+            Edge::Bottom,
+            SheetShape::Droplet,
+            "now",
+        );
+        let [shut, open] = ends.unwrap();
+        let warm = |b: &mut Balloon, lit: bool| {
+            let built = b.opening.warm(
+                &mut b.glass,
+                &theme,
+                &text,
+                &shut,
+                &open,
+                SheetIcons::default(),
+                None,
+                None,
+                lit,
+            );
+            (built, b.opening.builds(), b.glass.builds())
+        };
+        assert_eq!(
+            warm(&mut stack[0], true),
+            (true, 1, 2),
+            "layers and the lit ends"
+        );
+        assert_eq!(warm(&mut stack[0], false), (true, 2, 4), "the plain ends");
+        shed(&mut stack, true, true);
+        assert_eq!(
+            warm(&mut stack[0], true),
+            (false, 2, 4),
+            "Droplets keep both"
+        );
+        shed(&mut stack, true, false);
+        assert_eq!(
+            warm(&mut stack[0], true),
+            (true, 1, 4),
+            "the layers went; sheets keep their glass"
+        );
+        shed(&mut stack, false, false);
+        assert_eq!(warm(&mut stack[0], true), (true, 1, 2), "both went");
     }
 
     #[test]
