@@ -135,13 +135,7 @@ fn a_typed_folder_answering_late_opens_on_a_later_wake() {
     assert_eq!(ex.place, here);
 
     answer.send(()).expect("send");
-    for _ in 0..500 {
-        if ex.place != here {
-            break;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(10));
-        ex.wake(&mut ctx);
-    }
+    wake_until(&mut ex, &mut ctx, |ex| ex.place != here);
     assert_eq!(ex.place, Place::Folder(sub));
     assert!(ex.history.can_back());
 }
@@ -252,13 +246,7 @@ fn a_folders_node_read_late_fills_on_a_later_wake() {
     assert!(ex.tree.node(&path).expect("node").children.is_empty());
 
     answer.send(()).expect("send");
-    for _ in 0..500 {
-        if ex.filling.is_empty() {
-            break;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(10));
-        ex.wake(&mut ctx);
-    }
+    wake_until(&mut ex, &mut ctx, |ex| ex.filling.is_empty());
     let node = ex.tree.node(&path).expect("node");
     assert!(node.expanded, "the node stays open");
     let labels: Vec<&str> = node.children.iter().map(|n| n.label.as_str()).collect();
@@ -297,13 +285,7 @@ fn a_folders_refill_that_does_not_answer_fills_on_a_later_wake() {
     assert_eq!(ex.filling.len(), 1);
 
     drop(closed);
-    for _ in 0..500 {
-        if ex.filling.is_empty() {
-            break;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(10));
-        ex.wake(&mut ctx);
-    }
+    wake_until(&mut ex, &mut ctx, |ex| ex.filling.is_empty());
     assert_eq!(labels(&ex), ["new", "old"]);
 }
 
@@ -318,6 +300,8 @@ fn a_gone_folder_whose_check_answers_late_is_followed_on_a_later_wake() {
     let mut ctx = test_ctx();
     let here = Place::Folder(shown.clone());
     let mut ex = test_explorer(here.clone(), &mut ctx);
+    // The folder watch would follow the rename in place to a2/b on a wake of its own.
+    ex.watch = None;
     std::fs::rename(dir.path().join("a"), dir.path().join("a2")).expect("rename");
 
     let gate = Arc::new(std::sync::RwLock::new(()));
@@ -328,13 +312,7 @@ fn a_gone_folder_whose_check_answers_late_is_followed_on_a_later_wake() {
 
     drop(closed);
     ex.held = None;
-    for _ in 0..500 {
-        if ex.place != here {
-            break;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(10));
-        ex.wake(&mut ctx);
-    }
+    wake_until(&mut ex, &mut ctx, |ex| ex.place != here);
     assert_eq!(ex.place, Place::Folder(dir.path().to_path_buf()));
 }
 
@@ -724,6 +702,7 @@ fn a_rename_whose_relist_lands_late_keeps_the_renamed_item_selected() {
         again: false,
     });
 
+    ex.held = Some(Arc::default());
     ex.sv.edit = Some((0, reprisekit::textedit::TextEdit::new("d.txt", false)));
     ex.commit_rename(&mut ctx);
     assert!(dir.path().join("d.txt").is_file());
@@ -1426,13 +1405,7 @@ fn the_picker_opens_at_once_and_walks_to_a_folder_that_answers_late() {
 
     drop(closed);
     ex.held = None;
-    for _ in 0..500 {
-        if !picked(&ex).2 {
-            break;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(10));
-        ex.wake(&mut ctx);
-    }
+    wake_until(&mut ex, &mut ctx, |ex| !picked(ex).2);
     let here = Place::Folder(dir.path().to_path_buf());
     assert_eq!(picked(&ex), (Some(here), true, false));
 }
@@ -1795,16 +1768,15 @@ fn the_pickers_new_folder_is_named_in_place() {
     );
 }
 
-/// Wakes `ex` until `done` holds, for a read let go of on a listing thread.
+/// Wakes `ex` until `done` holds, for a read let go of on a listing thread. The read can queue
+/// behind other tests' reads in the process-wide listing pool, so it gets a whole [`LIST_WAIT`].
 pub(crate) fn wake_until(ex: &mut Explorer, ctx: &mut Ctx, done: impl Fn(&Explorer) -> bool) {
-    for _ in 0..500 {
-        if done(ex) {
-            return;
-        }
+    let end = std::time::Instant::now() + LIST_WAIT;
+    while !done(ex) {
+        assert!(std::time::Instant::now() < end, "the read landed");
         std::thread::sleep(std::time::Duration::from_millis(10));
         ex.wake(ctx);
     }
-    assert!(done(ex), "the read landed");
 }
 
 fn picker_making(ex: &Explorer) -> bool {
@@ -2671,13 +2643,7 @@ fn a_program_that_answers_late_raises_its_box_on_a_later_wake() {
 
     drop(closed);
     ex.held = None;
-    for _ in 0..500 {
-        if ex.dialog.is_some() {
-            break;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(10));
-        ex.wake(&mut ctx);
-    }
+    wake_until(&mut ex, &mut ctx, |ex| ex.dialog.is_some());
     match ex.dialog.take().expect("the error box is up") {
         crate::dialogs::Dialog::Message { title, text } => {
             assert_eq!(title, "b.sh");
@@ -2718,13 +2684,7 @@ fn a_start_folder_answering_late_opens_the_window_at_once() {
     assert_eq!(ex.place, Place::Folder(gone));
 
     answer.send(()).expect("send");
-    for _ in 0..500 {
-        if ex.place == Place::Home {
-            break;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(10));
-        ex.wake(&mut ctx);
-    }
+    wake_until(&mut ex, &mut ctx, |ex| ex.place == Place::Home);
     assert_eq!(ex.place, Place::Home);
     assert!(!ex.history.can_back());
 }
