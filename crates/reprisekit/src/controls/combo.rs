@@ -57,6 +57,7 @@ impl ListItem {
     }
 }
 
+/// A row with an icon, at 100% text: it grows with the text and centres its 16 px icon.
 pub const SHELL_ROW_H: i32 = 16;
 
 /// One indent level, in px.
@@ -76,7 +77,7 @@ fn shell(items: &[ListItem]) -> bool {
 
 fn items_row_h(items: &[ListItem], cm: &ControlMetrics) -> i32 {
     if shell(items) {
-        SHELL_ROW_H
+        cm.text.len(SHELL_ROW_H)
     } else {
         cm.combo_row
     }
@@ -847,7 +848,7 @@ pub fn draw_list_rows(
         }
         let ix = r.x + (LIST_ICON_X + items[i].indent * INDENT_STEP) * s;
         if let Some(icon) = &items[i].icon {
-            c.blit_over(ix, r.y, icon);
+            c.blit_over(ix, r.y + (row_h - SHELL_ROW_H) / 2 * s, icon);
         }
         let tx = ix + (16 + ICON_GAP) * s;
         let label = fitted(text, &items[i].text, inner.right() - s - tx, px);
@@ -1535,6 +1536,59 @@ mod tests {
             cs.window.argb(),
             "white past the highlight"
         );
+    }
+
+    #[test]
+    fn grown_shell_rows_grow_and_centre_their_icons() {
+        let text = TextRenderer::load(&FontConfig::default());
+        let red = Color::rgb(0xFF, 0, 0);
+        let mut icon = Canvas::new(16, 16);
+        icon.fill_rect(Rect::new(0, 0, 16, 16), red);
+        let items = [
+            ListItem::shell("Desktop", Some(icon.clone()), 0),
+            ListItem::shell("Documents", Some(icon), 1),
+        ];
+        for (pct, row_h) in [(100, 16), (150, 25), (200, 32)] {
+            let theme = Theme::default().with_text_size(pct);
+            let combo = Combo::with_items(items.to_vec(), 0, 4);
+            assert_eq!(combo.row_h(&theme.controls()), row_h, "{pct}%");
+            let list = Rect::new(0, 0, 200, 2 * row_h + 2);
+            let mut c = Canvas::new(200, list.height as u32);
+            let p = Paint {
+                text: theme.text,
+                ..classic_paint(&theme.colors, 1)
+            };
+            let px = theme.fonts.size_px;
+            draw_list(
+                &mut c,
+                &text,
+                &p,
+                &items,
+                Some(1),
+                0,
+                2,
+                list,
+                None,
+                None,
+                px,
+            );
+            let x = 1 + LIST_ICON_X + INDENT_STEP;
+            let dy = (row_h - 16) / 2;
+            let top = 1 + row_h + dy;
+            assert_eq!(c.get(x, top), red.argb(), "{pct}%: icon top");
+            assert_eq!(c.get(x, top + 15), red.argb(), "{pct}%: icon bottom");
+            if dy > 0 {
+                assert_ne!(c.get(x, top - 1), red.argb(), "{pct}%: above the icon");
+                assert_ne!(c.get(x, top + 16), red.argb(), "{pct}%: under the icon");
+            }
+            let tx = x + 16 + ICON_GAP;
+            let tw = text.measure("Documents", false, px);
+            let lit: Vec<i32> = (0..list.height)
+                .filter(|&y| (tx..tx + tw).any(|x| c.get(x, y) == theme.colors.hilight.argb()))
+                .collect();
+            assert_eq!(lit.first(), Some(&(2 + row_h)), "{pct}%: highlight top");
+            assert_eq!(lit.last(), Some(&(2 * row_h)), "{pct}%: highlight bottom");
+        }
     }
 
     fn run_box(value: &str) -> (Combo, Layout) {
