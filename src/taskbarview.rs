@@ -897,12 +897,7 @@ impl State {
         };
         bar.dialogs = slots.iter().map(|s| s.dialog).collect();
         bar.layout = layout;
-        let start_icon = if self.config.start_icon {
-            let flag = theme.taskbar_shape().start_icon * scale;
-            icons.get_shared("start-here", flag)
-        } else {
-            None
-        };
+        let start_icon = start_icon(&self.config, icons, scale);
         let task_hot = bar
             .task_hot
             .and_then(|key| crate::taskbar::find_task(&bar.buttons, &bar.pins, &bar.dialogs, &key));
@@ -1841,6 +1836,20 @@ impl State {
             .map_or(TaskbarHit::Nothing, |b| self.bar_hit(b, x, y));
         Hit::Taskbar { bar: tree, hit }
     }
+}
+
+/// The icon theme's start-here at the orb's size at draw scale `scale`, when `start_icon` asks for
+/// it; None for the Reprise mark.
+pub fn start_icon(
+    config: &crate::config::Config,
+    icons: &mut IconCache,
+    scale: i32,
+) -> Option<Arc<Canvas>> {
+    let px = config.theme.taskbar_shape().start_icon * scale;
+    config
+        .start_icon
+        .then(|| icons.get_shared("start-here", px))
+        .flatten()
 }
 
 #[cfg(test)]

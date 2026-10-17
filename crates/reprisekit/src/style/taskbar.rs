@@ -1,9 +1,11 @@
 //! The taskbar drawn through a [`Style`].
 
+use std::sync::Arc;
+
 use crate::art::logo;
 use crate::icon;
 use crate::raster::{Canvas, Rect};
-use crate::style::startbloom::IconKey;
+use crate::style::startbloom::{Bloom, IconKey};
 use crate::style::{Part, PartImage, SpotFit, SpotFrames, State, Style};
 use crate::taskbar::{Edge, PagerMark, PopupCell, TaskbarLayout, TaskbarState, quick_icon_origin};
 use crate::text::{Align, TextRenderer};
@@ -879,12 +881,54 @@ fn start_icon_box(style: &Style, layout: &TaskbarLayout, state: &TaskbarState, s
     let d = layout.start_disc.unwrap_or(layout.start);
     let (w, h) = match &state.start_icon {
         Some(ic) => (ic.width as i32, ic.height as i32),
-        None => {
-            let px = style.taskbar.start_icon * s * ORB_MARK_SHARE.0 / ORB_MARK_SHARE.1;
-            (px, px)
-        }
+        None => (mark_px(style, s), mark_px(style, s)),
     };
     Rect::new(d.x + (d.width - w) / 2, d.y + (d.height - h) / 2, w, h)
+}
+
+/// The side of the orb's mark at scale `s`, device px.
+fn mark_px(style: &Style, s: i32) -> i32 {
+    style.taskbar.start_icon * s * ORB_MARK_SHARE.0 / ORB_MARK_SHARE.1
+}
+
+fn mark_icon(px: i32) -> Canvas {
+    let mut c = Canvas::new(px as u32, px as u32);
+    logo::draw_path(&mut c, 0, 0, px, START_MARK);
+    c
+}
+
+/// The bloom round the orb's `icon` (the mark when None) at scale `s` in `state` at `strength`,
+/// painted unless kept.
+pub(crate) fn orb_bloom(
+    style: &Style,
+    s: i32,
+    icon: Option<&Canvas>,
+    state: State,
+    strength: u8,
+) -> Option<Arc<Bloom>> {
+    let blooms = style.start_bloom.as_ref()?;
+    Some(match icon {
+        Some(ic) => blooms.get(IconKey::of(ic), s, state, strength, || ic.clone()),
+        None => {
+            let px = mark_px(style, s);
+            blooms.get(IconKey::Mark(px), s, state, strength, || mark_icon(px))
+        }
+    })
+}
+
+/// Whether `style` keeps [`orb_bloom`]'s bloom.
+pub(crate) fn keeps_orb_bloom(
+    style: &Style,
+    s: i32,
+    icon: Option<&Canvas>,
+    state: State,
+    strength: u8,
+) -> bool {
+    let key = match icon {
+        Some(ic) => IconKey::of(ic),
+        None => IconKey::Mark(mark_px(style, s)),
+    };
+    (style.start_bloom.as_ref()).is_some_and(|b| b.keeps(key, s, state, strength))
 }
 
 /// The glow is painted once per icon, scale, state and strength; here it is only laid on.
@@ -899,31 +943,14 @@ fn draw_bloom(
     s: i32,
     clip: Rect,
 ) {
-    let Some(blooms) = &style.start_bloom else {
-        return;
-    };
     if state.orb_glow == 0 {
         return;
     }
-    let i = start_icon_box(style, layout, state, s);
-    let key = match &state.start_icon {
-        Some(ic) => IconKey::of(ic),
-        None => IconKey::Mark(i.width),
+    let icon = state.start_icon.as_deref();
+    let Some(bloom) = orb_bloom(style, s, icon, start_state(state), state.orb_glow) else {
+        return;
     };
-    let bloom = blooms.get(
-        key,
-        s,
-        start_state(state),
-        state.orb_glow,
-        || match &state.start_icon {
-            Some(ic) => (**ic).clone(),
-            None => {
-                let mut c = Canvas::new(i.width as u32, i.height as u32);
-                logo::draw_path(&mut c, 0, 0, i.width, START_MARK);
-                c
-            }
-        },
-    );
+    let i = start_icon_box(style, layout, state, s);
     canvas.blit_screen_clipped(i.x + dx + bloom.x, i.y + dy + bloom.y, &bloom.canvas, clip);
 }
 
@@ -2857,6 +2884,34 @@ mod tests {
             kept.get(IconKey::Mark(px), 1, look, 100, || {
                 panic!("{look:?} built again")
             });
+        }
+    }
+
+    #[test]
+    fn a_warm_paints_the_orb_glow_drawn_at_scale_1_for_scale_2() {
+        let d = crate::glass::Settings::default();
+        let s = Arc::new(crate::glass::build(&d).with_rescale(move |_| crate::glass::build(&d)));
+        let mut st = state_with_tasks(&[]);
+        st.start_hot = true;
+        draw_glass(&s, 40, &st);
+        let mut logo = Canvas::new(48, 48);
+        logo.fill_rect(Rect::new(8, 8, 32, 32), Color::rgb(0xFF, 0x80, 0));
+        for icon in [None, Some(Arc::new(logo))] {
+            st.start_icon = icon.clone();
+            draw_glass(&s, 40, &st);
+            let warm = (s.warm(2, icon.clone())).expect("the scale 1 glow is unpainted at scale 2");
+            std::thread::spawn(move || warm.paint()).join().unwrap();
+            let two = s.at_scale(2);
+            let icon = icon.as_deref();
+            assert!(
+                keeps_orb_bloom(&two, 2, icon, State::Hot, 100),
+                "the scale 2 glow round the logo ({}) is painted before the first draw",
+                icon.is_some()
+            );
+            assert!(
+                !keeps_orb_bloom(&two, 2, icon, State::Normal, 100),
+                "a state not drawn at scale 1 waits for its draw"
+            );
         }
     }
 

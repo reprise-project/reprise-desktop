@@ -1111,8 +1111,12 @@ pub struct Style {
 /// Art [`Style::warm`] found unpainted at one scale; [`Warm::paint`] paints it, on any thread.
 pub struct Warm {
     style: Arc<Style>,
+    scale: i32,
     parts: Vec<Part>,
     spot: bool,
+    start_icon: Option<Arc<Canvas>>,
+    /// The orb's blooms round `start_icon`, by state and strength.
+    blooms: Vec<(State, u8)>,
 }
 
 impl Warm {
@@ -1122,6 +1126,10 @@ impl Warm {
         }
         if self.spot {
             self.style.task_spot();
+        }
+        let icon = self.start_icon.as_deref();
+        for &(state, strength) in &self.blooms {
+            taskbar::orb_bloom(&self.style, self.scale, icon, state, strength);
         }
     }
 }
@@ -1265,9 +1273,10 @@ impl Style {
         st
     }
 
-    /// The art a first draw at scale `n` would paint: the parts and lit task buttons drawn at a
-    /// scale this style keeps and not yet at `n`. None when there is nothing to paint.
-    pub fn warm(self: &Arc<Style>, n: i32) -> Option<Warm> {
+    /// The art a first draw at scale `n` would paint: the parts, lit task buttons and orb blooms
+    /// drawn at a scale this style keeps and not yet at `n`, the blooms round `start_icon` (the
+    /// orb's logo at `n`, device px; None for the mark). None when there is nothing to paint.
+    pub fn warm(self: &Arc<Style>, n: i32, start_icon: Option<Arc<Canvas>>) -> Option<Warm> {
         let at_n = self.at_scale(n);
         if Arc::ptr_eq(&at_n, self) {
             return None;
@@ -1294,10 +1303,23 @@ impl Style {
                 .is_some_and(|s| LazyLock::get(s).is_some())
         };
         let spot = !spot_drawn(&at_n) && (spot_drawn(self) || kept.iter().any(|st| spot_drawn(st)));
-        (!parts.is_empty() || spot).then_some(Warm {
+        let mut blooms: Vec<(State, u8)> = Vec::new();
+        for st in std::iter::once(self).chain(&kept) {
+            for b in (st.start_bloom.as_ref()).map_or(Vec::new(), |b| b.states()) {
+                if !blooms.contains(&b) {
+                    blooms.push(b);
+                }
+            }
+        }
+        let icon = start_icon.as_deref();
+        blooms.retain(|&(st, strength)| !taskbar::keeps_orb_bloom(&at_n, n, icon, st, strength));
+        (!parts.is_empty() || spot || !blooms.is_empty()).then_some(Warm {
             style: at_n,
+            scale: n,
             parts,
             spot,
+            start_icon,
+            blooms,
         })
     }
 
@@ -2139,11 +2161,14 @@ mod tests {
                 .with_painted(Part::Taskbar, art(k + 1))
         };
         let st = Arc::new(painted(1).with_rescale(painted));
-        assert!(st.warm(2).is_none(), "nothing drawn yet: nothing to paint");
+        assert!(
+            st.warm(2, None).is_none(),
+            "nothing drawn yet: nothing to paint"
+        );
         st.part(Part::Caption);
-        assert!(st.warm(1).is_none(), "scale 1 is the style itself");
+        assert!(st.warm(1, None).is_none(), "scale 1 is the style itself");
         let warm = st
-            .warm(2)
+            .warm(2, None)
             .expect("the caption drawn at scale 1 is unpainted at scale 2");
         std::thread::spawn(move || warm.paint()).join().unwrap();
         let count = |slot: usize| PAINTS[slot].load(Ordering::SeqCst);
@@ -2154,7 +2179,7 @@ mod tests {
         );
         st.at_scale(2).part(Part::Caption);
         assert_eq!(count(2), 1, "a draw at scale 2 finds the caption painted");
-        assert!(st.warm(2).is_none(), "scale 2 is warm");
+        assert!(st.warm(2, None).is_none(), "scale 2 is warm");
     }
 
     #[test]
