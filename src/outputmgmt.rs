@@ -73,7 +73,7 @@ pub struct HeadAsk {
 
 impl HeadAsk {
     /// Enabling `head` with nothing set yet: what it runs, at its place.
-    /// A disabled head comes back placed automatically.
+    /// A disabled head asks no position (`State::apply_head` picks it).
     fn from_head(head: &HeadState) -> HeadAsk {
         HeadAsk {
             enabled: true,
@@ -827,8 +827,8 @@ mod tests {
         let r = resolve(&heads, &[ask(&heads[0])]).unwrap();
         assert_eq!(r[0].1.mode, Some(1));
         assert_eq!(r[0].1.position, Some((100, 0)));
-        // A disabled head coming back takes its configured mode, placed
-        // automatically.
+        // A disabled head coming back takes its configured mode and asks no
+        // position.
         let heads = [head("A", true), head("B", false)];
         let r = resolve(&heads, &[ask(&heads[1])]).unwrap();
         assert_eq!((r[0].1.mode, r[0].1.position), (None, None));
