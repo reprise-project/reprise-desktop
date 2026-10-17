@@ -432,11 +432,17 @@ pub fn retheme(state: &mut State) {
     for depth in 0..state.menus.len() {
         state.redraw_menu(depth);
     }
-    state.retheme_start_panel();
-    state.redraw_launcher();
     state.refit_wallpaper();
     crate::layer::outputs_changed(state);
     state.relayout_desktop();
+    redraw_for_scale(state);
+}
+
+/// What `retheme` draws that `update_layout` leaves at the old draw scale: the open Start
+/// panel and launcher, the dialogs and the lock screen.
+pub fn redraw_for_scale(state: &mut State) {
+    state.retheme_start_panel();
+    state.redraw_launcher();
     for i in 0..state.dialogs.views.len() {
         // Layouts depend on the font and the frame: recompute before
         // redrawing.
