@@ -1,8 +1,12 @@
 //! App scopes: a program started from a desktop entry runs in `app-reprise-<id>-<n>.scope`, where
 //! xdg-desktop-portal reads a host app's id. The compositor and the programs both launch this way;
-//! a process that has to start unscoped is [`adopt`]ed after its exec.
+//! a launch that must report its own exec error is [`hold`]en before the exec instead.
 
 use std::ffi::{OsStr, OsString};
+use std::io::{Read, Write};
+use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
+use std::os::unix::process::CommandExt;
+use std::time::Duration;
 
 /// Every app scope [`in_scope`] names, as a `systemctl` pattern.
 pub const PATTERN: &str = "app-reprise-*.scope";
@@ -16,22 +20,123 @@ pub fn in_scope<S: AsRef<OsStr>>(argv: &[S], app: Option<&str>) -> Vec<OsString>
         .collect()
 }
 
-/// Moves the running process `pid` into an app scope of its own named by `app`, for a program
-/// started unscoped to keep its exec error (behind `systemd-run` that error would be systemd-run's).
-/// Blocks on the session bus; does nothing without a user manager.
-pub fn adopt(pid: u32, app: &str) -> zbus::Result<()> {
+/// How long a held child waits for its scope before it runs unscoped.
+const HOLD_LIMIT: Duration = Duration::from_secs(5);
+
+/// Makes `c`'s child wait between fork and exec until it is in an app scope of its own named by
+/// `app`, as `systemd-run --scope` does, so the program and whatever it forks run there from their
+/// first instruction and the spawn still returns the exec's own error. The spawn then blocks on
+/// the session bus. Without a user manager the child runs unscoped.
+pub fn hold(c: &mut std::process::Command, app: &str) -> std::io::Result<()> {
     if !user_manager_running() {
         return Ok(());
     }
+    let app = app.to_owned();
+    hold_with(c, HOLD_LIMIT, move |pid| {
+        if let Err(e) = adopt(pid, &app) {
+            log::warn!("app scope for {app}: {e}");
+        }
+    })
+}
+
+/// [`hold`] running `settle` with the held child's pid, the child going on to its exec once
+/// `settle` returns or after `limit`.
+fn hold_with(
+    c: &mut std::process::Command,
+    limit: Duration,
+    settle: impl FnOnce(u32) + Send + 'static,
+) -> std::io::Result<()> {
+    let (pid_r, pid_w) = pipe()?;
+    let (go_r, go_w) = pipe()?;
+    let go_w_fd = go_w.as_raw_fd();
+    std::thread::spawn(move || {
+        let mut pid = [0; 4];
+        // EOF: the Command was dropped without a fork reaching the hook.
+        if std::fs::File::from(pid_r).read_exact(&mut pid).is_err() {
+            return;
+        }
+        let (done, settled) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            settle(u32::from_ne_bytes(pid));
+            let _ = done.send(());
+        });
+        if settled.recv_timeout(limit).is_err() {
+            log::warn!("app scope: no answer in {limit:?}, running unscoped");
+        }
+        // A byte, not EOF: a sibling forked meanwhile may hold a copy of `go_w` until its exec.
+        let _ = std::fs::File::from(go_w).write_all(&[1]);
+    });
+    // SAFETY: runs between fork and exec; close, getpid, write and read are async-signal-safe and
+    // nothing allocates. The fds stay open in the parent while the Command lives.
+    unsafe {
+        c.pre_exec(move || {
+            libc::close(go_w_fd);
+            let pid = libc::getpid().to_ne_bytes();
+            while libc::write(pid_w.as_raw_fd(), pid.as_ptr().cast(), pid.len()) < 0 {
+                let e = std::io::Error::last_os_error();
+                if e.kind() != std::io::ErrorKind::Interrupted {
+                    return Err(e);
+                }
+            }
+            let mut go = 0u8;
+            while libc::read(go_r.as_raw_fd(), (&raw mut go).cast(), 1) < 0 {
+                if std::io::Error::last_os_error().kind() != std::io::ErrorKind::Interrupted {
+                    break;
+                }
+            }
+            Ok(())
+        });
+    }
+    Ok(())
+}
+
+/// A close-on-exec pipe, read end first.
+fn pipe() -> std::io::Result<(OwnedFd, OwnedFd)> {
+    let mut fds = [0; 2];
+    // SAFETY: `fds` is the two-fd out-param pipe2 fills.
+    if unsafe { libc::pipe2(fds.as_mut_ptr(), libc::O_CLOEXEC) } != 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    // SAFETY: pipe2 succeeded, so both fds are open and owned by nothing else.
+    Ok(unsafe { (OwnedFd::from_raw_fd(fds[0]), OwnedFd::from_raw_fd(fds[1])) })
+}
+
+/// Moves process `pid` into a new app scope named by `app` and waits for the scope's start job, as
+/// `systemd-run --scope` does before its exec. Blocks on the session bus.
+fn adopt(pid: u32, app: &str) -> zbus::Result<()> {
+    const MANAGER: &str = "org.freedesktop.systemd1.Manager";
+    let conn = reprisebus::session()?;
     let (unit, properties) = transient_scope(app, &unit_suffix(), pid);
+    // Matched before the call: the job can end before its reply arrives.
+    let rule = zbus::MatchRule::builder()
+        .msg_type(zbus::message::Type::Signal)
+        .sender("org.freedesktop.systemd1")?
+        .interface(MANAGER)?
+        .member("JobRemoved")?
+        .arg(2, unit.as_str())?
+        .build();
+    let removed = zbus::blocking::MessageIterator::for_match_rule(rule, &conn, Some(4))?;
     let aux: Vec<(&str, Vec<(&str, zbus::zvariant::Value)>)> = Vec::new();
-    zbus::blocking::Connection::session()?.call_method(
-        Some("org.freedesktop.systemd1"),
-        "/org/freedesktop/systemd1",
-        Some("org.freedesktop.systemd1.Manager"),
-        "StartTransientUnit",
-        &(unit, "fail", properties, aux),
-    )?;
+    let job: zbus::zvariant::OwnedObjectPath = conn
+        .call_method(
+            Some("org.freedesktop.systemd1"),
+            "/org/freedesktop/systemd1",
+            Some(MANAGER),
+            "StartTransientUnit",
+            &(&unit, "fail", properties, aux),
+        )?
+        .body()
+        .deserialize()?;
+    for m in removed {
+        let (_, path, _, result): (u32, zbus::zvariant::OwnedObjectPath, String, String) =
+            m?.body().deserialize()?;
+        if path == job {
+            return match result.as_str() {
+                "done" => Ok(()),
+                _ => Err(zbus::Error::Failure(format!("{unit}: {result}"))),
+            };
+        }
+    }
     Ok(())
 }
 
@@ -103,6 +208,47 @@ fn user_manager_running() -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_held_child_is_settled_before_its_exec() {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let mut c = std::process::Command::new("true");
+        hold_with(&mut c, Duration::from_secs(5), move |pid| {
+            let _ = tx.send(std::fs::read_link(format!("/proc/{pid}/exe")).ok());
+        })
+        .unwrap();
+        assert!(c.spawn().unwrap().wait().unwrap().success());
+        let exe = rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        assert_eq!(
+            exe,
+            std::env::current_exe().ok(),
+            "still this program when settled"
+        );
+    }
+
+    #[test]
+    fn a_held_program_that_cannot_exec_reports_the_exec_error() {
+        let mut c = std::process::Command::new("/srv/no-such-program");
+        hold_with(&mut c, Duration::from_secs(5), |_| {}).unwrap();
+        let e = c.spawn().unwrap_err();
+        assert_eq!(e.kind(), std::io::ErrorKind::NotFound);
+    }
+
+    #[test]
+    fn a_held_child_runs_once_settling_outlasts_the_limit() {
+        let mut c = std::process::Command::new("true");
+        hold_with(&mut c, Duration::from_millis(50), |_| {
+            std::thread::sleep(Duration::from_secs(3));
+        })
+        .unwrap();
+        let t = std::time::Instant::now();
+        assert!(c.spawn().unwrap().wait().unwrap().success());
+        assert!(
+            t.elapsed() < Duration::from_secs(2),
+            "ran after {:?}",
+            t.elapsed()
+        );
+    }
 
     #[test]
     fn a_desktop_entry_launch_runs_in_an_app_scope_named_by_its_id() {
