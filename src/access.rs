@@ -1,12 +1,12 @@
 //! Screen reader side of the compositor's own surfaces: one AccessKit adapter per taskbar, menu stack, switcher, dialog, launcher, clipboard history, emoji picker, calendar, displays panel, tray flyout, task preview panel, notification history and the balloons, speaking AT-SPI on the session's accessibility bus.
 //! `accesskit_unix` runs its D-Bus side on its own thread and calls the handlers (`reprisekit::access::Handler`) there; they post a `Msg` to a calloop channel, so the loop never waits on the bus. Trees are built on the loop, in an idle pass [`touch`] queues, only for adapters a reader holds.
 //! Bounds are layout coordinates: a tree's root carries its surface's place as a transform and its controls lay out surface-local. A tree claims the focus only while its surface has the keyboard (see [`focus_of`]). The lock screen has no tree, so its password field's text stays here.
-//! A reader's action on a node runs as the click a user would give it ([`click`], `reprisekit::access::gesture`) through the pointer's press and release paths; focusing a taskbar item gives the bar the keyboard (`barkeys`).
+//! A reader's action on a node runs as the click a user would give it ([`click`], `reprisekit::access::gesture`) through the pointer's press and release paths; focusing a taskbar item gives the bar the keyboard (`barkeys`); ScrollIntoView, or Focus on a row out of view, scrolls the row's list ([`reveal`]).
 //! The same idle pass moves the seat's keyboard for the menus, Glass Start menu, launcher and overview, reader or not: they take it from the window while open and give it back on close ([`move_keyboard`]).
 
 use reprisebus::a11y::{KeyEcho, KeyNote};
 use reprisekit::access::accesskit::{Affine, Role};
-use reprisekit::access::{Act, Gesture, Handler, Published, Request, Tree};
+use reprisekit::access::{Act, Gesture, Handler, Published, Request, Reveal, Tree};
 use reprisescene::TreeId;
 use smithay::input::keyboard::Keycode;
 use smithay::reexports::calloop::LoopHandle;
@@ -500,11 +500,20 @@ fn lands_on(state: &State, surface: Surface, hit: &Hit) -> bool {
 /// published: the click `reprisekit::access::gesture` picks, at the
 /// node's middle, if that point still lands on the surface. Focus on a
 /// taskbar item gives the bar the keyboard there; on a menu row it
-/// lights the row.
+/// lights the row. ScrollIntoView, or Focus on a row out of view,
+/// scrolls the row's list ([`reveal`]).
 fn act(state: &mut State, surface: Surface, req: Request) {
-    let target = (state.access.slots.iter())
+    let published = (state.access.slots.iter())
         .find(|x| x.surface == surface && x.active)
-        .and_then(|x| x.published.target(req.node));
+        .map(|x| &x.published);
+    let scroll = matches!(req.act, Act::ScrollIntoView | Act::Focus)
+        .then(|| published.and_then(|p| p.reveal(req.node)))
+        .flatten();
+    let target = published.and_then(|p| p.target(req.node));
+    if let Some(r) = scroll {
+        reveal(state, surface, r);
+        return;
+    }
     let Some(target) = target else {
         return;
     };
@@ -532,6 +541,34 @@ fn act(state: &mut State, surface: Surface, req: Request) {
             }
         }
         None => {}
+    }
+}
+
+/// Scroll the list at `r.at` so its row `r.row` shows, for a reader's ScrollIntoView or Focus on a
+/// row out of view: a dialog page's list box or tree, or the clipboard history's list.
+fn reveal(state: &mut State, surface: Surface, r: Reveal) {
+    let hit = state.scene_hit(Point::from(r.at));
+    if !lands_on(state, surface, &hit) {
+        log::debug!("access: reveal on {surface:?} lands on {hit:?}; dropped");
+        return;
+    }
+    match hit {
+        Hit::Dialog { index, .. } => {
+            let px = state.config.theme.fonts.size_px;
+            let Some(v) = state.dialogs.views.get_mut(index) else {
+                return;
+            };
+            let (x, y) = (r.at.0 as i32 - v.x, r.at.1 as i32 - v.y);
+            if v.dialog.reveal(x, y, r.row, &state.text, px) == crate::dialog::Outcome::Redraw {
+                state.redraw_dialog(index);
+            }
+        }
+        Hit::ClipView { .. }
+            if (state.panels.clipview.as_mut()).is_some_and(|v| v.model.reveal(r.row)) =>
+        {
+            state.redraw_clipview();
+        }
+        _ => {}
     }
 }
 

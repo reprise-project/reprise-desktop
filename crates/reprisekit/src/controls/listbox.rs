@@ -89,6 +89,15 @@ impl ListBox {
         }
     }
 
+    /// Scroll row `i` into a box of `visible` rows without picking it. True when it moved.
+    pub fn reveal(&mut self, i: usize, visible: usize) -> bool {
+        let top = self.top;
+        if i < self.items.len() {
+            scroll_into_view(&mut self.top, i, visible);
+        }
+        self.top != top
+    }
+
     pub fn scroll(&mut self, rows: i32, visible: usize) -> bool {
         let max_top = self.items.len().saturating_sub(visible.max(1));
         let top = (self.top as i32 + rows).clamp(0, max_top as i32) as usize;
@@ -308,7 +317,8 @@ pub fn draw(
 }
 
 /// The list box's `access` part: a list with one option per item, the
-/// selected one marked. Rows scrolled out of view have no bounds. Returns
+/// selected one marked. Rows scrolled out of view lie above or below the
+/// frame, where a reader can ask to scroll them in. Returns
 /// the node that has the focus when the list does: the selected row, else
 /// the list.
 pub fn access(
@@ -328,15 +338,13 @@ pub fn access(
         if let Some(d) = lb.detail.get(i).filter(|d| !d.is_empty()) {
             o.set_description(d.as_str());
         }
-        if (lb.top..lb.top + lay.visible).contains(&i) {
-            let y = lay.inner.y + (i - lb.top) as i32 * lay.row_h;
-            o.set_bounds(access::bounds(Rect::new(
-                lay.inner.x,
-                y,
-                lay.inner.width,
-                lay.row_h,
-            )));
-        }
+        let y = lay.inner.y + (i as i32 - lb.top as i32) * lay.row_h;
+        o.set_bounds(access::bounds(Rect::new(
+            lay.inner.x,
+            y,
+            lay.inner.width,
+            lay.row_h,
+        )));
         o.set_selected(lb.selected == Some(i));
         if let Some(&checked) = lb.checks.get(i) {
             o.set_toggled(checked.into());

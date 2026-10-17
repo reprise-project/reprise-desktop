@@ -3143,6 +3143,28 @@ impl Form {
         if moved { Event::Redraw } else { Event::None }
     }
 
+    /// A reader asked to see row `row` of the list box or tree at (`x`, `y`): it scrolls in,
+    /// nothing is picked.
+    pub fn reveal(&mut self, x: i32, y: i32, row: usize, text: &TextRenderer, px: u32) -> Event {
+        let Some(i) = self.hit(x, y, text, px).map(|h| h.item) else {
+            return Event::None;
+        };
+        let cm = self.rendered.controls.get();
+        let rect = self.at(&self.items[i]);
+        let moved = match &mut self.items[i].control {
+            Control::ListBox { list, .. } => {
+                let visible = listbox::layout(list, rect, &cm).visible;
+                list.reveal(row, visible)
+            }
+            Control::Tree(tv) => {
+                let lay = treeview::layout_without_text(tv, rect, &cm);
+                tv.reveal(row, &lay)
+            }
+            _ => false,
+        };
+        if moved { Event::Redraw } else { Event::None }
+    }
+
     fn grab_bar(&mut self, i: usize, thumb: ThumbDrag) {
         if thumb.holding() {
             self.drag = Some(Drag::Bar { item: i, thumb });
@@ -6272,6 +6294,40 @@ mod tests {
         assert_eq!(row.part, Part::List(listbox::Hit::Row(1)));
         assert_eq!(f.double_click(Some(row)), Event::Default);
         assert_eq!(list(&f), Some(1));
+    }
+
+    #[test]
+    fn a_reader_scrolls_a_list_box_row_in_without_picking_it() {
+        let names = (0..20).map(|i| format!("Row {i}")).collect();
+        let mut f = Form::new(vec![Item::new(
+            "rows",
+            Rect::new(10, 10, 100, 60),
+            Control::ListBox {
+                list: ListBox::new(names, Some(0)),
+                icons: vec![None; 20],
+            },
+        )]);
+        use crate::access::{Published, ROOT, Tree};
+        let mut tree = Tree::window("", (200, 100));
+        f.access(&mut tree, ROOT, &tr(), PX);
+        let shown = tree.find(Role::ListBoxOption, "Row 1").unwrap();
+        let below = tree.find(Role::ListBoxOption, "Row 12").unwrap();
+        let mut p = Published::default();
+        p.update(tree);
+        assert_eq!(p.reveal(shown), None, "a row in view needs no scroll");
+        assert_eq!(p.target(below), None, "a row out of view takes no click");
+        let reveal = p.reveal(below).expect("a row below the frame");
+        assert_eq!(reveal.row, 12);
+        let (x, y) = (reveal.at.0 as i32, reveal.at.1 as i32);
+        assert_eq!(f.reveal(x, y, reveal.row, &tr(), PX), Event::Redraw);
+        let list = match &f.items[0].control {
+            Control::ListBox { list, .. } => list,
+            _ => unreachable!(),
+        };
+        let visible = listbox::layout(list, f.at(&f.items[0]), &f.rendered.controls.get()).visible;
+        assert_eq!(list.top + visible, 13, "row 12 is the last row shown");
+        assert_eq!(list.selected, Some(0), "the pick stays");
+        assert_eq!(f.reveal(x, y, 12, &tr(), PX), Event::None);
     }
 
     /// A list with check boxes: a click on a row's box selects the row

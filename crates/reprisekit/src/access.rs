@@ -108,6 +108,7 @@ impl Tree {
 #[derive(Clone, Debug, Default)]
 pub struct Published {
     nodes: HashMap<NodeId, Node>,
+    parents: HashMap<NodeId, NodeId>,
     live: bool,
 }
 
@@ -122,10 +123,12 @@ impl Published {
         let focus = tree.focus;
         let mut out = Vec::new();
         let mut next = HashMap::with_capacity(tree.nodes.len());
+        self.parents.clear();
         for (id, n) in tree.nodes {
             if first || self.nodes.get(&id) != Some(&n) {
                 out.push((id, n.clone()));
             }
+            self.parents.extend(n.children().iter().map(|&c| (c, id)));
             next.insert(id, n);
         }
         self.nodes = next;
@@ -143,21 +146,80 @@ impl Published {
 
     /// Node `id` as last published, placed by the root's transform. Only
     /// a root carries a transform here; the nodes under it lay out in its
-    /// space. None for a node not in the last tree or without bounds.
+    /// space. None for a node not in the last tree, without bounds or
+    /// scrolled out of its list.
     pub fn target(&self, id: NodeId) -> Option<Target> {
         let n = self.nodes.get(&id)?;
-        let b = n.bounds()?;
+        if self.scrolled_out(id).is_some() {
+            return None;
+        }
+        Some(Target {
+            role: n.role(),
+            at: self.middle(id)?,
+        })
+    }
+
+    /// What a reader's ScrollIntoView on node `id` scrolls: a row lying outside its list's
+    /// frame. None for a row in view, or a node that is not a row of a list.
+    pub fn reveal(&self, id: NodeId) -> Option<Reveal> {
+        let list = self.scrolled_out(id)?;
+        let role = self.nodes.get(&id)?.role();
+        let mut row = 0;
+        let mut stack: Vec<NodeId> = self
+            .nodes
+            .get(&list)?
+            .children()
+            .iter()
+            .rev()
+            .copied()
+            .collect();
+        while let Some(at) = stack.pop() {
+            if at == id {
+                return Some(Reveal {
+                    at: self.middle(list)?,
+                    row,
+                });
+            }
+            let Some(n) = self.nodes.get(&at) else {
+                continue;
+            };
+            if n.role() == role {
+                row += 1;
+            }
+            stack.extend(n.children().iter().rev());
+        }
+        None
+    }
+
+    /// The list `id` is a row of, when the row lies above or below the list's frame.
+    fn scrolled_out(&self, id: NodeId) -> Option<NodeId> {
+        let b = self.nodes.get(&id)?.bounds()?;
+        let mut up = *self.parents.get(&id)?;
+        loop {
+            let n = self.nodes.get(&up)?;
+            if matches!(
+                n.role(),
+                Role::ListBox | Role::Tree | Role::List | Role::ListGrid | Role::TreeGrid
+            ) {
+                let f = n.bounds()?;
+                return (b.y0 < f.y0 || b.y1 > f.y1).then_some(up);
+            }
+            up = *self.parents.get(&up)?;
+        }
+    }
+
+    /// The middle of node `id`'s bounds, placed by the root's transform.
+    fn middle(&self, id: NodeId) -> Option<(f64, f64)> {
+        let b = self.nodes.get(&id)?.bounds()?;
         let centre = accesskit::Point::new((b.x0 + b.x1) / 2.0, (b.y0 + b.y1) / 2.0);
         let root = self.nodes.get(&ROOT).and_then(|r| r.transform().copied());
         let p = root.map_or(centre, |t| t * centre);
-        Some(Target {
-            role: n.role(),
-            at: (p.x, p.y),
-        })
+        Some((p.x, p.y))
     }
 
     pub fn reset(&mut self) {
         self.nodes.clear();
+        self.parents.clear();
         self.live = false;
     }
 }
@@ -201,6 +263,14 @@ pub struct Target {
     pub at: (f64, f64),
 }
 
+/// A list to scroll so its row `row` (counted in the order the list's rows are published, a
+/// tree's in its visible order) shows whole, without picking it; `at` is the list's middle.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Reveal {
+    pub at: (f64, f64),
+    pub row: usize,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Gesture {
     Click((f64, f64)),
@@ -212,8 +282,8 @@ pub enum Gesture {
 /// click for ContextMenu. Focus is a click only where a click does no
 /// more than Tab or the arrows would (a field, a list row, a tab) and a
 /// hover on a menu row; on a button a click would press it, so Focus is
-/// dropped there. ScrollIntoView is dropped: every list a host draws
-/// scrolls to the row its arrows pick, which a Focus click does.
+/// dropped there. ScrollIntoView is no gesture: the host scrolls the list
+/// [`Published::reveal`] names.
 pub fn gesture(act: Act, target: Target) -> Option<Gesture> {
     let at = target.at;
     match act {
@@ -587,6 +657,34 @@ mod tests {
             })
         );
         assert_eq!(p.target(NodeId(9)), None, "a node not published");
+    }
+
+    #[test]
+    fn a_tree_row_out_of_view_is_revealed_by_its_place_in_the_visible_order() {
+        let mut root = node(Role::Window, Rect::new(0, 0, 200, 100));
+        root.set_transform(accesskit::Affine::translate((100.0, 50.0)));
+        let mut t = Tree::new(root);
+        let tree = t.push(ROOT, "tree", node(Role::Tree, Rect::new(10, 10, 100, 40)));
+        let row = |y| node(Role::TreeItem, Rect::new(12, y, 90, 10));
+        let a = t.push(tree, "a", row(12));
+        t.push(a, "edit", node(Role::TextInput, Rect::new(14, 12, 40, 10)));
+        let b = t.push(a, "b", row(22));
+        t.push(tree, "c", row(32));
+        let d = t.push(tree, "d", row(52));
+        t.push(d, "e", row(62));
+        let mut p = Published::default();
+        p.update(t);
+        assert_eq!(p.reveal(b), None, "a row in view");
+        assert_eq!(
+            p.reveal(d),
+            Some(Reveal {
+                at: (160.0, 80.0),
+                row: 3
+            }),
+            "the fourth row in tree order, other roles not counted"
+        );
+        assert_eq!(p.target(d), None);
+        assert_eq!(p.reveal(tree), None, "the tree itself is no row");
     }
 
     #[test]
