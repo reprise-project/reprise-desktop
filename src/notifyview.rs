@@ -400,6 +400,8 @@ pub struct NotifyView {
     /// The opening layers' painter thread, started by the first warm job, and its result source.
     warmer: Option<std::sync::mpsc::Sender<(u64, u64, WarmJob)>>,
     warm_source: Option<RegistrationToken>,
+    /// Painter threads started; past [`WARM_SPAWNS`] every opening paints in frame.
+    warm_spawns: u32,
     pub log: Log,
     /// The history popup, while open.
     pub center: Option<crate::notifycenter::CenterView>,
@@ -2190,8 +2192,7 @@ fn warm_one(
     }
 }
 
-/// The painter thread ended, a job's panic among the causes: the jobs it held are asked again of
-/// the next one.
+/// The painter thread ended: the jobs it held are asked again of the next one.
 fn lose_warmer(v: &mut NotifyView) {
     v.warmer = None;
     for b in &mut v.stack {
@@ -2205,10 +2206,13 @@ fn warmer(state: &mut State) -> Option<std::sync::mpsc::Sender<(u64, u64, WarmJo
     if let Some(tx) = &state.notify.warmer {
         return Some(tx.clone());
     }
+    if state.notify.warm_spawns >= WARM_SPAWNS {
+        return None;
+    }
     if let Some(gone) = state.notify.warm_source.take() {
         state.handle.remove(gone);
     }
-    let (done, landed) = channel::channel::<(u64, u64, WarmLayers)>();
+    let (done, landed) = channel::channel::<(u64, u64, Option<WarmLayers>)>();
     let inserted = state
         .handle
         .insert_source(landed, |event, _, state| match event {
@@ -2228,38 +2232,71 @@ fn warmer(state: &mut State) -> Option<std::sync::mpsc::Sender<(u64, u64, WarmJo
     let spawned = std::thread::Builder::new()
         .name("notify-warm".into())
         .spawn(move || {
-            let mut text: Option<(reprisekit::theme::FontConfig, TextRenderer)> = None;
-            for (serial, generation, job) in jobs {
-                if text.as_ref().is_none_or(|(fonts, _)| fonts != job.fonts()) {
-                    text = Some((job.fonts().clone(), TextRenderer::load(job.fonts())));
-                }
-                let Some((_, text)) = &text else {
-                    unreachable!("loaded above");
-                };
-                if done
-                    .send((serial, generation, build_warm(job, text)))
-                    .is_err()
-                {
-                    return;
-                }
-            }
+            paint_warm_jobs(jobs, build_warm, |serial, generation, built| {
+                done.send((serial, generation, built)).is_ok()
+            });
         });
     if let Err(e) = spawned {
         log::warn!("notify: no warm thread: {e}");
         return None;
     }
+    state.notify.warm_spawns += 1;
+    if state.notify.warm_spawns == WARM_SPAWNS {
+        log::warn!("notify: the warm thread was started {WARM_SPAWNS} times; no more after this");
+    }
     state.notify.warmer = Some(tx.clone());
     Some(tx)
 }
 
-/// Gives balloon `serial` the layers its warm job `generation` painted, unless it left or sent a
-/// later job since; true when taken.
-fn land_warm(stack: &mut [Balloon], serial: u64, generation: u64, built: WarmLayers) -> bool {
-    match stack.iter_mut().find(|b| b.serial == serial) {
-        Some(b) if b.warm_gen == generation => {
-            b.opening.install(&mut b.glass, built);
-            true
+const WARM_SPAWNS: u32 = 3;
+
+/// The painter thread's loop: paints each job with `build` and hands `done` its layers, `None`
+/// for a job that panicked, until `done` returns false.
+fn paint_warm_jobs(
+    jobs: std::sync::mpsc::Receiver<(u64, u64, WarmJob)>,
+    build: impl Fn(WarmJob, &TextRenderer) -> WarmLayers,
+    done: impl Fn(u64, u64, Option<WarmLayers>) -> bool,
+) {
+    let mut text: Option<(reprisekit::theme::FontConfig, TextRenderer)> = None;
+    for (serial, generation, job) in jobs {
+        let built = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            if text.as_ref().is_none_or(|(fonts, _)| fonts != job.fonts()) {
+                text = Some((job.fonts().clone(), TextRenderer::load(job.fonts())));
+            }
+            let Some((_, text)) = &text else {
+                unreachable!("loaded above");
+            };
+            build(job, text)
+        }));
+        if built.is_err() {
+            log::error!("notify: painting balloon {serial}'s opening panicked; it paints in frame");
+            text = None;
         }
+        if !done(serial, generation, built.ok()) {
+            return;
+        }
+    }
+}
+
+/// Gives balloon `serial` the layers its warm job `generation` painted, unless it left or sent a
+/// later job since; true when taken. `None`, a job that panicked, is not sent again.
+fn land_warm(
+    stack: &mut [Balloon],
+    serial: u64,
+    generation: u64,
+    built: Option<WarmLayers>,
+) -> bool {
+    match stack.iter_mut().find(|b| b.serial == serial) {
+        Some(b) if b.warm_gen == generation => match built {
+            Some(built) => {
+                b.opening.install(&mut b.glass, built);
+                true
+            }
+            None => {
+                b.opening.job_failed();
+                false
+            }
+        },
         _ => false,
     }
 }
@@ -3296,7 +3333,13 @@ mod tests {
 
     /// Layers a worker painted for `b`'s Droplet, the job asking for them, and whether `b` would
     /// still send that job.
-    fn warm_layers(b: &Balloon) -> (WarmLayers, impl Fn(&mut Balloon) -> bool + use<>) {
+    fn warm_layers(b: &Balloon) -> (Option<WarmLayers>, impl Fn(&mut Balloon) -> bool + use<>) {
+        let (job, wants) = warm_job(b);
+        (Some(build_warm(job, &text())), wants)
+    }
+
+    /// A warm job for `b`'s Droplet, and whether `b` would still send it.
+    fn warm_job(b: &Balloon) -> (WarmJob, impl Fn(&mut Balloon) -> bool + use<>) {
         let (theme, text) = (theme_for(Interface::Glass), text());
         let ends = droplet_ends(
             &theme,
@@ -3333,7 +3376,7 @@ mod tests {
                 )
                 .is_some()
         };
-        (build_warm(job, &text), wants)
+        (job, wants)
     }
 
     #[test]
@@ -3399,6 +3442,49 @@ mod tests {
         );
         shed(&mut stack, false, false);
         assert_eq!(warm(&mut stack[0], true), (true, 1, 2), "both went");
+    }
+
+    #[test]
+    fn a_warm_job_that_panics_is_landed_as_none_and_not_sent_again() {
+        let mut scene = crate::compositor::DeskScene::new();
+        let mut stack = vec![balloon(&mut scene, 1)];
+        let (tx, jobs) = std::sync::mpsc::channel();
+        for serial in [1, 2] {
+            tx.send((serial, 1, warm_job(&stack[0]).0)).unwrap();
+        }
+        drop(tx);
+        let calls = std::cell::Cell::new(0);
+        let landed = std::cell::RefCell::new(Vec::new());
+        paint_warm_jobs(
+            jobs,
+            |job, text| {
+                calls.set(calls.get() + 1);
+                if calls.get() == 1 {
+                    panic!("a job that panics");
+                }
+                build_warm(job, text)
+            },
+            |serial, generation, built| {
+                landed.borrow_mut().push((serial, generation, built));
+                true
+            },
+        );
+        let mut landed = landed.into_inner();
+        let ok: Vec<_> = landed.iter().map(|(s, _, b)| (*s, b.is_some())).collect();
+        assert_eq!(
+            ok,
+            [(1, false), (2, true)],
+            "the painter outlives the panic"
+        );
+        let (_, wants) = warm_job(&stack[0]);
+        stack[0].warm_gen = 1;
+        assert!(wants(&mut stack[0]), "the job is out");
+        let (serial, generation, built) = landed.remove(0);
+        assert!(!land_warm(&mut stack, serial, generation, built));
+        assert!(
+            !wants(&mut stack[0]),
+            "its content paints in frame from now on"
+        );
     }
 
     #[test]
