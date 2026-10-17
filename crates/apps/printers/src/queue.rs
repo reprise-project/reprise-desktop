@@ -332,6 +332,10 @@ impl Queue {
             return Outcome::None;
         }
         self.alt_arm.interrupt();
+        if k.sym == keysym::MENU || (k.sym == keysym::F10 && k.mods.shift) {
+            self.bar.close();
+            return self.keyboard_menu(ctx);
+        }
         let bar_key = match k.sym {
             keysym::F10 => Some(Key::Activate),
             keysym::ESCAPE => Some(Key::Escape),
@@ -367,17 +371,19 @@ impl Queue {
                 None => Outcome::None,
             },
             keysym::ESCAPE => Outcome::Close,
-            keysym::MENU => {
-                let lay = self.list.layout(r, ctx);
-                let at = self.list.selected();
-                let y = lay.body.y
-                    + at.map_or(0, |i| i.saturating_sub(self.list.view.top) as i32) * lay.row_h();
-                let rows = document_rows(self.selected_job());
-                self.popup = Popup::open(rows, lay.body.x + 20, y + lay.row_h(), ctx, true);
-                Outcome::Redraw
-            }
             _ => Outcome::None,
         }
+    }
+
+    /// Shift+F10 or the Menu key: the selected document's menu under its row, its first row picked.
+    fn keyboard_menu(&mut self, ctx: &Ctx) -> Outcome {
+        let lay = self.list.layout(self.list_rect(ctx), ctx);
+        let at = self.list.selected();
+        let y = lay.body.y
+            + at.map_or(0, |i| i.saturating_sub(self.list.view.top) as i32) * lay.row_h();
+        let rows = document_rows(self.selected_job());
+        self.popup = Popup::open(rows, lay.body.x + 20, y + lay.row_h(), ctx, true);
+        Outcome::Redraw
     }
 
     pub fn key_up(&mut self, k: &KeyInput, ctx: &Ctx) -> Outcome {
@@ -561,6 +567,28 @@ mod tests {
             Outcome::Job(2, JobOp::Cancel)
         );
         assert_eq!(q.key(&key(keysym::ESCAPE), &s, &ctx), Outcome::Close);
+    }
+
+    #[test]
+    fn shift_f10_opens_the_documents_menu_and_f10_alone_the_menu_bar() {
+        let ctx = ctx();
+        let s = snap();
+        let mut q = Queue::new("Laser");
+        q.refresh(&s);
+        let (x, y) = row_point(&q, &ctx, 1);
+        q.press(one(x, y), BTN_LEFT, &s, &ctx);
+        assert_eq!(q.key(&key(keysym::F10), &s, &ctx), Outcome::Redraw);
+        assert!(q.popup.is_none(), "F10 alone goes to the menu bar");
+        assert!(q.bar.is_active());
+        let mut shift_f10 = key(keysym::F10);
+        shift_f10.mods.shift = true;
+        assert_eq!(q.key(&shift_f10, &s, &ctx), Outcome::Redraw);
+        assert!(!q.bar.is_active(), "the menu bar lets go");
+        assert_eq!(
+            q.key(&key(keysym::RETURN), &s, &ctx),
+            Outcome::Job(2, JobOp::Resume),
+            "the held document's first live row is picked"
+        );
     }
 
     #[test]
