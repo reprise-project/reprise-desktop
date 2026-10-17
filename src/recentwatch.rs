@@ -1,5 +1,5 @@
 //! Reads the recent files again when `recently-used.xbel` changes, and checks the document
-//! folders again when one comes or goes, so open lists follow them.
+//! folders again when one comes or goes or `user-dirs.dirs` changes, so open lists follow them.
 
 use crate::compositor::State;
 use crate::dirwatch::{DirWatch, Want};
@@ -18,9 +18,9 @@ impl AsFd for Watch {
     }
 }
 
-/// The xbel's directory, waking only for the xbel: GLib and KDE replace it by a rename.
-fn wants(xbel: &Path) -> Vec<Want> {
-    let (Some(dir), Some(name)) = (xbel.parent(), xbel.file_name()) else {
+/// The file's directory, waking only for the file: GLib and KDE replace the xbel by a rename.
+fn wants(file: &Path) -> Vec<Want> {
+    let (Some(dir), Some(name)) = (file.parent(), file.file_name()) else {
         return Vec::new();
     };
     vec![Want {
@@ -49,25 +49,55 @@ fn folder_wants(dirs: &[PathBuf]) -> Vec<Want> {
         .collect()
 }
 
+/// `user-dirs.dirs`, and the document folders `dirs` read from it.
+fn document_wants(user_dirs: &Path, dirs: &[PathBuf]) -> Vec<Want> {
+    let mut want = wants(user_dirs);
+    want.extend(folder_wants(dirs));
+    want
+}
+
 pub fn setup(state: &mut State) {
     if let Some(xbel) = reprisefs::recent::xbel_path() {
         watch(state, "recent files", wants(&xbel), State::read_recent);
     }
-    // user-dirs.dirs is read off the loop, as the checks read it.
-    state.spawn_fs_job(|| {
-        let dirs: Vec<PathBuf> = reprisefs::places::document_dir_paths()
-            .into_iter()
-            .map(|(d, _)| d)
-            .collect();
-        Box::new(move |state: &mut State| {
-            watch(
-                state,
-                "document folders",
-                folder_wants(&dirs),
-                State::check_recent,
-            )
-        })
+    let watch = match DirWatch::new() {
+        Ok(w) => w,
+        Err(e) => return log::warn!("document folders watch: inotify unavailable: {e}"),
+    };
+    // SAFETY: the fd is the watch's inotify fd, open for this call.
+    let fd = match unsafe { BorrowedFd::borrow_raw(watch.fd()) }.try_clone_to_owned() {
+        Ok(fd) => fd,
+        Err(e) => return log::warn!("document folders watch: no fd: {e}"),
+    };
+    let source = Generic::new(fd, Interest::READ, Mode::Level);
+    let added = state.handle.insert_source(source, |_, _, state| {
+        let changed = state
+            .recent
+            .folder_watch
+            .as_mut()
+            .is_some_and(|w| w.drain());
+        follow_document_dirs(state);
+        if changed {
+            state.check_recent();
+        }
+        Ok(PostAction::Continue)
     });
+    if let Err(e) = added {
+        return log::warn!("document folders watch: {}", e.error);
+    }
+    state.recent.folder_watch = Some(watch);
+    follow_document_dirs(state);
+}
+
+/// Watches `user-dirs.dirs` and the document folders the last recent check read from it.
+pub fn follow_document_dirs(state: &mut State) {
+    let want = document_wants(
+        &reprisefs::places::user_dirs_file(),
+        &state.recent.document_dir_paths(),
+    );
+    if let Some(w) = state.recent.folder_watch.as_mut() {
+        w.sync(&want);
+    }
 }
 
 /// Runs `hit` on the loop whenever an event `want` asks for arrives.
@@ -116,6 +146,29 @@ mod tests {
         std::fs::rename(dir.join("recently-used.xbel.TMP"), &xbel).unwrap();
         assert!(w.drain(), "the xbel replaced by a rename");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn an_edited_user_dirs_wakes_the_watch_and_the_folders_follow_the_last_read() {
+        let home =
+            std::env::temp_dir().join(format!("reprise-userdirswatch-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        std::fs::create_dir_all(home.join(".config")).unwrap();
+        let user_dirs = home.join(".config/user-dirs.dirs");
+        let mut w = DirWatch::new().unwrap();
+        w.sync(&document_wants(&user_dirs, &[home.join("Documents")]));
+        std::fs::write(home.join(".config/other.conf"), "").unwrap();
+        assert!(!w.drain(), "another file in the config folder");
+        std::fs::write(home.join(".config/user-dirs.dirs.tmp"), "").unwrap();
+        std::fs::rename(home.join(".config/user-dirs.dirs.tmp"), &user_dirs).unwrap();
+        assert!(w.drain(), "user-dirs.dirs replaced by a rename");
+
+        w.sync(&document_wants(&user_dirs, &[home.join("Papers")]));
+        std::fs::create_dir(home.join("Documents")).unwrap();
+        assert!(!w.drain(), "Documents is no document folder any more");
+        std::fs::create_dir(home.join("Papers")).unwrap();
+        assert!(w.drain(), "Papers made");
+        let _ = std::fs::remove_dir_all(&home);
     }
 
     #[test]
