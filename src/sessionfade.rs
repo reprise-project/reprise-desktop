@@ -19,13 +19,15 @@ use crate::compositor::State;
 const LAST_FRAME: Duration = Duration::from_millis(50);
 /// How long a starting output stays black waiting for its wallpaper before it fades in anyway.
 const WAIT_CAP: Duration = Duration::from_secs(2);
+/// The most a fade in moves on between two of its frames on screen, so an output whose frames
+/// stall (its own or another output's modeset) resumes the fade where the screen left it.
+const STEP: Duration = Duration::from_millis(50);
 
-/// One fade's black from start to end, linear in alpha.
+/// The fade out's black from start to end, linear in alpha.
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct Ramp {
     started: Instant,
     ms: u32,
-    to_black: bool,
 }
 
 impl Ramp {
@@ -43,7 +45,7 @@ impl Ramp {
         } else {
             now.saturating_duration_since(self.started).as_secs_f64() * 1000.0 / f64::from(self.ms)
         };
-        (if self.to_black { t } else { 1.0 - t }) as f32
+        t as f32
     }
 }
 
@@ -51,7 +53,22 @@ impl Ramp {
 enum In {
     /// Black from this instant until the output's first full frame, then a fade of this many ms.
     Waiting(Instant, u32),
-    Fading(Ramp),
+    /// The full frame went out under the black: the fade starts once a frame is on screen, as a
+    /// first modeset can take longer than the whole fade.
+    Drawn(u32),
+    /// A fade of `ms`, `shown` of it on screen by the frame presented at `last`.
+    Fading {
+        ms: u32,
+        shown: Duration,
+        last: Instant,
+    },
+}
+
+impl In {
+    /// How much of a fade in the screen shows by `now`.
+    fn shown(shown: Duration, last: Instant, now: Instant) -> Duration {
+        shown + now.saturating_duration_since(last).min(STEP)
+    }
 }
 
 /// What an output's frame asks of the loop after it is drawn.
@@ -100,21 +117,23 @@ impl<K: PartialEq + Clone, T> Fade<K, T> {
             if let In::Waiting(since, ms) = self.ins[i].1
                 && (ready || now.saturating_duration_since(since) >= WAIT_CAP)
             {
-                self.ins[i].1 = In::Fading(Ramp {
-                    started: now,
-                    ms,
-                    to_black: false,
-                });
+                self.ins[i].1 = In::Drawn(ms);
             }
             match self.ins[i].1 {
-                In::Waiting(..) => shown = 1.0,
-                In::Fading(r) if r.done(now) => {
-                    self.ins.remove(i);
-                    self.opening = None;
-                }
-                In::Fading(r) => {
-                    shown = r.alpha(now);
-                    next = Next::Frame;
+                In::Waiting(..) | In::Drawn(_) => shown = 1.0,
+                In::Fading {
+                    ms,
+                    shown: by,
+                    last,
+                } => {
+                    let t = In::shown(by, last, now).as_secs_f64() * 1000.0 / f64::from(ms);
+                    if t >= 1.0 {
+                        self.ins.remove(i);
+                        self.opening = None;
+                    } else {
+                        shown = (1.0 - t) as f32;
+                        next = Next::Frame;
+                    }
                 }
             }
         }
@@ -127,20 +146,40 @@ impl<K: PartialEq + Clone, T> Fade<K, T> {
         (shown, next)
     }
 
+    /// A frame of `key`'s reached the screen at `now`: a fade in waiting for that starts, a
+    /// running one moves on. True when one started, so the caller draws the next frame.
+    pub fn presented(&mut self, key: &K, now: Instant) -> bool {
+        let Some((_, i)) = self.ins.iter_mut().find(|(k, _)| k == key) else {
+            return false;
+        };
+        match *i {
+            In::Drawn(ms) => {
+                *i = In::Fading {
+                    ms,
+                    shown: Duration::ZERO,
+                    last: now,
+                };
+                true
+            }
+            In::Fading { ms, shown, last } => {
+                *i = In::Fading {
+                    ms,
+                    shown: In::shown(shown, last, now),
+                    last: now,
+                };
+                false
+            }
+            In::Waiting(..) => false,
+        }
+    }
+
     /// Fade every output to black over `ms`, then hand `then` back from `ended`. Returns `then`
     /// to run at once when `ms` is 0 or a fade out is already under way.
     pub fn fade_out(&mut self, ms: u32, then: T, now: Instant) -> Option<T> {
         if ms == 0 || self.out.is_some() {
             return Some(then);
         }
-        self.out = Some((
-            Ramp {
-                started: now,
-                ms,
-                to_black: true,
-            },
-            Some(then),
-        ));
+        self.out = Some((Ramp { started: now, ms }, Some(then)));
         None
     }
 
@@ -204,9 +243,7 @@ pub fn element(state: &mut State, output: &Output) -> (Option<SolidColorRenderEl
     }
     let f = &mut state.session_fade;
     let fading = fading_in(&f.fade, output);
-    if fading && !was_fading {
-        log::debug!("session fade: {} fades in", output.name());
-    } else if was_fading && !fading {
+    if was_fading && !fading {
         log::debug!("session fade: {} faded in", output.name());
     }
     let at = f.drawn.iter().position(|(o, ..)| o == output);
@@ -243,10 +280,26 @@ pub fn element(state: &mut State, output: &Output) -> (Option<SolidColorRenderEl
     (Some(e), next)
 }
 
+/// A frame of `output`'s reached the screen (`backend::flipped`).
+pub fn presented(state: &mut State, output: &Output) {
+    if state.session_fade.fade.presented(output, Instant::now()) {
+        log::debug!("session fade: {} fades in", output.name());
+        crate::backend::schedule(state, output);
+    }
+}
+
+/// A frame of `output`'s was rendered: an `empty` one changed nothing, so the screen already
+/// shows it.
+pub fn rendered(state: &mut State, output: &Output, empty: bool) {
+    if empty {
+        presented(state, output);
+    }
+}
+
 fn fading_in(fade: &Fade<Output, Then>, output: &Output) -> bool {
     fade.ins
         .iter()
-        .any(|(k, i)| k == output && matches!(i, In::Fading(_)))
+        .any(|(k, i)| k == output && matches!(i, In::Fading { .. }))
 }
 
 /// Fade every output to black over `[effects] session_fade_out_ms`, then run `then`; at once
@@ -301,17 +354,30 @@ mod tests {
         Duration::from_millis(n)
     }
 
+    /// Present `key`'s frames every 16 ms over (`from`, `to`]; the black at `to`.
+    fn frames<T>(f: &mut Fade<u8, T>, key: u8, from: Instant, to: Instant) -> f32 {
+        let mut at = from;
+        while at + ms(16) <= to {
+            at += ms(16);
+            f.frame(&key, true, at);
+            f.presented(&key, at);
+        }
+        f.frame(&key, true, to).0
+    }
+
     #[test]
     fn a_starting_output_stays_black_until_ready_then_fades_in() {
         let t0 = Instant::now();
         let mut f: Fade<u8, ()> = Fade::new(600);
         assert_eq!(f.frame(&1, false, t0), (1.0, Next::After(WAIT_CAP)));
         assert_eq!(f.frame(&1, false, t0 + ms(500)), (1.0, Next::Idle));
-        assert_eq!(f.frame(&1, true, t0 + ms(1000)), (1.0, Next::Frame));
-        let (half, next) = f.frame(&1, true, t0 + ms(1300));
+        assert_eq!(f.frame(&1, true, t0 + ms(1000)), (1.0, Next::Idle));
+        assert!(f.presented(&1, t0 + ms(1000)));
+        assert_eq!(f.frame(&1, true, t0 + ms(1016)).1, Next::Frame);
+        let half = frames(&mut f, 1, t0 + ms(1000), t0 + ms(1300));
         assert!((half - 0.5).abs() < 1e-3, "{half}");
-        assert_eq!(next, Next::Frame);
-        assert_eq!(f.frame(&1, true, t0 + ms(1600)), (0.0, Next::Idle));
+        assert_eq!(frames(&mut f, 1, t0 + ms(1300), t0 + ms(1600)), 0.0);
+        assert_eq!(f.frame(&1, true, t0 + ms(1616)), (0.0, Next::Idle));
         assert_eq!(
             f.frame(&2, true, t0 + ms(1700)),
             (0.0, Next::Idle),
@@ -324,8 +390,47 @@ mod tests {
         let t0 = Instant::now();
         let mut f: Fade<u8, ()> = Fade::new(600);
         f.frame(&1, false, t0);
-        assert_eq!(f.frame(&1, false, t0 + WAIT_CAP), (1.0, Next::Frame));
-        assert_eq!(f.frame(&1, false, t0 + WAIT_CAP + ms(600)).0, 0.0);
+        assert_eq!(f.frame(&1, false, t0 + WAIT_CAP), (1.0, Next::Idle));
+        assert!(f.presented(&1, t0 + WAIT_CAP));
+        assert_eq!(
+            frames(&mut f, 1, t0 + WAIT_CAP, t0 + WAIT_CAP + ms(608)),
+            0.0
+        );
+    }
+
+    #[test]
+    fn the_fade_in_starts_when_its_first_frame_reaches_the_screen() {
+        let t0 = Instant::now();
+        let mut f: Fade<u8, ()> = Fade::new(600);
+        assert_eq!(f.frame(&1, true, t0).0, 1.0);
+        assert!(!f.presented(&2, t0), "another output's frame");
+        let modeset = ms(700);
+        assert_eq!(
+            f.frame(&1, true, t0 + modeset).0,
+            1.0,
+            "still black while the first modeset is out"
+        );
+        assert!(f.presented(&1, t0 + modeset));
+        assert!(!f.presented(&1, t0 + modeset), "starts once");
+        let half = frames(&mut f, 1, t0 + modeset, t0 + modeset + ms(300));
+        assert!((half - 0.5).abs() < 1e-3, "{half}");
+    }
+
+    #[test]
+    fn a_stalled_output_resumes_its_fade_in_where_the_screen_left_it() {
+        let t0 = Instant::now();
+        let mut f: Fade<u8, ()> = Fade::new(600);
+        f.frame(&1, true, t0);
+        f.presented(&1, t0);
+        let before = frames(&mut f, 1, t0, t0 + ms(160));
+        assert!((before - (1.0 - 160.0 / 600.0)).abs() < 1e-3, "{before}");
+        let stall = ms(450);
+        let (after, next) = f.frame(&1, true, t0 + ms(160) + stall);
+        assert!(
+            (after - (1.0 - 210.0 / 600.0)).abs() < 1e-3,
+            "one step on after the stall: {after}"
+        );
+        assert_eq!(next, Next::Frame);
     }
 
     #[test]
@@ -334,9 +439,12 @@ mod tests {
         let mut f: Fade<u8, ()> = Fade::new(600);
         f.frame(&1, true, t0);
         f.frame(&2, false, t0);
-        assert_eq!(f.frame(&1, true, t0 + ms(600)).0, 0.0);
+        f.presented(&1, t0);
+        f.presented(&2, t0);
+        assert_eq!(frames(&mut f, 1, t0, t0 + ms(608)), 0.0);
         assert_eq!(f.frame(&2, false, t0 + ms(700)).0, 1.0, "still waiting");
-        assert_eq!(f.frame(&2, true, t0 + ms(800)), (1.0, Next::Frame));
+        assert_eq!(f.frame(&2, true, t0 + ms(800)), (1.0, Next::Idle));
+        assert!(f.presented(&2, t0 + ms(816)));
     }
 
     #[test]
@@ -389,8 +497,9 @@ mod tests {
         let t0 = Instant::now();
         let mut f: Fade<u8, &str> = Fade::new(400);
         f.frame(&1, true, t0);
+        f.presented(&1, t0);
         f.fade_out(400, "stop", t0 + ms(100));
-        let (a, _) = f.frame(&1, true, t0 + ms(200));
+        let a = frames(&mut f, 1, t0, t0 + ms(200));
         assert!((a - 0.5).abs() < 1e-3, "the fade in's half: {a}");
         let (a, _) = f.frame(&1, true, t0 + ms(400));
         assert!((a - 0.75).abs() < 1e-3, "the fade out's: {a}");
