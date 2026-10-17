@@ -43,6 +43,8 @@ pub struct RecentDocs {
     /// The document folders with their icon names as the last check read them from
     /// `user-dirs.dirs`, whether or not they exist.
     dirs: Vec<(PathBuf, &'static str)>,
+    /// Wakes for `user-dirs.dirs` and the document folders (`recentwatch`).
+    pub(crate) folder_watch: Option<crate::dirwatch::DirWatch>,
 }
 
 impl Default for RecentDocs {
@@ -62,6 +64,7 @@ impl RecentDocs {
             checking: false,
             recheck: false,
             dirs: Vec::new(),
+            folder_watch: None,
         }
     }
 
@@ -92,6 +95,11 @@ impl RecentDocs {
     /// The document folders that were not found missing; none before the first check.
     pub fn document_dirs(&self) -> Vec<(PathBuf, &'static str)> {
         self.found_dirs(self.dirs.clone())
+    }
+
+    /// The document folders the last check read, found or not.
+    pub fn document_dir_paths(&self) -> Vec<PathBuf> {
+        self.dirs.iter().map(|(d, _)| d.clone()).collect()
     }
 
     /// Whether `path` is one of the document folders, found or not.
@@ -207,6 +215,7 @@ impl State {
             );
             Box::new(|s: &mut State| {
                 s.recent.dirs = dirs;
+                crate::recentwatch::follow_document_dirs(s);
                 s.recent.checking = false;
                 if std::mem::take(&mut s.recent.recheck) {
                     s.check_recent();
