@@ -131,8 +131,8 @@ impl Reuse {
 }
 
 smithay::render_elements! {
-    /// What a private backdrop draws: the scene below its glass, cut to the part its glass reads
-    /// while the glass stays put.
+    /// What a backdrop draws: the output's cut to what its glass reads; a private one the scene
+    /// below its glass, cut so while the glass stays put.
     Private<=GlesRenderer>;
     Whole=SceneElement<GlesRenderer>,
     Cut=CropRenderElement<SceneElement<GlesRenderer>>,
@@ -260,9 +260,25 @@ impl GlassCtx {
             let Some(b) = backdrops.get_mut(&name) else {
                 return;
             };
-            let d = f64::from(reprisefx::blur::backdrop_downscale(scale));
-            let elements = scene.backdrop_elements(renderer, &View::new(area, scale / d));
-            let needed = self.reads_on(scene, area, seen, scale, &own);
+            let d = reprisefx::blur::backdrop_downscale(scale);
+            let view = View::new(area, scale / f64::from(d));
+            let reads = self.reads_on(scene, area, seen, scale, &own);
+            let needed: Vec<_> = reads.iter().flat_map(|r| r.needed.clone()).collect();
+            // Only the backdrop the glass reads is drawn: what changes elsewhere (the water under
+            // Rain each frame) waits until glass moves over it, which moves the cut.
+            let cut = reads
+                .iter()
+                .filter_map(|r| r.feed)
+                .reduce(|a, b| a.merge(b))
+                .map(|f| shrunk(f, d));
+            let elements: Vec<Private> = scene
+                .backdrop_elements(renderer, &view)
+                .into_iter()
+                .filter_map(|e| {
+                    let cut = cut?;
+                    CropRenderElement::from_element(e, view.scale, cut).map(Private::Cut)
+                })
+                .collect();
             *self.source.borrow_mut() =
                 self.redraw(renderer, b, &elements, clear, output, Some(&needed));
             let pass = self.pass.get();
@@ -276,9 +292,9 @@ impl GlassCtx {
         }
     }
 
-    /// The output pixels the glass shown on the output at `area` reads from its picture, glass
-    /// drawn from its own backdrop (`own`) aside: only changes there are blurred, the rest wait
-    /// until glass reads them.
+    /// What the glass shown on the output at `area` reads from its picture, glass drawn from its
+    /// own backdrop (`own`) aside: only changes there are drawn and blurred, the rest wait until
+    /// glass reads them.
     fn reads_on(
         &self,
         scene: &DeskScene,
@@ -286,7 +302,7 @@ impl GlassCtx {
         seen: Size<i32, Physical>,
         scale: f64,
         own: &[Stacked],
-    ) -> Vec<Rectangle<i32, Physical>> {
+    ) -> Vec<Reads> {
         let pass = self.pass.get();
         self.nodes
             .borrow()
@@ -303,10 +319,9 @@ impl GlassCtx {
                 let pane = n.pane.borrow();
                 Rectangle::new(at, pane.extent()).overlaps(area).then(|| {
                     let at = (at - area.loc).to_f64().to_physical(scale);
-                    Reads::of(&pane, at, seen, scale, &pass).needed
+                    Reads::of(&pane, at, seen, scale, &pass)
                 })
             })
-            .flatten()
             .collect()
     }
 
@@ -667,6 +682,7 @@ impl OutputBackdrop {
     }
 }
 
+#[derive(Debug, PartialEq)]
 struct Reads {
     needed: Vec<Rectangle<i32, Physical>>,
     reach: Vec<Rectangle<i32, Physical>>,
@@ -1716,6 +1732,37 @@ mod tests {
         let bytes = renderer.map_texture(&mapping).unwrap();
         let (x, y) = (at.0 / 2, at.1 / 2);
         u32::from(bytes[((y * size.w + x) * 4) as usize])
+    }
+
+    #[test]
+    fn the_outputs_backdrop_draws_only_what_its_glass_reads() {
+        let Ok(mut renderer) = reprisefx::headless::renderer() else {
+            eprintln!("skipped: no renderer");
+            return;
+        };
+        let ctx = GlassCtx::new();
+        ctx.set_renderer(&mut renderer);
+        let mut scene = DeskScene::new();
+        let root = scene.root();
+        let desktop = scene.tree_create(root);
+        scene.rect_create(desktop, (320, 200), [1.0; 4]);
+        let windows = scene.tree_create(root);
+        let (window, _glass) = glass_window(&mut scene, &ctx, windows, (10, 10), (80, 50), None);
+        red_at(&mut renderer, &ctx, &scene, Material::Frosted, &[]);
+        assert!(
+            backdrop_red(&mut renderer, &ctx, (50, 30)) > 230,
+            "under the glass"
+        );
+        assert!(
+            backdrop_red(&mut renderer, &ctx, (300, 180)) < 20,
+            "far from the glass the backdrop is left clear"
+        );
+        scene.set_position(window, 220, 130);
+        red_at(&mut renderer, &ctx, &scene, Material::Frosted, &[]);
+        assert!(
+            backdrop_red(&mut renderer, &ctx, (300, 180)) > 230,
+            "glass moved there draws it"
+        );
     }
 
     #[test]
