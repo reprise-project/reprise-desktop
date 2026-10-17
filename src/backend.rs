@@ -1159,6 +1159,15 @@ impl Backend {
         outputs.chain(std::iter::once(&self.device.track))
     }
 
+    /// `crtc`'s output is held at `now` (`commit::held`).
+    fn held(&self, crtc: crtc::Handle, now: std::time::Instant) -> bool {
+        let Some(s) = self.surfaces.get(&crtc) else {
+            return false;
+        };
+        let all: Vec<_> = self.tracks().collect();
+        commit::held(&s.track, &all, !self.retiring.is_empty(), now)
+    }
+
     /// The session is ours and its return has been handled (`reset_device`).
     fn settled(&self) -> bool {
         self.session.is_active() && !self.back.pending()
@@ -1191,12 +1200,7 @@ pub fn stalled(state: &State, output: &Output) -> bool {
     let Some(b) = state.backend.as_ref() else {
         return false;
     };
-    let Some(s) = crtc_of(output).and_then(|c| b.surfaces.get(&c)) else {
-        return false;
-    };
-    let all: Vec<_> = b.tracks().collect();
-    let now = std::time::Instant::now();
-    commit::held(&s.track, &all, !b.retiring.is_empty(), now)
+    crtc_of(output).is_some_and(|c| b.held(c, std::time::Instant::now()))
 }
 
 /// Deferred work, in the order it runs: the device reset before the scan reads connectors
@@ -1377,8 +1381,9 @@ fn watch(state: &mut State) {
     }
 }
 
-/// Label outputs past `commit::STALL`: lock and sleep stop waiting for their cover, their
-/// clients get a frame callback each tick. False once nothing is out.
+/// Label outputs past `commit::STALL`. On every held output (`commit::held`) lock and sleep
+/// stop waiting for its cover and its clients get a frame callback each tick. False once
+/// nothing is out.
 fn watch_tick(state: &mut State) -> bool {
     let now = std::time::Instant::now();
     let Some(b) = state.backend.as_mut() else {
@@ -1388,8 +1393,7 @@ fn watch_tick(state: &mut State) -> bool {
     if newly {
         log::warn!("the device reset is still in the kernel after 2 s");
     }
-    let mut throttled = Vec::new();
-    for (&crtc, s) in b.surfaces.iter_mut() {
+    for s in b.surfaces.values_mut() {
         if s.track.stall(now) {
             let name = s.output.name();
             match s.track.phase() {
@@ -1400,10 +1404,13 @@ fn watch_tick(state: &mut State) -> bool {
             }
             newly = true;
         }
-        if s.track.stalled() && s.callback_timer.is_none() {
-            throttled.push(crtc);
-        }
     }
+    let throttled: Vec<_> = b
+        .surfaces
+        .iter()
+        .filter(|(crtc, s)| s.callback_timer.is_none() && b.held(**crtc, now))
+        .map(|(crtc, _)| *crtc)
+        .collect();
     if newly {
         let held: Vec<Output> = state
             .scene
@@ -2202,12 +2209,12 @@ fn callbacks_after_a_frame(state: &mut State, crtc: crtc::Handle, shown: bool) {
                 return TimeoutAction::Drop;
             };
             let active = b.session.is_active();
+            let held = b.held(crtc, std::time::Instant::now());
             let Some(s) = b.surfaces.get_mut(&crtc) else {
                 return TimeoutAction::Drop;
             };
             s.callback_timer = None;
-            // A commit since asked for a frame: its callback waits for that frame, or the client would draw again before the screen showed its last.
-            if (s.needs_redraw || s.idle_scheduled) && !s.hw.off && !s.track.stalled() && active {
+            if waits_for_frame(s.needs_redraw || s.idle_scheduled, s.hw.off, held, active) {
                 return TimeoutAction::Drop;
             }
             callbacks_done(state, crtc);
@@ -2217,6 +2224,13 @@ fn callbacks_after_a_frame(state: &mut State, crtc: crtc::Handle, shown: bool) {
         Ok(t) => s.callback_timer = Some(t),
         Err(e) => log::warn!("frame callback timer: {}", e.error),
     }
+}
+
+/// A commit since asked for a frame: its callback waits for that frame, or the client would
+/// draw again before the screen showed its last. An output off, held or away from its session
+/// shows no frame, so its callbacks go out on the timer.
+fn waits_for_frame(asked: bool, off: bool, held: bool, active: bool) -> bool {
+    asked && !off && !held && active
 }
 
 pub fn answer_frames(state: &mut State) {
@@ -2843,7 +2857,7 @@ fn write_gamma(
 mod tests {
     use super::{
         Ask, Asked, CrtcNow, GammaStep, LINK_TRIES, LinkStep, Lut, ModeInfo, OutputMode, Step,
-        asks_scan, gamma_step, link_mode, link_step, lut_from_blob, next_step,
+        asks_scan, gamma_step, link_mode, link_step, lut_from_blob, next_step, waits_for_frame,
     };
 
     fn asked(asks: &[Ask]) -> Asked {
@@ -2852,6 +2866,18 @@ mod tests {
             a.add(*ask);
         }
         a
+    }
+
+    #[test]
+    fn a_held_output_answers_frames_on_the_timer() {
+        assert!(waits_for_frame(true, false, false, true));
+        assert!(
+            !waits_for_frame(true, false, true, true),
+            "a held output shows no frame for its clients to wait on"
+        );
+        assert!(!waits_for_frame(true, true, false, true));
+        assert!(!waits_for_frame(true, false, false, false));
+        assert!(!waits_for_frame(false, false, false, true));
     }
 
     #[test]
