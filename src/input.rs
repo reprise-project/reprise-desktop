@@ -1692,8 +1692,8 @@ impl State {
             keyboard: keyboard.then_some(start),
         };
         self.set_resizing(w, true);
-        // A pointer drag of an edge shared within a snap group sizes the
-        // neighbours along it.
+        // A drag of an edge shared within a snap group sizes the neighbours
+        // along it; a keyboard size brings them in as its arrows pick sides.
         if !keyboard {
             self.begin_group_resize(w, edges, start);
         }
@@ -1727,19 +1727,11 @@ impl State {
                 was_snapped,
                 ..
             } => self.end_move(window, snap, start.restore_rect(was_snapped)),
-            Interaction::Resize {
-                window,
-                edges,
-                keyboard,
-                ..
-            } => {
+            Interaction::Resize { window, .. } => {
                 // `resize_anchor` deliberately survives the release: the
                 // client's commit for the last requested size still has to
                 // be anchored. `handle_commit` drops it once that lands.
                 self.set_resizing(window, false);
-                if let Some(origin) = keyboard {
-                    self.wm.snap.end_key_resize(window, origin, edges);
-                }
                 self.end_group_resize();
             }
             Interaction::TabPress { .. } => self.tab_press_released(),
@@ -1816,9 +1808,15 @@ impl State {
                 crate::snapbarview::end(self);
             }
             Interaction::TabPress { window, .. } => self.tab_press_cancelled(window),
-            Interaction::Resize { window, .. } => {
+            Interaction::Resize {
+                window, keyboard, ..
+            } => {
                 self.set_resizing(window, false);
-                self.end_group_resize();
+                if keyboard.is_some() {
+                    self.cancel_group_resize();
+                } else {
+                    self.end_group_resize();
+                }
             }
             Interaction::PressButton { window, .. } => {
                 if let Some(w) = self.win_mut(window) {
