@@ -98,7 +98,7 @@ impl State {
                     is_app: matches!(source, DragSource::App { .. }),
                     op,
                     shortcut: Box::new(move |name| shortcut_text(&s, l.as_ref(), name)),
-                    replace: *replace,
+                    replace: replace.clone(),
                 }
             })
             .collect();

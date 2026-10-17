@@ -1618,7 +1618,8 @@ fn asked(ex: &Explorer) -> Option<(&'static str, String)> {
     }
 }
 
-/// Yes replaces the first file, No keeps the second, and the folder prompt's Yes merges.
+/// Yes replaces the first file, No keeps the second, and the folder prompt's Yes merges, asking
+/// about the file inside it the merge would replace.
 #[test]
 fn the_replace_prompt_asks_per_clash_and_carries_out_each_answer() {
     let mut ctx = test_ctx();
@@ -1638,6 +1639,15 @@ fn the_replace_prompt_asks_per_clash_and_carries_out_each_answer() {
         Some(("Confirm Folder Replace", "Reports".to_string()))
     );
     ex.dialog_event(key_event_alt('y'), &mut ctx);
+    assert_eq!(
+        asked(&ex),
+        Some(("Confirm File Replace", "r.txt".to_string()))
+    );
+    assert!(
+        matches!(&ex.dialog, Some(Dialog::Replace(r)) if r.fields.many),
+        "a file inside a merge offers Yes to All"
+    );
+    ex.dialog_event(key_event_alt('y'), &mut ctx);
     assert!(ex.dialog.is_none());
     ex.finish_puts(&mut ctx);
 
@@ -1650,6 +1660,27 @@ fn the_replace_prompt_asks_per_clash_and_carries_out_each_answer() {
     );
     assert!(!dest.join("a (2).txt").exists() && !dest.join("Copy of a.txt").exists());
     assert_eq!(ex.undo, None, "a replacement cannot be undone");
+}
+
+/// No on a file inside a merged folder keeps that file; the rest of the folder still merges.
+#[test]
+fn no_on_a_file_inside_a_merge_keeps_it() {
+    let mut ctx = test_ctx();
+    let (t, dest, mut ex) = paste_onto_taken_names(&mut ctx);
+    std::fs::write(t.path().join("src/Reports/mine.txt"), "mine").expect("write");
+    ex.dialog_event(key_event_alt('n'), &mut ctx);
+    ex.dialog_event(key_event_alt('n'), &mut ctx);
+    ex.dialog_event(key_event_alt('y'), &mut ctx);
+    assert_eq!(
+        asked(&ex),
+        Some(("Confirm File Replace", "r.txt".to_string()))
+    );
+    ex.dialog_event(key_event_alt('n'), &mut ctx);
+    assert!(ex.dialog.is_none());
+    ex.finish_puts(&mut ctx);
+    let read = |n: &str| std::fs::read_to_string(dest.join(n)).expect("read");
+    assert!(read("Reports/r.txt").ends_with("dest"), "No kept r.txt");
+    assert_eq!(read("Reports/mine.txt"), "mine", "the rest merged");
 }
 
 /// Right twice moves the replace prompt's focus from Yes past All to No and Enter presses No; the next
@@ -1678,6 +1709,11 @@ fn arrows_move_the_replace_prompt_s_focus_and_enter_presses_it() {
         "Enter on Yes answers b.txt"
     );
     ex.dialog_event(key_event_alt('y'), &mut ctx);
+    ex.dialog_event(key_event_alt('y'), &mut ctx);
+    assert!(
+        ex.dialog.is_none(),
+        "the folder and r.txt inside it answered"
+    );
     ex.finish_puts(&mut ctx);
     let read = |n: &str| std::fs::read_to_string(dest.join(n)).expect("read");
     assert_eq!(read("a.txt"), "old", "No kept a.txt");
