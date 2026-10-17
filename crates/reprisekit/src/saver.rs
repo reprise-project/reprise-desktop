@@ -206,6 +206,7 @@ pub struct Saver {
     rng: Rng,
     scene: Scene,
     carry: u64,
+    scale: i32,
 }
 
 impl Saver {
@@ -264,7 +265,7 @@ impl Saver {
                 )
             }
             Kind::Logo => {
-                let word = wordmark(text, (h / 9).max(8));
+                let word = wordmark(text, logo_size(h), 1);
                 let x = rng.range(0.0, (w as f32 - word.width as f32).max(0.0));
                 let y = rng.range(0.0, (h as f32 - word.height as f32).max(0.0));
                 let v = w.min(h) as f32 / 150.0 * opts.pace();
@@ -285,11 +286,26 @@ impl Saver {
             rng,
             scene,
             carry: 0,
+            scale: 1,
         }
+    }
+
+    /// This saver for a host showing it at `scale` device pixels a unit: [`Saver::logo`] is drawn
+    /// that much larger and Photos asks for pictures that much larger. Positions stay in units.
+    pub fn at_scale(mut self, text: &TextRenderer, scale: i32) -> Saver {
+        self.scale = scale.max(1);
+        if let Scene::Logo { word, .. } = &mut self.scene {
+            *word = wordmark(text, logo_size(self.h), self.scale);
+        }
+        self
     }
 
     pub fn size(&self) -> (u32, u32) {
         (self.w, self.h)
+    }
+
+    pub fn scale(&self) -> i32 {
+        self.scale
     }
 
     pub fn advance(&mut self, ms: u64) {
@@ -350,7 +366,8 @@ impl Saver {
                 vel,
                 color,
             } => {
-                let (ww, wh) = (word.width as f32, word.height as f32);
+                let s = self.scale as u32;
+                let (ww, wh) = ((word.width / s) as f32, (word.height / s) as f32);
                 at.0 += vel.0;
                 at.1 += vel.1;
                 let mut bounced = false;
@@ -429,9 +446,9 @@ impl Saver {
             .map(|_| photo_ms.saturating_sub(p.held_ms).max(STEP_MS))
     }
 
-    /// The logo: its wordmark in its colour, on black. The compositor
-    /// moves one buffer to [`Saver::logo_at`] and uploads the word again
-    /// only when [`Saver::logo_color`] changes.
+    /// The logo: its wordmark in its colour, on black, in device pixels at [`Saver::scale`]. The
+    /// compositor moves one buffer to [`Saver::logo_at`] and uploads the word again only when
+    /// [`Saver::logo_color`] changes.
     pub fn logo(&self) -> Option<Canvas> {
         match &self.scene {
             Scene::Logo { word, color, .. } => Some(tint(word, LOGO_COLORS[*color])),
@@ -602,11 +619,16 @@ fn line(canvas: &mut Canvas, a: (f32, f32), b: (f32, f32), unit: i32, color: Col
     }
 }
 
-pub fn wordmark(text: &TextRenderer, size_px: u32) -> Canvas {
+fn logo_size(h: u32) -> u32 {
+    (h / 9).max(8)
+}
+
+/// The wordmark at `size_px` in units, drawn at `scale` and returned as a canvas of its device pixels.
+pub fn wordmark(text: &TextRenderer, size_px: u32, scale: i32) -> Canvas {
     let pad = (size_px / 4) as i32;
     let w = text.measure(WORDMARK, true, size_px) + 2 * pad;
     let h = (size_px as i32 * 3 / 2) + 2 * pad;
-    let mut c = Canvas::new(w.max(1) as u32, h.max(1) as u32);
+    let mut c = Canvas::with_scale(w.max(1) as u32, h.max(1) as u32, scale);
     c.fill_rect(c.bounds(), Color::rgb(0, 0, 0));
     text.draw(
         &mut c,
@@ -617,7 +639,8 @@ pub fn wordmark(text: &TextRenderer, size_px: u32) -> Canvas {
         Align::Center,
         size_px,
     );
-    c
+    let (dw, dh) = c.device_size();
+    Canvas::from_pixels(dw, dh, c.pixels)
 }
 
 fn tint(white: &Canvas, color: Color) -> Canvas {
@@ -920,6 +943,68 @@ mod tests {
             s.step();
         }
         assert_eq!(s.logo_color(), Some(0));
+    }
+
+    /// The last letter of a white-on-black word as (x, y, level) for every pixel of its columns.
+    fn last_letter(word: &Canvas) -> Vec<(i32, i32, u32)> {
+        let (w, h) = (word.width as i32, word.height as i32);
+        let ink = |x: i32| (0..h).any(|y| word.get(x, y) & 0xFF != 0);
+        let right = (0..w).rev().find(|&x| ink(x)).unwrap();
+        let left = (0..right).rev().find(|&x| !ink(x)).unwrap() + 1;
+        (left & !1..(right + 2).min(w) & !1)
+            .flat_map(|x| (0..h & !1).map(move |y| (x, y, word.get(x, y) & 0xFF)))
+            .collect()
+    }
+
+    /// Whether every aligned 2x2 block of `px` is one level, as a scale-1 drawing doubled is.
+    fn doubled(word: &Canvas, px: &[(i32, i32, u32)]) -> bool {
+        px.iter()
+            .filter(|&&(x, y, _)| x % 2 == 0 && y % 2 == 0)
+            .all(|&(x, y, v)| {
+                [(x + 1, y), (x, y + 1), (x + 1, y + 1)]
+                    .iter()
+                    .all(|&(x, y)| word.get(x, y) & 0xFF == v)
+            })
+    }
+
+    #[test]
+    fn the_logo_word_is_drawn_afresh_at_scale_2_and_moves_in_units() {
+        let one = Saver::new(Kind::Logo, &Options::default(), 480, 270, 7, &text());
+        let two = one.clone().at_scale(&text(), 2);
+        let (w1, w2) = (one.logo().unwrap(), two.logo().unwrap());
+        assert_eq!((w2.width, w2.height), (w1.width * 2, w1.height * 2));
+        if crate::text::test_tahoma() {
+            assert_eq!(digest(&w1), 5770883215788226389, "word at scale 1");
+            assert_eq!(digest(&w2), 15604862939813622337, "word at scale 2");
+            assert!(
+                !doubled(&w2, &last_letter(&w2)),
+                "monochrome, still redrawn"
+            );
+        }
+        let (mut one, mut two) = (one, two);
+        for _ in 0..400 {
+            one.step();
+            two.step();
+        }
+        assert_eq!(two.logo_at(), one.logo_at(), "the word bounces in units");
+        assert_eq!(two.logo_color(), one.logo_color());
+    }
+
+    #[test]
+    fn a_smoothed_logo_word_has_soft_curves_at_scale_2() {
+        let smooth = TextRenderer::load(&FontConfig {
+            antialias: true,
+            ..FontConfig::default()
+        });
+        let s =
+            Saver::new(Kind::Logo, &Options::default(), 480, 270, 7, &smooth).at_scale(&smooth, 2);
+        let word = s.logo().unwrap();
+        let px = last_letter(&word);
+        assert!(
+            px.iter().any(|&(_, _, v)| (1..255).contains(&v)),
+            "the last letter's curves are partly covered"
+        );
+        assert!(!doubled(&word, &px), "scale 2 is drawn, not doubled");
     }
 
     #[test]
