@@ -22,9 +22,9 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use reprisekit::glass::{Settings, streak};
-use smithay::backend::renderer::Texture;
 use smithay::backend::renderer::gles::{GlesError, GlesRenderer, GlesTexture};
 use smithay::backend::renderer::utils::{DamageBag, DamageSnapshot};
+use smithay::backend::renderer::{Bind, Frame, Renderer, Texture};
 use smithay::utils::{Buffer, Physical, Rectangle, Size, Transform};
 
 use crate::blur::{self, Plan, Quality, Streaks};
@@ -194,7 +194,7 @@ impl Picture {
         } else {
             self.small = None;
         }
-        let mut across = blur::fit(&mut self.across, renderer, out)?;
+        let across = blur::fit(&mut self.across, renderer, out)?;
         let mut picture = blur::fit(&mut self.picture, renderer, out)?;
         if self.clamped.as_ref().map(GlesTexture::tex_id) != Some(u.backdrop.tex_id()) {
             blur::clamp(renderer, u.backdrop)?;
@@ -216,50 +216,60 @@ impl Picture {
                 })
                 .collect()
         };
+        let src = Rectangle::from_size((f64::from(out.w), f64::from(out.h)).into());
+        let program = fx.blur_program();
+        let across_uniforms = blur::gaussian(key.plan, (1.0 / out.w as f32, 0.0));
+        let picture_uniforms = blur::gaussian(key.plan, (0.0, 1.0 / out.h as f32));
+        let across_parts = texels(&parts.across);
+        let picture_parts = texels(&parts.picture);
+        let streaks = fx.streaks(renderer, s, u.output, u.scale)?;
+        // One frame for the passes, on the picture that none of them reads: each frame's finish
+        // costs a submission.
+        let mut target = renderer.bind(&mut picture)?;
+        let mut frame = renderer.render(&mut target, (out.w, out.h).into(), Transform::Normal)?;
         let from = match self.small.clone() {
-            Some(mut small) => {
+            Some(small) => {
                 // Each texel the mean of the 2x2 backdrop texels under it.
                 let k = f / d;
                 let src = Rectangle::from_size((f64::from(out.w * k), f64::from(out.h * k)).into());
                 let level = texels(&parts.level);
-                blur::pass_from(renderer, u.backdrop, src, &mut small, None, &[], &level)?;
+                blur::drawing_into(&mut frame, &small, |frame| {
+                    blur::draw_from(frame, u.backdrop, src, out, None, &[], &level)
+                })?;
                 small
             }
             None => u.backdrop.clone(),
         };
-        let src = Rectangle::from_size((f64::from(out.w), f64::from(out.h)).into());
-        let program = fx.blur_program();
-        let uniforms = blur::gaussian(key.plan, (1.0 / out.w as f32, 0.0));
-        let across_parts = texels(&parts.across);
-        blur::pass_from(
-            renderer,
-            &from,
-            src,
-            &mut across,
-            Some(program),
-            &uniforms,
-            &across_parts,
-        )?;
-        let uniforms = blur::gaussian(key.plan, (0.0, 1.0 / out.h as f32));
-        let picture_parts = texels(&parts.picture);
-        blur::pass_from(
-            renderer,
+        blur::drawing_into(&mut frame, &across, |frame| {
+            blur::draw_from(
+                frame,
+                &from,
+                src,
+                out,
+                Some(program),
+                &across_uniforms,
+                &across_parts,
+            )
+        })?;
+        blur::draw_from(
+            &mut frame,
             &across,
             src,
-            &mut picture,
+            out,
             Some(program),
-            &uniforms,
+            &picture_uniforms,
             &picture_parts,
         )?;
-        if let Some(t) = fx.streaks(renderer, s, u.output, u.scale)? {
+        if let Some(t) = &streaks {
             let streaks = Streaks {
-                texture: &t,
+                texture: t,
                 output: u.output,
                 shown: extent,
                 transform: Transform::Normal,
             };
-            blur::streak_over(renderer, &streaks, &mut picture, &picture_parts)?;
+            blur::streak_over(&mut frame, &streaks, out, &picture_parts)?;
         }
+        let _ = frame.finish()?;
         // A lookup at an output pixel reads the texels either side of it.
         let output = Rectangle::from_size(u.output);
         self.damage.add(
