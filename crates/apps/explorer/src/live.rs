@@ -19,6 +19,13 @@ use std::time::{Duration, Instant};
 
 pub const HOVER: Duration = Duration::from_millis(900);
 
+/// What [`Explorer::follow_gone`] asks of the file system: the nearest folder at or above the
+/// gone one, and the folders above the old place that still exist, nearest first.
+pub(crate) struct Gone {
+    nearest: Option<PathBuf>,
+    above: Vec<PathBuf>,
+}
+
 /// The thread reading the hovered folder's tip ([`window::folder_tip_lines`]).
 /// Dropping it sets the stop flag; the window does not wait for it on close.
 pub struct TipWalk {
@@ -121,6 +128,7 @@ impl Explorer {
             .or(put)
             .or(self.take_read(ctx))
             .or(self.take_checked(ctx))
+            .or(self.take_gone(ctx))
             .filter(|r| *r != Reply::none());
         if let Some(from) = self.watch.as_mut().and_then(|w| w.take_gone()) {
             let r = self.follow_gone(&from, ctx);
@@ -155,22 +163,50 @@ impl Explorer {
     }
 
     /// The folder shown, or one above it, was deleted or moved away: show the nearest folder that exists at or above
-    /// `from` (its new path after a rename in place, else its old one) in its place in the history.
-    fn follow_gone(&mut self, from: &Path, ctx: &mut Ctx) -> Reply {
-        let Some(dir) = from.ancestors().find(|p| p.is_dir()) else {
+    /// `from` (its new path after a rename in place, else its old one) in its place in the history. Which folders
+    /// still exist is asked on a listing thread; a later answer (a dead mount) lands on a wake
+    /// ([`Explorer::take_gone`]), dropped if the window has moved on by then.
+    pub(crate) fn follow_gone(&mut self, from: &Path, ctx: &mut Ctx) -> Reply {
+        let from = from.to_path_buf();
+        let old = self.place.path();
+        let read = move || Gone {
+            nearest: from.ancestors().find(|p| p.is_dir()).map(Path::to_path_buf),
+            above: old
+                .iter()
+                .flat_map(|o| o.ancestors())
+                .filter(|p| p.is_dir())
+                .map(Path::to_path_buf)
+                .collect(),
+        };
+        match self.read_job(ctx, read) {
+            Ok(gone) => self.follow_gone_to(gone, ctx),
+            Err(job) => {
+                self.going = Some((self.place.clone(), job));
+                Reply::none()
+            }
+        }
+    }
+
+    /// Follows a gone folder whose check ([`Explorer::follow_gone`]) answered late, unless the
+    /// window has moved on since.
+    pub(crate) fn take_gone(&mut self, ctx: &mut Ctx) -> Option<Reply> {
+        let gone = self.going.as_ref()?.1.take()?;
+        let (from, _) = self.going.take()?;
+        (from == self.place).then(|| self.follow_gone_to(gone, ctx))
+    }
+
+    fn follow_gone_to(&mut self, gone: Gone, ctx: &mut Ctx) -> Reply {
+        let Some(dir) = gone.nearest else {
             return self.refresh(ctx);
         };
-        let place = Place::from_path(dir);
+        let place = Place::from_path(&dir);
         if place == self.place {
             return self.refresh(ctx);
         }
         // The Folders pane still holds the old names. What changed is a folder above the old path;
         // refilling top down keeps what is open below.
-        if let Some(old) = self.place.path() {
-            let above: Vec<&Path> = old.ancestors().filter(|p| p.is_dir()).collect();
-            for p in above.into_iter().rev() {
-                self.refill_tree_node(&Place::from_path(p), ctx);
-            }
+        for p in gone.above.iter().rev() {
+            self.refill_tree_node(&Place::from_path(p), ctx);
         }
         self.history.replace(place.clone());
         self.show(place, ctx)

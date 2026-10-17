@@ -307,6 +307,37 @@ fn a_folders_refill_that_does_not_answer_fills_on_a_later_wake() {
     assert_eq!(labels(&ex), ["new", "old"]);
 }
 
+/// The shown folder's parent renamed away: which folders still exist is asked on a listing
+/// thread, so on a dead mount the window stays where it is and goes to the nearest folder left on
+/// the wake after the answer.
+#[test]
+fn a_gone_folder_whose_check_answers_late_is_followed_on_a_later_wake() {
+    let dir = tempfile::tempdir().expect("a temp dir");
+    let shown = dir.path().join("a/b");
+    std::fs::create_dir_all(&shown).expect("mkdir");
+    let mut ctx = test_ctx();
+    let here = Place::Folder(shown.clone());
+    let mut ex = test_explorer(here.clone(), &mut ctx);
+    std::fs::rename(dir.path().join("a"), dir.path().join("a2")).expect("rename");
+
+    let gate = Arc::new(std::sync::RwLock::new(()));
+    let closed = gate.write().expect("lock");
+    ex.held = Some(gate.clone());
+    assert_eq!(ex.follow_gone(&shown, &mut ctx), Reply::none());
+    assert_eq!(ex.place, here, "the window waits for the check");
+
+    drop(closed);
+    ex.held = None;
+    for _ in 0..500 {
+        if ex.place != here {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        ex.wake(&mut ctx);
+    }
+    assert_eq!(ex.place, Place::Folder(dir.path().to_path_buf()));
+}
+
 /// Computer's view and its tree node read the drives scanned at the
 /// last `/proc/mounts` change: neither stats the mounts again.
 #[test]
