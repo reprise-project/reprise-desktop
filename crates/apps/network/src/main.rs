@@ -23,6 +23,7 @@ mod vpnsheet;
 mod wg;
 
 use std::path::PathBuf;
+use std::rc::Rc;
 use std::sync::mpsc::Receiver;
 
 use repriseapp::filedlg::{Host, Resolved, Step, type_keep};
@@ -116,7 +117,7 @@ struct NetApp {
     hotspot: Option<hotspot::HotspotDialog>,
     notice: Option<Notice>,
     /// The message box's font, loaded in `start`: `children` sizes its window without a `Ctx`.
-    dialog_text: Option<TextRenderer>,
+    dialog_text: Option<Rc<TextRenderer>>,
     /// `Ctx::forms` as of the last event, which `children` and `initial_size` size windows by.
     forms: Theme,
     /// The icon theme's "network-vpn" at 16 px; see `read_icons`.
@@ -1141,10 +1142,11 @@ impl App for NetApp {
         let (rx, handle) = nm::watch(waker);
         self.nm_rx = Some(rx);
         self.nm = Some(handle);
-        self.dialog_text = Some(TextRenderer::load(&repriseapp::start_fonts()));
+        self.dialog_text = Some(repriseapp::start_text());
     }
 
     fn event(&mut self, win: WinId, ev: Event, ctx: &mut Ctx) -> Reply {
+        self.dialog_text = Some(ctx.text.clone());
         self.forms = ctx.forms();
         if matches!(ev, Event::Wake) {
             return self.wake();
@@ -1239,6 +1241,7 @@ impl App for NetApp {
     }
 
     fn draw(&mut self, win: WinId, c: &mut Canvas, ctx: &Ctx) {
+        self.dialog_text = Some(ctx.text.clone());
         let cs = &ctx.theme.colors;
         let forms = ctx.forms();
         let form_px = forms.fonts.size_px;
@@ -1381,7 +1384,8 @@ mod tests {
     pub(crate) fn test_ctx(size: (i32, i32)) -> Ctx {
         Ctx {
             theme: reprisekit::theme::Theme::default(),
-            text: reprisekit::text::TextRenderer::load(&reprisekit::theme::FontConfig::default()),
+            text: reprisekit::text::TextRenderer::load(&reprisekit::theme::FontConfig::default())
+                .into(),
             icons: reprisekit::icontheme::IconCache::new(reprisekit::icontheme::IconTheme::load(
                 "test",
                 &[],

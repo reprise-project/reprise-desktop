@@ -26,6 +26,7 @@ use reprisekit::raster::Canvas;
 use reprisekit::text::TextRenderer;
 use reprisekit::theme::Theme;
 use std::path::PathBuf;
+use std::rc::Rc;
 
 use settings::Settings;
 use upower::{Power, State};
@@ -52,7 +53,7 @@ struct PowerApp {
     error: Option<MsgBox>,
     /// The renderer and forms theme the box and window are sized with: `children` and
     /// `initial_size` have no `Ctx`, so they are kept from `start` and the last event.
-    dialog_text: Option<TextRenderer>,
+    dialog_text: Option<Rc<TextRenderer>>,
     forms: Theme,
     /// The client size last asked for the main window.
     asked: (i32, i32),
@@ -378,7 +379,7 @@ impl App for PowerApp {
     }
 
     fn start(&mut self, waker: repriseapp::Waker) {
-        self.dialog_text = Some(TextRenderer::load(&repriseapp::start_fonts()));
+        self.dialog_text = Some(repriseapp::start_text());
         self.asked = sheet::CLIENT;
         // The tray goes first: it takes the `reprise.power` bus name, and a second instance exits here once it has raised the first.
         match tray::start(waker.clone()) {
@@ -404,6 +405,7 @@ impl App for PowerApp {
     }
 
     fn event(&mut self, win: WinId, ev: Event, ctx: &mut Ctx) -> Reply {
+        self.dialog_text = Some(ctx.text.clone());
         self.forms = ctx.forms();
         let mut reply = self.dispatch(win, ev, ctx);
         let size = self.forms.text.size(sheet::CLIENT);
@@ -427,6 +429,7 @@ impl App for PowerApp {
     }
 
     fn draw(&mut self, win: WinId, c: &mut Canvas, ctx: &Ctx) {
+        self.dialog_text = Some(ctx.text.clone());
         let forms = ctx.forms();
         if win == ERROR_WIN {
             if let (Some(b), Some(text)) = (&self.error, &self.dialog_text) {

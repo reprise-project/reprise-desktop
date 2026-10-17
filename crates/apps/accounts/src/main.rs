@@ -90,7 +90,7 @@ impl AccountsApp {
     }
 
     fn fonts(&mut self) {
-        self.text = Some(Rc::new(TextRenderer::load(&repriseapp::start_fonts())));
+        self.text = Some(repriseapp::start_text());
     }
 
     fn text(&self) -> Rc<TextRenderer> {
@@ -638,6 +638,7 @@ impl App for AccountsApp {
     }
 
     fn event(&mut self, win: WinId, ev: Event, ctx: &mut Ctx) -> Reply {
+        self.text = Some(ctx.text.clone());
         self.forms = ctx.forms();
         let mut reply = self.dispatch(win, ev, ctx);
         let size = self.forms.text.size(users::CLIENT);
@@ -700,6 +701,7 @@ impl App for AccountsApp {
     }
 
     fn draw(&mut self, win: WinId, c: &mut Canvas, ctx: &Ctx) {
+        self.text = Some(ctx.text.clone());
         let cs = &ctx.theme.colors;
         let forms = ctx.forms();
         let px = forms.fonts.size_px;

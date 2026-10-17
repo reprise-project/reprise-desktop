@@ -15,6 +15,7 @@ mod state;
 mod view;
 
 use std::path::PathBuf;
+use std::rc::Rc;
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::time::Instant;
 
@@ -117,7 +118,7 @@ struct Volume {
     advanced: Option<Form>,
     about: bool,
     app_icon: Option<Canvas>,
-    dialog_text: TextRenderer,
+    dialog_text: Rc<TextRenderer>,
     dialog_px: u32,
     /// The forms theme at the last event, which `children` sizes the dialogs with.
     forms: Theme,
@@ -154,7 +155,7 @@ impl Volume {
             advanced: None,
             about: false,
             app_icon: None,
-            dialog_text: TextRenderer::load(&repriseapp::start_fonts()),
+            dialog_text: repriseapp::start_text(),
             dialog_px: Theme::default().fonts.size_px,
             forms: Theme::default(),
             waker: None,
@@ -671,6 +672,7 @@ impl App for Volume {
     }
 
     fn event(&mut self, win: WinId, ev: Event, ctx: &mut Ctx) -> Reply {
+        self.dialog_text = ctx.text.clone();
         if self.app_icon.is_none() {
             self.app_icon = ctx.icons.get(ICON, 32);
         }
@@ -719,6 +721,7 @@ impl App for Volume {
     }
 
     fn draw(&mut self, win: WinId, c: &mut Canvas, ctx: &Ctx) {
+        self.dialog_text = ctx.text.clone();
         let forms = ctx.forms();
         match win {
             PROPS_WIN => {
@@ -808,7 +811,7 @@ mod tests {
     fn test_ctx() -> Ctx {
         Ctx {
             theme: Theme::default(),
-            text: TextRenderer::load(&FontConfig::default()),
+            text: TextRenderer::load(&FontConfig::default()).into(),
             icons: reprisekit::icontheme::IconCache::new(reprisekit::icontheme::IconTheme::load(
                 "test",
                 &[],

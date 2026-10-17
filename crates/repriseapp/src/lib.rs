@@ -121,7 +121,9 @@ pub struct Ctx {
     /// `[accessibility] text_size`, in percent: what a program grows its
     /// forms ([`Ctx::forms`]) and its document's text (the edit control) by.
     pub text_size: u32,
-    pub text: TextRenderer,
+    /// The look's UI font at 100%, shared: a program holding a clone for its dialogs takes it
+    /// again from here, as a `[fonts]` change replaces it.
+    pub text: Rc<TextRenderer>,
     pub icons: IconCache,
     pub caret_on: bool,
     /// The window's client size, logical px.
@@ -917,9 +919,26 @@ pub fn start_theme() -> Theme {
     Look::from_env().theme()
 }
 
-/// The fonts `run` starts in, for a renderer a program loads beside [`Ctx::text`].
-pub fn start_fonts() -> reprisekit::theme::FontConfig {
-    start_theme().fonts
+thread_local! {
+    static TEXT: RefCell<Option<(reprisekit::theme::FontConfig, Rc<TextRenderer>)>> =
+        const { RefCell::new(None) };
+}
+
+/// A renderer for `fonts`, the one loaded last when the fonts are the same.
+fn text_for(fonts: &reprisekit::theme::FontConfig) -> Rc<TextRenderer> {
+    TEXT.with_borrow_mut(|held| match held {
+        Some((f, text)) if f == fonts => text.clone(),
+        _ => {
+            let text = Rc::new(TextRenderer::load(fonts));
+            *held = Some((fonts.clone(), text.clone()));
+            text
+        }
+    })
+}
+
+/// [`Ctx::text`] as `run` starts, for a renderer a program needs before its first event.
+pub fn start_text() -> Rc<TextRenderer> {
+    text_for(&start_theme().fonts)
 }
 
 /// [`Ctx::forms`] as the program starts, for an [`App::initial_size`] asked before any event.
@@ -987,7 +1006,7 @@ pub fn run(app: Box<dyn App>) {
     let look = Look::from_env();
     let theme = look.theme();
     publish_theme(&theme);
-    let text = TextRenderer::load(&theme.fonts);
+    let text = text_for(&theme.fonts);
     let theme = sized(theme, &*app, look.text_size);
     let icons = look.icons();
     let (ping, ping_source) = make_ping().expect("ping");
@@ -2086,12 +2105,7 @@ impl Host {
             return;
         }
         let theme = self.look.theme();
-        // The old theme's fonts at 100%, as the renderer was loaded with them.
-        let mut before = self.ctx.theme.fonts.clone();
-        before.size_px = self.ctx.theme.text.base_px(before.size_px);
-        if theme.fonts != before {
-            self.ctx.text = TextRenderer::load(&theme.fonts);
-        }
+        self.ctx.text = text_for(&theme.fonts);
         publish_theme(&theme);
         self.ctx.theme = sized(theme, &*self.app, self.look.text_size);
         self.ctx.text_size = self.look.text_size;
@@ -4270,6 +4284,19 @@ mod tests {
     }
 
     #[test]
+    fn the_same_fonts_share_one_renderer_and_other_fonts_load_another() {
+        let fonts = reprisekit::theme::FontConfig::default();
+        assert!(Rc::ptr_eq(&text_for(&fonts), &text_for(&fonts)));
+        let other = reprisekit::theme::FontConfig {
+            family: vec!["DejaVu Sans".into()],
+            ..fonts.clone()
+        };
+        let changed = text_for(&other);
+        assert!(Rc::ptr_eq(&changed, &text_for(&other)));
+        assert!(!Rc::ptr_eq(&changed, &text_for(&fonts)));
+    }
+
+    #[test]
     fn the_configured_font_family_reaches_the_themes_fonts() {
         use reprisebus::appearance as a;
         let mut look = Look::default();
@@ -4356,7 +4383,7 @@ mod tests {
         let theme = Theme::default();
         let mut ctx = Ctx {
             theme: theme.clone(),
-            text: TextRenderer::load(&theme.fonts),
+            text: Rc::new(TextRenderer::load(&theme.fonts)),
             icons: IconCache::new(IconTheme::load("test", &[])),
             caret_on: true,
             size: (40, 30),
@@ -4383,7 +4410,7 @@ mod tests {
         let theme = Theme::default();
         let ctx = Ctx {
             theme: theme.with_text_size(150),
-            text: TextRenderer::load(&theme.fonts),
+            text: Rc::new(TextRenderer::load(&theme.fonts)),
             icons: IconCache::new(IconTheme::load("test", &[])),
             caret_on: true,
             size: (40, 30),
@@ -4408,7 +4435,7 @@ mod tests {
         let theme = reprisekit::interfaces::theme_for(Interface::Glass);
         let mut ctx = Ctx {
             theme: theme.clone(),
-            text: TextRenderer::load(&theme.fonts),
+            text: Rc::new(TextRenderer::load(&theme.fonts)),
             icons: IconCache::new(IconTheme::load("test", &[])),
             caret_on: true,
             size: (40, 30),
@@ -4456,7 +4483,7 @@ mod tests {
         let theme = reprisekit::interfaces::theme_for(Interface::Blue);
         let mut ctx = Ctx {
             theme: theme.clone(),
-            text: TextRenderer::load(&theme.fonts),
+            text: Rc::new(TextRenderer::load(&theme.fonts)),
             icons: IconCache::new(IconTheme::load("test", &[])),
             caret_on: true,
             size: (120, 30),

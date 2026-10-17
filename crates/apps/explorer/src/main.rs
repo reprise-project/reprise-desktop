@@ -213,7 +213,7 @@ pub struct Explorer {
     pub props: Option<Props>,
     error_icon: Option<Canvas>,
     /// `children(&self)` has no `Ctx` to borrow a renderer from.
-    dialog_text: TextRenderer,
+    dialog_text: Rc<TextRenderer>,
     /// The dialog font's px at 100%; the folder picker and the Open With chooser stay at it.
     dialog_px: u32,
     /// The forms theme with the dialog font at the text size, which the boxes draw with and
@@ -385,7 +385,7 @@ impl Explorer {
             dialog: None,
             props: None,
             error_icon: None,
-            dialog_text: TextRenderer::load(&repriseapp::start_fonts()),
+            dialog_text: ctx.text.clone(),
             dialog_px: Theme::default().fonts.size_px,
             forms: Theme::default(),
             clicks: DoubleClick::default(),

@@ -96,7 +96,7 @@ impl BtApp {
     }
 
     fn fonts(&mut self) {
-        self.text = Some(Rc::new(TextRenderer::load(&repriseapp::start_fonts())));
+        self.text = Some(repriseapp::start_text());
         self.forms = Theme::default();
     }
 
@@ -898,6 +898,7 @@ impl App for BtApp {
     }
 
     fn event(&mut self, win: WinId, ev: Event, ctx: &mut Ctx) -> Reply {
+        self.text = Some(ctx.text.clone());
         self.forms = ctx.forms();
         if matches!(ev, Event::Wake) {
             return self.wake();
@@ -965,6 +966,7 @@ impl App for BtApp {
     }
 
     fn draw(&mut self, win: WinId, c: &mut Canvas, ctx: &Ctx) {
+        self.text = Some(ctx.text.clone());
         let cs = &ctx.theme.colors;
         let forms = ctx.forms();
         let px = forms.fonts.size_px;
@@ -1539,7 +1541,7 @@ mod tests {
     fn test_ctx() -> Ctx {
         Ctx {
             theme: Theme::default(),
-            text: TextRenderer::load(&FontConfig::default()),
+            text: TextRenderer::load(&FontConfig::default()).into(),
             icons: reprisekit::icontheme::IconCache::new(reprisekit::icontheme::IconTheme::load(
                 "test",
                 &[],
