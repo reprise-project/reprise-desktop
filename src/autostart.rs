@@ -31,30 +31,44 @@ fn on_path(program: &str) -> bool {
     reprisefs::autostart::find_program(program).is_some()
 }
 
-/// Spawn every applicable autostart entry and return them. Called once at
-/// startup, after `WAYLAND_DISPLAY` is exported, so a child inherits the
-/// socket. Walks the user manager's session units over D-Bus first, which blocks.
-pub fn run(state: &State) -> Vec<Entry> {
+/// Spawn every applicable autostart entry, then restore the last session. Called once at startup,
+/// after `WAYLAND_DISPLAY` is exported, so a child inherits the socket. The scan, the walk of the
+/// user manager's session units and the spawns run on a job thread so the first frames don't wait
+/// on them; the restore follows on the loop.
+pub fn start(state: &mut State) {
     let desktops = reprisefs::autostart::desktop_names(Some(&state.env.desktop));
+    let terminal = state.config.terminal.clone();
+    let env = state.env.clone();
+    state.spawn_fs_job(move || {
+        let run = find(&desktops);
+        launch(&run, &terminal, &env);
+        Box::new(move |state: &mut State| crate::session::restore(state, &run))
+    });
+}
+
+/// The entries to launch on `desktops`. Blocks on the user manager.
+fn find(desktops: &[String]) -> Vec<Entry> {
     let found = reprisefs::autostart::scan(
         &reprisefs::autostart::system_dirs(),
         &reprisefs::autostart::config_home(),
     );
     let units = reprisebus::units::session_programs();
-    let run = runnable(found, &desktops, on_path, |e| {
+    runnable(found, desktops, on_path, |e| {
         let left =
             reprisefs::autostart::left_to_systemd(e, &units, reprisefs::autostart::find_program);
         if left {
             log::info!("autostart: {} is left to its systemd unit", e.id);
         }
         left
-    });
-    for e in &run {
+    })
+}
+
+fn launch(run: &[Entry], terminal: &str, env: &crate::spawn::SessionEnv) {
+    for e in run {
         log::info!("autostart: {}", e.id);
-        let argv = e.argv(&state.config.terminal);
-        crate::spawn::spawn_argv_in(&argv, Some(&e.id), e.path.as_deref(), &state.env, None);
+        let argv = e.argv(terminal);
+        crate::spawn::spawn_argv_in(&argv, Some(&e.id), e.path.as_deref(), env, None);
     }
-    run
 }
 
 #[cfg(test)]

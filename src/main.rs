@@ -296,8 +296,7 @@ fn run(
             notifyview::notice(state, "Configuration", &body);
         });
     }
-    let autostarted = autostart::run(&state);
-    session::restore(&mut state, &autostarted);
+    autostart::start(&mut state);
 
     event_loop.run(None, &mut state, |state| {
         state.popups.cleanup();
