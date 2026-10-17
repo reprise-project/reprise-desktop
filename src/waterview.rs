@@ -235,25 +235,25 @@ impl PaneState {
             return Ok(());
         };
         let step = Step::new(preset.damping, hz);
-        for _ in 0..n {
-            let splashes: Vec<Splash> = self
-                .queue
-                .take(SPLASHES_PER_STEP, hz)
-                .into_iter()
-                .map(|s| {
-                    self.energy.add(&s);
-                    Splash {
-                        depth: s.depth * preset.gain,
-                        ..s
-                    }
-                })
-                .collect();
-            pool.step(r, fx, &splashes, &self.obstacles, step)?;
-            self.energy.step(step.damping);
-        }
-        if n > 0 {
-            pool.shade(r, fx, SLOPE_GAIN)?;
-        }
+        let splashes: Vec<Vec<Splash>> = (0..n)
+            .map(|_| {
+                let laid = self
+                    .queue
+                    .take(SPLASHES_PER_STEP, hz)
+                    .into_iter()
+                    .map(|s| {
+                        self.energy.add(&s);
+                        Splash {
+                            depth: s.depth * preset.gain,
+                            ..s
+                        }
+                    })
+                    .collect();
+                self.energy.step(step.damping);
+                laid
+            })
+            .collect();
+        pool.advance(r, fx, &splashes, &self.obstacles, step, SLOPE_GAIN)?;
         if self.running && self.energy.idle() && self.queue.is_empty() && !rains {
             pool.flatten(r, fx)?;
             self.running = false;

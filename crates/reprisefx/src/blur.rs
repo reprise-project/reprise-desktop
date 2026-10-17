@@ -210,30 +210,60 @@ fn blit(
     })?
 }
 
-fn pass(
-    renderer: &mut GlesRenderer,
-    from: &GlesTexture,
-    to: &mut GlesTexture,
-    program: Option<&GlesTexProgram>,
-    uniforms: &[Uniform<'_>],
-) -> Result<(), GlesError> {
-    let src = Rectangle::from_size(from.size().to_f64());
-    let full = Rectangle::from_size((to.size().w, to.size().h).into());
-    pass_from(renderer, from, src, to, program, uniforms, &[full])
+/// Run `f`'s draws into `to` instead of the frame's target: passes chained in one frame skip a
+/// finish each (a flush and a fence export). `to` must be the size of the frame's target.
+pub(crate) fn drawing_into<T>(
+    frame: &mut GlesFrame<'_, '_>,
+    to: &GlesTexture,
+    f: impl FnOnce(&mut GlesFrame<'_, '_>) -> Result<T, GlesError>,
+) -> Result<T, GlesError> {
+    let id = to.tex_id();
+    let fbo = frame.with_context(|gl| {
+        // SAFETY: the frame's context is current while the frame lives; the
+        // framebuffer object made here is unbound and deleted below.
+        unsafe {
+            let mut current = 0i32;
+            gl.GetIntegerv(ffi::DRAW_FRAMEBUFFER_BINDING, &mut current);
+            let mut fbo = 0;
+            gl.GenFramebuffers(1, &mut fbo);
+            gl.BindFramebuffer(ffi::DRAW_FRAMEBUFFER, fbo);
+            gl.FramebufferTexture2D(
+                ffi::DRAW_FRAMEBUFFER,
+                ffi::COLOR_ATTACHMENT0,
+                ffi::TEXTURE_2D,
+                id,
+                0,
+            );
+            let complete =
+                gl.CheckFramebufferStatus(ffi::DRAW_FRAMEBUFFER) == ffi::FRAMEBUFFER_COMPLETE;
+            (fbo, complete, current as u32)
+        }
+    })?;
+    let (fbo, complete, current) = fbo;
+    let drawn = match complete {
+        true => f(frame),
+        false => Err(GlesError::FramebufferBindingError),
+    };
+    frame.with_context(|gl| {
+        // SAFETY: as above; the frame's own draw binding is put back.
+        unsafe {
+            gl.BindFramebuffer(ffi::DRAW_FRAMEBUFFER, current);
+            gl.DeleteFramebuffers(1, &fbo);
+        }
+    })?;
+    drawn
 }
 
-pub(crate) fn pass_from(
-    renderer: &mut GlesRenderer,
+/// `src` of `from` drawn over all of a target of `size`, `parts` of it only.
+pub(crate) fn draw_from(
+    frame: &mut GlesFrame<'_, '_>,
     from: &GlesTexture,
     src: Rectangle<f64, Buffer>,
-    to: &mut GlesTexture,
+    size: Size<i32, Buffer>,
     program: Option<&GlesTexProgram>,
     uniforms: &[Uniform<'_>],
     parts: &[Rectangle<i32, Physical>],
 ) -> Result<(), GlesError> {
-    let size = to.size();
-    let mut target = renderer.bind(to)?;
-    let mut frame = renderer.render(&mut target, (size.w, size.h).into(), Transform::Normal)?;
     let full = Rectangle::from_size((size.w, size.h).into());
     frame.render_texture_from_to(
         from,
@@ -245,20 +275,16 @@ pub(crate) fn pass_from(
         1.0,
         program,
         uniforms,
-    )?;
-    // Later passes and the frame are on the same context, which keeps
-    // them in order: no fence to wait for.
-    let _ = frame.finish()?;
-    Ok(())
+    )
 }
 
+/// The streaks blended over `parts` of a target of `size`.
 pub(crate) fn streak_over(
-    renderer: &mut GlesRenderer,
+    frame: &mut GlesFrame<'_, '_>,
     s: &Streaks<'_>,
-    to: &mut GlesTexture,
+    size: Size<i32, Buffer>,
     parts: &[Rectangle<i32, Physical>],
 ) -> Result<(), GlesError> {
-    let size = to.size();
     let st = s.texture.size();
     let kx = f64::from(st.w) / f64::from(s.output.w);
     let ky = f64::from(st.h) / f64::from(s.output.h);
@@ -267,8 +293,6 @@ pub(crate) fn streak_over(
         (f64::from(r.loc.x) * kx, f64::from(r.loc.y) * ky).into(),
         (f64::from(r.size.w) * kx, f64::from(r.size.h) * ky).into(),
     );
-    let mut target = renderer.bind(to)?;
-    let mut frame = renderer.render(&mut target, (size.w, size.h).into(), Transform::Normal)?;
     let full = Rectangle::from_size((size.w, size.h).into());
     frame.render_texture_from_to(
         s.texture,
@@ -280,9 +304,7 @@ pub(crate) fn streak_over(
         1.0,
         None,
         &[],
-    )?;
-    let _ = frame.finish()?;
-    Ok(())
+    )
 }
 
 pub(crate) fn gaussian(plan: Plan, dir: (f32, f32)) -> [Uniform<'static>; 3] {
@@ -333,7 +355,7 @@ impl Levels {
         frame: &mut GlesFrame<'_, '_>,
         c: &Capture<'_>,
     ) -> Result<(), GlesError> {
-        let (Some(down), Some(mut across), Some(mut picture)) =
+        let (Some(down), Some(across), Some(mut picture)) =
             (self.down.clone(), self.across.clone(), self.picture.clone())
         else {
             return Ok(());
@@ -341,32 +363,46 @@ impl Levels {
         blit(frame, c.region, &down)?;
         let mut guard = smithay::backend::renderer::FrameContext::renderer(frame);
         let renderer: &mut GlesRenderer = guard.as_mut();
+        let size = picture.size();
+        let whole = |t: &GlesTexture| Rectangle::from_size(t.size().to_f64());
+        let full = Rectangle::from_size((size.w, size.h).into());
+        // One frame for the passes, on the picture that none of them reads.
+        let mut target = renderer.bind(&mut picture)?;
+        let mut f = renderer.render(&mut target, (size.w, size.h).into(), Transform::Normal)?;
         let source = match self.small.clone() {
-            Some(mut small) => {
-                pass(renderer, &down, &mut small, None, &[])?;
+            Some(small) => {
+                drawing_into(&mut f, &small, |f| {
+                    draw_from(f, &down, whole(&down), size, None, &[], &[full])
+                })?;
                 small
             }
             None => down,
         };
-        let size = picture.size();
-        pass(
-            renderer,
-            &source,
-            &mut across,
-            Some(c.blur),
-            &gaussian(c.plan, (1.0 / size.w as f32, 0.0)),
-        )?;
-        pass(
-            renderer,
+        let across_uniforms = gaussian(c.plan, (1.0 / size.w as f32, 0.0));
+        drawing_into(&mut f, &across, |f| {
+            draw_from(
+                f,
+                &source,
+                whole(&source),
+                size,
+                Some(c.blur),
+                &across_uniforms,
+                &[full],
+            )
+        })?;
+        draw_from(
+            &mut f,
             &across,
-            &mut picture,
+            whole(&across),
+            size,
             Some(c.blur),
             &gaussian(c.plan, (0.0, 1.0 / size.h as f32)),
+            &[full],
         )?;
         if let Some(s) = &c.streaks {
-            let full = Rectangle::from_size((size.w, size.h).into());
-            streak_over(renderer, s, &mut picture, &[full])?;
+            streak_over(&mut f, s, size, &[full])?;
         }
+        let _ = f.finish()?;
         self.region = c.region;
         Ok(())
     }
