@@ -143,7 +143,8 @@ the Super tap, Super+Shift+Esc and the VT switch keys can be rebound.
 - **Suggestions.** The layouts start with your last few arrangements on
   that screen. Pick one and every window in it goes back to its zone.
 - **Snap assist.** After a snap, the zones left over offer your other
-  windows, live. Pick one, or press Esc and carry on.
+  windows, live, one zone at a time, the zones still to fill outlined.
+  Pick one, or press Esc and carry on.
 - **Snap groups.** Drag the edge between two snapped windows and both
   resize. Each desktop keeps its own layout, and snapped windows keep their
   zones when the taskbar moves. A window moved to another desktop leaves its
