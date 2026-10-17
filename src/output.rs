@@ -464,7 +464,12 @@ impl State {
             .map(|o| self.draw_scale_at(Some(o)))
             .collect();
         let scales = new_draw_scales(&used, scales);
-        let warm: Vec<_> = scales.iter().filter_map(|&n| style.warm(n)).collect();
+        let icons = &mut self.icons;
+        let mut icon = |n| crate::taskbarview::start_icon(&self.config, icons, n);
+        let warm: Vec<_> = scales
+            .iter()
+            .filter_map(|&n| style.warm(n, icon(n)))
+            .collect();
         if warm.is_empty() {
             return;
         }

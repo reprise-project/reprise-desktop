@@ -83,6 +83,20 @@ impl StartBloom {
         kept.push(entry);
         b
     }
+
+    /// The state and strength of each kept bloom, of any icon at any scale.
+    pub(crate) fn states(&self) -> Vec<(State, u8)> {
+        let kept = self.kept.lock().unwrap_or_else(|e| e.into_inner());
+        (kept.iter())
+            .map(|&((_, _, state, strength), _)| (state, strength))
+            .collect()
+    }
+
+    /// Whether the bloom of `key` at scale `d` in `state` at `strength` is kept.
+    pub(crate) fn keeps(&self, key: IconKey, d: i32, state: State, strength: u8) -> bool {
+        let kept = self.kept.lock().unwrap_or_else(|e| e.into_inner());
+        kept.iter().any(|(k, _)| *k == (key, d, state, strength))
+    }
 }
 
 #[cfg(test)]
