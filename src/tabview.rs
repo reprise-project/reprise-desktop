@@ -120,6 +120,26 @@ impl TabView {
         } else {
             m
         };
+        self.pass_fullscreen(heir, restore);
+    }
+
+    /// `w` leaves its group as it closes; returns the tab shown in its
+    /// place. When `w` showed fullscreen, `fullscreen` holding the frame
+    /// from before, that tab takes the fullscreen.
+    fn close_tab(&mut self, w: WindowId, fullscreen: Option<Option<Rect>>) -> Option<WindowId> {
+        self.fullscreen_waits.retain(|&(x, _)| x != w);
+        let shown = self.groups.shown_of(w) == w;
+        let now = self.groups.leave(w)?;
+        if shown
+            && now != w
+            && let Some(restore) = fullscreen
+        {
+            self.pass_fullscreen(now, restore);
+        }
+        Some(now)
+    }
+
+    fn pass_fullscreen(&mut self, heir: WindowId, restore: Option<Rect>) {
         self.fullscreen_waits.retain(|&(x, _)| x != heir);
         self.fullscreen_waits.push((heir, restore));
     }
@@ -678,11 +698,15 @@ impl State {
         if self.tabs.held.is_some_and(|h| h.0 == w) {
             self.tabs.held = None;
         }
-        self.tabs.fullscreen_waits.retain(|&(x, _)| x != w);
         let Some(g) = self.tabs.groups.group_of(w).cloned() else {
+            self.tabs.fullscreen_waits.retain(|&(x, _)| x != w);
             return;
         };
-        let Some(now) = self.tabs.groups.leave(w) else {
+        let fullscreen = self
+            .win(w)
+            .filter(|x| x.fullscreen)
+            .map(|x| x.saved_fullscreen);
+        let Some(now) = self.tabs.close_tab(w, fullscreen) else {
             return;
         };
         if let Some(win) = self.win_mut(w) {
@@ -1104,6 +1128,37 @@ mod tests {
         t.hid_fullscreen(b, Some(a), None);
         assert_eq!(t.take_fullscreen(a), None);
         assert_eq!(t.take_fullscreen(b), Some(None));
+    }
+
+    #[test]
+    fn closing_the_fullscreen_tab_hands_the_fullscreen_to_the_tab_shown_next() {
+        let (a, b, c) = (WindowId::next(), WindowId::next(), WindowId::next());
+        let mut t = TabView::default();
+        t.groups.join(b, a);
+        t.groups.join(c, a);
+        t.groups.select(a);
+        let restore = Rect::new(40, 30, 640, 480);
+        let next = t.close_tab(a, Some(Some(restore)));
+        assert_eq!(next, Some(b));
+        assert_eq!(
+            t.take_fullscreen(b),
+            Some(Some(restore)),
+            "b fullscreen, restoring to a's frame from before"
+        );
+        assert_eq!(t.take_fullscreen(c), None);
+    }
+
+    #[test]
+    fn closing_a_tab_that_was_not_fullscreen_passes_no_fullscreen() {
+        let (a, b, c) = (WindowId::next(), WindowId::next(), WindowId::next());
+        let mut t = TabView::default();
+        t.groups.join(b, a);
+        t.groups.join(c, a);
+        t.groups.select(a);
+        assert_eq!(t.close_tab(a, None), Some(b));
+        assert_eq!(t.take_fullscreen(b), None);
+        assert_eq!(t.close_tab(c, Some(None)), Some(b), "c was hidden");
+        assert_eq!(t.take_fullscreen(b), None);
     }
 
     #[test]
