@@ -11,6 +11,7 @@
 
 use std::cell::Cell;
 
+use reprisekit::style::Part;
 use reprisescene::BufferId;
 use smithay::{
     backend::input::InputTime,
@@ -493,6 +494,7 @@ impl State {
     pub fn update_layout(&mut self) {
         self.place_outputs();
         self.drop_unused_scales();
+        self.warm_popup_parts();
         self.settle_moves();
         crate::layer::outputs_changed(self);
         self.refit_maximized();
@@ -718,12 +720,52 @@ impl State {
         }
     }
 
+    /// Paints, on a job, the popups' art at each draw scale the outputs run at, so the first
+    /// Alt+Tab, preview or Start menu of a session, look or scale finds it painted.
+    fn warm_popup_parts(&mut self) {
+        let reprisekit::look::Look::Styled(style) = &self.config.theme.look else {
+            return;
+        };
+        let mut scales: Vec<i32> = (self.scene.outputs().iter())
+            .map(|o| self.draw_scale_at(Some(o)))
+            .collect();
+        scales.sort_unstable();
+        scales.dedup();
+        let warm: Vec<_> = (scales.iter())
+            .filter_map(|&n| style.warm_parts(n, &POPUP_PARTS))
+            .collect();
+        if warm.is_empty() {
+            return;
+        }
+        self.spawn_fs_job(move || {
+            for w in &warm {
+                w.paint();
+            }
+            Box::new(|_| ())
+        });
+    }
+
     pub fn draw_scale_at(&self, output: Option<&Output>) -> i32 {
         output.map_or(1, |o| {
             draw_scale(o.current_scale().fractional_scale() as f32)
         })
     }
 }
+
+/// The parts of the popups a key, click or hover opens, painted ahead by `warm_popup_parts`.
+const POPUP_PARTS: [Part; 11] = [
+    Part::SwitcherFrame,
+    Part::SwitcherIconFrame,
+    Part::SwitcherSelect,
+    Part::SwitcherHot,
+    Part::SwitcherShadow,
+    Part::PreviewFrame,
+    Part::PreviewThumb,
+    Part::PreviewClose,
+    Part::SnapFrame,
+    Part::FlyoutShadow,
+    Part::StartPanel,
+];
 
 /// Output changes waiting for a job painting the art of new draw scales.
 pub struct ScaleWarm {
