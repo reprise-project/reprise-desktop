@@ -109,6 +109,8 @@ pub struct Preview {
     pub saver: Saver,
     pub kind: Kind,
     pub options: Options,
+    /// `[screensaver] folder` as the sheet holds it, empty for Pictures.
+    pub folder: String,
     /// The Photos folder's pictures, as the full-screen saver lists them.
     pub files: Vec<PathBuf>,
     /// The picture shown last, which the next pick skips.
@@ -122,15 +124,23 @@ pub fn screen_size() -> (u32, u32) {
 
 impl Preview {
     /// Seeded so the page shows the same each time it opens.
-    pub fn new(kind: Kind, options: Options, text: &TextRenderer) -> Preview {
+    pub fn new(kind: Kind, options: Options, folder: &str, text: &TextRenderer) -> Preview {
         let (w, h) = screen_size();
         Preview {
             saver: Saver::new(kind, &options, w, h, 7, text),
             kind,
             options,
+            folder: folder.to_string(),
             files: Vec::new(),
             current: None,
         }
+    }
+
+    /// Whether this runs the saver `s` picks; a Photos folder edit makes it start over.
+    pub fn runs(&self, kind: Kind, s: &Settings) -> bool {
+        self.kind == kind
+            && self.options == options(s)
+            && (kind != Kind::Photos || self.folder == s.saver_folder)
     }
 
     pub fn frame(&mut self, ms: u64) -> Canvas {
@@ -271,7 +281,7 @@ mod tests {
     fn the_monitor_runs_the_saver_from_a_fixed_seed() {
         let text = TextRenderer::load(&reprisekit::theme::FontConfig::default());
         let opts = Options::default();
-        let mut p = Preview::new(Kind::Starfield, opts.clone(), &text);
+        let mut p = Preview::new(Kind::Starfield, opts.clone(), "", &text);
         let frame = p.frame(saver::STEP_MS * 20);
         let mut want = Saver::new(Kind::Starfield, &opts, 152, 112, 7, &text);
         for _ in 0..20 {
@@ -283,5 +293,20 @@ mod tests {
             frame.pixels, c.pixels,
             "the page's frame is the kit's at seed 7"
         );
+    }
+    #[test]
+    fn a_photos_folder_edit_starts_the_monitor_over() {
+        let text = TextRenderer::load(&reprisekit::theme::FontConfig::default());
+        let mut s = Settings {
+            saver: "photos".into(),
+            saver_folder: "/srv/a".into(),
+            ..Settings::default()
+        };
+        let p = Preview::new(Kind::Photos, options(&s), &s.saver_folder, &text);
+        assert!(p.runs(Kind::Photos, &s));
+        s.saver_folder = "/srv/b".into();
+        assert!(!p.runs(Kind::Photos, &s), "another folder lists again");
+        let p = Preview::new(Kind::Logo, options(&s), "/srv/a", &text);
+        assert!(p.runs(Kind::Logo, &s), "the folder means nothing to Logo");
     }
 }

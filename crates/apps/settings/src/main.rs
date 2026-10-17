@@ -1935,13 +1935,13 @@ impl SettingsApp {
             0 => reprisekit::saver::Kind::Blank,
             _ => saverpage::kind(&self.want),
         };
-        let options = saverpage::options(&self.want);
         let stale = self
             .saver_preview
             .as_ref()
-            .is_none_or(|(p, _)| p.kind != kind || p.options != options);
+            .is_none_or(|(p, _)| !p.runs(kind, &self.want));
         if stale {
-            let p = saverpage::Preview::new(kind, options, &ctx.text);
+            let options = saverpage::options(&self.want);
+            let p = saverpage::Preview::new(kind, options, &self.want.saver_folder, &ctx.text);
             self.saver_preview = Some((p, std::time::Instant::now()));
             self.saver_photo = None;
         }
