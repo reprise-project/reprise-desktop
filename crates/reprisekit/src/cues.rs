@@ -15,6 +15,10 @@ pub struct Cues {
     pub keys: bool,
 }
 
+/// Set to `1` on a program the desktop started from the keyboard: its first window opens
+/// with cues showing.
+pub const KEYBOARD_LAUNCH_ENV: &str = "REPRISE_KEYBOARD_LAUNCH";
+
 impl Cues {
     pub const NONE: Cues = Cues {
         focus: false,

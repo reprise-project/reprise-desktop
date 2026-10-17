@@ -350,7 +350,8 @@ are.
   Lock turns it on and off.
 - **Access keys** underline once you press Alt, in the window you press it
   in, until that window loses the keyboard. A window opened from the keyboard
-  underlines them from the start, and a menu bar opened with Alt or F10
+  underlines them from the start, as does a Reprise program started from the
+  keyboard (a shortcut, the Run box, the Start menu's keys), and a menu bar opened with Alt or F10
   underlines its menus; one opened with the mouse doesn't. A context menu
   opened with Shift+F10 or the Menu key underlines its own.
 - When a shortcut turns StickyKeys, SlowKeys or MouseKeys on or off, a

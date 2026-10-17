@@ -400,6 +400,7 @@ fn spawn_then(
     };
     let mut c = Command::new(program);
     c.args(args)
+        .env_remove(reprisekit::cues::KEYBOARD_LAUNCH_ENV)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
@@ -1011,7 +1012,7 @@ pub fn run(app: Box<dyn App>) {
         ticking: Vec::new(),
         portal_done,
         press_serial: 0,
-        key_last: false,
+        key_last: std::env::var_os(reprisekit::cues::KEYBOARD_LAUNCH_ENV).is_some_and(|v| v == "1"),
         press_time: 0,
         compositor,
         xdg_shell,
@@ -1315,7 +1316,8 @@ struct Host {
     portal_done: Sender<OnLoop>,
     /// The last pointer press's serial, which a drag must name.
     press_serial: u32,
-    /// The last input was a key, not a pointer press: a window opened now underlines its access keys.
+    /// The last input was a key, not a pointer press, counting a start from the keyboard: a window
+    /// opened now underlines its access keys.
     key_last: bool,
     /// The time the last pointer press carried, real or a reader's
     /// (`access_msg`): a reader's click is stamped a second past the

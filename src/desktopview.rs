@@ -1603,13 +1603,13 @@ impl State {
     /// the terminal. The exec waits on the file's mount, so it runs off the loop; a program that does
     /// not start gets an error box.
     pub(crate) fn run_program(&mut self, path: &Path) {
-        let token = self.new_activation_token();
+        let launch = self.new_launch();
         let env = self.env.clone();
         let path = path.to_path_buf();
         let (terminal, end) = (self.config.terminal.clone(), self.config.script_terminal);
         self.spawn_fs_job(move || {
             let started = reprisefs::program::run_argv(&path, &terminal, end).and_then(|argv| {
-                crate::spawn::try_spawn_argv_in(&argv, None, path.parent(), &env, Some(&token))
+                crate::spawn::try_spawn_argv_in(&argv, None, path.parent(), &env, Some(&launch))
             });
             if let (Ok(pid), Some(name)) = (&started, path.file_name())
                 && let Err(e) = reprisefs::scope::adopt(*pid, &name.to_string_lossy())

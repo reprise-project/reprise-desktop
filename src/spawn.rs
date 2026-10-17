@@ -492,13 +492,21 @@ fn run_waited(cmds: Vec<Vec<String>>) {
     }
 }
 
-/// `cmd` as a `sh -c` process with the session's variables exported. `token` becomes
-/// `XDG_ACTIVATION_TOKEN`; without one the variable is removed so an inherited token never
-/// reaches a client. `DESKTOP_STARTUP_ID` is always removed.
-pub fn command(cmd: &str, env: &SessionEnv, token: Option<&str>) -> std::process::Command {
+/// A start the user asked for: its xdg-activation token, and whether the last input was a key.
+#[derive(Clone, Debug)]
+pub struct Launch {
+    pub token: String,
+    pub by_key: bool,
+}
+
+/// `cmd` as a `sh -c` process with the session's variables exported. `launch`'s token becomes
+/// `XDG_ACTIVATION_TOKEN` and a start by key sets [`reprisekit::cues::KEYBOARD_LAUNCH_ENV`];
+/// without one both are removed so an inherited value never reaches a client.
+/// `DESKTOP_STARTUP_ID` is always removed.
+pub fn command(cmd: &str, env: &SessionEnv, launch: Option<&Launch>) -> std::process::Command {
     let mut c = std::process::Command::new("sh");
     c.arg("-c").arg(cmd);
-    with_session_env(&mut c, env, token);
+    with_session_env(&mut c, env, launch);
     c
 }
 
@@ -508,15 +516,15 @@ fn command_argv<S: AsRef<std::ffi::OsStr>>(
     program: &S,
     args: &[S],
     env: &SessionEnv,
-    token: Option<&str>,
+    launch: Option<&Launch>,
 ) -> std::process::Command {
     let mut c = std::process::Command::new(program);
     c.args(args);
-    with_session_env(&mut c, env, token);
+    with_session_env(&mut c, env, launch);
     c
 }
 
-fn with_session_env(c: &mut std::process::Command, env: &SessionEnv, token: Option<&str>) {
+fn with_session_env(c: &mut std::process::Command, env: &SessionEnv, launch: Option<&Launch>) {
     for (k, v) in env.pairs() {
         c.env(k, v);
     }
@@ -527,30 +535,35 @@ fn with_session_env(c: &mut std::process::Command, env: &SessionEnv, token: Opti
         c.env_remove("DISPLAY");
     }
     c.env_remove("DESKTOP_STARTUP_ID");
-    match token {
-        Some(t) => {
-            c.env("XDG_ACTIVATION_TOKEN", t);
+    match launch {
+        Some(l) => {
+            c.env("XDG_ACTIVATION_TOKEN", &l.token);
         }
         None => {
             c.env_remove("XDG_ACTIVATION_TOKEN");
         }
     }
+    if launch.is_some_and(|l| l.by_key) {
+        c.env(reprisekit::cues::KEYBOARD_LAUNCH_ENV, "1");
+    } else {
+        c.env_remove(reprisekit::cues::KEYBOARD_LAUNCH_ENV);
+    }
 }
 
 /// Returns whether the shell started; what it runs may still fail.
-pub fn spawn(cmd: &str, env: &SessionEnv, token: Option<&str>) -> bool {
-    spawn_in(cmd, None, env, token)
+pub fn spawn(cmd: &str, env: &SessionEnv, launch: Option<&Launch>) -> bool {
+    spawn_in(cmd, None, env, launch)
 }
 
 /// `spawn` in an app scope, as [`spawn_argv_in`] does.
-pub fn spawn_in(cmd: &str, app: Option<&str>, env: &SessionEnv, token: Option<&str>) -> bool {
+pub fn spawn_in(cmd: &str, app: Option<&str>, env: &SessionEnv, launch: Option<&Launch>) -> bool {
     let name = log_name(
         app,
         &crate::session::program(cmd).unwrap_or_else(|| "sh".into()),
     );
     let argv = reprisefs::scope::in_scope(&["sh", "-c", cmd], Some(&name));
     match start(
-        command_argv(&argv[0], &argv[1..], env, token),
+        command_argv(&argv[0], &argv[1..], env, launch),
         cmd,
         Some(&name),
     ) {
@@ -566,9 +579,9 @@ pub fn spawn_in(cmd: &str, app: Option<&str>, env: &SessionEnv, token: Option<&s
 pub fn spawn_argv<S: AsRef<std::ffi::OsStr> + std::fmt::Debug>(
     argv: &[S],
     env: &SessionEnv,
-    token: Option<&str>,
+    launch: Option<&Launch>,
 ) {
-    spawn_argv_in(argv, None, None, env, token);
+    spawn_argv_in(argv, None, None, env, launch);
 }
 
 /// `spawn_argv` in working directory `dir`, or reprise's own when `None`. The process runs in
@@ -581,11 +594,11 @@ pub fn spawn_argv_in<S: AsRef<std::ffi::OsStr> + std::fmt::Debug>(
     app: Option<&str>,
     dir: Option<&std::path::Path>,
     env: &SessionEnv,
-    token: Option<&str>,
+    launch: Option<&Launch>,
 ) {
     let program = argv.first().map(|p| p.as_ref().to_string_lossy());
     let name = program.map(|p| log_name(app, &p));
-    if let Err(e) = try_spawn_argv_in(argv, name.as_deref(), dir, env, token) {
+    if let Err(e) = try_spawn_argv_in(argv, name.as_deref(), dir, env, launch) {
         log::error!("spawn {argv:?}: {e}");
     }
 }
@@ -599,7 +612,7 @@ pub fn try_spawn_argv_in<S: AsRef<std::ffi::OsStr> + std::fmt::Debug>(
     app: Option<&str>,
     dir: Option<&std::path::Path>,
     env: &SessionEnv,
-    token: Option<&str>,
+    launch: Option<&Launch>,
 ) -> std::io::Result<u32> {
     let Some(program) = argv.first() else {
         return Err(std::io::Error::new(
@@ -610,7 +623,7 @@ pub fn try_spawn_argv_in<S: AsRef<std::ffi::OsStr> + std::fmt::Debug>(
     let what = program.as_ref().to_string_lossy();
     let name = log_name(app, &what);
     let argv = reprisefs::scope::in_scope(argv, app);
-    let mut c = command_argv(&argv[0], &argv[1..], env, token);
+    let mut c = command_argv(&argv[0], &argv[1..], env, launch);
     if let Some(dir) = dir {
         c.current_dir(dir);
     }
@@ -1162,7 +1175,11 @@ mod tests {
 
     #[test]
     fn command_exports_token_when_given() {
-        let c = command("true", &env(None), Some("tok-1"));
+        let launch = Launch {
+            token: "tok-1".into(),
+            by_key: false,
+        };
+        let c = command("true", &env(None), Some(&launch));
         assert_eq!(
             env_of(&c, "XDG_ACTIVATION_TOKEN"),
             Some(Some("tok-1".into()))
@@ -1173,6 +1190,33 @@ mod tests {
         );
         // No X11 display: DISPLAY is removed rather than inherited.
         assert_eq!(env_of(&c, "DISPLAY"), Some(None));
+    }
+
+    #[test]
+    fn command_marks_only_a_start_by_key() {
+        let key = |by_key| {
+            let launch = Launch {
+                token: "t".into(),
+                by_key,
+            };
+            env_of(
+                &command("true", &env(None), Some(&launch)),
+                reprisekit::cues::KEYBOARD_LAUNCH_ENV,
+            )
+        };
+        assert_eq!(key(true), Some(Some("1".into())));
+        assert_eq!(
+            key(false),
+            Some(None),
+            "a click start removes an inherited mark"
+        );
+        assert_eq!(
+            env_of(
+                &command("true", &env(None), None),
+                reprisekit::cues::KEYBOARD_LAUNCH_ENV
+            ),
+            Some(None)
+        );
     }
 
     #[test]

@@ -119,17 +119,25 @@ impl State {
         token.to_string()
     }
 
+    /// A token for a program started now, marked by key when the last input was a keystroke.
+    pub fn new_launch(&mut self) -> crate::spawn::Launch {
+        crate::spawn::Launch {
+            token: self.new_activation_token(),
+            by_key: self.key_input.last_key_input,
+        }
+    }
+
     pub fn spawn_activated(&mut self, cmd: &str) -> bool {
-        let token = self.new_activation_token();
-        crate::spawn::spawn(cmd, &self.env, Some(&token))
+        let launch = self.new_launch();
+        crate::spawn::spawn(cmd, &self.env, Some(&launch))
     }
 
     /// `spawn_activated` for a command typed or bound by hand, in its [`crate::spawn::command_app`]
     /// scope.
     pub fn spawn_command_activated(&mut self, cmd: &str) -> bool {
         let app = crate::spawn::command_app(cmd, &self.app_index);
-        let token = self.new_activation_token();
-        crate::spawn::spawn_in(cmd, app.as_deref(), &self.env, Some(&token))
+        let launch = self.new_launch();
+        crate::spawn::spawn_in(cmd, app.as_deref(), &self.env, Some(&launch))
     }
 
     /// The Run dialog's line: one that names a folder opens it in Explorer, anything else runs
@@ -158,8 +166,8 @@ impl State {
         &mut self,
         argv: &[S],
     ) {
-        let token = self.new_activation_token();
-        crate::spawn::spawn_argv(argv, &self.env, Some(&token))
+        let launch = self.new_launch();
+        crate::spawn::spawn_argv(argv, &self.env, Some(&launch))
     }
 
     /// Open a path as `open` says, in its program's app scope when it has one.
@@ -176,8 +184,8 @@ impl State {
         argv: &[S],
         app: &str,
     ) {
-        let token = self.new_activation_token();
-        crate::spawn::spawn_argv_in(argv, Some(app), None, &self.env, Some(&token))
+        let launch = self.new_launch();
+        crate::spawn::spawn_argv_in(argv, Some(app), None, &self.env, Some(&launch))
     }
 }
 
