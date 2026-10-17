@@ -95,6 +95,7 @@ pub fn start(state: &mut State, kind: Kind, preview: bool) {
             .scene
             .rect_create(tree, (b.width, b.height), [0.0, 0.0, 0.0, 1.0]);
         let seed = generation as u32 ^ (i as u32 + 1).wrapping_mul(0x9E37_79B9);
+        let scale = state.draw_scale_at(Some(&o)).max(1);
         let saver = Saver::new(
             kind,
             &opts,
@@ -102,7 +103,8 @@ pub fn start(state: &mut State, kind: Kind, preview: bool) {
             b.height as u32,
             seed,
             &state.text,
-        );
+        )
+        .at_scale(&state.text, scale);
         let marks = matches!(kind, Kind::Starfield | Kind::Mystify).then(|| {
             let marks = Rc::new(RefCell::new(Vec::new()));
             let strokes = Rc::new(Strokes::default());
@@ -264,7 +266,7 @@ fn show(state: &mut State) {
             if *uploaded != color
                 && let Some(word) = o.saver.logo()
             {
-                crate::output::upload_scaled(scene, *buf, &word, 1);
+                crate::output::upload_scaled(scene, *buf, &word, o.saver.scale());
                 *uploaded = color;
             }
             if let Some((x, y)) = o.saver.logo_at() {
@@ -375,7 +377,7 @@ fn listen_for_photos(state: &mut State) {
         o.current = d.path;
         o.saver.push_photo(picture.clone());
         let buf = state.scene.buffer_create(o.tree);
-        crate::output::upload_scaled(&mut state.scene, buf, &picture, 1);
+        crate::output::upload_scaled(&mut state.scene, buf, &picture, o.saver.scale());
         state.scene.set_opacity(buf, 0.0);
         if let Some(old) = o.incoming.replace(buf) {
             state.scene.destroy(old);
@@ -410,6 +412,8 @@ fn request_photos(state: &mut State) {
             continue;
         }
         let (w, h) = o.saver.size();
+        let s = o.saver.scale() as u32;
+        let (w, h) = (w * s, h * s);
         let current = o.current.clone();
         let (tx, folder, generation) = (tx.clone(), folder.clone(), run.generation);
         let spawned = std::thread::Builder::new()
