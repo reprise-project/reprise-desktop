@@ -2524,6 +2524,51 @@ fn opening_an_executable_script_runs_it_in_its_folder() {
     }
 }
 
+/// Opening a program file reads it on a listing thread: on a dead mount the window goes on at
+/// once, and a run that fails raises its box on the wake after the answer.
+#[test]
+fn a_program_that_answers_late_raises_its_box_on_a_later_wake() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().expect("a temp dir");
+    let p = dir.path().join("b.sh");
+    std::fs::write(
+        &p,
+        b"#!/no/such/shell
+",
+    )
+    .expect("write");
+    std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).expect("chmod");
+    let mut ctx = test_ctx();
+    let mut ex = test_explorer(Place::Folder(dir.path().to_path_buf()), &mut ctx);
+    ex.sv.selection.set_only(Some(0));
+
+    let gate = Arc::new(std::sync::RwLock::new(()));
+    let closed = gate.write().expect("lock");
+    ex.held = Some(gate.clone());
+    assert_eq!(ex.open_selected(&mut ctx), Reply::none());
+    assert!(ex.dialog.is_none(), "no box before the answer");
+
+    drop(closed);
+    ex.held = None;
+    for _ in 0..500 {
+        if ex.dialog.is_some() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        ex.wake(&mut ctx);
+    }
+    match ex.dialog.take().expect("the error box is up") {
+        crate::dialogs::Dialog::Message { title, text } => {
+            assert_eq!(title, "b.sh");
+            assert_eq!(
+                text,
+                "Cannot run b.sh: The program that runs it was not found."
+            );
+        }
+        _ => panic!("a failed run raises a message box"),
+    }
+}
+
 /// A command-line folder whose check has not answered opens the window there at once; a late
 /// "missing" sends it Home with nothing to go back to.
 #[test]

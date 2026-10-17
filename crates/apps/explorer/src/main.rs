@@ -101,6 +101,12 @@ pub struct Tip {
     pub plain: bool,
 }
 
+/// What opening a file came to: a program run, or the opening of a file in its program.
+pub(crate) enum Opened {
+    Ran(std::io::Result<()>),
+    Open(reprisefs::props::Opening),
+}
+
 /// How long a listing is waited for before the window goes on. Tests wait as long as it takes.
 pub(crate) const LIST_WAIT: std::time::Duration = if cfg!(test) {
     std::time::Duration::from_secs(60)
@@ -279,6 +285,8 @@ pub struct Explorer {
     /// The place shown when its folder went and the check of what is left
     /// ([`Explorer::follow_gone`]), still unanswered.
     going: Option<(Place, Job<live::Gone>)>,
+    /// Opened files whose opening ([`Explorer::open_file`]) has not answered.
+    opening: Vec<(PathBuf, Job<Opened>)>,
     /// The `--select` entry and its folder, waiting on that folder's listing.
     selecting: Option<(Place, PathBuf)>,
     watch: Option<Watch>,
@@ -420,6 +428,7 @@ impl Explorer {
             dims_asked: HashSet::new(),
             checking: None,
             going: None,
+            opening: Vec::new(),
             selecting: None,
             watch: match Watch::new(ctx.wake.clone()) {
                 Ok(w) => Some(w),
@@ -1010,31 +1019,87 @@ impl Explorer {
         if let Some(place) = folder_place(&it) {
             return self.go(place, ctx);
         }
-        if it.exec
-            && it.shortcut.is_none()
-            && std::fs::metadata(&it.path)
-                .is_ok_and(|m| reprisefs::program::is_program(&it.path, &m))
-        {
-            return self.run_program(&it.path, ctx);
+        if it.shortcut.is_some() {
+            let open = self.open_for(&it);
+            return Reply {
+                redraw: true,
+                spawn: vec![open.argv],
+                spawn_app: open.app,
+                ..Default::default()
+            };
         }
-        let open = self.open_for(&it);
-        Reply {
-            redraw: true,
-            spawn: vec![open.argv],
-            spawn_app: open.app,
-            ..Default::default()
+        self.open_file(&it.path, it.exec, ctx)
+    }
+
+    /// Runs the program file at `path` in its own folder and an app scope named after it, or
+    /// opens a file that is no program in its program. Telling a program (its first bytes), the
+    /// run and the opening (whether it is a folder) read the file, so they go on a listing
+    /// thread; a later answer (a dead mount) lands on a wake ([`Explorer::take_opened`]).
+    fn open_file(&mut self, path: &Path, exec: bool, ctx: &mut Ctx) -> Reply {
+        let (globs, apps) = (self.globs.clone(), self.app_index.clone());
+        let (terminal, end) = (repriseconf::terminal(), repriseconf::script_terminal());
+        let path = path.to_path_buf();
+        let at = path.clone();
+        let read = move || {
+            let program = exec
+                && std::fs::metadata(&path)
+                    .is_ok_and(|m| reprisefs::program::is_program(&path, &m));
+            if !program {
+                return Opened::Open(reprisefs::props::open_in(&path, &globs, &apps, &terminal));
+            }
+            let scope = path.file_name().map(|n| n.to_string_lossy());
+            let argv = reprisefs::program::run_argv(&path, &terminal, end);
+            Opened::Ran(
+                argv.and_then(|argv| repriseapp::spawn_in(&argv, path.parent(), scope.as_deref())),
+            )
+        };
+        match self.read_job(ctx, read) {
+            Ok(opened) => self.opened(&at, opened, ctx),
+            Err(job) => {
+                self.opening.push((at, job));
+                Reply::none()
+            }
         }
     }
 
-    /// Run the program file at `path` in its own folder and an app scope named after it; one that
-    /// does not start gets a message box.
-    fn run_program(&mut self, path: &Path, ctx: &mut Ctx) -> Reply {
-        let terminal = repriseconf::terminal();
-        let argv = reprisefs::program::run_argv(path, &terminal, repriseconf::script_terminal());
-        let scope = path.file_name().map(|n| n.to_string_lossy());
-        match argv.and_then(|argv| repriseapp::spawn_in(&argv, path.parent(), scope.as_deref())) {
-            Ok(()) => Reply::redraw(),
-            Err(e) => {
+    /// Takes the openings ([`Explorer::open_file`]) that answered late. Their spawns carry their
+    /// own app scopes, as one reply holds them all.
+    pub(crate) fn take_opened(&mut self, ctx: &mut Ctx) -> Option<Reply> {
+        let mut done = Vec::new();
+        self.opening.retain(|(path, job)| match job.take() {
+            Some(opened) => {
+                done.push((path.clone(), opened));
+                false
+            }
+            None => true,
+        });
+        if done.is_empty() {
+            return None;
+        }
+        let mut reply = Reply::redraw();
+        for (path, opened) in done {
+            let r = self.opened(&path, opened, ctx);
+            let app = r.spawn_app.as_deref();
+            reply.spawn.extend(
+                r.spawn
+                    .iter()
+                    .map(|argv| reprisefs::scope::in_scope(argv, app)),
+            );
+            reply.redraw_all |= r.redraw_all;
+        }
+        Some(reply)
+    }
+
+    fn opened(&mut self, path: &Path, opened: Opened, ctx: &mut Ctx) -> Reply {
+        match opened {
+            Opened::Open(open) => Reply {
+                redraw: true,
+                spawn: vec![open.argv],
+                spawn_app: open.app,
+                ..Default::default()
+            },
+            Opened::Ran(Ok(())) => Reply::redraw(),
+            Opened::Ran(Err(e)) => {
                 log::warn!("run {}: {e}", path.display());
                 let name = path.file_name().unwrap_or_default().to_string_lossy();
                 let text = reprisefs::program::run_failed_text(&name, &e);
