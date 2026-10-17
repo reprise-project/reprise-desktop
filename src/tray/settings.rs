@@ -33,6 +33,8 @@ pub struct Appearance {
     pub shell_dlg: String,
     /// `[fonts] family`, joined as [`look::FONT_FAMILY`] carries it.
     pub font_family: String,
+    /// `[fonts] antialias`, as [`look::FONT_ANTIALIAS`] carries it.
+    pub font_antialias: bool,
     pub glass_mode: reprisekit::glass::Mode,
     pub glass_material: reprisekit::glass::Material,
     /// `[cursor] theme`, else `XCURSOR_THEME`, else "default".
@@ -76,6 +78,7 @@ impl Appearance {
             icon_theme: cfg.icons.theme.clone(),
             shell_dlg: cfg.theme.fonts.shell_dlg.clone().unwrap_or_default(),
             font_family: cfg.theme.fonts.family.join(","),
+            font_antialias: cfg.theme.fonts.antialias,
             glass_mode: cfg.glass.mode,
             glass_material: cfg.glass.material,
             cursor_theme,
@@ -151,6 +154,11 @@ impl Appearance {
                 look::NAMESPACE,
                 look::FONT_FAMILY,
                 Value::from(self.font_family.clone()),
+            ),
+            (
+                look::NAMESPACE,
+                look::FONT_ANTIALIAS,
+                Value::from(self.font_antialias.to_string()),
             ),
             (
                 look::NAMESPACE,
@@ -443,12 +451,13 @@ mod tests {
                 c.icons.theme = "Papirus".into();
                 c.theme.fonts.shell_dlg = Some("/usr/share/wine/fonts/sserife.fon".into());
                 c.theme.fonts.family = vec!["DejaVu Sans".into(), "Noto Sans".into()];
+                c.theme.fonts.antialias = true;
                 Appearance::of(&c)
             })),
         };
         assert_eq!(
             s.read_all(vec![look::NAMESPACE.into()])[look::NAMESPACE].len(),
-            10
+            11
         );
         let text = |key| String::try_from(s.lookup(look::NAMESPACE, key).unwrap()).unwrap();
         assert_eq!(text(look::INTERFACE), "blue");
@@ -457,6 +466,7 @@ mod tests {
         assert_eq!(text(look::ICON_THEME), "Papirus");
         assert_eq!(text(look::SHELL_DLG), "/usr/share/wine/fonts/sserife.fon");
         assert_eq!(text(look::FONT_FAMILY), "DejaVu Sans,Noto Sans");
+        assert_eq!(text(look::FONT_ANTIALIAS), "true");
         assert_eq!(text(look::GLASS_MODE), "light");
         assert_eq!(text(look::GLASS_MATERIAL), "frosted");
         assert_eq!(text(look::TEXT_SIZE), "100");

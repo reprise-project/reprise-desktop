@@ -22,6 +22,8 @@ pub const ICON_THEME: &str = "icon-theme";
 pub const SHELL_DLG: &str = "shell-dlg";
 /// `[fonts] family`, the families in order joined by commas ([`families`] splits them).
 pub const FONT_FAMILY: &str = "font-family";
+/// `[fonts] antialias`, `true` or `false`.
+pub const FONT_ANTIALIAS: &str = "font-antialias";
 
 /// `[glass] mode`, `light` or `dark`, as `REPRISE_GLASS_MODE`.
 pub const GLASS_MODE: &str = "glass-mode";
@@ -35,7 +37,7 @@ pub const TEXT_SIZE: &str = "text-size";
 /// `[metrics] double_click_ms` in force, in ms ("500").
 pub const DOUBLE_CLICK_MS: &str = "double-click-ms";
 
-const KEYS: [&str; 10] = [
+const KEYS: [&str; 11] = [
     INTERFACE,
     BLUE_VARIANT,
     GLASS_MODE,
@@ -44,6 +46,7 @@ const KEYS: [&str; 10] = [
     ICON_THEME,
     SHELL_DLG,
     FONT_FAMILY,
+    FONT_ANTIALIAS,
     TEXT_SIZE,
     DOUBLE_CLICK_MS,
 ];
