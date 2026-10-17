@@ -530,7 +530,7 @@ impl State {
             }
             self.scene.set_position(node.buffer, b.x, b.y);
             let canvas =
-                crate::wallpaper::compose(source, size.0, size.1, position, bg, scale as f32);
+                crate::wallpaper::composed(source, size.0, size.1, position, bg, scale as f32);
             upload_scaled(&mut self.scene, node.buffer, &canvas, scale);
             node.fit = Some(fit);
             changed = true;
