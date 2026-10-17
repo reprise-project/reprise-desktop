@@ -407,16 +407,25 @@ impl State {
         }
     }
 
-    /// Give `m` `lead`'s frame: its place and size, maximized and snapped
-    /// state, the rect a restore goes back to, its desktop, and, when
-    /// `lead` is hidden now, its minimized state. The client is asked for
-    /// the size at once; the frame follows its commit.
+    /// Give `m` `lead`'s frame outside fullscreen: its place and size,
+    /// maximized and snapped state, the rect a restore goes back to, its
+    /// desktop, and, when `lead` is hidden now, its minimized state.
+    /// Fullscreen passes on its own (`hid_fullscreen`, `close_tab`). The
+    /// client is asked for the size at once; the frame follows its commit.
     fn adopt_frame(&mut self, m: WindowId, lead: WindowId) {
         let lead_hidden = self.tabs.groups.is_hidden(lead);
+        let usable = self.usable_area_for_window(lead);
         let Some(l) = self.win(lead) else {
             return;
         };
-        let (rect, maximized, saved, snapped) = (l.frame_rect(), l.maximized, l.saved, l.snapped);
+        let rect = frame_outside_fullscreen(
+            l.frame_rect(),
+            l.fullscreen,
+            l.maximized,
+            l.saved_fullscreen,
+            usable,
+        );
+        let (maximized, saved, snapped) = (l.maximized, l.saved, l.snapped);
         let (desktop, sticky, minimized) = (l.desktop, l.sticky, l.minimized);
         if lead_hidden && let Some(l) = self.win_mut(lead) {
             l.minimized = false;
@@ -647,14 +656,32 @@ impl State {
         }
     }
 
-    /// the group's frame unless maximized.
+    /// the group's frame unless maximized. A fullscreen window stays put
+    /// and its unfullscreen lands there instead.
     fn step_off_group(&mut self, w: WindowId) {
-        if let Some(win) = self.win(w).filter(|x| !x.maximized) {
-            let step = self.config.theme.metrics.caption_height + 2 * win.geom.frame;
-            let r = win.frame_rect();
-            let area = self.usable_area_for_window(w);
-            let (x, y) =
-                crate::window::keep_inside((r.x + step, r.y + step), (r.width, r.height), area);
+        let Some(win) = self.win(w).filter(|x| !x.maximized) else {
+            return;
+        };
+        let fullscreen = win.fullscreen;
+        let m = &self.config.theme.metrics;
+        let frame = if fullscreen {
+            m.frame_width
+        } else {
+            win.geom.frame
+        };
+        let step = m.caption_height + 2 * frame;
+        let r = match win.saved_fullscreen {
+            Some(r) if fullscreen => r,
+            _ => win.frame_rect(),
+        };
+        let area = self.usable_area_for_window(w);
+        let (x, y) =
+            crate::window::keep_inside((r.x + step, r.y + step), (r.width, r.height), area);
+        if fullscreen {
+            if let Some(win) = self.win_mut(w) {
+                win.saved_fullscreen = Some(Rect::new(x, y, r.width, r.height));
+            }
+        } else {
             self.move_to(w, x, y);
         }
     }
@@ -1037,6 +1064,23 @@ impl State {
     }
 }
 
+/// A window's frame rect when it is not fullscreen: the one it had before,
+/// or the `usable` area when maximized underneath.
+fn frame_outside_fullscreen(
+    frame: Rect,
+    fullscreen: bool,
+    maximized: bool,
+    saved_fullscreen: Option<Rect>,
+    usable: Rect,
+) -> Rect {
+    match saved_fullscreen {
+        _ if !fullscreen => frame,
+        Some(r) => r,
+        None if maximized => usable,
+        None => frame,
+    }
+}
+
 /// The window a new window of `tab_group` rule `name` joins, from the open
 /// `windows` (id, rule name, pulled out by hand) oldest first.
 fn rule_target<'a, T>(
@@ -1146,6 +1190,26 @@ mod tests {
             "b fullscreen, restoring to a's frame from before"
         );
         assert_eq!(t.take_fullscreen(c), None);
+    }
+
+    #[test]
+    fn a_tab_shown_in_a_fullscreen_tabs_place_takes_the_frame_from_before_fullscreen() {
+        let screen = Rect::new(0, 0, 1920, 1080);
+        let before = Rect::new(200, 150, 800, 500);
+        let usable = Rect::new(0, 0, 1920, 1050);
+        assert_eq!(
+            frame_outside_fullscreen(screen, true, false, Some(before), usable),
+            before
+        );
+        assert_eq!(
+            frame_outside_fullscreen(screen, true, true, None, usable),
+            usable,
+            "maximized underneath: the usable area"
+        );
+        assert_eq!(
+            frame_outside_fullscreen(before, false, false, None, usable),
+            before
+        );
     }
 
     #[test]
