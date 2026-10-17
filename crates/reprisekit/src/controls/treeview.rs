@@ -305,6 +305,16 @@ impl TreeView {
         self.set_top(top.min(self.max_top(lay)));
     }
 
+    /// Scroll visible row `i` into view without picking it. True when it moved.
+    pub fn reveal(&mut self, i: usize, lay: &Layout) -> bool {
+        if i >= self.visible().len() {
+            return false;
+        }
+        let mut top = self.top;
+        scroll_into_view(&mut top, i, lay.rows);
+        self.set_top(top.min(self.max_top(lay)))
+    }
+
     /// Scroll to `top`. A hot row moves away from the pointer, so none is hot until it moves. True when it moved.
     fn set_top(&mut self, top: usize) -> bool {
         let moved = top != self.top;
@@ -937,7 +947,7 @@ pub fn draw(
 
 /// The tree view's `access` part: a tree whose items nest as the visible rows
 /// do, expanded or collapsed when they have children. Rows scrolled out of
-/// view have no bounds. Returns the node that has the focus when the tree
+/// view lie above or below the frame. Returns the node that has the focus when the tree
 /// does: the rename box while open, the selected row, else the tree.
 pub fn access(
     tv: &TreeView,
@@ -968,16 +978,14 @@ pub fn access(
         }
         let selected = tv.selected.as_ref() == Some(&row.path);
         item.set_selected(selected);
-        if (tv.top..tv.top + lay.rows).contains(&i) {
-            let y = lay.body.y + (i - tv.top) as i32 * rh;
-            let x = lay.body.x - tv.left_in(lay) + tv.label_x(row.depth);
-            item.set_bounds(access::bounds(Rect::new(
-                x,
-                y,
-                (lay.body.right() - x).max(0),
-                rh,
-            )));
-        }
+        let y = lay.body.y + (i as i32 - tv.top as i32) * rh;
+        let x = lay.body.x - tv.left_in(lay) + tv.label_x(row.depth);
+        item.set_bounds(access::bounds(Rect::new(
+            x,
+            y,
+            (lay.body.right() - x).max(0),
+            rh,
+        )));
         let up = row
             .depth
             .checked_sub(1)
@@ -1939,6 +1947,31 @@ mod tests {
         assert!(tv.hover(&lay, &text, 11, lay.body.x + 30, y));
         assert!(tv.scroll(1, &lay));
         assert_eq!(tv.hot, None);
+    }
+
+    #[test]
+    fn a_revealed_row_scrolls_in_as_the_last_row_and_stays_unpicked() {
+        let text = TextRenderer::load(&FontConfig::default());
+        let mut b = Node::new("B", true);
+        b.expanded = true;
+        b.children = (0..30)
+            .map(|k| Node::new(&format!("b{k}"), false))
+            .collect();
+        let mut tv = TreeView::new(vec![b], Style::Explorer);
+        let lay = layout(
+            &tv,
+            &text,
+            11,
+            Rect::new(0, 0, 200, 120),
+            &ControlMetrics::CLASSIC,
+        );
+        assert!(!tv.reveal(1, &lay), "a row in view");
+        assert!(tv.reveal(20, &lay));
+        assert_eq!(tv.top + lay.rows, 21);
+        assert_eq!(tv.selected, None);
+        assert!(tv.reveal(0, &lay));
+        assert_eq!(tv.top, 0);
+        assert!(!tv.reveal(31, &lay), "past the last row");
     }
 
     /// A hot label is drawn in `hot_light` and underlined 2 px below its ink's lowest row, as wide as its text; on the selection's band the underline takes the band's ink.
