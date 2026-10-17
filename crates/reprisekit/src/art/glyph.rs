@@ -68,3 +68,16 @@ pub fn draw_glyph_strokes(
         }
     }
 }
+
+/// The glyph of a caption button `b` device px, centred. A button taller than 14 `s` (a grown
+/// text size) draws it at the largest whole multiple whose 9-unit-tall glyphs keep the margin they
+/// have at 14.
+pub fn draw_glyph_fitted(c: &mut Canvas, b: Rect, s: i32, glyph: Glyph, ink: Color, face: Color) {
+    if b.height <= 14 * s {
+        return draw_glyph_strokes(c, b.x, b.y, s, glyph, ink, face);
+    }
+    let q = ((b.height - 4 * s) / 9).max(s);
+    let x = b.x + (b.width - 16 * q + 1) / 2;
+    let y = b.y + (b.height - 14 * q) / 2;
+    draw_glyph_strokes(c, x, y, q, glyph, ink, face);
+}

@@ -449,6 +449,8 @@ fn draw_buttons(
         }
         return;
     }
+    let grown = style.at_button_side(geom.buttons[2].height / s);
+    let style = grown.as_deref().unwrap_or(style);
     for (kind, r) in CaptionButton::ALL.into_iter().zip(geom.buttons) {
         if !geom.chrome.buttons.has(kind) {
             continue;
@@ -545,6 +547,40 @@ mod tests {
             c.get(g.client.x + 5, g.client.y + 5),
             0,
             "the client hole is clear"
+        );
+    }
+
+    #[test]
+    fn a_grown_blue_caption_draws_its_buttons_as_big_as_their_cells() {
+        for (pct, side) in [(150, 28), (200, 34)] {
+            let theme = theme_for(Interface::Blue).with_text_size(pct);
+            let style = theme.look.style().unwrap();
+            let g = FrameGeometry::layout(&theme.metrics, 300, 200, false, Chrome::WINDOW);
+            let close = g.buttons[2];
+            assert_eq!((close.width, close.height), (side, side), "{pct}%");
+            let text = TextRenderer::load(&style.caption_text.font());
+            let mut c = Canvas::new(g.total.0 as u32, g.total.1 as u32);
+            draw_frame(&mut c, style, &theme, &text, &g, &state(true, false));
+            let grown = style.at_button_side(side).unwrap();
+            let mut want = Canvas::new(side as u32, side as u32);
+            let at = Rect::new(0, 0, side, side);
+            grown.draw(&mut want, at, Part::CloseButton, State::Normal, 1);
+            let mid = side / 2;
+            for (x, y) in [(mid, 1), (1, mid), (mid, mid), (side - 2, mid)] {
+                assert_eq!(
+                    c.get(close.x + x, close.y + y),
+                    want.get(x, y),
+                    "{pct}%: close at ({x}, {y})"
+                );
+            }
+        }
+        assert!(
+            theme_for(Interface::Blue)
+                .look
+                .style()
+                .unwrap()
+                .at_button_side(21)
+                .is_none()
         );
     }
 

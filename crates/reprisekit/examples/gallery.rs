@@ -560,8 +560,8 @@ fn render_windowed_dialog(scale: i32) -> Canvas {
 }
 
 /// A message box over a property sheet over a window's controls (a menu bar with its File menu
-/// open, a list view, a tree and a calendar) in each look, laid out for 100% text and drawn at
-/// `pct`.
+/// open, a list view, a tree and a calendar), then a window's and a dialog's frame, in each look,
+/// laid out for 100% text and drawn at `pct`.
 fn render_text_size(pct: u32) -> Canvas {
     let looks = [Interface::Classic, Interface::Blue, Interface::Glass];
     let themes: Vec<Theme> = looks
@@ -610,9 +610,18 @@ fn render_text_size(pct: u32) -> Canvas {
     let (pw, ph) = u.size(TEXT_SIZE_PANES);
     let (vw, vh) = u.size(TEXT_SIZE_VIEWS);
     let col = col.max(cw + 10).max(pw + 10).max(vw + 10);
+    let fh = themes
+        .iter()
+        .map(|t| {
+            FrameGeometry::layout(&t.metrics, 100, 20, false, Chrome::WINDOW)
+                .total
+                .1
+        })
+        .max()
+        .unwrap_or(0);
     let mut c = Canvas::new(
         (themes.len() as i32 * col + 10) as u32,
-        (mh + sh + ch + ph + vh + 60) as u32,
+        (mh + sh + ch + ph + vh + 2 * fh + 80) as u32,
     );
     c.fill_rect(c.bounds(), Color::rgb(58, 110, 165));
     for (i, theme) in themes.iter().enumerate() {
@@ -633,6 +642,29 @@ fn render_text_size(pct: u32) -> Canvas {
         c.blit_canvas(x, mh + sh + 30, &text_size_controls(theme, &text));
         c.blit_canvas(x, mh + sh + ch + 40, &text_size_panes(theme, &text));
         c.blit_canvas(x, mh + sh + ch + ph + 50, &text_size_views(theme, &text));
+        let caption_text = theme.look.style().map_or_else(
+            || TextRenderer::load(&theme.fonts),
+            |st| TextRenderer::load(&st.caption_text.font()),
+        );
+        let top = mh + sh + ch + ph + vh + 60;
+        for (row, chrome) in [Chrome::WINDOW, Chrome::HELP_DIALOG]
+            .into_iter()
+            .enumerate()
+        {
+            let g = FrameGeometry::layout(&theme.metrics, col - 10, 20, false, chrome)
+                .translated(-x, -(top + row as i32 * (fh + 10)));
+            let st = FrameState {
+                title: "Notes",
+                active: true,
+                maximized: false,
+                pressed: None,
+                glow: Glow::lit(None),
+                icon: None,
+                tabbed: false,
+            };
+            look::draw_frame(&mut c, theme, &text, &caption_text, &g, &st);
+            c.fill_rect(g.client, theme.colors.window);
+        }
     }
     c
 }

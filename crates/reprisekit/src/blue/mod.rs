@@ -19,7 +19,7 @@ use std::sync::{Arc, OnceLock};
 use crate::metrics::{ControlMetrics, FileDlgMetrics, StartMenuMetrics};
 use crate::raster::Insets;
 use crate::raster::Rect;
-use crate::style::{Part, Shadow, SoftShadow, State, Style, TextSpec, TrackMarks};
+use crate::style::{Part, PartImage, Shadow, SoftShadow, State, Style, TextSpec, TrackMarks};
 use crate::taskbar::{ClockBox, LabelledButton, StartMenuDock, TaskbarShape, TrayArrow};
 use crate::theme::{Color, Metrics};
 
@@ -135,6 +135,26 @@ pub fn style_for(v: Variant) -> Arc<Style> {
         .clone()
 }
 
+/// The caption buttons and the ? box `side` design px square at `scale`.
+fn sided_buttons(v: Variant, scale: i32, side: i32) -> Vec<(Part, PartImage)> {
+    let mut parts: Vec<(Part, PartImage)> = [
+        (Part::MinButton, capbutton::Glyph::Minimize),
+        (Part::MaxButton, capbutton::Glyph::Maximize),
+        (Part::RestoreButton, capbutton::Glyph::Restore),
+        (Part::CloseButton, capbutton::Glyph::Close),
+    ]
+    .into_iter()
+    .map(|(part, g)| {
+        (
+            part,
+            capbutton::caption_button_sized(v.scheme(), g, scale, side),
+        )
+    })
+    .collect();
+    parts.extend(controls::help_sized(v, scale, side));
+    parts
+}
+
 /// `v`'s style at `scale` device pixels per design pixel. Parts painted from geometry are
 /// painted at `scale` and marked so
 /// ([`PartImage::at_scale`](crate::style::PartImage::at_scale)); other parts are design-size
@@ -195,6 +215,7 @@ fn build(v: Variant, scale: i32) -> Style {
             capbutton::caption_button(v.scheme(), glyph, scale)
         })
     })
+    .with_button_side(move |side| sided_buttons(v, scale, side))
     .with_painted(Part::Taskbar, move || bar::taskbar(v.scheme(), scale))
     .with_painted(Part::StartButton, move || {
         start::start_button(v.scheme(), scale)

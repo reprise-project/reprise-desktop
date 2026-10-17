@@ -57,9 +57,10 @@ fn rects(g: Glyph) -> &'static [(i32, i32, i32, i32)] {
 }
 
 /// How much of the device pixel at (`x`, `y`) glyph `g` covers at `k`
-/// device pixels per design pixel, moved by (`dx`, `dy`) design pixels.
+/// device pixels per glyph unit, moved by (`dx`, `dy`) device pixels. Rect
+/// edges round to whole device pixels, so a grown glyph stays crisp.
 fn glyph_cover(g: Glyph, x: f64, y: f64, k: f64, (dx, dy): (i32, i32)) -> f64 {
-    let (x, y) = (x - f64::from(dx) * k, y - f64::from(dy) * k);
+    let (x, y) = (x - f64::from(dx), y - f64::from(dy));
     if g == Glyph::Close {
         return CROSS
             .iter()
@@ -76,8 +77,9 @@ fn glyph_cover(g: Glyph, x: f64, y: f64, k: f64, (dx, dy): (i32, i32)) -> f64 {
     rects(g)
         .iter()
         .map(|&(rx, ry, w, h)| {
-            let (w, h) = (f64::from(w) * k, f64::from(h) * k);
-            shape::rounded(x - f64::from(rx) * k, y - f64::from(ry) * k, w, h, 0.0)
+            let px = |v: i32| (f64::from(v) * k).round();
+            let (x0, y0) = (px(rx), px(ry));
+            shape::rounded(x - x0, y - y0, px(rx + w) - x0, px(ry + h) - y0, 0.0)
         })
         .sum::<f64>()
         .min(1.0)
@@ -166,25 +168,27 @@ fn look(s: &Scheme, g: Glyph, i: usize) -> Look {
     l
 }
 
-pub fn frame(l: &Look, g: Glyph, d: i32) -> Canvas {
+/// One state of the button, `side` design px square at `d`: the glyph and the
+/// corners grow with `side`, the rim stays 1 px.
+pub fn frame(l: &Look, g: Glyph, d: i32, side: i32) -> Canvas {
     let k = f64::from(d);
-    let side = f64::from(SIDE) * k;
-    let (lo, hi) = (
-        1.5 / f64::from(SIDE),
-        (f64::from(SIDE) - 1.5) / f64::from(SIDE),
-    );
-    let t = |v: f64| ((shape::centre(v as i32, d) + 0.5) / f64::from(SIDE)).clamp(lo, hi);
-    shape::draw(SIDE, SIDE, d, |x, y| {
-        let outer = shape::rounded(x, y, side, side, CORNER * k);
+    let grown = k * f64::from(side) / f64::from(SIDE);
+    let n = f64::from(side);
+    let (lo, hi) = (1.5 / n, (n - 1.5) / n);
+    let t = |v: f64| ((shape::centre(v as i32, d) + 0.5) / n).clamp(lo, hi);
+    let side_px = n * k;
+    let emboss = (EMBOSS_OFFSET.0 * d, EMBOSS_OFFSET.1 * d);
+    shape::draw(side, side, d, |x, y| {
+        let outer = shape::rounded(x, y, side_px, side_px, CORNER * grown);
         if outer == 0.0 {
             return shape::CLEAR;
         }
         let inner = shape::rounded(
             x - k,
             y - k,
-            side - 2.0 * k,
-            side - 2.0 * k,
-            (CORNER - 1.0) * k,
+            side_px - 2.0 * k,
+            side_px - 2.0 * k,
+            CORNER * grown - k,
         );
         // Where the two gradients cross they add, less the face's mean, so
         // a corner takes both shades and the middle neither twice.
@@ -194,9 +198,9 @@ pub fn frame(l: &Look, g: Glyph, d: i32) -> Canvas {
             std::array::from_fn(|i| (dn[i] + ac[i] - l.base[i]).clamp(0.0, 255.0)),
         );
         if let Some(e) = l.emboss {
-            c = shape::over(shape::scale(e, glyph_cover(g, x, y, k, EMBOSS_OFFSET)), c);
+            c = shape::over(shape::scale(e, glyph_cover(g, x, y, grown, emboss)), c);
         }
-        c = shape::over(shape::scale(l.ink, glyph_cover(g, x, y, k, (0, 0))), c);
+        c = shape::over(shape::scale(l.ink, glyph_cover(g, x, y, grown, (0, 0))), c);
         shape::shares(&[(l.rim, outer - inner), (c, inner)])
     })
 }
@@ -223,10 +227,15 @@ fn faces(s: &Scheme, g: Glyph) -> [&Face; 5] {
 }
 
 pub fn caption_button(s: &Scheme, g: Glyph, d: i32) -> PartImage {
-    let side = SIDE * d;
-    let mut a = Canvas::new(side as u32, (side * STATES.len() as i32) as u32);
+    caption_button_sized(s, g, d, SIDE)
+}
+
+/// [`caption_button`] `side` design px square, for a caption grown with the text size.
+pub fn caption_button_sized(s: &Scheme, g: Glyph, d: i32, side: i32) -> PartImage {
+    let px = side * d;
+    let mut a = Canvas::new(px as u32, (px * STATES.len() as i32) as u32);
     for i in 0..STATES.len() {
-        a.blit_over(0, i as i32 * side, &frame(&look(s, g, i), g, d));
+        a.blit_over(0, i as i32 * px, &frame(&look(s, g, i), g, d, side));
     }
     let mut img = PartImage::new(a, &STATES, Layout::Vertical).at_scale(d);
     img.true_size = true;
@@ -399,6 +408,64 @@ mod tests {
                 .collect();
             assert_ne!(two, doubled, "{v:?}");
         }
+    }
+
+    /// The sides a caption grown to 150% and 200% text asks for.
+    const GROWN: [i32; 2] = [28, 34];
+
+    #[test]
+    fn grown_buttons_are_their_side_with_clear_corners_smooth_at_2() {
+        for side in GROWN {
+            for g in GLYPHS {
+                for d in [1, 2] {
+                    let img = caption_button_sized(Variant::Blue.scheme(), g, d, side);
+                    let n = side * d;
+                    assert_eq!(
+                        (img.atlas.width, img.atlas.height),
+                        (n as u32, (5 * n) as u32)
+                    );
+                    for st in STATES {
+                        let px = frame_pixels(&img, st);
+                        let at = |x: i32, y: i32| px[(y * n + x) as usize] >> 24;
+                        for (x, y) in [(0, 0), (n - 1, 0), (0, n - 1), (n - 1, n - 1)] {
+                            assert!(at(x, y) < 16, "{g:?} {st:?} {side} at {d}: ({x}, {y})");
+                        }
+                        let partial = (0..4 * d)
+                            .flat_map(|y| (0..4 * d).map(move |x| (x, y)))
+                            .filter(|&(x, y)| (1..255).contains(&at(x, y)))
+                            .count();
+                        assert!(partial >= 2, "{g:?} {st:?} {side} at {d}: corner smooths");
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_grown_glyph_keeps_whole_pixel_strokes_at_1() {
+        let l = look(Variant::Blue.scheme(), Glyph::Minimize, 0);
+        let c = frame(&l, Glyph::Minimize, 1, 28);
+        let ink = shape::pack(l.ink);
+        let rows: Vec<i32> = (1..27)
+            .filter(|&y| (7..16).all(|x| c.get(x, y) == ink))
+            .collect();
+        assert_eq!(rows, [17, 18, 19, 20], "the bar is 4 solid rows");
+    }
+
+    #[test]
+    fn grown_caption_buttons_pin_at_scale_1_and_2() {
+        let mut got = Vec::new();
+        for v in Variant::ALL {
+            for g in GLYPHS {
+                for side in GROWN {
+                    for d in [1, 2] {
+                        let img = caption_button_sized(v.scheme(), g, d, side);
+                        got.push((format!("{v:?} {g:?} {side} {d}"), fnv(&img)));
+                    }
+                }
+            }
+        }
+        crate::pins::check("blue/caption_buttons_grown", &got);
     }
 
     #[test]

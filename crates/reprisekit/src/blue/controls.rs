@@ -104,6 +104,11 @@ pub(super) const GROUPS: [Group; 19] = [
     (&[Part::PlacesBar], placesbar::parts),
 ];
 
+/// The ? box `side` design px square at `scale`.
+pub(super) fn help_sized(v: Variant, scale: i32, side: i32) -> Vec<(Part, PartImage)> {
+    help::parts_sized(v, scale, side)
+}
+
 /// The parts cheap enough to paint with the style; which ones depends on the variant.
 pub(super) fn eager(v: Variant) -> Vec<(Part, PartImage)> {
     let mut parts = field::parts(v);
