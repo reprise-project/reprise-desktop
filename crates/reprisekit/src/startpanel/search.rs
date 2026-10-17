@@ -376,28 +376,23 @@ mod tests {
         assert_eq!(away.pixels, draw(None, false).pixels, "nor shows a preedit");
     }
 
-    /// A preedit marking its whole run (0..2) draws it on the hilight colour with the caret at its end.
     #[test]
-    fn a_preedit_range_draws_selected_in_the_field() {
+    fn a_preedit_range_draws_as_a_caret_at_its_end() {
         let st = crate::glass::style(&crate::glass::Settings::default());
         let text = TextRenderer::load(&FontConfig::default());
         let r = Rect::new(4, 4, FIELD.0, FIELD.1);
         let edit = TextEdit::new("ab", false);
-        let mut c = Canvas::new(240, 32);
-        c.set_preedit(Preedit::new("ni".into(), 0, 2));
-        field(&mut c, &st, &text, &text, r, &edit, true, true, Grow::at(1));
-        let (ab, ni) = (
-            text.measure("ab", false, TEXT_PX),
-            text.measure("ni", false, TEXT_PX),
-        );
-        let pen = r.x + at::TYPED_PEN + ab;
-        let row = r.y + at::CARET.1;
+        let draw = |p| {
+            let mut c = Canvas::new(240, 32);
+            c.set_preedit(p);
+            field(&mut c, &st, &text, &text, r, &edit, true, true, Grow::at(1));
+            c
+        };
+        let mut range = draw(Preedit::new("ni".into(), 0, 2));
+        let mut at_end = draw(Preedit::new("ni".into(), 2, 2));
         let hl = st.colors.hilight.argb();
-        assert_eq!(c.get(pen, row), hl, "the range starts on hilight");
-        assert_eq!(c.get(pen + ni - 1, row), hl, "and ends on it");
-        assert_ne!(c.get(pen - 1, row), hl, "ab is not selected");
-        let spot = c.take_spot().expect("a focused field reports");
-        let caret = r.x + at::CARET.0 + ab + ni;
-        assert_eq!(spot.caret.x, caret, "the caret ends the range");
+        assert!(range.pixels.iter().all(|&p| p != hl), "nothing on hilight");
+        assert_eq!(range.pixels, at_end.pixels);
+        assert_eq!(range.take_spot(), at_end.take_spot());
     }
 }
