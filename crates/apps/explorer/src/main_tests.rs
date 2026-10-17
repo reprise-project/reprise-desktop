@@ -5,19 +5,33 @@ use crate::commands::Command;
 use reprisekit::controls::treeview::{self, Node};
 use reprisekit::theme::FontConfig;
 
-/// A `Ctx` for the navigation commands; its icon theme is a name nothing carries, so every lookup answers `None`.
-pub(crate) fn test_ctx() -> Ctx {
-    // Saves land in a scratch state dir and thumbnails in a scratch cache dir, never the developer's own; set once per process.
-    static STATE_HOME: std::sync::Once = std::sync::Once::new();
-    STATE_HOME.call_once(|| {
-        let state =
-            std::env::temp_dir().join(format!("reprise-explorer-tests-{}", std::process::id()));
+/// The process's scratch home for tests: state, cache, data (the Recycle Bin) and config.
+fn scratch() -> PathBuf {
+    std::env::temp_dir().join(format!("reprise-explorer-tests-{}", std::process::id()))
+}
+
+/// Point the Recycle Bin at the scratch home's trash, with no drives and default settings, so a
+/// test that deletes or lists the bin never reaches the developer's own. Run once per process by
+/// [`test_env`], and again by a test that pointed it elsewhere, as it ends.
+pub(crate) fn scratch_bin() {
+    reprisefs::trash::set_mount_table(Some("/dev/null".into()));
+    reprisefs::bincap::set_config_path(Some(scratch().join("config.toml")));
+}
+
+/// Saves land in a scratch state dir, thumbnails in a scratch cache dir and the Recycle Bin in
+/// [`scratch_bin`], never the developer's own; set once per process, before a test changes them.
+pub(crate) fn test_env() {
+    static SCRATCH: std::sync::Once = std::sync::Once::new();
+    SCRATCH.call_once(|| {
+        let state = scratch();
         // SAFETY: tests run on parallel threads, but std serialises its own
-        // env access and the other `test_ctx` callers wait on the `Once`.
+        // env access and the other `test_env` callers wait on the `Once`.
         unsafe {
             std::env::set_var("XDG_STATE_HOME", &state);
             std::env::set_var("XDG_CACHE_HOME", state.join("cache"));
+            std::env::set_var("XDG_DATA_HOME", state.join("data"));
         }
+        scratch_bin();
         // A script opened in a test runs under this terminal, which records its arguments.
         use std::os::unix::fs::PermissionsExt;
         std::fs::create_dir_all(&state).expect("mkdir");
@@ -33,6 +47,12 @@ pub(crate) fn test_ctx() -> Ctx {
         std::fs::write(&config, format!("terminal = \"{}\"\n", term.display())).expect("write");
         repriseconf::set_config_path(Some(config));
     });
+}
+
+/// A `Ctx` for the navigation commands, in [`test_env`]; its icon theme is a name nothing carries,
+/// so every lookup answers `None`.
+pub(crate) fn test_ctx() -> Ctx {
+    test_env();
     Ctx {
         theme: Theme::default(),
         text: TextRenderer::load(&FontConfig::default()),

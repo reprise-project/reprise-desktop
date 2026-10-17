@@ -89,16 +89,19 @@ fn new_text_document_never_truncates_an_unlisted_file() {
     assert_eq!(ex.undo, None);
 }
 
-/// `$XDG_DATA_HOME` is process-wide, so tests that point the trash at a temporary home take turns.
+/// `$XDG_DATA_HOME` is process-wide, so tests that point the trash at a temporary home take turns,
+/// and so do the tests that delete into the scratch one ([`crate::tests::scratch_bin`]), whose
+/// bin would otherwise be the other test's.
 static TRASH_ENV: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 /// Points `$XDG_DATA_HOME` at `dir` and `$XDG_CONFIG_HOME` at `dir/config` (the test's Recycle Bin
-/// settings), with no drives (only the home trash is listed), and restores the old values on drop so a
-/// test cannot leave the process pointing at a deleted tempdir. Held under [`TRASH_ENV`].
+/// settings), with no drives (only the home trash is listed), and puts back the scratch home on drop
+/// so a test cannot leave the process pointing at a deleted tempdir. Held under [`TRASH_ENV`].
 struct DataHome(Vec<(&'static str, Option<std::ffi::OsString>)>);
 
 impl DataHome {
     fn set(dir: &Path) -> Self {
+        crate::tests::test_env();
         let vars = [
             ("XDG_DATA_HOME", dir.to_path_buf()),
             ("XDG_CONFIG_HOME", dir.join("config")),
@@ -111,7 +114,7 @@ impl DataHome {
             // SAFETY: std serialises its own env access and only `TRASH_ENV` holders read these variables.
             unsafe { std::env::set_var(name, value) };
         }
-        reprisefs::trash::set_mount_table(Some("/dev/null".into()));
+        reprisefs::bincap::set_config_path(Some(dir.join("config/reprise/config.toml")));
         Self(was)
     }
 
@@ -124,7 +127,7 @@ impl DataHome {
 
 impl Drop for DataHome {
     fn drop(&mut self) {
-        reprisefs::trash::set_mount_table(None);
+        crate::tests::scratch_bin();
         for (name, old) in self.0.drain(..) {
             // SAFETY: as in `DataHome::set`; still under `TRASH_ENV`.
             unsafe {
@@ -137,24 +140,25 @@ impl Drop for DataHome {
     }
 }
 
-/// The default Recycle Bin settings for a test that deletes without a [`DataHome`], so the developer's
-/// own `[recycle_bin]` cannot change what Delete does. Takes [`TRASH_ENV`].
-struct DefaultBinSettings {
-    _env: std::sync::MutexGuard<'static, ()>,
-}
-
-impl DefaultBinSettings {
-    fn set() -> Self {
-        let guard = TRASH_ENV.lock().unwrap_or_else(|e| e.into_inner());
-        reprisefs::bincap::set_config_path(Some("/nonexistent/reprise/config.toml".into()));
-        Self { _env: guard }
-    }
-}
-
-impl Drop for DefaultBinSettings {
-    fn drop(&mut self) {
-        reprisefs::bincap::set_config_path(None);
-    }
+/// A test that deletes without a [`DataHome`] gets the scratch Recycle Bin: its home trash in the
+/// scratch home, no drives' trashes and default settings, whatever the developer's own are.
+#[test]
+fn a_test_without_a_data_home_gets_the_scratch_bin() {
+    let _guard = TRASH_ENV.lock().unwrap_or_else(|e| e.into_inner());
+    test_ctx();
+    let bins = reprisefs::trash::Bins::system().expect("a bin");
+    let scratch =
+        std::env::temp_dir().join(format!("reprise-explorer-tests-{}", std::process::id()));
+    assert_eq!(bins.home, scratch.join("data/Trash"));
+    assert_eq!(bins.mounts, Vec::<PathBuf>::new());
+    assert_eq!(bins.policy, reprisefs::bincap::Policy::default());
+    let home = tempfile::tempdir().expect("a temp dir");
+    drop(DataHome::set(home.path()));
+    let again = reprisefs::trash::Bins::system().expect("a bin");
+    assert_eq!(
+        again.home, bins.home,
+        "a data home puts the scratch one back"
+    );
 }
 
 /// Puts `dir` back to `0o700` on drop, so a failed assertion in the chmod-0500 test cannot leave an undeletable tempdir.
@@ -170,7 +174,7 @@ impl Drop for Mode0700 {
 /// The tree menu's Delete, Cut and Copy take the node's folder, not the file selected in the view.
 #[test]
 fn the_tree_menus_file_rows_take_the_node() {
-    let _bin = DefaultBinSettings::set();
+    let _guard = TRASH_ENV.lock().unwrap_or_else(|e| e.into_inner());
     let home = tempfile::Builder::new()
         .prefix("treemenu")
         .tempdir()
@@ -205,7 +209,7 @@ fn the_tree_menus_file_rows_take_the_node() {
 #[test]
 fn a_delete_prompt_has_the_prompt_caption() {
     use repriseapp::Caption;
-    let _bin = DefaultBinSettings::set();
+    let _guard = TRASH_ENV.lock().unwrap_or_else(|e| e.into_inner());
     let dir = tempfile::tempdir().expect("a temp dir");
     std::fs::write(dir.path().join("a.txt"), "1").expect("write");
     let mut ctx = test_ctx();
@@ -244,7 +248,7 @@ fn enter() -> repriseapp::Event {
 /// Right moves the delete prompt's focus from Yes to No, and Enter presses No: the prompt closes, the file stays.
 #[test]
 fn an_arrow_moves_the_delete_prompt_s_focus_and_enter_presses_it() {
-    let _bin = DefaultBinSettings::set();
+    let _guard = TRASH_ENV.lock().unwrap_or_else(|e| e.into_inner());
     let dir = tempfile::tempdir().expect("a temp dir");
     std::fs::write(dir.path().join("a.txt"), "1").expect("write");
     let mut ctx = test_ctx();
