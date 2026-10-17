@@ -5,6 +5,7 @@
 
 use std::borrow::Cow;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use reprisekit::wallpapers::Builtin;
@@ -30,8 +31,8 @@ use crate::{
 pub struct Wallpaper {
     pub path: PathBuf,
     /// A file's picture; None until the first decode lands, and for a
-    /// built-in.
-    image: Option<Loaded>,
+    /// built-in. Shared with the jobs composing it.
+    image: Option<Arc<Loaded>>,
     /// The cut a decode in flight is making; a finished decode for any
     /// other is stale and dropped.
     loading: Option<Cut>,
@@ -103,6 +104,30 @@ pub struct Slideshow {
 struct WallpaperNode {
     buffer: BufferId,
     fit: Option<Fit>,
+    /// The logical box the buffer covers; None until it first holds a picture.
+    placed: Option<Rect>,
+    /// The fit a job is composing for this output.
+    composing: Option<Fit>,
+}
+
+impl WallpaperNode {
+    /// Stretch the buffer over `b`; true when it moved.
+    fn place(&mut self, scene: &mut crate::compositor::DeskScene, b: Rect) -> bool {
+        if self.placed.is_none_or(|p| p == b) {
+            return false;
+        }
+        scene.set_position(self.buffer, b.x, b.y);
+        scene.buffer_set_dest_size(self.buffer, Some((b.width, b.height).into()));
+        self.placed = Some(b);
+        true
+    }
+}
+
+/// Whether a file's picture of `img` pixels, shown on an output that already shows a picture, is
+/// composed for `size` on a job: anything but a stretched picture of the output's own size
+/// resamples or fills a whole screen.
+fn composes_off_loop(shown: bool, position: Position, img: (u32, u32), size: (u32, u32)) -> bool {
+    shown && !(position == Position::Stretch && img == size)
 }
 
 /// What an output's wallpaper is composed from besides the image; the same
@@ -159,9 +184,10 @@ impl State {
             w.loading = None;
             match loaded {
                 Some(l) => {
-                    w.image = Some(l);
+                    w.image = Some(Arc::new(l));
                     for (_, node) in &mut w.nodes {
                         node.fit = None;
+                        node.composing = None;
                     }
                     state.refit_wallpaper();
                     crate::lockview::refit(state);
@@ -492,12 +518,18 @@ impl State {
         };
         let mut changed = false;
         let mut fade_in = false;
-        for (out, b, scale, size) in shown.into_iter().filter(|_| ready) {
+        let mut compose = Vec::new();
+        for (out, b, scale, size) in shown {
             let source = match &w.builtin {
+                _ if !ready => None,
                 Some((_, drawn)) => drawn.get(size),
                 None => w.image.as_ref().map(|l| &l.image),
             };
             let Some(source) = source else {
+                // Until its own picture is ready an output shows the one before, stretched.
+                if let Some((_, node)) = w.nodes.iter_mut().find(|(o, _)| *o == out) {
+                    changed |= node.place(&mut self.scene, b);
+                }
                 continue;
             };
             let fit = Fit {
@@ -529,6 +561,8 @@ impl State {
                         WallpaperNode {
                             buffer: n,
                             fit: None,
+                            placed: None,
+                            composing: None,
                         },
                     ));
                     w.nodes.len() - 1
@@ -536,6 +570,21 @@ impl State {
             };
             let node = &mut w.nodes[i].1;
             if node.fit == Some(fit) {
+                node.composing = None;
+                changed |= node.place(&mut self.scene, b);
+                continue;
+            }
+            let img = (source.width, source.height);
+            if let Some(image) = w
+                .image
+                .as_ref()
+                .filter(|_| composes_off_loop(node.placed.is_some(), position, img, size))
+            {
+                changed |= node.place(&mut self.scene, b);
+                if node.composing != Some(fit) {
+                    node.composing = Some(fit);
+                    compose.push((i, fit, size, Arc::clone(image)));
+                }
                 continue;
             }
             self.scene.set_position(node.buffer, b.x, b.y);
@@ -557,10 +606,14 @@ impl State {
                 _ => upload_scaled(&mut self.scene, node.buffer, &canvas, scale),
             }
             node.fit = Some(fit);
+            node.placed = Some(b);
             changed = true;
             let out = w.nodes[i].0.clone();
             self.water_wallpaper(&out, Pane::Desktop, &canvas, fresh);
         }
+        let compose: Vec<_> = (compose.into_iter())
+            .map(|(i, fit, size, image)| (w.nodes[i].0.clone(), fit, size, image))
+            .collect();
         let starts_fade = fade_in && w.fade.is_none();
         let path = w.path.clone();
         let builtin = w.builtin.as_ref().map(|(b, _)| *b);
@@ -571,6 +624,9 @@ impl State {
         if let Some(b) = builtin.filter(|_| !draw.is_empty()) {
             self.draw_builtins(path, b, draw);
         }
+        for (out, fit, size, image) in compose {
+            self.compose_wallpaper(out, fit, size, image);
+        }
         if starts_fade {
             self.start_fade();
         }
@@ -578,6 +634,38 @@ impl State {
             self.redraw_all();
         }
         self.water_configured();
+    }
+
+    /// Compose `image` for `out`'s `fit` on a job; it shows unless the picture or the fit wanted
+    /// changed meanwhile.
+    fn compose_wallpaper(&mut self, out: Output, fit: Fit, size: (u32, u32), image: Arc<Loaded>) {
+        self.spawn_fs_job(move || {
+            let (bg, position, scale) = (fit.bg, fit.position, fit.scale as f32);
+            let canvas =
+                crate::wallpaper::compose(&image.image, size.0, size.1, position, bg, scale);
+            Box::new(move |state: &mut State| {
+                let Some(w) = state.wallpaper.as_mut() else {
+                    return;
+                };
+                if !w.image.as_ref().is_some_and(|l| Arc::ptr_eq(l, &image)) {
+                    return;
+                }
+                let Some((_, node)) = w.nodes.iter_mut().find(|(o, _)| *o == out) else {
+                    return;
+                };
+                if node.composing != Some(fit) {
+                    return;
+                }
+                node.composing = None;
+                node.fit = Some(fit);
+                node.placed = Some(fit.rect);
+                let b = fit.rect;
+                state.scene.set_position(node.buffer, b.x, b.y);
+                upload_scaled(&mut state.scene, node.buffer, &canvas, fit.scale);
+                state.water_wallpaper(&out, Pane::Desktop, &canvas, false);
+                state.redraw_all();
+            })
+        });
     }
 
     /// The wallpaper as `out` shows it, at `scale`: the lock screen's
@@ -631,5 +719,31 @@ impl State {
                 c
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_shown_picture_at_a_new_size_composes_on_a_job_and_a_first_show_at_once() {
+        let s = Position::Stretch;
+        assert!(composes_off_loop(true, s, (2560, 1440), (3072, 1728)));
+        assert!(composes_off_loop(true, s, (3072, 1728), (1920, 1080)));
+        assert!(composes_off_loop(
+            true,
+            Position::Center,
+            (1920, 1080),
+            (1920, 1080)
+        ));
+        assert!(
+            !composes_off_loop(true, s, (1920, 1080), (1920, 1080)),
+            "shown as drawn"
+        );
+        assert!(
+            !composes_off_loop(false, s, (2560, 1440), (1920, 1080)),
+            "first show"
+        );
     }
 }
