@@ -66,10 +66,15 @@ pub fn trash_contents(files: &Path) -> (usize, Option<String>) {
     (count, first)
 }
 
+/// `$XDG_CONFIG_HOME/user-dirs.dirs`, which names the user's folders.
+pub fn user_dirs_file() -> PathBuf {
+    crate::autostart::config_home().join("user-dirs.dirs")
+}
+
 /// `XDG_<key>_DIR` from `$XDG_CONFIG_HOME/user-dirs.dirs`, else `$HOME/<fallback>`; `None` without a home.
 pub fn user_dir(key: &str, fallback: &str) -> Option<PathBuf> {
     let home = std::env::var_os("HOME").map(PathBuf::from)?;
-    let user_dirs = crate::autostart::config_home().join("user-dirs.dirs");
+    let user_dirs = user_dirs_file();
     match std::fs::read_to_string(&user_dirs) {
         Ok(text) => {
             if let Some(p) = parse_user_dir(&text, &home, key) {
@@ -126,8 +131,7 @@ pub fn document_dir_paths() -> Vec<(PathBuf, &'static str)> {
     let Some(home) = std::env::var_os("HOME").map(PathBuf::from) else {
         return Vec::new();
     };
-    let user_dirs = crate::autostart::config_home().join("user-dirs.dirs");
-    let text = std::fs::read_to_string(user_dirs).unwrap_or_default();
+    let text = std::fs::read_to_string(user_dirs_file()).unwrap_or_default();
     DIRS.iter()
         .map(|(key, fallback, icon)| {
             let dir = parse_user_dir(&text, &home, key).unwrap_or_else(|| home.join(fallback));
