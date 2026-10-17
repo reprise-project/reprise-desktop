@@ -99,11 +99,12 @@ use wayland_client::{
     },
 };
 
+pub use access::ReaderForm;
 pub use dnd::{Accept, Actions, DragAction, DragOut, DropKind, Dropped, Offered, Uri};
 pub use fielddrop::{DropForm, FileDrop};
 use reprisefs::pipe::PasteBuf;
 pub use reprisekit;
-use reprisekit::access::{Act, Reveal, Tree, accesskit};
+use reprisekit::access::{Act, Gesture, Reveal, Tree, accesskit};
 use reprisekit::cues::Cues;
 use reprisekit::icontheme::{IconCache, IconTheme};
 use reprisekit::raster::{Canvas, Rect};
@@ -617,8 +618,8 @@ pub trait App {
     /// The form in window `win` that a screen reader's Focus and ScrollIntoView reach without a
     /// click: a row scrolls into view, a button takes the focus unpressed. Defaults to
     /// [`App::drop_form`].
-    fn reader_form(&mut self, win: WinId) -> Option<DropForm<'_>> {
-        self.drop_form(win)
+    fn reader_form(&mut self, win: WinId) -> Option<ReaderForm<'_>> {
+        self.drop_form(win).map(ReaderForm::Form)
     }
     /// The file dialog in window `win`, whose File name field takes a drag of text or files as
     /// a form's field does; files go in by name, or by path from another folder. None (the
@@ -2183,6 +2184,10 @@ impl Host {
                 let Some(g) = target.and_then(|t| reprisekit::access::gesture(req.act, t)) else {
                     return;
                 };
+                if let Gesture::Focus(at) = g {
+                    self.reader_focus(win, at);
+                    return;
+                }
                 let apart = self.ctx.theme.metrics.double_click_ms.max(0) as u32 + 1000;
                 self.press_time = self.press_time.wrapping_add(apart);
                 for input in access::reader_input(g, self.press_time) {
@@ -2194,13 +2199,29 @@ impl Host {
 
     /// Scroll the list in window `win`'s reader form so the row `r` names shows.
     fn reader_reveal(&mut self, win: WinId, r: Reveal) {
+        let at = (r.at.0 as i32, r.at.1 as i32);
+        self.reader_act(win, |form, text, px| form.reveal(at, r.row, text, px));
+    }
+
+    /// Give the keyboard to the control at `at` in window `win`'s reader form, pressing nothing.
+    fn reader_focus(&mut self, win: WinId, at: (f64, f64)) {
+        let at = (at.0 as i32, at.1 as i32);
+        self.reader_act(win, |form, text, px| form.focus_at(at, text, px));
+    }
+
+    /// Run `f` on window `win`'s reader form at the font size it is drawn at; when it reports a
+    /// change the window and its tree are drawn again.
+    fn reader_act(
+        &mut self,
+        win: WinId,
+        f: impl FnOnce(ReaderForm<'_>, &TextRenderer, u32) -> bool,
+    ) {
         let base = self.ctx.base_px();
-        let Some(DropForm { form, px }) = self.app.reader_form(win) else {
+        let Some(form) = self.app.reader_form(win) else {
             return;
         };
-        let px = px.unwrap_or_else(|| form.units().px(base));
-        let (x, y) = (r.at.0 as i32, r.at.1 as i32);
-        if form.reveal(x, y, r.row, &self.ctx.text, px) != reprisekit::controls::form::Event::None
+        let px = form.px(base);
+        if f(form, &self.ctx.text, px)
             && let Some(s) = self.slot_mut(win)
         {
             s.dirty = true;

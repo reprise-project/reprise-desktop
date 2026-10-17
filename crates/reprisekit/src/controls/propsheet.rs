@@ -924,6 +924,21 @@ impl PropSheet {
         self.open().hit(x, y, text, px).map(Hit::Control)
     }
 
+    /// A reader moved the keyboard to the open page's control at (`x`, `y`) ([`Form::focus_at`]):
+    /// the strip lets go of it and a scrolled page brings the control into view.
+    pub fn focus_at(&mut self, x: i32, y: i32, text: &TextRenderer, px: u32) -> Event {
+        let Some(Hit::Control(h)) = self.hit(x, y, text, px) else {
+            return Event::None;
+        };
+        let moved = self.open_mut().focus_at(x, y, text, px) != form::Event::None;
+        if self.open().focus() != Some(h.item) || !(moved || self.tabs.focused) {
+            return Event::None;
+        }
+        self.tabs.focused = false;
+        self.reveal_focus();
+        Event::Redraw
+    }
+
     pub fn click(&mut self, hit: Option<Hit>) -> Event {
         match hit {
             Some(Hit::Tab(i)) => {
@@ -1795,6 +1810,25 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn a_readers_focus_on_a_page_control_takes_the_keyboard_from_the_list() {
+        let text = TextRenderer::load(&FontConfig::default());
+        let px = Theme::default().fonts.size_px;
+        let mut s = list_sheet();
+        s.tabs.focused = true;
+        let check = s.open().index_of("check").unwrap();
+        let r = s.open().items[check].rect;
+        let (x, y) = (r.x + 4, r.y + r.height / 2);
+        assert_eq!(s.focus_at(x, y, &text, px), Event::Redraw);
+        assert!(!s.tabs.focused);
+        assert_eq!(s.open().focus(), Some(check));
+        assert_eq!(s.focus_at(x, y, &text, px), Event::None, "already there");
+        let ok = s.open().index_of(OK).unwrap();
+        let r = s.open().items[ok].rect;
+        assert_eq!(s.focus_at(r.x + 4, r.y + 4, &text, px), Event::Redraw);
+        assert_eq!(s.open().focus(), Some(ok), "OK takes it unpressed");
     }
 
     /// The open page's item names the page's panel, which holds its
