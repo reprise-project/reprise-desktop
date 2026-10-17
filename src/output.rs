@@ -793,12 +793,13 @@ fn finish_scale_warm(state: &mut State) {
     let Some(w) = state.scale_warm.take() else {
         return;
     };
-    // As the reload did, with the outputs at their new scale.
+    // The reload rethemed at the old scale: lay out at the new one, which draws the bars,
+    // frames and desktop, then what the layout leaves at the old scale.
     if let Some(old) = w.old
         && state.apply_outputs(&old, false)
     {
-        crate::configwatch::retheme(state);
         state.update_layout();
+        crate::configwatch::redraw_for_scale(state);
     }
     for p in w.heads {
         crate::outputmgmt::answer(state, p);
