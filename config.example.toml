@@ -346,8 +346,9 @@ suspend_after = 0            # run [power] standby
 # animation = "none"         # how a switch moves the screen: "none" (it just happens), "slide"
 #                            # (sideways, a later desktop comes in from the right), "slide-vertical"
 #                            # (a later one comes up from below), "fade", "zoom" (the old desktop
-#                            # shrinks as it fades) or "wipe" (an edge sweeps the old one away)
-# animation_ms = 200         # 0 to 2000; 0 is no animation
+#                            # shrinks as it fades) or "wipe" (an edge sweeps the old one away);
+#                            # a three-finger swipe slides after the fingers whatever is set here
+# animation_ms = 200         # 0 to 2000; 0 is no animation, and a lifted swipe lands at once
 # pager = "light"           # how the Glass taskbar marks the current desktop: "light" (a light
 #                            # under its number) or "tile" (a glass tile behind it); other
 #                            # interfaces ignore it
