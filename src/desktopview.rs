@@ -1608,14 +1608,10 @@ impl State {
         let path = path.to_path_buf();
         let (terminal, end) = (self.config.terminal.clone(), self.config.script_terminal);
         self.spawn_fs_job(move || {
+            let name = path.file_name().unwrap_or_default().to_string_lossy();
             let started = reprisefs::program::run_argv(&path, &terminal, end).and_then(|argv| {
-                crate::spawn::try_spawn_argv_in(&argv, None, path.parent(), &env, Some(&launch))
+                crate::spawn::try_spawn_held(&argv, &name, path.parent(), &env, Some(&launch))
             });
-            if let (Ok(pid), Some(name)) = (&started, path.file_name())
-                && let Err(e) = reprisefs::scope::adopt(*pid, &name.to_string_lossy())
-            {
-                log::warn!("app scope for {}: {e}", path.display());
-            }
             Box::new(move |state: &mut State| {
                 // A child that exited before its pid was recorded left a SIGCHLD that found nothing.
                 crate::spawn::reap_children();
