@@ -435,6 +435,9 @@ struct SettingsApp {
     /// The slideshow folder and its pictures, listed for the monitor.
     listed: Option<(PathBuf, Vec<PathBuf>)>,
     listing: Option<(PathBuf, Receiver<Vec<PathBuf>>)>,
+    /// Follows the folder last listed; sets `slides_touched` when a file in it changes.
+    folder_watch: Option<configwatch::FolderWatch>,
+    slides_touched: Arc<AtomicBool>,
     /// The slideshow folder picked before Picture was chosen; kept in the state file.
     last_slideshow: String,
     decoding: Option<(String, Receiver<Option<Decoded>>)>,
@@ -653,6 +656,8 @@ impl SettingsApp {
             scan: None,
             listed: None,
             listing: None,
+            folder_watch: None,
+            slides_touched: Arc::default(),
             last_slideshow: String::new(),
             decoding: None,
             state_path: None,
@@ -970,16 +975,23 @@ impl SettingsApp {
         self.listed.as_ref().map_or(&[], |(_, p)| p.as_slice())
     }
 
-    /// List the pending slideshow folder on a thread unless it is listed or being listed already.
+    /// List the pending slideshow folder on a thread unless it is listed, unchanged since, or being listed already.
     fn list_slide_folder(&mut self) {
         let Some(folder) = wallpapers::expand(&self.want.slideshow) else {
+            self.slides_touched.store(false, Ordering::Release);
             return;
         };
         let is = |f: &PathBuf| *f == folder;
-        if self.listed.as_ref().is_some_and(|(f, _)| is(f))
-            || self.listing.as_ref().is_some_and(|(f, _)| is(f))
-        {
+        // A change during a listing is kept for when that listing lands.
+        if self.listing.as_ref().is_some_and(|(f, _)| is(f)) {
             return;
+        }
+        let touched = self.slides_touched.swap(false, Ordering::AcqRel);
+        if !touched && self.listed.as_ref().is_some_and(|(f, _)| is(f)) {
+            return;
+        }
+        if let Some(w) = &mut self.folder_watch {
+            w.follow(&folder);
         }
         let dir = folder.clone();
         self.listing = Some((
@@ -1119,6 +1131,9 @@ impl SettingsApp {
         let mut activate = None;
         if self.config_touched.swap(false, Ordering::AcqRel) {
             changed |= self.config_changed();
+        }
+        if self.slides_touched.load(Ordering::Acquire) {
+            self.want_preview();
         }
         while let Some(req) = self.requests.as_ref().and_then(instance::Requests::next) {
             changed |= self.request(&req);
@@ -2980,6 +2995,11 @@ impl App for SettingsApp {
         }
         let w = waker.clone();
         configwatch::spawn(&self.path, self.config_touched.clone(), move || w.wake());
+        let w = waker.clone();
+        match configwatch::FolderWatch::spawn(self.slides_touched.clone(), move || w.wake()) {
+            Ok(watch) => self.folder_watch = Some(watch),
+            Err(e) => log::warn!("the slideshow folder is not watched: {e}"),
+        }
         self.waker = Some(waker);
         let had = self.wallpapers.clone();
         self.scan = Some(
@@ -3750,6 +3770,38 @@ mod tests {
         assert_eq!(winstate::slideshow(&state), name(&trips));
         mode(&mut a, 1);
         assert_eq!(a.want.slideshow, name(&trips), "the folder picked before");
+    }
+
+    #[test]
+    fn a_picture_added_to_the_slideshow_folder_becomes_the_monitors_first_slide() {
+        let dir = tmp("slide-relist");
+        let trips = dir.join("Trips");
+        std::fs::create_dir_all(&trips).unwrap();
+        std::fs::write(trips.join("coast.jpg"), b"x").unwrap();
+        let path = dir.join("config.toml");
+        std::fs::write(&path, format!("[wallpaper]\nslideshow = {:?}\n", trips)).unwrap();
+        let mut a = SettingsApp::open(path);
+        let settle = |a: &mut SettingsApp| {
+            for _ in 0..500 {
+                a.wake();
+                if a.listing.is_none() && a.decoding.is_none() {
+                    break;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
+            a.picture.as_ref().map(|p| p.path.clone())
+        };
+        let name = |p: &Path| Some(p.to_string_lossy().into_owned());
+        a.want_preview();
+        assert_eq!(settle(&mut a), name(&trips.join("coast.jpg")));
+
+        std::fs::write(trips.join("bay.jpg"), b"x").unwrap();
+        a.slides_touched.store(true, Ordering::Release);
+        assert_eq!(
+            settle(&mut a),
+            name(&trips.join("bay.jpg")),
+            "bay sorts first"
+        );
     }
 
     #[test]
