@@ -996,6 +996,7 @@ mod tests {
         let mut v = Volume::new(View::Playback, snap, State::default());
         let mut ctx = test_ctx();
         ctx.size = v.initial_size();
+        ctx.theme.access_keys = false;
         let mut c = Canvas::new(ctx.size.0 as u32, ctx.size.1 as u32);
         v.draw(repriseapp::MAIN, &mut c, &ctx);
         reprisekit::raster::write_preview(&c, "volume-window.png");

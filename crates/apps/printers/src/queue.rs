@@ -612,7 +612,8 @@ mod tests {
     #[test]
     #[ignore]
     fn render_queue() {
-        let ctx = ctx();
+        let mut ctx = ctx();
+        ctx.theme.access_keys = false;
         let mut q = Queue::new("Laser");
         q.refresh(&snap());
         q.list.view.selection.set_only(Some(0));
