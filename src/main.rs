@@ -284,7 +284,7 @@ fn run(
         "running on WAYLAND_DISPLAY={}",
         state.socket().to_string_lossy()
     );
-    spawn::begin_session(&state.env);
+    let session_begun = spawn::begin_session(&state.env);
     spawn::theme_portal_gtk(
         &state.env,
         tray::settings::Appearance::live(&state).gtk_theme(),
@@ -297,7 +297,7 @@ fn run(
             notifyview::notice(state, "Configuration", &body);
         });
     }
-    autostart::start(&mut state);
+    autostart::start(&mut state, session_begun);
 
     event_loop.run(None, &mut state, |state| {
         state.popups.cleanup();

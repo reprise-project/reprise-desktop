@@ -3,6 +3,7 @@
 
 use std::collections::HashSet;
 use std::path::PathBuf;
+use std::time::{Duration, Instant};
 use zbus::blocking::Proxy;
 
 /// Reprise's session target (data/systemd). It binds `graphical-session.target`, so units wanted
@@ -25,6 +26,9 @@ const BEFORE_SESSION: &str = "basic.target";
 pub struct Unit {
     pub pulls: Vec<String>,
     pub programs: Vec<PathBuf>,
+    /// Its last start was skipped because a `Condition*` failed: its programs did not run, the
+    /// units it pulls were queued all the same.
+    pub skipped: bool,
 }
 
 /// The programs of every unit `roots` pull in, transitively. `unit` describes a unit by name, or
@@ -41,7 +45,9 @@ pub fn programs_from(
             continue;
         }
         let Some(u) = unit(&name) else { continue };
-        programs.extend(u.programs);
+        if !u.skipped {
+            programs.extend(u.programs);
+        }
         todo.extend(u.pulls.into_iter().filter(|p| !seen.contains(p)));
     }
     programs
@@ -49,7 +55,8 @@ pub fn programs_from(
 
 /// [`programs_from`] the session's roots over the user manager's bus API, each program
 /// canonicalised. Empty when the manager does not answer, so every entry starts as it would
-/// without systemd.
+/// without systemd. A service with a start job still queued is waited for, up to [`SETTLE`] for
+/// the whole walk, so its conditions have been checked.
 pub fn session_programs() -> HashSet<PathBuf> {
     let conn = match crate::session() {
         Ok(c) => c,
@@ -58,11 +65,12 @@ pub fn session_programs() -> HashSet<PathBuf> {
             return HashSet::new();
         }
     };
+    let deadline = Instant::now() + SETTLE;
     programs_from(&ROOTS, |name| {
         if name == BEFORE_SESSION {
             return None;
         }
-        load(&conn, name).unwrap_or_else(|e| {
+        load(&conn, name, deadline).unwrap_or_else(|e| {
             log::info!("systemd unit {name}: {e}");
             None
         })
@@ -74,10 +82,17 @@ pub fn session_programs() -> HashSet<PathBuf> {
 
 const DEST: &str = "org.freedesktop.systemd1";
 
+/// How long one walk waits in all for start jobs queued at login.
+const SETTLE: Duration = Duration::from_secs(3);
+
 /// `ExecStart`'s D-Bus signature `a(sasbttttuii)`: the binary's path comes first.
 type ExecCommand = (String, Vec<String>, bool, u64, u64, u64, u64, u32, i32, i32);
 
-fn load(conn: &zbus::blocking::Connection, name: &str) -> zbus::Result<Option<Unit>> {
+fn load(
+    conn: &zbus::blocking::Connection,
+    name: &str,
+    deadline: Instant,
+) -> zbus::Result<Option<Unit>> {
     let path: zbus::zvariant::OwnedObjectPath = conn
         .call_method(
             Some(DEST),
@@ -88,7 +103,13 @@ fn load(conn: &zbus::blocking::Connection, name: &str) -> zbus::Result<Option<Un
         )?
         .body()
         .deserialize()?;
-    let unit = Proxy::new(conn, DEST, &path, "org.freedesktop.systemd1.Unit")?;
+    // Uncached: `Job` and the condition result are polled while the start job runs.
+    let unit: Proxy = zbus::blocking::proxy::Builder::new(conn)
+        .destination(DEST)?
+        .path(&path)?
+        .interface("org.freedesktop.systemd1.Unit")?
+        .cache_properties(zbus::proxy::CacheProperties::No)
+        .build()?;
     if unit.get_property::<String>("LoadState")? != "loaded" {
         return Ok(None);
     }
@@ -96,16 +117,33 @@ fn load(conn: &zbus::blocking::Connection, name: &str) -> zbus::Result<Option<Un
     for p in PULLS {
         pulls.extend(unit.get_property::<Vec<String>>(p)?);
     }
-    let programs = if name.ends_with(".service") {
-        Proxy::new(conn, DEST, &path, "org.freedesktop.systemd1.Service")?
-            .get_property::<Vec<ExecCommand>>("ExecStart")?
-            .into_iter()
-            .map(|c| PathBuf::from(c.0))
-            .collect()
-    } else {
-        Vec::new()
-    };
-    Ok(Some(Unit { pulls, programs }))
+    if !name.ends_with(".service") {
+        return Ok(Some(Unit {
+            pulls,
+            ..Unit::default()
+        }));
+    }
+    let programs = Proxy::new(conn, DEST, &path, "org.freedesktop.systemd1.Service")?
+        .get_property::<Vec<ExecCommand>>("ExecStart")?
+        .into_iter()
+        .map(|c| PathBuf::from(c.0))
+        .collect();
+    while Instant::now() < deadline
+        && unit
+            .get_property::<(u32, zbus::zvariant::OwnedObjectPath)>("Job")?
+            .0
+            != 0
+    {
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    // A timestamp of 0: the conditions were never checked, so the unit is about to run.
+    let skipped = unit.get_property::<u64>("ConditionTimestampMonotonic")? != 0
+        && !unit.get_property::<bool>("ConditionResult")?;
+    Ok(Some(Unit {
+        pulls,
+        programs,
+        skipped,
+    }))
 }
 
 #[cfg(test)]
@@ -125,6 +163,7 @@ mod tests {
                         "masked.service".into(),
                     ],
                     programs: vec![],
+                    skipped: false,
                 },
             ),
             (
@@ -132,6 +171,7 @@ mod tests {
                 Unit {
                     pulls: vec!["agent.service".into(), "s.target".into()],
                     programs: vec![],
+                    skipped: false,
                 },
             ),
             (
@@ -139,6 +179,7 @@ mod tests {
                 Unit {
                     pulls: vec!["dirs.service".into()],
                     programs: vec![],
+                    skipped: false,
                 },
             ),
             (
@@ -146,6 +187,7 @@ mod tests {
                 Unit {
                     pulls: vec![],
                     programs: vec!["/usr/bin/agent".into()],
+                    skipped: false,
                 },
             ),
             (
@@ -153,6 +195,7 @@ mod tests {
                 Unit {
                     pulls: vec![],
                     programs: vec!["/usr/bin/dirs-update".into()],
+                    skipped: false,
                 },
             ),
             (
@@ -160,6 +203,7 @@ mod tests {
                 Unit {
                     pulls: vec![],
                     programs: vec!["/usr/bin/other".into()],
+                    skipped: false,
                 },
             ),
         ]);
@@ -178,5 +222,35 @@ mod tests {
             6,
             "each unit is asked once despite the cycle: {asked:?}"
         );
+    }
+
+    #[test]
+    fn a_unit_skipped_by_a_failed_condition_runs_no_program_but_still_pulls() {
+        let units: HashMap<&str, Unit> = HashMap::from([
+            (
+                "s.target",
+                Unit {
+                    pulls: vec!["gated.service".into()],
+                    ..Unit::default()
+                },
+            ),
+            (
+                "gated.service",
+                Unit {
+                    pulls: vec!["helper.service".into()],
+                    programs: vec!["/usr/bin/gated".into()],
+                    skipped: true,
+                },
+            ),
+            (
+                "helper.service",
+                Unit {
+                    programs: vec!["/usr/bin/helper".into()],
+                    ..Unit::default()
+                },
+            ),
+        ]);
+        let got = programs_from(&["s.target"], |n| units.get(n).cloned());
+        assert_eq!(got, HashSet::from([PathBuf::from("/usr/bin/helper")]));
     }
 }

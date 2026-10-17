@@ -283,8 +283,8 @@ pub fn begin_commands(env: &SessionEnv) -> Vec<Vec<String>> {
 }
 
 /// Run `begin_commands` in order on a thread of its own: each waits for the last, so the
-/// target's units start with the variables published.
-pub fn begin_session(env: &SessionEnv) {
+/// target's units start with the variables published. The thread ends once the start is queued.
+pub fn begin_session(env: &SessionEnv) -> std::thread::JoinHandle<()> {
     let cmds = begin_commands(env);
     std::thread::spawn(move || {
         for argv in cmds {
@@ -297,7 +297,7 @@ pub fn begin_session(env: &SessionEnv) {
                 Err(e) => log::warn!("{argv:?}: {e}"),
             }
         }
-    });
+    })
 }
 
 /// The GTK portal backend's unit; it draws GTK3's print dialog (`Print=gtk` in
