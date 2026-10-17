@@ -353,16 +353,22 @@ impl Explorer {
         let lay = self.layout(ctx);
         let sl = self.view_layout(lay.view, ctx);
         match shellview::hit(&self.sv, &sl, x, y) {
-            shellview::Hit::Entry(i) => self.entry_menu_at(i, (x, y), ctx),
+            shellview::Hit::Entry(i) => self.entry_menu_at(i, (x, y), ctx, false),
             _ => {
                 let menu = crate::menus::background_menu(&self.menu_state());
-                self.popup = Some(Popup::new((x, y), menu, lay.client, ctx));
+                self.popup = Some(Popup::new((x, y), menu, lay.client, ctx, false));
                 Reply::redraw()
             }
         }
     }
 
-    pub(crate) fn entry_menu_at(&mut self, i: usize, at: (i32, i32), ctx: &mut Ctx) -> Reply {
+    pub(crate) fn entry_menu_at(
+        &mut self,
+        i: usize,
+        at: (i32, i32),
+        ctx: &mut Ctx,
+        by_keyboard: bool,
+    ) -> Reply {
         let lay = self.layout(ctx);
         if !self.sv.selection.set.contains(&i) {
             self.sv.selection.set_only(Some(i));
@@ -388,7 +394,7 @@ impl Explorer {
         let send_to = self.build_send_to(ctx);
         let eject = self.ejectable(i);
         let menu = crate::menus::item_menu(&self.menu_state(), kind, eject, &open_with, &send_to);
-        self.popup = Some(Popup::new(at, menu, lay.client, ctx));
+        self.popup = Some(Popup::new(at, menu, lay.client, ctx, by_keyboard));
         Reply::redraw()
     }
 
@@ -552,7 +558,7 @@ impl Explorer {
                     dir,
                     source,
                 });
-                self.popup = Some(Popup::new((x, y), menu, client, ctx));
+                self.popup = Some(Popup::new((x, y), menu, client, ctx, false));
                 return Reply::redraw();
             }
         };

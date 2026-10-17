@@ -841,6 +841,9 @@ impl Level {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PopupMenu {
     levels: Vec<Level>,
+    /// Opened from the keyboard: the chain underlines its access keys
+    /// whatever its host's cues say.
+    pub(crate) keys: bool,
 }
 
 fn level_layout(items: &[MenuItem], cx: &MenuCtx) -> MenuLayout {
@@ -867,6 +870,7 @@ impl PopupMenu {
                 layout,
                 hovered,
             }],
+            keys: by_keyboard,
         }
     }
 
@@ -1067,7 +1071,9 @@ impl PopupMenu {
     /// Under a look whose menus cast a shadow
     /// ([`MenuLook::shadow`](crate::style::MenuLook::shadow)) each level
     /// casts it over what lies under it first.
+    /// `underline` is the host's cue; a chain opened from the keyboard underlines regardless.
     pub fn draw(&self, c: &mut Canvas, theme: &Theme, text: &TextRenderer, underline: bool) {
+        let underline = underline || self.keys;
         let s = theme.scale.max(1);
         let look = menu_look(theme);
         for level in &self.levels {
@@ -2832,6 +2838,29 @@ mod tests {
             level.origin.0 + r.x + 5,
             level.origin.1 + r.y + r.height / 2,
         )
+    }
+
+    #[test]
+    fn a_chain_opened_from_the_keyboard_underlines_without_the_hosts_cue() {
+        let theme = wide_theme();
+        let text = TextRenderer::load(&FontConfig::default());
+        let cx = nested_ctx(&theme, &text);
+        let t = nested_tree();
+        let drawn = |p: &PopupMenu, cue: bool| {
+            let mut c = Canvas::new(800, 600);
+            p.draw(&mut c, &theme, &text, cue);
+            c.pixels
+        };
+        let by_pointer = PopupMenu::open(&t, (100, 50), &cx, false);
+        assert!(
+            drawn(&by_pointer, false) != drawn(&by_pointer, true),
+            "pointer: the cue decides"
+        );
+        let by_key = PopupMenu::open(&t, (100, 50), &cx, true);
+        assert!(
+            drawn(&by_key, false) == drawn(&by_key, true),
+            "keyboard: underlined"
+        );
     }
 
     #[test]

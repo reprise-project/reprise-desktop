@@ -393,7 +393,7 @@ impl Explorer {
             if menu.items().is_empty() {
                 return Reply::redraw();
             }
-            self.popup = Some(Popup::new(at, menu, client, ctx));
+            self.popup = Some(Popup::new(at, menu, client, ctx, false));
             return Reply::redraw();
         }
         let cmd = match id {
@@ -475,7 +475,7 @@ impl Explorer {
                 .unwrap_or((false, false));
             let folder = self.node_folder().is_some();
             let menu = menus::tree_menu(node.0, node.1, folder);
-            self.popup = Some(Popup::new((x, y), menu, lay.client, ctx));
+            self.popup = Some(Popup::new((x, y), menu, lay.client, ctx, false));
             return Reply::redraw();
         }
         Reply::none()
