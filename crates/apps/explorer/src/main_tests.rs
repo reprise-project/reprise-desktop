@@ -2730,3 +2730,34 @@ fn the_dialogs_take_the_renderer_a_font_change_loads() {
     ex.follow_forms(&ctx);
     assert!(Rc::ptr_eq(&ex.dialog_text, &ctx.text));
 }
+
+/// The drive scan stats every mount on a listing thread: on a mount that does not answer the
+/// window keeps the drives it has, and takes the scan on the wake after it lands.
+#[test]
+fn a_drive_scan_that_answers_late_lands_on_a_later_wake() {
+    let dir = tempfile::tempdir().expect("a temp dir");
+    let mut ctx = test_ctx();
+    let mut ex = test_explorer(Place::Folder(dir.path().to_path_buf()), &mut ctx);
+    let scanned = reprisefs::places::drives();
+    ex.drives.clear();
+    ex.mounts_seen.clear();
+
+    let gate = Arc::new(std::sync::RwLock::new(()));
+    let closed = gate.write().expect("lock");
+    ex.held = Some(gate.clone());
+    ex.refresh(&mut ctx);
+    assert!(ex.drives.is_empty(), "the drives wait for the scan");
+    assert!(ex.scanning.is_some());
+    ex.refresh(&mut ctx);
+    drop(closed);
+    ex.held = None;
+    wake_until(&mut ex, &mut ctx, |ex| ex.scanning.is_none());
+    assert!(
+        !ex.drives.is_empty() || scanned.is_empty(),
+        "the scan landed"
+    );
+    assert!(
+        !ex.mounts_seen.is_empty(),
+        "the mount table it scanned is kept"
+    );
+}

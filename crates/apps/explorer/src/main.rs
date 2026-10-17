@@ -155,11 +155,14 @@ pub struct Explorer {
     pub tree: TreeView,
     pub tree_places: Vec<Place>,
     /// The drives Computer lists. The scan stats every mount (a hung network
-    /// mount blocks it), so it runs only in [`Explorer::sync_drives`].
+    /// mount blocks it), so once the window is open it runs on a listing thread in
+    /// [`Explorer::sync_drives`].
     pub drives: Vec<reprisefs::places::Drive>,
     /// Tells a drive's root apart from a plain folder in the tree.
     pub drive_mounts: Vec<PathBuf>,
     mounts_seen: String,
+    /// A drive scan still being read, with the `/proc/mounts` it was started for.
+    pub(crate) scanning: Option<(String, Job<Vec<reprisefs::places::Drive>>)>,
     pub(crate) udisks: Option<reprisefs::udisks::Udisks>,
     /// Read with every drive scan and every Computer listing, and taken from
     /// `volume_changes`: a stick plugged in without being mounted doesn't change `/proc/mounts`.
@@ -339,6 +342,7 @@ impl Explorer {
             drive_mounts: place::drive_mounts(&drives),
             drives,
             mounts_seen: std::fs::read_to_string("/proc/mounts").unwrap_or_default(),
+            scanning: None,
             volumes: reprisefs::udisks::Snapshot::default(),
             volume_changes: None,
             udisks,
@@ -969,18 +973,53 @@ impl Explorer {
     }
 
     /// Rescan the drives and UDisks2 volumes when `/proc/mounts` changed: the
-    /// tree and address drop follow the mounts. Returns whether it rescanned.
+    /// tree and address drop follow the mounts. Returns whether it rescanned. The scan stats every
+    /// mount on a listing thread; one that does not answer (a dead mount) lands through
+    /// [`Explorer::take_drives`].
     fn sync_drives(&mut self, ctx: &mut Ctx) -> bool {
         let mounts = std::fs::read_to_string("/proc/mounts").unwrap_or_default();
         if mounts == self.mounts_seen {
+            self.scanning = None;
             return false;
         }
-        self.drives = reprisefs::places::drives();
+        if self.scanning.as_ref().is_some_and(|(m, _)| *m == mounts) {
+            return false;
+        }
+        match self.read_job(ctx, reprisefs::places::drives) {
+            Ok(drives) => {
+                self.drives_read(mounts, drives, ctx);
+                true
+            }
+            Err(job) => {
+                self.scanning = Some((mounts, job));
+                false
+            }
+        }
+    }
+
+    fn drives_read(
+        &mut self,
+        mounts: String,
+        drives: Vec<reprisefs::places::Drive>,
+        ctx: &mut Ctx,
+    ) {
+        self.scanning = None;
+        self.drives = drives;
         self.drive_mounts = place::drive_mounts(&self.drives);
         self.mounts_seen = mounts;
         self.sync_volumes();
         self.build_address(ctx);
-        true
+    }
+
+    /// Takes a drive scan ([`Explorer::sync_drives`]) that answered late; Computer re-lists on it.
+    pub(crate) fn take_drives(&mut self, ctx: &mut Ctx) -> Option<Reply> {
+        let drives = self.scanning.as_ref()?.1.take()?;
+        let (mounts, _) = self.scanning.take()?;
+        self.drives_read(mounts, drives, ctx);
+        if self.place == Place::Computer {
+            return Some(self.refresh(ctx));
+        }
+        Some(Reply::redraw())
     }
 
     /// Read UDisks2 again and mark the mounted drives it calls removable:
