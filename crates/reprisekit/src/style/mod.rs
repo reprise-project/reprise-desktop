@@ -1323,6 +1323,23 @@ impl Style {
         })
     }
 
+    /// The art of `parts` a first draw at scale `n` would paint: those this style draws at `n`
+    /// and has not painted there yet. None when there is nothing to paint.
+    pub fn warm_parts(self: &Arc<Style>, n: i32, parts: &[Part]) -> Option<Warm> {
+        let at_n = self.at_scale(n);
+        let parts: Vec<Part> = (parts.iter().copied())
+            .filter(|part| (at_n.parts.get(part)).is_some_and(|a| LazyLock::get(a).is_none()))
+            .collect();
+        (!parts.is_empty()).then_some(Warm {
+            style: at_n,
+            scale: n,
+            parts,
+            spot: false,
+            start_icon: None,
+            blooms: Vec::new(),
+        })
+    }
+
     /// Drops the styles [`Style::at_scale`] kept for the scales `keep` turns down.
     pub fn keep_scales(&self, keep: impl Fn(i32) -> bool) {
         let mut kept = self.rescaled.0.lock().unwrap_or_else(|e| e.into_inner());
@@ -2180,6 +2197,48 @@ mod tests {
         st.at_scale(2).part(Part::Caption);
         assert_eq!(count(2), 1, "a draw at scale 2 finds the caption painted");
         assert!(st.warm(2, None).is_none(), "scale 2 is warm");
+    }
+
+    #[test]
+    fn warm_parts_paints_the_named_parts_unpainted_at_each_scale_and_no_others() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        static PAINTS: [AtomicUsize; 4] = [const { AtomicUsize::new(0) }; 4];
+        let painted = |n: i32| {
+            let art = |slot: usize| {
+                move || {
+                    PAINTS[slot].fetch_add(1, Ordering::SeqCst);
+                    PartImage::new(Canvas::new(2, 2), &[State::Normal], Layout::Vertical)
+                }
+            };
+            let k = 2 * (n as usize - 1);
+            style()
+                .with_painted(Part::SwitcherFrame, art(k))
+                .with_painted(Part::Taskbar, art(k + 1))
+        };
+        let st = Arc::new(painted(1).with_rescale(painted));
+        let named = [Part::SwitcherFrame, Part::SnapFrame];
+        let warm: Vec<Warm> = [1, 2]
+            .iter()
+            .map(|&n| st.warm_parts(n, &named).expect("the frame is unpainted"))
+            .collect();
+        std::thread::spawn(move || warm.iter().for_each(Warm::paint))
+            .join()
+            .unwrap();
+        let count = |slot: usize| PAINTS[slot].load(Ordering::SeqCst);
+        assert_eq!(
+            [count(0), count(1), count(2), count(3)],
+            [1, 0, 1, 0],
+            "the switcher frame at scales 1 and 2, not the taskbar"
+        );
+        st.part(Part::SwitcherFrame);
+        st.at_scale(2).part(Part::SwitcherFrame);
+        assert_eq!(
+            (count(0), count(2)),
+            (1, 1),
+            "a draw finds the frame painted"
+        );
+        assert!(st.warm_parts(1, &named).is_none(), "scale 1 is warm");
+        assert!(st.warm_parts(2, &named).is_none(), "scale 2 is warm");
     }
 
     #[test]
