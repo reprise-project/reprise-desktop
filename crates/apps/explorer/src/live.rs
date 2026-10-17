@@ -128,6 +128,7 @@ impl Explorer {
             .or(put)
             .or(self.take_read(ctx))
             .or(self.take_checked(ctx))
+            .or(self.take_opened(ctx))
             .or(self.take_gone(ctx))
             .filter(|r| *r != Reply::none());
         if let Some(from) = self.watch.as_mut().and_then(|w| w.take_gone()) {
