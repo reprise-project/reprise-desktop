@@ -27,6 +27,17 @@ pub struct BinItem {
     pub record: Option<reprisefs::trash::Trashed>,
 }
 
+/// Where a paste goes.
+#[derive(Clone, Debug)]
+pub enum PasteTo {
+    /// The place on view; dropped if the window has left it by the answer.
+    Place { dir: PathBuf, shortcut: bool },
+    /// A folder entry's Paste.
+    Folder(PathBuf),
+    /// A launcher's Paste: its program opens the clipboard's files.
+    App(apps::AppEntry),
+}
+
 pub(crate) struct Put {
     pub(crate) job: PutJob,
     pub(crate) dir: PathBuf,
@@ -155,22 +166,19 @@ impl Explorer {
         let Some(dir) = self.place.path() else {
             return Reply::none();
         };
-        self.paste_shortcut = shortcut;
-        self.paste_dir = Some(dir);
-        self.paste_app = None;
+        self.paste = Some(PasteTo::Place { dir, shortcut });
         Reply {
             paste_files: true,
             ..Default::default()
         }
     }
 
-    /// Paste on the launcher the item menu was opened on.
-    pub fn begin_paste_open(&mut self) -> Reply {
-        let Some(app) = self.menu_launcher.clone() else {
+    /// Paste on the folder or launcher the item menu was opened on.
+    pub fn begin_paste_on_item(&mut self) -> Reply {
+        if self.menu_paste.is_none() {
             return Reply::none();
-        };
-        self.paste_app = Some(app);
-        self.paste_dir = None;
+        }
+        self.paste = self.menu_paste.clone();
         Reply {
             paste_files: true,
             ..Default::default()
@@ -178,24 +186,27 @@ impl Explorer {
     }
 
     pub fn pasted(&mut self, clip: FileClip, ctx: &mut Ctx) -> Reply {
-        if let Some(app) = self.paste_app.take() {
-            let terminal = repriseconf::terminal();
-            return Reply {
-                spawn: (clip.paths.iter())
-                    .map(|p| reprisefs::apps::open_argv(&app, &terminal, p))
-                    .collect(),
-                spawn_app: Some(app.id),
-                ..Default::default()
-            };
-        }
-        let shortcut = std::mem::take(&mut self.paste_shortcut);
-        let Some(dir) = self.paste_dir.take() else {
-            return Reply::none();
+        let (dir, shortcut) = match self.paste.take() {
+            None => return Reply::none(),
+            Some(PasteTo::App(app)) => {
+                let terminal = repriseconf::terminal();
+                return Reply {
+                    spawn: (clip.paths.iter())
+                        .map(|p| reprisefs::apps::open_argv(&app, &terminal, p))
+                        .collect(),
+                    spawn_app: Some(app.id),
+                    ..Default::default()
+                };
+            }
+            Some(PasteTo::Folder(dir)) => (dir, false),
+            Some(PasteTo::Place { dir, shortcut }) => {
+                if self.place.read_only() || self.place.path() != Some(dir.clone()) {
+                    log::info!("explorer: the paste's folder is gone, dropping it");
+                    return Reply::none();
+                }
+                (dir, shortcut)
+            }
         };
-        if self.place.read_only() || self.place.path() != Some(dir.clone()) {
-            log::info!("explorer: the paste's folder is gone, dropping it");
-            return Reply::none();
-        }
         if clip.paths.is_empty() {
             return Reply::none();
         }
