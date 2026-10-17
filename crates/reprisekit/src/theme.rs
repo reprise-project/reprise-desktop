@@ -563,12 +563,13 @@ impl Theme {
     }
 
     /// This scale-1 theme with its text at `pct` percent (the
-    /// `[accessibility] text_size`): the UI font, a styled look's caption and
-    /// Start text, and the heights that hold one line of it (caption, menu
-    /// rows, Start menu rows, taskbar) grow, each by [`line_growth`].
+    /// `[accessibility] text_size`): the UI font, a styled look's caption
+    /// text, and the heights that hold one line of it (caption, menu rows,
+    /// Start menu rows, taskbar) grow, each by [`line_growth`].
     /// Caption buttons grow as much as the caption unless the look joins them
     /// into a [`CaptionGroup`]. Classic's Start button widens with its label;
-    /// frames, icons and the output scale keep their size.
+    /// a styled look's Start label and button, frames, icons and the output
+    /// scale keep their size.
     pub fn with_text_size(&self, pct: u32) -> Theme {
         if pct == 100 {
             return self.clone();
