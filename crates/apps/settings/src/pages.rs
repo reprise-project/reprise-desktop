@@ -2423,6 +2423,16 @@ pub fn fill_locations(lv: &mut ListView, answers: &[(String, bool)]) {
     lv.top = lv.top.min(lv.rows.len().saturating_sub(1));
 }
 
+/// The location list while it is read: one row saying so, nothing picked.
+pub fn show_locations_loading(lv: &mut ListView) {
+    lv.rows = vec![Row {
+        icon: None,
+        cells: vec!["Loading...".into(), String::new()],
+    }];
+    lv.selection.set_only(None);
+    lv.top = 0;
+}
+
 /// Draw the Shortcuts list over the Keyboard page; `rect` is [`shortcuts`] where the page sits now.
 pub fn draw_shortcuts(
     c: &mut Canvas,

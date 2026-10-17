@@ -298,6 +298,45 @@ fn portal_location_answers() -> Vec<(String, bool)> {
     })
 }
 
+/// The location list as read off the loop: its answers, each row's text and icon name.
+#[derive(Debug, Default)]
+struct Located {
+    answers: Vec<LocationAnswer>,
+    rows: Vec<(String, bool)>,
+    icons: Vec<Option<String>>,
+}
+
+/// Reprise's own answers from `file`, the portal's, and the program each names.
+fn read_locations(file: &std::path::Path) -> Located {
+    let answers = location_answers(
+        repriseconf::location::load_from(file),
+        portal_location_answers(),
+    );
+    let entries = if answers.is_empty() {
+        Vec::new()
+    } else {
+        reprisefs::apps::scan(&reprisefs::apps::default_dirs())
+    };
+    let found: Vec<_> = answers
+        .iter()
+        .map(|a| reprisefs::apps::entry_for_app_id(&entries, &a.id, |_| true))
+        .collect();
+    let rows = answers
+        .iter()
+        .zip(&found)
+        .map(|(a, e)| (e.map_or_else(|| a.id.clone(), |e| e.name.clone()), a.allow))
+        .collect();
+    let icons = found
+        .iter()
+        .map(|e| e.and_then(|e| e.icon.clone()))
+        .collect();
+    Located {
+        answers,
+        rows,
+        icons,
+    }
+}
+
 /// The longest 100% length that grows to no more than `v`.
 fn take<T>(rx: &Receiver<T>) -> Result<Option<T>, ()> {
     match rx.try_recv() {
@@ -341,6 +380,10 @@ struct SettingsApp {
     location_icons: Vec<Option<String>>,
     location_icons_due: bool,
     location_file: PathBuf,
+    /// The location list is read the first time the Advanced page shows, and again after a
+    /// failed Forget; `locating` holds the read under way.
+    locations_due: bool,
+    locating: Option<Receiver<Located>>,
 
     pads: Vec<reprisebus::tray::Pad>,
     pad_picked: usize,
@@ -570,6 +613,8 @@ impl SettingsApp {
             location_icons: Vec::new(),
             location_icons_due: false,
             location_file: repriseconf::location::path(),
+            locations_due: true,
+            locating: None,
             xkb,
             add_layout: None,
             add_item: None,
@@ -626,7 +671,6 @@ impl SettingsApp {
         app.rescan();
         app.app_names = app_names(&app.want);
         app.fill_shortcuts();
-        app.reload_locations();
         app.quick_reload(None);
         app.show_monitor();
         app
@@ -1128,6 +1172,20 @@ impl SettingsApp {
                 changed = true;
             }
         }
+        if let Some(rx) = &self.locating {
+            let found = match take(rx) {
+                Ok(found) => found,
+                Err(()) => {
+                    log::warn!("the location list read ended without a result");
+                    Some(Located::default())
+                }
+            };
+            if let Some(found) = found {
+                self.locating = None;
+                self.show_locations(found);
+                changed = true;
+            }
+        }
         let cleared = match &self.clearing {
             Some(rx) => match take(rx) {
                 Ok(c) => c.map(pages::Clearing::Done),
@@ -1241,44 +1299,42 @@ impl SettingsApp {
         Reply::redraw()
     }
 
-    fn reload_locations(&mut self) {
-        let answers = location_answers(
-            repriseconf::location::load_from(&self.location_file),
-            portal_location_answers(),
-        );
-        let entries = if answers.is_empty() {
-            Vec::new()
-        } else {
-            reprisefs::apps::scan(&reprisefs::apps::default_dirs())
-        };
-        let found: Vec<_> = answers
-            .iter()
-            .map(|a| reprisefs::apps::entry_for_app_id(&entries, &a.id, |_| true))
-            .collect();
-        let rows: Vec<(String, bool)> = answers
-            .iter()
-            .zip(&found)
-            .map(|(a, e)| (e.map_or_else(|| a.id.clone(), |e| e.name.clone()), a.allow))
-            .collect();
-        self.location_icons = found
-            .iter()
-            .map(|e| e.and_then(|e| e.icon.clone()))
-            .collect();
+    /// Read the location list off the loop the first time the Advanced page shows: the
+    /// permission store can take seconds to answer. The list says it is loading until then.
+    fn ensure_locations(&mut self) {
+        if !self.locations_due
+            || self.locating.is_some()
+            || registry::open(&self.sheet) != Page::Advanced
+        {
+            return;
+        }
+        self.locations_due = false;
+        let file = self.location_file.clone();
+        self.locating = Some(self.spawn(move || read_locations(&file)));
+        pages::show_locations_loading(&mut self.locations);
+        self.sync_forget();
+    }
+
+    fn show_locations(&mut self, found: Located) {
+        self.location_icons = found.icons;
         self.location_icons_due = true;
-        self.location_answers = answers;
-        pages::fill_locations(&mut self.locations, &rows);
+        self.location_answers = found.answers;
+        self.locations.selection.set_only(None);
+        pages::fill_locations(&mut self.locations, &found.rows);
         self.sync_forget();
     }
 
     fn sync_forget(&mut self) {
-        let on = self.locations.selection.focus.is_some();
+        let on = self.locating.is_none() && self.locations.selection.focus.is_some();
         self.sheet.pages[Page::Advanced.index()].set_enabled(pages::FORGET, on);
     }
 
     /// Forget drops the picked answer at once, from the state file or the portal's permission
     /// store; it waits for no Apply.
     fn forget_location(&mut self) -> Reply {
-        let Some(a) = (self.locations.selection.focus).and_then(|i| self.location_answers.get(i))
+        let Some((i, a)) = (self.locations.selection.focus)
+            .filter(|_| self.locating.is_none())
+            .and_then(|i| Some((i, self.location_answers.get(i)?)))
         else {
             return Reply::none();
         };
@@ -1288,11 +1344,21 @@ impl SettingsApp {
         } else {
             repriseconf::location::forget_in(&self.location_file, id).map_err(|e| e.to_string())
         };
-        if let Err(e) = forgot {
-            log::warn!("forget the location answer for {id}: {e}");
-            self.fail("The location answer could not be forgotten.");
+        match forgot {
+            Ok(()) => {
+                self.location_answers.remove(i);
+                self.location_icons.remove(i);
+                self.locations.rows.remove(i);
+                self.locations.selection.set_only(None);
+                self.sync_forget();
+            }
+            Err(e) => {
+                log::warn!("forget the location answer for {id}: {e}");
+                self.fail("The location answer could not be forgotten.");
+                self.locations_due = true;
+                self.ensure_locations();
+            }
         }
-        self.reload_locations();
         self.sync_apply();
         Reply::redraw()
     }
@@ -2812,6 +2878,7 @@ impl App for SettingsApp {
             reply.redraw_all |= r.redraw_all;
         }
         self.ensure_defaults();
+        self.ensure_locations();
         if win == repriseapp::MAIN
             && !self.saver_ticking
             && self.sheet.tabs.open == Page::ScreenSaver.index()
@@ -4339,6 +4406,54 @@ mod tests {
         );
     }
 
+    /// Show the Advanced page and wait for the location read it starts.
+    fn read_locations_on_advanced(app: &mut SettingsApp) {
+        app.sheet.tabs.open = Page::Advanced.index();
+        app.ensure_locations();
+        let found = app
+            .locating
+            .take()
+            .expect("a read under way")
+            .recv()
+            .unwrap();
+        app.show_locations(found);
+    }
+
+    #[test]
+    fn the_location_list_is_read_off_the_loop_once_the_advanced_page_shows() {
+        let dir = tmp("location-lazy");
+        let file = dir.join("location.toml");
+        std::fs::write(&file, "[apps]\n\"org.example.NoSuchMaps\" = true\n").unwrap();
+        let mut app = SettingsApp::open(dir.join("config.toml"));
+        app.location_file = file;
+        assert!(app.locations.rows.is_empty(), "opening reads no answers");
+        app.ensure_locations();
+        assert!(app.locating.is_none(), "no read while another page shows");
+
+        app.sheet.tabs.open = Page::Advanced.index();
+        app.ensure_locations();
+        assert!(app.locating.is_some(), "the Advanced page starts the read");
+        let cells: Vec<Vec<String>> = app.locations.rows.iter().map(|r| r.cells.clone()).collect();
+        assert_eq!(cells, [vec!["Loading...".to_string(), String::new()]]);
+        app.locations.selection.set_only(Some(0));
+        app.sync_apply();
+        assert!(!forget_enabled(&app), "Forget stays greyed while loading");
+
+        let found = app.locating.take().unwrap().recv().unwrap();
+        app.show_locations(found);
+        assert_eq!(app.locations.rows.len(), 1);
+        assert_eq!(
+            app.locations.rows[0].cells,
+            ["org.example.NoSuchMaps", "Allowed"]
+        );
+        assert_eq!(
+            app.locations.selection.focus, None,
+            "the loading row's pick is dropped"
+        );
+        app.ensure_locations();
+        assert!(app.locating.is_none(), "the list is read once");
+    }
+
     #[test]
     fn forget_drops_a_location_answer_from_the_file() {
         let dir = tmp("location");
@@ -4350,7 +4465,7 @@ mod tests {
         .unwrap();
         let mut app = SettingsApp::open(dir.join("config.toml"));
         app.location_file = file.clone();
-        app.reload_locations();
+        read_locations_on_advanced(&mut app);
         let cells: Vec<Vec<String>> = app.locations.rows.iter().map(|r| r.cells.clone()).collect();
         assert_eq!(
             cells,
