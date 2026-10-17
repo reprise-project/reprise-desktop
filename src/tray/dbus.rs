@@ -814,9 +814,9 @@ impl Loop {
             if let Ok(stream) = proxy.receive_signal(sig).await {
                 let key = key.clone();
                 let stop = stop_rx.clone();
+                let changes = stream.map(move |_| Wake::ItemChanged(key.clone()));
                 self.streams.push(
-                    stream
-                        .map(move |_| Wake::ItemChanged(key.clone()))
+                    pumped(&self.conn, changes)
                         .take_until(Box::pin(async move {
                             let _ = stop.recv().await;
                         }))
@@ -1111,7 +1111,33 @@ async fn signal_stream(
     f: impl Fn(zbus::Message) -> Option<Wake> + Send + 'static,
 ) -> Option<BoxStream<'static, Wake>> {
     let stream = proxy.receive_signal(member).await.ok()?;
-    Some(stream.filter_map(move |m| std::future::ready(f(m))).boxed())
+    let wakes = stream.filter_map(move |m| std::future::ready(f(m)));
+    Some(pumped(proxy.connection(), wakes))
+}
+
+/// Drain `stream` on the connection's executor, so a full zbus match queue never stops the socket
+/// while the loop is inside an await. Dropping the returned stream cancels the drain.
+fn pumped<T: Send + 'static>(
+    conn: &Connection,
+    stream: impl futures_util::Stream<Item = T> + Send + 'static,
+) -> BoxStream<'static, T> {
+    let (tx, rx) = async_channel::unbounded();
+    let drain = conn.executor().spawn(
+        async move {
+            let mut stream = std::pin::pin!(stream);
+            while let Some(item) = stream.next().await {
+                if tx.send(item).await.is_err() {
+                    break;
+                }
+            }
+        },
+        "tray signal drain",
+    );
+    futures_util::stream::unfold((rx, drain), |(rx, drain)| async move {
+        let item = rx.recv().await.ok()?;
+        Some((item, (rx, drain)))
+    })
+    .boxed()
 }
 
 fn load_icons(theme: &str) -> IconCache {
@@ -1752,6 +1778,59 @@ mod tests {
                 Some(TrayEvent::Added(item)) => Some(item.id),
                 _ => None,
             }
+        });
+        assert_eq!(added.as_deref(), Some(":1.1/answering"));
+    }
+
+    /// zbus stops reading the socket while any match queue (64 deep) is full, and `add_match`
+    /// waits on the reader's lock: a queue the loop has not drained must not stall the next watch.
+    #[test]
+    fn a_signal_flood_before_the_loop_drains_it_does_not_stall_the_connection() {
+        let (tx, events) = std::sync::mpsc::channel();
+        // SAFETY: eventfd takes no pointers; the result is checked below.
+        let fd = unsafe { libc::eventfd(0, libc::EFD_NONBLOCK | libc::EFD_CLOEXEC) };
+        assert!(fd >= 0, "eventfd failed");
+        // SAFETY: `fd` was just opened and nothing else owns it.
+        let fd = unsafe { OwnedFd::from_raw_fd(fd) };
+        let added = zbus::block_on(async {
+            let (ours, item) = peers(Duration::from_secs(10)).await;
+            let calls = zbus::MessageStream::from(&item);
+            let titles = AtomicUsize::new(0);
+            let mut lp = test_loop(ours, tx, fd.as_raw_fd());
+            lp.watch_item(":1.1", "/chatty").await;
+            for _ in 0..200 {
+                let changed = zbus::message::Message::signal("/chatty", ITEM_IFACE, "NewTitle")
+                    .unwrap()
+                    .sender(":1.1")
+                    .unwrap()
+                    .build(&())
+                    .unwrap();
+                item.send(&changed).await.unwrap();
+            }
+            async_io::Timer::after(Duration::from_millis(200)).await;
+            let (wakes, wake_rx) = async_channel::unbounded();
+            lp.streams.push(wake_rx.boxed());
+            register(&wakes, "/answering").await;
+            let script = async {
+                loop {
+                    match next_event(&events, Duration::from_secs(3)).await {
+                        Some(TrayEvent::Added(item)) if item.path == "/answering" => {
+                            return Some(item.id);
+                        }
+                        Some(_) => {}
+                        None => return None,
+                    }
+                }
+            };
+            let run = async {
+                lp.run().await;
+                std::future::pending().await
+            };
+            let serve = async {
+                serve_items(item.clone(), calls, &titles).await;
+                std::future::pending().await
+            };
+            futures_lite::future::or(script, futures_lite::future::or(run, serve)).await
         });
         assert_eq!(added.as_deref(), Some(":1.1/answering"));
     }
