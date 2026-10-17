@@ -1,5 +1,7 @@
 //! A wallpaper on a screen: Center at its own size, Tile from the top-left or Stretch to fill, composed over the desktop colour. The compositor composes each output with it, Reprise Settings its monitor preview.
 
+use std::borrow::Cow;
+
 use crate::raster::Canvas;
 use crate::theme::Color;
 
@@ -22,19 +24,58 @@ impl Position {
     }
 }
 
+/// [`compose`], borrowing `img` when it already is the result: an opaque picture stretched to its
+/// own size.
+pub fn composed(
+    img: &Canvas,
+    w: u32,
+    h: u32,
+    position: Position,
+    bg: Color,
+    scale: f32,
+) -> Cow<'_, Canvas> {
+    if position == Position::Stretch
+        && (img.width, img.height) == (w, h)
+        && w > 0
+        && h > 0
+        && opaque(img)
+    {
+        Cow::Borrowed(img)
+    } else {
+        Cow::Owned(compose(img, w, h, position, bg, scale))
+    }
+}
+
+fn opaque(c: &Canvas) -> bool {
+    c.scale() == 1 && c.pixels.iter().all(|&p| p >> 24 == 0xFF)
+}
+
 /// `img` placed on a `w` x `h` canvas of `bg` by `position`. `scale` is the image's draw size relative to its own for Center and Tile; Stretch ignores it.
 pub fn compose(img: &Canvas, w: u32, h: u32, position: Position, bg: Color, scale: f32) -> Canvas {
     let mut out = Canvas::new(w, h);
-    out.fill_rect(out.bounds(), bg);
     if img.width == 0 || img.height == 0 || w == 0 || h == 0 {
+        out.fill_rect(out.bounds(), bg);
         return out;
     }
     match position {
         Position::Stretch => {
-            let fitted = img.resample_box(w, h);
-            out.blit_over(0, 0, &fitted);
+            let resampled;
+            let fitted = if (img.width, img.height, img.scale()) == (w, h, 1) {
+                img
+            } else {
+                resampled = img.resample_box(w, h);
+                &resampled
+            };
+            // The colour never shows under an opaque picture.
+            if opaque(fitted) {
+                out.pixels.copy_from_slice(&fitted.pixels);
+            } else {
+                out.fill_rect(out.bounds(), bg);
+                out.blit_over(0, 0, fitted);
+            }
         }
         Position::Center | Position::Tile => {
+            out.fill_rect(out.bounds(), bg);
             let (sw, sh) = (
                 ((img.width as f32 * scale).round() as u32).max(1),
                 ((img.height as f32 * scale).round() as u32).max(1),
@@ -111,6 +152,42 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn stretch_composes_an_opaque_picture_as_its_own_pixels_and_a_translucent_one_over_the_colour()
+    {
+        let bg = Color::rgb(0, 0, 255);
+        let pic = numbered();
+        assert_eq!(
+            compose(&pic, 11, 9, Position::Stretch, bg, 1.0).pixels,
+            pic.pixels,
+            "an opaque picture at the screen's size"
+        );
+        let mut slow = Canvas::new(22, 18);
+        slow.fill_rect(slow.bounds(), bg);
+        slow.blit_over(0, 0, &pic.resample_box(22, 18));
+        assert_eq!(
+            compose(&pic, 22, 18, Position::Stretch, bg, 1.0).pixels,
+            slow.pixels,
+            "an opaque picture stretched"
+        );
+        let mut glassy = pic.clone();
+        glassy.pixels[5] = 0x8040_0000;
+        let mut over = Canvas::new(11, 9);
+        over.fill_rect(over.bounds(), bg);
+        over.blit_over(0, 0, &glassy);
+        let c = compose(&glassy, 11, 9, Position::Stretch, bg, 1.0);
+        assert_eq!(c.pixels, over.pixels, "a translucent picture");
+        assert_eq!(c.get(5, 0), 0xFF40_007F, "half red over blue");
+        assert!(matches!(
+            composed(&pic, 11, 9, Position::Stretch, bg, 1.0),
+            Cow::Borrowed(_)
+        ));
+        assert_eq!(
+            composed(&glassy, 11, 9, Position::Stretch, bg, 1.0).pixels,
+            over.pixels
+        );
     }
 
     #[test]
