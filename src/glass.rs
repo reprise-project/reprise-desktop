@@ -1052,7 +1052,14 @@ impl Backdrop {
         if let Some((node, _, _)) = self.node.take() {
             scene.destroy(node);
         }
+        // Only shown glass is listed: a hidden one kept stale would ask for frames forever.
+        ctx.glasses
+            .borrow_mut()
+            .retain(|g| !std::ptr::eq(g.as_ptr(), Rc::as_ptr(&self.glass)));
         if let Some(p) = &pane {
+            // A glass kept from an earlier node blurs its first frame afresh rather than holding.
+            self.glass.refresh();
+            ctx.glasses.borrow_mut().push(Rc::downgrade(&self.glass));
             let shared = Rc::new(RefCell::new(p.clone()));
             let node = scene.custom_create(
                 tree,
@@ -2115,6 +2122,65 @@ mod tests {
             let differ = drawn.iter().zip(&fresh).filter(|(a, b)| a != b).count();
             assert_eq!(differ, 0, "{what}: pixels unlike a fresh start's");
         }
+    }
+
+    #[test]
+    fn glass_kept_while_hidden_resumes_its_private_backdrop_in_a_new_tree() {
+        let Ok(mut renderer) = reprisefx::headless::renderer() else {
+            eprintln!("skipped: no renderer");
+            return;
+        };
+        let l = Layout {
+            stripe: [0.8, 0.1, 0.1, 1.0],
+            patch: (520, 120),
+            lower: (20, 20),
+            upper: (100, 50),
+            upper_size: (150, 110),
+            lower_on_top: false,
+            material: Material::Frosted,
+        };
+        let mut live = lay(&l, &mut renderer);
+        let glass = Rc::as_ptr(&live.upper.1.glass);
+        let texture = |live: &Laid| {
+            let kept = live.ctx.beneath.borrow();
+            kept.iter()
+                .find(|((_, g), _)| *g == glass)
+                .map(|(_, b)| b.backdrop.texture.tex_id())
+        };
+        let listed = |live: &Laid| {
+            live.ctx
+                .glasses
+                .borrow()
+                .iter()
+                .filter(|g| g.as_ptr() == glass)
+                .count()
+        };
+        frame(&mut renderer, &live, l.material);
+        let first = texture(&live).expect("the upper glass draws from a private backdrop");
+        assert_eq!(listed(&live), 1);
+
+        let pane = Some(sheet_pane(l.upper_size, &[]));
+        live.upper
+            .1
+            .set(&mut live.scene, &live.ctx, live.upper.2, None);
+        live.scene.destroy(live.upper.0);
+        frame(&mut renderer, &live, l.material);
+        assert_eq!(listed(&live), 0, "hidden glass is not listed");
+        assert_eq!(texture(&live), Some(first), "kept while hidden");
+
+        let s = &mut live.scene;
+        let window = s.tree_create(s.root());
+        s.set_position(window, l.upper.0, l.upper.1);
+        let chrome = s.tree_create(window);
+        leave_out(s, chrome);
+        live.upper.1.set(s, &live.ctx, chrome, pane);
+        let drawn = frame(&mut renderer, &live, l.material);
+        assert_eq!(texture(&live), Some(first), "resumed, not made afresh");
+        assert_eq!(listed(&live), 1, "listed once shown again");
+        let start = lay(&l, &mut renderer);
+        let fresh = frame(&mut renderer, &start, l.material);
+        let differ = drawn.iter().zip(&fresh).filter(|(a, b)| a != b).count();
+        assert_eq!(differ, 0, "pixels unlike a fresh start's");
     }
 
     #[test]

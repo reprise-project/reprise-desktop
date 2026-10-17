@@ -333,6 +333,8 @@ pub struct State {
     pub start_panel: Option<crate::startpanelview::StartPanelView>,
     /// The Start panel's frame, kept between opens so an open skips drawing it again.
     pub start_backing: reprisekit::glass::startpanel::Backing,
+    /// The Start panel's glass between opens, so its private backdrop resumes within `KEEP_IDLE`.
+    pub start_backdrop: Option<crate::glass::Backdrop>,
     pub panels: crate::panels::Panels,
     pub osd: crate::osdview::OsdView,
     pub displays: crate::displays::Displays,
@@ -589,6 +591,7 @@ impl State {
             launcher: None,
             start_panel: None,
             start_backing: Default::default(),
+            start_backdrop: None,
             panels: Default::default(),
             osd: Default::default(),
             displays: Default::default(),
