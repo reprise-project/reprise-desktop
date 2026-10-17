@@ -14,11 +14,14 @@ use zbus::object_server::SignalEmitter;
 use zbus::zvariant::{ObjectPath, OwnedValue, Value};
 use zbus::{Connection, Proxy};
 
+use reprisebus::instance::Handoff;
+
 pub const ITEM_PATH: &str = "/StatusNotifierItem";
 pub const MENU_PATH: &str = "/MenuBar";
 
 const ITEM_IFACE: &str = "org.kde.StatusNotifierItem";
 const MENU_IFACE: &str = "com.canonical.dbusmenu";
+const HANDOFF_IFACE: &str = "org.reprise.TrayItem";
 const WATCHER_NAME: &str = "org.kde.StatusNotifierWatcher";
 const WATCHER_PATH: &str = "/StatusNotifierWatcher";
 const NOTIFY_NAME: &str = "org.freedesktop.Notifications";
@@ -185,8 +188,8 @@ enum Cmd {
     },
 }
 
-/// The xdg-activation token a second instance handed over, until the applet takes it.
-type Token = Arc<Mutex<Option<String>>>;
+/// What a second instance or a balloon click handed over, until the applet takes it.
+type Token = Arc<Mutex<Option<Handoff>>>;
 
 pub struct TrayHandle {
     commands: async_channel::Sender<Cmd>,
@@ -228,9 +231,15 @@ impl TrayHandle {
         });
     }
 
-    /// The xdg-activation token a second instance handed over before its raise, once; presented for the window the raise shows.
-    pub fn take_activation_token(&self) -> Option<String> {
+    /// What a second instance handed over before its raise, or a balloon click left, once; for the
+    /// `Reply::activate` of the window the raise shows.
+    pub fn take_handoff(&self) -> Option<Handoff> {
         self.token.lock().unwrap_or_else(|e| e.into_inner()).take()
+    }
+
+    /// The token [`TrayHandle::take_handoff`] would give, for a window another process opens.
+    pub fn take_activation_token(&self) -> Option<String> {
+        self.take_handoff().and_then(|h| h.token)
     }
 }
 
@@ -269,6 +278,26 @@ impl Shared {
     }
 }
 
+/// A token on its own (the tray host's `ProvideXdgActivationToken`, a balloon click) came from a
+/// pointer: it drops an earlier by-key mark.
+fn hand_token(handoff: &Token, token: String) {
+    *handoff.lock().unwrap_or_else(|e| e.into_inner()) = Some(Handoff {
+        token: Some(token),
+        by_key: false,
+    });
+}
+
+/// A second instance's [`Handoff`], next to the item: the SNI interface carries only a token.
+struct Handoffs(Token);
+
+#[zbus::interface(name = "org.reprise.TrayItem")]
+impl Handoffs {
+    fn provide_platform_data(&self, platform_data: HashMap<String, OwnedValue>) {
+        *self.0.lock().unwrap_or_else(|e| e.into_inner()) =
+            Some(Handoff::from_platform_data(&platform_data));
+    }
+}
+
 struct Item(Shared);
 
 type ToolTip = (String, Vec<(i32, i32, Vec<u8>)>, String, String);
@@ -284,7 +313,7 @@ impl Item {
     }
 
     fn provide_xdg_activation_token(&self, token: String) {
-        *self.0.token.lock().unwrap_or_else(|e| e.into_inner()) = Some(token);
+        hand_token(&self.0.token, token);
     }
 
     fn context_menu(&self, _x: i32, _y: i32) {}
@@ -460,15 +489,17 @@ async fn register(conn: &Connection) {
     }
 }
 
-/// Ask the instance that owns the bus name to show itself, handing over our activation token first so its window takes focus.
+/// Ask the instance that owns the bus name to show itself, handing over our [`Handoff`] first so its
+/// window takes focus, with its cues out after a start by key.
 async fn activate_existing(conn: &Connection, config: &Config) {
-    if let Ok(token) = std::env::var("XDG_ACTIVATION_TOKEN")
-        && let Ok(proxy) = Proxy::new(conn, config.bus_name, ITEM_PATH, ITEM_IFACE).await
+    let handoff = Handoff::from_env();
+    if handoff != Handoff::default()
+        && let Ok(proxy) = Proxy::new(conn, config.bus_name, ITEM_PATH, HANDOFF_IFACE).await
         && let Err(e) = proxy
-            .call_method("ProvideXdgActivationToken", &(token,))
+            .call_method("ProvidePlatformData", &(handoff.platform_data(),))
             .await
     {
-        log::debug!("tray: ProvideXdgActivationToken failed: {e}");
+        log::debug!("tray: ProvidePlatformData failed: {e}");
     }
     let result = match config.raise {
         Raise::Activate => match Proxy::new(conn, config.bus_name, ITEM_PATH, ITEM_IFACE).await {
@@ -601,7 +632,7 @@ impl Clickable {
     fn on(&mut self, signal: BalloonSignal, token: &Token) -> Option<Msg> {
         match signal {
             BalloonSignal::ActivationToken(id, t) if self.0.contains_key(&id) => {
-                *token.lock().unwrap_or_else(|e| e.into_inner()) = Some(t);
+                hand_token(token, t);
                 None
             }
             BalloonSignal::ActionInvoked(id, key) if key == "default" => {
@@ -770,6 +801,11 @@ pub fn start(config: Config, initial: Shown, wake: Wake) -> Started {
                     .await
                     .and(
                         conn.object_server()
+                            .at(ITEM_PATH, Handoffs(token.clone()))
+                            .await,
+                    )
+                    .and(
+                        conn.object_server()
                             .at(MENU_PATH, Menu(shared.clone()))
                             .await,
                     );
@@ -895,6 +931,38 @@ mod tests {
         );
     }
 
+    fn sent(h: &Handoff) -> HashMap<String, OwnedValue> {
+        h.platform_data()
+            .into_iter()
+            .map(|(k, v)| (k.to_string(), OwnedValue::try_from(v).unwrap()))
+            .collect()
+    }
+
+    #[test]
+    fn a_second_instances_key_mark_waits_for_the_raise_and_a_pointer_token_drops_it() {
+        let token = Token::default();
+        let handle = TrayHandle {
+            commands: async_channel::unbounded().0,
+            token: token.clone(),
+        };
+        let by_key = Handoff {
+            token: Some("t-key".into()),
+            by_key: true,
+        };
+        Handoffs(token.clone()).provide_platform_data(sent(&by_key));
+        assert_eq!(handle.take_handoff(), Some(by_key.clone()));
+        assert_eq!(handle.take_handoff(), None, "taken once");
+        Handoffs(token.clone()).provide_platform_data(sent(&by_key));
+        hand_token(&token, "t-click".into());
+        assert_eq!(
+            handle.take_handoff(),
+            Some(Handoff {
+                token: Some("t-click".into()),
+                by_key: false
+            })
+        );
+    }
+
     /// A click on one of our balloons comes back as its tag, token first; another's balloon, another action, or a closed balloon is nothing.
     #[test]
     fn a_click_on_a_clickable_balloon_comes_back_as_its_tag() {
@@ -909,7 +977,14 @@ mod tests {
             c.on(BalloonSignal::ActivationToken(8, "other".into()), &token),
             None
         );
-        assert_eq!(token.lock().unwrap().as_deref(), Some("tok"));
+        assert_eq!(
+            token
+                .lock()
+                .unwrap()
+                .as_ref()
+                .and_then(|h| h.token.as_deref()),
+            Some("tok")
+        );
         assert_eq!(
             c.on(BalloonSignal::ActionInvoked(9, "default".into()), &token),
             None

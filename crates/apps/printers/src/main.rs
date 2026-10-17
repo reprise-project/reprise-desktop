@@ -318,7 +318,7 @@ impl PrintersApp {
         }
         self.sync_watching();
         Reply {
-            activate: self.tray.as_ref().and_then(|t| t.take_activation_token()),
+            activate: self.tray.as_ref().and_then(|t| t.take_handoff()),
             ..Reply::redraw_all()
         }
     }
