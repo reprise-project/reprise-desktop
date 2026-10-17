@@ -727,7 +727,6 @@ fn draw_header<R: Rows, C: AsRef<[Column]>, S: Borrow<Selection>>(
     let left = lv.left_in(lay);
     header_widgets::draw_strip(c, p, header);
     let arrow_w = header_widgets::sort_arrow_width(p);
-    let arrow_end = p.look.controls().header_arrow_end;
     let arrow_over = p.look.controls().header_arrow_over;
     let mut cx = header.x - left * s;
     for (ci, col) in lv.columns.as_ref().iter().enumerate() {
@@ -744,17 +743,7 @@ fn draw_header<R: Rows, C: AsRef<[Column]>, S: Borrow<Selection>>(
             header_widgets::draw_sort_arrow(c, p, ax, r, asc);
         }
         let sorted = sorted.filter(|_| !arrow_over);
-        // A right-aligned sorted column's arrow stops `header_arrow_end` short of the end and its title
-        // ends the arrow gap before it; a left-aligned title keeps its place and the arrow follows.
-        let right_arrow =
-            (sorted.is_some() && col.right).then(|| t.right() - (arrow_end + arrow_w) * s);
-        let tr_right = match right_arrow {
-            Some(ax) => ax - ARROW_GAP * s,
-            None if sorted.is_some() => t.right() - (HEADER_TEXT_X + ARROW_GAP + arrow_w) * s,
-            None => t.right() - HEADER_TEXT_X * s,
-        };
-        let tx = t.x + HEADER_TEXT_X * s;
-        let tr = Rect::new(tx, t.y, (tr_right - tx).max(0), t.height);
+        let (tr, right_arrow) = title_room(p, col, t, sorted.is_some());
         let align = if col.right { Align::Right } else { Align::Left };
         let shown = text.ellipsize(&col.title, tr.width, false, px);
         text.draw(c, tr, &shown, false, cs.button_text, align, px);
@@ -764,6 +753,52 @@ fn draw_header<R: Rows, C: AsRef<[Column]>, S: Borrow<Selection>>(
             header_widgets::draw_sort_arrow(c, p, ax, r, asc);
         }
     }
+}
+
+/// Where `col`'s title goes in its item's title rect `t`, and the x of a right-aligned sorted
+/// column's arrow. `sorted` is set when the arrow sits beside the title rather than over it.
+fn title_room(p: &Paint, col: &Column, t: Rect, sorted: bool) -> (Rect, Option<i32>) {
+    let s = p.s;
+    let arrow_w = header_widgets::sort_arrow_width(p);
+    let arrow_end = p.look.controls().header_arrow_end;
+    // A right-aligned sorted column's arrow stops `header_arrow_end` short of the end and its title
+    // ends the arrow gap before it; a left-aligned title keeps its place and the arrow follows.
+    let right_arrow = (sorted && col.right).then(|| t.right() - (arrow_end + arrow_w) * s);
+    let tr_right = match right_arrow {
+        Some(ax) => ax - ARROW_GAP * s,
+        None if sorted => t.right() - (HEADER_TEXT_X + ARROW_GAP + arrow_w) * s,
+        None => t.right() - HEADER_TEXT_X * s,
+    };
+    let tx = t.x + HEADER_TEXT_X * s;
+    (
+        Rect::new(tx, t.y, (tr_right - tx).max(0), t.height),
+        right_arrow,
+    )
+}
+
+/// The columns whose header title runs past its room, by index and px over, so a host's audit
+/// test catches a title the header would ellipsize.
+pub fn header_overflows<R: Rows, C: AsRef<[Column]>, S: Borrow<Selection>>(
+    lv: &ListView<R, C, S>,
+    lay: &Layout,
+    text: &TextRenderer,
+    p: &Paint,
+    px: u32,
+) -> Vec<(usize, i32)> {
+    let arrow_over = p.look.controls().header_arrow_over;
+    lv.columns
+        .as_ref()
+        .iter()
+        .enumerate()
+        .filter_map(|(ci, col)| {
+            let r = Rect::new(0, 0, lay.col_w(col) * p.s, lay.header.height * p.s);
+            let sorted = lv.sort.is_some_and(|(i, _)| i == ci);
+            let t = header_widgets::item_title_rect(p, r, lv.header.of(ci), sorted);
+            let (tr, _) = title_room(p, col, t, sorted && !arrow_over);
+            let by = text.measure(&col.title, false, px) - tr.width;
+            (by > 0).then_some((ci, by))
+        })
+        .collect()
 }
 
 /// The rows, clipped to their box.

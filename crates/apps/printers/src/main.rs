@@ -1117,4 +1117,37 @@ mod tests {
         let queue = app.children().into_iter().find(|c| c.id == QUEUE);
         assert_eq!(queue.map(|c| c.size), Some(twice(queue::CLIENT)));
     }
+
+    /// The folder's and the queue's column titles fit their header items under every interface
+    /// and text size.
+    #[test]
+    fn every_column_title_fits_its_header() {
+        let over = reprisekit::interfaces::overflows(|_, theme, text| {
+            let lists = [
+                ("folder", folder::Folder::new().list),
+                ("queue", queue::Queue::new("Laser").list),
+            ];
+            let p = reprisekit::look::Paint {
+                s: 1,
+                ..theme.paint()
+            };
+            let mut over = Vec::new();
+            for (name, list) in &lists {
+                let r = reprisekit::raster::Rect::new(0, 0, 900, 400);
+                let lay = reprisekit::controls::listview::layout(&list.view, r, &theme.controls());
+                for (ci, by) in reprisekit::controls::listview::header_overflows(
+                    &list.view,
+                    &lay,
+                    text,
+                    &p,
+                    theme.fonts.size_px,
+                ) {
+                    let title = list.view.columns[ci].title.clone();
+                    over.push((format!("{name} {title}"), "header", by));
+                }
+            }
+            over
+        });
+        assert!(over.is_empty(), "{}", over.join("\n"));
+    }
 }

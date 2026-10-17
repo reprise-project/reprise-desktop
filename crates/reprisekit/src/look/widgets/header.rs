@@ -46,6 +46,14 @@ pub fn draw_item(c: &mut Canvas, p: &Paint, r: Rect, ptr: Interaction, sorted: b
     r
 }
 
+/// The rect [`draw_item`] returns, without drawing.
+pub fn item_title_rect(p: &Paint, r: Rect, ptr: Interaction, sorted: bool) -> Rect {
+    p.look
+        .style()
+        .and_then(|st| styled::header::title_rect(st, p, r, ptr, sorted))
+        .unwrap_or(r)
+}
+
 /// One column's title button in a dialog's list (the tray's Customize
 /// list): the style's item when it has one, else a face button with a
 /// 1 px edge, hilight top and left and shadow bottom and right, flatter

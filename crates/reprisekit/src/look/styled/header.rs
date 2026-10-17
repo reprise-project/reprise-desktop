@@ -24,9 +24,7 @@ const SORTED_DX: i32 = 3;
 
 /// One column's item in its state for `ptr`, a `sorted` column at rest
 /// in the part's Checked frame where it has one; the rect its title goes
-/// in: the part's content rect, [`SORTED_DX`] further in on a `sorted`
-/// column whose arrow follows its title, and a pixel down and right
-/// while held.
+/// in ([`title_rect`]).
 pub fn draw_item(
     st: &Style,
     c: &mut Canvas,
@@ -36,11 +34,17 @@ pub fn draw_item(
     sorted: bool,
 ) -> Option<Rect> {
     let img = st.part(Part::HeaderItem)?;
-    let state = match super::state(true, ptr) {
-        State::Normal if sorted && img.states.contains(&State::Checked) => State::Checked,
-        s => s,
-    };
+    let state = item_state(img.states.contains(&State::Checked), ptr, sorted);
     st.draw(c, r, Part::HeaderItem, state, p.s);
+    title_rect(st, p, r, ptr, sorted)
+}
+
+/// The rect an item's title goes in: the part's content rect,
+/// [`SORTED_DX`] further in on a `sorted` column whose arrow follows its
+/// title, and a pixel down and right while held.
+pub fn title_rect(st: &Style, p: &Paint, r: Rect, ptr: Interaction, sorted: bool) -> Option<Rect> {
+    let img = st.part(Part::HeaderItem)?;
+    let state = item_state(img.states.contains(&State::Checked), ptr, sorted);
     let t = st.content_rect(Part::HeaderItem, r, p.s);
     let push = if state == State::Pressed { p.s } else { 0 };
     let after = sorted && !p.look.controls().header_arrow_over;
@@ -51,6 +55,13 @@ pub fn draw_item(
         t.width - dx,
         t.height,
     ))
+}
+
+fn item_state(has_checked: bool, ptr: Interaction, sorted: bool) -> State {
+    match super::state(true, ptr) {
+        State::Normal if sorted && has_checked => State::Checked,
+        s => s,
+    }
 }
 
 pub fn sort_arrow_width(st: &Style) -> Option<i32> {
