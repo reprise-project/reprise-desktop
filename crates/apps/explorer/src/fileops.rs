@@ -157,6 +157,20 @@ impl Explorer {
         };
         self.paste_shortcut = shortcut;
         self.paste_dir = Some(dir);
+        self.paste_app = None;
+        Reply {
+            paste_files: true,
+            ..Default::default()
+        }
+    }
+
+    /// Paste on the launcher the item menu was opened on.
+    pub fn begin_paste_open(&mut self) -> Reply {
+        let Some(app) = self.menu_launcher.clone() else {
+            return Reply::none();
+        };
+        self.paste_app = Some(app);
+        self.paste_dir = None;
         Reply {
             paste_files: true,
             ..Default::default()
@@ -164,6 +178,16 @@ impl Explorer {
     }
 
     pub fn pasted(&mut self, clip: FileClip, ctx: &mut Ctx) -> Reply {
+        if let Some(app) = self.paste_app.take() {
+            let terminal = repriseconf::terminal();
+            return Reply {
+                spawn: (clip.paths.iter())
+                    .map(|p| reprisefs::apps::open_argv(&app, &terminal, p))
+                    .collect(),
+                spawn_app: Some(app.id),
+                ..Default::default()
+            };
+        }
         let shortcut = std::mem::take(&mut self.paste_shortcut);
         let Some(dir) = self.paste_dir.take() else {
             return Reply::none();

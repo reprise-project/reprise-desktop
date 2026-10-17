@@ -372,12 +372,22 @@ pub fn views_menu(mode: Mode) -> Menu {
     modes_menu(mode)
 }
 
+/// What an entry in the view is, for its right-click menu.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum ItemKind {
+    Folder,
+    File,
+    /// A trusted program launcher (`reprisefs::apps::Shortcut::App`).
+    Launcher,
+}
+
 /// The right-click menu of an entry in the view. "Run as..." sits greyed under
-/// Open for every file. `eject` adds Eject, in a group above Cut and Copy, for a
-/// removable drive.
+/// Open for every file. A launcher has no Open With and has Paste under Copy,
+/// opening the clipboard's files in its program. `eject` adds Eject, in a group
+/// above Cut and Copy, for a removable drive.
 pub fn item_menu(
     state: &MenuState,
-    is_dir: bool,
+    kind: ItemKind,
     eject: bool,
     open_with: &[(String, Option<Canvas>)],
     send_to: &[(String, bool, Option<Canvas>)],
@@ -388,13 +398,15 @@ pub fn item_menu(
     let writable = !state.read_only;
     let mut m = Menu::default();
     m.row(bold("&Open", true), Command::Open);
-    if is_dir {
+    if kind == ItemKind::Folder {
         m.row(row("E&xplore", true), Command::Explore);
         m.row(row("Sharing and Security...", false), Command::Nothing);
     } else {
         m.row(row("Run &as...", false), Command::Nothing);
         m.sep();
-        m.sub(row("Open Wit&h", true), open_with_menu(open_with));
+        if kind == ItemKind::File {
+            m.sub(row("Open Wit&h", true), open_with_menu(open_with));
+        }
     }
     m.sub(
         row("Se&nd To", !send_to.is_empty() && writable),
@@ -407,6 +419,9 @@ pub fn item_menu(
     m.sep();
     m.row(row("Cu&t", writable), Command::Cut);
     m.row(row("&Copy", true), Command::Copy);
+    if kind == ItemKind::Launcher {
+        m.row(row("&Paste", state.can_paste), Command::PasteOpen);
+    }
     m.sep();
     m.row(row("Create &Shortcut", writable), Command::CreateShortcut);
     m.row(row("&Delete", writable), Command::Delete { erase: false });

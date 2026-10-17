@@ -1774,3 +1774,53 @@ fn a_stale_yes_lands_numbered_with_its_undo() {
     );
     assert_eq!(ex.undo, Some("Copy"), "the numbered copy can be undone");
 }
+
+/// Paste on a launcher opens each clipboard file in its program, in its app scope, and copies
+/// nothing into the folder.
+#[test]
+fn paste_on_a_launcher_opens_the_clipboards_files_in_its_program() {
+    let dir = tempfile::tempdir().expect("a temp dir");
+    reprisefs::apps::write_launcher(
+        &dir.path().join("editor.desktop"),
+        "[Desktop Entry]\nType=Application\nName=Editor\nExec=editor %f\n",
+    )
+    .expect("write");
+    std::fs::write(dir.path().join("a.txt"), "1").expect("write");
+    let mut ctx = test_ctx();
+    let mut ex = crate::tests::test_explorer(Place::Folder(dir.path().to_path_buf()), &mut ctx);
+    let launcher = ex
+        .items
+        .iter()
+        .position(|it| it.shortcut.is_some())
+        .expect("the launcher is listed");
+
+    ex.entry_menu_at(launcher, (0, 0), &mut ctx);
+    let reply = ex.run(Command::PasteOpen, &mut ctx);
+    assert!(reply.paste_files, "the clipboard was asked for");
+    let paths = vec![dir.path().join("a.txt"), PathBuf::from("/srv/b.txt")];
+    let reply = ex.pasted(FileClip { cut: true, paths }, &mut ctx);
+    assert_eq!(
+        reply.spawn,
+        [
+            vec![OsString::from("editor"), dir.path().join("a.txt").into()],
+            vec![OsString::from("editor"), OsString::from("/srv/b.txt")],
+        ]
+    );
+    assert_eq!(reply.spawn_app.as_deref(), Some("editor.desktop"));
+    assert!(ex.put.is_none(), "nothing is copied");
+    assert!(dir.path().join("a.txt").exists(), "a cut file stays put");
+
+    let reply = ex.run(Command::Paste, &mut ctx);
+    assert!(reply.paste_files);
+    ex.pasted(
+        FileClip {
+            cut: false,
+            paths: vec![dir.path().join("a.txt")],
+        },
+        &mut ctx,
+    );
+    assert!(
+        ex.put.is_some(),
+        "a later Paste copies into the folder again"
+    );
+}
