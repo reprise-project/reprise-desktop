@@ -34,12 +34,14 @@ fn on_path(program: &str) -> bool {
 /// Spawn every applicable autostart entry, then restore the last session. Called once at startup,
 /// after `WAYLAND_DISPLAY` is exported, so a child inherits the socket. The scan, the walk of the
 /// user manager's session units and the spawns run on a job thread so the first frames don't wait
-/// on them; the restore follows on the loop.
-pub fn start(state: &mut State) {
+/// on them; the restore follows on the loop. The walk waits for `session_begun`, so the session
+/// target's start jobs are queued and their conditions get checked before it reads them.
+pub fn start(state: &mut State, session_begun: std::thread::JoinHandle<()>) {
     let desktops = reprisefs::autostart::desktop_names(Some(&state.env.desktop));
     let terminal = state.config.terminal.clone();
     let env = state.env.clone();
     state.spawn_fs_job(move || {
+        let _ = session_begun.join();
         let run = find(&desktops);
         launch(&run, &terminal, &env);
         Box::new(move |state: &mut State| crate::session::restore(state, &run))
