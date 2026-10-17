@@ -335,6 +335,7 @@ pub struct State {
     pub start_backing: reprisekit::glass::startpanel::Backing,
     /// The Start panel's glass between opens, so its private backdrop resumes within `KEEP_IDLE`.
     pub start_backdrop: Option<crate::glass::Backdrop>,
+    pub start_pictures: crate::startpanelview::UserPictures,
     pub panels: crate::panels::Panels,
     pub osd: crate::osdview::OsdView,
     pub displays: crate::displays::Displays,
@@ -592,6 +593,7 @@ impl State {
             start_panel: None,
             start_backing: Default::default(),
             start_backdrop: None,
+            start_pictures: Default::default(),
             panels: Default::default(),
             osd: Default::default(),
             displays: Default::default(),

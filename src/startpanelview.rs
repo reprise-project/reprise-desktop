@@ -420,17 +420,61 @@ fn picture_paths(home: Option<&Path>, user: &str) -> Vec<PathBuf> {
 }
 
 /// The picture files carry no extension, so the icon cache does not take them.
-fn load_picture(path: &Path, px: i32) -> Option<Canvas> {
+fn load_picture(path: &Path) -> Option<Canvas> {
     const MAX_BYTES: u64 = 4 << 20;
     let meta = std::fs::metadata(path).ok()?;
     if !meta.is_file() || meta.len() > MAX_BYTES {
         return None;
     }
     let bytes = std::fs::read(path).ok()?;
-    let c = reprisekit::icontheme::png_to_canvas(&bytes, 4096)
+    reprisekit::icontheme::png_to_canvas(&bytes, 4096)
         .map_err(|e| log::debug!("user picture {}: {e}", path.display()))
-        .ok()?;
-    Some(c.resample_box(px as u32, px as u32))
+        .ok()
+}
+
+/// The first of `paths` that decodes, at each of `sizes` device pixels.
+fn read_pictures(paths: &[PathBuf], sizes: &[i32]) -> Vec<(i32, Option<Canvas>)> {
+    let picture = paths.iter().find_map(|p| load_picture(p));
+    (sizes.iter())
+        .map(|&px| {
+            let c = picture
+                .as_ref()
+                .map(|c| c.resample_box(px as u32, px as u32));
+            (px, c)
+        })
+        .collect()
+}
+
+/// The user picture at each size Start shows it, read on a file job: `~/.face` lives in the
+/// home folder, which may be a mount that never answers.
+#[derive(Default)]
+pub struct UserPictures {
+    /// What the last read found at each device-pixel size, None where it found no picture.
+    read: HashMap<i32, Option<Canvas>>,
+    reading: bool,
+}
+
+impl UserPictures {
+    /// The picture the last read found at `px`; None before any read at that size.
+    fn at(&self, px: i32) -> Option<Option<&Canvas>> {
+        self.read.get(&px).map(Option::as_ref)
+    }
+
+    /// The sizes a read takes, or None while one runs.
+    fn start(&mut self, mut sizes: Vec<i32>) -> Option<Vec<i32>> {
+        if self.reading {
+            return None;
+        }
+        sizes.sort_unstable();
+        sizes.dedup();
+        self.reading = true;
+        Some(sizes)
+    }
+
+    fn land(&mut self, found: Vec<(i32, Option<Canvas>)>) {
+        self.reading = false;
+        self.read.extend(found);
+    }
 }
 
 fn panel_pane(l: &Layout) -> Pane {
@@ -501,11 +545,10 @@ impl State {
         self.refresh_recent();
         let (rows, places) = self.start_places(px, &user);
         model.places = rows;
-        let home = std::env::var_os("HOME").map(PathBuf::from);
-        model.user_picture = picture_paths(home.as_deref(), &user)
-            .iter()
-            .find_map(|p| load_picture(p, px))
-            .or_else(|| self.icons.get("avatar-default", px));
+        model.user_picture = match self.start_pictures.at(px) {
+            Some(Some(c)) => Some(c.clone()),
+            _ => self.icons.get("avatar-default", px),
+        };
         let scene = &mut self.scene;
         let tree = scene.tree_create(self.layers.menu);
         scene.set_data(tree, Some(SceneOwner::StartPanel));
@@ -549,6 +592,7 @@ impl State {
             crossfades: Vec::new(),
             crossfade_timer: None,
         });
+        self.read_user_pictures(vec![px]);
         self.list_start_programs();
         self.restart_caret();
         if let Some(b) = self.bar_mut(bar) {
@@ -1517,6 +1561,44 @@ impl State {
         }
     }
 
+    /// Reads the user picture at `sizes` device pixels on a file job; an open panel shows what
+    /// it finds. Each Start open reads again, so a new picture shows at the next.
+    pub fn read_user_pictures(&mut self, sizes: Vec<i32>) {
+        let Some(sizes) = self.start_pictures.start(sizes) else {
+            return;
+        };
+        self.spawn_fs_job(move || {
+            let home = std::env::var_os("HOME").map(PathBuf::from);
+            let paths = picture_paths(home.as_deref(), &crate::lock::current_user());
+            let found = read_pictures(&paths, &sizes);
+            Box::new(move |state: &mut State| {
+                state.start_pictures.land(found);
+                let Some(p) = state.start_panel.as_ref() else {
+                    return;
+                };
+                let px = PICTURE * state.draw_scale_at(Some(&p.output)).max(1);
+                let Some(found) = state.start_pictures.at(px) else {
+                    return;
+                };
+                let picture = match found {
+                    Some(c) => Some(c.clone()),
+                    None => state.icons.get("avatar-default", px),
+                };
+                if let Some(p) = state.start_panel.as_mut()
+                    && p.model.user_picture != picture
+                {
+                    p.model.user_picture = picture;
+                    state.redraw_start_panel();
+                }
+            })
+        });
+    }
+
+    /// Reads the user picture ahead at the Start sizes of each of draw `scales`.
+    pub fn warm_user_pictures(&mut self, scales: &[i32]) {
+        self.read_user_pictures(scales.iter().map(|n| PICTURE * n).collect());
+    }
+
     pub fn redraw_start_panel(&mut self) {
         let Some(v) = self.start_panel.as_ref() else {
             return;
@@ -2226,6 +2308,40 @@ mod tests {
             Vec::<PathBuf>::new(),
             "a user name is never a path"
         );
+    }
+
+    #[test]
+    fn the_user_picture_is_the_first_path_that_decodes_at_each_size() {
+        let dir = std::env::temp_dir().join(format!("reprise-face-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut c = Canvas::new(8, 8);
+        c.fill_rect(Rect::new(0, 0, 8, 8), crate::theme::Color::rgb(0, 128, 255));
+        std::fs::write(dir.join("face.png"), reprisekit::raster::to_png(&c)).unwrap();
+        std::fs::write(dir.join("broken"), "not a png").unwrap();
+        let paths = [dir.join("gone"), dir.join("broken"), dir.join("face.png")];
+        let found = read_pictures(&paths, &[48, 96]);
+        let sizes: Vec<_> = (found.iter())
+            .map(|(px, c)| (*px, c.as_ref().map(|c| (c.width, c.height))))
+            .collect();
+        assert_eq!(sizes, [(48, Some((48, 48))), (96, Some((96, 96)))]);
+        assert_eq!(read_pictures(&paths[..2], &[48]), [(48, None)]);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn one_user_picture_read_runs_at_a_time_and_opens_show_the_last_read() {
+        let mut p = UserPictures::default();
+        assert_eq!(p.at(48), None, "nothing read yet");
+        assert_eq!(p.start(vec![96, 48, 96]), Some(vec![48, 96]));
+        assert_eq!(p.start(vec![48]), None, "a read is under way");
+        p.land(vec![(48, Some(Canvas::new(48, 48))), (96, None)]);
+        assert_eq!(p.at(48).map(|c| c.map(|c| c.width)), Some(Some(48)));
+        assert_eq!(p.at(96), Some(None), "read, no picture");
+        assert_eq!(p.start(vec![48]), Some(vec![48]));
+        p.land(vec![(48, None)]);
+        assert_eq!(p.at(48), Some(None), "the picture was removed");
+        assert_eq!(p.at(96), Some(None));
     }
 
     #[test]
