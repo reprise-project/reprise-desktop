@@ -1118,18 +1118,23 @@ impl State {
             },
             None => Subject::Folder,
         };
+        let folder = match batch.asker.step() {
+            reprisefs::replace::Step::Ask {
+                index,
+                inside: Some(under),
+                ..
+            } => batch
+                .puts
+                .get(index)
+                .map(|(s, _, _)| reprisefs::replace::merge_folder(s.path(), &under)),
+            _ => None,
+        };
         let fields = Fields {
             name: name.into_owned(),
+            many: batch.puts.len() > 1 || folder.is_some(),
+            folder,
             subject,
             icon: self.icons.get("folder", 32),
-            many: batch.puts.len() > 1
-                || matches!(
-                    batch.asker.step(),
-                    reprisefs::replace::Step::Ask {
-                        inside: Some(_),
-                        ..
-                    }
-                ),
         };
         let t = &self.config.theme;
         crate::dialog::Dialog::confirm_replace(fields, batch, &self.text, t.fonts.size_px, t.text)
@@ -1542,6 +1547,7 @@ mod tests {
         let id = batch.identity().to_path_buf();
         let fields = Fields {
             name: "a.txt".into(),
+            folder: None,
             subject: Subject::Folder,
             icon: None,
             many: false,

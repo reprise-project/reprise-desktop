@@ -10099,6 +10099,7 @@ mod tests {
         };
         let replace = |subject, many| replacebox::Fields {
             name: "Quarterly report for the board.txt".into(),
+            folder: None,
             subject,
             icon: None,
             many,

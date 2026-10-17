@@ -4303,6 +4303,7 @@ fn render(theme: &Theme, with_blue: bool) -> Canvas {
         };
         let file = replacebox::Fields {
             name: "notes.txt".into(),
+            folder: None,
             subject: replacebox::Subject::File {
                 existing: Box::new(side("512 bytes")),
                 incoming: Box::new(side("1.23 KB")),
@@ -4312,6 +4313,7 @@ fn render(theme: &Theme, with_blue: bool) -> Canvas {
         };
         let folder = replacebox::Fields {
             name: "Reports".into(),
+            folder: None,
             subject: replacebox::Subject::Folder,
             icon: None,
             many: true,

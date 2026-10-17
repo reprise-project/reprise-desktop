@@ -50,6 +50,9 @@ pub enum Subject {
 pub struct Fields {
     /// The name both share.
     pub name: String,
+    /// For a file inside a folder merge, the folder holding it, from the merged folder down
+    /// (`Reports/2024`); `None` for an item of the put itself.
+    pub folder: Option<String>,
     pub subject: Subject,
     /// The 32 px picture at the top left; `None` leaves the slot empty.
     pub icon: Option<Canvas>,
@@ -166,10 +169,14 @@ fn plan(f: &Fields, text: &TextRenderer, px: u32, u: TextUnits) -> Plan {
     };
     // The first line names the file and never wraps: a long name widens
     // the prompt instead.
-    let mut lines = vec![(
-        format!("This folder already contains a {what} named '{}'.", f.name),
-        TEXT_Y,
-    )];
+    let first = match &f.folder {
+        None => format!("This folder already contains a {what} named '{}'.", f.name),
+        Some(dir) => format!(
+            "The folder '{dir}' already contains a {what} named '{}'.",
+            f.name
+        ),
+    };
+    let mut lines = vec![(first, TEXT_Y)];
     match &f.subject {
         Subject::File { existing, incoming } => {
             lines.push((
@@ -303,6 +310,7 @@ mod tests {
     fn file() -> Fields {
         Fields {
             name: "notes.txt".into(),
+            folder: None,
             subject: Subject::File {
                 existing: Box::new(side("512 bytes")),
                 incoming: Box::new(side("1.23 KB")),
@@ -315,6 +323,7 @@ mod tests {
     fn folder() -> Fields {
         Fields {
             name: "Reports".into(),
+            folder: None,
             subject: Subject::Folder,
             icon: Some(Canvas::new(32, 32)),
             many: true,
@@ -398,6 +407,27 @@ mod tests {
         assert_eq!(client(&fields, &text, px, TextUnits::ONE), (413, 138));
         assert_eq!(fields.title(), "Confirm Folder Replace");
         assert_eq!(file().title(), "Confirm File Replace");
+    }
+
+    /// A file inside a folder merge names the folder holding it under the merged one.
+    #[test]
+    fn a_file_inside_a_merge_names_its_folder() {
+        let (text, px) = rend();
+        let mut inside = file();
+        inside.folder = Some("Reports/2024".into());
+        let f = form(&inside, &text, px, TextUnits::ONE);
+        let line0 = |f: &Form| match &f.item("line0").expect("the first line").control {
+            form::Control::Label { text, .. } => text.clone(),
+            other => panic!("a label, not {other:?}"),
+        };
+        assert_eq!(
+            line0(&f),
+            "The folder 'Reports/2024' already contains a file named 'notes.txt'."
+        );
+        assert_eq!(
+            line0(&form(&file(), &text, px, TextUnits::ONE)),
+            "This folder already contains a file named 'notes.txt'."
+        );
     }
 
     /// A long name widens the prompt, and the buttons stay at its right.
