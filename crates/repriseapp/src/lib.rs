@@ -372,17 +372,11 @@ pub use reprisefs::fileclip::FileClip;
 
 /// Run `argv` as a process of its own in working directory `dir` (the caller's when `None`), no
 /// shell between, reaped in the background: a [`Reply::spawn`] for a caller that needs the exec's
-/// error, as a program file that will not start reports it. A `scope` moves it into that app scope
-/// after the exec ([`reprisefs::scope::adopt`]), off the caller's thread.
+/// error, as a program file that will not start reports it. With a `scope` the child waits before
+/// its exec until it is in that app scope ([`reprisefs::scope::hold`]), so this blocks on the
+/// session bus.
 pub fn spawn_in(argv: &[OsString], dir: Option<&Path>, scope: Option<&str>) -> std::io::Result<()> {
-    let scope = scope.map(str::to_owned);
-    spawn_then(argv, dir, move |pid| {
-        if let Some(app) = scope
-            && let Err(e) = reprisefs::scope::adopt(pid, &app)
-        {
-            log::warn!("app scope for {app}: {e}");
-        }
-    })
+    spawn_then(argv, dir, scope, |_| {})
 }
 
 /// [`spawn_in`]'s spawn, running `then` with the child's pid on the reaper thread before the
@@ -390,6 +384,7 @@ pub fn spawn_in(argv: &[OsString], dir: Option<&Path>, scope: Option<&str>) -> s
 fn spawn_then(
     argv: &[OsString],
     dir: Option<&Path>,
+    scope: Option<&str>,
     then: impl FnOnce(u32) + Send + 'static,
 ) -> std::io::Result<()> {
     let Some((program, args)) = argv.split_first() else {
@@ -406,6 +401,9 @@ fn spawn_then(
         .stderr(Stdio::null());
     if let Some(dir) = dir {
         c.current_dir(dir);
+    }
+    if let Some(app) = scope {
+        reprisefs::scope::hold(&mut c, app)?;
     }
     let mut child = c.spawn()?;
     std::thread::spawn(move || {
@@ -4067,7 +4065,7 @@ mod tests {
     #[test]
     fn a_spawned_program_is_handed_over_unreaped_as_this_process_s_child() {
         let (tx, rx) = std::sync::mpsc::channel();
-        spawn_then(&["true".into()], None, move |pid| {
+        spawn_then(&["true".into()], None, None, move |pid| {
             let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).unwrap_or_default();
             let ppid = stat
                 .rsplit(") ")

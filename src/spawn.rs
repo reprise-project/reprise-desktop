@@ -605,8 +605,7 @@ pub fn spawn_argv_in<S: AsRef<std::ffi::OsStr> + std::fmt::Debug>(
 
 /// [`spawn_argv_in`] that hands back the pid, or why the program did not start (the exec's own
 /// error, such as a missing interpreter). Waits for the exec, so a program on a hung mount blocks
-/// the caller. Without an `app` it starts unscoped, as behind `systemd-run` the error would be
-/// systemd-run's; the caller then [`reprisefs::scope::adopt`]s the pid.
+/// the caller. Without an `app` it starts unscoped.
 pub fn try_spawn_argv_in<S: AsRef<std::ffi::OsStr> + std::fmt::Debug>(
     argv: &[S],
     app: Option<&str>,
@@ -614,13 +613,7 @@ pub fn try_spawn_argv_in<S: AsRef<std::ffi::OsStr> + std::fmt::Debug>(
     env: &SessionEnv,
     launch: Option<&Launch>,
 ) -> std::io::Result<u32> {
-    let Some(program) = argv.first() else {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::InvalidInput,
-            "empty command line",
-        ));
-    };
-    let what = program.as_ref().to_string_lossy();
+    let what = first(argv)?.as_ref().to_string_lossy();
     let name = log_name(app, &what);
     let argv = reprisefs::scope::in_scope(argv, app);
     let mut c = command_argv(&argv[0], &argv[1..], env, launch);
@@ -628,6 +621,31 @@ pub fn try_spawn_argv_in<S: AsRef<std::ffi::OsStr> + std::fmt::Debug>(
         c.current_dir(dir);
     }
     start(c, &what, Some(&name))
+}
+
+/// [`try_spawn_argv_in`] in `app`'s scope without `systemd-run` in front, whose error would hide
+/// the exec's: the child waits before its exec until it is in the scope
+/// ([`reprisefs::scope::hold`]), so this also waits on the session bus. For off the loop.
+pub fn try_spawn_held<S: AsRef<std::ffi::OsStr> + std::fmt::Debug>(
+    argv: &[S],
+    app: &str,
+    dir: Option<&std::path::Path>,
+    env: &SessionEnv,
+    launch: Option<&Launch>,
+) -> std::io::Result<u32> {
+    let what = first(argv)?.as_ref().to_string_lossy();
+    let name = log_name(Some(app), &what);
+    let mut c = command_argv(&argv[0], &argv[1..], env, launch);
+    if let Some(dir) = dir {
+        c.current_dir(dir);
+    }
+    reprisefs::scope::hold(&mut c, app)?;
+    start(c, &what, Some(&name))
+}
+
+fn first<S>(argv: &[S]) -> std::io::Result<&S> {
+    argv.first()
+        .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidInput, "empty command line"))
 }
 
 /// The journal identifier of a spawned program: its desktop entry id, else its file name.
