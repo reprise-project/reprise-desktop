@@ -97,6 +97,7 @@ impl Explorer {
                 ..Default::default()
             };
         }
+        let browsed = self.take_browse(ctx);
         let mut dirty = tipped
             | self.take_fills(ctx)
             | self.list_icons.take(&mut self.sv.entries, &mut ctx.icons);
@@ -146,10 +147,10 @@ impl Explorer {
                 self.show_tip(ctx);
             }
         }
-        if dirty {
-            Reply::redraw()
-        } else {
-            Reply::none()
+        Reply {
+            redraw: dirty || browsed,
+            redraw_all: browsed,
+            ..Default::default()
         }
     }
 

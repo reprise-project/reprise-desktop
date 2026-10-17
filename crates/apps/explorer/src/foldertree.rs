@@ -18,6 +18,25 @@ pub struct Inputs<'a> {
     pub drive_mounts: &'a [PathBuf],
 }
 
+/// [`Inputs`] owned, for a read on a listing thread.
+pub struct World {
+    pub show_hidden: bool,
+    pub drives: Vec<reprisefs::places::Drive>,
+    pub volumes: reprisefs::udisks::Snapshot,
+    pub drive_mounts: Vec<PathBuf>,
+}
+
+impl World {
+    pub fn inputs(&self) -> Inputs<'_> {
+        Inputs {
+            show_hidden: self.show_hidden,
+            drives: &self.drives,
+            volumes: &self.volumes,
+            drive_mounts: &self.drive_mounts,
+        }
+    }
+}
+
 /// The shell places under the Desktop, in the tree's order (the address drop's too), ahead of the Desktop folder's own subfolders.
 pub const DESKTOP_PLACES: [Place; 4] = [
     Place::Documents,
@@ -104,6 +123,9 @@ pub fn fill(
     let kids = read_kids(&places[node.id as usize], inp, &known);
     fill_with(tree, places, path, kids, inp, icons);
 }
+
+/// The children of the places a walk fills ([`to_fill`]), read ahead for [`follow_with`].
+pub type Chain = Vec<(Place, Kids)>;
 
 /// A node's children as [`read_kids`] read them: label, place, and whether the child opens
 /// (`None` for one the node already held, which keeps its own).
@@ -300,20 +322,7 @@ pub fn refill_path(
     (!(n.children.is_empty() && n.has_children)).then_some(path)
 }
 
-/// Walk the tree down to `place`, expanding and filling what it takes, and select it. The chain is
-/// [`Place::chain_in`] over the cached mounts, so a folder is reached through Computer and the drive
-/// whose mount owns it. The caller scrolls the selection into view.
-pub fn follow(
-    tree: &mut TreeView,
-    places: &mut Vec<Place>,
-    place: &Place,
-    inp: &Inputs,
-    icons: &mut IconCache,
-) {
-    follow_with(tree, places, place, inp, icons, Vec::new());
-}
-
-/// The places whose nodes [`follow`] fills on its way to `place`: from the first one not yet
+/// The places whose nodes [`follow_with`] fills on its way to `place`: from the first one not yet
 /// read, every place left on the chain.
 pub fn to_fill(tree: &TreeView, places: &[Place], place: &Place, mounts: &[PathBuf]) -> Vec<Place> {
     let chain = place.chain_in(mounts);
@@ -333,14 +342,17 @@ pub fn to_fill(tree: &TreeView, places: &[Place], place: &Place, mounts: &[PathB
     Vec::new()
 }
 
-/// [`follow`], filling a node from `read` ([`read_kids`] of its place) when it holds the place.
+/// Walk the tree down to `place`, expanding and filling what it takes, and select it. The chain is
+/// [`Place::chain_in`] over the cached mounts, so a folder is reached through Computer and the drive
+/// whose mount owns it. The caller scrolls the selection into view.
+/// A node whose place `read` holds ([`read_kids`] of it) fills from there; any other is read here.
 pub fn follow_with(
     tree: &mut TreeView,
     places: &mut Vec<Place>,
     place: &Place,
     inp: &Inputs,
     icons: &mut IconCache,
-    mut read: Vec<(Place, Kids)>,
+    mut read: Chain,
 ) {
     let chain = place.chain_in(inp.drive_mounts);
     let mut path: Vec<usize> = Vec::new();
@@ -405,7 +417,7 @@ mod tests {
         let mut places: Vec<Place> = Vec::new();
         build(&mut tree, &mut places, &inp, &mut icons);
         let c = Place::Folder(home.path().join("b/c"));
-        follow(&mut tree, &mut places, &c, &inp, &mut icons);
+        follow_with(&mut tree, &mut places, &c, &inp, &mut icons, Vec::new());
 
         std::fs::create_dir(home.path().join("a")).expect("mkdir a");
         let here = Place::Folder(home.path().to_path_buf());
@@ -534,7 +546,7 @@ mod tests {
         );
     }
 
-    /// `follow` walks Desktop, Computer and the "/" drive down to a deep folder, expanding and
+    /// `follow_with` walks Desktop, Computer and the "/" drive down to a deep folder, expanding and
     /// selecting it, so the same walk works for the Move/Copy picker's tree.
     #[test]
     fn follow_opens_and_picks_a_nested_folder() {
@@ -565,7 +577,14 @@ mod tests {
         build(&mut tree, &mut places, &inp, &mut icons);
 
         let target = Place::Folder(home.path().join("a/b"));
-        follow(&mut tree, &mut places, &target, &inp, &mut icons);
+        follow_with(
+            &mut tree,
+            &mut places,
+            &target,
+            &inp,
+            &mut icons,
+            Vec::new(),
+        );
 
         assert_eq!(
             tree.selected

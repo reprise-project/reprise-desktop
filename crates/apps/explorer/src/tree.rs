@@ -3,7 +3,7 @@ use crate::place::Place;
 use crate::{Explorer, LIST_WAIT};
 use repriseapp::Ctx;
 use repriseapp::listjob::Job;
-use reprisekit::controls::treeview;
+use reprisekit::controls::treeview::{self, TreeView};
 use std::path::PathBuf;
 
 impl Explorer {
@@ -60,28 +60,59 @@ impl Explorer {
         path: &[usize],
         place: Place,
     ) -> impl FnOnce() -> Kids + Send + 'static {
-        let known: Vec<Place> = self
-            .tree
+        self.kids_reader_in(&self.tree, &self.tree_places, path, place)
+    }
+
+    /// [`Explorer::kids_reader`] for a node of another tree over this window's places (the
+    /// Move/Copy picker's).
+    pub(crate) fn kids_reader_in(
+        &self,
+        tree: &TreeView,
+        places: &[Place],
+        path: &[usize],
+        place: Place,
+    ) -> impl FnOnce() -> Kids + Send + 'static {
+        let known: Vec<Place> = tree
             .node(path)
             .map(|n| {
                 n.children
                     .iter()
-                    .map(|c| self.tree_places[c.id as usize].clone())
+                    .map(|c| places[c.id as usize].clone())
                     .collect()
             })
             .unwrap_or_default();
-        let show_hidden = self.settings.show_hidden;
-        let (drives, volumes) = (self.drives.clone(), self.volumes.clone());
-        let mounts = self.drive_mounts.clone();
+        let world = self.tree_world();
         move || {
-            let inp = Inputs {
-                show_hidden,
-                drives: &drives,
-                volumes: &volumes,
-                drive_mounts: &mounts,
-            };
             let known: Vec<&Place> = known.iter().collect();
-            foldertree::read_kids(&place, &inp, &known)
+            foldertree::read_kids(&place, &world.inputs(), &known)
+        }
+    }
+
+    /// The children of each place of `chain` ([`foldertree::to_fill`]) for a thread, for
+    /// [`foldertree::follow_with`].
+    pub(crate) fn chain_reader(
+        &self,
+        chain: Vec<Place>,
+    ) -> impl FnOnce() -> foldertree::Chain + Send + 'static {
+        let world = self.tree_world();
+        move || {
+            let inp = world.inputs();
+            chain
+                .into_iter()
+                .map(|p| {
+                    let kids = foldertree::read_kids(&p, &inp, &[]);
+                    (p, kids)
+                })
+                .collect()
+        }
+    }
+
+    fn tree_world(&self) -> foldertree::World {
+        foldertree::World {
+            show_hidden: self.settings.show_hidden,
+            drives: self.drives.clone(),
+            volumes: self.volumes.clone(),
+            drive_mounts: self.drive_mounts.clone(),
         }
     }
 
