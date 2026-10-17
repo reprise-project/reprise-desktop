@@ -4,7 +4,9 @@ use reprisekit::controls::form::{self, Control, Form, Item};
 use reprisekit::controls::hotkey::{Chord, HotKey};
 use reprisekit::raster::Rect;
 
-use crate::model::{ACTIONS, Shortcut, check_keys, check_program_keys};
+use repriseconf::keybind::NONE;
+
+use crate::model::{ACTIONS, Shortcut, check_keys, check_program_keys, default_chord};
 
 pub const CLIENT: (i32, i32) = (320, 160);
 
@@ -31,6 +33,12 @@ const HINT: [&str; 2] = [
     "Press the keys in the field, as in Super+Shift+B.",
     "Backspace or Clear empties it.",
 ];
+
+/// The action list: the compositor's actions, then "none", which unbinds a
+/// default's chord.
+fn choices() -> Vec<&'static str> {
+    ACTIONS.iter().copied().chain([NONE]).collect()
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Outcome {
@@ -65,7 +73,9 @@ impl ShortcutDialog {
             Some(sc) => ("Edit Shortcut", sc.clone()),
             None => ("Add Shortcut", Shortcut::new("", ACTIONS[1], "")),
         };
-        let selected = ACTIONS.iter().position(|a| *a == sc.action).unwrap_or(1);
+        let selected = (choices().iter())
+            .position(|a| *a == sc.action)
+            .unwrap_or(1);
         let items = vec![
             label("keys_l", ROW_Y[0], "&Keys:"),
             Item::new(
@@ -78,7 +88,7 @@ impl ShortcutDialog {
             Item::new(
                 "action",
                 Rect::new(FIELD_X, ROW_Y[1], FIELD_W, 21),
-                Control::Combo(Combo::new(&ACTIONS, selected, 8)),
+                Control::Combo(Combo::new(&choices(), selected, 8)),
             ),
             label("command_l", ROW_Y[2], "&Command:"),
             edit("command", ROW_Y[2], &sc.command, sc.action == "spawn"),
@@ -161,8 +171,9 @@ impl ShortcutDialog {
 
     pub fn conflict(&self) -> Option<&Shortcut> {
         let chord = self.hotkey()?.value.as_ref()?;
-        self.others
-            .iter()
+        // A "none" row leaves its chord free.
+        (self.others.iter())
+            .filter(|o| o.action != NONE)
             .find(|o| Chord::parse(&o.keys).is_some_and(|c| c.same(chord)))
     }
 
@@ -174,6 +185,7 @@ impl ShortcutDialog {
         check_keys(&v.keys).is_ok()
             && self.conflict().is_none()
             && (v.action != "spawn" || !v.command.is_empty())
+            && (v.action != NONE || default_chord(&v.keys))
     }
 
     /// The note's two lines: the taken keys' owner, keys the compositor
@@ -198,6 +210,10 @@ impl ShortcutDialog {
         };
         match checked {
             Err(why) if !keys.is_empty() => [why, String::new()],
+            Ok(()) if !self.program && self.action() == NONE && !default_chord(&keys) => [
+                "Only a default shortcut can be set to none.".into(),
+                "Remove a shortcut you added instead.".into(),
+            ],
             _ => HINT.map(String::from),
         }
     }
@@ -286,7 +302,7 @@ mod tests {
 
     fn pick(d: &mut ShortcutDialog, action: &str) -> Outcome {
         if let Some(Control::Combo(c)) = d.form.item_mut("action").map(|i| &mut i.control) {
-            c.selected = ACTIONS.iter().position(|a| *a == action).unwrap();
+            c.selected = choices().iter().position(|a| *a == action).unwrap();
         }
         d.event(form::Event::Changed("action"))
     }
@@ -407,6 +423,35 @@ mod tests {
         pick(&mut d, "close");
         assert!(!enabled(&d, "command"));
         assert_eq!(d.value(), Shortcut::new("Super+t", "close", ""));
+    }
+
+    #[test]
+    fn none_unbinds_a_default_chord_and_only_a_default_chord() {
+        let sc = Shortcut::new("Super+q", "close", "");
+        let mut d = ShortcutDialog::new(Some(&sc), Vec::new());
+        pick(&mut d, "none");
+        assert!(!enabled(&d, "command"));
+        assert_eq!(
+            d.event(form::Event::Default),
+            Outcome::Accept(Shortcut::new("Super+q", "none", ""))
+        );
+        chord(&mut d, &[(SUPER_L, "Super_L"), (0x78, "x")]);
+        assert!(!enabled(&d, OK), "Super+x is no default");
+        assert_eq!(note(&d)[0], "Only a default shortcut can be set to none.");
+        pick(&mut d, "lock");
+        assert!(enabled(&d, OK));
+        assert_eq!(note(&d), HINT);
+    }
+
+    #[test]
+    fn a_none_rows_keys_are_free_and_it_opens_on_none() {
+        let none = Shortcut::new("Super+q", "none", "");
+        let d = ShortcutDialog::new(Some(&none), Vec::new());
+        assert_eq!(d.value(), none);
+        let mut d = ShortcutDialog::new(None, vec![none]);
+        chord(&mut d, &[(SUPER_L, "Super_L"), (0x71, "q")]);
+        assert!(d.conflict().is_none());
+        assert!(enabled(&d, OK));
     }
 
     #[test]
