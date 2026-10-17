@@ -2794,3 +2794,33 @@ fn a_drive_scan_that_answers_late_lands_on_a_later_wake() {
         "the mount table it scanned is kept"
     );
 }
+
+/// The opening drive scan runs on a listing thread too: a window opened while a mount does not
+/// answer lists its folder and takes the drives on the wake after the scan lands.
+#[test]
+fn the_opening_drive_scan_that_answers_late_lands_on_a_later_wake() {
+    let dir = tempfile::tempdir().expect("a temp dir");
+    std::fs::write(dir.path().join("one.txt"), "1").expect("write");
+    let mut ctx = test_ctx();
+    let scanned = reprisefs::places::drives();
+    let start = Place::Folder(dir.path().to_path_buf());
+    let mut ex = Explorer::unopened(
+        start.clone(),
+        Settings::default(),
+        Vec::new(),
+        None,
+        &mut ctx,
+    );
+
+    let gate = Arc::new(std::sync::RwLock::new(()));
+    let closed = gate.write().expect("lock");
+    ex.held = Some(gate.clone());
+    ex.first_show(start, &mut ctx);
+    assert!(ex.drives.is_empty(), "the drives wait for the scan");
+    assert!(ex.scanning.is_some());
+    wake_until(&mut ex, &mut ctx, |ex| ex.items.len() == 1);
+    drop(closed);
+    ex.held = None;
+    wake_until(&mut ex, &mut ctx, |ex| ex.scanning.is_none());
+    assert_eq!(ex.drives, scanned);
+}
