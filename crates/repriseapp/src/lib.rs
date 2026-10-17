@@ -372,8 +372,26 @@ pub use reprisefs::fileclip::FileClip;
 
 /// Run `argv` as a process of its own in working directory `dir` (the caller's when `None`), no
 /// shell between, reaped in the background: a [`Reply::spawn`] for a caller that needs the exec's
-/// error, as a program file that will not start reports it.
-pub fn spawn_in(argv: &[OsString], dir: Option<&Path>) -> std::io::Result<()> {
+/// error, as a program file that will not start reports it. A `scope` moves it into that app scope
+/// after the exec ([`reprisefs::scope::adopt`]), off the caller's thread.
+pub fn spawn_in(argv: &[OsString], dir: Option<&Path>, scope: Option<&str>) -> std::io::Result<()> {
+    let scope = scope.map(str::to_owned);
+    spawn_then(argv, dir, move |pid| {
+        if let Some(app) = scope
+            && let Err(e) = reprisefs::scope::adopt(pid, &app)
+        {
+            log::warn!("app scope for {app}: {e}");
+        }
+    })
+}
+
+/// [`spawn_in`]'s spawn, running `then` with the child's pid on the reaper thread before the
+/// wait, so the pid cannot be reused under it.
+fn spawn_then(
+    argv: &[OsString],
+    dir: Option<&Path>,
+    then: impl FnOnce(u32) + Send + 'static,
+) -> std::io::Result<()> {
     let Some((program, args)) = argv.split_first() else {
         return Err(std::io::Error::new(
             std::io::ErrorKind::InvalidInput,
@@ -390,6 +408,7 @@ pub fn spawn_in(argv: &[OsString], dir: Option<&Path>) -> std::io::Result<()> {
     }
     let mut child = c.spawn()?;
     std::thread::spawn(move || {
+        then(child.id());
         let _ = child.wait();
     });
     Ok(())
@@ -2315,7 +2334,7 @@ impl Host {
     }
 
     fn spawn(&mut self, argv: &[OsString]) {
-        if let Err(e) = spawn_in(argv, None) {
+        if let Err(e) = spawn_in(argv, None, None) {
             log::warn!("spawn {argv:?}: {e}");
         }
     }
@@ -4021,6 +4040,22 @@ pub(crate) fn main_wanted(hidden: bool, have: bool) -> Option<bool> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_spawned_program_is_handed_over_unreaped_as_this_process_s_child() {
+        let (tx, rx) = std::sync::mpsc::channel();
+        spawn_then(&["true".into()], None, move |pid| {
+            let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).unwrap_or_default();
+            let ppid = stat
+                .rsplit(") ")
+                .next()
+                .and_then(|rest| rest.split(' ').nth(1));
+            tx.send(ppid.map(str::to_owned)).unwrap();
+        })
+        .unwrap();
+        let ppid = rx.recv_timeout(std::time::Duration::from_secs(5)).unwrap();
+        assert_eq!(ppid, Some(std::process::id().to_string()));
+    }
 
     struct Kept {
         kept: (i32, i32),

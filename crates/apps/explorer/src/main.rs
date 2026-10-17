@@ -1022,11 +1022,13 @@ impl Explorer {
         }
     }
 
-    /// Run the program file at `path` in its own folder; one that does not start gets a message box.
+    /// Run the program file at `path` in its own folder and an app scope named after it; one that
+    /// does not start gets a message box.
     fn run_program(&mut self, path: &Path, ctx: &mut Ctx) -> Reply {
         let terminal = repriseconf::terminal();
         let argv = reprisefs::program::run_argv(path, &terminal, repriseconf::script_terminal());
-        match argv.and_then(|argv| repriseapp::spawn_in(&argv, path.parent())) {
+        let scope = path.file_name().map(|n| n.to_string_lossy());
+        match argv.and_then(|argv| repriseapp::spawn_in(&argv, path.parent(), scope.as_deref())) {
             Ok(()) => Reply::redraw(),
             Err(e) => {
                 log::warn!("run {}: {e}", path.display());
