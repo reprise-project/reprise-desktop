@@ -4832,6 +4832,23 @@ fn render(theme: &Theme, with_blue: bool) -> Canvas {
         }
     }
 
+    {
+        c.fill_rect(Rect::new(670, 9823, 270, 190), cs.background);
+        let sv = shellview::sample(shellview::Mode::List, false);
+        let lay = shellview::layout(&sv, Rect::new(0, 0, 250, 150), &theme.controls());
+        let rows: Vec<shellview::DragRow> = [2, 3, 5]
+            .iter()
+            .map(|&index| shellview::DragRow {
+                index,
+                icon: sv.entries[index].icon.as_deref(),
+            })
+            .collect();
+        let at = (lay.cells[2].x + 30, lay.cells[2].y + 8);
+        if let Some((img, _)) = shellview::drag_image(theme, &text, &sv, &lay, &rows, at) {
+            c.blit_over(690, 9843, &img);
+        }
+    }
+
     if with_blue {
         let blue_theme = interfaces::theme_for(Interface::Blue);
         c.fill_rect(Rect::new(0, 9575, 950, 238), cs.background);

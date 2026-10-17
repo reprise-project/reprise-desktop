@@ -44,7 +44,7 @@ pub const GROUP_H: i32 = 31;
 const GROUP_TITLE_H: i32 = 19;
 pub const ICON_PX: i32 = 16;
 /// The name column: icon 2 px in, text 2 px after it; other columns' text and the header text 6 px in.
-const ICON_X: i32 = 2;
+pub(crate) const ICON_X: i32 = 2;
 const NAME_X: i32 = ICON_X + ICON_PX + 2;
 const CELL_X: i32 = 6;
 const HEADER_TEXT_X: i32 = 6;

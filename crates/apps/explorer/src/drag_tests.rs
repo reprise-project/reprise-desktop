@@ -869,17 +869,11 @@ fn the_drag_image_draws_again_at_another_scale() {
     assert!(b > r, "scale 2 wears the 64 px folder");
 }
 
-/// At a larger text size every mode's image is made of whole grown icon cells inside the grown square: the dragged cells in the icon modes, the pressed entry's centred on the press in List and Details.
+/// At a larger text size an icon mode's image is made of the dragged whole grown icon cells inside the grown square.
 #[test]
 fn the_drag_image_grows_with_the_text_size() {
     const EXPECTED_CELL: [(u32, (i32, i32)); 2] = [(150, (116, 95)), (200, (150, 112))];
-    let modes = [
-        Mode::Icons,
-        Mode::Tiles,
-        Mode::Thumbnails,
-        Mode::List,
-        Mode::Details,
-    ];
+    let modes = [Mode::Icons, Mode::Tiles, Mode::Thumbnails];
     for (pct, (w, h)) in EXPECTED_CELL {
         for mode in modes {
             let mut ctx = test_ctx();
@@ -892,17 +886,13 @@ fn the_drag_image_grows_with_the_text_size() {
             let (img, grab) = ex.drag_image(&mut ctx, 1).expect("an image");
             let side = 256 * pct as i32 / 100;
             let window = Rect::new(at.0 - side / 2, at.1 - side / 2, side, side);
-            let bounds = if matches!(mode, Mode::List | Mode::Details) {
-                Rect::new(at.0 - w / 2, at.1 - h / 2, w, h)
-            } else {
-                ["a.txt", "Box", "Crate"]
-                    .iter()
-                    .map(|n| cell(&ex, &ctx, index_of(&ex, n)))
-                    .map(|c| Rect::new(c.x, c.y, w, h))
-                    .filter(|c| window.intersect(c) == *c)
-                    .reduce(|a, b| a.union(&b))
-                    .expect("a whole cell")
-            };
+            let bounds = ["a.txt", "Box", "Crate"]
+                .iter()
+                .map(|n| cell(&ex, &ctx, index_of(&ex, n)))
+                .map(|c| Rect::new(c.x, c.y, w, h))
+                .filter(|c| window.intersect(c) == *c)
+                .reduce(|a, b| a.union(&b))
+                .expect("a whole cell");
             assert_eq!(
                 (img.width as i32, img.height as i32),
                 (bounds.width, bounds.height),
@@ -913,6 +903,47 @@ fn the_drag_image_grows_with_the_text_size() {
                 (at.0 - bounds.x, at.1 - bounds.y),
                 "{mode:?} at {pct}%"
             );
+        }
+    }
+}
+
+/// A List or Details drag of several rows carries every dragged row where it sits, at 100% and grown,
+/// held where the press landed: two of three rows dragged make an image three rows tall.
+#[test]
+fn a_rows_drag_image_carries_every_dragged_row() {
+    for pct in [100, 150] {
+        for mode in [Mode::List, Mode::Details] {
+            let mut ctx = test_ctx();
+            ctx.theme = reprisekit::theme::Theme::default().with_text_size(pct);
+            let (_dir, mut ex) = explorer(&mut ctx);
+            ex.sv.mode = mode;
+            let rows: Vec<Rect> = ["Box", "Crate", "a.txt"]
+                .iter()
+                .map(|n| cell(&ex, &ctx, index_of(&ex, n)))
+                .collect();
+            assert!(
+                rows[0].y < rows[1].y && rows[1].y < rows[2].y,
+                "{mode:?}: one row each"
+            );
+            select(&mut ex, &["Box", "a.txt"]);
+            let at = centre(&ex, &ctx, index_of(&ex, "a.txt"));
+            press(&mut ex, &mut ctx, at, BTN_LEFT);
+            let (img, grab) = ex.drag_image(&mut ctx, 1).expect("an image");
+            let top = rows[0].y;
+            assert_eq!(
+                img.height as i32,
+                rows[2].bottom() - top,
+                "{mode:?} at {pct}%"
+            );
+            assert_eq!(grab.1, at.1 - top, "{mode:?} at {pct}%");
+            // The test theme has no icons: a row is drawn when its name's ink is.
+            let inked = |r: &Rect| {
+                (r.y - top..r.bottom() - top)
+                    .any(|y| (0..img.width as i32).any(|x| img.get(x, y) >> 24 > 0))
+            };
+            assert!(inked(&rows[0]), "{mode:?} at {pct}%: Box drawn");
+            assert!(!inked(&rows[1]), "{mode:?} at {pct}%: Crate left out");
+            assert!(inked(&rows[2]), "{mode:?} at {pct}%: a.txt drawn");
         }
     }
 }
