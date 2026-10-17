@@ -44,6 +44,7 @@ use reprisekit::{
 };
 use reprisekit::{controls::menu, controls::treeview};
 
+/// The task pane's width and its gap to the view at 100% text; both grow with the text.
 const TASK_W: i32 = 200;
 const TASK_VIEW_GAP: i32 = 10;
 /// Fixed widths of the status bar's size and zone panels.
@@ -125,12 +126,12 @@ pub fn layout(
     let height = (bottom - top).max(0);
 
     let (bar, tree, tasks, view_x) = if !settings.folders {
-        let w = TASK_W.min(client.width);
+        let w = cm.text.len(TASK_W).min(client.width);
         (
             None,
             None,
             Some(Rect::new(client.x, top, w, height)),
-            (client.x + w + TASK_VIEW_GAP).min(client.right()),
+            (client.x + w + cm.text.len(TASK_VIEW_GAP)).min(client.right()),
         )
     } else {
         let frame = Rect::new(
@@ -823,6 +824,21 @@ mod tests {
         assert_eq!(lay.tasks, Some(Rect::new(0, 83, 200, 490)));
         // Past the pane's 10 px of white.
         assert_eq!(lay.view.inset(FIELD_PAD).x, 210);
+    }
+
+    #[test]
+    fn the_task_pane_and_its_gap_widen_with_the_text_size() {
+        let s = Settings {
+            folders: false,
+            status_bar: false,
+            ..Settings::default()
+        };
+        for (px, w, view_x) in [(17, 309, 324), (22, 400, 420)] {
+            let cm = ControlMetrics::CLASSIC.grown(reprisekit::theme::TextUnits::new(px, 11));
+            let lay = layout(client(), &s, 200, statusbar::HEIGHT, &cm);
+            assert_eq!(lay.tasks.expect("task pane").width, w, "{px} px text");
+            assert_eq!(lay.view.inset(FIELD_PAD).x, view_x, "{px} px text");
+        }
     }
 
     /// Blue's rebar is 86 px with no closing line; the task pane starts under it.
