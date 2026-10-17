@@ -1792,7 +1792,7 @@ fn paste_on_a_folder_lands_the_clipboards_files_inside_it() {
         .position(|it| it.is_dir)
         .expect("Sub is listed");
 
-    ex.entry_menu_at(folder, (0, 0), &mut ctx);
+    ex.entry_menu_at(folder, (0, 0), &mut ctx, false);
     let reply = ex.run(Command::PasteOnItem, &mut ctx);
     assert!(reply.paste_files, "the clipboard was asked for");
     ex.pasted(
@@ -1812,7 +1812,7 @@ fn paste_on_a_folder_lands_the_clipboards_files_inside_it() {
         "a copy leaves the source"
     );
 
-    ex.entry_menu_at(folder, (0, 0), &mut ctx);
+    ex.entry_menu_at(folder, (0, 0), &mut ctx, false);
     ex.run(Command::PasteOnItem, &mut ctx);
     ex.go(Place::Computer, &mut ctx);
     ex.pasted(
@@ -1849,7 +1849,7 @@ fn paste_on_a_launcher_opens_the_clipboards_files_in_its_program() {
         .position(|it| it.shortcut.is_some())
         .expect("the launcher is listed");
 
-    ex.entry_menu_at(launcher, (0, 0), &mut ctx);
+    ex.entry_menu_at(launcher, (0, 0), &mut ctx, false);
     let reply = ex.run(Command::PasteOnItem, &mut ctx);
     assert!(reply.paste_files, "the clipboard was asked for");
     let paths = vec![dir.path().join("a.txt"), PathBuf::from("/srv/b.txt")];

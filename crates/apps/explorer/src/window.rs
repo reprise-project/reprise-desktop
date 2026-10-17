@@ -442,9 +442,16 @@ pub struct Popup {
 
 impl Popup {
     /// Opens `menu` at `at`, pushed back inside `client` if it would overhang.
-    pub fn new(at: (i32, i32), menu: crate::commands::Menu, client: Rect, ctx: &Ctx) -> Popup {
+    /// `by_keyboard` (Shift+F10, the Menu key) picks its first row and underlines its keys.
+    pub fn new(
+        at: (i32, i32),
+        menu: crate::commands::Menu,
+        client: Rect,
+        ctx: &Ctx,
+        by_keyboard: bool,
+    ) -> Popup {
         let tree = menu.tree();
-        let chain = menu::PopupMenu::open(&tree, at, &popup_ctx(ctx, client), false);
+        let chain = menu::PopupMenu::open(&tree, at, &popup_ctx(ctx, client), by_keyboard);
         Popup {
             menu,
             tree,
