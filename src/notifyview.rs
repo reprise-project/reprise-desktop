@@ -34,7 +34,7 @@ use crate::compositor::{DeskScene, SceneOwner, State};
 use crate::config::EffectsConfig;
 use crate::dialogview::DialogKey;
 use crate::glass::{Backdrop, GlassCtx, Pane, PaneShape};
-use crate::input::BTN_LEFT;
+use crate::input::{BTN_LEFT, Hit, Interaction};
 use crate::notifylog::Log;
 use crate::output::upload_scaled;
 use crate::raster::{Canvas, Rect};
@@ -1341,16 +1341,46 @@ fn lay_scale(state: &State) -> i32 {
 /// The pointer moved, `over` the stack or not: the part under it lights (on a sheet, its close
 /// button too) and sheets hold their clocks; crossing the replying balloon restarts `REPLY_IDLE`.
 pub fn hover(state: &mut State, x: f64, y: f64, over: bool) {
-    let (mut dirty, touched) = point_at(&mut state.notify, x, y, over, Instant::now());
-    dirty |= aim_open(state);
+    let (dirty, touched) = point_at(&mut state.notify, x, y, over, Instant::now());
+    show_marks(state, dirty);
+    if touched {
+        reply_touched(state);
+    }
+}
+
+/// The stack came to rest under the still pointer: the sheet now under it lights as on a move,
+/// and one slid away from it goes dark. A crossing it did not make leaves `REPLY_IDLE` alone.
+fn rehover(state: &mut State) {
+    if !sheets(state) || !matches!(state.interaction, Interaction::Idle) {
+        return;
+    }
+    let p = state.pointer_location();
+    let over = matches!(state.scene_hit(p), Hit::Notification);
+    if let Some((dirty, _)) = rest_point(&mut state.notify, p.x, p.y, over, Instant::now()) {
+        show_marks(state, dirty);
+    }
+}
+
+/// `point_at` once nothing in the stack moves, each sheet at rest; `None` while one moves.
+fn rest_point(
+    v: &mut NotifyView,
+    x: f64,
+    y: f64,
+    over: bool,
+    now: Instant,
+) -> Option<(bool, bool)> {
+    still(v, now).then(|| point_at(v, x, y, over, now))
+}
+
+/// Turns the Droplets and the clocks after `point_at`, and repaints when its marks or an opening
+/// changed.
+fn show_marks(state: &mut State, dirty: bool) {
+    let dirty = aim_open(state) | dirty;
     if hold_clocks(state) {
         rearm(state);
     }
     if dirty {
         paint(state);
-    }
-    if touched {
-        reply_touched(state);
     }
 }
 
@@ -1750,11 +1780,18 @@ fn aim_open(state: &mut State) -> bool {
     if !sheets(state) || state.config.glass.notification.shape() != SheetShape::Droplet {
         return false;
     }
-    let (now, e) = (Instant::now(), state.config.effects);
+    aim_stack(
+        &mut state.notify.stack,
+        &state.config.effects,
+        Instant::now(),
+    )
+}
+
+fn aim_stack(stack: &mut [Balloon], e: &EffectsConfig, now: Instant) -> bool {
     let mut turned = false;
-    for b in &mut state.notify.stack {
+    for b in stack {
         let to = open_target(b.pointer_in, b.reply.is_some());
-        turned |= b.motion.aim_open(to, &e, now);
+        turned |= b.motion.aim_open(to, e, now);
     }
     turned
 }
@@ -1927,7 +1964,7 @@ fn join_burst(b: &mut Balloon, n: &Notification, theme: &Theme) {
 }
 
 /// Lays out, places and draws every balloon and the chip, and arms the clocks and the app line
-/// tick for what is drawn.
+/// tick for what is drawn; a stack of sheets at rest then re-checks the still pointer.
 fn paint(state: &mut State) {
     hold_clocks(state);
     rearm(state);
@@ -1961,6 +1998,7 @@ fn paint(state: &mut State) {
     crate::access::touch(state);
     arm_tick(state);
     warm_openings(state);
+    rehover(state);
 }
 
 /// Lays out and places every balloon and the chip. All are drawn, or with `opening_only` just
@@ -2620,6 +2658,12 @@ fn still(v: &NotifyView, now: Instant) -> bool {
         .all(|b| b.motion.settled(now))
 }
 
+/// A tick not `settled` at its start runs once more, so the next one sees the rest and re-checks
+/// the pointer; one settled runs on while a Droplet it opened at `later` moves.
+fn keeps_ticking(v: &NotifyView, settled: bool, later: Instant) -> bool {
+    !settled || !still(v, later)
+}
+
 fn arm_tick(state: &mut State) {
     if state.notify.tick_timer.is_some() || still(&state.notify, Instant::now()) {
         return;
@@ -2641,6 +2685,7 @@ fn arm_tick(state: &mut State) {
 
 /// Redraws the Droplets opening, with the stack following their height and the hold the still
 /// pointer, poses every sheet and takes down those done leaving; true while any still moves.
+/// Once all rest, the still pointer is re-checked as on a move.
 fn tick(state: &mut State) -> bool {
     let now = Instant::now();
     let v = &state.notify;
@@ -2682,11 +2727,16 @@ fn tick(state: &mut State) -> bool {
         destroy(state, b);
     }
     state.redraw_all();
-    let moving = !still(&state.notify, now);
-    let p = state.pointer_location();
-    if !moving && hold_at(&mut state.notify, p.x, p.y, now) && hold_clocks(state) {
-        rearm(state);
+    let settled = still(&state.notify, now);
+    if settled {
+        let p = state.pointer_location();
+        if hold_at(&mut state.notify, p.x, p.y, now) && hold_clocks(state) {
+            rearm(state);
+        }
+        // A Droplet this opens moves on, and `paint` leaves the running tick armed.
+        rehover(state);
     }
+    let moving = keeps_ticking(&state.notify, settled, Instant::now());
     if !moving {
         warm_openings(state);
     }
@@ -3427,6 +3477,161 @@ mod tests {
             f64::from(b.at.0 + c.x - ox + 2),
             f64::from(b.at.1 + c.y - oy + 2),
         )
+    }
+
+    /// The newest sheet closes: the others ease down a slot over 250 ms.
+    fn close_newest(v: &mut NotifyView, pitch: i32, now: Instant) {
+        v.stack.remove(0);
+        for b in &mut v.stack {
+            b.at.1 += pitch;
+            b.motion.slide_by(-f64::from(pitch), now, 250);
+        }
+    }
+
+    #[test]
+    fn a_tick_before_a_slide_ends_runs_once_more_to_re_check_the_pointer() {
+        let mut scene = crate::compositor::DeskScene::new();
+        let (mut v, pitch) = sheets_at(&mut scene);
+        let now = Instant::now();
+        close_newest(&mut v, pitch, now);
+        let (tick, later) = (
+            now + Duration::from_millis(249),
+            now + Duration::from_millis(251),
+        );
+        assert!(
+            keeps_ticking(&v, still(&v, tick), later),
+            "settled after the tick began"
+        );
+        assert!(
+            !keeps_ticking(&v, still(&v, later), later),
+            "the next tick ends it"
+        );
+    }
+
+    #[test]
+    fn a_sheet_slid_out_from_under_a_still_pointer_loses_its_lit_close() {
+        let mut scene = crate::compositor::DeskScene::new();
+        let (mut v, pitch) = sheets_at(&mut scene);
+        let (x, y) = close_spot(&v, 1);
+        let now = Instant::now();
+        point_at(&mut v, x, y, true, now);
+        assert_eq!(v.stack[1].hot, Some(NotifyHit::Close));
+        close_newest(&mut v, pitch, now);
+        assert_eq!(
+            rest_point(&mut v, x, y, true, now),
+            None,
+            "kept while sliding"
+        );
+        let settled = now + Duration::from_millis(300);
+        assert_eq!(rest_point(&mut v, x, y, true, settled), Some((true, false)));
+        assert_eq!(v.stack[0].hot, None, "the sheet slid away is dark");
+        assert!(!v.stack[0].pointer_in);
+    }
+
+    #[test]
+    fn a_sheet_slid_under_a_still_pointer_lights_its_close() {
+        let mut scene = crate::compositor::DeskScene::new();
+        let (mut v, pitch) = sheets_at(&mut scene);
+        let (x, y) = close_spot(&v, 1);
+        let now = Instant::now();
+        point_at(&mut v, x, y, true, now);
+        close_newest(&mut v, pitch, now);
+        rest_point(&mut v, x, y, true, now + Duration::from_millis(300));
+        assert_eq!(v.stack[1].hot, Some(NotifyHit::Close));
+        assert!(v.stack[1].pointer_in && hovered(&v));
+    }
+
+    /// Places and layouts for three Droplets by the taskbar, sheet `open` (if any) open.
+    fn droplet_slots(open: Option<usize>) -> Vec<((i32, i32), Drawn)> {
+        let area = Rect::new(0, 0, 1920, 1040);
+        let drawn: Vec<Drawn> = (0..3)
+            .map(|i| {
+                let t = if open == Some(i) { 1.0 } else { 0.0 };
+                Drawn::Sheet(droplet_at(t, SheetShape::Droplet).0)
+            })
+            .collect();
+        let footprints: Vec<(i32, i32)> = drawn.iter().map(Drawn::footprint).collect();
+        let (spots, _) = place_stack(area, &footprints, None, Edge::Bottom);
+        spots.into_iter().zip(drawn).collect()
+    }
+
+    fn place(v: &mut NotifyView, slots: &[((i32, i32), Drawn)]) {
+        for (b, (at, d)) in v.stack.iter_mut().zip(slots) {
+            b.at = *at;
+            b.drawn = Some(d.clone());
+        }
+    }
+
+    fn droplets(scene: &mut crate::compositor::DeskScene) -> NotifyView {
+        let mut v = NotifyView {
+            stack: [3, 2, 1].map(|id| balloon(scene, id)).into(),
+            ..NotifyView::default()
+        };
+        for b in &mut v.stack {
+            b.item = droplet_note();
+        }
+        place(&mut v, &droplet_slots(None));
+        v
+    }
+
+    #[test]
+    fn a_droplet_slid_away_from_a_still_pointer_closes() {
+        let (mut scene, e) = (crate::compositor::DeskScene::new(), glass_effects());
+        let mut v = droplets(&mut scene);
+        let (x, y) = close_spot(&v, 1);
+        let now = Instant::now();
+        point_at(&mut v, x, y, true, now);
+        aim_stack(&mut v.stack, &e, now);
+        assert_eq!(v.stack[1].motion.open.target(), 1.0);
+        let pitch = v.stack[0].at.1 - v.stack[1].at.1;
+        let open = now + Duration::from_millis(300);
+        close_newest(&mut v, pitch, open);
+        let settled = open + Duration::from_millis(300);
+        rest_point(&mut v, x, y, true, settled);
+        assert!(aim_stack(&mut v.stack, &e, settled));
+        assert_eq!(v.stack[0].motion.open.target(), 0.0, "slid away, it closes");
+        assert_eq!(v.stack[1].motion.open.target(), 1.0, "slid under, it opens");
+    }
+
+    #[test]
+    fn a_droplet_opening_under_a_still_pointer_stays_open_once_its_neighbours_move() {
+        let (mut scene, e) = (crate::compositor::DeskScene::new(), glass_effects());
+        let mut v = droplets(&mut scene);
+        let (shut, open) = (droplet_slots(None), droplet_slots(Some(1)));
+        let (at, d) = &shut[1];
+        let ((ox, oy), (w, h)) = (d.origin(), d.size());
+        assert_ne!(shut[2].0, open[2].0, "the older sheet is pushed");
+        let now = Instant::now();
+        let settled = now + Duration::from_millis(300);
+        let mut tried = 0;
+        for (lx, ly) in (0..w)
+            .step_by(3)
+            .flat_map(|lx| (0..h).step_by(3).map(move |ly| (lx, ly)))
+        {
+            if d.hit(lx, ly).is_none() {
+                continue;
+            }
+            tried += 1;
+            let (x, y) = (
+                f64::from(at.0 + lx - ox) + 0.5,
+                f64::from(at.1 + ly - oy) + 0.5,
+            );
+            place(&mut v, &shut);
+            for b in &mut v.stack {
+                b.motion = Motion::settled_at(now);
+            }
+            point_at(&mut v, x, y, true, now);
+            aim_stack(&mut v.stack, &e, now);
+            assert_eq!(v.stack[1].motion.open.target(), 1.0, "opens at ({x}, {y})");
+            place(&mut v, &open);
+            assert!(rest_point(&mut v, x, y, true, settled).is_some());
+            assert!(
+                !aim_stack(&mut v.stack, &e, settled),
+                "nothing turns at ({x}, {y})"
+            );
+            assert!(v.stack[1].pointer_in, "still on it at ({x}, {y})");
+        }
+        assert!(tried > 100, "{tried} points on the shut sheet");
     }
 
     #[test]
