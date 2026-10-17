@@ -307,9 +307,10 @@ fn row_icon_names(d: &Dialog) -> Vec<(usize, String, i32)> {
 
 impl State {
     /// Show `d`, placed per `d.placement` on the output under the pointer. A dialog with the same
-    /// `identity` is raised instead of reopened. A Welcome panel takes the screen alone and closes the
-    /// switchers; any other dialog opened under the 3D switcher joins its stack (`flip_join`) and stays
-    /// hidden until its cards land (`flip_hide_dialog`).
+    /// `identity` is raised instead of reopened, its cues out when a key asked ([`Cues::reopen`]).
+    /// A Welcome panel takes the screen alone and closes the switchers; any other dialog opened
+    /// under the 3D switcher joins its stack (`flip_join`) and stays hidden until its cards land
+    /// (`flip_hide_dialog`).
     pub fn open_dialog(&mut self, d: Dialog) {
         if matches!(d.style, Style::Welcome) {
             self.switcher_cancel();
@@ -323,7 +324,15 @@ impl State {
             .iter()
             .position(|v| v.dialog.identity() == d.identity());
         match same {
-            Some(i) => self.raise_dialog(i),
+            Some(i) => {
+                let v = &mut self.dialogs.views[i];
+                let id = v.id;
+                let shown = v.cues.reopen(self.key_input.last_key_input);
+                self.raise_dialog(i);
+                if shown && let Some(j) = self.dialogs.views.iter().position(|v| v.id == id) {
+                    self.redraw_dialog(j);
+                }
+            }
             None => self.open_view(d, None),
         }
     }
