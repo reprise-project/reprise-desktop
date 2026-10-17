@@ -1,9 +1,9 @@
 //! One running copy of a program. The first start owns a well-known name
 //! on the session bus and serves `org.freedesktop.Application` under it;
 //! a later start hands its request to that copy ([`claim`]) and exits.
-//! The later start's xdg-activation token rides along as the
-//! `activation-token` platform data, so the running copy can raise its
-//! window with it.
+//! The later start's xdg-activation token and its by-key mark ride along as
+//! platform data ([`Handoff`]), so the running copy can raise its window with
+//! them.
 
 use std::collections::HashMap;
 use std::sync::mpsc::{Receiver, Sender, channel};
@@ -13,13 +13,62 @@ use zbus::zvariant::{OwnedValue, Value};
 
 const INTERFACE: &str = "org.freedesktop.Application";
 const TOKEN: &str = "activation-token";
+const BY_KEY: &str = "reprise-keyboard-launch";
+
+/// Set to `1` on a program the desktop started from the keyboard: its first window opens
+/// with cues showing.
+pub const KEYBOARD_LAUNCH_ENV: &str = "REPRISE_KEYBOARD_LAUNCH";
+
+/// What a start hands the running copy: its xdg-activation token, and whether
+/// it came from the keyboard, so the raised window shows its cues.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Handoff {
+    pub token: Option<String>,
+    pub by_key: bool,
+}
+
+impl Handoff {
+    /// This process's own start, from `XDG_ACTIVATION_TOKEN` and [`KEYBOARD_LAUNCH_ENV`].
+    pub fn from_env() -> Handoff {
+        Handoff {
+            token: std::env::var("XDG_ACTIVATION_TOKEN").ok(),
+            by_key: std::env::var_os(KEYBOARD_LAUNCH_ENV).is_some_and(|v| v == "1"),
+        }
+    }
+
+    /// As `org.freedesktop.Application` platform data: `activation-token`
+    /// and `reprise-keyboard-launch`.
+    pub fn platform_data(&self) -> HashMap<&'static str, Value<'static>> {
+        let mut data = HashMap::new();
+        if let Some(token) = &self.token {
+            data.insert(TOKEN, Value::from(token.clone()));
+        }
+        if self.by_key {
+            data.insert(BY_KEY, Value::from(true));
+        }
+        data
+    }
+
+    pub fn from_platform_data(data: &HashMap<String, OwnedValue>) -> Handoff {
+        Handoff {
+            token: data
+                .get(TOKEN)
+                .and_then(|v| <&str>::try_from(&**v).ok())
+                .map(str::to_string),
+            by_key: data
+                .get(BY_KEY)
+                .and_then(|v| bool::try_from(&**v).ok())
+                .unwrap_or(false),
+        }
+    }
+}
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Request {
     /// An action and its string parameters (`ActivateAction`), None for a
     /// plain `Activate`.
     pub action: Option<(String, Vec<String>)>,
-    pub token: Option<String>,
+    pub handoff: Handoff,
 }
 
 /// What [`claim`] found.
@@ -52,7 +101,7 @@ impl Requests {
 }
 
 /// Own `name`, or hand `action` (None: just raise the window) and this
-/// start's `XDG_ACTIVATION_TOKEN` to the copy that owns it.
+/// start's [`Handoff`] to the copy that owns it.
 pub fn claim(name: &str, action: Option<(String, Vec<String>)>) -> Claim {
     let conn = match crate::session() {
         Ok(c) => c,
@@ -82,10 +131,7 @@ pub fn claim(name: &str, action: Option<(String, Vec<String>)>) -> Claim {
         }
     }
     let _ = conn.object_server().remove::<Application, _>(path.as_str());
-    let mut data = HashMap::new();
-    if let Ok(token) = std::env::var("XDG_ACTIVATION_TOKEN") {
-        data.insert(TOKEN, Value::from(token));
-    }
+    let data = Handoff::from_env().platform_data();
     let sent = match action {
         Some((action, params)) => {
             let params: Vec<Value> = params.into_iter().map(Value::from).collect();
@@ -127,11 +173,8 @@ struct Application {
 
 impl Application {
     fn send(&self, action: Option<(String, Vec<String>)>, data: &HashMap<String, OwnedValue>) {
-        let token = data
-            .get(TOKEN)
-            .and_then(|v| <&str>::try_from(&**v).ok())
-            .map(str::to_string);
-        if self.tx.send(Request { action, token }).is_ok()
+        let handoff = Handoff::from_platform_data(data);
+        if self.tx.send(Request { action, handoff }).is_ok()
             && let Some(wake) = &*self.wake.lock().unwrap_or_else(|e| e.into_inner())
         {
             wake();
@@ -162,5 +205,35 @@ impl Application {
             .filter_map(|v| <&str>::try_from(&**v).ok().map(str::to_string))
             .collect();
         self.send(Some((action_name, params)), &platform_data);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn received(h: &Handoff) -> Handoff {
+        let data = h
+            .platform_data()
+            .into_iter()
+            .map(|(k, v)| (k.to_string(), OwnedValue::try_from(v).expect("owned")))
+            .collect();
+        Handoff::from_platform_data(&data)
+    }
+
+    #[test]
+    fn a_handoff_survives_the_platform_data() {
+        let h = Handoff {
+            token: Some("t-1".into()),
+            by_key: true,
+        };
+        assert_eq!(received(&h), h);
+        let pointer = Handoff {
+            token: Some("t-2".into()),
+            by_key: false,
+        };
+        assert!(!pointer.platform_data().contains_key(BY_KEY));
+        assert_eq!(received(&pointer), pointer);
+        assert_eq!(received(&Handoff::default()), Handoff::default());
     }
 }

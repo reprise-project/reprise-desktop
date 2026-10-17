@@ -287,7 +287,7 @@ impl BtApp {
                 tray::TrayMsg::Exit => return self.quit(),
                 tray::TrayMsg::Show => {
                     self.hidden = false;
-                    activate = self.tray.as_ref().and_then(|t| t.take_activation_token());
+                    activate = self.tray.as_ref().and_then(|t| t.take_handoff());
                 }
                 tray::TrayMsg::Add => self.open_wizard(),
                 tray::TrayMsg::TogglePower => {
