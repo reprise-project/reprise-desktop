@@ -42,7 +42,11 @@ pub fn draw(c: &mut Canvas, theme: &Theme, text: &TextRenderer, r: Rect) {
     let lay = hot.layout(text, px, hot_client, &cm);
     let f = lay.frames[2];
     hot.hover(f.x + 3, f.y + 3, &lay);
-    hot.draw(c, text, theme, &lay);
+    let pointer = Theme {
+        access_keys: false,
+        ..theme.clone()
+    };
+    hot.draw(c, text, &pointer, &lay);
 
     let mut open = bar();
     let lay = open.layout(text, px, open_client, &cm);

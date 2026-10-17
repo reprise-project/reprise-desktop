@@ -1,6 +1,7 @@
 //! The menu bar under a window's caption: a 20 px strip with the titles side by
 //! side, the open title sunken and its popup hanging from the frame's
-//! bottom-left. Access-key underlines show once Alt or F10 activated the bar.
+//! bottom-left. Access-key underlines show while Alt or F10 holds the bar or
+//! the window's cues show them.
 //! Looks with flat menus ([`crate::style::Style::flat_menus`]) or menu bar parts
 //! ([`Part::MenuBar`], [`Part::MenuBarItem`]) draw hot and open titles their own
 //! way; on an unfocused window the titles ink grey.
@@ -735,7 +736,7 @@ impl Bar {
             &cx,
             by_keyboard,
         );
-        // The bar's own `underline` decides: arrowing on from a pointer-opened menu keeps them hidden.
+        // The bar decides ([`Bar::underlined`]): arrowing on from a pointer-opened menu keeps them hidden.
         popup.keys = false;
         self.popup = Some(popup);
         self.open = Some(i);
@@ -996,7 +997,7 @@ impl Bar {
             &self.titles,
             shown,
             self.hot,
-            self.underline,
+            self.underlined(theme),
             self.banded,
             glass,
             px,
@@ -1006,8 +1007,14 @@ impl Bar {
     /// The open menu, if any.
     pub fn draw_popup(&self, c: &mut Canvas, text: &TextRenderer, theme: &crate::theme::Theme) {
         if let Some(popup) = &self.popup {
-            popup.draw(c, theme, text, self.underline);
+            popup.draw(c, theme, text, self.underlined(theme));
         }
+    }
+
+    /// Whether access keys show: while Alt or F10 holds the bar, or while the window's
+    /// cues show them ([`crate::theme::Theme::access_keys`]).
+    fn underlined(&self, theme: &crate::theme::Theme) -> bool {
+        self.underline || theme.access_keys
     }
 }
 
@@ -1165,7 +1172,10 @@ mod bar_tests {
     #[test]
     fn a_menu_underlines_its_keys_only_when_the_keyboard_opened_it() {
         let text = TextRenderer::load(&FontConfig::default());
-        let theme = Theme::default();
+        let theme = Theme {
+            access_keys: false,
+            ..Theme::default()
+        };
         let (m, px) = (&theme, theme.fonts.size_px);
         let lay = Layout::compute(
             &text,
@@ -1199,6 +1209,43 @@ mod bar_tests {
         assert_eq!(by_key.open, Some(0));
         let (shown, keys) = drawn(&by_key);
         assert!(shown == keys, "opened with Alt+F: underlined");
+    }
+
+    #[test]
+    fn the_titles_underline_while_the_window_shows_its_cues() {
+        let text = TextRenderer::load(&FontConfig::default());
+        let cued = Theme::default();
+        let hidden = Theme {
+            access_keys: false,
+            ..Theme::default()
+        };
+        let px = cued.fonts.size_px;
+        let lay = Layout::compute(
+            &text,
+            px,
+            Rect::new(0, 0, 300, 20),
+            &bar().titles,
+            &MenuTitles::CLASSIC,
+        );
+        let drawn = |b: &Bar, theme: &Theme| {
+            let mut c = Canvas::new(300, 20);
+            b.draw_titles(&mut c, &text, theme, &lay);
+            c.pixels
+        };
+        let mut b = bar();
+        let (plain, keys) = (drawn(&b, &hidden), drawn(&b, &cued));
+        assert!(plain != keys, "cues shown: the titles underline at rest");
+        b.key(Key::Activate, &lay, &text, &hidden, px);
+        assert!(
+            drawn(&b, &hidden) == drawn(&b, &cued),
+            "Alt holds the bar: underlined with the cues hidden too"
+        );
+        b.key(Key::Escape, &lay, &text, &hidden, px);
+        assert!(drawn(&b, &hidden) == plain, "Esc with cues hidden: none");
+        assert!(
+            drawn(&b, &cued) == keys,
+            "Esc with cues shown: still underlined"
+        );
     }
 
     #[test]
