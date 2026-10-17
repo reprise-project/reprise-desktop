@@ -1277,30 +1277,16 @@ pub fn draw(
     caret: Caret,
 ) {
     let Paint { cs, s, .. } = *p;
-    // With a preedit the drawn selection is the range it marks; text-input-v3 removes the real one.
-
+    // With a preedit nothing is drawn selected; text-input-v3 removes the real selection.
     let preedit = c.preedit().filter(|_| caret.focused()).cloned();
     c.fill_rect(lay.frame, cs.button_face);
     draw_edit_frame(c, p, lay.frame, cs.window);
     let inner = lay.inner;
     c.fill_rect(inner, cs.window);
     let line_h = m.line_h * s;
-    let (a, b) = if let Some(p) = &preedit {
-        let (line, col) = (edit.caret.line, edit.caret.col);
-        let end = p.text.len();
-        let mark = p.cursor.clone().unwrap_or(end..end);
-        (
-            Pos {
-                line,
-                col: col + mark.start,
-            },
-            Pos {
-                line,
-                col: col + mark.end,
-            },
-        )
-    } else {
-        edit.selection()
+    let (a, b) = match &preedit {
+        Some(_) => (edit.caret, edit.caret),
+        None => edit.selection(),
     };
     let x0 = inner.x + s - view.left;
     let clip = Rect::new(
@@ -1388,7 +1374,7 @@ pub fn draw(
         }
         if li == edit.caret.line {
             let (col, bar_on) = match (&composed, &preedit) {
-                (Some((_, _, mark)), Some(p)) => (mark.end, p.cursor.is_some()),
+                (Some((_, _, at)), Some(p)) => (*at, p.cursor.is_some()),
                 _ => (edit.caret.col, true),
             };
             let cx = col_x(col);
@@ -1668,7 +1654,7 @@ mod tests {
     }
 
     #[test]
-    fn a_preedit_range_draws_selected_in_the_caret_line() {
+    fn a_preedit_range_draws_as_a_caret_at_its_end_over_no_selection() {
         let text = TextRenderer::load(&FontConfig::default());
         let theme = Theme::default();
         let m = Metrics {
@@ -1676,28 +1662,33 @@ mod tests {
             ..Default::default()
         };
         let mut t = e("top\nab");
-        t.place(p(1, 1), false);
+        t.place(p(0, 1), false);
+        t.place(p(1, 1), true);
         let lay = layout(&text, &m, &t, Rect::new(0, 0, 200, 60), 1);
-        let mut c = Canvas::new(200, 60);
-        c.set_preedit(crate::textedit::Preedit::new("xyz".into(), 1, 3));
-        draw(
-            &mut c,
-            &text,
-            &classic_paint(&theme.colors, 1),
-            &m,
-            &t,
-            View::default(),
-            &lay,
-            Caret::Shown,
-        );
-        let x = |s: &str| lay.inner.x + 1 + text.measure(s, false, m.font_px);
-        let y = lay.inner.y + 1 + m.line_h;
+        let draw_with = |pre| {
+            let mut c = Canvas::new(200, 60);
+            c.set_preedit(pre);
+            draw(
+                &mut c,
+                &text,
+                &classic_paint(&theme.colors, 1),
+                &m,
+                &t,
+                View::default(),
+                &lay,
+                Caret::Shown,
+            );
+            c
+        };
+        let mut range = draw_with(crate::textedit::Preedit::new("xyz".into(), 1, 3));
+        let mut at_end = draw_with(crate::textedit::Preedit::new("xyz".into(), 3, 3));
         let hl = theme.colors.hilight.argb();
-        assert_eq!(c.get(x("ax"), y), hl, "yz starts on hilight");
-        assert_eq!(c.get(x("axyz") - 1, y), hl, "and ends on it");
-        assert_ne!(c.get(x("ax") - 1, y), hl, "x is not selected");
-        let spot = c.take_spot().expect("focused");
-        assert_eq!(spot.caret.x, x("axyz"), "the caret ends the range");
+        assert!(range.pixels.iter().all(|&p| p != hl), "nothing on hilight");
+        assert_eq!(range.pixels, at_end.pixels);
+        let x = lay.inner.x + 1 + text.measure("axyz", false, m.font_px);
+        let spot = range.take_spot().expect("focused");
+        assert_eq!(spot.caret.x, x, "the caret ends the range");
+        assert_eq!(Some(spot), at_end.take_spot());
     }
 
     #[test]
