@@ -10,8 +10,9 @@
 //! Snap assist is the same model in a zone: after a snap that leaves zones
 //! free (`apply_layout`, `key_into_zone`), the first free zone shows a panel 13 px in from
 //! its edges with a card per other window of the desktop. Picking one snaps
-//! it there and moves on to the next free zone. It has no dim; under a
-//! glass look the panel is a glass sheet (`glass::Backdrop`).
+//! it there and moves on to the next free zone, the zones after it outlined as a snap drag
+//! outlines its target. It has no dim; under a glass look the panel is a glass sheet
+//! (`glass::Backdrop`).
 
 use std::time::Instant;
 
@@ -57,6 +58,8 @@ pub struct OverviewView {
     /// Snap assist: the window the picker snapped, and the zones still
     /// empty as (zone, rect), the first being the grid's.
     assist: Option<(WindowId, Vec<(usize, Rect)>)>,
+    /// Snap assist's outlines of the empty zones after the grid's, on the overlay layer.
+    outlines: Vec<TreeId>,
     /// The dim over every output (none under snap assist) and each grid's `cells`.
     tree: TreeId,
     fade: Option<FadeRun>,
@@ -312,6 +315,13 @@ impl State {
             let shade = self.scene.rect_create(tree, (dim.width, dim.height), DIM);
             self.scene.set_position(shade, dim.x, dim.y);
         }
+        let waiting = assist
+            .as_ref()
+            .map_or_else(Vec::new, |(_, z)| waiting_zones(z));
+        let outlines = waiting
+            .into_iter()
+            .filter_map(|r| self.outline_tree(r, reprisekit::classic::snapframe::BAND))
+            .collect();
         let mut layouts = Vec::with_capacity(grids.len());
         let grids = grids
             .into_iter()
@@ -327,6 +337,7 @@ impl State {
             layouts,
             grids,
             assist,
+            outlines,
             tree,
             fade: None,
             slide: None,
@@ -549,6 +560,9 @@ impl State {
             self.thumb_drop(id);
         }
         self.scene.destroy(v.tree);
+        for t in v.outlines {
+            self.scene.destroy(t);
+        }
         self.redraw_all();
         crate::access::touch(self);
         let p = self.pointer_location();
@@ -962,6 +976,11 @@ fn assist_offer(
     (!left.is_empty()).then_some(left)
 }
 
+/// The empty zones snap assist outlines: every one after the zone its grid fills.
+fn waiting_zones(zones: &[(usize, Rect)]) -> Vec<Rect> {
+    zones.iter().skip(1).map(|&(_, r)| r).collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1020,6 +1039,22 @@ mod tests {
         assert_eq!(key_of(&press(&[keys::KEY_Return], 0)), Some(Key::Enter));
         assert_eq!(key_of(&press(&[keys::KEY_Escape], 0)), Some(Key::Escape));
         assert_eq!(key_of(&press(&[keys::KEY_a], 0)), None, "text goes on");
+    }
+
+    #[test]
+    fn snap_assist_outlines_the_empty_zones_after_the_one_it_fills() {
+        let (a, b, c) = (
+            Rect::new(0, 0, 640, 1032),
+            Rect::new(640, 0, 640, 1032),
+            Rect::new(1280, 0, 640, 1032),
+        );
+        assert_eq!(waiting_zones(&[(0, a), (1, b), (2, c)]), vec![b, c]);
+        assert_eq!(
+            waiting_zones(&[(2, c)]),
+            Vec::<Rect>::new(),
+            "the last zone"
+        );
+        assert_eq!(waiting_zones(&[]), Vec::<Rect>::new());
     }
 
     #[test]
