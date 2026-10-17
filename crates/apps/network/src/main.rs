@@ -1141,7 +1141,7 @@ impl App for NetApp {
         let (rx, handle) = nm::watch(waker);
         self.nm_rx = Some(rx);
         self.nm = Some(handle);
-        self.dialog_text = Some(TextRenderer::load(&reprisekit::theme::FontConfig::default()));
+        self.dialog_text = Some(TextRenderer::load(&repriseapp::start_fonts()));
     }
 
     fn event(&mut self, win: WinId, ev: Event, ctx: &mut Ctx) -> Reply {

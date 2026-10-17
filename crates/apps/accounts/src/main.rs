@@ -25,7 +25,7 @@ use reprisekit::look::Paint;
 use reprisekit::raster::{Canvas, Rect};
 use reprisekit::text::TextRenderer;
 use reprisekit::textedit::keysym;
-use reprisekit::theme::{FontConfig, TextUnits, Theme};
+use reprisekit::theme::{TextUnits, Theme};
 
 use acct::{Op, User};
 
@@ -90,7 +90,7 @@ impl AccountsApp {
     }
 
     fn fonts(&mut self) {
-        self.text = Some(Rc::new(TextRenderer::load(&FontConfig::default())));
+        self.text = Some(Rc::new(TextRenderer::load(&repriseapp::start_fonts())));
     }
 
     fn text(&self) -> Rc<TextRenderer> {

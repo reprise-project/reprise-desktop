@@ -33,7 +33,7 @@ use reprisekit::look::Paint;
 use reprisekit::raster::{Canvas, Rect};
 use reprisekit::text::TextRenderer;
 use reprisekit::textedit::keysym;
-use reprisekit::theme::{FontConfig, TextUnits, Theme};
+use reprisekit::theme::{TextUnits, Theme};
 
 use state::State;
 use view::{Options, Recent, View};
@@ -154,7 +154,7 @@ impl Volume {
             advanced: None,
             about: false,
             app_icon: None,
-            dialog_text: TextRenderer::load(&FontConfig::default()),
+            dialog_text: TextRenderer::load(&repriseapp::start_fonts()),
             dialog_px: Theme::default().fonts.size_px,
             forms: Theme::default(),
             waker: None,
@@ -788,6 +788,7 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use reprisekit::theme::FontConfig;
 
     fn label_at(t: usize, r: usize) -> String {
         match &menus(false)[t].1[r] {

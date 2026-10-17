@@ -20,6 +20,8 @@ pub const COLORS: &str = "colors";
 pub const ICON_THEME: &str = "icon-theme";
 /// `[fonts] shell_dlg`, a family or a font file's path; empty when unset.
 pub const SHELL_DLG: &str = "shell-dlg";
+/// `[fonts] family`, the families in order joined by commas ([`families`] splits them).
+pub const FONT_FAMILY: &str = "font-family";
 
 /// `[glass] mode`, `light` or `dark`, as `REPRISE_GLASS_MODE`.
 pub const GLASS_MODE: &str = "glass-mode";
@@ -33,7 +35,7 @@ pub const TEXT_SIZE: &str = "text-size";
 /// `[metrics] double_click_ms` in force, in ms ("500").
 pub const DOUBLE_CLICK_MS: &str = "double-click-ms";
 
-const KEYS: [&str; 9] = [
+const KEYS: [&str; 10] = [
     INTERFACE,
     BLUE_VARIANT,
     GLASS_MODE,
@@ -41,9 +43,20 @@ const KEYS: [&str; 9] = [
     COLORS,
     ICON_THEME,
     SHELL_DLG,
+    FONT_FAMILY,
     TEXT_SIZE,
     DOUBLE_CLICK_MS,
 ];
+
+/// The families a [`FONT_FAMILY`] value names, in order; none when it is empty.
+pub fn families(value: &str) -> Vec<String> {
+    value
+        .split(',')
+        .map(str::trim)
+        .filter(|f| !f.is_empty())
+        .map(String::from)
+        .collect()
+}
 
 /// Call `changed(key, value)` from a thread of its own for each key of
 /// [`NAMESPACE`]: once with the current value when the watch starts, then

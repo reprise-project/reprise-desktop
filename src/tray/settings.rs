@@ -31,6 +31,8 @@ pub struct Appearance {
     pub colors: String,
     pub icon_theme: String,
     pub shell_dlg: String,
+    /// `[fonts] family`, joined as [`look::FONT_FAMILY`] carries it.
+    pub font_family: String,
     pub glass_mode: reprisekit::glass::Mode,
     pub glass_material: reprisekit::glass::Material,
     /// `[cursor] theme`, else `XCURSOR_THEME`, else "default".
@@ -73,6 +75,7 @@ impl Appearance {
             colors: colors.to_env(),
             icon_theme: cfg.icons.theme.clone(),
             shell_dlg: cfg.theme.fonts.shell_dlg.clone().unwrap_or_default(),
+            font_family: cfg.theme.fonts.family.join(","),
             glass_mode: cfg.glass.mode,
             glass_material: cfg.glass.material,
             cursor_theme,
@@ -143,6 +146,11 @@ impl Appearance {
                 look::NAMESPACE,
                 look::SHELL_DLG,
                 Value::from(self.shell_dlg.clone()),
+            ),
+            (
+                look::NAMESPACE,
+                look::FONT_FAMILY,
+                Value::from(self.font_family.clone()),
             ),
             (
                 look::NAMESPACE,
@@ -434,12 +442,13 @@ mod tests {
                 c.blue_variant = Variant::Silver;
                 c.icons.theme = "Papirus".into();
                 c.theme.fonts.shell_dlg = Some("/usr/share/wine/fonts/sserife.fon".into());
+                c.theme.fonts.family = vec!["DejaVu Sans".into(), "Noto Sans".into()];
                 Appearance::of(&c)
             })),
         };
         assert_eq!(
             s.read_all(vec![look::NAMESPACE.into()])[look::NAMESPACE].len(),
-            9
+            10
         );
         let text = |key| String::try_from(s.lookup(look::NAMESPACE, key).unwrap()).unwrap();
         assert_eq!(text(look::INTERFACE), "blue");
@@ -447,6 +456,7 @@ mod tests {
         assert_eq!(text(look::COLORS), colors.to_env());
         assert_eq!(text(look::ICON_THEME), "Papirus");
         assert_eq!(text(look::SHELL_DLG), "/usr/share/wine/fonts/sserife.fon");
+        assert_eq!(text(look::FONT_FAMILY), "DejaVu Sans,Noto Sans");
         assert_eq!(text(look::GLASS_MODE), "light");
         assert_eq!(text(look::GLASS_MATERIAL), "frosted");
         assert_eq!(text(look::TEXT_SIZE), "100");

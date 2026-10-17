@@ -40,6 +40,7 @@ These share the project's license, GPL-3.0-or-later:
 
 Reprise asks fontconfig for the families in `[fonts] family`, in order. The
 default is `["Tahoma", "DejaVu Sans"]`, and any other font works too.
+Reprise's programs take the same families and follow a change while running.
 Layouts are tuned for 11 px text, so a font with other metrics can put a
 label a pixel or two off.
 

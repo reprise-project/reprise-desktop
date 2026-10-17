@@ -22,7 +22,7 @@ use reprisekit::look::Paint;
 use reprisekit::raster::{Canvas, Rect};
 use reprisekit::taskbar::Edge;
 use reprisekit::text::TextRenderer;
-use reprisekit::theme::{FontConfig, Theme};
+use reprisekit::theme::Theme;
 
 const ERROR_WIN: WinId = "error";
 const VOLUME_CONTROL: &str = "reprise-volume";
@@ -599,7 +599,7 @@ impl App for Sound {
 
     fn start(&mut self, waker: repriseapp::Waker) {
         self.waker = Some(waker.clone());
-        self.dialog_text = Some(TextRenderer::load(&FontConfig::default()));
+        self.dialog_text = Some(TextRenderer::load(&repriseapp::start_fonts()));
         self.asked = sheet::CLIENT;
         // The tray goes first: it takes the `reprise.sound` bus name and a
         // second instance exits here once it has raised the first. Spawning
