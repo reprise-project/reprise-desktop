@@ -372,15 +372,40 @@ fn a_launcher_has_paste_under_copy_and_no_open_with() {
             "Properties"
         ]
     );
-    assert_eq!(m.command(&[7]), Command::PasteOpen);
+    assert_eq!(m.command(&[7]), Command::PasteOnItem);
     assert!(
         enabled(m.items(), 7),
         "Paste opens files, so a read-only place keeps it"
     );
     let file = item_menu(&s, ItemKind::File, false, &[], &[]);
     assert!(
-        (0..file.items().len()).all(|i| file.command(&[i]) != Command::PasteOpen),
+        (0..file.items().len()).all(|i| file.command(&[i]) != Command::PasteOnItem),
         "a plain file has no Paste"
+    );
+}
+
+#[test]
+fn a_folder_has_paste_into_it_under_copy() {
+    let s = MenuState {
+        selection: 1,
+        can_paste: true,
+        ..Default::default()
+    };
+    let m = item_menu(&s, ItemKind::Folder, false, &[], &[]);
+    let copy = (0..m.items().len())
+        .position(|i| label(m.items(), i) == "Copy")
+        .expect("Copy");
+    assert_eq!(label(m.items(), copy + 1), "Paste");
+    assert_eq!(m.command(&[copy + 1]), Command::PasteOnItem);
+    assert!(enabled(m.items(), copy + 1));
+    let read_only = MenuState {
+        read_only: true,
+        ..s
+    };
+    let m = item_menu(&read_only, ItemKind::Folder, false, &[], &[]);
+    assert!(
+        !enabled(m.items(), copy + 1),
+        "a drive under Computer takes no paste"
     );
 }
 

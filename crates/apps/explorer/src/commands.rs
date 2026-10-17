@@ -19,8 +19,8 @@ pub enum Command {
     Copy,
     Paste,
     PasteShortcut,
-    /// Paste on a launcher: the clipboard's files open in its program.
-    PasteOpen,
+    /// Paste on the item menu's entry: into a folder, or a launcher opens the clipboard's files.
+    PasteOnItem,
     Delete {
         erase: bool,
     },
@@ -392,7 +392,7 @@ impl Explorer {
             Command::Copy => self.clipboard(false, ctx),
             Command::Paste => self.begin_paste(false),
             Command::PasteShortcut => self.begin_paste(true),
-            Command::PasteOpen => self.begin_paste_open(),
+            Command::PasteOnItem => self.begin_paste_on_item(),
             Command::Delete { erase } => self.confirm_delete(erase, ctx),
             Command::NewFolder => self.new_item(true, ctx),
             Command::EmptyRecycleBin => self.confirm_empty_bin(ctx),

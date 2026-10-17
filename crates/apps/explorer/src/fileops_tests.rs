@@ -1775,6 +1775,61 @@ fn a_stale_yes_lands_numbered_with_its_undo() {
     assert_eq!(ex.undo, Some("Copy"), "the numbered copy can be undone");
 }
 
+/// Paste on a folder entry copies the clipboard's files into that folder, even after the window
+/// has moved on, and a cut moves them.
+#[test]
+fn paste_on_a_folder_lands_the_clipboards_files_inside_it() {
+    let dir = tempfile::tempdir().expect("a temp dir");
+    let sub = dir.path().join("Sub");
+    std::fs::create_dir(&sub).expect("mkdir");
+    std::fs::write(dir.path().join("a.txt"), "a").expect("write");
+    std::fs::write(dir.path().join("b.txt"), "b").expect("write");
+    let mut ctx = test_ctx();
+    let mut ex = crate::tests::test_explorer(Place::Folder(dir.path().to_path_buf()), &mut ctx);
+    let folder = ex
+        .items
+        .iter()
+        .position(|it| it.is_dir)
+        .expect("Sub is listed");
+
+    ex.entry_menu_at(folder, (0, 0), &mut ctx);
+    let reply = ex.run(Command::PasteOnItem, &mut ctx);
+    assert!(reply.paste_files, "the clipboard was asked for");
+    ex.pasted(
+        FileClip {
+            cut: false,
+            paths: vec![dir.path().join("a.txt")],
+        },
+        &mut ctx,
+    );
+    ex.finish_puts(&mut ctx);
+    assert_eq!(
+        std::fs::read_to_string(sub.join("a.txt")).expect("read"),
+        "a"
+    );
+    assert!(
+        dir.path().join("a.txt").exists(),
+        "a copy leaves the source"
+    );
+
+    ex.entry_menu_at(folder, (0, 0), &mut ctx);
+    ex.run(Command::PasteOnItem, &mut ctx);
+    ex.go(Place::Computer, &mut ctx);
+    ex.pasted(
+        FileClip {
+            cut: true,
+            paths: vec![dir.path().join("b.txt")],
+        },
+        &mut ctx,
+    );
+    ex.finish_puts(&mut ctx);
+    assert!(
+        sub.join("b.txt").exists(),
+        "the folder was named by the menu"
+    );
+    assert!(!dir.path().join("b.txt").exists(), "a cut moves");
+}
+
 /// Paste on a launcher opens each clipboard file in its program, in its app scope, and copies
 /// nothing into the folder.
 #[test]
@@ -1795,7 +1850,7 @@ fn paste_on_a_launcher_opens_the_clipboards_files_in_its_program() {
         .expect("the launcher is listed");
 
     ex.entry_menu_at(launcher, (0, 0), &mut ctx);
-    let reply = ex.run(Command::PasteOpen, &mut ctx);
+    let reply = ex.run(Command::PasteOnItem, &mut ctx);
     assert!(reply.paste_files, "the clipboard was asked for");
     let paths = vec![dir.path().join("a.txt"), PathBuf::from("/srv/b.txt")];
     let reply = ex.pasted(FileClip { cut: true, paths }, &mut ctx);

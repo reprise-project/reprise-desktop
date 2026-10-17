@@ -367,18 +367,18 @@ impl Explorer {
         if !self.sv.selection.set.contains(&i) {
             self.sv.selection.set_only(Some(i));
         }
+        use crate::fileops::PasteTo;
         use crate::menus::ItemKind;
         let item = self.items.get(i);
-        self.menu_launcher = item.and_then(|it| match it.shortcut.as_deref() {
-            Some(reprisefs::apps::Shortcut::App(app)) => Some(app.clone()),
+        self.menu_paste = item.and_then(|it| match it.shortcut.as_deref() {
+            _ if it.is_dir => Some(PasteTo::Folder(it.path.clone())),
+            Some(reprisefs::apps::Shortcut::App(app)) => Some(PasteTo::App(app.clone())),
             _ => None,
         });
-        let kind = if item.is_some_and(|it| it.is_dir) {
-            ItemKind::Folder
-        } else if self.menu_launcher.is_some() {
-            ItemKind::Launcher
-        } else {
-            ItemKind::File
+        let kind = match self.menu_paste {
+            Some(PasteTo::Folder(_)) => ItemKind::Folder,
+            Some(PasteTo::App(_)) => ItemKind::Launcher,
+            _ => ItemKind::File,
         };
         let open_with = if kind == ItemKind::File {
             self.build_open_with(i, ctx)
