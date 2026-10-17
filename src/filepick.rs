@@ -584,13 +584,11 @@ impl FilePicker {
 
     /// A key from the dialog view. Typed text goes in as an edit so the
     /// File name field takes it, and its first character doubles as the
-    /// shell view's type-ahead. The file dialog has no access keys of
-    /// its own yet. `client` is the dialog's page rect, where `draw`
-    /// laid it out.
+    /// shell view's type-ahead. `client` is the dialog's page rect, where
+    /// `draw` laid it out.
     pub fn key(&mut self, client: Rect, key: Key) -> Outcome {
         let k = match key {
             Key::Backspace => Key::Edit(EditKey::Backspace { word: false }),
-            Key::Access(_) => return Outcome::Nothing,
             k => k,
         };
         let ch = match &k {
