@@ -2,9 +2,10 @@
 //! over a folder tree of its own; Accept runs the same move or copy a paste does.
 
 use crate::dialogs::{Dialog, dialog_key};
-use crate::foldertree::{self, Inputs};
+use crate::foldertree::{self, Inputs, Kids};
 use crate::place::Place;
 use crate::{BTN_LEFT, Explorer};
+use repriseapp::listjob::Job;
 use repriseapp::{Ctx, Event, PointerInput, Reply};
 use reprisefs::names::Verdict;
 use reprisefs::ops::DropOp;
@@ -24,8 +25,15 @@ pub struct Browse {
     pub items: Vec<PathBuf>,
     pub mv: bool,
     /// The pick the buttons were last judged for; judging stats the folder, and
-    /// every pointer motion ends in `sync_buttons`.
+    /// every pointer motion ends in [`Explorer::sync_browse_buttons`].
     pub judged: Option<Option<Place>>,
+    /// The judging of the pick still being read (a dead mount); both buttons grey until it lands.
+    pub judging: Option<Job<(bool, bool)>>,
+    /// The walk to the items' folder still being read: the picker shows the Desktop until it
+    /// lands, and a row picked by then keeps the pick.
+    pub walking: Option<(Place, Job<foldertree::Chain>)>,
+    /// Opened nodes whose children are still being read.
+    pub filling: Vec<(Place, Job<Kids>)>,
     pub clicks: DoubleClick<Option<browsefolder::Hit>>,
     pub refused: Option<Refused>,
 }
@@ -45,17 +53,20 @@ impl Browse {
         foldertree::place_of(&self.bf.tree, &self.places, path)
     }
 
-    pub fn sync_buttons(&mut self) {
+    /// The judging of a new pick, Accept's and Make New Folder's, for a listing thread; `None`
+    /// when the pick was judged already.
+    pub fn judge(&mut self) -> Option<impl FnOnce() -> (bool, bool) + Send + 'static> {
         let pick = self.picked();
         if self.judged.as_ref() == Some(&pick) {
-            return;
+            return None;
         }
-        let (accept, new_folder) = match &pick {
-            Some(p) => (accept_ok(self.mv, &self.items, p), new_folder_ok(p)),
+        self.judged = Some(pick.clone());
+        self.judging = None;
+        let (mv, items) = (self.mv, self.items.clone());
+        Some(move || match &pick {
+            Some(p) => (accept_ok(mv, &items, p), new_folder_ok(p)),
             None => (false, false),
-        };
-        self.bf.set_enabled(accept, new_folder);
-        self.judged = Some(pick);
+        })
     }
 }
 
@@ -144,8 +155,20 @@ impl Explorer {
         let mut places = Vec::new();
         foldertree::build(&mut tree, &mut places, &inp, &mut ctx.icons);
         let here = items[0].parent().map(Place::from_path);
+        let mut walking = None;
         if let Some(here) = &here {
-            foldertree::follow(&mut tree, &mut places, here, &inp, &mut ctx.icons);
+            let chain = foldertree::to_fill(&tree, &places, here, inp.drive_mounts);
+            match self.read_job(ctx, self.chain_reader(chain)) {
+                Ok(read) => foldertree::follow_with(
+                    &mut tree,
+                    &mut places,
+                    here,
+                    &inp,
+                    &mut ctx.icons,
+                    read,
+                ),
+                Err(job) => walking = Some((here.clone(), job)),
+            }
         }
         let accept = if mv { "Move" } else { "Copy" };
         let mut b = Browse {
@@ -154,13 +177,16 @@ impl Explorer {
             items,
             mv,
             judged: None,
+            judging: None,
+            walking,
+            filling: Vec::new(),
             clicks: DoubleClick::default(),
             refused: None,
         };
         if self.keyed {
             b.bf.cue(true);
         }
-        b.sync_buttons();
+        self.sync_browse_buttons(&mut b, ctx);
         // The walk stops above a folder the tree does not show (a hidden one); Enter must not send the items there unasked.
         if here.is_none() || b.picked() != here {
             b.bf.set_focus(browsefolder::Focus::Tree);
@@ -259,7 +285,22 @@ impl Explorer {
             browsefolder::Event::None => Reply::none(),
             browsefolder::Event::Redraw | browsefolder::Event::Selected(_) => Reply::redraw(),
             browsefolder::Event::Expand(p) => {
-                foldertree::fill(&mut b.bf.tree, &mut b.places, p, &inp, &mut ctx.icons);
+                if let Some(place) = foldertree::place_of(&b.bf.tree, &b.places, &p)
+                    && !b.filling.iter().any(|(q, _)| *q == place)
+                {
+                    let read = self.kids_reader_in(&b.bf.tree, &b.places, &p, place.clone());
+                    match self.read_job(ctx, read) {
+                        Ok(kids) => foldertree::fill_with(
+                            &mut b.bf.tree,
+                            &mut b.places,
+                            p,
+                            kids,
+                            &inp,
+                            &mut ctx.icons,
+                        ),
+                        Err(job) => b.filling.push((place, job)),
+                    }
+                }
                 Reply::redraw()
             }
             browsefolder::Event::NewFolder(p) => {
@@ -366,7 +407,7 @@ impl Explorer {
                     b.bf.tree.follow(&lay.tree);
                 }
                 self.after_rename(&from, &to, true, ctx);
-                b.sync_buttons();
+                self.sync_browse_buttons(&mut b, ctx);
                 return self.put_back_then(b, Reply::redraw_all(), press, ctx);
             }
             browsefolder::Event::Accept(p) => {
@@ -382,8 +423,92 @@ impl Explorer {
             browsefolder::Event::Resize => Reply::resize(),
         };
         // A click opens a row as it picks it without a `Selected`, so every event re-checks the pick.
-        b.sync_buttons();
+        self.sync_browse_buttons(&mut b, ctx);
         self.put_back(b, reply)
+    }
+
+    /// Judges the picker's buttons for a new pick on a listing thread ([`Browse::judge`]).
+    pub(crate) fn sync_browse_buttons(&self, b: &mut Browse, ctx: &Ctx) {
+        let Some(read) = b.judge() else {
+            return;
+        };
+        match self.read_job(ctx, read) {
+            Ok((accept, new_folder)) => b.bf.set_enabled(accept, new_folder),
+            Err(job) => {
+                b.bf.set_enabled(false, false);
+                b.judging = Some(job);
+            }
+        }
+    }
+
+    /// Takes the picker's reads that landed after their wait: the walk to the items' folder,
+    /// opened nodes and the pick's judging. True when one did.
+    pub(crate) fn take_browse(&mut self, ctx: &mut Ctx) -> bool {
+        let mut b = match self.dialog.take() {
+            Some(Dialog::Browse(b)) => b,
+            other => {
+                self.dialog = other;
+                return false;
+            }
+        };
+        let inp = Inputs {
+            show_hidden: self.settings.show_hidden,
+            drives: &self.drives,
+            volumes: &self.volumes,
+            drive_mounts: &self.drive_mounts,
+        };
+        let mut landed = false;
+        if let Some(read) = b.walking.as_ref().and_then(|(_, job)| job.take())
+            && let Some((here, _)) = b.walking.take()
+        {
+            if b.bf.tree.selected.as_deref() == Some(&[0]) {
+                foldertree::follow_with(
+                    &mut b.bf.tree,
+                    &mut b.places,
+                    &here,
+                    &inp,
+                    &mut ctx.icons,
+                    read,
+                );
+                let lay = b.bf.layout(
+                    &self.dialog_text,
+                    self.forms.fonts.size_px,
+                    &self.forms.controls(),
+                );
+                b.bf.tree.follow(&lay.tree);
+            }
+            landed = true;
+        }
+        let mut done = Vec::new();
+        b.filling.retain(|(place, job)| match job.take() {
+            Some(kids) => {
+                done.push((place.clone(), kids));
+                false
+            }
+            None => true,
+        });
+        for (place, kids) in done {
+            if let Some(path) = foldertree::path_of(&b.bf.tree, &b.places, &place, inp.drive_mounts)
+            {
+                foldertree::fill_with(
+                    &mut b.bf.tree,
+                    &mut b.places,
+                    path,
+                    kids,
+                    &inp,
+                    &mut ctx.icons,
+                );
+            }
+            landed = true;
+        }
+        self.sync_browse_buttons(&mut b, ctx);
+        if let Some((accept, new_folder)) = b.judging.as_ref().and_then(Job::take) {
+            b.judging = None;
+            b.bf.set_enabled(accept, new_folder);
+            landed = true;
+        }
+        self.dialog = Some(Dialog::Browse(b));
+        landed
     }
 
     pub fn browse_error_fields(&self) -> Option<msgbox::Fields> {
@@ -596,18 +721,27 @@ mod tests {
             items: vec![t.path().join("a.txt")],
             mv: false,
             judged: None,
+            judging: None,
+            walking: None,
+            filling: Vec::new(),
             clicks: DoubleClick::default(),
             refused: None,
         };
-        b.sync_buttons();
+        let judge = |b: &mut Browse| {
+            if let Some(read) = b.judge() {
+                let (accept, new_folder) = read();
+                b.bf.set_enabled(accept, new_folder);
+            }
+        };
+        judge(&mut b);
         assert!(b.bf.accept_enabled, "one is writable");
         for d in [&one, &two] {
             std::fs::set_permissions(d, std::fs::Permissions::from_mode(0o555)).unwrap();
         }
-        b.sync_buttons();
+        judge(&mut b);
         let kept = b.bf.accept_enabled;
         b.bf.tree.selected = Some(vec![1]);
-        b.sync_buttons();
+        judge(&mut b);
         let two_judged = b.bf.accept_enabled;
         for d in [&one, &two] {
             std::fs::set_permissions(d, std::fs::Permissions::from_mode(0o755)).unwrap();
