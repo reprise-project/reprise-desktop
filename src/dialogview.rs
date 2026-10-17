@@ -69,6 +69,8 @@ pub struct DialogView {
     wheel: i32,
     /// Icons the last draw used, so a caret blink skips the lookups.
     icons: Option<(IconKey, DialogIcons)>,
+    /// A job decodes icon files the icons wait for; they are looked up again when it lands.
+    decoding: bool,
     /// Last full raster without its caret, and its scale: a blink repaints the field over a clone.
     still_canvas: Option<(Canvas, i32)>,
     /// Keyboard cues: a pointer-opened dialog starts without them ([`Cues::key`]), a key-opened one has them.
@@ -266,6 +268,24 @@ struct DialogIcons {
     rows: HashMap<(String, i32), Option<Canvas>>,
 }
 
+/// Icon `name` at `px` from `cache`. An icon file is never read here: one not decoded at `px` yet
+/// goes on `undecoded` for a job and shows nothing meanwhile.
+fn cached(
+    cache: &mut reprisekit::icontheme::IconCache,
+    name: &str,
+    px: i32,
+    undecoded: &mut Vec<(String, i32)>,
+) -> Option<Canvas> {
+    if !name.starts_with('/') {
+        return cache.get(name, px);
+    }
+    let put = cache.file_put(name, px);
+    if put.is_none() {
+        undecoded.push((name.to_string(), px));
+    }
+    put.flatten().map(std::sync::Arc::unwrap_or_clone)
+}
+
 /// The names `redraw_dialog` resolves for `d`.
 fn icon_key(d: &Dialog, scale: i32) -> IconKey {
     IconKey {
@@ -422,6 +442,7 @@ impl State {
             row_press: DoubleClick::default(),
             wheel: 0,
             icons: None,
+            decoding: false,
             still_canvas: None,
             cues: Cues::opened(self.key_input.last_key_input),
             fade: None,
@@ -870,8 +891,12 @@ impl State {
         let v = &mut dialogs.views[index];
         let px = dialog::ICON_PX * scale;
         let key = icon_key(&v.dialog, scale);
+        let mut undecoded = Vec::new();
         if v.icons.as_ref().map(|(k, _)| k) != Some(&key) {
-            let mut get = |n: &Option<String>, px: i32| n.as_deref().and_then(|n| cache.get(n, px));
+            let mut get = |n: &Option<String>, px: i32| {
+                n.as_deref()
+                    .and_then(|n| cached(cache, n, px, &mut undecoded))
+            };
             let set = key.icon.as_deref() == Some(reprisekit::controls::filesheet::SET_ICON);
             let icons = DialogIcons {
                 icon: if set {
@@ -898,7 +923,7 @@ impl State {
             icons
                 .rows
                 .entry((n.clone(), *size))
-                .or_insert_with(|| cache.get(n, size * scale));
+                .or_insert_with(|| cached(cache, n, size * scale, &mut undecoded));
         }
         let mut row_icons: Vec<Option<&Canvas>> =
             vec![None; names.last().map_or(0, |(i, _, _)| i + 1)];
@@ -959,12 +984,42 @@ impl State {
         let pane = glass_pane(&base, wanted, &v.layout);
         v.backdrop.set(scene, glass, v.glass_tree, pane);
         let origin = (v.x, v.y);
+        let id = v.id;
+        let decode = !undecoded.is_empty() && !std::mem::replace(&mut v.decoding, true);
         if active {
             let spot = canvas.take_spot();
             self.ime_field_drawn(crate::caret::Editor::Dialog, spot, origin, scale);
         }
+        if decode {
+            self.decode_dialog_icons(id, undecoded);
+        }
         self.redraw_all();
         crate::access::touch(self);
+    }
+
+    /// Decodes dialog `id`'s icon files on a file job, since one can sit on a mount that never
+    /// answers, then draws the dialog again with them.
+    fn decode_dialog_icons(&mut self, id: u64, mut files: Vec<(String, i32)>) {
+        files.sort_unstable();
+        files.dedup();
+        self.spawn_fs_job(move || {
+            let art: Vec<_> = (files.into_iter())
+                .map(|(f, px)| {
+                    let c = reprisekit::icontheme::decode_file(std::path::Path::new(&f), px, 1);
+                    (f, px, c)
+                })
+                .collect();
+            Box::new(move |state: &mut State| {
+                state.icons.put_files(art);
+                let Some(i) = state.dialogs.views.iter().position(|v| v.id == id) else {
+                    return;
+                };
+                let v = &mut state.dialogs.views[i];
+                v.decoding = false;
+                v.icons = None;
+                state.redraw_dialog(i);
+            })
+        });
     }
 
     /// Dialog `id`'s tree, placed where it stands.
@@ -2513,6 +2568,35 @@ mod tests {
     };
     use crate::dialog::Dialog;
     use crate::raster::Rect;
+
+    #[test]
+    fn an_icon_file_not_decoded_yet_is_left_for_a_job_and_shows_nothing() {
+        use super::cached;
+        use crate::raster::Canvas;
+        use reprisekit::icontheme::{IconCache, IconTheme};
+        let mut cache = IconCache::new(IconTheme::load("test", &[]));
+        let mut undecoded = Vec::new();
+        let file = "/srv/icons/app.png";
+        assert_eq!(cached(&mut cache, file, 32, &mut undecoded), None);
+        assert_eq!(undecoded, [(file.to_string(), 32)]);
+        cache.put_file(file, 32, Some(Canvas::new(32, 32)));
+        undecoded.clear();
+        let shown = cached(&mut cache, file, 32, &mut undecoded);
+        assert_eq!(shown.map(|c| c.width), Some(32));
+        assert_eq!(cached(&mut cache, file, 16, &mut undecoded), None);
+        assert_eq!(
+            undecoded,
+            [(file.to_string(), 16)],
+            "another size is its own decode"
+        );
+        cache.put_file(file, 16, None);
+        undecoded.clear();
+        assert_eq!(cached(&mut cache, file, 16, &mut undecoded), None);
+        assert!(
+            undecoded.is_empty(),
+            "a file that failed to decode is not tried again"
+        );
+    }
     use reprisekit::controls::form::Key;
     use reprisekit::controls::openwith::{Program, ROWS};
 
