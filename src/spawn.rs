@@ -688,12 +688,12 @@ fn start(mut c: std::process::Command, what: &str, name: Option<&str>) -> std::i
         c.stdout(fd.try_clone()?);
         c.stderr(fd);
     }
-    // Dropping the `Child` does not reap.
+    // Held across the spawn: a child started off the loop that exits at once is listed before
+    // the loop's `reap_children` can look for it. Dropping the `Child` does not reap.
+    let mut children = CHILDREN.lock().unwrap_or_else(|e| e.into_inner());
     let child = c.spawn()?;
-    CHILDREN
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .push((child.id() as libc::pid_t, what.to_string()));
+    children.push((child.id() as libc::pid_t, what.to_string()));
+    drop(children);
     crate::mapfocus::grant(child.id() as i32);
     log::info!("spawned {what:?}");
     Ok(())
