@@ -1003,12 +1003,18 @@ impl State {
     /// the cursor's current position and the window's current rect.
     pub fn set_resize_edges(&mut self, new: Edges) {
         let p = self.pointer_location();
-        let Interaction::Resize { window, .. } = self.interaction else {
+        let Interaction::Resize {
+            window, keyboard, ..
+        } = self.interaction
+        else {
             return;
         };
         let Some(rect) = self.win(window).map(|w| w.frame_rect()) else {
             return;
         };
+        if let Some(origin) = keyboard {
+            self.widen_group_resize(window, new, origin);
+        }
         if let Interaction::Resize {
             edges,
             start,
