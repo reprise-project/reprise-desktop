@@ -972,6 +972,18 @@ impl App for PrintersApp {
         }
     }
 
+    fn reader(&mut self, win: WinId, act: repriseapp::Reader, ctx: &Ctx) -> bool {
+        match (win, act) {
+            (QUEUE, repriseapp::Reader::Reveal { row, .. }) => {
+                self.queue.as_mut().is_some_and(|q| q.reveal(row, ctx))
+            }
+            (repriseapp::MAIN, repriseapp::Reader::Reveal { row, .. }) => {
+                self.folder.reveal(row, ctx)
+            }
+            _ => repriseapp::reader_forms(self, win, act, ctx),
+        }
+    }
+
     fn drop_form(&mut self, win: WinId) -> Option<DropForm<'_>> {
         let form = match win {
             PROPS => self.props.as_mut()?.sheet.open_mut(),

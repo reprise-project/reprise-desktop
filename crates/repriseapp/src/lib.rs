@@ -99,7 +99,7 @@ use wayland_client::{
     },
 };
 
-pub use access::ReaderForm;
+pub use access::{Reader, ReaderForm};
 pub use dnd::{Accept, Actions, DragAction, DragOut, DropKind, Dropped, Offered, Uri};
 pub use fielddrop::{DropForm, FileDrop};
 use reprisefs::pipe::PasteBuf;
@@ -161,6 +161,14 @@ impl Ctx {
     pub fn form_units(&self) -> reprisekit::theme::TextUnits {
         let base = self.base_px();
         reprisekit::theme::TextUnits::new(reprisekit::theme::text_px(base, self.text_size), base)
+    }
+
+    /// Point the window fields at slot `s`'s window, for an event, draw or tree of it.
+    fn aim(&mut self, s: &Slot) {
+        self.size = s.size;
+        self.maximized = s.maximized;
+        self.at_pick = at_pick(s.size, s.picked, s.bounds);
+        self.origin = s.origin;
     }
 
     /// The UI font's px at 100% text, what a form's `units().px(..)` grows.
@@ -678,6 +686,12 @@ pub trait App {
     fn reader_form(&mut self, win: WinId) -> Option<ReaderForm<'_>> {
         self.drop_form(win).map(ReaderForm::Form)
     }
+    /// Carry out a screen reader's Focus or ScrollIntoView in window `win` that takes no click;
+    /// true when the window changed and is drawn again. Defaults to [`reader_forms`]; a window
+    /// drawn from other controls answers it here.
+    fn reader(&mut self, win: WinId, act: Reader, ctx: &Ctx) -> bool {
+        reader_forms(self, win, act, ctx)
+    }
     /// The file dialog in window `win`, whose File name field takes a drag of text or files as
     /// a form's field does; files go in by name, or by path from another folder. None (the
     /// default) hands the drags to `event`. The host also decodes its pictures for Thumbnails
@@ -685,6 +699,14 @@ pub trait App {
     fn drop_file_dialog(&mut self, _win: WinId) -> Option<FileDrop<'_>> {
         None
     }
+}
+
+/// A screen reader's `act` carried out on window `win`'s [`App::reader_form`]; what
+/// [`App::reader`] does unless a program answers it.
+pub fn reader_forms<A: App + ?Sized>(app: &mut A, win: WinId, act: Reader, ctx: &Ctx) -> bool {
+    let base = ctx.base_px();
+    app.reader_form(win)
+        .is_some_and(|f| f.act(act, &ctx.text, base))
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -1535,12 +1557,7 @@ impl Host {
             return;
         }
         match self.slots.iter().find(|s| s.id == win) {
-            Some(s) => {
-                self.ctx.size = s.size;
-                self.ctx.maximized = s.maximized;
-                self.ctx.at_pick = at_pick(s.size, s.picked, s.bounds);
-                self.ctx.origin = s.origin;
-            }
+            Some(s) => self.ctx.aim(s),
             // A hidden main window still takes events the host has no
             // surface for (a `Wake`, a blink); a child with no surface
             // does not exist at all.
@@ -2157,10 +2174,7 @@ impl Host {
             s.title.clone()
         };
         let (size, modal) = (s.size, s.modal);
-        self.ctx.size = s.size;
-        self.ctx.maximized = s.maximized;
-        self.ctx.at_pick = at_pick(s.size, s.picked, s.bounds);
-        self.ctx.origin = s.origin;
+        self.ctx.aim(s);
         let (app, ctx) = (&mut self.app, &self.ctx);
         let acc = &mut self.slots[i].access;
         acc.adapter.update_if_active(|| {
@@ -2254,31 +2268,25 @@ impl Host {
         }
     }
 
-    /// Scroll the list in window `win`'s reader form so the row `r` names shows.
+    /// Scroll the list in window `win` so the row `r` names shows.
     fn reader_reveal(&mut self, win: WinId, r: Reveal) {
         let at = (r.at.0 as i32, r.at.1 as i32);
-        self.reader_act(win, |form, text, px| form.reveal(at, r.row, text, px));
+        self.reader_act(win, Reader::Reveal { at, row: r.row });
     }
 
-    /// Give the keyboard to the control at `at` in window `win`'s reader form, pressing nothing.
+    /// Give the keyboard to the control at `at` in window `win`, pressing nothing.
     fn reader_focus(&mut self, win: WinId, at: (f64, f64)) {
-        let at = (at.0 as i32, at.1 as i32);
-        self.reader_act(win, |form, text, px| form.focus_at(at, text, px));
+        self.reader_act(win, Reader::Focus((at.0 as i32, at.1 as i32)));
     }
 
-    /// Run `f` on window `win`'s reader form at the font size it is drawn at; when it reports a
-    /// change the window and its tree are drawn again.
-    fn reader_act(
-        &mut self,
-        win: WinId,
-        f: impl FnOnce(ReaderForm<'_>, &TextRenderer, u32) -> bool,
-    ) {
-        let base = self.ctx.base_px();
-        let Some(form) = self.app.reader_form(win) else {
+    /// Hand `act` to the program ([`App::reader`]); when it reports a change the window and its
+    /// tree are drawn again.
+    fn reader_act(&mut self, win: WinId, act: Reader) {
+        let Some(s) = self.slots.iter().find(|s| s.id == win) else {
             return;
         };
-        let px = form.px(base);
-        if f(form, &self.ctx.text, px)
+        self.ctx.aim(s);
+        if self.app.reader(win, act, &self.ctx)
             && let Some(s) = self.slot_mut(win)
         {
             s.dirty = true;
