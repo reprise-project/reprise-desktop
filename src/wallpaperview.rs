@@ -122,6 +122,18 @@ impl WallpaperNode {
         self.placed = Some(b);
         true
     }
+
+    /// The buffer holds the picture composed for `fit`; a job composing another fit lands stale.
+    fn shown(&mut self, fit: Fit) {
+        self.fit = Some(fit);
+        self.placed = Some(fit.rect);
+        self.composing = None;
+    }
+
+    /// Whether a job's picture composed for `fit` is still wanted.
+    fn takes(&self, fit: Fit) -> bool {
+        self.composing == Some(fit)
+    }
 }
 
 /// Whether a file's picture of `img` pixels, shown on an output that already shows a picture, is
@@ -605,8 +617,7 @@ impl State {
                 }
                 _ => upload_scaled(&mut self.scene, node.buffer, &canvas, scale),
             }
-            node.fit = Some(fit);
-            node.placed = Some(b);
+            node.shown(fit);
             changed = true;
             let out = w.nodes[i].0.clone();
             self.water_wallpaper(&out, Pane::Desktop, &canvas, fresh);
@@ -655,12 +666,10 @@ impl State {
                 let Some((_, node)) = w.nodes.iter_mut().find(|(o, _)| *o == out) else {
                     return;
                 };
-                if node.composing != Some(fit) {
+                if !node.takes(fit) {
                     return;
                 }
-                node.composing = None;
-                node.fit = Some(fit);
-                node.placed = Some(fit.rect);
+                node.shown(fit);
                 let b = fit.rect;
                 state.scene.set_position(node.buffer, b.x, b.y);
                 let renderer = state.backend.as_mut().map(|b| &mut b.renderer);
@@ -732,6 +741,31 @@ impl State {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_fit_shown_at_once_turns_away_the_job_composing_an_older_one() {
+        let mut scene = crate::compositor::DeskScene::new();
+        let root = scene.root();
+        let fit = |width| Fit {
+            rect: Rect::new(0, 0, width, 540),
+            scale: 2,
+            position: Position::Stretch,
+            bg: Color::rgb(0, 0, 0),
+        };
+        let mut node = WallpaperNode {
+            buffer: scene.buffer_create(root),
+            fit: Some(fit(1920)),
+            placed: Some(fit(1920).rect),
+            composing: Some(fit(1280)),
+        };
+        assert!(node.takes(fit(1280)));
+        node.shown(fit(960));
+        assert!(
+            !node.takes(fit(1280)),
+            "the job for the older fit lands stale"
+        );
+        assert!(node.fit == Some(fit(960)));
+    }
 
     #[test]
     fn a_shown_picture_at_a_new_size_composes_on_a_job_and_a_first_show_at_once() {
