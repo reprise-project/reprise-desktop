@@ -101,8 +101,9 @@ pub struct DesktopView {
     pub(crate) bins: DriveBins,
 }
 
-/// The drives the Send To submenu lists, as the last scan found them. A drive top can be a mount
-/// that never answers, so scans run on a file job, one at a time.
+/// The drives the Send To submenu lists, as the last scan found them. A scan lists the mount points
+/// on a file job, then stats each drive top on a file job of its own, since a drive can be a mount
+/// that never answers: one that hangs keeps only its own stat.
 #[derive(Debug)]
 pub(crate) struct Drives {
     pub(crate) found: Vec<PathBuf>,
@@ -110,6 +111,13 @@ pub(crate) struct Drives {
     scanner: Option<places::MountedDrives>,
     /// The mount table changed during a scan: scan again when it lands.
     again: bool,
+    /// The mount points the last scan listed, in order.
+    listed: Vec<PathBuf>,
+    /// Each listed drive's last [`places::usable_drive`] answer.
+    usable: HashMap<PathBuf, bool>,
+    /// The drives whose stat is out. A drive that never answers keeps its stat, and no second
+    /// one starts.
+    stats: HashSet<PathBuf>,
 }
 
 impl Drives {
@@ -118,6 +126,9 @@ impl Drives {
             found: Vec::new(),
             scanner: Some(scanner),
             again: false,
+            listed: Vec::new(),
+            usable: HashMap::new(),
+            stats: HashSet::new(),
         }
     }
 
@@ -128,11 +139,38 @@ impl Drives {
         scanner
     }
 
-    /// Takes a scan's answer; true when another scan was asked for meanwhile.
-    fn land(&mut self, scanner: places::MountedDrives, found: Vec<PathBuf>) -> bool {
+    /// Takes a scan's list: whether another scan was asked for meanwhile, and the drives to stat
+    /// (those listed with no stat out, now counted as out).
+    fn land(
+        &mut self,
+        scanner: places::MountedDrives,
+        listed: Vec<PathBuf>,
+    ) -> (bool, Vec<PathBuf>) {
         self.scanner = Some(scanner);
-        self.found = found;
-        std::mem::take(&mut self.again)
+        self.usable.retain(|t, _| listed.contains(t));
+        let stat = (listed.iter())
+            .filter(|t| self.stats.insert(t.to_path_buf()))
+            .cloned()
+            .collect();
+        self.listed = listed;
+        self.refind();
+        (std::mem::take(&mut self.again), stat)
+    }
+
+    /// Takes drive `top`'s stat.
+    fn land_stat(&mut self, top: PathBuf, usable: bool) {
+        self.stats.remove(&top);
+        if self.listed.contains(&top) {
+            self.usable.insert(top, usable);
+            self.refind();
+        }
+    }
+
+    fn refind(&mut self) {
+        self.found = (self.listed.iter())
+            .filter(|t| self.usable.get(*t) == Some(&true))
+            .cloned()
+            .collect();
     }
 }
 
@@ -1040,9 +1078,22 @@ impl State {
             return;
         };
         self.spawn_fs_job(move || {
-            let found = scanner.current().to_vec();
+            let listed = scanner.listed().to_vec();
             Box::new(move |state: &mut State| {
-                let again = (state.desktop.as_mut()).is_some_and(|v| v.drives.land(scanner, found));
+                let Some(view) = state.desktop.as_mut() else {
+                    return;
+                };
+                let (again, stat) = view.drives.land(scanner, listed);
+                for top in stat {
+                    state.spawn_fs_job(move || {
+                        let usable = places::usable_drive(&top);
+                        Box::new(move |state: &mut State| {
+                            if let Some(view) = state.desktop.as_mut() {
+                                view.drives.land_stat(top, usable);
+                            }
+                        })
+                    });
+                }
                 if again {
                     state.scan_drives();
                 }
@@ -2215,20 +2266,52 @@ mod tests {
         let mut drives = Drives::new(places::MountedDrives::at(table, vec![root.clone()]));
         let mut scanner = drives.start().unwrap();
         assert!(drives.start().is_none(), "a scan is under way");
-        let found = scanner.current().to_vec();
+        let listed = scanner.listed().to_vec();
+        let (again, stat) = drives.land(scanner, listed);
+        assert!(again, "the table changed during the scan");
+        assert_eq!(stat, [root.join("STICK")]);
         assert!(
             drives.found.is_empty(),
-            "nothing listed before the scan lands"
+            "nothing listed before its stat lands"
         );
-        assert!(
-            drives.land(scanner, found),
-            "the table changed during the scan"
-        );
+        drives.land_stat(root.join("STICK"), true);
         assert_eq!(drives.found, [root.join("STICK")]);
         let scanner = drives.start().unwrap();
-        assert!(!drives.land(scanner, Vec::new()));
+        assert_eq!(drives.land(scanner, Vec::new()), (false, Vec::new()));
         assert_eq!(drives.found, Vec::<PathBuf>::new());
         let _ = std::fs::remove_dir_all(&t);
+    }
+
+    #[test]
+    fn a_drive_whose_stat_never_lands_keeps_no_drive_mounted_later_off_the_list() {
+        let (dead, card) = (PathBuf::from("/media/DEAD"), PathBuf::from("/media/CARD"));
+        let mut drives = Drives::new(places::MountedDrives::at("/nonexistent".into(), Vec::new()));
+        let scanner = drives.start().unwrap();
+        let (_, stat) = drives.land(scanner, vec![dead.clone()]);
+        assert_eq!(stat, std::slice::from_ref(&dead));
+
+        let scanner = drives.start().unwrap();
+        let (_, stat) = drives.land(scanner, vec![card.clone(), dead.clone()]);
+        assert_eq!(
+            stat,
+            std::slice::from_ref(&card),
+            "DEAD's stat is still out: no second one"
+        );
+        drives.land_stat(card.clone(), true);
+        assert_eq!(drives.found, std::slice::from_ref(&card));
+
+        drives.land_stat(dead.clone(), true);
+        assert_eq!(drives.found, [card.clone(), dead.clone()], "mount order");
+        let scanner = drives.start().unwrap();
+        let (_, stat) = drives.land(scanner, vec![card.clone()]);
+        assert_eq!(stat, std::slice::from_ref(&card));
+        assert_eq!(drives.found, std::slice::from_ref(&card), "DEAD unmounted");
+        drives.land_stat(dead, true);
+        assert_eq!(
+            drives.found,
+            [card],
+            "a stat landing after its unmount lists nothing"
+        );
     }
 
     /// A home trash made after the watch started is seen through the data

@@ -225,13 +225,16 @@ pub fn mounted_drives() -> Vec<PathBuf> {
     MountedDrives::new().current().to_vec()
 }
 
-/// [`mounted_drives`] for a long-lived process: `current` walks the mount roots again only when the mount table changed.
+/// [`mounted_drives`] for a long-lived process: `listed` walks the mount roots again only when the
+/// mount table changed.
 #[derive(Debug)]
 pub struct MountedDrives {
     mounts_file: PathBuf,
     roots: Vec<PathBuf>,
     mounts: Option<Vec<u8>>,
-    drives: Vec<PathBuf>,
+    listed: Vec<PathBuf>,
+    /// `listed` filtered by [`usable_drive`], None until `current` asks after a table change.
+    drives: Option<Vec<PathBuf>>,
 }
 
 impl MountedDrives {
@@ -248,34 +251,47 @@ impl MountedDrives {
             mounts_file,
             roots,
             mounts: None,
-            drives: Vec::new(),
+            listed: Vec::new(),
+            drives: None,
         }
     }
 
-    pub fn current(&mut self) -> &[PathBuf] {
-        use std::os::unix::fs::PermissionsExt;
+    /// The local mount points under the roots, sorted, before [`usable_drive`] looks at them:
+    /// nothing here touches a drive, so a drive that never answers cannot hold it.
+    pub fn listed(&mut self) -> &[PathBuf] {
         let mounts = std::fs::read(&self.mounts_file).unwrap_or_default();
         if self.mounts.as_ref() == Some(&mounts) {
-            return &self.drives;
+            return &self.listed;
         }
         let remote = network_mounts(&mounts);
         let mounted: HashSet<PathBuf> = mount_table(&mounts).into_iter().map(|(p, _)| p).collect();
-        self.drives = self
+        self.listed = self
             .roots
             .iter()
             .filter_map(|r| std::fs::read_dir(r).ok())
             .flatten()
             .filter_map(|e| e.ok().map(|e| e.path()))
             .filter(|p| mounted.contains(p) && !remote.contains(p))
-            .filter(|p| {
-                std::fs::metadata(p)
-                    .is_ok_and(|m| m.is_dir() && m.permissions().mode() & 0o200 != 0)
-            })
             .collect();
-        self.drives.sort();
+        self.listed.sort();
         self.mounts = Some(mounts);
-        &self.drives
+        self.drives = None;
+        &self.listed
     }
+
+    pub fn current(&mut self) -> &[PathBuf] {
+        self.listed();
+        let listed = &self.listed;
+        self.drives
+            .get_or_insert_with(|| listed.iter().filter(|p| usable_drive(p)).cloned().collect())
+    }
+}
+
+/// Whether the mount point `top` is a folder the user may write to. It stats the drive, which
+/// waits for as long as the drive does not answer.
+pub fn usable_drive(top: &Path) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::metadata(top).is_ok_and(|m| m.is_dir() && m.permissions().mode() & 0o200 != 0)
 }
 
 impl Default for MountedDrives {
