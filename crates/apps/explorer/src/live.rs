@@ -994,13 +994,7 @@ mod tests {
         index_of(&ex, "a.png");
 
         answer.send(()).expect("send");
-        for _ in 0..500 {
-            if ex.place == place {
-                break;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(10));
-            ex.wake(&mut ctx);
-        }
+        crate::tests::wake_until(&mut ex, &mut ctx, |ex| ex.place == place);
         assert_eq!(ex.place, place);
         index_of(&ex, "inner.txt");
         assert!(ex.reading.is_none());
@@ -1036,13 +1030,7 @@ mod tests {
             ex.items.iter().all(|it| it.name != "late.txt"),
             "the visit is answered by the read it joined"
         );
-        for _ in 0..500 {
-            if ex.reading.is_none() {
-                break;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(10));
-            ex.wake(&mut ctx);
-        }
+        crate::tests::wake_until(&mut ex, &mut ctx, |ex| ex.reading.is_none());
         index_of(&ex, "late.txt");
     }
 
@@ -1065,13 +1053,7 @@ mod tests {
             "the read in flight answers the refresh"
         );
         assert!(ex.reading.is_some(), "a read started after the refresh");
-        for _ in 0..500 {
-            if ex.reading.is_none() {
-                break;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(10));
-            ex.wake(&mut ctx);
-        }
+        crate::tests::wake_until(&mut ex, &mut ctx, |ex| ex.reading.is_none());
         index_of(&ex, "late.txt");
         assert!(ex.reading.is_none(), "the second read leaves none behind");
     }
@@ -1105,13 +1087,9 @@ mod tests {
 
         ctx.icons.set_scale(2);
         ex.follow_scale(2, &mut ctx);
-        for _ in 0..500 {
-            if drawn(&ex)[0].is_some_and(|(scale, ..)| scale == 2) {
-                break;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(10));
-            ex.wake(&mut ctx);
-        }
+        crate::tests::wake_until(&mut ex, &mut ctx, |ex| {
+            drawn(ex)[0].is_some_and(|(scale, ..)| scale == 2)
+        });
         assert_eq!(
             drawn(&ex),
             [Some((2, 32, OWN)), Some((2, 64, OWN)), Some((2, 96, OWN))]
