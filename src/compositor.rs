@@ -3,7 +3,9 @@
 //! is a trait impl on `State` (`handlers`), and every event source on the
 //! loop gets `&mut State`, so nothing holds a pointer into it.
 
-use std::{ffi::OsString, path::PathBuf, rc::Rc, sync::Arc, time::Duration};
+use std::{
+    ffi::OsString, os::unix::net::UnixStream, path::PathBuf, rc::Rc, sync::Arc, time::Duration,
+};
 
 use smithay::{
     backend::renderer::gles::GlesRenderer,
@@ -384,10 +386,7 @@ impl State {
         let listening = listen()?;
         let socket = listening.socket_name().to_os_string();
         handle.insert_source(listening, |stream, _, state| {
-            let data = ClientState {
-                sandbox: crate::sandbox::ClientSandbox::of_stream(&stream, None),
-                ..ClientState::default()
-            };
+            let data = ClientState::of_stream(&stream, None);
             if let Err(e) = state.dh.insert_client(stream, Arc::new(data)) {
                 log::warn!("client refused: {e}");
             }
@@ -731,16 +730,30 @@ pub fn start_text(theme: &crate::theme::Theme) -> TextRenderer {
     }
 }
 
-#[derive(Default)]
 pub struct ClientState {
     pub compositor_state: CompositorClientState,
     /// Whether it runs in a sandbox, for the global filters (`sandbox`).
     pub sandbox: crate::sandbox::ClientSandbox,
+    peer: crate::clientlog::ClientPeer,
+}
+
+impl ClientState {
+    /// A client on `stream`, in the sandbox `context` when it came in on a
+    /// sandbox's socket.
+    pub fn of_stream(stream: &UnixStream, context: Option<crate::sandbox::Sandbox>) -> Self {
+        ClientState {
+            compositor_state: CompositorClientState::default(),
+            sandbox: crate::sandbox::ClientSandbox::of_stream(stream, context),
+            peer: crate::clientlog::ClientPeer::of_stream(stream),
+        }
+    }
 }
 
 impl ClientData for ClientState {
     fn initialized(&self, _client_id: ClientId) {}
-    fn disconnected(&self, _client_id: ClientId, _reason: DisconnectReason) {}
+    fn disconnected(&self, _client_id: ClientId, reason: DisconnectReason) {
+        crate::clientlog::disconnected(&self.sandbox, &self.peer, &reason);
+    }
 }
 
 #[cfg(test)]

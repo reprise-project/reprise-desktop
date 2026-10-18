@@ -14,6 +14,7 @@ mod capture;
 mod captureborder;
 mod caret;
 mod clientglass;
+mod clientlog;
 mod clipboard;
 mod cliphistory;
 mod clipview;
