@@ -1836,6 +1836,62 @@ fn a_paste_whose_prompt_is_still_reading_at_close_keeps_the_clashes_puts_the_res
     );
 }
 
+/// Close from the taskbar, which the modal prompt does not block, while one paste's Replace
+/// prompt is up and a second paste waits behind it.
+#[test]
+fn closing_with_the_replace_prompt_up_answers_no_puts_the_rest_and_quits() {
+    let mut ctx = test_ctx();
+    let t = tempfile::tempdir().expect("a temp dir");
+    let (src, dest) = (t.path().join("src"), t.path().join("dest"));
+    for d in [&src, &dest] {
+        std::fs::create_dir_all(d).expect("mkdir");
+    }
+    for name in ["a.txt", "b.txt"] {
+        std::fs::write(src.join(name), "new").expect("write");
+        std::fs::write(dest.join(name), "old").expect("write");
+    }
+    std::fs::write(src.join("c.txt"), "c").expect("write");
+    let mut ex = crate::tests::test_explorer(Place::Folder(dest.clone()), &mut ctx);
+    for batch in [
+        &[src.join("a.txt"), src.join("c.txt")][..],
+        &[src.join("b.txt")],
+    ] {
+        ex.put_all(batch, &dest, &|_| Some(DropOp::Copy), false, &mut ctx);
+    }
+    crate::tests::wake_until(&mut ex, &mut ctx, |ex| {
+        ex.clashing.is_empty() && ex.asking.is_none()
+    });
+    assert!(asked(&ex).is_some() && ex.replace_waiting.len() == 1);
+    assert!(
+        !ex.run(Command::Close, &mut ctx).quit,
+        "the window waits for the rest of the paste"
+    );
+    assert_eq!(asked(&ex), None, "no prompt on the hidden window");
+
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    let quit = loop {
+        if ex.wake(&mut ctx).quit {
+            break true;
+        }
+        if std::time::Instant::now() > deadline {
+            break false;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(2));
+    };
+    assert!(quit, "the closed window quits once the paste is done");
+    for name in ["a.txt", "b.txt"] {
+        assert_eq!(
+            std::fs::read_to_string(dest.join(name)).ok().as_deref(),
+            Some("old"),
+            "{name} is kept"
+        );
+    }
+    assert!(
+        dest.join("c.txt").exists(),
+        "c.txt, which did not clash, is copied"
+    );
+}
+
 /// Yes replaces the first file, No keeps the second, and the folder prompt's Yes merges, asking
 /// about the file inside it the merge would replace.
 #[test]

@@ -1393,7 +1393,7 @@ impl App for Lazy {
                 ex.settings_dirty = true;
                 Reply::redraw()
             }
-            Event::CloseRequest => ex.close(),
+            Event::CloseRequest => ex.close(ctx),
             Event::DragEnter {
                 x, y, offered, own, ..
             } => ex.drag_enter(x, y, offered, own, ctx),

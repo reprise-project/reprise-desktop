@@ -2758,7 +2758,7 @@ fn a_file_opened_late_still_opens_when_the_window_closes_first() {
     let closed = gate.write().expect("lock");
     ex.held = Some(gate.clone());
     assert_eq!(ex.open_selected(&mut ctx), Reply::none());
-    assert!(!ex.close().quit, "the window waits for the opening");
+    assert!(!ex.close(&mut ctx).quit, "the window waits for the opening");
 
     drop(closed);
     ex.held = None;
