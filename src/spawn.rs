@@ -564,12 +564,12 @@ pub fn spawn_in(cmd: &str, app: Option<&str>, env: &SessionEnv, launch: Option<&
     let argv = reprisefs::scope::in_scope(&["sh", "-c", cmd], Some(&name));
     match start(
         command_argv(&argv[0], &argv[1..], env, launch),
-        cmd,
+        &name,
         Some(&name),
     ) {
         Ok(_) => true,
         Err(e) => {
-            log::error!("spawn {cmd:?}: {e}");
+            log::error!("spawn {name:?}: {e}");
             false
         }
     }

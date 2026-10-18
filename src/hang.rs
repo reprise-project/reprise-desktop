@@ -315,7 +315,11 @@ impl State {
 
     /// Only a window asked to close gets End Program, once per close.
     fn offer_end(&mut self, w: WindowId) {
-        let Some(title) = self.win(w).filter(|x| x.mapped).map(|x| x.title()) else {
+        let Some((title, app_id)) = self
+            .win(w)
+            .filter(|x| x.mapped)
+            .map(|x| (x.title(), x.app_id()))
+        else {
             return;
         };
         let h = self.window_hang(w);
@@ -324,14 +328,14 @@ impl State {
         }
         h.close_asked = false;
         if self.ending.is_some() {
-            log::info!("window {title:?} is not responding; the session end lists it");
+            log::info!("window {w:?} ({app_id:?}) is not responding; the session end lists it");
             return;
         }
         let Some(pid) = self.client_pid(w).filter(|&p| self.may_end(p)) else {
-            log::info!("window {title:?} is not responding; no pid to end");
+            log::info!("window {w:?} ({app_id:?}) is not responding; no pid to end");
             return;
         };
-        log::info!("window {title:?} (pid {pid}) is not responding");
+        log::info!("window {w:?} ({app_id:?}, pid {pid}) is not responding");
         let name = program_name(pid).unwrap_or(title);
         self.open_dialog(Dialog::end_program(&name, pid));
     }
