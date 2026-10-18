@@ -631,10 +631,10 @@ impl State {
     }
 
     pub(crate) fn under_fullscreen(&self, bar: &Bar) -> bool {
-        let Some(w) = self.focused.and_then(|w| self.win(w)) else {
+        let Some(w) = self.bind_window().and_then(|w| self.win(w)) else {
             return false;
         };
-        if !w.fullscreen || !w.mapped || w.minimized {
+        if !w.fullscreen {
             return false;
         }
         let r = self.bar_placement(&bar.output).shown;
