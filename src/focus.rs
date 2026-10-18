@@ -183,7 +183,8 @@ impl State {
                 pid: pid(self, f),
                 owns: self.is_owner_of(f, w),
             });
-        let holder = mapfocus::holder(self.dialogs.active, window);
+        let reprise = self.dialogs.active || self.bar_shared.keys.is_some();
+        let holder = mapfocus::holder(reprise, window);
         let takes = mapfocus::takes_focus(&new, holder);
         if !takes {
             log::info!(

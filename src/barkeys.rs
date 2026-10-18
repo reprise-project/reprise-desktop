@@ -134,6 +134,29 @@ impl State {
         }
     }
 
+    /// Put `w`, mapping, on top while the bar keeps the keyboard: its task button asks for
+    /// attention, and it comes next after the window the bar took the keyboard from.
+    pub fn map_under_bar_keys(&mut self, w: WindowId) {
+        let Some(tree) = self.win(w).map(|x| x.tree) else {
+            return;
+        };
+        self.scene.raise_to_top(tree);
+        self.raise_children(w);
+        if let Some(win) = self.win_mut(w) {
+            win.attention = true;
+        }
+        let back = self.bar_shared.keys.map(|k| k.back);
+        let order = &mut self.focus_order;
+        order.retain(|p| *p != w);
+        let at = match back {
+            Some(Back::Window(b)) => order.iter().position(|p| *p == b),
+            _ => None,
+        };
+        order.insert(at.unwrap_or(order.len()), w);
+        self.redraw_taskbars();
+        self.redraw_all();
+    }
+
     pub fn end_bar_keys(&mut self) {
         if let Some(k) = self.bar_shared.keys.take() {
             self.redraw_taskbar(k.bar);
