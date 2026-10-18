@@ -396,6 +396,10 @@ progressbar progress, scale highlight, progressbar progress:backdrop, scale high
   border-color: shade(@theme_selected_bg_color, 0.8);
   background-color: @theme_selected_bg_color;
 }
+progressbar > trough > progress:disabled, progressbar > trough > progress:backdrop:disabled {
+  border-color: @insensitive_fg_color;
+  background-color: @insensitive_fg_color;
+}
 scale slider, scale slider:hover, scale slider:backdrop {
   color: @theme_fg_color;
   border-color: @reprise_shadow;
