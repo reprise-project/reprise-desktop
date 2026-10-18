@@ -24,8 +24,9 @@ impl Position {
     }
 }
 
-/// [`compose`], borrowing `img` when it already is the result: an opaque picture stretched to its
-/// own size.
+/// `img` placed on a `w` x `h` canvas of `bg` by `position`, borrowing `img` when it already is the
+/// result: an opaque picture stretched to its own size. `scale` is the image's draw size relative
+/// to its own for Center and Tile; Stretch ignores it.
 pub fn composed(
     img: &Canvas,
     w: u32,
@@ -34,48 +35,31 @@ pub fn composed(
     bg: Color,
     scale: f32,
 ) -> Cow<'_, Canvas> {
-    if position == Position::Stretch
-        && (img.width, img.height) == (w, h)
-        && w > 0
-        && h > 0
-        && opaque(img)
-    {
-        Cow::Borrowed(img)
-    } else {
-        Cow::Owned(compose(img, w, h, position, bg, scale))
-    }
-}
-
-fn opaque(c: &Canvas) -> bool {
-    c.scale() == 1 && c.pixels.iter().all(|&p| p >> 24 == 0xFF)
-}
-
-/// `img` placed on a `w` x `h` canvas of `bg` by `position`. `scale` is the image's draw size relative to its own for Center and Tile; Stretch ignores it.
-pub fn compose(img: &Canvas, w: u32, h: u32, position: Position, bg: Color, scale: f32) -> Canvas {
-    let mut out = Canvas::new(w, h);
-    if img.width == 0 || img.height == 0 || w == 0 || h == 0 {
+    let blank = || {
+        let mut out = Canvas::new(w, h);
         out.fill_rect(out.bounds(), bg);
-        return out;
+        out
+    };
+    if img.width == 0 || img.height == 0 || w == 0 || h == 0 {
+        return Cow::Owned(blank());
     }
-    match position {
+    let out = match position {
         Position::Stretch => {
-            let resampled;
             let fitted = if (img.width, img.height, img.scale()) == (w, h, 1) {
-                img
+                Cow::Borrowed(img)
             } else {
-                resampled = img.resample_box(w, h);
-                &resampled
+                Cow::Owned(img.resample_box(w, h))
             };
             // The colour never shows under an opaque picture.
-            if opaque(fitted) {
-                out.pixels.copy_from_slice(&fitted.pixels);
-            } else {
-                out.fill_rect(out.bounds(), bg);
-                out.blit_over(0, 0, fitted);
+            if opaque(&fitted) {
+                return fitted;
             }
+            let mut out = blank();
+            out.blit_over(0, 0, &fitted);
+            out
         }
         Position::Center | Position::Tile => {
-            out.fill_rect(out.bounds(), bg);
+            let mut out = blank();
             let (sw, sh) = (
                 ((img.width as f32 * scale).round() as u32).max(1),
                 ((img.height as f32 * scale).round() as u32).max(1),
@@ -101,9 +85,19 @@ pub fn compose(img: &Canvas, w: u32, h: u32, position: Position, bg: Color, scal
                     row.copy_from_slice(&band.pixels[src..src + w]);
                 }
             }
+            out
         }
-    }
-    out
+    };
+    Cow::Owned(out)
+}
+
+/// [`composed`] as an owned canvas.
+pub fn compose(img: &Canvas, w: u32, h: u32, position: Position, bg: Color, scale: f32) -> Canvas {
+    composed(img, w, h, position, bg, scale).into_owned()
+}
+
+fn opaque(c: &Canvas) -> bool {
+    c.scale() == 1 && c.pixels.iter().all(|&p| p >> 24 == 0xFF)
 }
 
 #[cfg(test)]
