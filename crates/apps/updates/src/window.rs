@@ -745,7 +745,8 @@ mod tests {
     #[test]
     #[ignore]
     fn render_updates() {
-        let env = Env::new();
+        let mut env = Env::new();
+        env.theme.access_keys = true;
         let mut ups = mixed();
         ups[0].kind = Kind::Security;
         ups[0].summary = "Standalone web browser from mozilla.org".into();

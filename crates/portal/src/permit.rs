@@ -578,7 +578,10 @@ mod tests {
         use reprisekit::controls::form;
         use reprisekit::text::TextRenderer;
         use reprisekit::theme::{FontConfig, Theme};
-        let theme = Theme::default();
+        let theme = Theme {
+            access_keys: true,
+            ..Theme::default()
+        };
         let text = TextRenderer::load(&FontConfig::default());
         let input = Input {
             offer_remember: true,

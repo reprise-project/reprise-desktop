@@ -629,7 +629,10 @@ mod tests {
     #[test]
     #[ignore]
     fn render_status() {
-        let theme = reprisekit::theme::Theme::default();
+        let theme = reprisekit::theme::Theme {
+            access_keys: true,
+            ..reprisekit::theme::Theme::default()
+        };
         let text = reprisekit::text::TextRenderer::load(&reprisekit::theme::FontConfig::default());
         let mut d = wired();
         d.connected_since = None;

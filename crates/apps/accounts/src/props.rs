@@ -551,7 +551,10 @@ mod tests {
     fn render_sheet() {
         use reprisekit::text::TextRenderer;
         use reprisekit::theme::{FontConfig, Theme};
-        let theme = Theme::default();
+        let theme = Theme {
+            access_keys: true,
+            ..Theme::default()
+        };
         let text = TextRenderer::load(&FontConfig::default());
         let (w, h) = CLIENT;
         let mut out = Canvas::new(4 * w as u32, h as u32);

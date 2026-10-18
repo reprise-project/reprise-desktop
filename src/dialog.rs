@@ -4381,7 +4381,8 @@ pub fn draw(
 }
 
 /// The copy progress control of `c` into `client` of a dialog drawn at `scale`, from the unscaled
-/// `theme`: the control draws on a canvas of the output's scale.
+/// `theme`: the control draws on a canvas of the output's scale, underlining while `keys`.
+#[allow(clippy::too_many_arguments)]
 pub fn draw_copy(
     canvas: &mut Canvas,
     theme: &Theme,
@@ -4390,10 +4391,12 @@ pub fn draw_copy(
     client: Rect,
     scale: i32,
     active: bool,
+    keys: bool,
 ) {
     let mut page = Canvas::with_scale(client.width as u32, client.height as u32, scale);
     let paint = Paint {
         active,
+        access_keys: keys,
         s: 1,
         ..theme.paint()
     };
@@ -5025,7 +5028,10 @@ fn draw_welcome(
             draw_button(
                 &mut c,
                 text,
-                &theme.paint(),
+                &Paint {
+                    access_keys: cues.keys,
+                    ..theme.paint()
+                },
                 r,
                 &btn.label,
                 btn.default,
