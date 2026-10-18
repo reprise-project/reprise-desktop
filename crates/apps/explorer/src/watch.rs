@@ -44,6 +44,17 @@ fn mask() -> WatchMask {
 struct Shared {
     only: Vec<(WatchDescriptor, OsString)>,
     shown: Option<Shown>,
+    #[cfg(test)]
+    fence: Fence,
+}
+
+/// A watch tests use to learn the thread has dealt with every event before it ([`Watch::sync`]).
+#[cfg(test)]
+#[derive(Default)]
+struct Fence {
+    wd: Option<WatchDescriptor>,
+    read: bool,
+    passed: bool,
 }
 
 /// The shown folder's watch and one on every folder above it, which name the folder on the path
@@ -102,6 +113,11 @@ impl Shared {
         if e.mask.contains(EventMask::IGNORED) {
             return false;
         }
+        #[cfg(test)]
+        if self.fence.wd.as_ref() == Some(&e.wd) {
+            self.fence.read = true;
+            return false;
+        }
         if let Some(s) = self.shown.as_mut()
             && let Some(k) = s.levels.iter().position(|w| w.as_ref() == Some(&e.wd))
         {
@@ -140,6 +156,12 @@ impl Watch {
                     events.fold(false, |any, e| seen.note(&e) | any)
                 };
                 loop {
+                    #[cfg(test)]
+                    {
+                        let mut seen = seen.lock().unwrap_or_else(|e| e.into_inner());
+                        let fence = &mut seen.fence;
+                        fence.passed |= std::mem::take(&mut fence.read);
+                    }
                     match inotify.read_events_blocking(&mut buf) {
                         Ok(events) => {
                             if flag.strong_count() == 0 {
@@ -263,6 +285,32 @@ impl Watch {
     fn flag(&self) -> Arc<AtomicBool> {
         self.changed.clone()
     }
+
+    /// Returns once the thread has finished with every event queued before the call, its settle
+    /// and flag included: events on one fd arrive in order, so it waits for a fence event's round.
+    #[cfg(test)]
+    fn sync(&mut self) {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let wd = self
+            .watches
+            .add(dir.path(), WatchMask::CREATE)
+            .expect("fence watch");
+        self.shared().fence = Fence {
+            wd: Some(wd.clone()),
+            ..Fence::default()
+        };
+        std::fs::write(dir.path().join("fence"), "").expect("fence");
+        let until = Instant::now() + Duration::from_secs(30);
+        while !self.shared().fence.passed {
+            assert!(
+                Instant::now() < until,
+                "the watch thread never passed the fence"
+            );
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        self.shared().fence = Fence::default();
+        let _ = self.watches.remove(wd);
+    }
 }
 
 impl Drop for Watch {
@@ -311,14 +359,14 @@ mod tests {
         watch.watch(dir.path());
         watch.clear();
         watch.watch(dir.path());
-        std::thread::sleep(COALESCE * 4);
+        watch.sync();
         assert!(
             !watch.take_changed(),
             "our own rm_watch was taken for a change"
         );
 
         std::fs::write(dir.path().join("new.txt"), "x").expect("write");
-        std::thread::sleep(COALESCE * 4);
+        watch.sync();
         assert!(watch.take_changed());
     }
 
@@ -331,15 +379,15 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         watch.watch(dir.path());
         let mut f = std::fs::File::create(dir.path().join("big.bin")).expect("create");
-        std::thread::sleep(COALESCE * 4);
+        watch.sync();
         assert!(watch.take_changed(), "the file arriving is a change");
         for _ in 0..3 {
             f.write_all(&[0; 4096]).expect("write");
-            std::thread::sleep(COALESCE * 2);
         }
+        watch.sync();
         assert!(!watch.take_changed(), "its writes are not");
         drop(f);
-        std::thread::sleep(COALESCE * 4);
+        watch.sync();
         assert!(watch.take_changed(), "its close is");
     }
 
@@ -350,11 +398,11 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         watch.watch_all(&[(dir.path().to_path_buf(), Some("Trash".into()))]);
         std::fs::write(dir.path().join("recently-used.xbel"), "x").expect("write");
-        std::thread::sleep(COALESCE * 4);
+        watch.sync();
         assert!(!watch.take_changed(), "another entry is not a change");
 
         std::fs::create_dir(dir.path().join("Trash")).expect("mkdir");
-        std::thread::sleep(COALESCE * 4);
+        watch.sync();
         assert!(watch.take_changed(), "the named entry is");
     }
 
@@ -388,10 +436,6 @@ mod tests {
         assert!(watch.wd.is_empty());
     }
 
-    fn wait() {
-        std::thread::sleep(COALESCE * 4);
-    }
-
     #[test]
     fn a_folder_renamed_in_place_is_gone_to_its_new_name() {
         let mut watch = Watch::new(Waker::noop()).expect("inotify");
@@ -401,7 +445,7 @@ mod tests {
         watch.watch(&old);
         std::fs::write(top.path().join("other.txt"), "x").expect("write");
         std::fs::rename(top.path().join("other.txt"), top.path().join("moved.txt")).expect("mv");
-        wait();
+        watch.sync();
         assert_eq!(
             watch.take_gone(),
             None,
@@ -413,7 +457,7 @@ mod tests {
         );
 
         std::fs::rename(&old, &new).expect("rename");
-        wait();
+        watch.sync();
         assert_eq!(watch.take_gone(), Some(new));
         assert_eq!(watch.take_gone(), None, "taken once");
     }
@@ -427,7 +471,7 @@ mod tests {
         std::fs::create_dir(top.path().join("b")).expect("mkdir");
         watch.watch(&shown);
         std::fs::rename(&shown, top.path().join("b").join("shown")).expect("mv");
-        wait();
+        watch.sync();
         assert_eq!(
             watch.take_gone(),
             Some(shown.clone()),
@@ -437,7 +481,7 @@ mod tests {
         std::fs::create_dir(&shown).expect("mkdir");
         watch.watch(&shown);
         std::fs::remove_dir(&shown).expect("rmdir");
-        wait();
+        watch.sync();
         assert_eq!(watch.take_gone(), Some(shown), "deleted");
     }
     /// `top/a/b/shown`, watched at `shown`.
@@ -456,12 +500,12 @@ mod tests {
         let a = top.path().join("a");
         std::fs::create_dir(a.join("c")).expect("mkdir");
         std::fs::rename(a.join("c"), a.join("d")).expect("mv");
-        wait();
+        watch.sync();
         assert_eq!(watch.take_gone(), None, "a sibling renamed");
         assert!(!watch.take_changed(), "events above are not a change");
 
         std::fs::rename(&a, top.path().join("z")).expect("rename");
-        wait();
+        watch.sync();
         assert_eq!(
             watch.take_gone(),
             Some(top.path().join("z").join("b").join("shown"))
@@ -472,7 +516,7 @@ mod tests {
     fn a_folder_above_moved_up_the_path_is_followed() {
         let (top, mut watch, _) = deep();
         std::fs::rename(top.path().join("a").join("b"), top.path().join("b2")).expect("mv");
-        wait();
+        watch.sync();
         assert_eq!(watch.take_gone(), Some(top.path().join("b2").join("shown")));
     }
 
@@ -481,13 +525,13 @@ mod tests {
         let (top, mut watch, shown) = deep();
         let away = tempfile::tempdir().expect("tempdir");
         std::fs::rename(top.path().join("a"), away.path().join("a")).expect("mv");
-        wait();
+        watch.sync();
         assert_eq!(watch.take_gone(), Some(shown.clone()), "moved elsewhere");
 
         std::fs::create_dir_all(&shown).expect("mkdir");
         watch.watch(&shown);
         std::fs::remove_dir_all(top.path().join("a")).expect("rm");
-        wait();
+        watch.sync();
         assert_eq!(watch.take_gone(), Some(shown), "deleted");
     }
 }
