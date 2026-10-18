@@ -466,7 +466,7 @@ impl State {
         };
         // A decode takes a while for a large image, so it runs off the
         // loop; the entry may be gone by the time it lands.
-        self.spawn_fs_job(move || {
+        self.spawn_job(move || {
             let thumb = thumbnail(&png);
             Box::new(move |state: &mut State| {
                 let Some(thumb) = thumb else {
