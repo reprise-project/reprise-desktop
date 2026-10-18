@@ -7,7 +7,7 @@ use reprisefs::removal::Removal;
 
 use crate::compositor::State;
 use crate::desktop::{self, DesktopEntry};
-use crate::dialog::Dialog;
+use crate::dialog::{Dialog, Style};
 use crate::fsjobs::OnLoop;
 
 /// What Delete on the set `set` of `entries` covers: the `system_icons` names of its place icons and the paths of its files.
@@ -323,19 +323,53 @@ impl State {
         }) else {
             return;
         };
-        // Each drive's size is a statvfs, which a mount that never answers holds.
+        // The drives' tabs come from the last reads and fill in as each drive answers: a drive's
+        // tab looks inside it, which a mount that never answers holds.
         self.spawn_fs_job(move || {
             let read = reprisefs::trash::Bins::system().map(|bins| {
-                let drives = crate::binprops::drives(&bins, &places::mounted_drives());
-                (bins.policy, drives)
+                let home = crate::binprops::home_drive(&bins);
+                (bins, home)
             });
             Box::new(move |state: &mut State| {
-                if let Some((policy, drives)) = read {
-                    let sheet = crate::binprops::BinSheet::new(policy, drives);
-                    state.open_dialog(crate::binprops::dialog(sheet, at, &icon));
-                }
+                let (Some((bins, home)), Some(view)) = (read, state.desktop.as_ref()) else {
+                    return;
+                };
+                let drives = home.into_iter().chain(view.bins.tabs(&view.drives.found));
+                let sheet = crate::binprops::BinSheet::new(bins.policy.clone(), drives.collect());
+                state.open_dialog(crate::binprops::dialog(sheet, at, &icon));
+                state.read_bin_tabs(&bins);
             })
         });
+    }
+
+    /// Reads the tab of each drive the Send To scan found on a file job of its own, one per drive
+    /// at a time, and shows the answers in the open Recycle Bin Properties.
+    fn read_bin_tabs(&mut self, bins: &reprisefs::trash::Bins) {
+        let Some(view) = self.desktop.as_mut() else {
+            return;
+        };
+        for top in view.bins.start_tab_reads(&view.drives.found) {
+            let bins = bins.clone();
+            self.spawn_fs_job(move || {
+                let tab = crate::binprops::drive_tab(&bins, &top);
+                Box::new(move |state: &mut State| {
+                    let Some(view) = state.desktop.as_mut() else {
+                        return;
+                    };
+                    view.bins.land_tab(top, tab);
+                    let tabs = view.bins.tabs(&view.drives.found);
+                    for i in 0..state.dialogs.views.len() {
+                        let Style::Form(fd) = &mut state.dialogs.views[i].dialog.style else {
+                            continue;
+                        };
+                        if crate::binprops::show_drives(fd, tabs.clone()) {
+                            state.refit_dialog(i);
+                            state.redraw_dialog(i);
+                        }
+                    }
+                })
+            });
+        }
     }
 
     /// Empty Recycle Bin: asks to delete what the bins hold, counted in a file job.

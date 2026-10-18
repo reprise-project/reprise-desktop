@@ -8,7 +8,7 @@
 //! (`reprisefs::sendto::session_rows`).
 
 use std::borrow::Cow;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::os::fd::BorrowedFd;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -97,7 +97,7 @@ pub struct DesktopView {
     landed: Vec<(i32, i32)>,
     pub(crate) send_to: Vec<reprisefs::sendto::SendToRow>,
     pub(crate) drives: Drives,
-    bins: DriveBins,
+    pub(crate) bins: DriveBins,
 }
 
 /// The drives the Send To submenu lists, as the last scan found them. A drive top can be a mount
@@ -144,6 +144,11 @@ pub(crate) struct DriveBins {
     reads: crate::fsjobs::Reads,
     /// A read was asked for while one ran: read again when it lands.
     again: bool,
+    /// Each drive's Recycle Bin Properties tab as its last read found it, None for no bin.
+    tabs: HashMap<PathBuf, Option<crate::binprops::Drive>>,
+    /// The drives whose tab is being read. A drive that never answers keeps its read, and no
+    /// second one starts.
+    tab_reads: HashSet<PathBuf>,
 }
 
 impl DriveBins {
@@ -164,6 +169,26 @@ impl DriveBins {
         self.wants = wants;
         self.full = full;
         (true, again)
+    }
+
+    /// The tabs of `tops` the reads have found so far, in `tops`' order.
+    pub(crate) fn tabs(&self, tops: &[PathBuf]) -> Vec<crate::binprops::Drive> {
+        (tops.iter())
+            .filter_map(|t| self.tabs.get(t).cloned().flatten())
+            .collect()
+    }
+
+    /// The drives of `tops` to read a tab of: those with no read out, now counted as read.
+    pub(crate) fn start_tab_reads(&mut self, tops: &[PathBuf]) -> Vec<PathBuf> {
+        (tops.iter())
+            .filter(|t| self.tab_reads.insert(t.to_path_buf()))
+            .cloned()
+            .collect()
+    }
+
+    pub(crate) fn land_tab(&mut self, top: PathBuf, tab: Option<crate::binprops::Drive>) {
+        self.tab_reads.remove(&top);
+        self.tabs.insert(top, tab);
     }
 }
 
@@ -2436,6 +2461,36 @@ mod tests {
         let third = bins.start(now).unwrap();
         assert_eq!(bins.land(third, Vec::new(), false), (true, false));
         assert!(!bins.full);
+    }
+
+    #[test]
+    fn a_drive_tab_read_still_out_starts_no_second_and_known_tabs_keep_mount_order() {
+        let tab = |label: &str| crate::binprops::Drive {
+            key: label.into(),
+            label: label.into(),
+            size: 1,
+        };
+        let (a, b, c) = (
+            PathBuf::from("/media/A"),
+            PathBuf::from("/media/B"),
+            PathBuf::from("/media/C"),
+        );
+        let tops = [a.clone(), b.clone(), c.clone()];
+        let mut bins = DriveBins::default();
+        assert_eq!(bins.start_tab_reads(&tops), tops);
+        assert!(bins.tabs(&tops).is_empty(), "no read has landed");
+        bins.land_tab(c.clone(), Some(tab("C")));
+        bins.land_tab(a.clone(), Some(tab("A")));
+        assert_eq!(
+            bins.start_tab_reads(&tops),
+            [a.clone(), c.clone()],
+            "B never answered: its read is still out"
+        );
+        assert_eq!(bins.tabs(&tops), [tab("A"), tab("C")]);
+        bins.land_tab(a.clone(), None);
+        bins.land_tab(b, Some(tab("B")));
+        assert_eq!(bins.tabs(&tops), [tab("B"), tab("C")], "A has no bin now");
+        assert_eq!(bins.tabs(&[c]), [tab("C")], "only drives still mounted");
     }
 
     #[test]
