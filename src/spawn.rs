@@ -709,6 +709,14 @@ pub fn xdg_open_file(argv: &[std::ffi::OsString]) -> Option<&std::path::Path> {
     }
 }
 
+/// The regular file `xdg-open <file>` opens; None for any other command line or path. Stats
+/// the path: call it off the loop.
+pub fn xdg_open_document(argv: &[std::ffi::OsString]) -> Option<std::path::PathBuf> {
+    xdg_open_file(argv)
+        .filter(|p| p.is_file())
+        .map(std::path::Path::to_path_buf)
+}
+
 /// The entry id `gtk-launch [options] <id> [uris]` names, `.desktop` optional.
 fn gtk_launch_id(cmd: &str) -> Option<String> {
     let argv = reprisefs::apps::exec_argv(cmd);
@@ -862,6 +870,24 @@ mod tests {
         assert_eq!(xdg_open_file(&argv("xdg-open https://example.org/")), None);
         assert_eq!(xdg_open_file(&argv("xdg-open a.txt b.txt")), None);
         assert_eq!(xdg_open_file(&argv("gedit /home/u/a.txt")), None);
+    }
+
+    #[test]
+    fn a_document_shortcut_opens_by_type_only_on_a_regular_file() {
+        let dir = std::env::temp_dir().join(format!("reprise-xdg-doc-{}", std::process::id()));
+        let folder = dir.join("Backup.zip");
+        let file = dir.join("notes.txt");
+        std::fs::create_dir_all(&folder).unwrap();
+        std::fs::write(&file, "n").unwrap();
+        let open = |p: &std::path::Path| vec!["xdg-open".into(), p.as_os_str().to_owned()];
+        assert_eq!(xdg_open_document(&open(&file)), Some(file.clone()));
+        assert_eq!(
+            xdg_open_document(&open(&folder)),
+            None,
+            "a folder named like an archive"
+        );
+        assert_eq!(xdg_open_document(&open(&dir.join("gone.txt"))), None);
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
