@@ -980,12 +980,8 @@ pub fn access(
         item.set_selected(selected);
         let y = lay.body.y + (i as i32 - tv.top as i32) * rh;
         let x = lay.body.x - tv.left_in(lay) + tv.label_x(row.depth);
-        item.set_bounds(access::bounds(Rect::new(
-            x,
-            y,
-            (lay.body.right() - x).max(0),
-            rh,
-        )));
+        let r = Rect::new(x, y, (lay.body.right() - x).max(0), rh);
+        item.set_bounds(access::row_bounds(lay.body, r));
         let up = row
             .depth
             .checked_sub(1)

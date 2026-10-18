@@ -359,6 +359,11 @@ impl App for UpdatesApp {
         );
     }
 
+    fn reader(&mut self, _win: WinId, act: repriseapp::Reader, ctx: &Ctx) -> bool {
+        let px = ctx.forms().fonts.size_px;
+        (self.window).reader(act, &ctx.text, px, &ctx.theme.controls())
+    }
+
     fn draw(&mut self, _win: WinId, c: &mut Canvas, ctx: &Ctx) {
         self.sync_window(ctx);
         self.window

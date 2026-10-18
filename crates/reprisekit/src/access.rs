@@ -160,7 +160,7 @@ impl Published {
     }
 
     /// What a reader's ScrollIntoView on node `id` scrolls: a row lying outside its list's
-    /// frame. None for a row in view, or a node that is not a row of a list.
+    /// bounds ([`Published::scrolled_out`]). None for a row in view, or a node that is not a row of a list.
     pub fn reveal(&self, id: NodeId) -> Option<Reveal> {
         let list = self.scrolled_out(id)?;
         let role = self.nodes.get(&id)?.role();
@@ -191,18 +191,14 @@ impl Published {
         None
     }
 
-    /// The list `id` is a row of, when the row lies above or below the list's frame.
+    /// The list `id` is a row of, when the row lies out of the list's bounds ([`out_of`]).
     fn scrolled_out(&self, id: NodeId) -> Option<NodeId> {
         let b = self.nodes.get(&id)?.bounds()?;
         let mut up = *self.parents.get(&id)?;
         loop {
             let n = self.nodes.get(&up)?;
-            if matches!(
-                n.role(),
-                Role::ListBox | Role::Tree | Role::List | Role::ListGrid | Role::TreeGrid
-            ) {
-                let f = n.bounds()?;
-                return (b.y0 < f.y0 || b.y1 > f.y1).then_some(up);
+            if is_list(n.role()) {
+                return out_of(b, n.bounds()?).then_some(up);
             }
             up = *self.parents.get(&up)?;
         }
@@ -351,6 +347,20 @@ impl<K: Copy, P: Fn(Msg<K>)> accesskit::ActionHandler for Handler<K, P> {
     }
 }
 
+/// A role whose rows scroll inside it.
+fn is_list(role: Role) -> bool {
+    matches!(
+        role,
+        Role::ListBox | Role::Tree | Role::List | Role::ListGrid | Role::TreeGrid
+    )
+}
+
+/// A row with bounds `b` lies out of its list's bounds `f`: partly above or below them, or
+/// wholly beside them (a row cut by a side edge, as a deep tree row is, stays in).
+fn out_of(b: accesskit::Rect, f: accesskit::Rect) -> bool {
+    b.y0 < f.y0 || b.y1 > f.y1 || b.x1 <= f.x0 || b.x0 >= f.x1
+}
+
 pub fn bounds(r: Rect) -> accesskit::Rect {
     accesskit::Rect {
         x0: r.x.into(),
@@ -358,6 +368,25 @@ pub fn bounds(r: Rect) -> accesskit::Rect {
         x1: r.right().into(),
         y1: r.bottom().into(),
     }
+}
+
+/// The bounds of `row` in a list whose rows show in `view`: the row itself while any of it
+/// shows, else a row of its size just past the edge it went out by. Every row out on one side
+/// shares that place, so a scroll changes only the rows crossing the edge, and
+/// [`Published::reveal`] still finds each outside the list.
+pub fn row_bounds(view: Rect, row: Rect) -> accesskit::Rect {
+    let r = if row.bottom() <= view.y {
+        Rect::new(row.x, view.y - row.height, row.width, row.height)
+    } else if row.y >= view.bottom() {
+        Rect::new(row.x, view.bottom(), row.width, row.height)
+    } else if row.right() <= view.x {
+        Rect::new(view.x - row.width, row.y, row.width, row.height)
+    } else if row.x >= view.right() {
+        Rect::new(view.right(), row.y, row.width, row.height)
+    } else {
+        row
+    };
+    bounds(r)
 }
 
 pub fn node(role: Role, r: Rect) -> Node {
@@ -688,6 +717,55 @@ mod tests {
         );
         assert_eq!(p.target(d), None);
         assert_eq!(p.reveal(tree), None, "the tree itself is no row");
+    }
+
+    #[test]
+    fn a_cell_wholly_beside_a_list_or_cut_by_its_bottom_is_revealed() {
+        let mut t = Tree::new(node(Role::Window, Rect::new(0, 0, 200, 100)));
+        let list = t.push(
+            ROOT,
+            "list",
+            node(Role::ListBox, Rect::new(10, 10, 100, 40)),
+        );
+        let cell = |x| node(Role::ListBoxOption, Rect::new(x, 12, 40, 10));
+        let shown = t.push(list, 0, cell(12));
+        let cut = t.push(list, 1, cell(90));
+        let left = t.push(list, 2, cell(-40));
+        let low = t.push(
+            list,
+            3,
+            node(Role::ListBoxOption, Rect::new(12, 45, 40, 10)),
+        );
+        let mut p = Published::default();
+        p.update(t);
+        assert_eq!(p.reveal(shown), None);
+        assert_eq!(p.reveal(cut), None, "a cell cut by a side edge");
+        assert_eq!(
+            p.reveal(left).map(|r| r.row),
+            Some(2),
+            "a cell left of the list"
+        );
+        assert_eq!(
+            p.reveal(low).map(|r| r.row),
+            Some(3),
+            "a row cut by the bottom edge"
+        );
+    }
+
+    #[test]
+    fn rows_out_of_view_share_a_place_past_the_edge_they_left_by() {
+        let view = Rect::new(10, 10, 100, 40);
+        let at = |x, y| row_bounds(view, Rect::new(x, y, 50, 10));
+        assert_eq!(at(10, -100), at(10, 0), "every row above shares one place");
+        assert_eq!(at(10, 0), bounds(Rect::new(10, 0, 50, 10)));
+        assert_eq!(
+            at(10, 5),
+            bounds(Rect::new(10, 5, 50, 10)),
+            "a cut row keeps its own"
+        );
+        assert_eq!(at(10, 300), bounds(Rect::new(10, 50, 50, 10)));
+        assert_eq!(at(-300, 20), bounds(Rect::new(-40, 20, 50, 10)));
+        assert_eq!(at(300, 20), bounds(Rect::new(110, 20, 50, 10)));
     }
 
     #[test]

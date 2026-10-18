@@ -430,9 +430,21 @@ impl<R: Rows, C: AsRef<[Column]>, S: Borrow<Selection>> ListView<R, C, S> {
     }
 
     pub fn follow(&mut self, lay: &Layout) {
-        let Some(i) = self.selection.borrow().focus else {
-            return;
-        };
+        if let Some(i) = self.selection.borrow().focus {
+            self.show(i, lay);
+        }
+    }
+
+    /// Scroll row `i` into view without picking it, for a reader's ScrollIntoView. True when it moved.
+    pub fn reveal(&mut self, i: usize, lay: &Layout) -> bool {
+        let top = self.top;
+        if i < self.rows.len() {
+            self.show(i, lay);
+        }
+        self.top != top
+    }
+
+    fn show(&mut self, i: usize, lay: &Layout) {
         if i < self.top {
             self.top = i;
             return;
@@ -1079,8 +1091,8 @@ pub fn sample() -> ListView {
 
 impl<R: Rows, C: AsRef<[Column]>, S: Borrow<Selection>> ListView<R, C, S> {
     /// The list view's `access` part: one option per row, named by its first column and described by
-    /// the others. Selected rows are marked, check rows carry their check, scrolled-out rows have no
-    /// bounds. Returns the focused row's node when the list has the focus, else the list.
+    /// the others. Selected rows are marked, check rows carry their check. The list's bounds are the
+    /// body, so a row scrolled out lies outside them, where a reader can ask to scroll it in. Returns the focused row's node when the list has the focus, else the list.
     pub fn access(
         &self,
         lay: &Layout,
@@ -1088,7 +1100,7 @@ impl<R: Rows, C: AsRef<[Column]>, S: Borrow<Selection>> ListView<R, C, S> {
         parent: NodeId,
         key: impl std::hash::Hash,
     ) -> NodeId {
-        let mut n = access::node(Role::ListBox, lay.frame);
+        let mut n = access::node(Role::ListBox, lay.body);
         n.set_multiselectable();
         access::focusable(&mut n, true);
         let id = tree.push(parent, key, n);
@@ -1115,14 +1127,8 @@ impl<R: Rows, C: AsRef<[Column]>, S: Borrow<Selection>> ListView<R, C, S> {
                 o.set_toggled((*on).into());
             }
             let y = lay.body.y + self.slot_y(i, lay);
-            if y >= lay.body.y && y + lay.row_h() <= lay.body.bottom() {
-                o.set_bounds(access::bounds(Rect::new(
-                    lay.body.x,
-                    y,
-                    lay.body.width,
-                    lay.row_h(),
-                )));
-            }
+            let row = Rect::new(lay.body.x, y, lay.body.width, lay.row_h());
+            o.set_bounds(access::row_bounds(lay.body, row));
             let oid = tree.push(id, i, o);
             if sel.focus == Some(i) {
                 focus = oid;
@@ -1294,6 +1300,43 @@ mod tests {
         lv.top = 0;
         lv.select(Some(10), &short);
         assert_eq!(lv.top, 10);
+    }
+
+    #[test]
+    fn a_reader_scrolls_a_row_out_of_view_in_without_picking_it() {
+        use crate::access::{Published, ROOT, Tree};
+        let mut lv = view(20);
+        lv.selection.focus = Some(0);
+        lv.top = 4;
+        let r = Rect::new(0, 0, 200, 4 + HEADER_H + 6 * ROW_H);
+        let lay = layout(&lv, r, &ControlMetrics::CLASSIC);
+        let mut tree = Tree::window("", (200, 200));
+        lv.access(&lay, &mut tree, ROOT, "list");
+        let row = |i| {
+            tree.find(Role::ListBoxOption, &format!("file{i}.txt"))
+                .unwrap()
+        };
+        let (above, shown, below) = (row(3), row(4), row(15));
+        let mut p = Published::default();
+        p.update(tree);
+        assert_eq!(p.reveal(shown), None, "the top row shows");
+        assert_eq!(
+            p.reveal(above).map(|r| r.row),
+            Some(3),
+            "the row under the header"
+        );
+        assert_eq!(
+            p.target(above),
+            None,
+            "a click there would land on the header"
+        );
+        assert_eq!(p.reveal(below).map(|r| r.row), Some(15));
+        assert!(lv.reveal(15, &lay));
+        assert_eq!(lv.top, 10, "row 15 is the last row shown");
+        assert!(lv.reveal(3, &lay));
+        assert_eq!(lv.top, 3);
+        assert!(!lv.reveal(5, &lay), "a row in view stays put");
+        assert_eq!(lv.selection.focus, Some(0), "the pick stays");
     }
 
     fn render(lv: &ListView, r: Rect) -> (Canvas, Layout, Theme) {

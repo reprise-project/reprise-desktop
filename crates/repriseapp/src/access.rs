@@ -66,6 +66,16 @@ impl AccessState {
     }
 }
 
+/// A screen reader's action that takes no click ([`crate::App::reader`]), at a window point.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Reader {
+    /// Scroll row `row` of the list at `at` into view, picking nothing; the row is counted as
+    /// `reprisekit::access::Reveal` counts it.
+    Reveal { at: (i32, i32), row: usize },
+    /// Give the keyboard to the control at the point, as Tab would, pressing nothing.
+    Focus((i32, i32)),
+}
+
 /// What a screen reader's Focus and ScrollIntoView reach in a window without a click
 /// ([`crate::App::reader_form`]): a form, or a property sheet and its open page.
 pub enum ReaderForm<'a> {
@@ -74,34 +84,26 @@ pub enum ReaderForm<'a> {
 }
 
 impl ReaderForm<'_> {
-    /// The font size the form is drawn at, from the theme's `base`.
-    pub(crate) fn px(&self, base: u32) -> u32 {
-        match self {
-            ReaderForm::Form(d) => d.px.unwrap_or_else(|| d.form.units().px(base)),
-            ReaderForm::Sheet(s) => s.open().units().px(base),
-        }
-    }
-
-    /// Scroll row `row` of the list at (`x`, `y`) into view; true when it moved.
-    pub(crate) fn reveal(
-        self,
-        (x, y): (i32, i32),
-        row: usize,
-        text: &TextRenderer,
-        px: u32,
-    ) -> bool {
-        let form = match self {
-            ReaderForm::Form(d) => d.form,
-            ReaderForm::Sheet(s) => s.open_mut(),
-        };
-        form.reveal(x, y, row, text, px) != form::Event::None
-    }
-
-    /// Give the keyboard to the control at (`x`, `y`); true when it moved.
-    pub(crate) fn focus_at(self, (x, y): (i32, i32), text: &TextRenderer, px: u32) -> bool {
-        match self {
-            ReaderForm::Form(d) => d.form.focus_at(x, y, text, px) != form::Event::None,
-            ReaderForm::Sheet(s) => s.focus_at(x, y, text, px) != propsheet::Event::None,
+    /// Carry out `act` at the font size the form is drawn at, from the theme's `base`; true
+    /// when the form changed.
+    pub fn act(self, act: Reader, text: &TextRenderer, base: u32) -> bool {
+        match (self, act) {
+            (ReaderForm::Form(d), Reader::Reveal { at: (x, y), row }) => {
+                let px = d.px.unwrap_or_else(|| d.form.units().px(base));
+                d.form.reveal(x, y, row, text, px) != form::Event::None
+            }
+            (ReaderForm::Form(d), Reader::Focus((x, y))) => {
+                let px = d.px.unwrap_or_else(|| d.form.units().px(base));
+                d.form.focus_at(x, y, text, px) != form::Event::None
+            }
+            (ReaderForm::Sheet(s), Reader::Reveal { at: (x, y), row }) => {
+                let px = s.open().units().px(base);
+                s.open_mut().reveal(x, y, row, text, px) != form::Event::None
+            }
+            (ReaderForm::Sheet(s), Reader::Focus((x, y))) => {
+                let px = s.open().units().px(base);
+                s.focus_at(x, y, text, px) != propsheet::Event::None
+            }
         }
     }
 }

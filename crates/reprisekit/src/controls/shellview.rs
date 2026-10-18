@@ -842,6 +842,25 @@ pub fn ensure_visible(sv: &mut ShellView, i: usize, lay: &Layout) {
     }
 }
 
+/// Scroll cell `i` into view without picking it, for a reader's ScrollIntoView. True when it moved.
+pub fn reveal(sv: &mut ShellView, i: usize, lay: &Layout) -> bool {
+    let (top, left) = (sv.top, sv.left);
+    ensure_visible(sv, i, lay);
+    (sv.top, sv.left) != (top, left)
+}
+
+/// The part of `lay.body` the cells show in: below the header in Details.
+fn cells_area(sv: &ShellView, lay: &Layout) -> Rect {
+    let b = lay.body;
+    match sv.mode {
+        Mode::Details => {
+            let head = lay.controls.list_header;
+            Rect::new(b.x, b.y + head, b.width, (b.height - head).max(0))
+        }
+        _ => b,
+    }
+}
+
 /// Scroll `by` steps: rows in Details, a cell's height per step in the icon
 /// modes, and in List a column sideways per wheel notch (`WHEEL_ROWS` steps),
 /// as the bar's arrows step. `true` when the offset moved.
@@ -1375,8 +1394,9 @@ pub fn sample(mode: Mode, grouped: bool) -> ShellView {
 
 /// The shell view's `access` part, the same in every mode: a list with one
 /// option per entry, named by its name and described by its Details columns
-/// ("Size: 2 KB, Type: Text Document"), the selected ones marked. Entries
-/// scrolled out of the body have no bounds. A rename in progress is a text
+/// ("Size: 2 KB, Type: Text Document"), the selected ones marked. The list's
+/// bounds are the cells' area, so an entry scrolled out lies outside them,
+/// where a reader can ask to scroll it in ([`reveal`]). A rename in progress is a text
 /// input. Returns the node that has the focus: the rename field, else the focused entry, else the list.
 pub fn access(
     sv: &ShellView,
@@ -1387,7 +1407,8 @@ pub fn access(
     parent: NodeId,
     key: impl std::hash::Hash,
 ) -> NodeId {
-    let mut n = access::node(Role::ListBox, lay.frame);
+    let area = cells_area(sv, lay);
+    let mut n = access::node(Role::ListBox, area);
     n.set_multiselectable();
     access::focusable(&mut n, true);
     let id = tree.push(parent, key, n);
@@ -1410,10 +1431,8 @@ pub fn access(
             o.set_description(rest.join(", "));
         }
         o.set_selected(sv.selection.is(i));
-        if let Some(cell) = lay.cells.get(i)
-            && !cell.intersect(&lay.body).is_empty()
-        {
-            o.set_bounds(access::bounds(*cell));
+        if let Some(cell) = lay.cells.get(i) {
+            o.set_bounds(access::row_bounds(area, *cell));
         }
         let oid = tree.push(id, e.id, o);
         if sv.selection.focus == Some(i) {
@@ -2310,6 +2329,42 @@ pub(crate) mod tests {
         let lay = layout(&sv, r, &ControlMetrics::CLASSIC);
         assert!(lay.cells[last].bottom() <= lay.body.bottom());
         assert!(lay.cells[last].y >= lay.body.y);
+    }
+
+    #[test]
+    fn a_reader_scrolls_an_entry_in_without_picking_it_in_every_mode() {
+        use crate::access::{Published, ROOT, Tree};
+        let (text, px) = rend();
+        let r = Rect::new(0, 0, 300, 120);
+        for mode in [Mode::List, Mode::Details, Mode::Icons, Mode::Tiles] {
+            let mut sv = iconed(200, mode);
+            sv.selection.set_only(Some(0));
+            let last = sv.entries.len() - 1;
+            let lay = layout(&sv, r, &ControlMetrics::CLASSIC);
+            let mut tree = Tree::window("", (300, 120));
+            access(&sv, &lay, &text, px, &mut tree, ROOT, "view");
+            let first = tree.find(Role::ListBoxOption, &sv.entries[0].name).unwrap();
+            let end = tree
+                .find(Role::ListBoxOption, &sv.entries[last].name)
+                .unwrap();
+            let mut p = Published::default();
+            p.update(tree);
+            assert_eq!(p.reveal(first), None, "{mode:?}: the first entry shows");
+            assert_eq!(p.reveal(end).map(|r| r.row), Some(last), "{mode:?}");
+            assert!(reveal(&mut sv, last, &lay), "{mode:?}");
+            let lay = layout(&sv, r, &ControlMetrics::CLASSIC);
+            let mut tree = Tree::window("", (300, 120));
+            access(&sv, &lay, &text, px, &mut tree, ROOT, "view");
+            let end = tree
+                .find(Role::ListBoxOption, &sv.entries[last].name)
+                .unwrap();
+            let first = tree.find(Role::ListBoxOption, &sv.entries[0].name).unwrap();
+            let mut p = Published::default();
+            p.update(tree);
+            assert_eq!(p.reveal(end), None, "{mode:?}: the last entry shows");
+            assert!(p.reveal(first).is_some(), "{mode:?}: the first is out");
+            assert_eq!(sv.selection.focus, Some(0), "{mode:?}: the pick stays");
+        }
     }
 
     /// Writes target/shellview-preview.png: the five modes stacked, the last grouped, for a visual check.
