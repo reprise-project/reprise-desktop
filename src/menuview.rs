@@ -1193,7 +1193,7 @@ impl State {
             }
             DesktopCommand::SendTo => {
                 let view = self.desktop.as_mut()?;
-                let rows = reprisefs::sendto::session_rows(&view.drives.found);
+                let rows = view.drives.send_to_rows(&view.send_dirs);
                 let (mut items, commands) = crate::desktopview::send_to_menu(&rows);
                 for (item, r) in items.iter_mut().zip(&rows) {
                     if let MenuItem::Entry { icon, .. } = item {
@@ -1317,6 +1317,12 @@ impl State {
         place: impl FnOnce((i32, i32), (i32, i32), Rect) -> (i32, i32),
         options_look: bool,
     ) {
+        let send_to = Some(DesktopCommand::SendTo);
+        if let MenuKind::Desktop { commands, .. } | MenuKind::File { commands, .. } = &kind
+            && commands.contains(&send_to)
+        {
+            self.restat_drives();
+        }
         let Some(output) = self.output_at(at.0 as f64, at.1 as f64) else {
             return;
         };

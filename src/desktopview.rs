@@ -4,8 +4,8 @@
 //! inotify watch that rescans on change. Dragging icons is `dragview`'s, other
 //! programs' drops are `dnddrop`'s; rename, the file clipboard and icon keys are
 //! `iconedit`'s; Delete, Properties, Open With and Empty Recycle Bin are
-//! `desktopfiles`'. Send To lists its destinations as the submenu opens
-//! (`reprisefs::sendto::session_rows`).
+//! `desktopfiles`'. Send To lists its destinations as the submenu opens,
+//! from what the desktop read and the drive stats found (`Drives::send_to_rows`).
 
 use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
@@ -101,8 +101,26 @@ pub struct DesktopView {
     /// cells ([`desktop::to_saved`]), so a text size change keeps them.
     landed: Vec<(i32, i32)>,
     pub(crate) send_to: Vec<reprisefs::sendto::SendToRow>,
+    pub(crate) send_dirs: SendToDirs,
     pub(crate) drives: Drives,
     pub(crate) bins: DriveBins,
+}
+
+/// The Send To submenu's own folders as the last desktop read found them, since the desktop
+/// folder can sit on a mount that never answers.
+#[derive(Debug, Default)]
+pub(crate) struct SendToDirs {
+    desktop: bool,
+    documents: Option<PathBuf>,
+}
+
+impl SendToDirs {
+    fn read(desktop: &Path) -> SendToDirs {
+        SendToDirs {
+            desktop: desktop.is_dir(),
+            documents: places::user_dir("DOCUMENTS", "Documents"),
+        }
+    }
 }
 
 /// The drives the Send To submenu lists, as the last scan found them. A scan lists the mount points
@@ -159,6 +177,36 @@ impl Drives {
         self.listed = listed;
         self.refind();
         (std::mem::take(&mut self.again), stat)
+    }
+
+    /// The listed drives to stat again (those with no stat out, now counted as out), so a drive
+    /// that stops answering shows as such.
+    fn restat(&mut self) -> Vec<PathBuf> {
+        (self.listed.iter())
+            .filter(|t| self.stats.insert(t.to_path_buf()))
+            .cloned()
+            .collect()
+    }
+
+    /// For a send to `dir`: None when it is no listed drive (send at once), Some(true) when a stat
+    /// of it starts (send once it answers), Some(false) when its stat is out (send nothing).
+    fn send_stat(&mut self, dir: &Path) -> Option<bool> {
+        self.listed
+            .iter()
+            .any(|t| t == dir)
+            .then(|| self.stats.insert(dir.to_path_buf()))
+    }
+
+    /// The Send To rows for `dirs` and the found drives, one whose stat is out greyed.
+    pub(crate) fn send_to_rows(&self, dirs: &SendToDirs) -> Vec<reprisefs::sendto::SendToRow> {
+        let documents = dirs.documents.clone();
+        let mut rows = reprisefs::sendto::rows(dirs.desktop, documents, &self.found);
+        for r in &mut rows {
+            if let reprisefs::sendto::SendTo::Folder(d) = &r.dest {
+                r.enabled &= !self.stats.contains(d);
+            }
+        }
+        rows
     }
 
     /// Takes drive `top`'s stat: whether it changed `found`.
@@ -1010,6 +1058,7 @@ pub fn setup(state: &mut State) {
         icons_read: (0, 0),
         landed: Vec::new(),
         send_to: Vec::new(),
+        send_dirs: SendToDirs::default(),
         drives: Drives::new(places::MountedDrives::new()),
         bins: DriveBins::default(),
     });
@@ -1096,7 +1145,7 @@ impl State {
                     state.drives_changed();
                 }
                 for top in stat {
-                    state.stat_drive(top);
+                    state.stat_drive(top, |_, _| {});
                 }
                 if again {
                     state.scan_drives();
@@ -1105,9 +1154,20 @@ impl State {
         });
     }
 
-    /// Stats drive `top` (its stat already counted as out) on a file job. A change to the drives
-    /// shows in an open Recycle Bin Properties.
-    fn stat_drive(&mut self, top: PathBuf) {
+    /// Stats each listed drive again, as a menu holding Send To opens: one that stopped answering
+    /// greys its row.
+    pub(crate) fn restat_drives(&mut self) {
+        let Some(view) = self.desktop.as_mut() else {
+            return;
+        };
+        for top in view.drives.restat() {
+            self.stat_drive(top, |_, _| {});
+        }
+    }
+
+    /// Stats drive `top` (its stat already counted as out) on a file job, then runs `then` with
+    /// whether it is usable. A change to the drives shows in an open Recycle Bin Properties.
+    fn stat_drive(&mut self, top: PathBuf, then: impl FnOnce(&mut State, bool) + Send + 'static) {
         self.spawn_fs_job(move || {
             let usable = places::usable_drive(&top);
             Box::new(move |state: &mut State| {
@@ -1117,6 +1177,7 @@ impl State {
                 if view.drives.land_stat(top, usable) {
                     state.drives_changed();
                 }
+                then(state, usable);
             })
         });
     }
@@ -1217,7 +1278,11 @@ impl State {
                 drive_bins_full,
             );
             let art = icon_files(&entries, px);
+            let send_dirs = SendToDirs::read(&dir);
             Box::new(move |state| {
+                if let Some(view) = state.desktop.as_mut() {
+                    view.send_dirs = send_dirs;
+                }
                 state.desktop_watched(want, added);
                 state.desktop_scanned(entries, art, px)
             })
@@ -1773,12 +1838,49 @@ impl State {
                 self.perform_all(sources, &target, crate::dragview::DropOp::Shortcut);
             }
             SendTo::Mail => self.spawn_argv_activated(&reprisefs::sendto::mail_argv(&paths)),
-            SendTo::Folder(dir) => self.perform_all(
-                sources,
-                &crate::dragview::DropTarget::Folder(dir),
-                crate::dragview::DropOp::Copy,
-            ),
+            SendTo::Folder(dir) => {
+                use crate::dragview::{DropOp, DropTarget};
+                // A copy onto a drive that stopped answering would hold a file action until it
+                // answers: a fresh stat of the drive goes first, and one out already sends nothing.
+                match self.desktop.as_mut().and_then(|v| v.drives.send_stat(&dir)) {
+                    None => self.perform_all(sources, &DropTarget::Folder(dir), DropOp::Copy),
+                    Some(false) => self.send_to_not_responding(&dir),
+                    Some(true) => {
+                        let sources = sources.to_vec();
+                        let settled = self.send_to_deadline(dir.clone());
+                        self.stat_drive(dir.clone(), move |state, usable| {
+                            if !settled.swap(true, std::sync::atomic::Ordering::AcqRel) && usable {
+                                state.perform_all(&sources, &DropTarget::Folder(dir), DropOp::Copy);
+                            }
+                        });
+                    }
+                }
+            }
         }
+    }
+
+    /// Arms the deadline of a send waiting on drive `dir`'s stat. The flag settles once, by the
+    /// stat landing or the deadline passing; past the deadline the send is dropped.
+    fn send_to_deadline(&mut self, dir: PathBuf) -> std::sync::Arc<std::sync::atomic::AtomicBool> {
+        let settled = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let watch = std::sync::Arc::clone(&settled);
+        let timer = Timer::from_duration(crate::fsjobs::ACTION_DEADLINE);
+        let armed = self.handle.insert_source(timer, move |_, _, state| {
+            if !watch.swap(true, std::sync::atomic::Ordering::AcqRel) {
+                state.send_to_not_responding(&dir);
+            }
+            TimeoutAction::Drop
+        });
+        if let Err(e) = armed {
+            log::warn!("send to: no deadline: {}", e.error);
+        }
+        settled
+    }
+
+    fn send_to_not_responding(&mut self, dir: &Path) {
+        log::warn!("send to: {} is not answering; nothing sent", dir.display());
+        let text = crate::fsjobs::Action::reads("Send To").not_responding(false);
+        self.open_dialog(crate::dialog::Dialog::error("Send To", text));
     }
 
     pub(crate) fn select_icon(&mut self, index: Option<usize>) {
@@ -2376,6 +2478,55 @@ mod tests {
     }
 
     #[test]
+    fn a_found_drive_whose_new_stat_is_out_greys_its_send_to_row() {
+        let (card, dead) = (PathBuf::from("/media/CARD"), PathBuf::from("/media/DEAD"));
+        let mut drives = drives_listing(&[card.clone(), dead.clone()]);
+        drives.land_stat(card.clone(), true);
+        drives.land_stat(dead.clone(), true);
+        let enabled = |d: &Drives, top: &PathBuf| {
+            let rows = d.send_to_rows(&SendToDirs::default());
+            let dest = reprisefs::sendto::SendTo::Folder(top.clone());
+            let row = rows.iter().find(|r| r.dest == dest);
+            row.map(|r| r.enabled)
+        };
+        assert_eq!(enabled(&drives, &dead), Some(true));
+
+        assert_eq!(drives.restat(), [card.clone(), dead.clone()]);
+        assert_eq!(drives.restat(), Vec::<PathBuf>::new(), "no second stat");
+        drives.land_stat(card.clone(), true);
+        assert_eq!(enabled(&drives, &card), Some(true));
+        assert_eq!(enabled(&drives, &dead), Some(false), "DEAD's stat is out");
+        drives.land_stat(dead.clone(), true);
+        assert_eq!(enabled(&drives, &dead), Some(true), "DEAD answered");
+    }
+
+    #[test]
+    fn send_to_rows_take_the_desktop_folder_as_the_desktop_read_found_it() {
+        let drives = drives_listing(&[]);
+        let desktop = |dirs: &SendToDirs| drives.send_to_rows(dirs)[1].enabled;
+        assert!(!desktop(&SendToDirs::default()), "before the first read");
+        let dir = std::env::temp_dir();
+        assert!(desktop(&SendToDirs::read(&dir)));
+        let gone = dir.join(format!("reprise-no-desktop-{}", std::process::id()));
+        assert!(!desktop(&SendToDirs::read(&gone)));
+    }
+
+    #[test]
+    fn a_send_to_a_drive_waits_on_a_fresh_stat_and_one_whose_stat_is_out_sends_nothing() {
+        let dead = PathBuf::from("/media/DEAD");
+        let mut drives = drives_listing(std::slice::from_ref(&dead));
+        drives.land_stat(dead.clone(), true);
+        assert_eq!(drives.send_stat(Path::new("/home/u/Documents")), None);
+        assert_eq!(drives.send_stat(&dead), Some(true), "a fresh stat starts");
+        assert_eq!(drives.send_stat(&dead), Some(false), "its stat is out");
+        assert_eq!(
+            drives.restat(),
+            Vec::<PathBuf>::new(),
+            "the send's stat counts"
+        );
+    }
+
+    #[test]
     fn a_drive_whose_stat_never_lands_keeps_no_drive_mounted_later_off_the_list() {
         let (dead, card) = (PathBuf::from("/media/DEAD"), PathBuf::from("/media/CARD"));
         let mut drives = Drives::new(places::MountedDrives::at("/nonexistent".into(), Vec::new()));
@@ -2507,7 +2658,7 @@ mod tests {
     #[test]
     fn send_to_menu_greys_a_disabled_row() {
         let rows = reprisefs::sendto::rows(
-            None,
+            false,
             Some(PathBuf::from("/home/u/Documents")),
             &[PathBuf::from("/run/media/u/STICK")],
         );
