@@ -16,19 +16,25 @@ use crate::text::{Align, TextRenderer, wrap};
 use crate::textedit::{Caret, EditKey, Preedit, TextEdit, index_at};
 use crate::theme::Theme;
 
+/// The pitch of a tip's lines in device px: [`INFO_LINE_H`], grown as the text outgrows its
+/// 100% line ([`Theme::line_growth`]).
+pub(crate) fn line_pitch(theme: &Theme) -> i32 {
+    (INFO_LINE_H + theme.line_growth()) * theme.scale.max(1)
+}
+
 /// Where a box's text goes: how far inside each edge (design px) and the first
 /// line's text box height (device px). A look with its own box
-/// ([`tooltip::insets`]) sets the insets and boxes every line at [`INFO_LINE_H`];
+/// ([`tooltip::insets`]) sets the insets and boxes every line at [`line_pitch`];
 /// Classic's is `pad` inside the 1 px border, the first line `line_h` tall.
 fn text_frame(theme: &Theme, pad: i32, line_h: i32) -> (Insets, i32) {
     match tooltip::insets(&theme.paint()) {
-        Some((content, _)) => (content, INFO_LINE_H * theme.scale.max(1)),
+        Some((content, _)) => (content, line_pitch(theme)),
         None => (Insets::new(pad + 1, pad + 1, pad + 1, pad + 1), line_h),
     }
 }
 
 /// Size of the box holding `lines`, in `theme`'s units: the widest line plus the
-/// insets, one text box per line at [`INFO_LINE_H`] pitch, the first as tall as
+/// insets, one text box per line at [`line_pitch`], the first as tall as
 /// [`text_frame`] says. The plain tip, the menu's infotip and Explorer's are this
 /// box. A look's shadow lies outside it.
 pub(crate) fn box_size(
@@ -49,7 +55,7 @@ pub(crate) fn box_size(
     let n = lines.len().max(1) as i32;
     (
         widest + (m.left + m.right) * s,
-        line_h + (n - 1) * INFO_LINE_H * s + (m.top + m.bottom) * s,
+        line_h + (n - 1) * line_pitch(theme) + (m.top + m.bottom) * s,
     )
 }
 
@@ -81,7 +87,7 @@ pub(crate) fn draw_box(
     for line in lines {
         let r = Rect::new(m.left * s, y, w - (m.left + m.right) * s, line_h);
         text.draw(&mut c, r, line, false, ink, Align::Left, size);
-        y += INFO_LINE_H * s;
+        y += line_pitch(theme);
     }
     c
 }
@@ -224,7 +230,7 @@ fn info_lines(text: &TextRenderer, theme: &Theme, body: &str) -> Vec<String> {
 }
 
 pub fn info_size(text: &TextRenderer, theme: &Theme, body: &str) -> (i32, i32) {
-    let line_h = INFO_LINE_H * theme.scale.max(1);
+    let line_h = line_pitch(theme);
     box_size(
         text,
         theme,
@@ -235,7 +241,7 @@ pub fn info_size(text: &TextRenderer, theme: &Theme, body: &str) -> (i32, i32) {
 }
 
 pub fn draw_info_tip(theme: &Theme, text: &TextRenderer, body: &str) -> Canvas {
-    let line_h = INFO_LINE_H * theme.scale.max(1);
+    let line_h = line_pitch(theme);
     draw_box(
         theme,
         text,
@@ -283,7 +289,9 @@ pub fn balloon_size(text: &TextRenderer, theme: &Theme, title: &str, body: &str)
         }
         None => {
             let w = widest(size, true) + (2 * BALLOON_PAD_X + 2) * s;
-            let h = (STEM_H + BALLOON_BODY_Y + BALLOON_BOTTOM) * s + n * BALLOON_LINE_H * s;
+            let g = theme.line_growth();
+            let h =
+                (STEM_H + BALLOON_BODY_Y + g + BALLOON_BOTTOM) * s + n * (BALLOON_LINE_H + g) * s;
             (w, h)
         }
     }
@@ -347,27 +355,28 @@ pub fn draw_balloon_tip(theme: &Theme, text: &TextRenderer, title: &str, body: &
     c.fill_rect(Rect::new(x0 + s, STEM_H * s, STEM_W * s - 2 * s, s), bg);
     let tx = (1 + BALLOON_PAD_X) * s;
     let tw = w - 2 * tx;
+    let line_h = (BALLOON_LINE_H + theme.line_growth()) * s;
     text.draw(
         &mut c,
-        Rect::new(tx, (STEM_H + BALLOON_TITLE_Y) * s, tw, BALLOON_LINE_H * s),
+        Rect::new(tx, (STEM_H + BALLOON_TITLE_Y) * s, tw, line_h),
         title,
         true,
         ink,
         Align::Left,
         size,
     );
-    let mut y = (STEM_H + BALLOON_BODY_Y) * s;
+    let mut y = (STEM_H + BALLOON_BODY_Y + theme.line_growth()) * s;
     for line in balloon_lines(text, theme, body) {
         text.draw(
             &mut c,
-            Rect::new(tx, y, tw, BALLOON_LINE_H * s),
+            Rect::new(tx, y, tw, line_h),
             &line,
             false,
             ink,
             Align::Left,
             size,
         );
-        y += BALLOON_LINE_H * s;
+        y += line_h;
     }
     c
 }
@@ -465,8 +474,16 @@ pub enum NotifyHit {
     Body,
 }
 
+/// The look's own balloon, its title and lines grown with `theme`'s text size.
 fn balloon_look(theme: &Theme) -> Option<BalloonLook> {
-    theme.look.style().and_then(|st| st.balloon)
+    let b = theme.look.style().and_then(|st| st.balloon)?;
+    let title = theme.text.px(b.title_px) - b.title_px;
+    Some(BalloonLook {
+        title_px: b.title_px + title,
+        body_y: b.body_y + title as i32,
+        line_h: b.line_h + theme.line_growth(),
+        ..b
+    })
 }
 
 /// Lay out the balloon for `title`, `body` and the action labels `actions`
@@ -1299,6 +1316,81 @@ mod tests {
         assert!(
             has_ink(line1 + 2 * INFO_LINE_H),
             "line 3 starts two pitches down"
+        );
+    }
+
+    #[test]
+    fn a_grown_tip_pitches_its_lines_with_the_text() {
+        let text = TextRenderer::load(&FontConfig::default());
+        let label = "Local Area Connection\nStatus: Connected";
+        let base = Theme::default();
+        let grown = base.with_text_size(200);
+        let g = grown.line_growth();
+        assert!(g > 0, "a 200% line outgrows the 100% one");
+        let (_, h100) = tip_size(&text, &base, label);
+        let (w, h) = tip_size(&text, &grown, label);
+        let px = (grown.fonts.size_px - base.fonts.size_px) as i32;
+        assert_eq!(
+            h,
+            h100 + px + g,
+            "the first line grows with the font, the next by the pitch"
+        );
+        let c = draw_tip(&grown, &text, label);
+        let has_ink = |y: i32| (1..w - 1).any(|x| c.get(x, y) == TIP_INK.argb());
+        let line1 = (1..h - 1).find(|&y| has_ink(y)).expect("line 1 has ink");
+        let pitch = INFO_LINE_H + g;
+        assert!(!has_ink(line1 + pitch - 1), "a blank row above line 2");
+        assert!(has_ink(line1 + pitch), "line 2 starts a grown pitch down");
+
+        let glass = crate::interfaces::theme_for(crate::interface::Interface::Glass);
+        let glass200 = glass.with_text_size(200);
+        let g = glass200.line_growth();
+        let (_, h100) = tip_size(&text, &glass, label);
+        let (_, h) = tip_size(&text, &glass200, label);
+        assert_eq!(
+            h,
+            h100 + 2 * g,
+            "a look's box grows every line by the pitch"
+        );
+        let body = "Opens the settings.";
+        assert_eq!(
+            info_size(&text, &glass200, body).1,
+            info_size(&text, &glass, body).1 + g
+        );
+        let lines = [
+            String::from("Type: Text Document"),
+            String::from("Size: 1 KB"),
+        ];
+        assert_eq!(
+            crate::controls::infotip::size(&text, &glass200, &lines).1,
+            crate::controls::infotip::size(&text, &glass, &lines).1 + 2 * g
+        );
+    }
+
+    #[test]
+    fn a_grown_balloon_tip_grows_its_title_and_lines() {
+        let text = TextRenderer::load(&FontConfig::default());
+        let body = "Closes your programs.";
+        let base = Theme::default();
+        let grown = base.with_text_size(200);
+        let g = grown.line_growth();
+        let (_, h100) = balloon_size(&text, &base, "Log Off", body);
+        let (_, h) = balloon_size(&text, &grown, "Log Off", body);
+        assert_eq!(h, h100 + 2 * g, "the title's gap and the body line grow");
+
+        let glass = crate::interfaces::theme_for(crate::interface::Interface::Glass);
+        let glass200 = glass.with_text_size(200);
+        let (b, b200) = (
+            balloon_look(&glass).unwrap(),
+            balloon_look(&glass200).unwrap(),
+        );
+        assert_eq!(b200.title_px, 2 * b.title_px);
+        assert_eq!(b200.body_y, b.body_y + b.title_px as i32);
+        assert_eq!(b200.line_h, b.line_h + glass200.line_growth());
+        assert_eq!(
+            balloon_look(&glass.with_text_size(100)),
+            Some(b),
+            "100% keeps the look's own"
         );
     }
 

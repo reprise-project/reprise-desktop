@@ -1,6 +1,6 @@
 //! The infotip over a file: the flat yellow box of a tooltip with one line per fact, never wrapped.
 
-use crate::controls::tooltip::{box_size, draw_box, place_below};
+use crate::controls::tooltip::{box_size, draw_box, line_pitch, place_below};
 use crate::raster::{Canvas, Rect};
 use crate::text::TextRenderer;
 use crate::theme::Theme;
@@ -8,27 +8,21 @@ use crate::theme::Theme;
 /// Padding between the border and the text, on every side; the menu infotip
 /// ([`crate::controls::tooltip::draw_info_tip`]) pads the same box by 2.
 pub const PAD: i32 = 5;
-/// One line of the tip.
+/// One line of the tip at 100% text; [`line_pitch`] grows it.
 pub const LINE_H: i32 = crate::controls::tooltip::INFO_LINE_H;
 /// Where the box hangs relative to the pointer's hotspot.
 pub const BELOW_POINTER: (i32, i32) = (0, 19);
 
 /// Size of the tip for `lines` in `theme`'s units: the widest line plus the padding and the 1 px
-/// border, [`LINE_H`] per line.
+/// border, a [`line_pitch`] per line.
 pub fn size(text: &TextRenderer, theme: &Theme, lines: &[String]) -> (i32, i32) {
-    box_size(text, theme, lines, PAD, LINE_H * theme.scale.max(1))
+    box_size(text, theme, lines, PAD, line_pitch(theme))
 }
 
 /// Draw the tip into a canvas of [`size`] at `canvas_scale` (the scale of the canvas it is blitted
 /// onto).
 pub fn draw(theme: &Theme, text: &TextRenderer, lines: &[String], canvas_scale: i32) -> Canvas {
-    draw_box(
-        theme,
-        text,
-        lines,
-        (PAD, LINE_H * theme.scale.max(1)),
-        canvas_scale,
-    )
+    draw_box(theme, text, lines, (PAD, line_pitch(theme)), canvas_scale)
 }
 
 /// Where a tip of `size` goes for a pointer at `cursor`: [`BELOW_POINTER`] from the hotspot, pushed
