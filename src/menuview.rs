@@ -311,6 +311,8 @@ pub struct Menu {
     /// Laid out and drawn with the style's Shut down options look ([`reprisekit::theme::Theme::for_options_menu`]).
     options_look: bool,
     opened: Instant,
+    /// Rows showing a stand-in until a job decodes their icon file.
+    icon_waits: IconWaits,
 }
 
 /// Where a menu was opened. One opened from the taskbar keeps an
@@ -442,6 +444,7 @@ impl Menu {
             parent_row: None,
             options_look: false,
             opened: Instant::now(),
+            icon_waits: Vec::new(),
         }
     }
 }
@@ -586,6 +589,95 @@ fn list_anchor(layout: &reprisekit::taskbar::TaskbarLayout, i: usize) -> Rect {
         .unwrap_or_default()
 }
 
+/// Menu rows waiting on an icon file: (row, file, px).
+type IconWaits = Vec<(usize, String, i32)>;
+
+/// What a row whose icon file is not decoded yet shows meanwhile.
+const ICON_STAND_IN: &str = "application-x-executable";
+
+/// Icon `name` at `px` for a menu row. An icon file is never read here, since it can sit on a
+/// mount that never answers: one not decoded at `px` yet is Err, left to a job.
+fn row_icon(
+    cache: &mut reprisekit::icontheme::IconCache,
+    name: &str,
+    px: i32,
+) -> Result<Option<Canvas>, ()> {
+    if !name.starts_with('/') {
+        return Ok(cache.get(name, px));
+    }
+    (cache.file_put(name, px))
+        .map(|put| put.map(Arc::unwrap_or_clone))
+        .ok_or(())
+}
+
+/// Puts `art`, icon file `file` decoded at `px`, on the rows of `items` that `waits` holds for
+/// it. True when a row took it.
+fn land_icon(
+    items: &mut [MenuItem],
+    waits: &mut IconWaits,
+    file: &str,
+    px: i32,
+    art: &Option<Canvas>,
+) -> bool {
+    let before = waits.len();
+    waits.retain(|(row, f, p)| {
+        if f != file || *p != px {
+            return true;
+        }
+        if let Some(MenuItem::Entry { icon, .. }) = items.get_mut(*row) {
+            icon.clone_from(art);
+        }
+        false
+    });
+    waits.len() != before
+}
+
+impl State {
+    /// Icon `name` at `px` for menu row `row`: an icon file not decoded yet shows a stand-in and
+    /// goes on `waits` for [`State::decode_menu_icons`].
+    fn menu_icon(
+        &mut self,
+        row: usize,
+        name: &str,
+        px: i32,
+        waits: &mut IconWaits,
+    ) -> Option<Canvas> {
+        row_icon(&mut self.icons, name, px).unwrap_or_else(|()| {
+            waits.push((row, name.to_string(), px));
+            self.icons.get(ICON_STAND_IN, px)
+        })
+    }
+
+    /// Hands menu `depth` the rows waiting on icon files and decodes each file on a job of its
+    /// own, so a file on a dead mount holds one job and the others still land.
+    fn decode_menu_icons(&mut self, depth: usize, waits: IconWaits) {
+        for (_, file, px) in &waits {
+            if !self.menu_icon_decodes.insert((file.clone(), *px)) {
+                continue;
+            }
+            let (file, px) = (file.clone(), *px);
+            self.spawn_fs_job(move || {
+                let art = reprisekit::icontheme::decode_file(std::path::Path::new(&file), px, 1);
+                Box::new(move |state: &mut State| state.menu_icon_decoded(file, px, art))
+            });
+        }
+        if let Some(m) = self.menus.get_mut(depth) {
+            m.icon_waits = waits;
+        }
+    }
+
+    fn menu_icon_decoded(&mut self, file: String, px: i32, art: Option<Canvas>) {
+        self.menu_icon_decodes.remove(&(file.clone(), px));
+        self.icons.put_file(&file, px, art.clone());
+        for depth in 0..self.menus.len() {
+            let m = &mut self.menus[depth];
+            if land_icon(&mut m.items, &mut m.icon_waits, &file, px, &art) {
+                self.redraw_menu(depth);
+            }
+        }
+    }
+}
+
 impl State {
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn push_menu(
@@ -627,6 +719,7 @@ impl State {
             parent_row: None,
             options_look: false,
             opened: Instant::now(),
+            icon_waits: Vec::new(),
         });
         if fade {
             self.arm_menu_fade();
@@ -672,22 +765,26 @@ impl State {
         crate::access::touch(self);
     }
 
-    fn entry_items(&mut self, entries: &[MenuEntry], px: i32) -> Vec<MenuItem> {
+    fn entry_items(&mut self, entries: &[MenuEntry], px: i32) -> (Vec<MenuItem>, IconWaits) {
         let user = crate::lock::current_user();
-        entries
-            .iter()
-            .map(|e| match e {
+        let mut waits = Vec::new();
+        let items = (entries.iter().enumerate())
+            .map(|(row, e)| match e {
                 MenuEntry::Separator => MenuItem::Separator,
                 MenuEntry::Item { label, icon, .. } => {
                     let (label, mnemonic) =
                         split_mnemonic(&crate::startmenu::expand_label(label, &user));
                     MenuItem::entry(label)
-                        .icon(icon.as_deref().and_then(|n| self.icons.get(n, px)))
+                        .icon(
+                            icon.as_deref()
+                                .and_then(|n| self.menu_icon(row, n, px, &mut waits)),
+                        )
                         .submenu(e.opens_submenu())
                         .mnemonic(mnemonic)
                 }
             })
-            .collect()
+            .collect();
+        (items, waits)
     }
 
     fn submenu_open_for(&self, depth: usize, row: usize) -> bool {
@@ -753,7 +850,7 @@ impl State {
         let entries = self.config.startmenu.clone();
         let style = MenuStyle::root(&self.config.theme);
         let px = style.icon_px() * self.draw_scale_at(Some(&output)).max(1);
-        let items = self.entry_items(&entries, px);
+        let (items, waits) = self.entry_items(&entries, px);
         let area = self.usable_area(Some(&output));
         let style = style.fit(
             &self.text,
@@ -783,6 +880,7 @@ impl State {
         if let Some(m) = self.menus.first_mut() {
             m.shadow_floor = start_menu_shadow_floor(dock, &p);
         }
+        self.decode_menu_icons(0, waits);
         if let Some(b) = self.bar_mut(bar) {
             b.start_pressed = true;
         }
@@ -834,7 +932,7 @@ impl State {
         &mut self,
         depth: usize,
         row: usize,
-    ) -> Option<(Vec<MenuItem>, MenuKind, bool)> {
+    ) -> Option<(Vec<MenuItem>, MenuKind, bool, IconWaits)> {
         let parent = self.menus.get(depth)?;
         let output = parent.output.clone();
         match &parent.kind {
@@ -846,7 +944,7 @@ impl State {
                     self.bar_shared.quick_shown,
                     self.config.taskbar.pinned,
                 );
-                return Some((items, MenuKind::Taskbar { commands }, true));
+                return Some((items, MenuKind::Taskbar { commands }, true, Vec::new()));
             }
             MenuKind::Window { window, rows }
                 if rows.get(row).copied().flatten() == Some(WindowMenuRow::MoveToMenu)
@@ -859,7 +957,7 @@ impl State {
                 let own = self.win(self.home(window)).map_or(0, |h| h.desktop);
                 let (items, rows) =
                     crate::winmenu::move_to_menu(self.desktops.count, own, WindowMenuRow::MoveTo);
-                return Some((items, MenuKind::Window { window, rows }, true));
+                return Some((items, MenuKind::Window { window, rows }, true, Vec::new()));
             }
             MenuKind::Window { window, rows }
                 if rows.get(row).copied().flatten() == Some(WindowMenuRow::TabsOfMenu)
@@ -886,7 +984,7 @@ impl State {
                     })
                     .collect();
                 let (items, rows) = crate::winmenu::tabs_of_menu(rows);
-                return Some((items, MenuKind::Window { window, rows }, true));
+                return Some((items, MenuKind::Window { window, rows }, true, Vec::new()));
             }
             MenuKind::JumpList {
                 rows,
@@ -901,7 +999,7 @@ impl State {
                     target: target.clone(),
                     button: *button,
                 };
-                return Some((items, kind, true));
+                return Some((items, kind, true, Vec::new()));
             }
             MenuKind::WindowList {
                 windows,
@@ -916,7 +1014,7 @@ impl State {
                     rows,
                     button: *button,
                 };
-                return Some((items, kind, true));
+                return Some((items, kind, true, Vec::new()));
             }
             MenuKind::Desktop { commands, target } => {
                 let target = target.clone();
@@ -927,8 +1025,8 @@ impl State {
                         .map(|t| s.open_with_apps(t))
                         .unwrap_or_default()
                 };
-                let (items, commands) = self.desktop_submenu(command, &output, apps)?;
-                return Some((items, MenuKind::Desktop { commands, target }, true));
+                let (items, commands, waits) = self.desktop_submenu(command, &output, apps)?;
+                return Some((items, MenuKind::Desktop { commands, target }, true, waits));
             }
             MenuKind::File {
                 commands,
@@ -938,13 +1036,13 @@ impl State {
                 let (path, facts) = (path.clone(), facts.clone());
                 let command = commands.get(row).cloned().flatten()?;
                 let apps = |s: &Self| s.open_with_apps_for(&path);
-                let (items, commands) = self.desktop_submenu(command, &output, apps)?;
+                let (items, commands, waits) = self.desktop_submenu(command, &output, apps)?;
                 let kind = MenuKind::File {
                     commands,
                     path,
                     facts,
                 };
-                return Some((items, kind, true));
+                return Some((items, kind, true, waits));
             }
             _ => {}
         }
@@ -971,11 +1069,12 @@ impl State {
         };
         let style = MenuStyle::submenu(&self.config.theme);
         let px = style.icon_px() * self.draw_scale_at(Some(&output)).max(1);
-        let app_items = |s: &mut State, apps: &AppRows| -> Vec<MenuItem> {
-            apps.iter()
-                .map(|a| {
+        let mut waits = Vec::new();
+        let mut app_items = |s: &mut State, apps: &AppRows| -> Vec<MenuItem> {
+            (apps.iter().enumerate())
+                .map(|(row, a)| {
                     MenuItem::entry(a.name.clone())
-                        .icon(a.icon.as_deref().and_then(|n| s.icons.get(n, px)))
+                        .icon((a.icon.as_deref()).and_then(|n| s.menu_icon(row, n, px, &mut waits)))
                 })
                 .collect()
         };
@@ -1010,7 +1109,8 @@ impl State {
                 self.documents_rows(px, true)
             }
             MenuTarget::Submenu(entries) => {
-                let mut items = self.entry_items(&entries, px);
+                let (mut items, entry_waits) = self.entry_items(&entries, px);
+                waits = entry_waits;
                 if items.is_empty() {
                     items.push(MenuItem::entry("(Empty)").enabled(false));
                 }
@@ -1018,7 +1118,7 @@ impl State {
             }
             MenuTarget::Action(_) => return None,
         };
-        Some((items, kind, false))
+        Some((items, kind, false, waits))
     }
 
     /// A Documents menu's rows from the last recent read and check: with `with_dirs` the document
@@ -1080,8 +1180,9 @@ impl State {
         command: DesktopCommand,
         output: &Output,
         open_with: impl FnOnce(&Self) -> Vec<(String, String)>,
-    ) -> Option<(Vec<MenuItem>, Vec<Option<DesktopCommand>>)> {
+    ) -> Option<(Vec<MenuItem>, Vec<Option<DesktopCommand>>, IconWaits)> {
         let px = self.context_icon_px(output);
+        let mut waits = Vec::new();
         let (items, commands) = match command {
             DesktopCommand::ArrangeIcons => {
                 crate::desktopview::arrange_menu(self.desktop_auto_arrange())
@@ -1098,14 +1199,14 @@ impl State {
             DesktopCommand::OpenWith => {
                 let apps = open_with(self);
                 let (mut items, commands) = crate::desktopview::open_with_menu(&apps);
-                for (item, (id, _)) in items.iter_mut().zip(&apps) {
+                for (row, (item, (id, _))) in items.iter_mut().zip(&apps).enumerate() {
                     let name = self
                         .app_index
                         .iter()
                         .find(|a| &a.id == id)
                         .and_then(|a| a.icon.clone());
                     if let (MenuItem::Entry { icon, .. }, Some(name)) = (item, name) {
-                        *icon = self.icons.get(&name, px);
+                        *icon = self.menu_icon(row, &name, px, &mut waits);
                     }
                 }
                 (items, commands)
@@ -1124,13 +1225,13 @@ impl State {
             }
             _ => return None,
         };
-        Some((items, commands))
+        Some((items, commands, waits))
     }
 
     fn open_submenu(&mut self, depth: usize, row: usize) {
         self.schedule_menu_hover(None);
         self.close_menus_above(depth);
-        let Some((items, kind, context)) = self.submenu_rows(depth, row) else {
+        let Some((items, kind, context, waits)) = self.submenu_rows(depth, row) else {
             return;
         };
         let Some(parent) = self.menus.get(depth) else {
@@ -1196,6 +1297,7 @@ impl State {
             m.parent_row = Some(row);
             m.shadow_floor = floor;
         }
+        self.decode_menu_icons(depth + 1, waits);
         self.redraw_menu(depth + 1);
     }
 
@@ -2295,6 +2397,46 @@ fn stack_name(kind: &MenuKind) -> &'static str {
 mod tests {
     use super::*;
     use crate::keys::{KEY_KP_Enter, KEY_Return};
+
+    #[test]
+    fn a_row_icon_file_is_left_to_a_job_and_lands_on_its_rows_only() {
+        use reprisekit::icontheme::{IconCache, IconTheme};
+        let mut cache = IconCache::new(IconTheme::load("test", &[]));
+        let (file, other) = ("/srv/icons/app.png", "/srv/icons/other.png");
+        assert_eq!(row_icon(&mut cache, file, 16), Err(()));
+        let mut items = vec![
+            MenuItem::entry("Aaa"),
+            MenuItem::entry("Bbb"),
+            MenuItem::entry("Ccc"),
+        ];
+        let mut waits = vec![(0, file.to_string(), 16), (2, other.to_string(), 16)];
+        let art = Some(Canvas::new(16, 16));
+        assert!(
+            !land_icon(&mut items, &mut waits, file, 32, &art),
+            "another size is its own decode"
+        );
+        assert!(land_icon(&mut items, &mut waits, file, 16, &art));
+        let icon_width = |it: &MenuItem| match it {
+            MenuItem::Entry { icon, .. } => icon.as_ref().map(|c| c.width),
+            MenuItem::Separator => None,
+        };
+        assert_eq!(
+            items.iter().map(icon_width).collect::<Vec<_>>(),
+            [Some(16), None, None]
+        );
+        assert_eq!(waits, [(2, other.to_string(), 16)]);
+        cache.put_file(file, 16, art);
+        assert_eq!(
+            row_icon(&mut cache, file, 16).map(|c| c.map(|c| c.width)),
+            Ok(Some(16))
+        );
+        cache.put_file(file, 32, None);
+        assert_eq!(
+            row_icon(&mut cache, file, 32),
+            Ok(None),
+            "a file that failed to decode is not tried again"
+        );
+    }
 
     #[test]
     fn show_desktop_restores_bottom_first_as_they_were_stacked() {
