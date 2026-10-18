@@ -466,6 +466,8 @@ impl Sound {
             .as_ref()
             .map(|rx| rx.try_iter().filter_map(tray::translate).collect())
             .unwrap_or_default();
+        // A wheel step never comes with a handoff.
+        let raised = msgs.iter().any(|m| !matches!(m, tray::TrayMsg::Scroll(_)));
         let mut show = false;
         // A fast wheel burst arrives as several messages in one wake. Each
         // one recomputing from the same snapshot would move the volume a
@@ -547,11 +549,11 @@ impl Sound {
             self.hidden = false;
         }
         Reply {
-            activate: self
-                .tray
-                .as_ref()
-                .filter(|_| show)
-                .and_then(|t| t.take_handoff()),
+            activate: reprisetray::handoff_for(
+                self.tray.as_ref(),
+                raised,
+                show.then_some(repriseapp::MAIN),
+            ),
             spawn,
             ..Reply::redraw_all()
         }
@@ -964,21 +966,8 @@ mod tests {
         assert_eq!(anchor((100, 1080 + 30), (0, 1080)), (100, 30));
     }
 
-    /// A wake that shows no window leaves a second instance's handoff for the wake whose raise does.
-    #[test]
-    fn the_handoff_waits_for_the_wake_that_shows_the_window() {
-        let handoff = reprisebus::instance::Handoff {
-            token: Some("t".into()),
-            by_key: true,
-        };
-        let (tx, rx) = std::sync::mpsc::channel();
-        let mut app = Sound {
-            tray: Some(reprisetray::TrayHandle::holding(handoff.clone())),
-            msgs: Some(rx),
-            hidden: true,
-            ..Sound::default()
-        };
-        let mut ctx = Ctx {
+    fn test_ctx() -> Ctx {
+        Ctx {
             theme: reprisekit::theme::Theme::default(),
             text: reprisekit::text::TextRenderer::load(&reprisekit::theme::FontConfig::default())
                 .into(),
@@ -995,10 +984,67 @@ mod tests {
             want_tick: Default::default(),
             at_pick: false,
             text_size: 100,
+        }
+    }
+
+    /// A wake that shows no window leaves a second instance's handoff for the wake whose raise does.
+    #[test]
+    fn the_handoff_waits_for_the_wake_that_shows_the_window() {
+        let handoff = reprisebus::instance::Handoff {
+            token: Some("t".into()),
+            by_key: true,
         };
+        let (tx, rx) = std::sync::mpsc::channel();
+        let mut app = Sound {
+            tray: Some(reprisetray::TrayHandle::holding(handoff.clone())),
+            msgs: Some(rx),
+            hidden: true,
+            ..Sound::default()
+        };
+        let mut ctx = test_ctx();
         assert_eq!(app.wake(&mut ctx).activate, None);
         tx.send(reprisetray::Msg::Clicked(tray::ID_PROPERTIES))
             .unwrap();
-        assert_eq!(app.wake(&mut ctx).activate, Some(handoff));
+        assert_eq!(
+            app.wake(&mut ctx).activate,
+            Some((repriseapp::MAIN, handoff))
+        );
+    }
+
+    #[test]
+    fn a_first_click_that_opens_only_the_flyout_drops_its_handoff() {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let mut app = Sound {
+            tray: Some(reprisetray::TrayHandle::holding(
+                reprisebus::instance::Handoff {
+                    token: Some("t".into()),
+                    by_key: false,
+                },
+            )),
+            msgs: Some(rx),
+            hidden: true,
+            ..Sound::default()
+        };
+        let mut ctx = test_ctx();
+        tx.send(reprisetray::Msg::Activate(0, 0)).unwrap();
+        assert_eq!(app.wake(&mut ctx).activate, None);
+        assert_eq!(app.tray.as_ref().unwrap().take_handoff(), None);
+    }
+
+    #[test]
+    fn a_wheel_step_leaves_the_handoff_for_the_raise() {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let mut app = Sound {
+            tray: Some(reprisetray::TrayHandle::holding(
+                reprisebus::instance::Handoff::default(),
+            )),
+            msgs: Some(rx),
+            hidden: true,
+            ..Sound::default()
+        };
+        let mut ctx = test_ctx();
+        tx.send(reprisetray::Msg::Scroll(1)).unwrap();
+        app.wake(&mut ctx);
+        assert!(app.tray.as_ref().unwrap().take_handoff().is_some());
     }
 }

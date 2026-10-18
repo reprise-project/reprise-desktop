@@ -443,11 +443,11 @@ pub struct Reply {
     pub copy_files: Option<FileClip>,
     /// Arrives as `Event::PastedFiles` on the window this reply is for.
     pub paste_files: bool,
-    /// What another process handed over with a request to show the main
-    /// window: its token is presented for it, so the compositor focuses it,
-    /// and a start by key brings out its cues. Dropped while the main window
-    /// is hidden.
-    pub activate: Option<reprisebus::instance::Handoff>,
+    /// What another process handed over with a request to show a window, and
+    /// that window: its token is presented for it, so the compositor focuses
+    /// it, and a start by key brings out its cues. Dropped while that window
+    /// is not shown.
+    pub activate: Option<(WinId, reprisebus::instance::Handoff)>,
     /// Start a drag of files from the window this reply is for. It must
     /// answer a pointer press still held (the host uses that press's
     /// serial); the compositor refuses it otherwise.
@@ -1746,12 +1746,12 @@ impl Host {
         {
             a.offer.destroy();
         }
-        if let Some(handoff) = reply.activate
-            && let Some(main) = self.slots.iter_mut().find(|s| s.id == MAIN)
+        if let Some((id, handoff)) = reply.activate
+            && let Some(s) = self.slots.iter_mut().find(|s| s.id == id)
         {
-            main.dirty |= main.cues.reopen(handoff.by_key);
+            s.dirty |= s.cues.reopen(handoff.by_key);
             if let (Some(token), Some(activation)) = (handoff.token, &self.activation) {
-                activation.activate::<Host>(main.window.wl_surface(), token);
+                activation.activate::<Host>(s.window.wl_surface(), token);
             }
         }
         self.drain_head_requests();
