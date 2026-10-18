@@ -425,10 +425,15 @@ impl Explorer {
         Reply::redraw_all()
     }
 
-    /// Raises the replace prompt whose sides ([`Explorer::ask_replace`]) were read late.
+    /// Raises the replace prompt whose sides ([`Explorer::ask_replace`]) were read late. A window
+    /// closed meanwhile asks again, which answers No, and so do the pastes waiting behind it.
     pub(crate) fn take_asking(&mut self, ctx: &mut Ctx) -> Option<Reply> {
         let sides = self.asking.as_ref()?.1.take()?;
         let (ask, _) = self.asking.take()?;
+        if self.closing {
+            self.ask_replace(ask.pending, ask.asker, ctx);
+            return Some(self.show_waiting(ctx));
+        }
         Some(self.open_replace(ask, sides, ctx))
     }
 
@@ -569,6 +574,7 @@ impl Explorer {
             || self.removing.is_some()
             || self.jobs_pending > 0
             || !self.opening.is_empty()
+            || self.asking.is_some()
     }
 
     /// File > Close or the close box. With work in flight the window hides and [`Explorer::wake`]
