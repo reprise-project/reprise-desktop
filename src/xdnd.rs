@@ -82,11 +82,13 @@ impl WaylandFocus for PointerFocus {
     }
 }
 
-/// Forward a `PointerTarget` call to the client surface; Reprise's own drawing hears nothing.
+/// Forward a `PointerTarget` call to the client surface after any motion held for it
+/// (`coalesce`); Reprise's own drawing hears nothing.
 macro_rules! forward {
     ($($name:ident($($arg:ident: $ty:ty),*);)*) => {$(
         fn $name(&self, seat: &Seat<State>, data: &mut State, $($arg: $ty),*) {
             if let PointerFocus::Surface(s) = self {
+                data.flush_motion();
                 PointerTarget::<State>::$name(s, seat, data, $($arg),*);
             }
         }
@@ -98,6 +100,7 @@ impl PointerTarget<State> for PointerFocus {
     /// that at the screen's corner, so a motion to the same point follows the enter.
     fn enter(&self, seat: &Seat<State>, data: &mut State, event: &MotionEvent) {
         if let PointerFocus::Surface(s) = self {
+            data.flush_motion();
             PointerTarget::<State>::enter(s, seat, data, event);
             if from_xwayland(s) {
                 PointerTarget::<State>::motion(s, seat, data, event);
@@ -105,12 +108,30 @@ impl PointerTarget<State> for PointerFocus {
         }
     }
 
+    fn motion(&self, _: &Seat<State>, data: &mut State, event: &MotionEvent) {
+        if let PointerFocus::Surface(s) = self {
+            data.hold_motion(s, event);
+        }
+    }
+
+    fn relative_motion(&self, _: &Seat<State>, data: &mut State, event: &RelativeMotionEvent) {
+        if let PointerFocus::Surface(s) = self {
+            data.hold_relative(s, event);
+        }
+    }
+
+    fn frame(&self, seat: &Seat<State>, data: &mut State) {
+        if let PointerFocus::Surface(s) = self
+            && !data.pointers.motions.frame_held(s)
+        {
+            data.flush_motion();
+            PointerTarget::<State>::frame(s, seat, data);
+        }
+    }
+
     forward! {
-        motion(event: &MotionEvent);
-        relative_motion(event: &RelativeMotionEvent);
         button(event: &ButtonEvent);
         axis(frame: AxisFrame);
-        frame();
         gesture_swipe_begin(event: &GestureSwipeBeginEvent);
         gesture_swipe_update(event: &GestureSwipeUpdateEvent);
         gesture_swipe_end(event: &GestureSwipeEndEvent);
@@ -193,6 +214,8 @@ impl DndFocus<State> for PointerFocus {
         location: Point<f64, Logical>,
         serial: &Serial,
     ) -> Option<Offer> {
+        data.flush_motion();
+        data.dnd_actions_changed();
         let source = Arc::new(data.drag_source_for(source)?);
         match self.target(data) {
             Target::X11(x) => {
@@ -217,23 +240,30 @@ impl DndFocus<State> for PointerFocus {
             (Target::X11(x), Some(Offer::X11(o))) => {
                 // An X11 target answers in a status the source never hears of;
                 // what it last said stands for its accept.
+                data.flush_motion();
                 data.x11_target_answered(o.validated());
                 DndFocus::motion(&*x, data, Some(o), seat, location, time);
             }
             (Target::X11(x), None) => {
+                data.flush_motion();
                 DndFocus::<State>::motion::<S>(&*x, data, None, seat, location, time)
             }
             (Target::Wl(s), Some(Offer::Wl(o))) => {
-                DndFocus::motion(&s, data, Some(o), seat, location, time)
+                // The offer only passes on a change of the source's actions.
+                if data.dnd_actions_changed() {
+                    data.flush_motion();
+                    DndFocus::motion(&s, data, Some(o), seat, location, time)
+                } else {
+                    data.hold_drag(&s, location, time)
+                }
             }
-            (Target::Wl(s), None) => {
-                DndFocus::<State>::motion::<S>(&s, data, None, seat, location, time)
-            }
+            (Target::Wl(s), None) => data.hold_drag(&s, location, time),
             _ => {}
         }
     }
 
     fn leave<S: Source>(&self, data: &mut State, offer: Option<&mut Offer>, seat: &Seat<State>) {
+        data.flush_motion();
         match (self.target(data), offer) {
             (Target::X11(x), Some(Offer::X11(o))) => DndFocus::leave(&*x, data, Some(o), seat),
             (Target::X11(x), None) => DndFocus::<State>::leave::<S>(&*x, data, None, seat),
@@ -244,6 +274,7 @@ impl DndFocus<State> for PointerFocus {
     }
 
     fn drop<S: Source>(&self, data: &mut State, offer: Option<&mut Offer>, seat: &Seat<State>) {
+        data.flush_motion();
         match (self.target(data), offer) {
             (Target::X11(x), Some(Offer::X11(o))) => DndFocus::drop(&*x, data, Some(o), seat),
             (Target::X11(x), None) => DndFocus::<State>::drop::<S>(&*x, data, None, seat),

@@ -373,6 +373,7 @@ impl State {
             InputEvent::PointerMotion { .. } | InputEvent::PointerMotionAbsolute { .. }
         ) {
             self.settle_pointer();
+            self.flush_motion();
         }
         if crate::idle::is_activity(&event) {
             crate::idle::notify_activity(self);
