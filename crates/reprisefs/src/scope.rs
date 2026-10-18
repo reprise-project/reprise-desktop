@@ -192,8 +192,15 @@ fn unit_escape(s: &str) -> String {
 /// Two instances of one app need two scopes, also when two processes launch it.
 fn unit_suffix() -> String {
     static NEXT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
-    let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    format!("{:x}{n:x}", std::process::id())
+    suffix(
+        std::process::id(),
+        NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+    )
+}
+
+/// Launch `n` of process `pid`; the `x` keeps pid 0x1a's launch 0x23 apart from pid 0x1a2's 0x3.
+fn suffix(pid: u32, n: u32) -> String {
+    format!("{pid:x}x{n:x}")
 }
 
 /// Without a user manager `systemd-run --user` fails, so the command runs unscoped.
@@ -293,6 +300,12 @@ mod tests {
     #[test]
     fn launch_scopes_get_distinct_suffixes() {
         assert_ne!(unit_suffix(), unit_suffix());
+    }
+
+    #[test]
+    fn two_processes_never_share_a_scope_suffix() {
+        assert_ne!(suffix(0x1a, 0x23), suffix(0x1a2, 0x3));
+        assert_eq!(suffix(0x1a, 0x23), "1ax23");
     }
 
     #[test]
