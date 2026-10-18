@@ -1134,3 +1134,78 @@ fn a_drop_on_the_address_bar_goes_into_its_field() {
     ex.drag_leave();
     assert!(ex.address.combo.drop_x.is_none());
 }
+
+/// The red of the reddest pixel: the drag image's text is black, so only the icon carries red.
+fn reddest(img: &Canvas) -> u32 {
+    (0..img.height as i32)
+        .flat_map(|y| (0..img.width as i32).map(move |x| (x, y)))
+        .map(|(x, y)| (img.get(x, y) >> 16) & 0xff)
+        .max()
+        .unwrap_or(0)
+}
+
+/// A cut row's icon drags faded as the view draws it: half the strength of an uncut one.
+#[test]
+fn a_cut_rows_drag_image_fades_its_icon_as_the_view_does() {
+    for mode in [Mode::List, Mode::Details, Mode::Icons] {
+        let red = |cut: bool| {
+            let mut ctx = test_ctx();
+            let (_dir, mut ex) = explorer(&mut ctx);
+            ex.sv.mode = mode;
+            let i = index_of(&ex, "a.txt");
+            let px = if mode == Mode::Icons { 32 } else { 16 };
+            let mut icon = Canvas::new(px, px);
+            icon.fill_rect(
+                Rect::new(0, 0, px as i32, px as i32),
+                reprisekit::theme::Color::rgb(255, 0, 0),
+            );
+            let e = &mut ex.sv.entries[i];
+            e.icon = Some(std::rc::Rc::new(icon.clone()));
+            e.icon32 = Some(std::rc::Rc::new(icon));
+            e.cut = cut;
+            select(&mut ex, &["a.txt"]);
+            let at = centre(&ex, &ctx, i);
+            press(&mut ex, &mut ctx, at, BTN_LEFT);
+            reddest(&ex.drag_image(&mut ctx, 1).expect("an image").0)
+        };
+        let (whole, cut) = (red(false), red(true));
+        assert!(whole > 0, "{mode:?}: the icon is drawn");
+        assert!(
+            cut.abs_diff(whole / 2) <= 1,
+            "{mode:?}: a cut icon drags at half strength, {cut} of {whole}"
+        );
+    }
+}
+
+/// A Details drag pressed with the Name column scrolled out of view carries the rows' names,
+/// drawn at the body's left edge, instead of an empty image.
+#[test]
+fn a_details_drag_with_the_name_column_scrolled_out_still_carries_its_rows() {
+    let mut ctx = test_ctx();
+    let (_dir, mut ex) = explorer(&mut ctx);
+    ex.sv.mode = Mode::Details;
+    for col in ex.sv.columns.iter_mut().skip(1) {
+        col.width = 2000;
+    }
+    let name_w = ex.sv.columns[0].width;
+    ex.sv.left = name_w + 40;
+    let i = index_of(&ex, "a.txt");
+    select(&mut ex, &["a.txt"]);
+    let row = cell(&ex, &ctx, i);
+    let body = ex.layout(&ctx).view;
+    let at = (body.x + body.width / 2, row.y + row.height / 2);
+    press(&mut ex, &mut ctx, at, BTN_LEFT);
+    assert!(ex.drag.is_some(), "a press on the row arms a drag");
+    let (img, grab) = ex.drag_image(&mut ctx, 1).expect("an image");
+    assert!(
+        img.width > 0 && img.height > 0,
+        "got {}x{}",
+        img.width,
+        img.height
+    );
+    assert!(
+        (0..img.height as i32).any(|y| (0..img.width as i32).any(|x| img.get(x, y) >> 24 > 0)),
+        "the name is drawn"
+    );
+    assert_eq!(grab.1, at.1 - row.y, "held where the press landed");
+}
