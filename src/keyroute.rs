@@ -506,7 +506,7 @@ pub fn route(modes: &Modes, k: &KeyPress, binds: &[Keybind], globals: &[GlobalBi
     // the arrows walk it, Enter and the Menu key act on its item, Escape
     // gives the keyboard back.
     if modes.taskbar_keys && k.pressed {
-        let actions = bound(k, binds);
+        let actions = desktop_close(bound(k, binds), modes);
         return with(match (actions.is_empty(), k.syms.first()) {
             (false, _) => KeyRoute::Binds(actions),
             (true, Some(&sym)) => KeyRoute::Taskbar(sym),
@@ -582,15 +582,7 @@ pub fn route(modes: &Modes, k: &KeyPress, binds: &[Keybind], globals: &[GlobalBi
         return with(KeyRoute::Client);
     }
     if k.pressed {
-        let mut actions = bound(k, binds);
-        // With no window to close, the desktop's close bind opens Turn Off.
-        if modes.desktop_has_keyboard {
-            for a in &mut actions {
-                if *a == Action::Close {
-                    *a = Action::TurnOff;
-                }
-            }
-        }
+        let actions = desktop_close(bound(k, binds), modes);
         if !actions.is_empty() {
             return with(KeyRoute::Binds(actions));
         }
@@ -740,6 +732,19 @@ impl KeyRoute {
 }
 
 /// The actions the binds give `k`, in keysym order.
+/// With no window to close (the desktop or the taskbar has the keyboard), the close bind opens
+/// Turn Off.
+fn desktop_close(mut actions: Vec<Action>, modes: &Modes) -> Vec<Action> {
+    if modes.desktop_has_keyboard {
+        for a in &mut actions {
+            if *a == Action::Close {
+                *a = Action::TurnOff;
+            }
+        }
+    }
+    actions
+}
+
 fn bound(k: &KeyPress, binds: &[Keybind]) -> Vec<Action> {
     k.lower
         .iter()
@@ -1397,6 +1402,16 @@ mod tests {
             route(&Modes::default(), &alt_f4, &menu_binds(), &[]).route,
             KeyRoute::Binds(vec![Action::Close]),
             "a focused window keeps the close bind"
+        );
+        let bar = Modes {
+            taskbar_keys: true,
+            desktop_has_keyboard: true,
+            ..Modes::default()
+        };
+        assert_eq!(
+            route(&bar, &alt_f4, &menu_binds(), &[]).route,
+            KeyRoute::Binds(vec![Action::TurnOff]),
+            "the taskbar with the keyboard holds no window to close"
         );
     }
 
