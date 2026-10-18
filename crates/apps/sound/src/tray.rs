@@ -5,6 +5,7 @@
 
 use std::time::{Duration, Instant};
 
+use reprisekit::pointer::DOUBLE_CLICK_SLOP;
 use reprisetray::{Config, Icon, Msg, Node, Raise, Shown};
 
 pub const BUS_NAME: &str = "reprise.sound";
@@ -83,8 +84,9 @@ pub fn shown(icon: &str, tip: String, muted: bool) -> Shown {
 }
 
 /// Tells a single click on the icon from a double one. The first press is
-/// held for the double-click interval; a second inside it makes a double,
-/// and when none comes `due` hands the first back.
+/// held for the double-click interval; a second inside it and within
+/// [`DOUBLE_CLICK_SLOP`] of it makes a double, and when none comes `due`
+/// hands the first back. A second press too far away starts over.
 #[derive(Default)]
 pub struct ClickGate {
     first: Option<(Instant, (i32, i32))>,
@@ -100,7 +102,13 @@ pub enum Press {
 impl ClickGate {
     pub fn press(&mut self, now: Instant, at: (i32, i32), interval: Duration) -> Press {
         match self.first.take() {
-            Some((t, _)) if now.duration_since(t) < interval => Press::Double,
+            Some((t, first))
+                if now.duration_since(t) < interval
+                    && (at.0 - first.0).abs() <= DOUBLE_CLICK_SLOP
+                    && (at.1 - first.1).abs() <= DOUBLE_CLICK_SLOP =>
+            {
+                Press::Double
+            }
             _ => {
                 self.first = Some((now, at));
                 Press::First
@@ -224,6 +232,19 @@ mod tests {
         g.press(t0, (5, 6), MS500);
         assert_eq!(g.press(t0 + MS500 * 2, (7, 8), MS500), Press::First);
         assert_eq!(g.due(t0 + MS500 * 3, MS500), Some((7, 8)));
+    }
+
+    #[test]
+    fn a_second_press_past_the_slop_starts_over() {
+        let t0 = Instant::now();
+        let mut g = ClickGate::default();
+        g.press(t0, (5, 6), MS500);
+        let near = (5 + DOUBLE_CLICK_SLOP, 6 - DOUBLE_CLICK_SLOP);
+        assert_eq!(g.press(t0 + MS500 / 4, near, MS500), Press::Double);
+        g.press(t0 + MS500, (5, 6), MS500);
+        let far = (5 + DOUBLE_CLICK_SLOP + 1, 6);
+        assert_eq!(g.press(t0 + MS500 * 5 / 4, far, MS500), Press::First);
+        assert_eq!(g.due(t0 + MS500 * 9 / 4, MS500), Some(far));
     }
 
     #[test]
