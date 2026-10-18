@@ -2074,3 +2074,20 @@ fn paste_on_a_launcher_opens_the_clipboards_files_in_its_program() {
         "a later Paste copies into the folder again"
     );
 }
+
+/// A mount's job asking for the whole window drawn and a quick one landing with it in one wake.
+#[test]
+fn jobs_landing_in_one_wake_keep_every_reply() {
+    let mut ctx = test_ctx();
+    let t = tempfile::tempdir().expect("a temp dir");
+    let mut ex = crate::tests::test_explorer(Place::Folder(t.path().to_path_buf()), &mut ctx);
+    let replies: [fn() -> Reply; 2] = [Reply::redraw_all, Reply::redraw];
+    for reply in replies {
+        ex.jobs_pending += 1;
+        let done: JobDone = Box::new(move |_, _| reply());
+        ex.jobs_tx.send(done).expect("send");
+    }
+    let got = ex.poll_jobs(&mut ctx).expect("two jobs landed");
+    assert!(got.redraw_all, "the first job's redraw_all is kept");
+    assert_eq!(ex.jobs_pending, 0);
+}
