@@ -129,9 +129,8 @@ impl State {
         else {
             return;
         };
-        let area = self.desktop_area();
-        let cell = desktop::cell_at(self.desktop_grid(), area, cell.x, cell.y);
-        self.perform_all(sources, &DropTarget::Desktop(cell), DropOp::Shortcut);
+        let target = self.desktop_drop_at(cell.x, cell.y);
+        self.perform_all(sources, &target, DropOp::Shortcut);
     }
 
     /// Cut or Copy aimed at icon `index`: its file and the other files of
@@ -159,8 +158,7 @@ impl State {
     pub fn paste_on_desktop(&mut self, at: Option<(i32, i32)>, shortcut: bool) {
         let area = self.desktop_area();
         let at = at.unwrap_or((area.x, area.y));
-        let cell = desktop::cell_at(self.desktop_grid(), area, at.0, at.1);
-        self.paste_files(DropTarget::Desktop(cell), shortcut);
+        self.paste_files(self.desktop_drop_at(at.0, at.1), shortcut);
     }
 
     /// Paste the clipboard's files onto `target` as a drop there would:
