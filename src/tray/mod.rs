@@ -1066,8 +1066,44 @@ pub fn apply_choices(state: &mut State, picked: Choices) {
     replace_all(state);
 }
 
+/// Icon file `file` landed: the remembered rows of an open Customize dialog that wear it take it.
+pub(crate) fn customize_icon_landed(state: &mut State, file: &str) {
+    let Some(tray) = state.tray.as_ref() else {
+        return;
+    };
+    let mut refilled = Vec::new();
+    for (i, v) in state.dialogs.views.iter_mut().enumerate() {
+        if let Some(t) = v.dialog.tray_mut()
+            && refill_past(t, &tray.choices, &mut state.icons, file)
+        {
+            refilled.push(i);
+        }
+    }
+    for i in refilled {
+        state.redraw_dialog(i);
+    }
+}
+
+/// Gives `t`'s remembered rows whose kept icon is `file` their icon again; true if any did.
+fn refill_past(
+    t: &mut TrayCustomize,
+    choices: &BTreeMap<String, Remembered>,
+    icons: &mut IconCache,
+    file: &str,
+) -> bool {
+    let current = t.current;
+    let mut refilled = false;
+    for e in &mut t.entries[current..] {
+        if choices.get(&e.key).and_then(|r| r.icon.as_deref()) == Some(file) {
+            e.icon = past_icon(icons, Some(file)).into();
+            refilled = true;
+        }
+    }
+    refilled
+}
+
 /// A remembered item's icon for the Customize list. A file is never read on the loop: one not
-/// decoded yet shows the stand-in, and the next Customize shows the file.
+/// decoded yet shows the stand-in until [`customize_icon_landed`] refills the row.
 fn past_icon(icons: &mut IconCache, name: Option<&str>) -> Vec<IconSource> {
     let name = name.unwrap_or(crate::icon::STAND_IN);
     [16, 32]
@@ -1608,6 +1644,53 @@ mod tests {
             .map(|s| s.width)
             .collect();
         assert_eq!(widths, [16]);
+    }
+
+    #[test]
+    fn a_remembered_row_takes_its_icon_file_when_it_lands() {
+        let file = "/srv/icons/tray.png";
+        let mut icons = IconCache::new(crate::icontheme::IconTheme::load("none", &[]));
+        let entry = |key: &str, icon: Vec<IconSource>| Entry {
+            key: key.into(),
+            name: key.into(),
+            detail: String::new(),
+            icon: icon.into(),
+            passive: false,
+            behaviour: Behaviour::Hide,
+        };
+        let past = past_icon(&mut icons, Some(file));
+        assert!(past.is_empty());
+        let mut t = TrayCustomize::new(
+            traycustomize::Wording::Classic,
+            vec![entry("live", Vec::new())],
+            vec![entry("gone", past), entry("other", Vec::new())],
+            None,
+            reprisekit::metrics::ControlMetrics::CLASSIC,
+        );
+        let kept = |icon: &str| Remembered {
+            behaviour: Behaviour::Hide,
+            name: String::new(),
+            icon: Some(icon.into()),
+        };
+        let choices = [
+            ("live".to_string(), kept(file)),
+            ("gone".to_string(), kept(file)),
+            ("other".to_string(), kept("/srv/icons/other.png")),
+        ]
+        .into_iter()
+        .collect();
+        icons.put_file(file, 16, Some(Canvas::new(16, 16)));
+        assert!(!refill_past(
+            &mut t,
+            &choices,
+            &mut icons,
+            "/srv/icons/else.png"
+        ));
+        assert!(refill_past(&mut t, &choices, &mut icons, file));
+        let widths: Vec<Vec<u32>> = (t.entries.iter())
+            .map(|e| e.icon.iter().map(|s| s.width).collect())
+            .collect();
+        assert_eq!(widths, [vec![], vec![16], vec![]]);
     }
 
     #[test]
