@@ -654,10 +654,11 @@ impl Explorer {
         if self.dragging {
             // The view keeps at least 200 px, the width the task pane
             // would have taken.
-            let width = (x - explorerbar::SPLITTER_W / 2).clamp(
-                explorerbar::MIN_W,
-                (ctx.size.0 - explorerbar::SPLITTER_W - 200).max(explorerbar::MIN_W),
-            );
+            let u = ctx.theme.controls().text;
+            let widest = u.within(ctx.size.0 - explorerbar::SPLITTER_W - 200);
+            let width = u
+                .within(x - explorerbar::SPLITTER_W / 2)
+                .clamp(explorerbar::MIN_W, widest.max(explorerbar::MIN_W));
             if width != self.explorer_bar.width {
                 self.explorer_bar.width = width;
                 return Reply::redraw();
