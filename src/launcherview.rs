@@ -344,7 +344,7 @@ impl State {
             .iter()
             .map(|s| Row {
                 name: s.name(app_index),
-                icon: s.icon(app_index).and_then(|n| icons.get(&n, px)),
+                icon: s.icon(app_index).and_then(|n| unread(icons, &n, px)),
             })
             .collect();
         v.model.set_settings(settings);
@@ -354,12 +354,42 @@ impl State {
                 let a = &app_index[ai];
                 Row {
                     name: a.name.clone(),
-                    icon: a.icon.as_deref().and_then(|n| icons.get(n, px)),
+                    icon: a.icon.as_deref().and_then(|n| unread(icons, n, px)),
                 }
             })
             .collect();
         v.matches = matches;
         v.model.set_rows(rows);
+    }
+
+    /// Icon file `file` landed: the app and settings rows wearing it take it.
+    pub(crate) fn launcher_icon_landed(&mut self, file: &str) {
+        let scale = self.launcher_scale();
+        let State {
+            launcher,
+            app_index,
+            icons,
+            ..
+        } = self;
+        let Some(v) = launcher.as_mut() else {
+            return;
+        };
+        let app = |i: usize| app_index.get(i).and_then(|a| a.icon.clone());
+        let setting_icons: Vec<Option<String>> =
+            v.settings.iter().map(|s| s.icon(app_index)).collect();
+        let wears = |n: &Option<String>| n.as_deref() == Some(file);
+        if !v.matches.iter().any(|&i| wears(&app(i))) && !setting_icons.iter().any(wears) {
+            return;
+        }
+        let px = 16 * scale;
+        let apps = (v.matches.iter())
+            .map(|&i| app(i).and_then(|n| unread(icons, &n, px)))
+            .collect();
+        let settings = (setting_icons.iter())
+            .map(|n| n.as_deref().and_then(|n| unread(icons, n, px)))
+            .collect();
+        v.model.refill_icons(apps, settings);
+        self.redraw_launcher();
     }
 
     /// The text changed: stop the search in flight, narrow the file rows
@@ -476,8 +506,7 @@ impl State {
             None => None,
         }
         .unwrap_or_else(|| "system-search".to_string());
-        let icon = icons
-            .get(&icon_name, launcher::ICON * scale)
+        let icon = unread(icons, &icon_name, launcher::ICON * scale)
             .unwrap_or_else(|| reprisekit::icon::fallback(&theme, launcher::ICON * scale));
         let mut canvas = launcher::draw(
             &theme,
@@ -507,6 +536,15 @@ impl State {
         tree.set_focus(focus);
         Some(tree)
     }
+}
+
+/// Icon `name` for a launcher row, its file never read on the loop ([`crate::icon::unread`]).
+fn unread(
+    icons: &mut crate::icontheme::IconCache,
+    name: &str,
+    px: i32,
+) -> Option<crate::raster::Canvas> {
+    crate::icon::unread(icons, name, px).map(std::sync::Arc::unwrap_or_clone)
 }
 
 #[cfg(test)]
