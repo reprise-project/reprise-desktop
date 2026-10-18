@@ -84,7 +84,7 @@ pub fn render() -> Canvas {
     let height: i32 = BANDS.iter().map(|b| TITLE + b.height).sum();
     let mut c = Canvas::new(COLUMN as u32 * Variant::ALL.len() as u32, height as u32);
     for (i, v) in Variant::ALL.into_iter().enumerate() {
-        let theme = interfaces::blue_theme(v);
+        let theme = crate::cued(interfaces::blue_theme(v));
         let x = i as i32 * COLUMN;
         let mut y = 0;
         for b in &BANDS {

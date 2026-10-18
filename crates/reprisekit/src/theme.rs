@@ -485,7 +485,8 @@ pub struct Theme {
     /// configuration: two themes that differ only here are equal.
     pub active: bool,
     /// Whether access keys draw their underline, handed on by [`Theme::paint`]: the
-    /// window's [`crate::cues::Cues::keys`]. Draw state set and put back as `active` is.
+    /// window's [`crate::cues::Cues::keys`]. False unless a host sets it for one draw and
+    /// puts it back after. Draw state, as `active` is.
     pub access_keys: bool,
 }
 
@@ -510,7 +511,7 @@ impl Default for Theme {
             look: crate::paint::Look::Classic,
             text: TextUnits::ONE,
             active: true,
-            access_keys: true,
+            access_keys: false,
         }
     }
 }

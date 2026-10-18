@@ -274,7 +274,10 @@ mod tests {
     #[test]
     #[ignore]
     fn render_hotspot() {
-        let theme = reprisekit::theme::Theme::default();
+        let theme = reprisekit::theme::Theme {
+            access_keys: true,
+            ..reprisekit::theme::Theme::default()
+        };
         let text = reprisekit::text::TextRenderer::load(&reprisekit::theme::FontConfig::default());
         let mut d = HotspotDialog::new("/dev/3", "desk");
         type_into(&mut d, "password", "correct horse");

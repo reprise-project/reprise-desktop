@@ -1139,7 +1139,8 @@ mod tests {
     #[test]
     #[ignore]
     fn render_chooser() {
-        let ctx = ctx();
+        let mut ctx = ctx();
+        ctx.theme.access_keys = true;
         let mut c = chooser();
         c.list.select_row(Some(2));
         c.sync_button();

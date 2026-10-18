@@ -308,7 +308,10 @@ mod tests {
         use reprisekit::raster::Canvas;
         use reprisekit::text::TextRenderer;
         use reprisekit::theme::{FontConfig, Theme};
-        let theme = Theme::default();
+        let theme = Theme {
+            access_keys: true,
+            ..Theme::default()
+        };
         let text = TextRenderer::load(&FontConfig::default());
         let mut d = AddUser::new(vec!["jo".into()]);
         type_into(&mut d, FULL, "Jo Doe");

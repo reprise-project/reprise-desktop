@@ -383,7 +383,10 @@ mod tests {
     #[test]
     #[ignore]
     fn render_keydlg() {
-        let theme = reprisekit::theme::Theme::default();
+        let theme = reprisekit::theme::Theme {
+            access_keys: true,
+            ..reprisekit::theme::Theme::default()
+        };
         let text = reprisekit::text::TextRenderer::load(&reprisekit::theme::FontConfig::default());
         let mut d = dialog();
         type_into(&mut d, "key", "hunter22");

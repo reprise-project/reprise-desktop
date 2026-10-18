@@ -57,6 +57,14 @@ use reprisekit::theme::{Color, FontConfig, Theme};
 use reprisekit::trackbar;
 use reprisekit::wallpaper::{self, Position};
 
+/// `t` with its access keys underlined, as a window showing its keyboard cues draws.
+fn cued(t: Theme) -> Theme {
+    Theme {
+        access_keys: true,
+        ..t
+    }
+}
+
 fn main() {
     if let Ok(n) = std::env::var("REPRISE_GALLERY_SCALE") {
         let n: i32 = n.parse().expect("REPRISE_GALLERY_SCALE is a whole number");
@@ -90,9 +98,12 @@ fn main() {
                 mode,
                 ..reprisekit::glass::Settings::default()
             };
-            let theme =
-                interfaces::theme_with(Interface::Glass, reprisekit::blue::Variant::default(), &g)
-                    .scaled(n.max(1));
+            let theme = cued(interfaces::theme_with(
+                Interface::Glass,
+                reprisekit::blue::Variant::default(),
+                &g,
+            ))
+            .scaled(n.max(1));
             let name = if mode == reprisekit::glass::Mode::Dark {
                 "dark"
             } else {
@@ -145,7 +156,7 @@ fn main() {
         Some(name) => vec![Some(name)],
     };
     for name in names {
-        let mut theme = Theme::default();
+        let mut theme = cued(Theme::default());
         let mut out = "reprisekit-gallery.png".to_string();
         if let Some(name) = name {
             theme.colors = schemes::scheme(name)
@@ -281,10 +292,10 @@ fn render_monitors(with_blue: bool) -> Canvas {
         tile(2, (1920, 0), (1280, 1024)),
         tile(3, (0, 1080), (1080, 1920)),
     ];
-    let mut themes = vec![Theme::default()];
+    let mut themes = vec![cued(Theme::default())];
     if with_blue {
-        themes.push(interfaces::theme_for(Interface::Blue));
-        themes.push(interfaces::theme_for(Interface::Glass));
+        themes.push(cued(interfaces::theme_for(Interface::Blue)));
+        themes.push(cued(interfaces::theme_for(Interface::Glass)));
     }
     let (ww, wh) = (358, 108);
     let col = ww + BADGE + 30;
@@ -344,10 +355,10 @@ fn render_end_session(with_blue: bool) -> Canvas {
         ],
         icon: None,
     };
-    let mut themes = vec![Theme::default()];
+    let mut themes = vec![cued(Theme::default())];
     if with_blue {
-        themes.push(interfaces::theme_for(Interface::Blue));
-        themes.push(interfaces::theme_for(Interface::Glass));
+        themes.push(cued(interfaces::theme_for(Interface::Blue)));
+        themes.push(cued(interfaces::theme_for(Interface::Glass)));
     }
     let base = TextRenderer::load(&Theme::default().fonts);
     let (w, h) = endsession::client(
@@ -381,10 +392,10 @@ fn render_location_prompt(with_blue: bool) -> Canvas {
         program: "Maps".into(),
         icon: Some(icon),
     };
-    let mut themes = vec![Theme::default()];
+    let mut themes = vec![cued(Theme::default())];
     if with_blue {
-        themes.push(interfaces::theme_for(Interface::Blue));
-        themes.push(interfaces::theme_for(Interface::Glass));
+        themes.push(cued(interfaces::theme_for(Interface::Blue)));
+        themes.push(cued(interfaces::theme_for(Interface::Glass)));
     }
     let base = TextRenderer::load(&Theme::default().fonts);
     let (w, h) = locationprompt::client(
@@ -425,21 +436,21 @@ fn render_copy_progress(with_blue: bool, scale: i32) -> Canvas {
         waiting: 1,
         ..Status::default()
     };
-    let glass_dark = interfaces::theme_with(
+    let glass_dark = cued(interfaces::theme_with(
         Interface::Glass,
         reprisekit::blue::Variant::default(),
         &reprisekit::glass::Settings {
             mode: reprisekit::glass::Mode::Dark,
             ..reprisekit::glass::Settings::default()
         },
-    );
+    ));
     let mut boxes: Vec<(Theme, Kind, Phase, bool)> = vec![
-        (Theme::default(), Kind::Move, Phase::Preparing, true),
-        (Theme::default(), Kind::Move, Phase::Copying, true),
-        (Theme::default(), Kind::Move, Phase::Finishing, true),
-        (Theme::default(), Kind::Delete, Phase::Copying, true),
-        (Theme::default(), Kind::Empty, Phase::Copying, true),
-        (Theme::default(), Kind::Restore, Phase::Copying, true),
+        (cued(Theme::default()), Kind::Move, Phase::Preparing, true),
+        (cued(Theme::default()), Kind::Move, Phase::Copying, true),
+        (cued(Theme::default()), Kind::Move, Phase::Finishing, true),
+        (cued(Theme::default()), Kind::Delete, Phase::Copying, true),
+        (cued(Theme::default()), Kind::Empty, Phase::Copying, true),
+        (cued(Theme::default()), Kind::Restore, Phase::Copying, true),
     ];
     if with_blue {
         for v in [
@@ -447,15 +458,20 @@ fn render_copy_progress(with_blue: bool, scale: i32) -> Canvas {
             reprisekit::blue::Variant::Olive,
             reprisekit::blue::Variant::Silver,
         ] {
-            boxes.push((interfaces::blue_theme(v), Kind::Move, Phase::Copying, true));
+            boxes.push((
+                cued(interfaces::blue_theme(v)),
+                Kind::Move,
+                Phase::Copying,
+                true,
+            ));
         }
-        let blue = interfaces::blue_theme(reprisekit::blue::Variant::Blue);
+        let blue = cued(interfaces::blue_theme(reprisekit::blue::Variant::Blue));
         for kind in [Kind::Delete, Kind::Empty, Kind::Restore] {
             boxes.push((blue.clone(), kind, Phase::Copying, true));
         }
-        let olive = interfaces::blue_theme(reprisekit::blue::Variant::Olive);
+        let olive = cued(interfaces::blue_theme(reprisekit::blue::Variant::Olive));
         boxes.push((olive, Kind::Delete, Phase::Finishing, true));
-        let glass = interfaces::theme_for(Interface::Glass);
+        let glass = cued(interfaces::theme_for(Interface::Glass));
         boxes.push((glass.clone(), Kind::Move, Phase::Copying, true));
         boxes.push((glass_dark, Kind::Move, Phase::Copying, true));
         boxes.push((glass.clone(), Kind::Move, Phase::Copying, false));
@@ -511,13 +527,17 @@ fn render_windowed_dialog(scale: i32) -> Canvas {
             frame,
             ..Settings::default()
         };
-        interfaces::theme_with(Interface::Glass, Variant::default(), &s)
+        cued(interfaces::theme_with(
+            Interface::Glass,
+            Variant::default(),
+            &s,
+        ))
     };
     let looks = [
-        Theme::default(),
-        interfaces::blue_theme(Variant::Blue),
-        interfaces::blue_theme(Variant::Olive),
-        interfaces::blue_theme(Variant::Silver),
+        cued(Theme::default()),
+        cued(interfaces::blue_theme(Variant::Blue)),
+        cued(interfaces::blue_theme(Variant::Olive)),
+        cued(interfaces::blue_theme(Variant::Silver)),
         glass(Mode::Light, Frame::Rounded),
         glass(Mode::Dark, Frame::Rounded),
         glass(Mode::Light, Frame::Square),
@@ -570,7 +590,7 @@ fn render_text_size(pct: u32) -> Canvas {
     let looks = [Interface::Classic, Interface::Blue, Interface::Glass];
     let themes: Vec<Theme> = looks
         .iter()
-        .map(|&i| interfaces::theme_for(i).with_text_size(pct))
+        .map(|&i| cued(interfaces::theme_for(i)).with_text_size(pct))
         .collect();
     let u = themes[0].text;
     let notice = msgbox::Fields {
@@ -895,10 +915,10 @@ fn render_stats_panel(with_blue: bool) -> Canvas {
             Row::new("Memory", "84.2 MB"),
         ],
     };
-    let mut themes = vec![Theme::default()];
+    let mut themes = vec![cued(Theme::default())];
     if with_blue {
-        themes.push(interfaces::theme_for(Interface::Blue));
-        themes.push(interfaces::theme_for(Interface::Glass));
+        themes.push(cued(interfaces::theme_for(Interface::Blue)));
+        themes.push(cued(interfaces::theme_for(Interface::Glass)));
     }
     let h = statspanel::height(p.rows.len());
     let step = statspanel::W + 40;
@@ -949,10 +969,10 @@ fn render_about_system(with_blue: bool, pct: u32) -> Canvas {
             g("Session:", &["Jo Doe (jo)", "Up 3 hours, 12 minutes"]),
         ],
     };
-    let mut themes = vec![Theme::default().with_text_size(pct)];
+    let mut themes = vec![cued(Theme::default()).with_text_size(pct)];
     if with_blue {
-        themes.push(interfaces::theme_for(Interface::Blue).with_text_size(pct));
-        themes.push(interfaces::theme_for(Interface::Glass).with_text_size(pct));
+        themes.push(cued(interfaces::theme_for(Interface::Blue)).with_text_size(pct));
+        themes.push(cued(interfaces::theme_for(Interface::Glass)).with_text_size(pct));
     }
     let (w, h) = themes[0].text.size(aboutbox::system_size(&system));
     let mut c = Canvas::new(
@@ -975,7 +995,7 @@ fn render_about_system(with_blue: bool, pct: u32) -> Canvas {
 /// The Open dialog enlarged, in Details, sorted by Size twice: files first, largest first, then folders Z to A.
 fn render_file_dialog() -> Canvas {
     let text = TextRenderer::load(&FontConfig::default());
-    let theme = Theme::default();
+    let theme = cued(Theme::default());
     let mut d = filedlg::FileDlg::new(
         filedlg::Fields {
             title: "Open".into(),
@@ -1038,7 +1058,7 @@ fn render_file_dialog() -> Canvas {
 /// One picture composed Center, Tile and Stretch on the monitor, then the Appearance sample of `sample_theme` per interface.
 fn render_backgrounds() -> Canvas {
     let text = TextRenderer::load(&FontConfig::default());
-    let theme = Theme::default();
+    let theme = cued(Theme::default());
     let px = theme.fonts.size_px;
     let mut c = Canvas::new(1090, 396);
     c.fill_rect(c.bounds(), theme.colors.button_face);
@@ -1070,15 +1090,30 @@ fn render_backgrounds() -> Canvas {
     let samples = [
         (
             "classic",
-            interfaces::sample_theme(Interface::Classic, "Brick", &ruby, None),
+            cued(interfaces::sample_theme(
+                Interface::Classic,
+                "Brick",
+                &ruby,
+                None,
+            )),
         ),
         (
             "blue",
-            interfaces::sample_theme(Interface::Blue, "Olive Green", &ruby, None),
+            cued(interfaces::sample_theme(
+                Interface::Blue,
+                "Olive Green",
+                &ruby,
+                None,
+            )),
         ),
         (
             "glass",
-            interfaces::sample_theme(Interface::Glass, "", &ruby, Some(teal)),
+            cued(interfaces::sample_theme(
+                Interface::Glass,
+                "",
+                &ruby,
+                Some(teal),
+            )),
         ),
     ];
     for (i, (id, t)) in samples.into_iter().enumerate() {
@@ -1107,7 +1142,7 @@ fn render_backgrounds() -> Canvas {
 fn render_savers() -> Canvas {
     use reprisekit::saver::{Kind, Options, Saver};
     let text = TextRenderer::load(&FontConfig::default());
-    let theme = Theme::default();
+    let theme = cued(Theme::default());
     let (_, _, sw, sh) = reprisekit::classic::assets::MONITOR_SCREEN;
     let mut c = Canvas::new(10 + 211 * 4, 188);
     c.fill_rect(c.bounds(), theme.colors.button_face);
@@ -1150,7 +1185,7 @@ fn render_show_desktop() -> Canvas {
     let mut c = blurred_stripes(670, 140);
     let mut y = 10;
     for i in [Interface::Classic, Interface::Blue, Interface::Glass] {
-        let theme = interfaces::theme_for(i);
+        let theme = cued(interfaces::theme_for(i));
         let start_text = match theme.look.style() {
             Some(s) => TextRenderer::load(&s.start_text.font()),
             None => TextRenderer::load(&FontConfig::default()),
@@ -1217,20 +1252,20 @@ fn render_task_progress(scale: i32) -> Canvas {
         TaskEntry, TaskProgress, TaskbarCounts, TaskbarLayout, TaskbarState,
     };
     let text = TextRenderer::load(&FontConfig::default());
-    let glass_dark = interfaces::theme_with(
+    let glass_dark = cued(interfaces::theme_with(
         Interface::Glass,
         reprisekit::blue::Variant::default(),
         &reprisekit::glass::Settings {
             mode: reprisekit::glass::Mode::Dark,
             ..reprisekit::glass::Settings::default()
         },
-    );
+    ));
     let themes = [
-        interfaces::theme_for(Interface::Classic),
-        interfaces::blue_theme(reprisekit::blue::Variant::Blue),
-        interfaces::blue_theme(reprisekit::blue::Variant::Olive),
-        interfaces::blue_theme(reprisekit::blue::Variant::Silver),
-        interfaces::theme_for(Interface::Glass),
+        cued(interfaces::theme_for(Interface::Classic)),
+        cued(interfaces::blue_theme(reprisekit::blue::Variant::Blue)),
+        cued(interfaces::blue_theme(reprisekit::blue::Variant::Olive)),
+        cued(interfaces::blue_theme(reprisekit::blue::Variant::Silver)),
+        cued(interfaces::theme_for(Interface::Glass)),
         glass_dark,
     ];
     let (w, gap) = (560, 10);
@@ -1309,13 +1344,13 @@ fn render_taskbar_top() -> Canvas {
         Edge, PagerButton, TaskEntry, TaskbarCounts, TaskbarLayout, TaskbarState,
     };
     let text = TextRenderer::load(&FontConfig::default());
-    let mut small = interfaces::theme_for(Interface::Glass);
+    let mut small = cued(interfaces::theme_for(Interface::Glass));
     small.metrics.taskbar_height = reprisekit::glass::SMALL_TASKBAR_HEIGHT;
     small.look = look::Look::Styled(reprisekit::glass::small_bar_style(&Default::default()));
     let themes = [
-        interfaces::theme_for(Interface::Classic),
-        interfaces::theme_for(Interface::Blue),
-        interfaces::theme_for(Interface::Glass),
+        cued(interfaces::theme_for(Interface::Classic)),
+        cued(interfaces::theme_for(Interface::Blue)),
+        cued(interfaces::theme_for(Interface::Glass)),
         small,
     ];
     let mut c = blurred_stripes(660, 200);
@@ -1406,13 +1441,13 @@ fn render_taskbar_edges() -> Canvas {
         TaskbarState,
     };
     let text = TextRenderer::load(&FontConfig::default());
-    let mut small = interfaces::theme_for(Interface::Glass);
+    let mut small = cued(interfaces::theme_for(Interface::Glass));
     small.metrics.taskbar_height = reprisekit::glass::SMALL_TASKBAR_HEIGHT;
     small.look = look::Look::Styled(reprisekit::glass::small_bar_style(&Default::default()));
     let themes = [
-        interfaces::theme_for(Interface::Classic),
-        interfaces::theme_for(Interface::Blue),
-        interfaces::theme_for(Interface::Glass),
+        cued(interfaces::theme_for(Interface::Classic)),
+        cued(interfaces::theme_for(Interface::Blue)),
+        cued(interfaces::theme_for(Interface::Glass)),
         small,
     ];
     let (time, date) = ("3:45 PM", "10/04/2026");
@@ -1572,12 +1607,12 @@ fn render_taskbar_cells() -> Canvas {
         TaskbarState,
     };
     let text = TextRenderer::load(&FontConfig::default());
-    let mut small = interfaces::theme_for(Interface::Glass);
+    let mut small = cued(interfaces::theme_for(Interface::Glass));
     interfaces::small_bar(&mut small, &Default::default());
     let themes = [
-        interfaces::theme_for(Interface::Classic),
-        interfaces::theme_for(Interface::Blue),
-        interfaces::theme_for(Interface::Glass),
+        cued(interfaces::theme_for(Interface::Classic)),
+        cued(interfaces::theme_for(Interface::Blue)),
+        cued(interfaces::theme_for(Interface::Glass)),
         small,
     ];
     let cells = [
@@ -1738,7 +1773,7 @@ fn render_tray_arrow() -> Canvas {
     let mut c = blurred_stripes(1060, 262);
     let mut x0 = 10;
     for interface in [Interface::Classic, Interface::Blue] {
-        let theme = interfaces::theme_for(interface);
+        let theme = cued(interfaces::theme_for(interface));
         let shape = theme.taskbar_shape();
         let full = reveal_width(&shape, 2);
         let lay = |span: BarSpan, reveal: i32| {
@@ -1842,7 +1877,7 @@ fn render_tray_arrow_schemes(n: i32) -> Canvas {
     let cols = cells.len() as i32;
     let mut c = blurred_stripes((cols * (w + gap) + gap) * n, (7 * 40 + gap) * n);
     for (row, v) in reprisekit::blue::Variant::ALL.into_iter().enumerate() {
-        let one = interfaces::blue_theme(v);
+        let one = cued(interfaces::blue_theme(v));
         let theme = one.scaled(n);
         let shape = theme.taskbar_shape();
         for (col, cell) in cells.into_iter().enumerate() {
@@ -1915,14 +1950,14 @@ fn render_orb_glow(n: i32) -> Canvas {
     ];
     let mut c = blurred_stripes((3 * (w + gap) + gap) * n, 4 * row_h * n);
     for (li, mode) in looks.into_iter().enumerate() {
-        let one = interfaces::theme_with(
+        let one = cued(interfaces::theme_with(
             Interface::Glass,
             reprisekit::blue::Variant::default(),
             &reprisekit::glass::Settings {
                 mode,
                 ..reprisekit::glass::Settings::default()
             },
-        );
+        ));
         let theme = one.scaled(n);
         let shape = theme.taskbar_shape();
         for (ii, icon) in [None, Some(quads.clone())].into_iter().enumerate() {
@@ -2025,7 +2060,7 @@ fn render_taskbar_keys() -> Canvas {
     let mut c = blurred_stripes(1080, 580);
     let mut y = 20;
     for i in [Interface::Classic, Interface::Blue, Interface::Glass] {
-        let theme = interfaces::theme_for(i);
+        let theme = cued(interfaces::theme_for(i));
         let start_text = match theme.look.style() {
             Some(s) => TextRenderer::load(&s.start_text.font()),
             None => TextRenderer::load(&FontConfig::default()),
@@ -2097,13 +2132,13 @@ fn render_taskbar_hidden() -> Canvas {
     use reprisekit::taskbar::{Edge, TaskbarCounts, TaskbarLayout, TaskbarState};
     const BAND: i32 = 16;
     let text = TextRenderer::load(&FontConfig::default());
-    let mut small = interfaces::theme_for(Interface::Glass);
+    let mut small = cued(interfaces::theme_for(Interface::Glass));
     small.metrics.taskbar_height = reprisekit::glass::SMALL_TASKBAR_HEIGHT;
     small.look = look::Look::Styled(reprisekit::glass::small_bar_style(&Default::default()));
     let themes = [
-        interfaces::theme_for(Interface::Classic),
-        interfaces::theme_for(Interface::Blue),
-        interfaces::theme_for(Interface::Glass),
+        cued(interfaces::theme_for(Interface::Classic)),
+        cued(interfaces::theme_for(Interface::Blue)),
+        cued(interfaces::theme_for(Interface::Glass)),
         small,
     ];
     let mut c = blurred_stripes(660, 20 + 8 * (BAND + 6));
@@ -3745,7 +3780,7 @@ fn render(theme: &Theme, with_blue: bool) -> Canvas {
     }
 
     if with_blue {
-        let blue_theme = interfaces::theme_for(Interface::Blue);
+        let blue_theme = cued(interfaces::theme_for(Interface::Blue));
         let style = blue_theme.look.style().unwrap();
         let caption_text = TextRenderer::load(&style.caption_text.font());
         let bcs = &blue_theme.colors;
@@ -4468,7 +4503,7 @@ fn render(theme: &Theme, with_blue: bool) -> Canvas {
 
     if with_blue {
         use reprisekit::taskbar::{TaskEntry, TaskbarCounts, TaskbarLayout, TaskbarState};
-        let blue_theme = interfaces::theme_for(Interface::Blue);
+        let blue_theme = cued(interfaces::theme_for(Interface::Blue));
         let style = blue_theme.look.style().unwrap();
         let bcs = &blue_theme.colors;
         let band = Rect::new(0, 9312, 950, 40);
@@ -4856,7 +4891,7 @@ fn render(theme: &Theme, with_blue: bool) -> Canvas {
     }
 
     if with_blue {
-        let blue_theme = interfaces::theme_for(Interface::Blue);
+        let blue_theme = cued(interfaces::theme_for(Interface::Blue));
         c.fill_rect(Rect::new(0, 9575, 950, 238), cs.background);
         c.blit_canvas(
             10,
@@ -4871,7 +4906,7 @@ fn render(theme: &Theme, with_blue: bool) -> Canvas {
     }
 
     if with_blue {
-        let blue_theme = interfaces::theme_for(Interface::Blue);
+        let blue_theme = cued(interfaces::theme_for(Interface::Blue));
         let bcs = &blue_theme.colors;
         let bp = Paint {
             s,
@@ -5428,7 +5463,7 @@ fn render(theme: &Theme, with_blue: bool) -> Canvas {
 
 /// Glass's frames, taskbars, flyouts and control sheets (each in its own `render_glass_*`), over a box-blurred stripe backdrop standing in for the blurred desktop. Drawn once: Glass has one scheme.
 fn render_glass() -> Canvas {
-    let theme = interfaces::theme_for(Interface::Glass);
+    let theme = cued(interfaces::theme_for(Interface::Glass));
     let frames = render_glass_frames();
     let parts = [
         render_glass_task_rows(),
@@ -5468,14 +5503,14 @@ fn render_glass() -> Canvas {
 
 /// Dark Glass's captions, then the same control rows as [`render_glass`] under the dark scheme, then its Smoked and Molten captions.
 fn render_glass_dark() -> Canvas {
-    let theme = interfaces::theme_with(
+    let theme = cued(interfaces::theme_with(
         Interface::Glass,
         reprisekit::blue::Variant::default(),
         &reprisekit::glass::Settings {
             mode: reprisekit::glass::Mode::Dark,
             ..reprisekit::glass::Settings::default()
         },
-    );
+    ));
     let parts = [
         render_glass_dark_captions(&theme),
         render_glass_client_glass(&theme),
@@ -5535,8 +5570,11 @@ fn render_glass_scale2() -> Canvas {
     glass_scale2_bars(&mut c, &rows, 700);
     glass_popups_at_2(&mut c, 700 + GLASS_SCALE2_BARS, &text);
     for (row, s) in rows.iter().enumerate() {
-        let theme =
-            interfaces::theme_with(Interface::Glass, reprisekit::blue::Variant::default(), s);
+        let theme = cued(interfaces::theme_with(
+            Interface::Glass,
+            reprisekit::blue::Variant::default(),
+            s,
+        ));
         let caption_text = TextRenderer::load(&theme.look.style().unwrap().caption_text.font());
         let two = theme.scaled(2);
         for (i, active) in [true, false].into_iter().enumerate() {
@@ -5568,8 +5606,11 @@ fn render_glass_scale2_buttons(rows: &[reprisekit::glass::Settings]) -> Canvas {
     let text = TextRenderer::load(&FontConfig::default());
     let mut c = blurred_stripes(1300, 120 * rows.len() as i32);
     for (row, s) in rows.iter().enumerate() {
-        let theme =
-            interfaces::theme_with(Interface::Glass, reprisekit::blue::Variant::default(), s);
+        let theme = cued(interfaces::theme_with(
+            Interface::Glass,
+            reprisekit::blue::Variant::default(),
+            s,
+        ));
         let caption_text = TextRenderer::load(&theme.look.style().unwrap().caption_text.font());
         let two = theme.scaled(2);
         let state = |glow, pressed| FrameState {
@@ -5617,7 +5658,7 @@ const POPUPS_AT_2: i32 = 1960;
 /// Glass's Start panel, Alt+Tab panel and task preview at scale 2 in Sky, drawn into `c` from row `y0` down.
 fn glass_popups_at_2(c: &mut Canvas, y0: i32, text: &TextRenderer) {
     use reprisekit::startpanel::{self as sp, PlaceRow, ProgramRow, Spot, StartPanel};
-    let theme = interfaces::theme_for(Interface::Glass);
+    let theme = cued(interfaces::theme_for(Interface::Glass));
     let two = theme.scaled(2);
     let glass = reprisekit::glass::Settings::default();
     let face = interfaces::start_panel_text(&theme);
@@ -5818,7 +5859,13 @@ fn glass_scale2_bars(c: &mut Canvas, rows: &[reprisekit::glass::Settings], top: 
     };
     let themes: Vec<Theme> = rows
         .iter()
-        .map(|s| interfaces::theme_with(Interface::Glass, reprisekit::blue::Variant::default(), s))
+        .map(|s| {
+            cued(interfaces::theme_with(
+                Interface::Glass,
+                reprisekit::blue::Variant::default(),
+                s,
+            ))
+        })
         .collect();
     for (i, theme) in themes.iter().enumerate() {
         bar(
@@ -6072,7 +6119,7 @@ fn render_glass_materials(mode: reprisekit::glass::Mode) -> Canvas {
     let text = TextRenderer::load(&FontConfig::default());
     let mut c = blurred_stripes(950, 150);
     for (row, material) in [Material::Smoked, Material::Molten].into_iter().enumerate() {
-        let theme = interfaces::theme_with(
+        let theme = cued(interfaces::theme_with(
             Interface::Glass,
             reprisekit::blue::Variant::default(),
             &Settings {
@@ -6080,7 +6127,7 @@ fn render_glass_materials(mode: reprisekit::glass::Mode) -> Canvas {
                 material,
                 ..Settings::default()
             },
-        );
+        ));
         let style = theme.look.style().unwrap();
         let caption_text = TextRenderer::load(&style.caption_text.font());
         for (i, active) in [true, false].into_iter().enumerate() {
@@ -6963,7 +7010,7 @@ fn render_glass_notify_sheets(theme: &Theme) -> Canvas {
 /// The Glass clock popup at `pct` text over the stripes, at 10:09:30.
 fn render_glass_clock_popup(pct: u32) -> Canvas {
     use reprisekit::controls::calendar;
-    let theme = interfaces::theme_for(Interface::Glass).with_text_size(pct);
+    let theme = cued(interfaces::theme_for(Interface::Glass)).with_text_size(pct);
     let text = TextRenderer::load(&FontConfig::default());
     let mut cal = calendar::Calendar::new(2026, 10, None, 0);
     cal.today = Some((2026, 10, 16));
@@ -7203,7 +7250,7 @@ fn render_now_playing() -> Canvas {
         .into_iter()
         .enumerate()
     {
-        let theme = interfaces::theme_for(look);
+        let theme = cued(interfaces::theme_for(look));
         let text = TextRenderer::load(&theme.fonts);
         let playing = NowPlaying {
             title: "Evening Mix".into(),
@@ -7344,7 +7391,7 @@ fn write_volume_popups(with_blue: bool, n: i32) {
     }
     for (name, look) in looks {
         write_preview(
-            &render_volume_popup(&interfaces::theme_for(look), n),
+            &render_volume_popup(&cued(interfaces::theme_for(look)), n),
             &format!("reprisekit-gallery-volume-popup{name}{at}.png"),
         );
     }
@@ -7487,7 +7534,7 @@ fn render_list_sheets_of(groups: &[(&str, &[&str])], open: usize) -> Canvas {
     c.fill_rect(c.bounds(), Theme::default().colors.background);
     let mut y = 10;
     for i in [Interface::Classic, Interface::Blue, Interface::Glass] {
-        let theme = interfaces::theme_for(i);
+        let theme = cued(interfaces::theme_for(i));
         let pages = (0..count).map(|_| page()).collect();
         let mut sheet = PropSheet::with_list(groups, pages, (398, 424));
         sheet.tabs.open = open;
@@ -7536,7 +7583,7 @@ fn render_tray_customize() -> Canvas {
     c.fill_rect(c.bounds(), Theme::default().colors.background);
     let (mut x, mut y) = (10, 10);
     for i in [Interface::Classic, Interface::Blue, Interface::Glass] {
-        let theme = interfaces::theme_for(i);
+        let theme = cued(interfaces::theme_for(i));
         let w = Wording::of(&theme);
         let mut t = TrayCustomize::new(
             w,
@@ -7837,7 +7884,7 @@ fn render_glass_choices(theme: &Theme) -> Canvas {
 /// [`render_glass`]'s frames, taskbars and flyout, 950x1120.
 fn render_glass_frames() -> Canvas {
     let text = TextRenderer::load(&FontConfig::default());
-    let glass_theme = interfaces::theme_for(Interface::Glass);
+    let glass_theme = cued(interfaces::theme_for(Interface::Glass));
     let style = glass_theme.look.style().unwrap();
     let caption_text = TextRenderer::load(&style.caption_text.font());
     let mut c = blurred_stripes(950, 1120);
@@ -8067,7 +8114,7 @@ fn render_glass_frames() -> Canvas {
             890 - fl.height - m.top,
             &trayflyout::draw(&glass_theme, &text, &fl, &icons, false),
         );
-        let classic = Theme::default();
+        let classic = cued(Theme::default());
         let fl = FlyoutLayout::compute(&classic, icons.len());
         c.blit_canvas(
             15,
@@ -8084,7 +8131,7 @@ fn render_glass_task_rows() -> Canvas {
         PagerButton, PagerMark, TaskEntry, TaskRow, TaskbarCounts, TaskbarLayout, TaskbarState,
     };
     let text = TextRenderer::load(&FontConfig::default());
-    let full = interfaces::theme_for(Interface::Glass);
+    let full = cued(interfaces::theme_for(Interface::Glass));
     let small = reprisekit::glass::small_bar_style(&Default::default());
     type Row<'a> = (
         &'a [u8],
@@ -8357,7 +8404,7 @@ fn render_glass_task_rows() -> Canvas {
 fn render_glass_spots() -> Canvas {
     use reprisekit::taskbar::{TaskEntry, TaskRow, TaskbarCounts, TaskbarLayout, TaskbarState};
     let text = TextRenderer::load(&FontConfig::default());
-    let full = interfaces::theme_for(Interface::Glass);
+    let full = cued(interfaces::theme_for(Interface::Glass));
     let small = reprisekit::glass::small_bar_style(&Default::default());
     let colours = [
         Color::rgb(0xF0, 0xC8, 0x40),
@@ -8474,7 +8521,7 @@ fn render_glass_spots() -> Canvas {
 /// Glass's task preview popups over the striped backdrop: one window, then a group of three with the middle one hovered. White boxes stand in for the live pictures.
 fn render_glass_preview() -> Canvas {
     let text = TextRenderer::load(&FontConfig::default());
-    let theme = interfaces::theme_for(Interface::Glass);
+    let theme = cued(interfaces::theme_for(Interface::Glass));
     let mut c = blurred_stripes(1000, 440);
     let mut icon = Canvas::new(16, 16);
     icon.fill_rect(Rect::new(2, 1, 12, 14), Color::rgb(80, 193, 255));
@@ -8526,7 +8573,7 @@ fn render_glass_preview() -> Canvas {
 /// Glass's Alt+Tab thumbnail panels over the striped backdrop, then the icon style. White boxes stand in for the pictures; an entry with no picture shows its icon.
 fn render_glass_switcher() -> Canvas {
     let text = TextRenderer::load(&FontConfig::default());
-    let theme = interfaces::theme_for(Interface::Glass);
+    let theme = cued(interfaces::theme_for(Interface::Glass));
     let grid = interfaces::switcher_grid(&theme);
     let mut c = blurred_stripes(1100, 900);
     let mut panel =
@@ -8770,8 +8817,8 @@ fn render_start_panel() -> Canvas {
         p
     };
     let glass = reprisekit::glass::Settings::default();
-    let glass_theme = interfaces::theme_for(Interface::Glass);
-    let classic = interfaces::theme_for(Interface::Classic);
+    let glass_theme = cued(interfaces::theme_for(Interface::Glass));
+    let classic = cued(interfaces::theme_for(Interface::Classic));
     let text = interfaces::start_panel_text(&glass_theme);
     let (cell_w, cell_h) = (520, 540);
     let mut c = Canvas::new(3 * cell_w as u32, 2 * cell_h as u32);
@@ -8845,7 +8892,7 @@ fn display_panel(tabs: usize) -> displaypanel::DisplayPanel {
 /// The media keys' panel, the displays flyout and the launcher in Glass over the stripes.
 fn render_glass_popups() -> Canvas {
     let text = TextRenderer::load(&FontConfig::default());
-    let theme = interfaces::theme_for(Interface::Glass);
+    let theme = cued(interfaces::theme_for(Interface::Glass));
     let mut c = blurred_stripes(1000, 760);
     let m = reprisekit::look::panel::margin(&theme);
     let mut icon = Canvas::new(32, 32);
@@ -8917,7 +8964,7 @@ fn launcher_sample() -> launcher::Launcher {
 
 /// The Glass launcher with every kind of row at `pct` text over the stripes.
 fn render_glass_launcher(pct: u32) -> Canvas {
-    let theme = interfaces::theme_for(Interface::Glass).with_text_size(pct);
+    let theme = cued(interfaces::theme_for(Interface::Glass)).with_text_size(pct);
     let text = TextRenderer::load(&FontConfig::default());
     let m = reprisekit::look::panel::margin(&theme);
     let l = launcher_sample();
@@ -8939,7 +8986,7 @@ fn render_launchers(pct: u32) -> Canvas {
     let panels: Vec<Canvas> = [Interface::Classic, Interface::Blue]
         .iter()
         .map(|&i| {
-            let theme = interfaces::theme_for(i).with_text_size(pct);
+            let theme = cued(interfaces::theme_for(i)).with_text_size(pct);
             launcher::draw(&theme, &text, &l, Some(&icon), true, None)
         })
         .collect();
@@ -8964,11 +9011,11 @@ fn render_glass_square_frames() -> Canvas {
         ..glass::Settings::default()
     };
     let themes = [glass::Mode::Light, glass::Mode::Dark].map(|m| {
-        interfaces::theme_with(
+        cued(interfaces::theme_with(
             Interface::Glass,
             reprisekit::blue::Variant::default(),
             &square_settings(m),
-        )
+        ))
     });
     let text = TextRenderer::load(&FontConfig::default());
     let caption_text = TextRenderer::load(&themes[0].look.style().unwrap().caption_text.font());
@@ -9206,7 +9253,7 @@ fn render_snap_layouts() -> Canvas {
         .into_iter()
         .enumerate()
     {
-        let theme = interfaces::theme_for(i);
+        let theme = cued(interfaces::theme_for(i));
         let x0 = k as i32 * w;
         c.fill_rect(Rect::new(x0, 0, w, h), theme.colors.background);
         let grid = PickerLayout::compute(Shape::Grid, (1920, 1050), &cells);
@@ -9265,7 +9312,7 @@ fn render_overview() -> Canvas {
         .into_iter()
         .enumerate()
     {
-        let theme = interfaces::theme_for(i);
+        let theme = cued(interfaces::theme_for(i));
         let x0 = k as i32 * w;
         c.fill_rect(Rect::new(x0, 0, w, h), theme.colors.background);
         let mut dim = Canvas::new(w as u32, h as u32);
@@ -9314,15 +9361,22 @@ fn render_caption_tabs(pct: u32) -> Canvas {
         ..Default::default()
     };
     let themes = [
-        (Theme::default(), 1),
-        (interfaces::theme_for(Interface::Blue), 1),
-        (interfaces::blue_theme(reprisekit::blue::Variant::Silver), 1),
-        (interfaces::theme_for(Interface::Glass), 1),
+        (cued(Theme::default()), 1),
+        (cued(interfaces::theme_for(Interface::Blue)), 1),
         (
-            interfaces::theme_with(Interface::Glass, reprisekit::blue::Variant::Blue, &dark),
+            cued(interfaces::blue_theme(reprisekit::blue::Variant::Silver)),
             1,
         ),
-        (Theme::default(), 2),
+        (cued(interfaces::theme_for(Interface::Glass)), 1),
+        (
+            cued(interfaces::theme_with(
+                Interface::Glass,
+                reprisekit::blue::Variant::Blue,
+                &dark,
+            )),
+            1,
+        ),
+        (cued(Theme::default()), 2),
     ];
     let text = TextRenderer::load(&FontConfig::default());
     let mut c = blurred_stripes(950, 72 * themes.len() as i32 + 40);

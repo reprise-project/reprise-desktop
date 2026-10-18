@@ -1434,7 +1434,10 @@ mod tests {
     #[test]
     #[ignore]
     fn render_vpn_sheets() {
-        let theme = reprisekit::theme::Theme::default();
+        let theme = reprisekit::theme::Theme {
+            access_keys: true,
+            ..reprisekit::theme::Theme::default()
+        };
         let text = reprisekit::text::TextRenderer::load(&reprisekit::theme::FontConfig::default());
         let mut s = WgSheet::new(&cfg(), None);
         for (i, name) in ["vpn-sheet-wireguard.png", "vpn-sheet-peers.png"]
