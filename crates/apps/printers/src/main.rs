@@ -286,13 +286,18 @@ impl PrintersApp {
         for j in ended {
             self.job_ended(j);
         }
+        let mut shown = false;
         while let Some(raw) = self.msgs.as_ref().and_then(|rx| rx.try_recv().ok()) {
             let Some(msg) = tray::translate(raw) else {
                 continue;
             };
             match msg {
-                tray::TrayMsg::Folder => self.hidden = false,
+                tray::TrayMsg::Folder => {
+                    self.hidden = false;
+                    shown = true;
+                }
                 tray::TrayMsg::Open => {
+                    shown = true;
                     match tray::busy_printers(&self.snapshot, &self.user)
                         .first()
                         .cloned()
@@ -307,18 +312,24 @@ impl PrintersApp {
                         .cloned()
                     {
                         self.open_queue(&p);
+                        shown = true;
                     }
                 }
                 tray::TrayMsg::Balloon(tag) => {
                     if let Some(p) = self.balloons.get(tag as usize).cloned() {
                         self.open_queue(&p);
+                        shown = true;
                     }
                 }
             }
         }
         self.sync_watching();
         Reply {
-            activate: self.tray.as_ref().and_then(|t| t.take_handoff()),
+            activate: self
+                .tray
+                .as_ref()
+                .filter(|_| shown)
+                .and_then(|t| t.take_handoff()),
             ..Reply::redraw_all()
         }
     }
@@ -1149,5 +1160,24 @@ mod tests {
             over
         });
         assert!(over.is_empty(), "{}", over.join("\n"));
+    }
+
+    /// A wake that shows no window leaves a second instance's handoff for the wake whose raise does.
+    #[test]
+    fn the_handoff_waits_for_the_wake_that_shows_the_window() {
+        let handoff = reprisebus::instance::Handoff {
+            token: Some("t".into()),
+            by_key: true,
+        };
+        let (tx, rx) = std::sync::mpsc::channel();
+        let mut app = PrintersApp {
+            tray: Some(reprisetray::TrayHandle::holding(handoff.clone())),
+            msgs: Some(rx),
+            hidden: true,
+            ..PrintersApp::default()
+        };
+        assert_eq!(app.wake().activate, None);
+        tx.send(reprisetray::Msg::Activate(0, 0)).unwrap();
+        assert_eq!(app.wake().activate, Some(handoff));
     }
 }
