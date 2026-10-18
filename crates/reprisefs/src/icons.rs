@@ -84,10 +84,10 @@ pub fn item_icon(
     item_icon_with(it, own_icon(it).as_deref(), specials, has)
 }
 
-/// A folder row's own icon from its `.directory`. A drive row's top is not read: the drive may
-/// never answer, and it wears its drive icon.
+/// A folder row's own icon from its `.directory`. A drive row's or mount point's top is not read:
+/// the mount may never answer, and a drive wears its drive icon.
 pub fn own_icon(it: &Item) -> Option<String> {
-    (it.is_dir && it.shortcut.is_none() && it.drive.is_none())
+    (it.is_dir && it.shortcut.is_none() && it.drive.is_none() && !it.mount_root)
         .then(|| crate::meta::folder_icon(&it.path))
         .flatten()
 }
@@ -201,6 +201,7 @@ mod tests {
             mime: mime.map(str::to_string),
             kind: String::new(),
             drive,
+            mount_root: false,
             trashed: None,
             shortcut: None,
         };
@@ -245,6 +246,7 @@ mod tests {
             mime: None,
             kind: String::new(),
             drive: None,
+            mount_root: false,
             trashed: None,
             shortcut: None,
         };
@@ -274,11 +276,42 @@ mod tests {
             mime: None,
             kind: String::new(),
             drive: Some(DriveKind::Removable),
+            mount_root: false,
             trashed: None,
             shortcut: None,
         };
         let has = |n: &str| n == "folder-music";
         assert_eq!(item_icon(&it, &[], &has), DriveKind::Removable.icon());
+    }
+
+    #[test]
+    fn a_mount_point_wears_the_folder_icon_whatever_its_top_holds() {
+        let dir = tempfile::tempdir().unwrap();
+        crate::meta::set_folder_icon(dir.path(), Some("folder-music")).unwrap();
+        let it = Item {
+            name: "remote".into(),
+            path: dir.path().to_path_buf(),
+            is_dir: true,
+            is_link: false,
+            exec: false,
+            program: false,
+            hidden: false,
+            size: 0,
+            modified: None,
+            mime: None,
+            kind: String::new(),
+            drive: None,
+            mount_root: true,
+            trashed: None,
+            shortcut: None,
+        };
+        assert_eq!(
+            own_icon(&it),
+            None,
+            "a mount point's .directory is not read"
+        );
+        let has = |n: &str| n == "folder-music";
+        assert_eq!(item_icon(&it, &[], &has), "folder");
     }
 
     #[test]
@@ -296,6 +329,7 @@ mod tests {
             mime: Some("text/plain".into()),
             kind: "TXT File".into(),
             drive: None,
+            mount_root: false,
             trashed: None,
             shortcut: None,
         };

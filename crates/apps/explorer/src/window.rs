@@ -956,6 +956,7 @@ mod tests {
             mime: None,
             kind: kind.to_string(),
             drive: None,
+            mount_root: false,
             trashed: None,
             shortcut: None,
         }

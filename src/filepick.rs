@@ -782,10 +782,7 @@ fn read_folder(dir: &Path, exts: Option<&[&str]>, pattern: Option<&str>) -> Vec<
     });
     rows.into_iter()
         .map(|row| {
-            let it = &row.item;
-            let own_icon = (it.is_dir && it.shortcut.is_none())
-                .then(|| reprisefs::meta::folder_icon(&it.path))
-                .flatten();
+            let own_icon = reprisefs::icons::own_icon(&row.item);
             Listed { row, own_icon }
         })
         .collect()

@@ -162,12 +162,15 @@ pub fn read_kids(place: &Place, inp: &Inputs, known: &[&Place]) -> Kids {
         .collect()
 }
 
-/// Whether `p`'s node shows a +. A drive's is shown unread: one that never answers would hold
-/// up every drive under Computer, and opening an empty one drops the +.
+/// Whether `p`'s node shows a +. A drive's or other mount point's is shown unread: one that never
+/// answers would hold up its siblings, and opening an empty one drops the +.
 fn opens(p: &Place, inp: &Inputs) -> bool {
     *p != Place::RecycleBin
-        && p.path()
-            .is_none_or(|dir| inp.drive_mounts.contains(&dir) || has_subfolder(&dir, inp))
+        && p.path().is_none_or(|dir| {
+            inp.drive_mounts.contains(&dir)
+                || reprisefs::listing::is_mount_root(&dir)
+                || has_subfolder(&dir, inp)
+        })
 }
 
 /// [`fill`] with the node's children already read.
