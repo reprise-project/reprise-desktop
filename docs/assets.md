@@ -34,7 +34,8 @@ These share the project's license, GPL-3.0-or-later:
   `docs/logo/`, all written by `scripts/logo/build.py`. The lockups carry
   Adwaita Sans glyphs as outlines, under the SIL Open Font License.
 - **Screenshots** in `docs/screenshots/`.
-- **`protocols/reprise-input-v1.xml`**, Reprise's own Wayland protocol.
+- **`protocols/reprise-input-v1.xml`** and **`protocols/reprise-tabs-v1.xml`**,
+  Reprise's own Wayland protocols.
 
 ## Fonts
 

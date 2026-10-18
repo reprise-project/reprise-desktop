@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<protocol name="reprise_tabs_v1">
+  <copyright>
+    reprise private protocol: a program's windows as tabs of one caption.
+  </copyright>
+
+  <interface name="reprise_tabs_v1" version="1">
+    <description summary="put a toplevel into another toplevel's caption tab group">
+      One global. A program that keeps its tabs as windows of their own
+      asks for a new window to join the caption tab group of one it
+      already shows, so the frame draws the tabs. Both toplevels must be
+      the client's own.
+    </description>
+
+    <request name="destroy" type="destructor">
+      <description summary="destroy the manager">
+        Joins already asked for stand.
+      </description>
+    </request>
+
+    <request name="join">
+      <description summary="tab toplevel next to leader">
+        When toplevel maps, it joins the tab group leader is in (or starts
+        one with it) right after leader, and shows. Asked after toplevel
+        mapped, it joins at once. Ignored when either toplevel belongs to
+        another client, when they are the same, when leader is gone by
+        then, or when the compositor keeps no tab groups. The user can
+        pull the tab out again like any other.
+      </description>
+      <arg name="toplevel" type="object" interface="xdg_toplevel"/>
+      <arg name="leader" type="object" interface="xdg_toplevel"/>
+    </request>
+  </interface>
+</protocol>

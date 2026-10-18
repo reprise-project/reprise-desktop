@@ -422,6 +422,8 @@ pub struct Window {
     /// Pulled out of its tab group by hand: new windows of its `tab_group`
     /// pass it over until it is in a group again.
     pub tab_pulled_out: bool,
+    /// The window of the same client whose tab group it joins at map (reprise-tabs-v1).
+    pub tab_leader: Option<WindowId>,
 }
 
 /// Whether (`x`, `y`) takes the pointer: clear pixels of a styled caption's cut corner pass
@@ -767,6 +769,7 @@ impl State {
             tab_hidden: false,
             tab_group: None,
             tab_pulled_out: false,
+            tab_leader: None,
         });
         id
     }
