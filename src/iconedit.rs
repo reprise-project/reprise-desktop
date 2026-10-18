@@ -12,6 +12,7 @@ use crate::{
     desktop::{self, DesktopEntry, IconMove},
     desktopview::{DesktopCommand, aimed_in},
     dragview::{DragSource, DropOp, DropTarget},
+    fsjobs::Action,
     keys,
 };
 
@@ -193,7 +194,7 @@ impl State {
         let dir = self.desktop.as_ref().map(|v| v.dir.clone());
         let target = target.clone();
         // A clipboard file may sit on a mount that never answers.
-        self.spawn_fs_job(move || {
+        self.spawn_fs_action(Action::reads("Paste"), move |_| {
             let paths: Vec<PathBuf> = clip.paths.iter().filter(|p| p.exists()).cloned().collect();
             let here = match &dir {
                 Some(dir) => crate::dragview::in_folder(paths.clone(), dir),
@@ -437,7 +438,11 @@ impl State {
         // The file may sit on a mount that never answers: the label shows the old name until the
         // rename lands.
         self.relayout_desktop();
-        self.spawn_fs_job(move || {
+        let action = Action::changes("Rename", State::rescan_desktop);
+        self.spawn_fs_action(action, move |gate| {
+            if !gate.change(&entry.path) {
+                return Box::new(|_| {});
+            }
             let done = if entry.label_is_name_key() {
                 // A launcher's or a link's label is its `Name=`; the file keeps its name.
                 if let Err(e) = reprisefs::apps::set_launcher_name(&entry.path, &typed) {
