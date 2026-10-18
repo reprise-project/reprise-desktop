@@ -5,6 +5,7 @@
 
 use std::borrow::Cow;
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -48,6 +49,20 @@ pub struct Wallpaper {
     /// it runs.
     fading: Vec<BufferId>,
     fade: Option<(RegistrationToken, Instant)>,
+    /// The Alt+Tab desktop entry's last picture and what it was composed for; a picture
+    /// landing drops it.
+    still: Option<(StillKey, Rc<Canvas>)>,
+}
+
+/// What a desktop entry's still depends on besides the wallpaper's own pictures.
+#[derive(PartialEq)]
+struct StillKey {
+    out: Option<Output>,
+    size: (u32, u32),
+    layout: Rect,
+    scale: i32,
+    position: Position,
+    bg: Color,
 }
 
 impl Wallpaper {
@@ -61,6 +76,33 @@ impl Wallpaper {
             nodes: Vec::new(),
             fading: Vec::new(),
             fade: None,
+            still: None,
+        }
+    }
+
+    fn land_image(&mut self, loaded: Loaded) {
+        self.image = Some(Arc::new(loaded));
+        self.still = None;
+    }
+
+    /// A built-in's picture lands; false (and dropped) when no output wants its size any more.
+    fn land_drawn(&mut self, picture: Canvas) -> bool {
+        let landed = self.builtin.as_mut().is_some_and(|(_, d)| d.land(picture));
+        if landed {
+            self.still = None;
+        }
+        landed
+    }
+
+    /// The still for `key`: the last one when it was composed for the same key, else `compose`'s.
+    fn still(&mut self, key: StillKey, compose: impl FnOnce(&Wallpaper) -> Canvas) -> Rc<Canvas> {
+        match &self.still {
+            Some((k, c)) if *k == key => c.clone(),
+            _ => {
+                let c = Rc::new(compose(self));
+                self.still = Some((key, c.clone()));
+                c
+            }
         }
     }
 
@@ -197,7 +239,7 @@ impl State {
             w.loading = None;
             match loaded {
                 Some(l) => {
-                    w.image = Some(Arc::new(l));
+                    w.land_image(l);
                     for (_, node) in &mut w.nodes {
                         node.fit = None;
                         node.composing = None;
@@ -240,9 +282,7 @@ impl State {
             if w.path != path {
                 return;
             }
-            if let Some((_, d)) = w.builtin.as_mut()
-                && d.land(picture)
-            {
+            if w.land_drawn(picture) {
                 w.staged.push(staged);
                 state.refit_wallpaper();
                 crate::lockview::refit(state);
@@ -703,38 +743,45 @@ impl State {
     }
 
     /// The wallpaper as `out` shows it, composed into `w` x `h` pixels:
-    /// the Alt+Tab desktop entry's picture. The background colour alone
-    /// without a wallpaper or before its decode lands.
-    pub fn wallpaper_thumbnail(&self, out: Option<&Output>, w: i32, h: i32) -> Canvas {
+    /// the Alt+Tab desktop entry's picture, kept until it would differ. The
+    /// background colour alone without a wallpaper or before its decode lands.
+    pub fn wallpaper_thumbnail(&mut self, out: Option<&Output>, w: i32, h: i32) -> Rc<Canvas> {
         let (w, h) = (w.max(1) as u32, h.max(1) as u32);
         let bg = self.config.theme.colors.background;
+        let position = self.config.wallpaper.position;
         let b = self.layout_box(out);
         // A built-in's picture of the output's own size; any of them for
         // the whole layout.
         let scale = self.draw_scale_at(out);
         let size = ((b.width * scale) as u32, (b.height * scale) as u32);
-        let image = self
-            .wallpaper
-            .as_ref()
-            .and_then(|wp| match (&wp.builtin, out) {
+        let fill = || {
+            let mut c = Canvas::new(w, h);
+            c.fill_rect(c.bounds(), bg);
+            c
+        };
+        let Some(wp) = self.wallpaper.as_mut() else {
+            return Rc::new(fill());
+        };
+        let key = StillKey {
+            out: out.cloned(),
+            size: (w, h),
+            layout: b,
+            scale,
+            position,
+            bg,
+        };
+        wp.still(key, |wp| {
+            let image = match (&wp.builtin, out) {
                 (Some((_, drawn)), None) => drawn.any(),
                 _ => wp.source(size),
-            });
-        match image {
-            Some(image) if b.width > 0 => crate::wallpaper::compose(
-                image,
-                w,
-                h,
-                self.config.wallpaper.position,
-                bg,
-                w as f32 / b.width as f32,
-            ),
-            _ => {
-                let mut c = Canvas::new(w, h);
-                c.fill_rect(c.bounds(), bg);
-                c
+            };
+            match image {
+                Some(image) if b.width > 0 => {
+                    crate::wallpaper::compose(image, w, h, position, bg, w as f32 / b.width as f32)
+                }
+                _ => fill(),
             }
-        }
+        })
     }
 }
 
@@ -765,6 +812,40 @@ mod tests {
             "the job for the older fit lands stale"
         );
         assert!(node.fit == Some(fit(960)));
+    }
+
+    #[test]
+    fn the_desktop_still_is_composed_again_only_for_a_new_key_or_a_landed_picture() {
+        let mut w = Wallpaper::new(Path::new("/srv/w/a.jpg"));
+        let composed = std::cell::Cell::new(0);
+        let still = |w: &mut Wallpaper, width: i32| {
+            let key = StillKey {
+                out: None,
+                size: (160, 90),
+                layout: Rect::new(0, 0, width, 1080),
+                scale: 1,
+                position: Position::Stretch,
+                bg: Color::rgb(0, 0, 0),
+            };
+            w.still(key, |_| {
+                composed.set(composed.get() + 1);
+                Canvas::new(160, 90)
+            })
+        };
+        let first = still(&mut w, 1920);
+        assert!(
+            Rc::ptr_eq(&first, &still(&mut w, 1920)),
+            "kept for the same key"
+        );
+        assert_eq!(composed.get(), 1);
+        still(&mut w, 2560);
+        assert_eq!(composed.get(), 2, "a new layout composes again");
+        w.land_image(Loaded {
+            image: Canvas::new(4, 4),
+            cut: None,
+        });
+        still(&mut w, 2560);
+        assert_eq!(composed.get(), 3, "a landed picture composes again");
     }
 
     #[test]
