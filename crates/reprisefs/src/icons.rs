@@ -73,17 +73,23 @@ pub fn pick_program_icon(mime: Option<&str>, path: &Path, has: &dyn Fn(&str) -> 
 }
 
 /// The theme icon name a listing gives `it`: a shortcut's own icon, a folder's `.directory` icon (a
-/// theme name `has` answers for, or an image path), the folder `specials` ([`crate::places::special_folders`])
-/// and drive rows, a program's icon ([`pick_program_icon`]), else [`pick_icon`] down the MIME chain.
+/// theme name `has` answers for, or an image path; [`own_icon`]), the folder `specials`
+/// ([`crate::places::special_folders`]) and drive rows, a program's icon ([`pick_program_icon`]),
+/// else [`pick_icon`] down the MIME chain.
 pub fn item_icon(
     it: &Item,
     specials: &[(PathBuf, &'static str)],
     has: &dyn Fn(&str) -> bool,
 ) -> String {
-    let own = (it.is_dir && it.shortcut.is_none())
+    item_icon_with(it, own_icon(it).as_deref(), specials, has)
+}
+
+/// A folder row's own icon from its `.directory`. A drive row's top is not read: the drive may
+/// never answer, and it wears its drive icon.
+pub fn own_icon(it: &Item) -> Option<String> {
+    (it.is_dir && it.shortcut.is_none() && it.drive.is_none())
         .then(|| crate::meta::folder_icon(&it.path))
-        .flatten();
-    item_icon_with(it, own.as_deref(), specials, has)
+        .flatten()
 }
 
 /// [`item_icon`] with the folder's own icon (`meta::folder_icon`) read beforehand, so a host that
@@ -249,6 +255,30 @@ mod tests {
         assert_eq!(item_icon(&it, &[], &has), "/art/cover.png");
         crate::meta::set_folder_icon(dir.path(), Some("no-such-icon")).unwrap();
         assert_eq!(item_icon(&it, &[], &has), "folder");
+    }
+
+    #[test]
+    fn a_drive_wears_its_drive_icon_whatever_its_top_holds() {
+        let dir = tempfile::tempdir().unwrap();
+        crate::meta::set_folder_icon(dir.path(), Some("folder-music")).unwrap();
+        let it = Item {
+            name: "STICK".into(),
+            path: dir.path().to_path_buf(),
+            is_dir: true,
+            is_link: false,
+            exec: false,
+            program: false,
+            hidden: false,
+            size: 0,
+            modified: None,
+            mime: None,
+            kind: String::new(),
+            drive: Some(DriveKind::Removable),
+            trashed: None,
+            shortcut: None,
+        };
+        let has = |n: &str| n == "folder-music";
+        assert_eq!(item_icon(&it, &[], &has), DriveKind::Removable.icon());
     }
 
     #[test]
