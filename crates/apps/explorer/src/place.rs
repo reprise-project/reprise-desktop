@@ -449,6 +449,7 @@ fn drive_item(d: &Drive) -> Item {
         mime: None,
         kind: d.kind().label().to_string(),
         drive: Some(d.kind()),
+        mount_root: false,
         trashed: None,
         shortcut: None,
     }
@@ -476,6 +477,7 @@ fn volume_item(volumes: &Snapshot, v: &Volume) -> Item {
         mime: None,
         kind: kind.label().to_string(),
         drive: Some(kind),
+        mount_root: false,
         trashed: None,
         shortcut: None,
     }
@@ -513,6 +515,7 @@ fn build_computer(
             mime: None,
             kind: "File Folder".to_string(),
             drive: None,
+            mount_root: false,
             trashed: None,
             shortcut: None,
         });
@@ -765,6 +768,7 @@ mod tests {
             mime: None,
             kind: "File Folder".to_string(),
             drive: None,
+            mount_root: false,
             trashed: None,
             shortcut: None,
         };
@@ -917,6 +921,7 @@ mod tests {
             mime: None,
             kind: String::new(),
             drive,
+            mount_root: false,
             trashed: None,
             shortcut: None,
         };

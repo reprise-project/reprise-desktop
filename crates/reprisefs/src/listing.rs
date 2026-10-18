@@ -33,6 +33,9 @@ pub struct Item {
     /// [`kind_text_in`]'s.
     pub kind: String,
     pub drive: Option<crate::places::DriveKind>,
+    /// A file system is mounted here. It may never answer, so the listing gives its cached
+    /// attributes and reads nothing inside it.
+    pub mount_root: bool,
     /// An item listed in the Recycle Bin: where it was deleted from and
     /// when, as its `.trashinfo` records them. Boxed so every other
     /// listing's items stay small.
@@ -98,9 +101,17 @@ pub fn item_at(path: &Path, globs: &MimeDb) -> Item {
 /// One stat follows a link for its folder-ness and what opens it; the
 /// size and date the columns show are a symlink's own, a shortcut's as
 /// its Properties sheet reads them. `listed` is the folder's `.hidden`.
+/// A mount root is described from [`mount_root_stat`] alone.
 fn item_with(p: &Path, is_link: bool, listed: &hidden::Listed, globs: &MimeDb) -> Item {
-    let meta = std::fs::metadata(p).ok();
-    let is_dir = meta.as_ref().is_some_and(|m| m.is_dir());
+    let mount = mount_root_stat(p);
+    let meta = match mount {
+        Some(_) => None,
+        None => std::fs::metadata(p).ok(),
+    };
+    let is_dir = match &mount {
+        Some(m) => m.is_dir,
+        None => meta.as_ref().is_some_and(|m| m.is_dir()),
+    };
     let exec = meta
         .as_ref()
         .is_some_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0);
@@ -117,12 +128,16 @@ fn item_with(p: &Path, is_link: bool, listed: &hidden::Listed, globs: &MimeDb) -
         true => std::fs::symlink_metadata(p).ok(),
         false => meta.clone(),
     };
-    let size = own.as_ref().map(|m| m.len()).unwrap_or(0);
-    let modified = own
-        .as_ref()
-        .and_then(|m| m.modified().ok())
-        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-        .map(|d| d.as_secs() as i64);
+    let (size, modified) = match (&mount, &own) {
+        (Some(m), None) => (m.size, Some(m.modified)),
+        _ => (
+            own.as_ref().map(|m| m.len()).unwrap_or(0),
+            own.as_ref()
+                .and_then(|m| m.modified().ok())
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|d| d.as_secs() as i64),
+        ),
+    };
     let mime = if globs.is_empty() || is_dir {
         None
     } else {
@@ -152,9 +167,50 @@ fn item_with(p: &Path, is_link: bool, listed: &hidden::Listed, globs: &MimeDb) -
         mime,
         kind,
         drive: None,
+        mount_root: mount.is_some(),
         trashed: None,
         shortcut,
     }
+}
+
+/// A mount root's attributes as last cached, which a mount that stopped answering still gives.
+struct MountStat {
+    is_dir: bool,
+    size: u64,
+    modified: i64,
+}
+
+/// Whether a file system is mounted on `p` (following a link), asked without waiting on it.
+pub fn is_mount_root(p: &Path) -> bool {
+    mount_root_stat(p).is_some()
+}
+
+/// [`MountStat`] when a file system is mounted on `p` (following a link), else None. Asks only the
+/// mount table and cached attributes (`AT_STATX_DONT_SYNC`), so it never waits on the mount.
+fn mount_root_stat(p: &Path) -> Option<MountStat> {
+    use std::os::unix::ffi::OsStrExt;
+    let c = std::ffi::CString::new(p.as_os_str().as_bytes()).ok()?;
+    let mut stx = std::mem::MaybeUninit::<libc::statx>::zeroed();
+    // SAFETY: `c` is a NUL-terminated path and `stx` a writable statx buffer.
+    let r = unsafe {
+        libc::statx(
+            libc::AT_FDCWD,
+            c.as_ptr(),
+            libc::AT_STATX_DONT_SYNC,
+            libc::STATX_TYPE | libc::STATX_SIZE | libc::STATX_MTIME,
+            stx.as_mut_ptr(),
+        )
+    };
+    if r != 0 {
+        return None;
+    }
+    // SAFETY: statx filled `stx` on success.
+    let stx = unsafe { stx.assume_init() };
+    (stx.stx_attributes & libc::STATX_ATTR_MOUNT_ROOT as u64 != 0).then(|| MountStat {
+        is_dir: u32::from(stx.stx_mode) & libc::S_IFMT == libc::S_IFDIR,
+        size: stx.stx_size,
+        modified: stx.stx_mtime.tv_sec,
+    })
 }
 
 /// A file dialog's listed item and its Date Modified text.
@@ -455,6 +511,18 @@ mod tests {
             .collect();
         assert_eq!(got, [("notes.txt", new.as_path())]);
     }
+    #[test]
+    fn a_folder_with_a_file_system_mounted_on_it_is_a_mount_root() {
+        let t = tempfile::tempdir().unwrap();
+        std::fs::write(t.path().join("file"), "").unwrap();
+        let db = MimeDb::empty();
+        let proc = item_at(Path::new("/proc"), &db);
+        assert!(proc.mount_root && proc.is_dir, "/proc is a mounted folder");
+        assert!(is_mount_root(Path::new("/proc")));
+        assert!(!item_at(t.path(), &db).mount_root, "a plain folder");
+        assert!(!item_at(&t.path().join("file"), &db).mount_root, "a file");
+    }
+
     #[test]
     fn date_text_is_explorers() {
         // 2026-09-13 20:25 local: build the epoch from the components.
