@@ -98,9 +98,10 @@ impl AccountsApp {
     }
 
     /// Run `ops` (none for a plain read) and reread the accounts, off the
-    /// event loop. One job runs at a time; a second is dropped.
+    /// event loop. One job runs at a time; a second is dropped with its saved pictures.
     fn run(&mut self, ops: Vec<Op>, after: After) -> bool {
         if self.job.is_some() {
+            acct::remove_pictures(&ops);
             return false;
         }
         let (tx, rx) = channel();
@@ -773,4 +774,31 @@ impl AccountsApp {
 fn main() {
     reprisebus::journal::init_logger("error");
     repriseapp::run(Box::new(AccountsApp::new()));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_apply_dropped_behind_a_job_deletes_its_picture() {
+        let file = std::env::temp_dir().join(format!(
+            "reprise-accounts-dropped-{}.png",
+            std::process::id()
+        ));
+        std::fs::write(&file, "png").expect("write");
+        let mut app = AccountsApp::new();
+        let (_tx, rx) = channel();
+        app.job = Some((rx, After::Read));
+        let ops = vec![Op::Picture {
+            path: "/org/freedesktop/Accounts/User1000".into(),
+            file: file.clone(),
+            you: false,
+        }];
+        assert!(
+            !app.run(ops, After::Props { close: false }),
+            "a second job is dropped"
+        );
+        assert!(!file.exists(), "the dropped Apply's picture is gone");
+    }
 }
