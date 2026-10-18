@@ -302,6 +302,11 @@ fn show(state: &mut State, bar: TreeId, i: usize) {
     redraw(state);
 }
 
+/// Icon files landed: the open preview draws its windows' icons again.
+pub(crate) fn icons_landed(state: &mut State) {
+    redraw(state);
+}
+
 fn redraw(state: &mut State) {
     let Some(p) = state.task_preview.shown.as_ref() else {
         return;

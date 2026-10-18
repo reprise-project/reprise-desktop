@@ -754,7 +754,7 @@ impl State {
     }
 
     /// Draw the open overview again.
-    fn redraw_overview(&mut self) {
+    pub(crate) fn redraw_overview(&mut self) {
         let Some(v) = self.overview.view.as_ref() else {
             return;
         };

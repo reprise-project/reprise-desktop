@@ -83,6 +83,20 @@ fn width_of(buffer: &WlBuffer) -> i32 {
 /// What an icon whose file is not decoded yet shows meanwhile.
 pub const STAND_IN: &str = "application-x-executable";
 
+/// Icon `name` at `px` for a surface on the loop. An icon file is never read here, since it can
+/// sit on a mount that never answers: one not decoded at `px` yet shows [`STAND_IN`] until
+/// [`State::decode_wanted_icons`] lands it, and the surface draws again from `icon_landed`.
+pub fn unread(icons: &mut IconCache, name: &str, px: i32) -> Option<Arc<Canvas>> {
+    icons
+        .get_unread(name, px)
+        .unwrap_or_else(|| icons.get_shared(STAND_IN, px))
+}
+
+/// Whether app `app_id`'s icon, as [`crate::taskbarview::app_icon`] finds it, is icon file `file`.
+fn app_wears(index: &[reprisefs::apps::AppEntry], app_id: &str, file: &str) -> bool {
+    reprisefs::apps::icon_for_app_id(index, app_id) == Some(file)
+}
+
 /// Icon files a job is decoding, each with the px asked for since its job started.
 pub type Decoding = std::collections::HashMap<String, Vec<i32>>;
 
@@ -153,6 +167,26 @@ impl State {
         for (px, c) in art {
             self.menu_icon_landed(file, *px, c);
         }
+        self.window_icon_landed(file);
+    }
+
+    /// Icon file `file` landed: the windows whose app wears it redraw their caption and task
+    /// button, and an open switcher, overview, snap picker or task preview draws again.
+    fn window_icon_landed(&mut self, file: &str) {
+        let wearing: Vec<WindowId> = (self.windows.iter())
+            .filter(|w| app_wears(&self.app_index, &w.app_id(), file))
+            .map(|w| w.id)
+            .collect();
+        if wearing.is_empty() {
+            return;
+        }
+        for w in wearing {
+            self.retitled(w, crate::retitle::Changes::ICON);
+        }
+        self.redraw_switcher();
+        self.redraw_overview();
+        crate::snappickerview::icons_landed(self);
+        crate::taskpreview::icons_landed(self);
     }
 
     /// A commit of `w`'s surface applies a newly set icon: the buffer whose width
@@ -195,6 +229,31 @@ impl XdgToplevelIconHandler for State {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_app_icon_file_is_never_read_on_the_loop() {
+        use reprisekit::icontheme::IconTheme;
+        let file = "/srv/icons/viewer.png";
+        let index = [reprisefs::apps::AppEntry {
+            name: "Viewer".into(),
+            exec_line: "viewer".into(),
+            terminal: false,
+            id: "org.example.Viewer".into(),
+            icon: Some(file.into()),
+            startup_wm_class: None,
+            categories: Vec::new(),
+            mime_types: Vec::new(),
+            shown: true,
+        }];
+        let mut icons = IconCache::new(IconTheme::load("none", &[]));
+        let app = "org.example.Viewer";
+        assert!(crate::taskbarview::app_icon(&mut icons, &index, app, 16).is_none());
+        assert_eq!(icons.take_wanted(), [(file.to_string(), 16)]);
+        assert!(app_wears(&index, app, file));
+        icons.put_file(file, 16, Some(Canvas::new(16, 16)));
+        let icon = crate::taskbarview::app_icon(&mut icons, &index, app, 16);
+        assert_eq!(icon.map(|c| c.width), Some(16));
+    }
 
     #[test]
     fn a_file_decoding_holds_one_job_whatever_sizes_ask_for_it() {
