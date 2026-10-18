@@ -56,6 +56,28 @@ impl Explorer {
         }
     }
 
+    /// A reader's ScrollIntoView on a program out of view, or Focus on a button; true when the
+    /// chooser changed.
+    pub fn chooser_reader(&mut self, act: repriseapp::Reader) -> bool {
+        let Some(Dialog::ChooseProgram(cp)) = self.dialog.as_mut() else {
+            return false;
+        };
+        let ev = match act {
+            repriseapp::Reader::Reveal { row, .. } => cp.ow.reveal(row),
+            repriseapp::Reader::Focus((x, y)) => {
+                let lay = cp.ow.layout(
+                    &self.dialog_text,
+                    self.forms.fonts.size_px,
+                    (0, 0),
+                    &self.forms.controls(),
+                );
+                let hit = cp.ow.hit(&lay, x, y);
+                cp.ow.focus_on(hit)
+            }
+        };
+        ev != openwith::Event::None
+    }
+
     pub fn program_browse_event(&mut self, ev: Event, ctx: &mut Ctx) -> Reply {
         let Some(Dialog::ChooseProgram(cp)) = self.dialog.as_mut() else {
             return Reply::none();

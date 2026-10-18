@@ -1566,8 +1566,8 @@ impl FileDlg {
         None
     }
 
-    /// A reader asked to see entry `row` of the list at (`x`, `y`): the shell view, or a list on
-    /// the extra rows, scrolls it in and nothing is picked.
+    /// A reader asked to see entry `row` of the list at (`x`, `y`): the shell view, an open drop
+    /// list, or a list on the extra rows, scrolls it in and nothing is picked.
     pub fn reveal(
         &mut self,
         text: &TextRenderer,
@@ -1582,6 +1582,8 @@ impl FileDlg {
                 let lay = self.shell_layout(r, &cm);
                 shellview::reveal(&mut self.shell, row, &lay)
             }
+            Some(Hit::LookIn(_)) => self.lookin.reveal(row),
+            Some(Hit::FileType(_)) => self.filetype.reveal(row),
             Some(Hit::Extra(_)) => {
                 let (fx, fy) = (x - r.x, y - rows(r, &cm).y - self.grow(r, &cm));
                 (self.extra.as_mut())

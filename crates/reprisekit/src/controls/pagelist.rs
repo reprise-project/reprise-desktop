@@ -360,8 +360,10 @@ fn draw_row(
 
 /// The list's `access` part: a list holding, row by row, each heading as
 /// static text and each page as a list item named by its label, the open
-/// one selected. A row's bounds are its part inside the list; a row
-/// scrolled out of view has none. Returns the pages' items in page order.
+/// one selected. The list's bounds are its inside. A heading's bounds are its
+/// part inside, none when scrolled out; a page keeps its whole row, so one
+/// scrolled out lies outside the list, where a reader can ask to scroll it
+/// in ([`PageList::reveal`]). Returns the pages' items in page order.
 pub fn access(
     list: &PageList,
     strip: &TabStrip,
@@ -370,7 +372,7 @@ pub fn access(
     parent: NodeId,
     key: impl std::hash::Hash,
 ) -> Vec<NodeId> {
-    let mut list_node = access::node(Role::List, lay.frame);
+    let mut list_node = access::node(Role::List, lay.inner);
     list_node.set_label("Pages");
     let id = tree.push(parent, key, list_node);
     let total = list
@@ -396,7 +398,7 @@ pub fn access(
             }
             Row::Page(k) => {
                 let mut n = access::node(Role::ListItem, *r);
-                place(&mut n);
+                n.set_bounds(access::row_bounds(lay.inner, *r));
                 n.set_label(strip.labels.get(*k).map_or("", String::as_str));
                 n.set_selected(*k == strip.open);
                 n.set_position_in_set(items.len() + 1);
@@ -859,27 +861,41 @@ mod tests {
         assert_eq!(c.get(20, 18), cs.window.argb(), "above it, the heading");
     }
 
-    /// Rows scrolled out of the list have no bounds; one cut by its edge
-    /// has its part inside.
+    /// A heading scrolled out of the list has no bounds; a page keeps its whole row, and one cut
+    /// by the list's edge is revealed by its page number.
     #[test]
-    fn rows_scrolled_out_have_no_bounds() {
+    fn a_page_scrolled_out_keeps_its_row_and_is_revealed_by_its_number() {
         let mut list = PageList::new(GROUPS);
         list.top = 25;
         let lay = layout(&list, SHORT, &ControlMetrics::CLASSIC);
         let mut tree = Tree::window("T", (160, 140));
         let items = access(&list, &strip(0, false), &lay, &mut tree, ROOT, "pages");
-        let bounds = |id| tree.get(id).unwrap().bounds();
+        let bounds = |t: &Tree, id| t.get(id).unwrap().bounds();
         assert_eq!(
-            bounds(items[0]),
-            Some(access::bounds(Rect::new(8, 10, 120, 9)))
+            bounds(&tree, items[0]),
+            Some(access::bounds(Rect::new(8, 2, 120, 17))),
+            "the cut first page's whole row"
         );
         assert_eq!(
-            bounds(items[1]),
+            bounds(&tree, items[1]),
             Some(access::bounds(Rect::new(8, 19, 120, 17)))
         );
         let (node, _) = tree.nodes().find(|(_, n)| n.role() == Role::List).unwrap();
         let heading = tree.get(node).unwrap().children()[0];
-        assert_eq!(bounds(heading), None, "the first heading is out of view");
+        assert_eq!(
+            bounds(&tree, heading),
+            None,
+            "the first heading is out of view"
+        );
+        let first = items[0];
+        let mut p = crate::access::Published::default();
+        p.update(tree);
+        assert_eq!(p.reveal(items[1]), None);
+        assert_eq!(p.reveal(first).map(|r| r.row), Some(0));
+        assert!(list.reveal(0, &lay));
+        assert_eq!(list.top, 0, "the page comes in with its heading");
+        let mut tree = Tree::window("T", (160, 140));
+        let items = access(&list, &strip(0, false), &lay, &mut tree, ROOT, "pages");
         assert_eq!(
             tree.get(items[2]).unwrap().position_in_set(),
             Some(3),

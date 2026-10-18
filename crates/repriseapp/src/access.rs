@@ -98,7 +98,7 @@ impl ReaderForm<'_> {
             }
             (ReaderForm::Sheet(s), Reader::Reveal { at: (x, y), row }) => {
                 let px = s.open().units().px(base);
-                s.open_mut().reveal(x, y, row, text, px) != form::Event::None
+                s.reveal(x, y, row, text, px) != propsheet::Event::None
             }
             (ReaderForm::Sheet(s), Reader::Focus((x, y))) => {
                 let px = s.open().units().px(base);
