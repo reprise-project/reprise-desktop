@@ -224,11 +224,7 @@ impl SecurityContextHandler for State {
         );
         let sandbox = Sandbox::from(&context);
         let inserted = self.handle.insert_source(source, move |stream, _, state| {
-            let sandbox = ClientSandbox::of_stream(&stream, Some(sandbox.clone()));
-            let data = Arc::new(ClientState {
-                sandbox,
-                ..ClientState::default()
-            });
+            let data = Arc::new(ClientState::of_stream(&stream, Some(sandbox.clone())));
             if let Err(e) = state.dh.insert_client(stream, data) {
                 log::warn!("sandboxed client refused: {e}");
             }
