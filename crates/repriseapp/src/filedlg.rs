@@ -18,7 +18,7 @@ use crate::listicons::{ListIcons, ReadIcons};
 use crate::listjob::Job;
 use crate::thumbs::{self, Thumbs};
 use reprisefs::folders::FolderTable;
-use reprisekit::controls::filedlg::{Crumb, Fields, FileDlg, Folder, FolderId, Hit};
+use reprisekit::controls::filedlg::{Crumb, Fields, FileDlg, Folder, FolderId, Hit, Remembered};
 use reprisekit::controls::placesbar::Place;
 use reprisekit::controls::shellview::{self, Entry, Mode};
 use reprisekit::icontheme::{IconCache, ListingIcons};
@@ -302,6 +302,16 @@ pub enum Resolved {
     File(PathBuf),
 }
 
+/// The file every dialog's view and sort are kept in, once [`remember_views`] ran: a test
+/// that never runs a program opens every dialog in the default view and stores nothing.
+static VIEW_FILE: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+
+/// Dialogs opened from here on open in the view and sort the last one left, and store theirs.
+/// [`crate::run`] calls it; a host that opens a dialog before that calls it first.
+pub fn remember_views() {
+    VIEW_FILE.get_or_init(repriseconf::filedialog::path);
+}
+
 #[derive(Default)]
 pub struct Host {
     pub folders: FolderTable,
@@ -323,6 +333,10 @@ pub struct Host {
     /// A typed path whose folders did not answer within [`RESOLVE_WAIT`]; the next resolve of
     /// the same path waits on it again instead of starting another probe.
     probing: Option<(PathBuf, Job<(bool, bool)>)>,
+    /// The view and sort the open dialog last stored ([`Host::remember`]).
+    remembered: Remembered,
+    /// Where they are stored; None is [`VIEW_FILE`].
+    view_file: Option<PathBuf>,
 }
 
 /// How long the dialog waits for a listing before it goes on. Tests wait as long as it takes.
@@ -355,7 +369,34 @@ impl Host {
         let mut dlg = self.icons.dialog(fields);
         self.icons_scale = 0;
         dlg.set_text(u);
+        self.remembered = self
+            .view_file()
+            .map(|f| Remembered::parse(&repriseconf::filedialog::load_from(&f)))
+            .unwrap_or_default();
+        dlg.restore(self.remembered);
         dlg
+    }
+
+    fn view_file(&self) -> Option<PathBuf> {
+        self.view_file.clone().or_else(|| VIEW_FILE.get().cloned())
+    }
+
+    /// Stores the dialog's view and sort once they change, for every dialog opened after.
+    fn remember(&mut self, dlg: &FileDlg) {
+        let now = dlg.remembered();
+        if now == self.remembered {
+            return;
+        }
+        self.remembered = now;
+        let Some(path) = self.view_file() else {
+            return;
+        };
+        if let Err(e) = repriseconf::filedialog::save_to(&path, &now.text()) {
+            log::warn!(
+                "file dialog: could not store its view in {}: {e}",
+                path.display()
+            );
+        }
     }
 
     /// Starts the worker that decodes the listed pictures for Thumbnails and Tiles, once; `wake`
@@ -479,6 +520,7 @@ impl Host {
             return Step::Redraw;
         }
         let step = self.event_inner(dlg, ev, text, forms.fonts.size_px, size, metrics);
+        self.remember(dlg);
         self.ask_thumbs(dlg);
         step
     }
@@ -748,6 +790,55 @@ mod tests {
             mods,
             edit: reprisekit::textedit::key_for(sym, ctrl, false, utf8),
         })
+    }
+
+    #[test]
+    fn the_next_dialog_opens_in_the_view_and_sort_the_last_one_left() {
+        let t = tempfile::tempdir().unwrap();
+        let file = t.path().join("state").join("filedialog.toml");
+        let fields = || Fields {
+            title: "Open".into(),
+            accept_label: "Open".into(),
+            filters: vec![],
+            mode: DlgMode::Open,
+            multiple: false,
+        };
+        let host = || Host {
+            view_file: Some(file.clone()),
+            ..Host::default()
+        };
+        let theme = Theme::default();
+        let text = TextRenderer::load(&reprisekit::theme::FontConfig::default());
+        let metrics = Metrics::default();
+
+        let mut h = host();
+        let mut dlg = h.open(t.path(), fields(), theme.text);
+        assert_eq!(dlg.remembered(), Remembered::default(), "no file yet");
+        let r = Rect::new(0, 0, CLIENT.0, CLIENT.1);
+        dlg.click(r, Some(Hit::ToolBar(3)), Mods::default());
+        dlg.click(r, Some(Hit::ViewsItem(4)), Mods::default());
+        for _ in 0..2 {
+            dlg.click(
+                r,
+                Some(Hit::Shell(shellview::Hit::Header(3))),
+                Mods::default(),
+            );
+            dlg.release();
+        }
+        h.event(&mut dlg, &Event::Blink, &text, &theme, CLIENT, &metrics);
+        let details = Remembered {
+            mode: Mode::Details,
+            sort: shellview::Field::Modified,
+            ascending: false,
+        };
+        assert_eq!(dlg.remembered(), details);
+
+        let dlg = host().open(t.path(), fields(), theme.text);
+        assert_eq!(dlg.remembered(), details, "a Save As opened after");
+
+        std::fs::write(&file, [0xff, 0xfe, 0]).unwrap();
+        let dlg = host().open(t.path(), fields(), theme.text);
+        assert_eq!(dlg.remembered(), Remembered::default(), "a bad file");
     }
 
     #[test]

@@ -351,6 +351,7 @@ pub fn run_dialog() {
     let theme = reprisekit::theme::Theme::default();
     let text = TextRenderer::load(&theme.fonts);
     let px = theme.fonts.size_px;
+    repriseapp::filedlg::remember_views();
     let mut host = Host::default();
     host.icons.prime(&mut dialog::icons());
     let mode = if input.folder_mode {
