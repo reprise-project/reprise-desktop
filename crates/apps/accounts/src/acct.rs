@@ -256,12 +256,17 @@ fn removing_pictures(
     call: impl FnOnce(&[Op]) -> Result<(), Failure>,
 ) -> Result<(), Failure> {
     let done = call(ops);
+    remove_pictures(ops);
+    done
+}
+
+/// Deletes the saved pictures `ops` name, for ops that ran or were dropped.
+pub fn remove_pictures(ops: &[Op]) {
     for op in ops {
         if let Op::Picture { file, .. } = op {
             let _ = std::fs::remove_file(file);
         }
     }
-    done
 }
 
 async fn run(conn: &zbus::Connection, op: &Op) -> Result<(), Failure> {
