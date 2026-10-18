@@ -939,6 +939,19 @@ impl PropSheet {
         Event::Redraw
     }
 
+    /// A reader asked to see row `row` of the list at (`x`, `y`): the page list's page `row`, or
+    /// a row of a list on the open page, scrolls in; nothing is picked or turned to.
+    pub fn reveal(&mut self, x: i32, y: i32, row: usize, text: &TextRenderer, px: u32) -> Event {
+        let moved = match self.hit(x, y, text, px) {
+            Some(Hit::Tab(_) | Hit::List) => self.on_list(|list, lay| list.reveal(row, lay)),
+            Some(Hit::Control(_)) => {
+                self.open_mut().reveal(x, y, row, text, px) != form::Event::None
+            }
+            _ => false,
+        };
+        if moved { Event::Redraw } else { Event::None }
+    }
+
     pub fn click(&mut self, hit: Option<Hit>) -> Event {
         match hit {
             Some(Hit::Tab(i)) => {
@@ -1492,6 +1505,26 @@ mod tests {
             Nav::List(l) => l.top,
             Nav::Tabs => unreachable!(),
         }
+    }
+
+    #[test]
+    fn a_reader_scrolls_a_page_list_row_in_without_turning_to_it() {
+        use crate::access::{Published, ROOT, Tree, accesskit::Role};
+        let text = TextRenderer::load(&FontConfig::default());
+        let px = Theme::default().fonts.size_px;
+        let mut s = long_list_sheet();
+        let mut tree = Tree::window("T", s.size);
+        s.access(&mut tree, ROOT, &text, px);
+        let last = tree.find(Role::ListItem, "Page 29").unwrap();
+        let mut p = Published::default();
+        p.update(tree);
+        let r = p.reveal(last).expect("the last page is out of view");
+        assert_eq!(r.row, 29);
+        let (x, y) = (r.at.0 as i32, r.at.1 as i32);
+        assert_eq!(s.reveal(x, y, r.row, &text, px), Event::Redraw);
+        assert_eq!(list_top(&s), 151, "the last row's bottom at the inside's");
+        assert_eq!(s.tabs.open, 0, "the open page stays");
+        assert_eq!(s.reveal(x, y, r.row, &text, px), Event::None);
     }
 
     /// A resized list sheet keeps its buttons in the bottom-right corner

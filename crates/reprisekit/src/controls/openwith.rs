@@ -355,6 +355,28 @@ impl OpenWith {
         }
     }
 
+    /// A reader asked to see list row `row`: it scrolls in and nothing is picked.
+    pub fn reveal(&mut self, row: usize) -> Event {
+        redraw_if(self.list.reveal(row, self.rows.get()))
+    }
+
+    /// A reader's Focus on what `hit` names: it takes the keyboard as Tab gives it, unpressed.
+    pub fn focus_on(&mut self, hit: Option<Hit>) -> Event {
+        let f = match hit {
+            Some(Hit::List(_)) => Focus::List,
+            Some(Hit::Always) => Focus::Always,
+            Some(Hit::Browse) => Focus::Browse,
+            Some(Hit::Ok) => Focus::Ok,
+            Some(Hit::Cancel) => Focus::Cancel,
+            None => return Event::None,
+        };
+        if !self.focusable(f) || self.focus == f {
+            return Event::None;
+        }
+        self.focus = f;
+        Event::Redraw
+    }
+
     fn arm(&mut self, f: Focus) -> Event {
         if !self.focusable(f) {
             return Event::None;
@@ -768,6 +790,28 @@ mod tests {
                 }
             ]
         );
+    }
+
+    #[test]
+    fn a_reader_scrolls_a_program_in_and_focuses_a_button_without_pressing_it() {
+        use crate::access::{Published, Tree};
+        let mut o = sample();
+        let lay = o.layout(&text(), 11, (0, 0), &ControlMetrics::CLASSIC);
+        let mut tree = Tree::window("", (lay.client.width, lay.client.height));
+        o.access(&mut tree, &lay);
+        let last = tree.find(Role::ListBoxOption, "Program 11").unwrap();
+        let mut p = Published::default();
+        p.update(tree);
+        let r = p.reveal(last).expect("the last program is out of view");
+        assert_eq!(r.row, 15);
+        assert_eq!(p.target(last), None);
+        assert_eq!(o.reveal(r.row), Event::Redraw);
+        assert_eq!(o.list.top, 16 - ROWS);
+        assert_eq!(o.list.selected, Some(1), "the pick stays");
+        assert_eq!(o.focus_on(Some(Hit::Ok)), Event::Redraw);
+        assert_eq!(o.focus, Focus::Ok);
+        assert_eq!(o.pointer.held(), None, "OK is not pressed");
+        assert_eq!(o.focus_on(Some(Hit::Ok)), Event::None);
     }
 
     #[test]

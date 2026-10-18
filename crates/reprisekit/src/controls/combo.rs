@@ -298,6 +298,16 @@ impl Combo {
         }
     }
 
+    /// A reader asked to see row `i` of the open list: it scrolls in and the highlight stays.
+    /// True when it moved.
+    pub fn reveal(&mut self, i: usize) -> bool {
+        let top = self.top;
+        if self.open.is_some() && i < self.items.len() {
+            self.keep_in_view(i);
+        }
+        self.top != top
+    }
+
     pub fn scroll(&mut self, rows: i32) -> bool {
         let max_top = self.items.len().saturating_sub(self.visible());
         let top = (self.top as i32 + rows).clamp(0, max_top as i32) as usize;
@@ -864,7 +874,7 @@ pub fn draw_list_rows(
     }
 }
 
-/// The combo's `access` part: a combo box over its rows (the picked one selected, the highlighted one while open), plus a text input for an editable combo. Returns the focused node: the highlighted row while open, else the field of an editable combo, else the combo.
+/// The combo's `access` part: a combo box over its rows (the picked one selected, the highlighted one while open), plus a text input for an editable combo. While open, the list's bounds are its rows in view and a row scrolled out lies outside them ([`Combo::reveal`]). Returns the focused node: the highlighted row while open, else the field of an editable combo, else the combo.
 #[allow(clippy::too_many_arguments)]
 pub fn access(
     combo: &Combo,
@@ -907,20 +917,22 @@ pub fn access(
             "edit",
         );
     }
-    let list = tree.push(id, "list", access::node(Role::ListBox, lay.list));
-    let (rh, shown) = (lay.row_h, combo.top..combo.top + combo.visible());
+    let rh = lay.row_h;
+    let rows = Rect::new(
+        lay.list.x + 1,
+        lay.list.y + 1,
+        lay.list.width - 2,
+        combo.visible() as i32 * rh,
+    );
+    let list = tree.push(id, "list", access::node(Role::ListBox, rows));
     let picked = combo.open.unwrap_or(combo.selected);
     for (i, item) in combo.items.iter().enumerate() {
         let mut o = Node::new(Role::ListBoxOption);
         o.set_label(item.text.as_str());
-        if combo.open.is_some() && shown.contains(&i) {
-            let y = lay.list.y + 1 + (i - combo.top) as i32 * rh;
-            o.set_bounds(access::bounds(Rect::new(
-                lay.list.x + 1,
-                y,
-                lay.list.width - 2,
-                rh,
-            )));
+        if combo.open.is_some() {
+            let y = rows.y + (i as i32 - combo.top as i32) * rh;
+            let row = Rect::new(rows.x, y, rows.width, rh);
+            o.set_bounds(access::row_bounds(rows, row));
         }
         o.set_selected(i == picked);
         if item.greyed {
@@ -942,6 +954,43 @@ mod tests {
 
     fn combo() -> Combo {
         Combo::new(&["Reprise Classic", "Slate", "Harbor"], 0, 8)
+    }
+
+    #[test]
+    fn a_reader_scrolls_a_dropped_row_in_and_the_highlight_stays() {
+        use crate::access::{Published, ROOT, Tree};
+        let names: Vec<String> = (0..30).map(|i| format!("Row {i}")).collect();
+        let names: Vec<&str> = names.iter().map(String::as_str).collect();
+        let mut c = Combo::new(&names, 0, 8);
+        let text = TextRenderer::load(&FontConfig::default());
+        let lay = layout(
+            &c,
+            Rect::new(10, 10, 120, COMBO_H),
+            &ControlMetrics::CLASSIC,
+        );
+        let tree_of = |c: &Combo| {
+            let mut tree = Tree::window("", (200, 300));
+            access(c, &lay, &text, 11, &mut tree, ROOT, "combo");
+            tree
+        };
+        let tree = tree_of(&c);
+        let row = tree.find(Role::ListBoxOption, "Row 20").unwrap();
+        assert_eq!(
+            tree.get(row).unwrap().bounds(),
+            None,
+            "a closed list has no rows to show"
+        );
+        assert!(c.toggle());
+        let tree = tree_of(&c);
+        let shown = tree.find(Role::ListBoxOption, "Row 7").unwrap();
+        let row = tree.find(Role::ListBoxOption, "Row 20").unwrap();
+        let mut p = Published::default();
+        p.update(tree);
+        assert_eq!(p.reveal(shown), None);
+        assert_eq!(p.reveal(row).map(|r| r.row), Some(20));
+        assert!(c.reveal(20));
+        assert_eq!(c.top, 13, "row 20 is the last row shown");
+        assert_eq!(c.open, Some(0), "the highlight stays");
     }
 
     #[test]

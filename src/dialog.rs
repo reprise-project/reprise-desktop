@@ -3056,6 +3056,14 @@ impl Dialog {
                 (Some(p), Some(client)) => p.focus_at(client, (x, y), text, px),
                 _ => Outcome::Nothing,
             },
+            Some(DialogHit::Chooser(h)) => match self.chooser_mut() {
+                Some(c) => redraw_if(c.ow.focus_on(Some(h)) != openwith::Event::None),
+                None => Outcome::Nothing,
+            },
+            Some(DialogHit::Tray(h)) => match self.tray_mut() {
+                Some(t) => redraw_if(t.focus_on(Some(h)) != traycustomize::Event::None),
+                None => Outcome::Nothing,
+            },
             Some(DialogHit::Control(_)) => {
                 if let Some(f) = self.form_mut() {
                     return redraw_if(match &mut f.body {
@@ -3104,7 +3112,8 @@ impl Dialog {
     }
 
     /// A reader asked to see row `row` of the list at dialog point (`x`, `y`): Browse's file list,
-    /// or a form page's list box or tree, scrolls it in.
+    /// Open With's programs, the tray's items, an open drop list, a sheet's page list, or a form
+    /// page's list box or tree, scrolls it in.
     pub fn reveal(
         &mut self,
         layout: &DialogLayout,
@@ -3116,9 +3125,29 @@ impl Dialog {
         if let (Some(p), Some(client)) = (self.picker_mut(), layout.page) {
             return p.reveal(client, (x, y), row, text, px);
         }
+        if let Some(c) = self.chooser_mut() {
+            return redraw_if(c.ow.reveal(row) != openwith::Event::None);
+        }
+        if let (Some(t), Some(client)) = (self.tray_mut(), layout.page) {
+            let lay = t.layout(text, px, (client.x, client.y));
+            let hit = t.hit(&lay, x, y);
+            return redraw_if(t.reveal(hit, row));
+        }
+        if let (Some(f), Some(fr)) = (self.field.as_mut(), layout.field)
+            && f.combo.open.is_some()
+            && combo::layout(&f.combo, fr, &layout.controls)
+                .list
+                .contains(x, y)
+        {
+            return redraw_if(f.combo.reveal(row));
+        }
         let Some(f) = self.form_mut() else {
             return Outcome::Nothing;
         };
+        if let FormBody::Sheet(s) = &mut f.body {
+            let ev = s.reveal(x, y, row, text, px);
+            return redraw_if(ev != reprisekit::controls::propsheet::Event::None);
+        }
         let Some(form) = f.open_page_mut() else {
             return Outcome::Nothing;
         };

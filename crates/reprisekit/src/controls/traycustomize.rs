@@ -825,12 +825,50 @@ impl TrayCustomize {
 
     /// Select entry `i`, scrolled into view.
     pub fn select(&mut self, i: usize) {
-        let height = self.body_height();
         if i >= self.entries.len() {
             return;
         }
         self.selected = Some(i);
         self.rebuild_combo();
+        self.show(i);
+    }
+
+    /// A reader asked to see row `i` of the list `hit` names: the open combo's list, else the
+    /// items, scrolls it in and nothing is picked. True when it moved.
+    pub fn reveal(&mut self, hit: Option<Hit>, i: usize) -> bool {
+        if let Some(Hit::Combo(_)) = hit {
+            return self.combo.reveal(i);
+        }
+        let top = self.top;
+        if i < self.entries.len() {
+            self.show(i);
+        }
+        self.top != top
+    }
+
+    /// A reader's Focus on what `hit` names: it takes the keyboard as Tab gives it, without
+    /// opening, pressing or picking anything.
+    pub fn focus_on(&mut self, hit: Option<Hit>) -> Event {
+        let f = match hit {
+            Some(Hit::Row(_) | Hit::List) => Focus::List,
+            Some(Hit::Combo(_)) => Focus::Combo,
+            Some(Hit::AllIcons) => Focus::AllIcons,
+            Some(Hit::Restore) => Focus::Restore,
+            Some(Hit::Ok) => Focus::Ok,
+            Some(Hit::Cancel) => Focus::Cancel,
+            _ => return Event::None,
+        };
+        if !self.focusable(f) || self.focus == f {
+            return Event::None;
+        }
+        self.combo.open = None;
+        self.focus = f;
+        Event::Redraw
+    }
+
+    /// Scroll so entry `i` shows whole, with its group's header when that comes right above.
+    fn show(&mut self, i: usize) {
+        let height = self.body_height();
         let slots = self.slots();
         let Some(k) = slots.iter().position(|&s| s == Slot::Row(i)) else {
             return;
@@ -2065,6 +2103,36 @@ impl TrayCustomize {
         over
     }
 
+    /// Every entry's row, those scrolled out of the body included, laid end to end from the
+    /// first row in view.
+    fn row_rects(&self, lay: &Layout) -> Vec<Option<Rect>> {
+        let mut out = vec![None; self.entries.len()];
+        let slots = self.slots();
+        let Some(&(first, anchor)) = lay.slots.iter().find(|(s, _)| matches!(s, Slot::Row(_)))
+        else {
+            return out;
+        };
+        let Some(k0) = slots.iter().position(|&s| s == first) else {
+            return out;
+        };
+        let mut place = |k: usize, y: i32| {
+            if let Slot::Row(i) = slots[k] {
+                out[i] = Some(Rect::new(anchor.x, y, anchor.width, anchor.height));
+            }
+        };
+        let mut y = anchor.y;
+        for k in k0..slots.len() {
+            place(k, y);
+            y += self.slot_h(&slots, k);
+        }
+        let mut y = anchor.y;
+        for k in (0..k0).rev() {
+            y -= self.slot_h(&slots, k);
+            place(k, y);
+        }
+        out
+    }
+
     /// The text, the list with its rows (each named by the item and
     /// valued by its behaviour), the combo, the box and the buttons; the
     /// focused part gets the focus.
@@ -2079,14 +2147,15 @@ impl TrayCustomize {
             w.prompt()
         };
         tree.push(root, "prompt", access::label(lay.prompt, prompt, true));
-        let mut ln = access::node(Role::ListBox, lay.frame);
+        let mut ln = access::node(Role::ListBox, lay.body);
         access::focusable(&mut ln, live);
         let list = tree.push(root, "list", ln);
         let mut focus_row = list;
+        let rows = self.row_rects(lay);
         for (i, e) in self.entries.iter().enumerate() {
             let mut n = access::node(Role::ListBoxOption, Rect::default());
-            if let Some((_, r)) = lay.slots.iter().find(|(s, _)| *s == Slot::Row(i)) {
-                n.set_bounds(access::bounds(*r));
+            if let Some(r) = rows.get(i).copied().flatten() {
+                n.set_bounds(access::row_bounds(lay.body, r));
             }
             n.set_label(e.name.as_str());
             n.set_value(w.label(w.choices()[w.index(e.behaviour, e.passive)]));
@@ -2231,6 +2300,56 @@ mod tests {
             (w == Wording::Glass).then_some(false),
             metrics(w),
         )
+    }
+
+    #[test]
+    fn a_reader_scrolls_a_past_item_in_and_focuses_a_button_without_pressing_it() {
+        use crate::access::{Published, Tree};
+        let (text, px) = (TextRenderer::load(&crate::theme::FontConfig::default()), 11);
+        let current = (0..3).map(|i| {
+            entry(
+                &format!("c{i}"),
+                &format!("Current {i}"),
+                false,
+                Behaviour::Auto,
+            )
+        });
+        let past = (0..12).map(|i| {
+            entry(
+                &format!("p{i}"),
+                &format!("Past {i}"),
+                false,
+                Behaviour::Hide,
+            )
+        });
+        let w = Wording::Classic;
+        let mut t = TrayCustomize::new(w, current.collect(), past.collect(), None, metrics(w));
+        let published = |t: &TrayCustomize| {
+            let lay = t.layout(&text, px, (0, 0));
+            let mut tree = Tree::window("", t.client());
+            t.access(&mut tree, &lay, &text, px);
+            let first = tree.find(Role::ListBoxOption, "Current 0").unwrap();
+            let last = tree.find(Role::ListBoxOption, "Past 11").unwrap();
+            let mut p = Published::default();
+            p.update(tree);
+            (p, first, last)
+        };
+        let (p, first, last) = published(&t);
+        assert_eq!(p.reveal(first), None, "the first item shows");
+        let r = p.reveal(last).expect("the last past item is out of view");
+        assert_eq!(r.row, 14);
+        let picked = t.selected;
+        assert!(t.reveal(None, r.row));
+        let (p, first, last) = published(&t);
+        assert_eq!(p.reveal(last), None, "the last past item shows");
+        assert!(p.reveal(first).is_some(), "the first is out of view");
+        assert_eq!(t.selected, picked, "the pick stays");
+        let lay = t.layout(&text, px, (0, 0));
+        let at = |r: Rect| (r.x + r.width / 2, r.y + r.height / 2);
+        let (x, y) = at(lay.cancel);
+        assert_eq!(t.focus_on(t.hit(&lay, x, y)), Event::Redraw);
+        assert_eq!(t.focus, Focus::Cancel);
+        assert!(!t.holding(), "Cancel is not pressed");
     }
 
     #[test]
