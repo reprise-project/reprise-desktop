@@ -992,16 +992,7 @@ pub fn customize(state: &mut State) {
     let past = past_keys
         .into_iter()
         .map(|(key, r)| {
-            let icon = r.icon.as_deref().unwrap_or("application-x-executable");
-            let icon: Vec<IconSource> = [16, 32]
-                .into_iter()
-                .filter_map(|px| state.icons.get(icon, px))
-                .map(|c| IconSource {
-                    width: c.width,
-                    height: c.height,
-                    pixels: c.pixels,
-                })
-                .collect();
+            let icon = past_icon(&mut state.icons, r.icon.as_deref());
             let name = if r.name.is_empty() {
                 key.clone()
             } else {
@@ -1073,6 +1064,21 @@ pub fn apply_choices(state: &mut State, picked: Choices) {
         tray.choices = choices;
     }
     replace_all(state);
+}
+
+/// A remembered item's icon for the Customize list. A file is never read on the loop: one not
+/// decoded yet shows the stand-in, and the next Customize shows the file.
+fn past_icon(icons: &mut IconCache, name: Option<&str>) -> Vec<IconSource> {
+    let name = name.unwrap_or(crate::icon::STAND_IN);
+    [16, 32]
+        .into_iter()
+        .filter_map(|px| crate::icon::unread(icons, name, px))
+        .map(|c| IconSource {
+            width: c.width,
+            height: c.height,
+            pixels: c.pixels.clone(),
+        })
+        .collect()
 }
 
 pub fn item_icon(state: &mut State, item: &TrayItem, px: i32) -> Option<Arc<Canvas>> {
@@ -1586,6 +1592,24 @@ pub fn menu_activate(state: &mut State, depth: usize, idx: usize) {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_remembered_icon_file_is_never_read_on_the_loop() {
+        let file = "/srv/icons/tray.png";
+        let mut icons = IconCache::new(crate::icontheme::IconTheme::load("none", &[]));
+        assert!(past_icon(&mut icons, Some(file)).is_empty());
+        assert_eq!(
+            icons.take_wanted(),
+            [(file.to_string(), 16), (file.to_string(), 32)]
+        );
+        icons.put_file(file, 16, Some(Canvas::new(16, 16)));
+        icons.put_file(file, 32, None);
+        let widths: Vec<u32> = past_icon(&mut icons, Some(file))
+            .iter()
+            .map(|s| s.width)
+            .collect();
+        assert_eq!(widths, [16]);
+    }
+
     #[test]
     fn the_balloon_icon_is_the_picture_else_the_app_icon() {
         let src = |w: u32| IconSource {
