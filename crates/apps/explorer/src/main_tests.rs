@@ -239,7 +239,7 @@ fn a_folders_node_read_late_fills_on_a_later_wake() {
         gate.recv().ok();
         read()
     });
-    ex.filling.push((place.clone(), job));
+    ex.filling.push((place.clone(), job, false));
 
     ex.fill_node(path.clone(), &mut ctx);
     assert_eq!(ex.filling.len(), 1, "the node is read once");
@@ -286,6 +286,50 @@ fn a_folders_refill_that_does_not_answer_fills_on_a_later_wake() {
 
     drop(closed);
     wake_until(&mut ex, &mut ctx, |ex| ex.filling.is_empty());
+    assert_eq!(labels(&ex), ["new", "old"]);
+}
+
+/// A refill asked for while a read of the node that began before the change is out reads the node
+/// again once that read lands.
+#[test]
+fn a_folders_refill_during_an_older_read_reads_the_node_again() {
+    let dir = tempfile::Builder::new()
+        .prefix("tree")
+        .tempdir()
+        .expect("a temp dir shown in the tree");
+    std::fs::create_dir(dir.path().join("old")).expect("mkdir");
+    let mut ctx = test_ctx();
+    let here = Place::Folder(dir.path().to_path_buf());
+    let mut ex = test_explorer(here.clone(), &mut ctx);
+    let path = ex.tree_path_of(&here).expect("the folder's node");
+    let labels = |ex: &Explorer| -> Vec<String> {
+        let node = ex.tree.node(&path).expect("node");
+        node.children.iter().map(|n| n.label.clone()).collect()
+    };
+    let read = ex.kids_reader(&path, here.clone());
+    let (answer, gate) = std::sync::mpsc::channel::<()>();
+    let (began, read_done) = std::sync::mpsc::channel::<()>();
+    let job = repriseapp::listjob::Job::spawn(None, move || {
+        let kids = read();
+        began.send(()).ok();
+        gate.recv().ok();
+        kids
+    });
+    read_done.recv().expect("the older read ran");
+    ex.filling.push((here.clone(), job, false));
+
+    std::fs::create_dir(dir.path().join("new")).expect("mkdir");
+    ex.refill_tree_node(&here, &mut ctx);
+    assert_eq!(ex.filling.len(), 1, "the refill waits for the read out");
+
+    answer.send(()).expect("send");
+    for _ in 0..500 {
+        if ex.filling.is_empty() && labels(&ex).len() == 2 {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        ex.wake(&mut ctx);
+    }
     assert_eq!(labels(&ex), ["new", "old"]);
 }
 
