@@ -277,7 +277,7 @@ impl State {
         };
         source.drop_performed();
         source.send(over.mime, write);
-        self.spawn_fs_job(move || {
+        self.spawn_job(move || {
             let got = reprisefs::pipe::read_bounded(
                 &read,
                 crate::dnddrop::MAX_BYTES,
