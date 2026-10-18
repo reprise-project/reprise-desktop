@@ -358,19 +358,48 @@ impl State {
                         return;
                     };
                     view.bins.land_tab(top, tab);
-                    let tabs = view.bins.tabs(&view.drives.found);
-                    for i in 0..state.dialogs.views.len() {
-                        let Style::Form(fd) = &mut state.dialogs.views[i].dialog.style else {
-                            continue;
-                        };
-                        if crate::binprops::show_drives(fd, tabs.clone()) {
-                            state.refit_dialog(i);
-                            state.redraw_dialog(i);
-                        }
-                    }
+                    state.show_bin_tabs();
                 })
             });
         }
+    }
+
+    /// Shows the drives' tabs as the reads found them in each open Recycle Bin Properties.
+    fn show_bin_tabs(&mut self) {
+        let Some(view) = self.desktop.as_ref() else {
+            return;
+        };
+        let tabs = view.bins.tabs(&view.drives.found);
+        for i in 0..self.dialogs.views.len() {
+            let Style::Form(fd) = &mut self.dialogs.views[i].dialog.style else {
+                continue;
+            };
+            if crate::binprops::show_drives(fd, tabs.clone()) {
+                self.refit_dialog(i);
+                self.redraw_dialog(i);
+            }
+        }
+    }
+
+    /// The Send To drives changed: an open Recycle Bin Properties drops the tab of a drive gone
+    /// and reads the tab of one that answered since it opened.
+    pub(crate) fn drives_changed(&mut self) {
+        let open = (self.dialogs.views.iter()).any(|v| {
+            matches!(&v.dialog.style, Style::Form(fd)
+                if matches!(fd.kind, crate::dialog::Kind::RecycleBin(_)))
+        });
+        if !open {
+            return;
+        }
+        self.show_bin_tabs();
+        self.spawn_fs_job(|| {
+            let bins = reprisefs::trash::Bins::system();
+            Box::new(move |state: &mut State| {
+                if let Some(bins) = bins {
+                    state.read_bin_tabs(&bins);
+                }
+            })
+        });
     }
 
     /// Empty Recycle Bin: asks to delete what the bins hold, counted in a file job.
