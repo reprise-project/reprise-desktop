@@ -135,6 +135,8 @@ impl Wallpaper {
 /// step of that fade.
 const FADE: Duration = Duration::from_millis(1200);
 const FADE_TICK: Duration = Duration::from_millis(33);
+/// How long after a picture lands Alt+Tab's desktop still is composed: past `FADE`.
+const STILL_WARM_DELAY: Duration = Duration::from_secs(2);
 
 /// The running `[wallpaper] slideshow`: its folder, the timer for the
 /// next change, and whether a pick is on its way from the thread.
@@ -255,6 +257,7 @@ impl State {
                     }
                     state.refit_wallpaper();
                     crate::lockview::refit(state);
+                    state.warm_switcher_still_soon();
                 }
                 None => state.clear_wallpaper(),
             }
@@ -272,6 +275,19 @@ impl State {
             });
         if let Err(e) = spawned {
             log::warn!("wallpaper: no decode thread: {e}");
+        }
+    }
+
+    /// A picture landed: compose Alt+Tab's desktop still a moment later,
+    /// away from the frames that show the new picture.
+    fn warm_switcher_still_soon(&mut self) {
+        let timer = Timer::from_duration(STILL_WARM_DELAY);
+        let inserted = self.handle.insert_source(timer, |_, _, state| {
+            state.warm_switcher_still();
+            TimeoutAction::Drop
+        });
+        if let Err(e) = inserted {
+            log::warn!("wallpaper: {}", e.error);
         }
     }
 
@@ -295,6 +311,7 @@ impl State {
                 w.staged.push(staged);
                 state.refit_wallpaper();
                 crate::lockview::refit(state);
+                state.warm_switcher_still_soon();
             }
         });
         if let Err(e) = inserted {

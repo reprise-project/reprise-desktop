@@ -162,6 +162,26 @@ impl State {
         switcher::start(len, self.keyboard_held(), self.config.switcher.desktop)
     }
 
+    /// Compose the desktop entry's picture of the wallpaper for the output
+    /// under the pointer, as the next thumbnail panel there will want it,
+    /// so the first Alt+Tab after a wallpaper lands finds it kept.
+    pub fn warm_switcher_still(&mut self) {
+        let c = &self.config.switcher;
+        if c.style != SwitcherStyle::Thumbnails || !c.desktop {
+            return;
+        }
+        let grid = interfaces::switcher_grid(&self.config.theme).sized(c.size);
+        let p = self.pointer_location();
+        let out = self.output_at(p.x, p.y);
+        let area = self.usable_area(out.as_ref());
+        let well = SwitcherLayout::thumbnails(1, 0, area, grid).wells[0];
+        let ob = self.layout_box(out.as_ref());
+        let pic = fit(ob.width, ob.height, well, 1).scaled(self.draw_scale_at(out.as_ref()));
+        if !pic.is_empty() {
+            self.wallpaper_thumbnail(out.as_ref(), pic.width, pic.height);
+        }
+    }
+
     pub fn open_switcher(&mut self, mods: u32) {
         let entries = self.switch_entries();
         let Some(selected) = self.switcher_start(entries.len()) else {

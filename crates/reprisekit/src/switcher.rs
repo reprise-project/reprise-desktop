@@ -335,6 +335,24 @@ mod tests {
     }
 
     #[test]
+    fn every_well_has_the_size_of_a_lone_entry_s_well() {
+        // The compositor composes the desktop still for a one-entry layout ahead of the first open.
+        let area = Rect::new(0, 0, 1920, 1040);
+        let lone = SwitcherLayout::thumbnails(1, 0, area, G).wells[0];
+        for n in [2, 7, 16, 30] {
+            let l = SwitcherLayout::thumbnails(n, n - 1, area, G);
+            assert!(
+                l.wells
+                    .iter()
+                    .all(|w| (w.width, w.height) == (lone.width, lone.height)),
+                "{n} entries: every well {}x{}",
+                lone.width,
+                lone.height
+            );
+        }
+    }
+
+    #[test]
     fn one_row_is_as_wide_as_its_cells() {
         let l = SwitcherLayout::thumbnails(6, 1, Rect::new(0, 0, 1920, 1040), G);
         assert_eq!((l.rect.width, l.rect.height), (16 + 6 * 144, 45 + 85 + 8));
