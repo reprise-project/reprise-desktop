@@ -1129,6 +1129,30 @@ impl VolumePopup {
     }
 
     /// The left button went down at (`x`, `y`). The thumb is where the volume puts it now; a press on the channel steps it one position; focus moves to the pressed part; a combo's field or drop button opens its list. With a list open, a press on it acts there and any other press closes it; outside the panel closes the popup.
+    /// A reader's Focus on the control at (`x`, `y`): it takes the keyboard as Tab gives it,
+    /// without sliding, muting, playing or dropping anything.
+    pub fn focus_at(&mut self, lay: &Layout, x: i32, y: i32) -> Event {
+        let lay = &self.current(lay);
+        let live = |i: usize| self.columns[i].volume.enabled;
+        let f = match hit(self, lay, x, y) {
+            Hit::Track(i, _) if live(i) => Focus::Thumb(i),
+            Hit::Mute(i) if live(i) => Focus::Mute(i),
+            Hit::Media(t) if self.can(t) => Focus::Media(t),
+            Hit::Combo(d, combo::Hit::Field | combo::Hit::Drop) if self.combo(d).enabled => {
+                combo_focus(d)
+            }
+            _ => return Event::None,
+        };
+        if self.focus == f {
+            return Event::None;
+        }
+        if let Some(d) = self.open_list() {
+            self.combo_mut(d).open = None;
+        }
+        self.focus = f;
+        Event::Redraw
+    }
+
     pub fn press(&mut self, lay: &Layout, x: i32, y: i32) -> Event {
         let lay = &self.current(lay);
         self.point = Some((x, y));
@@ -1452,6 +1476,22 @@ mod tests {
 
     fn col(l: &Layout, i: usize) -> &ColumnLayout {
         l.columns[i].as_ref().expect("column shown")
+    }
+
+    #[test]
+    fn a_readers_focus_moves_to_a_slider_or_mute_without_acting() {
+        let mut vp = VolumePopup::new(&mix(&[app("firefox", 16)]));
+        let l = lay(&vp);
+        let (x, y) = mid(col(&l, 1).track.bounds);
+        let pos = vp.columns[1].volume.pos;
+        assert_eq!(vp.focus_at(&l, x, y), Event::Redraw);
+        assert_eq!(vp.focus, Focus::Thumb(1));
+        assert_eq!(vp.columns[1].volume.pos, pos, "the thumb stays");
+        let (x, y) = mid(col(&l, 0).mute);
+        assert_eq!(vp.focus_at(&l, x, y), Event::Redraw);
+        assert_eq!(vp.focus, Focus::Mute(0));
+        assert!(!vp.columns[0].mute, "nothing is muted");
+        assert_eq!(vp.focus_at(&l, x, y), Event::None);
     }
 
     #[test]

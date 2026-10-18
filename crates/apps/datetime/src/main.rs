@@ -229,6 +229,11 @@ impl App for DateTimeApp {
         reply
     }
 
+    fn reader_form(&mut self, win: WinId) -> Option<repriseapp::ReaderForm<'_>> {
+        let s = self.sheet.as_mut().filter(|_| win != ERROR_WIN)?;
+        Some(repriseapp::ReaderForm::Sheet(&mut s.sheet))
+    }
+
     fn access(&mut self, win: WinId, tree: &mut Tree, ctx: &Ctx) {
         let forms = ctx.forms();
         if win == ERROR_WIN {

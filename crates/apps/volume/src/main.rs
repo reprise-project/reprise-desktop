@@ -743,6 +743,29 @@ impl App for Volume {
         }
     }
 
+    fn reader_form(&mut self, win: WinId) -> Option<repriseapp::ReaderForm<'_>> {
+        let form = match win {
+            PROPS_WIN => &mut self.props.as_mut()?.form,
+            ADVANCED_WIN => self.advanced.as_mut()?,
+            _ => return None,
+        };
+        let form = repriseapp::DropForm { form, px: None };
+        Some(repriseapp::ReaderForm::Form(form))
+    }
+
+    fn reader(&mut self, win: WinId, act: repriseapp::Reader, ctx: &Ctx) -> bool {
+        match (win, act) {
+            (PROPS_WIN | ADVANCED_WIN | ABOUT_WIN, _) => {
+                repriseapp::reader_forms(self, win, act, ctx)
+            }
+            (_, repriseapp::Reader::Focus((x, y))) => {
+                let lay = self.mixer_layout(ctx);
+                self.mixer.focus_at(&lay, x, y) != mixer::Event::None
+            }
+            _ => false,
+        }
+    }
+
     fn access(&mut self, win: WinId, tree: &mut Tree, ctx: &Ctx) {
         let forms = ctx.forms();
         let (dt, dpx) = (&ctx.text, forms.fonts.size_px);

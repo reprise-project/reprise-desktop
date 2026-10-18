@@ -1067,6 +1067,24 @@ impl Mixer {
     /// channel either side of it steps it one position that way; the
     /// focus moves to the part pressed. A check box or the Advanced
     /// button acts at the release.
+    /// A reader's Focus on the control at (`x`, `y`): it takes the keyboard as Tab gives it,
+    /// without sliding, flipping or pressing it.
+    pub fn focus_at(&mut self, lay: &Layout, x: i32, y: i32) -> Event {
+        let lay = &self.current(lay);
+        let f = match hit(self, lay, x, y) {
+            Hit::Balance(i, _) => Focus::Balance(i),
+            Hit::Volume(i, _) => Focus::Volume(i),
+            Hit::Check(i) => Focus::Check(i),
+            Hit::Advanced => Focus::Advanced,
+            _ => return Event::None,
+        };
+        if self.focus == f || !self.focus_order().contains(&f) {
+            return Event::None;
+        }
+        self.focus = f;
+        Event::Redraw
+    }
+
     pub fn press(&mut self, lay: &Layout, x: i32, y: i32) -> Event {
         let lay = &self.current(lay);
         self.point = Some((x, y));
@@ -1347,6 +1365,28 @@ mod tests {
 
     fn mid(r: Rect) -> (i32, i32) {
         (r.x + r.width / 2, r.y + r.height / 2)
+    }
+
+    #[test]
+    fn a_readers_focus_moves_to_a_trackbar_or_box_without_moving_it() {
+        let mut m = Mixer::new(&lines(), false);
+        let l = lay(&m);
+        let (x, y) = mid(col(&l, 1).volume.bounds);
+        let volume = m.columns[1].volume.pos;
+        assert_eq!(m.focus_at(&l, x, y), Event::Redraw);
+        assert_eq!(m.focus, Focus::Volume(1));
+        assert_eq!(m.columns[1].volume.pos, volume, "the thumb stays");
+        assert_eq!(m.focus_at(&l, x, y), Event::None, "already there");
+        let (x, y) = mid(col(&l, 2).check);
+        assert_eq!(m.focus_at(&l, x, y), Event::Redraw);
+        assert_eq!(m.focus, Focus::Check(2));
+        assert!(!m.columns[2].checked, "the box is not flipped");
+        let (x, y) = mid(col(&l, 2).balance.bounds);
+        assert_eq!(
+            m.focus_at(&l, x, y),
+            Event::None,
+            "a mono line's balance is greyed"
+        );
     }
 
     #[test]
