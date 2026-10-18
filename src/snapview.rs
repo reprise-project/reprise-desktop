@@ -91,18 +91,21 @@ struct Partner {
     side: Edges,
     edge: Edges,
     start: Rect,
+    /// Its `snapped` before the size took it, which a cancel puts back.
+    snapped: Option<Rect>,
 }
 
-/// A follower, the frame it started from, and the (dragged side, own side) pairs it rides.
-type Follower = (WindowId, Rect, Vec<(Edges, Edges)>);
+/// A follower, the frame it started from, the (dragged side, own side) pairs it rides, and its
+/// `snapped` from before the size.
+type Follower = (WindowId, Rect, Vec<(Edges, Edges)>, Option<Rect>);
 
-/// Each follower once; its frame is its first entry's.
+/// Each follower once; its frame and `snapped` are its first entry's.
 fn partner_sides(partners: &[Partner]) -> Vec<Follower> {
     let mut out: Vec<Follower> = Vec::new();
     for p in partners {
         match out.iter_mut().find(|o| o.0 == p.window) {
             Some(o) => o.2.push((p.side, p.edge)),
-            None => out.push((p.window, p.start, vec![(p.side, p.edge)])),
+            None => out.push((p.window, p.start, vec![(p.side, p.edge)], p.snapped)),
         }
     }
     out
@@ -805,7 +808,7 @@ impl State {
         let had = (self.wm.snap.resize)
             .filter(|r| r.0 == w)
             .map_or(Edges::NONE, |r| r.2);
-        let mut others: Vec<(WindowId, Rect)> = Vec::new();
+        let mut others: Vec<(WindowId, Rect, Option<Rect>)> = Vec::new();
         for win in &self.windows {
             let free = win.mapped && !win.minimized && !win.maximized && !win.fullscreen;
             if win.id == w || !free || self.wm.snap.group_of(win.id) != Some(g) {
@@ -814,7 +817,7 @@ impl State {
             if !self.on_current_desktop(win.id) {
                 continue;
             }
-            others.push((win.id, win.frame_rect()));
+            others.push((win.id, win.frame_rect(), win.snapped));
         }
         let frames: Vec<Rect> = others.iter().map(|o| o.1).collect();
         let mut partners = Vec::new();
@@ -825,6 +828,7 @@ impl State {
                     side,
                     edge,
                     start: others[i].1,
+                    snapped: others[i].2,
                 });
             }
         }
@@ -859,7 +863,7 @@ impl State {
     /// lands.
     pub(crate) fn drag_partners(&mut self, r: Rect) {
         self.wm.snap.last = Some(r);
-        for (window, start, sides) in partner_sides(&self.wm.snap.partners) {
+        for (window, start, sides, _) in partner_sides(&self.wm.snap.partners) {
             let (next, edges) = followed(start, &sides, r);
             let m = &self.config.theme.metrics;
             let Some(win) = self.win(window) else {
@@ -885,14 +889,17 @@ impl State {
         }
     }
 
-    /// Escape on a keyboard size: the followers go back to where they started and the group's
-    /// zones stay.
+    /// Escape on a keyboard size: the followers go back to where they started, with the frames
+    /// they restore to, and the group's zones stay.
     pub(crate) fn cancel_group_resize(&mut self) {
         let partners = std::mem::take(&mut self.wm.snap.partners);
         self.wm.snap.resize = None;
         self.wm.snap.last = None;
-        for (window, start, _) in partner_sides(&partners) {
+        for (window, start, _, snapped) in partner_sides(&partners) {
             self.set_resizing(window, false);
+            if let Some(win) = self.win_mut(window) {
+                win.snapped = snapped;
+            }
             let m = &self.config.theme.metrics;
             let Some(win) = self.win(window) else {
                 continue;
@@ -1841,31 +1848,40 @@ mod tests {
     fn a_follower_riding_two_sides_takes_both_from_its_first_frame() {
         let (tr, bl) = (WindowId::next(), WindowId::next());
         let tr_start = Rect::new(960, 0, 960, 516);
+        let tr_restore = Rect::new(300, 200, 640, 480);
         let partners = [
             Partner {
                 window: tr,
                 side: Edges::RIGHT,
                 edge: Edges::LEFT,
                 start: tr_start,
+                snapped: Some(tr_restore),
             },
             Partner {
                 window: bl,
                 side: Edges::BOTTOM,
                 edge: Edges::TOP,
                 start: Rect::new(0, 516, 960, 516),
+                snapped: None,
             },
-            // Picked second, after the first side had moved it.
+            // Picked second, after the first side had moved it and taken its restore frame.
             Partner {
                 window: tr,
                 side: Edges::BOTTOM,
                 edge: Edges::BOTTOM,
                 start: Rect::new(1000, 0, 920, 516),
+                snapped: None,
             },
         ];
         let by = partner_sides(&partners);
         assert_eq!(by.len(), 2, "each follower once");
-        let (w, start, sides) = &by[0];
+        let (w, start, sides, snapped) = &by[0];
         assert_eq!((*w, *start), (tr, tr_start), "its first entry's frame");
+        assert_eq!(
+            *snapped,
+            Some(tr_restore),
+            "a cancel gives back the restore frame from before the first side"
+        );
         let sized = Rect::new(0, 0, 1040, 600);
         assert_eq!(
             followed(*start, sides, sized),
