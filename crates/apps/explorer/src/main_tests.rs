@@ -503,6 +503,7 @@ fn item(name: &str, is_dir: bool, size: u64, kind: &str, modified: Option<i64>) 
         mime: None,
         kind: kind.to_string(),
         drive: None,
+        mount_root: false,
         trashed: None,
         shortcut: None,
     }
