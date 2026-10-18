@@ -279,6 +279,8 @@ pub struct Explorer {
     /// Folders nodes still being read after [`LIST_WAIT`] ([`Explorer::fill_node`]), each with
     /// whether a refill asked meanwhile reads it again once it lands.
     filling: Vec<(Place, Job<foldertree::Kids>, bool)>,
+    /// Picker writes still on disk when the picker closed, landed for their undo entries.
+    browse_left: Vec<crate::browse::Making>,
     /// Holds every [`Explorer::read_job`] read until the test drops its write lock; while set, no
     /// read is waited for ([`Explorer::list_wait`]).
     #[cfg(test)]
@@ -446,6 +448,7 @@ impl Explorer {
             reading: None,
             left: Vec::new(),
             filling: Vec::new(),
+            browse_left: Vec::new(),
             #[cfg(test)]
             held: None,
             image_dims: HashMap::new(),
