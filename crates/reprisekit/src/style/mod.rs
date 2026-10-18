@@ -1117,6 +1117,8 @@ pub struct Warm {
     start_icon: Option<Arc<Canvas>>,
     /// The orb's blooms round `start_icon`, by state and strength.
     blooms: Vec<(State, u8)>,
+    /// Caption button sides to build ([`Style::at_button_side`]).
+    sides: Vec<i32>,
 }
 
 impl Warm {
@@ -1130,6 +1132,9 @@ impl Warm {
         let icon = self.start_icon.as_deref();
         for &(state, strength) in &self.blooms {
             taskbar::orb_bloom(&self.style, self.scale, icon, state, strength);
+        }
+        for &side in &self.sides {
+            self.style.at_button_side(side);
         }
     }
 }
@@ -1260,6 +1265,15 @@ impl Style {
         Some(st)
     }
 
+    /// Whether [`Style::at_button_side`] would build `side` now: a side other than the metrics'
+    /// own, not built yet. Reads no art, so the host may ask on its loop.
+    fn builds_side(&self, side: i32) -> bool {
+        self.button_side.is_some() && side != self.metrics.caption_button_height && {
+            let kept = self.sided.0.lock().unwrap_or_else(|e| e.into_inner());
+            !kept.iter().any(|(k, _)| *k == side)
+        }
+    }
+
     pub fn at_scale(self: &Arc<Style>, n: i32) -> Arc<Style> {
         let Some(build) = self.rescale.as_ref().filter(|_| n > 1) else {
             return self.clone();
@@ -1320,6 +1334,7 @@ impl Style {
             spot,
             start_icon,
             blooms,
+            sides: Vec::new(),
         })
     }
 
@@ -1337,6 +1352,26 @@ impl Style {
             spot: false,
             start_icon: None,
             blooms: Vec::new(),
+            sides: Vec::new(),
+        })
+    }
+
+    /// The caption buttons a first frame at scale `n` would build at `sides`
+    /// ([`crate::frame::caption_button_sides`]): those this style grows and has not built there
+    /// yet. None when there is nothing to build.
+    pub fn warm_button_sides(self: &Arc<Style>, n: i32, sides: &[i32]) -> Option<Warm> {
+        let at_n = self.at_scale(n);
+        let sides: Vec<i32> = (sides.iter().copied())
+            .filter(|&side| at_n.builds_side(side))
+            .collect();
+        (!sides.is_empty()).then_some(Warm {
+            style: at_n,
+            scale: n,
+            parts: Vec::new(),
+            spot: false,
+            start_icon: None,
+            blooms: Vec::new(),
+            sides,
         })
     }
 

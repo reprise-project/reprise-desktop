@@ -585,6 +585,36 @@ mod tests {
     }
 
     #[test]
+    fn a_grown_blue_caption_has_its_buttons_built_ahead_at_each_scale() {
+        use crate::frame::caption_button_sides;
+        use crate::paint::Look;
+        let styled = |pct| {
+            let theme = theme_for(Interface::Blue).with_text_size(pct);
+            let Look::Styled(style) = &theme.look else {
+                panic!("Blue is styled")
+            };
+            (style.clone(), caption_button_sides(&theme.metrics))
+        };
+        let (style, sides) = styled(100);
+        for n in [1, 2] {
+            assert!(
+                style.warm_button_sides(n, &sides).is_none(),
+                "100% draws its own"
+            );
+        }
+        let (style, sides) = styled(150);
+        assert_eq!(sides, [28]);
+        for n in [1, 2] {
+            let warm = (style.warm_button_sides(n, &sides)).expect("28 px buttons to build");
+            std::thread::spawn(move || warm.paint()).join().unwrap();
+            assert!(
+                style.warm_button_sides(n, &sides).is_none(),
+                "scale {n}: a first frame finds them built"
+            );
+        }
+    }
+
+    #[test]
     fn maximized_blue_frame_uses_the_short_caption() {
         let theme = theme_for(Interface::Blue);
         let g = FrameGeometry::layout(&theme.metrics, 300, 200, true, Chrome::WINDOW);

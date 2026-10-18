@@ -468,9 +468,11 @@ impl State {
         let scales = new_draw_scales(&used, scales);
         let icons = &mut self.icons;
         let mut icon = |n| crate::taskbarview::start_icon(&self.config, icons, n);
+        let sides = reprisekit::frame::caption_button_sides(&self.config.theme.metrics);
         let warm: Vec<_> = scales
             .iter()
-            .filter_map(|&n| style.warm(n, icon(n)))
+            .flat_map(|&n| [style.warm(n, icon(n)), style.warm_button_sides(n, &sides)])
+            .flatten()
             .collect();
         if warm.is_empty() {
             return;
@@ -737,8 +739,9 @@ impl State {
         }
     }
 
-    /// Paints, on a job, the popups' art at each draw scale the outputs run at, so the first
-    /// Alt+Tab, preview or Start menu of a session, look or scale finds it painted.
+    /// Paints, on a job, the popups' art and a grown caption's buttons at each draw scale the
+    /// outputs run at, so the first Alt+Tab, preview, Start menu or frame of a session, look, text
+    /// size or scale finds them painted.
     fn warm_popup_parts(&mut self) {
         if self.config.theme.look.style().is_none() {
             return;
@@ -752,8 +755,15 @@ impl State {
         let reprisekit::look::Look::Styled(style) = &self.config.theme.look else {
             return;
         };
+        let sides = reprisekit::frame::caption_button_sides(&self.config.theme.metrics);
         let warm: Vec<_> = (scales.iter())
-            .filter_map(|&n| style.warm_parts(n, &POPUP_PARTS))
+            .flat_map(|&n| {
+                [
+                    style.warm_parts(n, &POPUP_PARTS),
+                    style.warm_button_sides(n, &sides),
+                ]
+            })
+            .flatten()
             .collect();
         if warm.is_empty() {
             return;
