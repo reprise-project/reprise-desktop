@@ -189,22 +189,33 @@ impl State {
     }
 
     /// `spawn_app_activated` for launcher `app`. One that runs `xdg-open <file>` (a Quick Launch
-    /// document shortcut) opens the file in its default program and that program's scope, as the
-    /// file's desktop icon does.
+    /// document shortcut) on a regular file opens it in its default program and that program's
+    /// scope, as the file's desktop icon does. The file is checked on a file job.
     pub fn spawn_launcher_activated(&mut self, argv: &[std::ffi::OsString], app: &str) {
-        if let Some(file) = crate::spawn::xdg_open_file(argv) {
-            let mime = file
-                .file_name()
-                .and_then(|n| self.with_mime(|db| db.mime_of_name(&n.to_string_lossy())));
-            if let Some(default) = mime
-                .as_deref()
-                .and_then(|m| reprisefs::props::default_app_entry(m, &self.app_index))
-            {
-                let open = reprisefs::props::open_file(file, Some(default), &self.config.terminal);
-                return self.spawn_opening_activated(&open);
-            }
+        if crate::spawn::xdg_open_file(argv).is_none() {
+            return self.spawn_app_activated(argv, app);
         }
-        self.spawn_app_activated(argv, app)
+        let (argv, app) = (argv.to_vec(), app.to_string());
+        self.spawn_fs_job(move || {
+            let doc = crate::spawn::xdg_open_document(&argv);
+            Box::new(move |state: &mut State| {
+                if let Some(open) = doc.and_then(|file| state.document_opening(&file)) {
+                    return state.spawn_opening_activated(&open);
+                }
+                state.spawn_app_activated(&argv, &app)
+            })
+        });
+    }
+
+    fn document_opening(&self, file: &std::path::Path) -> Option<reprisefs::props::Opening> {
+        let name = file.file_name()?.to_string_lossy();
+        let mime = self.with_mime(|db| db.mime_of_name(&name))?;
+        let default = reprisefs::props::default_app_entry(&mime, &self.app_index)?;
+        Some(reprisefs::props::open_file(
+            file,
+            Some(default),
+            &self.config.terminal,
+        ))
     }
 }
 
