@@ -248,6 +248,12 @@ pub fn bold(g: Glyph) -> (i32, Mark) {
     (row, Mark { w: 11, h, pieces })
 }
 
+/// How many times its design size a glyph drawn in `rows` rows is, when its design fills `base`:
+/// the nearest whole multiple, so its strokes stay whole design pixels.
+pub fn multiple(rows: i32, base: i32) -> i32 {
+    ((rows + base / 2) / base).max(1)
+}
+
 pub const MAGNIFIER: Mark = Mark {
     w: 13,
     h: 13,

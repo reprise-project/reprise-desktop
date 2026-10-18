@@ -1,13 +1,13 @@
 //! Glass caption buttons on the Rounded frame, drawn from the glass settings: the minimize/maximize/close strip, a dialog's close box, its ? box and a windowed dialog's minimize box.
 
-use super::frame::Under;
+use super::frame::{BAND, Under};
 use super::glyph::{self, Glyph};
 use super::panel::Glass;
 use super::tint::{Recolour, Surface};
 use super::{SWATCHES, Settings};
 use crate::raster::Canvas;
 use crate::shape::{self, Px, Stops, centre, over, pack, rounded, smooth};
-use crate::style::{Layout, PartImage, State};
+use crate::style::{Layout, Part, PartImage, State};
 use crate::theme::Color;
 
 struct Strip {
@@ -54,6 +54,9 @@ const MIN_CLOSE: Strip = Strip {
 
 /// Restored strip rows: it hangs from the caption's light line (row 0); bodies on rows 1 to 16, light line 17, outline 18, halo 19. A maximized strip omits row 0.
 const ROWS: i32 = 20;
+
+/// The body's rows, 1 to 16 ([`BODY_ROWS`]): what a grown strip stretches.
+const BODY: i32 = 16;
 
 const RIGHT: i32 = 6;
 
@@ -403,18 +406,106 @@ impl Paint {
     }
 }
 
+/// A strip laid out `grow` rows taller than its design, each cell as wide as the frame's
+/// [`CaptionGroup::grown`](crate::theme::CaptionGroup::grown) cell: the body's rows and the cells
+/// stretch, the rings round them keep their 1 px, and the glyphs grow by [`Laid::glyph`].
+struct Laid {
+    width: i32,
+    rows: i32,
+    grow: i32,
+    cells: Vec<(i32, i32, Glyph)>,
+    dividers: Vec<i32>,
+    /// Each cell's width over its design width, for the lit spot's reach across.
+    spread: Vec<f64>,
+    /// How many times its design size each glyph is drawn ([`glyph::multiple`]).
+    glyph: i32,
+}
+
+impl Laid {
+    fn of(layout: &Strip, grow: i32) -> Laid {
+        let (base, wide) = (super::CAPTION_GROUP, super::CAPTION_GROUP.grown(grow));
+        let more = |g: Glyph| {
+            let i = match g {
+                Glyph::Minimize | Glyph::Help => 0,
+                Glyph::Maximize | Glyph::Restore => 1,
+                Glyph::Close => 2,
+            };
+            wide.widths[i] - base.widths[i]
+        };
+        let (mut cells, mut spread, mut at) = (Vec::new(), Vec::new(), 0);
+        for &(x0, x1, g) in layout.cells {
+            let d = more(g);
+            cells.push((x0 + at, x1 + at + d, g));
+            spread.push(f64::from(x1 - x0 + d) / f64::from(x1 - x0));
+            at += d;
+        }
+        let dividers = (layout.dividers.iter())
+            .map(|&x| {
+                let before = layout.cells.iter().filter(|c| c.1 < x);
+                x + before.map(|c| more(c.2)).sum::<i32>()
+            })
+            .collect();
+        Laid {
+            width: layout.width + at,
+            rows: ROWS + grow,
+            grow,
+            cells,
+            dividers,
+            spread,
+            glyph: glyph::multiple(BODY + grow, BODY),
+        }
+    }
+
+    /// The design y (restored strip rows, [`centre`]d) `y` is shaded as: the body's rows stretch
+    /// over the grown body, the light line, outline and halo below it keep their rows.
+    fn shade_y(&self, y: f64) -> f64 {
+        let (body, edge) = (f64::from(BODY + self.grow), y + 0.5);
+        if self.grow == 0 || edge < 1.0 {
+            y
+        } else if edge < 1.0 + body {
+            0.5 + (edge - 1.0) * f64::from(BODY) / body
+        } else {
+            y - f64::from(self.grow)
+        }
+    }
+
+    /// The caption band's design row `y` (rows from the window's top) shows under a strip on a
+    /// caption grown as much: the band is drawn [`BAND`] rows tall and stretched row by row.
+    fn band_y(&self, y: f64) -> f64 {
+        if self.grow == 0 {
+            return y;
+        }
+        let row = (y + 0.5).floor() as i32;
+        f64::from(row * BAND / (BAND + self.grow)) + y - f64::from(row)
+    }
+
+    /// The top row of a glyph whose design top is `row` and `h` rows tall: its middle kept where
+    /// the stretched body puts it.
+    fn glyph_row(&self, row: i32, h: i32) -> i32 {
+        if self.grow == 0 {
+            return row;
+        }
+        let mid = f64::from(row) + f64::from(h) / 2.0;
+        let grown = 1.0 + (mid - 1.0) * f64::from(BODY + self.grow) / f64::from(BODY);
+        (grown - f64::from(h * self.glyph) / 2.0).round() as i32
+    }
+}
+
 /// What every strip at `n` pixels per design pixel shares: per-pixel coverage by halo, outline, light line and body, and the glyph's cover, outline and white.
 struct Shape {
     n: i32,
+    laid: Laid,
     cov: Vec<[f64; 4]>,
     glyphs: Vec<[f64; 3]>,
 }
 
 impl Shape {
-    /// Each ring is `n` px wide and the bottom corners follow [`RADIUS`] times `n`, antialiased at the strip's own pixels.
-    fn new(layout: &Strip, n: i32) -> Shape {
+    /// Each ring is `n` px wide and the bottom corners follow [`RADIUS`] (grown with the strip) times `n`, antialiased at the strip's own pixels.
+    fn of(layout: &Strip, grow: i32, n: i32) -> Shape {
+        let laid = Laid::of(layout, grow);
         let k = f64::from(n);
-        let (w, h) = (layout.width * n, ROWS * n);
+        let (w, h) = (laid.width * n, laid.rows * n);
+        let radius = RADIUS + RADIUS * f64::from(grow) / f64::from(ROWS);
         let mut cov = Vec::with_capacity((w * h) as usize);
         for y in 0..h {
             for x in 0..w {
@@ -424,37 +515,48 @@ impl Shape {
                         f64::from(x) - i * k,
                         f64::from(y) + 50.0 * k,
                         f64::from(w) - 2.0 * i * k,
-                        (f64::from(ROWS) - i + 50.0) * k,
-                        (RADIUS - i) * k,
+                        (f64::from(laid.rows) - i + 50.0) * k,
+                        (radius - i) * k,
                     )
                 }));
             }
         }
         let mut glyphs = vec![[0.0_f64; 3]; (w * h) as usize];
         let fill = GLYPH_FILL.map(|(t, v)| (t, level(v)));
-        for &(x0, x1, g) in layout.cells {
+        let m = laid.glyph;
+        for &(x0, x1, g) in &laid.cells {
             let (row, mark) = glyph::bold(g);
-            let (gx, rows) = ((x0 + x1) / 2 - 5, f64::from(mark.h.max(2) - 1));
-            for y in ((row - 1) * n).max(0)..((row + mark.h + 1) * n).min(h) {
-                for x in ((gx - 1) * n).max(0)..((gx + mark.w + 1) * n).min(w) {
+            let row = laid.glyph_row(row, mark.h);
+            let (gx, rows) = (
+                (x0 + x1) / 2 + 1 - 6 * m,
+                f64::from((mark.h * m).max(2) - 1),
+            );
+            let (gw, gh) = (mark.w * m, mark.h * m);
+            for y in ((row - 1) * n).max(0)..((row + gh + 1) * n).min(h) {
+                for x in ((gx - 1) * n).max(0)..((gx + gw + 1) * n).min(w) {
                     let (dx, dy) = (x - gx * n, y - row * n);
-                    let grown = mark.cover(dx, dy, n, 1.0);
+                    let grown = mark.cover(dx, dy, n * m, 1.0 / f64::from(m));
                     if grown == 0.0 {
                         continue;
                     }
                     let t = ((centre(y, n) - f64::from(row)) / rows).clamp(0.0, 1.0);
                     let px = &mut glyphs[(y * w + x) as usize];
-                    px[0] = px[0].max(mark.cover(dx, dy, n, 0.0));
+                    px[0] = px[0].max(mark.cover(dx, dy, n * m, 0.0));
                     px[1] = px[1].max(grown);
                     px[2] = Stops(&fill).at(t).0;
                 }
             }
         }
-        Shape { n, cov, glyphs }
+        Shape {
+            n,
+            laid,
+            cov,
+            glyphs,
+        }
     }
 
     fn glyph(&self, x: i32, y: i32) -> [f64; 3] {
-        let w = self.cov.len() as i32 / (ROWS * self.n);
+        let w = self.laid.width * self.n;
         self.glyphs[(y * w + x) as usize]
     }
 }
@@ -479,13 +581,13 @@ impl Shine {
 fn draw(
     c: &mut Canvas,
     top: i32,
-    layout: &Strip,
     shape: &Shape,
     p: &Paint,
     lit: Option<(usize, Lit)>,
     maximized: bool,
 ) {
-    let (w, n) = (layout.width, shape.n);
+    let (layout, n) = (&shape.laid, shape.n);
+    let w = layout.width;
     let skip = i32::from(maximized);
     let last = layout.cells.len() - 1;
     let cell_of = |x: i32| {
@@ -498,15 +600,16 @@ fn draw(
     let lit_cell = lit.map(|(i, _)| i);
     let glow = lit.map(|(i, how)| (i, layout.cells[i], p.glow(layout.cells[i].2, how)));
     let k = p.k;
-    for y in 0..(ROWS - skip) * n {
+    for y in 0..(layout.rows - skip) * n {
         let yr = y + skip * n;
-        let (r, cy) = (yr / n, centre(yr, n));
+        let (at, cy) = (centre(yr, n), layout.shade_y(centre(yr, n)));
+        let r = (cy + 0.5).floor() as i32;
         let body = |i: usize, r: i32| p.body(layout.cells[i].2, r, cy, lit_cell == Some(i));
         for xn in 0..w * n {
             let (x, cx) = (xn / n, centre(xn, n));
             let band = p.under.at(
                 f64::from(RIGHT + w - 1) - cx,
-                cy + 1.0 - f64::from(skip),
+                layout.band_y(at + 1.0 - f64::from(skip)),
                 maximized,
             );
             let cov = shape.cov[(yr * w * n + xn) as usize];
@@ -556,7 +659,7 @@ fn draw(
                         parts[3].0 = ring;
                         parts[4].0 = if x == x0 || x == x1 { ring } else { lit };
                         let (peak, across, down, row, power) = g.spot;
-                        let dx = (cx - mid) / across;
+                        let dx = (cx - mid) / (across * layout.spread[i]);
                         let dy = (cy - row) / down;
                         let a = peak * (-(dx * dx + dy * dy).powf(power / 2.0)).exp();
                         spot = Some(lay(a, g.spot_colour));
@@ -613,20 +716,19 @@ fn frames(
     layout: &Strip,
     list: &[(State, Option<usize>)],
     maximized: bool,
-    n: i32,
+    (grow, n): (i32, i32),
 ) -> PartImage {
-    frames_of_shape(s, layout, list, maximized, &Shape::new(layout, n))
+    frames_of_shape(s, list, maximized, &Shape::of(layout, grow, n))
 }
 
 fn frames_of_shape(
     s: &Settings,
-    layout: &Strip,
     list: &[(State, Option<usize>)],
     maximized: bool,
     shape: &Shape,
 ) -> PartImage {
-    let n = shape.n;
-    let h = (ROWS - i32::from(maximized)) * n;
+    let (n, layout) = (shape.n, &shape.laid);
+    let h = (layout.rows - i32::from(maximized)) * n;
     let mut c = Canvas::new((layout.width * n) as u32, (h * list.len() as i32) as u32);
     let paints = [
         Paint::new(s, Surface::Active),
@@ -638,7 +740,6 @@ fn frames_of_shape(
         draw(
             &mut c,
             i as i32 * h,
-            layout,
             shape,
             p,
             lit.map(|i| (i, how)),
@@ -665,16 +766,16 @@ const GROUP_FRAMES: [(State, Option<usize>); 11] = [
 
 /// Minimize, maximize and close in one 105x20 strip, in [`GROUP_FRAMES`] order, painted at `n` pixels per design pixel.
 pub fn caption_group(s: &Settings, n: i32) -> PartImage {
-    frames(s, &GROUP, &GROUP_FRAMES, false, n)
+    frames(s, &GROUP, &GROUP_FRAMES, false, (0, n))
 }
 
 /// The group on a maximized window, 105x19 (no row 0).
 pub fn max_caption_group(s: &Settings, n: i32) -> PartImage {
-    frames(s, &MAX_GROUP, &GROUP_FRAMES, true, n)
+    frames(s, &MAX_GROUP, &GROUP_FRAMES, true, (0, n))
 }
 
 pub fn dialog_close(s: &Settings, n: i32) -> PartImage {
-    frames(s, &DIALOG_CLOSE, &CLOSE_FRAMES, false, n)
+    frames(s, &DIALOG_CLOSE, &CLOSE_FRAMES, false, (0, n))
 }
 
 const CLOSE_FRAMES: [(State, Option<usize>); 5] = [
@@ -685,16 +786,14 @@ const CLOSE_FRAMES: [(State, Option<usize>); 5] = [
     (State::InactiveHot, Some(0)),
 ];
 
-pub const HELP_CELL: i32 = 30;
-
 /// A dialog's ? box joined to its close box, 78x20, one frame per box, the ? box's first.
 pub fn help_strip(s: &Settings, n: i32) -> PartImage {
-    frames(s, &HELP, &HELP_FRAMES, false, n)
+    frames(s, &HELP, &HELP_FRAMES, false, (0, n))
 }
 
 /// A windowed dialog's minimize box joined to its close box, 78x20, in [`HELP_FRAMES`] order.
 pub fn min_close(s: &Settings, n: i32) -> PartImage {
-    frames(s, &MIN_CLOSE, &HELP_FRAMES, false, n)
+    frames(s, &MIN_CLOSE, &HELP_FRAMES, false, (0, n))
 }
 
 const HELP_FRAMES: [(State, Option<usize>); 8] = [
@@ -707,6 +806,31 @@ const HELP_FRAMES: [(State, Option<usize>); 8] = [
     (State::InactiveHot, Some(0)),
     (State::InactiveHot, Some(1)),
 ];
+
+/// The strips and boxes for a caption whose restored strip is `side` rows tall, painted at `n`:
+/// each laid out as the frame's [`CaptionGroup::grown`](crate::theme::CaptionGroup::grown).
+pub fn sided(s: &Settings, n: i32, side: i32) -> Vec<(Part, PartImage)> {
+    let at = (side - ROWS, n);
+    vec![
+        (
+            Part::CaptionGroup,
+            frames(s, &GROUP, &GROUP_FRAMES, false, at),
+        ),
+        (
+            Part::MaxCaptionGroup,
+            frames(s, &MAX_GROUP, &GROUP_FRAMES, true, at),
+        ),
+        (
+            Part::CloseButton,
+            frames(s, &DIALOG_CLOSE, &CLOSE_FRAMES, false, at),
+        ),
+        (Part::HelpButton, frames(s, &HELP, &HELP_FRAMES, false, at)),
+        (
+            Part::MinCloseGroup,
+            frames(s, &MIN_CLOSE, &HELP_FRAMES, false, at),
+        ),
+    ]
+}
 
 #[cfg(test)]
 mod tests {
@@ -1349,16 +1473,16 @@ mod tests {
                 (across, down)
             };
             let bare = |n: i32| {
-                let mut shape = Shape::new(layout, n);
+                let mut shape = Shape::of(layout, 0, n);
                 shape.glyphs.fill([0.0; 3]);
-                frames_of_shape(&s, layout, list, maximized, &shape)
+                frames_of_shape(&s, list, maximized, &shape)
             };
             let (bare1, bare2) = (bare(1), bare(2));
             let (_, full2) = (
-                frames(&s, layout, list, maximized, 1),
-                frames(&s, layout, list, maximized, 2),
+                frames(&s, layout, list, maximized, (0, 1)),
+                frames(&s, layout, list, maximized, (0, 2)),
             );
-            let shape = Shape::new(layout, 2);
+            let shape = Shape::of(layout, 0, 2);
             let h = ROWS - skip;
             for (i, &(st, lit)) in list.iter().enumerate() {
                 let (top1, top2) = (i as i32 * h, 2 * i as i32 * h);
@@ -1720,13 +1844,187 @@ mod tests {
         let mut c = Canvas::new(g.total.0 as u32, g.total.1 as u32);
         crate::look::draw_dialog_frame(&mut c, &two, &text, &g, &st, Some(Interaction::Hot));
         for y in 0..40 {
-            for x in 0..2 * HELP_CELL {
+            for x in 0..2 * super::super::CAPTION_GROUP.widths[0] {
                 assert_eq!(
                     c.get(help.x + x, help.y + y),
                     want.get(x, y),
                     "({x}, {y}) is the lit ? cell's at 2"
                 );
             }
+        }
+    }
+
+    /// A Glass style for `frame` at scale `n`, its buttons built for a strip grown by `grow` rows.
+    fn grown_style(
+        frame: crate::glass::Frame,
+        n: i32,
+        grow: i32,
+    ) -> std::sync::Arc<crate::style::Style> {
+        let st = crate::glass::style(&Settings {
+            frame,
+            ..Settings::default()
+        })
+        .at_scale(n);
+        let side = st.metrics.caption_group.unwrap().restored.height + grow;
+        st.at_button_side(side).expect("a grown side builds")
+    }
+
+    const FRAMES: [crate::glass::Frame; 2] =
+        [crate::glass::Frame::Rounded, crate::glass::Frame::Square];
+
+    /// Rows a strip grows by at 150% and 200% text size.
+    const GROWN: [i32; 2] = [7, 13];
+
+    const GROWN_PARTS: [Part; 5] = [
+        Part::CaptionGroup,
+        Part::MaxCaptionGroup,
+        Part::CloseButton,
+        Part::HelpButton,
+        Part::MinCloseGroup,
+    ];
+
+    #[test]
+    fn grown_strips_are_as_big_as_the_frame_lays_them_out() {
+        for frame in FRAMES {
+            let base = crate::glass::style(&Settings {
+                frame,
+                ..Settings::default()
+            });
+            let g = base.metrics.caption_group.unwrap();
+            for grow in GROWN {
+                let want = g.grown(grow);
+                let [min, max, close] = want.widths;
+                let (strip, _) = want.layout(400, false);
+                for n in [1, 2] {
+                    let st = grown_style(frame, n, grow);
+                    let size = |part| {
+                        let p = st.part(part).unwrap();
+                        let f = p.frame(State::Normal);
+                        (f.width / p.scale, f.height / p.scale)
+                    };
+                    let what = format!("{frame:?} +{grow} at {n}");
+                    let tall = want.restored.height;
+                    assert_eq!(size(Part::CaptionGroup), (strip.width, tall), "{what}");
+                    assert_eq!(
+                        size(Part::MaxCaptionGroup),
+                        (strip.width, want.maximized.height),
+                        "{what}"
+                    );
+                    assert_eq!(size(Part::CloseButton), (close, tall), "{what}");
+                    let joined = min + close - want.divider;
+                    let help = if st.joined_help { joined } else { min };
+                    assert_eq!(size(Part::HelpButton), (help, tall), "{what}");
+                    assert_eq!(size(Part::MinCloseGroup), (joined, tall), "{what}");
+                    assert_eq!(strip.width, min + max + close - 2 * want.divider);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn grown_strips_pin_at_scale_1_and_2() {
+        let mut got = Vec::new();
+        for frame in FRAMES {
+            for grow in GROWN {
+                for n in [1, 2] {
+                    let st = grown_style(frame, n, grow);
+                    for part in GROWN_PARTS {
+                        let key = format!("{frame:?} {part:?} +{grow} {n}");
+                        got.push((key, fnv(st.part(part).unwrap())));
+                    }
+                }
+            }
+        }
+        crate::pins::check("glass/caption_buttons_grown", &got);
+    }
+
+    #[test]
+    fn a_grown_strip_draws_each_state_apart() {
+        for frame in FRAMES {
+            for grow in GROWN {
+                let st = grown_style(frame, 1, grow);
+                let img = st.part(Part::CaptionGroup).unwrap();
+                let frames: Vec<Vec<u32>> = GROUP_FRAMES
+                    .iter()
+                    .enumerate()
+                    .map(|(i, &(st, _))| {
+                        let nth = GROUP_FRAMES[..i].iter().filter(|f| f.0 == st).count();
+                        let f = img.frame_nth(st, nth);
+                        (f.y..f.bottom())
+                            .flat_map(|y| (f.x..f.right()).map(move |x| (x, y)))
+                            .map(|(x, y)| img.atlas.get(x, y))
+                            .collect()
+                    })
+                    .collect();
+                for i in 0..frames.len() {
+                    for j in 0..i {
+                        assert_ne!(
+                            frames[i], frames[j],
+                            "{frame:?} +{grow}: frames {j} and {i}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    /// The bounding box of `img`'s white glyph pixels in its Normal frame's columns `x0..x1`.
+    fn glyph_box(img: &PartImage, x0: i32, x1: i32) -> (i32, i32) {
+        let f = img.frame(State::Normal);
+        let white = |x: i32, y: i32| {
+            let p = img.atlas.get(f.x + x, f.y + y);
+            p >> 24 == 0xFF
+                && (p & 0xFF) >= 0xD0
+                && ((p >> 8) & 0xFF) >= 0xD0
+                && ((p >> 16) & 0xFF) >= 0xD0
+        };
+        let pts: Vec<(i32, i32)> = (0..f.height)
+            .flat_map(|y| (x0..x1).map(move |x| (x, y)))
+            .filter(|&(x, y)| white(x, y))
+            .collect();
+        let span = |v: Vec<i32>| v.iter().max().unwrap() - v.iter().min().unwrap() + 1;
+        (
+            span(pts.iter().map(|p| p.0).collect()),
+            span(pts.iter().map(|p| p.1).collect()),
+        )
+    }
+
+    #[test]
+    fn a_grown_glyph_is_a_whole_multiple_of_its_design() {
+        let s = Settings::default();
+        let base = caption_group(&s, 1);
+        let mins = |img: &PartImage, laid: &Laid| glyph_box(img, laid.cells[0].0, laid.cells[0].1);
+        let at = mins(&base, &Laid::of(&GROUP, 0));
+        for (grow, k) in [(7, 1), (13, 2)] {
+            let img = frames(&s, &GROUP, &GROUP_FRAMES, false, (grow, 1));
+            assert_eq!(Laid::of(&GROUP, grow).glyph, k);
+            assert_eq!(
+                mins(&img, &Laid::of(&GROUP, grow)),
+                (at.0 * k, at.1 * k),
+                "+{grow}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_grown_strip_is_drawn_afresh_at_scale_2() {
+        let s = Settings::default();
+        for grow in GROWN {
+            let img = frames(&s, &GROUP, &GROUP_FRAMES, false, (grow, 2));
+            let f = img.frame(State::Normal);
+            let (w, h) = (f.width, f.height);
+            let corner = |x0: i32| {
+                (h - 2 * CORNER2..h).step_by(2).any(|y| {
+                    (x0..x0 + 2 * CORNER2).step_by(2).any(|x| {
+                        let px = |dx, dy| img.atlas.get(f.x + x + dx, f.y + y + dy);
+                        px(0, 0) != px(1, 0) || px(0, 0) != px(0, 1) || px(0, 0) != px(1, 1)
+                    })
+                })
+            };
+            assert!(
+                corner(0) && corner(w - 2 * CORNER2),
+                "+{grow}: smooth corners at 2"
+            );
         }
     }
 }
