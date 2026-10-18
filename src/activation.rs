@@ -141,8 +141,8 @@ impl State {
     }
 
     /// The Run dialog's line: one that names a folder opens it in Explorer, anything else runs
-    /// as [`State::spawn_command_activated`]. The folder is checked on a file job, so one on a
-    /// mount that does not answer never stalls the loop.
+    /// as [`State::spawn_command_activated`]. The folder is checked off the loop on a
+    /// [`State::spawn_job`], so a mount that does not answer stalls neither the loop nor the launch.
     pub fn run_line_activated(&mut self, cmd: &str) {
         let home = std::env::var_os("HOME").map(std::path::PathBuf::from);
         let Some(dir) = crate::spawn::command_folder(cmd, home.as_deref()) else {
@@ -150,7 +150,7 @@ impl State {
             return;
         };
         let cmd = cmd.to_string();
-        self.spawn_fs_job(move || {
+        self.spawn_job(move || {
             let is_dir = dir.is_dir();
             Box::new(move |state: &mut State| {
                 if is_dir {
@@ -190,13 +190,14 @@ impl State {
 
     /// `spawn_app_activated` for launcher `app`. One that runs `xdg-open <file>` (a Quick Launch
     /// document shortcut) on a regular file opens it in its default program and that program's
-    /// scope, as the file's desktop icon does. The file is checked on a file job.
+    /// scope, as the file's desktop icon does. The file is checked off the loop on a
+    /// [`State::spawn_job`].
     pub fn spawn_launcher_activated(&mut self, argv: &[std::ffi::OsString], app: &str) {
         if crate::spawn::xdg_open_file(argv).is_none() {
             return self.spawn_app_activated(argv, app);
         }
         let (argv, app) = (argv.to_vec(), app.to_string());
-        self.spawn_fs_job(move || {
+        self.spawn_job(move || {
             let doc = crate::spawn::xdg_open_document(&argv);
             Box::new(move |state: &mut State| {
                 if let Some(open) = doc.and_then(|file| state.document_opening(&file)) {

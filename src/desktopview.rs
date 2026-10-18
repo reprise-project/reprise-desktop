@@ -1784,7 +1784,7 @@ impl State {
         let env = self.env.clone();
         let path = path.to_path_buf();
         let (terminal, end) = (self.config.terminal.clone(), self.config.script_terminal);
-        self.spawn_fs_job(move || {
+        self.spawn_job(move || {
             let name = path.file_name().unwrap_or_default().to_string_lossy();
             let started = reprisefs::program::run_argv(&path, &terminal, end).and_then(|argv| {
                 crate::spawn::try_spawn_held(&argv, &name, path.parent(), &env, Some(&launch))
