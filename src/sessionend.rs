@@ -109,7 +109,7 @@ fn check(state: &mut State, goal: Goal, cmd: Option<String>, critical: bool) {
         start(state, goal, cmd, critical);
         return;
     };
-    state.spawn_fs_job(move || {
+    state.spawn_job(move || {
         let refused = zbus::block_on(can(verb));
         Box::new(move |state: &mut State| match refused {
             None => start(state, goal, cmd, critical),
@@ -289,7 +289,7 @@ fn act(state: &mut State, goal: Goal, cmd: Option<String>, override_inhibitors: 
     };
     log::info!("session end: {goal:?} runs {cmd:?}");
     let env = state.env.clone();
-    state.spawn_fs_job(move || {
+    state.spawn_job(move || {
         let failed = match logind_verb(&cmd) {
             Some(verb) => zbus::block_on(call(verb, override_inhibitors)),
             None => run(&cmd, &env),
