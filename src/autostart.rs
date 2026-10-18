@@ -40,7 +40,7 @@ pub fn start(state: &mut State, session_begun: std::thread::JoinHandle<()>) {
     let desktops = reprisefs::autostart::desktop_names(Some(&state.env.desktop));
     let terminal = state.config.terminal.clone();
     let env = state.env.clone();
-    state.spawn_fs_job(move || {
+    state.spawn_job(move || {
         let _ = session_begun.join();
         let run = find(&desktops);
         launch(&run, &terminal, &env);
