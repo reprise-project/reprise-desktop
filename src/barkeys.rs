@@ -75,6 +75,13 @@ impl State {
         self.redraw_taskbar(tree);
     }
 
+    /// The window a window bind (maximize, snap) acts on: the focused one, or while the taskbar
+    /// has the keyboard the one it took the keyboard from.
+    pub fn bind_window(&self) -> Option<WindowId> {
+        bind_window(self.focused, self.bar_shared.keys.map(|k| k.back))
+            .filter(|&w| self.win(w).is_some_and(|x| x.mapped && !x.minimized))
+    }
+
     pub fn bar_focus(&self, bar: &crate::taskbarview::Bar) -> Option<TaskbarHit> {
         let k = self.bar_shared.keys.filter(|k| k.bar == bar.tree)?;
         taskbarfocus::fit(&taskbarfocus::items(&bar.layout), k.at)
@@ -190,6 +197,13 @@ fn returns_to(back: Back, windows: &[WindowId]) -> Option<WindowId> {
     }
 }
 
+fn bind_window(focused: Option<WindowId>, back: Option<Back>) -> Option<WindowId> {
+    match (focused, back) {
+        (Some(w), _) | (None, Some(Back::Window(w))) => Some(w),
+        _ => None,
+    }
+}
+
 /// Whether Enter (`BTN_LEFT`) on item `at` opens or shuts the tray run in
 /// place (`trayreveal::toggle`) rather than clicking the item's middle:
 /// on the arrow of a look that has one (`arrow_look`). A click would land
@@ -214,6 +228,17 @@ mod tests {
             "the Menu key clicks"
         );
         assert!(!enter_toggles_run(true, TaskbarHit::Clock, BTN_LEFT));
+    }
+
+    #[test]
+    fn window_binds_act_on_the_window_the_bar_took_the_keyboard_from() {
+        let (w, other) = (WindowId::next(), WindowId::next());
+        assert_eq!(bind_window(Some(w), None), Some(w));
+        assert_eq!(bind_window(None, Some(Back::Window(w))), Some(w));
+        assert_eq!(bind_window(Some(other), Some(Back::Window(w))), Some(other));
+        assert_eq!(bind_window(None, Some(Back::Dialog(1))), None);
+        assert_eq!(bind_window(None, Some(Back::Nobody)), None);
+        assert_eq!(bind_window(None, None), None);
     }
 
     #[test]

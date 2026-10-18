@@ -1175,13 +1175,13 @@ impl State {
         self.wm.snap.outputs_gone(&live);
     }
 
-    /// Super and an arrow: the focused window steps across the active layout, on to the next
-    /// output, then maximized or back to its pre-snap size.
+    /// Super and an arrow: the bind window (`bind_window`) steps across the active layout, on to
+    /// the next output, then maximized or back to its pre-snap size.
     pub fn key_snap(&mut self, dir: Dir) {
         if self.snap_assist_open() {
             self.close_overview();
         }
-        let Some(w) = self.focused else {
+        let Some(w) = self.bind_window() else {
             return;
         };
         let Some(win) = self.win(w) else {
