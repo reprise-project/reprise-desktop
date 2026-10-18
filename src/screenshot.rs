@@ -10,8 +10,8 @@
 //! is the window's client tree rendered alone, so a window partly covered
 //! or off screen comes out whole. Encoding and writing the file run off
 //! the loop (`fsjobs`); the PNG is offered as `image/png` on the seat's
-//! selection (`State::clip_offer`) when they are done, and a balloon says
-//! where the file went.
+//! selection (`State::clip_offer`) once encoded, and a balloon says where
+//! the file went once written.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -154,42 +154,50 @@ impl State {
         self.deliver(move || still);
     }
 
-    /// Encode `picture` and, with `[screenshot] save` on, write it to a
-    /// new file, both off the loop; then offer the PNG as the clipboard.
+    /// Encode `picture` off the loop and offer the PNG as the clipboard; with `[screenshot] save`
+    /// on, then write it to a new file on a file job.
     fn deliver(&mut self, picture: impl FnOnce() -> Canvas + Send + 'static) {
         let save = self.config.screenshot.save;
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map_or(0, |d| d.as_secs() as i64);
-        self.spawn_fs_job(move || -> crate::fsjobs::OnLoop {
-            let png = crate::raster::to_png(&picture());
-            let saved = save.then(|| write_file(&png, now));
+        self.spawn_job(move || -> crate::fsjobs::OnLoop {
+            let png: Arc<[u8]> = Arc::from(crate::raster::to_png(&picture()));
             Box::new(move |state| {
-                state.clip_offer(&["image/png"], Arc::from(png));
-                match saved {
-                    None => {}
-                    Some(Ok(path)) => {
-                        log::info!("screenshot saved to {}", path.display());
-                        let name = path.file_name().unwrap_or_default().to_string_lossy();
-                        let dir = path.parent().unwrap_or(std::path::Path::new("/"));
-                        crate::notifyview::notice_opening(
-                            state,
-                            "Screenshot saved",
-                            &format!("{name}\nClick here to open the Screenshots folder."),
-                            vec!["reprise-explorer".into(), dir.as_os_str().to_owned()],
-                        );
-                    }
-                    Some(Err(e)) => {
-                        log::warn!("screenshot not saved: {e}");
-                        crate::notifyview::notice(
-                            state,
-                            "Screenshot not saved",
-                            &format!("{e}\nThe picture is on the clipboard."),
-                        );
-                    }
+                state.clip_offer(&["image/png"], Arc::clone(&png));
+                if save {
+                    state.spawn_fs_job(move || {
+                        let saved = write_file(&png, now);
+                        Box::new(move |state| saved_notice(state, saved))
+                    });
                 }
             })
         });
+    }
+}
+
+/// Tells how the screenshot's save went.
+fn saved_notice(state: &mut State, saved: Result<PathBuf, String>) {
+    match saved {
+        Ok(path) => {
+            log::info!("screenshot saved to {}", path.display());
+            let name = path.file_name().unwrap_or_default().to_string_lossy();
+            let dir = path.parent().unwrap_or(std::path::Path::new("/"));
+            crate::notifyview::notice_opening(
+                state,
+                "Screenshot saved",
+                &format!("{name}\nClick here to open the Screenshots folder."),
+                vec!["reprise-explorer".into(), dir.as_os_str().to_owned()],
+            );
+        }
+        Err(e) => {
+            log::warn!("screenshot not saved: {e}");
+            crate::notifyview::notice(
+                state,
+                "Screenshot not saved",
+                &format!("{e}\nThe picture is on the clipboard."),
+            );
+        }
     }
 }
 
