@@ -567,7 +567,7 @@ fn focus_dialog(state: &mut State, index: usize, at: (f64, f64)) {
 }
 
 /// Scroll the list at `r.at` so its row `r.row` shows, for a reader's ScrollIntoView or Focus on a
-/// row out of view: a dialog's list, or the clipboard history's.
+/// row out of view: a dialog's list, the clipboard history's or the emoji picker's.
 fn reveal(state: &mut State, surface: Surface, r: Reveal) {
     let hit = state.scene_hit(Point::from(r.at));
     if !lands_on(state, surface, &hit) {
@@ -590,6 +590,11 @@ fn reveal(state: &mut State, surface: Surface, r: Reveal) {
             if (state.panels.clipview.as_mut()).is_some_and(|v| v.model.reveal(r.row)) =>
         {
             state.redraw_clipview();
+        }
+        Hit::EmojiView { .. }
+            if (state.panels.emojiview.as_mut()).is_some_and(|v| v.model.reveal(r.row)) =>
+        {
+            state.redraw_emoji();
         }
         _ => {}
     }
