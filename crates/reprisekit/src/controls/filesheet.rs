@@ -771,7 +771,13 @@ pub fn shortcut_page(facts: &ShortcutFacts, icon: Option<Canvas>) -> Form {
     let [target, start, comment] = &facts.fields;
     let mut form = Form::new(vec![
         Item::picture("icon", SC_ICON, icon),
-        Item::label_at("sc_name", SC_NAME.0, SC_NAME.1, value_w, &facts.name),
+        Item::label_at(
+            "sc_name",
+            SC_NAME.0,
+            SC_NAME.1,
+            value_w,
+            &escape_mnemonic(&facts.name),
+        ),
         sep("sc_sep0", SC_SEPS[0]),
         Item::label_at("sc_type_l", LABEL_X, SC_ROWS[0], label_w, "Target type:"),
         Item::label_at(
@@ -779,7 +785,7 @@ pub fn shortcut_page(facts: &ShortcutFacts, icon: Option<Canvas>) -> Form {
             SC_VALUE_X,
             SC_ROWS[0],
             value_w,
-            &facts.target_type,
+            &escape_mnemonic(&facts.target_type),
         ),
         Item::label_at(
             "sc_where_l",
@@ -793,7 +799,7 @@ pub fn shortcut_page(facts: &ShortcutFacts, icon: Option<Canvas>) -> Form {
             SC_VALUE_X,
             SC_ROWS[1],
             value_w,
-            &facts.target_location,
+            &escape_mnemonic(&facts.target_location),
         ),
         label("sc_target_l", 0, "&Target:"),
         edit(SHORTCUT_IDS[0], 0, target, true, true),
@@ -878,7 +884,7 @@ pub fn web_page(facts: &WebFacts, icon: Option<Canvas>) -> Form {
             WD_NAME.0,
             WD_NAME.1,
             SEP_RIGHT - WD_NAME.0,
-            &facts.name,
+            &escape_mnemonic(&facts.name),
         ),
         sep("wd_sep0", WD_SEPS[0]),
         label("wd_url_l", 0, "&URL:"),
@@ -1922,6 +1928,34 @@ mod tests {
         for (label, want) in [
             (label_of(&page, "v_loc"), "/srv/R&D"),
             (label_of(&bin, NAME), "R&D notes.txt"),
+        ] {
+            assert_eq!(crate::text::split_mnemonic(label), (want.to_string(), None));
+        }
+    }
+
+    #[test]
+    fn an_ampersand_on_a_shortcut_or_web_page_shows_and_is_no_access_key() {
+        let link = shortcut_page(
+            &ShortcutFacts {
+                name: "R&D".into(),
+                target_type: "Q&A Document".into(),
+                target_location: "Q&A".into(),
+                ..shortcut_facts()
+            },
+            None,
+        );
+        let web = web_page(
+            &WebFacts {
+                name: "R&D Wiki".into(),
+                url: "http://www.example.com/".into(),
+            },
+            None,
+        );
+        for (label, want) in [
+            (label_of(&link, "sc_name"), "R&D"),
+            (label_of(&link, "sc_type"), "Q&A Document"),
+            (label_of(&link, "sc_where"), "Q&A"),
+            (label_of(&web, "wd_name"), "R&D Wiki"),
         ] {
             assert_eq!(crate::text::split_mnemonic(label), (want.to_string(), None));
         }
