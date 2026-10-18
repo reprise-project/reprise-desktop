@@ -6,6 +6,7 @@
 use reprisekit::controls::menubar;
 use reprisekit::controls::mixer::{self, Mixer};
 use reprisekit::controls::statusbar;
+use reprisekit::frame::Chrome;
 use reprisekit::theme::Theme;
 
 /// The status line's height: the look's status bar.
@@ -26,10 +27,26 @@ pub fn body(m: &Mixer, theme: &Theme, room: Option<i32>) -> (i32, i32) {
     }
 }
 
-pub fn window(m: &Mixer, theme: &Theme, room: Option<i32>) -> (i32, i32) {
+/// The client size for `m` under `theme`: the body, at least as wide as the caption needs to show
+/// `title` whole (no wider than `room` allows), over the menu bar and the status line.
+pub fn window(m: &Mixer, theme: &Theme, room: Option<i32>, title: &str) -> (i32, i32) {
     let (w, h) = body(m, theme, room);
-    (w, menubar::bar_h(&theme.controls()) + h + status_h(theme))
+    let caption = reprisekit::look::caption_fit(theme, title, CHROME);
+    let caption = match room {
+        Some(room) => caption.min(room - 2 * theme.metrics.dialog_frame_width),
+        None => caption,
+    };
+    (
+        w.max(caption),
+        menubar::bar_h(&theme.controls()) + h + status_h(theme),
+    )
 }
+
+/// The frame the compositor gives a fixed-size main window.
+const CHROME: Chrome = Chrome {
+    resizable: false,
+    ..Chrome::WINDOW
+};
 
 #[cfg(test)]
 mod tests {
@@ -58,8 +75,14 @@ mod tests {
             line("c", Check::Mute),
         ];
         let m = Mixer::new(&lines, false);
-        assert_eq!(window(&m, &theme, None), (450, 20 + 225 + 21));
-        assert_eq!(window(&Mixer::new(&lines, true), &theme, None).1, 293);
+        assert_eq!(
+            window(&m, &theme, None, "Volume Control"),
+            (450, 20 + 225 + 21)
+        );
+        assert_eq!(
+            window(&Mixer::new(&lines, true), &theme, None, "Volume Control").1,
+            293
+        );
     }
 
     /// At 200% the menu bar, the mixer and the status line all grow with the text.
@@ -74,7 +97,32 @@ mod tests {
         assert_eq!((w, h), (2 * 135 + 5 + 2 * 100, 2 * 225));
         let bars = menubar::bar_h(&theme.controls()) + status_h(&theme);
         assert_eq!(bars, 40 + 43);
-        assert_eq!(window(&m, &theme, None), (w, h + bars));
+        assert_eq!(window(&m, &theme, None, "Volume Control"), (w, h + bars));
+    }
+
+    #[test]
+    fn one_column_is_widened_to_show_the_title_whole_in_every_look_and_size() {
+        use reprisekit::interface::Interface;
+        let m = Mixer::new(&[line("out", Check::MuteAll)], false);
+        for i in [Interface::Classic, Interface::Blue, Interface::Glass] {
+            for pct in [100, 150, 200] {
+                let theme = reprisekit::interfaces::theme_for(i).with_text_size(pct);
+                let fit = reprisekit::look::caption_fit(&theme, "Volume Control", CHROME);
+                let (w, _) = window(&m, &theme, None, "Volume Control");
+                assert_eq!(w, fit.max(m.size(theme.text).0), "{i:?} {pct}%");
+                assert!(
+                    w >= fit,
+                    "{i:?} {pct}%: {w} is short of the caption's {fit}"
+                );
+            }
+        }
+        let theme = reprisekit::interfaces::theme_for(Interface::Blue).with_text_size(200);
+        let frame = 2 * theme.metrics.dialog_frame_width;
+        assert_eq!(
+            window(&m, &theme, Some(320), "Volume Control").0,
+            320 - frame,
+            "no wider than the output"
+        );
     }
 
     #[test]

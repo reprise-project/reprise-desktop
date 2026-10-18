@@ -142,7 +142,7 @@ impl Volume {
         let lines = view::lines(&snapshot, &opts, &Recent::default());
         let (refused_tx, refused) = mpsc::channel();
         let mixer = Mixer::new(&lines, opts.advanced);
-        let main_size = fit::window(&mixer, &Theme::default(), None);
+        let main_size = fit::window(&mixer, &Theme::default(), None, view.title());
         Volume {
             mixer,
             bar: Bar::new(menus(opts.advanced)),
@@ -181,7 +181,7 @@ impl Volume {
     }
 
     fn refit(&mut self, theme: &Theme) -> Option<(i32, i32)> {
-        let want = fit::window(&self.mixer, theme, self.room);
+        let want = fit::window(&self.mixer, theme, self.room, self.opts.view.title());
         (want != self.main_size).then(|| {
             self.main_size = want;
             want
@@ -1008,17 +1008,27 @@ mod tests {
     #[test]
     fn the_window_opens_to_fit_its_columns() {
         let v = Volume::new(View::Playback, Snapshot::default(), State::default());
-        assert_eq!(v.initial_size(), (mixer::DEVICE_W, 20 + 225 + 21));
+        let title = fit::window(&v.mixer, &Theme::default(), None, "Volume Control").0;
+        assert!(
+            title > mixer::DEVICE_W,
+            "one column is narrower than the title"
+        );
+        assert_eq!(v.initial_size(), (title, 20 + 225 + 21));
         assert!(v.fixed());
         let rec = Snapshot {
             sources: vec![device(50, "mic")],
             ..Snapshot::default()
         };
         let v = Volume::new(View::Recording, rec, State::default());
-        assert_eq!(
-            v.initial_size().0,
-            mixer::MIN_W,
-            "one column keeps the least width"
+        let fit = reprisekit::look::caption_fit(
+            &Theme::default(),
+            "Recording Control",
+            reprisekit::frame::Chrome {
+                resizable: false,
+                ..reprisekit::frame::Chrome::WINDOW
+            },
         );
+        assert!(fit > mixer::MIN_W);
+        assert_eq!(v.initial_size().0, fit, "one column widens to the title");
     }
 }
