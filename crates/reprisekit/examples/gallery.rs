@@ -8,6 +8,8 @@
 //! only a message box, a property sheet, window controls, panes and the shell
 //! view's icon modes in each look at that text size, About's system view and the caption tabs.
 
+#[path = "gallery_doctabs/mod.rs"]
+mod gallery_doctabs;
 #[path = "gallery_p3/mod.rs"]
 mod gallery_p3;
 #[path = "gallery_parts/mod.rs"]
@@ -79,12 +81,20 @@ fn main() {
         );
         write_volume_popups(true, n.max(1));
         write_preview(
+            &gallery_doctabs::render(n.max(1)),
+            &format!("reprisekit-gallery-doc-tabs@{}.png", n.max(1)),
+        );
+        write_preview(
             &render_copy_progress(true, n.max(1)),
             &format!("reprisekit-gallery-copy-progress@{}.png", n.max(1)),
         );
         write_preview(
             &render_task_progress(n.max(1)),
             &format!("reprisekit-gallery-task-progress@{}.png", n.max(1)),
+        );
+        write_preview(
+            &render_termgrid(n.max(1)),
+            &format!("reprisekit-gallery-termgrid@{}.png", n.max(1)),
         );
         write_preview(
             &render_windowed_dialog(n.max(1)),
@@ -166,6 +176,7 @@ fn main() {
         write_preview(&render(&theme, with_blue), &out);
     }
     write_preview(&render_file_dialog(), "reprisekit-gallery-file-dialog.png");
+    write_preview(&render_termgrid(1), "reprisekit-gallery-termgrid.png");
     write_preview(
         &render_about_system(with_blue, 100),
         "reprisekit-gallery-about-system.png",
@@ -195,6 +206,10 @@ fn main() {
         "reprisekit-gallery-stats-panel.png",
     );
     write_volume_popups(with_blue, 1);
+    write_preview(
+        &gallery_doctabs::render(1),
+        "reprisekit-gallery-doc-tabs@1.png",
+    );
     if with_blue {
         write_preview(
             &render_tray_arrow_schemes(1),
@@ -1242,6 +1257,117 @@ fn render_show_desktop() -> Canvas {
         }
         y += layout.height + 8;
     }
+    c
+}
+
+/// A terminal screen: a prompt, the 16 colours, attributes, box frames, blocks and wide chars.
+fn render_termgrid(scale: i32) -> Canvas {
+    use reprisekit::controls::termgrid::{self, CursorShape, Flags, Snapshot};
+    let text = TextRenderer::load(&FontConfig {
+        family: vec![
+            "Lucida Console".into(),
+            "Liberation Mono".into(),
+            "DejaVu Sans Mono".into(),
+        ],
+        size_px: 13,
+        antialias: true,
+        ..FontConfig::default()
+    });
+    let m = termgrid::metrics(&text, 13, scale);
+    let (cols, rows) = (44, 12);
+    let fg = Color::rgb(0xC0, 0xC0, 0xC0);
+    let mut snap = Snapshot::new(cols, rows, fg, Color::rgb(0, 0, 0));
+    let ansi: [u32; 16] = [
+        0x000000, 0xCD3131, 0x0DBC79, 0xE5E510, 0x2472C8, 0xBC3FBC, 0x11A8CD, 0xE5E5E5, 0x666666,
+        0xF14C4C, 0x23D18B, 0xF5F543, 0x3B8EEA, 0xD670D6, 0x29B8DB, 0xFFFFFF,
+    ];
+    for (i, v) in ansi.into_iter().enumerate() {
+        let bg = Color::rgb((v >> 16) as u8, (v >> 8) as u8, v as u8);
+        snap.cells[cols + 2 * i].bg = bg;
+        snap.cells[cols + 2 * i + 1].bg = bg;
+    }
+    let mut put = |row: usize, col: usize, s: &str, fg: Color, flags: Flags| {
+        let mut c = col;
+        for ch in s.chars() {
+            let wide = flags.contains(Flags::WIDE);
+            let cell = &mut snap.cells[row * cols + c];
+            (cell.ch, cell.fg, cell.flags) = (ch, fg, flags);
+            if wide {
+                let spacer = &mut snap.cells[row * cols + c + 1];
+                spacer.flags = Flags::WIDE_SPACER;
+                c += 1;
+            }
+            c += 1;
+        }
+    };
+    let green = Color::rgb(0x4E, 0xC0, 0x4E);
+    let blue = Color::rgb(0x60, 0x90, 0xF0);
+    put(0, 0, "user@reprise", green, Flags::BOLD);
+    put(0, 12, ":", fg, Flags::default());
+    put(0, 13, "~/src", blue, Flags::BOLD);
+    put(0, 18, "$ ls --color", fg, Flags::default());
+    for (col, (word, flags)) in [
+        ("bold", Flags::BOLD),
+        ("italic", Flags::ITALIC),
+        ("under", Flags::UNDERLINE),
+        ("strike", Flags::STRIKE),
+        ("dim", Flags::DIM),
+        ("inverse", Flags::INVERSE),
+    ]
+    .into_iter()
+    .scan(0, |col, w| {
+        let at = *col;
+        *col += w.0.len() + 1;
+        Some((at, w))
+    }) {
+        put(2, col, word, fg, flags);
+    }
+    put(3, 0, "selected", fg, Flags::SELECTED);
+    put(3, 9, "match", fg, Flags::MATCH);
+    put(3, 15, "current", fg, Flags::MATCH | Flags::MATCH_CURRENT);
+    put(
+        4,
+        0,
+        "┌──────┬───┐ ╔══════╦═══╗ ╭────╮",
+        fg,
+        Flags::default(),
+    );
+    put(
+        5,
+        0,
+        "│ box  │ ├─┤ ║ dbl  ║ ╬ ║ │ ▲▼ │",
+        fg,
+        Flags::default(),
+    );
+    put(
+        6,
+        0,
+        "├──────┼───┤ ╠══════╬═══╣ ╰────╯",
+        fg,
+        Flags::default(),
+    );
+    put(
+        7,
+        0,
+        "└──────┴───┘ ╚══════╩═══╝ ╱╲╳ ┃━╋",
+        fg,
+        Flags::default(),
+    );
+    put(
+        8,
+        0,
+        "▀▄█▌▐░▒▓ ▁▂▃▄▅▆▇█ ▖▗▘▙▚▛▜▝▞▟ ┄┅┆┈╌╍",
+        fg,
+        Flags::default(),
+    );
+    put(9, 0, "日本語", fg, Flags::WIDE);
+    put(9, 7, "wide chars", fg, Flags::default());
+    put(10, 0, "$ ", fg, Flags::default());
+    snap.cursor = (10, 2, CursorShape::Block);
+    let w = (cols as i32 * m.cell_w + scale - 1) / scale;
+    let h = (rows as i32 * m.cell_h + scale - 1) / scale;
+    let mut c = Canvas::with_scale(w as u32, h as u32, scale);
+    termgrid::draw(&mut c, &text, &m, Rect::new(0, 0, w, h), &snap, 13);
     c
 }
 

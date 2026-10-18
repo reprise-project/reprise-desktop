@@ -28,25 +28,20 @@ pub fn draw_tab(
         return false;
     }
     let s = p.s;
-    let (state, frame, closed) = if open {
-        let g = GROWN * s;
+    let (state, frame) = if open {
         let h = if page.y == r.bottom() {
             r.height + s
         } else {
             r.height
         };
-        (
-            State::Checked,
-            Rect::new(r.x, r.y, r.width, h),
-            Rect::new(r.x + g, r.y, r.width - 2 * g, r.height - g),
-        )
+        (State::Checked, Rect::new(r.x, r.y, r.width, h))
     } else if hot {
-        (State::Hot, r, r)
+        (State::Hot, r)
     } else {
-        (State::Normal, r, r)
+        (State::Normal, r)
     };
     st.draw(c, frame, Part::TabItem, state, p.s);
-    let content = st.content_rect(Part::TabItem, closed, p.s);
+    let content = label_rect(st, Part::TabItem, r, open, s);
     text.draw(
         c,
         content,
@@ -57,6 +52,18 @@ pub fn draw_tab(
         px,
     );
     true
+}
+
+/// The rect a tab of `part` laid out at `r` holds its label in: an open tab's is a closed one's,
+/// 2 px higher.
+pub fn label_rect(st: &Style, part: Part, r: Rect, open: bool, s: i32) -> Rect {
+    let g = GROWN * s;
+    let closed = if open {
+        Rect::new(r.x + g, r.y, r.width - 2 * g, r.height - g)
+    } else {
+        r
+    };
+    st.content_rect(part, closed, s)
 }
 
 /// [`crate::look::widgets::draw_tab_focus`] through `st`: Classic's ring

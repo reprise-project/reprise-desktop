@@ -267,6 +267,8 @@ pub struct Canvas {
     spot: Option<Box<TextSpot>>,
     /// Rows at the top drawn clear for the frame's glass ([`Canvas::report_glass_top`]).
     glass_top: i32,
+    /// What the frame changed ([`Canvas::report_damage`]); `None` is the whole canvas.
+    damage: Option<Vec<Rect>>,
 }
 
 /// One premultiplied pixel with all four channels scaled by `num / den`.
@@ -336,6 +338,7 @@ impl Canvas {
             preedit: None,
             spot: None,
             glass_top: 0,
+            damage: None,
         }
     }
 
@@ -352,6 +355,7 @@ impl Canvas {
             preedit: None,
             spot: None,
             glass_top: 0,
+            damage: None,
         }
     }
 
@@ -390,6 +394,16 @@ impl Canvas {
 
     pub fn take_glass_top(&mut self) -> i32 {
         std::mem::take(&mut self.glass_top)
+    }
+
+    /// An app that keeps its canvas between frames reports each logical-px rect it redrew;
+    /// a frame with no report changed the whole canvas.
+    pub fn report_damage(&mut self, r: Rect) {
+        self.damage.get_or_insert_with(Vec::new).push(r);
+    }
+
+    pub fn take_damage(&mut self) -> Option<Vec<Rect>> {
+        self.damage.take()
     }
 
     pub fn scale(&self) -> i32 {
@@ -1316,6 +1330,23 @@ fn in_rounded(r: Rect, radius: i32, x: i32, y: i32) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn canvas_damage_defaults_to_whole() {
+        assert_eq!(Canvas::new(4, 4).take_damage(), None);
+    }
+
+    #[test]
+    fn canvas_damage_collects_rects() {
+        let mut c = Canvas::new(8, 8);
+        c.report_damage(Rect::new(0, 0, 2, 2));
+        c.report_damage(Rect::new(3, 4, 1, 1));
+        assert_eq!(
+            c.take_damage(),
+            Some(vec![Rect::new(0, 0, 2, 2), Rect::new(3, 4, 1, 1)])
+        );
+        assert_eq!(c.take_damage(), None);
+    }
 
     #[test]
     fn rects_sharing_only_an_edge_do_not_intersect() {
