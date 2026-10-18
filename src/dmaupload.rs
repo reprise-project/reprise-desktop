@@ -19,7 +19,8 @@ use smithay::backend::{
 use crate::{compositor::DeskScene, output::upload_scaled, raster::Canvas};
 
 /// Fills dma-bufs off the loop on a GBM device of its own, opened on the render node at first
-/// use. The first failure stops further tries (virtio-gpu refuses linear buffers).
+/// use. The first failure, in a fill or in the renderer's import, stops further tries (virtio-gpu
+/// refuses linear buffers).
 #[derive(Clone)]
 pub struct Uploads {
     node: PathBuf,
@@ -62,11 +63,7 @@ impl Uploads {
             return None;
         }
         self.try_fill(canvas)
-            .map_err(|e| {
-                if !self.refused.swap(true, Ordering::Relaxed) {
-                    log::warn!("uploads: none from now on: {e}");
-                }
-            })
+            .map_err(|e| refuse(&self.refused, e))
             .ok()
     }
 
@@ -101,17 +98,30 @@ impl Uploads {
     }
 }
 
+fn refuse(refused: &AtomicBool, why: impl std::fmt::Display) {
+    if !refused.swap(true, Ordering::Relaxed) {
+        log::warn!("uploads: none from now on: {why}");
+    }
+}
+
+/// The renderer's import of a filled dma-buf; a refusal stops the `Uploads` that filled it.
+fn imported<T, E: std::fmt::Display>(import: Result<T, E>, refused: &AtomicBool) -> Option<T> {
+    import
+        .map_err(|e| refuse(refused, format_args!("import failed: {e}")))
+        .ok()
+}
+
 /// A canvas made ready for a scene buffer off the loop: in a dma-buf when `Uploads` could fill
-/// one, else copied into pixel memory.
+/// one (with the `Uploads`' refused flag), else copied into pixel memory.
 pub enum Staged {
-    Dmabuf(Dmabuf),
+    Dmabuf(Dmabuf, Arc<AtomicBool>),
     Memory(Prepared),
 }
 
 impl Staged {
     pub fn new(uploads: Option<&Uploads>, canvas: &Canvas) -> Staged {
-        match uploads.and_then(|u| u.fill(canvas)) {
-            Some(d) => Staged::Dmabuf(d),
+        match uploads.and_then(|u| Some((u.fill(canvas)?, u.refused.clone()))) {
+            Some((d, refused)) => Staged::Dmabuf(d, refused),
             None => Staged::Memory(Prepared::new(
                 &canvas.pixels,
                 canvas.width as i32,
@@ -122,7 +132,7 @@ impl Staged {
 
     pub fn size(&self) -> (i32, i32) {
         match self {
-            Staged::Dmabuf(d) => {
+            Staged::Dmabuf(d, _) => {
                 let s = d.size();
                 (s.w, s.h)
             }
@@ -143,14 +153,15 @@ impl Staged {
         let scale = scale.max(1);
         let (w, h) = self.size();
         match self {
-            Staged::Dmabuf(d) => match renderer.map(|r| (r.import_dmabuf(&d, None), r)) {
-                Some((Ok(t), r)) => scene.buffer_set_texture(sb, r, t),
-                Some((Err(e), _)) => {
-                    log::warn!("uploads: import failed: {e}");
+            Staged::Dmabuf(d, refused) => {
+                let Some(r) = renderer else {
                     return upload_scaled(scene, sb, canvas, scale);
-                }
-                None => return upload_scaled(scene, sb, canvas, scale),
-            },
+                };
+                let Some(t) = imported(r.import_dmabuf(&d, None), &refused) else {
+                    return upload_scaled(scene, sb, canvas, scale);
+                };
+                scene.buffer_set_texture(sb, r, t);
+            }
             Staged::Memory(p) => scene.buffer_set_prepared(sb, p),
         }
         scene.buffer_set_dest_size(sb, Some((w / scale, h / scale).into()));
@@ -165,6 +176,26 @@ mod tests {
         renderer::{Bind, ExportMem, Texture},
     };
     use smithay::utils::Rectangle;
+
+    #[test]
+    fn a_refused_import_stops_further_fills() {
+        let uploads = Uploads::new(PathBuf::from("/nonexistent/renderD128"));
+        assert_eq!(imported(Ok::<_, &str>(7), &uploads.refused), Some(7));
+        assert!(
+            !uploads.refused.load(Ordering::Relaxed),
+            "an import taken keeps uploads on"
+        );
+        assert_eq!(imported(Err::<u8, _>("refused"), &uploads.refused), None);
+        assert!(
+            uploads.refused.load(Ordering::Relaxed),
+            "a refused import stops uploads"
+        );
+        assert!(uploads.fill(&Canvas::new(4, 4)).is_none());
+        assert!(
+            uploads.alloc.get().is_none(),
+            "no GBM device is opened once uploads are stopped"
+        );
+    }
 
     #[test]
     fn a_canvas_filled_on_another_thread_reads_back_through_the_renderer() {
