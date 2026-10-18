@@ -642,6 +642,24 @@ impl App for Sound {
         reply
     }
 
+    fn reader_form(&mut self, win: WinId) -> Option<repriseapp::ReaderForm<'_>> {
+        let s = self
+            .sheet
+            .as_mut()
+            .filter(|_| win != ERROR_WIN && win != FLYOUT_WIN)?;
+        Some(repriseapp::ReaderForm::Sheet(&mut s.sheet))
+    }
+
+    fn reader(&mut self, win: WinId, act: repriseapp::Reader, ctx: &Ctx) -> bool {
+        match (win, act, &mut self.flyout) {
+            (FLYOUT_WIN, repriseapp::Reader::Focus((x, y)), Some(f)) => {
+                let lay = flyout_layout(f, ctx);
+                f.popup.focus_at(&lay, x, y) != volumepopup::Event::None
+            }
+            _ => repriseapp::reader_forms(self, win, act, ctx),
+        }
+    }
+
     fn access(&mut self, win: WinId, tree: &mut Tree, ctx: &Ctx) {
         let forms = ctx.forms();
         match win {
