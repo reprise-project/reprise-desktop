@@ -22,6 +22,7 @@ use crate::{
     compositor::State,
     desktop::{self, Target},
     dnddrop::Answer,
+    fsjobs::Action,
     input::{BTN_LEFT, BTN_RIGHT, Hit, Interaction},
     menuview::MenuKind,
     output::upload_scaled,
@@ -803,7 +804,7 @@ impl State {
                 // mount that never answers holds.
                 let dir = view.dir.clone();
                 let (sources, target) = (sources.to_vec(), target.clone());
-                self.spawn_fs_job(move || {
+                self.spawn_fs_action(Action::reads(op.failure_title()), move |_| {
                     let here = in_folder(files, &dir);
                     Box::new(move |state: &mut State| state.put_all(&sources, &target, op, &here))
                 });
@@ -978,7 +979,11 @@ impl State {
             }
             DropTarget::Quick(_) | DropTarget::Trash => return,
         };
-        self.spawn_fs_job(move || {
+        let action = Action::changes(DropOp::Shortcut.failure_title(), State::rescan_desktop);
+        self.spawn_fs_action(action, move |gate| {
+            if !gate.change(&dir) {
+                return Box::new(|_| {});
+            }
             let mut landed = Vec::new();
             let mut failed = None;
             for ((url, title), cell) in links.iter().zip(cells) {
@@ -1011,7 +1016,7 @@ impl State {
 
     /// Look for the names a drop would land on off the loop (a hung network mount cannot stall the desktop), then carry it out ([`Self::ask_then_put`]).
     fn scan_then_ask(&mut self, dir: PathBuf, op: DropOp, puts: Vec<Put>, existing: Vec<String>) {
-        self.spawn_fs_job(move || {
+        self.spawn_fs_action(Action::reads(op.failure_title()), move |_| {
             let batch = Batch::new(dir, op, puts, existing);
             Box::new(move |state| state.ask_then_put(batch))
         });
@@ -1035,7 +1040,8 @@ impl State {
                     src.push(under);
                     dest.push(under);
                 }
-                self.spawn_fs_job(move || {
+                let action = Action::reads(batch.op.failure_title());
+                self.spawn_fs_action(action, move |_| {
                     let is_12h = reprisefs::locale::is_12h();
                     let facts = (clash == Clash::File).then(|| {
                         (

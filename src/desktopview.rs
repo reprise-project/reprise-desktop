@@ -32,6 +32,7 @@ use crate::{
     compositor::{SceneOwner, State},
     desktop::{self, DesktopEntry, ICON_PX, IconId, Target},
     dirwatch::{self, DirWatch, Want},
+    fsjobs::Action,
     output::upload_scaled,
     raster::Rect,
     startmenu::MenuItem,
@@ -1810,7 +1811,11 @@ impl State {
     /// answers.
     pub(crate) fn allow_launching(&mut self, paths: &[PathBuf]) {
         let paths = paths.to_vec();
-        self.spawn_fs_job(move || {
+        let action = Action::changes("Allow Launching", State::rescan_desktop);
+        self.spawn_fs_action(action, move |gate| {
+            if !paths.first().is_some_and(|p| gate.change(p)) {
+                return Box::new(|_| {});
+            }
             let failed = paths
                 .iter()
                 .find_map(|p| apps::allow_launching(p).err().map(|e| (p.clone(), e)));
@@ -2062,8 +2067,12 @@ impl State {
         };
         let existing: Vec<String> = view.entries.iter().map(|e| e.name.clone()).collect();
         let name = names::new_folder_name(&existing);
-        let path = view.dir.join(&name);
-        self.spawn_fs_job(move || {
+        let (dir, path) = (view.dir.clone(), view.dir.join(&name));
+        let action = Action::changes("New Folder", State::rescan_desktop);
+        self.spawn_fs_action(action, move |gate| {
+            if !gate.change(&dir) {
+                return Box::new(|_| {});
+            }
             let made = std::fs::create_dir(&path);
             Box::new(move |state: &mut State| match made {
                 Ok(()) => state.created(&name, at),
@@ -2083,7 +2092,11 @@ impl State {
             return;
         };
         let dir = view.dir.clone();
-        self.spawn_fs_job(move || {
+        let action = Action::changes("New Text Document", State::rescan_desktop);
+        self.spawn_fs_action(action, move |gate| {
+            if !gate.change(&dir) {
+                return Box::new(|_| {});
+            }
             let made = ops::create_new_numbered(&dir, "New Text Document.txt");
             Box::new(move |state: &mut State| match made {
                 Ok((_, path)) => {

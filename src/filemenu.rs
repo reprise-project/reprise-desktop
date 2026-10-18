@@ -13,6 +13,7 @@ use crate::compositor::State;
 use crate::desktop::{self, Target};
 use crate::desktopview::{DesktopCommand, IconMenu, entry, icon_menu};
 use crate::dragview::{DragSource, DropOp, DropTarget};
+use crate::fsjobs::Action;
 
 /// The menu of a folder (`m.is_dir`) or of a file of type `mime`, with `m`'s
 /// launcher rows; the file verbs come from `mime`.
@@ -129,7 +130,7 @@ impl State {
             Dc::SendToDest(row) => {
                 // The names beside the file, which a Send To to the same folder numbers past.
                 let dir = path.parent().map(Path::to_path_buf);
-                self.spawn_fs_job(move || {
+                self.spawn_fs_action(Action::reads("Send To"), move |_| {
                     let existing: Vec<String> = dir
                         .and_then(|d| std::fs::read_dir(d).ok())
                         .into_iter()
@@ -176,7 +177,7 @@ impl State {
                 let p = self.pointer_location();
                 let at = (p.x as i32, p.y as i32);
                 let apps = self.app_index.clone();
-                self.spawn_fs_job(move || {
+                self.spawn_fs_action(Action::reads("Properties"), move |_| {
                     let info = reprisefs::props::glance(&path, &name, &apps);
                     Box::new(move |state: &mut State| match info {
                         Ok(info) => {

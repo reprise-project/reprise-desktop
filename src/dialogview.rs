@@ -23,6 +23,7 @@ use smithay::reexports::calloop::timer::{TimeoutAction, Timer};
 
 use crate::compositor::{SceneOwner, State};
 use crate::dialog::{self, Dialog, DialogHit, DialogLayout, Outcome, Placement, Style};
+use crate::fsjobs::Action;
 use crate::glass::{Backdrop, frame_pane};
 use crate::input::Interaction;
 use crate::output::upload_scaled;
@@ -2257,7 +2258,7 @@ impl State {
             // A non-empty folder gets Confirm Attribute Changes first, since the change can reach the
             // whole tree; the look is a folder read, so it runs off the loop.
             (true, None) => {
-                self.spawn_fs_job(move || {
+                self.spawn_fs_action(Action::reads("Properties"), move |_| {
                     let ask = has_entries(&write.path);
                     Box::new(move |state| {
                         if ask {
@@ -2298,7 +2299,7 @@ impl State {
             .map(|v| v.id);
         match (!write.attrs.is_empty() || write.hidden.is_some(), recurse) {
             (true, None) => {
-                self.spawn_fs_job(move || {
+                self.spawn_fs_action(Action::reads("Properties"), move |_| {
                     let ask = write.paths.iter().any(|p| has_entries(p));
                     Box::new(move |state| {
                         if ask {
@@ -2337,13 +2338,17 @@ impl State {
         tree: bool,
         close: bool,
     ) {
-        self.spawn_fs_job(move || {
+        let action = Action::changes("Properties", State::rescan_desktop);
+        self.spawn_fs_action(action, move |gate| {
             let SetWrite {
                 paths,
                 attrs,
                 hidden,
                 folder_icon,
             } = write;
+            if !paths.first().is_some_and(|p| gate.change(p)) {
+                return Box::new(|_| {});
+            }
             let mut failed = Vec::new();
             if let Some(icon) = &folder_icon {
                 for dir in paths.iter().filter(|p| p.is_dir()) {
@@ -2504,7 +2509,8 @@ impl State {
             .map(|name| (name.to_string(), self.app_index.clone()));
         let mime = self.desktop.as_ref().map(|v| v.mime.clone());
         let shown = self.config.desktop_extensions;
-        self.spawn_fs_job(move || {
+        let action = Action::changes("Properties", State::rescan_desktop);
+        self.spawn_fs_action(action, move |gate| {
             let Props {
                 path,
                 name,
@@ -2514,6 +2520,9 @@ impl State {
                 folder_icon,
                 launcher,
             } = w;
+            if !gate.change(&path) {
+                return Box::new(|_| {});
+            }
             // Every write is tried; the first failure is shown and each landed field goes back as written.
             let mut failed: Option<std::io::Error> = None;
             let mut note = |r: std::io::Result<()>| match r {
