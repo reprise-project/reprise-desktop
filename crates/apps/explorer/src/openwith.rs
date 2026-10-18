@@ -69,7 +69,7 @@ impl Explorer {
             &mut b.dlg,
             &ev,
             &self.dialog_text,
-            self.forms.fonts.size_px,
+            &self.forms,
             ctx.size,
             &ctx.theme.metrics,
         );

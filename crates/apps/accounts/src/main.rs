@@ -492,7 +492,7 @@ impl AccountsApp {
             d,
             &ev,
             &ctx.text,
-            ctx.forms().fonts.size_px,
+            &ctx.forms(),
             ctx.size,
             &ctx.theme.metrics,
         ) {
@@ -615,7 +615,7 @@ impl App for AccountsApp {
             out.push(Child {
                 id: BROWSE,
                 title: "Browse".into(),
-                size: filedlg::CLIENT,
+                size: self.browse.as_ref().map_or(filedlg::CLIENT, |d| d.client()),
                 fixed: false,
                 modal: true,
             });
