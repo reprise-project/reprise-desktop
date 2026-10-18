@@ -94,22 +94,35 @@ pub fn set_placement(output: &Output, pos: Option<Point<i32, Logical>>) {
 }
 
 /// Where each connector was placed when it left the layout, for the session: an output turned
-/// off and on, or unplugged and plugged in, comes back there unless `[[outputs]] position` says.
+/// off and on, or unplugged and plugged in, comes back there unless `[[outputs]] position` says,
+/// or another output now covers part of that spot.
 #[derive(Default)]
-pub struct Places(std::collections::HashMap<String, (i32, i32)>);
+pub struct Places(std::collections::HashMap<String, Rectangle<i32, Logical>>);
 
 impl Places {
-    /// `name` left the layout placed at `at` (None: automatic).
-    pub fn left(&mut self, name: &str, at: Option<(i32, i32)>) {
+    /// `name` left the layout placed at `at`, its box then (None: automatic).
+    pub fn left(&mut self, name: &str, at: Option<Rectangle<i32, Logical>>) {
         match at {
-            Some(p) => self.0.insert(name.to_string(), p),
+            Some(r) => self.0.insert(name.to_string(), r),
             None => self.0.remove(name),
         };
     }
 
-    /// Where `name` goes as it comes back: `configured` if set, else where it left.
-    pub fn back(&self, name: &str, configured: Option<(i32, i32)>) -> Option<(i32, i32)> {
-        configured.or_else(|| self.0.get(name).copied())
+    /// Where `name` goes as it comes back: `configured` if set, else where it left unless one of
+    /// `others` (the outputs in the layout) overlaps that box, else automatic.
+    pub fn back(
+        &self,
+        name: &str,
+        configured: Option<(i32, i32)>,
+        others: &[Rectangle<i32, Logical>],
+    ) -> Option<(i32, i32)> {
+        configured.or_else(|| {
+            let r = self
+                .0
+                .get(name)
+                .filter(|r| !others.iter().any(|o| o.overlaps(**r)))?;
+            Some((r.loc.x, r.loc.y))
+        })
     }
 }
 
@@ -245,7 +258,7 @@ impl State {
         if self.scene.outputs().contains(output) {
             return;
         }
-        let at = (self.output_places).back(&name, self.config.position_for_output_name(&name));
+        let at = self.back_place(output);
         set_placement(output, at.map(Point::from));
         if !self.enable_configured(output) {
             log::error!("output {name}: no output state accepted, leaving it out");
@@ -255,9 +268,22 @@ impl State {
         self.output_added(output);
     }
 
+    /// Where `output` goes as it comes back into the layout (`Places::back`).
+    fn back_place(&self, output: &Output) -> Option<(i32, i32)> {
+        let name = output.name();
+        let others: Vec<_> = (self.scene.outputs().iter())
+            .filter(|o| *o != output)
+            .filter_map(reprisescene::output_rect)
+            .collect();
+        (self.output_places).back(&name, self.config.position_for_output_name(&name), &others)
+    }
+
     pub fn leave_layout(&mut self, output: &Output) {
         if self.scene.outputs().contains(output) {
-            let at = placement(output).0.get().map(|p| (p.x, p.y));
+            let at = placement(output)
+                .0
+                .get()
+                .and_then(|p| reprisescene::output_rect(output).map(|r| Rectangle::new(p, r.size)));
             self.output_places.left(&output.name(), at);
         }
         if crate::backend::disable(self, output) {
@@ -338,9 +364,7 @@ impl State {
         {
             output.change_current_state(None, Some(req.transform), Some(scale), None);
         }
-        let at = req.position.or_else(|| {
-            (self.output_places).back(&name, self.config.position_for_output_name(&name))
-        });
+        let at = req.position.or_else(|| self.back_place(output));
         set_placement(output, at.map(Point::from));
         if driven {
             if let Some(i) = req.mode
@@ -1022,20 +1046,49 @@ mod tests {
     fn an_output_comes_back_where_it_was_placed_unless_configured() {
         let mut places = Places::default();
         assert_eq!(
-            places.back("HDMI-A-1", None),
+            places.back("HDMI-A-1", None, &[]),
             None,
             "never placed: automatic"
         );
-        places.left("HDMI-A-1", Some((3840, 0)));
-        assert_eq!(places.back("HDMI-A-1", None), Some((3840, 0)));
-        assert_eq!(places.back("HDMI-A-2", None), None, "per connector");
+        places.left(
+            "HDMI-A-1",
+            Some(Rectangle::new((3840, 0).into(), (1920, 1080).into())),
+        );
+        assert_eq!(places.back("HDMI-A-1", None, &[]), Some((3840, 0)));
+        assert_eq!(places.back("HDMI-A-2", None, &[]), None, "per connector");
         assert_eq!(
-            places.back("HDMI-A-1", Some((0, 1080))),
+            places.back("HDMI-A-1", Some((0, 1080)), &[]),
             Some((0, 1080)),
             "a configured position wins"
         );
         places.left("HDMI-A-1", None);
-        assert_eq!(places.back("HDMI-A-1", None), None, "left automatic");
+        assert_eq!(places.back("HDMI-A-1", None, &[]), None, "left automatic");
+    }
+
+    #[test]
+    fn an_output_whose_spot_another_output_took_comes_back_automatic() {
+        let mut places = Places::default();
+        places.left(
+            "HDMI-A-2",
+            Some(Rectangle::new((1920, 0).into(), (1920, 1080).into())),
+        );
+        let beside = Rectangle::new((0, 0).into(), (1920, 1080).into());
+        assert_eq!(
+            places.back("HDMI-A-2", None, &[beside]),
+            Some((1920, 0)),
+            "an output touching the edge leaves the spot free"
+        );
+        let moved = Rectangle::new((2560, 0).into(), (1920, 1080).into());
+        assert_eq!(
+            places.back("HDMI-A-2", None, &[beside, moved]),
+            None,
+            "an output over part of the spot sends it to automatic placement"
+        );
+        assert_eq!(
+            places.back("HDMI-A-2", Some((0, 1080)), &[moved]),
+            Some((0, 1080)),
+            "a configured position is kept even when taken"
+        );
     }
 
     #[test]
