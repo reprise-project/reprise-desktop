@@ -254,6 +254,8 @@ pub struct Explorer {
     pub(crate) replace_waiting:
         std::collections::VecDeque<(fileops::PendingPut, reprisefs::replace::Asker)>,
     pub(crate) messages_waiting: std::collections::VecDeque<(String, String)>,
+    /// A replace prompt whose two files are still being read, on a listing thread.
+    pub(crate) asking: Option<(fileops::Asking, Job<Option<[fileops::ReadSide; 2]>>)>,
     /// Finished background jobs (deletes, the bin's Empty) waiting for a wake.
     jobs_tx: std::sync::mpsc::Sender<fileops::JobDone>,
     jobs_rx: std::sync::mpsc::Receiver<fileops::JobDone>,
@@ -426,6 +428,7 @@ impl Explorer {
             task_progress: None,
             replace_waiting: std::collections::VecDeque::new(),
             messages_waiting: std::collections::VecDeque::new(),
+            asking: None,
             jobs_tx,
             jobs_rx,
             jobs_pending: 0,
