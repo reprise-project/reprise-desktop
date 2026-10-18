@@ -3475,7 +3475,9 @@ pub fn draw(c: &mut Canvas, text: &TextRenderer, p: &Paint, form: &Form, cues: b
                     if live {
                         text.draw(c, lr, line, false, cs.button_text, Align::Left, px);
                     } else {
-                        draw_disabled_label(c, text, p, lr, line, Align::Left, px, None);
+                        // The greyed painter reads access keys; a note has none.
+                        let line = crate::text::escape_mnemonic(line);
+                        draw_disabled_label(c, text, p, lr, &line, Align::Left, px, None);
                     }
                 }
             }
@@ -4364,6 +4366,34 @@ mod tests {
             matches!(form.overflows(&text, PX)[..], [("n", by)] if by >= LINE_H),
             "the note rewraps onto a row it was not built with"
         );
+    }
+
+    #[test]
+    fn a_greyed_note_draws_its_ampersand_like_the_live_note() {
+        let text = tr();
+        let theme = Theme::default();
+        let cs = &theme.colors;
+        let ink = |item: Item| {
+            let mut c = Canvas::new(120, 30);
+            c.fill_rect(c.bounds(), cs.button_face);
+            draw(
+                &mut c,
+                &text,
+                &classic_paint(cs, 1),
+                &Form::new(vec![item]),
+                false,
+                PX,
+            );
+            let cols: Vec<i32> = (0..c.width as i32)
+                .filter(|&x| (0..c.height as i32).any(|y| c.get(x, y) != cs.button_face.argb()))
+                .collect();
+            (cols.first().copied(), cols.last().copied())
+        };
+        let live = Item::lines_at("n", 4, 4, 110, &["R&D notes"]);
+        assert_eq!(ink(live.clone().enabled(false)), {
+            let (l, r) = ink(live);
+            (l, r.map(|r| r + 1))
+        });
     }
 
     /// Blue lifts a wrapped check box label's second line onto the box's row.

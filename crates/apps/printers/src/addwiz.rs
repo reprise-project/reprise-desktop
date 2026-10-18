@@ -10,6 +10,7 @@ use reprisekit::controls::listbox::ListBox;
 use reprisekit::controls::wizard::{self, INTERIOR_BODY, Style, Wizard};
 use reprisekit::look::Paint;
 use reprisekit::raster::{Canvas, Rect};
+use reprisekit::text::escape_mnemonic;
 
 use crate::cups::{self, Device, Driver, NewPrinter, Ppd, Snapshot};
 use crate::folder::check_name;
@@ -386,7 +387,7 @@ impl AddWizard {
 
     fn driver_status(&self) -> String {
         if let Some(f) = &self.file {
-            return format!("Driver file: {}", f.display());
+            return format!("Driver file: {}", escape_mnemonic(&f.to_string_lossy()));
         }
         match &self.ppds {
             None => "Reading the list of drivers...".into(),
@@ -475,7 +476,13 @@ impl AddWizard {
             Item::check(DEFAULT, B.x, B.y + 90, "Set as the &default printer")
                 .checked(self.make_default),
             Item::check(TEST, B.x, B.y + 114, "Print a &test page").checked(self.test_page),
-            Item::label_at(ERROR, B.x, B.y + 146, B.width, &self.error),
+            Item::label_at(
+                ERROR,
+                B.x,
+                B.y + 146,
+                B.width,
+                &escape_mnemonic(&self.error),
+            ),
         ];
         let mut w = self.interior(
             "Name your printer",
@@ -666,13 +673,17 @@ impl AddWizard {
             Ok(None) => return Outcome::None,
             Err(why) => {
                 self.error = why;
-                self.page.form.set_text(ERROR, &self.error);
+                self.page
+                    .form
+                    .set_text(ERROR, &escape_mnemonic(&self.error));
                 return Outcome::Redraw;
             }
         };
         self.adding = true;
         self.error = "Adding the printer...".into();
-        self.page.form.set_text(ERROR, &self.error);
+        self.page
+            .form
+            .set_text(ERROR, &escape_mnemonic(&self.error));
         self.sync_next();
         let info = match self.chosen_device() {
             Some(d) if !d.info.is_empty() => d.info.clone(),

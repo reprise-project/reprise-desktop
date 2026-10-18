@@ -4,7 +4,7 @@
 use crate::classic::widgets::{BUTTON_GAP, BUTTON_H, BUTTON_W, CheckState, LINE_H};
 use crate::controls::form::{CHECK, Control, Form, Item};
 use crate::raster::{Canvas, Rect};
-use crate::text::{DialogFont, TextRenderer};
+use crate::text::{DialogFont, TextRenderer, escape_mnemonic};
 use crate::textedit::TextEdit;
 use crate::theme::TextUnits;
 
@@ -335,9 +335,13 @@ pub fn general_page(
                     icon.clone(),
                 ));
                 items.push(match row {
-                    Row::Count { text } => {
-                        Item::label_at(COUNT, FIELD.x, FIELD.y, SEP_RIGHT - FIELD.x, text)
-                    }
+                    Row::Count { text } => Item::label_at(
+                        COUNT,
+                        FIELD.x,
+                        FIELD.y,
+                        SEP_RIGHT - FIELD.x,
+                        &escape_mnemonic(text),
+                    ),
                     _ => Item::new(
                         NAME,
                         FIELD,
@@ -371,7 +375,7 @@ pub fn general_page(
                 items.push(if *wraps {
                     Item::lines(ids.1, Rect::new(value_x, y, w, ROW_PITCH), &[value])
                 } else {
-                    Item::label_at(ids.1, value_x, y, w, value)
+                    Item::label_at(ids.1, value_x, y, w, &escape_mnemonic(value))
                 });
                 y += ROW_PITCH;
             }
@@ -1347,7 +1351,13 @@ pub fn bin_page(facts: &BinFacts, name: &str, icon: Option<Canvas>) -> Form {
             Rect::new(LABEL_X, BIN_ICON_Y, ICON_PX, ICON_PX),
             icon,
         ),
-        Item::label_at(NAME, BIN_NAME.0, BIN_NAME.1, SEP_RIGHT - BIN_NAME.0, name),
+        Item::label_at(
+            NAME,
+            BIN_NAME.0,
+            BIN_NAME.1,
+            SEP_RIGHT - BIN_NAME.0,
+            &escape_mnemonic(name),
+        ),
     ];
     for (id, y) in SEP_IDS.iter().zip(BIN_SEPS) {
         items.push(Item::new(
@@ -1364,7 +1374,7 @@ pub fn bin_page(facts: &BinFacts, name: &str, icon: Option<Canvas>) -> Form {
             items.push(Item::lines(v, Rect::new(x, y, w, BIN_WRAP_PITCH), &[value]));
             y + BIN_WRAP_PITCH
         } else {
-            items.push(Item::label_at(v, x, y, w, value));
+            items.push(Item::label_at(v, x, y, w, &escape_mnemonic(value)));
             y + LINE_H
         }
     };
@@ -1892,6 +1902,29 @@ mod tests {
 
     fn page(is_dir: bool) -> (Form, i32) {
         general_page(&rows(&facts(is_dir)), "New Folder", None, None)
+    }
+
+    fn label_of<'a>(page: &'a Form, id: &str) -> &'a str {
+        match &page.item(id).expect(id).control {
+            Control::Label { text, .. } => text,
+            other => panic!("{id} is a label, not {other:?}"),
+        }
+    }
+
+    #[test]
+    fn an_ampersand_in_a_location_or_bin_name_shows_and_is_no_access_key() {
+        let f = Facts {
+            location: "/srv/R&D".into(),
+            ..facts(false)
+        };
+        let (page, _) = general_page(&rows(&f), "R&D notes.txt", None, None);
+        let bin = bin_page(&bin_facts(), "R&D notes.txt", None);
+        for (label, want) in [
+            (label_of(&page, "v_loc"), "/srv/R&D"),
+            (label_of(&bin, NAME), "R&D notes.txt"),
+        ] {
+            assert_eq!(crate::text::split_mnemonic(label), (want.to_string(), None));
+        }
     }
 
     #[test]

@@ -85,7 +85,7 @@ impl Status {
             match d.hotspot_summary() {
                 Some(hotspot) => {
                     g.set_text("signal_l", "Hotspot:");
-                    g.set_text("hotspot", &hotspot);
+                    g.set_text("hotspot", &reprisekit::text::escape_mnemonic(&hotspot));
                     g.set_picture("signal", Canvas::new(0, 0));
                 }
                 None => {

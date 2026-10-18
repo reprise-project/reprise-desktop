@@ -126,7 +126,7 @@ pub fn choice_rows(
                 IDS[i],
                 Rect::new(x, y, room, CHECK),
                 Control::Check {
-                    label: fits.replace('&', "&&"),
+                    label: reprisekit::text::escape_mnemonic(&fits),
                     checked: c.initial == "true",
                     enabled: true,
                     mixed: None,
@@ -160,7 +160,7 @@ pub fn choice_rows(
             items.push(Item::label(
                 LABEL_IDS[i],
                 Rect::new(x, y + (COMBO_H - LINE_H) / 2, label_w, LINE_H),
-                &shown.replace('&', "&&"),
+                &reprisekit::text::escape_mnemonic(&shown),
             ));
             let cx = x + label_w + LABEL_GAP;
             let right = if cx + need > x + w { x + room } else { x + w };

@@ -229,7 +229,7 @@ fn open_with_menu(open_with: &[(String, Option<Canvas>)]) -> Menu {
     let mut m = Menu::default();
     for (i, (name, icon)) in open_with.iter().enumerate() {
         m.row(
-            with_icon(row(name, true), icon.clone()),
+            with_icon(MenuItem::entry(name.as_str()), icon.clone()),
             Command::OpenWith(i),
         );
     }
@@ -246,7 +246,10 @@ fn send_to_menu(send_to: &[(String, bool, Option<Canvas>)]) -> Menu {
     let mut m = Menu::default();
     for (i, (name, enabled, icon)) in send_to.iter().enumerate() {
         m.row(
-            with_icon(row(name, *enabled), icon.clone()),
+            with_icon(
+                MenuItem::entry(name.as_str()).enabled(*enabled),
+                icon.clone(),
+            ),
             Command::SendTo(i),
         );
     }

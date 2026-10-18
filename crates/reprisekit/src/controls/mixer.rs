@@ -705,7 +705,7 @@ fn draw_column(
             text,
             p,
             cl.title,
-            &title.replace('&', "&&"),
+            &crate::text::escape_mnemonic(&title),
             Align::Left,
             px,
             None,

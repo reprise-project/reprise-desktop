@@ -277,6 +277,7 @@ fn build_form(kind: Kind, input: &Input) -> Form {
     let mut items = vec![prompt];
     for (i, (id, line)) in ITEM_IDS.into_iter().zip(listed(&input.items)).enumerate() {
         let y = ITEMS_Y + i as i32 * ITEM_H;
+        let line = reprisekit::text::escape_mnemonic(&line);
         items.push(Item::label_at(id, TEXT_X, y, w - TEXT_X - 11, &line));
     }
     items.push(note);

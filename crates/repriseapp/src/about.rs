@@ -4,6 +4,7 @@ use crate::heads::Head;
 use reprisefs::sysinfo::{cpu_model, mem_total_kb};
 use reprisekit::controls::aboutbox::{Fields, Group};
 use reprisekit::raster::Canvas;
+use reprisekit::text::escape_mnemonic;
 
 /// Every string an About box shows for `product` (the row under the banner) wearing `icon` (32x32; `None` leaves the slot empty).
 pub fn fields(product: &str, icon: Option<Canvas>) -> Fields {
@@ -342,11 +343,6 @@ pub fn format_gb(bytes: u64) -> String {
     format!("{:.1} GB", bytes as f64 / 1_073_741_824.0)
 }
 
-/// Double every `&`, so a label (which reads a bare `&` as a mnemonic marker) draws it literally.
-pub fn escape_mnemonic(s: &str) -> String {
-    s.replace('&', "&&")
-}
-
 /// The version line. The parenthetical is a build identifier and, after a colon, a second element; with no git hash the whole parenthetical goes.
 pub fn version_line(pkg: &str, build: Option<&str>, kernel: &str) -> String {
     match build {
@@ -623,18 +619,6 @@ mod tests {
     #[test]
     fn returns_none_for_empty_uevent_slice() {
         assert_eq!(first_driver_in(&[]), None);
-    }
-
-    #[test]
-    fn escapes_ampersands_for_the_mnemonic_parser() {
-        assert_eq!(
-            escape_mnemonic("Intel(R) Core(TM) i5 & friends"),
-            "Intel(R) Core(TM) i5 && friends"
-        );
-        assert_eq!(escape_mnemonic("&"), "&&");
-        assert_eq!(escape_mnemonic("a&&b"), "a&&&&b");
-        assert_eq!(escape_mnemonic(""), "");
-        assert_eq!(escape_mnemonic("amdgpu"), "amdgpu");
     }
 
     #[test]

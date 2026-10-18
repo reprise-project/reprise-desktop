@@ -736,7 +736,7 @@ impl State {
     }
 
     fn entry_items(&mut self, entries: &[MenuEntry], px: i32) -> (Vec<MenuItem>, IconWaits) {
-        let user = crate::lock::current_user();
+        let user = crate::text::escape_mnemonic(&crate::lock::current_user());
         let mut waits = Vec::new();
         let items = (entries.iter().enumerate())
             .map(|(row, e)| match e {

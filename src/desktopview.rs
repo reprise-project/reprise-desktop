@@ -35,7 +35,7 @@ use crate::{
     output::upload_scaled,
     raster::Rect,
     startmenu::MenuItem,
-    text::split_mnemonic,
+    text::{escape_mnemonic, split_mnemonic},
     textedit::TextEdit,
     theme::Theme,
 };
@@ -453,7 +453,7 @@ pub fn send_to_menu(
     rows.iter()
         .enumerate()
         .map(|(i, r)| {
-            let label = r.label.replace('&', "&&");
+            let label = escape_mnemonic(&r.label);
             if r.enabled {
                 (entry(&label), Some(DesktopCommand::SendToDest(i)))
             } else {
@@ -470,7 +470,7 @@ pub fn open_with_menu(apps: &[(String, String)]) -> (Vec<MenuItem>, Vec<Option<D
         .iter()
         .map(|(id, name)| {
             (
-                entry(&name.replace('&', "&&")),
+                entry(&escape_mnemonic(name)),
                 Some(DesktopCommand::OpenWithApp(id.clone())),
             )
         })
