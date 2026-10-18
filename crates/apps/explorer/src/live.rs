@@ -97,6 +97,7 @@ impl Explorer {
         let removed = self.poll_removal(ctx);
         self.show_progress_dialogs();
         let job = self.poll_jobs(ctx);
+        let acted = self.take_acting(ctx);
         let opened = self.take_opened(ctx);
         let tipped = self.poll_tip_walk(ctx);
         let clashed = self.take_clashes(ctx);
@@ -128,6 +129,7 @@ impl Explorer {
         // whatever else answered in the same wake. A finished put already re-listed.
         let put = [
             job,
+            acted,
             removed,
             put,
             self.take_read(ctx),

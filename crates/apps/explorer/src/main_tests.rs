@@ -750,6 +750,7 @@ fn a_rename_whose_relist_lands_late_keeps_the_renamed_item_selected() {
     ex.held = Some(Arc::default());
     ex.sv.edit = Some((0, reprisekit::textedit::TextEdit::new("d.txt", false)));
     ex.commit_rename(&mut ctx);
+    wake_until(&mut ex, &mut ctx, |ex| ex.acting.is_empty());
     assert!(dir.path().join("d.txt").is_file());
     answer.send(()).expect("send");
     wake_until(&mut ex, &mut ctx, |ex| ex.reading.is_none());

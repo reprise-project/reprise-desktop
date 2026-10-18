@@ -187,9 +187,13 @@ impl Explorer {
         f
     }
 
-    /// Raise a box titled `title` over `text` with the theme's error icon. While a replace prompt is up the box waits for it (`messages_waiting`).
+    /// Raise a box titled `title` over `text` with the theme's error icon. While a replace prompt or
+    /// another box is up the box waits for it (`messages_waiting`).
     pub fn message_box(&mut self, title: &str, text: String, ctx: &mut Ctx) -> Reply {
-        if matches!(self.dialog, Some(Dialog::Replace(_))) {
+        if matches!(
+            self.dialog,
+            Some(Dialog::Replace(_) | Dialog::Message { .. })
+        ) {
             self.messages_waiting.push_back((title.to_string(), text));
             return Reply::none();
         }
