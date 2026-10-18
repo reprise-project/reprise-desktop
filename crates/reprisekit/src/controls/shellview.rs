@@ -1173,6 +1173,12 @@ pub fn drag_image(
                 .first()
                 .map_or(0, |col| lv_lay.col_w(col) - listview::ICON_X);
             let body = lv_lay.body;
+            // A Name column scrolled out of view is drawn where it sits scrolled home.
+            let x = if x + w <= body.x {
+                body.x + listview::ICON_X
+            } else {
+                x
+            };
             (
                 body,
                 Box::new(move |cell: Rect| Rect::new(x, cell.y, w, cell.height)),

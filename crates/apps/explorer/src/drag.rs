@@ -287,12 +287,17 @@ impl Explorer {
         let icons: Vec<Option<Canvas>> = shown
             .iter()
             .map(|&(i, _)| {
-                let worn = self.sv.entries.get(i).and_then(icon_of)?;
+                let e = self.sv.entries.get(i)?;
+                let worn = icon_of(e)?;
                 let icon = match worn.scale() == s {
                     true => None,
                     false => self.list_icons.fetch(&worn, px, &mut ctx.icons),
                 };
-                Some(device_px(icon.unwrap_or_else(|| (*worn).clone()), s))
+                let mut icon = device_px(icon.unwrap_or_else(|| (*worn).clone()), s);
+                if e.cut {
+                    icon.fade(1, 2);
+                }
+                Some(icon)
             })
             .collect();
         ctx.icons.set_scale(drawn);
