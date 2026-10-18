@@ -480,12 +480,15 @@ impl State {
             heads: Vec::new(),
             scales,
         });
-        self.spawn_fs_job(move || {
+        let spawned = self.spawn_job(move || {
             for w in &warm {
                 w.paint();
             }
             Box::new(finish_scale_warm)
         });
+        if !spawned {
+            self.scale_warm = None;
+        }
     }
 
     /// The layout changed: place the outputs, then refit the desktop to
@@ -741,7 +744,7 @@ impl State {
         if warm.is_empty() {
             return;
         }
-        self.spawn_fs_job(move || {
+        self.spawn_job(move || {
             for w in &warm {
                 w.paint();
             }

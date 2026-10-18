@@ -640,7 +640,7 @@ impl State {
     /// changed meanwhile.
     fn compose_wallpaper(&mut self, out: Output, fit: Fit, size: (u32, u32), image: Arc<Loaded>) {
         let uploads = self.uploads();
-        self.spawn_fs_job(move || {
+        self.spawn_job(move || {
             let (bg, position, scale) = (fit.bg, fit.position, fit.scale as f32);
             let canvas =
                 crate::wallpaper::compose(&image.image, size.0, size.1, position, bg, scale);
