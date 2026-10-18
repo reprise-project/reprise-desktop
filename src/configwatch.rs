@@ -422,7 +422,9 @@ pub fn retheme(state: &mut State) {
         .filter(|w| w.mapped)
         .map(|w| w.id)
         .collect();
+    let mut was = Vec::new();
     for w in windows {
+        was.extend(state.win(w).map(|x| (w, x.frame_rect())));
         state.relayout(w);
     }
     // A look switch can change the taskbar's height and the frame's
@@ -434,6 +436,10 @@ pub fn retheme(state: &mut State) {
     }
     state.refit_wallpaper();
     crate::layer::outputs_changed(state);
+    // After the taskbar took its new size, so the work area is the new one.
+    for (w, was) in was {
+        state.keep_on_screen_inside(w, was);
+    }
     state.relayout_desktop();
     redraw_for_scale(state);
 }
