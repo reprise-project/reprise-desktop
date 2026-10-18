@@ -26,7 +26,7 @@ const BEFORE_SESSION: &str = "basic.target";
 pub struct Unit {
     pub pulls: Vec<String>,
     pub programs: Vec<PathBuf>,
-    /// Its last start was skipped because a `Condition*` failed: its programs did not run, the
+    /// Its last start was skipped because a `Condition*` or `Assert*` failed: its programs did not run, the
     /// units it pulls were queued all the same.
     pub skipped: bool,
 }
@@ -136,14 +136,23 @@ fn load(
     {
         std::thread::sleep(Duration::from_millis(50));
     }
-    // A timestamp of 0: the conditions were never checked, so the unit is about to run.
-    let skipped = unit.get_property::<u64>("ConditionTimestampMonotonic")? != 0
-        && !unit.get_property::<bool>("ConditionResult")?;
+    let checked = |kind: &str| -> zbus::Result<(u64, bool)> {
+        Ok((
+            unit.get_property::<u64>(&format!("{kind}TimestampMonotonic"))?,
+            unit.get_property::<bool>(&format!("{kind}Result"))?,
+        ))
+    };
     Ok(Some(Unit {
         pulls,
         programs,
-        skipped,
+        skipped: skipped(checked("Condition")?, checked("Assert")?),
     }))
+}
+
+/// Whether a failed check kept the unit's programs from running, from each check's
+/// (`*TimestampMonotonic`, `*Result`): a timestamp of 0 was never checked, so the unit is about to run.
+fn skipped(condition: (u64, bool), assert: (u64, bool)) -> bool {
+    [condition, assert].iter().any(|&(at, ok)| at != 0 && !ok)
 }
 
 #[cfg(test)]
@@ -221,6 +230,18 @@ mod tests {
             asked.len(),
             6,
             "each unit is asked once despite the cycle: {asked:?}"
+        );
+    }
+
+    #[test]
+    fn a_failed_condition_or_assert_skips_the_unit_once_checked() {
+        assert!(!skipped((0, false), (0, false)), "not checked yet");
+        assert!(!skipped((5, true), (5, true)));
+        assert!(skipped((5, false), (0, false)));
+        assert!(skipped((5, true), (6, false)), "a failed assert");
+        assert!(
+            !skipped((5, true), (0, false)),
+            "the assert not checked yet"
         );
     }
 
