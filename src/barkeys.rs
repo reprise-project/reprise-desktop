@@ -75,8 +75,8 @@ impl State {
         self.redraw_taskbar(tree);
     }
 
-    /// The window a window bind (maximize, snap) acts on: the focused one, or while the taskbar
-    /// has the keyboard the one it took the keyboard from.
+    /// The window a window bind (maximize, snap) acts on and a fullscreen window covering the
+    /// taskbar is: the focused one, or while the taskbar has the keyboard the one it took it from.
     pub fn bind_window(&self) -> Option<WindowId> {
         bind_window(self.focused, self.bar_shared.keys.map(|k| k.back))
             .filter(|&w| self.win(w).is_some_and(|x| x.mapped && !x.minimized))
