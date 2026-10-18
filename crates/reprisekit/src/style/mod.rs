@@ -1078,8 +1078,9 @@ pub struct Style {
     pub group_label: GroupLabel,
     pub smooth_progress: bool,
     pub track_marks: TrackMarks,
-    /// The ? box's width at the help frames' left, its divider included.
-    pub joined_help: Option<i32>,
+    /// The help frames hold the ? box and the close box joined, the ? box at the left as wide as
+    /// the frame lays it out.
+    pub joined_help: bool,
     pub flat_menus: bool,
     pub buttons_over_caption: bool,
     /// Whether the caption title is centred across the frame, moved left
@@ -1202,7 +1203,7 @@ impl Style {
             group_label: GroupLabel::LINE,
             smooth_progress: false,
             track_marks: TrackMarks::LOW,
-            joined_help: None,
+            joined_help: false,
             flat_menus: false,
             buttons_over_caption: false,
             centred_title: false,
@@ -1270,7 +1271,7 @@ impl Style {
     /// Whether [`Style::at_button_side`] would build `side` now: a side other than the metrics'
     /// own, not built yet. Reads no art, so the host may ask on its loop.
     fn builds_side(&self, side: i32) -> bool {
-        self.button_side.is_some() && side != self.metrics.caption_button_height && {
+        self.button_side.is_some() && side != crate::frame::button_side(&self.metrics) && {
             let kept = self.sided.0.lock().unwrap_or_else(|e| e.into_inner());
             !kept.iter().any(|(k, _)| *k == side)
         }
@@ -1545,8 +1546,8 @@ impl Style {
         self
     }
 
-    pub fn with_joined_help(mut self, cell: i32) -> Style {
-        self.joined_help = Some(cell);
+    pub fn with_joined_help(mut self) -> Style {
+        self.joined_help = true;
         self
     }
 

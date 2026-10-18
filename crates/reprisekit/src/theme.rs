@@ -284,6 +284,22 @@ impl CaptionGroup {
         g.map(|g| g.scaled(n))
     }
 
+    /// This strip `grow` px taller, each cell widened in proportion (rounded) so the strip keeps
+    /// its shape; the divider and the strip's place stay.
+    pub fn grown(&self, grow: i32) -> CaptionGroup {
+        let h = self.restored.height;
+        let tall = |p: GroupPlace| GroupPlace {
+            height: p.height + grow,
+            ..p
+        };
+        CaptionGroup {
+            widths: self.widths.map(|w| w + (w * grow + h / 2) / h),
+            restored: tall(self.restored),
+            maximized: tall(self.maximized),
+            ..*self
+        }
+    }
+
     /// The strip and its three cells, in `CaptionButton::ALL` order, in a
     /// frame `frame_w` px wide. The cells are where the pointer hits each
     /// button: maximized, they reach up to the frame's top and close
@@ -567,8 +583,8 @@ impl Theme {
     /// `[accessibility] text_size`): the UI font, a styled look's caption
     /// text, and the heights that hold one line of it (caption, menu rows,
     /// Start menu rows, taskbar) grow, each by [`line_growth`].
-    /// Caption buttons grow as much as the caption unless the look joins them
-    /// into a [`CaptionGroup`]. Classic's Start button widens with its label;
+    /// Caption buttons grow as much as the caption; a joined [`CaptionGroup`]
+    /// keeps its shape ([`CaptionGroup::grown`]). Classic's Start button widens with its label;
     /// a styled look's Start label and button, frames, icons and the output
     /// scale keep their size.
     pub fn with_text_size(&self, pct: u32) -> Theme {
@@ -586,9 +602,12 @@ impl Theme {
         ] {
             *h += grow;
         }
-        if m.caption_group.is_none() {
-            m.caption_button_width += grow;
-            m.caption_button_height += grow;
+        match &mut m.caption_group {
+            Some(g) => *g = g.grown(grow),
+            None => {
+                m.caption_button_width += grow;
+                m.caption_button_height += grow;
+            }
         }
         match &t.look {
             crate::paint::Look::Classic => {
@@ -754,21 +773,17 @@ mod tests {
             big.metrics.start_button_width, glass.metrics.start_button_width,
             "the orb keeps its size"
         );
-        let buttons = |m: &Metrics| {
-            (
-                m.caption_button_width,
-                m.caption_button_height,
-                m.caption_group,
-            )
+        let strip = |pct| {
+            let g = glass.with_text_size(pct).metrics.caption_group.unwrap();
+            (g.widths, g.divider, g.restored.height, g.maximized.height)
         };
-        for pct in [150, 200] {
-            let grown = glass.with_text_size(pct);
-            assert_eq!(
-                buttons(&grown.metrics),
-                buttons(&glass.metrics),
-                "the joined strip keeps its size"
-            );
-        }
+        assert_eq!(strip(100), ([30, 28, 49], 1, 20, 19));
+        assert_eq!(
+            strip(150),
+            ([41, 38, 66], 1, 27, 26),
+            "the joined strip keeps its shape"
+        );
+        assert_eq!(strip(200), ([50, 46, 81], 1, 33, 32));
         let blue = crate::interfaces::theme_for(crate::interface::Interface::Blue);
         let side = |pct| blue.with_text_size(pct).metrics.caption_button_height;
         assert_eq!((side(100), side(150), side(200)), (21, 28, 34));

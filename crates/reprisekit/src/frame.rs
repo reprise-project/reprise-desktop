@@ -428,14 +428,18 @@ impl FrameGeometry {
     }
 }
 
-/// The caption button sides a frame laid out with `m` draws, normal then maximized, each once:
-/// what a style's [`crate::style::Style::warm_button_sides`] builds ahead.
+/// The caption button sides a frame laid out with `m` draws, each once ([`button_side`]): what a
+/// style's [`crate::style::Style::warm_button_sides`] builds ahead.
 pub fn caption_button_sides(m: &Metrics) -> Vec<i32> {
-    let mut sides: Vec<i32> = [false, true]
-        .map(|max| FrameGeometry::layout(m, 400, 300, max, Chrome::WINDOW).buttons[2].height)
-        .into();
-    sides.dedup();
-    sides
+    vec![button_side(m)]
+}
+
+/// The side [`crate::style::Style::at_button_side`] builds a frame's caption buttons at: their
+/// height, or a joined strip's restored height (maximized, it draws a row shorter from the same
+/// build).
+pub fn button_side(m: &Metrics) -> i32 {
+    m.caption_group
+        .map_or(m.caption_button_height, |g| g.restored.height)
 }
 
 pub fn caption_buttons(m: &Metrics, caption: Rect, gap: i32) -> [Rect; 3] {
