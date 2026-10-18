@@ -428,6 +428,16 @@ impl FrameGeometry {
     }
 }
 
+/// The caption button sides a frame laid out with `m` draws, normal then maximized, each once:
+/// what a style's [`crate::style::Style::warm_button_sides`] builds ahead.
+pub fn caption_button_sides(m: &Metrics) -> Vec<i32> {
+    let mut sides: Vec<i32> = [false, true]
+        .map(|max| FrameGeometry::layout(m, 400, 300, max, Chrome::WINDOW).buttons[2].height)
+        .into();
+    sides.dedup();
+    sides
+}
+
 pub fn caption_buttons(m: &Metrics, caption: Rect, gap: i32) -> [Rect; 3] {
     let bw = m.caption_button_width;
     let bh = m.caption_button_height;
