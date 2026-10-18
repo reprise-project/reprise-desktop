@@ -41,9 +41,7 @@ impl ReadIcons {
         let own = items
             .into_iter()
             .map(|it| {
-                let own = (it.is_dir && it.shortcut.is_none())
-                    .then(|| reprisefs::meta::folder_icon(&it.path))
-                    .flatten();
+                let own = reprisefs::icons::own_icon(it);
                 let named = match &it.shortcut {
                     Some(sc) => Some(sc.icon()),
                     None => own.as_deref(),

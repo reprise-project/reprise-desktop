@@ -162,8 +162,12 @@ pub fn read_kids(place: &Place, inp: &Inputs, known: &[&Place]) -> Kids {
         .collect()
 }
 
+/// Whether `p`'s node shows a +. A drive's is shown unread: one that never answers would hold
+/// up every drive under Computer, and opening an empty one drops the +.
 fn opens(p: &Place, inp: &Inputs) -> bool {
-    *p != Place::RecycleBin && p.path().is_none_or(|dir| has_subfolder(&dir, inp))
+    *p != Place::RecycleBin
+        && p.path()
+            .is_none_or(|dir| inp.drive_mounts.contains(&dir) || has_subfolder(&dir, inp))
 }
 
 /// [`fill`] with the node's children already read.
@@ -388,6 +392,25 @@ mod tests {
     use super::*;
     use reprisefs::places::Drive;
     use reprisefs::udisks::Snapshot;
+
+    #[test]
+    fn a_drive_shows_a_plus_unread_and_a_folder_only_with_a_subfolder() {
+        let t = tempfile::tempdir().expect("a temp dir");
+        let (drive, folder) = (t.path().join("gone/DEAD"), t.path().join("empty"));
+        std::fs::create_dir(&folder).expect("mkdir empty");
+        let volumes = Snapshot::default();
+        let mounts = [drive.clone()];
+        let inp = Inputs {
+            show_hidden: false,
+            drives: &[],
+            volumes: &volumes,
+            drive_mounts: &mounts,
+        };
+        assert!(opens(&Place::Folder(drive), &inp), "a drive is not read");
+        assert!(!opens(&Place::Folder(folder.clone()), &inp));
+        std::fs::create_dir(folder.join("sub")).expect("mkdir sub");
+        assert!(opens(&Place::Folder(folder), &inp));
+    }
 
     /// Re-reading an open folder keeps what was open below it and the selection on its node, when a new sibling sorts ahead of both.
     #[test]
