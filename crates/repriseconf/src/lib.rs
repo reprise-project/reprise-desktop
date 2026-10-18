@@ -522,6 +522,7 @@ pub fn set(doc: &mut DocumentMut, key: &Key, value: Value) -> Result<(), SetErro
     Ok(())
 }
 
+pub mod filedialog;
 pub mod glob;
 pub mod keybind;
 pub mod location;

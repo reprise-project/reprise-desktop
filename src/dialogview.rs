@@ -1767,8 +1767,9 @@ impl State {
         let out = self.output_at(pos.x, pos.y);
         let scale = self.draw_scale_at(out.as_ref());
         let icons = crate::filepick::icons(&mut self.icons, scale);
-        let picker =
+        let mut picker =
             crate::filepick::FilePicker::run_command(&start, icons, self.config.recent_files);
+        picker.remember_in(repriseconf::filedialog::path());
         let mut d = Dialog::browse(picker);
         let area = self.usable_area(out.as_ref());
         let edge = out
@@ -1788,11 +1789,12 @@ impl State {
             .last()
             .map_or(1, |v| self.draw_scale_at(Some(&v.output)));
         let icons = crate::filepick::icons(&mut self.icons, scale);
-        let picker = crate::filepick::FilePicker::program(
+        let mut picker = crate::filepick::FilePicker::program(
             std::path::Path::new("/usr/bin"),
             icons,
             self.config.recent_files,
         );
+        picker.remember_in(repriseconf::filedialog::path());
         let mut d = Dialog::browse(picker);
         d.title = "Open With...".into();
         if let Some(chooser) = self.dialogs.views.last() {

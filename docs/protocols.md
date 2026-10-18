@@ -87,7 +87,8 @@ confinement holds, every motion goes through as it comes.
 - **Access**, the generic permission prompt
 - **FileChooser** and **AppChooser:** Reprise's own Open, Save and Open With
   dialogs. Their Tiles and Thumbnails views show pictures as Explorer does,
-  from the same thumbnail cache
+  from the same thumbnail cache, and they open in the view and sort the last
+  Open or Save As dialog was left in
 - **Notification**
 - **Inhibit:** idle, suspend and log off
 
