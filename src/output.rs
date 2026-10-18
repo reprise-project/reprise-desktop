@@ -455,8 +455,9 @@ impl State {
         geometry_changed
     }
 
-    /// Paints, on a job, the art of the draw scales among output `scales` that no output runs at;
-    /// meanwhile `scale_warm` holds the output changes, which its end applies. Else nothing.
+    /// Paints, on a job, the art of the draw scales among output `scales` that no output runs at,
+    /// and loads the desktop's theme icons at them; meanwhile `scale_warm` holds the output
+    /// changes, which its end applies. Else nothing.
     pub fn start_scale_warm(&mut self, scales: Vec<f32>) {
         let reprisekit::look::Look::Styled(style) = &self.config.theme.look else {
             return;
@@ -474,6 +475,10 @@ impl State {
         if warm.is_empty() {
             return;
         }
+        let desk: Vec<(String, i32)> = (scales.iter())
+            .flat_map(|&n| self.desktop_theme_icons(n))
+            .collect();
+        let (theme, icon_scale) = (self.icons.theme(), self.icons.scale());
         log::debug!("output scales {scales:?}: painting their art before the change");
         self.scale_warm = Some(ScaleWarm {
             old: None,
@@ -484,7 +489,16 @@ impl State {
             for w in &warm {
                 w.paint();
             }
-            Box::new(finish_scale_warm)
+            let desk: Vec<_> = (desk.into_iter())
+                .map(|(name, px)| {
+                    let icon = reprisekit::icontheme::load_icon(&theme, &name, px, icon_scale);
+                    (name, px, icon)
+                })
+                .collect();
+            Box::new(move |state: &mut State| {
+                state.icons.put_icons(&theme, desk);
+                finish_scale_warm(state);
+            })
         });
         if !spawned {
             self.scale_warm = None;
