@@ -914,6 +914,8 @@ pub struct IconCache {
     file_cap: usize,
     /// Times the icon files were dropped at their cap; see [`IconCache::file_drops`].
     file_drops: u64,
+    /// Icon files [`IconCache::get_unread`] lacked, until [`IconCache::take_wanted`].
+    wanted: Vec<(String, i32)>,
 }
 
 /// Names come from peers, so every set is bounded: past its cap a set is dropped whole and
@@ -951,6 +953,7 @@ impl IconCache {
             counts: [0; 3],
             file_cap: FILE_CAP,
             file_drops: 0,
+            wanted: Vec::new(),
         }
     }
 
@@ -1071,6 +1074,28 @@ impl IconCache {
                 self.insert(key, canvas.map(Arc::new));
             }
         }
+    }
+
+    /// [`IconCache::get_shared`] that never reads an icon file, for a host whose loop must not
+    /// wait on a mount: a file not put at `px` yet is None and goes on [`IconCache::take_wanted`].
+    pub fn get_unread(&mut self, name: &str, px: i32) -> Option<Option<Arc<Canvas>>> {
+        if !name.starts_with('/') {
+            return Some(self.get_shared(name, px));
+        }
+        if px <= 0 {
+            return Some(None);
+        }
+        let put = self.file_put(name, px);
+        if put.is_none() && !self.wanted.iter().any(|(f, p)| f == name && *p == px) {
+            self.wanted.push((name.to_string(), px));
+        }
+        put
+    }
+
+    /// The icon files (path, px) [`IconCache::get_unread`] lacked since the last call, each
+    /// once, for the host to [`decode_file`] off its loop and [`IconCache::put_file`].
+    pub fn take_wanted(&mut self) -> Vec<(String, i32)> {
+        std::mem::take(&mut self.wanted)
     }
 
     pub fn theme_name(&self) -> String {
@@ -1820,6 +1845,33 @@ mod tests {
             "a size not put in reads the file"
         );
         fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn get_unread_never_reads_a_file_and_wants_each_once() {
+        let mut cache = IconCache::new(IconTheme::load("none", &[]));
+        let file = "/srv/icons/app.png";
+        assert_eq!(cache.get_unread(file, 16), None);
+        assert_eq!(cache.get_unread(file, 16), None);
+        assert_eq!(cache.get_unread(file, 32), None);
+        assert_eq!(
+            cache.take_wanted(),
+            [(file.to_string(), 16), (file.to_string(), 32)]
+        );
+        assert!(cache.take_wanted().is_empty());
+        cache.put_file(file, 16, Some(Canvas::new(16, 16)));
+        cache.put_file(file, 32, None);
+        assert_eq!(
+            cache.get_unread(file, 16).map(|c| c.map(|c| c.width)),
+            Some(Some(16))
+        );
+        assert_eq!(
+            cache.get_unread(file, 32),
+            Some(None),
+            "a failed decode is not tried again"
+        );
+        assert_eq!(cache.get_unread("no-such-name", 16), Some(None));
+        assert!(cache.take_wanted().is_empty());
     }
 
     /// `file_put` answers only what was put in, never reading the file: a size not put in is
