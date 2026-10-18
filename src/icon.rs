@@ -177,6 +177,7 @@ impl State {
             self.redraw_taskbars();
         }
         self.start_panel_icon_landed(file);
+        self.launcher_icon_landed(file);
     }
 
     /// Icon file `file` landed: the windows whose app wears it redraw their caption and task

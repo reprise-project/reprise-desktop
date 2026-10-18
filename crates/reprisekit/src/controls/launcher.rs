@@ -257,6 +257,27 @@ impl Launcher {
         self.rebuild(None);
     }
 
+    /// Gives the app and settings rows, in order, the icons the host found for them again (an
+    /// icon file it decoded since), keeping the list as it is.
+    pub fn refill_icons(&mut self, apps: Vec<Option<Canvas>>, settings: Vec<Option<Canvas>>) {
+        for (r, icon) in self.apps.iter_mut().zip(apps) {
+            r.icon = icon;
+        }
+        for (r, icon) in self.settings.iter_mut().zip(settings) {
+            r.icon = icon;
+        }
+        for (k, line) in self.lines().into_iter().enumerate() {
+            let icon = match line {
+                Line::Row(Pick::App(i)) => self.apps[i].icon.clone(),
+                Line::Row(Pick::Setting(i)) => self.settings[i].icon.clone(),
+                _ => continue,
+            };
+            if let Some(slot) = self.icons.get_mut(k) {
+                *slot = icon;
+            }
+        }
+    }
+
     /// The host's file rows for the current query, best first. The highlight stays
     /// on a row above the files.
     pub fn set_files(&mut self, files: Vec<FileRow>) {
@@ -1067,6 +1088,30 @@ mod tests {
 
     fn typed(l: &mut Launcher, s: &str) -> Event {
         l.key(Key::Char(EditKey::Insert(s.into())))
+    }
+
+    #[test]
+    fn refilled_icons_land_on_their_rows_and_keep_the_highlight() {
+        let mut l = Launcher::new();
+        typed(&mut l, "x");
+        l.set_settings(rows(&["Display"]));
+        l.set_rows(rows(&["Xa", "Xb"]));
+        l.key(Key::Down);
+        let selected = l.list.selected;
+        l.refill_icons(
+            vec![None, Some(Canvas::new(16, 16))],
+            vec![Some(Canvas::new(8, 8))],
+        );
+        let widths: Vec<Option<u32>> = l
+            .icons
+            .iter()
+            .map(|c| c.as_ref().map(|c| c.width))
+            .collect();
+        let at = |name: &str| l.list.items.iter().position(|n| n == name).unwrap();
+        assert_eq!(widths[at("Xa")], None);
+        assert_eq!(widths[at("Xb")], Some(16));
+        assert_eq!(widths[at("Display")], Some(8));
+        assert_eq!(l.list.selected, selected);
     }
 
     #[test]
