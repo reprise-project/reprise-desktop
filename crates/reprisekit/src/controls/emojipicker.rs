@@ -158,6 +158,16 @@ impl EmojiPicker {
         scroll_into_view(&mut self.top, i / COLS, ROWS);
     }
 
+    /// A reader asked to see cell `i`: its row scrolls in and the highlight stays. True when it
+    /// moved.
+    pub fn reveal(&mut self, i: usize) -> bool {
+        let top = self.top;
+        if i < self.shown.len() {
+            scroll_into_view(&mut self.top, i / COLS, ROWS);
+        }
+        self.top != top
+    }
+
     fn pick(&self) -> Event {
         self.selected_entry()
             .map_or(Event::Close, |e| Event::Pick(e.emoji))
@@ -284,13 +294,19 @@ pub fn layout(cm: &ControlMetrics) -> Layout {
 }
 
 fn cell_rect(m: &EmojiPicker, lay: &Layout, i: usize) -> Option<Rect> {
-    let row = (i / COLS).checked_sub(m.top).filter(|&r| r < ROWS)?;
-    Some(Rect::new(
+    (i / COLS).checked_sub(m.top).filter(|&r| r < ROWS)?;
+    Some(cell_place(m, lay, i))
+}
+
+/// Cell `i`'s place, above or below the grid when its row is scrolled out.
+fn cell_place(m: &EmojiPicker, lay: &Layout, i: usize) -> Rect {
+    let row = (i / COLS) as i32 - m.top as i32;
+    Rect::new(
         lay.cells.x + (i % COLS) as i32 * CELL,
-        lay.cells.y + row as i32 * CELL,
+        lay.cells.y + row * CELL,
         CELL,
         CELL,
-    ))
+    )
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -458,8 +474,8 @@ fn title(name: &str) -> String {
         .unwrap_or_default()
 }
 
-/// The panel's `access` part, in panel coordinates: the filter field and a list of the named cells in
-/// view. Returns the focused node: the highlighted cell, else the field.
+/// The panel's `access` part, in panel coordinates: the filter field and a list of the named cells;
+/// a cell scrolled out lies outside the list ([`EmojiPicker::reveal`]). Returns the focused node: the highlighted cell, else the field.
 pub fn access(
     m: &EmojiPicker,
     text: &TextRenderer,
@@ -474,17 +490,21 @@ pub fn access(
     let field = access_edit(
         &m.edit, first, false, lay.field, true, text, px, tree, parent, "field",
     );
-    let mut n = access::node(Role::ListBox, lay.grid);
+    let shown = Rect::new(
+        lay.cells.x,
+        lay.cells.y,
+        COLS as i32 * CELL,
+        ROWS as i32 * CELL,
+    );
+    let mut n = access::node(Role::ListBox, shown);
     access::focusable(&mut n, true);
     let list = tree.push(parent, "cells", n);
     let mut focus = field;
-    for i in m.top * COLS..m.len().min((m.top + ROWS) * COLS) {
+    for i in 0..m.len() {
         let e = &m.entries[m.shown[i]];
         let mut o = Node::new(Role::ListBoxOption);
         o.set_label(title(e.name));
-        if let Some(r) = cell_rect(m, &lay, i) {
-            o.set_bounds(access::bounds(r));
-        }
+        o.set_bounds(access::row_bounds(shown, cell_place(m, &lay, i)));
         o.set_selected(m.selected == Some(i));
         let id = tree.push(list, i, o);
         if m.selected == Some(i) {
@@ -673,6 +693,27 @@ mod tests {
         let named = (lay.name.x..lay.name.right())
             .any(|x| (lay.name.y..lay.name.bottom()).any(|y| c.get(x, y) != cs.button_face.argb()));
         assert!(named, "the highlighted emoji's name is drawn");
+    }
+
+    #[test]
+    fn a_reader_scrolls_a_cell_in_and_the_highlight_stays() {
+        use crate::access::{Published, ROOT};
+        let text = TextRenderer::load(&FontConfig::default());
+        let cm = ControlMetrics::CLASSIC;
+        let mut m = EmojiPicker::new(Vec::new(), catalog(None));
+        let last = m.len() - 1;
+        let mut t = Tree::window("", (width(&cm), 300));
+        access(&m, &text, 11, &mut t, ROOT, &cm);
+        let (list, n) = t.nodes().find(|(_, n)| n.role() == Role::ListBox).unwrap();
+        assert_eq!(n.children().len(), m.len(), "every cell is listed");
+        let cell = t.get(list).unwrap().children()[last];
+        let mut p = Published::default();
+        p.update(t);
+        assert_eq!(p.reveal(cell).map(|r| r.row), Some(last));
+        assert!(m.reveal(last));
+        assert_eq!(m.top, last / COLS + 1 - ROWS, "its row is the last shown");
+        assert_eq!(m.selected, Some(0), "the highlight stays");
+        assert!(!m.reveal(last));
     }
 
     #[test]
