@@ -1,7 +1,7 @@
 //! The Send To submenu's rows, shared by the desktop's menu and Explorer's.
 
 use std::ffi::OsString;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use crate::{names, ops, places};
 
@@ -21,11 +21,9 @@ pub struct SendToRow {
     pub enabled: bool,
 }
 
-pub fn rows(
-    desktop: Option<&Path>,
-    documents: Option<PathBuf>,
-    drives: &[PathBuf],
-) -> Vec<SendToRow> {
+/// The rows for a desktop folder that is there or not, the Documents folder and `drives`; this
+/// touches no file, so a folder on a mount that stopped answering cannot hold it.
+pub fn rows(desktop: bool, documents: Option<PathBuf>, drives: &[PathBuf]) -> Vec<SendToRow> {
     let row = |label: &str, icon: &'static str, dest: SendTo| SendToRow {
         label: label.to_string(),
         icon,
@@ -35,7 +33,7 @@ pub fn rows(
     let mut rows = vec![
         row("Compressed (zipped) Folder", "application-zip", SendTo::Zip),
         SendToRow {
-            enabled: desktop.is_some_and(Path::is_dir),
+            enabled: desktop,
             ..row(
                 "Desktop (create shortcut)",
                 "user-desktop",
@@ -63,7 +61,7 @@ pub fn rows(
 
 pub fn session_rows(drives: &[PathBuf]) -> Vec<SendToRow> {
     rows(
-        places::user_dir("DESKTOP", "Desktop").as_deref(),
+        places::user_dir("DESKTOP", "Desktop").is_some_and(|d| d.is_dir()),
         places::user_dir("DOCUMENTS", "Documents"),
         drives,
     )
@@ -92,9 +90,8 @@ mod tests {
 
     #[test]
     fn rows_come_in_order_and_grey_a_missing_desktop() {
-        let desktop = tempfile::tempdir().unwrap();
         let rows = rows(
-            Some(desktop.path()),
+            true,
             Some(PathBuf::from("/home/u/Documents")),
             &[PathBuf::from("/run/media/u/USB")],
         );
@@ -114,10 +111,9 @@ mod tests {
         assert_eq!(rows[4].dest, SendTo::Folder("/run/media/u/USB".into()));
         assert_eq!(rows[4].icon, "drive-removable-media");
 
-        let bare = super::rows(Some(Path::new("/nonexistent/Desktop")), None, &[]);
+        let bare = super::rows(false, None, &[]);
         assert_eq!(bare.len(), 3);
         assert!(!bare[1].enabled);
-        assert!(!super::rows(None, None, &[])[1].enabled);
     }
 
     #[test]
