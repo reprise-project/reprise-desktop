@@ -276,8 +276,9 @@ pub struct Explorer {
     /// Reads of places left before they landed, one per key: a visit back joins its read
     /// instead of starting another, so visits to a dead folder hold one listing thread.
     left: Vec<Reading>,
-    /// Folders nodes still being read after [`LIST_WAIT`] ([`Explorer::fill_node`]).
-    filling: Vec<(Place, Job<foldertree::Kids>)>,
+    /// Folders nodes still being read after [`LIST_WAIT`] ([`Explorer::fill_node`]), each with
+    /// whether a refill asked meanwhile reads it again once it lands.
+    filling: Vec<(Place, Job<foldertree::Kids>, bool)>,
     /// Holds every [`Explorer::read_job`] read until the test drops its write lock; while set, no
     /// read is waited for ([`Explorer::list_wait`]).
     #[cfg(test)]
