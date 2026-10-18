@@ -126,6 +126,9 @@ pipewire.workspace = true
 reis = { version = "0.7", default-features = false }
 rustix = { version = "1", features = ["net"] }
 wayland-scanner = "0.31"
+# The feature only unlocks `set_default_max_buffer_size`, which the Rust
+# backend implements; nothing links libwayland-server.
+wayland-server = { version = "0.31", features = ["libwayland_1_23"] }
 
 [dev-dependencies]
 zbus = { workspace = true, features = ["p2p"] }

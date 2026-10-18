@@ -380,7 +380,7 @@ impl State {
         handle: LoopHandle<'static, State>,
         signal: LoopSignal,
     ) -> Result<State, Box<dyn std::error::Error>> {
-        let display: Display<State> = Display::new()?;
+        let display: Display<State> = new_display()?;
         let dh = display.handle();
 
         let listening = listen()?;
@@ -730,6 +730,19 @@ pub fn start_text(theme: &crate::theme::Theme) -> TextRenderer {
     }
 }
 
+/// How far a client may fall behind on its events, past the ~280 writes its
+/// socket holds, before the backend drops it. The buffer grows only as needed.
+const CLIENT_BUFFER_MAX: usize = 4 << 20;
+
+/// The display every client connects to.
+fn new_display<D: 'static>() -> std::io::Result<Display<D>> {
+    let display = Display::new().map_err(std::io::Error::other)?;
+    display
+        .handle()
+        .set_default_max_buffer_size(CLIENT_BUFFER_MAX);
+    Ok(display)
+}
+
 pub struct ClientState {
     pub compositor_state: CompositorClientState,
     /// Whether it runs in a sandbox, for the global filters (`sandbox`).
@@ -759,6 +772,85 @@ impl ClientData for ClientState {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use smithay::reexports::wayland_server::{
+        Client, DataInit, Dispatch, GlobalDispatch, New, backend::ClientData,
+        protocol::wl_output::WlOutput,
+    };
+    use std::io::{Read, Write};
+
+    struct Flood;
+    impl GlobalDispatch<WlOutput, ()> for Flood {
+        fn bind(
+            _: &mut Self,
+            _: &DisplayHandle,
+            _: &Client,
+            _: New<WlOutput>,
+            _: &(),
+            _: &mut DataInit<'_, Self>,
+        ) {
+        }
+    }
+    impl Dispatch<WlOutput, ()> for Flood {
+        fn request(
+            _: &mut Self,
+            _: &Client,
+            _: &WlOutput,
+            _: <WlOutput as smithay::reexports::wayland_server::Resource>::Request,
+            _: &(),
+            _: &DisplayHandle,
+            _: &mut DataInit<'_, Self>,
+        ) {
+        }
+    }
+    struct NoData;
+    impl ClientData for NoData {}
+
+    /// Whether a client that binds the registry and then stops reading is
+    /// still connected after `events` globals, one flush each, as the loop
+    /// flushes once per iteration.
+    fn connected_after(mut display: Display<Flood>, events: usize) -> bool {
+        let (server, mut client) = UnixStream::pair().unwrap();
+        let mut dh = display.handle();
+        dh.insert_client(server, Arc::new(NoData)).unwrap();
+        let mut request = |opcode: u32, new_id: u32| {
+            let words: [u32; 3] = [1, (12 << 16) | opcode, new_id];
+            client
+                .write_all(&words.map(u32::to_ne_bytes).concat())
+                .unwrap();
+            display.dispatch_clients(&mut Flood).unwrap();
+        };
+        request(1, 2);
+        for _ in 0..events {
+            dh.create_global::<Flood, WlOutput, ()>(4, ());
+            let _ = dh.flush_clients();
+        }
+        // The backend closes a dropped client's socket on the next dispatch
+        // that has a request to read.
+        request(0, 3);
+        client.set_nonblocking(true).unwrap();
+        let mut buf = [0; 4096];
+        let mut read = 0;
+        let closed = loop {
+            match client.read(&mut buf) {
+                Ok(0) => break true,
+                Err(e) if e.kind() == std::io::ErrorKind::ConnectionReset => break true,
+                Ok(n) => read += n,
+                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => break false,
+                Err(e) => panic!("{e}"),
+            }
+        };
+        assert!(read >= 278 * 32, "the socket took {read} bytes");
+        !closed
+    }
+
+    #[test]
+    fn a_client_that_stops_reading_survives_two_thousand_small_flushes() {
+        assert!(
+            !connected_after(Display::new().unwrap(), 2000),
+            "the backend's own 4 KiB buffer drops it"
+        );
+        assert!(connected_after(new_display().unwrap(), 2000));
+    }
 
     #[test]
     fn a_styled_caption_renderer_is_the_one_the_kits_popups_draw_with() {

@@ -1976,6 +1976,7 @@ dependencies = [
  "wayland-client",
  "wayland-protocols",
  "wayland-scanner",
+ "wayland-server",
  "x11rb 0.14.0",
  "xcursor",
  "zbus",
