@@ -215,7 +215,7 @@ impl Explorer {
     pub fn run(&mut self, cmd: Command, ctx: &mut Ctx) -> Reply {
         match cmd {
             Command::Nothing => Reply::none(),
-            Command::Close => self.close(),
+            Command::Close => self.close(ctx),
             Command::About => self.about_box(ctx),
             Command::SystemInformation => Reply {
                 spawn: vec![vec!["reprise-about".into()]],

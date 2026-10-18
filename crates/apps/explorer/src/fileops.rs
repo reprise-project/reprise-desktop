@@ -582,9 +582,15 @@ impl Explorer {
     }
 
     /// File > Close or the close box. With work in flight the window hides and [`Explorer::wake`]
-    /// quits once it drains.
-    pub fn close(&mut self) -> Reply {
+    /// quits once it drains. A Replace prompt still up (the taskbar's Close passes it) answers No,
+    /// as do the pastes waiting behind it, and the rest is put.
+    pub fn close(&mut self, ctx: &mut Ctx) -> Reply {
         self.flush_settings();
+        if let Some(Dialog::Replace(r)) = self.dialog.take() {
+            self.closing = true;
+            self.ask_replace(r.pending, r.asker, ctx);
+            self.show_waiting(ctx);
+        }
         if self.busy() {
             self.closing = true;
             return Reply::none();
