@@ -1095,6 +1095,19 @@ impl State {
         }
     }
 
+    /// The theme icons the desktop's cells wear at draw scale `scale`, with their size in
+    /// device pixels: a scale warm loads them off the loop for the relayout at that scale.
+    pub fn desktop_theme_icons(&self, scale: i32) -> Vec<(String, i32)> {
+        let mut icons: Vec<(String, i32)> = (self.desktop.iter())
+            .flat_map(|v| &v.entries)
+            .filter(|e| !e.icon.starts_with('/'))
+            .map(|e| (e.icon.clone(), ICON_PX * scale))
+            .collect();
+        icons.sort_unstable();
+        icons.dedup();
+        icons
+    }
+
     pub fn relayout_desktop(&mut self) {
         let out = self.first_output();
         let (area, scale) = match &out {

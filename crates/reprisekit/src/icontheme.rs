@@ -903,7 +903,7 @@ fn cache_key(name: &str, extra: &[PathBuf]) -> String {
 /// Decoded icons by `(name, px, scale)`. Misses are cached as `None`. `get_shared` costs a
 /// refcount; `get` copies.
 pub struct IconCache {
-    theme: IconTheme,
+    theme: Arc<IconTheme>,
     cache: HashMap<(String, i32, i32), Option<Arc<Canvas>>>,
     /// The canvas scale icons come back at; see [`IconCache::set_scale`].
     scale: i32,
@@ -944,7 +944,7 @@ impl Kind {
 impl IconCache {
     pub fn new(theme: IconTheme) -> IconCache {
         IconCache {
-            theme,
+            theme: Arc::new(theme),
             cache: HashMap::new(),
             scale: 1,
             known: RefCell::new(HashMap::new()),
@@ -1053,6 +1053,26 @@ impl IconCache {
             .cloned()
     }
 
+    /// The theme `get` looks names up in, for a job loading icons with [`load_icon`] to hand
+    /// to [`IconCache::put_icons`].
+    pub fn theme(&self) -> Arc<IconTheme> {
+        self.theme.clone()
+    }
+
+    /// Takes icons [`load_icon`] loaded from `theme` at this cache's scale, so `get` answers
+    /// them without a lookup; dropped when the cache looks names up in another theme now.
+    pub fn put_icons(&mut self, theme: &Arc<IconTheme>, icons: Vec<(String, i32, Option<Canvas>)>) {
+        if !Arc::ptr_eq(theme, &self.theme) {
+            return;
+        }
+        for (name, px, canvas) in icons {
+            let key = (cache_key(&name, &[]), px, self.scale);
+            if !self.cache.contains_key(&key) {
+                self.insert(key, canvas.map(Arc::new));
+            }
+        }
+    }
+
     pub fn theme_name(&self) -> String {
         self.theme.chain.first().cloned().unwrap_or_default()
     }
@@ -1083,42 +1103,60 @@ impl IconCache {
     }
 
     fn shared(&mut self, name: &str, px: i32, extra: &[PathBuf]) -> Option<Arc<Canvas>> {
-        if name.is_empty() || px <= 0 {
-            return None;
-        }
-        // A theme icon name has no path separator; a relative path would resolve against the
-        // compositor's working directory.
-        if name.contains('/') && !name.starts_with('/') {
+        if !loadable(name, px) {
             return None;
         }
         let key = (cache_key(name, extra), px, self.scale);
         if let Some(hit) = self.cache.get(&key) {
             return hit.clone();
         }
-        let dpx = px * self.scale;
-        let canvas = if name.starts_with('/') {
-            decode(Path::new(name), dpx as u32)
-        } else {
-            // Some `.desktop` files carry an extension in `Icon=`; the spec says to strip it.
-            let bare = name
-                .strip_suffix(".png")
-                .or_else(|| name.strip_suffix(".svg"))
-                .or_else(|| name.strip_suffix(".xpm"))
-                .unwrap_or(name);
-            // Theme lookup is in device pixels at scale 1: a 32 px request at 2x and a 32 px
-            // icon at 1x want the same file. A file that fails to decode gives way to the next.
-            let found = self
-                .theme
-                .find_with_extra(bare, dpx, 1, extra, |p| decode(&p, dpx as u32));
-            if found.is_none() {
-                log::debug!("no icon named \"{bare}\" decodes at {dpx} px");
-            }
-            found
-        };
-        let canvas = canvas.map(|c| Arc::new(c.at_scale(self.scale)));
+        let canvas = load_with_extra(&self.theme, name, px, self.scale, extra);
+        let canvas = canvas.map(Arc::new);
         self.insert(key, canvas.clone());
         canvas
     }
+}
+
+/// `name` (an icon name or an absolute path) at `px` and `scale` as [`IconCache::get`] loads it,
+/// without a cache: for a job filling one through [`IconCache::put_icons`].
+pub fn load_icon(theme: &IconTheme, name: &str, px: i32, scale: i32) -> Option<Canvas> {
+    loadable(name, px)
+        .then(|| load_with_extra(theme, name, px, scale.max(1), &[]))
+        .flatten()
+}
+
+fn loadable(name: &str, px: i32) -> bool {
+    // A theme icon name has no path separator; a relative path would resolve against the
+    // compositor's working directory.
+    !name.is_empty() && px > 0 && (name.starts_with('/') || !name.contains('/'))
+}
+
+fn load_with_extra(
+    theme: &IconTheme,
+    name: &str,
+    px: i32,
+    scale: i32,
+    extra: &[PathBuf],
+) -> Option<Canvas> {
+    let dpx = px * scale;
+    let canvas = if name.starts_with('/') {
+        decode(Path::new(name), dpx as u32)
+    } else {
+        // Some `.desktop` files carry an extension in `Icon=`; the spec says to strip it.
+        let bare = name
+            .strip_suffix(".png")
+            .or_else(|| name.strip_suffix(".svg"))
+            .or_else(|| name.strip_suffix(".xpm"))
+            .unwrap_or(name);
+        // Theme lookup is in device pixels at scale 1: a 32 px request at 2x and a 32 px
+        // icon at 1x want the same file. A file that fails to decode gives way to the next.
+        let found = theme.find_with_extra(bare, dpx, 1, extra, |p| decode(&p, dpx as u32));
+        if found.is_none() {
+            log::debug!("no icon named \"{bare}\" decodes at {dpx} px");
+        }
+        found
+    };
+    canvas.map(|c| c.at_scale(scale))
 }
 
 /// A file listing's icon sizes in logical px: List and Details, Icons and Thumbnails, Tiles.
@@ -1741,6 +1779,26 @@ mod tests {
         );
         fs::remove_file(&p).unwrap();
         fs::remove_file(&png).unwrap();
+    }
+
+    /// Icons a job loaded from the cache's theme answer `get` without a lookup; ones loaded
+    /// from a theme the cache no longer looks names up in are dropped.
+    #[test]
+    fn icons_put_in_from_the_caches_theme_answer_without_a_lookup() {
+        let root = fixture("put-icons", "test", INDEX, &[]);
+        let png = root.join("test/32x32/apps/app.png");
+        fs::create_dir_all(png.parent().unwrap()).unwrap();
+        write_png(&png, 1, 1, &[0, 0, 255, 255]);
+        let mut cache = IconCache::new(IconTheme::load("test", std::slice::from_ref(&root)));
+        let theme = cache.theme();
+        let icon = load_icon(&theme, "app", 32, cache.scale());
+        assert!(icon.is_some());
+        let old = Arc::new(IconTheme::load("test", std::slice::from_ref(&root)));
+        cache.put_icons(&old, vec![("app".into(), 32, None)]);
+        cache.put_icons(&theme, vec![("app".into(), 32, icon.clone())]);
+        fs::remove_file(&png).unwrap();
+        assert_eq!(cache.get("app", 32), icon);
+        fs::remove_dir_all(&root).unwrap();
     }
 
     /// An icon file decoded elsewhere answers `get` without the file being read again.
