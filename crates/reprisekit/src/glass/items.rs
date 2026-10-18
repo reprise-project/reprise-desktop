@@ -19,6 +19,8 @@
 //! filled near-black pointing down-right when expanded, either cyan with a soft
 //! glow under the pointer.
 
+use std::borrow::Cow;
+
 use super::glyph::{Mark, Piece};
 use super::panel::{self, Fade, LightBox};
 use crate::raster::{Canvas, Insets};
@@ -194,17 +196,21 @@ pub fn desktop_part(d: i32) -> PartImage {
 const COLLAPSED: Mark = Mark {
     w: EXPANDER,
     h: EXPANDER,
-    pieces: &[Piece::Line(
-        &[(5.5, 4.5), (9.5, 8.5), (5.5, 12.5), (5.5, 4.5)],
+    pieces: Cow::Borrowed(&[Piece::Line(
+        Cow::Borrowed(&[(5.5, 4.5), (9.5, 8.5), (5.5, 12.5), (5.5, 4.5)]),
         1.1,
-    )],
+    )]),
 };
 /// An expanded node's triangle: solid, pointing down to the right, its
 /// right angle at the bottom right of (10, 10), its sides 6 px.
 const EXPANDED: Mark = Mark {
     w: EXPANDER,
     h: EXPANDER,
-    pieces: &[Piece::Poly(&[(11.0, 4.6), (11.0, 11.0), (4.6, 11.0)])],
+    pieces: Cow::Borrowed(&[Piece::Poly(Cow::Borrowed(&[
+        (11.0, 4.6),
+        (11.0, 11.0),
+        (4.6, 11.0),
+    ]))]),
 };
 /// The collapsed triangle's grey, the expanded one's near-black, and
 /// either's cyan under the pointer.
