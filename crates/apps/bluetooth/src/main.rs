@@ -278,18 +278,23 @@ impl BtApp {
         if let Some(s) = latest {
             self.snapshot_in(s);
         }
-        let mut activate = None;
+        let mut shown = None;
+        let mut raised = false;
         while let Some(raw) = self.msgs.as_ref().and_then(|rx| rx.try_recv().ok()) {
             let Some(msg) = tray::translate(raw) else {
                 continue;
             };
+            raised = true;
             match msg {
                 tray::TrayMsg::Exit => return self.quit(),
                 tray::TrayMsg::Show => {
                     self.hidden = false;
-                    activate = self.tray.as_ref().and_then(|t| t.take_handoff());
+                    shown = Some(repriseapp::MAIN);
                 }
-                tray::TrayMsg::Add => self.open_wizard(),
+                tray::TrayMsg::Add => {
+                    self.open_wizard();
+                    shown = Some(WIZARD);
+                }
                 tray::TrayMsg::TogglePower => {
                     if let Some(a) = &self.snapshot.adapter {
                         self.send(bz::Cmd::SetPowered {
@@ -301,7 +306,7 @@ impl BtApp {
             }
         }
         Reply {
-            activate,
+            activate: reprisetray::handoff_for(self.tray.as_ref(), raised, shown),
             ..Reply::redraw_all()
         }
     }
@@ -1556,5 +1561,40 @@ mod tests {
             at_pick: false,
             text_size: 100,
         }
+    }
+
+    fn holding_tray(
+        a: &mut BtApp,
+    ) -> (
+        reprisebus::instance::Handoff,
+        std::sync::mpsc::Sender<reprisetray::Msg>,
+    ) {
+        let handoff = reprisebus::instance::Handoff {
+            token: Some("t".into()),
+            by_key: false,
+        };
+        let (tx, rx) = std::sync::mpsc::channel();
+        a.tray = Some(reprisetray::TrayHandle::holding(handoff.clone()));
+        a.msgs = Some(rx);
+        (handoff, tx)
+    }
+
+    #[test]
+    fn add_from_the_tray_hands_its_token_to_the_wizard() {
+        let mut a = app();
+        a.snapshot_in(snap(true));
+        let (handoff, tx) = holding_tray(&mut a);
+        tx.send(reprisetray::Msg::Clicked(tray::ID_ADD)).unwrap();
+        assert_eq!(a.wake().activate, Some((WIZARD, handoff)));
+    }
+
+    #[test]
+    fn a_tray_row_that_shows_nothing_drops_its_handoff() {
+        let mut a = app();
+        a.snapshot_in(snap(true));
+        let (_, tx) = holding_tray(&mut a);
+        tx.send(reprisetray::Msg::Clicked(tray::ID_POWER)).unwrap();
+        assert_eq!(a.wake().activate, None);
+        assert_eq!(a.tray.as_ref().unwrap().take_handoff(), None);
     }
 }
