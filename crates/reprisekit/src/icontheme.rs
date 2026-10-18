@@ -957,6 +957,18 @@ impl IconCache {
         }
     }
 
+    /// Looks names up in `theme` from now on. Icon files decoded, and those
+    /// [`IconCache::take_wanted`] has yet to hand out, are the same in every theme and stay.
+    pub fn set_theme(&mut self, theme: IconTheme) {
+        self.theme = Arc::new(theme);
+        self.known.get_mut().clear();
+        self.cache.retain(|k, _| k.0.starts_with('/'));
+        self.counts = [0; 3];
+        for (k, v) in &self.cache {
+            self.counts[Kind::of(&k.0, v) as usize] += 1;
+        }
+    }
+
     pub fn len(&self) -> usize {
         self.cache.len()
     }
@@ -1897,6 +1909,22 @@ mod tests {
             "a failed decode is kept"
         );
         fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn a_new_theme_keeps_the_icon_files_and_the_ones_still_wanted() {
+        let mut cache = IconCache::new(IconTheme::load("none", &[]));
+        cache.put_file("/srv/icons/kept.png", 16, Some(Canvas::new(16, 16)));
+        assert_eq!(cache.get_unread("/srv/icons/late.png", 16), None);
+        cache.get_shared("missing-name", 16);
+        cache.set_theme(IconTheme::load("other", &[]));
+        assert_eq!(cache.theme_name(), "other");
+        assert!(cache.file_put("/srv/icons/kept.png", 16).is_some());
+        assert_eq!(cache.len(), 1, "the theme lookups go");
+        assert_eq!(
+            cache.take_wanted(),
+            [("/srv/icons/late.png".to_string(), 16)]
+        );
     }
 
     /// A file put in and then dropped at the file cap is gone from `file_put`, and `file_drops`
