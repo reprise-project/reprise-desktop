@@ -555,10 +555,14 @@ impl Explorer {
     }
 
     pub(crate) fn poll_jobs(&mut self, ctx: &mut Ctx) -> Option<Reply> {
-        let mut reply = None;
+        let mut reply: Option<Reply> = None;
         while let Ok(done) = self.jobs_rx.try_recv() {
             self.jobs_pending = self.jobs_pending.saturating_sub(1);
-            reply = Some(done(self, ctx));
+            let r = done(self, ctx);
+            reply = Some(match reply {
+                Some(was) => was.and(r),
+                None => r,
+            });
         }
         reply
     }
