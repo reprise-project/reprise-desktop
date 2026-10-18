@@ -54,7 +54,7 @@ pub fn load(src: &Source, px: u32) -> Option<Canvas> {
 }
 
 /// `src` saved at [`userpic::SAVED_PX`] as a PNG in the runtime folder,
-/// for AccountsService to copy. Each save gets a file of its own.
+/// for AccountsService to copy. Each save gets a file of its own, which [`crate::acct::apply`] deletes.
 pub fn save(src: &Source) -> Result<PathBuf, String> {
     let c = load(src, userpic::SAVED_PX).ok_or("The file is not a picture Reprise can read.")?;
     let dir = std::env::var_os("XDG_RUNTIME_DIR")
