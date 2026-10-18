@@ -251,7 +251,7 @@ suspend_after = 0            # run [power] standby
 
 # [[outputs]]                # per-output settings, matched by connector name; the Display page of Reprise Settings writes mode, transform, scale, position and adaptive_sync here after you keep the change
 # name = "DP-1"
-# position = [1920, 0]       # top-left in the layout, in logical pixels; outputs without one line up right of the rightmost placed one, and one turned off and on comes back where it was placed
+# position = [1920, 0]       # top-left in the layout, in logical pixels; outputs without one line up right of the rightmost placed one, and one turned off and on comes back where it was placed unless another output now covers that spot
 # primary = true             # the desktop icons, notification balloons and the media keys' panel go here; the first output when none is marked
 # scale = 1.5                # 1 to 4 in steps of 0.25; drawn at the next whole scale, then scaled down
 # mode = "2560x1440@59.95"   # WIDTHxHEIGHT[@HZ]; the preferred mode when left out or not offered
