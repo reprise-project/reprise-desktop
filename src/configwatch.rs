@@ -288,11 +288,9 @@ pub fn reload(state: &mut State, cfg: Config) {
         state.invalidate_desktop();
     }
     if changes.icons {
-        state.icons =
-            reprisekit::icontheme::IconCache::new(reprisekit::icontheme::IconTheme::load(
-                &state.config.icons.theme,
-                &reprisekit::icontheme::IconTheme::default_roots(),
-            ));
+        let roots = reprisekit::icontheme::IconTheme::default_roots();
+        let loaded = reprisekit::icontheme::IconTheme::load(&state.config.icons.theme, &roots);
+        state.icons.set_theme(loaded);
         state.invalidate_desktop();
         state.invalidate_dialogs();
         let theme = state.config.icons.theme.clone();
