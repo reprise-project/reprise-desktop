@@ -3157,8 +3157,8 @@ impl Form {
         Event::Redraw
     }
 
-    /// A reader asked to see row `row` of the list box or tree at (`x`, `y`): it scrolls in,
-    /// nothing is picked.
+    /// A reader asked to see row `row` of the list box, tree or open drop list at (`x`, `y`): it
+    /// scrolls in, nothing is picked.
     pub fn reveal(&mut self, x: i32, y: i32, row: usize, text: &TextRenderer, px: u32) -> Event {
         let Some(i) = self.hit(x, y, text, px).map(|h| h.item) else {
             return Event::None;
@@ -3174,6 +3174,7 @@ impl Form {
                 let lay = treeview::layout_without_text(tv, rect, &cm);
                 tv.reveal(row, &lay)
             }
+            Control::Combo(c) => c.reveal(row),
             _ => false,
         };
         if moved { Event::Redraw } else { Event::None }

@@ -1425,6 +1425,7 @@ impl App for Lazy {
     fn reader(&mut self, win: WinId, act: repriseapp::Reader, ctx: &Ctx) -> bool {
         match (win, &mut self.inner) {
             (MAIN, Some(ex)) => window::reader(ex, act, ctx),
+            (DIALOG, Some(ex)) => ex.chooser_reader(act),
             _ => repriseapp::reader_forms(self, win, act, ctx),
         }
     }

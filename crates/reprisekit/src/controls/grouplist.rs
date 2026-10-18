@@ -76,6 +76,21 @@ impl<T> GroupList<T> {
             return;
         }
         self.selected = Some(i);
+        self.show(i, visible);
+    }
+
+    /// Scroll row `i` into a box of `visible` rows without picking it, for a reader's
+    /// ScrollIntoView. True when it moved.
+    pub fn reveal(&mut self, i: usize, visible: usize) -> bool {
+        let top = self.top;
+        if i < self.rows.len() {
+            self.show(i, visible);
+        }
+        self.top != top
+    }
+
+    /// Scroll so row `i` shows, with the group heading right above it.
+    fn show(&mut self, i: usize, visible: usize) {
         let above = if i > 0 && matches!(self.rows[i - 1], Row::Group(_)) {
             i - 1
         } else {
@@ -313,8 +328,9 @@ pub fn draw<T>(
 }
 
 /// The list's `access` part: a list box with an option per row, headers included (they take the
-/// selection too), the selected one marked. Rows scrolled out of view have no bounds. Returns the
-/// node focused when the list is: the selected row, else the list.
+/// selection too), the selected one marked. The list's bounds are the rows shown whole, so a row
+/// scrolled out lies outside them, where a reader can ask to scroll it in ([`GroupList::reveal`]).
+/// Returns the node focused when the list is: the selected row, else the list.
 pub fn access<T>(
     list: &GroupList<T>,
     lay: &Layout,
@@ -323,18 +339,22 @@ pub fn access<T>(
     key: impl std::hash::Hash,
 ) -> crate::access::accesskit::NodeId {
     use crate::access::{self, accesskit::Node, accesskit::Role};
-    let mut n = access::node(Role::ListBox, lay.frame);
+    let shown = Rect::new(
+        lay.inner.x,
+        lay.inner.y,
+        lay.inner.width,
+        lay.visible as i32 * lay.row_h,
+    );
+    let mut n = access::node(Role::ListBox, shown);
     access::focusable(&mut n, true);
     let id = tree.push(parent, key, n);
     let mut focus = id;
     for (i, row) in list.rows.iter().enumerate() {
         let mut o = Node::new(Role::ListBoxOption);
         o.set_label(row.label());
-        if (list.top..list.top + lay.visible).contains(&i) {
-            let y = lay.inner.y + (i - list.top) as i32 * lay.row_h;
-            let r = Rect::new(lay.inner.x, y, lay.inner.width, lay.row_h);
-            o.set_bounds(access::bounds(r));
-        }
+        let y = lay.inner.y + (i as i32 - list.top as i32) * lay.row_h;
+        let r = Rect::new(lay.inner.x, y, lay.inner.width, lay.row_h);
+        o.set_bounds(access::row_bounds(shown, r));
         o.set_selected(list.selected == Some(i));
         let oid = tree.push(id, i, o);
         if list.selected == Some(i) {
