@@ -155,8 +155,7 @@ pub struct Explorer {
     pub tree: TreeView,
     pub tree_places: Vec<Place>,
     /// The drives Computer lists. The scan stats every mount (a hung network
-    /// mount blocks it), so once the window is open it runs on a listing thread in
-    /// [`Explorer::sync_drives`].
+    /// mount blocks it), so it runs on a listing thread in [`Explorer::sync_drives`].
     pub drives: Vec<reprisefs::places::Drive>,
     /// Tells a drive's root apart from a plain folder in the tree.
     pub drive_mounts: Vec<PathBuf>,
@@ -320,9 +319,21 @@ impl Explorer {
         udisks: Option<reprisefs::udisks::Udisks>,
         ctx: &mut Ctx,
     ) -> Explorer {
+        let mut ex = Explorer::unopened(start.clone(), settings, app_index, udisks, ctx);
+        ex.first_show(start, ctx);
+        ex
+    }
+
+    /// The window's state before [`Explorer::first_show`] scans the drives and lists `start`.
+    fn unopened(
+        start: Place,
+        settings: Settings,
+        app_index: Vec<reprisefs::apps::AppEntry>,
+        udisks: Option<reprisefs::udisks::Udisks>,
+        ctx: &mut Ctx,
+    ) -> Explorer {
         let (jobs_tx, jobs_rx) = std::sync::mpsc::channel();
         let thumb_cache = thumbs::configured_cache();
-        let drives = reprisefs::places::drives();
         let mut sv = ShellView {
             mode: commands::mode_from_name(&settings.mode),
             sort: Some(settings.sort),
@@ -333,7 +344,7 @@ impl Explorer {
                 col.width = *w;
             }
         }
-        let mut ex = Explorer {
+        Explorer {
             place: start.clone(),
             history: History::new(start.clone()),
             sv,
@@ -342,9 +353,9 @@ impl Explorer {
             item_index: HashMap::new(),
             tree: TreeView::new(Vec::new(), Style::Explorer),
             tree_places: Vec::new(),
-            drive_mounts: place::drive_mounts(&drives),
-            drives,
-            mounts_seen: std::fs::read_to_string("/proc/mounts").unwrap_or_default(),
+            drive_mounts: Vec::new(),
+            drives: Vec::new(),
+            mounts_seen: String::new(),
             scanning: None,
             volumes: reprisefs::udisks::Snapshot::default(),
             volume_changes: None,
@@ -449,14 +460,19 @@ impl Explorer {
             tip: None,
             folder_tip: None,
             tip_walk: None,
-        };
-        ex.follow_forms(ctx);
-        ex.build_toolbar(ctx);
-        ex.build_address(ctx);
-        ex.build_tree(ctx);
-        ex.sync_bar();
-        ex.show(start, ctx);
-        ex
+        }
+    }
+
+    /// Builds the chrome and lists `start`. The drives are scanned first, on a listing thread
+    /// ([`Explorer::sync_drives`]): the address drop and a start under a drive need them.
+    fn first_show(&mut self, start: Place, ctx: &mut Ctx) {
+        self.follow_forms(ctx);
+        self.sync_drives(ctx);
+        self.build_toolbar(ctx);
+        self.build_address(ctx);
+        self.build_tree(ctx);
+        self.sync_bar();
+        self.show(start, ctx);
     }
 
     /// The keyboard cannot be left in a tree that is gone.
