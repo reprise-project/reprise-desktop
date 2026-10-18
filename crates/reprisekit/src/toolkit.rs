@@ -270,6 +270,25 @@ mod tests {
     }
 
     #[test]
+    fn a_disabled_progress_bar_fills_grey_in_gtk3_and_gtk4() {
+        let rule = "progressbar > trough > progress:disabled, \
+                    progressbar > trough > progress:backdrop:disabled {\n  \
+                    border-color: @insensitive_fg_color;\n  \
+                    background-color: @insensitive_fg_color;\n}";
+        for interface in [Interface::Classic, Interface::Blue, Interface::Glass] {
+            let cs = ColorScheme::default();
+            assert!(
+                gtk3_css(&cs, interface).contains(rule),
+                "GTK3 {interface:?}"
+            );
+            assert!(
+                gtk4_theme_css(&cs, interface).contains(rule),
+                "GTK4 {interface:?}"
+            );
+        }
+    }
+
+    #[test]
     fn the_rules_read_only_defined_colours() {
         let css = gtk3_css(&ColorScheme::default(), Interface::Classic);
         let defined: Vec<&str> = css
@@ -379,9 +398,9 @@ mod tests {
         assert_eq!(
             got,
             [
-                0x8c41_ac8e_912b_923b,
-                0xf707_456c_02ae_8a7c,
-                0xd647_1260_5635_b098
+                0x25cc_4e89_cd8c_5463,
+                0xe5a2_5c5e_afdb_ce8c,
+                0x1c06_2550_e6c0_1d08
             ],
             "{got:#x?}"
         );
