@@ -1724,6 +1724,55 @@ fn a_replace_prompt_whose_files_answer_late_comes_up_on_a_later_wake() {
     );
 }
 
+/// After Close the window is hidden, so a prompt could never be answered.
+#[test]
+fn a_paste_whose_clash_check_answers_after_close_keeps_the_clashes_puts_the_rest_and_quits() {
+    let mut ctx = test_ctx();
+    let t = tempfile::tempdir().expect("a temp dir");
+    let (src, dest) = (t.path().join("src"), t.path().join("dest"));
+    for d in [&src, &dest] {
+        std::fs::create_dir_all(d).expect("mkdir");
+    }
+    std::fs::write(src.join("a.txt"), "new").expect("write");
+    std::fs::write(dest.join("a.txt"), "old").expect("write");
+    std::fs::write(src.join("b.txt"), "b").expect("write");
+    let mut ex = crate::tests::test_explorer(Place::Folder(dest.clone()), &mut ctx);
+    let gate = std::sync::Arc::new(std::sync::RwLock::new(()));
+    let closed = gate.write().expect("lock");
+    ex.held = Some(gate.clone());
+    ex.put_all(
+        &[src.join("a.txt"), src.join("b.txt")],
+        &dest,
+        &|_| Some(DropOp::Copy),
+        false,
+        &mut ctx,
+    );
+    assert!(!ex.run(Command::Close, &mut ctx).quit, "the check is out");
+    drop(closed);
+    ex.held = None;
+
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    let quit = loop {
+        if ex.wake(&mut ctx).quit {
+            break true;
+        }
+        if std::time::Instant::now() > deadline {
+            break false;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(2));
+    };
+    assert_eq!(asked(&ex), None, "no prompt on the hidden window");
+    assert!(quit, "the closed window quits once the paste is done");
+    assert_eq!(
+        std::fs::read_to_string(dest.join("a.txt")).ok().as_deref(),
+        Some("old")
+    );
+    assert!(
+        dest.join("b.txt").exists(),
+        "b.txt, which did not clash, is copied"
+    );
+}
+
 /// Yes replaces the first file, No keeps the second, and the folder prompt's Yes merges, asking
 /// about the file inside it the merge would replace.
 #[test]

@@ -11,7 +11,7 @@ use reprisefs::jobs::{PutEvent, PutItem, PutJob};
 use reprisefs::listing::Item;
 use reprisefs::names;
 use reprisefs::ops::DropOp;
-use reprisefs::replace::{self, Asker, Clash, Step, Verdict};
+use reprisefs::replace::{self, Answer, Asker, Clash, Step, Verdict};
 use reprisefs::sendto::{self, SendTo};
 use reprisefs::undo::Undoable;
 use reprisekit::controls::openwith::{self, Check, OpenWith, Program};
@@ -314,12 +314,17 @@ impl Explorer {
         self.ask_replace(pending, Asker::new(c.clashes), ctx)
     }
 
+    /// Asks about the next clash of `pending`. A closed window has no one to ask, so it answers
+    /// No to each: nothing is replaced and the rest is put.
     pub(crate) fn ask_replace(
         &mut self,
         mut pending: PendingPut,
-        asker: Asker,
+        mut asker: Asker,
         ctx: &mut Ctx,
     ) -> Reply {
+        while self.closing && matches!(asker.step(), Step::Ask { .. }) {
+            asker.answer(Answer::No);
+        }
         match asker.step() {
             Step::Cancelled => Reply::none(),
             Step::Ask { .. }
