@@ -80,7 +80,81 @@ fn width_of(buffer: &WlBuffer) -> i32 {
     with_buffer_contents(buffer, |_, _, d| d.width).unwrap_or(0)
 }
 
+/// What an icon whose file is not decoded yet shows meanwhile.
+pub const STAND_IN: &str = "application-x-executable";
+
+/// Icon files a job is decoding, each with the px asked for since its job started.
+pub type Decoding = std::collections::HashMap<String, Vec<i32>>;
+
+/// The jobs to start for `wanted` (path, px): one per file not decoding yet, with all its sizes.
+/// A file already decoding only notes the sizes, for a job of its own once the first lands: a
+/// file on a dead mount holds one job whatever surfaces and sizes ask for it.
+fn plan_decodes(decoding: &mut Decoding, wanted: Vec<(String, i32)>) -> Vec<(String, Vec<i32>)> {
+    let mut start: Vec<(String, Vec<i32>)> = Vec::new();
+    for (file, px) in wanted {
+        if let Some(asked) = decoding.get_mut(&file) {
+            if !asked.contains(&px) {
+                asked.push(px);
+            }
+            continue;
+        }
+        match start.iter_mut().find(|(f, _)| *f == file) {
+            Some((_, sizes)) if !sizes.contains(&px) => sizes.push(px),
+            Some(_) => {}
+            None => start.push((file, vec![px])),
+        }
+    }
+    for (file, sizes) in &start {
+        decoding.insert(file.clone(), sizes.clone());
+    }
+    start
+}
+
 impl State {
+    /// Decodes the icon files the loop asked [`IconCache::get_unread`] for off the loop (`plan_decodes`). Runs
+    /// after each dispatch of the loop.
+    pub fn decode_wanted_icons(&mut self) {
+        let wanted = self.icons.take_wanted();
+        if wanted.is_empty() {
+            return;
+        }
+        for (file, sizes) in plan_decodes(&mut self.icon_decodes, wanted) {
+            self.spawn_icon_decode(file, sizes);
+        }
+    }
+
+    fn spawn_icon_decode(&mut self, file: String, sizes: Vec<i32>) {
+        let scale = self.icons.scale();
+        self.spawn_fs_job(move || {
+            let path = std::path::Path::new(&file);
+            let art: Vec<(i32, Option<Canvas>)> = (sizes.into_iter())
+                .map(|px| (px, reprisekit::icontheme::decode_file(path, px, scale)))
+                .collect();
+            Box::new(move |state: &mut State| state.icon_decoded(file, art, scale))
+        });
+    }
+
+    fn icon_decoded(&mut self, file: String, art: Vec<(i32, Option<Canvas>)>, scale: i32) {
+        let asked = self.icon_decodes.remove(&file).unwrap_or_default();
+        let late: Vec<i32> = (asked.into_iter())
+            .filter(|px| !art.iter().any(|(p, _)| p == px))
+            .collect();
+        let puts = art.iter().map(|(px, c)| (file.clone(), *px, c.clone()));
+        self.icons.put_files_at(puts.collect(), scale);
+        self.icon_landed(&file, &art);
+        if !late.is_empty() {
+            self.icon_decodes.insert(file.clone(), late.clone());
+            self.spawn_icon_decode(file, late);
+        }
+    }
+
+    /// Icon file `file` decoded at the sizes of `art`: every surface showing it draws again.
+    fn icon_landed(&mut self, file: &str, art: &[(i32, Option<Canvas>)]) {
+        for (px, c) in art {
+            self.menu_icon_landed(file, *px, c);
+        }
+    }
+
     /// A commit of `w`'s surface applies a newly set icon: the buffer whose width
     /// is closest to 32 px is kept at native size. None that reads falls back to the
     /// app id's.
@@ -115,5 +189,42 @@ impl XdgToplevelIconHandler for State {
         {
             win.icon_pending = true;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_file_decoding_holds_one_job_whatever_sizes_ask_for_it() {
+        let mut decoding = Decoding::new();
+        let w = |f: &str, px| (f.to_string(), px);
+        let start = plan_decodes(
+            &mut decoding,
+            vec![
+                w("/srv/a.png", 16),
+                w("/srv/a.png", 32),
+                w("/srv/b.png", 16),
+                w("/srv/a.png", 16),
+            ],
+        );
+        assert_eq!(
+            start,
+            [
+                ("/srv/a.png".to_string(), vec![16, 32]),
+                ("/srv/b.png".to_string(), vec![16])
+            ]
+        );
+        let again = plan_decodes(
+            &mut decoding,
+            vec![w("/srv/a.png", 48), w("/srv/a.png", 16)],
+        );
+        assert!(again.is_empty(), "a decoding file starts no second job");
+        assert_eq!(
+            decoding["/srv/a.png"],
+            [16, 32, 48],
+            "the late size waits for the first job"
+        );
     }
 }
