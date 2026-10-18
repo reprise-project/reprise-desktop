@@ -257,7 +257,10 @@ impl State {
         };
         let (chars, codes) = keys_for(text);
         if let Err(e) = keyboard.set_keymap_from_string(self, keymap_source(&chars)) {
-            log::warn!("emoji picker: could not compile a keymap for {text:?}: {e:?}");
+            log::warn!(
+                "emoji picker: could not compile a keymap for {} characters: {e:?}",
+                chars.len()
+            );
             return;
         }
         for code in codes {

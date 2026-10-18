@@ -597,7 +597,11 @@ pub async fn watch(conn: zbus::Connection, book: Shared) {
                 else {
                     continue;
                 };
-                log::info!("Notification {app_id:?}/{id:?}: {key} runs {what:?}");
+                let runs = match &what {
+                    Invoke::Activate => "Activate",
+                    Invoke::ActivateAction(a) | Invoke::Signal(a) => a.name.as_str(),
+                };
+                log::info!("Notification {app_id:?}/{id:?}: {key} runs {runs:?}");
                 let conn2 = conn.clone();
                 conn.executor()
                     .spawn(

@@ -243,7 +243,7 @@ impl NetApp {
     /// through here, so a burst drained in one wake still shows each edge.
     fn announce(&mut self, s: &nm::Snapshot) {
         for b in self.edges.feed(s) {
-            log::info!("{}: {}", b.summary, b.body);
+            log::info!("{}", b.summary);
             if let Some(t) = &self.tray {
                 match b.tag {
                     Some(tag) => t.notify_clickable(&b.summary, &b.body, tag),
