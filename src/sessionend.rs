@@ -575,46 +575,84 @@ fn end_process(state: &State, pid: i32) {
 }
 
 fn programs(state: &State) -> Vec<Program> {
-    let open: Vec<(Option<i32>, String, String, bool)> = state
+    let open: Vec<Shown<WindowId>> = state
         .windows
         .iter()
         .filter(|w| w.mapped && !w.override_redirect)
-        .map(|w| {
-            (
-                state.client_pid(w.id),
-                w.app(),
-                w.title(),
-                state.parent_window(w.id).is_some(),
-            )
+        .map(|w| Shown {
+            id: w.id,
+            pid: state.client_pid(w.id),
+            app_id: w.app(),
+            title: w.title(),
+            owner: state.parent_window(w.id),
         })
         .collect();
     group(open)
 }
 
-/// [`programs`] over (pid, app id, title, owned) per window: windows of
-/// one pid are one program, named by its first unowned window's title,
-/// else its app id. A window with no pid is a program of its own.
-fn group(windows: Vec<(Option<i32>, String, String, bool)>) -> Vec<Program> {
-    let mut out: Vec<(Program, bool)> = Vec::new();
-    for (pid, app_id, title, owned) in windows {
-        let name = if title.is_empty() {
-            app_id.clone()
+/// A window as [`group`] sees it.
+struct Shown<I> {
+    id: I,
+    pid: Option<i32>,
+    app_id: String,
+    title: String,
+    owner: Option<I>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Key<I> {
+    Pid(i32),
+    Window(I),
+}
+
+/// [`programs`] over the open windows: windows of one pid are one program,
+/// named by its first unowned window's title, else its app id. A window with
+/// no pid (an X11 client without `_NET_WM_PID`) joins its owner's program, or
+/// is a program of its own.
+fn group<I: Copy + Eq>(windows: Vec<Shown<I>>) -> Vec<Program> {
+    let key = |w: &Shown<I>| {
+        let mut at = w;
+        for _ in 0..windows.len() {
+            if let Some(pid) = at.pid {
+                return Key::Pid(pid);
+            }
+            match at.owner.and_then(|o| windows.iter().find(|x| x.id == o)) {
+                Some(owner) => at = owner,
+                None => break,
+            }
+        }
+        Key::Window(at.id)
+    };
+    let mut out: Vec<(Key<I>, Program, bool)> = Vec::new();
+    for w in &windows {
+        let k = key(w);
+        let owned = w.owner.is_some();
+        let name = if w.title.is_empty() {
+            w.app_id.clone()
         } else {
-            title
+            w.title.clone()
         };
-        match out.iter_mut().find(|(p, _)| pid.is_some() && p.pid == pid) {
+        match out.iter_mut().find(|(at, _, _)| *at == k) {
             // An owned window names the program only until an unowned
             // one comes.
-            Some((p, named_by_owned)) => {
+            Some((_, p, named_by_owned)) => {
                 if *named_by_owned && !owned {
                     p.name = name;
                     *named_by_owned = false;
                 }
             }
-            None => out.push((Program { pid, app_id, name }, owned)),
+            None => out.push((
+                k,
+                Program {
+                    pid: w.pid,
+                    app_id: w.app_id.clone(),
+                    name,
+                },
+                owned,
+            )),
         }
     }
-    out.into_iter().map(|(p, _)| p).collect()
+    out.into_iter().map(|(_, p, _)| p).collect()
 }
 
 fn holding(holders: &[Holder], goal: Goal) -> Vec<Holder> {
@@ -857,13 +895,14 @@ fn shutdown_blocks(list: impl Iterator<Item = (String, String, String, String)>)
 mod tests {
     use super::*;
 
-    fn win(
-        pid: Option<i32>,
-        app: &str,
-        title: &str,
-        owned: bool,
-    ) -> (Option<i32>, String, String, bool) {
-        (pid, app.into(), title.into(), owned)
+    fn win(id: u32, pid: Option<i32>, app: &str, title: &str, owner: Option<u32>) -> Shown<u32> {
+        Shown {
+            id,
+            pid,
+            app_id: app.into(),
+            title: title.into(),
+            owner,
+        }
     }
 
     fn holder(who: &str, why: &str, shutdown_only: bool) -> Holder {
@@ -877,12 +916,12 @@ mod tests {
     #[test]
     fn windows_group_into_programs_by_process() {
         let got = group(vec![
-            win(Some(10), "reprise-notepad", "Notepad", true),
-            win(Some(10), "reprise-notepad", "Untitled - Notepad", false),
-            win(Some(11), "foot", "", false),
-            win(None, "x", "No pid", false),
-            win(None, "x", "No pid either", false),
-            win(Some(10), "reprise-notepad", "notes.txt - Notepad", false),
+            win(1, Some(10), "reprise-notepad", "Notepad", Some(2)),
+            win(2, Some(10), "reprise-notepad", "Untitled - Notepad", None),
+            win(3, Some(11), "foot", "", None),
+            win(4, None, "x", "No pid", None),
+            win(5, None, "x", "No pid either", None),
+            win(6, Some(10), "reprise-notepad", "notes.txt - Notepad", None),
         ]);
         let names: Vec<&str> = got.iter().map(|p| p.name.as_str()).collect();
         assert_eq!(
@@ -890,6 +929,19 @@ mod tests {
             ["Untitled - Notepad", "foot", "No pid", "No pid either"]
         );
         assert_eq!(got[0].pid, Some(10));
+    }
+
+    #[test]
+    fn a_window_without_a_pid_joins_its_owners_program() {
+        let got = group(vec![
+            win(1, None, "", "Discard the unsaved text?", Some(2)),
+            win(2, None, "", "Unsaved note", None),
+            win(3, None, "", "Options", Some(1)),
+            win(4, None, "", "Unsaved note", None),
+        ]);
+        let names: Vec<&str> = got.iter().map(|p| p.name.as_str()).collect();
+        assert_eq!(names, ["Unsaved note", "Unsaved note"]);
+        assert_eq!(got[0].pid, None);
     }
 
     #[test]
