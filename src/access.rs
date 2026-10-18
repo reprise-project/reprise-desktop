@@ -567,7 +567,7 @@ fn focus_dialog(state: &mut State, index: usize, at: (f64, f64)) {
 }
 
 /// Scroll the list at `r.at` so its row `r.row` shows, for a reader's ScrollIntoView or Focus on a
-/// row out of view: a dialog page's list box or tree, or the clipboard history's list.
+/// row out of view: a dialog's list, or the clipboard history's.
 fn reveal(state: &mut State, surface: Surface, r: Reveal) {
     let hit = state.scene_hit(Point::from(r.at));
     if !lands_on(state, surface, &hit) {
@@ -581,7 +581,8 @@ fn reveal(state: &mut State, surface: Surface, r: Reveal) {
                 return;
             };
             let (x, y) = (r.at.0 as i32 - v.x, r.at.1 as i32 - v.y);
-            if v.dialog.reveal(x, y, r.row, &state.text, px) == crate::dialog::Outcome::Redraw {
+            let out = v.dialog.reveal(&v.layout, (x, y), r.row, &state.text, px);
+            if out == crate::dialog::Outcome::Redraw {
                 state.redraw_dialog(index);
             }
         }

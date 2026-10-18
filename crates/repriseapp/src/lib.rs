@@ -701,12 +701,24 @@ pub trait App {
     }
 }
 
-/// A screen reader's `act` carried out on window `win`'s [`App::reader_form`]; what
-/// [`App::reader`] does unless a program answers it.
+/// A screen reader's `act` carried out on window `win`'s [`App::reader_form`], else its
+/// [`App::drop_file_dialog`]; what [`App::reader`] does unless a program answers it.
 pub fn reader_forms<A: App + ?Sized>(app: &mut A, win: WinId, act: Reader, ctx: &Ctx) -> bool {
     let base = ctx.base_px();
-    app.reader_form(win)
-        .is_some_and(|f| f.act(act, &ctx.text, base))
+    if let Some(f) = app.reader_form(win) {
+        return f.act(act, &ctx.text, base);
+    }
+    let px = ctx.form_units().px(base);
+    let Some(FileDrop { dlg, .. }) = app.drop_file_dialog(win) else {
+        return false;
+    };
+    let (w, h) = dlg.client();
+    let r = Rect::new(0, 0, w, h);
+    let ev = match act {
+        Reader::Reveal { at, row } => dlg.reveal(&ctx.text, px, r, at, row),
+        Reader::Focus(at) => dlg.focus_at(&ctx.text, px, r, at),
+    };
+    !matches!(ev, reprisekit::controls::filedlg::Event::None)
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
