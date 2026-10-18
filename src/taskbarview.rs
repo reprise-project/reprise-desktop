@@ -249,7 +249,7 @@ pub(crate) fn app_icon(
         return Some(c);
     }
     let name = reprisefs::apps::icon_for_app_id(index, app_id)?;
-    icons.get_shared(name, px)
+    crate::icon::unread(icons, name, px)
 }
 
 const GLOW_KEEP: usize = 256;

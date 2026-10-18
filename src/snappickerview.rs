@@ -340,6 +340,16 @@ pub fn output_gone(state: &mut State) {
     }
 }
 
+/// Icon files landed: the open picker takes its windows' icons again.
+pub(crate) fn icons_landed(state: &mut State) {
+    let Some(p) = state.snap_picker.shown.take() else {
+        return;
+    };
+    let icons = icons_for(state, &p.picks, p.scale);
+    state.snap_picker.shown = Some(Picker { icons, ..p });
+    redraw(state);
+}
+
 fn redraw(state: &mut State) {
     let Some(p) = state.snap_picker.shown.as_ref() else {
         return;
