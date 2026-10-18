@@ -115,6 +115,8 @@ pub enum DropTarget {
     /// Quick Launch gap `slot` (see `TaskbarLayout::drop_slot`).
     Quick(usize),
     Folder(PathBuf),
+    /// A desktop cell, as a 100% cell (`desktop::to_saved`): a drop's file work answers later,
+    /// maybe after the text size has grown the grid (`State::desktop_drop_at`).
     Desktop((i32, i32)),
     Trash,
 }
@@ -224,8 +226,8 @@ fn desktop_entry_named(entries: &[desktop::DesktopEntry], name: &str) -> Option<
         .position(|e| e.kind == desktop::Kind::File && e.name == name)
 }
 
-/// One source of a batch: its desktop cell (None in a folder or with auto-arrange) and the place a
-/// shortcut to a system icon opens.
+/// One source of a batch: its desktop cell as a 100% cell (`desktop::to_saved`; None in a folder
+/// or with auto-arrange) and the place a shortcut to a system icon opens.
 pub(crate) type Put = (DragSource, Option<(i32, i32)>, Option<PlaceLink>);
 
 /// A drop's file work into one folder, held while the replace prompt asks about clashing names (`reprisefs::replace`).
@@ -773,12 +775,7 @@ impl State {
                 if !takes_cell(self.config.desktop_icons, sources) {
                     return None;
                 }
-                Some(DropTarget::Desktop(desktop::cell_at(
-                    self.desktop_grid(),
-                    self.desktop_area(),
-                    pos.x as i32,
-                    pos.y as i32,
-                )))
+                Some(self.desktop_drop_at(pos.x as i32, pos.y as i32))
             }
             _ => None,
         }
@@ -851,7 +848,7 @@ impl State {
                 let puts = sources.iter().map(|s| (s.clone(), None, None)).collect();
                 self.scan_then_ask(dir.clone(), op, puts, Vec::new());
             }
-            DropTarget::Desktop(cell) => {
+            DropTarget::Desktop(saved) => {
                 let area = self.desktop_area();
                 let Some(view) = self.desktop.as_ref() else {
                     return;
@@ -860,6 +857,7 @@ impl State {
                 let existing: Vec<String> = view.entries.iter().map(|e| e.name.clone()).collect();
                 let auto = view.auto_arrange;
                 let grid = self.desktop_grid();
+                let cell = desktop::from_saved(grid, *saved);
                 let grid_of = |r: &Rect| desktop::cell_at(grid, area, r.x, r.y);
                 let index_of = |s: &DragSource| match s {
                     DragSource::Icon { id, .. } => desktop::find(&view.entries, id),
@@ -904,7 +902,7 @@ impl State {
                             let own = grid_of(r);
                             (cell.0 + own.0 - g.0, cell.1 + own.1 - g.1)
                         }
-                        _ => *cell,
+                        _ => cell,
                     };
                     let cell = desktop::free_cell_near(grid, area, &taken, wanted);
                     taken.insert(cell);
@@ -931,7 +929,8 @@ impl State {
                                     icon: e.icon.clone(),
                                     command: desktop::place_command(e),
                                 });
-                            puts.push((source.clone(), (!auto).then_some(cell), link));
+                            let saved = desktop::to_saved(grid, cell);
+                            puts.push((source.clone(), (!auto).then_some(saved), link));
                         }
                     }
                 }
@@ -956,8 +955,9 @@ impl State {
         }
         let (dir, cells) = match target {
             DropTarget::Folder(dir) => (dir.clone(), vec![None; links.len()]),
-            DropTarget::Desktop(cell) => {
+            DropTarget::Desktop(saved) => {
                 let (area, grid) = (self.desktop_area(), self.desktop_grid());
+                let cell = desktop::from_saved(grid, *saved);
                 let Some(view) = self.desktop.as_ref() else {
                     return;
                 };
@@ -969,9 +969,9 @@ impl State {
                 let cells = links
                     .iter()
                     .map(|_| {
-                        let c = desktop::free_cell_near(grid, area, &taken, *cell);
+                        let c = desktop::free_cell_near(grid, area, &taken, cell);
                         taken.insert(c);
-                        (!view.auto_arrange).then_some(c)
+                        (!view.auto_arrange).then_some(desktop::to_saved(grid, c))
                     })
                     .collect();
                 (view.dir.clone(), cells)

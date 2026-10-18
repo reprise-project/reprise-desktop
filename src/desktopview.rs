@@ -93,7 +93,8 @@ pub struct DesktopView {
     /// The icon size the last read decoded the icon files at, and the icon cache's
     /// `file_drops` after it put them in: a change in either means a read again.
     icons_read: (i32, u64),
-    /// Cells answers pinned since the last read finished, which `cells` does not show yet.
+    /// Cells answers pinned since the last read finished, which `cells` does not show yet; 100%
+    /// cells ([`desktop::to_saved`]), so a text size change keeps them.
     landed: Vec<(i32, i32)>,
     pub(crate) send_to: Vec<reprisefs::sendto::SendToRow>,
     pub(crate) drives: Drives,
@@ -707,9 +708,10 @@ fn icon_files(
         .collect()
 }
 
-/// The cell an answer landing `name` at `wanted` takes: `wanted` unless another icon is laid out
-/// there (`cells` runs parallel to `entries`) or an earlier answer landed there since the last
-/// read, else the free cell nearest it. A late answer never evicts an icon.
+/// The cell of `grid` an answer landing `name` at `wanted` takes: `wanted` unless another icon is
+/// laid out there (`cells` runs parallel to `entries`) or an earlier answer landed there since the
+/// last read, else the free cell nearest it. A late answer never evicts an icon. `wanted` and
+/// `landed` are 100% cells ([`desktop::to_saved`]): the grid may have grown since they were picked.
 fn landing_cell(
     grid: desktop::Cell,
     area: Rect,
@@ -724,9 +726,9 @@ fn landing_cell(
         .zip(cells)
         .filter(|(e, _)| e.name != name)
         .map(|(_, r)| desktop::cell_at(grid, area, r.x, r.y))
-        .chain(landed.iter().copied())
+        .chain(landed.iter().map(|&c| desktop::from_saved(grid, c)))
         .collect();
-    desktop::free_cell_near(grid, area, &taken, wanted)
+    desktop::free_cell_near(grid, area, &taken, desktop::from_saved(grid, wanted))
 }
 
 fn migrate_launcher_keys(
@@ -1662,12 +1664,8 @@ impl State {
             SendTo::DesktopShortcut => {
                 let area = self.desktop_area();
                 let (x, y) = beside.unwrap_or((area.x, area.y));
-                let cell = desktop::cell_at(self.desktop_grid(), area, x, y);
-                self.perform_all(
-                    sources,
-                    &crate::dragview::DropTarget::Desktop(cell),
-                    crate::dragview::DropOp::Shortcut,
-                );
+                let target = self.desktop_drop_at(x, y);
+                self.perform_all(sources, &target, crate::dragview::DropOp::Shortcut);
             }
             SendTo::Mail => self.spawn_argv_activated(&reprisefs::sendto::mail_argv(&paths)),
             SendTo::Folder(dir) => self.perform_all(
@@ -1877,6 +1875,13 @@ impl State {
         desktop::Cell::grown(self.config.theme.text)
     }
 
+    /// The drop target of the desktop cell under (`x`, `y`).
+    pub(crate) fn desktop_drop_at(&self, x: i32, y: i32) -> crate::dragview::DropTarget {
+        let grid = self.desktop_grid();
+        let cell = desktop::cell_at(grid, self.desktop_area(), x, y);
+        crate::dragview::DropTarget::Desktop(desktop::to_saved(grid, cell))
+    }
+
     pub(crate) fn desktop_auto_arrange(&self) -> bool {
         self.desktop.as_ref().is_some_and(|d| d.auto_arrange)
     }
@@ -1921,9 +1926,10 @@ impl State {
         self.relayout_desktop();
     }
 
-    /// Pin `name`, which an answer from the file jobs just put on the desktop, to `cell`, or to
-    /// the free cell nearest it when an icon took `cell` while the answer was pending.
-    pub(crate) fn land_icon(&mut self, name: &str, cell: (i32, i32)) {
+    /// Pin `name`, which an answer from the file jobs just put on the desktop, to `saved`, a 100%
+    /// cell ([`desktop::to_saved`]) picked when the job was asked, or to the free cell nearest it
+    /// when an icon took it while the answer was pending.
+    pub(crate) fn land_icon(&mut self, name: &str, saved: (i32, i32)) {
         let (area, grid) = (self.desktop_area(), self.desktop_grid());
         let Some(view) = self.desktop.as_mut() else {
             return;
@@ -1935,9 +1941,9 @@ impl State {
             &view.cells,
             &view.landed,
             name,
-            cell,
+            saved,
         );
-        view.landed.push(cell);
+        view.landed.push(desktop::to_saved(grid, cell));
         self.pin_icon(name, cell);
     }
 
@@ -1947,7 +1953,11 @@ impl State {
         let area = self.desktop_area();
         let auto = self.desktop.as_ref().is_none_or(|v| v.auto_arrange);
         if let Some((x, y)) = at.filter(|_| !auto && area.width > 0) {
-            self.land_icon(name, desktop::cell_at(self.desktop_grid(), area, x, y));
+            let grid = self.desktop_grid();
+            self.land_icon(
+                name,
+                desktop::to_saved(grid, desktop::cell_at(grid, area, x, y)),
+            );
         }
         self.rescan_desktop();
     }
@@ -2083,8 +2093,7 @@ impl State {
                 // right click.
                 let area = self.desktop_area();
                 let at = self.desktop_menu_at.unwrap_or((area.x, area.y));
-                let cell = desktop::cell_at(self.desktop_grid(), area, at.0, at.1);
-                let target = crate::dragview::DropTarget::Desktop(cell);
+                let target = self.desktop_drop_at(at.0, at.1);
                 self.paste_files(target, cmd == Dc::PasteShortcut);
             }
             Dc::PasteInto => {
@@ -2616,6 +2625,22 @@ mod tests {
         assert_eq!(
             landing_cell(square, area, &entries, &cells, &[], "report.pdf", (4, 0)),
             (4, 0)
+        );
+    }
+
+    #[test]
+    fn an_answer_lands_in_the_grown_grid_cell_holding_the_cell_it_was_asked_for() {
+        let area = Rect::new(0, 0, 800, 600);
+        let big = desktop::Cell::grown(reprisekit::theme::TextUnits::new(22, 11));
+        assert_eq!(
+            landing_cell(big, area, &[], &[], &[], "report.pdf", (4, 2)),
+            (2, 1),
+            "100% cell (4, 2) sits in cell (2, 1) of the 200% grid"
+        );
+        assert_eq!(
+            landing_cell(big, area, &[], &[], &[(4, 2)], "notes.txt", (5, 2)),
+            (2, 2),
+            "an answer landed at 100% still claims its cell after the grid grew"
         );
     }
 
