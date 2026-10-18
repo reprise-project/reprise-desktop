@@ -39,10 +39,45 @@ pub struct Adds {
 /// The watches an [`Adds::run`] made.
 pub struct Added(Vec<(PathBuf, WatchDescriptor)>);
 
+/// What [`DirWatch::adder`] saw watched, for [`Adder::run`] on a thread.
+pub struct Adder {
+    watches: Watches,
+    watched: Vec<PathBuf>,
+}
+
+impl Adder {
+    /// Watches each directory of `want` that exists and was not watched when the adder was made.
+    /// The loop's next [`DirWatch::plan`] of a want holding these, then [`DirWatch::adopt`], takes
+    /// them.
+    pub fn run(self, want: &[Want]) -> Added {
+        let dirs = (merged(want).into_iter())
+            .filter(|w| !self.watched.contains(&w.dir))
+            .map(|w| (w.dir, w.mask))
+            .collect();
+        Adds {
+            watches: self.watches,
+            dirs,
+        }
+        .run()
+    }
+}
+
 impl Adds {
     /// Nothing to watch: no need to run.
     pub fn is_empty(&self) -> bool {
         self.dirs.is_empty()
+    }
+
+    /// Each directory with an [`Adds`] of its own, for a thread each.
+    pub fn each(self) -> impl Iterator<Item = (PathBuf, Adds)> {
+        let watches = self.watches;
+        (self.dirs.into_iter()).map(move |(dir, mask)| {
+            let adds = Adds {
+                watches: watches.clone(),
+                dirs: vec![(dir.clone(), mask)],
+            };
+            (dir, adds)
+        })
     }
 
     /// Watches each directory that exists.
@@ -110,6 +145,14 @@ impl DirWatch {
         Adds {
             watches: self.ino.watches(),
             dirs,
+        }
+    }
+
+    /// The watched directories as they are now, for wants worked out on a thread.
+    pub fn adder(&self) -> Adder {
+        Adder {
+            watches: self.ino.watches(),
+            watched: self.watched.iter().map(|x| x.dir.clone()).collect(),
         }
     }
 
@@ -396,6 +439,53 @@ mod tests {
             1,
             "a second add of Music lands on the same watch"
         );
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn an_adder_made_on_the_loop_watches_on_a_thread_what_was_not_watched_then() {
+        let home =
+            std::env::temp_dir().join(format!("reprise-dirwatch-adder-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        for d in ["Desktop", "STICK", "CARD"] {
+            std::fs::create_dir_all(home.join(d)).unwrap();
+        }
+        let want = |name: &str| Want {
+            dir: home.join(name),
+            mask: WatchMask::CREATE,
+            only: Vec::new(),
+        };
+        let mut w = DirWatch::new().unwrap();
+        w.sync(&[want("Desktop")]);
+        let (adder, first) = (w.adder(), [want("Desktop"), want("STICK")]);
+        let added = std::thread::spawn(move || adder.run(&first))
+            .join()
+            .unwrap();
+        assert_eq!(
+            added.0.len(),
+            1,
+            "Desktop was watched already: only STICK is added"
+        );
+        w.plan(&[want("Desktop"), want("STICK"), want("CARD")]);
+        w.adopt(added);
+
+        let rest: Vec<PathBuf> = (w
+            .plan(&[want("Desktop"), want("STICK"), want("CARD")])
+            .each())
+        .map(|(dir, add)| {
+            w.adopt(add.run());
+            dir
+        })
+        .collect();
+        assert_eq!(
+            rest,
+            [home.join("CARD")],
+            "a folder an adder added is not planned again"
+        );
+        for d in ["Desktop", "STICK", "CARD"] {
+            std::fs::write(home.join(d).join("a"), "").unwrap();
+            assert!(w.drain(), "{d} is watched");
+        }
         let _ = std::fs::remove_dir_all(&home);
     }
 }
