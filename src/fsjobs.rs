@@ -4,12 +4,13 @@
 use smithay::reexports::calloop::channel::{self, Event, Sender};
 use smithay::reexports::calloop::timer::{TimeoutAction, Timer};
 use std::collections::VecDeque;
-use std::path::Path;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 use crate::compositor::State;
+use reprisefs::deadline::Landing;
+pub use reprisefs::deadline::{ACTION_DEADLINE, Gate};
 
 pub type OnLoop = Box<dyn FnOnce(&mut State) + Send>;
 
@@ -18,10 +19,6 @@ type Work = Box<dyn FnOnce() -> OnLoop + Send>;
 /// Job threads running at once per pool. A job on a file system that never answers keeps its
 /// thread; past this many, later jobs wait for a thread to come back instead of stranding more.
 pub const MAX_THREADS: usize = 8;
-
-/// How long an action asked for by hand waits on the file system before it gives up. A disk waking
-/// from standby or a network mount reconnecting answers within about 10 s.
-pub const ACTION_DEADLINE: Duration = Duration::from_secs(15);
 
 /// The loop's end of the jobs' channel. No sender until `setup`, or when the
 /// channel could not join the loop: `spawn` then runs the work inline.
@@ -250,79 +247,7 @@ impl Action {
 
     /// The give-up's error text; `changing` when the work had passed [`Gate::change`].
     pub fn not_responding(&self, changing: bool) -> String {
-        let rest = match (self.late, changing) {
-            (None, _) => "",
-            (Some(_), false) => " Nothing was changed.",
-            (Some(_), true) => " The change may still be made once it answers.",
-        };
-        format!("The location is not responding.{rest}")
-    }
-}
-
-const WAITING: u8 = 0;
-const CHANGING: u8 = 1;
-const LANDED: u8 = 2;
-const GAVE_UP: u8 = 3;
-const GAVE_UP_CHANGING: u8 = 4;
-
-/// An action's race against [`ACTION_DEADLINE`], shared by its thread and its timer: whichever
-/// comes first, the answer or the deadline, wins.
-#[derive(Clone, Default)]
-pub struct Gate(Arc<AtomicU8>);
-
-/// What becomes of an action's answer.
-#[derive(Debug, PartialEq, Eq)]
-enum Landing {
-    /// In time: it runs.
-    Landed,
-    /// Past the deadline, nothing changed: it is dropped.
-    Dropped,
-    /// Past the deadline, after [`Gate::change`]: dropped, and the view refreshes.
-    Refresh,
-}
-
-impl Gate {
-    /// Called before the work's first change on `at`'s file system; false once the action gave up.
-    /// The free-space query reaches the server on a network mount, so a dead mount holds the work
-    /// here, before anything changes; a call blocked past this point may still land.
-    pub fn change(&self, at: &Path) -> bool {
-        let _ = reprisefs::places::statvfs_totals(at);
-        self.commit()
-    }
-
-    fn commit(&self) -> bool {
-        match (self.0).compare_exchange(WAITING, CHANGING, Ordering::AcqRel, Ordering::Acquire) {
-            Ok(_) => true,
-            Err(now) => now == CHANGING,
-        }
-    }
-
-    /// The deadline passed: whether a change may still land, or None when the answer came first.
-    fn give_up(&self) -> Option<bool> {
-        let was = (self.0).try_update(Ordering::AcqRel, Ordering::Acquire, |s| match s {
-            WAITING => Some(GAVE_UP),
-            CHANGING => Some(GAVE_UP_CHANGING),
-            _ => None,
-        });
-        match was {
-            Ok(was) => Some(was == CHANGING),
-            Err(_) => None,
-        }
-    }
-
-    fn given_up(&self) -> bool {
-        self.0.load(Ordering::Acquire) >= GAVE_UP
-    }
-
-    fn land(&self) -> Landing {
-        let was = (self.0).try_update(Ordering::AcqRel, Ordering::Acquire, |s| {
-            (s < LANDED).then_some(LANDED)
-        });
-        match was {
-            Err(GAVE_UP) => Landing::Dropped,
-            Err(GAVE_UP_CHANGING) => Landing::Refresh,
-            _ => Landing::Landed,
-        }
+        reprisefs::deadline::not_responding(self.late.is_some(), changing)
     }
 }
 
@@ -601,26 +526,6 @@ mod tests {
     }
 
     #[test]
-    fn a_gate_lets_the_first_of_answer_and_deadline_win() {
-        let g = Gate::default();
-        assert!(g.commit());
-        assert!(g.commit(), "a second step of the same change goes on");
-        assert_eq!(g.give_up(), Some(true), "a change was under way");
-        assert_eq!(g.land(), Landing::Refresh);
-
-        let g = Gate::default();
-        assert_eq!(g.give_up(), Some(false));
-        assert!(g.given_up());
-        assert!(!g.commit());
-        assert_eq!(g.land(), Landing::Dropped);
-
-        let g = Gate::default();
-        assert_eq!(g.land(), Landing::Landed);
-        assert_eq!(g.give_up(), None, "the answer came first");
-        assert!(!g.given_up());
-    }
-
-    #[test]
     fn actions_start_while_file_jobs_are_stuck_and_wait_only_for_actions() {
         let hang = fifo("pools");
         let (tx, _rx) = channel::channel::<OnLoop>();
@@ -673,23 +578,5 @@ mod tests {
                 && files.load(Ordering::Acquire) == 0
         });
         let _ = std::fs::remove_dir_all(hang.parent().unwrap());
-    }
-
-    #[test]
-    fn the_give_up_says_whether_a_change_may_still_land() {
-        let reads = Action::reads("Properties");
-        assert_eq!(
-            reads.not_responding(false),
-            "The location is not responding."
-        );
-        let changes = Action::changes("Rename", |_| {});
-        assert_eq!(
-            changes.not_responding(false),
-            "The location is not responding. Nothing was changed."
-        );
-        assert_eq!(
-            changes.not_responding(true),
-            "The location is not responding. The change may still be made once it answers."
-        );
     }
 }

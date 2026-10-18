@@ -5,6 +5,7 @@
 pub mod apps;
 pub mod autostart;
 pub mod bincap;
+pub mod deadline;
 pub mod drawncache;
 pub mod dropdata;
 pub mod fileclip;

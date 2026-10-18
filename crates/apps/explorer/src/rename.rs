@@ -1,8 +1,11 @@
+use crate::acting::Action;
 use crate::{Explorer, Focus};
 use repriseapp::{Ctx, KeyInput, Reply};
+use reprisefs::deadline::Gate;
 use reprisefs::listing::Item;
 use reprisefs::names::{Verdict, failed_text, verdict};
 use reprisekit::textedit::{TextEdit, keysym};
+use std::path::PathBuf;
 
 impl Explorer {
     pub(crate) fn after_rename(
@@ -84,32 +87,71 @@ impl Explorer {
                     Some(dir) => dir.join(&name),
                     None => return Reply::redraw(),
                 };
-                if let Err(e) = reprisefs::hidden::rename(&it.path, &to) {
-                    log::warn!("explorer: rename {} failed: {e}", it.path.display());
-                    return self.message_box("Rename", failed_text(&it.name, &e), ctx);
-                }
-                self.after_rename(&it.path, &to, it.is_dir, ctx);
-                // `refresh` keeps the selection by path, and the old path is gone.
-                let reply = self.refresh(ctx);
-                if self.reading.is_some() {
-                    self.selecting = Some((self.place.clone(), to));
-                } else if let Some(j) = self.index_of(&to) {
-                    self.sv.selection.set_only(Some(j));
-                    self.refresh_chrome(ctx);
-                }
-                reply
+                let (from, dest) = (it.path.clone(), to.clone());
+                let work = move |gate: &Gate| {
+                    if !gate.change(&from) {
+                        return Ok(());
+                    }
+                    reprisefs::hidden::rename(&from, &to)
+                };
+                self.act(
+                    ctx,
+                    Action::changes("Rename"),
+                    work,
+                    move |ex, done, ctx| ex.rename_done(&it, dest, done, ctx),
+                )
             }
         }
+    }
+
+    /// A rename of `it` to `to` answered `done`.
+    fn rename_done(
+        &mut self,
+        it: &Item,
+        to: PathBuf,
+        done: std::io::Result<()>,
+        ctx: &mut Ctx,
+    ) -> Reply {
+        if let Err(e) = done {
+            log::warn!("explorer: rename {} failed: {e}", it.path.display());
+            return self.message_box("Rename", failed_text(&it.name, &e), ctx);
+        }
+        self.after_rename(&it.path, &to, it.is_dir, ctx);
+        // `refresh` keeps the selection by path, and the old path is gone.
+        let reply = self.refresh(ctx);
+        if self.reading.is_some() {
+            self.selecting = Some((self.place.clone(), to));
+        } else if let Some(j) = self.index_of(&to) {
+            self.sv.selection.set_only(Some(j));
+            self.refresh_chrome(ctx);
+        }
+        reply
     }
 
     fn rename_shortcut(&mut self, it: &Item, typed: &str, ctx: &mut Ctx) -> Reply {
         if typed.is_empty() || typed == it.label() {
             return Reply::redraw();
         }
-        if let Err(e) = reprisefs::apps::set_launcher_name(&it.path, typed) {
-            log::warn!("explorer: rename {} failed: {e}", it.path.display());
-            return self.message_box("Rename", failed_text(it.label(), &e), ctx);
-        }
-        self.refresh(ctx)
+        let (path, typed) = (it.path.clone(), typed.to_string());
+        let work = move |gate: &Gate| {
+            if !gate.change(&path) {
+                return Ok(());
+            }
+            reprisefs::apps::set_launcher_name(&path, &typed)
+        };
+        let label = it.label().to_string();
+        let path = it.path.clone();
+        self.act(
+            ctx,
+            Action::changes("Rename"),
+            work,
+            move |ex, done, ctx| {
+                if let Err(e) = done {
+                    log::warn!("explorer: rename {} failed: {e}", path.display());
+                    return ex.message_box("Rename", failed_text(&label, &e), ctx);
+                }
+                ex.refresh(ctx)
+            },
+        )
     }
 }

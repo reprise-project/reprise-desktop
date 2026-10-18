@@ -2,6 +2,7 @@
 //! reprisekit's controls, the file system is reprisefs, and every input
 //! resolves to a [`commands::Command`] before anything changes.
 
+mod acting;
 mod browse;
 mod chrome;
 mod commands;
@@ -243,23 +244,28 @@ pub struct Explorer {
     pub(crate) put: Option<fileops::Put>,
     pub(crate) put_queue: std::collections::VecDeque<fileops::PendingPut>,
     /// Batches being checked on a listing thread ([`fileops::Checked`]: a folder merge walks the
-    /// folder), with their target folder and whether what lands is selected, oldest first.
-    pub(crate) clashing: std::collections::VecDeque<((PathBuf, bool), Job<fileops::Checked>)>,
+    /// folder), oldest first.
+    pub(crate) clashing: std::collections::VecDeque<fileops::Clashing>,
     pub(crate) removing: Option<removing::Removing>,
     pub(crate) remove_queue: std::collections::VecDeque<removing::PendingRemoval>,
     /// The whole percent and paused state last put on the task button.
     pub(crate) task_progress: Option<(u32, bool)>,
     /// While a replace prompt is up: the batches whose prompts come next, and
-    /// the error boxes of batches that finished meanwhile.
+    /// the error boxes of batches that finished meanwhile. Error boxes also
+    /// wait behind one already up.
     pub(crate) replace_waiting:
         std::collections::VecDeque<(fileops::PendingPut, reprisefs::replace::Asker)>,
     pub(crate) messages_waiting: std::collections::VecDeque<(String, String)>,
     /// A replace prompt whose two files are still being read, on a listing thread.
-    pub(crate) asking: Option<(fileops::Asking, Job<Option<[fileops::ReadSide; 2]>>)>,
+    pub(crate) asking: Option<fileops::ReadingSides>,
     /// Finished background jobs (deletes, the bin's Empty) waiting for a wake.
     jobs_tx: std::sync::mpsc::Sender<fileops::JobDone>,
     jobs_rx: std::sync::mpsc::Receiver<fileops::JobDone>,
     pub(crate) jobs_pending: usize,
+    /// Actions still out after the listing wait ([`Explorer::act`]).
+    pub(crate) acting: Vec<acting::Acting>,
+    /// How long an action waits on the file system: [`acting::ACTION_DEADLINE`], shorter in tests.
+    pub(crate) action_deadline: std::time::Duration,
     /// Close came while a put or job was out: the program quits at the wake that finds them all done.
     pub(crate) closing: bool,
     /// The thumbnail worker. Every listing bumps the generation, which drops
@@ -436,6 +442,8 @@ impl Explorer {
             jobs_tx,
             jobs_rx,
             jobs_pending: 0,
+            acting: Vec::new(),
+            action_deadline: acting::ACTION_DEADLINE,
             closing: false,
             thumbs: Thumbs::new(
                 Arc::new(Decoders::default_set()),

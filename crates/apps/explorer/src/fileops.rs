@@ -1,12 +1,14 @@
 //! The file operations behind Explorer's menus. The work is `reprisefs`'s; every operation ends in
 //! a re-listing so view, status bar and Details box agree with disk.
 
+use crate::acting::{Action, Deadline};
 use crate::dialogs::{ChooseProgram, ConfirmKind, Dialog, ReplaceAsk};
 use crate::place::Place;
 use crate::{Explorer, Focus};
 use repriseapp::openwith::ChooserInput;
 use repriseapp::{Ctx, FileClip, Reply};
 use reprisefs::apps::{self, Launch};
+use reprisefs::deadline::Gate;
 use reprisefs::jobs::{PutEvent, PutItem, PutJob};
 use reprisefs::listing::Item;
 use reprisefs::names;
@@ -241,6 +243,7 @@ impl Explorer {
         if puts.is_empty() {
             return Reply::none();
         }
+        let title = puts[0].1.failure_title();
         let into = dir.to_path_buf();
         let read = move || Checked {
             clashes: replace::clashes(
@@ -256,27 +259,46 @@ impl Explorer {
                 .collect(),
         };
         let to = (dir.to_path_buf(), select_landed);
-        if !self.clashing.is_empty() {
-            // Behind a batch still being checked, so the prompts come in the order pasted.
-            let job = repriseapp::listjob::Job::spawn(Some(&ctx.wake), read);
-            self.clashing.push_back((to, job));
-            return Reply::none();
-        }
-        match self.read_job(ctx, read) {
-            Ok(checked) => self.checked_put(to, checked, ctx),
-            Err(job) => {
-                self.clashing.push_back((to, job));
-                Reply::none()
+        let job = if self.clashing.is_empty() {
+            match self.read_job(ctx, read) {
+                Ok(checked) => return self.checked_put(to, checked, ctx),
+                Err(job) => job,
             }
-        }
+        } else {
+            // Behind a batch still being checked, so the prompts come in the order pasted.
+            repriseapp::listjob::Job::spawn(Some(&ctx.wake), read)
+        };
+        self.clashing.push_back(Clashing {
+            to,
+            job,
+            deadline: Deadline::start(self.action_deadline, ctx),
+            title,
+        });
+        Reply::none()
     }
 
-    /// Asks about the batches whose check ([`Explorer::put_all`]) answered late, in order.
+    /// Asks about the batches whose check ([`Explorer::put_all`]) answered late, in order; one
+    /// past its deadline is dropped with an error box.
     pub(crate) fn take_clashes(&mut self, ctx: &mut Ctx) -> Option<Reply> {
         let mut reply = None;
-        while let Some(checked) = self.clashing.front().and_then(|(_, job)| job.take()) {
-            let (to, _) = self.clashing.pop_front()?;
-            self.checked_put(to, checked, ctx);
+        while let Some(front) = self.clashing.front() {
+            if let Some(checked) = front.job.take() {
+                let c = self.clashing.pop_front()?;
+                self.checked_put(c.to, checked, ctx);
+            } else if front.deadline.passed(std::time::Instant::now()) {
+                let c = self.clashing.pop_front()?;
+                log::warn!(
+                    "explorer: a paste's check into {} gave up",
+                    c.to.0.display()
+                );
+                self.message_box(
+                    c.title,
+                    reprisefs::deadline::not_responding(false, false),
+                    ctx,
+                );
+            } else {
+                break;
+            }
             reply = Some(Reply::redraw_all());
         }
         reply
@@ -368,7 +390,8 @@ impl Explorer {
                 match self.read_job(ctx, read) {
                     Ok(sides) => self.open_replace(ask, sides, ctx),
                     Err(job) => {
-                        self.asking = Some((ask, job));
+                        let deadline = Deadline::start(self.action_deadline, ctx);
+                        self.asking = Some((ask, job, deadline));
                         Reply::none()
                     }
                 }
@@ -428,8 +451,21 @@ impl Explorer {
     /// Raises the replace prompt whose sides ([`Explorer::ask_replace`]) were read late. A window
     /// closed meanwhile asks again, which answers No, and so do the pastes waiting behind it.
     pub(crate) fn take_asking(&mut self, ctx: &mut Ctx) -> Option<Reply> {
-        let sides = self.asking.as_ref()?.1.take()?;
-        let (ask, _) = self.asking.take()?;
+        let (ask, job, deadline) = self.asking.as_ref()?;
+        let Some(sides) = job.take() else {
+            if !deadline.passed(std::time::Instant::now()) {
+                return None;
+            }
+            let title = (ask.pending.items.first()).map_or("Paste", |it| it.op.failure_title());
+            log::warn!("explorer: a replace prompt's files gave up");
+            self.asking = None;
+            if self.closing {
+                return Some(self.show_waiting(ctx));
+            }
+            let text = reprisefs::deadline::not_responding(false, false);
+            return Some(self.message_box(title, text, ctx));
+        };
+        let (ask, ..) = self.asking.take()?;
         if self.closing {
             self.ask_replace(ask.pending, ask.asker, ctx);
             return Some(self.show_waiting(ctx));
@@ -579,6 +615,7 @@ impl Explorer {
             || self.jobs_pending > 0
             || !self.opening.is_empty()
             || self.asking.is_some()
+            || !self.acting.is_empty()
     }
 
     /// File > Close or the close box. With work in flight the window hides and [`Explorer::wake`]
@@ -618,12 +655,16 @@ impl Explorer {
             if let Some(r) = self.poll_jobs(ctx) {
                 reply = r;
             }
+            if let Some(r) = self.take_acting(ctx) {
+                reply = r;
+            }
         }
         reply
     }
 
     /// Delete (or Shift+Delete): a Confirm box per [`reprisefs::bincap::delete_mode`]. Items with
-    /// no Recycle Bin, or already in one, are erased (the latter always asked about).
+    /// no Recycle Bin, or already in one, are erased (the latter always asked about). Each item's
+    /// fate is read on a listing thread: it stats the item and its mount.
     pub fn confirm_delete(&mut self, erase: bool, ctx: &mut Ctx) -> Reply {
         use reprisefs::bincap::{Fate, delete_mode};
         let in_bin = self.place == Place::RecycleBin;
@@ -634,34 +675,39 @@ impl Explorer {
         if paths.is_empty() {
             return Reply::none();
         }
-        let bins = reprisefs::trash::Bins::system();
-        let fates: Vec<Fate> = paths
-            .iter()
-            .map(|p| bins.as_ref().map_or(Fate::NoBin, |b| b.fate(p)))
-            .collect();
-        let confirm = bins.as_ref().is_none_or(|b| b.policy.confirm);
-        let mode = delete_mode(confirm, &fates, erase);
-        if !in_bin && !mode.ask {
-            return self.delete_now(&paths, mode.erase, ctx);
-        }
-        let no_bin = !in_bin && mode.no_bin;
-        let erase = in_bin || mode.erase;
         let only = self.sv.selection.single().and_then(|i| self.items.get(i));
         let is_dir = only.is_some_and(|it| it.is_dir && !it.is_link);
         let name = only.map(|it| it.name.clone()).unwrap_or_default();
         let kind = ConfirmKind::of(paths.len(), is_dir);
-        let icon = if erase {
-            self.sv
-                .selection
-                .single()
-                .and_then(|i| self.sv.entries.get(i))
-                .and_then(|e| e.icon32.as_deref().cloned())
-                .or_else(|| crate::chrome_icon(ctx, &["user-trash-full"], 32))
-        } else {
-            crate::chrome_icon(ctx, &["user-trash-full"], 32)
-        };
+        let own_icon = self
+            .sv
+            .selection
+            .single()
+            .and_then(|i| self.sv.entries.get(i))
+            .and_then(|e| e.icon32.as_deref().cloned());
         let bin = in_bin.then(|| self.selected_bin_items());
-        self.confirm_box(kind, &name, paths, erase, no_bin, icon, false, bin)
+        let read = paths.clone();
+        let work = move |_: &Gate| {
+            let bins = reprisefs::trash::Bins::system();
+            let fates: Vec<Fate> = (read.iter())
+                .map(|p| bins.as_ref().map_or(Fate::NoBin, |b| b.fate(p)))
+                .collect();
+            (fates, bins.as_ref().is_none_or(|b| b.policy.confirm))
+        };
+        let action = Action::reads("Error Deleting File or Folder");
+        self.act(ctx, action, work, move |ex, (fates, confirm), ctx| {
+            let mode = delete_mode(confirm, &fates, erase);
+            if !in_bin && !mode.ask {
+                return ex.delete_now(&paths, mode.erase, ctx);
+            }
+            let no_bin = !in_bin && mode.no_bin;
+            let erase = in_bin || mode.erase;
+            let icon = match erase {
+                true => own_icon.or_else(|| crate::chrome_icon(ctx, &["user-trash-full"], 32)),
+                false => crate::chrome_icon(ctx, &["user-trash-full"], 32),
+            };
+            ex.confirm_box(kind, &name, paths, erase, no_bin, icon, false, bin)
+        })
     }
 
     pub fn confirm_empty_bin(&mut self, ctx: &mut Ctx) -> Reply {
@@ -715,6 +761,8 @@ impl Explorer {
         let paths = paths.to_vec();
         let from = self.place.title();
         use reprisefs::bincap::{Plan, TooBig, TooBigStep};
+        // The walk that measures a folder for its bin's cap takes as long as the folder is big, so
+        // it runs on a job with no deadline.
         self.spawn_job(ctx, move || {
             let bins = reprisefs::trash::Bins::system();
             if erase {
@@ -742,7 +790,8 @@ impl Explorer {
         use reprisefs::bincap::TooBigStep;
         match asker.step() {
             TooBigStep::Ask(path) => {
-                let is_dir = path.is_dir() && !path.is_symlink();
+                let listed = self.items.iter().find(|it| it.path == *path);
+                let is_dir = listed.is_some_and(|it| it.is_dir && !it.is_link);
                 let kind = ConfirmKind::of(1, is_dir);
                 let text = reprisefs::bincap::too_big_text(&reprisefs::bincap::label(path));
                 let icon = question_icon(ctx, is_dir);
@@ -787,17 +836,40 @@ impl Explorer {
             names::new_text_document_name(&existing)
         };
         let path = dir.join(&name);
+        let title = if folder {
+            "New Folder"
+        } else {
+            "New Text Document"
+        };
+        let made = path.clone();
         // The listing can be stale, so neither kind may land on an existing name: both fail with
         // `AlreadyExists`.
-        let made = if folder {
-            std::fs::create_dir(&path)
-        } else {
-            std::fs::OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .open(&path)
-                .map(drop)
+        let work = move |gate: &Gate| {
+            if !gate.change(&dir) {
+                return Ok(());
+            }
+            if folder {
+                std::fs::create_dir(&made)
+            } else {
+                std::fs::OpenOptions::new()
+                    .write(true)
+                    .create_new(true)
+                    .open(&made)
+                    .map(drop)
+            }
         };
+        self.act(ctx, Action::changes(title), work, move |ex, made, ctx| {
+            ex.item_made(path, &name, made, ctx)
+        })
+    }
+
+    fn item_made(
+        &mut self,
+        path: PathBuf,
+        name: &str,
+        made: std::io::Result<()>,
+        ctx: &mut Ctx,
+    ) -> Reply {
         if let Err(e) = made {
             return self.message_box(
                 "Error Creating File or Folder",
@@ -859,12 +931,20 @@ impl Explorer {
                 if let Some(at) = focus.and_then(|f| paths.iter().position(|p| *p == f.path)) {
                     paths[..=at].rotate_right(1);
                 }
-                let existing = paths[0].parent().map(existing_names).unwrap_or_default();
-                let spawn = sendto::zip_argv(&paths, &existing).into_iter().collect();
-                return Reply {
-                    spawn,
-                    ..self.refresh(ctx)
-                };
+                let dir = paths[0].parent().map(Path::to_path_buf);
+                let work = move |_: &Gate| dir.as_deref().map(existing_names).unwrap_or_default();
+                return self.act(
+                    ctx,
+                    Action::reads("Send To"),
+                    work,
+                    move |ex, existing, ctx| {
+                        let spawn = sendto::zip_argv(&paths, &existing).into_iter().collect();
+                        Reply {
+                            spawn,
+                            ..ex.refresh(ctx)
+                        }
+                    },
+                );
             }
             SendTo::Mail => {
                 return Reply {
@@ -1146,6 +1226,22 @@ impl Explorer {
         reprisefs::icons::pick_icon(mime.as_deref(), path, &has)
     }
 }
+
+/// A batch whose check ([`Checked`]) is still out: where it goes and whether what lands is
+/// selected, and the title of the box that says it gave up.
+pub(crate) struct Clashing {
+    to: (PathBuf, bool),
+    job: repriseapp::listjob::Job<Checked>,
+    deadline: Deadline,
+    title: &'static str,
+}
+
+/// A replace prompt whose sides are still being read, and when the read gives up.
+pub(crate) type ReadingSides = (
+    Asking,
+    repriseapp::listjob::Job<Option<[ReadSide; 2]>>,
+    Deadline,
+);
 
 /// A replace prompt waiting on its sides: the batch, its asker, the incoming file and what the
 /// prompt says of it.

@@ -2,12 +2,14 @@
 //! write.
 
 use crate::Explorer;
+use crate::acting::Action;
 use crate::props_dialog::{
     ADVANCED, AttrConfirm, BIN_SHEET_H, CHANGE, ICON_PX, PROPS, Props, READ_ONLY, RESTORE, SHEET_W,
     attr_form, attr_tree_picked, bin_facts, bin_page, folder_has_contents, general_page, rows,
     set_facts,
 };
 use repriseapp::{Child, Ctx, Event, Reply};
+use reprisefs::deadline::Gate;
 use reprisefs::props::{AttrMoves, FileInfo};
 use reprisekit::controls::form::{self, Control};
 use reprisekit::controls::propsheet::{self, PropSheet};
@@ -28,41 +30,38 @@ impl Explorer {
         if self.place == crate::place::Place::RecycleBin
             && let Some(it) = chosen.cloned()
         {
-            return self.open_bin_properties(&it, ctx);
+            return self.open_bin_properties(it, ctx);
         }
-        let (path, name, title) = match chosen {
-            Some(it) => (it.path.clone(), it.label().into(), it.label().into()),
-            None => match self.place_sheet() {
-                Some(v) => v,
-                None => return Reply::none(),
-            },
+        if let Some(it) = chosen {
+            let (path, name) = (it.path.clone(), it.label().to_string());
+            return self.open_properties(&path, &name, &name, ctx);
+        }
+        let place = self.place.clone();
+        let (apps, globs) = (self.app_index.clone(), self.globs.clone());
+        let work = move |_: &Gate| {
+            let (path, name, title) = place_sheet_of(&place)?;
+            Some((glance(&path, &name, &apps, &globs), name, title))
         };
-        self.open_properties(&path, &name, &title, ctx)
+        self.act(
+            ctx,
+            Action::reads("Properties"),
+            work,
+            |ex, read, ctx| match read {
+                Some((glanced, name, title)) => ex.glanced(glanced, &name, &title, ctx),
+                None => Reply::none(),
+            },
+        )
     }
 
     /// The path, the sheet field's name and the caption's name for the current place's own sheet,
-    /// or `None` where there is no sheet. Shell folders are titled by their shell names while the
-    /// field keeps the real directory name, so OK cannot rename `$HOME` to "<user>'s Home".
+    /// or `None` where there is no sheet ([`place_sheet_of`]).
+    #[cfg(test)]
     pub(crate) fn place_sheet(&self) -> Option<(PathBuf, String, String)> {
-        use crate::place::Place;
-        match &self.place {
-            Place::Computer | Place::RecycleBin => None,
-            place => {
-                let dir = place.path()?;
-                // A folder reached through a symlink gets its own sheet, not the link's.
-                let dir = std::fs::canonicalize(&dir).unwrap_or(dir);
-                let name = match place {
-                    Place::Folder(_) => place.title(),
-                    _ => dir
-                        .file_name()
-                        .map(|n| n.to_string_lossy().into_owned())
-                        .unwrap_or_else(|| place.title()),
-                };
-                Some((dir, name, place.title()))
-            }
-        }
+        place_sheet_of(&self.place)
     }
 
+    /// The sheet for `path`, its field showing `name` and its caption `title`, once a listing
+    /// thread has read it.
     pub(crate) fn open_properties(
         &mut self,
         path: &Path,
@@ -70,29 +69,65 @@ impl Explorer {
         title: &str,
         ctx: &mut Ctx,
     ) -> Reply {
-        let info = match reprisefs::props::glance_in(path, name, &self.app_index, &self.globs) {
-            Ok(info) => info,
+        let (path, name, title) = (path.to_path_buf(), name.to_string(), title.to_string());
+        let (apps, globs) = (self.app_index.clone(), self.globs.clone());
+        let read = name.clone();
+        let work = move |_: &Gate| glance(&path, &read, &apps, &globs);
+        self.act(
+            ctx,
+            Action::reads("Properties"),
+            work,
+            move |ex, glanced, ctx| ex.glanced(glanced, &name, &title, ctx),
+        )
+    }
+
+    fn glanced(
+        &mut self,
+        glanced: std::io::Result<Glanced>,
+        name: &str,
+        title: &str,
+        ctx: &mut Ctx,
+    ) -> Reply {
+        match glanced {
+            Ok(g) => {
+                self.props = Some(self.build_props(g, title.to_string(), ctx));
+                Reply::redraw_all()
+            }
             Err(e) => {
                 let text = format!("Cannot show the properties of {name}: {e}");
+                self.message_box("Properties", text, ctx)
+            }
+        }
+    }
+
+    fn open_bin_properties(&mut self, it: reprisefs::listing::Item, ctx: &mut Ctx) -> Reply {
+        let (path, name) = (it.path.clone(), it.name.clone());
+        let (apps, globs) = (self.app_index.clone(), self.globs.clone());
+        let work = move |_: &Gate| glance(&path, &name, &apps, &globs);
+        self.act(
+            ctx,
+            Action::reads("Properties"),
+            work,
+            move |ex, glanced, ctx| ex.bin_glanced(glanced, &it, ctx),
+        )
+    }
+
+    fn bin_glanced(
+        &mut self,
+        glanced: std::io::Result<Glanced>,
+        it: &reprisefs::listing::Item,
+        ctx: &mut Ctx,
+    ) -> Reply {
+        let Glanced { info, icon } = match glanced {
+            Ok(g) => g,
+            Err(e) => {
+                let text = format!("Cannot show the properties of {}: {e}", it.name);
                 return self.message_box("Properties", text, ctx);
             }
         };
-        self.props = Some(self.build_props(info, title.to_string(), ctx));
-        Reply::redraw_all()
-    }
-
-    fn open_bin_properties(&mut self, it: &reprisefs::listing::Item, ctx: &mut Ctx) -> Reply {
-        let info =
-            match reprisefs::props::glance_in(&it.path, &it.name, &self.app_index, &self.globs) {
-                Ok(info) => info,
-                Err(e) => {
-                    let text = format!("Cannot show the properties of {}: {e}", it.name);
-                    return self.message_box("Properties", text, ctx);
-                }
-            };
         self.walk_for_props(&info, ctx);
         let facts = bin_facts(&info, it.trashed.as_deref(), reprisefs::locale::is_12h());
-        let icon = self.props_icon(&info, ctx);
+        let icon = props_icon(&icon, &info.path, ctx);
         let page = bin_page(&facts, &it.name, icon);
         let sheet = PropSheet::new(&["General"], vec![page], (SHEET_W, BIN_SHEET_H));
         self.props = Some(Props {
@@ -134,10 +169,11 @@ impl Explorer {
         }
     }
 
-    fn build_props(&mut self, info: FileInfo, title: String, ctx: &mut Ctx) -> Props {
+    fn build_props(&mut self, glanced: Glanced, title: String, ctx: &mut Ctx) -> Props {
+        let Glanced { info, icon } = glanced;
         self.walk_for_props(&info, ctx);
         let rows = rows(&info, reprisefs::locale::is_12h());
-        let icon = self.props_icon(&info, ctx);
+        let icon = props_icon(&icon, &info.path, ctx);
         let icon = match info.is_shortcut {
             true => icon.map(iconview::with_shortcut_arrow),
             false => icon,
@@ -200,19 +236,20 @@ impl Explorer {
         let order = first
             .into_iter()
             .chain(sel.set.iter().copied().filter(|&i| Some(i) != first));
-        let mut items = Vec::new();
-        for it in order.filter_map(|i| self.items.get(i)) {
-            match reprisefs::props::glance_in(&it.path, it.label(), &self.app_index, &self.globs) {
-                Ok(info) => items.push(info),
-                Err(e) => log::warn!("properties: {}: {e}", it.path.display()),
-            }
-        }
-        let Some(first) = items.first() else {
-            return Reply::none();
-        };
-        let caption = format!("{}, ...", first.name);
-        self.props = self.build_set_props(items, caption, ctx);
-        Reply::redraw_all()
+        let chosen: Vec<(PathBuf, String)> = order
+            .filter_map(|i| self.items.get(i))
+            .map(|it| (it.path.clone(), it.label().to_string()))
+            .collect();
+        let (apps, globs) = (self.app_index.clone(), self.globs.clone());
+        let work = move |_: &Gate| glance_set_items(&chosen, &apps, &globs);
+        self.act(ctx, Action::reads("Properties"), work, |ex, items, ctx| {
+            let Some(first) = items.first() else {
+                return Reply::none();
+            };
+            let caption = format!("{}, ...", first.name);
+            ex.props = ex.build_set_props(items, caption, ctx);
+            Reply::redraw_all()
+        })
     }
 
     fn build_set_props(
@@ -367,25 +404,6 @@ impl Explorer {
         Reply::redraw_all()
     }
 
-    fn props_icon(&mut self, info: &FileInfo, ctx: &mut Ctx) -> Option<Canvas> {
-        let name = if info.path.is_dir() {
-            let own = reprisefs::meta::folder_icon(&info.path);
-            crate::icons::sheet_folder_icon(
-                own.as_deref().unwrap_or(filesheet::STANDARD_FOLDER_ICON),
-                &|n| ctx.icons.has(n),
-            )
-        } else if let Some(sc) = std::fs::metadata(&info.path)
-            .ok()
-            .and_then(|m| reprisefs::apps::shortcut_at(&info.path, &m))
-        {
-            sc.icon().to_string()
-        } else {
-            let mime = reprisefs::apps::mime_of_in(&self.globs, &info.path);
-            reprisefs::icons::pick_icon(mime.as_deref(), &info.path, &|n| ctx.icons.has(n))
-        };
-        ctx.icons.get(&name, ICON_PX)
-    }
-
     /// The sheet's child window, while it is up.
     pub fn props_child(&self) -> Option<Child> {
         let p = self.props.as_ref()?;
@@ -522,8 +540,15 @@ impl Explorer {
         };
         if let Some(set) = &p.set {
             let (paths, attrs, hidden) = (set.paths.clone(), p.attrs(), p.hidden());
-            if let Some(icon) = p.icon_chosen.clone() {
-                for dir in paths.iter().filter(|d| d.is_dir()) {
+            let Some(icon) = p.icon_chosen.clone() else {
+                return self.apply_set_props(paths, attrs, hidden, close, ctx);
+            };
+            let dirs = paths.clone();
+            let work = move |gate: &Gate| {
+                if !dirs.first().is_some_and(|d| gate.change(d)) {
+                    return;
+                }
+                for dir in dirs.iter().filter(|d| d.is_dir()) {
                     if let Err(e) = reprisefs::meta::set_folder_icon(dir, icon.as_deref()) {
                         log::warn!(
                             "properties: could not set the icon of {}: {e}",
@@ -531,11 +556,18 @@ impl Explorer {
                         );
                     }
                 }
-                if attrs.is_empty() && hidden.is_none() {
-                    return self.finish_set_props(paths, close, ctx);
-                }
-            }
-            return self.apply_set_props(paths, attrs, hidden, close, ctx);
+            };
+            return self.act(
+                ctx,
+                Action::changes("Properties"),
+                work,
+                move |ex, (), ctx| {
+                    if attrs.is_empty() && hidden.is_none() {
+                        return ex.finish_set_props(paths, close, ctx);
+                    }
+                    ex.apply_set_props(paths, attrs, hidden, close, ctx)
+                },
+            );
         }
         let (new_name, attrs, hidden) = (p.new_name(), p.attrs(), p.hidden());
         let summary = p.summary_moves();
@@ -554,48 +586,62 @@ impl Explorer {
             }
             return Reply::none();
         }
-        // The description goes first, while the file is where the sheet found it; the rest may
-        // rename it.
-        let _ = reprisefs::meta::write_summary(&p.info.path, &summary);
-        if !launcher.is_empty()
-            && let Err(e) = reprisefs::launcher::write_keys(&p.info.path, &launcher)
-        {
-            let text = format!("Cannot change {}: {e}", p.info.name);
-            return self.message_box("Properties", text, ctx);
-        }
-        if let Some(icon) = &folder_icon
-            && let Err(e) = reprisefs::meta::set_folder_icon(&p.info.path, icon.as_deref())
-        {
-            let text = format!("Cannot change the icon of {}: {e}", p.info.name);
-            return self.message_box("Properties", text, ctx);
-        }
-        if new_name.is_none() && attrs.is_empty() && hidden.is_none() {
-            let path = p.info.path.clone();
-            return self.finish_props(&path, close, ctx);
-        }
-        if (!attrs.is_empty() || hidden.is_some())
-            && p.info.is_dir
-            && folder_has_contents(&p.info.path)
-        {
-            let form = attr_form(
-                &attrs,
-                hidden,
-                filesheet::Subject::Folder,
-                &self.dialog_text,
-                self.forms.fonts.size_px,
-                self.forms.text,
-            );
-            self.dialog = Some(crate::dialogs::Dialog::AttrConfirm(AttrConfirm {
-                set: None,
-                new_name,
-                attrs,
-                hidden,
-                close,
-                form,
-            }));
-            return Reply::redraw_all();
-        }
-        self.write_props(new_name, attrs, hidden, false, close, ctx)
+        let (path, name) = (p.info.path.clone(), p.info.name.clone());
+        let look_inside = (!attrs.is_empty() || hidden.is_some()) && p.info.is_dir;
+        let at = path.clone();
+        let work = move |gate: &Gate| -> Result<bool, String> {
+            if !gate.change(&at) {
+                return Ok(false);
+            }
+            // The description goes first, while the file is where the sheet found it; the rest
+            // may rename it.
+            let _ = reprisefs::meta::write_summary(&at, &summary);
+            if !launcher.is_empty()
+                && let Err(e) = reprisefs::launcher::write_keys(&at, &launcher)
+            {
+                return Err(format!("Cannot change {name}: {e}"));
+            }
+            if let Some(icon) = &folder_icon
+                && let Err(e) = reprisefs::meta::set_folder_icon(&at, icon.as_deref())
+            {
+                return Err(format!("Cannot change the icon of {name}: {e}"));
+            }
+            Ok(look_inside && folder_has_contents(&at))
+        };
+        self.act(
+            ctx,
+            Action::changes("Properties"),
+            work,
+            move |ex, pre, ctx| {
+                let ask = match pre {
+                    Ok(ask) => ask,
+                    Err(text) => return ex.message_box("Properties", text, ctx),
+                };
+                if new_name.is_none() && attrs.is_empty() && hidden.is_none() {
+                    return ex.finish_props(&path, close, ctx);
+                }
+                if !ask {
+                    return ex.write_props(new_name, attrs, hidden, false, close, ctx);
+                }
+                let form = attr_form(
+                    &attrs,
+                    hidden,
+                    filesheet::Subject::Folder,
+                    &ex.dialog_text,
+                    ex.forms.fonts.size_px,
+                    ex.forms.text,
+                );
+                ex.dialog = Some(crate::dialogs::Dialog::AttrConfirm(AttrConfirm {
+                    set: None,
+                    new_name,
+                    attrs,
+                    hidden,
+                    close,
+                    form,
+                }));
+                Reply::redraw_all()
+            },
+        )
     }
 
     fn apply_set_props(
@@ -613,26 +659,35 @@ impl Explorer {
             }
             return Reply::none();
         }
-        if paths.iter().any(|p| p.is_dir() && folder_has_contents(p)) {
-            let form = attr_form(
-                &attrs,
-                hidden,
-                filesheet::Subject::Set { has_dir: true },
-                &self.dialog_text,
-                self.forms.fonts.size_px,
-                self.forms.text,
-            );
-            self.dialog = Some(crate::dialogs::Dialog::AttrConfirm(AttrConfirm {
-                set: Some(paths),
-                new_name: None,
-                attrs,
-                hidden,
-                close,
-                form,
-            }));
-            return Reply::redraw_all();
-        }
-        self.write_set_props(paths, attrs, hidden, false, close, ctx)
+        let looked = paths.clone();
+        let work = move |_: &Gate| looked.iter().any(|p| p.is_dir() && folder_has_contents(p));
+        self.act(
+            ctx,
+            Action::reads("Properties"),
+            work,
+            move |ex, ask, ctx| {
+                if !ask {
+                    return ex.write_set_props(paths, attrs, hidden, false, close, ctx);
+                }
+                let form = attr_form(
+                    &attrs,
+                    hidden,
+                    filesheet::Subject::Set { has_dir: true },
+                    &ex.dialog_text,
+                    ex.forms.fonts.size_px,
+                    ex.forms.text,
+                );
+                ex.dialog = Some(crate::dialogs::Dialog::AttrConfirm(AttrConfirm {
+                    set: Some(paths),
+                    new_name: None,
+                    attrs,
+                    hidden,
+                    close,
+                    form,
+                }));
+                Reply::redraw_all()
+            },
+        )
     }
 
     fn write_set_props(
@@ -644,9 +699,20 @@ impl Explorer {
         close: bool,
         ctx: &mut Ctx,
     ) -> Reply {
-        self.spawn_job(ctx, move || {
-            let w = reprisefs::props::write_set(paths, attrs, hidden, tree);
-            Box::new(move |ex: &mut Explorer, ctx: &mut Ctx| {
+        let work = move |gate: &Gate| {
+            if !paths.first().is_some_and(|p| gate.change(p)) {
+                return None;
+            }
+            Some(reprisefs::props::write_set(paths, attrs, hidden, tree))
+        };
+        self.act(
+            ctx,
+            Action::changes("Properties"),
+            work,
+            move |ex, w, ctx| {
+                let Some(w) = w else {
+                    return Reply::none();
+                };
                 for (from, to) in &w.renames {
                     ex.after_rename(from, to, to.is_dir(), ctx);
                 }
@@ -656,30 +722,40 @@ impl Explorer {
                     ex.message_box("Properties", text, ctx);
                 }
                 reply
-            })
-        });
-        Reply::none()
+            },
+        )
     }
 
     fn finish_set_props(&mut self, now: Vec<PathBuf>, close: bool, ctx: &mut Ctx) -> Reply {
         let reply = self.refresh(ctx);
         let caption = self.props.as_ref().map(|p| p.caption.clone());
-        match caption {
+        let sheet = match caption {
             Some(caption) if !close => {
-                let items = now
-                    .iter()
+                let chosen: Vec<(PathBuf, String)> = (now.iter())
                     .filter_map(|p| {
-                        let name = p.file_name()?.to_string_lossy().into_owned();
-                        reprisefs::props::glance_in(p, &name, &self.app_index, &self.globs).ok()
+                        Some((p.clone(), p.file_name()?.to_string_lossy().into_owned()))
                     })
                     .collect();
-                self.props = self.build_set_props(items, caption, ctx);
+                let (apps, globs) = (self.app_index.clone(), self.globs.clone());
+                let work = move |_: &Gate| glance_set_items(&chosen, &apps, &globs);
+                self.act(
+                    ctx,
+                    Action::reads("Properties"),
+                    work,
+                    move |ex, items, ctx| {
+                        ex.props = ex.build_set_props(items, caption, ctx);
+                        Reply::redraw_all()
+                    },
+                )
             }
-            _ => self.props = None,
-        }
+            _ => {
+                self.props = None;
+                Reply::none()
+            }
+        };
         Reply {
             redraw_all: true,
-            ..reply
+            ..reply.and(sheet)
         }
     }
 
@@ -695,31 +771,51 @@ impl Explorer {
         let Some(info) = self.props.as_ref().map(|p| p.info.clone()) else {
             return Reply::redraw_all();
         };
-        let path = if let Some(wanted) = new_name {
-            let here = self.place.path().as_deref() == Some(info.path.as_path());
-            match self.rename_for_props(&info, &wanted, ctx) {
-                Ok(path) => {
-                    if here && path != info.path {
-                        self.show(crate::place::Place::from_path(&path), ctx);
-                    }
-                    path
-                }
-                Err(reply) => return *reply,
+        let old = info.file_name();
+        let to = match new_name.map(|wanted| reprisefs::names::verdict(&old, &wanted, &[])) {
+            Some(reprisefs::names::Verdict::Refuse(text)) => {
+                return self.message_box("Rename", text, ctx);
             }
-        } else {
-            info.path.clone()
+            Some(reprisefs::names::Verdict::Rename(name)) => {
+                info.path.parent().map(|d| d.join(name))
+            }
+            Some(reprisefs::names::Verdict::Cancel) | None => None,
         };
-        if tree {
-            self.spawn_job(ctx, move || {
-                let write = reprisefs::props::write_item(&path, &attrs, hidden, true);
-                Box::new(move |ex: &mut Explorer, ctx: &mut Ctx| {
-                    ex.attrs_written(write, &path, close, ctx)
-                })
-            });
-            return Reply::none();
-        }
-        let write = reprisefs::props::write_item(&path, &attrs, hidden, false);
-        self.attrs_written(write, &path, close, ctx)
+        let here = self.place.path().as_deref() == Some(info.path.as_path());
+        let from = info.path.clone();
+        let work = move |gate: &Gate| -> Option<Result<_, String>> {
+            if !gate.change(&from) {
+                return None;
+            }
+            // Carries the item's `.hidden` line over to the new name.
+            if let Some(to) = &to
+                && let Err(e) = reprisefs::hidden::rename(&from, to)
+            {
+                return Some(Err(reprisefs::names::failed_text(&old, &e)));
+            }
+            let path = to.clone().unwrap_or(from);
+            let write = reprisefs::props::write_item(&path, &attrs, hidden, tree);
+            Some(Ok((to, path, write)))
+        };
+        self.act(
+            ctx,
+            Action::changes("Properties"),
+            work,
+            move |ex, done, ctx| {
+                let (renamed, path, write) = match done {
+                    None => return Reply::none(),
+                    Some(Err(text)) => return ex.message_box("Rename", text, ctx),
+                    Some(Ok(done)) => done,
+                };
+                if let Some(to) = &renamed {
+                    ex.after_rename(&info.path, to, info.is_dir, ctx);
+                    if here && *to != info.path {
+                        ex.show(crate::place::Place::from_path(to), ctx);
+                    }
+                }
+                ex.attrs_written(write, &path, close, ctx)
+            },
+        )
     }
 
     pub(crate) fn attrs_confirmed(&mut self, a: AttrConfirm, ctx: &mut Ctx) -> Reply {
@@ -770,33 +866,6 @@ impl Explorer {
         Reply::redraw_all()
     }
 
-    fn rename_for_props(
-        &mut self,
-        info: &FileInfo,
-        wanted: &str,
-        ctx: &mut Ctx,
-    ) -> Result<PathBuf, Box<Reply>> {
-        let old = info.file_name();
-        match reprisefs::names::verdict(&old, wanted, &[]) {
-            reprisefs::names::Verdict::Cancel => Ok(info.path.clone()),
-            reprisefs::names::Verdict::Refuse(text) => {
-                Err(Box::new(self.message_box("Rename", text, ctx)))
-            }
-            reprisefs::names::Verdict::Rename(name) => {
-                let Some(to) = info.path.parent().map(|d| d.join(&name)) else {
-                    return Ok(info.path.clone());
-                };
-                // Carries the item's `.hidden` line over to the new name.
-                if let Err(e) = reprisefs::hidden::rename(&info.path, &to) {
-                    let text = reprisefs::names::failed_text(&old, &e);
-                    return Err(Box::new(self.message_box("Rename", text, ctx)));
-                }
-                self.after_rename(&info.path, &to, info.is_dir, ctx);
-                Ok(to)
-            }
-        }
-    }
-
     fn finish_props(&mut self, path: &Path, close: bool, ctx: &mut Ctx) -> Reply {
         let reply = self.refresh(ctx);
         if close {
@@ -824,12 +893,28 @@ impl Explorer {
         } else {
             p.caption.clone()
         };
-        if let Ok(info) = reprisefs::props::glance_in(path, &name, &self.app_index, &self.globs) {
-            self.props = Some(self.build_props(info, caption, ctx));
-        }
+        let (path, apps, globs) = (
+            path.to_path_buf(),
+            self.app_index.clone(),
+            self.globs.clone(),
+        );
+        let work = move |_: &Gate| glance(&path, &name, &apps, &globs);
+        let sheet = self.act(
+            ctx,
+            Action::reads("Properties"),
+            work,
+            move |ex, glanced, ctx| {
+                if let Ok(g) = glanced
+                    && ex.props.is_some()
+                {
+                    ex.props = Some(ex.build_props(g, caption, ctx));
+                }
+                Reply::redraw_all()
+            },
+        );
         Reply {
             redraw_all: true,
-            ..reply
+            ..reply.and(sheet)
         }
     }
 
@@ -867,4 +952,90 @@ fn shortcut_facts(info: &FileInfo, l: &reprisefs::launcher::Launcher) -> fileshe
 fn change_failed_text(path: &Path, e: &dyn std::fmt::Display) -> String {
     let name = path.file_name().unwrap_or(path.as_os_str());
     format!("Cannot change {}: {e}", name.to_string_lossy())
+}
+
+/// The path, the sheet field's name and the caption's name for `place`'s own sheet, or `None`
+/// where there is no sheet. Shell folders are titled by their shell names while the field keeps
+/// the real directory name, so OK cannot rename `$HOME` to "<user>'s Home".
+fn place_sheet_of(place: &crate::place::Place) -> Option<(PathBuf, String, String)> {
+    use crate::place::Place;
+    match place {
+        Place::Computer | Place::RecycleBin => None,
+        place => {
+            let dir = place.path()?;
+            // A folder reached through a symlink gets its own sheet, not the link's.
+            let dir = std::fs::canonicalize(&dir).unwrap_or(dir);
+            let name = match place {
+                Place::Folder(_) => place.title(),
+                _ => dir
+                    .file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| place.title()),
+            };
+            Some((dir, name, place.title()))
+        }
+    }
+}
+
+/// A file's sheet facts and what its sheet icon is drawn from, read on a listing thread.
+pub(crate) struct Glanced {
+    info: FileInfo,
+    icon: SheetIcon,
+}
+
+enum SheetIcon {
+    /// A folder, with its own `.directory` icon.
+    Folder(Option<String>),
+    /// A shortcut's icon.
+    Shortcut(String),
+    /// A file of this type.
+    File(Option<String>),
+}
+
+fn glance(
+    path: &Path,
+    name: &str,
+    apps: &[reprisefs::apps::AppEntry],
+    globs: &reprisefs::apps::MimeDb,
+) -> std::io::Result<Glanced> {
+    let info = reprisefs::props::glance_in(path, name, apps, globs)?;
+    let icon = if info.path.is_dir() {
+        SheetIcon::Folder(reprisefs::meta::folder_icon(&info.path))
+    } else if let Some(sc) = std::fs::metadata(&info.path)
+        .ok()
+        .and_then(|m| reprisefs::apps::shortcut_at(&info.path, &m))
+    {
+        SheetIcon::Shortcut(sc.icon().to_string())
+    } else {
+        SheetIcon::File(reprisefs::apps::mime_of_in(globs, &info.path))
+    };
+    Ok(Glanced { info, icon })
+}
+
+/// Each of `chosen` (path and label) that answers, for the combined sheet.
+fn glance_set_items(
+    chosen: &[(PathBuf, String)],
+    apps: &[reprisefs::apps::AppEntry],
+    globs: &reprisefs::apps::MimeDb,
+) -> Vec<FileInfo> {
+    let glance = |(path, label): &(PathBuf, String)| {
+        reprisefs::props::glance_in(path, label, apps, globs)
+            .inspect_err(|e| log::warn!("properties: {}: {e}", path.display()))
+            .ok()
+    };
+    chosen.iter().filter_map(glance).collect()
+}
+
+fn props_icon(icon: &SheetIcon, path: &Path, ctx: &mut Ctx) -> Option<Canvas> {
+    let name = match icon {
+        SheetIcon::Folder(own) => crate::icons::sheet_folder_icon(
+            own.as_deref().unwrap_or(filesheet::STANDARD_FOLDER_ICON),
+            &|n| ctx.icons.has(n),
+        ),
+        SheetIcon::Shortcut(name) => name.clone(),
+        SheetIcon::File(mime) => {
+            reprisefs::icons::pick_icon(mime.as_deref(), path, &|n| ctx.icons.has(n))
+        }
+    };
+    ctx.icons.get(&name, ICON_PX)
 }
