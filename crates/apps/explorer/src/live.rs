@@ -97,12 +97,13 @@ impl Explorer {
         let removed = self.poll_removal(ctx);
         self.show_progress_dialogs();
         let job = self.poll_jobs(ctx);
+        let opened = self.take_opened(ctx);
         let tipped = self.poll_tip_walk(ctx);
         if self.closing && !self.busy() {
-            return Reply {
+            return opened.unwrap_or_default().and(Reply {
                 quit: true,
                 ..Default::default()
-            };
+            });
         }
         let browsed = self.take_browse(ctx);
         let mut dirty = tipped
@@ -122,27 +123,33 @@ impl Explorer {
             arrived.push(done.path);
             dirty = true;
         }
-        // A finished put already re-listed; its reply may carry an error box.
-        let put = job
-            .or(removed)
-            .or(put)
-            .or(self.take_read(ctx))
-            .or(self.take_checked(ctx))
-            .or(self.take_opened(ctx))
-            .or(self.take_gone(ctx))
-            .or(self.take_drives(ctx))
-            .or(self.take_clashes(ctx))
-            .filter(|r| *r != Reply::none());
+        // Every answer that landed keeps its effects: a file opened late spawns its program
+        // whatever else answered in the same wake. A finished put already re-listed.
+        let put = [
+            job,
+            removed,
+            put,
+            self.take_read(ctx),
+            self.take_checked(ctx),
+            opened,
+            self.take_gone(ctx),
+            self.take_drives(ctx),
+            self.take_clashes(ctx),
+        ]
+        .into_iter()
+        .flatten()
+        .reduce(Reply::and)
+        .filter(|r| *r != Reply::none());
         if let Some(from) = self.watch.as_mut().and_then(|w| w.take_gone()) {
             let r = self.follow_gone(&from, ctx);
-            return put.unwrap_or(r);
+            return put.unwrap_or_default().and(r);
         }
         if self.watch.as_mut().is_some_and(|w| w.take_changed()) {
             let r = self.refresh(ctx);
-            return put.unwrap_or(r);
+            return put.unwrap_or_default().and(r);
         }
         if let Some(r) = self.poll_volumes(ctx) {
-            return put.unwrap_or(r);
+            return put.unwrap_or_default().and(r);
         }
         if let Some(r) = put {
             return r;
