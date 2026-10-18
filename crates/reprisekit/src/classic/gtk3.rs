@@ -289,6 +289,23 @@ mod tests {
     }
 
     #[test]
+    fn a_disabled_progress_bar_draws_grey_blocks_along_its_orientation() {
+        let css = sheet(&ColorScheme::default());
+        let grey = "@insensitive_fg_color 0, @insensitive_fg_color 6px, transparent 6px";
+        assert!(
+            rule(
+                &css,
+                "progressbar.horizontal > trough > progress:disabled {"
+            )
+            .contains(&format!("repeating-linear-gradient(to right, {grey}"))
+        );
+        assert!(
+            rule(&css, "progressbar.vertical > trough > progress:disabled {")
+                .contains(&format!("repeating-linear-gradient(to bottom, {grey}"))
+        );
+    }
+
+    #[test]
     fn the_sheet_reads_only_defined_colours() {
         let cs = ColorScheme::default();
         let css = crate::toolkit::gtk3_css(&cs, crate::interface::Interface::Classic);

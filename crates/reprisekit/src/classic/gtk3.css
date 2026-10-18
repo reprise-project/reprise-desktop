@@ -453,8 +453,11 @@ progressbar.vertical > trough > progress {
   min-height: 6px;
   background-image: repeating-linear-gradient(to bottom, @theme_selected_bg_color 0, @theme_selected_bg_color 6px, transparent 6px, transparent 8px);
 }
-progressbar progress:disabled {
+progressbar.horizontal > trough > progress:disabled {
   background-image: repeating-linear-gradient(to right, @insensitive_fg_color 0, @insensitive_fg_color 6px, transparent 6px, transparent 8px);
+}
+progressbar.vertical > trough > progress:disabled {
+  background-image: repeating-linear-gradient(to bottom, @insensitive_fg_color 0, @insensitive_fg_color 6px, transparent 6px, transparent 8px);
 }
 
 combobox button.combo, combobox button.combo:hover, combobox button.combo:active,
