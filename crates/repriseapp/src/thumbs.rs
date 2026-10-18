@@ -2,6 +2,7 @@
 //! through the freedesktop thumbnail cache. Explorer and the file dialog host share it; Explorer's
 //! [`serve_stdio`] decodes for the compositor's Browse dialog in a process of its own. Navigation
 //! bumps a generation counter and the worker drops requests older than the newest it has seen.
+//! A file that does not answer within [`WITHIN`] keeps its icon, and the worker moves on.
 
 use crate::Waker;
 use crate::decode::Decoders;
@@ -10,10 +11,22 @@ use reprisefs::thumbpipe;
 use reprisekit::controls::shellview;
 use reprisekit::raster::Canvas;
 use std::collections::{HashSet, VecDeque};
+use std::io;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc::{Receiver, Sender, TryRecvError, channel};
 use std::thread::JoinHandle;
+use std::time::Duration;
+
+/// How long a picture's open or read may take before the picture keeps its icon: well past a
+/// large photo's read on a slow network mount, short enough that a dead mount holds the rest of
+/// the folder back only briefly.
+const WITHIN: Duration = Duration::from_secs(3);
+
+/// Calls given up on and still blocked, past which pictures keep their icons without a try until
+/// one returns: each holds a thread.
+const MAX_STUCK: usize = 4;
 
 struct Request {
     path: PathBuf,
@@ -134,6 +147,7 @@ fn work(
 ) {
     let mut queue: VecDeque<Request> = VecDeque::new();
     let mut newest = 0u64;
+    let fs = Deadlines::new(WITHIN);
     loop {
         let Ok(req) = rx.recv() else {
             return;
@@ -148,13 +162,13 @@ fn work(
                 continue;
             }
             // A file no decoder claims (a truncated JPEG, a `.png` that
-            // is not one) answers nothing, so its path stays in the
-            // window's `pending` set for the rest of the listing and is
-            // never asked for again. That is deliberate: a retry costs a
-            // read and a probe per pass and would never succeed. The
-            // next listing clears the set.
+            // is not one) or whose read is given up on answers nothing, so
+            // its path stays in the window's `pending` set for the rest of
+            // the listing and is never asked for again: a retry costs a read
+            // per pass and would not succeed. The next listing clears the set.
             let edge = edge_for(shellview::thumb_px(req.scale));
-            let Some((thumb, dims)) = thumbnail(&decoders, edge, cache.as_mut(), &req.path) else {
+            let Some((thumb, dims)) = thumbnail(&decoders, edge, cache.as_mut(), &req.path, &fs)
+            else {
                 continue;
             };
             let done = Done {
@@ -190,9 +204,10 @@ fn serve(
     mut input: impl std::io::BufRead,
     mut output: impl std::io::Write,
 ) -> std::io::Result<()> {
+    let fs = Deadlines::new(WITHIN);
     while let Some((path, edge)) = thumbpipe::read_request(&mut input)? {
         let edge = edge_for(edge);
-        let thumb = thumbnail(decoders, edge, cache.as_deref_mut(), &path).map(|(c, dims)| {
+        let thumb = thumbnail(decoders, edge, cache.as_deref_mut(), &path, &fs).map(|(c, dims)| {
             let (width, height) = c.device_size();
             thumbpipe::Thumb {
                 width,
@@ -243,38 +258,51 @@ pub fn clear_cache() -> Cleared {
 const PROGRAM_PREFIX: &str = "reprise-";
 const PROGRAM: &str = concat!("reprise-", env!("CARGO_PKG_VERSION"));
 
-/// `path`'s thumbnail at `edge` and its size, from `cache` or decoded into it. A file the stat
-/// cannot read skips the cache both ways, so nobody else's thumbnail of
-/// it shows. The stat comes before the read, so a picture changed in
-/// between is kept under its old stamp and simply misses next time.
-/// Anything but a regular file (a named pipe, a device) is never opened, since the open or the
-/// read may never return.
+/// `path`'s thumbnail at `edge` and its size, from `cache` or decoded into it. The stat comes
+/// before the read, so a picture changed in between is kept under its old stamp and simply misses
+/// next time. Anything but a regular file (a named pipe, a device) is never opened, since the open
+/// or the read may never return. A picture whose open or read `fs` gives up on is not marked
+/// failed in the cache, so it is tried again once its mount answers.
 fn thumbnail(
     decoders: &Decoders,
     edge: u32,
-    cache: Option<&mut Thumbnails>,
+    mut cache: Option<&mut Thumbnails>,
     path: &std::path::Path,
+    fs: &Deadlines,
 ) -> Option<(Canvas, (u32, u32))> {
-    if std::fs::metadata(path).is_ok_and(|m| !m.is_file()) {
-        return None;
-    }
-    let stat = std::fs::File::open(path).and_then(|f| f.metadata());
-    let cached = cache.zip(stat.ok());
-    if let Some((cache, meta)) = &cached {
+    let p = path.to_path_buf();
+    let (file, meta) = fs
+        .run(move || {
+            if !std::fs::metadata(&p)?.is_file() {
+                return Err(io::ErrorKind::InvalidInput.into());
+            }
+            let f = std::fs::File::open(&p)?;
+            let meta = f.metadata()?;
+            Ok((f, meta))
+        })
+        .map_err(|e| log::debug!("thumbnail {}: {e}", path.display()))
+        .ok()?;
+    if let Some(cache) = cache.as_deref_mut() {
         // An entry without the picture's size is a miss, since the Tiles
         // line needs it, and is written again with it.
-        if let Some(hit) = cache.get(path, meta, edge)
+        if let Some(hit) = cache.get(path, &meta, edge)
             && let Some(dims) = hit.dims
             && let Ok(thumb) = reprisekit::icontheme::png_to_canvas(&hit.png, edge)
         {
             return Some((thumb, dims));
         }
-        if cache.failed(path, meta) {
+        if cache.failed(path, &meta) {
             return None;
         }
     }
-    let img = decoders.decode_file(path, (edge, edge));
-    if let Some((cache, meta)) = cached {
+    let img = match fs.run(move || crate::decode::read_capped_from(file)) {
+        Err(e) if e.kind() == io::ErrorKind::TimedOut => {
+            log::debug!("thumbnail {}: {e}", path.display());
+            return None;
+        }
+        bytes => bytes.ok().and_then(|b| decoders.decode(&b, (edge, edge))),
+    };
+    if let Some(cache) = cache {
         match &img {
             Some(img) => {
                 let (width, height) = img.canvas.device_size();
@@ -291,6 +319,53 @@ fn thumbnail(
     }
     let img = img?;
     Some((img.canvas, (img.width, img.height)))
+}
+
+/// File-system calls on threads of their own, each given up after `within`: a file on a dead
+/// mount holds the worker that long at most.
+struct Deadlines {
+    within: Duration,
+    /// Calls started and not yet returned.
+    running: Arc<AtomicUsize>,
+}
+
+impl Deadlines {
+    fn new(within: Duration) -> Deadlines {
+        Deadlines {
+            within,
+            running: Arc::default(),
+        }
+    }
+
+    /// What `call` returns, or `TimedOut` when it takes longer than `within` or [`MAX_STUCK`]
+    /// earlier calls are still blocked.
+    fn run<T: Send + 'static>(
+        &self,
+        call: impl FnOnce() -> io::Result<T> + Send + 'static,
+    ) -> io::Result<T> {
+        if self.running.load(Ordering::Acquire) >= MAX_STUCK {
+            return Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                format!("{MAX_STUCK} file reads have not returned"),
+            ));
+        }
+        let (tx, rx) = std::sync::mpsc::sync_channel(1);
+        let running = self.running.clone();
+        running.fetch_add(1, Ordering::AcqRel);
+        let spawned = std::thread::Builder::new()
+            .name("thumbs-read".into())
+            .spawn(move || {
+                let out = call();
+                running.fetch_sub(1, Ordering::AcqRel);
+                let _ = tx.send(out);
+            });
+        if let Err(e) = spawned {
+            self.running.fetch_sub(1, Ordering::AcqRel);
+            return Err(e);
+        }
+        rx.recv_timeout(self.within)
+            .unwrap_or_else(|_| Err(io::ErrorKind::TimedOut.into()))
+    }
 }
 
 fn straight_rgba(canvas: &Canvas) -> Vec<u8> {
@@ -328,6 +403,10 @@ mod tests {
                 done_tx: keep,
             },
         )
+    }
+
+    fn fs() -> Deadlines {
+        Deadlines::new(WITHIN)
     }
 
     fn done(path: &str, generation: u64) -> Done {
@@ -417,12 +496,12 @@ mod tests {
     #[test]
     fn a_cached_thumbnail_is_read_back_rather_than_decoded() {
         let (_dir, src, decoders, count, mut cache) = counted(b"FAKE picture");
-        let first = thumbnail(&decoders, 128, Some(&mut cache), &src).expect("decoded");
-        let again = thumbnail(&decoders, 128, Some(&mut cache), &src).expect("cached");
+        let first = thumbnail(&decoders, 128, Some(&mut cache), &src, &fs()).expect("decoded");
+        let again = thumbnail(&decoders, 128, Some(&mut cache), &src, &fs()).expect("cached");
         assert_eq!(count.load(std::sync::atomic::Ordering::SeqCst), 1);
         assert_eq!(first.0, again.0);
         assert_eq!(again.1, (640, 320));
-        thumbnail(&decoders, 128, None, &src).expect("decoded");
+        thumbnail(&decoders, 128, None, &src, &fs()).expect("decoded");
         assert_eq!(count.load(std::sync::atomic::Ordering::SeqCst), 2);
     }
 
@@ -463,7 +542,7 @@ mod tests {
         assert!(made.success());
         let (tx, rx) = channel();
         std::thread::spawn(move || {
-            let _ = tx.send(thumbnail(&Decoders::default_set(), 128, None, &fifo).is_none());
+            let _ = tx.send(thumbnail(&Decoders::default_set(), 128, None, &fifo, &fs()).is_none());
         });
         let answer = rx.recv_timeout(std::time::Duration::from_secs(5));
         assert_eq!(
@@ -491,9 +570,9 @@ mod tests {
                 .is_some()
         );
         assert_eq!((held("normal"), held("large")), (0, 1));
-        thumbnail(&decoders, edge(2), Some(&mut cache), &src).expect("cached");
+        thumbnail(&decoders, edge(2), Some(&mut cache), &src, &fs()).expect("cached");
         assert_eq!(count.load(std::sync::atomic::Ordering::SeqCst), 1);
-        thumbnail(&decoders, edge(1), Some(&mut cache), &src).expect("decoded");
+        thumbnail(&decoders, edge(1), Some(&mut cache), &src, &fs()).expect("decoded");
         assert_eq!(count.load(std::sync::atomic::Ordering::SeqCst), 2);
         assert_eq!((held("normal"), held("large")), (1, 1));
     }
@@ -526,7 +605,7 @@ mod tests {
         std::fs::write(&pic, b"RAMP").unwrap();
         let mut decoders = Decoders::default_set();
         decoders.register(Box::new(Ramp));
-        let (thumb, dims) = thumbnail(&decoders, edge, None, &pic).expect("decoded");
+        let (thumb, dims) = thumbnail(&decoders, edge, None, &pic, &fs()).expect("decoded");
         let sv = ShellView {
             mode: Mode::Thumbnails,
             entries: vec![Entry {
@@ -593,11 +672,79 @@ mod tests {
     #[test]
     fn a_picture_that_failed_is_not_decoded_again_until_it_changes() {
         let (_dir, src, decoders, count, mut cache) = counted(b"FAKE BAD picture");
-        assert!(thumbnail(&decoders, 128, Some(&mut cache), &src).is_none());
-        assert!(thumbnail(&decoders, 128, Some(&mut cache), &src).is_none());
+        assert!(thumbnail(&decoders, 128, Some(&mut cache), &src, &fs()).is_none());
+        assert!(thumbnail(&decoders, 128, Some(&mut cache), &src, &fs()).is_none());
         assert_eq!(count.load(std::sync::atomic::Ordering::SeqCst), 1);
         std::fs::write(&src, b"FAKE picture, saved again").unwrap();
-        assert!(thumbnail(&decoders, 128, Some(&mut cache), &src).is_some());
+        assert!(thumbnail(&decoders, 128, Some(&mut cache), &src, &fs()).is_some());
         assert_eq!(count.load(std::sync::atomic::Ordering::SeqCst), 2);
+    }
+
+    /// A read that blocks on a named pipe until a writer opens it, as a read on a dead mount
+    /// blocks, is given up after its deadline; past [`MAX_STUCK`] of them every read is refused
+    /// at once, until the blocked reads return.
+    #[test]
+    fn a_read_that_hangs_is_given_up_and_bounded() {
+        use std::time::Instant;
+        const SHORT: Duration = Duration::from_millis(50);
+        let dir = tempfile::tempdir().unwrap();
+        let (hang, pic) = (dir.path().join("hang.png"), dir.path().join("dunes.png"));
+        std::fs::write(&pic, b"a picture").unwrap();
+        assert!(
+            std::process::Command::new("mkfifo")
+                .arg(&hang)
+                .status()
+                .unwrap()
+                .success()
+        );
+        let fs = Deadlines::new(SHORT);
+        let read = |p: &std::path::Path| {
+            let p = p.to_path_buf();
+            fs.run(move || std::fs::read(p))
+        };
+        assert_eq!(read(&pic).unwrap(), b"a picture");
+        for _ in 0..MAX_STUCK {
+            let asked = Instant::now();
+            assert_eq!(read(&hang).unwrap_err().kind(), io::ErrorKind::TimedOut);
+            assert!(
+                asked.elapsed() < SHORT * 20,
+                "gave up after {:?}",
+                asked.elapsed()
+            );
+        }
+        let asked = Instant::now();
+        assert_eq!(
+            read(&pic).unwrap_err().kind(),
+            io::ErrorKind::TimedOut,
+            "refused while reads hang"
+        );
+        assert!(asked.elapsed() < SHORT, "refused at once");
+
+        let end = Instant::now() + Duration::from_secs(5);
+        while fs.running.load(Ordering::Acquire) > 0 {
+            assert!(Instant::now() < end, "the blocked reads return");
+            // A read-write open of a pipe never blocks, and wakes the readers waiting on it.
+            let _ = std::fs::OpenOptions::new()
+                .read(true)
+                .write(true)
+                .open(&hang);
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert_eq!(read(&pic).unwrap(), b"a picture", "reads run again");
+    }
+
+    #[test]
+    fn a_picture_given_up_on_keeps_its_icon_and_is_tried_again() {
+        let (_dir, src, decoders, count, mut cache) = counted(b"FAKE picture");
+        let fs = fs();
+        fs.running.store(MAX_STUCK, Ordering::Release);
+        assert!(thumbnail(&decoders, 128, Some(&mut cache), &src, &fs).is_none());
+        assert_eq!(count.load(Ordering::SeqCst), 0, "nothing decoded");
+        fs.running.store(0, Ordering::Release);
+        assert!(
+            thumbnail(&decoders, 128, Some(&mut cache), &src, &fs).is_some(),
+            "not marked failed in the cache"
+        );
+        assert_eq!(count.load(Ordering::SeqCst), 1);
     }
 }
