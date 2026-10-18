@@ -2124,7 +2124,8 @@ impl State {
         self.restack();
         let mut activated = self.win(w).is_some_and(|x| x.activate_on_map);
         let locked = self.is_locked();
-        let on_map = crate::mapfocus::on_map(locked, here, &mut activated, |a| {
+        let bar_keys = self.bar_shared.keys.is_some();
+        let on_map = crate::mapfocus::on_map(locked, here, bar_keys, &mut activated, |a| {
             self.takes_focus_on_map(w, a)
         });
         if let Some(win) = self.win_mut(w) {
@@ -2143,6 +2144,7 @@ impl State {
             }
             OnMap::Focus => self.focus_window(w),
             OnMap::Behind => self.place_behind_focus(w),
+            OnMap::Attention => self.map_under_bar_keys(w),
         }
         // Pre-map state: the client's request (xdg pending / X11 `_NET_WM_STATE`) or the first
         // configure's plan; a rule's state wins. An xdg request is taken out of pending.

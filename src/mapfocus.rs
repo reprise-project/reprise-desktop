@@ -95,8 +95,10 @@ pub fn takes_focus(new: &Arrival, focused: Option<Holder>) -> bool {
     new.activated || new.launched || new.prompt || same_client || descends || f.owns
 }
 
-pub fn holder(dialog: bool, window: Option<Holder>) -> Option<Holder> {
-    if dialog {
+/// The keyboard's holder: Reprise itself (`reprise`: a dialog or the
+/// taskbar has it), owning no program's window, else `window`.
+pub fn holder(reprise: bool, window: Option<Holder>) -> Option<Holder> {
+    if reprise {
         Some(Holder::default())
     } else {
         window
@@ -111,16 +113,21 @@ pub enum OnMap {
     Elsewhere,
     Focus,
     Behind,
+    /// Behind the taskbar's keys: on top, its task button asking for
+    /// attention, the keyboard left on the bar.
+    Attention,
 }
 
 /// How a toplevel mapping on the current desktop (`here`) or not treats
 /// the keyboard. `activated` is a trusted activation it presented before
 /// the map. A map that may focus at all hands it to `weigh`
 /// (`takes_focus`) and uses it up, so the window's next map has to earn
-/// the focus again.
+/// the focus again. One that may not while the taskbar has the keyboard
+/// (`bar_keys`) asks for attention.
 pub fn on_map(
     locked: bool,
     here: bool,
+    bar_keys: bool,
     activated: &mut bool,
     weigh: impl FnOnce(bool) -> bool,
 ) -> OnMap {
@@ -130,6 +137,8 @@ pub fn on_map(
         OnMap::Elsewhere
     } else if weigh(std::mem::take(activated)) {
         OnMap::Focus
+    } else if bar_keys {
+        OnMap::Attention
     } else {
         OnMap::Behind
     }
@@ -341,6 +350,33 @@ mod tests {
     }
 
     #[test]
+    fn a_window_mapping_while_the_taskbar_has_the_keys_asks_for_attention() {
+        let held = holder(true, None);
+        let stranger = Arrival {
+            client: Some(OTHER),
+            lineage: STRANGER,
+            ..Arrival::default()
+        };
+        let mut activated = false;
+        let verdict = on_map(false, true, true, &mut activated, |_| {
+            takes_focus(&stranger, held)
+        });
+        assert_eq!(verdict, OnMap::Attention);
+        let launched = Arrival {
+            launched: true,
+            ..stranger
+        };
+        let verdict = on_map(false, true, true, &mut activated, |_| {
+            takes_focus(&launched, held)
+        });
+        assert_eq!(
+            verdict,
+            OnMap::Focus,
+            "a window the bar launched takes focus"
+        );
+    }
+
+    #[test]
     fn a_pre_map_activation_focuses_one_map_only() {
         let weigh = |activated| {
             let new = Arrival {
@@ -352,18 +388,24 @@ mod tests {
             takes_focus(&new, editor_focused())
         };
         let mut activated = true;
-        assert_eq!(on_map(false, true, &mut activated, weigh), OnMap::Focus);
+        assert_eq!(
+            on_map(false, true, false, &mut activated, weigh),
+            OnMap::Focus
+        );
         assert!(!activated, "expected the activation used up");
-        assert_eq!(on_map(false, true, &mut activated, weigh), OnMap::Behind);
+        assert_eq!(
+            on_map(false, true, false, &mut activated, weigh),
+            OnMap::Behind
+        );
     }
 
     #[test]
     fn a_window_mapping_under_the_lock_is_not_weighed() {
         let mut activated = true;
-        let verdict = on_map(true, true, &mut activated, |_| panic!("weighed"));
+        let verdict = on_map(true, true, false, &mut activated, |_| panic!("weighed"));
         assert_eq!(verdict, OnMap::Locked);
         assert!(activated, "expected the activation kept");
-        let verdict = on_map(false, false, &mut activated, |_| panic!("weighed"));
+        let verdict = on_map(false, false, false, &mut activated, |_| panic!("weighed"));
         assert_eq!(verdict, OnMap::Elsewhere);
     }
 
