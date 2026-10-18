@@ -134,6 +134,9 @@ const FOLDER_BUTTON_GAP: i32 = 23;
 const FOLDER_MIN_W: i32 = 413;
 const FOLDER_BUTTON_RIGHT: i32 = FOLDER_MIN_W - TEXT_X - (4 * BUTTON_W + 3 * BUTTON_GAP);
 
+/// The widest the first line runs: the prompt is at most 553 px wide.
+const FIRST_MAX_W: i32 = 480;
+
 const MERGE_TEXT: &str = "If files in the existing folder have the same names as files in \
                           the folder you are moving or copying, they will be replaced. Do \
                           you still want to move or copy the folder?";
@@ -167,16 +170,7 @@ fn plan(f: &Fields, text: &TextRenderer, px: u32, u: TextUnits) -> Plan {
         Subject::File { .. } => "file",
         Subject::Folder => "folder",
     };
-    // The first line names the file and never wraps: a long name widens
-    // the prompt instead.
-    let first = match &f.folder {
-        None => format!("This folder already contains a {what} named '{}'.", f.name),
-        Some(dir) => format!(
-            "The folder '{dir}' already contains a {what} named '{}'.",
-            f.name
-        ),
-    };
-    let mut lines = vec![(first, TEXT_Y)];
+    let mut lines = vec![(first_line(f, what, text, px, u), TEXT_Y)];
     match &f.subject {
         Subject::File { existing, incoming } => {
             lines.push((
@@ -210,6 +204,39 @@ fn plan(f: &Fields, text: &TextRenderer, px: u32, u: TextUnits) -> Plan {
             }
         }
     }
+}
+
+/// The first line on one row: a long name widens the prompt up to `FIRST_MAX_W`, then the folder
+/// loses its start at a slash (".../2024/Q3") and, past that, the name its end.
+fn first_line(f: &Fields, what: &str, text: &TextRenderer, px: u32, u: TextUnits) -> String {
+    let line = |dir: Option<&str>, name: &str| match dir {
+        None => format!("This folder already contains a {what} named '{name}'."),
+        Some(dir) => format!("The folder '{dir}' already contains a {what} named '{name}'."),
+    };
+    let max = u.len(FIRST_MAX_W);
+    let full = line(f.folder.as_deref(), &f.name);
+    if text.measure(&full, false, px) <= max {
+        return full;
+    }
+    let dots = "...";
+    if let Some(dir) = &f.folder {
+        let mut room = max - text.measure(&line(Some(dots), &f.name), false, px);
+        let mut cut = dir.len();
+        for (i, ch) in dir.char_indices().rev() {
+            room -= text.advance(ch, false, px);
+            if room < 0 {
+                break;
+            }
+            cut = i;
+        }
+        if cut < dir.len() {
+            cut += dir[cut..].find('/').unwrap_or(0);
+            return line(Some(&format!("{dots}{}", &dir[cut..])), &f.name);
+        }
+    }
+    let dir = f.folder.as_ref().map(|_| dots);
+    let room = max - text.measure(&line(dir, ""), false, px);
+    line(dir, &text.ellipsize(&f.name, room, false, px))
 }
 
 fn button_row_w(n: usize) -> i32 {
@@ -440,6 +467,52 @@ mod tests {
         assert!(w > 420);
         let f = form(&long, &text, px, TextUnits::ONE);
         assert_eq!(f.item(NO).unwrap().rect.right(), w - 11);
+    }
+
+    fn line0(f: &Form) -> String {
+        match &f.item("line0").expect("the first line").control {
+            form::Control::Label { text, .. } => text.clone(),
+            other => panic!("a label, not {other:?}"),
+        }
+    }
+
+    /// A deep folder stops widening the prompt at 553 px: the folder loses its start, so the
+    /// folders nearest the file and the file's name stay.
+    #[test]
+    fn a_deep_folder_is_elided_from_its_start() {
+        let (text, px) = rend();
+        for (px, u) in [
+            (px, TextUnits::ONE),
+            (px * 3 / 2, TextUnits::new(px * 3 / 2, px)),
+        ] {
+            let mut deep = file();
+            deep.folder = Some(format!("{}/2024", ["Reports"; 80].join("/")));
+            let (w, _) = client(&deep, &text, px, u);
+            assert!(w <= 553, "{w} px wide");
+            let line = line0(&form(&deep, &text, px, u));
+            assert!(line.starts_with("The folder '.../Reports/"), "{line}");
+            assert!(
+                line.ends_with("/2024' already contains a file named 'notes.txt'."),
+                "{line}"
+            );
+        }
+    }
+
+    /// A name too long for the widest prompt keeps its start and ends in "...".
+    #[test]
+    fn a_name_past_the_widest_prompt_is_cut_at_its_end() {
+        let (text, px) = rend();
+        let mut long = file();
+        long.name = "a".repeat(400);
+        long.folder = Some("Reports".into());
+        let (w, _) = client(&long, &text, px, TextUnits::ONE);
+        assert!(w <= 553, "{w} px wide");
+        let line = line0(&form(&long, &text, px, TextUnits::ONE));
+        assert!(
+            line.starts_with("The folder '...' already contains a file named 'aaa"),
+            "{line}"
+        );
+        assert!(line.ends_with("a...'."), "{line}");
     }
 
     /// The pixels: the default ring around Yes, the plain bevel of No,
