@@ -237,8 +237,18 @@ pub(crate) fn app_icon(
     app_id: &str,
     px: i32,
 ) -> Option<Arc<Canvas>> {
+    app_icon_waiting(icons, index, app_id, px).0
+}
+
+/// [`app_icon`], with the icon file it waits on when that file is not decoded at `px` yet.
+pub(crate) fn app_icon_waiting(
+    icons: &mut IconCache,
+    index: &[reprisefs::apps::AppEntry],
+    app_id: &str,
+    px: i32,
+) -> (Option<Arc<Canvas>>, Option<String>) {
     if app_id.is_empty() {
-        return None;
+        return (None, None);
     }
     // The app id is a client-chosen string used as a theme icon name; one
     // with a path separator would be taken for a file path, so it only
@@ -246,10 +256,18 @@ pub(crate) fn app_icon(
     if !app_id.contains('/')
         && let Some(c) = icons.get_shared(app_id, px)
     {
-        return Some(c);
+        return (Some(c), None);
     }
-    let name = reprisefs::apps::icon_for_app_id(index, app_id)?;
-    crate::icon::unread(icons, name, px)
+    let Some(name) = reprisefs::apps::icon_for_app_id(index, app_id) else {
+        return (None, None);
+    };
+    match icons.get_unread(name, px) {
+        Some(icon) => (icon, None),
+        None => (
+            icons.get_shared(crate::icon::STAND_IN, px),
+            Some(name.to_string()),
+        ),
+    }
 }
 
 /// A Quick Launch item's or pin's icon at `px`, its file never read on the loop.

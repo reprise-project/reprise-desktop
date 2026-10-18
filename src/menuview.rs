@@ -631,6 +631,24 @@ impl State {
         icon.map(Arc::unwrap_or_clone)
     }
 
+    /// Window `w`'s icon at `px` for menu row `row`: one waiting on its app's icon file shows the
+    /// stand-in and goes on `waits` for [`State::menu_icon_landed`].
+    fn menu_window_icon(
+        &mut self,
+        row: usize,
+        w: WindowId,
+        px: i32,
+        waits: &mut IconWaits,
+    ) -> Option<Canvas> {
+        let win = self.windows.iter().find(|x| x.id == w)?;
+        let (icon, file) =
+            crate::icon::window_icon_waiting(&mut self.icons, &self.app_index, win, px);
+        if let Some(file) = file {
+            waits.push((row, file, px));
+        }
+        icon.map(Arc::unwrap_or_clone)
+    }
+
     fn set_icon_waits(&mut self, depth: usize, waits: IconWaits) {
         if let Some(m) = self.menus.get_mut(depth) {
             m.icon_waits = waits;
@@ -938,23 +956,15 @@ impl State {
             {
                 let window = *window;
                 let px = self.context_icon_px(&output);
-                let targets = self.tab_targets(window);
-                let rows = targets
-                    .into_iter()
-                    .filter_map(|t| {
-                        let State {
-                            windows,
-                            icons,
-                            app_index,
-                            ..
-                        } = &mut *self;
-                        let win = windows.iter().find(|x| x.id == t)?;
-                        let icon = crate::icon::window_icon(icons, app_index, win, px);
-                        Some((t, win.title(), icon.map(|i| (*i).clone())))
-                    })
+                let mut waits = Vec::new();
+                let titled: Vec<(WindowId, String)> = (self.tab_targets(window).into_iter())
+                    .filter_map(|t| Some((t, self.win(t)?.title())))
+                    .collect();
+                let rows = (titled.into_iter().enumerate())
+                    .map(|(n, (t, title))| (t, title, self.menu_window_icon(n, t, px, &mut waits)))
                     .collect();
                 let (items, rows) = crate::winmenu::tabs_of_menu(rows);
-                return Some((items, MenuKind::Window { window, rows }, true, Vec::new()));
+                return Some((items, MenuKind::Window { window, rows }, true, waits));
             }
             MenuKind::JumpList {
                 rows,
@@ -1578,15 +1588,12 @@ impl State {
             return;
         };
         let px = self.context_icon_px(&output);
-        let items = items
-            .into_iter()
-            .zip(&rows)
-            .map(|(item, row)| match row {
+        let mut waits = Vec::new();
+        let items = (items.into_iter().zip(&rows).enumerate())
+            .map(|(n, (item, row))| match row {
                 Some(JumpRow::Window(k)) => {
-                    let icon = target
-                        .windows
-                        .get(*k)
-                        .and_then(|&w| self.window_icon(w, px));
+                    let icon = (target.windows.get(*k))
+                        .and_then(|&w| self.menu_window_icon(n, w, px, &mut waits));
                     item.icon(icon)
                 }
                 _ => item,
@@ -1599,6 +1606,7 @@ impl State {
             button: i,
         };
         self.push_context_menu(at, items, kind, MenuFrom::Bar);
+        self.set_icon_waits(0, waits);
     }
 
     fn jump_activate(&mut self, row: JumpRow, target: &JumpTarget) {
@@ -1677,12 +1685,11 @@ impl State {
             .map(|&w| self.win(w).map(|x| x.title()).unwrap_or_default())
             .collect();
         let (items, rows) = crate::taskbar::window_list(&titles, self.desktops.count);
-        let items: Vec<MenuItem> = items
-            .into_iter()
-            .zip(&rows)
-            .map(|(item, row)| match row {
+        let mut waits = Vec::new();
+        let items: Vec<MenuItem> = (items.into_iter().zip(&rows).enumerate())
+            .map(|(n, (item, row))| match row {
                 Some(WindowListRow::Window(k)) => {
-                    let icon = self.window_icon(wins[*k], px);
+                    let icon = self.menu_window_icon(n, wins[*k], px, &mut waits);
                     item.icon(icon)
                 }
                 _ => item,
@@ -1711,6 +1718,7 @@ impl State {
             button: i,
         };
         self.push_menu(0, pos, layout, items, output, kind, MenuFrom::Bar);
+        self.set_icon_waits(0, waits);
         self.redraw_menu(0);
     }
 
@@ -1732,10 +1740,10 @@ impl State {
         self.close_menu();
         let style = MenuStyle::context(&self.config.theme, ContextBitmaps::Icons);
         let px = style.icon_px() * self.draw_scale_at(Some(&output)).max(1);
-        let items: Vec<MenuItem> = rows
-            .into_iter()
-            .map(|(title, window)| {
-                let icon = window.and_then(|w| self.window_icon(w, px));
+        let mut waits = Vec::new();
+        let items: Vec<MenuItem> = (rows.into_iter().enumerate())
+            .map(|(n, (title, window))| {
+                let icon = window.and_then(|w| self.menu_window_icon(n, w, px, &mut waits));
                 MenuItem::entry(title).icon(icon)
             })
             .collect();
@@ -1758,6 +1766,7 @@ impl State {
         let pos = place_popup(p.anchor_point(cell), (layout.width, layout.height), usable);
         let kind = MenuKind::TaskOverflow { bar: tree, keys };
         self.push_menu(0, pos, layout, items, output, kind, MenuFrom::Bar);
+        self.set_icon_waits(0, waits);
         self.redraw_menu(0);
         self.redraw_taskbars();
     }

@@ -39,10 +39,20 @@ pub fn window_icon(
     win: &Window,
     px: i32,
 ) -> Option<Arc<Canvas>> {
+    window_icon_waiting(icons, index, win, px).0
+}
+
+/// [`window_icon`], with the icon file it waits on when that file is not decoded at `px` yet.
+pub fn window_icon_waiting(
+    icons: &mut IconCache,
+    index: &[reprisefs::apps::AppEntry],
+    win: &Window,
+    px: i32,
+) -> (Option<Arc<Canvas>>, Option<String>) {
     if let Some(icon) = win.own_icon(px) {
-        return Some(icon);
+        return (Some(icon), None);
     }
-    crate::taskbarview::app_icon(icons, index, &win.app_id(), px)
+    crate::taskbarview::app_icon_waiting(icons, index, &win.app_id(), px)
 }
 
 /// Read a wl_shm icon buffer's pixels at their native size. None for an
@@ -263,6 +273,36 @@ mod tests {
         icons.put_file(file, 16, Some(Canvas::new(16, 16)));
         let icon = crate::taskbarview::app_icon(&mut icons, &index, app, 16);
         assert_eq!(icon.map(|c| c.width), Some(16));
+    }
+
+    #[test]
+    fn an_app_icon_names_the_file_it_waits_on_until_it_lands() {
+        use reprisekit::icontheme::IconTheme;
+        let file = "/srv/icons/viewer.png";
+        let index = [reprisefs::apps::AppEntry {
+            name: "Viewer".into(),
+            exec_line: "viewer".into(),
+            terminal: false,
+            id: "org.example.Viewer".into(),
+            icon: Some(file.into()),
+            startup_wm_class: None,
+            categories: Vec::new(),
+            mime_types: Vec::new(),
+            shown: true,
+        }];
+        let mut icons = IconCache::new(IconTheme::load("none", &[]));
+        let app = "org.example.Viewer";
+        let waiting = |icons: &mut IconCache, app| {
+            crate::taskbarview::app_icon_waiting(icons, &index, app, 16).1
+        };
+        assert_eq!(waiting(&mut icons, app).as_deref(), Some(file));
+        assert_eq!(waiting(&mut icons, "org.example.Unknown"), None);
+        icons.put_file(file, 16, Some(Canvas::new(16, 16)));
+        assert_eq!(
+            waiting(&mut icons, app),
+            None,
+            "a landed file is not waited on"
+        );
     }
 
     #[test]
