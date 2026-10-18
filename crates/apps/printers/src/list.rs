@@ -41,6 +41,12 @@ impl List {
         listview::layout(&self.view, r, &ctx.theme.controls())
     }
 
+    /// A reader asked to see row `row`: it scrolls in and nothing is picked. True when it moved.
+    pub fn reveal(&mut self, row: usize, r: Rect, ctx: &Ctx) -> bool {
+        let lay = self.layout(r, ctx);
+        self.view.reveal(row, &lay)
+    }
+
     pub fn selected(&self) -> Option<usize> {
         self.view.selection.single()
     }

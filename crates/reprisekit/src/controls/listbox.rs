@@ -122,6 +122,14 @@ pub struct Layout {
     pub row_h: i32,
 }
 
+impl Layout {
+    /// The rows shown whole: the strip under the last one is empty.
+    fn shown(&self) -> Rect {
+        let i = self.inner;
+        Rect::new(i.x, i.y, i.width, self.visible as i32 * self.row_h)
+    }
+}
+
 pub fn layout(lb: &ListBox, frame: Rect, cm: &ControlMetrics) -> Layout {
     let mut inner = frame.inset(2);
     let visible = (inner.height / cm.list_row).max(1) as usize;
@@ -317,8 +325,9 @@ pub fn draw(
 }
 
 /// The list box's `access` part: a list with one option per item, the
-/// selected one marked. Rows scrolled out of view lie above or below the
-/// frame, where a reader can ask to scroll them in. Returns
+/// selected one marked. The list's bounds are the rows shown whole, so a row
+/// scrolled out lies outside them ([`access::row_bounds`]), where a reader can
+/// ask to scroll it in. Returns
 /// the node that has the focus when the list does: the selected row, else
 /// the list.
 pub fn access(
@@ -328,7 +337,7 @@ pub fn access(
     parent: NodeId,
     key: impl std::hash::Hash,
 ) -> NodeId {
-    let mut n = access::node(Role::ListBox, lay.frame);
+    let mut n = access::node(Role::ListBox, lay.shown());
     access::focusable(&mut n, true);
     let id = tree.push(parent, key, n);
     let mut focus = id;
@@ -339,12 +348,8 @@ pub fn access(
             o.set_description(d.as_str());
         }
         let y = lay.inner.y + (i as i32 - lb.top as i32) * lay.row_h;
-        o.set_bounds(access::bounds(Rect::new(
-            lay.inner.x,
-            y,
-            lay.inner.width,
-            lay.row_h,
-        )));
+        let row = Rect::new(lay.inner.x, y, lay.inner.width, lay.row_h);
+        o.set_bounds(access::row_bounds(lay.shown(), row));
         o.set_selected(lb.selected == Some(i));
         if let Some(&checked) = lb.checks.get(i) {
             o.set_toggled(checked.into());

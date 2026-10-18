@@ -1422,6 +1422,13 @@ impl App for Lazy {
         Some(DropForm { form, px: None })
     }
 
+    fn reader(&mut self, win: WinId, act: repriseapp::Reader, ctx: &Ctx) -> bool {
+        match (win, &mut self.inner) {
+            (MAIN, Some(ex)) => window::reader(ex, act, ctx),
+            _ => repriseapp::reader_forms(self, win, act, ctx),
+        }
+    }
+
     fn drop_file_dialog(&mut self, win: WinId) -> Option<FileDrop<'_>> {
         let Some(Dialog::ChooseProgram(cp)) = self.inner.as_mut()?.dialog.as_mut() else {
             return None;

@@ -430,6 +430,27 @@ pub fn access(ex: &Explorer, tree: &mut Tree, ctx: &Ctx) {
     tree.set_focus(focus.unwrap_or(view));
 }
 
+/// A reader's ScrollIntoView, or Focus on a row out of view: the view's entry or the Folders
+/// tree's row at `act`'s list scrolls in. True when one moved.
+pub fn reader(ex: &mut Explorer, act: repriseapp::Reader, ctx: &Ctx) -> bool {
+    let repriseapp::Reader::Reveal { at: (x, y), row } = act else {
+        return false;
+    };
+    let lay = ex.layout(ctx);
+    if lay.view.contains(x, y) {
+        let sl = ex.view_layout(lay.view, ctx);
+        return shellview::reveal(&mut ex.sv, row, &sl);
+    }
+    match lay.tree.filter(|r| r.contains(x, y)) {
+        Some(r) => {
+            let px = ctx.theme.fonts.size_px;
+            let tl = treeview::layout(&ex.tree, &ctx.text, px, r, &ctx.theme.controls());
+            ex.tree.reveal(row, &tl)
+        }
+        None => false,
+    }
+}
+
 /// An open context menu or toolbar drop. The menu bar keeps its own chain
 /// inside [`reprisekit::controls::menubar::Bar`].
 pub struct Popup {

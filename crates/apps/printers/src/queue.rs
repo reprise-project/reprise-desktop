@@ -418,6 +418,12 @@ impl Queue {
         }
     }
 
+    /// A reader asked to see document `row`; true when the list moved.
+    pub fn reveal(&mut self, row: usize, ctx: &Ctx) -> bool {
+        let r = self.list_rect(ctx);
+        self.list.reveal(row, r, ctx)
+    }
+
     pub fn access(&self, tree: &mut Tree, ctx: &Ctx) {
         let blay = self.bar_layout(ctx);
         let menus = self.bar.access(&blay, tree, ROOT);

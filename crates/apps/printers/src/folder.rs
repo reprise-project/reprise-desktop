@@ -649,6 +649,12 @@ impl Folder {
         }
     }
 
+    /// A reader asked to see printer `row`; true when the list moved.
+    pub fn reveal(&mut self, row: usize, ctx: &Ctx) -> bool {
+        let (_, r) = self.layout(ctx);
+        self.list.reveal(row, r, ctx)
+    }
+
     pub fn access(&self, tree: &mut Tree, ctx: &Ctx) {
         let (_, list_r) = self.layout(ctx);
         let pl = self.pane_layout(ctx);

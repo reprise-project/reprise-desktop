@@ -367,6 +367,30 @@ impl Window {
         }
     }
 
+    /// A reader's ScrollIntoView on an update out of view scrolls it in; Focus on a button
+    /// takes the keyboard from the list. True when the window changed.
+    pub fn reader(
+        &mut self,
+        act: repriseapp::Reader,
+        text: &TextRenderer,
+        px: u32,
+        cm: &ControlMetrics,
+    ) -> bool {
+        match act {
+            repriseapp::Reader::Reveal { row, .. } => {
+                let lay = listview::layout(&self.list, self.list_rect(), cm);
+                self.list.reveal(row, &lay)
+            }
+            repriseapp::Reader::Focus((x, y)) => {
+                let moved = self.form.focus_at(x, y, text, px) != form::Event::None;
+                if moved {
+                    self.focus_list(false);
+                }
+                moved
+            }
+        }
+    }
+
     /// The form draws with `forms`, the list with `theme`'s controls.
     pub fn draw(
         &self,
