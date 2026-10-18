@@ -78,9 +78,9 @@ pub struct Switcher {
     /// Classic's icon panel, a look without glass or one drawn opaque.
     backdrop: Backdrop,
     /// The desktop entry's wallpaper picture and the rect (device pixels,
-    /// panel-relative) it was composed for, so it is composed once while
-    /// the cell keeps its place.
-    desktop_still: Option<(Rect, Canvas)>,
+    /// panel-relative) it was fetched for; the wallpaper keeps it across
+    /// opens (`State::wallpaper_thumbnail`).
+    desktop_still: Option<(Rect, std::rc::Rc<Canvas>)>,
     thumb: Option<ThumbId>,
     thumbs: Vec<Option<ThumbId>>,
     peeking: bool,
@@ -637,7 +637,7 @@ impl State {
                         (Some(pic.scaled(scale)), None)
                     }
                     (_, _, Some((d, pic))) if d == k => {
-                        (Some(pic), sw.desktop_still.as_ref().map(|(_, c)| c))
+                        (Some(pic), sw.desktop_still.as_ref().map(|(_, c)| &**c))
                     }
                     _ => (None, None),
                 };
