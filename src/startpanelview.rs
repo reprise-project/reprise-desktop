@@ -482,6 +482,17 @@ impl UserPictures {
         self.read.get(&px).map(Option::as_ref)
     }
 
+    /// The picture to show at `px`: the read at `px`, else the largest picture read at another
+    /// size resampled while `px` is still being read. None shows avatar-default.
+    fn shown(&self, px: i32) -> Option<Canvas> {
+        match self.at(px) {
+            Some(found) => found.cloned(),
+            None => (self.read.values().flatten())
+                .max_by_key(|c| c.width)
+                .map(|c| c.resample_box(px as u32, px as u32)),
+        }
+    }
+
     /// The read's id and the sizes it takes, or None while one runs and is not stuck.
     fn start(&mut self, mut sizes: Vec<i32>, now: Instant) -> Option<(u64, Vec<i32>)> {
         let id = self.reads.start(now, ())?;
@@ -568,10 +579,8 @@ impl State {
         self.refresh_recent();
         let (rows, places) = self.start_places(px, &user);
         model.places = rows;
-        model.user_picture = match self.start_pictures.at(px) {
-            Some(Some(c)) => Some(c.clone()),
-            _ => self.icons.get("avatar-default", px),
-        };
+        model.user_picture =
+            (self.start_pictures.shown(px)).or_else(|| self.icons.get("avatar-default", px));
         let scene = &mut self.scene;
         let tree = scene.tree_create(self.layers.menu);
         scene.set_data(tree, Some(SceneOwner::StartPanel));
@@ -1649,13 +1658,8 @@ impl State {
                     return;
                 };
                 let px = PICTURE * state.draw_scale_at(Some(&p.output)).max(1);
-                let Some(found) = state.start_pictures.at(px) else {
-                    return;
-                };
-                let picture = match found {
-                    Some(c) => Some(c.clone()),
-                    None => state.icons.get("avatar-default", px),
-                };
+                let picture = (state.start_pictures.shown(px))
+                    .or_else(|| state.icons.get("avatar-default", px));
                 if let Some(p) = state.start_panel.as_mut()
                     && p.model.user_picture != picture
                 {
@@ -2454,6 +2458,26 @@ mod tests {
         assert!(p.land(b, vec![(48, None)]));
         assert_eq!(p.at(48), Some(None), "the picture was removed");
         assert_eq!(p.at(96), Some(None));
+    }
+
+    #[test]
+    fn a_size_not_read_yet_shows_the_largest_picture_read_resampled() {
+        let mut big = Canvas::new(96, 96);
+        big.pixels.fill(0xFF20_4060);
+        let mut p = UserPictures::default();
+        assert_eq!(p.shown(48), None, "nothing read: avatar-default");
+        let (a, _) = p.start(vec![48, 96], Instant::now()).unwrap();
+        assert!(p.land(a, vec![(48, Some(Canvas::new(48, 48))), (96, Some(big))]));
+        let shown = p.shown(144).expect("the 96 px picture resampled to 144");
+        assert_eq!((shown.width, shown.height), (144, 144));
+        assert!(shown.pixels.iter().all(|&px| px == 0xFF20_4060));
+        let (b, _) = p.start(vec![48], Instant::now()).unwrap();
+        assert!(p.land(b, vec![(48, None)]));
+        assert_eq!(
+            p.shown(48),
+            None,
+            "a read that found no picture shows avatar-default"
+        );
     }
 
     #[test]
