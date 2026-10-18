@@ -546,6 +546,15 @@ impl App for DrivesApp {
         }
     }
 
+    fn reader_form(&mut self, win: WinId) -> Option<repriseapp::ReaderForm<'_>> {
+        let u = self.unlock.as_mut().filter(|_| win == UNLOCK)?;
+        let form = repriseapp::DropForm {
+            form: &mut u.form,
+            px: None,
+        };
+        Some(repriseapp::ReaderForm::Form(form))
+    }
+
     fn access(&mut self, win: WinId, tree: &mut Tree, ctx: &Ctx) {
         match win {
             FLYOUT => {

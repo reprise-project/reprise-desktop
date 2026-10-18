@@ -192,6 +192,14 @@ impl App for AboutBox {
         reply
     }
 
+    fn reader_form(&mut self, _win: WinId) -> Option<repriseapp::ReaderForm<'_>> {
+        let form = repriseapp::DropForm {
+            form: self.form.as_mut()?,
+            px: None,
+        };
+        Some(repriseapp::ReaderForm::Form(form))
+    }
+
     fn access(&mut self, _win: WinId, tree: &mut Tree, ctx: &Ctx) {
         let px = ctx.forms().fonts.size_px;
         let form = self.form(ctx).clone();
