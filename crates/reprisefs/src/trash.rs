@@ -407,10 +407,6 @@ impl Bins {
             .collect()
     }
 
-    pub fn all_empty(&self) -> bool {
-        self.files_dirs().iter().all(|f| places::trash_empty(f))
-    }
-
     /// Empty every trash ([`empty_in`] each of [`Bins::roots`]), returning
     /// how many items went. One that fails does not stop the rest; the
     /// error is the first failure.

@@ -97,6 +97,7 @@ pub struct DesktopView {
     landed: Vec<(i32, i32)>,
     pub(crate) send_to: Vec<reprisefs::sendto::SendToRow>,
     pub(crate) drives: Drives,
+    bins: DriveBins,
 }
 
 /// The drives the Send To submenu lists, as the last scan found them. A drive top can be a mount
@@ -132,6 +133,48 @@ impl Drives {
         self.found = found;
         std::mem::take(&mut self.again)
     }
+}
+
+/// The drives' Recycle Bins as the last read found them: the folders the watch adds for them
+/// and whether all are empty. A drive can be a mount that never answers, so reads run on file jobs.
+#[derive(Default)]
+pub(crate) struct DriveBins {
+    wants: Vec<Want>,
+    full: bool,
+    reads: crate::fsjobs::Reads,
+    /// A read was asked for while one ran: read again when it lands.
+    again: bool,
+}
+
+impl DriveBins {
+    /// A new read's id, or None while one runs, which then reads again when it lands.
+    fn start(&mut self, now: std::time::Instant) -> Option<u64> {
+        let id = self.reads.start(now, ());
+        self.again = id.is_none();
+        id
+    }
+
+    /// Takes read `id`'s answer: whether it changed the bins (a stale answer changes nothing),
+    /// and whether to read again.
+    fn land(&mut self, id: u64, wants: Vec<Want>, full: bool) -> (bool, bool) {
+        let again = std::mem::take(&mut self.again);
+        if !self.reads.land(id) || (self.wants == wants && self.full == full) {
+            return (false, again);
+        }
+        self.wants = wants;
+        self.full = full;
+        (true, again)
+    }
+}
+
+/// [`drive_trash_wants`] for the folders there now, and whether any drive's bin holds something.
+fn read_drive_bins(bins: &reprisefs::trash::Bins) -> (Vec<Want>, bool) {
+    let wants = drive_trash_wants(bins)
+        .into_iter()
+        .filter(|w| w.dir.is_dir())
+        .collect();
+    let full = (bins.roots().iter().skip(1)).any(|r| !places::trash_empty(&r.join("files")));
+    (wants, full)
 }
 
 /// A rubber-band selection in progress: the press point, the selection as it
@@ -579,7 +622,8 @@ fn listed(
 }
 
 /// The desktop's icons as [`listed`] gives them, read from the file system: the places'
-/// folders, the Recycle Bin's fullness and the desktop folder's files.
+/// folders, the home Recycle Bin's fullness (full anyway with `drive_bins_full`) and the
+/// desktop folder's files.
 fn read_icons(
     dir: &Path,
     mime: &apps::MimeDb,
@@ -587,6 +631,7 @@ fn read_icons(
     system_icons: &[String],
     show_files: bool,
     shown: reprisefs::names::Extensions,
+    drive_bins_full: bool,
 ) -> Vec<DesktopEntry> {
     let mut entries = listed(
         system_icons,
@@ -594,7 +639,7 @@ fn read_icons(
         |name| {
             if name == "recycle-bin" {
                 let files = places::trash_dir()?;
-                let empty = reprisefs::trash::Bins::system().is_none_or(|b| b.all_empty());
+                let empty = !drive_bins_full && places::trash_empty(&files);
                 Some(desktop::recycle_bin(files, empty))
             } else {
                 let e = desktop::place_shown(name, names);
@@ -682,9 +727,9 @@ fn migrate_launcher_keys(
 /// What the desktop watch covers. When `files` shows the folder's files: the
 /// desktop folder (ATTRIB, because chmod +x turns a `.desktop` file into a
 /// launcher) and its parent (for the folder being made). The home trash
-/// (`home_trash_wants`) and each mounted drive's trash, so the Recycle Bin's
-/// icon flips between empty and full.
-fn watch_wants(dir: &Path, files: bool, system_icons: &[String]) -> Vec<Want> {
+/// (`home_trash_wants`) and the drives' trashes as [`read_drive_bins`] last found them, so the
+/// Recycle Bin's icon flips between empty and full.
+fn watch_wants(dir: &Path, files: bool, system_icons: &[String], drive_bins: &[Want]) -> Vec<Want> {
     let mut want = Vec::new();
     if files {
         want.push(Want {
@@ -709,9 +754,7 @@ fn watch_wants(dir: &Path, files: bool, system_icons: &[String]) -> Vec<Want> {
         && let Some(root) = places::trash_root()
     {
         want.extend(home_trash_wants(&root));
-        if let Some(bins) = reprisefs::trash::Bins::system() {
-            want.extend(drive_trash_wants(&bins));
-        }
+        want.extend(drive_bins.iter().cloned());
     }
     want
 }
@@ -896,6 +939,7 @@ pub fn setup(state: &mut State) {
         landed: Vec::new(),
         send_to: Vec::new(),
         drives: Drives::new(places::MountedDrives::new()),
+        bins: DriveBins::default(),
     });
     state.rescan_desktop();
     state.scan_drives();
@@ -979,6 +1023,28 @@ impl State {
         });
     }
 
+    /// Reads the drives' Recycle Bins on a file job; an answer that changes them rescans.
+    fn read_drive_bins(&mut self) {
+        let now = std::time::Instant::now();
+        let Some(id) = (self.desktop.as_mut()).and_then(|v| v.bins.start(now)) else {
+            return;
+        };
+        self.spawn_fs_job(move || {
+            let read = reprisefs::trash::Bins::system().map(|b| read_drive_bins(&b));
+            Box::new(move |state: &mut State| {
+                let (wants, full) = read.unwrap_or_default();
+                let Some(view) = state.desktop.as_mut() else {
+                    return;
+                };
+                match view.bins.land(id, wants, full) {
+                    (true, _) => state.rescan_desktop(),
+                    (false, true) => state.read_drive_bins(),
+                    (false, false) => {}
+                }
+            })
+        });
+    }
+
     /// Rescan once changes stop arriving for `SETTLE_MS`.
     fn settle_rescan(&mut self) {
         let Some(view) = self.desktop.as_mut() else {
@@ -1019,15 +1085,27 @@ impl State {
         else {
             return;
         };
-        // Watch before reading, so a change between the two is not missed. The watched folders
-        // are local: the desktop folder, its parent and the Recycle Bin's folders.
+        // Watch before reading, so a change between the two is not missed. The drives' bin
+        // folders come from the last drive bin read, which just looked them up off the loop.
         if let Some(w) = view.watch.as_mut() {
             w.sync(&watch_wants(
                 &view.dir,
                 config.desktop_icons,
                 &config.system_icons,
+                &view.bins.wants,
             ));
         }
+        if config.system_icons.iter().any(|n| n == "recycle-bin") {
+            self.read_drive_bins();
+        }
+        let State {
+            desktop: Some(view),
+            config,
+            ..
+        } = self
+        else {
+            return;
+        };
         if view.scanning {
             view.rescan_again = true;
             return;
@@ -1038,13 +1116,22 @@ impl State {
             view.mime.clone(),
             view.system_names.clone(),
         );
-        let (system_icons, show_files, shown) = (
+        let (system_icons, show_files, shown, drive_bins_full) = (
             config.system_icons.clone(),
             config.desktop_icons,
             config.desktop_extensions,
+            view.bins.full,
         );
         self.spawn_fs_job(move || {
-            let entries = read_icons(&dir, &mime, &names, &system_icons, show_files, shown);
+            let entries = read_icons(
+                &dir,
+                &mime,
+                &names,
+                &system_icons,
+                show_files,
+                shown,
+                drive_bins_full,
+            );
             let art = icon_files(&entries, px);
             Box::new(move |state| state.desktop_scanned(entries, art, px))
         });
@@ -2257,6 +2344,7 @@ mod tests {
             &[],
             true,
             reprisefs::names::Extensions::Hide,
+            false,
         );
         let dirs: Vec<(&str, bool)> = entries
             .iter()
@@ -2295,7 +2383,7 @@ mod tests {
 
         let dir = Path::new("/home/u/Desktop");
         let watched = |files: bool| -> Vec<PathBuf> {
-            watch_wants(dir, files, &[])
+            watch_wants(dir, files, &[], &[])
                 .into_iter()
                 .map(|w| w.dir)
                 .collect()
@@ -2306,6 +2394,48 @@ mod tests {
             [dir.to_path_buf(), PathBuf::from("/home/u")],
             "the folder and its parent"
         );
+    }
+
+    #[test]
+    fn a_drive_bin_read_watches_the_bins_there_and_says_whether_one_holds_something() {
+        let t = std::env::temp_dir().join(format!("reprise-drive-bins-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&t);
+        let (stick, card) = (t.join("STICK"), t.join("CARD"));
+        std::fs::create_dir_all(&card).unwrap();
+        let bins = reprisefs::trash::Bins::new(t.join("home"), vec![stick.clone(), card.clone()]);
+        let bin = stick.join(format!(".Trash-{}", bins.uid));
+        std::fs::create_dir_all(bin.join("files")).unwrap();
+        std::fs::write(bin.join("files/a.txt"), "").unwrap();
+        let (wants, full) = read_drive_bins(&bins);
+        let dirs: Vec<PathBuf> = wants.into_iter().map(|w| w.dir).collect();
+        assert_eq!(dirs, [stick, card, bin.join("files"), bin.clone()]);
+        assert!(full, "a.txt is in STICK's bin");
+        std::fs::remove_file(bin.join("files/a.txt")).unwrap();
+        assert!(!read_drive_bins(&bins).1, "every drive bin empty");
+        let _ = std::fs::remove_dir_all(&t);
+    }
+
+    #[test]
+    fn one_drive_bin_read_runs_at_a_time_and_one_asked_for_meanwhile_reads_again() {
+        let now = std::time::Instant::now();
+        let mut bins = DriveBins::default();
+        let first = bins.start(now).unwrap();
+        assert_eq!(bins.start(now), None, "a read is under way");
+        assert_eq!(
+            bins.land(first, Vec::new(), true),
+            (true, true),
+            "a bin filled, and a read was asked for meanwhile"
+        );
+        assert!(bins.full);
+        let second = bins.start(now).unwrap();
+        assert_eq!(
+            bins.land(second, Vec::new(), true),
+            (false, false),
+            "the same answer changes nothing"
+        );
+        let third = bins.start(now).unwrap();
+        assert_eq!(bins.land(third, Vec::new(), false), (true, false));
+        assert!(!bins.full);
     }
 
     #[test]
