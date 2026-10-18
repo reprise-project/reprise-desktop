@@ -278,7 +278,8 @@ pub struct Explorer {
     left: Vec<Reading>,
     /// Folders nodes still being read after [`LIST_WAIT`] ([`Explorer::fill_node`]).
     filling: Vec<(Place, Job<foldertree::Kids>)>,
-    /// Holds every [`Explorer::read_job`] read until the test drops its write lock.
+    /// Holds every [`Explorer::read_job`] read until the test drops its write lock; while set, no
+    /// read is waited for ([`Explorer::list_wait`]).
     #[cfg(test)]
     pub(crate) held: Option<Arc<std::sync::RwLock<()>>>,
     /// Image sizes by path, from the thumbnail worker or a header read
@@ -738,7 +739,7 @@ impl Explorer {
                 false,
             ),
         };
-        match job.wait(LIST_WAIT) {
+        match job.wait(self.list_wait()) {
             Some(read) => {
                 let reply = self.show_read(read, ctx);
                 if again {

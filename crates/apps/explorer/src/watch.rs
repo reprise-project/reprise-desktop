@@ -2,8 +2,8 @@
 //! appears without an F5.
 //!
 //! The thread owns the `Inotify`; the window keeps the [`Watches`] handle, so the watch moves with
-//! the view while the thread sits in its read. The thread is detached on purpose: Explorer keeps
-//! one [`Watch`] for the life of the process.
+//! the view while the thread sits in its read. The thread ends, freeing its inotify instance, once
+//! the [`Watch`] drops.
 
 use inotify::{EventMask, Inotify, WatchDescriptor, WatchMask, Watches};
 use repriseapp::Waker;
@@ -127,7 +127,7 @@ impl Watch {
         let mut inotify = Inotify::init()?;
         let watches = inotify.watches();
         let changed = Arc::new(AtomicBool::new(false));
-        let flag = changed.clone();
+        let flag = Arc::downgrade(&changed);
         let shared: Arc<Mutex<Shared>> = Arc::default();
         let seen = shared.clone();
         std::thread::Builder::new()
@@ -142,6 +142,9 @@ impl Watch {
                 loop {
                     match inotify.read_events_blocking(&mut buf) {
                         Ok(events) => {
+                            if flag.strong_count() == 0 {
+                                return;
+                            }
                             if !note(events) {
                                 continue;
                             }
@@ -157,6 +160,9 @@ impl Watch {
                     if let Ok(events) = inotify.read_events(&mut buf) {
                         note(events);
                     }
+                    let Some(flag) = flag.upgrade() else {
+                        return;
+                    };
                     flag.store(true, Ordering::SeqCst);
                     wake.wake();
                     last_wake = Some(Instant::now());
@@ -259,6 +265,17 @@ impl Watch {
     }
 }
 
+impl Drop for Watch {
+    fn drop(&mut self) {
+        // The thread holds a Weak of the flag. Taking a watch off queues IN_IGNORED, which wakes it
+        // to find the flag gone.
+        self.changed = Arc::default();
+        if let Ok(wd) = self.watches.add("/", WatchMask::DELETE_SELF) {
+            let _ = self.watches.remove(wd);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -339,6 +356,20 @@ mod tests {
         std::fs::create_dir(dir.path().join("Trash")).expect("mkdir");
         std::thread::sleep(COALESCE * 4);
         assert!(watch.take_changed(), "the named entry is");
+    }
+
+    /// Each window's watch is an inotify instance, and a user gets max_user_instances of them.
+    #[test]
+    fn a_dropped_watch_frees_its_inotify_instance() {
+        let limit: usize = std::fs::read_to_string("/proc/sys/fs/inotify/max_user_instances")
+            .ok()
+            .and_then(|s| s.trim().parse().ok())
+            .unwrap_or(128);
+        let dir = tempfile::tempdir().expect("tempdir");
+        for _ in 0..limit + 1 {
+            let mut watch = Watch::new(Waker::noop()).expect("inotify");
+            watch.watch(dir.path());
+        }
     }
 
     #[test]

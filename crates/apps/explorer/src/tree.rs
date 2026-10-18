@@ -32,6 +32,15 @@ impl Explorer {
         }
     }
 
+    /// How long the loop waits on a listing: [`LIST_WAIT`], or not at all while a test holds reads.
+    pub(crate) fn list_wait(&self) -> std::time::Duration {
+        #[cfg(test)]
+        if self.held.is_some() {
+            return std::time::Duration::ZERO;
+        }
+        LIST_WAIT
+    }
+
     /// Runs `read` on a listing thread and waits [`LIST_WAIT`] for it; a later answer (a dead
     /// mount) comes back as the job, for a wake to take.
     pub(crate) fn read_job<T: Send + 'static>(
