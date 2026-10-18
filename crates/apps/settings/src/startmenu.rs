@@ -54,7 +54,11 @@ impl Entry {
     /// holds it: plain text, so an `&` in it (a program's "Software &
     /// Updates") is doubled rather than read as the access key.
     pub fn program(name: &str, icon: &str, command: String) -> Entry {
-        Entry::item(&name.replace('&', "&&"), icon, Target::Command(command))
+        Entry::item(
+            &reprisekit::text::escape_mnemonic(name),
+            icon,
+            Target::Command(command),
+        )
     }
 
     fn tipped(self, text: &str) -> Entry {

@@ -149,7 +149,7 @@ pub fn form(f: &Fields, text: &TextRenderer, px: u32, u: TextUnits) -> Form {
         Item::label(
             "text",
             Rect::new(tx, TEXT_Y, w - tx - MARGIN_X, u.base_px(px) as i32 + 4),
-            &f.text,
+            &crate::text::escape_mnemonic(&f.text),
         )
     };
     items.push(text_item.indent_px(step));
@@ -199,6 +199,30 @@ mod tests {
             min_text_h: None,
             min_w: 0,
         }
+    }
+
+    #[test]
+    fn a_one_line_message_shows_its_ampersand_with_no_access_key() {
+        let (text, px) = rend();
+        let f = form(
+            &Fields {
+                text: "Are you sure you want to delete 'R&D notes.txt'?".into(),
+                ..notfound()
+            },
+            &text,
+            px,
+            TextUnits::ONE,
+        );
+        let Control::Label { text: label, .. } = &f.item("text").unwrap().control else {
+            panic!("a one-line message is a label");
+        };
+        assert_eq!(
+            crate::text::split_mnemonic(label),
+            (
+                "Are you sure you want to delete 'R&D notes.txt'?".to_string(),
+                None
+            )
+        );
     }
 
     /// Confirm Folder Delete keeps four rows of text whatever the

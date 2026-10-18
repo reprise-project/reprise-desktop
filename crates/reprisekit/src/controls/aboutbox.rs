@@ -353,7 +353,7 @@ pub fn system_form(s: &System, text: &TextRenderer, px: u32, u: TextUnits) -> Fo
         if cut == shown {
             line.to_string()
         } else {
-            cut.replace('&', "&&")
+            crate::text::escape_mnemonic(&cut)
         }
     };
     let mut lines = groups.iter().flat_map(|g| g.lines.iter());

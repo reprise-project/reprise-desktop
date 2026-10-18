@@ -5,6 +5,7 @@ use reprisekit::classic::widgets::LINE_H;
 use reprisekit::controls::form::{self, Control, Form, Item};
 use reprisekit::controls::propsheet::{self, PropSheet};
 use reprisekit::raster::{Canvas, Rect};
+use reprisekit::text::escape_mnemonic;
 use reprisekit::textedit::TextEdit;
 
 use crate::cups::{self, Change, Options, Printer, Setting};
@@ -394,10 +395,10 @@ impl PropsSheet {
         let page = &mut self.sheet.pages[SHARING];
         page.set_check(SHARE, self.pending.shared);
         page.set_check(NOSHARE, !self.pending.shared);
-        self.sheet.pages[GENERAL].set_text(MODEL, &p.make_model);
+        self.sheet.pages[GENERAL].set_text(MODEL, &escape_mnemonic(&p.make_model));
         let f = features(p, self.options.as_ref());
         self.sheet.pages[GENERAL].set_lines(FEATURES, &f);
-        self.sheet.pages[PORTS].set_text(CONNECTION, connection(&p.device_uri));
+        self.sheet.pages[PORTS].set_text(CONNECTION, &escape_mnemonic(connection(&p.device_uri)));
         let dirty = self.dirty();
         self.sheet.set_apply_enabled(dirty);
     }
@@ -419,7 +420,10 @@ impl PropsSheet {
 
     pub fn options_failed(&mut self, why: &str) {
         let mut form = device(None);
-        form.set_text(READING, &format!("The settings could not be read. {why}"));
+        form.set_text(
+            READING,
+            &escape_mnemonic(&format!("The settings could not be read. {why}")),
+        );
         self.sheet.set_page(DEVICE, form);
     }
 

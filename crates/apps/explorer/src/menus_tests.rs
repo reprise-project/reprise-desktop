@@ -450,6 +450,34 @@ fn send_to_rows_carry_their_icons() {
     assert!(!enabled(rows, 1), "Desktop (create shortcut) is greyed");
 }
 
+#[test]
+fn an_ampersand_in_a_program_or_target_name_shows_and_is_no_access_key() {
+    let s = MenuState {
+        selection: 1,
+        ..Default::default()
+    };
+    let open_with = [("R&D Viewer".to_string(), None)];
+    let send_to = [("R&D share".to_string(), true, None)];
+    let m = item_menu(&s, ItemKind::File, false, &open_with, &send_to);
+    let sub = |name: &str| {
+        let at = (0..m.items().len())
+            .find(|&i| label(m.items(), i) == name)
+            .unwrap_or_else(|| panic!("a {name} row"));
+        m.at(&[at]).unwrap().items()
+    };
+    for (rows, want) in [
+        (sub("Open With"), "R&D Viewer"),
+        (sub("Send To"), "R&D share"),
+    ] {
+        assert_eq!(label(rows, 0), want);
+        assert_eq!(
+            rows[0].access_key(),
+            Some('r'),
+            "{want}: the first letter, not D"
+        );
+    }
+}
+
 /// Eject sits alone between Sharing and Security... and Copy, on access key j.
 #[test]
 fn only_a_removable_drives_menu_has_eject() {

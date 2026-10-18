@@ -7,7 +7,7 @@
 
 use std::borrow::Cow;
 
-use crate::text::split_mnemonic;
+use crate::text::{escape_mnemonic, split_mnemonic};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Cues {
@@ -55,7 +55,7 @@ impl Cues {
         if self.keys || !label.contains('&') {
             Cow::Borrowed(label)
         } else {
-            Cow::Owned(split_mnemonic(label).0.replace('&', "&&"))
+            Cow::Owned(escape_mnemonic(&split_mnemonic(label).0))
         }
     }
 }

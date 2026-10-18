@@ -283,7 +283,7 @@ pub fn slideshow_start(last: &str, wallpaper: &str) -> Option<String> {
 /// The Home icon's check: its desktop label ("<user>'s Home"), H its
 /// access key.
 fn home_check() -> String {
-    let label = reprisefs::places::home_label().replace('&', "&&");
+    let label = reprisekit::text::escape_mnemonic(&reprisefs::places::home_label());
     match label.strip_suffix("Home") {
         Some(owner) => format!("{owner}&Home"),
         None => label,

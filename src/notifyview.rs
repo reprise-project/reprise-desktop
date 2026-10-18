@@ -2880,7 +2880,7 @@ pub fn action_items(actions: &[(String, String)]) -> Vec<MenuItem> {
                 (true, INLINE_REPLY) => "Reply".to_string(),
                 (true, _) => k.clone(),
             };
-            MenuItem::entry(label.replace('&', "&&"))
+            MenuItem::entry(label)
         })
         .collect()
 }
@@ -3159,7 +3159,8 @@ mod tests {
         assert_eq!(rows[2], MenuItem::entry("x"));
         assert_eq!(rows[3], MenuItem::entry("Reply"));
         let amp = action_items(&[("k".into(), "Save & Quit".into())]);
-        assert_eq!(amp[0], MenuItem::entry("Save && Quit"));
+        assert_eq!(amp[0], MenuItem::entry("Save & Quit"));
+        assert_eq!(amp[0].access_key(), Some('s'));
     }
 
     #[test]
