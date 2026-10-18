@@ -132,6 +132,10 @@ pub struct FilePicker {
     /// that listing is on screen.
     recent: std::collections::HashMap<String, PathBuf>,
     pictures: Pictures,
+    /// The view and sort last stored, and the file they live in once
+    /// [`FilePicker::remember_in`] named it.
+    remembered: filedlg::Remembered,
+    view_file: Option<PathBuf>,
 }
 
 /// The listed pictures and how far their thumbnails have got.
@@ -286,6 +290,8 @@ impl FilePicker {
             restyling: None,
             recent: Default::default(),
             pictures: Pictures::default(),
+            remembered: Default::default(),
+            view_file: None,
         };
         let id = picker.folders.id(start);
         picker.list(id);
@@ -678,10 +684,35 @@ impl FilePicker {
         !matches!(self.dlg.leave(), Event::None)
     }
 
+    /// Opens in the view and sort `file` holds (`repriseconf::filedialog`), the one every Open
+    /// and Save As dialog shares, and stores the dialog's own there as they change.
+    pub fn remember_in(&mut self, file: PathBuf) {
+        self.remembered = filedlg::Remembered::parse(&repriseconf::filedialog::load_from(&file));
+        self.dlg.restore(self.remembered);
+        self.view_file = Some(file);
+    }
+
+    fn remember(&mut self) {
+        let now = self.dlg.remembered();
+        let Some(file) = self.view_file.clone().filter(|_| now != self.remembered) else {
+            return;
+        };
+        self.remembered = now;
+        crate::state::run_in_order(move || {
+            if let Err(e) = repriseconf::filedialog::save_to(&file, &now.text()) {
+                log::warn!(
+                    "browse: could not store the view in {}: {e}",
+                    file.display()
+                );
+            }
+        });
+    }
+
     /// What the dialog asked for. Open on a name looks it up off the loop:
     /// a folder is entered, a file is the pick, anything else ignored.
     fn event(&mut self, ev: Event) -> Outcome {
         self.sync_filter();
+        self.remember();
         let ev = match ev {
             Event::NeedPlace(i) => match self.place_dirs.get(i).cloned().flatten() {
                 Some(dir) => Event::NeedListing(self.folders.id(&dir)),
@@ -907,6 +938,29 @@ mod tests {
         p.key(R, Key::Enter);
         settle(&mut p);
         assert_eq!(p.current(), Some(dir.join("Pictures").as_path()));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn browse_shares_the_view_the_last_file_dialog_stored() {
+        let dir = sandbox("remember");
+        let file = dir.join("state").join("filedialog.toml");
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(
+            &file,
+            "view = \"details\"\nsort = \"size\"\nascending = false\n",
+        )
+        .unwrap();
+        let mut p = FilePicker::run_command(&dir, Icons::default(), true);
+        p.remember_in(file.clone());
+        assert_eq!(p.dlg.view(), Mode::Details);
+        p.click(R, Some(filedlg::Hit::ToolBar(3)));
+        p.click(R, Some(filedlg::Hit::ViewsItem(0)));
+        crate::state::flush();
+        assert_eq!(
+            std::fs::read_to_string(&file).unwrap(),
+            "view = \"thumbnails\"\nsort = \"size\"\nascending = false\n"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 

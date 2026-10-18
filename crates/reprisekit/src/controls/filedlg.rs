@@ -11,6 +11,7 @@
 //! that takes the height out of the shell view (see `set_size`).
 //! Folders list by Name ascending; a Details column click re-sorts
 //! (`shellview::sort_by_column`) and the sort carries to the next folder.
+//! Hosts keep the view and sort for the next dialog ([`Remembered`]).
 //! The Views popup is a [`menu`](super::menu) context menu with a radio
 //! bullet on the current mode.
 
@@ -25,7 +26,7 @@ use crate::controls::iconview::IconMove;
 use crate::controls::menu::{ContextBitmaps, MenuItem, MenuLayout, MenuStyle};
 use crate::controls::metrics::ControlMetrics;
 use crate::controls::placesbar::{self, Place, PlacesBar};
-use crate::controls::shellview::{self, Mode, ShellView};
+use crate::controls::shellview::{self, Field, Mode, ShellView};
 use crate::controls::toolbar::{self, ToolBar};
 use crate::look::Paint;
 use crate::look::widgets::{draw_button, draw_edit_field, draw_label};
@@ -156,6 +157,89 @@ const TOOLBAR_GAP: i32 = 12;
 const TOOLBAR_MARGIN: i32 = 84;
 const TOOLBAR_Y: i32 = 8;
 const SHELL_Y: i32 = 37;
+/// The Views pick and the Details sort one dialog hands the next: hosts read it with
+/// [`FileDlg::remembered`], store it as [`Remembered::text`] and open with
+/// [`FileDlg::restore`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Remembered {
+    pub mode: Mode,
+    pub sort: Field,
+    pub ascending: bool,
+}
+
+impl Default for Remembered {
+    fn default() -> Remembered {
+        Remembered {
+            mode: Mode::List,
+            sort: Field::Name,
+            ascending: true,
+        }
+    }
+}
+
+const MODE_KEYS: [(Mode, &str); 5] = [
+    (Mode::List, "list"),
+    (Mode::Details, "details"),
+    (Mode::Thumbnails, "thumbnails"),
+    (Mode::Tiles, "tiles"),
+    (Mode::Icons, "icons"),
+];
+
+const FIELD_KEYS: [(Field, &str); 6] = [
+    (Field::Name, "name"),
+    (Field::Folder, "folder"),
+    (Field::Size, "size"),
+    (Field::Kind, "type"),
+    (Field::Modified, "modified"),
+    (Field::Deleted, "deleted"),
+];
+
+impl Remembered {
+    /// `view`, `sort` and `ascending` as TOML lines.
+    pub fn text(&self) -> String {
+        fn key<T: PartialEq>(table: &[(T, &'static str)], v: T) -> &'static str {
+            table.iter().find(|(k, _)| *k == v).map_or("", |(_, s)| *s)
+        }
+        format!(
+            "view = \"{}\"\nsort = \"{}\"\nascending = {}\n",
+            key(&MODE_KEYS, self.mode),
+            key(&FIELD_KEYS, self.sort),
+            self.ascending
+        )
+    }
+
+    /// Reads [`Remembered::text`]'s lines; a missing or unknown value keeps its default.
+    pub fn parse(text: &str) -> Remembered {
+        let mut r = Remembered::default();
+        for line in text.lines() {
+            let Some((key, value)) = line.split_once('=') else {
+                continue;
+            };
+            let value = value.trim();
+            let word = value.trim_matches('"');
+            match key.trim() {
+                "view" => {
+                    if let Some((m, _)) = MODE_KEYS.iter().find(|(_, s)| *s == word) {
+                        r.mode = *m;
+                    }
+                }
+                "sort" => {
+                    if let Some((f, _)) = FIELD_KEYS.iter().find(|(_, s)| *s == word) {
+                        r.sort = *f;
+                    }
+                }
+                "ascending" => {
+                    if let Ok(b) = value.parse() {
+                        r.ascending = b;
+                    }
+                }
+                _ => {}
+            }
+        }
+        r
+    }
+}
+
 /// The places bar runs past the shell view down to the Files of type row's bottom.
 const PLACES_H: i32 = 403;
 const GAP_COL: i32 = 6;
@@ -822,6 +906,33 @@ impl FileDlg {
     /// The view picked from Views.
     pub fn view(&self) -> Mode {
         self.shell.mode
+    }
+
+    /// The view and sort to hand the next dialog. A view with no sort column reads as Name.
+    pub fn remembered(&self) -> Remembered {
+        let (col, ascending) = self.shell.sort.unwrap_or((0, true));
+        match self.shell.fields.get(col) {
+            Some(&sort) => Remembered {
+                mode: self.shell.mode,
+                sort,
+                ascending,
+            },
+            None => Remembered {
+                mode: self.shell.mode,
+                ..Remembered::default()
+            },
+        }
+    }
+
+    /// Opens in `r`'s view and sort; a sort column this dialog does not show sorts by Name
+    /// ascending.
+    pub fn restore(&mut self, r: Remembered) {
+        self.shell.set_mode(r.mode);
+        self.shell.sort = Some(match self.shell.fields.iter().position(|&f| f == r.sort) {
+            Some(col) => (col, r.ascending),
+            None => (0, true),
+        });
+        shellview::sort(&mut self.shell);
     }
 
     pub fn set_filter(&mut self, i: usize) {
@@ -3408,6 +3519,81 @@ mod tests {
 
     fn names(d: &FileDlg) -> Vec<&str> {
         d.entries().iter().map(|e| e.name.as_str()).collect()
+    }
+
+    #[test]
+    fn a_restored_view_opens_in_its_mode_and_sort() {
+        let mut d = multi(DlgMode::Open, false);
+        d.restore(Remembered {
+            mode: Mode::Details,
+            sort: Field::Size,
+            ascending: false,
+        });
+        d.set_listing(folder(
+            2,
+            None,
+            vec![sized("a", 1), sized("b", 3), dir("c")],
+        ));
+        assert_eq!(d.view(), Mode::Details);
+        assert_eq!(d.shell.sort, Some((1, false)));
+        assert_eq!(names(&d), ["b", "a", "c"]);
+    }
+
+    #[test]
+    fn a_sort_column_the_dialog_does_not_show_restores_as_name_ascending() {
+        let mut d = multi(DlgMode::Open, false);
+        d.restore(Remembered {
+            mode: Mode::Thumbnails,
+            sort: Field::Deleted,
+            ascending: false,
+        });
+        assert_eq!(d.view(), Mode::Thumbnails);
+        assert_eq!(d.shell.sort, Some((0, true)));
+    }
+
+    #[test]
+    fn a_views_pick_and_a_column_click_change_what_is_remembered() {
+        let mut d = multi(DlgMode::Open, false);
+        d.set_listing(folder(2, None, vec![sized("a", 1)]));
+        assert_eq!(d.remembered(), Remembered::default());
+        d.views_open = true;
+        let details = views_items().iter().position(|(_, m)| *m == Mode::Details);
+        d.click(R, details.map(Hit::ViewsItem), Mods::default());
+        let date = Some(Hit::Shell(shellview::Hit::Header(3)));
+        for _ in 0..2 {
+            d.click(R, date, Mods::default());
+            d.release();
+        }
+        assert_eq!(
+            d.remembered(),
+            Remembered {
+                mode: Mode::Details,
+                sort: Field::Modified,
+                ascending: false,
+            }
+        );
+    }
+
+    #[test]
+    fn remembered_text_round_trips_and_bad_values_keep_defaults() {
+        let r = Remembered {
+            mode: Mode::Tiles,
+            sort: Field::Kind,
+            ascending: false,
+        };
+        assert_eq!(Remembered::parse(&r.text()), r);
+        assert_eq!(Remembered::parse(""), Remembered::default());
+        assert_eq!(
+            Remembered::parse("view = \"huge\"\nsort = 7\nascending = maybe\n\u{0}"),
+            Remembered::default()
+        );
+        assert_eq!(
+            Remembered::parse("view = \"icons\""),
+            Remembered {
+                mode: Mode::Icons,
+                ..Remembered::default()
+            }
+        );
     }
 
     /// A folder lists by Name, ascending, folders first. A click on a

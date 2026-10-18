@@ -1101,6 +1101,7 @@ pub fn start_forms() -> Theme {
 }
 
 pub fn run(app: Box<dyn App>) {
+    filedlg::remember_views();
     let conn = Connection::connect_to_env().expect("WAYLAND_DISPLAY");
     let (globals, event_queue) = registry_queue_init(&conn).expect("registry");
     let qh = event_queue.handle();
