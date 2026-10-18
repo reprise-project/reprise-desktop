@@ -40,8 +40,8 @@ pub struct Wallpaper {
     loading: Option<Cut>,
     /// A built-in and its pictures, one per output device size.
     builtin: Option<(Builtin, Drawn)>,
-    /// Built-in pictures made ready for the scene on the drawing thread; the first output of
-    /// a picture's size takes it.
+    /// Built-in pictures made ready for the scene on the drawing thread; every output of a
+    /// picture's size shows it, and a refit drops the ones it showed.
     staged: Vec<Staged>,
     nodes: Vec<(Output, WallpaperNode)>,
     /// The picture this one replaces, still on screen under it until this
@@ -181,6 +181,15 @@ impl WallpaperNode {
 /// Whether a file's picture of `img` pixels, shown on an output that already shows a picture, is
 /// composed for `size` on a job: anything but a stretched picture of the output's own size
 /// resamples or fills a whole screen.
+/// The staged picture of `size`, left for the other outputs of that size.
+fn staged_of(staged: &[Staged], size: (u32, u32)) -> Option<Staged> {
+    staged.iter().find(|p| staged_size(p) == size).cloned()
+}
+
+fn staged_size(p: &Staged) -> (u32, u32) {
+    (p.size().0 as u32, p.size().1 as u32)
+}
+
 fn composes_off_loop(shown: bool, position: Position, img: (u32, u32), size: (u32, u32)) -> bool {
     shown && !(position == Position::Stretch && img == size)
 }
@@ -537,8 +546,7 @@ impl State {
             })
             .collect();
         let sizes: Vec<(u32, u32)> = shown.iter().map(|s| s.3).collect();
-        w.staged
-            .retain(|p| sizes.contains(&(p.size().0 as u32, p.size().1 as u32)));
+        w.staged.retain(|p| sizes.contains(&staged_size(p)));
         let mut load = None;
         let mut draw = Vec::new();
         let ready = match w.builtin.as_mut() {
@@ -573,6 +581,7 @@ impl State {
         let mut changed = false;
         let mut fade_in = false;
         let mut compose = Vec::new();
+        let mut taken = Vec::new();
         for (out, b, scale, size) in shown {
             let source = match &w.builtin {
                 _ if !ready => None,
@@ -644,11 +653,10 @@ impl State {
             self.scene.set_position(node.buffer, b.x, b.y);
             let canvas =
                 crate::wallpaper::composed(source, size.0, size.1, position, bg, scale as f32);
-            let staged = w
-                .staged
-                .iter()
-                .position(|p| p.size() == (size.0 as i32, size.1 as i32))
-                .map(|i| w.staged.swap_remove(i));
+            let staged = staged_of(&w.staged, size);
+            if staged.is_some() {
+                taken.push(size);
+            }
             match staged {
                 // Borrowed: the picture is shown as drawn, so what was staged is the canvas.
                 Some(p) if matches!(canvas, Cow::Borrowed(_)) => {
@@ -662,6 +670,7 @@ impl State {
             let out = w.nodes[i].0.clone();
             self.water_wallpaper(&out, Pane::Desktop, &canvas, fresh);
         }
+        w.staged.retain(|p| !taken.contains(&staged_size(p)));
         let compose: Vec<_> = (compose.into_iter())
             .map(|(i, fit, size, image)| (w.nodes[i].0.clone(), fit, size, image))
             .collect();
@@ -788,6 +797,20 @@ impl State {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn every_output_of_a_staged_pictures_size_takes_it() {
+        let staged = vec![Staged::new(None, &Canvas::new(1920, 1080))];
+        for out in ["first", "second"] {
+            let p = staged_of(&staged, (1920, 1080));
+            assert_eq!(
+                p.map(|p| p.size()),
+                Some((1920, 1080)),
+                "the {out} 1920x1080 output takes the staged picture"
+            );
+        }
+        assert!(staged_of(&staged, (1280, 1024)).is_none());
+    }
 
     #[test]
     fn a_fit_shown_at_once_turns_away_the_job_composing_an_older_one() {
