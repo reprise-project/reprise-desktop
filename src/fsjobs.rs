@@ -76,25 +76,18 @@ impl FsJobs {
             self.waiting.push_back(work);
             return true;
         }
-        let running = Arc::clone(&self.running);
-        running.fetch_add(1, Ordering::AcqRel);
-        let spawned = std::thread::Builder::new()
-            .name("fsjobs".into())
-            .spawn(move || {
-                let done = std::panic::catch_unwind(std::panic::AssertUnwindSafe(work))
-                    .unwrap_or_else(|_| Box::new(|_| log::error!("fsjobs: a job panicked")));
-                // Counted down before the send, so the loop finds the thread free when the
-                // result arrives.
-                running.fetch_sub(1, Ordering::AcqRel);
-                // The loop may have gone meanwhile; the result goes with it.
-                let _ = tx.send(done);
-            });
-        if let Err(e) = spawned {
+        self.running.fetch_add(1, Ordering::AcqRel);
+        let spawned = thread(tx, work, Some(Arc::clone(&self.running)));
+        if !spawned {
             self.running.fetch_sub(1, Ordering::AcqRel);
-            log::warn!("fsjobs: cannot spawn a thread ({e}); the file work was dropped");
-            return false;
         }
-        true
+        spawned
+    }
+
+    /// Runs `work` on a thread of its own at once, past [`MAX_THREADS`]: for work no mount can
+    /// hold. False only if the thread fails to spawn and the work is lost.
+    fn spawn_now(&self, tx: Sender<OnLoop>, work: Work) -> bool {
+        thread(tx, work, None)
     }
 
     /// Starts waiting jobs on the threads that have come back.
@@ -113,6 +106,28 @@ impl FsJobs {
             self.warned = false;
         }
     }
+}
+
+/// Runs `work` on a new thread and sends what it returns to the loop. `running`, counted up by
+/// the caller, is counted down as the thread ends. False when the thread fails to spawn.
+fn thread(tx: Sender<OnLoop>, work: Work, running: Option<Arc<AtomicUsize>>) -> bool {
+    let spawned = std::thread::Builder::new()
+        .name("fsjobs".into())
+        .spawn(move || {
+            let done = std::panic::catch_unwind(std::panic::AssertUnwindSafe(work))
+                .unwrap_or_else(|_| Box::new(|_| log::error!("fsjobs: a job panicked")));
+            // Counted down before the send, so the loop finds the thread free when the
+            // result arrives.
+            if let Some(running) = running {
+                running.fetch_sub(1, Ordering::AcqRel);
+            }
+            // The loop may have gone meanwhile; the result goes with it.
+            let _ = tx.send(done);
+        });
+    if let Err(e) = &spawned {
+        log::warn!("fsjobs: cannot spawn a thread ({e}); the work was dropped");
+    }
+    spawned.is_ok()
 }
 
 /// A read that has not landed in this long (a mount not answering) lets a newer [`Reads`] read
@@ -201,6 +216,19 @@ impl State {
         };
         self.fsjobs.spawn(tx, Box::new(work))
     }
+
+    /// [`State::spawn_fs_job`] for work that opens no file (painting art, bus calls): it starts
+    /// at once on a thread of its own, never waiting behind file jobs stuck on a mount.
+    pub fn spawn_job<W>(&mut self, work: W) -> bool
+    where
+        W: FnOnce() -> OnLoop + Send + 'static,
+    {
+        let Some(tx) = self.fsjobs.tx.clone() else {
+            work()(self);
+            return true;
+        };
+        self.fsjobs.spawn_now(tx, Box::new(work))
+    }
 }
 
 #[cfg(test)]
@@ -279,6 +307,47 @@ mod tests {
         assert!(!jobs.warned, "the wait is over");
         stop.store(true, Ordering::Release);
         writer.join().unwrap();
+        let _ = std::fs::remove_dir_all(hang.parent().unwrap());
+    }
+
+    #[test]
+    fn work_that_opens_no_file_starts_while_file_jobs_are_stuck() {
+        use std::os::unix::fs::OpenOptionsExt;
+        let hang = fifo("now");
+        let (tx, _rx) = channel::channel::<OnLoop>();
+        let mut jobs = FsJobs {
+            tx: Some(tx.clone()),
+            ..Default::default()
+        };
+        for _ in 0..MAX_THREADS + 1 {
+            let path = hang.clone();
+            let work: Work = Box::new(move || {
+                let _ = std::fs::read(&path);
+                Box::new(|_| {})
+            });
+            assert!(jobs.spawn(tx.clone(), work));
+        }
+        let running = Arc::clone(&jobs.running);
+        until("the threads to start", || {
+            running.load(Ordering::Acquire) == MAX_THREADS
+        });
+        let painted = Arc::new(AtomicBool::new(false));
+        let done = Arc::clone(&painted);
+        let paint: Work = Box::new(move || {
+            done.store(true, Ordering::Release);
+            Box::new(|_| {})
+        });
+        assert!(jobs.spawn_now(tx.clone(), paint));
+        until("the work to run", || painted.load(Ordering::Acquire));
+        assert_eq!(jobs.waiting.len(), 1, "only the file job waits");
+        // A writer opening the pipe answers the blocked reads, so their threads end.
+        while running.load(Ordering::Acquire) > 0 {
+            let _ = std::fs::OpenOptions::new()
+                .write(true)
+                .custom_flags(libc::O_NONBLOCK)
+                .open(&hang);
+            std::thread::sleep(Duration::from_millis(2));
+        }
         let _ = std::fs::remove_dir_all(hang.parent().unwrap());
     }
 
