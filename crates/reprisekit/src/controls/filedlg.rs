@@ -1566,6 +1566,65 @@ impl FileDlg {
         None
     }
 
+    /// A reader asked to see entry `row` of the list at (`x`, `y`): the shell view, or a list on
+    /// the extra rows, scrolls it in and nothing is picked.
+    pub fn reveal(
+        &mut self,
+        text: &TextRenderer,
+        px: u32,
+        r: Rect,
+        (x, y): (i32, i32),
+        row: usize,
+    ) -> Event {
+        let cm = self.drawn.0.get();
+        let moved = match self.hit(text, px, r, x, y) {
+            Some(Hit::Shell(_)) => {
+                let lay = self.shell_layout(r, &cm);
+                shellview::reveal(&mut self.shell, row, &lay)
+            }
+            Some(Hit::Extra(_)) => {
+                let (fx, fy) = (x - r.x, y - rows(r, &cm).y - self.grow(r, &cm));
+                (self.extra.as_mut())
+                    .is_some_and(|(f, _)| f.reveal(fx, fy, row, text, px) != form::Event::None)
+            }
+            _ => false,
+        };
+        if moved { Event::Redraw } else { Event::None }
+    }
+
+    /// A reader's Focus on the control at (`x`, `y`): the keyboard moves there as Tab or the
+    /// access key would, without opening, accepting or cancelling anything.
+    pub fn focus_at(&mut self, text: &TextRenderer, px: u32, r: Rect, (x, y): (i32, i32)) -> Event {
+        let cm = self.drawn.0.get();
+        let focus = match self.hit(text, px, r, x, y) {
+            Some(Hit::FileName) => Focus::FileName,
+            Some(Hit::FileType(_)) => Focus::FileType,
+            Some(Hit::LookIn(_)) => Focus::LookIn,
+            Some(Hit::Accept) => Focus::Accept,
+            Some(Hit::Cancel) => Focus::Cancel,
+            Some(Hit::Shell(_)) => Focus::Shell,
+            Some(Hit::Extra(_)) => {
+                let (fx, fy) = (x - r.x, y - rows(r, &cm).y - self.grow(r, &cm));
+                let Some((f, _)) = &mut self.extra else {
+                    return Event::None;
+                };
+                let moved = f.focus_at(fx, fy, text, px) != form::Event::None;
+                if !moved && self.focus == Focus::Extra {
+                    return Event::None;
+                }
+                Focus::Extra
+            }
+            _ => return Event::None,
+        };
+        if focus == self.focus && focus != Focus::Extra {
+            return Event::None;
+        }
+        self.lookin.open = None;
+        self.filetype.open = None;
+        self.focus = focus;
+        Event::Redraw
+    }
+
     /// Dispatches a hit from `hit` into the sub-control it named and
     /// returns the resulting `Event`. `r` is what `hit` was given.
     pub fn click(&mut self, r: Rect, hit: Option<Hit>, mods: Mods) -> Event {
@@ -2500,6 +2559,61 @@ mod tests {
         d.click(R, Some(Hit::ViewsItem(4)), Mods::default());
         assert_eq!(d.shell.mode, Mode::Details);
         assert_eq!((d.shell.top, d.shell.left), (0, 0), "top and left are 0");
+    }
+
+    #[test]
+    fn a_reader_scrolls_a_file_in_and_focuses_the_buttons_without_pressing_them() {
+        let t = text();
+        let px = Theme::default().fonts.size_px;
+        let mut d = sample();
+        d.set_listing(folder(
+            1,
+            None,
+            (0..200).map(|i| file(&format!("f{i}.txt"))).collect(),
+        ));
+        d.shell.set_mode(Mode::List);
+        let cm = ControlMetrics::CLASSIC;
+        let lay = d.layout(&t, px, R, &cm);
+        let mid = |r: Rect| (r.x + r.width / 2, r.y + r.height / 2);
+        let shell = mid(d.shell_layout(R, &cm).body);
+        let picked = d.shell.selection.focus;
+        assert!(matches!(d.reveal(&t, px, R, shell, 199), Event::Redraw));
+        let cells = d.shell_layout(R, &cm);
+        assert!(
+            cells.cells[199].right() <= cells.body.right(),
+            "the last file shows"
+        );
+        assert!(matches!(d.reveal(&t, px, R, shell, 199), Event::None));
+        assert_eq!(d.shell.selection.focus, picked, "the pick stays");
+        assert!(matches!(
+            d.focus_at(&t, px, R, mid(lay.cancel)),
+            Event::Redraw
+        ));
+        assert_eq!(
+            d.focus,
+            Focus::Cancel,
+            "Cancel takes the keyboard and cancels nothing"
+        );
+        d.filename.text = "a.txt".into();
+        assert!(matches!(
+            d.focus_at(&t, px, R, mid(lay.accept)),
+            Event::Redraw
+        ));
+        assert_eq!(
+            d.focus,
+            Focus::Accept,
+            "Open takes the keyboard and opens nothing"
+        );
+        assert!(matches!(
+            d.focus_at(&t, px, R, mid(lay.accept)),
+            Event::None
+        ));
+        d.lookin.open = Some(0);
+        assert!(matches!(
+            d.focus_at(&t, px, R, mid(lay.filetype.field)),
+            Event::Redraw
+        ));
+        assert_eq!((d.focus, d.lookin.open), (Focus::FileType, None));
     }
 
     fn folder(id: FolderId, parent: Option<FolderId>, entries: Vec<shellview::Entry>) -> Folder {
