@@ -18,6 +18,7 @@ mod clientlog;
 mod clipboard;
 mod cliphistory;
 mod clipview;
+mod coalesce;
 mod compositor;
 mod configwatch;
 mod constraint;

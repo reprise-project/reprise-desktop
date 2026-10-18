@@ -372,6 +372,7 @@ impl State {
                 grab.ungrab(PopupUngrabStrategy::All);
                 return;
             }
+            self.flush_motion();
             keyboard.set_focus(self, grab.current_grab(), serial);
             keyboard.set_grab(self, PopupKeyboardGrab::new(&grab), serial);
         }

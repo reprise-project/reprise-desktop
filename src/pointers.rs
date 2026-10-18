@@ -39,6 +39,11 @@ pub struct Pointers {
     pub owed: Option<smithay::backend::input::InputTime>,
     pub settle_timer: Option<RegistrationToken>,
     pub swipe: Option<KeptSwipe>,
+    /// Client motion held for the next delivery (`coalesce`) and its timer.
+    pub motions: crate::coalesce::Motions<WlSurface>,
+    pub motion_timer: Option<RegistrationToken>,
+    /// The drag source's actions a target last heard of (`dnd_actions_changed`).
+    pub drag_actions: Vec<smithay::input::dnd::DndAction>,
     _globals: Globals,
 }
 
@@ -59,6 +64,9 @@ impl Pointers {
             owed: None,
             settle_timer: None,
             swipe: None,
+            motions: Default::default(),
+            motion_timer: None,
+            drag_actions: Vec::new(),
             _globals: Globals {
                 _constraints: PointerConstraintsState::new::<State>(dh),
                 _relative: RelativePointerManagerState::new::<State>(dh),
