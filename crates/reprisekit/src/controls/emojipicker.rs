@@ -474,8 +474,10 @@ fn title(name: &str) -> String {
         .unwrap_or_default()
 }
 
-/// The panel's `access` part, in panel coordinates: the filter field and a list of the named cells;
-/// a cell scrolled out lies outside the list ([`EmojiPicker::reveal`]). Returns the focused node: the highlighted cell, else the field.
+/// The panel's `access` part, in panel coordinates: the filter field and a list of the named cells
+/// in view, the rows just past each edge and the highlighted cell. A cell scrolled out lies outside
+/// the list ([`EmojiPicker::reveal`]) and carries its place in the catalog. Returns the focused
+/// node: the highlighted cell, else the field.
 pub fn access(
     m: &EmojiPicker,
     text: &TextRenderer,
@@ -500,10 +502,16 @@ pub fn access(
     access::focusable(&mut n, true);
     let list = tree.push(parent, "cells", n);
     let mut focus = field;
-    for i in 0..m.len() {
+    let near = m.top.saturating_sub(1) * COLS..m.len().min((m.top + ROWS + 1) * COLS);
+    let selected = m.selected.filter(|i| !near.contains(i));
+    let mut cells: Vec<usize> = near.chain(selected).collect();
+    cells.sort_unstable();
+    for i in cells {
         let e = &m.entries[m.shown[i]];
         let mut o = Node::new(Role::ListBoxOption);
         o.set_label(title(e.name));
+        o.set_position_in_set(i + 1);
+        o.set_size_of_set(m.len());
         o.set_bounds(access::row_bounds(shown, cell_place(m, &lay, i)));
         o.set_selected(m.selected == Some(i));
         let id = tree.push(list, i, o);
@@ -701,19 +709,39 @@ mod tests {
         let text = TextRenderer::load(&FontConfig::default());
         let cm = ControlMetrics::CLASSIC;
         let mut m = EmojiPicker::new(Vec::new(), catalog(None));
-        let last = m.len() - 1;
-        let mut t = Tree::window("", (width(&cm), 300));
-        access(&m, &text, 11, &mut t, ROOT, &cm);
-        let (list, n) = t.nodes().find(|(_, n)| n.role() == Role::ListBox).unwrap();
-        assert_eq!(n.children().len(), m.len(), "every cell is listed");
-        let cell = t.get(list).unwrap().children()[last];
+        let cells = |m: &EmojiPicker| {
+            let mut t = Tree::window("", (width(&cm), 300));
+            let focus = access(m, &text, 11, &mut t, ROOT, &cm);
+            let (_, n) = t.nodes().find(|(_, n)| n.role() == Role::ListBox).unwrap();
+            let rows: Vec<_> = n.children().to_vec();
+            (t, focus, rows)
+        };
+        let (t, _, rows) = cells(&m);
+        assert_eq!(
+            rows.len(),
+            (ROWS + 1) * COLS,
+            "the rows in view and the next"
+        );
+        let next = *rows.last().unwrap();
         let mut p = Published::default();
         p.update(t);
-        assert_eq!(p.reveal(cell).map(|r| r.row), Some(last));
-        assert!(m.reveal(last));
-        assert_eq!(m.top, last / COLS + 1 - ROWS, "its row is the last shown");
+        let below = (ROWS + 1) * COLS - 1;
+        assert_eq!(p.reveal(next).map(|r| r.row), Some(below));
+        assert!(m.reveal(below));
+        assert_eq!(m.top, 1, "its row is the last shown");
         assert_eq!(m.selected, Some(0), "the highlight stays");
-        assert!(!m.reveal(last));
+        assert!(!m.reveal(below));
+
+        let last = m.len() - 1;
+        assert!(m.reveal(last));
+        let (t, focus, rows) = cells(&m);
+        assert_eq!(rows.len(), 1 + (ROWS + 1) * COLS - (COLS - 1 - last % COLS));
+        assert_eq!(
+            t.get(rows[0]).unwrap().position_in_set(),
+            Some(1),
+            "the highlighted cell stays listed"
+        );
+        assert_eq!(focus, rows[0], "and focused");
     }
 
     #[test]
