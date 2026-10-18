@@ -26,7 +26,8 @@ use crate::node::{
 };
 
 /// A canvas copied into a buffer node's pixel memory, on any thread, so that
-/// [`Scene::buffer_set_prepared`] shows it without the copy.
+/// [`Scene::buffer_set_prepared`] shows it without the copy. Clones share the memory.
+#[derive(Clone)]
 pub struct Prepared(MemoryRenderBuffer, Size<i32, BufferCoords>);
 
 impl Prepared {

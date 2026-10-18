@@ -112,7 +112,9 @@ fn imported<T, E: std::fmt::Display>(import: Result<T, E>, refused: &AtomicBool)
 }
 
 /// A canvas made ready for a scene buffer off the loop: in a dma-buf when `Uploads` could fill
-/// one (with the `Uploads`' refused flag), else copied into pixel memory.
+/// one (with the `Uploads`' refused flag), else copied into pixel memory. Clones share the
+/// buffer.
+#[derive(Clone)]
 pub enum Staged {
     Dmabuf(Dmabuf, Arc<AtomicBool>),
     Memory(Prepared),
