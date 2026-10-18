@@ -186,13 +186,13 @@ pub fn wheel(rows: i32, cell: CellAt, mode: TermMode) -> Wheel {
 impl Terminal {
     /// Route a pointer event: a gesture begun on the grid keeps it until the release.
     pub(crate) fn pointer(&mut self, p: PointerInput, ctx: &mut Ctx) -> Reply {
-        if self.chrome.menu.is_some() {
+        if self.w.chrome.menu.is_some() {
             return self.chrome_pointer(p, ctx);
         }
-        if self.tabs.current().map(Tab::pid) != Some(self.mouse.tab) {
-            self.mouse.end();
+        if self.w.tabs.current().map(Tab::pid) != Some(self.w.mouse.tab) {
+            self.w.mouse.end();
         }
-        let grid = chrome::grid_rect(ctx);
+        let grid = chrome::grid_rect(ctx, self.w.caption);
         match p {
             PointerInput::Press {
                 x,
@@ -200,10 +200,10 @@ impl Terminal {
                 button,
                 time,
                 mods,
-            } if self.chrome.press.is_none() && grid.contains(x, y) => {
+            } if self.w.chrome.press.is_none() && grid.contains(x, y) => {
                 self.grid_press(x, y, button, time, mods, ctx)
             }
-            PointerInput::Motion { x, y } if self.mouse.held() => self.grid_drag(x, y, ctx),
+            PointerInput::Motion { x, y } if self.w.mouse.held() => self.grid_drag(x, y, ctx),
             PointerInput::Motion { x, y } => {
                 let reply = self.chrome_pointer(p, ctx);
                 match grid.contains(x, y) {
@@ -211,7 +211,7 @@ impl Terminal {
                     false => reply,
                 }
             }
-            PointerInput::Release { x, y, button, .. } if self.mouse.held() => {
+            PointerInput::Release { x, y, button, .. } if self.w.mouse.held() => {
                 self.grid_release(x, y, button, ctx)
             }
             PointerInput::Scroll { x, y, rows } if grid.contains(x, y) => {
@@ -223,10 +223,10 @@ impl Terminal {
 
     /// The cell under (`x`, `y`), the point first pulled inside the grid's cells.
     fn cell_at(&mut self, x: i32, y: i32, ctx: &Ctx) -> Option<Hit> {
-        let ((cols, rows), _) = self.fitted?;
-        let m = self.metrics(self.scale);
-        let s = self.scale.max(1);
-        let area = chrome::grid_rect(ctx);
+        let ((cols, rows), _) = self.w.fitted?;
+        let m = self.metrics(self.w.scale);
+        let s = self.w.scale.max(1);
+        let area = chrome::grid_rect(ctx, self.w.caption);
         let x = x.clamp(area.x, area.x + (cols as i32 * m.cell_w - 1) / s);
         let y = y.clamp(area.y, area.y + (rows as i32 * m.cell_h - 1) / s);
         termgrid::hit(&m, area, s, x, y).map(|h| Hit {
@@ -252,19 +252,19 @@ impl Terminal {
         if button == BTN_LEFT && mods.ctrl && self.open_url(cell) {
             return Reply::none();
         }
-        let Some(tab) = self.tabs.current() else {
+        let Some(tab) = self.w.tabs.current() else {
             return Reply::none();
         };
         let mode = tab.mode();
-        self.mouse.hold(tab.pid());
+        self.w.mouse.hold(tab.pid());
         if mode.intersects(TermMode::MOUSE_MODE) && !mods.shift {
             let Some(code) = button_code(button) else {
                 return Reply::none();
             };
             let code = code + mods_code(mods);
-            self.mouse.reports.retain(|&(b, _)| b != button);
-            self.mouse.reports.push((button, code));
-            self.mouse.reported = Some(cell);
+            self.w.mouse.reports.retain(|&(b, _)| b != button);
+            self.w.mouse.reports.push((button, code));
+            self.w.mouse.reported = Some(cell);
             if let Some(bytes) = report(code, true, cell, mode) {
                 tab.write(bytes.into());
             }
@@ -272,9 +272,13 @@ impl Terminal {
         }
         match button {
             BTN_LEFT => {
-                let clicks = self.mouse.clicks.press(ctx.theme.metrics.click(x, y, time));
+                let clicks = self
+                    .w
+                    .mouse
+                    .clicks
+                    .press(ctx.theme.metrics.click(x, y, time));
                 tab.with_term(|t| select(t, kind(clicks), cell, hit.side));
-                self.mouse.selecting = true;
+                self.w.mouse.selecting = true;
                 Reply::redraw()
             }
             BTN_MIDDLE => Reply {
@@ -290,20 +294,20 @@ impl Terminal {
             return Reply::none();
         };
         let cell = (hit.col, hit.row);
-        let Some(tab) = self.tabs.current() else {
+        let Some(tab) = self.w.tabs.current() else {
             return Reply::none();
         };
-        if self.mouse.selecting {
+        if self.w.mouse.selecting {
             tab.with_term(|t| extend(t, cell, hit.side));
             return Reply::redraw();
         }
-        match self.mouse.reports.last() {
+        match self.w.mouse.reports.last() {
             Some(&(_, code)) => {
                 let mode = tab.mode();
                 if mode.intersects(TermMode::MOUSE_DRAG | TermMode::MOUSE_MOTION)
-                    && self.mouse.reported != Some(cell)
+                    && self.w.mouse.reported != Some(cell)
                 {
-                    self.mouse.reported = Some(cell);
+                    self.w.mouse.reported = Some(cell);
                     if let Some(bytes) = report(code + MOTION, true, cell, mode) {
                         tab.write(bytes.into());
                     }
@@ -320,12 +324,12 @@ impl Terminal {
             return Reply::none();
         };
         let cell = (hit.col, hit.row);
-        let Some(tab) = self.tabs.current() else {
+        let Some(tab) = self.w.tabs.current() else {
             return Reply::none();
         };
         let mode = tab.mode();
-        if mode.contains(TermMode::MOUSE_MOTION) && self.mouse.reported != Some(cell) {
-            self.mouse.reported = Some(cell);
+        if mode.contains(TermMode::MOUSE_MOTION) && self.w.mouse.reported != Some(cell) {
+            self.w.mouse.reported = Some(cell);
             if let Some(bytes) = report(3 + MOTION, true, cell, mode) {
                 tab.write(bytes.into());
             }
@@ -335,12 +339,12 @@ impl Terminal {
 
     fn grid_release(&mut self, x: i32, y: i32, button: u32, ctx: &Ctx) -> Reply {
         let cell = self.cell_at(x, y, ctx).map(|h| (h.col, h.row));
-        let Some(tab) = self.tabs.current() else {
-            self.mouse.end();
+        let Some(tab) = self.w.tabs.current() else {
+            self.w.mouse.end();
             return Reply::none();
         };
-        if let Some(i) = self.mouse.reports.iter().position(|&(b, _)| b == button) {
-            let (_, code) = self.mouse.reports.remove(i);
+        if let Some(i) = self.w.mouse.reports.iter().position(|&(b, _)| b == button) {
+            let (_, code) = self.w.mouse.reports.remove(i);
             let mode = tab.mode();
             if mode.intersects(TermMode::MOUSE_MODE)
                 && let Some(bytes) = cell.and_then(|c| report(code, false, c, mode))
@@ -349,8 +353,8 @@ impl Terminal {
             }
             return Reply::none();
         }
-        if self.mouse.selecting && button == BTN_LEFT {
-            self.mouse.selecting = false;
+        if self.w.mouse.selecting && button == BTN_LEFT {
+            self.w.mouse.selecting = false;
             return Reply {
                 copy_primary: tab.selection().filter(|s| !s.is_empty()),
                 ..Default::default()
@@ -363,7 +367,7 @@ impl Terminal {
         let Some(hit) = self.cell_at(x, y, ctx) else {
             return Reply::none();
         };
-        let Some(tab) = self.tabs.current() else {
+        let Some(tab) = self.w.tabs.current() else {
             return Reply::none();
         };
         match wheel(rows, (hit.col, hit.row), tab.mode()) {
@@ -380,10 +384,10 @@ impl Terminal {
 
     /// Open the URL drawn at `cell` with xdg-open; false when there is none.
     fn open_url(&self, (col, row): CellAt) -> bool {
-        if row >= self.snap.rows {
+        if row >= self.w.snap.rows {
             return false;
         }
-        let line: String = self.snap.row(row).iter().map(|c| c.ch).collect();
+        let line: String = self.w.snap.row(row).iter().map(|c| c.ch).collect();
         let Some(url) = urls::at(&line, col) else {
             return false;
         };

@@ -192,6 +192,16 @@ fn set_live(form: &mut Form, live: bool) {
 impl Terminal {
     /// Open the Find dialog with the last query.
     pub(crate) fn open_find(&mut self) -> Reply {
+        // An open Find moves to the window that asks, leaving its search behind.
+        let asker = self.cur;
+        if self.find.is_some() && self.find_on != asker && self.enter(self.find_on) {
+            for t in &self.w.tabs.list {
+                t.end_find();
+            }
+            self.w.snap.dirty.fill(true);
+            self.enter(asker);
+        }
+        self.find_on = asker;
         let q = self.last_find.clone();
         self.find.get_or_insert_with(|| {
             finddlg::find_form(&FindFields {
@@ -205,10 +215,10 @@ impl Terminal {
 
     fn close_find(&mut self) -> Reply {
         self.find = None;
-        for t in &self.tabs.list {
+        for t in &self.w.tabs.list {
             t.end_find();
         }
-        self.snap.dirty.fill(true);
+        self.w.snap.dirty.fill(true);
         Reply::redraw_all()
     }
 
@@ -219,6 +229,7 @@ impl Terminal {
         self.last_find = read(form);
         let q = self.last_find.clone();
         let found = self
+            .w
             .tabs
             .current()
             .is_some_and(|t| t.find(&q.text, q.match_case, !q.up));
@@ -233,7 +244,7 @@ impl Terminal {
             };
             self.notfound = Some(MsgBox::new("Terminal", fields));
         }
-        self.snap.dirty.fill(true);
+        self.w.snap.dirty.fill(true);
         Reply::redraw_all()
     }
 

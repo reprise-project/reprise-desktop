@@ -15,6 +15,7 @@ pub mod oneshot;
 pub mod openwith;
 mod outputmgmt;
 mod primary;
+mod tabgroup;
 mod textinput;
 pub mod thumbs;
 pub mod unlock;
@@ -112,6 +113,7 @@ use reprisekit::raster::{Canvas, Rect};
 use reprisekit::text::TextRenderer;
 use reprisekit::textedit::{EditKey, key_for};
 use reprisekit::theme::Theme;
+use tabgroup::reprise_tabs_v1;
 use zeroize::{Zeroize, Zeroizing};
 
 pub struct Ctx {
@@ -482,6 +484,11 @@ pub struct Reply {
     /// compositor asks for another size; a configure that only repeats the last
     /// size asked for leaves it.
     pub size: Option<(i32, i32)>,
+    /// More of this program's windows to draw again, besides the one this reply is for.
+    pub redraw_wins: Vec<WinId>,
+    /// Bring this program's window to the front with the keyboard: the host asks xdg-activation
+    /// for a token on the last input's serial and presents it for that window.
+    pub raise: Option<WinId>,
 }
 
 impl Reply {
@@ -558,6 +565,8 @@ impl Reply {
             tick,
             resize,
             size,
+            mut redraw_wins,
+            raise,
         } = then;
         let (spawn, spawn_app) = if spawn.is_empty() {
             (self.spawn, self.spawn_app)
@@ -593,6 +602,12 @@ impl Reply {
             tick: self.tick || tick,
             resize: self.resize || resize,
             size: self.size.or(size),
+            redraw_wins: {
+                let mut wins = self.redraw_wins;
+                wins.append(&mut redraw_wins);
+                wins
+            },
+            raise: self.raise.or(raise),
         }
     }
 }
@@ -608,6 +623,16 @@ pub trait App {
     }
     fn children(&self) -> Vec<Child> {
         Vec::new()
+    }
+    /// The window child `win` sits over. `None` makes it a toplevel of its own, unparented like
+    /// the main window, for a program that shows several (its `modal` is then ignored).
+    fn parent(&self, _win: WinId) -> Option<WinId> {
+        Some(MAIN)
+    }
+    /// The window of this program whose caption tab group unparented child `win` joins as it
+    /// maps, right after it. Read when its window is made; needs [`tab_groups`].
+    fn tab_with(&self, _win: WinId) -> Option<WinId> {
+        None
     }
     /// The smallest client size resizable window `win` can be dragged
     /// to, read when its window is made; `None` keeps a child's wanted
@@ -1128,6 +1153,10 @@ pub fn run(app: Box<dyn App>) {
             NoEvents,
         )
         .ok();
+    let tab_groups = globals
+        .bind::<reprise_tabs_v1::RepriseTabsV1, _, _>(&qh, 1..=1, NoEvents)
+        .ok();
+    TAB_GROUPS.store(tab_groups.is_some(), std::sync::atomic::Ordering::Relaxed);
     // The main window itself is `sync_main`'s, so a program that starts
     // hidden never gets a surface for it.
     let ((w, h), _) = opening_size(&*app);
@@ -1174,6 +1203,7 @@ pub fn run(app: Box<dyn App>) {
         wm_dialog,
         tag_manager,
         effects,
+        tab_groups,
         outputs: None,
         inhibit_manager,
         seat: None,
@@ -1379,6 +1409,8 @@ struct Slot {
     glass_top: (i32, i32),
     /// The window's keyboard cues; `keys` is drawn as `Theme::access_keys`.
     cues: Cues,
+    /// The child's [`App::parent`] as the host last set it; none for the main window.
+    parent: Option<WinId>,
 }
 
 impl Drop for Slot {
@@ -1483,6 +1515,7 @@ struct Host {
     importer_v1: Option<zxdg_importer_v1::ZxdgImporterV1>,
     tag_manager: Option<xdg_toplevel_tag_manager_v1::XdgToplevelTagManagerV1>,
     effects: Option<ext_background_effect_manager_v1::ExtBackgroundEffectManagerV1>,
+    tab_groups: Option<reprise_tabs_v1::RepriseTabsV1>,
     outputs: Option<outputmgmt::Outputs>,
     inhibit_manager:
         Option<zwp_keyboard_shortcuts_inhibit_manager_v1::ZwpKeyboardShortcutsInhibitManagerV1>,
@@ -1570,8 +1603,10 @@ impl Host {
         }
     }
 
-    fn modal(&self) -> Option<WinId> {
-        top_modal(self.slots.iter().map(|s| (s.id, s.modal)))
+    /// The modal child gating `win`: the newest over `win`'s own window.
+    fn modal(&self, win: WinId) -> Option<WinId> {
+        let slots = self.slots.iter().map(|s| (s.id, s.modal));
+        modal_over(win, slots, |w| self.app.parent(w))
     }
 
     fn gated(&self, win: WinId, ev: &Event) -> bool {
@@ -1579,7 +1614,7 @@ impl Host {
             .slots
             .iter()
             .any(|s| s.id == win && s.window.toplevel().is_none());
-        input_blocked(ev, self.modal(), win, flyout)
+        input_blocked(ev, self.modal(win), win, flyout)
     }
 
     fn send(&mut self, win: WinId, ev: Event) {
@@ -1673,6 +1708,9 @@ impl Host {
             for s in self.slots.iter_mut() {
                 s.dirty = true;
             }
+        }
+        for s in self.slots.iter_mut() {
+            s.dirty |= reply.redraw_wins.contains(&s.id);
         }
         if reply.quit {
             self.exit = true;
@@ -1778,7 +1816,31 @@ impl Host {
                 activation.activate::<Host>(s.window.wl_surface(), token);
             }
         }
+        if let Some(id) = reply.raise {
+            self.raise(id);
+        }
         self.drain_head_requests();
+    }
+
+    /// Ask for a token on the last input for the keyboard's window, which `new_token` presents
+    /// for window `id`.
+    fn raise(&self, id: WinId) {
+        let (Some(activation), Some(seat)) = (&self.activation, &self.seat) else {
+            return;
+        };
+        let surface = self
+            .focus
+            .and_then(|f| self.slots.iter().find(|s| s.id == f))
+            .map(|s| s.window.wl_surface().clone());
+        activation.request_token(
+            &self.qh,
+            RequestData {
+                app_id: Some(self.app.app_id()),
+                seat_and_serial: Some((seat.clone(), self.last_serial)),
+                surface,
+                udata: Some(id),
+            },
+        );
     }
 
     fn send_tag(&self, window: &Window, caption: Caption) {
@@ -1867,6 +1929,7 @@ impl Host {
                 glass: None,
                 glass_top: (0, 0),
                 cues: Cues::opened(self.key_last),
+                parent: None,
             },
         );
     }
@@ -1994,17 +2057,17 @@ impl Host {
         if self.focus.is_some_and(|f| drop.contains(&f)) {
             self.focus = None;
         }
-        self.slots.retain(|s| s.id == MAIN || !drop.contains(&s.id));
-        let main = self.slots.iter().find(|s| s.id == MAIN);
-        // xdg-shell drops a parent that is not mapped yet, so a child
-        // wanted before the main window's first frame waits for it
-        // (`draw` calls back here then).
-        if main.is_some_and(|s| !s.mapped) {
-            return;
+        // A toplevel must not be anyone's parent when destroyed.
+        for s in self.slots.iter_mut() {
+            if s.parent.is_some_and(|p| drop.contains(&p)) {
+                if let Some(w) = s.window.toplevel() {
+                    w.xdg_toplevel().set_parent(None);
+                    w.commit();
+                }
+                s.parent = None;
+            }
         }
-        let parent = main
-            .and_then(|s| s.window.toplevel())
-            .map(|w| w.xdg_toplevel().clone());
+        self.slots.retain(|s| s.id == MAIN || !drop.contains(&s.id));
         let app_id = self.app.app_id();
         for i in make {
             let c = &want[i];
@@ -2012,6 +2075,17 @@ impl Host {
             if self.slots.iter().any(|s| s.id == c.id) {
                 continue;
             }
+            let wanted = self.app.parent(c.id);
+            let parent_slot = wanted.and_then(|p| self.slots.iter().find(|s| s.id == p));
+            let parent = match placement(wanted, parent_slot.map(|s| s.mapped)) {
+                // xdg-shell drops a parent that is not mapped yet; `draw` calls back here once
+                // it is.
+                Placement::Wait => continue,
+                Placement::Under(_) => parent_slot
+                    .and_then(|s| s.window.toplevel())
+                    .map(|w| w.xdg_toplevel().clone()),
+                Placement::Alone => None,
+            };
             let size = sane_size(c.size);
             let surface = self.compositor.create_surface(&self.qh);
             let scaling = self.scaling(&surface);
@@ -2029,6 +2103,9 @@ impl Host {
                 window.set_max_size(Some((size.0 as u32, size.1 as u32)));
             }
             window.xdg_toplevel().set_parent(parent.as_ref());
+            if wanted.is_none() {
+                self.join_tabs(&window, c.id);
+            }
             let caption = self.app.caption(c.id);
             self.send_tag(&window, caption);
             window.commit();
@@ -2060,10 +2137,12 @@ impl Host {
                 glass: None,
                 glass_top: (0, 0),
                 cues: Cues::opened(self.key_last),
+                parent: wanted,
             });
         }
         let mut resized = Vec::new();
         for c in &want {
+            self.reparent(c.id);
             let caption = self.app.caption(c.id);
             if let Some(s) = self.slots.iter_mut().find(|s| s.id == c.id) {
                 s.modal = c.modal;
@@ -2087,6 +2166,45 @@ impl Host {
         }
         for id in resized {
             self.refit(id);
+        }
+    }
+
+    /// Move child `id` over the window [`App::parent`] names now, once that one is mapped.
+    fn reparent(&mut self, id: WinId) {
+        let want = self.app.parent(id);
+        let Some(s) = self.slots.iter().find(|s| s.id == id) else {
+            return;
+        };
+        if s.parent == want {
+            return;
+        }
+        let parent_slot = want.and_then(|p| self.slots.iter().find(|s| s.id == p));
+        let parent = match placement(want, parent_slot.map(|s| s.mapped)) {
+            Placement::Wait => return,
+            Placement::Under(_) => parent_slot
+                .and_then(|s| s.window.toplevel())
+                .map(|w| w.xdg_toplevel().clone()),
+            Placement::Alone => None,
+        };
+        if let Some(w) = s.window.toplevel() {
+            w.xdg_toplevel().set_parent(parent.as_ref());
+            w.commit();
+        }
+        if let Some(s) = self.slot_mut(id) {
+            s.parent = want;
+        }
+    }
+
+    /// Ask for unparented child `id`'s new `window` to join its [`App::tab_with`] window's tab
+    /// group, before its first commit.
+    fn join_tabs(&self, window: &Window, id: WinId) {
+        let leader = self
+            .app
+            .tab_with(id)
+            .and_then(|l| self.slots.iter().find(|s| s.id == l))
+            .and_then(|s| s.window.toplevel());
+        if let (Some(tabs), Some(leader)) = (&self.tab_groups, leader) {
+            tabs.join(window.xdg_toplevel(), leader.xdg_toplevel());
         }
     }
 
@@ -2192,6 +2310,7 @@ impl Host {
             glass: None,
             glass_top: (0, 0),
             cues: Cues::opened(self.key_last),
+            parent: None,
         });
     }
 
@@ -2687,7 +2806,7 @@ impl Host {
             .attach_to(surface)
             .expect("attach");
         s.window.commit();
-        if !std::mem::replace(&mut s.mapped, true) && id == MAIN {
+        if !std::mem::replace(&mut s.mapped, true) {
             self.sync_children();
         }
     }
@@ -3883,8 +4002,17 @@ impl DataSourceHandler for Host {
 }
 
 impl ActivationHandler for Host {
-    type RequestUdata = ();
-    fn new_token(&mut self, _token: String, _data: &RequestData<()>) {}
+    /// The window a token was asked for ([`Host::raise`]).
+    type RequestUdata = Option<WinId>;
+    fn new_token(&mut self, token: String, data: &RequestData<Option<WinId>>) {
+        let surface = data
+            .udata
+            .and_then(|id| self.slots.iter().find(|s| s.id == id))
+            .map(|s| s.window.wl_surface());
+        if let (Some(surface), Some(activation)) = (surface, &self.activation) {
+            activation.activate::<Host>(surface, token);
+        }
+    }
 }
 
 struct NoEvents;
@@ -3987,6 +4115,7 @@ no_events!(
     xdg_dialog_v1::XdgDialogV1,
     xdg_toplevel_tag_manager_v1::XdgToplevelTagManagerV1,
     zwp_keyboard_shortcuts_inhibit_manager_v1::ZwpKeyboardShortcutsInhibitManagerV1,
+    reprise_tabs_v1::RepriseTabsV1,
 );
 
 struct InhibitorOf(WinId);
@@ -4223,6 +4352,71 @@ pub(crate) fn reconcile(have: &[WinId], want: &[&Child]) -> (Vec<WinId>, Vec<usi
         .map(|(i, _)| i)
         .collect();
     (drop, make)
+}
+
+static TAB_GROUPS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Whether the compositor puts a window into another's caption tab group ([`App::tab_with`]),
+/// known once [`run`] connected, before [`App::start`].
+pub fn tab_groups() -> bool {
+    TAB_GROUPS.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// Where a child whose program names `parent` opens, given whether that parent's window is
+/// mapped (`None`: it has no window).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Placement {
+    Wait,
+    Under(WinId),
+    Alone,
+}
+
+pub(crate) fn placement(parent: Option<WinId>, mapped: Option<bool>) -> Placement {
+    match (parent, mapped) {
+        (Some(_), Some(false)) => Placement::Wait,
+        (Some(p), Some(true)) => Placement::Under(p),
+        _ => Placement::Alone,
+    }
+}
+
+/// The toplevel `win` belongs to: the window up its chain of [`App::parent`]s that has none,
+/// or `MAIN`.
+pub(crate) fn root_of(win: WinId, parent: impl Fn(WinId) -> Option<WinId>) -> WinId {
+    let mut w = win;
+    // A chain is a dialog over a dialog at most; the bound stops a loop a program made.
+    for _ in 0..8 {
+        if w == MAIN {
+            break;
+        }
+        match parent(w) {
+            Some(p) if p != w => w = p,
+            _ => break,
+        }
+    }
+    w
+}
+
+/// The modal child among `slots` that gates `win`: the newest with the same toplevel.
+pub(crate) fn modal_over(
+    win: WinId,
+    slots: impl Iterator<Item = (WinId, bool)>,
+    parent: impl Fn(WinId) -> Option<WinId>,
+) -> Option<WinId> {
+    let root = root_of(win, &parent);
+    top_modal(slots.filter(|&(id, _)| root_of(id, &parent) == root))
+}
+
+/// The id `window-<n>`, one `'static` str per `n` for the life of the process: for a program
+/// that opens windows of its own as it runs ([`App::parent`]).
+pub fn window_id(n: usize) -> WinId {
+    use std::sync::Mutex;
+    static IDS: Mutex<Vec<WinId>> = Mutex::new(Vec::new());
+    let mut ids = IDS.lock().unwrap_or_else(|e| e.into_inner());
+    while ids.len() <= n {
+        let next = format!("window-{}", ids.len());
+        ids.push(Box::leak(next.into_boxed_str()));
+    }
+    ids[n]
 }
 
 /// The newest, since each child maps over the ones before it.
@@ -4845,6 +5039,64 @@ mod tests {
         assert_eq!(top_modal(slots.into_iter()), Some("error"));
         assert_eq!(top_modal(slots[..3].iter().copied()), Some("open"));
         assert_eq!(top_modal([(MAIN, false)].into_iter()), None);
+    }
+
+    #[test]
+    fn a_modal_child_gates_only_the_windows_it_sits_over() {
+        let parent = |w: WinId| match w {
+            "confirm" => Some("second"),
+            "second" => None,
+            _ => Some(MAIN),
+        };
+        assert_eq!(root_of("confirm", parent), "second");
+        assert_eq!(root_of("find", parent), MAIN);
+        assert_eq!(root_of(MAIN, parent), MAIN);
+        let slots = [(MAIN, false), ("second", false), ("confirm", true)];
+        assert_eq!(modal_over(MAIN, slots.into_iter(), parent), None);
+        assert_eq!(
+            modal_over("second", slots.into_iter(), parent),
+            Some("confirm")
+        );
+        assert_eq!(
+            modal_over("confirm", slots.into_iter(), parent),
+            Some("confirm")
+        );
+    }
+
+    #[test]
+    fn a_child_waits_for_its_parents_first_frame() {
+        assert_eq!(placement(Some(MAIN), Some(false)), Placement::Wait);
+        assert_eq!(placement(Some(MAIN), Some(true)), Placement::Under(MAIN));
+        assert_eq!(
+            placement(Some(MAIN), None),
+            Placement::Alone,
+            "a hidden main window parents nothing"
+        );
+        assert_eq!(placement(None, Some(false)), Placement::Alone);
+    }
+
+    #[test]
+    fn a_numbered_window_id_is_one_str_per_number() {
+        assert!(std::ptr::eq(window_id(3), window_id(3)));
+        assert_ne!(window_id(3), window_id(4));
+        assert_ne!(window_id(0), MAIN);
+    }
+
+    #[test]
+    fn reply_merge_joins_the_windows_to_redraw_and_keeps_the_first_raise() {
+        let first = Reply {
+            redraw_wins: vec!["a"],
+            raise: Some("a"),
+            ..Default::default()
+        };
+        let then = Reply {
+            redraw_wins: vec!["b"],
+            raise: Some("b"),
+            ..Default::default()
+        };
+        let merged = first.and(then);
+        assert_eq!(merged.redraw_wins, ["a", "b"]);
+        assert_eq!(merged.raise, Some("a"));
     }
 
     #[test]

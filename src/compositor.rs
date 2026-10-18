@@ -451,6 +451,7 @@ impl State {
         let quicklaunch = crate::taskbarview::load_quicklaunch(&config);
 
         let ime = crate::textinput::Ime::new(&dh, &seat);
+        crate::tabsproto::init(&dh);
         let clip = crate::clipboard::Clip::new(&dh);
 
         Ok(State {

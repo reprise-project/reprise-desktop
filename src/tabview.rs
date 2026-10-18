@@ -13,8 +13,8 @@
 //! dragged along the caption reorders; dragged off it, it leaves the group
 //! and carries on as a move of its own window.
 //!
-//! A window also joins a group as it maps, for session restore or a
-//! `tab_group` window rule (`tab_on_map`).
+//! A window also joins a group as it maps, for session restore, a
+//! `tab_group` window rule or its client's reprise-tabs-v1 join (`tab_on_map`).
 
 use std::time::{Duration, Instant};
 
@@ -598,22 +598,47 @@ impl State {
                 }
             }
             Claim::None => {
-                let Some(name) = self.win(w).and_then(|x| x.tab_group.clone()) else {
-                    return;
-                };
-                let open = self
-                    .windows
-                    .iter()
-                    .filter(|x| x.id != w && self.tabbable(x.id));
-                let open = open.map(|x| (x.id, x.tab_group.as_deref(), x.tab_pulled_out));
-                let target = rule_target(open, &name);
-                if let Some(t) = target {
-                    self.join_tabs_quiet(w, t, usize::MAX, false);
+                if let Some(l) = self.win_mut(w).and_then(|x| x.tab_leader.take()) {
+                    self.join_next_to(w, l);
+                } else if let Some(name) = self.win(w).and_then(|x| x.tab_group.clone()) {
+                    let open = self
+                        .windows
+                        .iter()
+                        .filter(|x| x.id != w && self.tabbable(x.id));
+                    let open = open.map(|x| (x.id, x.tab_group.as_deref(), x.tab_pulled_out));
+                    if let Some(t) = rule_target(open, &name) {
+                        self.join_tabs_quiet(w, t, usize::MAX, false);
+                    }
                 }
             }
         }
         if self.desktop_of(w) != desktop {
             self.desktops_changed();
+        }
+    }
+
+    /// reprise-tabs-v1's join: `w` joins `leader`'s group as it maps, or now when it is mapped.
+    pub(crate) fn join_leader(&mut self, w: WindowId, leader: WindowId) {
+        match self.win(w).map(|x| x.mapped) {
+            Some(true) => self.join_next_to(w, leader),
+            Some(false) => {
+                if let Some(win) = self.win_mut(w) {
+                    win.tab_leader = Some(leader);
+                }
+            }
+            None => {}
+        }
+    }
+
+    /// `w` joins `leader`'s group right after it and shows, with the focus when the group had it.
+    fn join_next_to(&mut self, w: WindowId, leader: WindowId) {
+        let members = self.tabs.groups.members_of(leader);
+        let had_focus = self
+            .focused
+            .is_some_and(|f| members.contains(&self.home(f)));
+        let slot = after(&members, leader);
+        if self.join_tabs_quiet(w, leader, slot, false) && had_focus {
+            self.focus_window(w);
         }
     }
 
@@ -1093,9 +1118,24 @@ fn rule_target<'a, T>(
         .map(|(id, ..)| id)
 }
 
+/// The slot right after `leader` in its group's `members`; past the end appends.
+fn after<T: PartialEq>(members: &[T], leader: T) -> usize {
+    members
+        .iter()
+        .position(|m| *m == leader)
+        .map_or(usize::MAX, |i| i + 1)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_joining_window_goes_right_after_its_leader() {
+        assert_eq!(after(&[1, 2, 3], 2), 2);
+        assert_eq!(after(&[1, 2, 3], 3), 3);
+        assert_eq!(after(&[7], 7), 1, "a leader in no group starts one");
+    }
 
     #[test]
     fn a_rule_passes_over_a_window_pulled_out_of_its_group() {
