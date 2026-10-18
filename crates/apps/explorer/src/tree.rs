@@ -48,19 +48,28 @@ impl Explorer {
         ctx: &Ctx,
         read: impl FnOnce() -> T + Send + 'static,
     ) -> Result<T, Job<T>> {
-        #[cfg(test)]
-        if let Some(gate) = self.held.clone() {
-            let job = Job::spawn(Some(&ctx.wake), move || {
-                drop(gate.read());
-                read()
-            });
-            return job.take().ok_or(job);
-        }
-        let job = Job::spawn(Some(&ctx.wake), read);
-        match job.wait(LIST_WAIT) {
+        let job = self.spawn_read(ctx, read);
+        match job.wait(self.list_wait()) {
             Some(answer) => Ok(answer),
             None => Err(job),
         }
+    }
+
+    /// Runs `read` on a listing thread that wakes the window once it answers. While a test holds
+    /// reads, it waits for the test's write lock to drop first.
+    pub(crate) fn spawn_read<T: Send + 'static>(
+        &self,
+        ctx: &Ctx,
+        read: impl FnOnce() -> T + Send + 'static,
+    ) -> Job<T> {
+        #[cfg(test)]
+        if let Some(gate) = self.held.clone() {
+            return Job::spawn(Some(&ctx.wake), move || {
+                drop(gate.read());
+                read()
+            });
+        }
+        Job::spawn(Some(&ctx.wake), read)
     }
 
     /// The read of the children of the node at `path`, standing for `place`, for a thread.

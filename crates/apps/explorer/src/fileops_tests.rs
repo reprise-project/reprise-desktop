@@ -1331,6 +1331,79 @@ fn send_to_a_folder_copies_on_a_job() {
     assert!(!dest.path().join("b.txt").exists(), "one undo takes both");
 }
 
+/// A drive listed under a mount root in `table`, for Send To.
+fn send_drive(t: &Path) -> (reprisefs::sendto::Drives, PathBuf) {
+    let (root, table) = (t.join("media"), t.join("mounts"));
+    let stick = root.join("STICK");
+    std::fs::create_dir_all(&stick).expect("mkdir");
+    let line = format!("/dev/sdb1 {} vfat rw 0 0\n", stick.display());
+    std::fs::write(&table, line).expect("write");
+    let scanner = reprisefs::places::MountedDrives::at(table, vec![root]);
+    (reprisefs::sendto::Drives::new(scanner), stick)
+}
+
+fn send_row(ex: &mut Explorer, ctx: &mut Ctx) -> (usize, bool) {
+    let rows = ex.build_send_to(ctx);
+    let i = rows
+        .iter()
+        .position(|(l, ..)| l == "STICK")
+        .expect("the drive's row");
+    (i, rows[i].1)
+}
+
+#[test]
+fn a_send_to_drive_whose_stat_is_out_greys_its_row_and_a_send_past_the_deadline_copies_nothing() {
+    let t = tempfile::tempdir().expect("a temp dir");
+    let src = t.path().join("src");
+    std::fs::create_dir(&src).expect("mkdir");
+    std::fs::write(src.join("a.txt"), "1").expect("write");
+    let mut ctx = test_ctx();
+    let mut ex = crate::tests::test_explorer(Place::Folder(src.clone()), &mut ctx);
+    let stick;
+    (ex.send.drives, stick) = send_drive(t.path());
+    ex.sv.selection.set_only(Some(0));
+    assert!(send_row(&mut ex, &mut ctx).1, "STICK answered");
+
+    let gate = std::sync::Arc::new(std::sync::RwLock::new(()));
+    let closed = gate.write().expect("lock");
+    ex.held = Some(gate.clone());
+    assert!(!send_row(&mut ex, &mut ctx).1, "STICK's new stat is out");
+    drop(closed);
+    ex.held = None;
+    let (i, enabled) = send_row(&mut ex, &mut ctx);
+    assert!(enabled, "STICK answered again");
+
+    let closed = gate.write().expect("lock");
+    ex.held = Some(gate.clone());
+    ex.action_deadline = std::time::Duration::from_millis(20);
+    ex.send_to(i, &mut ctx);
+    assert!(ex.busy(), "the send waits on STICK's stat");
+    crate::tests::wake_until(&mut ex, &mut ctx, |ex| ex.dialog.is_some());
+    match &ex.dialog {
+        Some(Dialog::Message { title, text }) => assert_eq!(
+            (title.as_str(), text.as_str()),
+            ("Send To", "The location is not responding.")
+        ),
+        _ => panic!("the give-up box is up"),
+    }
+    assert!(!ex.busy());
+    drop(closed);
+    ex.held = None;
+    ex.dialog = None;
+    std::thread::sleep(std::time::Duration::from_millis(100));
+    ex.finish_puts(&mut ctx);
+    assert!(!stick.join("a.txt").exists(), "the late stat sends nothing");
+
+    let (i, enabled) = send_row(&mut ex, &mut ctx);
+    assert!(enabled, "the late stat landed");
+    ex.send_to(i, &mut ctx);
+    ex.finish_puts(&mut ctx);
+    assert!(
+        stick.join("a.txt").exists(),
+        "a send to STICK answering copies"
+    );
+}
+
 #[test]
 fn the_empty_bin_prompt_counts_the_bin() {
     let dir = tempfile::tempdir().expect("a temp dir");

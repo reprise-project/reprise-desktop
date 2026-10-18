@@ -98,6 +98,7 @@ impl Explorer {
         self.show_progress_dialogs();
         let job = self.poll_jobs(ctx);
         let acted = self.take_acting(ctx);
+        let sent = self.take_send_reads(ctx);
         let opened = self.take_opened(ctx);
         let tipped = self.poll_tip_walk(ctx);
         let clashed = self.take_clashes(ctx);
@@ -130,6 +131,7 @@ impl Explorer {
         let put = [
             job,
             acted,
+            sent,
             removed,
             put,
             self.take_read(ctx),

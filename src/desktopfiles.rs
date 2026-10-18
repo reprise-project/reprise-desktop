@@ -335,7 +335,7 @@ impl State {
                 let (Some((bins, home)), Some(view)) = (read, state.desktop.as_ref()) else {
                     return;
                 };
-                let drives = home.into_iter().chain(view.bins.tabs(&view.drives.found));
+                let drives = home.into_iter().chain(view.bins.tabs(view.drives.found()));
                 let sheet = crate::binprops::BinSheet::new(bins.policy.clone(), drives.collect());
                 state.open_dialog(crate::binprops::dialog(sheet, at, &icon));
                 state.read_bin_tabs(&bins);
@@ -349,7 +349,7 @@ impl State {
         let Some(view) = self.desktop.as_mut() else {
             return;
         };
-        for top in view.bins.start_tab_reads(&view.drives.found) {
+        for top in view.bins.start_tab_reads(view.drives.found()) {
             let bins = bins.clone();
             self.spawn_fs_job(move || {
                 let tab = crate::binprops::drive_tab(&bins, &top);
@@ -369,7 +369,7 @@ impl State {
         let Some(view) = self.desktop.as_ref() else {
             return;
         };
-        let tabs = view.bins.tabs(&view.drives.found);
+        let tabs = view.bins.tabs(view.drives.found());
         for i in 0..self.dialogs.views.len() {
             let Style::Form(fd) = &mut self.dialogs.views[i].dialog.style else {
                 continue;

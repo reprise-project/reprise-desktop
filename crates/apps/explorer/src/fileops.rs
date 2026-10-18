@@ -616,6 +616,7 @@ impl Explorer {
             || !self.opening.is_empty()
             || self.asking.is_some()
             || !self.acting.is_empty()
+            || !self.send.sends.is_empty()
     }
 
     /// File > Close or the close box. With work in flight the window hides and [`Explorer::wake`]
@@ -656,6 +657,9 @@ impl Explorer {
                 reply = r;
             }
             if let Some(r) = self.take_acting(ctx) {
+                reply = r;
+            }
+            if let Some(r) = self.take_send_reads(ctx) {
                 reply = r;
             }
         }
@@ -902,7 +906,7 @@ impl Explorer {
     /// Send To rows for the selection as (label, enabled, 16 px icon), cached so the menu's row
     /// index resolves to a destination.
     pub fn build_send_to(&mut self, ctx: &mut Ctx) -> Vec<(String, bool, Option<Canvas>)> {
-        self.send_to = sendto::session_rows(&reprisefs::places::mounted_drives());
+        self.send_to = self.send_rows(ctx);
         self.send_to
             .iter()
             .map(|r| (r.label.clone(), r.enabled, ctx.icons.get(r.icon, 16)))
@@ -956,7 +960,7 @@ impl Explorer {
                 Some(d) => (d, DropOp::Shortcut),
                 None => return Reply::none(),
             },
-            SendTo::Folder(d) => (d, DropOp::Copy),
+            SendTo::Folder(d) => return self.send_to_folder(paths, d, ctx),
         };
         self.put_all(&paths, &dir, &|_| Some(op), false, ctx)
     }
