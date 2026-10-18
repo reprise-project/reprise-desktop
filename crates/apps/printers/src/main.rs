@@ -286,24 +286,31 @@ impl PrintersApp {
         for j in ended {
             self.job_ended(j);
         }
-        let mut shown = false;
+        let mut shown = None;
+        let mut raised = false;
         while let Some(raw) = self.msgs.as_ref().and_then(|rx| rx.try_recv().ok()) {
             let Some(msg) = tray::translate(raw) else {
                 continue;
             };
+            raised = true;
             match msg {
                 tray::TrayMsg::Folder => {
                     self.hidden = false;
-                    shown = true;
+                    shown = Some(repriseapp::MAIN);
                 }
                 tray::TrayMsg::Open => {
-                    shown = true;
                     match tray::busy_printers(&self.snapshot, &self.user)
                         .first()
                         .cloned()
                     {
-                        Some(p) => self.open_queue(&p),
-                        None => self.hidden = false,
+                        Some(p) => {
+                            self.open_queue(&p);
+                            shown = Some(QUEUE);
+                        }
+                        None => {
+                            self.hidden = false;
+                            shown = Some(repriseapp::MAIN);
+                        }
                     }
                 }
                 tray::TrayMsg::Queue(i) => {
@@ -312,24 +319,20 @@ impl PrintersApp {
                         .cloned()
                     {
                         self.open_queue(&p);
-                        shown = true;
+                        shown = Some(QUEUE);
                     }
                 }
                 tray::TrayMsg::Balloon(tag) => {
                     if let Some(p) = self.balloons.get(tag as usize).cloned() {
                         self.open_queue(&p);
-                        shown = true;
+                        shown = Some(QUEUE);
                     }
                 }
             }
         }
         self.sync_watching();
         Reply {
-            activate: self
-                .tray
-                .as_ref()
-                .filter(|_| shown)
-                .and_then(|t| t.take_handoff()),
+            activate: reprisetray::handoff_for(self.tray.as_ref(), raised, shown),
             ..Reply::redraw_all()
         }
     }
@@ -1190,6 +1193,36 @@ mod tests {
         };
         assert_eq!(app.wake().activate, None);
         tx.send(reprisetray::Msg::Activate(0, 0)).unwrap();
-        assert_eq!(app.wake().activate, Some(handoff));
+        assert_eq!(app.wake().activate, Some((repriseapp::MAIN, handoff)));
+    }
+
+    #[test]
+    fn a_raise_that_opens_a_queue_hands_its_token_to_the_queue_window() {
+        let handoff = reprisebus::instance::Handoff {
+            token: Some("t".into()),
+            by_key: false,
+        };
+        let (tx, rx) = std::sync::mpsc::channel();
+        let mut app = PrintersApp {
+            tray: Some(reprisetray::TrayHandle::holding(handoff.clone())),
+            msgs: Some(rx),
+            hidden: true,
+            user: "u".into(),
+            snapshot: cups::Snapshot {
+                printers: vec![cups::Printer {
+                    name: "Laser".into(),
+                    ..Default::default()
+                }],
+                jobs: vec![cups::Job {
+                    printer: "Laser".into(),
+                    owner: "u".into(),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            },
+            ..PrintersApp::default()
+        };
+        tx.send(reprisetray::Msg::Activate(0, 0)).unwrap();
+        assert_eq!(app.wake().activate, Some((QUEUE, handoff)));
     }
 }

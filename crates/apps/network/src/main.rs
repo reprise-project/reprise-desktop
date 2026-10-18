@@ -525,27 +525,29 @@ impl NetApp {
             }
             None => {}
         }
-        let mut shown = false;
+        let mut shown = None;
+        let mut raised = false;
         while let Some(raw) = self.msgs.as_ref().and_then(|rx| rx.try_recv().ok()) {
             let Some(msg) = tray::translate(raw) else {
                 continue;
             };
+            raised = true;
             match msg {
                 tray::TrayMsg::Exit => return self.quit(),
                 tray::TrayMsg::Folder => {
                     self.hidden = false;
-                    shown = true;
+                    shown = Some(repriseapp::MAIN);
                 }
                 tray::TrayMsg::Status => {
                     if let Some(p) = self.primary_path() {
                         self.open_status(&p);
-                        shown = true;
+                        shown = Some(STATUS);
                     }
                 }
                 tray::TrayMsg::Wireless => {
                     if let Some(p) = self.wifi_path() {
                         self.open_chooser(&p);
-                        shown = true;
+                        shown = Some(CHOOSER);
                     }
                 }
                 tray::TrayMsg::Toggle => {
@@ -566,7 +568,7 @@ impl NetApp {
                         Some((p, true)) => self.send(nm::Cmd::Disconnect(p)),
                         Some((p, false)) => {
                             self.open_hotspot(&p);
-                            shown = true;
+                            shown = Some(HOTSPOT);
                         }
                         None => {}
                     }
@@ -578,11 +580,7 @@ impl NetApp {
             }
         }
         Reply {
-            activate: self
-                .tray
-                .as_ref()
-                .filter(|_| shown)
-                .and_then(|t| t.take_handoff()),
+            activate: reprisetray::handoff_for(self.tray.as_ref(), raised, shown),
             ..Reply::redraw_all()
         }
     }
@@ -1491,6 +1489,51 @@ mod tests {
         };
         assert_eq!(app.wake().activate, None);
         tx.send(reprisetray::Msg::Clicked(tray::ID_FOLDER)).unwrap();
-        assert_eq!(app.wake().activate, Some(handoff));
+        assert_eq!(app.wake().activate, Some((repriseapp::MAIN, handoff)));
+    }
+
+    #[test]
+    fn a_raise_that_opens_status_hands_its_token_to_the_status_window() {
+        let handoff = reprisebus::instance::Handoff {
+            token: Some("t".into()),
+            by_key: false,
+        };
+        let (tx, rx) = std::sync::mpsc::channel();
+        let mut app = NetApp {
+            tray: Some(reprisetray::TrayHandle::holding(handoff.clone())),
+            msgs: Some(rx),
+            hidden: true,
+            snapshot: nm::Snapshot {
+                devices: vec![nm::Device {
+                    path: "/dev/1".into(),
+                    kind: nm::Kind::Wired,
+                    state: nm::State::Connected,
+                    managed: true,
+                    ..Default::default()
+                }],
+                ..Default::default()
+            },
+            ..NetApp::default()
+        };
+        tx.send(reprisetray::Msg::Clicked(tray::ID_STATUS)).unwrap();
+        assert_eq!(app.wake().activate, Some((STATUS, handoff)));
+    }
+
+    #[test]
+    fn a_raise_that_shows_nothing_drops_its_handoff() {
+        let tray = reprisetray::TrayHandle::holding(reprisebus::instance::Handoff {
+            token: Some("t".into()),
+            by_key: false,
+        });
+        let (tx, rx) = std::sync::mpsc::channel();
+        let mut app = NetApp {
+            tray: Some(tray),
+            msgs: Some(rx),
+            hidden: true,
+            ..NetApp::default()
+        };
+        tx.send(reprisetray::Msg::Clicked(tray::ID_REPAIR)).unwrap();
+        assert_eq!(app.wake().activate, None);
+        assert_eq!(app.tray.as_ref().unwrap().take_handoff(), None);
     }
 }

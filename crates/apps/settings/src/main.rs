@@ -1138,7 +1138,7 @@ impl SettingsApp {
         }
         while let Some(req) = self.requests.as_ref().and_then(instance::Requests::next) {
             changed |= self.request(&req);
-            activate = Some(req.handoff);
+            activate = Some((repriseapp::MAIN, req.handoff));
         }
         if let Some(rx) = &self.scan {
             let found = match take(rx) {

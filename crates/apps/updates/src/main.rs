@@ -212,12 +212,13 @@ impl UpdatesApp {
             .as_ref()
             .map(|rx| rx.try_iter().filter_map(tray::translate).collect())
             .unwrap_or_default();
-        let mut shown = false;
+        let raised = !msgs.is_empty();
+        let mut shown = None;
         for msg in msgs {
             match msg {
                 tray::TrayMsg::Open => {
                     self.hidden = false;
-                    shown = true;
+                    shown = Some(repriseapp::MAIN);
                 }
                 tray::TrayMsg::Check => self.check(),
             }
@@ -225,11 +226,7 @@ impl UpdatesApp {
         self.push_state();
         Reply {
             redraw: true,
-            activate: self
-                .tray
-                .as_ref()
-                .filter(|_| shown)
-                .and_then(|t| t.take_handoff()),
+            activate: reprisetray::handoff_for(self.tray.as_ref(), raised, shown),
             ..Reply::none()
         }
     }
@@ -591,6 +588,6 @@ mod tests {
         };
         assert_eq!(app.wake().activate, None);
         tx.send(reprisetray::Msg::Clicked(tray::ID_OPEN)).unwrap();
-        assert_eq!(app.wake().activate, Some(handoff));
+        assert_eq!(app.wake().activate, Some((repriseapp::MAIN, handoff)));
     }
 }

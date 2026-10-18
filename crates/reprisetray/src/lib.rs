@@ -253,6 +253,18 @@ impl TrayHandle {
     }
 }
 
+/// The handoff for the tray messages one wake handled (`raised`), paired with the window they
+/// showed. A message that shows none drops it: it came with that message, not a later one. A wake
+/// with no message leaves it for the message still on its way.
+pub fn handoff_for<W>(
+    tray: Option<&TrayHandle>,
+    raised: bool,
+    shown: Option<W>,
+) -> Option<(W, Handoff)> {
+    let handoff = tray.filter(|_| raised)?.take_handoff();
+    shown.zip(handoff)
+}
+
 /// `s` as a notification body reads it literally: the markup subset's three characters escaped.
 pub fn escape_markup(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
