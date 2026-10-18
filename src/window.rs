@@ -185,14 +185,22 @@ pub fn grown_back_inside(was: Rect, now: Rect, area: Rect) -> Option<(i32, i32)>
     (to != (now.x, now.y)).then_some(to)
 }
 
-/// Where a frame that was `was` and is `now` after a look or text size change goes: inside `area`
-/// as `keep_inside` puts it, when it was wholly on `screen` and now leaves the work area (its
-/// frame grew, or the taskbar did). `None` leaves it where it is.
-pub fn retheme_back_inside(was: Rect, now: Rect, screen: Rect, area: Rect) -> Option<(i32, i32)> {
+/// Where a frame that was `was` in work area `was_area` and is `now` in `area` after a look or
+/// text size change goes: inside `area` as `keep_inside` puts it, when it was wholly on `screen`,
+/// its frame or the taskbar grew, and it now leaves the work area. `None` leaves it where it is.
+pub fn retheme_back_inside(
+    was: Rect,
+    now: Rect,
+    screen: Rect,
+    was_area: Rect,
+    area: Rect,
+) -> Option<(i32, i32)> {
     let within = |r: Rect, b: Rect| {
         r.x >= b.x && r.y >= b.y && r.right() <= b.right() && r.bottom() <= b.bottom()
     };
-    if area.width <= 0 || !within(was, screen) || within(now, area) {
+    let grew = now.width > was.width || now.height > was.height;
+    let shrank = !within(was_area, area);
+    if area.width <= 0 || !(grew || shrank) || !within(was, screen) || within(now, area) {
         return None;
     }
     let to = keep_inside((now.x, now.y), (now.width, now.height), area);
@@ -2426,10 +2434,17 @@ impl State {
         }
     }
 
-    /// After a look or text size change re-lays out `w`'s frame (it was `was`), a normal window
-    /// that was on screen moves back inside the work area. Maximized and snapped ones refit on
-    /// their own.
-    pub(crate) fn keep_on_screen_inside(&mut self, w: WindowId, was: Rect) {
+    /// The screen and work area of the output under `r`'s centre; `None` off every output.
+    pub(crate) fn screen_and_area(&self, r: Rect) -> Option<(Rect, Rect)> {
+        let out = self.output_at(f64::from(r.x + r.width / 2), f64::from(r.y + r.height / 2));
+        let screen = self.layout_box(out.as_ref());
+        (screen.width > 0).then(|| (screen, self.usable_area(out.as_ref())))
+    }
+
+    /// After a look or text size change re-lays out `w`'s frame (it was `was` in work area
+    /// `was_area`), a normal window that was on screen moves back inside the work area if its
+    /// frame or the taskbar grew. Maximized and snapped ones refit on their own.
+    pub(crate) fn keep_on_screen_inside(&mut self, w: WindowId, was: Rect, was_area: Rect) {
         let Some(win) = self.win(w) else {
             return;
         };
@@ -2437,16 +2452,10 @@ impl State {
             return;
         }
         let now = win.frame_rect();
-        let out = self.output_at(
-            f64::from(was.x + was.width / 2),
-            f64::from(was.y + was.height / 2),
-        );
-        let screen = self.layout_box(out.as_ref());
-        if screen.width <= 0 {
+        let Some((screen, area)) = self.screen_and_area(was) else {
             return;
-        }
-        let area = self.usable_area(out.as_ref());
-        if let Some((x, y)) = retheme_back_inside(was, now, screen, area) {
+        };
+        if let Some((x, y)) = retheme_back_inside(was, now, screen, was_area, area) {
             self.move_to(w, x, y);
         }
     }
@@ -2984,32 +2993,38 @@ mod tests {
     }
 
     #[test]
-    fn a_window_on_screen_comes_back_inside_after_its_frame_or_the_taskbar_grows() {
+    fn a_window_on_screen_comes_back_inside_only_after_its_frame_or_the_taskbar_grows() {
         let screen = Rect::new(0, 0, 1920, 1080);
+        let old = Rect::new(0, 0, 1920, 1050);
         let area = Rect::new(0, 0, 1920, 1027);
         let was = Rect::new(312, 567, 375, 460);
         let grown = Rect::new(312, 567, 735, 920);
         assert_eq!(
-            retheme_back_inside(was, grown, screen, area),
+            retheme_back_inside(was, grown, screen, area, area),
             Some((312, 107)),
-            "the grown sheet ends on the grown taskbar's top"
+            "the grown sheet ends on the taskbar's top"
         );
         let low = Rect::new(156, 557, 688, 480);
         assert_eq!(
-            retheme_back_inside(low, low, screen, area),
+            retheme_back_inside(low, low, screen, old, area),
             Some((156, 547)),
             "a window the taller taskbar now covers moves up"
         );
-        assert_eq!(retheme_back_inside(was, was, screen, area), None);
+        assert_eq!(
+            retheme_back_inside(low, low, screen, area, area),
+            None,
+            "one left over an unchanged taskbar stays"
+        );
+        assert_eq!(retheme_back_inside(was, was, screen, area, area), None);
         let off = Rect::new(1500, 567, 620, 460);
         assert_eq!(
-            retheme_back_inside(off, Rect { height: 920, ..off }, screen, area),
+            retheme_back_inside(off, Rect { height: 920, ..off }, screen, area, area),
             None,
             "one left partly off screen stays"
         );
         let tall = Rect::new(0, 100, 600, 1200);
         assert_eq!(
-            retheme_back_inside(Rect::new(0, 100, 600, 500), tall, screen, area),
+            retheme_back_inside(Rect::new(0, 100, 600, 500), tall, screen, area, area),
             Some((0, 0)),
             "one taller than the work area keeps its caption on screen"
         );
