@@ -1,4 +1,4 @@
-//! Pluggable image decoders: turn file bytes into a [`Canvas`] fitted to a caller-supplied maximum size, plus the source's own dimensions. [`ImageDecoder`] is `Send + Sync` because Explorer's thumbnail worker calls `Decoders::decode_file` from a thread.
+//! Pluggable image decoders: turn file bytes into a [`Canvas`] fitted to a caller-supplied maximum size, plus the source's own dimensions. [`ImageDecoder`] is `Send + Sync` because Explorer's thumbnail worker decodes from a thread.
 //!
 //! [`Decoders::default_set`] registers [`ImageCrateDecoder`] (the `image`
 //! crate's formats, listed on it); a caller with a format `image` doesn't
@@ -70,8 +70,12 @@ pub const MAX_FILE_BYTES: u64 = 64 << 20;
 pub const MAX_DECODED_BYTES: u64 = 96 << 20;
 
 fn read_capped(path: &Path) -> std::io::Result<Vec<u8>> {
+    read_capped_from(std::fs::File::open(path)?)
+}
+
+/// The bytes of open file `f`, or `InvalidData` when it holds more than [`MAX_FILE_BYTES`].
+pub fn read_capped_from(f: std::fs::File) -> std::io::Result<Vec<u8>> {
     use std::io::{Error, ErrorKind, Read};
-    let f = std::fs::File::open(path)?;
     let len = f.metadata()?.len();
     if len > MAX_FILE_BYTES {
         return Err(Error::new(ErrorKind::InvalidData, "larger than an image"));
