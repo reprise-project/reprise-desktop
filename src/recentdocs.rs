@@ -45,6 +45,10 @@ pub struct RecentDocs {
     dirs: Vec<(PathBuf, &'static str)>,
     /// Wakes for `user-dirs.dirs` and the document folders (`recentwatch`).
     pub(crate) folder_watch: Option<crate::dirwatch::DirWatch>,
+    /// A job is watching document folders; another waits for it.
+    pub(crate) folder_syncing: bool,
+    /// The folders changed while a job watched them: follow them again when it answers.
+    pub(crate) folder_resync: bool,
 }
 
 impl Default for RecentDocs {
@@ -65,6 +69,8 @@ impl RecentDocs {
             recheck: false,
             dirs: Vec::new(),
             folder_watch: None,
+            folder_syncing: false,
+            folder_resync: false,
         }
     }
 

@@ -89,15 +89,36 @@ pub fn setup(state: &mut State) {
     follow_document_dirs(state);
 }
 
-/// Watches `user-dirs.dirs` and the document folders the last recent check read from it.
+/// Watches `user-dirs.dirs` and the document folders the last recent check read from it. The
+/// folders are looked up on a file job, one at a time, since one may sit on a dead mount.
 pub fn follow_document_dirs(state: &mut State) {
+    if state.recent.folder_syncing {
+        state.recent.folder_resync = true;
+        return;
+    }
     let want = document_wants(
         &reprisefs::places::user_dirs_file(),
         &state.recent.document_dir_paths(),
     );
-    if let Some(w) = state.recent.folder_watch.as_mut() {
-        w.sync(&want);
+    let Some(adds) = state.recent.folder_watch.as_mut().map(|w| w.plan(&want)) else {
+        return;
+    };
+    if adds.is_empty() {
+        return;
     }
+    state.recent.folder_syncing = true;
+    state.spawn_fs_job(move || {
+        let added = adds.run();
+        Box::new(move |s: &mut State| {
+            s.recent.folder_syncing = false;
+            if let Some(w) = s.recent.folder_watch.as_mut() {
+                w.adopt(added);
+            }
+            if std::mem::take(&mut s.recent.folder_resync) {
+                follow_document_dirs(s);
+            }
+        })
+    });
 }
 
 /// Runs `hit` on the loop whenever an event `want` asks for arrives.
