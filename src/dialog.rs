@@ -3052,6 +3052,10 @@ impl Dialog {
     ) -> Outcome {
         match layout.hit(self, x, y, text, px) {
             Some(DialogHit::Button(i)) => self.focus_button(i),
+            Some(DialogHit::Browse(_)) => match (self.picker_mut(), layout.page) {
+                (Some(p), Some(client)) => p.focus_at(client, (x, y), text, px),
+                _ => Outcome::Nothing,
+            },
             Some(DialogHit::Control(_)) => {
                 if let Some(f) = self.form_mut() {
                     return redraw_if(match &mut f.body {
@@ -3099,9 +3103,19 @@ impl Dialog {
         Outcome::Redraw
     }
 
-    /// A reader asked to see row `row` of the list at dialog point (`x`, `y`): a form page's list
-    /// box or tree scrolls it in.
-    pub fn reveal(&mut self, x: i32, y: i32, row: usize, text: &TextRenderer, px: u32) -> Outcome {
+    /// A reader asked to see row `row` of the list at dialog point (`x`, `y`): Browse's file list,
+    /// or a form page's list box or tree, scrolls it in.
+    pub fn reveal(
+        &mut self,
+        layout: &DialogLayout,
+        (x, y): (i32, i32),
+        row: usize,
+        text: &TextRenderer,
+        px: u32,
+    ) -> Outcome {
+        if let (Some(p), Some(client)) = (self.picker_mut(), layout.page) {
+            return p.reveal(client, (x, y), row, text, px);
+        }
         let Some(f) = self.form_mut() else {
             return Outcome::Nothing;
         };

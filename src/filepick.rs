@@ -22,6 +22,7 @@ use reprisekit::controls::shellview::{self, Entry, Mode};
 use reprisekit::frame::Edges;
 use reprisekit::icontheme::{IconCache, ListingIcons};
 use reprisekit::selection::Mods;
+use reprisekit::text::TextRenderer;
 use reprisekit::textedit::EditKey;
 use std::path::{Path, PathBuf};
 
@@ -608,6 +609,31 @@ impl FilePicker {
 
     pub fn click(&mut self, client: Rect, hit: Option<filedlg::Hit>) -> Outcome {
         let ev = self.dlg.click(client, hit, Mods::default());
+        self.event(ev)
+    }
+
+    /// A reader asked to see entry `row` of the list at client point `at`; nothing is picked.
+    pub fn reveal(
+        &mut self,
+        client: Rect,
+        at: (i32, i32),
+        row: usize,
+        text: &TextRenderer,
+        px: u32,
+    ) -> Outcome {
+        let ev = self.dlg.reveal(text, px, client, at, row);
+        self.event(ev)
+    }
+
+    /// A reader's Focus on the control at `at`: it takes the keyboard, nothing is pressed.
+    pub fn focus_at(
+        &mut self,
+        client: Rect,
+        at: (i32, i32),
+        text: &TextRenderer,
+        px: u32,
+    ) -> Outcome {
+        let ev = self.dlg.focus_at(text, px, client, at);
         self.event(ev)
     }
 
