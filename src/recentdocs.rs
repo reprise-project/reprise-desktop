@@ -8,8 +8,10 @@ use std::collections::{HashMap, HashSet};
 use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
+use std::time::Instant;
 
 use crate::compositor::State;
+use crate::fsjobs::Reads;
 use crate::menuview::{MenuKind, jump_relisted};
 use crate::raster::Rect;
 use crate::startmenu::{MenuItem, MenuLayout};
@@ -24,6 +26,9 @@ enum Found {
 
 type Stat = fn(&Path) -> io::Result<std::fs::Metadata>;
 
+/// The paths a check asked about: what a landing check keeps in `found`.
+type Asked = HashSet<PathBuf>;
+
 pub struct RecentDocs {
     /// None while a read job has it.
     files: Option<RecentFiles>,
@@ -36,10 +41,15 @@ pub struct RecentDocs {
     /// Filled by the check job one path at a time, so a path that hangs keeps only itself and
     /// the paths after it unchecked.
     found: Arc<Mutex<HashMap<PathBuf, Found>>>,
-    /// A check is running; another is not started until it answers.
-    checking: bool,
-    /// A check was asked for while one ran: check again when it answers.
+    /// The mount points a check is statting a path on. A later check skips their paths, so a
+    /// dead mount holds one check thread, and the checks stuck on it hold no others back.
+    statting: Arc<Mutex<HashSet<PathBuf>>>,
+    /// The checks in flight: one at a time until it is stuck, then a newer one may start.
+    checks: Reads,
+    /// A check was asked for while one ran: check again when one answers or may start.
     recheck: bool,
+    /// A timer waits to start the check `recheck` asks for.
+    retry_armed: bool,
     /// The document folders with their icon names as the last check read them from
     /// `user-dirs.dirs`, whether or not they exist.
     dirs: Vec<(PathBuf, &'static str)>,
@@ -65,8 +75,10 @@ impl RecentDocs {
             reread: false,
             check_after_read: false,
             found: Arc::default(),
-            checking: false,
+            statting: Arc::default(),
+            checks: Reads::default(),
             recheck: false,
+            retry_armed: false,
             dirs: Vec::new(),
             folder_watch: None,
             folder_syncing: false,
@@ -119,15 +131,25 @@ impl RecentDocs {
             .collect()
     }
 
-    /// The bookmarks a check asks about besides the document folders (none without `files`),
-    /// or None while a check is running.
-    fn paths_to_check(&mut self, files: bool) -> Option<Vec<PathBuf>> {
-        if self.checking {
-            return None;
-        }
-        self.checking = true;
+    /// A new check's id and the bookmarks it asks about besides the document folders (none
+    /// without `files`), or None while [`Reads::start`] refuses one.
+    fn start_check(&mut self, now: Instant, files: bool) -> Option<(u64, Vec<PathBuf>)> {
+        let id = self.checks.start(now, ())?;
         let marks = self.marks.iter().filter(|_| files);
-        Some(marks.map(|b| b.path.clone()).collect())
+        Some((id, marks.map(|b| b.path.clone()).collect()))
+    }
+
+    /// Ends check `id`; true when it is the newest to land, and then its folders and what it
+    /// asked about are kept, `found` dropping other paths.
+    fn land_check(&mut self, id: u64, dirs: Vec<(PathBuf, &'static str)>, asked: Asked) -> bool {
+        if !self.checks.land(id) {
+            return false;
+        }
+        self.dirs = dirs;
+        if let Ok(mut f) = self.found.lock() {
+            f.retain(|p, _| asked.contains(p));
+        }
+        true
     }
 
     /// Takes what a read found; true when the bookmarks changed.
@@ -139,36 +161,59 @@ impl RecentDocs {
     }
 }
 
-/// Reads the document folders, then [`check`]s them and `paths`; returns the folders read.
-/// Runs off the loop: `user-dirs.dirs` lives in the home folder, which may be a network mount.
-fn check_with_dirs(
-    paths: Vec<PathBuf>,
-    found: &Mutex<HashMap<PathBuf, Found>>,
+/// What a check job works with: the shared `found` and `statting`, the mount points, and how
+/// it stats.
+struct Probe<'a> {
+    found: &'a Mutex<HashMap<PathBuf, Found>>,
+    statting: &'a Mutex<HashSet<PathBuf>>,
+    mounts: &'a [PathBuf],
     stat: Stat,
-    read_dirs: impl FnOnce() -> Vec<(PathBuf, &'static str)>,
-) -> Vec<(PathBuf, &'static str)> {
-    let dirs = read_dirs();
-    let asked = dirs.iter().map(|(d, _)| d.clone()).chain(paths).collect();
-    check(asked, found, stat);
-    dirs
 }
 
-/// Stats `paths` in order into `found`, then drops what `found` holds of other paths.
-fn check(paths: Vec<PathBuf>, found: &Mutex<HashMap<PathBuf, Found>>, stat: Stat) {
-    for p in &paths {
-        let what = match stat(p) {
+/// Reads the document folders, then [`check`]s them and `paths`; returns the folders read and
+/// every path asked about. Runs off the loop: `user-dirs.dirs` lives in the home folder, which
+/// may be a network mount.
+fn check_with_dirs(
+    paths: Vec<PathBuf>,
+    probe: &Probe,
+    read_dirs: impl FnOnce() -> Vec<(PathBuf, &'static str)>,
+) -> (Vec<(PathBuf, &'static str)>, Asked) {
+    let dirs = read_dirs();
+    let asked: Vec<PathBuf> = dirs.iter().map(|(d, _)| d.clone()).chain(paths).collect();
+    check(&asked, probe);
+    (dirs, asked.into_iter().collect())
+}
+
+/// Stats `paths` in order into `found`, skipping a path on a mount another check is statting
+/// on: it keeps what was found before.
+fn check(paths: &[PathBuf], probe: &Probe) {
+    for p in paths {
+        let mount = mount_of(p, probe.mounts).to_path_buf();
+        let free = (probe.statting.lock()).map_or(true, |mut s| s.insert(mount.clone()));
+        if !free {
+            continue;
+        }
+        let what = match (probe.stat)(p) {
             Ok(m) if m.is_file() => Found::File,
             Ok(m) if m.is_dir() => Found::Dir,
             _ => Found::Neither,
         };
-        if let Ok(mut f) = found.lock() {
+        if let Ok(mut s) = probe.statting.lock() {
+            s.remove(&mount);
+        }
+        if let Ok(mut f) = probe.found.lock() {
             f.insert(p.clone(), what);
         }
     }
-    let asked: HashSet<&PathBuf> = paths.iter().collect();
-    if let Ok(mut f) = found.lock() {
-        f.retain(|p, _| asked.contains(p));
-    }
+}
+
+/// The mount point of `mounts` holding `path` by its spelling (a symlink is not followed, as
+/// that could wait on the mount), or `path` itself when none does.
+fn mount_of<'a>(path: &'a Path, mounts: &'a [PathBuf]) -> &'a Path {
+    (mounts.iter())
+        .filter(|m| path.starts_with(m))
+        .max_by_key(|m| m.as_os_str().len())
+        .map_or(path, PathBuf::as_path)
 }
 
 impl State {
@@ -206,23 +251,32 @@ impl State {
     /// Checks the bookmarks and document folders off the loop, or once more after the check
     /// under way.
     pub fn check_recent(&mut self) {
-        let files = self.config.recent_files;
-        let Some(paths) = self.recent.paths_to_check(files) else {
+        let (files, now) = (self.config.recent_files, Instant::now());
+        let Some((id, paths)) = self.recent.start_check(now, files) else {
             self.recent.recheck = true;
+            if let Some(wait) = self.recent.checks.retry_in(now) {
+                self.recheck_recent_in(wait);
+            }
             return;
         };
-        let found = self.recent.found.clone();
+        let (found, statting) = (self.recent.found.clone(), self.recent.statting.clone());
         self.spawn_fs_job(move || {
-            let dirs = check_with_dirs(
-                paths,
-                &found,
-                |p| std::fs::metadata(p),
-                reprisefs::places::document_dir_paths,
-            );
-            Box::new(|s: &mut State| {
-                s.recent.dirs = dirs;
-                crate::recentwatch::follow_document_dirs(s);
-                s.recent.checking = false;
+            let table = std::fs::read("/proc/self/mounts").unwrap_or_default();
+            let mounts: Vec<PathBuf> = (reprisefs::places::mount_table(&table).into_iter())
+                .map(|(m, _)| m)
+                .collect();
+            let probe = Probe {
+                found: &found,
+                statting: &statting,
+                mounts: &mounts,
+                stat: |p| std::fs::metadata(p),
+            };
+            let (dirs, asked) =
+                check_with_dirs(paths, &probe, reprisefs::places::document_dir_paths);
+            Box::new(move |s: &mut State| {
+                if s.recent.land_check(id, dirs, asked) {
+                    crate::recentwatch::follow_document_dirs(s);
+                }
                 if std::mem::take(&mut s.recent.recheck) {
                     s.check_recent();
                 }
@@ -230,6 +284,27 @@ impl State {
                 s.relist_start_places();
             })
         });
+    }
+
+    /// Starts the check `recheck` asks for after `wait`, when the running ones may be stuck.
+    fn recheck_recent_in(&mut self, wait: std::time::Duration) {
+        use smithay::reexports::calloop::timer::{TimeoutAction, Timer};
+        if std::mem::replace(&mut self.recent.retry_armed, true) {
+            return;
+        }
+        let added = self
+            .handle
+            .insert_source(Timer::from_duration(wait), |_, _, state| {
+                state.recent.retry_armed = false;
+                if std::mem::take(&mut state.recent.recheck) {
+                    state.check_recent();
+                }
+                TimeoutAction::Drop
+            });
+        if let Err(e) = added {
+            self.recent.retry_armed = false;
+            log::warn!("recent check retry timer: {e}");
+        }
     }
 
     /// Relists the open Documents menus and jump lists, the Start panel's included, from the last
@@ -327,10 +402,20 @@ mod tests {
         docs.take_read(files, marks)
     }
 
+    fn probe<'a>(docs: &'a RecentDocs, mounts: &'a [PathBuf], stat: Stat) -> Probe<'a> {
+        Probe {
+            found: &docs.found,
+            statting: &docs.statting,
+            mounts,
+            stat,
+        }
+    }
+
     fn checked(docs: &mut RecentDocs) {
-        let paths = docs.paths_to_check(true).unwrap();
-        check(paths, &docs.found, |p| std::fs::metadata(p));
-        docs.checking = false;
+        let (id, paths) = docs.start_check(Instant::now(), true).unwrap();
+        let (dirs, asked) =
+            check_with_dirs(paths, &probe(docs, &[], |p| std::fs::metadata(p)), Vec::new);
+        assert!(docs.land_check(id, dirs, asked));
     }
 
     fn open_then_stat(p: &Path) -> io::Result<std::fs::Metadata> {
@@ -364,10 +449,21 @@ mod tests {
         read(&mut docs);
         assert_eq!(docs.current(10).len(), 5, "nothing checked: all listed");
 
-        let paths = docs.paths_to_check(true).unwrap();
-        assert!(docs.paths_to_check(true).is_none(), "one check at a time");
-        let found = docs.found.clone();
-        let job = std::thread::spawn(move || check(paths, &found, open_then_stat));
+        let (_, paths) = docs.start_check(Instant::now(), true).unwrap();
+        assert!(
+            docs.start_check(Instant::now(), true).is_none(),
+            "one check at a time"
+        );
+        let (found, statting) = (docs.found.clone(), docs.statting.clone());
+        let job = std::thread::spawn(move || {
+            let probe = Probe {
+                found: &found,
+                statting: &statting,
+                mounts: &[],
+                stat: open_then_stat,
+            };
+            check(&paths, &probe)
+        });
         let end = Instant::now() + Duration::from_secs(5);
         while docs.found(&folder).is_none() {
             assert!(Instant::now() < end, "timed out waiting for the check");
@@ -389,6 +485,75 @@ mod tests {
             .unwrap();
         job.join().unwrap();
         assert_eq!(docs.current(10), [kept], "the pipe is not a file");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A check stuck on a dead mount lets a newer one start once it is stuck; the newer one
+    /// skips that mount's paths, drops a file deleted elsewhere, and the stuck one landing
+    /// later is stale.
+    #[test]
+    fn a_check_stuck_on_a_dead_mount_lets_a_newer_check_drop_a_deleted_file() {
+        use std::os::unix::fs::OpenOptionsExt;
+        let dir = std::env::temp_dir().join(format!("reprise-recentdead-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let mount = dir.join("mnt");
+        std::fs::create_dir_all(&mount).unwrap();
+        let (hang, remote, local) = (mount.join("hang"), mount.join("b.txt"), dir.join("a.txt"));
+        std::fs::write(&remote, "").unwrap();
+        std::fs::write(&local, "").unwrap();
+        let c = std::ffi::CString::new(hang.as_os_str().as_encoded_bytes()).unwrap();
+        // SAFETY: `c` is a valid NUL-terminated path for the call's duration.
+        assert_eq!(unsafe { libc::mkfifo(c.as_ptr(), 0o600) }, 0);
+        let xbel_path = dir.join("recently-used.xbel");
+        std::fs::write(&xbel_path, xbel(&[&*hang, &*remote, &*local])).unwrap();
+        let mut docs = RecentDocs::at(RecentFiles::at(Some(xbel_path)));
+        read(&mut docs);
+        let mounts = vec![PathBuf::from("/"), mount.clone()];
+
+        let t0 = Instant::now();
+        let (first, paths) = docs.start_check(t0, true).unwrap();
+        let (found, statting, table) = (docs.found.clone(), docs.statting.clone(), mounts.clone());
+        let job = std::thread::spawn(move || {
+            let probe = Probe {
+                found: &found,
+                statting: &statting,
+                mounts: &table,
+                stat: open_then_stat,
+            };
+            check_with_dirs(paths, &probe, Vec::new)
+        });
+        let end = Instant::now() + Duration::from_secs(5);
+        while !docs.statting.lock().unwrap().contains(&mount) {
+            assert!(Instant::now() < end, "timed out waiting for the check");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+
+        std::fs::remove_file(&local).unwrap();
+        let fresh = t0 + crate::fsjobs::STUCK / 2;
+        assert!(
+            docs.start_check(fresh, true).is_none(),
+            "the first is fresh"
+        );
+        let (second, paths) = docs.start_check(t0 + crate::fsjobs::STUCK, true).unwrap();
+        let (dirs, asked) =
+            check_with_dirs(paths, &probe(&docs, &mounts, open_then_stat), Vec::new);
+        assert!(docs.land_check(second, dirs, asked));
+        assert_eq!(
+            docs.current(10),
+            [hang.clone(), remote.clone()],
+            "a.txt dropped; the dead mount's paths stay unchecked"
+        );
+        assert!(!job.is_finished(), "the first check still hangs");
+
+        // A writer opening the pipe answers the blocked open.
+        let _w = std::fs::OpenOptions::new()
+            .write(true)
+            .custom_flags(libc::O_NONBLOCK)
+            .open(&hang)
+            .unwrap();
+        let (dirs, asked) = job.join().unwrap();
+        assert!(!docs.land_check(first, dirs, asked), "the first is stale");
+        assert_eq!(docs.current(10), [remote], "the pipe is not a file");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -417,11 +582,8 @@ mod tests {
                 .collect()
         };
         let checked = |docs: &RecentDocs| {
-            check(
-                dirs().into_iter().map(|(d, _)| d).collect(),
-                &docs.found,
-                |p| std::fs::metadata(p),
-            )
+            let paths: Vec<PathBuf> = dirs().into_iter().map(|(d, _)| d).collect();
+            check(&paths, &probe(docs, &[], |p| std::fs::metadata(p)))
         };
         checked(&docs);
         assert_eq!(places(&docs), ["{user}", "Documents", "Music"]);
@@ -453,10 +615,11 @@ mod tests {
             ]
         };
         let moved = || vec![(home.join("Papers"), "folder-documents")];
-        let paths = docs.paths_to_check(false).unwrap();
+        let (id, paths) = docs.start_check(Instant::now(), false).unwrap();
         assert_eq!(paths, Vec::<PathBuf>::new());
-        docs.dirs = check_with_dirs(paths, &docs.found, |p| std::fs::metadata(p), first);
-        docs.checking = false;
+        let (dirs, asked) =
+            check_with_dirs(paths, &probe(&docs, &[], |p| std::fs::metadata(p)), first);
+        assert!(docs.land_check(id, dirs, asked));
         assert_eq!(
             docs.document_dirs(),
             [(home.join("Documents"), "folder-documents")],
@@ -464,8 +627,10 @@ mod tests {
         );
         assert!(docs.is_document_dir(&home.join("Music")));
 
-        let paths = docs.paths_to_check(false).unwrap();
-        docs.dirs = check_with_dirs(paths, &docs.found, |p| std::fs::metadata(p), moved);
+        let (id, paths) = docs.start_check(Instant::now(), false).unwrap();
+        let (dirs, asked) =
+            check_with_dirs(paths, &probe(&docs, &[], |p| std::fs::metadata(p)), moved);
+        assert!(docs.land_check(id, dirs, asked));
         assert_eq!(
             docs.document_dirs(),
             [(home.join("Papers"), "folder-documents")]
