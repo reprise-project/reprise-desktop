@@ -176,6 +176,7 @@ impl State {
         if quick_wears(&self.quicklaunch, file) {
             self.redraw_taskbars();
         }
+        self.start_panel_icon_landed(file);
     }
 
     /// Icon file `file` landed: the windows whose app wears it redraw their caption and task

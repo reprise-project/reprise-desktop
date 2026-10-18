@@ -305,6 +305,28 @@ fn spot_app(
     }
 }
 
+/// An app's icon for a panel row, its file never read on the loop ([`crate::icon::unread`]).
+fn app_icon(icons: &mut crate::icontheme::IconCache, a: &AppEntry, px: i32) -> Option<Canvas> {
+    (a.icon.as_deref()).and_then(|n| unread(icons, n, px))
+}
+
+fn unread(icons: &mut crate::icontheme::IconCache, name: &str, px: i32) -> Option<Canvas> {
+    crate::icon::unread(icons, name, px).map(std::sync::Arc::unwrap_or_clone)
+}
+
+/// Gives each app row of `rows` (whose apps `map` holds) the icon `icon` finds for its app.
+fn refill_tree(
+    rows: &mut [TreeRow],
+    map: &[Option<usize>],
+    mut icon: impl FnMut(usize) -> Option<Canvas>,
+) {
+    for (row, app) in rows.iter_mut().zip(map) {
+        if let (TreeRow::App { icon: worn, .. }, Some(i)) = (row, app) {
+            *worn = icon(*i);
+        }
+    }
+}
+
 fn jump_rows(
     icons: &mut crate::icontheme::IconCache,
     files: &[PathBuf],
@@ -733,7 +755,7 @@ impl State {
                 let a = &app_index[i];
                 ProgramRow {
                     name: a.name.clone(),
-                    icon: a.icon.as_deref().and_then(|n| icons.get(n, px)),
+                    icon: app_icon(icons, a, px),
                     jump: !jumps.is_empty(),
                     new_pin: k < pinned.len() && v.new_pins.contains(&a.id),
                 }
@@ -804,17 +826,59 @@ impl State {
         let (mut rows, map) = tree_rows(app_index, &reprisefs::apps::group(app_index), &kept);
         let px = TREE_ICON * scale;
         let folder = icons.get("folder", px);
-        for (row, app) in rows.iter_mut().zip(&map) {
-            match (row, app) {
-                (TreeRow::App { icon, .. }, Some(i)) => {
-                    *icon = app_index[*i].icon.as_deref().and_then(|n| icons.get(n, px));
-                }
-                (TreeRow::Folder { icon, .. }, _) => *icon = folder.clone(),
-                _ => {}
+        for row in &mut rows {
+            if let TreeRow::Folder { icon, .. } = row {
+                *icon = folder.clone();
             }
         }
+        refill_tree(&mut rows, &map, |i| app_icon(icons, &app_index[i], px));
         replace_tree(&mut v.model, rows);
         v.tree_apps = map;
+    }
+
+    /// Icon file `file` landed: the program, tree and search rows wearing it take it.
+    pub(crate) fn start_panel_icon_landed(&mut self, file: &str) {
+        let Some(scale) = self
+            .start_panel
+            .as_ref()
+            .map(|v| self.draw_scale_at(Some(&v.output)).max(1))
+        else {
+            return;
+        };
+        let State {
+            start_panel,
+            app_index,
+            icons,
+            ..
+        } = self;
+        let Some(v) = start_panel.as_mut() else {
+            return;
+        };
+        let wears = |i: &usize| app_index.get(*i).and_then(|a| a.icon.as_deref()) == Some(file);
+        let programs = v.programs.iter().any(wears);
+        let tree = v.tree_apps.iter().flatten().any(wears);
+        let results = v.model.mode() == Mode::Search
+            && (v.result_apps.iter().any(wears)
+                || (v.result_settings.iter()).any(|s| s.icon(app_index).as_deref() == Some(file)));
+        if programs {
+            let px = PROGRAM_ICON * scale;
+            let rows = v.model.pinned.iter_mut().chain(&mut v.model.frequent);
+            for (row, &i) in rows.zip(&v.programs) {
+                row.icon = app_icon(icons, &app_index[i], px);
+            }
+        }
+        if tree {
+            let px = TREE_ICON * scale;
+            refill_tree(&mut v.model.tree, &v.tree_apps, |i| {
+                app_icon(icons, &app_index[i], px)
+            });
+        }
+        if results {
+            self.start_panel_show_results();
+        }
+        if programs || tree || results {
+            self.redraw_start_panel();
+        }
     }
 
     /// The app index was rescanned: list the programs again, so a row
@@ -977,12 +1041,12 @@ impl State {
         icon_rows.extend(
             v.result_apps
                 .iter()
-                .map(|&i| app_index[i].icon.as_deref().and_then(|n| icons.get(n, px))),
+                .map(|&i| app_icon(icons, &app_index[i], px)),
         );
         icon_rows.extend(
             v.result_settings
                 .iter()
-                .map(|s| s.icon(app_index).and_then(|n| icons.get(&n, px))),
+                .map(|s| s.icon(app_index).and_then(|n| unread(icons, &n, px))),
         );
         with_mime(desktop.as_ref(), |mime| {
             icon_rows.extend(v.search.files.iter().map(|p| {
@@ -1806,6 +1870,44 @@ mod tests {
             mime_types: Vec::new(),
             shown: true,
         }
+    }
+
+    #[test]
+    fn a_tree_refill_gives_only_app_rows_their_icons() {
+        let mut rows = vec![
+            TreeRow::Folder {
+                name: "Games".into(),
+                open: true,
+                icon: None,
+            },
+            TreeRow::App {
+                name: "Chess".into(),
+                icon: None,
+                depth: 1,
+            },
+        ];
+        refill_tree(&mut rows, &[None, Some(3)], |i| {
+            Some(Canvas::new(i as _, 1))
+        });
+        let widths: Vec<Option<usize>> = (rows.iter())
+            .map(|r| match r {
+                TreeRow::Folder { icon, .. } | TreeRow::App { icon, .. } => {
+                    icon.as_ref().map(|c| c.width as usize)
+                }
+            })
+            .collect();
+        assert_eq!(widths, [None, Some(3)]);
+    }
+
+    #[test]
+    fn a_program_icon_file_is_never_read_on_the_loop() {
+        use reprisekit::icontheme::{IconCache, IconTheme};
+        let file = "/srv/icons/chess.png";
+        let mut chess = app("Chess", "Game");
+        chess.icon = Some(file.into());
+        let mut icons = IconCache::new(IconTheme::load("none", &[]));
+        assert_eq!(app_icon(&mut icons, &chess, 16), None);
+        assert_eq!(icons.take_wanted(), [(file.to_string(), 16)]);
     }
 
     #[test]
