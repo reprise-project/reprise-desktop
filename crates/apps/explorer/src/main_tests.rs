@@ -2656,6 +2656,92 @@ fn a_program_that_answers_late_raises_its_box_on_a_later_wake() {
     }
 }
 
+/// Whether `reply` spawns something that opens `path`.
+fn opens(reply: &Reply, path: &std::path::Path) -> bool {
+    reply
+        .spawn
+        .iter()
+        .any(|argv| argv.iter().any(|a| std::path::Path::new(a) == path))
+}
+
+#[test]
+fn a_file_opened_late_still_opens_when_the_window_closes_first() {
+    let dir = tempfile::tempdir().expect("a temp dir");
+    let p = dir.path().join("a.txt");
+    std::fs::write(&p, "text").expect("write");
+    let mut ctx = test_ctx();
+    let mut ex = test_explorer(Place::Folder(dir.path().to_path_buf()), &mut ctx);
+    ex.sv.selection.set_only(Some(0));
+
+    let gate = Arc::new(std::sync::RwLock::new(()));
+    let closed = gate.write().expect("lock");
+    ex.held = Some(gate.clone());
+    assert_eq!(ex.open_selected(&mut ctx), Reply::none());
+    assert!(!ex.close().quit, "the window waits for the opening");
+
+    drop(closed);
+    ex.held = None;
+    let mut spawned = false;
+    for _ in 0..500 {
+        let r = ex.wake(&mut ctx);
+        spawned |= opens(&r, &p);
+        if r.quit {
+            assert!(spawned, "the file opens before the window quits");
+            return;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    panic!("the window quits once the opening answers");
+}
+
+#[test]
+fn a_file_opened_late_opens_when_another_answer_lands_in_the_same_wake() {
+    let dir = tempfile::tempdir().expect("a temp dir");
+    let p = dir.path().join("a.txt");
+    std::fs::write(&p, "text").expect("write");
+    let sub = dir.path().join("sub");
+    std::fs::create_dir(&sub).expect("mkdir");
+    let mut ctx = test_ctx();
+    let here = Place::Folder(dir.path().to_path_buf());
+    let mut ex = test_explorer(here.clone(), &mut ctx);
+    let at = ex
+        .items
+        .iter()
+        .position(|it| it.path == p)
+        .expect("a.txt listed");
+    ex.sv.selection.set_only(Some(at));
+
+    let gate = Arc::new(std::sync::RwLock::new(()));
+    let closed = gate.write().expect("lock");
+    ex.held = Some(gate.clone());
+    assert_eq!(ex.open_selected(&mut ctx), Reply::none());
+    ex.held = None;
+    let typed = gate.clone();
+    let reply = ex.navigate(
+        &sub.display().to_string(),
+        move |d| {
+            drop(typed.read());
+            d.is_dir()
+        },
+        &mut ctx,
+    );
+    assert_eq!(reply, Reply::none());
+
+    drop(closed);
+    // Both answers land before the wake that takes them.
+    std::thread::sleep(std::time::Duration::from_millis(500));
+    let mut spawned = false;
+    for _ in 0..500 {
+        spawned |= opens(&ex.wake(&mut ctx), &p);
+        if ex.place != here && spawned {
+            return;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    assert_eq!(ex.place, Place::Folder(sub));
+    assert!(spawned, "the file opens in its program");
+}
+
 /// A command-line folder whose check has not answered opens the window there at once; a late
 /// "missing" sends it Home with nothing to go back to.
 #[test]
