@@ -306,6 +306,7 @@ fn run(
         state.refresh_workspaces();
         sessionend::tick(state);
         state.ime_field_sync();
+        state.decode_wanted_icons();
         if let Err(e) = state.dh.flush_clients() {
             log::warn!("flush: {e}");
         }

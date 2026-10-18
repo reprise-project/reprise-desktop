@@ -592,24 +592,6 @@ fn list_anchor(layout: &reprisekit::taskbar::TaskbarLayout, i: usize) -> Rect {
 /// Menu rows waiting on an icon file: (row, file, px).
 type IconWaits = Vec<(usize, String, i32)>;
 
-/// What a row whose icon file is not decoded yet shows meanwhile.
-const ICON_STAND_IN: &str = "application-x-executable";
-
-/// Icon `name` at `px` for a menu row. An icon file is never read here, since it can sit on a
-/// mount that never answers: one not decoded at `px` yet is Err, left to a job.
-fn row_icon(
-    cache: &mut reprisekit::icontheme::IconCache,
-    name: &str,
-    px: i32,
-) -> Result<Option<Canvas>, ()> {
-    if !name.starts_with('/') {
-        return Ok(cache.get(name, px));
-    }
-    (cache.file_put(name, px))
-        .map(|put| put.map(Arc::unwrap_or_clone))
-        .ok_or(())
-}
-
 /// Puts `art`, icon file `file` decoded at `px`, on the rows of `items` that `waits` holds for
 /// it. True when a row took it.
 fn land_icon(
@@ -633,8 +615,8 @@ fn land_icon(
 }
 
 impl State {
-    /// Icon `name` at `px` for menu row `row`: an icon file not decoded yet shows a stand-in and
-    /// goes on `waits` for [`State::decode_menu_icons`].
+    /// Icon `name` at `px` for menu row `row` ([`crate::icon::unread`]): an icon file not decoded
+    /// yet shows the stand-in and goes on `waits` for [`State::menu_icon_landed`].
     fn menu_icon(
         &mut self,
         row: usize,
@@ -642,36 +624,24 @@ impl State {
         px: i32,
         waits: &mut IconWaits,
     ) -> Option<Canvas> {
-        row_icon(&mut self.icons, name, px).unwrap_or_else(|()| {
+        let icon = self.icons.get_unread(name, px).unwrap_or_else(|| {
             waits.push((row, name.to_string(), px));
-            self.icons.get(ICON_STAND_IN, px)
-        })
+            self.icons.get_shared(crate::icon::STAND_IN, px)
+        });
+        icon.map(Arc::unwrap_or_clone)
     }
 
-    /// Hands menu `depth` the rows waiting on icon files and decodes each file on a job of its
-    /// own, so a file on a dead mount holds one job and the others still land.
-    fn decode_menu_icons(&mut self, depth: usize, waits: IconWaits) {
-        for (_, file, px) in &waits {
-            if !self.menu_icon_decodes.insert((file.clone(), *px)) {
-                continue;
-            }
-            let (file, px) = (file.clone(), *px);
-            self.spawn_fs_job(move || {
-                let art = reprisekit::icontheme::decode_file(std::path::Path::new(&file), px, 1);
-                Box::new(move |state: &mut State| state.menu_icon_decoded(file, px, art))
-            });
-        }
+    fn set_icon_waits(&mut self, depth: usize, waits: IconWaits) {
         if let Some(m) = self.menus.get_mut(depth) {
             m.icon_waits = waits;
         }
     }
 
-    fn menu_icon_decoded(&mut self, file: String, px: i32, art: Option<Canvas>) {
-        self.menu_icon_decodes.remove(&(file.clone(), px));
-        self.icons.put_file(&file, px, art.clone());
+    /// Icon file `file` decoded at `px`: the menu rows waiting on it take it.
+    pub(crate) fn menu_icon_landed(&mut self, file: &str, px: i32, art: &Option<Canvas>) {
         for depth in 0..self.menus.len() {
             let m = &mut self.menus[depth];
-            if land_icon(&mut m.items, &mut m.icon_waits, &file, px, &art) {
+            if land_icon(&mut m.items, &mut m.icon_waits, file, px, art) {
                 self.redraw_menu(depth);
             }
         }
@@ -880,7 +850,7 @@ impl State {
         if let Some(m) = self.menus.first_mut() {
             m.shadow_floor = start_menu_shadow_floor(dock, &p);
         }
-        self.decode_menu_icons(0, waits);
+        self.set_icon_waits(0, waits);
         if let Some(b) = self.bar_mut(bar) {
             b.start_pressed = true;
         }
@@ -1297,7 +1267,7 @@ impl State {
             m.parent_row = Some(row);
             m.shadow_floor = floor;
         }
-        self.decode_menu_icons(depth + 1, waits);
+        self.set_icon_waits(depth + 1, waits);
         self.redraw_menu(depth + 1);
     }
 
@@ -2399,11 +2369,8 @@ mod tests {
     use crate::keys::{KEY_KP_Enter, KEY_Return};
 
     #[test]
-    fn a_row_icon_file_is_left_to_a_job_and_lands_on_its_rows_only() {
-        use reprisekit::icontheme::{IconCache, IconTheme};
-        let mut cache = IconCache::new(IconTheme::load("test", &[]));
+    fn an_icon_file_lands_on_its_waiting_rows_only() {
         let (file, other) = ("/srv/icons/app.png", "/srv/icons/other.png");
-        assert_eq!(row_icon(&mut cache, file, 16), Err(()));
         let mut items = vec![
             MenuItem::entry("Aaa"),
             MenuItem::entry("Bbb"),
@@ -2425,17 +2392,6 @@ mod tests {
             [Some(16), None, None]
         );
         assert_eq!(waits, [(2, other.to_string(), 16)]);
-        cache.put_file(file, 16, art);
-        assert_eq!(
-            row_icon(&mut cache, file, 16).map(|c| c.map(|c| c.width)),
-            Ok(Some(16))
-        );
-        cache.put_file(file, 32, None);
-        assert_eq!(
-            row_icon(&mut cache, file, 32),
-            Ok(None),
-            "a file that failed to decode is not tried again"
-        );
     }
 
     #[test]
