@@ -66,24 +66,33 @@ impl Tree {
     }
 
     /// Where the focused node lies in the space the root is placed in:
-    /// its bounds through every transform from the root down to it. None
-    /// when it has no bounds or hangs nowhere under the root. The
-    /// magnifier pans to it.
+    /// its bounds through every transform from the root down to it, or
+    /// its list's when it is a row scrolled out of the list. None when it
+    /// has no bounds or hangs nowhere under the root. The magnifier pans
+    /// to it.
     pub fn focus_bounds(&self) -> Option<accesskit::Rect> {
         fn down(
             t: &Tree,
             id: NodeId,
             want: NodeId,
             at: accesskit::Affine,
+            list: Option<accesskit::Rect>,
         ) -> Option<accesskit::Rect> {
             let n = t.get(id)?;
             let at = n.transform().map_or(at, |a| at * *a);
+            let b = n.bounds().map(|b| at.transform_rect_bbox(b));
             if id == want {
-                return n.bounds().map(|b| at.transform_rect_bbox(b));
+                return match (b, list) {
+                    (Some(b), Some(f)) if out_of(b, f) => Some(f),
+                    _ => b,
+                };
             }
-            n.children().iter().find_map(|&c| down(t, c, want, at))
+            let list = if is_list(n.role()) { b } else { list };
+            n.children()
+                .iter()
+                .find_map(|&c| down(t, c, want, at, list))
         }
-        down(self, ROOT, self.focus, accesskit::Affine::IDENTITY)
+        down(self, ROOT, self.focus, accesskit::Affine::IDENTITY, None)
     }
 
     pub fn get(&self, id: NodeId) -> Option<&Node> {
@@ -621,6 +630,38 @@ mod tests {
         assert_eq!((b.x0, b.y0, b.x1, b.y1), (115.0, 66.0, 195.0, 86.0));
         t.set_focus(NodeId(999));
         assert_eq!(t.focus_bounds(), None, "a focus not in the tree");
+    }
+
+    #[test]
+    fn a_focused_row_scrolled_out_of_its_list_shows_as_the_list() {
+        let mut root = node(Role::Window, Rect::new(0, 0, 400, 300));
+        root.set_transform(accesskit::Affine::translate((100.0, 50.0)));
+        let mut t = Tree::new(root);
+        let list = t.push(
+            ROOT,
+            "list",
+            node(Role::ListBox, Rect::new(10, 10, 100, 40)),
+        );
+        let shown = t.push(
+            list,
+            0,
+            node(Role::ListBoxOption, Rect::new(10, 10, 100, 10)),
+        );
+        let gone = t.push(
+            list,
+            1,
+            node(Role::ListBoxOption, Rect::new(10, 50, 100, 10)),
+        );
+        t.set_focus(shown);
+        let b = t.focus_bounds().unwrap();
+        assert_eq!((b.x0, b.y0, b.x1, b.y1), (110.0, 60.0, 210.0, 70.0));
+        t.set_focus(gone);
+        let b = t.focus_bounds().unwrap();
+        assert_eq!(
+            (b.x0, b.y0, b.x1, b.y1),
+            (110.0, 60.0, 210.0, 100.0),
+            "the list"
+        );
     }
 
     #[test]
