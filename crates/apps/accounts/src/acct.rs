@@ -238,13 +238,30 @@ impl From<String> for Failure {
 }
 
 pub fn apply(ops: &[Op]) -> Result<(), Failure> {
-    zbus::block_on(async {
-        let conn = connect(None).await.map_err(|e| e.to_string())?;
-        for op in ops {
-            run(&conn, op).await?;
-        }
-        Ok(())
+    removing_pictures(ops, |ops| {
+        zbus::block_on(async {
+            let conn = connect(None).await.map_err(|e| e.to_string())?;
+            for op in ops {
+                run(&conn, op).await?;
+            }
+            Ok(())
+        })
     })
+}
+
+/// Runs `call`, then deletes the saved pictures its `Op::Picture`s name: the daemon has copied
+/// them by the time `SetIconFile` returns, and a retried Apply saves a new one.
+fn removing_pictures(
+    ops: &[Op],
+    call: impl FnOnce(&[Op]) -> Result<(), Failure>,
+) -> Result<(), Failure> {
+    let done = call(ops);
+    for op in ops {
+        if let Op::Picture { file, .. } = op {
+            let _ = std::fs::remove_file(file);
+        }
+    }
+    done
 }
 
 async fn run(conn: &zbus::Connection, op: &Op) -> Result<(), Failure> {
@@ -425,6 +442,26 @@ fn update_faces_in(home: &Path, file: &Path) {
 mod tests {
     use super::*;
     use zbus::zvariant::Value;
+
+    #[test]
+    fn an_applied_picture_is_deleted_once_the_call_returns() {
+        let file = std::env::temp_dir().join(format!(
+            "reprise-accounts-applied-{}.png",
+            std::process::id()
+        ));
+        std::fs::write(&file, "png").expect("write");
+        let ops = [Op::Picture {
+            path: "/org/freedesktop/Accounts/User1000".into(),
+            file: file.clone(),
+            you: false,
+        }];
+        let done = removing_pictures(&ops, |_| {
+            assert!(file.exists(), "the file is there for the call");
+            Err(Failure::Dismissed)
+        });
+        assert_eq!(done, Err(Failure::Dismissed));
+        assert!(!file.exists(), "the saved picture is gone after the call");
+    }
 
     #[test]
     fn a_dismissed_prompt_is_silent_and_a_refusal_is_told() {
