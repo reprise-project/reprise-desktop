@@ -301,6 +301,7 @@ impl PowerApp {
             .as_ref()
             .map(|rx| rx.try_iter().filter_map(tray::translate).collect())
             .unwrap_or_default();
+        let mut shown = false;
         for msg in msgs {
             match msg {
                 tray::TrayMsg::Exit => {
@@ -325,6 +326,7 @@ impl PowerApp {
                         });
                     }
                     self.hidden = false;
+                    shown = true;
                 }
             }
         }
@@ -335,7 +337,11 @@ impl PowerApp {
         Reply {
             redraw: true,
             spawn,
-            activate: self.tray.as_ref().and_then(|t| t.take_handoff()),
+            activate: self
+                .tray
+                .as_ref()
+                .filter(|_| shown)
+                .and_then(|t| t.take_handoff()),
             ..Reply::none()
         }
     }
@@ -523,5 +529,25 @@ mod tests {
         std::fs::remove_file(&path).unwrap();
         assert_eq!(app.settings.battery_low, 50);
         assert_ne!(app.alarms, alarms::Alarms::default(), "the low alarm fired");
+    }
+
+    /// A wake that shows no window leaves a second instance's handoff for the wake whose raise does.
+    #[test]
+    fn the_handoff_waits_for_the_wake_that_shows_the_window() {
+        let handoff = reprisebus::instance::Handoff {
+            token: Some("t".into()),
+            by_key: true,
+        };
+        let (tx, rx) = std::sync::mpsc::channel();
+        let mut app = PowerApp {
+            tray: Some(reprisetray::TrayHandle::holding(handoff.clone())),
+            msgs: Some(rx),
+            hidden: true,
+            ..PowerApp::default()
+        };
+        assert_eq!(app.wake().activate, None);
+        tx.send(reprisetray::Msg::Clicked(tray::ID_PROPERTIES))
+            .unwrap();
+        assert_eq!(app.wake().activate, Some(handoff));
     }
 }

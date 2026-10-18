@@ -547,7 +547,11 @@ impl Sound {
             self.hidden = false;
         }
         Reply {
-            activate: self.tray.as_ref().and_then(|t| t.take_handoff()),
+            activate: self
+                .tray
+                .as_ref()
+                .filter(|_| show)
+                .and_then(|t| t.take_handoff()),
             spawn,
             ..Reply::redraw_all()
         }
@@ -940,5 +944,43 @@ mod tests {
         assert_eq!(anchor((1900, 30), (0, 0)), (1900, 30));
         // An output under another: its own top is the origin.
         assert_eq!(anchor((100, 1080 + 30), (0, 1080)), (100, 30));
+    }
+
+    /// A wake that shows no window leaves a second instance's handoff for the wake whose raise does.
+    #[test]
+    fn the_handoff_waits_for_the_wake_that_shows_the_window() {
+        let handoff = reprisebus::instance::Handoff {
+            token: Some("t".into()),
+            by_key: true,
+        };
+        let (tx, rx) = std::sync::mpsc::channel();
+        let mut app = Sound {
+            tray: Some(reprisetray::TrayHandle::holding(handoff.clone())),
+            msgs: Some(rx),
+            hidden: true,
+            ..Sound::default()
+        };
+        let mut ctx = Ctx {
+            theme: reprisekit::theme::Theme::default(),
+            text: reprisekit::text::TextRenderer::load(&reprisekit::theme::FontConfig::default())
+                .into(),
+            icons: reprisekit::icontheme::IconCache::new(reprisekit::icontheme::IconTheme::load(
+                "test",
+                &[],
+            )),
+            caret_on: true,
+            size: (0, 0),
+            maximized: false,
+            origin: (0, 0),
+            wake: repriseapp::Waker::noop(),
+            heads: Default::default(),
+            want_tick: Default::default(),
+            at_pick: false,
+            text_size: 100,
+        };
+        assert_eq!(app.wake(&mut ctx).activate, None);
+        tx.send(reprisetray::Msg::Clicked(tray::ID_PROPERTIES))
+            .unwrap();
+        assert_eq!(app.wake(&mut ctx).activate, Some(handoff));
     }
 }

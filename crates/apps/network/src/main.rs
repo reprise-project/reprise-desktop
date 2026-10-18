@@ -525,21 +525,27 @@ impl NetApp {
             }
             None => {}
         }
+        let mut shown = false;
         while let Some(raw) = self.msgs.as_ref().and_then(|rx| rx.try_recv().ok()) {
             let Some(msg) = tray::translate(raw) else {
                 continue;
             };
             match msg {
                 tray::TrayMsg::Exit => return self.quit(),
-                tray::TrayMsg::Folder => self.hidden = false,
+                tray::TrayMsg::Folder => {
+                    self.hidden = false;
+                    shown = true;
+                }
                 tray::TrayMsg::Status => {
                     if let Some(p) = self.primary_path() {
                         self.open_status(&p);
+                        shown = true;
                     }
                 }
                 tray::TrayMsg::Wireless => {
                     if let Some(p) = self.wifi_path() {
                         self.open_chooser(&p);
+                        shown = true;
                     }
                 }
                 tray::TrayMsg::Toggle => {
@@ -558,7 +564,10 @@ impl NetApp {
                         .map(|d| (d.path.clone(), d.hotspot.is_some()));
                     match radio {
                         Some((p, true)) => self.send(nm::Cmd::Disconnect(p)),
-                        Some((p, false)) => self.open_hotspot(&p),
+                        Some((p, false)) => {
+                            self.open_hotspot(&p);
+                            shown = true;
+                        }
                         None => {}
                     }
                 }
@@ -569,7 +578,11 @@ impl NetApp {
             }
         }
         Reply {
-            activate: self.tray.as_ref().and_then(|t| t.take_handoff()),
+            activate: self
+                .tray
+                .as_ref()
+                .filter(|_| shown)
+                .and_then(|t| t.take_handoff()),
             ..Reply::redraw_all()
         }
     }
@@ -1460,5 +1473,24 @@ mod tests {
             app.initial_size(),
             (2 * folder::CLIENT.0, 2 * folder::CLIENT.1)
         );
+    }
+
+    /// A wake that shows no window leaves a second instance's handoff for the wake whose raise does.
+    #[test]
+    fn the_handoff_waits_for_the_wake_that_shows_the_window() {
+        let handoff = reprisebus::instance::Handoff {
+            token: Some("t".into()),
+            by_key: true,
+        };
+        let (tx, rx) = std::sync::mpsc::channel();
+        let mut app = NetApp {
+            tray: Some(reprisetray::TrayHandle::holding(handoff.clone())),
+            msgs: Some(rx),
+            hidden: true,
+            ..NetApp::default()
+        };
+        assert_eq!(app.wake().activate, None);
+        tx.send(reprisetray::Msg::Clicked(tray::ID_FOLDER)).unwrap();
+        assert_eq!(app.wake().activate, Some(handoff));
     }
 }

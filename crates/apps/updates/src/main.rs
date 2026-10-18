@@ -212,16 +212,24 @@ impl UpdatesApp {
             .as_ref()
             .map(|rx| rx.try_iter().filter_map(tray::translate).collect())
             .unwrap_or_default();
+        let mut shown = false;
         for msg in msgs {
             match msg {
-                tray::TrayMsg::Open => self.hidden = false,
+                tray::TrayMsg::Open => {
+                    self.hidden = false;
+                    shown = true;
+                }
                 tray::TrayMsg::Check => self.check(),
             }
         }
         self.push_state();
         Reply {
             redraw: true,
-            activate: self.tray.as_ref().and_then(|t| t.take_handoff()),
+            activate: self
+                .tray
+                .as_ref()
+                .filter(|_| shown)
+                .and_then(|t| t.take_handoff()),
             ..Reply::none()
         }
     }
@@ -561,5 +569,23 @@ mod tests {
             Phase::Failed("Reprise could not check for updates. No network.".into())
         );
         assert_eq!(app.updates.len(), 1);
+    }
+
+    /// A wake that shows no window leaves a second instance's handoff for the wake whose raise does.
+    #[test]
+    fn the_handoff_waits_for_the_wake_that_shows_the_window() {
+        let handoff = reprisebus::instance::Handoff {
+            token: Some("t".into()),
+            by_key: true,
+        };
+        let (tx, rx) = std::sync::mpsc::channel();
+        let mut app = UpdatesApp {
+            tray: Some(reprisetray::TrayHandle::holding(handoff.clone())),
+            msgs: Some(rx),
+            ..UpdatesApp::new(true)
+        };
+        assert_eq!(app.wake().activate, None);
+        tx.send(reprisetray::Msg::Clicked(tray::ID_OPEN)).unwrap();
+        assert_eq!(app.wake().activate, Some(handoff));
     }
 }

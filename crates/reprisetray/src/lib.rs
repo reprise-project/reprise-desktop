@@ -241,6 +241,16 @@ impl TrayHandle {
     pub fn take_activation_token(&self) -> Option<String> {
         self.take_handoff().and_then(|h| h.token)
     }
+
+    /// A handle with no tray behind it, holding `handoff` as if a second instance had sent it: for
+    /// the applets' tests.
+    #[doc(hidden)]
+    pub fn holding(handoff: Handoff) -> TrayHandle {
+        TrayHandle {
+            commands: async_channel::unbounded().0,
+            token: Arc::new(Mutex::new(Some(handoff))),
+        }
+    }
 }
 
 /// `s` as a notification body reads it literally: the markup subset's three characters escaped.
