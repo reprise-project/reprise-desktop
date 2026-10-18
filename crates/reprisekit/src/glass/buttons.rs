@@ -417,8 +417,8 @@ struct Laid {
     dividers: Vec<i32>,
     /// Each cell's width over its design width, for the lit spot's reach across.
     spread: Vec<f64>,
-    /// How many times its design size each glyph is drawn ([`glyph::multiple`]).
-    glyph: i32,
+    /// How many times its design size each glyph is drawn: the body's growth ([`glyph::bold`]).
+    glyph: f64,
 }
 
 impl Laid {
@@ -452,7 +452,7 @@ impl Laid {
             cells,
             dividers,
             spread,
-            glyph: glyph::multiple(BODY + grow, BODY),
+            glyph: f64::from(BODY + grow) / f64::from(BODY),
         }
     }
 
@@ -479,15 +479,11 @@ impl Laid {
         f64::from(row * BAND / (BAND + self.grow)) + y - f64::from(row)
     }
 
-    /// The top row of a glyph whose design top is `row` and `h` rows tall: its middle kept where
+    /// The top row of a glyph `h` rows tall whose design middle is `mid`: its middle kept where
     /// the stretched body puts it.
-    fn glyph_row(&self, row: i32, h: i32) -> i32 {
-        if self.grow == 0 {
-            return row;
-        }
-        let mid = f64::from(row) + f64::from(h) / 2.0;
+    fn glyph_row(&self, mid: f64, h: i32) -> i32 {
         let grown = 1.0 + (mid - 1.0) * f64::from(BODY + self.grow) / f64::from(BODY);
-        (grown - f64::from(h * self.glyph) / 2.0).round() as i32
+        (grown - f64::from(h) / 2.0).round() as i32
     }
 }
 
@@ -523,25 +519,22 @@ impl Shape {
         }
         let mut glyphs = vec![[0.0_f64; 3]; (w * h) as usize];
         let fill = GLYPH_FILL.map(|(t, v)| (t, level(v)));
-        let m = laid.glyph;
+        let column = glyph::bold_column(laid.glyph);
         for &(x0, x1, g) in &laid.cells {
-            let (row, mark) = glyph::bold(g);
-            let row = laid.glyph_row(row, mark.h);
-            let (gx, rows) = (
-                (x0 + x1) / 2 + 1 - 6 * m,
-                f64::from((mark.h * m).max(2) - 1),
-            );
-            let (gw, gh) = (mark.w * m, mark.h * m);
+            let (mid, mark) = glyph::bold(g, laid.glyph);
+            let row = laid.glyph_row(mid, mark.h);
+            let (gx, rows) = ((x0 + x1) / 2 + 1 - column, f64::from(mark.h.max(2) - 1));
+            let (gw, gh) = (mark.w, mark.h);
             for y in ((row - 1) * n).max(0)..((row + gh + 1) * n).min(h) {
                 for x in ((gx - 1) * n).max(0)..((gx + gw + 1) * n).min(w) {
                     let (dx, dy) = (x - gx * n, y - row * n);
-                    let grown = mark.cover(dx, dy, n * m, 1.0 / f64::from(m));
+                    let grown = mark.cover(dx, dy, n, 1.0);
                     if grown == 0.0 {
                         continue;
                     }
                     let t = ((centre(y, n) - f64::from(row)) / rows).clamp(0.0, 1.0);
                     let px = &mut glyphs[(y * w + x) as usize];
-                    px[0] = px[0].max(mark.cover(dx, dy, n * m, 0.0));
+                    px[0] = px[0].max(mark.cover(dx, dy, n, 0.0));
                     px[1] = px[1].max(grown);
                     px[2] = Stops(&fill).at(t).0;
                 }
@@ -1990,19 +1983,14 @@ mod tests {
     }
 
     #[test]
-    fn a_grown_glyph_is_a_whole_multiple_of_its_design() {
+    fn a_grown_glyph_grows_with_its_cell() {
         let s = Settings::default();
         let base = caption_group(&s, 1);
         let mins = |img: &PartImage, laid: &Laid| glyph_box(img, laid.cells[0].0, laid.cells[0].1);
-        let at = mins(&base, &Laid::of(&GROUP, 0));
-        for (grow, k) in [(7, 1), (13, 2)] {
+        assert_eq!(mins(&base, &Laid::of(&GROUP, 0)), (10, 3));
+        for (grow, bar) in [(7, (14, 4)), (13, (18, 5))] {
             let img = frames(&s, &GROUP, &GROUP_FRAMES, false, (grow, 1));
-            assert_eq!(Laid::of(&GROUP, grow).glyph, k);
-            assert_eq!(
-                mins(&img, &Laid::of(&GROUP, grow)),
-                (at.0 * k, at.1 * k),
-                "+{grow}"
-            );
+            assert_eq!(mins(&img, &Laid::of(&GROUP, grow)), bar, "+{grow}");
         }
     }
 

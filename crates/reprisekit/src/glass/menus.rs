@@ -1,6 +1,8 @@
 //! Glass's popup menus and menu bars, drawn from shapes: an opaque menu with an icon gutter, lit
 //! rows and check boxes, and a bar with hot and open title frames.
 
+use std::borrow::Cow;
+
 use super::Mode;
 use super::dark::remap_color;
 use super::glyph::{Mark, Piece};
@@ -276,7 +278,10 @@ const TICK_INK: u32 = 0x0D0C9D;
 const TICK: Mark = Mark {
     w: 9,
     h: 11,
-    pieces: &[Piece::Line(&[(0.7, 5.4), (3.3, 8.6), (8.3, 0.6)], 1.9)],
+    pieces: Cow::Borrowed(&[Piece::Line(
+        Cow::Borrowed(&[(0.7, 5.4), (3.3, 8.6), (8.3, 0.6)]),
+        1.9,
+    )]),
 };
 const BULLET: i32 = 8;
 const BULLET_BODY: [(f64, u32); 3] = [(0.0, 0xC2C1E8), (0.55, 0x6D6CB1), (1.0, 0x1D1A6E)];

@@ -135,17 +135,16 @@ fn button(c: &mut Canvas, r: Rect, g: Glyph, lit: Lit, active: bool, ink: &Ink, 
             c.put_raw(x, y, fill);
         }
     }
-    let m = glyph::multiple(r.height / n, FILL_H);
+    let mark = glyph::lines(g, f64::from(r.height) / f64::from(n * FILL_H));
     let (gx, gy) = (
-        r.x + n * ((r.width / n - 10 * m) / 2),
-        r.y + n * ((r.height / n - 10 * m) / 2),
+        r.x + n * ((r.width / n - mark.w) / 2),
+        r.y + n * ((r.height / n - mark.h) / 2),
     );
-    let mark = glyph::lines(g);
     // Pushed x-major, so `dots` is sorted for `edge_alpha`'s binary search.
     let mut dots = Vec::new();
-    for dx in 0..mark.w * m * n {
-        for dy in 0..mark.h * m * n {
-            let k = mark.cover(dx, dy, n * m, 0.0);
+    for dx in 0..mark.w * n {
+        for dy in 0..mark.h * n {
+            let k = mark.cover(dx, dy, n, 0.0);
             if k > 0.0 {
                 dots.push((gx + dx, gy + dy, k));
             }
