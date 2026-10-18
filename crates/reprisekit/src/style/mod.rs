@@ -76,6 +76,8 @@ pub enum Part {
     ComboList,
     TabItem,
     TabPane,
+    /// A document tab over the frame's glass: Normal, Hot and Checked (open).
+    GlassTab,
     ProgressBar,
     ProgressChunk,
     TrackbarTrack,

@@ -849,6 +849,7 @@ impl Default for ClipboardConfig {
         ClipboardConfig {
             history: true,
             terminal_apps: [
+                "reprise.terminal",
                 "foot",
                 "kitty",
                 "Alacritty",
@@ -4375,7 +4376,7 @@ mod tests {
     #[test]
     fn defaults() {
         let c = Config::default();
-        assert_eq!(c.terminal, "alacritty");
+        assert_eq!(c.terminal, "reprise-terminal");
         assert!(c.retired.is_empty());
         assert_eq!(c.keybinds.len(), 40);
         assert!(matches!(c.keybinds[0].action, Action::Terminal));
@@ -4788,6 +4789,11 @@ mod tests {
         let cfg = Config::default();
         assert!(cfg.clipboard.history);
         assert!(cfg.clipboard.terminal_apps.contains(&"foot".to_string()));
+        assert!(
+            cfg.clipboard
+                .terminal_apps
+                .contains(&"reprise.terminal".to_string())
+        );
         let (mods, keysym) = parse_keybind("Super+v").unwrap();
         assert!(
             cfg.keybinds.iter().any(|b| b.mods == mods
@@ -5304,7 +5310,7 @@ command = "gedit"
     #[test]
     fn load_missing_file_gives_defaults() {
         let (c, notice) = Config::load(Some(std::path::Path::new("/nonexistent/reprise.toml")));
-        assert_eq!(c.terminal, "alacritty");
+        assert_eq!(c.terminal, "reprise-terminal");
         assert_eq!(notice, None, "a missing file is not worth a notice");
     }
 

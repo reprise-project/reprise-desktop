@@ -84,13 +84,13 @@ build() {
   # Named explicitly: the workspace has a root package, so a bare build
   # would build only that.
   cargo build --release --locked -p reprise -p reprise-portal \
-    -p reprise-notepad -p reprise-explorer -p reprise-about -p reprise-sound -p reprise-volume -p reprise-settings -p reprise-power -p reprise-datetime -p reprise-accounts -p reprise-network -p reprise-bluetooth -p reprise-drives -p reprise-polkit -p reprise-updates -p reprise-printers
+    -p reprise-notepad -p reprise-explorer -p reprise-about -p reprise-sound -p reprise-volume -p reprise-settings -p reprise-power -p reprise-datetime -p reprise-accounts -p reprise-network -p reprise-bluetooth -p reprise-drives -p reprise-polkit -p reprise-updates -p reprise-printers -p reprise-terminal
 }
 
 package() {
   cd "$(_repo)"
   install -Dm755 "$srcdir/target/release/reprise" "$pkgdir/usr/bin/reprise"
-  for app in reprise-notepad reprise-explorer reprise-about reprise-sound reprise-volume reprise-settings reprise-power reprise-datetime reprise-accounts reprise-network reprise-bluetooth reprise-drives reprise-polkit reprise-updates reprise-printers; do
+  for app in reprise-notepad reprise-explorer reprise-about reprise-sound reprise-volume reprise-settings reprise-power reprise-datetime reprise-accounts reprise-network reprise-bluetooth reprise-drives reprise-polkit reprise-updates reprise-printers reprise-terminal; do
     install -Dm755 "$srcdir/target/release/$app" "$pkgdir/usr/bin/$app"
     install -Dm644 "data/apps/$app.desktop" "$pkgdir/usr/share/applications/$app.desktop"
   done

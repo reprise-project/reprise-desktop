@@ -60,6 +60,7 @@ pub mod switcher;
 pub mod tabstrip;
 pub mod taskpane;
 pub mod taskpreview;
+pub mod termgrid;
 pub mod tilelist;
 pub mod timefield;
 pub mod toolbar;

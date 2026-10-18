@@ -676,7 +676,7 @@ fn opener(is_dir: bool) -> &'static str {
     }
 }
 
-pub const DEFAULT_TERMINAL: &str = "alacritty";
+pub const DEFAULT_TERMINAL: &str = "reprise-terminal";
 
 /// None when `path` is not UTF-8, which no `Exec=` line can hold.
 pub fn open_command_for(path: &Path) -> Option<String> {
@@ -1464,6 +1464,12 @@ mod tests {
         );
         assert!(parse_desktop("[Desktop Entry]\nType=Application\nName=x\n", "a").is_none());
         assert!(parse_desktop("[Other]\nType=Application\nName=x\nExec=x\n", "a").is_none());
+    }
+
+    #[test]
+    fn default_terminal_is_reprise() {
+        let argv = in_terminal(DEFAULT_TERMINAL, vec!["top".into()]);
+        assert_eq!(argv, ["reprise-terminal", "-e", "top"]);
     }
 
     #[test]

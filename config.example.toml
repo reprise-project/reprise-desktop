@@ -1,6 +1,6 @@
 # Reprise configuration. Every key is optional.
 
-terminal = "alacritty"
+terminal = "reprise-terminal"
 # script_terminal = "stay"   # a script opened from the desktop, Explorer or a search runs in `terminal`: "stay" waits for Enter after it ends, "close" closes the window at once unless the script fails; Default Programs sets it
 # task_manager = "gnome-system-monitor"   # the taskbar menu's Task Manager row; default: top in the terminal
 startmenu_banner = "Reprise Desktop"   # text of the vertical band on the Start menu's left edge
@@ -284,7 +284,7 @@ suspend_after = 0            # run [power] standby
 
 # [clipboard]                # the last 25 things copied, in memory only, for Super+V
 # history = true             # false records nothing and turns the Super+V popup off
-# terminal_apps = ["foot", "kitty", "Alacritty", "org.wezfurlong.wezterm", "com.mitchellh.ghostty", "org.gnome.Console", "konsole", "xterm"]
+# terminal_apps = ["reprise.terminal", "foot", "kitty", "Alacritty", "org.wezfurlong.wezterm", "com.mitchellh.ghostty", "org.gnome.Console", "konsole", "xterm"]
 #                            # app ids a pick pastes into with Ctrl+Shift+V instead of Ctrl+V
 # trusted_apps = []          # Flatpak app ids given the clipboard managers' protocols, e.g.
 #                            # ["me.proton.Pass"] so its copy buttons work; they can read the clipboard too.

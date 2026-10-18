@@ -126,21 +126,26 @@ pub const GREYED_ICON_ON_GLASS: (u32, u32) = (2, 3);
 /// Lay the look's label glow (or halo) under whatever is drawn in `r` over clear
 /// [`client_glass`], so labels and icons there read on any tint; nothing in a look without one.
 pub fn glow_on_glass(canvas: &mut Canvas, theme: &Theme, r: Rect) {
-    let Some(glow) = theme.look.style().and_then(|s| s.label_glow) else {
+    glow_under(canvas, &theme.paint(), r)
+}
+
+/// [`glow_on_glass`] for a widget painting with `p`.
+pub fn glow_under(canvas: &mut Canvas, p: &Paint, r: Rect) {
+    let Some(glow) = p.look.style().and_then(|s| s.label_glow) else {
         return;
     };
     let ink = canvas.copy_rect(r);
     let (w, h) = ink.device_size();
     let (w, h) = (w as usize, h as usize);
-    let coverage: Vec<u8> = ink.pixels.iter().map(|&p| (p >> 24) as u8).collect();
+    let coverage: Vec<u8> = ink.pixels.iter().map(|&px| (px >> 24) as u8).collect();
     let s = canvas.scale();
     let alpha = (glow.alpha)(&crate::style::GlowMask {
         coverage: &coverage,
         width: w,
         height: h,
         rows: (0, h),
-        active: theme.active,
-        scale: theme.scale.max(1) * s,
+        active: p.active,
+        scale: p.s * s,
     });
     canvas.clear_rect(r);
     canvas.blit_mask_over(r.x * s, r.y * s, w, h, &alpha, glow.color, r);

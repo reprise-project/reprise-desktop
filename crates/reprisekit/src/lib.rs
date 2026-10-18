@@ -36,6 +36,7 @@ pub mod anim;
 pub mod art;
 pub mod backdrop;
 pub mod blue;
+pub mod boxdraw;
 pub mod classic;
 pub mod colorfilter;
 pub mod controls;

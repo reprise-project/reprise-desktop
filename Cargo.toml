@@ -25,6 +25,7 @@ members = [
     "crates/apps/polkit",
     "crates/apps/updates",
     "crates/apps/printers",
+    "crates/apps/terminal",
     "crates/portal",
 ]
 

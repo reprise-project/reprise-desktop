@@ -14,6 +14,7 @@ pub mod listjob;
 pub mod oneshot;
 pub mod openwith;
 mod outputmgmt;
+mod primary;
 mod textinput;
 pub mod thumbs;
 pub mod unlock;
@@ -295,6 +296,8 @@ pub enum Event {
     Blink,
     Tick,
     Pasted(String),
+    /// The primary selection's text, asked for with `Reply::paste_primary`.
+    PastedPrimary(String),
     PastedFiles(FileClip),
     Focus(bool),
     /// The compositor took its shortcuts back from the window that held
@@ -432,6 +435,10 @@ pub struct Reply {
     pub copy: Option<String>,
     /// Arrives as `Event::Pasted` on the window this reply is for.
     pub paste: bool,
+    /// Offered as the primary selection, the text a middle click pastes.
+    pub copy_primary: Option<String>,
+    /// Arrives as `Event::PastedPrimary` on the window this reply is for.
+    pub paste_primary: bool,
     /// Run each argument vector as a process of its own, no shell
     /// between, detached and reaped in the background. No activation
     /// token is sent: a launched window takes focus as a child of the
@@ -538,6 +545,8 @@ impl Reply {
             quit,
             copy,
             paste,
+            copy_primary,
+            paste_primary,
             spawn,
             spawn_app,
             copy_files,
@@ -571,6 +580,8 @@ impl Reply {
             quit: self.quit || quit,
             copy: self.copy.or(copy),
             paste: self.paste || paste,
+            copy_primary: self.copy_primary.or(copy_primary),
+            paste_primary: self.paste_primary || paste_primary,
             spawn,
             spawn_app,
             copy_files: self.copy_files.or(copy_files),
@@ -669,6 +680,11 @@ pub trait App {
         None
     }
     fn draw(&mut self, win: WinId, c: &mut Canvas, ctx: &Ctx);
+    /// Whether `draw` gets `win`'s last frame back (until a resize or scale change) and reports
+    /// what it redrew with [`Canvas::report_damage`].
+    fn keeps_canvas(&self, _win: WinId) -> bool {
+        false
+    }
     /// Window `win`'s accessibility tree, from the state `draw` last drew:
     /// hang the controls' `access` parts under `reprisekit::access::ROOT` and
     /// set the focus. Called only while a screen reader listens. Without it
@@ -1133,6 +1149,7 @@ pub fn run(app: Box<dyn App>) {
         data_device_manager,
         data_device: None,
         copy_source: None,
+        primary: primary::Primary::bind(&globals, &qh),
         copy_text: Arc::default(),
         copy_clip: None,
         drag_out: None,
@@ -1432,6 +1449,7 @@ struct Host {
     data_device_manager: Option<DataDeviceManagerState>,
     data_device: Option<DataDevice>,
     copy_source: Option<CopyPasteSource>,
+    primary: primary::Primary,
     copy_text: Arc<[u8]>,
     /// The copied files, as each type they are offered as.
     copy_clip: Option<Vec<(&'static str, Vec<u8>)>>,
@@ -1686,6 +1704,12 @@ impl Host {
         }
         if reply.paste {
             self.paste(win);
+        }
+        if let Some(text) = reply.copy_primary {
+            self.copy_primary(text);
+        }
+        if reply.paste_primary {
+            self.paste_primary(win);
         }
         if reply.paste_files {
             self.paste_files(win);
@@ -2413,6 +2437,16 @@ impl Host {
         self.copy_source = Some(source);
     }
 
+    fn copy_primary(&mut self, text: String) {
+        self.primary.copy(&self.qh, text, self.last_serial);
+    }
+
+    fn paste_primary(&mut self, win: WinId) {
+        if let Some(pipe) = self.primary.receive() {
+            self.read_offer(win, pipe, |buf| Event::PastedPrimary(buf.into_text()));
+        }
+    }
+
     fn copy_files(&mut self, clip: FileClip) {
         let (Some(manager), Some(device)) = (&self.data_device_manager, &self.data_device) else {
             return;
@@ -2565,9 +2599,10 @@ impl Host {
         let stride = bw * 4;
         // Cleared: an app may leave a region alone and expect it transparent.
         let mut canvas = std::mem::replace(&mut self.slots[i].canvas, Canvas::new(0, 0));
-        if (canvas.width, canvas.height, canvas.scale()) != (w as u32, h as u32, scale) {
+        let fresh = (canvas.width, canvas.height, canvas.scale()) == (w as u32, h as u32, scale);
+        if !fresh {
             canvas = Canvas::with_scale(w as u32, h as u32, scale);
-        } else {
+        } else if !self.app.keeps_canvas(id) {
             canvas.pixels.fill(0);
         }
         self.ctx.size = (w, h);
@@ -2602,6 +2637,7 @@ impl Host {
         self.ctx.theme.access_keys = false;
         self.set_glass_top(i, (w, glass_top), qh);
         let spot = canvas.take_spot();
+        let damage = canvas.take_damage();
         if let Some(t) = self.text_input.as_mut() {
             t.sync(id, spot);
         }
@@ -2639,7 +2675,10 @@ impl Host {
             Some(v) => v.set_destination(w, h),
             None => surface.set_buffer_scale(scale),
         }
-        surface.damage_buffer(0, 0, bw, bh);
+        let keeps = self.app.keeps_canvas(id);
+        for (x, y, w, h) in surface_damage(damage, fresh, keeps, scale, (bw, bh)) {
+            surface.damage_buffer(x, y, w, h);
+        }
         surface.frame(qh, FrameCallbackData(surface.clone()));
         s.frame_pending = true;
         s.buffers[k]
@@ -2711,6 +2750,29 @@ fn next_buffer(free: [Option<bool>; 2], attached: usize) -> (usize, bool) {
         (k, true)
     } else {
         (1 - attached, true)
+    }
+}
+
+/// Reported logical rects as buffer-px `(x, y, width, height)` at `scale`.
+fn buffer_damage(rects: &[Rect], scale: i32) -> Vec<(i32, i32, i32, i32)> {
+    rects
+        .iter()
+        .map(|r| (r.x * scale, r.y * scale, r.width * scale, r.height * scale))
+        .collect()
+}
+
+/// The buffer-px rects to damage: the reported ones only when the canvas kept last frame's pixels
+/// (`fresh` and the app `keeps` it), else the whole `buffer`.
+fn surface_damage(
+    damage: Option<Vec<Rect>>,
+    fresh: bool,
+    keeps: bool,
+    scale: i32,
+    buffer: (i32, i32),
+) -> Vec<(i32, i32, i32, i32)> {
+    match (fresh && keeps).then_some(damage).flatten() {
+        Some(rects) => buffer_damage(&rects, scale),
+        None => vec![(0, 0, buffer.0, buffer.1)],
     }
 }
 
@@ -2950,6 +3012,7 @@ impl SeatHandler for Host {
             {
                 self.data_device = Some(manager.get_data_device(qh, &seat));
             }
+            self.primary.attach(qh, &seat);
         }
         if capability == Capability::Pointer && self.pointer.is_none() {
             self.pointer = self.seat_state.get_pointer(qh, &seat).ok();
@@ -4217,6 +4280,49 @@ pub(crate) fn main_wanted(hidden: bool, have: bool) -> Option<bool> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reply_merge_keeps_primary() {
+        let first = Reply {
+            copy_primary: Some("old".into()),
+            paste_primary: false,
+            ..Default::default()
+        };
+        let then = Reply {
+            copy_primary: Some("new".into()),
+            paste_primary: true,
+            ..Default::default()
+        };
+        let merged = first.clone().and(then);
+        assert_eq!(merged.copy_primary.as_deref(), Some("old"));
+        assert!(merged.paste_primary);
+        let filled = Reply::default().and(Reply {
+            copy_primary: Some("new".into()),
+            ..Default::default()
+        });
+        assert_eq!(filled.copy_primary.as_deref(), Some("new"));
+    }
+
+    #[test]
+    fn damage_rects_scale_to_buffer() {
+        let rects = [Rect::new(1, 2, 3, 4), Rect::new(0, 0, 10, 5)];
+        assert_eq!(buffer_damage(&rects, 2), vec![(2, 4, 6, 8), (0, 0, 20, 10)]);
+    }
+
+    #[test]
+    fn only_a_kept_canvas_damages_part_of_the_buffer() {
+        let rects = Some(vec![Rect::new(1, 2, 3, 4)]);
+        let whole = vec![(0, 0, 40, 20)];
+        let damage = |rects, fresh, keeps| surface_damage(rects, fresh, keeps, 2, (40, 20));
+        assert_eq!(damage(rects.clone(), true, true), vec![(2, 4, 6, 8)]);
+        assert_eq!(
+            damage(rects.clone(), true, false),
+            whole,
+            "a canvas cleared for the draw damages the whole buffer"
+        );
+        assert_eq!(damage(rects, false, true), whole, "so does a new canvas");
+        assert_eq!(damage(None, true, true), whole);
+    }
 
     #[test]
     fn a_spawned_program_is_handed_over_unreaped_as_this_process_s_child() {

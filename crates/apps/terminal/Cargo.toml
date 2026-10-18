@@ -1,0 +1,29 @@
+[package]
+name = "reprise-terminal"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Terminal: a tabbed terminal emulator"
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "reprise-terminal"
+path = "src/main.rs"
+
+[dependencies]
+alacritty_terminal = { version = "=0.26.0", default-features = false }
+repriseapp = { path = "../../repriseapp" }
+reprisekit = { path = "../../reprisekit" }
+repriseconf = { path = "../../repriseconf" }
+reprisebus = { path = "../../reprisebus" }
+log.workspace = true
+polling = "3"
+serde = { workspace = true, features = ["derive"] }
+toml.workspace = true
+unicode-width = "0.2"
+
+[dev-dependencies]
+tempfile.workspace = true

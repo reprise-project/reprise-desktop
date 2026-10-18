@@ -51,6 +51,36 @@ CRLF line endings, never leaves a file half saved, asks before opening a
 file that isn't UTF-8, and grows with Larger Text. Word Wrap and Print are
 greyed out for now. Notepad has always had its priorities.
 
+## Terminal
+
+A tabbed terminal, `reprise-terminal`. It opens in the directory it was
+started from; `reprise-terminal -e program args...` runs a program instead of
+your login shell. The window closes when its last tab's program exits, and
+closing a tab or the window while something other than the shell runs there
+asks first. Programs see `TERM=xterm-256color` and `COLORTERM=truecolor`.
+
+- **Tabs:** + opens your shell in the open tab's directory; the arrow beside
+  it lists the shell, your profiles and the `Host` entries of
+  `~/.ssh/config` (and the files it includes). Drag a tab to reorder it,
+  middle-click it to close it.
+- **Toolbar:** Copy, Paste, Find and Settings. Find searches the scrollback
+  up or down, with Match case, and highlights what it found.
+- **Mouse:** a selection goes to the primary selection and a middle click
+  pastes it. A program that takes the mouse gets the clicks; hold Shift to
+  select anyway. The wheel scrolls back.
+- **Options** (Settings): the shell, cursor shape and blinking, and
+  scrollback lines (10000 by default) on General; the font, size in pixels,
+  colour scheme (Reprise, Light or Dark) and, under Glass, a see-through
+  background with its opacity on Appearance; on Profiles, named commands for
+  the new-tab menu. Other terminal windows take a change when next focused.
+- **Shortcuts:** Ctrl+Shift+T new tab, Ctrl+Shift+W close tab, Ctrl+Shift+N
+  new window, Ctrl+Shift+C and Ctrl+Shift+V copy and paste, Ctrl+Shift+F
+  find, Ctrl+Tab and Ctrl+Shift+Tab (or Ctrl+PgDn and Ctrl+PgUp) next and
+  previous tab, Ctrl+= and Ctrl+- zoom and Ctrl+0 back, Shift+PgUp and
+  Shift+PgDn page through the scrollback.
+- **Files:** the options live in `$XDG_CONFIG_HOME/reprise/terminal.toml`,
+  the window size in `$XDG_STATE_HOME/reprise/terminal.toml`.
+
 ## Reprise Settings
 
 One window, 23 pages, four headings. Only one runs at a time.

@@ -10,6 +10,7 @@ mod clock;
 mod controls;
 mod copygraph;
 pub mod dark;
+mod doctab;
 mod fields;
 mod flyouts;
 pub mod frame;
@@ -548,7 +549,7 @@ fn build_at(s: &Settings, scale: i32) -> Style {
 type Group = (&'static [Part], fn(i32) -> Vec<(Part, PartImage)>);
 
 /// Glass's control parts, each group painted the first time one of its parts is drawn.
-const GROUPS: [Group; 12] = [
+const GROUPS: [Group; 13] = [
     (&[Part::CheckBox, Part::Radio], |d| {
         controls::parts(d).into()
     }),
@@ -631,6 +632,7 @@ const GROUPS: [Group; 12] = [
         |d| menus::parts(d).into(),
     ),
     (&[Part::BalloonClose], |d| balloon::parts(d).into()),
+    (&[Part::GlassTab], |d| doctab::parts(d).into()),
     (
         &[Part::CalendarToday, Part::CalendarPrev, Part::CalendarNext],
         |d| flyouts::parts(d).into(),

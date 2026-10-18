@@ -649,14 +649,14 @@ mod tests {
     #[test]
     fn a_script_runs_in_the_terminal_key_and_stays_unless_set_to_close() {
         use reprisefs::program::ScriptEnd;
-        assert_eq!(terminal_in(""), "alacritty");
+        assert_eq!(terminal_in(""), "reprise-terminal");
         assert_eq!(script_terminal_in(""), ScriptEnd::Stay);
         let text = "terminal = \"foot -o x=1\"\nscript_terminal = \"close\"\n[drives]\nterminal = \"st\"\n";
         assert_eq!(terminal_in(text), "foot -o x=1");
         assert_eq!(script_terminal_in(text), ScriptEnd::Close);
         assert_eq!(
             terminal_in("[drives]\nterminal = \"st\"\n"),
-            "alacritty",
+            "reprise-terminal",
             "top-level keys only"
         );
         assert_eq!(

@@ -1954,7 +1954,7 @@ size_px = 12
     fn load_falls_back_to_the_compositors_defaults() {
         let s = load("");
         assert_eq!(s, Settings::default());
-        assert_eq!(s.terminal, "alacritty");
+        assert_eq!(s.terminal, "reprise-terminal");
         assert_eq!(s.taskbar_height, 28);
         assert_eq!(s.screen_off_after, 900);
         assert_eq!(s.task_manager, "", "an absent key is the empty string");
