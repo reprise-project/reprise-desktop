@@ -66,8 +66,9 @@ impl Tree {
     }
 
     /// Where the focused node lies in the space the root is placed in:
-    /// its bounds through every transform from the root down to it, or
-    /// its list's when it is a row scrolled out of the list. None when it
+    /// its bounds through every transform from the root down to it, a
+    /// row's cut to the part in its list, or the list's when the row is
+    /// wholly out of it. None when it
     /// has no bounds or hangs nowhere under the root. The magnifier pans
     /// to it.
     pub fn focus_bounds(&self) -> Option<accesskit::Rect> {
@@ -83,7 +84,7 @@ impl Tree {
             let b = n.bounds().map(|b| at.transform_rect_bbox(b));
             if id == want {
                 return match (b, list) {
-                    (Some(b), Some(f)) if out_of(b, f) => Some(f),
+                    (Some(b), Some(f)) => Some(in_view(b, f)),
                     _ => b,
                 };
             }
@@ -368,6 +369,16 @@ fn is_list(role: Role) -> bool {
 /// wholly beside them (a row cut by a side edge, as a deep tree row is, stays in).
 fn out_of(b: accesskit::Rect, f: accesskit::Rect) -> bool {
     b.y0 < f.y0 || b.y1 > f.y1 || b.x1 <= f.x0 || b.x0 >= f.x1
+}
+
+/// The part of a row with bounds `b` inside its list's bounds `f`, or `f` when none of it is.
+fn in_view(b: accesskit::Rect, f: accesskit::Rect) -> accesskit::Rect {
+    let v = b.intersect(f);
+    if v.width() > 0.0 && v.height() > 0.0 {
+        v
+    } else {
+        f
+    }
 }
 
 pub fn bounds(r: Rect) -> accesskit::Rect {
@@ -662,6 +673,32 @@ mod tests {
             (110.0, 60.0, 210.0, 100.0),
             "the list"
         );
+    }
+
+    #[test]
+    fn a_focused_row_cut_by_its_list_edge_shows_as_its_part_in_the_list() {
+        let mut t = Tree::new(node(Role::Window, Rect::new(0, 0, 400, 300)));
+        let list = t.push(
+            ROOT,
+            "list",
+            node(Role::ListBox, Rect::new(10, 10, 100, 40)),
+        );
+        let cut = t.push(
+            list,
+            0,
+            node(Role::ListBoxOption, Rect::new(10, 44, 100, 10)),
+        );
+        let above = t.push(
+            list,
+            1,
+            node(Role::ListBoxOption, Rect::new(10, 4, 100, 10)),
+        );
+        t.set_focus(cut);
+        let b = t.focus_bounds().unwrap();
+        assert_eq!((b.x0, b.y0, b.x1, b.y1), (10.0, 44.0, 110.0, 50.0));
+        t.set_focus(above);
+        let b = t.focus_bounds().unwrap();
+        assert_eq!((b.x0, b.y0, b.x1, b.y1), (10.0, 10.0, 110.0, 14.0));
     }
 
     #[test]
