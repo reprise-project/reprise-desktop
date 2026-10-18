@@ -1135,6 +1135,7 @@ impl State {
             && let Some(keyboard) = self.seat.get_keyboard()
             && let Some(focus) = keyboard.current_focus()
         {
+            self.flush_motion();
             keyboard.set_focus(self, None, SERIAL_COUNTER.next_serial());
             keyboard.set_focus(self, Some(focus), SERIAL_COUNTER.next_serial());
         }
