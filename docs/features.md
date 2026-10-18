@@ -119,6 +119,8 @@ the Super tap, Super+Shift+Esc and the VT switch keys can be rebound.
 - **No focus stealing.** A window takes the keyboard only with a trusted
   activation token, after you clicked or launched something. Anything else
   opens behind the window you're typing in and flags its taskbar button.
+  While the taskbar has the keyboard (Super+T), it opens on top with its
+  button flagged and the keyboard stays on the taskbar.
 - **Motion.** Windows fade and grow as they open and shrink as they close,
   caption buttons and Start fade their highlights, menus fade in. All
   optional (`[effects]`), on by default under Glass.
