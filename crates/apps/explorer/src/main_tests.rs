@@ -1874,6 +1874,43 @@ fn the_pickers_new_folder_and_rename_on_a_folder_that_answers_late_land_on_a_lat
     );
 }
 
+/// The picker cancelled while its Make New Folder or rename is still on disk: the change lands
+/// anyway, so its undo entry is kept.
+#[test]
+fn a_pickers_new_folder_and_rename_landing_after_cancel_keep_their_undo() {
+    let mut ctx = test_ctx();
+    let (dir, mut ex) = browse_fixture(&mut ctx);
+    let made = dir.path().join("New Folder");
+    let gate = Arc::new(std::sync::RwLock::new(()));
+
+    ex.open_browse(false, &mut ctx);
+    let closed = gate.write().expect("lock");
+    ex.held = Some(gate.clone());
+    click_at(&mut ex, 60, 328, &mut ctx);
+    ex.dialog_event(Event::Key(key_in(keysym::ESCAPE)), &mut ctx);
+    assert!(ex.dialog.is_none(), "Cancel closes the picker");
+    drop(closed);
+    ex.held = None;
+    wake_until(&mut ex, &mut ctx, |ex| ex.undo.is_some());
+    assert!(made.is_dir());
+    assert_eq!(ex.undo, Some("New"));
+
+    ex.open_browse(false, &mut ctx);
+    click_at(&mut ex, 60, 328, &mut ctx);
+    let second = dir.path().join("New Folder (2)");
+    assert!(second.is_dir());
+    type_in(&mut ex, "Photos", &mut ctx);
+    let closed = gate.write().expect("lock");
+    ex.held = Some(gate.clone());
+    ex.dialog_event(Event::Key(key_in(keysym::RETURN)), &mut ctx);
+    ex.dialog_event(Event::Key(key_in(keysym::ESCAPE)), &mut ctx);
+    assert!(ex.dialog.is_none(), "Cancel closes the picker");
+    drop(closed);
+    ex.held = None;
+    wake_until(&mut ex, &mut ctx, |ex| ex.undo == Some("Rename"));
+    assert!(dir.path().join("Photos").is_dir() && !second.exists());
+}
+
 /// A rename refused after the wait shows its error box over the picker, and OK reopens the box.
 #[test]
 fn a_pickers_rename_refused_late_shows_the_error_box() {

@@ -401,9 +401,13 @@ impl Explorer {
                 };
                 let op = if b.mv { DropOp::Move } else { DropOp::Copy };
                 self.put_all(&b.items, &dir, &|_| Some(op), true, ctx);
+                self.browse_left.extend(b.making);
                 return Reply::redraw_all();
             }
-            browsefolder::Event::Cancel => return Reply::redraw_all(),
+            browsefolder::Event::Cancel => {
+                self.browse_left.extend(b.making);
+                return Reply::redraw_all();
+            }
             browsefolder::Event::Resize => Reply::resize(),
         };
         // A click opens a row as it picks it without a `Selected`, so every event re-checks the pick.
@@ -457,11 +461,47 @@ impl Explorer {
                 b.bf.new_folder_made([p.as_slice(), &[i]].concat(), &lay);
             }
         }
+        self.new_folder_made(under, made, ctx);
+        self.sync_browse_buttons(&mut b, ctx);
+        self.put_back(b, Reply::redraw_all())
+    }
+
+    fn new_folder_made(&mut self, under: &Place, made: PathBuf, ctx: &mut Ctx) {
         self.refill_tree_node(under, ctx);
         self.undos.push(reprisefs::undo::Undoable::New(made));
         self.sync_undo();
-        self.sync_browse_buttons(&mut b, ctx);
-        self.put_back(b, Reply::redraw_all())
+    }
+
+    /// Lands the picker writes its Cancel or Accept left on disk ([`Explorer::browse_left`]): their
+    /// undo entries and the Folders pane. True when one did.
+    fn take_browse_left(&mut self, ctx: &mut Ctx) -> bool {
+        let mut landed = false;
+        for making in std::mem::take(&mut self.browse_left) {
+            match making {
+                Making::New { under, job } => match job.take() {
+                    Some(Some(Ok((made, _)))) => self.new_folder_made(&under, made, ctx),
+                    Some(Some(Err(text))) => log::warn!("explorer: {text}"),
+                    Some(None) => {}
+                    None => {
+                        self.browse_left.push(Making::New { under, job });
+                        continue;
+                    }
+                },
+                Making::Rename { from, path, job } => match job.take() {
+                    Some(Renamed::Done(to, _)) => self.after_rename(&from, &to, true, ctx),
+                    Some(Renamed::Refused(text)) => {
+                        log::warn!("explorer: naming {} failed: {text}", from.display())
+                    }
+                    Some(Renamed::Kept) => {}
+                    None => {
+                        self.browse_left.push(Making::Rename { from, path, job });
+                        continue;
+                    }
+                },
+            }
+            landed = true;
+        }
+        landed
     }
 
     /// Picks the folder renamed from `from` (the node at `path` when asked) under its new name,
@@ -551,13 +591,15 @@ impl Explorer {
     }
 
     /// Takes the picker's reads that landed after their wait: the walk to the items' folder,
-    /// opened nodes, the pick's judging and a Make New Folder or rename. True when one did.
+    /// opened nodes, the pick's judging and a Make New Folder or rename, a closed picker's too.
+    /// True when one did.
     pub(crate) fn take_browse(&mut self, ctx: &mut Ctx) -> bool {
+        let left = self.take_browse_left(ctx);
         let mut b = match self.dialog.take() {
             Some(Dialog::Browse(b)) => b,
             other => {
                 self.dialog = other;
-                return false;
+                return left;
             }
         };
         let inp = Inputs {
@@ -566,7 +608,7 @@ impl Explorer {
             volumes: &self.volumes,
             drive_mounts: &self.drive_mounts,
         };
-        let mut landed = false;
+        let mut landed = left;
         if let Some(read) = b.walking.as_ref().and_then(|(_, job)| job.take())
             && let Some((here, _)) = b.walking.take()
         {
