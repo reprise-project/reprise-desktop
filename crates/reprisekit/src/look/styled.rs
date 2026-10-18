@@ -8,6 +8,7 @@ pub mod button;
 pub mod captiontab;
 pub mod checkbox;
 pub mod combodrop;
+pub mod doctab;
 pub mod explorerbar;
 pub mod field;
 pub mod groupbox;

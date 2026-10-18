@@ -1019,9 +1019,37 @@ pub fn draw_tab(
             cs.button_face,
         );
     }
+    text.draw(
+        c,
+        tab_label_rect(r, open, s),
+        label,
+        false,
+        cs.button_text,
+        Align::Center,
+        px,
+    );
+}
+
+/// The band a tab's label is centred in, down from its top edge.
+pub fn tab_label_rect(r: Rect, open: bool, s: i32) -> Rect {
     let h = if open { r.height - s } else { r.height + s };
-    let tr = Rect::new(r.x, r.y + s, r.width, h);
-    text.draw(c, tr, label, false, cs.button_text, Align::Center, px);
+    Rect::new(r.x, r.y + s, r.width, h)
+}
+
+/// A document tab's close cross, 8x7 with 2 px strokes, centred in `b`.
+pub fn draw_doc_cross(c: &mut Canvas, b: Rect, s: i32, ink: Color) {
+    let (x0, y0) = (b.x + (b.width - 8 * s) / 2, b.y + (b.height - 7 * s) / 2);
+    for i in 0..7 {
+        c.fill_rect(Rect::new(x0 + i * s, y0 + i * s, 2 * s, s), ink);
+        c.fill_rect(Rect::new(x0 + (6 - i) * s, y0 + i * s, 2 * s, s), ink);
+    }
+}
+
+/// The new-tab plus, 8x8 with 2 px arms, centred in `b`.
+pub fn draw_doc_plus(c: &mut Canvas, b: Rect, s: i32, ink: Color) {
+    let (x0, y0) = (b.x + (b.width - 8 * s) / 2, b.y + (b.height - 8 * s) / 2);
+    c.fill_rect(Rect::new(x0, y0 + 3 * s, 8 * s, 2 * s), ink);
+    c.fill_rect(Rect::new(x0 + 3 * s, y0, 2 * s, 8 * s), ink);
 }
 
 pub fn draw_group_box(

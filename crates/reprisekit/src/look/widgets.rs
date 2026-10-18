@@ -8,6 +8,7 @@ pub use crate::flyout::draw_link;
 use crate::look::Paint;
 use crate::look::styled;
 use crate::raster::{Canvas, EdgeStyle, Rect};
+use crate::shape;
 use crate::style::{Part, State};
 use crate::text::{Align, TextRenderer};
 use crate::theme::Color;
@@ -622,6 +623,179 @@ pub fn draw_tab_focus(c: &mut Canvas, p: &Paint, ring: Rect) {
         return;
     }
     classic::widgets::draw_tab_focus(c, ring, p.s, p.cs.button_text)
+}
+
+/// One document tab, every rect in device px. `close_ptr` is what the pointer does to its
+/// close box.
+pub struct DocTab<'a> {
+    pub r: Rect,
+    pub label: &'a str,
+    pub open: bool,
+    pub hot: bool,
+    pub close: Rect,
+    pub close_ptr: Interaction,
+}
+
+/// Whether a document strip lying `on_glass` draws glass tabs: only in a look that has them.
+pub fn glass_tabs(p: &Paint, on_glass: bool) -> bool {
+    on_glass
+        && p.look
+            .style()
+            .is_some_and(|st| st.part(Part::GlassTab).is_some())
+}
+
+/// A document tab: the look's sheet tab (the open one run into `page`, the strip's lip) or with
+/// `glass` the style's glass tab, its label cut short of its close box, and the close box.
+pub fn draw_doc_tab(
+    c: &mut Canvas,
+    text: &TextRenderer,
+    p: &Paint,
+    t: &DocTab,
+    page: Rect,
+    glass: bool,
+    px: u32,
+) {
+    let s = p.s;
+    let band = match p.look.style() {
+        Some(st) if glass => styled::doctab::draw_glass_tab(st, c, p, t.r, t.open, t.hot, page),
+        _ => {
+            draw_tab(c, text, p, t.r, "", t.open, t.hot, page, px);
+            tab_label_rect(p, t.r, t.open)
+        }
+    };
+    let ink = doc_ink(p, glass, t.open);
+    draw_lit(c, p, t.close, t.close_ptr, ink);
+    let left = t.r.x + if t.open { 8 * s } else { 6 * s };
+    let room = Rect::new(left, band.y, (t.close.x - 2 * s - left).max(0), band.height);
+    let label = text.ellipsize(t.label, room.width, false, px);
+    let held = if t.close_ptr == Interaction::Pressed && p.look.style().is_none() {
+        s
+    } else {
+        0
+    };
+    let cross = Rect::new(
+        t.close.x + held,
+        t.close.y + held,
+        t.close.width,
+        t.close.height,
+    );
+    let ink_area = room.union(&cross);
+    inked(c, p, glass && !t.open, ink_area, |c, o| {
+        let at = |r: Rect| Rect::new(r.x - o.0, r.y - o.1, r.width, r.height);
+        text.draw(c, at(room), &label, false, ink, Align::Left, px);
+        match p.look.style() {
+            Some(_) => styled::doctab::draw_glyph(c, at(cross), shape::Glyph::Cross, 7, ink, s),
+            None => classic::widgets::draw_doc_cross(c, at(cross), s, ink),
+        }
+    });
+}
+
+/// The new-tab button after a document strip's tabs: one closed tab over its + part `add` and
+/// its menu part `menu` (device px), each part lit on its own as a close box is.
+#[expect(clippy::too_many_arguments)]
+pub fn draw_doc_adder(
+    c: &mut Canvas,
+    text: &TextRenderer,
+    p: &Paint,
+    add: Rect,
+    menu: Rect,
+    add_ptr: Interaction,
+    menu_ptr: Interaction,
+    glass: bool,
+    px: u32,
+) {
+    let s = p.s;
+    let body = add.union(&menu);
+    let hot = add_ptr != Interaction::Idle || menu_ptr != Interaction::Idle;
+    match p.look.style() {
+        Some(st) if glass => {
+            styled::doctab::draw_glass_tab(st, c, p, body, false, hot, body);
+        }
+        _ => draw_tab(c, text, p, body, "", false, hot, body, px),
+    }
+    let ink = doc_ink(p, glass, false);
+    let well = |r: Rect| Rect::new(r.x + 2 * s, r.y + 3 * s, r.width - 4 * s, r.height - 5 * s);
+    let (add, menu) = (well(add), well(menu));
+    draw_lit(c, p, add, add_ptr, ink);
+    draw_lit(c, p, menu, menu_ptr, ink);
+    let shift = |r: Rect, ptr: Interaction| {
+        let d = if ptr == Interaction::Pressed && p.look.style().is_none() {
+            s
+        } else {
+            0
+        };
+        Rect::new(r.x + d, r.y + d, r.width, r.height)
+    };
+    let (plus, arrow) = (shift(add, add_ptr), shift(menu, menu_ptr));
+    inked(c, p, glass, plus.union(&arrow), |c, o| {
+        let at = |r: Rect| Rect::new(r.x - o.0, r.y - o.1, r.width, r.height);
+        let (plus, arrow) = (at(plus), at(arrow));
+        match p.look.style() {
+            Some(_) => {
+                styled::doctab::draw_glyph(c, plus, shape::Glyph::Plus, 8, ink, s);
+                styled::doctab::draw_glyph(c, arrow, shape::Glyph::ArrowDown, 7, ink, s);
+            }
+            None => {
+                classic::widgets::draw_doc_plus(c, plus, s, ink);
+                let (x, y) = (
+                    arrow.x + (arrow.width - 5 * s) / 2,
+                    arrow.y + (arrow.height - 3 * s) / 2,
+                );
+                classic::widgets::draw_small_arrow(c, x, y, s, ink);
+            }
+        }
+    });
+}
+
+/// The rect a sheet tab laid out at `r` centres its label in.
+fn tab_label_rect(p: &Paint, r: Rect, open: bool) -> Rect {
+    match p.look.style() {
+        Some(st) if st.part(Part::TabItem).is_some() => {
+            styled::tab::label_rect(st, Part::TabItem, r, open, p.s)
+        }
+        _ => classic::widgets::tab_label_rect(r, open, p.s),
+    }
+}
+
+/// A document tab's ink: the caption's over the frame's glass, the button text on a solid tab.
+fn doc_ink(p: &Paint, glass: bool, open: bool) -> Color {
+    match p.look.style() {
+        Some(st) if glass && !open => {
+            let t = &st.caption_text;
+            if p.active { t.color } else { t.inactive }
+        }
+        _ => p.cs.button_text,
+    }
+}
+
+/// A close box or new-tab part `b` lit by the pointer: a toolbar button's frame in Classic, a
+/// wash of `ink` in a style.
+fn draw_lit(c: &mut Canvas, p: &Paint, b: Rect, ptr: Interaction, ink: Color) {
+    match (p.look.style(), ptr) {
+        (_, Interaction::Idle) => {}
+        (Some(_), _) => styled::doctab::draw_wash(c, b, ptr, ink, p.s),
+        (None, Interaction::Hot) => classic::toolbar::draw_button(c, p, b, State::Hot),
+        (None, Interaction::Pressed) => classic::toolbar::draw_button(c, p, b, State::Pressed),
+    }
+}
+
+/// Run `draw` for ink over `r`; with `glow`, onto a clear layer that takes the look's label glow
+/// before it lands. `draw` gets the origin to take off its device rects.
+fn inked(
+    c: &mut Canvas,
+    p: &Paint,
+    glow: bool,
+    r: Rect,
+    draw: impl FnOnce(&mut Canvas, (i32, i32)),
+) {
+    if !glow || r.is_empty() {
+        return draw(c, (0, 0));
+    }
+    let mut layer = Canvas::new(r.width as u32, r.height as u32);
+    draw(&mut layer, (r.x, r.y));
+    let all = layer.bounds();
+    crate::look::glow_under(&mut layer, p, all);
+    c.blit_over(r.x, r.y, &layer);
 }
 
 pub fn draw_page(c: &mut Canvas, p: &Paint, page: Rect) {

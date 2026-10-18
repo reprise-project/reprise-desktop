@@ -1,0 +1,28 @@
+plain 1 909caa75335460f2
+bold 1 da0e97a07e0390b2
+italic 1 e7a3c80ace2baf72
+underline 1 39c56d8e9b4e09b2
+strike 1 e53079ac27f0fbf2
+inverse 1 c787e78983443c12
+dim 1 63067f0318cf6972
+selected 1 1013c58bd355a6fa
+match 1 1c4deecfb83d3c12
+match_current 1 62847640467ecb92
+cursor Block 1 881edef2c3ce4f72
+cursor Bar 1 fd532dcdadd2c132
+cursor Underline 1 9e3d7563e62f3ef2
+cursor HollowBlock 1 55822315529c0432
+plain 2 168176300f3c0c45
+bold 2 168176300f3c0c45
+italic 2 b40d34c656894445
+underline 2 3292b8e4b1e0d745
+strike 2 7891e21c8c9e80c5
+inverse 2 1dbab88d1eb9e0dd
+dim 2 d85e850eccc25405
+selected 2 07045a58e7bc92a5
+match 2 90424ebbb321f35d
+match_current 2 b897b79874532fad
+cursor Block 2 449e6b222b774945
+cursor Bar 2 056cc0eac1b8ebc5
+cursor Underline 2 dcdd613687c664c5
+cursor HollowBlock 2 1fee46d5d20d8b45

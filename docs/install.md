@@ -52,6 +52,8 @@ Every push to main also publishes a package as the
 ### To build
 
 - Rust, clang, pkg-config and git
+- Reprise Terminal's emulation comes from the `alacritty_terminal` crate,
+  built in; it needs no runtime library
 
 ### To run
 
