@@ -1665,6 +1665,49 @@ fn a_paste_whose_clash_check_answers_late_asks_on_a_later_wake() {
     );
 }
 
+#[test]
+fn a_paste_whose_clash_check_passes_the_deadline_gives_up_and_copies_nothing() {
+    let mut ctx = test_ctx();
+    let t = tempfile::tempdir().expect("a temp dir");
+    let (src, dest) = (t.path().join("src"), t.path().join("dest"));
+    for d in [&src, &dest] {
+        std::fs::create_dir_all(d).expect("mkdir");
+    }
+    std::fs::write(src.join("a.txt"), "x").expect("write");
+    let mut ex = crate::tests::test_explorer(Place::Folder(dest.clone()), &mut ctx);
+    ex.action_deadline = std::time::Duration::from_millis(20);
+    let gate = std::sync::Arc::new(std::sync::RwLock::new(()));
+    let closed = gate.write().expect("lock");
+    ex.held = Some(gate.clone());
+    ex.put_all(
+        &[src.join("a.txt")],
+        &dest,
+        &|_| Some(DropOp::Copy),
+        false,
+        &mut ctx,
+    );
+    crate::tests::wake_until(&mut ex, &mut ctx, |ex| ex.clashing.is_empty());
+    match &ex.dialog {
+        Some(Dialog::Message { title, text }) => assert_eq!(
+            (title.as_str(), text.as_str()),
+            (
+                "Error Copying File or Folder",
+                "The location is not responding."
+            )
+        ),
+        _ => panic!("the give-up box is up"),
+    }
+    assert!(!ex.busy());
+    drop(closed);
+    ex.held = None;
+    std::thread::sleep(std::time::Duration::from_millis(100));
+    ex.wake(&mut ctx);
+    assert!(
+        !dest.join("a.txt").exists(),
+        "the late check starts no copy"
+    );
+}
+
 /// The replace prompt's size and date lines stat both files on a listing thread: on a file that
 /// does not answer (a dead mount) the prompt comes up on the wake after the read lands, and a
 /// paste made meanwhile asks after it.

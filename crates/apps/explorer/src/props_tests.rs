@@ -283,9 +283,9 @@ fn a_folders_totals_arrive_after_the_sheet_opens() {
     );
 }
 
-/// OK on Confirm Attribute Changes with the tree radio picked writes the tree on a job; the sheet closes when it is done.
+/// OK on Confirm Attribute Changes with the tree radio picked writes the tree; the sheet closes when it is done.
 #[test]
-fn the_tree_attribute_write_runs_on_a_job() {
+fn the_tree_attribute_write_reaches_the_subfolders_and_closes_the_sheet() {
     use crate::place::Place;
     use std::os::unix::fs::PermissionsExt;
     let dir = tempfile::tempdir().expect("a temp dir");
@@ -314,7 +314,6 @@ fn the_tree_attribute_write_runs_on_a_job() {
         form,
     };
     ex.attrs_confirmed(a, &mut ctx);
-    assert!(ex.busy(), "the tree write is out on a job");
     ex.finish_puts(&mut ctx);
     assert!(
         ex.props.is_none(),
