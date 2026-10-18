@@ -8,7 +8,7 @@ use reprisefs::removal::Removal;
 use crate::compositor::State;
 use crate::desktop::{self, DesktopEntry};
 use crate::dialog::{Dialog, Style};
-use crate::fsjobs::OnLoop;
+use crate::fsjobs::{Action, OnLoop};
 
 /// What Delete on the set `set` of `entries` covers: the `system_icons` names of its place icons and the paths of its files.
 pub fn set_for_delete(entries: &[DesktopEntry], set: &[usize]) -> (Vec<String>, Vec<PathBuf>) {
@@ -114,7 +114,8 @@ impl State {
 
     /// Delete `paths`, asking first as `delete_mode` says (Delete, or Shift+Delete with `shift`). Each item's fate (`Bins::fate`) is read off the loop first: it stats the paths and their mounts, which a hung network mount would stall.
     pub(crate) fn ask_delete(&mut self, paths: Vec<PathBuf>, label: Option<String>, shift: bool) {
-        self.spawn_fs_job(move || -> OnLoop {
+        let action = Action::reads("Error Deleting File or Folder");
+        self.spawn_fs_action(action, move |_| -> OnLoop {
             use reprisefs::bincap::{Fate, Policy, delete_mode};
             let bins = reprisefs::trash::Bins::system();
             let fates: Vec<Fate> = paths
@@ -290,7 +291,7 @@ impl State {
             Vec::new()
         };
         let apps = self.app_index.clone();
-        self.spawn_fs_job(move || {
+        self.spawn_fs_action(Action::reads("Properties"), move |_| {
             let read = glance_aimed(&own, &files, &apps);
             Box::new(move |state: &mut State| match read {
                 Some(Glanced::One(info)) => state.open_properties(&info, &icon, at),

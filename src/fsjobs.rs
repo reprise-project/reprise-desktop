@@ -2,9 +2,11 @@
 //! closure it returns back to the loop over a channel, where it runs with the state.
 
 use smithay::reexports::calloop::channel::{self, Event, Sender};
+use smithay::reexports::calloop::timer::{TimeoutAction, Timer};
 use std::collections::VecDeque;
+use std::path::Path;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 use crate::compositor::State;
@@ -13,15 +15,28 @@ pub type OnLoop = Box<dyn FnOnce(&mut State) + Send>;
 
 type Work = Box<dyn FnOnce() -> OnLoop + Send>;
 
-/// Job threads running at once. A job on a file system that never answers keeps its thread for
-/// good; past this many, later jobs wait for a thread to come back instead of stranding more.
+/// Job threads running at once per pool. A job on a file system that never answers keeps its
+/// thread; past this many, later jobs wait for a thread to come back instead of stranding more.
 pub const MAX_THREADS: usize = 8;
+
+/// How long an action asked for by hand waits on the file system before it gives up. A disk waking
+/// from standby or a network mount reconnecting answers within about 10 s.
+pub const ACTION_DEADLINE: Duration = Duration::from_secs(15);
 
 /// The loop's end of the jobs' channel. No sender until `setup`, or when the
 /// channel could not join the loop: `spawn` then runs the work inline.
 #[derive(Default)]
 pub struct FsJobs {
     tx: Option<Sender<OnLoop>>,
+    /// Background file work: listings, rescans, icon reads.
+    files: Pool,
+    /// Actions asked for by hand, apart from `files` so neither starves the other.
+    actions: Pool,
+}
+
+/// Threads of one kind of job, at most [`MAX_THREADS`] at once.
+#[derive(Default)]
+struct Pool {
     /// Job threads not yet finished, counted down by each thread as it ends.
     running: Arc<AtomicUsize>,
     /// Jobs waiting for a thread while [`MAX_THREADS`] are running.
@@ -62,14 +77,31 @@ impl FsJobs {
         self.tx.clone()
     }
 
+    /// Runs `work` on a thread of its own at once, past [`MAX_THREADS`]: for work no mount can
+    /// hold. False only if the thread fails to spawn and the work is lost.
+    fn spawn_now(&self, tx: Sender<OnLoop>, work: Work) -> bool {
+        thread(tx, work, None)
+    }
+
+    /// Starts waiting jobs on the threads that have come back.
+    fn start_waiting(&mut self) {
+        let Some(tx) = self.tx.clone() else {
+            return;
+        };
+        self.files.start_waiting(&tx, "file jobs");
+        self.actions.start_waiting(&tx, "file actions");
+    }
+}
+
+impl Pool {
     /// Runs `work` on a thread of its own, or queues it while [`MAX_THREADS`] are running.
     /// False only if the thread fails to spawn and the work is lost.
-    fn spawn(&mut self, tx: Sender<OnLoop>, work: Work) -> bool {
+    fn spawn(&mut self, tx: Sender<OnLoop>, work: Work, what: &str) -> bool {
         if self.running.load(Ordering::Acquire) >= MAX_THREADS {
             if !self.warned {
                 log::warn!(
-                    "fsjobs: {MAX_THREADS} file jobs have not finished (a file system not \
-                     answering?); later file work waits for one"
+                    "fsjobs: {MAX_THREADS} {what} have not finished (a file system not \
+                     answering?); later ones wait for one"
                 );
                 self.warned = true;
             }
@@ -84,25 +116,15 @@ impl FsJobs {
         spawned
     }
 
-    /// Runs `work` on a thread of its own at once, past [`MAX_THREADS`]: for work no mount can
-    /// hold. False only if the thread fails to spawn and the work is lost.
-    fn spawn_now(&self, tx: Sender<OnLoop>, work: Work) -> bool {
-        thread(tx, work, None)
-    }
-
-    /// Starts waiting jobs on the threads that have come back.
-    fn start_waiting(&mut self) {
-        let Some(tx) = self.tx.clone() else {
-            return;
-        };
+    fn start_waiting(&mut self, tx: &Sender<OnLoop>, what: &str) {
         while self.running.load(Ordering::Acquire) < MAX_THREADS {
             let Some(work) = self.waiting.pop_front() else {
                 break;
             };
-            self.spawn(tx.clone(), work);
+            self.spawn(tx.clone(), work, what);
         }
         if self.waiting.is_empty() && self.warned {
-            log::info!("fsjobs: the waiting file work has started");
+            log::info!("fsjobs: the waiting {what} have started");
             self.warned = false;
         }
     }
@@ -202,6 +224,133 @@ impl<T> Reads<T> {
     }
 }
 
+/// What an action does to files, which decides what a give-up says and what a late answer does.
+#[derive(Clone, Copy)]
+pub struct Action {
+    /// The error box's title.
+    pub title: &'static str,
+    /// Some for an action that changes files: what refreshes the view when a change it had
+    /// already started lands past the deadline.
+    pub late: Option<fn(&mut State)>,
+}
+
+impl Action {
+    /// An action whose work only reads; a late answer is dropped.
+    pub fn reads(title: &'static str) -> Action {
+        Action { title, late: None }
+    }
+
+    /// An action whose work changes files after [`Gate::change`].
+    pub fn changes(title: &'static str, late: fn(&mut State)) -> Action {
+        Action {
+            title,
+            late: Some(late),
+        }
+    }
+
+    /// The give-up's error text; `changing` when the work had passed [`Gate::change`].
+    pub fn not_responding(&self, changing: bool) -> String {
+        let rest = match (self.late, changing) {
+            (None, _) => "",
+            (Some(_), false) => " Nothing was changed.",
+            (Some(_), true) => " The change may still be made once it answers.",
+        };
+        format!("The location is not responding.{rest}")
+    }
+}
+
+const WAITING: u8 = 0;
+const CHANGING: u8 = 1;
+const LANDED: u8 = 2;
+const GAVE_UP: u8 = 3;
+const GAVE_UP_CHANGING: u8 = 4;
+
+/// An action's race against [`ACTION_DEADLINE`], shared by its thread and its timer: whichever
+/// comes first, the answer or the deadline, wins.
+#[derive(Clone, Default)]
+pub struct Gate(Arc<AtomicU8>);
+
+/// What becomes of an action's answer.
+#[derive(Debug, PartialEq, Eq)]
+enum Landing {
+    /// In time: it runs.
+    Landed,
+    /// Past the deadline, nothing changed: it is dropped.
+    Dropped,
+    /// Past the deadline, after [`Gate::change`]: dropped, and the view refreshes.
+    Refresh,
+}
+
+impl Gate {
+    /// Called before the work's first change on `at`'s file system; false once the action gave up.
+    /// The free-space query reaches the server on a network mount, so a dead mount holds the work
+    /// here, before anything changes; a call blocked past this point may still land.
+    pub fn change(&self, at: &Path) -> bool {
+        let _ = reprisefs::places::statvfs_totals(at);
+        self.commit()
+    }
+
+    fn commit(&self) -> bool {
+        match (self.0).compare_exchange(WAITING, CHANGING, Ordering::AcqRel, Ordering::Acquire) {
+            Ok(_) => true,
+            Err(now) => now == CHANGING,
+        }
+    }
+
+    /// The deadline passed: whether a change may still land, or None when the answer came first.
+    fn give_up(&self) -> Option<bool> {
+        let was = (self.0).try_update(Ordering::AcqRel, Ordering::Acquire, |s| match s {
+            WAITING => Some(GAVE_UP),
+            CHANGING => Some(GAVE_UP_CHANGING),
+            _ => None,
+        });
+        match was {
+            Ok(was) => Some(was == CHANGING),
+            Err(_) => None,
+        }
+    }
+
+    fn given_up(&self) -> bool {
+        self.0.load(Ordering::Acquire) >= GAVE_UP
+    }
+
+    fn land(&self) -> Landing {
+        let was = (self.0).try_update(Ordering::AcqRel, Ordering::Acquire, |s| {
+            (s < LANDED).then_some(LANDED)
+        });
+        match was {
+            Err(GAVE_UP) => Landing::Dropped,
+            Err(GAVE_UP_CHANGING) => Landing::Refresh,
+            _ => Landing::Landed,
+        }
+    }
+}
+
+/// `work` for an action's thread: skipped when the action gave up while it waited for a thread,
+/// and its answer dropped (or `late` run in its place) when it lands past the deadline.
+fn gated<W>(gate: Gate, late: Option<fn(&mut State)>, work: W) -> Work
+where
+    W: FnOnce(&Gate) -> OnLoop + Send + 'static,
+{
+    Box::new(move || {
+        if gate.given_up() {
+            return Box::new(|_| {});
+        }
+        let done = work(&gate);
+        match (gate.land(), late) {
+            (Landing::Landed, _) => done,
+            (Landing::Refresh, Some(late)) => {
+                log::info!("fsjobs: a file action landed past its deadline; refreshing");
+                Box::new(late)
+            }
+            _ => {
+                log::info!("fsjobs: a file action answered past its deadline; dropped");
+                Box::new(|_| {})
+            }
+        }
+    })
+}
+
 impl State {
     /// Run `work` on a thread; what it returns runs on the loop afterwards. Without
     /// the channel it runs inline; returns false only if the thread fails to spawn
@@ -214,7 +363,35 @@ impl State {
             work()(self);
             return true;
         };
-        self.fsjobs.spawn(tx, Box::new(work))
+        self.fsjobs.files.spawn(tx, Box::new(work), "file jobs")
+    }
+
+    /// [`State::spawn_fs_job`] for an action asked for by hand: past [`ACTION_DEADLINE`] an error box
+    /// says the location is not responding and the answer is dropped whenever it comes.
+    pub fn spawn_fs_action<W>(&mut self, action: Action, work: W) -> bool
+    where
+        W: FnOnce(&Gate) -> OnLoop + Send + 'static,
+    {
+        let Some(tx) = self.fsjobs.tx.clone() else {
+            work(&Gate::default())(self);
+            return true;
+        };
+        let gate = Gate::default();
+        let timer = Timer::from_duration(ACTION_DEADLINE);
+        let watch = gate.clone();
+        let armed = self.handle.insert_source(timer, move |_, _, state| {
+            if let Some(changing) = watch.give_up() {
+                log::warn!("fsjobs: {} gave up after {ACTION_DEADLINE:?}", action.title);
+                let text = action.not_responding(changing);
+                state.open_dialog(crate::dialog::Dialog::error(action.title, text));
+            }
+            TimeoutAction::Drop
+        });
+        if let Err(e) = armed {
+            log::warn!("fsjobs: no deadline for {}: {}", action.title, e.error);
+        }
+        let work = gated(gate, action.late, work);
+        self.fsjobs.actions.spawn(tx, work, "file actions")
     }
 
     /// [`State::spawn_fs_job`] for work that opens no file (painting art, bus calls) or only the
@@ -276,16 +453,16 @@ mod tests {
                 let _ = std::fs::read(&path);
                 Box::new(|_| {})
             });
-            assert!(jobs.spawn(tx.clone(), work));
+            assert!(jobs.files.spawn(tx.clone(), work, "file jobs"));
         }
-        let running = Arc::clone(&jobs.running);
+        let running = Arc::clone(&jobs.files.running);
         until("the threads to start", || {
             running.load(Ordering::Acquire) == MAX_THREADS
         });
-        assert_eq!(jobs.waiting.len(), 3, "jobs past the cap wait");
-        assert!(jobs.warned);
+        assert_eq!(jobs.files.waiting.len(), 3, "jobs past the cap wait");
+        assert!(jobs.files.warned);
         jobs.start_waiting();
-        assert_eq!(jobs.waiting.len(), 3, "no thread came back");
+        assert_eq!(jobs.files.waiting.len(), 3, "no thread came back");
 
         // A writer opening and closing the pipe answers each blocked read with an empty file.
         let stop = Arc::new(AtomicBool::new(false));
@@ -300,12 +477,12 @@ mod tests {
             }
         });
         let end = Instant::now() + Duration::from_secs(5);
-        while !(jobs.waiting.is_empty() && running.load(Ordering::Acquire) == 0) {
+        while !(jobs.files.waiting.is_empty() && running.load(Ordering::Acquire) == 0) {
             assert!(Instant::now() < end, "timed out waiting for the jobs");
             jobs.start_waiting();
             std::thread::sleep(Duration::from_millis(5));
         }
-        assert!(!jobs.warned, "the wait is over");
+        assert!(!jobs.files.warned, "the wait is over");
         stop.store(true, Ordering::Release);
         writer.join().unwrap();
         let _ = std::fs::remove_dir_all(hang.parent().unwrap());
@@ -326,9 +503,9 @@ mod tests {
                 let _ = std::fs::read(&path);
                 Box::new(|_| {})
             });
-            assert!(jobs.spawn(tx.clone(), work));
+            assert!(jobs.files.spawn(tx.clone(), work, "file jobs"));
         }
-        let running = Arc::clone(&jobs.running);
+        let running = Arc::clone(&jobs.files.running);
         until("the threads to start", || {
             running.load(Ordering::Acquire) == MAX_THREADS
         });
@@ -340,7 +517,7 @@ mod tests {
         });
         assert!(jobs.spawn_now(tx.clone(), paint));
         until("the work to run", || painted.load(Ordering::Acquire));
-        assert_eq!(jobs.waiting.len(), 1, "only the file job waits");
+        assert_eq!(jobs.files.waiting.len(), 1, "only the file job waits");
         // A writer opening the pipe answers the blocked reads, so their threads end.
         while running.load(Ordering::Acquire) > 0 {
             let _ = std::fs::OpenOptions::new()
@@ -379,5 +556,140 @@ mod tests {
         );
         assert!(r.start(t0 + STUCK * 9, ()).is_some(), "a slot came back");
         assert!(r.land(c));
+    }
+    /// Opens `hang` to write until `done`, which answers each read blocked on it.
+    fn answer(hang: &std::path::Path, mut done: impl FnMut() -> bool) {
+        use std::os::unix::fs::OpenOptionsExt;
+        let end = Instant::now() + Duration::from_secs(5);
+        while !done() {
+            assert!(Instant::now() < end, "timed out answering the reads");
+            let _ = std::fs::OpenOptions::new()
+                .write(true)
+                .custom_flags(libc::O_NONBLOCK)
+                .open(hang);
+            std::thread::sleep(Duration::from_millis(2));
+        }
+    }
+
+    #[test]
+    fn an_action_answered_past_its_deadline_changes_nothing() {
+        let hang = fifo("late");
+        let made = hang.with_file_name("New Folder");
+        let (tx, _rx) = channel::channel::<OnLoop>();
+        let mut jobs = FsJobs {
+            tx: Some(tx.clone()),
+            ..Default::default()
+        };
+        let gate = Gate::default();
+        let entered = Arc::new(AtomicBool::new(false));
+        let (path, dir, inside) = (hang.clone(), made.clone(), Arc::clone(&entered));
+        let work = gated(gate.clone(), Some(|_| {}), move |gate: &Gate| -> OnLoop {
+            inside.store(true, Ordering::Release);
+            let _ = std::fs::read(&path);
+            if gate.change(dir.parent().unwrap()) {
+                std::fs::create_dir(&dir).unwrap();
+            }
+            Box::new(|_| {})
+        });
+        assert!(jobs.actions.spawn(tx, work, "file actions"));
+        let running = Arc::clone(&jobs.actions.running);
+        until("the action to start", || entered.load(Ordering::Acquire));
+        assert_eq!(gate.give_up(), Some(false), "no change had started");
+        answer(&hang, || running.load(Ordering::Acquire) == 0);
+        assert!(!made.exists(), "the folder is not made after the give-up");
+        let _ = std::fs::remove_dir_all(hang.parent().unwrap());
+    }
+
+    #[test]
+    fn a_gate_lets_the_first_of_answer_and_deadline_win() {
+        let g = Gate::default();
+        assert!(g.commit());
+        assert!(g.commit(), "a second step of the same change goes on");
+        assert_eq!(g.give_up(), Some(true), "a change was under way");
+        assert_eq!(g.land(), Landing::Refresh);
+
+        let g = Gate::default();
+        assert_eq!(g.give_up(), Some(false));
+        assert!(g.given_up());
+        assert!(!g.commit());
+        assert_eq!(g.land(), Landing::Dropped);
+
+        let g = Gate::default();
+        assert_eq!(g.land(), Landing::Landed);
+        assert_eq!(g.give_up(), None, "the answer came first");
+        assert!(!g.given_up());
+    }
+
+    #[test]
+    fn actions_start_while_file_jobs_are_stuck_and_wait_only_for_actions() {
+        let hang = fifo("pools");
+        let (tx, _rx) = channel::channel::<OnLoop>();
+        let mut jobs = FsJobs {
+            tx: Some(tx.clone()),
+            ..Default::default()
+        };
+        let stuck = |path: std::path::PathBuf| -> Work {
+            Box::new(move || {
+                let _ = std::fs::read(&path);
+                Box::new(|_| {})
+            })
+        };
+        for _ in 0..MAX_THREADS {
+            assert!(
+                jobs.files
+                    .spawn(tx.clone(), stuck(hang.clone()), "file jobs")
+            );
+        }
+        let files = Arc::clone(&jobs.files.running);
+        until("the file jobs to start", || {
+            files.load(Ordering::Acquire) == MAX_THREADS
+        });
+        let ran = Arc::new(AtomicBool::new(false));
+        let done = Arc::clone(&ran);
+        let action = gated(Gate::default(), None, move |_: &Gate| -> OnLoop {
+            done.store(true, Ordering::Release);
+            Box::new(|_| {})
+        });
+        assert!(jobs.actions.spawn(tx.clone(), action, "file actions"));
+        until("the action to run", || ran.load(Ordering::Acquire));
+        let actions = Arc::clone(&jobs.actions.running);
+        until("the action to end", || actions.load(Ordering::Acquire) == 0);
+
+        for _ in 0..MAX_THREADS + 1 {
+            let work = gated(Gate::default(), None, {
+                let path = hang.clone();
+                move |_: &Gate| -> OnLoop {
+                    let _ = std::fs::read(&path);
+                    Box::new(|_| {})
+                }
+            });
+            assert!(jobs.actions.spawn(tx.clone(), work, "file actions"));
+        }
+        assert_eq!(jobs.actions.waiting.len(), 1, "a ninth stuck action waits");
+        answer(&hang, || {
+            jobs.start_waiting();
+            jobs.actions.waiting.is_empty()
+                && actions.load(Ordering::Acquire) == 0
+                && files.load(Ordering::Acquire) == 0
+        });
+        let _ = std::fs::remove_dir_all(hang.parent().unwrap());
+    }
+
+    #[test]
+    fn the_give_up_says_whether_a_change_may_still_land() {
+        let reads = Action::reads("Properties");
+        assert_eq!(
+            reads.not_responding(false),
+            "The location is not responding."
+        );
+        let changes = Action::changes("Rename", |_| {});
+        assert_eq!(
+            changes.not_responding(false),
+            "The location is not responding. Nothing was changed."
+        );
+        assert_eq!(
+            changes.not_responding(true),
+            "The location is not responding. The change may still be made once it answers."
+        );
     }
 }

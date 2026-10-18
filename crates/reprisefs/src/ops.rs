@@ -811,15 +811,21 @@ impl DropOp {
     /// The error box's title and text when this op on `name` fails with
     /// `error`.
     pub fn failure(self, name: &str, error: &dyn std::fmt::Display) -> (&'static str, String) {
-        let (title, what) = match self {
-            DropOp::Move => ("Error Moving File or Folder", format!("move {name}")),
-            DropOp::Copy => ("Error Copying File or Folder", format!("copy {name}")),
-            DropOp::Shortcut => (
-                "Error Creating Shortcut",
-                format!("create a shortcut to {name}"),
-            ),
+        let what = match self {
+            DropOp::Move => format!("move {name}"),
+            DropOp::Copy => format!("copy {name}"),
+            DropOp::Shortcut => format!("create a shortcut to {name}"),
         };
-        (title, format!("Cannot {what}: {error}"))
+        (self.failure_title(), format!("Cannot {what}: {error}"))
+    }
+
+    /// The title of this op's error box.
+    pub fn failure_title(self) -> &'static str {
+        match self {
+            DropOp::Move => "Error Moving File or Folder",
+            DropOp::Copy => "Error Copying File or Folder",
+            DropOp::Shortcut => "Error Creating Shortcut",
+        }
     }
 }
 
