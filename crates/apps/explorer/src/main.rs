@@ -23,6 +23,7 @@ mod props_dialog;
 mod props_host;
 mod removing;
 mod rename;
+mod sendreads;
 mod settings;
 mod tree;
 mod volumes;
@@ -211,6 +212,8 @@ pub struct Explorer {
     pub open_with_apps: Vec<usize>,
     pub open_with_path: Option<PathBuf>,
     pub send_to: Vec<reprisefs::sendto::SendToRow>,
+    /// What the Send To rows are read from, off the loop.
+    pub(crate) send: sendreads::SendReads,
     pub dialog: Option<Dialog>,
     /// The Properties sheet, in its own modeless window: it and a box can be up at once.
     pub props: Option<Props>,
@@ -412,6 +415,7 @@ impl Explorer {
             open_with_apps: Vec::new(),
             open_with_path: None,
             send_to: Vec::new(),
+            send: sendreads::SendReads::default(),
             dialog: None,
             props: None,
             error_icon: None,
