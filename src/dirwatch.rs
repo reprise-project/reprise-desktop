@@ -7,6 +7,7 @@ use std::io::{self, ErrorKind};
 use std::os::fd::{AsRawFd, RawFd};
 use std::path::PathBuf;
 
+#[derive(Clone, Debug, PartialEq)]
 pub struct Want {
     pub dir: PathBuf,
     pub mask: WatchMask,
