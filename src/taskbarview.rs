@@ -252,6 +252,11 @@ pub(crate) fn app_icon(
     crate::icon::unread(icons, name, px)
 }
 
+/// A Quick Launch item's or pin's icon at `px`, its file never read on the loop.
+pub(crate) fn quick_icon(icons: &mut IconCache, q: &QuickItem, px: i32) -> Option<Arc<Canvas>> {
+    (q.entry.icon.as_deref()).and_then(|n| crate::icon::unread(icons, n, px))
+}
+
 const GLOW_KEEP: usize = 256;
 
 type GlowKey = (usize, u32, u32, u64);
@@ -742,12 +747,7 @@ impl State {
         } else {
             self.quicklaunch
                 .iter()
-                .map(|q| {
-                    q.entry
-                        .icon
-                        .as_deref()
-                        .and_then(|n| icons.get_shared(n, px))
-                })
+                .map(|q| quick_icon(icons, q, px))
                 .collect()
         };
         let TaskWindows {
@@ -856,7 +856,7 @@ impl State {
                         title: String::new(),
                         active: false,
                         attention: false,
-                        icon: name.and_then(|n| icons.get_shared(&n, task_px)),
+                        icon: name.and_then(|n| crate::icon::unread(icons, &n, task_px)),
                         glow: None,
                     };
                 }
@@ -1738,12 +1738,10 @@ impl State {
         let Some(item) = self.quicklaunch.get(index) else {
             return;
         };
-        let mut canvas = item
-            .entry
-            .icon
-            .as_deref()
-            .and_then(|n| self.icons.get(n, icon_px))
-            .unwrap_or_else(|| reprisekit::icon::chrome_fallback(&theme, icon_px));
+        let mut canvas = quick_icon(&mut self.icons, item, icon_px).map_or_else(
+            || reprisekit::icon::chrome_fallback(&theme, icon_px),
+            Arc::unwrap_or_clone,
+        );
         canvas.fade(1, 2);
         let buffer = self.scene.buffer_create(self.layers.overlay);
         self.scene.set_input(buffer, Input::Passthrough);

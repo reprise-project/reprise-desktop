@@ -97,6 +97,11 @@ fn app_wears(index: &[reprisefs::apps::AppEntry], app_id: &str, file: &str) -> b
     reprisefs::apps::icon_for_app_id(index, app_id) == Some(file)
 }
 
+/// Whether a Quick Launch item or taskbar pin wears icon file `file`.
+fn quick_wears(items: &[crate::quicklaunch::QuickItem], file: &str) -> bool {
+    items.iter().any(|q| q.entry.icon.as_deref() == Some(file))
+}
+
 /// Icon files a job is decoding, each with the px asked for since its job started.
 pub type Decoding = std::collections::HashMap<String, Vec<i32>>;
 
@@ -168,6 +173,9 @@ impl State {
             self.menu_icon_landed(file, *px, c);
         }
         self.window_icon_landed(file);
+        if quick_wears(&self.quicklaunch, file) {
+            self.redraw_taskbars();
+        }
     }
 
     /// Icon file `file` landed: the windows whose app wears it redraw their caption and task
@@ -253,6 +261,23 @@ mod tests {
         icons.put_file(file, 16, Some(Canvas::new(16, 16)));
         let icon = crate::taskbarview::app_icon(&mut icons, &index, app, 16);
         assert_eq!(icon.map(|c| c.width), Some(16));
+    }
+
+    #[test]
+    fn a_quick_launch_icon_file_is_never_read_on_the_loop() {
+        use reprisekit::icontheme::IconTheme;
+        let file = "/srv/icons/editor.svg";
+        let text =
+            format!("[Desktop Entry]\nType=Application\nName=Editor\nExec=ed\nIcon={file}\n");
+        let item = crate::quicklaunch::QuickItem {
+            file: "editor.desktop".into(),
+            entry: crate::quicklaunch::parse(&text, "editor.desktop", "foot").unwrap(),
+            app: reprisefs::apps::parse_desktop(&text, "editor.desktop"),
+        };
+        let mut icons = IconCache::new(IconTheme::load("none", &[]));
+        assert!(crate::taskbarview::quick_icon(&mut icons, &item, 16).is_none());
+        assert_eq!(icons.take_wanted(), [(file.to_string(), 16)]);
+        assert!(quick_wears(std::slice::from_ref(&item), file));
     }
 
     #[test]
