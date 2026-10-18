@@ -132,6 +132,7 @@ impl Explorer {
             .or(self.take_gone(ctx))
             .or(self.take_drives(ctx))
             .or(self.take_clashes(ctx))
+            .or(self.take_asking(ctx))
             .filter(|r| *r != Reply::none());
         if let Some(from) = self.watch.as_mut().and_then(|w| w.take_gone()) {
             let r = self.follow_gone(&from, ctx);

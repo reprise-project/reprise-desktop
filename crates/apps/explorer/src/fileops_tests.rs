@@ -1665,6 +1665,65 @@ fn a_paste_whose_clash_check_answers_late_asks_on_a_later_wake() {
     );
 }
 
+/// The replace prompt's size and date lines stat both files on a listing thread: on a file that
+/// does not answer (a dead mount) the prompt comes up on the wake after the read lands, and a
+/// paste made meanwhile asks after it.
+#[test]
+fn a_replace_prompt_whose_files_answer_late_comes_up_on_a_later_wake() {
+    let mut ctx = test_ctx();
+    let t = tempfile::tempdir().expect("a temp dir");
+    let (src, dest) = (t.path().join("src"), t.path().join("dest"));
+    for (d, text) in [(&src, "x"), (&dest, "old")] {
+        std::fs::create_dir_all(d).expect("mkdir");
+        std::fs::write(d.join("a.txt"), text).expect("write");
+        std::fs::write(d.join("b.txt"), text).expect("write");
+    }
+    let mut ex = crate::tests::test_explorer(Place::Folder(dest.clone()), &mut ctx);
+    let check = std::sync::Arc::new(std::sync::RwLock::new(()));
+    let checking = check.write().expect("lock");
+    ex.held = Some(check.clone());
+    for name in ["a.txt", "b.txt"] {
+        ex.put_all(
+            &[src.join(name)],
+            &dest,
+            &|_| Some(DropOp::Copy),
+            false,
+            &mut ctx,
+        );
+    }
+    let stat = std::sync::Arc::new(std::sync::RwLock::new(()));
+    let statting = stat.write().expect("lock");
+    ex.held = Some(stat.clone());
+    drop(checking);
+    crate::tests::wake_until(&mut ex, &mut ctx, |ex| ex.clashing.is_empty());
+    assert_eq!(asked(&ex), None, "no prompt before its files are read");
+    assert!(ex.asking.is_some());
+    drop(statting);
+    ex.held = None;
+    crate::tests::wake_until(&mut ex, &mut ctx, |ex| ex.dialog.is_some());
+    assert_eq!(
+        asked(&ex),
+        Some(("Confirm File Replace", "a.txt".to_string()))
+    );
+    match &ex.dialog {
+        Some(Dialog::Replace(r)) => match &r.fields.subject {
+            replacebox::Subject::File { existing, incoming } => {
+                assert_eq!(
+                    (existing.size.as_str(), incoming.size.as_str()),
+                    ("3 bytes", "1 bytes")
+                );
+            }
+            replacebox::Subject::Folder => panic!("a file clash shows both files"),
+        },
+        _ => panic!("the replace prompt is up"),
+    }
+    ex.dialog_event(key_event_alt('n'), &mut ctx);
+    assert_eq!(
+        asked(&ex),
+        Some(("Confirm File Replace", "b.txt".to_string()))
+    );
+}
+
 /// Yes replaces the first file, No keeps the second, and the folder prompt's Yes merges, asking
 /// about the file inside it the merge would replace.
 #[test]
