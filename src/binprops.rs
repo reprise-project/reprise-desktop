@@ -20,7 +20,7 @@ use reprisekit::controls::form::{Control, Event, Form, Item};
 use reprisekit::controls::propsheet::{self, PropSheet};
 use reprisekit::trackbar::TrackBar;
 use serde::Deserialize;
-use std::path::PathBuf;
+use std::path::Path;
 
 /// Settings from the state file, before `[recycle_bin]`: read once and moved into `config.toml` (`dialogview::setup`).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize)]
@@ -214,39 +214,59 @@ impl BinSheet {
 
 pub use reprisefs::props::short_size;
 
-/// The home trash's drive first, as "Local Disk (/)" by its mount, then each
-/// drive of `reprisefs::places::mounted_drives` that has or can make a
-/// Recycle Bin, by folder name. Sized by `statvfs`, keyed as `[recycle_bin.drives]`.
-pub fn drives(bins: &reprisefs::trash::Bins, mounted: &[PathBuf]) -> Vec<Drive> {
-    let mut out = Vec::new();
-    let home_top = bins.home_top().map(std::path::Path::to_path_buf);
-    if let Some(top) = &home_top
-        && let Some(size) = fs_size(top)
-    {
-        out.push(Drive {
-            key: reprisefs::bincap::HOME.into(),
-            label: format!("Local Disk ({})", top.display()),
-            size,
-        });
+/// The home trash's drive, as "Local Disk (/)" by its mount, sized by `statvfs`.
+pub fn home_drive(bins: &reprisefs::trash::Bins) -> Option<Drive> {
+    let top = bins.home_top()?;
+    Some(Drive {
+        key: reprisefs::bincap::HOME.into(),
+        label: format!("Local Disk ({})", top.display()),
+        size: fs_size(top)?,
+    })
+}
+
+/// The tab of `top`, a drive of `reprisefs::places::mounted_drives`, by folder name: None for
+/// the home trash's drive and a drive with no Recycle Bin that cannot make one. Sized by
+/// `statvfs`, keyed as `[recycle_bin.drives]`. Looks inside `top`, so it runs on a file job.
+pub fn drive_tab(bins: &reprisefs::trash::Bins, top: &Path) -> Option<Drive> {
+    if bins.home_top() == Some(top) {
+        return None;
     }
-    for d in mounted {
-        if home_top.as_ref() == Some(d) || bins.bin_for(&d.join("x"), false).is_none() {
-            continue;
-        }
-        let Some(size) = fs_size(d) else {
-            continue;
-        };
-        let name = d
-            .file_name()
-            .map(|n| n.to_string_lossy().into_owned())
-            .unwrap_or_else(|| d.display().to_string());
-        out.push(Drive {
-            key: bins.drive_key(d),
-            label: name,
-            size,
-        });
+    bins.bin_for(&top.join("x"), false)?;
+    let size = fs_size(top)?;
+    let label = top
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| top.display().to_string());
+    Some(Drive {
+        key: bins.drive_key(top),
+        label,
+        size,
+    })
+}
+
+/// Shows `drives` as the mounted drives' tabs after the home drive's, keeping the open tab
+/// when its drive stays and what the boxes say. False when the tabs were already these.
+pub fn show_drives(fd: &mut FormDialog, drives: Vec<Drive>) -> bool {
+    let open = fd.open_index();
+    let Kind::RecycleBin(sheet) = &mut fd.kind else {
+        return false;
+    };
+    let home = (sheet.drives.iter()).filter(|d| d.key == reprisefs::bincap::HOME);
+    let all: Vec<Drive> = home.cloned().chain(drives).collect();
+    if all == sheet.drives {
+        return false;
     }
-    out
+    let open_key = (open.checked_sub(1))
+        .and_then(|i| sheet.drives.get(i))
+        .map(|d| d.key.clone());
+    let reopen = (open_key.and_then(|k| all.iter().position(|d| d.key == k))).map_or(0, |i| i + 1);
+    sheet.drives = all;
+    let sheet = sheet.clone();
+    *fd = FormDialog::from_sheet(sheet.sheet(), Kind::RecycleBin(sheet));
+    if let Some(s) = fd.sheet_mut() {
+        s.open_tab(reopen);
+    }
+    true
 }
 
 fn fs_size(path: &std::path::Path) -> Option<u64> {
@@ -372,6 +392,50 @@ mod tests {
 
     fn sheet() -> BinSheet {
         BinSheet::new(Policy::default(), vec![drive("home", "Local Disk (/home)")])
+    }
+
+    #[test]
+    fn a_landing_drive_tab_keeps_the_home_tab_the_open_tab_and_the_boxes() {
+        let mut d = dialog(sheet(), (0, 0), "user-trash");
+        let Style::Form(fd) = &mut d.style else {
+            panic!()
+        };
+        assert!(show_drives(fd, vec![drive("b", "B")]));
+        fd.sheet_mut().unwrap().open_tab(2);
+        let Kind::RecycleBin(s) = &mut fd.kind else {
+            panic!()
+        };
+        s.pending.confirm = false;
+        assert!(show_drives(fd, vec![drive("a", "A"), drive("b", "B")]));
+        assert!(!show_drives(fd, vec![drive("a", "A"), drive("b", "B")]));
+        let labels = &fd.sheet().unwrap().tabs.labels;
+        assert_eq!(labels, &["Global", "Local Disk (/home)", "A", "B"]);
+        assert_eq!(fd.open_index(), 3, "B's tab stays open");
+        let Kind::RecycleBin(s) = &fd.kind else {
+            panic!()
+        };
+        assert!(!s.pending.confirm, "what the boxes said");
+        fd.sheet_mut().unwrap().open_tab(2);
+        assert!(show_drives(fd, vec![drive("b", "B")]));
+        assert_eq!(fd.open_index(), 0, "A's tab went: Global opens");
+    }
+
+    #[test]
+    fn a_drive_gets_a_tab_when_it_has_a_bin_or_can_make_one() {
+        use std::os::unix::fs::PermissionsExt;
+        let t = std::env::temp_dir().join(format!("reprise-bin-tabs-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&t);
+        let (stick, shut) = (t.join("STICK"), t.join("SHUT"));
+        std::fs::create_dir_all(&stick).unwrap();
+        std::fs::create_dir_all(&shut).unwrap();
+        std::fs::set_permissions(&shut, std::fs::Permissions::from_mode(0o555)).unwrap();
+        let bins = reprisefs::trash::Bins::new(t.join("home"), vec![stick.clone(), shut.clone()]);
+        let tab = drive_tab(&bins, &stick).expect("STICK can make a bin");
+        assert_eq!(tab.label, "STICK");
+        assert!(tab.size > 0);
+        assert_eq!(drive_tab(&bins, &shut), None, "SHUT cannot");
+        std::fs::set_permissions(&shut, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let _ = std::fs::remove_dir_all(&t);
     }
 
     /// The sheet carries the bin's icon for a styled caption and Alt+Tab; its Classic body has no place for it.
