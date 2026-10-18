@@ -214,6 +214,13 @@ impl App for Choose {
                 self.apply_updates();
                 return Reply::redraw();
             }
+            Event::Resized => {
+                return Reply {
+                    size: Some(openwith::client(&ctx.forms().controls())),
+                    redraw: true,
+                    ..Default::default()
+                };
+            }
             ev => {
                 let lay = self.ow.layout(
                     &ctx.text,
@@ -475,6 +482,36 @@ mod tests {
         assert!(
             app.pending.lock().unwrap().is_empty(),
             "the update is used up"
+        );
+    }
+
+    #[test]
+    fn a_text_size_change_resizes_the_chooser_to_its_grown_size() {
+        let input = Input::default();
+        let mut app = Choose {
+            ow: chooser(&input, &[], None),
+            default: None,
+            input,
+            apps: Vec::new(),
+            icon: None,
+            row_icons: Vec::new(),
+            icons: IconCache::new(reprisekit::icontheme::IconTheme::load("hicolor", &[])),
+            updates: None,
+            pending: Arc::new(Mutex::new(Vec::new())),
+            input_state: ChooserInput::default(),
+            out: Arc::new(Mutex::new(Output::default())),
+        };
+        let mut ctx = crate::dialog::test_ctx(200);
+        let reply = app.event(repriseapp::MAIN, Event::Resized, &mut ctx);
+        let want = openwith::client(&ctx.forms().controls());
+        assert_ne!(
+            want,
+            openwith::client(&crate::dialog::test_ctx(100).forms().controls())
+        );
+        assert_eq!(
+            reply.size,
+            Some(want),
+            "the fixed chooser asks for its 200% size"
         );
     }
 

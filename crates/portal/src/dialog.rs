@@ -342,6 +342,12 @@ impl App for Prompt {
     fn event(&mut self, _win: WinId, ev: Event, ctx: &mut Ctx) -> Reply {
         match ev {
             Event::CloseRequest => self.cancelled(Refusal::Dismissed),
+            // A text size change: a fixed window takes only the size it is asked for.
+            Event::Resized => Reply {
+                size: Some(ctx.forms().text.size(self.size)),
+                redraw: true,
+                ..Default::default()
+            },
             ev => match form_input(&mut self.form, &ev, ctx) {
                 Some(e) => self.decide(e),
                 None => Reply::none(),
@@ -410,11 +416,59 @@ pub fn overflows(
     over
 }
 
+/// A program context at `text_size` for the dialogs' tests.
+#[cfg(test)]
+pub fn test_ctx(text_size: u32) -> Ctx {
+    Ctx {
+        theme: Theme::default(),
+        text: reprisekit::text::TextRenderer::load(&reprisekit::theme::FontConfig::default())
+            .into(),
+        icons: IconCache::new(IconTheme::load("hicolor", &[])),
+        caret_on: true,
+        size: (300, 300),
+        maximized: false,
+        origin: (0, 0),
+        wake: repriseapp::Waker::noop(),
+        heads: Default::default(),
+        want_tick: Default::default(),
+        at_pick: false,
+        text_size,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::os::unix::process::ExitStatusExt;
     use std::time::{Duration, Instant};
+
+    #[test]
+    fn a_text_size_change_resizes_a_prompt_to_its_grown_size() {
+        let size = (360, 140);
+        let mut p = Prompt {
+            title: "Allow?".into(),
+            size,
+            form: Form::new(Vec::new()),
+            icon: None,
+            accept: "allow",
+            cancel: "deny",
+            on_accept: Box::new(|_| true),
+            on_cancel: Box::new(|_, _| {}),
+            parent: None,
+            modal: false,
+        };
+        let mut ctx = test_ctx(175);
+        let reply = p.event(repriseapp::MAIN, Event::Resized, &mut ctx);
+        let want = ctx.forms().text.size(size);
+        assert_ne!(want, size);
+        assert_eq!(
+            reply.size,
+            Some(want),
+            "the fixed window asks for its 175% size"
+        );
+        let reply = p.event(repriseapp::MAIN, Event::Resized, &mut test_ctx(100));
+        assert_eq!(reply.size, Some(size), "and its own size back at 100%");
+    }
 
     #[test]
     fn a_mnemonic_label_becomes_an_access_key() {
