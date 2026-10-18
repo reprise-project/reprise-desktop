@@ -873,7 +873,7 @@ pub fn draw_notify_balloon(
     }
     // A peer's label is plain text: `&` is not an access key marker.
     let mut button = |r: Rect, label: &str, hit: NotifyHit, enabled: bool| {
-        let label = label.replace('&', "&&");
+        let label = crate::text::escape_mnemonic(label);
         let ptr = if !enabled {
             Interaction::Idle
         } else if pushed == Some(hit) {
@@ -1058,7 +1058,7 @@ pub fn access_parts(
 ) -> crate::access::accesskit::NodeId {
     use crate::access::{self, accesskit::Action, accesskit::Live, accesskit::Role};
     // Peer text is plain: `&` is no access key marker.
-    let plain = |s: &str| s.replace('&', "&&");
+    let plain = crate::text::escape_mnemonic;
     let mut alert = access::node(Role::Alert, p.bubble);
     alert.set_label(says.spoken());
     alert.set_live(if says.urgent {

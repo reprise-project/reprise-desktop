@@ -218,14 +218,15 @@ pub fn icons() -> IconCache {
 }
 
 /// The two lines beside the header icon in a client `w` wide: `prompt` on
-/// line 12, `note` on line 38, both ending 11 px from the right.
+/// line 12, `note` on line 38, both ending 11 px from the right. Both are
+/// plain text: an `&` (in an app's name) draws as itself.
 pub fn header(w: i32, prompt: String, note: String) -> [Item; 2] {
-    let line = |id, y, text| {
+    let line = |id, y, text: String| {
         Item::new(
             id,
             Rect::new(TEXT_X, y, w - TEXT_X - 11, LINE_H),
             Control::Label {
-                text,
+                text: reprisekit::text::escape_mnemonic(&text),
                 enabled: true,
                 align: Align::Left,
             },
@@ -491,6 +492,18 @@ mod tests {
         assert_eq!(parent_handle("x11:1f"), None);
         assert_eq!(parent_handle("wayland:"), None);
         assert_eq!(parent_handle(""), None);
+    }
+
+    #[test]
+    fn an_ampersand_in_the_prompt_draws_as_itself() {
+        let [prompt, _] = header(391, "R&D Tool wants to see your screen.".into(), "n".into());
+        let Control::Label { text, .. } = &prompt.control else {
+            panic!("the prompt is a label");
+        };
+        assert_eq!(
+            reprisekit::text::split_mnemonic(text),
+            ("R&D Tool wants to see your screen.".to_string(), None)
+        );
     }
 
     #[test]

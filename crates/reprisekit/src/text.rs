@@ -1019,6 +1019,12 @@ pub fn split_mnemonic(label: &str) -> (String, Option<usize>) {
     (out, mnemonic)
 }
 
+/// `s` as a label [`split_mnemonic`] reads back unchanged: every `&` doubled,
+/// so a file or program name never turns a letter into an access key.
+pub fn escape_mnemonic(s: &str) -> String {
+    s.replace('&', "&&")
+}
+
 pub fn access_key(label: &str) -> Option<char> {
     let (plain, m) = split_mnemonic(label);
     m.and_then(|m| plain.chars().nth(m))
@@ -1043,6 +1049,15 @@ mod tests {
         assert_eq!(access_key("&Always use"), Some('a'));
         assert_eq!(access_key("Sear&ch"), Some('c'));
         assert_eq!(access_key("Plain"), None);
+    }
+
+    #[test]
+    fn an_escaped_name_reads_back_whole_with_no_access_key() {
+        for name in ["R&D notes.txt", "&", "a&&b", "Plain", ""] {
+            let label = escape_mnemonic(name);
+            assert_eq!(split_mnemonic(&label), (name.to_string(), None), "{name}");
+            assert_eq!(access_key(&label), None, "{name}");
+        }
     }
 
     #[test]

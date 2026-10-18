@@ -281,7 +281,8 @@ pub fn form(f: &Fields, text: &TextRenderer, px: u32, u: TextUnits) -> Form {
         ));
     }
     for ((line, y), id) in p.lines.iter().zip(LINE_IDS) {
-        items.push(Item::label_at(id, TEXT_X, *y, w - TEXT_X - MARGIN, line));
+        let line = crate::text::escape_mnemonic(line);
+        items.push(Item::label_at(id, TEXT_X, *y, w - TEXT_X - MARGIN, &line));
     }
     for ((y, side), (icon_id, size_id, date_id)) in p.sides.iter().zip(SIDE_IDS) {
         if let Some(icon) = &side.icon {
@@ -454,6 +455,25 @@ mod tests {
         assert_eq!(
             line0(&form(&file(), &text, px, TextUnits::ONE)),
             "This folder already contains a file named 'notes.txt'."
+        );
+    }
+
+    #[test]
+    fn an_ampersand_in_the_name_or_folder_shows_and_is_no_access_key() {
+        let (text, px) = rend();
+        let mut amp = file();
+        amp.name = "R&D notes.txt".into();
+        amp.folder = Some("Q&A".into());
+        let f = form(&amp, &text, px, TextUnits::ONE);
+        let form::Control::Label { text: label, .. } = &f.item("line0").unwrap().control else {
+            panic!("the first line is a label");
+        };
+        assert_eq!(
+            crate::text::split_mnemonic(label),
+            (
+                "The folder 'Q&A' already contains a file named 'R&D notes.txt'.".to_string(),
+                None
+            )
         );
     }
 
