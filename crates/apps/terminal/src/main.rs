@@ -609,8 +609,8 @@ impl Terminal {
         }
     }
 
-    /// Carry out what each tab's PTY thread queued; tabs whose program exited close.
-    /// Carry out what each window's tabs queued; a window whose last tab closed closes.
+    /// Carry out what each window's tabs queued; a window whose last tab closed closes. Only the
+    /// windows whose shown tab, strip or chrome changed draw again.
     fn wake(&mut self, ctx: &Ctx) -> Reply {
         let scheme = self.scheme(&ctx.theme);
         let mut reply = Reply::none();
@@ -618,13 +618,19 @@ impl Terminal {
             if !self.enter(id) {
                 continue;
             }
-            for t in &mut self.w.tabs.list {
-                let copied = t.pump(&scheme);
+            let open = self.w.tabs.strip.open;
+            let mut shown = false;
+            for (i, t) in self.w.tabs.list.iter_mut().enumerate() {
+                let Some(copied) = t.pump(&scheme) else {
+                    continue;
+                };
+                shown |= i == open;
                 reply.copy = copied.clipboard.or(reply.copy);
                 reply.copy_primary = copied.primary.or(reply.copy_primary);
             }
-            for (program, code) in self.reap() {
-                if code != 0 {
+            let reaped = self.reap();
+            for (program, code) in &reaped {
+                if *code != 0 {
                     log::warn!("{program} exited with status {code}");
                 }
             }
@@ -641,7 +647,9 @@ impl Terminal {
                     self.w.chrome.dirty = true;
                 }
             }
-            reply.redraw_wins.push(id);
+            if shown || !reaped.is_empty() || self.w.chrome.dirty {
+                reply.redraw_wins.push(id);
+            }
         }
         reply
     }

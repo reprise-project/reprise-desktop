@@ -33,6 +33,8 @@ struct Inbox {
     copied: Copied,
     status: Option<i32>,
     exited: bool,
+    /// Something came since the last pump: output on the screen or one of the above.
+    news: bool,
 }
 
 /// A query the program sent that the main loop answers into the PTY.
@@ -77,6 +79,7 @@ impl EventListener for Proxy {
                 TermEvent::Wakeup => {}
                 _ => return,
             }
+            inbox.news = true;
         }
         self.waker.wake();
     }
@@ -279,10 +282,14 @@ impl Tab {
     }
 
     /// Carry out what the PTY thread queued: title changes, the program's queries (answered in
-    /// `scheme`'s colours), and its exit. Returns what it stored on the clipboards.
-    pub fn pump(&mut self, scheme: &Scheme) -> Copied {
+    /// `scheme`'s colours), and its exit. Returns what it stored on the clipboards, or None when
+    /// the PTY thread had nothing since the last pump, so the screen is as last drawn.
+    pub fn pump(&mut self, scheme: &Scheme) -> Option<Copied> {
         let (title, replies, copied, status, exited) = {
             let mut inbox = self.inbox.lock().unwrap();
+            if !std::mem::take(&mut inbox.news) {
+                return None;
+            }
             (
                 inbox.title.take(),
                 std::mem::take(&mut inbox.replies),
@@ -305,7 +312,7 @@ impl Tab {
         if exited {
             self.exit = Some(status.unwrap_or(0));
         }
-        copied
+        Some(copied)
     }
 
     fn colour(&self, i: usize, scheme: &Scheme) -> Rgb {

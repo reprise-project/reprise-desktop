@@ -1416,3 +1416,68 @@ fn the_caption_mode_toolbar_pins_in_every_interface() {
     let want: Vec<(String, u64)> = want.iter().map(|(k, h)| (k.to_string(), *h)).collect();
     assert_eq!(got, want);
 }
+
+#[test]
+fn output_in_one_caption_tab_redraws_only_its_window() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut ctx = test_ctx();
+    let mut t = captioned(&["cat"]);
+    t.config = dir.path().join("config.toml");
+    t.event(MAIN, keys(NEW_TAB), &mut ctx);
+    t.event(MAIN, keys(NEW_TAB), &mut ctx);
+    let (second, third) = (repriseapp::window_id(1), repriseapp::window_id(2));
+    assert_eq!(t.order, [MAIN, third, second]);
+    let (w, h) = ctx.size;
+    let mut c = Canvas::new(w as u32, h as u32);
+    let mut settle = |t: &mut Terminal, ctx: &mut Ctx| {
+        for w in [MAIN, second, third] {
+            t.draw(w, &mut c, ctx);
+        }
+        for _ in 0..20 {
+            t.event(MAIN, Event::Wake, ctx);
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        for w in [MAIN, second, third] {
+            t.draw(w, &mut c, ctx);
+        }
+    };
+    settle(&mut t, &mut ctx);
+    assert!(
+        t.event(MAIN, Event::Wake, &mut ctx).redraw_wins.is_empty(),
+        "a wake with no output draws nothing"
+    );
+    t.enter(second);
+    t.w.tabs.list[0].write(b"hello\n".as_slice().into());
+    let mut drawn = Vec::new();
+    until("cat echoes", || {
+        let reply = t.event(MAIN, Event::Wake, &mut ctx);
+        assert!(!reply.redraw_all);
+        drawn.extend(reply.redraw_wins);
+        !drawn.is_empty()
+    });
+    assert_eq!(drawn, [second], "the idle windows stay as drawn");
+    settle(&mut t, &mut ctx);
+
+    t.enter(MAIN);
+    t.open_options();
+    let o = t.options.as_mut().unwrap();
+    o.sheet.pages[0].set_check("blink", false);
+    o.sheet.set_apply_enabled(true);
+    let alt_a = Event::Key(KeyInput {
+        sym: u32::from(b'a'),
+        utf8: None,
+        mods: Mods {
+            alt: true,
+            ..Mods::default()
+        },
+        edit: Some(reprisekit::textedit::EditKey::Insert("a".into())),
+    });
+    assert!(
+        t.event(OPTIONS, alt_a, &mut ctx).redraw_all,
+        "Apply draws every window"
+    );
+    assert!(!t.settings.blink, "Apply took the settings");
+    for w in [MAIN, second, third] {
+        assert!(t.pane(w).unwrap().full, "{w} draws whole");
+    }
+}
