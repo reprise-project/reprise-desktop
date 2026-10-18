@@ -154,18 +154,20 @@ impl Published {
         }
     }
 
-    /// Node `id` as last published, placed by the root's transform. Only
-    /// a root carries a transform here; the nodes under it lay out in its
-    /// space. None for a node not in the last tree, without bounds or
-    /// scrolled out of its list.
+    /// Node `id` as last published, aimed at the middle of its part inside its list ([`in_view`])
+    /// and placed by the root's transform. Only a root carries a transform here; the nodes under
+    /// it lay out in its space. None for a node not in the last tree, without bounds or scrolled
+    /// out of its list.
     pub fn target(&self, id: NodeId) -> Option<Target> {
         let n = self.nodes.get(&id)?;
         if self.scrolled_out(id).is_some() {
             return None;
         }
+        let b = n.bounds()?;
+        let list = self.list_of(id).and_then(|l| self.nodes.get(&l)?.bounds());
         Some(Target {
             role: n.role(),
-            at: self.middle(id)?,
+            at: self.place(list.map_or(b, |f| in_view(b, f))),
         })
     }
 
@@ -213,11 +215,16 @@ impl Published {
     /// The list `id` is a row of, when the row lies out of the list's bounds ([`out_of`]).
     fn scrolled_out(&self, id: NodeId) -> Option<NodeId> {
         let b = self.nodes.get(&id)?.bounds()?;
+        let list = self.list_of(id)?;
+        out_of(b, self.nodes.get(&list)?.bounds()?).then_some(list)
+    }
+
+    /// The nearest list above node `id`.
+    fn list_of(&self, id: NodeId) -> Option<NodeId> {
         let mut up = *self.parents.get(&id)?;
         loop {
-            let n = self.nodes.get(&up)?;
-            if is_list(n.role()) {
-                return out_of(b, n.bounds()?).then_some(up);
+            if is_list(self.nodes.get(&up)?.role()) {
+                return Some(up);
             }
             up = *self.parents.get(&up)?;
         }
@@ -225,11 +232,15 @@ impl Published {
 
     /// The middle of node `id`'s bounds, placed by the root's transform.
     fn middle(&self, id: NodeId) -> Option<(f64, f64)> {
-        let b = self.nodes.get(&id)?.bounds()?;
+        Some(self.place(self.nodes.get(&id)?.bounds()?))
+    }
+
+    /// The middle of `b`, placed by the root's transform.
+    fn place(&self, b: accesskit::Rect) -> (f64, f64) {
         let centre = accesskit::Point::new((b.x0 + b.x1) / 2.0, (b.y0 + b.y1) / 2.0);
         let root = self.nodes.get(&ROOT).and_then(|r| r.transform().copied());
         let p = root.map_or(centre, |t| t * centre);
-        Some((p.x, p.y))
+        (p.x, p.y)
     }
 
     pub fn reset(&mut self) {
@@ -776,6 +787,36 @@ mod tests {
             })
         );
         assert_eq!(p.target(NodeId(9)), None, "a node not published");
+    }
+
+    #[test]
+    fn a_cell_cut_by_its_lists_side_edge_is_aimed_at_its_part_in_the_list() {
+        let mut root = node(Role::Window, Rect::new(0, 0, 200, 100));
+        root.set_transform(accesskit::Affine::translate((100.0, 50.0)));
+        let mut t = Tree::new(root);
+        let list = t.push(
+            ROOT,
+            "list",
+            node(Role::ListBox, Rect::new(10, 10, 100, 40)),
+        );
+        let row = t.push(
+            list,
+            "row",
+            node(Role::ListBoxOption, Rect::new(12, 12, 96, 10)),
+        );
+        let cut = t.push(
+            row,
+            "cut",
+            node(Role::ListBoxOption, Rect::new(90, 12, 60, 10)),
+        );
+        let mut p = Published::default();
+        p.update(t);
+        assert_eq!(
+            p.target(cut).map(|t| t.at),
+            Some((200.0, 67.0)),
+            "the middle of x 90..110, not of the whole cell's 90..150"
+        );
+        assert_eq!(p.target(row).map(|t| t.at), Some((160.0, 67.0)));
     }
 
     #[test]
