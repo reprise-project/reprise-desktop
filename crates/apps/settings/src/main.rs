@@ -2725,7 +2725,7 @@ impl SettingsApp {
             d,
             &ev,
             &ctx.text,
-            ctx.forms().fonts.size_px,
+            &ctx.forms(),
             ctx.size,
             &ctx.theme.metrics,
         ) {
@@ -2839,7 +2839,7 @@ impl App for SettingsApp {
                     Pick::Program => "Browse",
                 }
                 .into(),
-                size: filedlg::CLIENT,
+                size: self.add.as_ref().map_or(filedlg::CLIENT, |d| d.client()),
                 fixed: false,
                 modal: true,
             });
@@ -3599,6 +3599,27 @@ mod tests {
         a.chooser = None;
         enter(&mut a, &ctx);
         assert_eq!(mime(&a), Some(double), "Enter opens it for the same type");
+    }
+
+    #[test]
+    fn the_add_dialog_opens_at_the_text_size() {
+        let mut a = app("add-grown");
+        let mut ctx = test_ctx();
+        ctx.text_size = 200;
+        a.follow_text(&ctx);
+        a.open_add(Pick::Autostart);
+        let client = a
+            .add
+            .as_ref()
+            .map(|d| d.client())
+            .expect("the dialog is open");
+        assert_ne!(client, filedlg::CLIENT, "the dialog grows at 200%");
+        let kid = a.children().into_iter().find(|k| k.id == ADD_WIN);
+        assert_eq!(
+            kid.map(|k| k.size),
+            Some(client),
+            "its window opens at the grown size"
+        );
     }
 
     #[test]

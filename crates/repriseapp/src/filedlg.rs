@@ -24,7 +24,7 @@ use reprisekit::controls::shellview::{self, Entry, Mode};
 use reprisekit::icontheme::{IconCache, ListingIcons};
 use reprisekit::pointer::DoubleClick;
 use reprisekit::raster::Canvas;
-use reprisekit::theme::{Metrics, TextUnits};
+use reprisekit::theme::{Metrics, TextUnits, Theme};
 
 fn dialog_places() -> Vec<reprisefs::places::DialogPlace> {
     reprisefs::places::dialog_places(repriseconf::recent_files())
@@ -469,11 +469,16 @@ impl Host {
         dlg: &mut FileDlg,
         ev: &Event,
         text: &TextRenderer,
-        px: u32,
+        forms: &Theme,
         size: (i32, i32),
         metrics: &Metrics,
     ) -> Step {
-        let step = self.event_inner(dlg, ev, text, px, size, metrics);
+        // A text size change reaches the dialog as a resize of its window, at the old size.
+        if *ev == Event::Resized && dlg.text() != forms.text {
+            dlg.set_text(forms.text);
+            return Step::Redraw;
+        }
+        let step = self.event_inner(dlg, ev, text, forms.fonts.size_px, size, metrics);
         self.ask_thumbs(dlg);
         step
     }
@@ -746,6 +751,44 @@ mod tests {
     }
 
     #[test]
+    fn a_text_size_change_lays_the_dialog_out_for_the_new_size() {
+        let mut h = Host::default();
+        let base = Theme::default();
+        let mut dlg = h.icons.dialog(Fields {
+            title: String::new(),
+            accept_label: String::new(),
+            filters: vec![],
+            mode: DlgMode::Open,
+            multiple: false,
+        });
+        dlg.set_text(base.text);
+        let text = TextRenderer::load(&reprisekit::theme::FontConfig::default());
+        let metrics = Metrics::default();
+        let grown = base.with_form_text(200);
+        let step = h.event(&mut dlg, &Event::Resized, &text, &grown, CLIENT, &metrics);
+        assert!(matches!(step, Step::Redraw));
+        let big = grown.text.size(CLIENT);
+        assert_eq!(
+            dlg.client(),
+            big,
+            "the old window size does not hold it back"
+        );
+        h.event(&mut dlg, &Event::Resized, &text, &grown, big, &metrics);
+        assert_eq!(dlg.client(), big, "the window's resize to it stands");
+
+        h.event(&mut dlg, &Event::Resized, &text, &base, big, &metrics);
+        assert_eq!(dlg.client(), CLIENT, "at 100% it takes its own size again");
+        let wide = (CLIENT.0 + 300, CLIENT.1 + 200);
+        h.event(&mut dlg, &Event::Resized, &text, &base, wide, &metrics);
+        h.event(&mut dlg, &Event::Resized, &text, &grown, wide, &metrics);
+        assert_eq!(
+            dlg.client(),
+            (wide.0.max(big.0), wide.1.max(big.1)),
+            "a dialog sized by hand keeps its size, no smaller than its minimum"
+        );
+    }
+
+    #[test]
     fn thumb_buttons_step_back_and_forward() {
         use reprisekit::controls::filedlg::{Crumb, Event as E, Folder};
         let listing = |id| Folder {
@@ -784,7 +827,7 @@ mod tests {
                 &mut dlg,
                 &thumb(0x113),
                 &text,
-                11,
+                &Theme::default(),
                 CLIENT,
                 &Metrics::default()
             ),
@@ -796,7 +839,7 @@ mod tests {
                 &mut dlg,
                 &thumb(0x114),
                 &text,
-                11,
+                &Theme::default(),
                 CLIENT,
                 &Metrics::default()
             ),
@@ -846,7 +889,7 @@ mod tests {
             &mut dlg,
             &key(keysym::DOWN, true, None),
             &text,
-            11,
+            &Theme::default(),
             CLIENT,
             &Metrics::default(),
         );
@@ -855,7 +898,7 @@ mod tests {
             &mut dlg,
             &key(keysym::SPACE, true, Some(" ")),
             &text,
-            11,
+            &Theme::default(),
             CLIENT,
             &Metrics::default(),
         );
@@ -1096,7 +1139,7 @@ mod tests {
                 dlg,
                 &key(keysym::RETURN, false, None),
                 &text,
-                11,
+                &Theme::default(),
                 CLIENT,
                 &Metrics::default(),
             )
@@ -1216,7 +1259,7 @@ mod tests {
                 &mut dlg,
                 &wheel(x, y, -WHEEL_ROWS),
                 &text,
-                11,
+                &Theme::default(),
                 CLIENT,
                 &Metrics::default()
             ),
@@ -1227,7 +1270,7 @@ mod tests {
                 &mut dlg,
                 &wheel(x, y, WHEEL_ROWS),
                 &text,
-                11,
+                &Theme::default(),
                 CLIENT,
                 &Metrics::default()
             ),
@@ -1238,7 +1281,7 @@ mod tests {
                 &mut dlg,
                 &wheel(1, 1, WHEEL_ROWS),
                 &text,
-                11,
+                &Theme::default(),
                 CLIENT,
                 &Metrics::default()
             ),

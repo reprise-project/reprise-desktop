@@ -604,10 +604,20 @@ impl FileDlg {
     }
 
     /// Lay the dialog out for text grown by `u` from here on: the host draws it with a theme of
-    /// the same [`Theme::text`]. The client grows to the new minimum.
+    /// the same [`Theme::text`]. A client at its minimum takes the new minimum; a larger one
+    /// keeps its size, no smaller than the new minimum.
     pub fn set_text(&mut self, u: TextUnits) {
+        let at_min = self.size == self.min_client();
         self.text = u;
+        if at_min {
+            self.size = self.min_client();
+        }
         self.grow_to_min();
+    }
+
+    /// The text size the dialog is laid out for ([`FileDlg::set_text`]).
+    pub fn text(&self) -> TextUnits {
+        self.text
     }
 
     fn grow_to_min(&mut self) {

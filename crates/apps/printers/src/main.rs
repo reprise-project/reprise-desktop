@@ -717,7 +717,7 @@ impl PrintersApp {
             d,
             &ev,
             &ctx.text,
-            ctx.forms().fonts.size_px,
+            &ctx.forms(),
             ctx.size,
             &ctx.theme.metrics,
         ) {
