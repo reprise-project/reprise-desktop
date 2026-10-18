@@ -81,7 +81,9 @@ pub fn draw_frame(
     if !state.tabbed {
         draw_title(canvas, style, theme, caption_text, geom, state);
     }
-    draw_buttons(canvas, style, geom, state, s);
+    let side = crate::frame::button_side(&theme.metrics) / s;
+    let grown = style.at_button_side(side);
+    draw_buttons(canvas, grown.as_deref().unwrap_or(style), geom, state, s);
 
     canvas.clear_rect(geom.client);
 }
@@ -449,8 +451,6 @@ fn draw_buttons(
         }
         return;
     }
-    let grown = style.at_button_side(geom.buttons[2].height / s);
-    let style = grown.as_deref().unwrap_or(style);
     for (kind, r) in CaptionButton::ALL.into_iter().zip(geom.buttons) {
         if !geom.chrome.buttons.has(kind) {
             continue;
@@ -612,6 +612,61 @@ mod tests {
                 "scale {n}: a first frame finds them built"
             );
         }
+    }
+
+    #[test]
+    fn a_grown_glass_caption_draws_its_strip_as_big_as_its_cells() {
+        use crate::frame::{button_side, caption_button_sides};
+        for (pct, side) in [(150, 27), (200, 33)] {
+            for n in [1, 2] {
+                let theme = theme_for(Interface::Glass).with_text_size(pct).scaled(n);
+                let style = theme.look.style().unwrap();
+                assert_eq!(button_side(&theme.metrics) / n, side, "{pct}%");
+                let text = TextRenderer::load(&style.caption_text.font());
+                let grown = style.at_button_side(side).unwrap();
+                for (maximized, part) in
+                    [(false, Part::CaptionGroup), (true, Part::MaxCaptionGroup)]
+                {
+                    let g =
+                        FrameGeometry::layout(&theme.metrics, 400, 200, maximized, Chrome::WINDOW);
+                    let strip = g.group.unwrap();
+                    let mut c = Canvas::new(g.total.0 as u32, g.total.1 as u32);
+                    draw_frame(&mut c, style, &theme, &text, &g, &state(true, maximized));
+                    let mut want = Canvas::new(strip.width as u32, strip.height as u32);
+                    let at = Rect::new(0, 0, strip.width, strip.height);
+                    grown.draw(&mut want, at, part, State::Normal, n);
+                    for y in 0..strip.height {
+                        for x in 0..strip.width {
+                            assert_eq!(
+                                c.get(strip.x + x, strip.y + y),
+                                want.get(x, y),
+                                "{pct}% at {n}, maximized {maximized}: ({x}, {y})"
+                            );
+                        }
+                    }
+                }
+            }
+            let theme = theme_for(Interface::Glass).with_text_size(pct);
+            assert_eq!(caption_button_sides(&theme.metrics), [side]);
+            let crate::paint::Look::Styled(style) = &theme.look else {
+                panic!("Glass is styled")
+            };
+            let warm = style
+                .warm_button_sides(1, &[side])
+                .expect("the grown strip to build");
+            warm.paint();
+            assert!(style.warm_button_sides(1, &[side]).is_none());
+        }
+        let theme = theme_for(Interface::Glass);
+        let crate::paint::Look::Styled(style) = &theme.look else {
+            panic!("Glass is styled")
+        };
+        assert!(style.at_button_side(button_side(&theme.metrics)).is_none());
+        assert!(
+            style
+                .warm_button_sides(1, &caption_button_sides(&theme.metrics))
+                .is_none()
+        );
     }
 
     #[test]

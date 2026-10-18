@@ -63,16 +63,18 @@ pub fn frame(mut st: Style, n: i32) -> Style {
         g.corner = &[];
     }
     st.metrics.caption_group = Some(CAPTION_GROUP);
-    st.joined_help = None;
+    st.joined_help = false;
     st.buttons_over_caption = true;
     st.centred_title = true;
-    st.with_part(Part::CaptionGroup, group(&ink, false, n))
-        .with_part(Part::MaxCaptionGroup, group(&ink, true, n))
-        .with_part(Part::CloseButton, lone(&ink, Glyph::Close, n))
-        .with_part(Part::HelpButton, lone(&ink, Glyph::Help, n))
-        .with_part(Part::MinCloseGroup, min_close(&ink, n))
+    st.with_part(Part::CaptionGroup, group(&ink, false, 0, n))
+        .with_part(Part::MaxCaptionGroup, group(&ink, true, 0, n))
+        .with_part(Part::CloseButton, lone(&ink, Glyph::Close, 0, n))
+        .with_part(Part::HelpButton, lone(&ink, Glyph::Help, 0, n))
+        .with_part(Part::MinCloseGroup, min_close(&ink, 0, n))
+        .with_button_side(move |side| sided(&ink, n, side))
 }
 
+#[derive(Clone, Copy)]
 struct Ink {
     active: u32,
     inactive: u32,
@@ -133,16 +135,17 @@ fn button(c: &mut Canvas, r: Rect, g: Glyph, lit: Lit, active: bool, ink: &Ink, 
             c.put_raw(x, y, fill);
         }
     }
+    let m = glyph::multiple(r.height / n, FILL_H);
     let (gx, gy) = (
-        r.x + n * ((r.width / n - 10) / 2),
-        r.y + n * ((r.height / n - 10) / 2),
+        r.x + n * ((r.width / n - 10 * m) / 2),
+        r.y + n * ((r.height / n - 10 * m) / 2),
     );
     let mark = glyph::lines(g);
     // Pushed x-major, so `dots` is sorted for `edge_alpha`'s binary search.
     let mut dots = Vec::new();
-    for dx in 0..mark.w * n {
-        for dy in 0..mark.h * n {
-            let k = mark.cover(dx, dy, n, 0.0);
+    for dx in 0..mark.w * m * n {
+        for dy in 0..mark.h * m * n {
+            let k = mark.cover(dx, dy, n * m, 0.0);
             if k > 0.0 {
                 dots.push((gx + dx, gy + dy, k));
             }
@@ -225,24 +228,19 @@ fn lit_of(state: State) -> (Lit, bool) {
 }
 
 /// The row carries no caption band: the frame lays it over the band
-/// ([`Style::buttons_over_caption`]).
-fn group(ink: &Ink, maximized: bool, n: i32) -> PartImage {
-    let place = if maximized {
-        CAPTION_GROUP.maximized
-    } else {
-        CAPTION_GROUP.restored
-    };
+/// ([`Style::buttons_over_caption`]). `grow` rows taller than the design, laid out as
+/// [`CaptionGroup::grown`].
+fn group(ink: &Ink, maximized: bool, grow: i32, n: i32) -> PartImage {
+    let g = CAPTION_GROUP.grown(grow);
+    let place = if maximized { g.maximized } else { g.restored };
     let middle = if maximized {
         Glyph::Restore
     } else {
         Glyph::Maximize
     };
-    let cells = [
-        (Glyph::Minimize, MIN_W),
-        (middle, MIN_W),
-        (Glyph::Close, CLOSE_W),
-    ];
-    strip(ink, &cells, place.height, &GROUP_FRAMES, n)
+    let [min, max, close] = g.widths;
+    let cells = [(Glyph::Minimize, min), (middle, max), (Glyph::Close, close)];
+    strip(ink, &cells, (place.height, grow), &GROUP_FRAMES, n)
 }
 
 /// [`GROUP_FRAMES`] with minimize and close only, for `Part::MinCloseGroup`.
@@ -257,29 +255,31 @@ const MIN_CLOSE_FRAMES: [(State, Option<usize>); 8] = [
     (State::InactiveHot, Some(1)),
 ];
 
-fn min_close(ink: &Ink, n: i32) -> PartImage {
-    let cells = [(Glyph::Minimize, MIN_W), (Glyph::Close, CLOSE_W)];
-    let h = CAPTION_GROUP.restored.height;
-    strip(ink, &cells, h, &MIN_CLOSE_FRAMES, n)
+fn min_close(ink: &Ink, grow: i32, n: i32) -> PartImage {
+    let g = CAPTION_GROUP.grown(grow);
+    let cells = [(Glyph::Minimize, g.widths[0]), (Glyph::Close, g.widths[2])];
+    strip(ink, &cells, (g.restored.height, grow), &MIN_CLOSE_FRAMES, n)
 }
 
-/// `cells` (glyph, width) side by side in rows `height` tall, one frame per entry of `frames`.
+/// `cells` (glyph, width) side by side in rows `height` tall, filled [`FILL_H`] + `grow` rows from
+/// the bottom, one frame per entry of `frames`.
 fn strip(
     ink: &Ink,
     cells: &[(Glyph, i32)],
-    height: i32,
+    (height, grow): (i32, i32),
     frames: &[(State, Option<usize>)],
     n: i32,
 ) -> PartImage {
     let (w, h) = (cells.iter().map(|c| c.1).sum::<i32>() * n, height * n);
-    let top = h - FILL_H * n;
+    let fill = (FILL_H + grow) * n;
+    let top = h - fill;
     let mut a = Canvas::new(w as u32, (h * frames.len() as i32) as u32);
     for (i, &(state, lit_one)) in frames.iter().enumerate() {
         let (lit, active) = lit_of(state);
         let mut x = 0;
         for (b, &(g, bw)) in cells.iter().enumerate() {
             let l = if lit_one == Some(b) { lit } else { Lit::Rest };
-            let r = Rect::new(x, i as i32 * h + top, bw * n, FILL_H * n);
+            let r = Rect::new(x, i as i32 * h + top, bw * n, fill);
             button(&mut a, r, g, l, active, ink, n);
             x += bw * n;
         }
@@ -288,7 +288,19 @@ fn strip(
     PartImage::new(a, &states, Layout::Vertical).at_scale(n)
 }
 
-fn lone(ink: &Ink, g: Glyph, n: i32) -> PartImage {
+/// The buttons for a caption whose restored row is `side` tall, painted at `n`.
+fn sided(ink: &Ink, n: i32, side: i32) -> Vec<(Part, PartImage)> {
+    let grow = side - CAPTION_GROUP.restored.height;
+    vec![
+        (Part::CaptionGroup, group(ink, false, grow, n)),
+        (Part::MaxCaptionGroup, group(ink, true, grow, n)),
+        (Part::CloseButton, lone(ink, Glyph::Close, grow, n)),
+        (Part::HelpButton, lone(ink, Glyph::Help, grow, n)),
+        (Part::MinCloseGroup, min_close(ink, grow, n)),
+    ]
+}
+
+fn lone(ink: &Ink, g: Glyph, grow: i32, n: i32) -> PartImage {
     const STATES: [State; 5] = [
         State::Normal,
         State::Inactive,
@@ -296,8 +308,9 @@ fn lone(ink: &Ink, g: Glyph, n: i32) -> PartImage {
         State::Pressed,
         State::InactiveHot,
     ];
-    let w = if g == Glyph::Close { CLOSE_W } else { MIN_W } * n;
-    let (h, fill) = (CAPTION_GROUP.restored.height * n, FILL_H * n);
+    let group = CAPTION_GROUP.grown(grow);
+    let w = group.widths[if g == Glyph::Close { 2 } else { 0 }] * n;
+    let (h, fill) = (group.restored.height * n, (FILL_H + grow) * n);
     let mut a = Canvas::new(w as u32, (h * STATES.len() as i32) as u32);
     for (i, &state) in STATES.iter().enumerate() {
         let (lit, active) = lit_of(state);
@@ -725,11 +738,11 @@ mod tests {
         for (name, of) in [
             (
                 "group",
-                &(|n| group(&ink, false, n)) as &dyn Fn(i32) -> PartImage,
+                &(|n| group(&ink, false, 0, n)) as &dyn Fn(i32) -> PartImage,
             ),
-            ("maximized group", &|n| group(&ink, true, n)),
-            ("close", &|n| lone(&ink, Glyph::Close, n)),
-            ("?", &|n| lone(&ink, Glyph::Help, n)),
+            ("maximized group", &|n| group(&ink, true, 0, n)),
+            ("close", &|n| lone(&ink, Glyph::Close, 0, n)),
+            ("?", &|n| lone(&ink, Glyph::Help, 0, n)),
         ] {
             let (one, two) = (of(1), of(2));
             assert_eq!(two.scale, 2);
@@ -792,7 +805,7 @@ mod tests {
         }
         let help = s.part(Part::HelpButton).unwrap().frame(State::Normal);
         assert_eq!((help.width, help.height), (26, 21), "the ? box");
-        assert_eq!(s.joined_help, None, "it stands alone");
+        assert!(!s.joined_help, "it stands alone");
     }
 
     #[test]

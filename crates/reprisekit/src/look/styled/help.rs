@@ -25,15 +25,16 @@ pub fn draw_help_button(
         (true, Interaction::Hot) => State::Hot,
         (true, Interaction::Idle) => State::Normal,
     };
-    let Some(cell) = st.joined_help else {
+    if !st.joined_help {
         let state = if active { lit(ptr) } else { State::Inactive };
         st.draw(c, r, Part::HelpButton, state, s);
         return true;
-    };
+    }
     let Some((close, held, glow)) = close else {
         // No close box: the ? cell alone, cut from the left of the strip's frame and stretched into
         // the box.
         let f = p.frame(lit(ptr));
+        let cell = r.width / s.max(1);
         let cell_box = |c: &mut Canvas, r: Rect, s: i32| {
             let k = (s.max(1) / p.scale).max(1);
             let from = Rect::new(f.x, f.y, cell * p.scale, f.height).scaled(k);
