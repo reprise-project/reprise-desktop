@@ -198,8 +198,8 @@ fn modifier_role(key: &str) -> Option<(&'static str, &'static str)> {
 }
 
 /// Whether two `keys` name one chord: the same modifiers and keysym, whatever the spelling and
-/// order. A modifier-only chord counts its key among its modifiers, so "Alt+Shift_L" and
-/// "Shift+Alt_L" are one chord; with both keys in one role the sides must agree.
+/// order. A modifier-only chord counts its key among its modifiers and its key's side must agree,
+/// so "Alt+Shift_L" and "Shift+Alt_L" are one chord and "Alt+Shift_R" is another.
 pub fn same(a: &str, b: &str) -> bool {
     let (Some((ma, ka)), Some((mb, kb))) = (split(a), split(b)) else {
         return false;
@@ -211,7 +211,8 @@ pub fn same(a: &str, b: &str) -> bool {
             m.dedup();
             m
         };
-        return held(ma, ra) == held(mb, rb) && (ra != rb || sa == sb);
+        let side = |key: &str| key.ends_with("_R");
+        return held(ma, ra) == held(mb, rb) && side(sa) == side(sb);
     }
     ma == mb && keysym(ka).is_some_and(|s| keysym(kb) == Some(s))
 }
@@ -324,6 +325,10 @@ mod tests {
         assert!(same("Shift+Meta_L", "Shift+Alt_L"), "Meta is Alt");
         assert!(same("Ctrl+Alt+Shift_L", "Shift+Ctrl+Alt_L"));
         assert!(!same("Shift+Alt_L", "Shift+Alt_R"), "the key's side counts");
+        assert!(
+            !same("Alt+Shift_R", "Shift+Alt_L"),
+            "the key's side counts with the roles swapped"
+        );
         assert!(!same("Shift+Alt_L", "Ctrl+Shift_L"));
         assert!(!same("Shift+Alt_L", "Alt_L"));
         assert!(!same("Ctrl+Alt+Shift_L", "Alt+Shift_L"));
@@ -338,6 +343,14 @@ mod tests {
         assert!(!out.contains(&("Shift+Alt_L", "next-layout")));
         let out = run(&[("Alt+Shift_L", NONE)]);
         assert!(!out.iter().any(|&(k, _)| k == "Shift+Alt_L"));
+    }
+
+    #[test]
+    fn a_swapped_entry_on_the_other_side_keeps_the_default() {
+        let out = run(&[("Alt+Shift_R", "next-layout")]);
+        assert_eq!(out.len(), DEFAULTS.len() + 1);
+        assert!(out.contains(&("Alt+Shift_R", "next-layout")));
+        assert!(out.contains(&("Shift+Alt_L", "next-layout")));
     }
 
     #[test]

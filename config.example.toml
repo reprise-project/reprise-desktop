@@ -648,8 +648,8 @@ action = "focus-tray"
 # Super_L, ...) is a modifier-only chord: it fires when one of its keys is
 # released and nothing else was pressed in between, in either order. This
 # one is the left Alt with either Shift: the next [keyboard] layout. A bind
-# with the key and a modifier swapped ("Alt+Shift_L") counts as this chord
-# and replaces it.
+# with the key and a modifier swapped on the same side ("Alt+Shift_L")
+# counts as this chord and replaces it; "Alt+Shift_R" is a chord of its own.
 [[keybinds]]
 keys = "Shift+Alt_L"
 action = "next-layout"
