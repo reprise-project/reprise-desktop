@@ -36,6 +36,7 @@ use crate::text::{Align, TextRenderer, access_key, split_mnemonic};
 use crate::textedit::{Caret, EditKey, TextEdit};
 use crate::theme::{TextUnits, Theme};
 use accesskit::NodeId;
+use std::borrow::Cow;
 use std::cell::Cell;
 
 /// A host-assigned folder handle, opaque to this module.
@@ -105,8 +106,41 @@ const LOOKIN_LABEL: &str = "Look &in:";
 const FILENAME_LABEL: &str = "File &name:";
 const FILETYPE_LABEL: &str = "Files of &type:";
 const CANCEL: &str = "Cancel";
-/// The access keys the labels above take; the accept button picks another.
-const LABEL_KEYS: [char; 3] = ['i', 'n', 't'];
+/// [`FileDlg::labels`]: each label's text with its access key.
+struct Labels<'a> {
+    lookin: Cow<'static, str>,
+    filename: Cow<'static, str>,
+    filetype: Cow<'static, str>,
+    accept: Cow<'a, str>,
+}
+
+/// `label` with an access key outside `taken`: its own when free, else its first letter not taken,
+/// else none.
+fn key_around<'a>(label: impl Into<Cow<'a, str>>, taken: &[char]) -> Cow<'a, str> {
+    let label = label.into();
+    let free = |c: char| c.is_alphanumeric() && c.to_lowercase().all(|l| !taken.contains(&l));
+    if access_key(&label).is_some_and(free) {
+        return label;
+    }
+    let (plain, _) = split_mnemonic(&label);
+    let mut out = String::with_capacity(plain.len() + 2);
+    let mut keyed = false;
+    for c in plain.chars() {
+        if !keyed && free(c) {
+            out.push('&');
+            keyed = true;
+        }
+        if c == '&' {
+            out.push('&');
+        }
+        out.push(c);
+    }
+    if !keyed && !label.contains('&') {
+        return label;
+    }
+    out.into()
+}
+
 /// Label text x: "Look in:" at 55, "File name:" and "Files of type:" at 102.
 const LOOKIN_LABEL_X: i32 = 55;
 const ROW_LABEL_X: i32 = 102;
@@ -1073,31 +1107,51 @@ impl FileDlg {
         MenuLayout::compute_styled(&style, &items, usize::MAX)
     }
 
-    /// The accept button's label with an access key: the caller's own, else
-    /// its first letter the labels' keys leave free.
-    fn accept_label(&self) -> std::borrow::Cow<'_, str> {
-        let label = &self.fields.accept_label;
-        if access_key(label).is_some() {
-            return label.into();
+    /// The labels and the accept button with their access keys. The caller's keys (the extra
+    /// rows' and the accept button's own) win; each label keeps its letter unless one of those
+    /// takes it, then moves to its first free one, and a keyless accept button takes its first
+    /// letter left free.
+    fn labels(&self) -> Labels<'_> {
+        let mut taken: Vec<char> = (self.extra.iter())
+            .flat_map(|(f, _)| f.items.iter().filter_map(form::Item::mnemonic))
+            .collect();
+        let accept = &self.fields.accept_label;
+        taken.extend(access_key(accept));
+        let mut keyed = |label: &'static str| {
+            let label = key_around(label, &taken);
+            taken.extend(access_key(&label));
+            label
+        };
+        let (lookin, filename, filetype) = (
+            keyed(LOOKIN_LABEL),
+            keyed(FILENAME_LABEL),
+            keyed(FILETYPE_LABEL),
+        );
+        Labels {
+            lookin,
+            filename,
+            filetype,
+            accept: match access_key(accept) {
+                Some(_) => accept.into(),
+                None => key_around(accept, &taken),
+            },
         }
-        let free = label.char_indices().find(|(_, c)| {
-            c.is_alphanumeric() && c.to_lowercase().all(|l| !LABEL_KEYS.contains(&l))
-        });
-        match free {
-            Some((i, _)) => format!("{}&{}", &label[..i], &label[i..]).into(),
-            None => label.into(),
-        }
+    }
+
+    fn accept_label(&self) -> Cow<'_, str> {
+        self.labels().accept
     }
 
     /// Alt+letter: a label's key focuses its field, the accept button's
     /// accepts, and any other goes to the extra rows.
     fn access_press(&mut self, ch: char) -> Event {
-        let key = ch.to_lowercase().next().unwrap_or(ch);
-        let focus = match key {
-            'i' => Focus::LookIn,
-            'n' => Focus::FileName,
-            't' if self.has_types() => Focus::FileType,
-            _ if access_key(&self.accept_label()) == Some(key) => Focus::Accept,
+        let key = Some(ch.to_lowercase().next().unwrap_or(ch));
+        let labels = self.labels();
+        let focus = match () {
+            _ if key == access_key(&labels.lookin) => Focus::LookIn,
+            _ if key == access_key(&labels.filename) => Focus::FileName,
+            _ if key == access_key(&labels.filetype) && self.has_types() => Focus::FileType,
+            _ if key == access_key(&labels.accept) => Focus::Accept,
             _ => {
                 let taken = self
                     .extra
@@ -1800,6 +1854,7 @@ impl FileDlg {
         let Paint { cs, s, .. } = *p;
         self.drawn_with(p);
         let lay = self.layout(text, px, r, &self.drawn.0.get());
+        let labels = self.labels();
         c.fill_rect(r.scaled(s), cs.button_face);
 
         draw_label(
@@ -1807,7 +1862,7 @@ impl FileDlg {
             text,
             p,
             lay.lookin_label.scaled(s),
-            LOOKIN_LABEL,
+            &labels.lookin,
             cs.button_text,
             Align::Left,
             px,
@@ -1851,7 +1906,7 @@ impl FileDlg {
             text,
             p,
             lay.filename_label.scaled(s),
-            FILENAME_LABEL,
+            &labels.filename,
             cs.button_text,
             Align::Left,
             px,
@@ -1890,7 +1945,7 @@ impl FileDlg {
             text,
             p,
             lay.accept.scaled(s),
-            &self.accept_label(),
+            &labels.accept,
             true,
             Interaction::Idle,
             true,
@@ -1904,7 +1959,7 @@ impl FileDlg {
                 text,
                 p,
                 lay.filetype_label.scaled(s),
-                FILETYPE_LABEL,
+                &labels.filetype,
                 cs.button_text,
                 Align::Left,
                 px,
@@ -2081,6 +2136,7 @@ impl FileDlg {
     pub fn access(&self, tree: &mut Tree, r: Rect, text: &TextRenderer, px: u32) {
         let root = access::ROOT;
         let lay = self.layout(text, px, r, &self.drawn.0.get());
+        let labels = self.labels();
         let label = |tree: &mut Tree, key: &str, rect: Rect, s: &str| {
             tree.push(root, key, access::label(rect, s, true))
         };
@@ -2089,7 +2145,7 @@ impl FileDlg {
                 n.push_labelled_by(by);
             }
         };
-        let l = label(tree, "lookin label", lay.lookin_label, LOOKIN_LABEL);
+        let l = label(tree, "lookin label", lay.lookin_label, &labels.lookin);
         let lookin = combo::access(&self.lookin, &lay.lookin, text, px, tree, root, "lookin");
         labelled(tree, Tree::id_of(root, "lookin"), l);
         toolbar::access(
@@ -2109,7 +2165,7 @@ impl FileDlg {
             "places",
         );
         let shell = shellview::access(&self.shell, &lay.shell, text, px, tree, root, "shell");
-        let l = label(tree, "filename label", lay.filename_label, FILENAME_LABEL);
+        let l = label(tree, "filename label", lay.filename_label, &labels.filename);
         let first = edit_first_visible(
             text,
             &self.filename,
@@ -2133,10 +2189,10 @@ impl FileDlg {
         let accept = tree.push(
             root,
             "accept",
-            access::button(lay.accept, &self.accept_label(), true, true),
+            access::button(lay.accept, &labels.accept, true, true),
         );
         let filetype = self.has_types().then(|| {
-            let l = label(tree, "filetype label", lay.filetype_label, FILETYPE_LABEL);
+            let l = label(tree, "filetype label", lay.filetype_label, &labels.filetype);
             let filetype = combo::access(
                 &self.filetype,
                 &lay.filetype,
@@ -2992,6 +3048,32 @@ mod tests {
         assert!(matches!(hit, Some(Hit::Extra(_))), "got {hit:?}");
         d.click(big, hit, Mods::default());
         assert_eq!(d.extra().unwrap().checked("extra-check"), Some(true));
+    }
+
+    #[test]
+    fn an_extra_rows_key_wins_and_the_labels_pick_around_it() {
+        let mut d = multi(DlgMode::Open, false);
+        let form = form::Form::new(vec![
+            form::Item::check("subfolders", FIELD_X, EXTRA_Y, "&Include subfolders"),
+            form::Item::check("names", FIELD_X, EXTRA_Y + 20, "&Name files"),
+        ]);
+        d.set_extra(form, EXTRA_H, &ControlMetrics::CLASSIC);
+        d.fields.accept_label = "Load".into();
+        let alt = |d: &mut FileDlg, c| d.key(R, form::Key::Access(c), None, Mods::default());
+        alt(&mut d, 'i');
+        assert_eq!(d.extra().unwrap().checked("subfolders"), Some(true));
+        assert_eq!(d.focus, Focus::Extra);
+        alt(&mut d, 'n');
+        assert_eq!(d.extra().unwrap().checked("names"), Some(true));
+        let keys = d.labels();
+        assert_eq!(keys.lookin, "&Look in:");
+        assert_eq!(keys.filename, "&File name:");
+        assert_eq!(keys.filetype, "Files of &type:");
+        assert_eq!(d.accept_label(), "L&oad", "l is Look in's now");
+        alt(&mut d, 'l');
+        assert_eq!(d.focus, Focus::LookIn);
+        alt(&mut d, 'f');
+        assert_eq!(d.focus, Focus::FileName);
     }
 
     #[test]

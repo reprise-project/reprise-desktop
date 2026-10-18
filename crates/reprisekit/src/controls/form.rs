@@ -490,7 +490,7 @@ impl Item {
         }
     }
 
-    fn mnemonic(&self) -> Option<char> {
+    pub(crate) fn mnemonic(&self) -> Option<char> {
         let label = match &self.control {
             Control::Label { text, enabled, .. } if *enabled => text,
             Control::Check { label, enabled, .. } if *enabled => label,
