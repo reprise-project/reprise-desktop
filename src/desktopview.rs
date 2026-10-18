@@ -31,7 +31,7 @@ use smithay::{
 use crate::{
     compositor::{SceneOwner, State},
     desktop::{self, DesktopEntry, ICON_PX, IconId, Target},
-    dirwatch::{DirWatch, Want},
+    dirwatch::{self, DirWatch, Want},
     output::upload_scaled,
     raster::Rect,
     startmenu::MenuItem,
@@ -74,6 +74,9 @@ pub struct DesktopView {
     /// shows its caret there, without the selection, until the drag goes.
     pub rename_drop: Option<usize>,
     watch: Option<DirWatch>,
+    /// The folders a file job is adding to `watch`. One on a drive that never answers keeps its
+    /// job, and no second one starts.
+    watch_adds: HashSet<PathBuf>,
     /// Re-armed on every inotify wakeup; the rescan runs when it fires, so an unpack
     /// costs one scan, not one per file.
     settle: Option<RegistrationToken>,
@@ -789,12 +792,12 @@ fn migrate_launcher_keys(
     moved
 }
 
-/// What the desktop watch covers. When `files` shows the folder's files: the
-/// desktop folder (ATTRIB, because chmod +x turns a `.desktop` file into a
-/// launcher) and its parent (for the folder being made). The home trash
-/// (`home_trash_wants`) and the drives' trashes as [`read_drive_bins`] last found them, so the
-/// Recycle Bin's icon flips between empty and full.
-fn watch_wants(dir: &Path, files: bool, system_icons: &[String], drive_bins: &[Want]) -> Vec<Want> {
+/// What the desktop watch covers besides the drives' bins. When `files` shows the folder's files:
+/// the desktop folder (ATTRIB, because chmod +x turns a `.desktop` file into a launcher) and its
+/// parent (for the folder being made). The home trash (`home_trash_wants`), so the Recycle Bin's
+/// icon flips between empty and full; the drives' trashes as [`read_drive_bins`] last found them
+/// join it on the loop.
+fn watch_wants(dir: &Path, files: bool, system_icons: &[String]) -> Vec<Want> {
     let mut want = Vec::new();
     if files {
         want.push(Want {
@@ -819,7 +822,6 @@ fn watch_wants(dir: &Path, files: bool, system_icons: &[String], drive_bins: &[W
         && let Some(root) = places::trash_root()
     {
         want.extend(home_trash_wants(&root));
-        want.extend(drive_bins.iter().cloned());
     }
     want
 }
@@ -991,6 +993,7 @@ pub fn setup(state: &mut State) {
         rename_clicks: DoubleClick::default(),
         rename_drop: None,
         watch,
+        watch_adds: HashSet::new(),
         settle: None,
         drawn: Vec::new(),
         drawn_theme: None,
@@ -1155,25 +1158,7 @@ impl State {
     pub fn rescan_desktop(&mut self) {
         let first = self.first_output();
         let px = ICON_PX * self.draw_scale_at(first.as_ref());
-        let State {
-            desktop: Some(view),
-            config,
-            ..
-        } = self
-        else {
-            return;
-        };
-        // Watch before reading, so a change between the two is not missed. The drives' bin
-        // folders come from the last drive bin read, which just looked them up off the loop.
-        if let Some(w) = view.watch.as_mut() {
-            w.sync(&watch_wants(
-                &view.dir,
-                config.desktop_icons,
-                &config.system_icons,
-                &view.bins.wants,
-            ));
-        }
-        if config.system_icons.iter().any(|n| n == "recycle-bin") {
+        if self.config.system_icons.iter().any(|n| n == "recycle-bin") {
             self.read_drive_bins();
         }
         let State {
@@ -1200,7 +1185,11 @@ impl State {
             config.desktop_extensions,
             view.bins.full,
         );
+        let adder = view.watch.as_ref().map(DirWatch::adder);
         self.spawn_fs_job(move || {
+            // Watch before reading, so a change between the two is not missed.
+            let want = watch_wants(&dir, show_files, &system_icons);
+            let added = adder.map(|a| a.run(&want));
             let entries = read_icons(
                 &dir,
                 &mime,
@@ -1211,8 +1200,56 @@ impl State {
                 drive_bins_full,
             );
             let art = icon_files(&entries, px);
-            Box::new(move |state| state.desktop_scanned(entries, art, px))
+            Box::new(move |state| {
+                state.desktop_watched(want, added);
+                state.desktop_scanned(entries, art, px)
+            })
         });
+    }
+
+    /// Takes the desktop's own watches a rescan added, with `want` the folders it wanted, then
+    /// adds the drives' bin folders the last drive bin read found, each on a file job of its own:
+    /// a drive that stopped answering since holds only its own.
+    fn desktop_watched(&mut self, mut want: Vec<Want>, added: Option<dirwatch::Added>) {
+        let State {
+            desktop: Some(view),
+            config,
+            ..
+        } = self
+        else {
+            return;
+        };
+        let tried = want.len();
+        if config.system_icons.iter().any(|n| n == "recycle-bin") {
+            want.extend(view.bins.wants.iter().cloned());
+        }
+        let Some(w) = view.watch.as_mut() else {
+            return;
+        };
+        w.plan(&want);
+        if let Some(added) = added {
+            w.adopt(added);
+        }
+        // A folder of the rescan's own that is missing was just looked for.
+        let tried: Vec<&Path> = want[..tried].iter().map(|w| w.dir.as_path()).collect();
+        let adds: Vec<_> = (w.plan(&want).each())
+            .filter(|(dir, _)| {
+                !tried.contains(&dir.as_path()) && view.watch_adds.insert(dir.clone())
+            })
+            .collect();
+        for (dir, add) in adds {
+            self.spawn_fs_job(move || {
+                let added = add.run();
+                Box::new(move |state: &mut State| {
+                    if let Some(view) = state.desktop.as_mut() {
+                        view.watch_adds.remove(&dir);
+                        if let Some(w) = view.watch.as_mut() {
+                            w.adopt(added);
+                        }
+                    }
+                })
+            });
+        }
     }
 
     /// A desktop read is done: its icon files go into the icon cache, its plain files wear the
@@ -2500,7 +2537,7 @@ mod tests {
 
         let dir = Path::new("/home/u/Desktop");
         let watched = |files: bool| -> Vec<PathBuf> {
-            watch_wants(dir, files, &[], &[])
+            watch_wants(dir, files, &[])
                 .into_iter()
                 .map(|w| w.dir)
                 .collect()
