@@ -99,6 +99,7 @@ impl Explorer {
         let job = self.poll_jobs(ctx);
         let opened = self.take_opened(ctx);
         let tipped = self.poll_tip_walk(ctx);
+        let clashed = self.take_clashes(ctx);
         if self.closing && !self.busy() {
             return opened.unwrap_or_default().and(Reply {
                 quit: true,
@@ -134,7 +135,7 @@ impl Explorer {
             opened,
             self.take_gone(ctx),
             self.take_drives(ctx),
-            self.take_clashes(ctx),
+            clashed,
             self.take_asking(ctx),
         ]
         .into_iter()
