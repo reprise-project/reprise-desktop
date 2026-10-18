@@ -592,7 +592,7 @@ impl State {
                 }
             }
             Action::Maximize => {
-                if let Some(w) = self.focused {
+                if let Some(w) = self.bind_window() {
                     let maximized = self.win(w).is_some_and(|x| x.maximized);
                     self.set_maximized(w, !maximized);
                 }
