@@ -23,12 +23,12 @@ impl Explorer {
         let Some(place) = self.place_of(&path) else {
             return;
         };
-        if self.filling.iter().any(|(p, _)| *p == place) {
+        if self.filling.iter().any(|(p, ..)| *p == place) {
             return;
         }
         match self.read_job(ctx, self.kids_reader(&path, place.clone())) {
             Ok(kids) => self.fill_read(&place, kids, ctx),
-            Err(job) => self.filling.push((place, job)),
+            Err(job) => self.filling.push((place, job, false)),
         }
     }
 
@@ -149,16 +149,19 @@ impl Explorer {
     /// Fills the nodes whose late reads ([`Explorer::fill_node`]) answered: true when one did.
     pub(crate) fn take_fills(&mut self, ctx: &mut Ctx) -> bool {
         let mut done = Vec::new();
-        self.filling.retain(|(place, job)| match job.take() {
+        self.filling.retain(|(place, job, again)| match job.take() {
             Some(kids) => {
-                done.push((place.clone(), kids));
+                done.push((place.clone(), kids, *again));
                 false
             }
             None => true,
         });
         let filled = !done.is_empty();
-        for (place, kids) in done {
+        for (place, kids, again) in done {
             self.fill_read(&place, kids, ctx);
+            if again {
+                self.refill_tree_node(&place, ctx);
+            }
         }
         filled
     }
@@ -186,13 +189,24 @@ impl Explorer {
 
     /// Reads the children of the node standing for `place` again when it was opened, off the loop
     /// as [`Explorer::fill_node`] reads: [`Explorer::tree_follow`] only fills a node whose children
-    /// are still empty. A read of the node still in flight stands for this one.
+    /// are still empty. A read of the node still in flight may predate the change, so the node is
+    /// read again once it lands.
     pub fn refill_tree_node(&mut self, place: &Place, ctx: &mut Ctx) {
-        if let Some(path) =
+        let Some(path) =
             foldertree::refill_path(&self.tree, &self.tree_places, place, &self.drive_mounts)
+        else {
+            return;
+        };
+        let at = self.place_of(&path);
+        if let Some((.., again)) = self
+            .filling
+            .iter_mut()
+            .find(|(p, ..)| at.as_ref() == Some(p))
         {
-            self.fill_node(path, ctx);
+            *again = true;
+            return;
         }
+        self.fill_node(path, ctx);
     }
 
     pub fn tree_follow(&mut self, place: &Place, ctx: &mut Ctx) {
