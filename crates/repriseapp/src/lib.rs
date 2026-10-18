@@ -519,6 +519,63 @@ impl Reply {
             ..self
         }
     }
+
+    /// This reply and `then`, the answer of another job landing in the same wake, so neither
+    /// loses its effects: flags join, each spawn keeps its own app scope, and for a one-off
+    /// (a copy, a drag) this reply's goes first.
+    pub fn and(self, then: Reply) -> Reply {
+        let Reply {
+            redraw,
+            redraw_all,
+            quit,
+            copy,
+            paste,
+            spawn,
+            spawn_app,
+            copy_files,
+            paste_files,
+            activate,
+            start_drag,
+            drag_accept,
+            answer_drop,
+            tick,
+            resize,
+            size,
+        } = then;
+        let (spawn, spawn_app) = if spawn.is_empty() {
+            (self.spawn, self.spawn_app)
+        } else if self.spawn.is_empty() {
+            (spawn, spawn_app)
+        } else if self.spawn_app == spawn_app {
+            (self.spawn.into_iter().chain(spawn).collect(), spawn_app)
+        } else {
+            let scoped = |argvs: Vec<Vec<OsString>>, app: Option<String>| {
+                argvs
+                    .into_iter()
+                    .map(move |argv| reprisefs::scope::in_scope(&argv, app.as_deref()))
+            };
+            let mine = scoped(self.spawn, self.spawn_app);
+            (mine.chain(scoped(spawn, spawn_app)).collect(), None)
+        };
+        Reply {
+            redraw: self.redraw || redraw,
+            redraw_all: self.redraw_all || redraw_all,
+            quit: self.quit || quit,
+            copy: self.copy.or(copy),
+            paste: self.paste || paste,
+            spawn,
+            spawn_app,
+            copy_files: self.copy_files.or(copy_files),
+            paste_files: self.paste_files || paste_files,
+            activate: self.activate.or(activate),
+            start_drag: self.start_drag.or(start_drag),
+            drag_accept: self.drag_accept.or(drag_accept),
+            answer_drop: self.answer_drop.or(answer_drop),
+            tick: self.tick || tick,
+            resize: self.resize || resize,
+            size: self.size.or(size),
+        }
+    }
 }
 
 pub trait App {
