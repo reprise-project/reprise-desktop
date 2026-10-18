@@ -161,13 +161,16 @@ impl Drives {
         (std::mem::take(&mut self.again), stat)
     }
 
-    /// Takes drive `top`'s stat.
-    fn land_stat(&mut self, top: PathBuf, usable: bool) {
+    /// Takes drive `top`'s stat: whether it changed `found`.
+    fn land_stat(&mut self, top: PathBuf, usable: bool) -> bool {
         self.stats.remove(&top);
-        if self.listed.contains(&top) {
-            self.usable.insert(top, usable);
-            self.refind();
+        if !self.listed.contains(&top) {
+            return false;
         }
+        self.usable.insert(top, usable);
+        let before = std::mem::take(&mut self.found);
+        self.refind();
+        self.found != before
     }
 
     fn refind(&mut self) {
@@ -1087,19 +1090,32 @@ impl State {
                 let Some(view) = state.desktop.as_mut() else {
                     return;
                 };
+                let before = view.drives.found.clone();
                 let (again, stat) = view.drives.land(scanner, listed);
+                if view.drives.found != before {
+                    state.drives_changed();
+                }
                 for top in stat {
-                    state.spawn_fs_job(move || {
-                        let usable = places::usable_drive(&top);
-                        Box::new(move |state: &mut State| {
-                            if let Some(view) = state.desktop.as_mut() {
-                                view.drives.land_stat(top, usable);
-                            }
-                        })
-                    });
+                    state.stat_drive(top);
                 }
                 if again {
                     state.scan_drives();
+                }
+            })
+        });
+    }
+
+    /// Stats drive `top` (its stat already counted as out) on a file job. A change to the drives
+    /// shows in an open Recycle Bin Properties.
+    fn stat_drive(&mut self, top: PathBuf) {
+        self.spawn_fs_job(move || {
+            let usable = places::usable_drive(&top);
+            Box::new(move |state: &mut State| {
+                let Some(view) = state.desktop.as_mut() else {
+                    return;
+                };
+                if view.drives.land_stat(top, usable) {
+                    state.drives_changed();
                 }
             })
         });
@@ -2330,6 +2346,33 @@ mod tests {
         assert_eq!(drives.land(scanner, Vec::new()), (false, Vec::new()));
         assert_eq!(drives.found, Vec::<PathBuf>::new());
         let _ = std::fs::remove_dir_all(&t);
+    }
+
+    fn drives_listing(tops: &[PathBuf]) -> Drives {
+        let mut drives = Drives::new(places::MountedDrives::at("/nonexistent".into(), Vec::new()));
+        let scanner = drives.start().unwrap();
+        drives.land(scanner, tops.to_vec());
+        drives
+    }
+
+    #[test]
+    fn a_drive_stat_landing_says_whether_the_found_drives_changed() {
+        let (card, stick) = (PathBuf::from("/media/CARD"), PathBuf::from("/media/STICK"));
+        let mut drives = drives_listing(&[card.clone(), stick.clone()]);
+        assert!(drives.land_stat(card.clone(), true), "CARD answered");
+        assert!(
+            !drives.land_stat(stick.clone(), false),
+            "STICK is not usable"
+        );
+        let scanner = drives.start().unwrap();
+        let (_, stat) = drives.land(scanner, vec![card.clone(), stick.clone()]);
+        assert_eq!(stat, [card.clone(), stick.clone()]);
+        assert!(!drives.land_stat(card.clone(), true), "the same answer");
+        assert!(drives.land_stat(stick.clone(), true), "STICK became usable");
+        assert!(
+            !drives.land_stat("/media/GONE".into(), true),
+            "a drive not listed"
+        );
     }
 
     #[test]
