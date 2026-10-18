@@ -247,6 +247,11 @@ pub struct Layout {
     pub body: Rect,
     /// One per column; `None` for a column scrolled out of view.
     pub columns: Vec<Option<ColumnLayout>>,
+    /// Where each column scrolled out of view would lie, left or right of the body; `None` for
+    /// a shown column. Only `access` reads them.
+    pub beyond: Vec<Option<ColumnLayout>>,
+    /// Where the shown columns lie: the body above the scrollbar, as wide as they are.
+    pub view: Rect,
     /// The etched line the titles of the columns but the device's share.
     pub title_line: Option<Rect>,
     /// The first column's Advanced button, when it shows.
@@ -482,24 +487,30 @@ pub fn layout(m: &Mixer, theme: &Theme, text: &TextRenderer, body: Rect) -> Layo
     let bar_h = if scrolls { cm.scroll } else { 0 };
     let h = body.height - bar_h;
     let track_h = (h - (d.body_h - d.track_h) - d.below(m.advanced)).max(d.min_track_h);
-    let mut x = body.x;
+    let mut x = body.x - m.columns[..first].iter().map(|c| d.extent(c)).sum::<i32>();
     let mut prev_device = None;
     let mut columns = Vec::with_capacity(m.columns.len());
+    let mut beyond = Vec::with_capacity(m.columns.len());
+    let mut right = body.x;
     for (i, c) in m.columns.iter().enumerate() {
+        let left = x;
+        x += d.extent(c);
+        let device = is_device(c);
+        let controls = if device { left } else { left + SLOT };
+        let mut cl = column_layout(c, text, px, &cm, &d, controls, body.y, track_h, h);
         if i < first || i >= first + shown {
             columns.push(None);
+            beyond.push(Some(cl));
             continue;
         }
-        let device = is_device(c);
-        let controls = if device { x } else { x + SLOT };
-        let mut cl = column_layout(c, text, px, &cm, &d, controls, body.y, track_h, h);
         if !device && let Some(after_device) = prev_device {
             let top = if after_device { DEVICE_SEP_Y } else { d.sep_y };
-            cl.separator = Some(Rect::new(x + SEP_X, body.y + top, 2, h - top));
+            cl.separator = Some(Rect::new(left + SEP_X, body.y + top, 2, h - top));
         }
         prev_device = Some(device);
-        x += d.extent(c);
+        right = x;
         columns.push(Some(cl));
+        beyond.push(None);
     }
     let title_line = columns
         .iter()
@@ -525,6 +536,8 @@ pub fn layout(m: &Mixer, theme: &Theme, text: &TextRenderer, body: Rect) -> Layo
     Layout {
         body,
         columns,
+        beyond,
+        view: Rect::new(body.x, body.y, (right - body.x).min(body.width), h),
         title_line,
         advanced,
         shown,
@@ -1017,8 +1030,11 @@ impl Mixer {
 
     /// Scroll so the focused column shows.
     fn reveal_focus(&mut self, shown: usize) {
+        self.show_column(self.focus_column(), shown);
+    }
+
+    fn show_column(&mut self, i: usize, shown: usize) {
         self.first = self.first.min(self.last_first(shown));
-        let i = self.focus_column();
         if i < self.first {
             self.first = i;
         } else if i >= self.first + shown {
@@ -1063,10 +1079,6 @@ impl Mixer {
         Event::Redraw
     }
 
-    /// The left button went down at (`x`, `y`). A thumb is held, and the
-    /// channel either side of it steps it one position that way; the
-    /// focus moves to the part pressed. A check box or the Advanced
-    /// button acts at the release.
     /// A reader's Focus on the control at (`x`, `y`): it takes the keyboard as Tab gives it,
     /// without sliding, flipping or pressing it.
     pub fn focus_at(&mut self, lay: &Layout, x: i32, y: i32) -> Event {
@@ -1085,6 +1097,25 @@ impl Mixer {
         Event::Redraw
     }
 
+    /// A reader's ScrollIntoView on column `i`: the columns scroll until it shows, the focus
+    /// staying where it is.
+    pub fn reveal(&mut self, lay: &Layout, i: usize) -> Event {
+        if i >= self.columns.len() {
+            return Event::None;
+        }
+        let before = self.first;
+        self.show_column(i, lay.shown);
+        if self.first == before {
+            return Event::None;
+        }
+        self.rehit(lay);
+        Event::Redraw
+    }
+
+    /// The left button went down at (`x`, `y`). A thumb is held, and the
+    /// channel either side of it steps it one position that way; the
+    /// focus moves to the part pressed. A check box or the Advanced
+    /// button acts at the release.
     pub fn press(&mut self, lay: &Layout, x: i32, y: i32) -> Event {
         let lay = &self.current(lay);
         self.point = Some((x, y));
@@ -1251,17 +1282,22 @@ impl Mixer {
         }
     }
 
-    /// The mixer's `access` part: a group per shown column named by its
-    /// title, holding the Balance and Volume sliders with their labels
-    /// and the check box, then the Advanced button. Returns the focused
-    /// node, or `parent` when the focus is on a column out of view.
+    /// The mixer's `access` part: a scroll view over the columns holding a group per column
+    /// named by its title (one scrolled out lies beyond the view), each with the Balance and
+    /// Volume sliders, their labels and the check box; then the Advanced button. Returns the
+    /// focused node, or `parent` when there are no columns.
     pub fn access(&self, lay: &Layout, tree: &mut Tree, parent: NodeId) -> NodeId {
         let mut focus = parent;
-        for (i, (col, cl)) in self.columns.iter().zip(&lay.columns).enumerate() {
-            let Some(cl) = cl else { continue };
+        let placed = lay.columns.iter().zip(&lay.beyond);
+        let view = (!self.columns.is_empty())
+            .then(|| tree.push(parent, "columns", access::node(Role::ScrollView, lay.view)));
+        for (i, (col, (shown, beyond))) in self.columns.iter().zip(placed).enumerate() {
+            let (Some(view), Some(cl)) = (view, shown.as_ref().or(beyond.as_ref())) else {
+                continue;
+            };
             let mut g = access::node(Role::Group, cl.rect);
             g.set_label(col.title.as_str());
-            let g = tree.push(parent, ("column", col.key.as_str()), g);
+            let g = tree.push(view, ("column", col.key.as_str()), g);
             let bl = tree.push(
                 g,
                 "balance-label",
@@ -1535,6 +1571,38 @@ mod tests {
         assert_eq!(m.first, 1);
         assert_eq!(m.press(&l, fwd.0, fwd.1), Event::Redraw);
         assert_eq!(m.first, 1, "stops with the last column shown");
+    }
+
+    #[test]
+    fn a_column_scrolled_out_publishes_beyond_the_view_and_a_reveal_scrolls_it_in() {
+        let mut m = Mixer::new(&lines(), false);
+        let l = lay_in(&m, &Theme::default(), Rect::new(0, 0, 250, 260));
+        assert_eq!(l.shown, 2);
+        let out = l.beyond[2].as_ref().expect("column 2 placed");
+        assert_eq!(out.rect.x, col(&l, 1).rect.right() + SLOT);
+        assert!(out.rect.x >= l.view.right(), "right of the view");
+        assert!(l.beyond[0].is_none() && l.beyond[1].is_none());
+        let mut tree = Tree::window("Volume Control", (250, 260));
+        m.access(&l, &mut tree, access::ROOT);
+        let slider = tree
+            .nodes()
+            .filter(|(_, n)| n.role() == Role::Slider && n.bounds().is_some())
+            .map(|(id, _)| id)
+            .last()
+            .expect("column 2's volume slider");
+        let mut p = access::Published::default();
+        p.update(tree);
+        let r = p.reveal(slider).expect("out of view");
+        assert_eq!(r.row, 2);
+        assert_eq!(m.reveal(&l, r.row), Event::Redraw);
+        assert_eq!(m.first, 1);
+        assert_eq!(m.focus, Focus::Volume(0), "the focus stays");
+        let l = lay_in(&m, &Theme::default(), Rect::new(0, 0, 250, 260));
+        let left = l.beyond[0].as_ref().expect("column 0 placed");
+        assert_eq!(left.rect.right(), l.view.x, "left of the view");
+        assert_eq!(m.reveal(&l, 2), Event::None, "already shown");
+        assert_eq!(m.reveal(&l, 0), Event::Redraw);
+        assert_eq!(m.first, 0);
     }
 
     #[test]

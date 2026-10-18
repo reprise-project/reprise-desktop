@@ -173,8 +173,9 @@ impl Published {
 
     /// What a reader's ScrollIntoView on node `id` scrolls: a row lying outside its list's
     /// bounds ([`Published::scrolled_out`]), counted by its position in set when it has one (a
-    /// list publishing only the rows near its view), else among the list's rows. None for a row
-    /// in view, or a node that is not a row of a list.
+    /// list publishing only the rows near its view), else among the list's rows; in a scroll
+    /// view, the row is its child holding the node. None for a row in view, or a node that is
+    /// not a row of a list.
     pub fn reveal(&self, id: NodeId) -> Option<Reveal> {
         let list = self.scrolled_out(id)?;
         let node = self.nodes.get(&id)?;
@@ -184,16 +185,20 @@ impl Published {
                 row: pos.checked_sub(1)?,
             });
         }
+        let children = self.nodes.get(&list)?.children();
+        if self.nodes.get(&list)?.role() == Role::ScrollView {
+            let mut child = id;
+            while self.parents.get(&child)? != &list {
+                child = *self.parents.get(&child)?;
+            }
+            return Some(Reveal {
+                at: self.middle(list)?,
+                row: children.iter().position(|&c| c == child)?,
+            });
+        }
         let role = node.role();
         let mut row = 0;
-        let mut stack: Vec<NodeId> = self
-            .nodes
-            .get(&list)?
-            .children()
-            .iter()
-            .rev()
-            .copied()
-            .collect();
+        let mut stack: Vec<NodeId> = children.iter().rev().copied().collect();
         while let Some(at) = stack.pop() {
             if at == id {
                 return Some(Reveal {
@@ -290,7 +295,8 @@ pub struct Target {
 }
 
 /// A list to scroll so its row `row` (counted in the order the list's rows are published, a
-/// tree's in its visible order) shows whole, without picking it; `at` is the list's middle.
+/// tree's in its visible order, a scroll view's by its children) shows whole, without picking
+/// it; `at` is the list's middle.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Reveal {
     pub at: (f64, f64),
@@ -381,7 +387,12 @@ impl<K: Copy, P: Fn(Msg<K>)> accesskit::ActionHandler for Handler<K, P> {
 fn is_list(role: Role) -> bool {
     matches!(
         role,
-        Role::ListBox | Role::Tree | Role::List | Role::ListGrid | Role::TreeGrid
+        Role::ListBox
+            | Role::Tree
+            | Role::List
+            | Role::ListGrid
+            | Role::TreeGrid
+            | Role::ScrollView
     )
 }
 
@@ -845,6 +856,37 @@ mod tests {
         );
         assert_eq!(p.target(d), None);
         assert_eq!(p.reveal(tree), None, "the tree itself is no row");
+    }
+
+    #[test]
+    fn a_node_out_of_a_scroll_view_is_revealed_by_the_child_holding_it() {
+        let mut t = Tree::new(node(Role::Window, Rect::new(0, 0, 200, 100)));
+        let view = t.push(
+            ROOT,
+            "view",
+            node(Role::ScrollView, Rect::new(0, 0, 100, 80)),
+        );
+        let group = |x| node(Role::Group, Rect::new(x, 0, 50, 80));
+        let slider = |x| node(Role::Slider, Rect::new(x + 10, 10, 20, 60));
+        let a = t.push(view, "a", group(0));
+        let shown = t.push(a, "slider", slider(0));
+        let b = t.push(view, "b", group(50));
+        t.push(b, "slider", slider(50));
+        let c = t.push(view, "c", group(100));
+        let beyond = t.push(c, "slider", slider(100));
+        let mut p = Published::default();
+        p.update(t);
+        assert_eq!(p.reveal(shown), None, "a slider in view");
+        assert_eq!(
+            p.reveal(beyond),
+            Some(Reveal {
+                at: (50.0, 40.0),
+                row: 2
+            }),
+            "the third column, whatever the slider's role"
+        );
+        assert_eq!(p.reveal(c).map(|r| r.row), Some(2));
+        assert_eq!(p.target(beyond), None);
     }
 
     #[test]

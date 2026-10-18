@@ -762,7 +762,10 @@ impl App for Volume {
                 let lay = self.mixer_layout(ctx);
                 self.mixer.focus_at(&lay, x, y) != mixer::Event::None
             }
-            _ => false,
+            (_, repriseapp::Reader::Reveal { row, .. }) => {
+                let lay = self.mixer_layout(ctx);
+                self.mixer.reveal(&lay, row) != mixer::Event::None
+            }
         }
     }
 
