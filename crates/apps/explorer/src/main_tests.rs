@@ -915,6 +915,32 @@ fn a_column_drag_at_200_percent_saves_half_the_px() {
     assert_eq!(ex.settings.columns[2], 138);
 }
 
+/// The splitter dragged to 300 px at 200% saves the Folders bar 150 wide: kept at 100%.
+#[test]
+fn a_splitter_drag_at_200_percent_saves_half_the_px() {
+    let dir = tempfile::tempdir().expect("a temp dir");
+    let mut ctx = test_ctx();
+    ctx.theme = Theme::default().with_text_size(200);
+    ctx.size = (1600, 900);
+    let mut ex = test_explorer(Place::Folder(dir.path().to_path_buf()), &mut ctx);
+    ex.dragging = true;
+    let x = 300 + reprisekit::controls::explorerbar::SPLITTER_W / 2;
+    ex.pointer(repriseapp::PointerInput::Motion { x, y: 200 }, &mut ctx);
+    assert_eq!(ex.explorer_bar.width, 150);
+    ex.pointer(
+        repriseapp::PointerInput::Release {
+            x,
+            y: 200,
+            button: crate::BTN_LEFT,
+            mods: repriseapp::Mods::default(),
+        },
+        &mut ctx,
+    );
+    assert_eq!(ex.settings.bar_width, 150);
+    let bar = ex.layout(&ctx).bar.expect("bar");
+    assert_eq!(bar.header.width, 300);
+}
+
 #[test]
 fn a_refresh_keeps_the_scroll_position() {
     let dir = tempfile::tempdir().expect("a temp dir");
