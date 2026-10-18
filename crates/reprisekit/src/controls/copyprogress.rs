@@ -1092,9 +1092,27 @@ mod tests {
     fn render_copyprogress() {
         let text = TextRenderer::load(&FontConfig::default());
         for (name, theme) in [
-            ("classic", Theme::default()),
-            ("blue", theme_for(Interface::Blue)),
-            ("glass", theme_for(Interface::Glass)),
+            (
+                "classic",
+                Theme {
+                    access_keys: true,
+                    ..Theme::default()
+                },
+            ),
+            (
+                "blue",
+                Theme {
+                    access_keys: true,
+                    ..theme_for(Interface::Blue)
+                },
+            ),
+            (
+                "glass",
+                Theme {
+                    access_keys: true,
+                    ..theme_for(Interface::Glass)
+                },
+            ),
         ] {
             for s in [1, 2] {
                 let p = theme.paint();

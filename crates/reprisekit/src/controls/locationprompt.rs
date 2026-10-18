@@ -322,7 +322,10 @@ mod tests {
     #[ignore]
     fn render_locationprompt() {
         let (text, px) = rend();
-        let theme = Theme::default();
+        let theme = Theme {
+            access_keys: true,
+            ..Theme::default()
+        };
         let fields = fields();
         let (w, h) = client(&fields, &text, px, TextUnits::ONE);
         let mut c = Canvas::new(w as u32, h as u32);

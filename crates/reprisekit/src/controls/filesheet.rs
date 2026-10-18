@@ -2192,10 +2192,19 @@ mod tests {
     #[ignore]
     fn render_set_sheet() {
         for (name, theme) in [
-            ("filesheet-set.png", Theme::default()),
+            (
+                "filesheet-set.png",
+                Theme {
+                    access_keys: true,
+                    ..Theme::default()
+                },
+            ),
             (
                 "filesheet-set-blue.png",
-                crate::interfaces::theme_for(crate::interface::Interface::Blue),
+                crate::theme::Theme {
+                    access_keys: true,
+                    ..crate::interfaces::theme_for(crate::interface::Interface::Blue)
+                },
             ),
         ] {
             let t = text();
@@ -2705,7 +2714,10 @@ mod tests {
     #[ignore]
     fn render_shortcut_page() {
         let t = text();
-        let theme = Theme::default();
+        let theme = Theme {
+            access_keys: true,
+            ..Theme::default()
+        };
         let (general, height) = page(false);
         let s = sheet(general, height, &sheet_tabs(Over::Launcher), |_| {
             shortcut_page(&shortcut_facts(), None)
@@ -2720,7 +2732,10 @@ mod tests {
     #[ignore]
     fn render_link_pages() {
         let t = text();
-        let theme = Theme::default();
+        let theme = Theme {
+            access_keys: true,
+            ..Theme::default()
+        };
         let pages: [(Over, Form, &str); 2] = [
             (
                 Over::Symlink { runs: false },
@@ -2750,7 +2765,10 @@ mod tests {
     #[ignore]
     fn render_summary_page() {
         let t = text();
-        let theme = Theme::default();
+        let theme = Theme {
+            access_keys: true,
+            ..Theme::default()
+        };
         let (general, _) = page(false);
         let values: [String; 6] =
             ["Report", "", "Ann", "", "q3", "first\nsecond"].map(String::from);
@@ -2846,7 +2864,10 @@ mod tests {
     #[ignore]
     fn render_tab_pages() {
         let t = text();
-        let theme = Theme::default();
+        let theme = Theme {
+            access_keys: true,
+            ..Theme::default()
+        };
         let (general, _) = page(true);
         let mut s = sheet(general, 424, &[Tab::Sharing, Tab::Compatibility], |_| {
             Form::new(vec![])
@@ -2864,7 +2885,10 @@ mod tests {
     #[ignore]
     fn render_file_sheet() {
         let t = text();
-        let theme = Theme::default();
+        let theme = Theme {
+            access_keys: true,
+            ..Theme::default()
+        };
         let (page, height) = page(false);
         let sheet =
             crate::controls::propsheet::PropSheet::new(&["General"], vec![page], (SHEET_W, height));
@@ -2964,7 +2988,10 @@ mod tests {
         }
         let mut got = Vec::new();
         for look in [Interface::Classic, Interface::Blue, Interface::Glass] {
-            let theme = crate::interfaces::theme_for(look);
+            let theme = crate::theme::Theme {
+                access_keys: true,
+                ..crate::interfaces::theme_for(look)
+            };
             for enabled in [true, false] {
                 let page = exec_page(false, true, enabled);
                 let height = 478;

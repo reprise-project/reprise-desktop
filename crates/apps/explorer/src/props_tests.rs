@@ -720,7 +720,10 @@ fn the_attribute_question_names_the_change_and_the_scope() {
 #[test]
 #[ignore]
 fn render_the_sheets() {
-    let theme = Theme::default();
+    let theme = Theme {
+        access_keys: true,
+        ..Theme::default()
+    };
     let t = text();
     for (dir, out) in [(false, "props-file.png"), (true, "props-folder.png")] {
         let mut info = info(dir);

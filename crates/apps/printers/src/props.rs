@@ -711,7 +711,10 @@ mod tests {
         use reprisekit::look::Paint;
         use reprisekit::text::TextRenderer;
         use reprisekit::theme::{FontConfig, Theme};
-        let theme = Theme::default();
+        let theme = Theme {
+            access_keys: true,
+            ..Theme::default()
+        };
         let text = TextRenderer::load(&FontConfig::default());
         let mut p = PropsSheet::new(&laser(), None);
         p.set_options(options(), &laser());

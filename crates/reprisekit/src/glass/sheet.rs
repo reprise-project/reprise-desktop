@@ -319,7 +319,10 @@ mod tests {
     const WHITE: Color = Color::rgb(0xFF, 0xFF, 0xFF);
 
     fn glass() -> Theme {
-        theme_for(Interface::Glass)
+        Theme {
+            access_keys: true,
+            ..theme_for(Interface::Glass)
+        }
     }
 
     fn filled(w: i32, h: i32, s: i32, bg: Color) -> Canvas {

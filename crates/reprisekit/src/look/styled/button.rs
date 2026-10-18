@@ -139,7 +139,10 @@ mod tests {
 
     #[test]
     fn a_classic_look_paints_the_classic_painter() {
-        let theme = theme_for(Interface::Classic);
+        let theme = Theme {
+            access_keys: true,
+            ..theme_for(Interface::Classic)
+        };
         let text = TextRenderer::load(&theme.fonts);
         let r = Rect::new(0, 0, 75, 23);
         let (mut a, mut b) = (Canvas::new(80, 30), Canvas::new(80, 30));
@@ -180,7 +183,10 @@ mod tests {
     const FOCUSED: Flags = (false, Interaction::Idle, true, true);
 
     fn blue() -> Theme {
-        theme_for(Interface::Blue)
+        Theme {
+            access_keys: true,
+            ..theme_for(Interface::Blue)
+        }
     }
 
     fn filled(mut c: Canvas, bg: Color) -> Canvas {

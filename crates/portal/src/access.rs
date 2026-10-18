@@ -758,7 +758,10 @@ mod tests {
     fn render_access() {
         use reprisekit::controls::form;
         use reprisekit::theme::Theme;
-        let theme = Theme::default();
+        let theme = Theme {
+            access_keys: true,
+            ..Theme::default()
+        };
         let text = TextRenderer::load(&FontConfig::default());
         let input = Input {
             body: "It will see what your camera sees.\nYou can change this in Settings.".into(),

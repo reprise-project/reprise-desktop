@@ -138,7 +138,7 @@ fn styled(s: Arc<Style>) -> Theme {
         scale: 1,
         look: Look::Styled(s),
         active: true,
-        access_keys: true,
+        access_keys: false,
         text: crate::theme::TextUnits::ONE,
     }
 }

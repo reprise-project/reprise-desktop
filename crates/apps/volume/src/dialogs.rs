@@ -373,7 +373,10 @@ mod tests {
         use reprisekit::controls::form;
         use reprisekit::text::TextRenderer;
         use reprisekit::theme::Theme;
-        let theme = Theme::default();
+        let theme = Theme {
+            access_keys: true,
+            ..Theme::default()
+        };
         let text = TextRenderer::load(&theme.fonts);
         let px = theme.fonts.size_px;
         let p = Props::new(&snap(), &Options::new(View::Playback));

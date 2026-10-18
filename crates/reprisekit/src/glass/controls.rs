@@ -653,7 +653,10 @@ mod tests {
     fn a_glass_choice_label_starts_16_px_past_its_box() {
         use crate::controls::form::{self, Form, Item};
         let text = crate::text::TextRenderer::load(&crate::theme::FontConfig::default());
-        let theme = theme_for(Interface::Glass);
+        let theme = crate::theme::Theme {
+            access_keys: true,
+            ..theme_for(Interface::Glass)
+        };
         let f = Form::new(vec![
             Item::check("check", 10, 10, "&Override"),
             Item::radio("radio", 11, 40, "&Accept", "g"),

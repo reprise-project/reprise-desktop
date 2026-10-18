@@ -3707,7 +3707,10 @@ mod tests {
         if !reprisekit::text::test_tahoma() {
             return;
         }
-        let theme = Theme::default();
+        let theme = Theme {
+            access_keys: true,
+            ..Theme::default()
+        };
         let text = TextRenderer::load(&FontConfig::default());
         let px = theme.fonts.size_px;
         let mut page = advanced(Area::MIN);
@@ -5362,7 +5365,10 @@ mod tests {
     #[test]
     #[ignore]
     fn render_the_pages() {
-        let theme = Theme::default();
+        let theme = Theme {
+            access_keys: true,
+            ..Theme::default()
+        };
         let text = TextRenderer::load(&FontConfig::default());
         let px = theme.fonts.size_px;
         let two = Settings {

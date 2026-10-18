@@ -578,7 +578,10 @@ mod tests {
     #[ignore]
     fn render_replacebox() {
         let (text, px) = rend();
-        let theme = Theme::default();
+        let theme = Theme {
+            access_keys: true,
+            ..Theme::default()
+        };
         for (fields, name) in [
             (file(), "replacebox-file-preview.png"),
             (folder(), "replacebox-folder-preview.png"),

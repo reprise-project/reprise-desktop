@@ -2599,7 +2599,7 @@ impl Host {
             None => 0,
         };
         self.ctx.theme.active = true;
-        self.ctx.theme.access_keys = true;
+        self.ctx.theme.access_keys = false;
         self.set_glass_top(i, (w, glass_top), qh);
         let spot = canvas.take_spot();
         if let Some(t) = self.text_input.as_mut() {

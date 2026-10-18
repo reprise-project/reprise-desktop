@@ -1172,10 +1172,7 @@ mod bar_tests {
     #[test]
     fn a_menu_underlines_its_keys_only_when_the_keyboard_opened_it() {
         let text = TextRenderer::load(&FontConfig::default());
-        let theme = Theme {
-            access_keys: false,
-            ..Theme::default()
-        };
+        let theme = Theme::default();
         let (m, px) = (&theme, theme.fonts.size_px);
         let lay = Layout::compute(
             &text,
@@ -1212,11 +1209,67 @@ mod bar_tests {
     }
 
     #[test]
+    fn a_default_theme_draws_bar_titles_and_form_labels_without_underlines() {
+        use crate::controls::form::{self, Form, Item};
+        use crate::interface::Interface;
+        let text = TextRenderer::load(&FontConfig::default());
+        let themes = [
+            Theme::default(),
+            crate::interfaces::theme_for(Interface::Classic),
+            crate::interfaces::theme_for(Interface::Blue),
+            crate::interfaces::theme_for(Interface::Glass),
+        ];
+        for theme in themes {
+            let px = theme.fonts.size_px;
+            let titles = |t: &Theme, file: &str| {
+                let b = Bar::new(vec![(file, vec![])]);
+                let lay = Layout::compute(
+                    &text,
+                    px,
+                    Rect::new(0, 0, 120, 20),
+                    &b.titles,
+                    &MenuTitles::CLASSIC,
+                );
+                let mut c = Canvas::new(120, 20);
+                b.draw_titles(&mut c, &text, t, &lay);
+                c.pixels
+            };
+            let label = |t: &Theme, name: &str| {
+                let f = Form::new(vec![Item::label("l", Rect::new(4, 4, 80, 13), name)]);
+                let mut c = Canvas::new(90, 22);
+                c.fill_rect(c.bounds(), t.colors.button_face);
+                form::draw(&mut c, &text, &t.paint(), &f, false, 11);
+                c.pixels
+            };
+            let cued = Theme {
+                access_keys: true,
+                ..theme.clone()
+            };
+            assert!(
+                titles(&theme, "&File") == titles(&theme, "File"),
+                "the title draws as one without a key"
+            );
+            assert!(
+                label(&theme, "&Name:") == label(&theme, "Name:"),
+                "the label draws as one without a key"
+            );
+            assert!(
+                titles(&cued, "&File") != titles(&cued, "File"),
+                "cued: underlined"
+            );
+            assert!(
+                label(&cued, "&Name:") != label(&cued, "Name:"),
+                "cued: underlined"
+            );
+        }
+    }
+
+    #[test]
     fn the_titles_underline_while_the_window_shows_its_cues() {
         let text = TextRenderer::load(&FontConfig::default());
-        let cued = Theme::default();
-        let hidden = Theme {
-            access_keys: false,
+        let hidden = Theme::default();
+        let cued = Theme {
+            access_keys: true,
             ..Theme::default()
         };
         let px = cued.fonts.size_px;

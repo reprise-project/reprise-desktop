@@ -989,7 +989,10 @@ pub(crate) mod tests {
         let row = Rect::new(X, 251, 358, 21);
         let mut got = Vec::new();
         for i in [Interface::Classic, Interface::Blue, Interface::Glass] {
-            let theme = reprisekit::interfaces::theme_for(i);
+            let theme = reprisekit::theme::Theme {
+                access_keys: true,
+                ..reprisekit::interfaces::theme_for(i)
+            };
             let text = reprisekit::text::TextRenderer::load(&theme.fonts);
             let mut hashes = [0; 2];
             for (k, hash) in hashes.iter_mut().enumerate() {

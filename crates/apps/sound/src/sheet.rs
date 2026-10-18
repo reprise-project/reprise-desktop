@@ -1669,7 +1669,10 @@ mod tests {
     #[ignore]
     fn render_the_applications_tab() {
         use reprisekit::icontheme::{IconCache, IconTheme};
-        let theme = Theme::default();
+        let theme = Theme {
+            access_keys: true,
+            ..Theme::default()
+        };
         let text = TextRenderer::load(&FontConfig::default());
         let px = theme.fonts.size_px;
         let mut snap = playing();
@@ -1692,7 +1695,10 @@ mod tests {
     #[test]
     #[ignore]
     fn render_the_sheet() {
-        let theme = Theme::default();
+        let theme = Theme {
+            access_keys: true,
+            ..Theme::default()
+        };
         let text = TextRenderer::load(&FontConfig::default());
         let px = theme.fonts.size_px;
         let s = sheet(&fixture());

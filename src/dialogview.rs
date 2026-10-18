@@ -986,7 +986,16 @@ impl State {
             preedit.as_ref(),
         );
         if let (Some(c), Some(client)) = (v.dialog.copy(), v.layout.page) {
-            dialog::draw_copy(&mut canvas, &base, text, c, client, scale, active);
+            dialog::draw_copy(
+                &mut canvas,
+                &base,
+                text,
+                c,
+                client,
+                scale,
+                active,
+                v.cues.keys,
+            );
         }
         // What the backdrop sees: the client area.
         let part = wanted

@@ -360,7 +360,10 @@ mod tests {
     #[ignore]
     fn render_picker() {
         use reprisekit::theme::{FontConfig, Theme};
-        let theme = Theme::default();
+        let theme = Theme {
+            access_keys: true,
+            ..Theme::default()
+        };
         let text = reprisekit::text::TextRenderer::load(&FontConfig::default());
         let form = build_form(&rows(), Some(1), true, "Chromium", |_| None);
         let mut c = Canvas::new(CLIENT.0 as u32, CLIENT.1 as u32);
