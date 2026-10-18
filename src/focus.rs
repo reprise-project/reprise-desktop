@@ -187,8 +187,8 @@ impl State {
         let takes = mapfocus::takes_focus(&new, holder);
         if !takes {
             log::info!(
-                "window {:?} (pid {new_pid:?}) maps behind the focused one",
-                self.win(w).map(|x| x.title()).unwrap_or_default()
+                "window {w:?} ({:?}, pid {new_pid:?}) maps behind the focused one",
+                self.win(w).map(|x| x.app_id()).unwrap_or_default()
             );
         }
         takes

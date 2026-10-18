@@ -35,6 +35,10 @@ Started from a terminal, Reprise logs to the terminal and its programs
 inherit it; `REPRISE_LOG_STDERR=1` keeps the log on stderr anywhere.
 `RUST_LOG` sets the level, as in `RUST_LOG=reprise=debug`.
 
+The log names windows and programs by app id, window id and pid. It does
+not record window titles, notification text, clipboard contents, what is
+typed or what is playing.
+
 On Arch, `packaging/arch/PKGBUILD` packages the compositor, the programs, the
 session file, the PAM files and the portal backend.
 

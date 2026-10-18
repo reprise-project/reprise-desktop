@@ -89,8 +89,8 @@ impl XdgActivationHandler for State {
         }
         let minimized = win.minimized;
         log::info!(
-            "activation of {:?}: {}",
-            win.title(),
+            "activation of {w:?} ({:?}): {}",
+            win.app_id(),
             if trusted { "focused" } else { "attention" }
         );
         let focused = self.focused == Some(w);
