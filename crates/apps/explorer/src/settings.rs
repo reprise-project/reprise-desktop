@@ -17,6 +17,7 @@ pub struct Settings {
     pub status_bar: bool,
     pub toolbars: bool,
     pub address_bar: bool,
+    /// The Folders bar's width in 100% px, grown by the text size when drawn.
     pub bar_width: i32,
     /// The main window's client size in 100% px, grown by the text size at open.
     pub window: (i32, i32),

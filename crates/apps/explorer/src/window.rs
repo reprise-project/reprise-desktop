@@ -134,6 +134,7 @@ pub fn layout(
             (client.x + w + cm.text.len(TASK_VIEW_GAP)).min(client.right()),
         )
     } else {
+        let bar_width = cm.text.len(bar_width);
         let frame = Rect::new(
             client.x,
             top,
@@ -910,6 +911,17 @@ mod tests {
         );
         assert_eq!(lay.bar.expect("bar").splitter.x, 300);
         assert_eq!(lay.view.inset(FIELD_PAD).x, 304);
+    }
+
+    #[test]
+    fn the_folders_bar_width_grows_with_the_text_size() {
+        let cm = reprisekit::theme::Theme::default()
+            .with_text_size(200)
+            .controls();
+        let lay = layout((1600, 900), &Settings::default(), 150, 23, &cm);
+        let bar = lay.bar.expect("bar");
+        assert_eq!(bar.header.width, 300, "150 at 100% draws 300 px at 200%");
+        assert_eq!(bar.splitter.x, 300);
     }
 
     #[test]

@@ -878,6 +878,8 @@ fn the_drag_image_grows_with_the_text_size() {
         for mode in modes {
             let mut ctx = test_ctx();
             ctx.theme = reprisekit::theme::Theme::default().with_text_size(pct);
+            // Room for the grown Folders bar and the view's cells beside it.
+            ctx.size = (1600, 900);
             let (_dir, mut ex) = explorer(&mut ctx);
             ex.sv.mode = mode;
             select(&mut ex, &["a.txt", "Box", "Crate"]);
