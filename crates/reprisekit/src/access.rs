@@ -169,10 +169,19 @@ impl Published {
     }
 
     /// What a reader's ScrollIntoView on node `id` scrolls: a row lying outside its list's
-    /// bounds ([`Published::scrolled_out`]). None for a row in view, or a node that is not a row of a list.
+    /// bounds ([`Published::scrolled_out`]), counted by its position in set when it has one (a
+    /// list publishing only the rows near its view), else among the list's rows. None for a row
+    /// in view, or a node that is not a row of a list.
     pub fn reveal(&self, id: NodeId) -> Option<Reveal> {
         let list = self.scrolled_out(id)?;
-        let role = self.nodes.get(&id)?.role();
+        let node = self.nodes.get(&id)?;
+        if let Some(pos) = node.position_in_set() {
+            return Some(Reveal {
+                at: self.middle(list)?,
+                row: pos.checked_sub(1)?,
+            });
+        }
+        let role = node.role();
         let mut row = 0;
         let mut stack: Vec<NodeId> = self
             .nodes
