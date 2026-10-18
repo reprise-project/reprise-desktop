@@ -98,6 +98,7 @@ mod switcherview;
 mod tablet;
 mod tabletpad;
 mod tabs;
+mod tabsproto;
 mod tabview;
 mod taskpreview;
 mod textinput;

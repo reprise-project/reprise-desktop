@@ -15,6 +15,7 @@ reprisefs = { path = "../reprisefs" }
 repriseconf = { path = "../repriseconf" }
 smithay-client-toolkit = "0.21"
 wayland-client.workspace = true
+wayland-scanner = "0.31"
 log.workspace = true
 zeroize.workspace = true
 # in pure Rust. Left out: AVIF (decoding needs the system dav1d), TGA and

@@ -14,11 +14,24 @@ pub enum Cursor {
     Underline,
 }
 
+/// Where a window keeps its tabs.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum TabPosition {
+    /// A strip under the toolbar.
+    #[default]
+    Below,
+    /// The title bar: each tab is a window of one caption tab group.
+    Caption,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
     /// Empty runs the login shell from the password database.
     pub shell: String,
+    /// Takes effect for windows opened after a change.
+    pub tab_position: TabPosition,
     pub cursor: Cursor,
     pub blink: bool,
     pub scrollback: usize,
@@ -36,6 +49,7 @@ impl Default for Settings {
     fn default() -> Self {
         Settings {
             shell: String::new(),
+            tab_position: TabPosition::Below,
             cursor: Cursor::Block,
             blink: true,
             scrollback: 10_000,
@@ -134,6 +148,7 @@ mod tests {
         assert_eq!(s.size_px, 13);
         assert_eq!(s.scheme, "reprise");
         assert!(!s.see_through);
+        assert_eq!(s.tab_position, TabPosition::Below);
         assert_eq!(s, Settings::default());
     }
 
@@ -157,6 +172,7 @@ mod tests {
         let p = dir.path().join("reprise").join("terminal.toml");
         let s = Settings {
             shell: "/bin/zsh".into(),
+            tab_position: TabPosition::Caption,
             cursor: Cursor::Bar,
             blink: false,
             scrollback: 2000,

@@ -7,7 +7,7 @@ use reprisekit::raster::Rect;
 use reprisekit::trackbar::{self, TrackBar};
 
 use crate::schemes;
-use crate::settings::{Cursor, Profile, Settings};
+use crate::settings::{Cursor, Profile, Settings, TabPosition};
 
 pub const CLIENT: (i32, i32) = (398, 317);
 pub const PROFILE_CLIENT: (i32, i32) = (300, 112);
@@ -18,6 +18,11 @@ const APPEARANCE: usize = 1;
 const PROFILES: usize = 2;
 
 const SCROLLBACK: (i32, i32) = (0, 100_000);
+/// The tab position combo's rows, in [`TabPosition`] order.
+const TAB_POSITIONS: [(&str, TabPosition); 2] = [
+    ("Below the toolbar", TabPosition::Below),
+    ("In the title bar", TabPosition::Caption),
+];
 const SIZE_PX: (i32, i32) = (6, 48);
 /// The trackbar's first position is this opacity, in percent.
 const OPACITY_MIN: usize = 10;
@@ -79,8 +84,10 @@ impl Options {
             Cursor::Block
         };
         let scheme = look.combo_selected("scheme").unwrap_or(0);
+        let tabs = general.combo_selected("tab_position").unwrap_or(0);
         Settings {
             shell: edit_text(general, "shell"),
+            tab_position: TAB_POSITIONS[tabs.min(TAB_POSITIONS.len() - 1)].1,
             cursor,
             blink: general.checked("blink").unwrap_or(true),
             scrollback: number(general, "scrollback") as usize,
@@ -268,6 +275,14 @@ fn spin(id: &'static str, rect: Rect, value: i32, (lo, hi): (i32, i32)) -> Item 
 }
 
 fn general_page(s: &Settings) -> Form {
+    let positions: Vec<&str> = TAB_POSITIONS.iter().map(|p| p.0).collect();
+    let mut tabs = Item::combo("tab_position", 140, 236, 160, &positions, positions.len());
+    if let Control::Combo(c) = &mut tabs.control {
+        c.selected = TAB_POSITIONS
+            .iter()
+            .position(|p| p.1 == s.tab_position)
+            .unwrap_or(0);
+    }
     Form::new(vec![
         Item::label(
             "shell_label",
@@ -292,6 +307,12 @@ fn general_page(s: &Settings) -> Form {
             s.scrollback.min(SCROLLBACK.1 as usize) as i32,
             SCROLLBACK,
         ),
+        Item::label(
+            "tab_position_label",
+            Rect::new(16, 240, 120, 13),
+            "&Tabs (new windows):",
+        ),
+        tabs,
     ])
 }
 
@@ -404,6 +425,7 @@ mod tests {
     fn other() -> Settings {
         Settings {
             shell: "/bin/zsh".into(),
+            tab_position: TabPosition::Caption,
             cursor: Cursor::Underline,
             blink: false,
             scrollback: 2500,

@@ -111,7 +111,7 @@ fn press(x: i32, y: i32, button: u32) -> Event {
 }
 
 fn pids(t: &Terminal) -> Vec<u32> {
-    t.tabs.list.iter().map(Tab::pid).collect()
+    t.w.tabs.list.iter().map(Tab::pid).collect()
 }
 
 #[test]
@@ -125,9 +125,9 @@ fn resize_reflows_all_tabs() {
         t.event(MAIN, Event::Resized, &mut ctx);
         t.event(MAIN, Event::Wake, &mut ctx);
         let m = termgrid::metrics(&t.font, t.px, 1);
-        let (cols, rows) = termgrid::grid_size(&m, chrome::grid_rect(&ctx), 1);
+        let (cols, rows) = termgrid::grid_size(&m, chrome::grid_rect(&ctx, false), 1);
         let want = (cols.max(2), rows.max(1));
-        for tab in &t.tabs.list {
+        for tab in &t.w.tabs.list {
             assert_eq!(
                 tab.size(),
                 want,
@@ -146,7 +146,7 @@ fn exit_at_once_closes() {
     let scheme = t.scheme(&ctx.theme);
     let mut reaped = Vec::new();
     until("false exits", || {
-        t.tabs.list.iter_mut().for_each(|tab| {
+        t.w.tabs.list.iter_mut().for_each(|tab| {
             tab.pump(&scheme);
         });
         reaped = t.reap();
@@ -161,14 +161,14 @@ fn scale_change_resizes_pty() {
     let mut ctx = test_ctx();
     let mut t = terminal(&["cat"]);
     t.follow_scale(MAIN, 1, &mut ctx);
-    let one = t.tabs.list[0].size();
+    let one = t.w.tabs.list[0].size();
     t.follow_scale(MAIN, 2, &mut ctx);
     assert_eq!(t.metrics.0, (2, t.px));
     let m = termgrid::metrics(&t.font, t.px, 2);
-    let want = termgrid::grid_size(&m, chrome::grid_rect(&ctx), 2);
+    let want = termgrid::grid_size(&m, chrome::grid_rect(&ctx, false), 2);
     assert_eq!(t.metrics.1, m, "the cell is taken again at scale 2");
-    assert_eq!(t.fitted, Some((want, (m.cell_w, m.cell_h))));
-    assert_eq!(t.tabs.list[0].size(), want);
+    assert_eq!(t.w.fitted, Some((want, (m.cell_w, m.cell_h))));
+    assert_eq!(t.w.tabs.list[0].size(), want);
     assert!(one.0 > 0 && want.0 > 0);
 }
 
@@ -177,31 +177,31 @@ fn new_tab_inherits_cwd() {
     let mut ctx = test_ctx();
     let mut t = terminal(&["/bin/sh", "-c", "cd / && exec cat"]);
     until("the first tab is in /", || {
-        t.tabs.current().and_then(Tab::cwd).as_deref() == Some(Path::new("/"))
+        t.w.tabs.current().and_then(Tab::cwd).as_deref() == Some(Path::new("/"))
     });
     assert_eq!(
         t.new_window(),
         (argv(&["reprise-terminal"]), Some("/".into()))
     );
     t.event(MAIN, key(0x54, true, true), &mut ctx);
-    assert_eq!(t.tabs.list.len(), 2, "Ctrl+Shift+T opens a tab");
-    assert_eq!(t.tabs.strip.open, 1);
+    assert_eq!(t.w.tabs.list.len(), 2, "Ctrl+Shift+T opens a tab");
+    assert_eq!(t.w.tabs.strip.open, 1);
     until("the new tab starts in /", || {
-        t.tabs.list[1].cwd().as_deref() == Some(Path::new("/"))
+        t.w.tabs.list[1].cwd().as_deref() == Some(Path::new("/"))
     });
 
     let osc7 = "printf '\\033]7;file://localhost/usr\\007'; exec cat";
     t.spawn_tab(&launch(&["/bin/sh", "-c", osc7]), None);
     until("the shell reports /usr", || {
-        t.tabs.list[2].cwd().as_deref() == Some(Path::new("/usr"))
+        t.w.tabs.list[2].cwd().as_deref() == Some(Path::new("/usr"))
     });
     assert_ne!(
-        cwd::cwd_of(t.tabs.list[2].pid()).as_deref(),
+        cwd::cwd_of(t.w.tabs.list[2].pid()).as_deref(),
         Some(Path::new("/usr"))
     );
     t.new_tab(&Choice::Shell);
     until("the tab opened from it starts in /usr", || {
-        t.tabs.list[3].cwd().as_deref() == Some(Path::new("/usr"))
+        t.w.tabs.list[3].cwd().as_deref() == Some(Path::new("/usr"))
     });
 }
 
@@ -210,13 +210,13 @@ fn shortcuts_switch_close_and_zoom() {
     let mut ctx = test_ctx();
     let mut t = terminal(&["cat"]);
     t.event(MAIN, key(0x54, true, true), &mut ctx);
-    assert_eq!(t.tabs.strip.open, 1);
+    assert_eq!(t.w.tabs.strip.open, 1);
     t.event(MAIN, key(0xff09, true, false), &mut ctx);
-    assert_eq!(t.tabs.strip.open, 0, "Ctrl+Tab wraps round");
+    assert_eq!(t.w.tabs.strip.open, 0, "Ctrl+Tab wraps round");
     t.event(MAIN, key(0xff55, true, false), &mut ctx);
-    assert_eq!(t.tabs.strip.open, 1, "Ctrl+PgUp goes back");
+    assert_eq!(t.w.tabs.strip.open, 1, "Ctrl+PgUp goes back");
     t.event(MAIN, key(0xff09, true, true), &mut ctx);
-    assert_eq!(t.tabs.strip.open, 0, "Ctrl+Shift+Tab goes back");
+    assert_eq!(t.w.tabs.strip.open, 0, "Ctrl+Shift+Tab goes back");
     let px = t.px;
     t.event(MAIN, key(0x3d, true, false), &mut ctx);
     assert_eq!(t.px, px + 1);
@@ -228,7 +228,7 @@ fn shortcuts_switch_close_and_zoom() {
     assert!(t.event(MAIN, key(0x56, true, true), &mut ctx).paste);
     assert!(t.event(MAIN, Event::Pasted("x".into()), &mut ctx).redraw);
     assert!(!t.event(MAIN, key(0x57, true, true), &mut ctx).quit);
-    assert_eq!(t.tabs.list.len(), 1);
+    assert_eq!(t.w.tabs.list.len(), 1);
     assert!(
         t.event(MAIN, key(0x57, true, true), &mut ctx).quit,
         "the last tab closes the window"
@@ -253,25 +253,25 @@ fn closing_a_busy_tab_asks_first() {
     let mut ctx = test_ctx();
     let mut t = terminal(&["cat"]);
     t.spawn_tab(&launch(&["/bin/sh", "-i"]), None);
-    t.tabs.list[1].write(b"sleep 30\n".as_slice().into());
-    until("sleep holds the foreground", || t.tabs.list[1].busy());
-    assert!(!t.tabs.list[0].busy(), "cat is the tab's own program");
+    t.w.tabs.list[1].write(b"sleep 30\n".as_slice().into());
+    until("sleep holds the foreground", || t.w.tabs.list[1].busy());
+    assert!(!t.w.tabs.list[0].busy(), "cat is the tab's own program");
     let (x, y) = centre(t.chrome_layout(&ctx).strip.tabs[1]);
     t.event(MAIN, press(x, y, 0x112), &mut ctx);
-    assert_eq!(t.tabs.list.len(), 2, "nothing closes before the answer");
+    assert_eq!(t.w.tabs.list.len(), 2, "nothing closes before the answer");
     assert_eq!(t.children().first().map(|c| c.id), Some(CONFIRM));
     t.event(CONFIRM, key(keysym::RETURN, false, false), &mut ctx);
-    assert_eq!(t.tabs.list.len(), 1, "Close closes the tab");
+    assert_eq!(t.w.tabs.list.len(), 1, "Close closes the tab");
     assert!(t.children().is_empty());
 
     t.spawn_tab(&launch(&["/bin/sh", "-i"]), None);
-    t.tabs.list[1].write(b"sleep 30\n".as_slice().into());
-    until("sleep holds the foreground", || t.tabs.list[1].busy());
+    t.w.tabs.list[1].write(b"sleep 30\n".as_slice().into());
+    until("sleep holds the foreground", || t.w.tabs.list[1].busy());
     assert!(!t.event(MAIN, Event::CloseRequest, &mut ctx).quit);
     assert!(t.confirm.is_some(), "closing the window asks too");
     t.event(CONFIRM, key(keysym::ESCAPE, false, false), &mut ctx);
     assert!(t.confirm.is_none());
-    assert_eq!(t.tabs.list.len(), 2, "Cancel keeps every tab");
+    assert_eq!(t.w.tabs.list.len(), 2, "Cancel keeps every tab");
 }
 
 #[test]
@@ -291,7 +291,7 @@ fn tab_drag_never_moves_window() {
             &mut ctx,
         ));
         assert!(
-            t.tabs.strip.dragging.is_some() || x == x0 + 2,
+            t.w.tabs.strip.dragging.is_some() || x == x0 + 2,
             "dragging past the threshold"
         );
     }
@@ -306,8 +306,8 @@ fn tab_drag_never_moves_window() {
         &mut ctx,
     ));
     assert_eq!(pids(&t), [before[1], before[0]], "the tabs swapped");
-    assert_eq!(t.tabs.strip.open, 1, "the dragged tab stays open");
-    assert!(t.tabs.strip.dragging.is_none());
+    assert_eq!(t.w.tabs.strip.open, 1, "the dragged tab stays open");
+    assert!(t.w.tabs.strip.dragging.is_none());
     for r in replies {
         assert!(!r.resize && r.start_drag.is_none() && !r.quit, "{r:?}");
     }
@@ -327,16 +327,16 @@ fn the_add_button_and_its_menu_open_tabs() {
         mods: Mods::default(),
     };
     t.event(MAIN, Event::Pointer(release), &mut ctx);
-    assert_eq!(t.tabs.list.len(), 2, "+ opens the shell");
+    assert_eq!(t.w.tabs.list.len(), 2, "+ opens the shell");
     let lay = t.chrome_layout(&ctx);
     let (x, y) = centre(lay.strip.menu);
     t.event(MAIN, press(x, y, BTN_LEFT), &mut ctx);
-    assert!(t.chrome.menu.is_some(), "the arrow opens the menu");
+    assert!(t.w.chrome.menu.is_some(), "the arrow opens the menu");
     t.event(MAIN, key(keysym::DOWN, false, false), &mut ctx);
     t.event(MAIN, key(keysym::RETURN, false, false), &mut ctx);
-    assert!(t.chrome.menu.is_none());
-    assert_eq!(t.tabs.list.len(), 3, "its first row opens the shell");
-    assert_eq!(t.tabs.list[2].program(), "sh");
+    assert!(t.w.chrome.menu.is_none());
+    assert_eq!(t.w.tabs.list.len(), 3, "its first row opens the shell");
+    assert_eq!(t.w.tabs.list[2].program(), "sh");
 }
 
 #[test]
@@ -357,7 +357,7 @@ fn closing_a_tab_mid_press_drops_the_press() {
             &mut ctx,
         );
     }
-    assert!(t.tabs.strip.dragging.is_none(), "no tab is dragged");
+    assert!(t.w.tabs.strip.dragging.is_none(), "no tab is dragged");
     assert_eq!(pids(&t), before[..2], "no tab moved");
 
     let (x, y) = centre(t.chrome_layout(&ctx).strip.closes[1]);
@@ -378,9 +378,9 @@ fn a_second_close_request_keeps_the_first_question() {
     let mut ctx = test_ctx();
     let mut t = terminal(&["cat"]);
     t.spawn_tab(&launch(&["/bin/sh", "-i"]), None);
-    t.tabs.list[1].write(b"sleep 30\n".as_slice().into());
-    until("sleep holds the foreground", || t.tabs.list[1].busy());
-    let pid = t.tabs.list[1].pid();
+    t.w.tabs.list[1].write(b"sleep 30\n".as_slice().into());
+    until("sleep holds the foreground", || t.w.tabs.list[1].busy());
+    let pid = t.w.tabs.list[1].pid();
     t.event(MAIN, key(0x57, true, true), &mut ctx);
     assert!(matches!(t.confirm, Some((Closing::Tab(p), _)) if p == pid));
     t.event(MAIN, Event::CloseRequest, &mut ctx);
@@ -451,21 +451,21 @@ fn see_through_solid_outside_glass() {
         let mut t = in_dir(dir.path(), t.settings.clone());
         let mut c = Canvas::new(640, 400);
         t.draw(repriseapp::MAIN, &mut c, &ctx);
-        assert_eq!(t.snap.alpha, 255, "{i:?} draws a solid background");
+        assert_eq!(t.w.snap.alpha, 255, "{i:?} draws a solid background");
         assert_eq!(c.take_glass_top(), 0, "{i:?} shows no glass");
     }
     let ctx = themed_ctx(reprisekit::interfaces::theme_for(Interface::Glass));
     let mut t = in_dir(dir.path(), t.settings.clone());
     let mut c = Canvas::new(640, 400);
     t.draw(repriseapp::MAIN, &mut c, &ctx);
-    assert_eq!(t.snap.alpha, 127, "50% opacity");
+    assert_eq!(t.w.snap.alpha, 127, "50% opacity");
     assert_eq!(c.take_glass_top(), 400, "the whole client is glass");
     t.settings.see_through = false;
     t.draw(repriseapp::MAIN, &mut c, &ctx);
-    assert_eq!(t.snap.alpha, 255);
+    assert_eq!(t.w.snap.alpha, 255);
     assert_eq!(
         c.take_glass_top(),
-        chrome::band_height(&ctx.theme),
+        chrome::band_height(&ctx.theme, false),
         "the chrome's band stays glass"
     );
 }
@@ -496,9 +496,9 @@ fn apply_updates_open_tabs() {
     t.cmd = Some(cmd.to_vec());
     t.start(repriseapp::Waker::noop());
     t.spawn_tab(&launch(&["sh", "-c", "seq 1 200; sleep 5"]), None);
-    assert_eq!(t.tabs.list.len(), 2);
+    assert_eq!(t.w.tabs.list.len(), 2);
     until("the output reached every scrollback", || {
-        t.tabs.list.iter().all(|tab| tab.history() >= 100)
+        t.w.tabs.list.iter().all(|tab| tab.history() >= 100)
     });
 
     t.apply(Settings {
@@ -508,7 +508,7 @@ fn apply_updates_open_tabs() {
     });
     let ctx = themed_ctx(Theme::default());
     let scheme = t.scheme(&ctx.theme);
-    for tab in &t.tabs.list {
+    for tab in &t.w.tabs.list {
         assert_eq!(tab.history(), 20, "every open tab keeps the new scrollback");
         let mut snap = Snapshot::new(0, 0, scheme.fg, scheme.bg);
         tab.snapshot(&scheme, &mut snap);
@@ -635,7 +635,7 @@ fn leaving_glass_draws_a_see_through_grid_solid() {
     assert!(c.get(w / 2, h - 5) >> 24 < 255, "see-through under Glass");
     ctx.theme = Theme::default();
     t.draw(MAIN, &mut c, &ctx);
-    for y in (chrome::band_height(&ctx.theme)..h).step_by(7) {
+    for y in (chrome::band_height(&ctx.theme, false)..h).step_by(7) {
         assert_eq!(c.get(w / 2, y) >> 24, 255, "row at {y} is solid");
     }
 }
@@ -643,7 +643,7 @@ fn leaving_glass_draws_a_see_through_grid_solid() {
 /// A logical point in grid cell (`col`, `row`) at scale 1, in its left half or its right.
 fn cell_point(t: &mut Terminal, ctx: &Ctx, col: i32, row: i32, right: bool) -> (i32, i32) {
     let m = t.metrics(1);
-    let g = chrome::grid_rect(ctx);
+    let g = chrome::grid_rect(ctx, false);
     let x = if right {
         m.cell_w * 3 / 4
     } else {
@@ -658,7 +658,7 @@ fn cell_point(t: &mut Terminal, ctx: &Ctx, col: i32, row: i32, right: bool) -> (
 fn row_text(t: &Terminal, row: usize) -> String {
     let mut snap = Snapshot::new(0, 0, Color::rgb(0, 0, 0), Color::rgb(0, 0, 0));
     let scheme = schemes::scheme("reprise", Interface::Classic);
-    t.tabs.current().unwrap().snapshot(&scheme, &mut snap);
+    t.w.tabs.current().unwrap().snapshot(&scheme, &mut snap);
     snap.row_text(row)
 }
 
@@ -705,7 +705,7 @@ fn a_selection_copies_to_primary_and_shift_overrides_mouse_mode() {
     ]);
     t.follow_scale(MAIN, 1, &mut ctx);
     until("the program takes the mouse", || {
-        t.tabs
+        t.w.tabs
             .current()
             .unwrap()
             .mode()
@@ -714,7 +714,7 @@ fn a_selection_copies_to_primary_and_shift_overrides_mouse_mode() {
     });
     let reply = drag(&mut t, &mut ctx, (1, 0), (5, 0), Mods::default());
     assert_eq!(reply.copy_primary, None, "the press went to the program");
-    assert_eq!(t.tabs.current().unwrap().selection(), None);
+    assert_eq!(t.w.tabs.current().unwrap().selection(), None);
     let shift = Mods {
         shift: true,
         ..Mods::default()
@@ -740,7 +740,7 @@ fn the_wheel_moves_the_scrollback() {
     let mut t = terminal(&["sh", "-c", "seq 100; sleep 5"]);
     t.follow_scale(MAIN, 1, &mut ctx);
     until("the lines scroll off", || {
-        t.tabs.current().unwrap().with_term(|term| {
+        t.w.tabs.current().unwrap().with_term(|term| {
             use alacritty_terminal::grid::Dimensions;
             term.history_size() > 10
         })
@@ -748,7 +748,7 @@ fn the_wheel_moves_the_scrollback() {
     let (x, y) = cell_point(&mut t, &ctx, 0, 0, false);
     pointer(&mut t, &mut ctx, PointerInput::Scroll { x, y, rows: -3 });
     let offset = |t: &Terminal| {
-        t.tabs
+        t.w.tabs
             .current()
             .unwrap()
             .with_term(|term| term.grid().display_offset())
@@ -767,8 +767,8 @@ fn a_toolbar_press_survives_a_closed_tab() {
     let (x, y) = centre(*t.chrome_layout(&ctx).buttons.last().unwrap());
     t.event(MAIN, press(x, y, BTN_LEFT), &mut ctx);
     t.event(MAIN, key(0x57, true, true), &mut ctx);
-    assert_eq!(t.tabs.list.len(), 1, "Ctrl+Shift+W closed a tab");
-    assert_eq!(t.chrome.bar.pressed, Some(t.chrome.bar.items.len() - 1));
+    assert_eq!(t.w.tabs.list.len(), 1, "Ctrl+Shift+W closed a tab");
+    assert_eq!(t.w.chrome.bar.pressed, Some(t.w.chrome.bar.items.len() - 1));
     let release = PointerInput::Release {
         x,
         y,
@@ -776,7 +776,7 @@ fn a_toolbar_press_survives_a_closed_tab() {
         mods: Mods::default(),
     };
     t.event(MAIN, Event::Pointer(release), &mut ctx);
-    assert_eq!(t.chrome.bar.pressed, None);
+    assert_eq!(t.w.chrome.bar.pressed, None);
     assert_eq!(
         t.children().first().map(|c| c.id),
         Some(OPTIONS),
@@ -801,11 +801,11 @@ fn paste_arrives(bracketed: bool) {
     let mut t = terminal(&["sh", "-c", &script]);
     t.follow_scale(MAIN, 1, &mut ctx);
     until("the program reads raw", || row_text(&t, 0) == "ready");
-    let mode = t.tabs.current().unwrap().mode();
+    let mode = t.w.tabs.current().unwrap().mode();
     assert_eq!(mode.contains(TermMode::BRACKETED_PASTE), bracketed);
     let text = format!("{}\n", "a".repeat(1023)).repeat(1024);
     assert_eq!(text.len(), MB);
-    t.tabs.current().unwrap().written.borrow_mut().clear();
+    t.w.tabs.current().unwrap().written.borrow_mut().clear();
     let start = std::time::Instant::now();
     t.event(MAIN, Event::Pasted(text), &mut ctx);
     // Only an O(n^2) pass gets near this; a linear one takes a few ms even unoptimised.
@@ -814,15 +814,15 @@ fn paste_arrives(bracketed: bool) {
         took < std::time::Duration::from_millis(250),
         "the paste took {took:?}"
     );
-    let lens: Vec<usize> = t
-        .tabs
-        .current()
-        .unwrap()
-        .written
-        .borrow()
-        .iter()
-        .map(Vec::len)
-        .collect();
+    let lens: Vec<usize> =
+        t.w.tabs
+            .current()
+            .unwrap()
+            .written
+            .borrow()
+            .iter()
+            .map(Vec::len)
+            .collect();
     assert_eq!(lens, [MB + marks], "one write of the whole paste");
     let count = (MB + marks).to_string();
     until("every byte arrives", || {
@@ -863,13 +863,13 @@ fn switching_tabs_moves_the_search() {
     let mut ctx = test_ctx();
     let mut t = terminal(&["cat"]);
     t.spawn_tab(&launch(&["cat"]), None);
-    t.tabs.strip.open = 0;
-    t.tabs.current().unwrap().find("x", false, true);
-    assert!(t.tabs.list[0].searching());
+    t.w.tabs.strip.open = 0;
+    t.w.tabs.current().unwrap().find("x", false, true);
+    assert!(t.w.tabs.list[0].searching());
     t.event(MAIN, key(0xff09, true, false), &mut ctx);
-    assert_eq!(t.tabs.strip.open, 1);
+    assert_eq!(t.w.tabs.strip.open, 1);
     assert!(
-        !t.tabs.list[0].searching(),
+        !t.w.tabs.list[0].searching(),
         "the old tab stops highlighting"
     );
 }
@@ -913,27 +913,27 @@ fn a_held_selection_ends_with_its_tab() {
     t.event(MAIN, tab.clone(), &mut ctx);
     left(&mut t, &mut ctx, 1, true);
     t.event(MAIN, tab, &mut ctx);
-    assert_eq!(t.tabs.strip.open, 0, "Ctrl+Tab switched tabs mid-drag");
+    assert_eq!(t.w.tabs.strip.open, 0, "Ctrl+Tab switched tabs mid-drag");
     let reply = left(&mut t, &mut ctx, 5, false);
     assert_eq!(reply.copy_primary, None, "the switch ended the drag");
     assert_eq!(
-        t.tabs.current().unwrap().selection().as_deref(),
+        t.w.tabs.current().unwrap().selection().as_deref(),
         Some("bc"),
         "the open tab's selection stays"
     );
 
     t.spawn_tab(&launch(&["cat"]), None);
-    t.tabs.select(0);
+    t.w.tabs.select(0);
     left(&mut t, &mut ctx, 1, true);
     let (x, y) = centre(t.chrome_layout(&ctx).strip.tabs[2]);
     t.event(MAIN, press(x, y, 0x112), &mut ctx);
-    assert_eq!(t.tabs.list.len(), 2, "middle-click closed another tab");
+    assert_eq!(t.w.tabs.list.len(), 2, "middle-click closed another tab");
     let reply = left(&mut t, &mut ctx, 5, false);
     assert_eq!(reply.copy_primary.as_deref(), Some("bc de"));
 
     left(&mut t, &mut ctx, 1, true);
     t.event(MAIN, key(0x57, true, true), &mut ctx);
-    assert_eq!(t.tabs.list.len(), 1, "Ctrl+Shift+W closed the held tab");
+    assert_eq!(t.w.tabs.list.len(), 1, "Ctrl+Shift+W closed the held tab");
     let reply = left(&mut t, &mut ctx, 5, false);
     assert_eq!(
         reply.copy_primary, None,
@@ -947,7 +947,7 @@ fn every_reported_press_reports_its_release() {
     let mut t = terminal(&["sh", "-c", "printf '\\033[?1000h\\033[?1006h'; sleep 5"]);
     t.follow_scale(MAIN, 1, &mut ctx);
     until("the program takes the mouse", || {
-        t.tabs
+        t.w.tabs
             .current()
             .unwrap()
             .mode()
@@ -962,12 +962,12 @@ fn every_reported_press_reports_its_release() {
             mods: Mods::default(),
         })
     };
-    t.tabs.current().unwrap().written.borrow_mut().clear();
+    t.w.tabs.current().unwrap().written.borrow_mut().clear();
     t.event(MAIN, press(x, y, BTN_LEFT), &mut ctx);
     t.event(MAIN, press(x, y, repriseapp::BTN_RIGHT), &mut ctx);
     t.event(MAIN, release(repriseapp::BTN_RIGHT), &mut ctx);
     t.event(MAIN, release(BTN_LEFT), &mut ctx);
-    let written = t.tabs.current().unwrap().written.borrow().concat();
+    let written = t.w.tabs.current().unwrap().written.borrow().concat();
     assert_eq!(
         String::from_utf8(written).unwrap(),
         "\x1b[<0;1;1M\x1b[<2;1;1M\x1b[<2;1;1m\x1b[<0;1;1m"
@@ -1036,18 +1036,18 @@ fn only_a_switch_ends_the_search() {
     let mut ctx = test_ctx();
     let mut t = terminal(&["cat"]);
     t.spawn_tab(&launch(&["cat"]), None);
-    t.tabs.select(0);
-    t.tabs.list[0].find("x", false, true);
+    t.w.tabs.select(0);
+    t.w.tabs.list[0].find("x", false, true);
     let (x, y) = centre(t.chrome_layout(&ctx).strip.tabs[0]);
     t.event(MAIN, press(x, y, BTN_LEFT), &mut ctx);
     assert!(
-        t.tabs.list[0].searching(),
+        t.w.tabs.list[0].searching(),
         "a click on the open tab keeps it"
     );
     t.waker = None;
     t.event(MAIN, key(0x54, true, true), &mut ctx);
-    assert_eq!(t.tabs.list.len(), 2, "no tab could start");
-    assert!(t.tabs.list[0].searching(), "a failed new tab keeps it");
+    assert_eq!(t.w.tabs.list.len(), 2, "no tab could start");
+    assert!(t.w.tabs.list[0].searching(), "a failed new tab keeps it");
 }
 
 #[test]
@@ -1060,9 +1060,9 @@ fn a_palette_query_answers_the_palette_colour() {
     ]);
     let scheme = t.scheme(&ctx.theme);
     let answers =
-        |t: &Terminal| String::from_utf8(t.tabs.list[0].written.borrow().concat()).unwrap();
+        |t: &Terminal| String::from_utf8(t.w.tabs.list[0].written.borrow().concat()).unwrap();
     until("both queries are answered", || {
-        t.tabs.list[0].pump(&scheme);
+        t.w.tabs.list[0].pump(&scheme);
         answers(&t).matches("\x1b]4;").count() == 2
     });
     let text = answers(&t);
@@ -1092,7 +1092,7 @@ fn a_program_s_clipboard_store_is_copied() {
     assert_eq!(copy.as_deref(), Some("hello"));
     assert_eq!(primary.as_deref(), Some("world"));
     assert!(
-        t.tabs.list[0].written.borrow().is_empty(),
+        t.w.tabs.list[0].written.borrow().is_empty(),
         "a load request is not answered"
     );
 }
@@ -1114,22 +1114,22 @@ fn partial_damage_is_exact() {
     );
 
     let m = t.metrics(1);
-    let grid = chrome::grid_rect(&ctx);
+    let grid = chrome::grid_rect(&ctx, false);
     let row = |r: i32| Rect::new(grid.x, grid.y + r * m.cell_h, grid.width, m.cell_h);
     let cursor_row = |t: &Terminal| {
-        t.tabs
+        t.w.tabs
             .current()
             .unwrap()
             .with_term(|term| term.grid().cursor.point.line.0)
     };
-    t.tabs.current().unwrap().write(b"x".as_slice().into());
+    t.w.tabs.current().unwrap().write(b"x".as_slice().into());
     until("cat's echo shows", || {
         row_text(&t, 0) == "x" && cursor_row(&t) == 0
     });
     t.draw(MAIN, &mut c, &ctx);
     assert_eq!(c.take_damage(), Some(vec![row(0)]), "only the changed row");
 
-    t.tabs.current().unwrap().write(b"\n".as_slice().into());
+    t.w.tabs.current().unwrap().write(b"\n".as_slice().into());
     until("cat writes the line back", || {
         row_text(&t, 1) == "x" && cursor_row(&t) == 2
     });
@@ -1140,9 +1140,9 @@ fn partial_damage_is_exact() {
         "the row the cursor left, the new line, the row it entered"
     );
 
-    t.chrome.dirty = true;
+    t.w.chrome.dirty = true;
     t.draw(MAIN, &mut c, &ctx);
-    let band = chrome::band_height(&ctx.theme);
+    let band = chrome::band_height(&ctx.theme, false);
     assert_eq!(
         c.take_damage(),
         Some(vec![Rect::new(0, 0, w, band)]),
@@ -1152,7 +1152,7 @@ fn partial_damage_is_exact() {
     let ctx = themed_ctx(reprisekit::interfaces::theme_for(Interface::Glass));
     let (w, h) = ctx.size;
     let mut c = Canvas::new(w as u32, h as u32);
-    let band = chrome::band_height(&ctx.theme);
+    let band = chrome::band_height(&ctx.theme, false);
     for frame in 0..3 {
         t.draw(MAIN, &mut c, &ctx);
         assert_eq!(
@@ -1170,4 +1170,249 @@ fn partial_damage_is_exact() {
             c.take_damage();
         }
     }
+}
+
+/// A started terminal like [`terminal`] whose compositor keeps tab groups and whose tabs go in
+/// the caption.
+fn captioned(cmd: &[&str]) -> Terminal {
+    let mut t = terminal(cmd);
+    t.settings.tab_position = TabPosition::Caption;
+    t.tab_groups = true;
+    t.w.caption = t.caption_mode();
+    t
+}
+
+const NEW_TAB: (u32, bool, bool) = (0x54, true, true);
+const CLOSE_TAB: (u32, bool, bool) = (0x57, true, true);
+const FIND_KEY: (u32, bool, bool) = (0x46, true, true);
+
+fn keys(k: (u32, bool, bool)) -> Event {
+    key(k.0, k.1, k.2)
+}
+
+#[test]
+fn in_caption_mode_a_new_tab_is_a_window_that_joins_this_ones_group() {
+    let mut ctx = test_ctx();
+    let mut t = captioned(&["cat"]);
+    let (second, third, fourth) = (
+        repriseapp::window_id(1),
+        repriseapp::window_id(2),
+        repriseapp::window_id(3),
+    );
+    t.event(MAIN, keys(NEW_TAB), &mut ctx);
+    assert_eq!(t.order, [MAIN, second]);
+    assert_eq!(t.parent(second), None, "a window of its own");
+    assert_eq!(t.tab_with(second), Some(MAIN));
+    assert!(
+        t.children()
+            .iter()
+            .any(|c| c.id == second && !c.fixed && !c.modal)
+    );
+    assert_eq!(
+        t.pane(MAIN).unwrap().tabs.list.len(),
+        1,
+        "the first window keeps one tab"
+    );
+    assert_eq!(t.pane(second).unwrap().tabs.list.len(), 1);
+    t.event(second, keys(NEW_TAB), &mut ctx);
+    assert_eq!(t.order, [MAIN, second, third]);
+    assert_eq!(t.tab_with(third), Some(second));
+    t.event(MAIN, keys(NEW_TAB), &mut ctx);
+    assert_eq!(
+        t.order,
+        [MAIN, fourth, second, third],
+        "a new tab goes right after the window it came from"
+    );
+}
+
+#[test]
+fn ctrl_tab_in_caption_mode_raises_the_next_window_going_round() {
+    let mut ctx = test_ctx();
+    let mut t = captioned(&["cat"]);
+    t.event(MAIN, keys(NEW_TAB), &mut ctx);
+    t.event(repriseapp::window_id(1), keys(NEW_TAB), &mut ctx);
+    let (second, third) = (repriseapp::window_id(1), repriseapp::window_id(2));
+    let next = |t: &mut Terminal, ctx: &mut Ctx, win, shift| {
+        t.event(win, key(0xff09, true, shift), ctx).raise
+    };
+    assert_eq!(next(&mut t, &mut ctx, MAIN, false), Some(second));
+    assert_eq!(
+        next(&mut t, &mut ctx, MAIN, true),
+        Some(third),
+        "back round"
+    );
+    assert_eq!(next(&mut t, &mut ctx, third, false), Some(MAIN));
+    assert_eq!(t.order.len(), 3, "raising opens and closes nothing");
+}
+
+#[test]
+fn the_program_quits_with_its_last_window() {
+    let mut ctx = test_ctx();
+    let mut t = captioned(&["cat"]);
+    t.event(MAIN, keys(NEW_TAB), &mut ctx);
+    let second = repriseapp::window_id(1);
+    assert!(!t.event(MAIN, keys(CLOSE_TAB), &mut ctx).quit);
+    assert!(t.hidden(), "the first window closes");
+    assert_eq!(t.order, [second], "the second stays");
+    assert!(t.children().iter().any(|c| c.id == second));
+    assert!(
+        t.event(second, keys(CLOSE_TAB), &mut ctx).quit,
+        "the last window closing quits"
+    );
+}
+
+#[test]
+fn find_and_options_open_over_the_window_that_asked() {
+    let mut ctx = test_ctx();
+    let mut t = captioned(&["cat"]);
+    t.event(MAIN, keys(NEW_TAB), &mut ctx);
+    let second = repriseapp::window_id(1);
+    t.event(second, keys(FIND_KEY), &mut ctx);
+    assert_eq!(t.parent(FIND), Some(second));
+    t.event(MAIN, keys(FIND_KEY), &mut ctx);
+    assert_eq!(
+        t.parent(FIND),
+        Some(MAIN),
+        "an open Find moves to the window that asks"
+    );
+    assert!(t.enter(second));
+    t.open_options();
+    assert_eq!(t.parent(OPTIONS), Some(second));
+    assert_eq!(t.parent(PROFILE), Some(second));
+    t.event(second, keys(CLOSE_TAB), &mut ctx);
+    assert_eq!(
+        t.parent(OPTIONS),
+        Some(MAIN),
+        "Options moves to a window still open"
+    );
+    assert!(t.find.is_some(), "Find over the other window stays");
+}
+
+#[test]
+fn a_busy_window_asks_over_itself_before_closing() {
+    let mut ctx = test_ctx();
+    let mut t = captioned(&["cat"]);
+    t.event(MAIN, keys(NEW_TAB), &mut ctx);
+    let second = repriseapp::window_id(1);
+    assert!(t.enter(second));
+    t.w.tabs.list[0].write(b"sleep 30\n".as_slice().into());
+    until("sleep holds the foreground", || {
+        t.pane(second).unwrap().tabs.list[0].busy()
+    });
+    t.event(second, Event::CloseRequest, &mut ctx);
+    assert_eq!(t.parent(CONFIRM), Some(second));
+    t.event(CONFIRM, key(keysym::RETURN, false, false), &mut ctx);
+    assert_eq!(t.order, [MAIN], "Close closes that window alone");
+}
+
+#[test]
+fn a_tab_position_change_reaches_new_windows_only() {
+    let mut ctx = test_ctx();
+    let mut t = terminal(&["cat"]);
+    t.tab_groups = true;
+    t.take(Settings {
+        tab_position: TabPosition::Caption,
+        ..t.settings.clone()
+    });
+    assert!(
+        t.caption_mode(),
+        "a window opened now keeps its tabs in the caption"
+    );
+    assert!(!t.w.caption);
+    t.event(MAIN, keys(NEW_TAB), &mut ctx);
+    assert_eq!(t.w.tabs.list.len(), 2, "the open window keeps its strip");
+    assert_eq!(t.order, [MAIN]);
+}
+
+#[test]
+fn without_the_compositor_s_tab_groups_the_tabs_stay_below_the_toolbar() {
+    let nowhere = Path::new(NOWHERE);
+    let settings = Settings {
+        shell: "/bin/sh".into(),
+        tab_position: TabPosition::Caption,
+        ..Settings::default()
+    };
+    let mut t = Terminal::with_state(settings, Some(argv(&["cat"])), nowhere.join("state.toml"));
+    t.start(repriseapp::Waker::noop());
+    assert!(!t.w.caption);
+}
+
+fn release(x: i32, y: i32) -> Event {
+    Event::Pointer(PointerInput::Release {
+        x,
+        y,
+        button: BTN_LEFT,
+        mods: Mods::default(),
+    })
+}
+
+#[test]
+fn in_caption_mode_the_toolbar_leads_with_new_tab_and_the_grid_takes_the_strip() {
+    let mut ctx = test_ctx();
+    let mut t = captioned(&["cat"]);
+    t.follow_scale(MAIN, 1, &mut ctx);
+    let lay = t.chrome_layout(&ctx);
+    assert_eq!(lay.band, lay.toolbar.height, "no strip under the toolbar");
+    assert_eq!(lay.grid.y, lay.toolbar.height);
+    assert!(matches!(
+        t.w.chrome.bar.items[0],
+        toolbar::Item::DropButton {
+            id: chrome::NEW,
+            ..
+        }
+    ));
+    let r = lay.buttons[0];
+    let (arrow, main) = (
+        (r.right() - 3, r.y + r.height / 2),
+        (r.x + 4, r.y + r.height / 2),
+    );
+    t.event(MAIN, press(arrow.0, arrow.1, BTN_LEFT), &mut ctx);
+    assert!(t.w.chrome.menu.is_some(), "the arrow opens the menu");
+    t.event(MAIN, key(keysym::ESCAPE, false, false), &mut ctx);
+    assert!(t.w.chrome.menu.is_none());
+    t.event(MAIN, press(main.0, main.1, 0x111), &mut ctx);
+    assert!(t.w.chrome.menu.is_some(), "a right-click opens it too");
+    t.event(MAIN, key(keysym::ESCAPE, false, false), &mut ctx);
+    t.event(MAIN, press(main.0, main.1, BTN_LEFT), &mut ctx);
+    t.event(MAIN, release(main.0, main.1), &mut ctx);
+    assert_eq!(t.order.len(), 2, "New Tab opens a window");
+}
+
+fn fnv(c: &Canvas) -> u64 {
+    let mut h = 0xcbf2_9ce4_8422_2325u64;
+    for v in [c.width, c.height]
+        .into_iter()
+        .chain(c.pixels.iter().copied())
+    {
+        for b in v.to_le_bytes() {
+            h = (h ^ u64::from(b)).wrapping_mul(0x100_0000_01b3);
+        }
+    }
+    h
+}
+
+#[test]
+fn the_caption_mode_toolbar_pins_in_every_interface() {
+    if !reprisekit::text::test_tahoma() {
+        return;
+    }
+    let mut got = Vec::new();
+    for i in [Interface::Classic, Interface::Blue, Interface::Glass] {
+        let mut ctx = themed_ctx(reprisekit::interfaces::theme_for(i));
+        let mut t = captioned(&["cat"]);
+        t.follow_scale(MAIN, 1, &mut ctx);
+        let mut c = Canvas::new(640, 400);
+        t.draw(MAIN, &mut c, &ctx);
+        let band = t.chrome_layout(&ctx).band;
+        let mut top = Canvas::new(640, band as u32);
+        top.blit_canvas(0, 0, &c);
+        got.push((format!("{i:?}"), fnv(&top)));
+    }
+    let want: [(&str, u64); 3] = [
+        ("Classic", 0x30ba_a6b4_d116_ac75),
+        ("Blue", 0x4eda_45d7_f42f_2eba),
+        ("Glass", 0xa36d_f98e_ba6b_7591),
+    ];
+    let want: Vec<(String, u64)> = want.iter().map(|(k, h)| (k.to_string(), *h)).collect();
+    assert_eq!(got, want);
 }

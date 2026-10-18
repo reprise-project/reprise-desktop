@@ -2361,6 +2361,7 @@ dependencies = [
  "smithay-client-toolkit",
  "tempfile",
  "wayland-client",
+ "wayland-scanner",
  "zeroize",
 ]
 

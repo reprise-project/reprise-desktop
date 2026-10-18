@@ -1,5 +1,6 @@
-//! Terminal: `reprise-terminal [-e prog args...]`, a tabbed terminal window in the inherited cwd
-//! that closes when its last tab's program exits.
+//! Terminal: `reprise-terminal [-e prog args...]`, a tabbed terminal window in the inherited cwd.
+//! With the tabs in the caption each tab is a window of its own; the program ends with its last
+//! window.
 
 mod chrome;
 mod cwd;
@@ -40,7 +41,7 @@ use crate::keys::Shortcut;
 use crate::newtab::{Choice, Launch};
 use crate::options::{Options, Outcome};
 use crate::schemes::Scheme;
-use crate::settings::{Settings, State};
+use crate::settings::{Settings, State, TabPosition};
 use crate::tab::Tab;
 use crate::tabs::Tabs;
 
@@ -61,19 +62,12 @@ const NOTFOUND: WinId = "notfound";
 enum Closing {
     /// The tab whose program has this pid.
     Tab(u32),
-    Window,
+    Window(WinId),
 }
 
-struct Terminal {
-    settings: Settings,
-    cmd: Option<Vec<OsString>>,
-    waker: Option<repriseapp::Waker>,
+/// One window's own state: its tabs, its chrome and what it last drew.
+struct Pane {
     tabs: Tabs,
-    font: TextRenderer,
-    /// The text size, zoomed, px.
-    px: u32,
-    /// Cell metrics and the scale and size they were taken at.
-    metrics: ((i32, u32), Metrics),
     scale: i32,
     /// The grid (cols, rows) and cell (device px) last handed to the tabs.
     fitted: Option<((usize, usize), (i32, i32))>,
@@ -87,11 +81,61 @@ struct Terminal {
     mouse: pointer::Mouse,
     /// The next frame draws everything and damages the whole canvas.
     full: bool,
+    /// Its tabs are windows of one caption tab group, one tab each, rather than a strip under
+    /// the toolbar. Fixed when the window opens.
+    caption: bool,
+    /// The window whose caption tab group this one joins as it opens.
+    leader: Option<WinId>,
+    /// The client size last drawn at, logical px: what a window opened from this one takes.
+    size: (i32, i32),
+}
+
+impl Pane {
+    fn new(caption: bool, leader: Option<WinId>) -> Pane {
+        let black = Color::rgb(0, 0, 0);
+        Pane {
+            tabs: Tabs::new(),
+            scale: 1,
+            fitted: None,
+            snap: Snapshot::new(0, 0, black, black),
+            drawn: (0, 0, 0),
+            shown: (0, 0, CursorShape::Hidden),
+            focused: false,
+            chrome: Chrome::new(),
+            mouse: pointer::Mouse::default(),
+            full: true,
+            caption,
+            leader,
+            size: (0, 0),
+        }
+    }
+}
+
+struct Terminal {
+    settings: Settings,
+    cmd: Option<Vec<OsString>>,
+    waker: Option<repriseapp::Waker>,
+    font: TextRenderer,
+    /// The text size, zoomed, px.
+    px: u32,
+    /// Cell metrics and the scale and size they were taken at.
+    metrics: ((i32, u32), Metrics),
+    /// The window the event or draw at hand is for (`enter`); the others wait in `parked`.
+    w: Pane,
+    cur: WinId,
+    parked: Vec<(WinId, Pane)>,
+    /// The open windows, in tab order as they opened.
+    order: Vec<WinId>,
+    /// The compositor joins windows into caption tab groups (`repriseapp::tab_groups`).
+    tab_groups: bool,
     confirm: Option<(Closing, MsgBox)>,
     /// The last event's text and form theme, which the confirm box is sized with.
     forms: Option<(Rc<TextRenderer>, Theme)>,
     options: Option<Options>,
+    options_on: WinId,
     find: Option<form::Form>,
+    /// The window Find searches and sits over.
+    find_on: WinId,
     last_find: find::Query,
     notfound: Option<MsgBox>,
     config: PathBuf,
@@ -160,28 +204,24 @@ impl Terminal {
         let font = load_font(&settings);
         let px = settings.size_px;
         let metrics = termgrid::metrics(&font, px, 1);
-        let black = Color::rgb(0, 0, 0);
         Terminal {
             settings,
             cmd,
             waker: None,
-            tabs: Tabs::new(),
             font,
             px,
             metrics: ((1, px), metrics),
-            scale: 1,
-            fitted: None,
-            snap: Snapshot::new(0, 0, black, black),
-            drawn: (0, 0, 0),
-            shown: (0, 0, CursorShape::Hidden),
-            focused: false,
-            chrome: Chrome::new(),
-            mouse: pointer::Mouse::default(),
-            full: true,
+            w: Pane::new(false, None),
+            cur: MAIN,
+            parked: Vec::new(),
+            order: vec![MAIN],
+            tab_groups: false,
             confirm: None,
             forms: None,
             options: None,
+            options_on: MAIN,
             find: None,
+            find_on: MAIN,
             last_find: find::Query::default(),
             notfound: None,
             config: settings::path(),
@@ -219,6 +259,7 @@ impl Terminal {
     fn open_options(&mut self) -> Reply {
         self.options
             .get_or_insert_with(|| Options::new(&self.settings));
+        self.options_on = self.cur;
         Reply::redraw_all()
     }
 
@@ -270,10 +311,18 @@ impl Terminal {
             self.px = self.settings.size_px;
             self.metrics.0 = (0, 0);
         }
-        for t in &self.tabs.list {
-            t.configure(&self.settings);
+        for p in panes_mut(&mut self.w, &mut self.parked) {
+            for t in &p.tabs.list {
+                t.configure(&self.settings);
+            }
+            p.full = true;
         }
-        self.full = true;
+    }
+
+    /// Whether a window opened now keeps its tabs in the caption: the setting asks for it and
+    /// the compositor can; the strip under the toolbar otherwise.
+    fn caption_mode(&self) -> bool {
+        self.settings.tab_position == TabPosition::Caption && self.tab_groups
     }
 
     fn scheme(&self, theme: &Theme) -> Scheme {
@@ -292,12 +341,13 @@ impl Terminal {
 
     /// Hand every tab the grid the client holds under the chrome, when it changed.
     fn fit(&mut self, ctx: &Ctx) {
-        let m = self.metrics(self.scale);
-        let (cols, rows) = termgrid::grid_size(&m, chrome::grid_rect(ctx), self.scale);
+        let m = self.metrics(self.w.scale);
+        let (cols, rows) =
+            termgrid::grid_size(&m, chrome::grid_rect(ctx, self.w.caption), self.w.scale);
         let want = ((cols.max(2), rows.max(1)), (m.cell_w, m.cell_h));
-        if self.fitted != Some(want) {
-            self.fitted = Some(want);
-            for t in &self.tabs.list {
+        if self.w.fitted != Some(want) {
+            self.w.fitted = Some(want);
+            for t in &self.w.tabs.list {
                 t.resize(want.0, want.1);
             }
         }
@@ -309,12 +359,12 @@ impl Terminal {
         };
         let m = self.metrics.1;
         let open = (OPEN_CELLS.0 as usize, OPEN_CELLS.1 as usize);
-        let (size, cell) = self.fitted.unwrap_or((open, (m.cell_w, m.cell_h)));
+        let (size, cell) = self.w.fitted.unwrap_or((open, (m.cell_w, m.cell_h)));
         match Tab::spawn(launch, cwd, size, cell, waker) {
             Ok(tab) => {
                 tab.configure(&self.settings);
                 let label = tab.title().to_owned();
-                self.tabs.open(tab, label);
+                self.w.tabs.open(tab, label);
             }
             Err(e) => log::error!("cannot start {:?}: {e}", launch.argv),
         }
@@ -323,33 +373,140 @@ impl Terminal {
     /// A new tab running `choice`, in the open tab's directory.
     fn new_tab(&mut self, choice: &Choice) -> Reply {
         let launch = newtab::launch(choice, &self.settings);
-        let cwd = self.tabs.current().and_then(Tab::cwd);
-        let before = self.tabs.list.len();
+        let cwd = self.w.tabs.current().and_then(Tab::cwd);
+        if self.w.caption {
+            return self.new_pane(&launch, cwd);
+        }
+        let before = self.w.tabs.list.len();
         self.spawn_tab(&launch, cwd);
-        match self.tabs.list.len() == before {
+        match self.w.tabs.list.len() == before {
             true => Reply::none(),
             false => self.switched(),
         }
     }
 
+    /// A window of its own running `launch`, joining this window's caption tab group right
+    /// after it.
+    fn new_pane(&mut self, launch: &Launch, cwd: Option<PathBuf>) -> Reply {
+        let leader = self.cur;
+        let id = (1..)
+            .map(repriseapp::window_id)
+            .find(|id| !self.order.contains(id))
+            .expect("a free window id");
+        let mut pane = Pane::new(true, Some(leader));
+        (pane.size, pane.fitted) = (self.w.size, self.w.fitted);
+        self.parked.push((id, pane));
+        let at = self
+            .order
+            .iter()
+            .position(|&w| w == leader)
+            .map_or(0, |i| i + 1);
+        self.order.insert(at, id);
+        self.enter(id);
+        self.spawn_tab(launch, cwd);
+        if self.w.tabs.list.is_empty() {
+            self.drop_pane();
+            self.enter(leader);
+            return Reply::none();
+        }
+        Reply::redraw_all()
+    }
+
+    /// Make `win`'s pane the one at hand; false when `win` is no terminal window.
+    fn enter(&mut self, win: WinId) -> bool {
+        if win == self.cur {
+            return self.order.contains(&win);
+        }
+        let Some(i) = self.parked.iter().position(|(id, _)| *id == win) else {
+            return false;
+        };
+        let (id, pane) = self.parked.swap_remove(i);
+        let was = std::mem::replace(&mut self.w, pane);
+        if self.order.contains(&self.cur) {
+            self.parked.push((self.cur, was));
+        }
+        self.cur = id;
+        true
+    }
+
+    fn pane(&self, win: WinId) -> Option<&Pane> {
+        match win == self.cur {
+            true => self.order.contains(&win).then_some(&self.w),
+            false => self
+                .parked
+                .iter()
+                .find(|(id, _)| *id == win)
+                .map(|(_, p)| p),
+        }
+    }
+
+    /// The window whose tabs include the one running `pid`.
+    fn pane_of_pid(&self, pid: u32) -> Option<WinId> {
+        self.order.iter().copied().find(|&id| {
+            self.pane(id)
+                .is_some_and(|p| p.tabs.list.iter().any(|t| t.pid() == pid))
+        })
+    }
+
+    /// Close the window at hand: another one comes to hand and takes over the dialogs it had.
+    /// True when it was the last.
+    fn drop_pane(&mut self) -> bool {
+        let gone = self.cur;
+        self.order.retain(|&w| w != gone);
+        let Some(&next) = self.order.first() else {
+            return true;
+        };
+        let (_, pane) = self
+            .parked
+            .iter()
+            .position(|(id, _)| *id == next)
+            .map(|i| self.parked.swap_remove(i))
+            .expect("every open window but the one at hand is parked");
+        self.w = pane;
+        self.cur = next;
+        if self.options_on == gone {
+            self.options_on = next;
+        }
+        if self.find_on == gone {
+            (self.find, self.notfound, self.find_on) = (None, None, next);
+        }
+        let asked = match self.confirm {
+            Some((Closing::Window(w), _)) => w != gone,
+            Some((Closing::Tab(pid), _)) => self.pane_of_pid(pid).is_some(),
+            None => true,
+        };
+        if !asked {
+            self.confirm = None;
+        }
+        false
+    }
+
+    /// Close the window at hand, the program with its last.
+    fn close_pane(&mut self) -> Reply {
+        match self.drop_pane() {
+            true => self.quit(),
+            false => Reply::redraw_all(),
+        }
+    }
+
     /// Another tab is open (or the open one moved): its cells and the strip are drawn again.
     fn switched(&mut self) -> Reply {
-        for t in &self.tabs.list {
+        for t in &self.w.tabs.list {
             t.end_find();
         }
-        self.snap.dirty.fill(true);
+        self.w.snap.dirty.fill(true);
         self.chrome_changed()
     }
 
     /// The command line of another window in the open tab's directory.
     fn new_window(&self) -> (Vec<OsString>, Option<PathBuf>) {
-        let cwd = self.tabs.current().and_then(Tab::cwd);
+        let cwd = self.w.tabs.current().and_then(Tab::cwd);
         (vec!["reprise-terminal".into()], cwd)
     }
 
     fn copy(&self) -> Reply {
         Reply {
-            copy: self.tabs.current().and_then(Tab::selection),
+            copy: self.w.tabs.current().and_then(Tab::selection),
             ..Default::default()
         }
     }
@@ -364,13 +521,15 @@ impl Terminal {
     fn zoom(&mut self, px: u32, ctx: &Ctx) -> Reply {
         self.px = px.clamp(ZOOM.0, ZOOM.1);
         self.fit(ctx);
-        self.full = true;
-        Reply::redraw()
+        for p in panes_mut(&mut self.w, &mut self.parked) {
+            p.full = true;
+        }
+        Reply::redraw_all()
     }
 
     /// Close tab `i`, asking first while a program other than its shell runs there.
     fn ask_close(&mut self, i: usize, ctx: &mut Ctx) -> Reply {
-        let Some(t) = self.tabs.list.get(i) else {
+        let Some(t) = self.w.tabs.list.get(i) else {
             return Reply::none();
         };
         if t.busy() {
@@ -383,29 +542,29 @@ impl Terminal {
 
     fn close_tab(&mut self, i: usize) -> Reply {
         self.drop_press();
-        if self.tabs.close(i) {
-            return self.quit();
+        if self.w.tabs.close(i) {
+            return self.close_pane();
         }
         self.switched()
     }
 
     fn close_window(&mut self, ctx: &mut Ctx) -> Reply {
-        if self.tabs.list.iter().any(Tab::busy) {
+        if self.w.tabs.list.iter().any(Tab::busy) {
             let text = "Programs are still running in this window.\nClose the window anyway?";
-            self.ask(Closing::Window, text, ctx);
+            self.ask(Closing::Window(self.cur), text, ctx);
             return Reply::redraw();
         }
-        self.quit()
+        self.close_pane()
     }
 
     /// A press on the strip names tabs by index, which a closed tab shifts; a toolbar button's
     /// index stays.
     fn drop_press(&mut self) {
-        if !matches!(self.chrome.press, Some(chrome::Press::Button(_))) {
-            self.chrome.press = None;
+        if !matches!(self.w.chrome.press, Some(chrome::Press::Button(_))) {
+            self.w.chrome.press = None;
         }
-        self.tabs.strip.held = false;
-        self.tabs.strip.hot_adder = None;
+        self.w.tabs.strip.held = false;
+        self.w.tabs.strip.hot_adder = None;
     }
 
     /// Ask about `what`, unless a box is already up: the first question stands.
@@ -435,9 +594,10 @@ impl Terminal {
                 let what = *what;
                 self.confirm = None;
                 let reply = match (button, what) {
-                    (Some(0), Closing::Window) => return self.quit(),
+                    (Some(0), Closing::Window(w)) if self.enter(w) => self.close_pane(),
                     (Some(0), Closing::Tab(pid)) => {
-                        match self.tabs.list.iter().position(|t| t.pid() == pid) {
+                        let w = self.pane_of_pid(pid).filter(|&w| self.enter(w));
+                        match w.and_then(|_| self.w.tabs.list.iter().position(|t| t.pid() == pid)) {
                             Some(i) => self.close_tab(i),
                             None => Reply::none(),
                         }
@@ -450,27 +610,38 @@ impl Terminal {
     }
 
     /// Carry out what each tab's PTY thread queued; tabs whose program exited close.
+    /// Carry out what each window's tabs queued; a window whose last tab closed closes.
     fn wake(&mut self, ctx: &Ctx) -> Reply {
         let scheme = self.scheme(&ctx.theme);
-        let mut reply = Reply::redraw();
-        for t in &mut self.tabs.list {
-            let copied = t.pump(&scheme);
-            reply.copy = copied.clipboard.or(reply.copy);
-            reply.copy_primary = copied.primary.or(reply.copy_primary);
-        }
-        for (program, code) in self.reap() {
-            if code != 0 {
-                log::warn!("{program} exited with status {code}");
+        let mut reply = Reply::none();
+        for id in self.order.clone() {
+            if !self.enter(id) {
+                continue;
             }
-        }
-        if self.tabs.list.is_empty() {
-            return self.quit();
-        }
-        for (label, t) in self.tabs.strip.labels.iter_mut().zip(&self.tabs.list) {
-            if label != t.title() {
-                *label = t.title().to_owned();
-                self.chrome.dirty = true;
+            for t in &mut self.w.tabs.list {
+                let copied = t.pump(&scheme);
+                reply.copy = copied.clipboard.or(reply.copy);
+                reply.copy_primary = copied.primary.or(reply.copy_primary);
             }
+            for (program, code) in self.reap() {
+                if code != 0 {
+                    log::warn!("{program} exited with status {code}");
+                }
+            }
+            if self.w.tabs.list.is_empty() {
+                if self.drop_pane() {
+                    return self.quit();
+                }
+                reply.redraw_all = true;
+                continue;
+            }
+            for (label, t) in self.w.tabs.strip.labels.iter_mut().zip(&self.w.tabs.list) {
+                if label != t.title() {
+                    *label = t.title().to_owned();
+                    self.w.chrome.dirty = true;
+                }
+            }
+            reply.redraw_wins.push(id);
         }
         reply
     }
@@ -478,19 +649,19 @@ impl Terminal {
     /// Close the tabs whose program exited; their programs and exit codes.
     fn reap(&mut self) -> Vec<(String, i32)> {
         let mut out = Vec::new();
-        let mut i = self.tabs.list.len();
+        let mut i = self.w.tabs.list.len();
         while i > 0 {
             i -= 1;
-            if let Some(code) = self.tabs.list[i].exited() {
-                out.push((self.tabs.list[i].program().to_owned(), code));
-                self.tabs.close(i);
+            if let Some(code) = self.w.tabs.list[i].exited() {
+                out.push((self.w.tabs.list[i].program().to_owned(), code));
+                self.w.tabs.close(i);
                 self.drop_press();
-                self.snap.dirty.fill(true);
-                self.chrome.dirty = true;
+                self.w.snap.dirty.fill(true);
+                self.w.chrome.dirty = true;
             }
         }
         if let Some((Closing::Tab(pid), _)) = self.confirm
-            && !self.tabs.list.iter().any(|t| t.pid() == pid)
+            && self.pane_of_pid(pid).is_none()
         {
             self.confirm = None;
         }
@@ -498,10 +669,10 @@ impl Terminal {
     }
 
     fn key(&mut self, k: &KeyInput, ctx: &mut Ctx) -> Reply {
-        if self.chrome.menu.is_some() {
+        if self.w.chrome.menu.is_some() {
             return self.menu_key(k, ctx);
         }
-        let Some(tab) = self.tabs.current() else {
+        let Some(tab) = self.w.tabs.current() else {
             return Reply::none();
         };
         let mode = tab.mode();
@@ -521,9 +692,13 @@ impl Terminal {
     fn shortcut(&mut self, s: Shortcut, ctx: &mut Ctx) -> Reply {
         match s {
             Shortcut::NewTab => self.new_tab(&Choice::Shell),
-            Shortcut::CloseTab => self.ask_close(self.tabs.strip.open, ctx),
+            Shortcut::CloseTab => self.ask_close(self.w.tabs.strip.open, ctx),
+            Shortcut::NextTab | Shortcut::PrevTab if self.w.caption => Reply {
+                raise: self.sibling(s == Shortcut::PrevTab),
+                ..Default::default()
+            },
             Shortcut::NextTab | Shortcut::PrevTab => {
-                match self.tabs.strip.cycle(s == Shortcut::PrevTab) {
+                match self.w.tabs.strip.cycle(s == Shortcut::PrevTab) {
                     true => self.switched(),
                     false => Reply::none(),
                 }
@@ -542,7 +717,7 @@ impl Terminal {
             Shortcut::ZoomOut => self.zoom(self.px.saturating_sub(1), ctx),
             Shortcut::ZoomReset => self.zoom(self.settings.size_px, ctx),
             Shortcut::PageUp | Shortcut::PageDown => {
-                if let Some(t) = self.tabs.current() {
+                if let Some(t) = self.w.tabs.current() {
                     t.scroll(match s {
                         Shortcut::PageUp => Scroll::PageUp,
                         _ => Scroll::PageDown,
@@ -553,14 +728,31 @@ impl Terminal {
         }
     }
 
+    /// The caption-mode window after this one in opening order, or before it, going round.
+    fn sibling(&self, backwards: bool) -> Option<WinId> {
+        let ring: Vec<WinId> = self
+            .order
+            .iter()
+            .copied()
+            .filter(|&w| self.pane(w).is_some_and(|p| p.caption))
+            .collect();
+        let i = ring.iter().position(|&w| w == self.cur)?;
+        let n = ring.len();
+        let j = match backwards {
+            true => (i + n - 1) % n,
+            false => (i + 1) % n,
+        };
+        Some(ring[j]).filter(|&w| w != self.cur)
+    }
+
     /// The cursor to draw: hollow while the window is not focused, gone in the blink's off half
     /// and while an input method composes.
     fn cursor(&self, ctx: &Ctx, preedit: bool) -> (usize, usize, CursorShape) {
-        let (r, c, shape) = self.snap.cursor;
+        let (r, c, shape) = self.w.snap.cursor;
         let shape = match shape {
             CursorShape::Hidden => CursorShape::Hidden,
             _ if preedit => CursorShape::Hidden,
-            _ if !self.focused => CursorShape::HollowBlock,
+            _ if !self.w.focused => CursorShape::HollowBlock,
             _ if self.settings.blink && !ctx.caret_on => CursorShape::Hidden,
             s => s,
         };
@@ -569,27 +761,29 @@ impl Terminal {
 
     fn draw_main(&mut self, c: &mut Canvas, ctx: &Ctx) {
         let scale = c.scale();
-        self.scale = scale;
+        self.w.scale = scale;
+        self.w.size = ctx.size;
         self.fit(ctx);
         let m = self.metrics(scale);
         let lay = self.chrome_layout(ctx);
         let canvas = (c.width, c.height, scale);
-        if self.drawn != canvas {
-            self.drawn = canvas;
-            self.full = true;
+        if self.w.drawn != canvas {
+            self.w.drawn = canvas;
+            self.w.full = true;
         }
         let theme = &ctx.theme;
         if !self
+            .w
             .chrome
             .drawn
             .as_ref()
             .is_some_and(|(t, a)| t == theme && *a == theme.active)
         {
-            self.chrome.drawn = Some((theme.clone(), theme.active));
-            self.full = true;
+            self.w.chrome.drawn = Some((theme.clone(), theme.active));
+            self.w.full = true;
         }
         // An open menu lies over cells that may change under it, so it is drawn whole each time.
-        let full = std::mem::take(&mut self.full) || self.chrome.menu.is_some();
+        let full = std::mem::take(&mut self.w.full) || self.w.chrome.menu.is_some();
         // The deeper report wins: the chrome's band, or the whole client when see-through.
         if chrome::on_glass(ctx) {
             c.report_glass_top(lay.band);
@@ -597,31 +791,31 @@ impl Terminal {
         if self.background_alpha(theme) < 255 {
             c.report_glass_top(c.height as i32);
         }
-        let chrome = std::mem::take(&mut self.chrome.dirty) || full;
+        let chrome = std::mem::take(&mut self.w.chrome.dirty) || full;
         if chrome {
             self.draw_chrome(c, ctx, &lay);
         }
         let scheme = self.scheme(theme);
-        if let Some(tab) = self.tabs.current() {
-            tab.snapshot(&scheme, &mut self.snap);
+        if let Some(tab) = self.w.tabs.current() {
+            tab.snapshot(&scheme, &mut self.w.snap);
         }
         if full {
-            self.snap.dirty.fill(true);
+            self.w.snap.dirty.fill(true);
         }
         let alpha = self.background_alpha(theme);
-        if alpha != self.snap.alpha {
-            self.snap.alpha = alpha;
-            self.snap.dirty.fill(true);
+        if alpha != self.w.snap.alpha {
+            self.w.snap.alpha = alpha;
+            self.w.snap.dirty.fill(true);
         }
         let preedit = c.preedit().map(|p| p.text.clone());
         if let Some(text) = &preedit {
-            snapshot::overlay_preedit(&mut self.snap, text);
+            snapshot::overlay_preedit(&mut self.w.snap, text);
         }
         let cursor = self.cursor(ctx, preedit.is_some());
-        snapshot::move_cursor(&mut self.snap, self.shown, cursor);
-        self.shown = cursor;
-        let rects = termgrid::draw(c, &self.font, &m, lay.grid, &self.snap, self.px);
-        self.snap.dirty.fill(false);
+        snapshot::move_cursor(&mut self.w.snap, self.w.shown, cursor);
+        self.w.shown = cursor;
+        let rects = termgrid::draw(c, &self.font, &m, lay.grid, &self.w.snap, self.px);
+        self.w.snap.dirty.fill(false);
         self.draw_menu(c, ctx);
         // No report damages the whole canvas, so an unchanged frame reports an empty rect.
         if !full {
@@ -653,9 +847,11 @@ impl Terminal {
 
 impl App for Terminal {
     fn title(&self) -> String {
-        self.tabs
-            .current()
-            .map_or_else(|| "Terminal".into(), |t| t.title().to_owned())
+        pane_title(self.pane(MAIN))
+    }
+
+    fn hidden(&self) -> bool {
+        !self.order.contains(&MAIN)
     }
 
     fn app_id(&self) -> String {
@@ -665,7 +861,7 @@ impl App for Terminal {
     fn initial_size(&self) -> (i32, i32) {
         self.window.unwrap_or_else(|| {
             let m = self.metrics.1;
-            let band = chrome::band_height(&repriseapp::start_theme());
+            let band = chrome::band_height(&repriseapp::start_theme(), self.w.caption);
             (OPEN_CELLS.0 * m.cell_w, OPEN_CELLS.1 * m.cell_h + band)
         })
     }
@@ -675,7 +871,22 @@ impl App for Terminal {
             return Vec::new();
         };
         let u = &forms.text;
-        let mut out = Vec::new();
+        let mut out: Vec<Child> = self
+            .order
+            .iter()
+            .filter(|&&id| id != MAIN)
+            .filter_map(|&id| self.pane(id).map(|p| (id, p)))
+            .map(|(id, p)| Child {
+                id,
+                title: pane_title(Some(p)),
+                size: match p.size {
+                    (0, 0) => self.initial_size(),
+                    size => size,
+                },
+                fixed: false,
+                modal: false,
+            })
+            .collect();
         if let Some(o) = &self.options {
             out.push(Child {
                 id: OPTIONS,
@@ -712,8 +923,32 @@ impl App for Terminal {
         out
     }
 
+    fn parent(&self, win: WinId) -> Option<WinId> {
+        match win {
+            FIND | NOTFOUND => Some(self.find_on),
+            OPTIONS | PROFILE => Some(self.options_on),
+            CONFIRM => match self.confirm {
+                Some((Closing::Window(w), _)) => Some(w),
+                Some((Closing::Tab(pid), _)) => self.pane_of_pid(pid).or(Some(self.cur)),
+                None => Some(self.cur),
+            },
+            _ if self.order.contains(&win) => None,
+            _ => Some(MAIN),
+        }
+    }
+
+    fn tab_with(&self, win: WinId) -> Option<WinId> {
+        self.pane(win).and_then(|p| p.leader)
+    }
+
+    fn min_size(&self, win: WinId) -> Option<(i32, i32)> {
+        self.pane(win).map(|_| repriseapp::MIN_SIZE)
+    }
+
     fn start(&mut self, waker: repriseapp::Waker) {
         self.waker = Some(waker);
+        self.tab_groups = repriseapp::tab_groups();
+        self.w.caption = self.caption_mode();
         let shell = Some(&self.settings.shell)
             .filter(|s| !s.is_empty())
             .map(|s| vec![s.into()]);
@@ -734,19 +969,19 @@ impl App for Terminal {
     }
 
     fn follow_scale(&mut self, win: WinId, scale: i32, ctx: &mut Ctx) {
-        if win != MAIN {
+        if !self.enter(win) {
             return;
         }
-        if scale != self.scale || self.chrome.bar.items.is_empty() {
-            self.chrome.bar.items = chrome::toolbar_items(ctx);
-            self.chrome.dirty = true;
+        if scale != self.w.scale || self.w.chrome.bar.items.is_empty() {
+            self.w.chrome.bar.items = chrome::toolbar_items(ctx, self.w.caption);
+            self.w.chrome.dirty = true;
         }
-        self.scale = scale;
+        self.w.scale = scale;
         self.fit(ctx);
     }
 
     fn keeps_canvas(&self, win: WinId) -> bool {
-        win == MAIN
+        self.order.contains(&win)
     }
 
     fn draw(&mut self, win: WinId, c: &mut Canvas, ctx: &Ctx) {
@@ -770,7 +1005,9 @@ impl App for Terminal {
             }
             return;
         }
-        self.draw_main(c, ctx);
+        if self.enter(win) {
+            self.draw_main(c, ctx);
+        }
     }
 
     fn access(&mut self, win: WinId, tree: &mut Tree, ctx: &Ctx) {
@@ -794,11 +1031,16 @@ impl App for Terminal {
             }
             return;
         }
+        if !self.enter(win) {
+            return;
+        }
         let lay = self.chrome_layout(ctx);
-        let bar = &self.chrome.bar;
+        let bar = &self.w.chrome.bar;
         toolbar::access(bar, lay.toolbar, &lay.buttons, tree, ROOT, "toolbar");
-        tabstrip::doc_access(&self.tabs.strip, &lay.strip, tree, ROOT, "tabs");
-        termgrid::access(&self.snap, lay.grid, tree, ROOT, "grid");
+        if !self.w.caption {
+            tabstrip::doc_access(&self.w.tabs.strip, &lay.strip, tree, ROOT, "tabs");
+        }
+        termgrid::access(&self.w.snap, lay.grid, tree, ROOT, "grid");
     }
 }
 
@@ -818,27 +1060,33 @@ impl Terminal {
             return self.notfound_event(ev);
         }
         if win == FIND {
+            self.enter(self.find_on);
             return self.find_event(ev, ctx);
         }
-        if self.tabs.list.is_empty() {
-            return self.quit();
+        if ev == Event::Wake {
+            return self.wake(ctx);
+        }
+        if !self.enter(win) {
+            return Reply::none();
+        }
+        if self.w.tabs.list.is_empty() {
+            return self.close_pane();
         }
         match ev {
-            Event::Wake => self.wake(ctx),
             Event::Key(k) => self.key(&k, ctx),
             Event::Pointer(p) => self.pointer(p, ctx),
             Event::Pasted(text) | Event::PastedPrimary(text) => {
-                if let Some(tab) = self.tabs.current() {
+                if let Some(tab) = self.w.tabs.current() {
                     tab.scroll(Scroll::Bottom);
                     tab.write(keys::bracket_paste(&text, tab.mode()).into());
                 }
                 Reply::redraw()
             }
             Event::Focus(f) => {
-                self.focused = f;
+                self.w.focused = f;
                 self.chrome_changed()
             }
-            Event::Blink if self.focused && self.settings.blink => Reply::redraw(),
+            Event::Blink if self.w.focused && self.settings.blink => Reply::redraw(),
             Event::CloseRequest => self.close_window(ctx),
             Event::Resized => {
                 if !ctx.maximized && !ctx.at_pick {
@@ -944,6 +1192,20 @@ impl Terminal {
             }
         }
     }
+}
+
+/// Each window's pane: the one at hand and the parked ones.
+fn panes_mut<'a>(
+    w: &'a mut Pane,
+    parked: &'a mut [(WinId, Pane)],
+) -> impl Iterator<Item = &'a mut Pane> {
+    std::iter::once(w).chain(parked.iter_mut().map(|(_, p)| p))
+}
+
+/// A window's title: its open tab's.
+fn pane_title(p: Option<&Pane>) -> String {
+    p.and_then(|p| p.tabs.current())
+        .map_or_else(|| "Terminal".into(), |t| t.title().to_owned())
 }
 
 fn mtime(path: &std::path::Path) -> Option<std::time::SystemTime> {

@@ -63,6 +63,11 @@ asks first. Programs see `TERM=xterm-256color` and `COLORTERM=truecolor`.
   it lists the shell, your profiles and the `Host` entries of
   `~/.ssh/config` (and the files it includes). Drag a tab to reorder it,
   middle-click it to close it.
+- **Tabs in the title bar:** Options > General > Tabs (new windows) set to
+  In the title bar makes each tab a window of its own in one caption tab
+  group, with New Tab at the start of the toolbar. Open windows keep the
+  mode they opened with. Without Reprise's tab groups the tabs stay below
+  the toolbar.
 - **Toolbar:** Copy, Paste, Find and Settings. Find searches the scrollback
   up or down, with Match case, and highlights what it found.
 - **Mouse:** a selection goes to the primary selection and a middle click
