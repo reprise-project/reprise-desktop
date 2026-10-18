@@ -129,7 +129,7 @@ pub fn layout(theme: &Theme, geom: &FrameGeometry, n: usize) -> Layout {
     let room = (x1 - x0).max(0);
     let count = n.max(1) as i32;
     let u = theme.text;
-    let share = ((room - GRAB * s) / count).clamp(u.len(TAB_MIN) * s, u.len(TAB_MAX) * s);
+    let share = ((room - u.len(GRAB) * s) / count).clamp(u.len(TAB_MIN) * s, u.len(TAB_MAX) * s);
     let w = if share * count > room {
         room / count
     } else {
@@ -382,6 +382,23 @@ mod tests {
             "the grab room stays free"
         );
         assert_eq!((l.tabs[0].y, l.tabs[0].height), (g.caption.y, 18));
+    }
+
+    #[test]
+    fn the_grab_room_grows_with_the_text_size() {
+        for pct in [150, 200] {
+            let theme = Theme::default().with_text_size(pct);
+            let g = geom(&theme, 900);
+            let l = layout(&theme, &g, 6);
+            let grab = theme.text.len(GRAB);
+            assert!(grab >= GRAB * pct as i32 / 100, "{pct}%: {grab}");
+            let room = g.title_end() - 2 - (g.caption.x + 2);
+            assert_eq!(l.tabs[0].width, (room - grab) / 6, "{pct}%");
+            assert!(
+                l.tabs[5].right() <= g.title_end() - 2 - grab,
+                "{pct}%: the grown grab room stays free"
+            );
+        }
     }
 
     #[test]
