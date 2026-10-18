@@ -217,8 +217,9 @@ impl State {
         self.fsjobs.spawn(tx, Box::new(work))
     }
 
-    /// [`State::spawn_fs_job`] for work that opens no file (painting art, bus calls): it starts
-    /// at once on a thread of its own, never waiting behind file jobs stuck on a mount.
+    /// [`State::spawn_fs_job`] for work that opens no file (painting art, bus calls) or only the
+    /// one path a launch starts: it starts at once on a thread of its own, never waiting behind
+    /// file jobs stuck on a mount.
     pub fn spawn_job<W>(&mut self, work: W) -> bool
     where
         W: FnOnce() -> OnLoop + Send + 'static,
