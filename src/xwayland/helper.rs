@@ -233,6 +233,9 @@ fn run(
                     return Ok(());
                 }
             }
+            Req::KillOwner { window, pid } if !can_count => {
+                log::info!("x11 window {window:#x}: no X-Resource to confirm pid {pid}; kept");
+            }
             Req::KillOwner { window, pid } => {
                 let spec = res::ClientIdSpec {
                     client: window,
