@@ -447,10 +447,14 @@ pub fn node(role: Role, r: Rect) -> Node {
 }
 
 pub fn named(role: Role, r: Rect, label: &str) -> Node {
+    titled(role, r, &crate::text::split_mnemonic(label).0)
+}
+
+/// [`named`] for a label drawn as it is, with no access key: an `&` in it is read.
+pub fn titled(role: Role, r: Rect, label: &str) -> Node {
     let mut n = node(role, r);
-    let plain = crate::text::split_mnemonic(label).0;
-    if !plain.is_empty() {
-        n.set_label(plain);
+    if !label.is_empty() {
+        n.set_label(label);
     }
     n
 }

@@ -219,7 +219,7 @@ pub fn access(
         .zip(&l.tabs)
         .enumerate()
         .map(|(i, (e, r))| {
-            let mut n = access::named(Role::Tab, *r, e.title);
+            let mut n = access::titled(Role::Tab, *r, e.title);
             n.set_selected(i == tabs.selected && !tabs.is_ghost(i));
             tree.push(list, i, n)
         })
@@ -616,5 +616,22 @@ mod tests {
             Some(false),
             "the ghost is never selected"
         );
+    }
+
+    #[test]
+    fn a_tab_is_read_with_the_ampersand_in_its_title() {
+        let theme = Theme::default();
+        let g = geom(&theme, 600);
+        let mut t = tabs(1, 0);
+        t.tabs[0].title = "R&D notes";
+        let mut tree = Tree::window("w", (600, 60));
+        let ids = access(
+            &t,
+            &layout(&theme, &g, 1),
+            &mut tree,
+            crate::access::ROOT,
+            "tabs",
+        );
+        assert_eq!(tree.get(ids[0]).unwrap().label(), Some("R&D notes"));
     }
 }
