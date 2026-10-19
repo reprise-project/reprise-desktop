@@ -1,7 +1,7 @@
 //! The hidden icons flyout: tray items kept off the bar, as a grid of 16 px icons opened by the ^
 //! cell, with a Customize... link under it.
 
-use crate::access::accesskit::{NodeId, Role};
+use crate::access::accesskit::{Action, NodeId, Role};
 use crate::access::{self, Tree};
 use crate::icon::ICON_SIZE;
 use crate::raster::{Canvas, EdgeStyle, Rect};
@@ -139,10 +139,13 @@ pub fn access(layout: &FlyoutLayout, names: &[String], tree: &mut Tree, parent: 
         if !name.is_empty() {
             n.set_label(name.as_str());
         }
+        n.add_action(Action::Click);
         tree.push(parent, i, n);
     }
     if let Some(l) = layout.link {
-        tree.push(parent, "link", access::named(Role::Link, l, LINK));
+        let mut n = access::named(Role::Link, l, LINK);
+        n.add_action(Action::Click);
+        tree.push(parent, "link", n);
     }
 }
 
@@ -342,5 +345,20 @@ mod tests {
         let mut t = Tree::window("Hidden icons", (l.width, l.height));
         access(&l, &["Battery".into(), "Mail".into()], &mut t, access::ROOT);
         assert!(t.find(Role::Link, "Customize...").is_some());
+    }
+
+    #[test]
+    fn a_reader_can_press_each_cell_and_the_link() {
+        let l = FlyoutLayout::compute(&glass_theme(), 2);
+        let mut t = Tree::window("Hidden icons", (l.width, l.height));
+        access(&l, &["Battery".into(), "Mail".into()], &mut t, access::ROOT);
+        for (role, name) in [
+            (Role::Button, "Battery"),
+            (Role::Button, "Mail"),
+            (Role::Link, "Customize..."),
+        ] {
+            let n = t.get(t.find(role, name).unwrap()).unwrap();
+            assert!(n.supports_action(Action::Click), "{name} takes a click");
+        }
     }
 }
