@@ -15,11 +15,11 @@ use smithay::{
     utils::{IsAlive, Logical, Point},
 };
 
-use crate::{compositor::State, dnd::DragSource};
+use crate::{compositor::State, dnd::DragSource, xdnd::X11Offer};
 
-/// Motion owed to one client surface `S`.
+/// Motion owed to one client surface `S`; `O` is an X11 drag target's offer.
 #[derive(Debug, Clone)]
-pub enum Held<S> {
+pub enum Held<S, O = X11Offer> {
     /// `wl_pointer.motion` at the latest position and the relative deltas
     /// summed since the last delivery, closed by one `wl_pointer.frame`.
     Pointer {
@@ -27,11 +27,13 @@ pub enum Held<S> {
         motion: Option<MotionEvent>,
         relative: Option<RelativeMotionEvent>,
     },
-    /// `wl_data_device.motion` at the latest surface-local position.
+    /// `wl_data_device.motion`, or `XdndPosition` through an X11 target's
+    /// offer, at the latest surface-local position.
     Drag {
         to: S,
         at: Point<f64, Logical>,
         time: InputTime,
+        x11: Option<O>,
     },
 }
 
@@ -39,12 +41,12 @@ pub enum Held<S> {
 /// (button, axis, enter, leave, keyboard focus) takes it out first
 /// ([`Motions::take`]), so the client sees the true position before it.
 #[derive(Debug)]
-pub struct Motions<S> {
-    held: Option<Held<S>>,
+pub struct Motions<S, O = X11Offer> {
+    held: Option<Held<S, O>>,
     taken_at: Option<Instant>,
 }
 
-impl<S> Default for Motions<S> {
+impl<S, O> Default for Motions<S, O> {
     fn default() -> Self {
         Motions {
             held: None,
@@ -53,10 +55,10 @@ impl<S> Default for Motions<S> {
     }
 }
 
-impl<S: PartialEq> Motions<S> {
+impl<S: PartialEq, O> Motions<S, O> {
     /// Hold `event` for `to`. Returns motion held for another surface, to
     /// deliver before it.
-    pub fn motion(&mut self, to: S, event: MotionEvent) -> Option<Held<S>> {
+    pub fn motion(&mut self, to: S, event: MotionEvent) -> Option<Held<S, O>> {
         let earlier = self.other_than_pointer(&to);
         match &mut self.held {
             Some(Held::Pointer { motion, .. }) => *motion = Some(event),
@@ -73,7 +75,7 @@ impl<S: PartialEq> Motions<S> {
 
     /// Add `event`'s deltas to what is held for `to`; the sum carries the
     /// latest time. Returns motion held for another surface, as `motion`.
-    pub fn relative(&mut self, to: S, event: RelativeMotionEvent) -> Option<Held<S>> {
+    pub fn relative(&mut self, to: S, event: RelativeMotionEvent) -> Option<Held<S, O>> {
         let earlier = self.other_than_pointer(&to);
         match &mut self.held {
             Some(Held::Pointer {
@@ -96,13 +98,20 @@ impl<S: PartialEq> Motions<S> {
         earlier
     }
 
-    /// Hold a drag's motion over `to` at surface-local `at`.
-    pub fn drag(&mut self, to: S, at: Point<f64, Logical>, time: InputTime) -> Option<Held<S>> {
+    /// Hold a drag's motion over `to` at surface-local `at`, through `x11`
+    /// when `to` is an X11 window.
+    pub fn drag(
+        &mut self,
+        to: S,
+        at: Point<f64, Logical>,
+        time: InputTime,
+        x11: Option<O>,
+    ) -> Option<Held<S, O>> {
         let earlier = match &self.held {
             Some(Held::Drag { to: held, .. }) if *held == to => None,
             _ => self.held.take(),
         };
-        self.held = Some(Held::Drag { to, at, time });
+        self.held = Some(Held::Drag { to, at, time, x11 });
         earlier
     }
 
@@ -117,7 +126,7 @@ impl<S: PartialEq> Motions<S> {
     }
 
     /// The held motion, to deliver now.
-    pub fn take(&mut self, now: Instant) -> Option<Held<S>> {
+    pub fn take(&mut self, now: Instant) -> Option<Held<S, O>> {
         let held = self.held.take()?;
         self.taken_at = Some(now);
         Some(held)
@@ -131,7 +140,7 @@ impl<S: PartialEq> Motions<S> {
         })
     }
 
-    fn other_than_pointer(&mut self, to: &S) -> Option<Held<S>> {
+    fn other_than_pointer(&mut self, to: &S) -> Option<Held<S, O>> {
         match &self.held {
             Some(Held::Pointer { to: held, .. }) if held == to => None,
             _ => self.held.take(),
@@ -163,9 +172,16 @@ impl State {
         self.held(earlier);
     }
 
-    /// As `hold_motion`, for a drag over a Wayland client's surface.
-    pub(crate) fn hold_drag(&mut self, to: &WlSurface, at: Point<f64, Logical>, time: InputTime) {
-        let earlier = self.pointers.motions.drag(to.clone(), at, time);
+    /// As `hold_motion`, for a drag over a client's surface; `x11` is the
+    /// offer of an X11 window's, whose own `XdndStatus` pacing still applies.
+    pub(crate) fn hold_drag(
+        &mut self,
+        to: &WlSurface,
+        at: Point<f64, Logical>,
+        time: InputTime,
+        x11: Option<X11Offer>,
+    ) {
+        let earlier = self.pointers.motions.drag(to.clone(), at, time, x11);
         self.held(earlier);
     }
 
@@ -246,8 +262,23 @@ impl State {
                 }
                 PointerTarget::<State>::frame(&to, &seat, self);
             }
-            Held::Drag { to, at, time } if to.alive() => {
+            Held::Drag {
+                to,
+                at,
+                time,
+                x11: None,
+            } if to.alive() => {
                 DndFocus::<State>::motion::<DragSource>(&to, self, None, &seat, at, time);
+            }
+            Held::Drag {
+                to,
+                at,
+                time,
+                x11: Some(offer),
+            } => {
+                if let Some(x) = self.x11_window_of(&to) {
+                    offer.motion(&x, self, &seat, at, time);
+                }
             }
             _ => {}
         }
@@ -261,6 +292,8 @@ mod tests {
 
     const A: u8 = 1;
     const B: u8 = 2;
+
+    type M = Motions<u8, u8>;
 
     fn motion(x: f64, ms: u32) -> MotionEvent {
         MotionEvent {
@@ -280,7 +313,7 @@ mod tests {
 
     #[test]
     fn many_motions_deliver_once_at_the_last_position_and_time() {
-        let mut m = Motions::default();
+        let mut m = M::default();
         for i in 0..50 {
             assert!(
                 m.motion(A, motion(f64::from(i), i)).is_none(),
@@ -303,7 +336,7 @@ mod tests {
 
     #[test]
     fn relative_deltas_sum_exactly_with_the_latest_time() {
-        let mut m = Motions::default();
+        let mut m = M::default();
         m.relative(A, relative(0.5, 0.25, 1));
         m.motion(A, motion(3.0, 1));
         m.relative(A, relative(1.25, 1.0, 2));
@@ -323,7 +356,7 @@ mod tests {
 
     #[test]
     fn motion_for_another_surface_hands_back_the_held_one_first() {
-        let mut m = Motions::default();
+        let mut m = M::default();
         m.motion(A, motion(1.0, 1));
         let earlier = m.motion(B, motion(2.0, 2));
         assert!(
@@ -336,14 +369,14 @@ mod tests {
 
     #[test]
     fn a_drag_and_a_pointer_motion_never_share_a_delivery() {
-        let mut m = Motions::default();
+        let mut m = M::default();
         m.motion(A, motion(1.0, 1));
         assert!(
-            m.drag(A, (4.0, 4.0).into(), InputTime::from_millis(2))
+            m.drag(A, (4.0, 4.0).into(), InputTime::from_millis(2), None)
                 .is_some()
         );
         assert!(
-            m.drag(A, (5.0, 4.0).into(), InputTime::from_millis(3))
+            m.drag(A, (5.0, 4.0).into(), InputTime::from_millis(3), None)
                 .is_none()
         );
         let Some(Held::Drag { at, time, .. }) = m.take(Instant::now()) else {
@@ -353,8 +386,33 @@ mod tests {
     }
 
     #[test]
+    fn an_x11_drag_delivers_once_through_its_offer_at_the_last_position() {
+        const OFFER: u8 = 7;
+        let mut m = M::default();
+        for i in 0..50 {
+            let at = (f64::from(i), 4.0).into();
+            assert!(
+                m.drag(A, at, InputTime::from_millis(i), Some(OFFER))
+                    .is_none(),
+                "nothing delivered early"
+            );
+        }
+        let Some(Held::Drag {
+            to: A,
+            at,
+            time,
+            x11: Some(OFFER),
+        }) = m.take(Instant::now())
+        else {
+            panic!("expected one held drag motion for A through offer 7");
+        };
+        assert_eq!((at, time), ((49.0, 4.0).into(), InputTime::from_millis(49)));
+        assert!(m.take(Instant::now()).is_none(), "expected nothing left");
+    }
+
+    #[test]
     fn a_frame_closing_held_motion_is_left_to_the_delivery() {
-        let mut m = Motions::default();
+        let mut m = M::default();
         assert!(
             !m.frame_held(&A),
             "expected a frame with nothing held to go"
@@ -371,7 +429,7 @@ mod tests {
     #[test]
     fn delivery_waits_out_the_refresh_interval_after_the_last() {
         let interval = Duration::from_micros(6250);
-        let mut m = Motions::<u8>::default();
+        let mut m = M::default();
         let t0 = Instant::now();
         assert_eq!(
             m.wait(t0, interval),
