@@ -226,15 +226,12 @@ pub(crate) fn watch(
     let spawned = std::thread::Builder::new()
         .name(format!("reprisefs-{job}-watch"))
         .spawn(move || {
-            let mut seen = (m.stirring().0, Instant::now());
+            let mut headway = Headway::new(m.stirring().0, Instant::now());
             while !ended.load(Ordering::Acquire) {
                 std::thread::sleep(every);
-                let (stir, resting) = m.stirring();
-                if resting || stir != seen.0 {
-                    seen = (stir, Instant::now());
-                    continue;
-                }
-                if seen.1.elapsed() < deadline || ended.swap(true, Ordering::AcqRel) {
+                if !headway.stalled(m.stirring(), Instant::now(), deadline)
+                    || ended.swap(true, Ordering::AcqRel)
+                {
                     continue;
                 }
                 m.cancel();
@@ -245,6 +242,27 @@ pub(crate) fn watch(
         });
     if let Err(e) = spawned {
         log::warn!("reprisefs: no watch on a {job}: {e}");
+    }
+}
+
+/// [`watch`]'s memory of the last step it saw and when.
+struct Headway {
+    stir: u64,
+    at: Instant,
+}
+
+impl Headway {
+    fn new(stir: u64, at: Instant) -> Self {
+        Headway { stir, at }
+    }
+
+    /// Whether `stirring` ([`Meter::stirring`]) read at `now` has stood still for `deadline`.
+    fn stalled(&mut self, (stir, resting): (u64, bool), now: Instant, deadline: Duration) -> bool {
+        if resting || stir != self.stir {
+            *self = Headway::new(stir, now);
+            return false;
+        }
+        now.duration_since(self.at) >= deadline
     }
 }
 
@@ -442,35 +460,49 @@ mod tests {
         assert_eq!(e.kind(), std::io::ErrorKind::Interrupted);
     }
 
-    /// Runs `slow` under a watched meter with a 100 ms deadline; true when the watch gave up.
-    fn watched(slow: impl FnOnce()) -> bool {
-        let m = Arc::new(Meter::default());
-        let ended = Arc::new(AtomicBool::new(false));
-        let gave_up = Arc::new(AtomicBool::new(false));
-        let g = gave_up.clone();
-        watch(&m, &ended, Duration::from_millis(100), "test", move |_| {
-            g.store(true, Ordering::Relaxed)
-        });
-        metered(&m, slow);
-        std::thread::sleep(Duration::from_millis(50));
-        ended.store(true, Ordering::Release);
-        gave_up.load(Ordering::Relaxed)
+    /// Polls a [`Headway`] every 25 ms of a made-up clock for 400 ms while `stirring` gives the
+    /// meter at each poll; true when it stalled at a 100 ms deadline.
+    fn stalls(mut stirring: impl FnMut(u32) -> (u64, bool)) -> bool {
+        let start = Instant::now();
+        let mut h = Headway::new(0, start);
+        (1..=16).any(|n| {
+            let now = start + Duration::from_millis(25) * n;
+            h.stalled(stirring(n), now, Duration::from_millis(100))
+        })
     }
 
     #[test]
     fn a_slow_step_that_keeps_stepping_or_flushes_outlives_the_deadline() {
-        let tick = Duration::from_millis(40);
-        let stepping = || {
-            for _ in 0..10 {
-                std::thread::sleep(tick);
-                step();
-            }
-        };
-        assert!(!watched(stepping), "400 ms of steps 40 ms apart");
-        let flush = || flushing(|| std::thread::sleep(Duration::from_millis(400)));
-        assert!(!watched(flush), "a 400 ms flush");
-        let stuck = || std::thread::sleep(Duration::from_millis(400));
-        assert!(watched(stuck), "400 ms without a step gives up");
+        assert!(
+            !stalls(|n| (u64::from(n * 25 / 40), false)),
+            "400 ms of steps 40 ms apart"
+        );
+        assert!(!stalls(|_| (0, true)), "a 400 ms flush");
+        assert!(stalls(|_| (0, false)), "400 ms without a step gives up");
+    }
+
+    #[test]
+    fn a_step_stirs_and_a_flush_rests_the_meter_it_runs_under() {
+        let m = Arc::new(Meter::default());
+        metered(&m, || {
+            step();
+            assert_eq!(m.stirring(), (1, false));
+            flushing(|| assert_eq!(m.stirring(), (1, true)));
+        });
+        assert_eq!(m.stirring(), (2, false), "a flush's end is a step");
+    }
+
+    #[test]
+    fn a_watch_gives_up_on_a_meter_that_stands_still() {
+        let m = Arc::new(Meter::default());
+        let ended = Arc::new(AtomicBool::new(false));
+        let (gave_up, given) = std::sync::mpsc::channel();
+        watch(&m, &ended, Duration::from_millis(20), "test", move |_| {
+            gave_up.send(()).expect("the test waits")
+        });
+        assert_eq!(given.recv_timeout(Duration::from_secs(30)), Ok(()));
+        assert!(m.cancelled());
+        assert!(ended.load(Ordering::Acquire), "the watch ended the job");
     }
 
     #[test]
