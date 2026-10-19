@@ -384,8 +384,9 @@ impl Source for DragSource {
 #[derive(Default)]
 pub struct Dnd {
     drag: Option<Drag>,
-    /// A popup's grab asked for during the drag, set once it ends.
-    held_popup: Option<(PopupGrab<State>, Serial)>,
+    /// A popup's grab asked for during the drag, or the menu's a drag out
+    /// of it took, set again once it ends.
+    held_popup: crate::popupgrab::Held<PopupGrab<State>>,
     pub(crate) drops: crate::dnddrop::Drops,
 }
 
@@ -395,7 +396,15 @@ impl Dnd {
     }
 
     pub fn hold_popup_grab(&mut self, grab: PopupGrab<State>, serial: Serial) {
-        self.held_popup = Some((grab, serial));
+        self.held_popup.hold(grab, serial);
+    }
+
+    pub fn holds_popup(&self) -> bool {
+        self.held_popup.is_open()
+    }
+
+    pub fn dismiss_held_popup(&mut self) -> bool {
+        self.held_popup.dismiss()
     }
 }
 
@@ -1126,9 +1135,7 @@ impl State {
     }
 
     fn after_drag(&mut self, mods_changed: bool) {
-        if let Some((grab, serial)) = self.dnd.held_popup.take()
-            && !grab.has_ended()
-        {
+        if let Some((grab, serial)) = self.dnd.held_popup.give_back() {
             self.set_popup_grab(grab, serial);
         }
         if mods_changed
