@@ -1649,6 +1649,11 @@ impl Host {
             return;
         }
         filedlg::thumbs_on(&mut *self.app, win, &self.ctx.wake);
+        // Read off the live offer: sctk calls `selection` for a new offer but not for a cleared one.
+        CLIPBOARD_TEXT.set(
+            self.selection_offer()
+                .is_some_and(|o| o.with_mime_types(text_mime).is_some()),
+        );
         let mut reply = self.app.event(win, ev, &mut self.ctx);
         reply.tick |= self.ctx.want_tick.take();
         self.apply(win, reply);
@@ -2621,14 +2626,10 @@ impl Host {
         let Some(offer) = device.data().selection_offer() else {
             return;
         };
-        let mime = [TEXT_MIME, "text/plain", "UTF8_STRING"]
-            .iter()
-            .find(|m| offer.with_mime_types(|types| types.iter().any(|t| t == *m)))
-            .map(|m| m.to_string());
-        let Some(mime) = mime else {
+        let Some(mime) = offer.with_mime_types(text_mime) else {
             return;
         };
-        let Ok(read_pipe) = offer.receive(mime) else {
+        let Ok(read_pipe) = offer.receive(mime.to_string()) else {
             return;
         };
         self.read_offer(win, read_pipe, |buf| Event::Pasted(buf.into_text()));
@@ -4384,6 +4385,33 @@ pub(crate) fn reconcile(have: &[WinId], want: &[&Child]) -> (Vec<WinId>, Vec<usi
     (drop, make)
 }
 
+/// The text types a paste reads, best first; the last two are X11's Latin-1 ones.
+const PASTE_MIMES: [&str; 5] = [TEXT_MIME, "text/plain", "UTF8_STRING", "TEXT", "STRING"];
+
+/// The type a paste reads out of a selection offering `types`, if it offers text.
+fn text_mime(types: &[String]) -> Option<&'static str> {
+    PASTE_MIMES
+        .into_iter()
+        .find(|m| types.iter().any(|t| t == m))
+}
+
+thread_local! {
+    /// Set on the event loop's thread before each `App::event`.
+    static CLIPBOARD_TEXT: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Whether the clipboard holds text a paste ([`Reply::paste`]) would read, as of the event being
+/// handled; false before a window first had the keyboard.
+pub fn clipboard_has_text() -> bool {
+    CLIPBOARD_TEXT.get()
+}
+
+/// Stands in for the compositor's offer in a program's tests, on the calling thread.
+#[doc(hidden)]
+pub fn fake_clipboard_text(on: bool) {
+    CLIPBOARD_TEXT.set(on);
+}
+
 static TAB_GROUPS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 /// Whether the compositor puts a window into another's caption tab group ([`App::tab_with`]),
@@ -4504,6 +4532,31 @@ pub(crate) fn main_wanted(hidden: bool, have: bool) -> Option<bool> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn types(t: &[&str]) -> Vec<String> {
+        t.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn a_selection_offering_any_text_type_reads_its_best_one() {
+        let browser = types(&["text/html", "text/plain", TEXT_MIME]);
+        assert_eq!(text_mime(&browser), Some(TEXT_MIME));
+        let x11 = types(&["TARGETS", "STRING", "UTF8_STRING"]);
+        assert_eq!(text_mime(&x11), Some("UTF8_STRING"));
+        assert_eq!(text_mime(&types(&["TEXT"])), Some("TEXT"));
+        assert_eq!(text_mime(&types(&["STRING"])), Some("STRING"));
+    }
+
+    #[test]
+    fn an_image_or_files_on_the_clipboard_is_no_text() {
+        assert_eq!(text_mime(&types(&["image/png", "image/bmp"])), None);
+        assert_eq!(
+            text_mime(&types(&["text/uri-list", "x-special/gnome-copied-files"])),
+            None
+        );
+        assert_eq!(text_mime(&types(&["text/html"])), None);
+        assert_eq!(text_mime(&[]), None);
+    }
 
     #[test]
     fn reply_merge_keeps_primary() {

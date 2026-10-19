@@ -952,8 +952,7 @@ impl Notepad {
         }
     }
 
-    /// Grey the rows that cannot act. Paste stays live: the host does not track whether the
-    /// clipboard holds text.
+    /// Grey the rows that cannot act.
     fn sync_menus(&mut self) {
         let has_text = self.edit.lines().iter().any(|l| !l.is_empty());
         let selected = self.edit.has_selection();
@@ -961,6 +960,7 @@ impl Notepad {
             (row::UNDO, self.edit.can_undo()),
             (row::CUT, selected),
             (row::COPY, selected),
+            (row::PASTE, repriseapp::clipboard_has_text()),
             (row::DELETE, selected),
             (row::FIND, has_text),
             (row::FIND_NEXT, has_text),
@@ -2325,7 +2325,22 @@ mod tests {
                 "row {r} is greyed with no selection and no edit"
             );
         }
-        assert!(on(&np, row::PASTE), "Paste stays live");
+        assert!(
+            !on(&np, row::PASTE),
+            "Paste is greyed with no text to paste"
+        );
+        assert!(
+            !np.command(title::EDIT, row::PASTE, &ctx).paste,
+            "a greyed Paste asks for nothing"
+        );
+        repriseapp::fake_clipboard_text(true);
+        np.event(MAIN, Event::Focus(true), &mut ctx);
+        assert!(
+            on(&np, row::PASTE),
+            "text on the clipboard makes Paste live"
+        );
+        assert!(np.command(title::EDIT, row::PASTE, &ctx).paste);
+        repriseapp::fake_clipboard_text(false);
         assert_eq!(
             np.command(title::EDIT, row::COPY, &ctx).copy,
             None,
