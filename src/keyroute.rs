@@ -514,10 +514,14 @@ pub fn route(modes: &Modes, k: &KeyPress, binds: &[Keybind], globals: &[GlobalBi
         });
     }
     // The dialog with the keyboard takes every press (its field wants the
-    // text), except the switchers' binds: Alt+Tab leaves a dialog as it
-    // leaves a window, and so does Super+Tab. A windowed dialog lets Show
-    // Desktop through as well.
+    // text), except binds that move no focus (`passes_dialog`) and the
+    // switchers' binds: Alt+Tab leaves a dialog as it leaves a window, and
+    // so does Super+Tab. A windowed dialog lets Show Desktop through as well.
     if modes.dialog_has_keyboard && k.pressed {
+        let passing: Vec<Action> = bound(k, binds).into_iter().filter(passes_dialog).collect();
+        if !passing.is_empty() {
+            return with(KeyRoute::Binds(passing));
+        }
         if modes.dialog_windowed && own(Action::ShowDesktop) {
             return with(KeyRoute::Binds(vec![Action::ShowDesktop]));
         }
@@ -695,6 +699,38 @@ pub fn runs_during_drag(a: &Action) -> bool {
             | Action::Snap(_)
             | Action::Desktop(_)
             | Action::Zoom(_)
+    )
+}
+
+/// Whether a bind's action runs while a dialog has the keyboard, a Welcome
+/// panel's included: the magnifier, lock, screenshots, the layout and the
+/// machine's toggles leave the dialog its focus.
+fn passes_dialog(a: &Action) -> bool {
+    matches!(
+        a,
+        Action::Zoom(_)
+            | Action::ColorFilter
+            | Action::Lock
+            | Action::NextLayout
+            | Action::DoNotDisturb
+            | Action::NightLight
+            | Action::Screenshot
+            | Action::ScreenshotWindow
+            | Action::ScreenshotRegion
+            | Action::ScreenshotContent
+            | Action::VolumeUp
+            | Action::VolumeDown
+            | Action::Mute
+            | Action::MicMute
+            | Action::BrightnessUp
+            | Action::BrightnessDown
+            | Action::KbdBrightnessUp
+            | Action::KbdBrightnessDown
+            | Action::PlayPause
+            | Action::Next
+            | Action::Prev
+            | Action::Stop
+            | Action::Wifi
     )
 }
 
@@ -1162,6 +1198,61 @@ mod tests {
         m.dialog_modal = true;
         assert_eq!(r(&m, &alt_tab), KeyRoute::Dialog);
         assert_eq!(r(&m, &super_tab), KeyRoute::Dialog);
+    }
+
+    #[test]
+    fn zoom_lock_screenshot_and_volume_binds_pass_a_dialog_but_window_binds_do_not() {
+        let mut b = binds();
+        for (mods, keysym, action) in [
+            (
+                MOD_LOGO,
+                KEY_equal,
+                Action::Zoom(crate::magnifier::ZoomStep::In),
+            ),
+            (MOD_LOGO, KEY_l, Action::Lock),
+            (0, KEY_Print, Action::Screenshot),
+            (MOD_LOGO, KEY_Up, Action::VolumeUp),
+            (MOD_LOGO, KEY_Down, Action::Minimize),
+        ] {
+            b.push(Keybind {
+                mods,
+                keysym,
+                action,
+            });
+        }
+        let mut m = Modes {
+            dialog_has_keyboard: true,
+            ..Modes::default()
+        };
+        for modal in [false, true] {
+            m.dialog_modal = modal;
+            let r = |k: &KeyPress| route(&m, k, &b, &[]).route;
+            assert_eq!(
+                r(&press(KEY_equal, MOD_LOGO)),
+                KeyRoute::Binds(vec![Action::Zoom(crate::magnifier::ZoomStep::In)])
+            );
+            assert_eq!(
+                r(&press(KEY_l, MOD_LOGO)),
+                KeyRoute::Binds(vec![Action::Lock])
+            );
+            assert_eq!(
+                r(&press(KEY_Print, 0)),
+                KeyRoute::Binds(vec![Action::Screenshot])
+            );
+            assert_eq!(
+                r(&press(KEY_Up, MOD_LOGO)),
+                KeyRoute::Binds(vec![Action::VolumeUp])
+            );
+            assert_eq!(
+                r(&press(KEY_XF86AudioRaiseVolume, 0)),
+                KeyRoute::Media(Action::VolumeUp)
+            );
+            assert_eq!(r(&press(KEY_Down, MOD_LOGO)), KeyRoute::Dialog);
+            assert_eq!(r(&press(KEY_r, MOD_LOGO)), KeyRoute::Dialog);
+            assert_eq!(r(&press(KEY_Escape, 0)), KeyRoute::Dialog);
+            assert_eq!(r(&press(KEY_Return, 0)), KeyRoute::Dialog);
+            assert_eq!(r(&press(KEY_equal, 0)), KeyRoute::Dialog);
+        }
     }
 
     #[test]
