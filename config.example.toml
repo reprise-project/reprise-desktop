@@ -1,6 +1,6 @@
 # Reprise configuration. Every key is optional.
 
-terminal = "reprise-terminal"
+terminal = "reprise-terminal"   # a command line, arguments included; Default Programs sets it
 # script_terminal = "stay"   # a script opened from the desktop, Explorer or a search runs in `terminal`: "stay" waits for Enter after it ends, "close" closes the window at once unless the script fails; Default Programs sets it
 # task_manager = "gnome-system-monitor"   # the taskbar menu's Task Manager row; default: top in the terminal
 startmenu_banner = "Reprise Desktop"   # text of the vertical band on the Start menu's left edge
