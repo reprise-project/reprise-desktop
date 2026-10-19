@@ -1173,7 +1173,7 @@ pub struct DragRow<'a> {
 /// The image a List, Details, Tiles or Thumbnails drag of `rows` carries, faded 1:2. A List or
 /// Details row is painted as an unselected List row where it sits in the view, keeping only the
 /// rows the body shows; Details rows take the Name column's width, from its icon. A tile or
-/// thumbnail is painted unselected in its cell, cut as [`iconview::drag_cut`] cuts. Returns the
+/// thumbnail is painted unselected in its cell, cut as [`grid_drag_cut`] cuts. Returns the
 /// image at `theme.scale` and the point of it under `pointer`, in view coordinates; None in Icons,
 /// which draws through [`iconview::drag_image`].
 pub fn drag_image(
@@ -1249,6 +1249,31 @@ pub fn drag_image(
     Some((c, (pointer.0 - bounds.x, pointer.1 - bounds.y)))
 }
 
+/// The tiles or thumbnails a drag of `cells` shows: those held whole by a square
+/// [`iconview::DRAG_IMAGE_MAX`] 100% px across, grown by the text size, centred on the cell under
+/// `pointer`, so the pressed cell always shows whole. Cuts as [`iconview::drag_cut`] when the
+/// pointer is on none of them.
+fn grid_drag_cut(
+    u: crate::theme::TextUnits,
+    cells: &[Rect],
+    pointer: (i32, i32),
+) -> Option<(Vec<usize>, Rect)> {
+    let Some(&pressed) = cells.iter().find(|c| c.contains(pointer.0, pointer.1)) else {
+        return iconview::drag_cut(u, cells, pointer);
+    };
+    let side = u.len(iconview::DRAG_IMAGE_MAX);
+    let (cx, cy) = (
+        pressed.x + pressed.width / 2,
+        pressed.y + pressed.height / 2,
+    );
+    let window = Rect::new(cx - side / 2, cy - side / 2, side, side).union(&pressed);
+    let shown: Vec<usize> = (0..cells.len())
+        .filter(|&i| window.intersect(&cells[i]) == cells[i])
+        .collect();
+    let r = shown.iter().map(|&i| cells[i]).reduce(|a, b| a.union(&b))?;
+    Some((shown, r))
+}
+
 fn grid_drag_image(
     theme: &crate::theme::Theme,
     text: &TextRenderer,
@@ -1262,7 +1287,7 @@ fn grid_drag_image(
         .filter_map(|r| Some((r, sv.entries.get(r.index)?, *lay.cells.get(r.index)?)))
         .collect();
     let cells: Vec<Rect> = placed.iter().map(|&(_, _, cell)| cell).collect();
-    let (shown, r) = iconview::drag_cut(theme.text, &cells, pointer)?;
+    let (shown, r) = grid_drag_cut(theme.text, &cells, pointer)?;
     let (cs, s, u, px) = (
         &theme.colors,
         theme.scale.max(1),
@@ -2669,7 +2694,7 @@ pub(crate) mod tests {
 
     /// A Tiles or Thumbnails drag image paints each dragged cell unselected where it sits: a
     /// tile's icon left of its name and detail lines, a thumbnail's picture in its frame over its
-    /// name; a cell partly past the pointer's square is cut at it.
+    /// name; with the pointer off every cell, a cell partly past the pointer's square is cut at it.
     #[test]
     fn a_grid_drag_image_paints_each_tile_or_thumbnail_in_its_cell() {
         for mode in [Mode::Tiles, Mode::Thumbnails] {
@@ -2707,7 +2732,40 @@ pub(crate) mod tests {
             assert_eq!(
                 cut.width as i32,
                 c.right() - (far.0 - DRAG_HALF),
-                "{mode:?}: cut at the square's left edge"
+                "{mode:?}: off every cell, cut at the square's left edge"
+            );
+        }
+    }
+
+    /// A tile or thumbnail pressed near its edge shows whole; the square round the pressed cell's
+    /// centre keeps the other cells it holds whole (the tile below; no thumbnail) and drops the
+    /// ones it would cut.
+    #[test]
+    fn a_grid_drag_keeps_the_pressed_cell_whole_wherever_it_is_pressed() {
+        for mode in [Mode::Tiles, Mode::Thumbnails] {
+            let sv = sample(mode, false);
+            let lay = layout(&sv, Rect::new(0, 0, 500, 400), &ControlMetrics::CLASSIC);
+            let cells = &lay.cells;
+            for (dx, dy) in [(2, 2), (cells[0].width - 3, cells[0].height - 3)] {
+                let at = (cells[0].x + dx, cells[0].y + dy);
+                let (img, grab) = drag_of(&sv, &lay, &[0], at, 1).expect("an image");
+                assert_eq!(
+                    (img.width as i32, img.height as i32, grab),
+                    (cells[0].width, cells[0].height, (dx, dy)),
+                    "{mode:?} pressed at {dx},{dy}"
+                );
+            }
+            let all: Vec<usize> = (0..cells.len()).collect();
+            let at = (cells[0].x + 2, cells[0].y + 2);
+            let (img, grab) = drag_of(&sv, &lay, &all, at, 1).expect("an image");
+            let held = match mode {
+                Mode::Tiles => cells[0].union(&cells[2]),
+                _ => cells[0],
+            };
+            assert_eq!(
+                (img.width as i32, img.height as i32, grab),
+                (held.width, held.height, (2, 2)),
+                "{mode:?}: the cells the square round cell 0 holds whole"
             );
         }
     }
@@ -2737,10 +2795,10 @@ pub(crate) mod tests {
         assert_eq!(
             got,
             [
-                12367351723118438290,
-                10812927578775749966,
-                7051300675491572982,
-                13578866114428635029
+                13645227026126532502,
+                1281062025351903798,
+                7530801195331324834,
+                6682858532581181662
             ]
         );
     }

@@ -800,15 +800,25 @@ fn the_drag_image_stacks_every_dragged_icon() {
             Mode::Icons => (true, (21, 2, 32)),
             _ => (false, (5, 4, 48)),
         };
-        let bounds = cells
-            .iter()
-            .map(|c| match square {
-                true => Rect::new(c.x, c.y, iconview::CELL, iconview::CELL),
-                false => *c,
-            })
-            .reduce(|a, b| a.union(&b))
-            .expect("cells")
-            .intersect(&Rect::new(at.0 - 128, at.1 - 128, 256, 256));
+        // Icons cut at the square round the pointer; tiles keep those whole in the square round
+        // the pressed tile's centre.
+        let bounds = match square {
+            true => cells
+                .iter()
+                .map(|c| Rect::new(c.x, c.y, iconview::CELL, iconview::CELL))
+                .reduce(|a, b| a.union(&b))
+                .expect("cells")
+                .intersect(&Rect::new(at.0 - 128, at.1 - 128, 256, 256)),
+            false => {
+                let p = cells[0];
+                let (cx, cy) = (p.x + p.width / 2, p.y + p.height / 2);
+                let window = Rect::new(cx - 128, cy - 128, 256, 256);
+                (cells.iter().copied())
+                    .filter(|c| window.intersect(c) == *c)
+                    .reduce(|a, b| a.union(&b))
+                    .expect("the pressed tile")
+            }
+        };
         assert_eq!(
             (img.width as i32, img.height as i32),
             (bounds.width, bounds.height),

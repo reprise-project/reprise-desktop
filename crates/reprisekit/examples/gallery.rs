@@ -1378,7 +1378,8 @@ fn render_termgrid(scale: i32) -> Canvas {
 
 /// A 640 px bar along the top in Classic, Blue, Glass and Glass's small bar over the stripes; the orb's buffer goes over each Glass bar.
 /// A taskbar per look with a copy running, one paused and one without progress.
-/// A Tiles and a Thumbnails drag of three entries, each image over the view's window colour.
+/// A Tiles and a Thumbnails drag of three entries pressed near the second's left edge, each image
+/// over the view's window colour.
 fn render_grid_drag(scale: i32) -> Canvas {
     let theme = cued(Theme::default()).scaled(scale);
     let text = TextRenderer::load(&theme.fonts);
@@ -1407,7 +1408,7 @@ fn render_grid_drag(scale: i32) -> Canvas {
             })
             .collect();
         let cell = lay.cells[1];
-        let at = (cell.x + cell.width / 2, cell.y + cell.height / 2);
+        let at = (cell.x + 8, cell.y + cell.height / 2);
         if let Some((img, _)) = shellview::drag_image(&theme, &text, &sv, &lay, &rows, at) {
             c.blit_over(x * scale, 10 * scale, &img);
             x += img.width as i32 / scale + 20;
