@@ -100,13 +100,18 @@ impl Meter {
     }
 
     /// The step count and whether the job is paused or waiting on a flush, for [`watch`].
-    pub(crate) fn stirring(&self) -> (u64, bool) {
-        let resting =
-            self.paused.load(Ordering::Relaxed) || self.flush_waits.load(Ordering::Relaxed) > 0;
-        (self.stir.load(Ordering::Relaxed), resting)
+    pub(crate) fn stirring(&self) -> (u64, Rest) {
+        let rest = if self.paused.load(Ordering::Relaxed) {
+            Rest::Paused
+        } else if self.flush_waits.load(Ordering::Relaxed) > 0 {
+            Rest::Flushing
+        } else {
+            Rest::No
+        };
+        (self.stir.load(Ordering::Relaxed), rest)
     }
 
-    /// Run `f`, a wait on a drive's flush, outside the watch: a slow disk takes as long as it takes.
+    /// Run `f`, a wait on a drive's flush, under [`watch`]'s longer flush bound.
     pub(crate) fn flush_wait<T>(&self, f: impl FnOnce() -> T) -> T {
         self.flush_waits.fetch_add(1, Ordering::Relaxed);
         let out = f();
@@ -211,8 +216,24 @@ impl Meter {
     }
 }
 
+/// Why a job's step count may stand still without the job being stuck.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Rest {
+    No,
+    /// Held by the user: never a give-up.
+    Paused,
+    /// In a wait on a drive's flush: given [`FLUSH_ALLOWANCE`] deadlines.
+    Flushing,
+}
+
+/// A wait on one flush gives up after this many deadlines (5 min at
+/// [`crate::deadline::ACTION_DEADLINE`]). A job keeps only a few MB unflushed, but a drive's flush
+/// also writes what other programs left dirty: a 10 MB/s stick flushes 3 GB in that time. A soft
+/// NFS mount fails its call within it; a hard one, or a pulled stick, never answers.
+const FLUSH_ALLOWANCE: u32 = 20;
+
 /// Cancels the job and runs `give_up` (which reports it as not responding) once `meter` stands
-/// still for `deadline` outside a pause or a flush. `ended` is set by whichever ends the job first,
+/// still for `deadline` outside a pause, or one flush lasts [`FLUSH_ALLOWANCE`] deadlines. `ended` is set by whichever ends the job first,
 /// the job or the watch, so only one of them reports its end.
 pub(crate) fn watch(
     meter: &Arc<Meter>,
@@ -223,19 +244,20 @@ pub(crate) fn watch(
 ) {
     let (m, ended) = (meter.clone(), ended.clone());
     let every = (deadline / 4).min(Duration::from_secs(1));
+    let flush_deadline = deadline * FLUSH_ALLOWANCE;
     let spawned = std::thread::Builder::new()
         .name(format!("reprisefs-{job}-watch"))
         .spawn(move || {
             let mut headway = Headway::new(m.stirring().0, Instant::now());
             while !ended.load(Ordering::Acquire) {
                 std::thread::sleep(every);
-                if !headway.stalled(m.stirring(), Instant::now(), deadline)
+                if !headway.stalled(m.stirring(), Instant::now(), deadline, flush_deadline)
                     || ended.swap(true, Ordering::AcqRel)
                 {
                     continue;
                 }
                 m.cancel();
-                log::warn!("reprisefs: a {job} made no headway for {deadline:?}; giving up");
+                log::warn!("reprisefs: a {job} stood still past its deadline; giving up");
                 give_up(&m);
                 return;
             }
@@ -245,24 +267,45 @@ pub(crate) fn watch(
     }
 }
 
-/// [`watch`]'s memory of the last step it saw and when.
+/// [`watch`]'s memory of the last step it saw and when, and when the flush it is in began.
 struct Headway {
     stir: u64,
     at: Instant,
+    flush_from: Option<Instant>,
 }
 
 impl Headway {
     fn new(stir: u64, at: Instant) -> Self {
-        Headway { stir, at }
+        Headway {
+            stir,
+            at,
+            flush_from: None,
+        }
     }
 
-    /// Whether `stirring` ([`Meter::stirring`]) read at `now` has stood still for `deadline`.
-    fn stalled(&mut self, (stir, resting): (u64, bool), now: Instant, deadline: Duration) -> bool {
-        if resting || stir != self.stir {
+    /// Whether `stirring` ([`Meter::stirring`]) read at `now` has stood still for `deadline`, or
+    /// one flush has lasted `flush_deadline`.
+    fn stalled(
+        &mut self,
+        (stir, rest): (u64, Rest),
+        now: Instant,
+        deadline: Duration,
+        flush_deadline: Duration,
+    ) -> bool {
+        if rest == Rest::Paused || stir != self.stir {
             *self = Headway::new(stir, now);
-            return false;
         }
-        now.duration_since(self.at) >= deadline
+        match rest {
+            Rest::Paused => false,
+            Rest::Flushing => {
+                self.at = now;
+                now.duration_since(*self.flush_from.get_or_insert(now)) >= flush_deadline
+            }
+            Rest::No => {
+                self.flush_from = None;
+                now.duration_since(self.at) >= deadline
+            }
+        }
     }
 }
 
@@ -461,24 +504,60 @@ mod tests {
     }
 
     /// Polls a [`Headway`] every 25 ms of a made-up clock for 400 ms while `stirring` gives the
-    /// meter at each poll; true when it stalled at a 100 ms deadline.
-    fn stalls(mut stirring: impl FnMut(u32) -> (u64, bool)) -> bool {
+    /// meter at each poll; true when it stalled at a 100 ms deadline and a `flush_ms` flush bound.
+    fn stalls_by(flush_ms: u64, mut stirring: impl FnMut(u32) -> (u64, Rest)) -> bool {
         let start = Instant::now();
         let mut h = Headway::new(0, start);
         (1..=16).any(|n| {
             let now = start + Duration::from_millis(25) * n;
-            h.stalled(stirring(n), now, Duration::from_millis(100))
+            let (deadline, flush) = (Duration::from_millis(100), Duration::from_millis(flush_ms));
+            h.stalled(stirring(n), now, deadline, flush)
         })
+    }
+
+    fn stalls(stirring: impl FnMut(u32) -> (u64, Rest)) -> bool {
+        stalls_by(1000, stirring)
     }
 
     #[test]
     fn a_slow_step_that_keeps_stepping_or_flushes_outlives_the_deadline() {
         assert!(
-            !stalls(|n| (u64::from(n * 25 / 40), false)),
+            !stalls(|n| (u64::from(n * 25 / 40), Rest::No)),
             "400 ms of steps 40 ms apart"
         );
-        assert!(!stalls(|_| (0, true)), "a 400 ms flush");
-        assert!(stalls(|_| (0, false)), "400 ms without a step gives up");
+        assert!(!stalls(|_| (0, Rest::Flushing)), "a 400 ms flush");
+        assert!(!stalls(|_| (0, Rest::Paused)), "a 400 ms pause");
+        assert!(stalls(|_| (0, Rest::No)), "400 ms without a step gives up");
+    }
+
+    #[test]
+    fn a_flush_past_its_own_bound_gives_up_and_a_pause_never_does() {
+        assert!(
+            stalls_by(300, |_| (0, Rest::Flushing)),
+            "a 400 ms flush with a 300 ms bound"
+        );
+        assert!(
+            !stalls_by(300, |n| (u64::from(n / 8), Rest::Flushing)),
+            "two 200 ms flushes, each under the bound"
+        );
+        assert!(
+            !stalls_by(300, |n| (
+                0,
+                if n % 4 == 0 {
+                    Rest::Paused
+                } else {
+                    Rest::Flushing
+                }
+            )),
+            "a flush paused every 100 ms starts its bound again"
+        );
+        assert!(
+            stalls_by(300, |n| (
+                0,
+                if n <= 10 { Rest::Flushing } else { Rest::No }
+            )),
+            "a flush that ends without a step still owes the step deadline"
+        );
     }
 
     #[test]
@@ -486,10 +565,13 @@ mod tests {
         let m = Arc::new(Meter::default());
         metered(&m, || {
             step();
-            assert_eq!(m.stirring(), (1, false));
-            flushing(|| assert_eq!(m.stirring(), (1, true)));
+            assert_eq!(m.stirring(), (1, Rest::No));
+            flushing(|| assert_eq!(m.stirring(), (1, Rest::Flushing)));
+            m.set_paused(true);
+            flushing(|| assert_eq!(m.stirring(), (2, Rest::Paused)));
+            m.set_paused(false);
         });
-        assert_eq!(m.stirring(), (2, false), "a flush's end is a step");
+        assert_eq!(m.stirring(), (3, Rest::No), "a flush's end is a step");
     }
 
     #[test]
