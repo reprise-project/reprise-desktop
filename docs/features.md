@@ -113,7 +113,9 @@ the Super tap, Super+Shift+Esc and the VT switch keys can be rebound.
   pointer. Super+Shift+B hides its frame. Esc during a caption drag puts the
   window back where it was.
 - **End Program.** Reprise pings windows, so one that stopped answering gets
-  End Program as soon as you close it instead of after a wait.
+  End Program as soon as you close it instead of after a wait. A program
+  that has exited while one of its threads hangs on a dead mount stops
+  answering too; its windows go without End Program.
 - **Modal dialogs that stay modal.** Focus can't land behind a dialog a
   toolkit marked modal.
 - **No focus stealing.** A window takes the keyboard only with a trusted

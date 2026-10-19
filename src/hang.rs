@@ -94,6 +94,18 @@ fn end_programs(dialogs: &[Option<i32>], ends: impl Fn(i32) -> bool) -> Vec<(usi
         .collect()
 }
 
+/// Whether `pid`'s main thread has exited (`/proc/<pid>/stat` state Z or X); other threads of
+/// it may still run.
+fn leader_exited(pid: i32) -> bool {
+    std::fs::read_to_string(format!("/proc/{pid}/stat"))
+        .is_ok_and(|s| matches!(stat_state(&s), Some('Z' | 'X')))
+}
+
+/// The state letter of a `/proc/<pid>/stat` line; the command name before it may hold `)`.
+fn stat_state(stat: &str) -> Option<char> {
+    stat.rsplit_once(')')?.1.trim_start().chars().next()
+}
+
 fn program_name(pid: i32) -> Option<String> {
     std::fs::read_link(format!("/proc/{pid}/exe"))
         .ok()
@@ -303,10 +315,40 @@ impl State {
     /// Its windows are hung until it answers a ping or commits a frame.
     fn ping_timed_out(&mut self, target: Target) {
         self.hang.pings.remove(&target);
-        for w in self.windows_of(target) {
+        let ws = self.windows_of(target);
+        if ws.first().is_some_and(|&w| self.drop_exited(w)) {
+            return;
+        }
+        for w in ws {
             self.window_hang(w).liveness.timed_out();
             self.offer_end(w);
         }
+    }
+
+    /// A program whose main thread has exited never answers again, but a thread of it stuck on a
+    /// dead mount keeps its socket open: disconnect the client behind `w` so its windows go.
+    fn drop_exited(&mut self, w: WindowId) -> bool {
+        let Some(pid) = self
+            .client_pid(w)
+            .filter(|&p| self.may_end(p) && leader_exited(p))
+        else {
+            return false;
+        };
+        let Some(win) = self.win(w) else {
+            return false;
+        };
+        log::info!("window {w:?}: pid {pid} has exited; dropping its connection");
+        match &win.kind {
+            Kind::Xdg(t) => {
+                if let Some(c) = t.wl_surface().client() {
+                    self.dh
+                        .backend_handle()
+                        .kill_client(c.id(), DisconnectReason::ConnectionClosed);
+                }
+            }
+            Kind::X11(x) => self.xwayland.kill_owner(x.window_id(), pid as u32),
+        }
+        true
     }
 
     /// Whether End Program may kill `pid`: never the compositor itself or the Xwayland server under
@@ -445,6 +487,33 @@ mod tests {
         l.pinged(at(t0, 5000));
         assert!(l.hung(true), "still hung while the new ping is out");
         assert!(!l.hung(false), "the new ping answered clears it");
+    }
+
+    #[test]
+    fn the_stat_state_follows_the_last_parenthesis() {
+        assert_eq!(stat_state("42 (a) b) Z 1 42"), Some('Z'));
+        assert_eq!(stat_state("42 (foot) S 1 42"), Some('S'));
+        assert_eq!(stat_state("garbage"), None);
+    }
+
+    #[test]
+    fn a_child_left_unreaped_has_exited_and_a_running_one_has_not() {
+        let mut running = std::process::Command::new("sleep")
+            .arg("30")
+            .spawn()
+            .unwrap();
+        assert!(!leader_exited(running.id() as i32), "running sleep");
+        running.kill().unwrap();
+        running.wait().unwrap();
+
+        let mut exited = std::process::Command::new("true").spawn().unwrap();
+        let pid = exited.id() as i32;
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !leader_exited(pid) && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(leader_exited(pid), "unreaped true is a zombie");
+        exited.wait().unwrap();
     }
 
     #[test]
