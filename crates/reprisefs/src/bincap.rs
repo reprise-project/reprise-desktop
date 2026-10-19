@@ -637,8 +637,8 @@ pub fn delete_prompt(
     let lead = match (no_bin, count) {
         (BinLack::None, _) => return (title, question),
         (_, 1) => "This drive has no Recycle Bin.",
-        (BinLack::All, _) => "These items are on a drive with no Recycle Bin.",
-        (BinLack::Some, _) => "Some of these items are on a drive with no Recycle Bin.",
+        (BinLack::All, _) => "None of these items can go to the Recycle Bin.",
+        (BinLack::Some, _) => "Some of these items cannot go to the Recycle Bin.",
     };
     (title, format!("{lead} {question}"))
 }
@@ -974,7 +974,7 @@ mod tests {
             p(Multiple, "", 3, true, BinLack::All),
             (
                 "Confirm Multiple File Delete",
-                "These items are on a drive with no Recycle Bin. Are you sure you want to \
+                "None of these items can go to the Recycle Bin. Are you sure you want to \
                  delete these 3 items?",
             ),
         );
@@ -982,7 +982,7 @@ mod tests {
             p(Multiple, "", 3, true, BinLack::Some),
             (
                 "Confirm Multiple File Delete",
-                "Some of these items are on a drive with no Recycle Bin. Are you sure you want \
+                "Some of these items cannot go to the Recycle Bin. Are you sure you want \
                  to delete these 3 items?",
             ),
         );
