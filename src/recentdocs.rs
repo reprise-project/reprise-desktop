@@ -53,12 +53,11 @@ pub struct RecentDocs {
     /// The document folders with their icon names as the last check read them from
     /// `user-dirs.dirs`, whether or not they exist.
     dirs: Vec<(PathBuf, &'static str)>,
-    /// Wakes for `user-dirs.dirs` and the document folders (`recentwatch`).
+    /// Wakes for `user-dirs.dirs`, the document folders and the files open lists show
+    /// (`recentwatch`).
     pub(crate) folder_watch: Option<crate::dirwatch::DirWatch>,
-    /// A job is watching document folders; another waits for it.
-    pub(crate) folder_syncing: bool,
-    /// The folders changed while a job watched them: follow them again when it answers.
-    pub(crate) folder_resync: bool,
+    /// The folders a file job is adding to `folder_watch`.
+    pub(crate) folder_adds: HashSet<PathBuf>,
 }
 
 impl Default for RecentDocs {
@@ -81,8 +80,7 @@ impl RecentDocs {
             retry_armed: false,
             dirs: Vec::new(),
             folder_watch: None,
-            folder_syncing: false,
-            folder_resync: false,
+            folder_adds: HashSet::new(),
         }
     }
 
@@ -274,9 +272,7 @@ impl State {
             let (dirs, asked) =
                 check_with_dirs(paths, &probe, reprisefs::places::document_dir_paths);
             Box::new(move |s: &mut State| {
-                if s.recent.land_check(id, dirs, asked) {
-                    crate::recentwatch::follow_document_dirs(s);
-                }
+                s.recent.land_check(id, dirs, asked);
                 if std::mem::take(&mut s.recent.recheck) {
                     s.check_recent();
                 }
@@ -360,6 +356,7 @@ impl State {
             self.redraw_menu(depth - 1);
         }
         self.relist_start_jumps();
+        crate::recentwatch::follow_recent(self);
     }
 }
 

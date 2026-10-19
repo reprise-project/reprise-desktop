@@ -39,6 +39,12 @@ pub struct Adds {
 /// The watches an [`Adds::run`] made.
 pub struct Added(Vec<(PathBuf, WatchDescriptor)>);
 
+impl Added {
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+}
+
 /// What [`DirWatch::adder`] saw watched, for [`Adder::run`] on a thread.
 pub struct Adder {
     watches: Watches,
@@ -63,11 +69,6 @@ impl Adder {
 }
 
 impl Adds {
-    /// Nothing to watch: no need to run.
-    pub fn is_empty(&self) -> bool {
-        self.dirs.is_empty()
-    }
-
     /// Each directory with an [`Adds`] of its own, for a thread each.
     pub fn each(self) -> impl Iterator<Item = (PathBuf, Adds)> {
         let watches = self.watches;

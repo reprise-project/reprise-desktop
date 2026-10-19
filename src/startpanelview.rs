@@ -341,6 +341,13 @@ fn jump_rows(
         .collect()
 }
 
+impl StartPanelView {
+    /// Every file the programs' jump lists show.
+    pub(crate) fn jump_files(&self) -> impl Iterator<Item = &PathBuf> {
+        self.jumps.iter().flatten()
+    }
+}
+
 fn jump_file(jumps: &[Vec<PathBuf>], mode: Mode, k: usize) -> Option<&Path> {
     let Mode::Jump(i) = mode else {
         return None;
