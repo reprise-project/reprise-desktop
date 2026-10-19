@@ -14,6 +14,7 @@ pub mod combo;
 pub mod copyprogress;
 pub mod displaypanel;
 pub mod dlgtemplate;
+pub mod editmenu;
 pub mod emojipicker;
 pub mod endsession;
 pub mod explorerbar;

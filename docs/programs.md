@@ -46,7 +46,9 @@ The file manager, and the default for folders.
 ## Notepad
 
 The default for plain text. New, Open, Save, Find (F3 for the next one),
-Replace, Go To and Time/Date (F5), with Ln and Col in the status bar. It keeps
+Replace, Go To and Time/Date (F5), with Ln and Col in the status bar. A
+right-click on the text (or Shift+F10) opens Undo, Cut, Copy, Paste, Delete
+and Select All, and Paste greys while the clipboard holds no text. It keeps
 CRLF line endings, never leaves a file half saved, asks before opening a
 file that isn't UTF-8, and grows with Larger Text. Word Wrap and Print are
 greyed out for now. Notepad has always had its priorities.
