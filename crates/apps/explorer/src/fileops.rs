@@ -47,6 +47,8 @@ pub(crate) struct Put {
     pub(crate) ops: Vec<ItemOp>,
     batch: Vec<Undoable>,
     landed: Vec<PathBuf>,
+    /// A folder landed, so the Folders tree refills.
+    landed_folder: bool,
     select_landed: bool,
     /// The last failure; `Failed` and `Finished` can arrive in different polls.
     failed: Option<(&'static str, String)>,
@@ -55,7 +57,8 @@ pub(crate) struct Put {
 
 pub(crate) type JobDone = Box<dyn FnOnce(&mut Explorer, &mut Ctx) -> Reply + Send>;
 
-pub(crate) type ItemOp = (PathBuf, DropOp, String);
+/// An item of a put: its source, op, display name and whether it is a folder ([`Checked`]).
+pub(crate) type ItemOp = (PathBuf, DropOp, String, bool);
 
 /// Wake the window once a job just started may have run long enough to show its dialog.
 pub(crate) fn wake_to_show(ctx: &Ctx) {
@@ -68,6 +71,8 @@ pub(crate) fn wake_to_show(ctx: &Ctx) {
 
 pub struct PendingPut {
     pub(crate) items: Vec<PutItem>,
+    /// Whether each of `items` is a folder, as [`Checked`] read it.
+    folders: Vec<bool>,
     pub(crate) dir: PathBuf,
     select_landed: bool,
 }
@@ -76,19 +81,28 @@ impl PendingPut {
     fn ops(&self) -> Vec<ItemOp> {
         self.items
             .iter()
-            .map(|it| (it.src.clone(), it.op, it.display_name.clone()))
+            .zip(&self.folders)
+            .map(|(it, &folder)| (it.src.clone(), it.op, it.display_name.clone(), folder))
             .collect()
     }
 
     pub(crate) fn apply(&mut self, verdicts: &[Verdict]) {
         let mut v = verdicts.iter();
-        self.items.retain_mut(|it| match v.next() {
-            Some(Verdict::Skip) => false,
-            Some(Verdict::Replace(r)) => {
-                it.replace = Some(r.clone());
-                true
+        let mut folders = std::mem::take(&mut self.folders).into_iter();
+        self.items.retain_mut(|it| {
+            let folder = folders.next().unwrap_or(false);
+            let keep = match v.next() {
+                Some(Verdict::Skip) => false,
+                Some(Verdict::Replace(r)) => {
+                    it.replace = Some(r.clone());
+                    true
+                }
+                _ => true,
+            };
+            if keep {
+                self.folders.push(folder);
             }
-            _ => true,
+            keep
         });
     }
 }
@@ -311,6 +325,11 @@ impl Explorer {
         c: Checked,
         ctx: &mut Ctx,
     ) -> Reply {
+        let folders = c
+            .puts
+            .iter()
+            .map(|&(_, op, is_dir)| is_dir && op != DropOp::Shortcut)
+            .collect();
         let items = c
             .puts
             .into_iter()
@@ -331,6 +350,7 @@ impl Explorer {
             .collect();
         let pending = PendingPut {
             items,
+            folders,
             dir,
             select_landed,
         };
@@ -479,14 +499,14 @@ impl Explorer {
         let wake = ctx.wake.clone();
         let job = PutJob::start(pending.items, pending.dir.clone(), move || wake.wake());
         wake_to_show(ctx);
-        let kind = if ops.iter().all(|(_, op, _)| *op == DropOp::Move) {
+        let kind = if ops.iter().all(|(_, op, ..)| *op == DropOp::Move) {
             Kind::Move
         } else {
             Kind::Copy
         };
         let from = ops
             .first()
-            .and_then(|(src, _, _)| src.parent())
+            .and_then(|(src, ..)| src.parent())
             .map(|p| Place::from_path(p).title())
             .unwrap_or_default();
         let to = Place::from_path(&pending.dir).title();
@@ -497,6 +517,7 @@ impl Explorer {
             ops,
             batch: Vec::new(),
             landed: Vec::new(),
+            landed_folder: false,
             select_landed: pending.select_landed,
             failed: None,
             progress,
@@ -514,9 +535,10 @@ impl Explorer {
                     replaced,
                     unlisted,
                 } => {
-                    let (src, op, _) = &put.ops[index];
+                    let (src, op, _, folder) = &put.ops[index];
                     let dest = put.dir.join(&landed);
                     put.landed.push(dest.clone());
+                    put.landed_folder |= folder;
                     if replaced {
                         continue;
                     }
@@ -530,7 +552,7 @@ impl Explorer {
                     });
                 }
                 PutEvent::Failed { index, error } => {
-                    let (_, op, name) = &put.ops[index];
+                    let (_, op, name, _) = &put.ops[index];
                     put.failed = Some(op.failure(name, &error));
                 }
                 PutEvent::Finished => finished = true,
@@ -545,9 +567,9 @@ impl Explorer {
         self.publish_task_progress();
         self.undos.push_all(put.batch);
         self.sync_undo();
-        if put.landed.iter().any(|p| p.is_dir()) {
+        if put.landed_folder {
             let mut dirs = vec![put.dir.clone()];
-            for (src, op, _) in &put.ops {
+            for (src, op, ..) in &put.ops {
                 if *op == DropOp::Move
                     && let Some(parent) = src.parent()
                     && !dirs.iter().any(|d| d == parent)
