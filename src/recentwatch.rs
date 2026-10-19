@@ -1,8 +1,11 @@
-//! Reads the recent files again when `recently-used.xbel` changes, and checks the document
-//! folders again when one comes or goes or `user-dirs.dirs` changes, so open lists follow them.
+//! Reads the recent files again when `recently-used.xbel` changes, and checks the recent files
+//! and document folders again when a listed file or a document folder goes or `user-dirs.dirs`
+//! changes, so open lists follow them.
 
 use crate::compositor::State;
 use crate::dirwatch::{DirWatch, Want};
+use crate::menuview::MenuKind;
+use crate::taskbar::JumpRow;
 use inotify::WatchMask;
 use smithay::reexports::calloop::{Interest, Mode, PostAction, generic::Generic};
 use std::os::fd::{AsFd, BorrowedFd};
@@ -76,7 +79,7 @@ pub fn setup(state: &mut State) {
             .folder_watch
             .as_mut()
             .is_some_and(|w| w.drain());
-        follow_document_dirs(state);
+        follow_recent(state);
         if changed {
             state.check_recent();
         }
@@ -86,39 +89,81 @@ pub fn setup(state: &mut State) {
         return log::warn!("document folders watch: {}", e.error);
     }
     state.recent.folder_watch = Some(watch);
-    follow_document_dirs(state);
+    follow_recent(state);
 }
 
-/// Watches `user-dirs.dirs` and the document folders the last recent check read from it. The
-/// folders are looked up on a file job, one at a time, since one may sit on a dead mount.
-pub fn follow_document_dirs(state: &mut State) {
-    if state.recent.folder_syncing {
-        state.recent.folder_resync = true;
-        return;
-    }
-    let want = document_wants(
+/// Watches `user-dirs.dirs`, the document folders the last recent check read from it and the
+/// files the open lists show. Each folder is looked up on a file job of its own, since one may
+/// sit on a dead mount; a folder newly watched calls for a check, as a file may have gone
+/// before its watch came.
+pub fn follow_recent(state: &mut State) {
+    let mut want = document_wants(
         &reprisefs::places::user_dirs_file(),
         &state.recent.document_dir_paths(),
     );
-    let Some(adds) = state.recent.folder_watch.as_mut().map(|w| w.plan(&want)) else {
+    want.extend(file_wants(&listed_files(state)));
+    let recent = &mut state.recent;
+    let Some(w) = recent.folder_watch.as_mut() else {
         return;
     };
-    if adds.is_empty() {
-        return;
+    let adds: Vec<_> = (w.plan(&want).each())
+        .filter(|(dir, _)| recent.folder_adds.insert(dir.clone()))
+        .collect();
+    for (dir, add) in adds {
+        state.spawn_fs_job(move || {
+            let added = add.run();
+            Box::new(move |s: &mut State| {
+                s.recent.folder_adds.remove(&dir);
+                let new = !added.is_empty();
+                if let Some(w) = s.recent.folder_watch.as_mut() {
+                    w.adopt(added);
+                }
+                if new {
+                    s.check_recent();
+                }
+            })
+        });
     }
-    state.recent.folder_syncing = true;
-    state.spawn_fs_job(move || {
-        let added = adds.run();
-        Box::new(move |s: &mut State| {
-            s.recent.folder_syncing = false;
-            if let Some(w) = s.recent.folder_watch.as_mut() {
-                w.adopt(added);
-            }
-            if std::mem::take(&mut s.recent.folder_resync) {
-                follow_document_dirs(s);
-            }
+}
+
+/// The files the open Documents menus and jump lists show, the Start panel's included.
+fn listed_files(state: &State) -> Vec<PathBuf> {
+    let mut files: Vec<PathBuf> = state
+        .menus
+        .iter()
+        .flat_map(|m| listed_in(&m.kind))
+        .collect();
+    if let Some(v) = state.start_panel.as_ref() {
+        files.extend(v.jump_files().cloned());
+    }
+    files
+}
+
+fn listed_in(kind: &MenuKind) -> Vec<PathBuf> {
+    match kind {
+        MenuKind::Documents { paths, .. } => paths.iter().flatten().cloned().collect(),
+        MenuKind::JumpList { rows, .. } => (rows.iter().flatten())
+            .filter_map(|r| match r {
+                JumpRow::Recent(p) => Some(p.clone()),
+                _ => None,
+            })
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
+/// Each file's folder, waking only for the file leaving it.
+fn file_wants(files: &[PathBuf]) -> Vec<Want> {
+    files
+        .iter()
+        .filter_map(|f| {
+            Some(Want {
+                dir: f.parent()?.to_path_buf(),
+                mask: WatchMask::DELETE | WatchMask::MOVED_FROM,
+                only: vec![f.file_name()?.to_os_string()],
+            })
         })
-    });
+        .collect()
 }
 
 /// Runs `hit` on the loop whenever an event `want` asks for arrives.
@@ -206,5 +251,51 @@ mod tests {
         std::fs::create_dir(home.join("Videos")).unwrap();
         assert!(w.drain(), "Videos made");
         let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn a_listed_file_deleted_or_moved_away_wakes_the_watch_and_a_neighbour_does_not() {
+        let dir = std::env::temp_dir().join(format!("reprise-listedwatch-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let [a, b, other] = ["a.txt", "b.txt", "other.txt"].map(|n| dir.join(n));
+        for f in [&a, &b, &other] {
+            std::fs::write(f, "").unwrap();
+        }
+        let docs = MenuKind::Documents {
+            paths: vec![Some(a.clone()), None],
+            tips: vec![None, None],
+            dirs: false,
+            icon_px: 16,
+        };
+        let jump = MenuKind::JumpList {
+            rows: vec![
+                Some(JumpRow::Recent(b.clone())),
+                None,
+                Some(JumpRow::Launch),
+            ],
+            target: Box::new(crate::menuview::JumpTarget {
+                name: "Notepad".into(),
+                launch: None,
+                entry: None,
+                pin_file: None,
+                source: None,
+                windows: Vec::new(),
+            }),
+            button: 0,
+        };
+        let listed: Vec<PathBuf> = [docs, jump].iter().flat_map(listed_in).collect();
+        assert_eq!(listed, [a.clone(), b.clone()]);
+
+        let mut w = DirWatch::new().unwrap();
+        w.sync(&file_wants(&listed));
+        std::fs::remove_file(&other).unwrap();
+        std::fs::write(dir.join("c.txt"), "").unwrap();
+        assert!(!w.drain(), "a file the lists do not show");
+        std::fs::remove_file(&a).unwrap();
+        assert!(w.drain(), "a.txt deleted");
+        std::fs::rename(&b, dir.join("b2.txt")).unwrap();
+        assert!(w.drain(), "b.txt moved away");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
