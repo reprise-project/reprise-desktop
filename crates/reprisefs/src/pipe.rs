@@ -69,6 +69,14 @@ impl PasteBuf {
             }
         }
     }
+
+    /// The bytes as Latin-1 text (X11's `STRING`), one character each.
+    pub fn into_latin1_text(self) -> String {
+        let size = self.0.iter().map(|&b| if b < 0x80 { 1 } else { 2 }).sum();
+        let mut text = String::with_capacity(size);
+        text.extend(self.0.iter().map(|&b| char::from(b)));
+        text
+    }
 }
 
 impl Drop for PasteBuf {

@@ -2763,7 +2763,9 @@ impl Host {
         let Ok(read_pipe) = offer.receive(mime.to_string()) else {
             return;
         };
-        self.read_offer(win, read_pipe, |buf| Event::Pasted(buf.into_text()));
+        self.read_offer(win, read_pipe, move |buf| {
+            Event::Pasted(pasted_text(mime, buf))
+        });
     }
 
     /// Read the clipboard's files for `win`: a cut marked in [`reprisefs::fileclip::KDE_CUT`]
@@ -4529,8 +4531,17 @@ pub(crate) fn reconcile(have: &[WinId], want: &[&Child]) -> (Vec<WinId>, Vec<usi
     (drop, make)
 }
 
-/// The text types a paste reads, best first; the last two are X11's Latin-1 ones.
+/// The text types a paste reads, best first; `STRING` is X11's Latin-1 one.
 const PASTE_MIMES: [&str; 5] = [TEXT_MIME, "text/plain", "UTF8_STRING", "TEXT", "STRING"];
+
+/// `buf` read as type `mime` of [`PASTE_MIMES`].
+fn pasted_text(mime: &str, buf: PasteBuf) -> String {
+    if mime == "STRING" {
+        buf.into_latin1_text()
+    } else {
+        buf.into_text()
+    }
+}
 
 /// The type a paste reads out of a selection offering `types`, if it offers text.
 fn text_mime(types: &[String]) -> Option<&'static str> {
@@ -4703,6 +4714,24 @@ mod tests {
         assert_eq!(text_mime(&x11), Some("UTF8_STRING"));
         assert_eq!(text_mime(&types(&["TEXT"])), Some("TEXT"));
         assert_eq!(text_mime(&types(&["STRING"])), Some("STRING"));
+    }
+
+    #[test]
+    fn a_string_paste_reads_as_latin1_and_the_others_as_utf8() {
+        let buf = |b: &[u8]| {
+            let mut buf = PasteBuf::default();
+            assert!(buf.push(b));
+            buf
+        };
+        assert_eq!(pasted_text("STRING", buf(b"caf\xe9")), "caf\u{e9}");
+        assert_eq!(
+            pasted_text("UTF8_STRING", buf("caf\u{e9}".as_bytes())),
+            "caf\u{e9}"
+        );
+        assert_eq!(
+            pasted_text("TEXT", buf("caf\u{e9}".as_bytes())),
+            "caf\u{e9}"
+        );
     }
 
     #[test]
