@@ -14,7 +14,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
 
 use reprisefs::apps::AppEntry;
-use reprisekit::taskbar::TaskbarHit;
+use reprisekit::taskbar::{TaskbarHit, TaskbarLayout};
 use reprisescene::{BufferId, Input};
 use smithay::utils::{Logical, Point};
 
@@ -760,11 +760,7 @@ impl State {
             Hit::Taskbar { bar, hit } => {
                 let b = self.bar(bar)?;
                 let (lx, ly) = self.bar_local(b, pos.x, pos.y);
-                let layout = &b.layout;
-                let on_band = matches!(hit, TaskbarHit::Quick(_))
-                    || (matches!(hit, TaskbarHit::Nothing | TaskbarHit::Grip(_))
-                        && layout.on_quick_band(lx, ly));
-                on_band.then(|| DropTarget::Quick(layout.drop_slot(lx, ly)))
+                quick_drop(&b.layout, hit, lx, ly).map(DropTarget::Quick)
             }
             Hit::Desktop { index } => {
                 let view = self.desktop.as_ref()?;
@@ -1166,9 +1162,51 @@ impl State {
     }
 }
 
+/// The Quick Launch slot a drop at bar point (`x`, `y`) over `hit` adds a button at, if on the band.
+fn quick_drop(layout: &TaskbarLayout, hit: TaskbarHit, x: i32, y: i32) -> Option<usize> {
+    let on_band = matches!(hit, TaskbarHit::Quick(_) | TaskbarHit::QuickMore)
+        || (matches!(hit, TaskbarHit::Nothing | TaskbarHit::Grip(_)) && layout.on_quick_band(x, y));
+    on_band.then(|| layout.drop_slot(x, y))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_drop_on_the_quick_launch_more_cell_adds_past_the_shown_buttons() {
+        use reprisekit::taskbar::{Bands, BarSpan, ClockText, Edge, TaskbarCounts, TaskbarShape};
+        let m = crate::theme::Metrics::default();
+        let span = BarSpan {
+            edge: Edge::Bottom,
+            length: 800,
+            thickness: m.taskbar_height,
+        };
+        let counts = TaskbarCounts {
+            quick: 5,
+            tasks: 1,
+            ..TaskbarCounts::default()
+        };
+        let bands = Bands {
+            tasks_first: false,
+            first_width: Some(0),
+        };
+        let clock = ClockText { time: 30, date: 30 };
+        let layout = TaskbarLayout::compute_on(
+            &m,
+            &TaskbarShape::CLASSIC,
+            span,
+            false,
+            counts,
+            clock,
+            bands,
+        );
+        let more = layout.quick_more.expect("the band ends in a » cell");
+        let (x, y) = (more.x + more.width / 2, more.y + more.height / 2);
+        let hit = layout.hit(x, y);
+        assert_eq!(hit, TaskbarHit::QuickMore);
+        assert_eq!(quick_drop(&layout, hit, x, y), Some(layout.quick.len()));
+    }
 
     #[test]
     fn a_program_row_drags_only_while_its_menu_is_open() {
