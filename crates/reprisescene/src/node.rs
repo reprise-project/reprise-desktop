@@ -229,7 +229,17 @@ pub(crate) struct Node<R: Renderer, D> {
     pub(crate) opacity: f32,
     /// A tree's clip, node-local: its leaves draw and hit only inside it.
     pub(crate) clip: Option<Rectangle<i32, Logical>>,
+    /// Layout: the node and everything under it are left out of any view
+    /// lying wholly inside it, and out of hit tests at points in it.
+    pub(crate) hidden_in: Option<Rectangle<i32, Logical>>,
     pub(crate) input: Input,
     pub(crate) data: Option<D>,
     pub(crate) content: Content<R>,
+}
+
+impl<R: Renderer, D> Node<R, D> {
+    /// Whether `area` (layout) lies inside the node's `hidden_in`.
+    pub(crate) fn hidden_over(&self, area: Rectangle<i32, Logical>) -> bool {
+        self.hidden_in.is_some_and(|h| h.contains_rect(area))
+    }
 }

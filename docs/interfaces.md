@@ -129,7 +129,9 @@ Hibernate.
 
 - **The 3D switcher.** Super+Tab tilts every window into a stack over the
   dimmed desktop. Tab or the wheel rolls it, releasing Super switches, a click
-  picks a card, Esc backs out. `[switcher] flip = false` turns it off, and
+  picks a card, Esc backs out. With several screens the stack opens on the
+  one under the pointer, its desktop card shows that screen, and the other
+  screens keep their windows. `[switcher] flip = false` turns it off, and
   Super+Tab acts like Alt+Tab.
 
   ![The 3D switcher](screenshots/flip.png)

@@ -490,6 +490,7 @@ where
         let Some(n) = self
             .node(id)
             .filter(|n| n.enabled && (n.in_backdrop || !pass.mode.backdrop()))
+            .filter(|n| !n.hidden_over(pass.view.area))
         else {
             return;
         };
@@ -512,7 +513,9 @@ where
                     passed.set(true);
                     continue;
                 }
-                if let (Some(hn), Some((a, out))) = (self.node(h), self.shown(h, pass.mode)) {
+                if let (Some(hn), Some((a, out))) =
+                    (self.node(h), self.shown(h, pass.mode, pass.view))
+                {
                     let pos = self.origin_of(h) + hn.position;
                     let c = self.clip_above(h);
                     self.walk_node(h, hn, pos, a, out, pass, c, visit);
@@ -525,15 +528,16 @@ where
 
     /// The opacity `id` draws at with every ancestor's, and whether it or
     /// one of them is left out of the backdrop, if it and they are all
-    /// enabled (and in the backdrop, for the backdrop's walk) up to the
+    /// enabled (and in the backdrop, for the backdrop's walk) and not
+    /// hidden in `view` up to the
     /// root; None if any hides it.
-    fn shown(&self, id: NodeId, mode: Mode) -> Option<(f32, bool)> {
+    fn shown(&self, id: NodeId, mode: Mode, view: &View) -> Option<(f32, bool)> {
         let mut id = id;
         let mut alpha = 1.0;
         let mut left_out = false;
         loop {
             let n = self.node(id)?;
-            if !n.enabled || (mode.backdrop() && !n.in_backdrop) {
+            if !n.enabled || (mode.backdrop() && !n.in_backdrop) || n.hidden_over(view.area) {
                 return None;
             }
             alpha *= n.opacity;
