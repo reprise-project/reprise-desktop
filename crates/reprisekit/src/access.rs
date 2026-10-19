@@ -44,8 +44,10 @@ impl Tree {
     /// Add `node` as the last child of `parent` and return its id. A
     /// second child under the same key gets an id of its own derived from
     /// the first, so ids stay unique even when a caller repeats a key.
+    /// A row or tab carrying a selected state gets its actions ([`pickable`]).
     /// Panics if `parent` is not in the tree.
-    pub fn push(&mut self, parent: NodeId, key: impl Hash, node: Node) -> NodeId {
+    pub fn push(&mut self, parent: NodeId, key: impl Hash, mut node: Node) -> NodeId {
+        pickable(&mut node);
         let mut id = Tree::id_of(parent, key);
         while id == ROOT || self.index.contains_key(&id) {
             id = Tree::id_of(id, 0u8);
@@ -469,6 +471,19 @@ pub fn focusable(n: &mut Node, enabled: bool) {
         n.add_action(Action::Click);
     } else {
         n.set_disabled();
+    }
+}
+
+/// A live row or tab (an item with a selected state) offers Focus and Click, so a reader picks
+/// it as a user's click would: a tab turns to its page, a row is selected.
+fn pickable(n: &mut Node) {
+    let item = matches!(
+        n.role(),
+        Role::Tab | Role::ListItem | Role::ListBoxOption | Role::TreeItem | Role::Row | Role::Cell
+    );
+    if item && n.is_selected().is_some() && !n.is_disabled() {
+        n.add_action(Action::Focus);
+        n.add_action(Action::Click);
     }
 }
 
@@ -993,6 +1008,39 @@ mod tests {
         let b = t.push(ROOT, "x", Node::new(Role::Label));
         assert_ne!(a, b);
         assert_eq!(t.get(ROOT).unwrap().children(), &[a, b]);
+    }
+
+    #[test]
+    fn a_selectable_row_or_tab_offers_click_and_a_greyed_or_plain_one_none() {
+        let mut t = Tree::window("T", (100, 100));
+        let item = |role, selected: Option<bool>, greyed| {
+            let mut n = node(role, Rect::new(0, 0, 10, 10));
+            if let Some(s) = selected {
+                n.set_selected(s);
+            }
+            if greyed {
+                n.set_disabled();
+            }
+            n
+        };
+        let tab = t.push(ROOT, 0, item(Role::Tab, Some(false), false));
+        let row = t.push(ROOT, 1, item(Role::ListBoxOption, Some(true), false));
+        let tree_row = t.push(ROOT, 2, item(Role::TreeItem, Some(false), false));
+        let greyed = t.push(ROOT, 3, item(Role::ListBoxOption, Some(false), true));
+        let plain = t.push(ROOT, 4, item(Role::ListBoxOption, None, false));
+        let label = t.push(ROOT, 5, item(Role::Label, Some(false), false));
+        for id in [tab, row, tree_row] {
+            let n = t.get(id).unwrap();
+            assert!(
+                n.supports_action(Action::Click),
+                "{:?} picks by click",
+                n.role()
+            );
+            assert!(n.supports_action(Action::Focus));
+        }
+        for id in [greyed, plain, label] {
+            assert!(!t.get(id).unwrap().supports_action(Action::Click));
+        }
     }
 
     #[test]
