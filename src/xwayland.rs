@@ -69,7 +69,13 @@ use smithay::{
 
 use crate::clipboard::{Owner, answer};
 use crate::compositor::State;
-use crate::window::{Kind, WindowId};
+use crate::placement::Subject;
+use crate::raster::Rect;
+use crate::theme::Metrics;
+use crate::window::{
+    DialogTag, Kind, SizeLimits, WindowId, chrome_for, client_limits, first_configure_size,
+};
+use crate::windowrules::Want;
 
 /// Xwayland and its window manager, kept on `State::xwayland`.
 pub struct Xwayland {
@@ -635,6 +641,80 @@ impl XWaylandShellHandler for State {
     }
 }
 
+/// What an X11 window shows placement before it maps.
+struct Premap {
+    override_redirect: bool,
+    owned: bool,
+    modal: bool,
+    app: String,
+    title: String,
+    limits: SizeLimits,
+    decorated: bool,
+}
+
+impl Premap {
+    fn of(x: &X11Surface) -> Premap {
+        let class = x.class();
+        let min = x.min_size().unwrap_or_default();
+        let max = x.max_size().unwrap_or_default();
+        Premap {
+            override_redirect: x.is_override_redirect(),
+            owned: x
+                .is_transient_for()
+                .is_some_and(|p| p != x11rb::NONE && p != x.window_id()),
+            modal: x.is_modal(),
+            app: if class.is_empty() {
+                x.instance()
+            } else {
+                class
+            },
+            title: x.title(),
+            limits: client_limits((min.w, min.h, max.w, max.h)),
+            decorated: decorated(&x.motif_hints()),
+        }
+    }
+
+    /// The same test as `Window::placeable` for a window that is not mapped yet.
+    fn subject(&self) -> Subject {
+        Subject {
+            app: self.app.clone(),
+            title: self.title.clone(),
+            placeable: !self.override_redirect
+                && !self.owned
+                && !self.modal
+                && !self.app.is_empty(),
+            fixed: !self.limits.resizable(),
+        }
+    }
+
+    /// The client size `want` gives this window, as `configure_initial` sends it once mapped.
+    fn size(&self, m: &Metrics, want: &Want, screen: Rect, area: Rect) -> Option<(i32, i32)> {
+        let chrome = chrome_for(
+            false,
+            self.limits.resizable(),
+            self.decorated,
+            DialogTag::None,
+        );
+        first_configure_size(m, want, self.limits, screen, area, chrome)
+    }
+}
+
+impl State {
+    /// The client size the window rules or the app's memory give X11 window `x`
+    /// before it maps; `None` leaves the client's own size.
+    fn x11_planned_size(&self, x: &X11Surface) -> Option<(i32, i32)> {
+        let p = Premap::of(x);
+        let want = self.plan_for(&p.subject(), None)?;
+        let out = self.placement_output(Some(&want));
+        p.size(
+            &self.config.theme.metrics,
+            &want,
+            self.layout_box(out.as_ref()),
+            self.usable_area(out.as_ref()),
+        )
+    }
+}
+
 /// The size an X11 window asking for `want` gets: each side from 1 px to
 /// twice the layout's side (`layout`), but never under 4096 or over
 /// 16384 px. Xwayland allocates the whole window, so a client asking for
@@ -661,7 +741,8 @@ impl XwmHandler for State {
 
     /// Every managed window may map; `map_window` places it on its first
     /// buffer. A window created larger than `cap_x11_size` allows is
-    /// shrunk first, before Xwayland allocates its picture.
+    /// shrunk first, before Xwayland allocates its picture, and one a rule
+    /// or the app's memory sizes gets that size, so its first frame has it.
     fn map_window_request(&mut self, _xwm: XwmId, window: X11Surface) {
         let geo = window.geometry();
         let area = self.output_area();
@@ -676,6 +757,14 @@ impl XwmHandler for State {
             if let Err(e) = window.configure(Rectangle::new(geo.loc, (w, h).into())) {
                 log::debug!("x11 configure: {e}");
             }
+        }
+        if let Some((cw, ch)) = self
+            .x11_planned_size(&window)
+            .map(|s| cap_x11_size(s, (area.size.w, area.size.h)))
+            && (cw, ch) != (w, h)
+            && let Err(e) = window.configure(Rectangle::new(geo.loc, (cw, ch).into()))
+        {
+            log::debug!("x11 configure: {e}");
         }
         if let Err(e) = window.set_mapped(true) {
             log::warn!("x11 map: {e}");
@@ -949,6 +1038,110 @@ impl XwmHandler for State {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    use reprisekit::classic::frame::FrameGeometry;
+
+    fn xterm() -> Premap {
+        Premap {
+            override_redirect: false,
+            owned: false,
+            modal: false,
+            app: "XTerm".into(),
+            title: "xterm".into(),
+            limits: SizeLimits {
+                min: (10, 17),
+                max: (None, None),
+            },
+            decorated: true,
+        }
+    }
+
+    #[test]
+    fn an_x11_window_takes_its_rule_size_before_it_maps() {
+        let m = Metrics::default();
+        let screen = Rect::new(0, 0, 1920, 1080);
+        let area = Rect::new(0, 0, 1920, 1050);
+        let rules = [crate::windowrules::WindowRule {
+            app_id: "XTerm".into(),
+            size: Some((900, 560)),
+            ..Default::default()
+        }];
+        let p = xterm();
+        let want = crate::windowrules::want(&rules, &p.app, &p.title, Want::default());
+        let chrome = chrome_for(false, true, true, DialogTag::None);
+        let client =
+            |w, h, maximized| FrameGeometry::client_size_for_total(&m, w, h, maximized, chrome);
+        assert_eq!(
+            p.size(&m, &want, screen, area),
+            Some(client(900, 560, false)),
+            "the client inside the rule's 900x560 frame"
+        );
+
+        let csd = Premap {
+            decorated: false,
+            ..xterm()
+        };
+        assert_eq!(
+            csd.size(&m, &want, screen, area),
+            Some((900, 560)),
+            "a window drawing its own frame is the rule's size itself"
+        );
+
+        let maximized = Want {
+            state: Some(crate::windowrules::WindowState::Maximized),
+            ..Want::default()
+        };
+        assert_eq!(
+            p.size(&m, &maximized, screen, area),
+            Some(client(1920, 1050, true)),
+            "a maximized rule fills the work area"
+        );
+    }
+
+    #[test]
+    fn only_a_named_top_level_x11_window_is_planned_before_it_maps() {
+        assert!(xterm().subject().placeable);
+        for (p, why) in [
+            (
+                Premap {
+                    override_redirect: true,
+                    ..xterm()
+                },
+                "a menu keeps its place",
+            ),
+            (
+                Premap {
+                    owned: true,
+                    ..xterm()
+                },
+                "a dialog opens over its owner",
+            ),
+            (
+                Premap {
+                    modal: true,
+                    ..xterm()
+                },
+                "a modal dialog opens over its owner",
+            ),
+            (
+                Premap {
+                    app: String::new(),
+                    ..xterm()
+                },
+                "an unnamed window matches no rule",
+            ),
+        ] {
+            assert!(!p.subject().placeable, "{why}");
+        }
+        let fixed = Premap {
+            limits: SizeLimits {
+                min: (300, 200),
+                max: (Some(300), Some(200)),
+            },
+            ..xterm()
+        };
+        assert!(fixed.subject().fixed, "a fixed-size window keeps its size");
+    }
 
     #[test]
     fn an_x11_window_is_capped_to_twice_the_layout() {
