@@ -449,7 +449,6 @@ impl Notepad {
         let lay = self.edit_layout(ctx);
         self.view
             .follow(&self.mono, &self.metrics, &self.edit, &lay, 1);
-        self.sync_menus();
         if changed {
             self.dirty = true;
         }
@@ -530,7 +529,6 @@ impl Notepad {
             (title::HELP, row::ABOUT) => self.about = true,
             _ => {}
         }
-        self.sync_menus();
         reply
     }
 
@@ -622,7 +620,6 @@ impl Notepad {
         let lay = self.edit_layout(ctx);
         self.view
             .follow(&self.mono, &self.metrics, &self.edit, &lay, 1);
-        self.sync_menus();
     }
 
     fn key(&mut self, k: KeyInput, ctx: &Ctx) -> Reply {
@@ -955,12 +952,22 @@ impl Notepad {
         }
     }
 
-    /// Grey the rows that cannot act.
+    /// Grey the rows that cannot act. Paste stays live: the host does not track whether the
+    /// clipboard holds text.
     fn sync_menus(&mut self) {
         let has_text = self.edit.lines().iter().any(|l| !l.is_empty());
-        for r in [row::FIND, row::FIND_NEXT] {
+        let selected = self.edit.has_selection();
+        let live = [
+            (row::UNDO, self.edit.can_undo()),
+            (row::CUT, selected),
+            (row::COPY, selected),
+            (row::DELETE, selected),
+            (row::FIND, has_text),
+            (row::FIND_NEXT, has_text),
+        ];
+        for (r, on) in live {
             if let MenuItem::Entry { enabled, .. } = &mut self.bar.menus[title::EDIT][r] {
-                *enabled = has_text;
+                *enabled = on;
             }
         }
     }
@@ -1412,7 +1419,6 @@ impl Notepad {
                 self.view = View::default();
                 self.path = None;
                 self.dirty = false;
-                self.sync_menus();
                 Reply::redraw_all()
             }
             PendingAction::Open => {
@@ -1619,7 +1625,9 @@ impl App for Notepad {
         if win != MAIN {
             self.alt_arm.interrupt();
         }
-        match win {
+        // Selection and text change in many places (the pointer, Find, Replace), so the rows
+        // are greyed after every event, before the next draw or menu choice.
+        let reply = match win {
             GOTO => self.goto_event(ev, ctx),
             FIND => self.find_event(ev, ctx),
             REPLACE_WIN => self.replace_event(ev, ctx),
@@ -1632,7 +1640,9 @@ impl App for Notepad {
             OPEN => self.open_event(ev, ctx),
             SAVEAS => self.saveas_event(ev, ctx),
             _ => self.main_event(ev, ctx),
-        }
+        };
+        self.sync_menus();
+        reply
     }
 
     fn drop_form(&mut self, win: WinId) -> Option<DropForm<'_>> {
@@ -1898,7 +1908,6 @@ impl Notepad {
                     let lay = self.edit_layout(ctx);
                     self.view
                         .follow(&self.mono, &self.metrics, &self.edit, &lay, 1);
-                    self.sync_menus();
                 }
                 Reply::redraw()
             }
@@ -2290,6 +2299,48 @@ mod tests {
         np.sync_menus();
         assert!(on(&np, row::FIND), "text enables Find");
         assert!(on(&np, row::FIND_NEXT));
+    }
+
+    #[test]
+    fn edit_rows_grey_until_there_is_a_selection_or_an_edit_to_undo() {
+        let mut np = Notepad::new(None);
+        np.edit = MultiEdit::new("text");
+        let mut ctx = test_ctx();
+        let on = |np: &Notepad, r: usize| match &np.bar.menus[title::EDIT][r] {
+            MenuItem::Entry { enabled, .. } => *enabled,
+            MenuItem::Separator => panic!("that row is a separator"),
+        };
+        let key = |edit| {
+            Event::Key(KeyInput {
+                sym: 0,
+                utf8: None,
+                mods: repriseapp::Mods::default(),
+                edit: Some(edit),
+            })
+        };
+        np.event(MAIN, Event::Focus(true), &mut ctx);
+        for r in [row::UNDO, row::CUT, row::COPY, row::DELETE] {
+            assert!(
+                !on(&np, r),
+                "row {r} is greyed with no selection and no edit"
+            );
+        }
+        assert!(on(&np, row::PASTE), "Paste stays live");
+        assert_eq!(
+            np.command(title::EDIT, row::COPY, &ctx).copy,
+            None,
+            "a greyed Copy copies nothing"
+        );
+
+        np.event(MAIN, key(EditKey::SelectAll), &mut ctx);
+        for r in [row::CUT, row::COPY, row::DELETE] {
+            assert!(on(&np, r), "row {r} is live over a selection");
+        }
+        assert!(!on(&np, row::UNDO), "selecting is not an edit");
+
+        np.event(MAIN, key(EditKey::Insert("x".into())), &mut ctx);
+        assert!(on(&np, row::UNDO), "typing makes Undo live");
+        assert!(!on(&np, row::CUT), "the typed text replaced the selection");
     }
 
     /// Find's Cancel lights under the pointer and goes cold when the pointer leaves; held and
