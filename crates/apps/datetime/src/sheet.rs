@@ -296,8 +296,17 @@ impl Sheet {
         let page = &mut self.sheet.pages[TAB_DATE];
         page.set_enabled("ntp", can);
         let manual = !page.checked("ntp").unwrap_or(false);
-        for id in ["month", "year", "cal", "time"] {
+        const DATE: [&str; 4] = ["month", "year", "cal", "time"];
+        for id in DATE {
             page.set_enabled(id, manual);
+        }
+        let focused = page.focus().map(|i| page.items[i].id);
+        if !manual && focused.is_some_and(|id| DATE.contains(&id)) {
+            if can {
+                page.focus_id("ntp");
+            } else {
+                page.set_focus(None);
+            }
         }
     }
 
@@ -435,6 +444,22 @@ mod tests {
 
     fn sheet() -> Sheet {
         Sheet::new(&system(), &zones(), now(), 0, true)
+    }
+
+    #[test]
+    fn with_the_time_server_on_the_focus_starts_on_its_check_box() {
+        let synced = System {
+            ntp: true,
+            ..system()
+        };
+        let s = Sheet::new(&synced, &zones(), now(), 0, true);
+        let page = &s.sheet.pages[TAB_DATE];
+        assert_eq!(page.checked("ntp"), Some(true));
+        assert_eq!(
+            page.focus(),
+            page.index_of("ntp"),
+            "not on the greyed month"
+        );
     }
 
     /// Both pages fit their text under every interface and text size.
