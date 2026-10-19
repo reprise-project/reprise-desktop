@@ -35,6 +35,20 @@ pub fn composed(
     bg: Color,
     scale: f32,
 ) -> Cow<'_, Canvas> {
+    composed_known(img, w, h, position, bg, scale, None)
+}
+
+/// [`composed`] for an `img` already known to be opaque or not, which spares a stretched picture
+/// the scan of its pixels.
+pub fn composed_known(
+    img: &Canvas,
+    w: u32,
+    h: u32,
+    position: Position,
+    bg: Color,
+    scale: f32,
+    known_opaque: Option<bool>,
+) -> Cow<'_, Canvas> {
     let blank = || {
         let mut out = Canvas::new(w, h);
         out.fill_rect(out.bounds(), bg);
@@ -51,7 +65,8 @@ pub fn composed(
                 Cow::Owned(img.resample_box(w, h))
             };
             // The colour never shows under an opaque picture.
-            if opaque(&fitted) {
+            // A box resample keeps every alpha of an opaque picture at 0xFF.
+            if known_opaque.map_or_else(|| opaque(&fitted), |o| o && fitted.scale() == 1) {
                 return fitted;
             }
             let mut out = blank();
@@ -181,6 +196,22 @@ mod tests {
         assert_eq!(
             composed(&glassy, 11, 9, Position::Stretch, bg, 1.0).pixels,
             over.pixels
+        );
+    }
+
+    #[test]
+    fn a_picture_known_opaque_or_not_is_not_scanned_again() {
+        let bg = Color::rgb(0, 0, 255);
+        let mut glassy = numbered();
+        glassy.pixels[5] = 0x8040_0000;
+        let known = |c, o| composed_known(c, 11, 9, Position::Stretch, bg, 1.0, Some(o));
+        assert!(
+            matches!(known(&glassy, true), Cow::Borrowed(_)),
+            "taken as opaque on the word of the caller"
+        );
+        assert!(
+            matches!(known(&numbered(), false), Cow::Owned(_)),
+            "blended over the colour on the word of the caller"
         );
     }
 
