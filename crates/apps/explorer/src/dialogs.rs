@@ -367,6 +367,7 @@ impl Explorer {
     }
 
     /// The caption `win` wears: the sheets and pickers add the ? box; the message boxes, confirmations and About have the close box alone.
+    /// The program Browse is a file dialog and keeps the plain caption, which tags it `file-dialog`.
     pub fn caption(&self, win: WinId) -> Caption {
         match win {
             DIALOG => match self.dialog {
@@ -378,7 +379,7 @@ impl Explorer {
                 ) => Caption::Help,
                 _ => Caption::Prompt,
             },
-            PROGRAM_BROWSE | crate::props_dialog::PROPS => Caption::Help,
+            crate::props_dialog::PROPS => Caption::Help,
             crate::browse::ERROR => Caption::Prompt,
             crate::copydlg::COPY | crate::copydlg::REMOVE => Caption::Prompt,
             _ => Caption::Window,
