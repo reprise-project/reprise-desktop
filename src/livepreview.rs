@@ -2,7 +2,9 @@
 //! Alt+Tab and the 3D switcher (`flipview`).
 //!
 //! Each thumb is a texture of its own (`offscreen::Target`) that the
-//! window's `content` subtree is rendered into at thumbnail size: the
+//! window's `content` subtree is rendered into at thumbnail size, or a
+//! cell of a texture shared by thumbs made together ([`State::thumbs_create`]),
+//! drawn in one render: the
 //! client surface and its popups without the frame, drawn even while the
 //! window is covered, minimized or on another desktop (the subtree's own
 //! and its ancestors' enabled flags are ignored). A scene buffer in the
@@ -34,12 +36,17 @@ use std::time::{Duration, Instant};
 use reprisekit::controls::taskpreview::fit;
 use reprisescene::{BufferId, TreeId, View};
 use smithay::{
-    backend::renderer::{gles::GlesTexture, utils::with_renderer_surface_state},
+    backend::renderer::{
+        Renderer,
+        element::{Element, Id, Kind, RenderElement, UnderlyingStorage, utils::CropRenderElement},
+        gles::{GlesRenderer, GlesTexture},
+        utils::{CommitCounter, DamageSet, OpaqueRegions, with_renderer_surface_state},
+    },
     reexports::calloop::{
         RegistrationToken,
         timer::{TimeoutAction, Timer},
     },
-    utils::Rectangle,
+    utils::{Buffer, Physical, Point, Rectangle, Scale, Transform, user_data::UserDataMap},
 };
 
 use crate::{
@@ -59,6 +66,7 @@ pub struct ThumbId(u64);
 #[derive(Default)]
 pub struct LivePreviews {
     thumbs: Vec<Thumb>,
+    sheets: Vec<Sheet>,
     next: u64,
     /// Fires a period after the last draw while a thumb waits for one.
     timer: Option<RegistrationToken>,
@@ -78,7 +86,25 @@ struct Thumb {
     mode: (i32, i32, i32, i32),
     /// The window committed since the last draw.
     marked: bool,
+    /// The shared texture the picture is a cell of, and the cell's
+    /// top-left there (None until laid out). `target` stays None.
+    sheet: Option<u64>,
+    cell: Option<Point<i32, Physical>>,
 }
+
+/// One texture shared by well thumbs made together: one render, one GPU
+/// submit, draws them all.
+struct Sheet {
+    id: u64,
+    /// None until the first draw or after one failed.
+    target: Option<Target>,
+}
+
+/// Device pixels left clear between two cells of a sheet, so a filtered
+/// draw of one cell never samples its neighbour.
+const SHEET_GAP: i32 = 2;
+/// The widest a sheet grows before its cells start a new row.
+const SHEET_WIDTH: i32 = 4096;
 
 /// What a thumb pictures and where the picture goes.
 enum Show {
@@ -135,7 +161,49 @@ impl State {
             well,
             scale: scale.max(1),
         };
-        Some(self.thumb_push(w, show))
+        let id = self.thumb_push(w, show, None);
+        self.draw_thumbs(Some(&[id]));
+        Some(id)
+    }
+
+    /// [`State::thumb_create`] for each (window, well) of `wants`, all
+    /// under `parent` at `scale`, drawn together into one shared texture.
+    pub fn thumbs_create(
+        &mut self,
+        parent: TreeId,
+        wants: &[(WindowId, Rect)],
+        scale: i32,
+    ) -> Vec<Option<ThumbId>> {
+        let sheet = self.live_previews.next;
+        self.live_previews.next += 1;
+        self.live_previews.sheets.push(Sheet {
+            id: sheet,
+            target: None,
+        });
+        let mut seen = Vec::new();
+        let ids: Vec<Option<ThumbId>> = wants
+            .iter()
+            .map(|&(w, well)| {
+                if !self.has_picture(w) {
+                    return None;
+                }
+                let buffer = self.scene.buffer_create(parent);
+                let show = Show::Well {
+                    buffer,
+                    well,
+                    scale: scale.max(1),
+                };
+                // A window's elements appear once per render: a second
+                // picture of it gets its own texture.
+                let shared = (!seen.contains(&w)).then_some(sheet);
+                seen.push(w);
+                Some(self.thumb_push(w, show, shared))
+            })
+            .collect();
+        let drawn: Vec<ThumbId> = ids.iter().flatten().copied().collect();
+        self.sheet_forget_unused();
+        self.draw_thumbs(Some(&drawn));
+        ids
     }
 
     /// Show the whole of `w` live, `px` device pixels large, in `slot`,
@@ -150,10 +218,12 @@ impl State {
         if !self.has_picture(w) {
             return None;
         }
-        Some(self.thumb_push(w, Show::Whole { px, slot }))
+        let id = self.thumb_push(w, Show::Whole { px, slot }, None);
+        self.draw_thumbs(Some(&[id]));
+        Some(id)
     }
 
-    fn thumb_push(&mut self, w: WindowId, show: Show) -> ThumbId {
+    fn thumb_push(&mut self, w: WindowId, show: Show, sheet: Option<u64>) -> ThumbId {
         let p = &mut self.live_previews;
         let id = ThumbId(p.next);
         p.next += 1;
@@ -164,9 +234,18 @@ impl State {
             target: None,
             mode: (0, 0, 0, 0),
             marked: false,
+            sheet,
+            cell: None,
         });
-        self.draw_thumbs(Some(id));
         id
+    }
+
+    /// Drop the sheets no thumb is a cell of.
+    fn sheet_forget_unused(&mut self) {
+        let p = &mut self.live_previews;
+        let thumbs = &p.thumbs;
+        p.sheets
+            .retain(|s| thumbs.iter().any(|t| t.sheet == Some(s.id)));
     }
 
     pub fn thumb_drop(&mut self, id: ThumbId) {
@@ -182,6 +261,9 @@ impl State {
         }
         if let Show::Well { buffer, .. } = t.show {
             self.scene.destroy(buffer);
+        }
+        if t.sheet.is_some() {
+            self.sheet_forget_unused();
         }
     }
 
@@ -241,16 +323,21 @@ impl State {
         }
     }
 
-    /// Draw thumb `only`, or every marked thumb for None: fit the client's
-    /// current size, render what changed and send the window's frame
-    /// callbacks.
-    fn draw_thumbs(&mut self, only: Option<ThumbId>) {
-        let jobs: Vec<(usize, Shot)> = self
-            .live_previews
-            .thumbs
+    /// Draw the thumbs `only`, or every marked thumb for None, and every
+    /// other cell of their sheets: fit the client's current size, render
+    /// what changed and send the window's frame callbacks.
+    fn draw_thumbs(&mut self, only: Option<&[ThumbId]>) {
+        let picked = |t: &Thumb| only.map_or(t.marked, |ids| ids.contains(&t.id));
+        let thumbs = &self.live_previews.thumbs;
+        let sheets: Vec<u64> = thumbs
+            .iter()
+            .filter(|t| picked(t))
+            .filter_map(|t| t.sheet)
+            .collect();
+        let jobs: Vec<(usize, Shot)> = thumbs
             .iter()
             .enumerate()
-            .filter(|(_, t)| only.map_or(t.marked, |id| t.id == id))
+            .filter(|(_, t)| picked(t) || t.sheet.is_some_and(|s| sheets.contains(&s)))
             .filter_map(|(i, t)| {
                 let x = self.win(t.window)?;
                 let (tree, rect) = match t.show {
@@ -297,10 +384,22 @@ impl State {
             glass.begin(o, settings, reprisefx::Quality::default(), false);
         }
         let mut drew = false;
+        for sheet in live_previews.sheets.iter_mut() {
+            let cells: Vec<(usize, &Shot)> = jobs
+                .iter()
+                .filter(|(i, _)| live_previews.thumbs[*i].sheet == Some(sheet.id))
+                .map(|(i, shot)| (*i, shot))
+                .collect();
+            if !cells.is_empty() {
+                drew |= draw_sheet(renderer, scene, sheet, &mut live_previews.thumbs, &cells);
+            }
+        }
         for (i, shot) in jobs {
             let t = &mut live_previews.thumbs[i];
             t.marked = false;
-            drew |= draw(renderer, scene, t, &shot);
+            if t.sheet.is_none() {
+                drew |= draw(renderer, scene, t, &shot);
+            }
             // Wanted or not, the picture is the client's frame: a hidden
             // window's surface gets no other.
             if let Some(o) = &output {
@@ -331,28 +430,21 @@ pub fn preview_wait(drawn: Option<Instant>, now: Instant, period: Duration) -> D
 /// Render `shot` into `t`'s texture and show it in `t`'s buffer or slot.
 /// True when what shows changed.
 fn draw(
-    renderer: &mut smithay::backend::renderer::gles::GlesRenderer,
+    renderer: &mut GlesRenderer,
     scene: &mut crate::compositor::DeskScene,
     t: &mut Thumb,
     shot: &Shot,
 ) -> bool {
-    let (cw, ch) = (shot.rect.width, shot.rect.height);
-    if cw <= 0 || ch <= 0 {
+    let Some(Fit {
+        size,
+        pic,
+        mode,
+        scale,
+    }) = fit_shot(t, shot)
+    else {
         return false;
-    }
-    let (size, pic) = match &t.show {
-        Show::Well { well, scale, .. } => {
-            let pic = fit(cw, ch, *well, 1);
-            ((pic.width * scale, pic.height * scale), Some(pic))
-        }
-        Show::Whole { px, .. } => (*px, None),
     };
-    if size.0 <= 0 || size.1 <= 0 {
-        return false;
-    }
-    let mode = (size.0, size.1, cw, ch);
-    // The window drawn straight at the picture's size.
-    let scale = cover_scale(size, (cw, ch));
+    let (cw, ch) = (shot.rect.width, shot.rect.height);
     let fresh = mode != t.mode || t.target.is_none();
     if fresh {
         t.target = match Target::new(renderer, size.into(), scale) {
@@ -418,6 +510,240 @@ fn draw(
     }
 }
 
+/// A thumb's picture for the window's current size.
+#[derive(Clone, Copy)]
+struct Fit {
+    /// Device pixels.
+    size: (i32, i32),
+    /// Where a well's picture sits in its well, logical.
+    pic: Option<Rect>,
+    mode: (i32, i32, i32, i32),
+    /// The window drawn straight at the picture's size.
+    scale: f64,
+}
+
+fn fit_shot(t: &Thumb, shot: &Shot) -> Option<Fit> {
+    let (cw, ch) = (shot.rect.width, shot.rect.height);
+    if cw <= 0 || ch <= 0 {
+        return None;
+    }
+    let (size, pic) = match &t.show {
+        Show::Well { well, scale, .. } => {
+            let pic = fit(cw, ch, *well, 1);
+            ((pic.width * scale, pic.height * scale), Some(pic))
+        }
+        Show::Whole { px, .. } => (*px, None),
+    };
+    if size.0 <= 0 || size.1 <= 0 {
+        return None;
+    }
+    Some(Fit {
+        size,
+        pic,
+        mode: (size.0, size.1, cw, ch),
+        scale: cover_scale(size, (cw, ch)),
+    })
+}
+
+/// Render the `cells` (thumb index, shot) of `sheet` into its texture in
+/// one pass and show each cell in its thumb's buffer. A new size of any
+/// cell lays the sheet out again. True when what shows changed.
+fn draw_sheet(
+    renderer: &mut GlesRenderer,
+    scene: &mut crate::compositor::DeskScene,
+    sheet: &mut Sheet,
+    thumbs: &mut [Thumb],
+    cells: &[(usize, &Shot)],
+) -> bool {
+    let fits: Vec<Option<Fit>> = cells
+        .iter()
+        .map(|(i, shot)| fit_shot(&thumbs[*i], shot))
+        .collect();
+    let fresh = sheet.target.is_none()
+        || cells.iter().zip(&fits).any(|((i, _), f)| {
+            f.is_some_and(|f| f.mode != thumbs[*i].mode || thumbs[*i].cell.is_none())
+        });
+    if fresh {
+        let sizes: Vec<(i32, i32)> = fits.iter().map(|f| f.map_or((0, 0), |f| f.size)).collect();
+        let (at, size) = pack(&sizes);
+        sheet.target = match Target::new(renderer, size.into(), 1.0) {
+            Ok(target) => Some(target),
+            Err(e) => {
+                log::warn!("live preview: could not size the sheet to {size:?}: {e}");
+                None
+            }
+        };
+        for (((i, _), f), at) in cells.iter().zip(&fits).zip(at) {
+            let t = &mut thumbs[*i];
+            t.cell = f.map(|_| at.into());
+            let (Some(f), Show::Well { buffer, .. }) = (f, &t.show) else {
+                continue;
+            };
+            t.mode = f.mode;
+            if let Some(pic) = f.pic {
+                scene.set_position(*buffer, pic.x, pic.y);
+                scene.buffer_set_dest_size(*buffer, Some((pic.width, pic.height).into()));
+            }
+        }
+    }
+    let Some(target) = sheet.target.as_mut() else {
+        return false;
+    };
+    let mut elements = Vec::new();
+    for ((i, shot), f) in cells.iter().zip(&fits) {
+        let (Some(f), Some(cell)) = (f, thumbs[*i].cell) else {
+            continue;
+        };
+        let Some((origin, _)) = scene.coords(shot.tree) else {
+            continue;
+        };
+        let (cw, ch) = (shot.rect.width, shot.rect.height);
+        let view = View::new(Rectangle::new(origin, (cw, ch).into()), f.scale);
+        let crop = Rectangle::new(cell, f.size.into());
+        elements.extend(
+            scene
+                .render_elements_of(renderer, shot.tree, &view)
+                .into_iter()
+                .filter_map(|e| {
+                    let placed = Placed {
+                        inner: e,
+                        scale: f.scale.into(),
+                        offset: cell,
+                    };
+                    CropRenderElement::from_element(placed, 1.0, crop)
+                }),
+        );
+    }
+    let damage = match target.render(renderer, &elements) {
+        Ok(d) => d,
+        Err(e) => {
+            log::warn!("live preview: {e}");
+            return false;
+        }
+    };
+    let mut changed = false;
+    for ((i, _), f) in cells.iter().zip(&fits) {
+        let t = &thumbs[*i];
+        let (Some(f), Some(cell), Show::Well { buffer, .. }) = (f, t.cell, &t.show) else {
+            continue;
+        };
+        let rect = Rectangle::<i32, Buffer>::new((cell.x, cell.y).into(), f.size.into());
+        if fresh {
+            scene.buffer_set_texture(*buffer, renderer, target.texture().clone());
+            scene.buffer_set_source_box(*buffer, Some(rect.to_f64()));
+            changed = true;
+            continue;
+        }
+        let hit: Vec<_> = damage.iter().filter_map(|d| d.intersection(rect)).collect();
+        if !hit.is_empty() {
+            scene.buffer_set_texture_with_damage(*buffer, renderer, target.texture().clone(), &hit);
+            changed = true;
+        }
+    }
+    changed
+}
+
+/// The top-left of a cell for each picture of `sizes` (device pixels) on
+/// one sheet, in rows left to right, and the sheet's size. An empty size
+/// takes no room.
+fn pack(sizes: &[(i32, i32)]) -> (Vec<(i32, i32)>, (i32, i32)) {
+    let (mut x, mut y, mut row, mut width) = (0, 0, 0, 1);
+    let at = sizes
+        .iter()
+        .map(|&(w, h)| {
+            if w <= 0 || h <= 0 {
+                return (0, 0);
+            }
+            if x > 0 && x + w > SHEET_WIDTH {
+                (x, y, row) = (0, y + row + SHEET_GAP, 0);
+            }
+            let at = (x, y);
+            width = width.max(x + w);
+            row = row.max(h);
+            x += w + SHEET_GAP;
+            at
+        })
+        .collect();
+    (at, (width, (y + row).max(1)))
+}
+
+/// An element drawn at its own `scale` and moved by `offset`, at whatever
+/// scale the target asks: cells of one sheet each draw at their own.
+struct Placed<E> {
+    inner: E,
+    scale: Scale<f64>,
+    offset: Point<i32, Physical>,
+}
+
+impl<E: Element> Element for Placed<E> {
+    fn id(&self) -> &Id {
+        self.inner.id()
+    }
+    fn current_commit(&self) -> CommitCounter {
+        self.inner.current_commit()
+    }
+    fn location(&self, _: Scale<f64>) -> Point<i32, Physical> {
+        self.inner.location(self.scale) + self.offset
+    }
+    fn src(&self) -> Rectangle<f64, Buffer> {
+        self.inner.src()
+    }
+    fn transform(&self) -> Transform {
+        self.inner.transform()
+    }
+    fn geometry(&self, _: Scale<f64>) -> Rectangle<i32, Physical> {
+        let mut g = self.inner.geometry(self.scale);
+        g.loc += self.offset;
+        g
+    }
+    fn damage_since(
+        &self,
+        _: Scale<f64>,
+        commit: Option<CommitCounter>,
+    ) -> DamageSet<i32, Physical> {
+        self.inner.damage_since(self.scale, commit)
+    }
+    fn opaque_regions(&self, _: Scale<f64>) -> OpaqueRegions<i32, Physical> {
+        self.inner.opaque_regions(self.scale)
+    }
+    fn alpha(&self) -> f32 {
+        self.inner.alpha()
+    }
+    fn kind(&self) -> Kind {
+        self.inner.kind()
+    }
+    fn is_framebuffer_effect(&self) -> bool {
+        self.inner.is_framebuffer_effect()
+    }
+}
+
+impl<R: Renderer, E: RenderElement<R>> RenderElement<R> for Placed<E> {
+    fn draw(
+        &self,
+        frame: &mut R::Frame<'_, '_>,
+        src: Rectangle<f64, Buffer>,
+        dst: Rectangle<i32, Physical>,
+        damage: &[Rectangle<i32, Physical>],
+        opaque_regions: &[Rectangle<i32, Physical>],
+        cache: Option<&UserDataMap>,
+    ) -> Result<(), R::Error> {
+        self.inner
+            .draw(frame, src, dst, damage, opaque_regions, cache)
+    }
+    fn underlying_storage(&self, renderer: &mut R) -> Option<UnderlyingStorage<'_>> {
+        self.inner.underlying_storage(renderer)
+    }
+    fn capture_framebuffer(
+        &self,
+        frame: &mut R::Frame<'_, '_>,
+        src: Rectangle<f64, Buffer>,
+        dst: Rectangle<i32, Physical>,
+        cache: &UserDataMap,
+    ) -> Result<(), R::Error> {
+        self.inner.capture_framebuffer(frame, src, dst, cache)
+    }
+}
+
 /// The scale that draws a `client` (w, h) onto a `size` picture with no
 /// empty row or column: `fit` floors the picture's shorter side, so the
 /// larger of the two ratios fills both and crops under a pixel.
@@ -442,6 +768,88 @@ mod tests {
         let s = cover_scale((pic.width, pic.height), (696, 496));
         assert!(696.0 * s >= 148.0, "width covered: {}", 696.0 * s);
         assert!(496.0 * s >= 106.0, "height covered: {}", 496.0 * s);
+    }
+
+    #[test]
+    fn cells_of_a_sheet_lie_apart_in_rows_no_wider_than_the_sheet() {
+        let (at, size) = pack(&[(2000, 100), (2000, 150), (0, 0), (2000, 80), (50, 50)]);
+        assert_eq!(
+            at,
+            vec![(0, 0), (2002, 0), (0, 0), (0, 152), (2002, 152)],
+            "two 2000 wide per row, 2 apart; the empty one takes no room"
+        );
+        assert_eq!(size, (4002, 232));
+        assert_eq!(pack(&[]).1, (1, 1), "an empty sheet is still a texture");
+    }
+
+    #[test]
+    fn a_cell_of_a_sheet_has_the_pixels_of_a_texture_of_its_own() {
+        use smithay::backend::{
+            allocator::Fourcc,
+            renderer::{ImportMem, element::texture::TextureRenderElement},
+        };
+        let Some(mut r) = reprisefx::headless::renderer()
+            .map_err(|e| eprintln!("skipped: {e}"))
+            .ok()
+        else {
+            return;
+        };
+        // Red, green / blue, white, B G R A bytes; drawn 3x3 logical at
+        // scale 3, so the 6x6 picture crops it.
+        let bytes = [
+            0, 0, 255, 255, 0, 255, 0, 255, 255, 0, 0, 255, 255, 255, 255, 255,
+        ];
+        let texture = r
+            .import_memory(&bytes, Fourcc::Argb8888, (2, 2).into(), false)
+            .unwrap();
+        let context = r.context_id();
+        let element = || {
+            TextureRenderElement::from_static_texture(
+                Id::new(),
+                context.clone(),
+                (0.0, 0.0),
+                texture.clone(),
+                1,
+                Transform::Normal,
+                None,
+                None,
+                Some((3, 3).into()),
+                None,
+                Kind::Unspecified,
+            )
+        };
+        let mut own = Target::new(&mut r, (6, 6).into(), 3.0).unwrap();
+        own.render(&mut r, &[element()]).unwrap();
+        let own = own.read(&mut r).unwrap();
+
+        let cell = Point::from((9, 2));
+        let placed = Placed {
+            inner: element(),
+            scale: 3.0.into(),
+            offset: cell,
+        };
+        let crop = Rectangle::new(cell, (6, 6).into());
+        let placed = CropRenderElement::from_element(placed, 1.0, crop).unwrap();
+        let mut sheet = Target::new(&mut r, (20, 10).into(), 1.0).unwrap();
+        sheet.render(&mut r, &[placed]).unwrap();
+        let sheet = sheet.read(&mut r).unwrap();
+
+        for y in 0..10 {
+            for x in 0..20 {
+                let got = sheet.pixels[y * 20 + x];
+                let (cx, cy) = (x as i32 - 9, y as i32 - 2);
+                let want = if (0..6).contains(&cx) && (0..6).contains(&cy) {
+                    own.pixels[cy as usize * 6 + cx as usize]
+                } else {
+                    0
+                };
+                assert_eq!(got, want, "sheet pixel ({x}, {y})");
+            }
+        }
+        assert_ne!(
+            own.pixels[0], own.pixels[35],
+            "the picture is not one colour"
+        );
     }
 
     #[test]
