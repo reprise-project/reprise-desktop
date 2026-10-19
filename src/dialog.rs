@@ -6216,13 +6216,13 @@ mod tests {
         let all = Dialog::confirm_delete_many(&paths, true, BinLack::All);
         assert_eq!(
             all.text,
-            "These items are on a drive with no Recycle Bin. Are you sure you want to delete \
+            "None of these items can go to the Recycle Bin. Are you sure you want to delete \
              these 2 items?"
         );
         let some = Dialog::confirm_delete_many(&paths, true, BinLack::Some);
         assert_eq!(
             some.text,
-            "Some of these items are on a drive with no Recycle Bin. Are you sure you want to \
+            "Some of these items cannot go to the Recycle Bin. Are you sure you want to \
              delete these 2 items?"
         );
     }
