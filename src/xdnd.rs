@@ -13,7 +13,11 @@
 //! [`PointerFocus::Reprise`], whose offer holds when Reprise takes the drop.
 //! An X11 drag over its own program's windows stays that program's.
 
-use std::{borrow::Cow, sync::Arc};
+use std::{
+    borrow::Cow,
+    fmt,
+    sync::{Arc, Mutex, MutexGuard},
+};
 
 use smithay::{
     backend::input::InputTime,
@@ -151,15 +155,43 @@ fn from_xwayland(s: &WlSurface) -> bool {
 
 pub enum Offer {
     Wl(WlOfferData<DragSource>),
-    X11(XwmOfferData<DragSource>),
+    X11(X11Offer),
     Reprise(DragSource),
+}
+
+/// An X11 target's offer, shared with the drag motion `coalesce` holds for it.
+#[derive(Clone)]
+pub struct X11Offer(Arc<Mutex<XwmOfferData<DragSource>>>);
+
+impl fmt::Debug for X11Offer {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("X11Offer")
+    }
+}
+
+impl X11Offer {
+    fn lock(&self) -> MutexGuard<'_, XwmOfferData<DragSource>> {
+        self.0.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// Send `x` an `XdndPosition`, or keep `at` for when its `XdndStatus` comes.
+    pub fn motion(
+        &self,
+        x: &X11Surface,
+        data: &mut State,
+        seat: &Seat<State>,
+        at: Point<f64, Logical>,
+        time: InputTime,
+    ) {
+        DndFocus::motion(x, data, Some(&mut *self.lock()), seat, at, time);
+    }
 }
 
 impl OfferData for Offer {
     fn disable(&self) {
         match self {
             Offer::Wl(o) => o.disable(),
-            Offer::X11(o) => o.disable(),
+            Offer::X11(o) => o.lock().disable(),
             Offer::Reprise(_) => {}
         }
     }
@@ -167,7 +199,7 @@ impl OfferData for Offer {
     fn drop(&self) {
         match self {
             Offer::Wl(o) => o.drop(),
-            Offer::X11(o) => o.drop(),
+            Offer::X11(o) => OfferData::drop(&*o.lock()),
             Offer::Reprise(_) => {}
         }
     }
@@ -175,7 +207,7 @@ impl OfferData for Offer {
     fn validated(&self) -> bool {
         match self {
             Offer::Wl(o) => o.validated(),
-            Offer::X11(o) => o.validated(),
+            Offer::X11(o) => o.lock().validated(),
             Offer::Reprise(s) => s.reprise_target(),
         }
     }
@@ -218,9 +250,8 @@ impl DndFocus<State> for PointerFocus {
         data.dnd_actions_changed();
         let source = Arc::new(data.drag_source_for(source)?);
         match self.target(data) {
-            Target::X11(x) => {
-                DndFocus::enter(&*x, data, dh, source, seat, location, serial).map(Offer::X11)
-            }
+            Target::X11(x) => DndFocus::enter(&*x, data, dh, source, seat, location, serial)
+                .map(|o| Offer::X11(X11Offer(Arc::new(Mutex::new(o))))),
             Target::Wl(s) => {
                 DndFocus::enter(&s, data, dh, source, seat, location, serial).map(Offer::Wl)
             }
@@ -237,12 +268,13 @@ impl DndFocus<State> for PointerFocus {
         time: InputTime,
     ) {
         match (self.target(data), offer) {
-            (Target::X11(x), Some(Offer::X11(o))) => {
+            (Target::X11(_), Some(Offer::X11(o))) => {
                 // An X11 target answers in a status the source never hears of;
                 // what it last said stands for its accept.
-                data.flush_motion();
-                data.x11_target_answered(o.validated());
-                DndFocus::motion(&*x, data, Some(o), seat, location, time);
+                data.x11_target_answered(o.lock().validated());
+                if let PointerFocus::Surface(s) = self {
+                    data.hold_drag(s, location, time, Some(o.clone()));
+                }
             }
             (Target::X11(x), None) => {
                 data.flush_motion();
@@ -254,10 +286,10 @@ impl DndFocus<State> for PointerFocus {
                     data.flush_motion();
                     DndFocus::motion(&s, data, Some(o), seat, location, time)
                 } else {
-                    data.hold_drag(&s, location, time)
+                    data.hold_drag(&s, location, time, None)
                 }
             }
-            (Target::Wl(s), None) => data.hold_drag(&s, location, time),
+            (Target::Wl(s), None) => data.hold_drag(&s, location, time, None),
             _ => {}
         }
     }
@@ -265,7 +297,9 @@ impl DndFocus<State> for PointerFocus {
     fn leave<S: Source>(&self, data: &mut State, offer: Option<&mut Offer>, seat: &Seat<State>) {
         data.flush_motion();
         match (self.target(data), offer) {
-            (Target::X11(x), Some(Offer::X11(o))) => DndFocus::leave(&*x, data, Some(o), seat),
+            (Target::X11(x), Some(Offer::X11(o))) => {
+                DndFocus::leave(&*x, data, Some(&mut *o.lock()), seat)
+            }
             (Target::X11(x), None) => DndFocus::<State>::leave::<S>(&*x, data, None, seat),
             (Target::Wl(s), Some(Offer::Wl(o))) => DndFocus::leave(&s, data, Some(o), seat),
             (Target::Wl(s), None) => DndFocus::<State>::leave::<S>(&s, data, None, seat),
@@ -276,7 +310,9 @@ impl DndFocus<State> for PointerFocus {
     fn drop<S: Source>(&self, data: &mut State, offer: Option<&mut Offer>, seat: &Seat<State>) {
         data.flush_motion();
         match (self.target(data), offer) {
-            (Target::X11(x), Some(Offer::X11(o))) => DndFocus::drop(&*x, data, Some(o), seat),
+            (Target::X11(x), Some(Offer::X11(o))) => {
+                DndFocus::drop(&*x, data, Some(&mut *o.lock()), seat)
+            }
             (Target::X11(x), None) => DndFocus::<State>::drop::<S>(&*x, data, None, seat),
             (Target::Wl(s), Some(Offer::Wl(o))) => DndFocus::drop(&s, data, Some(o), seat),
             (Target::Wl(s), None) => DndFocus::<State>::drop::<S>(&s, data, None, seat),
