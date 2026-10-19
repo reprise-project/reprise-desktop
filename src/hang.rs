@@ -95,11 +95,17 @@ fn end_programs(dialogs: &[Option<i32>], ends: impl Fn(i32) -> bool) -> Vec<(usi
         .collect()
 }
 
-/// Whether `pid`'s main thread has exited (`/proc/<pid>/stat` state Z or X); other threads of
-/// it may still run.
-fn leader_exited(pid: i32) -> bool {
-    std::fs::read_to_string(format!("/proc/{pid}/stat"))
-        .is_ok_and(|s| matches!(stat_state(&s), Some('Z' | 'X')))
+/// Whether `pid` never answers again: its main thread has exited (state Z or X; other threads of
+/// it may still run) or has SIGKILL pending, which a main thread blocked on a dead mount keeps.
+/// Reads only the main thread, unlike [`killed`].
+fn dying(pid: i32) -> bool {
+    let read = |f: &str| std::fs::read_to_string(format!("/proc/{pid}/{f}")).unwrap_or_default();
+    dying_by(&read("stat"), &read("status"))
+}
+
+/// [`dying`] from the main thread's `/proc/<pid>/stat` and `/proc/<pid>/status`.
+fn dying_by(stat: &str, status: &str) -> bool {
+    matches!(stat_state(stat), Some('Z' | 'X')) || sigkill_pending(status)
 }
 
 /// The state letter of a `/proc/<pid>/stat` line; the command name before it may hold `)`.
@@ -136,19 +142,19 @@ fn sigkill_pending(status: &str) -> bool {
 const WATCHED_THREADS: usize = 4;
 
 /// Pidfds that turn readable when a thread of `pid` other than its main one exits
-/// (`PIDFD_THREAD`, Linux 6.9+), for its `WATCHED_THREADS` oldest. A main thread's pidfd stays
+/// (`PIDFD_THREAD`, Linux 6.9+), for its `n` oldest not in `known`. A main thread's pidfd stays
 /// quiet while any other thread lives, so it is not taken.
-fn thread_pidfds(pid: i32) -> Vec<(i32, OwnedFd)> {
+fn thread_pidfds(pid: i32, known: &[i32], n: usize) -> Vec<(i32, OwnedFd)> {
     let mut tids: Vec<i32> = std::fs::read_dir(format!("/proc/{pid}/task"))
         .into_iter()
         .flatten()
         .flatten()
         .filter_map(|t| t.file_name().to_str()?.parse().ok())
-        .filter(|&t| t != pid)
+        .filter(|&t| t != pid && !known.contains(&t))
         .collect();
     tids.sort_unstable();
     tids.into_iter()
-        .take(WATCHED_THREADS)
+        .take(n)
         .filter_map(|tid| match thread_pidfd(tid) {
             Ok(fd) => Some((tid, fd)),
             Err(e) => {
@@ -260,8 +266,11 @@ impl State {
 
     /// Ask window `w`'s client to close it, and ping it: a client that does not answer within
     /// `PING_TIMEOUT` gets End Program. A ping input sent earlier and still out stands in for the
-    /// close's own, so its timeout comes sooner.
+    /// close's own, so its timeout comes sooner. A [`dying`] program's client is dropped instead.
     pub fn ping_on_close(&mut self, w: WindowId) {
+        if self.drop_exited(w) {
+            return;
+        }
         let outstanding = self.ping_outstanding(w);
         let h = self.window_hang(w);
         h.close_asked = true;
@@ -275,7 +284,8 @@ impl State {
     }
 
     /// Input reached window `w`: ping its client when one is due (`Liveness::input`), so a client
-    /// that stops answering is known before the window is asked to close.
+    /// that stops answering is known before the window is asked to close; a [`dying`] one is
+    /// dropped instead.
     pub fn input_reached(&mut self, w: WindowId) {
         if !self.win(w).is_some_and(|x| x.mapped) {
             return;
@@ -285,6 +295,7 @@ impl State {
             .window_hang(w)
             .liveness
             .input(Instant::now(), outstanding)
+            && !self.drop_exited(w)
         {
             self.ping(w);
         }
@@ -315,11 +326,13 @@ impl State {
 
     /// Ping window `w`'s client and note it when one went out. An X11 client without
     /// `_NET_WM_PING` gets none, so never End Program. One whose last ping timed out still has it
-    /// out (Smithay sends one at a time); the wait starts again on that one.
+    /// out (Smithay sends one at a time); the wait starts again on that one. Threads started since
+    /// the last ping join the watch.
     fn ping(&mut self, w: WindowId) {
         let Some(target) = self.ping_target(w) else {
             return;
         };
+        self.watch_threads(w);
         let Some(win) = self.win(w) else {
             return;
         };
@@ -398,29 +411,31 @@ impl State {
         }
     }
 
-    /// A program whose main thread has exited never answers again, but a thread of it stuck on a
-    /// dead mount keeps its socket open: disconnect the client behind `w` so its windows go.
+    /// A [`dying`] program never answers again, but a thread of it stuck on a dead mount keeps its
+    /// socket open: disconnect the client behind `w` so its windows go.
     fn drop_exited(&mut self, w: WindowId) -> bool {
-        let Some(pid) = self
-            .client_pid(w)
-            .filter(|&p| self.may_end(p) && leader_exited(p))
-        else {
+        let Some(pid) = self.client_pid(w).filter(|&p| self.may_end(p) && dying(p)) else {
             return false;
         };
         self.disconnect(w, pid)
     }
 
-    /// Watch threads of mapped window `w`'s program (`thread_pidfds`), so a kill that leaves a
-    /// thread stuck is known when the others exit rather than when a ping times out.
+    /// Watch threads of window `w`'s program (`thread_pidfds`), up to `WATCHED_THREADS` running,
+    /// so a kill that leaves a thread stuck is known when the others exit rather than when a ping
+    /// times out. Called at map and again at each ping for threads started since.
     pub fn watch_threads(&mut self, w: WindowId) {
         let Some(pid) = self.client_pid(w).filter(|&p| self.may_end(p)) else {
             return;
         };
-        if self.hang.threads.contains_key(&pid) {
-            return;
-        }
-        let mut threads = Threads::default();
-        for (tid, fd) in thread_pidfds(pid) {
+        let mut threads = self.hang.threads.remove(&pid).unwrap_or_default();
+        let known: Vec<i32> = threads.watched.iter().map(|&(t, _)| t).collect();
+        let n = WATCHED_THREADS.saturating_sub(known.len());
+        let fresh = if threads.dropped || n == 0 {
+            Vec::new()
+        } else {
+            thread_pidfds(pid, &known, n)
+        };
+        for (tid, fd) in fresh {
             let source = Generic::new(fd, Interest::READ, Mode::Level);
             match self.handle.insert_source(source, move |_, _, state| {
                 state.thread_left(pid, tid);
@@ -642,18 +657,33 @@ mod tests {
             .arg("30")
             .spawn()
             .unwrap();
-        assert!(!leader_exited(running.id() as i32), "running sleep");
+        assert!(!dying(running.id() as i32), "running sleep");
         running.kill().unwrap();
         running.wait().unwrap();
 
         let mut exited = std::process::Command::new("true").spawn().unwrap();
         let pid = exited.id() as i32;
         let deadline = Instant::now() + Duration::from_secs(5);
-        while !leader_exited(pid) && Instant::now() < deadline {
+        while !dying(pid) && Instant::now() < deadline {
             std::thread::sleep(Duration::from_millis(10));
         }
-        assert!(leader_exited(pid), "unreaped true is a zombie");
+        assert!(dying(pid), "unreaped true is a zombie");
         exited.wait().unwrap();
+    }
+
+    #[test]
+    fn a_main_thread_stuck_with_sigkill_pending_is_dying() {
+        let stat = |state: char| format!("42 (a) b) {state} 1 42 42");
+        let status = |sig: &str| format!("Name:\tx\nState:\tD\nSigPnd:\t{sig}\nShdPnd:\t0\n");
+        let (kill, none) = ("0000000000000100", "0000000000000000");
+        assert!(
+            dying_by(&stat('D'), &status(kill)),
+            "stuck on a dead mount, killed"
+        );
+        assert!(!dying_by(&stat('D'), &status(none)), "stuck, not killed");
+        assert!(!dying_by(&stat('S'), &status(none)), "running");
+        assert!(dying_by(&stat('Z'), ""), "exited");
+        assert!(!dying_by("", ""), "gone");
     }
 
     #[test]
@@ -723,7 +753,7 @@ mod tests {
         let mut b = 0u8;
         // SAFETY: reads one byte into a live buffer.
         unsafe { libc::read(ready_r, (&raw mut b).cast(), 1) };
-        let fds = thread_pidfds(pid);
+        let fds = thread_pidfds(pid, &[], WATCHED_THREADS);
         let reap = || {
             // SAFETY: plain syscalls on our own child and pipes.
             unsafe {
@@ -743,6 +773,12 @@ mod tests {
             fds.len(),
             2,
             "both threads besides the main one are watched"
+        );
+        let rest = thread_pidfds(pid, &[fds[0].0], WATCHED_THREADS);
+        assert_eq!(
+            rest.iter().map(|(t, _)| *t).collect::<Vec<_>>(),
+            [fds[1].0],
+            "a re-scan takes only the threads not yet watched"
         );
         assert!(
             fds.iter().all(|(_, fd)| !readable(fd, 50)),
