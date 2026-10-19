@@ -294,6 +294,23 @@ pub fn edit<E>(
     path: &Path,
     edit: impl FnOnce(&str) -> Result<String, E>,
 ) -> std::io::Result<Result<String, E>> {
+    locked_edit(path, false, edit)
+}
+
+/// [`edit`] for a file whose text can be rebuilt: one that is not UTF-8 reads as empty and is
+/// overwritten.
+pub fn edit_or_reset<E>(
+    path: &Path,
+    edit: impl FnOnce(&str) -> Result<String, E>,
+) -> std::io::Result<Result<String, E>> {
+    locked_edit(path, true, edit)
+}
+
+fn locked_edit<E>(
+    path: &Path,
+    reset: bool,
+    edit: impl FnOnce(&str) -> Result<String, E>,
+) -> std::io::Result<Result<String, E>> {
     use std::os::fd::AsRawFd;
     let dir = match path.parent() {
         Some(d) if !d.as_os_str().is_empty() => d.to_path_buf(),
@@ -310,16 +327,21 @@ pub fn edit<E>(
     if unsafe { libc::flock(lock.as_raw_fd(), libc::LOCK_EX) } != 0 {
         return Err(std::io::Error::last_os_error());
     }
+    let mut stale = false;
     let text = match std::fs::read_to_string(path) {
         Ok(t) => t,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(e) if reset && e.kind() == std::io::ErrorKind::InvalidData => {
+            stale = true;
+            String::new()
+        }
         Err(e) => return Err(e),
     };
     let out = match edit(&text) {
         Ok(out) => out,
         Err(e) => return Ok(Err(e)),
     };
-    if out != text {
+    if out != text || stale {
         write_atomic(path, &out)?;
     }
     Ok(Ok(out))
