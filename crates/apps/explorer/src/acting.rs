@@ -271,10 +271,11 @@ mod tests {
         ex.watch = None;
         ex.held = Some(Arc::new(RwLock::new(())));
         let (go, wait) = std::sync::mpsc::channel::<()>();
+        let (changing, changed) = std::sync::mpsc::channel::<bool>();
         let (at, made) = (dir.path().to_path_buf(), dir.path().join("late.txt"));
         let write = made.clone();
         let work = move |gate: &Gate| {
-            assert!(gate.change(&at));
+            changing.send(gate.change(&at)).expect("the test waits");
             wait.recv().expect("the test lets it go");
             std::fs::write(&write, "1").expect("write");
         };
@@ -284,6 +285,8 @@ mod tests {
             work,
             |_, (), _| Reply::none(),
         );
+        // Only a wake gives up, so the work is under way before the first wake checks the deadline.
+        assert_eq!(changed.recv_timeout(crate::LIST_WAIT), Ok(true));
         wake_until(&mut ex, &mut ctx, |ex| message(ex).is_some());
         assert_eq!(
             message(&ex).map(|m| m.1),
