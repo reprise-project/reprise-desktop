@@ -924,6 +924,39 @@ fn emptying_the_bin_drops_only_the_trash_undos() {
 }
 
 #[test]
+fn paste_greys_with_no_files_on_the_clipboard_but_ctrl_v_still_asks() {
+    let dir = tempfile::tempdir().expect("a temp dir");
+    let mut ctx = test_ctx();
+    let mut ex = crate::tests::test_explorer(Place::Folder(dir.path().to_path_buf()), &mut ctx);
+
+    repriseapp::fake_clipboard_files(true);
+    assert!(
+        ex.menu_state().can_paste,
+        "files on the clipboard: Paste is live"
+    );
+    repriseapp::fake_clipboard_files(false);
+    assert!(
+        !ex.menu_state().can_paste,
+        "no files on the clipboard: Paste greys"
+    );
+
+    let ctrl_v = repriseapp::KeyInput {
+        sym: 'v' as u32,
+        utf8: None,
+        mods: repriseapp::Mods {
+            ctrl: true,
+            shift: false,
+            alt: false,
+        },
+        edit: None,
+    };
+    assert!(
+        ex.key_inner(ctrl_v, &mut ctx).paste_files,
+        "Ctrl+V asks the clipboard anyway"
+    );
+}
+
+#[test]
 fn a_paste_into_the_same_folder_lands_as_a_copy() {
     let dir = tempfile::tempdir().expect("a temp dir");
     std::fs::write(dir.path().join("a.txt"), "1").expect("write");
