@@ -10,6 +10,8 @@ use smithay::reexports::calloop::{
     RegistrationToken,
     timer::{TimeoutAction, Timer},
 };
+use smithay::reexports::wayland_server::Resource;
+use smithay::reexports::wayland_server::backend::DisconnectReason;
 use smithay::utils::SERIAL_COUNTER;
 use smithay::wayland::shell::PingError;
 use smithay::wayland::shell::xdg::ShellClient;
@@ -365,7 +367,8 @@ impl State {
 
     /// End Program's End Now: SIGKILL `pid`, as long as a window still belongs to it. The program
     /// may have gone and its pid been reused while the dialog waited; a window holding the pid
-    /// means it is still the one that stopped responding.
+    /// means it is still the one that stopped responding. Its Wayland connections are dropped too:
+    /// a thread of it blocked on a dead mount outlives the kill and keeps their sockets open.
     pub fn end_program(&mut self, pid: i32) {
         let owns = self
             .windows
@@ -382,6 +385,25 @@ impl State {
                 "end program: kill {pid}: {}",
                 std::io::Error::last_os_error()
             );
+        }
+        self.drop_clients_of(pid);
+    }
+
+    /// Disconnects the Wayland clients behind `pid`'s xdg windows; X11 windows share Xwayland's.
+    fn drop_clients_of(&mut self, pid: i32) {
+        let mut clients = Vec::new();
+        for w in self.windows.iter() {
+            if let Kind::Xdg(t) = &w.kind
+                && self.client_pid(w.id) == Some(pid)
+                && let Some(c) = t.wl_surface().client()
+                && !clients.contains(&c.id())
+            {
+                clients.push(c.id());
+            }
+        }
+        let backend = self.dh.backend_handle();
+        for id in clients {
+            backend.kill_client(id, DisconnectReason::ConnectionClosed);
         }
     }
 }
