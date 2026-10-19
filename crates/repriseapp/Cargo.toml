@@ -18,6 +18,7 @@ wayland-client.workspace = true
 wayland-scanner = "0.31"
 log.workspace = true
 zeroize.workspace = true
+libc.workspace = true
 # in pure Rust. Left out: AVIF (decoding needs the system dav1d), TGA and
 # farbfeld (no magic `guess_format` can sniff, or too rare to carry).
 image = { workspace = true, features = ["gif", "webp", "tiff", "ico", "qoi", "pnm", "hdr", "exr", "dds"] }

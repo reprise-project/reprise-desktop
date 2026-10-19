@@ -2352,6 +2352,7 @@ dependencies = [
  "accesskit_unix",
  "env_logger",
  "image",
+ "libc",
  "log",
  "png",
  "reprisebus",
