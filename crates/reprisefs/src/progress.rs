@@ -4,7 +4,7 @@
 use std::cell::RefCell;
 use std::ffi::OsStr;
 use std::path::Path;
-use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -44,6 +44,12 @@ pub struct Meter {
     /// Bytes of small files written since their drive's last flush started ([`Meter::wrote_file`]).
     unflushed: AtomicU64,
     flushing: Mutex<Option<std::thread::JoinHandle<()>>>,
+    /// Bumped by every step the job takes; a job whose count stands still is stuck in a call.
+    stir: AtomicU64,
+    /// Waits on a drive's flush under way: a slow disk, not a stuck job.
+    flush_waits: AtomicU32,
+    /// The index of the item the job is on.
+    at: AtomicUsize,
 }
 
 /// A file this large is flushed in windows as it is written ([`Writeback`]).
@@ -89,7 +95,42 @@ impl Meter {
         self.items.fetch_add(1, Ordering::Relaxed);
     }
 
+    fn stir(&self) {
+        self.stir.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// The step count and whether the job is paused or waiting on a flush, for the watch on a put
+    /// that stops answering.
+    pub(crate) fn stirring(&self) -> (u64, bool) {
+        let resting =
+            self.paused.load(Ordering::Relaxed) || self.flush_waits.load(Ordering::Relaxed) > 0;
+        (self.stir.load(Ordering::Relaxed), resting)
+    }
+
+    /// Run `f`, a wait on a drive's flush, outside the watch: a slow disk takes as long as it takes.
+    pub(crate) fn flush_wait<T>(&self, f: impl FnOnce() -> T) -> T {
+        self.flush_waits.fetch_add(1, Ordering::Relaxed);
+        let out = f();
+        self.flush_waits.fetch_sub(1, Ordering::Relaxed);
+        self.stir();
+        out
+    }
+
+    pub(crate) fn set_at(&self, index: usize) {
+        self.at.store(index, Ordering::Relaxed);
+        self.stir();
+    }
+
+    pub(crate) fn at(&self) -> usize {
+        self.at.load(Ordering::Relaxed)
+    }
+
+    pub(crate) fn phase(&self) -> Phase {
+        self.snapshot().phase
+    }
+
     pub(crate) fn set_phase(&self, p: Phase) {
+        self.stir();
         let v = match p {
             Phase::Preparing => 0,
             Phase::Copying => 1,
@@ -99,6 +140,7 @@ impl Meter {
     }
 
     pub(crate) fn add_totals(&self, t: Totals) {
+        self.stir();
         self.total_bytes.fetch_add(t.bytes, Ordering::Relaxed);
         self.total_items.fetch_add(t.items, Ordering::Relaxed);
     }
@@ -106,11 +148,13 @@ impl Meter {
     /// The counts once a put's item `done` has landed, whatever its copy counted on the way:
     /// the walk's totals stay the one measure of the bar.
     pub(crate) fn settle(&self, done: Totals) {
+        self.stir();
         self.bytes.store(done.bytes, Ordering::Relaxed);
         self.items.store(done.items, Ordering::Relaxed);
     }
 
     pub(crate) fn set_current(&self, name: &OsStr) {
+        self.stir();
         if let Ok(mut s) = self.current.lock() {
             *s = name.to_string_lossy().into_owned();
         }
@@ -128,6 +172,7 @@ impl Meter {
         while self.paused.load(Ordering::Relaxed) && !self.cancelled() {
             std::thread::sleep(PAUSE_POLL);
         }
+        self.stir();
         if self.cancelled() {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::Interrupted,
@@ -141,6 +186,7 @@ impl Meter {
     /// Other files start a background flush every [`KICK_EVERY`] and wait for it past [`FLUSH_EVERY`].
     pub(crate) fn wrote_file(&self, file: &std::fs::File, len: u64, windowed: bool) {
         self.items.fetch_add(1, Ordering::Relaxed);
+        self.stir();
         if windowed {
             return;
         }
@@ -156,7 +202,7 @@ impl Meter {
                 return;
             }
             if let Some(h) = flushing.take() {
-                let _ = h.join();
+                let _ = self.flush_wait(|| h.join());
             }
         }
         self.unflushed.store(0, Ordering::Relaxed);
@@ -185,8 +231,8 @@ impl std::ops::Add for Totals {
 
 /// The bytes and files under `src` a copy writes: a link is one item of no bytes, a top-level
 /// link is followed (a copy follows it), and what is neither file, folder nor link is skipped as
-/// the copy skips it. `None` once `stop` is set.
-pub(crate) fn walk(src: &Path, follow: bool, stop: &AtomicBool) -> Option<Totals> {
+/// the copy skips it. `None` once `m` is cancelled.
+pub(crate) fn walk(src: &Path, follow: bool, m: &Meter) -> Option<Totals> {
     let meta = if follow {
         std::fs::metadata(src)
     } else {
@@ -210,10 +256,11 @@ pub(crate) fn walk(src: &Path, follow: bool, stop: &AtomicBool) -> Option<Totals
     }
     let mut sum = Totals::default();
     for entry in std::fs::read_dir(src).into_iter().flatten().flatten() {
-        if stop.load(Ordering::Relaxed) {
+        if m.cancelled() {
             return None;
         }
-        sum = sum + walk(&entry.path(), false, stop)?;
+        m.stir();
+        sum = sum + walk(&entry.path(), false, m)?;
     }
     Some(sum)
 }
@@ -249,7 +296,7 @@ impl Writeback {
     }
 
     /// `file` holds `len` bytes so far.
-    pub(crate) fn advance(&mut self, file: &std::fs::File, len: u64) {
+    pub(crate) fn advance(&mut self, file: &std::fs::File, len: u64, meter: &Meter) {
         use std::os::fd::AsRawFd;
         while len >= self.sent + WINDOW {
             let fd = file.as_raw_fd();
@@ -262,14 +309,16 @@ impl Writeback {
                     libc::SYNC_FILE_RANGE_WRITE,
                 );
                 if self.sent >= WINDOW {
-                    libc::sync_file_range(
-                        fd,
-                        (self.sent - WINDOW) as i64,
-                        WINDOW as i64,
-                        libc::SYNC_FILE_RANGE_WAIT_BEFORE
-                            | libc::SYNC_FILE_RANGE_WRITE
-                            | libc::SYNC_FILE_RANGE_WAIT_AFTER,
-                    );
+                    meter.flush_wait(|| {
+                        libc::sync_file_range(
+                            fd,
+                            (self.sent - WINDOW) as i64,
+                            WINDOW as i64,
+                            libc::SYNC_FILE_RANGE_WAIT_BEFORE
+                                | libc::SYNC_FILE_RANGE_WRITE
+                                | libc::SYNC_FILE_RANGE_WAIT_AFTER,
+                        )
+                    });
                 }
             }
             self.sent += WINDOW;
@@ -307,7 +356,7 @@ mod tests {
         std::fs::write(d.join("a"), vec![0; 300]).unwrap();
         std::fs::write(d.join("sub/b"), vec![0; 700]).unwrap();
         std::os::unix::fs::symlink("a", d.join("link")).unwrap();
-        let got = walk(&d, true, &AtomicBool::new(false)).unwrap();
+        let got = walk(&d, true, &Meter::default()).unwrap();
         assert_eq!(
             got,
             Totals {
@@ -315,7 +364,9 @@ mod tests {
                 items: 3
             }
         );
-        assert_eq!(walk(&d, true, &AtomicBool::new(true)), None);
+        let cancelled = Meter::default();
+        cancelled.cancel();
+        assert_eq!(walk(&d, true, &cancelled), None);
     }
 
     #[test]

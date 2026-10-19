@@ -187,7 +187,7 @@ fn copy_metered(
             break;
         }
         len += n as u64;
-        back.advance(dst, len);
+        back.advance(dst, len, meter);
         meter.wrote(n as u64)?;
     }
     meter.wrote_file(dst, len, back.used());
@@ -419,6 +419,9 @@ pub enum PutError {
     /// A replacement of a file by itself: the same file under another
     /// link, or a link to the file it would replace.
     SameFile,
+    /// The job made no headway for [`crate::deadline::ACTION_DEADLINE`]: a call on a drive that
+    /// stopped answering.
+    NotResponding,
     Io(io::Error),
 }
 
@@ -435,6 +438,7 @@ impl std::fmt::Display for PutError {
                 f.write_str("The source and destination file names are the same.")
             }
             PutError::SameFile => f.write_str("The source and destination are the same file."),
+            PutError::NotResponding => f.write_str("The location is not responding."),
             PutError::Io(e) => e.fmt(f),
         }
     }

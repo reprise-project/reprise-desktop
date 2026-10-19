@@ -8,7 +8,6 @@ use crate::trash::{self, Bins, Trashed};
 use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::sync::atomic::AtomicBool;
 use std::sync::mpsc::{self, Receiver, TryRecvError};
 
 /// One item of a removal job.
@@ -73,13 +72,13 @@ impl Removal {
     }
 
     /// The files and links under the item, which the bar counts.
-    fn totals(&self, stop: &AtomicBool) -> Option<Totals> {
+    fn totals(&self, m: &Meter) -> Option<Totals> {
         let path = match self {
             Removal::Trash { path, .. } | Removal::Erase(path) => path.clone(),
             Removal::EraseTrashed { files, .. } | Removal::Restore { files, .. } => files.clone(),
             Removal::Empty(root) => root.join("files"),
         };
-        progress::walk(&path, false, stop)
+        progress::walk(&path, false, m)
     }
 
     fn name(&self) -> &std::ffi::OsStr {
@@ -144,7 +143,7 @@ impl RemoveJob {
                 let Some(sizes) = items
                     .iter()
                     .map(|it| {
-                        let t = it.totals(&m.cancel);
+                        let t = it.totals(&m);
                         m.add_totals(t.unwrap_or_default());
                         t
                     })
@@ -315,7 +314,7 @@ mod tests {
                 "a cancelled item reports nothing: {evs:?}"
             );
         }
-        let left = progress::walk(&a, false, &AtomicBool::new(false)).unwrap();
+        let left = progress::walk(&a, false, &Meter::default()).unwrap();
         assert_eq!(left.items, 200, "nothing went past the pause");
     }
 
