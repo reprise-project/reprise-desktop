@@ -2032,6 +2032,7 @@ impl State {
             return;
         }
         self.note_app_id(w);
+        self.watch_threads(w);
         let current = self.desktops.current;
         let Some(win) = self.win_mut(w) else {
             return;
