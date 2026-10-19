@@ -839,6 +839,10 @@ impl Notepad {
                 if !(self.edit.has_selection() && (start..=end).contains(&pos)) {
                     self.edit.place(pos, false);
                 }
+                // The menu takes the left button's release, so a drag in progress ends here.
+                self.dragging = None;
+                self.thumb.release();
+                self.view.bars.release_bar();
                 self.open_context((x, y), false, ctx);
                 Reply::redraw()
             }
@@ -2606,6 +2610,55 @@ mod tests {
         np.event(MAIN, Event::Pointer(right_press(x, y)), &mut ctx);
         assert!(np.context.is_none(), "a press off the menu only closes it");
         assert_eq!(np.edit.caret(), multiedit::Pos { line: 0, col: 2 });
+    }
+
+    #[test]
+    fn a_right_click_during_a_text_drag_ends_the_drag() {
+        let mut ctx = test_ctx();
+        let mut np = Notepad::new(None);
+        np.edit = MultiEdit::new("alpha beta gamma");
+        let (x0, y) = at_col(&np, &ctx, 0);
+        let (x3, _) = at_col(&np, &ctx, 3);
+        let (x8, _) = at_col(&np, &ctx, 8);
+        np.event(
+            MAIN,
+            Event::Pointer(PointerInput::Press {
+                x: x0,
+                y,
+                button: BTN_LEFT,
+                time: 0,
+                mods: repriseapp::Mods::default(),
+            }),
+            &mut ctx,
+        );
+        np.event(
+            MAIN,
+            Event::Pointer(PointerInput::Motion { x: x3, y }),
+            &mut ctx,
+        );
+        np.event(MAIN, Event::Pointer(right_press(x3, y)), &mut ctx);
+        assert!(np.context.is_some());
+        np.event(
+            MAIN,
+            Event::Pointer(PointerInput::Release {
+                x: x3,
+                y,
+                button: BTN_LEFT,
+                mods: repriseapp::Mods::default(),
+            }),
+            &mut ctx,
+        );
+        np.event(MAIN, typed(keysym::ESCAPE, None, false), &mut ctx);
+        np.event(
+            MAIN,
+            Event::Pointer(PointerInput::Motion { x: x8, y }),
+            &mut ctx,
+        );
+        assert_eq!(
+            np.edit.selected_text(),
+            "alp",
+            "motion with no button held after the menu leaves the selection"
+        );
     }
 
     #[test]
