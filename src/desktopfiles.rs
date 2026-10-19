@@ -116,7 +116,7 @@ impl State {
     pub(crate) fn ask_delete(&mut self, paths: Vec<PathBuf>, label: Option<String>, shift: bool) {
         let action = Action::reads("Error Deleting File or Folder");
         self.spawn_fs_action(action, move |_| -> OnLoop {
-            use reprisefs::bincap::{Fate, Policy, delete_mode};
+            use reprisefs::bincap::{BinLack, Fate, Policy, delete_mode};
             let bins = reprisefs::trash::Bins::system();
             let fates: Vec<Fate> = paths
                 .iter()
@@ -137,7 +137,13 @@ impl State {
                         let name = label.unwrap_or_else(|| {
                             one.file_name().unwrap_or_default().to_string_lossy().into()
                         });
-                        Dialog::confirm_delete(&name, one, is_dir, erase, mode.no_bin)
+                        Dialog::confirm_delete(
+                            &name,
+                            one,
+                            is_dir,
+                            erase,
+                            mode.no_bin != BinLack::None,
+                        )
                     }
                     _ => Dialog::confirm_delete_many(&paths, erase, mode.no_bin),
                 };
