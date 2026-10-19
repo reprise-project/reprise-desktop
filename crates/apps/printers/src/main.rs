@@ -831,6 +831,11 @@ impl App for PrintersApp {
         self.hidden
     }
 
+    fn min_size(&self, win: WinId) -> Option<(i32, i32)> {
+        let (_, d) = self.browse.as_ref().filter(|_| win == BROWSE)?;
+        Some(d.min_client())
+    }
+
     fn children(&self) -> Vec<Child> {
         let mut out = Vec::new();
         if let Some(q) = &self.queue {
@@ -1126,6 +1131,27 @@ mod tests {
         };
         assert_eq!(size(WIZARD), (768, 556));
         assert_eq!(size(PROPS), (587, 680));
+    }
+
+    #[test]
+    fn have_disk_shrinks_back_to_the_dialog_minimum() {
+        let mut app = PrintersApp::default();
+        let mut d = FileDlg::new(
+            FileFields {
+                title: "Have Disk".into(),
+                accept_label: "Open".into(),
+                mode: DlgMode::Open,
+                multiple: false,
+                filters: vec!["Printer Drivers (*.ppd)".into()],
+            },
+            Vec::new(),
+        );
+        d.set_size((800, 600));
+        let min = d.min_client();
+        assert!(min.0 < 800 && min.1 < 600, "{min:?}");
+        app.browse = Some((Host::default(), d));
+        assert_eq!(app.min_size(BROWSE), Some(min));
+        assert_eq!(app.min_size(WIZARD), None);
     }
 
     #[test]

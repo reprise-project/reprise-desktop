@@ -1645,6 +1645,24 @@ fn browse_opens_the_program_picker_over_the_chooser() {
     );
 }
 
+#[test]
+fn the_program_picker_has_the_plain_caption_of_a_file_dialog() {
+    let dir = tempfile::tempdir().expect("a temp dir");
+    std::fs::write(dir.path().join("b.txt"), "").unwrap();
+    let mut ctx = test_ctx();
+    let mut ex = crate::tests::test_explorer(Place::Folder(dir.path().to_path_buf()), &mut ctx);
+    ex.choose_program_for(&dir.path().join("b.txt"), false, &mut ctx);
+    ex.chooser_event(key_event_alt('b'), &mut ctx);
+    assert_eq!(
+        ex.caption(crate::dialogs::DIALOG),
+        repriseapp::Caption::Help
+    );
+    assert_eq!(
+        ex.caption(crate::dialogs::PROGRAM_BROWSE),
+        repriseapp::Caption::Window
+    );
+}
+
 fn key_event_escape() -> repriseapp::Event {
     repriseapp::Event::Key(repriseapp::KeyInput {
         sym: reprisekit::textedit::keysym::ESCAPE,
