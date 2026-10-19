@@ -4,7 +4,13 @@
 //! loop gets `&mut State`, so nothing holds a pointer into it.
 
 use std::{
-    ffi::OsString, os::unix::net::UnixStream, path::PathBuf, rc::Rc, sync::Arc, time::Duration,
+    cell::RefCell,
+    ffi::OsString,
+    os::{fd::AsFd, unix::net::UnixStream},
+    path::PathBuf,
+    rc::Rc,
+    sync::Arc,
+    time::Duration,
 };
 
 use smithay::{
@@ -12,7 +18,11 @@ use smithay::{
     desktop::PopupManager,
     input::{Seat, SeatState, keyboard::XkbConfig, pointer::CursorImageStatus},
     reexports::{
-        calloop::{Interest, LoopHandle, LoopSignal, Mode, PostAction, generic::Generic},
+        calloop::{
+            Interest, LoopHandle, LoopSignal, Mode, PostAction,
+            generic::Generic,
+            ping::{Ping, make_ping},
+        },
         wayland_protocols_misc::server_decoration::server::org_kde_kwin_server_decoration_manager::Mode as KdeDefaultMode,
         wayland_server::{
             Display, DisplayHandle,
@@ -158,6 +168,9 @@ pub struct State {
     pub config_path: PathBuf,
     pub dh: DisplayHandle,
     pub handle: LoopHandle<'static, State>,
+    /// Clients `drop_client` disconnected, and the ping that has their objects freed.
+    dropped_clients: Vec<ClientId>,
+    drop_kick: Ping,
     /// Stops the event loop: SIGTERM, SIGINT.
     /// The session's end (the `exit` bind, Log Off) stops it too.
     pub signal: LoopSignal,
@@ -373,6 +386,15 @@ pub struct State {
 }
 
 impl State {
+    /// Disconnect `client` and free its objects, its windows with them, at once.
+    pub fn drop_client(&mut self, client: ClientId) {
+        self.dh
+            .backend_handle()
+            .kill_client(client.clone(), DisconnectReason::ConnectionClosed);
+        self.dropped_clients.push(client);
+        self.drop_kick.ping();
+    }
+
     /// The display, its socket and every global, on `handle`'s loop. The
     /// backend comes after (`backend::init`).
     pub fn new(
@@ -392,16 +414,28 @@ impl State {
                 log::warn!("client refused: {e}");
             }
         })?;
+        let display = Rc::new(RefCell::new(display));
+        let display_fd = display.borrow().as_fd().try_clone_to_owned()?;
+        let d = display.clone();
         handle.insert_source(
-            Generic::new(display, Interest::READ, Mode::Level),
-            |_, display, state| {
-                // SAFETY: the display is owned by this source and never
-                // dropped while the loop dispatches it.
-                unsafe { display.get_mut().dispatch_clients(state)? };
+            Generic::new(display_fd, Interest::READ, Mode::Level),
+            move |_, _, state| {
+                d.borrow_mut().dispatch_clients(state)?;
                 state.ime_sync_grab();
                 Ok(PostAction::Continue)
             },
         )?;
+        // A killed client's objects are freed by the next dispatch, which an idle display, with no
+        // client sending, would not run until one does.
+        let (drop_kick, kick) = make_ping()?;
+        handle.insert_source(kick, move |_, _, state: &mut State| {
+            for id in std::mem::take(&mut state.dropped_clients) {
+                let _ = display
+                    .borrow_mut()
+                    .backend()
+                    .dispatch_single_client(state, id);
+            }
+        })?;
 
         let mut seat_state = SeatState::new();
         let mut seat = seat_state.new_wl_seat(&dh, "seat0");
@@ -625,6 +659,8 @@ impl State {
             config_path,
             dh,
             handle,
+            dropped_clients: Vec::new(),
+            drop_kick,
             signal,
             clock: Clock::new(),
             env,
