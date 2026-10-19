@@ -3,7 +3,7 @@
 //! re-keyed under each press inside that client. Smithay grants a drag out of a menu
 //! (`wl_data_device.start_drag`) or a submenu only while the pointer's grab carries that
 //! press's serial, and only the popup grab carries the serial the popup was opened with.
-//! A drag out of a menu takes the grab along (`dnd`); it comes back if the menu is still open.
+//! A drag out of a menu takes the grab along (`dnd`, [`Held`]); it comes back if the menu is still open.
 
 use smithay::{
     backend::input::{ButtonState, InputTime},
@@ -53,15 +53,79 @@ pub fn holding(pointer: &PointerHandle<State>) -> Option<PopupGrab<State>> {
         .flatten()
 }
 
+/// The popups a grab keeps open.
+pub trait Popups {
+    fn has_ended(&self) -> bool;
+    fn close(&mut self);
+}
+
+impl Popups for PopupGrab<State> {
+    fn has_ended(&self) -> bool {
+        PopupGrab::has_ended(self)
+    }
+
+    fn close(&mut self) {
+        self.ungrab(PopupUngrabStrategy::All);
+    }
+}
+
+/// A client popups' grab a running drag holds, with the serial it was
+/// asked for under: given back at the drag's end if the popups are still open.
+pub struct Held<G>(Option<(G, Serial)>);
+
+impl<G> Default for Held<G> {
+    fn default() -> Self {
+        Held(None)
+    }
+}
+
+impl<G: Popups> Held<G> {
+    pub fn hold(&mut self, grab: G, serial: Serial) {
+        self.0 = Some((grab, serial));
+    }
+
+    pub fn is_open(&self) -> bool {
+        self.0.as_ref().is_some_and(|(g, _)| !g.has_ended())
+    }
+
+    /// Close the held popups; false when none are open.
+    pub fn dismiss(&mut self) -> bool {
+        match self.0.take() {
+            Some((mut g, _)) if !g.has_ended() => {
+                g.close();
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// The grab to set again once the drag ends.
+    pub fn give_back(&mut self) -> Option<(G, Serial)> {
+        self.0.take().filter(|(g, _)| !g.has_ended())
+    }
+}
+
+/// Whether client popups hold the seat, through the pointer's grab or a
+/// running drag's.
+pub fn open(state: &State) -> bool {
+    state
+        .seat
+        .get_pointer()
+        .is_some_and(|p| holding(&p).is_some())
+        || state.dnd.holds_popup()
+}
+
 /// Close the client popups whose grab holds the seat, as a press outside
 /// them would: the keyboard goes back to the surface they opened on.
-/// False when no client popup holds it.
+/// A drag that holds their grab drops it. False when no client popup holds it.
 pub fn dismiss(state: &mut State) -> bool {
     let Some(pointer) = state.seat.get_pointer() else {
         return false;
     };
     let Some(mut popup) = holding(&pointer) else {
-        return false;
+        // The drag took the keyboard grab off the popups when it took the
+        // pointer (`PopupPointer::unset`), or they asked during the drag.
+        return state.dnd.dismiss_held_popup();
     };
     popup.ungrab(PopupUngrabStrategy::All);
     // Unsetting the pointer grab ends the keyboard grab with it.
@@ -250,6 +314,57 @@ mod tests {
 
     fn s(n: u32) -> Serial {
         Serial::from(n)
+    }
+
+    #[derive(Default)]
+    struct Menu {
+        ended: bool,
+        closed: bool,
+    }
+
+    impl Popups for std::rc::Rc<std::cell::RefCell<Menu>> {
+        fn has_ended(&self) -> bool {
+            self.borrow().ended
+        }
+
+        fn close(&mut self) {
+            let mut m = self.borrow_mut();
+            m.closed = true;
+            m.ended = true;
+        }
+    }
+
+    #[test]
+    fn a_held_menu_dismissed_mid_drag_closes_and_is_not_given_back() {
+        let menu = std::rc::Rc::new(std::cell::RefCell::new(Menu::default()));
+        let mut held = Held::default();
+        held.hold(menu.clone(), s(7));
+        assert!(held.is_open());
+        assert!(held.dismiss());
+        assert!(menu.borrow().closed, "dismissing closes the held popups");
+        assert!(!held.is_open());
+        assert!(held.give_back().is_none(), "the drag's end grabs nothing");
+    }
+
+    #[test]
+    fn a_held_menu_still_open_at_the_drags_end_is_given_back_once() {
+        let menu = std::rc::Rc::new(std::cell::RefCell::new(Menu::default()));
+        let mut held = Held::default();
+        held.hold(menu.clone(), s(7));
+        assert_eq!(held.give_back().map(|(_, s)| s), Some(s(7)));
+        assert!(held.give_back().is_none());
+        assert!(!menu.borrow().closed);
+    }
+
+    #[test]
+    fn a_held_menu_the_client_closed_is_neither_open_nor_dismissed() {
+        let menu = std::rc::Rc::new(std::cell::RefCell::new(Menu::default()));
+        let mut held = Held::default();
+        held.hold(menu.clone(), s(7));
+        menu.borrow_mut().ended = true;
+        assert!(!held.is_open());
+        assert!(!held.dismiss());
+        assert!(!menu.borrow().closed);
     }
 
     #[test]

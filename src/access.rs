@@ -365,10 +365,7 @@ fn hand_off(
 /// Move the seat's keyboard for open popups: a popup that takes every key ([`takes_keyboard`]) takes it from the window before its tree claims the focus and hands it back, as a fresh enter, when it lets go. A client's open popup closes first: its grab would keep the keyboard on it.
 fn move_keyboard(state: &mut State, focus: Option<Surface>) {
     let held = state.seat.get_keyboard().and_then(|k| k.current_focus());
-    let grabbed = state
-        .seat
-        .get_pointer()
-        .is_some_and(|p| crate::popupgrab::holding(&p).is_some());
+    let grabbed = crate::popupgrab::open(state);
     let reply = crate::notifyview::reply_focused(state);
     let step = hand_off(
         takes_keys(focus, reply),
