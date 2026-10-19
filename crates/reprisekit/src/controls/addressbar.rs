@@ -125,6 +125,30 @@ impl AddressBar {
         }
     }
 
+    /// A right press on what [`hit`] returned, ahead of the host's edit menu: in the field the
+    /// caret moves to `x` unless it is inside the selection; anywhere else nothing happens.
+    pub fn right_press(
+        &mut self,
+        hit: Hit,
+        x: i32,
+        lay: &Layout,
+        text: &TextRenderer,
+        px: u32,
+        s: i32,
+    ) -> Event {
+        if hit != Hit::Combo(combo::Hit::Field) {
+            return Event::None;
+        }
+        let i = combo::index_at(&self.combo, &lay.combo, text, px, s, x);
+        match self.combo.edit.as_mut() {
+            Some(edit) => {
+                edit.press_for_menu(i);
+                Event::Redraw
+            }
+            None => Event::None,
+        }
+    }
+
     /// Pick row `i`: the list closes and the field takes the place's
     /// text and icon.
     fn take(&mut self, i: usize) -> Event {

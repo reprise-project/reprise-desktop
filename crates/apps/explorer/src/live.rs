@@ -7,8 +7,10 @@
 use crate::place::Place;
 use crate::window;
 use crate::{Explorer, HoverOn, Tip};
-use repriseapp::{Ctx, KeyInput, PointerInput, Reply};
+use repriseapp::keys::form_clipboard;
+use repriseapp::{Ctx, Event, KeyInput, PointerInput, Reply};
 use reprisefs::listing::Item;
+use reprisekit::controls::form::FocusedEdit;
 use reprisekit::controls::shellview::{self, Mode};
 use reprisekit::controls::taskpane;
 use std::path::{Path, PathBuf};
@@ -44,7 +46,9 @@ impl Explorer {
     /// Entry point for keys: drops the infotip before acting on the key.
     pub fn key(&mut self, k: KeyInput, ctx: &mut Ctx) -> Reply {
         let tipped = self.hide_tip();
-        let mut reply = self.key_inner(k, ctx);
+        let field = self.text_field().map(FocusedEdit::Line);
+        let clip = form_clipboard(field, &Event::Key(k.clone()));
+        let mut reply = self.key_inner(k, ctx).with_clipboard(clip);
         reply.redraw |= tipped;
         reply
     }

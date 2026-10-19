@@ -292,6 +292,9 @@ pub struct TextSpot {
     pub surrounding: Option<Surrounding>,
     pub secret: bool,
     pub multiline: bool,
+    /// The edit has a step to undo, for its edit menu's Undo.
+    pub can_undo: bool,
+    pub selected: bool,
 }
 
 impl TextSpot {
@@ -406,6 +409,20 @@ impl TextEdit {
 
     pub fn has_selection(&self) -> bool {
         self.caret != self.anchor
+    }
+
+    pub fn can_undo(&self) -> bool {
+        self.undo.can_undo()
+    }
+
+    /// A right press at byte `index`: inside the selection it stays for the edit menu to act
+    /// on, anywhere else the caret moves there.
+    pub fn press_for_menu(&mut self, index: usize) -> bool {
+        let sel = self.selection();
+        if self.has_selection() && (sel.start..=sel.end).contains(&index) {
+            return false;
+        }
+        self.place(index, false)
     }
 
     pub fn all_selected(&self) -> bool {
@@ -563,6 +580,8 @@ impl TextEdit {
                 .then(|| Surrounding::around(&self.text, self.caret, self.anchor)),
             secret: self.secret,
             multiline: false,
+            can_undo: self.can_undo(),
+            selected: self.has_selection(),
         }
     }
 
@@ -864,6 +883,32 @@ pub fn index_at(text: &crate::text::TextRenderer, s: &str, x: i32, px: u32) -> u
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_menu_press_keeps_the_selection_under_it_and_moves_the_caret_off_it() {
+        let mut e = TextEdit::new("alpha beta", false);
+        e.set_selection(6, 10);
+        assert!(!e.press_for_menu(8));
+        assert!(!e.press_for_menu(10), "its edge is inside");
+        assert_eq!(e.selection(), 6..10);
+        assert!(e.press_for_menu(2));
+        assert_eq!((e.caret(), e.has_selection()), (2, false));
+    }
+
+    #[test]
+    fn a_spot_says_whether_there_is_a_selection_and_an_undo() {
+        let r = crate::raster::Rect::new(0, 0, 10, 10);
+        let mut e = TextEdit::new("ab", false);
+        let s = e.spot(r, r);
+        assert!(!s.can_undo && !s.selected);
+        e.key(EditKey::Backspace { word: false });
+        e.key(EditKey::Left {
+            select: true,
+            word: false,
+        });
+        let s = e.spot(r, r);
+        assert!(s.can_undo && s.selected);
+    }
 
     #[test]
     fn words_step_over_words_and_spaces() {

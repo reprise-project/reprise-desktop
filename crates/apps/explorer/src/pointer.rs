@@ -436,13 +436,27 @@ impl Explorer {
 
     fn right_press(&mut self, x: i32, y: i32, ctx: &mut Ctx) -> Reply {
         self.popup = None;
-        // A right-click anywhere commits an in-place rename, before the
-        // menu it opens sees the new selection.
-        if self.sv.edit.is_some() {
-            return self.commit_rename(ctx);
-        }
         let lay = self.layout(ctx);
         let px = ctx.theme.fonts.size_px;
+        // A right-click in the rename box leaves it to the edit menu; anywhere else it commits
+        // the rename, before the menu it opens sees the new selection.
+        if let Some((i, _)) = self.sv.edit {
+            let sl = self.view_layout(lay.view, ctx);
+            if lay.view.contains(x, y)
+                && shellview::label_rect(&self.sv, &sl, i, &ctx.text, px).contains(x, y)
+            {
+                return Reply::redraw();
+            }
+            return self.commit_rename(ctx);
+        }
+        if let Some(r) = lay.address {
+            let al = addressbar::layout(&self.address, &ctx.text, px, r, &ctx.theme.controls());
+            let hit = addressbar::hit(&self.address, &al, x, y);
+            if self.address.right_press(hit, x, &al, &ctx.text, px, 1) != addressbar::Event::None {
+                self.focus = Focus::Address;
+                return Reply::redraw();
+            }
+        }
         if lay.view.contains(x, y) {
             let sl = self.view_layout(lay.view, ctx);
             if let shellview::Hit::Entry(i) = shellview::hit(&self.sv, &sl, x, y) {

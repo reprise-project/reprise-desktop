@@ -5,6 +5,7 @@ pub mod about;
 mod access;
 pub mod decode;
 pub mod dnd;
+mod editmenu;
 pub mod fielddrop;
 pub mod filedlg;
 mod hangup;
@@ -108,11 +109,12 @@ pub use fielddrop::{DropForm, FileDrop};
 use reprisefs::pipe::PasteBuf;
 pub use reprisekit;
 use reprisekit::access::{Gesture, Reveal, Route, Tree, accesskit};
+use reprisekit::controls::menu::MenuCtx;
 use reprisekit::cues::Cues;
 use reprisekit::icontheme::{IconCache, IconTheme};
 use reprisekit::raster::{Canvas, Rect};
 use reprisekit::text::TextRenderer;
-use reprisekit::textedit::{EditKey, key_for};
+use reprisekit::textedit::{EditKey, TextSpot, key_for};
 use reprisekit::theme::Theme;
 use tabgroup::reprise_tabs_v1;
 use zeroize::{Zeroize, Zeroizing};
@@ -1187,6 +1189,7 @@ pub fn run(app: Box<dyn App>) {
         drag_out: None,
         drag_in: None,
         field_drag: None,
+        edit_menu: Default::default(),
         asked_drop: None,
         ticking: Vec::new(),
         portal_done,
@@ -1416,6 +1419,8 @@ struct Slot {
     cues: Cues,
     /// The child's [`App::parent`] as the host last set it; none for the main window.
     parent: Option<WinId>,
+    /// The focused field the last frame drew.
+    spot: Option<TextSpot>,
 }
 
 impl Drop for Slot {
@@ -1494,6 +1499,7 @@ struct Host {
     drag_in: Option<Incoming>,
     /// A drag over a window's `App::drop_form`.
     field_drag: Option<(WinId, fielddrop::Hover)>,
+    edit_menu: editmenu::EditMenu,
     asked_drop: Option<Asked>,
     ticking: Vec<WinId>,
     /// Where a document portal call's thread sends what to do with its
@@ -1641,6 +1647,12 @@ impl Host {
                 s.access.state.dirty = true;
             }
         }
+        if self.edit_menu_event(win, &ev) {
+            return;
+        }
+        if self.file_dialog_clipboard(win, &ev) {
+            return;
+        }
         if let Some((reply, changed)) = self.field_drop(win, &ev) {
             self.apply(win, reply);
             if changed != reprisekit::controls::form::Event::None {
@@ -1661,6 +1673,96 @@ impl Host {
         let mut reply = self.app.event(win, ev, &mut self.ctx);
         reply.tick |= self.ctx.want_tick.take();
         self.apply(win, reply);
+    }
+
+    /// Whether the clipboard holds text, read off the live offer as `CLIPBOARD_TEXT` is.
+    fn clipboard_text(&self) -> bool {
+        self.selection_offer()
+            .is_some_and(|o| o.with_mime_types(text_mime).is_some())
+    }
+
+    /// The edit menu's share of `ev` ([`editmenu`]); `true` when the program does not get it.
+    /// A window keeping its canvas has none: the menu's pixels would stay in it.
+    fn edit_menu_event(&mut self, win: WinId, ev: &Event) -> bool {
+        let Some(i) = self.slots.iter().position(|s| s.id == win) else {
+            return false;
+        };
+        if self.app.keeps_canvas(win) {
+            return false;
+        }
+        let size = self.slots[i].size;
+        let cx = MenuCtx {
+            text: &self.ctx.text,
+            theme: &self.ctx.theme,
+            px: self.ctx.theme.fonts.size_px,
+            within: Rect::new(0, 0, size.0, size.1),
+        };
+        let was = self.edit_menu.is_open(win);
+        let paste = self.clipboard_text();
+        let out = self
+            .edit_menu
+            .event(win, ev, self.slots[i].spot.as_ref(), paste, &cx);
+        let slot = &mut self.slots[i];
+        slot.dirty |= was != self.edit_menu.is_open(win) || self.edit_menu.is_pending(win);
+        match out {
+            editmenu::Outcome::Pass => false,
+            editmenu::Outcome::Taken => true,
+            editmenu::Outcome::Redraw => {
+                slot.dirty = true;
+                true
+            }
+            editmenu::Outcome::Run(k) => {
+                slot.dirty = true;
+                self.send(win, Event::Key(k));
+                true
+            }
+        }
+    }
+
+    /// The clipboard for a file dialog's File name ([`App::drop_file_dialog`]): Ctrl+C and Ctrl+X
+    /// put its selection on the clipboard before the key reaches the dialog, and Ctrl+V asks for
+    /// the clipboard's text, which goes into the field. `true` when the program does not get `ev`.
+    fn file_dialog_clipboard(&mut self, win: WinId, ev: &Event) -> bool {
+        let Some(fd) = self.app.drop_file_dialog(win) else {
+            return false;
+        };
+        match ev {
+            Event::Key(KeyInput {
+                edit: Some(EditKey::Copy | EditKey::Cut),
+                ..
+            }) => {
+                let text = (fd.dlg.focused_edit())
+                    .filter(|e| !e.is_secret())
+                    .map(|e| e.selected_text().to_string())
+                    .filter(|t| !t.is_empty());
+                if let Some(t) = text {
+                    self.copy(t);
+                }
+                false
+            }
+            Event::Key(KeyInput {
+                edit: Some(EditKey::Paste),
+                ..
+            }) if fd.dlg.focused_edit().is_some() => {
+                self.apply(
+                    win,
+                    Reply {
+                        paste: true,
+                        ..Reply::none()
+                    },
+                );
+                true
+            }
+            Event::Pasted(text) => {
+                if fd.dlg.paste(text)
+                    && let Some(s) = self.slot_mut(win)
+                {
+                    s.dirty = true;
+                }
+                true
+            }
+            _ => false,
+        }
     }
 
     /// `ev` for window `win`'s drop form, when it has one and `ev` is a drag over it or a tick
@@ -1965,6 +2067,7 @@ impl Host {
                 glass_top: (0, 0),
                 cues: Cues::opened(self.key_last),
                 parent: None,
+                spot: None,
             },
         );
     }
@@ -1986,6 +2089,8 @@ impl Host {
                 }
                 self.foreign = None;
                 self.slots.retain(|s| s.id != MAIN);
+                let slots = &self.slots;
+                self.edit_menu.retain(|w| slots.iter().any(|s| s.id == w));
             }
             None => {}
         }
@@ -2103,6 +2208,8 @@ impl Host {
             }
         }
         self.slots.retain(|s| s.id == MAIN || !drop.contains(&s.id));
+        let slots = &self.slots;
+        self.edit_menu.retain(|w| slots.iter().any(|s| s.id == w));
         let app_id = self.app.app_id();
         for i in make {
             let c = &want[i];
@@ -2173,6 +2280,7 @@ impl Host {
                 glass_top: (0, 0),
                 cues: Cues::opened(self.key_last),
                 parent: wanted,
+                spot: None,
             });
         }
         let mut resized = Vec::new();
@@ -2285,6 +2393,8 @@ impl Host {
                 self.focus = None;
             }
             self.slots.retain(|s| s.id != id);
+            let slots = &self.slots;
+            self.edit_menu.retain(|w| slots.iter().any(|s| s.id == w));
         }
         if let Some(f) = make {
             self.make_flyout(f);
@@ -2354,6 +2464,7 @@ impl Host {
             glass_top: (0, 0),
             cues: Cues::opened(self.key_last),
             parent: None,
+            spot: None,
         });
     }
 
@@ -2374,6 +2485,7 @@ impl Host {
         let (size, modal) = (s.size, s.modal);
         self.ctx.aim(s);
         let (app, ctx) = (&mut self.app, &self.ctx);
+        let menu = self.edit_menu.menu(id);
         let acc = &mut self.slots[i].access;
         acc.adapter.update_if_active(|| {
             let mut tree = Tree::window(&title, size);
@@ -2382,6 +2494,10 @@ impl Host {
                 root.set_modal();
             }
             app.access(id, &mut tree, ctx);
+            if let Some(menu) = menu {
+                let node = menu.access(&mut tree, reprisekit::access::ROOT);
+                tree.set_focus(node);
+            }
             acc.state.secret = tree
                 .get(tree.focus())
                 .is_some_and(|n| n.role() == accesskit::Role::PasswordInput);
@@ -2794,9 +2910,23 @@ impl Host {
         canvas.set_preedit(preedit);
         filedlg::follow_scale(&mut *self.app, id, scale, &mut self.ctx);
         self.app.follow_scale(id, scale, &mut self.ctx);
+        let paste = self.edit_menu.is_pending(id) && self.clipboard_text();
         let app = &mut self.app;
-        self.ctx
-            .at_scale(scale, |ctx| app.draw(id, &mut canvas, ctx));
+        let menu = &mut self.edit_menu;
+        let spot = self.ctx.at_scale(scale, |ctx| {
+            app.draw(id, &mut canvas, ctx);
+            let spot = canvas.take_spot();
+            let cx = MenuCtx {
+                text: &ctx.text,
+                theme: &ctx.theme,
+                px: ctx.theme.fonts.size_px,
+                within: Rect::new(0, 0, w, h),
+            };
+            menu.drawn(id, spot.as_ref(), paste, &cx);
+            menu.draw(id, &mut canvas, &ctx.theme, &cx);
+            spot
+        });
+        self.slots[i].spot = spot.clone();
         let glass_top = canvas.take_glass_top();
         let glass_top = match reprisekit::look::client_glass(&self.ctx.theme, true) {
             Some(_) => glass_top.clamp(0, h),
@@ -2805,7 +2935,6 @@ impl Host {
         self.ctx.theme.active = true;
         self.ctx.theme.access_keys = false;
         self.set_glass_top(i, (w, glass_top), qh);
-        let spot = canvas.take_spot();
         let damage = canvas.take_damage();
         if let Some(t) = self.text_input.as_mut() {
             t.sync(id, spot);

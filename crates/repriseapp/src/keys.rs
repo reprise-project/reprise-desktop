@@ -7,7 +7,7 @@ use reprisekit::controls::hotkey;
 use reprisekit::controls::propsheet::{self, PropSheet};
 use reprisekit::textedit::EditKey;
 
-use crate::{BTN_LEFT, Ctx, Event, KeyInput, PointerInput, Reply};
+use crate::{BTN_LEFT, BTN_RIGHT, Ctx, Event, KeyInput, PointerInput, Reply};
 
 /// Alt-release menu-bar activation: Alt down arms it, Alt up fires it, anything
 /// in between cancels it.
@@ -99,7 +99,7 @@ pub fn form_clipboard(focused: Option<form::FocusedEdit>, ev: &Event) -> Reply {
 
 /// One event fed to a property sheet: a key through [`form_key`] with Ctrl+Tab
 /// and Ctrl+Page Down turning the page ([`propsheet::page_step`]), a left press
-/// hit-tested and clicked, motion tracked, a release released, Leave clearing
+/// hit-tested and clicked, a right press on a field readying it for the edit menu, motion tracked, a release released, Leave clearing
 /// what the pointer lit, a drop on a field ([`crate::fielddrop`]) heard as the
 /// open page's, a tick stepping a held scrollbar arrow. `None` is an event the host answers
 /// itself. First the sheet fits the window ([`PropSheet::fit`], [`PropSheet::fit_tabs`]): a
@@ -132,6 +132,18 @@ fn sheet_event(sheet: &mut PropSheet, ev: &Event, ctx: &Ctx) -> Option<propsheet
         }) => {
             let hit = sheet.hit(*x, *y, &ctx.text, px);
             sheet.click(hit)
+        }
+        Event::Pointer(PointerInput::Press {
+            x,
+            y,
+            button: BTN_RIGHT,
+            ..
+        }) => {
+            let hit = sheet.hit(*x, *y, &ctx.text, px);
+            match sheet.right_press(hit) {
+                propsheet::Event::None => return None,
+                e => e,
+            }
         }
         Event::Pointer(PointerInput::Motion { x, y }) => {
             let hit = sheet.hit(*x, *y, &ctx.text, px);
@@ -185,6 +197,19 @@ pub fn form_input(form: &mut Form, ev: &Event, ctx: &Ctx) -> Option<form::Event>
         }) => {
             let hit = form.hit(*x, *y, &ctx.text, px);
             form.click(hit)
+        }
+        Event::Pointer(PointerInput::Press {
+            x,
+            y,
+            button: BTN_RIGHT,
+            ..
+        }) => {
+            // Off a field the press stays the program's.
+            let hit = form.hit(*x, *y, &ctx.text, px);
+            match form.right_press(hit) {
+                form::Event::None => return None,
+                e => e,
+            }
         }
         Event::Pointer(PointerInput::Motion { x, y }) => {
             let hit = form.hit(*x, *y, &ctx.text, px);

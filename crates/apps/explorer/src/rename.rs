@@ -29,6 +29,36 @@ impl Explorer {
         }
     }
 
+    /// The text field with the keyboard: the rename box, else the address field while it has
+    /// the focus. Its clipboard keys and pastes go there.
+    pub(crate) fn text_field(&self) -> Option<&TextEdit> {
+        if let Some((_, e)) = &self.sv.edit {
+            return Some(e);
+        }
+        (self.focus == Focus::Address)
+            .then_some(self.address.combo.edit.as_ref())
+            .flatten()
+    }
+
+    /// The clipboard's text into [`Explorer::text_field`]; a name takes no `/`.
+    pub(crate) fn paste_text(&mut self, text: &str) -> Reply {
+        let changed = match (&mut self.sv.edit, self.focus) {
+            (Some((_, e)), _) => e.paste(text, &['/']),
+            (None, Focus::Address) => self
+                .address
+                .combo
+                .edit
+                .as_mut()
+                .is_some_and(|e| e.paste(text, &[])),
+            _ => false,
+        };
+        if changed {
+            Reply::redraw()
+        } else {
+            Reply::none()
+        }
+    }
+
     pub fn begin_rename(&mut self, ctx: &mut Ctx) -> Reply {
         if self.place.read_only() {
             return Reply::none();

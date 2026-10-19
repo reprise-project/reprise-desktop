@@ -575,6 +575,21 @@ impl Host {
                     dlg.click(r, hit, mods(m))
                 }
             }
+            // File name takes the focus for the edit menu the host opens over it.
+            Event::Pointer(PointerInput::Press {
+                x,
+                y,
+                button: crate::BTN_RIGHT,
+                mods: m,
+                ..
+            }) => match dlg.hit(text, px, r, *x, *y) {
+                Some(reprisekit::controls::filedlg::Hit::FileName) => dlg.click(
+                    r,
+                    Some(reprisekit::controls::filedlg::Hit::FileName),
+                    mods(m),
+                ),
+                _ => return Step::None,
+            },
             Event::Pointer(PointerInput::Press { button, .. }) => {
                 match reprisekit::pointer::nav_button(*button) {
                     Some(nav) => dlg.nav(nav),

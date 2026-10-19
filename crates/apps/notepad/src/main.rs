@@ -8,7 +8,7 @@ use drop::Hover;
 use pending::{Pending, PendingAction};
 use repriseapp::filedlg::{Host, Resolved, Step, taken, type_keep};
 use repriseapp::keys::AltArm;
-use repriseapp::keys::dialog_key;
+use repriseapp::keys::{dialog_key, form_clipboard};
 use repriseapp::oneshot::{self, MsgBox};
 use repriseapp::{
     App, BTN_LEFT, BTN_RIGHT, Child, Ctx, DropForm, Event, FileDrop, KeyInput, MAIN, PointerInput,
@@ -21,7 +21,7 @@ use reprisekit::controls::editmenu;
 use reprisekit::controls::filedlg::{CLIENT, DlgMode, Event as FileEvent, Fields, FileDlg};
 use reprisekit::controls::finddlg;
 use reprisekit::controls::form::{self, Control, Form, Item};
-use reprisekit::controls::menu::{MenuAction, MenuCtx, MenuItem, MenuKey, MenuTree, PopupMenu};
+use reprisekit::controls::menu::{MenuCtx, MenuItem};
 use reprisekit::controls::menubar::{self, Action, Bar, Key};
 use reprisekit::controls::msgbox;
 use reprisekit::controls::multiedit::{self, Metrics, MultiEdit, MultiKey, View};
@@ -154,6 +154,22 @@ fn form_event(
             None => FormStep::None,
         },
         Event::FieldDropped(e) => FormStep::Out(*e),
+        Event::Pointer(PointerInput::Press {
+            x,
+            y,
+            button: BTN_RIGHT,
+            ..
+        }) => match form {
+            Some(f) => {
+                let hit = f.hit(*x, *y, text, px);
+                FormStep::Out(f.right_press(hit))
+            }
+            None => FormStep::None,
+        },
+        Event::Pasted(t) => match form {
+            Some(f) => FormStep::Out(f.paste(t.clone())),
+            None => FormStep::None,
+        },
         _ => FormStep::None,
     }
 }
@@ -217,7 +233,7 @@ struct Notepad {
     host: Host,
     hover: Option<Hover>,
     /// The text box's right-click menu while it is open.
-    context: Option<(MenuTree, PopupMenu)>,
+    context: Option<editmenu::Menu>,
 }
 
 fn mi(label: &str, shortcut: Option<&str>, enabled: bool) -> MenuItem {
@@ -639,7 +655,7 @@ impl Notepad {
             return Reply::none();
         }
         self.alt_arm.interrupt();
-        if k.sym == keysym::MENU || (k.sym == keysym::F10 && k.mods.shift) {
+        if editmenu::opens(k.sym, k.mods.shift) {
             self.bar.close();
             let at = self.caret_point(ctx);
             self.open_context(at, true, ctx);
@@ -1008,13 +1024,18 @@ impl Notepad {
 
     /// Opens the text box's context menu with its top-left at `at`, greyed like the Edit menu.
     fn open_context(&mut self, at: (i32, i32), by_keyboard: bool, ctx: &Ctx) {
-        let tree = editmenu::tree(editmenu::Live {
+        let live = editmenu::Live {
             undo: self.edit.can_undo(),
             selection: self.edit.has_selection(),
             paste: repriseapp::clipboard_has_text(),
-        });
-        let chain = PopupMenu::open(&tree, at, &self.menu_ctx(ctx), by_keyboard);
-        self.context = Some((tree, chain));
+            secret: false,
+        };
+        self.context = Some(editmenu::Menu::open(
+            live,
+            at,
+            &self.menu_ctx(ctx),
+            by_keyboard,
+        ));
     }
 
     /// Below the caret's line, where Shift+F10 and the Menu key open the context menu.
@@ -1033,69 +1054,55 @@ impl Notepad {
         )
     }
 
-    fn context_step(&mut self, act: MenuAction, ctx: &Ctx) -> Reply {
-        match act {
-            MenuAction::Chosen(path) => {
+    fn context_step(&mut self, step: editmenu::Step, ctx: &Ctx) -> Reply {
+        let cmd = match step {
+            editmenu::Step::Run(cmd) => cmd,
+            editmenu::Step::Close => {
                 self.context = None;
-                let row = match editmenu::command(&path) {
-                    Some(editmenu::Command::Undo) => row::UNDO,
-                    Some(editmenu::Command::Cut) => row::CUT,
-                    Some(editmenu::Command::Copy) => row::COPY,
-                    Some(editmenu::Command::Paste) => row::PASTE,
-                    Some(editmenu::Command::Delete) => row::DELETE,
-                    Some(editmenu::Command::SelectAll) => row::SELECT_ALL,
-                    None => return Reply::redraw(),
-                };
-                Reply {
-                    redraw: true,
-                    ..self.command(title::EDIT, row, ctx)
-                }
+                return Reply::redraw();
             }
-            MenuAction::Close => {
-                self.context = None;
-                Reply::redraw()
-            }
-            MenuAction::Redraw => Reply::redraw(),
-            MenuAction::None => Reply::none(),
+            editmenu::Step::Redraw => return Reply::redraw(),
+            editmenu::Step::None => return Reply::none(),
+        };
+        self.context = None;
+        let row = match cmd {
+            editmenu::Command::Undo => row::UNDO,
+            editmenu::Command::Cut => row::CUT,
+            editmenu::Command::Copy => row::COPY,
+            editmenu::Command::Paste => row::PASTE,
+            editmenu::Command::Delete => row::DELETE,
+            editmenu::Command::SelectAll => row::SELECT_ALL,
+        };
+        Reply {
+            redraw: true,
+            ..self.command(title::EDIT, row, ctx)
         }
     }
 
     /// The pointer while the context menu is open: a press anywhere picks a row or closes it.
     fn context_pointer(&mut self, p: PointerInput, ctx: &Ctx) -> Reply {
         let cx = self.menu_ctx(ctx);
-        let Some((tree, chain)) = self.context.as_mut() else {
+        let Some(menu) = self.context.as_mut() else {
             return Reply::none();
         };
         match p {
             PointerInput::Press { x, y, .. } => {
-                let act = chain.click(tree, x, y, &cx);
-                self.context_step(act, ctx)
+                let step = menu.press(x, y, &cx);
+                self.context_step(step, ctx)
             }
-            PointerInput::Motion { x, y } if chain.motion(tree, x, y, &cx) => Reply::redraw(),
+            PointerInput::Motion { x, y } if menu.motion(x, y, &cx) => Reply::redraw(),
             _ => Reply::none(),
         }
     }
 
     /// Every key goes to the open context menu; the ones it has no use for do nothing.
     fn context_key(&mut self, k: &KeyInput, ctx: &Ctx) -> Reply {
-        let key = match k.sym {
-            keysym::ESCAPE => MenuKey::Escape,
-            keysym::UP | keysym::KP_UP => MenuKey::Up,
-            keysym::DOWN | keysym::KP_DOWN => MenuKey::Down,
-            keysym::LEFT | keysym::KP_LEFT => MenuKey::Left,
-            keysym::RIGHT | keysym::KP_RIGHT => MenuKey::Right,
-            keysym::RETURN | keysym::KP_ENTER => MenuKey::Enter,
-            _ => match k.utf8.as_deref().and_then(|s| s.chars().next()) {
-                Some(c) if c.is_alphanumeric() => MenuKey::Char(c),
-                _ => return Reply::none(),
-            },
-        };
         let cx = self.menu_ctx(ctx);
-        let Some((tree, chain)) = self.context.as_mut() else {
+        let Some(menu) = self.context.as_mut() else {
             return Reply::none();
         };
-        let act = chain.key(tree, key, &cx);
-        self.context_step(act, ctx)
+        let step = menu.key(k.sym, k.utf8.as_deref(), &cx);
+        self.context_step(step, ctx)
     }
 
     /// Grey the rows that cannot act.
@@ -1773,6 +1780,12 @@ impl App for Notepad {
         }
         // Selection and text change in many places (the pointer, Find, Replace), so the rows
         // are greyed after every event, before the next draw or menu choice.
+        let clip = match win {
+            GOTO | FIND | REPLACE_WIN => self
+                .drop_form(win)
+                .map(|d| form_clipboard(d.form.focused_edit(), &ev)),
+            _ => None,
+        };
         let reply = match win {
             GOTO => self.goto_event(ev, ctx),
             FIND => self.find_event(ev, ctx),
@@ -1786,6 +1799,10 @@ impl App for Notepad {
             OPEN => self.open_event(ev, ctx),
             SAVEAS => self.saveas_event(ev, ctx),
             _ => self.main_event(ev, ctx),
+        };
+        let reply = match clip {
+            Some(clip) => reply.with_clipboard(clip),
+            None => reply,
         };
         self.sync_menus();
         reply
@@ -2142,8 +2159,8 @@ impl Notepad {
         }
         let lay = self.bar_layout(ctx);
         self.bar.draw(c, &ctx.text, &ctx.theme, &lay);
-        if let Some((_, chain)) = &self.context {
-            chain.draw(c, &ctx.theme, &ctx.text, ctx.theme.access_keys);
+        if let Some(menu) = &self.context {
+            menu.draw(c, &ctx.theme, &ctx.text, ctx.theme.access_keys);
         }
     }
 
@@ -2189,10 +2206,7 @@ impl Notepad {
         if let Some((bar, r)) = self.status(ctx) {
             statusbar::access(&bar, r, ctx.theme.text, tree, ROOT);
         }
-        let context = self
-            .context
-            .as_ref()
-            .map(|(_, chain)| chain.access(tree, ROOT, "context"));
+        let context = self.context.as_ref().map(|menu| menu.access(tree, ROOT));
         tree.set_focus(context.or(menus).unwrap_or(edit));
     }
 }
@@ -2547,7 +2561,11 @@ mod tests {
     }
 
     fn context_rows(np: &Notepad) -> Vec<bool> {
-        let (tree, _) = np.context.as_ref().expect("the context menu is open");
+        let tree = np
+            .context
+            .as_ref()
+            .map(|m| m.tree())
+            .expect("the context menu is open");
         tree.iter()
             .filter_map(|item| match item {
                 MenuItem::Entry { enabled, .. } => Some(*enabled),
@@ -2640,7 +2658,7 @@ mod tests {
 
         np.event(MAIN, typed(keysym::F10, None, true), &mut ctx);
         assert!(np.bar.open.is_none(), "Shift+F10 is not the menu bar's F10");
-        let (_, chain) = np.context.as_ref().expect("Shift+F10 opens the menu");
+        let chain = np.context.as_ref().expect("Shift+F10 opens the menu");
         let el = np.edit_layout(&ctx);
         let caret_x = multiedit::x_of(&np.mono, &np.metrics, &np.edit, np.edit.caret());
         assert_eq!(

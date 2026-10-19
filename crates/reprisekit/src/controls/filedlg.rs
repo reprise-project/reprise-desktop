@@ -1019,6 +1019,16 @@ impl FileDlg {
         true
     }
 
+    /// The clipboard's text into File name while it has the focus, its first line as
+    /// [`TextEdit::paste`] takes it. `true` when the field changed.
+    pub fn paste(&mut self, text: &str) -> bool {
+        if self.focus != Focus::FileName || !self.filename.paste(text, &[]) {
+            return false;
+        }
+        self.typed = self.filename.text.clone();
+        true
+    }
+
     /// A drag dropped `line` on File name: it goes in at the drop caret as
     /// [`TextEdit::drop_text`] puts it, and the field takes the focus. `false` when the field
     /// was not taking the drag or nothing went in.
@@ -2976,6 +2986,22 @@ mod tests {
         let mut d = multi(DlgMode::Save, false);
         d.set_file_name("report.pdf");
         d
+    }
+
+    #[test]
+    fn a_paste_goes_into_file_name_only_while_it_has_the_focus() {
+        let mut d = save_dlg();
+        d.focus = Focus::FileName;
+        d.filename.select_all();
+        assert!(d.paste("notes.txt\nsecond line"));
+        assert_eq!(
+            d.file_name(),
+            "notes.txt",
+            "its first line replaces the selection"
+        );
+        d.focus = Focus::Shell;
+        assert!(!d.paste("other"));
+        assert_eq!(d.file_name(), "notes.txt");
     }
 
     /// A typed `*` or `?` pattern is not accepted: the host applies it, which

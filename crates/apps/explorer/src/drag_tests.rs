@@ -7,6 +7,7 @@ use crate::BTN_RIGHT;
 use crate::tests::test_ctx;
 use repriseapp::Mods as SeatMods;
 use repriseapp::PointerInput;
+use reprisekit::controls::addressbar;
 
 /// A folder with a file and two subfolders, shown in Icons.
 fn explorer(ctx: &mut Ctx) -> (tempfile::TempDir, Explorer) {
@@ -1327,4 +1328,81 @@ fn a_link_drop_past_its_deadline_writes_nothing() {
     std::thread::sleep(std::time::Duration::from_millis(100));
     ex.wake(&mut ctx);
     assert!(!dir.path().join("Example Page.desktop").exists());
+}
+
+#[test]
+fn a_right_press_in_the_rename_box_keeps_it_and_one_in_the_address_field_focuses_it() {
+    let mut ctx = test_ctx();
+    let (_dir, mut ex) = explorer(&mut ctx);
+    let a = index_of(&ex, "a.txt");
+    ex.sv.selection.set_only(Some(a));
+    ex.run(crate::commands::Command::Rename, &mut ctx);
+    let px = ctx.theme.fonts.size_px;
+    let sl = ex.view_layout(ex.layout(&ctx).view, &ctx);
+    let r = shellview::label_rect(&ex.sv, &sl, a, &ctx.text, px);
+    press(&mut ex, &mut ctx, (r.x + 2, r.y + r.height / 2), BTN_RIGHT);
+    let (_, ed) = ex
+        .sv
+        .edit
+        .clone()
+        .expect("the box stays up for its edit menu");
+    assert_eq!(
+        ed.selection(),
+        0.."a".len(),
+        "the selection stays for the menu"
+    );
+
+    let band = ex.layout(&ctx).address.expect("the address bar shows");
+    let al = addressbar::layout(&ex.address, &ctx.text, px, band, &ctx.theme.controls());
+    let at = (al.field.x + 4, al.field.y + al.field.height / 2);
+    press(&mut ex, &mut ctx, at, BTN_RIGHT);
+    assert!(
+        ex.sv.edit.is_none(),
+        "a press off the box commits the rename"
+    );
+    press(&mut ex, &mut ctx, at, BTN_RIGHT);
+    assert_eq!(ex.focus, crate::Focus::Address);
+    let edit = ex.address.combo.edit.as_ref().expect("the field edits");
+    assert!(
+        !edit.has_selection() && edit.caret() < edit.text.len(),
+        "the caret moved to the press"
+    );
+}
+
+#[test]
+fn the_address_field_and_the_rename_box_copy_and_paste_text() {
+    let mut ctx = test_ctx();
+    let (_dir, mut ex) = explorer(&mut ctx);
+    let ctrl = |ch: u8| repriseapp::KeyInput {
+        sym: u32::from(ch),
+        utf8: None,
+        mods: SeatMods {
+            ctrl: true,
+            ..SeatMods::default()
+        },
+        edit: reprisekit::textedit::key_for(u32::from(ch), true, false, None),
+    };
+    ex.focus = crate::Focus::Address;
+    ex.address.set_place("/srv/data", None);
+    ex.key(ctrl(b'a'), &mut ctx);
+    let copied = ex.key(ctrl(b'c'), &mut ctx).copy;
+    assert_eq!(copied.as_deref(), Some("/srv/data"));
+    assert!(
+        ex.key(ctrl(b'v'), &mut ctx).paste,
+        "Ctrl+V asks for the clipboard"
+    );
+    ex.paste_text("/srv/other\nmore");
+    assert_eq!(
+        ex.address.text(),
+        "/srv/other",
+        "the paste replaces the selection"
+    );
+
+    let a = index_of(&ex, "a.txt");
+    ex.sv.selection.set_only(Some(a));
+    ex.run(crate::commands::Command::Rename, &mut ctx);
+    assert_eq!(ex.key(ctrl(b'x'), &mut ctx).copy.as_deref(), Some("a"));
+    ex.paste_text("b/c");
+    let (_, ed) = ex.sv.edit.clone().expect("the box is up");
+    assert_eq!(ed.text, "bc.txt", "a name takes no slash");
 }
