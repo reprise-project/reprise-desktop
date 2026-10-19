@@ -183,6 +183,7 @@ pub fn item_size(path: &Path, limit: u64) -> io::Result<u64> {
             continue;
         };
         for e in rd.flatten() {
+            crate::progress::step();
             let Ok(m) = e.metadata() else {
                 continue;
             };
@@ -318,6 +319,7 @@ fn held(root: &Path) -> Vec<Held> {
         return out;
     };
     for e in rd.flatten() {
+        crate::progress::step();
         let Ok(m) = std::fs::symlink_metadata(e.path()) else {
             continue;
         };
@@ -426,7 +428,7 @@ pub(crate) fn make_room(
             break;
         }
         let files = root.join("files").join(&h.name);
-        crate::ops::erase(&files)?;
+        crate::ops::erase_stepped(&files)?;
         let mut info = h.name.clone();
         info.push(".trashinfo");
         if let Err(e) = std::fs::remove_file(root.join("info").join(info))

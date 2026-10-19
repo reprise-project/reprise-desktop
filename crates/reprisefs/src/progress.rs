@@ -6,7 +6,7 @@ use std::ffi::OsStr;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Phase {
@@ -99,8 +99,7 @@ impl Meter {
         self.stir.fetch_add(1, Ordering::Relaxed);
     }
 
-    /// The step count and whether the job is paused or waiting on a flush, for the watch on a put
-    /// that stops answering.
+    /// The step count and whether the job is paused or waiting on a flush, for [`watch`].
     pub(crate) fn stirring(&self) -> (u64, bool) {
         let resting =
             self.paused.load(Ordering::Relaxed) || self.flush_waits.load(Ordering::Relaxed) > 0;
@@ -212,6 +211,43 @@ impl Meter {
     }
 }
 
+/// Cancels the job and runs `give_up` (which reports it as not responding) once `meter` stands
+/// still for `deadline` outside a pause or a flush. `ended` is set by whichever ends the job first,
+/// the job or the watch, so only one of them reports its end.
+pub(crate) fn watch(
+    meter: &Arc<Meter>,
+    ended: &Arc<AtomicBool>,
+    deadline: Duration,
+    job: &'static str,
+    give_up: impl FnOnce(&Meter) + Send + 'static,
+) {
+    let (m, ended) = (meter.clone(), ended.clone());
+    let every = (deadline / 4).min(Duration::from_secs(1));
+    let spawned = std::thread::Builder::new()
+        .name(format!("reprisefs-{job}-watch"))
+        .spawn(move || {
+            let mut seen = (m.stirring().0, Instant::now());
+            while !ended.load(Ordering::Acquire) {
+                std::thread::sleep(every);
+                let (stir, resting) = m.stirring();
+                if resting || stir != seen.0 {
+                    seen = (stir, Instant::now());
+                    continue;
+                }
+                if seen.1.elapsed() < deadline || ended.swap(true, Ordering::AcqRel) {
+                    continue;
+                }
+                m.cancel();
+                log::warn!("reprisefs: a {job} made no headway for {deadline:?}; giving up");
+                give_up(&m);
+                return;
+            }
+        });
+    if let Err(e) = spawned {
+        log::warn!("reprisefs: no watch on a {job}: {e}");
+    }
+}
+
 /// What a put's sources add up to.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Totals {
@@ -282,6 +318,23 @@ pub(crate) fn metered<T>(meter: &Arc<Meter>, f: impl FnOnce() -> T) -> T {
 /// The meter this thread's put counts into, if it runs under one.
 pub(crate) fn current() -> Option<Arc<Meter>> {
     METER.with(|m| m.borrow().clone())
+}
+
+/// One step of an uncounted walk or remove under this thread's job, so [`watch`] sees it moving.
+pub(crate) fn step() {
+    METER.with(|m| {
+        if let Some(m) = m.borrow().as_ref() {
+            m.stir();
+        }
+    });
+}
+
+/// Run `f`, a flush, outside this thread's job's [`watch`] ([`Meter::flush_wait`]).
+pub(crate) fn flushing<T>(f: impl FnOnce() -> T) -> T {
+    match current() {
+        Some(m) => m.flush_wait(f),
+        None => f(),
+    }
 }
 
 /// Keeps a large file's dirty pages to about two windows: each full window is sent to the disk
@@ -387,5 +440,60 @@ mod tests {
         m.cancel.store(true, Ordering::Relaxed);
         let e = t.join().unwrap().unwrap_err();
         assert_eq!(e.kind(), std::io::ErrorKind::Interrupted);
+    }
+
+    /// Runs `slow` under a watched meter with a 100 ms deadline; true when the watch gave up.
+    fn watched(slow: impl FnOnce()) -> bool {
+        let m = Arc::new(Meter::default());
+        let ended = Arc::new(AtomicBool::new(false));
+        let gave_up = Arc::new(AtomicBool::new(false));
+        let g = gave_up.clone();
+        watch(&m, &ended, Duration::from_millis(100), "test", move |_| {
+            g.store(true, Ordering::Relaxed)
+        });
+        metered(&m, slow);
+        std::thread::sleep(Duration::from_millis(50));
+        ended.store(true, Ordering::Release);
+        gave_up.load(Ordering::Relaxed)
+    }
+
+    #[test]
+    fn a_slow_step_that_keeps_stepping_or_flushes_outlives_the_deadline() {
+        let tick = Duration::from_millis(40);
+        let stepping = || {
+            for _ in 0..10 {
+                std::thread::sleep(tick);
+                step();
+            }
+        };
+        assert!(!watched(stepping), "400 ms of steps 40 ms apart");
+        let flush = || flushing(|| std::thread::sleep(Duration::from_millis(400)));
+        assert!(!watched(flush), "a 400 ms flush");
+        let stuck = || std::thread::sleep(Duration::from_millis(400));
+        assert!(watched(stuck), "400 ms without a step gives up");
+    }
+
+    #[test]
+    fn a_measure_and_an_uncounted_erase_step_per_entry() {
+        let t = tempfile::tempdir().unwrap();
+        let d = t.path().join("d");
+        std::fs::create_dir_all(d.join("sub")).unwrap();
+        for i in 0..40 {
+            std::fs::write(
+                d.join(if i % 2 == 0 { "sub" } else { "." })
+                    .join(format!("f{i}")),
+                "x",
+            )
+            .unwrap();
+        }
+        let m = Arc::new(Meter::default());
+        let before = m.stirring().0;
+        metered(&m, || crate::bincap::item_size(&d, u64::MAX)).unwrap();
+        let measured = m.stirring().0;
+        assert!(measured - before >= 40, "one step per entry measured");
+        metered(&m, || crate::ops::erase_stepped(&d)).unwrap();
+        assert!(m.stirring().0 - measured >= 40, "one step per entry erased");
+        assert!(!d.exists());
+        assert_eq!(m.snapshot().items, 0, "nothing counts on the bar");
     }
 }

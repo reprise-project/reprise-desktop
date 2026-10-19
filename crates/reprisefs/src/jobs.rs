@@ -10,8 +10,8 @@ use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
-use std::time::{Duration, Instant};
+use std::sync::mpsc::{self, Receiver, TryRecvError};
+use std::time::Duration;
 
 pub type ShortcutText = Box<dyn Fn(&str) -> Option<String> + Send>;
 
@@ -75,7 +75,18 @@ impl PutJob {
         let meter = Arc::new(Meter::default());
         let wake = Arc::new(wake);
         let ended = Arc::new(AtomicBool::new(false));
-        watch(&meter, &ended, deadline, tx.clone(), wake.clone());
+        let (watch_tx, watch_wake) = (tx.clone(), wake.clone());
+        progress::watch(&meter, &ended, deadline, "put", move |m| {
+            if m.phase() != Phase::Finishing {
+                let error = ops::PutError::NotResponding;
+                let _ = watch_tx.send(PutEvent::Failed {
+                    index: m.at(),
+                    error,
+                });
+            }
+            let _ = watch_tx.send(PutEvent::Finished);
+            (*watch_wake)();
+        });
         let m = meter.clone();
         let spawned = std::thread::Builder::new()
             .name("reprisefs-put".into())
@@ -216,49 +227,6 @@ impl PutJob {
 
     pub fn is_finished(&self) -> bool {
         self.finished
-    }
-}
-
-/// Cancels the put and fails it as not responding once `meter` stands still for `deadline` outside a
-/// pause or a flush; one stuck in its last flush has landed everything, so it just finishes.
-fn watch(
-    meter: &Arc<Meter>,
-    ended: &Arc<AtomicBool>,
-    deadline: Duration,
-    tx: Sender<PutEvent>,
-    wake: Arc<impl Fn() + Send + Sync + 'static>,
-) {
-    let (m, ended) = (meter.clone(), ended.clone());
-    let every = (deadline / 4).min(Duration::from_secs(1));
-    let spawned = std::thread::Builder::new()
-        .name("reprisefs-put-watch".into())
-        .spawn(move || {
-            let mut seen = (m.stirring().0, Instant::now());
-            while !ended.load(Ordering::Acquire) {
-                std::thread::sleep(every);
-                let (stir, resting) = m.stirring();
-                if resting || stir != seen.0 {
-                    seen = (stir, Instant::now());
-                    continue;
-                }
-                if seen.1.elapsed() < deadline || ended.swap(true, Ordering::AcqRel) {
-                    continue;
-                }
-                m.cancel();
-                log::warn!("reprisefs: a put made no headway for {deadline:?}; giving up");
-                if m.phase() != Phase::Finishing {
-                    let error = ops::PutError::NotResponding;
-                    let _ = tx.send(PutEvent::Failed {
-                        index: m.at(),
-                        error,
-                    });
-                }
-                let _ = tx.send(PutEvent::Finished);
-                (*wake)();
-            }
-        });
-    if let Err(e) = spawned {
-        log::warn!("reprisefs: no watch on a put: {e}");
     }
 }
 
