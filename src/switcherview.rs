@@ -162,7 +162,7 @@ impl State {
         switcher::start(len, self.keyboard_held(), self.config.switcher.desktop)
     }
 
-    /// Compose the desktop entry's picture of the wallpaper for the output
+    /// Compose on a job the desktop entry's picture of the wallpaper for the output
     /// under the pointer, as the next thumbnail panel there will want it,
     /// so the first Alt+Tab after a wallpaper lands finds it kept.
     pub fn warm_switcher_still(&mut self) {
@@ -178,7 +178,7 @@ impl State {
         let ob = self.layout_box(out.as_ref());
         let pic = fit(ob.width, ob.height, well, 1).scaled(self.draw_scale_at(out.as_ref()));
         if !pic.is_empty() {
-            self.wallpaper_thumbnail(out.as_ref(), pic.width, pic.height);
+            self.warm_wallpaper_thumbnail(out.as_ref(), pic.width, pic.height);
         }
     }
 
