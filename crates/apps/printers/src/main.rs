@@ -19,6 +19,7 @@ mod ppd;
 mod props;
 mod queue;
 mod tray;
+mod wins;
 mod worker;
 
 use std::collections::HashSet;
@@ -42,10 +43,9 @@ use reprisekit::text::TextRenderer;
 use reprisekit::theme::Theme;
 
 use cups::{JobState, PrinterState, Snapshot};
+use wins::{Ids, Opened, Wins};
 use worker::{Cmd, Msg};
 
-const QUEUE: WinId = "queue";
-const PROPS: WinId = "props";
 const WIZARD: WinId = "wizard";
 const BROWSE: WinId = "browse";
 const CONFIRM: WinId = "confirm";
@@ -77,8 +77,9 @@ struct PrintersApp {
     user: String,
     tray_state: Option<reprisetray::Shown>,
     folder: folder::Folder,
-    queue: Option<queue::Queue>,
-    props: Option<props::PropsSheet>,
+    queues: Wins<queue::Queue>,
+    props: Wins<props::PropsSheet>,
+    ids: Ids,
     wizard: Option<addwiz::AddWizard>,
     browse: Option<(Host, FileDlg)>,
     confirm: Option<(String, MsgBox)>,
@@ -88,7 +89,7 @@ struct PrintersApp {
     doc_icon: Option<Canvas>,
     icons_read: bool,
     refit: bool,
-    refit_queue: bool,
+    refit_queues: HashSet<WinId>,
     hidden: bool,
     tray_only: bool,
     watching: bool,
@@ -134,8 +135,10 @@ impl PrintersApp {
     }
 
     fn sync_watching(&mut self) {
-        let on =
-            !self.hidden || self.queue.is_some() || self.props.is_some() || self.wizard.is_some();
+        let on = !self.hidden
+            || !self.queues.is_empty()
+            || !self.props.is_empty()
+            || self.wizard.is_some();
         if on != self.watching {
             self.watching = on;
             self.send(Cmd::Watching(on));
@@ -180,25 +183,23 @@ impl PrintersApp {
         self.renaming.retain(|n| snap.printer(n).is_none());
         self.folder.refresh(&self.snapshot, self.icon16.as_ref());
         self.refit = true;
-        if let Some(q) = &mut self.queue {
-            if self.snapshot.printer(&q.printer).is_some()
-                || !self.snapshot.running
-                || self.renaming.contains(&q.printer)
-            {
-                q.refresh(&self.snapshot);
-            } else {
-                self.queue = None;
+        let (snap, renaming) = (&self.snapshot, &self.renaming);
+        self.queues.retain(|q| {
+            let keep = snap.printer(&q.printer).is_some()
+                || !snap.running
+                || renaming.contains(&q.printer);
+            if keep {
+                q.refresh(snap);
             }
-        }
-        if let Some(p) = &mut self.props {
-            match self.snapshot.printer(&p.printer) {
-                Some(pr) => p.refresh(pr, false),
-                None if self.snapshot.running && !self.renaming.contains(&p.printer) => {
-                    self.props = None
-                }
-                None => {}
+            keep
+        });
+        self.props.retain(|p| match snap.printer(&p.printer) {
+            Some(pr) => {
+                p.refresh(pr, false);
+                true
             }
-        }
+            None => !snap.running || renaming.contains(&p.printer),
+        });
         self.push_tray();
     }
 
@@ -239,9 +240,7 @@ impl PrintersApp {
                 }
                 Msg::Options(name, r) => {
                     let printer = self.snapshot.printer(&name).cloned();
-                    if let (Some(p), Some(pr)) = (self.props.as_mut(), printer)
-                        && p.printer == name
-                    {
+                    if let (Some(p), Some(pr)) = (self.props.by_printer_mut(&name), printer) {
                         match r {
                             Ok(o) => p.set_options(o, &pr),
                             Err(e) => p.options_failed(&e.text()),
@@ -303,10 +302,7 @@ impl PrintersApp {
                         .first()
                         .cloned()
                     {
-                        Some(p) => {
-                            self.open_queue(&p);
-                            shown = Some(QUEUE);
-                        }
+                        Some(p) => shown = Some(self.open_queue(&p).id()),
                         None => {
                             self.hidden = false;
                             shown = Some(repriseapp::MAIN);
@@ -318,14 +314,12 @@ impl PrintersApp {
                         .get(i)
                         .cloned()
                     {
-                        self.open_queue(&p);
-                        shown = Some(QUEUE);
+                        shown = Some(self.open_queue(&p).id());
                     }
                 }
                 tray::TrayMsg::Balloon(tag) => {
                     if let Some(p) = self.balloons.get(tag as usize).cloned() {
-                        self.open_queue(&p);
-                        shown = Some(QUEUE);
+                        shown = Some(self.open_queue(&p).id());
                     }
                 }
             }
@@ -337,32 +331,37 @@ impl PrintersApp {
         }
     }
 
-    fn open_queue(&mut self, printer: &str) {
-        if self.queue.as_ref().is_some_and(|q| q.printer == printer) {
-            return;
+    fn open_queue(&mut self, printer: &str) -> Opened {
+        let (icon, snap) = (&self.doc_icon, &self.snapshot);
+        let opened = self.queues.open(printer, &mut self.ids, || {
+            let mut q = queue::Queue::new(printer);
+            q.icon = icon.clone().map(Rc::new);
+            q.refresh(snap);
+            q
+        });
+        if let Opened::New(id) = opened {
+            self.refit_queues.insert(id);
+            self.send(Cmd::Refresh);
         }
-        let mut q = queue::Queue::new(printer);
-        q.icon = self.doc_icon.clone().map(Rc::new);
-        q.refresh(&self.snapshot);
-        self.queue = Some(q);
-        self.refit_queue = true;
-        self.send(Cmd::Refresh);
+        opened
     }
 
-    fn open_props(&mut self, printer: &str, tab: usize) {
-        if let Some(p) = &mut self.props
-            && p.printer == printer
-        {
+    fn open_props(&mut self, printer: &str, tab: usize) -> Option<Opened> {
+        if let Some(p) = self.props.by_printer_mut(printer) {
             p.open_tab(tab);
-            return;
+            return self.props.of(printer).map(Opened::Already);
         }
-        let Some(pr) = self.snapshot.printer(printer) else {
-            return;
-        };
-        let mut p = props::PropsSheet::new(pr, self.icon32.clone());
-        p.open_tab(tab);
-        self.props = Some(p);
-        self.send(Cmd::Options(printer.into()));
+        let pr = self.snapshot.printer(printer)?;
+        let icon = &self.icon32;
+        let opened = self.props.open(printer, &mut self.ids, || {
+            let mut p = props::PropsSheet::new(pr, icon.clone());
+            p.open_tab(tab);
+            p
+        });
+        if let Opened::New(_) = opened {
+            self.send(Cmd::Options(printer.into()));
+        }
+        Some(opened)
     }
 
     fn open_wizard(&mut self) {
@@ -386,16 +385,8 @@ impl PrintersApp {
     }
 
     fn rename(&mut self, old: String, new: String) {
-        if let Some(q) = &mut self.queue
-            && q.printer == old
-        {
-            q.printer = new.clone();
-        }
-        if let Some(p) = &mut self.props
-            && p.printer == old
-        {
-            p.printer = new.clone();
-        }
+        self.queues.rename(&old, &new);
+        self.props.rename(&old, &new);
         if self.folder.selected_name() == Some(old.as_str()) {
             self.select = Some(new.clone());
         }
@@ -471,8 +462,11 @@ impl PrintersApp {
                 Reply::redraw()
             }
             O::Open(p) => {
-                self.open_queue(&p);
-                Reply::redraw_all()
+                let raise = self.open_queue(&p).raise();
+                Reply {
+                    raise,
+                    ..Reply::redraw_all()
+                }
             }
             O::SetDefault(p) => {
                 self.send(Cmd::SetDefault(p));
@@ -490,14 +484,8 @@ impl PrintersApp {
                 self.send(Cmd::CancelAll(p));
                 Reply::redraw()
             }
-            O::Sharing(p) => {
-                self.open_props(&p, props::SHARING);
-                Reply::redraw_all()
-            }
-            O::Properties(p) => {
-                self.open_props(&p, props::GENERAL);
-                Reply::redraw_all()
-            }
+            O::Sharing(p) => self.props_opened(&p, props::SHARING),
+            O::Properties(p) => self.props_opened(&p, props::GENERAL),
             O::Delete(p) => {
                 self.ask_delete(p, ctx);
                 Reply::redraw_all()
@@ -510,6 +498,14 @@ impl PrintersApp {
                 self.fail("Rename", why);
                 Reply::redraw_all()
             }
+        }
+    }
+
+    fn props_opened(&mut self, printer: &str, tab: usize) -> Reply {
+        let raise = self.open_props(printer, tab).and_then(Opened::raise);
+        Reply {
+            raise,
+            ..Reply::redraw_all()
         }
     }
 
@@ -537,15 +533,15 @@ impl PrintersApp {
         self.folder_outcome(out, ctx)
     }
 
-    fn queue_event(&mut self, ev: Event, ctx: &mut Ctx) -> Reply {
+    fn queue_event(&mut self, win: WinId, ev: Event, ctx: &mut Ctx) -> Reply {
         let s = &self.snapshot;
-        let Some(q) = self.queue.as_mut() else {
+        let Some(q) = self.queues.get_mut(win) else {
             return Reply::none();
         };
         let out = match ev {
             Event::CloseRequest => queue::Outcome::Close,
             Event::Resized => {
-                self.refit_queue = true;
+                self.refit_queues.insert(win);
                 return Reply::redraw();
             }
             Event::Key(k) => q.key(&k, s, ctx),
@@ -570,7 +566,8 @@ impl PrintersApp {
             O::None => Reply::none(),
             O::Redraw => Reply::redraw(),
             O::Close => {
-                self.queue = None;
+                self.queues.close(win);
+                self.refit_queues.remove(&win);
                 self.sync_watching();
                 Reply::redraw_all()
             }
@@ -587,8 +584,8 @@ impl PrintersApp {
         }
     }
 
-    fn props_event(&mut self, ev: Event, ctx: &Ctx) -> Reply {
-        let Some(p) = self.props.as_mut() else {
+    fn props_event(&mut self, win: WinId, ev: Event, ctx: &Ctx) -> Reply {
+        let Some(p) = self.props.get_mut(win) else {
             return Reply::none();
         };
         let out = match ev {
@@ -626,13 +623,13 @@ impl PrintersApp {
                     self.rename(printer, new);
                 }
                 if close {
-                    self.props = None;
+                    self.props.close(win);
                     self.sync_watching();
                 }
                 Reply::redraw_all()
             }
             props::Outcome::Close => {
-                self.props = None;
+                self.props.close(win);
                 self.sync_watching();
                 Reply::redraw_all()
             }
@@ -804,8 +801,7 @@ impl PrintersApp {
     fn focused_edit(&self, win: WinId) -> Option<form::FocusedEdit<'_>> {
         match win {
             WIZARD => self.wizard.as_ref()?.page.form.focused_edit(),
-            PROPS => self.props.as_ref()?.sheet.open().focused_edit(),
-            _ => None,
+            _ => self.props.get(win)?.sheet.open().focused_edit(),
         }
     }
 }
@@ -838,18 +834,18 @@ impl App for PrintersApp {
 
     fn children(&self) -> Vec<Child> {
         let mut out = Vec::new();
-        if let Some(q) = &self.queue {
+        for (id, q) in self.queues.iter() {
             out.push(Child {
-                id: QUEUE,
+                id,
                 title: q.title(&self.snapshot),
                 size: self.forms.text.size(queue::CLIENT),
                 fixed: false,
                 modal: false,
             });
         }
-        if let Some(p) = &self.props {
+        for (id, p) in self.props.iter() {
             out.push(Child {
-                id: PROPS,
+                id,
                 title: p.window_title(),
                 size: self.forms.text.size(props::CLIENT),
                 fixed: true,
@@ -916,17 +912,16 @@ impl App for PrintersApp {
             return self.wake();
         }
         self.read_icons(ctx);
-        if let Some(q) = &mut self.queue
-            && q.icon.is_none()
-            && self.doc_icon.is_some()
-        {
-            q.icon = self.doc_icon.clone().map(Rc::new);
-            q.refresh(&self.snapshot);
+        if let Some(icon) = &self.doc_icon {
+            for q in self.queues.values_mut().filter(|q| q.icon.is_none()) {
+                q.icon = Some(Rc::new(icon.clone()));
+                q.refresh(&self.snapshot);
+            }
         }
         let clip = form_clipboard(self.focused_edit(win), &ev);
         match win {
-            QUEUE => self.queue_event(ev, ctx),
-            PROPS => self.props_event(ev, ctx),
+            _ if self.queues.get(win).is_some() => self.queue_event(win, ev, ctx),
+            _ if self.props.get(win).is_some() => self.props_event(win, ev, ctx),
             WIZARD => self.wizard_event(ev, ctx),
             BROWSE => self.browse_event(ev, ctx),
             CONFIRM => self.confirm_event(ev, ctx),
@@ -940,15 +935,9 @@ impl App for PrintersApp {
         let forms = ctx.forms();
         let px = forms.fonts.size_px;
         match win {
-            QUEUE => {
-                if let Some(q) = &self.queue {
-                    q.access(tree, ctx);
-                }
-            }
-            PROPS => {
-                if let Some(p) = &self.props {
-                    oneshot::access_sheet(&p.sheet, tree, &ctx.text, px);
-                }
+            _ if let Some(q) = self.queues.get(win) => q.access(tree, ctx),
+            _ if let Some(p) = self.props.get(win) => {
+                oneshot::access_sheet(&p.sheet, tree, &ctx.text, px);
             }
             WIZARD => {
                 if let Some(w) = &self.wizard {
@@ -982,8 +971,8 @@ impl App for PrintersApp {
 
     fn reader(&mut self, win: WinId, act: repriseapp::Reader, ctx: &Ctx) -> bool {
         match (win, act) {
-            (QUEUE, repriseapp::Reader::Reveal { row, .. }) => {
-                self.queue.as_mut().is_some_and(|q| q.reveal(row, ctx))
+            (_, repriseapp::Reader::Reveal { row, .. }) if self.queues.get(win).is_some() => {
+                self.queues.get_mut(win).is_some_and(|q| q.reveal(row, ctx))
             }
             (repriseapp::MAIN, repriseapp::Reader::Reveal { row, .. }) => {
                 self.folder.reveal(row, ctx)
@@ -994,9 +983,8 @@ impl App for PrintersApp {
 
     fn drop_form(&mut self, win: WinId) -> Option<DropForm<'_>> {
         let form = match win {
-            PROPS => self.props.as_mut()?.sheet.open_mut(),
             WIZARD => &mut self.wizard.as_mut()?.page.form,
-            _ => return None,
+            _ => self.props.get_mut(win)?.sheet.open_mut(),
         };
         Some(DropForm { form, px: None })
     }
@@ -1015,19 +1003,15 @@ impl App for PrintersApp {
             ..forms.paint()
         };
         match win {
-            QUEUE => {
-                if let Some(q) = &mut self.queue {
-                    if std::mem::take(&mut self.refit_queue) {
-                        q.fit_columns(ctx);
-                    }
-                    q.draw(c, ctx);
+            _ if let Some(q) = self.queues.get_mut(win) => {
+                if self.refit_queues.remove(&win) {
+                    q.fit_columns(ctx);
                 }
+                q.draw(c, ctx);
             }
-            PROPS => {
+            _ if let Some(p) = self.props.get(win) => {
                 c.fill_rect(c.bounds(), ctx.theme.colors.button_face);
-                if let Some(p) = &self.props {
-                    propsheet::draw(c, &ctx.text, &paint, &p.sheet, true, px);
-                }
+                propsheet::draw(c, &ctx.text, &paint, &p.sheet, true, px);
             }
             WIZARD => {
                 if let Some(w) = &self.wizard {
@@ -1112,11 +1096,11 @@ mod tests {
     fn form_windows_open_at_the_text_size() {
         let mut app = PrintersApp::default();
         app.open_wizard();
-        let printer = cups::Printer {
+        app.snapshot.printers.push(cups::Printer {
             name: "Laser".into(),
             ..Default::default()
-        };
-        app.props = Some(props::PropsSheet::new(&printer, None));
+        });
+        let props = app.open_props("Laser", props::GENERAL).unwrap().id();
         let mut ctx = Ctx {
             text_size: 150,
             ..test_ctx(folder::CLIENT)
@@ -1130,7 +1114,7 @@ mod tests {
                 .size
         };
         assert_eq!(size(WIZARD), (768, 556));
-        assert_eq!(size(PROPS), (587, 680));
+        assert_eq!(size(props), (587, 680));
     }
 
     #[test]
@@ -1158,7 +1142,7 @@ mod tests {
     fn the_folder_and_the_queue_open_at_the_text_size() {
         let mut app = PrintersApp::default();
         assert_eq!(app.initial_size(), folder::CLIENT);
-        app.queue = Some(queue::Queue::new("Laser"));
+        let queue = app.open_queue("Laser").id();
         let mut ctx = Ctx {
             text_size: 200,
             ..test_ctx(folder::CLIENT)
@@ -1166,7 +1150,7 @@ mod tests {
         app.event(repriseapp::MAIN, Event::Blink, &mut ctx);
         let twice = |(w, h): (i32, i32)| (2 * w, 2 * h);
         assert_eq!(app.initial_size(), twice(folder::CLIENT));
-        let queue = app.children().into_iter().find(|c| c.id == QUEUE);
+        let queue = app.children().into_iter().find(|c| c.id == queue);
         assert_eq!(queue.map(|c| c.size), Some(twice(queue::CLIENT)));
     }
 
@@ -1249,6 +1233,89 @@ mod tests {
             ..PrintersApp::default()
         };
         tx.send(reprisetray::Msg::Activate(0, 0)).unwrap();
-        assert_eq!(app.wake().activate, Some((QUEUE, handoff)));
+        let activate = app.wake().activate;
+        let queue = app.queues.of("Laser").expect("the Laser queue opened");
+        assert_eq!(activate, Some((queue, handoff)));
+    }
+
+    fn two_printers() -> PrintersApp {
+        let printer = |name: &str| cups::Printer {
+            name: name.into(),
+            ..Default::default()
+        };
+        PrintersApp {
+            snapshot: cups::Snapshot {
+                printers: vec![printer("Laser"), printer("Inkjet")],
+                running: true,
+                ..Default::default()
+            },
+            ..PrintersApp::default()
+        }
+    }
+
+    #[test]
+    fn two_printers_show_two_queues_and_two_property_sheets() {
+        let mut app = two_printers();
+        let mut ctx = test_ctx(folder::CLIENT);
+        for p in ["Laser", "Inkjet"] {
+            app.folder_outcome(folder::Outcome::Open(p.into()), &mut ctx);
+            app.folder_outcome(folder::Outcome::Properties(p.into()), &mut ctx);
+        }
+        let ids: HashSet<WinId> = app.children().into_iter().map(|c| c.id).collect();
+        assert_eq!(ids.len(), 4, "every window has its own id");
+    }
+
+    #[test]
+    fn reopening_a_printer_s_window_raises_it_and_keeps_the_others() {
+        let mut app = two_printers();
+        let mut ctx = test_ctx(folder::CLIENT);
+        let open = |app: &mut PrintersApp, out, ctx: &mut Ctx| app.folder_outcome(out, ctx).raise;
+        assert_eq!(
+            open(&mut app, folder::Outcome::Open("Laser".into()), &mut ctx),
+            None
+        );
+        assert_eq!(
+            open(&mut app, folder::Outcome::Open("Inkjet".into()), &mut ctx),
+            None
+        );
+        let laser = app.queues.of("Laser");
+        assert_eq!(
+            open(&mut app, folder::Outcome::Open("Laser".into()), &mut ctx),
+            laser
+        );
+        open(
+            &mut app,
+            folder::Outcome::Properties("Laser".into()),
+            &mut ctx,
+        );
+        let sheet = app.props.of("Laser");
+        let again = open(&mut app, folder::Outcome::Sharing("Laser".into()), &mut ctx);
+        assert_eq!(again, sheet);
+        assert_eq!(app.children().len(), 3);
+    }
+
+    #[test]
+    fn closing_one_queue_leaves_the_other_open() {
+        let mut app = two_printers();
+        let laser = app.open_queue("Laser").id();
+        let inkjet = app.open_queue("Inkjet").id();
+        let mut ctx = test_ctx(queue::CLIENT);
+        app.event(laser, Event::CloseRequest, &mut ctx);
+        assert!(app.queues.get(laser).is_none());
+        assert_eq!(app.queues.of("Inkjet"), Some(inkjet));
+    }
+
+    #[test]
+    fn a_deleted_printer_s_windows_close_and_the_other_printer_s_stay() {
+        let mut app = two_printers();
+        app.open_queue("Laser");
+        app.open_props("Laser", props::GENERAL);
+        let inkjet = app.open_queue("Inkjet").id();
+        let mut s = app.snapshot.clone();
+        s.printers.retain(|p| p.name != "Laser");
+        app.snapshot_in(s);
+        assert_eq!(app.queues.of("Laser"), None);
+        assert_eq!(app.props.of("Laser"), None);
+        assert_eq!(app.queues.of("Inkjet"), Some(inkjet));
     }
 }
