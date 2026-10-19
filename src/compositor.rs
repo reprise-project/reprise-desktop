@@ -206,6 +206,7 @@ pub struct State {
     pub layers: Layers,
     pub windows: Vec<Window>,
     pub focused: Option<WindowId>,
+    pub frame_batch: crate::window::FrameBatch,
     pub focus_order: Vec<WindowId>,
     /// The window whose caption button is lit (`State::frame_hover`).
     pub hot_frame: Option<WindowId>,
@@ -505,6 +506,7 @@ impl State {
             layers,
             windows: Vec::new(),
             focused: None,
+            frame_batch: Default::default(),
             focus_order: Vec::new(),
             hot_frame: None,
             fading_frames: Vec::new(),

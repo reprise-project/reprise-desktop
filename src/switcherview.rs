@@ -369,8 +369,11 @@ impl State {
     pub fn switcher_commit(&mut self) {
         if let Some(sw) = self.switcher.panel.take() {
             let entry = sw.entries.get(sw.selected).copied();
-            self.destroy_switcher_tree(sw);
-            self.switch_to(entry);
+            // Ending the peek and the focus change both redraw the old focus's frame.
+            self.batch_frames(|s| {
+                s.destroy_switcher_tree(sw);
+                s.switch_to(entry);
+            });
         } else if let Some(st) = self.switcher.stack.take() {
             // Released before it showed: nothing switches.
             if !st.revealed() {

@@ -315,6 +315,37 @@ pub fn chrome_for(owned: bool, resizable: bool, decorated: bool, tag: DialogTag)
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct WindowId(u64);
 
+/// The frames `redraw_frame` put off inside `State::batch_frames`, each once, in the order first
+/// asked for.
+#[derive(Default)]
+pub struct FrameBatch(Option<Vec<WindowId>>);
+
+impl FrameBatch {
+    /// Start a batch; false if one is open already (the outer one draws).
+    fn begin(&mut self) -> bool {
+        if self.0.is_some() {
+            return false;
+        }
+        self.0 = Some(Vec::new());
+        true
+    }
+
+    /// Whether `w`'s redraw waits for the batch's end.
+    fn put_off(&mut self, w: WindowId) -> bool {
+        let Some(batch) = self.0.as_mut() else {
+            return false;
+        };
+        if !batch.contains(&w) {
+            batch.push(w);
+        }
+        true
+    }
+
+    fn end(&mut self) -> Vec<WindowId> {
+        self.0.take().unwrap_or_default()
+    }
+}
+
 impl WindowId {
     pub(crate) fn next() -> WindowId {
         static NEXT: AtomicU64 = AtomicU64::new(1);
@@ -868,6 +899,9 @@ impl State {
     }
 
     pub fn redraw_frame(&mut self, w: WindowId) {
+        if self.frame_batch.put_off(w) {
+            return;
+        }
         self.place_backdrop(w);
         if self.is_sheet(w) {
             let scale = self.draw_scale_for_window(w);
@@ -892,6 +926,18 @@ impl State {
         }
         self.place_shadow(w);
         self.draw_strips(w, false);
+    }
+
+    /// Run `f` with `redraw_frame` put off: each frame it asked for draws once afterwards, in its
+    /// final state.
+    pub fn batch_frames(&mut self, f: impl FnOnce(&mut Self)) {
+        let outer = self.frame_batch.begin();
+        f(self);
+        if outer {
+            for w in self.frame_batch.end() {
+                self.redraw_frame(w);
+            }
+        }
     }
 
     /// Whether `w` shows as a sheet: peek hides it, it is not fullscreen, and the look draws
@@ -2572,6 +2618,23 @@ fn stack_shadow(scene: &mut DeskScene, shadow: &[BufferId; 8], backdrop: TreeId,
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_batch_draws_each_frame_once_at_the_outer_end() {
+        use super::{FrameBatch, WindowId};
+        let (a, b) = (WindowId::next(), WindowId::next());
+        let mut batch = FrameBatch::default();
+        assert!(!batch.put_off(a), "outside a batch a frame draws at once");
+        assert!(batch.begin());
+        assert!(batch.put_off(a) && batch.put_off(b) && batch.put_off(a));
+        assert!(
+            !batch.begin(),
+            "a nested batch leaves the drawing to the outer one"
+        );
+        assert!(batch.put_off(b));
+        assert_eq!(batch.end(), vec![a, b]);
+        assert!(!batch.put_off(a), "the batch is closed after its end");
+    }
+
     #[test]
     fn a_frame_never_starts_above_a_top_bars_foot() {
         use super::below_top_bar;
