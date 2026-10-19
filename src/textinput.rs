@@ -16,7 +16,7 @@ use smithay::{
         SeatHandler,
         keyboard::{
             GrabStartData as KeyboardGrabStartData, KeyboardGrab, KeyboardInnerHandle,
-            KeyboardSource, ModifiersState,
+            KeyboardSource, ModifiersState, SerializedMods,
         },
     },
     reexports::{
@@ -68,6 +68,7 @@ pub struct Ime {
     pub im: Option<ZwpInputMethodV2>,
     grab: Option<InputMethodKeyboardGrab>,
     grab_object: Option<ZwpInputMethodKeyboardGrabV2>,
+    heard: HeardMods,
     cursors: HashMap<ObjectId, TiState>,
     pub vk: VkKeymap,
     vk_key: bool,
@@ -102,6 +103,7 @@ impl Ime {
             im: None,
             grab: None,
             grab_object: None,
+            heard: HeardMods::default(),
             cursors: HashMap::new(),
             vk: VkKeymap::default(),
             vk_key: false,
@@ -630,6 +632,24 @@ impl KeySplit {
     }
 }
 
+/// The modifiers the input method's keyboard grab last heard, so each state reaches it once.
+#[derive(Default)]
+struct HeardMods(Option<SerializedMods>);
+
+impl HeardMods {
+    fn heard(&mut self, mods: SerializedMods) {
+        self.0 = Some(mods);
+    }
+
+    /// `now`, unless the grab already holds it.
+    fn unheard(&mut self, now: SerializedMods) -> Option<SerializedMods> {
+        (self.0 != Some(now)).then(|| {
+            self.0 = Some(now);
+            now
+        })
+    }
+}
+
 pub fn popup_origin(caret: Rect, size: (i32, i32), output: Rect) -> (i32, i32) {
     let (w, h) = size;
     let below = output.bottom() - caret.bottom();
@@ -666,6 +686,9 @@ impl KeyboardGrab<State> for SplitGrab {
         if !data.ime.vk_key && self.split.goes_to_grab(keycode.raw(), pressed, grab) {
             self.im
                 .input(data, handle, keycode, key_state, modifiers, serial, time);
+            if let Some(m) = modifiers {
+                data.ime.heard.heard(m.serialized);
+            }
         } else {
             handle.input(data, keycode, key_state, modifiers, serial, time);
         }
@@ -701,6 +724,7 @@ impl State {
         let handle = self.seat.input_method().clone();
         if !handle.keyboard_grabbed() {
             self.ime.grab = None;
+            self.ime.heard = HeardMods::default();
             return;
         }
         let Some(kb) = self.seat.get_keyboard() else {
@@ -709,8 +733,14 @@ impl State {
         let fresh = kb
             .with_grab(|_, g| g.downcast_ref::<InputMethodKeyboardGrab>().cloned())
             .flatten();
+        // Smithay tells a new grab the modifiers as it starts; a grab coming back from a menu's
+        // hears what changed while the menu held the keyboard.
+        let regained = fresh.is_none();
         let im = match fresh {
-            Some(im) => im,
+            Some(im) => {
+                self.ime.heard.heard(kb.modifier_state().serialized);
+                im
+            }
             None if !kb.is_grabbed() => match self.ime.grab.clone() {
                 Some(im) => im,
                 None => return,
@@ -725,6 +755,9 @@ impl State {
             start: KeyboardGrabStartData { focus: None },
         };
         kb.set_grab(self, grab, SERIAL_COUNTER.next_serial());
+        if regained {
+            self.ime_grab_modifiers();
+        }
     }
 
     /// A key that changed the modifiers went past the input method's grab
@@ -732,7 +765,8 @@ impl State {
     /// not see): the grab hears the new state. Smithay tells it the
     /// modifiers only with a key it gets, so the Super of the Super+R that
     /// opened the Run box stayed down for it, and it passed every key on
-    /// untouched until the next modifier it saw.
+    /// untouched until the next modifier it saw. A state the grab already
+    /// heard is not sent again.
     pub fn ime_grab_modifiers(&mut self) {
         if !self.seat.input_method().keyboard_grabbed() {
             return;
@@ -746,7 +780,9 @@ impl State {
         let Some(grab) = &self.ime.grab_object else {
             return;
         };
-        let m = kb.modifier_state().serialized;
+        let Some(m) = self.ime.heard.unheard(kb.modifier_state().serialized) else {
+            return;
+        };
         grab.modifiers(
             SERIAL_COUNTER.next_serial().into(),
             m.depressed,
@@ -1154,6 +1190,33 @@ mod tests {
             (true, None),
             "enabled again from clean"
         );
+    }
+
+    #[test]
+    fn the_grab_hears_each_modifier_state_once() {
+        let shift = SerializedMods {
+            depressed: 1,
+            ..Default::default()
+        };
+        let none = SerializedMods::default();
+        let mut heard = HeardMods::default();
+        assert_eq!(
+            heard.unheard(none),
+            Some(none),
+            "a grab that heard nothing hears the state"
+        );
+        heard.heard(shift);
+        assert_eq!(
+            heard.unheard(shift),
+            None,
+            "Shift came with its key: no duplicate"
+        );
+        assert_eq!(
+            heard.unheard(none),
+            Some(none),
+            "Shift released past the grab"
+        );
+        assert_eq!(heard.unheard(none), None, "the release is sent once");
     }
 
     const OUT: Rect = Rect {
