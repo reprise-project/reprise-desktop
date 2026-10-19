@@ -238,11 +238,14 @@ impl ShmTextures {
                     // SAFETY: the context is current; `ptr` maps the
                     // buffer's rows for this call (checked above).
                     gl.GetError();
+                    let copied = copy_into(gl, tex, image, w, h);
                     gl.BindTexture(ffi::TEXTURE_2D, tex);
                     gl.EGLImageTargetTexture2DOES(ffi::TEXTURE_2D, image);
                     let backed = gl.GetError() == ffi::NO_ERROR;
-                    // Failed, the texture keeps its storage, and the
-                    // upload below is a plain one.
+                    if copied || !backed {
+                        gl.BindTexture(ffi::TEXTURE_2D, 0);
+                        return backed;
+                    }
                     gl.PixelStorei(ffi::UNPACK_ROW_LENGTH, stride);
                     gl.TexSubImage2D(
                         ffi::TEXTURE_2D,
@@ -268,5 +271,64 @@ impl ShmTextures {
         })
         .ok()
         .flatten()
+    }
+}
+
+/// Blit texture `from` into `image` on the GPU, sparing the main thread a full upload; false
+/// when it could not.
+///
+/// # Safety
+/// The context is current and `image` was created on its display.
+unsafe fn copy_into(gl: &ffi::Gles2, from: u32, image: EGLImage, w: i32, h: i32) -> bool {
+    if !gl.BlitFramebuffer.is_loaded() {
+        return false;
+    }
+    // SAFETY: the caller's contract; every name made here is deleted before returning and the
+    // bindings and scissor state it changes are restored.
+    unsafe {
+        let (mut read, mut draw) = (0, 0);
+        gl.GetIntegerv(ffi::READ_FRAMEBUFFER_BINDING, &mut read);
+        gl.GetIntegerv(ffi::DRAW_FRAMEBUFFER_BINDING, &mut draw);
+        let scissor = gl.IsEnabled(ffi::SCISSOR_TEST) == ffi::TRUE;
+        let mut to = 0;
+        gl.GenTextures(1, &mut to);
+        gl.BindTexture(ffi::TEXTURE_2D, to);
+        gl.EGLImageTargetTexture2DOES(ffi::TEXTURE_2D, image);
+        let mut fbs = [0; 2];
+        gl.GenFramebuffers(2, fbs.as_mut_ptr());
+        gl.BindFramebuffer(ffi::READ_FRAMEBUFFER, fbs[0]);
+        gl.FramebufferTexture2D(
+            ffi::READ_FRAMEBUFFER,
+            ffi::COLOR_ATTACHMENT0,
+            ffi::TEXTURE_2D,
+            from,
+            0,
+        );
+        gl.BindFramebuffer(ffi::DRAW_FRAMEBUFFER, fbs[1]);
+        gl.FramebufferTexture2D(
+            ffi::DRAW_FRAMEBUFFER,
+            ffi::COLOR_ATTACHMENT0,
+            ffi::TEXTURE_2D,
+            to,
+            0,
+        );
+        let complete = gl.CheckFramebufferStatus(ffi::READ_FRAMEBUFFER)
+            == ffi::FRAMEBUFFER_COMPLETE
+            && gl.CheckFramebufferStatus(ffi::DRAW_FRAMEBUFFER) == ffi::FRAMEBUFFER_COMPLETE;
+        if complete {
+            if scissor {
+                gl.Disable(ffi::SCISSOR_TEST);
+            }
+            gl.BlitFramebuffer(0, 0, w, h, 0, 0, w, h, ffi::COLOR_BUFFER_BIT, ffi::NEAREST);
+            if scissor {
+                gl.Enable(ffi::SCISSOR_TEST);
+            }
+        }
+        gl.BindFramebuffer(ffi::READ_FRAMEBUFFER, read as u32);
+        gl.BindFramebuffer(ffi::DRAW_FRAMEBUFFER, draw as u32);
+        gl.DeleteFramebuffers(2, fbs.as_ptr());
+        gl.BindTexture(ffi::TEXTURE_2D, 0);
+        gl.DeleteTextures(1, &to);
+        complete && gl.GetError() == ffi::NO_ERROR
     }
 }
