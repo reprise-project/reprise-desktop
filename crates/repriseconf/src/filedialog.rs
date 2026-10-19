@@ -17,9 +17,10 @@ pub fn load_from(path: &Path) -> String {
 
 /// Writes `text`'s `key = value` lines over the file's lines of the same keys, keeping the rest,
 /// so the view and the geometry writers leave each other's keys alone, under [`crate::edit`]'s
-/// lock so that a program and the compositor writing at once both keep theirs.
+/// lock so that a program and the compositor writing at once both keep theirs. A file that is
+/// not UTF-8 is replaced.
 pub fn save_to(path: &Path, text: &str) -> std::io::Result<()> {
-    crate::edit(path, |old| {
+    crate::edit_or_reset(path, |old| {
         Ok::<_, std::convert::Infallible>(merged(old, text))
     })
     .map(|_| ())
@@ -114,6 +115,18 @@ impl Geometry {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_save_over_a_file_that_is_not_utf8_replaces_it() {
+        let dir = std::env::temp_dir().join(format!("repriseconf-fd-bad-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("filedialog.toml");
+        std::fs::write(&path, b"view = \"list\"\n\xff\xfe\n").unwrap();
+        save_to(&path, "sort = \"size\"\n").unwrap();
+        assert_eq!(load_from(&path), "sort = \"size\"\n");
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
 
     #[test]
     fn geometry_text_round_trips_and_a_partial_or_bad_entry_reads_as_none() {
