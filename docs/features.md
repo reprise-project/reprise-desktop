@@ -22,6 +22,10 @@ the Super tap, Super+Shift+Esc and the VT switch keys can be rebound.
 - **Pinned programs.** The Quick Launch programs can lead the task row
   instead of sitting in their own band. A pinned program with no windows is
   an icon that starts it, and its button takes that place once it runs.
+- **Quick Launch overflow.** Unlocked, a band's grip drags the Quick Launch
+  band shorter than its buttons. The ones that no longer fit move behind a »
+  at its end, which lists them with their icons; right-click one for its
+  Open and Delete menu.
 - **Jump lists.** Right-click a task button for the files that program
   used recently, its windows, Pin or Unpin, Move to desktop and Close.
 - **Drag to reorder.** Task buttons act when the mouse button comes up, so

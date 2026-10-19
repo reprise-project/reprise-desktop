@@ -376,6 +376,18 @@ impl State {
     /// A press on row `row` of the menu at `depth` with `button`: a program row arms a drag and is
     /// picked on release if the pointer stays put; any other row acts now, left button only.
     pub fn menu_row_press(&mut self, depth: usize, row: Option<usize>, button: u32) {
+        if button == BTN_RIGHT
+            && let Some(row) = row
+            && let Some(MenuKind::QuickOverflow { files, .. }) =
+                self.menus.get(depth).map(|m| &m.kind)
+            && let Some(index) = files
+                .get(row)
+                .and_then(|f| self.quicklaunch.iter().position(|q| &q.file == f))
+        {
+            let p = self.pointer_location();
+            self.open_quick_menu(index, (p.x as i32, p.y as i32));
+            return;
+        }
         let Some(row) = row.filter(|_| button == BTN_LEFT) else {
             return;
         };

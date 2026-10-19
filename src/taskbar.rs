@@ -1864,6 +1864,7 @@ mod tests {
                 quick_hot: None,
                 quick_pressed: None,
                 quick_drop: None,
+                quick_more: Default::default(),
                 pager: vec![],
                 pager_hot: None,
                 pager_mark: Default::default(),

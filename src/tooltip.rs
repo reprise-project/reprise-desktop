@@ -413,6 +413,7 @@ pub(crate) fn label_for(state: &State, bar: TreeId, hit: TaskbarHit) -> Option<S
             Some(chevron_tip(crate::trayreveal::arrow_look(state), open).to_string())
         }
         TaskbarHit::More => Some("Show more windows".to_string()),
+        TaskbarHit::QuickMore => Some(reprisekit::taskbar::QUICK_MORE_NAME.to_string()),
         TaskbarHit::Tray(i) => match crate::tray::cell_at(state, bar, i) {
             crate::tray::Cell::Hidden(_) => {
                 let revealed = state.bar(bar).map_or(0, |b| b.layout.tray_hidden);

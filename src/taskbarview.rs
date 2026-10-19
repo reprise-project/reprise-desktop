@@ -175,7 +175,8 @@ pub struct Bar {
     task_hot_x: Option<i32>,
     task_hot_x_drawn: Option<i32>,
     show_desktop_hot: bool,
-    more_hot: bool,
+    /// The » cell under the pointer: the task row's (More) or Quick Launch's (QuickMore).
+    more_hot: Option<TaskbarHit>,
     pub(crate) chevron_hot: bool,
     pub chevron_held: bool,
     pub task_slides: Vec<(taskslide::Key, reprisekit::anim::Slide)>,
@@ -393,7 +394,7 @@ impl State {
             task_hot_x: None,
             task_hot_x_drawn: None,
             show_desktop_hot: false,
-            more_hot: false,
+            more_hot: None,
             chevron_hot: false,
             chevron_held: false,
             task_slides: Vec::new(),
@@ -529,6 +530,10 @@ impl State {
         self.menu_root() == Some(MenuRoot::TaskOverflow(tree))
     }
 
+    fn quick_more_open(&self, tree: TreeId) -> bool {
+        self.menu_root() == Some(MenuRoot::QuickOverflow(tree))
+    }
+
     fn chevron_open(&self, bar: &Bar) -> bool {
         bar.tray_open || crate::trayflyout::open_on(self).as_ref() == Some(&bar.output)
     }
@@ -557,6 +562,7 @@ impl State {
                 .collect(),
             hidden_open: self.chevron_open(bar),
             more_open: self.more_open(bar.tree),
+            quick_more_open: self.quick_more_open(bar.tree),
             clock: crate::taskbar::clock_text(),
             date: crate::taskbar::date_text(),
         };
@@ -961,6 +967,11 @@ impl State {
             quick_hot: bar.quick_hot,
             quick_pressed: bar.quick_pressed,
             quick_drop: bar.quick_drop,
+            quick_more: PopupCell {
+                hot: bar.more_hot == Some(TaskbarHit::QuickMore),
+                open: self.quick_more_open(bar.tree),
+                held: false,
+            },
             pager: pager.clone(),
             pager_hot: bar.pager_hot,
             pager_mark: self.config.pager_mark,
@@ -973,7 +984,7 @@ impl State {
             task_progress,
             show_desktop_hot: bar.show_desktop_hot,
             more: PopupCell {
-                hot: bar.more_hot,
+                hot: bar.more_hot == Some(TaskbarHit::More),
                 open: self.more_open(bar.tree),
                 held: false,
             },
@@ -1149,7 +1160,7 @@ impl State {
                 })
         });
         crate::trayreveal::hover(self, area);
-        let none = (false, None, None, None, false, false, false);
+        let none = (false, None, None, None, false, None, false);
         let (fade_in, fade_out) = self.config.effects.hover_ms();
         let now = Instant::now();
         let hot_x = match (hit, tree.and_then(|t| self.bar(t))) {
@@ -1165,17 +1176,19 @@ impl State {
                 none
             } else {
                 match hit {
-                    TaskbarHit::Start => (true, None, None, None, false, false, false),
-                    TaskbarHit::Quick(i) => (false, Some(i), None, None, false, false, false),
-                    TaskbarHit::Pager(i) => (false, None, Some(i), None, false, false, false),
+                    TaskbarHit::Start => (true, None, None, None, false, None, false),
+                    TaskbarHit::Quick(i) => (false, Some(i), None, None, false, None, false),
+                    TaskbarHit::Pager(i) => (false, None, Some(i), None, false, None, false),
                     TaskbarHit::Task(i) => {
                         let key =
                             crate::taskbar::task_key(&bar.buttons, &bar.pins, &bar.dialogs, i);
-                        (false, None, None, key, false, false, false)
+                        (false, None, None, key, false, None, false)
                     }
-                    TaskbarHit::ShowDesktop => (false, None, None, None, true, false, false),
-                    TaskbarHit::More => (false, None, None, None, false, true, false),
-                    TaskbarHit::Chevron => (false, None, None, None, false, false, true),
+                    TaskbarHit::ShowDesktop => (false, None, None, None, true, None, false),
+                    TaskbarHit::More | TaskbarHit::QuickMore => {
+                        (false, None, None, None, false, Some(hit), false)
+                    }
+                    TaskbarHit::Chevron => (false, None, None, None, false, None, true),
                     _ => none,
                 }
             };
@@ -1307,6 +1320,11 @@ impl State {
             TaskbarHit::More if button == BTN_LEFT => {
                 if closed != Some(MenuRoot::TaskOverflow(tree)) {
                     self.open_task_overflow(tree);
+                }
+            }
+            TaskbarHit::QuickMore if button == BTN_LEFT => {
+                if closed != Some(MenuRoot::QuickOverflow(tree)) {
+                    self.open_quick_overflow(tree);
                 }
             }
             TaskbarHit::Pager(i) if button == BTN_LEFT => self.switch_desktop(i),

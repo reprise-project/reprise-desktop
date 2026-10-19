@@ -99,6 +99,20 @@ pub fn draw_taskbar(
             }
         }
     }
+    if let Some(r) = layout.quick_more {
+        let cell = state.quick_more;
+        let o = if cell.open {
+            canvas.edge_t(r, EdgeStyle::ThinSunken, cs, s);
+            s
+        } else {
+            if cell.hot {
+                canvas.edge_t(r, EdgeStyle::ThinRaised, cs, s);
+            }
+            0
+        };
+        let at = Rect::new(r.x + o, r.y + o, r.width, r.height);
+        crate::taskbar::draw_more(canvas, at, cs.button_text, s);
+    }
     if let (Some(slot), Some(first)) = (state.quick_drop, layout.quick.first()) {
         let ink = cs.button_dk_shadow;
         let last = layout.quick.last().unwrap_or(first);
@@ -348,6 +362,7 @@ mod tests {
             quick_hot: None,
             quick_pressed: None,
             quick_drop: None,
+            quick_more: Default::default(),
             pager: vec![],
             pager_hot: None,
             pager_mark: Default::default(),
@@ -438,6 +453,7 @@ mod tests {
             quick_hot: None,
             quick_pressed: None,
             quick_drop: None,
+            quick_more: Default::default(),
             pager: vec![],
             pager_hot: None,
             pager_mark: Default::default(),
@@ -514,6 +530,7 @@ mod tests {
             quick_hot: None,
             quick_pressed: None,
             quick_drop: None,
+            quick_more: Default::default(),
             pager: vec![],
             pager_hot: None,
             pager_mark: Default::default(),
@@ -599,6 +616,7 @@ mod tests {
             quick_hot: None,
             quick_pressed: None,
             quick_drop: None,
+            quick_more: Default::default(),
             pager: vec![],
             pager_hot: None,
             pager_mark: Default::default(),
@@ -659,6 +677,7 @@ mod tests {
             quick_hot: None,
             quick_pressed: None,
             quick_drop: None,
+            quick_more: Default::default(),
             pager: vec![],
             pager_hot: None,
             pager_mark: Default::default(),
@@ -718,6 +737,7 @@ mod tests {
             quick_hot: None,
             quick_pressed: None,
             quick_drop: None,
+            quick_more: Default::default(),
             pager: vec![],
             pager_hot: None,
             pager_mark: Default::default(),
@@ -774,6 +794,7 @@ mod tests {
             quick_hot: None,
             quick_pressed: None,
             quick_drop: None,
+            quick_more: Default::default(),
             pager: vec![
                 PagerButton {
                     current: true,
@@ -852,6 +873,7 @@ mod tests {
             quick_hot: None,
             quick_pressed: None,
             quick_drop: None,
+            quick_more: Default::default(),
             pager: vec![],
             pager_hot: None,
             pager_mark: Default::default(),
@@ -915,6 +937,7 @@ mod tests {
             quick_hot: None,
             quick_pressed: None,
             quick_drop: None,
+            quick_more: Default::default(),
             pager: vec![],
             pager_hot: None,
             pager_mark: Default::default(),
@@ -983,6 +1006,7 @@ mod tests {
             quick_hot: None,
             quick_pressed: Some(0),
             quick_drop: Some(2),
+            quick_more: Default::default(),
             pager: vec![],
             pager_hot: None,
             pager_mark: Default::default(),
@@ -1052,6 +1076,7 @@ mod tests {
             quick_hot: Some(1),
             quick_pressed: None,
             quick_drop: None,
+            quick_more: Default::default(),
             pager: vec![],
             pager_hot: None,
             pager_mark: Default::default(),
@@ -1112,6 +1137,7 @@ mod tests {
                 quick_hot: None,
                 quick_pressed: None,
                 quick_drop: None,
+                quick_more: Default::default(),
                 pager: vec![],
                 pager_hot: None,
                 pager_mark: Default::default(),
@@ -1181,6 +1207,7 @@ mod tests {
             quick_hot: None,
             quick_pressed: None,
             quick_drop: None,
+            quick_more: Default::default(),
             pager: vec![],
             pager_hot: None,
             pager_mark: Default::default(),
@@ -1277,6 +1304,7 @@ mod tests {
             quick_hot: None,
             quick_pressed: None,
             quick_drop: None,
+            quick_more: Default::default(),
             pager: vec![
                 PagerButton {
                     current: true,
@@ -1570,6 +1598,7 @@ mod tests {
             quick_hot: None,
             quick_pressed: None,
             quick_drop: drop,
+            quick_more: Default::default(),
             pager: vec![
                 PagerButton {
                     current: true,
@@ -1769,6 +1798,7 @@ mod tests {
             quick_hot: None,
             quick_pressed: None,
             quick_drop: None,
+            quick_more: Default::default(),
             pager: vec![],
             pager_hot: None,
             pager_mark: Default::default(),

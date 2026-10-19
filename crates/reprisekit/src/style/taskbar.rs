@@ -451,6 +451,16 @@ pub fn draw_taskbar(
             }
         }
     }
+    if let Some(r) = layout.quick_more {
+        let lit = popup_state(state.quick_more);
+        if let Some(st) = lit {
+            style.draw(canvas, r, Part::TaskButton, st, s);
+        }
+        let ink = lit
+            .and_then(|st| style.text_color(Part::TaskButton, st))
+            .unwrap_or(style.bar_text);
+        crate::taskbar::draw_more(canvas, r, ink, s);
+    }
     let lights = style.has_parts(&[Part::SlotEdge, Part::SlotLight]);
     for (i, (r, b)) in layout.pager.iter().zip(&state.pager).enumerate() {
         let hot = state.pager_hot == Some(i);
@@ -1022,6 +1032,7 @@ mod tests {
             quick_hot: None,
             quick_pressed: None,
             quick_drop: None,
+            quick_more: Default::default(),
             pager: vec![],
             pager_hot: None,
             pager_mark: Default::default(),

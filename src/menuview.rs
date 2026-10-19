@@ -131,6 +131,11 @@ pub enum MenuKind {
         bar: TreeId,
         keys: Vec<TaskKey<WindowId>>,
     },
+    /// The Quick Launch band's » menu: per row, the hidden launcher's file.
+    QuickOverflow {
+        bar: TreeId,
+        files: Vec<String>,
+    },
 }
 
 /// What row `idx` of a menu stands for, resolved through the kind's own parallel
@@ -178,6 +183,7 @@ pub enum MenuPick {
         bar: TreeId,
         key: TaskKey<WindowId>,
     },
+    QuickOverflow(String),
 }
 
 impl MenuKind {
@@ -277,6 +283,10 @@ impl MenuKind {
                         key,
                     })
             }
+            MenuKind::QuickOverflow { files, .. } => files
+                .get(idx)
+                .cloned()
+                .map_or(MenuPick::Nothing, MenuPick::QuickOverflow),
         }
     }
 
@@ -329,6 +339,7 @@ pub enum MenuRoot {
     WindowList(usize),
     JumpList(usize),
     TaskOverflow(TreeId),
+    QuickOverflow(TreeId),
     Other,
 }
 
@@ -821,6 +832,7 @@ impl State {
             MenuKind::WindowList { button, .. } => MenuRoot::WindowList(*button),
             MenuKind::JumpList { button, .. } => MenuRoot::JumpList(*button),
             MenuKind::TaskOverflow { bar, .. } => MenuRoot::TaskOverflow(*bar),
+            MenuKind::QuickOverflow { bar, .. } => MenuRoot::QuickOverflow(*bar),
             _ => MenuRoot::Other,
         })
     }
@@ -1744,8 +1756,7 @@ impl State {
             return;
         }
         self.close_menu();
-        let style = MenuStyle::context(&self.config.theme, ContextBitmaps::Icons);
-        let px = style.icon_px() * self.draw_scale_at(Some(&output)).max(1);
+        let px = self.overflow_icon_px(&output);
         let mut waits = Vec::new();
         let items: Vec<MenuItem> = (rows.into_iter().enumerate())
             .map(|(n, (title, window))| {
@@ -1753,6 +1764,55 @@ impl State {
                 MenuItem::entry(title).icon(icon)
             })
             .collect();
+        let kind = MenuKind::TaskOverflow { bar: tree, keys };
+        self.push_overflow(output, more, items, kind, waits);
+    }
+
+    /// The menu off the Quick Launch band's » cell: the launchers the band hides, each with its
+    /// icon and name.
+    pub fn open_quick_overflow(&mut self, tree: TreeId) {
+        let Some(b) = self.bar(tree) else { return };
+        let Some(more) = b.layout.quick_more else {
+            return;
+        };
+        let output = b.output.clone();
+        let hidden: Vec<(String, String, Option<String>)> = (self.quicklaunch)
+            .iter()
+            .skip(b.layout.quick.len())
+            .map(|q| (q.file.clone(), q.entry.label.clone(), q.entry.icon.clone()))
+            .collect();
+        if hidden.is_empty() {
+            return;
+        }
+        self.close_menu();
+        let px = self.overflow_icon_px(&output);
+        let mut waits = Vec::new();
+        let mut files = Vec::with_capacity(hidden.len());
+        let mut items = Vec::with_capacity(hidden.len());
+        for (n, (file, label, icon)) in hidden.into_iter().enumerate() {
+            let icon = icon.and_then(|name| self.menu_icon(n, &name, px, &mut waits));
+            items.push(MenuItem::entry(label).icon(icon));
+            files.push(file);
+        }
+        let kind = MenuKind::QuickOverflow { bar: tree, files };
+        self.push_overflow(output, more, items, kind, waits);
+    }
+
+    fn overflow_icon_px(&self, output: &Output) -> i32 {
+        let style = MenuStyle::context(&self.config.theme, ContextBitmaps::Icons);
+        style.icon_px() * self.draw_scale_at(Some(output)).max(1)
+    }
+
+    /// Opens `items` as a menu off the bar cell `cell` (bar coordinates) on `output`.
+    fn push_overflow(
+        &mut self,
+        output: Output,
+        cell: Rect,
+        items: Vec<MenuItem>,
+        kind: MenuKind,
+        waits: IconWaits,
+    ) {
+        let style = MenuStyle::context(&self.config.theme, ContextBitmaps::Icons);
         let usable = self.usable_area(Some(&output));
         let style = style.fit(
             &self.text,
@@ -1764,13 +1824,12 @@ impl State {
         let layout = MenuLayout::compute_styled(&style, &items, max_rows);
         let p = self.bar_placement(&output);
         let cell = Rect::new(
-            p.shown.x + more.x,
-            p.shown.y + more.y,
-            more.width,
-            more.height,
+            p.shown.x + cell.x,
+            p.shown.y + cell.y,
+            cell.width,
+            cell.height,
         );
         let pos = place_popup(p.anchor_point(cell), (layout.width, layout.height), usable);
-        let kind = MenuKind::TaskOverflow { bar: tree, keys };
         self.push_menu(0, pos, layout, items, output, kind, MenuFrom::Bar);
         self.set_icon_waits(0, waits);
         self.redraw_menu(0);
@@ -2167,6 +2226,11 @@ impl State {
             MenuPick::Layout(i) => self.set_layout(i),
             MenuPick::NightLight(row) => crate::nightlight::pick(self, row),
             MenuPick::StartPanel(row) => self.start_row(row),
+            MenuPick::QuickOverflow(file) => {
+                if let Some(k) = self.quicklaunch.iter().position(|q| q.file == file) {
+                    self.run_quick(k);
+                }
+            }
             MenuPick::TaskOverflow { bar, key } => {
                 let button = (self.bar(bar))
                     .and_then(|b| crate::taskbar::find_task(&b.buttons, &b.pins, &b.dialogs, &key));
@@ -2469,6 +2533,18 @@ mod tests {
         );
         let c_closed = [vec![a], vec![b]];
         assert_eq!(find_task(&c_closed, &[], &[], &key), None, "gone");
+    }
+
+    #[test]
+    fn a_quick_overflow_row_launches_its_own_file() {
+        let mut scene = crate::compositor::DeskScene::new();
+        let bar = scene.tree_create(scene.root());
+        let kind = MenuKind::QuickOverflow {
+            bar,
+            files: vec!["c.desktop".into(), "d.desktop".into()],
+        };
+        assert_eq!(kind.pick(1), MenuPick::QuickOverflow("d.desktop".into()));
+        assert_eq!(kind.pick(2), MenuPick::Nothing);
     }
 
     #[test]

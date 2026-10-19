@@ -650,6 +650,7 @@ mod tests {
             quick_hot: None,
             quick_pressed: None,
             quick_drop: None,
+            quick_more: Default::default(),
             pager: vec![],
             pager_hot: None,
             pager_mark: Default::default(),
@@ -918,6 +919,149 @@ mod tests {
 
     const MIN: Option<CaptionButton> = Some(CaptionButton::Minimize);
     const CLOSE: Option<CaptionButton> = Some(CaptionButton::Close);
+
+    /// A 600 px bar on `edge` whose Quick Launch band, dragged to 60 px (a row of cells down a
+    /// side bar), hides some of its five buttons behind the »: the bar with the » in `cell` and without it, at scale `s`.
+    fn quick_more_bar(
+        interface: Interface,
+        edge: crate::taskbar::Edge,
+        s: i32,
+        cell: crate::taskbar::PopupCell,
+    ) -> (Canvas, Canvas, TaskbarLayout) {
+        use crate::taskbar::{Bands, BarSpan, ClockText, TaskbarCounts};
+        let base = theme_for(interface);
+        let t = if edge.is_side() {
+            base.taskbar_shape().side_default(&base.metrics)
+        } else {
+            base.metrics.taskbar_height
+        };
+        let span = BarSpan {
+            edge,
+            length: 600,
+            thickness: t,
+        };
+        let counts = TaskbarCounts {
+            quick: 5,
+            ..TaskbarCounts::default()
+        };
+        let bands = Bands {
+            tasks_first: false,
+            first_width: Some(if edge.is_side() { 30 } else { 60 }),
+        };
+        let shape = base.taskbar_shape();
+        let l = TaskbarLayout::compute_on(
+            &base.metrics,
+            &shape,
+            span,
+            false,
+            counts,
+            ClockText::default(),
+            bands,
+        )
+        .scaled(s);
+        let theme = base.scaled(s);
+        let text = TextRenderer::load(&FontConfig::default());
+        let draw = |l: &TaskbarLayout, cell| {
+            let mut st = empty_taskbar_state();
+            st.quick_more = cell;
+            let mut c = Canvas::new(l.width as u32, l.height as u32);
+            draw_taskbar(&mut c, &theme, &text, &text, l, &st);
+            c
+        };
+        let mut bare = l.clone();
+        bare.quick_more = None;
+        (draw(&l, cell), draw(&bare, cell), l)
+    }
+
+    fn quick_more_cells() -> [(&'static str, crate::taskbar::PopupCell); 3] {
+        use crate::taskbar::PopupCell;
+        let hot = PopupCell {
+            hot: true,
+            ..PopupCell::default()
+        };
+        let open = PopupCell {
+            open: true,
+            ..PopupCell::default()
+        };
+        [("rest", PopupCell::default()), ("hot", hot), ("open", open)]
+    }
+
+    #[test]
+    fn the_quick_launch_more_cell_pins_in_every_look_and_state_at_scale_1_and_2() {
+        let mut got = Vec::new();
+        for interface in [Interface::Classic, Interface::Blue, Interface::Glass] {
+            for s in [1, 2] {
+                let mut drawn = Vec::new();
+                for (name, cell) in quick_more_cells() {
+                    let (c, _, l) =
+                        quick_more_bar(interface, crate::taskbar::Edge::Bottom, s, cell);
+                    let r = l
+                        .quick_more
+                        .expect("a 60 px band shows two buttons and the »");
+                    let cut = c.copy_rect(r);
+                    assert!(
+                        !drawn.contains(&fnv(&cut)),
+                        "{interface:?} {name} {s}: each state draws its own cell"
+                    );
+                    drawn.push(fnv(&cut));
+                    got.push((format!("{interface:?} {name} {s}"), fnv(&cut)));
+                }
+            }
+        }
+        crate::pins::check("look/quick_more", &got);
+    }
+
+    #[test]
+    fn the_quick_launch_more_cell_is_a_quick_button_face_under_the_double_chevron_on_every_edge() {
+        use crate::taskbar::{Edge, draw_more};
+        for interface in [Interface::Classic, Interface::Blue, Interface::Glass] {
+            for edge in [Edge::Bottom, Edge::Top, Edge::Left, Edge::Right] {
+                for s in [1, 2] {
+                    let theme = theme_for(interface).scaled(s);
+                    for (name, cell) in quick_more_cells() {
+                        let (c, mut want, l) = quick_more_bar(interface, edge, s, cell);
+                        let r = l.quick_more.expect("a short band ends in a »");
+                        assert!(l.quick.len() < 5, "{interface:?} {edge:?}");
+                        match &theme.look {
+                            Look::Classic => {
+                                let cs = &theme.colors;
+                                let o = if cell.open {
+                                    want.edge_t(r, EdgeStyle::ThinSunken, cs, s);
+                                    s
+                                } else {
+                                    if cell.hot {
+                                        want.edge_t(r, EdgeStyle::ThinRaised, cs, s);
+                                    }
+                                    0
+                                };
+                                let at = Rect::new(r.x + o, r.y + o, r.width, r.height);
+                                draw_more(&mut want, at, cs.button_text, s);
+                            }
+                            Look::Styled(st) => {
+                                let part = crate::style::Part::TaskButton;
+                                let lit = match (cell.open, cell.hot) {
+                                    (true, _) => Some(crate::style::State::Checked),
+                                    (false, true) => Some(crate::style::State::Hot),
+                                    _ => None,
+                                };
+                                if let Some(l) = lit {
+                                    st.draw(&mut want, r, part, l, s);
+                                }
+                                let ink = lit
+                                    .and_then(|l| st.text_color(part, l))
+                                    .unwrap_or(st.bar_text);
+                                draw_more(&mut want, r, ink, s);
+                            }
+                        }
+                        assert!(
+                            c.copy_rect(r) == want.copy_rect(r),
+                            "{interface:?} {edge:?} {name} at scale {s}"
+                        );
+                    }
+                }
+            }
+        }
+    }
 
     #[test]
     fn windowed_dialog_frames_pin_in_every_look_at_scale_1_and_2() {
