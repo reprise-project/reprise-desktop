@@ -1380,6 +1380,7 @@ impl App for Lazy {
             }
             Event::Pointer(p) => ex.pointer(p, ctx),
             Event::PastedFiles(clip) => ex.pasted(clip, ctx),
+            Event::Pasted(text) => ex.paste_text(&text),
             Event::Wake => ex.wake(ctx),
             Event::Blink => {
                 ex.flush_settings();

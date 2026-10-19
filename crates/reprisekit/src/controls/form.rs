@@ -2701,6 +2701,31 @@ impl Form {
         None
     }
 
+    /// A right press, ahead of the host's edit menu: an enabled single-line field under it takes
+    /// the focus, its caret moving to the press unless the press is inside its selection.
+    pub fn right_press(&mut self, hit: Option<Hit>) -> Event {
+        let Some(Hit {
+            item,
+            part: Part::Edit(at),
+            ..
+        }) = hit
+        else {
+            return Event::None;
+        };
+        if !matches!(
+            self.items[item].control,
+            Control::Edit { enabled: true, .. }
+        ) {
+            return Event::None;
+        }
+        self.close_popups();
+        self.set_focus(Some(item));
+        if let Control::Edit { edit, .. } = &mut self.items[item].control {
+            edit.press_for_menu(at);
+        }
+        Event::Redraw
+    }
+
     pub fn click(&mut self, hit: Option<Hit>) -> Event {
         let lit = self.light(hit);
         self.pointer
@@ -5471,6 +5496,49 @@ mod tests {
             panic!()
         };
         assert_eq!(edit.selection(), to..at, "the drag swept back to `to`");
+    }
+
+    #[test]
+    fn a_right_press_focuses_a_field_and_keeps_a_selection_under_it() {
+        let t = tr();
+        let mut f = edit_form();
+        let Control::Edit { edit, .. } = &mut f.items[1].control else {
+            panic!("the fixture's second item is an edit")
+        };
+        *edit = TextEdit::new("Hello world", false);
+        edit.set_selection(0, 5);
+        f.set_focus(Some(2));
+        let at =
+            |f: &Form, dx: i32| f.hit(80 + crate::classic::widgets::FIELD_PAD + dx, 15, &t, PX);
+
+        let inside = at(&f, 8);
+        assert_eq!(f.right_press(inside), Event::Redraw);
+        assert_eq!(f.focus, Some(1), "the field takes the focus");
+        assert_eq!(
+            field(&f).0.selection(),
+            0..5,
+            "a press inside the selection keeps it"
+        );
+        assert_eq!(f.drag, None, "a right press starts no drag");
+
+        let outside = at(&f, 60);
+        let Some(Hit {
+            part: Part::Edit(i),
+            ..
+        }) = outside
+        else {
+            panic!("the press lands in the field");
+        };
+        f.right_press(outside);
+        assert!(
+            !field(&f).0.has_selection(),
+            "a press off the selection drops it"
+        );
+        assert_eq!(field(&f).0.caret(), i);
+
+        let ok = f.hit(20, 50, &t, PX);
+        assert_eq!(f.right_press(ok), Event::None, "a button is not a field");
+        assert_eq!(f.focus, Some(1));
     }
 
     fn field(f: &Form) -> (&TextEdit, usize) {

@@ -560,6 +560,8 @@ mod tests {
             }),
             secret: false,
             multiline: false,
+            can_undo: false,
+            selected: false,
         }
     }
 
