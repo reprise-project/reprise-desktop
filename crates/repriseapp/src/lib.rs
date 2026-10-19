@@ -107,7 +107,7 @@ pub use dnd::{Accept, Actions, DragAction, DragOut, DropKind, Dropped, Offered, 
 pub use fielddrop::{DropForm, FileDrop};
 use reprisefs::pipe::PasteBuf;
 pub use reprisekit;
-use reprisekit::access::{Act, Gesture, Reveal, Tree, accesskit};
+use reprisekit::access::{Gesture, Reveal, Route, Tree, accesskit};
 use reprisekit::cues::Cues;
 use reprisekit::icontheme::{IconCache, IconTheme};
 use reprisekit::raster::{Canvas, Rect};
@@ -2435,18 +2435,22 @@ impl Host {
                 }
             }
             access::Msg::Act(win, req) => {
-                let published = (self.slot_mut(win))
-                    .filter(|s| s.access.state.active)
-                    .map(|s| &s.access.state.published);
-                let scroll = matches!(req.act, Act::ScrollIntoView | Act::Focus)
-                    .then(|| published.and_then(|p| p.reveal(req.node)))
-                    .flatten();
-                let target = published.and_then(|p| p.target(req.node));
-                if let Some(r) = scroll {
-                    self.reader_reveal(win, r);
-                    return;
-                }
-                let Some(g) = target.and_then(|t| reprisekit::access::gesture(req.act, t)) else {
+                let target = match self.reader_route(win, req) {
+                    Route::Reveal { reveal, then } => {
+                        self.reader_reveal(win, reveal);
+                        if !then {
+                            return;
+                        }
+                        self.publish(win);
+                        match self.reader_route(win, req) {
+                            Route::Act(t) => t,
+                            _ => return,
+                        }
+                    }
+                    Route::Act(t) => t,
+                    Route::None => return,
+                };
+                let Some(g) = reprisekit::access::gesture(req.act, target) else {
                     return;
                 };
                 if let Gesture::Focus(at) = g {
@@ -2460,6 +2464,13 @@ impl Host {
                 }
             }
         }
+    }
+
+    /// How a reader's `req` in window `win` is carried out, on the tree last published there.
+    fn reader_route(&mut self, win: WinId, req: reprisekit::access::Request) -> Route {
+        (self.slot_mut(win))
+            .filter(|s| s.access.state.active)
+            .map_or(Route::None, |s| s.access.state.published.route(req))
     }
 
     /// Scroll the list in window `win` so the row `r` names shows.

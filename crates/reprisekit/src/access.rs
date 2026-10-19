@@ -219,6 +219,23 @@ impl Published {
         None
     }
 
+    /// How a host carries out `req`. ScrollIntoView on a row out of view scrolls its list; so
+    /// does any other action, and `then` asks the host to publish again and route `req` once
+    /// more, so one Focus or Click lands on the row scrolled in. A row in view is acted on at
+    /// its [`Target`].
+    pub fn route(&self, req: Request) -> Route {
+        if let Some(reveal) = self.reveal(req.node) {
+            return Route::Reveal {
+                reveal,
+                then: req.act != Act::ScrollIntoView,
+            };
+        }
+        match (req.act, self.target(req.node)) {
+            (Act::ScrollIntoView, _) | (_, None) => Route::None,
+            (_, Some(t)) => Route::Act(t),
+        }
+    }
+
     /// The list `id` is a row of, when the row lies out of the list's bounds ([`out_of`]).
     fn scrolled_out(&self, id: NodeId) -> Option<NodeId> {
         let b = self.nodes.get(&id)?.bounds()?;
@@ -303,6 +320,14 @@ pub struct Target {
 pub struct Reveal {
     pub at: (f64, f64),
     pub row: usize,
+}
+
+/// What [`Published::route`] makes of a reader's request.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Route {
+    Reveal { reveal: Reveal, then: bool },
+    Act(Target),
+    None,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -875,6 +900,51 @@ mod tests {
         );
         assert_eq!(p.target(d), None);
         assert_eq!(p.reveal(tree), None, "the tree itself is no row");
+    }
+
+    #[test]
+    fn focus_or_click_on_a_row_out_of_view_scrolls_it_in_then_acts_on_it() {
+        let mut t = Tree::new(node(Role::Window, Rect::new(0, 0, 200, 100)));
+        let list = t.push(
+            ROOT,
+            "list",
+            node(Role::ListBox, Rect::new(10, 10, 100, 40)),
+        );
+        let shown = t.push(
+            list,
+            0,
+            node(Role::ListBoxOption, Rect::new(10, 10, 100, 10)),
+        );
+        let below = t.push(
+            list,
+            1,
+            node(Role::ListBoxOption, Rect::new(10, 50, 100, 10)),
+        );
+        let mut p = Published::default();
+        p.update(t);
+        let req = |node, act| Request { node, act };
+        let reveal = Reveal {
+            at: (60.0, 30.0),
+            row: 1,
+        };
+        for (act, then) in [
+            (Act::Focus, true),
+            (Act::Click, true),
+            (Act::ScrollIntoView, false),
+        ] {
+            assert_eq!(
+                p.route(req(below, act)),
+                Route::Reveal { reveal, then },
+                "{act:?}"
+            );
+        }
+        let at = Target {
+            role: Role::ListBoxOption,
+            at: (60.0, 15.0),
+        };
+        assert_eq!(p.route(req(shown, Act::Focus)), Route::Act(at));
+        assert_eq!(p.route(req(shown, Act::ScrollIntoView)), Route::None);
+        assert_eq!(p.route(req(NodeId(99), Act::Click)), Route::None);
     }
 
     #[test]
