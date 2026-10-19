@@ -16,12 +16,13 @@ pub fn load_from(path: &Path) -> String {
 }
 
 /// Writes `text`'s `key = value` lines over the file's lines of the same keys, keeping the rest,
-/// so the view and the geometry writers leave each other's keys alone.
+/// so the view and the geometry writers leave each other's keys alone, under [`crate::edit`]'s
+/// lock so that a program and the compositor writing at once both keep theirs.
 pub fn save_to(path: &Path, text: &str) -> std::io::Result<()> {
-    if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir)?;
-    }
-    crate::write_atomic(path, &merged(&load_from(path), text))
+    crate::edit(path, |old| {
+        Ok::<_, std::convert::Infallible>(merged(old, text))
+    })
+    .map(|_| ())
 }
 
 fn key(line: &str) -> Option<&str> {
@@ -171,6 +172,35 @@ mod tests {
             "view = \"details\"\nsort = \"size\"\nascending = false\n\
              x = 5\ny = 6\nwidth = 700\nheight = 500\n"
         );
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn two_writers_at_once_both_keep_their_keys() {
+        let dir =
+            std::env::temp_dir().join(format!("repriseconf-filedlg-race-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let file = dir.join("filedialog.toml");
+        let rounds = 200;
+        let go = std::sync::Barrier::new(2);
+        std::thread::scope(|s| {
+            s.spawn(|| {
+                go.wait();
+                for i in 0..rounds {
+                    save_to(&file, &format!("view = \"v{i}\"\n")).unwrap();
+                }
+            });
+            s.spawn(|| {
+                go.wait();
+                for i in 0..rounds {
+                    save_to(&file, &format!("width = {i}\n")).unwrap();
+                }
+            });
+        });
+        let text = load_from(&file);
+        let last = rounds - 1;
+        assert!(text.contains(&format!("view = \"v{last}\"\n")), "{text}");
+        assert!(text.contains(&format!("width = {last}\n")), "{text}");
         std::fs::remove_dir_all(&dir).unwrap();
     }
 }
