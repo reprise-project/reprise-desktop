@@ -1,4 +1,4 @@
-//! The Default Programs page: a combo per kind of program, what a plugged-in drive does (`[drives] on_insert`),
+//! The Default Programs page: a combo per kind of program, the terminal's arguments, what a plugged-in drive does (`[drives] on_insert`),
 //! whether a script's terminal stays open when it ends (`script_terminal`),
 //! every file type with its program, a filter, and Change... and Restore Default. Defaults live in the mime-apps lists ([`reprisefs::props`]); edits wait in
 //! [`Defaults::edits`] until Apply and go to the user's `mimeapps.list`.
@@ -112,6 +112,8 @@ pub const KINDS: [Kind; 7] = [
 
 pub const TERMINAL: &str = "dp_terminal";
 const TERMINAL_LABEL: &str = "dp_terminal_label";
+pub const TERMINAL_ARGS: &str = "dp_terminal_args";
+const TERMINAL_ARGS_LABEL: &str = "dp_terminal_args_label";
 pub const DRIVE_INSERT: &str = "dp_drive_insert";
 const DRIVE_INSERT_LABEL: &str = "dp_drive_insert_label";
 pub const SCRIPT_END: &str = "dp_script_end";
@@ -129,7 +131,7 @@ const LABEL_W: i32 = 96;
 const DROP_ROWS: usize = 12;
 
 pub fn list(a: Area) -> Rect {
-    Rect::new(X, 312, a.w, 128 + a.dh)
+    Rect::new(X, 335, a.w, 105 + a.dh)
 }
 pub const COLUMNS: [(&str, i32); 3] = [("Type", 90), ("Description", 140), ("Opens With", 108)];
 const RESTORE_W: i32 = 96;
@@ -157,6 +159,25 @@ pub fn page(a: Area) -> Form {
         ));
     }
     let y = ROW0 + (KINDS.len() as i32 + 1) * ROW_STEP;
+    items.push(Item::label_at(
+        TERMINAL_ARGS_LABEL,
+        X,
+        y,
+        DRIVE_LABEL_W,
+        "Terminal ar&guments:",
+    ));
+    items.push(Item::edit(
+        TERMINAL_ARGS,
+        Rect::new(
+            X + DRIVE_LABEL_W + 4,
+            y - 4,
+            a.combo(Area::MIN.w - DRIVE_LABEL_W - 4),
+            20,
+        ),
+        "",
+        true,
+    ));
+    let y = y + ROW_STEP;
     items.push(Item::label_at(
         DRIVE_INSERT_LABEL,
         X,
@@ -583,16 +604,38 @@ fn defaults_in(text: &str) -> Vec<String> {
 }
 
 /// Put `d`'s programs in the page's combos, the pending terminal
-/// `terminal` picked, and grey Change... and Restore Default as the
-/// picked row `row` allows.
+/// `terminal`'s program picked and its arguments in their field, and grey
+/// Change... and Restore Default as the picked row `row` allows.
 pub fn fill(form: &mut Form, d: &Defaults, terminal: &str, row: Option<usize>) {
     for k in &KINDS {
         let (rows, at) = d.kind_rows(k);
         set_combo(form, k.id, &rows, at);
     }
-    let (rows, at) = d.terminal_rows(terminal);
+    let (program, args) = split_command(terminal);
+    let (rows, at) = d.terminal_rows(program);
     set_combo(form, TERMINAL, &rows, at);
+    if let Some(Control::Edit { edit, first, .. }) =
+        form.item_mut(TERMINAL_ARGS).map(|i| &mut i.control)
+        && edit.text.trim() != args
+    {
+        *edit = reprisekit::textedit::TextEdit::new(args, false);
+        first.set(0);
+    }
     sync_buttons(form, d, row);
+}
+
+/// The `terminal` key split into its program and the arguments after it.
+pub fn split_command(command: &str) -> (&str, &str) {
+    let command = command.trim();
+    match command.split_once(char::is_whitespace) {
+        Some((program, args)) => (program, args.trim_start()),
+        None => (command, ""),
+    }
+}
+
+/// The `terminal` key for `program` run with `args`.
+pub fn join_command(program: &str, args: &str) -> String {
+    format!("{program} {args}").trim().to_string()
 }
 
 /// Change... wants a picked type; Restore Default one the user set. A
@@ -869,6 +912,45 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn a_terminal_command_splits_into_its_program_and_arguments_and_joins_back() {
+        assert_eq!(split_command("foot"), ("foot", ""));
+        assert_eq!(
+            split_command(" foot  -e tmux new "),
+            ("foot", "-e tmux new")
+        );
+        assert_eq!(join_command("foot", "-e tmux"), "foot -e tmux");
+        assert_eq!(join_command("/usr/bin/kitty", "  "), "/usr/bin/kitty");
+    }
+
+    #[test]
+    fn the_terminal_row_picks_the_program_and_the_field_holds_its_arguments() {
+        let d = defaults();
+        let mut form = page(Area::MIN);
+        let args = |f: &Form| match f.item(TERMINAL_ARGS).map(|i| &i.control) {
+            Some(Control::Edit { edit, .. }) => edit.text.clone(),
+            _ => panic!("the arguments field is an edit"),
+        };
+        fill(
+            &mut form,
+            &d,
+            "kitty --single-instance -o font_size=9",
+            None,
+        );
+        assert_eq!(form.combo_selected(TERMINAL), Some(1), "kitty");
+        assert_eq!(args(&form), "--single-instance -o font_size=9");
+        let (rows, at) = d.terminal_rows("wezterm");
+        fill(&mut form, &d, "wezterm start --cwd .", None);
+        assert_eq!(form.combo_selected(TERMINAL), Some(at));
+        assert_eq!(
+            rows[at], "wezterm",
+            "an unknown program's own row, without its arguments"
+        );
+        assert_eq!(args(&form), "start --cwd .");
+        fill(&mut form, &d, "foot", None);
+        assert_eq!(args(&form), "", "no arguments");
+    }
+
+    #[test]
     fn the_file_types_are_declared_or_listed_and_filter_by_any_column() {
         let mut d = defaults();
         let types: Vec<(&str, Option<&str>)> = (d.types.iter())
@@ -957,12 +1039,14 @@ pub(crate) mod tests {
         assert_eq!(at("dp_browser"), Rect::new(120, 44, 258, 21));
         assert_eq!(at(TERMINAL_LABEL), Rect::new(20, 209, 96, 13));
         assert_eq!(at(TERMINAL), Rect::new(120, 205, 258, 21));
-        assert_eq!(at(DRIVE_INSERT_LABEL), Rect::new(20, 232, 140, 13));
-        assert_eq!(at(DRIVE_INSERT), Rect::new(164, 228, 214, 21));
-        assert_eq!(at(SCRIPT_END_LABEL), Rect::new(20, 255, 140, 13));
-        assert_eq!(at(SCRIPT_END), Rect::new(164, 251, 214, 21));
-        assert_eq!(at("dp_types_label"), Rect::new(20, 290, 120, 13));
-        assert_eq!(at(FILTER), Rect::new(228, 286, 150, 20));
+        assert_eq!(at(TERMINAL_ARGS_LABEL), Rect::new(20, 232, 140, 13));
+        assert_eq!(at(TERMINAL_ARGS), Rect::new(164, 228, 214, 20));
+        assert_eq!(at(DRIVE_INSERT_LABEL), Rect::new(20, 255, 140, 13));
+        assert_eq!(at(DRIVE_INSERT), Rect::new(164, 251, 214, 21));
+        assert_eq!(at(SCRIPT_END_LABEL), Rect::new(20, 278, 140, 13));
+        assert_eq!(at(SCRIPT_END), Rect::new(164, 274, 214, 21));
+        assert_eq!(at("dp_types_label"), Rect::new(20, 313, 120, 13));
+        assert_eq!(at(FILTER), Rect::new(228, 309, 150, 20));
         assert_eq!(at(CHANGE), Rect::new(201, 446, 75, 23));
         assert_eq!(at(RESTORE), Rect::new(282, 446, 96, 23));
         assert_eq!(
@@ -986,7 +1070,7 @@ pub(crate) mod tests {
                 (h ^ *p as u64).wrapping_mul(0x100000001b3)
             })
         }
-        let row = Rect::new(X, 251, 358, 21);
+        let row = Rect::new(X, 274, 358, 21);
         let mut got = Vec::new();
         for i in [Interface::Classic, Interface::Blue, Interface::Glass] {
             let theme = reprisekit::theme::Theme {
@@ -1028,7 +1112,7 @@ pub(crate) mod tests {
     fn the_page_draws_the_list_under_a_dropped_combo() {
         let cs = reprisekit::theme::Theme::default().colors;
         let (c, list, terminal) = drawn(false);
-        assert_eq!((list.x, list.y), (166, 312));
+        assert_eq!((list.x, list.y), (166, 335));
         let header = (list.x + 80, list.y + 6);
         let row = |r: i32| list.y + 2 + 17 + 17 * r + 8;
         let lit = |c: &reprisekit::raster::Canvas, y| {
