@@ -67,6 +67,10 @@ impl<T: Clone, P: Copy> Undo<T, P> {
         self.last = kind;
     }
 
+    pub fn can_undo(&self) -> bool {
+        self.saved.is_some()
+    }
+
     /// Ctrl+Z: swap the saved state with the current one; false when nothing to undo. The caller clamps the positions it gets back.
     pub fn toggle(&mut self, text: &mut T, caret: &mut P, anchor: &mut P) -> bool {
         let Some((t, c, a)) = self.saved.take() else {
