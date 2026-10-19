@@ -967,7 +967,17 @@ impl State {
             self.clip_edit_key(e);
         }
         self.restart_caret();
-        self.start_panel_event_with(enters, |m| m.key(key));
+        let menu = key == Key::Menu;
+        let mut row_menu = false;
+        self.start_panel_event_with(enters, |m| {
+            let event = m.key(key);
+            row_menu = event != Event::None;
+            event
+        });
+        // Without a row's menu to open, the menu key opens the search field's.
+        if menu && !row_menu {
+            self.open_edit_menu(None);
+        }
     }
 
     /// Text dropped on the search field becomes the query (`dialogdrop`); `true` when it went
@@ -1154,6 +1164,12 @@ impl State {
         let Some(spot) = spot else {
             return;
         };
+        if (b, spot) == (Button::Right, Spot::Search) {
+            self.start_panel_event(|m| m.focus_on(Spot::Search));
+            let p = self.pointer_location();
+            self.open_edit_menu(Some((p.x as i32, p.y as i32)));
+            return;
+        }
         if let (Button::Left, Some(v)) = (b, self.start_panel.as_mut()) {
             v.pressed = Some(spot);
         }

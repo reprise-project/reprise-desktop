@@ -126,11 +126,16 @@ impl State {
         if let Key::Char(e) = &key {
             self.clip_edit_key(e);
         }
+        let menu = key == Key::Menu;
         let Some(v) = self.launcher.as_mut() else {
             return;
         };
         let event = v.model.key(key);
         self.restart_caret();
+        // Without a row's menu to open, the menu key opens the field's.
+        if menu && event == Event::None && self.open_edit_menu(None) {
+            return;
+        }
         self.apply_launcher(event);
     }
 

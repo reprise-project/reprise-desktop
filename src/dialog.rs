@@ -2881,6 +2881,33 @@ impl Dialog {
         redraw_if(self.button_focus.take().is_some() || placed)
     }
 
+    /// A right press, ahead of the edit menu: the field or a page's edit field under it takes
+    /// the keyboard, its caret moving to the press unless the press is inside its selection.
+    /// `false` when no field is there.
+    pub fn right_press(&mut self, text: &TextRenderer, px: u32, hit: Option<DialogHit>) -> bool {
+        match hit {
+            Some(DialogHit::Control(h)) => self
+                .form_mut()
+                .and_then(|f| f.open_page_mut())
+                .is_some_and(|page| {
+                    page.right_press(Some(h)) != reprisekit::controls::form::Event::None
+                }),
+            Some(DialogHit::Field(x)) => {
+                let Some(f) = self.field.as_mut().filter(|f| f.combo.open.is_none()) else {
+                    return false;
+                };
+                let i = f.combo.edit_index(text, px, x);
+                let Some(e) = f.edit_mut() else {
+                    return false;
+                };
+                e.press_for_menu(i);
+                self.button_focus = None;
+                true
+            }
+            _ => false,
+        }
+    }
+
     pub fn double_click_field(&mut self, text: &TextRenderer, px: u32, x: i32) -> Outcome {
         let Some(f) = self.field.as_mut().filter(|f| f.combo.open.is_none()) else {
             return Outcome::Nothing;
@@ -3038,6 +3065,9 @@ impl Dialog {
     }
 
     pub fn paste(&mut self, text: &str) -> Outcome {
+        if let Some(p) = self.picker_mut() {
+            return redraw_if(p.dlg.paste(text));
+        }
         if let Some(f) = self.form_mut() {
             let Some(form) = f.open_page_mut() else {
                 return Outcome::Nothing;

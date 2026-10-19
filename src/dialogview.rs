@@ -1403,6 +1403,36 @@ impl State {
         self.apply_dialog(outcome);
     }
 
+    /// A right press on dialog `index` at `at`: a field under it takes the keyboard (the caret
+    /// moving to the press unless the press is inside its selection) and its edit menu opens.
+    pub fn dialog_right_press(&mut self, index: usize, hit: Option<DialogHit>, at: (i32, i32)) {
+        let Some(id) = self.dialogs.views.get(index).map(|v| v.id) else {
+            return;
+        };
+        self.raise_dialog(index);
+        if self.dialogs.views.last().is_none_or(|v| v.id != id) {
+            return;
+        }
+        let px = self.top_dialog_px();
+        let State { dialogs, text, .. } = self;
+        let Some(v) = dialogs.views.last_mut() else {
+            return;
+        };
+        let took = match (hit, v.dialog.picker_mut(), v.layout.page) {
+            (Some(DialogHit::Browse(filedlg::Hit::FileName)), Some(p), Some(client)) => {
+                p.click(client, Some(filedlg::Hit::FileName));
+                true
+            }
+            _ => v.dialog.right_press(text, px, hit),
+        };
+        if !took {
+            return;
+        }
+        self.restart_caret();
+        self.apply_dialog(Outcome::Redraw);
+        self.open_edit_menu(Some(at));
+    }
+
     /// A left press at the pointer for double-click pairing, in the theme's double-click time.
     fn dialog_click(&self, time_msec: u32) -> reprisekit::pointer::Click {
         let p = self.pointer_location();

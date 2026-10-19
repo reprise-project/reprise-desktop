@@ -31,6 +31,7 @@ mod dmaupload;
 mod dnd;
 mod dnddrop;
 mod dndsource;
+mod editmenuview;
 mod eis;
 mod emojiview;
 mod flipview;

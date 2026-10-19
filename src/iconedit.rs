@@ -318,6 +318,34 @@ impl State {
         self.relayout_desktop();
     }
 
+    /// A right press at layout (`lx`, `ly`) during a rename: inside the edit box the caret moves
+    /// under the pointer unless the press is inside the selection, and `true` leaves the box to
+    /// its edit menu; elsewhere `rename_press` decides.
+    pub fn rename_right_press(&mut self, lx: f64, ly: f64) -> bool {
+        let Some(view) = self.desktop.as_ref() else {
+            return false;
+        };
+        let Some((index, edit)) = view.rename.as_ref() else {
+            return false;
+        };
+        let Some(cell) = view.cells.get(*index) else {
+            return false;
+        };
+        let theme = &self.config.theme;
+        let lay = desktop::edit_layout(theme, &self.text, edit, self.desktop_grid().w);
+        let (x, y) = (lx as i32 - cell.x, ly as i32 - cell.y);
+        if !lay.rect.contains(x, y) {
+            return false;
+        }
+        let i = lay.index_at(&self.text, theme.fonts.size_px, x, y);
+        if let Some((_, edit)) = self.desktop.as_mut().and_then(|d| d.rename.as_mut()) {
+            edit.press_for_menu(i);
+        }
+        self.restart_caret();
+        self.relayout_desktop();
+        true
+    }
+
     /// A left press at layout (`lx`, `ly`) while a rename is in progress:
     /// inside the edit box it puts the caret under the pointer (Shift
     /// extends) or selects the word on a double click, and returns true so
