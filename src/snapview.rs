@@ -91,24 +91,31 @@ struct Partner {
     side: Edges,
     edge: Edges,
     start: Rect,
-    /// Its `snapped` before the size took it, which a cancel puts back.
-    snapped: Option<Rect>,
 }
 
-/// A follower, the frame it started from, the (dragged side, own side) pairs it rides, and its
-/// `snapped` from before the size.
-type Follower = (WindowId, Rect, Vec<(Edges, Edges)>, Option<Rect>);
+/// A follower, the frame it started from and the (dragged side, own side) pairs it rides.
+type Follower = (WindowId, Rect, Vec<(Edges, Edges)>);
 
-/// Each follower once; its frame and `snapped` are its first entry's.
+/// Each follower once; its frame is its first entry's.
 fn partner_sides(partners: &[Partner]) -> Vec<Follower> {
     let mut out: Vec<Follower> = Vec::new();
     for p in partners {
         match out.iter_mut().find(|o| o.0 == p.window) {
             Some(o) => o.2.push((p.side, p.edge)),
-            None => out.push((p.window, p.start, vec![(p.side, p.edge)], p.snapped)),
+            None => out.push((p.window, p.start, vec![(p.side, p.edge)])),
         }
     }
     out
+}
+
+/// A size that moved its window: the splits (vertical, from, to) its followed sides moved, and
+/// whether a side no member followed moved too, which took the window off its zone.
+#[derive(Debug, PartialEq)]
+struct SizeEnd {
+    window: WindowId,
+    start: Rect,
+    moves: Vec<(bool, i32, i32)>,
+    off_zone: bool,
 }
 
 /// A follower that started at `start`, its sides moved onto the lines of `r` it rides
@@ -519,6 +526,38 @@ impl Snapping {
         }
     }
 
+    /// The size ends: the followers it brought along, and what it did if it moved its window.
+    fn end_resize(&mut self) -> (Vec<WindowId>, Option<SizeEnd>) {
+        let partners = std::mem::take(&mut self.partners);
+        let followers = partner_sides(&partners).into_iter().map(|f| f.0).collect();
+        let (Some((window, start, edges)), Some(r)) = (self.resize.take(), self.last.take()) else {
+            return (followers, None);
+        };
+        let followed: Vec<Edges> = partners.iter().map(|p| p.side).collect();
+        let off_zone = crate::snap::lone_side(start, r, edges, &followed);
+        let mut moves: Vec<(bool, i32, i32)> = Vec::new();
+        let mut done: Vec<Edges> = Vec::new();
+        for p in &partners {
+            if done.contains(&p.side) {
+                continue;
+            }
+            done.push(p.side);
+            let vertical = p.side == Edges::LEFT || p.side == Edges::RIGHT;
+            let (from, to) = (
+                crate::snap::side_at(start, p.side),
+                crate::snap::side_at(r, p.side),
+            );
+            moves.push((vertical, from, to));
+        }
+        let end = SizeEnd {
+            window,
+            start,
+            moves,
+            off_zone,
+        };
+        (followers, Some(end))
+    }
+
     pub fn forget_window(&mut self, w: WindowId) {
         if let Some(output) = self.remove(w) {
             self.drop_unheld_layout(&output);
@@ -802,13 +841,15 @@ impl State {
     /// A keyboard size of `w` that began at `start` now sizes `edges`: the sides it picks one
     /// by one bring their followers along, as a drag's do.
     pub(crate) fn widen_group_resize(&mut self, w: WindowId, edges: Edges, start: Rect) {
-        let Some(g) = self.wm.snap.group_of(w) else {
-            return;
-        };
         let had = (self.wm.snap.resize)
             .filter(|r| r.0 == w)
             .map_or(Edges::NONE, |r| r.2);
-        let mut others: Vec<(WindowId, Rect, Option<Rect>)> = Vec::new();
+        // Tracked for an ungrouped window too: `end_group_resize` sees whether it left its zone.
+        self.wm.snap.resize = Some((w, start, edges));
+        let Some(g) = self.wm.snap.group_of(w) else {
+            return;
+        };
+        let mut others: Vec<(WindowId, Rect)> = Vec::new();
         for win in &self.windows {
             let free = win.mapped && !win.minimized && !win.maximized && !win.fullscreen;
             if win.id == w || !free || self.wm.snap.group_of(win.id) != Some(g) {
@@ -817,7 +858,7 @@ impl State {
             if !self.on_current_desktop(win.id) {
                 continue;
             }
-            others.push((win.id, win.frame_rect(), win.snapped));
+            others.push((win.id, win.frame_rect()));
         }
         let frames: Vec<Rect> = others.iter().map(|o| o.1).collect();
         let mut partners = Vec::new();
@@ -828,17 +869,12 @@ impl State {
                     side,
                     edge,
                     start: others[i].1,
-                    snapped: others[i].2,
                 });
             }
         }
         for p in &partners {
-            if let Some(win) = self.win_mut(p.window) {
-                win.snapped = None;
-            }
             self.set_resizing(p.window, true);
         }
-        self.wm.snap.resize = Some((w, start, edges));
         self.wm.snap.partners.extend(partners);
     }
 
@@ -863,7 +899,7 @@ impl State {
     /// lands.
     pub(crate) fn drag_partners(&mut self, r: Rect) {
         self.wm.snap.last = Some(r);
-        for (window, start, sides, _) in partner_sides(&self.wm.snap.partners) {
+        for (window, start, sides) in partner_sides(&self.wm.snap.partners) {
             let (next, edges) = followed(start, &sides, r);
             let m = &self.config.theme.metrics;
             let Some(win) = self.win(window) else {
@@ -889,17 +925,14 @@ impl State {
         }
     }
 
-    /// Escape on a keyboard size: the followers go back to where they started, with the frames
-    /// they restore to, and the group's zones stay.
+    /// Escape on a keyboard size: the followers go back to where they started, and the group's
+    /// zones stay.
     pub(crate) fn cancel_group_resize(&mut self) {
         let partners = std::mem::take(&mut self.wm.snap.partners);
         self.wm.snap.resize = None;
         self.wm.snap.last = None;
-        for (window, start, _, snapped) in partner_sides(&partners) {
+        for (window, start, _) in partner_sides(&partners) {
             self.set_resizing(window, false);
-            if let Some(win) = self.win_mut(window) {
-                win.snapped = snapped;
-            }
             let m = &self.config.theme.metrics;
             let Some(win) = self.win(window) else {
                 continue;
@@ -917,42 +950,28 @@ impl State {
         }
     }
 
-    /// The drag ended: followers stop, the group's zones take the moved splits, and a side no
-    /// member followed takes `w` out of the group.
+    /// The size ended: followers stop, the group's zones take the moved splits, and a side no
+    /// member followed takes the sized window off its zone: out of the group, with no size from
+    /// before the snap. A window still in its zone keeps that size, followers included.
     pub(crate) fn end_group_resize(&mut self) {
-        let partners = std::mem::take(&mut self.wm.snap.partners);
-        let resize = self.wm.snap.resize.take();
-        let last = self.wm.snap.last.take();
-        for p in &partners {
-            self.set_resizing(p.window, false);
+        let (followers, end) = self.wm.snap.end_resize();
+        for w in followers {
+            self.set_resizing(w, false);
         }
-        let (Some((w, start, edges)), Some(r)) = (resize, last) else {
+        let Some(end) = end else {
             return;
         };
-        let followed: Vec<Edges> = partners.iter().map(|p| p.side).collect();
-        let lone = crate::snap::lone_side(start, r, edges, &followed);
+        let start = end.start;
         let centre = (start.x + start.width / 2, start.y + start.height / 2);
-        let Some(out) = self.output_at(f64::from(centre.0), f64::from(centre.1)) else {
-            return;
-        };
-        let work = self.usable_area(Some(&out));
-        let mut moves: Vec<(bool, i32, i32)> = Vec::new();
-        let mut done: Vec<Edges> = Vec::new();
-        for p in &partners {
-            if done.contains(&p.side) {
-                continue;
-            }
-            done.push(p.side);
-            let vertical = p.side == Edges::LEFT || p.side == Edges::RIGHT;
-            let (from, to) = (
-                crate::snap::side_at(start, p.side),
-                crate::snap::side_at(r, p.side),
-            );
-            moves.push((vertical, from, to));
+        if let Some(out) = self.output_at(f64::from(centre.0), f64::from(centre.1)) {
+            let work = self.usable_area(Some(&out));
+            self.wm.snap.move_splits(end.window, work, &end.moves);
         }
-        self.wm.snap.move_splits(w, work, &moves);
-        if lone {
-            self.wm.snap.leave_group(w);
+        if end.off_zone {
+            self.wm.snap.leave_group(end.window);
+            if let Some(win) = self.win_mut(end.window) {
+                win.snapped = None;
+            }
         }
     }
 
@@ -1848,40 +1867,31 @@ mod tests {
     fn a_follower_riding_two_sides_takes_both_from_its_first_frame() {
         let (tr, bl) = (WindowId::next(), WindowId::next());
         let tr_start = Rect::new(960, 0, 960, 516);
-        let tr_restore = Rect::new(300, 200, 640, 480);
         let partners = [
             Partner {
                 window: tr,
                 side: Edges::RIGHT,
                 edge: Edges::LEFT,
                 start: tr_start,
-                snapped: Some(tr_restore),
             },
             Partner {
                 window: bl,
                 side: Edges::BOTTOM,
                 edge: Edges::TOP,
                 start: Rect::new(0, 516, 960, 516),
-                snapped: None,
             },
-            // Picked second, after the first side had moved it and taken its restore frame.
+            // Picked second, after the first side had moved it.
             Partner {
                 window: tr,
                 side: Edges::BOTTOM,
                 edge: Edges::BOTTOM,
                 start: Rect::new(1000, 0, 920, 516),
-                snapped: None,
             },
         ];
         let by = partner_sides(&partners);
         assert_eq!(by.len(), 2, "each follower once");
-        let (w, start, sides, snapped) = &by[0];
+        let (w, start, sides) = &by[0];
         assert_eq!((*w, *start), (tr, tr_start), "its first entry's frame");
-        assert_eq!(
-            *snapped,
-            Some(tr_restore),
-            "a cancel gives back the restore frame from before the first side"
-        );
         let sized = Rect::new(0, 0, 1040, 600);
         assert_eq!(
             followed(*start, sides, sized),
@@ -1891,6 +1901,54 @@ mod tests {
             followed(by[1].1, &by[1].2, sized),
             (Rect::new(0, 600, 960, 432), Edges::TOP)
         );
+    }
+
+    #[test]
+    fn a_size_takes_its_window_off_its_zone_only_by_a_side_no_member_followed() {
+        let (a, b) = (WindowId::next(), WindowId::next());
+        let (left, right) = (Rect::new(0, 0, 960, 1032), Rect::new(960, 0, 960, 1032));
+        let mut s = Snapping::default();
+        s.new_group(a, "DP-1", &halves(), Splits::new(&halves(), WORK), 0);
+        s.join_group(a, b, 1);
+        let size = |s: &mut Snapping, edges: Edges, last: Rect, followed: bool| {
+            s.resize = Some((a, left, edges));
+            s.last = Some(last);
+            s.partners = (followed.then_some(Partner {
+                window: b,
+                side: Edges::RIGHT,
+                edge: Edges::LEFT,
+                start: right,
+            }))
+            .into_iter()
+            .collect();
+            s.end_resize()
+        };
+        let wider = Rect::new(0, 0, 1040, 1032);
+        let (followers, end) = size(&mut s, Edges::RIGHT, wider, true);
+        assert_eq!(followers, vec![b]);
+        let end = end.expect("the size moved its window");
+        assert_eq!(end.moves, vec![(true, 960, 1040)]);
+        assert!(
+            !end.off_zone,
+            "the shared side moved: both stay in their zones"
+        );
+        assert_eq!(
+            (s.resize, s.last, s.partners.len()),
+            (None, None, 0),
+            "nothing of the size is left"
+        );
+        let shorter = Rect::new(0, 100, 1040, 932);
+        let end = size(&mut s, Edges::RIGHT | Edges::TOP, shorter, true).1;
+        assert!(end.expect("moved").off_zone, "the top side had no follower");
+        let end = size(&mut s, Edges::RIGHT, wider, false).1;
+        assert!(
+            end.expect("moved").off_zone,
+            "an ungrouped window's side moved"
+        );
+        let end = size(&mut s, Edges::RIGHT, left, false).1;
+        assert!(!end.expect("sized").off_zone, "a size that moved nothing");
+        s.resize = None;
+        assert_eq!(s.end_resize(), (Vec::new(), None), "no side picked yet");
     }
 
     #[test]
