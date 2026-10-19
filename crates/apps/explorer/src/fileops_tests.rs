@@ -2326,3 +2326,70 @@ fn jobs_landing_in_one_wake_keep_every_reply() {
     assert!(got.redraw_all, "the first job's redraw_all is kept");
     assert_eq!(ex.jobs_pending, 0);
 }
+
+/// A finished paste decides on refilling the Folders tree from its own items: the landed copy is
+/// not read again on the window's thread, where a drive that stopped answering would freeze it.
+#[test]
+fn a_pasted_folder_refills_the_tree_without_reading_its_landed_copy() {
+    let dir = tempfile::Builder::new()
+        .prefix("tree")
+        .tempdir()
+        .expect("a temp dir shown in the tree");
+    let src = tempfile::tempdir().expect("a temp dir");
+    std::fs::create_dir(src.path().join("Reports")).expect("mkdir");
+    std::fs::write(src.path().join("Reports/r.txt"), "x").expect("write");
+    let mut ctx = test_ctx();
+    let here = Place::Folder(dir.path().to_path_buf());
+    let mut ex = crate::tests::test_explorer(here.clone(), &mut ctx);
+    let path = ex.tree_path_of(&here).expect("the folder's node");
+    let labels = |ex: &Explorer| -> Vec<String> {
+        let node = ex.tree.node(&path).expect("node");
+        node.children.iter().map(|n| n.label.clone()).collect()
+    };
+    assert!(labels(&ex).is_empty());
+
+    ex.put_all(
+        &[src.path().join("Reports")],
+        dir.path(),
+        &|_| Some(DropOp::Copy),
+        false,
+        &mut ctx,
+    );
+    let end = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while ex.put.as_ref().expect("a put").job.progress().phase
+        != reprisefs::progress::Phase::Finishing
+    {
+        assert!(std::time::Instant::now() < end, "the folder lands");
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    std::fs::rename(dir.path().join("Reports"), dir.path().join("Moved")).expect("rename");
+    crate::tests::wake_until(&mut ex, &mut ctx, |ex| {
+        ex.put.is_none() && ex.filling.is_empty()
+    });
+    assert_eq!(labels(&ex), ["Moved"], "the node was read again");
+}
+
+#[test]
+fn a_skipped_item_takes_its_folder_flag_with_it() {
+    let item = |name: &str| PutItem {
+        src: PathBuf::from("/srv").join(name),
+        display_name: name.into(),
+        is_app: false,
+        op: DropOp::Copy,
+        shortcut: Box::new(|_| None),
+        replace: None,
+    };
+    let mut pending = PendingPut {
+        items: vec![item("a"), item("b.txt")],
+        folders: vec![true, false],
+        dir: PathBuf::from("/srv/dest"),
+        select_landed: false,
+    };
+    pending.apply(&[Verdict::Skip, Verdict::Put]);
+    let ops = pending.ops();
+    assert_eq!(ops.len(), 1);
+    assert_eq!(
+        (ops[0].0.as_path(), ops[0].3),
+        (Path::new("/srv/b.txt"), false)
+    );
+}
