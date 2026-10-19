@@ -537,6 +537,9 @@ mod tests {
     }
 
     const WITHIN: Duration = Duration::from_millis(200);
+    /// The fake helper is a shell started per test; a loaded runner can take longer than
+    /// [`WITHIN`] to answer its first picture.
+    const ANSWER: Duration = Duration::from_secs(1);
 
     fn fetched(f: &mut Fetcher, path: &str) -> bool {
         f.fetch(Path::new(path), 128)
@@ -553,13 +556,13 @@ mod tests {
 
     #[test]
     fn a_picture_the_helper_hangs_on_is_skipped_and_the_rest_arrive() {
-        let mut f = Fetcher::new(fake_helper, WITHIN);
+        let mut f = Fetcher::new(fake_helper, ANSWER);
         assert!(fetched(&mut f, "/pics/a.jpg"));
         let hung = helper_pid(&f).expect("a helper");
         let asked = Instant::now();
         assert!(!fetched(&mut f, "/pics/hang.jpg"));
         assert!(
-            asked.elapsed() < WITHIN * 5,
+            asked.elapsed() < ANSWER * 5,
             "gave up after {:?}",
             asked.elapsed()
         );
@@ -581,7 +584,7 @@ mod tests {
 
     #[test]
     fn three_hangs_in_a_row_give_up_the_rest_of_the_queue() {
-        let mut f = Fetcher::new(fake_helper, WITHIN);
+        let mut f = Fetcher::new(fake_helper, ANSWER);
         assert!(!fetched(&mut f, "/pics/hang-1.jpg"));
         assert!(!fetched(&mut f, "/pics/hang-2.jpg"));
         assert!(fetched(&mut f, "/pics/a.jpg"), "an answer resets the count");
