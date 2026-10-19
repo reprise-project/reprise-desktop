@@ -1481,3 +1481,71 @@ fn a_web_links_web_document_tab_writes_its_url() {
         text.replace("URL=https://example.org/", "URL=https://example.org/news")
     );
 }
+
+#[test]
+fn change_reads_a_links_target_off_the_loop() {
+    use crate::dialogs::Dialog;
+    use crate::place::Place;
+    let dir = tempfile::tempdir().expect("a temp dir");
+    let real = std::fs::canonicalize(dir.path()).expect("canonical");
+    std::fs::write(real.join("notes.txt"), "notes").expect("write");
+    let link = real.join("link.txt");
+    std::os::unix::fs::symlink("notes.txt", &link).expect("symlink");
+    let mut ctx = crate::tests::test_ctx();
+    let mut ex = crate::tests::test_explorer(Place::Folder(real.clone()), &mut ctx);
+    let gate = std::sync::Arc::new(std::sync::RwLock::new(()));
+    let closed = gate.write().expect("lock");
+    ex.held = Some(gate.clone());
+    ex.choose_program_for(&link, true, &mut ctx);
+    assert!(ex.dialog.is_none(), "no chooser before the read lands");
+
+    drop(closed);
+    ex.held = None;
+    crate::tests::wake_until(&mut ex, &mut ctx, |ex| ex.dialog.is_some());
+    match ex.dialog.as_ref() {
+        Some(Dialog::ChooseProgram(c)) => assert_eq!(c.path, real.join("notes.txt")),
+        _ => panic!("the chooser is up"),
+    }
+}
+
+#[test]
+fn find_target_answering_late_selects_it_on_a_later_wake() {
+    use crate::place::Place;
+    use reprisekit::controls::filesheet::FIND_TARGET;
+    use reprisekit::controls::form;
+    let dir = tempfile::tempdir().expect("a temp dir");
+    let real = std::fs::canonicalize(dir.path()).expect("canonical");
+    std::fs::create_dir(real.join("Documents")).expect("mkdir");
+    let link = real.join("Docs");
+    std::os::unix::fs::symlink("Documents", &link).expect("symlink");
+    let mut ctx = crate::tests::test_ctx();
+    let mut ex = crate::tests::test_explorer(Place::Folder(real.clone()), &mut ctx);
+    ex.open_properties(&link, "Docs", "Docs", &mut ctx);
+    assert!(ex.props.is_some(), "the sheet");
+    let gate = std::sync::Arc::new(std::sync::RwLock::new(()));
+    let closed = gate.write().expect("lock");
+    ex.held = Some(gate.clone());
+    let on_page = |ev| reprisekit::controls::propsheet::Event::Page(1, ev);
+    let reply = ex.props_outcome(on_page(form::Event::Pressed(FIND_TARGET)), &mut ctx);
+    assert!(reply.spawn.is_empty(), "nothing before the read lands");
+
+    drop(closed);
+    ex.held = None;
+    let end = std::time::Instant::now() + crate::LIST_WAIT;
+    let reply = loop {
+        assert!(std::time::Instant::now() < end, "the read landed");
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        let reply = ex.wake(&mut ctx);
+        if !reply.spawn.is_empty() {
+            break reply;
+        }
+    };
+    assert_eq!(
+        reply.spawn,
+        [vec![
+            std::ffi::OsString::from("reprise-explorer"),
+            "--select".into(),
+            real.join("Documents").into_os_string()
+        ]]
+    );
+}

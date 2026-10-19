@@ -579,6 +579,27 @@ fn a_symlink_to_a_folder_lists_as_a_file_and_opens_the_folder() {
 }
 
 #[test]
+fn a_shortcut_whose_read_answers_late_puts_its_location_up_on_a_later_wake() {
+    let dir = tempfile::tempdir().expect("a temp dir");
+    let real = std::fs::canonicalize(dir.path()).expect("canonical");
+    std::os::unix::fs::symlink("/etc", real.join("c etc")).expect("symlink");
+    let mut ctx = test_ctx();
+    let mut ex = test_explorer(Place::Folder(real.clone()), &mut ctx);
+    let gate = Arc::new(std::sync::RwLock::new(()));
+    let closed = gate.write().expect("lock");
+    ex.held = Some(gate.clone());
+    ex.sv.selection.set_only(Some(0));
+    ex.refresh_chrome(&mut ctx);
+    assert_eq!(ex.status.panels[0].text, "1 object(s) selected");
+
+    drop(closed);
+    ex.held = None;
+    wake_until(&mut ex, &mut ctx, |ex| {
+        ex.status.panels[0].text == "Location: /"
+    });
+}
+
+#[test]
 fn one_selected_shortcut_shows_its_location_in_the_status_bar() {
     let dir = tempfile::tempdir().expect("a temp dir");
     let real = std::fs::canonicalize(dir.path()).expect("canonical");
