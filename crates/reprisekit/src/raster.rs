@@ -281,6 +281,10 @@ fn fade_px(p: u32, num: u32, den: u32) -> u32 {
 /// per channel.
 fn over_px(s: u32, d: u32) -> u32 {
     let sa = (s >> 24) & 0xFF;
+    // The blend's own result for these two, without the four divisions.
+    if sa == 0xFF || d == 0 {
+        return s;
+    }
     let blend = |sc: u32, dc: u32| -> u32 { sc + dc * (255 - sa) / 255 };
     let a = blend(sa, (d >> 24) & 0xFF);
     let r = blend((s >> 16) & 0xFF, (d >> 16) & 0xFF);
@@ -1867,6 +1871,21 @@ mod tests {
             dst.pixels, want.pixels,
             "faded blit equals fade then blit_over"
         );
+    }
+
+    #[test]
+    fn over_px_of_an_opaque_source_or_onto_a_clear_pixel_is_the_blend() {
+        let blend = |s: u32, d: u32| {
+            let sa = s >> 24;
+            let ch = |k: u32| ((s >> k) & 0xFF) + ((d >> k) & 0xFF) * (255 - sa) / 255;
+            ch(24) << 24 | ch(16) << 16 | ch(8) << 8 | ch(0)
+        };
+        let ds = [0, 0x8040_2010, 0xFF12_3456, 0x0100_0000];
+        for s in [0xFFAB_CDEF, 0xFF00_0000, 0x8040_2010, 0x0101_0101] {
+            for d in ds {
+                assert_eq!(over_px(s, d), blend(s, d), "{s:08x} over {d:08x}");
+            }
+        }
     }
 
     #[test]
