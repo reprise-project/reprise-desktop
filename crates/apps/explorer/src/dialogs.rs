@@ -248,7 +248,7 @@ impl Explorer {
         Reply::redraw_all()
     }
 
-    /// Raise a delete prompt over `paths` on the template its kind takes (see [`dlgtemplate`]). `no_bin` leads with the drive having no Recycle Bin ([`reprisefs::bincap::delete_prompt`]). `empty_bin` is the Recycle Bin's Empty task, which counts the listed items since it has no paths; `bin` is the picked items of a prompt raised in the Recycle Bin, which Yes deletes for good.
+    /// Raise a delete prompt over `paths` on the template its kind takes (see [`dlgtemplate`]). `no_bin` leads with the drive having no Recycle Bin for some or all of `paths` ([`reprisefs::bincap::delete_prompt`]). `empty_bin` is the Recycle Bin's Empty task, which counts the listed items since it has no paths; `bin` is the picked items of a prompt raised in the Recycle Bin, which Yes deletes for good.
     #[allow(clippy::too_many_arguments)]
     pub fn confirm_box(
         &mut self,
@@ -256,7 +256,7 @@ impl Explorer {
         name: &str,
         paths: Vec<PathBuf>,
         erase: bool,
-        no_bin: bool,
+        no_bin: reprisefs::bincap::BinLack,
         icon: Option<Canvas>,
         empty_bin: bool,
         bin: Option<Vec<crate::fileops::BinItem>>,

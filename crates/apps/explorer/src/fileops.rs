@@ -8,6 +8,7 @@ use crate::{Explorer, Focus};
 use repriseapp::openwith::ChooserInput;
 use repriseapp::{Ctx, FileClip, Reply};
 use reprisefs::apps::{self, Launch};
+use reprisefs::bincap::BinLack;
 use reprisefs::deadline::Gate;
 use reprisefs::jobs::{PutEvent, PutItem, PutJob};
 use reprisefs::listing::Item;
@@ -704,7 +705,7 @@ impl Explorer {
             if !in_bin && !mode.ask {
                 return ex.delete_now(&paths, mode.erase, ctx);
             }
-            let no_bin = !in_bin && mode.no_bin;
+            let no_bin = if in_bin { BinLack::None } else { mode.no_bin };
             let erase = in_bin || mode.erase;
             let icon = match erase {
                 true => own_icon.or_else(|| crate::chrome_icon(ctx, &["user-trash-full"], 32)),
@@ -722,7 +723,16 @@ impl Explorer {
         let kind = ConfirmKind::of(self.items.len(), only.is_some_and(|it| it.is_dir));
         let name = only.map(|it| it.name.clone()).unwrap_or_default();
         let icon = crate::chrome_icon(ctx, &["user-trash-full"], 32);
-        self.confirm_box(kind, &name, Vec::new(), true, false, icon, true, None)
+        self.confirm_box(
+            kind,
+            &name,
+            Vec::new(),
+            true,
+            BinLack::None,
+            icon,
+            true,
+            None,
+        )
     }
 
     /// Yes on that prompt: empty every trash. `Trash` undos go with it (their `files/` copies are
@@ -799,7 +809,8 @@ impl Explorer {
                 let kind = ConfirmKind::of(1, is_dir);
                 let text = reprisefs::bincap::too_big_text(&reprisefs::bincap::label(path));
                 let icon = question_icon(ctx, is_dir);
-                let reply = self.confirm_box(kind, "", Vec::new(), true, false, icon, false, None);
+                let reply =
+                    self.confirm_box(kind, "", Vec::new(), true, BinLack::None, icon, false, None);
                 if let Some(Dialog::Confirm(c)) = self.dialog.as_mut() {
                     c.text = text;
                     c.too_big = Some(asker);
@@ -1175,7 +1186,8 @@ impl Explorer {
                 let text = no_bin.question(many);
                 let kind = ConfirmKind::of(if many { 2 } else { 1 }, is_dir);
                 let icon = question_icon(ctx, is_dir);
-                let reply = self.confirm_box(kind, "", Vec::new(), true, false, icon, false, None);
+                let reply =
+                    self.confirm_box(kind, "", Vec::new(), true, BinLack::None, icon, false, None);
                 if let Some(Dialog::Confirm(c)) = self.dialog.as_mut() {
                     c.text = text;
                     c.undo_erase = true;
