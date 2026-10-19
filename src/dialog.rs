@@ -36,6 +36,8 @@ pub enum DialogAction {
     /// Run's Browse...: open Browse, the pick lands in the field.
     BrowseRun,
     Spawn(String),
+    /// Run this `[power]` standby command, reporting a refusal (`sessionend::sleep`).
+    StandBy(String),
     /// End the session toward `Goal`, then run this command (`sessionend`).
     EndSession(Goal, String),
     /// Delete these paths, to the trash or, with `erase`, for good.
@@ -1569,6 +1571,7 @@ pub enum Outcome {
     Size(Edges),
     Close,
     Spawn(String),
+    StandBy(String),
     EndSession(Goal, String),
     /// The session-end prompt's answer: End Now or Cancel.
     SessionEnd(reprisekit::controls::endsession::Choice),
@@ -2535,7 +2538,7 @@ impl Dialog {
                     "system-suspend",
                     "Keeps your session in memory and puts the computer in a low-power \
                      state so that you can quickly resume working.",
-                    DialogAction::Spawn(power.standby.clone()),
+                    DialogAction::StandBy(power.standby.clone()),
                     false,
                     true,
                 ),
@@ -3518,6 +3521,7 @@ impl Dialog {
         match &b.action {
             DialogAction::Cancel => Outcome::Close,
             DialogAction::Spawn(cmd) => Outcome::Spawn(cmd.clone()),
+            DialogAction::StandBy(cmd) => Outcome::StandBy(cmd.clone()),
             DialogAction::EndSession(goal, cmd) => Outcome::EndSession(*goal, cmd.clone()),
             DialogAction::Delete { paths, erase } => Outcome::Delete {
                 paths: paths.clone(),
@@ -5666,7 +5670,7 @@ mod tests {
         );
         assert_eq!(
             t.key(Key::Edit(EditKey::Insert("S".into()))),
-            Outcome::Spawn("systemctl suspend".into())
+            Outcome::StandBy("systemctl suspend".into())
         );
         assert_eq!(
             t.key(Key::Edit(EditKey::Insert("r".into()))),
