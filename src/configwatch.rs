@@ -418,6 +418,7 @@ pub fn reload(state: &mut State, cfg: Config) {
     if changes.retired {
         state.config.warn_retired();
     }
+    state.rehover_bars();
 }
 
 fn close_bar_popups(state: &mut State) {

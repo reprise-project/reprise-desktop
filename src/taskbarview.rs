@@ -1231,6 +1231,18 @@ impl State {
         }
     }
 
+    /// Hover the bars afresh where the pointer rests: their hot cells are
+    /// the last layout's, and a bar moved or relaid under a still pointer
+    /// would keep one lit until the next motion.
+    pub(crate) fn rehover_bars(&mut self) {
+        if self.pointer_free() {
+            let p = self.pointer_location();
+            self.repoint(p, smithay::backend::input::InputTime::now());
+        } else {
+            self.taskbar_hover(None, TaskbarHit::Nothing);
+        }
+    }
+
     pub fn taskbar_press(
         &mut self,
         tree: TreeId,
