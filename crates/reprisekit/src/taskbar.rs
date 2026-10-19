@@ -1418,7 +1418,31 @@ impl TaskbarLayout {
         }
     }
 
+    /// The cell under (x, y); a point between the screen edge and a cell, with nothing between them, takes that cell.
     pub fn hit(&self, x: i32, y: i32) -> TaskbarHit {
+        let hit = self.hit_drawn(x, y);
+        let inside = |x: i32, y: i32| x >= 0 && x < self.width && y >= 0 && y < self.height;
+        if hit != TaskbarHit::Nothing || !inside(x, y) {
+            return hit;
+        }
+        let (dx, dy) = match self.edge {
+            Edge::Bottom => (0, -1),
+            Edge::Top => (0, 1),
+            Edge::Left => (1, 0),
+            Edge::Right => (-1, 0),
+        };
+        let (mut x, mut y) = (x + dx, y + dy);
+        while inside(x, y) {
+            match self.hit_drawn(x, y) {
+                TaskbarHit::Nothing => (x, y) = (x + dx, y + dy),
+                TaskbarHit::Resize => break,
+                hit => return hit,
+            }
+        }
+        TaskbarHit::Nothing
+    }
+
+    fn hit_drawn(&self, x: i32, y: i32) -> TaskbarHit {
         if self.disc_past_bar().is_some_and(|d| d.contains(x, y)) && self.on_disc(x, y) {
             return TaskbarHit::Start;
         }
@@ -2118,6 +2142,114 @@ mod tests {
         assert_eq!(l.hit(780, 10), TaskbarHit::Clock);
         assert_eq!(l.hit(500, 10), TaskbarHit::Nothing);
         assert_eq!(l.hit(10, 40), TaskbarHit::Nothing);
+    }
+
+    fn every_cell(l: &TaskbarLayout) -> Vec<(TaskbarHit, Rect)> {
+        let mut cells = vec![(TaskbarHit::Start, l.start), (TaskbarHit::Clock, l.clock)];
+        let each = |hit: fn(usize) -> TaskbarHit, v: &[Rect]| {
+            v.iter()
+                .enumerate()
+                .map(move |(i, &r)| (hit(i), r))
+                .collect::<Vec<_>>()
+        };
+        cells.extend(each(TaskbarHit::Grip, &l.grips));
+        cells.extend(each(TaskbarHit::Quick, &l.quick));
+        cells.extend(each(TaskbarHit::Pager, &l.pager));
+        cells.extend(each(TaskbarHit::Task, &l.tasks));
+        cells.extend(each(TaskbarHit::Tray, &l.tray));
+        cells.extend(l.quick_more.map(|r| (TaskbarHit::QuickMore, r)));
+        cells.extend(l.chevron.map(|r| (TaskbarHit::Chevron, r)));
+        cells.extend(l.show_desktop.map(|r| (TaskbarHit::ShowDesktop, r)));
+        cells.extend(l.more.map(|r| (TaskbarHit::More, r)));
+        cells
+    }
+
+    /// The screen-edge pixel across from the middle of `r`, and the strip between it and `r`.
+    fn edge_pixel(l: &TaskbarLayout, r: Rect) -> ((i32, i32), Rect) {
+        let (cx, cy) = (r.x + r.width / 2, r.y + r.height / 2);
+        match l.edge {
+            Edge::Bottom => (
+                (cx, l.height - 1),
+                Rect::new(cx, r.bottom(), 1, l.height - r.bottom()),
+            ),
+            Edge::Top => ((cx, 0), Rect::new(cx, 0, 1, r.y)),
+            Edge::Left => ((0, cy), Rect::new(0, cy, r.x, 1)),
+            Edge::Right => (
+                (l.width - 1, cy),
+                Rect::new(r.right(), cy, l.width - r.right(), 1),
+            ),
+        }
+    }
+
+    #[test]
+    fn every_cell_takes_the_screen_edge_pixel_across_from_it() {
+        use crate::interface::Interface;
+        let counts = [
+            TaskbarCounts {
+                quick: 6,
+                pager: 2,
+                tasks: 3,
+                tray: 3,
+                show_desktop: true,
+                chevron: true,
+                ..TaskbarCounts::default()
+            },
+            TaskbarCounts {
+                quick: 2,
+                tasks: 60,
+                tray: 1,
+                ..TaskbarCounts::default()
+            },
+        ];
+        let bands = Bands {
+            tasks_first: false,
+            first_width: Some(60),
+        };
+        let mut seen = std::collections::HashSet::new();
+        for look in [Interface::Classic, Interface::Blue, Interface::Glass] {
+            let theme = crate::interfaces::theme_for(look);
+            let shape = theme.taskbar_shape();
+            for edge in Edge::ALL {
+                let thickness = if edge.is_side() {
+                    100
+                } else {
+                    theme.metrics.taskbar_height
+                };
+                let span = BarSpan {
+                    edge,
+                    length: if edge.is_side() { 700 } else { 1000 },
+                    thickness,
+                };
+                for (c, locked) in counts.iter().zip([false, true]) {
+                    let l = TaskbarLayout::compute_on(
+                        &theme.metrics,
+                        &shape,
+                        span,
+                        locked,
+                        *c,
+                        ClockText { time: 30, date: 30 },
+                        bands,
+                    );
+                    let cells = every_cell(&l);
+                    for &(hit, r) in &cells {
+                        let ((x, y), between) = edge_pixel(&l, r);
+                        let shielded = cells
+                            .iter()
+                            .any(|&(h, o)| h != hit && !o.intersect(&between).is_empty());
+                        if shielded {
+                            continue;
+                        }
+                        assert_eq!(
+                            l.hit(x, y),
+                            hit,
+                            "{look:?} {edge:?}: {hit:?} at {r:?} takes ({x}, {y})"
+                        );
+                        seen.insert(std::mem::discriminant(&hit));
+                    }
+                }
+            }
+        }
+        assert_eq!(seen.len(), 11, "every kind of cell checked");
     }
 
     #[test]
