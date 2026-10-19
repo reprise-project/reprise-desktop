@@ -33,6 +33,11 @@ pub enum Req {
     DragActions,
     /// Whether an X client holds the pointer grab as override-redirect `window` shows.
     Grabbed(u32),
+    /// Disconnect the X client owning `window` if X-Resource says it is `pid`.
+    KillOwner {
+        window: u32,
+        pid: u32,
+    },
 }
 
 pub enum Back {
@@ -226,6 +231,24 @@ fn run(
                     && back.send(Back::Grabbed(window)).is_err()
                 {
                     return Ok(());
+                }
+            }
+            Req::KillOwner { window, pid } => {
+                let spec = res::ClientIdSpec {
+                    client: window,
+                    mask: res::ClientIdMask::LOCAL_CLIENT_PID,
+                };
+                let owner = conn
+                    .res_query_client_ids(&[spec])?
+                    .reply()
+                    .ok()
+                    .and_then(|r| r.ids.iter().find_map(|id| id.value.first().copied()));
+                if owner == Some(pid) {
+                    log::info!("x11 window {window:#x}: disconnecting its client, pid {pid}");
+                    conn.kill_client(window)?;
+                    conn.flush()?;
+                } else {
+                    log::info!("x11 window {window:#x}: client is pid {owner:?}, not {pid}; kept");
                 }
             }
             Req::Property(_, a) if a != net_wm_icon => {}

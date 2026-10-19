@@ -147,6 +147,11 @@ impl Xwayland {
         self.send(helper::Req::DragActions);
     }
 
+    /// Disconnect the X client owning `window`, as long as it is process `pid`.
+    pub fn kill_owner(&self, window: u32, pid: u32) {
+        self.send(helper::Req::KillOwner { window, pid });
+    }
+
     /// The Xwayland server's pid, 0 while none runs.
     pub fn pid(&self) -> i32 {
         self.pid
