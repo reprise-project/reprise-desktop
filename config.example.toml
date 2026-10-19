@@ -463,6 +463,9 @@ suspend_after = 0            # run [power] standby
 # "super+Q" is Super+q) replaces that bind, and every other default stays.
 # action = "none" leaves its keys unbound, a default's included. Binding an
 # action to other keys keeps its default keys too; a "none" frees them.
+# While a dialog (Run, Turn Off, ...) has the keyboard, only the zoom, color
+# filter, lock, screenshot, layout, do-not-disturb, night light and media
+# binds run, with Alt+Tab and Super+Tab; every other press goes to the dialog.
 #[[keybinds]]
 #keys = "Super+q"
 #action = "none"
