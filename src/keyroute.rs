@@ -900,11 +900,15 @@ impl ChordState {
 /// or a shortcuts inhibitor, whose client gets the keys, nor during a drag,
 /// whose modifiers pick its action, and at the lock
 /// only the layout switch, so the password can be typed in any layout.
+/// A dialog with the keyboard passes what it passes a bind.
 pub fn chord_allowed(modes: &Modes, a: &Action) -> bool {
     !modes.captured
         && !modes.shortcuts_inhibited
         && !modes.dragging
         && (!modes.locked || *a == Action::NextLayout)
+        && (!modes.dialog_has_keyboard
+            || passes_dialog(a)
+            || (modes.dialog_windowed && *a == Action::ShowDesktop))
 }
 
 /// The built-in action of a media keysym; None for any other key.
@@ -2477,6 +2481,24 @@ mod tests {
         ] {
             assert!(!chord_allowed(&m, &NEXT));
         }
+    }
+
+    #[test]
+    fn a_dialog_with_the_keyboard_passes_a_chord_only_what_it_passes_a_bind() {
+        let dialog = Modes {
+            dialog_has_keyboard: true,
+            ..Modes::default()
+        };
+        assert!(chord_allowed(&dialog, &NEXT));
+        assert!(chord_allowed(&dialog, &Action::Lock));
+        assert!(!chord_allowed(&dialog, &Action::Terminal));
+        assert!(!chord_allowed(&dialog, &Action::ShowDesktop));
+        let windowed = Modes {
+            dialog_windowed: true,
+            ..dialog
+        };
+        assert!(chord_allowed(&windowed, &Action::ShowDesktop));
+        assert!(!chord_allowed(&windowed, &Action::Terminal));
     }
 
     #[test]
