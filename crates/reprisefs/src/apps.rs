@@ -97,6 +97,47 @@ pub fn exec_argv(exec: &str) -> Vec<String> {
         .collect()
 }
 
+/// `exec`'s first argument as [`exec_argv`] reads it, and the unparsed rest
+/// of the line after it.
+pub fn exec_program_and_rest(exec: &str) -> (String, &str) {
+    let exec = exec.trim_start();
+    let mut quoted = false;
+    let mut end = exec.len();
+    let mut chars = exec.char_indices();
+    while let Some((i, c)) = chars.next() {
+        match c {
+            '"' => quoted = !quoted,
+            '\\' if quoted => {
+                chars.next();
+            }
+            c if c.is_whitespace() && !quoted => {
+                end = i;
+                break;
+            }
+            _ => {}
+        }
+    }
+    let program = exec_argv(&exec[..end]).pop().unwrap_or_default();
+    (program, exec[end..].trim())
+}
+
+/// `arg` written so [`exec_argv`] reads it back as one argument.
+pub fn exec_quote(arg: &str) -> String {
+    let arg = arg.replace('%', "%%");
+    if !arg.is_empty() && !arg.contains(|c: char| c.is_whitespace() || "\"`$\\".contains(c)) {
+        return arg;
+    }
+    let mut out = String::from("\"");
+    for c in arg.chars() {
+        if "\"`$\\".contains(c) {
+            out.push('\\');
+        }
+        out.push(c);
+    }
+    out.push('"');
+    out
+}
+
 /// [`exec_argv`]'s splitting, with field code `%c` replaced by
 /// `field('c')` inside its argument; None drops it, and an argument that
 /// was only the code goes with it.
@@ -1268,6 +1309,26 @@ mod tests {
             "an empty quoted argument stays"
         );
         assert!(exec_argv("").is_empty());
+    }
+
+    #[test]
+    fn a_quoted_program_splits_off_its_arguments_and_round_trips_through_in_terminal() {
+        assert_eq!(
+            exec_program_and_rest("  \"/opt/My Term/term\"  --hold -o \"a b\" "),
+            ("/opt/My Term/term".to_string(), "--hold -o \"a b\"")
+        );
+        assert_eq!(exec_program_and_rest("foot"), ("foot".to_string(), ""));
+        assert_eq!(exec_program_and_rest(""), (String::new(), ""));
+        for program in ["foot", "/home/u/My Apps/x.AppImage", "a\"b`c$d\\e%f", ""] {
+            let terminal = format!("{} --hold", exec_quote(program));
+            assert_eq!(exec_program_and_rest(&terminal).0, program, "{terminal}");
+            assert_eq!(
+                in_terminal(&terminal, vec!["top".into()]),
+                [program, "--hold", "-e", "top"].map(OsString::from),
+                "{terminal}"
+            );
+        }
+        assert_eq!(exec_quote("foot"), "foot", "a plain program stays bare");
     }
 
     #[test]

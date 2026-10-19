@@ -1692,7 +1692,7 @@ impl SettingsApp {
         if id == defaultspage::TERMINAL_ARGS {
             if let Some(form::Control::Edit { edit, .. }) = page.item(id).map(|i| &i.control) {
                 let program = defaultspage::split_command(&self.want.terminal).0;
-                self.want.terminal = defaultspage::join_command(program, &edit.text);
+                self.want.terminal = defaultspage::join_command(&program, &edit.text);
             }
             self.sync_apply();
             return Reply::redraw();

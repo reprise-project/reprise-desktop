@@ -612,7 +612,7 @@ pub fn fill(form: &mut Form, d: &Defaults, terminal: &str, row: Option<usize>) {
         set_combo(form, k.id, &rows, at);
     }
     let (program, args) = split_command(terminal);
-    let (rows, at) = d.terminal_rows(program);
+    let (rows, at) = d.terminal_rows(&program);
     set_combo(form, TERMINAL, &rows, at);
     if let Some(Control::Edit { edit, first, .. }) =
         form.item_mut(TERMINAL_ARGS).map(|i| &mut i.control)
@@ -624,18 +624,16 @@ pub fn fill(form: &mut Form, d: &Defaults, terminal: &str, row: Option<usize>) {
     sync_buttons(form, d, row);
 }
 
-/// The `terminal` key split into its program and the arguments after it.
-pub fn split_command(command: &str) -> (&str, &str) {
-    let command = command.trim();
-    match command.split_once(char::is_whitespace) {
-        Some((program, args)) => (program, args.trim_start()),
-        None => (command, ""),
-    }
+/// The `terminal` key split into its program, unquoted, and the arguments after it.
+pub fn split_command(command: &str) -> (String, &str) {
+    reprisefs::apps::exec_program_and_rest(command)
 }
 
 /// The `terminal` key for `program` run with `args`.
 pub fn join_command(program: &str, args: &str) -> String {
-    format!("{program} {args}").trim().to_string()
+    format!("{} {}", reprisefs::apps::exec_quote(program), args.trim())
+        .trim()
+        .to_string()
 }
 
 /// Change... wants a picked type; Restore Default one the user set. A
@@ -913,13 +911,24 @@ pub(crate) mod tests {
 
     #[test]
     fn a_terminal_command_splits_into_its_program_and_arguments_and_joins_back() {
-        assert_eq!(split_command("foot"), ("foot", ""));
+        assert_eq!(split_command("foot"), ("foot".to_string(), ""));
         assert_eq!(
             split_command(" foot  -e tmux new "),
-            ("foot", "-e tmux new")
+            ("foot".to_string(), "-e tmux new")
         );
         assert_eq!(join_command("foot", "-e tmux"), "foot -e tmux");
         assert_eq!(join_command("/usr/bin/kitty", "  "), "/usr/bin/kitty");
+        assert_eq!(
+            split_command("\"/opt/My Term/term\" --hold"),
+            ("/opt/My Term/term".to_string(), "--hold"),
+            "a quoted program is one program"
+        );
+        let key = join_command("/home/u/My Apps/x.AppImage", "--hold");
+        assert_eq!(key, "\"/home/u/My Apps/x.AppImage\" --hold");
+        assert_eq!(
+            split_command(&key),
+            ("/home/u/My Apps/x.AppImage".to_string(), "--hold")
+        );
     }
 
     #[test]
