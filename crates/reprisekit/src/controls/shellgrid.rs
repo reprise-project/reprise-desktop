@@ -207,13 +207,14 @@ pub(crate) fn entry_icon(e: &Entry, mode: Mode) -> Option<Cow<'_, Canvas>> {
     Some(Cow::Owned(icon))
 }
 
-/// One tile: the 48 px icon, centred down a grown cell, then the name and `detail` lines in one block, filled with the highlight when selected. `cell` and `label` are already scaled and offset into the canvas.
+/// One tile: the 48 px `icon`, centred down a grown cell, then the name and `detail` lines in one block, filled with the highlight when selected. `cell` and `label` are already scaled and offset into the canvas.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn draw_tile(
     c: &mut Canvas,
     text: &TextRenderer,
     cs: &ColorScheme,
     e: &Entry,
+    icon: Option<&Canvas>,
     cell: Rect,
     label: Rect,
     sel: (bool, bool),
@@ -222,10 +223,10 @@ pub(crate) fn draw_tile(
     u: TextUnits,
 ) {
     let (selected, ring) = sel;
-    if let Some(icon) = entry_icon(e, Mode::Tiles) {
+    if let Some(icon) = icon {
         let dy = TILE_ICON_OFF.1 + (cell.height / s - TILE_CELL.1) / 2;
         let (ix, iy) = (cell.x + TILE_ICON_OFF.0 * s, cell.y + dy * s);
-        c.blit_over(ix, iy, &icon);
+        c.blit_over(ix, iy, icon);
         if e.link {
             iconview::draw_shortcut_arrow(c, ix, iy + TILE_ICON * s, s);
         }
@@ -259,13 +260,14 @@ pub(crate) fn draw_tile(
     }
 }
 
-/// One thumbnail: the framed image (or the 32 px icon centred in it), a `THUMB_RING` highlight ring when selected, and the wrapped label under it.
+/// One thumbnail: the framed image `img` (or the 32 px icon centred in it), a `THUMB_RING` highlight ring when selected, and the wrapped label under it.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn draw_thumb(
     c: &mut Canvas,
     text: &TextRenderer,
     cs: &ColorScheme,
     e: &Entry,
+    img: Option<&Canvas>,
     cell: Rect,
     label: Rect,
     sel: (bool, bool),
@@ -286,10 +288,10 @@ pub(crate) fn draw_thumb(
     }
     c.fill_rect(frame, cs.window);
     c.ring_t(frame, cs.button_face, cs.button_face, s);
-    if let Some(img) = entry_icon(e, Mode::Thumbnails) {
+    if let Some(img) = img {
         let ix = frame.x + (frame.width - img.width as i32) / 2;
         let iy = frame.y + (frame.height - img.height as i32) / 2;
-        c.blit_over(ix, iy, &img);
+        c.blit_over(ix, iy, img);
         if e.link {
             iconview::draw_shortcut_arrow(c, ix, iy + img.height as i32, s);
         }
@@ -408,6 +410,7 @@ pub(crate) fn draw_grid(
                     text,
                     cs,
                     e,
+                    entry_icon(e, Mode::Tiles).as_deref(),
                     cell,
                     label,
                     (selected, ring),
@@ -425,6 +428,7 @@ pub(crate) fn draw_grid(
                     text,
                     cs,
                     e,
+                    entry_icon(e, Mode::Thumbnails).as_deref(),
                     cell,
                     label,
                     (selected, ring),

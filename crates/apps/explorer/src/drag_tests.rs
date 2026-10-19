@@ -778,6 +778,14 @@ fn the_drag_image_stacks_every_dragged_icon() {
         let mut ctx = test_ctx();
         let (_dir, mut ex) = explorer(&mut ctx);
         ex.sv.mode = mode;
+        // The test theme has no 48 px icons; a tile draws only the icon it wears.
+        for e in &mut ex.sv.entries {
+            e.icon48 = Some(std::rc::Rc::new(Canvas::from_pixels(
+                48,
+                48,
+                vec![!0; 48 * 48],
+            )));
+        }
         select(&mut ex, &["a.txt", "Box", "Crate"]);
         let cells: Vec<Rect> = ["a.txt", "Box", "Crate"]
             .iter()
@@ -787,9 +795,17 @@ fn the_drag_image_stacks_every_dragged_icon() {
         press(&mut ex, &mut ctx, at, BTN_LEFT);
         let (img, grab) = ex.drag_image(&mut ctx, 1).expect("an image");
 
+        // An icon is drawn in a square cell; a tile in its own, its 48 px icon at (5, 4).
+        let (square, (ix, iy, n)) = match mode {
+            Mode::Icons => (true, (21, 2, 32)),
+            _ => (false, (5, 4, 48)),
+        };
         let bounds = cells
             .iter()
-            .map(|c| Rect::new(c.x, c.y, iconview::CELL, iconview::CELL))
+            .map(|c| match square {
+                true => Rect::new(c.x, c.y, iconview::CELL, iconview::CELL),
+                false => *c,
+            })
             .reduce(|a, b| a.union(&b))
             .expect("cells")
             .intersect(&Rect::new(at.0 - 128, at.1 - 128, 256, 256));
@@ -801,16 +817,16 @@ fn the_drag_image_stacks_every_dragged_icon() {
         assert_eq!(grab, (at.0 - bounds.x, at.1 - bounds.y), "{mode:?}");
         // Each cell's icon is in the image, faded: a pixel inside its icon square is drawn, at most half opaque.
         let icon_in = |c: &&Rect| {
-            let sq = Rect::new(c.x + 21, c.y + 2, 32, 32);
+            let sq = Rect::new(c.x + ix, c.y + iy, n, n);
             sq.intersect(&bounds) == sq
         };
         let whole: Vec<&Rect> = cells.iter().filter(icon_in).collect();
         assert!(whole.len() >= 2, "{mode:?}: at least two icons whole");
         for c in whole {
             let (x0, y0) = (c.x - bounds.x, c.y - bounds.y);
-            let alphas: Vec<u32> = (0..32)
-                .flat_map(|y| (0..32).map(move |x| (x, y)))
-                .map(|(x, y)| img.get(x0 + 21 + x, y0 + 2 + y) >> 24)
+            let alphas: Vec<u32> = (0..n)
+                .flat_map(|y| (0..n).map(move |x| (x, y)))
+                .map(|(x, y)| img.get(x0 + ix + x, y0 + iy + y) >> 24)
                 .collect();
             assert!(alphas.iter().any(|&a| a > 0), "{mode:?}: an icon at {c:?}");
             assert!(alphas.iter().all(|&a| a <= 128), "{mode:?}: faded");
@@ -869,6 +885,33 @@ fn the_drag_image_draws_again_at_another_scale() {
     assert!(b > r, "scale 2 wears the 64 px folder");
 }
 
+/// A Thumbnails drag carries each thumbnail's own picture in its frame, the frame centred in the cell.
+#[test]
+fn a_thumbnails_drag_image_carries_the_picture() {
+    const PICTURE: u32 = 0xFF20_8040;
+    let mut ctx = test_ctx();
+    let (_dir, mut ex) = explorer(&mut ctx);
+    ex.sv.mode = Mode::Thumbnails;
+    let i = index_of(&ex, "a.txt");
+    ex.sv.entries[i].thumb = Some(Canvas::from_pixels(60, 40, vec![PICTURE; 60 * 40]));
+    select(&mut ex, &["a.txt"]);
+    let c = cell(&ex, &ctx, i);
+    let at = centre(&ex, &ctx, i);
+    press(&mut ex, &mut ctx, at, BTN_LEFT);
+    let (img, grab) = ex.drag_image(&mut ctx, 1).expect("an image");
+    assert_eq!((img.width as i32, img.height as i32), (c.width, c.height));
+    assert_eq!(grab, (at.0 - c.x, at.1 - c.y));
+    let mut faded = Canvas::from_pixels(1, 1, vec![PICTURE]);
+    faded.fade(1, 2);
+    // The 96 px frame sits 17 px in and 3 px down; the picture is centred in it.
+    assert_eq!(
+        img.get(17 + 48, 3 + 48),
+        faded.pixels[0],
+        "the picture, faded"
+    );
+    assert_ne!(img.get(17 + 2, 3 + 2) >> 24, 0, "the frame's white");
+}
+
 /// At a larger text size an icon mode's image is made of the dragged whole grown icon cells inside the grown square.
 #[test]
 fn the_drag_image_grows_with_the_text_size() {
@@ -891,7 +934,10 @@ fn the_drag_image_grows_with_the_text_size() {
             let bounds = ["a.txt", "Box", "Crate"]
                 .iter()
                 .map(|n| cell(&ex, &ctx, index_of(&ex, n)))
-                .map(|c| Rect::new(c.x, c.y, w, h))
+                .map(|c| match mode {
+                    Mode::Icons => Rect::new(c.x, c.y, w, h),
+                    _ => c,
+                })
                 .filter(|c| window.intersect(c) == *c)
                 .reduce(|a, b| a.union(&b))
                 .expect("a whole cell");
