@@ -10,13 +10,20 @@ static SOCKET: AtomicI32 = AtomicI32::new(-1);
 /// default action would. SIGKILL can't be caught: End Program drops the connection itself.
 const ENDING: [libc::c_int; 3] = [libc::SIGTERM, libc::SIGINT, libc::SIGHUP];
 
-/// Hangs up `socket` if the program is ended by a signal.
+/// Hangs up `socket` if the program is ended by a signal. A signal it started with ignored
+/// (`nohup`, a shell's background job) stays ignored.
 pub(crate) fn on_signals(socket: BorrowedFd) {
     SOCKET.store(socket.as_raw_fd(), Ordering::Release);
     for sig in ENDING {
-        // SAFETY: the handler calls only async-signal-safe functions; the struct is zeroed and
-        // filled before the call reads it.
+        // SAFETY: the handler calls only async-signal-safe functions; the structs are zeroed and
+        // filled before the calls read them.
         unsafe {
+            let mut old: libc::sigaction = std::mem::zeroed();
+            if libc::sigaction(sig, std::ptr::null(), &mut old) == 0
+                && old.sa_sigaction == libc::SIG_IGN
+            {
+                continue;
+            }
             let mut sa: libc::sigaction = std::mem::zeroed();
             sa.sa_sigaction = on_ending as *const () as libc::sighandler_t;
             sa.sa_flags = libc::SA_RESETHAND;
@@ -98,5 +105,32 @@ mod tests {
             "the peer reads the end while this process still holds the child's socket"
         );
         drop(ours);
+    }
+
+    #[test]
+    fn a_program_started_with_sighup_ignored_survives_it() {
+        let (ours, peer) = UnixStream::pair().unwrap();
+        // SAFETY: the child calls only signal, sigaction, raise and _exit before it ends.
+        let pid = unsafe { libc::fork() };
+        assert!(pid >= 0, "fork");
+        if pid == 0 {
+            // SAFETY: signal, raise and _exit in the forked child.
+            unsafe { libc::signal(libc::SIGHUP, libc::SIG_IGN) };
+            on_signals(ours.as_fd());
+            // SAFETY: as above.
+            unsafe {
+                libc::raise(libc::SIGHUP);
+                libc::_exit(7);
+            }
+        }
+        let mut status = 0;
+        // SAFETY: waits on the child forked above.
+        unsafe { libc::waitpid(pid, &mut status, 0) };
+        assert!(
+            libc::WIFEXITED(status) && libc::WEXITSTATUS(status) == 7,
+            "the child exits by itself after the SIGHUP: status {status:#x}"
+        );
+        drop(ours);
+        drop(peer);
     }
 }
