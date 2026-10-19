@@ -512,6 +512,7 @@ impl App for DrivesApp {
         self.flyout.as_ref().map(|f| repriseapp::Flyout {
             id: FLYOUT,
             at: f.at,
+            title: tray::TIP,
         })
     }
 
