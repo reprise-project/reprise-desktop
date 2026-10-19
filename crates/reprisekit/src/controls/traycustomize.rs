@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::access::{
     self, Tree,
-    accesskit::{NodeId, Role},
+    accesskit::{Action, NodeId, Role},
 };
 use crate::classic::widgets::{
     BarHit, LINE_H, bar_hit, draw_focus_ring, draw_focus_ring_screen, draw_label, scrollbar_parts,
@@ -2133,9 +2133,17 @@ impl TrayCustomize {
         out
     }
 
+    /// Name the combo just added to `list` by its row's item.
+    fn name_combo(tree: &mut Tree, list: NodeId, name: &str) {
+        let combo = tree.get(list).and_then(|l| l.children().last().copied());
+        if let Some(n) = combo.and_then(|c| tree.get_mut(c)) {
+            n.set_label(name);
+        }
+    }
+
     /// The text, the list with its rows (each named by the item and
-    /// valued by its behaviour), the combo, the box and the buttons; the
-    /// focused part gets the focus.
+    /// described by its behaviour, which AT-SPI reads where it drops a row's value), the combo,
+    /// the box and the buttons; the focused part gets the focus.
     pub fn access(&self, tree: &mut Tree, lay: &Layout, text: &TextRenderer, px: u32) -> NodeId {
         let root = access::ROOT;
         let w = self.wording;
@@ -2158,15 +2166,21 @@ impl TrayCustomize {
                 n.set_bounds(access::row_bounds(lay.body, r));
             }
             n.set_label(e.name.as_str());
-            n.set_value(w.label(w.choices()[w.index(e.behaviour, e.passive)]));
+            n.set_description(w.label(w.choices()[w.index(e.behaviour, e.passive)]));
             n.set_selected(self.selected == Some(i));
             let id = tree.push(list, ("row", i), n);
+            if self.is_page()
+                && let Some(n) = tree.get_mut(id)
+            {
+                // A page row is picked through its combo; a click on the row's name picks nothing.
+                n.remove_action(Action::Click);
+            }
             if self.selected == Some(i) {
                 focus_row = id;
             }
         }
         let mut combo_focus = None;
-        if let (Some((_, cl)), true) = (&lay.combo, live) {
+        if let (Some((i, cl)), true) = (&lay.combo, live) {
             combo_focus = Some(combo::access(
                 &self.combo,
                 cl,
@@ -2176,6 +2190,22 @@ impl TrayCustomize {
                 list,
                 "combo",
             ));
+            if self.is_page() {
+                Self::name_combo(tree, list, &self.entries[*i].name);
+            }
+        }
+        if self.is_page() && live {
+            let labels: Vec<&str> = w.choices().iter().map(|&b| w.label(b)).collect();
+            for &(i, field) in &lay.fields {
+                if lay.combo.as_ref().is_some_and(|(j, _)| *j == i) {
+                    continue;
+                }
+                let e = &self.entries[i];
+                let row = Combo::new(&labels, w.index(e.behaviour, e.passive), labels.len());
+                let cl = combo::layout(&row, field, &self.metrics);
+                combo::access(&row, &cl, text, px, tree, list, ("combo", i));
+                Self::name_combo(tree, list, &e.name);
+            }
         }
         let all = match (lay.check, lay.check_label, self.all_icons) {
             (Some(b), Some(l), Some(on)) => Some(tree.push(
@@ -2300,6 +2330,84 @@ mod tests {
             (w == Wording::Glass).then_some(false),
             metrics(w),
         )
+    }
+
+    #[test]
+    fn a_reader_hears_every_rows_behaviour_not_only_the_selected_ones() {
+        use crate::access::Tree;
+        let (text, px) = (TextRenderer::load(&crate::theme::FontConfig::default()), 11);
+        for (w, want) in [
+            (
+                Wording::Glass,
+                [
+                    "Show icon and notifications",
+                    "Only show notifications",
+                    "Show icon and notifications",
+                    "Only show notifications",
+                ],
+            ),
+            (
+                Wording::Classic,
+                [
+                    "Hide when inactive",
+                    "Hide when inactive",
+                    "Always show",
+                    "Always hide",
+                ],
+            ),
+        ] {
+            let t = sample(w);
+            let lay = t.layout(&text, px, (0, 0));
+            let mut tree = Tree::window("", t.client());
+            t.access(&mut tree, &lay, &text, px);
+            for (name, want) in ["Network", "Volume", "Mail", "Sticky Keys"]
+                .iter()
+                .zip(want)
+            {
+                let row = tree.find(Role::ListBoxOption, name).unwrap();
+                let n = tree.get(row).unwrap();
+                assert_eq!(n.description(), Some(want), "{w:?} {name}");
+                if w == Wording::Glass {
+                    assert!(
+                        !n.supports_action(Action::Click),
+                        "{name} picks by its combo"
+                    );
+                    let combo = tree
+                        .find(Role::ComboBox, name)
+                        .expect("each row has a combo");
+                    let c = tree.get(combo).unwrap();
+                    assert!(c.supports_action(Action::Click));
+                    let picked = tree.nodes().find(|(id, o)| {
+                        o.is_selected() == Some(true)
+                            && tree.get(*id).and_then(|o| o.label()) == Some(want)
+                            && c.children()
+                                .iter()
+                                .any(|&l| tree.get(l).is_some_and(|l| l.children().contains(id)))
+                    });
+                    assert!(picked.is_some(), "{name}'s combo shows {want}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn the_selected_page_rows_open_combo_keeps_its_name_and_its_rows_theirs() {
+        use crate::access::Tree;
+        let (text, px) = (TextRenderer::load(&crate::theme::FontConfig::default()), 11);
+        let mut t = sample(Wording::Glass);
+        t.select(2);
+        assert!(t.combo.toggle());
+        let lay = t.layout(&text, px, (0, 0));
+        let mut tree = Tree::window("", t.client());
+        t.access(&mut tree, &lay, &text, px);
+        let combo = tree
+            .find(Role::ComboBox, "Mail")
+            .expect("the open combo is named");
+        assert_eq!(tree.get(combo).unwrap().is_expanded(), Some(true));
+        for b in Wording::Glass.choices() {
+            let label = Wording::Glass.label(*b);
+            assert!(tree.find(Role::ListBoxOption, label).is_some(), "{label}");
+        }
     }
 
     #[test]
