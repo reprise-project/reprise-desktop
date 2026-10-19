@@ -87,6 +87,16 @@ pub fn diff(old: &Config, new: &Config) -> Changes {
     }
 }
 
+/// Whether `new` differs from `old` in its output keys (`[[outputs]]`, `adaptive_sync`) alone.
+fn outputs_only(old: &Config, new: &Config) -> bool {
+    let kept = Config {
+        outputs: new.outputs.clone(),
+        adaptive_sync: new.adaptive_sync,
+        ..old.clone()
+    };
+    old != new && kept == *new
+}
+
 /// Which of one output's settings a reload changed, so it commits those
 /// and nothing else: a mode set through output management and not yet
 /// written survives a reload that changes another key.
@@ -230,6 +240,7 @@ pub(crate) fn closes_start(old: StartMenuStyle, new: StartMenuStyle) -> bool {
 
 pub fn reload(state: &mut State, cfg: Config) {
     let changes = diff(&state.config, &cfg);
+    let outputs_only = outputs_only(&state.config, &cfg);
     state
         .inputproto
         .shortcuts
@@ -318,9 +329,7 @@ pub fn reload(state: &mut State, cfg: Config) {
         WallpaperChange::None => {}
     }
     state.water_configured();
-    if changes.outputs {
-        state.apply_output_config(&old);
-    }
+    let geometry_changed = changes.outputs && state.apply_output_config(&old);
     if changes.keyboard {
         state.apply_keyboard();
     }
@@ -350,13 +359,21 @@ pub fn reload(state: &mut State, cfg: Config) {
     if changes.bar_hide {
         crate::autohideview::config_changed(state);
     }
-    // `reveal_on_*` and `taskbar_hide_ms` reach the bars through the poke
-    // in `retheme`'s `redraw_taskbars`.
-    retheme(state);
-    // The taskbar's height follows the interface and its edge `[taskbar]
-    // position`, and the outputs may run another mode, scale or
-    // transform: the usable areas move.
-    state.update_layout();
+    if outputs_only {
+        // Nothing drawn changed but the outputs, which a scale warm's end lays out.
+        if geometry_changed {
+            state.update_layout();
+            redraw_for_scale(state);
+        }
+    } else {
+        // `reveal_on_*` and `taskbar_hide_ms` reach the bars through the poke
+        // in `retheme`'s `redraw_taskbars`.
+        retheme(state);
+        // The taskbar's height follows the interface and its edge `[taskbar]
+        // position`, and the outputs may run another mode, scale or
+        // transform: the usable areas move.
+        state.update_layout();
+    }
     // The panels follow `[debug]` and are redrawn for the new look.
     crate::debugview::config_changed(state);
     if changes.bar_moved || changes.bar_hide {
@@ -463,6 +480,32 @@ pub fn redraw_for_scale(state: &mut State) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_reload_changing_only_output_keys_is_told_from_one_changing_the_look() {
+        let old = Config::default();
+        assert!(!outputs_only(&old, &old.clone()), "nothing changed");
+        let mut scaled = old.clone();
+        scaled.outputs.push(crate::config::OutputConfig {
+            name: "HDMI-A-1".into(),
+            scale: 1.25,
+            mode: None,
+            adaptive_sync: None,
+            transform: Default::default(),
+            position: None,
+            primary: false,
+        });
+        assert!(outputs_only(&old, &scaled), "a scale change");
+        let mut vrr = old.clone();
+        vrr.adaptive_sync = !old.adaptive_sync;
+        assert!(outputs_only(&old, &vrr), "adaptive sync");
+        let mut both = scaled.clone();
+        both.taskbar.auto_hide = !old.taskbar.auto_hide;
+        assert!(
+            !outputs_only(&old, &both),
+            "a scale change with a taskbar key"
+        );
+    }
 
     #[test]
     fn a_new_side_width_moves_a_side_bar_and_not_a_bottom_one() {
