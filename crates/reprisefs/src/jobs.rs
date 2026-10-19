@@ -1,14 +1,17 @@
 //! File operations off the caller's thread. A [`PutJob`] runs a batch of [`ops::put_in`] calls on
 //! its own thread, reports each item as it lands and counts its progress ([`crate::progress`]);
-//! cancel stops it inside a file. The host polls from its loop.
+//! cancel stops it inside a file; one stuck for [`ACTION_DEADLINE`] fails as not responding.
+//! The host polls from its loop.
 
+use crate::deadline::ACTION_DEADLINE;
 use crate::ops::{self, DropOp};
 use crate::progress::{self, Meter, Phase, Snapshot, Totals};
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::sync::atomic::AtomicBool;
-use std::sync::mpsc::{self, Receiver, TryRecvError};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
+use std::time::{Duration, Instant};
 
 pub type ShortcutText = Box<dyn Fn(&str) -> Option<String> + Send>;
 
@@ -43,7 +46,11 @@ pub struct PutJob {
 }
 
 impl PutJob {
-    pub fn start(items: Vec<PutItem>, dir: PathBuf, wake: impl Fn() + Send + 'static) -> PutJob {
+    pub fn start(
+        items: Vec<PutItem>,
+        dir: PathBuf,
+        wake: impl Fn() + Send + Sync + 'static,
+    ) -> PutJob {
         Self::start_past(items, dir, Vec::new(), wake)
     }
 
@@ -52,26 +59,46 @@ impl PutJob {
         items: Vec<PutItem>,
         dir: PathBuf,
         taken: Vec<String>,
-        wake: impl Fn() + Send + 'static,
+        wake: impl Fn() + Send + Sync + 'static,
+    ) -> PutJob {
+        Self::start_until(items, dir, taken, ACTION_DEADLINE, wake)
+    }
+
+    fn start_until(
+        items: Vec<PutItem>,
+        dir: PathBuf,
+        taken: Vec<String>,
+        deadline: Duration,
+        wake: impl Fn() + Send + Sync + 'static,
     ) -> PutJob {
         let (tx, events) = mpsc::channel();
         let meter = Arc::new(Meter::default());
+        let wake = Arc::new(wake);
+        let ended = Arc::new(AtomicBool::new(false));
+        watch(&meter, &ended, deadline, tx.clone(), wake.clone());
         let m = meter.clone();
         let spawned = std::thread::Builder::new()
             .name("reprisefs-put".into())
             .spawn(move || {
                 let stop = &m.cancel;
+                let finish = || {
+                    if !ended.swap(true, Ordering::AcqRel) {
+                        let _ = tx.send(PutEvent::Finished);
+                        (*wake)();
+                    }
+                };
                 let Some(sizes) = items
                     .iter()
-                    .map(|it| {
-                        let t = item_totals(it, &dir, stop);
+                    .enumerate()
+                    .map(|(index, it)| {
+                        m.set_at(index);
+                        let t = item_totals(it, &dir, &m);
                         m.add_totals(t.unwrap_or_default());
                         t
                     })
                     .collect::<Option<Vec<Totals>>>()
                 else {
-                    let _ = tx.send(PutEvent::Finished);
-                    wake();
+                    finish();
                     return;
                 };
                 m.set_phase(Phase::Copying);
@@ -84,6 +111,7 @@ impl PutJob {
                     if m.hold().is_err() {
                         break;
                     }
+                    m.set_at(index);
                     m.set_current(it.src.file_name().unwrap_or(it.display_name.as_ref()));
                     wrote |= writes(it, &dir);
                     let r = progress::metered(&m, || {
@@ -123,22 +151,22 @@ impl PutJob {
                     };
                     let failed = matches!(ev, PutEvent::Failed { .. });
                     if tx.send(ev).is_err() {
+                        ended.store(true, Ordering::Release);
                         return;
                     }
-                    wake();
+                    (*wake)();
                     if failed {
                         break;
                     }
                 }
                 if wrote && !m.cancelled() {
                     m.set_phase(Phase::Finishing);
-                    wake();
+                    (*wake)();
                     if let Ok(d) = std::fs::File::open(&dir) {
-                        progress::sync_fs(&d);
+                        m.flush_wait(|| progress::sync_fs(&d));
                     }
                 }
-                let _ = tx.send(PutEvent::Finished);
-                wake();
+                finish();
             });
         if let Err(e) = spawned {
             log::error!("reprisefs: cannot spawn the put thread: {e}");
@@ -191,12 +219,55 @@ impl PutJob {
     }
 }
 
+/// Cancels the put and fails it as not responding once `meter` stands still for `deadline` outside a
+/// pause or a flush; one stuck in its last flush has landed everything, so it just finishes.
+fn watch(
+    meter: &Arc<Meter>,
+    ended: &Arc<AtomicBool>,
+    deadline: Duration,
+    tx: Sender<PutEvent>,
+    wake: Arc<impl Fn() + Send + Sync + 'static>,
+) {
+    let (m, ended) = (meter.clone(), ended.clone());
+    let every = (deadline / 4).min(Duration::from_secs(1));
+    let spawned = std::thread::Builder::new()
+        .name("reprisefs-put-watch".into())
+        .spawn(move || {
+            let mut seen = (m.stirring().0, Instant::now());
+            while !ended.load(Ordering::Acquire) {
+                std::thread::sleep(every);
+                let (stir, resting) = m.stirring();
+                if resting || stir != seen.0 {
+                    seen = (stir, Instant::now());
+                    continue;
+                }
+                if seen.1.elapsed() < deadline || ended.swap(true, Ordering::AcqRel) {
+                    continue;
+                }
+                m.cancel();
+                log::warn!("reprisefs: a put made no headway for {deadline:?}; giving up");
+                if m.phase() != Phase::Finishing {
+                    let error = ops::PutError::NotResponding;
+                    let _ = tx.send(PutEvent::Failed {
+                        index: m.at(),
+                        error,
+                    });
+                }
+                let _ = tx.send(PutEvent::Finished);
+                (*wake)();
+            }
+        });
+    if let Err(e) = spawned {
+        log::warn!("reprisefs: no watch on a put: {e}");
+    }
+}
+
 /// What `it` adds to the totals: a move within one drive is a rename, one item of no bytes.
-fn item_totals(it: &PutItem, dir: &Path, stop: &AtomicBool) -> Option<Totals> {
+fn item_totals(it: &PutItem, dir: &Path, m: &Meter) -> Option<Totals> {
     if !writes(it, dir) {
         return Some(Totals { bytes: 0, items: 1 });
     }
-    progress::walk(&it.src, it.op != DropOp::Move || it.is_app, stop)
+    progress::walk(&it.src, it.op != DropOp::Move || it.is_app, m)
 }
 
 /// Whether putting `it` in `dir` writes file data, rather than renaming or making a shortcut.
@@ -453,5 +524,100 @@ mod tests {
         let got = run(job, woke);
         assert!(matches!(got.last(), Some(PutEvent::Finished)));
         assert!(got.len() <= 2);
+    }
+
+    /// A shortcut item whose text waits on `gate`: a call that blocks until the test lets it go.
+    fn stuck(src: PathBuf, gate: std::sync::mpsc::Receiver<()>) -> PutItem {
+        let gate = std::sync::Mutex::new(gate);
+        PutItem {
+            shortcut: Box::new(move |_| {
+                let _ = gate.lock().unwrap().recv();
+                Some(String::new())
+            }),
+            ..item(src, DropOp::Shortcut)
+        }
+    }
+
+    #[test]
+    fn a_put_that_stops_answering_fails_as_not_responding_and_finishes() {
+        let t = tempfile::tempdir().unwrap();
+        std::fs::write(t.path().join("a.txt"), "a").unwrap();
+        let dest = t.path().join("dest");
+        std::fs::create_dir_all(&dest).unwrap();
+        let (release, gate) = channel();
+        let (wtx, woke) = channel();
+        let job = PutJob::start_until(
+            vec![
+                item(t.path().join("a.txt"), DropOp::Copy),
+                stuck(t.path().join("a.txt"), gate),
+            ],
+            dest,
+            Vec::new(),
+            Duration::from_millis(300),
+            move || {
+                let _ = wtx.send(());
+            },
+        );
+        let meter = job.meter().clone();
+        let got = run(job, woke);
+        assert!(
+            matches!(
+                got.as_slice(),
+                [
+                    PutEvent::Landed { index: 0, .. },
+                    PutEvent::Failed {
+                        index: 1,
+                        error: ops::PutError::NotResponding
+                    },
+                    PutEvent::Finished,
+                ]
+            ),
+            "a.txt lands, the stuck shortcut fails as not responding, then Finished: {got:?}"
+        );
+        assert!(
+            meter.cancelled(),
+            "the stuck call stops the put once it returns"
+        );
+        release.send(()).unwrap();
+    }
+
+    #[test]
+    fn a_paused_put_is_not_taken_for_one_that_stopped_answering() {
+        let t = tempfile::tempdir().unwrap();
+        std::fs::write(t.path().join("a.txt"), "a").unwrap();
+        let dest = t.path().join("dest");
+        std::fs::create_dir_all(&dest).unwrap();
+        let (release, gate) = channel();
+        let (wtx, woke) = channel();
+        let job = PutJob::start_until(
+            vec![
+                stuck(t.path().join("a.txt"), gate),
+                item(t.path().join("a.txt"), DropOp::Copy),
+            ],
+            dest.clone(),
+            Vec::new(),
+            Duration::from_millis(500),
+            move || {
+                let _ = wtx.send(());
+            },
+        );
+        std::thread::sleep(Duration::from_millis(50));
+        job.set_paused(true);
+        release.send(()).unwrap();
+        std::thread::sleep(Duration::from_millis(1500));
+        job.set_paused(false);
+        let got = run(job, woke);
+        assert!(
+            matches!(
+                got.as_slice(),
+                [
+                    PutEvent::Landed { index: 0, .. },
+                    PutEvent::Landed { index: 1, .. },
+                    PutEvent::Finished,
+                ]
+            ),
+            "a pause three deadlines long fails nothing: {got:?}"
+        );
+        assert!(dest.join("a.txt").exists());
     }
 }
