@@ -2,6 +2,7 @@
 //! `begin` asks every window to close, then the session ends once no window or inhibitor holds it; after `PROMPT_AFTER`
 //! the session-end prompt lists what is left. A critical battery kills the remainder after `PROMPT_AFTER` without a prompt.
 //! Turn Off and Restart ask logind first, and a refusal before or after the programs close shows a message box.
+//! Stand By and Hibernate close nothing; a refusal shows the same message box.
 
 use std::time::Duration;
 
@@ -113,7 +114,7 @@ fn check(state: &mut State, goal: Goal, cmd: Option<String>, critical: bool) {
         let refused = zbus::block_on(can(verb));
         Box::new(move |state: &mut State| match refused {
             None => start(state, goal, cmd, critical),
-            Some(why) => refuse(state, goal, &why),
+            Some(why) => refuse(state, Act::of(goal), &why),
         })
     });
 }
@@ -288,6 +289,20 @@ fn act(state: &mut State, goal: Goal, cmd: Option<String>, override_inhibitors: 
         return;
     };
     log::info!("session end: {goal:?} runs {cmd:?}");
+    attempt(state, Act::of(goal), cmd, override_inhibitors);
+}
+
+/// Put the computer to sleep with a `[power]` standby or hibernate `cmd`, closing nothing.
+pub fn sleep(state: &mut State, act: Act, cmd: String) {
+    if cmd.trim().is_empty() {
+        return;
+    }
+    log::info!("power: {act:?} runs {cmd:?}");
+    attempt(state, act, cmd, false);
+}
+
+/// Run `cmd` off the loop, on logind when it names a logind action; a refusal shows a message box.
+fn attempt(state: &mut State, act: Act, cmd: String, override_inhibitors: bool) {
     let env = state.env.clone();
     state.spawn_job(move || {
         let failed = match logind_verb(&cmd) {
@@ -296,10 +311,47 @@ fn act(state: &mut State, goal: Goal, cmd: Option<String>, override_inhibitors: 
         };
         Box::new(move |state: &mut State| {
             if let Some(why) = failed {
-                refuse(state, goal, &why);
+                refuse(state, act, &why);
             }
         })
     });
+}
+
+/// What a refusal's message box names.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Act {
+    TurnOff,
+    Restart,
+    StandBy,
+    Hibernate,
+}
+
+impl Act {
+    fn of(goal: Goal) -> Act {
+        match goal {
+            Goal::Restart => Act::Restart,
+            Goal::TurnOff | Goal::LogOff => Act::TurnOff,
+        }
+    }
+
+    fn title(self) -> &'static str {
+        match self {
+            Act::TurnOff => "Turn Off Computer",
+            Act::Restart => "Restart Computer",
+            Act::StandBy => "Stand By",
+            Act::Hibernate => "Hibernate",
+        }
+    }
+
+    /// The action done to `the` computer ("this", "the").
+    fn on(self, the: &str) -> String {
+        match self {
+            Act::TurnOff => format!("turn off {the} computer"),
+            Act::Restart => format!("restart {the} computer"),
+            Act::StandBy => format!("put {the} computer on stand by"),
+            Act::Hibernate => format!("hibernate {the} computer"),
+        }
+    }
 }
 
 /// Why the computer stayed up.
@@ -311,23 +363,18 @@ enum Refused {
     Failed(String),
 }
 
-fn refuse(state: &mut State, goal: Goal, why: &Refused) {
-    log::warn!("session end: {goal:?} refused: {why:?}");
+fn refuse(state: &mut State, act: Act, why: &Refused) {
+    log::warn!("session end: {act:?} refused: {why:?}");
     crate::sessionfade::restore(state);
-    let title = match goal {
-        Goal::Restart => "Restart Computer",
-        Goal::TurnOff | Goal::LogOff => "Turn Off Computer",
-    };
-    state.open_dialog(crate::dialog::Dialog::error(title, refusal_text(goal, why)));
+    state.open_dialog(crate::dialog::Dialog::error(
+        act.title(),
+        refusal_text(act, why),
+    ));
 }
 
-fn refusal_text(goal: Goal, why: &Refused) -> String {
-    let what = match goal {
-        Goal::Restart => "restart",
-        Goal::TurnOff | Goal::LogOff => "turn off",
-    };
+fn refusal_text(act: Act, why: &Refused) -> String {
     let reason = match why {
-        Refused::NotAllowed => format!("You are not allowed to {what} this computer."),
+        Refused::NotAllowed => format!("You are not allowed to {}.", act.on("this")),
         Refused::Unsupported => "This computer does not support it.".to_string(),
         Refused::Held(holders) if holders.is_empty() => "A program is preventing it.".to_string(),
         Refused::Held(holders) => {
@@ -344,13 +391,15 @@ fn refusal_text(goal: Goal, why: &Refused) -> String {
         }
         Refused::Failed(m) => m.clone(),
     };
-    format!("Reprise could not {what} the computer.\n\n{reason}")
+    format!("Reprise could not {}.\n\n{reason}", act.on("the"))
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Verb {
     PowerOff,
     Reboot,
+    Suspend,
+    Hibernate,
 }
 
 impl Verb {
@@ -358,6 +407,8 @@ impl Verb {
         match self {
             Verb::PowerOff => "CanPowerOff",
             Verb::Reboot => "CanReboot",
+            Verb::Suspend => "CanSuspend",
+            Verb::Hibernate => "CanHibernate",
         }
     }
 
@@ -365,6 +416,8 @@ impl Verb {
         match self {
             Verb::PowerOff => "PowerOff",
             Verb::Reboot => "Reboot",
+            Verb::Suspend => "Suspend",
+            Verb::Hibernate => "Hibernate",
         }
     }
 
@@ -372,12 +425,22 @@ impl Verb {
         match self {
             Verb::PowerOff => "PowerOffWithFlags",
             Verb::Reboot => "RebootWithFlags",
+            Verb::Suspend => "SuspendWithFlags",
+            Verb::Hibernate => "HibernateWithFlags",
+        }
+    }
+
+    /// The inhibitor `what` that blocks this action.
+    fn inhibited_by(self) -> &'static str {
+        match self {
+            Verb::PowerOff | Verb::Reboot => "shutdown",
+            Verb::Suspend | Verb::Hibernate => "sleep",
         }
     }
 }
 
 /// The logind action `cmd` is when it says exactly `systemctl` or `loginctl`
-/// with `poweroff` or `reboot`; logind is then called directly, so polkit
+/// with `poweroff`, `reboot`, `suspend` or `hibernate`; logind is then called directly, so polkit
 /// sees the compositor and a dismissed prompt can be told apart.
 fn logind_verb(cmd: &str) -> Option<Verb> {
     let words: Vec<&str> = cmd.split_whitespace().collect();
@@ -391,6 +454,8 @@ fn logind_verb(cmd: &str) -> Option<Verb> {
     match verb {
         "poweroff" => Some(Verb::PowerOff),
         "reboot" => Some(Verb::Reboot),
+        "suspend" => Some(Verb::Suspend),
+        "hibernate" => Some(Verb::Hibernate),
         _ => None,
     }
 }
@@ -406,11 +471,11 @@ fn refused_by(answer: &str) -> Option<Refused> {
 }
 
 /// A refusal names the shutdown inhibitors, when there are any.
-async fn with_holders(conn: &zbus::Connection, why: Refused) -> Refused {
+async fn with_holders(conn: &zbus::Connection, verb: Verb, why: Refused) -> Refused {
     if !matches!(why, Refused::NotAllowed | Refused::Held(_)) {
         return why;
     }
-    let holders = logind_holders(conn).await;
+    let holders = logind_holders(conn, verb.inhibited_by()).await;
     if holders.is_empty() {
         why
     } else {
@@ -434,7 +499,7 @@ async fn can(verb: Verb) -> Option<Refused> {
     match reply {
         Ok(answer) => {
             log::info!("session end: {} says {answer:?}", verb.can());
-            Some(with_holders(&conn, refused_by(&answer)?).await)
+            Some(with_holders(&conn, verb, refused_by(&answer)?).await)
         }
         Err(e) => {
             log::warn!("session end: {}: {e}", verb.can());
@@ -495,7 +560,7 @@ async fn call(verb: Verb, override_inhibitors: bool) -> Option<Refused> {
     }
     .await;
     let e = reply.err()?;
-    Some(with_holders(&conn, failure(&e, reprisebus::polkit::dismissed)?).await)
+    Some(with_holders(&conn, verb, failure(&e, reprisebus::polkit::dismissed)?).await)
 }
 
 /// A failed logind call as a refusal; a dismissed password prompt is none.
@@ -792,7 +857,7 @@ async fn poll(tx: channel::Sender<Vec<Holder>>, stop: async_channel::Receiver<()
             None => Vec::new(),
         };
         if let Some(c) = &system {
-            held.extend(logind_holders(c).await);
+            held.extend(logind_holders(c, Verb::PowerOff.inhibited_by()).await);
         }
         if tx.send(held).is_err() {
             return;
@@ -857,7 +922,7 @@ async fn portal_holders(conn: &zbus::Connection, ending: bool) -> Vec<Holder> {
     }
 }
 
-async fn logind_holders(conn: &zbus::Connection) -> Vec<Holder> {
+async fn logind_holders(conn: &zbus::Connection, blocked: &str) -> Vec<Holder> {
     type Inhibitor = (String, String, String, String, u32, u32);
     let reply = conn
         .call_method(
@@ -870,9 +935,10 @@ async fn logind_holders(conn: &zbus::Connection) -> Vec<Holder> {
         .await
         .and_then(|m| m.body().deserialize::<Vec<Inhibitor>>());
     match reply {
-        Ok(v) => shutdown_blocks(
+        Ok(v) => blocks(
             v.into_iter()
                 .map(|(what, who, why, mode, _, _)| (what, who, why, mode)),
+            blocked,
         ),
         Err(e) => {
             log::warn!("session end: logind: {e}");
@@ -881,8 +947,12 @@ async fn logind_holders(conn: &zbus::Connection) -> Vec<Holder> {
     }
 }
 
-fn shutdown_blocks(list: impl Iterator<Item = (String, String, String, String)>) -> Vec<Holder> {
-    list.filter(|(what, _, _, mode)| mode == "block" && what.split(':').any(|w| w == "shutdown"))
+/// The block inhibitors in `list` (what, who, why, mode) that hold `blocked`.
+fn blocks(
+    list: impl Iterator<Item = (String, String, String, String)>,
+    blocked: &str,
+) -> Vec<Holder> {
+    list.filter(|(what, _, _, mode)| mode == "block" && what.split(':').any(|w| w == blocked))
         .map(|(_, who, why, _)| Holder {
             who,
             why,
@@ -1002,18 +1072,28 @@ mod tests {
     }
 
     #[test]
-    fn only_shutdown_blocks_are_listed() {
+    fn only_blocks_of_the_action_are_listed() {
         let s = |a: &str, b: &str, c: &str, d: &str| (a.into(), b.into(), c.into(), d.into());
-        let got = shutdown_blocks(
+        let list = || {
             vec![
                 s("shutdown:sleep", "packagekit", "Installing", "block"),
                 s("shutdown", "NetworkManager", "Saving", "delay"),
                 s("sleep", "portal", "Playing", "block"),
                 s("handle-power-key:handle-lid-switch", "reprise", "", "block"),
             ]
-            .into_iter(),
+            .into_iter()
+        };
+        assert_eq!(
+            blocks(list(), Verb::PowerOff.inhibited_by()),
+            [holder("packagekit", "Installing", true)]
         );
-        assert_eq!(got, [holder("packagekit", "Installing", true)]);
+        assert_eq!(
+            blocks(list(), Verb::Suspend.inhibited_by()),
+            [
+                holder("packagekit", "Installing", true),
+                holder("portal", "Playing", true)
+            ]
+        );
     }
 
     #[test]
@@ -1023,7 +1103,9 @@ mod tests {
         assert_eq!(logind_verb("/usr/bin/systemctl reboot"), Some(Verb::Reboot));
         assert_eq!(logind_verb("systemctl poweroff -i"), None);
         assert_eq!(logind_verb("sudo systemctl poweroff"), None);
-        assert_eq!(logind_verb("systemctl suspend"), None);
+        assert_eq!(logind_verb("systemctl suspend"), Some(Verb::Suspend));
+        assert_eq!(logind_verb("loginctl hibernate"), Some(Verb::Hibernate));
+        assert_eq!(logind_verb("systemctl suspend-then-hibernate"), None);
         assert_eq!(logind_verb("my-poweroff"), None);
         assert_eq!(logind_verb(""), None);
     }
@@ -1106,7 +1188,7 @@ mod tests {
     #[test]
     fn the_message_names_the_action_and_why() {
         assert_eq!(
-            refusal_text(Goal::Restart, &Refused::NotAllowed),
+            refusal_text(Act::Restart, &Refused::NotAllowed),
             "Reprise could not restart the computer.\n\nYou are not allowed to restart this computer."
         );
         let held = Refused::Held(vec![
@@ -1114,13 +1196,25 @@ mod tests {
             holder("backup", "", true),
         ]);
         assert_eq!(
-            refusal_text(Goal::TurnOff, &held),
+            refusal_text(Act::TurnOff, &held),
             "Reprise could not turn off the computer.\n\n\
              These programs are preventing it:\npackagekit: Installing updates\nbackup"
         );
         assert!(
-            refusal_text(Goal::TurnOff, &Refused::Held(Vec::new()))
+            refusal_text(Act::TurnOff, &Refused::Held(Vec::new()))
                 .ends_with("\n\nA program is preventing it.")
+        );
+        assert_eq!(
+            refusal_text(Act::StandBy, &Refused::NotAllowed),
+            "Reprise could not put the computer on stand by.\n\n\
+             You are not allowed to put this computer on stand by."
+        );
+        assert_eq!(
+            refusal_text(
+                Act::Hibernate,
+                &Refused::Failed("Unit hibernate.target is masked.".into())
+            ),
+            "Reprise could not hibernate the computer.\n\nUnit hibernate.target is masked."
         );
     }
 }

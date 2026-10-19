@@ -2031,6 +2031,10 @@ impl State {
                 self.close_dialog();
                 self.spawn_from_dialog(&cmd);
             }
+            Outcome::StandBy(cmd) => {
+                self.close_dialog();
+                crate::sessionend::sleep(self, crate::sessionend::Act::StandBy, cmd);
+            }
             Outcome::EndSession(goal, cmd) => {
                 self.close_dialog();
                 crate::sessionend::begin(self, goal, Some(cmd));

@@ -274,6 +274,8 @@ are.
   logind first: when it says no, nothing closes. A refusal before or after
   the programs close (polkit, an inhibitor, a failing `[power]` command)
   shows a message saying why; a cancelled password prompt shows nothing.
+  Stand By and Hibernate close nothing, and say why the same way when the
+  computer stays up.
   End Now overrides the inhibitors the list showed, which usually asks for
   a password; a critical battery overrides them too.
 - **Session restore.** `[session] restore = true` starts the programs you
