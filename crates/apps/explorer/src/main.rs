@@ -198,9 +198,6 @@ pub struct Explorer {
     pub focus: Focus,
     pub undo: Option<&'static str>,
     pub undos: reprisefs::undo::UndoStack,
-    /// Always true: nothing can ask the compositor what the clipboard holds
-    /// without pasting, so an empty paste is a no-op.
-    pub can_paste: bool,
     /// Where an asked-for paste goes, captured then: the answer arrives an
     /// event later, when the window may have moved somewhere that takes no writes.
     pub paste: Option<fileops::PasteTo>,
@@ -414,7 +411,6 @@ impl Explorer {
             focus: Focus::View,
             undo: None,
             undos: reprisefs::undo::UndoStack::default(),
-            can_paste: true,
             paste: None,
             menu_paste: None,
             app_index,
@@ -554,7 +550,7 @@ impl Explorer {
             mode: self.sv.mode,
             sort: self.sv.sort.unwrap_or(self.settings.sort),
             selection: self.sv.selection.len(),
-            can_paste: self.can_paste,
+            can_paste: repriseapp::clipboard_has_files(),
             can_undo: self.undo,
             folders: self.settings.folders,
             status_bar: self.settings.status_bar,

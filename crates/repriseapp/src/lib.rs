@@ -1650,10 +1650,14 @@ impl Host {
         }
         filedlg::thumbs_on(&mut *self.app, win, &self.ctx.wake);
         // Read off the live offer: sctk calls `selection` for a new offer but not for a cleared one.
+        let offer = self.selection_offer();
         CLIPBOARD_TEXT.set(
-            self.selection_offer()
+            offer
+                .as_ref()
                 .is_some_and(|o| o.with_mime_types(text_mime).is_some()),
         );
+        CLIPBOARD_FILES
+            .set(offer.is_some_and(|o| o.with_mime_types(reprisefs::fileclip::source).is_some()));
         let mut reply = self.app.event(win, ev, &mut self.ctx);
         reply.tick |= self.ctx.want_tick.take();
         self.apply(win, reply);
@@ -4409,6 +4413,8 @@ fn text_mime(types: &[String]) -> Option<&'static str> {
 thread_local! {
     /// Set on the event loop's thread before each `App::event`.
     static CLIPBOARD_TEXT: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// Set alongside `CLIPBOARD_TEXT`.
+    static CLIPBOARD_FILES: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
 /// Whether the clipboard holds text a paste ([`Reply::paste`]) would read, as of the event being
@@ -4421,6 +4427,18 @@ pub fn clipboard_has_text() -> bool {
 #[doc(hidden)]
 pub fn fake_clipboard_text(on: bool) {
     CLIPBOARD_TEXT.set(on);
+}
+
+/// Whether the clipboard holds files a [`Reply::paste_files`] would read, as of the event being
+/// handled; false before a window first had the keyboard.
+pub fn clipboard_has_files() -> bool {
+    CLIPBOARD_FILES.get()
+}
+
+/// Stands in for the compositor's offer in a program's tests, on the calling thread.
+#[doc(hidden)]
+pub fn fake_clipboard_files(on: bool) {
+    CLIPBOARD_FILES.set(on);
 }
 
 static TAB_GROUPS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
