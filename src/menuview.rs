@@ -136,6 +136,10 @@ pub enum MenuKind {
         bar: TreeId,
         files: Vec<String>,
     },
+    /// A field's edit menu (`editmenuview`), its rows `editmenu::items`.
+    Edit {
+        editor: crate::caret::Editor,
+    },
 }
 
 /// What row `idx` of a menu stands for, resolved through the kind's own parallel
@@ -184,6 +188,10 @@ pub enum MenuPick {
         key: TaskKey<WindowId>,
     },
     QuickOverflow(String),
+    Edit {
+        editor: crate::caret::Editor,
+        command: reprisekit::controls::editmenu::Command,
+    },
 }
 
 impl MenuKind {
@@ -287,6 +295,13 @@ impl MenuKind {
                 .get(idx)
                 .cloned()
                 .map_or(MenuPick::Nothing, MenuPick::QuickOverflow),
+            MenuKind::Edit { editor } => reprisekit::controls::editmenu::command(&[idx]).map_or(
+                MenuPick::Nothing,
+                |command| MenuPick::Edit {
+                    editor: *editor,
+                    command,
+                },
+            ),
         }
     }
 
@@ -2181,6 +2196,12 @@ impl State {
         if !enabled {
             return;
         }
+        // The field the menu edits stays open under it.
+        if let MenuPick::Edit { editor, command } = pick {
+            self.close_menu();
+            self.edit_menu_pick(editor, command);
+            return;
+        }
         if pick_closes_start_panel(&pick) {
             self.close_start_panel();
         }
@@ -2231,6 +2252,7 @@ impl State {
                     self.run_quick(k);
                 }
             }
+            MenuPick::Edit { .. } => {}
             MenuPick::TaskOverflow { bar, key } => {
                 let button = (self.bar(bar))
                     .and_then(|b| crate::taskbar::find_task(&b.buttons, &b.pins, &b.dialogs, &key));

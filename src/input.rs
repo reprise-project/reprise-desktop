@@ -1474,6 +1474,8 @@ impl State {
             } => {
                 if button == BTN_LEFT {
                     self.dialog_press(index, dialog_button, time.millis());
+                } else if button == BTN_RIGHT {
+                    self.dialog_right_press(index, dialog_button, at);
                 } else if let Some(nav) = reprisekit::pointer::nav_button(button) {
                     self.dialog_nav(index, nav);
                 }
@@ -1483,6 +1485,10 @@ impl State {
             // press that stays put opens the icon's menu on the release.
             Hit::Desktop { index } => {
                 self.focus_desktop();
+                if button == BTN_RIGHT && self.rename_right_press(pos.x, pos.y) {
+                    self.open_edit_menu(Some(at));
+                    return;
+                }
                 // During a rename a press in its box moves the caret (and
                 // may drag-select); anywhere else commits the name first.
                 if self.rename_press(pos.x, pos.y, time.millis()) {
