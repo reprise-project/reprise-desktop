@@ -11,16 +11,17 @@ use repriseapp::keys::AltArm;
 use repriseapp::keys::dialog_key;
 use repriseapp::oneshot::{self, MsgBox};
 use repriseapp::{
-    App, BTN_LEFT, Child, Ctx, DropForm, Event, FileDrop, KeyInput, MAIN, PointerInput, Reply,
-    WinId,
+    App, BTN_LEFT, BTN_RIGHT, Child, Ctx, DropForm, Event, FileDrop, KeyInput, MAIN, PointerInput,
+    Reply, WinId,
 };
 use reprisekit::access::{ROOT, Tree};
 use reprisekit::classic::widgets::{self, Axis, ScrollHit};
 use reprisekit::controls::aboutbox;
+use reprisekit::controls::editmenu;
 use reprisekit::controls::filedlg::{CLIENT, DlgMode, Event as FileEvent, Fields, FileDlg};
 use reprisekit::controls::finddlg;
 use reprisekit::controls::form::{self, Control, Form, Item};
-use reprisekit::controls::menu::MenuItem;
+use reprisekit::controls::menu::{MenuAction, MenuCtx, MenuItem, MenuKey, MenuTree, PopupMenu};
 use reprisekit::controls::menubar::{self, Action, Bar, Key};
 use reprisekit::controls::msgbox;
 use reprisekit::controls::multiedit::{self, Metrics, MultiEdit, MultiKey, View};
@@ -215,6 +216,8 @@ struct Notepad {
     saveas: Option<FileDlg>,
     host: Host,
     hover: Option<Hover>,
+    /// The text box's right-click menu while it is open.
+    context: Option<(MenuTree, PopupMenu)>,
 }
 
 fn mi(label: &str, shortcut: Option<&str>, enabled: bool) -> MenuItem {
@@ -379,6 +382,7 @@ impl Notepad {
             saveas: None,
             host: Host::default(),
             hover: None,
+            context: None,
         };
         if let Some((p, e)) = failed {
             np.open_failed(&p, &e);
@@ -626,14 +630,24 @@ impl Notepad {
         let lay = self.bar_layout(ctx);
         let m = &ctx.theme;
         let px = ctx.theme.fonts.size_px;
+        if self.context.is_some() {
+            return self.context_key(&k, ctx);
+        }
         let is_alt = k.sym == keysym::ALT_L || k.sym == keysym::ALT_R;
         if is_alt {
             self.alt_arm.press_alt();
             return Reply::none();
         }
         self.alt_arm.interrupt();
+        if k.sym == keysym::MENU || (k.sym == keysym::F10 && k.mods.shift) {
+            self.bar.close();
+            let at = self.caret_point(ctx);
+            self.open_context(at, true, ctx);
+            return Reply::redraw();
+        }
         let bar_key = match k.sym {
-            keysym::F10 => Some(Key::Activate),
+            // Shift+F10 is the text box's context menu key, not the menu bar's.
+            keysym::F10 if !k.mods.shift => Some(Key::Activate),
             keysym::ESCAPE => Some(Key::Escape),
             keysym::LEFT | keysym::KP_LEFT => Some(Key::Left),
             keysym::RIGHT | keysym::KP_RIGHT => Some(Key::Right),
@@ -727,6 +741,9 @@ impl Notepad {
         if matches!(p, PointerInput::Press { .. }) {
             self.alt_arm.interrupt();
         }
+        if self.context.is_some() {
+            return self.context_pointer(p, ctx);
+        }
         let lay = self.bar_layout(ctx);
         let m = &ctx.theme;
         let px = ctx.theme.fonts.size_px;
@@ -780,6 +797,34 @@ impl Notepad {
                     return Reply::redraw();
                 }
                 if lit { Reply::redraw() } else { Reply::none() }
+            }
+            PointerInput::Press {
+                x,
+                y,
+                button: BTN_RIGHT,
+                ..
+            } => {
+                let el = self.edit_layout(ctx);
+                if !el.inner.contains(x, y) {
+                    return Reply::none();
+                }
+                self.bar.close();
+                let pos = multiedit::pos_at(
+                    &self.mono,
+                    &self.metrics,
+                    &self.edit,
+                    &el,
+                    self.view,
+                    x,
+                    y,
+                    1,
+                );
+                let (start, end) = self.edit.selection();
+                if !(self.edit.has_selection() && (start..=end).contains(&pos)) {
+                    self.edit.place(pos, false);
+                }
+                self.open_context((x, y), false, ctx);
+                Reply::redraw()
             }
             PointerInput::Release { .. } => {
                 self.dragging = None;
@@ -950,6 +995,107 @@ impl Notepad {
             form::Event::None => Reply::none(),
             _ => Reply::redraw(),
         }
+    }
+
+    fn menu_ctx<'a>(&self, ctx: &'a Ctx) -> MenuCtx<'a> {
+        MenuCtx {
+            text: &ctx.text,
+            theme: &ctx.theme,
+            px: ctx.theme.fonts.size_px,
+            within: self.client(ctx),
+        }
+    }
+
+    /// Opens the text box's context menu with its top-left at `at`, greyed like the Edit menu.
+    fn open_context(&mut self, at: (i32, i32), by_keyboard: bool, ctx: &Ctx) {
+        let tree = editmenu::tree(editmenu::Live {
+            undo: self.edit.can_undo(),
+            selection: self.edit.has_selection(),
+            paste: repriseapp::clipboard_has_text(),
+        });
+        let chain = PopupMenu::open(&tree, at, &self.menu_ctx(ctx), by_keyboard);
+        self.context = Some((tree, chain));
+    }
+
+    /// Below the caret's line, where Shift+F10 and the Menu key open the context menu.
+    fn caret_point(&self, ctx: &Ctx) -> (i32, i32) {
+        let el = self.edit_layout(ctx);
+        let caret = self.edit.caret();
+        let x = multiedit::x_of(&self.mono, &self.metrics, &self.edit, caret) - self.view.left;
+        let row = caret.line.saturating_sub(self.view.top) as i32 + 1;
+        let at = (
+            el.inner.x + 1 + x,
+            el.inner.y + 1 + row * self.metrics.line_h,
+        );
+        (
+            at.0.clamp(el.inner.x, el.inner.right()),
+            at.1.clamp(el.inner.y, el.inner.bottom()),
+        )
+    }
+
+    fn context_step(&mut self, act: MenuAction, ctx: &Ctx) -> Reply {
+        match act {
+            MenuAction::Chosen(path) => {
+                self.context = None;
+                let row = match editmenu::command(&path) {
+                    Some(editmenu::Command::Undo) => row::UNDO,
+                    Some(editmenu::Command::Cut) => row::CUT,
+                    Some(editmenu::Command::Copy) => row::COPY,
+                    Some(editmenu::Command::Paste) => row::PASTE,
+                    Some(editmenu::Command::Delete) => row::DELETE,
+                    Some(editmenu::Command::SelectAll) => row::SELECT_ALL,
+                    None => return Reply::redraw(),
+                };
+                Reply {
+                    redraw: true,
+                    ..self.command(title::EDIT, row, ctx)
+                }
+            }
+            MenuAction::Close => {
+                self.context = None;
+                Reply::redraw()
+            }
+            MenuAction::Redraw => Reply::redraw(),
+            MenuAction::None => Reply::none(),
+        }
+    }
+
+    /// The pointer while the context menu is open: a press anywhere picks a row or closes it.
+    fn context_pointer(&mut self, p: PointerInput, ctx: &Ctx) -> Reply {
+        let cx = self.menu_ctx(ctx);
+        let Some((tree, chain)) = self.context.as_mut() else {
+            return Reply::none();
+        };
+        match p {
+            PointerInput::Press { x, y, .. } => {
+                let act = chain.click(tree, x, y, &cx);
+                self.context_step(act, ctx)
+            }
+            PointerInput::Motion { x, y } if chain.motion(tree, x, y, &cx) => Reply::redraw(),
+            _ => Reply::none(),
+        }
+    }
+
+    /// Every key goes to the open context menu; the ones it has no use for do nothing.
+    fn context_key(&mut self, k: &KeyInput, ctx: &Ctx) -> Reply {
+        let key = match k.sym {
+            keysym::ESCAPE => MenuKey::Escape,
+            keysym::UP | keysym::KP_UP => MenuKey::Up,
+            keysym::DOWN | keysym::KP_DOWN => MenuKey::Down,
+            keysym::LEFT | keysym::KP_LEFT => MenuKey::Left,
+            keysym::RIGHT | keysym::KP_RIGHT => MenuKey::Right,
+            keysym::RETURN | keysym::KP_ENTER => MenuKey::Enter,
+            _ => match k.utf8.as_deref().and_then(|s| s.chars().next()) {
+                Some(c) if c.is_alphanumeric() => MenuKey::Char(c),
+                _ => return Reply::none(),
+            },
+        };
+        let cx = self.menu_ctx(ctx);
+        let Some((tree, chain)) = self.context.as_mut() else {
+            return Reply::none();
+        };
+        let act = chain.key(tree, key, &cx);
+        self.context_step(act, ctx)
     }
 
     /// Grey the rows that cannot act.
@@ -1914,6 +2060,7 @@ impl Notepad {
             Event::CloseRequest => self.confirm_then(PendingAction::Quit),
             Event::Focus(false) => {
                 self.alt_arm.interrupt();
+                self.context = None;
                 Reply::redraw()
             }
             Event::Resized | Event::Blink | Event::Focus(_) => Reply::redraw(),
@@ -1995,6 +2142,9 @@ impl Notepad {
         }
         let lay = self.bar_layout(ctx);
         self.bar.draw(c, &ctx.text, &ctx.theme, &lay);
+        if let Some((_, chain)) = &self.context {
+            chain.draw(c, &ctx.theme, &ctx.text, ctx.theme.access_keys);
+        }
     }
 
     fn status(&self, ctx: &Ctx) -> Option<(StatusBar, Rect)> {
@@ -2039,7 +2189,11 @@ impl Notepad {
         if let Some((bar, r)) = self.status(ctx) {
             statusbar::access(&bar, r, ctx.theme.text, tree, ROOT);
         }
-        tree.set_focus(menus.unwrap_or(edit));
+        let context = self
+            .context
+            .as_ref()
+            .map(|(_, chain)| chain.access(tree, ROOT, "context"));
+        tree.set_focus(context.or(menus).unwrap_or(edit));
     }
 }
 
@@ -2356,6 +2510,165 @@ mod tests {
         np.event(MAIN, key(EditKey::Insert("x".into())), &mut ctx);
         assert!(on(&np, row::UNDO), "typing makes Undo live");
         assert!(!on(&np, row::CUT), "the typed text replaced the selection");
+    }
+
+    fn right_press(x: i32, y: i32) -> PointerInput {
+        PointerInput::Press {
+            x,
+            y,
+            button: BTN_RIGHT,
+            time: 0,
+            mods: repriseapp::Mods::default(),
+        }
+    }
+
+    fn typed(sym: u32, utf8: Option<&str>, shift: bool) -> Event {
+        Event::Key(KeyInput {
+            sym,
+            utf8: utf8.map(str::to_string),
+            mods: repriseapp::Mods {
+                shift,
+                ..Default::default()
+            },
+            edit: None,
+        })
+    }
+
+    /// Where a press lands on the gap before `col` on the first line.
+    fn at_col(np: &Notepad, ctx: &Ctx, col: usize) -> (i32, i32) {
+        let el = np.edit_layout(ctx);
+        let x = multiedit::x_of(
+            &np.mono,
+            &np.metrics,
+            &np.edit,
+            multiedit::Pos { line: 0, col },
+        );
+        (el.inner.x + 1 + x - np.view.left, el.inner.y + 2)
+    }
+
+    fn context_rows(np: &Notepad) -> Vec<bool> {
+        let (tree, _) = np.context.as_ref().expect("the context menu is open");
+        tree.iter()
+            .filter_map(|item| match item {
+                MenuItem::Entry { enabled, .. } => Some(*enabled),
+                MenuItem::Separator => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_right_click_keeps_the_selection_under_it_and_moves_the_caret_outside_it() {
+        let mut ctx = test_ctx();
+        let mut np = Notepad::new(None);
+        np.edit = MultiEdit::new("alpha beta gamma");
+        np.edit.place(multiedit::Pos { line: 0, col: 6 }, false);
+        np.edit.place(multiedit::Pos { line: 0, col: 10 }, true);
+
+        let (x, y) = at_col(&np, &ctx, 8);
+        np.event(MAIN, Event::Pointer(right_press(x, y)), &mut ctx);
+        assert_eq!(np.edit.selected_text(), "beta", "the selection stays");
+        assert_eq!(
+            context_rows(&np),
+            [false, true, true, false, true, true],
+            "Undo and Paste greyed, Cut, Copy, Delete and Select All live"
+        );
+        np.event(MAIN, typed(keysym::ESCAPE, None, false), &mut ctx);
+        assert!(np.context.is_none(), "Escape closes the menu");
+
+        let (x, y) = at_col(&np, &ctx, 2);
+        np.event(MAIN, Event::Pointer(right_press(x, y)), &mut ctx);
+        assert!(
+            !np.edit.has_selection(),
+            "a click off the selection drops it"
+        );
+        assert_eq!(np.edit.caret(), multiedit::Pos { line: 0, col: 2 });
+        assert_eq!(context_rows(&np), [false, false, false, false, false, true]);
+
+        let (x, y) = at_col(&np, &ctx, 0);
+        np.event(MAIN, Event::Pointer(right_press(x, y)), &mut ctx);
+        assert!(np.context.is_none(), "a press off the menu only closes it");
+        assert_eq!(np.edit.caret(), multiedit::Pos { line: 0, col: 2 });
+    }
+
+    #[test]
+    fn the_context_menu_runs_the_edit_commands() {
+        let mut ctx = test_ctx();
+        let mut np = Notepad::new(None);
+        np.edit = MultiEdit::new("alpha");
+        repriseapp::fake_clipboard_text(true);
+        let (x, y) = at_col(&np, &ctx, 1);
+        let open = |np: &mut Notepad, ctx: &mut Ctx| {
+            np.event(MAIN, Event::Pointer(right_press(x, y)), ctx);
+        };
+
+        open(&mut np, &mut ctx);
+        assert!(
+            context_rows(&np)[3],
+            "text on the clipboard makes Paste live"
+        );
+        np.event(MAIN, typed(0x61, Some("a"), false), &mut ctx);
+        assert!(np.context.is_none());
+        assert_eq!(np.edit.selected_text(), "alpha", "Select All");
+
+        open(&mut np, &mut ctx);
+        let copy = np.event(MAIN, typed(0x63, Some("c"), false), &mut ctx);
+        assert_eq!(copy.copy.as_deref(), Some("alpha"));
+
+        open(&mut np, &mut ctx);
+        let paste = np.event(MAIN, typed(0x70, Some("p"), false), &mut ctx);
+        assert!(paste.paste);
+
+        open(&mut np, &mut ctx);
+        np.event(MAIN, typed(0x64, Some("d"), false), &mut ctx);
+        assert_eq!(np.edit.text(), "", "Delete");
+        assert!(np.dirty);
+
+        open(&mut np, &mut ctx);
+        np.event(MAIN, typed(0x75, Some("u"), false), &mut ctx);
+        assert_eq!(np.edit.text(), "alpha", "Undo");
+        repriseapp::fake_clipboard_text(false);
+    }
+
+    #[test]
+    fn shift_f10_opens_the_context_menu_under_the_caret_and_it_draws_over_the_text() {
+        let mut ctx = test_ctx();
+        let mut np = Notepad::new(None);
+        np.edit = MultiEdit::new("alpha\nbeta");
+        np.edit.place(multiedit::Pos { line: 1, col: 2 }, false);
+        let mut before = Canvas::new(ctx.size.0 as u32, ctx.size.1 as u32);
+        np.draw_main(&mut before, &ctx);
+
+        np.event(MAIN, typed(keysym::F10, None, true), &mut ctx);
+        assert!(np.bar.open.is_none(), "Shift+F10 is not the menu bar's F10");
+        let (_, chain) = np.context.as_ref().expect("Shift+F10 opens the menu");
+        let el = np.edit_layout(&ctx);
+        let caret_x = multiedit::x_of(&np.mono, &np.metrics, &np.edit, np.edit.caret());
+        assert_eq!(
+            (chain.rect().x, chain.rect().y),
+            (
+                el.inner.x + 1 + caret_x,
+                el.inner.y + 1 + 2 * np.metrics.line_h
+            ),
+            "the menu's corner sits under the caret"
+        );
+        let r = chain.rect();
+        let mut after = Canvas::new(ctx.size.0 as u32, ctx.size.1 as u32);
+        np.draw_main(&mut after, &ctx);
+        let changed = (r.y..r.bottom())
+            .flat_map(|y| (r.x..r.right()).map(move |x| (x, y)))
+            .filter(|&(x, y)| before.get(x, y) != after.get(x, y))
+            .count();
+        assert!(changed > 0, "the menu draws over the text");
+        assert_eq!(
+            before.get(r.right() + 40, r.y - 4),
+            after.get(r.right() + 40, r.y - 4),
+            "and nowhere else"
+        );
+
+        np.event(MAIN, Event::Focus(false), &mut ctx);
+        assert!(np.context.is_none(), "losing the keyboard closes it");
+        np.event(MAIN, typed(keysym::MENU, None, false), &mut ctx);
+        assert!(np.context.is_some(), "the Menu key opens it too");
     }
 
     /// Find's Cancel lights under the pointer and goes cold when the pointer leaves; held and
