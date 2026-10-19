@@ -165,6 +165,9 @@ impl State {
         let modes = self.key_modes();
         let globals = self.global_binds();
         let mut routed = crate::keyroute::route(&modes, &k, &self.config.keybinds, &globals);
+        if k.pressed && self.edit_menu_key(&routed.route, &k.syms, k.mods) {
+            routed.route = KeyRoute::Swallow;
+        }
         // The release of a key pressed during a drag: its press reached
         // no client, so neither does the release.
         if let Some(i) = self.key_input.drag_keys.iter().position(|&c| c == keycode) {
