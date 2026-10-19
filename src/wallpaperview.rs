@@ -54,6 +54,30 @@ pub struct Wallpaper {
     still: Option<(StillKey, Rc<Canvas>)>,
 }
 
+/// A wallpaper picture shared with a job composing from it.
+#[derive(Clone)]
+enum Shared {
+    Drawn(Arc<Canvas>),
+    Image(Arc<Loaded>),
+}
+
+impl Shared {
+    fn canvas(&self) -> &Canvas {
+        match self {
+            Shared::Drawn(c) => c,
+            Shared::Image(l) => &l.image,
+        }
+    }
+
+    fn same(&self, other: &Shared) -> bool {
+        match (self, other) {
+            (Shared::Drawn(a), Shared::Drawn(b)) => Arc::ptr_eq(a, b),
+            (Shared::Image(a), Shared::Image(b)) => Arc::ptr_eq(a, b),
+            _ => false,
+        }
+    }
+}
+
 /// What a desktop entry's still depends on besides the wallpaper's own pictures.
 #[derive(PartialEq)]
 struct StillKey {
@@ -116,8 +140,25 @@ impl Wallpaper {
     /// a built-in's own picture of that size, else the file's.
     fn source(&self, size: (u32, u32)) -> Option<&Canvas> {
         match &self.builtin {
-            Some((_, d)) => d.get(size),
+            Some((_, d)) => d.get(size).map(|p| &**p),
             None => self.image.as_ref().map(|l| &l.image),
+        }
+    }
+
+    /// The picture the still of `key` is composed from: a built-in's of the output's `size`
+    /// (any for the whole layout), else the file's.
+    fn still_source(&self, key: &StillKey, size: (u32, u32)) -> Option<Shared> {
+        match &self.builtin {
+            Some((_, d)) if key.out.is_none() => d.any().cloned().map(Shared::Drawn),
+            Some((_, d)) => d.get(size).cloned().map(Shared::Drawn),
+            None => self.image.clone().map(Shared::Image),
+        }
+    }
+
+    /// A still composed on a job from `src` lands: kept unless a picture landed meanwhile.
+    fn land_still(&mut self, key: StillKey, size: (u32, u32), src: &Shared, still: Canvas) {
+        if self.still_source(&key, size).is_some_and(|s| s.same(src)) {
+            self.still = Some((key, Rc::new(still)));
         }
     }
 
@@ -602,7 +643,7 @@ impl State {
         for (out, b, scale, size) in shown {
             let source = match &w.builtin {
                 _ if !ready => None,
-                Some((_, drawn)) => drawn.get(size),
+                Some((_, drawn)) => drawn.get(size).map(|p| &**p),
                 None => w.image.as_ref().map(|l| &l.image),
             };
             let Some(source) = source else {
@@ -772,14 +813,9 @@ impl State {
     /// the Alt+Tab desktop entry's picture, kept until it would differ. The
     /// background colour alone without a wallpaper or before its decode lands.
     pub fn wallpaper_thumbnail(&mut self, out: Option<&Output>, w: i32, h: i32) -> Rc<Canvas> {
-        let (w, h) = (w.max(1) as u32, h.max(1) as u32);
-        let bg = self.config.theme.colors.background;
-        let position = self.config.wallpaper.position;
-        let b = self.layout_box(out);
-        // A built-in's picture of the output's own size; any of them for
-        // the whole layout.
-        let scale = self.draw_scale_at(out);
-        let size = ((b.width * scale) as u32, (b.height * scale) as u32);
+        let (key, size) = self.still_key(out, w, h);
+        let (w, h) = key.size;
+        let bg = key.bg;
         let fill = || {
             let mut c = Canvas::new(w, h);
             c.fill_rect(c.bounds(), bg);
@@ -788,26 +824,53 @@ impl State {
         let Some(wp) = self.wallpaper.as_mut() else {
             return Rc::new(fill());
         };
+        let (position, width) = (key.position, key.layout.width);
+        let source = wp.still_source(&key, size);
+        wp.still(key, |_| match source {
+            Some(src) if width > 0 => {
+                crate::wallpaper::compose(src.canvas(), w, h, position, bg, w as f32 / width as f32)
+            }
+            _ => fill(),
+        })
+    }
+
+    /// Compose on a job the still `wallpaper_thumbnail` would return, so its first call finds it.
+    pub fn warm_wallpaper_thumbnail(&mut self, out: Option<&Output>, w: i32, h: i32) {
+        let (key, size) = self.still_key(out, w, h);
+        let Some(wp) = self.wallpaper.as_ref() else {
+            return;
+        };
+        if key.layout.width <= 0 || wp.still.as_ref().is_some_and(|(k, _)| *k == key) {
+            return;
+        }
+        let Some(src) = wp.still_source(&key, size) else {
+            return;
+        };
+        self.spawn_job(move || {
+            let (w, h) = key.size;
+            let ratio = w as f32 / key.layout.width as f32;
+            let still = crate::wallpaper::compose(src.canvas(), w, h, key.position, key.bg, ratio);
+            Box::new(move |state: &mut State| {
+                if let Some(wp) = state.wallpaper.as_mut() {
+                    wp.land_still(key, size, &src, still);
+                }
+            })
+        });
+    }
+
+    /// The still key for `out`'s wallpaper at `w` x `h`, and the output's device size.
+    fn still_key(&self, out: Option<&Output>, w: i32, h: i32) -> (StillKey, (u32, u32)) {
+        let b = self.layout_box(out);
+        let scale = self.draw_scale_at(out);
         let key = StillKey {
             out: out.cloned(),
-            size: (w, h),
+            size: (w.max(1) as u32, h.max(1) as u32),
             layout: b,
             scale,
-            position,
-            bg,
+            position: self.config.wallpaper.position,
+            bg: self.config.theme.colors.background,
         };
-        wp.still(key, |wp| {
-            let image = match (&wp.builtin, out) {
-                (Some((_, drawn)), None) => drawn.any(),
-                _ => wp.source(size),
-            };
-            match image {
-                Some(image) if b.width > 0 => {
-                    crate::wallpaper::compose(image, w, h, position, bg, w as f32 / b.width as f32)
-                }
-                _ => fill(),
-            }
-        })
+        (key, ((b.width * scale) as u32, (b.height * scale) as u32))
     }
 }
 
@@ -886,6 +949,33 @@ mod tests {
         });
         still(&mut w, 2560);
         assert_eq!(composed.get(), 3, "a landed picture composes again");
+    }
+
+    #[test]
+    fn a_still_composed_on_a_job_is_kept_unless_a_picture_landed_meanwhile() {
+        let key = || StillKey {
+            out: None,
+            size: (160, 90),
+            layout: Rect::new(0, 0, 1920, 1080),
+            scale: 1,
+            position: Position::Stretch,
+            bg: Color::rgb(0, 0, 0),
+        };
+        let size = (1920, 1080);
+        let picture = |n| Loaded {
+            image: Canvas::new(n, n),
+            cut: None,
+        };
+        let mut w = Wallpaper::new(Path::new("/srv/w/a.jpg"));
+        assert!(w.still_source(&key(), size).is_none(), "nothing to compose");
+        w.land_image(picture(4));
+        let src = w.still_source(&key(), size).expect("the file's picture");
+        w.land_image(picture(8));
+        w.land_still(key(), size, &src, Canvas::new(160, 90));
+        assert!(w.still.is_none(), "composed from a picture since replaced");
+        let src = w.still_source(&key(), size).expect("the file's picture");
+        w.land_still(key(), size, &src, Canvas::new(160, 90));
+        w.still(key(), |_| panic!("the landed still is kept for its key"));
     }
 
     #[test]

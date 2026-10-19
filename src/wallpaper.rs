@@ -3,6 +3,7 @@
 
 use crate::raster::Canvas;
 use std::path::Path;
+use std::sync::Arc;
 
 pub use reprisekit::wallpaper::{Position, compose, composed};
 use reprisekit::wallpapers::{self, Builtin};
@@ -66,7 +67,8 @@ pub fn draw(b: Builtin, w: u32, h: u32) -> Canvas {
 /// A built-in's pictures, one per output device size, drawn and being drawn.
 #[derive(Default)]
 pub struct Drawn {
-    pictures: Vec<Canvas>,
+    /// Shared with the jobs composing Alt+Tab's desktop still.
+    pictures: Vec<Arc<Canvas>>,
     drawing: Vec<(u32, u32)>,
 }
 
@@ -94,15 +96,15 @@ impl Drawn {
             return false;
         };
         self.drawing.swap_remove(i);
-        self.pictures.push(picture);
+        self.pictures.push(Arc::new(picture));
         true
     }
 
-    pub fn get(&self, size: (u32, u32)) -> Option<&Canvas> {
+    pub fn get(&self, size: (u32, u32)) -> Option<&Arc<Canvas>> {
         self.pictures.iter().find(|p| (p.width, p.height) == size)
     }
 
-    pub fn any(&self) -> Option<&Canvas> {
+    pub fn any(&self) -> Option<&Arc<Canvas>> {
         self.pictures.first()
     }
 }
