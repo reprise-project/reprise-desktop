@@ -554,14 +554,15 @@ fn act(state: &mut State, surface: Surface, req: Request) {
     }
 }
 
-/// Give the keyboard to what lies at layout point `at` on dialog `index`, pressing nothing.
+/// Give the keyboard to what lies at layout point `at` on dialog `index`, pressing nothing, with
+/// its focus rectangle shown.
 fn focus_dialog(state: &mut State, index: usize, at: (f64, f64)) {
     let px = state.config.theme.fonts.size_px;
     let Some(v) = state.dialogs.views.get_mut(index) else {
         return;
     };
-    let (x, y) = (at.0 as i32 - v.x, at.1 as i32 - v.y);
-    if v.dialog.focus_at(&v.layout, x, y, &state.text, px) == crate::dialog::Outcome::Redraw {
+    let at = (at.0 as i32 - v.x, at.1 as i32 - v.y);
+    if crate::dialogview::reader_focus(&mut v.dialog, &mut v.cues, &v.layout, at, &state.text, px) {
         state.redraw_dialog(index);
     }
 }

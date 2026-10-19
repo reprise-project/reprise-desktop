@@ -71,8 +71,7 @@ impl Explorer {
                     (0, 0),
                     &self.forms.controls(),
                 );
-                let hit = cp.ow.hit(&lay, x, y);
-                cp.ow.focus_on(hit)
+                cp.input.reader_focus(&mut cp.ow, &lay, (x, y))
             }
         };
         ev != openwith::Event::None

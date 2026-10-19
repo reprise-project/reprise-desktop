@@ -32,6 +32,21 @@ impl ChooserInput {
         self.cues
     }
 
+    /// A reader's Focus at `at`: the control there takes the keyboard and the focus rectangles
+    /// come out, as a key brings them. At least `Event::Redraw` when they came out.
+    pub fn reader_focus(
+        &mut self,
+        ow: &mut OpenWith,
+        lay: &Layout,
+        at: (i32, i32),
+    ) -> openwith::Event {
+        let cued = self.cues.key(false);
+        match ow.focus_on(ow.hit(lay, at.0, at.1)) {
+            openwith::Event::None if cued => openwith::Event::Redraw,
+            e => e,
+        }
+    }
+
     /// Feed `ev` to `ow`, laid out as `lay`. A key that brings out a cue is at
     /// least `Event::Redraw`.
     pub fn event(
@@ -379,6 +394,28 @@ mod tests {
                 keys: false
             },
             "a key shows the rectangles only"
+        );
+    }
+
+    #[test]
+    fn a_readers_focus_shows_the_rectangles_only() {
+        let (mut ow, lay) = chooser();
+        let mut input = ChooserInput::default();
+        assert_eq!(
+            input.reader_focus(&mut ow, &lay, centre(lay.cancel)),
+            openwith::Event::Redraw
+        );
+        assert_eq!(
+            input.cues(),
+            Cues {
+                focus: true,
+                keys: false
+            }
+        );
+        assert_eq!(
+            input.reader_focus(&mut ow, &lay, centre(lay.cancel)),
+            openwith::Event::None,
+            "nothing changes the second time"
         );
     }
 
