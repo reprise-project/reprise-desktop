@@ -7,6 +7,7 @@ pub mod decode;
 pub mod dnd;
 pub mod fielddrop;
 pub mod filedlg;
+mod hangup;
 pub mod heads;
 pub mod keys;
 pub mod listicons;
@@ -1103,6 +1104,7 @@ pub fn start_forms() -> Theme {
 pub fn run(app: Box<dyn App>) {
     filedlg::remember_views();
     let conn = Connection::connect_to_env().expect("WAYLAND_DISPLAY");
+    hangup::on_signals(conn.backend().poll_fd());
     let (globals, event_queue) = registry_queue_init(&conn).expect("registry");
     let qh = event_queue.handle();
     let mut event_queue = event_queue;
@@ -1341,6 +1343,8 @@ pub fn run(app: Box<dyn App>) {
             host.draw(id, &qh);
         }
         if host.exit {
+            let _ = conn.flush();
+            hangup::hang_up(conn.backend().poll_fd());
             break;
         }
     }
