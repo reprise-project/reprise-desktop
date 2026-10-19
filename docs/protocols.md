@@ -37,7 +37,7 @@ them. At the lock screen and while an input capture holds the keyboard, the
 compositor drops them.
 
 A client hears pointer and drag motion at most once per refresh of the
-fastest screen, at the latest position, with `zwp_relative_pointer_v1` deltas
+screen the pointer is on, at the latest position, with `zwp_relative_pointer_v1` deltas
 summed since the last one. A button, wheel, gesture, key or focus change
 always reaches it after the motion it happened at. While a pointer lock or
 confinement holds, every motion goes through as it comes.
