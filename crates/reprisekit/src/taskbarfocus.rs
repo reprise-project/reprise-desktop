@@ -40,6 +40,7 @@ pub fn items(layout: &TaskbarLayout) -> Vec<TaskbarHit> {
     let mut v = vec![TaskbarHit::Start];
     let tools = (0..layout.quick.len())
         .map(TaskbarHit::Quick)
+        .chain(layout.quick_more.map(|_| TaskbarHit::QuickMore))
         .chain((0..layout.pager.len()).map(TaskbarHit::Pager));
     let tasks = (0..layout.tasks.len()).map(TaskbarHit::Task);
     if layout.bands.tasks_first {
@@ -60,7 +61,7 @@ pub fn items(layout: &TaskbarLayout) -> Vec<TaskbarHit> {
 fn group(h: TaskbarHit) -> u8 {
     match h {
         TaskbarHit::Start => 0,
-        TaskbarHit::Quick(_) => 1,
+        TaskbarHit::Quick(_) | TaskbarHit::QuickMore => 1,
         TaskbarHit::Pager(_) => 2,
         TaskbarHit::Task(_) | TaskbarHit::More => 3,
         TaskbarHit::Chevron | TaskbarHit::Tray(_) => 4,
@@ -143,6 +144,7 @@ pub fn focus_ring(layout: &TaskbarLayout, h: TaskbarHit, s: i32) -> Option<Rect>
         TaskbarHit::Clock => (Some(layout.clock), 1),
         TaskbarHit::ShowDesktop => (layout.show_desktop, 1),
         TaskbarHit::Quick(i) => (get(&layout.quick, i), 0),
+        TaskbarHit::QuickMore => (layout.quick_more, 0),
         TaskbarHit::Pager(i) => (get(&layout.pager, i), 0),
         TaskbarHit::Chevron => (layout.chevron, 0),
         TaskbarHit::Tray(i) => (get(&layout.tray, i), 0),
