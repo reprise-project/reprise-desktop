@@ -87,14 +87,30 @@ pub fn diff(old: &Config, new: &Config) -> Changes {
     }
 }
 
-/// Whether `new` differs from `old` in its output keys (`[[outputs]]`, `adaptive_sync`) alone.
-fn outputs_only(old: &Config, new: &Config) -> bool {
+/// What a reload redraws.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Redraw {
+    /// An identical config: nothing.
+    Nothing,
+    /// Output keys alone (`[[outputs]]`, `adaptive_sync`): the layout, when it moved.
+    Layout,
+    /// The look and the layout.
+    All,
+}
+
+fn redraw(old: &Config, new: &Config) -> Redraw {
     let kept = Config {
         outputs: new.outputs.clone(),
         adaptive_sync: new.adaptive_sync,
         ..old.clone()
     };
-    old != new && kept == *new
+    if old == new {
+        Redraw::Nothing
+    } else if kept == *new {
+        Redraw::Layout
+    } else {
+        Redraw::All
+    }
 }
 
 /// Which of one output's settings a reload changed, so it commits those
@@ -239,8 +255,13 @@ pub(crate) fn closes_start(old: StartMenuStyle, new: StartMenuStyle) -> bool {
 }
 
 pub fn reload(state: &mut State, cfg: Config) {
+    let redraw = redraw(&state.config, &cfg);
+    if redraw == Redraw::Nothing {
+        // Programs started since still get the look.
+        publish_look(state);
+        return;
+    }
     let changes = diff(&state.config, &cfg);
-    let outputs_only = outputs_only(&state.config, &cfg);
     state
         .inputproto
         .shortcuts
@@ -359,7 +380,7 @@ pub fn reload(state: &mut State, cfg: Config) {
     if changes.bar_hide {
         crate::autohideview::config_changed(state);
     }
-    if outputs_only {
+    if redraw == Redraw::Layout {
         // Nothing drawn changed but the outputs, which a scale warm's end lays out.
         if geometry_changed {
             state.update_layout();
@@ -413,24 +434,7 @@ fn close_bar_popups(state: &mut State) {
 }
 
 pub fn retheme(state: &mut State) {
-    let c = &state.config;
-    // Read per launch, never published: nothing to compare.
-    state.env.qt_platform_theme = c.toolkits.qt_platform_theme.clone();
-    if state.env.set_look(
-        c.theme.colors.to_env(),
-        c.interface,
-        c.blue_variant,
-        (c.glass.mode, c.glass.material),
-        &c.icons.theme,
-        c.cursor.effective(),
-    ) {
-        crate::spawn::export_session_env(&state.env);
-    }
-    // The generated GTK theme lands in its slot before the portal names it.
-    crate::toolkits::refresh(state);
-    let appearance = crate::tray::settings::Appearance::live(state);
-    crate::spawn::theme_portal_gtk(&state.env, appearance.gtk_theme());
-    crate::tray::send(state, crate::tray::TrayCommand::Appearance(appearance));
+    publish_look(state);
     let windows: Vec<_> = state
         .windows
         .iter()
@@ -462,6 +466,29 @@ pub fn retheme(state: &mut State) {
     redraw_for_scale(state);
 }
 
+/// Hands the look to programs: the session environment, the generated toolkit themes, the GTK
+/// portal and the tray.
+fn publish_look(state: &mut State) {
+    let c = &state.config;
+    // Read per launch, never published: nothing to compare.
+    state.env.qt_platform_theme = c.toolkits.qt_platform_theme.clone();
+    if state.env.set_look(
+        c.theme.colors.to_env(),
+        c.interface,
+        c.blue_variant,
+        (c.glass.mode, c.glass.material),
+        &c.icons.theme,
+        c.cursor.effective(),
+    ) {
+        crate::spawn::export_session_env(&state.env);
+    }
+    // The generated GTK theme lands in its slot before the portal names it.
+    crate::toolkits::refresh(state);
+    let appearance = crate::tray::settings::Appearance::live(state);
+    crate::spawn::theme_portal_gtk(&state.env, appearance.gtk_theme());
+    crate::tray::send(state, crate::tray::TrayCommand::Appearance(appearance));
+}
+
 /// What `retheme` draws that `update_layout` leaves at the old draw scale: the open Start
 /// panel and launcher, the dialogs and the lock screen.
 pub fn redraw_for_scale(state: &mut State) {
@@ -482,9 +509,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_reload_changing_only_output_keys_is_told_from_one_changing_the_look() {
+    fn a_reload_redraws_the_layout_for_output_keys_alone_and_nothing_for_an_identical_config() {
         let old = Config::default();
-        assert!(!outputs_only(&old, &old.clone()), "nothing changed");
+        assert_eq!(redraw(&old, &old.clone()), Redraw::Nothing);
         let mut scaled = old.clone();
         scaled.outputs.push(crate::config::OutputConfig {
             name: "HDMI-A-1".into(),
@@ -495,14 +522,15 @@ mod tests {
             position: None,
             primary: false,
         });
-        assert!(outputs_only(&old, &scaled), "a scale change");
+        assert_eq!(redraw(&old, &scaled), Redraw::Layout, "a scale change");
         let mut vrr = old.clone();
         vrr.adaptive_sync = !old.adaptive_sync;
-        assert!(outputs_only(&old, &vrr), "adaptive sync");
+        assert_eq!(redraw(&old, &vrr), Redraw::Layout, "adaptive sync");
         let mut both = scaled.clone();
         both.taskbar.auto_hide = !old.taskbar.auto_hide;
-        assert!(
-            !outputs_only(&old, &both),
+        assert_eq!(
+            redraw(&old, &both),
+            Redraw::All,
             "a scale change with a taskbar key"
         );
     }
