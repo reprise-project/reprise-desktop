@@ -127,6 +127,7 @@ pub struct TaskbarState {
     pub quick_hot: Option<usize>,
     pub quick_pressed: Option<usize>,
     pub quick_drop: Option<usize>,
+    pub quick_more: PopupCell,
     pub pager: Vec<PagerButton>,
     pub pager_hot: Option<usize>,
     pub pager_mark: PagerMark,
@@ -160,6 +161,7 @@ pub struct PopupCell {
 pub enum TaskbarHit {
     Start,
     Quick(usize),
+    QuickMore,
     Pager(usize),
     Task(usize),
     Chevron,
@@ -454,7 +456,10 @@ pub struct TaskbarLayout {
     pub edge: Edge,
     pub start: Rect,
     pub grips: Vec<Rect>,
+    /// Quick Launch buttons shown; the hidden rest are the items past them, behind `quick_more`.
     pub quick: Vec<Rect>,
+    /// The » cell ending a Quick Launch band too short for its buttons.
+    pub quick_more: Option<Rect>,
     pub pager: Vec<Rect>,
     pub tasks: Vec<Rect>,
     /// Windows per task button (2+ draws stacked edges); 0 is a pinned app with no windows, a bare icon.
@@ -493,6 +498,8 @@ pub struct TaskbarLayout {
 
 /// Quick Launch button width: 16 px icon, 3 px padding, 1 px frame each side. A pager button is as wide.
 const QUICK_W: i32 = 23;
+/// Width of the » cell ending a Quick Launch band too short for its buttons on a Bottom or Top bar; down a side bar it is a `QUICK_W` cell.
+const QUICK_MORE_W: i32 = 14;
 const PAGER_GAP: i32 = 4;
 const SIDE_TRAY_MARGIN: i32 = 2;
 
@@ -512,25 +519,28 @@ const TASKS_MIN_W: i32 = 66;
 
 struct Arranged {
     tools: i32,
+    /// Length the tools band is laid in: its natural length, or less when shrunk.
+    tools_len: i32,
     tasks: i32,
     tasks_end: i32,
     bands: Bands,
     grip: Option<i32>,
 }
 
-/// Lay the tools band and the task row from `band_x` to `limit` in `bands` order; the first is `first_width` long, clamped so the second keeps its content.
+/// Lay the tools band (`tools`: least, natural length) and the task row from `band_x` to `limit` in `bands` order; the first is `first_width` long, clamped so the second keeps its least length. Without a dragged width the task row leaves the tools band whole.
 fn arrange_bands(
     band_x: i32,
     limit: i32,
-    tools: i32,
+    tools: (i32, i32),
     task: (i32, i32),
     bands: Bands,
     locked: bool,
     tasks: usize,
 ) -> Arranged {
-    if tools == 0 {
+    if tools.1 == 0 {
         return Arranged {
             tools: band_x,
+            tools_len: 0,
             tasks: band_x,
             tasks_end: limit,
             bands: Bands::default(),
@@ -539,9 +549,14 @@ fn arrange_bands(
     }
     let step = if locked { BAND_GAP } else { BAND_GAP_GRIP };
     let (min, natural, second) = if bands.tasks_first {
-        (task.0, task.1, tools)
+        let second = if bands.first_width.is_some() {
+            tools.0
+        } else {
+            tools.1
+        };
+        (task.0, task.1, second)
     } else {
-        (tools, tools, 0)
+        (tools.0, tools.1, 0)
     };
     let max = (limit - band_x - step - second).max(min);
     let w = bands.first_width.unwrap_or(natural).clamp(min, max);
@@ -554,6 +569,7 @@ fn arrange_bands(
     if bands.tasks_first {
         Arranged {
             tools: end + step,
+            tools_len: (limit - end - step).clamp(tools.0, tools.1),
             tasks: band_x,
             tasks_end: end.min(limit),
             bands: laid,
@@ -562,6 +578,7 @@ fn arrange_bands(
     } else {
         Arranged {
             tools: band_x,
+            tools_len: w,
             tasks: end + step,
             tasks_end: limit,
             bands: laid,
@@ -744,10 +761,16 @@ impl TaskbarLayout {
             Some(x) => x - 4,
             None => clock.x - 6,
         };
+        let pager_w = pager_count as i32 * QUICK_W;
+        let tools_least = if quick_count > 0 {
+            pager_w + pager_gap + QUICK_MORE_W
+        } else {
+            tools_w
+        };
         let a = arrange_bands(
             band_x,
             limit,
-            tools_w,
+            (tools_least, tools_w),
             (TASKS_MIN_W, m.task_button_max_width),
             bands,
             locked,
@@ -760,10 +783,20 @@ impl TaskbarLayout {
         let pager: Vec<Rect> = (0..pager_count as i32)
             .map(|i| Rect::new(pager_x + i * QUICK_W, shape.button_top, QUICK_W, btn_h))
             .collect();
-        let quick_x = pager_x + pager_count as i32 * QUICK_W + pager_gap;
-        let quick: Vec<Rect> = (0..quick_count as i32)
+        let quick_x = pager_x + pager_w + pager_gap;
+        let quick_room = a.tools_len - pager_w - pager_gap;
+        let shown = if quick_room >= quick_w {
+            quick_count
+        } else {
+            (((quick_room - QUICK_MORE_W).max(0) / QUICK_W) as usize).min(quick_count)
+        };
+        let quick: Vec<Rect> = (0..shown as i32)
             .map(|i| Rect::new(quick_x + i * QUICK_W, shape.button_top, QUICK_W, btn_h))
             .collect();
+        let quick_more = (shown < quick_count).then(|| {
+            let x = quick_x + shown as i32 * QUICK_W;
+            Rect::new(x, shape.button_top, QUICK_MORE_W, btn_h)
+        });
         // One well around the tray and clock, starting `well_lead` left of the ^ cell or first icon; full height in `well_full_height` shapes, else sunken in the button row.
         let lead = match (arrow, chevron) {
             (Some(a), Some(_)) => a.well_lead,
@@ -782,6 +815,7 @@ impl TaskbarLayout {
             start,
             grips,
             quick,
+            quick_more,
             pager,
             tasks: Vec::with_capacity(task_count),
             stacks: Vec::with_capacity(task_count),
@@ -989,7 +1023,20 @@ impl TaskbarLayout {
         } else {
             Rect::new(left, well_y, room, clock_r.bottom() - well_y)
         };
-        let a = arrange_bands(band_y, limit, tools, (btn, btn), bands, locked, task_count);
+        let tools_least = if quick_count > 0 {
+            lines(pager_count) + pager_gap + QUICK_W
+        } else {
+            tools
+        };
+        let a = arrange_bands(
+            band_y,
+            limit,
+            (tools_least, tools),
+            (btn, btn),
+            bands,
+            locked,
+            task_count,
+        );
         if let Some(g) = a.grip {
             grips.push(grip(g));
         }
@@ -1006,9 +1053,15 @@ impl TaskbarLayout {
             .map(|i| cell(a.tools, pager_count, i))
             .collect();
         let quick_y = a.tools + lines(pager_count) + pager_gap;
-        let quick = (0..quick_count)
-            .map(|i| cell(quick_y, quick_count, i))
-            .collect();
+        let fits = ((a.tools_len - lines(pager_count) - pager_gap) / QUICK_W).max(1) as usize
+            * per_line as usize;
+        let shown = if fits >= quick_count {
+            quick_count
+        } else {
+            fits - 1
+        };
+        let quick = (0..shown).map(|i| cell(quick_y, quick_count, i)).collect();
+        let quick_more = (shown < quick_count).then(|| cell(quick_y, quick_count, shown));
         let mut layout = TaskbarLayout {
             width: t,
             height: len,
@@ -1016,6 +1069,7 @@ impl TaskbarLayout {
             start,
             grips,
             quick,
+            quick_more,
             pager,
             tasks: Vec::with_capacity(task_count),
             stacks: Vec::with_capacity(task_count),
@@ -1211,7 +1265,7 @@ impl TaskbarLayout {
         let at = self.along(x, y);
         let along = |r: Rect| self.to_along(r);
         let pager_end = self.pager.last().map(|&p| along(p).right());
-        let last = self.quick.last().map(|&r| along(r).right());
+        let last = (self.quick_more.or(self.quick.last().copied())).map(|r| along(r).right());
         let end = if self.bands.tasks_first {
             let tray = match self.chevron.or(self.tray.first().copied()) {
                 Some(t) => along(t).x - 4,
@@ -1221,7 +1275,7 @@ impl TaskbarLayout {
         } else {
             self.tasks_x
         };
-        match (self.quick.first(), pager_end) {
+        match (self.quick.first().or(self.quick_more.as_ref()), pager_end) {
             (Some(&first), _) => {
                 let start = pager_end.unwrap_or(along(first).x - GRIP_LEAD);
                 at >= start && at < end
@@ -1336,6 +1390,7 @@ impl TaskbarLayout {
             start: m(self.start),
             grips: all(self.grips),
             quick: all(self.quick),
+            quick_more: self.quick_more.map(m),
             pager: all(self.pager),
             tasks: all(self.tasks),
             chevron: self.chevron.map(m),
@@ -1390,6 +1445,9 @@ impl TaskbarLayout {
             if r.contains(x, y) {
                 return TaskbarHit::Quick(i);
             }
+        }
+        if self.quick_more.is_some_and(|r| r.contains(x, y)) {
+            return TaskbarHit::QuickMore;
         }
         for (i, r) in self.pager.iter().enumerate() {
             if r.contains(x, y) {
@@ -1458,6 +1516,7 @@ impl TaskbarLayout {
             start: self.start.scaled(n),
             grips: self.grips.iter().map(|r| r.scaled(n)).collect(),
             quick: self.quick.iter().map(|r| r.scaled(n)).collect(),
+            quick_more: self.quick_more.map(|r| r.scaled(n)),
             pager: self.pager.iter().map(|r| r.scaled(n)).collect(),
             tasks: self.tasks.iter().map(|r| r.scaled(n)).collect(),
             stacks: self.stacks.clone(),
@@ -1543,7 +1602,7 @@ pub fn draw_tray_arrow_side(canvas: &mut Canvas, r: Rect, ink: Color, s: i32, op
     fill_rows(canvas, rows, x, r.y + y * s, ink, s);
 }
 
-/// The » glyph on a side bar's overflow cell: two chevrons 4x7 times `s`.
+/// The » glyph on an overflow cell (the task row's or Quick Launch's): two chevrons 4x7 times `s`.
 pub fn draw_more(canvas: &mut Canvas, r: Rect, ink: Color, s: i32) {
     let s = s.max(1);
     let (x0, y0) = (r.x + (r.width - 10 * s) / 2, r.y + (r.height - 7 * s) / 2);
@@ -1606,12 +1665,15 @@ pub struct TaskbarNames {
     /// The flyout or a tray arrow's run is open: the ^ cell reads expanded (a tray arrow is then named Hide).
     pub hidden_open: bool,
     pub more_open: bool,
+    pub quick_more_open: bool,
     pub clock: String,
     pub date: String,
     pub focus: Option<TaskbarHit>,
 }
 
 pub const ATTENTION: &str = "Wants attention";
+/// Name and tip of the Quick Launch band's » cell.
+pub const QUICK_MORE_NAME: &str = "Show more Quick Launch buttons";
 
 /// The taskbar's `access` part, in taskbar coordinates; titles and tips are taken as they are (an `&` is text).
 pub fn access(layout: &TaskbarLayout, names: &TaskbarNames, tree: &mut Tree, parent: NodeId) {
@@ -1650,10 +1712,22 @@ pub fn access(layout: &TaskbarLayout, names: &TaskbarNames, tree: &mut Tree, par
             n.set_description(ATTENTION);
         }
     };
-    if !layout.quick.is_empty() {
-        let id = bar(tree, "quick", &layout.quick, "Quick Launch");
+    let quick_cells: Vec<Rect> = layout
+        .quick
+        .iter()
+        .copied()
+        .chain(layout.quick_more)
+        .collect();
+    if !quick_cells.is_empty() {
+        let id = bar(tree, "quick", &quick_cells, "Quick Launch");
         for (i, (r, name)) in layout.quick.iter().zip(&names.quick).enumerate() {
             mark(TaskbarHit::Quick(i), tree.push(id, i, button(*r, name)));
+        }
+        if let Some(r) = layout.quick_more {
+            let mut n = button(r, QUICK_MORE_NAME);
+            n.set_has_popup(HasPopup::Menu);
+            n.set_expanded(names.quick_more_open);
+            mark(TaskbarHit::QuickMore, tree.push(id, "more", n));
         }
     }
     if !layout.pager.is_empty() {
@@ -2784,7 +2858,11 @@ mod tests {
             30,
             wide(10),
         );
-        assert_eq!(l.grips[1].x, 120);
+        assert_eq!(
+            l.grips[1].x,
+            68 + 14 + 6,
+            "the Quick Launch band shrinks to its »"
+        );
         let l = TaskbarLayout::compute_with(
             &m,
             &TaskbarShape::CLASSIC,
@@ -2875,6 +2953,104 @@ mod tests {
     }
 
     #[test]
+    fn a_quick_band_shorter_than_its_buttons_ends_in_a_more_cell() {
+        let m = Metrics::default();
+        let lay = |bands: Bands, edge: Edge| {
+            let span = BarSpan {
+                edge,
+                length: 800,
+                thickness: m.taskbar_height,
+            };
+            let clock = ClockText { time: 30, date: 30 };
+            TaskbarLayout::compute_on(
+                &m,
+                &TaskbarShape::CLASSIC,
+                span,
+                false,
+                counts(5, 1, 0),
+                clock,
+                bands,
+            )
+        };
+        let wide = |w| Bands {
+            tasks_first: false,
+            first_width: Some(w),
+        };
+        let whole = lay(Bands::default(), Edge::Bottom);
+        assert_eq!((whole.quick.len(), whole.quick_more), (5, None));
+        let x0 = whole.quick[0].x;
+        let three = lay(wide(3 * 23 + 14), Edge::Bottom);
+        assert_eq!(three.quick, whole.quick[..3].to_vec());
+        let r = three.quick_more.expect("a band 83 px long shows a »");
+        assert_eq!(r, Rect::new(x0 + 69, 4, 14, 22));
+        assert_eq!(three.hit(r.x + 7, r.y + 11), TaskbarHit::QuickMore);
+        assert!(three.on_quick_band(r.right() - 1, 10));
+        let two = lay(wide(3 * 23 + 13), Edge::Bottom);
+        assert_eq!(two.quick.len(), 2, "a px short of three buttons and the »");
+        assert_eq!(two.quick_more.map(|r| r.x), Some(x0 + 46));
+        let least = lay(wide(0), Edge::Bottom);
+        assert_eq!(least.quick, vec![]);
+        assert_eq!(least.quick_more, Some(Rect::new(x0, 4, 14, 22)));
+        assert_eq!(
+            least.grips[1].x,
+            x0 + 14 + 6,
+            "the band keeps room for the » alone"
+        );
+
+        let top = lay(wide(83), Edge::Top);
+        assert_eq!(top.quick_more, Some(Rect::new(x0 + 69, 2, 14, 22)));
+        assert_eq!(three.scaled(2).quick_more, Some(r.scaled(2)));
+
+        let after = lay(
+            Bands {
+                tasks_first: true,
+                first_width: Some(2000),
+            },
+            Edge::Bottom,
+        );
+        let r = after
+            .quick_more
+            .expect("a task band dragged over the tools leaves the »");
+        assert_eq!(after.quick, vec![]);
+        assert_eq!(r.right(), after.tasks_limit() + 13 + 14);
+    }
+
+    #[test]
+    fn a_short_column_quick_band_gives_its_last_cell_to_the_more_cell() {
+        let span = BarSpan {
+            edge: Edge::Left,
+            length: 600,
+            thickness: 60,
+        };
+        let lay = |first_width| {
+            TaskbarLayout::compute_on(
+                &Metrics::default(),
+                &TaskbarShape::CLASSIC,
+                span,
+                false,
+                counts(7, 1, 0),
+                ClockText { time: 30, date: 0 },
+                Bands {
+                    tasks_first: false,
+                    first_width,
+                },
+            )
+        };
+        let whole = lay(None);
+        assert_eq!((whole.quick.len(), whole.quick_more), (7, None));
+        let two_rows = lay(Some(2 * 23));
+        assert_eq!(two_rows.quick, whole.quick[..3].to_vec());
+        assert_eq!(two_rows.quick_more, Some(whole.quick[3]));
+        assert_eq!(
+            two_rows.hit(30, whole.quick[3].y + 5),
+            TaskbarHit::QuickMore
+        );
+        let least = lay(Some(0));
+        assert_eq!(least.quick, vec![whole.quick[0]]);
+        assert_eq!(least.quick_more, Some(whole.quick[1]));
+    }
+
+    #[test]
     fn dragging_a_grip_resizes_or_swaps_the_bands() {
         let m = Metrics::default();
         let l = TaskbarLayout::compute(&m, &TaskbarShape::CLASSIC, 800, false, counts(2, 1, 0), 30);
@@ -2897,7 +3073,7 @@ mod tests {
             30,
             back,
         );
-        assert_eq!(l2.grips[1].x, 120);
+        assert_eq!(l2.grips[1].x, 68 + 14 + 6);
         assert_eq!(l.drag_band(d, Band::Quick, 100), d);
         assert_eq!(
             l.drag_band(d, Band::Quick, 499),

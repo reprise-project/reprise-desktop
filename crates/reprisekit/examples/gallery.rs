@@ -256,6 +256,7 @@ fn main() {
             &render_taskbar_keys(),
             "reprisekit-gallery-taskbar-keys.png",
         );
+        write_preview(&render_quick_more(), "reprisekit-gallery-quick-more.png");
         write_preview(&render_tray_arrow(), "reprisekit-gallery-tray-arrow.png");
         write_preview(
             &render_glass_preview(),
@@ -1240,6 +1241,7 @@ fn render_show_desktop() -> Canvas {
                 quick_hot: None,
                 quick_pressed: None,
                 quick_drop: None,
+                quick_more: Default::default(),
                 pager: vec![],
                 pager_hot: None,
                 pager_mark: Default::default(),
@@ -1566,6 +1568,7 @@ fn render_taskbar_top() -> Canvas {
             quick_hot: None,
             quick_pressed: None,
             quick_drop: None,
+            quick_more: Default::default(),
             pager: vec![
                 PagerButton::default(),
                 PagerButton {
@@ -1639,6 +1642,7 @@ fn render_taskbar_edges() -> Canvas {
         quick_hot: None,
         quick_pressed: None,
         quick_drop: None,
+        quick_more: Default::default(),
         pager: vec![
             PagerButton::default(),
             PagerButton {
@@ -1809,6 +1813,7 @@ fn render_taskbar_cells() -> Canvas {
         quick_hot: None,
         quick_pressed: None,
         quick_drop: None,
+        quick_more: Default::default(),
         pager: vec![],
         pager_hot: None,
         pager_mark: Default::default(),
@@ -1905,6 +1910,135 @@ fn render_taskbar_cells() -> Canvas {
     c
 }
 
+/// A Quick Launch band dragged shorter than its five buttons, ending in its » at rest, lit and with its menu open, in each look: along the bottom and the top, along the bottom at scale 2, then down left and right columns.
+fn render_quick_more() -> Canvas {
+    use reprisekit::taskbar::{
+        Bands, BarSpan, ClockText, Edge, PopupCell, TaskbarCounts, TaskbarLayout, TaskbarState,
+    };
+    let text = TextRenderer::load(&FontConfig::default());
+    let looks = [Interface::Classic, Interface::Blue, Interface::Glass];
+    let cells = [
+        PopupCell::default(),
+        PopupCell {
+            hot: true,
+            ..PopupCell::default()
+        },
+        PopupCell {
+            open: true,
+            ..PopupCell::default()
+        },
+    ];
+    let state = |cell: PopupCell| TaskbarState {
+        start_pressed: false,
+        start_focus: false,
+        focus: None,
+        start_hot: false,
+        start_icon: None,
+        orb_glow: 100,
+        quick_icons: vec![Some(indicator::draw_record(16).into()); 5],
+        quick_hot: None,
+        quick_pressed: None,
+        quick_drop: None,
+        quick_more: cell,
+        pager: vec![],
+        pager_hot: None,
+        pager_mark: Default::default(),
+        task_hot: None,
+        task_pressed: None,
+        task_hot_x: None,
+        task_shift: Vec::new(),
+        task_float: None,
+        task_progress: Vec::new(),
+        show_desktop_hot: false,
+        more: Default::default(),
+        chevron: Default::default(),
+        tasks: vec![],
+        tray_icons: vec![],
+        clock: "3:45 PM".into(),
+    };
+    let lay = |theme: &Theme, span: BarSpan| {
+        let counts = TaskbarCounts {
+            quick: 5,
+            ..TaskbarCounts::default()
+        };
+        let first_width = if span.edge.is_side() { 30 } else { 2 * 23 + 14 };
+        TaskbarLayout::compute_on(
+            &theme.metrics,
+            &theme.taskbar_shape(),
+            span,
+            false,
+            counts,
+            ClockText {
+                time: text.measure("3:45 PM", false, theme.fonts.size_px),
+                date: 0,
+            },
+            Bands {
+                tasks_first: false,
+                first_width: Some(first_width),
+            },
+        )
+    };
+    let draw = |c: &mut Canvas, theme: &Theme, l: &TaskbarLayout, cell, at: (i32, i32)| {
+        let start_text = match theme.look.style() {
+            Some(s) => TextRenderer::load(&s.start_text.font()),
+            None => TextRenderer::load(&FontConfig::default()),
+        };
+        let mut bar = Canvas::new(l.width as u32, l.height as u32);
+        look::draw_taskbar(&mut bar, theme, &text, &start_text, l, &state(cell));
+        c.blit_over(at.0, at.1, &bar);
+    };
+    let mut c = blurred_stripes(1060, 1570);
+    let mut y = 10;
+    for interface in looks {
+        let theme = cued(interfaces::theme_for(interface));
+        let h = theme.metrics.taskbar_height;
+        for edge in [Edge::Bottom, Edge::Top] {
+            let mut x = 10;
+            for cell in cells {
+                let span = BarSpan {
+                    edge,
+                    length: 340,
+                    thickness: h,
+                };
+                draw(&mut c, &theme, &lay(&theme, span), cell, (x, y));
+                x += 350;
+            }
+            y += h + 8;
+        }
+        let scaled = theme.scaled(2);
+        for cell in cells {
+            let span = BarSpan {
+                edge: Edge::Bottom,
+                length: 340,
+                thickness: h,
+            };
+            let l = lay(&theme, span).scaled(2);
+            draw(&mut c, &scaled, &l, cell, (10, y));
+            y += l.height + 8;
+        }
+        y += 8;
+    }
+    for interface in looks {
+        let theme = cued(interfaces::theme_for(interface));
+        let t = theme.taskbar_shape().side_default(&theme.metrics);
+        let mut x = 10;
+        for edge in [Edge::Left, Edge::Right] {
+            for cell in cells {
+                let span = BarSpan {
+                    edge,
+                    length: 200,
+                    thickness: t,
+                };
+                draw(&mut c, &theme, &lay(&theme, span), cell, (x, y));
+                x += t + 6;
+            }
+            x += 10;
+        }
+        y += 210;
+    }
+    c
+}
+
 /// The tray arrow on Classic and Blue bars with one shown and two hidden icons: along the bottom in each state, then down a left bar.
 fn render_tray_arrow() -> Canvas {
     use reprisekit::taskbar::{
@@ -1923,6 +2057,7 @@ fn render_tray_arrow() -> Canvas {
         quick_hot: None,
         quick_pressed: None,
         quick_drop: None,
+        quick_more: Default::default(),
         pager: vec![],
         pager_hot: None,
         pager_mark: Default::default(),
@@ -2082,6 +2217,7 @@ fn render_tray_arrow_schemes(n: i32) -> Canvas {
                 quick_hot: None,
                 quick_pressed: None,
                 quick_drop: None,
+                quick_more: Default::default(),
                 pager: vec![],
                 pager_hot: None,
                 pager_mark: Default::default(),
@@ -2155,6 +2291,7 @@ fn render_orb_glow(n: i32) -> Canvas {
                     quick_hot: None,
                     quick_pressed: None,
                     quick_drop: None,
+                    quick_more: Default::default(),
                     pager: vec![],
                     pager_hot: None,
                     pager_mark: Default::default(),
@@ -2263,6 +2400,7 @@ fn render_taskbar_keys() -> Canvas {
                 quick_hot: None,
                 quick_pressed: None,
                 quick_drop: None,
+                quick_more: Default::default(),
                 pager: vec![],
                 pager_hot: None,
                 pager_mark: Default::default(),
@@ -2345,6 +2483,7 @@ fn render_taskbar_hidden() -> Canvas {
                 quick_hot: None,
                 quick_pressed: None,
                 quick_drop: None,
+                quick_more: Default::default(),
                 pager: vec![],
                 pager_hot: None,
                 pager_mark: Default::default(),
@@ -4729,6 +4868,7 @@ fn render(theme: &Theme, with_blue: bool) -> Canvas {
             quick_hot: None,
             quick_pressed: None,
             quick_drop: None,
+            quick_more: Default::default(),
             pager: vec![],
             pager_hot: None,
             pager_mark: Default::default(),
@@ -5994,6 +6134,7 @@ fn glass_scale2_bars(c: &mut Canvas, rows: &[reprisekit::glass::Settings], top: 
             quick_hot: None,
             quick_pressed: None,
             quick_drop: None,
+            quick_more: Default::default(),
             pager: vec![
                 PagerButton::default(),
                 PagerButton {
@@ -6091,6 +6232,7 @@ fn render_glass_dark_bar(theme: &Theme) -> Canvas {
         quick_hot: None,
         quick_pressed: None,
         quick_drop: None,
+        quick_more: Default::default(),
         pager: vec![],
         pager_hot: None,
         pager_mark: Default::default(),
@@ -8181,6 +8323,7 @@ fn render_glass_frames() -> Canvas {
                 quick_hot: None,
                 quick_pressed: None,
                 quick_drop: None,
+                quick_more: Default::default(),
                 pager: vec![],
                 pager_hot: None,
                 pager_mark: Default::default(),
@@ -8244,6 +8387,7 @@ fn render_glass_frames() -> Canvas {
             quick_hot: None,
             quick_pressed: None,
             quick_drop: None,
+            quick_more: Default::default(),
             pager: vec![],
             pager_hot: None,
             pager_mark: Default::default(),
@@ -8532,6 +8676,7 @@ fn render_glass_task_rows() -> Canvas {
             quick_hot: None,
             quick_pressed: None,
             quick_drop: None,
+            quick_more: Default::default(),
             pager: match mark {
                 Some(_) => (0..4)
                     .map(|i| PagerButton {
@@ -8658,6 +8803,7 @@ fn render_glass_spots() -> Canvas {
             quick_hot: None,
             quick_pressed: None,
             quick_drop: None,
+            quick_more: Default::default(),
             pager: vec![],
             pager_hot: None,
             pager_mark: Default::default(),
