@@ -1689,6 +1689,14 @@ impl SettingsApp {
             return Reply::redraw();
         }
         let page = &self.sheet.pages[Page::DefaultPrograms.index()];
+        if id == defaultspage::TERMINAL_ARGS {
+            if let Some(form::Control::Edit { edit, .. }) = page.item(id).map(|i| &i.control) {
+                let program = defaultspage::split_command(&self.want.terminal).0;
+                self.want.terminal = defaultspage::join_command(program, &edit.text);
+            }
+            self.sync_apply();
+            return Reply::redraw();
+        }
         let Some(d) = self.defaults.as_mut() else {
             return Reply::redraw();
         };
@@ -1705,7 +1713,8 @@ impl SettingsApp {
         let row = page.combo_selected(id).unwrap_or(0);
         if id == defaultspage::TERMINAL {
             if let Some(t) = d.terminal_pick(row) {
-                self.want.terminal = t.to_string();
+                let args = defaultspage::split_command(&self.want.terminal).1;
+                self.want.terminal = defaultspage::join_command(t, args);
             }
         } else if let Some(k) = defaultspage::KINDS.iter().find(|k| k.id == id) {
             d.pick(k, row);
@@ -3599,6 +3608,32 @@ mod tests {
         a.chooser = None;
         enter(&mut a, &ctx);
         assert_eq!(mime(&a), Some(double), "Enter opens it for the same type");
+    }
+
+    #[test]
+    fn picking_a_terminal_keeps_its_arguments_and_typed_arguments_follow_the_program() {
+        let mut a = app("terminal-args");
+        a.open_page(Page::DefaultPrograms, None);
+        a.defaults = Some(defaultspage::tests::defaults());
+        a.want.terminal = "foot -e tmux".into();
+        a.refill_defaults();
+        let page = Page::DefaultPrograms.index();
+        a.sheet.pages[page].set_combo(defaultspage::TERMINAL, 1);
+        a.defaults_changed(defaultspage::TERMINAL);
+        assert_eq!(a.want.terminal, "/usr/bin/kitty -e tmux");
+        if let Some(form::Control::Edit { edit, .. }) = a.sheet.pages[page]
+            .item_mut(defaultspage::TERMINAL_ARGS)
+            .map(|i| &mut i.control)
+        {
+            *edit = reprisekit::textedit::TextEdit::new("--hold", false);
+        }
+        a.defaults_changed(defaultspage::TERMINAL_ARGS);
+        assert_eq!(a.want.terminal, "/usr/bin/kitty --hold");
+        assert_eq!(
+            a.sheet.pages[page].combo_selected(defaultspage::TERMINAL),
+            Some(1),
+            "the program stays picked"
+        );
     }
 
     #[test]
