@@ -146,6 +146,20 @@ fn blur_cues_without_keyboard<'a>(
     blurred
 }
 
+/// A reader's Focus at dialog point `at`: the control there takes the keyboard and the focus
+/// rectangles come out, as a key brings them. Whether the dialog needs a redraw.
+pub(crate) fn reader_focus(
+    dialog: &mut Dialog,
+    cues: &mut Cues,
+    layout: &DialogLayout,
+    at: (i32, i32),
+    text: &reprisekit::text::TextRenderer,
+    px: u32,
+) -> bool {
+    let cued = cues.key(false);
+    dialog.focus_at(layout, at.0, at.1, text, px) == Outcome::Redraw || cued
+}
+
 fn raise_order(links: &[(u64, Option<u64>)], index: usize) -> Vec<usize> {
     let parent = |i: usize| {
         links[i]
@@ -2682,8 +2696,8 @@ fn client_part(canvas: &Canvas, layout: &DialogLayout, scale: i32) -> Option<(Ca
 #[cfg(test)]
 mod tests {
     use super::{
-        blur_cues_without_keyboard, client_part, glass_pane, raise_order, refit_origin,
-        row_icon_names, to_local,
+        blur_cues_without_keyboard, client_part, glass_pane, raise_order, reader_focus,
+        refit_origin, row_icon_names, to_local,
     };
     use crate::dialog::Dialog;
     use crate::raster::Rect;
@@ -2775,6 +2789,40 @@ mod tests {
         );
         assert!(blur_cues_without_keyboard(stack.iter_mut(), None));
         assert_eq!(stack.map(|c| c.keys), [false; 3]);
+    }
+
+    #[test]
+    fn a_readers_focus_brings_out_the_focus_rectangles_but_not_the_underlines() {
+        use crate::dialog::DialogLayout;
+        use reprisekit::cues::Cues;
+        use reprisekit::theme::Theme;
+        let theme = Theme::default();
+        let text = reprisekit::text::TextRenderer::load(&theme.fonts);
+        let px = theme.fonts.size_px;
+        let mut run = Dialog::run(&[]);
+        let l = DialogLayout::compute(&theme, &text, &run);
+        let b = l.buttons[1];
+        let at = (b.x + b.width / 2, b.y + b.height / 2);
+        let mut cues = Cues::NONE;
+        assert!(reader_focus(&mut run, &mut cues, &l, at, &text, px));
+        assert_eq!(run.button_focus, Some(1));
+        assert_eq!(
+            cues,
+            Cues {
+                focus: true,
+                keys: false
+            }
+        );
+        let mut cues = Cues::NONE;
+        assert!(
+            reader_focus(&mut run, &mut cues, &l, at, &text, px),
+            "a focus already there still brings out its rectangle"
+        );
+        assert!(cues.focus);
+        assert!(
+            !reader_focus(&mut run, &mut cues, &l, at, &text, px),
+            "nothing changes the second time"
+        );
     }
 
     #[test]
