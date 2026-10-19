@@ -781,6 +781,8 @@ pub fn access(
             && let Some(n) = tree.get_mut(id)
         {
             n.set_disabled();
+            n.remove_action(accesskit::Action::Focus);
+            n.remove_action(accesskit::Action::Click);
         }
     }
     focus
@@ -1070,6 +1072,12 @@ mod tests {
         assert!(
             t.get(heading).unwrap().is_disabled(),
             "the heading is greyed"
+        );
+        let h = t.get(heading).unwrap();
+        assert!(
+            !h.supports_action(accesskit::Action::Click)
+                && !h.supports_action(accesskit::Action::Focus),
+            "the greyed heading offers no click or focus"
         );
     }
     use crate::raster::Rect;

@@ -2134,10 +2134,16 @@ impl TrayCustomize {
     }
 
     /// Name the combo just added to `list` by its row's item.
-    fn name_combo(tree: &mut Tree, list: NodeId, name: &str) {
+    /// Names the combo just pushed under `list` for entry `i` of `total` and gives it the
+    /// entry's place, which a reader's scroll-in counts by ([`Published::reveal`]).
+    ///
+    /// [`Published::reveal`]: crate::access::Published::reveal
+    fn name_combo(tree: &mut Tree, list: NodeId, name: &str, i: usize, total: usize) {
         let combo = tree.get(list).and_then(|l| l.children().last().copied());
         if let Some(n) = combo.and_then(|c| tree.get_mut(c)) {
             n.set_label(name);
+            n.set_position_in_set(i + 1);
+            n.set_size_of_set(total);
         }
     }
 
@@ -2172,7 +2178,8 @@ impl TrayCustomize {
             if self.is_page()
                 && let Some(n) = tree.get_mut(id)
             {
-                // A page row is picked through its combo; a click on the row's name picks nothing.
+                // A page row is picked through its combo; it offers no action of its own.
+                n.remove_action(Action::Focus);
                 n.remove_action(Action::Click);
             }
             if self.selected == Some(i) {
@@ -2191,7 +2198,7 @@ impl TrayCustomize {
                 "combo",
             ));
             if self.is_page() {
-                Self::name_combo(tree, list, &self.entries[*i].name);
+                Self::name_combo(tree, list, &self.entries[*i].name, *i, self.entries.len());
             }
         }
         if self.is_page() && live {
@@ -2204,7 +2211,7 @@ impl TrayCustomize {
                 let row = Combo::new(&labels, w.index(e.behaviour, e.passive), labels.len());
                 let cl = combo::layout(&row, field, &self.metrics);
                 combo::access(&row, &cl, text, px, tree, list, ("combo", i));
-                Self::name_combo(tree, list, &e.name);
+                Self::name_combo(tree, list, &e.name, i, self.entries.len());
             }
         }
         let all = match (lay.check, lay.check_label, self.all_icons) {
@@ -2369,7 +2376,7 @@ mod tests {
                 assert_eq!(n.description(), Some(want), "{w:?} {name}");
                 if w == Wording::Glass {
                     assert!(
-                        !n.supports_action(Action::Click),
+                        !n.supports_action(Action::Click) && !n.supports_action(Action::Focus),
                         "{name} picks by its combo"
                     );
                     let combo = tree
@@ -2407,6 +2414,40 @@ mod tests {
         for b in Wording::Glass.choices() {
             let label = Wording::Glass.label(*b);
             assert!(tree.find(Role::ListBoxOption, label).is_some(), "{label}");
+        }
+    }
+
+    #[test]
+    fn a_reader_scrolls_a_cut_page_combo_in_by_its_entry_once_the_list_is_scrolled() {
+        use crate::access::{Published, Tree};
+        let (text, px) = (TextRenderer::load(&crate::theme::FontConfig::default()), 11);
+        let current = (0..13).map(|i| {
+            entry(
+                &format!("c{i}"),
+                &format!("Item {i}"),
+                false,
+                Behaviour::Auto,
+            )
+        });
+        let w = Wording::Glass;
+        let mut t = TrayCustomize::new(w, current.collect(), Vec::new(), Some(false), metrics(w));
+        t.top = 3;
+        let lay = t.layout(&text, px, (0, 0));
+        let mut tree = Tree::window("", t.client());
+        t.access(&mut tree, &lay, &text, px);
+        let mut p = Published::default();
+        p.update(tree.clone());
+        let cut: Vec<_> = lay
+            .fields
+            .iter()
+            .filter_map(|&(i, _)| {
+                let combo = tree.find(Role::ComboBox, &format!("Item {i}"))?;
+                Some((i, p.reveal(combo)?.row))
+            })
+            .collect();
+        assert!(!cut.is_empty(), "a combo is cut by the list's bottom");
+        for (i, row) in cut {
+            assert_eq!(row, i, "Item {i}'s combo scrolls in its own entry");
         }
     }
 
