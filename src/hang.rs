@@ -29,6 +29,10 @@ pub const PING_EVERY: Duration = Duration::from_secs(2);
 /// and a close asked of it opens End Program.
 pub const PING_TIMEOUT: Duration = Duration::from_secs(5);
 
+/// How often programs with a window are checked for [`dying`], for one whose kill nothing else
+/// reports: no ping out, no watched thread left to exit.
+const DYING_EVERY: Duration = Duration::from_secs(2);
+
 /// One window's ping record.
 #[derive(Debug, Default)]
 pub struct Liveness {
@@ -97,20 +101,33 @@ fn end_programs(dialogs: &[Option<i32>], ends: impl Fn(i32) -> bool) -> Vec<(usi
 
 /// Whether `pid` never answers again: its main thread has exited (state Z or X; other threads of
 /// it may still run) or has SIGKILL pending, which a main thread blocked on a dead mount keeps.
-/// Reads only the main thread, unlike [`killed`].
+/// Reads only the main thread's `/proc/<pid>/stat`, unlike [`killed`].
 fn dying(pid: i32) -> bool {
-    let read = |f: &str| std::fs::read_to_string(format!("/proc/{pid}/{f}")).unwrap_or_default();
-    dying_by(&read("stat"), &read("status"))
+    dying_by(&std::fs::read_to_string(format!("/proc/{pid}/stat")).unwrap_or_default())
 }
 
-/// [`dying`] from the main thread's `/proc/<pid>/stat` and `/proc/<pid>/status`.
-fn dying_by(stat: &str, status: &str) -> bool {
-    matches!(stat_state(stat), Some('Z' | 'X')) || sigkill_pending(status)
+/// [`dying`] from a `/proc/<pid>/stat` line. Its `signal` field is the thread's own pending mask,
+/// where a fatal signal or `exit_group` puts SIGKILL on every thread it ends.
+fn dying_by(stat: &str) -> bool {
+    let state = stat_fields(stat).next().and_then(|s| s.chars().next());
+    matches!(state, Some('Z' | 'X')) || stat_signal(stat).is_some_and(|m| m & sigkill_bit() != 0)
 }
 
-/// The state letter of a `/proc/<pid>/stat` line; the command name before it may hold `)`.
-fn stat_state(stat: &str) -> Option<char> {
-    stat.rsplit_once(')')?.1.trim_start().chars().next()
+/// The `signal` field (31) of a `/proc/<pid>/stat` line; `state` is field 3.
+fn stat_signal(stat: &str) -> Option<u64> {
+    stat_fields(stat).nth(28)?.parse().ok()
+}
+
+/// The fields of a `/proc/<pid>/stat` line from `state` on; the command name before them may
+/// hold `)`.
+fn stat_fields(stat: &str) -> impl Iterator<Item = &str> {
+    stat.rsplit_once(')')
+        .map_or("", |(_, rest)| rest)
+        .split_ascii_whitespace()
+}
+
+fn sigkill_bit() -> u64 {
+    1 << (libc::SIGKILL - 1)
 }
 
 /// Whether `pid` is being torn down: a thread of it has SIGKILL pending, as a fatal signal and
@@ -127,7 +144,7 @@ fn killed(pid: i32) -> bool {
 
 /// Whether a `/proc/<pid>/task/<tid>/status` holds SIGKILL in its pending masks.
 fn sigkill_pending(status: &str) -> bool {
-    let bit = 1u64 << (libc::SIGKILL - 1);
+    let bit = sigkill_bit();
     status
         .lines()
         .filter_map(|l| {
@@ -197,7 +214,19 @@ pub struct Hang {
     pings: HashMap<Target, RegistrationToken>,
     /// The threads watched per client pid with a window.
     threads: HashMap<i32, Threads>,
+    /// The timer of the periodic [`dying`] check, while a pid in `threads` is not yet dropped.
+    dying_check: Option<RegistrationToken>,
     next_key: u64,
+}
+
+/// The pids the periodic [`dying`] check reads: those with a window not yet dropped. None stops
+/// the timer.
+fn dying_scan(threads: &HashMap<i32, Threads>) -> Vec<i32> {
+    threads
+        .iter()
+        .filter(|(_, t)| !t.dropped)
+        .map(|(&p, _)| p)
+        .collect()
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -446,6 +475,38 @@ impl State {
             }
         }
         self.hang.threads.insert(pid, threads);
+        self.arm_dying_check();
+    }
+
+    fn arm_dying_check(&mut self) {
+        if self.hang.dying_check.is_some() || dying_scan(&self.hang.threads).is_empty() {
+            return;
+        }
+        let timer = self
+            .handle
+            .insert_source(Timer::from_duration(DYING_EVERY), |_, _, state| {
+                state.dying_check()
+            });
+        match timer {
+            Ok(t) => self.hang.dying_check = Some(t),
+            Err(e) => log::warn!("dying check timer: {}", e.error),
+        }
+    }
+
+    /// Drops each program with a window found [`dying`]; the timer ends once none is left to read.
+    fn dying_check(&mut self) -> TimeoutAction {
+        for pid in dying_scan(&self.hang.threads) {
+            if dying(pid) {
+                log::info!("pid {pid}: dying, found by the periodic check");
+                self.drop_program(pid);
+            }
+        }
+        if dying_scan(&self.hang.threads).is_empty() {
+            self.hang.dying_check = None;
+            TimeoutAction::Drop
+        } else {
+            TimeoutAction::ToDuration(DYING_EVERY)
+        }
     }
 
     /// Thread `tid` of `pid` exited. A program being killed loses its connections now; a thread
@@ -458,8 +519,16 @@ impl State {
         if threads.dropped || !killed(pid) {
             return;
         }
-        threads.dropped = true;
         log::info!("pid {pid}: killed, thread {tid} exited");
+        self.drop_program(pid);
+    }
+
+    /// Disconnect every client behind `pid`'s windows, once.
+    fn drop_program(&mut self, pid: i32) {
+        let Some(threads) = self.hang.threads.get_mut(&pid).filter(|t| !t.dropped) else {
+            return;
+        };
+        threads.dropped = true;
         let ws: Vec<WindowId> = self
             .windows
             .iter()
@@ -546,6 +615,11 @@ impl State {
             for (_, t) in self.hang.threads.remove(&pid).unwrap_or_default().watched {
                 self.handle.remove(t);
             }
+        }
+        if dying_scan(&self.hang.threads).is_empty()
+            && let Some(t) = self.hang.dying_check.take()
+        {
+            self.handle.remove(t);
         }
         self.close_end_programs(|p| !live.contains(&p), "has no window left");
     }
@@ -645,10 +719,10 @@ mod tests {
     }
 
     #[test]
-    fn the_stat_state_follows_the_last_parenthesis() {
-        assert_eq!(stat_state("42 (a) b) Z 1 42"), Some('Z'));
-        assert_eq!(stat_state("42 (foot) S 1 42"), Some('S'));
-        assert_eq!(stat_state("garbage"), None);
+    fn the_stat_fields_follow_the_last_parenthesis() {
+        assert_eq!(stat_fields("42 (a) b) Z 1 42").next(), Some("Z"));
+        assert_eq!(stat_fields("42 (foot) S 1 42").next(), Some("S"));
+        assert_eq!(stat_fields("garbage").next(), None);
     }
 
     #[test]
@@ -673,17 +747,55 @@ mod tests {
 
     #[test]
     fn a_main_thread_stuck_with_sigkill_pending_is_dying() {
-        let stat = |state: char| format!("42 (a) b) {state} 1 42 42");
-        let status = |sig: &str| format!("Name:\tx\nState:\tD\nSigPnd:\t{sig}\nShdPnd:\t0\n");
-        let (kill, none) = ("0000000000000100", "0000000000000000");
+        // Fields 4..=30 as 1, then `signal` (31) and four more.
+        let stat = |state: char, signal: u64| {
+            format!("42 (a) b) {state}{} {signal} 0 0 0 0", " 1".repeat(27))
+        };
+        assert!(dying_by(&stat('D', 256)), "stuck on a dead mount, killed");
+        assert!(!dying_by(&stat('D', 0)), "stuck, not killed");
         assert!(
-            dying_by(&stat('D'), &status(kill)),
-            "stuck on a dead mount, killed"
+            !dying_by(&stat('S', 0x4002)),
+            "running, other signals pending"
         );
-        assert!(!dying_by(&stat('D'), &status(none)), "stuck, not killed");
-        assert!(!dying_by(&stat('S'), &status(none)), "running");
-        assert!(dying_by(&stat('Z'), ""), "exited");
-        assert!(!dying_by("", ""), "gone");
+        assert!(dying_by(&stat('Z', 0)), "exited");
+        assert!(!dying_by(""), "gone");
+    }
+
+    #[test]
+    fn a_signal_pending_on_a_thread_shows_in_its_stat_signal_field() {
+        let mut ready = [0; 2];
+        // SAFETY: `ready` holds two fds.
+        assert_eq!(unsafe { libc::pipe(ready.as_mut_ptr()) }, 0);
+        // SAFETY: the child only makes libc calls and never returns into the test.
+        let pid = unsafe { libc::fork() };
+        if pid == 0 {
+            // SAFETY: as above; a live sigset on the stack.
+            unsafe {
+                let mut set = std::mem::zeroed();
+                libc::sigemptyset(&mut set);
+                libc::sigaddset(&mut set, libc::SIGUSR1);
+                libc::sigprocmask(libc::SIG_BLOCK, &set, std::ptr::null_mut());
+                libc::write(ready[1], [1u8].as_ptr().cast(), 1);
+                libc::pause();
+                libc::_exit(0);
+            }
+        }
+        let mut b = 0u8;
+        // SAFETY: reads one byte into a live buffer; then plain syscalls on our own child.
+        unsafe {
+            libc::read(ready[0], (&raw mut b).cast(), 1);
+            libc::syscall(libc::SYS_tgkill, pid, pid, libc::SIGUSR1);
+        }
+        let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).unwrap();
+        // SAFETY: plain syscalls on our own child and pipe.
+        unsafe {
+            libc::kill(pid, libc::SIGKILL);
+            libc::waitpid(pid, std::ptr::null_mut(), 0);
+            libc::close(ready[0]);
+            libc::close(ready[1]);
+        }
+        assert_eq!(stat_signal(&stat), Some(1 << (libc::SIGUSR1 - 1)));
+        assert!(!dying_by(&stat), "a pending SIGUSR1 is no kill");
     }
 
     #[test]
@@ -795,6 +907,35 @@ mod tests {
         );
         assert!(!killed(pid), "a thread ending by itself is no kill");
         reap();
+    }
+
+    #[test]
+    fn the_dying_check_reads_only_programs_not_yet_dropped_and_stops_without_one() {
+        let threads = |dropped: &[(i32, bool)]| -> HashMap<i32, Threads> {
+            dropped
+                .iter()
+                .map(|&(p, dropped)| {
+                    (
+                        p,
+                        Threads {
+                            dropped,
+                            ..Threads::default()
+                        },
+                    )
+                })
+                .collect()
+        };
+        let mut scan = dying_scan(&threads(&[(10, false), (20, true), (30, false)]));
+        scan.sort_unstable();
+        assert_eq!(scan, [10, 30], "a dropped program is not read again");
+        assert!(
+            dying_scan(&threads(&[(20, true)])).is_empty(),
+            "only dropped programs left: the timer stops"
+        );
+        assert!(
+            dying_scan(&HashMap::new()).is_empty(),
+            "no program with a window: no timer"
+        );
     }
 
     #[test]
