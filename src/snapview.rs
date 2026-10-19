@@ -512,8 +512,9 @@ impl Snapping {
     }
 
     /// Members `desktop_of` puts on another desktop than their group's leave it; None (a window
-    /// on every desktop, or gone) stays.
-    pub fn leave_other_desktops(&mut self, desktop_of: impl Fn(WindowId) -> Option<usize>) {
+    /// on every desktop, or gone) stays. A group with every member on every desktop moves to the
+    /// desktop shown, its layout with it unless that desktop has one of its own there.
+    pub fn settle_desktops(&mut self, desktop_of: impl Fn(WindowId) -> Option<usize>) {
         let moved: Vec<WindowId> = (self.groups.iter())
             .flat_map(|g| {
                 (g.members.iter())
@@ -523,6 +524,29 @@ impl Snapping {
             .collect();
         for w in moved {
             self.leave_group(w);
+        }
+        let current = self.desktop;
+        for i in 0..self.groups.len() {
+            let g = &self.groups[i];
+            if g.desktop == current || g.members.iter().any(|&(_, m)| desktop_of(m).is_some()) {
+                continue;
+            }
+            let old = (g.output.clone(), g.desktop);
+            let layout = (self
+                .active
+                .get(&old)
+                .filter(|a| a.layout == g.layout)
+                .cloned())
+            .unwrap_or_else(|| ActiveLayout {
+                layout: g.layout.clone(),
+                explicit: false,
+                splits: g.splits.clone(),
+            });
+            self.active
+                .entry((g.output.clone(), current))
+                .or_insert(layout);
+            self.groups[i].desktop = current;
+            self.drop_unheld_layout(&old);
         }
     }
 
@@ -1472,20 +1496,74 @@ mod tests {
         s.join_group(a, b, 1);
         s.join_group(a, c, 1);
         let on = |b_at: Option<usize>| move |w: WindowId| if w == b { b_at } else { Some(0) };
-        s.leave_other_desktops(on(None));
+        s.settle_desktops(on(None));
         assert_eq!(s.group_of(b), Some(g), "on every desktop: stays");
-        s.leave_other_desktops(on(Some(0)));
+        s.settle_desktops(on(Some(0)));
         assert_eq!(s.group_of(b), Some(g), "still on the group's desktop");
-        s.leave_other_desktops(on(Some(1)));
+        s.settle_desktops(on(Some(1)));
         assert_eq!(s.group_of(b), None, "moved to the second desktop");
         assert_eq!(s.group_of(a), Some(g));
         assert_eq!(s.group_of(c), Some(g));
-        s.leave_other_desktops(|_| Some(1));
+        s.settle_desktops(|_| Some(1));
         assert_eq!(s.group_of(a), None);
         assert!(
             !s.active.contains_key(&k("DP-1")),
             "the layout went with the last member"
         );
+    }
+
+    #[test]
+    fn a_group_on_every_desktop_moves_to_the_desktop_shown() {
+        let (a, b, c) = (WindowId::next(), WindowId::next(), WindowId::next());
+        let mut s = Snapping::default();
+        let thirds = ZoneLayout::parse("1|1|1").unwrap();
+        s.apply(a, "DP-1", halves(), true, true, WORK, 0, all);
+        s.apply(b, "DP-1", halves(), true, true, WORK, 1, all);
+        let g = s.group_of(a).expect("snapped");
+        s.desktop = 2;
+        s.apply(c, "DP-1", thirds.clone(), true, true, WORK, 0, all);
+        let sticky = |w: WindowId| (w == c).then_some(2);
+        s.desktop = 1;
+        s.settle_desktops(sticky);
+        assert_eq!((s.group_of(a), s.group_of(b)), (Some(g), Some(g)));
+        let on_1 = |m: WindowId| m != c;
+        assert_eq!(s.active_target("DP-1", WORK, &on_1).0, halves());
+        assert_eq!(
+            s.landing("DP-1", &halves(), true, WORK, &on_1).0,
+            Some(g),
+            "a drop on the second desktop joins it"
+        );
+        assert!(
+            !s.active.contains_key(&k("DP-1")),
+            "the first desktop's layout went with it"
+        );
+        s.desktop = 2;
+        s.settle_desktops(sticky);
+        assert_eq!(
+            s.active_target("DP-1", WORK, &all).0,
+            thirds,
+            "the third desktop keeps its own layout"
+        );
+        assert_eq!(s.group_of(a), Some(g));
+    }
+
+    #[test]
+    fn a_group_with_a_member_on_one_desktop_stays_there() {
+        let (a, b) = (WindowId::next(), WindowId::next());
+        let mut s = Snapping::default();
+        s.apply(a, "DP-1", halves(), true, true, WORK, 0, all);
+        s.apply(b, "DP-1", halves(), true, true, WORK, 1, all);
+        let g = s.group_of(a).expect("snapped");
+        s.desktop = 1;
+        s.settle_desktops(|w| (w == b).then_some(0));
+        assert_eq!((s.group_of(a), s.group_of(b)), (Some(g), Some(g)));
+        let only_a = |m: WindowId| m == a;
+        assert_eq!(
+            s.landing("DP-1", &halves(), true, WORK, &only_a).0,
+            None,
+            "`b` is not on the second desktop: the group does not count there"
+        );
+        assert!(s.active.contains_key(&k("DP-1")));
     }
 
     #[test]

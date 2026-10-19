@@ -106,13 +106,13 @@ impl State {
         false
     }
 
-    /// Bring every window in line with the current desktop: a snapped window moved off its group's desktop leaves the group, a mapped window's tree is enabled when it is on it and nothing up its owner chain is minimized. A window leaving the screen loses any move, held task button or window menu, and the focused one loses focus (the caller hands it on).
+    /// Bring every window in line with the current desktop: a snapped window moved off its group's desktop leaves the group and a group on every desktop moves to the one shown, a mapped window's tree is enabled when it is on it and nothing up its owner chain is minimized. A window leaving the screen loses any move, held task button or window menu, and the focused one loses focus (the caller hands it on).
     pub fn desktops_changed(&mut self) {
         self.wm.snap.desktop = self.desktops.current;
         let desktops: Vec<(WindowId, Option<usize>)> = (self.windows.iter())
             .map(|w| (w.id, self.desktop_of(w.id)))
             .collect();
-        (self.wm.snap).leave_other_desktops(|w| desktops.iter().find(|d| d.0 == w)?.1);
+        (self.wm.snap).settle_desktops(|w| desktops.iter().find(|d| d.0 == w)?.1);
         let all: Vec<WindowId> = self
             .windows
             .iter()

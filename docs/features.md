@@ -154,7 +154,8 @@ the Super tap, Super+Shift+Esc and the VT switch keys can be rebound.
   out. Dragging an edge no other window shares unsnaps the window. Each
   desktop keeps its own layout, and snapped windows keep their zones when
   the taskbar moves. A window moved to another desktop leaves its
-  group.
+  group. A group whose windows are all on every desktop holds on whichever
+  desktop is shown; one with a window on a single desktop holds only there.
 - **From the keyboard.** Super and Left or Right step a window through the
   zones and on to the next screen. Super+Up steps up, then maximizes; Super+
   Down steps down, restores, then gives back the size from before the snap.
