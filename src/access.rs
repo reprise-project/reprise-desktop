@@ -1,12 +1,12 @@
 //! Screen reader side of the compositor's own surfaces: one AccessKit adapter per taskbar, menu stack, switcher, dialog, launcher, clipboard history, emoji picker, calendar, displays panel, tray flyout, task preview panel, notification history and the balloons, speaking AT-SPI on the session's accessibility bus.
 //! `accesskit_unix` runs its D-Bus side on its own thread and calls the handlers (`reprisekit::access::Handler`) there; they post a `Msg` to a calloop channel, so the loop never waits on the bus. Trees are built on the loop, in an idle pass [`touch`] queues, only for adapters a reader holds.
 //! Bounds are layout coordinates: a tree's root carries its surface's place as a transform and its controls lay out surface-local. A tree claims the focus only while its surface has the keyboard (see [`focus_of`]). The lock screen has no tree, so its password field's text stays here.
-//! A reader's action on a node runs as the click a user would give it ([`click`], `reprisekit::access::gesture`) through the pointer's press and release paths; focusing a taskbar item gives the bar the keyboard (`barkeys`), a dialog's button or a Start panel spot takes it unpressed; ScrollIntoView, or Focus on a row out of view, scrolls the row's list ([`reveal`]).
+//! A reader's action on a node runs as the click a user would give it ([`click`], `reprisekit::access::gesture`) through the pointer's press and release paths; focusing a taskbar item gives the bar the keyboard (`barkeys`), a dialog's button or a Start panel spot takes it unpressed; ScrollIntoView on a row out of view scrolls its list ([`reveal`]); any other action there scrolls it in, then acts on it.
 //! The same idle pass moves the seat's keyboard for the menus, Glass Start menu, launcher and overview, reader or not: they take it from the window while open and give it back on close ([`move_keyboard`]).
 
 use reprisebus::a11y::{KeyEcho, KeyNote};
 use reprisekit::access::accesskit::{Affine, Role};
-use reprisekit::access::{Act, Gesture, Handler, Published, Request, Reveal, Tree};
+use reprisekit::access::{Act, Gesture, Handler, Published, Request, Reveal, Route, Tree};
 use reprisescene::TreeId;
 use smithay::input::keyboard::Keycode;
 use smithay::reexports::calloop::LoopHandle;
@@ -501,22 +501,29 @@ fn lands_on(state: &State, surface: Surface, hit: &Hit) -> bool {
 /// node's middle, if that point still lands on the surface. Focus on a
 /// taskbar item gives the bar the keyboard there; on a menu row it
 /// lights the row; on a dialog's button or a Start panel spot it moves
-/// the keyboard there unpressed. ScrollIntoView, or Focus on a row out of view,
-/// scrolls the row's list ([`reveal`]).
+/// the keyboard there unpressed. A row out of view is scrolled in first
+/// ([`reveal`]); after anything but ScrollIntoView the trees are published
+/// again and `req` acts on the row in view.
 fn act(state: &mut State, surface: Surface, req: Request) {
-    let published = (state.access.slots.iter())
-        .find(|x| x.surface == surface && x.active)
-        .map(|x| &x.published);
-    let scroll = matches!(req.act, Act::ScrollIntoView | Act::Focus)
-        .then(|| published.and_then(|p| p.reveal(req.node)))
-        .flatten();
-    let target = published.and_then(|p| p.target(req.node));
-    if let Some(r) = scroll {
-        reveal(state, surface, r);
-        return;
-    }
-    let Some(target) = target else {
-        return;
+    let route = |state: &State| {
+        (state.access.slots.iter())
+            .find(|x| x.surface == surface && x.active)
+            .map_or(Route::None, |x| x.published.route(req))
+    };
+    let target = match route(state) {
+        Route::Reveal { reveal: r, then } => {
+            reveal(state, surface, r);
+            if !then {
+                return;
+            }
+            sync(state);
+            match route(state) {
+                Route::Act(t) => t,
+                _ => return,
+            }
+        }
+        Route::Act(t) => t,
+        Route::None => return,
     };
     let hit = state.scene_hit(Point::from(target.at));
     if !lands_on(state, surface, &hit) {
@@ -567,8 +574,8 @@ fn focus_dialog(state: &mut State, index: usize, at: (f64, f64)) {
     }
 }
 
-/// Scroll the list at `r.at` so its row `r.row` shows, for a reader's ScrollIntoView or Focus on a
-/// row out of view: a dialog's list, the clipboard history's or the emoji picker's.
+/// Scroll the list at `r.at` so its row `r.row` shows, for a reader's action on a row out of
+/// view: a dialog's list, the clipboard history's or the emoji picker's.
 fn reveal(state: &mut State, surface: Surface, r: Reveal) {
     let hit = state.scene_hit(Point::from(r.at));
     if !lands_on(state, surface, &hit) {
