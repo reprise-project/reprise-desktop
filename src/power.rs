@@ -500,9 +500,6 @@ pub fn setup(state: &mut State) {
 
 pub fn run_action(state: &mut State, a: PowerAction) {
     log::info!("power: {}", a.name());
-    let spawn = |state: &mut State, cmd: &str| {
-        state.spawn_activated(cmd);
-    };
     match a {
         PowerAction::Nothing => {}
         PowerAction::ScreenOff => {
@@ -512,11 +509,11 @@ pub fn run_action(state: &mut State, a: PowerAction) {
         PowerAction::Lock => crate::lockview::lock(state),
         PowerAction::Standby => {
             let cmd = state.config.power.standby.clone();
-            spawn(state, &cmd);
+            crate::sessionend::sleep(state, crate::sessionend::Act::StandBy, cmd);
         }
         PowerAction::Hibernate => {
             let cmd = state.config.power.hibernate.clone();
-            spawn(state, &cmd);
+            crate::sessionend::sleep(state, crate::sessionend::Act::Hibernate, cmd);
         }
         PowerAction::TurnOff => {
             let cmd = state.config.power.poweroff.clone();
