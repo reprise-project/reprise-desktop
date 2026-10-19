@@ -1129,8 +1129,8 @@ impl VolumePopup {
     }
 
     /// The left button went down at (`x`, `y`). The thumb is where the volume puts it now; a press on the channel steps it one position; focus moves to the pressed part; a combo's field or drop button opens its list. With a list open, a press on it acts there and any other press closes it; outside the panel closes the popup.
-    /// A reader's Focus on the control at (`x`, `y`): it takes the keyboard as Tab gives it,
-    /// without sliding, muting, playing or dropping anything.
+    /// A reader's Focus on the control at (`x`, `y`): it takes the keyboard as Tab gives it, with
+    /// its focus ring shown, without sliding, muting, playing or dropping anything.
     pub fn focus_at(&mut self, lay: &Layout, x: i32, y: i32) -> Event {
         let lay = &self.current(lay);
         let live = |i: usize| self.columns[i].volume.enabled;
@@ -1143,8 +1143,10 @@ impl VolumePopup {
             }
             _ => return Event::None,
         };
+        let cued = !self.cues;
+        self.cues = true;
         if self.focus == f {
-            return Event::None;
+            return if cued { Event::Redraw } else { Event::None };
         }
         if let Some(d) = self.open_list() {
             self.combo_mut(d).open = None;
@@ -1491,6 +1493,18 @@ mod tests {
         assert_eq!(vp.focus_at(&l, x, y), Event::Redraw);
         assert_eq!(vp.focus, Focus::Mute(0));
         assert!(!vp.columns[0].mute, "nothing is muted");
+        assert_eq!(vp.focus_at(&l, x, y), Event::None);
+    }
+
+    #[test]
+    fn a_readers_focus_shows_the_focus_ring() {
+        let mut vp = VolumePopup::new(&mix(&[]));
+        let l = lay(&vp);
+        assert!(!vp.cues, "opened with the pointer");
+        let (x, y) = mid(col(&l, 0).track.bounds);
+        assert_eq!(vp.focus, Focus::Thumb(0));
+        assert_eq!(vp.focus_at(&l, x, y), Event::Redraw, "the ring comes out");
+        assert!(vp.cues);
         assert_eq!(vp.focus_at(&l, x, y), Event::None);
     }
 
