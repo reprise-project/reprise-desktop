@@ -58,6 +58,7 @@ fn copy_entries(
                 "The copy was cancelled.",
             ));
         }
+        crate::progress::step();
         let to = dest.join(entry.file_name());
         let from = entry.path();
         // `symlink_metadata`, not `is_dir`: the latter follows the link.
@@ -569,12 +570,29 @@ pub fn erase(path: &Path) -> io::Result<()> {
 /// holds before the next, and a cancel stops with `Interrupted`, keeping what is left. Folders are
 /// opened without following links, so one swapped for a link on the way is never walked into.
 pub(crate) fn erase_counted(path: &Path, meter: &crate::progress::Meter) -> io::Result<()> {
+    meter.hold()?;
+    erase_tree(path, meter, true)
+}
+
+/// [`erase`], each entry a step of this thread's job ([`crate::progress::step`]) without counting
+/// on its bar or taking its pause and cancel: the purge of a bin, the original of a move.
+pub(crate) fn erase_stepped(path: &Path) -> io::Result<()> {
+    match crate::progress::current() {
+        Some(meter) => erase_tree(path, &meter, false),
+        None => erase(path),
+    }
+}
+
+/// Remove `path` one entry at a time, `counted` on `meter` (each file an item, a pause and cancel
+/// between two) or only stepping it.
+fn erase_tree(path: &Path, meter: &crate::progress::Meter, counted: bool) -> io::Result<()> {
     use std::os::unix::ffi::OsStrExt;
     refuse_mount_point(path)?;
-    meter.hold()?;
     if !std::fs::symlink_metadata(path)?.is_dir() {
         std::fs::remove_file(path)?;
-        meter.removed();
+        if counted {
+            meter.removed();
+        }
         return Ok(());
     }
     refuse_holding_mount(path)?;
@@ -590,7 +608,12 @@ pub(crate) fn erase_counted(path: &Path, meter: &crate::progress::Meter) -> io::
         parent
     })?;
     let name = std::ffi::CString::new(name.as_bytes())?;
-    remove_tree_at(std::os::fd::AsRawFd::as_raw_fd(&parent), &name, meter)
+    remove_tree_at(
+        std::os::fd::AsRawFd::as_raw_fd(&parent),
+        &name,
+        meter,
+        counted,
+    )
 }
 
 /// Remove folder `name` in the folder open at `parent` with everything under it, children first.
@@ -598,6 +621,7 @@ fn remove_tree_at(
     parent: std::os::fd::RawFd,
     name: &std::ffi::CStr,
     meter: &crate::progress::Meter,
+    counted: bool,
 ) -> io::Result<()> {
     use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
     let flags = libc::O_RDONLY | libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC;
@@ -609,15 +633,21 @@ fn remove_tree_at(
     // SAFETY: `fd` was just opened and is owned by nothing else.
     let dir = unsafe { OwnedFd::from_raw_fd(fd) };
     for (child, is_dir) in entries_at(&dir)? {
-        meter.hold()?;
+        if counted {
+            meter.hold()?;
+        } else {
+            crate::progress::step();
+        }
         if is_dir {
-            remove_tree_at(dir.as_raw_fd(), &child, meter)?;
+            remove_tree_at(dir.as_raw_fd(), &child, meter, counted)?;
         } else {
             // SAFETY: as for `openat` above.
             if unsafe { libc::unlinkat(dir.as_raw_fd(), child.as_ptr(), 0) } != 0 {
                 return Err(io::Error::last_os_error());
             }
-            meter.removed();
+            if counted {
+                meter.removed();
+            }
         }
     }
     // SAFETY: as for `openat` above.
@@ -1081,10 +1111,13 @@ pub(crate) fn sync_tree(path: &Path) -> io::Result<()> {
 }
 
 /// Flush `path` and the folder entry that names it.
+/// Under a job it runs outside the job's watch: a slow disk takes as long as it takes.
 pub(crate) fn sync_landed(path: &Path) -> io::Result<()> {
-    sync_tree(path)?;
-    let dir = path.parent().unwrap_or(Path::new("."));
-    std::fs::File::open(dir)?.sync_all()
+    crate::progress::flushing(|| {
+        sync_tree(path)?;
+        let dir = path.parent().unwrap_or(Path::new("."));
+        std::fs::File::open(dir)?.sync_all()
+    })
 }
 
 /// Refuse a move to another drive whose original cannot be removed once

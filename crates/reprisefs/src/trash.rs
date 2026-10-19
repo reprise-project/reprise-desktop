@@ -812,7 +812,7 @@ fn copy_then_remove(from: &Path, to: &Path) -> io::Result<()> {
         refuse_holding_mount(from)?;
         copy_dir_all(from, to)?;
         crate::ops::sync_landed(to)?;
-        std::fs::remove_dir_all(from)
+        crate::ops::erase_stepped(from)
     } else {
         crate::ops::copy_new(from, to)?;
         crate::ops::sync_landed(to)?;

@@ -1,14 +1,18 @@
 //! Deletes, Empty Recycle Bin and Restore off the caller's thread, counted like a put
 //! ([`crate::jobs::PutJob`]): a walk of every item for the totals, then the items in order,
-//! reported one by one. A pause or cancel takes effect between two files.
+//! reported one by one. A pause or cancel takes effect between two files; a job stuck for
+//! [`ACTION_DEADLINE`] fails as not responding.
 
 use crate::bincap::Measured;
+use crate::deadline::ACTION_DEADLINE;
 use crate::progress::{self, Meter, Phase, Snapshot, Totals};
 use crate::trash::{self, Bins, Trashed};
 use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, TryRecvError};
+use std::time::Duration;
 
 /// One item of a removal job.
 #[derive(Clone, Debug)]
@@ -116,6 +120,11 @@ impl Removal {
     }
 }
 
+/// The error a removal fails with once it made no headway for [`ACTION_DEADLINE`].
+fn not_responding() -> io::Error {
+    io::Error::new(io::ErrorKind::TimedOut, "The location is not responding.")
+}
+
 impl RemoveJob {
     /// Start `items` on a thread of their own; `bins` is where [`Removal::Trash`] goes. `wake`
     /// runs after each report. The first failure stops the rest, except that an Empty goes on to
@@ -123,34 +132,61 @@ impl RemoveJob {
     pub fn start(
         items: Vec<Removal>,
         bins: Option<Bins>,
-        wake: impl Fn() + Send + 'static,
+        wake: impl Fn() + Send + Sync + 'static,
     ) -> RemoveJob {
-        Self::start_metered(items, bins, Arc::new(Meter::default()), wake)
+        Self::start_metered(
+            items,
+            bins,
+            Arc::new(Meter::default()),
+            ACTION_DEADLINE,
+            wake,
+        )
     }
 
-    /// [`Self::start`], counting on `meter`, so a test can pause it before the thread runs.
+    /// [`Self::start`], counting on `meter` and failing after `deadline` without headway, so a test
+    /// can pause it before the thread runs or wait less.
     fn start_metered(
         items: Vec<Removal>,
         bins: Option<Bins>,
         meter: Arc<Meter>,
-        wake: impl Fn() + Send + 'static,
+        deadline: Duration,
+        wake: impl Fn() + Send + Sync + 'static,
     ) -> RemoveJob {
         let (tx, events) = mpsc::channel();
+        let wake = Arc::new(wake);
+        let ended = Arc::new(AtomicBool::new(false));
+        let (watch_tx, watch_wake) = (tx.clone(), wake.clone());
+        progress::watch(&meter, &ended, deadline, "removal", move |m| {
+            let error = not_responding();
+            let _ = watch_tx.send(RemoveEvent::Failed {
+                index: m.at(),
+                error,
+            });
+            let _ = watch_tx.send(RemoveEvent::Finished);
+            (*watch_wake)();
+        });
         let m = meter.clone();
         let spawned = std::thread::Builder::new()
             .name("reprisefs-remove".into())
             .spawn(move || {
+                let finish = || {
+                    if !ended.swap(true, Ordering::AcqRel) {
+                        let _ = tx.send(RemoveEvent::Finished);
+                        (*wake)();
+                    }
+                };
                 let Some(sizes) = items
                     .iter()
-                    .map(|it| {
+                    .enumerate()
+                    .map(|(index, it)| {
+                        m.set_at(index);
                         let t = it.totals(&m);
                         m.add_totals(t.unwrap_or_default());
                         t
                     })
                     .collect::<Option<Vec<Totals>>>()
                 else {
-                    let _ = tx.send(RemoveEvent::Finished);
-                    wake();
+                    finish();
                     return;
                 };
                 m.set_phase(Phase::Copying);
@@ -159,6 +195,7 @@ impl RemoveJob {
                     if m.hold().is_err() {
                         break;
                     }
+                    m.set_at(index);
                     m.set_current(it.name());
                     let r = progress::metered(&m, || it.run(bins.as_ref(), &m));
                     done = done + sizes[index];
@@ -174,15 +211,15 @@ impl RemoveJob {
                         Err(error) => RemoveEvent::Failed { index, error },
                     };
                     if tx.send(ev).is_err() {
+                        ended.store(true, Ordering::Release);
                         return;
                     }
-                    wake();
+                    (*wake)();
                     if stop {
                         break;
                     }
                 }
-                let _ = tx.send(RemoveEvent::Finished);
-                wake();
+                finish();
             });
         if let Err(e) = spawned {
             log::error!("reprisefs: cannot spawn the removal thread: {e}");
@@ -294,8 +331,13 @@ mod tests {
         tree(&a, 200);
         let meter = Arc::new(Meter::default());
         meter.set_paused(true);
-        let job =
-            RemoveJob::start_metered(vec![Removal::Erase(a.clone())], None, meter.clone(), || {});
+        let job = RemoveJob::start_metered(
+            vec![Removal::Erase(a.clone())],
+            None,
+            meter.clone(),
+            ACTION_DEADLINE,
+            || {},
+        );
         let deadline = std::time::Instant::now() + Duration::from_secs(5);
         while meter.snapshot().phase != Phase::Copying {
             assert!(std::time::Instant::now() < deadline, "the walk ends");
@@ -316,6 +358,61 @@ mod tests {
         }
         let left = progress::walk(&a, false, &Meter::default()).unwrap();
         assert_eq!(left.items, 200, "nothing went past the pause");
+    }
+
+    #[test]
+    fn a_removal_that_stops_answering_fails_as_not_responding_and_finishes() {
+        use std::os::unix::ffi::OsStrExt;
+        let t = tempfile::tempdir().unwrap();
+        let a = t.path().join("a.txt");
+        std::fs::write(&a, "a").unwrap();
+        let root = t.path().join("Trash");
+        std::fs::create_dir_all(root.join("files/x")).unwrap();
+        std::fs::create_dir_all(root.join("info")).unwrap();
+        // Reading a FIFO with no writer blocks, as a call on a drive that stopped answering does.
+        let info = root.join("info/x.trashinfo");
+        let c = std::ffi::CString::new(info.as_os_str().as_bytes()).unwrap();
+        // SAFETY: `c` is a NUL-terminated path that outlives the call.
+        assert_eq!(unsafe { libc::mkfifo(c.as_ptr(), 0o600) }, 0);
+        let (wtx, woke) = channel();
+        let job = RemoveJob::start_metered(
+            vec![
+                Removal::Erase(a.clone()),
+                Removal::EraseTrashed {
+                    files: root.join("files/x"),
+                    record: None,
+                },
+            ],
+            None,
+            Arc::new(Meter::default()),
+            Duration::from_millis(300),
+            move || {
+                let _ = wtx.send(());
+            },
+        );
+        let meter = job.meter().clone();
+        let got = run(job, woke);
+        assert!(
+            matches!(
+                got.as_slice(),
+                [
+                    RemoveEvent::Done { index: 0, removed: Removed::Erased },
+                    RemoveEvent::Failed { index: 1, error },
+                    RemoveEvent::Finished,
+                ] if error.kind() == io::ErrorKind::TimedOut
+            ),
+            "a.txt goes, the stuck entry fails as not responding, then Finished: {got:?}"
+        );
+        assert!(
+            meter.cancelled(),
+            "the stuck call stops the job once it returns"
+        );
+        assert!(
+            root.join("files/x").exists(),
+            "nothing goes past the stuck read"
+        );
+        let writer = std::fs::OpenOptions::new().write(true).open(&info).unwrap();
+        drop(writer);
     }
 
     #[test]
