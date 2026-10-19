@@ -20,6 +20,7 @@ pub struct Want {
 struct Watched {
     dir: PathBuf,
     wd: WatchDescriptor,
+    mask: WatchMask,
     only: Vec<OsString>,
 }
 
@@ -36,8 +37,8 @@ pub struct Adds {
     dirs: Vec<(PathBuf, WatchMask)>,
 }
 
-/// The watches an [`Adds::run`] made.
-pub struct Added(Vec<(PathBuf, WatchDescriptor)>);
+/// The watches an [`Adds::run`] made, with the masks they were made with.
+pub struct Added(Vec<(PathBuf, WatchDescriptor, WatchMask)>);
 
 impl Added {
     pub fn is_empty(&self) -> bool {
@@ -48,16 +49,16 @@ impl Added {
 /// What [`DirWatch::adder`] saw watched, for [`Adder::run`] on a thread.
 pub struct Adder {
     watches: Watches,
-    watched: Vec<PathBuf>,
+    watched: Vec<(PathBuf, WatchMask)>,
 }
 
 impl Adder {
-    /// Watches each directory of `want` that exists and was not watched when the adder was made.
-    /// The loop's next [`DirWatch::plan`] of a want holding these, then [`DirWatch::adopt`], takes
-    /// them.
+    /// Watches each directory of `want` that exists and was not watched for its mask when the
+    /// adder was made. The loop's next [`DirWatch::plan`] of a want holding these, then
+    /// [`DirWatch::adopt`], takes them.
     pub fn run(self, want: &[Want]) -> Added {
         let dirs = (merged(want).into_iter())
-            .filter(|w| !self.watched.contains(&w.dir))
+            .filter(|w| !covered(&self.watched, &w.dir, w.mask))
             .map(|w| (w.dir, w.mask))
             .collect();
         Adds {
@@ -89,7 +90,7 @@ impl Adds {
                 continue;
             }
             match (self.watches).add(&dir, mask | WatchMask::DELETE_SELF | WatchMask::MOVE_SELF) {
-                Ok(wd) => added.push((dir, wd)),
+                Ok(wd) => added.push((dir, wd, mask)),
                 Err(e) => log::warn!("not watching {}: {e}", dir.display()),
             }
         }
@@ -112,7 +113,7 @@ impl DirWatch {
 
     /// Make the watched set `want`: drop directories no longer in it, take
     /// each kept one's `only`, and watch every wanted directory that exists
-    /// and is not watched yet. Wants naming the same path are merged; two
+    /// and is not watched yet or for less than its mask. Wants naming the same path are merged; two
     /// paths must not name one directory, since inotify gives one inode one
     /// watch. `DELETE_SELF | MOVE_SELF` is added to each mask so the watch
     /// notices its directory leaving.
@@ -123,7 +124,7 @@ impl DirWatch {
     }
 
     /// [`DirWatch::sync`] without looking up a path: drops and updates the watches, and returns
-    /// the directories still to watch, for [`Adds::run`] on a thread (a directory on a mount
+    /// the directories still to watch or to watch for a wider mask, for [`Adds::run`] on a thread (a directory on a mount
     /// that stopped answering blocks it) and [`DirWatch::adopt`] after.
     pub fn plan(&mut self, want: &[Want]) -> Adds {
         self.want = merged(want);
@@ -137,10 +138,14 @@ impl DirWatch {
         });
         let mut dirs = Vec::new();
         for w in want {
-            if let Some(x) = self.watched.iter_mut().find(|x| x.dir == w.dir) {
-                x.only.clone_from(&w.only);
-            } else {
+            let Some(x) = self.watched.iter_mut().find(|x| x.dir == w.dir) else {
                 dirs.push((w.dir.clone(), w.mask));
+                continue;
+            };
+            x.only.clone_from(&w.only);
+            // Adding the inode again keeps its descriptor and replaces its mask.
+            if !x.mask.contains(w.mask) {
+                dirs.push((w.dir.clone(), w.mask | x.mask));
             }
         }
         Adds {
@@ -153,15 +158,19 @@ impl DirWatch {
     pub fn adder(&self) -> Adder {
         Adder {
             watches: self.ino.watches(),
-            watched: self.watched.iter().map(|x| x.dir.clone()).collect(),
+            watched: (self.watched.iter())
+                .map(|x| (x.dir.clone(), x.mask))
+                .collect(),
         }
     }
 
     /// Takes the watches an [`Adds::run`] made, as wanted by the last [`DirWatch::plan`]: one
-    /// whose directory left the want meanwhile, or is watched already, is dropped.
+    /// whose directory left the want meanwhile, or is watched already, is dropped; one that
+    /// widened a watch's mask updates it.
     pub fn adopt(&mut self, added: Added) {
-        for (dir, wd) in added.0 {
-            if self.watched.iter().any(|x| x.wd == wd) {
+        for (dir, wd, mask) in added.0 {
+            if let Some(x) = self.watched.iter_mut().find(|x| x.wd == wd) {
+                x.mask = mask;
                 continue;
             }
             let wanted = self.want.iter().find(|w| w.dir == dir);
@@ -170,6 +179,7 @@ impl DirWatch {
                     self.watched.push(Watched {
                         dir,
                         wd,
+                        mask,
                         only: w.only.clone(),
                     })
                 }
@@ -230,6 +240,11 @@ impl DirWatch {
         }
         changed
     }
+}
+
+/// Whether `dir` is in `watched` for every event of `mask`.
+fn covered(watched: &[(PathBuf, WatchMask)], dir: &PathBuf, mask: WatchMask) -> bool {
+    (watched.iter()).any(|(d, m)| d == dir && m.contains(mask))
 }
 
 /// `want` with each path once: masks joined, `only` joined (empty, meaning
@@ -340,6 +355,28 @@ mod tests {
         std::fs::write(desk.join("b.txt"), "").unwrap();
         assert!(w.drain(), "a file in the new desktop directory: rescan");
 
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    /// A want that asks a watched directory for more events widens its watch.
+    #[test]
+    fn a_wider_want_on_a_watched_directory_widens_its_mask() {
+        let home =
+            std::env::temp_dir().join(format!("reprise-dirwatch-wide-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        std::fs::create_dir_all(&home).unwrap();
+        let want = |mask| Want {
+            dir: home.clone(),
+            mask,
+            only: vec!["Documents".into()],
+        };
+        let mut w = DirWatch::new().unwrap();
+        w.sync(&[want(WatchMask::DELETE)]);
+        w.sync(&[want(WatchMask::DELETE), want(WatchMask::CREATE)]);
+        std::fs::create_dir(home.join("Documents")).unwrap();
+        assert!(w.drain(), "Documents made: the second want's event");
+        std::fs::remove_dir(home.join("Documents")).unwrap();
+        assert!(w.drain(), "Documents deleted: the first want's event");
         let _ = std::fs::remove_dir_all(&home);
     }
 

@@ -1887,6 +1887,9 @@ impl State {
         self.schedule_menu_hover(None);
         crate::tray::menus_closed_above(self, depth);
         crate::tooltip::menus_closed_above(self, depth);
+        if self.menus.len() > depth + 1 {
+            crate::recentwatch::lists_closed(self);
+        }
         while self.menus.len() > depth + 1 {
             if let Some(m) = self.menus.pop() {
                 self.scene.destroy(m.tree);
@@ -1923,6 +1926,7 @@ impl State {
             crate::tooltip::menus_closed(self);
             self.menus_emptied();
         } else {
+            crate::recentwatch::lists_closed(self);
             crate::tray::menus_closed_above(self, self.menus.len() - 1);
             crate::tooltip::menus_closed_above(self, self.menus.len() - 1);
             self.redraw_all();
@@ -1931,6 +1935,7 @@ impl State {
     }
 
     fn menus_emptied(&mut self) {
+        crate::recentwatch::lists_closed(self);
         self.menu_keys = false;
         self.drop_menu_closed();
         let held = self.start_panel_bar();

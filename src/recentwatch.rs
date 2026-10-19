@@ -119,11 +119,19 @@ pub fn follow_recent(state: &mut State) {
                     w.adopt(added);
                 }
                 if new {
+                    // A wider want on this folder that came while it was being added.
+                    follow_recent(s);
                     s.check_recent();
                 }
             })
         });
     }
+}
+
+/// A menu or the Start panel closed: once the loop is idle, the watch drops the folders only
+/// its files held.
+pub fn lists_closed(state: &mut State) {
+    state.handle.insert_idle(follow_recent);
 }
 
 /// The files the open Documents menus and jump lists show, the Start panel's included.
