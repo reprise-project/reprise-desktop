@@ -1727,7 +1727,10 @@ impl State {
                 start,
                 was_snapped,
                 ..
-            } => self.end_move(window, snap, start.restore_rect(was_snapped)),
+            } => {
+                self.end_move(window, snap, start.restore_rect(was_snapped));
+                self.remember_file_dialog(window);
+            }
             Interaction::Resize { window, .. } => {
                 // `resize_anchor` deliberately survives the release: the
                 // client's commit for the last requested size still has to
@@ -1784,9 +1787,10 @@ impl State {
                 crate::notifycenter::release(self, pos.x, pos.y);
             }
             Interaction::DisplaysSlide => crate::displaysview::release(self),
-            Interaction::DialogMove { .. }
-            | Interaction::DialogResize { .. }
-            | Interaction::Idle => {}
+            Interaction::DialogMove { index, .. } | Interaction::DialogResize { index, .. } => {
+                self.remember_browse(index)
+            }
+            Interaction::Idle => {}
         }
         self.interaction = Interaction::Idle;
         self.set_cursor("default");
@@ -1837,7 +1841,9 @@ impl State {
                 self.stir_cancel(Source::Pointer);
             }
             // A dragged or sized dialog stays as it is.
-            Interaction::DialogMove { .. } | Interaction::DialogResize { .. } => {}
+            Interaction::DialogMove { index, .. } | Interaction::DialogResize { index, .. } => {
+                self.remember_browse(index)
+            }
             Interaction::FieldDrag {
                 editor: crate::caret::Editor::Dialog,
             }

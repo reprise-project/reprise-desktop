@@ -1720,6 +1720,14 @@ impl Host {
         // (Open, Save As) often retitles the main window.
         let title = self.app.title();
         let caption = self.app.caption(MAIN);
+        let tag = match self
+            .slots
+            .iter()
+            .any(|s| s.id == MAIN && s.caption != caption)
+        {
+            true => self.tag_of(MAIN, caption),
+            false => "",
+        };
         let tags = self.tag_manager.clone();
         if let Some(s) = self.slot_mut(MAIN) {
             if s.title != title {
@@ -1732,7 +1740,7 @@ impl Host {
                 && let Some(w) = s.window.toplevel()
             {
                 s.caption = caption;
-                send_tag(tags.as_ref(), w, caption);
+                send_tag(tags.as_ref(), w, tag);
             }
         }
         if let Some(text) = reply.copy {
@@ -1844,9 +1852,22 @@ impl Host {
         );
     }
 
-    fn send_tag(&self, window: &Window, caption: Caption) {
-        if caption != Caption::Window {
-            send_tag(self.tag_manager.as_ref(), window, caption);
+    fn send_tag(&mut self, window: &Window, id: WinId, caption: Caption) {
+        let tag = self.tag_of(id, caption);
+        if !tag.is_empty() {
+            send_tag(self.tag_manager.as_ref(), window, tag);
+        }
+    }
+
+    /// Window `id`'s xdg-toplevel-tag: its caption's, or `file-dialog` for a file dialog with a
+    /// plain caption, whose size and place the compositor hands the next one.
+    fn tag_of(&mut self, id: WinId, caption: Caption) -> &'static str {
+        match caption {
+            Caption::Window if self.app.drop_file_dialog(id).is_some() => "file-dialog",
+            Caption::Window => "",
+            Caption::Prompt => "prompt",
+            Caption::Help => "help-dialog",
+            Caption::Fixed => "fixed-dialog",
         }
     }
 
@@ -1898,7 +1919,7 @@ impl Host {
             self.foreign = self.import_parent(&handle, &window);
         }
         let caption = self.app.caption(MAIN);
-        self.send_tag(&window, caption);
+        self.send_tag(&window, MAIN, caption);
         window.commit();
         self.slots.insert(
             0,
@@ -2108,7 +2129,7 @@ impl Host {
                 self.join_tabs(&window, c.id);
             }
             let caption = self.app.caption(c.id);
-            self.send_tag(&window, caption);
+            self.send_tag(&window, c.id, caption);
             window.commit();
             self.slots.push(Slot {
                 id: c.id,
@@ -2145,6 +2166,14 @@ impl Host {
         for c in &want {
             self.reparent(c.id);
             let caption = self.app.caption(c.id);
+            let tag = match self
+                .slots
+                .iter()
+                .any(|s| s.id == c.id && s.caption != caption)
+            {
+                true => self.tag_of(c.id, caption),
+                false => "",
+            };
             if let Some(s) = self.slots.iter_mut().find(|s| s.id == c.id) {
                 s.modal = c.modal;
                 if s.wanted != sane_size(c.size) {
@@ -2161,7 +2190,7 @@ impl Host {
                     && let Some(w) = s.window.toplevel()
                 {
                     s.caption = caption;
-                    send_tag(self.tag_manager.as_ref(), w, caption);
+                    send_tag(self.tag_manager.as_ref(), w, tag);
                 }
             }
         }
@@ -4021,15 +4050,9 @@ struct NoEvents;
 fn send_tag(
     manager: Option<&xdg_toplevel_tag_manager_v1::XdgToplevelTagManagerV1>,
     window: &Window,
-    caption: Caption,
+    tag: &str,
 ) {
     if let Some(m) = manager {
-        let tag = match caption {
-            Caption::Window => "",
-            Caption::Prompt => "prompt",
-            Caption::Help => "help-dialog",
-            Caption::Fixed => "fixed-dialog",
-        };
         m.set_toplevel_tag(window.xdg_toplevel(), tag.into());
     }
 }

@@ -128,6 +128,7 @@ mod dialogview;
 mod dirwatch;
 mod dragview;
 mod editkeys;
+mod filedlggeom;
 mod filemenu;
 mod filepick;
 mod fsjobs;

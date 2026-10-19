@@ -1771,6 +1771,7 @@ impl State {
             crate::filepick::FilePicker::run_command(&start, icons, self.config.recent_files);
         picker.remember_in(repriseconf::filedialog::path());
         let mut d = Dialog::browse(picker);
+        let kept = self.restore_browse_in(&mut d);
         let area = self.usable_area(out.as_ref());
         let edge = out
             .as_ref()
@@ -1778,7 +1779,7 @@ impl State {
         let size = DialogLayout::compute(&self.config.theme, &self.text, &d).size;
         let (x, y) = dialog::browse_by_start(area, edge, size);
         d.placement = Placement::At(x, y);
-        self.open_dialog_over(d);
+        self.open_browse(d, kept);
     }
 
     /// The Open With chooser's Browse...: "Open With..." on `/usr/bin`, cascaded 3 px right and 22 px below the chooser.
@@ -1797,10 +1798,31 @@ impl State {
         picker.remember_in(repriseconf::filedialog::path());
         let mut d = Dialog::browse(picker);
         d.title = "Open With...".into();
+        let kept = self.restore_browse_in(&mut d);
         if let Some(chooser) = self.dialogs.views.last() {
             d.placement = Placement::At(chooser.x + 3, chooser.y + 22);
         }
+        self.open_browse(d, kept);
+    }
+
+    /// Sizes Browse dialog `d` from the kept file dialog geometry; the place it goes, if any.
+    fn restore_browse_in(&self, d: &mut Dialog) -> Option<(i32, i32)> {
+        let layout = DialogLayout::compute(&self.config.theme, &self.text, d);
+        let page = layout.page?;
+        let pad = (layout.size.0 - page.width, layout.size.1 - page.height);
+        self.restore_browse(d.picker_mut()?, pad)
+    }
+
+    /// Opens Browse dialog `d` over the top dialog, moved to `kept` once it shows.
+    fn open_browse(&mut self, d: Dialog, kept: Option<(i32, i32)>) {
+        let before = self.dialogs.views.len();
         self.open_dialog_over(d);
+        let top = self.dialogs.views.len();
+        if let Some((x, y)) = kept
+            && top > before
+        {
+            self.move_dialog(top - 1, x, y);
+        }
     }
 
     /// Open the Properties sheet for `info`, or raise the one open on its file. An unwalked folder reads

@@ -13,6 +13,7 @@ pub struct Wm {
     pub remembered: BTreeMap<String, Remembered>,
     pub snap: crate::snapview::Snapping,
     pub shake: crate::shakeview::Shaking,
+    pub file_dialog: crate::filedlggeom::Kept,
 }
 
 impl Wm {
@@ -21,6 +22,7 @@ impl Wm {
             remembered: crate::state::load().window_geometry,
             snap: Default::default(),
             shake: Default::default(),
+            file_dialog: crate::filedlggeom::Kept::load(),
         }
     }
 }
@@ -28,9 +30,14 @@ impl Wm {
 impl Window {
     /// Whether the window rules and the app's remembered frame place this
     /// window: a top-level window of an app that names itself. Dialogs
-    /// keep their own placement, X11 menus and tooltips their own place.
+    /// keep their own placement (file dialogs the shared one, `filedlggeom`),
+    /// X11 menus and tooltips their own place.
     pub fn placeable(&self) -> bool {
-        !self.override_redirect && !self.is_owned() && !self.is_modal() && !self.app().is_empty()
+        !self.override_redirect
+            && !self.is_owned()
+            && !self.is_modal()
+            && !self.file_dialog
+            && !self.app().is_empty()
     }
 
     /// The last app id seen once the client is gone: a disconnecting client can
@@ -197,6 +204,11 @@ impl State {
             t.with_pending_state(|s| s.bounds = Some(most.into()));
         }
         let Some(want) = want else {
+            if let Some((cw, ch)) = self.file_dialog_size(w)
+                && let Some(t) = self.win(w).and_then(Window::xdg)
+            {
+                t.with_pending_state(|s| s.size = Some((cw.max(1), ch.max(1)).into()));
+            }
             self.send_configure(w);
             return;
         };

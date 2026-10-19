@@ -193,9 +193,13 @@ the Super tap, Super+Shift+Esc and the VT switch keys can be rebound.
 - **Program icons.** A file that runs when opened (below) wears the theme's
   program icon (`application-x-executable`) on the desktop, in Explorer and
   in file dialogs.
-- **File dialogs remember their view.** Every Open and Save As dialog, in
-  Reprise's programs, Run's Browse and the portal's, opens in the view and
-  Details sort the last one was left in (`$XDG_STATE_HOME/reprise/filedialog.toml`).
+- **File dialogs remember their view and place.** Every Open and Save As
+  dialog, in Reprise's programs, Run's Browse and the portal's, opens in the
+  view and Details sort, and at the size and place, the last one was left in
+  (`$XDG_STATE_HOME/reprise/filedialog.toml`). The size grows with the text
+  size and stays inside the screen; a place whose title bar is off every
+  screen opens where the dialog would have opened. A maximized dialog leaves
+  its restored size.
 - **Programs and scripts.** A file with its Executable box ticked
   (Properties) that holds a script (`#!`) or a binary runs when you open it,
   in its own folder, here and in Explorer. A script runs in your terminal,

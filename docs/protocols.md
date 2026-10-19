@@ -48,8 +48,9 @@ confinement holds, every motion goes through as it comes.
   `wl_seat`, `wl_output`, `zxdg_output_manager_v1`, `wl_data_device_manager`,
   `zwp_linux_dmabuf_v1`, `xdg_wm_base`, `zxdg_decoration_manager_v1`,
   `org_kde_kwin_server_decoration_manager`, `xdg_activation_v1`,
-  `xdg_wm_dialog_v1`, `xdg_toplevel_tag_manager_v1`,
-  `xdg_toplevel_icon_manager_v1`, `zxdg_exporter_v1`/`zxdg_importer_v1`,
+  `xdg_wm_dialog_v1`, `xdg_toplevel_tag_manager_v1` (a toplevel tagged
+  `file-dialog` opens at the size and place the last file dialog was left
+  at), `xdg_toplevel_icon_manager_v1`, `zxdg_exporter_v1`/`zxdg_importer_v1`,
   `zxdg_exporter_v2`/`zxdg_importer_v2`, `xwayland_shell_v1`
 - **Selection:** `zwp_primary_selection_device_manager_v1`,
   `ext_data_control_manager_v1`, `zwlr_data_control_manager_v1`
@@ -87,8 +88,8 @@ confinement holds, every motion goes through as it comes.
 - **Access**, the generic permission prompt
 - **FileChooser** and **AppChooser:** Reprise's own Open, Save and Open With
   dialogs. Their Tiles and Thumbnails views show pictures as Explorer does,
-  from the same thumbnail cache, and they open in the view and sort the last
-  Open or Save As dialog was left in
+  from the same thumbnail cache, and they open in the view, sort, size and
+  place the last Open or Save As dialog was left in
 - **Notification**
 - **Inhibit:** idle, suspend and log off
 

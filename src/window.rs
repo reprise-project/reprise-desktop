@@ -273,6 +273,7 @@ fn owner_chain_has<T: Copy + Eq + std::hash::Hash>(
 pub const PROMPT_TAG: &str = "prompt";
 pub const HELP_DIALOG_TAG: &str = "help-dialog";
 pub const FIXED_DIALOG_TAG: &str = "fixed-dialog";
+pub const FILE_DIALOG_TAG: &str = "file-dialog";
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum DialogTag {
@@ -399,6 +400,8 @@ pub struct Window {
     /// Frame hidden by the `toggleframe` bind; the client fills the old outer rect.
     pub frameless: bool,
     pub dialog_tag: DialogTag,
+    /// Tagged `file-dialog`: opens at and keeps the shared file dialog geometry (`filedlggeom`).
+    pub file_dialog: bool,
     pub modal: bool,
     pub on_top: bool,
     pub frame_scale: i32,
@@ -753,6 +756,7 @@ impl State {
             glow: Default::default(),
             csd: false,
             dialog_tag: DialogTag::None,
+            file_dialog: false,
             modal: false,
             on_top: false,
             frame_scale: 1,
@@ -1433,7 +1437,14 @@ impl State {
     }
 
     pub fn set_tag(&mut self, w: WindowId, tag: &str) {
+        let file_dialog = tag == FILE_DIALOG_TAG;
         let tag = DialogTag::from_tag(tag);
+        let Some(win) = self.win_mut(w) else {
+            return;
+        };
+        if std::mem::replace(&mut win.file_dialog, file_dialog) != file_dialog {
+            self.replan_unmapped(w);
+        }
         let Some(win) = self.win_mut(w) else {
             return;
         };
@@ -1867,6 +1878,7 @@ impl State {
                 && let Some(win) = self.win_mut(w)
             {
                 win.resize_anchor = None;
+                self.remember_file_dialog(w);
             }
         }
         self.refit_scale(w);
@@ -2025,12 +2037,14 @@ impl State {
         let m = self.config.theme.metrics.clone();
         // The wanted frame size, so a window that maps maximized keeps it to restore to.
         let mut size = None;
-        let (mut x, mut y) = match (owner, position) {
-            (Some(p), _) => {
+        let kept = self.file_dialog_position(w);
+        let (mut x, mut y) = match (owner, position, kept) {
+            (_, _, Some(at)) => at,
+            (Some(p), _, None) => {
                 let frame = self.win(p).map_or(area, Window::frame_rect);
                 centre_on(frame, total, area)
             }
-            (None, Some(pos)) => {
+            (None, Some(pos), None) => {
                 let s = match (want.as_ref().and_then(|x| x.size), rescaled) {
                     (Some(s), _) => fit_size(s, area),
                     (None, Some(sh)) => fit_size(sh.size(total), area),
@@ -2063,8 +2077,8 @@ impl State {
                 }
             }
             // A fixed-size ownerless window (polkit prompt, About box) centres on the screen.
-            (None, None) if !resizable => centre_on(area, total, area),
-            (None, None) => {
+            (None, None, None) if !resizable => centre_on(area, total, area),
+            (None, None, None) => {
                 let index = self
                     .windows
                     .iter()
@@ -2313,6 +2327,7 @@ impl State {
         self.window_closing(w);
         let was_focused = self.focused == Some(w);
         self.remember_window(w, true);
+        self.remember_file_dialog(w);
         self.forget_window(w);
         self.reset_state(w);
         let Some(win) = self.win_mut(w) else {
