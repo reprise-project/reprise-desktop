@@ -12,7 +12,7 @@ use smithay::{
         calloop::timer::{TimeoutAction, Timer},
         wayland_server::protocol::wl_surface::WlSurface,
     },
-    utils::{IsAlive, Logical, Point},
+    utils::{IsAlive, Logical, Point, Rectangle},
 };
 
 use crate::{compositor::State, dnd::DragSource, xdnd::X11Offer};
@@ -217,23 +217,21 @@ impl State {
         if self.pointers.motion_timer.is_some() || !self.pointers.motions.is_held() {
             return;
         }
-        // The fastest output's: the pointer's own location is behind the
-        // pointer's lock, which a motion is delivered under.
-        let refresh = self
-            .scene
-            .outputs()
-            .iter()
-            .filter_map(|o| o.current_mode())
-            .map(|m| m.refresh)
-            .max()
-            .unwrap_or(0);
+        // The pointer's own location is behind the pointer's lock, which a
+        // motion is held under: the timer starts at the fastest output's
+        // interval and stretches to the one under the pointer when it fires.
         let wait = self
             .pointers
             .motions
-            .wait(Instant::now(), crate::framepace::interval(refresh));
+            .wait(Instant::now(), self.motion_interval(None));
         match self
             .handle
             .insert_source(Timer::from_duration(wait), |_, _, state| {
+                let interval = state.motion_interval(Some(state.pointer_location()));
+                let rest = state.pointers.motions.wait(Instant::now(), interval);
+                if !rest.is_zero() {
+                    return TimeoutAction::ToDuration(rest);
+                }
                 state.pointers.motion_timer = None;
                 state.flush_motion();
                 TimeoutAction::Drop
@@ -244,6 +242,13 @@ impl State {
                 self.flush_motion();
             }
         }
+    }
+
+    fn motion_interval(&self, at: Option<Point<f64, Logical>>) -> Duration {
+        let rates: Vec<_> = (self.scene.outputs().iter())
+            .filter_map(|o| Some((reprisescene::output_rect(o)?, o.current_mode()?.refresh)))
+            .collect();
+        crate::framepace::interval(pace_refresh(&rates, at))
     }
 
     fn deliver_motion(&mut self, held: Held<WlSurface>) {
@@ -283,6 +288,22 @@ impl State {
             _ => {}
         }
     }
+}
+
+/// The refresh (mHz) motion is paced by: the output at `at`, else the
+/// fastest; 0 with none.
+fn pace_refresh(
+    outputs: &[(Rectangle<i32, Logical>, i32)],
+    at: Option<Point<f64, Logical>>,
+) -> i32 {
+    at.and_then(|p| {
+        outputs
+            .iter()
+            .find(|(r, _)| r.to_f64().contains(p))
+            .map(|&(_, hz)| hz)
+    })
+    .or_else(|| outputs.iter().map(|&(_, hz)| hz).max())
+    .unwrap_or(0)
 }
 
 #[cfg(test)]
@@ -441,5 +462,28 @@ mod tests {
         let t1 = t0 + Duration::from_millis(2);
         assert_eq!(m.wait(t1, interval), Duration::from_micros(4250));
         assert_eq!(m.wait(t0 + interval * 2, interval), Duration::ZERO);
+    }
+
+    #[test]
+    fn motion_is_paced_by_the_output_under_the_pointer() {
+        let left = (Rectangle::new((0, 0).into(), (1920, 1080).into()), 60_000);
+        let right = (
+            Rectangle::new((1920, 0).into(), (1920, 1080).into()),
+            144_000,
+        );
+        let both = &[left, right];
+        assert_eq!(pace_refresh(both, Some((100.0, 100.0).into())), 60_000);
+        assert_eq!(pace_refresh(both, Some((2000.0, 100.0).into())), 144_000);
+        assert_eq!(
+            pace_refresh(both, None),
+            144_000,
+            "expected the fastest output with no pointer location"
+        );
+        assert_eq!(
+            pace_refresh(both, Some((-5.0, 100.0).into())),
+            144_000,
+            "expected the fastest output off every output"
+        );
+        assert_eq!(pace_refresh(&[], None), 0);
     }
 }
