@@ -4,14 +4,15 @@
 //! time, timed by `PING_TIMEOUT`. A ping no longer out that never timed out was answered.
 
 use std::collections::HashMap;
+use std::os::fd::{FromRawFd, OwnedFd};
 use std::time::{Duration, Instant};
 
 use smithay::reexports::calloop::{
-    RegistrationToken,
+    Interest, Mode, PostAction, RegistrationToken,
+    generic::Generic,
     timer::{TimeoutAction, Timer},
 };
 use smithay::reexports::wayland_server::Resource;
-use smithay::reexports::wayland_server::backend::DisconnectReason;
 use smithay::utils::SERIAL_COUNTER;
 use smithay::wayland::shell::PingError;
 use smithay::wayland::shell::xdg::ShellClient;
@@ -106,6 +107,68 @@ fn stat_state(stat: &str) -> Option<char> {
     stat.rsplit_once(')')?.1.trim_start().chars().next()
 }
 
+/// Whether `pid` is being torn down: a thread of it has SIGKILL pending, as a fatal signal and
+/// `exit_group` leave on every thread they end. A thread stuck on a dead mount keeps it pending.
+fn killed(pid: i32) -> bool {
+    std::fs::read_dir(format!("/proc/{pid}/task"))
+        .into_iter()
+        .flatten()
+        .flatten()
+        .any(|t| {
+            std::fs::read_to_string(t.path().join("status")).is_ok_and(|s| sigkill_pending(&s))
+        })
+}
+
+/// Whether a `/proc/<pid>/task/<tid>/status` holds SIGKILL in its pending masks.
+fn sigkill_pending(status: &str) -> bool {
+    let bit = 1u64 << (libc::SIGKILL - 1);
+    status
+        .lines()
+        .filter_map(|l| {
+            l.strip_prefix("SigPnd:")
+                .or_else(|| l.strip_prefix("ShdPnd:"))
+        })
+        .filter_map(|v| u64::from_str_radix(v.trim(), 16).ok())
+        .any(|mask| mask & bit != 0)
+}
+
+/// Threads of a program watched for exit; one other than a stuck thread is enough.
+const WATCHED_THREADS: usize = 4;
+
+/// Pidfds that turn readable when a thread of `pid` other than its main one exits
+/// (`PIDFD_THREAD`, Linux 6.9+), for its `WATCHED_THREADS` oldest. A main thread's pidfd stays
+/// quiet while any other thread lives, so it is not taken.
+fn thread_pidfds(pid: i32) -> Vec<(i32, OwnedFd)> {
+    let mut tids: Vec<i32> = std::fs::read_dir(format!("/proc/{pid}/task"))
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter_map(|t| t.file_name().to_str()?.parse().ok())
+        .filter(|&t| t != pid)
+        .collect();
+    tids.sort_unstable();
+    tids.into_iter()
+        .take(WATCHED_THREADS)
+        .filter_map(|tid| match thread_pidfd(tid) {
+            Ok(fd) => Some((tid, fd)),
+            Err(e) => {
+                log::debug!("pidfd_open {tid}: {e}");
+                None
+            }
+        })
+        .collect()
+}
+
+fn thread_pidfd(tid: i32) -> std::io::Result<OwnedFd> {
+    // SAFETY: pidfd_open takes a tid and flags, no pointers.
+    let fd = unsafe { libc::syscall(libc::SYS_pidfd_open, tid, libc::PIDFD_THREAD) };
+    if fd < 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    // SAFETY: `fd` is a descriptor pidfd_open just returned; nothing else owns it.
+    Ok(unsafe { OwnedFd::from_raw_fd(fd as i32) })
+}
+
 fn program_name(pid: i32) -> Option<String> {
     std::fs::read_link(format!("/proc/{pid}/exe"))
         .ok()
@@ -126,6 +189,8 @@ fn exe_name(link: &str) -> Option<String> {
 pub struct Hang {
     windows: HashMap<WindowId, WindowHang>,
     pings: HashMap<Target, RegistrationToken>,
+    /// The threads watched per client pid with a window.
+    threads: HashMap<i32, Threads>,
     next_key: u64,
 }
 
@@ -144,6 +209,14 @@ struct WindowHang {
 
 #[derive(Clone, Copy)]
 struct ClientKey(u64);
+
+#[derive(Default)]
+struct Threads {
+    /// The pidfd source per watched tid still running.
+    watched: Vec<(i32, RegistrationToken)>,
+    /// Its connections were dropped when the first thread left on the kill.
+    dropped: bool,
+}
 
 impl State {
     fn client_key(&mut self, client: &ShellClient) -> Option<u64> {
@@ -334,16 +407,71 @@ impl State {
         else {
             return false;
         };
+        self.disconnect(w, pid)
+    }
+
+    /// Watch threads of mapped window `w`'s program (`thread_pidfds`), so a kill that leaves a
+    /// thread stuck is known when the others exit rather than when a ping times out.
+    pub fn watch_threads(&mut self, w: WindowId) {
+        let Some(pid) = self.client_pid(w).filter(|&p| self.may_end(p)) else {
+            return;
+        };
+        if self.hang.threads.contains_key(&pid) {
+            return;
+        }
+        let mut threads = Threads::default();
+        for (tid, fd) in thread_pidfds(pid) {
+            let source = Generic::new(fd, Interest::READ, Mode::Level);
+            match self.handle.insert_source(source, move |_, _, state| {
+                state.thread_left(pid, tid);
+                Ok(PostAction::Remove)
+            }) {
+                Ok(t) => threads.watched.push((tid, t)),
+                Err(e) => log::warn!("pidfd source: {}", e.error),
+            }
+        }
+        self.hang.threads.insert(pid, threads);
+    }
+
+    /// Thread `tid` of `pid` exited. A program being killed loses its connections now; a thread
+    /// that ended by itself changes nothing.
+    fn thread_left(&mut self, pid: i32, tid: i32) {
+        let Some(threads) = self.hang.threads.get_mut(&pid) else {
+            return;
+        };
+        threads.watched.retain(|&(t, _)| t != tid);
+        if threads.dropped || !killed(pid) {
+            return;
+        }
+        threads.dropped = true;
+        log::info!("pid {pid}: killed, thread {tid} exited");
+        let ws: Vec<WindowId> = self
+            .windows
+            .iter()
+            .map(|w| w.id)
+            .filter(|&w| self.client_pid(w) == Some(pid))
+            .collect();
+        let mut seen = Vec::new();
+        for w in ws {
+            if let Some(target) = self.ping_target(w).filter(|t| !seen.contains(t)) {
+                seen.push(target);
+                self.disconnect(w, pid);
+            }
+        }
+    }
+
+    /// Disconnect the client behind window `w`, program `pid`, which has exited or is being killed.
+    fn disconnect(&mut self, w: WindowId, pid: i32) -> bool {
         let Some(win) = self.win(w) else {
             return false;
         };
-        log::info!("window {w:?}: pid {pid} has exited; dropping its connection");
+        log::info!(
+            "window {w:?}: pid {pid} has exited or is being killed; dropping its connection"
+        );
         match &win.kind {
             Kind::Xdg(t) => {
                 if let Some(c) = t.wl_surface().client() {
-                    self.dh
-                        .backend_handle()
-                        .kill_client(c.id(), DisconnectReason::ConnectionClosed);
+                    self.drop_client(c.id());
                 }
             }
             Kind::X11(x) => self.xwayland.kill_owner(x.window_id(), pid as u32),
@@ -384,13 +512,26 @@ impl State {
         self.open_dialog(Dialog::end_program(&name, pid));
     }
 
-    /// A window went away: close each End Program whose program has no window left.
+    /// A window went away: close each End Program and thread watch whose program has no window
+    /// left.
     pub fn close_ended_programs(&mut self) {
         let live: Vec<i32> = self
             .windows
             .iter()
             .filter_map(|w| self.client_pid(w.id))
             .collect();
+        let gone: Vec<i32> = self
+            .hang
+            .threads
+            .keys()
+            .copied()
+            .filter(|p| !live.contains(p))
+            .collect();
+        for pid in gone {
+            for (_, t) in self.hang.threads.remove(&pid).unwrap_or_default().watched {
+                self.handle.remove(t);
+            }
+        }
         self.close_end_programs(|p| !live.contains(&p), "has no window left");
     }
 
@@ -443,9 +584,8 @@ impl State {
                 clients.push(c.id());
             }
         }
-        let backend = self.dh.backend_handle();
         for id in clients {
-            backend.kill_client(id, DisconnectReason::ConnectionClosed);
+            self.drop_client(id);
         }
     }
 }
@@ -514,6 +654,111 @@ mod tests {
         }
         assert!(leader_exited(pid), "unreaped true is a zombie");
         exited.wait().unwrap();
+    }
+
+    #[test]
+    fn sigkill_shows_in_either_pending_mask() {
+        let status = |sig: &str, shd: &str| format!("Name:\tx\nSigPnd:\t{sig}\nShdPnd:\t{shd}\n");
+        assert!(sigkill_pending(&status(
+            "0000000000000100",
+            "0000000000000000"
+        )));
+        assert!(sigkill_pending(&status(
+            "0000000000000000",
+            "0000000000000100"
+        )));
+        assert!(!sigkill_pending(&status(
+            "0000000000004002",
+            "0000000000000000"
+        )));
+        assert!(!sigkill_pending("Name:\tx\n"));
+    }
+
+    fn readable(fd: &OwnedFd, ms: i32) -> bool {
+        use std::os::fd::AsRawFd;
+        let mut p = libc::pollfd {
+            fd: fd.as_raw_fd(),
+            events: libc::POLLIN,
+            revents: 0,
+        };
+        // SAFETY: one valid pollfd.
+        unsafe { libc::poll(&mut p, 1, ms) == 1 }
+    }
+
+    #[test]
+    fn a_thread_pidfd_fires_when_its_thread_exits_and_a_lone_exit_is_no_kill() {
+        extern "C" fn sleeper(_: *mut libc::c_void) -> *mut libc::c_void {
+            // SAFETY: plain libc calls in the forked child.
+            unsafe { libc::sleep(30) };
+            std::ptr::null_mut()
+        }
+        extern "C" fn leaver(go: *mut libc::c_void) -> *mut libc::c_void {
+            let mut b = 0u8;
+            // SAFETY: reads one byte into a live buffer from the fd passed as the argument.
+            unsafe { libc::read(go as i32, (&raw mut b).cast(), 1) };
+            std::ptr::null_mut()
+        }
+        let mut go = [0; 2];
+        // SAFETY: `go` holds two fds.
+        assert_eq!(unsafe { libc::pipe(go.as_mut_ptr()) }, 0);
+        let (ready_r, ready_w) = {
+            let mut r = [0; 2];
+            // SAFETY: `r` holds two fds.
+            assert_eq!(unsafe { libc::pipe(r.as_mut_ptr()) }, 0);
+            (r[0], r[1])
+        };
+        // SAFETY: the child only makes libc calls and never returns into the test.
+        let pid = unsafe { libc::fork() };
+        if pid == 0 {
+            // SAFETY: as above.
+            unsafe {
+                let mut t = 0;
+                libc::pthread_create(&mut t, std::ptr::null(), sleeper, std::ptr::null_mut());
+                libc::pthread_create(&mut t, std::ptr::null(), leaver, go[0] as *mut _);
+                libc::write(ready_w, [1u8].as_ptr().cast(), 1);
+                libc::pause();
+                libc::_exit(0);
+            }
+        }
+        let mut b = 0u8;
+        // SAFETY: reads one byte into a live buffer.
+        unsafe { libc::read(ready_r, (&raw mut b).cast(), 1) };
+        let fds = thread_pidfds(pid);
+        let reap = || {
+            // SAFETY: plain syscalls on our own child and pipes.
+            unsafe {
+                libc::kill(pid, libc::SIGKILL);
+                libc::waitpid(pid, std::ptr::null_mut(), 0);
+                for fd in [go[0], go[1], ready_r, ready_w] {
+                    libc::close(fd);
+                }
+            }
+        };
+        if fds.is_empty() {
+            reap();
+            eprintln!("no PIDFD_THREAD on this kernel");
+            return;
+        }
+        assert_eq!(
+            fds.len(),
+            2,
+            "both threads besides the main one are watched"
+        );
+        assert!(
+            fds.iter().all(|(_, fd)| !readable(fd, 50)),
+            "quiet while all run"
+        );
+        // SAFETY: writes one byte from a live buffer.
+        unsafe { libc::write(go[1], [1u8].as_ptr().cast(), 1) };
+        let fired = fds.iter().filter(|(_, fd)| readable(fd, 2000)).count();
+        let ended = fds.iter().filter(|(_, fd)| readable(fd, 0)).count();
+        assert_eq!(
+            (fired, ended),
+            (1, 1),
+            "only the thread that returned fires"
+        );
+        assert!(!killed(pid), "a thread ending by itself is no kill");
+        reap();
     }
 
     #[test]
