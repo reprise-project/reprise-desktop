@@ -241,6 +241,11 @@ the Super tap, Super+Shift+Esc and the VT switch keys can be rebound.
   by name or shortcode, and Enter types it without touching the clipboard.
   It wants a colour emoji font.
 - **Clipboard managers work,** and so does middle-click paste.
+- **Edit menu.** A right-click in a text field of a Reprise program, Shift+F10
+  or the Menu key opens Undo, Cut, Copy, Paste, Delete and Select All: in
+  Settings and the dialogs, the file dialogs' File name, and Explorer's
+  address bar and rename box. Paste greys while the clipboard holds no text,
+  and a password field keeps Cut and Copy greyed.
 - **Screenshots.** PrtSc for the screen, Alt+PrtSc for the window,
   Ctrl+Alt+PrtSc for its content without the frame, Shift+PrtSc for a region
   or a clicked window. Every shot goes to the clipboard and, if you like, to

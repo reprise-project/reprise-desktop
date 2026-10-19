@@ -849,6 +849,8 @@ impl Terminal {
             surrounding: None,
             secret: false,
             multiline: true,
+            can_undo: false,
+            selected: false,
         });
     }
 }

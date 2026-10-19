@@ -247,6 +247,8 @@ impl MultiEdit {
             surrounding: Some(Surrounding::around(line, self.caret.col, anchor)),
             secret: false,
             multiline: true,
+            can_undo: self.can_undo(),
+            selected: self.has_selection(),
         }
     }
 

@@ -39,12 +39,12 @@ use std::sync::mpsc::{Receiver, TryRecvError, channel};
 
 use repriseapp::decode::{Decoded, Decoders};
 use repriseapp::filedlg::{Host, Resolved, Step, type_keep};
-use repriseapp::keys::{dialog_key, form_input};
+use repriseapp::keys::{dialog_key, form_clipboard, form_input};
 use repriseapp::oneshot::{self, MsgBox};
 use repriseapp::openwith::ChooserInput;
 use repriseapp::{
-    App, BTN_LEFT, Child, Ctx, DropForm, Event, FileDrop, KeyInput, PointerInput, Reply, Waker,
-    WinId,
+    App, BTN_LEFT, BTN_RIGHT, Child, Ctx, DropForm, Event, FileDrop, KeyInput, PointerInput, Reply,
+    Waker, WinId,
 };
 use reprisebus::instance::{self, Claim};
 use reprisefs::autostart::Entry;
@@ -3122,7 +3122,15 @@ impl SettingsApp {
                 self.sheet.open_mut().caret = ctx.caret_on;
                 Reply::redraw()
             }
-            Event::Key(k) => self.key(k, &ctx.forms().controls()),
+            Event::Key(k) => {
+                let field = self.sheet.open().focused_edit();
+                let clip = form_clipboard(field, &Event::Key(k.clone()));
+                self.key(k, &ctx.forms().controls()).with_clipboard(clip)
+            }
+            Event::Pasted(text) => {
+                let ev = self.sheet.paste(text);
+                self.sheet_event(ev)
+            }
             Event::FieldDropped(e) => {
                 let ev = self.sheet.dropped(e);
                 self.sheet_event(ev)
@@ -3211,6 +3219,16 @@ impl SettingsApp {
                     redraw: r.redraw || lit,
                     ..r
                 }
+            }
+            Event::Pointer(PointerInput::Press {
+                x,
+                y,
+                button: BTN_RIGHT,
+                ..
+            }) => {
+                let hit = self.sheet.hit(x, y, &ctx.text, px);
+                let ev = self.sheet.right_press(hit);
+                self.sheet_event(ev)
             }
             _ => Reply::none(),
         }
@@ -3524,6 +3542,34 @@ mod tests {
             mods: repriseapp::Mods::default(),
         };
         a.event(MAIN, Event::Pointer(press), ctx);
+    }
+
+    #[test]
+    fn a_field_copies_its_selection_and_takes_a_paste() {
+        let mut a = app("field-clipboard");
+        let mut ctx = test_ctx();
+        a.open_page(Page::Windows, Some("snap_layouts"));
+        a.event(MAIN, Event::Pasted("1|1 2\nmore".into()), &mut ctx);
+        let windows = Page::Windows.index();
+        let text =
+            |a: &SettingsApp| match &a.sheet.pages[windows].item("snap_layouts").unwrap().control {
+                form::Control::Edit { edit, .. } => edit.text.clone(),
+                _ => unreachable!(),
+            };
+        assert_eq!(text(&a), "1|1 2", "the paste's first line goes in");
+        let ctrl = |ch: u8| KeyInput {
+            sym: u32::from(ch),
+            utf8: None,
+            mods: repriseapp::Mods {
+                ctrl: true,
+                ..Default::default()
+            },
+            edit: reprisekit::textedit::key_for(u32::from(ch), true, false, None),
+        };
+        a.event(MAIN, Event::Key(ctrl(b'a')), &mut ctx);
+        let r = a.event(MAIN, Event::Key(ctrl(b'c')), &mut ctx);
+        assert_eq!(r.copy.as_deref(), Some("1|1 2"));
+        assert!(a.event(MAIN, Event::Key(ctrl(b'v')), &mut ctx).paste);
     }
 
     fn enter(a: &mut SettingsApp, ctx: &Ctx) {

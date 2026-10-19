@@ -952,6 +952,14 @@ impl PropSheet {
         if moved { Event::Redraw } else { Event::None }
     }
 
+    /// [`Form::right_press`] on the open page.
+    pub fn right_press(&mut self, hit: Option<Hit>) -> Event {
+        let i = self.tabs.open;
+        let ev = self.pages[i].right_press(control(hit));
+        self.page_clicked();
+        self.event(i, ev)
+    }
+
     pub fn click(&mut self, hit: Option<Hit>) -> Event {
         match hit {
             Some(Hit::Tab(i)) => {
