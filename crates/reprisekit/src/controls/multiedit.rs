@@ -259,6 +259,11 @@ impl MultiEdit {
         self.caret != self.anchor
     }
 
+    /// Ctrl+Z has a state to swap back in; after an undo it is the redo.
+    pub fn can_undo(&self) -> bool {
+        self.undo.can_undo()
+    }
+
     /// The selected range, ordered.
     pub fn selection(&self) -> (Pos, Pos) {
         (self.caret.min(self.anchor), self.caret.max(self.anchor))
