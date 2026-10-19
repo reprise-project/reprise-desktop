@@ -61,18 +61,21 @@ impl PutJob {
         taken: Vec<String>,
         wake: impl Fn() + Send + Sync + 'static,
     ) -> PutJob {
-        Self::start_until(items, dir, taken, ACTION_DEADLINE, wake)
+        let meter = Arc::new(Meter::default());
+        Self::start_until(items, dir, taken, meter, ACTION_DEADLINE, wake)
     }
 
+    /// [`Self::start_past`], counting on `meter` and failing after `deadline` without headway, so a
+    /// test can pause it before the thread runs or wait less.
     fn start_until(
         items: Vec<PutItem>,
         dir: PathBuf,
         taken: Vec<String>,
+        meter: Arc<Meter>,
         deadline: Duration,
         wake: impl Fn() + Send + Sync + 'static,
     ) -> PutJob {
         let (tx, events) = mpsc::channel();
-        let meter = Arc::new(Meter::default());
         let wake = Arc::new(wake);
         let ended = Arc::new(AtomicBool::new(false));
         let (watch_tx, watch_wake) = (tx.clone(), wake.clone());
@@ -521,6 +524,7 @@ mod tests {
             ],
             dest,
             Vec::new(),
+            Arc::default(),
             Duration::from_millis(300),
             move || {
                 let _ = wtx.send(());
@@ -557,6 +561,8 @@ mod tests {
         std::fs::create_dir_all(&dest).unwrap();
         let (release, gate) = channel();
         let (wtx, woke) = channel();
+        let meter = Arc::new(Meter::default());
+        meter.set_paused(true);
         let job = PutJob::start_until(
             vec![
                 stuck(t.path().join("a.txt"), gate),
@@ -564,13 +570,12 @@ mod tests {
             ],
             dest.clone(),
             Vec::new(),
+            meter,
             Duration::from_millis(500),
             move || {
                 let _ = wtx.send(());
             },
         );
-        std::thread::sleep(Duration::from_millis(50));
-        job.set_paused(true);
         release.send(()).unwrap();
         std::thread::sleep(Duration::from_millis(1500));
         job.set_paused(false);
