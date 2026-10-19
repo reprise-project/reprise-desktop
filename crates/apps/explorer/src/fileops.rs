@@ -1002,9 +1002,9 @@ impl Explorer {
             .items
             .get(i)
             .and_then(|it| {
-                it.mime
-                    .clone()
-                    .or_else(|| reprisefs::apps::mime_of_in(&self.globs, &it.path))
+                let name = || it.path.file_name().map(|n| n.to_string_lossy());
+                // Only files get the submenu, so the name decides without a stat.
+                (it.mime.clone()).or_else(|| self.globs.mime_of_name(&name()?))
             })
             .map(|m| reprisefs::apps::open_with(&self.app_index, &m))
             .unwrap_or_default();
@@ -1048,14 +1048,43 @@ impl Explorer {
         self.choose_program_for(&path, false, ctx)
     }
 
+    /// The Open With chooser for `path`, once a listing thread has read its type. With
+    /// `set_default` (the sheet's Change...) a link's target is read in its place.
     pub(crate) fn choose_program_for(
         &mut self,
         path: &Path,
         set_default: bool,
         ctx: &mut Ctx,
     ) -> Reply {
-        let path = path.to_path_buf();
-        let mime = reprisefs::apps::mime_of_in(&self.globs, &path);
+        let (path, globs) = (path.to_path_buf(), self.globs.clone());
+        let work = move |_: &Gate| {
+            let path = match set_default {
+                true => std::fs::canonicalize(&path).unwrap_or(path),
+                false => path,
+            };
+            let mime = reprisefs::apps::mime_of_in(&globs, &path);
+            (path, mime)
+        };
+        let title = if set_default {
+            "Properties"
+        } else {
+            "Open With"
+        };
+        self.act(
+            ctx,
+            Action::reads(title),
+            work,
+            move |ex, (path, mime), ctx| ex.open_chooser(path, mime, set_default, ctx),
+        )
+    }
+
+    fn open_chooser(
+        &mut self,
+        path: PathBuf,
+        mime: Option<String>,
+        set_default: bool,
+        ctx: &mut Ctx,
+    ) -> Reply {
         let apps = &self.app_index;
         let default = mime
             .as_deref()

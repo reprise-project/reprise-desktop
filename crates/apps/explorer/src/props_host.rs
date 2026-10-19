@@ -513,25 +513,32 @@ impl Explorer {
     fn find_target(&mut self, ctx: &mut Ctx) -> Reply {
         let Some((l, page, path)) = self.props.as_ref().and_then(|p| {
             let page = filesheet::shortcut_of(&p.sheet.pages)?;
-            Some((p.info.launcher.as_ref()?, page, &p.info.path))
+            Some((p.info.launcher.clone()?, page, p.info.path.clone()))
         }) else {
             return Reply::none();
         };
         let [target, ..] = filesheet::shortcut_values(page);
-        match l.find(&target, path) {
-            Some(found) => Reply {
-                spawn: vec![vec![
-                    "reprise-explorer".into(),
-                    "--select".into(),
-                    found.into_os_string(),
-                ]],
-                ..Reply::none()
+        let work = move |_: &Gate| match l.find(&target, &path) {
+            Some(found) => Ok(found),
+            None => Err(l.not_found_text(&target)),
+        };
+        let title = "Problem with Shortcut";
+        self.act(
+            ctx,
+            Action::reads(title),
+            work,
+            move |ex, found, ctx| match found {
+                Ok(found) => Reply {
+                    spawn: vec![vec![
+                        "reprise-explorer".into(),
+                        "--select".into(),
+                        found.into_os_string(),
+                    ]],
+                    ..Reply::none()
+                },
+                Err(text) => ex.message_box(title, text, ctx),
             },
-            None => {
-                let text = l.not_found_text(&target);
-                self.message_box("Problem with Shortcut", text, ctx)
-            }
-        }
+        )
     }
 
     fn apply_props(&mut self, close: bool, ctx: &mut Ctx) -> Reply {
@@ -921,8 +928,7 @@ impl Explorer {
     /// The sheet's Change...: the Open With chooser with "always" checked and greyed, since this
     /// one only writes the default.
     fn change_default(&mut self, path: &Path, ctx: &mut Ctx) -> Reply {
-        let real = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
-        self.choose_program_for(&real, true, ctx)
+        self.choose_program_for(path, true, ctx)
     }
 
     pub(crate) fn props_set_opens_with(&mut self, name: String, icon: Option<Canvas>) {

@@ -111,6 +111,7 @@ impl Explorer {
         let browsed = self.take_browse(ctx);
         let mut dirty = tipped
             | self.take_fills(ctx)
+            | self.take_link_status(ctx)
             | self.list_icons.take(&mut self.sv.entries, &mut ctx.icons);
         let mut arrived: Vec<PathBuf> = Vec::new();
         for done in self.thumbs.drain() {

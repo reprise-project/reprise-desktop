@@ -282,14 +282,13 @@ fn what_a_drag_drops_as() {
         move_: false,
         ask: false,
     };
-    let tmp = Path::new("/tmp");
     let x = [PathBuf::from("/tmp/x")];
-    assert_eq!(accept_for(link, None, tmp).actions, copy);
-    let a = accept_for(link, Some(&x), tmp);
+    assert_eq!(accept_for(link, None, true).actions, copy);
+    let a = accept_for(link, Some(&x), true);
     assert_eq!(a.actions, copy);
     assert_eq!(a.preferred, Some(DragAction::Copy));
-    assert_eq!(accept_for(FILES, Some(&[]), tmp).actions, copy);
-    assert_eq!(accept_for(FILES, Some(&x), tmp).actions, Actions::ALL);
+    assert_eq!(accept_for(FILES, Some(&[]), true).actions, copy);
+    assert_eq!(accept_for(FILES, Some(&x), true).actions, Actions::ALL);
 }
 
 #[test]
@@ -298,12 +297,13 @@ fn a_plain_drop_moves_only_when_every_file_is_on_the_drive() {
     let here = home.path().join("x");
     std::fs::write(&here, "x").expect("write");
     let dir = home.path();
-    let a = accept_for(FILES, Some(std::slice::from_ref(&here)), dir);
+    assert!(all_on_device(std::slice::from_ref(&here), dir));
+    let a = accept_for(FILES, Some(std::slice::from_ref(&here)), true);
     assert_eq!(a.preferred, Some(DragAction::Move));
     let mixed = [here.clone(), PathBuf::from("/proc/version")];
     assert!(!all_on_device(&mixed, dir));
     assert_eq!(
-        accept_for(FILES, Some(&mixed), dir).preferred,
+        accept_for(FILES, Some(&mixed), false).preferred,
         Some(DragAction::Copy)
     );
     assert!(!all_on_device(&[], dir));
@@ -1210,4 +1210,65 @@ fn a_details_drag_with_the_name_column_scrolled_out_still_carries_its_rows() {
         "the name is drawn"
     );
     assert_eq!(grab.1, at.1 - row.y, "held where the press landed");
+}
+
+#[test]
+fn a_drag_whose_files_answer_late_offers_copy_until_they_do() {
+    let mut ctx = test_ctx();
+    let (dir, mut ex) = explorer(&mut ctx);
+    let other = tempfile::tempdir_in(dir.path()).expect("a temp dir");
+    let far = other.path().join("far.txt");
+    std::fs::write(&far, "x").expect("write");
+    let gate = std::sync::Arc::new(std::sync::RwLock::new(()));
+    let closed = gate.write().expect("lock");
+    ex.held = Some(gate.clone());
+    let bg = background(&ex, &ctx);
+    ex.drag_enter(bg.0, bg.1, FILES, false, &ctx);
+    let r = ex.drag_files(vec![far.clone()], &ctx);
+    let preferred = |r: Reply| r.drag_accept.flatten().and_then(|a| a.preferred);
+    assert_eq!(preferred(r), Some(DragAction::Copy));
+
+    drop(closed);
+    ex.held = None;
+    let end = std::time::Instant::now() + crate::LIST_WAIT;
+    while preferred(ex.drag_over(bg.0, bg.1, &ctx)) != Some(DragAction::Move) {
+        assert!(std::time::Instant::now() < end, "the read landed");
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+}
+
+#[test]
+fn a_link_drop_past_its_deadline_writes_nothing() {
+    let mut ctx = test_ctx();
+    let (dir, mut ex) = explorer(&mut ctx);
+    ex.action_deadline = std::time::Duration::from_millis(20);
+    let gate = std::sync::Arc::new(std::sync::RwLock::new(()));
+    let closed = gate.write().expect("lock");
+    ex.held = Some(gate.clone());
+    let link = Uri::Url {
+        url: "https://example.org/page".into(),
+        title: Some("Example Page".into()),
+    };
+    let bg = background(&ex, &ctx);
+    ex.drag_drop(
+        bg,
+        Dropped::Uris(vec![link]),
+        DragAction::Copy,
+        Actions::ALL,
+        &mut ctx,
+    );
+    crate::tests::wake_until(&mut ex, &mut ctx, |ex| ex.dialog.is_some());
+    match &ex.dialog {
+        Some(crate::dialogs::Dialog::Message { title, text }) => {
+            assert_eq!(title, "Error Creating Shortcut");
+            assert_eq!(text, "The location is not responding. Nothing was changed.");
+        }
+        _ => panic!("the give-up box is up"),
+    }
+
+    drop(closed);
+    ex.held = None;
+    std::thread::sleep(std::time::Duration::from_millis(100));
+    ex.wake(&mut ctx);
+    assert!(!dir.path().join("Example Page.desktop").exists());
 }
