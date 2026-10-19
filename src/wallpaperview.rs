@@ -641,10 +641,11 @@ impl State {
         let mut compose = Vec::new();
         let mut taken = Vec::new();
         for (out, b, scale, size) in shown {
-            let source = match &w.builtin {
-                _ if !ready => None,
-                Some((_, drawn)) => drawn.get(size).map(|p| &**p),
-                None => w.image.as_ref().map(|l| &l.image),
+            let (source, opaque) = match &w.builtin {
+                _ if !ready => (None, None),
+                // Every built-in is opaque (`wallpapers` pins it): no scan.
+                Some((_, drawn)) => (drawn.get(size).map(|p| &**p), Some(true)),
+                None => (w.image.as_ref().map(|l| &l.image), None),
             };
             let Some(source) = source else {
                 // Until its own picture is ready an output shows the one before, stretched.
@@ -709,8 +710,15 @@ impl State {
                 continue;
             }
             self.scene.set_position(node.buffer, b.x, b.y);
-            let canvas =
-                crate::wallpaper::composed(source, size.0, size.1, position, bg, scale as f32);
+            let canvas = crate::wallpaper::composed_known(
+                source,
+                size.0,
+                size.1,
+                position,
+                bg,
+                scale as f32,
+                opaque,
+            );
             let staged = staged_of(&w.staged, size);
             if staged.is_some() {
                 taken.push(size);

@@ -5,7 +5,7 @@ use crate::raster::Canvas;
 use std::path::Path;
 use std::sync::Arc;
 
-pub use reprisekit::wallpaper::{Position, compose, composed};
+pub use reprisekit::wallpaper::{Position, compose, composed_known};
 use reprisekit::wallpapers::{self, Builtin};
 
 /// Largest side accepted; the decoder checks the header so oversized files are refused before allocation.
