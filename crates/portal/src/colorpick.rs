@@ -19,6 +19,7 @@ use std::sync::{Arc, Mutex};
 use wayland_client::protocol::wl_shm::Format;
 
 const FLYOUT: WinId = "pickcolor";
+const TITLE: &str = "Pick a colour";
 
 struct Output {
     layout: Rect,
@@ -160,7 +161,7 @@ impl Picker {
 
 impl App for Picker {
     fn title(&self) -> String {
-        "Pick a colour".into()
+        TITLE.into()
     }
     fn app_id(&self) -> String {
         "reprise-portal".into()
@@ -175,6 +176,7 @@ impl App for Picker {
         (!self.done).then_some(Flyout {
             id: FLYOUT,
             at: Flyout::UNDER_POINTER,
+            title: TITLE,
         })
     }
 

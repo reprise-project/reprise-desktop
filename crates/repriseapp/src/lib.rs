@@ -2324,7 +2324,7 @@ impl Host {
             attached: 0,
             pool: None,
             canvas: Canvas::new(0, 0),
-            title: String::new(),
+            title: f.title.into(),
             size: (0, 0),
             origin,
             maximized: false,
@@ -4361,6 +4361,8 @@ pub struct Child {
 pub struct Flyout {
     pub id: WinId,
     pub at: (i32, i32),
+    /// What a screen reader calls the flyout's window.
+    pub title: &'static str,
 }
 
 impl Flyout {
@@ -5132,6 +5134,7 @@ mod tests {
         let f = Flyout {
             id: "flyout",
             at: (10, 20),
+            title: "Volume",
         };
         assert_eq!(flyout_wanted(Some(f), None), (None, Some(f)));
         assert_eq!(flyout_wanted(None, Some("flyout")), (Some("flyout"), None));
@@ -5139,6 +5142,7 @@ mod tests {
         let g = Flyout {
             id: "other",
             at: (0, 0),
+            title: "Other",
         };
         assert_eq!(
             flyout_wanted(Some(g), Some("flyout")),
