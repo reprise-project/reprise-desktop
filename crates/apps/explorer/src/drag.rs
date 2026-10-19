@@ -6,8 +6,10 @@ use crate::commands::Command;
 use crate::place::Place;
 use crate::window::Popup;
 use crate::{BTN_LEFT, DRAG_SLOP, Explorer};
+use repriseapp::listjob::Job;
 use repriseapp::{Accept, Actions, Ctx, DragAction, DragOut, DropKind, Dropped, Offered, Uri};
 use repriseapp::{Reply, fielddrop};
+use reprisefs::deadline::Gate;
 use reprisefs::ops::DropOp;
 use reprisekit::controls::addressbar;
 use reprisekit::controls::iconview::{self, Ghost};
@@ -60,7 +62,8 @@ pub fn drop_kind(offered: Offered) -> Option<DropKind> {
     (offered.files || offered.link).then_some(DropKind::Uris)
 }
 
-pub fn accept_for(offered: Offered, paths: Option<&[PathBuf]>, dir: &Path) -> Accept {
+/// `on_device`: every file sits on the target folder's file system ([`Facts`]).
+pub fn accept_for(offered: Offered, paths: Option<&[PathBuf]>, on_device: bool) -> Accept {
     let copy = Actions {
         copy: true,
         move_: false,
@@ -72,7 +75,7 @@ pub fn accept_for(offered: Offered, paths: Option<&[PathBuf]>, dir: &Path) -> Ac
         Some(_) => Actions::ALL,
         None => Actions { ask: true, ..copy },
     };
-    let moves = actions.move_ && paths.is_some_and(|p| all_on_device(p, dir));
+    let moves = actions.move_ && on_device;
     Accept {
         kind: DropKind::Uris,
         actions,
@@ -90,6 +93,21 @@ pub fn all_on_device(paths: &[PathBuf], dir: &Path) -> bool {
 
 pub fn lands_in_place(paths: &[PathBuf], dir: &Path) -> bool {
     !paths.is_empty() && paths.iter().all(|p| reprisefs::ops::same_folder(p, dir))
+}
+
+/// What a drag's files are to the folder under the pointer. Both stat the files and the folder, so
+/// they are read on a listing thread; unknown (a mount not answering) reads as neither.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Facts {
+    pub on_device: bool,
+    pub in_place: bool,
+}
+
+/// [`Facts`] for the last folder a drag asked about, or the read still out.
+pub struct FactsRead {
+    paths: Vec<PathBuf>,
+    dir: PathBuf,
+    read: Result<Facts, Job<Facts>>,
 }
 
 pub fn ask_default(shortcut: bool, on_device: bool) -> DropOp {
@@ -432,6 +450,7 @@ impl Explorer {
             .as_ref()
             .filter(|d| own && d.started)
             .map(|d| d.paths.clone());
+        self.drop_facts = None;
         self.incoming = Some(Incoming {
             offered,
             own,
@@ -487,9 +506,14 @@ impl Explorer {
         let over = drop_kind(offered)
             .and_then(|_| self.drag_target(x, y, paths.as_deref().unwrap_or(&[]), ctx));
         let dir = over.and_then(|t| self.target_dir(&t));
-        let accept = dir
-            .as_deref()
-            .map(|dir| accept_for(offered, paths.as_deref(), dir));
+        let accept = dir.as_deref().map(|dir| {
+            let files = paths.as_deref().unwrap_or(&[]);
+            accept_for(
+                offered,
+                paths.as_deref(),
+                self.facts(files, dir, ctx).on_device,
+            )
+        });
         let (entry, row) = match over.filter(|_| accept.is_some()) {
             Some(Target::ViewEntry(i)) => (Some(i), None),
             Some(Target::TreeRow(i)) => (None, Some(i)),
@@ -562,7 +586,8 @@ impl Explorer {
                 // Our own drag asks with the left button only for a
                 // shortcut; the compositor asks for the right one too.
                 let shortcut = own && self.drag.as_ref().is_some_and(|d| d.button == BTN_LEFT);
-                let default = ask_default(shortcut, source.move_ && all_on_device(&paths, &dir));
+                let on_device = self.facts(&paths, &dir, ctx).on_device;
+                let default = ask_default(shortcut, source.move_ && on_device);
                 let menu = crate::menus::drop_menu(default, source);
                 let client = self.layout(ctx).client;
                 self.pending_drop = Some(PendingDrop {
@@ -590,7 +615,7 @@ impl Explorer {
         if !links.is_empty() {
             reply = self.drop_links(links, dir, ctx);
         }
-        if op == DropOp::Move && lands_in_place(&paths, dir) {
+        if op == DropOp::Move && self.facts(&paths, dir, ctx).in_place {
             return reply;
         }
         let put = self.drop_into(&paths, dir, op, ctx);
@@ -604,7 +629,7 @@ impl Explorer {
         let Some(p) = self.pending_drop.take() else {
             return Reply::none();
         };
-        let in_place = op == DropOp::Move && lands_in_place(&p.paths, &p.dir);
+        let in_place = op == DropOp::Move && self.facts(&p.paths, &p.dir, ctx).in_place;
         let answer = if in_place {
             answer_for(DropOp::Copy, p.source)
         } else {
@@ -676,9 +701,17 @@ impl Explorer {
 
     fn drop_links(&mut self, links: Vec<WebLink>, dir: &Path, ctx: &mut Ctx) -> Reply {
         let dir = dir.to_path_buf();
-        self.spawn_job(ctx, move || {
-            let result = write_links(&links, &dir);
-            Box::new(move |ex: &mut Explorer, ctx: &mut Ctx| {
+        let at = dir.clone();
+        let work = move |gate: &Gate| match gate.change(&at) {
+            true => write_links(&links, &at),
+            false => Ok(()),
+        };
+        let title = DropOp::Shortcut.failure_title();
+        let acted = self.act(
+            ctx,
+            crate::acting::Action::changes(title),
+            work,
+            move |ex, result, ctx| {
                 let reply = if ex.place.path().as_deref() == Some(&*dir) {
                     ex.refresh(ctx)
                 } else {
@@ -686,11 +719,11 @@ impl Explorer {
                 };
                 match result {
                     Ok(()) => reply,
-                    Err(text) => ex.message_box("Error Creating Shortcut", text, ctx),
+                    Err(text) => ex.message_box(title, text, ctx),
                 }
-            })
-        });
-        Reply::redraw()
+            },
+        );
+        Reply::redraw().and(acted)
     }
 
     fn address_layout(&self, ctx: &Ctx) -> Option<addressbar::Layout> {
@@ -751,6 +784,37 @@ impl Explorer {
             answer_drop: (action == DragAction::Ask).then_some(took.then_some(DragAction::Copy)),
             ..Reply::redraw()
         }
+    }
+
+    /// [`Facts`] of `paths` against `dir`, read once per folder a drag rests on: the first ask waits
+    /// the listing wait, later ones take a late answer once it has come.
+    fn facts(&mut self, paths: &[PathBuf], dir: &Path, ctx: &Ctx) -> Facts {
+        if paths.is_empty() {
+            return Facts::default();
+        }
+        if let Some(f) = self.drop_facts.as_mut()
+            && f.dir == dir
+            && f.paths == paths
+        {
+            if let Err(job) = &f.read
+                && let Some(read) = job.take()
+            {
+                f.read = Ok(read);
+            }
+            return f.read.as_ref().copied().unwrap_or_default();
+        }
+        let (p, d) = (paths.to_vec(), dir.to_path_buf());
+        let read = self.read_job(ctx, move || Facts {
+            on_device: all_on_device(&p, &d),
+            in_place: lands_in_place(&p, &d),
+        });
+        let facts = read.as_ref().copied().unwrap_or_default();
+        self.drop_facts = Some(FactsRead {
+            paths: paths.to_vec(),
+            dir: dir.to_path_buf(),
+            read,
+        });
+        facts
     }
 
     pub(crate) fn drag_target(

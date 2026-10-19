@@ -6,11 +6,16 @@ use crate::place::Place;
 use crate::window;
 use crate::{Explorer, FOLDERS_ITEM};
 use repriseapp::Ctx;
+use repriseapp::listjob::Job;
 use reprisefs::listing::Item;
 use reprisekit::art::viewsicon;
 use reprisekit::controls::addressbar::AddressBar;
 use reprisekit::controls::combo::ListItem;
 use reprisekit::controls::toolbar;
+use std::path::PathBuf;
+
+/// A selected shortcut's path and its status text, or the read of it still out.
+pub(crate) type LinkStatus = (PathBuf, Result<Option<String>, Job<Option<String>>>);
 
 impl Explorer {
     pub(crate) fn build_toolbar(&mut self, ctx: &mut Ctx) {
@@ -140,8 +145,7 @@ impl Explorer {
                 self.status.panels[0].text =
                     window::bin_status_text(it, reprisefs::locale::is_12h());
             } else if (it.is_link || it.shortcut.is_some())
-                && let Some(text) = reprisefs::launcher::Launcher::at(&it.path, &self.globs)
-                    .and_then(|l| window::shortcut_status_text(&l, &it.path))
+                && let Some(text) = self.link_status(it.path.clone(), ctx)
             {
                 self.status.panels[0].text = text;
             }
@@ -161,5 +165,43 @@ impl Explorer {
         }
         self.toolbar.latched = self.settings.folders.then_some(FOLDERS_ITEM);
         self.build_taskpane(ctx);
+    }
+
+    /// Where the shortcut at `path` points, for the status bar, read on a listing thread. A read
+    /// still out for the same path starts no other; [`Explorer::take_link_status`] takes it.
+    fn link_status(&mut self, path: PathBuf, ctx: &Ctx) -> Option<String> {
+        match self.link_status.take() {
+            Some((at, Ok(text))) if at == path => return text,
+            Some((at, Err(job))) if at == path => {
+                self.link_status = Some((at, Err(job)));
+                return None;
+            }
+            _ => {}
+        }
+        let (at, globs) = (path.clone(), self.globs.clone());
+        let read = self.read_job(ctx, move || {
+            let l = reprisefs::launcher::Launcher::at(&at, &globs)?;
+            window::shortcut_status_text(&l, &at)
+        });
+        match read {
+            Ok(text) => text,
+            Err(job) => {
+                self.link_status = Some((path, Err(job)));
+                None
+            }
+        }
+    }
+
+    /// A shortcut's status read that answered late puts its text up; true when it did.
+    pub(crate) fn take_link_status(&mut self, ctx: &mut Ctx) -> bool {
+        let Some((at, Err(job))) = &self.link_status else {
+            return false;
+        };
+        let Some(text) = job.take() else {
+            return false;
+        };
+        self.link_status = Some((at.clone(), Ok(text)));
+        self.refresh_chrome(ctx);
+        true
     }
 }

@@ -1,11 +1,12 @@
 //! Actions asked for by hand (rename, New Folder, Properties, Delete) run on a listing thread under
 //! a [`Gate`]. One that has not answered within [`ACTION_DEADLINE`] gives up with an error box, and
-//! its answer is dropped whenever it comes.
+//! its answer is dropped whenever it comes; one whose change had begun re-lists the folder then.
 
 use crate::Explorer;
 use repriseapp::listjob::Job;
 use repriseapp::{Ctx, Reply};
 use reprisefs::deadline::{Gate, Landing};
+use std::sync::atomic::Ordering;
 use std::sync::mpsc::{RecvTimeoutError, Sender};
 use std::time::{Duration, Instant};
 
@@ -93,6 +94,7 @@ impl Explorer {
     ) -> Reply {
         let gate = Gate::default();
         let g = gate.clone();
+        let (late, wake) = (self.landed_late.clone(), ctx.wake.clone());
         let read = move || {
             if g.given_up() {
                 return None;
@@ -102,6 +104,8 @@ impl Explorer {
                 Landing::Landed => Some(answer),
                 Landing::Refresh => {
                     log::info!("explorer: {} landed past its deadline", action.title);
+                    late.store(true, Ordering::Release);
+                    wake.wake();
                     None
                 }
                 Landing::Dropped => {
@@ -128,6 +132,9 @@ impl Explorer {
     /// their deadline.
     pub(crate) fn take_acting(&mut self, ctx: &mut Ctx) -> Option<Reply> {
         let mut reply: Option<Reply> = None;
+        if self.landed_late.swap(false, Ordering::AcqRel) {
+            reply = Some(self.refresh(ctx));
+        }
         let mut keep = Vec::new();
         for mut a in std::mem::take(&mut self.acting) {
             if let Some(r) = (a.take)(self, ctx) {
@@ -179,10 +186,12 @@ fn taker<T: Send + 'static>(
 #[cfg(test)]
 mod tests {
     use crate::Explorer;
+    use crate::acting::Action;
     use crate::dialogs::Dialog;
     use crate::place::Place;
     use crate::tests::{test_ctx, test_explorer, wake_until};
-    use repriseapp::Ctx;
+    use repriseapp::{Ctx, Reply};
+    use reprisefs::deadline::Gate;
     use reprisekit::textedit::TextEdit;
     use std::sync::{Arc, RwLock};
     use std::time::Duration;
@@ -251,6 +260,38 @@ mod tests {
             "the late answer is dropped"
         );
         assert!(!dir.path().join("two.txt").exists());
+    }
+
+    #[test]
+    fn a_change_that_lands_past_its_deadline_relists_the_folder() {
+        let dir = tempfile::tempdir().expect("a temp dir");
+        let mut ctx = test_ctx();
+        let mut ex = test_explorer(Place::Folder(dir.path().to_path_buf()), &mut ctx);
+        ex.action_deadline = Duration::from_millis(20);
+        ex.watch = None;
+        ex.held = Some(Arc::new(RwLock::new(())));
+        let (go, wait) = std::sync::mpsc::channel::<()>();
+        let (at, made) = (dir.path().to_path_buf(), dir.path().join("late.txt"));
+        let write = made.clone();
+        let work = move |gate: &Gate| {
+            assert!(gate.change(&at));
+            wait.recv().expect("the test lets it go");
+            std::fs::write(&write, "1").expect("write");
+        };
+        ex.act(
+            &mut ctx,
+            Action::changes("New Text Document"),
+            work,
+            |_, (), _| Reply::none(),
+        );
+        wake_until(&mut ex, &mut ctx, |ex| message(ex).is_some());
+        assert_eq!(
+            message(&ex).map(|m| m.1),
+            Some("The location is not responding. The change may still be made once it answers.")
+        );
+
+        go.send(()).expect("the work waits");
+        wake_until(&mut ex, &mut ctx, |ex| ex.index_of(&made).is_some());
     }
 
     #[test]

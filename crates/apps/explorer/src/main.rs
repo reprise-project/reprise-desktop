@@ -244,6 +244,10 @@ pub struct Explorer {
     pub drag: Option<drag::Drag>,
     pub incoming: Option<drag::Incoming>,
     pub pending_drop: Option<drag::PendingDrop>,
+    /// What the drag's files are to the folder under it ([`drag::Facts`]).
+    pub(crate) drop_facts: Option<drag::FactsRead>,
+    /// The status bar's text for a selected shortcut, read late or still being read.
+    pub(crate) link_status: Option<chrome::LinkStatus>,
     pub(crate) put: Option<fileops::Put>,
     pub(crate) put_queue: std::collections::VecDeque<fileops::PendingPut>,
     /// Batches being checked on a listing thread ([`fileops::Checked`]: a folder merge walks the
@@ -269,6 +273,8 @@ pub struct Explorer {
     pub(crate) acting: Vec<acting::Acting>,
     /// How long an action waits on the file system: [`acting::ACTION_DEADLINE`], shorter in tests.
     pub(crate) action_deadline: std::time::Duration,
+    /// Set by a change that landed past its deadline; the next wake re-lists.
+    pub(crate) landed_late: Arc<std::sync::atomic::AtomicBool>,
     /// Close came while a put or job was out: the program quits at the wake that finds them all done.
     pub(crate) closing: bool,
     /// The thumbnail worker. Every listing bumps the generation, which drops
@@ -434,6 +440,8 @@ impl Explorer {
             drag: None,
             incoming: None,
             pending_drop: None,
+            drop_facts: None,
+            link_status: None,
             put: None,
             put_queue: std::collections::VecDeque::new(),
             clashing: std::collections::VecDeque::new(),
@@ -448,6 +456,7 @@ impl Explorer {
             jobs_pending: 0,
             acting: Vec::new(),
             action_deadline: acting::ACTION_DEADLINE,
+            landed_late: Arc::default(),
             closing: false,
             thumbs: Thumbs::new(
                 Arc::new(Decoders::default_set()),
