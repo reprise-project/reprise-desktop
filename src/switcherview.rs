@@ -732,7 +732,8 @@ impl State {
         let wells = sw.layout.wells.clone();
         let mut old = std::mem::take(&mut sw.thumbs);
         let mut thumbs = Vec::with_capacity(windows.len());
-        for (&window, &well) in windows.iter().zip(&wells) {
+        let mut wants = Vec::new();
+        for (i, (&window, &well)) in windows.iter().zip(&wells).enumerate() {
             let Some(w) = window else {
                 thumbs.push(None);
                 continue;
@@ -741,7 +742,17 @@ impl State {
                 .iter()
                 .position(|t| t.is_some_and(|id| self.thumb_shows(id, w, well, scale)))
                 .and_then(|i| old[i].take());
-            thumbs.push(kept.or_else(|| self.thumb_create(w, tree, well, scale)));
+            if kept.is_none() {
+                wants.push((i, (w, well)));
+            }
+            thumbs.push(kept);
+        }
+        let (cells, wants): (Vec<usize>, Vec<_>) = wants.into_iter().unzip();
+        for (i, id) in cells
+            .into_iter()
+            .zip(self.thumbs_create(tree, &wants, scale))
+        {
+            thumbs[i] = id;
         }
         // The pictures no cell kept go before the list is put back.
         for id in old.into_iter().flatten() {
