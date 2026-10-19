@@ -33,6 +33,11 @@ pub const PING_TIMEOUT: Duration = Duration::from_secs(5);
 /// reports: no ping out, no watched thread left to exit.
 const DYING_EVERY: Duration = Duration::from_secs(2);
 
+/// How long a program found [`killed`] when a thread left has to finish exiting before its
+/// connections are dropped. `exit_group` also leaves SIGKILL pending on the threads it ends, and a
+/// clean exit closes the socket well within this, so its last requests are still read.
+const KILL_SETTLE: Duration = Duration::from_millis(250);
+
 /// One window's ping record.
 #[derive(Debug, Default)]
 pub struct Liveness {
@@ -99,18 +104,28 @@ fn end_programs(dialogs: &[Option<i32>], ends: impl Fn(i32) -> bool) -> Vec<(usi
         .collect()
 }
 
-/// Whether `pid` never answers again: its main thread has exited (state Z or X; other threads of
-/// it may still run) or has SIGKILL pending, which a main thread blocked on a dead mount keeps.
-/// Reads only the main thread's `/proc/<pid>/stat`, unlike [`killed`].
+/// Whether `pid` never answers again: its main thread has SIGKILL pending, which a main thread
+/// blocked on a dead mount keeps, or has exited (state Z or X) while the program is torn down
+/// ([`killed`]) or has no other thread. A main thread that exited by itself while others run
+/// (`pthread_exit`) leaves a program that still answers.
 fn dying(pid: i32) -> bool {
-    dying_by(&std::fs::read_to_string(format!("/proc/{pid}/stat")).unwrap_or_default())
+    dying_by(
+        &std::fs::read_to_string(format!("/proc/{pid}/stat")).unwrap_or_default(),
+        || killed(pid) || threads(pid) <= 1,
+    )
 }
 
-/// [`dying`] from a `/proc/<pid>/stat` line. Its `signal` field is the thread's own pending mask,
-/// where a fatal signal or `exit_group` puts SIGKILL on every thread it ends.
-fn dying_by(stat: &str) -> bool {
+/// [`dying`] from a `/proc/<pid>/stat` line, with `torn_down` read only for an exited main
+/// thread. Its `signal` field is the thread's own pending mask, where a fatal signal or
+/// `exit_group` puts SIGKILL on every thread it ends.
+fn dying_by(stat: &str, torn_down: impl FnOnce() -> bool) -> bool {
     let state = stat_fields(stat).next().and_then(|s| s.chars().next());
-    matches!(state, Some('Z' | 'X')) || stat_signal(stat).is_some_and(|m| m & sigkill_bit() != 0)
+    stat_signal(stat).is_some_and(|m| m & sigkill_bit() != 0)
+        || (matches!(state, Some('Z' | 'X')) && torn_down())
+}
+
+fn threads(pid: i32) -> usize {
+    std::fs::read_dir(format!("/proc/{pid}/task")).map_or(0, |d| d.count())
 }
 
 /// The `signal` field (31) of a `/proc/<pid>/stat` line; `state` is field 3.
@@ -509,8 +524,8 @@ impl State {
         }
     }
 
-    /// Thread `tid` of `pid` exited. A program being killed loses its connections now; a thread
-    /// that ended by itself changes nothing.
+    /// Thread `tid` of `pid` exited. A program still [`killed`] after `KILL_SETTLE` loses its
+    /// connections; a thread that ended by itself changes nothing.
     fn thread_left(&mut self, pid: i32, tid: i32) {
         let Some(threads) = self.hang.threads.get_mut(&pid) else {
             return;
@@ -519,8 +534,18 @@ impl State {
         if threads.dropped || !killed(pid) {
             return;
         }
-        log::info!("pid {pid}: killed, thread {tid} exited");
-        self.drop_program(pid);
+        let timer =
+            self.handle
+                .insert_source(Timer::from_duration(KILL_SETTLE), move |_, _, state| {
+                    if state.hang.threads.get(&pid).is_some_and(|t| !t.dropped) && killed(pid) {
+                        log::info!("pid {pid}: killed, thread {tid} exited");
+                        state.drop_program(pid);
+                    }
+                    TimeoutAction::Drop
+                });
+        if let Err(e) = timer {
+            log::warn!("kill settle timer: {}", e.error);
+        }
     }
 
     /// Disconnect every client behind `pid`'s windows, once.
@@ -751,14 +776,65 @@ mod tests {
         let stat = |state: char, signal: u64| {
             format!("42 (a) b) {state}{} {signal} 0 0 0 0", " 1".repeat(27))
         };
-        assert!(dying_by(&stat('D', 256)), "stuck on a dead mount, killed");
-        assert!(!dying_by(&stat('D', 0)), "stuck, not killed");
+        let never = || -> bool { panic!("read only for an exited main thread") };
         assert!(
-            !dying_by(&stat('S', 0x4002)),
+            dying_by(&stat('D', 256), never),
+            "stuck on a dead mount, killed"
+        );
+        assert!(!dying_by(&stat('D', 0), never), "stuck, not killed");
+        assert!(
+            !dying_by(&stat('S', 0x4002), never),
             "running, other signals pending"
         );
-        assert!(dying_by(&stat('Z', 0)), "exited");
-        assert!(!dying_by(""), "gone");
+        assert!(dying_by(&stat('Z', 0), || true), "exited, torn down");
+        assert!(
+            !dying_by(&stat('Z', 0), || false),
+            "main thread exited by itself, others run"
+        );
+        assert!(!dying_by("", never), "gone");
+    }
+
+    #[test]
+    fn a_program_whose_main_thread_exited_by_itself_is_not_dying_until_killed() {
+        extern "C" fn worker(_: *mut libc::c_void) -> *mut libc::c_void {
+            // SAFETY: plain libc call in the forked child.
+            unsafe { libc::sleep(30) };
+            std::ptr::null_mut()
+        }
+        // SAFETY: the child only makes libc calls and never returns into the test.
+        let pid = unsafe { libc::fork() };
+        if pid == 0 {
+            // SAFETY: as above; the exit syscall ends only the calling thread, as pthread_exit
+            // does without its unwinding.
+            unsafe {
+                let mut t = 0;
+                libc::pthread_create(&mut t, std::ptr::null(), worker, std::ptr::null_mut());
+                libc::syscall(libc::SYS_exit, 0);
+                libc::_exit(0);
+            }
+        }
+        let state = || {
+            let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).unwrap_or_default();
+            stat_fields(&stat).next().and_then(|s| s.chars().next())
+        };
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while (state() != Some('Z') || threads(pid) < 2) && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let exited = (state(), threads(pid));
+        let alive = dying(pid);
+        // SAFETY: plain syscall on our own child.
+        unsafe { libc::kill(pid, libc::SIGKILL) };
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !dying(pid) && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let killed = dying(pid);
+        // SAFETY: reaps our own child.
+        unsafe { libc::waitpid(pid, std::ptr::null_mut(), 0) };
+        assert_eq!(exited, (Some('Z'), 2), "main thread exited, worker runs");
+        assert!(!alive, "a worker still runs and answers");
+        assert!(killed, "killed");
     }
 
     #[test]
@@ -795,7 +871,7 @@ mod tests {
             libc::close(ready[1]);
         }
         assert_eq!(stat_signal(&stat), Some(1 << (libc::SIGUSR1 - 1)));
-        assert!(!dying_by(&stat), "a pending SIGUSR1 is no kill");
+        assert!(!dying_by(&stat, || false), "a pending SIGUSR1 is no kill");
     }
 
     #[test]
