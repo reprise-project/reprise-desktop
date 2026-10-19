@@ -2182,7 +2182,11 @@ impl Dialog {
             erase,
         };
         let kind = reprisefs::bincap::ConfirmKind::of(1, is_dir);
-        let (title, text) = reprisefs::bincap::delete_prompt(kind, name, 1, erase, no_bin);
+        let lack = match no_bin {
+            true => reprisefs::bincap::BinLack::All,
+            false => reprisefs::bincap::BinLack::None,
+        };
+        let (title, text) = reprisefs::bincap::delete_prompt(kind, name, 1, erase, lack);
         let icon = if erase { "folder" } else { "user-trash-full" };
         Dialog {
             icon: Some(icon.into()),
@@ -2205,9 +2209,13 @@ impl Dialog {
 
     /// "Confirm Multiple File Delete" for a selection of `paths`: "send
     /// these N items to the Recycle Bin", or "delete these N items" with
-    /// `erase`, led by the missing Recycle Bin with `no_bin`. Yes trashes
+    /// `erase`, led by the missing Recycle Bin for `no_bin` of them. Yes trashes
     /// (or erases) every one of them.
-    pub fn confirm_delete_many(paths: &[std::path::PathBuf], erase: bool, no_bin: bool) -> Dialog {
+    pub fn confirm_delete_many(
+        paths: &[std::path::PathBuf],
+        erase: bool,
+        no_bin: reprisefs::bincap::BinLack,
+    ) -> Dialog {
         use reprisefs::bincap::{ConfirmKind, delete_prompt};
         let count = paths.len();
         let yes = DialogAction::Delete {
@@ -2467,10 +2475,10 @@ impl Dialog {
     /// Delete" naming the one item, or "Confirm Multiple File Delete" with
     /// the count. Yes empties it.
     pub fn confirm_empty_bin(count: usize, first: Option<&str>) -> Dialog {
-        use reprisefs::bincap::{ConfirmKind, delete_prompt};
+        use reprisefs::bincap::{BinLack, ConfirmKind, delete_prompt};
         let (title, text) = match (count, first) {
-            (1, Some(name)) => delete_prompt(ConfirmKind::File, name, 1, true, false),
-            _ => delete_prompt(ConfirmKind::Multiple, "", count, true, false),
+            (1, Some(name)) => delete_prompt(ConfirmKind::File, name, 1, true, BinLack::None),
+            _ => delete_prompt(ConfirmKind::Multiple, "", count, true, BinLack::None),
         };
         Dialog {
             icon: Some("user-trash-full".into()),
@@ -5131,6 +5139,7 @@ fn draw_icon_button(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use reprisefs::bincap::BinLack;
     use reprisekit::controls::filesheet::Subject;
     use reprisekit::controls::grouplist;
     use reprisekit::controls::openwith::{Check, Program};
@@ -6109,7 +6118,7 @@ mod tests {
             std::path::PathBuf::from("/d/New Folder"),
             std::path::PathBuf::from("/d/a b.txt"),
         ];
-        let mut d = Dialog::confirm_delete_many(&paths, false, false);
+        let mut d = Dialog::confirm_delete_many(&paths, false, BinLack::None);
         assert_eq!(d.title, "Confirm Multiple File Delete");
         assert_eq!(
             d.text,
@@ -6130,7 +6139,7 @@ mod tests {
         assert_eq!(l.lines[0].0.y, 45);
         assert_eq!(l.buttons[0], Rect::new(224, 96, 87, BUTTON_H));
         assert_eq!(l.buttons[1], Rect::new(318, 96, 87, BUTTON_H));
-        let mut e = Dialog::confirm_delete_many(&paths, true, false);
+        let mut e = Dialog::confirm_delete_many(&paths, true, BinLack::None);
         assert_eq!(e.text, "Are you sure you want to delete these 2 items?");
         assert!(matches!(
             e.style,
@@ -6157,7 +6166,7 @@ mod tests {
             }
         );
         let paths = vec![path, std::path::PathBuf::from("/d/c.txt")];
-        let mut m = Dialog::confirm_delete_many(&paths, true, false);
+        let mut m = Dialog::confirm_delete_many(&paths, true, BinLack::None);
         assert_eq!(m.key(Key::Enter), Outcome::Delete { paths, erase: true });
     }
 
@@ -6170,9 +6179,15 @@ mod tests {
             "This drive has no Recycle Bin. Are you sure you want to delete 'd.txt'?"
         );
         let paths = vec!["/m/a".into(), "/m/b".into()];
-        let many = Dialog::confirm_delete_many(&paths, true, true);
+        let all = Dialog::confirm_delete_many(&paths, true, BinLack::All);
         assert_eq!(
-            many.text,
+            all.text,
+            "These items are on a drive with no Recycle Bin. Are you sure you want to delete \
+             these 2 items?"
+        );
+        let some = Dialog::confirm_delete_many(&paths, true, BinLack::Some);
+        assert_eq!(
+            some.text,
             "Some of these items are on a drive with no Recycle Bin. Are you sure you want to \
              delete these 2 items?"
         );
@@ -10583,8 +10598,8 @@ mod tests {
             Dialog::turn_off(&power()),
             Dialog::confirm_delete("Quarterly report.txt", path, false, false, false),
             Dialog::confirm_delete("Reports", path, true, true, true),
-            Dialog::confirm_delete_many(&paths, false, false),
-            Dialog::confirm_delete_many(&paths, true, true),
+            Dialog::confirm_delete_many(&paths, false, BinLack::None),
+            Dialog::confirm_delete_many(&paths, true, BinLack::All),
             Dialog::too_big(std::path::Path::new("/d/big.iso"), false, too_big),
             Dialog::confirm_delete_icons(vec!["computer".into()], paths.clone()),
             Dialog::end_program("Text Editor", 42),

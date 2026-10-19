@@ -535,11 +535,19 @@ pub enum Fate {
     RemoveImmediately,
 }
 
+/// How many of the items a delete takes sit on a drive with no Recycle Bin.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BinLack {
+    None,
+    Some,
+    All,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct DeleteMode {
     pub erase: bool,
     pub ask: bool,
-    pub no_bin: bool,
+    pub no_bin: BinLack,
 }
 
 /// How Delete (or Shift+Delete, `shift`) treats items whose fates are
@@ -552,13 +560,17 @@ pub fn delete_mode(confirm: bool, fates: &[Fate], shift: bool) -> DeleteMode {
         return DeleteMode {
             erase: true,
             ask: confirm,
-            no_bin: false,
+            no_bin: BinLack::None,
         };
     }
-    let no_bin = fates.contains(&Fate::NoBin);
+    let no_bin = match fates.iter().filter(|f| **f == Fate::NoBin).count() {
+        0 => BinLack::None,
+        n if n == fates.len() => BinLack::All,
+        _ => BinLack::Some,
+    };
     DeleteMode {
         erase: fates.iter().any(|f| *f != Fate::Recycle),
-        ask: confirm || no_bin,
+        ask: confirm || no_bin != BinLack::None,
         no_bin,
     }
 }
@@ -583,13 +595,13 @@ impl ConfirmKind {
 /// The caption and question of a delete prompt over `count` items of
 /// `kind`, `name` being the lone item's. `erase` removes rather than
 /// recycles and says so; `no_bin` leads with the drive having no Recycle
-/// Bin, the reason for the erase.
+/// Bin, the reason for the erase, for some or all of the items.
 pub fn delete_prompt(
     kind: ConfirmKind,
     name: &str,
     count: usize,
     erase: bool,
-    no_bin: bool,
+    no_bin: BinLack,
 ) -> (&'static str, String) {
     let (title, question) = match (kind, erase) {
         (ConfirmKind::File, false) => (
@@ -620,12 +632,11 @@ pub fn delete_prompt(
             format!("Are you sure you want to delete these {count} items?"),
         ),
     };
-    if !no_bin {
-        return (title, question);
-    }
-    let lead = match count {
-        1 => "This drive has no Recycle Bin.",
-        _ => "Some of these items are on a drive with no Recycle Bin.",
+    let lead = match (no_bin, count) {
+        (BinLack::None, _) => return (title, question),
+        (_, 1) => "This drive has no Recycle Bin.",
+        (BinLack::All, _) => "These items are on a drive with no Recycle Bin.",
+        (BinLack::Some, _) => "Some of these items are on a drive with no Recycle Bin.",
     };
     (title, format!("{lead} {question}"))
 }
@@ -900,21 +911,21 @@ mod tests {
             assert_eq!((title, text.as_str()), want);
         };
         same(
-            p(File, "notes.txt", 1, false, false),
+            p(File, "notes.txt", 1, false, BinLack::None),
             (
                 "Confirm File Delete",
                 "Are you sure you want to send 'notes.txt' to the Recycle Bin?",
             ),
         );
         same(
-            p(File, "notes.txt", 1, true, false),
+            p(File, "notes.txt", 1, true, BinLack::None),
             (
                 "Confirm File Delete",
                 "Are you sure you want to delete 'notes.txt'?",
             ),
         );
         same(
-            p(Folder, "Reports", 1, false, false),
+            p(Folder, "Reports", 1, false, BinLack::None),
             (
                 "Confirm Folder Delete",
                 "Are you sure you want to remove the folder 'Reports' and move all its contents \
@@ -922,35 +933,35 @@ mod tests {
             ),
         );
         same(
-            p(Folder, "Reports", 1, true, false),
+            p(Folder, "Reports", 1, true, BinLack::None),
             (
                 "Confirm Folder Delete",
                 "Are you sure you want to remove the folder 'Reports' and all its contents?",
             ),
         );
         same(
-            p(Multiple, "", 4, false, false),
+            p(Multiple, "", 4, false, BinLack::None),
             (
                 "Confirm Multiple File Delete",
                 "Are you sure you want to send these 4 items to the Recycle Bin?",
             ),
         );
         same(
-            p(Multiple, "", 4, true, false),
+            p(Multiple, "", 4, true, BinLack::None),
             (
                 "Confirm Multiple File Delete",
                 "Are you sure you want to delete these 4 items?",
             ),
         );
         same(
-            p(File, "d.txt", 1, true, true),
+            p(File, "d.txt", 1, true, BinLack::All),
             (
                 "Confirm File Delete",
                 "This drive has no Recycle Bin. Are you sure you want to delete 'd.txt'?",
             ),
         );
         same(
-            p(Folder, "Reports", 1, true, true),
+            p(Folder, "Reports", 1, true, BinLack::All),
             (
                 "Confirm Folder Delete",
                 "This drive has no Recycle Bin. Are you sure you want to remove the folder \
@@ -958,7 +969,15 @@ mod tests {
             ),
         );
         same(
-            p(Multiple, "", 3, true, true),
+            p(Multiple, "", 3, true, BinLack::All),
+            (
+                "Confirm Multiple File Delete",
+                "These items are on a drive with no Recycle Bin. Are you sure you want to \
+                 delete these 3 items?",
+            ),
+        );
+        same(
+            p(Multiple, "", 3, true, BinLack::Some),
             (
                 "Confirm Multiple File Delete",
                 "Some of these items are on a drive with no Recycle Bin. Are you sure you want \
@@ -979,22 +998,35 @@ mod tests {
     fn delete_mode_erases_what_cannot_be_recycled_and_asks_as_set() {
         use Fate::*;
         let m = |erase, ask, no_bin| DeleteMode { erase, ask, no_bin };
-        assert_eq!(delete_mode(true, &[Recycle], false), m(false, true, false));
+        assert_eq!(
+            delete_mode(true, &[Recycle], false),
+            m(false, true, BinLack::None)
+        );
         assert_eq!(
             delete_mode(false, &[Recycle], false),
-            m(false, false, false)
+            m(false, false, BinLack::None)
         );
         assert_eq!(
             delete_mode(false, &[Recycle, RemoveImmediately], false),
-            m(true, false, false),
+            m(true, false, BinLack::None),
             "a drive set to remove immediately erases without the lead"
         );
         assert_eq!(
             delete_mode(false, &[Recycle, NoBin], false),
-            m(true, true, true),
+            m(true, true, BinLack::Some),
             "an erase the settings did not choose asks even with the prompt off"
         );
-        assert_eq!(delete_mode(true, &[Recycle], true), m(true, true, false));
-        assert_eq!(delete_mode(false, &[NoBin], true), m(true, false, false));
+        assert_eq!(
+            delete_mode(false, &[NoBin, NoBin], false),
+            m(true, true, BinLack::All)
+        );
+        assert_eq!(
+            delete_mode(true, &[Recycle], true),
+            m(true, true, BinLack::None)
+        );
+        assert_eq!(
+            delete_mode(false, &[NoBin], true),
+            m(true, false, BinLack::None)
+        );
     }
 }
