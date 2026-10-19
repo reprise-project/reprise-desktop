@@ -394,7 +394,7 @@ pub fn access(
         .zip(tabs)
         .enumerate()
         .map(|(i, (label, r))| {
-            let mut n = access::named(Role::Tab, *r, label);
+            let mut n = access::titled(Role::Tab, *r, label);
             n.set_selected(i == strip.open);
             tree.push(list, i, n)
         })
@@ -588,7 +588,7 @@ pub fn doc_access(
         .zip(l.tabs.iter().zip(&l.closes))
         .enumerate()
         .map(|(i, (label, (r, close)))| {
-            let mut n = access::named(Role::Tab, *r, label);
+            let mut n = access::titled(Role::Tab, *r, label);
             n.set_selected(i == strip.open);
             let id = tree.push(list, i, n);
             tree.push(
@@ -1100,6 +1100,21 @@ mod tests {
         let s = TabStrip::new(&["a", "b"], 0);
         assert_eq!(s.mode, Mode::Sheet);
         assert_eq!(TabStrip::document(labels(2), 1).mode, Mode::Document);
+    }
+
+    #[test]
+    fn a_tab_is_read_with_the_ampersand_it_shows() {
+        let strip = TabStrip::new(&["Date & Time", "Time Zone"], 0);
+        let mut tree = Tree::new(access::node(Role::Window, Rect::new(0, 0, 400, 40)));
+        let tabs = [Rect::new(0, 0, 75, 20), Rect::new(75, 0, 62, 20)];
+        access(&strip, &tabs, &mut tree, access::ROOT, "tabs");
+        assert!(tree.find(Role::Tab, "Date & Time").is_some());
+        let (text, px) = doc_text();
+        let strip = TabStrip::document(vec!["R&D notes".into()], 0);
+        let l = doc_layout(&text, px, &strip, Rect::new(0, 0, 600, 22), TextUnits::ONE);
+        let mut tree = Tree::new(access::node(Role::Window, Rect::new(0, 0, 600, 22)));
+        doc_access(&strip, &l, &mut tree, access::ROOT, "tabs");
+        assert!(tree.find(Role::Tab, "R&D notes").is_some());
     }
 
     #[test]
