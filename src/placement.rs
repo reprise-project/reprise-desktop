@@ -27,6 +27,15 @@ impl Wm {
     }
 }
 
+/// What placing a window reads of it: from a live window, or from an X11 window before it maps.
+pub(crate) struct Subject {
+    pub app: String,
+    pub title: String,
+    /// See [`Window::placeable`].
+    pub placeable: bool,
+    pub fixed: bool,
+}
+
 impl Window {
     /// Whether the window rules and the app's remembered frame place this
     /// window: a top-level window of an app that names itself. Dialogs
@@ -76,35 +85,46 @@ fn rule_desktop(desktop: usize, desktops: usize) -> Option<usize> {
 }
 
 impl State {
-    pub fn newest_of_app(&self, app_id: &str, except: WindowId) -> Option<WindowId> {
+    pub fn newest_of_app(&self, app_id: &str, except: Option<WindowId>) -> Option<WindowId> {
         self.windows
             .iter()
             .rev()
-            .filter(|w| w.mapped && w.id != except && w.placeable())
+            .filter(|w| w.mapped && Some(w.id) != except && w.placeable())
             .find(|w| w.app() == app_id)
             .map(|w| w.id)
     }
 
     pub(crate) fn plan_window(&self, w: WindowId) -> Option<Want> {
         let win = self.win(w)?;
-        if !win.placeable() {
+        let subject = Subject {
+            app: win.app(),
+            title: win.title(),
+            placeable: win.placeable(),
+            fixed: !win.is_resizable(),
+        };
+        self.plan_for(&subject, Some(w))
+    }
+
+    /// The placement the rules, the app's remembered frame and a restoring session give `s`;
+    /// `w` is its window once it has one.
+    pub(crate) fn plan_for(&self, s: &Subject, w: Option<WindowId>) -> Option<Want> {
+        if !s.placeable {
             return None;
         }
-        let app_id = win.app();
-        let fixed = !win.is_resizable();
-        let first = self.newest_of_app(&app_id, w).is_none();
+        let (app_id, title, fixed) = (&s.app, &s.title, s.fixed);
+        let first = self.newest_of_app(app_id, w).is_none();
         let mut base = Want::default();
         if self.config.remember_windows
             && !fixed
-            && let Some(m) = self.wm.remembered.get(&app_id)
+            && let Some(m) = self.wm.remembered.get(app_id)
         {
             base = m.want(first, self.config.accessibility.text_size);
         }
         if !fixed
-            && let Some(f) =
-                self.session
-                    .regrouping
-                    .frame(&app_id, &win.title(), std::time::Instant::now())
+            && let Some(f) = self
+                .session
+                .regrouping
+                .frame(app_id, title, std::time::Instant::now())
         {
             base = self.regroup_want(f);
         }
@@ -112,21 +132,20 @@ impl State {
             && let Some(d) = self
                 .session
                 .restoring
-                .desktop(&app_id, std::time::Instant::now())
+                .desktop(app_id, std::time::Instant::now())
             && d < self.desktops.count
         {
             base.desktop = Some(d);
         }
-        if let Some(d) =
-            self.session
-                .regrouping
-                .desktop(&app_id, &win.title(), std::time::Instant::now())
+        if let Some(d) = self
+            .session
+            .regrouping
+            .desktop(app_id, title, std::time::Instant::now())
             && d < self.desktops.count
         {
             base.desktop = Some(d);
         }
-        let mut want =
-            crate::windowrules::want(&self.config.window_rules, &app_id, &win.title(), base);
+        let mut want = crate::windowrules::want(&self.config.window_rules, app_id, title, base);
         if fixed {
             want.size = None;
         }
@@ -323,7 +342,7 @@ impl State {
             return;
         }
         let app_id = win.app();
-        if last_only && self.newest_of_app(&app_id, w).is_some() {
+        if last_only && self.newest_of_app(&app_id, Some(w)).is_some() {
             return;
         }
         let Some(entry) = self.frame_of(w) else {

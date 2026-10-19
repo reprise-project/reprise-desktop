@@ -2116,7 +2116,10 @@ impl State {
                     }
                     Position::Cascade => {
                         let app_id = self.win(w).map(Window::app).unwrap_or_default();
-                        match self.newest_of_app(&app_id, w).and_then(|p| self.win(p)) {
+                        match self
+                            .newest_of_app(&app_id, Some(w))
+                            .and_then(|p| self.win(p))
+                        {
                             Some(p) => cascade_from((p.x, p.y), s, area, &m),
                             None => cascade_position(0, area, &m),
                         }
