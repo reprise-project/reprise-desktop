@@ -1,7 +1,7 @@
 //! AccessKit trees: a control's `access` part adds nodes for its rect to a [`Tree`]; the host
 //! publishes one tree per surface through [`Published`], which sends only what changed.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::hash::{DefaultHasher, Hash, Hasher};
 
 pub use accesskit;
@@ -16,6 +16,8 @@ pub const ROOT: NodeId = NodeId(1);
 pub struct Tree {
     nodes: Vec<(NodeId, Node)>,
     index: HashMap<NodeId, usize>,
+    /// Nodes pushed disabled or under a disabled one.
+    greyed: HashSet<NodeId>,
     focus: NodeId,
 }
 
@@ -24,6 +26,7 @@ impl Tree {
         Tree {
             nodes: vec![(ROOT, root)],
             index: HashMap::from([(ROOT, 0)]),
+            greyed: HashSet::new(),
             focus: ROOT,
         }
     }
@@ -44,13 +47,19 @@ impl Tree {
     /// Add `node` as the last child of `parent` and return its id. A
     /// second child under the same key gets an id of its own derived from
     /// the first, so ids stay unique even when a caller repeats a key.
-    /// A row or tab carrying a selected state gets its actions ([`pickable`]).
-    /// Panics if `parent` is not in the tree.
+    /// A row or tab carrying a selected state, placed and not greyed itself or under a
+    /// greyed node, offers Focus and Click. Panics if `parent` is not in the tree.
     pub fn push(&mut self, parent: NodeId, key: impl Hash, mut node: Node) -> NodeId {
-        pickable(&mut node);
+        let greyed = node.is_disabled() || self.greyed.contains(&parent);
+        if !greyed && node.bounds().is_some() {
+            pickable(&mut node);
+        }
         let mut id = Tree::id_of(parent, key);
         while id == ROOT || self.index.contains_key(&id) {
             id = Tree::id_of(id, 0u8);
+        }
+        if greyed {
+            self.greyed.insert(id);
         }
         let p = self.index[&parent];
         self.nodes[p].1.push_child(id);
@@ -506,7 +515,7 @@ fn pickable(n: &mut Node) {
         n.role(),
         Role::Tab | Role::ListItem | Role::ListBoxOption | Role::TreeItem | Role::Row | Role::Cell
     );
-    if item && n.is_selected().is_some() && !n.is_disabled() {
+    if item && n.is_selected().is_some() {
         n.add_action(Action::Focus);
         n.add_action(Action::Click);
     }
@@ -1111,6 +1120,31 @@ mod tests {
         for id in [greyed, plain, label] {
             assert!(!t.get(id).unwrap().supports_action(Action::Click));
         }
+    }
+
+    #[test]
+    fn a_row_under_a_greyed_node_or_without_bounds_offers_no_click() {
+        let mut t = Tree::window("T", (100, 100));
+        let row = || {
+            let mut n = node(Role::ListBoxOption, Rect::new(0, 0, 10, 10));
+            n.set_selected(false);
+            n
+        };
+        let mut grey = node(Role::Group, Rect::new(0, 0, 50, 50));
+        grey.set_disabled();
+        let grey = t.push(ROOT, "grey", grey);
+        let list = t.push(grey, "list", node(Role::ListBox, Rect::new(0, 0, 50, 50)));
+        let under = t.push(list, 0, row());
+        let mut unplaced = row();
+        unplaced.clear_bounds();
+        let unplaced = t.push(ROOT, 1, unplaced);
+        let live = t.push(ROOT, 2, row());
+        for id in [under, unplaced] {
+            let n = t.get(id).unwrap();
+            assert!(!n.supports_action(Action::Click), "{id:?} offers no click");
+            assert!(!n.supports_action(Action::Focus), "{id:?} offers no focus");
+        }
+        assert!(t.get(live).unwrap().supports_action(Action::Click));
     }
 
     #[test]
