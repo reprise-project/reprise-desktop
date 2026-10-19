@@ -1163,16 +1163,19 @@ fn draw_list_row(
     text.draw_clipped(c, label_full, label, &shown, false, fg, Align::Left, px);
 }
 
-/// One dragged List or Details entry: its index and its 16 px icon at the image's scale.
+/// One dragged entry: its index and the icon its mode draws (a thumbnail's picture) at the image's
+/// scale.
 pub struct DragRow<'a> {
     pub index: usize,
     pub icon: Option<&'a Canvas>,
 }
 
-/// The image a List or Details drag of `rows` carries: each row's icon and name painted as an
-/// unselected List row where the row sits in the view, faded 1:2, keeping only the rows the body
-/// shows. Details rows take the Name column's width, from its icon. Returns the image at
-/// `theme.scale` and the point of it under `pointer`, in view coordinates; None in the icon modes.
+/// The image a List, Details, Tiles or Thumbnails drag of `rows` carries, faded 1:2. A List or
+/// Details row is painted as an unselected List row where it sits in the view, keeping only the
+/// rows the body shows; Details rows take the Name column's width, from its icon. A tile or
+/// thumbnail is painted unselected in its cell, cut as [`iconview::drag_cut`] cuts. Returns the
+/// image at `theme.scale` and the point of it under `pointer`, in view coordinates; None in Icons,
+/// which draws through [`iconview::drag_image`].
 pub fn drag_image(
     theme: &crate::theme::Theme,
     text: &TextRenderer,
@@ -1203,7 +1206,10 @@ pub fn drag_image(
                 Box::new(move |cell: Rect| Rect::new(x, cell.y, w, cell.height)),
             )
         }
-        Mode::Thumbnails | Mode::Tiles | Mode::Icons => return None,
+        Mode::Thumbnails | Mode::Tiles => {
+            return grid_drag_image(theme, text, sv, lay, rows, pointer);
+        }
+        Mode::Icons => return None,
     };
     let placed: Vec<(&DragRow, &Entry, Rect)> = rows
         .iter()
@@ -1241,6 +1247,53 @@ pub fn drag_image(
     }
     c.fade(1, 2);
     Some((c, (pointer.0 - bounds.x, pointer.1 - bounds.y)))
+}
+
+fn grid_drag_image(
+    theme: &crate::theme::Theme,
+    text: &TextRenderer,
+    sv: &ShellView,
+    lay: &Layout,
+    rows: &[DragRow],
+    pointer: (i32, i32),
+) -> Option<(Canvas, (i32, i32))> {
+    let placed: Vec<(&DragRow, &Entry, Rect)> = rows
+        .iter()
+        .filter_map(|r| Some((r, sv.entries.get(r.index)?, *lay.cells.get(r.index)?)))
+        .collect();
+    let cells: Vec<Rect> = placed.iter().map(|&(_, _, cell)| cell).collect();
+    let (shown, r) = iconview::drag_cut(theme.text, &cells, pointer)?;
+    let (cs, s, u, px) = (
+        &theme.colors,
+        theme.scale.max(1),
+        theme.text,
+        theme.fonts.size_px,
+    );
+    let mut c = Canvas::new((r.width * s) as u32, (r.height * s) as u32);
+    let at = |x: Rect| Rect::new(x.x - r.x, x.y - r.y, x.width, x.height).scaled(s);
+    for (row, e, cell) in shown.into_iter().map(|i| placed[i]) {
+        let label = at(shellgrid::label_of(sv.mode, cell, e, text, px, u));
+        let draw = match sv.mode {
+            Mode::Tiles => shellgrid::draw_tile,
+            _ => shellgrid::draw_thumb,
+        };
+        let unselected = (false, false);
+        draw(
+            &mut c,
+            text,
+            cs,
+            e,
+            row.icon,
+            at(cell),
+            label,
+            unselected,
+            px,
+            s,
+            u,
+        );
+    }
+    c.fade(1, 2);
+    Some((c, (pointer.0 - r.x, pointer.1 - r.y)))
 }
 
 pub fn draw(
@@ -2526,9 +2579,30 @@ pub(crate) mod tests {
         assert_eq!(names(&sv), ["mfolder", "b link", "a", "c"], "Type");
     }
 
-    /// Each picked entry's icon, its colour redrawn at `s` times its 16 px.
+    const DRAG_HALF: i32 = iconview::DRAG_IMAGE_MAX / 2;
+
+    fn canvas_fnv(c: &Canvas) -> u64 {
+        let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+        let words = [c.width, c.height]
+            .into_iter()
+            .chain(c.pixels.iter().copied());
+        for w in words {
+            for b in w.to_le_bytes() {
+                h ^= u64::from(b);
+                h = h.wrapping_mul(0x0000_0100_0000_01b3);
+            }
+        }
+        h
+    }
+
+    /// Each picked entry's icon, its colour redrawn at `s` times the size its mode draws.
     fn drag_icons(sv: &ShellView, picked: &[usize], s: i32) -> Vec<(usize, Canvas)> {
-        let n = (ICON_PX * s) as u32;
+        let px = match sv.mode {
+            Mode::Tiles => 48,
+            Mode::Thumbnails => 80,
+            _ => ICON_PX,
+        };
+        let n = (px * s) as u32;
         picked
             .iter()
             .map(|&i| {
@@ -2593,6 +2667,84 @@ pub(crate) mod tests {
         }
     }
 
+    /// A Tiles or Thumbnails drag image paints each dragged cell unselected where it sits: a
+    /// tile's icon left of its name and detail lines, a thumbnail's picture in its frame over its
+    /// name; a cell partly past the pointer's square is cut at it.
+    #[test]
+    fn a_grid_drag_image_paints_each_tile_or_thumbnail_in_its_cell() {
+        for mode in [Mode::Tiles, Mode::Thumbnails] {
+            let sv = sample(mode, false);
+            let lay = layout(&sv, Rect::new(0, 0, 500, 400), &ControlMetrics::CLASSIC);
+            let c = lay.cells[2];
+            let mid = (c.x + c.width / 2, c.y + 20);
+            let (img, grab) = drag_of(&sv, &lay, &[2], mid, 1).expect("an image");
+            assert_eq!(
+                (img.width as i32, img.height as i32),
+                (c.width, c.height),
+                "{mode:?}"
+            );
+            assert_eq!(grab, (c.width / 2, 20), "{mode:?}");
+            let alpha = |x: i32, y: i32| img.get(x, y) >> 24;
+            let ink =
+                |r: Rect| (r.x..r.right()).any(|x| (r.y..r.bottom()).any(|y| alpha(x, y) > 0));
+            let (picture, label) = match mode {
+                Mode::Tiles => ((5 + 24, 4 + 24), Rect::new(58, 0, c.width - 58, c.height)),
+                _ => (
+                    (17 + 48, 3 + 48),
+                    Rect::new(0, 3 + 96 + 4, c.width, c.height - 103),
+                ),
+            };
+            let a = alpha(picture.0, picture.1);
+            assert!(a > 0 && a <= 128, "{mode:?}: the picture, faded ({a})");
+            assert!(ink(label), "{mode:?}: the name");
+            if mode == Mode::Thumbnails {
+                assert!(alpha(17 + 1, 3 + 1) > 0, "the frame round the picture");
+                assert_eq!(alpha(2, 2), 0, "nothing outside the frame");
+            }
+
+            let far = (c.x + c.width + 100, c.y + 20);
+            let (cut, _) = drag_of(&sv, &lay, &[2], far, 1).expect("a cut image");
+            assert_eq!(
+                cut.width as i32,
+                c.right() - (far.0 - DRAG_HALF),
+                "{mode:?}: cut at the square's left edge"
+            );
+        }
+    }
+
+    /// The Tiles and Thumbnails images' pixels in Tahoma at scale 1 and 2; scale 2 is twice the size.
+    #[test]
+    fn a_grid_drag_image_draws_its_pixels() {
+        if !crate::text::test_tahoma() {
+            return;
+        }
+        let mut got = Vec::new();
+        for mode in [Mode::Tiles, Mode::Thumbnails] {
+            let sv = sample(mode, false);
+            let lay = layout(&sv, Rect::new(0, 0, 500, 400), &ControlMetrics::CLASSIC);
+            let pointer = (lay.cells[2].x + 30, lay.cells[2].y + 5);
+            let (one, grab) = drag_of(&sv, &lay, &[2, 3, 5], pointer, 1).expect("an image");
+            let (two, grab2) = drag_of(&sv, &lay, &[2, 3, 5], pointer, 2).expect("at scale 2");
+            assert_eq!(grab2, grab, "{mode:?}");
+            assert_eq!(
+                (two.width, two.height),
+                (one.width * 2, one.height * 2),
+                "{mode:?}"
+            );
+            got.push(canvas_fnv(&one));
+            got.push(canvas_fnv(&two));
+        }
+        assert_eq!(
+            got,
+            [
+                12367351723118438290,
+                10812927578775749966,
+                7051300675491572982,
+                13578866114428635029
+            ]
+        );
+    }
+
     /// Rows scrolled out of the body stay out of the image, and with none shown there is none.
     #[test]
     fn a_rows_drag_image_keeps_only_the_rows_on_screen() {
@@ -2624,19 +2776,6 @@ pub(crate) mod tests {
         if !crate::text::test_tahoma() {
             return;
         }
-        fn fnv(c: &Canvas) -> u64 {
-            let mut h: u64 = 0xcbf2_9ce4_8422_2325;
-            let words = [c.width, c.height]
-                .into_iter()
-                .chain(c.pixels.iter().copied());
-            for w in words {
-                for b in w.to_le_bytes() {
-                    h ^= u64::from(b);
-                    h = h.wrapping_mul(0x0000_0100_0000_01b3);
-                }
-            }
-            h
-        }
         let mut got = Vec::new();
         for mode in [Mode::List, Mode::Details] {
             let sv = sample(mode, false);
@@ -2650,8 +2789,8 @@ pub(crate) mod tests {
                 (one.width * 2, one.height * 2),
                 "{mode:?}"
             );
-            got.push(fnv(&one));
-            got.push(fnv(&two));
+            got.push(canvas_fnv(&one));
+            got.push(canvas_fnv(&two));
         }
         assert_eq!(
             got,

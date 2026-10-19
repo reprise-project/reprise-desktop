@@ -668,11 +668,33 @@ pub struct Ghost<'a> {
     pub shortcut: bool,
 }
 
+/// The part of a drag of `cells` its image shows: a square [`DRAG_IMAGE_MAX`] 100% px across
+/// centred on `pointer`. At 100% the square cuts through the cells at its edges; at a larger text
+/// size `u` it keeps only the cells it holds whole, and cuts as at 100% when it holds none.
+/// Returns the indices of the cells it shows and the rect it covers; None when no cell reaches it.
+pub fn drag_cut(u: TextUnits, cells: &[Rect], pointer: (i32, i32)) -> Option<(Vec<usize>, Rect)> {
+    let side = u.len(DRAG_IMAGE_MAX);
+    let half = side / 2;
+    let window = Rect::new(pointer.0 - half, pointer.1 - half, side, side);
+    let whole: Vec<usize> = (0..cells.len())
+        .filter(|&i| window.intersect(&cells[i]) == cells[i])
+        .collect();
+    let (shown, r) = if u.is_one() || whole.is_empty() {
+        let bounds = cells.iter().copied().reduce(|a, b| a.union(&b))?;
+        let r = bounds.intersect(&window);
+        let shown = (0..cells.len())
+            .filter(|&i| !cells[i].intersect(&r).is_empty())
+            .collect();
+        (shown, r)
+    } else {
+        let r = whole.iter().map(|&i| cells[i]).reduce(|a, b| a.union(&b))?;
+        (whole, r)
+    };
+    (!r.is_empty()).then_some((shown, r))
+}
+
 /// The image a drag of several icons carries: every icon drawn unselected in
-/// a `cell`, faded 1:2, within a square [`DRAG_IMAGE_MAX`] 100% px across
-/// centred on `pointer`. At 100% the square cuts through the cells at its
-/// edges; at a larger text size it keeps only the cells it holds whole, and
-/// cuts as at 100% when it holds none.
+/// a `cell`, faded 1:2, cut as [`drag_cut`] cuts.
 /// Returns the image and the pointer's place in it; None when no cell reaches it.
 pub fn drag_image(
     theme: &Theme,
@@ -682,34 +704,12 @@ pub fn drag_image(
     pointer: (i32, i32),
 ) -> Option<(Canvas, (i32, i32))> {
     let s = theme.scale.max(1);
-    let rect_of = |g: &Ghost| Rect::new(g.at.0, g.at.1, cell.w, cell.h);
-    let side = theme.text.len(DRAG_IMAGE_MAX);
-    let half = side / 2;
-    let window = Rect::new(pointer.0 - half, pointer.1 - half, side, side);
-    let whole: Vec<&Ghost> = ghosts
-        .iter()
-        .filter(|g| window.intersect(&rect_of(g)) == rect_of(g))
+    let cells: Vec<Rect> = (ghosts.iter())
+        .map(|g| Rect::new(g.at.0, g.at.1, cell.w, cell.h))
         .collect();
-    let (shown, r) = if theme.text.is_one() || whole.is_empty() {
-        let bounds = ghosts.iter().map(rect_of).reduce(|a, b| a.union(&b))?;
-        let r = bounds.intersect(&window);
-        let shown = ghosts
-            .iter()
-            .filter(|g| !rect_of(g).intersect(&r).is_empty())
-            .collect();
-        (shown, r)
-    } else {
-        let r = whole
-            .iter()
-            .map(|g| rect_of(g))
-            .reduce(|a, b| a.union(&b))?;
-        (whole, r)
-    };
-    if r.is_empty() {
-        return None;
-    }
+    let (shown, r) = drag_cut(theme.text, &cells, pointer)?;
     let mut c = Canvas::new((r.width * s) as u32, (r.height * s) as u32);
-    for g in shown {
+    for g in shown.into_iter().map(|i| &ghosts[i]) {
         let pos = ((g.at.0 - r.x) * s, (g.at.1 - r.y) * s);
         draw_cell_at(
             &mut c, pos, cell, theme, text, g.name, g.icon, g.shortcut, None, None,

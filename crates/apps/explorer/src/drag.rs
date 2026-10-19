@@ -306,12 +306,21 @@ impl Explorer {
             .iter()
             .map(|&(i, _)| {
                 let e = self.sv.entries.get(i)?;
-                let worn = icon_of(e)?;
-                let icon = match worn.scale() == s {
-                    true => None,
-                    false => self.list_icons.fetch(&worn, px, &mut ctx.icons),
+                let thumb = e
+                    .thumb
+                    .as_ref()
+                    .filter(|_| self.sv.mode == Mode::Thumbnails);
+                let mut icon = match thumb {
+                    Some(t) => device_px(t.clone(), s),
+                    None => {
+                        let worn = icon_of(e)?;
+                        let icon = match worn.scale() == s {
+                            true => None,
+                            false => self.list_icons.fetch(&worn, px, &mut ctx.icons),
+                        };
+                        device_px(icon.unwrap_or_else(|| (*worn).clone()), s)
+                    }
                 };
-                let mut icon = device_px(icon.unwrap_or_else(|| (*worn).clone()), s);
                 if e.cut {
                     icon.fade(1, 2);
                 }
@@ -320,7 +329,7 @@ impl Explorer {
             .collect();
         ctx.icons.set_scale(drawn);
         let mut theme = ctx.theme.scaled(s);
-        if flat {
+        if self.sv.mode != Mode::Icons {
             let rows: Vec<shellview::DragRow> = shown
                 .iter()
                 .zip(&icons)

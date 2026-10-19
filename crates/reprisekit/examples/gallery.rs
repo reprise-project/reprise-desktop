@@ -97,6 +97,10 @@ fn main() {
             &format!("reprisekit-gallery-termgrid@{}.png", n.max(1)),
         );
         write_preview(
+            &render_grid_drag(n.max(1)),
+            &format!("reprisekit-gallery-grid-drag@{}.png", n.max(1)),
+        );
+        write_preview(
             &render_windowed_dialog(n.max(1)),
             &format!("reprisekit-gallery-windowed-dialog@{}.png", n.max(1)),
         );
@@ -177,6 +181,7 @@ fn main() {
     }
     write_preview(&render_file_dialog(), "reprisekit-gallery-file-dialog.png");
     write_preview(&render_termgrid(1), "reprisekit-gallery-termgrid.png");
+    write_preview(&render_grid_drag(1), "reprisekit-gallery-grid-drag.png");
     write_preview(
         &render_about_system(with_blue, 100),
         "reprisekit-gallery-about-system.png",
@@ -1373,6 +1378,44 @@ fn render_termgrid(scale: i32) -> Canvas {
 
 /// A 640 px bar along the top in Classic, Blue, Glass and Glass's small bar over the stripes; the orb's buffer goes over each Glass bar.
 /// A taskbar per look with a copy running, one paused and one without progress.
+/// A Tiles and a Thumbnails drag of three entries, each image over the view's window colour.
+fn render_grid_drag(scale: i32) -> Canvas {
+    let theme = cued(Theme::default()).scaled(scale);
+    let text = TextRenderer::load(&theme.fonts);
+    let mut c = Canvas::new((600 * scale) as u32, (330 * scale) as u32);
+    c.fill_rect(c.bounds(), theme.colors.window);
+    let mut x = 10;
+    for (mode, px) in [
+        (shellview::Mode::Tiles, 48),
+        (shellview::Mode::Thumbnails, 80),
+    ] {
+        let sv = shellview::sample(mode, false);
+        let lay = shellview::layout(&sv, Rect::new(0, 0, 500, 400), &theme.controls());
+        let icons: Vec<(usize, Canvas)> = [0, 1, 2]
+            .into_iter()
+            .map(|i| {
+                let argb = sv.entries[i].icon.as_ref().map_or(0, |c| c.pixels[0]);
+                let n = (px * scale) as u32;
+                (i, Canvas::from_pixels(n, n, vec![argb; (n * n) as usize]))
+            })
+            .collect();
+        let rows: Vec<shellview::DragRow> = icons
+            .iter()
+            .map(|(index, icon)| shellview::DragRow {
+                index: *index,
+                icon: Some(icon),
+            })
+            .collect();
+        let cell = lay.cells[1];
+        let at = (cell.x + cell.width / 2, cell.y + cell.height / 2);
+        if let Some((img, _)) = shellview::drag_image(&theme, &text, &sv, &lay, &rows, at) {
+            c.blit_over(x * scale, 10 * scale, &img);
+            x += img.width as i32 / scale + 20;
+        }
+    }
+    c
+}
+
 fn render_task_progress(scale: i32) -> Canvas {
     use reprisekit::taskbar::{
         TaskEntry, TaskProgress, TaskbarCounts, TaskbarLayout, TaskbarState,
