@@ -444,7 +444,7 @@ impl Folder {
     fn press_at(&mut self, at: Click, button: u32, s: &nm::Snapshot, ctx: &Ctx) -> Outcome {
         let (x, y) = (at.x, at.y);
         if let Some(p) = self.popup.as_mut() {
-            let act = p.chain.click(&p.tree, x, y, &popup_ctx(ctx, client(ctx)));
+            let act = p.chain.click(&p.tree, x, y, &popup_ctx(ctx));
             return self.popup_action(act);
         }
         let (pane_r, list_r) = self.layout(ctx);
@@ -543,11 +543,10 @@ impl Folder {
             self.list.top = top;
             return redraw(moved);
         }
-        let client = client(ctx);
         let Some(p) = self.popup.as_mut() else {
             return Outcome::None;
         };
-        redraw(p.chain.motion(&p.tree, x, y, &popup_ctx(ctx, client)))
+        redraw(p.chain.motion(&p.tree, x, y, &popup_ctx(ctx)))
     }
 
     pub fn release(&mut self, ctx: &Ctx) -> Outcome {
@@ -564,7 +563,7 @@ impl Folder {
             let Some(mk) = menu_key(k) else {
                 return Outcome::None;
             };
-            let act = p.chain.key(&p.tree, mk, &popup_ctx(ctx, client(ctx)));
+            let act = p.chain.key(&p.tree, mk, &popup_ctx(ctx));
             return self.popup_action(act);
         }
         let (_, list_r) = self.layout(ctx);
@@ -682,7 +681,7 @@ impl Folder {
             return;
         }
         let tree = MenuTree::flat(items);
-        let chain = PopupMenu::open(&tree, (x, y), &popup_ctx(ctx, client(ctx)), by_keyboard);
+        let chain = PopupMenu::open(&tree, (x, y), &popup_ctx(ctx), by_keyboard);
         self.popup = Some(Popup {
             tree,
             chain,
@@ -738,16 +737,12 @@ fn redraw(changed: bool) -> Outcome {
     }
 }
 
-fn client(ctx: &Ctx) -> Rect {
-    Rect::new(0, 0, ctx.size.0, ctx.size.1)
-}
-
-fn popup_ctx<'a>(ctx: &'a Ctx, client: Rect) -> MenuCtx<'a> {
+fn popup_ctx(ctx: &Ctx) -> MenuCtx<'_> {
     MenuCtx {
         text: &ctx.text,
         theme: &ctx.theme,
         px: ctx.theme.fonts.size_px,
-        within: client,
+        within: ctx.menu_within(),
     }
 }
 

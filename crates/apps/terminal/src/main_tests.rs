@@ -40,6 +40,7 @@ fn test_ctx() -> Ctx {
         wake: repriseapp::Waker::noop(),
         heads: Default::default(),
         want_tick: Default::default(),
+        output_size: None,
         at_pick: false,
         text_size: 100,
     }
@@ -456,6 +457,7 @@ fn themed_ctx(theme: Theme) -> Ctx {
         wake: repriseapp::Waker::noop(),
         heads: Default::default(),
         want_tick: Default::default(),
+        output_size: None,
         at_pick: false,
         text_size: 100,
     }

@@ -461,6 +461,6 @@ fn menu_ctx(ctx: &Ctx) -> MenuCtx<'_> {
         text: &ctx.text,
         theme: &ctx.theme,
         px: ctx.theme.fonts.size_px,
-        within: Rect::new(0, 0, ctx.size.0, ctx.size.1),
+        within: ctx.menu_within(),
     }
 }
