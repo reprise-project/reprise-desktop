@@ -174,7 +174,8 @@ impl State {
         };
         place(&v.dim, &lay.dim);
         place(&v.border, &lay.border);
-        let tip = regionselect::draw_readout(&theme.scaled(scale), text, &v.model);
+        let tip =
+            regionselect::draw_readout(&theme.scaled(scale), text.for_output(scale), &v.model);
         match (lay.readout, tip) {
             (Some(r), Some(canvas)) => {
                 upload_scaled(scene, v.readout, &canvas, scale);

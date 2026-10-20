@@ -524,7 +524,7 @@ impl State {
             .unwrap_or_else(|| reprisekit::icon::fallback(&theme, launcher::ICON * scale));
         let mut canvas = launcher::draw(
             &theme,
-            text,
+            text.for_output(scale),
             &v.model,
             Some(&icon),
             caret.on,

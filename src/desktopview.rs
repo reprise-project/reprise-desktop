@@ -1532,7 +1532,7 @@ impl State {
                     .map(|(ed, on)| (ed, reprisekit::textedit::Caret::new(true, *on)));
                 let mut canvas = desktop::draw_cell(
                     theme,
-                    &self.text,
+                    self.text.for_output(theme.scale),
                     &r.label,
                     icon.as_deref(),
                     r.shortcut,

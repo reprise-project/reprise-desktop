@@ -1121,8 +1121,8 @@ impl State {
             reprisekit::look::draw_frame(
                 &mut canvas,
                 &theme,
-                &self.text,
-                &self.caption_text,
+                self.text.for_output(theme.scale),
+                self.caption_text.for_output(theme.scale),
                 &at,
                 &state,
             );
@@ -1130,8 +1130,8 @@ impl State {
                 captiontabs::draw(
                     &mut canvas,
                     &theme,
-                    &self.text,
-                    &self.caption_text,
+                    self.text.for_output(theme.scale),
+                    self.caption_text.for_output(theme.scale),
                     &at,
                     tabs,
                     active,
