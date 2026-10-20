@@ -1308,6 +1308,8 @@ pub fn run(app: Box<dyn App>) {
         key_echo: None,
         look,
     };
+    // Started before the roundtrip, so the theme warms while the compositor answers.
+    host.watch_icons();
     // Learn the outputs' scales before the program loads an icon or opens
     // a window; a window starts at the largest.
     if let Err(e) = event_queue.roundtrip(&mut host) {
@@ -2628,6 +2630,41 @@ impl Host {
         });
     }
 
+    /// Warms the icon theme off the loop, then reloads it once a directory it reads changes, so
+    /// an icon installed or removed while the program runs shows.
+    fn watch_icons(&self) {
+        let theme = self.ctx.icons.theme();
+        let tx = self.portal_done.clone();
+        let spawned = std::thread::Builder::new()
+            .name("icon-watch".into())
+            .spawn(move || {
+                theme.warm();
+                let dirs = theme.watch_dirs();
+                let watched = Arc::downgrade(&theme);
+                drop(theme);
+                if reprisefs::dirchange::wait(&dirs, ICONS_SETTLE).is_ok() {
+                    let _ = tx.send(Box::new(move |host: &mut Host| {
+                        host.icons_changed(&watched)
+                    }));
+                }
+            });
+        if let Err(e) = spawned {
+            log::warn!("icon theme watch: {e}");
+        }
+    }
+
+    fn icons_changed(&mut self, watched: &std::sync::Weak<IconTheme>) {
+        let current = self.ctx.icons.theme();
+        if !watched.upgrade().is_some_and(|t| Arc::ptr_eq(&t, &current)) {
+            return;
+        }
+        self.ctx.icons.reload();
+        for s in self.slots.iter_mut() {
+            s.dirty = true;
+        }
+        self.watch_icons();
+    }
+
     fn relook(&mut self, key: &str, value: String) {
         let text_size = self.look.text_size;
         if !self.look.set(key, value) {
@@ -2642,6 +2679,7 @@ impl Host {
             let scale = self.ctx.icons.scale();
             self.ctx.icons = self.look.icons();
             self.ctx.icons.set_scale(scale);
+            self.watch_icons();
         }
         for s in self.slots.iter_mut() {
             s.dirty = true;
@@ -3783,6 +3821,10 @@ struct Asked {
 const ASK_TIMEOUT: Duration = Duration::from_secs(60);
 
 type OnLoop = Box<dyn FnOnce(&mut Host) + Send>;
+
+/// How long the icon directories stay quiet before a change reloads the theme: one package
+/// install is one reload.
+const ICONS_SETTLE: Duration = Duration::from_millis(500);
 
 /// A window's min client size and, for a fixed one, its max.
 type Limits = ((i32, i32), Option<(i32, i32)>);
