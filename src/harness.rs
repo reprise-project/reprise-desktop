@@ -4,10 +4,10 @@
 use std::{os::fd::AsFd, os::unix::net::UnixStream, sync::Arc, time::Duration};
 
 use smithay::{
-    backend::input::InputTime,
+    backend::input::{ButtonState, InputTime},
     output::{Mode, Output, PhysicalProperties, Scale, Subpixel},
     reexports::calloop::EventLoop,
-    utils::Transform,
+    utils::{Point, Transform},
 };
 use wayland_client::{
     self as wc, Connection, EventQueue, QueueHandle,
@@ -23,6 +23,9 @@ use crate::{
     config::Config,
     window::WindowId,
 };
+
+/// `BTN_LEFT`.
+pub const LEFT: u32 = 0x110;
 
 pub struct Harness {
     pub event_loop: EventLoop<'static, State>,
@@ -59,6 +62,17 @@ impl Harness {
         self.state.turn_end();
     }
 
+    /// Turns of the loop for `ms`, so timers that long fire.
+    pub fn run_for(&mut self, ms: u64) {
+        let end = std::time::Instant::now() + Duration::from_millis(ms);
+        while std::time::Instant::now() < end {
+            self.event_loop
+                .dispatch(Some(Duration::from_millis(5)), &mut self.state)
+                .expect("dispatch");
+            self.state.turn_end();
+        }
+    }
+
     /// A `w`x`h` output at scale 1 put in the layout, as `backend::enable` does once it drives
     /// a connector.
     pub fn output(&mut self, name: &str, w: i32, h: i32) -> Output {
@@ -88,6 +102,29 @@ impl Harness {
         self.state.output_added(&output);
         self.dispatch();
         output
+    }
+
+    /// Move the pointer to (`x`, `y`) and run the hover work its settle timer would.
+    pub fn pointer_to(&mut self, x: f64, y: f64) {
+        self.state.pointer_to(Point::from((x, y)), InputTime::now());
+        self.state.settle_pointer();
+        self.dispatch();
+    }
+
+    pub fn button(&mut self, button: u32, pressed: bool) {
+        let s = if pressed {
+            ButtonState::Pressed
+        } else {
+            ButtonState::Released
+        };
+        self.state.handle_button(button, s, InputTime::now());
+        self.dispatch();
+    }
+
+    pub fn click(&mut self, x: f64, y: f64) {
+        self.pointer_to(x, y);
+        self.button(LEFT, true);
+        self.button(LEFT, false);
     }
 
     /// Key `code` (an evdev code) down or up on the seat's keyboard.
@@ -272,6 +309,8 @@ pub struct ClientSide {
     pub shells: Vec<Shell>,
     /// Each key event the keyboard heard: its evdev code and whether it went down.
     pub keys: Vec<(u32, bool)>,
+    /// The `shells` the compositor asked to close, in order.
+    pub closes: Vec<usize>,
 }
 
 impl wc::Dispatch<wl_registry::WlRegistry, ()> for ClientSide {
@@ -349,8 +388,12 @@ impl wc::Dispatch<xdg_toplevel::XdgToplevel, usize> for ClientSide {
         _: &Connection,
         _: &QueueHandle<Self>,
     ) {
-        if let xdg_toplevel::Event::Configure { width, height, .. } = ev {
-            st.shells[i].pending = (width, height);
+        match ev {
+            xdg_toplevel::Event::Configure { width, height, .. } => {
+                st.shells[i].pending = (width, height);
+            }
+            xdg_toplevel::Event::Close => st.closes.push(i),
+            _ => {}
         }
     }
 }
