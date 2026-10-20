@@ -1,6 +1,7 @@
 //! One-shot dialogs: boxes with no state beyond being open. Their form is rebuilt on every event,
 //! so a press resolves its release at once. [`MsgBox`] wraps the common case. The theme they take
 //! is the one their forms draw in ([`crate::Ctx::forms`]), whose text size the forms grow with.
+//! The form drawn last stays in a [`Shown`], so a cut label tips its whole text.
 
 use crate::keys::dialog_key;
 use crate::{BTN_LEFT, Child, Event, PointerInput, WinId};
@@ -12,6 +13,7 @@ use reprisekit::look::Paint;
 use reprisekit::raster::Canvas;
 use reprisekit::text::TextRenderer;
 use reprisekit::theme::Theme;
+use std::cell::RefCell;
 
 pub enum Step {
     Closed,
@@ -48,10 +50,58 @@ pub fn event(ev: &Event, text: &TextRenderer, theme: &Theme, build: impl FnOnce(
     }
 }
 
+/// The form a box drew last. The pointer's rest on it times the tip of a cut label
+/// ([`Form::tip_tick`]), and the next draw carries that rest over.
+#[derive(Default)]
+pub struct Shown(RefCell<Option<Form>>);
+
+impl Shown {
+    /// Fills the window and draws `f` over it; the runtime draws the label tip it reports.
+    pub fn draw(&self, c: &mut Canvas, theme: &Theme, text: &TextRenderer, mut f: Form) {
+        let mut last = self.0.borrow_mut();
+        if let Some(old) = &*last {
+            f.carry_tip(old);
+        }
+        c.fill_rect(c.bounds(), theme.colors.button_face);
+        let p = Paint {
+            s: 1,
+            ..theme.paint()
+        };
+        form::draw(c, text, &p, &f, true, theme.fonts.size_px);
+        *last = Some(f);
+    }
+
+    /// The motion, leave and blink that time the tip; `None` for any other event.
+    fn event(&self, ev: &Event) -> Option<Step> {
+        let mut last = self.0.borrow_mut();
+        let changed = match ev {
+            Event::Blink => last.as_mut().is_some_and(Form::tip_tick),
+            Event::Pointer(PointerInput::Motion { x, y }) => last
+                .as_mut()
+                .is_some_and(|f| f.rest_pointer(Some((*x, *y)))),
+            Event::Pointer(PointerInput::Leave) => {
+                last.as_mut().is_some_and(|f| f.rest_pointer(None))
+            }
+            _ => return None,
+        };
+        Some(if changed { Step::Redraw } else { Step::None })
+    }
+}
+
+/// [`event`] for a message box whose form `fields` builds, drawn through `shown`. The box lives
 /// between events, so a key that moves the focus (Tab, the arrows) moves
 /// `fields.default` with it: the next form puts the focus and the ring
 /// on that button, and Enter and Space press it.
-pub fn msgbox_event(ev: &Event, text: &TextRenderer, theme: &Theme, fields: &mut Fields) -> Step {
+pub fn msgbox_event(
+    ev: &Event,
+    text: &TextRenderer,
+    theme: &Theme,
+    fields: &mut Fields,
+    shown: &Shown,
+) -> Step {
+    if let Some(step) = shown.event(ev) {
+        return step;
+    }
     let (px, u) = (theme.fonts.size_px, theme.text);
     let Event::Key(k) = ev else {
         return event(ev, text, theme, || msgbox::form(fields, text, px, u));
@@ -73,6 +123,7 @@ pub fn msgbox_event(ev: &Event, text: &TextRenderer, theme: &Theme, fields: &mut
 pub struct MsgBox {
     pub title: String,
     pub fields: Fields,
+    shown: Shown,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -87,7 +138,11 @@ impl MsgBox {
     pub fn new(title: impl Into<String>, mut fields: Fields) -> MsgBox {
         let title = title.into();
         fields.min_w = fields.min_w.max(crate::caption_fit(&title));
-        MsgBox { title, fields }
+        MsgBox {
+            title,
+            fields,
+            shown: Shown::default(),
+        }
     }
 
     pub fn child(&self, id: WinId, text: &TextRenderer, theme: &Theme) -> Child {
@@ -102,7 +157,7 @@ impl MsgBox {
     }
 
     pub fn event(&mut self, ev: &Event, text: &TextRenderer, theme: &Theme) -> Outcome {
-        match msgbox_event(ev, text, theme, &mut self.fields) {
+        match msgbox_event(ev, text, theme, &mut self.fields, &self.shown) {
             Step::Closed => Outcome::Closed(None),
             Step::Redraw => Outcome::Redraw,
             Step::None => Outcome::None,
@@ -117,20 +172,8 @@ impl MsgBox {
     }
 
     pub fn draw(&self, c: &mut Canvas, theme: &Theme, text: &TextRenderer) {
-        let px = theme.fonts.size_px;
-        c.fill_rect(c.bounds(), theme.colors.button_face);
-        let f = msgbox::form(&self.fields, text, px, theme.text);
-        form::draw(
-            c,
-            text,
-            &Paint {
-                s: 1,
-                ..theme.paint()
-            },
-            &f,
-            true,
-            px,
-        );
+        let f = msgbox::form(&self.fields, text, theme.fonts.size_px, theme.text);
+        self.shown.draw(c, theme, text, f);
     }
 
     pub fn access(&self, tree: &mut Tree, text: &TextRenderer, theme: &Theme) {
@@ -173,6 +216,63 @@ mod tests {
                 min_w: 0,
             },
         )
+    }
+
+    #[test]
+    fn a_label_cut_by_a_narrow_window_tips_its_whole_text_after_a_blink() {
+        const LONG: &str = "The file name, directory name, or volume label syntax is incorrect.";
+        let text = TextRenderer::load(&FontConfig::default());
+        let theme = Theme::default();
+        let mut b = MsgBox::new(
+            "Notepad",
+            Fields {
+                text: LONG.into(),
+                icon: None,
+                buttons: vec!["OK".into()],
+                default: 0,
+                min_text_h: None,
+                min_w: 0,
+            },
+        );
+        let draw = |b: &MsgBox, w: u32| {
+            let mut c = Canvas::new(w, 120);
+            b.draw(&mut c, &theme, &text);
+            c.take_tip().map(|tip| tip.text)
+        };
+        let full = b.child("box", &text, &theme).size.0 as u32;
+        let label = msgbox::form(&b.fields, &text, theme.fonts.size_px, theme.text)
+            .item("text")
+            .unwrap()
+            .rect;
+        let on = Event::Pointer(PointerInput::Motion {
+            x: label.x + 10,
+            y: label.y + 5,
+        });
+        let blink = |b: &mut MsgBox| b.event(&Event::Blink, &text, &theme);
+
+        let leave = Event::Pointer(PointerInput::Leave);
+        assert_eq!(draw(&b, full), None);
+        assert_eq!(b.event(&on, &text, &theme), Outcome::None);
+        assert_eq!(blink(&mut b), Outcome::None, "a label that fits has no tip");
+        assert_eq!(b.event(&leave, &text, &theme), Outcome::None);
+
+        assert_eq!(draw(&b, 150), None, "no tip before a blink");
+        assert_eq!(b.event(&on, &text, &theme), Outcome::None);
+        assert_eq!(
+            blink(&mut b),
+            Outcome::Redraw,
+            "the cut label's tip comes up"
+        );
+        assert_eq!(
+            draw(&b, 150).as_deref(),
+            Some(LONG),
+            "the next draw reports the whole text"
+        );
+        assert_eq!(
+            b.event(&leave, &text, &theme),
+            Outcome::Redraw,
+            "leaving takes it down"
+        );
     }
 
     #[test]

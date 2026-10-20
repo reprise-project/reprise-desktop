@@ -1376,6 +1376,40 @@ impl Form {
         self.tip_tick()
     }
 
+    /// The pointer rests at `at` (`None`: it left) for a host that hands the form no other
+    /// pointer input: only the label tip follows it. Whether a shown tip went away.
+    pub fn rest_pointer(&mut self, at: Option<(i32, i32)>) -> bool {
+        self.point = at;
+        self.rest_tip(at.and_then(|(x, y)| self.label_at(x, y)))
+    }
+
+    /// Take over `old`'s pointer rest and tip count when the host builds the same form again.
+    /// The label is matched by id.
+    pub fn carry_tip(&mut self, old: &Form) {
+        self.point = old.point;
+        let id = old.tip.item.and_then(|i| old.items.get(i)).map(|it| it.id);
+        self.tip = LabelTip {
+            item: id.and_then(|id| self.items.iter().position(|it| it.id == id)),
+            ticks: old.tip.ticks,
+        };
+    }
+
+    /// A copy drawn with its (0, 0) at `origin` on the surface, the pointer rest moved along.
+    pub(crate) fn placed_at(&self, origin: (i32, i32)) -> Form {
+        let mut f = self.clone();
+        let (dx, dy) = (origin.0 - self.origin.0, origin.1 - self.origin.1);
+        f.origin = origin;
+        f.point = self.point.map(|(x, y)| (x + dx, y + dy));
+        f
+    }
+
+    /// Take the labels `drawn`, a [`Form::placed_at`] copy of this form, cut when it drew.
+    pub(crate) fn note_cuts(&self, drawn: &Form) {
+        self.rendered
+            .ellipsized
+            .replace(drawn.rendered.ellipsized.borrow().clone());
+    }
+
     /// The whole text of the ellipsized label whose tip is up ([`Form::tip_tick`]).
     pub fn label_tip(&self) -> Option<String> {
         if !self.tip_shown() {

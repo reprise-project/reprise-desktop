@@ -1989,9 +1989,31 @@ impl FileDlg {
     /// The pointer moved to (`x`, `y`) in `r`: the Details column title or the place
     /// under it lights, or the held title follows it. A redraw only when
     /// that changed and the look draws it lit.
+    /// The pointer resting on a cut label of the extra rows times its tip ([`FileDlg::blink`]).
     pub fn motion(&mut self, text: &TextRenderer, px: u32, r: Rect, x: i32, y: i32) -> Event {
         let hit = self.hit(text, px, r, x, y);
-        self.hover(hit)
+        let at = self.extra_point(r, x, y);
+        let hid = (self.extra.as_mut()).is_some_and(|(f, _)| f.rest_pointer(Some(at)));
+        match self.hover(hit) {
+            Event::None if hid => Event::Redraw,
+            e => e,
+        }
+    }
+
+    /// (`x`, `y`) in `r` as the extra rows' form takes it.
+    fn extra_point(&self, r: Rect, x: i32, y: i32) -> (i32, i32) {
+        let cm = self.drawn.0.get();
+        (x - r.x, y - rows(r, &cm).y - self.grow(r, &cm))
+    }
+
+    /// One caret blink went by: it times the tip of a cut label in the extra rows
+    /// ([`form::Form::tip_tick`]), which [`FileDlg::draw`] reports to its canvas.
+    pub fn blink(&mut self) -> Event {
+        if (self.extra.as_mut()).is_some_and(|(f, _)| f.tip_tick()) {
+            Event::Redraw
+        } else {
+            Event::None
+        }
     }
 
     /// [`FileDlg::motion`] for a host that hit-tested the point already.
@@ -2029,8 +2051,12 @@ impl FileDlg {
     }
 
     pub fn leave(&mut self) -> Event {
+        let hid = (self.extra.as_mut()).is_some_and(|(f, _)| f.rest_pointer(None));
         let changed = self.shell.header.leave() | self.places.hover(None);
-        self.lit(changed)
+        match self.lit(changed) {
+            Event::None if hid => Event::Redraw,
+            e => e,
+        }
     }
 
     fn lit(&self, changed: bool) -> Event {
@@ -2186,12 +2212,12 @@ impl FileDlg {
             let cm = self.drawn.0.get();
             let rows = rows(r, &cm);
             let dy = self.grow(r, &cm);
-            let mut shifted = f.clone();
-            shifted.origin = (rows.x, rows.y + dy);
+            let mut shifted = f.placed_at((rows.x, rows.y + dy));
             if self.focus != Focus::Extra {
                 shifted.set_focus(None);
             }
             form::draw(c, text, p, &shifted, true, px);
+            f.note_cuts(&shifted);
         }
         if self.lookin.open.is_some() {
             combo::draw_list(
@@ -3676,6 +3702,39 @@ mod tests {
             matches!(hit, Some(Hit::Extra(h)) if h.item == 0),
             "the label 16 px in hits the check box, got {hit:?}"
         );
+    }
+
+    #[test]
+    fn a_cut_extra_label_tips_its_whole_text_after_a_blink() {
+        const LONG: &str = "Character encoding used when the document is written back to disk";
+        let mut d = multi(DlgMode::Open, false);
+        let form = form::Form::new(vec![form::Item::label_at(
+            "long", FIELD_X, EXTRA_Y, 60, LONG,
+        )]);
+        d.set_extra(form, EXTRA_H, &ControlMetrics::CLASSIC);
+        let big = Rect::new(0, 0, CLIENT.0, CLIENT.1 + EXTRA_H);
+        let theme = Theme::default();
+        let t = text();
+        let draw = |d: &FileDlg| {
+            let mut c = Canvas::new(big.width as u32, big.height as u32);
+            d.draw(&mut c, &t, &theme.paint(), big, 11);
+            c.take_tip().map(|tip| (tip.text, tip.at))
+        };
+        assert_eq!(draw(&d), None);
+        let (x, y) = (FIELD_X + 20, EXTRA_Y + 5);
+        assert!(matches!(d.motion(&t, 11, big, x, y), Event::None));
+        assert!(
+            matches!(d.blink(), Event::Redraw),
+            "the blink brings the tip up"
+        );
+        assert_eq!(d.extra().unwrap().label_tip().as_deref(), Some(LONG));
+        assert_eq!(
+            draw(&d),
+            Some((LONG.to_string(), (x, y))),
+            "the drawn rows report the tip at the pointer"
+        );
+        assert!(matches!(d.leave(), Event::Redraw), "leaving takes it down");
+        assert_eq!(d.extra().unwrap().label_tip(), None);
     }
 
     /// `hit` lays the dialog out at the sizes of its last draw: after a
