@@ -529,7 +529,7 @@ pub fn access(
 }
 
 /// The popup's `access` part, in popup coordinates: the two month
-/// buttons, the analog clock where the look has one, and the grid, which
+/// buttons, which a reader can click, the analog clock where the look has one, and the grid, which
 /// reads as today's date while today is in the month shown. Returns the
 /// grid's node, which has the focus.
 pub fn popup_access(
@@ -545,7 +545,9 @@ pub fn popup_access(
         ("prev", lay.prev, "Previous month"),
         ("next", lay.next, "Next month"),
     ] {
-        tree.push(parent, key, access::named(Role::Button, r, name));
+        let mut n = access::named(Role::Button, r, name);
+        n.add_action(accesskit::Action::Click);
+        tree.push(parent, key, n);
     }
     if let Some(r) = lay.clock {
         tree.push(parent, "clock", access::named(Role::Image, r, "Clock"));
@@ -692,6 +694,28 @@ mod tests {
         assert_eq!(value(&cal).as_deref(), Some("September 25, 2026"));
         cal.step_month(1);
         assert_eq!(value(&cal).as_deref(), Some(cal.title().as_str()));
+    }
+
+    #[test]
+    fn a_reader_can_click_the_month_buttons() {
+        let text = TextRenderer::load(&FontConfig::default());
+        let cm = ControlMetrics::CLASSIC;
+        let mut t = Tree::window("", popup_size(&cm));
+        popup_access(
+            &Calendar::new(2026, 9, None, 0),
+            &cm,
+            &text,
+            11,
+            &mut t,
+            access::ROOT,
+        );
+        for name in ["Previous month", "Next month"] {
+            let id = t.find(Role::Button, name).unwrap();
+            assert!(
+                t.get(id).unwrap().supports_action(accesskit::Action::Click),
+                "{name} offers Click"
+            );
+        }
     }
 
     #[test]
