@@ -1669,7 +1669,13 @@ impl State {
         }
     }
 
+    /// The work areas changed: maximized, fullscreen and snapped windows refit to theirs, and
+    /// every xdg toplevel hears its new bounds.
     pub fn refit_maximized(&mut self) {
+        let bounded: Vec<WindowId> = (self.windows.iter())
+            .map(|w| w.id)
+            .filter(|&w| self.set_bounds(w))
+            .collect();
         let fits: Vec<WindowId> = self
             .windows
             .iter()
@@ -1682,6 +1688,10 @@ impl State {
             }
         }
         self.refit_snapped();
+        // A window refit above already sent its bounds with its size; this sends the rest.
+        for w in bounded {
+            self.send_configure(w);
+        }
     }
 
     pub fn set_fullscreen(&mut self, w: WindowId, on: bool) {
@@ -2558,26 +2568,30 @@ impl State {
     /// Send xdg toplevel `w` the bounds of the work area its frame's centre is on, when they
     /// differ from the ones it last heard.
     pub fn refresh_bounds(&mut self, w: WindowId) {
+        if self.set_bounds(w) {
+            self.send_configure(w);
+        }
+    }
+
+    /// Put the bounds `refresh_bounds` sends into `w`'s pending state; true when they changed.
+    fn set_bounds(&self, w: WindowId) -> bool {
         let Some(win) = self.win(w).filter(|w| w.mapped) else {
-            return;
+            return false;
         };
         let Some(t) = win.xdg() else {
-            return;
+            return false;
         };
         let r = win.frame_rect();
         let out = self.output_at((r.x + r.width / 2) as f64, (r.y + r.height / 2) as f64);
         let area = self.usable_area(out.as_ref());
         if out.is_none() || area.width <= 0 || area.height <= 0 {
-            return;
+            return false;
         }
         let most = area_client(&self.config.theme.metrics, area, win.chrome());
-        let changed = t.with_pending_state(|s| {
+        t.with_pending_state(|s| {
             let was = s.bounds.replace(most.into());
             was != s.bounds
-        });
-        if changed {
-            self.send_configure(w);
-        }
+        })
     }
 
     pub fn usable_area_for_window(&self, w: WindowId) -> Rect {
@@ -3311,6 +3325,65 @@ mod tests {
         assert_eq!(
             c.side.shells[t.shell].bounds, first,
             "and back on the first"
+        );
+    }
+
+    #[test]
+    fn a_window_hears_new_bounds_when_the_taskbar_moves_or_hides() {
+        let mut h = crate::harness::Harness::new();
+        h.output("TEST-1", 1024, 768);
+        let mut c = h.connect();
+        let t = h.map_toplevel(&mut c, "test.app", 300, 200);
+        h.roundtrip(&mut c);
+        let bottom = c.side.shells[t.shell].bounds;
+        let mut cfg = h.state.config.clone();
+        cfg.taskbar.position = reprisekit::taskbar::Edge::Left;
+        crate::configwatch::reload(&mut h.state, cfg);
+        h.roundtrip(&mut c);
+        let left = c.side.shells[t.shell].bounds;
+        assert!(
+            left.0 < bottom.0 && left.1 > bottom.1,
+            "a side bar takes width and gives height back: {bottom:?} -> {left:?}"
+        );
+        let mut cfg = h.state.config.clone();
+        cfg.taskbar.auto_hide = true;
+        crate::configwatch::reload(&mut h.state, cfg);
+        h.roundtrip(&mut c);
+        let hidden = c.side.shells[t.shell].bounds;
+        assert!(
+            hidden.0 > left.0 && hidden.1 == left.1,
+            "a hiding bar gives its width back: {left:?} -> {hidden:?}"
+        );
+    }
+
+    #[test]
+    fn a_window_hears_new_bounds_when_its_output_changes_mode_or_scale() {
+        use smithay::output::{Mode, Scale};
+        let mut h = crate::harness::Harness::new();
+        let o = h.output("TEST-1", 1024, 768);
+        let mut c = h.connect();
+        let t = h.map_toplevel(&mut c, "test.app", 300, 200);
+        h.roundtrip(&mut c);
+        let first = c.side.shells[t.shell].bounds;
+        let mode = Mode {
+            size: (1920, 1080).into(),
+            refresh: 60_000,
+        };
+        o.change_current_state(Some(mode), None, None, None);
+        h.state.update_layout();
+        h.roundtrip(&mut c);
+        let wide = c.side.shells[t.shell].bounds;
+        assert!(
+            wide.0 > first.0 && wide.1 > first.1,
+            "a larger mode gives larger bounds: {first:?} -> {wide:?}"
+        );
+        o.change_current_state(None, None, Some(Scale::Fractional(2.0)), None);
+        h.state.update_layout();
+        h.roundtrip(&mut c);
+        let scaled = c.side.shells[t.shell].bounds;
+        assert!(
+            scaled.0 < first.0 && scaled.1 < first.1,
+            "scale 2 halves the work area: {wide:?} -> {scaled:?}"
         );
     }
 }
