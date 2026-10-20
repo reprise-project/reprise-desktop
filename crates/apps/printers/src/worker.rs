@@ -198,7 +198,8 @@ fn title(cmd: &Cmd) -> &'static str {
         Cmd::Modify { .. } => "Could not change the printer",
         Cmd::TestPage(_) => "Could not print a test page",
         Cmd::Job {
-            op: JobOp::Cancel, ..
+            op: JobOp::Cancel | JobOp::Remove,
+            ..
         } => "Could not cancel the document",
         Cmd::Job {
             op: JobOp::Pause, ..

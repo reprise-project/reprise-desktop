@@ -721,6 +721,7 @@ mod tests {
                 state: JobState::Held,
                 ..Default::default()
             }],
+            ..Default::default()
         }
     }
 
