@@ -44,7 +44,7 @@ use accesskit::{NodeId, Role};
 /// A check box item's rect from [`Item::check`], 13 px square.
 pub const CHECK: i32 = 13;
 /// A radio item's rect from [`Item::radio`], 12 px square.
-const RADIO_ROW: i32 = 12;
+pub const RADIO_ROW: i32 = 12;
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Control {
