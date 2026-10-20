@@ -497,6 +497,17 @@ impl Overview {
         Event::Redraw
     }
 
+    /// A reader's focus on `cell`: it takes the selection as the keys
+    /// would, and nothing activates.
+    pub fn select(&mut self, cell: usize) -> Event {
+        if cell >= self.len || (cell == self.selected && self.hot.is_none()) {
+            return Event::None;
+        }
+        self.selected = cell;
+        self.hot = None;
+        Event::Redraw
+    }
+
     /// A left click on `cell` activates its window; one off every cell
     /// closes the overview.
     pub fn click(&mut self, cell: Option<usize>) -> Event {
@@ -915,6 +926,21 @@ mod tests {
         assert_eq!(o.hot, None);
         assert_eq!(o.click(Some(1)), Event::Activate(1));
         assert_eq!(o.click(None), Event::Close);
+    }
+
+    #[test]
+    fn a_selected_cell_takes_the_selection_and_activates_nothing() {
+        let mut o = Overview::new(3);
+        o.hover(Some(0));
+        assert_eq!(o.select(2), Event::Redraw);
+        assert_eq!(
+            (o.selected, o.hot),
+            (2, None),
+            "the hover goes, as with a key"
+        );
+        assert_eq!(o.select(2), Event::None);
+        assert_eq!(o.select(3), Event::None, "past the list");
+        assert_eq!(o.selected, 2);
     }
 
     #[test]

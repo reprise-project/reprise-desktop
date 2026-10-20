@@ -175,6 +175,15 @@ impl State {
         }
     }
 
+    /// A reader's focus on row `p`: it takes the highlight, and nothing starts.
+    pub fn launcher_highlight(&mut self, p: Pick) {
+        if let Some(v) = self.launcher.as_mut()
+            && v.model.highlight(p)
+        {
+            self.redraw_launcher();
+        }
+    }
+
     /// A right press on the panel: a program or file row opens its menu.
     pub fn launcher_right_clicked(&mut self, hit: Hit) {
         let Hit::Row(p) = hit else {
