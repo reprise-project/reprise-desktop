@@ -254,11 +254,11 @@ fn stages(updates: Vec<Update>) -> Vec<Stage> {
     out
 }
 
-fn ref_name(refs: &[Update], r: &str) -> String {
+/// The name of the update whose ref has flatpak id `id`, else the id.
+fn ref_name(refs: &[Update], id: &str) -> String {
     refs.iter()
-        .find(|u| u.id == r)
-        .map(|u| u.name.clone())
-        .unwrap_or_else(|| r.split('/').nth(1).unwrap_or(r).to_string())
+        .find(|u| u.id.split('/').nth(1) == Some(id))
+        .map_or_else(|| id.to_string(), |u| u.name.clone())
 }
 
 async fn install(
@@ -287,12 +287,10 @@ async fn install(
         let done = match (stage, conn) {
             (Stage::Flatpak(at, refs), _) => {
                 let ids: Vec<String> = refs.iter().map(|u| u.id.clone()).collect();
-                let total = ids.len() as f64;
-                let mut seen = 0.0;
-                flatpak::install(at, &ids, &mut |r| {
-                    let f = (seen / total).min(0.95);
-                    report(Some(f), Some(format!("Updating {}", ref_name(&refs, r))));
-                    seen += 1.0;
+                flatpak::install(at, &ids, &mut |id, f| {
+                    let line =
+                        (!id.is_empty()).then(|| format!("Updating {}", ref_name(&refs, id)));
+                    report(Some(f), line);
                 })
                 .map(|()| Restart::None)
                 .map_err(Failure::Text)
