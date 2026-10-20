@@ -439,7 +439,7 @@ impl DrivesApp {
         }
     }
 
-    fn unlock_event(&mut self, ev: Event, ctx: &Ctx) -> Reply {
+    fn unlock_event(&mut self, ev: Event, ctx: &mut Ctx) -> Reply {
         let Some(u) = self.unlock.as_mut() else {
             return Reply::none();
         };

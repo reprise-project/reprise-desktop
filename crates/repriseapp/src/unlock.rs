@@ -63,6 +63,12 @@ fn wrapped(name: &str, text: &TextRenderer, forms: &Theme) -> Vec<String> {
     reprisekit::text::wrap(text, &message(name), width, forms.fonts.size_px)
 }
 
+/// The drive icon, grown with the text size as the box is.
+fn icon(ctx: &mut Ctx) -> Option<Canvas> {
+    let px = ctx.forms().text.len(ICON.width);
+    ctx.icons.get(ICON_NAME, px)
+}
+
 /// The status line for a failed unlock with UDisks2 `message`.
 pub fn failure(message: &str) -> &str {
     // Wrong-passphrase wording varies by cryptsetup version.
@@ -77,7 +83,7 @@ impl Unlock {
     /// The box for container `volume`, named `name` in its message.
     pub fn open(volume: String, name: &str, ctx: &mut Ctx) -> Unlock {
         let lines = wrapped(name, &ctx.text, &ctx.forms());
-        Unlock::new(volume, name, &lines, ctx.icons.get(ICON_NAME, 32))
+        Unlock::new(volume, name, &lines, icon(ctx))
     }
 
     pub fn new(volume: String, name: &str, lines: &[String], icon: Option<Canvas>) -> Unlock {
@@ -156,13 +162,16 @@ impl Unlock {
     }
 
     /// An event on the box's window; the close box is Cancel.
-    pub fn input(&mut self, ev: Event, ctx: &Ctx) -> Outcome {
+    pub fn input(&mut self, ev: Event, ctx: &mut Ctx) -> Outcome {
         match ev {
             Event::CloseRequest => Outcome::Cancel,
             // The window hears a text size change as a resize.
             Event::Resized => {
                 let lines = wrapped(&self.name, &ctx.text, &ctx.forms());
                 self.form.set_lines("message", &lines);
+                if let Some(icon) = icon(ctx) {
+                    self.form.set_picture("icon", icon);
+                }
                 Outcome::Redraw
             }
             Event::Pasted(text) => {
@@ -275,6 +284,67 @@ mod tests {
             vec![("unlock".into(), fresh), ("wrong".into(), d.form.clone())]
         });
         assert!(over.is_empty(), "{}", over.join("\n"));
+    }
+
+    /// A context at `text_size` whose icon theme has the drive icon at 32 and 64 px.
+    fn ctx_with_drive_icon(themes: &std::path::Path, text_size: u32) -> Ctx {
+        use reprisekit::icontheme::{IconCache, IconTheme};
+        let theme = themes.join("flat");
+        let mut index =
+            "[Icon Theme]\nName=Flat\nDirectories=32x32/devices,64x64/devices\n".to_string();
+        for px in [32, 64] {
+            let dir = format!("{px}x{px}/devices");
+            index += &format!("\n[{dir}]\nSize={px}\nType=Fixed\n");
+            std::fs::create_dir_all(theme.join(&dir)).expect("mkdir");
+            let mut c = Canvas::new(px, px);
+            c.pixels.fill(0xff00_00ff);
+            let png = reprisekit::raster::to_png(&c);
+            std::fs::write(theme.join(&dir).join(format!("{ICON_NAME}.png")), png).expect("png");
+        }
+        std::fs::write(theme.join("index.theme"), index).expect("index");
+        let fonts = Theme::default().fonts;
+        Ctx {
+            theme: Theme::default(),
+            text: std::rc::Rc::new(TextRenderer::load(&fonts)),
+            icons: IconCache::new(IconTheme::load("flat", &[themes.to_path_buf()])),
+            caret_on: true,
+            size: CLIENT,
+            maximized: false,
+            origin: (0, 0),
+            wake: crate::Waker::noop(),
+            heads: Default::default(),
+            want_tick: Default::default(),
+            at_pick: false,
+            text_size,
+        }
+    }
+
+    fn icon_size(d: &Unlock) -> Option<(u32, u32)> {
+        match d.form.item("icon").map(|i| &i.control) {
+            Some(Control::Picture {
+                canvas: Some(c), ..
+            }) => Some((c.width, c.height)),
+            _ => None,
+        }
+    }
+
+    #[test]
+    fn the_drive_icon_grows_with_the_text_size() {
+        let themes = tempfile::tempdir().expect("tempdir");
+        let mut ctx = ctx_with_drive_icon(themes.path(), 100);
+        let mut d = Unlock::open("sdc".into(), "VAULT", &mut ctx);
+        assert_eq!(icon_size(&d), Some((32, 32)), "32 px at 100%");
+
+        ctx.text_size = 200;
+        d.input(Event::Resized, &mut ctx);
+        assert_eq!(icon_size(&d), Some((64, 64)), "64 px once the text doubles");
+
+        let fresh = Unlock::open("sdc".into(), "VAULT", &mut ctx);
+        assert_eq!(
+            icon_size(&fresh),
+            Some((64, 64)),
+            "64 px when opened at 200%"
+        );
     }
 
     #[test]
