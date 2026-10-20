@@ -27,6 +27,8 @@ zeroize.workspace = true
 accesskit = "0.25"
 emojis = "0.9"
 rustybuzz = "0.20"
+# The glyph cache's hasher: its keys are small and never from outside.
+rustc-hash = "2"
 serde = { workspace = true, features = ["derive"] }
 
 [dev-dependencies]

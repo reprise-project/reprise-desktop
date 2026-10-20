@@ -2442,6 +2442,7 @@ dependencies = [
  "png",
  "reprisekit-pins",
  "resvg",
+ "rustc-hash",
  "rustybuzz",
  "serde",
  "syn 3.0.9",
