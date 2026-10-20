@@ -95,8 +95,14 @@ pub fn lands_in_place(paths: &[PathBuf], dir: &Path) -> bool {
     !paths.is_empty() && paths.iter().all(|p| reprisefs::ops::same_folder(p, dir))
 }
 
+/// [`lands_in_place`] by the names alone, for a drop whose [`Facts`] have not answered: the
+/// listing's paths and the folder's share their spelling.
+pub fn named_in_place(paths: &[PathBuf], dir: &Path) -> bool {
+    !paths.is_empty() && paths.iter().all(|p| p.parent() == Some(dir))
+}
+
 /// What a drag's files are to the folder under the pointer. Both stat the files and the folder, so
-/// they are read on a listing thread; unknown (a mount not answering) reads as neither.
+/// they are read on a listing thread; unknown (a mount not answering) is `None`.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Facts {
     pub on_device: bool,
@@ -520,7 +526,7 @@ impl Explorer {
             accept_for(
                 offered,
                 paths.as_deref(),
-                self.facts(files, dir, ctx).on_device,
+                self.facts(files, dir, ctx).unwrap_or_default().on_device,
             )
         });
         let (entry, row) = match over.filter(|_| accept.is_some()) {
@@ -595,7 +601,7 @@ impl Explorer {
                 // Our own drag asks with the left button only for a
                 // shortcut; the compositor asks for the right one too.
                 let shortcut = own && self.drag.as_ref().is_some_and(|d| d.button == BTN_LEFT);
-                let on_device = self.facts(&paths, &dir, ctx).on_device;
+                let on_device = self.facts(&paths, &dir, ctx).unwrap_or_default().on_device;
                 let default = ask_default(shortcut, source.move_ && on_device);
                 let menu = crate::menus::drop_menu(default, source);
                 let client = self.layout(ctx).client;
@@ -624,7 +630,7 @@ impl Explorer {
         if !links.is_empty() {
             reply = self.drop_links(links, dir, ctx);
         }
-        if op == DropOp::Move && self.facts(&paths, dir, ctx).in_place {
+        if op == DropOp::Move && self.in_place(&paths, dir, ctx) {
             return reply;
         }
         let put = self.drop_into(&paths, dir, op, ctx);
@@ -638,7 +644,7 @@ impl Explorer {
         let Some(p) = self.pending_drop.take() else {
             return Reply::none();
         };
-        let in_place = op == DropOp::Move && self.facts(&p.paths, &p.dir, ctx).in_place;
+        let in_place = op == DropOp::Move && self.in_place(&p.paths, &p.dir, ctx);
         let answer = if in_place {
             answer_for(DropOp::Copy, p.source)
         } else {
@@ -795,29 +801,39 @@ impl Explorer {
         }
     }
 
+    /// Whether a move of `paths` into `dir` leaves them where they are; by their names while the
+    /// [`Facts`] are unknown.
+    fn in_place(&mut self, paths: &[PathBuf], dir: &Path, ctx: &Ctx) -> bool {
+        self.facts(paths, dir, ctx)
+            .map_or_else(|| named_in_place(paths, dir), |f| f.in_place)
+    }
+
     /// [`Facts`] of `paths` against `dir`, read once per folder a drag rests on: the first ask waits
-    /// the listing wait, later ones take a late answer once it has come.
-    fn facts(&mut self, paths: &[PathBuf], dir: &Path, ctx: &Ctx) -> Facts {
+    /// the listing wait, later ones take a late answer once it has come. While a read is out, for
+    /// any folder, no other starts: a drag of files on a dead mount holds one thread.
+    fn facts(&mut self, paths: &[PathBuf], dir: &Path, ctx: &Ctx) -> Option<Facts> {
         if paths.is_empty() {
-            return Facts::default();
+            return Some(Facts::default());
         }
-        if let Some(f) = self.drop_facts.as_mut()
-            && f.dir == dir
-            && f.paths == paths
-        {
+        if let Some(f) = self.drop_facts.as_mut() {
             if let Err(job) = &f.read
                 && let Some(read) = job.take()
             {
                 f.read = Ok(read);
             }
-            return f.read.as_ref().copied().unwrap_or_default();
+            if f.dir == dir && f.paths == paths {
+                return f.read.as_ref().ok().copied();
+            }
+            if f.read.is_err() {
+                return None;
+            }
         }
         let (p, d) = (paths.to_vec(), dir.to_path_buf());
         let read = self.read_job(ctx, move || Facts {
             on_device: all_on_device(&p, &d),
             in_place: lands_in_place(&p, &d),
         });
-        let facts = read.as_ref().copied().unwrap_or_default();
+        let facts = read.as_ref().ok().copied();
         self.drop_facts = Some(FactsRead {
             paths: paths.to_vec(),
             dir: dir.to_path_buf(),

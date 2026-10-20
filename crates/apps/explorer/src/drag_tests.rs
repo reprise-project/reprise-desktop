@@ -1406,3 +1406,71 @@ fn the_address_field_and_the_rename_box_copy_and_paste_text() {
     let (_, ed) = ex.sv.edit.clone().expect("the box is up");
     assert_eq!(ed.text, "bc.txt", "a name takes no slash");
 }
+
+#[test]
+fn a_move_onto_the_files_own_folder_before_their_facts_answer_moves_nothing() {
+    let mut ctx = test_ctx();
+    let (dir, mut ex) = explorer(&mut ctx);
+    let a = dir.path().join("a.txt");
+    let gate = std::sync::Arc::new(std::sync::RwLock::new(()));
+    let closed = gate.write().expect("lock");
+    ex.held = Some(gate.clone());
+    let bg = background(&ex, &ctx);
+    ex.drag_enter(bg.0, bg.1, FILES, false, &ctx);
+    ex.drag_files(vec![a.clone()], &ctx);
+    ex.drag_drop(
+        bg,
+        Dropped::Uris(vec![Uri::File(a.clone())]),
+        DragAction::Move,
+        Actions::ALL,
+        &mut ctx,
+    );
+    drop(closed);
+    ex.held = None;
+    let end = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while ex.busy() && ex.dialog.is_none() && std::time::Instant::now() < end {
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        ex.poll_put(&mut ctx);
+    }
+    assert!(ex.dialog.is_none(), "no box comes up");
+    assert!(!ex.busy(), "nothing is put");
+    assert!(a.is_file(), "a.txt stays where it was");
+}
+
+#[test]
+fn a_drag_over_folders_while_its_facts_are_out_reads_one_at_a_time() {
+    let mut ctx = test_ctx();
+    let (dir, mut ex) = explorer(&mut ctx);
+    let other = tempfile::tempdir_in(dir.path()).expect("a temp dir");
+    let far = other.path().join("far.txt");
+    std::fs::write(&far, "x").expect("write");
+    let gate = std::sync::Arc::new(std::sync::RwLock::new(()));
+    let closed = gate.write().expect("lock");
+    ex.held = Some(gate.clone());
+    let bg = background(&ex, &ctx);
+    ex.drag_enter(bg.0, bg.1, FILES, false, &ctx);
+    ex.drag_files(vec![far.clone()], &ctx);
+    let first = ex.drop_facts.as_ref().map(|f| f.dir.clone());
+    assert_eq!(
+        first.as_deref(),
+        Some(dir.path()),
+        "the folder's read is out"
+    );
+
+    let into_box = centre(&ex, &ctx, index_of(&ex, "Box"));
+    ex.drag_over(into_box.0, into_box.1, &ctx);
+    let asked = ex.drop_facts.as_ref().map(|f| f.dir.clone());
+    assert_eq!(asked, first, "Box waits for the folder's read");
+
+    drop(closed);
+    ex.held = None;
+    let end = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while ex.drop_facts.as_ref().map(|f| f.dir.as_path()) != Some(&dir.path().join("Box")) {
+        assert!(
+            std::time::Instant::now() < end,
+            "Box is read once the first lands"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        ex.drag_over(into_box.0, into_box.1, &ctx);
+    }
+}

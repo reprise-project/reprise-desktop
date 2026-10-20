@@ -167,12 +167,13 @@ impl Explorer {
         self.build_taskpane(ctx);
     }
 
-    /// Where the shortcut at `path` points, for the status bar, read on a listing thread. A read
-    /// still out for the same path starts no other; [`Explorer::take_link_status`] takes it.
+    /// Where the shortcut at `path` points, for the status bar, read on a listing thread. While a
+    /// read is out, for any shortcut in the listing, no other starts: a folder of shortcuts on a
+    /// dead mount holds one thread. [`Explorer::take_link_status`] takes the answer.
     fn link_status(&mut self, path: PathBuf, ctx: &Ctx) -> Option<String> {
         match self.link_status.take() {
             Some((at, Ok(text))) if at == path => return text,
-            Some((at, Err(job))) if at == path => {
+            Some((at, Err(job))) => {
                 self.link_status = Some((at, Err(job)));
                 return None;
             }

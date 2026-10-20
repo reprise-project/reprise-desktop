@@ -3006,3 +3006,38 @@ fn the_opening_drive_scan_that_answers_late_lands_on_a_later_wake() {
         "free space moves between two scans"
     );
 }
+
+#[test]
+fn a_shortcut_picked_while_anothers_read_is_out_is_read_once_that_one_lands() {
+    let dir = tempfile::tempdir().expect("a temp dir");
+    let real = std::fs::canonicalize(dir.path()).expect("canonical");
+    for d in ["m1", "m2"] {
+        std::fs::create_dir(real.join(d)).expect("mkdir");
+        std::fs::write(real.join(d).join("a.txt"), "x").expect("write");
+    }
+    std::os::unix::fs::symlink("m1/a.txt", real.join("c one")).expect("symlink");
+    std::os::unix::fs::symlink("m2/a.txt", real.join("d two")).expect("symlink");
+    let mut ctx = test_ctx();
+    let mut ex = test_explorer(Place::Folder(real.clone()), &mut ctx);
+    let gate = Arc::new(std::sync::RwLock::new(()));
+    let closed = gate.write().expect("lock");
+    ex.held = Some(gate.clone());
+    let pick = |ex: &mut Explorer, ctx: &mut Ctx, name: &str| {
+        let i = ex.items.iter().position(|it| it.name == name).expect(name);
+        ex.sv.selection.set_only(Some(i));
+        ex.refresh_chrome(ctx);
+    };
+    pick(&mut ex, &mut ctx, "c one");
+    pick(&mut ex, &mut ctx, "d two");
+    let out = ex.link_status.as_ref().map(|(at, _)| at.clone());
+    assert_eq!(
+        out,
+        Some(real.join("c one")),
+        "d two waits for c one's read"
+    );
+
+    drop(closed);
+    ex.held = None;
+    let want = format!("Location: {}", real.join("m2").display());
+    wake_until(&mut ex, &mut ctx, |ex| ex.status.panels[0].text == want);
+}
