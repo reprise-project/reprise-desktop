@@ -122,9 +122,9 @@ pub(crate) struct DriveBins {
     /// Each listed drive's bin folders and whether one holds something, as its last read found
     /// them.
     drives: HashMap<PathBuf, (Vec<Want>, bool)>,
-    /// The drives whose bins are being read. A drive that never answers keeps its read, and no
-    /// second one starts.
-    drive_reads: HashSet<PathBuf>,
+    /// The drives whose bins are being read, by the drive list read that started each. A drive
+    /// that never answers keeps its read, and no second one starts while it stays listed.
+    drive_reads: HashMap<PathBuf, u64>,
     /// Each drive's Recycle Bin Properties tab as its last read found it, None for no bin.
     tabs: HashMap<PathBuf, Option<crate::binprops::Drive>>,
     /// The drives whose tab is being read. A drive that never answers keeps its read, and no
@@ -141,27 +141,30 @@ impl DriveBins {
     }
 
     /// Takes read `id`'s drive list `tops`: whether it changed the bins (a stale answer changes
-    /// nothing), whether to read again, and the drives to read, now counted as read.
+    /// nothing), whether to read again, and the drives to read, now counted as read by `id`.
     fn land(&mut self, id: u64, tops: Vec<PathBuf>) -> (bool, bool, Vec<PathBuf>) {
         let again = std::mem::take(&mut self.again);
         if !self.reads.land(id) {
             return (false, again, Vec::new());
         }
         self.drives.retain(|t, _| tops.contains(t));
+        self.drive_reads.retain(|t, _| tops.contains(t));
         let read = (tops.iter())
-            .filter(|t| self.drive_reads.insert(t.to_path_buf()))
+            .filter(|t| !self.drive_reads.contains_key(*t))
             .cloned()
-            .collect();
+            .collect::<Vec<_>>();
+        (self.drive_reads).extend(read.iter().map(|t| (t.clone(), id)));
         self.listed = tops;
         (self.sum(), again, read)
     }
 
-    /// Takes drive `top`'s read: whether it changed the bins.
-    fn land_drive(&mut self, top: PathBuf, wants: Vec<Want>, full: bool) -> bool {
-        self.drive_reads.remove(&top);
-        if !self.listed.contains(&top) {
+    /// Takes drive `top`'s read, started by list read `id`: whether it changed the bins. A read
+    /// of a drive that left the list meanwhile changes nothing.
+    fn land_drive(&mut self, top: PathBuf, id: u64, wants: Vec<Want>, full: bool) -> bool {
+        if self.drive_reads.get(&top) != Some(&id) {
             return false;
         }
+        self.drive_reads.remove(&top);
         self.drives.insert(top, (wants, full));
         self.sum()
     }
@@ -1160,7 +1163,7 @@ impl State {
                 let (changed, again, read) = view.bins.land(id, tops);
                 if let Some(bins) = bins {
                     for top in read {
-                        state.read_drive_bin(bins.clone(), top);
+                        state.read_drive_bin(bins.clone(), top, id);
                     }
                 }
                 if changed {
@@ -1172,14 +1175,14 @@ impl State {
         });
     }
 
-    fn read_drive_bin(&mut self, bins: reprisefs::trash::Bins, top: PathBuf) {
+    fn read_drive_bin(&mut self, bins: reprisefs::trash::Bins, top: PathBuf, id: u64) {
         self.spawn_fs_job(move || {
             let (wants, full) = read_drive_bin(&bins, &top);
             Box::new(move |state: &mut State| {
                 let Some(view) = state.desktop.as_mut() else {
                     return;
                 };
-                if view.bins.land_drive(top, wants, full) {
+                if view.bins.land_drive(top, id, wants, full) {
                     state.rescan_desktop();
                 }
             })
@@ -2652,25 +2655,54 @@ mod tests {
         let (a, b) = (PathBuf::from("/media/A"), PathBuf::from("/media/B"));
         let now = std::time::Instant::now();
         let mut bins = DriveBins::default();
-        let id = bins.start(now).unwrap();
-        let (changed, _, read) = bins.land(id, vec![a.clone(), b.clone()]);
+        let first = bins.start(now).unwrap();
+        let (changed, _, read) = bins.land(first, vec![a.clone(), b.clone()]);
         assert!(!changed);
         assert_eq!(read, [a.clone(), b.clone()]);
-        assert!(bins.land_drive(b.clone(), vec![want("/media/B/.Trash-1000")], true));
+        assert!(bins.land_drive(b.clone(), first, vec![want("/media/B/.Trash-1000")], true));
         assert!(bins.full, "B's bin holds something while A never answers");
         assert_eq!(bins.wants, [want("/media/B/.Trash-1000")]);
         let id = bins.start(now).unwrap();
         let (_, _, read) = bins.land(id, vec![a.clone(), b.clone()]);
         assert_eq!(read, std::slice::from_ref(&b), "A's read is still out");
-        assert!(bins.land_drive(a.clone(), vec![want("/media/A")], false));
+        assert!(bins.land_drive(a.clone(), first, vec![want("/media/A")], false));
         assert_eq!(bins.wants, [want("/media/A"), want("/media/B/.Trash-1000")]);
-        let id = bins.start(now).unwrap();
-        let (changed, _, _) = bins.land(id, vec![a.clone()]);
+        let last = bins.start(now).unwrap();
+        let (changed, _, _) = bins.land(last, vec![a.clone()]);
         assert!(changed && !bins.full, "B was ejected");
         assert!(
-            !bins.land_drive(b, Vec::new(), true),
+            !bins.land_drive(b, id, Vec::new(), true),
             "an answer from B is dropped"
         );
+    }
+
+    #[test]
+    fn a_drive_mounted_again_where_a_stuck_one_left_is_read_afresh() {
+        let want = |d: &str| Want {
+            dir: PathBuf::from(d),
+            mask: TRASH_MASK,
+            only: Vec::new(),
+        };
+        let a = PathBuf::from("/media/A");
+        let now = std::time::Instant::now();
+        let mut bins = DriveBins::default();
+        let stuck = bins.start(now).unwrap();
+        assert_eq!(
+            bins.land(stuck, vec![a.clone()]).2,
+            std::slice::from_ref(&a)
+        );
+        let gone = bins.start(now).unwrap();
+        assert_eq!(bins.land(gone, Vec::new()).2, Vec::<PathBuf>::new());
+        let back = bins.start(now).unwrap();
+        let (_, _, read) = bins.land(back, vec![a.clone()]);
+        assert_eq!(read, std::slice::from_ref(&a), "the new A is read");
+        assert!(
+            !bins.land_drive(a.clone(), stuck, vec![want("/media/A/old")], true),
+            "the old A's late answer is dropped"
+        );
+        assert!(bins.land_drive(a.clone(), back, vec![want("/media/A/.Trash-1000")], true));
+        assert_eq!(bins.wants, [want("/media/A/.Trash-1000")]);
+        assert!(bins.full);
     }
 
     #[test]
