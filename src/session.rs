@@ -254,7 +254,7 @@ pub struct PendingTabs<T> {
 #[derive(Debug)]
 struct Restart {
     app: String,
-    /// Starts left within the cap of one per saved slot, the first included.
+    /// Starts left within the cap of one per saved window, the first included.
     left: usize,
     /// Starts whose window has not mapped yet.
     in_flight: usize,
@@ -302,13 +302,15 @@ impl<T: Copy + Eq> PendingTabs<T> {
     }
 
     /// Restore has started `app_id` once: it may start again for empty
-    /// slots, at most once per slot it has in all, that first start included.
+    /// slots, at most once per window it had (its slots and its loose
+    /// windows), that first start included.
     pub fn started(&mut self, app_id: &str) {
-        let slots = self.free_slots(app_id);
-        if slots > 1 {
+        let loose = self.loose.iter().filter(|(a, _)| a == app_id).count();
+        let windows = self.free_slots(app_id) + loose;
+        if windows > 1 {
             self.restarts.push(Restart {
                 app: app_id.to_string(),
-                left: slots - 1,
+                left: windows - 1,
                 in_flight: 1,
                 armed: false,
             });
@@ -933,6 +935,27 @@ mod tests {
         p.claim("foot", "", 1, t);
         assert!(p.settle("foot", t));
         assert_eq!(p.restart("foot", late), 0, "the restore window has ended");
+    }
+
+    #[test]
+    fn a_window_back_outside_the_group_leaves_a_start_for_each_slot() {
+        let t = Instant::now();
+        let later = t + RESTART_SETTLE;
+        let ed = SavedApp {
+            loose: vec!["notes.txt".into()],
+            ..saved("ed", "ed.desktop", 0)
+        };
+        let group = [titled(&["a.txt", "b.txt"])];
+        let mut p = PendingTabs::new(&group, std::slice::from_ref(&ed), t);
+        p.started("ed");
+        assert_eq!(p.claim("ed", "notes.txt", 1, t), Claim::None);
+        assert!(p.settle("ed", t));
+        assert_eq!(p.restart("ed", later), 2, "both slots are empty");
+        let mut p = PendingTabs::new(&[titled(&["a.txt"])], &[ed], t);
+        p.started("ed");
+        p.claim("ed", "notes.txt", 1, t);
+        assert!(p.settle("ed", t));
+        assert_eq!(p.restart("ed", later), 1, "a one-tab group's slot is empty");
     }
 
     #[test]
