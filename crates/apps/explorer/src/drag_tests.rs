@@ -1494,6 +1494,91 @@ fn a_right_press_in_the_rename_box_past_its_selection_moves_the_caret_there() {
     assert_eq!(ed.caret(), "a.txt".len(), "the caret is at the press");
 }
 
+/// A left press at `at` with `time`, its release, then whatever the caller does next.
+fn left_press_at(ex: &mut Explorer, ctx: &mut Ctx, at: (i32, i32), time: u32, shift: bool) {
+    ex.pointer(
+        PointerInput::Press {
+            x: at.0,
+            y: at.1,
+            button: BTN_LEFT,
+            time,
+            mods: SeatMods {
+                shift,
+                ..SeatMods::default()
+            },
+        },
+        ctx,
+    );
+}
+
+#[test]
+fn a_left_press_in_the_rename_box_places_the_caret_and_a_drag_or_double_click_selects() {
+    let mut ctx = test_ctx();
+    let dir = tempfile::tempdir().expect("a temp dir");
+    std::fs::write(dir.path().join("old notes.txt"), "").expect("write");
+    let mut ex = crate::tests::test_explorer(Place::Folder(dir.path().to_path_buf()), &mut ctx);
+    for mode in [Mode::Icons, Mode::List, Mode::Details, Mode::Tiles] {
+        ex.sv.mode = mode;
+        let i = index_of(&ex, "old notes.txt");
+        ex.sv.selection.set_only(Some(i));
+        ex.run(crate::commands::Command::Rename, &mut ctx);
+        let px = ctx.theme.fonts.size_px;
+        let sl = ex.view_layout(ex.layout(&ctx).view, &ctx);
+        let r = shellview::label_rect(&ex.sv, &sl, i, &ctx.text, px);
+        let name_len = "old notes.txt".len();
+        let pts: Vec<(i32, i32)> = (0..name_len)
+            .map(|byte| {
+                (r.y..r.bottom())
+                    .flat_map(|y| (r.x..r.right()).map(move |x| (x, y)))
+                    .find(|&(x, y)| {
+                        shellview::edit_index_at(&ex.sv, &sl, x, y, &ctx.text, px) == Some(byte)
+                    })
+                    .unwrap_or_else(|| panic!("{mode:?}: no point lands on byte {byte}"))
+            })
+            .collect();
+        let caret = |ex: &Explorer| ex.sv.edit.as_ref().expect("the box stays up").1.clone();
+
+        left_press_at(&mut ex, &mut ctx, pts[2], 1000, false);
+        assert_eq!(
+            caret(&ex).selection(),
+            2..2,
+            "{mode:?}: the caret is at the press"
+        );
+        motion(&mut ex, &mut ctx, pts[7]);
+        assert_eq!(caret(&ex).selection(), 2..7, "{mode:?}: the drag selects");
+        release(&mut ex, &mut ctx, pts[7], BTN_LEFT, SeatMods::default());
+        motion(&mut ex, &mut ctx, pts[9]);
+        assert_eq!(
+            caret(&ex).selection(),
+            2..7,
+            "{mode:?}: the release ends the drag"
+        );
+
+        left_press_at(&mut ex, &mut ctx, pts[9], 3000, true);
+        assert_eq!(caret(&ex).selection(), 2..9, "{mode:?}: Shift extends");
+        let at = pts[6];
+        left_press_at(&mut ex, &mut ctx, at, 5000, false);
+        release(&mut ex, &mut ctx, at, BTN_LEFT, SeatMods::default());
+        left_press_at(&mut ex, &mut ctx, at, 5100, false);
+        assert_eq!(
+            caret(&ex).selection(),
+            4..name_len,
+            "{mode:?}: a double click selects the word"
+        );
+        release(&mut ex, &mut ctx, at, BTN_LEFT, SeatMods::default());
+        ex.key(
+            repriseapp::KeyInput {
+                sym: reprisekit::textedit::keysym::ESCAPE,
+                utf8: None,
+                mods: SeatMods::default(),
+                edit: None,
+            },
+            &mut ctx,
+        );
+        assert!(ex.sv.edit.is_none(), "{mode:?}: Escape closes the box");
+    }
+}
+
 #[test]
 fn the_address_field_and_the_rename_box_copy_and_paste_text() {
     let mut ctx = test_ctx();

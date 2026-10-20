@@ -115,6 +115,7 @@ impl Explorer {
                 self.thumb.release();
                 self.tree_thumb.release();
                 self.marquee_from = None;
+                self.rename_drag = false;
                 self.sv.marquee = None;
                 self.toolbar.pressed = None;
                 Reply::redraw()
@@ -302,7 +303,7 @@ impl Explorer {
                 if shellview::rename_rect(&self.sv, &sl, i, &ctx.text, px)
                     .is_some_and(|r| r.contains(x, y))
                 {
-                    return Reply::none();
+                    return self.rename_press(&sl, x, y, time, mods.shift, ctx);
                 }
                 let reply = self.commit_rename(ctx);
                 // The listing may have moved under the click; let the
@@ -506,9 +507,56 @@ impl Explorer {
         Reply::none()
     }
 
+    /// A left press in the rename box: the caret goes to the byte under it (Shift extends) and
+    /// the held pointer drag-selects, or a double click selects the word there.
+    fn rename_press(
+        &mut self,
+        sl: &shellview::Layout,
+        x: i32,
+        y: i32,
+        time: u32,
+        shift: bool,
+        ctx: &Ctx,
+    ) -> Reply {
+        let px = ctx.theme.fonts.size_px;
+        let at = shellview::edit_index_at(&self.sv, sl, x, y, &ctx.text, px);
+        let double = self
+            .rename_clicks
+            .press((), ctx.theme.metrics.click(x, y, time));
+        if let (Some(at), Some((_, ed))) = (at, self.sv.edit.as_mut()) {
+            if double {
+                ed.select_word_at(at);
+            } else {
+                ed.place(at, shift);
+            }
+        }
+        self.rename_drag = !double;
+        Reply::redraw()
+    }
+
+    /// The pointer, held since a press in the rename box, extends its selection to the byte
+    /// under it.
+    fn drag_rename(&mut self, x: i32, y: i32, ctx: &Ctx) -> Reply {
+        let sl = self.view_layout(self.layout(ctx).view, ctx);
+        let px = ctx.theme.fonts.size_px;
+        let at = shellview::edit_index_at(&self.sv, &sl, x, y, &ctx.text, px);
+        let moved = match (at, self.sv.edit.as_mut()) {
+            (Some(at), Some((_, ed))) => ed.place(at, true),
+            _ => false,
+        };
+        if moved {
+            Reply::redraw()
+        } else {
+            Reply::none()
+        }
+    }
+
     fn motion(&mut self, x: i32, y: i32, ctx: &mut Ctx) -> Reply {
         if self.drag.is_some() {
             return self.drag_motion(x, y, ctx);
+        }
+        if self.rename_drag {
+            return self.drag_rename(x, y, ctx);
         }
         // While something holds the pointer (a thumb, a marquee, a
         // column or the bar's splitter), only a held bar part follows it:
