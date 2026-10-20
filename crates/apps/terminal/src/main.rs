@@ -26,6 +26,7 @@ use repriseapp::keys::{form_clipboard, form_input, sheet_input};
 use repriseapp::oneshot::{self, MsgBox};
 use repriseapp::{App, Child, Ctx, Event, KeyInput, MAIN, Reply, WinId};
 use reprisekit::access::{ROOT, Tree};
+use reprisekit::controls::hosted::Hosted;
 use reprisekit::controls::msgbox::Fields;
 use reprisekit::controls::termgrid::{self, CursorShape, Metrics, Snapshot};
 use reprisekit::controls::{finddlg, form, propsheet, tabstrip, toolbar};
@@ -429,6 +430,17 @@ impl Terminal {
         true
     }
 
+    fn pane_mut(&mut self, win: WinId) -> Option<&mut Pane> {
+        match win == self.cur {
+            true => self.order.contains(&win).then_some(&mut self.w),
+            false => self
+                .parked
+                .iter_mut()
+                .find(|(id, _)| *id == win)
+                .map(|(_, p)| p),
+        }
+    }
+
     fn pane(&self, win: WinId) -> Option<&Pane> {
         match win == self.cur {
             true => self.order.contains(&win).then_some(&self.w),
@@ -791,8 +803,7 @@ impl Terminal {
             self.w.chrome.drawn = Some((theme.clone(), theme.active));
             self.w.full = true;
         }
-        // An open menu lies over cells that may change under it, so it is drawn whole each time.
-        let full = std::mem::take(&mut self.w.full) || self.w.chrome.menu.is_some();
+        let full = std::mem::take(&mut self.w.full);
         // The deeper report wins: the chrome's band, or the whole client when see-through.
         if chrome::on_glass(ctx) {
             c.report_glass_top(lay.band);
@@ -990,6 +1001,14 @@ impl App for Terminal {
         }
         self.w.scale = scale;
         self.fit(ctx);
+    }
+
+    fn popup(&mut self, win: WinId, _: &Ctx) -> Option<Box<dyn Hosted + '_>> {
+        match win {
+            OPTIONS => Some(Box::new(&mut self.options.as_mut()?.sheet)),
+            PROFILE => Some(Box::new(&mut self.options.as_mut()?.editing.as_mut()?.form)),
+            _ => Some(Box::new(&mut self.pane_mut(win)?.chrome.menu)),
+        }
     }
 
     fn keeps_canvas(&self, win: WinId) -> bool {

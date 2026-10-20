@@ -1,6 +1,7 @@
 use repriseapp::keys::AltArm;
 use repriseapp::{BTN_LEFT, BTN_RIGHT, Ctx, KeyInput};
 use reprisekit::access::{ROOT, Tree};
+use reprisekit::controls::hosted::Hosted;
 use reprisekit::controls::listview::{self, Column};
 use reprisekit::controls::menu::MenuItem;
 use reprisekit::controls::menubar::{self, Action, Bar, Key};
@@ -97,6 +98,14 @@ pub struct Queue {
 }
 
 impl Queue {
+    /// The open menu (the bar's or the context menu), for the host's popups.
+    pub fn popup(&mut self) -> Box<dyn Hosted + '_> {
+        match self.bar.open {
+            Some(_) => Box::new(&mut self.bar),
+            None => Box::new(&mut self.popup),
+        }
+    }
+
     pub fn new(printer: &str) -> Queue {
         let mut q = Queue {
             printer: printer.into(),

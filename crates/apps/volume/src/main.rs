@@ -26,6 +26,7 @@ use repriseaudio::Snapshot;
 use reprisekit::access::{ROOT, Tree};
 use reprisekit::controls::aboutbox;
 use reprisekit::controls::form::{self, Form};
+use reprisekit::controls::hosted::Hosted;
 use reprisekit::controls::menu::MenuItem;
 use reprisekit::controls::menubar::{self, Action, Bar, Key};
 use reprisekit::controls::mixer::{self, Mixer};
@@ -741,6 +742,13 @@ impl App for Volume {
             }
             _ => self.draw_main(c, ctx),
         }
+    }
+
+    fn popup(&mut self, win: WinId, _: &Ctx) -> Option<Box<dyn Hosted + '_>> {
+        if win == repriseapp::MAIN {
+            return Some(Box::new(&mut self.bar));
+        }
+        repriseapp::reader_popup(self, win)
     }
 
     fn reader_form(&mut self, win: WinId) -> Option<repriseapp::ReaderForm<'_>> {
