@@ -411,19 +411,20 @@ fn stack(frames: &[Canvas]) -> Canvas {
     a
 }
 
-fn frames(cells: Vec<Canvas>, lying: bool) -> Canvas {
+fn frames(cells: &[Canvas], lying: bool) -> Canvas {
     if lying {
         stack(&cells.iter().map(turned).collect::<Vec<_>>())
     } else {
-        stack(&cells)
+        stack(cells)
     }
 }
 
 /// The ten scrollbar parts at `d`, the same in every glass colour.
 pub fn parts(d: i32) -> [(Part, PartImage); 10] {
     // Row and column 3 of an arrow are its one seam, so a 16 px bar drops a plain line and keeps the glyph.
-    let arrow_part = |way, lying| {
-        let cells = ARROW_STATES.iter().map(|&s| arrow(way, s, d)).collect();
+    let arrows = |way| -> Vec<Canvas> { ARROW_STATES.iter().map(|&s| arrow(way, s, d)).collect() };
+    let (up, down) = (arrows(Way::Up), arrows(Way::Down));
+    let arrow_part = |cells: &[Canvas], lying| {
         PartImage::new(frames(cells, lying), &ARROW_STATES, Layout::Vertical)
             .sizing(Insets::new(3, 3, 13, 13))
             .at_scale(d)
@@ -435,23 +436,20 @@ pub fn parts(d: i32) -> [(Part, PartImage); 10] {
         (&HOT, RIDGE_LIT),
         (&GREY, RIDGE),
     ];
-    let thumb_part = |lying| {
-        let cells = thumb_faces.iter().map(|f| thumb(f, d)).collect();
-        PartImage::new(frames(cells, lying), &LIT_STATES, Layout::Vertical).at_scale(d)
+    let thumbs: Vec<Canvas> = thumb_faces.iter().map(|f| thumb(f, d)).collect();
+    let grips: Vec<Canvas> = grip_looks.iter().map(|&(f, r)| grip(f, r, d)).collect();
+    let tracks = [track(&GROOVE, d), track(&GROOVE_HELD, d)];
+    let lit_part = |cells: &[Canvas], states: &[State], lying| {
+        PartImage::new(frames(cells, lying), states, Layout::Vertical).at_scale(d)
     };
-    let grip_part = |lying| {
-        let cells = grip_looks.iter().map(|&(f, r)| grip(f, r, d)).collect();
-        PartImage::new(frames(cells, lying), &LIT_STATES, Layout::Vertical).at_scale(d)
-    };
-    let track_part = |lying| {
-        let cells = vec![track(&GROOVE, d), track(&GROOVE_HELD, d)];
-        PartImage::new(frames(cells, lying), &TRACK_STATES, Layout::Vertical).at_scale(d)
-    };
+    let thumb_part = |lying| lit_part(&thumbs, &LIT_STATES, lying);
+    let grip_part = |lying| lit_part(&grips, &LIT_STATES, lying);
+    let track_part = |lying| lit_part(&tracks, &TRACK_STATES, lying);
     [
-        (Part::ScrollArrowUp, arrow_part(Way::Up, false)),
-        (Part::ScrollArrowDown, arrow_part(Way::Down, false)),
-        (Part::ScrollArrowLeft, arrow_part(Way::Up, true)),
-        (Part::ScrollArrowRight, arrow_part(Way::Down, true)),
+        (Part::ScrollArrowUp, arrow_part(&up, false)),
+        (Part::ScrollArrowDown, arrow_part(&down, false)),
+        (Part::ScrollArrowLeft, arrow_part(&up, true)),
+        (Part::ScrollArrowRight, arrow_part(&down, true)),
         // 5 fixed rows at each end (clear one included) round one body row; the middle line is the seam for a thinner bar.
         (
             Part::ScrollThumbV,
