@@ -323,6 +323,12 @@ pub fn init(state: &mut State) -> Result<(), Box<dyn std::error::Error>> {
     let mut renderer = unsafe { GlesRenderer::with_capabilities(context, capabilities)? };
     log::info!("renderer: gles2 on {render_node}");
     state.glass.set_renderer(&mut renderer);
+    let (streaks_made, made) = smithay::reexports::calloop::ping::make_ping()?;
+    state.glass.on_streaks(move || streaks_made.ping());
+    state
+        .handle
+        .insert_source(made, |_, _, state| state.redraw_all())
+        .map_err(|e| e.error)?;
     state.water.set_renderer(&mut renderer);
 
     let shm_textures = crate::shmtex::ShmTextures::new(gbm.clone(), &renderer);

@@ -3,6 +3,7 @@
 use std::cell::{Cell, RefCell};
 use std::hash::{Hash, Hasher};
 use std::rc::Rc;
+use std::sync::{Arc, mpsc};
 
 use reprisekit::glass::tint::Surface;
 use reprisekit::glass::{Settings, streak};
@@ -34,6 +35,24 @@ struct Shared {
     programs: Programs,
     /// The streak textures last made, newest first, one per output size, scale and gain.
     streaks: RefCell<Vec<(StreakKey, GlesTexture)>>,
+    /// Streak pictures being made on a thread of their own ([`GlassFx::on_streaks`]).
+    jobs: RefCell<Vec<(StreakKey, Job)>>,
+    wake: RefCell<Option<Wake>>,
+}
+
+#[derive(Clone)]
+struct Wake(Arc<dyn Fn() + Send + Sync>);
+
+impl std::fmt::Debug for Wake {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Wake")
+    }
+}
+
+#[derive(Debug)]
+enum Job {
+    Making(mpsc::Receiver<Vec<u8>>),
+    Made(Vec<u8>),
 }
 
 type StreakKey = (Size<i32, Physical>, u64);
@@ -46,7 +65,74 @@ impl GlassFx {
         Ok(GlassFx(Rc::new(Shared {
             programs: Programs::compile(renderer)?,
             streaks: RefCell::new(Vec::new()),
+            jobs: RefCell::new(Vec::new()),
+            wake: RefCell::new(None),
         })))
+    }
+
+    /// Make each streak picture on a thread of its own and call `wake` there once it is made: glass
+    /// draws without streaks until a frame after that. Without it they are made in the frame that
+    /// first needs them.
+    pub fn on_streaks(&self, wake: impl Fn() + Send + Sync + 'static) {
+        *self.0.wake.borrow_mut() = Some(Wake(Arc::new(wake)));
+    }
+
+    /// Whether glass over `output` at `scale` draws streaks now: shown and made. Starts making them
+    /// when not.
+    pub(crate) fn streaks_ready(
+        &self,
+        s: &Settings,
+        output: Size<i32, Physical>,
+        scale: f64,
+    ) -> bool {
+        if !streak::shown(s) {
+            return false;
+        }
+        let key = (output, scale.to_bits());
+        if self.0.streaks.borrow().iter().any(|(k, _)| *k == key) {
+            return true;
+        }
+        let Some(wake) = self.0.wake.borrow().clone() else {
+            return true;
+        };
+        let mut jobs = self.0.jobs.borrow_mut();
+        match jobs.iter().position(|(k, _)| *k == key) {
+            Some(i) => {
+                if let Job::Making(rx) = &jobs[i].1 {
+                    match rx.try_recv() {
+                        Ok(bytes) => jobs[i].1 = Job::Made(bytes),
+                        Err(mpsc::TryRecvError::Empty) => return false,
+                        Err(mpsc::TryRecvError::Disconnected) => {
+                            log::warn!("glass: the streaks thread stopped; made in the frame");
+                            jobs.remove(i);
+                        }
+                    }
+                }
+                true
+            }
+            None => {
+                let (tx, rx) = mpsc::channel();
+                let px = streak_px(output);
+                let spawned = std::thread::Builder::new()
+                    .name("glass-streaks".into())
+                    .spawn(move || {
+                        if tx.send(streak_bytes(px, scale)).is_ok() {
+                            (wake.0)();
+                        }
+                    });
+                match spawned {
+                    Ok(_) => {
+                        jobs.insert(0, (key, Job::Making(rx)));
+                        jobs.truncate(STREAK_TEXTURES);
+                        false
+                    }
+                    Err(e) => {
+                        log::warn!("glass: streaks made in the frame, no thread: {e}");
+                        true
+                    }
+                }
+            }
+        }
     }
 
     pub(crate) fn blur_program(&self) -> &GlesTexProgram {
@@ -73,16 +159,34 @@ impl GlassFx {
             cache.insert(0, hit);
             return Ok(Some(t));
         }
-        let px = ((output.w + 1) / 2, (output.h + 1) / 2);
-        let Some(pixels) = streak::pixels(s, px, (scale / 2.0) as f32) else {
-            return Ok(None);
+        let px = streak_px(output);
+        let made = {
+            let mut jobs = self.0.jobs.borrow_mut();
+            let i = jobs
+                .iter()
+                .position(|(k, j)| *k == key && matches!(j, Job::Made(_)));
+            i.map(|i| jobs.remove(i).1)
         };
-        let bytes: Vec<u8> = pixels.iter().flat_map(|p| p.to_le_bytes()).collect();
+        let bytes = match made {
+            Some(Job::Made(bytes)) => bytes,
+            _ => streak_bytes(px, scale),
+        };
         let t = renderer.import_memory(&bytes, Fourcc::Argb8888, px.into(), false)?;
         cache.insert(0, (key, t.clone()));
         cache.truncate(STREAK_TEXTURES);
         Ok(Some(t))
     }
+}
+
+/// The streak picture's size for an output: half its resolution.
+fn streak_px(output: Size<i32, Physical>) -> (i32, i32) {
+    ((output.w + 1) / 2, (output.h + 1) / 2)
+}
+
+/// The streak picture of `px` pixels for an output at `scale`, as ARGB8888 bytes.
+fn streak_bytes(px: (i32, i32), scale: f64) -> Vec<u8> {
+    let p = streak::picture(px, (scale / 2.0) as f32);
+    p.iter().flat_map(|v| v.to_le_bytes()).collect()
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -190,7 +294,8 @@ impl Glass {
         let geometry = shrink(area, k);
         let plan = Plan::new(f.settings.blur, material, f.quality, f.scale);
         let tint = f.surface.map(|s| Tint::new(f.settings, s));
-        let drawn = key(f, area, plan, tint, &lenses);
+        let streaks = fx.streaks_ready(f.settings, f.output, f.scale);
+        let drawn = key(f, area, plan, tint, &lenses, streaks);
         let hold = f.hold && !self.refresh.replace(false);
         let caught_up = f.source.map(|s| self.catch_up(s, area, k, bend));
         if self.key.get() != Some(drawn) {
@@ -216,6 +321,7 @@ impl Glass {
             tint,
             plan,
             settings: *f.settings,
+            streaks,
             output: f.output,
             scale: f.scale,
             alpha: f.alpha,
@@ -310,6 +416,7 @@ fn key(
     plan: Plan,
     tint: Option<Tint>,
     lenses: &[Option<Lens>],
+    streaks: bool,
 ) -> u64 {
     let mut h = std::hash::DefaultHasher::new();
     let local = |r: Rectangle<i32, Physical>| {
@@ -337,7 +444,7 @@ fn key(
     (plan.factor, plan.sigma.to_bits(), plan.pairs.to_bits()).hash(&mut h);
     let s = f.settings;
     (
-        s.streaks,
+        streaks,
         s.material,
         f.output.w,
         f.output.h,
@@ -367,6 +474,8 @@ pub struct GlassElement {
     tint: Option<Tint>,
     plan: Plan,
     settings: Settings,
+    /// Whether the streaks are drawn: shown and made ([`GlassFx::streaks_ready`]).
+    streaks: bool,
     output: Size<i32, Physical>,
     scale: f64,
     alpha: f32,
@@ -458,9 +567,11 @@ impl RenderElement<GlesRenderer> for GlassElement {
         let streaks = {
             let mut guard = frame.renderer();
             let renderer: &mut GlesRenderer = guard.as_mut();
-            let streaks = self
-                .fx
-                .streaks(renderer, &self.settings, self.output, self.scale)?;
+            let streaks = if self.streaks {
+                (self.fx).streaks(renderer, &self.settings, self.output, self.scale)?
+            } else {
+                None
+            };
             levels.prepare(renderer, region, self.plan)?;
             streaks
         };
