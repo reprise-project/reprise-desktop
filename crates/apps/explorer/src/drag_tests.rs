@@ -1695,3 +1695,55 @@ fn a_folder_on_the_files_disk_moves_while_another_folders_facts_are_out() {
         std::thread::sleep(std::time::Duration::from_millis(10));
     }
 }
+
+/// A List or Details drag carries the icon its row shows: 16 px at 100%, 32 px at 200%.
+#[test]
+fn a_rows_drag_image_wears_the_grown_icon_at_200_percent() {
+    const RED: u32 = 0xffff_0000;
+    const BLUE: u32 = 0xff00_00ff;
+    // The image is faded: a pixel is the icon's when only its channel is lit.
+    let only = |argb: u32, shift: u32| {
+        let rgb = argb & 0xff_ffff;
+        rgb != 0 && rgb & !(0xff << shift) == 0
+    };
+    for (pct, side, ink, other) in [(100, 16, 16, 0), (200, 32, 0, 16)] {
+        for mode in [Mode::List, Mode::Details] {
+            let mut ctx = test_ctx();
+            ctx.theme = reprisekit::theme::Theme::default().with_text_size(pct);
+            ctx.size = (1600, 900);
+            let (_dir, mut ex) = explorer(&mut ctx);
+            ex.sv.mode = mode;
+            let square = |n: u32, argb: u32| {
+                std::rc::Rc::new(Canvas::from_pixels(n, n, vec![argb; (n * n) as usize]))
+            };
+            for e in &mut ex.sv.entries {
+                e.icon = Some(square(16, RED));
+                e.icon32 = Some(square(32, BLUE));
+            }
+            select(&mut ex, &["Box"]);
+            let at = centre(&ex, &ctx, index_of(&ex, "Box"));
+            press(&mut ex, &mut ctx, at, BTN_LEFT);
+            let (img, _) = ex.drag_image(&mut ctx, 1).expect("an image");
+            let (w, h) = (img.width as i32, img.height as i32);
+            let px: Vec<(i32, i32, u32)> = (0..h)
+                .flat_map(|y| (0..w).map(move |x| (x, y)))
+                .map(|(x, y)| (x, y, img.get(x, y)))
+                .collect();
+            let lit: Vec<(i32, i32)> = (px.iter())
+                .filter(|p| only(p.2, ink))
+                .map(|p| (p.0, p.1))
+                .collect();
+            let xs = lit.iter().map(|p| p.0);
+            let ys = lit.iter().map(|p| p.1);
+            let size = (
+                xs.clone().max().unwrap_or(-1) - xs.min().unwrap_or(0) + 1,
+                ys.clone().max().unwrap_or(-1) - ys.min().unwrap_or(0) + 1,
+            );
+            assert_eq!(size, (side, side), "{mode:?} at {pct}%: the icon's size");
+            assert!(
+                !px.iter().any(|p| only(p.2, other)),
+                "{mode:?} at {pct}%: only the {side} px icon"
+            );
+        }
+    }
+}
