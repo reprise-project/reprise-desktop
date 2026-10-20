@@ -4,6 +4,7 @@
 use std::collections::HashMap;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use crate::{Event, PointerInput};
 use reprisefs::listing::{Item, Row};
@@ -21,7 +22,7 @@ use reprisefs::folders::FolderTable;
 use reprisekit::controls::filedlg::{Crumb, Fields, FileDlg, Folder, FolderId, Hit, Remembered};
 use reprisekit::controls::placesbar::Place;
 use reprisekit::controls::shellview::{self, Entry, Mode};
-use reprisekit::icontheme::{IconCache, ListingIcons};
+use reprisekit::icontheme::{IconCache, IconTheme, ListingIcons};
 use reprisekit::pointer::DoubleClick;
 use reprisekit::raster::Canvas;
 use reprisekit::theme::{Metrics, TextUnits, Theme};
@@ -53,16 +54,19 @@ const TOOLBAR_ICONS: [&str; 4] = ["go-previous", "go-up", "folder-new", "view-li
 pub struct Icons {
     pub places: [Option<Canvas>; 6],
     pub toolbar: [Option<Canvas>; 4],
-    /// The cache's scale when they were fetched.
+    /// The cache's scale and theme when they were fetched.
     scale: i32,
+    theme: Option<Arc<IconTheme>>,
 }
 
 impl Icons {
-    /// Fetches the icons not yet held, all of them again when `icons` is at another scale.
+    /// Fetches the icons not yet held, all of them again when `icons` is at another scale or
+    /// looks names up in another theme.
     pub fn prime(&mut self, icons: &mut IconCache) {
-        if self.scale != icons.scale() {
+        if !self.fetched_from(icons) {
             *self = Icons {
                 scale: icons.scale(),
+                theme: Some(icons.theme()),
                 ..Icons::default()
             };
         }
@@ -76,6 +80,14 @@ impl Icons {
                 *icon = icons.get(name, 16);
             }
         }
+    }
+
+    fn fetched_from(&self, icons: &IconCache) -> bool {
+        self.scale == icons.scale()
+            && self
+                .theme
+                .as_ref()
+                .is_some_and(|t| Arc::ptr_eq(t, &icons.theme()))
     }
 
     pub fn places(&self) -> Vec<Place> {
@@ -451,8 +463,9 @@ impl Host {
     }
 
     /// The dialog draws at `scale`, `icons`' scale: its places, toolbar and entries wear their
-    /// icons at that scale, and its pictures are asked for again at it. The thumbnails and icon
-    /// files it shows stay until theirs arrive and `wake` fires.
+    /// icons at that scale, the places and toolbar from `icons`' theme, and its pictures are
+    /// asked for again at it. The thumbnails and icon files it shows stay until theirs arrive
+    /// and `wake` fires.
     fn follow_scale(
         &mut self,
         dlg: &mut FileDlg,
@@ -460,7 +473,8 @@ impl Host {
         icons: &mut IconCache,
         wake: &crate::Waker,
     ) {
-        if std::mem::replace(&mut self.icons_scale, scale) != scale {
+        let rescaled = std::mem::replace(&mut self.icons_scale, scale) != scale;
+        if rescaled || !self.icons.fetched_from(icons) {
             self.icons.prime(icons);
             dlg.set_place_icons(self.icons.places.to_vec());
             self.icons.set_toolbar(dlg);
@@ -1631,6 +1645,41 @@ mod tests {
         icons.set_scale(1);
         h.follow_scale(&mut dlg, 1, &mut icons, &wake);
         assert!(dlg == fresh(&mut icons).0, "and the scale 1 ones again");
+    }
+
+    #[test]
+    fn a_new_icon_theme_gives_the_places_and_toolbar_its_icons() {
+        let t = pictures_folder();
+        let mut icons = flat_icons(t.path());
+        let mut h = host_in(&t.path().join("list"));
+        h.icons.prime(&mut icons);
+        let mut dlg = open_dlg(&mut h);
+        let wake = crate::Waker::noop();
+        h.follow_scale(&mut dlg, 1, &mut icons, &wake);
+
+        let other = t.path().join("other");
+        let theme = other.join("dark");
+        let dir = theme.join("32x32/places");
+        std::fs::create_dir_all(&dir).unwrap();
+        png(&dir.join("computer.png"), 32, 32, TEXT);
+        let index = "[Icon Theme]\nName=Dark\nDirectories=32x32/places\n\n[32x32/places]\nSize=32\nType=Fixed\n";
+        std::fs::write(theme.join("index.theme"), index).unwrap();
+        let mut icons = IconCache::new(reprisekit::icontheme::IconTheme::load("dark", &[other]));
+        h.follow_scale(&mut dlg, 1, &mut icons, &wake);
+
+        let mut fresh = Host::default();
+        fresh.icons.prime(&mut icons);
+        let computer = fresh.icons.places[5].as_ref().expect("the dark Computer");
+        assert_eq!(
+            computer.get(16, 16),
+            TEXT,
+            "Computer's tile from the dark theme"
+        );
+        assert!(fresh.icons.toolbar[1].is_none(), "the dark theme has no Up");
+        assert!(
+            dlg == open_dlg(&mut fresh),
+            "the open dialog wears the dark theme's icons"
+        );
     }
 
     /// Each size's canvas scale, device width and middle colour.
