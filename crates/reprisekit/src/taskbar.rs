@@ -588,17 +588,18 @@ fn arrange_bands(
 }
 
 /// Where the tray row (less its 4 px lead) may start at the earliest so
-/// `arrange_bands` still fits the tools band whole: `band_x` with no tools,
-/// else past their smallest arrangement.
-fn bands_floor(band_x: i32, tools: i32, task_min: i32, bands: Bands, locked: bool) -> i32 {
-    if tools == 0 {
+/// `arrange_bands` still fits the tools band (`tools`: least, natural length)
+/// whole, or as dragged when it comes first: `band_x` with no tools, else past
+/// their smallest arrangement.
+fn bands_floor(band_x: i32, tools: (i32, i32), task_min: i32, bands: Bands, locked: bool) -> i32 {
+    if tools.1 == 0 {
         return band_x;
     }
     let step = if locked { BAND_GAP } else { BAND_GAP_GRIP };
-    let first = if bands.tasks_first {
-        task_min + step + tools
-    } else {
-        tools + step
+    let first = match (bands.tasks_first, bands.first_width) {
+        (true, _) => task_min + step + tools.1,
+        (false, None) => tools.1 + step,
+        (false, Some(w)) => w.clamp(tools.0, tools.1) + step,
     };
     band_x + first + 4
 }
@@ -713,8 +714,14 @@ impl TaskbarLayout {
             0
         };
         let tools_w = quick_w + pager_gap + pager_count as i32 * QUICK_W;
+        let pager_w = pager_count as i32 * QUICK_W;
+        let tools_least = if quick_count > 0 {
+            pager_w + pager_gap + QUICK_MORE_W
+        } else {
+            tools_w
+        };
         // A capped run stops short of the tools band, so the arrow is never under it.
-        let floor = bands_floor(band_x, tools_w, TASKS_MIN_W, bands, locked);
+        let floor = bands_floor(band_x, (tools_least, tools_w), TASKS_MIN_W, bands, locked);
         let hidden = arrow.map_or(0, |a| {
             let room = cell_x(shown_n - 1) - a.gap - a.size.0 - floor;
             counts_hidden.min((room.max(0) / pitch) as usize)
@@ -760,12 +767,6 @@ impl TaskbarLayout {
         let limit = match row_x {
             Some(x) => x - 4,
             None => clock.x - 6,
-        };
-        let pager_w = pager_count as i32 * QUICK_W;
-        let tools_least = if quick_count > 0 {
-            pager_w + pager_gap + QUICK_MORE_W
-        } else {
-            tools_w
         };
         let a = arrange_bands(
             band_x,
@@ -951,7 +952,12 @@ impl TaskbarLayout {
             0
         };
         let tools = lines(quick_count) + pager_gap + lines(pager_count);
-        let floor = bands_floor(band_y, tools, btn, bands, locked);
+        let tools_least = if quick_count > 0 {
+            lines(pager_count) + pager_gap + QUICK_W
+        } else {
+            tools
+        };
+        let floor = bands_floor(band_y, (tools_least, tools), btn, bands, locked);
         let fit = arrow.map_or(0, |a| {
             let high = foot - floor - a.side_size.1 - a.side_gap;
             let rows = ((high + shape.tray_gap).max(0) / pitch) as usize;
@@ -1022,11 +1028,6 @@ impl TaskbarLayout {
             Rect::new(0, well_y, t, (end - well_y).max(0))
         } else {
             Rect::new(left, well_y, room, clock_r.bottom() - well_y)
-        };
-        let tools_least = if quick_count > 0 {
-            lines(pager_count) + pager_gap + QUICK_W
-        } else {
-            tools
         };
         let a = arrange_bands(
             band_y,
@@ -3082,6 +3083,46 @@ mod tests {
         assert_eq!(l.grips.len(), 1);
         assert_eq!(l.tasks[0].x, 68);
         assert_eq!(l.bands, Bands::default());
+    }
+
+    #[test]
+    fn an_open_tray_run_reaches_a_quick_band_dragged_short() {
+        let m = Metrics::default();
+        let lay = |bands: Bands| {
+            let span = BarSpan {
+                edge: Edge::Bottom,
+                length: 800,
+                thickness: m.taskbar_height,
+            };
+            let counts = TaskbarCounts {
+                quick: 12,
+                reveal: i32::MAX,
+                ..arrow_counts(2, 30, 0)
+            };
+            let clock = ClockText { time: 30, date: 30 };
+            TaskbarLayout::compute_on(
+                &m,
+                &TaskbarShape::CLASSIC,
+                span,
+                false,
+                counts,
+                clock,
+                bands,
+            )
+        };
+        let whole = lay(Bands::default());
+        let short = lay(Bands {
+            tasks_first: false,
+            first_width: Some(60),
+        });
+        let more = short.quick_more.expect("a » cell");
+        let arrow = short.chevron.expect("the arrow");
+        assert_eq!(
+            (whole.tray_hidden, short.tray_hidden),
+            (16, 27),
+            "the run reaches the shortened band"
+        );
+        assert!(arrow.x > more.right(), "the run stops short of the band");
     }
 
     #[test]
