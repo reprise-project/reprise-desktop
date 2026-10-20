@@ -57,6 +57,8 @@ const TOOLBAR_PX: i32 = 16;
 pub struct Icons {
     pub places: [Option<Canvas>; 6],
     pub toolbar: [Option<Canvas>; 4],
+    /// The Look in field's folder, grown with the text like the toolbar's.
+    pub folder: Option<Canvas>,
     /// The cache's scale and theme and the text size when they were fetched.
     scale: i32,
     theme: Option<Arc<IconTheme>>,
@@ -100,6 +102,9 @@ impl Icons {
                 *icon = get(icons, name, px)
                     .or_else(|| (i == TOOLBAR_VIEWS).then(|| views_icon(px, icons.scale())));
             }
+        }
+        if self.folder.is_none() {
+            self.folder = get(icons, "folder", px);
         }
     }
 
@@ -511,6 +516,7 @@ impl Host {
             self.icons.prime_at(icons, dlg.text());
             dlg.set_place_icons(self.icons.places.to_vec());
             self.icons.set_toolbar(dlg);
+            dlg.set_crumb_icons(vec![self.icons.folder.clone()]);
         }
         let theme = icons.theme();
         if let Some(had) = &self.listed_theme
@@ -766,7 +772,10 @@ impl Host {
     }
 
     fn show_read(&mut self, dlg: &mut FileDlg, id: FolderId, read: Read, icons: &mut IconCache) {
-        let l = listing(&mut self.folders, id, read, icons);
+        let mut l = listing(&mut self.folders, id, read, icons);
+        for c in &mut l.folder.crumbs {
+            c.icon = self.icons.folder.clone();
+        }
         self.folder = Some(id);
         self.aliases.clear();
         self.aliases.extend(l.aliases);
@@ -1834,6 +1843,35 @@ mod tests {
         dlg.set_text(TextUnits::ONE);
         h.follow_scale(&mut dlg, 1, &mut icons, &wake);
         assert_eq!(widths(&h), [Some(32), Some(16), Some(16)], "at 100% again");
+    }
+
+    /// The Look in field wears the folder icon whether the folder lists before or after the
+    /// dialog first draws, grown to 32 px at 200% text.
+    #[test]
+    fn the_look_in_field_wears_a_folder_icon() {
+        let t = pictures_folder();
+        let mut icons = flat_icons(t.path());
+        let wake = crate::Waker::noop();
+        let worn = |h: &Host, dlg: &FileDlg| {
+            let mut want = dlg.clone();
+            want.set_crumb_icons(vec![h.icons.folder.clone()]);
+            *dlg == want
+        };
+        let mut h = host_in(&t.path().join("list"));
+        let mut dlg = open_dlg(&mut h);
+        h.ensure_listed(&mut dlg, &mut icons, &|_| true);
+        h.follow_scale(&mut dlg, 1, &mut icons, &wake);
+        let folder = h.icons.folder.as_ref().map(|c| (c.width, c.get(8, 8)));
+        assert_eq!(folder, Some((16, FOLDER)));
+        assert!(worn(&h, &dlg), "listed before the first draw");
+
+        h.list(&mut dlg, h.folder.unwrap(), &mut icons, &|_| true);
+        assert!(worn(&h, &dlg), "listed again after it");
+
+        dlg.set_text(TextUnits::new(22, 11));
+        h.follow_scale(&mut dlg, 1, &mut icons, &wake);
+        assert_eq!(h.icons.folder.as_ref().map(|c| c.width), Some(32));
+        assert!(worn(&h, &dlg), "grown at 200%");
     }
 
     #[test]
