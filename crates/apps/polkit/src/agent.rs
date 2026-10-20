@@ -283,13 +283,8 @@ async fn single_instance(dismissed: Dismissals) {
     let Ok(conn) = zbus::Connection::session().await else {
         return;
     };
-    let owned = conn
-        .request_name_with_flags(BUS_NAME, zbus::fdo::RequestNameFlags::DoNotQueue.into())
-        .await;
-    if !matches!(owned, Ok(zbus::fdo::RequestNameReply::PrimaryOwner)) {
-        log::info!("another reprise-polkit owns {BUS_NAME}; exiting");
-        std::process::exit(0);
-    }
+    // Served before the name is taken, so no call to the name finds it
+    // missing; a second instance exits before anyone calls it.
     let iface = DismissalsIface(dismissed);
     if let Err(e) = conn
         .object_server()
@@ -297,6 +292,13 @@ async fn single_instance(dismissed: Dismissals) {
         .await
     {
         log::warn!("cannot serve {}: {e}", reprisebus::polkit::INTERFACE);
+    }
+    let owned = conn
+        .request_name_with_flags(BUS_NAME, zbus::fdo::RequestNameFlags::DoNotQueue.into())
+        .await;
+    if !matches!(owned, Ok(zbus::fdo::RequestNameReply::PrimaryOwner)) {
+        log::info!("another reprise-polkit owns {BUS_NAME}; exiting");
+        std::process::exit(0);
     }
     let _ = SESSION_BUS.set(conn);
 }

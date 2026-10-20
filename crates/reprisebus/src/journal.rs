@@ -4,6 +4,10 @@
 use std::io::Write as _;
 use std::os::fd::{AsFd, AsRawFd, BorrowedFd};
 
+/// The default filter of Reprise's programs: their own crates (every target starting with
+/// `reprise`) at info, dependencies at warn.
+pub const PROGRAM_FILTER: &str = "warn,reprise=info";
+
 /// Starts the logger with `default_filter` unless `RUST_LOG` is set; prefixed when stderr is the
 /// stream `JOURNAL_STREAM` names.
 pub fn init_logger(default_filter: &str) {
@@ -138,6 +142,29 @@ mod tests {
             out.contains("WARN") && out.ends_with("reprise_sound] no sink\n"),
             "{out:?}"
         );
+    }
+
+    #[test]
+    fn programs_log_their_own_info_and_dependencies_warnings() {
+        let logger = env_logger::Builder::new()
+            .parse_filters(PROGRAM_FILTER)
+            .build();
+        let on = |level, target| {
+            logger.enabled(&log::Metadata::builder().level(level).target(target).build())
+        };
+        for own in [
+            "reprise_updates::fwupd",
+            "repriseapp",
+            "reprisekit::text",
+            "reprisebus",
+        ] {
+            assert!(on(log::Level::Info, own), "{own} logs at info");
+            assert!(!on(log::Level::Debug, own), "{own} does not log at debug");
+        }
+        for dep in ["zbus::connection", "tracing::span"] {
+            assert!(on(log::Level::Warn, dep), "{dep} logs warnings");
+            assert!(!on(log::Level::Info, dep), "{dep} does not log at info");
+        }
     }
 
     #[test]
