@@ -85,8 +85,9 @@ impl<R: Renderer, D> Scene<R, D> {
     }
 
     /// The topmost leaf at or under `from` that takes the pointer at `point`
-    /// (layout coordinates). Disabled nodes and [`Input::Passthrough`](crate::Input::Passthrough)
-    /// leaves are skipped; a surface tree takes the point only inside an input region.
+    /// (layout coordinates). Disabled nodes, nodes hidden at `point` ([`Scene::set_hidden_in`])
+    /// and [`Input::Passthrough`](crate::Input::Passthrough) leaves are skipped; a surface tree
+    /// takes the point only inside an input region.
     /// `from`'s ancestors are not checked for enabled; their clips apply.
     pub fn node_at(&self, from: impl Into<NodeId>, point: Point<f64, Logical>) -> Option<Hit> {
         let from = from.into();
@@ -105,7 +106,8 @@ impl<R: Renderer, D> Scene<R, D> {
         origin: Point<i32, Logical>,
         point: Point<f64, Logical>,
     ) -> Option<Hit> {
-        let n = self.node(id).filter(|n| n.enabled)?;
+        let at = Rectangle::new(point.to_i32_floor(), (1, 1).into());
+        let n = self.node(id).filter(|n| n.enabled && !n.hidden_over(at))?;
         let pos = origin + n.position;
         let local = point - pos.to_f64();
         match &n.content {
