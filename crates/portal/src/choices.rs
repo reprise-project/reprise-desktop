@@ -99,7 +99,8 @@ pub fn parse_choices(v: &Value<'_>) -> Vec<Choice> {
 /// The rows for `choices` stacked from `(x, y)`, and the y under the last row, in 100% units for
 /// text set at `px` that grows by `u`. The combos end `w` px from `x`, or `room` px (at least
 /// `w`) for one whose widest option needs it; the form's text may run `room` px from `x`, and a
-/// check box's label longer than that ends in an ellipsis.
+/// check box's label longer than that ends in an ellipsis. A combo's label keeps its whole text
+/// for the form to cut and tip.
 pub fn choice_rows(
     choices: &[Choice],
     (x, y): (i32, i32),
@@ -156,11 +157,11 @@ pub fn choice_rows(
             // The label takes what it needs while the combo keeps its need or half the room.
             let most = room - LABEL_GAP - need.min(room / 2);
             let label_w = u.design(text.measure(&plain, false, px) + 1).min(most);
-            let shown = text.ellipsize(&plain, u.len(label_w), false, px);
+            // Whole: the form cuts a label longer than its rect and tips the rest.
             items.push(Item::label(
                 LABEL_IDS[i],
                 Rect::new(x, y + (COMBO_H - LINE_H) / 2, label_w, LINE_H),
-                &reprisekit::text::escape_mnemonic(&shown),
+                &reprisekit::text::escape_mnemonic(&plain),
             ));
             let cx = x + label_w + LABEL_GAP;
             let right = if cx + need > x + w { x + room } else { x + w };
@@ -281,7 +282,7 @@ mod tests {
     }
 
     #[test]
-    fn a_label_longer_than_the_room_ends_in_an_ellipsis() {
+    fn a_long_check_label_ends_in_an_ellipsis_and_a_combo_keeps_its_need() {
         let text = TextRenderer::load(&FontConfig::default());
         let words = "Open the exported picture in the image viewer once it is written to disk";
         let check = Choice {
@@ -316,13 +317,48 @@ mod tests {
         let Control::Label { text: shown, .. } = &f.item("choice1-label").unwrap().control else {
             panic!("a label");
         };
-        assert!(shown.ends_with("..."), "{shown}");
+        assert_eq!(shown, words, "the combo's label keeps its whole text");
         let combo = f.item("choice1").unwrap().rect;
         assert_eq!(combo.right(), 354, "the combo ends at the room's edge");
         assert!(
             combo.width >= text.measure("Second", false, 11) + 20,
             "and keeps its need"
         );
+    }
+
+    /// The form cuts the label where the rows used to, and the cut label tips its whole text.
+    #[test]
+    fn a_cut_combo_label_draws_its_ellipsis_and_tips_its_whole_text() {
+        use reprisekit::controls::form;
+        use reprisekit::raster::Canvas;
+        use reprisekit::theme::Theme;
+        let text = TextRenderer::load(&FontConfig::default());
+        let words = "Character encoding used to read the picture metadata of every file";
+        let labelled = Choice {
+            label: words.into(),
+            ..combo("enc", "a")
+        };
+        let at = (195, 451);
+        let (items, _) = choice_rows(&[labelled], at, 246, 354, &text, 11, TextUnits::ONE);
+        let mut f = Form::new(items);
+        let r = f.item("choice0-label").unwrap().rect;
+        let mut cut = f.clone();
+        let Control::Label { text: shown, .. } =
+            &mut cut.item_mut("choice0-label").unwrap().control
+        else {
+            panic!("a label");
+        };
+        *shown = text.ellipsize(words, r.width, false, 11).into_owned();
+        let theme = Theme::default();
+        let draw = |f: &Form| {
+            let mut c = Canvas::new(600, 520);
+            form::draw(&mut c, &text, &theme.paint(), f, true, 11);
+            c.pixels
+        };
+        assert!(draw(&f) == draw(&cut), "drawn as the label cut to its rect");
+        f.rest_pointer(Some((r.x + 20, r.y + 5)));
+        assert!(f.tip_tick(), "the blink brings the tip up");
+        assert_eq!(f.label_tip().as_deref(), Some(words));
     }
 
     #[test]
