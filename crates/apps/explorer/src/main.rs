@@ -46,9 +46,10 @@ use repriseapp::{
 };
 use reprisefs::history::History;
 use reprisefs::listing::Item;
-use reprisekit::controls::addressbar::AddressBar;
-use reprisekit::controls::combo::ListItem;
+use reprisekit::controls::addressbar::{self, AddressBar};
+use reprisekit::controls::combo::{self, ListItem};
 use reprisekit::controls::explorerbar::ExplorerBar;
+use reprisekit::controls::hosted::Hosted;
 use reprisekit::controls::menubar::{self, Bar, Key};
 use reprisekit::controls::scrollbar::ThumbDrag;
 use reprisekit::controls::shellview::{self, Entry, Field, Group, LayoutCache, ShellView};
@@ -1463,6 +1464,29 @@ impl App for Lazy {
             _ => Reply::redraw(),
         };
         ex.settle_drop(reply)
+    }
+
+    fn popup(&mut self, win: WinId, ctx: &Ctx) -> Option<Box<dyn Hosted + '_>> {
+        if win != MAIN {
+            return repriseapp::reader_popup(self, win);
+        }
+        let ex = self.inner.as_mut()?;
+        if ex.bar.open.is_some() {
+            return Some(Box::new(&mut ex.bar));
+        }
+        if ex.popup.is_some() {
+            return Some(Box::new(&mut ex.popup));
+        }
+        ex.address.combo.open?;
+        let r = ex.layout(ctx).address?;
+        let (px, cm) = (ctx.theme.fonts.size_px, ctx.theme.controls());
+        let field = addressbar::layout(&ex.address, &ctx.text, px, r, &cm).field;
+        Some(Box::new(combo::Popped {
+            combo: &mut ex.address.combo,
+            field,
+            cm,
+            px,
+        }))
     }
 
     fn drop_form(&mut self, win: WinId) -> Option<DropForm<'_>> {
