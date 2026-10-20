@@ -1225,7 +1225,7 @@ fn mtime(path: &std::path::Path) -> Option<std::time::SystemTime> {
 }
 
 fn main() {
-    reprisebus::journal::init_logger("error");
+    reprisebus::journal::init_logger(reprisebus::journal::PROGRAM_FILTER);
     let settings = settings::load(&settings::path());
     let cmd = command(std::env::args_os().skip(1));
     repriseapp::run(Box::new(Terminal::new(settings, cmd)));

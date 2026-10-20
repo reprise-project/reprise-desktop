@@ -104,8 +104,9 @@ async fn run(feed: &mut Feed<Profiles>) -> Run {
         return feed.unavailable();
     };
     let Some((name, path, props, mut store)) = find(&conn).await else {
-        log::info!("power-profiles-daemon is not answering; no profiles to show");
-        return feed.unavailable();
+        return feed.unavailable_because(format_args!(
+            "power-profiles-daemon is not answering; no profiles to show"
+        ));
     };
     let rule = zbus::MatchRule::builder()
         .msg_type(zbus::message::Type::Signal)
