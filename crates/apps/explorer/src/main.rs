@@ -1469,7 +1469,7 @@ impl App for Lazy {
     }
 
     fn drag_image(&mut self, win: WinId, scale: i32, ctx: &mut Ctx) -> Option<Canvas> {
-        let ex = self.inner.as_ref().filter(|_| win == MAIN)?;
+        let ex = self.inner.as_mut().filter(|_| win == MAIN)?;
         ex.drag_image(ctx, scale).map(|(image, _)| image)
     }
 

@@ -286,8 +286,10 @@ impl Explorer {
         })
     }
 
-    /// The dragged entries' image drawn at `scale`, and the point of it the pointer holds.
-    pub(crate) fn drag_image(&self, ctx: &mut Ctx, scale: i32) -> Option<(Canvas, (i32, i32))> {
+    /// The dragged entries' image drawn at `scale`, and the point of it the pointer holds. An
+    /// icon file not yet decoded at `scale` is the listing's resampled until its decode lands
+    /// (`wake` asks for the image again).
+    pub(crate) fn drag_image(&mut self, ctx: &mut Ctx, scale: i32) -> Option<(Canvas, (i32, i32))> {
         let d = self.drag.as_ref()?;
         let s = scale.max(1);
         let lay = self.layout(ctx);
@@ -334,6 +336,7 @@ impl Explorer {
             })
             .collect();
         ctx.icons.set_scale(drawn);
+        self.list_icons.decode_misses(s, &ctx.wake);
         let mut theme = ctx.theme.scaled(s);
         if self.sv.mode != Mode::Icons {
             let rows: Vec<shellview::DragRow> = shown

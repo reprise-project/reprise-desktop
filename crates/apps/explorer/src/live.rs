@@ -93,6 +93,15 @@ impl Explorer {
         }
     }
 
+    /// Icon files a drag's image missed at its scale arrived: the host asks for the image again.
+    fn take_drag_art(&mut self, ctx: &mut Ctx) -> Option<Reply> {
+        let landed = self.list_icons.take_misses(&mut ctx.icons);
+        (landed && self.drag.as_ref().is_some_and(|d| d.started)).then(|| Reply {
+            redraw_drag: true,
+            ..Reply::none()
+        })
+    }
+
     /// `Event::Wake`: a put, job, tip walk, late listing, drive scan, clash check or Folders node read finished, thumbnails arrived, or
     /// the watch or UDisks2 saw a change (which re-lists), or the folder left (which follows it). A closing window quits here
     /// once its work is done.
@@ -146,6 +155,7 @@ impl Explorer {
             self.take_drives(ctx),
             clashed,
             self.take_asking(ctx),
+            self.take_drag_art(ctx),
         ]
         .into_iter()
         .flatten()

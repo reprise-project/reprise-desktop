@@ -464,6 +464,9 @@ pub struct Reply {
     /// answer a pointer press still held (the host uses that press's
     /// serial); the compositor refuses it otherwise.
     pub start_drag: Option<Box<DragOut>>,
+    /// Ask again for the running drag's image ([`App::drag_image`]) at the scale it shows at,
+    /// for art that landed since it was drawn.
+    pub redraw_drag: bool,
     /// The answer to a drag over the window: `Some(None)` refuses it,
     /// `Some(Some(a))` takes it as `a`, `None` leaves the last answer.
     pub drag_accept: Option<Option<Accept>>,
@@ -563,6 +566,7 @@ impl Reply {
             paste_files,
             activate,
             start_drag,
+            redraw_drag,
             drag_accept,
             answer_drop,
             tick,
@@ -600,6 +604,7 @@ impl Reply {
             paste_files: self.paste_files || paste_files,
             activate: self.activate.or(activate),
             start_drag: self.start_drag.or(start_drag),
+            redraw_drag: self.redraw_drag || redraw_drag,
             drag_accept: self.drag_accept.or(drag_accept),
             answer_drop: self.answer_drop.or(answer_drop),
             tick: self.tick || tick,
@@ -1890,6 +1895,15 @@ impl Host {
         }
         if let Some(out) = reply.start_drag {
             self.start_drag(win, *out);
+        }
+        if reply.redraw_drag
+            && let Some(scale) = self
+                .drag_out
+                .as_ref()
+                .and_then(|o| o.icon.as_ref())
+                .map(|i| i.scale)
+        {
+            self.draw_drag_icon(scale);
         }
         if reply.resize {
             self.begin_resize(win);
@@ -3685,10 +3699,17 @@ impl Host {
             return false;
         };
         let scale = factor.max(1);
-        if icon.scale == scale {
-            return true;
+        if icon.scale != scale {
+            self.draw_drag_icon(scale);
         }
-        let win = out.win;
+        true
+    }
+
+    /// The running drag's icon shows the program's image drawn again at `scale`.
+    fn draw_drag_icon(&mut self, scale: i32) {
+        let Some(win) = self.drag_out.as_ref().map(|o| o.win) else {
+            return;
+        };
         self.ctx.icons.set_scale(scale);
         let image = self.app.drag_image(win, scale, &mut self.ctx);
         if let Some(image) = image.filter(|i| i.scale() == scale)
@@ -3703,7 +3724,6 @@ impl Host {
             icon.scale = scale;
             icon.redraw();
         }
-        true
     }
 
     fn drag_ended(&mut self, out: Outgoing, finished: bool) {

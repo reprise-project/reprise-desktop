@@ -23,6 +23,34 @@ fn put_art(cache: &mut IconCache, art: &[(String, [Option<Canvas>; 3])], scale: 
     cache.put_files_at(puts.collect(), scale);
 }
 
+/// Decodes `files` at [`LISTING_PX`] and `scale` on a thread that fires `wake` once the art is
+/// sent. None when no thread starts.
+fn spawn_decode(files: Vec<String>, scale: i32, wake: &Waker) -> Option<Receiver<Art>> {
+    let (tx, rx) = channel();
+    let wake = wake.clone();
+    let spawned = std::thread::Builder::new()
+        .name("list icons".into())
+        .spawn(move || {
+            let art: Art = files
+                .into_iter()
+                .map(|f| {
+                    let a = LISTING_PX.map(|px| decode_file(Path::new(&f), px, scale));
+                    (f, a)
+                })
+                .collect();
+            if tx.send(art).is_ok() {
+                wake.wake();
+            }
+        });
+    match spawned {
+        Ok(_) => Some(rx),
+        Err(e) => {
+            log::warn!("cannot spawn an icon thread ({e}); icon files keep their scale");
+            None
+        }
+    }
+}
+
 /// What a listing's thread reads for its rows' icons, beside the rows: each folder's own icon
 /// (`.directory`'s `Icon=`), and the icon files the rows name decoded at [`LISTING_PX`]. A
 /// subfolder may be a mount point, and an icon file may be anywhere, that never answers.
@@ -75,6 +103,10 @@ pub struct ListIcons {
     icons: ListingIcons,
     scale: i32,
     files: Option<Receiver<Art>>,
+    /// Icon files [`ListIcons::fetch`] found missing at a scale, waiting for [`ListIcons::decode_misses`].
+    misses: Vec<String>,
+    /// The scale and decoded art of the last [`ListIcons::decode_misses`].
+    decoding: Option<(i32, Receiver<Art>)>,
 }
 
 impl ListIcons {
@@ -83,23 +115,53 @@ impl ListIcons {
         *self = ListIcons {
             icons,
             scale,
-            files: None,
+            ..ListIcons::default()
         };
     }
 
     /// `worn`, an icon an entry wears at `px`, from `cache` at the cache's scale: a theme icon
     /// fetched, an icon file only as the cache already holds it. None when the listing does not
-    /// know `worn` or the cache has no such file.
-    pub fn fetch(&self, worn: &Rc<Canvas>, px: i32, cache: &mut IconCache) -> Option<Canvas> {
+    /// know `worn` or the cache has no such file; a file never put at this scale is kept for
+    /// [`ListIcons::decode_misses`].
+    pub fn fetch(&mut self, worn: &Rc<Canvas>, px: i32, cache: &mut IconCache) -> Option<Canvas> {
         let name = self.icons.name_of(worn)?;
-        if name.starts_with('/') {
-            cache
-                .file_put(name, px)
-                .flatten()
-                .map(std::sync::Arc::unwrap_or_clone)
-        } else {
-            cache.get(name, px)
+        if !name.starts_with('/') {
+            return cache.get(name, px);
         }
+        match cache.file_put(name, px) {
+            Some(put) => put.map(std::sync::Arc::unwrap_or_clone),
+            None => {
+                if !self.misses.iter().any(|m| m == name) {
+                    self.misses.push(name.to_string());
+                }
+                None
+            }
+        }
+    }
+
+    /// Decodes the icon files `fetch` missed at `scale` on a thread that fires `wake`
+    /// ([`ListIcons::take_misses`]), in place of a decode still running.
+    pub fn decode_misses(&mut self, scale: i32, wake: &Waker) {
+        let files = std::mem::take(&mut self.misses);
+        if files.is_empty() {
+            return;
+        }
+        self.decoding = spawn_decode(files, scale, wake).map(|rx| (scale, rx));
+    }
+
+    /// Hands `cache` the icon files [`ListIcons::decode_misses`] decoded, at the scale they were
+    /// decoded at: true when they arrived.
+    pub fn take_misses(&mut self, cache: &mut IconCache) -> bool {
+        let Some((scale, art)) = self
+            .decoding
+            .as_ref()
+            .and_then(|(s, rx)| rx.try_recv().ok().map(|a| (*s, a)))
+        else {
+            return false;
+        };
+        self.decoding = None;
+        put_art(cache, &art, scale);
+        true
     }
 
     /// The window draws at `scale`, `cache`'s scale: `entries` wear its theme icons now, and the
@@ -121,26 +183,7 @@ impl ListIcons {
         if files.is_empty() {
             return;
         }
-        let (tx, rx) = channel();
-        let wake = wake.clone();
-        let spawned = std::thread::Builder::new()
-            .name("list icons".into())
-            .spawn(move || {
-                let art: Art = files
-                    .into_iter()
-                    .map(|f| {
-                        let a = LISTING_PX.map(|px| decode_file(Path::new(&f), px, scale));
-                        (f, a)
-                    })
-                    .collect();
-                if tx.send(art).is_ok() {
-                    wake.wake();
-                }
-            });
-        match spawned {
-            Ok(_) => self.files = Some(rx),
-            Err(e) => log::warn!("cannot spawn an icon thread ({e}); icon files keep their scale"),
-        }
+        self.files = spawn_decode(files, scale, wake);
     }
 
     /// Hands `entries` the icon files decoded for the last scale change, and `cache` keeps them
