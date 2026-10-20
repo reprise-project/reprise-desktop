@@ -77,6 +77,12 @@ fn due(menus: &[X11Window], pressed: &[X11Window]) -> bool {
     menus.iter().any(|m| !pressed.contains(m))
 }
 
+/// Whether the keyboard moving to an X11 window (`Some(true)`), another surface or none closes the
+/// open X11 menus. A move between X11 windows stays under the menu's grab: a submenu takes it.
+pub fn keyboard_move_closes(to_x11: Option<bool>) -> bool {
+    to_x11 != Some(true)
+}
+
 /// Press once for the open X11 menus at `press_at`, then give the pointer back to what lies under
 /// it. Not while the pointer is grabbed or the screen is locked. A menu is a typed one or an
 /// untyped override-redirect window that showed during an X pointer grab.
@@ -224,6 +230,16 @@ mod tests {
             press_at(area, &[fullscreen, everywhere], &[everywhere]),
             None
         );
+    }
+
+    #[test]
+    fn only_a_keyboard_move_off_the_x11_windows_closes_the_menus() {
+        assert!(
+            !keyboard_move_closes(Some(true)),
+            "an untyped submenu mapping"
+        );
+        assert!(keyboard_move_closes(Some(false)), "a Wayland window");
+        assert!(keyboard_move_closes(None), "no surface");
     }
 
     #[test]
