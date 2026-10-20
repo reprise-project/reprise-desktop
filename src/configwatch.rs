@@ -503,6 +503,7 @@ fn publish_look(state: &mut State) {
 /// What `retheme` draws that `update_layout` leaves at the old draw scale: the open Start
 /// panel and launcher, the dialogs and the lock screen.
 pub fn redraw_for_scale(state: &mut State) {
+    crate::tray::sync_icon_sizes(state);
     state.retheme_start_panel();
     state.redraw_launcher();
     for i in 0..state.dialogs.views.len() {

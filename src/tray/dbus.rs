@@ -4,7 +4,7 @@ use super::screensaver::{self, SCREENSAVER_NAME, SCREENSAVER_PATHS};
 use super::settings::{self, Appearance, SETTINGS_NAME, SETTINGS_PATH, Settings};
 use super::{
     DEFAULT_PROP, MenuNode, NOTIFY_SIZES, Notification, Orientation, TrayCommand, TrayEvent,
-    TrayItem, decode_named, decode_named_at, item_pixmaps, notify,
+    TrayItem, decode_named_at, item_pixmaps, notify,
 };
 use crate::icontheme::{IconCache, IconTheme};
 use futures_util::stream::{BoxStream, SelectAll, StreamExt};
@@ -454,11 +454,18 @@ fn lock(icons: &Icons) -> std::sync::MutexGuard<'_, IconCache> {
     icons.lock().unwrap_or_else(|e| e.into_inner())
 }
 
-fn item_named(icons: &Icons, item: &TrayItem) -> Arc<[IconSource]> {
+/// The px item icons are drawn at, which [`TrayCommand::IconSizes`] sets.
+type Sizes = Arc<Mutex<Vec<i32>>>;
+
+fn sizes_now(sizes: &Sizes) -> Vec<i32> {
+    sizes.lock().unwrap_or_else(|e| e.into_inner()).clone()
+}
+
+fn item_named(icons: &Icons, item: &TrayItem, sizes: &[i32]) -> Arc<[IconSource]> {
     match item.icon_name.as_deref() {
         Some(name) if item.pixmaps.is_empty() => {
             let extra: Vec<PathBuf> = item.icon_theme_path.iter().cloned().collect();
-            decode_named(&mut lock(icons), name, &extra).into()
+            decode_named_at(&mut lock(icons), name, &extra, sizes).into()
         }
         _ => Arc::from([]),
     }
@@ -529,7 +536,13 @@ fn item_texts(title: Option<String>, tip: Option<ToolTip>) -> (String, String) {
     (title, tooltip)
 }
 
-async fn fetch_item(conn: &Connection, icons: &Icons, bus: &str, path: &str) -> Option<TrayItem> {
+async fn fetch_item(
+    conn: &Connection,
+    icons: &Icons,
+    sizes: &Sizes,
+    bus: &str,
+    path: &str,
+) -> Option<TrayItem> {
     let proxy = uncached_proxy(conn, bus, path, ITEM_IFACE).await.ok()?;
     // Concurrent, so a silent peer costs one METHOD_TIMEOUT, not one per property.
     let (sni_id, title, icon_name, theme_path, pixmaps, menu, status, tip, pid) = futures_util::join!(
@@ -558,6 +571,8 @@ async fn fetch_item(conn: &Connection, icons: &Icons, bus: &str, path: &str) -> 
         return None;
     }
     let (title, tooltip) = item_texts(title, tip);
+    // Read after the properties, so a size change during the read is decoded by it.
+    let sizes = sizes_now(sizes);
     let key = item_key(
         sni_id.as_deref(),
         pid.and_then(program_name).as_deref(),
@@ -572,13 +587,13 @@ async fn fetch_item(conn: &Connection, icons: &Icons, bus: &str, path: &str) -> 
         tooltip,
         icon_name: icon_ref(icon_name),
         icon_theme_path: icon_ref(theme_path).map(PathBuf::from),
-        pixmaps: item_pixmaps(&pixmaps.unwrap_or_default()).into(),
+        pixmaps: item_pixmaps(&pixmaps.unwrap_or_default(), &sizes).into(),
         named: Arc::from([]),
         menu_path: menu.map(|p| p.as_str().to_string()).filter(|p| p != "/"),
         passive: status.is_some_and(|s| s.eq_ignore_ascii_case("Passive")),
         pid,
     };
-    item.named = item_named(icons, &item);
+    item.named = item_named(icons, &item, &sizes);
     Some(item)
 }
 
@@ -784,6 +799,7 @@ struct Loop {
     streams: SelectAll<BoxStream<'static, Wake>>,
     appearance: Arc<Mutex<Appearance>>,
     icons: Icons,
+    sizes: Sizes,
     senders: Arc<Mutex<Senders>>,
 }
 
@@ -867,13 +883,15 @@ impl Loop {
                 again: false,
             },
         );
-        let (conn, icons) = (self.conn.clone(), self.icons.clone());
+        let (conn, icons, sizes) = (self.conn.clone(), self.icons.clone(), self.sizes.clone());
         let read = async move {
             if !settle.is_zero() {
                 async_io::Timer::after(settle).await;
             }
             reading.store(true, Ordering::Relaxed);
-            let item = fetch_item(&conn, &icons, &bus, &path).await.map(Box::new);
+            let item = fetch_item(&conn, &icons, &sizes, &bus, &path)
+                .await
+                .map(Box::new);
             Wake::Fetched { key, fetch, item }
         };
         self.streams
@@ -1052,15 +1070,26 @@ impl Loop {
             }
             TrayCommand::Appearance(a) => settings::update(&self.conn, &self.appearance, a).await,
             TrayCommand::IconTheme(name) => self.retheme(&name),
+            TrayCommand::IconSizes(sizes) => self.resize_icons(sizes),
             TrayCommand::Shutdown => return false,
         }
         true
     }
 
+    /// Reads every item again, for `IconPixmap` entries and named icons at `sizes`.
+    fn resize_icons(&mut self, sizes: Vec<i32>) {
+        *self.sizes.lock().unwrap_or_else(|e| e.into_inner()) = sizes;
+        let keys: Vec<String> = self.items.keys().cloned().collect();
+        for key in keys {
+            self.refresh_item(&key);
+        }
+    }
+
     fn retheme(&mut self, name: &str) {
         *lock(&self.icons) = load_icons(name);
+        let sizes = sizes_now(&self.sizes);
         for item in self.items.values_mut() {
-            let named = item_named(&self.icons, item);
+            let named = item_named(&self.icons, item, &sizes);
             if named != item.named {
                 item.named = named;
                 emit(&self.events, self.eventfd, TrayEvent::Updated(item.clone()));
@@ -1153,6 +1182,7 @@ async fn setup(
     appearance: Appearance,
     icon_theme: String,
     pads: crate::tabletpad::Shared,
+    sizes: Vec<i32>,
 ) -> Result<Loop, String> {
     let icons: Icons = Arc::new(Mutex::new(load_icons(&icon_theme)));
     let senders: Arc<Mutex<Senders>> = Arc::default();
@@ -1311,6 +1341,7 @@ async fn setup(
         streams,
         appearance: current,
         icons,
+        sizes: Arc::new(Mutex::new(sizes)),
         senders,
     })
 }
@@ -1328,6 +1359,7 @@ pub fn start(
     appearance: Appearance,
     icon_theme: String,
     pads: crate::tabletpad::Shared,
+    icon_sizes: Vec<i32>,
 ) -> Option<(async_channel::Sender<TrayCommand>, JoinHandle<()>)> {
     let (tx, rx) = async_channel::unbounded::<TrayCommand>();
     let handle = std::thread::Builder::new()
@@ -1337,7 +1369,17 @@ pub fn start(
             // waiting for a stalled peer.
             let fd = eventfd.as_raw_fd();
             zbus::block_on(async move {
-                match setup(events.clone(), fd, rx, appearance, icon_theme, pads).await {
+                match setup(
+                    events.clone(),
+                    fd,
+                    rx,
+                    appearance,
+                    icon_theme,
+                    pads,
+                    icon_sizes,
+                )
+                .await
+                {
                     Ok(l) => l.run().await,
                     Err(e) => emit(&events, fd, TrayEvent::Unavailable(e)),
                 }
@@ -1620,17 +1662,18 @@ mod tests {
             passive: false,
             pid: None,
         };
-        let named = item_named(&icons, &item);
+        let drawn = [16, 24, 32, 48];
+        let named = item_named(&icons, &item, &drawn);
         let sizes: Vec<(u32, u32)> = named.iter().map(|s| (s.width, s.height)).collect();
-        assert_eq!(sizes, [(16, 16), (32, 32)]);
-        let drawn = crate::tray::closest(&named, 32).unwrap();
-        assert_eq!(drawn.get(16, 16), 0xFF00_00FF);
+        assert_eq!(sizes, [(16, 16), (24, 24), (32, 32), (48, 48)]);
+        let at24 = crate::tray::closest(&named, 24).unwrap();
+        assert_eq!(at24.get(12, 12), 0xFF00_00FF);
 
-        item.pixmaps = item_pixmaps(&[(1, 1, &[255u8, 255, 0, 0][..])]).into();
-        assert!(item_named(&icons, &item).is_empty());
+        item.pixmaps = item_pixmaps(&[(1, 1, &[255u8, 255, 0, 0][..])], &drawn).into();
+        assert!(item_named(&icons, &item, &drawn).is_empty());
         item.pixmaps = Arc::from([]);
         item.icon_name = Some("absent".into());
-        assert!(item_named(&icons, &item).is_empty());
+        assert!(item_named(&icons, &item, &drawn).is_empty());
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
@@ -1656,6 +1699,7 @@ mod tests {
                 Appearance::of(&crate::config::Config::default()),
             )),
             icons: Arc::new(Mutex::new(IconCache::new(IconTheme::load("hicolor", &[])))),
+            sizes: Arc::new(Mutex::new(vec![16])),
             senders: Arc::default(),
         }
     }
@@ -1911,6 +1955,23 @@ mod tests {
             reads, 2,
             "the NewTitle sent during the first read gets a second read"
         );
+    }
+
+    #[test]
+    fn new_icon_sizes_read_every_item_again() {
+        let reads = drive(async |h| {
+            register(&h.wakes, "/answering").await;
+            let added = next_event(&h.events, Duration::from_secs(2)).await;
+            assert!(
+                matches!(added, Some(TrayEvent::Added(_))),
+                "the item is added"
+            );
+            let sizes = TrayCommand::IconSizes(vec![16, 24]);
+            h.wakes.send(Wake::Command(sizes)).await.unwrap();
+            async_io::Timer::after(Duration::from_millis(300)).await;
+            h.titles.load(Ordering::Relaxed)
+        });
+        assert_eq!(reads, 2, "a second Title read after the sizes changed");
     }
 
     #[test]
