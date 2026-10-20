@@ -134,10 +134,10 @@ the Super tap, Super+Shift+Esc and the VT switch keys can be rebound.
   unroll from the side they open from, `menu_animation = "slide"`). All
   optional (`[effects]`), on by default under Glass; menus fade under every
   interface.
-- **Menus past the window's edge.** The menu bars, context menus and
-  drop-down lists in Reprise's own programs open on popups of their own, so a
-  menu shows whole below a short window and turns up or left at the screen's
-  edge.
+- **Menus past the window's edge.** The menu bars, context menus, drop-down
+  lists and colour palettes in Reprise's own programs open on popups of their
+  own, so a menu shows whole below a short window and turns up or left at the
+  screen's edge.
 
 ## Snapping
 
