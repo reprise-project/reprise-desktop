@@ -193,6 +193,8 @@ impl PrintersApp {
             }
             keep
         });
+        let queues = &self.queues;
+        self.refit_queues.retain(|id| queues.get(id).is_some());
         self.props.retain(|p| match snap.printer(&p.printer) {
             Some(pr) => {
                 p.refresh(pr, false);
@@ -1311,7 +1313,7 @@ mod tests {
     #[test]
     fn a_deleted_printer_s_windows_close_and_the_other_printer_s_stay() {
         let mut app = two_printers();
-        app.open_queue("Laser");
+        let laser = app.open_queue("Laser").id();
         app.open_props("Laser", props::GENERAL);
         let inkjet = app.open_queue("Inkjet").id();
         let mut s = app.snapshot.clone();
@@ -1320,5 +1322,10 @@ mod tests {
         assert_eq!(app.queues.of("Laser"), None);
         assert_eq!(app.props.of("Laser"), None);
         assert_eq!(app.queues.of("Inkjet"), Some(inkjet));
+        assert!(
+            !app.refit_queues.contains(&laser),
+            "the queue's fit goes with it"
+        );
+        assert!(app.refit_queues.contains(&inkjet));
     }
 }
