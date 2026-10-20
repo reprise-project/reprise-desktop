@@ -54,8 +54,7 @@ pub struct BarShared {
 }
 
 impl BarShared {
-    pub fn load() -> BarShared {
-        let p = crate::state::load();
+    pub fn from_persisted(p: &crate::state::Persisted) -> BarShared {
         BarShared {
             locked: p.taskbar_locked.unwrap_or(true),
             bands: p.bands,

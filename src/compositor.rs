@@ -403,17 +403,30 @@ impl State {
         handle: LoopHandle<'static, State>,
         signal: LoopSignal,
     ) -> Result<State, Box<dyn std::error::Error>> {
-        let display: Display<State> = new_display()?;
-        let dh = display.handle();
-
         let listening = listen()?;
-        let socket = listening.socket_name().to_os_string();
+        let socket = listening.socket_name().to_string_lossy().into_owned();
         handle.insert_source(listening, |stream, _, state| {
             let data = ClientState::of_stream(&stream, None);
             if let Err(e) = state.dh.insert_client(stream, Arc::new(data)) {
                 log::warn!("client refused: {e}");
             }
         })?;
+        State::on_display(config, config_path, handle, signal, socket, Host::Session)
+    }
+
+    /// Everything [`State::new`] builds but the listening socket: clients reach the display only
+    /// through `dh.insert_client`, and `socket` is the `WAYLAND_DISPLAY` programs are given.
+    pub(crate) fn on_display(
+        config: Config,
+        config_path: PathBuf,
+        handle: LoopHandle<'static, State>,
+        signal: LoopSignal,
+        socket: String,
+        host: Host,
+    ) -> Result<State, Box<dyn std::error::Error>> {
+        let session = host == Host::Session;
+        let display: Display<State> = new_display()?;
+        let dh = display.handle();
         let display = Rc::new(RefCell::new(display));
         let display_fd = display.borrow().as_fd().try_clone_to_owned()?;
         let d = display.clone();
@@ -458,7 +471,7 @@ impl State {
             renderer: "gles2",
             qt_platform_theme: config.toolkits.qt_platform_theme.clone(),
             ..SessionEnv::new(
-                socket.to_string_lossy().into_owned(),
+                socket,
                 &config.theme.colors,
                 config.interface,
                 config.blue_variant,
@@ -474,17 +487,32 @@ impl State {
         let caption_text = caption_text(&config.theme);
         let start_text = start_text(&config.theme);
         let start_panel_text = reprisekit::interfaces::start_panel_text(&config.theme);
-        let icons = IconCache::new(IconTheme::load(
-            &config.icons.theme,
-            &IconTheme::default_roots(),
-        ));
-        let app_index = reprisefs::apps::scan(&reprisefs::apps::default_dirs());
+        let roots = if session {
+            IconTheme::default_roots()
+        } else {
+            Vec::new()
+        };
+        let icons = IconCache::new(IconTheme::load(&config.icons.theme, &roots));
+        let app_index = if session {
+            reprisefs::apps::scan(&reprisefs::apps::default_dirs())
+        } else {
+            Vec::new()
+        };
         log::info!(
             "icon theme {} ({} entries indexed)",
             config.icons.theme,
             app_index.len()
         );
-        let quicklaunch = crate::taskbarview::load_quicklaunch(&config);
+        let quicklaunch = if session {
+            crate::taskbarview::load_quicklaunch(&config)
+        } else {
+            Vec::new()
+        };
+        let persisted = if session {
+            crate::state::load()
+        } else {
+            Default::default()
+        };
 
         let ime = crate::textinput::Ime::new(&dh, &seat);
         crate::tabsproto::init(&dh);
@@ -563,10 +591,22 @@ impl State {
                 &dh,
                 crate::desktops::Desktops::new(config.workspaces),
             ),
-            privacy: crate::privacy::Privacy::start(&handle),
+            privacy: if session {
+                crate::privacy::Privacy::start(&handle)
+            } else {
+                Default::default()
+            },
             capture_border: Default::default(),
-            location: crate::location::Location::start(&handle, config.location),
-            launcher_entries: crate::launcherentry::Entries::start(&handle),
+            location: if session {
+                crate::location::Location::start(&handle, config.location)
+            } else {
+                Default::default()
+            },
+            launcher_entries: if session {
+                crate::launcherentry::Entries::start(&handle)
+            } else {
+                Default::default()
+            },
             backend: None,
             // A slideshow picks its first picture once the loop runs.
             wallpaper: config
@@ -577,17 +617,14 @@ impl State {
                 .map(Wallpaper::new),
             slideshow: None,
             bars: Vec::new(),
-            bar_shared: crate::taskbarview::BarShared::load(),
+            bar_shared: crate::taskbarview::BarShared::from_persisted(&persisted),
             clock_timer: None,
             fading_bars: Vec::new(),
             icons,
             app_index,
-            launches: {
-                let p = crate::state::load();
-                crate::launches::Launches {
-                    pins: p.start_pins,
-                    recent: p.launches,
-                }
+            launches: crate::launches::Launches {
+                pins: persisted.start_pins.clone(),
+                recent: persisted.launches.clone(),
             },
             apps_watch: Default::default(),
             start_text,
@@ -604,7 +641,7 @@ impl State {
             glass: GlassCtx::new(),
             water: crate::waterview::WaterCtx::new(),
             reblur_timer: None,
-            wm: crate::placement::Wm::load(),
+            wm: crate::placement::Wm::from_persisted(&persisted, session),
             tabs: Default::default(),
             dialogs: Default::default(),
             caret: Default::default(),
@@ -651,7 +688,7 @@ impl State {
             notify: Default::default(),
             tooltip: Default::default(),
             access: crate::access::Access::new(&handle),
-            session: crate::session::Session::load(),
+            session: crate::session::Session::from_persisted(&persisted),
             ending: None,
             session_fade: crate::sessionfade::SessionFade::new(config.effects.session_fade_ms().0),
             calendar: Default::default(),
@@ -667,6 +704,19 @@ impl State {
             env,
             toolkits: Default::default(),
         })
+    }
+
+    /// What every turn of the event loop ends with, after its sources ran.
+    pub fn turn_end(&mut self) {
+        self.popups.cleanup();
+        self.refresh_toplevels();
+        self.refresh_workspaces();
+        crate::sessionend::tick(self);
+        self.ime_field_sync();
+        self.decode_wanted_icons();
+        if let Err(e) = self.dh.flush_clients() {
+            log::warn!("flush: {e}");
+        }
     }
 
     pub fn socket(&self) -> OsString {
@@ -721,6 +771,17 @@ fn listen() -> Result<ListeningSocketSource, Box<dyn std::error::Error>> {
         }
     }
     Err(last.map_or_else(|| "no Wayland socket".into(), |e| e.into()))
+}
+
+/// What a [`State`] reads and starts beside its display.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Host {
+    /// The user's saved state, programs and Quick Launch folder, and the session's watcher
+    /// threads (privacy, location, launcher entries).
+    Session,
+    /// None of it: a test's state starts empty and talks to no bus.
+    #[cfg(test)]
+    Bare,
 }
 
 /// Protocol states whose handlers never ask for them back.

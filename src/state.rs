@@ -51,8 +51,14 @@ pub struct Persisted {
     pub color_filter_last: Option<String>,
 }
 
-/// `$XDG_STATE_HOME/reprise/state.toml`.
+/// `$XDG_STATE_HOME/reprise/state.toml`; in tests a file of the test process's own, so no test
+/// rewrites the user's.
 pub fn path() -> PathBuf {
+    #[cfg(test)]
+    return std::env::temp_dir()
+        .join(format!("reprise-test-{}", std::process::id()))
+        .join("state.toml");
+    #[cfg(not(test))]
     repriseconf::xdg_home("XDG_STATE_HOME", ".local/state")
         .join("reprise")
         .join("state.toml")

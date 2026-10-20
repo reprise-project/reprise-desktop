@@ -1177,4 +1177,107 @@ mod tests {
         assert_eq!(held, vec![(41, hit("deafen"))]);
         assert!(take_held(&mut held, 40).is_empty());
     }
+
+    const KEY_A: u32 = 30;
+    const KEY_LEFT: u32 = 105;
+    const KEY_LEFTMETA: u32 = 125;
+
+    /// A harness with one output and a focused toplevel, and its client.
+    fn focused_client() -> (
+        crate::harness::Harness,
+        crate::harness::TestClient,
+        crate::harness::Toplevel,
+    ) {
+        let mut h = crate::harness::Harness::new();
+        h.output("TEST-1", 1024, 768);
+        let mut c = h.connect();
+        let t = h.map_toplevel(&mut c, "test.app", 300, 200);
+        assert_eq!(h.state.focused, Some(t.id));
+        (h, c, t)
+    }
+
+    fn heard(
+        h: &mut crate::harness::Harness,
+        c: &mut crate::harness::TestClient,
+    ) -> Vec<(u32, bool)> {
+        h.roundtrip(c);
+        std::mem::take(&mut c.side.keys)
+    }
+
+    #[test]
+    fn a_plain_key_reaches_the_focused_client_down_and_up() {
+        let (mut h, mut c, _) = focused_client();
+        h.key(KEY_A, true);
+        h.key(KEY_A, false);
+        assert_eq!(heard(&mut h, &mut c), [(KEY_A, true), (KEY_A, false)]);
+    }
+
+    #[test]
+    fn a_binds_key_reaches_no_client_down_or_up() {
+        let (mut h, mut c, t) = focused_client();
+        h.key(KEY_LEFTMETA, true);
+        h.key(KEY_LEFT, true);
+        h.key(KEY_LEFT, false);
+        h.key(KEY_LEFTMETA, false);
+        let keys = heard(&mut h, &mut c);
+        assert!(
+            !keys.iter().any(|&(k, _)| k == KEY_LEFT),
+            "Super+Left is the snap bind: {keys:?}"
+        );
+        assert!(
+            h.state.win(t.id).is_some_and(|w| w.snapped.is_some()),
+            "the bind snapped the window"
+        );
+        assert!(
+            h.state.key_input.taken.is_empty(),
+            "every taken key came up"
+        );
+    }
+
+    #[test]
+    fn a_taken_press_takes_its_release_after_the_modifier_went() {
+        let (mut h, mut c, _) = focused_client();
+        h.key(KEY_LEFTMETA, true);
+        h.key(KEY_LEFT, true);
+        h.key(KEY_LEFTMETA, false);
+        h.key(KEY_LEFT, false);
+        let keys = heard(&mut h, &mut c);
+        assert!(
+            !keys.iter().any(|&(k, _)| k == KEY_LEFT),
+            "a bare Left release still follows its press: {keys:?}"
+        );
+        h.key(KEY_LEFT, true);
+        h.key(KEY_LEFT, false);
+        assert_eq!(
+            heard(&mut h, &mut c),
+            [(KEY_LEFT, true), (KEY_LEFT, false)],
+            "the next Left is the client's"
+        );
+    }
+
+    #[test]
+    fn a_super_tap_opens_the_start_menu_and_a_second_shuts_it() {
+        let (mut h, mut c, _) = focused_client();
+        h.key(KEY_LEFTMETA, true);
+        h.key(KEY_LEFTMETA, false);
+        assert_eq!(h.state.menus.len(), 1, "the Start menu");
+        h.key(KEY_LEFTMETA, true);
+        h.key(KEY_LEFTMETA, false);
+        assert!(h.state.menus.is_empty());
+        let keys = heard(&mut h, &mut c);
+        assert!(
+            !keys.iter().any(|&(k, _)| k == KEY_A),
+            "nothing typed: {keys:?}"
+        );
+    }
+
+    #[test]
+    fn super_with_another_key_opens_no_start_menu() {
+        let (mut h, _c, _) = focused_client();
+        h.key(KEY_LEFTMETA, true);
+        h.key(KEY_A, true);
+        h.key(KEY_A, false);
+        h.key(KEY_LEFTMETA, false);
+        assert!(h.state.menus.is_empty());
+    }
 }
