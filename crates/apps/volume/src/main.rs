@@ -801,7 +801,7 @@ impl App for Volume {
 }
 
 fn main() {
-    reprisebus::journal::init_logger("error");
+    reprisebus::journal::init_logger(reprisebus::journal::PROGRAM_FILTER);
     let view = if std::env::args().skip(1).any(|a| a == "--record") {
         View::Recording
     } else {

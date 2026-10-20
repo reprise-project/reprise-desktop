@@ -157,6 +157,9 @@ pub(crate) struct Feed<T> {
     tx: Sender<T>,
     waker: repriseapp::Waker,
     last: Option<T>,
+    /// Unavailable since the last run that delivered; the reason is
+    /// logged once per outage, not on every retry.
+    down: bool,
 }
 
 impl<T: Clone + Default + PartialEq> Feed<T> {
@@ -172,6 +175,25 @@ impl<T: Clone + Default + PartialEq> Feed<T> {
         true
     }
 
+    /// [`Feed::unavailable`], logging `why` unless the outage was logged.
+    pub(crate) fn unavailable_because(&mut self, why: std::fmt::Arguments) -> Run {
+        if self.outage_starts() {
+            log::info!("{why}");
+        }
+        self.unavailable()
+    }
+
+    fn outage_starts(&mut self) -> bool {
+        !std::mem::replace(&mut self.down, true)
+    }
+
+    /// Note how a run ended: one that delivered ends the outage.
+    fn ended(&mut self, delivered: bool) {
+        if delivered {
+            self.down = false;
+        }
+    }
+
     pub(crate) fn unavailable(&mut self) -> Run {
         if self.send(T::default()) {
             Run::Ended { delivered: false }
@@ -185,8 +207,8 @@ async fn run(feed: &mut Feed<Power>) -> Run {
     let conn = match Connection::system().await {
         Ok(c) => c,
         Err(e) => {
-            log::info!("no system bus ({e}); no battery to show");
-            return feed.unavailable();
+            return feed
+                .unavailable_because(format_args!("no system bus ({e}); no battery to show"));
         }
     };
     let Ok(upower) = proxy(&conn, PATH.into(), NAME).await else {
@@ -201,8 +223,8 @@ async fn run(feed: &mut Feed<Power>) -> Run {
             Err(_) => return feed.unavailable(),
         },
         Err(e) => {
-            log::info!("UPower unavailable ({e}); no battery to show");
-            return feed.unavailable();
+            return feed
+                .unavailable_because(format_args!("UPower unavailable ({e}); no battery to show"));
         }
     };
     // Only UPower's own broadcasts get through (see `reprisebus::signals`).
@@ -305,9 +327,11 @@ pub(crate) fn follow<T: Clone + Default + PartialEq + Send + 'static>(
                 tx,
                 waker,
                 last: None,
+                down: false,
             };
             let mut pause = RETRY_MIN;
             while let Run::Ended { delivered } = run(&mut feed) {
+                feed.ended(delivered);
                 pause = next_pause(pause, delivered);
                 std::thread::sleep(pause);
             }
@@ -435,6 +459,7 @@ mod tests {
             tx,
             waker: repriseapp::Waker::noop(),
             last: None,
+            down: false,
         };
         let on_battery = Power {
             on_battery: true,
@@ -449,6 +474,22 @@ mod tests {
         );
         drop(rx);
         assert!(!feed.send(Power::default()), "the receiver is gone");
+    }
+
+    #[test]
+    fn an_outage_is_logged_once_until_a_run_delivers() {
+        let (tx, _rx) = channel::<Power>();
+        let mut feed = Feed {
+            tx,
+            waker: repriseapp::Waker::noop(),
+            last: None,
+            down: false,
+        };
+        assert!(feed.outage_starts());
+        feed.ended(false);
+        assert!(!feed.outage_starts(), "a retry that fails again is quiet");
+        feed.ended(true);
+        assert!(feed.outage_starts(), "a new outage after a live run");
     }
 
     #[test]

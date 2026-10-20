@@ -3470,7 +3470,7 @@ impl SettingsApp {
 }
 
 fn main() {
-    reprisebus::journal::init_logger("error");
+    reprisebus::journal::init_logger(reprisebus::journal::PROGRAM_FILTER);
     let page = page_arg(std::env::args().skip(1));
     let action = page.as_ref().map(|(p, focus)| {
         let params = std::iter::once(p.slug()).chain(focus.clone()).collect();

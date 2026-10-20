@@ -414,7 +414,7 @@ impl UpdatesApp {
 }
 
 fn main() {
-    reprisebus::journal::init_logger("error");
+    reprisebus::journal::init_logger(reprisebus::journal::PROGRAM_FILTER);
     let tray_only = std::env::args().any(|a| a == "--tray");
     repriseapp::run(Box::new(UpdatesApp::new(tray_only)));
 }
