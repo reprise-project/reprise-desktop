@@ -3,6 +3,8 @@
 //! the new-tab split button. The pointer on them, and the new-tab menu.
 
 use repriseapp::{BTN_LEFT, BTN_RIGHT, Ctx, KeyInput, PointerInput, Reply};
+use reprisekit::access::accesskit::NodeId;
+use reprisekit::access::{ROOT, Tree};
 use reprisekit::controls::hosted::Chain;
 use reprisekit::controls::menu::{MenuAction, MenuCtx, MenuKey, MenuTree, PopupMenu};
 use reprisekit::controls::rebar;
@@ -74,6 +76,13 @@ pub struct Popup {
     tree: MenuTree,
     chain: PopupMenu,
     choices: Vec<Option<Choice>>,
+}
+
+impl Popup {
+    /// The menu's nodes under the window; returns the node to focus.
+    pub fn access(&self, tree: &mut Tree) -> NodeId {
+        self.chain.access(tree, ROOT, "newtab")
+    }
 }
 
 impl Chain for Popup {
