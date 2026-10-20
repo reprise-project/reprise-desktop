@@ -573,6 +573,29 @@ pub fn label_rect(sv: &ShellView, lay: &Layout, i: usize, text: &TextRenderer, p
     }
 }
 
+/// The byte of the rename text under `(x, y)`, for a press in the rename box; `None` while no
+/// entry is being renamed.
+pub fn edit_index_at(
+    sv: &ShellView,
+    lay: &Layout,
+    x: i32,
+    y: i32,
+    text: &TextRenderer,
+    px: u32,
+) -> Option<usize> {
+    let (i, ed) = sv.edit.as_ref()?;
+    let text_x = match sv.mode {
+        Mode::Icons => {
+            let cell = *lay.cells.get(*i)?;
+            let el = iconview::edit_layout_at(1, px, text, ed, cell.width);
+            return Some(el.index_at(text, px, x - cell.x, y - cell.y));
+        }
+        Mode::Details => label_rect(sv, lay, *i, text, px).x + listview::EDIT_PAD_L,
+        _ => label_rect(sv, lay, *i, text, px).x - listview::EDIT_BACK + listview::EDIT_PAD_L,
+    };
+    Some(crate::textedit::index_at(text, &ed.text, x - text_x, px))
+}
+
 /// `sv`'s layout in `r`. Measures nothing: every mode's cells are a fixed
 /// pitch at the text size, and label rects come from `label_rect` on demand.
 /// List: a sunken field (`FIELD_PAD` inset, matching the frame `draw` puts
@@ -2314,6 +2337,67 @@ pub(crate) mod tests {
             "border at row 33"
         );
         assert_ne!(c.get(bx, by + 34), cs.window_frame.argb(), "34 px tall");
+    }
+
+    #[test]
+    fn a_press_in_the_rename_box_finds_the_byte_under_it_in_every_mode() {
+        let (text, px) = rend();
+        for mode in [
+            Mode::List,
+            Mode::Details,
+            Mode::Icons,
+            Mode::Tiles,
+            Mode::Thumbnails,
+        ] {
+            let mut sv = view(3);
+            sv.mode = mode;
+            sv.edit = Some((1, TextEdit::new("item1", true)));
+            let lay = layout(&sv, Rect::new(0, 0, 400, 300), &ControlMetrics::CLASSIC);
+            let (start, y) = match mode {
+                Mode::Icons => {
+                    let cell = lay.cells[1];
+                    let el = iconview::edit_layout_at(
+                        1,
+                        px,
+                        &text,
+                        &sv.edit.as_ref().unwrap().1,
+                        cell.width,
+                    );
+                    (cell.x + el.lines[0].x, cell.y + el.lines[0].y + 2)
+                }
+                Mode::Details => {
+                    let b = label_rect(&sv, &lay, 1, &text, px);
+                    (b.x + listview::EDIT_PAD_L, b.y + b.height / 2)
+                }
+                _ => {
+                    let l = label_rect(&sv, &lay, 1, &text, px);
+                    (
+                        l.x - listview::EDIT_BACK + listview::EDIT_PAD_L,
+                        l.y + l.height / 2,
+                    )
+                }
+            };
+            let at = |x| edit_index_at(&sv, &lay, x, y, &text, px);
+            assert_eq!(at(start), Some(0), "{mode:?}: the text's left edge");
+            let it = text.measure("it", false, px);
+            assert_eq!(at(start + it), Some(2), "{mode:?}: after \"it\"");
+            assert_eq!(at(start + 200), Some(5), "{mode:?}: past the end");
+        }
+        assert_eq!(
+            edit_index_at(
+                &view(3),
+                &layout(
+                    &view(3),
+                    Rect::new(0, 0, 400, 300),
+                    &ControlMetrics::CLASSIC
+                ),
+                0,
+                0,
+                &text,
+                px
+            ),
+            None
+        );
     }
 
     /// Renaming in Details is the transient `ListView`'s own box, placed by `listview::ListView::edit_rect`.
