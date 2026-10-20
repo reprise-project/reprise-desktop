@@ -63,6 +63,7 @@ fn note(title: &str, text: String, icon: Option<Canvas>) -> MsgBox {
             default: 0,
             min_text_h: None,
             min_w: 0,
+            max_w: repriseapp::dialog_max_w(),
         },
     )
 }
@@ -408,6 +409,7 @@ impl PrintersApp {
                 default: 0,
                 min_text_h: None,
                 min_w: 0,
+                max_w: repriseapp::dialog_max_w(),
             },
         );
         self.confirm = Some((printer, b));

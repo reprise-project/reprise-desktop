@@ -64,18 +64,34 @@ pub struct Fields {
     /// The narrowest client width as drawn, for a caption title wider than the text
     /// and buttons ([`crate::look::caption_fit`]); 0 sizes the box to them.
     pub min_w: i32,
+    /// The widest client width as drawn (what the screen leaves): a line wider wraps at its
+    /// spaces. 0 keeps every line whole.
+    pub max_w: i32,
 }
 
-/// The height the text block takes: one row a line, never less than
-/// `min_text_h`.
-fn block_h(f: &Fields) -> i32 {
-    let n = f.text.split('\n').count() as i32;
-    (n * LINE_H).max(f.min_text_h.unwrap_or(0))
+/// The rows the text takes: each `\n` line, wrapped where `max_w` leaves it too little room.
+fn lines(f: &Fields, text: &TextRenderer, px: u32, u: TextUnits) -> Vec<String> {
+    let (tx, step) = text_x(f);
+    let room = f.max_w - u.len(tx) - step - u.len(MARGIN_X);
+    let mut out = Vec::new();
+    for line in f.text.split('\n') {
+        if f.max_w > 0 && text.measure(line, false, px) > room {
+            out.extend(crate::text::wrap(text, line, room.max(1), px));
+        } else {
+            out.push(line.to_string());
+        }
+    }
+    out
 }
 
-/// How much taller than a one-line box this text makes it.
-fn extra_h(f: &Fields) -> i32 {
-    (block_h(f) - LINE_H).max(0)
+/// The height `n` rows of text take: one row a line, never less than `min_text_h`.
+fn block_h(f: &Fields, n: usize) -> i32 {
+    (n as i32 * LINE_H).max(f.min_text_h.unwrap_or(0))
+}
+
+/// How much taller than a one-line box `n` rows make it.
+fn extra_h(f: &Fields, n: usize) -> i32 {
+    (block_h(f, n) - LINE_H).max(0)
 }
 
 /// The text column's left edge as laid out at 100%, and how many px past it the text starts at
@@ -106,10 +122,10 @@ fn button_row_w(n: i32) -> i32 {
 
 /// The client size this box needs at 100%, for text set at `px` that grows by `u`: wide enough
 /// for its widest line, its button row and `min_w`, and tall enough for every line of text (one
-/// line keeps `CLIENT_H`; each embedded `\n` adds one `LINE_H`, and a `min_text_h` box keeps its
-/// reserved rows whatever the text is). The window is `u.size` of it.
+/// line keeps `CLIENT_H`; each embedded `\n` or wrap adds one `LINE_H`, and a `min_text_h` box
+/// keeps its reserved rows whatever the text is). The window is `u.size` of it.
 pub fn client(f: &Fields, text: &TextRenderer, px: u32, u: TextUnits) -> (i32, i32) {
-    let lines: Vec<&str> = f.text.split('\n').collect();
+    let lines = lines(f, text, px, u);
     let widest = lines
         .iter()
         .map(|l| text.measure(l, false, px))
@@ -121,7 +137,7 @@ pub fn client(f: &Fields, text: &TextRenderer, px: u32, u: TextUnits) -> (i32, i
     let row = MARGIN_X * 2 + button_row_w(n);
     (
         msg.max(row).max(MIN_W).max(u.design(f.min_w)),
-        CLIENT_H + extra_h(f),
+        CLIENT_H + extra_h(f, lines.len()),
     )
 }
 
@@ -130,8 +146,8 @@ pub fn client(f: &Fields, text: &TextRenderer, px: u32, u: TextUnits) -> (i32, i
 pub fn form(f: &Fields, text: &TextRenderer, px: u32, u: TextUnits) -> Form {
     let (w, _) = client(f, text, px, u);
     let (tx, step) = text_x(f);
-    let lines: Vec<&str> = f.text.split('\n').collect();
-    let extra = extra_h(f);
+    let lines = lines(f, text, px, u);
+    let extra = extra_h(f, lines.len());
     let mut items = Vec::new();
     if let Some(icon) = &f.icon {
         items.push(Item::picture("icon", icon_rect(u, px), Some(icon.clone())));
@@ -142,8 +158,8 @@ pub fn form(f: &Fields, text: &TextRenderer, px: u32, u: TextUnits) -> Form {
     let text_item = if lines.len() > 1 || f.min_text_h.is_some() {
         Item::lines(
             "text",
-            Rect::new(tx, TEXT_Y, w - tx - MARGIN_X, block_h(f)),
-            &lines,
+            Rect::new(tx, TEXT_Y, w - tx - MARGIN_X, block_h(f, lines.len())),
+            &lines.iter().map(String::as_str).collect::<Vec<_>>(),
         )
     } else {
         Item::label(
@@ -198,6 +214,7 @@ mod tests {
             default: 0,
             min_text_h: None,
             min_w: 0,
+            max_w: 0,
         }
     }
 
@@ -307,6 +324,7 @@ mod tests {
             default: 0,
             min_text_h: None,
             min_w: 0,
+            max_w: 0,
         };
         let f = form(&prompt, &text, px, TextUnits::ONE);
         let r = |i: usize| f.item(button_id(i)).expect("the button exists").rect;
@@ -333,6 +351,7 @@ mod tests {
             default: 1,
             min_text_h: None,
             min_w: 0,
+            max_w: 0,
         };
         let mut f = form(&replace, &text, px, TextUnits::ONE);
         assert_eq!(f.focus().map(|i| f.items[i].id), Some(button_id(1)));
@@ -436,6 +455,38 @@ mod tests {
                 "{pct}%: OK inside {w}x{h}"
             );
             assert_eq!(ok.height, u.len(64 + BUTTON_H) - u.len(64));
+        }
+    }
+
+    #[test]
+    fn a_line_wider_than_the_screen_allows_wraps_and_ok_stays_centred() {
+        const SCREEN_W: i32 = 400;
+        let text = TextRenderer::load(&FontConfig::default());
+        for pct in [100, 200] {
+            let theme = Theme::default().with_form_text(pct);
+            let (u, px) = (theme.text, theme.fonts.size_px);
+            let mut f = notfound();
+            f.text = format!("Cannot find \"{}\"", ["needle"; 12].join(" "));
+            let one_h = client(&notfound(), &text, px, u).1;
+            f.max_w = SCREEN_W;
+            let (w, h) = client(&f, &text, px, u);
+            assert!(u.size((w, h)).0 <= SCREEN_W, "{pct}%: {w} fits the screen");
+            let form = form(&f, &text, px, u);
+            form.drawn_with(&theme.paint());
+            let Control::Lines(lines) = &form.item("text").unwrap().control else {
+                panic!("{pct}%: a wrapped message draws as lines");
+            };
+            assert!(lines.len() > 1, "{pct}%: the line wraps");
+            assert_eq!(h, one_h + (lines.len() as i32 - 1) * LINE_H);
+            let row = form.rect("text").unwrap();
+            for l in lines {
+                assert!(
+                    text.measure(l, false, px) <= row.width,
+                    "{pct}%: {l:?} fits"
+                );
+            }
+            let ok = form.item(OK).unwrap().rect;
+            assert_eq!(ok.x, (w - ok.width) / 2, "{pct}%: OK centres in the box");
         }
     }
 
