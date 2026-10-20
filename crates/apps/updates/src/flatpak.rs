@@ -156,30 +156,112 @@ pub fn updates() -> Result<Vec<Update>, String> {
     Ok(out)
 }
 
-/// The ref a `flatpak update` output line says it is starting on, as
-/// `Updating app/org.example.App/x86_64/stable` (or `Installing` for a
-/// ref the update pulls in).
-fn started(line: &str) -> Option<&str> {
-    let rest = line
-        .strip_prefix("Updating ")
-        .or_else(|| line.strip_prefix("Installing "))?;
-    let r = rest.split_whitespace().next()?;
-    r.contains('/').then_some(r)
+/// Follows `flatpak update -y` output: the numbered operation table, then one
+/// `Updating 2/3… ███▌ 41%  3.9 MB/s` line per operation step. (`--noninteractive`
+/// picks Flatpak's quiet transaction, which prints no percentages.)
+#[derive(Default)]
+struct Follow {
+    /// The table's operations in order: id and download size in bytes (0 when not shown).
+    ops: Vec<(String, u64)>,
+    last: Option<(usize, u32)>,
 }
 
-/// Update `refs` in `install`, calling `step` with each ref the command
-/// starts on. Any related ref they need (a newer runtime, an extension)
-/// comes along.
+impl Follow {
+    /// The operation `line` reports on and the transaction's fraction done, when it moved.
+    /// Operations weigh by download size where the table gave every one a size.
+    fn line(&mut self, line: &str) -> Option<(&str, f64)> {
+        let line = line.trim();
+        if let Some(op) = table_row(line) {
+            self.ops.push(op);
+            return None;
+        }
+        let (k, n, percent) = op_progress(line)?;
+        if self.last == Some((k, percent)) {
+            return None;
+        }
+        self.last = Some((k, percent));
+        let here = percent.min(100) as f64 / 100.0;
+        let sized = self.ops.len() >= n && self.ops.iter().all(|o| o.1 > 0);
+        let fraction = if sized {
+            let total: u64 = self.ops.iter().map(|o| o.1).sum();
+            let before: u64 = self.ops[..k - 1].iter().map(|o| o.1).sum();
+            (before as f64 + here * self.ops[k - 1].1 as f64) / total as f64
+        } else {
+            ((k - 1) as f64 + here) / n as f64
+        };
+        let id = self.ops.get(k - 1).map_or("", |o| o.0.as_str());
+        Some((id, fraction))
+    }
+}
+
+/// A row of the operation table, ` 1.\t   \torg.example.App\tstable\tu\tflathub\t< 1.2 MB`,
+/// as its id and download size.
+fn table_row(line: &str) -> Option<(String, u64)> {
+    let (num, rest) = line.split_once('.')?;
+    num.parse::<usize>().ok()?;
+    if !rest.starts_with(char::is_whitespace) {
+        return None;
+    }
+    let words: Vec<&str> = rest.split_whitespace().collect();
+    let id = words.first()?;
+    let size = words
+        .windows(2)
+        .rev()
+        .find_map(|w| Some(w[0].parse::<f64>().ok()? * unit(w[1])? as f64))
+        .unwrap_or(0.0);
+    Some((id.to_string(), size as u64))
+}
+
+/// GLib's size units, as `g_format_size` writes them.
+fn unit(s: &str) -> Option<u64> {
+    Some(match s {
+        "byte" | "bytes" => 1,
+        "kB" => 1_000,
+        "MB" => 1_000_000,
+        "GB" => 1_000_000_000,
+        "TB" => 1_000_000_000_000,
+        _ => return None,
+    })
+}
+
+/// An operation's progress line as its number, the operation count and its percentage:
+/// `Updating 2/3… 41%`, or `Installing… 7%` when there is one operation. The first line
+/// of an operation has no percentage and counts as 0%.
+fn op_progress(line: &str) -> Option<(usize, usize, u32)> {
+    let rest = ["Updating", "Installing", "Uninstalling"]
+        .iter()
+        .find_map(|w| line.strip_prefix(w))?;
+    let (k, n) = if rest.starts_with('…') || rest.starts_with("...") {
+        (1, 1)
+    } else {
+        let count = rest.strip_prefix(' ')?.split(['…', '.', ' ']).next()?;
+        let (k, n) = count.split_once('/')?;
+        (k.parse().ok()?, n.parse().ok()?)
+    };
+    if k == 0 || k > n {
+        return None;
+    }
+    let percent = rest
+        .split_whitespace()
+        .rev()
+        .find_map(|w| w.strip_suffix('%')?.parse().ok())
+        .unwrap_or(0);
+    Some((k, n, percent))
+}
+
+/// Update `refs` in `install`, calling `step` with the id of the operation running and the
+/// fraction of the whole update done. Any related ref they need (a newer runtime, an
+/// extension) comes along.
 pub fn install(
     install: Install,
     refs: &[String],
-    step: &mut dyn FnMut(&str),
+    step: &mut dyn FnMut(&str, f64),
 ) -> Result<(), String> {
     if refs.is_empty() {
         return Ok(());
     }
     let mut child = Command::new(FLATPAK)
-        .args(["update", flag(install), "--noninteractive", "-y"])
+        .args(["update", flag(install), "-y"])
         .args(refs)
         .env("LC_ALL", "C")
         .stdin(Stdio::null())
@@ -197,9 +279,10 @@ pub fn install(
         })
     });
     if let Some(out) = child.stdout.take() {
+        let mut follow = Follow::default();
         for line in BufReader::new(out).lines().map_while(Result::ok) {
-            if let Some(r) = started(line.trim()) {
-                step(r);
+            if let Some((id, fraction)) = follow.line(&line) {
+                step(id, fraction);
             }
         }
     }
@@ -397,18 +480,56 @@ mod tests {
         assert_eq!(u[0].summary, "from test");
     }
 
+    /// `flatpak update -y` output, piped, for two operations.
+    const UPDATE_OUT: &str = "Looking for updates…\n\n\n \
+         1.\t   \torg.example.Platform\tstable\tu\ttest\t< 300.0 MB\n \
+         2.\t   \torg.example.Editor\tstable\tu\ttest\t< 100.0 MB (partial)\n\n\n\
+        Updating 1/2…\n\
+        Updating 1/2… 0%  0 bytes/s\n\
+        Updating 1/2… ████▌ 50%  3.9 MB/s  00:30\n\
+        Updating 1/2… ████▌ 50%  4.1 MB/s  00:29\n\
+        Updating 2/2…\n\
+        Updating 2/2… ██████████ 100%  4.0 MB/s\n\
+        Changes complete.\n";
+
+    fn followed(out: &str) -> Vec<(String, f64)> {
+        let mut f = Follow::default();
+        out.lines()
+            .filter_map(|l| f.line(l).map(|(id, x)| (id.to_string(), x)))
+            .collect()
+    }
+
     #[test]
-    fn update_lines_name_the_ref_they_start() {
-        assert_eq!(
-            started("Updating app/org.example.Editor/x86_64/stable"),
-            Some("app/org.example.Editor/x86_64/stable")
-        );
-        assert_eq!(
-            started("Installing runtime/org.example.Ext/x86_64/1"),
-            Some("runtime/org.example.Ext/x86_64/1")
-        );
-        assert_eq!(started("Updating appstream data"), None);
-        assert_eq!(started("Nothing to do."), None);
+    fn update_progress_runs_over_the_whole_transaction_by_download_size() {
+        let steps = followed(UPDATE_OUT);
+        let want = [
+            ("org.example.Platform", 0.0),
+            ("org.example.Platform", 0.375),
+            ("org.example.Editor", 0.75),
+            ("org.example.Editor", 1.0),
+        ];
+        assert_eq!(steps.len(), want.len(), "{steps:?}");
+        for ((id, f), (wid, wf)) in steps.iter().zip(want) {
+            assert_eq!(id, wid);
+            assert!((f - wf).abs() < 1e-9, "{id} at {f}, expected {wf}");
+        }
+    }
+
+    #[test]
+    fn operations_without_sizes_weigh_the_same() {
+        let out = " 1.\t   \torg.example.Tool\tmaster\tu\ttest\n \
+             2.\t   \torg.example.Ext\tmaster\ti\ttest\n\
+            Installing 2/2… 40%\n";
+        assert_eq!(followed(out), [("org.example.Ext".to_string(), 0.7)]);
+    }
+
+    #[test]
+    fn a_lone_operation_reads_its_own_percentage() {
+        assert_eq!(op_progress("Updating… ██ 12%  1.0 MB/s"), Some((1, 1, 12)));
+        assert_eq!(op_progress("Installing 3/4…"), Some((3, 4, 0)));
+        assert_eq!(op_progress("Updating to rebased version"), None);
+        assert_eq!(op_progress("Updating appstream data"), None);
+        assert_eq!(op_progress("Nothing to do."), None);
     }
 
     /// As Flatpak marks a change: makes `.changed`, or sets its times by path (`touch -c` does
