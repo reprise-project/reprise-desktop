@@ -573,6 +573,83 @@ mod tests {
         assert!(ink(&c, theme.colors.button_shadow.argb()));
     }
 
+    /// The areas are 1024x768 and 800x600 outputs over a 40 px taskbar.
+    #[test]
+    fn a_sheet_taller_than_its_output_keeps_to_it_and_scrolls_its_page() {
+        use crate::dialog::DialogHit;
+        use reprisekit::interface::Interface;
+        const AREA: (i32, i32) = (800, 560);
+        let text = TextRenderer::load(&FontConfig::default());
+        for look in [Interface::Classic, Interface::Blue, Interface::Glass] {
+            let one = reprisekit::interfaces::theme_for(look);
+            let big = one.with_text_size(200);
+            let px = big.fonts.size_px;
+            for area in [(1024, 728), AREA] {
+                let mut d = dialog(sheet(), (0, 0), "user-trash-full");
+                let grown = DialogLayout::compute(&big, &text, &{
+                    let mut g = d.clone();
+                    g.fit(&big, &text);
+                    g
+                });
+                assert!(grown.size.1 > area.1, "{look:?}: taller than {area:?}");
+                d.fit_in(&big, &text, area);
+                let l = DialogLayout::compute(&big, &text, &d);
+                assert!(
+                    l.size.0 <= area.0 && l.size.1 <= area.1,
+                    "{look:?}: {:?} inside {area:?}",
+                    l.size
+                );
+            }
+            let mut d = dialog(sheet(), (0, 0), "user-trash-full");
+            d.fit_in(&big, &text, AREA);
+            let l = DialogLayout::compute(&big, &text, &d);
+            let sl = d.form().unwrap().sheet().unwrap().layout(&text, px);
+            let bar = sl.bar.expect("the page scrolls");
+            for b in [sl.ok, sl.cancel, sl.apply] {
+                assert!(
+                    b.y >= bar.bottom() && b.bottom() < l.size.1,
+                    "{look:?}: {b:?}"
+                );
+            }
+            let confirm = |d: &Dialog| d.form().unwrap().pages()[0].rect("confirm").unwrap();
+            let before = confirm(&d);
+            let (x, y) = (bar.x + bar.width / 2, bar.bottom() - 2);
+            let hit = l.hit(&d, x, y, &text, px);
+            assert!(
+                matches!(hit, Some(DialogHit::PageBar(_))),
+                "{look:?}: {hit:?}"
+            );
+            assert_eq!(d.click(hit), Outcome::Redraw);
+            assert!(confirm(&d).y < before.y, "{look:?}: the page steps down");
+            assert!(d.ticking() && d.holding_page_bar(), "{look:?}");
+            assert_eq!(d.release(hit), Outcome::Redraw);
+            assert!(!d.ticking() && !d.holding_page_bar(), "{look:?}");
+            let stepped = confirm(&d);
+            assert_eq!(
+                d.wheel(None, 1),
+                Outcome::Redraw,
+                "{look:?}: the wheel scrolls"
+            );
+            assert!(confirm(&d).y < stepped.y, "{look:?}");
+
+            d.fit_in(&one, &text, AREA);
+            let mut whole = dialog(sheet(), (0, 0), "user-trash-full");
+            whole.fit_in(&one, &text, AREA);
+            assert_eq!(
+                DialogLayout::compute(&one, &text, &d).size,
+                DialogLayout::compute(&one, &text, &whole).size,
+                "{look:?}: whole at 100%"
+            );
+            let sl = d
+                .form()
+                .unwrap()
+                .sheet()
+                .unwrap()
+                .layout(&text, one.fonts.size_px);
+            assert_eq!(sl.bar, None, "{look:?}");
+        }
+    }
+
     /// Four drives' tabs wrap onto a second row: the sheet grows 18 px, the page
     /// and every control sit 18 px lower, and a rebuild keeps them there.
     #[test]
