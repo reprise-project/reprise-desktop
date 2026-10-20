@@ -299,12 +299,16 @@ impl Explorer {
         let lay = self.layout(ctx);
         let sl = self.view_layout(lay.view, ctx);
         let flat = matches!(self.sv.mode, Mode::List | Mode::Details);
-        let grown_rows = flat && sl.controls.text.len(shellview::ICON_PX) >= 32;
-        let (px, icon_of): (i32, fn(&shellview::Entry) -> _) = match self.sv.mode {
-            Mode::Tiles => (48, |e| e.icon48.clone()),
-            Mode::Thumbnails | Mode::Icons => (32, |e| e.icon32.clone()),
-            Mode::List | Mode::Details if grown_rows => (32, |e| e.icon32.clone()),
-            Mode::List | Mode::Details => (16, |e| e.icon.clone()),
+        let px = match self.sv.mode {
+            Mode::Tiles => 48,
+            Mode::Thumbnails | Mode::Icons => 32,
+            Mode::List | Mode::Details => shellview::list_icon_px(sl.controls.text),
+        };
+        let mode = self.sv.mode;
+        let icon_of = |e: &shellview::Entry| match mode {
+            Mode::Tiles => e.icon48.clone(),
+            Mode::Thumbnails | Mode::Icons => e.icon32.clone(),
+            Mode::List | Mode::Details => shellview::list_icon(e, px).cloned(),
         };
         // A List or Details image holds only the rows on screen, so a large selection fetches no icons it won't draw.
         let shown: Vec<(usize, (i32, i32))> = d
