@@ -399,6 +399,56 @@ mod tests {
     }
 
     #[test]
+    fn side_and_bottom_tabs_draw_their_own_edges() {
+        let cs = ColorScheme::default();
+        let flat = |r: &str| r.split_whitespace().collect::<Vec<_>>().join(" ");
+        let (hi, sh, dk) = ("@reprise_hilight", "@reprise_shadow", "@reprise_dk_shadow");
+        for css in [sheet(&cs), gtk4_bevels(&cs)] {
+            for (sel, edge) in [
+                (
+                    "notebook > header.bottom > tabs > tab:checked",
+                    format!("inset 1px 0 {hi}, inset -2px -2px {sh}, inset -1px -1px {dk}"),
+                ),
+                (
+                    "notebook > header.left > tabs > tab:checked",
+                    format!("inset 1px 1px {hi}, inset 0 -2px {sh}, inset 0 -1px {dk}"),
+                ),
+                (
+                    "notebook > header.right > tabs > tab:checked",
+                    format!("inset 0 1px {hi}, inset -2px -2px {sh}, inset -1px -1px {dk}"),
+                ),
+                (
+                    "notebook > stack:not(:only-child)",
+                    format!("inset -2px -2px {sh}, inset 1px 1px {hi}, inset -1px -1px {dk}"),
+                ),
+                (
+                    "notebook > header.top + stack",
+                    format!("inset -2px -2px {sh}, inset 1px 0 {hi}, inset -1px -1px {dk}"),
+                ),
+                (
+                    "notebook > header.left + stack",
+                    format!("inset -2px -2px {sh}, inset 0 1px {hi}, inset -1px -1px {dk}"),
+                ),
+                ("notebook > header.left {", format!("inset -1px 0 {hi}")),
+            ] {
+                assert!(
+                    flat(rule(&css, sel)).contains(&format!("box-shadow: {edge};")),
+                    "{sel}: {edge}"
+                );
+            }
+            assert!(
+                flat(&css).contains(&format!(
+                    "margin: 0 0 2px 0; padding: 2px 6px 1px 6px; \
+                     box-shadow: inset 0 2px {dk}, inset 0 1px {sh},"
+                )),
+                "an unpicked bottom tab carries the page's bottom edge"
+            );
+            assert!(rule(&css, "notebook > header.bottom {").contains("margin-top: -2px;"));
+            assert!(rule(&css, "notebook > header.right {").contains("margin-left: -2px;"));
+        }
+    }
+
+    #[test]
     fn a_gtk4_menu_popover_draws_no_arrow_over_its_raised_box() {
         let gtk4 = gtk4_bevels(&ColorScheme::default());
         let arrow = rule(
