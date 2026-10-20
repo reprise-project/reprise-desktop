@@ -650,6 +650,7 @@ impl Explorer {
             || self.asking.is_some()
             || !self.acting.is_empty()
             || !self.send.sends.is_empty()
+            || !self.browse_left.is_empty()
     }
 
     /// File > Close or the close box. With work in flight the window hides and [`Explorer::wake`]
