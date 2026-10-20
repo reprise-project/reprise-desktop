@@ -1418,7 +1418,11 @@ impl App for Lazy {
             Event::Wake => ex.wake(ctx),
             Event::Blink => {
                 ex.flush_settings();
-                Reply::redraw()
+                // The address field's caret is the one thing in the window that blinks.
+                Reply {
+                    redraw: ex.focus == Focus::Address,
+                    ..Reply::none()
+                }
             }
             Event::Tick => {
                 let field = ex.address_tick(ctx);
