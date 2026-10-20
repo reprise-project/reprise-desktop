@@ -252,7 +252,9 @@ the Super tap, Super+Shift+Esc and the VT switch keys can be rebound.
   and rename box, and every spin box.
   In the launcher and the Start menu's search those keys open a lit row's
   menu first. Paste greys while the clipboard holds no text, and a password
-  field keeps Cut and Copy greyed.
+  field keeps Cut and Copy greyed. In a program's window the menu opens on a
+  popup of its own, so it shows whole past a small dialog's edge and turns
+  up or left at the screen's edge.
 - **Screenshots.** PrtSc for the screen, Alt+PrtSc for the window,
   Ctrl+Alt+PrtSc for its content without the frame, Shift+PrtSc for a region
   or a clicked window. Every shot goes to the clipboard and, if you like, to
