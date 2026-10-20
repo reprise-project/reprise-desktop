@@ -250,6 +250,8 @@ pub struct Explorer {
     /// The status bar's text for a selected shortcut, read late or still being read.
     pub(crate) link_status: Option<chrome::LinkStatus>,
     pub(crate) put: Option<fileops::Put>,
+    /// Puts that gave up with their stuck call still out ([`reprisefs::jobs::PutJob::settled`]).
+    pub(crate) unsettled: Vec<reprisefs::jobs::PutJob>,
     pub(crate) put_queue: std::collections::VecDeque<fileops::PendingPut>,
     /// Batches being checked on a listing thread ([`fileops::Checked`]: a folder merge walks the
     /// folder), oldest first.
@@ -447,6 +449,7 @@ impl Explorer {
             drop_facts: Vec::new(),
             link_status: None,
             put: None,
+            unsettled: Vec::new(),
             put_queue: std::collections::VecDeque::new(),
             clashing: std::collections::VecDeque::new(),
             removing: None,

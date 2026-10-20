@@ -2444,3 +2444,49 @@ fn a_skipped_item_takes_its_folder_flag_with_it() {
         (Path::new("/srv/b.txt"), false)
     );
 }
+
+#[test]
+fn a_close_after_a_put_gave_up_waits_for_its_stuck_call_to_return() {
+    let mut ctx = test_ctx();
+    let t = tempfile::tempdir().expect("a temp dir");
+    let dest = t.path().join("dest");
+    std::fs::create_dir_all(&dest).expect("mkdir");
+    std::fs::write(t.path().join("a.txt"), "a").expect("write");
+    let mut ex = crate::tests::test_explorer(Place::Folder(dest.clone()), &mut ctx);
+    ex.action_deadline = std::time::Duration::from_millis(20);
+    let (release, gate) = std::sync::mpsc::channel::<()>();
+    let gate = std::sync::Mutex::new(gate);
+    let pending = PendingPut {
+        items: vec![PutItem {
+            src: t.path().join("a.txt"),
+            display_name: "a.txt".into(),
+            is_app: false,
+            op: DropOp::Shortcut,
+            shortcut: Box::new(move |_| {
+                let _ = gate.lock().expect("gate").recv();
+                Some(String::new())
+            }),
+            replace: None,
+        }],
+        folders: vec![false],
+        dir: dest.clone(),
+        select_landed: false,
+    };
+    let ops = pending.ops();
+    ex.start_put(pending, ops, &ctx);
+    crate::tests::wake_until(&mut ex, &mut ctx, |ex| ex.dialog.is_some());
+    match &ex.dialog {
+        Some(Dialog::Message { text, .. }) => {
+            assert!(text.ends_with("The location is not responding."), "{text}")
+        }
+        _ => panic!("the give-up box is up"),
+    }
+    ex.dialog = None;
+    assert!(!ex.close(&mut ctx).quit, "the stuck call is still out");
+    release.send(()).expect("release");
+    crate::tests::wake_until(&mut ex, &mut ctx, |ex| !ex.busy());
+    assert!(
+        ex.wake(&mut ctx).quit,
+        "the window quits once the call returns"
+    );
+}
