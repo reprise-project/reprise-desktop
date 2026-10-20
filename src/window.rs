@@ -2418,8 +2418,20 @@ impl State {
 
     pub fn cancel_interaction_for(&mut self, w: WindowId) {
         let involved = self.interaction.acts_on(w);
-        if let (true, Interaction::Resize { window, .. }) = (involved, self.interaction) {
+        if let (
+            true,
+            Interaction::Resize {
+                window, keyboard, ..
+            },
+        ) = (involved, self.interaction)
+        {
             self.set_resizing(window, false);
+            // Settled before the caller snaps, sizes or closes `w`, so the next size starts clean.
+            if keyboard.is_some() {
+                self.cancel_group_resize();
+            } else {
+                self.end_group_resize();
+            }
         }
         if involved {
             self.interaction = Interaction::Idle;

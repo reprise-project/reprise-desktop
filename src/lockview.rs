@@ -354,16 +354,19 @@ fn cancel_interaction(state: &mut State) {
         Interaction::BarMove { .. } | Interaction::BarWidth { .. } => state.cancel_bar_drag(),
         _ => {}
     }
-    match std::mem::take(&mut state.interaction) {
-        Interaction::Move { window, .. }
-        | Interaction::Resize { window, .. }
-        | Interaction::PressButton { window, .. } => state.cancel_interaction_for(window),
-        // A held taskbar button lets go without acting and stops drawing held.
-        was @ (Interaction::TaskPress { .. }
-        | Interaction::QuickPress { .. }
-        | Interaction::ArrowPress { .. }
-        | Interaction::Band { .. }) => state.cancel_taskbar_press(was),
-        _ => {}
+    if let Interaction::Move { window, .. }
+    | Interaction::Resize { window, .. }
+    | Interaction::PressButton { window, .. } = state.interaction
+    {
+        state.cancel_interaction_for(window);
+    }
+    // A held taskbar button lets go without acting and stops drawing held.
+    if let was @ (Interaction::TaskPress { .. }
+    | Interaction::QuickPress { .. }
+    | Interaction::ArrowPress { .. }
+    | Interaction::Band { .. }) = std::mem::take(&mut state.interaction)
+    {
+        state.cancel_taskbar_press(was);
     }
     state.interaction = Interaction::Idle;
 }
