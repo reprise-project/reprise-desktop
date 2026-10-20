@@ -789,25 +789,27 @@ thread_local! {
 /// host's theme (an owned child wears the dialog caption), no wider than the main window's
 /// output allows. 0 before the host has a theme.
 pub fn caption_fit(title: &str) -> i32 {
-    use reprisekit::frame::{Chrome, FrameGeometry};
-    CAPTION_FIT.with_borrow(|(theme, output_w)| {
+    CAPTION_FIT.with_borrow(|(theme, _)| {
         let Some(theme) = theme else {
             return 0;
         };
-        let fit = reprisekit::look::caption_fit(theme, title, Chrome::DIALOG);
-        match output_w {
-            Some(w) => {
-                let usable = FrameGeometry::client_size_for_total(
-                    &theme.metrics,
-                    *w,
-                    1,
-                    false,
-                    Chrome::DIALOG,
-                );
-                fit.min(usable.0)
-            }
-            None => fit,
+        let fit = reprisekit::look::caption_fit(theme, title, reprisekit::frame::Chrome::DIALOG);
+        match dialog_max_w() {
+            0 => fit,
+            max => fit.min(max),
         }
+    })
+}
+
+/// The widest client width a child dialog's frame leaves on the main window's output, for
+/// `msgbox::Fields::max_w`. 0 before the host knows its theme and output.
+pub fn dialog_max_w() -> i32 {
+    use reprisekit::frame::{Chrome, FrameGeometry};
+    CAPTION_FIT.with_borrow(|(theme, output_w)| match (theme, output_w) {
+        (Some(theme), Some(w)) => {
+            FrameGeometry::client_size_for_total(&theme.metrics, *w, 1, false, Chrome::DIALOG).0
+        }
+        _ => 0,
     })
 }
 

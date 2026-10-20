@@ -668,6 +668,7 @@ fn render_text_size(pct: u32) -> Canvas {
         default: 0,
         min_text_h: None,
         min_w: 0,
+        max_w: 0,
     };
     let page = || {
         form::Form::new(vec![
@@ -3153,6 +3154,7 @@ fn render(theme: &Theme, with_blue: bool) -> Canvas {
         default: 0,
         min_text_h: None,
         min_w: 0,
+        max_w: 0,
     };
     let (mw, mh) = msgbox::client(&notice, &text, px, theme.text);
     let mut msg_c = Canvas::new(mw as u32, mh as u32);

@@ -141,6 +141,7 @@ impl Pick {
             default,
             min_text_h: None,
             min_w: 0,
+            max_w: repriseapp::dialog_max_w(),
         };
         self.forms = ctx.forms();
         self.msg = Some((MsgBox::new(self.input.title.clone(), fields), replace));
