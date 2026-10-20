@@ -171,6 +171,20 @@ impl Wallpaper {
             && self.nodes.iter().all(|(_, n)| n.composing.is_none())
     }
 
+    /// Where the lock screen's backdrop on `out`, at the output's current `fit`, comes from.
+    fn lock_source(&self, out: &Output, fit: Fit) -> LockSource {
+        let node = self.nodes.iter().find(|(o, _)| o == out).map(|(_, n)| n);
+        match node {
+            Some(n) if n.fit == Some(fit) => match &n.texture {
+                Some(t) => LockSource::Shown(t.clone()),
+                None => LockSource::Here,
+            },
+            // A refit composes it on a job, whose landing repaints the lock screen.
+            _ if self.image.is_some() => LockSource::Composing,
+            _ => LockSource::Here,
+        }
+    }
+
     pub(crate) fn buffers(&self) -> (Vec<(Output, BufferId)>, Vec<BufferId>) {
         let shown = self
             .nodes
@@ -179,6 +193,23 @@ impl Wallpaper {
             .collect();
         (shown, self.fading.clone())
     }
+}
+
+enum LockSource {
+    Shown(GlesTexture),
+    Composing,
+    Here,
+}
+
+/// The lock screen's backdrop on an output.
+pub enum LockWall {
+    /// The staged texture the desktop shows on the output.
+    Shown(GlesTexture),
+    /// A job is composing the picture; until it lands the lock screen keeps what it shows.
+    Composing,
+    /// Composed on the loop: a built-in, or a picture with no texture to share.
+    Composed(Canvas),
+    None,
 }
 
 /// How long a slideshow picture takes to fade into the next, and the
@@ -812,6 +843,7 @@ impl State {
                 if fade_due {
                     state.start_fade();
                 }
+                crate::lockview::repaint_wall(state, &out);
                 state.redraw_all();
             })
         });
@@ -828,8 +860,30 @@ impl State {
         (node.composing.is_none() && node.fit.is_some()).then(|| node.texture.clone())?
     }
 
-    /// The wallpaper as `out` shows it, at `scale`: the lock screen's
-    /// backdrop. None without a wallpaper or before its decode lands.
+    /// The lock screen's backdrop on `out`: the desktop's texture once it is composed for the
+    /// output's current box and scale, else composed here.
+    pub fn lock_wallpaper(&self, out: &Output) -> LockWall {
+        let Some(w) = self.wallpaper.as_ref() else {
+            return LockWall::None;
+        };
+        let scale = self.draw_scale_at(Some(out));
+        let fit = Fit {
+            rect: self.layout_box(Some(out)),
+            scale,
+            position: self.config.wallpaper.position,
+            bg: self.config.theme.colors.background,
+        };
+        match w.lock_source(out, fit) {
+            LockSource::Shown(t) => LockWall::Shown(t),
+            LockSource::Composing => LockWall::Composing,
+            LockSource::Here => self
+                .wallpaper_canvas(out, scale)
+                .map_or(LockWall::None, LockWall::Composed),
+        }
+    }
+
+    /// The wallpaper as `out` shows it, at `scale`. None without a wallpaper or before its
+    /// decode lands.
     pub fn wallpaper_canvas(&self, out: &Output, scale: i32) -> Option<Canvas> {
         let b = self.layout_box(Some(out));
         let size = ((b.width * scale) as u32, (b.height * scale) as u32);
@@ -1034,16 +1088,6 @@ mod tests {
             texture: None,
         };
         let mut w = Wallpaper::new(Path::new("/srv/w/a.jpg"));
-        let output = |name: &str| {
-            let props = smithay::output::PhysicalProperties {
-                size: (0, 0).into(),
-                subpixel: smithay::output::Subpixel::Unknown,
-                make: "Reprise".into(),
-                model: "Test".into(),
-                serial_number: "0".into(),
-            };
-            Output::new(name.into(), props)
-        };
         w.nodes = vec![
             (output("A-1"), node(&mut scene)),
             (output("B-1"), node(&mut scene)),
@@ -1055,5 +1099,61 @@ mod tests {
         assert!(!w.fade_due(), "the second output still composing");
         w.nodes[1].1.shown(fit, None);
         assert!(w.fade_due(), "every output shows its picture");
+    }
+
+    #[test]
+    fn the_lock_screen_waits_for_the_file_picture_composing_for_its_output() {
+        let mut scene = crate::compositor::DeskScene::new();
+        let root = scene.root();
+        let fit = |width| Fit {
+            rect: Rect::new(0, 0, width, 1080),
+            scale: 1,
+            position: Position::Stretch,
+            bg: Color::rgb(0, 0, 0),
+        };
+        let out = output("A-1");
+        let mut w = Wallpaper::new(Path::new("/srv/w/a.jpg"));
+        assert!(
+            matches!(w.lock_source(&out, fit(1920)), LockSource::Here),
+            "before the decode lands the lock screen has nothing to wait for"
+        );
+        w.land_image(Loaded {
+            image: Canvas::new(4, 4),
+            cut: None,
+        });
+        assert!(
+            matches!(w.lock_source(&out, fit(1920)), LockSource::Composing),
+            "an output the refit has not reached waits for its job"
+        );
+        w.nodes = vec![(
+            out.clone(),
+            WallpaperNode {
+                buffer: scene.buffer_create(root),
+                fit: Some(fit(1280)),
+                placed: Some(fit(1280).rect),
+                composing: Some(fit(1920)),
+                texture: None,
+            },
+        )];
+        assert!(
+            matches!(w.lock_source(&out, fit(1920)), LockSource::Composing),
+            "an output showing an older fit waits for its job"
+        );
+        w.nodes[0].1.shown(fit(1920), None);
+        assert!(
+            matches!(w.lock_source(&out, fit(1920)), LockSource::Here),
+            "a picture staged in pixel memory has no texture to share"
+        );
+    }
+
+    fn output(name: &str) -> Output {
+        let props = smithay::output::PhysicalProperties {
+            size: (0, 0).into(),
+            subpixel: smithay::output::Subpixel::Unknown,
+            make: "Reprise".into(),
+            model: "Test".into(),
+            serial_number: "0".into(),
+        };
+        Output::new(name.into(), props)
     }
 }
