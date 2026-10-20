@@ -163,6 +163,14 @@ impl Wallpaper {
         }
     }
 
+    /// Whether the fade from the picture before is due: none runs yet and no output's picture
+    /// is still composing.
+    fn fade_due(&self) -> bool {
+        !self.fading.is_empty()
+            && self.fade.is_none()
+            && self.nodes.iter().all(|(_, n)| n.composing.is_none())
+    }
+
     pub(crate) fn buffers(&self) -> (Vec<(Output, BufferId)>, Vec<BufferId>) {
         let shown = self
             .nodes
@@ -225,9 +233,6 @@ impl WallpaperNode {
     }
 }
 
-/// Whether a file's picture of `img` pixels, shown on an output that already shows a picture, is
-/// composed for `size` on a job: anything but a stretched picture of the output's own size
-/// resamples or fills a whole screen.
 /// The staged picture of `size`, left for the other outputs of that size.
 fn staged_of(staged: &[Staged], size: (u32, u32)) -> Option<Staged> {
     staged.iter().find(|p| staged_size(p) == size).cloned()
@@ -235,10 +240,6 @@ fn staged_of(staged: &[Staged], size: (u32, u32)) -> Option<Staged> {
 
 fn staged_size(p: &Staged) -> (u32, u32) {
     (p.size().0 as u32, p.size().1 as u32)
-}
-
-fn composes_off_loop(shown: bool, position: Position, img: (u32, u32), size: (u32, u32)) -> bool {
-    shown && !(position == Position::Stretch && img == size)
 }
 
 /// What an output's wallpaper is composed from besides the image; the same
@@ -701,16 +702,14 @@ impl State {
                 changed |= node.place(&mut self.scene, b);
                 continue;
             }
-            let img = (source.width, source.height);
-            if let Some(image) = w
-                .image
-                .as_ref()
-                .filter(|_| composes_off_loop(node.placed.is_some(), position, img, size))
-            {
+            // A file's picture is composed and staged on a job, so the desktop water samples
+            // the texture it shows.
+            if let Some(image) = w.image.as_ref() {
                 changed |= node.place(&mut self.scene, b);
                 if node.composing != Some(fit) {
                     node.composing = Some(fit);
-                    compose.push((i, fit, size, Arc::clone(image)));
+                    let fading_in = node.fit.is_none() && !w.fading.is_empty();
+                    compose.push((i, fit, size, Arc::clone(image), fading_in));
                 }
                 continue;
             }
@@ -746,9 +745,11 @@ impl State {
         }
         w.staged.retain(|p| !taken.contains(&staged_size(p)));
         let compose: Vec<_> = (compose.into_iter())
-            .map(|(i, fit, size, image)| (w.nodes[i].0.clone(), fit, size, image))
+            .map(|(i, fit, size, image, fading_in)| {
+                (w.nodes[i].0.clone(), fit, size, image, fading_in)
+            })
             .collect();
-        let starts_fade = fade_in && w.fade.is_none();
+        let starts_fade = fade_in && w.fade_due();
         let path = w.path.clone();
         let builtin = w.builtin.as_ref().map(|(b, _)| *b);
         self.wallpaper = Some(w);
@@ -758,8 +759,8 @@ impl State {
         if let Some(b) = builtin.filter(|_| !draw.is_empty()) {
             self.draw_builtins(path, b, draw);
         }
-        for (out, fit, size, image) in compose {
-            self.compose_wallpaper(out, fit, size, image);
+        for (out, fit, size, image, fading_in) in compose {
+            self.compose_wallpaper(out, fit, size, image, fading_in);
         }
         if starts_fade {
             self.start_fade();
@@ -771,8 +772,16 @@ impl State {
     }
 
     /// Compose `image` for `out`'s `fit` on a job; it shows unless the picture or the fit wanted
-    /// changed meanwhile.
-    fn compose_wallpaper(&mut self, out: Output, fit: Fit, size: (u32, u32), image: Arc<Loaded>) {
+    /// changed meanwhile. The last output's picture to land starts the fade from the one before
+    /// (`fading_in` holds the water's under it until then).
+    fn compose_wallpaper(
+        &mut self,
+        out: Output,
+        fit: Fit,
+        size: (u32, u32),
+        image: Arc<Loaded>,
+        fading_in: bool,
+    ) {
         let uploads = self.uploads();
         self.spawn_job(move || {
             let (bg, position, scale) = (fit.bg, fit.position, fit.scale as f32);
@@ -798,7 +807,11 @@ impl State {
                 let texture =
                     staged.show(&mut state.scene, renderer, node.buffer, &canvas, fit.scale);
                 node.shown(fit, texture.clone());
-                state.water_wallpaper(&out, Pane::Desktop, &canvas, texture, false);
+                let fade_due = w.fade_due();
+                state.water_wallpaper(&out, Pane::Desktop, &canvas, texture, fading_in);
+                if fade_due {
+                    state.start_fade();
+                }
                 state.redraw_all();
             })
         });
@@ -1004,23 +1017,43 @@ mod tests {
     }
 
     #[test]
-    fn a_shown_picture_at_a_new_size_composes_on_a_job_and_a_first_show_at_once() {
-        let s = Position::Stretch;
-        assert!(composes_off_loop(true, s, (2560, 1440), (3072, 1728)));
-        assert!(composes_off_loop(true, s, (3072, 1728), (1920, 1080)));
-        assert!(composes_off_loop(
-            true,
-            Position::Center,
-            (1920, 1080),
-            (1920, 1080)
-        ));
-        assert!(
-            !composes_off_loop(true, s, (1920, 1080), (1920, 1080)),
-            "shown as drawn"
-        );
-        assert!(
-            !composes_off_loop(false, s, (2560, 1440), (1920, 1080)),
-            "first show"
-        );
+    fn the_fade_from_the_picture_before_waits_for_every_output_composing() {
+        let mut scene = crate::compositor::DeskScene::new();
+        let root = scene.root();
+        let fit = Fit {
+            rect: Rect::new(0, 0, 1920, 1080),
+            scale: 1,
+            position: Position::Stretch,
+            bg: Color::rgb(0, 0, 0),
+        };
+        let node = |scene: &mut crate::compositor::DeskScene| WallpaperNode {
+            buffer: scene.buffer_create(root),
+            fit: None,
+            placed: None,
+            composing: Some(fit),
+            texture: None,
+        };
+        let mut w = Wallpaper::new(Path::new("/srv/w/a.jpg"));
+        let output = |name: &str| {
+            let props = smithay::output::PhysicalProperties {
+                size: (0, 0).into(),
+                subpixel: smithay::output::Subpixel::Unknown,
+                make: "Reprise".into(),
+                model: "Test".into(),
+                serial_number: "0".into(),
+            };
+            Output::new(name.into(), props)
+        };
+        w.nodes = vec![
+            (output("A-1"), node(&mut scene)),
+            (output("B-1"), node(&mut scene)),
+        ];
+        assert!(!w.fade_due(), "no picture before to fade from");
+        w.fading.push(scene.buffer_create(root));
+        assert!(!w.fade_due(), "both outputs still composing");
+        w.nodes[0].1.shown(fit, None);
+        assert!(!w.fade_due(), "the second output still composing");
+        w.nodes[1].1.shown(fit, None);
+        assert!(w.fade_due(), "every output shows its picture");
     }
 }
