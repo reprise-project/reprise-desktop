@@ -44,7 +44,6 @@ use std::cell::RefCell;
 use std::io::Cursor;
 use std::os::fd::AsRawFd;
 use std::rc::Rc;
-use std::time::Duration;
 use wayland_client::protocol::wl_shm;
 use wayland_protocols::ext::image_copy_capture::v1::client::ext_image_copy_capture_frame_v1::FailureReason;
 
@@ -59,10 +58,6 @@ pub enum CursorMode {
     Embedded,
     Metadata,
 }
-
-/// The cursor's image is small and its session answers at once; a
-/// short wait keeps a missing cursor plane from stalling the frame.
-const CURSOR_WAIT: Duration = Duration::from_millis(50);
 
 /// The largest cursor image carried in the metadata: the cursor plane
 /// is 64 px on most hardware, 256 on some; the meta is sized for the
@@ -208,6 +203,12 @@ struct CursorPlane {
     /// The last id stamped; a new one tells the consumer the bitmap
     /// changed (the image is re-sent every frame, so it always does).
     id: u32,
+    /// The cursor frame out with the compositor; `buf` is not read
+    /// while it is.
+    asked: Option<Asked>,
+    /// The image of the last cursor frame answered, stamped until the
+    /// next one comes.
+    image: Option<Vec<u8>>,
 }
 
 /// Open the cursor session and a buffer for its image. Fails when the
@@ -234,6 +235,8 @@ fn cursor_plane(
         map,
         format,
         id: 0,
+        asked: None,
+        image: None,
     })
 }
 
@@ -735,7 +738,8 @@ fn hand_on(
 
 /// Fill the `SPA_META_Cursor` if the consumer asked for one: the
 /// pointer's position and hotspot, and its image while it is over the
-/// source (captured now, into the cursor plane's buffer).
+/// source. The image is the last cursor frame answered; the next is
+/// asked for here and read on a later frame, so nothing waits.
 unsafe fn stamp_cursor(sb: *mut spa_sys::spa_buffer, d: &mut Data) {
     // SAFETY: `sb` is the buffer the caller dequeued from the stream and
     // still holds.
@@ -746,24 +750,25 @@ unsafe fn stamp_cursor(sb: *mut spa_sys::spa_buffer, d: &mut Data) {
         return;
     };
     let info = d.wl.cursor_info();
-    let captured = if info.entered {
-        match d.wl.capture_cursor(&d.session, &plane.buf, CURSOR_WAIT) {
-            Ok(captured) => captured,
-            Err(e) => {
-                log::debug!("cursor capture: {e:?}");
-                false
-            }
-        }
+    let answer = if plane.asked.is_some() {
+        d.wl.cursor_answer()
     } else {
-        false
+        None
     };
+    if answer.is_some() || !info.entered {
+        plane.asked = None;
+    }
+    keep_cursor_image(&mut plane.image, answer, info.entered, plane.map.as_slice());
+    if info.entered && plane.asked.is_none() {
+        plane.asked = d.wl.ask_cursor(&d.session, &plane.buf);
+    }
     plane.id = plane.id.wrapping_add(1).max(1);
-    let bitmap = captured.then(|| Bitmap {
+    let bitmap = plane.image.as_deref().map(|pixels| Bitmap {
         format: spa_video_format(plane.format),
         width: plane.buf.width,
         height: plane.buf.height,
         stride: plane.buf.stride,
-        pixels: plane.map.as_slice(),
+        pixels,
     });
     write_cursor_meta(
         // SAFETY: `meta` is an entry of `sb`'s meta array whose `data`
@@ -774,6 +779,30 @@ unsafe fn stamp_cursor(sb: *mut spa_sys::spa_buffer, d: &mut Data) {
         info,
         bitmap,
     );
+}
+
+/// Update the stamped cursor image from the cursor frame's `answer`:
+/// a fresh one copies `pixels`, a failed one or a pointer off the
+/// source clears it, and none yet keeps the last.
+fn keep_cursor_image(
+    image: &mut Option<Vec<u8>>,
+    answer: Option<Result<(), CaptureError>>,
+    entered: bool,
+    pixels: &[u8],
+) {
+    match answer {
+        _ if !entered => *image = None,
+        Some(Ok(())) => {
+            let v = image.get_or_insert_with(Vec::new);
+            v.clear();
+            v.extend_from_slice(pixels);
+        }
+        Some(Err(e)) => {
+            log::debug!("cursor capture: {e:?}");
+            *image = None;
+        }
+        None => {}
+    }
 }
 
 /// The first meta of `type_` in `sb` that has memory behind it.
@@ -1197,6 +1226,31 @@ mod tests {
         assert_eq!(read_u32(&out, cur + 4), 2);
         assert_eq!(read_u32(&out, cur + 16) as usize, bml, "pixel offset");
         assert_eq!(&out[cur + bml..], &px[..]);
+    }
+
+    #[test]
+    fn the_cursor_image_waits_for_no_answer() {
+        let mut image = None;
+        keep_cursor_image(&mut image, Some(Ok(())), true, &[1, 2]);
+        assert_eq!(image.as_deref(), Some(&[1, 2][..]), "an answer is copied");
+        keep_cursor_image(&mut image, None, true, &[9, 9]);
+        assert_eq!(
+            image.as_deref(),
+            Some(&[1, 2][..]),
+            "with the next frame out, the last image stays and the buffer is not read"
+        );
+        keep_cursor_image(&mut image, Some(Ok(())), true, &[3, 4]);
+        assert_eq!(image.as_deref(), Some(&[3, 4][..]));
+        keep_cursor_image(&mut image, None, false, &[3, 4]);
+        assert_eq!(image, None, "a pointer off the source has no image");
+        keep_cursor_image(&mut image, Some(Ok(())), true, &[5, 6]);
+        keep_cursor_image(
+            &mut image,
+            Some(Err(CaptureError::Failed(FailureReason::Unknown))),
+            true,
+            &[5, 6],
+        );
+        assert_eq!(image, None, "a failed frame has no image");
     }
 
     #[test]
