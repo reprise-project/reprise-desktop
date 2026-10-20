@@ -417,12 +417,14 @@ impl Notepad {
     }
 
     fn bar_layout(&self, ctx: &Ctx) -> menubar::Layout {
-        self.bar.layout(
-            &ctx.text,
-            ctx.theme.fonts.size_px,
-            self.client(ctx),
-            &ctx.theme.controls(),
-        )
+        self.bar
+            .layout(
+                &ctx.text,
+                ctx.theme.fonts.size_px,
+                self.client(ctx),
+                &ctx.theme.controls(),
+            )
+            .reaching(ctx.menu_within())
     }
 
     /// The status bar reserves no space of its own, so the edit gives up its height here, under
@@ -1028,7 +1030,7 @@ impl Notepad {
             text: &ctx.text,
             theme: &ctx.theme,
             px: ctx.theme.fonts.size_px,
-            within: self.client(ctx),
+            within: ctx.menu_within(),
         }
     }
 
@@ -2748,6 +2750,27 @@ mod tests {
     }
 
     #[test]
+    fn a_narrow_window_s_menus_keep_their_rows_whole() {
+        let widths = |size: (i32, i32)| {
+            let mut ctx = test_ctx();
+            ctx.size = size;
+            ctx.output_size = Some((1920, 1080));
+            let mut np = Notepad::new(None);
+            np.event(MAIN, typed(keysym::F10, None, false), &mut ctx);
+            np.event(MAIN, typed(keysym::DOWN, None, false), &mut ctx);
+            let file = np.popup(MAIN, &ctx).unwrap().spots()[0].rect.width;
+            np.event(MAIN, typed(keysym::ESCAPE, None, false), &mut ctx);
+            np.event(MAIN, typed(keysym::ESCAPE, None, false), &mut ctx);
+            np.event(MAIN, typed(keysym::F10, None, true), &mut ctx);
+            let context = np.popup(MAIN, &ctx).unwrap().spots()[0].rect.width;
+            (file, context)
+        };
+        let wide = widths((800, 600));
+        assert!(wide.0 > 60 && wide.1 > 60, "rows need {wide:?} px");
+        assert_eq!(widths((60, 600)), wide, "a 60 px window's menus as wide");
+    }
+
+    #[test]
     fn shift_f10_opens_the_context_menu_under_the_caret_and_it_draws_over_the_text() {
         let mut ctx = test_ctx();
         let mut np = Notepad::new(None);
@@ -3303,6 +3326,7 @@ mod tests {
             wake: repriseapp::Waker::noop(),
             heads: Default::default(),
             want_tick: Default::default(),
+            output_size: None,
             at_pick: false,
             text_size: 100,
         }

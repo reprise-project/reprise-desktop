@@ -415,7 +415,7 @@ impl Explorer {
             shellview::Hit::Entry(i) => self.entry_menu_at(i, (x, y), ctx, false),
             _ => {
                 let menu = crate::menus::background_menu(&self.menu_state());
-                self.popup = Some(Popup::new((x, y), menu, lay.client, ctx, false));
+                self.popup = Some(Popup::new((x, y), menu, ctx, false));
                 Reply::redraw()
             }
         }
@@ -428,7 +428,6 @@ impl Explorer {
         ctx: &mut Ctx,
         by_keyboard: bool,
     ) -> Reply {
-        let lay = self.layout(ctx);
         if !self.sv.selection.set.contains(&i) {
             self.sv.selection.set_only(Some(i));
         }
@@ -453,7 +452,7 @@ impl Explorer {
         let send_to = self.build_send_to(ctx);
         let eject = self.ejectable(i);
         let menu = crate::menus::item_menu(&self.menu_state(), kind, eject, &open_with, &send_to);
-        self.popup = Some(Popup::new(at, menu, lay.client, ctx, by_keyboard));
+        self.popup = Some(Popup::new(at, menu, ctx, by_keyboard));
         Reply::redraw()
     }
 
@@ -617,14 +616,13 @@ impl Explorer {
                 let on_device = self.facts(&paths, &dir, ctx).unwrap_or_default().on_device;
                 let default = ask_default(shortcut, source.move_ && on_device);
                 let menu = crate::menus::drop_menu(default, source);
-                let client = self.layout(ctx).client;
                 self.pending_drop = Some(PendingDrop {
                     paths,
                     links,
                     dir,
                     source,
                 });
-                self.popup = Some(Popup::new((x, y), menu, client, ctx, false));
+                self.popup = Some(Popup::new((x, y), menu, ctx, false));
                 return Reply::redraw();
             }
         };

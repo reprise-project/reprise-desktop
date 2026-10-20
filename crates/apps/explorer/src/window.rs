@@ -459,23 +459,17 @@ pub struct Popup {
     menu: crate::commands::Menu,
     tree: menu::MenuTree,
     chain: menu::PopupMenu,
-    /// Requested origin, before the chain pushed it inside the client.
+    /// Requested origin.
     #[cfg(test)]
     at: (i32, i32),
 }
 
 impl Popup {
-    /// Opens `menu` at `at`, pushed back inside `client` if it would overhang.
+    /// Opens `menu` at `at`.
     /// `by_keyboard` (Shift+F10, the Menu key) picks its first row and underlines its keys.
-    pub fn new(
-        at: (i32, i32),
-        menu: crate::commands::Menu,
-        client: Rect,
-        ctx: &Ctx,
-        by_keyboard: bool,
-    ) -> Popup {
+    pub fn new(at: (i32, i32), menu: crate::commands::Menu, ctx: &Ctx, by_keyboard: bool) -> Popup {
         let tree = menu.tree();
-        let chain = menu::PopupMenu::open(&tree, at, &popup_ctx(ctx, client), by_keyboard);
+        let chain = menu::PopupMenu::open(&tree, at, &popup_ctx(ctx), by_keyboard);
         Popup {
             menu,
             tree,
@@ -494,17 +488,17 @@ impl Popup {
         self.menu.command(path)
     }
 
-    pub fn key(&mut self, key: menu::MenuKey, ctx: &Ctx, client: Rect) -> menu::MenuAction {
-        self.chain.key(&self.tree, key, &popup_ctx(ctx, client))
+    pub fn key(&mut self, key: menu::MenuKey, ctx: &Ctx) -> menu::MenuAction {
+        self.chain.key(&self.tree, key, &popup_ctx(ctx))
     }
 
-    pub fn click(&mut self, x: i32, y: i32, ctx: &Ctx, client: Rect) -> menu::MenuAction {
-        self.chain.click(&self.tree, x, y, &popup_ctx(ctx, client))
+    pub fn click(&mut self, x: i32, y: i32, ctx: &Ctx) -> menu::MenuAction {
+        self.chain.click(&self.tree, x, y, &popup_ctx(ctx))
     }
 
     /// True when the hover changed.
-    pub fn motion(&mut self, x: i32, y: i32, ctx: &Ctx, client: Rect) -> bool {
-        self.chain.motion(&self.tree, x, y, &popup_ctx(ctx, client))
+    pub fn motion(&mut self, x: i32, y: i32, ctx: &Ctx) -> bool {
+        self.chain.motion(&self.tree, x, y, &popup_ctx(ctx))
     }
 
     pub fn draw(&self, c: &mut Canvas, ctx: &Ctx) {
@@ -522,12 +516,12 @@ impl Chain for Popup {
     }
 }
 
-fn popup_ctx<'a>(ctx: &'a Ctx, client: Rect) -> menu::MenuCtx<'a> {
+fn popup_ctx(ctx: &Ctx) -> menu::MenuCtx<'_> {
     menu::MenuCtx {
         text: &ctx.text,
         theme: &ctx.theme,
         px: ctx.theme.fonts.size_px,
-        within: client,
+        within: ctx.menu_within(),
     }
 }
 

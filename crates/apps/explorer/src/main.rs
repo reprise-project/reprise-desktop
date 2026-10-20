@@ -569,12 +569,14 @@ impl Explorer {
 
     pub fn bar_layout(&self, ctx: &Ctx) -> menubar::Layout {
         let menu = self.layout(ctx).menu;
-        self.bar.layout(
-            &ctx.text,
-            ctx.theme.fonts.size_px,
-            menu,
-            &ctx.theme.controls(),
-        )
+        self.bar
+            .layout(
+                &ctx.text,
+                ctx.theme.fonts.size_px,
+                menu,
+                &ctx.theme.controls(),
+            )
+            .reaching(ctx.menu_within())
     }
 
     fn menu_state(&self) -> MenuState {

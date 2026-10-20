@@ -162,9 +162,8 @@ impl Explorer {
     }
 
     fn press(&mut self, x: i32, y: i32, time: u32, mods: repriseapp::Mods, ctx: &mut Ctx) -> Reply {
-        let client = self.layout(ctx).client;
         if let Some(p) = self.popup.as_mut() {
-            return match p.click(x, y, ctx, client) {
+            return match p.click(x, y, ctx) {
                 MenuAction::Chosen(path) => {
                     let cmd = p.command(&path);
                     self.popup = None;
@@ -210,7 +209,7 @@ impl Explorer {
             if let Some((i, part)) =
                 toolbar::hit_part(&self.toolbar, &rects, x, y, &ctx.theme.controls())
             {
-                return self.toolbar_press(i, part, rects[i], lay.client, ctx);
+                return self.toolbar_press(i, part, rects[i], ctx);
             }
             if r.contains(x, y) {
                 return Reply::none();
@@ -355,14 +354,7 @@ impl Explorer {
         }
         Reply::none()
     }
-    fn toolbar_press(
-        &mut self,
-        i: usize,
-        part: toolbar::Part,
-        rect: Rect,
-        client: Rect,
-        ctx: &mut Ctx,
-    ) -> Reply {
+    fn toolbar_press(&mut self, i: usize, part: toolbar::Part, rect: Rect, ctx: &mut Ctx) -> Reply {
         self.toolbar.pressed = Some(i);
         let id = match &self.toolbar.items[i] {
             toolbar::Item::Button { id, .. } | toolbar::Item::DropButton { id, .. } => *id,
@@ -398,7 +390,7 @@ impl Explorer {
             if menu.items().is_empty() {
                 return Reply::redraw();
             }
-            self.popup = Some(Popup::new(at, menu, client, ctx, false));
+            self.popup = Some(Popup::new(at, menu, ctx, false));
             return Reply::redraw();
         }
         let cmd = match id {
@@ -507,7 +499,7 @@ impl Explorer {
                 .unwrap_or((false, false));
             let folder = self.node_folder().is_some();
             let menu = menus::tree_menu(node.0, node.1, folder);
-            self.popup = Some(Popup::new((x, y), menu, lay.client, ctx, false));
+            self.popup = Some(Popup::new((x, y), menu, ctx, false));
             return Reply::redraw();
         }
         Reply::none()
@@ -741,11 +733,10 @@ impl Explorer {
             return Reply::none();
         }
         if self.popup.is_some() {
-            let client = self.layout(ctx).client;
             let Some(p) = self.popup.as_mut() else {
                 return Reply::none();
             };
-            return if p.motion(x, y, ctx, client) {
+            return if p.motion(x, y, ctx) {
                 Reply::redraw()
             } else {
                 Reply::none()

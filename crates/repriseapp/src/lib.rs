@@ -152,6 +152,8 @@ pub struct Ctx {
     /// Set while handling an event by a control that steps on its own while held (a sheet's
     /// scrollbar arrow, [`keys::sheet_input`]): the host sends the window an `Event::Tick`.
     pub want_tick: std::cell::Cell<bool>,
+    /// The largest output's logical size; `None` until the compositor names one.
+    pub output_size: Option<(i32, i32)>,
 }
 
 impl Ctx {
@@ -170,6 +172,13 @@ impl Ctx {
     pub fn form_units(&self) -> reprisekit::theme::TextUnits {
         let base = self.base_px();
         reprisekit::theme::TextUnits::new(reprisekit::theme::text_px(base, self.text_size), base)
+    }
+
+    /// What a menu shown on popups fits its width to and stays inside: the largest output, or the
+    /// window before an output is known. A menu drawn in the window fits the window instead.
+    pub fn menu_within(&self) -> Rect {
+        let (w, h) = self.output_size.unwrap_or(self.size);
+        Rect::new(0, 0, w, h)
     }
 
     /// Point the window fields at slot `s`'s window, for an event, draw or tree of it.
@@ -1299,6 +1308,7 @@ pub fn run(app: Box<dyn App>) {
             wake: Waker(Arc::new(ping)),
             heads: heads::HeadRequests::default(),
             want_tick: Default::default(),
+            output_size: None,
             at_pick: false,
         },
         exit: false,
@@ -1824,15 +1834,21 @@ impl Host {
         }
     }
 
-    /// What a menu fits its width to: the largest output, as a popup may run past the window.
+    /// [`Ctx::menu_within`] for a window `size` big.
     fn menu_within(&self, size: (i32, i32)) -> Rect {
-        let (w, h) = self
+        let (w, h) = self.ctx.output_size.unwrap_or(size);
+        Rect::new(0, 0, w, h)
+    }
+
+    /// Keeps [`Ctx::output_size`] on the largest output but `gone`, which the output state still
+    /// lists while it is being destroyed.
+    fn outputs_changed(&mut self, gone: Option<&wl_output::WlOutput>) {
+        self.ctx.output_size = self
             .output_state
             .outputs()
+            .filter(|o| Some(o) != gone)
             .filter_map(|o| self.output_state.info(&o)?.logical_size)
-            .max_by_key(|&(w, h)| i64::from(w) * i64::from(h))
-            .unwrap_or(size);
-        Rect::new(0, 0, w, h)
+            .max_by_key(|&(w, h)| i64::from(w) * i64::from(h));
     }
 
     /// The clipboard for a file dialog's File name ([`App::drop_file_dialog`]): Ctrl+C and Ctrl+X
@@ -3344,9 +3360,15 @@ impl OutputHandler for Host {
     fn output_state(&mut self) -> &mut OutputState {
         &mut self.output_state
     }
-    fn new_output(&mut self, _: &Connection, _: &QueueHandle<Self>, _: wl_output::WlOutput) {}
-    fn update_output(&mut self, _: &Connection, _: &QueueHandle<Self>, _: wl_output::WlOutput) {}
-    fn output_destroyed(&mut self, _: &Connection, _: &QueueHandle<Self>, _: wl_output::WlOutput) {}
+    fn new_output(&mut self, _: &Connection, _: &QueueHandle<Self>, _: wl_output::WlOutput) {
+        self.outputs_changed(None);
+    }
+    fn update_output(&mut self, _: &Connection, _: &QueueHandle<Self>, _: wl_output::WlOutput) {
+        self.outputs_changed(None);
+    }
+    fn output_destroyed(&mut self, _: &Connection, _: &QueueHandle<Self>, o: wl_output::WlOutput) {
+        self.outputs_changed(Some(&o));
+    }
 }
 
 impl WindowHandler for Host {
@@ -5099,6 +5121,7 @@ mod tests {
             wake: Waker::noop(),
             heads: Default::default(),
             want_tick: Default::default(),
+            output_size: None,
             at_pick: false,
             text_size: 100,
         };
@@ -5437,6 +5460,7 @@ mod tests {
             wake: Waker::noop(),
             heads: Default::default(),
             want_tick: Default::default(),
+            output_size: None,
             at_pick: false,
             text_size: 150,
         };
@@ -5464,6 +5488,7 @@ mod tests {
             wake: Waker::noop(),
             heads: Default::default(),
             want_tick: Default::default(),
+            output_size: None,
             at_pick: false,
             text_size: 150,
         };
@@ -5489,6 +5514,7 @@ mod tests {
             wake: Waker::noop(),
             heads: Default::default(),
             want_tick: Default::default(),
+            output_size: None,
             at_pick: false,
             text_size: 100,
         };
@@ -5537,6 +5563,7 @@ mod tests {
             wake: Waker::noop(),
             heads: Default::default(),
             want_tick: Default::default(),
+            output_size: None,
             at_pick: false,
             text_size: 100,
         };

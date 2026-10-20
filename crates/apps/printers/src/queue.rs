@@ -202,12 +202,14 @@ impl Queue {
     }
 
     fn bar_layout(&self, ctx: &Ctx) -> menubar::Layout {
-        self.bar.layout(
-            &ctx.text,
-            ctx.theme.fonts.size_px,
-            Rect::new(0, 0, ctx.size.0, ctx.size.1),
-            &ctx.theme.controls(),
-        )
+        self.bar
+            .layout(
+                &ctx.text,
+                ctx.theme.fonts.size_px,
+                Rect::new(0, 0, ctx.size.0, ctx.size.1),
+                &ctx.theme.controls(),
+            )
+            .reaching(ctx.menu_within())
     }
 
     fn status_bar(&self, ctx: &Ctx) -> (StatusBar, Rect) {

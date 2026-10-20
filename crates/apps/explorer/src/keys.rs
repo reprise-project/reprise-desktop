@@ -203,7 +203,7 @@ impl Explorer {
                 .unwrap_or((false, false));
             let folder = self.node_folder().is_some();
             let menu = menus::tree_menu(node.0, node.1, folder);
-            self.popup = Some(Popup::new(at, menu, lay.client, ctx, true));
+            self.popup = Some(Popup::new(at, menu, ctx, true));
             return Reply::redraw();
         }
         let sl = self.view_layout(lay.view, ctx);
@@ -218,7 +218,7 @@ impl Explorer {
             None => {
                 let menu = menus::background_menu(&self.menu_state());
                 let at = (lay.view.x + 8, lay.view.y + 8);
-                self.popup = Some(Popup::new(at, menu, lay.client, ctx, true));
+                self.popup = Some(Popup::new(at, menu, ctx, true));
                 Reply::redraw()
             }
         }
@@ -333,11 +333,10 @@ impl Explorer {
                 _ => return Reply::none(),
             },
         };
-        let client = self.layout(ctx).client;
         let Some(p) = self.popup.as_mut() else {
             return Reply::none();
         };
-        match p.key(key, ctx, client) {
+        match p.key(key, ctx) {
             MenuAction::Chosen(path) => {
                 let cmd = p.command(&path);
                 self.popup = None;
