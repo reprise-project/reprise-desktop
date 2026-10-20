@@ -30,6 +30,7 @@ const NOTIFY_PATH: &str = "/org/freedesktop/Notifications";
 #[derive(Clone, Debug)]
 pub struct Config {
     pub bus_name: &'static str,
+    /// The program's desktop entry id, so balloons carry its Name and icon.
     pub id: &'static str,
     pub title: &'static str,
     pub notify_icon: &'static str,
@@ -579,7 +580,7 @@ fn actions(clickable: bool, buttons: &[String]) -> Vec<String> {
 const BUTTON_KEY: &str = "button";
 
 /// A balloon: `Notify(app_name, replaces_id, icon, summary, body, actions, hints, timeout)`, with
-/// [`actions`]. The server's id for it, None when the call failed.
+/// [`actions`] and [`notify_hints`]. The server's id for it, None when the call failed.
 async fn notify(
     conn: &Connection,
     config: &Config,
@@ -590,7 +591,7 @@ async fn notify(
     let proxy = Proxy::new(conn, NOTIFY_NAME, NOTIFY_PATH, NOTIFY_NAME)
         .await
         .ok()?;
-    let hints: HashMap<&str, Value<'_>> = HashMap::new();
+    let hints = notify_hints(config);
     let reply = proxy
         .call_method(
             "Notify",
@@ -613,6 +614,10 @@ async fn notify(
             None
         }
     }
+}
+
+fn notify_hints(config: &Config) -> HashMap<&'static str, Value<'static>> {
+    HashMap::from([("desktop-entry", Value::from(config.id))])
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -897,6 +902,21 @@ mod tests {
             }
             _ => panic!("not a notify"),
         }
+    }
+
+    #[test]
+    fn a_balloon_names_its_desktop_entry() {
+        let config = Config {
+            bus_name: "reprise.test",
+            id: "reprise-printers",
+            title: "Printers",
+            notify_icon: "printer",
+            raise: Raise::Activate,
+        };
+        assert_eq!(
+            notify_hints(&config).get("desktop-entry"),
+            Some(&Value::from("reprise-printers"))
+        );
     }
 
     /// Once the handle is gone the thread drops its connection, so no item outlives its applet.
