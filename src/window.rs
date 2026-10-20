@@ -903,6 +903,7 @@ impl State {
             return;
         }
         self.place_backdrop(w);
+        crate::access::frame_changed(self);
         if self.is_sheet(w) {
             let scale = self.draw_scale_for_window(w);
             if let Some(win) = self.win_mut(w) {

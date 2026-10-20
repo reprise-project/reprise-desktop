@@ -381,12 +381,7 @@ fn place_caption(
 /// A caption button's tip; the maximize button's names the `snap-layouts`
 /// keys on a second line when they are bound.
 fn caption_tip(button: CaptionButton, maximized: bool, snap_keys: Option<&str>) -> String {
-    let name = match button {
-        CaptionButton::Minimize => "Minimize",
-        CaptionButton::Maximize if maximized => "Restore Down",
-        CaptionButton::Maximize => "Maximize",
-        CaptionButton::Close => "Close",
-    };
+    let name = button.name(maximized);
     match snap_keys {
         Some(keys) if button == CaptionButton::Maximize => format!("{name}\nSnap layouts: {keys}"),
         _ => name.to_string(),

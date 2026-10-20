@@ -1,8 +1,10 @@
 //! A window frame's shape and state, apart from how any one look paints it: layout around the
 //! client, hit test and caption buttons. `classic::frame` and `style::frame` turn this into pixels.
 
+use crate::access::{self, Tree, accesskit};
 use crate::raster::{Canvas, Rect};
 use crate::theme::Metrics;
+use accesskit::{Action, HasPopup, NodeId, Role};
 
 /// Resize edge bitflags; values match xdg_toplevel's `resize_edge` so they pass through.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -70,6 +72,16 @@ impl CaptionButton {
         CaptionButton::Maximize,
         CaptionButton::Close,
     ];
+
+    /// What the button is called, on its tip and to a screen reader.
+    pub fn name(self, maximized: bool) -> &'static str {
+        match self {
+            CaptionButton::Minimize => "Minimize",
+            CaptionButton::Maximize if maximized => "Restore Down",
+            CaptionButton::Maximize => "Maximize",
+            CaptionButton::Close => "Close",
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -468,11 +480,92 @@ pub fn held_button(hit: FrameHit, pressed: CaptionButton) -> Option<CaptionButto
     (hit == FrameHit::Button(pressed)).then_some(pressed)
 }
 
+/// The frame's `access` part under `parent`, in `geom`'s coordinates: a title bar named `title`
+/// holding the window menu (the icon) and the caption buttons `geom` has. A tabbed caption has no
+/// icon: `strip` adds its tabs under the title bar in the menu's place. The buttons offer only
+/// Click: the keyboard never rests on them.
+pub fn access(
+    geom: &FrameGeometry,
+    title: &str,
+    maximized: bool,
+    strip: Option<impl FnOnce(&mut Tree, NodeId)>,
+    tree: &mut Tree,
+    parent: NodeId,
+) {
+    let shown: Vec<CaptionButton> = (CaptionButton::ALL.into_iter())
+        .filter(|&b| geom.chrome.buttons.has(b))
+        .collect();
+    let all = (shown.iter()).fold(geom.caption, |u, &b| u.union(&geom.button_rect(b)));
+    let bar = tree.push(
+        parent,
+        "caption",
+        access::titled(Role::TitleBar, all, title),
+    );
+    let press = |r: Rect, label: &str| {
+        let mut n = access::titled(Role::Button, r, label);
+        n.add_action(Action::Click);
+        n
+    };
+    match strip {
+        Some(add) => add(tree, bar),
+        None if geom.chrome.icon => {
+            let c = geom.caption;
+            let mut n = press(Rect::new(c.x, c.y, ICON_AREA, c.height), "Window menu");
+            n.set_has_popup(HasPopup::Menu);
+            tree.push(bar, "menu", n);
+        }
+        None => {}
+    }
+    for b in shown {
+        tree.push(bar, b as u8, press(geom.button_rect(b), b.name(maximized)));
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::raster::Rect;
     use crate::theme::Metrics;
+
+    type Strip = fn(&mut Tree, NodeId);
+
+    fn published(
+        geom: &FrameGeometry,
+        maximized: bool,
+        strip: Option<Strip>,
+    ) -> Vec<(Role, String, Rect)> {
+        let mut t = Tree::window("Notes", geom.total);
+        access(geom, "Notes", maximized, strip, &mut t, access::ROOT);
+        let rect = |n: &accesskit::Node| {
+            let b = n.bounds().expect("bounds");
+            Rect::new(
+                b.x0 as i32,
+                b.y0 as i32,
+                (b.x1 - b.x0) as i32,
+                (b.y1 - b.y0) as i32,
+            )
+        };
+        let bar = t.get(access::ROOT).expect("root").children()[0];
+        let n = t.get(bar).expect("title bar");
+        let mut v = vec![(n.role(), n.label().unwrap_or("").to_string(), rect(n))];
+        for &c in n.children() {
+            let n = t.get(c).expect("child");
+            if n.role() == Role::Button {
+                assert!(
+                    n.supports_action(Action::Click),
+                    "{:?} offers Click",
+                    n.label()
+                );
+                assert!(
+                    !n.supports_action(Action::Focus),
+                    "{:?} takes no focus",
+                    n.label()
+                );
+            }
+            v.push((n.role(), n.label().unwrap_or("").to_string(), rect(n)));
+        }
+        v
+    }
 
     #[test]
     fn dialog_close_box_is_one_px_further_in() {
@@ -848,5 +941,122 @@ mod tests {
             None
         );
         assert_eq!(held_button(FrameHit::Outside, close), None);
+    }
+
+    #[test]
+    fn a_window_publishes_its_menu_and_three_buttons_on_the_title_bar() {
+        let m = Metrics::default();
+        let g = FrameGeometry::layout(&m, 300, 200, false, Chrome::WINDOW);
+        let c = g.caption;
+        assert_eq!(
+            published(&g, false, None),
+            vec![
+                (Role::TitleBar, "Notes".into(), c),
+                (
+                    Role::Button,
+                    "Window menu".into(),
+                    Rect::new(c.x, c.y, ICON_AREA, c.height)
+                ),
+                (
+                    Role::Button,
+                    "Minimize".into(),
+                    g.button_rect(CaptionButton::Minimize)
+                ),
+                (
+                    Role::Button,
+                    "Maximize".into(),
+                    g.button_rect(CaptionButton::Maximize)
+                ),
+                (
+                    Role::Button,
+                    "Close".into(),
+                    g.button_rect(CaptionButton::Close)
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_maximized_window_offers_restore_down() {
+        let m = Metrics::default();
+        let g = FrameGeometry::layout(&m, 300, 200, true, Chrome::WINDOW);
+        let names: Vec<String> = published(&g, true, None).into_iter().map(|x| x.1).collect();
+        assert_eq!(names[3], "Restore Down");
+    }
+
+    #[test]
+    fn a_prompt_publishes_only_its_close_button() {
+        let m = Metrics::default();
+        let g = FrameGeometry::layout(&m, 300, 200, false, Chrome::PROMPT);
+        let names: Vec<String> = published(&g, false, None)
+            .into_iter()
+            .map(|x| x.1)
+            .collect();
+        assert_eq!(
+            names,
+            ["Notes", "Close"],
+            "no icon, no minimize or maximize"
+        );
+    }
+
+    #[test]
+    fn every_published_button_lands_on_its_own_hit() {
+        let m = Metrics::default();
+        let g = FrameGeometry::layout(&m, 300, 200, false, Chrome::WINDOW);
+        let mid = |r: Rect| (r.x + r.width / 2, r.y + r.height / 2);
+        let hits: Vec<FrameHit> = published(&g, false, None)[1..]
+            .iter()
+            .map(|x| mid(x.2))
+            .map(|(x, y)| g.hit(x, y, &m))
+            .collect();
+        assert_eq!(
+            hits,
+            [
+                FrameHit::Icon,
+                FrameHit::Button(CaptionButton::Minimize),
+                FrameHit::Button(CaptionButton::Maximize),
+                FrameHit::Button(CaptionButton::Close),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_tabbed_caption_puts_its_strip_where_the_menu_was() {
+        let m = Metrics::default();
+        let g = FrameGeometry::layout(&m, 300, 200, false, Chrome::WINDOW);
+        let strip: Strip = |t, bar| {
+            t.push(
+                bar,
+                "tabs",
+                access::node(Role::TabList, Rect::new(2, 3, 40, 18)),
+            );
+        };
+        let roles: Vec<Role> = published(&g, false, Some(strip))
+            .into_iter()
+            .map(|x| x.0)
+            .collect();
+        assert_eq!(
+            roles,
+            [
+                Role::TitleBar,
+                Role::TabList,
+                Role::Button,
+                Role::Button,
+                Role::Button
+            ],
+            "no window menu: the icon's place belongs to the tabs"
+        );
+    }
+
+    #[test]
+    fn the_title_bar_holds_buttons_hung_above_the_caption() {
+        let mut m = Metrics::default();
+        m.caption_button_height = m.caption_height + 6;
+        let g = FrameGeometry::layout(&m, 300, 200, false, Chrome::WINDOW);
+        let bar = published(&g, false, None)[0].2;
+        for b in CaptionButton::ALL {
+            let r = g.button_rect(b);
+            assert_eq!(bar.union(&r), bar, "{b:?} inside the title bar");
+        }
     }
 }
