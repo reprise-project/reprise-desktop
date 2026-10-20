@@ -1427,14 +1427,20 @@ mod tests {
         assert_eq!(side(16, 32, TextUnits::ONE), 16);
     }
 
+    /// A fresh empty directory, a different one on every call so parallel tests never share
+    /// one; the caller removes it.
+    fn scratch() -> PathBuf {
+        static NEXT: AtomicUsize = AtomicUsize::new(0);
+        let n = NEXT.fetch_add(1, Ordering::Relaxed);
+        let dir = std::env::temp_dir().join(format!("reprise-icons-{}-{n}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
     /// A throwaway icon root with one theme; the caller removes it.
-    fn fixture(tag: &str, theme: &str, index: &str, files: &[&str]) -> PathBuf {
-        // `tag` keeps parallel tests apart.
-        let root = std::env::temp_dir().join(format!(
-            "reprise-icons-{}-{tag}-{theme}",
-            std::process::id()
-        ));
-        let _ = fs::remove_dir_all(&root);
+    fn fixture(theme: &str, index: &str, files: &[&str]) -> PathBuf {
+        let root = scratch();
         let dir = root.join(theme);
         fs::create_dir_all(&dir).unwrap();
         fs::write(dir.join("index.theme"), index).unwrap();
@@ -1452,7 +1458,7 @@ mod tests {
     /// later is not seen until reload (the cache remembers misses anyway).
     #[test]
     fn lookups_probe_cached_listings() {
-        let root = fixture("t16", "test", INDEX, &["16x16/apps/present.png"]);
+        let root = fixture("test", INDEX, &["16x16/apps/present.png"]);
         let t = IconTheme::load("test", std::slice::from_ref(&root));
         assert!(t.lookup("absent", 16, 1).is_none());
         let listed = || t.listings.iter().filter(|l| l.get().is_some()).count();
@@ -1484,7 +1490,7 @@ mod tests {
     /// name even when its target is gone.
     #[test]
     fn listing_skips_directories_without_following_symlinks() {
-        let root = fixture("t17", "test", INDEX, &["16x16/apps/plain.png"]);
+        let root = fixture("test", INDEX, &["16x16/apps/plain.png"]);
         let dir = root.join("test/16x16/apps");
         std::os::unix::fs::symlink("plain.png", dir.join("link.png")).unwrap();
         std::os::unix::fs::symlink("gone.png", dir.join("dangling.png")).unwrap();
@@ -1499,10 +1505,8 @@ mod tests {
     /// index names, ahead of later roots.
     #[test]
     fn a_root_without_the_index_serves_the_themes_directories() {
-        let system = fixture("t18", "test", INDEX, &["16x16/apps/both.png"]);
-        let user =
-            std::env::temp_dir().join(format!("reprise-icons-{}-t18-user", std::process::id()));
-        let _ = fs::remove_dir_all(&user);
+        let system = fixture("test", INDEX, &["16x16/apps/both.png"]);
+        let user = scratch();
         for f in ["test/16x16/apps/mine.png", "test/16x16/apps/both.png"] {
             let p = user.join(f);
             fs::create_dir_all(p.parent().unwrap()).unwrap();
@@ -1524,7 +1528,7 @@ mod tests {
     #[test]
     fn a_repeated_key_keeps_its_first_value_and_a_repeated_directory_counts_once() {
         let index = "[Icon Theme]\nDirectories=16x16/apps,16x16/apps\n\n[16x16/apps]\nSize=16\nSize=32\nType=Fixed\n";
-        let root = fixture("t21", "test", index, &[]);
+        let root = fixture("test", index, &[]);
         let t = IconTheme::load("test", std::slice::from_ref(&root));
         let test: Vec<_> = t.dirs[t.groups[0].clone()].iter().map(|d| d.size).collect();
         assert_eq!(test, [16]);
@@ -1533,7 +1537,7 @@ mod tests {
 
     #[test]
     fn parses_directories_and_inherits() {
-        let root = fixture("t1", "test", INDEX, &[]);
+        let root = fixture("test", INDEX, &[]);
         let t = IconTheme::load("test", std::slice::from_ref(&root));
         assert_eq!(t.chain, vec!["test".to_string(), "hicolor".to_string()]);
         assert_eq!(t.dirs.len(), 3);
@@ -1550,7 +1554,6 @@ mod tests {
     #[test]
     fn exact_size_beats_closest_size() {
         let root = fixture(
-            "t11",
             "test",
             INDEX,
             &["16x16/apps/firefox.png", "32x32/apps/firefox.png"],
@@ -1580,7 +1583,6 @@ mod tests {
     #[test]
     fn a_far_bigger_icon_beats_a_near_smaller_one() {
         let root = fixture(
-            "t12",
             "test",
             "[Icon Theme]\nName=Test\nDirectories=16x16/apps,128x128/apps\n\n[16x16/apps]\nSize=16\nType=Fixed\n\n[128x128/apps]\nSize=128\nType=Fixed\n",
             &["16x16/apps/net.png", "128x128/apps/net.png"],
@@ -1600,7 +1602,7 @@ mod tests {
 
     #[test]
     fn scalable_dir_matches_any_size_in_range() {
-        let root = fixture("t2", "test", INDEX, &["scalable/apps/gimp.svg"]);
+        let root = fixture("test", INDEX, &["scalable/apps/gimp.svg"]);
         let t = IconTheme::load("test", std::slice::from_ref(&root));
         assert_eq!(
             t.lookup("gimp", 16, 1),
@@ -1616,12 +1618,7 @@ mod tests {
 
     #[test]
     fn png_beats_svg_in_the_same_directory() {
-        let root = fixture(
-            "t12",
-            "test",
-            INDEX,
-            &["16x16/apps/a.svg", "16x16/apps/a.png"],
-        );
+        let root = fixture("test", INDEX, &["16x16/apps/a.svg", "16x16/apps/a.png"]);
         let t = IconTheme::load("test", std::slice::from_ref(&root));
         assert_eq!(
             t.lookup("a", 16, 1),
@@ -1633,12 +1630,7 @@ mod tests {
     #[test]
     fn scale_two_prefers_scaled_directory() {
         let index = "[Icon Theme]\nName=T\nDirectories=16x16/apps,16x16@2/apps\n\n[16x16/apps]\nSize=16\nType=Fixed\n\n[16x16@2/apps]\nSize=16\nScale=2\nType=Fixed\n";
-        let root = fixture(
-            "t13",
-            "test",
-            index,
-            &["16x16/apps/x.png", "16x16@2/apps/x.png"],
-        );
+        let root = fixture("test", index, &["16x16/apps/x.png", "16x16@2/apps/x.png"]);
         let t = IconTheme::load("test", std::slice::from_ref(&root));
         assert_eq!(
             t.lookup("x", 16, 2),
@@ -1655,9 +1647,7 @@ mod tests {
     fn themed_larger_icon_beats_inherited_exact_size() {
         // "test" has only a 22x22 dir but inherits "hicolor" with an exact 16x16 dir: the pass
         // finishes in "test" first, so 22x22 wins.
-        let root =
-            std::env::temp_dir().join(format!("reprise-icons-t14-{}-multi", std::process::id()));
-        let _ = fs::remove_dir_all(&root);
+        let root = scratch();
         let test_index = "[Icon Theme]\nName=Test\nInherits=hicolor\nDirectories=22x22/apps\n\n[22x22/apps]\nSize=22\nType=Fixed\n";
         let hicolor_index = "[Icon Theme]\nName=Hicolor\nDirectories=16x16/apps\n\n[16x16/apps]\nSize=16\nType=Fixed\n";
         for (theme, index, file) in [
@@ -1683,9 +1673,7 @@ mod tests {
     fn fallback_theme_inherits_are_followed() {
         // The configured theme is a bare "hicolor"; "Adwaita" only inherits from "Legacy", so
         // the fallback pass must walk that Inherits line.
-        let root =
-            std::env::temp_dir().join(format!("reprise-icons-t15-{}-legacy", std::process::id()));
-        let _ = fs::remove_dir_all(&root);
+        let root = scratch();
         let hicolor_index = "[Icon Theme]\nName=Hicolor\nDirectories=16x16/apps\n\n[16x16/apps]\nSize=16\nType=Fixed\n";
         let adwaita_index = "[Icon Theme]\nName=Adwaita\nInherits=Legacy,hicolor\nDirectories=symbolic/apps\n\n[symbolic/apps]\nSize=16\nType=Fixed\n";
         let legacy_index = "[Icon Theme]\nName=Legacy\nInherits=hicolor\nDirectories=16x16/apps\n\n[16x16/apps]\nSize=16\nType=Fixed\n";
@@ -1721,7 +1709,7 @@ mod tests {
 
     #[test]
     fn falls_back_to_bare_file_in_root() {
-        let root = fixture("t3", "test", INDEX, &[]);
+        let root = fixture("test", INDEX, &[]);
         fs::write(root.join("bare.png"), b"").unwrap();
         let t = IconTheme::load("test", std::slice::from_ref(&root));
         assert_eq!(t.lookup("bare", 16, 1), Some(root.join("bare.png")));
@@ -1730,7 +1718,7 @@ mod tests {
 
     #[test]
     fn extra_roots_are_consulted_first() {
-        let root = fixture("t4", "test", INDEX, &["16x16/apps/tray.png"]);
+        let root = fixture("test", INDEX, &["16x16/apps/tray.png"]);
         let extra = root.join("extra");
         fs::create_dir_all(&extra).unwrap();
         fs::write(extra.join("tray.png"), b"").unwrap();
@@ -1744,7 +1732,7 @@ mod tests {
 
     #[test]
     fn missing_theme_still_has_hicolor_in_chain() {
-        let root = std::env::temp_dir().join(format!("reprise-icons-none-{}", std::process::id()));
+        let root = scratch();
         let t = IconTheme::load("does-not-exist", &[root]);
         assert_eq!(
             t.chain,
@@ -1798,8 +1786,7 @@ mod tests {
     }
 
     fn tmp(name: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("reprise-decode-{}", std::process::id()));
-        fs::create_dir_all(&dir).unwrap();
+        let dir = scratch();
         dir.join(name)
     }
 
@@ -1971,7 +1958,7 @@ mod tests {
     /// from a theme the cache no longer looks names up in are dropped.
     #[test]
     fn icons_put_in_from_the_caches_theme_answer_without_a_lookup() {
-        let root = fixture("put-icons", "test", INDEX, &[]);
+        let root = fixture("test", INDEX, &[]);
         let png = root.join("test/32x32/apps/app.png");
         fs::create_dir_all(png.parent().unwrap()).unwrap();
         write_png(&png, 1, 1, &[0, 0, 255, 255]);
@@ -1990,7 +1977,7 @@ mod tests {
     /// An icon file decoded elsewhere answers `get` without the file being read again.
     #[test]
     fn a_file_put_in_answers_without_reading_the_file() {
-        let root = fixture("put", "test", INDEX, &[]);
+        let root = fixture("test", INDEX, &[]);
         let pic = root.join("cover.png");
         write_png(&pic, 1, 1, &[255, 0, 0, 255]);
         let mut cache = IconCache::new(IconTheme::load("test", std::slice::from_ref(&root)));
@@ -2039,7 +2026,7 @@ mod tests {
     /// None though the file is there to decode.
     #[test]
     fn file_put_never_reads_the_file() {
-        let root = fixture("file-put", "test", INDEX, &[]);
+        let root = fixture("test", INDEX, &[]);
         let pic = root.join("cover.png");
         write_png(&pic, 1, 1, &[255, 0, 0, 255]);
         let mut cache = IconCache::new(IconTheme::load("test", std::slice::from_ref(&root)));
@@ -2080,7 +2067,7 @@ mod tests {
     /// says so; a failed decode put in is a miss and stays.
     #[test]
     fn a_file_dropped_at_the_file_cap_shows_in_file_drops() {
-        let root = fixture("file-drop", "test", INDEX, &[]);
+        let root = fixture("test", INDEX, &[]);
         let pic = root.join("cover.png");
         write_png(&pic, 1, 1, &[255, 0, 0, 255]);
         let mut cache = IconCache::new(IconTheme::load("test", std::slice::from_ref(&root)));
@@ -2105,7 +2092,7 @@ mod tests {
     /// them in place.
     #[test]
     fn a_read_past_the_file_cap_keeps_every_file() {
-        let root = fixture("file-batch", "test", INDEX, &[]);
+        let root = fixture("test", INDEX, &[]);
         let pic = root.join("cover.png");
         write_png(&pic, 1, 1, &[255, 0, 0, 255]);
         let mut cache = IconCache::new(IconTheme::load("test", std::slice::from_ref(&root)));
@@ -2164,7 +2151,7 @@ mod tests {
     #[test]
     fn a_size_only_the_scalable_range_covers_loads_its_file_scaled() {
         let index = "[Icon Theme]\nName=T\nDirectories=24x24/mimetypes,48x48/mimetypes,128x128/mimetypes\n\n[24x24/mimetypes]\nSize=24\nType=Fixed\n\n[48x48/mimetypes]\nSize=48\nType=Fixed\n\n[128x128/mimetypes]\nSize=128\nMinSize=16\nMaxSize=512\nType=Scalable\n";
-        let root = fixture("t19", "test", index, &[]);
+        let root = fixture("test", index, &[]);
         let dir = root.join("test");
         for (sub, side, rgba) in [
             ("24x24/mimetypes/pic.png", 24, [255, 0, 0, 255]),
@@ -2193,9 +2180,7 @@ mod tests {
     /// the exact size.
     #[test]
     fn inherited_themes_come_before_hicolor() {
-        let root =
-            std::env::temp_dir().join(format!("reprise-icons-t20-{}-chain", std::process::id()));
-        let _ = fs::remove_dir_all(&root);
+        let root = scratch();
         let test_index = "[Icon Theme]\nName=Test\nInherits=parent\nDirectories=16x16/apps\n\n[16x16/apps]\nSize=16\nType=Fixed\n";
         let parent_index = "[Icon Theme]\nName=Parent\nDirectories=32x32/apps\n\n[32x32/apps]\nSize=32\nType=Fixed\n";
         let hicolor_index = "[Icon Theme]\nName=Hicolor\nDirectories=16x16/apps\n\n[16x16/apps]\nSize=16\nType=Fixed\n";
@@ -2232,7 +2217,7 @@ mod tests {
 
     #[test]
     fn cache_resolves_by_name_and_absolute_path_and_caches_misses() {
-        let root = fixture("t5", "test", INDEX, &[]);
+        let root = fixture("test", INDEX, &[]);
         let icon = root.join("test/16x16/apps/cached.png");
         fs::create_dir_all(icon.parent().unwrap()).unwrap();
         write_png(&icon, 1, 1, &[0, 255, 0, 255]);
@@ -2263,7 +2248,7 @@ mod tests {
 
     #[test]
     fn a_scaled_cache_loads_the_device_size_and_keeps_the_logical_one() {
-        let root = fixture("t5s", "test", INDEX, &[]);
+        let root = fixture("test", INDEX, &[]);
         let dir = root.join("test");
         fs::create_dir_all(dir.join("16x16/apps")).unwrap();
         fs::create_dir_all(dir.join("32x32/apps")).unwrap();
@@ -2354,7 +2339,7 @@ mod tests {
 
     #[test]
     fn cache_rejects_paths_that_are_not_decodable_icons() {
-        let root = fixture("t7", "test", INDEX, &[]);
+        let root = fixture("test", INDEX, &[]);
         let mut cache = IconCache::new(IconTheme::load("test", std::slice::from_ref(&root)));
         // An absolute path without an icon extension is refused before opening; reading
         // /dev/zero would never end.
@@ -2368,9 +2353,7 @@ mod tests {
     /// A FIFO or device with an icon extension is opened but not read.
     #[test]
     fn decode_refuses_files_that_are_not_regular() {
-        let dir = std::env::temp_dir().join("reprisekit-icontheme-fifo");
-        let _ = fs::remove_dir_all(&dir);
-        fs::create_dir_all(&dir).unwrap();
+        let dir = scratch();
         let fifo = dir.join("x.png");
         let c = std::ffi::CString::new(fifo.to_str().unwrap()).unwrap();
         // SAFETY: `c` is a NUL-terminated path that outlives the call.
@@ -2385,7 +2368,7 @@ mod tests {
     /// Peer-chosen names that miss are remembered up to a cap, then dropped together; hits stay.
     #[test]
     fn misses_are_bounded_and_never_evict_hits() {
-        let root = fixture("t7", "test", INDEX, &["32x32/apps/app.png"]);
+        let root = fixture("test", INDEX, &["32x32/apps/app.png"]);
         write_png(
             &root.join("test/32x32/apps/app.png"),
             1,
@@ -2406,7 +2389,7 @@ mod tests {
     /// `has` walks the theme once per name; the answer stays if the root vanishes.
     #[test]
     fn has_remembers_its_answer_per_name() {
-        let root = fixture("t8", "test", INDEX, &["32x32/apps/app.png"]);
+        let root = fixture("test", INDEX, &["32x32/apps/app.png"]);
         write_png(
             &root.join("test/32x32/apps/app.png"),
             1,
@@ -2426,7 +2409,6 @@ mod tests {
     #[test]
     fn a_broken_file_gives_way_to_the_next_candidate() {
         let root = fixture(
-            "broken",
             "test",
             INDEX,
             &[
@@ -2473,7 +2455,6 @@ mod tests {
     #[test]
     fn has_answers_no_for_a_name_with_only_broken_files() {
         let root = fixture(
-            "has-broken",
             "test",
             INDEX,
             &[
@@ -2500,7 +2481,7 @@ mod tests {
 
     #[test]
     fn a_shared_hit_is_the_cached_canvas_itself() {
-        let root = fixture("t9", "test", INDEX, &["32x32/apps/app.png"]);
+        let root = fixture("test", INDEX, &["32x32/apps/app.png"]);
         write_png(
             &root.join("test/32x32/apps/app.png"),
             1,
@@ -2519,7 +2500,7 @@ mod tests {
     fn cache_keys_on_the_extra_roots_too() {
         // Two tray items publishing "app" from different IconThemePath directories must not
         // share an entry.
-        let root = fixture("t6", "test", INDEX, &[]);
+        let root = fixture("test", INDEX, &[]);
         let (a, b) = (root.join("a"), root.join("b"));
         fs::create_dir_all(&a).unwrap();
         fs::create_dir_all(&b).unwrap();
@@ -2638,9 +2619,8 @@ mod tests {
     /// A system root with `test` (fresh cache) inheriting `base` (no cache) inheriting `hicolor`
     /// (cache stale in two directories), and a user root whose `test` has a cache older than
     /// its directory.
-    fn cached_fixture(tag: &str) -> (PathBuf, PathBuf) {
-        let top = std::env::temp_dir().join(format!("reprise-icons-{}-{tag}", std::process::id()));
-        let _ = fs::remove_dir_all(&top);
+    fn cached_fixture() -> (PathBuf, PathBuf) {
+        let top = scratch();
         let (system, user) = (top.join("system"), top.join("user"));
         let dirs = "16x16/apps,22x22/apps,24x24/apps,32x32/apps,48x48/apps,64x64/apps,scalable/apps,16x16@2/apps";
         let sections = "[16x16/apps]\nSize=16\nType=Fixed\n\n[22x22/apps]\nSize=22\nType=Fixed\n\n[24x24/apps]\nSize=24\n\n[32x32/apps]\nSize=32\nType=Fixed\n\n[48x48/apps]\nSize=48\nType=Fixed\n\n[64x64/apps]\nSize=64\nType=Fixed\n\n[scalable/apps]\nSize=48\nMinSize=8\nMaxSize=512\nType=Scalable\n\n[16x16@2/apps]\nSize=16\nScale=2\nType=Fixed\n";
@@ -2768,7 +2748,7 @@ mod tests {
 
     #[test]
     fn a_theme_cache_picks_the_files_the_listings_pick() {
-        let (system, user) = cached_fixture("t19");
+        let (system, user) = cached_fixture();
         let roots = [user.clone(), system.clone()];
         let cached = IconTheme::load("test", &roots);
         let listed = listing_only(IconTheme::load("test", &roots));
@@ -2811,7 +2791,7 @@ mod tests {
 
     #[test]
     fn an_icon_installed_or_removed_after_a_lookup_shows_once_reloaded() {
-        let (system, user) = cached_fixture("t21");
+        let (system, user) = cached_fixture();
         let mut icons = IconCache::new(IconTheme::load("test", &[user.clone(), system.clone()]));
         let apps = system.join("test/16x16/apps");
         let t = icons.theme();
@@ -2841,7 +2821,7 @@ mod tests {
 
     #[test]
     fn watched_directories_are_the_roots_homes_and_each_size_directory_or_its_parent() {
-        let (system, user) = cached_fixture("t22");
+        let (system, user) = cached_fixture();
         let t = IconTheme::load("test", &[user.clone(), system.clone()]);
         let w = t.watch_dirs();
         for dir in [
@@ -2865,7 +2845,7 @@ mod tests {
 
     #[test]
     fn warming_reads_every_directory_and_keeps_the_answers() {
-        let (system, user) = cached_fixture("t23");
+        let (system, user) = cached_fixture();
         let roots = [user.clone(), system.clone()];
         let (cold, warm) = (
             IconTheme::load("test", &roots),
@@ -2886,7 +2866,7 @@ mod tests {
 
     #[test]
     fn only_directories_that_exist_and_changed_since_the_cache_are_listed() {
-        let (system, user) = cached_fixture("t20");
+        let (system, user) = cached_fixture();
         let t = IconTheme::load("test", &[user.clone(), system.clone()]);
         assert!(t.lookup("nothing", 16, 1).is_none());
         let listing = |dir: &Path| {
