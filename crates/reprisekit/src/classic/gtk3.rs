@@ -449,14 +449,31 @@ mod tests {
     }
 
     #[test]
-    fn a_gtk4_menu_popover_draws_no_arrow_over_its_raised_box() {
-        let gtk4 = gtk4_bevels(&ColorScheme::default());
-        let arrow = rule(
-            &gtk4,
-            "popover.menu.background > arrow, popover.menu > arrow {",
-        );
+    fn a_popover_is_a_square_raised_box_with_no_arrow() {
+        let cs = ColorScheme::default();
+        let raised = "box-shadow: inset 2px 2px #ffffff, inset -2px -2px #808080, \
+                      inset 1px 1px #d4d0c8, inset -1px -1px #404040;";
+        let gtk3 = sheet(&cs);
+        let gtk3 = rule(&gtk3, ".csd popover.background, popover.background");
+        for want in ["border: none;", "border-radius: 0;", raised] {
+            assert!(gtk3.contains(want), "GTK3: {want}");
+        }
+        let gtk4 = gtk4_bevels(&cs);
+        let node = rule(&gtk4, "popover.background, popover.background:backdrop {");
+        for want in [
+            "border: none;",
+            "background-color: transparent;",
+            "box-shadow: none;",
+        ] {
+            assert!(node.contains(want), "GTK4 node: {want}");
+        }
+        let contents = rule(&gtk4, "popover.background > contents {");
+        for want in ["border: none;", "border-radius: 0;", raised] {
+            assert!(contents.contains(want), "GTK4 contents: {want}");
+        }
+        let arrow = rule(&gtk4, "popover.background > arrow, popover.menu > arrow {");
         for none in ["border: none;", "background: none;", "box-shadow: none;"] {
-            assert!(arrow.contains(none), "{none}");
+            assert!(arrow.contains(none), "GTK4 arrow: {none}");
         }
     }
 

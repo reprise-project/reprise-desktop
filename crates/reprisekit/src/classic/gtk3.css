@@ -326,6 +326,14 @@ menu separator, .menu separator, .context-menu separator {
   box-shadow: inset 0 1px @reprise_shadow, inset 0 -1px @reprise_hilight;
 }
 menu > arrow, .menu > arrow, .context-menu > arrow { border: none; border-radius: 0; }
+/* GTK3 fills the arrow with the background colour whatever the sheet says; with no border it */
+/* strokes no outline, so the arrow shows only over another colour. */
+.csd popover.background, popover.background, .csd popover.background:backdrop,
+popover.background:backdrop {
+  border: none;
+  border-radius: 0;
+  box-shadow: %window_raised%;
+}
 
 notebook > header, notebook > header:backdrop {
   padding: 0;

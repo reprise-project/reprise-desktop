@@ -279,7 +279,17 @@ menubar > item popover.menu.background popover.menu.background > contents {
   background-color: @reprise_menu;
   box-shadow: %window_raised%;
 }
-popover.menu.background > arrow, popover.menu > arrow {
+popover.background, popover.background:backdrop {
+  border: none;
+  background-color: transparent;
+  box-shadow: none;
+}
+popover.background > contents {
+  border: none;
+  border-radius: 0;
+  box-shadow: %window_raised%;
+}
+popover.background > arrow, popover.menu > arrow {
   border: none;
   background: none;
   box-shadow: none;
