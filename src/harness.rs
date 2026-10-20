@@ -448,6 +448,20 @@ impl TestClient {
         self.side.vks.len() - 1
     }
 
+    /// A virtual keyboard under keymap `text` (xkb text format); its index in `vks`.
+    pub fn virtual_keyboard_with(&mut self, text: &str) -> usize {
+        let qh = self.qh();
+        let vk = (self.side.vk_manager.as_ref())
+            .expect("zwp_virtual_keyboard_manager_v1")
+            .create_virtual_keyboard(self.seat(), &qh, ());
+        let bytes = [text.as_bytes(), b"\0"].concat();
+        let fd = crate::eis::sealed_memfd(&bytes).expect("keymap memfd");
+        let size = u32::try_from(bytes.len()).expect("keymap size");
+        vk.keymap(wl_keyboard::KeymapFormat::XkbV1.into(), fd.as_fd(), size);
+        self.side.vks.push(vk);
+        self.side.vks.len() - 1
+    }
+
     /// Key `code` (an evdev code) down or up on virtual keyboard `i`.
     pub fn vk_key(&self, i: usize, code: u32, pressed: bool) {
         self.side.vks[i].key(0, code, u32::from(pressed));
@@ -558,6 +572,21 @@ pub struct ClientSide {
     pub keys: Vec<(u32, bool)>,
     /// The `shells` the compositor asked to close, in order.
     pub closes: Vec<usize>,
+}
+
+impl ClientSide {
+    /// The text of the keymap the keyboard last got.
+    pub fn keymap_text(&self) -> String {
+        use std::os::unix::fs::FileExt;
+        let (fd, size) = self.keymap.as_ref().expect("a keymap");
+        let mut text = vec![0; *size as usize];
+        std::fs::File::from(fd.try_clone().expect("keymap fd"))
+            .read_exact_at(&mut text, 0)
+            .expect("keymap read");
+        String::from_utf8_lossy(&text)
+            .trim_end_matches('\0')
+            .to_string()
+    }
 }
 
 impl wc::Dispatch<wl_registry::WlRegistry, ()> for ClientSide {
