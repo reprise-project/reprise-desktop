@@ -1302,19 +1302,37 @@ impl State {
     }
 
     /// Put dialog `index`'s top-left at (`x`, `y`) in layout coordinates.
+    /// Moves dialog `index` to `(x, y)`; the output under its title bar becomes its own, for its
+    /// work area, scale and lifetime.
     pub fn move_dialog(&mut self, index: usize, x: i32, y: i32) {
-        let Some(v) = self.dialogs.views.get_mut(index) else {
+        let Some(v) = self.dialogs.views.get(index) else {
             return;
         };
         if (v.x, v.y) == (x, y) {
             return;
         }
+        let m = &self.config.theme.metrics;
+        let bar = (
+            x + v.layout.size.0 / 2,
+            y + m.frame_width + m.caption_height / 2,
+        );
+        let onto = (self.output_at(f64::from(bar.0), f64::from(bar.1))).filter(|o| *o != v.output);
+        let rescale = onto
+            .as_ref()
+            .is_some_and(|o| self.draw_scale_at(Some(o)) != self.draw_scale_at(Some(&v.output)));
+        let v = &mut self.dialogs.views[index];
         v.x = x;
         v.y = y;
+        if let Some(o) = onto {
+            v.output = o;
+        }
         let tree = v.tree;
         self.scene.set_position(tree, x, y);
         if index + 1 == self.dialogs.views.len() {
             self.ime_field_moved(crate::caret::Editor::Dialog, (x, y));
+        }
+        if rescale {
+            self.redraw_dialog(index);
         }
         self.redraw_all();
     }

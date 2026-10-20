@@ -62,8 +62,8 @@ pub struct Opening {
 
 /// How a dialog with client minimum `min`, a frame `pad` larger than its client and a title bar
 /// `caption` high opens from `g` at `text_size`: the kept size held between `min` and the work
-/// area of the output its title bar lands on (else `screens.fallback`), at the kept place when
-/// the title bar lands on any output.
+/// area of the output its title bar lands on (else `screens.fallback`), at the kept place moved
+/// inside that work area when the title bar lands on any output.
 pub fn opening(
     g: &Geometry,
     text_size: u32,
@@ -80,9 +80,11 @@ pub fn opening(
         .find(|(b, _)| b.width > 0 && bar.intersects(*b));
     let area = on.map_or(screens.fallback, |(_, a)| *a);
     let most = (area.width - pad.0, area.height - pad.1);
+    let client = (w.min(most.0).max(min.0), h.min(most.1).max(min.1));
+    let frame = (client.0 + pad.0, client.1 + pad.1);
     Opening {
-        client: (w.min(most.0).max(min.0), h.min(most.1).max(min.1)),
-        at: on.map(|_| (g.x, g.y)),
+        client,
+        at: on.map(|_| crate::window::keep_inside((g.x, g.y), frame, area)),
     }
 }
 
@@ -227,14 +229,35 @@ mod tests {
         let open = |g: Geometry| opening(&g, 100, MIN, PAD, 30, &s).at;
         assert_eq!(open(at(100, 100)), Some((100, 100)));
         assert_eq!(
-            open(at(2000, 900)),
-            Some((2000, 900)),
+            open(at(2000, 300)),
+            Some((2000, 300)),
             "on the second output"
         );
+    }
+
+    #[test]
+    fn a_kept_place_moves_inside_the_work_area_its_title_bar_lands_on() {
+        let s = screens();
+        let open = |g: Geometry, ts| opening(&g, ts, MIN, PAD, 30, &s).at;
+        assert_eq!(open(at(-500, 10), 100), Some((0, 10)), "off the left edge");
         assert_eq!(
-            open(at(-500, 10)),
-            Some((-500, 10)),
-            "partly off the left edge"
+            open(at(2000, 900), 100),
+            Some((2000, 1024 - 634)),
+            "past the second output's bottom"
+        );
+        let one = Screens {
+            outputs: vec![s.outputs[0]],
+            fallback: s.fallback,
+        };
+        assert_eq!(
+            opening(&at(1800, 300), 100, MIN, PAD, 30, &one).at,
+            Some((1920 - 708, 300)),
+            "left straddling an output since unplugged"
+        );
+        assert_eq!(
+            open(at(100, 500), 150),
+            Some((100, 1050 - 934)),
+            "grown with the text past the bottom"
         );
     }
 
