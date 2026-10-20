@@ -513,6 +513,7 @@ fn topdir_of(root: &Path) -> Option<&Path> {
 pub fn restore(t: &Trashed) -> io::Result<()> {
     move_to_free(&t.files, &t.original)?;
     let _ = std::fs::remove_file(&t.info);
+    bincap::gone(&t.files);
     Ok(())
 }
 
@@ -662,6 +663,7 @@ pub(crate) fn erase_trashed_with(
     {
         log::warn!("trash: left {} behind: {e}", info.display());
     }
+    bincap::gone(files);
     Ok(())
 }
 
@@ -683,6 +685,7 @@ pub fn restore_free(t: &Trashed) -> io::Result<PathBuf> {
         match move_to_free(&t.files, &to) {
             Ok(()) => {
                 let _ = std::fs::remove_file(&t.info);
+                bincap::gone(&t.files);
                 return Ok(to);
             }
             Err(e) if e.kind() == io::ErrorKind::AlreadyExists => continue,
@@ -1862,6 +1865,28 @@ mod tests {
         let fields: Vec<&str> = sizes.trim_end().split(' ').collect();
         assert_eq!((fields[0], fields[2]), ("500", "Photos"), "{sizes}");
         assert_eq!(bincap::used(&bins.home), 500);
+    }
+
+    #[test]
+    fn a_folder_restored_or_erased_drops_its_line_in_directorysizes() {
+        let (t, bins, _drive) = drives();
+        let sizes = || fs::read_to_string(bins.home.join("directorysizes")).unwrap();
+        let (a, b) = (t.path().join("home/A"), t.path().join("home/B"));
+        for d in [&a, &b] {
+            fs::create_dir_all(d).unwrap();
+            fs::write(d.join("f"), [0u8; 100]).unwrap();
+        }
+        let (ta, _) = bins.trash(&a).unwrap();
+        let (tb, _) = bins.trash(&b).unwrap();
+        assert_eq!(sizes().lines().count(), 2, "{}", sizes());
+        restore_free(&ta).unwrap();
+        assert!(
+            sizes().ends_with(" B\n"),
+            "only B's line is left: {}",
+            sizes()
+        );
+        erase_trashed(&tb.files, Some(&tb)).unwrap();
+        assert_eq!(sizes(), "", "no line is left");
     }
 
     #[test]
