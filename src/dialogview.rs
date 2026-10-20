@@ -512,6 +512,13 @@ impl State {
         self.flip_hide_dialog(tree);
         self.flip_join();
         self.run_picker_requests();
+        // A still pointer gets no motion, so what lay under it (a desktop icon's tip) keeps the hover.
+        if self.pointer_free() {
+            self.owe_repoint(
+                smithay::backend::input::InputTime::now(),
+                std::time::Duration::ZERO,
+            );
+        }
     }
 
     /// Freeze the screen behind Welcome panel `id` and fade it to grey. Taken once the panel has the
