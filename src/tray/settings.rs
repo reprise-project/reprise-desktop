@@ -1,5 +1,5 @@
 //! The `org.freedesktop.impl.portal.Settings` backend, served from the compositor's bus connection so GTK, Qt and browsers learn through xdg-desktop-portal whether the look is dark and what its accent is.
-//! Three namespaces are answered, everything else is NotFound (`reprise-portals.conf` names no other Settings backend): `org.freedesktop.appearance`, `org.reprise.appearance` (the whole look, for Reprise's programs) and `org.gnome.desktop.interface` (theme, icons, cursor, font, font smoothing and overlay scrolling for GTK3, which the session points at the portal via `GTK_USE_PORTAL`).
+//! Three namespaces are answered, everything else is NotFound (`reprise-portals.conf` names no other Settings backend): `org.freedesktop.appearance`, `org.reprise.appearance` (the whole look, for Reprise's programs) and `org.gnome.desktop.interface` (theme, icons, cursor, font, font smoothing and overlay scrolling for GTK3, and an empty `gtk-im-module` for GTK4, which the session points at the portal via `GTK_USE_PORTAL`).
 
 use crate::config::{Config, FontSmoothing};
 use reprisebus::appearance as look;
@@ -219,6 +219,9 @@ impl Appearance {
                 "text-scaling-factor",
                 Value::F64(self.text_size as f64 / 100.0),
             ),
+            // GTK4 falls back to its simple module when the namespace lacks
+            // this key; empty lets it pick text-input-v3 (input methods).
+            (GNOME, "gtk-im-module", Value::from("")),
         ]
     }
 
@@ -505,7 +508,7 @@ mod tests {
         };
         assert_eq!(
             light.read_all(vec![GNOME.into()])[GNOME].len(),
-            11,
+            12,
             "every key GTK takes from here"
         );
         assert_eq!(text(&light, "color-scheme"), "default");
@@ -586,6 +589,12 @@ mod tests {
             .map(|(_, k, _)| k)
             .collect();
         assert_eq!(moved, ["gtk-theme"]);
+    }
+
+    #[test]
+    fn gtk_is_told_to_pick_its_input_method_module_itself() {
+        let a = Appearance::of(&crate::config::Config::default());
+        assert_eq!(a.get(GNOME, "gtk-im-module"), Some(Value::from("")));
     }
 
     #[test]
