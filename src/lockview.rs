@@ -26,7 +26,8 @@ use crate::lock::{self, LockButton, LockKey, LockState, PamVerifier};
 use crate::lockfinger;
 use crate::raster::Rect;
 use crate::sessionlock::{ClientLock, SessionLock};
-use crate::waterview::Pane;
+use crate::wallpaperview::LockWall;
+use crate::waterview::{Pane, Picture};
 use crate::window::WindowId;
 
 /// The lock's one `State` field (`lock`): the session-lock global and, while locked, the lock.
@@ -480,24 +481,63 @@ fn cover_output(state: &mut State, output: &Output) {
 /// Fill `wall` with the wallpaper as `output` shows it, or empty it without one or with `lock_screen`
 /// off. With `[wallpaper] water` on, the cover's `tree` gets the water node, which draws in place of `wall`.
 fn paint_wall(state: &mut State, output: &Output, tree: TreeId, wall: BufferId) {
-    let scale = state.draw_scale_at(Some(output));
-    let canvas = state
-        .config
-        .wallpaper
-        .lock_screen
-        .then(|| state.wallpaper_canvas(output, scale))
-        .flatten();
-    match &canvas {
-        Some(c) => crate::output::upload_scaled(&mut state.scene, wall, c, scale),
-        None => state.scene.buffer_clear(wall),
-    }
-    match canvas.filter(|_| state.water_on()) {
-        Some(c) => {
-            state.water_lock_cover(output, tree, wall);
-            state.water_wallpaper(output, Pane::Lock, &c, None, false);
+    let shown = match state.config.wallpaper.lock_screen {
+        true => state.lock_wallpaper(output),
+        false => LockWall::None,
+    };
+    let b = state.layout_box(Some(output));
+    let water = state.water_on() && !matches!(shown, LockWall::None);
+    let picture = match shown {
+        LockWall::Shown(t) => {
+            if let Some(backend) = state.backend.as_ref() {
+                state
+                    .scene
+                    .buffer_set_texture(wall, &backend.renderer, t.clone());
+                state
+                    .scene
+                    .buffer_set_dest_size(wall, Some((b.width, b.height).into()));
+            }
+            Some(Picture::Texture(t))
         }
-        None => state.water_lock_uncover(output, wall),
+        LockWall::Composed(c) => {
+            let scale = state.draw_scale_at(Some(output));
+            crate::output::upload_scaled(&mut state.scene, wall, &c, scale);
+            Some(Picture::Canvas(c))
+        }
+        // The picture before stays, stretched, until the job's picture lands (`repaint_wall`).
+        LockWall::Composing => {
+            if state.scene.buffer_has_pixels(wall) {
+                state
+                    .scene
+                    .buffer_set_dest_size(wall, Some((b.width, b.height).into()));
+            }
+            None
+        }
+        LockWall::None => {
+            state.scene.buffer_clear(wall);
+            None
+        }
+    };
+    if !water {
+        state.water_lock_uncover(output, wall);
+        return;
     }
+    state.water_lock_cover(output, tree, wall);
+    if let Some(p) = picture {
+        state.water_picture(output, Pane::Lock, p, false);
+    }
+}
+
+/// A job's wallpaper picture for `output` landed: show it on its lock screen too.
+pub fn repaint_wall(state: &mut State, output: &Output) {
+    let Some((tree, wall)) = (state.lock.active.as_ref())
+        .and_then(|l| l.outputs.iter().find(|lo| lo.output == *output))
+        .map(|lo| (lo.tree, lo.wall))
+    else {
+        return;
+    };
+    paint_wall(state, output, tree, wall);
+    redraw_output(state, output);
 }
 
 fn forget_output(state: &mut State, output: &Output) {

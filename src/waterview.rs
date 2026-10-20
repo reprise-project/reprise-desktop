@@ -101,7 +101,7 @@ fn next_flavour(profile: Profile, flavour: usize) -> usize {
 }
 
 /// A pane's next picture: a canvas to import, or a texture the wallpaper already holds.
-enum Picture {
+pub(crate) enum Picture {
     Canvas(Canvas),
     Texture(GlesTexture),
 }
@@ -955,7 +955,13 @@ impl State {
         self.water_picture(out, pane, picture, fading_in);
     }
 
-    fn water_picture(&mut self, out: &Output, pane: Pane, picture: Picture, fading_in: bool) {
+    pub(crate) fn water_picture(
+        &mut self,
+        out: &Output,
+        pane: Pane,
+        picture: Picture,
+        fading_in: bool,
+    ) {
         {
             let mut panes = self.water.panes.borrow_mut();
             let Some(p) = panes.get_mut(&(out.name(), pane)) else {
