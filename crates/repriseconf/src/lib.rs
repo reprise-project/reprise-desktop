@@ -88,67 +88,66 @@ pub fn glass_color() -> Option<String> {
         .map(String::from)
 }
 
-pub fn shell_dlg() -> Option<String> {
-    let text = std::fs::read_to_string(config_path()).unwrap_or_default();
-    shell_dlg_in(&text)
+/// The config keys a program's look follows on top of its interface, from one read of the file.
+#[derive(Clone, Debug, PartialEq)]
+pub struct LookKeys {
+    /// `[fonts] shell_dlg`; `None` when unset or blank.
+    pub shell_dlg: Option<String>,
+    /// `[fonts] family`; `None` when unset, empty or not a list of strings.
+    pub font_family: Option<Vec<String>>,
+    /// `[fonts] antialias`; `None` when unset or not a boolean.
+    pub antialias: Option<bool>,
+    /// `[accessibility] text_size` in percent, 100 unless one of 100..=200 in steps of 25.
+    pub text_size: u32,
+    /// `[metrics] double_click_ms`; `None` when unset or outside 0..=10000, which leaves the
+    /// interface's own time.
+    pub double_click_ms: Option<i32>,
 }
 
-fn shell_dlg_in(text: &str) -> Option<String> {
-    let doc = text.parse::<DocumentMut>().ok()?;
-    get(&doc, &key("fonts", "shell_dlg"))
+/// [`LookKeys`], read now.
+pub fn look_keys() -> LookKeys {
+    look_keys_in(&std::fs::read_to_string(config_path()).unwrap_or_default())
+}
+
+fn look_keys_in(text: &str) -> LookKeys {
+    let doc = text.parse::<DocumentMut>().ok();
+    let doc = doc.as_ref();
+    LookKeys {
+        shell_dlg: doc.and_then(shell_dlg_of),
+        font_family: doc.and_then(font_family_of),
+        antialias: doc.and_then(|d| get(d, &key("fonts", "antialias"))?.as_bool()),
+        text_size: doc.map_or(100, text_size_of),
+        double_click_ms: doc.and_then(double_click_ms_of),
+    }
+}
+
+fn shell_dlg_of(doc: &DocumentMut) -> Option<String> {
+    get(doc, &key("fonts", "shell_dlg"))
         .and_then(Item::as_str)
         .filter(|s| !s.trim().is_empty())
         .map(String::from)
 }
 
-/// `[fonts] family`, read now; `None` when unset, empty or not a list of strings.
-pub fn font_family() -> Option<Vec<String>> {
-    let text = std::fs::read_to_string(config_path()).unwrap_or_default();
-    font_family_in(&text)
-}
-
-fn font_family_in(text: &str) -> Option<Vec<String>> {
-    let doc = text.parse::<DocumentMut>().ok()?;
-    let list = get(&doc, &key("fonts", "family"))?.as_array()?;
+fn font_family_of(doc: &DocumentMut) -> Option<Vec<String>> {
+    let list = get(doc, &key("fonts", "family"))?.as_array()?;
     let families: Option<Vec<String>> = list.iter().map(|v| v.as_str().map(String::from)).collect();
     families.filter(|f| !f.is_empty())
 }
 
-/// `[fonts] antialias`, read now; `None` when unset or not a boolean.
-pub fn font_antialias() -> Option<bool> {
-    let text = std::fs::read_to_string(config_path()).unwrap_or_default();
-    font_antialias_in(&text)
-}
-
-fn font_antialias_in(text: &str) -> Option<bool> {
-    let doc = text.parse::<DocumentMut>().ok()?;
-    get(&doc, &key("fonts", "antialias"))?.as_bool()
-}
-
 pub fn text_size() -> u32 {
-    let text = std::fs::read_to_string(config_path()).unwrap_or_default();
-    text_size_in(&text)
+    look_keys().text_size
 }
 
-fn text_size_in(text: &str) -> u32 {
-    text.parse::<DocumentMut>()
-        .ok()
-        .and_then(|doc| get(&doc, &key("accessibility", "text_size"))?.as_integer())
+fn text_size_of(doc: &DocumentMut) -> u32 {
+    get(doc, &key("accessibility", "text_size"))
+        .and_then(Item::as_integer)
         .and_then(|v| u32::try_from(v).ok())
         .filter(|v| (100..=200).contains(v) && v % 25 == 0)
         .unwrap_or(100)
 }
 
-/// `[metrics] double_click_ms`, read now; `None` when unset or outside 0..=10000, which leaves the
-/// interface's own time.
-pub fn double_click_ms() -> Option<i32> {
-    let text = std::fs::read_to_string(config_path()).unwrap_or_default();
-    double_click_ms_in(&text)
-}
-
-fn double_click_ms_in(text: &str) -> Option<i32> {
-    let doc = text.parse::<DocumentMut>().ok()?;
-    get(&doc, &key("metrics", "double_click_ms"))?
+fn double_click_ms_of(doc: &DocumentMut) -> Option<i32> {
+    get(doc, &key("metrics", "double_click_ms"))?
         .as_integer()
         .and_then(|v| i32::try_from(v).ok())
         .filter(|v| (0..=10_000).contains(v))
@@ -601,60 +600,83 @@ mod tests {
 
     #[test]
     fn the_second_dialog_font_is_read_when_set() {
-        assert_eq!(shell_dlg_in(""), None);
-        assert_eq!(shell_dlg_in("[fonts]\nshell_dlg = \" \"\n"), None);
-        assert_eq!(shell_dlg_in("[fonts]\nshell_dlg = 3\n"), None);
-        assert_eq!(shell_dlg_in("[fonts\n"), None);
+        assert_eq!(look_keys_in("").shell_dlg, None);
+        assert_eq!(look_keys_in("[fonts]\nshell_dlg = \" \"\n").shell_dlg, None);
+        assert_eq!(look_keys_in("[fonts]\nshell_dlg = 3\n").shell_dlg, None);
+        assert_eq!(look_keys_in("[fonts\n").shell_dlg, None);
         assert_eq!(
-            shell_dlg_in("[fonts]\nshell_dlg = \"Some Sans\"\n").as_deref(),
+            look_keys_in("[fonts]\nshell_dlg = \"Some Sans\"\n")
+                .shell_dlg
+                .as_deref(),
             Some("Some Sans")
         );
     }
 
     #[test]
     fn the_font_family_is_read_when_a_list_of_names() {
-        assert_eq!(font_family_in(""), None);
-        assert_eq!(font_family_in("[fonts]\nfamily = []\n"), None);
-        assert_eq!(font_family_in("[fonts]\nfamily = \"DejaVu Sans\"\n"), None);
-        assert_eq!(font_family_in("[fonts]\nfamily = [\"A\", 3]\n"), None);
+        assert_eq!(look_keys_in("").font_family, None);
+        assert_eq!(look_keys_in("[fonts]\nfamily = []\n").font_family, None);
         assert_eq!(
-            font_family_in("[fonts]\nfamily = [\"DejaVu Sans\", \"Noto Sans\"]\n"),
+            look_keys_in("[fonts]\nfamily = \"DejaVu Sans\"\n").font_family,
+            None
+        );
+        assert_eq!(
+            look_keys_in("[fonts]\nfamily = [\"A\", 3]\n").font_family,
+            None
+        );
+        assert_eq!(
+            look_keys_in("[fonts]\nfamily = [\"DejaVu Sans\", \"Noto Sans\"]\n").font_family,
             Some(vec!["DejaVu Sans".into(), "Noto Sans".into()])
         );
     }
 
     #[test]
     fn font_antialias_is_read_when_a_boolean() {
-        assert_eq!(font_antialias_in(""), None);
-        assert_eq!(font_antialias_in("[fonts]\nantialias = \"yes\"\n"), None);
-        assert_eq!(font_antialias_in("[fonts]\nantialias = true\n"), Some(true));
+        assert_eq!(look_keys_in("").antialias, None);
         assert_eq!(
-            font_antialias_in("[fonts]\nantialias = false\n"),
+            look_keys_in("[fonts]\nantialias = \"yes\"\n").antialias,
+            None
+        );
+        assert_eq!(
+            look_keys_in("[fonts]\nantialias = true\n").antialias,
+            Some(true)
+        );
+        assert_eq!(
+            look_keys_in("[fonts]\nantialias = false\n").antialias,
             Some(false)
         );
     }
 
     #[test]
     fn the_text_size_is_read_or_100() {
-        assert_eq!(text_size_in(""), 100);
-        assert_eq!(text_size_in("[accessibility]\ntext_size = 150\n"), 150);
-        assert_eq!(text_size_in("[accessibility]\ntext_size = 140\n"), 100);
-        assert_eq!(text_size_in("[accessibility]\ntext_size = \"150\"\n"), 100);
+        assert_eq!(look_keys_in("").text_size, 100);
+        assert_eq!(
+            look_keys_in("[accessibility]\ntext_size = 150\n").text_size,
+            150
+        );
+        assert_eq!(
+            look_keys_in("[accessibility]\ntext_size = 140\n").text_size,
+            100
+        );
+        assert_eq!(
+            look_keys_in("[accessibility]\ntext_size = \"150\"\n").text_size,
+            100
+        );
     }
 
     #[test]
     fn the_double_click_time_is_read_or_left_to_the_interface() {
-        assert_eq!(double_click_ms_in(""), None);
+        assert_eq!(look_keys_in("").double_click_ms, None);
         assert_eq!(
-            double_click_ms_in("[metrics]\ndouble_click_ms = 900\n"),
+            look_keys_in("[metrics]\ndouble_click_ms = 900\n").double_click_ms,
             Some(900)
         );
         assert_eq!(
-            double_click_ms_in("[metrics]\ndouble_click_ms = -1\n"),
+            look_keys_in("[metrics]\ndouble_click_ms = -1\n").double_click_ms,
             None
         );
         assert_eq!(
-            double_click_ms_in("[metrics]\ndouble_click_ms = \"900\"\n"),
+            look_keys_in("[metrics]\ndouble_click_ms = \"900\"\n").double_click_ms,
             None
         );
     }
