@@ -295,6 +295,9 @@ pub struct TextSpot {
     /// The edit has a step to undo, for its edit menu's Undo.
     pub can_undo: bool,
     pub selected: bool,
+    /// A digits-only field (a spin box): no input method turns on over it, so its keys type
+    /// the digits themselves.
+    pub digits: bool,
 }
 
 impl TextSpot {
@@ -582,6 +585,7 @@ impl TextEdit {
             multiline: false,
             can_undo: self.can_undo(),
             selected: self.has_selection(),
+            digits: false,
         }
     }
 

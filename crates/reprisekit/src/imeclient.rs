@@ -99,6 +99,7 @@ pub struct ImeClient {
 
 impl ImeClient {
     pub fn sync(&mut self, spot: Option<TextSpot>) -> Vec<Request> {
+        let spot = spot.filter(|s| !s.digits);
         let out = plan(self.sent.as_ref(), spot.as_ref(), self.from_ime);
         self.sent = spot;
         self.from_ime = false;
@@ -160,6 +161,7 @@ mod tests {
             multiline: false,
             can_undo: false,
             selected: false,
+            digits: false,
         }
     }
 
@@ -185,6 +187,23 @@ mod tests {
             [Request::Disable, Request::Commit]
         );
         assert_eq!(plan(None, None, false), []);
+    }
+
+    #[test]
+    fn a_digits_field_turns_no_input_method_on() {
+        let digits = TextSpot {
+            digits: true,
+            ..spot(0, 5, "10", 2)
+        };
+        let mut c = ImeClient::default();
+        assert_eq!(c.sync(Some(digits.clone())), []);
+        assert_eq!(c.sent(), None);
+        c.sync(Some(spot(0, 5, "ab", 1)));
+        assert_eq!(
+            c.sync(Some(digits)),
+            [Request::Disable, Request::Commit],
+            "focus moving from a text field to a spin box turns it off"
+        );
     }
 
     #[test]
