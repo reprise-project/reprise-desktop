@@ -2058,27 +2058,39 @@ impl State {
         self.window_for_surface(&root)
     }
 
+    /// Fits a popup's pending geometry to its positioner: a window's popups inside the area the
+    /// window fits to (the taskbar stacks above them), a panel's inside its output.
     pub fn unconstrain_popup(&self, popup: &PopupSurface) {
         let kind = PopupKind::Xdg(popup.clone());
-        let Ok(root) = find_popup_root_surface(&kind) else {
-            return;
-        };
-        let Some(w) = self.window_for_surface(&root) else {
-            return;
-        };
-        let Some(win) = self.win(w) else {
-            return;
-        };
-        let out = self.output_box_for_window(w);
-        let (cx, cy) = win.client_origin();
+        let bounds = find_popup_root_surface(&kind)
+            .ok()
+            .and_then(|root| self.popup_bounds(&root));
         let parent = get_popup_toplevel_coords(&kind);
-        let target = Rectangle::new(
-            (out.x - cx - parent.x, out.y - cy - parent.y).into(),
-            (out.width, out.height).into(),
-        );
         popup.with_pending_state(|s| {
-            s.geometry = s.positioner.get_unconstrained_geometry(target);
+            s.geometry = match bounds {
+                Some((area, (ox, oy))) => {
+                    let target = Rectangle::new(
+                        (area.x - ox - parent.x, area.y - oy - parent.y).into(),
+                        (area.width, area.height).into(),
+                    );
+                    s.positioner.get_unconstrained_geometry(target)
+                }
+                None => s.positioner.get_geometry(),
+            };
         });
+    }
+
+    /// The layout rect a popup under `root` stays inside, and the layout point its offsets are
+    /// from.
+    fn popup_bounds(&self, root: &WlSurface) -> Option<(Rect, (i32, i32))> {
+        if let Some(w) = self.window_for_surface(root) {
+            let origin = self.win(w)?.client_origin();
+            let area = Some(self.fit_target(w))
+                .filter(|r| r.width > 0 && r.height > 0)
+                .unwrap_or_else(|| self.output_box_for_window(w));
+            return Some((area, origin));
+        }
+        self.layer_popup_bounds(root)
     }
 
     pub fn map_window(&mut self, w: WindowId) {
@@ -3286,6 +3298,86 @@ mod tests {
             bottom: right_bottom.1,
         };
         assert_eq!(anchored_position(&a, (120, 80), (50, 60)), (50, 60));
+    }
+
+    /// The layout rect of a 100x60 menu, and the usable area, once a toplevel asks for it to drop
+    /// from its client's bottom-left corner (or to open leftwards from its top-left one when
+    /// `leftwards`) with the taskbar on `edge` and the client 40 (80) px from the usable area's
+    /// edge: far enough that the menu would fit on the output over the bar.
+    fn menu_by_the_bar(
+        edge: reprisekit::taskbar::Edge,
+        leftwards: bool,
+    ) -> (crate::raster::Rect, crate::raster::Rect) {
+        use crate::raster::Rect;
+        use smithay::desktop::{PopupKind, PopupManager};
+        use wayland_protocols::xdg::shell::client::xdg_positioner::{
+            Anchor, ConstraintAdjustment, Gravity,
+        };
+        let mut config = crate::config::Config::default();
+        config.taskbar.position = edge;
+        let mut h = crate::harness::Harness::with_config(config);
+        let out = h.output("TEST-1", 1024, 768);
+        let mut c = h.connect();
+        let t = h.map_toplevel(&mut c, "test.app", 300, 200);
+        let area = h.state.usable_area(Some(&out));
+        let win = h.state.win(t.id).unwrap();
+        let (cx, cy) = win.client_origin();
+        let (fx, fy) = (win.x, win.y);
+        let (x, y) = if leftwards {
+            (area.x + 80 + fx - cx, fy)
+        } else {
+            (fx, area.y + area.height - 240 + fy - cy)
+        };
+        h.state.move_to(t.id, x, y);
+        h.dispatch();
+        h.map_popup_with(&mut c, t, 100, 60, |p| {
+            let adjust = ConstraintAdjustment::FlipX
+                | ConstraintAdjustment::FlipY
+                | ConstraintAdjustment::SlideX
+                | ConstraintAdjustment::SlideY;
+            if leftwards {
+                p.set_anchor_rect(0, 0, 1, 20);
+                p.set_anchor(Anchor::TopLeft);
+                p.set_gravity(Gravity::BottomLeft);
+            } else {
+                p.set_anchor_rect(0, 180, 40, 20);
+                p.set_anchor(Anchor::BottomLeft);
+                p.set_gravity(Gravity::BottomRight);
+            }
+            p.set_constraint_adjustment(adjust);
+        });
+        let win = h.state.win(t.id).unwrap();
+        let (cx, cy) = win.client_origin();
+        let open: Vec<_> = PopupManager::popups_for_surface(win.wl_surface()).collect();
+        assert_eq!(open.len(), 1, "the menu is open");
+        let PopupKind::Xdg(popup) = &open[0].0 else {
+            panic!("an xdg popup");
+        };
+        let g = popup.with_pending_state(|s| s.geometry);
+        let menu = Rect::new(cx + g.loc.x, cy + g.loc.y, g.size.w, g.size.h);
+        (menu, area)
+    }
+
+    #[test]
+    fn a_menu_dropping_onto_the_bottom_taskbar_opens_above_its_anchor() {
+        let (menu, area) = menu_by_the_bar(reprisekit::taskbar::Edge::Bottom, false);
+        assert!(area.height < 768, "the taskbar takes a strip: {area:?}");
+        assert_eq!(
+            menu.y + menu.height,
+            area.y + area.height - 60,
+            "the menu flips up to end at its anchor's top: {menu:?} in {area:?}"
+        );
+    }
+
+    #[test]
+    fn a_menu_opening_onto_a_left_taskbar_stays_right_of_it() {
+        let (menu, area) = menu_by_the_bar(reprisekit::taskbar::Edge::Left, true);
+        assert!(area.x >= 20, "the taskbar takes a strip: {area:?}");
+        assert!(
+            menu.x >= area.x,
+            "the menu starts right of the bar at x >= {}: {menu:?}",
+            area.x
+        );
     }
 
     /// Two mapped toplevels on one output with the desktop holding the keyboard; the second's

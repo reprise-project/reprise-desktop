@@ -3,7 +3,7 @@ use smithay::{
     desktop::{PopupKind, PopupManager},
     output::Output,
     reexports::wayland_server::protocol::{wl_output::WlOutput, wl_surface::WlSurface},
-    utils::{Logical, Point, Rectangle},
+    utils::{Logical, Point},
     wayland::{
         compositor::with_states,
         shell::{
@@ -245,20 +245,8 @@ impl WlrLayerShellHandler for State {
         });
     }
 
-    fn new_popup(&mut self, parent: WlrLayerSurface, popup: PopupSurface) {
-        let Some(l) = self.layer_of(parent.wl_surface()) else {
-            return;
-        };
-        let out = self.layout_box(Some(&l.output));
-        let at = self.scene.position(l.tree).unwrap_or_default();
-        // Kept inside the output; the target box is relative to the panel's surface.
-        let target = Rectangle::new(
-            (out.x - at.x, out.y - at.y).into(),
-            (out.width, out.height).into(),
-        );
-        popup.with_pending_state(|s| {
-            s.geometry = s.positioner.get_unconstrained_geometry(target);
-        });
+    fn new_popup(&mut self, _parent: WlrLayerSurface, popup: PopupSurface) {
+        self.unconstrain_popup(&popup);
     }
 
     fn layer_destroyed(&mut self, surface: WlrLayerSurface) {
@@ -284,6 +272,13 @@ impl WlrLayerShellHandler for State {
 }
 
 impl State {
+    /// A panel's popups stay inside its output; their offsets are from the panel's origin.
+    pub(crate) fn layer_popup_bounds(&self, root: &WlSurface) -> Option<(Rect, (i32, i32))> {
+        let l = self.layer_of(root)?;
+        let at = self.scene.position(l.tree).unwrap_or_default();
+        Some((self.layout_box(Some(&l.output)), (at.x, at.y)))
+    }
+
     fn layer_of(&self, surface: &WlSurface) -> Option<&LayerSurface> {
         self.layers_shell
             .surfaces
