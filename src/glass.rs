@@ -478,6 +478,13 @@ impl GlassCtx {
         });
     }
 
+    /// Drop the private backdrops on `output` its glass did not draw from in the last update:
+    /// the output stopped rendering, so no drag resumes them soon.
+    pub fn output_stopped(&self, output: &Output) {
+        let name = output.name();
+        (self.beneath.borrow_mut()).retain(|(o, _), b| *o != name || b.reuse.in_use());
+    }
+
     fn redraw<E: RenderElement<GlesRenderer>>(
         &self,
         renderer: &mut GlesRenderer,
@@ -2136,6 +2143,50 @@ mod tests {
             let differ = drawn.iter().zip(&fresh).filter(|(a, b)| a != b).count();
             assert_eq!(differ, 0, "{what}: pixels unlike a fresh start's");
         }
+    }
+
+    #[test]
+    fn an_output_that_stops_rendering_drops_the_private_backdrops_not_drawn_from() {
+        let Ok(mut renderer) = reprisefx::headless::renderer() else {
+            eprintln!("skipped: no renderer");
+            return;
+        };
+        let mut l = Layout {
+            stripe: [0.8, 0.1, 0.1, 1.0],
+            patch: (520, 120),
+            lower: (20, 20),
+            upper: (100, 50),
+            upper_size: (150, 110),
+            lower_on_top: false,
+            material: Material::Frosted,
+        };
+        let mut live = lay(&l, &mut renderer);
+        frame(&mut renderer, &live, l.material);
+        let covered = live.ctx.beneath.borrow().len();
+        assert!(
+            covered > 0,
+            "glass over glass draws from a private backdrop"
+        );
+        let output = test_output_of(640, 200);
+        live.ctx.output_stopped(&output);
+        assert_eq!(
+            live.ctx.beneath.borrow().len(),
+            covered,
+            "backdrops drawn from in the last update stay"
+        );
+        l.upper = (460, 60);
+        live.scene.set_position(live.upper.0, l.upper.0, l.upper.1);
+        frame(&mut renderer, &live, l.material);
+        assert_eq!(
+            live.ctx.beneath.borrow().len(),
+            covered,
+            "kept unused while rendering"
+        );
+        live.ctx.output_stopped(&output);
+        assert!(
+            live.ctx.beneath.borrow().is_empty(),
+            "dropped once its output stops"
+        );
     }
 
     #[test]
