@@ -1,8 +1,12 @@
 //! Big pictures copied into linear dma-bufs on the thread that drew them, which the renderer
 //! imports as they stand: the loop neither copies the pixels nor uploads a texture.
 
+use std::ffi::c_void;
 use std::fs::File;
+use std::io;
+use std::marker::PhantomData;
 use std::path::PathBuf;
+use std::ptr;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 
@@ -15,6 +19,7 @@ use smithay::backend::{
     },
     renderer::{ImportDma, gles::GlesRenderer},
 };
+use smithay::reexports::gbm::{AsRaw, BufferObject};
 
 use crate::{compositor::DeskScene, output::upload_scaled, raster::Canvas};
 
@@ -73,27 +78,79 @@ impl Uploads {
         let alloc = self.allocator().ok_or("no GBM device")?;
         // Held through the map and export: a GBM device is not safe to share between threads.
         let mut alloc = alloc.lock().map_err(|_| "poisoned")?;
-        let mut bo = (alloc.create_buffer(w, h, Fourcc::Argb8888, &[Modifier::Linear]))
+        let bo = (alloc.create_buffer(w, h, Fourcc::Argb8888, &[Modifier::Linear]))
             .map_err(|e| format!("no {w}x{h} buffer: {e}"))?;
         // Through gbm_bo_map, not an mmap of the dma-buf: on virtio-gpu only the driver's
         // unmap carries the pixels over to the host's copy the renderer samples.
-        (bo.map_mut(0, 0, w, h, |m| {
-            let stride = m.stride() as usize;
-            let dst = m.buffer_mut();
-            if stride < row || dst.len() < stride * (h as usize - 1) + row {
-                return Err(format!("stride {stride} too short for {w}x{h}"));
+        let mut map = WriteMap::new(&bo, w, h).map_err(|e| format!("map failed: {e}"))?;
+        let stride = map.stride;
+        let dst = map.bytes_mut();
+        if stride < row || dst.len() < stride * (h as usize - 1) + row {
+            return Err(format!("stride {stride} too short for {w}x{h}"));
+        }
+        for (y, src) in canvas.pixels.chunks_exact(w as usize).enumerate() {
+            // ARGB8888 is the canvas's pixels in little-endian byte order.
+            let line = &mut dst[y * stride..][..row];
+            for (d, p) in line.as_chunks_mut::<4>().0.iter_mut().zip(src) {
+                *d = p.to_le_bytes();
             }
-            for (y, src) in canvas.pixels.chunks_exact(w as usize).enumerate() {
-                // ARGB8888 is the canvas's pixels in little-endian byte order.
-                let line = &mut dst[y * stride..][..row];
-                for (d, p) in line.as_chunks_mut::<4>().0.iter_mut().zip(src) {
-                    *d = p.to_le_bytes();
-                }
-            }
-            Ok(())
-        }))
-        .map_err(|e| format!("map failed: {e}"))??;
+        }
+        drop(map);
         bo.export().map_err(|e| format!("export failed: {e}"))
+    }
+}
+
+/// A write-only gbm_bo_map of a buffer object's top-left `w`x`h`, unmapped on drop. gbm's own
+/// `map_mut` maps read-write, which lets a driver read the buffer back before the fill.
+struct WriteMap<'a> {
+    bo: *mut gbm_sys::gbm_bo,
+    data: *mut c_void,
+    ptr: *mut u8,
+    stride: usize,
+    len: usize,
+    _bo: PhantomData<&'a BufferObject<()>>,
+}
+
+impl<'a> WriteMap<'a> {
+    fn new(bo: &'a BufferObject<()>, w: u32, h: u32) -> io::Result<WriteMap<'a>> {
+        let bo = bo.as_raw() as *mut _;
+        let (mut stride, mut data) = (0, ptr::null_mut());
+        // SAFETY: `bo` is live for 'a and at least `w`x`h`; stride and data are out-params.
+        let ptr = unsafe {
+            gbm_sys::gbm_bo_map(
+                bo,
+                0,
+                0,
+                w,
+                h,
+                gbm_sys::gbm_bo_transfer_flags::GBM_BO_TRANSFER_WRITE,
+                &mut stride,
+                &mut data,
+            )
+        };
+        if ptr.is_null() {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(WriteMap {
+            bo,
+            data,
+            ptr: ptr.cast(),
+            stride: stride as usize,
+            len: stride as usize * h as usize,
+            _bo: PhantomData,
+        })
+    }
+
+    fn bytes_mut(&mut self) -> &mut [u8] {
+        // SAFETY: gbm_bo_map returned `len` bytes at `ptr`, mapped until the drop.
+        unsafe { std::slice::from_raw_parts_mut(self.ptr, self.len) }
+    }
+}
+
+impl Drop for WriteMap<'_> {
+    fn drop(&mut self) {
+        // SAFETY: the pair of the gbm_bo_map in `new`.
+        unsafe { gbm_sys::gbm_bo_unmap(self.bo, self.data) }
     }
 }
 
