@@ -47,6 +47,7 @@ mod harness;
 mod hoverfade;
 mod icon;
 mod iconedit;
+mod iconwatch;
 mod idle;
 mod imefield;
 mod input;
@@ -263,6 +264,7 @@ fn run(
     backend::init(&mut state)?;
     configwatch::setup(&mut state);
     appindex::setup(&mut state);
+    iconwatch::setup(&mut state);
     quickwatch::setup(&mut state);
     recentwatch::setup(&mut state);
     xwayland::start(&mut state);

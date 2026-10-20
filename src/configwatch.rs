@@ -332,11 +332,7 @@ pub fn reload(state: &mut State, cfg: Config) {
     if changes.icons {
         let roots = reprisekit::icontheme::IconTheme::default_roots();
         let loaded = reprisekit::icontheme::IconTheme::load(&state.config.icons.theme, &roots);
-        state.icons.set_theme(loaded);
-        state.invalidate_desktop();
-        state.invalidate_dialogs();
-        let theme = state.config.icons.theme.clone();
-        crate::tray::send(state, crate::tray::TrayCommand::IconTheme(theme));
+        crate::iconwatch::apply(state, loaded);
     }
     if changes.fonts || changes.icons {
         crate::tray::invalidate_icons(state);

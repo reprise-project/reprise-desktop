@@ -84,14 +84,21 @@ impl Explorer {
 
     /// The main window draws at `scale`, `ctx.icons`' scale: the chrome and the entries wear
     /// their icons at that scale (List and Details' at the text's size), icon files once a thread
-    /// decodes them, and thumbnails made at another one are asked for again.
+    /// decodes them, and thumbnails made at another one are asked for again. A new icon theme
+    /// fetches the chrome again and re-lists.
     pub fn follow_scale(&mut self, scale: i32, ctx: &mut Ctx) {
         let list = shellview::list_icon_px(ctx.theme.text);
         self.list_icons
             .follow(scale, list, &mut ctx.icons, &mut self.sv.entries, &ctx.wake);
-        if std::mem::replace(&mut self.drawn_scale, scale) != scale {
+        let theme = std::sync::Arc::downgrade(&ctx.icons.theme());
+        let rethemed = (self.drawn_theme.replace(theme.clone())).is_some_and(|t| !t.ptr_eq(&theme));
+        if std::mem::replace(&mut self.drawn_scale, scale) != scale || rethemed {
             self.rescale_chrome(ctx);
             self.request_thumbs(scale);
+        }
+        if rethemed {
+            // Which icon name an entry wears depends on what the theme has.
+            let _ = self.refresh(ctx);
         }
     }
 
@@ -993,6 +1000,40 @@ mod tests {
             }
         }
         out
+    }
+
+    #[test]
+    fn an_icon_installed_while_listed_shows_once_the_theme_reloads() {
+        let art = tempfile::tempdir().expect("a temp dir");
+        let (root, folder) = (art.path().join("icons"), art.path().join("folder"));
+        let apps = root.join("flat/16x16/apps");
+        std::fs::create_dir_all(&apps).expect("mkdir");
+        std::fs::create_dir_all(&folder).expect("mkdir");
+        let index = "[Icon Theme]\nName=flat\nDirectories=16x16/apps\n\n[16x16/apps]\nSize=16\nType=Fixed\n";
+        std::fs::write(root.join("flat/index.theme"), index).expect("write");
+        reprisefs::apps::write_launcher(
+            &folder.join("app.desktop"),
+            "[Desktop Entry]\nType=Application\nName=App\nExec=true\nIcon=reprise-test-app\n",
+        )
+        .expect("write");
+        let mut ctx = test_ctx();
+        ctx.icons = reprisekit::icontheme::IconCache::new(reprisekit::icontheme::IconTheme::load(
+            "flat",
+            &[root],
+        ));
+        let mut ex = crate::tests::test_explorer(Place::Folder(folder), &mut ctx);
+        crate::tests::wake_until(&mut ex, &mut ctx, |ex| ex.sv.entries.len() == 1);
+        ex.follow_scale(1, &mut ctx);
+        assert!(ex.sv.entries[0].icon.is_none(), "not installed yet");
+        let mut c = Canvas::new(16, 16);
+        c.pixels.fill(0xffff_00ff);
+        let png = reprisekit::raster::to_png(&c);
+        std::fs::write(apps.join("reprise-test-app.png"), png).expect("write");
+        ctx.icons.reload();
+        ex.follow_scale(1, &mut ctx);
+        crate::tests::wake_until(&mut ex, &mut ctx, |ex| {
+            ex.sv.entries.first().is_some_and(|e| e.icon.is_some())
+        });
     }
 
     #[test]
