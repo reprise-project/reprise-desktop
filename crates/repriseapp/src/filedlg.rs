@@ -1,7 +1,7 @@
 //! The host side of `reprisekit::controls::filedlg` every program shares: places tiles, icons and
 //! folder listings. Folder ids are handles in the program's `FolderTable`.
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -371,9 +371,11 @@ pub struct Host {
     /// The shown folder read again for a new icon theme's icons ([`Host::restyle`]).
     restyling: Option<Job<Read>>,
     /// The last [`Host::list`] and how to start it again: a link it listed unfollowed that
-    /// answers since (`relist`) reads the folder anew.
+    /// answers since (`relist`), or a gvfs metadata change in the folder (`gvfs`, a folder icon
+    /// `gio set` gives), reads the folder anew.
     again: Option<(ReadKey, PathBuf, StartRead)>,
     relist: Option<reprisefs::listing::Relist>,
+    gvfs: Option<reprisefs::gvfsmeta::Changes>,
     /// A typed path whose folders did not answer within [`RESOLVE_WAIT`]; the next resolve of
     /// the same path waits on it again instead of starting another probe.
     probing: Option<(PathBuf, Job<(bool, bool)>)>,
@@ -450,6 +452,10 @@ impl Host {
         self.relist.get_or_insert_with(|| {
             let wake = wake.clone();
             reprisefs::listing::Relist::new(move || wake.wake())
+        });
+        self.gvfs.get_or_insert_with(|| {
+            let wake = wake.clone();
+            reprisefs::gvfsmeta::Changes::new(move || wake.wake())
         });
         if self.thumbs.is_some() {
             return;
@@ -742,11 +748,18 @@ impl Host {
         }
     }
 
-    /// Reads the last listed folder again once a link it listed unfollowed has answered.
+    /// Reads the last listed folder again once a link it listed unfollowed has answered or gvfs
+    /// metadata changed for a file in it.
     fn read_due(&mut self) {
         let due = self.relist.as_ref().map(|r| r.take()).unwrap_or_default();
+        let changed = self.gvfs.as_ref().map(|g| g.take()).unwrap_or_default();
+        self.read_again(&due, &changed);
+    }
+
+    /// Reads the last listed folder again when it is one of `due` or holds one of `changed`.
+    fn read_again(&mut self, due: &BTreeSet<PathBuf>, changed: &BTreeSet<PathBuf>) {
         if let Some((key, path, start)) = &self.again
-            && due.contains(path)
+            && (due.contains(path) || changed.iter().any(|f| f.parent() == Some(path)))
         {
             self.reading = Some((key.clone(), start()));
         }
@@ -1326,6 +1339,33 @@ mod tests {
         let keep = type_keep(&dlg);
         h.list(&mut dlg, id, &mut icons, &keep);
         assert_eq!(names(&dlg), ["a.txt", "b.conf", "bash", "sub"]);
+        std::fs::remove_dir_all(&t).ok();
+    }
+
+    #[test]
+    fn a_metadata_change_in_the_folder_shown_reads_it_again() {
+        let t = tmp("gvfs");
+        let mut h = host_in(&t);
+        let mut icons = IconCache::new(reprisekit::icontheme::IconTheme::load("test", &[]));
+        let mut dlg = h.icons.dialog(Fields {
+            title: "Open".into(),
+            accept_label: "Open".into(),
+            filters: vec![],
+            mode: DlgMode::Open,
+            multiple: false,
+        });
+        h.ensure_listed(&mut dlg, &mut icons, &|_: &Item| true);
+        let none = BTreeSet::new();
+        h.read_again(
+            &none,
+            &BTreeSet::from([PathBuf::from("/srv/elsewhere/sub")]),
+        );
+        assert!(h.reading.is_none(), "a change in another folder is left");
+        h.read_again(&none, &BTreeSet::from([t.join("sub")]));
+        assert!(
+            h.reading.is_some(),
+            "a change to a subfolder reads the folder again"
+        );
         std::fs::remove_dir_all(&t).ok();
     }
 
