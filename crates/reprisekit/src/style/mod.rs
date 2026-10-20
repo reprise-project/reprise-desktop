@@ -1074,7 +1074,7 @@ pub struct Style {
     pub combo_edit_border: bool,
     parts: HashMap<Part, Art>,
     pub controls: ControlMetrics,
-    text_colors: HashMap<(Part, State), Color>,
+    text_colors: HashMap<(Part, State), Ink>,
     pub group_label: GroupLabel,
     pub smooth_progress: bool,
     pub track_marks: TrackMarks,
@@ -1166,6 +1166,7 @@ pub(crate) type ClockPainter = fn(time: (u32, u32, u32), side: i32, d: i32) -> C
 
 /// A part's art, painted the first time it is asked for; clones share it.
 type Art = Arc<LazyLock<PartImage, Box<dyn FnOnce() -> PartImage + Send>>>;
+type Ink = Arc<LazyLock<Color, Box<dyn FnOnce() -> Color + Send>>>;
 
 /// The lit task buttons' art, painted the first time it is asked for; clones share it.
 type Spot = Arc<LazyLock<TaskSpot, Box<dyn FnOnce() -> TaskSpot + Send>>>;
@@ -1628,13 +1629,26 @@ impl Style {
         self
     }
 
-    pub fn with_text_color(mut self, part: Part, state: State, c: Color) -> Style {
-        self.text_colors.insert((part, state), c);
+    pub fn with_text_color(self, part: Part, state: State, c: Color) -> Style {
+        self.with_picked_text_color(part, state, move || c)
+    }
+
+    /// The text colour for `part` in `state`, picked by `pick` the first time it is asked for.
+    pub fn with_picked_text_color(
+        mut self,
+        part: Part,
+        state: State,
+        pick: impl FnOnce() -> Color + Send + 'static,
+    ) -> Style {
+        self.text_colors
+            .insert((part, state), Arc::new(LazyLock::new(Box::new(pick))));
         self
     }
 
     pub fn text_color(&self, part: Part, state: State) -> Option<Color> {
-        self.text_colors.get(&(part, state)).copied()
+        self.text_colors
+            .get(&(part, state))
+            .map(|c| *LazyLock::force(c))
     }
 
     pub fn draw_check(
@@ -1918,6 +1932,25 @@ mod tests {
         assert_eq!(s.part(Part::TrayArea).unwrap().atlas.width, 3);
         assert_eq!(s.part(Part::Taskbar).unwrap().atlas.width, 2);
         assert_eq!(PAINTS.load(Ordering::Relaxed), 1);
+    }
+
+    #[test]
+    fn a_picked_text_color_is_picked_once_on_first_ask() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        static PICKS: AtomicUsize = AtomicUsize::new(0);
+        let ink = Color::rgb(1, 2, 3);
+        let s = style().with_picked_text_color(Part::StartPanel, State::Normal, move || {
+            PICKS.fetch_add(1, Ordering::Relaxed);
+            ink
+        });
+        assert_eq!(PICKS.load(Ordering::Relaxed), 0);
+        assert_eq!(s.text_color(Part::StartPanel, State::Normal), Some(ink));
+        assert_eq!(
+            s.clone().text_color(Part::StartPanel, State::Normal),
+            Some(ink)
+        );
+        assert_eq!(s.text_color(Part::StartPanel, State::Hot), None);
+        assert_eq!(PICKS.load(Ordering::Relaxed), 1);
     }
 
     #[test]

@@ -534,7 +534,9 @@ fn build_at(s: &Settings, scale: i32) -> Style {
     };
     let style = style
         .with_painted_group(&startpanel::PARTS, move || startpanel::parts(&owned, scale))
-        .with_text_color(Part::StartPanel, State::Normal, startpanel::right_ink(s));
+        .with_picked_text_color(Part::StartPanel, State::Normal, move || {
+            startpanel::right_ink(&owned)
+        });
     bars::parts()
         .into_iter()
         .fold(style, |st, (part, paint)| {
