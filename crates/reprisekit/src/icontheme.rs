@@ -96,7 +96,7 @@ pub struct IconTheme {
     /// a time.
     groups: Vec<std::ops::Range<usize>>,
     roots: Vec<PathBuf>,
-    /// Each theme's directory under each root, and the one each entry of `dirs` is in.
+    /// Each theme's directory under each root that has it, and the one each entry of `dirs` is in.
     homes: Vec<Home>,
     dir_home: Vec<usize>,
     /// What each entry of `dirs`, then `roots`, holds, read on first visit so a miss costs a
@@ -374,7 +374,7 @@ impl IconTheme {
     }
 
     /// Append `name` and its `Inherits` chain (depth first, skipping known themes) to
-    /// `chain`/`dirs`/`groups`, with a home per theme and root.
+    /// `chain`/`dirs`/`groups`, with a home per theme and root that has it.
     fn walk(&mut self, name: &str) {
         let IconTheme {
             chain,
@@ -397,19 +397,24 @@ impl IconTheme {
             // root, with or without an `index.theme` there.
             let mut subdirs: Vec<(PathBuf, DirEntry)> = Vec::new();
             let mut seen: HashSet<PathBuf> = HashSet::new();
-            for root in roots.iter() {
-                let base = root.join(&theme);
-                let (inherits, d) = parse_index(&base);
+            // A root without the theme holds none of its directories: leaving it out keeps
+            // lookups and size orders from walking them.
+            let bases: Vec<PathBuf> = roots
+                .iter()
+                .map(|root| root.join(&theme))
+                .filter(|base| base.is_dir())
+                .collect();
+            for base in &bases {
+                let (inherits, d) = parse_index(base);
                 for e in d {
-                    let rel = e.path.strip_prefix(&base).unwrap_or(&e.path).to_path_buf();
+                    let rel = e.path.strip_prefix(base).unwrap_or(&e.path).to_path_buf();
                     if seen.insert(rel.clone()) {
                         subdirs.push((rel, e));
                     }
                 }
                 inherits_all.extend(inherits);
             }
-            for root in roots.iter() {
-                let base = root.join(&theme);
+            for base in bases {
                 dirs.extend(subdirs.iter().map(|(rel, e)| DirEntry {
                     path: base.join(rel),
                     ..e.clone()
@@ -2764,16 +2769,10 @@ mod tests {
             Some(vec!["h.png"])
         );
         assert_eq!(names(&user.join("test/16x16/apps")), Some(vec!["u.png"]));
-        assert_eq!(names(&user.join("base/16x16/apps")), Some(vec![]));
-        assert!(matches!(
-            t.homes[t.dir_home[t
-                .dirs
-                .iter()
-                .position(|d| d.path == user.join("base/16x16/apps"))
-                .unwrap()]]
-            .state(),
-            HomeState::Missing
-        ));
+        assert!(
+            !t.dirs.iter().any(|d| d.path.starts_with(user.join("base"))),
+            "a root without the theme adds none of its directories"
+        );
         let base = t
             .homes
             .iter()
