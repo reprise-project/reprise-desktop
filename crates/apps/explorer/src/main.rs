@@ -1468,7 +1468,7 @@ impl App for Lazy {
 
     fn popup(&mut self, win: WinId, ctx: &Ctx) -> Option<Box<dyn Hosted + '_>> {
         if win != MAIN {
-            return repriseapp::reader_popup(self, win);
+            return repriseapp::reader_popup(self, win, ctx);
         }
         let ex = self.inner.as_mut()?;
         if ex.bar.open.is_some() {

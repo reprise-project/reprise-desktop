@@ -736,8 +736,8 @@ pub trait App {
     /// ([`reprisekit::controls::hosted`]): the program keeps it and gets its input as the
     /// window's, laid out where the compositor put each level. Asked before each draw. Defaults
     /// to [`reader_popup`].
-    fn popup(&mut self, win: WinId, _ctx: &Ctx) -> Option<Box<dyn Hosted + '_>> {
-        reader_popup(self, win)
+    fn popup(&mut self, win: WinId, ctx: &Ctx) -> Option<Box<dyn Hosted + '_>> {
+        reader_popup(self, win, ctx)
     }
     /// The form in window `win` that a screen reader's Focus and ScrollIntoView reach without a
     /// click: a row scrolls into view, a button takes the focus unpressed. Defaults to
@@ -760,16 +760,29 @@ pub trait App {
     }
 }
 
-/// A screen reader's `act` carried out on window `win`'s [`App::reader_form`], else its
-/// [`App::drop_file_dialog`]; what [`App::reader`] does unless a program answers it.
-/// The open combo list of [`App::reader_form`]'s form or sheet.
-pub fn reader_popup<A: App + ?Sized>(app: &mut A, win: WinId) -> Option<Box<dyn Hosted + '_>> {
-    match app.reader_form(win)? {
-        ReaderForm::Form(d) => Some(Box::new(d.form)),
-        ReaderForm::Sheet(s) => Some(Box::new(s)),
+/// The open popup of [`App::reader_form`]'s form or sheet, else the open list or Views menu of
+/// [`App::drop_file_dialog`].
+pub fn reader_popup<'a, A: App + ?Sized>(
+    app: &'a mut A,
+    win: WinId,
+    ctx: &Ctx,
+) -> Option<Box<dyn Hosted + 'a>> {
+    if app.reader_form(win).is_some() {
+        return match app.reader_form(win)? {
+            ReaderForm::Form(d) => Some(Box::new(d.form)),
+            ReaderForm::Sheet(s) => Some(Box::new(s)),
+        };
     }
+    let FileDrop { dlg, .. } = app.drop_file_dialog(win)?;
+    Some(Box::new(reprisekit::controls::filedlg::Popped {
+        dlg,
+        text: ctx.text.clone(),
+        px: ctx.form_units().px(ctx.base_px()),
+    }))
 }
 
+/// A screen reader's `act` carried out on window `win`'s [`App::reader_form`], else its
+/// [`App::drop_file_dialog`]; what [`App::reader`] does unless a program answers it.
 pub fn reader_forms<A: App + ?Sized>(app: &mut A, win: WinId, act: Reader, ctx: &Ctx) -> bool {
     let base = ctx.base_px();
     if let Some(f) = app.reader_form(win) {
@@ -4976,6 +4989,75 @@ mod tests {
         .unwrap();
         let ppid = rx.recv_timeout(std::time::Duration::from_secs(5)).unwrap();
         assert_eq!(ppid, Some(std::process::id().to_string()));
+    }
+
+    struct Picker {
+        dlg: reprisekit::controls::filedlg::FileDlg,
+        host: filedlg::Host,
+    }
+
+    impl App for Picker {
+        fn title(&self) -> String {
+            String::new()
+        }
+        fn app_id(&self) -> String {
+            String::new()
+        }
+        fn initial_size(&self) -> (i32, i32) {
+            (600, 400)
+        }
+        fn event(&mut self, _: WinId, _: Event, _: &mut Ctx) -> Reply {
+            Reply::default()
+        }
+        fn draw(&mut self, _: WinId, _: &mut Canvas, _: &Ctx) {}
+        fn drop_file_dialog(&mut self, _: WinId) -> Option<FileDrop<'_>> {
+            Some(FileDrop {
+                dlg: &mut self.dlg,
+                host: &mut self.host,
+            })
+        }
+    }
+
+    #[test]
+    fn a_file_dialogs_views_menu_is_the_windows_popup_while_open() {
+        use reprisekit::controls::filedlg::{DlgMode, Fields, FileDlg, Hit};
+        let ctx = Ctx {
+            theme: Theme::default(),
+            text: Rc::new(TextRenderer::load(&reprisekit::theme::FontConfig::default())),
+            icons: reprisekit::icontheme::IconCache::new(reprisekit::icontheme::IconTheme::load(
+                "test",
+                &[],
+            )),
+            caret_on: true,
+            size: (600, 400),
+            maximized: false,
+            origin: (0, 0),
+            wake: Waker::noop(),
+            heads: Default::default(),
+            want_tick: Default::default(),
+            at_pick: false,
+            text_size: 100,
+        };
+        let fields = Fields {
+            title: "Open".into(),
+            accept_label: "Open".into(),
+            filters: vec!["All Files (*.*)".into()],
+            mode: DlgMode::Open,
+            multiple: false,
+        };
+        let mut app = Picker {
+            dlg: FileDlg::new(fields, vec![]),
+            host: filedlg::Host::default(),
+        };
+        let spots = |app: &mut Picker| app.popup(MAIN, &ctx).map(|h| h.spots().len());
+        assert_eq!(spots(&mut app), Some(0), "nothing to show while closed");
+        let (w, h) = app.dlg.client();
+        app.dlg.click(
+            Rect::new(0, 0, w, h),
+            Some(Hit::ToolBar(3)),
+            reprisekit::selection::Mods::default(),
+        );
+        assert_eq!(spots(&mut app), Some(1));
     }
 
     struct Kept {

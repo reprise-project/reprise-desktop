@@ -22,6 +22,7 @@ use crate::classic::widgets::{
 };
 use crate::controls::combo::{self, Combo};
 use crate::controls::form;
+use crate::controls::hosted::{Anchor, Hosted, Spot};
 use crate::controls::iconview::IconMove;
 use crate::controls::menu::{ContextBitmaps, MenuItem, MenuLayout, MenuStyle};
 use crate::controls::metrics::ControlMetrics;
@@ -39,6 +40,7 @@ use crate::theme::{TextUnits, Theme};
 use accesskit::NodeId;
 use std::borrow::Cow;
 use std::cell::Cell;
+use std::rc::Rc;
 
 /// A host-assigned folder handle, opaque to this module.
 pub type FolderId = u64;
@@ -413,6 +415,8 @@ struct Layout {
     accept: Rect,
     filetype_label: Rect,
     filetype: combo::Layout,
+    /// Where the Files of type list shows unless a host put it elsewhere.
+    filetype_home: (i32, i32),
     cancel: Rect,
     views: Option<(Rect, MenuLayout)>,
     shell: shellview::Layout,
@@ -441,6 +445,11 @@ pub struct FileDlg {
     pending: Option<Nav>,
     focus: Focus,
     views_open: bool,
+    /// The Views menu's corner where a host showing it on a popup put it.
+    views_at: Option<(i32, i32)>,
+    /// A host shows the Look in and Files of type lists and the Views menu on popups
+    /// ([`Popped`]): `draw` leaves them out.
+    hosted: bool,
     extra: Option<(form::Form, i32)>,
     /// The client size the host's window has now, no narrower than
     /// `min_client`; see `set_size`.
@@ -477,6 +486,17 @@ impl PartialEq for Drawn {
 impl std::fmt::Debug for Drawn {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str("Drawn")
+    }
+}
+
+/// Moves `lay`'s open list and its scroll bar so the list's corner is at `to`.
+fn move_list(lay: &mut combo::Layout, to: (i32, i32)) {
+    let (dx, dy) = (to.0 - lay.list.x, to.1 - lay.list.y);
+    lay.list.x += dx;
+    lay.list.y += dy;
+    if let Some(sb) = &mut lay.scrollbar {
+        sb.x += dx;
+        sb.y += dy;
     }
 }
 
@@ -606,6 +626,8 @@ impl FileDlg {
             pending: None,
             focus: Focus::FileName,
             views_open: false,
+            views_at: None,
+            hosted: false,
             extra: None,
             size: CLIENT,
             typed: String::new(),
@@ -1129,7 +1151,11 @@ impl FileDlg {
         let lookin_field = Rect::new(lookin_x, r.y + u(LOOKIN_Y), lookin_w, lookin_h);
         let list_right = client.right() - u(MARGIN);
         let mut lookin = combo::layout(&self.lookin, lookin_field, cm);
+        move_list(&mut lookin, (lookin_field.x, lookin_field.bottom()));
         combo::widen_list(&self.lookin, &mut lookin, text, px, list_right);
+        if let Some(at) = self.lookin.list_at {
+            move_list(&mut lookin, at);
+        }
         if self.crumb_icon().is_some() {
             let shift = u(LOOKIN_ICON_X + LOOKIN_ICON_PX + LOOKIN_ICON_GAP) - 2;
             lookin.text.x += shift;
@@ -1181,21 +1207,23 @@ impl FileDlg {
         // The row sits near the client's bottom edge, and a list drawn
         // past it could not be clicked: it opens above the field instead.
         let mut filetype = combo::layout(&self.filetype, filetype_field, cm);
+        move_list(&mut filetype, (filetype_field.x, filetype_field.bottom()));
         combo::widen_list(&self.filetype, &mut filetype, text, px, list_right);
         if filetype.list.bottom() > client.bottom() {
-            let dy = filetype.field.y - filetype.list.bottom();
-            filetype.list.y += dy;
-            if let Some(sb) = &mut filetype.scrollbar {
-                sb.y += dy;
-            }
+            let to = (filetype.list.x, filetype.field.y - filetype.list.height);
+            move_list(&mut filetype, to);
+        }
+        let filetype_home = (filetype.list.x, filetype.list.y);
+        if let Some(at) = self.filetype.list_at {
+            move_list(&mut filetype, at);
         }
         let cancel = Rect::new(accept_x, filetype_y + CANCEL_DY, button_w, button_h);
 
         let views = self.views_open.then(|| {
             let anchor = toolbar_rects[TOOLBAR_VIEWS];
             let menu = self.views_menu(text, px, r.width, cm.text);
-            let popup = Rect::new(anchor.x, anchor.bottom(), menu.width, menu.height);
-            (popup, menu)
+            let (x, y) = self.views_at.unwrap_or((anchor.x, anchor.bottom()));
+            (Rect::new(x, y, menu.width, menu.height), menu)
         });
 
         let shell = self.shell_layout(client, cm);
@@ -1212,6 +1240,7 @@ impl FileDlg {
             accept,
             filetype_label,
             filetype,
+            filetype_home,
             cancel,
             views,
             shell,
@@ -1841,6 +1870,7 @@ impl FileDlg {
             TOOLBAR_NEW_FOLDER => Event::CreateFolder("New Folder".into()),
             TOOLBAR_VIEWS => {
                 self.views_open = true;
+                self.views_at = None;
                 Event::Redraw
             }
             _ => Event::None,
@@ -2231,7 +2261,7 @@ impl FileDlg {
             form::draw(c, text, p, &shifted, true, px);
             f.note_cuts(&shifted);
         }
-        if self.lookin.open.is_some() {
+        if self.lookin.open.is_some() && !self.hosted {
             combo::draw_list(
                 c,
                 text,
@@ -2246,7 +2276,7 @@ impl FileDlg {
                 px,
             );
         }
-        if self.filetype.open.is_some() {
+        if self.filetype.open.is_some() && !self.hosted {
             combo::draw_list(
                 c,
                 text,
@@ -2264,7 +2294,7 @@ impl FileDlg {
 
         crate::look::widgets::draw_size_grip(c, p, lay.grip.scaled(s));
 
-        if let Some((at, menu)) = &lay.views {
+        if let Some((at, menu)) = lay.views.as_ref().filter(|_| !self.hosted) {
             crate::controls::menu::draw_menu_at(
                 c,
                 (at.x * s, at.y * s),
@@ -2454,6 +2484,152 @@ impl FileDlg {
             Focus::Shell => shell,
             Focus::LookIn => lookin,
         });
+    }
+}
+
+/// The dialog's open Look in or Files of type list or its Views menu, for a host that shows it
+/// on a popup: `text` and `px` as the dialog is drawn with, in a client at `(0, 0)`. Dismissing
+/// it closes it.
+pub struct Popped<'a> {
+    pub dlg: &'a mut FileDlg,
+    pub text: Rc<TextRenderer>,
+    pub px: u32,
+}
+
+#[derive(Clone, Copy)]
+enum Open {
+    Views,
+    LookIn,
+    FileType,
+}
+
+impl Popped<'_> {
+    fn open(&self) -> Option<Open> {
+        let d = &self.dlg;
+        if d.views_open {
+            Some(Open::Views)
+        } else if d.lookin.open.is_some() {
+            Some(Open::LookIn)
+        } else if d.filetype.open.is_some() {
+            Some(Open::FileType)
+        } else {
+            None
+        }
+    }
+
+    fn layout(&self) -> Layout {
+        let (w, h) = self.dlg.size;
+        let cm = self.dlg.drawn.0.get();
+        self.dlg
+            .layout(&self.text, self.px, Rect::new(0, 0, w, h), &cm)
+    }
+}
+
+impl Hosted for Popped<'_> {
+    fn spots(&self) -> Vec<Spot> {
+        let Some(open) = self.open() else {
+            return Vec::new();
+        };
+        let lay = self.layout();
+        let spot = match (open, &lay.views) {
+            (Open::Views, Some((rect, _))) => Spot {
+                rect: *rect,
+                anchor: Anchor::Below(lay.toolbar_rects[TOOLBAR_VIEWS]),
+            },
+            (Open::LookIn, _) => Spot {
+                rect: lay.lookin.list,
+                anchor: Anchor::Below(lay.lookin.field),
+            },
+            // Where the dialog's own draw shows it: over the field when the client ends below it.
+            (Open::FileType, _) => Spot {
+                rect: lay.filetype.list,
+                anchor: Anchor::Point(lay.filetype_home.0, lay.filetype_home.1),
+            },
+            (Open::Views, None) => return Vec::new(),
+        };
+        vec![spot]
+    }
+
+    fn place(&mut self, level: usize, origin: (i32, i32)) {
+        match self.open().filter(|_| level == 0) {
+            Some(Open::Views) => self.dlg.views_at = Some(origin),
+            Some(Open::LookIn) => self.dlg.lookin.list_at = Some(origin),
+            Some(Open::FileType) => self.dlg.filetype.list_at = Some(origin),
+            None => {}
+        }
+    }
+
+    fn shadow(&self, theme: &Theme) -> i32 {
+        match self.open() {
+            Some(Open::Views) => crate::controls::menu::level_shadow(theme),
+            _ => combo::list_shadow(theme),
+        }
+    }
+
+    fn draw_level(
+        &self,
+        level: usize,
+        c: &mut Canvas,
+        by: (i32, i32),
+        theme: &Theme,
+        text: &TextRenderer,
+    ) {
+        let Some(open) = self.open().filter(|_| level == 0) else {
+            return;
+        };
+        let lay = self.layout();
+        // As the dialog's own draw painted it.
+        let p = Paint {
+            text: self.dlg.drawn.0.get().text,
+            s: 1,
+            ..theme.paint()
+        };
+        let moved = |r: Rect| Rect::new(r.x + by.0, r.y + by.1, r.width, r.height);
+        let list = |c: &mut Canvas, combo: &Combo, l: &combo::Layout| {
+            combo::draw_list(
+                c,
+                text,
+                &p,
+                &combo.items,
+                combo.open,
+                combo.top,
+                combo.rows,
+                moved(l.list),
+                l.scrollbar.map(moved),
+                None,
+                self.px,
+            );
+        };
+        match open {
+            Open::LookIn => list(c, &self.dlg.lookin, &lay.lookin),
+            Open::FileType => list(c, &self.dlg.filetype, &lay.filetype),
+            Open::Views => {
+                if let Some((at, menu)) = &lay.views {
+                    let at = moved(*at);
+                    crate::controls::menu::draw_menu_at(
+                        c,
+                        (at.x, at.y),
+                        &Theme::for_draw(&p, self.px),
+                        text,
+                        menu,
+                        &self.dlg.views_menu_items(),
+                        None,
+                        "",
+                        false,
+                    );
+                }
+            }
+        }
+    }
+
+    fn host(&mut self) {
+        self.dlg.hosted = true;
+    }
+
+    fn dismiss(&mut self) {
+        self.dlg.views_open = false;
+        self.dlg.lookin.open = None;
+        self.dlg.filetype.open = None;
     }
 }
 
@@ -2653,6 +2829,92 @@ mod tests {
         ));
         assert_eq!(d.shell.mode, Mode::Details);
         assert!(!d.views_open);
+    }
+
+    #[test]
+    fn a_hosted_list_or_views_menu_draws_alone_as_in_the_dialog_and_is_hit_where_it_was_put() {
+        let text = Rc::new(text());
+        let theme = Theme::default();
+        let paint = classic_paint(&theme.colors, 1);
+        let shot = |d: &FileDlg| {
+            let mut c = Canvas::new(CLIENT.0 as u32, CLIENT.1 as u32);
+            d.draw(&mut c, &text, &paint, R, 11);
+            c
+        };
+        let opens = [
+            Hit::LookIn(combo::Hit::Drop),
+            Hit::FileType(combo::Hit::Drop),
+            Hit::ToolBar(TOOLBAR_VIEWS),
+        ];
+        for open in opens {
+            let mut d = sample();
+            d.fields.filters = vec!["Text (*.txt)".into(), "All Files (*.*)".into()];
+            d.filetype = Combo::new(&["Text (*.txt)", "All Files (*.*)"], 0, 2);
+            d.set_listing(folder(1, None, vec![dir("Docs")]));
+            let popped = |d: &mut FileDlg| -> Vec<Spot> {
+                Popped {
+                    dlg: d,
+                    text: text.clone(),
+                    px: 11,
+                }
+                .spots()
+            };
+            assert!(popped(&mut d).is_empty(), "{open:?}: nothing while closed");
+            d.click(R, Some(open), Mods::default());
+            let whole = shot(&d);
+            let a = popped(&mut d)[0].rect;
+            let mut p = Popped {
+                dlg: &mut d,
+                text: text.clone(),
+                px: 11,
+            };
+            let mut own = Canvas::new(a.width as u32, a.height as u32);
+            p.draw_level(0, &mut own, (-a.x, -a.y), &theme, &text);
+            for y in 0..a.height {
+                for x in 0..a.width {
+                    assert_eq!(
+                        own.get(x, y),
+                        whole.get(a.x + x, a.y + y),
+                        "{open:?} ({x}, {y})"
+                    );
+                }
+            }
+            p.host();
+            let spot = p.spots()[0];
+            let b = spot.rect;
+            assert_eq!((b.width, b.height), (a.width, a.height), "{open:?}");
+            let home = match spot.anchor {
+                Anchor::Below(under) => (under.x, under.bottom()),
+                Anchor::Point(x, y) => (x, y),
+                Anchor::Beside { .. } => panic!("{open:?}: a root level"),
+            };
+            assert_eq!((b.x, b.y), home, "{open:?}");
+            assert_eq!(b, a, "{open:?}: where the dialog showed it");
+            p.place(0, (900, 700));
+            let bare = shot(&d);
+            assert!(
+                (0..a.height).any(|y| bare.get(a.x + 4, a.y + y) != whole.get(a.x + 4, a.y + y)),
+                "{open:?}: the dialog leaves it out"
+            );
+            let lay = d.layout(&text, 11, R, &ControlMetrics::CLASSIC);
+            let (at, want) = match open {
+                Hit::LookIn(_) => ((905, 702), Hit::LookIn(combo::Hit::Row(0))),
+                Hit::FileType(_) => (
+                    (905, 702 + d.filetype.row_h(&ControlMetrics::CLASSIC)),
+                    Hit::FileType(combo::Hit::Row(1)),
+                ),
+                _ => {
+                    let (r, menu) = lay.views.as_ref().unwrap();
+                    assert_eq!((r.x, r.y), (900, 700));
+                    let row = menu.rows[2];
+                    (
+                        (r.x + row.x + row.width / 2, r.y + row.y + row.height / 2),
+                        Hit::ViewsItem(2),
+                    )
+                }
+            };
+            assert_eq!(d.hit(&text, 11, R, at.0, at.1), Some(want), "{open:?}");
+        }
     }
 
     /// The toolbar's four buttons run from its left edge and end 84 px

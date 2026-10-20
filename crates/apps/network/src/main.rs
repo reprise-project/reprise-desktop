@@ -1238,11 +1238,11 @@ impl App for NetApp {
         }
     }
 
-    fn popup(&mut self, win: WinId, _: &Ctx) -> Option<Box<dyn Hosted + '_>> {
+    fn popup(&mut self, win: WinId, ctx: &Ctx) -> Option<Box<dyn Hosted + '_>> {
         if win == repriseapp::MAIN {
             return Some(Box::new(&mut self.folder.popup));
         }
-        repriseapp::reader_popup(self, win)
+        repriseapp::reader_popup(self, win, ctx)
     }
 
     fn drop_form(&mut self, win: WinId) -> Option<DropForm<'_>> {

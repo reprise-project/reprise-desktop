@@ -744,11 +744,11 @@ impl App for Volume {
         }
     }
 
-    fn popup(&mut self, win: WinId, _: &Ctx) -> Option<Box<dyn Hosted + '_>> {
+    fn popup(&mut self, win: WinId, ctx: &Ctx) -> Option<Box<dyn Hosted + '_>> {
         if win == repriseapp::MAIN {
             return Some(Box::new(&mut self.bar));
         }
-        repriseapp::reader_popup(self, win)
+        repriseapp::reader_popup(self, win, ctx)
     }
 
     fn reader_form(&mut self, win: WinId) -> Option<repriseapp::ReaderForm<'_>> {

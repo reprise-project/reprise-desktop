@@ -986,14 +986,14 @@ impl App for PrintersApp {
         }
     }
 
-    fn popup(&mut self, win: WinId, _: &Ctx) -> Option<Box<dyn Hosted + '_>> {
+    fn popup(&mut self, win: WinId, ctx: &Ctx) -> Option<Box<dyn Hosted + '_>> {
         if win == repriseapp::MAIN {
             return Some(self.folder.popup());
         }
         if self.queues.get(win).is_some() {
             return self.queues.get_mut(win).map(queue::Queue::popup);
         }
-        repriseapp::reader_popup(self, win)
+        repriseapp::reader_popup(self, win, ctx)
     }
 
     fn drop_form(&mut self, win: WinId) -> Option<DropForm<'_>> {
