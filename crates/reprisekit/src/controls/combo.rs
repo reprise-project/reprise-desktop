@@ -10,6 +10,7 @@ use crate::classic::widgets::{
     draw_edit_drop_point, draw_focus_ring_screen, edit_first_visible, scrollbar_hit,
     scrollbar_parts, scrollbar_pos_at,
 };
+use crate::controls::hosted::{Anchor, Hosted, Spot};
 use crate::controls::metrics::ControlMetrics;
 use crate::controls::scrollbar::ThumbDrag;
 use crate::look::Paint;
@@ -113,6 +114,10 @@ pub struct Combo {
     pub icon: Option<Canvas>,
     /// A drag of text resting on the editable field, at this logical x ([`Combo::drag_over`]).
     pub drop_x: Option<i32>,
+    /// The open list's corner where a host showing it on a popup put it ([`list_rect`]).
+    pub list_at: Option<(i32, i32)>,
+    /// A host shows the open list on a popup: its owner's draw leaves it out.
+    pub hosted: bool,
 }
 
 impl Combo {
@@ -136,6 +141,8 @@ impl Combo {
             first: Cell::new(0),
             icon: None,
             drop_x: None,
+            list_at: None,
+            hosted: false,
         }
     }
 
@@ -202,6 +209,7 @@ impl Combo {
         } else {
             let at = self.matching().unwrap_or(self.selected);
             self.open = Some(at);
+            self.list_at = None;
             self.top = at.saturating_sub(self.visible() - 1).min(at);
         }
         true
@@ -363,7 +371,92 @@ pub fn list_rect(combo: &Combo, field: Rect, cm: &ControlMetrics) -> Rect {
 
 fn list_rect_rows(combo: &Combo, field: Rect, row_h: i32) -> Rect {
     let n = combo.visible() as i32;
-    Rect::new(field.x, field.bottom(), field.width, n * row_h + 2)
+    let (x, y) = combo.list_at.unwrap_or((field.x, field.bottom()));
+    Rect::new(x, y, field.width, n * row_h + 2)
+}
+
+/// A combo's open list for a host that shows it on a popup: `field` is the combo's rect and
+/// `cm` its sizes as its owner lays it out, `px` its text px. The owner draws at `s: 1`.
+pub struct Popped<'a> {
+    pub combo: &'a mut Combo,
+    pub field: Rect,
+    pub cm: ControlMetrics,
+    pub px: u32,
+}
+
+/// Dismissing it closes the list.
+impl Hosted for Popped<'_> {
+    fn spots(&self) -> Vec<Spot> {
+        if self.combo.open.is_none() {
+            return Vec::new();
+        }
+        vec![Spot {
+            rect: layout(self.combo, self.field, &self.cm).list,
+            anchor: Anchor::Below(self.field),
+        }]
+    }
+
+    fn place(&mut self, level: usize, origin: (i32, i32)) {
+        if level == 0 {
+            self.combo.list_at = Some(origin);
+        }
+    }
+
+    fn shadow(&self, theme: &crate::theme::Theme) -> i32 {
+        list_shadow(theme)
+    }
+
+    fn draw_level(
+        &self,
+        level: usize,
+        c: &mut Canvas,
+        by: (i32, i32),
+        theme: &crate::theme::Theme,
+        text: &TextRenderer,
+    ) {
+        if level != 0 || self.combo.open.is_none() {
+            return;
+        }
+        let lay = layout(self.combo, self.field, &self.cm);
+        let moved = |r: Rect| Rect::new(r.x + by.0, r.y + by.1, r.width, r.height);
+        draw_list(
+            c,
+            text,
+            &Paint {
+                s: 1,
+                ..theme.paint()
+            },
+            &self.combo.items,
+            self.combo.open,
+            self.combo.top,
+            self.combo.rows,
+            moved(lay.list),
+            lay.scrollbar.map(moved),
+            None,
+            self.px,
+        );
+    }
+
+    fn host(&mut self) {
+        self.combo.hosted = true;
+    }
+
+    fn dismiss(&mut self) {
+        self.combo.open = None;
+    }
+}
+
+/// How far right and down of the open list its shadow reaches under `theme`'s look, logical px.
+pub fn list_shadow(theme: &crate::theme::Theme) -> i32 {
+    match theme
+        .look
+        .style()
+        .and_then(|st| st.drop_list)
+        .and_then(|d| d.shadow)
+    {
+        Some(_) => crate::style::DropShadow::N as i32,
+        None => 0,
+    }
 }
 
 pub fn layout(combo: &Combo, field: Rect, cm: &ControlMetrics) -> Layout {
@@ -973,6 +1066,64 @@ mod tests {
 
     fn combo() -> Combo {
         Combo::new(&["Reprise Classic", "Slate", "Harbor"], 0, 8)
+    }
+
+    #[test]
+    fn a_popped_list_draws_alone_as_draw_list_does_and_moves_where_it_was_put() {
+        let theme = Theme::default();
+        let text = TextRenderer::load(&FontConfig::default());
+        let field = Rect::new(10, 10, 120, COMBO_H);
+        let cm = ControlMetrics::CLASSIC;
+        let mut c = combo();
+        let mut p = Popped {
+            combo: &mut c,
+            field,
+            cm,
+            px: 11,
+        };
+        assert!(p.spots().is_empty());
+        p.combo.toggle();
+        let lay = layout(p.combo, field, &cm);
+        assert_eq!(
+            p.spots(),
+            [Spot {
+                rect: lay.list,
+                anchor: Anchor::Below(field)
+            }]
+        );
+        let mut whole = Canvas::new(200, 120);
+        let paint = classic_paint(&theme.colors, 1);
+        let items = p.combo.items.clone();
+        draw_list(
+            &mut whole,
+            &text,
+            &paint,
+            &items,
+            p.combo.open,
+            0,
+            8,
+            lay.list,
+            None,
+            None,
+            11,
+        );
+        let r = lay.list;
+        let mut own = Canvas::new(r.width as u32, r.height as u32);
+        p.draw_level(0, &mut own, (-r.x, -r.y), &theme, &text);
+        for y in 0..r.height {
+            for x in 0..r.width {
+                assert_eq!(own.get(x, y), whole.get(r.x + x, r.y + y), "({x}, {y})");
+            }
+        }
+        p.host();
+        p.place(0, (300, 5));
+        assert!(c.hosted);
+        let lay = layout(&c, field, &cm);
+        assert_eq!((lay.list.x, lay.list.y), (300, 5));
+        assert_eq!(hit(&c, &lay, 305, 5 + 1 + c.row_h(&cm)), Some(Hit::Row(1)));
+        c.toggle();
+        c.toggle();
+        assert_eq!(c.list_at, None, "a list opened again hangs under its field");
     }
 
     #[test]

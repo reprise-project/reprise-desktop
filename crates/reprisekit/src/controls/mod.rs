@@ -25,6 +25,7 @@ mod fit;
 pub mod flip;
 pub mod form;
 pub mod grouplist;
+pub mod hosted;
 pub mod hotkey;
 pub mod iconlist;
 pub mod iconview;

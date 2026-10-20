@@ -345,7 +345,7 @@ pub fn draw_list(
     lay: &Layout,
     px: u32,
 ) {
-    if ab.combo.open.is_none() {
+    if ab.combo.open.is_none() || ab.combo.hosted {
         return;
     }
     combo::draw_list(
