@@ -26,6 +26,8 @@ pub struct World {
     pub drives: Vec<reprisefs::places::Drive>,
     pub volumes: reprisefs::udisks::Snapshot,
     pub drive_mounts: Vec<PathBuf>,
+    /// The folders the list gives their own icons ([`reprisefs::places::special_folders`]).
+    pub specials: Vec<(PathBuf, &'static str)>,
 }
 
 impl World {
@@ -81,44 +83,52 @@ fn node_icons(place: &Place, icons: &mut IconCache) -> (Option<Canvas>, Option<C
     (icon, open_icon)
 }
 
-/// A folder node's own icon (`meta::folder_icon`), read with its parent's children.
+/// A folder node's own icon (`meta::folder_icon`) or special-folder icon, read with its parent's
+/// children.
 #[derive(Clone, Default)]
 pub enum Own {
     #[default]
     None,
-    Named(String),
+    /// Theme names, best first: the folder's own, then its special-folder icon.
+    Named(Vec<String>),
     /// An icon file, decoded at 16 px and the read's scale.
     File(Option<Canvas>),
 }
 
 impl Own {
-    /// `place`'s own icon, an icon file decoded at `scale`. A drive's or other mount point's is
-    /// not read: the mount may never answer.
-    fn read(place: &Place, inp: &Inputs, scale: i32) -> Own {
+    /// `place`'s own icon, an icon file decoded at `scale`, else its icon among `specials`. A
+    /// drive's or other mount point's is not read: the mount may never answer.
+    fn read(place: &Place, inp: &Inputs, scale: i32, specials: &[(PathBuf, &str)]) -> Own {
         let Place::Folder(dir) = place else {
             return Own::None;
         };
         if inp.drive_mounts.contains(dir) || reprisefs::listing::is_mount_root(dir) {
             return Own::None;
         }
+        let special = specials
+            .iter()
+            .find(|(d, _)| d == dir)
+            .map(|(_, n)| n.to_string());
         match reprisefs::meta::folder_icon(dir) {
-            None => Own::None,
             Some(f) if f.starts_with('/') => Own::File(reprisekit::icontheme::decode_file(
                 std::path::Path::new(&f),
                 16,
                 scale,
             )),
-            Some(name) => Own::Named(name),
+            own => match own.into_iter().chain(special).collect::<Vec<_>>() {
+                names if names.is_empty() => Own::None,
+                names => Own::Named(names),
+            },
         }
     }
 }
 
-/// [`node_icons`] with the folder's own icon worn instead, when the theme carries it or its file
-/// decoded; open or closed alike.
+/// [`node_icons`] with the folder's own or special-folder icon worn instead, the first the theme
+/// carries or its file decoded; open or closed alike.
 fn worn_icons(place: &Place, own: &Own, icons: &mut IconCache) -> (Option<Canvas>, Option<Canvas>) {
     let icon = match own {
         Own::None => None,
-        Own::Named(name) => icons.get(name, 16),
+        Own::Named(names) => names.iter().find_map(|n| icons.get(n, 16)),
         Own::File(art) => art.clone(),
     };
     match icon {
@@ -127,8 +137,8 @@ fn worn_icons(place: &Place, own: &Own, icons: &mut IconCache) -> (Option<Canvas
     }
 }
 
-/// Every node fetches its icons again from `icons`, now at another scale. A folder's own icon
-/// file gives way to the plain folder until its parent is filled again.
+/// Every node fetches its icons again from `icons`, now at another scale. A folder's own or
+/// special-folder icon gives way to the plain folder until its parent is filled again.
 pub fn refetch_icons(tree: &mut TreeView, places: &[Place], icons: &mut IconCache) {
     fn walk(nodes: &mut [Node], places: &[Place], icons: &mut IconCache) {
         for n in nodes {
@@ -170,7 +180,14 @@ pub fn fill(
         .iter()
         .map(|n| &places[n.id as usize])
         .collect();
-    let kids = read_kids(&places[node.id as usize], inp, &known, icons.scale());
+    let specials = reprisefs::places::special_folders();
+    let kids = read_kids(
+        &places[node.id as usize],
+        inp,
+        &known,
+        icons.scale(),
+        &specials,
+    );
     fill_with(tree, places, path, kids, inp, icons)
 }
 
@@ -182,9 +199,15 @@ pub type Chain = Vec<(Place, Kids)>;
 pub type Kids = Vec<(String, Place, Option<bool>, Own)>;
 
 /// The file system half of [`fill`]: `place`'s children with their own icons (icon files decoded
-/// at `scale`), and for those not in `known` whether they hold a folder. A host reads them off
-/// its loop for [`follow_with`].
-pub fn read_kids(place: &Place, inp: &Inputs, known: &[&Place], scale: i32) -> Kids {
+/// at `scale`) or their icons among `specials`, and for those not in `known` whether they hold a
+/// folder. A host reads them off its loop for [`follow_with`].
+pub fn read_kids(
+    place: &Place,
+    inp: &Inputs,
+    known: &[&Place],
+    scale: i32,
+    specials: &[(PathBuf, &str)],
+) -> Kids {
     let mut kids: Vec<(String, Place)> = Vec::new();
     match place {
         Place::Desktop => {
@@ -208,7 +231,7 @@ pub fn read_kids(place: &Place, inp: &Inputs, known: &[&Place], scale: i32) -> K
     kids.into_iter()
         .map(|(label, p)| {
             let opens = (!known.contains(&&p)).then(|| opens(&p, inp));
-            let own = Own::read(&p, inp, scale);
+            let own = Own::read(&p, inp, scale, specials);
             (label, p, opens, own)
         })
         .collect()
@@ -225,8 +248,8 @@ fn opens(p: &Place, inp: &Inputs) -> bool {
         })
 }
 
-/// [`fill`] with the node's children already read: true when one wears an icon file, which a new
-/// scale reads again.
+/// [`fill`] with the node's children already read: true when one wears its own or a
+/// special-folder icon, which a new scale reads again.
 pub fn fill_with(
     tree: &mut TreeView,
     places: &mut Vec<Place>,
@@ -235,7 +258,7 @@ pub fn fill_with(
     inp: &Inputs,
     icons: &mut IconCache,
 ) -> bool {
-    let art = (kids.iter()).any(|(.., own)| matches!(own, Own::File(Some(_))));
+    let art = (kids.iter()).any(|(.., own)| matches!(own, Own::File(Some(_)) | Own::Named(_)));
     let mut old: Vec<Option<Node>> = tree
         .node_mut(&path)
         .map(|n| {
@@ -672,7 +695,7 @@ mod tests {
         let read: Vec<(Place, Kids)> = to_fill(&tree, &places, &target, &mounts)
             .into_iter()
             .map(|p| {
-                let kids = read_kids(&p, &inp, &[], 1);
+                let kids = read_kids(&p, &inp, &[], 1, &[]);
                 (p, kids)
             })
             .collect();

@@ -156,7 +156,8 @@ pub struct Explorer {
     item_index: HashMap<PathBuf, usize>,
     pub tree: TreeView,
     pub tree_places: Vec<Place>,
-    /// The Folders nodes whose children wear icon files, read again at a new scale.
+    /// The Folders nodes whose children wear their own or special-folder icons, read again at a
+    /// new scale.
     tree_art: Vec<Place>,
     /// The drives Computer lists. The scan stats every mount (a hung network
     /// mount blocks it), so it runs on a listing thread in [`Explorer::sync_drives`].
@@ -827,6 +828,7 @@ impl Explorer {
         let mounts = self.drive_mounts.clone();
         let to_fill = foldertree::to_fill(&self.tree, &self.tree_places, &place, &mounts);
         let scale = ctx.icons.scale();
+        let specials = self.specials.clone();
         move || {
             let listed = list(&place, &globs, show_hidden, &drives, &volumes);
             let icons = ReadIcons::read(&listed.items, scale);
@@ -839,7 +841,7 @@ impl Explorer {
             let tree = to_fill
                 .into_iter()
                 .map(|p| {
-                    let kids = foldertree::read_kids(&p, &inp, &[], scale);
+                    let kids = foldertree::read_kids(&p, &inp, &[], scale, &specials);
                     (p, kids)
                 })
                 .collect();

@@ -97,7 +97,13 @@ impl Explorer {
         let world = self.tree_world();
         move || {
             let known: Vec<&Place> = known.iter().collect();
-            foldertree::read_kids(&place, &world.inputs(), &known, world.scale)
+            foldertree::read_kids(
+                &place,
+                &world.inputs(),
+                &known,
+                world.scale,
+                &world.specials,
+            )
         }
     }
 
@@ -113,7 +119,7 @@ impl Explorer {
             chain
                 .into_iter()
                 .map(|p| {
-                    let kids = foldertree::read_kids(&p, &inp, &[], world.scale);
+                    let kids = foldertree::read_kids(&p, &inp, &[], world.scale, &world.specials);
                     (p, kids)
                 })
                 .collect()
@@ -127,6 +133,7 @@ impl Explorer {
             drives: self.drives.clone(),
             volumes: self.volumes.clone(),
             drive_mounts: self.drive_mounts.clone(),
+            specials: self.specials.clone(),
         }
     }
 
@@ -215,7 +222,7 @@ impl Explorer {
         self.fill_node(path, ctx);
     }
 
-    /// Reads the children of the nodes whose children wear icon files again
+    /// Reads the children of the nodes whose children wear their own icons again
     /// ([`Explorer::refill_tree_node`]), so those come at the scale drawn now.
     pub(crate) fn refill_tree_art(&mut self, ctx: &mut Ctx) {
         for place in std::mem::take(&mut self.tree_art) {
@@ -223,7 +230,7 @@ impl Explorer {
         }
     }
 
-    /// Notes whether a fill of `place`'s node left a child wearing an icon file.
+    /// Notes whether a fill of `place`'s node left a child wearing its own icon.
     fn note_art(&mut self, place: &Place, art: bool) {
         self.tree_art.retain(|p| p != place);
         if art {
