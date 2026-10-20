@@ -1221,18 +1221,26 @@ fn load_with_extra(
     canvas.map(|c| c.at_scale(scale))
 }
 
-/// A file listing's icon sizes in logical px: List and Details, Icons and Thumbnails, Tiles.
+/// A file listing's icon sizes in logical px at 100% text: List and Details, Icons and
+/// Thumbnails, Tiles.
 pub const LISTING_PX: [i32; 3] = [16, 32, 48];
 
-/// One icon name's canvases at [`LISTING_PX`].
+/// [`LISTING_PX`] with List and Details' icon `list` px, their icon column grown with the text.
+pub fn listing_px(list: i32) -> [i32; 3] {
+    [list, LISTING_PX[1], LISTING_PX[2]]
+}
+
+/// One icon name's canvases at [`ListingIcons::sizes`].
 pub type ListingSizes = [Option<std::rc::Rc<Canvas>>; 3];
 
-/// A file listing's icons by name at [`LISTING_PX`]: each name is loaded once and its canvases
-/// shared by every entry wearing it.
+/// A file listing's icons by name at [`ListingIcons::sizes`]: each name is loaded once and its
+/// canvases shared by every entry wearing it.
 #[derive(Default)]
 pub struct ListingIcons {
     by_name: HashMap<String, ListingSizes>,
     device: i32,
+    /// List and Details' icon size; 0 is [`LISTING_PX`]'s.
+    list: i32,
 }
 
 impl ListingIcons {
@@ -1240,32 +1248,53 @@ impl ListingIcons {
     /// fetched `scale` times as large.
     pub fn device(scale: i32) -> ListingIcons {
         ListingIcons {
-            by_name: HashMap::new(),
             device: scale,
+            ..ListingIcons::default()
         }
     }
 
+    /// List and Details' icons fetched at `list` px ([`listing_px`]).
+    pub fn with_list(self, list: i32) -> ListingIcons {
+        ListingIcons { list, ..self }
+    }
+
+    /// The sizes each name is fetched at, in logical px.
+    pub fn sizes(&self) -> [i32; 3] {
+        match self.list {
+            0 => LISTING_PX,
+            list => listing_px(list),
+        }
+    }
+
+    /// Fetches List and Details' icons at `list` px from now on; [`ListingIcons::refetch`]
+    /// swaps the names already held. False when they already were.
+    pub fn set_list(&mut self, list: i32) -> bool {
+        let old = self.sizes()[0];
+        self.list = list;
+        old != list
+    }
+
     pub fn get(&mut self, cache: &mut IconCache, name: &str) -> ListingSizes {
-        let k = self.device.max(1);
+        let (k, sizes) = (self.device.max(1), self.sizes());
         self.by_name
             .entry(name.to_string())
-            .or_insert_with(|| LISTING_PX.map(|px| cache.get(name, px * k).map(std::rc::Rc::new)))
+            .or_insert_with(|| sizes.map(|px| cache.get(name, px * k).map(std::rc::Rc::new)))
             .clone()
     }
 
-    /// Fetches every name again from `cache`, now at another scale: each name's old and new
-    /// canvases. An icon file `cache` lacks at some size keeps its old ones and is returned
-    /// second, for the host to decode off its loop and hand to [`ListingIcons::put`].
+    /// Fetches every name again from `cache`, now at another scale or list size: each name's old
+    /// and new canvases. An icon file `cache` lacks at some size keeps its old ones and is
+    /// returned second, for the host to decode off its loop and hand to [`ListingIcons::put`].
     pub fn refetch(
         &mut self,
         cache: &mut IconCache,
     ) -> (Vec<(ListingSizes, ListingSizes)>, Vec<String>) {
-        let k = self.device.max(1);
+        let (k, sizes) = (self.device.max(1), self.sizes());
         let mut swaps = Vec::new();
         let mut files = Vec::new();
-        for (name, sizes) in &mut self.by_name {
+        for (name, sizes_held) in &mut self.by_name {
             let new = if name.starts_with('/') {
-                let put = LISTING_PX.map(|px| cache.file_put(name, px * k));
+                let put = sizes.map(|px| cache.file_put(name, px * k));
                 if put.iter().any(Option::is_none) {
                     files.push(name.clone());
                     continue;
@@ -1275,9 +1304,9 @@ impl ListingIcons {
                         .map(|c| std::rc::Rc::new(Arc::unwrap_or_clone(c)))
                 })
             } else {
-                LISTING_PX.map(|px| cache.get(name, px * k).map(std::rc::Rc::new))
+                sizes.map(|px| cache.get(name, px * k).map(std::rc::Rc::new))
             };
-            swaps.push((std::mem::replace(sizes, new.clone()), new));
+            swaps.push((std::mem::replace(sizes_held, new.clone()), new));
         }
         (swaps, files)
     }
@@ -1290,7 +1319,7 @@ impl ListingIcons {
             .map(|(name, _)| name.as_str())
     }
 
-    /// Icon file `path` as the host decoded it at [`LISTING_PX`]: its old and new canvases, or
+    /// Icon file `path` as the host decoded it at [`ListingIcons::sizes`]: its old and new canvases, or
     /// None when no entry wears it.
     pub fn put(
         &mut self,

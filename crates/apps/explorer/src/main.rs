@@ -143,6 +143,8 @@ pub(crate) struct Read {
     place: Place,
     listed: Listed,
     icons: ReadIcons,
+    /// List and Details' icon size the icon files were decoded at.
+    list: i32,
     tree: Vec<(Place, foldertree::Kids)>,
 }
 
@@ -828,10 +830,12 @@ impl Explorer {
         let mounts = self.drive_mounts.clone();
         let to_fill = foldertree::to_fill(&self.tree, &self.tree_places, &place, &mounts);
         let scale = ctx.icons.scale();
+        let list_px = shellview::list_icon_px(ctx.theme.text);
         let specials = self.specials.clone();
         move || {
             let listed = list(&place, &globs, show_hidden, &drives, &volumes);
-            let icons = ReadIcons::read(&listed.items, scale);
+            let sizes = reprisekit::icontheme::listing_px(list_px);
+            let icons = ReadIcons::read(&listed.items, sizes, scale);
             let inp = foldertree::Inputs {
                 show_hidden,
                 drives: &drives,
@@ -849,6 +853,7 @@ impl Explorer {
                 place,
                 listed,
                 icons,
+                list: list_px,
                 tree,
             }
         }
@@ -875,6 +880,7 @@ impl Explorer {
             place,
             listed: Listed { items, groups, .. },
             icons: read_icons,
+            list,
             tree,
         } = read;
         self.set_columns(&place);
@@ -900,7 +906,7 @@ impl Explorer {
                 }
             }
         }
-        let mut icons = ListingIcons::default();
+        let mut icons = ListingIcons::default().with_list(list);
         self.sv.hot = None;
         self.sv.entries = items
             .iter()
