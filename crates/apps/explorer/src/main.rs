@@ -946,6 +946,7 @@ impl Explorer {
         self.sv.top = 0;
         self.sv.left = 0;
         self.items = items;
+        self.link_status = None;
         // A bin item's sheet goes once its item is no longer listed as it was.
         let stale_sheet =
             self.props
