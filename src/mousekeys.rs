@@ -303,7 +303,7 @@ impl State {
             match a {
                 Action::Move(dx, dy) => {
                     let d: Point<f64, Logical> = (dx as f64, dy as f64).into();
-                    self.pointer_moved(d, d, time);
+                    self.pointer_moved(d, (d, d), time);
                 }
                 Action::Button(b, pressed) => {
                     let state = if pressed {
