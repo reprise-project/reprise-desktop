@@ -10625,6 +10625,30 @@ mod tests {
         assert_eq!(d.tray().unwrap().client(), (1184, 602), "back at 100%");
     }
 
+    /// At 200% on an 800x600 output Glass's Customize page stacks its rows and keeps inside the
+    /// work area, its buttons in the client.
+    #[test]
+    fn the_glass_tray_customize_page_fits_an_800x600_output_at_200() {
+        const AREA_600: (i32, i32) = (800, 560);
+        let text = TextRenderer::load(&FontConfig::default());
+        let theme = reprisekit::interfaces::theme_for(reprisekit::interface::Interface::Glass)
+            .with_text_size(200);
+        let mut d = tray_dialog(&theme);
+        d.fit_in(&theme, &text, AREA_600);
+        let l = DialogLayout::compute(&theme, &text, &d);
+        assert!(
+            l.size.0 <= AREA_600.0 && l.size.1 <= AREA_600.1,
+            "{:?}",
+            l.size
+        );
+        let tray = d.tray().unwrap();
+        let client = tray.client();
+        let parts = tray.layout(&text, theme.fonts.size_px, (0, 0));
+        assert!(parts.cancel.right() <= client.0);
+        assert!(parts.cancel.bottom() <= client.1);
+        assert_eq!(tray.overflows(&text, theme.fonts.size_px), vec![]);
+    }
+
     /// At 200% on a 1024x768 output the Customize dialog keeps inside the work area with its
     /// buttons in the client, under each interface; at 100% Classic's and Blue's room changes
     /// nothing (Glass's 1184 px page narrows to the output at any size).

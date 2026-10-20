@@ -8,8 +8,8 @@
 //! a 1184x602 settings page with a 1000x403 list. Sizes are in the layout
 //! consts below, at 100% text; both grow with the text size. A page wider or
 //! taller than the room its host has ([`TrayCustomize::fit`]) narrows its
-//! list and wraps its text, and scrolls above the button band; Classic's
-//! list grows shorter.
+//! list and wraps its text, then stacks each row's combo under its name, and
+//! scrolls above the button band; Classic's list grows shorter.
 
 use std::sync::Arc;
 
@@ -358,6 +358,14 @@ const PAGE_NARROW_COMBO: i32 = 200;
 const PAGE_MIN_W: i32 = PAGE_WIDE_MIN_W
     - 2 * (PAGE_MARGIN - PAGE_NARROW_MARGIN)
     - (PAGE_COMBO.width - PAGE_NARROW_COMBO);
+/// A page narrower than `PAGE_MIN_W` stacks each row: the combo goes under the name and tip,
+/// `PAGE_STACKED_COMBO_Y` down a row `PAGE_STACKED_ROW_H` tall, and the name takes the width.
+const PAGE_STACKED_COMBO_Y: i32 = 42;
+const PAGE_STACKED_ROW_H: i32 = 73;
+const PAGE_STACKED_MIN_W: i32 =
+    2 * PAGE_NARROW_MARGIN + PAGE_NAME.x + PAGE_NARROW_COMBO + PAGE_COMBO_RIGHT;
+/// The pitch of a heading wrapped onto more lines than one.
+const PAGE_HEADING_LINE_H: i32 = 21;
 /// The heading's size over the body text's: 16 px to 12.
 const HEADING_SCALE: (u32, u32) = (4, 3);
 
@@ -484,6 +492,8 @@ pub struct TrayCustomize {
     /// The intro as [`TrayCustomize::fit`] wrapped it; empty before. The page draws an empty
     /// one on one line; Classic's grows past three lines by the rest.
     intro: Vec<String>,
+    /// The page's heading as [`TrayCustomize::fit`] wrapped it; empty when it fits one line.
+    heading: Vec<String>,
     /// Restore Defaults' width at 100%, as wide as [`TrayCustomize::fit`] found its label
     /// needs; `None` before.
     restore_w: Option<i32>,
@@ -491,18 +501,41 @@ pub struct TrayCustomize {
     page_scroll: PageScroll,
 }
 
-/// Glass's page at the text size: 100% widths after the room, how much the intro's extra lines
-/// push what lies under it down and how far the page is scrolled.
+/// Glass's page at the text size: 100% widths after the room, how much the heading's extra
+/// lines push the intro down (`head_dy`), how much both push what lies under the intro down
+/// (`dy`) and how far the page is scrolled.
 #[derive(Clone, Copy)]
 struct PageGeo {
     u: TextUnits,
     width: i32,
+    head_dy: i32,
     dy: i32,
     top: i32,
     short: i32,
 }
 
 impl PageGeo {
+    fn stacked(&self) -> bool {
+        self.width < PAGE_MIN_W
+    }
+
+    fn row_h(&self) -> i32 {
+        if self.stacked() {
+            PAGE_STACKED_ROW_H
+        } else {
+            GLASS.row_h
+        }
+    }
+
+    /// A combo's top in its row.
+    fn combo_y(&self) -> i32 {
+        if self.stacked() {
+            PAGE_STACKED_COMBO_Y
+        } else {
+            PAGE_COMBO.y
+        }
+    }
+
     /// How far the page is narrower than [`PAGE_WIDE_MIN_W`].
     fn squeeze(&self) -> i32 {
         (PAGE_WIDE_MIN_W - self.width).max(0)
@@ -525,14 +558,21 @@ impl PageGeo {
     }
 
     /// Where the Behaviors column starts in the list: in from the right as the list narrows.
+    /// A stacked page's combos sit under the names.
     fn behaviours_x(&self) -> i32 {
+        if self.stacked() {
+            return PAGE_NAME.x;
+        }
         PAGE_BEHAVIOURS_X.min(self.list_w() - self.combo_w() - PAGE_COMBO_RIGHT)
     }
 
     fn name_w(&self) -> i32 {
-        PAGE_NAME
-            .width
-            .min(self.behaviours_x() - PAGE_NAME.x - PAGE_NAME_GAP)
+        let right = if self.stacked() {
+            self.list_w() - PAGE_COMBO_RIGHT
+        } else {
+            self.behaviours_x() - PAGE_NAME_GAP
+        };
+        PAGE_NAME.width.min(right - PAGE_NAME.x)
     }
 
     /// The page's parts down to the band, 100% tall.
@@ -561,11 +601,16 @@ impl PageGeo {
         )
     }
 
+    fn prompt(&self) -> Rect {
+        let r = GLASS.prompt;
+        Rect::new(self.margin(), r.y, self.list_w(), r.height + self.head_dy)
+    }
+
     fn intro(&self, lines: i32) -> Rect {
         let r = GLASS.intro;
         Rect::new(
             self.margin(),
-            r.y,
+            r.y + self.head_dy,
             self.list_w(),
             r.height + (lines - 1) * LINE_H,
         )
@@ -640,6 +685,7 @@ impl TrayCustomize {
             combo_thumb: ThumbDrag::default(),
             room: None,
             intro: Vec::new(),
+            heading: Vec::new(),
             restore_w: None,
             page_scroll: PageScroll::default(),
         };
@@ -662,6 +708,7 @@ impl TrayCustomize {
         self.top = 0;
         self.page_scroll = PageScroll::default();
         self.intro.clear();
+        self.heading.clear();
         self.hot_row = None;
         self.focus = if self.is_page() {
             Focus::Combo
@@ -696,6 +743,8 @@ impl TrayCustomize {
                 let over = g.client.1 - self.metrics.text.within(h);
                 g = g.shortened(over.clamp(0, g.list.height - CLASSIC_LIST_MIN_H));
             }
+        } else {
+            g.row_h = self.page_geo().row_h();
         }
         g.grown(self.metrics.text)
     }
@@ -706,12 +755,14 @@ impl TrayCustomize {
         let full = GLASS.client.0;
         let width = self
             .room
-            .map_or(full, |r| u.within(r.0).clamp(PAGE_MIN_W, full));
+            .map_or(full, |r| u.within(r.0).clamp(PAGE_STACKED_MIN_W, full));
         let lines = self.intro.len().max(1) as i32;
+        let head_dy = (self.heading.len().max(1) as i32 - 1) * PAGE_HEADING_LINE_H;
         PageGeo {
             u,
             width,
-            dy: (lines - 1) * LINE_H,
+            head_dy,
+            dy: head_dy + (lines - 1) * LINE_H,
             top: self.page_scroll.top,
             short: self.page_scroll.short,
         }
@@ -719,10 +770,12 @@ impl TrayCustomize {
 
     /// Lay the parts out around their text at `px`. Classic's intro takes the lines it wraps
     /// onto and Restore Defaults the width its label needs. The page fits
-    /// [`TrayCustomize::room`]: a narrower page wraps its intro onto more lines, and one taller
-    /// than the room keeps its band at the client's foot and scrolls the rest. Idempotent.
+    /// [`TrayCustomize::room`]: a narrower page wraps its heading and intro onto more lines, and
+    /// one taller than the room keeps its band at the client's foot and scrolls the rest.
+    /// Idempotent.
     pub fn fit(&mut self, text: &TextRenderer, px: u32) {
         self.intro.clear();
+        self.heading.clear();
         self.restore_w = None;
         if !self.is_page() {
             let u = self.metrics.text;
@@ -735,6 +788,10 @@ impl TrayCustomize {
         }
         let g = self.page_geo();
         let width = g.u.len(g.list_w());
+        let heading_px = px * HEADING_SCALE.0 / HEADING_SCALE.1;
+        if text.measure(Wording::HEADING, false, heading_px) > width {
+            self.heading = text::wrap(text, Wording::HEADING, width, heading_px);
+        }
         let intro = self.wording.intro();
         if text.measure(intro, false, px) > width {
             self.intro = text::wrap(text, intro, width, px);
@@ -759,7 +816,7 @@ impl TrayCustomize {
         let r = match self.focus {
             Focus::Combo => {
                 let k = self.selected?.checked_sub(self.top)? as i32;
-                let y = g.list().y + PAGE_BODY_Y + k * GLASS.row_h + PAGE_COMBO.y;
+                let y = g.list().y + PAGE_BODY_Y + k * g.row_h() + g.combo_y();
                 Rect::new(0, y, 0, PAGE_COMBO.height)
             }
             Focus::AllIcons => g.check(self.metrics.check).inset(-1),
@@ -1447,17 +1504,19 @@ impl TrayCustomize {
             titles.height,
         );
         let behaviours = frame.x + u.len(g.behaviours_x());
+        // A stacked page has no Behaviors column: its first title takes the header.
+        let split = if g.stacked() {
+            header.right()
+        } else {
+            behaviours
+        };
         let columns = [
-            Rect::new(header.x, header.y, behaviours - header.x, header.height),
-            Rect::new(
-                behaviours,
-                header.y,
-                header.right() - behaviours,
-                header.height,
-            ),
+            Rect::new(header.x, header.y, split - header.x, header.height),
+            Rect::new(split, header.y, header.right() - split, header.height),
         ];
-        let row_h = u.len(GLASS.row_h);
+        let row_h = u.len(g.row_h());
         let field = u.rect(Rect {
+            y: g.combo_y(),
             width: g.combo_w(),
             ..PAGE_COMBO
         });
@@ -1509,12 +1568,7 @@ impl TrayCustomize {
         Layout {
             client: at(Rect::new(0, 0, view.width, g.band().bottom())),
             intro: on_page(g.intro(self.intro.len().max(1) as i32)),
-            prompt: on_page(Rect::new(
-                g.margin(),
-                GLASS.prompt.y,
-                g.list_w(),
-                GLASS.prompt.height,
-            )),
+            prompt: on_page(g.prompt()),
             frame,
             inner,
             header,
@@ -1837,16 +1891,27 @@ impl TrayCustomize {
         let w = self.wording;
         let live = self.list_enabled();
         let heading_px = px * HEADING_SCALE.0 / HEADING_SCALE.1;
-        let heading = Wording::HEADING;
-        text.draw(
-            c,
-            lay.prompt.scaled(s),
-            heading,
-            false,
-            inks.heading,
-            Align::Left,
-            heading_px,
-        );
+        let u = self.metrics.text;
+        let pitch = u.len(PAGE_HEADING_LINE_H);
+        let one = [Wording::HEADING];
+        let lines: Vec<&str> = match self.heading.as_slice() {
+            [] => one.to_vec(),
+            lines => lines.iter().map(String::as_str).collect(),
+        };
+        for (k, line) in lines.into_iter().enumerate() {
+            let p = lay.prompt;
+            let first = p.height - (self.heading.len().max(1) as i32 - 1) * pitch;
+            let r = Rect::new(p.x, p.y + k as i32 * pitch, p.width, first);
+            text.draw(
+                c,
+                r.scaled(s),
+                line,
+                false,
+                inks.heading,
+                Align::Left,
+                heading_px,
+            );
+        }
         let intro = lay.intro.scaled(s);
         if self.intro.is_empty() {
             text.draw(c, intro, w.intro(), false, cs.window_text, Align::Left, px);
@@ -1862,6 +1927,9 @@ impl TrayCustomize {
         c.fill_rect(frame, inks.list_frame);
         c.fill_rect(lay.inner.scaled(s), cs.window);
         for (r, title) in lay.columns.iter().zip(w.columns()) {
+            if r.width == 0 {
+                continue;
+            }
             let dx = self.metrics.text.len(PAGE_TITLE_X);
             let tr = Rect::new(r.x + dx, r.y, r.width - dx, r.height);
             text.draw(
@@ -1874,7 +1942,6 @@ impl TrayCustomize {
                 px,
             );
         }
-        let u = self.metrics.text;
         let rule_x = lay.columns[0].x;
         let rule_end = lay.body.right() - u.len(PAGE_RULE_INSET);
         let rule = Rect::new(
@@ -2124,10 +2191,15 @@ impl TrayCustomize {
         put("cancel", button("Cancel", lay.cancel));
         if self.is_page() {
             let heading_px = px * HEADING_SCALE.0 / HEADING_SCALE.1;
-            put(
-                "heading",
-                width(Wording::HEADING, false, heading_px) - lay.prompt.width,
-            );
+            let heading = match self.heading.as_slice() {
+                [] => width(Wording::HEADING, false, heading_px),
+                lines => lines
+                    .iter()
+                    .map(|l| width(l, false, heading_px))
+                    .max()
+                    .unwrap_or(0),
+            };
+            put("heading", heading - lay.prompt.width);
             let intro = match self.intro.as_slice() {
                 [] => width(w.intro(), false, px),
                 lines => lines.iter().map(|l| width(l, false, px)).max().unwrap_or(0),
@@ -2140,6 +2212,9 @@ impl TrayCustomize {
             );
             put("restore", lay.restore.right() - right);
             for (r, title) in lay.columns.iter().zip(w.columns()) {
+                if r.width == 0 {
+                    continue;
+                }
                 let room = r.width - u.len(PAGE_TITLE_X);
                 put("column", width(title, true, px) - room);
             }
@@ -3209,6 +3284,37 @@ mod tests {
         assert_eq!(l.ok.right() + 12, l.cancel.x);
         assert!(l.page_bar.is_some());
         assert!(t.overflows(&text, 22).is_empty());
+    }
+
+    /// An 800x600 output at 200% has room for a 776x540 client, narrower than the columns need:
+    /// the page stacks each row's combo under its name and tip and wraps its heading.
+    #[test]
+    fn a_page_narrower_than_its_columns_stacks_its_rows() {
+        let text = TextRenderer::load(&crate::theme::FontConfig::default());
+        let mut t = sample(Wording::Glass);
+        t.metrics = metrics(Wording::Glass).grown(TextUnits::new(22, 11));
+        t.room = Some((776, 540));
+        t.fit(&text, 22);
+        let l = t.layout(&text, 22, (0, 0));
+        assert_eq!(t.client(), (776, 540));
+        assert_eq!(l.frame.x, 48);
+        let &(_, row) = l
+            .slots
+            .iter()
+            .find(|(s, _)| matches!(s, Slot::Row(0)))
+            .expect("the first row");
+        assert_eq!(row.height, 146, "73 px rows");
+        let (_, combo) = l.fields[0];
+        assert_eq!(
+            combo,
+            Rect::new(48 + 134, row.y + 84, 400, 46),
+            "under the name"
+        );
+        assert_eq!(l.columns[1].width, 0, "no Behaviors column");
+        assert!(t.heading.len() > 1, "the heading wraps");
+        assert_eq!(l.intro.y, l.prompt.bottom() + 20);
+        assert!(l.cancel.right() <= 776);
+        assert_eq!(t.overflows(&text, 22), vec![]);
     }
 
     /// At 200% Classic's client is 696x782; with room for 640 px its list shortens and what lies
