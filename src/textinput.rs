@@ -11,7 +11,7 @@ use smithay::{
         input::{Event, InputEvent, KeyState, KeyboardKeyEvent, Keycode},
         renderer::utils::with_renderer_surface_state,
     },
-    desktop::utils::bbox_from_surface_tree,
+    desktop::{PopupKeyboardGrab, utils::bbox_from_surface_tree},
     input::{
         SeatHandler,
         keyboard::{
@@ -713,6 +713,18 @@ impl KeyboardGrab<State> for SplitGrab {
     }
 }
 
+enum KeyboardHolder {
+    Nothing,
+    /// The input method's grab, as Smithay set it or wrapped in a `SplitGrab`.
+    InputMethod(Option<InputMethodKeyboardGrab>),
+    Other,
+}
+
+/// Whether open client popups take back the keyboard grab from `holder`.
+fn popup_grab_returns(popups_open: bool, holder: &KeyboardHolder) -> bool {
+    popups_open && !matches!(holder, KeyboardHolder::Other)
+}
+
 pub fn ime_holds_keyboard(kb: &smithay::input::keyboard::KeyboardHandle<State>) -> bool {
     kb.with_grab(|_, g| g.downcast_ref::<SplitGrab>().is_some())
         .unwrap_or(false)
@@ -721,6 +733,7 @@ pub fn ime_holds_keyboard(kb: &smithay::input::keyboard::KeyboardHandle<State>) 
 impl State {
     pub fn ime_sync_grab(&mut self) {
         self.ime_tap_input_method();
+        self.ime_return_popup_grab();
         let handle = self.seat.input_method().clone();
         if !handle.keyboard_grabbed() {
             self.ime.grab = None;
@@ -758,6 +771,40 @@ impl State {
         if regained {
             self.ime_grab_modifiers();
         }
+    }
+
+    /// Smithay hands an input method's grab the keyboard over a client
+    /// popup's grab, and the grab object's destruction unsets whatever grab
+    /// holds the keyboard: an input method dropping and retaking its grab as
+    /// a menu opens left the menu without its keyboard grab, and the keys
+    /// after the menu closed went to the gone menu. While the pointer still
+    /// holds the popups, their keyboard grab goes back, keeping the input
+    /// method's grab for when they close.
+    fn ime_return_popup_grab(&mut self) {
+        let (Some(kb), Some(pointer)) = (self.seat.get_keyboard(), self.seat.get_pointer()) else {
+            return;
+        };
+        let Some(popup) = crate::popupgrab::holding(&pointer) else {
+            return;
+        };
+        let holder = kb
+            .with_grab(|_, g| {
+                if let Some(im) = g.downcast_ref::<InputMethodKeyboardGrab>() {
+                    KeyboardHolder::InputMethod(Some(im.clone()))
+                } else if g.downcast_ref::<SplitGrab>().is_some() {
+                    KeyboardHolder::InputMethod(None)
+                } else {
+                    KeyboardHolder::Other
+                }
+            })
+            .unwrap_or(KeyboardHolder::Nothing);
+        if !popup_grab_returns(!popup.has_ended(), &holder) {
+            return;
+        }
+        if let KeyboardHolder::InputMethod(Some(im)) = holder {
+            self.ime.grab = Some(im);
+        }
+        kb.set_grab(self, PopupKeyboardGrab::new(&popup), popup.serial());
     }
 
     /// A key that changed the modifiers went past the input method's grab
@@ -1147,6 +1194,28 @@ mod guard_tests {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn open_popups_take_their_keyboard_grab_back_from_the_input_method() {
+        use KeyboardHolder::*;
+        assert!(
+            popup_grab_returns(true, &Nothing),
+            "unset by the grab object's end"
+        );
+        assert!(
+            popup_grab_returns(true, &InputMethod(None)),
+            "replaced by grab_keyboard"
+        );
+        assert!(
+            !popup_grab_returns(true, &Other),
+            "the popups' own grab stays"
+        );
+        assert!(
+            !popup_grab_returns(false, &Nothing),
+            "closed popups take nothing"
+        );
+        assert!(!popup_grab_returns(false, &InputMethod(None)));
+    }
 
     #[test]
     fn a_text_input_caret_counts_once_committed_and_enabled() {
