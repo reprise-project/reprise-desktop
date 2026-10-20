@@ -27,6 +27,24 @@ pub struct Spot {
     pub anchor: Anchor,
 }
 
+impl Spot {
+    /// The spot `dx`, `dy` further right and down, its anchor along with it.
+    pub fn moved(self, dx: i32, dy: i32) -> Spot {
+        let m = |r: Rect| Rect::new(r.x + dx, r.y + dy, r.width, r.height);
+        Spot {
+            rect: m(self.rect),
+            anchor: match self.anchor {
+                Anchor::Point(x, y) => Anchor::Point(x + dx, y + dy),
+                Anchor::Below(r) => Anchor::Below(m(r)),
+                Anchor::Beside { rect, dy: d } => Anchor::Beside {
+                    rect: m(rect),
+                    dy: d,
+                },
+            },
+        }
+    }
+}
+
 /// A model a host shows on popups.
 pub trait Hosted {
     /// Its levels, root first.

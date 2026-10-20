@@ -1460,11 +1460,15 @@ impl Form {
         f
     }
 
-    /// Take the labels `drawn`, a [`Form::placed_at`] copy of this form, cut when it drew.
-    pub(crate) fn note_cuts(&self, drawn: &Form) {
+    /// Take what `drawn`, a [`Form::placed_at`] copy of this form, laid out when it drew: the
+    /// labels it cut, its text px and how far it moved and widened items for their text.
+    pub(crate) fn note_draw(&self, drawn: &Form) {
+        let r = &drawn.rendered;
         self.rendered
             .ellipsized
-            .replace(drawn.rendered.ellipsized.borrow().clone());
+            .replace(r.ellipsized.borrow().clone());
+        self.rendered.fit.replace(r.fit.borrow().clone());
+        self.rendered.px.set(r.px.get());
     }
 
     /// The whole text of the ellipsized label whose tip is up ([`Form::tip_tick`]).

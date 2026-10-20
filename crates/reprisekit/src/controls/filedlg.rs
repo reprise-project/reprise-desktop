@@ -2043,8 +2043,14 @@ impl FileDlg {
 
     /// (`x`, `y`) in `r` as the extra rows' form takes it.
     fn extra_point(&self, r: Rect, x: i32, y: i32) -> (i32, i32) {
+        let (ox, oy) = self.extra_origin(r);
+        (x - ox, y - oy)
+    }
+
+    /// Where the extra rows' form has its (0, 0) when the dialog draws in `r`.
+    fn extra_origin(&self, r: Rect) -> (i32, i32) {
         let cm = self.drawn.0.get();
-        (x - r.x, y - rows(r, &cm).y - self.grow(r, &cm))
+        (r.x, rows(r, &cm).y + self.grow(r, &cm))
     }
 
     /// One caret blink went by: it times the tip of a cut label in the extra rows
@@ -2251,15 +2257,12 @@ impl FileDlg {
         );
 
         if let Some((f, _)) = &self.extra {
-            let cm = self.drawn.0.get();
-            let rows = rows(r, &cm);
-            let dy = self.grow(r, &cm);
-            let mut shifted = f.placed_at((rows.x, rows.y + dy));
+            let mut shifted = f.placed_at(self.extra_origin(r));
             if self.focus != Focus::Extra {
                 shifted.set_focus(None);
             }
             form::draw(c, text, p, &shifted, true, px);
-            f.note_cuts(&shifted);
+            f.note_draw(&shifted);
         }
         if self.lookin.open.is_some() && !self.hosted {
             combo::draw_list(
@@ -2489,9 +2492,9 @@ impl FileDlg {
     }
 }
 
-/// The dialog's open Look in or Files of type list or its Views menu, for a host that shows it
-/// on a popup: `text` and `px` as the dialog is drawn with, in a client at `(0, 0)`. Dismissing
-/// it closes it.
+/// The dialog's open Look in or Files of type list, its Views menu or an extra row's open list,
+/// for a host that shows it on a popup: `text` and `px` as the dialog is drawn with, in a client
+/// at `(0, 0)`. Dismissing it closes it.
 pub struct Popped<'a> {
     pub dlg: &'a mut FileDlg,
     pub text: Rc<TextRenderer>,
@@ -2503,6 +2506,7 @@ enum Open {
     Views,
     LookIn,
     FileType,
+    Extra,
 }
 
 impl Popped<'_> {
@@ -2514,9 +2518,19 @@ impl Popped<'_> {
             Some(Open::LookIn)
         } else if d.filetype.open.is_some() {
             Some(Open::FileType)
+        } else if d.extra_list_open() {
+            Some(Open::Extra)
         } else {
             None
         }
+    }
+
+    /// The extra rows' form and where its (0, 0) sits in the client: its rects and its list's
+    /// stored place are its own, not the client's.
+    fn extra(&self) -> Option<(&form::Form, (i32, i32))> {
+        let (w, h) = self.dlg.size;
+        let at = self.dlg.extra_origin(Rect::new(0, 0, w, h));
+        self.dlg.extra.as_ref().map(|(f, _)| (f, at))
     }
 
     fn layout(&self) -> Layout {
@@ -2532,6 +2546,11 @@ impl Hosted for Popped<'_> {
         let Some(open) = self.open() else {
             return Vec::new();
         };
+        if let Open::Extra = open {
+            return self.extra().map_or_else(Vec::new, |(f, (x, y))| {
+                f.spots().into_iter().map(|s| s.moved(x, y)).collect()
+            });
+        }
         let lay = self.layout();
         let spot = match (open, &lay.views) {
             (Open::Views, Some((rect, _))) => Spot {
@@ -2547,7 +2566,7 @@ impl Hosted for Popped<'_> {
                 rect: lay.filetype.list,
                 anchor: Anchor::Point(lay.filetype_home.0, lay.filetype_home.1),
             },
-            (Open::Views, None) => return Vec::new(),
+            (Open::Views, None) | (Open::Extra, _) => return Vec::new(),
         };
         vec![spot]
     }
@@ -2557,6 +2576,12 @@ impl Hosted for Popped<'_> {
             Some(Open::Views) => self.dlg.views_at = Some(origin),
             Some(Open::LookIn) => self.dlg.lookin.list_at = Some(origin),
             Some(Open::FileType) => self.dlg.filetype.list_at = Some(origin),
+            Some(Open::Extra) => {
+                let (x, y) = self.extra().map_or((0, 0), |(_, at)| at);
+                if let Some((f, _)) = &mut self.dlg.extra {
+                    f.place(level, (origin.0 - x, origin.1 - y));
+                }
+            }
             None => {}
         }
     }
@@ -2564,6 +2589,7 @@ impl Hosted for Popped<'_> {
     fn shadow(&self, theme: &Theme) -> i32 {
         match self.open() {
             Some(Open::Views) => crate::controls::menu::level_shadow(theme),
+            Some(Open::Extra) => self.extra().map_or(0, |(f, _)| f.shadow(theme)),
             _ => combo::list_shadow(theme),
         }
     }
@@ -2576,6 +2602,12 @@ impl Hosted for Popped<'_> {
         theme: &Theme,
         text: &TextRenderer,
     ) {
+        if let Some(Open::Extra) = self.open() {
+            if let Some((f, (x, y))) = self.extra() {
+                f.draw_level(level, c, (by.0 + x, by.1 + y), theme, text);
+            }
+            return;
+        }
         let Some(open) = self.open().filter(|_| level == 0) else {
             return;
         };
@@ -2605,6 +2637,7 @@ impl Hosted for Popped<'_> {
         match open {
             Open::LookIn => list(c, &self.dlg.lookin, &lay.lookin),
             Open::FileType => list(c, &self.dlg.filetype, &lay.filetype),
+            Open::Extra => {}
             Open::Views => {
                 if let Some((at, menu)) = &lay.views {
                     let at = moved(*at);
@@ -2626,12 +2659,18 @@ impl Hosted for Popped<'_> {
 
     fn host(&mut self) {
         self.dlg.hosted = true;
+        if let Some((f, _)) = &mut self.dlg.extra {
+            f.host();
+        }
     }
 
     fn dismiss(&mut self) {
         self.dlg.views_open = false;
         self.dlg.lookin.open = None;
         self.dlg.filetype.open = None;
+        if let Some((f, _)) = &mut self.dlg.extra {
+            f.dismiss();
+        }
     }
 }
 
@@ -2917,6 +2956,74 @@ mod tests {
             };
             assert_eq!(d.hit(&text, 11, R, at.0, at.1), Some(want), "{open:?}");
         }
+    }
+
+    #[test]
+    fn a_hosted_extra_list_draws_alone_as_in_the_dialog_and_is_hit_where_it_was_put() {
+        let text = Rc::new(text());
+        let theme = Theme::default();
+        let paint = classic_paint(&theme.colors, 1);
+        let mut d = with_extra();
+        let (w, h) = d.min_client();
+        d.set_size((w, h + 40));
+        let r = Rect::new(0, 0, w, h + 40);
+        let shot = |d: &FileDlg| {
+            let mut c = Canvas::new(w as u32, (h + 40) as u32);
+            d.draw(&mut c, &text, &paint, r, 11);
+            c
+        };
+        let popped = |d: &mut FileDlg| -> Vec<Spot> {
+            Popped {
+                dlg: d,
+                text: text.clone(),
+                px: 11,
+            }
+            .spots()
+        };
+        shot(&d);
+        assert!(popped(&mut d).is_empty(), "nothing while closed");
+        let (ox, oy) = d.extra_origin(r);
+        assert_eq!(oy, 40, "the rows sit 40 px lower in the taller client");
+        let f = d.extra().unwrap().rect("extra-combo").unwrap();
+        let field = Rect::new(f.x + ox, f.y + oy, f.width, f.height);
+        let drop = d.hit(&text, 11, r, field.right() - 5, field.y + 5);
+        assert!(matches!(drop, Some(Hit::Extra(_))), "{drop:?}");
+        d.click(r, drop, Mods::default());
+        let whole = shot(&d);
+        let spot = popped(&mut d)[0];
+        assert_eq!(spot.anchor, Anchor::Below(field), "under the drawn field");
+        let a = spot.rect;
+        assert_eq!((a.x, a.y), (field.x, field.bottom()));
+        let mut p = Popped {
+            dlg: &mut d,
+            text: text.clone(),
+            px: 11,
+        };
+        let mut own = Canvas::new(a.width as u32, a.height as u32);
+        p.draw_level(0, &mut own, (-a.x, -a.y), &theme, &text);
+        for y in 0..a.height {
+            for x in 0..a.width {
+                assert_eq!(own.get(x, y), whole.get(a.x + x, a.y + y), "({x}, {y})");
+            }
+        }
+        p.host();
+        p.place(0, (600, 700));
+        assert_eq!(
+            p.spots()[0].rect.y,
+            700,
+            "the list's spot is where it was put"
+        );
+        let bare = shot(&d);
+        assert!(
+            (0..a.height).any(|y| bare.get(a.x + 4, a.y + y) != whole.get(a.x + 4, a.y + y)),
+            "the dialog leaves it out"
+        );
+        let row = 702 + Combo::new(&["a"], 0, 1).row_h(&ControlMetrics::CLASSIC);
+        let pick = d.hit(&text, 11, r, 605, row);
+        d.click(r, pick, Mods::default());
+        let f = d.extra().unwrap();
+        assert_eq!(f.combo_selected("extra-combo"), Some(1), "the second row");
+        assert!(popped(&mut d).is_empty(), "the pick closes it");
     }
 
     /// The toolbar's four buttons run from its left edge and end 84 px
