@@ -1213,6 +1213,31 @@ mod tests {
     }
 
     #[test]
+    fn a_virtual_keyboards_bind_is_routed_like_the_keyboards() {
+        let (mut h, mut c, t) = focused_client();
+        let mut v = h.connect();
+        let vk = v.virtual_keyboard();
+        for (code, down) in [
+            (KEY_LEFTMETA, true),
+            (KEY_LEFT, true),
+            (KEY_LEFT, false),
+            (KEY_LEFTMETA, false),
+        ] {
+            v.vk_key(vk, code, down);
+        }
+        h.roundtrip(&mut v);
+        let keys = heard(&mut h, &mut c);
+        assert!(
+            !keys.iter().any(|&(k, _)| k == KEY_LEFT),
+            "Super+Left is the snap bind: {keys:?}"
+        );
+        assert!(
+            h.state.win(t.id).is_some_and(|w| w.snapped.is_some()),
+            "the bind snapped the window"
+        );
+    }
+
+    #[test]
     fn a_binds_key_reaches_no_client_down_or_up() {
         let (mut h, mut c, t) = focused_client();
         h.key(KEY_LEFTMETA, true);

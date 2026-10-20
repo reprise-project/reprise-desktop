@@ -17,9 +17,25 @@ use wayland_client::{
         wl_surface::WlSurface,
     },
 };
-use wayland_protocols::xdg::{
-    activation::v1::client::xdg_activation_v1::XdgActivationV1,
-    shell::client::{xdg_popup, xdg_positioner, xdg_surface, xdg_toplevel, xdg_wm_base},
+use wayland_protocols::{
+    wp::text_input::zv3::client::{
+        zwp_text_input_manager_v3::ZwpTextInputManagerV3, zwp_text_input_v3::ZwpTextInputV3,
+    },
+    xdg::{
+        activation::v1::client::xdg_activation_v1::XdgActivationV1,
+        shell::client::{xdg_popup, xdg_positioner, xdg_surface, xdg_toplevel, xdg_wm_base},
+    },
+};
+use wayland_protocols_misc::{
+    zwp_input_method_v2::client::{
+        zwp_input_method_keyboard_grab_v2::{self as im_grab, ZwpInputMethodKeyboardGrabV2},
+        zwp_input_method_manager_v2::ZwpInputMethodManagerV2,
+        zwp_input_method_v2::{self as im, ZwpInputMethodV2},
+    },
+    zwp_virtual_keyboard_v1::client::{
+        zwp_virtual_keyboard_manager_v1::ZwpVirtualKeyboardManagerV1,
+        zwp_virtual_keyboard_v1::ZwpVirtualKeyboardV1,
+    },
 };
 
 use crate::{
@@ -292,6 +308,15 @@ impl TestClient {
                 "wl_data_device_manager" => {
                     self.side.data_manager = Some(registry.bind(name, version.min(3), &qh, ()));
                 }
+                "zwp_input_method_manager_v2" => {
+                    self.side.im_manager = Some(registry.bind(name, 1, &qh, ()));
+                }
+                "zwp_text_input_manager_v3" => {
+                    self.side.ti_manager = Some(registry.bind(name, 1, &qh, ()));
+                }
+                "zwp_virtual_keyboard_manager_v1" => {
+                    self.side.vk_manager = Some(registry.bind(name, 1, &qh, ()));
+                }
                 _ => {}
             }
         }
@@ -346,18 +371,89 @@ impl TestClient {
         source
     }
 
-    /// Destroy toplevel `t`'s role objects, as a client closing it does.
-    pub fn destroy(&mut self, t: Toplevel) {
-        let s = &self.side.shells[t.shell];
-        s.toplevel.destroy();
-        s.xdg.destroy();
-        s.surface.destroy();
+    fn seat(&self) -> &wl_seat::WlSeat {
+        self.side.seat.as_ref().expect("wl_seat")
+    }
+
+    /// An input method on the seat, as fcitx5 asks for one; its index in `ims`. The manager is
+    /// bound at connect, while no input method hides its global.
+    pub fn input_method(&mut self) -> usize {
+        let qh = self.qh();
+        let i = self.side.ims.len();
+        let obj = (self.side.im_manager.as_ref())
+            .expect("zwp_input_method_manager_v2")
+            .get_input_method(self.seat(), &qh, i);
+        self.side.ims.push(InputMethod {
+            obj,
+            events: Vec::new(),
+            grab: None,
+            grab_keys: Vec::new(),
+            grab_mods: Vec::new(),
+        });
+        i
+    }
+
+    pub fn destroy_input_method(&mut self, i: usize) {
+        self.side.ims[i].obj.destroy();
+    }
+
+    /// Input method `i` takes the keyboard grab.
+    pub fn grab_keyboard(&mut self, i: usize) {
+        let qh = self.qh();
+        let im = &mut self.side.ims[i];
+        im.grab = Some(im.obj.grab_keyboard(&qh, i));
+    }
+
+    /// Input method `i` releases its keyboard grab.
+    pub fn release_grab(&mut self, i: usize) {
+        if let Some(g) = self.side.ims[i].grab.take() {
+            g.release();
+        }
+    }
+
+    /// A text input on the seat; its index in `text_inputs`.
+    pub fn text_input(&mut self) -> usize {
+        let qh = self.qh();
+        let ti = (self.side.ti_manager.as_ref())
+            .expect("zwp_text_input_manager_v3")
+            .get_text_input(self.seat(), &qh, ());
+        self.side.text_inputs.push(ti);
+        self.side.text_inputs.len() - 1
+    }
+
+    pub fn destroy_text_input(&self, i: usize) {
+        self.side.text_inputs[i].destroy();
+    }
+
+    /// A virtual keyboard under the seat's keymap; its index in `vks`.
+    pub fn virtual_keyboard(&mut self) -> usize {
+        let qh = self.qh();
+        let vk = (self.side.vk_manager.as_ref())
+            .expect("zwp_virtual_keyboard_manager_v1")
+            .create_virtual_keyboard(self.seat(), &qh, ());
+        let (fd, size) = self.side.keymap.as_ref().expect("the seat's keymap");
+        vk.keymap(wl_keyboard::KeymapFormat::XkbV1.into(), fd.as_fd(), *size);
+        self.side.vks.push(vk);
+        self.side.vks.len() - 1
+    }
+
+    /// Key `code` (an evdev code) down or up on virtual keyboard `i`.
+    pub fn vk_key(&self, i: usize, code: u32, pressed: bool) {
+        self.side.vks[i].key(0, code, u32::from(pressed));
     }
 
     /// Destroy popup `p`'s role objects and keep its surface, as a toolkit hiding a menu does.
     pub fn hide_popup(&mut self, p: &Popup) {
         p.popup.destroy();
         p.xdg.destroy();
+    }
+
+    /// Destroy toplevel `t`'s role objects, as a client closing it does.
+    pub fn destroy(&mut self, t: Toplevel) {
+        let s = &self.side.shells[t.shell];
+        s.toplevel.destroy();
+        s.xdg.destroy();
+        s.surface.destroy();
     }
 }
 
@@ -389,6 +485,41 @@ pub struct Shell {
     pub size: (i32, i32),
 }
 
+/// What an input method heard, in order.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ImHeard {
+    Activate,
+    Deactivate,
+    Done,
+    Unavailable,
+}
+
+pub struct InputMethod {
+    obj: ZwpInputMethodV2,
+    pub events: Vec<ImHeard>,
+    grab: Option<ZwpInputMethodKeyboardGrabV2>,
+    /// Each key its keyboard grab heard: its evdev code and whether it went down.
+    pub grab_keys: Vec<(u32, bool)>,
+    /// The depressed modifiers of each modifiers event its keyboard grab heard.
+    pub grab_mods: Vec<u32>,
+}
+
+impl InputMethod {
+    /// Whether the input method stands activated after its last `done`.
+    pub fn active(&self) -> bool {
+        let (mut pending, mut active) = (None, false);
+        for e in &self.events {
+            match e {
+                ImHeard::Activate => pending = Some(true),
+                ImHeard::Deactivate => pending = Some(false),
+                ImHeard::Done => active = pending.take().unwrap_or(active),
+                ImHeard::Unavailable => {}
+            }
+        }
+        active
+    }
+}
+
 #[derive(Default)]
 pub struct ClientSide {
     registry: Option<wl_registry::WlRegistry>,
@@ -403,6 +534,14 @@ pub struct ClientSide {
     /// The surface the keyboard last entered and has not left.
     pub keyboard_focus: Option<WlSurface>,
     enter_serial: u32,
+    /// The seat's keymap as the keyboard got it: the file and its size.
+    keymap: Option<(std::os::fd::OwnedFd, u32)>,
+    im_manager: Option<ZwpInputMethodManagerV2>,
+    ti_manager: Option<ZwpTextInputManagerV3>,
+    vk_manager: Option<ZwpVirtualKeyboardManagerV1>,
+    pub ims: Vec<InputMethod>,
+    pub text_inputs: Vec<ZwpTextInputV3>,
+    pub vks: Vec<ZwpVirtualKeyboardV1>,
     pub shells: Vec<Shell>,
     /// Each key event the keyboard heard: its evdev code and whether it went down.
     pub keys: Vec<(u32, bool)>,
@@ -518,6 +657,49 @@ impl wc::Dispatch<wl_keyboard::WlKeyboard, ()> for ClientSide {
             wl_keyboard::Event::Leave { surface, .. } => {
                 st.keyboard_focus.take_if(|f| *f == surface);
             }
+            wl_keyboard::Event::Keymap { fd, size, .. } => st.keymap = Some((fd, size)),
+            _ => {}
+        }
+    }
+}
+
+impl wc::Dispatch<ZwpInputMethodV2, usize> for ClientSide {
+    fn event(
+        st: &mut Self,
+        _: &ZwpInputMethodV2,
+        ev: im::Event,
+        &i: &usize,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        let heard = match ev {
+            im::Event::Activate => ImHeard::Activate,
+            im::Event::Deactivate => ImHeard::Deactivate,
+            im::Event::Done => ImHeard::Done,
+            im::Event::Unavailable => ImHeard::Unavailable,
+            _ => return,
+        };
+        st.ims[i].events.push(heard);
+    }
+}
+
+impl wc::Dispatch<ZwpInputMethodKeyboardGrabV2, usize> for ClientSide {
+    fn event(
+        st: &mut Self,
+        _: &ZwpInputMethodKeyboardGrabV2,
+        ev: im_grab::Event,
+        &i: &usize,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        match ev {
+            im_grab::Event::Key { key, state, .. } => {
+                let down = state == wc::WEnum::Value(wl_keyboard::KeyState::Pressed);
+                st.ims[i].grab_keys.push((key, down));
+            }
+            im_grab::Event::Modifiers { mods_depressed, .. } => {
+                st.ims[i].grab_mods.push(mods_depressed);
+            }
             _ => {}
         }
     }
@@ -551,6 +733,11 @@ wc::delegate_noop!(ClientSide: ignore wl_seat::WlSeat);
 wc::delegate_noop!(ClientSide: ignore XdgActivationV1);
 wc::delegate_noop!(ClientSide: ignore xdg_positioner::XdgPositioner);
 wc::delegate_noop!(ClientSide: ignore xdg_popup::XdgPopup);
+wc::delegate_noop!(ClientSide: ignore ZwpInputMethodManagerV2);
+wc::delegate_noop!(ClientSide: ignore ZwpTextInputManagerV3);
+wc::delegate_noop!(ClientSide: ignore ZwpTextInputV3);
+wc::delegate_noop!(ClientSide: ignore ZwpVirtualKeyboardManagerV1);
+wc::delegate_noop!(ClientSide: ignore ZwpVirtualKeyboardV1);
 
 #[test]
 fn a_headless_state_maps_a_clients_toplevel_on_its_output() {
