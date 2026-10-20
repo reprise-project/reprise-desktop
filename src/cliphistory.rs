@@ -290,12 +290,12 @@ impl State {
             self.record(Got::from_offers(&offers));
             return;
         }
-        let steps = plan(&self.clip.offered);
+        let steps = plan(self.clip_offered());
         if steps.is_empty() {
-            if !self.clip.offered.is_empty() {
+            if !self.clip_offered().is_empty() {
                 log::debug!(
                     "clipboard history: nothing to show in {:?}",
-                    self.clip.offered
+                    self.clip_offered()
                 );
             }
             return;

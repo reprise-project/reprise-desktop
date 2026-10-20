@@ -12,8 +12,9 @@ use smithay::{
 use wayland_client::{
     self as wc, Connection, EventQueue, QueueHandle,
     protocol::{
-        wl_buffer::WlBuffer, wl_compositor::WlCompositor, wl_keyboard, wl_registry, wl_seat,
-        wl_shm, wl_shm_pool, wl_surface::WlSurface,
+        wl_buffer::WlBuffer, wl_compositor::WlCompositor, wl_data_device, wl_data_device_manager,
+        wl_data_offer, wl_data_source, wl_keyboard, wl_registry, wl_seat, wl_shm, wl_shm_pool,
+        wl_surface::WlSurface,
     },
 };
 use wayland_protocols::xdg::{
@@ -252,6 +253,10 @@ impl TestClient {
                 "wl_seat" => {
                     let seat: wl_seat::WlSeat = registry.bind(name, version.min(7), &qh, ());
                     self.side.keyboard = Some(seat.get_keyboard(&qh, ()));
+                    self.side.seat = Some(seat);
+                }
+                "wl_data_device_manager" => {
+                    self.side.data_manager = Some(registry.bind(name, version.min(3), &qh, ()));
                 }
                 _ => {}
             }
@@ -286,6 +291,25 @@ impl TestClient {
         (self.side.activation.as_ref())
             .expect("xdg_activation_v1")
             .activate(token.into(), &self.side.shells[t.shell].surface);
+    }
+
+    /// A clipboard selection offering `mimes`, set while the client has the keyboard. The source
+    /// answers no reads.
+    pub fn copy(&mut self, mimes: &[&str]) -> wl_data_source::WlDataSource {
+        let qh = self.qh();
+        let manager = self
+            .side
+            .data_manager
+            .as_ref()
+            .expect("wl_data_device_manager");
+        let seat = self.side.seat.as_ref().expect("wl_seat");
+        let device = manager.get_data_device(seat, &qh, ());
+        let source = manager.create_data_source(&qh, ());
+        for m in mimes {
+            source.offer(m.to_string());
+        }
+        device.set_selection(Some(&source), 0);
+        source
     }
 
     /// Destroy toplevel `t`'s role objects, as a client closing it does.
@@ -334,6 +358,8 @@ pub struct ClientSide {
     wm_base: Option<xdg_wm_base::XdgWmBase>,
     activation: Option<XdgActivationV1>,
     keyboard: Option<wl_keyboard::WlKeyboard>,
+    seat: Option<wl_seat::WlSeat>,
+    data_manager: Option<wl_data_device_manager::WlDataDeviceManager>,
     pub shells: Vec<Shell>,
     /// Each key event the keyboard heard: its evdev code and whether it went down.
     pub keys: Vec<(u32, bool)>,
@@ -442,7 +468,26 @@ impl wc::Dispatch<wl_keyboard::WlKeyboard, ()> for ClientSide {
     }
 }
 
+impl wc::Dispatch<wl_data_device::WlDataDevice, ()> for ClientSide {
+    fn event(
+        _: &mut Self,
+        _: &wl_data_device::WlDataDevice,
+        _: wl_data_device::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+    }
+
+    wc::event_created_child!(ClientSide, wl_data_device::WlDataDevice, [
+        wl_data_device::EVT_DATA_OFFER_OPCODE => (wl_data_offer::WlDataOffer, ()),
+    ]);
+}
+
 wc::delegate_noop!(ClientSide: ignore WlCompositor);
+wc::delegate_noop!(ClientSide: ignore wl_data_device_manager::WlDataDeviceManager);
+wc::delegate_noop!(ClientSide: ignore wl_data_offer::WlDataOffer);
+wc::delegate_noop!(ClientSide: ignore wl_data_source::WlDataSource);
 wc::delegate_noop!(ClientSide: ignore WlSurface);
 wc::delegate_noop!(ClientSide: ignore wl_shm::WlShm);
 wc::delegate_noop!(ClientSide: ignore wl_shm_pool::WlShmPool);
