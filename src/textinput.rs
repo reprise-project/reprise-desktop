@@ -1505,6 +1505,19 @@ mod harness_tests {
     }
 
     #[test]
+    fn the_input_methods_grab_hears_a_modifier_released_that_it_never_saw_go_down() {
+        let (mut h, _c, _) = focused_client();
+        let mut m = input_method(&mut h, false);
+        h.key(KEY_LEFTSHIFT, true);
+        m.grab_keyboard(0);
+        h.roundtrip(&mut m);
+        m.side.ims[0].grab_mods.clear();
+        h.key(KEY_LEFTSHIFT, false);
+        h.roundtrip(&mut m);
+        assert_eq!(m.side.ims[0].grab_mods, [0], "Shift up");
+    }
+
+    #[test]
     fn a_virtual_keyboards_key_skips_the_input_methods_grab() {
         let (mut h, mut c, _) = focused_client();
         let mut m = input_method(&mut h, true);
