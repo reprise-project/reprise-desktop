@@ -1642,6 +1642,45 @@ fn the_picker_focuses_the_tree_when_the_items_folder_is_hidden() {
     );
 }
 
+/// An icon set on a folder while the picker is open reaches the picker's tree when its folder is
+/// read again for the change.
+#[test]
+fn the_picker_tree_wears_a_folder_icon_set_while_it_is_open() {
+    const OWN: u32 = 0xff20_80a0;
+    let mut ctx = test_ctx();
+    let dir = tempfile::Builder::new()
+        .prefix("browse")
+        .tempdir()
+        .expect("a temp dir");
+    let sub = dir.path().join("sub");
+    std::fs::create_dir(&sub).expect("mkdir");
+    std::fs::write(dir.path().join("a.txt"), "").expect("write");
+    let mut ex = test_explorer(Place::Folder(dir.path().to_path_buf()), &mut ctx);
+    ex.browse_items(true, vec![dir.path().join("a.txt")], &mut ctx);
+    let worn = |ex: &Explorer| {
+        let Some(Dialog::Browse(b)) = ex.dialog.as_ref() else {
+            panic!("the Browse dialog is what is up");
+        };
+        let path = foldertree::path_of(&b.bf.tree, &b.places, &Place::Folder(sub.clone()), &[])
+            .expect("the folder's row");
+        let icon = b.bf.tree.node(&path)?.icon.clone()?;
+        Some(icon.get(8, 8))
+    };
+    assert_ne!(worn(&ex), Some(OWN));
+
+    let own = dir.path().join("own.png");
+    let mut c = Canvas::new(16, 16);
+    c.pixels.fill(OWN);
+    std::fs::write(&own, reprisekit::raster::to_png(&c)).expect("write");
+    let entry = format!("[Desktop Entry]\nIcon={}\n", own.display());
+    std::fs::write(sub.join(".directory"), entry).expect("write");
+    assert!(
+        ex.refill_browse_node(&Place::Folder(dir.path().to_path_buf()), &mut ctx),
+        "the folder is read again at once, so the picker is repainted"
+    );
+    assert_eq!(worn(&ex), Some(OWN));
+}
+
 #[test]
 fn make_new_folder_refills_the_folders_pane() {
     let mut ctx = test_ctx();
