@@ -162,6 +162,15 @@ pub fn set_mount_table(table: Option<PathBuf>) {
     *MOUNT_TABLE.lock().unwrap_or_else(|e| e.into_inner()) = table;
 }
 
+static HOME_TRASH: std::sync::Mutex<Option<PathBuf>> = std::sync::Mutex::new(None);
+
+/// Make [`Bins::system`] keep its home trash at `root` (`None`: under
+/// `$XDG_DATA_HOME` again), for tests that cannot change the environment.
+#[doc(hidden)]
+pub fn set_home_trash(root: Option<PathBuf>) {
+    *HOME_TRASH.lock().unwrap_or_else(|e| e.into_inner()) = root;
+}
+
 impl Bins {
     pub fn system() -> Option<Bins> {
         let file = MOUNT_TABLE
@@ -170,7 +179,8 @@ impl Bins {
             .clone()
             .unwrap_or_else(|| PathBuf::from("/proc/self/mounts"));
         let table = std::fs::read(file).unwrap_or_default();
-        let mut bins = Bins::from_table(places::trash_root()?, &table);
+        let home = HOME_TRASH.lock().unwrap_or_else(|e| e.into_inner()).clone();
+        let mut bins = Bins::from_table(home.or_else(places::trash_root)?, &table);
         bins.policy = Policy::load();
         Some(bins)
     }
