@@ -1669,6 +1669,8 @@ fn flipped(state: &mut State, crtc: crtc::Handle, (time, seq, kind): Flip) {
     crate::sessionfade::presented(state, &output);
     if redraw {
         render(state, crtc);
+    } else {
+        state.glass.output_stopped(&output);
     }
     watch(state);
 }
@@ -1838,7 +1840,8 @@ fn render(state: &mut State, crtc: crtc::Handle) {
         feedback,
         pointer: false,
     };
-    if !(drawn && send_flip(s, modeset, flight)) {
+    let flipping = drawn && send_flip(s, modeset, flight);
+    if !flipping {
         finish(state, crtc, &output, false, empty, held, started);
     }
     if state.magnifier.panning(&output)
@@ -1849,6 +1852,12 @@ fn render(state: &mut State, crtc: crtc::Handle) {
     }
     if let Some(at) = state.water.next_step(&output) {
         schedule_step(state, &output, at);
+    }
+    let asked = (state.backend.as_ref())
+        .and_then(|b| b.surfaces.get(&crtc))
+        .is_none_or(|s| s.needs_redraw);
+    if !flipping && !asked {
+        state.glass.output_stopped(&output);
     }
     watch(state);
 }
