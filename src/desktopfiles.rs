@@ -473,6 +473,7 @@ fn session_delete_mode(paths: &[PathBuf], shift: bool) -> reprisefs::bincap::Del
 mod tests {
     use super::*;
     use crate::desktop::Target;
+    use crate::harness::Harness;
 
     fn file(name: &str) -> DesktopEntry {
         let path = PathBuf::from("/d").join(name);
@@ -556,18 +557,54 @@ mod tests {
     }
 
     /// A scratch home holding [`reprisefs::trash::Bins::system`]'s home trash and settings file,
-    /// with no drives. Drop puts the seams back and removes it, failed assertion or not.
-    struct SystemBin(PathBuf);
+    /// with no drives. The seams are process-wide, so one test holds them at a time. Drop puts
+    /// them back and removes the home, failed assertion or not.
+    struct SystemBin(
+        PathBuf,
+        #[allow(dead_code)] std::sync::MutexGuard<'static, ()>,
+    );
 
     impl SystemBin {
         fn new() -> SystemBin {
+            static HELD: std::sync::Mutex<()> = std::sync::Mutex::new(());
+            let held = HELD.lock().unwrap_or_else(|e| e.into_inner());
             let home =
                 std::env::temp_dir().join(format!("reprise-system-bin-{}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&home);
             std::fs::create_dir_all(&home).expect("mkdir");
             reprisefs::trash::set_home_trash(Some(home.join("Trash")));
             reprisefs::trash::set_mount_table(Some("/dev/null".into()));
             reprisefs::bincap::set_config_path(Some(home.join("config.toml")));
-            SystemBin(home)
+            SystemBin(home, held)
+        }
+
+        fn settings(&self, keys: &str) {
+            let text = format!("[recycle_bin]\n{keys}");
+            std::fs::write(self.0.join("config.toml"), text).expect("write");
+        }
+
+        /// Points the mount table at a named pipe, so reading it blocks as a drive that stopped
+        /// answering does. [`SystemBin::answer`] lets the reads through.
+        fn hang(&self) -> PathBuf {
+            let pipe = self.0.join("mounts");
+            let c = std::ffi::CString::new(pipe.as_os_str().as_encoded_bytes()).unwrap();
+            // SAFETY: `c` is a valid NUL-terminated path for the call's duration.
+            assert_eq!(unsafe { libc::mkfifo(c.as_ptr(), 0o600) }, 0);
+            reprisefs::trash::set_mount_table(Some(pipe.clone()));
+            pipe
+        }
+
+        /// Opens `pipe` to write for `ms`, ending each read blocked on it with an empty table.
+        fn answer(h: &mut Harness, pipe: &Path, ms: u64) {
+            use std::os::unix::fs::OpenOptionsExt;
+            let end = std::time::Instant::now() + std::time::Duration::from_millis(ms);
+            while std::time::Instant::now() < end {
+                let _ = std::fs::OpenOptions::new()
+                    .write(true)
+                    .custom_flags(libc::O_NONBLOCK)
+                    .open(pipe);
+                h.run_for(5);
+            }
         }
     }
 
@@ -586,10 +623,7 @@ mod tests {
         let home = SystemBin::new();
         let file = home.0.join("a.txt");
         std::fs::write(&file, "a").expect("write");
-        let settings = |keys: &str| {
-            std::fs::write(home.0.join("config.toml"), format!("[recycle_bin]\n{keys}"))
-                .expect("write")
-        };
+        let settings = |keys: &str| home.settings(keys);
         let mode = |erase, ask, no_bin| DeleteMode { erase, ask, no_bin };
         let delete = |shift| session_delete_mode(std::slice::from_ref(&file), shift);
 
@@ -604,6 +638,111 @@ mod tests {
             session_delete_mode(&off_drive, false),
             mode(true, true, BinLack::Some),
             "a file on a drive with no Recycle Bin asks even with confirm off"
+        );
+    }
+
+    /// A headless state whose file actions run on threads and give up after 100 ms.
+    fn with_file_jobs() -> Harness {
+        let mut h = Harness::new();
+        h.output("TEST-1", 1024, 768);
+        h.state.fsjobs.deadline = Some(std::time::Duration::from_millis(100));
+        crate::fsjobs::setup(&mut h.state);
+        h
+    }
+
+    fn titles(h: &Harness) -> Vec<String> {
+        (h.state.dialogs.views.iter())
+            .map(|v| v.dialog.title.clone())
+            .collect()
+    }
+
+    /// Runs the loop until `done`, at most 3 s.
+    fn run_until(h: &mut Harness, what: &str, done: impl Fn(&Harness) -> bool) {
+        let end = std::time::Instant::now() + std::time::Duration::from_secs(3);
+        while !done(h) {
+            assert!(
+                std::time::Instant::now() < end,
+                "timed out waiting for {what}"
+            );
+            h.run_for(5);
+        }
+    }
+
+    #[test]
+    fn a_desktop_delete_asks_trashes_or_erases_as_the_recycle_bin_settings_say() {
+        let home = SystemBin::new();
+        let mut h = with_file_jobs();
+        let (a, b) = (home.0.join("a.txt"), home.0.join("b.txt"));
+        std::fs::write(&a, "a").expect("write");
+        std::fs::write(&b, "b").expect("write");
+
+        h.state.trash_paths(vec![a.clone()]);
+        run_until(&mut h, "the prompt", |h| !titles(h).is_empty());
+        assert_eq!(titles(&h), ["Confirm File Delete"]);
+        assert!(a.exists(), "nothing goes before the answer");
+        h.state.close_all_dialogs();
+
+        home.settings("confirm = false\n");
+        h.state.trash_paths(vec![a.clone()]);
+        let trashed = home.0.join("Trash/files/a.txt");
+        run_until(&mut h, "the trash", |_| trashed.exists());
+        assert!(!a.exists(), "moved into the Recycle Bin");
+
+        home.settings("confirm = false\nremove_immediately = true\n");
+        h.state.trash_paths(vec![b.clone()]);
+        run_until(&mut h, "the erase", |_| !b.exists());
+        assert!(
+            !home.0.join("Trash/files/b.txt").exists(),
+            "erased, not trashed"
+        );
+        assert!(titles(&h).is_empty(), "no prompt with confirm off");
+    }
+
+    #[test]
+    fn a_desktop_delete_gives_up_when_its_recycle_bin_stops_answering() {
+        let home = SystemBin::new();
+        let mut h = with_file_jobs();
+        let a = home.0.join("a.txt");
+        std::fs::write(&a, "a").expect("write");
+        let pipe = home.hang();
+        h.state.trash_paths(vec![a.clone()]);
+        run_until(&mut h, "the give-up", |h| !titles(h).is_empty());
+        assert_eq!(titles(&h), ["Error Deleting File or Folder"]);
+        assert_eq!(
+            h.state.dialogs.views[0].dialog.text,
+            reprisefs::deadline::not_responding(false, false)
+        );
+        SystemBin::answer(&mut h, &pipe, 300);
+        assert_eq!(
+            titles(&h),
+            ["Error Deleting File or Folder"],
+            "the late answer asks nothing"
+        );
+        assert!(a.exists());
+    }
+
+    #[test]
+    fn empty_recycle_bin_gives_up_when_a_drive_bin_stops_answering() {
+        let home = SystemBin::new();
+        let mut h = with_file_jobs();
+        let trash = home.0.join("Trash");
+        std::fs::create_dir_all(trash.join("files")).expect("mkdir");
+        std::fs::create_dir_all(trash.join("info")).expect("mkdir");
+        std::fs::write(trash.join("files/a.txt"), "a").expect("write");
+        std::fs::write(
+            trash.join("info/a.txt.trashinfo"),
+            "[Trash Info]\nPath=/srv/a.txt\nDeletionDate=2026-10-20T01:00:00\n",
+        )
+        .expect("write");
+        let pipe = home.hang();
+        h.state.ask_empty_bin();
+        run_until(&mut h, "the give-up", |h| !titles(h).is_empty());
+        assert_eq!(titles(&h), ["Error Deleting File or Folder"]);
+        SystemBin::answer(&mut h, &pipe, 300);
+        assert_eq!(
+            titles(&h),
+            ["Error Deleting File or Folder"],
+            "the late count asks nothing"
         );
     }
 }
