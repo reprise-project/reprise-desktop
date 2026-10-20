@@ -385,6 +385,29 @@ mod tests {
         }
     }
 
+    #[test]
+    fn header_bar_popovers_keep_their_own_text_colours() {
+        let css = gtk4_theme_css(&ColorScheme::default(), Interface::Classic);
+        let rule = |sel: &str| {
+            let at = css.find(sel).unwrap_or_else(|| panic!("no rule for {sel}"));
+            let open = at + css[at..].find('{').unwrap();
+            &css[open..open + css[open..].find('}').unwrap()]
+        };
+        assert!(
+            rule(".titlebar popover label:not(:disabled) {").contains("color: inherit;"),
+            "a popover's label takes its menu item's colour, not the caption's"
+        );
+        assert!(
+            rule(".titlebar popover label:disabled {").contains("color: @insensitive_fg_color;"),
+            "a disabled popover label greys"
+        );
+        assert!(
+            rule(".titlebar popover.menu modelbutton label:disabled {")
+                .contains("text-shadow: inherit;"),
+            "a disabled menu item keeps its emboss under a header bar"
+        );
+    }
+
     fn fnv(text: &str) -> u64 {
         text.bytes().fold(0xcbf2_9ce4_8422_2325, |h, b| {
             (h ^ b as u64).wrapping_mul(0x0100_0000_01b3)
@@ -403,9 +426,9 @@ mod tests {
         assert_eq!(
             got,
             [
-                0x25cc_4e89_cd8c_5463,
-                0xe5a2_5c5e_afdb_ce8c,
-                0x1c06_2550_e6c0_1d08
+                0x048e_670a_68f4_c335,
+                0x7652_b21b_7b9a_5892,
+                0x0cd0_8386_d9fb_593e
             ],
             "{got:#x?}"
         );
@@ -424,7 +447,7 @@ mod tests {
         ];
         assert_eq!(
             got,
-            [0x7adc_153b_5d3d_c187, 0xd040_7db8_85d3_f787],
+            [0x4200_98e7_bf6b_be92, 0x023c_d5d3_aceb_fd92],
             "{got:#x?}"
         );
     }
