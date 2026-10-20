@@ -1260,6 +1260,54 @@ fn glass_may_ask_to_lie_below_other_glass_and_stays_out_of_the_backdrop() {
     assert_eq!(back.len(), 1, "never in the backdrop itself");
 }
 
+/// Glass drawn only in the top 10 rows of its 30x30 node.
+struct Band(Id);
+
+impl CustomNode<TestRenderer> for Band {
+    fn size(&self) -> Size<i32, Logical> {
+        (30, 30).into()
+    }
+
+    fn in_backdrop_below(&self) -> bool {
+        true
+    }
+
+    fn draws_in(&self, area: Rectangle<i32, Logical>) -> bool {
+        area.overlaps(rect(0, 0, 30, 10))
+    }
+
+    fn elements(
+        &self,
+        r: &mut TestRenderer,
+        location: Point<f64, Physical>,
+        scale: Scale<f64>,
+        alpha: f32,
+    ) -> Vec<CustomElement<TestRenderer>> {
+        Square(self.0.clone()).elements(r, location, scale, alpha)
+    }
+}
+
+#[test]
+fn left_out_glass_counts_below_only_where_it_draws() {
+    let mut s = TestScene::new();
+    let root = s.root();
+    s.rect_create(root, (100, 100), RED);
+    let lower = s.tree_create(root);
+    s.set_position(lower, 10, 10);
+    s.set_in_backdrop(lower, false);
+    s.custom_create(lower, Box::new(Band(Id::new())));
+    let upper = s.tree_create(root);
+    s.rect_create(upper, (50, 50), RED);
+    assert!(
+        s.left_out_below(upper, rect(0, 15, 50, 2)),
+        "rows 15-16 cross the band at 10-19"
+    );
+    assert!(
+        !s.left_out_below(upper, rect(0, 25, 50, 10)),
+        "rows 25-34 lie in the node's size but under the band"
+    );
+}
+
 /// Drives Smithay's damage tracker over a scene, one frame per call.
 struct Tracker(OutputDamageTracker, View);
 
