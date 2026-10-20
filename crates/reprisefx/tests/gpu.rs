@@ -1058,6 +1058,42 @@ fn streaks_made_on_their_own_thread_land_as_those_made_in_the_frame() {
     );
 }
 
+#[test]
+fn streaks_are_handed_to_the_fill_on_their_thread_and_uploaded_when_it_fills_none() {
+    let Some(mut r) = rig(640, 360) else { return };
+    let black = r.backdrop(|_, _| [0; 3]);
+    let made_in_frame = r.fx.clone();
+    let inline = streaks_over_black(&mut r, &made_in_frame, &black);
+    let fx = GlassFx::new(&mut r.renderer).expect("the glass shaders compile");
+    let (tx, woken) = std::sync::mpsc::channel();
+    fx.on_streaks(move || tx.send(()).unwrap());
+    let (filled, handed) = std::sync::mpsc::channel();
+    let filled = std::sync::Mutex::new(filled);
+    fx.fill_streaks(std::sync::Arc::new(move |bytes: &[u8], size| {
+        let on = std::thread::current().id();
+        filled
+            .lock()
+            .unwrap()
+            .send((bytes.len(), size, on))
+            .unwrap();
+        None
+    }));
+    streaks_over_black(&mut r, &fx, &black);
+    let ten = std::time::Duration::from_secs(10);
+    let (len, size, on) = handed.recv_timeout(ten).expect("the fill gets the picture");
+    assert_eq!(size, (320, 180), "half the output");
+    assert_eq!(len, 320 * 180 * 4, "ARGB8888 rows");
+    assert_ne!(on, std::thread::current().id(), "filled on another thread");
+    woken
+        .recv_timeout(ten)
+        .expect("woken once the streaks are made");
+    assert_eq!(
+        streaks_over_black(&mut r, &fx, &black),
+        inline,
+        "a picture the fill did not take is uploaded"
+    );
+}
+
 /// The rig's output as seen, from `els` rendered into its turned target:
 /// a first frame with a backdrop that names each pixel (red = x, green =
 /// y, through the same projection) says where each target pixel lies.

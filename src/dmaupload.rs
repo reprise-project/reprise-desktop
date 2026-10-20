@@ -61,19 +61,40 @@ impl Uploads {
     /// `canvas` in a new linear ARGB8888 dma-buf; None when one cannot be made or mapped.
     pub fn fill(&self, canvas: &Canvas) -> Option<Dmabuf> {
         let (w, h) = (canvas.width, canvas.height);
-        if w == 0 || h == 0 || canvas.pixels.len() != (w * h) as usize {
+        if canvas.pixels.len() != (w * h) as usize {
             return None;
         }
-        if self.refused.load(Ordering::Relaxed) {
+        self.fill_rows(w, h, |y, line| {
+            let src = &canvas.pixels[y * w as usize..][..w as usize];
+            // ARGB8888 is the canvas's pixels in little-endian byte order.
+            for (d, p) in line.as_chunks_mut::<4>().0.iter_mut().zip(src) {
+                *d = p.to_le_bytes();
+            }
+        })
+    }
+
+    /// `bytes`, `w`x`h` ARGB8888 pixels in rows of `w * 4` bytes, in a new linear dma-buf; None
+    /// when one cannot be made or mapped.
+    pub fn fill_bytes(&self, bytes: &[u8], (w, h): (u32, u32)) -> Option<Dmabuf> {
+        let row = w as usize * 4;
+        if bytes.len() != row * h as usize {
             return None;
         }
-        self.try_fill(canvas)
+        self.fill_rows(w, h, |y, line| {
+            line.copy_from_slice(&bytes[y * row..][..row])
+        })
+    }
+
+    fn fill_rows(&self, w: u32, h: u32, row: impl Fn(usize, &mut [u8])) -> Option<Dmabuf> {
+        if w == 0 || h == 0 || self.refused.load(Ordering::Relaxed) {
+            return None;
+        }
+        self.try_fill(w, h, row)
             .map_err(|e| refuse(&self.refused, e))
             .ok()
     }
 
-    fn try_fill(&self, canvas: &Canvas) -> Result<Dmabuf, String> {
-        let (w, h) = (canvas.width, canvas.height);
+    fn try_fill(&self, w: u32, h: u32, fill: impl Fn(usize, &mut [u8])) -> Result<Dmabuf, String> {
         let row = w as usize * 4;
         let alloc = self.allocator().ok_or("no GBM device")?;
         // Held through the map and export: a GBM device is not safe to share between threads.
@@ -88,12 +109,8 @@ impl Uploads {
         if stride < row || dst.len() < stride * (h as usize - 1) + row {
             return Err(format!("stride {stride} too short for {w}x{h}"));
         }
-        for (y, src) in canvas.pixels.chunks_exact(w as usize).enumerate() {
-            // ARGB8888 is the canvas's pixels in little-endian byte order.
-            let line = &mut dst[y * stride..][..row];
-            for (d, p) in line.as_chunks_mut::<4>().0.iter_mut().zip(src) {
-                *d = p.to_le_bytes();
-            }
+        for y in 0..h as usize {
+            fill(y, &mut dst[y * stride..][..row]);
         }
         drop(map);
         bo.export().map_err(|e| format!("export failed: {e}"))
@@ -256,7 +273,7 @@ mod tests {
     }
 
     #[test]
-    fn a_canvas_filled_on_another_thread_reads_back_through_the_renderer() {
+    fn a_canvas_or_its_bytes_filled_on_another_thread_read_back_through_the_renderer() {
         let Ok(mut renderer) = reprisefx::headless::renderer() else {
             eprintln!("skipped: no renderer");
             return;
@@ -276,44 +293,46 @@ mod tests {
         }
         let uploads = Uploads::new(node);
         let expected = canvas.pixels.clone();
-        let filled = std::thread::spawn(move || uploads.try_fill(&canvas));
-        let dmabuf = match filled.join().unwrap() {
-            Ok(d) => d,
-            Err(e) => {
-                // A virtual GPU may refuse linear buffers: they then show as copies.
-                eprintln!("skipped: {e}");
-                return;
-            }
+        let filled = std::thread::spawn(move || {
+            let bytes: Vec<u8> = canvas.pixels.iter().flat_map(|p| p.to_le_bytes()).collect();
+            Some([uploads.fill(&canvas)?, uploads.fill_bytes(&bytes, (37, 5))?])
+        });
+        let Some(dmabufs) = filled.join().unwrap() else {
+            // A virtual GPU may refuse linear buffers: they then show as copies.
+            eprintln!("skipped: no linear dma-buf");
+            return;
         };
-        let texture = renderer.import_dmabuf(&dmabuf, None).unwrap();
-        let size = texture.size();
-        assert_eq!((size.w, size.h), (37, 5));
-        // Sampled as a compositor frame samples it: drawn into a target of the renderer's own.
-        let mut target: GlesTexture = renderer.create_buffer(Fourcc::Argb8888, size).unwrap();
-        let mut fb = renderer.bind(&mut target).unwrap();
-        let out = (size.w, size.h).into();
-        let mut frame = renderer.render(&mut fb, out, Transform::Normal).unwrap();
-        let full = Rectangle::from_size(out);
-        (frame.render_texture_at(
-            &texture,
-            (0, 0).into(),
-            1,
-            1.0,
-            Transform::Normal,
-            &[full],
-            &[],
-            1.0,
-        ))
-        .unwrap();
-        frame.finish().unwrap().wait().unwrap();
-        let mapping = renderer
-            .copy_framebuffer(&fb, Rectangle::from_size(size), Fourcc::Argb8888)
+        for dmabuf in dmabufs {
+            let texture = renderer.import_dmabuf(&dmabuf, None).unwrap();
+            let size = texture.size();
+            assert_eq!((size.w, size.h), (37, 5));
+            // Sampled as a compositor frame samples it: drawn into a target of the renderer's own.
+            let mut target: GlesTexture = renderer.create_buffer(Fourcc::Argb8888, size).unwrap();
+            let mut fb = renderer.bind(&mut target).unwrap();
+            let out = (size.w, size.h).into();
+            let mut frame = renderer.render(&mut fb, out, Transform::Normal).unwrap();
+            let full = Rectangle::from_size(out);
+            (frame.render_texture_at(
+                &texture,
+                (0, 0).into(),
+                1,
+                1.0,
+                Transform::Normal,
+                &[full],
+                &[],
+                1.0,
+            ))
             .unwrap();
-        drop(fb);
-        let bytes = renderer.map_texture(&mapping).unwrap();
-        let read: Vec<u32> = (bytes.as_chunks::<4>().0.iter())
-            .map(|b| u32::from_le_bytes(*b))
-            .collect();
-        assert_eq!(read, expected);
+            frame.finish().unwrap().wait().unwrap();
+            let mapping = renderer
+                .copy_framebuffer(&fb, Rectangle::from_size(size), Fourcc::Argb8888)
+                .unwrap();
+            drop(fb);
+            let bytes = renderer.map_texture(&mapping).unwrap();
+            let read: Vec<u32> = (bytes.as_chunks::<4>().0.iter())
+                .map(|b| u32::from_le_bytes(*b))
+                .collect();
+            assert_eq!(read, expected);
+        }
     }
 }

@@ -325,6 +325,12 @@ pub fn init(state: &mut State) -> Result<(), Box<dyn std::error::Error>> {
     state.glass.set_renderer(&mut renderer);
     let (streaks_made, made) = smithay::reexports::calloop::ping::make_ping()?;
     state.glass.on_streaks(move || streaks_made.ping());
+    let uploads =
+        crate::dmaupload::Uploads::new(render_node.dev_path().unwrap_or_else(|| path.clone()));
+    let streak_uploads = uploads.clone();
+    (state.glass).fill_streaks(Arc::new(move |bytes, size| {
+        streak_uploads.fill_bytes(bytes, size)
+    }));
     state
         .handle
         .insert_source(made, |_, _, state| state.redraw_all())
@@ -476,9 +482,7 @@ pub fn init(state: &mut State) -> Result<(), Box<dyn std::error::Error>> {
         parked: HashMap::new(),
         dmabuf: Some((dmabuf_state, dmabuf_global)),
         shm_textures,
-        uploads: crate::dmaupload::Uploads::new(
-            render_node.dev_path().unwrap_or_else(|| path.clone()),
-        ),
+        uploads,
     });
     scan_connectors(state, &HashMap::new());
     if state.scene.outputs().is_empty() {

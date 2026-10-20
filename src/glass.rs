@@ -205,6 +205,13 @@ impl GlassCtx {
         }
     }
 
+    /// See [`GlassFx::fill_streaks`].
+    pub fn fill_streaks(&self, fill: reprisefx::Fill) {
+        if let Some(fx) = self.fx.borrow().as_ref() {
+            fx.fill_streaks(fill);
+        }
+    }
+
     pub fn flip_fx(&self) -> Option<reprisefx::FlipFx> {
         self.flip.borrow().clone()
     }
