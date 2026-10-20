@@ -387,6 +387,7 @@ impl TestClient {
             toplevel,
             pending: (0, 0),
             size: (0, 0),
+            bounds: (0, 0),
         });
         i
     }
@@ -543,6 +544,8 @@ pub struct Shell {
     pending: (i32, i32),
     /// The buffer's size; (0, 0) until the toplevel maps.
     pub size: (i32, i32),
+    /// The bounds the last toplevel configure carried; (0, 0) before any.
+    pub bounds: (i32, i32),
 }
 
 /// What an input method heard, in order.
@@ -705,6 +708,9 @@ impl wc::Dispatch<xdg_toplevel::XdgToplevel, usize> for ClientSide {
         match ev {
             xdg_toplevel::Event::Configure { width, height, .. } => {
                 st.shells[i].pending = (width, height);
+            }
+            xdg_toplevel::Event::ConfigureBounds { width, height } => {
+                st.shells[i].bounds = (width, height);
             }
             xdg_toplevel::Event::Close => st.closes.push(i),
             _ => {}

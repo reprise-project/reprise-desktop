@@ -875,6 +875,20 @@ fn at_pick(size: (i32, i32), picked: (i32, i32), bounds: Option<(i32, i32)>) -> 
     size == bounded(picked, bounds)
 }
 
+/// The size a window of `size` takes when its bounds go from `was` to `now`: one at its
+/// program's pick under `was` stays at the pick, held inside `now`; any other keeps its size.
+fn rebounded(
+    size: (i32, i32),
+    picked: (i32, i32),
+    was: Option<(i32, i32)>,
+    now: Option<(i32, i32)>,
+) -> (i32, i32) {
+    match at_pick(size, picked, was) {
+        true => bounded(picked, now),
+        false => size,
+    }
+}
+
 /// The main window's opening client size and its floor: a resizable window
 /// opens no smaller than its minimum, whatever size the program kept.
 fn opening_size(app: &dyn App) -> ((i32, i32), (i32, i32)) {
@@ -3283,6 +3297,10 @@ impl WindowHandler for Host {
         let s = self.slot_mut(id).expect("slot");
         let (size, own) = configured_size(s.size, asked, s.asked, s.own, configure.is_resizing());
         let moved_bounds = bounds.is_some() && bounds != s.bounds;
+        let size = match moved_bounds && size == s.size {
+            true => rebounded(size, s.picked, s.bounds, bounds),
+            false => size,
+        };
         if bounds.is_some() {
             s.bounds = bounds;
         }
@@ -5589,6 +5607,19 @@ mod tests {
     /// A window that picks its own size stays inside the compositor's bounds: a Settings sheet
     /// grown past a 1080-line screen opens as tall as the work area. A side the compositor asks
     /// for (maximized, fullscreen) is its own.
+    #[test]
+    fn a_window_at_its_pick_stays_at_it_under_other_bounds() {
+        let (pick, small, large) = ((1088, 1056), Some((1366, 700)), Some((1914, 1026)));
+        assert_eq!(rebounded((1088, 700), pick, small, large), (1088, 1026));
+        assert_eq!(rebounded((1088, 1026), pick, large, small), (1088, 700));
+        assert_eq!(rebounded((1088, 700), pick, small, None), pick);
+        assert_eq!(
+            rebounded((1000, 650), pick, small, large),
+            (1000, 650),
+            "a size the user picked stays"
+        );
+    }
+
     #[test]
     fn a_size_the_window_picks_stays_inside_the_bounds() {
         let bounds = Some((1914, 1026));
