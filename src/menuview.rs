@@ -819,7 +819,7 @@ impl State {
         draw_menu(
             &mut canvas,
             &theme,
-            &self.text,
+            self.text.for_output(scale),
             &layout,
             &m.items,
             m.hovered,

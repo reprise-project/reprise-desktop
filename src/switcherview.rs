@@ -590,7 +590,7 @@ impl State {
         switcher::draw(
             &mut canvas,
             &theme,
-            &self.text,
+            self.text.for_output(theme.scale),
             &layout,
             &title,
             &icons,
@@ -695,7 +695,7 @@ impl State {
         interfaces::draw_switcher(
             &mut canvas,
             &theme,
-            &self.text,
+            self.text.for_output(theme.scale),
             &layout,
             &title,
             &cells,

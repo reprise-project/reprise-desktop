@@ -127,7 +127,7 @@ impl State {
             .icons
             .get(icon_name, 32 * scale)
             .unwrap_or_else(|| reprisekit::icon::fallback(&theme, 32 * scale));
-        let canvas = osd::draw(&theme, &self.text, &osd, Some(&icon));
+        let canvas = osd::draw(&theme, self.text.for_output(theme.scale), &osd, Some(&icon));
         if self.show_canvas(canvas, (osd::W, osd::H), true) {
             self.osd.showing = None;
         }
@@ -153,7 +153,7 @@ impl State {
         };
         let lines = self.displays.lines(value);
         let size = osd::lines_size(lines.lines.len());
-        let canvas = osd::draw_lines(&theme, &self.text, &lines);
+        let canvas = osd::draw_lines(&theme, self.text.for_output(theme.scale), &lines);
         self.show_canvas(canvas, size, restart_timer)
     }
 

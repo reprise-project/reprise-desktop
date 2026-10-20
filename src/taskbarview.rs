@@ -1021,7 +1021,10 @@ impl State {
             clock,
         };
         let layout = bar.layout.scaled(scale);
-        let (text, start_text) = (&self.text, &self.start_text);
+        let (text, start_text) = (
+            self.text.for_output(scale),
+            self.start_text.for_output(scale),
+        );
         // The orb's own buffer: its rows past the bar, and held the whole
         // orb, which then stands over the menu unless a fullscreen window
         // covers the bar.

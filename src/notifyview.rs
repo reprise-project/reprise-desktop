@@ -1335,8 +1335,8 @@ fn field_press(state: &mut State, i: usize, drawn: &Drawn, lx: i32, for_menu: bo
     let text = &state.text;
     if let Some(field) = state.notify.stack[i].reply.as_mut() {
         let press = |field: &mut ReplyField| match drawn {
-            Drawn::Balloon(lay) => field.click(&theme, text, lay, lx),
-            Drawn::Sheet(lay) => sheet_click(lay, &theme, text, field, lx),
+            Drawn::Balloon(lay) => field.click(&theme, text.for_output(theme.scale), lay, lx),
+            Drawn::Sheet(lay) => sheet_click(lay, &theme, text.for_output(theme.scale), field, lx),
         };
         if for_menu {
             field.press_for_menu(press);
@@ -2053,7 +2053,7 @@ fn lay_stack(state: &mut State, opening_only: bool) -> bool {
             let t = b.motion.open.value(now);
             let (d, ends) = lay_out_open(
                 &state.config.theme.scaled(b.scale),
-                &state.text,
+                state.text.for_output(b.scale),
                 &b.item,
                 b.reply.is_some(),
                 p.edge,
@@ -2067,7 +2067,7 @@ fn lay_stack(state: &mut State, opening_only: bool) -> bool {
     let chip_scale = state.draw_scale_at(Some(&output)).max(1);
     let chip = chip_count(state.notify.queue.len(), cap(state)).map(|more| {
         let theme = state.config.theme.scaled(chip_scale);
-        let (w, h) = chip_layout(&theme, &state.text, more);
+        let (w, h) = chip_layout(&theme, state.text.for_output(theme.scale), more);
         (more, (w / chip_scale, h / chip_scale))
     });
     let footprints: Vec<(i32, i32)> = laid
@@ -2183,8 +2183,15 @@ fn warm_one(
     }
     let theme = state.config.theme.scaled(b.scale);
     let when = relative(b.shown_at.elapsed());
-    let Some([shut, open]) = droplet_ends(&theme, &state.text, &b.item, false, edge, shape, &when)
-    else {
+    let Some([shut, open]) = droplet_ends(
+        &theme,
+        state.text.for_output(theme.scale),
+        &b.item,
+        false,
+        edge,
+        shape,
+        &when,
+    ) else {
         return;
     };
     let lit = b.open_drawn < 1.0;
@@ -2362,7 +2369,7 @@ fn paint_one(
                     .or_else(|| state.icons.get("dialog-information", icon_px));
                 draw_notify_balloon(
                     &theme,
-                    &state.text,
+                    state.text.for_output(theme.scale),
                     lay,
                     icon.as_ref(),
                     pushed,
@@ -2384,7 +2391,7 @@ fn paint_one(
                     Some([shut, open]) => opening.draw(
                         &mut kept,
                         &theme,
-                        &state.text,
+                        state.text.for_output(theme.scale),
                         shut,
                         open,
                         t,
@@ -2396,7 +2403,7 @@ fn paint_one(
                     ),
                     None => kept.draw(
                         &theme,
-                        &state.text,
+                        state.text.for_output(theme.scale),
                         lay,
                         icons,
                         b.tint.flatten(),
@@ -2498,7 +2505,12 @@ fn draw_chip_at(state: &mut State, more: usize, at: (i32, i32), size: (i32, i32)
             }
         }
     };
-    let canvas = draw_chip(&state.config.theme.scaled(scale), &state.text, more, c.hot);
+    let canvas = draw_chip(
+        &state.config.theme.scaled(scale),
+        state.text.for_output(scale),
+        more,
+        c.hot,
+    );
     upload_scaled(&mut state.scene, c.buffer, &canvas, scale);
     state.scene.set_position(c.tree, at.0, at.1);
     state.notify.chip = Some(Chip {

@@ -5105,7 +5105,7 @@ fn draw_welcome(
     }
     let spec = welcome_title_text();
     WELCOME_TITLE.with(|t| {
-        t.draw(
+        t.for_output(s).draw(
             &mut c,
             Rect::new(
                 title.x + 12 * s,
