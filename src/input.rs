@@ -1285,9 +1285,12 @@ impl State {
         ) {
             crate::notifycenter::close(self);
         }
+        // A press on a field's edit menu leaves the panel or reply field under it open for the
+        // pick.
+        let on_edit_menu = matches!(hit, Hit::Menu { .. }) && self.edit_menu_open();
         // A press off the balloon takes the keyboard from its reply field,
         // which stays open.
-        if !matches!(hit, Hit::Notification) {
+        if !matches!(hit, Hit::Notification) && !on_edit_menu {
             crate::notifyview::blur(self);
         }
         let calendar_was_open = crate::calendarview::is_open(self);
@@ -1323,10 +1326,10 @@ impl State {
         if press_closes_start_panel(&hit) {
             self.close_start_panel();
         }
-        if !matches!(hit, Hit::ClipView { .. }) {
+        if !matches!(hit, Hit::ClipView { .. }) && !on_edit_menu {
             self.close_clipview();
         }
-        if !matches!(hit, Hit::EmojiView { .. }) {
+        if !matches!(hit, Hit::EmojiView { .. }) && !on_edit_menu {
             self.close_emoji();
         }
         match hit {
@@ -1533,6 +1536,18 @@ impl State {
             // stops there rather than falling through to what it covers.
             Hit::Osd => self.hide_osd(),
             // Likewise: a row starts it, the rest keeps it open.
+            Hit::Launcher {
+                hit: reprisekit::controls::launcher::Hit::Field,
+            }
+            | Hit::ClipView {
+                hit: reprisekit::controls::cliphistory::Hit::Field,
+            }
+            | Hit::EmojiView {
+                hit: reprisekit::controls::emojipicker::Hit::Field,
+            } if button == BTN_RIGHT => {
+                self.restart_caret();
+                self.open_edit_menu(Some(at));
+            }
             Hit::Launcher { hit } => match button {
                 BTN_LEFT => self.launcher_clicked(hit),
                 BTN_RIGHT => self.launcher_right_clicked(hit),

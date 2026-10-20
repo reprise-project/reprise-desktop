@@ -968,6 +968,21 @@ impl ReplyField {
         self.click_text(text, inner, theme.fonts.size_px, x);
     }
 
+    /// A right press ahead of the edit menu: `press` places the caret as a left press would
+    /// ([`ReplyField::click_in`], `sheet_click`), and a press inside the selection keeps it.
+    pub fn press_for_menu(&mut self, press: impl FnOnce(&mut ReplyField)) {
+        let (sel, caret) = (self.edit.selection(), self.edit.caret());
+        let anchor = if caret == sel.start {
+            sel.end
+        } else {
+            sel.start
+        };
+        press(self);
+        let at = self.edit.caret();
+        self.edit.set_selection(anchor, caret);
+        self.edit.press_for_menu(at);
+    }
+
     /// A press at device x `x` on a field whose text box is `inner`, its text at `px`.
     pub fn click_text(&mut self, text: &TextRenderer, inner: Option<Rect>, px: u32, x: i32) {
         self.focused = true;
@@ -1951,6 +1966,29 @@ mod tests {
         let w = t.measure("Sure", false, theme.fonts.size_px);
         f.click(&theme, &t, &lay, field.x + FIELD_PAD + w);
         assert_eq!(f.edit.caret(), 4);
+    }
+
+    #[test]
+    fn a_right_press_keeps_the_selection_under_it_and_moves_the_caret_elsewhere() {
+        let t = TextRenderer::load(&FontConfig::default());
+        let theme = Theme::default();
+        let lay = notify_layout(&theme, &t, "Ana", "Lunch?", &["Reply"], Some(REPLY));
+        let field = lay.field.unwrap();
+        let mut f = ReplyField {
+            edit: TextEdit::new("Sure thing", false),
+            focused: false,
+        };
+        f.edit.set_selection(0, 4);
+        let w = t.measure("Su", false, theme.fonts.size_px);
+        f.press_for_menu(|f| f.click(&theme, &t, &lay, field.x + FIELD_PAD + w));
+        assert!(f.focused);
+        assert_eq!(f.edit.selection(), 0..4, "a press on \"Sure\" keeps it");
+        f.press_for_menu(|f| f.click(&theme, &t, &lay, field.right() - 2));
+        assert_eq!(
+            (f.edit.selection(), f.edit.caret()),
+            (10..10, 10),
+            "a press past it moves the caret to the end"
+        );
     }
 
     use crate::access::ROOT;
