@@ -8,7 +8,8 @@
 //! a 1184x602 settings page with a 1000x403 list. Sizes are in the layout
 //! consts below, at 100% text; both grow with the text size. A page wider or
 //! taller than the room its host has ([`TrayCustomize::fit`]) narrows its
-//! list and wraps its text, and scrolls above the button band.
+//! list and wraps its text, and scrolls above the button band; Classic's
+//! list grows shorter.
 
 use std::sync::Arc;
 
@@ -230,6 +231,9 @@ const CLASSIC: Geometry = Geometry {
     cancel: Rect::new(264, 359, 75, 23),
 };
 
+/// The shortest Classic list a client with little room keeps: a group and three rows.
+const CLASSIC_LIST_MIN_H: i32 = 112;
+
 impl Geometry {
     /// These parts with the intro `dy` taller: what lies under it moves down and the client
     /// grows by as much.
@@ -247,6 +251,23 @@ impl Geometry {
             restore: down(self.restore),
             ok: down(self.ok),
             cancel: down(self.cancel),
+            ..*self
+        }
+    }
+
+    /// These parts with the list `dy` shorter: what lies under it moves up and the client
+    /// shrinks by as much.
+    fn shortened(&self, dy: i32) -> Geometry {
+        let up = |r: Rect| Rect::new(r.x, r.y - dy, r.width, r.height);
+        Geometry {
+            client: (self.client.0, self.client.1 - dy),
+            list: Rect {
+                height: self.list.height - dy,
+                ..self.list
+            },
+            restore: up(self.restore),
+            ok: up(self.ok),
+            cancel: up(self.cancel),
             ..*self
         }
     }
@@ -327,9 +348,16 @@ const PAGE_CANCEL_X: i32 = 168;
 /// What a narrowed page keeps right of a combo, and between a name and the combo.
 const PAGE_COMBO_RIGHT: i32 = 50;
 const PAGE_NAME_GAP: i32 = 25;
-/// The narrowest page: a name column 100 px wide.
-const PAGE_MIN_W: i32 =
+/// The narrowest page with full margins and combos: a name column 100 px wide. A page
+/// narrower still takes its margins in to `PAGE_NARROW_MARGIN`, then its combos to
+/// `PAGE_NARROW_COMBO`, down to `PAGE_MIN_W`.
+const PAGE_WIDE_MIN_W: i32 =
     2 * PAGE_MARGIN + PAGE_NAME.x + 100 + PAGE_NAME_GAP + PAGE_COMBO.width + PAGE_COMBO_RIGHT;
+const PAGE_NARROW_MARGIN: i32 = 24;
+const PAGE_NARROW_COMBO: i32 = 200;
+const PAGE_MIN_W: i32 = PAGE_WIDE_MIN_W
+    - 2 * (PAGE_MARGIN - PAGE_NARROW_MARGIN)
+    - (PAGE_COMBO.width - PAGE_NARROW_COMBO);
 /// The heading's size over the body text's: 16 px to 12.
 const HEADING_SCALE: (u32, u32) = (4, 3);
 
@@ -451,7 +479,7 @@ pub struct TrayCustomize {
     thumb: ThumbDrag,
     combo_thumb: ThumbDrag,
     /// The most client the host has room for, in px at the text size; `None` has room for all.
-    /// [`TrayCustomize::fit`] lays the page out in it.
+    /// [`TrayCustomize::fit`] lays the page out in it; Classic's list shortens to it.
     pub room: Option<(i32, i32)>,
     /// The intro as [`TrayCustomize::fit`] wrapped it; empty before. The page draws an empty
     /// one on one line; Classic's grows past three lines by the rest.
@@ -475,13 +503,30 @@ struct PageGeo {
 }
 
 impl PageGeo {
+    /// How far the page is narrower than [`PAGE_WIDE_MIN_W`].
+    fn squeeze(&self) -> i32 {
+        (PAGE_WIDE_MIN_W - self.width).max(0)
+    }
+
+    /// The left and right margins: in from `PAGE_MARGIN` once the page is narrower than
+    /// [`PAGE_WIDE_MIN_W`].
+    fn margin(&self) -> i32 {
+        PAGE_MARGIN - (self.squeeze() / 2).min(PAGE_MARGIN - PAGE_NARROW_MARGIN)
+    }
+
+    /// The combos' width: narrower once the margins are at their least.
+    fn combo_w(&self) -> i32 {
+        let left = self.squeeze() - 2 * (PAGE_MARGIN - self.margin());
+        PAGE_COMBO.width - left.clamp(0, PAGE_COMBO.width - PAGE_NARROW_COMBO)
+    }
+
     fn list_w(&self) -> i32 {
-        self.width - 2 * PAGE_MARGIN
+        self.width - 2 * self.margin()
     }
 
     /// Where the Behaviors column starts in the list: in from the right as the list narrows.
     fn behaviours_x(&self) -> i32 {
-        PAGE_BEHAVIOURS_X.min(self.list_w() - PAGE_COMBO.width - PAGE_COMBO_RIGHT)
+        PAGE_BEHAVIOURS_X.min(self.list_w() - self.combo_w() - PAGE_COMBO_RIGHT)
     }
 
     fn name_w(&self) -> i32 {
@@ -509,7 +554,7 @@ impl PageGeo {
 
     fn list(&self) -> Rect {
         Rect::new(
-            GLASS.list.x,
+            self.margin(),
             GLASS.list.y + self.dy,
             self.list_w(),
             GLASS.list.height,
@@ -518,18 +563,23 @@ impl PageGeo {
 
     fn intro(&self, lines: i32) -> Rect {
         let r = GLASS.intro;
-        Rect::new(r.x, r.y, self.list_w(), r.height + (lines - 1) * LINE_H)
+        Rect::new(
+            self.margin(),
+            r.y,
+            self.list_w(),
+            r.height + (lines - 1) * LINE_H,
+        )
     }
 
     fn restore(&self) -> Rect {
         let r = GLASS.restore;
-        Rect::new(r.x, r.y + self.dy, r.width, r.height)
+        Rect::new(self.margin(), r.y + self.dy, r.width, r.height)
     }
 
     /// The check box's row: as tall as the box at 100%.
     fn check(&self, check: i32) -> Rect {
-        let (x, y) = GLASS.check.unwrap_or_default();
-        Rect::new(x, y + self.dy, check, check)
+        let (_, y) = GLASS.check.unwrap_or_default();
+        Rect::new(self.margin(), y + self.dy, check, check)
     }
 
     /// The band and the part of the page above it, from the client's top-left.
@@ -545,8 +595,8 @@ impl PageGeo {
     fn button(&self, from_right: i32) -> Rect {
         let ok = GLASS.ok;
         let y = self.view_h() + ok.y - PAGE_BAND_Y;
-        self.u
-            .rect(Rect::new(self.width - from_right, y, ok.width, ok.height))
+        let x = self.width - from_right + PAGE_MARGIN - self.margin();
+        self.u.rect(Rect::new(x, y, ok.width, ok.height))
     }
 }
 
@@ -641,6 +691,10 @@ impl TrayCustomize {
             if let Some(w) = self.restore_w {
                 let r = g.restore;
                 g.restore = Rect::new(r.right() - w, r.y, w, r.height);
+            }
+            if let Some((_, h)) = self.room {
+                let over = g.client.1 - self.metrics.text.within(h);
+                g = g.shortened(over.clamp(0, g.list.height - CLASSIC_LIST_MIN_H));
             }
         }
         g.grown(self.metrics.text)
@@ -1403,7 +1457,10 @@ impl TrayCustomize {
             ),
         ];
         let row_h = u.len(GLASS.row_h);
-        let field = u.rect(PAGE_COMBO);
+        let field = u.rect(Rect {
+            width: g.combo_w(),
+            ..PAGE_COMBO
+        });
         let slots = self.slots();
         let top = self.top.min(slots.len());
         let mut placed = Vec::new();
@@ -1453,7 +1510,7 @@ impl TrayCustomize {
             client: at(Rect::new(0, 0, view.width, g.band().bottom())),
             intro: on_page(g.intro(self.intro.len().max(1) as i32)),
             prompt: on_page(Rect::new(
-                GLASS.prompt.x,
+                g.margin(),
                 GLASS.prompt.y,
                 g.list_w(),
                 GLASS.prompt.height,
@@ -3134,6 +3191,51 @@ mod tests {
         assert_eq!(l.cancel.x, 1564);
         assert_eq!(t.page_scroll.short, 115);
         assert!(t.overflows(&text, 22).is_empty());
+    }
+
+    /// A 1024x768 output at 200% has room for a 1000x640 client: the page takes its margins in
+    /// to 24 px and its combos to 210 px, and OK and Cancel keep inside its right edge.
+    #[test]
+    fn a_page_on_a_small_output_takes_in_its_margins_and_combos() {
+        let (t, text) = grown_page(Some((1000, 640)));
+        let l = t.layout(&text, 22, (0, 0));
+        assert_eq!(t.client(), (1000, 640));
+        assert_eq!(l.frame.x, 48);
+        assert_eq!(l.frame.right(), 1000 - 48);
+        assert_eq!(l.prompt.x, 48);
+        assert_eq!(l.fields[0].1.width, 420);
+        assert_eq!(l.fields[0].1.right(), l.frame.right() - 100);
+        assert_eq!(l.cancel.right(), 1000 - 48);
+        assert_eq!(l.ok.right() + 12, l.cancel.x);
+        assert!(l.page_bar.is_some());
+        assert!(t.overflows(&text, 22).is_empty());
+    }
+
+    /// At 200% Classic's client is 696x782; with room for 640 px its list shortens and what lies
+    /// under it moves up, so OK and Cancel keep inside. With room for all, nothing moves.
+    #[test]
+    fn classic_shortens_its_list_to_its_room() {
+        let text = TextRenderer::stub(22, |_| 11);
+        let mut t = sample(Wording::Classic);
+        t.metrics = metrics(Wording::Classic).grown(TextUnits::new(22, 11));
+        t.fit(&text, 22);
+        let full = t.layout(&text, 22, (0, 0));
+        assert_eq!(t.client(), (696, 782));
+        t.room = Some((1000, 900));
+        assert_eq!(t.layout(&text, 22, (0, 0)), full);
+        t.room = Some((1000, 640));
+        let l = t.layout(&text, 22, (0, 0));
+        assert_eq!(t.client(), (696, 640));
+        assert_eq!(l.frame.height, full.frame.height - 142);
+        assert_eq!(l.ok.y, full.ok.y - 142);
+        assert_eq!(l.restore.y, full.restore.y - 142);
+        assert!(l.cancel.bottom() < 640);
+        t.room = Some((1000, 100));
+        assert_eq!(
+            t.client().1,
+            782 - 2 * (208 - CLASSIC_LIST_MIN_H),
+            "the list keeps a group and three rows"
+        );
     }
 
     /// Off the list the wheel scrolls the page three lines a notch; on a list that cannot
