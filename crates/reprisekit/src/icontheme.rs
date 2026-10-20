@@ -435,6 +435,43 @@ impl IconTheme {
         }
     }
 
+    /// The same theme read afresh: what an install or removal since this one read its
+    /// directories changed shows. Hosts call it when a [`IconTheme::watch_dirs`] entry changes.
+    pub fn reload(&self) -> IconTheme {
+        IconTheme::load(&self.chain[0], &self.roots)
+    }
+
+    /// Reads every cache and checks or lists every directory now, so later lookups touch the
+    /// file system only for the icon files. Hosts run it on a thread right after `load`.
+    pub fn warm(&self) {
+        let dirs = self.dirs.iter().map(|d| &d.path).chain(&self.roots);
+        for (i, dir) in dirs.enumerate() {
+            self.listing(i, dir);
+        }
+    }
+
+    /// The existing directories whose entries lookups depend on: the roots, each theme's
+    /// directory, each size directory, or the closest one above a size directory not made yet.
+    pub fn watch_dirs(&self) -> Vec<PathBuf> {
+        let mut seen = HashSet::new();
+        let mut out = Vec::new();
+        let homes = self.homes.iter().map(|h| h.path.as_path());
+        let sizes = self.dirs.iter().zip(&self.dir_home).filter_map(|(d, &h)| {
+            let home = &self.homes[h].path;
+            d.path
+                .ancestors()
+                .take_while(|p| p.starts_with(home) && *p != home.as_path())
+                .find(|p| p.is_dir())
+        });
+        let tops = self.roots.iter().map(PathBuf::as_path).chain(homes);
+        for dir in tops.filter(|p| p.is_dir()).chain(sizes) {
+            if seen.insert(dir) {
+                out.push(dir.to_path_buf());
+            }
+        }
+        out
+    }
+
     pub fn lookup(&self, name: &str, size: i32, scale: i32) -> Option<PathBuf> {
         self.lookup_with_extra(name, size, scale, &[])
     }
@@ -510,14 +547,18 @@ impl IconTheme {
         Arc::clone(order)
     }
 
+    /// What `dir`, entry `i` of `dirs` then `roots`, holds, read on first use.
+    fn listing(&self, i: usize, dir: &Path) -> &Listing {
+        self.listings[i].get_or_init(|| match self.dir_home.get(i) {
+            Some(&h) => self.homes[h].listing(dir),
+            None => Listing::Names(list_files(dir)),
+        })
+    }
+
     /// Those of `files`, `name` with each of [`EXTENSIONS`], directly in `dir`, through
     /// `listings[i]`, read on first use.
     fn files_listed(&self, i: usize, dir: &Path, name: &str, files: &[OsString]) -> Vec<PathBuf> {
-        let listing = self.listings[i].get_or_init(|| match self.dir_home.get(i) {
-            Some(&h) => self.homes[h].listing(dir),
-            None => Listing::Names(list_files(dir)),
-        });
-        match listing {
+        match self.listing(i, dir) {
             Listing::Names(names) => files
                 .iter()
                 .filter(|f| names.contains(*f))
@@ -987,6 +1028,12 @@ impl IconCache {
         for (k, v) in &self.cache {
             self.counts[Kind::of(&k.0, v) as usize] += 1;
         }
+    }
+
+    /// [`IconCache::set_theme`] with the current theme read afresh ([`IconTheme::reload`]).
+    pub fn reload(&mut self) {
+        let theme = self.theme.reload();
+        self.set_theme(theme);
     }
 
     pub fn len(&self) -> usize {
@@ -2734,6 +2781,81 @@ mod tests {
             Some(system.join("test/16x16/apps/dangling.png"))
         );
         assert_eq!(cached.lookup("dangling", 16, 1), None);
+        fs::remove_dir_all(system.parent().unwrap()).unwrap();
+    }
+
+    #[test]
+    fn an_icon_installed_or_removed_after_a_lookup_shows_once_reloaded() {
+        let (system, user) = cached_fixture("t21");
+        let mut icons = IconCache::new(IconTheme::load("test", &[user.clone(), system.clone()]));
+        let apps = system.join("test/16x16/apps");
+        let t = icons.theme();
+        assert_eq!(t.lookup("fresh", 16, 1), None);
+        assert_eq!(
+            t.lookup("t", 16, 1),
+            Some(system.join("test/24x24/apps/t.png"))
+        );
+        assert_eq!(t.lookup("b", 16, 1), Some(apps.join("b.svg")));
+        assert!(t.watch_dirs().contains(&apps));
+        fs::write(apps.join("fresh.png"), b"").unwrap();
+        fs::write(apps.join("t.png"), b"").unwrap();
+        fs::remove_file(apps.join("b.svg")).unwrap();
+        assert_eq!(t.lookup("fresh", 16, 1), None, "read once until reloaded");
+        icons.reload();
+        let t = icons.theme();
+        assert_eq!(t.lookup("fresh", 16, 1), Some(apps.join("fresh.png")));
+        assert_eq!(t.lookup("t", 16, 1), Some(apps.join("t.png")));
+        assert_eq!(
+            t.lookup("b", 16, 1),
+            Some(system.join("test/16x16@2/apps/b.png"))
+        );
+        fs::remove_file(apps.join("fresh.png")).unwrap();
+        assert_eq!(t.reload().lookup("fresh", 16, 1), None);
+        fs::remove_dir_all(system.parent().unwrap()).unwrap();
+    }
+
+    #[test]
+    fn watched_directories_are_the_roots_homes_and_each_size_directory_or_its_parent() {
+        let (system, user) = cached_fixture("t22");
+        let t = IconTheme::load("test", &[user.clone(), system.clone()]);
+        let w = t.watch_dirs();
+        for dir in [
+            user.clone(),
+            system.clone(),
+            user.join("test"),
+            system.join("hicolor"),
+            system.join("test/16x16/apps"),
+            system.join("test/22x22/apps"),
+            system.join("hicolor/48x48/apps"),
+        ] {
+            assert!(w.contains(&dir), "{dir:?} watched");
+        }
+        // hicolor has no 22x22: a 22x22/apps made later shows in hicolor itself.
+        assert!(!w.contains(&system.join("hicolor/22x22")));
+        assert!(!w.contains(&user.join("test/48x48/apps")));
+        assert!(!w.contains(&user.join("base")), "a root without the theme");
+        assert_eq!(w.len(), w.iter().collect::<HashSet<_>>().len(), "each once");
+        fs::remove_dir_all(system.parent().unwrap()).unwrap();
+    }
+
+    #[test]
+    fn warming_reads_every_directory_and_keeps_the_answers() {
+        let (system, user) = cached_fixture("t23");
+        let roots = [user.clone(), system.clone()];
+        let (cold, warm) = (
+            IconTheme::load("test", &roots),
+            IconTheme::load("test", &roots),
+        );
+        warm.warm();
+        assert!(warm.listings.iter().all(|l| l.get().is_some()));
+        for name in NAMES {
+            for (size, scale) in [(16, 1), (22, 1), (48, 1), (16, 2)] {
+                assert_eq!(
+                    warm.lookup(name, size, scale),
+                    cold.lookup(name, size, scale)
+                );
+            }
+        }
         fs::remove_dir_all(system.parent().unwrap()).unwrap();
     }
 

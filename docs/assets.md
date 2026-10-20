@@ -76,6 +76,9 @@ theme has its own license.
   reads it instead of listing the theme's directories, and lists only those
   changed since it was written. Package hooks write it; for a theme you copied
   in, run `gtk-update-icon-cache ~/.local/share/icons/<theme>`.
+- Icons installed or removed while Reprise runs show without a restart: the
+  desktop and every Reprise program watch the theme's directories and read the
+  theme again half a second after they go quiet.
 - A missing icon falls back to a drawn generic glyph. A few spots have no
   fallback yet and show a magenta square with a black border, on purpose: it
   marks missing art, and the fix is a freedesktop icon name that fits.

@@ -275,6 +275,8 @@ pub struct State {
     /// Bars whose Start glow is still fading (`hoverfade`).
     pub fading_bars: Vec<TreeId>,
     pub icons: IconCache,
+    /// Reloads `icons` when a directory of its theme changes (`iconwatch`).
+    pub icon_watch: crate::iconwatch::IconWatch,
     pub app_index: Vec<reprisefs::apps::AppEntry>,
     pub launches: crate::launches::Launches,
     /// Keeps `app_index` current as programs come and go (`appindex`).
@@ -627,6 +629,7 @@ impl State {
                 recent: persisted.launches.clone(),
             },
             apps_watch: Default::default(),
+            icon_watch: None,
             start_text,
             start_panel_text,
             quicklaunch,
