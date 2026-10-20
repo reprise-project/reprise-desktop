@@ -1011,6 +1011,7 @@ struct Look {
 
 impl Look {
     fn from_env() -> Look {
+        let keys = repriseconf::look_keys();
         Look {
             interface: std::env::var(reprisekit::interface::ENV).ok(),
             blue_variant: std::env::var(reprisekit::blue::ENV).ok(),
@@ -1019,11 +1020,11 @@ impl Look {
             colors: std::env::var(reprisekit::theme::COLORS_ENV).ok(),
             icon_theme: std::env::var(reprisekit::icontheme::ENV)
                 .unwrap_or_else(|_| "hicolor".into()),
-            shell_dlg: repriseconf::shell_dlg(),
-            font_family: repriseconf::font_family(),
-            antialias: repriseconf::font_antialias(),
-            text_size: repriseconf::text_size(),
-            double_click_ms: repriseconf::double_click_ms(),
+            shell_dlg: keys.shell_dlg,
+            font_family: keys.font_family,
+            antialias: keys.antialias,
+            text_size: keys.text_size,
+            double_click_ms: keys.double_click_ms,
         }
     }
 
