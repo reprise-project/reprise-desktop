@@ -1063,19 +1063,19 @@ mod tests {
     #[test]
     fn ellipsize_keeps_fitting_text_and_trims_the_rest() {
         let r = TextRenderer::load(&FontConfig::default());
-        let full = r.measure("Printers and Faxes", false, 11);
-        assert_eq!(
-            r.ellipsize("Printers and Faxes", full, false, 11),
-            "Printers and Faxes"
-        );
-        let short = r.ellipsize("Printers and Faxes", full - 20, false, 11);
+        let full = r.measure("Printers", false, 11);
+        assert_eq!(r.ellipsize("Printers", full, false, 11), "Printers");
+        let short = r.ellipsize("Printers", full - 20, false, 11);
         assert!(short.ends_with("..."), "{short}");
-        assert!(short.len() < "Printers and Faxes".len());
+        assert!(short.len() < "Printers".len());
         assert!(r.measure(&short, false, 11) <= full - 20);
-        assert!(
-            !short.ends_with(" ..."),
-            "no space before the dots: {short}"
-        );
+        for width in 0..r.measure("Recycle Bin", false, 11) {
+            let short = r.ellipsize("Recycle Bin", width, false, 11);
+            assert!(
+                !short.ends_with(" ..."),
+                "no space before the dots: {short}"
+            );
+        }
         assert_eq!(r.ellipsize("abc", 0, false, 11), "...");
     }
     use crate::raster::{Canvas, Rect};
