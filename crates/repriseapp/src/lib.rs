@@ -876,7 +876,8 @@ fn at_pick(size: (i32, i32), picked: (i32, i32), bounds: Option<(i32, i32)>) -> 
 }
 
 /// The size a window of `size` takes when its bounds go from `was` to `now`: one at its
-/// program's pick under `was` stays at the pick, held inside `now`; any other keeps its size.
+/// program's pick under `was` stays at the pick, any other keeps its size; either held inside
+/// `now`.
 fn rebounded(
     size: (i32, i32),
     picked: (i32, i32),
@@ -885,7 +886,7 @@ fn rebounded(
 ) -> (i32, i32) {
     match at_pick(size, picked, was) {
         true => bounded(picked, now),
-        false => size,
+        false => bounded(size, now),
     }
 }
 
@@ -5604,9 +5605,6 @@ mod tests {
         assert!(!at_pick((1200, 1000), (1088, 1056), Some((1900, 1000))));
     }
 
-    /// A window that picks its own size stays inside the compositor's bounds: a Settings sheet
-    /// grown past a 1080-line screen opens as tall as the work area. A side the compositor asks
-    /// for (maximized, fullscreen) is its own.
     #[test]
     fn a_window_at_its_pick_stays_at_it_under_other_bounds() {
         let (pick, small, large) = ((1088, 1056), Some((1366, 700)), Some((1914, 1026)));
@@ -5620,6 +5618,17 @@ mod tests {
         );
     }
 
+    /// Settings sized by the compositor at 952x528 grows to its 200% minimum under the old
+    /// bounds, then hears the smaller ones the taller caption and taskbar leave.
+    #[test]
+    fn a_window_grown_past_new_bounds_is_held_inside_them() {
+        let (pick, was, now) = ((760, 680), Some((1912, 1016)), Some((1912, 990)));
+        assert_eq!(rebounded((1088, 1016), pick, was, now), (1088, 990));
+    }
+
+    /// A window that picks its own size stays inside the compositor's bounds: a Settings sheet
+    /// grown past a 1080-line screen opens as tall as the work area. A side the compositor asks
+    /// for (maximized, fullscreen) is its own.
     #[test]
     fn a_size_the_window_picks_stays_inside_the_bounds() {
         let bounds = Some((1914, 1026));
