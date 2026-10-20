@@ -539,6 +539,7 @@ mod tests {
             app_id: "foot".into(),
             entry: "foot.desktop".into(),
             desktop: 1,
+            loose: vec!["~/notes".into()],
         }];
         let tabs = vec![crate::session::SavedTabs {
             apps: vec!["foot".into(), "foot".into()],
