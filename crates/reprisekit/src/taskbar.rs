@@ -148,6 +148,83 @@ pub struct TaskbarState {
     pub clock: String,
 }
 
+impl TaskbarState {
+    /// Whether `self` and `other` differ at most in Start's own fields (`start_pressed`,
+    /// `start_focus`, `start_hot`), so a bar drawn for one needs only its Start part redrawn
+    /// (`look::redraw_taskbar_start`) for the other. Icons count as equal only when shared.
+    pub fn same_but_start(&self, other: &Self) -> bool {
+        fn icon(a: &Option<Arc<Canvas>>, b: &Option<Arc<Canvas>>) -> bool {
+            match (a, b) {
+                (Some(a), Some(b)) => Arc::ptr_eq(a, b),
+                (None, None) => true,
+                _ => false,
+            }
+        }
+        fn icons(a: &[Option<Arc<Canvas>>], b: &[Option<Arc<Canvas>>]) -> bool {
+            a.len() == b.len() && a.iter().zip(b).all(|(a, b)| icon(a, b))
+        }
+        let Self {
+            start_pressed: _,
+            start_focus: _,
+            start_hot: _,
+            focus,
+            start_icon,
+            orb_glow,
+            quick_icons,
+            quick_hot,
+            quick_pressed,
+            quick_drop,
+            quick_more,
+            pager,
+            pager_hot,
+            pager_mark,
+            task_hot,
+            task_pressed,
+            task_hot_x,
+            task_shift,
+            task_float,
+            task_progress,
+            show_desktop_hot,
+            more,
+            chevron,
+            tasks,
+            tray_icons,
+            clock,
+        } = self;
+        let same_task = |a: &TaskEntry, b: &TaskEntry| {
+            a.title == b.title
+                && a.active == b.active
+                && a.attention == b.attention
+                && a.glow == b.glow
+                && icon(&a.icon, &b.icon)
+        };
+        *focus == other.focus
+            && icon(start_icon, &other.start_icon)
+            && *orb_glow == other.orb_glow
+            && icons(quick_icons, &other.quick_icons)
+            && *quick_hot == other.quick_hot
+            && *quick_pressed == other.quick_pressed
+            && *quick_drop == other.quick_drop
+            && *quick_more == other.quick_more
+            && *pager == other.pager
+            && *pager_hot == other.pager_hot
+            && *pager_mark == other.pager_mark
+            && *task_hot == other.task_hot
+            && *task_pressed == other.task_pressed
+            && *task_hot_x == other.task_hot_x
+            && *task_shift == other.task_shift
+            && *task_float == other.task_float
+            && *task_progress == other.task_progress
+            && *show_desktop_hot == other.show_desktop_hot
+            && *more == other.more
+            && *chevron == other.chevron
+            && tasks.len() == other.tasks.len()
+            && tasks.iter().zip(&other.tasks).all(|(a, b)| same_task(a, b))
+            && icons(tray_icons, &other.tray_icons)
+            && *clock == other.clock
+    }
+}
+
 /// A bar cell that opens a popup (» or ^); `open` wins over `hot`; a tray arrow also draws `held`.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct PopupCell {

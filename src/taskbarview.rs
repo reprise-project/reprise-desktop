@@ -142,6 +142,14 @@ struct StartMix {
     changed: Rect,
 }
 
+/// A bar picture and what it was drawn from.
+pub(crate) struct DrawnBar {
+    pub(crate) state: TaskbarState,
+    pub(crate) layout: TaskbarLayout,
+    pub(crate) scale: i32,
+    pub(crate) canvas: Canvas,
+}
+
 pub struct Bar {
     pub output: Output,
     pub tree: TreeId,
@@ -166,6 +174,8 @@ pub struct Bar {
     start_hot: bool,
     pub start_glow: HoverFade,
     start_mix: Option<StartMix>,
+    /// The last full bar picture, so a change to Start alone redraws only Start's part.
+    pub(crate) drawn: Option<DrawnBar>,
     /// By key, so a button closing under the pointer lights no neighbour that
     /// slides into its place.
     task_hot: Option<TaskKey<WindowId>>,
@@ -187,6 +197,8 @@ pub struct Bar {
     pub tray_reveal_drawn: i32,
     #[cfg(test)]
     pub draws: usize,
+    #[cfg(test)]
+    pub start_only_draws: usize,
 }
 
 fn empty_layout() -> TaskbarLayout {
@@ -390,6 +402,7 @@ impl State {
             start_hot: false,
             start_glow: HoverFade::default(),
             start_mix: None,
+            drawn: None,
             task_hot: None,
             task_held: None,
             task_hot_x: None,
@@ -407,6 +420,8 @@ impl State {
             tray_reveal_drawn: 0,
             #[cfg(test)]
             draws: 0,
+            #[cfg(test)]
+            start_only_draws: 0,
         }
     }
 
@@ -732,6 +747,7 @@ impl State {
             bar.runs.clear();
             bar.dialogs.clear();
             bar.start_mix = None;
+            bar.drawn = None;
             bar.orb_up = None;
             bar.layout = empty_layout();
             return;
@@ -1006,19 +1022,22 @@ impl State {
         };
         let layout = bar.layout.scaled(scale);
         let (text, start_text) = (&self.text, &self.start_text);
-        let draw = |state: &TaskbarState| {
-            let mut canvas = Canvas::new(layout.width.max(1) as u32, layout.height as u32);
-            reprisekit::look::draw_taskbar(&mut canvas, &theme, text, start_text, &layout, state);
-            // The orb's own buffer: its rows past the bar, and held the
-            // whole orb, which then stands over the menu unless a
-            // fullscreen window covers the bar.
-            let orb = layout.start_orb(state.start_pressed).map(|r| {
+        // The orb's own buffer: its rows past the bar, and held the whole
+        // orb, which then stands over the menu unless a fullscreen window
+        // covers the bar.
+        let draw_orb = |state: &TaskbarState| {
+            layout.start_orb(state.start_pressed).map(|r| {
                 let mut c = Canvas::new(r.width as u32, r.height as u32);
                 reprisekit::look::draw_start_above(&mut c, &theme, &layout, state);
                 c
-            });
-            (canvas, orb)
+            })
         };
+        let draw_bar = |state: &TaskbarState| {
+            let mut canvas = Canvas::new(layout.width.max(1) as u32, layout.height as u32);
+            reprisekit::look::draw_taskbar(&mut canvas, &theme, text, start_text, &layout, state);
+            canvas
+        };
+        let draw = |state: &TaskbarState| (draw_bar(state), draw_orb(state));
         let held = state.start_pressed;
         let fading = !bar.start_glow.settled(Instant::now()) && base.look.style().is_some();
         if fading {
@@ -1035,11 +1054,38 @@ impl State {
                 scale,
                 changed,
             });
+            bar.drawn = None;
             self.redraw_start(bar);
         } else {
             bar.start_mix = None;
-            let (canvas, orb) = draw(&state);
-            bar.orb_up = self.upload_bar(bar, canvas, orb, held, scale);
+            let canvas = match bar.drawn.take() {
+                Some(mut d)
+                    if d.scale == scale && d.layout == layout && d.state.same_but_start(&state) =>
+                {
+                    #[cfg(test)]
+                    {
+                        bar.start_only_draws += 1;
+                    }
+                    reprisekit::look::redraw_taskbar_start(
+                        &mut d.canvas,
+                        &theme,
+                        text,
+                        start_text,
+                        &layout,
+                        &state,
+                    );
+                    d.canvas
+                }
+                _ => draw_bar(&state),
+            };
+            let orb = draw_orb(&state);
+            bar.orb_up = self.upload_bar(bar, &canvas, orb, held, scale);
+            bar.drawn = Some(DrawnBar {
+                state,
+                layout,
+                scale,
+                canvas,
+            });
         }
         crate::trayreveal::follow_layout(self, bar, now);
         bar.tray_reveal_drawn = bar.tray_reveal.x(now);
@@ -1101,7 +1147,7 @@ impl State {
             c
         });
         let (held, scale) = (m.held, m.scale);
-        bar.orb_up = self.upload_bar(bar, canvas, orb, held, scale);
+        bar.orb_up = self.upload_bar(bar, &canvas, orb, held, scale);
         self.place_bar(bar);
         if bar.start_glow.settled(now) {
             bar.start_mix = None;
@@ -1119,14 +1165,14 @@ impl State {
     fn upload_bar(
         &mut self,
         bar: &mut Bar,
-        canvas: Canvas,
+        canvas: &Canvas,
         orb: Option<Canvas>,
         held: bool,
         scale: i32,
     ) -> Option<bool> {
         let covered = self.under_fullscreen(bar);
         let scene = &mut self.scene;
-        upload_scaled(scene, bar.buffer, &canvas, scale);
+        upload_scaled(scene, bar.buffer, canvas, scale);
         bar.buffer_scale = scale;
         let l = &bar.layout;
         let over_menu = stands_over_menu(l, held, covered);
