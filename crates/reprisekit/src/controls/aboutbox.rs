@@ -153,6 +153,9 @@ fn solid_extent(n: i32) -> (i32, i32) {
 
 const TEXT_X: i32 = 53;
 const VALUE_X: i32 = 252;
+/// Short of the client's edge, so a label wider than its column moves the value right
+/// (`fit`) instead of being cut.
+const VALUE_W: i32 = 120;
 const ICON_X: i32 = 13;
 const ICON_Y: i32 = 91;
 const ICON: i32 = 32;
@@ -179,7 +182,7 @@ pub struct Fields {
     /// Three free rows. An empty entry leaves its row blank, so the separator does not move.
     pub facts: [String; 3],
     pub memory_label: String,
-    /// Drawn at its own column, so a longer label cannot shove it.
+    /// Drawn at its own column; a label too wide for its column moves it right.
     pub memory_value: String,
     /// 32x32, left of the product name.
     pub icon: Option<Canvas>,
@@ -234,7 +237,7 @@ pub fn form(f: &Fields, text: &TextRenderer, px: u32) -> Form {
     ));
     items.push(Item::label(
         "memvalue",
-        Rect::new(VALUE_X, row(MEMORY_BASE), CLIENT.0 - VALUE_X, line_h),
+        Rect::new(VALUE_X, row(MEMORY_BASE), VALUE_W, line_h),
         &f.memory_value,
     ));
     items.push(Item::button(
@@ -586,6 +589,14 @@ mod tests {
             assert_eq!(x(id), EXPECTED_TEXT_X, "{id} starts at x53");
         }
         assert_eq!(x("memvalue"), EXPECTED_VALUE_X);
+    }
+
+    #[test]
+    fn the_whole_memory_label_fits_in_every_look_and_size() {
+        let over = crate::interfaces::form_overflows(|_, theme, text| {
+            vec![("about".into(), form(&sample(), text, theme.fonts.size_px))]
+        });
+        assert!(over.is_empty(), "{}", over.join("\n"));
     }
 
     /// The OK button's rect, and the separator's span and etched row order. The order is
