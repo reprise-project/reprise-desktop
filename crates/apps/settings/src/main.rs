@@ -492,7 +492,12 @@ impl SettingsApp {
         let shown = (u.within(size.0), u.within(size.1));
         let size = (shown.0.max(min.0), shown.1.max(min.1));
         if size == self.sheet.size {
-            return self.sheet.fit(shown);
+            if !self.sheet.fit(shown) {
+                return false;
+            }
+            // A shorter window shortens the page list too.
+            self.sheet.reveal_open();
+            return true;
         }
         self.sheet.resize(size);
         let a = self.area();
@@ -519,8 +524,8 @@ impl SettingsApp {
             self.sheet.pages[p.index()].take_layout(&template, offset);
         }
         self.preview_for = None;
-        self.sheet.reveal_open();
         self.sheet.fit(shown);
+        self.sheet.reveal_open();
         true
     }
 
@@ -4376,6 +4381,36 @@ mod tests {
         app.event(MAIN, Event::Resized, &mut ctx);
         assert_eq!(app.sheet.size, min, "no smaller than its smallest");
         assert_eq!(add(&app), before);
+    }
+
+    #[test]
+    fn a_window_shorter_than_the_sheet_keeps_the_open_page_in_the_list() {
+        let mut app = app("short-list");
+        app.sheet.tabs.open = Page::Advanced.index();
+        app.sheet.reveal_open();
+        let mut ctx = test_ctx();
+        let min = app.min_size(MAIN).unwrap();
+        ctx.size = (min.0, 300);
+        app.event(MAIN, Event::Resized, &mut ctx);
+        let lay = app
+            .sheet
+            .layout(&ctx.text, ctx.theme.fonts.size_px)
+            .list
+            .expect("list mode");
+        assert!(lay.scrollbar.is_some(), "the list overflows");
+        let propsheet::Nav::List(list) = &app.sheet.nav else {
+            panic!("list mode");
+        };
+        let i = list
+            .rows
+            .iter()
+            .position(|r| *r == reprisekit::controls::pagelist::Row::Page(Page::Advanced.index()))
+            .unwrap();
+        let (row, inner) = (lay.rows[i], lay.inner);
+        assert!(
+            row.y >= inner.y && row.bottom() <= inner.bottom(),
+            "Advanced's row {row:?} shows inside {inner:?}"
+        );
     }
 
     /// At 200% on a 1080-line screen the window opens at its pick held to the work area; that
