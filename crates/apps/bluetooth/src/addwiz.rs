@@ -578,8 +578,9 @@ impl AddWizard {
             px,
             |c, r, i, sel| {
                 let d = &self.found[i];
+                let icon = icons.tile(d.kind, lay.text);
                 let tile = Tile {
-                    icon: Some(icons.get(d.kind)),
+                    icon: Some(&icon),
                     title: &d.alias,
                     tag: "",
                     caption: d.kind.name(),
