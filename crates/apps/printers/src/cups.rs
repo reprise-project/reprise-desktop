@@ -500,6 +500,25 @@ pub fn jobs(c: &Client, printer: Option<&str>) -> Result<Vec<Job>> {
     }
 }
 
+/// The finished jobs numbered after `after`, from cupsd's history: how the worker learns of a job
+/// that came and went between two reads. `first-job-id` is a CUPS extension to Get-Jobs.
+pub fn finished_after(c: &Client, after: i32) -> Result<Vec<Job>> {
+    let req = Request::new(GET_JOBS)
+        .op_attr("printer-uri", Value::uri("ipp://localhost/"))
+        .op_attr("which-jobs", Value::keyword("completed"))
+        .op_attr("first-job-id", Value::Int(after.saturating_add(1)))
+        .requested(&JOB_ATTRS);
+    match c.call("/", req) {
+        Ok(r) => Ok(r
+            .groups(JOB)
+            .map(Job::from_group)
+            .filter(|j| j.id > after)
+            .collect()),
+        Err(Error::Refused(_)) => Ok(Vec::new()),
+        Err(e) => Err(e),
+    }
+}
+
 /// One job, finished or not: how the worker learns how a job that left
 /// the queue ended.
 pub fn job(c: &Client, id: i32) -> Result<Job> {
