@@ -247,6 +247,21 @@ impl Harness {
         Toplevel { id, shell }
     }
 
+    /// `t`'s client draws itself at `w`x`h` without being asked, as a program fitting new
+    /// bounds or a new text size does.
+    pub fn resize_self(&mut self, c: &mut TestClient, t: Toplevel, w: i32, h: i32) {
+        c.side.shells[t.shell].size = (w, h);
+        let surface = c.side.shells[t.shell].surface.clone();
+        attach(
+            c.side.shm.as_ref().expect("wl_shm"),
+            &c.qh(),
+            &surface,
+            w,
+            h,
+        );
+        self.roundtrip(c);
+    }
+
     /// A `w`x`h` xdg popup on toplevel `t`, mapped with its first buffer, that asks for the
     /// seat's grab under the last keyboard enter's serial, as a menu does.
     pub fn map_popup(&mut self, c: &mut TestClient, t: Toplevel, w: i32, h: i32) -> Popup {
