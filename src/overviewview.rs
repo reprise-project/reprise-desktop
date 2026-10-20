@@ -630,6 +630,14 @@ impl State {
         }
     }
 
+    /// A reader's focus on cell `i`: it takes the selection, and no window activates.
+    pub fn overview_select(&mut self, i: usize) {
+        if let Some(v) = self.overview.view.as_mut() {
+            let e = v.model.select(i);
+            self.apply_overview(e);
+        }
+    }
+
     pub fn overview_hit(&self, lx: f64, ly: f64) -> Option<usize> {
         let v = self.overview.view.as_ref()?;
         resting_hit(&v.layouts, v.slide.is_some(), lx as i32, ly as i32)

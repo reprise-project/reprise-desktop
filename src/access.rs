@@ -1,7 +1,7 @@
 //! Screen reader side of the compositor's own surfaces: one AccessKit adapter per taskbar, menu stack, switcher, dialog, launcher, clipboard history, emoji picker, calendar, displays panel, tray flyout, task preview panel, notification history, the balloons and each framed window's caption, speaking AT-SPI on the session's accessibility bus.
 //! `accesskit_unix` runs its D-Bus side on its own thread and calls the handlers (`reprisekit::access::Handler`) there; they post a `Msg` to a calloop channel, so the loop never waits on the bus. Trees are built on the loop, in an idle pass [`touch`] queues, only for adapters a reader holds.
 //! Bounds are layout coordinates: a tree's root carries its surface's place as a transform and its controls lay out surface-local. A tree claims the focus only while its surface has the keyboard (see [`focus_of`]). The lock screen has no tree, so its password field's text stays here.
-//! A reader's action on a node runs as the click a user would give it ([`click`], `reprisekit::access::gesture`) through the pointer's press and release paths; focusing a taskbar item gives the bar the keyboard (`barkeys`), a dialog's button or a Start panel spot takes it unpressed; ScrollIntoView on a row out of view scrolls its list ([`reveal`]); any other action there scrolls it in, then acts on it.
+//! A reader's action on a node runs as the click a user would give it ([`click`], `reprisekit::access::gesture`) through the pointer's press and release paths; focusing a taskbar item gives the bar the keyboard (`barkeys`), a switcher, overview or launcher row takes the selection, a dialog's button or a Start panel spot takes it unpressed; ScrollIntoView on a row out of view scrolls its list ([`reveal`]); any other action there scrolls it in, then acts on it.
 //! The same idle pass moves the seat's keyboard for the menus, Glass Start menu, launcher and overview, reader or not: they take it from the window while open and give it back on close ([`move_keyboard`]).
 
 use reprisebus::a11y::{KeyEcho, KeyNote};
@@ -536,7 +536,8 @@ fn lands_on(state: &State, surface: Surface, hit: &Hit) -> bool {
 /// published: the click `reprisekit::access::gesture` picks, at the
 /// node's middle, if that point still lands on the surface. Focus on a
 /// taskbar item gives the bar the keyboard there; on a menu row it
-/// lights the row; on a dialog's button or a Start panel spot it moves
+/// lights the row; on a switcher, overview or launcher row it moves the
+/// selection there; on a dialog's button or a Start panel spot it moves
 /// the keyboard there unpressed. A row out of view is scrolled in first
 /// ([`reveal`]); after anything but ScrollIntoView the trees are published
 /// again and `req` acts on the row in view.
@@ -591,6 +592,9 @@ fn act(state: &mut State, surface: Surface, req: Request) {
         state.start_panel_focus(*s);
         return;
     }
+    if req.act == Act::Focus && select(state, &hit) {
+        return;
+    }
     match reprisekit::access::gesture(req.act, target) {
         Some(Gesture::Click(at)) => click(state, at, BTN_LEFT),
         Some(Gesture::RightClick(at)) => click(state, at, BTN_RIGHT),
@@ -606,6 +610,20 @@ fn act(state: &mut State, surface: Surface, req: Request) {
         }
         None => {}
     }
+}
+
+/// A reader's focus on a switcher, overview or launcher row, whose click switches or launches:
+/// the row takes the selection and nothing else happens. False for any other `hit`.
+fn select(state: &mut State, hit: &Hit) -> bool {
+    match *hit {
+        Hit::Switcher { cell: Some(i) } => state.switcher_select(i),
+        Hit::Overview { cell: Some(i) } => state.overview_select(i),
+        Hit::Launcher {
+            hit: reprisekit::controls::launcher::Hit::Row(p),
+        } => state.launcher_highlight(p),
+        _ => return false,
+    }
+    true
 }
 
 /// Give the keyboard to what lies at layout point `at` on dialog `index`, pressing nothing, with
@@ -723,6 +741,37 @@ pub fn echo_key(state: &mut State, code: Keycode, k: &KeyPress, time: u32) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_readers_focus_on_a_switcher_or_overview_row_selects_it_and_switches_nothing() {
+        let mut h = crate::harness::Harness::new();
+        h.output("TEST-1", 1024, 768);
+        let mut c = h.connect();
+        for app in ["one", "two", "three"] {
+            h.map_toplevel(&mut c, app, 300, 200);
+        }
+        let front = h.state.focused;
+        h.state.open_switcher(crate::keys::MOD_ALT);
+        assert!(select(&mut h.state, &Hit::Switcher { cell: Some(2) }));
+        let panel = h.state.switcher.panel.as_ref().expect("the panel stays up");
+        assert_eq!(panel.selected, 2);
+        assert_eq!(h.state.focused, front, "no window switched");
+        h.state.switcher_cancel();
+        h.state.open_overview();
+        assert!(select(&mut h.state, &Hit::Overview { cell: Some(1) }));
+        let v = h
+            .state
+            .overview
+            .view
+            .as_ref()
+            .expect("the overview stays up");
+        assert_eq!(v.model.selected, 1);
+        assert_eq!(h.state.focused, front, "no window activated");
+        assert!(
+            !select(&mut h.state, &Hit::Desktop { index: None }),
+            "another hit takes the click"
+        );
+    }
 
     #[test]
     fn the_keyboards_holder_has_the_focus_in_route_order() {

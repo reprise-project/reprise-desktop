@@ -260,6 +260,21 @@ impl State {
         self.switcher_peek();
     }
 
+    /// A reader's focus on entry `i`: the selection moves there as Tab would, and nothing switches.
+    pub fn switcher_select(&mut self, i: usize) {
+        if self.switcher.stack.is_some() {
+            self.flip_select(i);
+            return;
+        }
+        let Some(sw) = self.switcher.panel.as_mut().filter(|p| i < p.entries.len()) else {
+            return;
+        };
+        sw.selected = i;
+        sw.hot = None;
+        self.redraw_switcher();
+        self.switcher_peek();
+    }
+
     pub fn switcher_hit(&self, lx: f64, ly: f64) -> Option<usize> {
         if self.switcher.stack.is_some() {
             return self.flip_hit(lx, ly);

@@ -413,6 +413,29 @@ impl State {
         self.flip_moved();
     }
 
+    /// Entry `k` rolls to the front as that many steps would, committing nothing.
+    pub fn flip_select(&mut self, k: usize) {
+        let Some(st) = self.switcher.stack.as_mut().filter(|st| !st.pick) else {
+            return;
+        };
+        let n = st.entries.len();
+        if k >= n {
+            return;
+        }
+        let ahead = (k + n - st.selected) % n;
+        if ahead == 0 {
+            return;
+        }
+        st.selected = k;
+        let to = st.roll.target() + ahead as f64;
+        if st.revealed() {
+            st.roll.queue(to, Instant::now(), ROLL_MS, QUEUE_MS);
+        } else {
+            st.roll = Tween::at(to);
+        }
+        self.flip_moved();
+    }
+
     /// A click on entry `k`'s card: the front one commits at once; a
     /// card further back rolls to the front over `PICK_MS` and commits
     /// there (`flip_frame`).

@@ -364,11 +364,20 @@ impl Launcher {
     /// A right press on row `p`: it takes the highlight, and a program or
     /// file row opens its context menu.
     pub fn right_press(&mut self, p: Pick) -> Event {
-        let Some(i) = self.lines().iter().position(|l| *l == Line::Row(p)) else {
+        if !self.highlight(p) {
             return Event::None;
+        }
+        Self::context_of(p)
+    }
+
+    /// Row `p` takes the highlight and nothing starts, as a reader's focus moves it; false
+    /// when no such row is shown.
+    pub fn highlight(&mut self, p: Pick) -> bool {
+        let Some(i) = self.lines().iter().position(|l| *l == Line::Row(p)) else {
+            return false;
         };
         self.list.selected = Some(i);
-        Self::context_of(p)
+        true
     }
 
     fn context_of(p: Pick) -> Event {
@@ -1572,6 +1581,15 @@ mod tests {
         l.key(Key::Up);
         l.key(Key::Up);
         assert_eq!(l.picked(), Some(Pick::Calc));
+    }
+
+    #[test]
+    fn a_highlighted_row_is_picked_without_starting() {
+        let mut l = with_every_kind();
+        assert!(l.highlight(Pick::Setting(0)));
+        assert_eq!(l.picked(), Some(Pick::Setting(0)));
+        assert!(!l.highlight(Pick::File(3)), "no such row");
+        assert_eq!(l.picked(), Some(Pick::Setting(0)));
     }
 
     #[test]
