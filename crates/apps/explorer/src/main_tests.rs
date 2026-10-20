@@ -2003,6 +2003,40 @@ fn a_pickers_new_folder_and_rename_landing_after_cancel_keep_their_undo() {
     assert!(dir.path().join("Photos").is_dir() && !second.exists());
 }
 
+/// A window closed while a picker's rename left by Cancel is still on disk waits for it and
+/// keeps its undo until it quits.
+#[test]
+fn closing_waits_for_a_pickers_rename_left_by_cancel() {
+    let mut ctx = test_ctx();
+    let (dir, mut ex) = browse_fixture(&mut ctx);
+    ex.open_browse(false, &mut ctx);
+    click_at(&mut ex, 60, 328, &mut ctx);
+    type_in(&mut ex, "Photos", &mut ctx);
+    let gate = Arc::new(std::sync::RwLock::new(()));
+    let closed = gate.write().expect("lock");
+    ex.held = Some(gate.clone());
+    ex.dialog_event(Event::Key(key_in(keysym::RETURN)), &mut ctx);
+    ex.dialog_event(Event::Key(key_in(keysym::ESCAPE)), &mut ctx);
+    assert!(ex.dialog.is_none(), "Cancel closes the picker");
+    assert!(!ex.close(&mut ctx).quit, "the window waits for the rename");
+
+    drop(closed);
+    ex.held = None;
+    for _ in 0..500 {
+        if ex.wake(&mut ctx).quit {
+            assert_eq!(
+                ex.undo,
+                Some("Rename"),
+                "the rename's undo lands before the quit"
+            );
+            assert!(dir.path().join("Photos").is_dir());
+            return;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    panic!("the window quits once the rename lands");
+}
+
 /// A rename refused after the wait shows its error box over the picker, and OK reopens the box.
 #[test]
 fn a_pickers_rename_refused_late_shows_the_error_box() {
