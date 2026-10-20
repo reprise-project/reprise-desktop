@@ -870,7 +870,14 @@ impl State {
         let mut canvas = still.clone();
         if self.caret.on {
             let theme = self.config.theme.scaled(*at);
-            dialog::draw_field(&mut canvas, &theme, &self.text, &v.layout, &v.dialog, true);
+            dialog::draw_field(
+                &mut canvas,
+                &theme,
+                self.text.for_output(theme.scale),
+                &v.layout,
+                &v.dialog,
+                true,
+            );
         }
         let buffer = v.buffer;
         upload_scaled(&mut self.scene, buffer, &canvas, scale);
@@ -995,7 +1002,7 @@ impl State {
         }
         let mut canvas = dialog::draw(
             &theme,
-            text,
+            text.for_output(scale),
             &v.layout,
             icons.icon.as_ref(),
             icons.caption.as_ref(),
@@ -1022,7 +1029,7 @@ impl State {
             );
         }
         // An ellipsized label's tip, over everything the dialog drew.
-        reprisekit::controls::form::draw_tip(&mut canvas, text, &theme);
+        reprisekit::controls::form::draw_tip(&mut canvas, text.for_output(scale), &theme);
         // What the backdrop sees: the client area.
         let part = wanted
             .then(|| client_part(&canvas, &v.layout, scale))
@@ -1047,7 +1054,14 @@ impl State {
         if v.dialog.field.is_some() {
             v.still_canvas = Some((canvas.clone(), scale));
             if caret_on {
-                dialog::draw_field(&mut canvas, &theme, text, &v.layout, &v.dialog, true);
+                dialog::draw_field(
+                    &mut canvas,
+                    &theme,
+                    text.for_output(theme.scale),
+                    &v.layout,
+                    &v.dialog,
+                    true,
+                );
             }
         }
         upload_scaled(scene, v.buffer, &canvas, scale);

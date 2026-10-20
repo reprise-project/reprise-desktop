@@ -347,7 +347,7 @@ fn build(state: &mut State, output: &Output, origin: (i32, i32), want: StatsPane
 fn draw(state: &mut State, p: &mut Panel, want: StatsPanel) {
     let scale = state.draw_scale_at(Some(&p.output)).max(1);
     let theme = state.config.theme.scaled(scale);
-    let canvas = statspanel::draw(&theme, &state.text, &want);
+    let canvas = statspanel::draw(&theme, state.text.for_output(theme.scale), &want);
     let m = panel::margin(&state.config.theme);
     let h = statspanel::height(want.rows.len());
     let pane = match state.config.theme.glass() {

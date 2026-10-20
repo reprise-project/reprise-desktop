@@ -105,6 +105,7 @@ pub(crate) fn fixed_sizes(f: &Face) -> &[freetype::ffi::FT_Bitmap_Size] {
     unsafe { std::slice::from_raw_parts(raw.available_sizes, raw.num_fixed_sizes.max(0) as usize) }
 }
 
+#[derive(Clone)]
 struct LoadedFace {
     face: Face,
     family: String,
@@ -154,6 +155,10 @@ pub struct TextRenderer {
     /// Glyphs lean as [`Glyph::sheared`] draws them: the italic of a family without one.
     sheared: bool,
     italic: std::cell::OnceCell<Option<Box<TextRenderer>>>,
+    /// Sizes are an output's device px on a scale-1 canvas at another scale
+    /// ([`TextRenderer::for_output`]): bitmap fallback strikes are off.
+    prescaled: bool,
+    for_output: std::cell::OnceCell<Box<TextRenderer>>,
 }
 
 fn find_face(
@@ -450,6 +455,41 @@ impl TextRenderer {
             config: None,
             sheared: false,
             italic: std::cell::OnceCell::new(),
+            prescaled: false,
+            for_output: std::cell::OnceCell::new(),
+        }
+    }
+
+    /// These faces for a host that draws text at an output's device size on a scale-1 canvas
+    /// (sizes from `theme.scaled(scale)`): off scale 1 a char the UI face lacks draws from the
+    /// outline face, as on a canvas at `scale`. Itself at scale 1.
+    pub fn for_output(&self, scale: i32) -> &TextRenderer {
+        if scale <= 1 || self.prescaled {
+            return self;
+        }
+        self.for_output
+            .get_or_init(|| Box::new(self.prescaled_copy()))
+    }
+
+    fn prescaled_copy(&self) -> TextRenderer {
+        let mut t =
+            TextRenderer::with_faces(self.regular.clone(), self.bold.clone(), self.antialias);
+        t.shell_dlg = self
+            .shell_dlg
+            .as_ref()
+            .map(|s| Box::new(s.prescaled_copy()));
+        t.line_faces = self.line_faces.clone();
+        t.lead = self.lead;
+        t.config = self.config.clone();
+        t.sheared = self.sheared;
+        t.prescaled = true;
+        t
+    }
+
+    fn set_prescaled(&mut self) {
+        self.prescaled = true;
+        if let Some(s) = self.shell_dlg.as_mut() {
+            s.set_prescaled();
         }
     }
 
@@ -468,6 +508,9 @@ impl TextRenderer {
                 };
                 let mut t = TextRenderer::load(&cfg);
                 t.sheared = !t.regular.as_ref().is_some_and(|f| f.italic);
+                if self.prescaled {
+                    t.set_prescaled();
+                }
                 t.regular.is_some().then(|| Box::new(t))
             })
             .as_deref()
@@ -623,8 +666,8 @@ impl TextRenderer {
         let (face, strike) = self.source(bold, size_px)?;
         let index = face.get_char_index(ch as usize);
         // A char the UI face lacks comes from a fallback face: a bitmap face in mono when
-        // `antialias` is off, a strike fits and the canvas is at scale 1, else an outline face
-        // smoothed (an outline CJK face in mono ink at 11 px loses its strokes).
+        // `antialias` is off, a strike fits and the text is drawn at scale 1, else an outline
+        // face smoothed (an outline CJK face in mono ink at 11 px loses its strokes).
         let fallback = match index {
             Some(_) => None,
             None => {
@@ -684,7 +727,7 @@ impl TextRenderer {
     /// The face that draws `ch`, which the UI face lacks: the block's previous face if it has it,
     /// else the one fontconfig names (bitmap or outline per `bitmap`). `None` when no face has it.
     fn fallback_face(&self, ch: char, bold: bool, bitmap: bool) -> Option<Face> {
-        if bitmap && self.antialias {
+        if bitmap && (self.antialias || self.prescaled) {
             return None;
         }
         self.face(bold)?;
@@ -1592,6 +1635,87 @@ mod tests {
             "the glyph inks at scale 2"
         );
         assert!(!is_mono(&two), "smoothed outline at scale 2");
+    }
+
+    /// A BDF face with one strike at `px` whose only glyph, 中, is a solid `px` x `px` block.
+    fn block_strike_face(px: u32) -> (PathBuf, Face) {
+        let row = format!("{:06X}", ((1u32 << px) - 1) << (24 - px));
+        let rows = vec![row; px as usize].join("\n");
+        let bdf = format!(
+            "STARTFONT 2.1\nFONT -reprise-block-medium-r-normal--{px}-{d}-75-75-c-{d}-iso10646-1\n\
+             SIZE {px} 75 75\nFONTBOUNDINGBOX {px} {px} 0 -2\nSTARTPROPERTIES 5\nPIXEL_SIZE {px}\n\
+             FONT_ASCENT {a}\nFONT_DESCENT 2\nCHARSET_REGISTRY \"ISO10646\"\nCHARSET_ENCODING \"1\"\n\
+             ENDPROPERTIES\nCHARS 1\nSTARTCHAR U+4E2D\nENCODING 20013\nSWIDTH 1000 0\n\
+             DWIDTH {px} 0\nBBX {px} {px} 0 -2\nBITMAP\n{rows}\nENDCHAR\nENDFONT\n",
+            d = px * 10,
+            a = px - 2,
+        );
+        let path =
+            std::env::temp_dir().join(format!("reprise-block-{px}-{}.bdf", std::process::id()));
+        std::fs::write(&path, bdf).expect("write the BDF");
+        let face = Library::init()
+            .expect("FreeType")
+            .new_face(&path, 0)
+            .expect("FreeType opens the BDF");
+        (path, face)
+    }
+
+    #[test]
+    fn a_bitmap_strike_at_the_device_size_draws_only_for_an_output_at_scale_1() {
+        let r = TextRenderer::load(&FontConfig {
+            antialias: false,
+            ..FontConfig::default()
+        });
+        if r.face(false)
+            .is_none_or(|f| f.get_char_index('中' as usize).is_some())
+        {
+            return;
+        }
+        let (path, face) = block_strike_face(22);
+        let at_2 = r.for_output(2);
+        for t in [&r, at_2] {
+            t.fallback_mono.borrow_mut().pick(
+                '中',
+                false,
+                |f: &Face, c| f.get_char_index(c as usize).is_some(),
+                |_, _| Some((path.clone(), 0)),
+                |_| Some(face.clone()),
+            );
+        }
+        let draw = |t: &TextRenderer| {
+            let mut c = Canvas::new(40, 30);
+            let white = Color::rgb(255, 255, 255);
+            t.draw(
+                &mut c,
+                Rect::new(0, 0, 40, 30),
+                "中",
+                false,
+                white,
+                Align::Left,
+                22,
+            );
+            c
+        };
+        let lit = |c: &Canvas| c.pixels.iter().filter(|&&p| p == 0xFFFF_FFFF).count();
+        let (one, two) = (draw(&r), draw(at_2));
+        std::fs::remove_file(&path).ok();
+        assert_eq!(
+            lit(&one),
+            22 * 22,
+            "the 22 px strike's block at output scale 1"
+        );
+        assert!(
+            two.pixels.iter().any(|&p| p != 0),
+            "the glyph inks at output scale 2"
+        );
+        assert_ne!(lit(&two), 22 * 22, "no strike block at output scale 2");
+        if crate::fontfallback::fontconfig_face_for('中', false, false).is_some() {
+            assert!(
+                two.pixels.iter().any(|&p| p != 0 && p != 0xFFFF_FFFF),
+                "smoothed outline at output scale 2"
+            );
+        }
+        assert!(std::ptr::eq(r.for_output(1), &r), "itself at scale 1");
     }
 
     #[test]

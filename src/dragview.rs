@@ -634,7 +634,7 @@ impl State {
             });
             let one = desktop::draw_cell(
                 &theme,
-                &self.text,
+                self.text.for_output(scale),
                 name,
                 icon.as_deref(),
                 *shortcut,

@@ -56,7 +56,7 @@ pub fn show(state: &mut State, names: &[String]) {
         }
         let scale = state.draw_scale_at(Some(&out)).max(1);
         let theme = state.config.theme.scaled(scale);
-        let canvas = arrange::draw_badge(&theme, &state.text, k as u32 + 1);
+        let canvas = arrange::draw_badge(&theme, state.text.for_output(theme.scale), k as u32 + 1);
         let m = panel::margin(&state.config.theme);
         let at = badge_origin(b);
         let pane = match state.config.theme.glass() {

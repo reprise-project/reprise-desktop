@@ -163,7 +163,7 @@ fn redraw(state: &mut State) {
     };
     let scale = state.draw_scale_at(Some(&v.output)).max(1);
     let theme = state.config.theme.scaled(scale);
-    let canvas = displaypanel::draw(&theme, &state.text, &v.model);
+    let canvas = displaypanel::draw(&theme, state.text.for_output(theme.scale), &v.model);
     let size = layout_of(state, &v.model).size;
     let pane = glass::flyout_glass(&state.config, size);
     let Some(v) = state.displays_view.view.as_mut() else {

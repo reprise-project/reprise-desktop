@@ -305,7 +305,13 @@ impl State {
             return;
         };
         let theme = config.theme.scaled(v.scale);
-        let mut canvas = cliphistory::draw(&theme, text, &v.model, caret.on, preedit.as_ref());
+        let mut canvas = cliphistory::draw(
+            &theme,
+            text.for_output(theme.scale),
+            &v.model,
+            caret.on,
+            preedit.as_ref(),
+        );
         let size = panel_size(&v.model, &config.theme);
         let pane = glass::flyout_glass(config, size);
         let Some(v) = panels.clipview.as_mut() else {

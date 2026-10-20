@@ -842,7 +842,7 @@ impl State {
             interfaces::draw_snap_assist(
                 &mut canvas,
                 &theme,
-                &self.text,
+                self.text.for_output(theme.scale),
                 &layout,
                 &cells,
                 lit,
@@ -852,7 +852,7 @@ impl State {
             interfaces::draw_overview(
                 &mut canvas,
                 &theme,
-                &self.text,
+                self.text.for_output(theme.scale),
                 &layout,
                 &cells,
                 selected,

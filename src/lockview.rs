@@ -607,7 +607,13 @@ fn redraw_output(state: &mut State, output: &Output) {
         return;
     };
     let dialog = lo.dialog;
-    let canvas = lock::draw_dialog(&theme, &state.text, icon.as_deref(), &l.user, &l.state);
+    let canvas = lock::draw_dialog(
+        &theme,
+        state.text.for_output(theme.scale),
+        icon.as_deref(),
+        &l.user,
+        &l.state,
+    );
     let shown = l.dialog_shown();
     let (w, h) = logical.size;
     let x = b.x + (b.width - w) / 2;

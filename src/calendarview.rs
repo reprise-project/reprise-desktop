@@ -280,7 +280,8 @@ fn redraw(state: &mut State) {
     };
     let scale = state.draw_scale_at(Some(&v.output)).max(1);
     let theme = state.config.theme.scaled(scale);
-    let base = calendar::draw_popup_base(&theme, &state.text, &v.model, v.hot);
+    let base =
+        calendar::draw_popup_base(&theme, state.text.for_output(theme.scale), &v.model, v.hot);
     let mut shown = base.clone();
     if let Some(now) = v.model.now {
         calendar::draw_popup_clock(&theme, &mut shown, &base, now);

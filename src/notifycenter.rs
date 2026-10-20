@@ -148,7 +148,7 @@ fn redraw(state: &mut State) {
         return;
     };
     let theme = state.config.theme.scaled(v.scale);
-    let canvas = notifyhistory::draw(&theme, &state.text, &v.model);
+    let canvas = notifyhistory::draw(&theme, state.text.for_output(theme.scale), &v.model);
     let cm = state.config.theme.look.controls();
     let size = (notifyhistory::width(&cm), notifyhistory::layout(&cm).height);
     let pane = glass::flyout_glass(&state.config, size);

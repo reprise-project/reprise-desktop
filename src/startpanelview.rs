@@ -1766,7 +1766,7 @@ impl State {
                     &mut canvas,
                     &theme,
                     &self.config.glass,
-                    &self.start_panel_text,
+                    self.start_panel_text.for_output(scale),
                     &v.model,
                     &sl,
                     v.pressed,
@@ -2837,8 +2837,8 @@ mod tests {
                 reprisekit::look::draw_taskbar(
                     &mut want,
                     &theme,
-                    &s.text,
-                    &s.start_text,
+                    s.text.for_output(theme.scale),
+                    s.start_text.for_output(theme.scale),
                     &d.layout,
                     &d.state,
                 );

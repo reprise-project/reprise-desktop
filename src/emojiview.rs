@@ -298,8 +298,14 @@ impl State {
         };
         let theme = config.theme.scaled(v.scale);
         let font = panels.emoji.font();
-        let mut canvas =
-            emojipicker::draw(&theme, text, font, &v.model, caret.on, preedit.as_ref());
+        let mut canvas = emojipicker::draw(
+            &theme,
+            text.for_output(theme.scale),
+            font,
+            &v.model,
+            caret.on,
+            preedit.as_ref(),
+        );
         let cm = config.theme.look.controls();
         let size = (emojipicker::width(&cm), emojipicker::layout(&cm).height);
         let pane = glass::flyout_glass(config, size);

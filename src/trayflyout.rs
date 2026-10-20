@@ -214,7 +214,7 @@ fn redraw(state: &mut State) {
     };
     let canvas = trayflyout::draw(
         &theme,
-        &state.text,
+        state.text.for_output(scale),
         &v.layout.scaled(scale),
         &icons,
         v.link_hot,

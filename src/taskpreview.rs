@@ -356,7 +356,14 @@ fn redraw(state: &mut State) {
         .collect();
     let area = layout.canvas();
     let mut canvas = Canvas::new(area.width.max(1) as u32, area.height.max(1) as u32);
-    interfaces::draw_task_preview(&mut canvas, &theme, &state.text, &layout, &cells, hot);
+    interfaces::draw_task_preview(
+        &mut canvas,
+        &theme,
+        state.text.for_output(theme.scale),
+        &layout,
+        &cells,
+        hot,
+    );
     upload_scaled(&mut state.scene, buffer, &canvas, scale);
     state.redraw_all();
     crate::access::touch(state);

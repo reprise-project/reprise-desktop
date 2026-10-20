@@ -305,10 +305,10 @@ fn show_tip(state: &mut State, target: Target, tip: &Tip, output: &Output, curso
             } else {
                 place(cursor, size, screen, below)
             };
-            (draw_tip(&theme, text, label), at)
+            (draw_tip(&theme, text.for_output(theme.scale), label), at)
         }
         Tip::Balloon { title, body } => (
-            draw_balloon_tip(&theme, text, title, body),
+            draw_balloon_tip(&theme, text.for_output(theme.scale), title, body),
             place_balloon(cursor, balloon_size(text, base, title, body), screen),
         ),
         Tip::Info(body) => {
@@ -325,14 +325,14 @@ fn show_tip(state: &mut State, target: Target, tip: &Tip, output: &Output, curso
                 _ => (cursor.0, cursor.1 + INFO_BELOW_POINTER),
             };
             (
-                draw_info_tip(&theme, text, body),
+                draw_info_tip(&theme, text.for_output(theme.scale), body),
                 place_below(anchor, info_size(text, base, body), screen),
             )
         }
         Tip::Icon(lines) => {
             use reprisekit::controls::infotip;
             (
-                infotip::draw(&theme, text, lines, scale),
+                infotip::draw(&theme, text.for_output(theme.scale), lines, scale),
                 infotip::place(cursor, infotip::size(text, base, lines), screen),
             )
         }

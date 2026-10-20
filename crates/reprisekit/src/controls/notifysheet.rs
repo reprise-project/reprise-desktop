@@ -849,7 +849,14 @@ pub fn build_warm(job: WarmJob, text: &TextRenderer) -> WarmLayers {
         app: app.as_ref(),
         picture: picture.as_ref(),
     };
-    let layers = Layers::parts(key, &theme, text, &look, icons, None);
+    let layers = Layers::parts(
+        key,
+        &theme,
+        text.for_output(theme.scale),
+        &look,
+        icons,
+        None,
+    );
     let glass = layers
         .key
         .ends(lit)
