@@ -131,7 +131,20 @@ impl VkKeymap {
     }
 }
 
-impl TextInputActivation for State {}
+impl TextInputActivation for State {
+    /// With no keyboard focus Smithay deactivates the input method when any
+    /// client's last text input goes, under Reprise's own field too: the
+    /// field activates again on the next turn.
+    fn deactivated(&mut self) {
+        let unfocused = self
+            .seat
+            .get_keyboard()
+            .is_some_and(|k| k.current_focus().is_none());
+        if unfocused && self.ime.field.active() {
+            self.ime.field.forget();
+        }
+    }
+}
 
 impl VirtualKeyboardHandler for State {
     /// A key is routed as the seat's keys are (`State::route_key`), under
@@ -568,16 +581,6 @@ impl ObjectData<State> for TiPeek {
         self.inner
             .clone()
             .destroyed(handle, data, client_id, object_id);
-        // With no keyboard focus Smithay deactivates the input method when
-        // a client's last text input goes, under Reprise's own field too:
-        // the field activates again on the next turn.
-        let unfocused = data
-            .seat
-            .get_keyboard()
-            .is_some_and(|k| k.current_focus().is_none());
-        if unfocused && data.ime.field.active() {
-            data.ime.field.forget();
-        }
     }
 }
 
