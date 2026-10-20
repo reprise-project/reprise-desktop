@@ -338,6 +338,8 @@ pub struct Job {
     pub k_octets: i32,
     pub pages: i32,
     pub created: i64,
+    /// CUPS still holds the job's files, which Restart-Job needs.
+    pub preserved: bool,
 }
 
 impl Job {
@@ -359,7 +361,13 @@ impl Job {
                 .or_else(|| g.int("job-media-sheets-completed"))
                 .unwrap_or(0),
             created: g.int("time-at-creation").unwrap_or(0) as i64,
+            preserved: g.bool("job-preserved").unwrap_or(false),
         }
+    }
+
+    /// cupsd restarts a stopped job, or a finished one whose files it kept.
+    pub fn restartable(&self) -> bool {
+        self.state == JobState::Stopped || (self.state.done() && self.preserved)
     }
 
     pub fn status_word(&self) -> &'static str {
@@ -367,7 +375,7 @@ impl Job {
             JobState::Pending => "Waiting",
             JobState::Held => "Paused",
             JobState::Printing => "Printing",
-            JobState::Stopped => "Error",
+            JobState::Stopped => "Stopped",
             JobState::Canceled => "Deleting",
             JobState::Aborted => "Error",
             JobState::Completed => "Printed",
@@ -401,6 +409,9 @@ pub struct Snapshot {
     pub printers: Vec<Printer>,
     pub default: Option<String>,
     pub jobs: Vec<Job>,
+    /// Aborted jobs whose files CUPS still holds: they wait in the queue
+    /// window for a restart or a cancel.
+    pub aborted: Vec<Job>,
 }
 
 impl Snapshot {
@@ -410,6 +421,20 @@ impl Snapshot {
 
     pub fn jobs_of<'a>(&'a self, printer: &'a str) -> impl Iterator<Item = &'a Job> {
         self.jobs.iter().filter(move |j| j.printer == printer)
+    }
+
+    /// The documents a printer's queue window lists: its jobs and its
+    /// restartable aborted ones, oldest first.
+    pub fn queue_of(&self, printer: &str) -> Vec<Job> {
+        let mut out: Vec<Job> = self
+            .jobs
+            .iter()
+            .chain(&self.aborted)
+            .filter(|j| j.printer == printer)
+            .cloned()
+            .collect();
+        out.sort_by_key(|j| j.id);
+        out
     }
 }
 
@@ -428,7 +453,7 @@ const PRINTER_ATTRS: [&str; 12] = [
     "printer-type",
 ];
 
-const JOB_ATTRS: [&str; 9] = [
+const JOB_ATTRS: [&str; 10] = [
     "job-id",
     "job-printer-uri",
     "job-name",
@@ -438,13 +463,15 @@ const JOB_ATTRS: [&str; 9] = [
     "job-impressions",
     "job-media-sheets-completed",
     "time-at-creation",
+    "job-preserved",
 ];
 
-/// The printers, the default and the unfinished jobs. A cupsd that does
-/// not answer is a snapshot that says so.
+/// The printers, the default, the unfinished jobs and the restartable
+/// aborted ones. A cupsd that does not answer is a snapshot that says so.
 pub fn snapshot(c: &Client) -> Result<Snapshot> {
     let printers = printers(c)?;
     let jobs = jobs(c, None)?;
+    let aborted = aborted(c, None)?;
     let server_default = c
         .call(
             "/",
@@ -461,6 +488,7 @@ pub fn snapshot(c: &Client) -> Result<Snapshot> {
         printers,
         default,
         jobs,
+        aborted,
     })
 }
 
@@ -484,10 +512,22 @@ fn printers(c: &Client) -> Result<Vec<Printer>> {
 }
 
 pub fn jobs(c: &Client, printer: Option<&str>) -> Result<Vec<Job>> {
+    get_jobs(c, printer, "not-completed")
+}
+
+fn aborted(c: &Client, printer: Option<&str>) -> Result<Vec<Job>> {
+    let mut out = get_jobs(c, printer, "aborted")?;
+    out.retain(|j| j.state == JobState::Aborted && j.preserved);
+    Ok(out)
+}
+
+/// Get-Jobs for `which`, an RFC 8011 `which-jobs` keyword or one of CUPS's
+/// extensions such as `aborted`.
+fn get_jobs(c: &Client, printer: Option<&str>, which: &str) -> Result<Vec<Job>> {
     let uri = printer.map_or_else(|| "ipp://localhost/".to_string(), printer_uri);
     let req = Request::new(GET_JOBS)
         .op_attr("printer-uri", Value::uri(&uri))
-        .op_attr("which-jobs", Value::keyword("not-completed"))
+        .op_attr("which-jobs", Value::keyword(which))
         .requested(&JOB_ATTRS);
     match c.call("/", req) {
         Ok(r) => {
@@ -622,7 +662,9 @@ pub fn resume(c: &Client, name: &str) -> Result<()> {
 /// other people's jobs and has no cups-pk-helper cancels its own.
 pub fn cancel_all(c: &Client, name: &str) -> Result<()> {
     let all = c.admin(printer_op(c, CANCEL_JOBS, name), || {
-        cancel_calls(&jobs(c, Some(name)).unwrap_or_default())
+        let mut all = jobs(c, Some(name)).unwrap_or_default();
+        all.extend(aborted(c, Some(name)).unwrap_or_default());
+        cancel_calls(&all)
     });
     match all {
         Err(Error::NeedsHelper) => {
@@ -636,7 +678,7 @@ pub fn cancel_all(c: &Client, name: &str) -> Result<()> {
 
 fn cancel_calls(jobs: &[Job]) -> Vec<Call> {
     jobs.iter()
-        .map(|j| Call::JobCancelPurge(j.id, false))
+        .map(|j| Call::JobCancelPurge(j.id, j.state.done()))
         .collect()
 }
 
@@ -686,6 +728,9 @@ pub enum JobOp {
     Resume,
     Restart,
     Cancel,
+    /// Cancel-Job for a finished job: purges it with its files, the only
+    /// way cupsd lets it leave the history.
+    Remove,
 }
 
 pub fn job_op(c: &Client, id: i32, op: JobOp) -> Result<()> {
@@ -693,9 +738,12 @@ pub fn job_op(c: &Client, id: i32, op: JobOp) -> Result<()> {
         JobOp::Pause => HOLD_JOB,
         JobOp::Resume => RELEASE_JOB,
         JobOp::Restart => RESTART_JOB,
-        JobOp::Cancel => CANCEL_JOB,
+        JobOp::Cancel | JobOp::Remove => CANCEL_JOB,
     };
-    let req = Request::new(code).op_attr("job-uri", Value::uri(&job_uri(id)));
+    let mut req = Request::new(code).op_attr("job-uri", Value::uri(&job_uri(id)));
+    if op == JobOp::Remove {
+        req = req.op_attr("purge-job", Value::Bool(true));
+    }
     c.admin(c.call("/jobs/", req).map(drop), || vec![job_call(id, op)])
 }
 
@@ -707,6 +755,7 @@ fn job_call(id: i32, op: JobOp) -> Call {
         JobOp::Resume => Call::JobSetHoldUntil(id, "no-hold".into()),
         JobOp::Restart => Call::JobRestart(id),
         JobOp::Cancel => Call::JobCancelPurge(id, false),
+        JobOp::Remove => Call::JobCancelPurge(id, true),
     }
 }
 
@@ -2070,16 +2119,79 @@ mod tests {
         );
         assert_eq!(job_call(7, JobOp::Restart), Call::JobRestart(7));
         assert_eq!(job_call(7, JobOp::Cancel), Call::JobCancelPurge(7, false));
-        let jobs = [3, 9].map(|id| Job {
+        assert_eq!(job_call(7, JobOp::Remove), Call::JobCancelPurge(7, true));
+        let jobs = [(3, JobState::Pending), (9, JobState::Aborted)].map(|(id, state)| Job {
             id,
+            state,
             ..Job::default()
         });
         assert_eq!(
             cancel_calls(&jobs),
             [
                 Call::JobCancelPurge(3, false),
-                Call::JobCancelPurge(9, false)
-            ]
+                Call::JobCancelPurge(9, true)
+            ],
+            "a finished job is purged, the only way it leaves"
         );
+    }
+
+    #[test]
+    fn each_job_state_has_its_status_word_and_restart_needs_kept_files() {
+        let words = [
+            (3, JobState::Pending, "Waiting"),
+            (4, JobState::Held, "Paused"),
+            (5, JobState::Printing, "Printing"),
+            (6, JobState::Stopped, "Stopped"),
+            (7, JobState::Canceled, "Deleting"),
+            (8, JobState::Aborted, "Error"),
+            (9, JobState::Completed, "Printed"),
+        ];
+        for (code, state, word) in words {
+            let g = group(vec![
+                ("job-state", vec![Value::Enum(code)]),
+                ("job-preserved", vec![Value::Bool(true)]),
+            ]);
+            let j = Job::from_group(&g);
+            assert_eq!((j.state, j.status_word()), (state, word));
+            assert!(j.preserved);
+            let restartable = matches!(
+                state,
+                JobState::Stopped | JobState::Canceled | JobState::Aborted | JobState::Completed
+            );
+            assert_eq!(j.restartable(), restartable, "{state:?} with its files");
+            let gone = Job {
+                preserved: false,
+                ..j
+            };
+            assert_eq!(
+                gone.restartable(),
+                state == JobState::Stopped,
+                "{state:?} without its files"
+            );
+        }
+    }
+
+    #[test]
+    fn a_queue_lists_its_jobs_and_aborted_ones_by_number() {
+        let job = |id, printer: &str, state| Job {
+            id,
+            printer: printer.into(),
+            state,
+            ..Job::default()
+        };
+        let s = Snapshot {
+            jobs: vec![
+                job(5, "Laser", JobState::Pending),
+                job(6, "Inkjet", JobState::Held),
+            ],
+            aborted: vec![
+                job(2, "Laser", JobState::Aborted),
+                job(3, "Inkjet", JobState::Aborted),
+            ],
+            ..Snapshot::default()
+        };
+        let ids: Vec<i32> = s.queue_of("Laser").iter().map(|j| j.id).collect();
+        assert_eq!(ids, [2, 5]);
+        assert_eq!(s.jobs_of("Laser").count(), 1, "the folder counts live jobs");
     }
 }

@@ -121,6 +121,7 @@ mod tests {
                 job(2, "Office", "bob", JobState::Pending),
                 job(3, "Inkjet", "ann", JobState::Pending),
             ],
+            ..Default::default()
         }
     }
 

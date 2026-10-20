@@ -71,16 +71,26 @@ fn document_rows(j: Option<&Job>) -> Vec<(MenuItem, Option<Outcome>)> {
     let id = j.map_or(0, |j| j.id);
     let can_pause = matches!(state, Some(JobState::Pending | JobState::Printing));
     let can_resume = state == Some(JobState::Held);
-    let can_restart = matches!(state, Some(JobState::Stopped | JobState::Aborted));
+    let can_restart = j.is_some_and(Job::restartable);
     let live = j.is_some();
+    let cancel = j.map_or(JobOp::Cancel, cancel_op);
     let row =
         |label: &str, on: bool, op: JobOp| (item(label, on), on.then_some(Outcome::Job(id, op)));
     vec![
         row("&Pause", can_pause, JobOp::Pause),
         row("&Resume", can_resume, JobOp::Resume),
         row("Res&tart", can_restart, JobOp::Restart),
-        row("&Cancel", live, JobOp::Cancel),
+        row("&Cancel", live, cancel),
     ]
+}
+
+/// A finished job leaves the queue only when cupsd purges it.
+fn cancel_op(j: &Job) -> JobOp {
+    if j.state.done() {
+        JobOp::Remove
+    } else {
+        JobOp::Cancel
+    }
 }
 
 pub struct Queue {
@@ -146,7 +156,7 @@ impl Queue {
 
     pub fn refresh(&mut self, s: &Snapshot) {
         let keep = self.selected_job().map(|j| j.id);
-        self.jobs = s.jobs_of(&self.printer).cloned().collect();
+        self.jobs = s.queue_of(&self.printer);
         self.ids = self.jobs.iter().map(|j| j.id).collect();
         self.list.view.rows = self
             .jobs
@@ -378,7 +388,7 @@ impl Queue {
         }
         match k.sym {
             keysym::DELETE | keysym::KP_DELETE => match self.selected_job() {
-                Some(j) => Outcome::Job(j.id, JobOp::Cancel),
+                Some(j) => Outcome::Job(j.id, cancel_op(j)),
                 None => Outcome::None,
             },
             keysym::ESCAPE => Outcome::Close,
@@ -484,6 +494,7 @@ mod tests {
             k_octets: 12,
             pages: 3,
             created: 0,
+            preserved: false,
         }
     }
 
@@ -505,6 +516,7 @@ mod tests {
                 },
                 job(4, JobState::Stopped),
             ],
+            ..Default::default()
         }
     }
 
@@ -563,7 +575,43 @@ mod tests {
             on(&document_rows(Some(&job(4, JobState::Stopped)))),
             [false, false, true, true]
         );
+        let kept = Job {
+            preserved: true,
+            ..job(5, JobState::Aborted)
+        };
+        assert_eq!(on(&document_rows(Some(&kept))), [false, false, true, true]);
+        assert_eq!(
+            on(&document_rows(Some(&job(5, JobState::Aborted)))),
+            [false, false, false, true],
+            "an aborted job without its files cannot restart"
+        );
         assert_eq!(on(&document_rows(None)), [false, false, false, false]);
+    }
+
+    #[test]
+    fn an_aborted_document_is_listed_restarts_and_cancels_by_purging() {
+        let ctx = ctx();
+        let mut s = snap();
+        s.aborted = vec![Job {
+            preserved: true,
+            ..job(3, JobState::Aborted)
+        }];
+        let mut q = Queue::new("Laser");
+        q.refresh(&s);
+        assert_eq!(q.ids, [1, 2, 3, 4]);
+        assert_eq!(q.list.view.rows[2].cells[1], "Error");
+        assert_eq!(q.list.view.rows[3].cells[1], "Stopped");
+        assert_eq!(q.status, "4 documents in queue");
+        let (x, y) = row_point(&q, &ctx, 2);
+        q.press(one(x, y), BTN_LEFT, &s, &ctx);
+        assert_eq!(
+            q.chosen(DOCUMENT_MENU, 2, &s),
+            Outcome::Job(3, JobOp::Restart)
+        );
+        assert_eq!(
+            q.key(&key(keysym::DELETE), &s, &ctx),
+            Outcome::Job(3, JobOp::Remove)
+        );
     }
 
     #[test]
