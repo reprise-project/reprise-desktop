@@ -863,7 +863,7 @@ impl State {
         })
     }
 
-    /// A window or dialog opened (`map_window`, `open_dialog`): one the open
+    /// A window or dialog opened (`map_window`, `open_dialog`) or came to this desktop (`desktops_changed`): one the open
     /// stack lists but does not hold joins it before the desktop
     /// (`flip::insert_roll`), shown as its card.
     pub(crate) fn flip_join(&mut self) {
@@ -1036,5 +1036,24 @@ mod tests {
         crate::configwatch::reload(&mut h.state, wide);
         h.dispatch();
         assert!(stacked(&h).is_none(), "leaving Glass ends it");
+    }
+
+    #[test]
+    fn a_window_brought_to_this_desktop_joins_the_open_stack() {
+        let mut h = glass();
+        let mut c = h.connect();
+        h.map_toplevel(&mut c, "here", 300, 200);
+        let away = h.map_toplevel(&mut c, "away", 300, 200).id;
+        h.state.move_to_desktop(&[away], 2);
+        h.state.open_flip(crate::keys::MOD_LOGO);
+        let before = stacked(&h).expect("the stack is up");
+        assert!(!before.contains(&Entry::Window(away)));
+        h.state.set_desktop_count(1);
+        h.dispatch();
+        let after = stacked(&h).expect("still up");
+        assert!(
+            after.contains(&Entry::Window(away)),
+            "its card joins: {after:?}"
+        );
     }
 }

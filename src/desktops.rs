@@ -106,7 +106,7 @@ impl State {
         false
     }
 
-    /// Bring every window in line with the current desktop: a snapped window moved off its group's desktop leaves the group and a group on every desktop moves to the one shown, a mapped window's tree is enabled when it is on it and nothing up its owner chain is minimized. A window leaving the screen loses any move, held task button or window menu, and the focused one loses focus (the caller hands it on).
+    /// Bring every window in line with the current desktop: a snapped window moved off its group's desktop leaves the group and a group on every desktop moves to the one shown, a mapped window's tree is enabled when it is on it and nothing up its owner chain is minimized. A window leaving the screen loses any move, held task button or window menu, and the focused one loses focus (the caller hands it on); one arriving joins an open 3D switcher.
     pub fn desktops_changed(&mut self) {
         self.wm.snap.desktop = self.desktops.current;
         let desktops: Vec<(WindowId, Option<usize>)> = (self.windows.iter())
@@ -140,6 +140,7 @@ impl State {
             self.drop_window_focus();
         }
         crate::idle::inhibition_changed(self);
+        self.flip_join();
         self.overview_refresh();
         self.redraw_taskbars();
         self.redraw_all();
