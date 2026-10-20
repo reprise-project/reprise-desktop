@@ -319,6 +319,8 @@ pub struct Explorer {
     watch: Option<Watch>,
     /// Lists the place again once a link it listed unfollowed answers.
     relist: reprisefs::listing::Relist,
+    /// Lists the folder again when gvfs metadata (a folder icon Nautilus sets) changes in it.
+    gvfs: reprisefs::gvfsmeta::Changes,
     pub hover: Option<Hover>,
     pub tip: Option<Tip>,
     pub folder_tip: Option<(PathBuf, Vec<String>)>,
@@ -492,6 +494,10 @@ impl Explorer {
             relist: {
                 let wake = ctx.wake.clone();
                 reprisefs::listing::Relist::new(move || wake.wake())
+            },
+            gvfs: {
+                let wake = ctx.wake.clone();
+                reprisefs::gvfsmeta::Changes::new(move || wake.wake())
             },
             hover: None,
             tip: None,

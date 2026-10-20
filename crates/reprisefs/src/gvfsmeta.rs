@@ -1,9 +1,10 @@
 //! GNOME's per-file metadata (`gio set FILE metadata::KEY VALUE`), read from gvfsd-metadata's
 //! database in `$XDG_DATA_HOME/gvfs-metadata`: one tree file per mount, plus the journal of writes
-//! not yet folded into it. Files under `$HOME` live in the `home` tree, other files on the root
-//! mount in `root`; trees of other mounts are not read. Numbers in both files are big-endian.
+//! not yet folded into it. Files under `$HOME` live in the `home` tree, files on a drive udev
+//! names in its `uuid-...` or `label-...` tree, the rest in `root`. Numbers in both files are
+//! big-endian. Writes go through gvfsd-metadata on the session bus, which owns the files.
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
@@ -25,16 +26,77 @@ const FRESH: Duration = Duration::from_secs(1);
 /// Folder `dir`'s icon as Nautilus sets it: `metadata::custom-icon` (a `file://` URI) as a path,
 /// else `metadata::custom-icon-name` as a theme icon name.
 pub fn custom_icon(dir: &Path) -> Option<String> {
-    let data = std::env::var_os("XDG_DATA_HOME")
-        .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/share")))?;
-    let home = std::env::var_os("HOME").map(PathBuf::from);
-    custom_icon_in(dir, &data.join("gvfs-metadata"), home.as_deref())
+    custom_icon_in(dir, &db_dir()?, home().as_deref(), &drive_tree)
 }
 
+const ICON_KEYS: [&str; 2] = ["custom-icon", "custom-icon-name"];
+
+/// Clears the icon Nautilus set on folder `dir`, through gvfsd-metadata. Nothing is asked of the
+/// bus when none is set.
+pub fn unset_custom_icon(dir: &Path) -> zbus::Result<()> {
+    let Some((tree, path)) =
+        db_dir().and_then(|db| tree_of(dir, &db, home().as_deref(), &drive_tree))
+    else {
+        return Ok(());
+    };
+    let set: Vec<&str> = load(&tree)
+        .and_then(|db| {
+            let db = Db::parse(&db.0, db.1.as_deref())?;
+            Some(
+                (ICON_KEYS.into_iter())
+                    .filter(|k| db.lookup(&path, k).is_some())
+                    .collect(),
+            )
+        })
+        .unwrap_or_default();
+    if set.is_empty() {
+        return Ok(());
+    }
+    // An unset is a byte 0, as GIO sends `gio set -t unset`; both paths are NUL-terminated.
+    let data: HashMap<&str, zbus::zvariant::Value> = (set.into_iter())
+        .map(|k| (k, zbus::zvariant::Value::U8(0)))
+        .collect();
+    let mut tree_bytes = tree.as_os_str().as_bytes().to_vec();
+    tree_bytes.push(0);
+    let mut path_bytes = path;
+    path_bytes.push(0);
+    reprisebus::session()?.call_method(
+        Some(METADATA),
+        METADATA_PATH,
+        Some(METADATA),
+        "Set",
+        &(tree_bytes, path_bytes, data),
+    )?;
+    forget(&tree);
+    Ok(())
+}
+
+const METADATA: &str = "org.gtk.vfs.Metadata";
+const METADATA_PATH: &str = "/org/gtk/vfs/metadata";
+
+fn db_dir() -> Option<PathBuf> {
+    let data = std::env::var_os("XDG_DATA_HOME")
+        .map(PathBuf::from)
+        .or_else(|| home().map(|h| h.join(".local/share")))?;
+    Some(data.join("gvfs-metadata"))
+}
+
+fn home() -> Option<PathBuf> {
+    std::env::var_os("HOME").map(PathBuf::from)
+}
+
+/// The tree name and mount point of the drive `file` (on device `dev`) is on, for a drive udev
+/// names; see [`drive_tree`].
+type DriveTree<'a> = &'a dyn Fn(u64, &Path) -> Option<(String, PathBuf)>;
+
 /// [`custom_icon`] from the database in `db_dir`, `home` being the home tree's folder.
-fn custom_icon_in(dir: &Path, db_dir: &Path, home: Option<&Path>) -> Option<String> {
-    let (tree, path) = tree_of(dir, db_dir, home)?;
+fn custom_icon_in(
+    dir: &Path,
+    db_dir: &Path,
+    home: Option<&Path>,
+    drive: DriveTree,
+) -> Option<String> {
+    let (tree, path) = tree_of(dir, db_dir, home, drive)?;
     let db = load(&tree)?;
     let db = Db::parse(&db.0, db.1.as_deref())?;
     if let Some(uri) = db.lookup(&path, "custom-icon") {
@@ -42,6 +104,97 @@ fn custom_icon_in(dir: &Path, db_dir: &Path, home: Option<&Path>) -> Option<Stri
     }
     db.lookup(&path, "custom-icon-name")
         .filter(|n| !n.is_empty())
+}
+
+/// A process-wide ear for gvfsd-metadata's changes: [`Changes::take`] gives the files whose
+/// metadata changed since the last take. The first one starts a thread on the session bus that
+/// lives as long as the process; dropping a `Changes` stops its calls.
+pub struct Changes(Arc<Listener>);
+
+struct Listener {
+    changed: Mutex<BTreeSet<PathBuf>>,
+    wake: Box<dyn Fn() + Send + Sync>,
+}
+
+static LISTENERS: Mutex<Vec<std::sync::Weak<Listener>>> = Mutex::new(Vec::new());
+
+impl Changes {
+    /// `wake` runs on the bus thread, so it only wakes the host's loop.
+    pub fn new(wake: impl Fn() + Send + Sync + 'static) -> Changes {
+        static STARTED: std::sync::Once = std::sync::Once::new();
+        let l = Arc::new(Listener {
+            changed: Mutex::default(),
+            wake: Box::new(wake),
+        });
+        let mut all = LISTENERS.lock().unwrap_or_else(|e| e.into_inner());
+        all.retain(|w| w.strong_count() > 0);
+        all.push(Arc::downgrade(&l));
+        drop(all);
+        STARTED.call_once(|| {
+            let spawned = std::thread::Builder::new()
+                .name("gvfs-metadata".into())
+                .spawn(|| {
+                    if let Err(e) = listen() {
+                        log::info!("gvfs metadata changes: {e}");
+                    }
+                });
+            if let Err(e) = spawned {
+                log::warn!("gvfs metadata changes: {e}");
+            }
+        });
+        Changes(l)
+    }
+
+    pub fn take(&self) -> BTreeSet<PathBuf> {
+        std::mem::take(&mut self.0.changed.lock().unwrap_or_else(|e| e.into_inner()))
+    }
+}
+
+/// Hands each `AttributeChanged` gvfsd-metadata sends to the [`Changes`].
+fn listen() -> zbus::Result<()> {
+    let conn = reprisebus::session()?;
+    let rule = zbus::MatchRule::builder()
+        .msg_type(zbus::message::Type::Signal)
+        .interface(METADATA)?
+        .member("AttributeChanged")?
+        .build();
+    for m in zbus::blocking::MessageIterator::for_match_rule(rule, &conn, None)? {
+        let Ok((tree, path)) = m?.body().deserialize::<(String, String)>() else {
+            continue;
+        };
+        let tree = PathBuf::from(tree);
+        forget(&tree);
+        let Some(file) = file_of(&tree, &path, home().as_deref(), &drive_mount) else {
+            continue;
+        };
+        let live: Vec<Arc<Listener>> = (LISTENERS.lock().unwrap_or_else(|e| e.into_inner()))
+            .iter()
+            .filter_map(std::sync::Weak::upgrade)
+            .collect();
+        for l in live {
+            let mut changed = l.changed.lock().unwrap_or_else(|e| e.into_inner());
+            changed.insert(file.clone());
+            drop(changed);
+            (l.wake)();
+        }
+    }
+    Ok(())
+}
+
+/// The file `path` names in tree file `tree`; `mount` finds the mount point of a drive tree
+/// (`uuid-...`, `label-...`).
+fn file_of(
+    tree: &Path,
+    path: &str,
+    home: Option<&Path>,
+    mount: &dyn Fn(&str) -> Option<PathBuf>,
+) -> Option<PathBuf> {
+    let rel = path.trim_start_matches('/');
+    match tree.file_name()?.to_str()? {
+        "home" => Some(home?.join(rel)),
+        "root" => Some(Path::new("/").join(rel)),
+        name => Some(mount(name)?.join(rel)),
+    }
 }
 
 /// The path a `file://` URI names, when it is UTF-8.
@@ -54,29 +207,110 @@ fn file_path(uri: &str) -> Option<String> {
 
 /// The tree in `db_dir` holding `file`, and `file`'s path in it. The home tree holds only files on
 /// home's own file system: one mounted under it keeps its own tree, as gvfsd-metadata files it.
-fn tree_of(file: &Path, db_dir: &Path, home: Option<&Path>) -> Option<(PathBuf, Vec<u8>)> {
+/// A drive udev names (`drive`) has its tree, by its mount point, once gvfsd-metadata made one;
+/// everything else is in `root` by its full path.
+fn tree_of(
+    file: &Path,
+    db_dir: &Path,
+    home: Option<&Path>,
+    drive: DriveTree,
+) -> Option<(PathBuf, Vec<u8>)> {
     let file = std::fs::canonicalize(file).ok()?;
     let home = home.and_then(|h| std::fs::canonicalize(h).ok());
     let dev = |p: &Path| std::fs::metadata(p).ok().map(|m| m.dev());
     let file_dev = dev(&file)?;
+    let rooted = |rel: &Path| {
+        let mut path = b"/".to_vec();
+        path.extend_from_slice(rel.as_os_str().as_bytes());
+        path
+    };
     if let Some(h) = home.as_deref()
         && let Ok(rel) = file.strip_prefix(h)
         && dev(h) == Some(file_dev)
     {
-        let mut path = b"/".to_vec();
-        path.extend_from_slice(rel.as_os_str().as_bytes());
-        return Some((db_dir.join("home"), path));
+        return Some((db_dir.join("home"), rooted(rel)));
     }
-    (file_dev == dev(Path::new("/"))?)
-        .then(|| (db_dir.join("root"), file.as_os_str().as_bytes().to_vec()))
+    if let Some((name, mount)) = drive(file_dev, &file)
+        && let Ok(rel) = file.strip_prefix(&mount)
+        && db_dir.join(&name).is_file()
+    {
+        return Some((db_dir.join(name), rooted(rel)));
+    }
+    Some((db_dir.join("root"), file.as_os_str().as_bytes().to_vec()))
+}
+
+/// The tree gvfsd-metadata files device `dev`'s files in, `uuid-` or `label-` and the name udev
+/// gives the file system in `/dev/disk`, and the mount point `file` is under. None for a device
+/// udev does not know (a btrfs subvolume, tmpfs, FUSE).
+fn drive_tree(dev: u64, file: &Path) -> Option<(String, PathBuf)> {
+    if libc::major(dev) == 0 {
+        return None;
+    }
+    let name = disk_name(Path::new("/dev/disk/by-uuid"), dev)
+        .map(|n| format!("uuid-{n}"))
+        .or_else(|| {
+            disk_name(Path::new("/dev/disk/by-label"), dev).map(|n| format!("label-{n}"))
+        })?;
+    let mountinfo = std::fs::read("/proc/self/mountinfo").ok()?;
+    Some((name, mount_point(&mountinfo, dev, file)?))
+}
+
+/// The mount point of drive tree `name` ([`drive_tree`]).
+fn drive_mount(name: &str) -> Option<PathBuf> {
+    let link = match name.split_once('-')? {
+        ("uuid", n) => Path::new("/dev/disk/by-uuid").join(n),
+        ("label", n) => Path::new("/dev/disk/by-label").join(n),
+        _ => return None,
+    };
+    let dev = std::fs::metadata(link).ok()?.rdev();
+    let mountinfo = std::fs::read("/proc/self/mountinfo").ok()?;
+    mount_points(&mountinfo, dev).min_by_key(|m| m.as_os_str().len())
+}
+
+/// The entry of udev's `/dev/disk/by-*` folder `dir` naming block device `dev`.
+fn disk_name(dir: &Path, dev: u64) -> Option<String> {
+    std::fs::read_dir(dir)
+        .ok()?
+        .flatten()
+        .find(|e| std::fs::metadata(e.path()).is_ok_and(|m| m.rdev() == dev))?
+        .file_name()
+        .into_string()
+        .ok()
+}
+
+/// The longest mount point of device `dev` in `mountinfo` (`/proc/self/mountinfo`) that `file`
+/// is under.
+fn mount_point(mountinfo: &[u8], dev: u64, file: &Path) -> Option<PathBuf> {
+    mount_points(mountinfo, dev)
+        .filter(|m| file.starts_with(m))
+        .max_by_key(|m| m.as_os_str().len())
+}
+
+/// Each mount point of device `dev` in `mountinfo`.
+fn mount_points(mountinfo: &[u8], dev: u64) -> impl Iterator<Item = PathBuf> + '_ {
+    let want = format!("{}:{}", libc::major(dev), libc::minor(dev));
+    mountinfo.split(|&b| b == b'\n').filter_map(move |line| {
+        let mut fields = line.split(|&b| b == b' ');
+        let numbers = fields.nth(2)?;
+        let mount = fields.nth(1)?;
+        (numbers == want.as_bytes()).then(|| crate::places::mount_path(mount))
+    })
 }
 
 type Loaded = Arc<(Vec<u8>, Option<Vec<u8>>)>;
 type Cache = HashMap<PathBuf, (Instant, Option<Loaded>)>;
 
+static CACHE: Mutex<Option<Cache>> = Mutex::new(None);
+
+/// Drops tree `tree`'s read, so the next lookup reads it again.
+fn forget(tree: &Path) {
+    if let Some(cache) = CACHE.lock().unwrap_or_else(|e| e.into_inner()).as_mut() {
+        cache.remove(tree);
+    }
+}
+
 /// Tree file `tree` and its journal, read again once [`FRESH`] has passed.
 fn load(tree: &Path) -> Option<Loaded> {
-    static CACHE: Mutex<Option<Cache>> = Mutex::new(None);
     let mut cache = CACHE.lock().unwrap_or_else(|e| e.into_inner());
     let cache = cache.get_or_insert_with(HashMap::new);
     if let Some((at, db)) = cache.get(tree)
@@ -436,7 +670,7 @@ mod tests {
         std::fs::write(db.path().join("home"), tree()).expect("tree");
         let dir = home.path().join("gvfs-probe/a");
         assert_eq!(
-            custom_icon_in(&dir, db.path(), Some(home.path())).as_deref(),
+            custom_icon_in(&dir, db.path(), Some(home.path()), &no_drive).as_deref(),
             Some("/usr/share/pixmaps/x y.png")
         );
 
@@ -446,28 +680,94 @@ mod tests {
         std::fs::write(other.path().join("home"), tree()).expect("tree");
         std::fs::write(other.path().join("home-256f3361.log"), j).expect("journal");
         assert_eq!(
-            custom_icon_in(&dir, other.path(), Some(home.path())).as_deref(),
+            custom_icon_in(&dir, other.path(), Some(home.path()), &no_drive).as_deref(),
             Some("folder-music"),
             "the journal unset the file and set the name"
         );
         assert_eq!(
-            custom_icon_in(&dir, other.path(), None),
+            custom_icon_in(&dir, other.path(), None, &no_drive),
             None,
             "not on the root tree"
         );
     }
 
+    fn no_drive(_: u64, _: &Path) -> Option<(String, PathBuf)> {
+        None
+    }
+
     #[test]
     fn a_file_system_mounted_under_home_is_not_in_the_home_tree() {
         let db = Path::new("/srv/gvfs-metadata");
-        let (tree, path) = tree_of(Path::new("/proc"), db, Some(Path::new("/proc")))
+        let (tree, path) = tree_of(Path::new("/proc"), db, Some(Path::new("/proc")), &no_drive)
             .expect("home itself is in the home tree");
         assert_eq!((tree, path), (db.join("home"), b"/".to_vec()));
+        let (tree, path) =
+            tree_of(Path::new("/proc/self"), db, Some(Path::new("/")), &no_drive).expect("a tree");
         assert_eq!(
-            tree_of(Path::new("/proc/self"), db, Some(Path::new("/"))),
-            None,
+            tree,
+            db.join("root"),
             "/proc is its own file system under a home of /"
         );
+        assert!(path.starts_with(b"/proc/"), "by its full path");
+    }
+
+    #[test]
+    fn a_folder_on_a_named_drive_reads_its_tree_by_the_mount_point() {
+        let drive = tempfile::tempdir().expect("a temp dir");
+        let db = tempfile::tempdir().expect("a temp dir");
+        std::fs::create_dir_all(drive.path().join("gvfs-probe/a")).expect("mkdir");
+        let top = std::fs::canonicalize(drive.path()).expect("canonical");
+        let named = |_: u64, _: &Path| Some(("uuid-0EE3-8076".to_string(), top.clone()));
+        let dir = drive.path().join("gvfs-probe/a");
+        assert_eq!(
+            custom_icon_in(&dir, db.path(), None, &named),
+            None,
+            "no tree for the drive yet: the root tree, which has none"
+        );
+        std::fs::write(db.path().join("uuid-0EE3-8076"), tree()).expect("tree");
+        assert_eq!(
+            custom_icon_in(&dir, db.path(), None, &named).as_deref(),
+            Some("/usr/share/pixmaps/x y.png")
+        );
+    }
+
+    #[test]
+    fn a_drives_mount_point_is_the_longest_of_its_device_the_file_is_under() {
+        let info = b"39 1 0:33 /@ / rw shared:1 - btrfs /dev/sda3 rw\n\
+            90 39 7:0 / /mnt/my\\040stick rw shared:2 - ext4 /dev/loop0 rw\n\
+            91 90 7:0 /sub /mnt/my\\040stick/sub rw shared:3 - ext4 /dev/loop0 rw\n\
+            92 39 7:1 / /mnt/card rw shared:4 - vfat /dev/loop1 rw\n";
+        let stick = libc::makedev(7, 0);
+        assert_eq!(
+            mount_point(info, stick, Path::new("/mnt/my stick/a")),
+            Some(PathBuf::from("/mnt/my stick"))
+        );
+        assert_eq!(
+            mount_point(info, stick, Path::new("/mnt/my stick/sub/b")),
+            Some(PathBuf::from("/mnt/my stick/sub"))
+        );
+        assert_eq!(mount_point(info, stick, Path::new("/mnt/card/a")), None);
+        assert_eq!(
+            mount_points(info, stick).min_by_key(|m| m.as_os_str().len()),
+            Some(PathBuf::from("/mnt/my stick")),
+            "a changed drive tree names its top mount"
+        );
+    }
+
+    #[test]
+    fn a_changed_tree_path_names_the_file_on_its_mount() {
+        let home = Path::new("/home/u");
+        let mount = |n: &str| (n == "uuid-0EE3-8076").then(|| PathBuf::from("/run/media/u/CARD"));
+        let at = |tree: &str, path: &str| {
+            file_of(&Path::new("/db").join(tree), path, Some(home), &mount)
+        };
+        assert_eq!(at("home", "/gvhome"), Some(PathBuf::from("/home/u/gvhome")));
+        assert_eq!(at("root", "/srv/gvf"), Some(PathBuf::from("/srv/gvf")));
+        assert_eq!(
+            at("uuid-0EE3-8076", "/fold"),
+            Some(PathBuf::from("/run/media/u/CARD/fold"))
+        );
+        assert_eq!(at("uuid-gone", "/fold"), None, "a drive no longer mounted");
     }
 
     #[test]

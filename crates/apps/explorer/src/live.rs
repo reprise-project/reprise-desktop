@@ -166,8 +166,12 @@ impl Explorer {
             return put.unwrap_or_default().and(r);
         }
         let due = self.relist.take();
+        let metadata = self.gvfs.take();
+        let shown = || self.place.path();
         if self.watch.as_mut().is_some_and(|w| w.take_changed())
-            || (!due.is_empty() && self.place.path().is_some_and(|p| due.contains(&p)))
+            || (!due.is_empty() && shown().is_some_and(|p| due.contains(&p)))
+            || (!metadata.is_empty()
+                && shown().is_some_and(|p| metadata.iter().any(|f| f.parent() == Some(&p))))
         {
             let r = self.refresh(ctx);
             return put.unwrap_or_default().and(r);
