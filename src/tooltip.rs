@@ -253,6 +253,9 @@ fn fired(state: &mut State) {
     let Some((target, tip)) = state.tooltip.pending.take() else {
         return;
     };
+    if !state.menus.is_empty() && !matches!(target, Target::Menu { .. } | Target::StartPanel(_)) {
+        return;
+    }
     let cursor = state.pointer_location();
     let output = match target {
         Target::Taskbar { bar, .. } => state.bar(bar).map(|b| b.output.clone()),
@@ -498,6 +501,23 @@ mod tests {
         );
         assert!(!v.holds_back(icon), "another target gets its tip");
         assert!(!v.holds_back(arrow), "and the pressed one again after that");
+    }
+
+    #[test]
+    fn an_open_menu_keeps_the_desktop_icons_tip_down() {
+        let mut h = crate::harness::Harness::new();
+        h.output("TEST-1", 1024, 768);
+        h.pointer_to(40.0, 40.0);
+        h.state.open_desktop_menu((60, 40));
+        assert!(!h.state.menus.is_empty());
+        rest_on(&mut h.state, Target::Desktop(0), |_| {
+            Some(Tip::Icon(vec!["Recycle Bin".into()]))
+        });
+        h.run_for(u64::from(SHOW_MS) + 200);
+        assert!(
+            h.state.tooltip.shown.is_none(),
+            "only the open menu's rows tip"
+        );
     }
 
     #[test]
