@@ -409,7 +409,7 @@ impl State {
     }
 
     fn apply_outputs(&mut self, old: &crate::config::Config, warm: bool) -> bool {
-        if !crate::backend::quiet(self) {
+        if !crate::backend::modes_settle(self) {
             crate::backend::defer_output_config(self, old);
             return false;
         }
