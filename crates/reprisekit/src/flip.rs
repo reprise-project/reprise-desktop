@@ -246,15 +246,19 @@ pub fn insert(pos: f64, n: usize, i: usize) -> f64 {
 
 /// [`insert`] for a roll under way from `pos` toward `to`, which brings
 /// entry `to` (wrapped) to the front: where it stands now, and where it
-/// heads, about as many steps on as before, at that same entry.
-pub fn insert_roll(pos: f64, to: f64, n: usize, i: usize) -> (f64, f64) {
+/// heads, about as many steps on as before, at that same entry. With
+/// `follow`, a roll forward onto entry `i` ends on the joining entry
+/// instead, which comes in at that entry's place; past it, the roll
+/// would take a step more.
+pub fn insert_roll(pos: f64, to: f64, n: usize, i: usize, follow: bool) -> (f64, f64) {
     let now = insert(pos, n, i);
     if n == 0 {
         return (now, now);
     }
     let m = (n + 1) as f64;
     let target = to.round().rem_euclid(n as f64);
-    let end = if target < i as f64 {
+    let onto = follow && to > pos && target == i as f64;
+    let end = if target < i as f64 || onto {
         target
     } else {
         target + 1.0
@@ -792,9 +796,19 @@ mod tests {
 
     #[test]
     fn a_roll_under_way_as_an_entry_joins_heads_on_to_the_same_entry() {
-        assert_eq!(insert_roll(0.0, 2.0, 4, 3), (0.0, 2.0));
-        assert_eq!(insert_roll(0.0, 2.0, 4, 1), (0.0, 3.0));
-        assert_eq!(insert_roll(3.0, 4.0, 4, 3), (4.0, 5.0));
+        assert_eq!(insert_roll(0.0, 2.0, 4, 3, true), (0.0, 2.0));
+        assert_eq!(insert_roll(0.0, 2.0, 4, 1, true), (0.0, 3.0));
+        assert_eq!(insert_roll(3.0, 4.0, 4, 3, true), (4.0, 5.0));
+    }
+
+    #[test]
+    fn a_roll_onto_the_joining_place_ends_on_the_joining_entry() {
+        assert_eq!(insert_roll(2.5, 3.0, 4, 3, true), (2.5, 3.0));
+        assert_eq!(insert_roll(0.5, 3.0, 4, 3, true), (0.5, 3.0));
+        assert_eq!(insert_roll(3.5, 7.0, 4, 3, true), (4.5, 8.0));
+        assert_eq!(insert_roll(2.5, 3.0, 4, 3, false), (2.5, 4.0));
+        assert_eq!(insert_roll(3.5, 3.0, 4, 3, true), (4.5, 4.0));
+        assert_eq!(insert_roll(3.0, 3.0, 4, 3, true), (4.0, 4.0));
     }
 
     #[test]

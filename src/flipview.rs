@@ -951,18 +951,19 @@ fn logical(r: Rect) -> Rectangle<i32, Logical> {
 
 /// Put `entry` (`size`, lying at `flat`) into `st` at `now`, before the
 /// desktop: the position, the selection and the top entry move so every
-/// card keeps its place (`flip::insert_roll`).
+/// card keeps its place (`flip::insert_roll`). A step rolling onto the
+/// desktop ends on `entry`, which takes the selection; a pick does not.
 fn join_entry(st: &mut Stack, entry: Entry, size: (i32, i32), flat: Option<Rect>, now: Instant) {
     let n = st.entries.len();
     let i = (st.entries.iter())
         .position(|&e| e == Entry::Desktop)
         .unwrap_or(n);
-    let (at, to) = flip::insert_roll(st.roll.value(now), st.roll.target(), n, i);
+    let (at, to) = flip::insert_roll(st.roll.value(now), st.roll.target(), n, i, !st.pick);
     st.roll = Tween::at(at);
     if to != at {
         st.roll.retarget(to, now, ROLL_MS);
     }
-    if st.selected >= i {
+    if st.selected > i || (st.selected == i && to.rem_euclid((n + 1) as f64) != i as f64) {
         st.selected += 1;
     }
     if st.top >= i {
@@ -1003,6 +1004,8 @@ fn forget_entry(st: &mut Stack, entry: Entry, now: Instant) -> Option<Pic> {
 
 #[cfg(test)]
 mod tests {
+    use std::time::Instant;
+
     use crate::config::Config;
     use crate::harness::Harness;
     use crate::switcherview::Entry;
@@ -1036,6 +1039,31 @@ mod tests {
         crate::configwatch::reload(&mut h.state, wide);
         h.dispatch();
         assert!(stacked(&h).is_none(), "leaving Glass ends it");
+    }
+
+    #[test]
+    fn a_window_joining_as_a_step_rolls_onto_the_desktop_takes_the_step() {
+        let mut h = glass();
+        let mut c = h.connect();
+        h.map_toplevel(&mut c, "one", 300, 200);
+        h.map_toplevel(&mut c, "two", 300, 200);
+        h.state.open_flip(crate::keys::MOD_LOGO);
+        h.state.flip_reveal();
+        h.state.flip_step(false);
+        h.state.flip_step(false);
+        let st = h.state.switcher.stack.as_ref().expect("the stack is up");
+        assert_eq!(st.entries[st.selected], Entry::Desktop);
+        let from = st.roll.value(Instant::now());
+        let three = h.map_toplevel(&mut c, "three", 300, 200).id;
+        let st = h.state.switcher.stack.as_ref().expect("still up");
+        assert_eq!(st.entries.len(), 4);
+        assert_eq!(st.entries[st.selected], Entry::Window(three));
+        let to = st.roll.target();
+        assert_eq!(to.rem_euclid(4.0), st.selected as f64);
+        assert!(
+            to - from <= 2.0 + 1e-9,
+            "the roll ends on the new card, 2 steps from {from}: {to}"
+        );
     }
 
     #[test]
