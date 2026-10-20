@@ -1,4 +1,4 @@
-//! Where a key goes. An open menu owns the keyboard; otherwise the
+//! Where a key goes. An open menu or address list owns the keyboard; otherwise the
 //! window's accelerators answer first (they are [`Command`]s, and the
 //! table in [`crate::commands`] is the only place that says what a key
 //! means), then the menu bar's F10, Escape and Alt+letter access keys,
@@ -12,6 +12,7 @@ use crate::window::Popup;
 use crate::{Explorer, Focus};
 use repriseapp::{Ctx, KeyInput, Reply};
 use reprisekit::controls::addressbar;
+use reprisekit::controls::form;
 use reprisekit::controls::iconview::IconMove;
 use reprisekit::controls::menu::{MenuAction, MenuKey};
 use reprisekit::controls::menubar::{Action, Key};
@@ -55,6 +56,20 @@ impl Explorer {
             && let Some(reply) = self.bar_key(&k, ctx)
         {
             return reply;
+        }
+
+        // The address list's keys come ahead of the accelerators: open, it owns the keyboard
+        // as a menu does, and F4 or Alt+Down open it from the field.
+        if (self.focus == Focus::Address || self.address.combo.open.is_some())
+            && let Some(key) = form::special_key(k.sym, k.mods.shift, k.mods.alt)
+            && let Some(ev) = self.address.list_key(&key)
+        {
+            // The arrows filled the field with the rows they passed.
+            if key == form::Key::Escape {
+                let icon = ctx.icons.get(self.place.icon_name(), 16);
+                self.address.set_place(&self.place.address(), icon);
+            }
+            return self.address_event(ev, ctx);
         }
 
         // The accelerators, ahead of the bar's access keys: none of them
