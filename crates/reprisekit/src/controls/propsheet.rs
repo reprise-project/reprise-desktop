@@ -40,6 +40,7 @@
 use crate::access::{self, Tree, accesskit};
 use crate::classic::widgets::{BUTTON_H, BUTTON_W, BarHit, LINE_H, ScrollParts, bar_hit};
 use crate::controls::form::{self, Control, Form, Item};
+use crate::controls::hosted::{Hosted, Spot};
 use crate::controls::pagelist::{self, PageList};
 use crate::controls::scrollbar::PageScroll;
 use crate::controls::tabstrip::{self, TabStrip};
@@ -1420,6 +1421,37 @@ pub fn draw(
 pub fn draw_popups(c: &mut Canvas, text: &TextRenderer, p: &Paint, sheet: &PropSheet, px: u32) {
     let page = sheet.layout(text, px).page.scaled(p.s);
     form::draw_popups(c, text, &p.on_page(page), sheet.open(), px);
+}
+
+/// The open page's combo list.
+impl Hosted for PropSheet {
+    fn spots(&self) -> Vec<Spot> {
+        self.open().spots()
+    }
+    fn place(&mut self, level: usize, origin: (i32, i32)) {
+        self.open_mut().place(level, origin);
+    }
+    fn shadow(&self, theme: &crate::theme::Theme) -> i32 {
+        self.open().shadow(theme)
+    }
+    fn draw_level(
+        &self,
+        level: usize,
+        c: &mut Canvas,
+        by: (i32, i32),
+        theme: &crate::theme::Theme,
+        text: &TextRenderer,
+    ) {
+        self.open().draw_level(level, c, by, theme, text);
+    }
+    fn host(&mut self) {
+        for page in &mut self.pages {
+            page.host();
+        }
+    }
+    fn dismiss(&mut self) {
+        self.open_mut().dismiss();
+    }
 }
 
 impl PropSheet {
