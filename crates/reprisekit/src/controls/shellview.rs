@@ -1102,18 +1102,57 @@ pub(crate) fn draw_rename(
     label: Rect,
     px: u32,
 ) {
-    let Paint { s, .. } = *p;
     let Some((_, ed)) = sv.edit.as_ref().filter(|(j, _)| *j == i) else {
         return;
     };
-    let w = (text.measure(&ed.text, false, px) + listview::EDIT_PAD_L + listview::EDIT_PAD_R) * s;
-    let box_r = Rect::new(
+    let box_r = line_box(label, ed, text, px, p.text, p.s);
+    listview::draw_rename_box(c, text, p, ed, box_r, px);
+}
+
+/// The single-line rename box over `label` (both at scale `s`), sized to `ed`'s text.
+fn line_box(
+    label: Rect,
+    ed: &TextEdit,
+    text: &TextRenderer,
+    px: u32,
+    u: TextUnits,
+    s: i32,
+) -> Rect {
+    let w = text.measure(&ed.text, false, px) + listview::EDIT_PAD_L + listview::EDIT_PAD_R;
+    Rect::new(
         label.x - listview::EDIT_BACK * s,
         label.y - s,
-        w,
-        p.text.len(listview::EDIT_H) * s,
-    );
-    listview::draw_rename_box(c, text, p, ed, box_r, px);
+        w * s,
+        u.len(listview::EDIT_H) * s,
+    )
+}
+
+/// The rename box over entry `i`, border included, while `i` is being renamed: the field its
+/// edit menu and its presses own.
+pub fn rename_rect(
+    sv: &ShellView,
+    lay: &Layout,
+    i: usize,
+    text: &TextRenderer,
+    px: u32,
+) -> Option<Rect> {
+    let (_, ed) = sv.edit.as_ref().filter(|(j, _)| *j == i)?;
+    match sv.mode {
+        Mode::Details => Some(label_rect(sv, lay, i, text, px)),
+        Mode::Icons => {
+            let cell = *lay.cells.get(i)?;
+            let r = iconview::edit_layout_at(1, px, text, ed, cell.width).rect;
+            Some(Rect::new(cell.x + r.x, cell.y + r.y, r.width, r.height))
+        }
+        _ => Some(line_box(
+            label_rect(sv, lay, i, text, px),
+            ed,
+            text,
+            px,
+            lay.controls.text,
+            1,
+        )),
+    }
 }
 
 impl Hit {
@@ -1542,7 +1581,7 @@ pub fn access(
         if let Some((k, edit)) = &sv.edit
             && *k == i
         {
-            let r = label_rect(sv, lay, i, text, px);
+            let r = rename_rect(sv, lay, i, text, px).unwrap_or_default();
             focus = widgets::access_edit(edit, 0, false, r, true, text, px, tree, oid, "rename");
         }
     }
@@ -2398,6 +2437,42 @@ pub(crate) mod tests {
             ),
             None
         );
+    }
+
+    #[test]
+    fn the_rename_field_is_the_whole_box_in_every_mode() {
+        let (text, px) = rend();
+        let theme = Theme::default();
+        for mode in [
+            Mode::List,
+            Mode::Details,
+            Mode::Thumbnails,
+            Mode::Tiles,
+            Mode::Icons,
+        ] {
+            let mut sv = view(3);
+            sv.mode = mode;
+            sv.edit = Some((1, TextEdit::new("item1", true)));
+            let lay = layout(&sv, Rect::new(0, 0, 400, 300), &ControlMetrics::CLASSIC);
+            let mut c = Canvas::new(400, 300);
+            draw(
+                &mut c,
+                &text,
+                &classic_paint(&theme.colors, 1),
+                &sv,
+                &lay,
+                None,
+                px,
+            );
+            let spot = c.take_spot().expect("the rename box reports its field");
+            let b = rename_rect(&sv, &lay, 1, &text, px).expect("entry 1 renames");
+            assert_eq!(spot.field, b, "{mode:?}");
+            assert_eq!(
+                c.get(b.x, b.y + b.height / 2),
+                theme.colors.window_frame.argb(),
+                "{mode:?}: the box's left border"
+            );
+        }
     }
 
     /// Renaming in Details is the transient `ListView`'s own box, placed by `listview::ListView::edit_rect`.
