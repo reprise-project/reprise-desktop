@@ -597,6 +597,13 @@ pub fn leading(state: &State) -> usize {
     builtin::shown(state).iter().filter(|b| b.leads()).count()
 }
 
+/// The process owning the StatusNotifier item in bar `bar`'s tray cell `index`.
+pub fn item_pid(state: &State, bar: TreeId, index: usize) -> Option<i32> {
+    let revealed = state.bar(bar).map_or(0, |b| b.layout.tray_hidden);
+    let tray = state.tray.as_ref()?;
+    tray.item_at(revealed, leading(state), index)?.pid
+}
+
 pub fn cell_at(state: &State, bar: TreeId, index: usize) -> Cell {
     let revealed = state.bar(bar).map_or(0, |b| b.layout.tray_hidden);
     let items = state.tray.as_ref().map_or(0, |t| t.items.len());

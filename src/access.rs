@@ -595,7 +595,9 @@ fn act(state: &mut State, surface: Surface, req: Request) {
         Route::Act(t) => t,
         Route::None => return,
     };
-    let hit = uncover(state, surface, req.act, target.at);
+    let Some(hit) = uncover(state, surface, req.act, target.at) else {
+        return;
+    };
     if !lands_on(state, surface, &hit) {
         log::debug!("access: {req:?} on {surface:?} lands on {hit:?}; dropped");
         return;
@@ -636,8 +638,9 @@ fn act(state: &mut State, surface: Surface, req: Request) {
 
 /// What a reader's `act` at layout point `at` on `surface` lands on, once what covers it there
 /// is out of the way: a frame another window covers comes up, and a client's flyout closes on
-/// a click, where a user's click would only close it.
-fn uncover(state: &mut State, surface: Surface, act: Act, at: (f64, f64)) -> Hit {
+/// a click, where a user's click would only close it. None when the click is spent closing a
+/// flyout over its own tray icon, all a user's click there does.
+fn uncover(state: &mut State, surface: Surface, act: Act, at: (f64, f64)) -> Option<Hit> {
     let mut hit = state.scene_hit(Point::from(at));
     if let Surface::Frame(w) = surface
         && !lands_on(state, surface, &hit)
@@ -647,11 +650,22 @@ fn uncover(state: &mut State, surface: Surface, act: Act, at: (f64, f64)) -> Hit
     }
     if matches!(act, Act::Click | Act::ContextMenu)
         && let Hit::Surface { surface: s, .. } = &hit
-        && crate::layer::close_flyout(state, s)
     {
-        hit = state.scene_hit(Point::from(at));
+        let owner = state.surface_pid(s);
+        if crate::layer::close_flyout(state, s) {
+            hit = state.scene_hit(Point::from(at));
+            if let Hit::Taskbar {
+                bar,
+                hit: reprisekit::taskbar::TaskbarHit::Tray(i),
+            } = hit
+                && owner.is_some()
+                && crate::tray::item_pid(state, bar, i) == owner
+            {
+                return None;
+            }
+        }
     }
-    hit
+    Some(hit)
 }
 
 /// A reader's focus on a switcher, overview or launcher row, whose click switches or launches:
@@ -832,12 +846,12 @@ mod tests {
             matches!(h.state.scene_hit(Point::from(at)), Hit::Surface { .. }),
             "the flyout covers the bar"
         );
-        let focus = uncover(&mut h.state, Surface::Taskbar(bar), Act::Focus, at);
+        let focus = uncover(&mut h.state, Surface::Taskbar(bar), Act::Focus, at).expect("a hit");
         assert!(
             matches!(focus, Hit::Surface { .. }),
             "a focus closes nothing"
         );
-        let click = uncover(&mut h.state, Surface::Taskbar(bar), Act::Click, at);
+        let click = uncover(&mut h.state, Surface::Taskbar(bar), Act::Click, at).expect("a hit");
         assert!(
             lands_on(&h.state, Surface::Taskbar(bar), &click),
             "the click lands on the bar"
@@ -847,6 +861,67 @@ mod tests {
             c.side.layers_closed,
             [f],
             "the flyout's client hears closed"
+        );
+    }
+
+    #[test]
+    fn a_readers_click_on_a_flyouts_own_tray_icon_only_closes_the_flyout() {
+        use crate::tray::{TrayEvent, TrayItem};
+        use reprisekit::taskbar::TaskbarHit;
+        use std::os::fd::AsRawFd;
+        const VOLUME: i32 = i32::MAX - 719;
+        const OTHER: i32 = i32::MAX - 720;
+        let mut h = crate::harness::Harness::new();
+        h.output("TEST-1", 1024, 768);
+        let (tx, wake, _heard) = crate::tray::headless(&mut h.state);
+        let item = TrayItem {
+            id: "volume".into(),
+            key: "volume".into(),
+            service: "volume".into(),
+            path: "/StatusNotifierItem".into(),
+            title: "Volume".into(),
+            tooltip: String::new(),
+            icon_name: None,
+            icon_theme_path: None,
+            pixmaps: std::sync::Arc::from([]),
+            named: std::sync::Arc::from([]),
+            menu_path: None,
+            passive: false,
+            pid: Some(VOLUME),
+        };
+        tx.send(TrayEvent::Added(item)).expect("send");
+        // SAFETY: `wake` is an open eventfd and the buffer a live 8-byte local.
+        let wrote = unsafe { libc::write(wake.as_raw_fd(), (&1u64 as *const u64).cast(), 8) };
+        assert_eq!(wrote, 8);
+        h.dispatch();
+        let tree = h.state.bars[0].tree;
+        let y = 754.0;
+        let bar = h.state.bar(tree).expect("bar");
+        let x = (0..1024)
+            .map(f64::from)
+            .find(|&x| matches!(h.state.bar_hit(bar, x, y), TaskbarHit::Tray(_)))
+            .expect("the Volume icon on the bar");
+        let at = (x + 2.0, y);
+
+        let mut own = h.connect_as(VOLUME);
+        let f = h.map_flyout(&mut own);
+        let hit = uncover(&mut h.state, Surface::Taskbar(tree), Act::Click, at);
+        assert_eq!(hit, None, "the click is spent closing the flyout");
+        h.roundtrip(&mut own);
+        assert_eq!(own.side.layers_closed, [f], "the flyout closes");
+
+        let mut other = h.connect_as(OTHER);
+        h.map_flyout(&mut other);
+        let hit = uncover(&mut h.state, Surface::Taskbar(tree), Act::Click, at);
+        assert!(
+            matches!(
+                hit,
+                Some(Hit::Taskbar {
+                    hit: TaskbarHit::Tray(_),
+                    ..
+                })
+            ),
+            "another program's flyout closes and the click reaches the icon"
         );
     }
 
