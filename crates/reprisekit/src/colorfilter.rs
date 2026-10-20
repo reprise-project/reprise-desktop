@@ -3,10 +3,13 @@
 //! affine map `out = M · rgb + offset` on 0..1 channels, clamped. The
 //! compositor applies it on the GPU; the settings preview applies it here.
 //!
-//! Corrections are daltonization: simulate the eye (`S`, via LMS), take the
-//! lost colour (`rgb - S·rgb`) and add it into channels still told apart
-//! (`D`). Linear throughout, so the matrix is `I + k·D·(I - S)`, `k` the
-//! intensity (0 no change, 1 full correction). Neutral greys are unchanged.
+//! Corrections are daltonization in linear light: simulate the eye (`S`, via
+//! LMS), take the lost colour (`rgb - S·rgb`) and add it into channels still
+//! told apart (`D`), so the matrix is `I + k·D·(I - S)`, `k` the intensity (0
+//! no change, 1 full correction). Neutral greys are unchanged. Grayscale and
+//! invert work on the sRGB-encoded values.
+
+use crate::wallpapers::tone::{to_linear, to_srgb};
 
 /// One `[accessibility] color_filter` choice.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -71,6 +74,8 @@ impl Filter {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Matrix {
     pub rows: [[f32; 4]; 3],
+    /// The map takes and gives linear light: channels are sRGB-decoded before it and encoded after.
+    pub linear: bool,
 }
 
 type M3 = [[f64; 3]; 3];
@@ -118,9 +123,10 @@ fn simulation(lms: &M3) -> M3 {
     mul(&inverse(&RGB_TO_LMS), &mul(lms, &RGB_TO_LMS))
 }
 
-fn linear(m: M3) -> Matrix {
+fn linear_light(m: M3) -> Matrix {
     Matrix {
         rows: std::array::from_fn(|i| [m[i][0] as f32, m[i][1] as f32, m[i][2] as f32, 0.0]),
+        linear: true,
     }
 }
 
@@ -129,13 +135,16 @@ pub fn matrix(filter: Filter, intensity: f64) -> Option<Matrix> {
     let k = intensity.clamp(0.0, 1.0);
     let correction = |lms: &M3, shift: &M3| {
         let lost = add(&IDENTITY, &simulation(lms), -1.0);
-        linear(add(&IDENTITY, &mul(shift, &lost), k))
+        linear_light(add(&IDENTITY, &mul(shift, &lost), k))
     };
     Some(match filter {
         Filter::None => return None,
         Filter::Grayscale => {
             let row = [LUMA[0] as f32, LUMA[1] as f32, LUMA[2] as f32, 0.0];
-            Matrix { rows: [row; 3] }
+            Matrix {
+                rows: [row; 3],
+                linear: false,
+            }
         }
         Filter::Invert => Matrix {
             rows: [
@@ -143,6 +152,7 @@ pub fn matrix(filter: Filter, intensity: f64) -> Option<Matrix> {
                 [0.0, -1.0, 0.0, 1.0],
                 [0.0, 0.0, -1.0, 1.0],
             ],
+            linear: false,
         },
         Filter::Deuteranopia => correction(&DEUTAN_LMS, &RED_GREEN_SHIFT),
         Filter::Protanopia => correction(&PROTAN_LMS, &RED_GREEN_SHIFT),
@@ -153,8 +163,10 @@ pub fn matrix(filter: Filter, intensity: f64) -> Option<Matrix> {
 impl Matrix {
     /// `rgb` (0 to 1) through the map, clamped; what the shader computes.
     pub fn apply(&self, rgb: [f32; 3]) -> [f32; 3] {
-        self.rows
-            .map(|r| (r[0] * rgb[0] + r[1] * rgb[1] + r[2] * rgb[2] + r[3]).clamp(0.0, 1.0))
+        let v = if self.linear { rgb.map(to_linear) } else { rgb };
+        let out =
+            (self.rows).map(|r| (r[0] * v[0] + r[1] * v[1] + r[2] * v[2] + r[3]).clamp(0.0, 1.0));
+        if self.linear { out.map(to_srgb) } else { out }
     }
 
     pub fn apply_argb(&self, px: u32) -> u32 {
@@ -238,8 +250,13 @@ mod tests {
         for (f, _) in CORRECTIONS {
             let m = matrix(f, 0.0).unwrap();
             let c = [0.8, 0.3, 0.1];
-            assert!(close(m.apply(c), c, 1e-6), "{f:?}");
+            assert!(close(m.apply(c), c, 1e-5), "{f:?}");
         }
+    }
+
+    /// What the eye sees of sRGB-encoded `rgb`, in linear light.
+    fn see_encoded(m: &M3, rgb: [f32; 3]) -> [f32; 3] {
+        see(m, rgb.map(to_linear))
     }
 
     /// Colours the eye confuses (red/green, blue/green-grey) come apart once corrected.
@@ -252,14 +269,53 @@ mod tests {
         ];
         for ((f, lms), (a, b)) in CORRECTIONS.into_iter().zip(pairs) {
             let eye = simulation(lms);
-            let before = distance(see(&eye, a), see(&eye, b));
+            let before = distance(see_encoded(&eye, a), see_encoded(&eye, b));
             let m = matrix(f, 1.0).unwrap();
-            let after = distance(see(&eye, m.apply(a)), see(&eye, m.apply(b)));
+            let after = distance(see_encoded(&eye, m.apply(a)), see_encoded(&eye, m.apply(b)));
             assert!(
                 after > before * 1.2,
                 "{f:?}: {before} apart before, {after} after"
             );
         }
+    }
+
+    #[test]
+    fn corrections_map_linear_light_and_grayscale_and_invert_the_encoded_values() {
+        for f in Filter::ALL.into_iter().skip(1) {
+            let m = matrix(f, 1.0).unwrap();
+            assert_eq!(m.linear, f.takes_intensity(), "{f:?}");
+        }
+        let m = matrix(Filter::Protanopia, 1.0).unwrap();
+        let c = [0.8, 0.3, 0.1];
+        let lin = c.map(to_linear);
+        let want = m
+            .rows
+            .map(|r| to_srgb(r[0] * lin[0] + r[1] * lin[1] + r[2] * lin[2]));
+        assert!(close(m.apply(c), want, 1e-6), "decoded, mapped, encoded");
+    }
+
+    #[test]
+    fn corrections_give_these_pixels() {
+        let colours = [0xffff_0000, 0xff00_ff00, 0xff00_00ff, 0x80c0_4020];
+        let want = [
+            (
+                Filter::Deuteranopia,
+                [0xffff_7cbe, 0xff00_e700, 0xff00_00ff, 0x80c0_6b8c],
+            ),
+            (
+                Filter::Protanopia,
+                [0xffff_bdce, 0xff00_ba00, 0xff00_00ff, 0x80c0_9397],
+            ),
+            (
+                Filter::Tritanopia,
+                [0xffff_ff00, 0xff00_0000, 0xff00_00ff, 0x80ff_ea20],
+            ),
+        ];
+        let got = want.map(|(f, _)| {
+            let m = matrix(f, 1.0).unwrap();
+            (f, colours.map(|c| m.apply_argb(c)))
+        });
+        assert_eq!(got, want, "{got:08x?}");
     }
 
     #[test]

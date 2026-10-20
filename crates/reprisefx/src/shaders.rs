@@ -473,7 +473,8 @@ pub(crate) fn compile_water(
 
 /// The screen through a colour filter: each texel's straight colour through
 /// the affine map whose rows are `row_r`, `row_g`, `row_b` (fourth column the
-/// offset), clamped, alpha kept (`reprisekit::colorfilter::Matrix::apply`).
+/// offset), clamped, alpha kept; in linear light while `linear_light` is 1
+/// (`reprisekit::colorfilter::Matrix::apply`).
 const COLOR_FRAG: &str = r#"#version 100
 //_DEFINES_
 #if defined(EXTERNAL)
@@ -493,14 +494,30 @@ uniform float tint;
 uniform vec4 row_r;
 uniform vec4 row_g;
 uniform vec4 row_b;
+uniform float linear_light;
+
+vec3 to_linear(vec3 c) {
+    return mix(c / 12.92, pow((c + 0.055) / 1.055, vec3(2.4)), step(0.04045, c));
+}
+
+vec3 to_srgb(vec3 c) {
+    return mix(c * 12.92, 1.055 * pow(c, vec3(1.0 / 2.4)) - 0.055, step(0.0031308, c));
+}
 
 void main() {
     vec4 c = texture2D(tex, v_coords);
 #if defined(NO_ALPHA)
     c.a = 1.0;
 #endif
-    vec4 v = vec4(c.a > 0.0 ? c.rgb / c.a : vec3(0.0), 1.0);
+    vec3 rgb = c.a > 0.0 ? c.rgb / c.a : vec3(0.0);
+    if (linear_light == 1.0) {
+        rgb = to_linear(rgb);
+    }
+    vec4 v = vec4(rgb, 1.0);
     vec3 o = clamp(vec3(dot(row_r, v), dot(row_g, v), dot(row_b, v)), 0.0, 1.0);
+    if (linear_light == 1.0) {
+        o = to_srgb(o);
+    }
     gl_FragColor = vec4(o * c.a, c.a) * alpha;
 #if defined(DEBUG_FLAGS)
     if (tint == 1.0) {
@@ -517,6 +534,7 @@ pub(crate) fn compile_color(renderer: &mut GlesRenderer) -> Result<GlesTexProgra
             UniformName::new("row_r", UniformType::_4f),
             UniformName::new("row_g", UniformType::_4f),
             UniformName::new("row_b", UniformType::_4f),
+            UniformName::new("linear_light", UniformType::_1f),
         ],
     )
 }
