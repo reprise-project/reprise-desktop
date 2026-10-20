@@ -110,6 +110,8 @@ pub struct PlacesMetrics {
     pub tile: i32,
     /// An icon's top, from its tile's.
     pub icon_top: i32,
+    /// An icon's side.
+    pub icon: i32,
     /// From the icon's bottom to the label's first line.
     pub label_gap: i32,
     /// From one wrapped label line's top to the next, past the text size.
@@ -121,17 +123,43 @@ impl PlacesMetrics {
     pub const CLASSIC: PlacesMetrics = PlacesMetrics {
         tile: 65,
         icon_top: 3,
+        icon: 32,
         label_gap: 3,
         line_lead: 2,
     };
 
-    /// Tiles whose label, under the 32 px icon, grows by `u`.
+    /// Tiles whose icon and label grow by `u`, the icon's top kept.
     fn grown(self, u: crate::theme::TextUnits) -> PlacesMetrics {
-        let icon = self.icon_top + 32;
         PlacesMetrics {
-            tile: icon + u.len(self.tile - icon),
+            tile: self.icon_top + u.len(self.tile - self.icon_top),
+            icon: u.len(self.icon),
             ..self
         }
+    }
+
+    /// `n` of these tiles in `height` px: where they run past it, the icons shrink toward
+    /// Classic's 32 px, and the tiles with them.
+    pub fn fit(self, n: usize, height: i32) -> PlacesMetrics {
+        let n = n as i32;
+        let over = n * self.tile - height;
+        if n == 0 || over <= 0 {
+            return self;
+        }
+        let icon = (self.icon - (over + n - 1) / n).max(self.least_icon());
+        PlacesMetrics {
+            tile: self.tile - (self.icon - icon),
+            icon,
+            ..self
+        }
+    }
+
+    /// How tall `n` tiles get at the least, by [`PlacesMetrics::fit`].
+    pub fn least_tiles(self, n: usize) -> i32 {
+        n as i32 * (self.tile - (self.icon - self.least_icon()))
+    }
+
+    fn least_icon(self) -> i32 {
+        self.icon.min(PlacesMetrics::CLASSIC.icon)
     }
 }
 

@@ -161,10 +161,7 @@ impl AccountsApp {
         self.job = None;
         match read {
             Ok(rows) => {
-                let pictures = rows
-                    .iter()
-                    .map(|u| picture::of_user(&u.icon, u.you, ROW_PX))
-                    .collect();
+                let pictures = self.row_pictures(&rows);
                 self.users.refresh(rows, pictures);
             }
             Err(e) => {
@@ -203,6 +200,24 @@ impl AccountsApp {
         Reply::redraw_all()
     }
 
+    /// Each account's list picture at [`ROW_PX`] grown with the text.
+    fn row_pictures(&self, rows: &[User]) -> Vec<Option<Canvas>> {
+        let px = self.forms.text.px(ROW_PX);
+        rows.iter()
+            .map(|u| picture::of_user(&u.icon, u.you, px))
+            .collect()
+    }
+
+    /// The text size changed: the list's pictures and the sheet's General picture are made
+    /// again at their grown sizes.
+    fn regrow(&mut self) {
+        self.face = None;
+        self.users.pictures = self.row_pictures(&self.users.rows);
+        if let Some(p) = &mut self.props {
+            p.regrow(self.forms.text);
+        }
+    }
+
     fn open_props(&mut self, uid: u32) {
         if self.props.as_ref().is_some_and(|p| p.user.uid == uid) {
             return;
@@ -216,7 +231,7 @@ impl AccountsApp {
                 .map(|c| c.resample_box(props::PREVIEW_PX, props::PREVIEW_PX))
         });
         let last = self.last_admin(uid);
-        self.props = Some(props::Props::new(u, face, last));
+        self.props = Some(props::Props::new(u, face, last, self.forms.text));
     }
 
     fn ask_remove(&mut self, uid: u32, ctx: &mut Ctx) {
@@ -640,7 +655,10 @@ impl App for AccountsApp {
 
     fn event(&mut self, win: WinId, ev: Event, ctx: &mut Ctx) -> Reply {
         self.text = Some(ctx.text.clone());
-        self.forms = ctx.forms();
+        let was = std::mem::replace(&mut self.forms, ctx.forms()).text;
+        if self.forms.text != was {
+            self.regrow();
+        }
         let mut reply = self.dispatch(win, ev, ctx);
         let size = self.forms.text.size(users::CLIENT);
         if size != self.asked {
@@ -752,7 +770,9 @@ impl App for AccountsApp {
 impl AccountsApp {
     fn dispatch(&mut self, win: WinId, ev: Event, ctx: &mut Ctx) -> Reply {
         if self.face.is_none() {
-            self.face = ctx.icons.get("avatar-default", ROW_PX as i32);
+            self.face = ctx
+                .icons
+                .get("avatar-default", self.forms.text.len(ROW_PX as i32));
             self.browse_host.icons.prime(&mut ctx.icons);
         }
         if matches!(ev, Event::Wake) {
