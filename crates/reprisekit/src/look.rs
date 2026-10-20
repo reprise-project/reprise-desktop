@@ -1083,6 +1083,75 @@ mod tests {
         crate::pins::check("look/windowed_dialog_frame", &got);
     }
 
+    /// A dialog's frame with its ? box round a 240x60 client at scale `s`, untitled.
+    fn help_dialog_frame(
+        theme: &Theme,
+        s: i32,
+        active: bool,
+        help: Interaction,
+        hot: Option<CaptionButton>,
+        pressed: Option<CaptionButton>,
+    ) -> Canvas {
+        let g = FrameGeometry::layout(&theme.metrics, 240, 60, false, Chrome::DIALOG).scaled(s);
+        let theme = theme.scaled(s);
+        let text = loaded(theme.fonts.clone());
+        let st = FrameState {
+            title: "",
+            active,
+            maximized: false,
+            pressed,
+            glow: Glow::lit(hot),
+            icon: None,
+            tabbed: false,
+        };
+        let mut c = Canvas::new(g.total.0 as u32, g.total.1 as u32);
+        draw_dialog_frame(&mut c, &theme, &text, &g, &st, Some(help));
+        c
+    }
+
+    #[test]
+    fn dark_glass_dialog_frames_pin_at_scale_1_and_2() {
+        use crate::glass::{Frame, Mode, Settings};
+        use Interaction::{Hot, Idle, Pressed};
+        let mut got = Vec::new();
+        for (name, frame) in [("rounded", Frame::Rounded), ("square", Frame::Square)] {
+            let theme = |mode| {
+                let g = Settings {
+                    mode,
+                    frame,
+                    ..Settings::default()
+                };
+                crate::interfaces::theme_with(Interface::Glass, crate::blue::Variant::Blue, &g)
+            };
+            let (dark, light) = (theme(Mode::Dark), theme(Mode::Light));
+            for s in [1, 2] {
+                assert_ne!(
+                    help_dialog_frame(&dark, s, true, Idle, None, None).pixels,
+                    help_dialog_frame(&light, s, true, Idle, None, None).pixels,
+                    "{name} at {s}: the dark frame is not the light one"
+                );
+                let mut seen = Vec::new();
+                for (state, active, help, hot, pressed) in [
+                    ("rest", true, Idle, None, None),
+                    ("inactive", false, Idle, None, None),
+                    ("help hot", true, Hot, None, None),
+                    ("help pressed", true, Pressed, None, None),
+                    ("close hot", true, Idle, CLOSE, None),
+                    ("close pressed", true, Idle, None, CLOSE),
+                ] {
+                    let hash = fnv(&help_dialog_frame(&dark, s, active, help, hot, pressed));
+                    assert!(
+                        !seen.contains(&hash),
+                        "{name} {state} at {s} draws like another state"
+                    );
+                    seen.push(hash);
+                    got.push((format!("{name} {state} {s}"), hash));
+                }
+            }
+        }
+        crate::pins::check("look/dark_dialog_frame", &got);
+    }
+
     #[test]
     fn a_windowed_dialogs_minimize_box_lights_and_presses_inside_its_box() {
         for (name, theme) in windowed_themes() {
