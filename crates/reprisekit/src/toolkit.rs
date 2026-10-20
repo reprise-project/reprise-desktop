@@ -424,7 +424,7 @@ mod tests {
         ];
         assert_eq!(
             got,
-            [0x08f4_b0e6_eb96_913b, 0x9377_a0f7_f963_24b5],
+            [0x35d5_6308_85a9_e847, 0xdafb_7bf2_9511_2cb5],
             "{got:#x?}"
         );
     }

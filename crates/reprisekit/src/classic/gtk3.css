@@ -358,25 +358,79 @@ notebook > header.top > tabs > tab:backdrop:checked {
   box-shadow: inset -2px 0 @reprise_shadow, inset 1px 1px @reprise_hilight,
     inset -1px 0 @reprise_dk_shadow;
 }
+notebook.frame, notebook.frame:backdrop { border: none; padding: 0; box-shadow: none; }
+notebook > header.left { box-shadow: inset -1px 0 @reprise_hilight; }
+notebook > header.bottom { margin-top: -2px; }
+notebook > header.right { margin-left: -2px; }
+notebook > header.bottom > tabs { margin: 0; padding: 0 2px; }
+notebook > header.left > tabs, notebook > header.right > tabs { margin: 0; padding: 2px 0; }
 notebook > stack:not(:only-child), notebook > stack:not(:only-child):backdrop {
   background-color: @theme_bg_color;
+  box-shadow: inset -2px -2px @reprise_shadow, inset 1px 1px @reprise_hilight,
+    inset -1px -1px @reprise_dk_shadow;
+}
+notebook > header.top + stack:not(:only-child), notebook > header.top + stack:not(:only-child):backdrop {
   box-shadow: inset -2px -2px @reprise_shadow, inset 1px 0 @reprise_hilight,
     inset -1px -1px @reprise_dk_shadow;
 }
-notebook.frame, notebook.frame:backdrop { border: none; padding: 0; box-shadow: none; }
-notebook > header.bottom > tabs > tab, notebook > header.left > tabs > tab, notebook > header.right > tabs > tab,
-notebook > header.bottom > tabs > tab:hover, notebook > header.left > tabs > tab:hover,
-notebook > header.right > tabs > tab:hover {
+notebook > header.left + stack:not(:only-child), notebook > header.left + stack:not(:only-child):backdrop {
+  box-shadow: inset -2px -2px @reprise_shadow, inset 0 1px @reprise_hilight,
+    inset -1px -1px @reprise_dk_shadow;
+}
+notebook > header.bottom > tabs > tab, notebook > header.bottom > tabs > tab:hover,
+notebook > header.bottom > tabs > tab:backdrop, notebook > header.left > tabs > tab,
+notebook > header.left > tabs > tab:hover, notebook > header.left > tabs > tab:backdrop,
+notebook > header.right > tabs > tab, notebook > header.right > tabs > tab:hover,
+notebook > header.right > tabs > tab:backdrop {
+  min-height: 15px;
+  min-width: 0;
+  padding: 1px 6px 2px 6px;
   border: none;
   border-radius: 0;
   color: @theme_fg_color;
-  background-color: transparent;
-  box-shadow: none;
-}
-notebook > header.bottom > tabs > tab:checked, notebook > header.left > tabs > tab:checked,
-notebook > header.right > tabs > tab:checked {
+  outline-color: @theme_fg_color;
+  outline-offset: -3px;
   background-color: @theme_bg_color;
-  box-shadow: %raised%;
+}
+notebook > header.bottom > tabs > tab, notebook > header.bottom > tabs > tab:hover,
+notebook > header.bottom > tabs > tab:backdrop {
+  margin: 0 0 2px 0;
+  padding: 2px 6px 1px 6px;
+  box-shadow: inset 0 2px @reprise_dk_shadow, inset 0 1px @reprise_shadow,
+    inset 1px 0 @reprise_hilight, inset -2px -2px @reprise_shadow, inset -1px -1px @reprise_dk_shadow;
+}
+notebook > header.left > tabs > tab, notebook > header.left > tabs > tab:hover,
+notebook > header.left > tabs > tab:backdrop {
+  margin: 0 0 0 2px;
+  box-shadow: inset -1px 0 @reprise_hilight, inset 1px 1px @reprise_hilight,
+    inset 0 -2px @reprise_shadow, inset 0 -1px @reprise_dk_shadow;
+}
+notebook > header.right > tabs > tab, notebook > header.right > tabs > tab:hover,
+notebook > header.right > tabs > tab:backdrop {
+  margin: 0 2px 0 0;
+  box-shadow: inset 2px 0 @reprise_dk_shadow, inset 1px 0 @reprise_shadow,
+    inset 0 1px @reprise_hilight, inset -2px -2px @reprise_shadow, inset -1px -1px @reprise_dk_shadow;
+}
+notebook > header.bottom > tabs > tab:checked, notebook > header.bottom > tabs > tab:checked:hover,
+notebook > header.bottom > tabs > tab:backdrop:checked {
+  margin: 0 -2px;
+  padding: 3px 8px 2px 8px;
+  box-shadow: inset 1px 0 @reprise_hilight, inset -2px -2px @reprise_shadow,
+    inset -1px -1px @reprise_dk_shadow;
+}
+notebook > header.left > tabs > tab:checked, notebook > header.left > tabs > tab:checked:hover,
+notebook > header.left > tabs > tab:backdrop:checked {
+  margin: -2px 0;
+  padding: 3px 7px 4px 7px;
+  box-shadow: inset 1px 1px @reprise_hilight, inset 0 -2px @reprise_shadow,
+    inset 0 -1px @reprise_dk_shadow;
+}
+notebook > header.right > tabs > tab:checked, notebook > header.right > tabs > tab:checked:hover,
+notebook > header.right > tabs > tab:backdrop:checked {
+  margin: -2px 0;
+  padding: 3px 7px 4px 7px;
+  box-shadow: inset 0 1px @reprise_hilight, inset -2px -2px @reprise_shadow,
+    inset -1px -1px @reprise_dk_shadow;
 }
 
 frame > border, frame > border:backdrop {
