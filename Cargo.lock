@@ -2411,6 +2411,7 @@ dependencies = [
  "md5",
  "png",
  "reprisebus",
+ "rustc-hash",
  "serde",
  "tempfile",
  "toml_edit",
