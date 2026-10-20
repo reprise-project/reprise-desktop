@@ -1073,26 +1073,63 @@ impl PopupMenu {
     /// casts it over what lies under it first.
     /// `underline` is the host's cue; a chain opened from the keyboard underlines regardless.
     pub fn draw(&self, c: &mut Canvas, theme: &Theme, text: &TextRenderer, underline: bool) {
+        for i in 0..self.levels.len() {
+            self.draw_level(i, (0, 0), c, theme, text, underline);
+        }
+    }
+
+    /// Level `i` alone with its shadow, moved `by` logical px: a host that shows each level on
+    /// its own surface draws it there at its corner.
+    pub fn draw_level(
+        &self,
+        i: usize,
+        by: (i32, i32),
+        c: &mut Canvas,
+        theme: &Theme,
+        text: &TextRenderer,
+        underline: bool,
+    ) {
+        let Some(level) = self.levels.get(i) else {
+            return;
+        };
         let underline = underline || self.keys;
         let s = theme.scale.max(1);
-        let look = menu_look(theme);
-        for level in &self.levels {
-            if let Some(m) = &look {
-                let r = level.rect().scaled(s);
-                crate::look::styled::menu::draw_shadow(m, c, r, s);
-            }
-            draw_menu_at(
-                c,
-                (level.origin.0 * s, level.origin.1 * s),
-                theme,
-                text,
-                &level.layout.scaled(s),
-                &level.items,
-                level.hovered,
-                "",
-                underline,
-            );
+        let (x, y) = (level.origin.0 + by.0, level.origin.1 + by.1);
+        if let Some(m) = menu_look(theme) {
+            let r = Rect::new(x, y, level.layout.width, level.layout.height).scaled(s);
+            crate::look::styled::menu::draw_shadow(&m, c, r, s);
         }
+        draw_menu_at(
+            c,
+            (x * s, y * s),
+            theme,
+            text,
+            &level.layout.scaled(s),
+            &level.items,
+            level.hovered,
+            "",
+            underline,
+        );
+    }
+
+    /// Moves level `i` to `origin`, where its host's compositor put it.
+    pub fn place(&mut self, i: usize, origin: (i32, i32)) {
+        if let Some(level) = self.levels.get_mut(i) {
+            level.origin = origin;
+        }
+    }
+
+    /// Where level `i` (a submenu) opens against its parent, for a host that lets the
+    /// compositor place it: an anchor rect in the parent level's own coordinates and the
+    /// child's offset down from it. The child's left edge sits on the rect's right end, or
+    /// flipped, its right edge on the rect's left end, as [`place_submenu`] puts it.
+    pub fn submenu_anchor(&self, i: usize) -> Option<(Rect, i32)> {
+        let child = self.levels.get(i).filter(|_| i > 0)?;
+        let parent = &self.levels[i - 1];
+        let row = parent.layout.rows.get(*child.path.last()?)?;
+        let overlap = BORDER + INSET.left;
+        let w = (parent.layout.width - 2 * overlap).max(1);
+        Some((Rect::new(overlap, row.y, w, row.height), -INSET.top))
     }
 }
 
@@ -1207,6 +1244,14 @@ fn menu_look(theme: &Theme) -> Option<crate::style::MenuLook> {
 /// without one); a host that draws Classic's ([`draw_shadow`]) under a chain skips it then.
 pub fn draws_own_shadow(theme: &Theme) -> bool {
     menu_look(theme).is_some()
+}
+
+/// How far right and down of a [`PopupMenu`] level its own shadow reaches, logical px.
+pub fn level_shadow(theme: &Theme) -> i32 {
+    match menu_look(theme).and_then(|m| m.shadow) {
+        Some(_) => crate::style::DropShadow::N as i32,
+        None => 0,
+    }
 }
 
 pub fn shadow_reach(theme: &Theme) -> i32 {
@@ -1741,6 +1786,7 @@ mod tests {
         }
     }
     use crate::anim::{Unroll, UnrollFrom};
+    use crate::interface::Interface;
     use crate::raster::{Canvas, Rect};
     use crate::text::TextRenderer;
     use crate::theme::{FontConfig, Metrics, Theme};
@@ -2922,6 +2968,114 @@ mod tests {
             level.origin.0 + r.x + 5,
             level.origin.1 + r.y + r.height / 2,
         )
+    }
+
+    /// The nested chain with its submenu open, from the keyboard.
+    fn opened_nested(t: &MenuTree, cx: &MenuCtx) -> PopupMenu {
+        let mut p = PopupMenu::open(t, (100, 50), cx, true);
+        p.key(t, MenuKey::Down, cx);
+        p.key(t, MenuKey::Right, cx);
+        assert_eq!(p.depth(), 2);
+        p
+    }
+
+    #[test]
+    fn levels_drawn_alone_and_stacked_make_the_whole_chain() {
+        let text = TextRenderer::load(&FontConfig::default());
+        for interface in [Interface::Classic, Interface::Blue, Interface::Glass] {
+            let base = crate::interfaces::theme_for(interface);
+            let cx = nested_ctx(&base, &text);
+            let t = nested_tree();
+            let p = opened_nested(&t, &cx);
+            let m = level_shadow(&base);
+            for s in [1, 2] {
+                let theme = base.scaled(s);
+                let mut whole = Canvas::new(800 * s as u32, 600 * s as u32);
+                p.draw(&mut whole, &theme, &text, false);
+                let mut stacked = Canvas::new(800 * s as u32, 600 * s as u32);
+                for (i, level) in p.levels().iter().enumerate() {
+                    let r = level.rect();
+                    let mut own =
+                        Canvas::new(((r.width + m) * s) as u32, ((r.height + m) * s) as u32);
+                    p.draw_level(i, (-r.x, -r.y), &mut own, &theme, &text, false);
+                    stacked.blit_over(r.x * s, r.y * s, &own);
+                }
+                let off = whole
+                    .pixels
+                    .iter()
+                    .zip(&stacked.pixels)
+                    .filter(|(a, b)| {
+                        a.to_le_bytes()
+                            .iter()
+                            .zip(b.to_le_bytes())
+                            .any(|(x, y)| x.abs_diff(y) > 1)
+                    })
+                    .count();
+                assert_eq!(
+                    off, 0,
+                    "{interface:?} at {s}: no pixel off by more than a rounding step"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_level_shadow_reaches_as_far_as_the_look_casts_it() {
+        assert_eq!(
+            level_shadow(&Theme::default()),
+            0,
+            "Classic chains cast none"
+        );
+        let glass = crate::interfaces::theme_for(Interface::Glass);
+        assert_eq!(level_shadow(&glass), crate::style::DropShadow::N as i32);
+    }
+
+    #[test]
+    fn a_placed_level_is_hit_where_it_was_put() {
+        let theme = wide_theme();
+        let text = TextRenderer::load(&FontConfig::default());
+        let cx = nested_ctx(&theme, &text);
+        let t = nested_tree();
+        let mut p = opened_nested(&t, &cx);
+        let before = row_point(&p, 1, 0);
+        p.place(1, (-300, 900));
+        assert_eq!(p.levels()[1].origin, (-300, 900));
+        assert_ne!(p.hit(before.0, before.1), Some((1, Some(0))));
+        let (x, y) = row_point(&p, 1, 0);
+        assert_eq!(
+            p.hit(x, y),
+            Some((1, Some(0))),
+            "the moved row takes the point"
+        );
+        assert_eq!(
+            p.click(&t, x, y, &cx),
+            MenuAction::Chosen(vec![1, 0]),
+            "a press on it picks it"
+        );
+    }
+
+    #[test]
+    fn a_submenu_anchor_puts_the_child_where_place_submenu_does() {
+        let theme = wide_theme();
+        let text = TextRenderer::load(&FontConfig::default());
+        let cx = nested_ctx(&theme, &text);
+        let t = nested_tree();
+        let mut p = opened_nested(&t, &cx);
+        p.place(0, (400, 50));
+        assert_eq!(p.submenu_anchor(0), None, "the root opens at its point");
+        let (anchor, dy) = p.submenu_anchor(1).expect("the submenu's anchor");
+        let (parent, child) = (p.levels()[0].rect(), p.levels()[1].rect());
+        let row = p.levels()[0].layout.rows[1];
+        let row_abs = Rect::new(parent.x + row.x, parent.y + row.y, row.width, row.height);
+        let size = (child.width, child.height);
+        // Anchored on the rect's right end, growing right and down; flipped, on its left end
+        // growing left.
+        let right = (parent.x + anchor.right(), parent.y + anchor.y + dy);
+        let left = (parent.x + anchor.x - child.width, right.1);
+        let open = Rect::new(0, 0, 800, 600);
+        assert_eq!(right, place_submenu(parent, row_abs, size, open));
+        let tight = Rect::new(0, 0, parent.right() + 10, 600);
+        assert_eq!(left, place_submenu(parent, row_abs, size, tight));
     }
 
     #[test]

@@ -3,21 +3,26 @@
 //! [`reprisekit::controls::editmenu`]'s menu, and a pick runs as its shortcut key, so the field's
 //! own Ctrl+Z, Ctrl+X, Ctrl+C, Ctrl+V, Delete and Ctrl+A handling does the work. Fields are
 //! found by the [`TextSpot`] the focused one reports as it draws; multi-line ones keep their
-//! program's own menu.
+//! program's own menu. The menu shows on popups of its own ([`crate::menupopup`]).
 
 use reprisekit::controls::editmenu::{self, Live, Menu, Step};
 use reprisekit::controls::menu::MenuCtx;
-use reprisekit::raster::Canvas;
 use reprisekit::textedit::{TextSpot, key_for};
-use reprisekit::theme::Theme;
 
 use crate::{BTN_RIGHT, Event, KeyInput, Mods, PointerInput, WinId};
 
 #[derive(Default)]
 pub(crate) struct EditMenu {
-    open: Option<(WinId, Menu)>,
+    open: Option<Open>,
     /// A right press waiting for the frame that shows whether it landed in a field.
     pending: Option<(WinId, (i32, i32))>,
+}
+
+struct Open {
+    win: WinId,
+    menu: Menu,
+    /// The point it opened at, in the window's coordinates.
+    at: (i32, i32),
 }
 
 /// What [`EditMenu::event`] did with an event.
@@ -54,7 +59,7 @@ pub(crate) fn pick_key(cmd: editmenu::Command) -> KeyInput {
 
 impl EditMenu {
     pub fn is_open(&self, win: WinId) -> bool {
-        self.open.as_ref().is_some_and(|(w, _)| *w == win)
+        self.open.as_ref().is_some_and(|o| o.win == win)
     }
 
     pub fn is_pending(&self, win: WinId) -> bool {
@@ -71,7 +76,7 @@ impl EditMenu {
         paste: bool,
         cx: &MenuCtx,
     ) -> Outcome {
-        if let Some((w, menu)) = self.open.as_mut()
+        if let Some(Open { win: w, menu, .. }) = self.open.as_mut()
             && *w == win
         {
             let step = match ev {
@@ -106,8 +111,9 @@ impl EditMenu {
                 let Some(spot) = field(spot) else {
                     return Outcome::Pass;
                 };
-                let menu = Menu::open(Live::of(spot, paste), editmenu::under_caret(spot), cx, true);
-                self.open = Some((win, menu));
+                let at = editmenu::under_caret(spot);
+                let menu = Menu::open(Live::of(spot, paste), at, cx, true);
+                self.open = Some(Open { win, menu, at });
                 Outcome::Redraw
             }
             Event::Pointer(PointerInput::Press {
@@ -146,29 +152,39 @@ impl EditMenu {
         let Some(spot) = field(spot).filter(|s| s.field.contains(x, y)) else {
             return false;
         };
-        self.open = Some((win, Menu::open(Live::of(spot, paste), (x, y), cx, false)));
+        let menu = Menu::open(Live::of(spot, paste), (x, y), cx, false);
+        self.open = Some(Open {
+            win,
+            menu,
+            at: (x, y),
+        });
         true
     }
 
-    /// The open menu over `win`'s frame.
-    pub fn draw(&self, win: WinId, c: &mut Canvas, theme: &Theme, cx: &MenuCtx) {
-        if let Some((w, menu)) = &self.open
-            && *w == win
-        {
-            menu.draw(c, theme, cx.text, theme.access_keys);
+    pub fn menu(&self, win: WinId) -> Option<&Menu> {
+        self.open.as_ref().filter(|o| o.win == win).map(|o| &o.menu)
+    }
+
+    /// The open menu, its window and the point it opened at.
+    pub fn shown(&self) -> Option<(WinId, &Menu, (i32, i32))> {
+        self.open.as_ref().map(|o| (o.win, &o.menu, o.at))
+    }
+
+    /// Moves the open menu's level `i` to where its popup was put.
+    pub fn place(&mut self, i: usize, origin: (i32, i32)) {
+        if let Some(o) = self.open.as_mut() {
+            o.menu.place(i, origin);
         }
     }
 
-    pub fn menu(&self, win: WinId) -> Option<&Menu> {
-        self.open
-            .as_ref()
-            .filter(|(w, _)| *w == win)
-            .map(|(_, m)| m)
+    /// Closes the menu without a pick: the compositor dismissed it.
+    pub fn dismiss(&mut self) {
+        self.open = None;
     }
 
     /// Drops what belongs to a window `live` says is gone.
     pub fn retain(&mut self, live: impl Fn(WinId) -> bool) {
-        if self.open.as_ref().is_some_and(|(w, _)| !live(w)) {
+        if self.open.as_ref().is_some_and(|o| !live(o.win)) {
             self.open = None;
         }
         if self.pending.is_some_and(|(w, _)| !live(w)) {
@@ -184,8 +200,9 @@ mod tests {
     use crate::{Ctx, MAIN};
     use reprisekit::controls::form::{self, Control, Form, Item};
     use reprisekit::controls::menu::MenuItem;
-    use reprisekit::raster::Rect;
+    use reprisekit::raster::{Canvas, Rect};
     use reprisekit::textedit::{TextEdit, keysym};
+    use reprisekit::theme::Theme;
 
     fn ctx() -> Ctx {
         Ctx {

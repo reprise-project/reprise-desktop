@@ -153,6 +153,16 @@ impl Menu {
         self.chain.rect()
     }
 
+    /// The chain, for a host that shows each level on a surface of its own.
+    pub fn chain(&self) -> &PopupMenu {
+        &self.chain
+    }
+
+    /// Moves level `i` to where the host's compositor put it ([`PopupMenu::place`]).
+    pub fn place(&mut self, i: usize, origin: (i32, i32)) {
+        self.chain.place(i, origin);
+    }
+
     /// Every key while the menu is open: the arrows, Enter, Escape and access letters work it,
     /// the rest do nothing.
     pub fn key(&mut self, sym: u32, utf8: Option<&str>, cx: &MenuCtx) -> Step {

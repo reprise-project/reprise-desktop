@@ -13,6 +13,7 @@ pub mod heads;
 pub mod keys;
 pub mod listicons;
 pub mod listjob;
+mod menupopup;
 pub mod oneshot;
 pub mod openwith;
 mod outputmgmt;
@@ -1199,10 +1200,14 @@ pub fn run(app: Box<dyn App>) {
         drag_in: None,
         field_drag: None,
         edit_menu: Default::default(),
+        menu_popups: None,
         asked_drop: None,
         ticking: Vec::new(),
         portal_done,
         press_serial: 0,
+        input_serial: 0,
+        kb_on: None,
+        kb_settle: false,
         key_last: reprisebus::instance::Handoff::from_env().by_key,
         press_time: 0,
         compositor,
@@ -1368,6 +1373,9 @@ pub fn run(app: Box<dyn App>) {
             }
             host.draw(id, &qh);
         }
+        // After the draws: a window's draw opens the menu a right press asked for.
+        host.settle_keyboard();
+        host.sync_menu();
         if host.exit {
             let _ = conn.flush();
             hangup::hang_up(conn.backend().poll_fd());
@@ -1523,6 +1531,8 @@ struct Host {
     /// A drag over a window's `App::drop_form`.
     field_drag: Option<(WinId, fielddrop::Hover)>,
     edit_menu: editmenu::EditMenu,
+    /// The edit menu's popups while it is open.
+    menu_popups: Option<menupopup::MenuPopups>,
     asked_drop: Option<Asked>,
     ticking: Vec<WinId>,
     /// Where a document portal call's thread sends what to do with its
@@ -1530,6 +1540,14 @@ struct Host {
     portal_done: Sender<OnLoop>,
     /// The last pointer press's serial, which a drag must name.
     press_serial: u32,
+    /// The last key or pointer press's serial, which a menu's grab names.
+    input_serial: u32,
+    /// The surface the keyboard is on and the window it counts for: a window's menu popups
+    /// count for the window.
+    kb_on: Option<(wl_surface::WlSurface, WinId)>,
+    /// The keyboard left a surface of a window whose menu is open: `settle_keyboard` decides
+    /// after the turn whether it went to the menu or away.
+    kb_settle: bool,
     /// The last input was a key, not a pointer press, counting a start from the keyboard: a window
     /// opened now underlines its access keys.
     key_last: bool,
@@ -1710,7 +1728,8 @@ impl Host {
     }
 
     /// The edit menu's share of `ev` ([`editmenu`]); `true` when the program does not get it.
-    /// A window keeping its canvas has none: the menu's pixels would stay in it.
+    /// The menu shows on popups ([`menupopup`]), so only a pending right press draws the window
+    /// again. A window keeping its canvas has none.
     fn edit_menu_event(&mut self, win: WinId, ev: &Event) -> bool {
         let Some(i) = self.slots.iter().position(|s| s.id == win) else {
             return false;
@@ -1718,33 +1737,37 @@ impl Host {
         if self.app.keeps_canvas(win) {
             return false;
         }
-        let size = self.slots[i].size;
+        let within = self.menu_within(self.slots[i].size);
         let cx = MenuCtx {
             text: &self.ctx.text,
             theme: &self.ctx.theme,
             px: self.ctx.theme.fonts.size_px,
-            within: Rect::new(0, 0, size.0, size.1),
+            within,
         };
-        let was = self.edit_menu.is_open(win);
         let paste = self.clipboard_text();
         let out = self
             .edit_menu
             .event(win, ev, self.slots[i].spot.as_ref(), paste, &cx);
-        let slot = &mut self.slots[i];
-        slot.dirty |= was != self.edit_menu.is_open(win) || self.edit_menu.is_pending(win);
+        self.slots[i].dirty |= self.edit_menu.is_pending(win);
         match out {
             editmenu::Outcome::Pass => false,
-            editmenu::Outcome::Taken => true,
-            editmenu::Outcome::Redraw => {
-                slot.dirty = true;
-                true
-            }
+            editmenu::Outcome::Taken | editmenu::Outcome::Redraw => true,
             editmenu::Outcome::Run(k) => {
-                slot.dirty = true;
                 self.send(win, Event::Key(k));
                 true
             }
         }
+    }
+
+    /// What a menu fits its width to: the largest output, as a popup may run past the window.
+    fn menu_within(&self, size: (i32, i32)) -> Rect {
+        let (w, h) = self
+            .output_state
+            .outputs()
+            .filter_map(|o| self.output_state.info(&o)?.logical_size)
+            .max_by_key(|&(w, h)| i64::from(w) * i64::from(h))
+            .unwrap_or(size);
+        Rect::new(0, 0, w, h)
     }
 
     /// The clipboard for a file dialog's File name ([`App::drop_file_dialog`]): Ctrl+C and Ctrl+X
@@ -2125,9 +2148,8 @@ impl Host {
                     self.focus = None;
                 }
                 self.foreign = None;
+                self.drop_menus(|w| w != MAIN);
                 self.slots.retain(|s| s.id != MAIN);
-                let slots = &self.slots;
-                self.edit_menu.retain(|w| slots.iter().any(|s| s.id == w));
             }
             None => {}
         }
@@ -2244,9 +2266,8 @@ impl Host {
                 s.parent = None;
             }
         }
+        self.drop_menus(|w| w == MAIN || !drop.contains(&w));
         self.slots.retain(|s| s.id == MAIN || !drop.contains(&s.id));
-        let slots = &self.slots;
-        self.edit_menu.retain(|w| slots.iter().any(|s| s.id == w));
         let app_id = self.app.app_id();
         for i in make {
             let c = &want[i];
@@ -2429,9 +2450,8 @@ impl Host {
             if self.focus == Some(id) {
                 self.focus = None;
             }
+            self.drop_menus(|w| w != id);
             self.slots.retain(|s| s.id != id);
-            let slots = &self.slots;
-            self.edit_menu.retain(|w| slots.iter().any(|s| s.id == w));
         }
         if let Some(f) = make {
             self.make_flyout(f);
@@ -2563,6 +2583,7 @@ impl Host {
         for s in self.slots.iter_mut() {
             s.dirty = true;
         }
+        self.menu_relooked();
         // Forms and the windows that hold them grow with the text size: each window hears it as
         // a resize and answers with its new size, then grows to what its program asks now.
         if self.look.text_size != text_size {
@@ -2953,6 +2974,7 @@ impl Host {
         filedlg::follow_scale(&mut *self.app, id, scale, &mut self.ctx);
         self.app.follow_scale(id, scale, &mut self.ctx);
         let paste = self.edit_menu.is_pending(id) && self.clipboard_text();
+        let within = self.menu_within((w, h));
         let app = &mut self.app;
         let menu = &mut self.edit_menu;
         let spot = self.ctx.at_scale(scale, |ctx| {
@@ -2968,10 +2990,9 @@ impl Host {
                 text: &ctx.text,
                 theme: &ctx.theme,
                 px: ctx.theme.fonts.size_px,
-                within: Rect::new(0, 0, w, h),
+                within,
             };
             menu.drawn(id, spot.as_ref(), paste, &cx);
-            menu.draw(id, &mut canvas, &ctx.theme, &cx);
             spot
         });
         self.slots[i].spot = spot.clone();
@@ -3389,6 +3410,36 @@ impl SeatHandler for Host {
     fn remove_seat(&mut self, _: &Connection, _: &QueueHandle<Self>, _: wl_seat::WlSeat) {}
 }
 
+impl Host {
+    /// Window `id` lost the keyboard.
+    fn lose_keyboard(&mut self, id: WinId) {
+        if self.focus == Some(id) {
+            self.focus = None;
+        }
+        if let Some(s) = self.slot_mut(id) {
+            if let Some(a) = s.access.adapter.as_mut() {
+                a.update_window_focus_state(false);
+            }
+            s.dirty |= s.cues.blur();
+        }
+        self.redraw_if_active_shows(id);
+        self.send(id, Event::Focus(false));
+    }
+
+    /// After a turn with a deferred keyboard leave: the focused window lost the keyboard
+    /// unless it went to one of its own surfaces.
+    fn settle_keyboard(&mut self) {
+        if !std::mem::take(&mut self.kb_settle) {
+            return;
+        }
+        if let Some(f) = self.focus
+            && self.kb_on.as_ref().map(|(_, id)| *id) != Some(f)
+        {
+            self.lose_keyboard(f);
+        }
+    }
+}
+
 impl KeyboardHandler for Host {
     fn enter(
         &mut self,
@@ -3401,9 +3452,14 @@ impl KeyboardHandler for Host {
         _: &[Keysym],
     ) {
         self.last_serial = serial;
-        let Some(id) = self.slot_of(surface) else {
+        let Some(id) = self.slot_of(surface).or_else(|| self.menu_owner(surface)) else {
             return;
         };
+        self.kb_on = Some((surface.clone(), id));
+        // From a window to its menu or back: the window keeps the keyboard.
+        if self.focus == Some(id) {
+            return;
+        }
         self.focus = Some(id);
         if let Some(s) = self.slot_mut(id)
             && let Some(a) = s.access.adapter.as_mut()
@@ -3421,20 +3477,24 @@ impl KeyboardHandler for Host {
         surface: &wl_surface::WlSurface,
         _: u32,
     ) {
-        let Some(id) = self.slot_of(surface) else {
-            return;
-        };
-        if self.focus == Some(id) {
-            self.focus = None;
-        }
-        if let Some(s) = self.slot_mut(id) {
-            if let Some(a) = s.access.adapter.as_mut() {
-                a.update_window_focus_state(false);
+        let was_on = match self.kb_on.take() {
+            Some((on, id)) if &on == surface => Some(id),
+            other => {
+                self.kb_on = other;
+                None
             }
-            s.dirty |= s.cues.blur();
+        };
+        let window = self.slot_of(surface);
+        // A menu popup, open or just destroyed, or a window handing the keyboard to its menu:
+        // where it went is known once the turn's events are in.
+        let to_menu = window.is_some_and(|id| self.edit_menu.is_open(id));
+        if window.is_none() && was_on.is_some() || to_menu {
+            self.kb_settle = true;
+            return;
         }
-        self.redraw_if_active_shows(id);
-        self.send(id, Event::Focus(false));
+        if let Some(id) = window {
+            self.lose_keyboard(id);
+        }
     }
     fn press_key(
         &mut self,
@@ -3445,6 +3505,7 @@ impl KeyboardHandler for Host {
         event: KeyEvent,
     ) {
         self.last_serial = serial;
+        self.input_serial = serial;
         self.key(event);
     }
     fn repeat_key(
@@ -3490,10 +3551,14 @@ impl PointerHandler for Host {
         events: &[PointerEvent],
     ) {
         for event in events {
-            let Some(id) = self.slot_of(&event.surface) else {
+            let local = (event.position.0 as i32, event.position.1 as i32);
+            let Some((id, (x, y))) = self
+                .slot_of(&event.surface)
+                .map(|id| (id, local))
+                .or_else(|| self.menu_point(&event.surface, local))
+            else {
                 continue;
             };
-            let (x, y) = (event.position.0 as i32, event.position.1 as i32);
             self.pointer_pos = (x, y);
             match event.kind {
                 PointerEventKind::Enter { .. } => self.pointer_in = Some(id),
@@ -3514,6 +3579,7 @@ impl PointerHandler for Host {
                 } => {
                     self.last_serial = serial;
                     self.press_serial = serial;
+                    self.input_serial = serial;
                     self.press_time = time;
                     self.key_last = false;
                     PointerInput::Press {
