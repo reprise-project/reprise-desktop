@@ -96,7 +96,8 @@ confinement holds, every motion goes through as it comes.
 The compositor serves **Settings** (the light or dark look, contrast, fonts
 and icons). `reprise-portals.conf` hands **Secret** to gnome-keyring,
 **Print** to the GTK backend, and falls back to the wlr backend for screen
-sharing.
+sharing. It names no **Lockdown** backend, so GNOME's lockdown keys (location,
+camera, microphone, printing) don't apply and `[privacy] location` alone turns location off.
 
 Reprise also hosts `org.freedesktop.Notifications`, the
 StatusNotifierWatcher for the tray, `org.freedesktop.ScreenSaver` and the
