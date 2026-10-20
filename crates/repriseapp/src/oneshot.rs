@@ -214,6 +214,7 @@ mod tests {
                 default: 1,
                 min_text_h: None,
                 min_w: 0,
+                max_w: 0,
             },
         )
     }
@@ -232,6 +233,7 @@ mod tests {
                 default: 0,
                 min_text_h: None,
                 min_w: 0,
+                max_w: 0,
             },
         );
         let draw = |b: &MsgBox, w: u32| {
@@ -287,6 +289,7 @@ mod tests {
             default: 0,
             min_text_h: None,
             min_w: 0,
+            max_w: 0,
         };
         // Widths per look are pinned by look::caption_fit's own test.
         let plain = msgbox::client(&short(), &text, px, TextUnits::ONE).0;

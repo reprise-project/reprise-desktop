@@ -606,6 +606,7 @@ impl Notepad {
                     default: 0,
                     min_text_h: None,
                     min_w: 0,
+                    max_w: repriseapp::dialog_max_w(),
                 },
             );
             self.lossy = Some((prompt, text));
@@ -1285,6 +1286,7 @@ impl Notepad {
                 default: 0,
                 min_text_h: None,
                 min_w: 0,
+                max_w: repriseapp::dialog_max_w(),
             },
         )
     }
@@ -1299,6 +1301,7 @@ impl Notepad {
                 default: 0,
                 min_text_h: None,
                 min_w: 0,
+                max_w: repriseapp::dialog_max_w(),
             },
         )
     }
@@ -1554,6 +1557,7 @@ impl Notepad {
             default: self.savechanges_focus,
             min_text_h: None,
             min_w: 0,
+            max_w: repriseapp::dialog_max_w(),
         }
     }
 

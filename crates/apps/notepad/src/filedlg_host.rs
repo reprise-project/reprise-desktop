@@ -256,6 +256,7 @@ impl Notepad {
             default: self.overwrite_focus,
             min_text_h: None,
             min_w: 0,
+            max_w: repriseapp::dialog_max_w(),
         }
     }
 
