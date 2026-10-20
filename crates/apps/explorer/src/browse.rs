@@ -184,14 +184,16 @@ impl Explorer {
         let mut walking = None;
         let chain = foldertree::to_fill(&tree, &places, &walk_to, inp.drive_mounts);
         match self.read_job(ctx, self.chain_reader(chain)) {
-            Ok(read) => foldertree::follow_with(
-                &mut tree,
-                &mut places,
-                &walk_to,
-                &inp,
-                &mut ctx.icons,
-                read,
-            ),
+            Ok(read) => {
+                foldertree::follow_with(
+                    &mut tree,
+                    &mut places,
+                    &walk_to,
+                    &inp,
+                    &mut ctx.icons,
+                    read,
+                );
+            }
             Err(job) => walking = Some((walk_to, job)),
         }
         let accept = if mv { "Move" } else { "Copy" };
@@ -315,14 +317,16 @@ impl Explorer {
                 {
                     let read = self.kids_reader_in(&b.bf.tree, &b.places, &p, place.clone());
                     match self.read_job(ctx, read) {
-                        Ok(kids) => foldertree::fill_with(
-                            &mut b.bf.tree,
-                            &mut b.places,
-                            p,
-                            kids,
-                            &inp,
-                            &mut ctx.icons,
-                        ),
+                        Ok(kids) => {
+                            foldertree::fill_with(
+                                &mut b.bf.tree,
+                                &mut b.places,
+                                p,
+                                kids,
+                                &inp,
+                                &mut ctx.icons,
+                            );
+                        }
                         Err(job) => b.filling.push((place, job)),
                     }
                 }

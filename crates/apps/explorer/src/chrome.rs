@@ -108,6 +108,7 @@ impl Explorer {
         self.address.combo.icon = ctx.icons.get(self.place.icon_name(), 16);
         self.address.go_icon = chrome_icon(ctx, &["go-jump", "go-next"], 20);
         crate::foldertree::refetch_icons(&mut self.tree, &self.tree_places, &mut ctx.icons);
+        self.refill_tree_art(ctx);
         self.pane_key = None;
         self.refresh_chrome(ctx);
     }

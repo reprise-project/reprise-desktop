@@ -97,7 +97,7 @@ impl Explorer {
         let world = self.tree_world();
         move || {
             let known: Vec<&Place> = known.iter().collect();
-            foldertree::read_kids(&place, &world.inputs(), &known)
+            foldertree::read_kids(&place, &world.inputs(), &known, world.scale)
         }
     }
 
@@ -113,7 +113,7 @@ impl Explorer {
             chain
                 .into_iter()
                 .map(|p| {
-                    let kids = foldertree::read_kids(&p, &inp, &[]);
+                    let kids = foldertree::read_kids(&p, &inp, &[], world.scale);
                     (p, kids)
                 })
                 .collect()
@@ -122,6 +122,7 @@ impl Explorer {
 
     fn tree_world(&self) -> foldertree::World {
         foldertree::World {
+            scale: self.drawn_scale.max(1),
             show_hidden: self.settings.show_hidden,
             drives: self.drives.clone(),
             volumes: self.volumes.clone(),
@@ -140,7 +141,7 @@ impl Explorer {
             volumes: &self.volumes,
             drive_mounts: &self.drive_mounts,
         };
-        foldertree::fill_with(
+        let art = foldertree::fill_with(
             &mut self.tree,
             &mut self.tree_places,
             path,
@@ -148,6 +149,7 @@ impl Explorer {
             &inp,
             &mut ctx.icons,
         );
+        self.note_art(place, art);
     }
 
     /// Fills the nodes whose late reads ([`Explorer::fill_node`]) answered: true when one did.
@@ -213,6 +215,22 @@ impl Explorer {
         self.fill_node(path, ctx);
     }
 
+    /// Reads the children of the nodes whose children wear icon files again
+    /// ([`Explorer::refill_tree_node`]), so those come at the scale drawn now.
+    pub(crate) fn refill_tree_art(&mut self, ctx: &mut Ctx) {
+        for place in std::mem::take(&mut self.tree_art) {
+            self.refill_tree_node(&place, ctx);
+        }
+    }
+
+    /// Notes whether a fill of `place`'s node left a child wearing an icon file.
+    fn note_art(&mut self, place: &Place, art: bool) {
+        self.tree_art.retain(|p| p != place);
+        if art {
+            self.tree_art.push(place.clone());
+        }
+    }
+
     pub fn tree_follow(&mut self, place: &Place, ctx: &mut Ctx) {
         self.tree_follow_with(place, Vec::new(), ctx);
     }
@@ -226,7 +244,7 @@ impl Explorer {
             volumes: &self.volumes,
             drive_mounts: &self.drive_mounts,
         };
-        foldertree::follow_with(
+        let filled = foldertree::follow_with(
             &mut self.tree,
             &mut self.tree_places,
             place,
@@ -234,6 +252,9 @@ impl Explorer {
             &mut ctx.icons,
             read,
         );
+        for (p, art) in filled {
+            self.note_art(&p, art);
+        }
         if let Some(frame) = self.layout(ctx).tree {
             let tl = treeview::layout(
                 &self.tree,

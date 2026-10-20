@@ -20,6 +20,8 @@ pub struct Inputs<'a> {
 
 /// [`Inputs`] owned, for a read on a listing thread.
 pub struct World {
+    /// The scale icon files are decoded at.
+    pub scale: i32,
     pub show_hidden: bool,
     pub drives: Vec<reprisefs::places::Drive>,
     pub volumes: reprisefs::udisks::Snapshot,
@@ -50,10 +52,11 @@ fn tree_node(
     label: &str,
     place: Place,
     has_children: bool,
+    own: &Own,
     icons: &mut IconCache,
 ) -> Node {
     let id = places.len() as u64;
-    let (icon, open_icon) = node_icons(&place, icons);
+    let (icon, open_icon) = worn_icons(&place, own, icons);
     places.push(place);
     Node {
         label: label.to_string(),
@@ -78,7 +81,54 @@ fn node_icons(place: &Place, icons: &mut IconCache) -> (Option<Canvas>, Option<C
     (icon, open_icon)
 }
 
-/// Every node fetches its icons again from `icons`, now at another scale.
+/// A folder node's own icon (`meta::folder_icon`), read with its parent's children.
+#[derive(Clone, Default)]
+pub enum Own {
+    #[default]
+    None,
+    Named(String),
+    /// An icon file, decoded at 16 px and the read's scale.
+    File(Option<Canvas>),
+}
+
+impl Own {
+    /// `place`'s own icon, an icon file decoded at `scale`. A drive's or other mount point's is
+    /// not read: the mount may never answer.
+    fn read(place: &Place, inp: &Inputs, scale: i32) -> Own {
+        let Place::Folder(dir) = place else {
+            return Own::None;
+        };
+        if inp.drive_mounts.contains(dir) || reprisefs::listing::is_mount_root(dir) {
+            return Own::None;
+        }
+        match reprisefs::meta::folder_icon(dir) {
+            None => Own::None,
+            Some(f) if f.starts_with('/') => Own::File(reprisekit::icontheme::decode_file(
+                std::path::Path::new(&f),
+                16,
+                scale,
+            )),
+            Some(name) => Own::Named(name),
+        }
+    }
+}
+
+/// [`node_icons`] with the folder's own icon worn instead, when the theme carries it or its file
+/// decoded; open or closed alike.
+fn worn_icons(place: &Place, own: &Own, icons: &mut IconCache) -> (Option<Canvas>, Option<Canvas>) {
+    let icon = match own {
+        Own::None => None,
+        Own::Named(name) => icons.get(name, 16),
+        Own::File(art) => art.clone(),
+    };
+    match icon {
+        Some(icon) => (Some(icon.clone()), Some(icon)),
+        None => node_icons(place, icons),
+    }
+}
+
+/// Every node fetches its icons again from `icons`, now at another scale. A folder's own icon
+/// file gives way to the plain folder until its parent is filled again.
 pub fn refetch_icons(tree: &mut TreeView, places: &[Place], icons: &mut IconCache) {
     fn walk(nodes: &mut [Node], places: &[Place], icons: &mut IconCache) {
         for n in nodes {
@@ -95,7 +145,7 @@ pub fn refetch_icons(tree: &mut TreeView, places: &[Place], icons: &mut IconCach
 /// are read off the host's loop: a symlink among them may point into a mount that never answers.
 pub fn build(tree: &mut TreeView, places: &mut Vec<Place>, icons: &mut IconCache) {
     places.clear();
-    let mut root = tree_node(places, "Desktop", Place::Desktop, true, icons);
+    let mut root = tree_node(places, "Desktop", Place::Desktop, true, &Own::None, icons);
     root.expanded = true;
     tree.roots = vec![root];
     tree.selected = Some(vec![0]);
@@ -111,29 +161,30 @@ pub fn fill(
     path: Vec<usize>,
     inp: &Inputs,
     icons: &mut IconCache,
-) {
+) -> bool {
     let Some(node) = tree.node(&path) else {
-        return;
+        return false;
     };
     let known: Vec<&Place> = node
         .children
         .iter()
         .map(|n| &places[n.id as usize])
         .collect();
-    let kids = read_kids(&places[node.id as usize], inp, &known);
-    fill_with(tree, places, path, kids, inp, icons);
+    let kids = read_kids(&places[node.id as usize], inp, &known, icons.scale());
+    fill_with(tree, places, path, kids, inp, icons)
 }
 
 /// The children of the places a walk fills ([`to_fill`]), read ahead for [`follow_with`].
 pub type Chain = Vec<(Place, Kids)>;
 
-/// A node's children as [`read_kids`] read them: label, place, and whether the child opens
-/// (`None` for one the node already held, which keeps its own).
-pub type Kids = Vec<(String, Place, Option<bool>)>;
+/// A node's children as [`read_kids`] read them: label, place, whether the child opens (`None`
+/// for one the node already held, which keeps its own) and its own icon.
+pub type Kids = Vec<(String, Place, Option<bool>, Own)>;
 
-/// The file system half of [`fill`]: `place`'s children, and for those not in `known` whether
-/// they hold a folder. A host reads them off its loop for [`follow_with`].
-pub fn read_kids(place: &Place, inp: &Inputs, known: &[&Place]) -> Kids {
+/// The file system half of [`fill`]: `place`'s children with their own icons (icon files decoded
+/// at `scale`), and for those not in `known` whether they hold a folder. A host reads them off
+/// its loop for [`follow_with`].
+pub fn read_kids(place: &Place, inp: &Inputs, known: &[&Place], scale: i32) -> Kids {
     let mut kids: Vec<(String, Place)> = Vec::new();
     match place {
         Place::Desktop => {
@@ -157,7 +208,8 @@ pub fn read_kids(place: &Place, inp: &Inputs, known: &[&Place]) -> Kids {
     kids.into_iter()
         .map(|(label, p)| {
             let opens = (!known.contains(&&p)).then(|| opens(&p, inp));
-            (label, p, opens)
+            let own = Own::read(&p, inp, scale);
+            (label, p, opens, own)
         })
         .collect()
 }
@@ -173,7 +225,8 @@ fn opens(p: &Place, inp: &Inputs) -> bool {
         })
 }
 
-/// [`fill`] with the node's children already read.
+/// [`fill`] with the node's children already read: true when one wears an icon file, which a new
+/// scale reads again.
 pub fn fill_with(
     tree: &mut TreeView,
     places: &mut Vec<Place>,
@@ -181,7 +234,8 @@ pub fn fill_with(
     kids: Kids,
     inp: &Inputs,
     icons: &mut IconCache,
-) {
+) -> bool {
+    let art = (kids.iter()).any(|(.., own)| matches!(own, Own::File(Some(_))));
     let mut old: Vec<Option<Node>> = tree
         .node_mut(&path)
         .map(|n| {
@@ -194,17 +248,25 @@ pub fn fill_with(
     let place_at = |n: &Option<Node>| n.as_ref().map(|n| &places[n.id as usize]);
     let was: Vec<Option<usize>> = kids
         .iter()
-        .map(|(_, p, _)| old.iter().position(|n| place_at(n) == Some(p)))
+        .map(|(_, p, ..)| old.iter().position(|n| place_at(n) == Some(p)))
         .collect();
     let nodes: Vec<Node> = kids
         .into_iter()
         .zip(&was)
         .map(
-            |((label, p, opened), was)| match was.and_then(|i| old[i].take()) {
-                Some(n) => Node { label, ..n },
+            |((label, p, opened, own), was)| match was.and_then(|i| old[i].take()) {
+                Some(n) => {
+                    let (icon, open_icon) = worn_icons(&p, &own, icons);
+                    Node {
+                        label,
+                        icon,
+                        open_icon,
+                        ..n
+                    }
+                }
                 None => {
                     let expandable = opened.unwrap_or_else(|| opens(&p, inp));
-                    tree_node(places, &label, p, expandable, icons)
+                    tree_node(places, &label, p, expandable, &own, icons)
                 }
             },
         )
@@ -227,6 +289,7 @@ pub fn fill_with(
         node.children = nodes;
     }
     compact(tree, places);
+    art
 }
 
 /// `places` is indexed by `Node::id` and [`tree_node`] hands out a fresh id per node, so repeated
@@ -353,6 +416,7 @@ pub fn to_fill(tree: &TreeView, places: &[Place], place: &Place, mounts: &[PathB
 /// [`Place::chain_in`] over the cached mounts, so a folder is reached through Computer and the drive
 /// whose mount owns it. The caller scrolls the selection into view.
 /// A node whose place `read` holds ([`read_kids`] of it) fills from there; any other is read here.
+/// Gives the places filled, each with [`fill_with`]'s answer.
 pub fn follow_with(
     tree: &mut TreeView,
     places: &mut Vec<Place>,
@@ -360,7 +424,8 @@ pub fn follow_with(
     inp: &Inputs,
     icons: &mut IconCache,
     mut read: Chain,
-) {
+) -> Vec<(Place, bool)> {
+    let mut filled = Vec::new();
     let chain = place.chain_in(inp.drive_mounts);
     let mut path: Vec<usize> = Vec::new();
     for want in &chain {
@@ -379,15 +444,20 @@ pub fn follow_with(
             match read.iter().position(|(p, _)| p == want) {
                 Some(k) => {
                     let kids = read.swap_remove(k).1;
-                    fill_with(tree, places, path.clone(), kids, inp, icons);
+                    let art = fill_with(tree, places, path.clone(), kids, inp, icons);
+                    filled.push((want.clone(), art));
                 }
-                None => fill(tree, places, path.clone(), inp, icons),
+                None => {
+                    let art = fill(tree, places, path.clone(), inp, icons);
+                    filled.push((want.clone(), art));
+                }
             }
         }
     }
     if !path.is_empty() {
         tree.selected = Some(path);
     }
+    filled
 }
 
 #[cfg(test)]
@@ -475,6 +545,52 @@ mod tests {
         );
     }
 
+    #[test]
+    fn a_folder_wears_its_own_icon_and_a_refill_swaps_it() {
+        let home = tempfile::tempdir().expect("a temp home");
+        let art = tempfile::tempdir().expect("a temp dir");
+        std::fs::create_dir(home.path().join("own")).expect("mkdir own");
+        let wear = |argb: u32| {
+            let file = art.path().join(format!("{argb:x}.png"));
+            let mut c = Canvas::new(16, 16);
+            c.pixels.fill(argb);
+            std::fs::write(&file, reprisekit::raster::to_png(&c)).expect("write png");
+            let entry = format!("[Desktop Entry]\nIcon={}\n", file.display());
+            std::fs::write(home.path().join("own/.directory"), entry).expect("write");
+        };
+        let volumes = Snapshot::default();
+        let inp = Inputs {
+            show_hidden: true,
+            drives: &[],
+            volumes: &volumes,
+            drive_mounts: &[],
+        };
+        let mut icons = IconCache::new(reprisekit::icontheme::IconTheme::load("test", &[]));
+        let mut places = vec![Place::Folder(home.path().to_path_buf())];
+        let mut tree = TreeView::new(vec![Node::new("home", true)], Default::default());
+        let worn = |tree: &TreeView| {
+            let n = &tree.roots[0].children[0];
+            [&n.icon, &n.open_icon].map(|c| c.as_ref().map(|c| c.get(8, 8)))
+        };
+        wear(0xff10_2030);
+        fill(&mut tree, &mut places, vec![0], &inp, &mut icons);
+        assert_eq!(worn(&tree), [Some(0xff10_2030); 2], "closed and open");
+        wear(0xff40_5060);
+        fill(&mut tree, &mut places, vec![0], &inp, &mut icons);
+        assert_eq!(
+            worn(&tree),
+            [Some(0xff40_5060); 2],
+            "the kept node wears the new icon"
+        );
+        std::fs::remove_file(home.path().join("own/.directory")).expect("rm");
+        fill(&mut tree, &mut places, vec![0], &inp, &mut icons);
+        assert_eq!(
+            worn(&tree)[0],
+            icons.get("folder", 16).map(|c| c.get(8, 8)),
+            "and the plain folder once it has none"
+        );
+    }
+
     /// A folder shows a + box only when it holds a subfolder the tree would list: not an empty one, one
     /// holding only files, or (while hidden files are hidden) one whose only subfolder is hidden.
     #[test]
@@ -556,7 +672,7 @@ mod tests {
         let read: Vec<(Place, Kids)> = to_fill(&tree, &places, &target, &mounts)
             .into_iter()
             .map(|p| {
-                let kids = read_kids(&p, &inp, &[]);
+                let kids = read_kids(&p, &inp, &[], 1);
                 (p, kids)
             })
             .collect();

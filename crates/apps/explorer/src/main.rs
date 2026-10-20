@@ -156,6 +156,8 @@ pub struct Explorer {
     item_index: HashMap<PathBuf, usize>,
     pub tree: TreeView,
     pub tree_places: Vec<Place>,
+    /// The Folders nodes whose children wear icon files, read again at a new scale.
+    tree_art: Vec<Place>,
     /// The drives Computer lists. The scan stats every mount (a hung network
     /// mount blocks it), so it runs on a listing thread in [`Explorer::sync_drives`].
     pub drives: Vec<reprisefs::places::Drive>,
@@ -381,6 +383,7 @@ impl Explorer {
             item_index: HashMap::new(),
             tree: TreeView::new(Vec::new(), Style::Explorer),
             tree_places: Vec::new(),
+            tree_art: Vec::new(),
             drive_mounts: Vec::new(),
             drives: Vec::new(),
             mounts_seen: String::new(),
@@ -836,7 +839,7 @@ impl Explorer {
             let tree = to_fill
                 .into_iter()
                 .map(|p| {
-                    let kids = foldertree::read_kids(&p, &inp, &[]);
+                    let kids = foldertree::read_kids(&p, &inp, &[], scale);
                     (p, kids)
                 })
                 .collect();
