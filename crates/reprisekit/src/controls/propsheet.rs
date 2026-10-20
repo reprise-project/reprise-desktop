@@ -1423,7 +1423,7 @@ pub fn draw_popups(c: &mut Canvas, text: &TextRenderer, p: &Paint, sheet: &PropS
     form::draw_popups(c, text, &p.on_page(page), sheet.open(), px);
 }
 
-/// The open page's combo list.
+/// The open page's combo list or colour popup.
 impl Hosted for PropSheet {
     fn spots(&self) -> Vec<Spot> {
         self.open().spots()

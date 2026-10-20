@@ -558,7 +558,8 @@ pub struct Form {
     pub view: Option<View>,
     tip: LabelTip,
     rendered: Rendered,
-    /// A host shows the open combo list on a popup ([`Hosted`]): `draw` leaves it out.
+    /// A host shows the open combo list or colour popup on a popup ([`Hosted`]): `draw` leaves
+    /// it out.
     hosted: bool,
 }
 
@@ -2386,6 +2387,7 @@ impl Form {
                     }
                     (Control::Color(b), Key::Space | Key::Drop) => {
                         b.open = true;
+                        b.at = None;
                         Event::Redraw
                     }
                     (Control::Combo(c), Key::Drop) => {
@@ -2639,7 +2641,7 @@ impl Form {
                         });
                     }
                 }
-                Control::Color(_) => match colorbutton::hit_popup(self.at(it), x, y) {
+                Control::Color(b) => match colorbutton::hit_popup(self.at(it), b, x, y) {
                     Some(colorbutton::PopupHit::Swatch(k)) => {
                         return Some(Hit {
                             item: i,
@@ -4103,50 +4105,51 @@ fn draw_open_popups(c: &mut Canvas, text: &TextRenderer, p: &Paint, form: &Form,
                     px,
                 );
             }
-            Control::Color(b) if b.open => colorbutton::draw_popup(c, text, p, form.at(it), b, px),
+            Control::Color(b) if b.open && !form.hosted => {
+                colorbutton::draw_popup(c, text, p, form.at(it), b, px)
+            }
             _ => {}
         }
     }
 }
 
-impl Form {
-    /// The open combo's item, if a combo's list is down.
-    fn open_list(&self) -> Option<usize> {
-        self.items
-            .iter()
-            .position(|i| matches!(&i.control, Control::Combo(c) if c.open.is_some()))
-    }
-}
-
-/// The open combo's list; dismissing it closes the list.
+/// The open combo's list or colour button's popup; dismissing it closes it.
 impl Hosted for Form {
     fn spots(&self) -> Vec<Spot> {
-        let Some(i) = self.open_list() else {
+        let Some(i) = self.open_combo() else {
             return Vec::new();
         };
         let it = &self.items[i];
-        let Control::Combo(c) = &it.control else {
-            return Vec::new();
-        };
         let field = self.at(it);
-        let lay = combo::layout(c, field, &self.controls());
-        vec![Spot {
-            rect: lay.list,
-            anchor: Anchor::Below(field),
-        }]
+        match &it.control {
+            Control::Combo(c) => vec![Spot {
+                rect: combo::layout(c, field, &self.controls()).list,
+                anchor: Anchor::Below(field),
+            }],
+            Control::Color(b) => vec![Spot {
+                rect: colorbutton::popup_rect(field, b),
+                anchor: Anchor::Below(colorbutton::popup_anchor(field)),
+            }],
+            _ => Vec::new(),
+        }
     }
 
     fn place(&mut self, level: usize, origin: (i32, i32)) {
-        if level == 0
-            && let Some(i) = self.open_list()
-            && let Control::Combo(c) = &mut self.items[i].control
-        {
-            c.list_at = Some(origin);
+        let Some(i) = self.open_combo().filter(|_| level == 0) else {
+            return;
+        };
+        match &mut self.items[i].control {
+            Control::Combo(c) => c.list_at = Some(origin),
+            Control::Color(b) => b.at = Some(origin),
+            _ => {}
         }
     }
 
     fn shadow(&self, theme: &Theme) -> i32 {
-        combo::list_shadow(theme)
+        match self.open_combo().map(|i| &self.items[i].control) {
+            Some(Control::Color(_)) => crate::controls::menu::level_shadow(theme),
+            _ => combo::list_shadow(theme),
+        }
     }
 
     fn draw_level(
@@ -4157,38 +4160,48 @@ impl Hosted for Form {
         theme: &Theme,
         text: &TextRenderer,
     ) {
-        let Some(i) = self.open_list().filter(|_| level == 0) else {
+        let Some(i) = self.open_combo().filter(|_| level == 0) else {
             return;
         };
         let it = &self.items[i];
-        let Control::Combo(combo) = &it.control else {
-            return;
-        };
         // As the form's own draw painted it.
         let p = Paint {
             text: self.rendered.text.get(),
             s: self.rendered.scale.get().max(1),
             ..theme.paint()
         };
-        let lay = combo::layout(combo, self.at(it), &self.controls());
         let moved = |r: Rect| Rect::new(r.x + by.0, r.y + by.1, r.width, r.height);
         let px = match self.rendered.px.get() {
             0 => theme.fonts.size_px,
             px => px,
         };
-        combo::draw_list(
-            c,
-            text.dialog(self.font),
-            &p,
-            &combo.items,
-            combo.open,
-            combo.top,
-            combo.rows,
-            moved(lay.list),
-            lay.scrollbar.map(moved),
-            self.bar_lit(i),
-            px,
-        );
+        let text = text.dialog(self.font);
+        match &it.control {
+            Control::Combo(combo) => {
+                let lay = combo::layout(combo, self.at(it), &self.controls());
+                combo::draw_list(
+                    c,
+                    text,
+                    &p,
+                    &combo.items,
+                    combo.open,
+                    combo.top,
+                    combo.rows,
+                    moved(lay.list),
+                    lay.scrollbar.map(moved),
+                    self.bar_lit(i),
+                    px,
+                );
+            }
+            Control::Color(b) => {
+                let b = ColorButton {
+                    at: b.at.map(|(x, y)| (x + by.0, y + by.1)),
+                    ..b.clone()
+                };
+                colorbutton::draw_popup(c, text, &p, moved(self.at(it)), &b, px);
+            }
+            _ => {}
+        }
     }
 
     fn host(&mut self) {
@@ -4196,11 +4209,7 @@ impl Hosted for Form {
     }
 
     fn dismiss(&mut self) {
-        if let Some(i) = self.open_list()
-            && let Control::Combo(c) = &mut self.items[i].control
-        {
-            c.open = None;
-        }
+        self.close_popups();
     }
 }
 
@@ -7219,6 +7228,70 @@ mod tests {
             (1, None),
             "the second row, where it was put"
         );
+    }
+
+    #[test]
+    fn a_hosted_colour_popup_draws_alone_as_in_the_form_and_is_hit_where_it_was_put() {
+        use crate::controls::hosted::{Anchor, Hosted};
+        use crate::interface::Interface;
+        use crate::interfaces::theme_for;
+        let t = tr();
+        for look in [Interface::Classic, Interface::Blue] {
+            let theme = theme_for(look);
+            let red = Color::rgb(255, 0, 0);
+            let blue = Color::rgb(0, 0, 255);
+            let palette = vec![red, blue, Color::rgb(0, 255, 0)];
+            let button = Rect::new(10, 10, 75, 21);
+            let mut f = Form::new(vec![Item::new(
+                "c",
+                button,
+                Control::Color(ColorButton::new(red, palette)),
+            )]);
+            assert!(f.spots().is_empty(), "nothing to show while closed");
+            f.click(at(&f, 20, 15));
+            let p = theme.paint();
+            let mut whole = Canvas::new(200, 200);
+            draw(&mut whole, &t, &p, &f, false, PX);
+            let spots = f.spots();
+            assert_eq!(spots.len(), 1);
+            assert_eq!(
+                spots[0].anchor,
+                Anchor::Below(Rect::new(10, 10, 98, 21)),
+                "{look:?}: the popup hangs 21 px under the button's top"
+            );
+            let r = spots[0].rect;
+            assert_eq!(r, Rect::new(10, 31, 98, 151), "{look:?}");
+            let mut own = Canvas::new(r.width as u32, r.height as u32);
+            f.draw_level(0, &mut own, (-r.x, -r.y), &theme, &t);
+            for y in 0..r.height {
+                for x in 0..r.width {
+                    assert_eq!(
+                        own.get(x, y),
+                        whole.get(r.x + x, r.y + y),
+                        "{look:?} ({x}, {y})"
+                    );
+                }
+            }
+            f.host();
+            let mut bare = Canvas::new(200, 200);
+            draw(&mut bare, &t, &p, &f, false, PX);
+            assert_eq!(
+                bare.get(r.x + 30, r.y + 30),
+                0,
+                "{look:?}: the form leaves the popup out"
+            );
+            f.place(0, (300, 400));
+            // The second swatch: 5 + 23 px in, 5 px down from the popup's top.
+            f.click(at(&f, 300 + 5 + 23 + 9, 400 + 5 + 9));
+            let Control::Color(b) = &f.items[0].control else {
+                unreachable!()
+            };
+            assert_eq!(
+                (b.color, b.open),
+                (blue, false),
+                "{look:?}: the second swatch, where it was put"
+            );
+        }
     }
 
     #[test]
