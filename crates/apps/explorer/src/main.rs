@@ -223,6 +223,10 @@ pub struct Explorer {
     /// size their windows by ([`Explorer::follow_forms`]).
     forms: Theme,
     clicks: DoubleClick<usize>,
+    /// For the double click in the rename box that selects a word.
+    rename_clicks: DoubleClick<()>,
+    /// A left press in the rename box holds the pointer: motion extends its selection.
+    rename_drag: bool,
     /// For the double click that takes a list row as the default button, keyed by the form item.
     dialog_clicks: DoubleClick<Option<usize>>,
     alt_arm: AltArm,
@@ -425,6 +429,8 @@ impl Explorer {
             dialog_px: Theme::default().fonts.size_px,
             forms: Theme::default(),
             clicks: DoubleClick::default(),
+            rename_clicks: DoubleClick::default(),
+            rename_drag: false,
             dialog_clicks: DoubleClick::default(),
             alt_arm: AltArm::default(),
             keyed: false,
