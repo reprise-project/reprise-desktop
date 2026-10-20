@@ -338,7 +338,7 @@ are.
   square in the tray.
 - **Input methods.** fcitx5 and ibus work in programs and in Reprise's own
   fields: Run, the launcher, the Start menu's search, a desktop rename and
-  the dialogs.
+  the dialogs. Spin boxes take digits only and leave the input method off.
 - **Drop text into fields.** Text dragged from any program lands in a
   text field of Reprise's programs and dialogs, Run included, where the
   drop caret shows, and a drag held at the field's edge scrolls it.

@@ -249,6 +249,7 @@ impl MultiEdit {
             multiline: true,
             can_undo: self.can_undo(),
             selected: self.has_selection(),
+            digits: false,
         }
     }
 
