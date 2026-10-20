@@ -347,7 +347,8 @@ impl State {
         let Some(view) = self.desktop.as_mut() else {
             return;
         };
-        for top in view.bins.start_tab_reads(view.drives.found()) {
+        let (id, read) = view.bins.start_tab_reads(view.drives.found());
+        for top in read {
             let bins = bins.clone();
             self.spawn_fs_job(move || {
                 let tab = crate::binprops::drive_tab(&bins, &top);
@@ -355,7 +356,7 @@ impl State {
                     let Some(view) = state.desktop.as_mut() else {
                         return;
                     };
-                    view.bins.land_tab(top, tab);
+                    view.bins.land_tab(top, id, tab);
                     state.show_bin_tabs();
                 })
             });
