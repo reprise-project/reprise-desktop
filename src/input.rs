@@ -7,8 +7,8 @@ use std::time::{Duration, Instant};
 
 use smithay::{
     backend::input::{
-        AbsolutePositionEvent, Axis, AxisSource, ButtonState, Event, InputBackend, InputEvent,
-        InputTime, PointerAxisEvent, PointerButtonEvent, PointerMotionEvent,
+        AbsolutePositionEvent, Axis, AxisSource, ButtonState, Device as _, Event, InputBackend,
+        InputEvent, InputTime, PointerAxisEvent, PointerButtonEvent, PointerMotionEvent,
     },
     input::pointer::{AxisFrame, ButtonEvent, CursorImageStatus, MotionEvent},
     reexports::{
@@ -385,7 +385,7 @@ impl State {
                     return;
                 }
                 let delta = self.zoom_motion(event.delta());
-                self.pointer_moved(delta, event.delta_unaccel(), Event::time(&event));
+                self.pointer_moved(delta, (delta, event.delta_unaccel()), Event::time(&event));
             }
             InputEvent::PointerMotionAbsolute { event } => {
                 let area = self.output_area();
@@ -396,7 +396,8 @@ impl State {
                 // As a relative move, so a locked or confined pointer holds
                 // for absolute devices (a VM's tablet) too.
                 let delta = self.zoom_absolute(pos) - self.pointer_location();
-                self.pointer_moved(delta, delta, Event::time(&event));
+                let step = self.pointers.absolute.step(Event::device(&event).id(), pos);
+                self.pointer_moved(delta, (step, step), Event::time(&event));
             }
             InputEvent::PointerButton { event } => {
                 let time = Event::time(&event);

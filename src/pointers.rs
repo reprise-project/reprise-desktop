@@ -44,6 +44,7 @@ pub struct Pointers {
     pub motion_timer: Option<RegistrationToken>,
     /// The drag source's actions a target last heard of (`dnd_actions_changed`).
     pub drag_actions: Vec<smithay::input::dnd::DndAction>,
+    pub absolute: crate::constraint::AbsoluteTrail,
     _globals: Globals,
 }
 
@@ -67,6 +68,7 @@ impl Pointers {
             motions: Default::default(),
             motion_timer: None,
             drag_actions: Vec::new(),
+            absolute: Default::default(),
             _globals: Globals {
                 _constraints: PointerConstraintsState::new::<State>(dh),
                 _relative: RelativePointerManagerState::new::<State>(dh),
