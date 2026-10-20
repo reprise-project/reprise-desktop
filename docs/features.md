@@ -488,8 +488,8 @@ dialogs. [More in programs.md](programs.md#explorer).
   one more thread, and exit waits at most half a second for them, so input, programs, the lock
   screen and VT switches carry on while a driver holds a commit. Other
   monitors wait for a mode change to finish, as the kernel holds their locks
-  through it. Meanwhile hotplug scans and a reloaded config's output changes
-  wait for it, and output-management tools are told the display is busy. A
+  through it. Meanwhile hotplug scans, a reloaded config's output changes
+  and output-management configurations (wlr-randr, kanshi) wait for it. A
   monitor stuck for over 2 s no longer holds up the lock screen or sleep,
   and a mode change that failed or took that long is tried again after 1, 2,
   4 ... up to 30 s. `REPRISE_COMMIT_DELAY=<connector>:<ms>` in Reprise's
