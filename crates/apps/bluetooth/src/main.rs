@@ -1533,6 +1533,17 @@ mod tests {
         let lay = tilelist::layout(&a.devices.list, list, &cm);
         let last = lay.slots.last().expect("a tile");
         assert_eq!(last.rect.height, u.len(tilelist::TILE_H));
+        // The tile's icon is the 32 px one doubled, 8 px in and centred down the row.
+        let small = a.icons.get(a.devices.rows[1].kind);
+        let (x0, y0) = (last.rect.x + 8, last.rect.y + (last.rect.height - 64) / 2);
+        for y in 0..small.height as i32 {
+            for x in 0..small.width as i32 {
+                let px = small.get(x, y);
+                if px >> 24 == 0xff {
+                    assert_eq!(c.get(x0 + 2 * x + 1, y0 + 2 * y + 1), px, "({x}, {y})");
+                }
+            }
+        }
         let (x, y) = (last.rect.x + 60, last.rect.bottom() - 4);
         let press = PointerInput::Press {
             x,

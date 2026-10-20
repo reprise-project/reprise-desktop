@@ -401,8 +401,9 @@ impl Devices {
             |c, r, i, sel| {
                 let d = &self.rows[i];
                 let caption = bz::status_line(d);
+                let icon = icons.tile(d.kind, lay.text);
                 let tile = Tile {
-                    icon: Some(icons.get(d.kind)),
+                    icon: Some(&icon),
                     title: &d.alias,
                     tag: "",
                     caption: &caption,
