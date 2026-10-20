@@ -8,8 +8,8 @@ use crate::theme::{Color, FontConfig};
 use fontdb::{Database, Family, Query, Weight};
 use freetype::face::LoadFlag;
 use freetype::{Face, Library};
+use rustc_hash::FxHashMap;
 use std::cell::RefCell;
-use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 
@@ -135,10 +135,10 @@ pub struct TextRenderer {
     regular: Option<LoadedFace>,
     bold: Option<LoadedFace>,
     antialias: bool,
-    cache: RefCell<HashMap<GlyphKey, Glyph>>,
+    cache: RefCell<FxHashMap<GlyphKey, Glyph>>,
     /// (ascender, descender, line height) per (bold, size); asked of FreeType once because a size
     /// change invalidates the face's hinting state.
-    metrics: RefCell<HashMap<(bool, u32), LineMetrics>>,
+    metrics: RefCell<FxHashMap<(bool, u32), LineMetrics>>,
     shell_dlg: Option<Box<TextRenderer>>,
     /// The (regular, bold) faces line metrics come from when not this renderer's own: the second
     /// dialog font takes the UI font's so both sit on one baseline.
@@ -437,8 +437,8 @@ impl TextRenderer {
             regular,
             bold,
             antialias,
-            cache: RefCell::new(HashMap::new()),
-            metrics: RefCell::new(HashMap::new()),
+            cache: RefCell::default(),
+            metrics: RefCell::default(),
             shell_dlg: None,
             line_faces: None,
             lead: 0,
