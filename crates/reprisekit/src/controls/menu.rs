@@ -1740,6 +1740,7 @@ mod tests {
             ..Theme::default()
         }
     }
+    use crate::anim::{Unroll, UnrollFrom};
     use crate::raster::{Canvas, Rect};
     use crate::text::TextRenderer;
     use crate::theme::{FontConfig, Metrics, Theme};
@@ -2081,6 +2082,89 @@ mod tests {
         for m in 0..label.chars().count() {
             assert_eq!(underlined(m), m < kept, "access key at char {m}");
         }
+    }
+
+    /// A frame of `items` unrolling from `from` halfway in at scale `s`: the menu and its
+    /// shadow moved by the frame's shift and cut to its clip, as the compositor's scene shows it.
+    fn unrolled(theme: &Theme, items: &[MenuItem], from: UnrollFrom, s: i32) -> Canvas {
+        let text = TextRenderer::load(&FontConfig::default());
+        let mut theme = theme.clone();
+        theme.metrics.menu_width = 120;
+        let theme = &theme;
+        let layout = MenuLayout::compute_styled(&MenuStyle::submenu(theme), items, 99);
+        let reach = shadow_reach(theme);
+        let size = (layout.width + reach, layout.height + reach);
+        let frame = Unroll::at(from, size, 0.5);
+        let (theme, layout) = (theme.scaled(s), layout.scaled(s));
+        let mut menu = Canvas::new(layout.width as u32, layout.height as u32);
+        draw_menu(&mut menu, &theme, &text, &layout, items, Some(0), "", false);
+        let shadow = draw_menu_shadow(&theme, layout.width, layout.height, i32::MAX);
+        let (dx, dy) = (frame.shift.0 * s, frame.shift.1 * s);
+        let c = frame.clip;
+        let clip = Rect::new(c.x * s + dx, c.y * s + dy, c.width * s, c.height * s);
+        let mut out = Canvas::new((size.0 * s) as u32, (size.1 * s) as u32);
+        out.blit_over_clipped(dx, dy, &shadow, clip);
+        out.blit_over_clipped(dx, dy, &menu, clip);
+        out
+    }
+
+    #[test]
+    fn half_unrolled_menus_at_scale_1_and_2() {
+        let items = [
+            MenuItem::entry("").submenu(true),
+            MenuItem::Separator,
+            MenuItem::entry("").checked(true),
+            MenuItem::entry(""),
+        ];
+        let glass = crate::interfaces::theme_with(
+            crate::interface::Interface::Glass,
+            Default::default(),
+            &Default::default(),
+        );
+        let mut got = Vec::new();
+        for (look, theme) in [("Classic", Theme::default()), ("Glass", glass)] {
+            for from in [
+                UnrollFrom::Top,
+                UnrollFrom::Bottom,
+                UnrollFrom::Left,
+                UnrollFrom::Right,
+            ] {
+                for s in [1, 2] {
+                    let c = unrolled(&theme, &items, from, s);
+                    let clear = |x: i32, y: i32| c.get(x, y) >> 24 == 0;
+                    let (w, h) = (c.width as i32, c.height as i32);
+                    let (near, far) = match from {
+                        UnrollFrom::Top => ((w / 4, 0), (w / 4, h - 1)),
+                        UnrollFrom::Bottom => ((w / 4, h - 1), (w / 4, 0)),
+                        UnrollFrom::Left => ((0, h / 4), (w - 1, h / 4)),
+                        UnrollFrom::Right => ((w - 1, h / 4), (0, h / 4)),
+                    };
+                    assert!(
+                        !clear(near.0, near.1),
+                        "{look} {from:?} {s}: the near edge shows menu"
+                    );
+                    assert!(
+                        clear(far.0, far.1),
+                        "{look} {from:?} {s}: the far edge is still empty"
+                    );
+                    got.push((format!("{look} {from:?} {s}"), fnv(&c)));
+                }
+            }
+        }
+        crate::pins::check("menu_unroll", &got);
+    }
+
+    fn fnv(c: &Canvas) -> u64 {
+        let mut h = 0xcbf2_9ce4_8422_2325u64;
+        for v in [c.width, c.height]
+            .into_iter()
+            .chain(c.pixels.iter().copied())
+        {
+            for b in v.to_le_bytes() {
+                h = (h ^ u64::from(b)).wrapping_mul(0x100_0000_01b3);
+            }
+        }
+        h
     }
 
     #[test]

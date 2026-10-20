@@ -345,6 +345,8 @@ pub struct Settings {
     pub menu_shadow: i64,
     pub menu_hover_ms: i64,
     pub menu_fade_ms: i64,
+    /// `[effects] menu_animation`: one of [`MENU_ANIMATIONS`]' names.
+    pub menu_animation: String,
     pub window_animation: bool,
     pub window_open_ms: i64,
     pub window_close_ms: i64,
@@ -558,6 +560,7 @@ impl Default for Settings {
             menu_shadow: 4,
             menu_hover_ms: 400,
             menu_fade_ms: 150,
+            menu_animation: "fade".into(),
             window_animation: false,
             window_open_ms: 250,
             window_close_ms: 200,
@@ -755,6 +758,9 @@ pub const SWITCH_ANIMATIONS: &Choices = &[
     ("zoom", "Zoom"),
     ("wipe", "Wipe"),
 ];
+
+/// How menus open. Mirrors `MenuAnimation::name` in `src/config.rs`.
+pub const MENU_ANIMATIONS: &Choices = &[("fade", "Fade"), ("slide", "Slide"), ("none", "None")];
 
 /// How the Glass taskbar marks the current desktop. Mirrors
 /// `PagerMark::name` in `crates/reprisekit/src/taskbar.rs`.
@@ -1078,6 +1084,7 @@ fn fields() -> Vec<Field> {
         Field::Int(k("metrics", "menu_shadow"), lens!(menu_shadow)),
         Field::Int(k("metrics", "menu_hover_ms"), lens!(menu_hover_ms)),
         Field::Int(k("metrics", "menu_fade_ms"), lens!(menu_fade_ms)),
+        Field::Text(k("effects", "menu_animation"), lens!(menu_animation)),
         Field::Flag(k("effects", "window_animation"), lens!(window_animation)),
         Field::Int(k("effects", "window_open_ms"), lens!(window_open_ms)),
         Field::Int(k("effects", "window_close_ms"), lens!(window_close_ms)),
@@ -2383,6 +2390,7 @@ size_px = 12
             menu_shadow: 0,
             menu_hover_ms: 300,
             menu_fade_ms: 0,
+            menu_animation: "slide".into(),
             window_animation: true,
             window_open_ms: 300,
             window_close_ms: 180,

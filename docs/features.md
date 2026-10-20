@@ -130,8 +130,10 @@ the Super tap, Super+Shift+Esc and the VT switch keys can be rebound.
   While the taskbar has the keyboard (Super+T), it opens on top with its
   button flagged and the keyboard stays on the taskbar.
 - **Motion.** Windows fade and grow as they open and shrink as they close,
-  caption buttons and Start fade their highlights, menus fade in. All
-  optional (`[effects]`), on by default under Glass.
+  caption buttons and Start fade their highlights, menus fade in (or
+  unroll from the side they open from, `menu_animation = "slide"`). All
+  optional (`[effects]`), on by default under Glass; menus fade under every
+  interface.
 
 ## Snapping
 

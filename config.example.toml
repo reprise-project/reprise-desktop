@@ -40,7 +40,7 @@ system_icons = ["documents", "computer", "home", "recycle-bin"]   # the desktop'
 # menu_shadow = 4               # drop shadow under menus, 0 for none
 # double_click_ms = 500         # milliseconds, not scaled on HiDPI outputs
 # menu_hover_ms = 400           # milliseconds a hovered row waits before its submenu opens or closes
-# menu_fade_ms = 150            # milliseconds a menu takes to fade in, 0 for none
+# menu_fade_ms = 150            # milliseconds a menu takes to open ([effects] menu_animation), 0 for at once
 
 [fonts]
 family = ["Tahoma", "DejaVu Sans"]
@@ -368,6 +368,10 @@ suspend_after = 0            # run [power] standby
 #                            # dropped one glides into its slot
 # taskbar_hide_ms = 200      # 0 to 2000: an auto-hidden taskbar's slide; 0 hides
 #                            # and shows it at once
+# menu_animation = "fade"    # how menus and the Start menu open, the same under every
+#                            # interface: "fade", "slide" (it unrolls from the side
+#                            # facing what opened it) or "none"; over [metrics]
+#                            # menu_fade_ms
 # session_fade = true       # the screen fades in from black at log on and out to
 #                            # black at Log Off, Turn Off and Restart; on under
 #                            # every interface

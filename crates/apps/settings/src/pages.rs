@@ -29,10 +29,10 @@ use reprisekit::trackbar::{self, TrackBar};
 
 use crate::model::{
     CURSOR_SIZES, Choices, DESKTOPS_DEFAULT, DESKTOPS_MAX, EFFECTS_MS_MAX, FONT_SMOOTHINGS,
-    HOT_CORNERS, INTERFACES, PAGER_MARKS, POSITIONS, PREVIEW_FPS_MAX, QT_PLATFORM_THEMES,
-    REPRISE_TOOLKIT_ROW, SNAP_DISTANCE_MAX, STARTMENU_STYLES, SWITCH_ANIMATIONS, SWITCH_MS_MAX,
-    SWITCHER_SIZES, SWITCHER_STYLES, Settings, TASKBAR_BUTTONS, TASKBAR_POSITIONS, TEXT_SIZES,
-    TOOLKIT_AUTO, TOOLKIT_REPRISE, WATER_STYLES,
+    HOT_CORNERS, INTERFACES, MENU_ANIMATIONS, PAGER_MARKS, POSITIONS, PREVIEW_FPS_MAX,
+    QT_PLATFORM_THEMES, REPRISE_TOOLKIT_ROW, SNAP_DISTANCE_MAX, STARTMENU_STYLES,
+    SWITCH_ANIMATIONS, SWITCH_MS_MAX, SWITCHER_SIZES, SWITCHER_STYLES, Settings, TASKBAR_BUTTONS,
+    TASKBAR_POSITIONS, TEXT_SIZES, TOOLKIT_AUTO, TOOLKIT_REPRISE, WATER_STYLES,
 };
 use crate::registry::Page;
 use repriseconf::{Lens, ThumbnailCache, lens};
@@ -1459,7 +1459,7 @@ pub fn startup(a: Area) -> Form {
 }
 
 /// The Effects page: window animations and the fade of hovered buttons, each a check with its two durations
-/// indented under it, and the screen's fade; then the menus' shadow and timings, then the task buttons' slide.
+/// indented under it, and the screen's fade; then the menus' shadow, timings and opening, then the task buttons' slide.
 pub fn effects(a: Area) -> Form {
     let range = (0, EFFECTS_MS_MAX as i32);
     let mut items = vec![group(a, "effects_group", 44, 158, "Windows")];
@@ -1546,8 +1546,22 @@ pub fn effects(a: Area) -> Form {
         GX,
         260,
         60,
-        "Fa&de ms:",
+        "Ti&me ms:",
         (0, 9999),
+    ));
+    items.push(Item::label_at(
+        "menu_animation_label",
+        GX + 140,
+        260,
+        70,
+        "A&nimation:",
+    ));
+    items.push(choice(
+        "menu_animation",
+        GX + 214,
+        256,
+        110,
+        MENU_ANIMATIONS,
     ));
     items.push(group(a, "taskbar_group", 296, 48, "Taskbar"));
 
@@ -1757,6 +1771,7 @@ fn binds() -> Vec<Bind> {
         Bind::Num("menu_shadow", lens!(menu_shadow)),
         Bind::Num("menu_hover_ms", lens!(menu_hover_ms)),
         Bind::Num("menu_fade_ms", lens!(menu_fade_ms)),
+        Bind::Named("menu_animation", lens!(menu_animation), MENU_ANIMATIONS),
         Bind::Flag("window_animation", lens!(window_animation)),
         Bind::Num("window_open_ms", lens!(window_open_ms)),
         Bind::Num("window_close_ms", lens!(window_close_ms)),
@@ -4458,6 +4473,7 @@ mod tests {
         assert_eq!(rect(&s, p, "menu_shadow"), Rect::new(96, 230, 50, 20));
         assert_eq!(rect(&s, p, "menu_hover_ms"), Rect::new(246, 230, 50, 20));
         assert_eq!(rect(&s, p, "menu_fade_ms"), Rect::new(96, 256, 50, 20));
+        assert_eq!(rect(&s, p, "menu_animation"), Rect::new(246, 256, 110, 21));
         assert_eq!(rect(&s, p, "taskbar_group"), Rect::new(20, 296, 358, 48));
         assert_eq!(rect(&s, p, "taskbar_slide"), Rect::new(GX, 318, 13, 13));
         inside_page(&s, p);
@@ -4469,6 +4485,7 @@ mod tests {
             menu_shadow: 4,
             menu_hover_ms: 250,
             menu_fade_ms: 0,
+            menu_animation: "slide".into(),
             ..Settings::default()
         };
         let s = with(&want);

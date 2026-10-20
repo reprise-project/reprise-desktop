@@ -13,6 +13,7 @@ use std::{
 };
 
 use reprisefs::apps::AppEntry;
+use reprisekit::anim::{Unroll, UnrollFrom};
 use reprisekit::taskbar::{Edge, StartMenuDock};
 use reprisescene::{BufferId, Input, NodeId, TreeId};
 use smithay::{
@@ -23,7 +24,7 @@ use smithay::{
 use crate::{
     barplace::BarPlacement,
     compositor::{SceneOwner, State},
-    config::{Action, MenuEntry, MenuTarget},
+    config::{Action, MenuAnimation, MenuEntry, MenuTarget},
     desktop::IconId,
     desktopview::DesktopCommand,
     keys,
@@ -336,8 +337,28 @@ pub struct Menu {
     /// Laid out and drawn with the style's Shut down options look ([`reprisekit::theme::Theme::for_options_menu`]).
     options_look: bool,
     opened: Instant,
+    /// The animation still running since `opened`.
+    opening: Option<Opening>,
+    /// Where an unrolling menu draws from `x`, `y` this frame.
+    shift: (i32, i32),
     /// Rows showing a stand-in until a job decodes their icon file.
     icon_waits: IconWaits,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Opening {
+    Fade,
+    Unroll(UnrollFrom),
+}
+
+/// The side a menu opened from a bar on `edge` unrolls from.
+pub(crate) fn unroll_from_bar(edge: Edge) -> UnrollFrom {
+    match edge {
+        Edge::Bottom => UnrollFrom::Bottom,
+        Edge::Top => UnrollFrom::Top,
+        Edge::Left => UnrollFrom::Left,
+        Edge::Right => UnrollFrom::Right,
+    }
 }
 
 /// Where a menu was opened. One opened from the taskbar keeps an
@@ -470,6 +491,8 @@ impl Menu {
             parent_row: None,
             options_look: false,
             opened: Instant::now(),
+            opening: None,
+            shift: (0, 0),
             icon_waits: Vec::new(),
         }
     }
@@ -712,9 +735,29 @@ impl State {
         scene.set_input(shadow, Input::Passthrough);
         let buffer = scene.buffer_create(tree);
         scene.set_position(tree, x, y);
-        let fade = self.config.theme.metrics.menu_fade_ms > 0;
-        if fade {
-            scene.set_opacity(tree, 0.0);
+        let rect = Rect::new(x, y, layout.width, layout.height);
+        let opening = match self.config.menu_opening() {
+            MenuAnimation::None => None,
+            MenuAnimation::Fade => Some(Opening::Fade),
+            MenuAnimation::Slide => Some(Opening::Unroll(match self.menus.last() {
+                Some(parent) if depth > 0 => UnrollFrom::beside(
+                    rect,
+                    Rect::new(
+                        parent.x,
+                        parent.y,
+                        parent.layout.width,
+                        parent.layout.height,
+                    ),
+                ),
+                _ if from == MenuFrom::Bar => unroll_from_bar(self.bar_placement(&output).edge),
+                _ => {
+                    let p = self.pointer_location();
+                    UnrollFrom::facing(rect, (p.x as i32, p.y as i32))
+                }
+            })),
+        };
+        if opening == Some(Opening::Fade) {
+            self.scene.set_opacity(tree, 0.0);
         }
         self.menus.push(Menu {
             tree,
@@ -733,9 +776,12 @@ impl State {
             parent_row: None,
             options_look: false,
             opened: Instant::now(),
+            opening,
+            shift: (0, 0),
             icon_waits: Vec::new(),
         });
-        if fade {
+        if opening.is_some() {
+            self.open_menu_frame(self.menus.len() - 1, 0.0);
             self.arm_menu_fade();
         }
         crate::autohideview::poke(self);
@@ -2154,12 +2200,47 @@ impl State {
         }
     }
 
+    /// Shows menu `idx` at `t` (0 to 1) of its opening; at 1 the opening ends.
+    fn open_menu_frame(&mut self, idx: usize, t: f32) {
+        let reach = shadow_reach(&self.config.theme);
+        let Some(m) = self.menus.get_mut(idx) else {
+            return;
+        };
+        let done = t >= 1.0;
+        match m.opening {
+            None => {}
+            Some(Opening::Fade) => self.scene.set_opacity(m.tree, t),
+            Some(Opening::Unroll(from)) => {
+                let size = (m.layout.width + reach, m.layout.height + reach);
+                let Unroll { shift, clip } = Unroll::at(from, size, t);
+                m.shift = if done { (0, 0) } else { shift };
+                self.scene
+                    .set_position(m.tree, m.x + m.shift.0, m.y + m.shift.1);
+                self.scene.set_clip(
+                    m.tree,
+                    (!done).then(|| {
+                        smithay::utils::Rectangle::new(
+                            (clip.x, clip.y).into(),
+                            (clip.width, clip.height).into(),
+                        )
+                    }),
+                );
+            }
+        }
+        if done {
+            m.opening = None;
+        }
+    }
+
     fn menu_fade_tick(&mut self) -> TimeoutAction {
-        let fade = self.config.theme.metrics.menu_fade_ms.max(1) as f32;
+        let ms = self.config.theme.metrics.menu_fade_ms.max(1) as f32;
         let mut done = true;
-        for m in &self.menus {
-            let t = (m.opened.elapsed().as_secs_f32() * 1000.0 / fade).min(1.0);
-            self.scene.set_opacity(m.tree, t);
+        for idx in 0..self.menus.len() {
+            if self.menus[idx].opening.is_none() {
+                continue;
+            }
+            let t = (self.menus[idx].opened.elapsed().as_secs_f32() * 1000.0 / ms).min(1.0);
+            self.open_menu_frame(idx, t);
             done &= t >= 1.0;
         }
         self.redraw_all();
@@ -2173,7 +2254,8 @@ impl State {
 
     pub fn menu_row_at(&self, depth: usize, x: f64, y: f64) -> Option<usize> {
         let m = self.menus.get(depth)?;
-        m.layout.hit(x as i32 - m.x, y as i32 - m.y)
+        m.layout
+            .hit(x as i32 - m.x - m.shift.0, y as i32 - m.y - m.shift.1)
     }
 
     pub fn menu_activate(&mut self, depth: usize, idx: usize) {
