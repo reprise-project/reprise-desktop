@@ -222,6 +222,9 @@ pub enum TrayCommand {
     },
     Appearance(settings::Appearance),
     IconTheme(String),
+    /// The px item icons are drawn at now ([`icon_sizes`]): every item is read again and its
+    /// icon decoded at them.
+    IconSizes(Vec<i32>),
     Shutdown,
 }
 
@@ -289,21 +292,24 @@ pub fn strip_mnemonic(label: &str) -> String {
     out
 }
 
-/// Largest `IconPixmap` side the tray keeps. It draws 16 to 32 px, so a
-/// bigger entry only costs memory.
+/// Largest `IconPixmap` side the tray keeps. It draws at most 32 px per step of
+/// draw scale, so a bigger entry only costs memory.
 const MAX_PIXMAP_SIDE: i32 = 256;
 
-const PIXMAP_SIZES: [i32; 4] = [16, 22, 32, 48];
-
-pub fn item_pixmaps(raw: &[(i32, i32, &[u8])]) -> Vec<IconSource> {
+/// For each of `sizes`, the px the icon is drawn at ([`icon_sizes`]), the smallest
+/// `IconPixmap` entry at least that wide, else the widest: drawing shrinks it.
+pub fn item_pixmaps(raw: &[(i32, i32, &[u8])], sizes: &[i32]) -> Vec<IconSource> {
     let usable = || {
         raw.iter()
             .enumerate()
             .filter(|(_, (w, h, b))| pixmap_len(*w, *h, b.len()).is_some())
     };
-    let mut picked: Vec<usize> = Vec::with_capacity(PIXMAP_SIZES.len());
-    for size in PIXMAP_SIZES {
-        if let Some((i, _)) = usable().min_by_key(|(_, (w, ..))| (w - size).abs())
+    let mut picked: Vec<usize> = Vec::with_capacity(sizes.len());
+    for &size in sizes {
+        let fit = usable()
+            .filter(|(_, (w, ..))| *w >= size)
+            .min_by_key(|(_, (w, ..))| *w);
+        if let Some((i, _)) = fit.or_else(|| usable().max_by_key(|(_, (w, ..))| *w))
             && !picked.contains(&i)
         {
             picked.push(i);
@@ -347,22 +353,13 @@ fn pixmap_to_source(w: i32, h: i32, argb_be: &[u8]) -> Option<IconSource> {
     })
 }
 
-/// Sizes a peer-named icon is decoded at. The tray and the balloon draw
-/// at 16 px per step of output scale; past 2x the 32 px copy is scaled.
-const NAMED_SIZES: [i32; 2] = [16, 32];
-
 /// Sizes a notification's icons are decoded at; 48 and 96 px feed the Glass sheet's icon slot.
 pub const NOTIFY_SIZES: [i32; 4] = [16, 32, 48, 96];
 
 /// A peer-named icon (a theme name or an absolute path, with `extra`
-/// directories searched first) decoded at each of [`NAMED_SIZES`]. Only
-/// the D-Bus thread calls this: the file is the peer's choice, and even an
-/// SVG inside the decoder's budget can take a second to draw.
-pub fn decode_named(icons: &mut IconCache, name: &str, extra: &[PathBuf]) -> Vec<IconSource> {
-    decode_named_at(icons, name, extra, &NAMED_SIZES)
-}
-
-/// [`decode_named`] at the given `sizes`.
+/// directories searched first) decoded at each of `sizes`. Only the D-Bus
+/// thread calls this: the file is the peer's choice, and even an SVG inside
+/// the decoder's budget can take a second to draw.
 pub fn decode_named_at(
     icons: &mut IconCache,
     name: &str,
@@ -448,6 +445,8 @@ pub struct Tray {
     /// `item_icon`'s answers by (item id, px), dropped whenever an item
     /// changes: a redraw must not rescale every pixmap.
     icon_cache: HashMap<(String, i32), Option<Arc<Canvas>>>,
+    /// The [`icon_sizes`] the D-Bus thread decodes item icons at.
+    icon_sizes: Vec<i32>,
 }
 
 impl Tray {
@@ -656,7 +655,9 @@ pub fn setup(state: &mut State) {
     let appearance = settings::Appearance::live(state);
     let icon_theme = state.config.icons.theme.clone();
     let pads = state.devices.pads.shared();
-    let Some((commands, thread)) = dbus::start(tx, thread_fd, appearance, icon_theme, pads) else {
+    let sizes = drawn_sizes(state);
+    let Some((commands, thread)) = dbus::start(tx, thread_fd, appearance, icon_theme, pads, sizes)
+    else {
         log::warn!("tray: could not start the D-Bus thread; tray disabled");
         return;
     };
@@ -726,7 +727,45 @@ fn install(
         gone: false,
         wheel: None,
         icon_cache: HashMap::new(),
+        icon_sizes: drawn_sizes(state),
     });
+}
+
+/// The px an item's icon is drawn at, each once and ascending: a tray cell's 16 px and the
+/// Customize list's `list` px, at each draw scale in `scales`.
+pub fn icon_sizes(scales: &[i32], list: i32) -> Vec<i32> {
+    let mut sizes: Vec<i32> = scales
+        .iter()
+        .flat_map(|&s| [reprisekit::icon::ICON_SIZE * s, list * s])
+        .collect();
+    sizes.sort_unstable();
+    sizes.dedup();
+    sizes
+}
+
+/// [`icon_sizes`] at the outputs' draw scales (1 with no output) and the text size's list icon.
+fn drawn_sizes(state: &State) -> Vec<i32> {
+    let mut scales: Vec<i32> = (state.scene.outputs().iter())
+        .map(|o| state.draw_scale_at(Some(o)))
+        .collect();
+    if scales.is_empty() {
+        scales.push(1);
+    }
+    let list = shellview::list_icon_px(state.config.theme.controls().text);
+    icon_sizes(&scales, list)
+}
+
+/// After a text size or an output change: has the D-Bus thread decode item icons at the new
+/// [`drawn_sizes`], when they differ from the ones it has.
+pub fn sync_icon_sizes(state: &mut State) {
+    let sizes = drawn_sizes(state);
+    let Some(tray) = state.tray.as_mut() else {
+        return;
+    };
+    if tray.icon_sizes != sizes {
+        tray.icon_sizes = sizes.clone();
+        send(state, TrayCommand::IconSizes(sizes));
+    }
 }
 
 pub fn shutdown(state: &mut State) {
@@ -1030,7 +1069,7 @@ pub fn customize(state: &mut State) {
         .collect();
     let all_icons =
         (wording == traycustomize::Wording::Glass).then(|| !overflow_enabled(&state.config));
-    let metrics = theme.look.controls();
+    let metrics = theme.controls();
     let list = shellview::list_icon_px(metrics.text);
     let past = past_keys
         .into_iter()
@@ -1695,6 +1734,41 @@ mod tests {
     }
 
     #[test]
+    fn icon_sizes_are_the_cell_and_list_px_at_each_scale() {
+        assert_eq!(icon_sizes(&[1], 16), [16]);
+        assert_eq!(icon_sizes(&[1, 2], 24), [16, 24, 32, 48]);
+        assert_eq!(icon_sizes(&[2, 2], 16), [32]);
+    }
+
+    #[test]
+    fn a_text_size_or_scale_change_sends_the_new_icon_sizes() {
+        use smithay::output::Scale;
+        let mut h = crate::harness::Harness::new();
+        let output = h.output("TEST-1", 1024, 768);
+        let (_tx, _wake, heard) = headless(&mut h.state);
+        let sizes = || {
+            std::iter::from_fn(|| heard.try_recv().ok())
+                .filter_map(|c| match c {
+                    TrayCommand::IconSizes(s) => Some(s),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+        };
+        crate::configwatch::redraw_for_scale(&mut h.state);
+        assert!(sizes().is_empty(), "nothing sent while the sizes stand");
+
+        let large = crate::config::Config::parse("[accessibility]\ntext_size = 150\n").unwrap();
+        crate::configwatch::reload(&mut h.state, large);
+        let list = shellview::list_icon_px(h.state.config.theme.controls().text);
+        assert!(list > 16, "the list icon grows at 150%, got {list}");
+        assert_eq!(sizes(), [vec![16, list]]);
+
+        output.change_current_state(None, None, Some(Scale::Fractional(2.0)), None);
+        h.state.update_layout();
+        assert_eq!(sizes(), [vec![32, 2 * list]]);
+    }
+
+    #[test]
     fn a_remembered_icon_is_fetched_at_the_lists_grown_icon_size() {
         let mut icons = IconCache::new(crate::icontheme::IconTheme::load("none", &[]));
         past_icon(&mut icons, Some("/srv/icons/tray.png"), 24);
@@ -2232,19 +2306,30 @@ mod tests {
     }
 
     #[test]
-    fn item_pixmaps_keeps_at_most_four_entries_of_at_most_256_px() {
+    fn item_pixmaps_keeps_an_entry_per_drawn_size_of_at_most_256_px() {
         let pixels = vec![0u8; 1024 * 1024 * 4];
         let entry = |side: i32| (side, side, &pixels[..(side * side * 4) as usize]);
         let mut raw: Vec<_> = (0..30).map(|_| entry(1024)).collect();
-        raw.extend([16, 20, 22, 24, 32, 48, 64, 256, 300].map(entry));
-        let kept = item_pixmaps(&raw);
+        raw.extend([16, 20, 22, 32, 48, 64, 256, 300].map(entry));
+        let kept = item_pixmaps(&raw, &[16, 25, 32, 50]);
         let widths: Vec<u32> = kept.iter().map(|p| p.width).collect();
-        assert_eq!(widths, [16, 22, 32, 48], "one entry per tray size");
+        assert_eq!(
+            widths,
+            [16, 32, 64],
+            "the smallest entry at least each drawn size"
+        );
+        let kept = item_pixmaps(&raw, &[16, 300]);
+        let widths: Vec<u32> = kept.iter().map(|p| p.width).collect();
+        assert_eq!(widths, [16, 256], "the widest kept entry past them all");
 
         let big: Vec<_> = (0..30).map(|_| entry(256)).collect();
-        assert_eq!(item_pixmaps(&big).len(), 1, "one 256 px entry out of 30");
+        assert_eq!(
+            item_pixmaps(&big, &[16, 32]).len(),
+            1,
+            "one 256 px entry out of 30"
+        );
         assert!(
-            item_pixmaps(&[entry(1024)]).is_empty(),
+            item_pixmaps(&[entry(1024)], &[16]).is_empty(),
             "1024 px is dropped"
         );
     }

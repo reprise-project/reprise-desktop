@@ -546,6 +546,7 @@ impl State {
         self.close_dialogs_off_scene();
         self.keep_dialogs_inside();
         crate::tray::forget_output(self);
+        crate::tray::sync_icon_sizes(self);
         crate::trayflyout::output_gone(self);
         crate::calendarview::output_gone(self);
         crate::displaysview::output_gone(self);
