@@ -87,6 +87,9 @@ pub struct Backend {
     pub session: LibSeatSession,
     libinput: Libinput,
     input_fds: inputfds::Held,
+    /// The turns after a return that release the held device files, then resume libinput
+    /// (`input_back`).
+    input_back: Option<RegistrationToken>,
     pub renderer: GlesRenderer,
     pub render_node: DrmNode,
     drm: DrmDevice,
@@ -459,6 +462,7 @@ pub fn init(state: &mut State) -> Result<(), Box<dyn std::error::Error>> {
         session,
         libinput,
         input_fds,
+        input_back: None,
         renderer,
         render_node,
         drm,
@@ -1022,6 +1026,9 @@ fn pause(state: &mut State) {
         return;
     };
     log::info!("session paused");
+    if let Some(t) = b.input_back.take() {
+        state.handle.remove(t);
+    }
     b.libinput.suspend();
     b.drm.pause();
 }
@@ -1032,11 +1039,9 @@ fn activate(state: &mut State) {
     };
     log::info!("session active");
     b.back.activated(std::time::Instant::now());
-    inputfds::release(&mut b.session, &b.input_fds);
-    if b.libinput.resume().is_err() {
-        log::warn!("libinput did not resume");
-    }
-    let libinput = b.libinput.clone();
+    // logind answers this only once it has finished the switch; a device reset sent before
+    // that is refused (EACCES) and its modesets fail.
+    inputfds::release_one(&mut b.session, &b.input_fds);
     if let Err(e) = b.drm.activate(false) {
         log::error!("drm activate: {e}");
     }
@@ -1044,12 +1049,50 @@ fn activate(state: &mut State) {
         s.track.reset();
         s.hw.unlit = true;
     }
-    crate::inputqueue::take_queued(state, libinput);
     on_quiet(state);
     for output in state.scene.outputs().to_vec() {
         crate::nightlight::output_on(state, &output);
     }
     schedule_all(state, Ask::Scene);
+    input_back(state);
+}
+
+/// Releases the device files still held after `activate` one per loop turn, then resumes
+/// libinput in a turn of its own: each release is a synchronous logind call and the resume
+/// reopens every device, ~40 ms in one turn.
+fn input_back(state: &mut State) {
+    let Some(b) = state.backend.as_mut() else {
+        return;
+    };
+    if let Some(t) = b.input_back.take() {
+        state.handle.remove(t);
+    }
+    let token = state
+        .handle
+        .insert_source(Timer::immediate(), |_, _, state| {
+            let Some(b) = state.backend.as_mut() else {
+                return TimeoutAction::Drop;
+            };
+            match inputfds::release_one(&mut b.session, &b.input_fds) {
+                inputfds::Back::Released => return TimeoutAction::ToDuration(Duration::ZERO),
+                inputfds::Back::Paused => {}
+                inputfds::Back::Resume => {
+                    if b.libinput.resume().is_err() {
+                        log::warn!("libinput did not resume");
+                    }
+                    let libinput = b.libinput.clone();
+                    crate::inputqueue::take_queued(state, libinput);
+                }
+            }
+            if let Some(b) = state.backend.as_mut() {
+                b.input_back = None;
+            }
+            TimeoutAction::Drop
+        });
+    match token {
+        Ok(t) => b.input_back = Some(t),
+        Err(e) => log::error!("input resume timer: {e}"),
+    }
 }
 
 /// Once the session is back, quiet and no commit is out: read back each CRTC's gamma, then
