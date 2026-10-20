@@ -1,7 +1,7 @@
 //! Screen reader side of the compositor's own surfaces: one AccessKit adapter per taskbar, menu stack, switcher, dialog, launcher, clipboard history, emoji picker, calendar, displays panel, tray flyout, task preview panel, notification history, the balloons and each framed window's caption, speaking AT-SPI on the session's accessibility bus.
 //! `accesskit_unix` runs its D-Bus side on its own thread and calls the handlers (`reprisekit::access::Handler`) there; they post a `Msg` to a calloop channel, so the loop never waits on the bus. Trees are built on the loop, in an idle pass [`touch`] queues, only for adapters a reader holds.
 //! Bounds are layout coordinates: a tree's root carries its surface's place as a transform and its controls lay out surface-local. A tree claims the focus only while its surface has the keyboard (see [`focus_of`]). The lock screen has no tree, so its password field's text stays here.
-//! A reader's action on a node runs as the click a user would give it ([`click`], `reprisekit::access::gesture`) through the pointer's press and release paths; focusing a taskbar item gives the bar the keyboard (`barkeys`), a switcher, overview or launcher row takes the selection, a dialog's button or a Start panel spot takes it unpressed; ScrollIntoView on a row out of view scrolls its list ([`reveal`]); any other action there scrolls it in, then acts on it.
+//! A reader's action on a node runs as the click a user would give it ([`click`], `reprisekit::access::gesture`) through the pointer's press and release paths, a client's flyout over the node closed first; focusing a taskbar item gives the bar the keyboard (`barkeys`), a switcher, overview or launcher row takes the selection, a dialog's button or a Start panel spot takes it unpressed; ScrollIntoView on a row out of view scrolls its list ([`reveal`]); any other action there scrolls it in, then acts on it.
 //! The same idle pass moves the seat's keyboard for the menus, Glass Start menu, launcher and overview, reader or not: they take it from the window while open and give it back on close ([`move_keyboard`]).
 
 use reprisebus::a11y::{KeyEcho, KeyNote};
@@ -588,14 +588,7 @@ fn act(state: &mut State, surface: Surface, req: Request) {
         Route::Act(t) => t,
         Route::None => return,
     };
-    let mut hit = state.scene_hit(Point::from(target.at));
-    // A frame another window covers comes up first, as a user's click on it would need.
-    if let Surface::Frame(w) = surface
-        && !lands_on(state, surface, &hit)
-    {
-        state.focus_window(w);
-        hit = state.scene_hit(Point::from(target.at));
-    }
+    let hit = uncover(state, surface, req.act, target.at);
     if !lands_on(state, surface, &hit) {
         log::debug!("access: {req:?} on {surface:?} lands on {hit:?}; dropped");
         return;
@@ -632,6 +625,26 @@ fn act(state: &mut State, surface: Surface, req: Request) {
         }
         None => {}
     }
+}
+
+/// What a reader's `act` at layout point `at` on `surface` lands on, once what covers it there
+/// is out of the way: a frame another window covers comes up, and a client's flyout closes on
+/// a click, where a user's click would only close it.
+fn uncover(state: &mut State, surface: Surface, act: Act, at: (f64, f64)) -> Hit {
+    let mut hit = state.scene_hit(Point::from(at));
+    if let Surface::Frame(w) = surface
+        && !lands_on(state, surface, &hit)
+    {
+        state.focus_window(w);
+        hit = state.scene_hit(Point::from(at));
+    }
+    if matches!(act, Act::Click | Act::ContextMenu)
+        && let Hit::Surface { surface: s, .. } = &hit
+        && crate::layer::close_flyout(state, s)
+    {
+        hit = state.scene_hit(Point::from(at));
+    }
+    hit
 }
 
 /// A reader's focus on a switcher, overview or launcher row, whose click switches or launches:
@@ -792,6 +805,41 @@ mod tests {
         assert!(
             !select(&mut h.state, &Hit::Desktop { index: None }),
             "another hit takes the click"
+        );
+    }
+
+    #[test]
+    fn a_readers_click_on_a_taskbar_button_under_a_flyout_closes_the_flyout_and_reaches_the_bar() {
+        let mut h = crate::harness::Harness::new();
+        h.output("TEST-1", 1024, 768);
+        let mut c = h.connect();
+        h.map_toplevel(&mut c, "test.app", 300, 200);
+        let bar = h.state.bars[0].tree;
+        let at = (40.0, 754.0);
+        assert!(
+            matches!(h.state.scene_hit(Point::from(at)), Hit::Taskbar { .. }),
+            "the bar is at {at:?}"
+        );
+        let f = h.map_flyout(&mut c);
+        assert!(
+            matches!(h.state.scene_hit(Point::from(at)), Hit::Surface { .. }),
+            "the flyout covers the bar"
+        );
+        let focus = uncover(&mut h.state, Surface::Taskbar(bar), Act::Focus, at);
+        assert!(
+            matches!(focus, Hit::Surface { .. }),
+            "a focus closes nothing"
+        );
+        let click = uncover(&mut h.state, Surface::Taskbar(bar), Act::Click, at);
+        assert!(
+            lands_on(&h.state, Surface::Taskbar(bar), &click),
+            "the click lands on the bar"
+        );
+        h.roundtrip(&mut c);
+        assert_eq!(
+            c.side.layers_closed,
+            [f],
+            "the flyout's client hears closed"
         );
     }
 

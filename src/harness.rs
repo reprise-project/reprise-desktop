@@ -38,6 +38,11 @@ use wayland_protocols_misc::{
     },
 };
 
+use wayland_protocols_wlr::layer_shell::v1::client::{
+    zwlr_layer_shell_v1::{self, ZwlrLayerShellV1},
+    zwlr_layer_surface_v1::{self, ZwlrLayerSurfaceV1},
+};
+
 use crate::{
     compositor::{ClientState, Host, State},
     config::Config,
@@ -257,6 +262,33 @@ impl Harness {
             popup,
         }
     }
+
+    /// A flyout as `repriseapp` opens one: an overlay layer surface over the whole output that
+    /// holds the keyboard outright, configured and mapped with its first buffer.
+    pub fn map_flyout(&mut self, c: &mut TestClient) -> WlSurface {
+        let qh = c.qh();
+        let surface = (c.side.compositor.as_ref())
+            .expect("wl_compositor")
+            .create_surface(&qh, ());
+        let layer = (c.side.layer_shell.as_ref())
+            .expect("zwlr_layer_shell_v1")
+            .get_layer_surface(
+                &surface,
+                None,
+                zwlr_layer_shell_v1::Layer::Overlay,
+                "test.flyout".into(),
+                &qh,
+                surface.clone(),
+            );
+        use zwlr_layer_surface_v1::{Anchor, KeyboardInteractivity};
+        layer.set_anchor(Anchor::Top | Anchor::Bottom | Anchor::Left | Anchor::Right);
+        layer.set_exclusive_zone(-1);
+        layer.set_keyboard_interactivity(KeyboardInteractivity::Exclusive);
+        surface.commit();
+        self.roundtrip(c);
+        self.roundtrip(c);
+        surface
+    }
 }
 
 /// A client's xdg popup.
@@ -316,6 +348,9 @@ impl TestClient {
                 }
                 "zwp_virtual_keyboard_manager_v1" => {
                     self.side.vk_manager = Some(registry.bind(name, 1, &qh, ()));
+                }
+                "zwlr_layer_shell_v1" => {
+                    self.side.layer_shell = Some(registry.bind(name, version.min(4), &qh, ()));
                 }
                 _ => {}
             }
@@ -547,6 +582,9 @@ pub struct ClientSide {
     pub keys: Vec<(u32, bool)>,
     /// The `shells` the compositor asked to close, in order.
     pub closes: Vec<usize>,
+    layer_shell: Option<ZwlrLayerShellV1>,
+    /// The layer surfaces the compositor closed, by their `wl_surface`.
+    pub layers_closed: Vec<WlSurface>,
 }
 
 impl wc::Dispatch<wl_registry::WlRegistry, ()> for ClientSide {
@@ -629,6 +667,31 @@ impl wc::Dispatch<xdg_toplevel::XdgToplevel, usize> for ClientSide {
                 st.shells[i].pending = (width, height);
             }
             xdg_toplevel::Event::Close => st.closes.push(i),
+            _ => {}
+        }
+    }
+}
+
+impl wc::Dispatch<ZwlrLayerSurfaceV1, WlSurface> for ClientSide {
+    fn event(
+        st: &mut Self,
+        layer: &ZwlrLayerSurfaceV1,
+        ev: zwlr_layer_surface_v1::Event,
+        surface: &WlSurface,
+        _: &Connection,
+        qh: &QueueHandle<Self>,
+    ) {
+        match ev {
+            zwlr_layer_surface_v1::Event::Configure {
+                serial,
+                width,
+                height,
+            } => {
+                layer.ack_configure(serial);
+                let shm = st.shm.as_ref().expect("wl_shm");
+                attach(shm, qh, surface, width as i32, height as i32);
+            }
+            zwlr_layer_surface_v1::Event::Closed => st.layers_closed.push(surface.clone()),
             _ => {}
         }
     }
@@ -738,6 +801,7 @@ wc::delegate_noop!(ClientSide: ignore ZwpTextInputManagerV3);
 wc::delegate_noop!(ClientSide: ignore ZwpTextInputV3);
 wc::delegate_noop!(ClientSide: ignore ZwpVirtualKeyboardManagerV1);
 wc::delegate_noop!(ClientSide: ignore ZwpVirtualKeyboardV1);
+wc::delegate_noop!(ClientSide: ignore ZwlrLayerShellV1);
 
 #[test]
 fn a_headless_state_maps_a_clients_toplevel_on_its_output() {
