@@ -21,7 +21,8 @@ use smithay::{
             Bind, Color32F, ExportMem, Offscreen,
             damage::OutputDamageTracker,
             element::{Kind, surface::render_elements_from_surface_tree},
-            gles::{GlesRenderer, GlesTexture},
+            gles::{GlesMapping, GlesRenderer, GlesTexture},
+            sync::SyncPoint,
         },
     },
     output::{Output, WeakOutput},
@@ -266,7 +267,7 @@ fn render_into(
     size: Size<i32, Physical>,
     with_cursor: bool,
     target: Target<'_>,
-) -> Result<(), String> {
+) -> Result<Drawn, String> {
     let shown = state.config.debug.overlay_in_captures;
     state.without_debug_panels(shown, |state| {
         render_scene_into(state, output, origin, size, with_cursor, target)
@@ -280,7 +281,7 @@ fn render_scene_into(
     size: Size<i32, Physical>,
     with_cursor: bool,
     target: Target<'_>,
-) -> Result<(), String> {
+) -> Result<Drawn, String> {
     let pointer = state.pointer_location();
     let State {
         backend,
@@ -323,13 +324,26 @@ fn render_scene_into(
     draw(renderer, at, &elements, clear, target)
 }
 
+/// A capture rendered into its buffer, waiting for the GPU to finish.
+/// An shm buffer is filled once it has.
+struct Drawn {
+    sync: SyncPoint,
+    shm: Option<ShmCopy>,
+}
+
+struct ShmCopy {
+    buffer: WlBuffer,
+    mapping: GlesMapping,
+    size: Size<i32, Physical>,
+}
+
 fn draw(
     renderer: &mut GlesRenderer,
     (size, scale, transform): (Size<i32, Physical>, f64, Transform),
     elements: &[OutputElement],
     clear: Color32F,
     target: Target<'_>,
-) -> Result<(), String> {
+) -> Result<Drawn, String> {
     let mut tracker = OutputDamageTracker::new(size, scale, transform);
     match target {
         Target::Dmabuf(mut dmabuf) => {
@@ -337,20 +351,58 @@ fn draw(
             let result = tracker
                 .render_output(renderer, &mut fb, 0, elements, clear)
                 .map_err(|e| format!("{e:?}"))?;
-            // The client reads the buffer once told it is ready.
-            result.sync.wait().map_err(|e| format!("{e:?}"))
+            Ok(Drawn {
+                sync: result.sync,
+                shm: None,
+            })
         }
-        Target::Shm(buffer) => shm::with_buffer_contents_mut(buffer, |pool, pool_len, data| {
-            let fourcc = match data.format {
-                wl_shm::Format::Xrgb8888 => Fourcc::Xrgb8888,
-                wl_shm::Format::Argb8888 => Fourcc::Argb8888,
-                f => return Err(format!("shm format {f:?} not offered")),
+        Target::Shm(buffer) => {
+            let fourcc = shm::with_buffer_contents(buffer, |_, _, data| {
+                if data.width != size.w || data.height != size.h {
+                    return Err("shm buffer of the wrong size".to_string());
+                }
+                match data.format {
+                    wl_shm::Format::Xrgb8888 => Ok(Fourcc::Xrgb8888),
+                    wl_shm::Format::Argb8888 => Ok(Fourcc::Argb8888),
+                    f => Err(format!("shm format {f:?} not offered")),
+                }
+            })
+            .map_err(|e| format!("{e:?}"))??;
+            let mut texture: GlesTexture = renderer
+                .create_buffer(fourcc, size.to_logical(1).to_buffer(1, Transform::Normal))
+                .map_err(|e| e.to_string())?;
+            let mapping = {
+                let mut fb = renderer.bind(&mut texture).map_err(|e| e.to_string())?;
+                tracker
+                    .render_output(renderer, &mut fb, 0, elements, clear)
+                    .map_err(|e| format!("{e:?}"))?;
+                renderer
+                    .copy_framebuffer(&fb, Rectangle::from_size((size.w, size.h).into()), fourcc)
+                    .map_err(|e| e.to_string())?
             };
-            if data.width != size.w || data.height != size.h {
-                return Err("shm buffer of the wrong size".into());
-            }
-            let row = size.w as usize * 4;
-            let rows = size.h as usize;
+            Ok(Drawn {
+                sync: crate::gpufence::sync_now(renderer)?,
+                shm: Some(ShmCopy {
+                    buffer: buffer.clone(),
+                    mapping,
+                    size,
+                }),
+            })
+        }
+    }
+}
+
+impl ShmCopy {
+    fn fill(&self, renderer: &mut GlesRenderer) -> Result<(), String> {
+        let bytes = renderer
+            .map_texture(&self.mapping)
+            .map_err(|e| e.to_string())?;
+        let row = self.size.w as usize * 4;
+        let rows = self.size.h as usize;
+        if bytes.len() < row * rows {
+            return Err("short texture read".into());
+        }
+        shm::with_buffer_contents_mut(&self.buffer, |pool, pool_len, data| {
             let offset = usize::try_from(data.offset).map_err(|_| "negative offset")?;
             let stride = usize::try_from(data.stride).map_err(|_| "negative stride")?;
             let end = stride
@@ -358,21 +410,7 @@ fn draw(
                 .and_then(|n| n.checked_add(row))
                 .and_then(|n| n.checked_add(offset));
             if stride < row || end.is_none_or(|end| end > pool_len) {
-                return Err("buffer does not fit its pool".into());
-            }
-            let mut texture: GlesTexture = renderer
-                .create_buffer(fourcc, size.to_logical(1).to_buffer(1, Transform::Normal))
-                .map_err(|e| e.to_string())?;
-            let mut fb = renderer.bind(&mut texture).map_err(|e| e.to_string())?;
-            tracker
-                .render_output(renderer, &mut fb, 0, elements, clear)
-                .map_err(|e| format!("{e:?}"))?;
-            let mapping = renderer
-                .copy_framebuffer(&fb, Rectangle::from_size((size.w, size.h).into()), fourcc)
-                .map_err(|e| e.to_string())?;
-            let bytes = renderer.map_texture(&mapping).map_err(|e| e.to_string())?;
-            if bytes.len() < row * rows {
-                return Err("short texture read".into());
+                return Err("buffer does not fit its pool".to_string());
             }
             for y in 0..rows {
                 // SAFETY: `pool` is the client's mapped pool of `pool_len`
@@ -388,8 +426,29 @@ fn draw(
             }
             Ok(())
         })
-        .map_err(|e| format!("{e:?}"))?,
+        .map_err(|e| format!("{e:?}"))?
     }
+}
+
+/// Runs `done` once the GPU has finished `drawn` and an shm buffer holds
+/// it, or with an error when the render is not done by the deadline. The
+/// loop goes on meanwhile.
+fn when_done(
+    state: &mut State,
+    drawn: Drawn,
+    done: impl FnOnce(&mut State, Result<(), String>) + 'static,
+) {
+    let sync = drawn.sync.clone();
+    let deadline = crate::gpufence::CAPTURE_DEADLINE;
+    crate::gpufence::when_reached(&state.handle, sync, deadline, move |state, reached| {
+        let filled = match (reached, &drawn.shm, state.backend.as_mut()) {
+            (false, _, _) => Err(format!("the render did not finish in {deadline:?}")),
+            (true, None, _) => Ok(()),
+            (true, Some(copy), Some(b)) => copy.fill(&mut b.renderer),
+            (true, Some(_), None) => Err("no backend".into()),
+        };
+        done(state, filled);
+    });
 }
 
 /// The scale `w` is captured at: its output's, where its frame's centre
@@ -417,7 +476,7 @@ fn window_size(state: &State, w: WindowId) -> Option<Size<i32, Physical>> {
 /// window geometry's top-left at 0,0, into `target`. Under the lock the
 /// frame is blank: the window's own surfaces are not what the screen
 /// shows.
-fn render_window(state: &mut State, w: WindowId, target: Target<'_>) -> Result<(), String> {
+fn render_window(state: &mut State, w: WindowId, target: Target<'_>) -> Result<Drawn, String> {
     let size = window_size(state, w).ok_or("the window is not mapped")?;
     let scale = window_scale(state, w);
     let locked = state.is_locked();
@@ -452,16 +511,42 @@ fn render_window(state: &mut State, w: WindowId, target: Target<'_>) -> Result<(
 
 fn fill_window(state: &mut State, w: WindowId, session: &SessionRef, frame: Frame) {
     let buffer = frame.buffer();
-    match render_window(state, w, Target::of(&buffer)) {
+    let drawn = render_window(state, w, Target::of(&buffer));
+    if drawn.is_ok() {
+        fresh(session).clear();
+    }
+    let what = format!("capture of window {w:?}");
+    complete(state, drawn, frame, Transform::Normal, what, || ());
+}
+
+/// Sends `frame` ready once `drawn` is done, after `then`; fails it if
+/// the render failed or does not finish.
+fn complete(
+    state: &mut State,
+    drawn: Result<Drawn, String>,
+    frame: Frame,
+    transform: Transform,
+    what: String,
+    then: impl FnOnce() + 'static,
+) {
+    let now = state.now();
+    let drawn = match drawn {
+        Ok(d) => d,
+        Err(e) => {
+            log::warn!("{what}: {e}");
+            return frame.fail(CaptureFailureReason::Unknown);
+        }
+    };
+    when_done(state, drawn, move |_, done| match done {
         Ok(()) => {
-            fresh(session).clear();
-            frame.success(Transform::Normal, None, state.now());
+            then();
+            frame.success(transform, None, now);
         }
         Err(e) => {
-            log::warn!("capture of window {w:?}: {e}");
+            log::warn!("{what}: {e}");
             frame.fail(CaptureFailureReason::Unknown);
         }
-    }
+    });
 }
 
 fn window_constraints(state: &State, w: WindowId) -> Option<BufferConstraints> {
@@ -508,22 +593,18 @@ fn fill_cursor(state: &mut State, session: &CursorSessionRef, frame: Frame) {
     let (elements, hotspot) = cursor_image(renderer, parts, Scale::from(scale));
     let at = ((side, side).into(), scale, Transform::Normal);
     let buffer = frame.buffer();
-    match draw(
+    let drawn = draw(
         renderer,
         at,
         &elements,
         Color32F::TRANSPARENT,
         Target::of(&buffer),
-    ) {
-        Ok(()) => {
-            session.set_cursor_hotspot((hotspot.x, hotspot.y));
-            frame.success(Transform::Normal, None, state.now());
-        }
-        Err(e) => {
-            log::warn!("cursor capture on {}: {e}", output.name());
-            frame.fail(CaptureFailureReason::Unknown);
-        }
-    }
+    );
+    let what = format!("cursor capture on {}", output.name());
+    let session = session.clone();
+    complete(state, drawn, frame, Transform::Normal, what, move || {
+        session.set_cursor_hotspot((hotspot.x, hotspot.y));
+    });
 }
 
 fn cursor_side(output: &Output) -> i32 {
@@ -535,23 +616,19 @@ fn fill_ext(state: &mut State, output: &Output, session: &SessionRef, frame: Fra
         return frame.fail(CaptureFailureReason::Stopped);
     };
     let buffer = frame.buffer();
-    match render_into(
+    let drawn = render_into(
         state,
         output,
         (0, 0).into(),
         mode.size,
         session.draw_cursor(),
         Target::of(&buffer),
-    ) {
-        Ok(()) => {
-            fresh(session).clear();
-            frame.success(output.current_transform(), None, state.now());
-        }
-        Err(e) => {
-            log::warn!("capture of {}: {e}", output.name());
-            frame.fail(CaptureFailureReason::Unknown);
-        }
+    );
+    if drawn.is_ok() {
+        fresh(session).clear();
     }
+    let what = format!("capture of {}", output.name());
+    complete(state, drawn, frame, output.current_transform(), what, || ());
 }
 
 fn fill_wlr(state: &mut State, screencopy: Screencopy) {
@@ -563,17 +640,24 @@ fn fill_wlr(state: &mut State, screencopy: Screencopy) {
         ScreencopyBuffer::Shm(b) => Target::Shm(b),
         ScreencopyBuffer::Dmabuf(d) => Target::Dmabuf(d.clone()),
     };
-    match render_into(
+    let drawn = render_into(
         state,
         &info.output,
         info.region_loc,
         info.buffer_size,
         info.overlay_cursor,
         buffer,
-    ) {
-        Ok(()) => screencopy.submit(state.now()),
-        // Dropping it fails the frame.
-        Err(e) => log::warn!("screencopy of {}: {e}", info.output.name()),
+    );
+    let name = info.output.name();
+    let now = state.now();
+    // Dropping the screencopy fails its frame.
+    match drawn {
+        Ok(drawn) => when_done(state, drawn, move |_, done| match done {
+            Ok(()) if screencopy.is_alive() => screencopy.submit(now),
+            Ok(()) => {}
+            Err(e) => log::warn!("screencopy of {name}: {e}"),
+        }),
+        Err(e) => log::warn!("screencopy of {name}: {e}"),
     }
 }
 

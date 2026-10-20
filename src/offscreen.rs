@@ -105,6 +105,13 @@ impl Target {
                 Fourcc::Argb8888,
             )
             .map_err(|e| e.to_string())?;
+        drop(fb);
+        // Mapping a read the GPU has not finished waits in the driver for as long as it takes.
+        let fence = crate::gpufence::fence_now(renderer)?;
+        let deadline = crate::gpufence::READ_DEADLINE;
+        if !crate::gpufence::reached_within(&fence, deadline) {
+            return Err(format!("the render did not finish in {deadline:?}"));
+        }
         let bytes = renderer.map_texture(&mapping).map_err(|e| e.to_string())?;
         let count = (size.w * size.h) as usize;
         if bytes.len() < count * 4 {
