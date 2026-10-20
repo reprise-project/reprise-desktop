@@ -40,6 +40,7 @@ mod framepace;
 mod gammacontrol;
 mod glass;
 mod globalshortcuts;
+mod gpufence;
 mod handlers;
 #[cfg(test)]
 mod harness;
