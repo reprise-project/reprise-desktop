@@ -585,8 +585,7 @@ impl State {
             self.repoint(p.into(), InputTime::now());
         }
         self.redraw_switcher();
-        // The 3D switcher was laid out for an output that may have moved or gone.
-        if self.switcher.stack.is_some() || self.switcher.leaving.is_some() {
+        if self.flip_misplaced() {
             self.switcher_cancel();
         }
         self.input_layout_changed();
