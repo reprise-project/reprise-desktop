@@ -1,9 +1,10 @@
-//! A context menu drawn inside the window's own surface: the tree it walks, the chain
-//! reprisekit lays out, and what each row does.
+//! A context menu on popups of its own ([`repriseapp::App::popup`]): the tree it walks, the
+//! chain reprisekit lays out, and what each row does.
 
 use repriseapp::{Ctx, KeyInput};
 use reprisekit::access::Tree;
 use reprisekit::access::accesskit::NodeId;
+use reprisekit::controls::hosted::Chain;
 use reprisekit::controls::menu::{MenuAction, MenuCtx, MenuItem, MenuKey, MenuTree, PopupMenu};
 use reprisekit::raster::{Canvas, Rect};
 use reprisekit::textedit::keysym;
@@ -13,6 +14,15 @@ pub struct Popup<A> {
     chain: PopupMenu,
     /// Parallel to the rows: `None` for a separator or a greyed row.
     actions: Vec<Option<A>>,
+}
+
+impl<A> Chain for Popup<A> {
+    fn chain(&self) -> &PopupMenu {
+        &self.chain
+    }
+    fn chain_mut(&mut self) -> &mut PopupMenu {
+        &mut self.chain
+    }
 }
 
 /// What a press or key on an open menu came to.

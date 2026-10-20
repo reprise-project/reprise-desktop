@@ -35,6 +35,7 @@ use repriseapp::{
 };
 use reprisekit::access::Tree;
 use reprisekit::controls::filedlg::{DlgMode, Event as FileEvent, Fields as FileFields, FileDlg};
+use reprisekit::controls::hosted::Hosted;
 use reprisekit::controls::msgbox::Fields;
 use reprisekit::controls::{form, propsheet, wizard};
 use reprisekit::look::Paint;
@@ -983,6 +984,16 @@ impl App for PrintersApp {
             }
             _ => repriseapp::reader_forms(self, win, act, ctx),
         }
+    }
+
+    fn popup(&mut self, win: WinId, _: &Ctx) -> Option<Box<dyn Hosted + '_>> {
+        if win == repriseapp::MAIN {
+            return Some(self.folder.popup());
+        }
+        if self.queues.get(win).is_some() {
+            return self.queues.get_mut(win).map(queue::Queue::popup);
+        }
+        repriseapp::reader_popup(self, win)
     }
 
     fn drop_form(&mut self, win: WinId) -> Option<DropForm<'_>> {

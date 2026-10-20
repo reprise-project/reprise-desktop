@@ -52,6 +52,7 @@ use reprisekit::access::{ROOT, Tree};
 use reprisekit::classic::widgets::BarHit;
 use reprisekit::controls::filedlg::{self, DlgMode, Event as FileEvent, Fields, FileDlg};
 use reprisekit::controls::form;
+use reprisekit::controls::hosted::Hosted;
 use reprisekit::controls::listview::{self, ListView};
 use reprisekit::controls::metrics::ControlMetrics;
 use reprisekit::controls::msgbox;
@@ -2981,6 +2982,13 @@ impl App for SettingsApp {
             _ => return None,
         };
         Some(DropForm { form, px: None })
+    }
+
+    fn popup(&mut self, win: WinId, _: &Ctx) -> Option<Box<dyn Hosted + '_>> {
+        if win == LAYOUT_WIN {
+            return Some(Box::new(&mut self.add_layout.as_mut()?.form));
+        }
+        repriseapp::reader_popup(self, win)
     }
 
     fn reader_form(&mut self, win: WinId) -> Option<repriseapp::ReaderForm<'_>> {

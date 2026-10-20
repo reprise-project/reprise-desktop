@@ -3,6 +3,7 @@
 use repriseapp::{BTN_LEFT, BTN_RIGHT, Ctx, KeyInput};
 use reprisekit::access::{ROOT, Tree};
 use reprisekit::art::printbadge::{self, Badge};
+use reprisekit::controls::hosted::Hosted;
 use reprisekit::controls::listview::{self, Column};
 use reprisekit::controls::menu::MenuItem;
 use reprisekit::controls::taskpane::{self, Body, Section, TaskPane};
@@ -259,6 +260,11 @@ impl Default for Folder {
 }
 
 impl Folder {
+    /// The open context menu, for the host's popups.
+    pub fn popup(&mut self) -> Box<dyn Hosted + '_> {
+        Box::new(&mut self.popup)
+    }
+
     pub fn new() -> Folder {
         Folder {
             pane: TaskPane {

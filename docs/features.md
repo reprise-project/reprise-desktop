@@ -134,6 +134,10 @@ the Super tap, Super+Shift+Esc and the VT switch keys can be rebound.
   unroll from the side they open from, `menu_animation = "slide"`). All
   optional (`[effects]`), on by default under Glass; menus fade under every
   interface.
+- **Menus past the window's edge.** The menu bars, context menus and
+  drop-down lists in Reprise's own programs open on popups of their own, so a
+  menu shows whole below a short window and turns up or left at the screen's
+  edge.
 
 ## Snapping
 
@@ -253,8 +257,7 @@ the Super tap, Super+Shift+Esc and the VT switch keys can be rebound.
   In the launcher and the Start menu's search those keys open a lit row's
   menu first. Paste greys while the clipboard holds no text, and a password
   field keeps Cut and Copy greyed. In a program's window the menu opens on a
-  popup of its own, so it shows whole past a small dialog's edge and turns
-  up or left at the screen's edge.
+  popup of its own, like the program's other menus.
 - **Screenshots.** PrtSc for the screen, Alt+PrtSc for the window,
   Ctrl+Alt+PrtSc for its content without the frame, Shift+PrtSc for a region
   or a clicked window. Every shot goes to the clipboard and, if you like, to
