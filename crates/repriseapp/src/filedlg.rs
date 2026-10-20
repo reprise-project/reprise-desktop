@@ -125,7 +125,7 @@ fn read(path: PathBuf, keep: impl FnMut(&Item) -> bool, scale: i32) -> Read {
 
 /// What a folder's read depends on besides `keep`, which follows the dialog's filter. A relist
 /// with the same key while the read is in flight waits on that read instead of starting another.
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 struct ReadKey {
     id: FolderId,
     folders_only: bool,
@@ -312,6 +312,8 @@ pub fn remember_views() {
     VIEW_FILE.get_or_init(repriseconf::filedialog::path);
 }
 
+type StartRead = Box<dyn Fn() -> Job<Read>>;
+
 #[derive(Default)]
 pub struct Host {
     pub folders: FolderTable,
@@ -330,6 +332,10 @@ pub struct Host {
     wake: Option<crate::Waker>,
     /// A folder still being read after [`LIST_WAIT`]; the dialog shows the one before.
     reading: Option<(ReadKey, Job<Read>)>,
+    /// The last [`Host::list`] and how to start it again: a link it listed unfollowed that
+    /// answers since (`relist`) reads the folder anew.
+    again: Option<(ReadKey, PathBuf, StartRead)>,
+    relist: Option<reprisefs::listing::Relist>,
     /// A typed path whose folders did not answer within [`RESOLVE_WAIT`]; the next resolve of
     /// the same path waits on it again instead of starting another probe.
     probing: Option<(PathBuf, Job<(bool, bool)>)>,
@@ -403,6 +409,10 @@ impl Host {
     /// fires as they arrive and [`Host::take_thumbs`] shows them.
     fn thumbs_on(&mut self, wake: &crate::Waker) {
         self.wake.get_or_insert_with(|| wake.clone());
+        self.relist.get_or_insert_with(|| {
+            let wake = wake.clone();
+            reprisefs::listing::Relist::new(move || wake.wake())
+        });
         if self.thumbs.is_some() {
             return;
         }
@@ -468,6 +478,7 @@ impl Host {
     /// Hands the thumbnails and icon files that arrived to their entries, the icon files to
     /// `cache` too: true when one did.
     fn take_thumbs(&mut self, dlg: &mut FileDlg, cache: &mut IconCache) -> bool {
+        self.read_due();
         if let Some((id, read)) = self
             .reading
             .as_ref()
@@ -653,17 +664,36 @@ impl Host {
             return;
         };
         let key = ReadKey::of(dlg, id, icons.scale());
-        let job = match self.reading.take() {
-            Some((k, job)) if k == key => job,
-            _ => {
-                let keep = picks(key.folders_only, key.typed.clone(), keep.clone());
-                let scale = key.scale;
-                Job::spawn(self.wake.as_ref(), move || read(path, keep, scale))
+        let start = {
+            let (path, keep, scale) = (path.clone(), keep.clone(), key.scale);
+            let (folders_only, typed) = (key.folders_only, key.typed.clone());
+            let wake = self.wake.clone();
+            move || {
+                let (path, keep) = (
+                    path.clone(),
+                    picks(folders_only, typed.clone(), keep.clone()),
+                );
+                Job::spawn(wake.as_ref(), move || read(path, keep, scale))
             }
         };
+        let job = match self.reading.take() {
+            Some((k, job)) if k == key => job,
+            _ => start(),
+        };
+        self.again = Some((key.clone(), path, Box::new(start)));
         match job.wait(LIST_WAIT) {
             Some(r) => self.show_read(dlg, id, r, icons),
             None => self.reading = Some((key, job)),
+        }
+    }
+
+    /// Reads the last listed folder again once a link it listed unfollowed has answered.
+    fn read_due(&mut self) {
+        let due = self.relist.as_ref().map(|r| r.take()).unwrap_or_default();
+        if let Some((key, path, start)) = &self.again
+            && due.contains(path)
+        {
+            self.reading = Some((key.clone(), start()));
         }
     }
 

@@ -5,7 +5,7 @@
 //! client area, the only part the glass backdrop sees), the frame's `Backdrop`, then the buffer. A
 //! Welcome panel stands over a still of its output (`output_still`) that fades to grey.
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use reprisekit::controls::filedlg;
@@ -2003,6 +2003,19 @@ impl State {
         for (id, (generation, px, paths)) in pictures {
             let to_loop = self.fsjobs.sender();
             self.pickthumbs.want(to_loop, id, generation, px, paths);
+        }
+    }
+
+    /// Lists each Browse dialog showing one of `due` again.
+    pub(crate) fn relist_pickers(&mut self, due: &BTreeSet<std::path::PathBuf>) {
+        let mut any = false;
+        for v in &mut self.dialogs.views {
+            if let Some(p) = v.dialog.picker_mut() {
+                any |= p.relist(due);
+            }
+        }
+        if any {
+            self.run_picker_requests();
         }
     }
 

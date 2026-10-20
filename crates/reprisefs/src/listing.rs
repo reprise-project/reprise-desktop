@@ -75,7 +75,7 @@ impl Item {
 /// case-insensitively by name.
 /// `globs` is `apps::mime_globs()`; pass `MimeDb::empty()` to skip MIME.
 /// A symlink whose target has not answered within [`LINK_WAIT`] (one into a dead mount) lists as a
-/// broken link would.
+/// broken link would, and the folder is due again through [`Relist`] once the target answers.
 pub fn read_dir(dir: &Path, globs: &MimeDb) -> Vec<Item> {
     read_dir_with(dir, globs, target_of, LINK_WAIT)
 }
@@ -87,12 +87,76 @@ pub const LINK_WAIT: Duration = Duration::from_secs(2);
 /// threads stay bounded.
 const MAX_STUCK_LINKS: usize = 8;
 
-/// Keys of the links whose follow outlasted its wait and has not returned yet. One blocked thread
-/// stands behind each; a link with its key here is not followed again until that thread returns.
-static STUCK: Mutex<BTreeSet<PathBuf>> = Mutex::new(BTreeSet::new());
+/// The links whose follow outlasted its wait and has not returned yet, by [`stuck_key`]. One
+/// blocked thread stands behind each key; a link with its key here is not followed again until
+/// that thread returns.
+static STUCK: Mutex<Stuck> = Mutex::new(Stuck {
+    keys: BTreeSet::new(),
+    unfollowed: BTreeSet::new(),
+});
 
-fn stuck() -> MutexGuard<'static, BTreeSet<PathBuf>> {
+struct Stuck {
+    keys: BTreeSet<PathBuf>,
+    /// The folders that listed a link unfollowed since a blocked follow last returned: each is
+    /// handed to the [`Relist`]s when the next one returns.
+    unfollowed: BTreeSet<PathBuf>,
+}
+
+fn stuck() -> MutexGuard<'static, Stuck> {
     STUCK.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+fn folder_of(link: &Path) -> PathBuf {
+    link.parent().unwrap_or(Path::new("/")).to_path_buf()
+}
+
+/// A host's ear for links listed unfollowed: once a blocked follow returns, every folder that
+/// listed a link unfollowed is due a fresh listing, which [`Relist::take`] gives. Dropping it
+/// stops the calls.
+pub struct Relist(Arc<Listener>);
+
+struct Listener {
+    due: Mutex<BTreeSet<PathBuf>>,
+    wake: Box<dyn Fn() + Send + Sync>,
+}
+
+static RELISTS: Mutex<Vec<std::sync::Weak<Listener>>> = Mutex::new(Vec::new());
+
+impl Relist {
+    /// `wake` runs on the thread whose follow returned, so it only wakes the host's loop.
+    pub fn new(wake: impl Fn() + Send + Sync + 'static) -> Relist {
+        let l = Arc::new(Listener {
+            due: Mutex::default(),
+            wake: Box::new(wake),
+        });
+        let mut all = RELISTS.lock().unwrap_or_else(|e| e.into_inner());
+        all.retain(|w| w.strong_count() > 0);
+        all.push(Arc::downgrade(&l));
+        Relist(l)
+    }
+
+    /// The folders due a fresh listing since the last take.
+    pub fn take(&self) -> BTreeSet<PathBuf> {
+        std::mem::take(&mut self.0.due.lock().unwrap_or_else(|e| e.into_inner()))
+    }
+}
+
+fn relist(dirs: BTreeSet<PathBuf>) {
+    if dirs.is_empty() {
+        return;
+    }
+    let live: Vec<Arc<Listener>> = RELISTS
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .iter()
+        .filter_map(std::sync::Weak::upgrade)
+        .collect();
+    for l in live {
+        let mut due = l.due.lock().unwrap_or_else(|e| e.into_inner());
+        due.extend(dirs.iter().cloned());
+        drop(due);
+        (l.wake)();
+    }
 }
 
 /// [`read_dir`] with `follow` reading the symlinks' targets on a thread of their own.
@@ -135,7 +199,8 @@ fn read_dir_with(
 /// `follow` of each of `links`, read in order off the caller's thread; one per link. A link that
 /// took longer than `wait` (counted from the previous answer) gives `T::default()` and the rest go
 /// on on a fresh thread; a link whose target is already stuck gives the default without a follow.
-/// A thread left blocked ends when its mount answers or goes away.
+/// A thread left blocked ends when its mount answers or goes away; the folders that listed a link
+/// unfollowed meanwhile then go to every [`Relist`].
 pub fn follow_links<T: Default + Send + 'static>(
     links: Vec<PathBuf>,
     follow: fn(&Path) -> T,
@@ -151,22 +216,44 @@ pub fn follow_links<T: Default + Send + 'static>(
     let keys: Arc<Vec<PathBuf>> = Arc::new(links.iter().map(|l| stuck_key(l, &network)).collect());
     let links = Arc::new(links);
     let mut from = 0;
-    while from < links.len() && stuck().len() < MAX_STUCK_LINKS {
+    loop {
+        {
+            let mut s = stuck();
+            if from >= links.len() {
+                break;
+            }
+            if s.keys.len() >= MAX_STUCK_LINKS {
+                s.unfollowed
+                    .extend(links[from..].iter().map(|l| folder_of(l)));
+                break;
+            }
+        }
         let (tx, rx) = std::sync::mpsc::channel::<(usize, Option<T>)>();
         let (l, k) = (links.clone(), keys.clone());
         let spawned = std::thread::Builder::new()
             .name("listing-links".into())
             .spawn(move || {
                 for i in from..l.len() {
-                    let skip = stuck().contains(&k[i]);
+                    let skip = {
+                        let mut s = stuck();
+                        let skip = s.keys.contains(&k[i]);
+                        if skip {
+                            s.unfollowed.insert(folder_of(&l[i]));
+                        }
+                        skip
+                    };
                     let t = (!skip).then(|| follow(&l[i]));
                     // Held over the send, so a caller giving up on `i` sees either the answer or
                     // the key still absent.
                     let mut s = stuck();
-                    if t.is_some() {
-                        s.remove(&k[i]);
-                    }
-                    if tx.send((i, t)).is_err() {
+                    let due = match t.is_some() && s.keys.remove(&k[i]) {
+                        true => std::mem::take(&mut s.unfollowed),
+                        false => BTreeSet::new(),
+                    };
+                    let sent = tx.send((i, t));
+                    drop(s);
+                    relist(due);
+                    if sent.is_err() {
                         break;
                     }
                 }
@@ -189,7 +276,8 @@ pub fn follow_links<T: Default + Send + 'static>(
                         next = i + 1;
                         continue;
                     }
-                    s.insert(keys[next].clone());
+                    s.keys.insert(keys[next].clone());
+                    s.unfollowed.insert(folder_of(&links[next]));
                     next += 1;
                     break;
                 }
@@ -716,6 +804,45 @@ mod tests {
             "one follow stays blocked"
         );
         unblock(&t.path().join("pipe"));
+    }
+
+    #[test]
+    fn a_folder_that_listed_a_dead_link_is_due_again_once_its_target_answers() {
+        use std::os::unix::fs::FileTypeExt;
+        fn follow(p: &Path) -> Target {
+            if std::fs::metadata(p).is_ok_and(|m| m.file_type().is_fifo()) {
+                let _ = std::fs::File::open(p);
+            }
+            target_of(p)
+        }
+        let t = dead_and_live();
+        std::os::unix::fs::symlink("pipe", t.path().join("a dead")).unwrap();
+        let (tx, rx) = std::sync::mpsc::channel();
+        let relist = Relist::new(move || {
+            let _ = tx.send(());
+        });
+        let wait = Duration::from_millis(100);
+        for _ in 0..2 {
+            let items = read_dir_with(t.path(), &MimeDb::empty(), follow, wait);
+            let dead = items.iter().find(|i| i.name == "a dead").unwrap();
+            assert!(!dead.is_dir, "the dead link lists unfollowed");
+        }
+        assert!(
+            !relist.take().contains(t.path()),
+            "nothing is due while the target hangs"
+        );
+        unblock(&t.path().join("pipe"));
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        let mut due = BTreeSet::new();
+        while !due.contains(t.path()) && std::time::Instant::now() < deadline {
+            let _ = rx.recv_timeout(Duration::from_millis(100));
+            due.extend(relist.take());
+        }
+        assert!(
+            due.contains(t.path()),
+            "the folder is due once the target answers"
+        );
+        drop(relist);
     }
 
     #[test]
