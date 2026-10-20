@@ -235,7 +235,7 @@ impl PropSheet {
     }
 
     /// The client size at 100%: [`PropSheet::size`] less what [`PropSheet::fit`] cut.
-    fn shown(&self) -> (i32, i32) {
+    pub fn shown(&self) -> (i32, i32) {
         (
             self.size.0 - self.hscroll.short,
             self.size.1 - self.scroll.short,
@@ -501,8 +501,8 @@ impl PropSheet {
     }
 
     /// Scroll the page so its focused control shows whole, as little as it takes. True when
-    /// the controls moved.
-    fn reveal_focus(&mut self) -> bool {
+    /// the controls moved. A host that routes the page's keys itself calls it after each.
+    pub fn reveal_focus(&mut self) -> bool {
         if self.tabs.focused || !self.scrolls() {
             return false;
         }
@@ -1051,8 +1051,9 @@ impl PropSheet {
     }
 
     /// The wheel scrolls a page that shows in part a line a row: down, or sideways on a page
-    /// that scrolls only that way.
-    fn wheel_page(&mut self, rows: i32) -> Event {
+    /// that scrolls only that way. A host that routes the wheel to the page itself calls it
+    /// when the page took none.
+    pub fn wheel_page(&mut self, rows: i32) -> Event {
         if self.range() == 0 {
             return self.wheel_across(rows);
         }
@@ -1090,13 +1091,28 @@ impl PropSheet {
             Nav::List(list) => list.bar_release(),
             Nav::Tabs => false,
         };
-        let bar = self.scroll.release() | self.hscroll.release() || bar;
+        let bar = self.release_bars() || bar;
         let i = self.tabs.open;
         let ev = self.pages[i].release();
         match self.event(i, ev) {
             Event::None if bar => Event::Redraw,
             ev => ev,
         }
+    }
+
+    /// The pointer let go of the page's scrollbars: true when one was held or its look
+    /// changed. [`PropSheet::release`] does it; a host that routes the page's release itself
+    /// calls it first.
+    pub fn release_bars(&mut self) -> bool {
+        self.scroll.release() | self.hscroll.release()
+    }
+
+    /// Whether the pointer holds a thumb or an arrow of the page's scrollbars.
+    pub fn holding_bar(&self) -> bool {
+        self.scroll.holding()
+            || self.hscroll.holding()
+            || self.scroll.ticking()
+            || self.hscroll.ticking()
     }
 
     /// Whether the page list or the page has a scrollbar arrow held: the host sends

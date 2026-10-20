@@ -1527,9 +1527,9 @@ impl State {
             _ if double => v.dialog.double_click(hit),
             _ => v.dialog.click(hit),
         };
-        if v.dialog.tray().is_some_and(|t| t.ticking()) {
+        if v.dialog.ticking() {
             let id = v.id;
-            self.tick_tray(id);
+            self.tick_page(id);
         }
         let Some(v) = self.dialogs.views.last_mut() else {
             return out;
@@ -1542,6 +1542,7 @@ impl State {
         } else if page.is_some_and(|p| p.holding())
             || v.dialog.chooser().is_some_and(|c| c.ow.holding())
             || v.dialog.tray().is_some_and(|t| t.holding())
+            || v.dialog.holding_page_bar()
             || v.dialog.copy().is_some_and(|c| c.cp.form.holding())
             || v.dialog.field_lit.holding()
         {
@@ -1551,9 +1552,9 @@ impl State {
         out
     }
 
-    /// Tick the tray's Customize page `id` while its page arrow is held: the page steps as the
-    /// arrow repeats.
-    fn tick_tray(&mut self, id: u64) {
+    /// Tick dialog `id` while its page arrow is held (a sheet's or the tray's Customize page):
+    /// the page steps as the arrow repeats.
+    fn tick_page(&mut self, id: u64) {
         let every = reprisekit::controls::scrollbar::REPEAT_EVERY;
         let added = self
             .handle
@@ -1561,11 +1562,9 @@ impl State {
                 let Some(i) = state.dialogs.views.iter().position(|v| v.id == id) else {
                     return TimeoutAction::Drop;
                 };
-                let Some(t) = state.dialogs.views[i].dialog.tray_mut() else {
-                    return TimeoutAction::Drop;
-                };
-                let moved = t.tick(now) != reprisekit::controls::traycustomize::Event::None;
-                let ticking = t.ticking();
+                let d = &mut state.dialogs.views[i].dialog;
+                let moved = d.tick(now);
+                let ticking = d.ticking();
                 if moved {
                     state.redraw_dialog(i);
                 }
@@ -1681,6 +1680,12 @@ impl State {
             return;
         }
         let (x, y) = to_local(pos.x, pos.y, (v.x, v.y));
+        if v.dialog.holding_page_bar() {
+            if v.dialog.drag_page_bar(x, y, text, px) {
+                self.redraw_dialog(i);
+            }
+            return;
+        }
         let Some(fd) = v.dialog.form_mut() else {
             return;
         };
