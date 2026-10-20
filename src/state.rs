@@ -55,9 +55,7 @@ pub struct Persisted {
 /// rewrites the user's.
 pub fn path() -> PathBuf {
     #[cfg(test)]
-    return std::env::temp_dir()
-        .join(format!("reprise-test-{}", std::process::id()))
-        .join("state.toml");
+    return crate::harness::scratch().join("state.toml");
     #[cfg(not(test))]
     repriseconf::xdg_home("XDG_STATE_HOME", ".local/state")
         .join("reprise")

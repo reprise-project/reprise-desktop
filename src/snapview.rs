@@ -2261,4 +2261,99 @@ mod tests {
         h.roundtrip(&mut c);
         assert!(in_zone(&h), "a press without a move keeps the zone");
     }
+
+    const KEY_LEFT: u32 = 105;
+    const KEY_RIGHT: u32 = 106;
+    const KEY_UP: u32 = 103;
+    const KEY_DOWN: u32 = 108;
+    const KEY_LEFTMETA: u32 = 125;
+
+    /// Super and the arrow `key`, then the client's answer.
+    fn super_arrow(h: &mut crate::harness::Harness, c: &mut crate::harness::TestClient, key: u32) {
+        h.key(KEY_LEFTMETA, true);
+        h.key(key, true);
+        h.key(key, false);
+        h.key(KEY_LEFTMETA, false);
+        h.roundtrip(c);
+    }
+
+    #[test]
+    fn a_snapped_window_held_within_the_slop_keeps_its_zone_and_group() {
+        use crate::harness::{Harness, LEFT};
+        let mut h = Harness::new();
+        h.output("TEST-1", 1024, 768);
+        let mut c = h.connect();
+        let t = h.map_toplevel(&mut c, "test.app", 300, 200);
+        super_arrow(&mut h, &mut c, KEY_LEFT);
+        let zone = h.state.win(t.id).expect("window").frame_rect();
+        assert_eq!((zone.x, zone.width), (0, 512), "the left half");
+        let (x, y) = (f64::from(zone.x + 60), f64::from(zone.y + 10));
+        h.pointer_to(x, y);
+        h.button(LEFT, true);
+        assert!(
+            matches!(h.state.interaction, Interaction::Move { window, .. } if window == t.id),
+            "the caption moves"
+        );
+        let slop = f64::from(crate::desktop::DRAG_PX) - 1.0;
+        h.pointer_to(x + slop, y + slop);
+        h.roundtrip(&mut c);
+        let w = h.state.win(t.id).expect("window");
+        assert_eq!(w.frame_rect(), zone, "a jitter moves nothing");
+        assert!(w.snapped.is_some(), "still snapped");
+        assert!(h.state.wm.snap.group_of(t.id).is_some(), "still grouped");
+        h.pointer_to(x + 40.0, y + 40.0);
+        h.roundtrip(&mut c);
+        assert!(
+            h.state.wm.snap.group_of(t.id).is_none(),
+            "a real move leaves the group"
+        );
+        assert_ne!(
+            h.state.win(t.id).expect("window").frame_rect().width,
+            512,
+            "and takes back the size from before the snap"
+        );
+        h.button(LEFT, false);
+    }
+
+    #[test]
+    fn super_arrows_step_through_the_zones_to_the_next_output_and_back_out() {
+        let mut h = crate::harness::Harness::new();
+        h.output("TEST-1", 1024, 768);
+        h.output("TEST-2", 1024, 768);
+        let mut c = h.connect();
+        let t = h.map_toplevel(&mut c, "test.app", 300, 200);
+        let before = h.state.win(t.id).expect("window").frame_rect();
+        let frame = |h: &crate::harness::Harness| {
+            let r = h.state.win(t.id).expect("window").frame_rect();
+            (r.x, r.width)
+        };
+        let base = (h.state.scene.outputs().iter())
+            .map(|o| h.state.layout_box(Some(o)))
+            .map(|b| b.x)
+            .collect::<Vec<_>>();
+        let (first, second) = (base[0].min(base[1]), base[0].max(base[1]));
+        let on_first = before.x < second;
+        assert!(on_first, "the window maps on the left output");
+
+        super_arrow(&mut h, &mut c, KEY_LEFT);
+        assert_eq!(frame(&h), (first, 512), "the left half");
+        super_arrow(&mut h, &mut c, KEY_RIGHT);
+        assert_eq!(frame(&h), (first + 512, 512), "the right half");
+        super_arrow(&mut h, &mut c, KEY_RIGHT);
+        assert_eq!(frame(&h), (second, 512), "the next output's left half");
+        super_arrow(&mut h, &mut c, KEY_UP);
+        assert!(h.state.win(t.id).expect("window").maximized, "maximized");
+        super_arrow(&mut h, &mut c, KEY_DOWN);
+        let w = h.state.win(t.id).expect("window");
+        assert!(!w.maximized && w.snapped.is_some(), "back in its zone");
+        assert_eq!(frame(&h), (second, 512));
+        super_arrow(&mut h, &mut c, KEY_DOWN);
+        let w = h.state.win(t.id).expect("window");
+        assert!(w.snapped.is_none(), "unsnapped");
+        assert_eq!(
+            (w.frame_rect().width, w.frame_rect().height),
+            (before.width, before.height),
+            "the size from before the snap"
+        );
+    }
 }

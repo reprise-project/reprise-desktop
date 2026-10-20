@@ -1741,7 +1741,7 @@ impl State {
     fn send_to_deadline(&mut self, dir: PathBuf) -> std::sync::Arc<std::sync::atomic::AtomicBool> {
         let settled = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         let watch = std::sync::Arc::clone(&settled);
-        let timer = Timer::from_duration(crate::fsjobs::ACTION_DEADLINE);
+        let timer = Timer::from_duration(self.fsjobs.deadline());
         let armed = self.handle.insert_source(timer, move |_, _, state| {
             if !watch.swap(true, std::sync::atomic::Ordering::AcqRel) {
                 state.send_to_not_responding(&dir);
