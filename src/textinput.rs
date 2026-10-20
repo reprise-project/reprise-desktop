@@ -1526,4 +1526,66 @@ mod harness_tests {
             "the virtual keyboard's key goes to the window"
         );
     }
+
+    #[test]
+    fn the_input_methods_echo_of_a_held_key_goes_to_the_window_alone() {
+        let (mut h, mut c, _) = focused_client();
+        let mut m = input_method(&mut h, true);
+        let vk = m.virtual_keyboard();
+        h.roundtrip(&mut m);
+        h.key(KEY_A, true);
+        m.vk_key(vk, KEY_A, true);
+        h.roundtrip(&mut m);
+        h.key(KEY_A, false);
+        m.vk_key(vk, KEY_A, false);
+        h.roundtrip(&mut m);
+        h.roundtrip(&mut c);
+        assert_eq!(
+            m.side.ims[0].grab_keys,
+            [(KEY_A, true), (KEY_A, false)],
+            "the grab hears the seat's press and its release"
+        );
+        assert_eq!(
+            c.side.keys,
+            [(KEY_A, true), (KEY_A, false)],
+            "the window gets the echo once each way"
+        );
+        assert!(h.state.ime.vk.echoed.is_empty(), "the echo is settled");
+    }
+
+    #[test]
+    fn a_virtual_keyboards_own_keymap_gives_way_to_the_seats_keys() {
+        use smithay::input::keyboard::xkb;
+        let ctx = xkb::Context::new(xkb::CONTEXT_NO_FLAGS);
+        let german = xkb::Keymap::new_from_names(&ctx, "evdev", "pc105", "de", "", None, 0)
+            .expect("the de layout")
+            .get_as_string(xkb::KEYMAP_FORMAT_TEXT_V1);
+        let (mut h, mut c, _) = focused_client();
+        let seat = h.state.keymap_text().expect("the seat's keymap");
+        let mut v = h.connect();
+        let vk = v.virtual_keyboard_with(&german);
+        h.roundtrip(&mut v);
+        v.vk_key(vk, KEY_B, true);
+        v.vk_key(vk, KEY_B, false);
+        h.roundtrip(&mut v);
+        h.roundtrip(&mut c);
+        let typed = h.state.keymap_text().expect("the keymap in force");
+        assert_ne!(typed, seat, "the virtual keyboard's keymap is in force");
+        assert_eq!(c.side.keymap_text(), typed, "the window got it");
+        assert_eq!(c.side.keys, [(KEY_B, true), (KEY_B, false)]);
+
+        tap(&mut h, KEY_A);
+        h.roundtrip(&mut c);
+        assert_eq!(
+            h.state.keymap_text().as_deref(),
+            Some(&*seat),
+            "the seat's keymap is back"
+        );
+        assert_eq!(c.side.keymap_text(), seat, "the window got it back");
+        assert_eq!(
+            c.side.keys[2..],
+            [(KEY_A, true), (KEY_A, false)],
+            "the seat's key types after it"
+        );
+    }
 }
