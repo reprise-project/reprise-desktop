@@ -295,7 +295,7 @@ impl GlowCache {
 }
 
 /// A halo's alpha in `shape` for `m`, 0..255 per pixel. Each pass costs a constant per pixel at
-/// any scale, and all-0 lines are skipped.
+/// any scale; the spread skips all-0 rows and the passes down all-0 columns.
 fn glow_alpha(shape: &GlowShape, m: &GlowMask) -> Vec<u8> {
     let (w, h) = (m.width, m.height);
     let s = m.scale.max(1);
@@ -310,26 +310,39 @@ fn glow_alpha(shape: &GlowShape, m: &GlowMask) -> Vec<u8> {
     // Spread across then down, then blur down then across: the blur's passes are linear, so the
     // down passes may run first.
     for y in 0..h {
-        tmp.on_row(&mut img, w, y, |line, t| t.dilate(line, spread));
+        tmp.on_row(&mut img, w, y, spread, |line, t| t.dilate(line, spread));
     }
-    // Down the columns a whole row at a time, so every step runs along a row.
-    tmp.dilate_down(&mut img, w, spread);
+    // Down the columns a whole row at a time, so every step runs along a row. A column the
+    // spread left all 0 stays 0 down there, so only the inked columns go.
+    let mut any = vec![false; w];
+    for row in img.chunks_exact(w.max(1)) {
+        for (a, &v) in any.iter_mut().zip(row) {
+            *a |= v != 0.0;
+        }
+    }
+    let inked: Vec<usize> = (0..w).filter(|&x| any[x]).collect();
+    let mut band = Vec::with_capacity(inked.len() * h);
+    for row in img.chunks_exact(w.max(1)) {
+        band.extend(inked.iter().map(|&x| row[x]));
+    }
+    tmp.dilate_down(&mut band, inked.len(), spread);
     for &r in &radii {
-        tmp.box_down(&mut img, w, r);
+        tmp.box_down(&mut band, inked.len(), r);
+    }
+    for (y, row) in band.chunks_exact(inked.len().max(1)).enumerate() {
+        for (&x, &v) in inked.iter().zip(row) {
+            img[y * w + x] = v;
+        }
     }
     let rows = m.rows.0.min(h)..m.rows.1.min(h);
-    for y in rows.clone() {
-        tmp.on_row(&mut img, w, y, |line, t| {
-            for &r in &radii {
-                t.box_blur(line, r);
-            }
-        });
+    for &r in &radii {
+        tmp.box_across(&mut img, w, rows.clone(), r);
     }
     let mut out = vec![0u8; w * h];
     for y in rows {
         for x in 0..w {
             let g = peak * (shape.gain * img[y * w + x]).min(1.0);
-            out[y * w + x] = (g * 255.0).round() as u8;
+            out[y * w + x] = round_byte(g * 255.0);
         }
     }
     out
@@ -343,18 +356,25 @@ struct Lines {
 }
 
 impl Lines {
-    /// Run `f` on row `y` of the `w`-wide image `img` unless it is all 0 (both passes keep 0 at 0).
+    /// Run `f` on the span of row `y` of the `w`-wide image `img` within `r` of its nonzero
+    /// values, none when it is all 0: a dilation by up to `r` keeps the rest at 0.
     fn on_row(
         &mut self,
         img: &mut [f32],
         w: usize,
         y: usize,
+        r: usize,
         f: impl FnOnce(&mut [f32], &mut Lines),
     ) {
         let row = &mut img[y * w..(y + 1) * w];
-        if row.iter().any(|&v| v != 0.0) {
-            f(row, self);
-        }
+        let Some(first) = row.iter().position(|&v| v != 0.0) else {
+            return;
+        };
+        let last = row.iter().rposition(|&v| v != 0.0).unwrap_or(first);
+        f(
+            &mut row[first.saturating_sub(r)..(last + 1 + r).min(w)],
+            self,
+        );
     }
 
     /// Raise each value of `line` to the largest within `r` of it, 0 past the ends, in constant
@@ -446,7 +466,8 @@ impl Lines {
         }
     }
 
-    /// [`Lines::box_blur`] down the columns of `img`, one running sum per column.
+    /// Average each value over the 2r+1 down its column around it, 0 past the ends, with one
+    /// running sum per column.
     fn box_down(&mut self, img: &mut [f32], w: usize, r: usize) {
         if w == 0 {
             return;
@@ -480,25 +501,61 @@ impl Lines {
         }
     }
 
-    /// Average each value over the 2r+1 around it, 0 past the ends, with one running sum.
-    fn box_blur(&mut self, line: &mut [f32], r: usize) {
-        let n = line.len();
+    /// Average each value of `rows` over the 2r+1 along its row around it, 0 past the ends, with
+    /// one running sum per row. [`LANES`] rows run side by side, so no sum waits on another.
+    fn box_across(&mut self, img: &mut [f32], w: usize, rows: std::ops::Range<usize>, r: usize) {
+        if w == 0 {
+            return;
+        }
         let src = &mut self.a;
-        src.clear();
-        src.extend_from_slice(line);
-        let k = (2 * r + 1) as f32;
-        let mut sum: f32 = src[..(r + 1).min(n)].iter().sum();
-        for i in 0..n {
-            line[i] = sum / k;
-            if i + r + 1 < n {
-                sum += src[i + r + 1];
-            }
-            if i >= r {
-                sum -= src[i - r];
+        for y0 in rows.clone().step_by(LANES) {
+            let n = LANES.min(rows.end - y0);
+            src.clear();
+            src.extend_from_slice(&img[y0 * w..(y0 + n) * w]);
+            let out = &mut img[y0 * w..(y0 + n) * w];
+            if n == LANES {
+                box_rows::<LANES>(src, out, w, r);
+            } else {
+                for (src, out) in src.chunks_exact(w).zip(out.chunks_exact_mut(w)) {
+                    box_rows::<1>(src, out, w, r);
+                }
             }
         }
     }
 }
+
+/// [`Lines::box_across`] on the `N` rows of `src`, `w` wide, into `out`.
+fn box_rows<const N: usize>(src: &[f32], out: &mut [f32], w: usize, r: usize) {
+    let k = (2 * r + 1) as f32;
+    let mut sum = [0.0f32; N];
+    for (l, s) in sum.iter_mut().enumerate() {
+        *s = src[l * w..l * w + (r + 1).min(w)].iter().sum();
+    }
+    for i in 0..w {
+        for (l, s) in sum.iter().enumerate() {
+            out[l * w + i] = *s / k;
+        }
+        if i + r + 1 < w {
+            for (l, s) in sum.iter_mut().enumerate() {
+                *s += src[l * w + i + r + 1];
+            }
+        }
+        if i >= r {
+            for (l, s) in sum.iter_mut().enumerate() {
+                *s -= src[l * w + i - r];
+            }
+        }
+    }
+}
+
+/// `v` in 0..=255 rounded half away from zero as `f32::round` does, without its libm call.
+fn round_byte(v: f32) -> u8 {
+    let whole = v as u8;
+    whole + u8::from(v - f32::from(whole) >= 0.5)
+}
+
+/// Rows [`Lines::box_across`] sums side by side.
+const LANES: usize = 8;
 
 #[cfg(test)]
 mod tests {
@@ -666,6 +723,76 @@ mod tests {
         out
     }
 
+    /// Two words 80 px apart, so the passes down skip the blank columns between them.
+    #[test]
+    fn the_glow_of_two_words_far_apart_keeps_its_pixels() {
+        let (w, h) = (150, 30);
+        let mut m = vec![0u8; w * h];
+        for y in 10..19 {
+            for x in (2..30).step_by(3) {
+                m[y * w + x] = 255;
+            }
+            for x in (110..140).step_by(2) {
+                m[y * w + x] = 180;
+            }
+        }
+        let pins = [
+            (&GLOW, true, 1, 0x83ab99027f25b786),
+            (&GLOW, true, 2, 0x82ba80b9f956da60),
+            (&GLOW, false, 1, 0xf00edb05f30cb9a5),
+            (&GLOW, false, 2, 0x860999805b5335de),
+            (&EDGE, true, 1, 0xcaca423e4264463e),
+            (&EDGE, true, 2, 0x81ff1a6a36e333aa),
+            (&EDGE, false, 1, 0x4b4c08a6667ba05e),
+            (&EDGE, false, 2, 0xc60acb970c76a39e),
+            (&HALO, true, 1, 0x5e33b77d9b7bf04f),
+            (&HALO, true, 2, 0x058c3f450382a4da),
+        ];
+        for (shape, active, scale, pin) in pins {
+            let g = glow_alpha(
+                shape,
+                &GlowMask {
+                    coverage: &m,
+                    width: w,
+                    height: h,
+                    rows: (2, 28),
+                    active,
+                    scale,
+                },
+            );
+            let fnv = g.iter().fold(0xcbf29ce484222325u64, |f, &b| {
+                (f ^ u64::from(b)).wrapping_mul(0x100000001b3)
+            });
+            assert_eq!(
+                fnv, pin,
+                "spread {} active {active} scale {scale}",
+                shape.spread
+            );
+        }
+    }
+
+    #[test]
+    fn a_byte_rounds_half_away_from_zero_as_f32_round_does() {
+        for k in 0..=255u8 {
+            let k = f32::from(k);
+            for v in [
+                k,
+                k + 0.5,
+                (k + 0.5).next_down(),
+                (k + 0.5).next_up(),
+                k.next_up(),
+            ] {
+                if v <= 255.0 {
+                    assert_eq!(round_byte(v), v.round() as u8, "{v}");
+                }
+            }
+        }
+        for i in 0..=1_000_000u32 {
+            let v = i as f32 * 255.0 / 1_000_000.0;
+            assert_eq!(round_byte(v), v.round() as u8, "{v}");
+        }
+    }
+
     #[test]
     fn the_running_dilation_is_the_window_maximum() {
         let (w, h) = (37, 11);
@@ -677,7 +804,7 @@ mod tests {
             let mut got = src.clone();
             let mut t = Lines::default();
             for y in 0..h {
-                t.on_row(&mut got, w, y, |l, t| t.dilate(l, r));
+                t.on_row(&mut got, w, y, r, |l, t| t.dilate(l, r));
             }
             t.dilate_down(&mut got, w, r);
             assert_eq!(got, want, "radius {r}");
