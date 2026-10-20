@@ -135,6 +135,7 @@ pub struct Watch {
     wd: Vec<WatchDescriptor>,
     shared: Arc<Mutex<Shared>>,
     changed: Arc<AtomicBool>,
+    wake: Waker,
 }
 
 impl Watch {
@@ -146,6 +147,7 @@ impl Watch {
         let flag = Arc::downgrade(&changed);
         let shared: Arc<Mutex<Shared>> = Arc::default();
         let seen = shared.clone();
+        let waker = wake.clone();
         std::thread::Builder::new()
             .name("watch".to_string())
             .spawn(move || {
@@ -186,7 +188,7 @@ impl Watch {
                         return;
                     };
                     flag.store(true, Ordering::SeqCst);
-                    wake.wake();
+                    waker.wake();
                     last_wake = Some(Instant::now());
                 }
             })?;
@@ -195,6 +197,7 @@ impl Watch {
             wd: Vec::new(),
             shared,
             changed,
+            wake,
         })
     }
 
@@ -203,12 +206,30 @@ impl Watch {
     }
 
     /// Watch `dir` instead of whatever was being watched, and notice it or a folder above it
-    /// leaving ([`Watch::take_gone`]). Each level up costs one inotify watch.
+    /// leaving ([`Watch::take_gone`]); a `dir` already gone (the window deleted it itself) is gone
+    /// at once, on a wake of its own. Each level up costs one inotify watch.
     pub fn watch(&mut self, dir: &Path) {
         self.clear();
-        let Some(wd) = self.add(dir, mask() | WatchMask::MOVE_SELF | WatchMask::DELETE_SELF) else {
-            return;
+        let wd = match self
+            .watches
+            .add(dir, mask() | WatchMask::MOVE_SELF | WatchMask::DELETE_SELF)
+        {
+            Ok(wd) => wd,
+            Err(e) => {
+                log::info!("cannot watch {}: {e}", dir.display());
+                if e.kind() == io::ErrorKind::NotFound {
+                    self.shared().shown = Some(Shown {
+                        dir: dir.to_path_buf(),
+                        levels: Vec::new(),
+                        leaving: None,
+                        gone: Some(dir.to_path_buf()),
+                    });
+                    self.wake.wake();
+                }
+                return;
+            }
         };
+        self.wd.push(wd.clone());
         let mut levels = vec![Some(wd)];
         for up in dir.ancestors().skip(1) {
             let mask = WatchMask::MOVED_FROM
@@ -484,6 +505,17 @@ mod tests {
         watch.sync();
         assert_eq!(watch.take_gone(), Some(shown), "deleted");
     }
+
+    #[test]
+    fn a_folder_already_gone_when_watched_is_gone_at_once() {
+        let mut watch = Watch::new(Waker::noop()).expect("inotify");
+        let top = tempfile::tempdir().expect("tempdir");
+        let shown = top.path().join("shown");
+        watch.watch(&shown);
+        assert_eq!(watch.take_gone(), Some(shown));
+        assert_eq!(watch.take_gone(), None, "taken once");
+    }
+
     /// `top/a/b/shown`, watched at `shown`.
     fn deep() -> (tempfile::TempDir, Watch, PathBuf) {
         let top = tempfile::tempdir().expect("tempdir");
