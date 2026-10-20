@@ -1071,6 +1071,9 @@ impl Canvas {
         let clip = self.area();
         self.blit_rows(x, y, src, clip, |s, d| {
             let a = (s >> 24) & 0xFF;
+            if a == 0xFF {
+                return s;
+            }
             let blend = |sc: u32, dc: u32| -> u32 { sc + dc * (255 - a) / 255 };
             let r = blend((s >> 16) & 0xFF, (d >> 16) & 0xFF);
             let g = blend((s >> 8) & 0xFF, (d >> 8) & 0xFF);
