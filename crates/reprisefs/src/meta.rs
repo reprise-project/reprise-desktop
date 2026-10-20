@@ -118,7 +118,12 @@ pub const DIRECTORY_FILE: &str = ".directory";
 
 const DIRECTORY_MAX: u64 = 64 * 1024;
 
+/// Folder `dir`'s own icon: its `.directory` Icon=, else the one Nautilus set in gvfs metadata.
 pub fn folder_icon(dir: &Path) -> Option<String> {
+    directory_icon(dir).or_else(|| crate::gvfsmeta::custom_icon(dir))
+}
+
+fn directory_icon(dir: &Path) -> Option<String> {
     let bytes = crate::ops::read_regular(&dir.join(DIRECTORY_FILE), DIRECTORY_MAX).ok()?;
     let text = String::from_utf8(bytes).ok()?;
     let mut in_entry = false;

@@ -10,6 +10,7 @@ pub mod drawncache;
 pub mod dropdata;
 pub mod fileclip;
 pub mod folders;
+pub mod gvfsmeta;
 pub mod hidden;
 pub mod history;
 pub mod icons;
