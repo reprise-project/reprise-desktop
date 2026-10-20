@@ -31,6 +31,9 @@ impl State {
             ..
         } = self;
         let renderer = &mut backend.as_mut()?.renderer;
+        (crate::gpufence::ready(renderer))
+            .map_err(|e| log::warn!("snapshot: {e}"))
+            .ok()?;
         let clear = crate::render::clear_color(&config.theme.colors);
         if let Some(o) = &output {
             glass.begin(o, config.glass, quality, false);

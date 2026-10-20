@@ -370,6 +370,9 @@ impl State {
         let Some(renderer) = backend.as_mut().map(|b| &mut b.renderer) else {
             return;
         };
+        if crate::gpufence::ready(renderer).is_err() {
+            return;
+        }
         // No glass in a whole-window picture: it would blur the
         // transparency it is drawn over. The next screen frame begins its
         // own pass.

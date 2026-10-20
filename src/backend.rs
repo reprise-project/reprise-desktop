@@ -1869,6 +1869,9 @@ fn render(state: &mut State, crtc: crtc::Handle) {
     let mut feedback = None;
     let drawn = match rendered {
         Ok(r) => {
+            if let PrimaryPlaneElement::Swapchain(e) = &r.primary_element {
+                crate::gpufence::issued(&b.renderer, &e.sync);
+            }
             scene.update_surfaces(&output, &r.states);
             if r.is_empty {
                 empty = true;
