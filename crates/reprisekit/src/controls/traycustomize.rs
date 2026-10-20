@@ -1,6 +1,6 @@
 //! The tray's Customize Notifications dialog: a text, the tray items in two
 //! groups (registered now, then past ones that still carry a choice), each
-//! with its 16 px icon, name and behaviour, Restore Defaults, OK and Cancel.
+//! with its icon (16 px at 100% text), name and behaviour, Restore Defaults, OK and Cancel.
 //! The selected row's behaviour cell turns into a combo box. The host lists
 //! the items and acts on [`Event`]; nothing here knows the tray.
 //!
@@ -28,6 +28,7 @@ use crate::controls::form;
 use crate::controls::listview::{draw_group_header, list_rule};
 use crate::controls::metrics::ControlMetrics;
 use crate::controls::scrollbar::{PageScroll, ThumbDrag};
+use crate::controls::shellview::list_icon_px;
 use crate::cues::Cues;
 use crate::icon::IconSource;
 use crate::look::Paint;
@@ -272,8 +273,8 @@ impl Geometry {
         }
     }
 
-    /// These parts for text grown by `u`: rects, rows and columns grow, the icon stays centred
-    /// down its taller row, and the header's hidden row keeps its px.
+    /// These parts for text grown by `u`: rects, rows and columns grow, the icon grows with
+    /// them and keeps its place down the taller row, and the header's hidden row keeps its px.
     fn grown(&self, u: TextUnits) -> Geometry {
         let row_h = u.len(self.row_h);
         Geometry {
@@ -287,7 +288,7 @@ impl Geometry {
             rule_y: u.len(self.rule_y),
             row_h,
             highlight_h: u.len(self.highlight_h),
-            icon_dy: self.icon_dy + (row_h - self.row_h) / 2,
+            icon_dy: self.icon_dy + (row_h - self.row_h - (list_icon_px(u) - ICON_PX)) / 2,
             check: self.check.map(|(x, y)| (u.len(x), u.len(y))),
             restore: u.rect(self.restore),
             ok: u.rect(self.ok),
@@ -330,9 +331,9 @@ const PAGE_TITLE_X: i32 = 2;
 const PAGE_RULE_Y: i32 = 34;
 const PAGE_RULE_INSET: i32 = 33;
 const PAGE_BEHAVIOURS_X: i32 = 492;
-/// A page row's parts from its top-left: the icon, the name's and the
-/// tip's boxes, and the combo.
-const PAGE_ICON: (i32, i32) = (41, 5);
+/// A page row's parts from its top-left: the icon's left edge (centred down the name's box),
+/// the name's and the tip's boxes, and the combo.
+const PAGE_ICON_X: i32 = 41;
 const PAGE_NAME: Rect = Rect::new(67, 4, 400, 18);
 const PAGE_TIP: Rect = Rect::new(67, 19, 400, 18);
 /// The page's check box label, from the box's left edge, and a pixel up.
@@ -369,7 +370,8 @@ const PAGE_HEADING_LINE_H: i32 = 21;
 /// The heading's size over the body text's: 16 px to 12.
 const HEADING_SCALE: (u32, u32) = (4, 3);
 
-/// A row's icon and text, from the body's left edge.
+/// A row's icon and text, from the body's left edge, at 100% text; the name and the highlight
+/// move over by what the icon grows.
 const ICON_X: i32 = 4;
 const NAME_X: i32 = 22;
 const HIGHLIGHT_X: i32 = 20;
@@ -380,6 +382,17 @@ const HEADER_TEXT_X: i32 = 8;
 /// A group's title in from the body's left edge, bold.
 const GROUP_TEXT_X: i32 = 15;
 const ICON_PX: i32 = 16;
+
+/// `sources` drawn `px` square: the smallest at least that big, else the largest.
+fn icon_at(sources: &[IconSource], px: i32) -> Option<Canvas> {
+    let fits = |src: &&IconSource| src.width as i32 >= px;
+    sources
+        .iter()
+        .filter(fits)
+        .min_by_key(|src| src.width)
+        .or_else(|| sources.iter().max_by_key(|src| src.width))
+        .map(|src| src.to_canvas(px))
+}
 
 /// One tray item on the list.
 #[derive(Clone, Debug, PartialEq)]
@@ -2034,14 +2047,10 @@ impl TrayCustomize {
         let e = &self.entries[i];
         let x0 = lay.frame.x;
         let u = self.metrics.text;
-        if let Some(src) = e
-            .icon
-            .iter()
-            .min_by_key(|src| (src.width as i32 - ICON_PX * s).abs())
-        {
-            let ic = src.to_canvas(ICON_PX * s);
-            let dy = u.len(PAGE_ICON.1) + (u.len(PAGE_NAME.height) - PAGE_NAME.height) / 2;
-            c.blit_over((x0 + u.len(PAGE_ICON.0)) * s, (r.y + dy) * s, &ic);
+        let icon = list_icon_px(u);
+        if let Some(ic) = icon_at(&e.icon, icon * s) {
+            let dy = u.len(PAGE_NAME.y) + (u.len(PAGE_NAME.height) - icon) / 2;
+            c.blit_over((x0 + u.len(PAGE_ICON_X)) * s, (r.y + dy) * s, &ic);
         }
         let name_w = self.page_geo().name_w();
         for (b, line, ink, face) in [
@@ -2140,18 +2149,16 @@ impl TrayCustomize {
             };
             let e = &self.entries[i];
             let row = r.scaled(s);
-            if let Some(src) = e
-                .icon
-                .iter()
-                .min_by_key(|src| (src.width as i32 - ICON_PX * s).abs())
-            {
-                let ic = src.to_canvas(ICON_PX * s);
+            let icon = list_icon_px(self.metrics.text);
+            let grew = icon - ICON_PX;
+            if let Some(ic) = icon_at(&e.icon, icon * s) {
                 c.blit_over(row.x + ICON_X * s, row.y + g.icon_dy * s, &ic);
             }
+            let name_x = NAME_X + grew;
             let name_r = Rect::new(
-                row.x + NAME_X * s,
+                row.x + name_x * s,
                 row.y + g.text_dy * s,
-                (g.columns[0] - NAME_X - 4) * s,
+                (g.columns[0] - name_x - 4) * s,
                 g.highlight_h * s,
             );
             let name = text.ellipsize(&e.name, name_r.width, false, px);
@@ -2160,7 +2167,7 @@ impl TrayCustomize {
             let mut name_ink = ink;
             if selected {
                 let end = row.x + (g.columns[0] + 1) * s;
-                let hx = row.x + HIGHLIGHT_X * s;
+                let hx = row.x + (HIGHLIGHT_X + grew) * s;
                 let hl = Rect::new(hx, row.y, end - hx, g.highlight_h * s);
                 c.fill_rect(hl, cs.hilight);
                 name_ink = cs.hilight_text;
@@ -2796,6 +2803,59 @@ mod tests {
         assert_eq!(l.ok, Rect::new(366, 718, 150, 46));
         let (_, cl) = l.combo.expect("a combo on the selected row");
         assert_eq!(cl.field, Rect::new(20 + 370 + 1, 199 + 64 + 36, 248, 42));
+    }
+
+    /// A row's icon is `list_icon_px` square at each text size, drawn from the smallest copy at
+    /// least that big; the Classic name's highlight starts where the icon ends.
+    #[test]
+    fn a_rows_icon_grows_with_the_text() {
+        let (red, blue) = (0xFFFF_0000, 0xFF00_00FF);
+        let source = |px: u32, argb: u32| IconSource {
+            width: px,
+            height: px,
+            pixels: vec![argb; (px * px) as usize],
+        };
+        let text = text();
+        for (pct, ink) in [(100, red), (125, blue), (150, blue)] {
+            for (w, theme) in [
+                (Wording::Classic, Theme::default()),
+                (Wording::Glass, glass_theme()),
+            ] {
+                let theme = theme.with_text_size(pct);
+                let px = theme.fonts.size_px;
+                let want = list_icon_px(theme.controls().text);
+                assert_eq!(want > 16, pct > 100);
+                let mut e = entry("mail", "Mail", false, Behaviour::Show);
+                e.icon = Arc::from([source(16, red), source(32, blue)]);
+                let mut t = TrayCustomize::new(w, vec![e], Vec::new(), None, theme.controls());
+                t.select(0);
+                let l = t.layout(&text, px, (0, 0));
+                let (cw, ch) = t.client();
+                let mut c = Canvas::new(cw as u32, ch as u32);
+                t.draw(&mut c, &text, &theme.paint(), &l, Cues::NONE, px);
+                let (mut xs, mut ys) = (Vec::new(), Vec::new());
+                for y in 0..ch {
+                    for x in 0..cw {
+                        if c.get(x, y) == ink {
+                            xs.push(x);
+                            ys.push(y);
+                        }
+                    }
+                }
+                let span = |v: &[i32]| v.iter().max().unwrap() - v.iter().min().unwrap() + 1;
+                assert_eq!(xs.len(), (want * want) as usize, "{w:?} at {pct}%");
+                assert_eq!((span(&xs), span(&ys)), (want, want), "{w:?} at {pct}%");
+                if w == Wording::Classic {
+                    let (right, y) = (*xs.iter().max().unwrap(), ys[0] + 2);
+                    let hilight = theme.colors.hilight.argb();
+                    assert_eq!(
+                        c.get(right + 1, y),
+                        hilight,
+                        "{pct}%: highlight after the icon"
+                    );
+                }
+            }
+        }
     }
 
     #[test]
