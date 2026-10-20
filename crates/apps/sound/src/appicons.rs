@@ -109,7 +109,8 @@ impl Resolver {
 
 /// The icon `app`'s hints, executable or name lead to, first match wins: each hint as a desktop
 /// entry id or `StartupWMClass`, then as a theme icon; then the entry whose `Name` is the
-/// program's; then the entry whose `Exec` runs the executable.
+/// program's; then the entry whose `Exec` runs the executable; then the one entry whose `Name`
+/// starts with the program's name as a word.
 pub fn icon_name(app: &App, entries: &[AppEntry], has: impl Fn(&str) -> bool) -> Option<String> {
     for hint in &app.icon_hints {
         if let Some(icon) = apps::icon_for_app_id(entries, hint) {
@@ -124,6 +125,7 @@ pub fn icon_name(app: &App, entries: &[AppEntry], has: impl Fn(&str) -> bool) ->
     }
     by_name(entries, &app.label)
         .or_else(|| app.binary.as_deref().and_then(|b| by_exec(entries, b)))
+        .or_else(|| by_name_prefix(entries, &app.label))
         .map(str::to_string)
 }
 
@@ -149,6 +151,26 @@ fn by_name<'a>(entries: &'a [AppEntry], name: &str) -> Option<&'a str> {
         .filter(|e| e.icon.is_some())
         .find(|e| e.name.eq_ignore_ascii_case(name.trim()))
         .and_then(|e| e.icon.as_deref())
+}
+
+/// A browser edition reports its family's name ("Brave") and executable, while its entry names the
+/// edition ("Brave Origin") and runs a wrapper. Two editions installed side by side match neither.
+fn by_name_prefix<'a>(entries: &'a [AppEntry], name: &str) -> Option<&'a str> {
+    let name = name.trim();
+    if name.is_empty() {
+        return None;
+    }
+    let mut found = entries.iter().filter(|e| {
+        e.icon.is_some()
+            && e.name
+                .get(..name.len())
+                .is_some_and(|head| head.eq_ignore_ascii_case(name))
+            && e.name[name.len()..].starts_with(' ')
+    });
+    match (found.next(), found.next()) {
+        (Some(e), None) => e.icon.as_deref(),
+        _ => None,
+    }
 }
 
 #[cfg(test)]
@@ -267,6 +289,38 @@ mod tests {
         ] {
             assert_eq!(name(&app(hints, Some(binary)), &installed, none), want);
         }
+    }
+
+    /// The stream Brave Origin plays: Brave's icon name, executable and name, none of which its
+    /// entry carries.
+    #[test]
+    fn a_browser_edition_is_found_by_its_family_name() {
+        let mut origin = entry(
+            "brave-origin",
+            "brave-origin %U",
+            "brave-origin",
+            Some("brave-origin"),
+        );
+        origin.name = "Brave Origin".into();
+        let mut installed = vec![origin, entries()[0].clone()];
+        let brave = app(&["brave-browser", "brave", "Brave"], Some("brave"));
+        assert_eq!(name(&brave, &installed, |_| false), "brave-origin");
+
+        let mut nightly = entry("brave-nightly", "brave-nightly %U", "brave-nightly", None);
+        nightly.name = "Brave Nightly".into();
+        installed.push(nightly);
+        assert_eq!(
+            icon_name(&brave, &installed, |_| false),
+            None,
+            "two editions leave the choice open"
+        );
+        let mut braver = installed[0].clone();
+        braver.name = "Braveheart".into();
+        assert_eq!(
+            icon_name(&brave, &[braver], |_| false),
+            None,
+            "the name ends at a word"
+        );
     }
 
     #[test]
