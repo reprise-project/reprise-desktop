@@ -543,6 +543,26 @@ pub fn press(state: &mut State, surface: &WlSurface) {
     }
 }
 
+/// Close the flyout `surface` is part of at once, for a reader's click on what it covers: a
+/// mapped Top or Overlay layer surface that holds the keyboard outright. Its client hears
+/// `closed`; the scene drops it now. False, closing nothing, for any other surface.
+pub fn close_flyout(state: &mut State, surface: &WlSurface) -> bool {
+    let root = popup_root(state, surface).unwrap_or_else(|| surface.clone());
+    let Some(l) = state.layer_of(&root) else {
+        return false;
+    };
+    let over = l
+        .seen
+        .is_some_and(|w| matches!(w.layer, Layer::Top | Layer::Overlay));
+    if !(l.mapped && l.exclusive() && over) {
+        return false;
+    }
+    let ls = l.surface.clone();
+    ls.send_close();
+    state.layer_destroyed(ls);
+    true
+}
+
 pub fn is_mapped_layer(state: &State, surface: &WlSurface) -> bool {
     state.layer_of(surface).is_some_and(|l| l.mapped)
 }
