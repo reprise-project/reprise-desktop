@@ -1178,6 +1178,50 @@ mod tests {
     }
 
     #[test]
+    fn a_special_folder_wears_its_icon_in_the_tree_at_every_scale() {
+        const MUSIC: u32 = 0xff30_9050;
+        let dir = tempfile::Builder::new()
+            .prefix("tree")
+            .tempdir()
+            .expect("a temp dir shown in the tree");
+        let theme = dir.path().join("icons/t");
+        for side in [16, 32] {
+            let places = theme.join(format!("{side}x{side}/places"));
+            std::fs::create_dir_all(&places).expect("mkdir");
+            let mut c = Canvas::new(side, side);
+            c.pixels.fill(MUSIC);
+            let png = reprisekit::raster::to_png(&c);
+            std::fs::write(places.join("folder-music.png"), png).expect("write");
+        }
+        let index = "[Icon Theme]\nName=T\nDirectories=16x16/places,32x32/places\n\n\
+            [16x16/places]\nSize=16\nType=Fixed\n\n[32x32/places]\nSize=32\nType=Fixed\n";
+        std::fs::write(theme.join("index.theme"), index).expect("write");
+        let music = dir.path().join("Music");
+        std::fs::create_dir(&music).expect("mkdir");
+        let mut ctx = test_ctx();
+        ctx.icons = reprisekit::icontheme::IconCache::new(reprisekit::icontheme::IconTheme::load(
+            "t",
+            &[dir.path().join("icons")],
+        ));
+        let mut ex = crate::tests::test_explorer(Place::Folder(dir.path().to_path_buf()), &mut ctx);
+        ex.specials = vec![(music.clone(), "folder-music")];
+        ex.refill_tree_node(&Place::Folder(dir.path().to_path_buf()), &mut ctx);
+        let worn = |ex: &Explorer| {
+            let path = ex.tree_path_of(&Place::Folder(music.clone()))?;
+            let icon = ex.tree.node(&path)?.icon.clone()?;
+            Some((icon.scale(), icon.device_size().0, icon.get(8, 8)))
+        };
+        crate::tests::wake_until(&mut ex, &mut ctx, |ex| worn(ex).is_some());
+        assert_eq!(worn(&ex), Some((1, 16, MUSIC)));
+        ctx.icons.set_scale(2);
+        ex.follow_scale(2, &mut ctx);
+        crate::tests::wake_until(&mut ex, &mut ctx, |ex| {
+            worn(ex).is_some_and(|(scale, ..)| scale == 2)
+        });
+        assert_eq!(worn(&ex), Some((2, 32, MUSIC)));
+    }
+
+    #[test]
     fn a_refresh_keeps_the_thumbnails_of_unchanged_images() {
         let mut ctx = test_ctx();
         let (dir, mut ex) = explorer(&mut ctx);
