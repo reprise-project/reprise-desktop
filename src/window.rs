@@ -1812,6 +1812,33 @@ impl State {
         self.redraw_all();
     }
 
+    /// A normal window that took a size of its own after acking every configure keeps it in its
+    /// pending state, so a later state-only configure (activation, bounds) does not ask it back
+    /// to the size last sent.
+    fn keep_own_size(&self, w: WindowId) {
+        let Some(win) = self.win(w) else {
+            return;
+        };
+        let held = win.maximized || win.fullscreen || win.snapped.is_some();
+        if held
+            || win.resize_anchor.is_some()
+            || self.interaction.is_resize_of(w)
+            || self.wm.snap.follows_drag(w)
+        {
+            return;
+        }
+        let Some(t) = win.xdg().filter(|t| !t.has_pending_changes()) else {
+            return;
+        };
+        let own = win.client_size();
+        let acked = t.with_committed_state(|s| s.cloned());
+        t.with_pending_state(|s| {
+            if acked.as_ref() == Some(&*s) && s.size.is_some_and(|z| (z.w, z.h) != own) {
+                s.size = Some(own.into());
+            }
+        });
+    }
+
     /// Drop minimized/maximized/fullscreen/snapped state on unmap. An xdg toplevel takes the
     /// cleared state with its next initial configure; X11's `_NET_WM_STATE` clears at once.
     fn reset_state(&mut self, w: WindowId) {
@@ -1937,6 +1964,7 @@ impl State {
             }
             let sizing = self.interaction.is_resize_of(w) || self.wm.snap.follows_drag(w);
             self.follow_tabs(w, !sizing);
+            self.keep_own_size(w);
         }
         // The commit for the last requested size usually lands after release, so the anchor
         // outlives the drag until `anchor_done`.
@@ -3388,6 +3416,27 @@ mod tests {
         assert!(
             scaled.0 < first.0 && scaled.1 < first.1,
             "scale 2 halves the work area: {wide:?} -> {scaled:?}"
+        );
+    }
+
+    #[test]
+    fn a_window_that_sized_itself_keeps_that_size_when_restored() {
+        let mut h = crate::harness::Harness::new();
+        h.output("TEST-1", 1024, 768);
+        let mut c = h.connect();
+        let t = h.map_toplevel(&mut c, "test.app", 300, 200);
+        h.state.request_size(t.id, 400, 300);
+        h.roundtrip(&mut c);
+        assert_eq!(c.side.shells[t.shell].size, (400, 300), "the asked size");
+        h.resize_self(&mut c, t, 350, 250);
+        h.state.set_minimized(t.id, true);
+        h.roundtrip(&mut c);
+        h.state.set_minimized(t.id, false);
+        h.roundtrip(&mut c);
+        assert_eq!(
+            c.side.shells[t.shell].size,
+            (350, 250),
+            "minimize and restore keep the size the program took"
         );
     }
 }
