@@ -141,16 +141,74 @@ impl Bus {
     where
         B: serde::Serialize + zbus::zvariant::DynamicType,
     {
-        let error: String = self
-            .proxy()?
-            .call_with_flags(
-                method,
-                zbus::proxy::MethodFlags::AllowInteractiveAuth.into(),
-                body,
-            )
-            .map_err(|e| bus_error(method, e))?
-            .unwrap_or_default();
-        outcome(method, &error)
+        let proxy = self.proxy()?;
+        let call = || {
+            proxy
+                .call_with_flags(
+                    method,
+                    zbus::proxy::MethodFlags::AllowInteractiveAuth.into(),
+                    body,
+                )
+                .map(Option::unwrap_or_default)
+        };
+        send_with(method, call, || self.running())
+    }
+
+    fn running(&self) -> bool {
+        let Ok(conn) = self.conn() else {
+            return false;
+        };
+        let Ok(name) = zbus::names::BusName::try_from(DEST) else {
+            return false;
+        };
+        zbus::blocking::fdo::DBusProxy::new(&conn)
+            .is_ok_and(|d| d.name_has_owner(name).unwrap_or(false))
+    }
+}
+
+/// `call` once more when the service quit under it. cups-pk-helper exits 30 s after
+/// its last request, counted through a password prompt, so a call queued behind
+/// one can reach it as it goes: the bus answers NoReply, or the instance, its
+/// object already gone, UnknownMethod. The service is bus-activated, so a send
+/// after the old instance left starts a new one.
+fn send_with(
+    method: &str,
+    mut call: impl FnMut() -> zbus::Result<String>,
+    running: impl Fn() -> bool,
+) -> Result<()> {
+    let error = match call() {
+        Err(e) if quit_under(&e, running) => {
+            log::info!("{method}: cups-pk-helper quit under the call ({e}), sending it again");
+            call()
+        }
+        r => r,
+    }
+    .map_err(|e| bus_error(method, e))?;
+    outcome(method, &error)
+}
+
+/// How long an instance that dropped its object may take to leave the bus.
+const LEAVING: std::time::Duration = std::time::Duration::from_secs(2);
+
+/// Whether `e` came from an instance that was exiting, and it has left. NoReply
+/// from a running service is a prompt left open past the call's timeout.
+fn quit_under(e: &zbus::Error, running: impl Fn() -> bool) -> bool {
+    let zbus::Error::MethodError(name, _, _) = e else {
+        return false;
+    };
+    match name.as_str() {
+        "org.freedesktop.DBus.Error.NoReply" => !running(),
+        "org.freedesktop.DBus.Error.UnknownMethod" => {
+            let until = std::time::Instant::now() + LEAVING;
+            while running() {
+                if std::time::Instant::now() >= until {
+                    return false;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+            true
+        }
+        _ => false,
     }
 }
 
@@ -318,6 +376,75 @@ mod tests {
             || panic!("only NotPrivileged asks whether the prompt was dismissed"),
         );
         assert!(matches!(other, Error::Refused(_)));
+    }
+
+    fn bus_failure(name: &'static str, text: &str) -> zbus::Error {
+        let msg = zbus::Message::method_call("/", "PrinterSetEnabled")
+            .and_then(|b| b.build(&()))
+            .expect("a method call");
+        zbus::Error::MethodError(
+            zbus::names::OwnedErrorName::try_from(name).expect("an error name"),
+            Some(text.into()),
+            msg,
+        )
+    }
+
+    fn no_reply() -> zbus::Error {
+        bus_failure(
+            "org.freedesktop.DBus.Error.NoReply",
+            "Remote peer disconnected",
+        )
+    }
+
+    #[test]
+    fn a_call_an_exiting_instance_lost_is_sent_after_it_leaves() {
+        let mut sent = 0;
+        let call = || {
+            sent += 1;
+            if sent == 1 {
+                Err(bus_failure(
+                    "org.freedesktop.DBus.Error.UnknownMethod",
+                    "Object does not exist at path \u{201c}/\u{201d}",
+                ))
+            } else {
+                Ok(String::new())
+            }
+        };
+        let asked = std::cell::Cell::new(0);
+        let running = || {
+            asked.set(asked.get() + 1);
+            asked.get() < 3
+        };
+        assert_eq!(send_with("PrinterSetEnabled", call, running), Ok(()));
+        assert_eq!(sent, 2, "sent again once the old instance left");
+        assert_eq!(asked.get(), 3, "waited while it was still on the bus");
+    }
+
+    #[test]
+    fn a_call_the_service_quit_under_is_sent_again() {
+        let mut sent = 0;
+        let call = || {
+            sent += 1;
+            if sent == 1 {
+                Err(no_reply())
+            } else {
+                Ok(String::new())
+            }
+        };
+        assert_eq!(send_with("PrinterSetEnabled", call, || false), Ok(()));
+        assert_eq!(sent, 2, "the second send reaches the started service");
+    }
+
+    #[test]
+    fn no_reply_from_a_running_service_is_not_sent_again() {
+        let mut sent = 0;
+        let call = || {
+            sent += 1;
+            Err(no_reply())
+        };
+        let r = send_with("PrinterSetEnabled", call, || true);
+        assert!(matches!(r, Err(Error::Refused(_))), "{r:?}");
+        assert_eq!(sent, 1, "a prompt left open too long is not asked again");
     }
 
     #[test]
