@@ -104,6 +104,10 @@ fn main() {
             &render_windowed_dialog(n.max(1)),
             &format!("reprisekit-gallery-windowed-dialog@{}.png", n.max(1)),
         );
+        write_preview(
+            &render_label_ellipsis(n.max(1)),
+            &format!("reprisekit-gallery-label-ellipsis@{}.png", n.max(1)),
+        );
         for mode in [
             reprisekit::glass::Mode::Light,
             reprisekit::glass::Mode::Dark,
@@ -182,6 +186,10 @@ fn main() {
     write_preview(&render_file_dialog(), "reprisekit-gallery-file-dialog.png");
     write_preview(&render_termgrid(1), "reprisekit-gallery-termgrid.png");
     write_preview(&render_grid_drag(1), "reprisekit-gallery-grid-drag.png");
+    write_preview(
+        &render_label_ellipsis(1),
+        "reprisekit-gallery-label-ellipsis.png",
+    );
     write_preview(
         &render_about_system(with_blue, 100),
         "reprisekit-gallery-about-system.png",
@@ -539,6 +547,45 @@ fn render_copy_progress(with_blue: bool, scale: i32) -> Canvas {
 
 /// A windowed dialog's frame at `scale`, one row per look (Classic, Blue, Olive, Silver, Glass
 /// light and dark, the Square frame): at rest, minimize hot, minimize held, inactive.
+/// Labels too long for their rects, cut to an ellipsis, with the tip of the one under the
+/// pointer, in Classic, Blue and Glass.
+fn render_label_ellipsis(scale: i32) -> Canvas {
+    use reprisekit::controls::form::{self, Form, Item};
+    let text = TextRenderer::load(&FontConfig::default());
+    let looks = [
+        cued(Theme::default()),
+        cued(interfaces::blue_theme(reprisekit::blue::Variant::Blue)),
+        cued(interfaces::theme_for(Interface::Glass)),
+    ];
+    let (w, h) = (230, 110);
+    let mut c = Canvas::new((w * looks.len() as i32 * scale) as u32, (h * scale) as u32);
+    for (i, theme) in looks.iter().enumerate() {
+        let theme = theme.scaled(scale);
+        let mut cell = Canvas::new((w * scale) as u32, (h * scale) as u32);
+        cell.fill_rect(cell.bounds(), theme.colors.button_face);
+        let model = "HP LaserJet 4250 PostScript Printer Driver";
+        let mut f = Form::new(vec![
+            Item::label_at("model_label", 10, 10, 50, "Model:"),
+            Item::label_at("model", 64, 10, 150, model),
+            Item::label_at(
+                "status",
+                10,
+                30,
+                204,
+                "Error unlocking /dev/sdc: Failed to activate device: Operation not permitted",
+            ),
+            Item::label_at("grey", 10, 50, 204, model).enabled(false),
+        ]);
+        let px = theme.fonts.size_px;
+        form::draw(&mut cell, &text, &theme.paint(), &f, false, px);
+        f.motion(120, 55, None);
+        f.tip_tick();
+        form::draw_tip(&mut cell, &text, &theme, &f);
+        c.blit_canvas(w * scale * i as i32, 0, &cell);
+    }
+    c
+}
+
 fn render_windowed_dialog(scale: i32) -> Canvas {
     use reprisekit::blue::Variant;
     use reprisekit::glass::{Frame, Mode, Settings};

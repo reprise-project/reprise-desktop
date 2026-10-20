@@ -169,6 +169,7 @@ impl Unlock {
             ..forms.paint()
         };
         form::draw(c, &ctx.text, &paint, &self.form, true, forms.fonts.size_px);
+        form::draw_tip(c, &ctx.text, &forms, &self.form);
     }
 
     pub fn access(&self, tree: &mut Tree, ctx: &Ctx) {
