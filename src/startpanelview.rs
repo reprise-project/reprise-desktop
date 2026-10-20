@@ -654,7 +654,7 @@ impl State {
             self.arm_start_panel_fade();
         }
         self.redraw_start_panel();
-        self.redraw_taskbars();
+        self.redraw_taskbar(bar);
     }
 
     /// The panel's places for the document folders the last check left, with their `px`
@@ -959,9 +959,7 @@ impl State {
         if let Some(b) = self.bar_mut(v.bar) {
             b.start_pressed = false;
         }
-        self.redraw_taskbars();
-        self.redraw_all();
-        crate::access::touch(self);
+        self.redraw_taskbar(v.bar);
     }
 
     pub fn start_panel_key(&mut self, k: &DialogKey) {
@@ -2780,6 +2778,39 @@ mod tests {
             .0,
             2,
             "a hidden bar's panel stands on its reveal line"
+        );
+    }
+
+    #[test]
+    fn opening_and_closing_start_redraws_only_its_own_bar() {
+        let mut config = crate::config::Config::default();
+        config.startmenu_style = crate::config::StartMenuStyle::Glass;
+        let mut h = crate::harness::Harness::with_config(config);
+        h.output("TEST-1", 1024, 768);
+        h.output("TEST-2", 1024, 768);
+        let (own, other) = (h.state.bars[0].tree, h.state.bars[1].tree);
+        let draws = |h: &crate::harness::Harness| {
+            (
+                h.state.bar(own).unwrap().draws,
+                h.state.bar(other).unwrap().draws,
+            )
+        };
+        let (own_before, other_before) = draws(&h);
+        h.state.toggle_start(own);
+        assert!(h.state.start_panel.is_some());
+        assert!(h.state.bar(own).unwrap().start_pressed);
+        h.state.toggle_start(own);
+        assert!(h.state.start_panel.is_none());
+        assert!(!h.state.bar(own).unwrap().start_pressed);
+        let (own_after, other_after) = draws(&h);
+        assert_eq!(
+            own_after - own_before,
+            2,
+            "Start's bar is drawn on open and on close"
+        );
+        assert_eq!(
+            other_after, other_before,
+            "the other output's bar is not drawn"
         );
     }
 }
