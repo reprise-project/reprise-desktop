@@ -408,9 +408,11 @@ impl State {
         });
     }
 
-    /// Empty Recycle Bin: asks to delete what the bins hold, counted in a file job.
+    /// Empty Recycle Bin: asks to delete what the bins hold, counted in a file action, so a drive
+    /// bin on a mount that stopped answering gives up instead of asking minutes later.
     pub fn ask_empty_bin(&mut self) {
-        self.spawn_fs_job(|| {
+        let action = Action::reads("Error Deleting File or Folder");
+        self.spawn_fs_action(action, |_| -> OnLoop {
             let (count, first) = reprisefs::trash::Bins::system()
                 .map(|bins| bins.files_dirs())
                 .unwrap_or_default()
