@@ -41,6 +41,7 @@ impl ColorFx {
             texture,
             program: self.program.clone(),
             rows: m.rows,
+            linear_light: m.linear,
         }
     }
 }
@@ -50,6 +51,7 @@ pub struct ColorElement {
     texture: GlesTexture,
     program: GlesTexProgram,
     rows: [[f32; 4]; 3],
+    linear_light: bool,
 }
 
 impl Element for ColorElement {
@@ -112,6 +114,7 @@ impl RenderElement<GlesRenderer> for ColorElement {
             Uniform::new("row_r", self.rows[0]),
             Uniform::new("row_g", self.rows[1]),
             Uniform::new("row_b", self.rows[2]),
+            Uniform::new("linear_light", if self.linear_light { 1.0f32 } else { 0.0 }),
         ];
         frame.render_texture_from_to(
             &self.texture,
