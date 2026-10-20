@@ -464,6 +464,46 @@ impl Wayland {
             .map(|()| true)
     }
 
+    /// Ask for one frame into `buf` and return at once; [`Wayland::answer`]
+    /// reads the compositor's reply. A source with no damage replies only
+    /// once it changes. Dropping the `Asked` withdraws the request.
+    pub fn ask(&mut self, session: &CaptureSession, buf: &dyn CaptureBuffer) -> Asked {
+        self.ask_on(&session.session, Which::Main, buf)
+    }
+
+    /// The reply to the frame last asked for, if it came: what the socket
+    /// holds is read, without waiting.
+    pub fn answer(&mut self) -> Option<Result<(), CaptureError>> {
+        if let Err(e) = pump(&mut self.queue, &mut self.state, Duration::ZERO) {
+            return Some(Err(e));
+        }
+        self.take_answer(Which::Main)
+    }
+
+    fn ask_on(
+        &mut self,
+        session: &ExtImageCopyCaptureSessionV1,
+        which: Which,
+        buf: &dyn CaptureBuffer,
+    ) -> Asked {
+        let frame = session.create_frame(&self.qh, which);
+        let (w, h) = buf.size();
+        frame.attach_buffer(buf.wl_buffer());
+        frame.damage_buffer(0, 0, w as i32, h as i32);
+        frame.capture();
+        self.state.session(which).frame = None;
+        Asked(frame)
+    }
+
+    fn take_answer(&mut self, which: Which) -> Option<Result<(), CaptureError>> {
+        let s = self.state.session(which);
+        if let Some(r) = s.frame.take() {
+            return Some(r.map_err(CaptureError::Failed));
+        }
+        s.stopped
+            .then_some(Err(CaptureError::Failed(FailureReason::Stopped)))
+    }
+
     fn capture_on(
         &mut self,
         session: &ExtImageCopyCaptureSessionV1,
@@ -471,34 +511,27 @@ impl Wayland {
         buf: &dyn CaptureBuffer,
         wait: Duration,
     ) -> Result<(), CaptureError> {
-        let frame = session.create_frame(&self.qh, which);
-        let (w, h) = buf.size();
-        frame.attach_buffer(buf.wl_buffer());
-        frame.damage_buffer(0, 0, w as i32, h as i32);
-        frame.capture();
-        self.state.session(which).frame = None;
+        let _asked = self.ask_on(session, which, buf);
         let deadline = Instant::now() + wait;
-        let result = loop {
-            if let Some(r) = self.state.session(which).frame.take() {
-                break r.map_err(CaptureError::Failed);
-            }
-            if self.state.session(which).stopped {
-                break Err(CaptureError::Failed(FailureReason::Stopped));
+        loop {
+            if let Some(r) = self.take_answer(which) {
+                return r;
             }
             let left = deadline.saturating_duration_since(Instant::now());
             if left.is_zero() {
-                break Err(CaptureError::Timeout);
+                return Err(CaptureError::Timeout);
             }
-            if let Err(e) = pump(&mut self.queue, &mut self.state, left) {
-                break Err(e);
-            }
-        };
-        frame.destroy();
-        result
+            pump(&mut self.queue, &mut self.state, left)?;
+        }
     }
 
     pub fn stopped(&self) -> bool {
         self.state.main.stopped
+    }
+
+    /// The connection's fd, readable when the compositor sent events.
+    pub fn fd(&self) -> std::os::fd::RawFd {
+        self.conn.backend().poll_fd().as_raw_fd()
     }
 
     pub fn flush(&self) {
@@ -596,6 +629,15 @@ fn pump(
         .dispatch_pending(state)
         .map_err(|_| CaptureError::Gone)?;
     Ok(())
+}
+
+/// A frame asked of the compositor; dropping it destroys the frame.
+pub struct Asked(ExtImageCopyCaptureFrameV1);
+
+impl Drop for Asked {
+    fn drop(&mut self) {
+        self.0.destroy();
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
