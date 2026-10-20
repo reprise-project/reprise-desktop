@@ -34,19 +34,24 @@ pub fn gtk3_css(cs: &ColorScheme, interface: Interface) -> String {
 }
 
 /// The generated theme's `gtk-4.0/gtk.css`: GTK4's own Default sheet with GTK3's named colours
-/// and rules laid over it, plus rules for the nodes only GTK4 has. libadwaita ignores the theme.
+/// and rules laid over it, plus rules for the nodes only GTK4 has, and Classic's edges under
+/// Classic. libadwaita ignores the theme.
 pub fn gtk4_theme_css(cs: &ColorScheme, interface: Interface) -> String {
     let default = if cs.is_dark() {
         "Default-dark.css"
     } else {
         "Default-light.css"
     };
-    recoloured(
+    let mut out = recoloured(
         cs,
         interface,
         &format!("resource:///org/gtk/libgtk/theme/Default/{default}"),
         &[GTK3_RULES, GTK4_RULES],
-    )
+    );
+    if interface == Interface::Classic {
+        out += &crate::classic::gtk3::gtk4_bevels(cs);
+    }
+    out
 }
 
 pub fn gtk3_assets(cs: &ColorScheme, interface: Interface) -> Vec<(String, Vec<u8>)> {
@@ -402,6 +407,24 @@ mod tests {
                 0xe5a2_5c5e_afdb_ce8c,
                 0x1c06_2550_e6c0_1d08
             ],
+            "{got:#x?}"
+        );
+    }
+
+    #[test]
+    fn classic_gtk4_sheet_is_pinned() {
+        let tokyo = crate::schemes::scheme("Tokyo Night").unwrap();
+        let std = ColorScheme::default();
+        let classic = gtk4_theme_css(&std, Interface::Classic);
+        assert!(classic.ends_with(&crate::classic::gtk3::gtk4_bevels(&std)));
+        assert!(!gtk4_theme_css(&std, Interface::Blue).contains("../gtk-3.0/assets"));
+        let got = [
+            fnv(&classic),
+            fnv(&gtk4_theme_css(&tokyo, Interface::Classic)),
+        ];
+        assert_eq!(
+            got,
+            [0x501d_0b26_a76a_6482, 0x1eda_6164_a98e_3874],
             "{got:#x?}"
         );
     }

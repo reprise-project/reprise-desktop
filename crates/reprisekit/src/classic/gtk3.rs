@@ -1,6 +1,7 @@
-//! Classic's 3D edges for the generated GTK3 theme ([`crate::toolkit`]): `gtk3.css` with its placeholders
-//! filled in for a colour scheme, and the pictures it reads (GTK3 reads no `data:` URLs, so they are files).
-//! An edge is a stack of 1 px inset box shadows; each ring's bottom-right colour lies over its top-left one.
+//! Classic's 3D edges for the generated GTK theme ([`crate::toolkit`]): `gtk3.css` and `gtk4.css` with their
+//! placeholders filled in for a colour scheme, and the pictures they read (GTK3 reads no `data:` URLs, so
+//! they are files in `gtk-3.0/`). An edge is a stack of 1 px inset box shadows; each ring's bottom-right
+//! colour lies over its top-left one.
 
 use crate::classic::widgets::{
     Arrow, CheckState, draw_arrow_h, draw_arrow_v, draw_checkbox_disabled, draw_checkbox_held,
@@ -11,11 +12,22 @@ use crate::raster::{Canvas, EdgeStyle, Rect};
 use crate::theme::{Color, ColorScheme};
 
 const RULES: &str = include_str!("gtk3.css");
+const GTK4_RULES: &str = include_str!("gtk4.css");
+
+/// GTK4 reads the pictures from the GTK3 half of the theme, beside its own `gtk-4.0/`.
+const GTK4_ASSETS: &str = "../gtk-3.0/assets";
 
 pub fn bevels(cs: &ColorScheme) -> String {
-    let fills = fills(cs);
+    filled(RULES, &fills(cs, ASSETS))
+}
+
+pub fn gtk4_bevels(cs: &ColorScheme) -> String {
+    filled(GTK4_RULES, &fills(cs, GTK4_ASSETS))
+}
+
+fn filled(rules: &str, fills: &[(&str, String)]) -> String {
     let mut out = String::from("\n");
-    let mut rest = RULES;
+    let mut rest = rules;
     while let Some(start) = rest.find('%') {
         let Some(len) = rest[start + 1..].find('%') else {
             break;
@@ -32,7 +44,7 @@ pub fn bevels(cs: &ColorScheme) -> String {
     out
 }
 
-fn fills(cs: &ColorScheme) -> Vec<(&'static str, String)> {
+fn fills(cs: &ColorScheme, dir: &str) -> Vec<(&'static str, String)> {
     let mut v = vec![
         ("raised", stack(&edge_rings(cs, EdgeStyle::ButtonRaised))),
         (
@@ -59,8 +71,7 @@ fn fills(cs: &ColorScheme) -> Vec<(&'static str, String)> {
         }),
     ];
     v.extend(ART.iter().map(|&name| {
-        let text =
-            format!("-gtk-scaled(url(\"{ASSETS}/{name}.png\"), url(\"{ASSETS}/{name}@2.png\"))");
+        let text = format!("-gtk-scaled(url(\"{dir}/{name}.png\"), url(\"{dir}/{name}@2.png\"))");
         (name, text)
     }));
     v
@@ -320,6 +331,88 @@ mod tests {
             }
         }
         assert!(css.ends_with(&bevels(&cs)), "the edges come last");
+        let gtk4 = crate::toolkit::gtk4_theme_css(&cs, crate::interface::Interface::Classic);
+        for word in GTK4_RULES.split(|c: char| !(c.is_alphanumeric() || c == '_' || c == '@')) {
+            if let Some(name) = word.strip_prefix('@') {
+                assert!(defined.contains(&name), "GTK4: @{name} is not defined");
+            }
+        }
+        assert!(
+            gtk4.ends_with(&gtk4_bevels(&cs)),
+            "GTK4: the edges come last"
+        );
+    }
+
+    #[test]
+    fn gtk4_draws_the_same_edges_as_gtk3() {
+        let cs = ColorScheme::default();
+        let (gtk3, gtk4) = (sheet(&cs), gtk4_bevels(&cs));
+        assert!(!gtk4.contains('%'), "a placeholder is left");
+        let shadow = |css: &str, sel: &str| {
+            let r = rule(css, sel);
+            let at = r.find("box-shadow: ").unwrap() + "box-shadow: ".len();
+            r[at..at + r[at..].find(';').unwrap()].to_string()
+        };
+        for (sel3, sel4) in [
+            ("button, button:hover", "button, button:hover"),
+            (
+                "button:active, button:backdrop:active",
+                "button:active, button.keyboard-activating",
+            ),
+            (
+                "button:checked, button:checked:hover",
+                "button:checked, button:checked:hover",
+            ),
+            ("button.default", "button.default"),
+            ("button.flat:hover", "button.flat:hover"),
+            ("entry, entry:focus", "entry, entry:focus-within"),
+            ("scrollbar slider", "scrollbar > range > trough > slider"),
+            ("frame > border", "frame {"),
+            (
+                ".frame, .frame:backdrop",
+                ".frame, .frame:backdrop, scrolledwindow.frame",
+            ),
+            (".csd menu", "popover.menu.background > contents"),
+            ("menubar > menuitem:hover", "menubar > item:hover"),
+            (
+                "notebook > header.top > tabs > tab:checked",
+                "notebook > header.top > tabs > tab:checked",
+            ),
+            (
+                "treeview.view header button",
+                "columnview.view > header > button",
+            ),
+            ("progressbar trough", "progressbar > trough"),
+            (
+                "combobox button.combo",
+                "dropdown > button, combobox > box > button.combo, dropdown > button:hover",
+            ),
+            ("combobox arrow", "dropdown arrow"),
+            ("scale trough", "scale > trough"),
+            ("scale slider", "scale > trough > slider"),
+        ] {
+            assert_eq!(shadow(&gtk4, sel4), shadow(&gtk3, sel3), "{sel4}");
+        }
+        assert!(rule(&gtk4, "check, check:hover, check:backdrop {").contains("check_off.png"));
+        assert!(rule(&gtk4, "radio:checked, radio:checked:hover").contains("radio_on.png"));
+        assert!(rule(&gtk4, "scrollbar, scrollbar.top").contains("dither.png"));
+    }
+
+    #[test]
+    fn gtk4_reads_the_pictures_beside_gtk3s() {
+        let cs = ColorScheme::default();
+        let gtk4 = gtk4_bevels(&cs);
+        let names: Vec<String> = assets(&cs).into_iter().map(|(n, _)| n).collect();
+        let mut used = 0;
+        for url in gtk4.split("url(\"").skip(1) {
+            let path = &url[..url.find('"').unwrap()];
+            let name = path
+                .strip_prefix("../gtk-3.0/assets/")
+                .unwrap_or_else(|| panic!("{path} is not in gtk-3.0/assets"));
+            assert!(names.iter().any(|n| n == name), "{name} is not written");
+            used += 1;
+        }
+        assert!(used > 0);
     }
 
     #[test]

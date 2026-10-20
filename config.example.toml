@@ -63,7 +63,8 @@ theme = "hicolor"            # freedesktop icon theme for menus, taskbar, captio
 # gtk_theme = "auto"         # a GTK theme's name, handed to GTK3 and GTK4 through the
 #                            # portal; "auto" is Adwaita, Adwaita-dark under a dark look;
 #                            # "reprise" is Adwaita (GTK3) and GTK4's own theme in the
-#                            # look's colours, written to ~/.local/share/themes/Reprise
+#                            # look's colours, with Classic's 3D edges under Classic,
+#                            # written to ~/.local/share/themes/Reprise
 #                            # and Reprise-alt and rewritten when the look changes;
 #                            # libadwaita programs ignore it, see gtk4_colors
 # qt_platform_theme = "auto" # QT_QPA_PLATFORMTHEME for programs Reprise starts

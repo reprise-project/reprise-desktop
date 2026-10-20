@@ -1,0 +1,536 @@
+/* Classic's 3D edges over GTK4's recoloured Default sheet, filled in like gtk3.css.
+ * Selectors repeat Default's own where Default's would outrank them. */
+
+* { outline-style: dotted; }
+*:focus:focus-visible { outline-width: 1px; }
+
+button, button:hover, button:backdrop, button:backdrop:hover, button:focus:focus-visible,
+button.image-button:not(.flat), button.image-button:not(.flat):hover,
+list > row button.image-button:not(.flat), list > row button.image-button:not(.flat):hover,
+button.suggested-action, button.suggested-action:hover, button.suggested-action:backdrop,
+button.destructive-action, button.destructive-action:hover, button.destructive-action:backdrop,
+headerbar button:not(.titlebutton), .titlebar button:not(.titlebutton),
+dropdown > button, combobox > box > button.combo, dropdown > button:backdrop,
+combobox > box > button.combo:backdrop {
+  color: @theme_fg_color;
+  outline-color: @theme_fg_color;
+  outline-offset: -4px;
+  border: none;
+  border-radius: 0;
+  padding: 3px 8px;
+  min-height: 17px;
+  background-color: @theme_bg_color;
+  background-image: none;
+  box-shadow: %raised%;
+  text-shadow: none;
+  -gtk-icon-shadow: none;
+  -gtk-icon-filter: none;
+  transition: none;
+}
+button.image-button { padding: 3px 4px; min-width: 16px; }
+button.text-button { padding-left: 12px; padding-right: 12px; }
+button.default, button.default:hover, button.default:backdrop { box-shadow: %default%; }
+button:active, button.keyboard-activating, button:backdrop:active, button:checked:active,
+button.image-button:not(.flat):active, list > row button.image-button:not(.flat):active,
+button.suggested-action:active, button.destructive-action:active,
+dropdown > button:active, combobox > box > button.combo:active {
+  color: @theme_fg_color;
+  background-color: @theme_bg_color;
+  background-image: none;
+  padding: 4px 7px 2px 9px;
+  box-shadow: %pressed%;
+}
+button.text-button:active { padding: 4px 11px 2px 13px; }
+button.image-button:active { padding: 4px 3px 2px 5px; }
+button:checked, button:checked:hover, button:backdrop:checked,
+button.image-button:not(.flat):checked, list > row button.image-button:not(.flat):checked,
+button.suggested-action:checked, button.destructive-action:checked,
+headerbar button.toggle:checked:backdrop, headerbar stackswitcher button:checked:backdrop,
+.titlebar:not(headerbar) button.toggle:checked:backdrop {
+  color: @theme_fg_color;
+  background-color: @theme_bg_color;
+  background-image: %dither%;
+  padding: 4px 7px 2px 9px;
+  box-shadow: %pushed%;
+}
+button.text-button:checked { padding: 4px 11px 2px 13px; }
+button.image-button:checked { padding: 4px 3px 2px 5px; }
+button:disabled, button:backdrop:disabled, button:disabled:active, button:disabled:checked,
+button:backdrop:disabled:checked,
+button.suggested-action:disabled, button.destructive-action:disabled,
+button.image-button:not(.flat):disabled, dropdown > button:disabled {
+  color: @reprise_shadow;
+  background-color: @theme_bg_color;
+  background-image: none;
+  box-shadow: %raised%;
+  text-shadow: 1px 1px @reprise_hilight;
+  -gtk-icon-shadow: 1px 1px @reprise_hilight;
+  -gtk-icon-filter: none;
+}
+button:disabled label, button:backdrop:disabled label { color: @reprise_shadow; }
+button.flat, button.flat:backdrop, button.flat:disabled, button.flat:backdrop:disabled,
+button.sidebar-button, notebook > header > tabs > arrow, windowcontrols button,
+.toolbar > button, .toolbar > :not(.linked) > button {
+  color: @theme_fg_color;
+  border: none;
+  border-radius: 0;
+  background-color: transparent;
+  background-image: none;
+  box-shadow: none;
+  -gtk-icon-filter: none;
+}
+button.flat:disabled, button.flat:backdrop:disabled { color: @reprise_shadow; }
+button.flat:hover, button.sidebar-button:hover, notebook > header > tabs > arrow:hover,
+.toolbar > button:hover, .toolbar > :not(.linked) > button:hover {
+  color: @theme_fg_color;
+  background-image: none;
+  box-shadow: %thin_raised%;
+}
+button.flat:active, button.flat.keyboard-activating, button.sidebar-button:active,
+notebook > header > tabs > arrow:active, .toolbar > button:active, .toolbar > :not(.linked) > button:active {
+  color: @theme_fg_color;
+  background-image: none;
+  box-shadow: %thin_sunken%;
+}
+button.flat:checked, button.flat:checked:hover, button.flat:backdrop:checked, button:backdrop.flat:checked,
+.toolbar > button:checked, .toolbar > :not(.linked) > button:checked {
+  color: @theme_fg_color;
+  background-image: %dither%;
+  box-shadow: %thin_sunken%;
+}
+button.link, button.link:hover, button.link:active, button.link:checked {
+  background: none;
+  box-shadow: none;
+  padding: 0;
+}
+
+label:disabled, label:disabled:backdrop {
+  color: @reprise_shadow;
+  text-shadow: 1px 1px @reprise_hilight;
+}
+.view label:disabled, row label:disabled, tooltip label:disabled, headerbar label:disabled,
+button label:disabled { text-shadow: none; }
+
+entry, entry:focus-within, entry:backdrop, spinbutton:not(.vertical),
+spinbutton:focus-within:not(.vertical), spinbutton:backdrop:not(.vertical) {
+  color: @theme_text_color;
+  border: none;
+  border-radius: 0;
+  min-height: 21px;
+  padding: 0 5px;
+  outline-width: 0;
+  background-color: @theme_base_color;
+  background-image: none;
+  box-shadow: %sunken%;
+}
+spinbutton:not(.vertical) { padding: 0 2px 0 5px; border-spacing: 0; }
+entry:disabled, entry:backdrop:disabled, spinbutton:disabled:not(.vertical),
+spinbutton:backdrop:disabled:not(.vertical) {
+  color: @insensitive_fg_color;
+  background-color: @theme_bg_color;
+  box-shadow: %sunken%;
+}
+entry.flat, entry.flat:focus-within, entry.flat:backdrop, entry.flat:disabled {
+  background-color: transparent;
+  box-shadow: none;
+}
+spinbutton:not(.vertical) > button.image-button.up:not(.flat),
+spinbutton:not(.vertical) > button.image-button.down:not(.flat),
+spinbutton:not(.vertical) > button.image-button.up:not(.flat):hover,
+spinbutton:not(.vertical) > button.image-button.down:not(.flat):hover,
+spinbutton:not(.vertical) > button.image-button.up:not(.flat):disabled,
+spinbutton:not(.vertical) > button.image-button.down:not(.flat):disabled {
+  color: @theme_fg_color;
+  min-width: 16px;
+  min-height: 0;
+  margin: 2px 0;
+  padding: 0;
+  border: none;
+  border-radius: 0;
+  background-color: @theme_bg_color;
+  background-image: none;
+  box-shadow: %window_raised%;
+  -gtk-icon-transform: none;
+}
+spinbutton:not(.vertical) > button.image-button.up:not(.flat) { -gtk-icon-source: %arrow_up%; }
+spinbutton:not(.vertical) > button.image-button.down:not(.flat) { -gtk-icon-source: %arrow_down%; }
+spinbutton:not(.vertical) > button.image-button.up:not(.flat):disabled { -gtk-icon-source: %arrow_up_greyed%; }
+spinbutton:not(.vertical) > button.image-button.down:not(.flat):disabled { -gtk-icon-source: %arrow_down_greyed%; }
+spinbutton:not(.vertical) > button.image-button.up:not(.flat):active,
+spinbutton:not(.vertical) > button.image-button.down:not(.flat):active {
+  background-color: @theme_bg_color;
+  box-shadow: inset 0 0 0 1px @reprise_shadow;
+  -gtk-icon-transform: translate(1px, 1px);
+}
+
+checkbutton { border-radius: 0; outline-offset: 0; }
+checkbutton:focus:focus-visible { outline-color: @theme_fg_color; outline-width: 1px; outline-offset: 0; }
+check, radio, check:hover, radio:hover, check:active, radio:active, check:disabled, radio:disabled,
+check:checked, radio:checked, check:checked:hover, radio:checked:hover,
+check:checked:active, radio:checked:active, check:checked:disabled, radio:checked:disabled,
+check:indeterminate, radio:indeterminate, check:indeterminate:hover, radio:indeterminate:hover,
+check:indeterminate:active, radio:indeterminate:active,
+check:indeterminate:disabled, radio:indeterminate:disabled,
+row:selected check, row:selected radio, treeview.view check, treeview.view radio, popover.menu check, popover.menu radio,
+popover.menu check:checked, popover.menu radio:checked, popover.menu check:active, popover.menu radio:active,
+check:backdrop, radio:backdrop, check:checked:backdrop, radio:checked:backdrop,
+check:indeterminate:backdrop, radio:indeterminate:backdrop, check:backdrop:disabled, radio:backdrop:disabled,
+check:checked:backdrop:disabled, radio:checked:backdrop:disabled {
+  min-width: 13px;
+  min-height: 13px;
+  border: none;
+  border-radius: 0;
+  padding: 0;
+  transform: none;
+  background-color: transparent;
+  background-clip: border-box;
+  background-position: center;
+  background-repeat: no-repeat;
+  background-size: auto;
+  box-shadow: none;
+  -gtk-icon-source: none;
+}
+check, check:hover, check:backdrop { background-image: %check_off%; }
+check:checked, check:checked:hover, check:checked:backdrop { background-image: %check_on%; }
+check:indeterminate, check:indeterminate:hover, check:indeterminate:active,
+check:indeterminate:disabled, check:indeterminate:backdrop,
+check:indeterminate:backdrop:disabled { background-image: %check_mixed%; }
+check:active { background-image: %check_off_held%; }
+check:checked:active { background-image: %check_on_held%; }
+check:disabled, check:backdrop:disabled { background-image: %check_off_greyed%; }
+check:checked:disabled, check:checked:backdrop:disabled { background-image: %check_on_greyed%; }
+radio, radio:hover, radio:active, radio:checked, radio:checked:hover, radio:checked:active,
+radio:disabled, radio:checked:disabled, popover.menu radio, popover.menu radio:checked,
+radio:backdrop, radio:checked:backdrop, radio:indeterminate:backdrop, radio:backdrop:disabled,
+radio:checked:backdrop:disabled {
+  min-width: 12px;
+  min-height: 12px;
+}
+radio, radio:hover, radio:active, radio:backdrop { background-image: %radio_off%; }
+radio:checked, radio:checked:hover, radio:checked:active,
+radio:indeterminate, radio:indeterminate:hover, radio:checked:backdrop,
+radio:indeterminate:backdrop { background-image: %radio_on%; }
+radio:disabled, radio:backdrop:disabled { background-image: %radio_off_greyed%; }
+radio:checked:disabled, radio:indeterminate:disabled,
+radio:checked:backdrop:disabled { background-image: %radio_on_greyed%; }
+popover.menu check, popover.menu check:hover, popover.menu check:active { background-image: %check_off%; }
+popover.menu check:checked, popover.menu check:checked:hover,
+popover.menu check:checked:backdrop { background-image: %check_on%; }
+popover.menu radio, popover.menu radio:hover, popover.menu radio:active { background-image: %radio_off%; }
+popover.menu radio:checked, popover.menu radio:checked:hover,
+popover.menu radio:checked:backdrop { background-image: %radio_on%; }
+treeview.view check, treeview.view check:selected,
+treeview.view check:backdrop { background-image: %list_check_off%; }
+treeview.view check:checked, treeview.view check:checked:selected,
+treeview.view check:checked:backdrop {
+  background-image: %list_check_on%;
+}
+treeview.view radio:selected, treeview.view radio:selected:focus,
+treeview.view radio:checked:selected { border: none; border-radius: 0; box-shadow: none; -gtk-icon-source: none; }
+treeview.view radio:selected { background-image: %radio_off%; }
+treeview.view radio:checked:selected { background-image: %radio_on%; }
+
+scrollbar, scrollbar.top, scrollbar.bottom, scrollbar.left, scrollbar.right,
+scrollbar.overlay-indicator.dragging, scrollbar.overlay-indicator.hovering {
+  border: none;
+  padding: 0;
+  background-color: @theme_bg_color;
+  background-image: %dither%;
+  transition: none;
+}
+scrollbar > range > trough > slider, scrollbar > range > trough > slider:hover,
+scrollbar > range > trough > slider:hover:active, scrollbar > range.fine-tune > trough > slider,
+scrollbar > range.fine-tune.horizontal > trough > slider, scrollbar > range.fine-tune.vertical > trough > slider {
+  min-width: 16px;
+  min-height: 16px;
+  margin: 0;
+  border: none;
+  border-radius: 0;
+  background-color: @theme_bg_color;
+  background-clip: border-box;
+  box-shadow: %window_raised%;
+  transition: none;
+}
+scrollbar.horizontal > range > trough > slider { min-width: 8px; }
+scrollbar.vertical > range > trough > slider { min-height: 8px; }
+scrolledwindow > junction, scrolledwindow > junction:dir(rtl) { background: @theme_bg_color; }
+scrolledwindow > overshoot.top, scrolledwindow > overshoot.bottom, scrolledwindow > overshoot.left,
+scrolledwindow > overshoot.right, scrolledwindow > undershoot.top, scrolledwindow > undershoot.bottom,
+scrolledwindow > undershoot.left, scrolledwindow > undershoot.right {
+  background: none;
+  box-shadow: none;
+}
+
+menubar, menubar:backdrop { padding: 0; background-color: @theme_bg_color; box-shadow: none; }
+menubar > item { min-height: 15px; padding: 2px 6px; border-radius: 0; }
+menubar > item:hover, menubar > item:selected {
+  color: @reprise_menu_text;
+  background-color: transparent;
+  padding: 3px 5px 1px 7px;
+  box-shadow: %sunken%;
+}
+popover.menu.background > contents, popover.menu > contents,
+menubar > item popover.menu.background > contents,
+menubar > item popover.menu.background popover.menu.background > contents {
+  margin: 0;
+  padding: 3px;
+  border: none;
+  border-radius: 0;
+  background-color: @reprise_menu;
+  box-shadow: %window_raised%;
+}
+popover.menu modelbutton { min-height: 17px; padding: 0 6px; border-radius: 0; }
+popover.menu modelbutton:disabled {
+  color: @reprise_shadow;
+  text-shadow: 1px 1px @reprise_hilight;
+}
+popover.menu separator, popover.background > contents separator {
+  min-height: 2px;
+  margin: 3px 0;
+  background: none;
+  box-shadow: inset 0 1px @reprise_shadow, inset 0 -1px @reprise_hilight;
+}
+
+notebook > header, notebook > header:backdrop {
+  padding: 0;
+  border: none;
+  background-color: transparent;
+  box-shadow: none;
+}
+notebook > header.top { box-shadow: inset 0 -1px @reprise_hilight; }
+notebook > header.top > tabs { margin: 0; padding: 0 2px; }
+notebook > header.top > tabs > tab, notebook > header.top > tabs > tab:hover,
+notebook > header.top > tabs > tab:not(:checked), notebook > header.top > tabs > tab:backdrop {
+  min-height: 15px;
+  min-width: 0;
+  margin: 2px 0 0 0;
+  padding: 1px 6px 2px 6px;
+  border: none;
+  border-radius: 0;
+  color: @theme_fg_color;
+  outline-color: @theme_fg_color;
+  outline-offset: -3px;
+  background-color: @theme_bg_color;
+  box-shadow: inset 0 -1px @reprise_hilight, inset -2px 0 @reprise_shadow,
+    inset 1px 1px @reprise_hilight, inset -1px 0 @reprise_dk_shadow;
+}
+notebook > header.top > tabs > tab:checked, notebook > header.top > tabs > tab:checked:hover,
+notebook > header.top > tabs > tab:backdrop:checked {
+  margin: 0 -2px;
+  padding: 2px 8px 3px 8px;
+  box-shadow: inset -2px 0 @reprise_shadow, inset 1px 1px @reprise_hilight,
+    inset -1px 0 @reprise_dk_shadow;
+}
+notebook > stack:not(:only-child), notebook > stack:not(:only-child):backdrop {
+  background-color: @theme_bg_color;
+  box-shadow: inset -2px -2px @reprise_shadow, inset 1px 0 @reprise_hilight,
+    inset -1px -1px @reprise_dk_shadow;
+}
+notebook.frame { border: none; padding: 0; box-shadow: none; }
+notebook > header.bottom > tabs > tab, notebook > header.left > tabs > tab,
+notebook > header.right > tabs > tab, notebook > header.bottom > tabs > tab:hover,
+notebook > header.left > tabs > tab:hover, notebook > header.right > tabs > tab:hover {
+  border: none;
+  border-radius: 0;
+  color: @theme_fg_color;
+  background-color: transparent;
+  box-shadow: none;
+}
+notebook > header.bottom > tabs > tab:checked, notebook > header.left > tabs > tab:checked,
+notebook > header.right > tabs > tab:checked {
+  background-color: @theme_bg_color;
+  box-shadow: %raised%;
+}
+
+frame {
+  border: none;
+  border-radius: 0;
+  padding: 2px;
+  box-shadow: %etched%;
+}
+frame.flat { padding: 0; box-shadow: none; }
+.frame, .frame:backdrop, scrolledwindow.frame, frame > scrolledwindow:only-child {
+  border: none;
+  border-radius: 0;
+  padding: 2px;
+  box-shadow: %sunken%;
+}
+.frame.flat { padding: 0; box-shadow: none; }
+separator.horizontal {
+  min-height: 2px;
+  background: none;
+  box-shadow: inset 0 1px @reprise_shadow, inset 0 -1px @reprise_hilight;
+}
+separator.vertical {
+  min-width: 2px;
+  background: none;
+  box-shadow: inset 1px 0 @reprise_shadow, inset -1px 0 @reprise_hilight;
+}
+
+.toolbar { padding: 2px; }
+.toolbar > button, .toolbar > :not(.linked) > button { padding: 3px; }
+.toolbar > button:active, .toolbar > button:checked { padding: 4px 2px 2px 4px; }
+
+columnview.view > header > button, columnview.view > header > button:hover,
+columnview.view > header > button:active, columnview.view > header > button:disabled,
+columnview.view > header > button:last-child,
+treeview.view > header > button, treeview.view > header > button:hover,
+treeview.view > header > button:active, treeview.view > header > button:disabled,
+treeview.view > header > button:last-child, columnview > header > button:backdrop,
+treeview.view > header > button:backdrop {
+  color: @theme_fg_color;
+  font-weight: normal;
+  padding: 2px 6px;
+  border: none;
+  border-radius: 0;
+  background-color: @theme_bg_color;
+  background-image: none;
+  box-shadow: %raised%;
+}
+
+progressbar > trough, progressbar > trough:disabled, progressbar > trough:backdrop,
+progressbar > trough:backdrop:disabled {
+  border: none;
+  border-radius: 0;
+  padding: 2px;
+  background-color: @theme_bg_color;
+  box-shadow: %thin_sunken%;
+}
+progressbar.horizontal > trough { min-height: 9px; }
+progressbar.vertical > trough { min-width: 9px; }
+progressbar > trough > progress, progressbar.horizontal > trough > progress,
+progressbar > trough > progress.left, progressbar > trough > progress.right,
+progressbar > trough > progress.top, progressbar > trough > progress.bottom,
+progressbar > trough > progress:backdrop {
+  min-height: 9px;
+  min-width: 6px;
+  margin: 0;
+  border: none;
+  border-radius: 0;
+  background-color: transparent;
+  background-image: repeating-linear-gradient(to right, @theme_selected_bg_color 0, @theme_selected_bg_color 6px, transparent 6px, transparent 8px);
+}
+progressbar.vertical > trough > progress {
+  margin: 0;
+  min-width: 9px;
+  min-height: 6px;
+  background-image: repeating-linear-gradient(to bottom, @theme_selected_bg_color 0, @theme_selected_bg_color 6px, transparent 6px, transparent 8px);
+}
+progressbar.horizontal > trough > progress:disabled,
+progressbar.horizontal > trough > progress:backdrop:disabled {
+  background-image: repeating-linear-gradient(to right, @insensitive_fg_color 0, @insensitive_fg_color 6px, transparent 6px, transparent 8px);
+}
+progressbar.vertical > trough > progress:disabled,
+progressbar.vertical > trough > progress:backdrop:disabled {
+  background-image: repeating-linear-gradient(to bottom, @insensitive_fg_color 0, @insensitive_fg_color 6px, transparent 6px, transparent 8px);
+}
+
+dropdown > button, combobox > box > button.combo, dropdown > button:hover,
+combobox > box > button.combo:hover, dropdown > button:checked, combobox > box > button.combo:checked,
+dropdown > button:backdrop, combobox > box > button.combo:backdrop {
+  color: @theme_text_color;
+  padding: 2px 2px 2px 5px;
+  background-color: @theme_base_color;
+  background-image: none;
+  box-shadow: %sunken%;
+}
+dropdown > button:disabled, combobox > box > button.combo:disabled {
+  color: @insensitive_fg_color;
+  background-color: @theme_bg_color;
+  box-shadow: %sunken%;
+  text-shadow: none;
+}
+dropdown arrow, combobox arrow {
+  min-width: 16px;
+  min-height: 16px;
+  margin-left: 4px;
+  background-color: @theme_bg_color;
+  box-shadow: %window_raised%;
+  -gtk-icon-source: %arrow_down%;
+  -gtk-icon-transform: none;
+}
+dropdown > button:checked arrow, combobox > box > button.combo:checked arrow {
+  box-shadow: inset 0 0 0 1px @reprise_shadow;
+  -gtk-icon-transform: translate(1px, 1px);
+}
+combobox > box.linked > entry.combo + button.combo,
+combobox > box.linked > entry.combo + button.combo:hover,
+combobox > box.linked > entry.combo + button.combo:checked,
+combobox > box.linked > entry.combo + button.combo:disabled,
+combobox > box.linked > entry.combo + button.combo:backdrop {
+  padding: 0;
+  background-color: @theme_bg_color;
+  box-shadow: none;
+}
+combobox > box.linked > entry.combo + button.combo arrow { margin: 0; }
+dropdown > button:disabled arrow, combobox > box > button.combo:disabled arrow {
+  -gtk-icon-source: %arrow_down_greyed%;
+}
+
+scale > trough, scale > trough:disabled, scale > trough:backdrop, scale > trough:backdrop:disabled {
+  border: none;
+  border-radius: 0;
+  outline-width: 0;
+  background-color: @theme_bg_color;
+  box-shadow: %sunken%;
+}
+scale.horizontal > trough { min-height: 4px; }
+scale.vertical > trough { min-width: 4px; }
+scale > trough > fill, scale > trough > highlight, scale > trough > fill:disabled,
+scale > trough > highlight:disabled, scale > trough > fill:backdrop, scale > trough > highlight:backdrop {
+  margin: 0;
+  border: none;
+  background: none;
+  box-shadow: none;
+}
+scale > trough > slider, scale > trough > slider:hover, scale > trough > slider:active,
+scale > trough > slider:disabled, scale > trough > slider:backdrop, scale > trough > slider:backdrop:disabled,
+scale.horizontal.marks-before:not(.marks-after) > trough > slider,
+scale.horizontal.marks-after:not(.marks-before) > trough > slider,
+scale.vertical.marks-before:not(.marks-after) > trough > slider,
+scale.vertical.marks-after:not(.marks-before) > trough > slider,
+scale.horizontal.marks-before:not(.marks-after) > trough > slider:hover,
+scale.horizontal.marks-after:not(.marks-before) > trough > slider:hover,
+scale.vertical.marks-before:not(.marks-after) > trough > slider:hover,
+scale.vertical.marks-after:not(.marks-before) > trough > slider:hover,
+scale.horizontal.marks-before:not(.marks-after) > trough > slider:active,
+scale.horizontal.marks-after:not(.marks-before) > trough > slider:active,
+scale.vertical.marks-before:not(.marks-after) > trough > slider:active,
+scale.vertical.marks-after:not(.marks-before) > trough > slider:active,
+scale.horizontal.marks-before:not(.marks-after) > trough > slider:disabled,
+scale.horizontal.marks-after:not(.marks-before) > trough > slider:disabled,
+scale.vertical.marks-before:not(.marks-after) > trough > slider:disabled,
+scale.vertical.marks-after:not(.marks-before) > trough > slider:disabled,
+scale.horizontal.marks-before:not(.marks-after) > trough > slider:backdrop,
+scale.horizontal.marks-after:not(.marks-before) > trough > slider:backdrop,
+scale.horizontal.marks-before:not(.marks-after) > trough > slider:backdrop:disabled,
+scale.horizontal.marks-after:not(.marks-before) > trough > slider:backdrop:disabled {
+  min-width: 11px;
+  min-height: 21px;
+  margin: -9px -5px;
+  border: none;
+  border-radius: 0;
+  background-color: @theme_bg_color;
+  background-image: none;
+  box-shadow: %raised%;
+}
+scale.vertical > trough > slider, scale.vertical > trough > slider:hover,
+scale.vertical > trough > slider:active, scale.vertical > trough > slider:disabled,
+scale.vertical > trough > slider:backdrop, scale.vertical > trough > slider:backdrop:disabled,
+scale.vertical.marks-before:not(.marks-after) > trough > slider,
+scale.vertical.marks-after:not(.marks-before) > trough > slider,
+scale.vertical.marks-before:not(.marks-after) > trough > slider:hover,
+scale.vertical.marks-after:not(.marks-before) > trough > slider:hover,
+scale.vertical.marks-before:not(.marks-after) > trough > slider:active,
+scale.vertical.marks-after:not(.marks-before) > trough > slider:active,
+scale.vertical.marks-before:not(.marks-after) > trough > slider:disabled,
+scale.vertical.marks-after:not(.marks-before) > trough > slider:disabled,
+scale.vertical.marks-before:not(.marks-after) > trough > slider:backdrop,
+scale.vertical.marks-after:not(.marks-before) > trough > slider:backdrop,
+scale.vertical.marks-before:not(.marks-after) > trough > slider:backdrop:disabled,
+scale.vertical.marks-after:not(.marks-before) > trough > slider:backdrop:disabled {
+  min-width: 21px;
+  min-height: 11px;
+  margin: -5px -9px;
+}
+scale > trough > slider:disabled, scale > trough > slider:backdrop:disabled { background-image: %dither%; }
