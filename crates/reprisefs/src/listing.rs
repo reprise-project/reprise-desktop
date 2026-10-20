@@ -8,9 +8,10 @@
 
 use crate::apps::MimeDb;
 use crate::{hidden, locale, places, props, recent};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 
@@ -87,19 +88,23 @@ pub const LINK_WAIT: Duration = Duration::from_secs(2);
 /// threads stay bounded.
 const MAX_STUCK_LINKS: usize = 8;
 
+const NOT_FOLLOWING: usize = usize::MAX;
+
 /// The links whose follow outlasted its wait and has not returned yet, by [`stuck_key`]. One
 /// blocked thread stands behind each key; a link with its key here is not followed again until
 /// that thread returns.
 static STUCK: Mutex<Stuck> = Mutex::new(Stuck {
-    keys: BTreeSet::new(),
-    unfollowed: BTreeSet::new(),
+    keys: BTreeMap::new(),
+    capped: BTreeSet::new(),
 });
 
 struct Stuck {
-    keys: BTreeSet<PathBuf>,
-    /// The folders that listed a link unfollowed since a blocked follow last returned: each is
-    /// handed to the [`Relist`]s when the next one returns.
-    unfollowed: BTreeSet<PathBuf>,
+    /// Each key's folders that listed a link behind it unfollowed: they go to the [`Relist`]s
+    /// when its follow returns.
+    keys: BTreeMap<PathBuf, BTreeSet<PathBuf>>,
+    /// The folders that listed their links unfollowed past [`MAX_STUCK_LINKS`]: they go along
+    /// when any follow returns.
+    capped: BTreeSet<PathBuf>,
 }
 
 fn stuck() -> MutexGuard<'static, Stuck> {
@@ -110,9 +115,9 @@ fn folder_of(link: &Path) -> PathBuf {
     link.parent().unwrap_or(Path::new("/")).to_path_buf()
 }
 
-/// A host's ear for links listed unfollowed: once a blocked follow returns, every folder that
-/// listed a link unfollowed is due a fresh listing, which [`Relist::take`] gives. Dropping it
-/// stops the calls.
+/// A host's ear for links listed unfollowed: once a blocked follow returns, the folders that
+/// listed a link behind it unfollowed are due a fresh listing, which [`Relist::take`] gives.
+/// Dropping it stops the calls.
 pub struct Relist(Arc<Listener>);
 
 struct Listener {
@@ -196,11 +201,12 @@ fn read_dir_with(
     items
 }
 
-/// `follow` of each of `links`, read in order off the caller's thread; one per link. A link that
-/// took longer than `wait` (counted from the previous answer) gives `T::default()` and the rest go
-/// on on a fresh thread; a link whose target is already stuck gives the default without a follow.
-/// A thread left blocked ends when its mount answers or goes away; the folders that listed a link
-/// unfollowed meanwhile then go to every [`Relist`].
+/// `follow` of each of `links`, read in order off the caller's thread; one per link. A link whose
+/// follow outlasts `wait` (counted from the previous answer, and only once the follow is under
+/// way) gives `T::default()` and the rest go on on a fresh thread; a link whose target is already
+/// stuck gives the default without a follow. A thread left blocked ends when its mount answers or
+/// goes away; the folders that listed a link into it unfollowed meanwhile then go to every
+/// [`Relist`].
 pub fn follow_links<T: Default + Send + 'static>(
     links: Vec<PathBuf>,
     follow: fn(&Path) -> T,
@@ -223,32 +229,42 @@ pub fn follow_links<T: Default + Send + 'static>(
                 break;
             }
             if s.keys.len() >= MAX_STUCK_LINKS {
-                s.unfollowed
-                    .extend(links[from..].iter().map(|l| folder_of(l)));
+                s.capped.extend(links[from..].iter().map(|l| folder_of(l)));
                 break;
             }
         }
         let (tx, rx) = std::sync::mpsc::channel::<(usize, Option<T>)>();
-        let (l, k) = (links.clone(), keys.clone());
+        // The link the thread is inside `follow` of, else `NOT_FOLLOWING`; changed under STUCK.
+        let following = Arc::new(AtomicUsize::new(NOT_FOLLOWING));
+        let (l, k, f) = (links.clone(), keys.clone(), following.clone());
         let spawned = std::thread::Builder::new()
             .name("listing-links".into())
             .spawn(move || {
                 for i in from..l.len() {
                     let skip = {
                         let mut s = stuck();
-                        let skip = s.keys.contains(&k[i]);
-                        if skip {
-                            s.unfollowed.insert(folder_of(&l[i]));
+                        match s.keys.get_mut(&k[i]) {
+                            Some(folders) => {
+                                folders.insert(folder_of(&l[i]));
+                                true
+                            }
+                            None => {
+                                f.store(i, Ordering::Relaxed);
+                                false
+                            }
                         }
-                        skip
                     };
                     let t = (!skip).then(|| follow(&l[i]));
                     // Held over the send, so a caller giving up on `i` sees either the answer or
-                    // the key still absent.
+                    // the follow still under way.
                     let mut s = stuck();
-                    let due = match t.is_some() && s.keys.remove(&k[i]) {
-                        true => std::mem::take(&mut s.unfollowed),
-                        false => BTreeSet::new(),
+                    f.store(NOT_FOLLOWING, Ordering::Relaxed);
+                    let due = match t.as_ref().and_then(|_| s.keys.remove(&k[i])) {
+                        Some(mut folders) => {
+                            folders.append(&mut s.capped);
+                            folders
+                        }
+                        None => BTreeSet::new(),
                     };
                     let sent = tx.send((i, t));
                     drop(s);
@@ -262,7 +278,7 @@ pub fn follow_links<T: Default + Send + 'static>(
             break;
         }
         let mut next = from;
-        loop {
+        while next < links.len() {
             match rx.recv_timeout(wait) {
                 Ok((i, t)) => {
                     out[i] = t.unwrap_or_default();
@@ -276,8 +292,11 @@ pub fn follow_links<T: Default + Send + 'static>(
                         next = i + 1;
                         continue;
                     }
-                    s.keys.insert(keys[next].clone());
-                    s.unfollowed.insert(folder_of(&links[next]));
+                    // A thread that has not reached `next` yet is late, not blocked.
+                    if following.load(Ordering::Relaxed) != next {
+                        continue;
+                    }
+                    (s.keys.entry(keys[next].clone()).or_default()).insert(folder_of(&links[next]));
                     next += 1;
                     break;
                 }
@@ -843,6 +862,154 @@ mod tests {
             "the folder is due once the target answers"
         );
         drop(relist);
+    }
+
+    /// Follows that wait for the test: a follow of a link named `held*` blocks until [`open`]
+    /// lets that entry (1 for the first follow of the link, 2 for the second) through, and a
+    /// [`Relist`] wake run on its thread afterwards blocks until [`open_wake`] does. Any other
+    /// link answers at once.
+    mod gate {
+        use std::cell::RefCell;
+        use std::collections::{HashMap, HashSet};
+        use std::path::{Path, PathBuf};
+        use std::sync::Mutex;
+        use std::time::{Duration, Instant};
+
+        type Entry = (PathBuf, usize);
+        static ENTERED: Mutex<Option<HashMap<PathBuf, usize>>> = Mutex::new(None);
+        static OPEN: Mutex<Option<HashSet<Entry>>> = Mutex::new(None);
+        static WAKE_OPEN: Mutex<Option<HashSet<Entry>>> = Mutex::new(None);
+        thread_local!(static LAST: RefCell<Option<Entry>> = const { RefCell::new(None) });
+
+        fn has(set: &Mutex<Option<HashSet<Entry>>>, e: &Entry) -> bool {
+            set.lock().unwrap().as_ref().is_some_and(|s| s.contains(e))
+        }
+
+        fn until(what: &str, mut done: impl FnMut() -> bool) {
+            let deadline = Instant::now() + Duration::from_secs(10);
+            while !done() {
+                assert!(Instant::now() < deadline, "{what} within 10 s");
+                std::thread::sleep(Duration::from_millis(1));
+            }
+        }
+
+        pub fn follow(p: &Path) -> bool {
+            if !(p.file_name()).is_some_and(|n| n.to_string_lossy().starts_with("held")) {
+                return true;
+            }
+            let n = {
+                let mut e = ENTERED.lock().unwrap();
+                let n = e
+                    .get_or_insert_default()
+                    .entry(p.to_path_buf())
+                    .or_default();
+                *n += 1;
+                *n
+            };
+            let e = (p.to_path_buf(), n);
+            LAST.with(|l| *l.borrow_mut() = Some(e.clone()));
+            until("the follow is let through", || has(&OPEN, &e));
+            true
+        }
+
+        pub fn wake() {
+            if let Some(e) = LAST.with(|l| l.borrow().clone()) {
+                until("the wake is let through", || has(&WAKE_OPEN, &e));
+            }
+        }
+
+        pub fn entered(p: &Path, n: usize) {
+            until("the follow starts", || {
+                let e = ENTERED.lock().unwrap();
+                e.as_ref().and_then(|e| e.get(p)).copied() == Some(n)
+            });
+        }
+
+        pub fn open(p: &Path, n: usize) {
+            (OPEN.lock().unwrap().get_or_insert_default()).insert((p.to_path_buf(), n));
+        }
+
+        pub fn open_wake(p: &Path, n: usize) {
+            (WAKE_OPEN.lock().unwrap().get_or_insert_default()).insert((p.to_path_buf(), n));
+        }
+    }
+
+    /// Lists `links` on a thread of its own, as a second listing would while a first one runs.
+    fn list_aside(links: Vec<PathBuf>, wait: Duration) -> std::thread::JoinHandle<Vec<bool>> {
+        std::thread::spawn(move || follow_links(links, gate::follow, wait))
+    }
+
+    #[test]
+    fn a_wait_running_out_after_the_last_answer_ends_the_listing() {
+        let t = tempfile::tempdir().unwrap();
+        let held = t.path().join("held");
+        let _relist = Relist::new(gate::wake);
+        let first = list_aside(vec![held.clone()], Duration::from_millis(200));
+        gate::entered(&held, 1);
+        // A second listing marks the link stuck while the first one's follow is under way, so
+        // the first one's answer hands its folder to the wake, which then holds the thread past
+        // the wait.
+        let second = follow_links(vec![held.clone()], gate::follow, Duration::from_millis(20));
+        assert_eq!(second, [false], "the second listing gives up on the link");
+        gate::open(&held, 1);
+        let first = first.join();
+        gate::open_wake(&held, 1);
+        gate::open(&held, 2);
+        assert_eq!(
+            first.ok(),
+            Some(vec![true]),
+            "the first listing ends with its answer"
+        );
+    }
+
+    #[test]
+    fn a_link_thread_late_to_reach_a_link_leaves_it_unmarked() {
+        let t = tempfile::tempdir().unwrap();
+        let (held, late) = (t.path().join("held"), t.path().join("late"));
+        let _relist = Relist::new(gate::wake);
+        let wait = Duration::from_millis(200);
+        let first = list_aside(vec![held.clone(), late.clone()], wait);
+        gate::entered(&held, 1);
+        let second = follow_links(vec![held.clone()], gate::follow, Duration::from_millis(20));
+        assert_eq!(second, [false], "the second listing gives up on the link");
+        // The first answer's wake holds the thread before `late` for longer than the wait.
+        gate::open(&held, 1);
+        std::thread::sleep(wait * 2);
+        gate::open_wake(&held, 1);
+        assert_eq!(first.join().unwrap(), [true, true], "late is followed");
+        assert!(
+            !stuck().keys.contains_key(&late),
+            "late is not marked stuck"
+        );
+        gate::open(&held, 2);
+    }
+
+    #[test]
+    fn a_stuck_follow_that_returns_makes_only_its_own_folders_due() {
+        let (x, y) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+        let (in_x, in_y) = (x.path().join("held"), y.path().join("held"));
+        let relist = Relist::new(|| {});
+        let wait = Duration::from_millis(20);
+        assert_eq!(
+            follow_links(vec![in_x.clone()], gate::follow, wait),
+            [false]
+        );
+        assert_eq!(
+            follow_links(vec![in_y.clone()], gate::follow, wait),
+            [false]
+        );
+        gate::open(&in_x, 1);
+        gate::open_wake(&in_x, 1);
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        let mut due = BTreeSet::new();
+        while !due.contains(x.path()) && std::time::Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(5));
+            due.extend(relist.take());
+        }
+        assert!(due.contains(x.path()), "x is due once its link answers");
+        assert!(!due.contains(y.path()), "y's link still hangs");
+        gate::open(&in_y, 1);
+        gate::open_wake(&in_y, 1);
     }
 
     #[test]
