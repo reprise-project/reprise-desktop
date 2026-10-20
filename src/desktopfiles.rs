@@ -116,16 +116,8 @@ impl State {
     pub(crate) fn ask_delete(&mut self, paths: Vec<PathBuf>, label: Option<String>, shift: bool) {
         let action = Action::reads("Error Deleting File or Folder");
         self.spawn_fs_action(action, move |_| -> OnLoop {
-            use reprisefs::bincap::{BinLack, Fate, Policy, delete_mode};
-            let bins = reprisefs::trash::Bins::system();
-            let fates: Vec<Fate> = paths
-                .iter()
-                .map(|p| bins.as_ref().map_or(Fate::NoBin, |b| b.fate(p)))
-                .collect();
-            let confirm = bins
-                .as_ref()
-                .map_or(Policy::default().confirm, |b| b.policy.confirm);
-            let mode = delete_mode(confirm, &fates, shift);
+            use reprisefs::bincap::BinLack;
+            let mode = session_delete_mode(&paths, shift);
             // A symlink to a folder deletes as a file: only the link goes.
             let is_dir = matches!(paths.as_slice(), [one] if one.is_dir() && !one.is_symlink());
             Box::new(move |state| {
@@ -462,6 +454,21 @@ fn glance_aimed(
     }
 }
 
+/// How Delete (Shift+Delete with `shift`) treats `paths` under the session's Recycle Bins and
+/// their `[recycle_bin]` settings. Reads the disk, so it runs on a file job.
+fn session_delete_mode(paths: &[PathBuf], shift: bool) -> reprisefs::bincap::DeleteMode {
+    use reprisefs::bincap::{Fate, Policy, delete_mode};
+    let bins = reprisefs::trash::Bins::system();
+    let fates: Vec<Fate> = paths
+        .iter()
+        .map(|p| bins.as_ref().map_or(Fate::NoBin, |b| b.fate(p)))
+        .collect();
+    let confirm = bins
+        .as_ref()
+        .map_or(Policy::default().confirm, |b| b.policy.confirm);
+    delete_mode(confirm, &fates, shift)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -546,5 +553,57 @@ mod tests {
         );
         assert!(glance_aimed(&gone, &[], &[]).is_none());
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A scratch home holding [`reprisefs::trash::Bins::system`]'s home trash and settings file,
+    /// with no drives. Drop puts the seams back and removes it, failed assertion or not.
+    struct SystemBin(PathBuf);
+
+    impl SystemBin {
+        fn new() -> SystemBin {
+            let home =
+                std::env::temp_dir().join(format!("reprise-system-bin-{}", std::process::id()));
+            std::fs::create_dir_all(&home).expect("mkdir");
+            reprisefs::trash::set_home_trash(Some(home.join("Trash")));
+            reprisefs::trash::set_mount_table(Some("/dev/null".into()));
+            reprisefs::bincap::set_config_path(Some(home.join("config.toml")));
+            SystemBin(home)
+        }
+    }
+
+    impl Drop for SystemBin {
+        fn drop(&mut self) {
+            reprisefs::trash::set_home_trash(None);
+            reprisefs::trash::set_mount_table(None);
+            reprisefs::bincap::set_config_path(None);
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[test]
+    fn delete_follows_the_session_bin_and_its_recycle_bin_settings() {
+        use reprisefs::bincap::{BinLack, DeleteMode};
+        let home = SystemBin::new();
+        let file = home.0.join("a.txt");
+        std::fs::write(&file, "a").expect("write");
+        let settings = |keys: &str| {
+            std::fs::write(home.0.join("config.toml"), format!("[recycle_bin]\n{keys}"))
+                .expect("write")
+        };
+        let mode = |erase, ask, no_bin| DeleteMode { erase, ask, no_bin };
+        let delete = |shift| session_delete_mode(std::slice::from_ref(&file), shift);
+
+        assert_eq!(delete(false), mode(false, true, BinLack::None));
+        assert_eq!(delete(true), mode(true, true, BinLack::None));
+        settings("confirm = false\n");
+        assert_eq!(delete(false), mode(false, false, BinLack::None));
+        settings("confirm = false\nremove_immediately = true\n");
+        assert_eq!(delete(false), mode(true, false, BinLack::None));
+        let off_drive = [file.clone(), PathBuf::from("/proc/version")];
+        assert_eq!(
+            session_delete_mode(&off_drive, false),
+            mode(true, true, BinLack::Some),
+            "a file on a drive with no Recycle Bin asks even with confirm off"
+        );
     }
 }
