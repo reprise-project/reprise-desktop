@@ -35,6 +35,7 @@ use reprisefs::launcher::Launcher;
 use reprisefs::listing::Item;
 use reprisekit::access::{self, ROOT, Tree, accesskit};
 use reprisekit::classic::widgets::FIELD_PAD;
+use reprisekit::controls::hosted::Chain;
 use reprisekit::controls::metrics::ControlMetrics;
 use reprisekit::look::Paint;
 use reprisekit::raster::{Canvas, Rect};
@@ -509,6 +510,15 @@ impl Popup {
     pub fn draw(&self, c: &mut Canvas, ctx: &Ctx) {
         self.chain
             .draw(c, &ctx.theme, &ctx.text, ctx.theme.access_keys);
+    }
+}
+
+impl Chain for Popup {
+    fn chain(&self) -> &menu::PopupMenu {
+        &self.chain
+    }
+    fn chain_mut(&mut self) -> &mut menu::PopupMenu {
+        &mut self.chain
     }
 }
 
