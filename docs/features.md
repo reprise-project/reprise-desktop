@@ -459,7 +459,9 @@ dialogs. [More in programs.md](programs.md#explorer).
   Folder, Properties or Send To on it gives up after 15 s with "The location
   is not responding.", and an answer that comes later changes nothing. A copy's wait
   for a drive to flush gets up to 5 min, so a slow stick isn't taken for a
-  dead one. A Send To drive that stops answering greys its row.
+  dead one. A Send To drive that stops answering greys its row. A symlink
+  into such a mount lists after 2 s as a plain shortcut, in Explorer, the
+  file dialogs and on the desktop.
 - **Programs stuck on a dead mount** lose their windows once killed, without
   End Program (see [End Program](#windows)).
 

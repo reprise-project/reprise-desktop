@@ -91,13 +91,13 @@ pub fn refetch_icons(tree: &mut TreeView, places: &[Place], icons: &mut IconCach
     walk(&mut tree.roots, places, icons);
 }
 
-/// Build a tree rooted at the Desktop, its own node expanded and filled, and the root selected.
-pub fn build(tree: &mut TreeView, places: &mut Vec<Place>, inp: &Inputs, icons: &mut IconCache) {
+/// Build a tree rooted at the Desktop, its own node expanded and the root selected. Its children
+/// are read off the host's loop: a symlink among them may point into a mount that never answers.
+pub fn build(tree: &mut TreeView, places: &mut Vec<Place>, icons: &mut IconCache) {
     places.clear();
     let mut root = tree_node(places, "Desktop", Place::Desktop, true, icons);
     root.expanded = true;
     tree.roots = vec![root];
-    fill(tree, places, vec![0], inp, icons);
     tree.selected = Some(vec![0]);
 }
 
@@ -441,7 +441,7 @@ mod tests {
         let mut icons = IconCache::new(reprisekit::icontheme::IconTheme::load("test", &[]));
         let mut tree = TreeView::default();
         let mut places: Vec<Place> = Vec::new();
-        build(&mut tree, &mut places, &inp, &mut icons);
+        build(&mut tree, &mut places, &mut icons);
         let c = Place::Folder(home.path().join("b/c"));
         follow_with(&mut tree, &mut places, &c, &inp, &mut icons, Vec::new());
 
@@ -551,7 +551,7 @@ mod tests {
         let mut icons = IconCache::new(reprisekit::icontheme::IconTheme::load("test", &[]));
         let mut tree = TreeView::default();
         let mut places: Vec<Place> = Vec::new();
-        build(&mut tree, &mut places, &inp, &mut icons);
+        build(&mut tree, &mut places, &mut icons);
         let target = Place::Folder(home.path().join("a/b"));
         let read: Vec<(Place, Kids)> = to_fill(&tree, &places, &target, &mounts)
             .into_iter()
@@ -600,7 +600,7 @@ mod tests {
         let mut icons = IconCache::new(reprisekit::icontheme::IconTheme::load("test", &[]));
         let mut tree = TreeView::default();
         let mut places: Vec<Place> = Vec::new();
-        build(&mut tree, &mut places, &inp, &mut icons);
+        build(&mut tree, &mut places, &mut icons);
 
         let target = Place::Folder(home.path().join("a/b"));
         follow_with(
