@@ -361,12 +361,20 @@ pub(crate) fn unroll_from_bar(edge: Edge) -> UnrollFrom {
     }
 }
 
-/// Where a menu was opened. One opened from the taskbar keeps an
+/// Where a menu was opened. One opened from the taskbar, or over the Start panel, keeps an
 /// auto-hidden bar shown while it is up; one opened elsewhere does not.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MenuFrom {
     Bar,
+    /// Over the Start panel: unrolls facing the press, as a context menu elsewhere does.
+    StartPanel,
     Elsewhere,
+}
+
+impl MenuFrom {
+    pub fn holds_bar(self) -> bool {
+        matches!(self, MenuFrom::Bar | MenuFrom::StartPanel)
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -2555,6 +2563,28 @@ fn stack_name(kind: &MenuKind) -> &'static str {
 mod tests {
     use super::*;
     use crate::keys::{KEY_KP_Enter, KEY_Return};
+
+    #[test]
+    fn the_edit_menu_over_the_start_panel_unrolls_facing_the_press() {
+        let mut config = crate::config::Config::default();
+        config.startmenu_style = crate::config::StartMenuStyle::Glass;
+        config.effects.menu_animation = crate::config::MenuAnimation::Slide;
+        let mut h = crate::harness::Harness::with_config(config);
+        h.output("TEST-1", 1024, 768);
+        h.pointer_to(512.0, 400.0);
+        h.state.toggle_start_from_keys();
+        h.dispatch();
+        assert!(h.state.start_panel.is_some(), "the Start panel is open");
+        h.pointer_to(600.0, 100.0);
+        assert!(h.state.open_edit_menu(Some((600, 100))));
+        let menu = h.state.menus.first().expect("the edit menu is open");
+        assert_eq!(
+            menu.opening,
+            Some(Opening::Unroll(UnrollFrom::Top)),
+            "hanging below the press, it unrolls down from it, not up from the bottom bar"
+        );
+        assert!(menu.from.holds_bar(), "it keeps an auto-hidden bar shown");
+    }
 
     #[test]
     fn an_icon_file_lands_on_its_waiting_rows_only() {

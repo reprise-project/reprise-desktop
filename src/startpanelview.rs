@@ -1385,7 +1385,7 @@ impl State {
         }
         crate::tooltip::hover_start_panel(self, None);
         self.close_menu();
-        let from = crate::menuview::MenuFrom::Bar;
+        let from = crate::menuview::MenuFrom::StartPanel;
         self.push_context_menu_looked(at, items, kind, from, place, options_look);
     }
 

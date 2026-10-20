@@ -1301,7 +1301,6 @@ impl State {
         self.redraw_dialog(index);
     }
 
-    /// Put dialog `index`'s top-left at (`x`, `y`) in layout coordinates.
     /// Moves dialog `index` to `(x, y)`; the output under its title bar becomes its own, for its
     /// work area, scale and lifetime.
     pub fn move_dialog(&mut self, index: usize, x: i32, y: i32) {

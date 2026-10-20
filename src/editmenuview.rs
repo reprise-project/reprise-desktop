@@ -85,7 +85,7 @@ impl State {
             }
         };
         let from = match editor {
-            Editor::StartPanel => MenuFrom::Bar,
+            Editor::StartPanel => MenuFrom::StartPanel,
             _ => MenuFrom::Elsewhere,
         };
         self.close_menu();
