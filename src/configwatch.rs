@@ -113,6 +113,12 @@ fn redraw(old: &Config, new: &Config) -> Redraw {
     }
 }
 
+/// Whether an outputs-only reload moves anything: an output's geometry, or the primary output
+/// that holds the desktop icons, balloons and media panel.
+fn lays_out(old: &Config, new: &Config, geometry_changed: bool) -> bool {
+    geometry_changed || old.primary_output_name() != new.primary_output_name()
+}
+
 /// Which of one output's settings a reload changed, so it commits those
 /// and nothing else: a mode set through output management and not yet
 /// written survives a reload that changes another key.
@@ -382,7 +388,7 @@ pub fn reload(state: &mut State, cfg: Config) {
     }
     if redraw == Redraw::Layout {
         // Nothing drawn changed but the outputs, which a scale warm's end lays out.
-        if geometry_changed {
+        if lays_out(&old, &state.config, geometry_changed) {
             state.update_layout();
             redraw_for_scale(state);
         }
@@ -524,6 +530,14 @@ mod tests {
             primary: false,
         });
         assert_eq!(redraw(&old, &scaled), Redraw::Layout, "a scale change");
+        let mut primary = scaled.clone();
+        primary.outputs[0].primary = true;
+        assert_eq!(redraw(&scaled, &primary), Redraw::Layout, "a new primary");
+        assert!(
+            lays_out(&scaled, &primary, false),
+            "a new primary moves the desktop with no geometry change"
+        );
+        assert!(!lays_out(&old, &scaled, false), "nothing moved");
         let mut vrr = old.clone();
         vrr.adaptive_sync = !old.adaptive_sync;
         assert_eq!(redraw(&old, &vrr), Redraw::Layout, "adaptive sync");
