@@ -24,11 +24,31 @@ enum Held {
     Confined(Option<Vec<(RectangleKind, Rectangle<i32, Logical>)>>),
 }
 
+/// Where an absolute device (a VM's tablet, a touchpad in absolute mode) last put the pointer, so
+/// its relative motion is its own move rather than its distance from a locked pointer.
+#[derive(Default)]
+pub struct AbsoluteTrail(Option<(String, Point<f64, Logical>)>);
+
+impl AbsoluteTrail {
+    /// How far `device` moved to `pos` since its last point; nothing for its first point or the
+    /// first after another device's.
+    pub fn step(&mut self, device: String, pos: Point<f64, Logical>) -> Point<f64, Logical> {
+        let moved = match &self.0 {
+            Some((last_device, last)) if *last_device == device => pos - *last,
+            _ => Point::default(),
+        };
+        self.0 = Some((device, pos));
+        moved
+    }
+}
+
 impl State {
+    /// Move the pointer by `delta` (held by a lock or confinement) and send `relative`, the
+    /// accelerated and raw device motion, to relative-pointer clients.
     pub fn pointer_moved(
         &mut self,
         delta: Point<f64, Logical>,
-        unaccel: Point<f64, Logical>,
+        relative: (Point<f64, Logical>, Point<f64, Logical>),
         time: InputTime,
     ) {
         let Some(pointer) = self.seat.get_pointer() else {
@@ -39,8 +59,8 @@ impl State {
                 self,
                 self.pointers.focus.clone().map(|(s, o)| (s.into(), o)),
                 &RelativeMotionEvent {
-                    delta,
-                    delta_unaccel: unaccel,
+                    delta: relative.0,
+                    delta_unaccel: relative.1,
                     time,
                 },
             );
@@ -264,6 +284,20 @@ mod tests {
 
     fn p(x: f64, y: f64) -> Point<f64, Logical> {
         (x, y).into()
+    }
+
+    #[test]
+    fn an_absolute_device_moves_by_its_own_steps() {
+        let mut trail = AbsoluteTrail::default();
+        assert_eq!(trail.step("tablet".into(), p(960.0, 540.0)), p(0.0, 0.0));
+        assert_eq!(trail.step("tablet".into(), p(998.0, 540.0)), p(38.0, 0.0));
+        assert_eq!(
+            trail.step("tablet".into(), p(1036.0, 540.0)),
+            p(38.0, 0.0),
+            "a step, not the distance from where the pointer was locked"
+        );
+        assert_eq!(trail.step("spice".into(), p(10.0, 10.0)), p(0.0, 0.0));
+        assert_eq!(trail.step("spice".into(), p(5.0, 30.0)), p(-5.0, 20.0));
     }
 
     #[test]
