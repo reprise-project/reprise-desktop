@@ -27,6 +27,8 @@ pub struct ColorButton {
     pub palette: Vec<Color>,
     pub open: bool,
     pub enabled: bool,
+    /// The popup's corner where a host showing it on a popup of its own put it ([`popup_rect`]).
+    pub at: Option<(i32, i32)>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -42,6 +44,7 @@ impl ColorButton {
             palette,
             open: false,
             enabled: true,
+            at: None,
         }
     }
 
@@ -51,6 +54,7 @@ impl ColorButton {
             return false;
         }
         self.open = !self.open;
+        self.at = None;
         true
     }
 
@@ -74,12 +78,32 @@ fn swatch_at(button: Rect, k: usize) -> (i32, i32) {
     )
 }
 
-/// What (`x`, `y`) hits in the popup under the button at `button`, or `None` outside it. The caller checks the popup is open.
-pub fn hit_popup(button: Rect, x: i32, y: i32) -> Option<PopupHit> {
-    let popup = Rect::new(button.x + POPUP.0, button.y + POPUP.1, POPUP.2, POPUP.3);
-    if !popup.contains(x, y) {
+/// The button's rect moved so that its popup lands at `b.at`: the popup's parts are laid out
+/// from it.
+fn popup_button(button: Rect, b: &ColorButton) -> Rect {
+    match b.at {
+        Some((x, y)) => Rect::new(x - POPUP.0, y - POPUP.1, button.width, button.height),
+        None => button,
+    }
+}
+
+/// Where the popup of the button at `button` shows: under it, or where a host put it.
+pub fn popup_rect(button: Rect, b: &ColorButton) -> Rect {
+    let o = popup_button(button, b);
+    Rect::new(o.x + POPUP.0, o.y + POPUP.1, POPUP.2, POPUP.3)
+}
+
+/// The rect a hosted popup opens under: its bottom edge is where the popup's top sits.
+pub fn popup_anchor(button: Rect) -> Rect {
+    Rect::new(button.x + POPUP.0, button.y, POPUP.2, POPUP.1)
+}
+
+/// What (`x`, `y`) hits in the popup of the button at `button`, or `None` outside it. The caller checks the popup is open.
+pub fn hit_popup(button: Rect, b: &ColorButton, x: i32, y: i32) -> Option<PopupHit> {
+    if !popup_rect(button, b).contains(x, y) {
         return None;
     }
+    let button = popup_button(button, b);
     for k in 0..SWATCHES {
         let (sx, sy) = swatch_at(button, k);
         if Rect::new(sx, sy, SWATCH, SWATCH).contains(x, y) {
@@ -148,7 +172,8 @@ pub fn draw_popup(
 ) {
     let Paint { cs, s, .. } = *p;
     let (current, palette) = (b.color, b.palette.as_slice());
-    let popup = Rect::new(button.x + POPUP.0, button.y + POPUP.1, POPUP.2, POPUP.3).scaled(s);
+    let popup = popup_rect(button, b).scaled(s);
+    let button = popup_button(button, b);
     let menu = p.look.style().and_then(|st| st.menu);
     match &menu {
         Some(m) => {
@@ -248,13 +273,13 @@ mod tests {
         assert!(b.toggle() && b.open);
         let r = Rect::new(100, 100, 75, 21);
         let (sx, sy) = swatch_at(r, 1);
-        assert_eq!(hit_popup(r, sx + 1, sy + 1), Some(PopupHit::Swatch(1)));
+        assert_eq!(hit_popup(r, &b, sx + 1, sy + 1), Some(PopupHit::Swatch(1)));
         assert_eq!(
-            hit_popup(r, r.x + 1, r.y + POPUP.1 + 1),
+            hit_popup(r, &b, r.x + 1, r.y + POPUP.1 + 1),
             Some(PopupHit::Face)
         );
         assert_eq!(
-            hit_popup(r, r.x + 1, r.y + 1),
+            hit_popup(r, &b, r.x + 1, r.y + 1),
             None,
             "the button is not the popup"
         );
