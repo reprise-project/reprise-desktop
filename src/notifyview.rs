@@ -4342,16 +4342,50 @@ mod tests {
                 _ => None,
             })
             .expect("ActionInvoked carries a token");
-        assert!(
-            crate::mapfocus::take_recorded_launch(&[PID], None).is_some(),
-            "the sender's next window may take focus"
-        );
         c.activate(&token, mail);
         h.roundtrip(&mut c);
         assert_eq!(
             h.state.focused,
             Some(mail.id),
             "the token raises the window"
+        );
+    }
+
+    #[test]
+    fn a_notification_click_lets_its_senders_next_window_take_focus() {
+        use crate::tray::TrayEvent;
+        use std::os::fd::AsRawFd;
+        const SENDER: i32 = i32::MAX - 638;
+        const STRANGER: i32 = i32::MAX - 639;
+        let mut h = crate::harness::Harness::new();
+        h.output("TEST-1", 1024, 768);
+        let (tx, wake, _heard) = crate::tray::headless(&mut h.state);
+        let mut editor = h.connect();
+        let typing = h.map_toplevel(&mut editor, "editor", 300, 200);
+        let mut stranger = h.connect_as(STRANGER);
+        h.map_toplevel(&mut stranger, "stranger", 300, 200);
+        assert_eq!(
+            h.state.focused,
+            Some(typing.id),
+            "another program's window maps behind the focused one"
+        );
+
+        let mut n = note(8, "Mail");
+        n.actions = vec![("default".into(), "Open".into())];
+        n.pid = Some(SENDER);
+        tx.send(TrayEvent::Notify(n)).expect("send");
+        // SAFETY: `wake` is an open eventfd and the buffer a live 8-byte local.
+        let wrote = unsafe { libc::write(wake.as_raw_fd(), (&1u64 as *const u64).cast(), 8) };
+        assert_eq!(wrote, 8);
+        h.dispatch();
+        invoke(&mut h.state, 8, "default");
+
+        let mut sender = h.connect_as(SENDER);
+        let mail = h.map_toplevel(&mut sender, "mail", 300, 200);
+        assert_eq!(
+            h.state.focused,
+            Some(mail.id),
+            "the clicked notification's program maps its window in front"
         );
     }
 }
