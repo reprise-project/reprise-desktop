@@ -1540,7 +1540,7 @@ fn open_with_runs_the_program_as_its_entry_on_the_entry_the_menu_was_built_for()
     std::fs::write(dir.path().join("b.txt"), "2").expect("write");
     let mut ctx = test_ctx();
     let mut ex = crate::tests::test_explorer(Place::Folder(dir.path().to_path_buf()), &mut ctx);
-    ex.app_index = vec![app("Editor", "editor", &["text/plain"])];
+    ex.app_index = vec![app("Editor", "editor", &["text/plain"])].into();
     for it in &mut ex.items {
         it.mime = Some("text/plain".into());
     }
@@ -1611,7 +1611,7 @@ fn chooser_ok_runs_the_program_on_release() {
     std::fs::write(&path, "1").expect("write");
     let mut ctx = test_ctx();
     let mut ex = crate::tests::test_explorer(Place::Folder(dir.path().to_path_buf()), &mut ctx);
-    ex.app_index = vec![app("Editor", "editor", &["text/plain"])];
+    ex.app_index = vec![app("Editor", "editor", &["text/plain"])].into();
     ex.choose_program_for(&path, false, &mut ctx);
     let ok = match ex.dialog.as_ref() {
         Some(Dialog::ChooseProgram(c)) => {

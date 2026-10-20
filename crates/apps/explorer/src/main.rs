@@ -210,7 +210,7 @@ pub struct Explorer {
     /// The folder or launcher the item menu was opened on, for its Paste.
     pub menu_paste: Option<fileops::PasteTo>,
     /// Scanned once; Open, Open With and the chooser read it.
-    pub app_index: Vec<reprisefs::apps::AppEntry>,
+    pub app_index: AppIndex,
     /// Indices into `app_index`, parallel to the Open With and Send To rows.
     pub open_with_apps: Vec<usize>,
     pub open_with_path: Option<PathBuf>,
@@ -338,12 +338,37 @@ pub struct Explorer {
     pub tip_walk: Option<live::TipWalk>,
 }
 
+/// The installed programs, scanned the first time something reads them.
+#[derive(Default)]
+pub struct AppIndex(std::cell::OnceCell<Vec<reprisefs::apps::AppEntry>>);
+
+impl From<Vec<reprisefs::apps::AppEntry>> for AppIndex {
+    fn from(apps: Vec<reprisefs::apps::AppEntry>) -> AppIndex {
+        AppIndex(apps.into())
+    }
+}
+
+impl std::ops::Deref for AppIndex {
+    type Target = Vec<reprisefs::apps::AppEntry>;
+
+    fn deref(&self) -> &Self::Target {
+        self.0
+            .get_or_init(|| reprisefs::apps::scan(&reprisefs::apps::default_dirs()))
+    }
+}
+
+impl std::ops::DerefMut for AppIndex {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        let _ = &**self;
+        self.0.get_mut().expect("scanned by deref")
+    }
+}
+
 impl Explorer {
     fn new(start: Place, ctx: &mut Ctx) -> Explorer {
         let settings = Settings::load();
-        let apps = reprisefs::apps::scan(&reprisefs::apps::default_dirs());
         let udisks = reprisefs::udisks::Udisks::system();
-        let mut ex = Explorer::with_settings(start, settings, apps, udisks, ctx);
+        let mut ex = Explorer::with_settings(start, settings, AppIndex::default(), udisks, ctx);
         ex.follow_volumes(ctx.wake.clone());
         ex
     }
@@ -352,7 +377,7 @@ impl Explorer {
     fn with_settings(
         start: Place,
         settings: Settings,
-        app_index: Vec<reprisefs::apps::AppEntry>,
+        app_index: AppIndex,
         udisks: Option<reprisefs::udisks::Udisks>,
         ctx: &mut Ctx,
     ) -> Explorer {
@@ -365,7 +390,7 @@ impl Explorer {
     fn unopened(
         start: Place,
         settings: Settings,
-        app_index: Vec<reprisefs::apps::AppEntry>,
+        app_index: AppIndex,
         udisks: Option<reprisefs::udisks::Udisks>,
         ctx: &mut Ctx,
     ) -> Explorer {

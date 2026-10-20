@@ -75,7 +75,7 @@ pub(crate) fn test_ctx() -> Ctx {
 
 /// An Explorer on default settings and no `.desktop` index.
 pub(crate) fn test_explorer(start: Place, ctx: &mut Ctx) -> Explorer {
-    Explorer::with_settings(start, Settings::default(), Vec::new(), None, ctx)
+    Explorer::with_settings(start, Settings::default(), Vec::new().into(), None, ctx)
 }
 
 /// The address drop is built before the first listing lands and again when the mounts change; it
@@ -3238,7 +3238,7 @@ fn the_opening_drive_scan_that_answers_late_lands_on_a_later_wake() {
     let mut ex = Explorer::unopened(
         start.clone(),
         Settings::default(),
-        Vec::new(),
+        Vec::new().into(),
         None,
         &mut ctx,
     );
