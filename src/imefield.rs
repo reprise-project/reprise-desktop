@@ -21,11 +21,12 @@ use smithay::{
             ChangeCause, ContentHint, ContentPurpose,
         },
         wayland_protocols_misc::zwp_input_method_v2::server::{
+            zwp_input_method_manager_v2::{self, ZwpInputMethodManagerV2},
             zwp_input_method_v2::{self, ZwpInputMethodV2},
             zwp_input_popup_surface_v2::ZwpInputPopupSurfaceV2,
         },
         wayland_server::{
-            Resource,
+            Client, DataInit, DisplayHandle, New, Resource,
             backend::{
                 ClientId, Handle, ObjectData, ObjectId,
                 protocol::{Argument, Message},
@@ -33,7 +34,7 @@ use smithay::{
             protocol::wl_surface::WlSurface,
         },
     },
-    wayland::input_method::InputMethodSeat,
+    wayland::{GlobalData, GlobalDispatch2, input_method::InputMethodSeat},
 };
 
 use crate::{
@@ -210,7 +211,92 @@ pub fn field_route(route: &KeyRoute) -> bool {
     )
 }
 
-/// The bound input method object's data: its sends for Reprise's field go
+/// The input method manager global, Smithay's with each manager wrapped in
+/// an [`ImMaker`].
+pub struct ImGlobal {
+    pub filter: Box<dyn Fn(&Client) -> bool + Send + Sync>,
+}
+
+impl GlobalDispatch2<ZwpInputMethodManagerV2, State> for ImGlobal {
+    fn bind(
+        &self,
+        _state: &mut State,
+        dh: &DisplayHandle,
+        client: &Client,
+        resource: New<ZwpInputMethodManagerV2>,
+        data_init: &mut DataInit<'_, State>,
+    ) {
+        // Smithay's manager data is made only by wayland-server: a
+        // stand-in made with it lends its data and goes.
+        let Ok(stand_in) =
+            client.create_resource::<ZwpInputMethodManagerV2, _, State>(dh, 1, GlobalData)
+        else {
+            data_init.init(resource, GlobalData);
+            return;
+        };
+        let handle = dh.backend_handle();
+        let inner = handle.get_object_data::<State>(stand_in.id());
+        let _ = handle.destroy_object::<State>(&stand_in.id());
+        match inner {
+            Ok(inner) => data_init.custom_init(resource, Arc::new(ImMaker { inner })),
+            Err(_) => data_init.init(resource, GlobalData),
+        };
+    }
+
+    fn can_view(&self, client: &Client) -> bool {
+        (self.filter)(client)
+    }
+}
+
+/// A manager's data, wrapped to tap the input method Smithay makes the
+/// seat's own: Smithay keeps a second one inert, and only the request that
+/// made the seat's one tells them apart.
+struct ImMaker {
+    inner: Arc<dyn ObjectData<State>>,
+}
+
+impl ObjectData<State> for ImMaker {
+    fn request(
+        self: Arc<Self>,
+        handle: &Handle,
+        data: &mut State,
+        client_id: ClientId,
+        msg: Message<ObjectId, std::os::fd::OwnedFd>,
+    ) -> Option<Arc<dyn ObjectData<State>>> {
+        let made = match (msg.opcode, msg.args.get(1)) {
+            (
+                zwp_input_method_manager_v2::REQ_GET_INPUT_METHOD_OPCODE,
+                Some(Argument::NewId(id)),
+            ) => Some(id.clone()),
+            _ => None,
+        };
+        let had = data.seat.input_method().has_instance();
+        let inner = self.inner.clone();
+        let ret = crate::textinput::forward(self, inner, handle, data, client_id, msg)?;
+        let Some(id) = made.filter(|_| !had && data.seat.input_method().has_instance()) else {
+            return Some(ret);
+        };
+        if let Ok(im) = ZwpInputMethodV2::from_id(&data.dh, id) {
+            data.ime.im = Some(im);
+            data.ime.field.new_input_method();
+        }
+        Some(Arc::new(ImTap { inner: ret }))
+    }
+
+    fn destroyed(
+        self: Arc<Self>,
+        handle: &Handle,
+        data: &mut State,
+        client_id: ClientId,
+        object_id: ObjectId,
+    ) {
+        self.inner
+            .clone()
+            .destroyed(handle, data, client_id, object_id);
+    }
+}
+
+/// The seat's input method object's data: its sends for Reprise's field go
 /// here, and its commit serial reaches Smithay without Reprise's own `done`s.
 struct ImTap {
     inner: Arc<dyn ObjectData<State>>,
@@ -481,38 +567,6 @@ impl State {
             Editor::ClipView => self.redraw_clipview(),
             Editor::EmojiView => self.redraw_emoji(),
             Editor::NotifyReply => crate::notifyview::blink(self),
-        }
-    }
-
-    pub fn ime_tap_input_method(&mut self) {
-        let bound = self.seat.input_method().has_instance();
-        if !bound || self.ime.im.as_ref().is_some_and(|im| im.is_alive()) {
-            return;
-        }
-        let handle = self.dh.backend_handle();
-        let mut clients = Vec::new();
-        handle.with_all_clients(|c| clients.push(c));
-        let found = clients.into_iter().find_map(|c| {
-            let mut found = None;
-            let _ = handle.with_all_objects_for(c, |o| {
-                if found.is_none() && o.interface().name == ZwpInputMethodV2::interface().name {
-                    found = Some(o);
-                }
-            });
-            found
-        });
-        let Some(id) = found else {
-            return;
-        };
-        let Ok(inner) = handle.get_object_data::<State>(id.clone()) else {
-            return;
-        };
-        if !inner.is::<ImTap>() {
-            let _ = handle.set_object_data::<State>(id.clone(), Arc::new(ImTap { inner }));
-        }
-        if let Ok(im) = ZwpInputMethodV2::from_id(&self.dh, id) {
-            self.ime.im = Some(im);
-            self.ime.field.new_input_method();
         }
     }
 }
