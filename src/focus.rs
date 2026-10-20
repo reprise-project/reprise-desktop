@@ -256,8 +256,14 @@ impl State {
         log::debug!("keyboard enter {surface:?}");
         if let Some(keyboard) = self.seat.get_keyboard() {
             if keyboard.current_focus() != surface {
-                // A moved keyboard closes an open X11 menu, as a press elsewhere would.
-                self.handle.insert_idle(crate::xwayland::menus::dismiss);
+                let to_x11 = surface.as_ref().map(|s| {
+                    self.window_for_surface(s)
+                        .and_then(|w| self.win(w))
+                        .is_some_and(|w| w.x11().is_some())
+                });
+                if crate::xwayland::menus::keyboard_move_closes(to_x11) {
+                    self.handle.insert_idle(crate::xwayland::menus::dismiss);
+                }
             }
             self.flush_motion();
             keyboard.set_focus(self, surface, SERIAL_COUNTER.next_serial());
