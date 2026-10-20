@@ -1630,6 +1630,7 @@ impl FileDlg {
             && shellview::type_ahead(&mut self.shell, c)
         {
             shellview::follow(&mut self.shell, lay);
+            self.sync_name_field();
             return Event::Redraw;
         }
         // Hosts send Left, Right, Home and End as edit keys, which only the File name field edits with.
@@ -1648,9 +1649,7 @@ impl FileDlg {
         };
         let mods = self.sel_mods(mods);
         if shellview::step(&mut self.shell, dir, lay, mods) {
-            if self.multi() {
-                self.sync_name_field();
-            }
+            self.sync_name_field();
             Event::Redraw
         } else {
             Event::None
@@ -3335,6 +3334,22 @@ mod tests {
             Event::Accept(names) => assert_eq!(names, vec!["sub"]),
             e => panic!("expected Accept, got {e:?}"),
         }
+    }
+
+    #[test]
+    fn a_keyboard_pick_replaces_a_clicked_folders_name_before_enter() {
+        let mut d = multi(DlgMode::Open, false);
+        d.click(R, entry_hit(0), Mods::default());
+        assert_eq!(d.file_name(), "sub");
+        d.key(R, form::Key::End, None, Mods::default());
+        assert_eq!(d.file_name(), "c.txt");
+        match d.key(R, form::Key::Enter, None, Mods::default()) {
+            Event::Accept(names) => assert_eq!(names, vec!["c.txt"]),
+            e => panic!("expected Accept of c.txt, got {e:?}"),
+        }
+        d.click(R, entry_hit(0), Mods::default());
+        d.key(R, form::Key::Char('b'), Some('b'), Mods::default());
+        assert_eq!(d.file_name(), "b.txt", "a typed letter picks too");
     }
 
     #[test]
