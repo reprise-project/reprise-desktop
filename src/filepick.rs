@@ -168,6 +168,9 @@ pub struct Request {
     folder_only: bool,
     /// The dialog's draw scale, at which icon files the listing names are decoded.
     scale: i32,
+    /// The view file ([`FilePicker::remember_in`]) the first listing reads along with its
+    /// folder, so a dead `$XDG_STATE_HOME` never stalls the loop.
+    view_file: Option<PathBuf>,
 }
 
 impl Request {
@@ -198,7 +201,10 @@ impl Request {
             Found::Folder(rows) => icon_files(rows, self.scale),
             _ => Vec::new(),
         };
+        let view = (self.view_file.as_deref())
+            .map(|f| filedlg::Remembered::parse(&repriseconf::filedialog::load_from(f)));
         Reply {
+            view,
             seq: self.seq,
             scale: self.scale,
             id: self.id,
@@ -234,6 +240,8 @@ pub struct Reply {
     /// [`LISTING_PX`] times `scale` on the job's thread: the file may be anywhere, a dead mount
     /// included.
     art: Vec<(String, [Option<Canvas>; 3])>,
+    /// The stored view and sort, when the request carried the view file.
+    view: Option<filedlg::Remembered>,
 }
 
 #[derive(Debug)]
@@ -316,6 +324,7 @@ impl FilePicker {
             pattern: typed.or(self.dlg.wildcard()).map(str::to_string),
             folder_only: typed.is_some(),
             scale: self.icons.scale,
+            view_file: None,
         };
         if let Some(same) = self.pending.iter().find(|p| p.same_work(&req)) {
             return same.seq;
@@ -332,6 +341,11 @@ impl FilePicker {
     /// pick. A reply that a later navigation made stale changes nothing.
     pub fn reply(&mut self, r: Reply, cache: &mut IconCache, scale: i32) -> Outcome {
         self.pending.retain(|p| p.seq != r.seq);
+        // A view changed before the stored one arrived wins over it.
+        if let Some(view) = r.view.filter(|_| self.dlg.remembered() == self.remembered) {
+            self.remembered = view;
+            self.dlg.restore(view);
+        }
         cache.put_files(
             r.art
                 .iter()
@@ -684,11 +698,17 @@ impl FilePicker {
         !matches!(self.dlg.leave(), Event::None)
     }
 
-    /// Opens in the view and sort `file` holds (`repriseconf::filedialog`), the one every Open
-    /// and Save As dialog shares, and stores the dialog's own there as they change.
+    /// Takes the view and sort `file` holds (`repriseconf::filedialog`), the one every Open and
+    /// Save As dialog shares, and stores the dialog's own there as they change. The file is read
+    /// with the first listing, so call this before the host takes the first requests.
     pub fn remember_in(&mut self, file: PathBuf) {
-        self.remembered = filedlg::Remembered::parse(&repriseconf::filedialog::load_from(&file));
-        self.dlg.restore(self.remembered);
+        let first = self
+            .requests
+            .iter_mut()
+            .find(|r| Some(r.seq) == self.listing);
+        if let Some(r) = first {
+            r.view_file = Some(file.clone());
+        }
         self.view_file = Some(file);
     }
 
@@ -953,6 +973,8 @@ mod tests {
         .unwrap();
         let mut p = FilePicker::run_command(&dir, Icons::default(), true);
         p.remember_in(file.clone());
+        assert_eq!(p.dlg.view(), Mode::List, "the file is read off the loop");
+        settle(&mut p);
         assert_eq!(p.dlg.view(), Mode::Details);
         p.click(R, Some(filedlg::Hit::ToolBar(3)));
         p.click(R, Some(filedlg::Hit::ViewsItem(0)));
@@ -960,6 +982,31 @@ mod tests {
         assert_eq!(
             std::fs::read_to_string(&file).unwrap(),
             "view = \"thumbnails\"\nsort = \"size\"\nascending = false\n"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_view_picked_before_the_stored_one_arrives_wins() {
+        let dir = sandbox("remember-early");
+        let file = dir.join("state").join("filedialog.toml");
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(&file, "view = \"details\"\n").unwrap();
+        let mut p = FilePicker::run_command(&dir, Icons::default(), true);
+        p.remember_in(file.clone());
+        let first = p.take_requests();
+        p.click(R, Some(filedlg::Hit::ToolBar(3)));
+        p.click(R, Some(filedlg::Hit::ViewsItem(0)));
+        for r in first {
+            p.reply(r.run(), &mut cache(), 1);
+        }
+        assert_eq!(p.dlg.view(), Mode::Thumbnails);
+        crate::state::flush();
+        assert!(
+            std::fs::read_to_string(&file)
+                .unwrap()
+                .starts_with("view = \"thumbnails\"\n"),
+            "the picked view is stored"
         );
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -1058,6 +1105,7 @@ mod tests {
                 pattern: None,
                 found: Found::Folder(read_folder(&dir, Some(&[]), None)),
                 art: Vec::new(),
+                view: None,
             },
             &mut cache(),
             1,
