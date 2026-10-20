@@ -384,6 +384,25 @@ fn a_gone_folder_whose_check_answers_late_is_followed_on_a_later_wake() {
     assert_eq!(ex.place, Place::Folder(dir.path().to_path_buf()));
 }
 
+/// The tree menu's Delete on the shown folder: the re-listing after the delete finds the folder
+/// gone and the window goes to the folder above.
+#[test]
+fn deleting_the_shown_folder_goes_to_the_folder_above() {
+    let dir = tempfile::tempdir().expect("a temp dir");
+    let shown = dir.path().join("shown");
+    std::fs::create_dir_all(shown.join("inner")).expect("mkdir");
+    let mut ctx = test_ctx();
+    let here = Place::Folder(shown.clone());
+    let mut ex = test_explorer(here.clone(), &mut ctx);
+
+    ex.delete_now(std::slice::from_ref(&shown), true, &mut ctx);
+    ex.finish_puts(&mut ctx);
+    wake_until(&mut ex, &mut ctx, |ex| ex.place != here);
+
+    assert!(!shown.exists());
+    assert_eq!(ex.place, Place::Folder(dir.path().to_path_buf()));
+}
+
 /// Computer's view and its tree node read the drives scanned at the
 /// last `/proc/mounts` change: neither stats the mounts again.
 #[test]
