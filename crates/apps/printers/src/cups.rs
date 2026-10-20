@@ -1010,7 +1010,14 @@ pub fn rename(c: &Client, old: &str, new: &str, s: &Snapshot) -> Result<()> {
             Vec::new()
         }
     };
-    c.admin(rename_by_peer(c, old, new, s, ppd, &defaults), || {
+    let peer = rename_by_peer(c, old, new, s, ppd, &defaults);
+    if matches!(peer, Err(Error::Denied))
+        && c.helper.installed()
+        && let Some(e) = helper_rename_refusal(old, s)
+    {
+        return Err(e);
+    }
+    c.admin(peer, || {
         let mut calls = vec![Call::PrinterRename(old.into(), new.into())];
         calls.extend(defaults.iter().filter_map(|(k, v)| {
             let option = option_of(k).to_string();
@@ -1026,6 +1033,18 @@ pub fn rename(c: &Client, old: &str, new: &str, s: &Snapshot) -> Result<()> {
         write_lpoptions(&text)?;
     }
     Ok(())
+}
+
+/// cups-pk-helper's PrinterRename moves only held jobs: it refuses a queue
+/// with jobs waiting or printing and gives no reason, so the refusal is ours.
+fn helper_rename_refusal(old: &str, s: &Snapshot) -> Option<Error> {
+    s.jobs_of(old)
+        .any(|j| matches!(j.state, JobState::Pending | JobState::Printing))
+        .then(|| {
+            Error::Refused(format!(
+                "{old} can be renamed once no documents are waiting or printing on it."
+            ))
+        })
 }
 
 /// The user's lpoptions `user` after printer `old` became `new`, when the default it or the
@@ -1936,6 +1955,29 @@ mod tests {
                 Call::PrinterAddOptionDefault(n(), "sides".into(), vec![]),
             ]
         );
+    }
+
+    #[test]
+    fn a_helper_rename_is_refused_while_jobs_wait_or_print() {
+        let job = |state| Job {
+            printer: "Laser".into(),
+            state,
+            ..Job::default()
+        };
+        let with = |state| Snapshot {
+            jobs: vec![job(state)],
+            ..Snapshot::default()
+        };
+        for state in [JobState::Pending, JobState::Printing] {
+            assert_eq!(
+                helper_rename_refusal("Laser", &with(state)),
+                Some(Error::Refused(
+                    "Laser can be renamed once no documents are waiting or printing on it.".into()
+                ))
+            );
+            assert_eq!(helper_rename_refusal("Other", &with(state)), None);
+        }
+        assert_eq!(helper_rename_refusal("Laser", &with(JobState::Held)), None);
     }
 
     #[test]
