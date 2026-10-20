@@ -1,8 +1,9 @@
 //! The menu stack on the scene: Start menu and submenus, window, taskbar, Quick
 //! Launch and desktop menus, jump lists, window lists and tray DBusMenus. Layout
 //! and drawing come from `startmenu` (reprisekit); this file opens, places,
-//! drives and closes them. Each open menu is a tree in `layers.menu`, tagged
-//! `SceneOwner::Menu(depth)`, holding its shadow (no input) under its buffer.
+//! drives and closes them. Each open menu is a tree in `layers.menu` (a reply
+//! field's edit menu in `layers.overlay`), tagged `SceneOwner::Menu(depth)`,
+//! holding its shadow (no input) under its buffer.
 //! Menus carry no glass, so the glass below never blurs a menu.
 
 use std::{
@@ -735,8 +736,15 @@ impl State {
         kind: MenuKind,
         from: MenuFrom,
     ) {
+        // A balloon's reply field sits on the overlay layer: its edit menu goes there too.
+        let layer = match kind {
+            MenuKind::Edit {
+                editor: crate::caret::Editor::NotifyReply,
+            } => self.layers.overlay,
+            _ => self.layers.menu,
+        };
         let scene = &mut self.scene;
-        let tree = scene.tree_create(self.layers.menu);
+        let tree = scene.tree_create(layer);
         scene.set_data(tree, Some(SceneOwner::Menu(depth)));
         crate::glass::leave_out(scene, tree);
         let shadow = scene.buffer_create(tree);

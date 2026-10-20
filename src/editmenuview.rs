@@ -97,6 +97,13 @@ impl State {
         true
     }
 
+    /// Whether the open menu is a field's edit menu.
+    pub fn edit_menu_open(&self) -> bool {
+        self.menus
+            .first()
+            .is_some_and(|m| matches!(m.kind, MenuKind::Edit { .. }))
+    }
+
     /// The Menu key or Shift+F10 on a key routed to a field opens its edit menu; `true` when
     /// it did and the key goes no further. The launcher and the Start menu's search hand the
     /// key to a lit row's menu first and open this one themselves.
@@ -152,6 +159,122 @@ mod tests {
         let delete = pick_key(Command::Delete);
         assert_eq!((delete.syms, delete.mods), (vec![keysym::DELETE], 0));
         assert_eq!(delete.edit, Some(EditKey::Delete { word: false }));
+    }
+
+    /// The first point of a 1024x768 output, on a 2 px grid, whose scene hit is `want`.
+    fn point_where(
+        h: &crate::harness::Harness,
+        want: impl Fn(&crate::input::Hit) -> bool,
+    ) -> (f64, f64) {
+        (0..384)
+            .flat_map(|y| (0..512).map(move |x| (f64::from(x * 2), f64::from(y * 2))))
+            .find(|&(x, y)| want(&h.state.scene_hit((x, y).into())))
+            .expect("the point is on screen")
+    }
+
+    #[test]
+    fn a_right_press_in_a_panels_field_opens_its_edit_menu_and_a_pick_runs_there() {
+        use crate::input::{BTN_RIGHT, Hit};
+        use reprisekit::controls::{cliphistory, emojipicker, launcher};
+        type Open = fn(&mut State);
+        type OnField = fn(&Hit) -> bool;
+        type Text = fn(&State) -> Option<(String, std::ops::Range<usize>)>;
+        let panels: [(Editor, Open, OnField, Text); 3] = [
+            (
+                Editor::Launcher,
+                |s| {
+                    s.toggle_launcher();
+                    s.launcher_paste("foot");
+                },
+                |h| {
+                    matches!(
+                        h,
+                        Hit::Launcher {
+                            hit: launcher::Hit::Field
+                        }
+                    )
+                },
+                |s| {
+                    s.launcher
+                        .as_ref()
+                        .map(|v| (v.model.edit().text.clone(), v.model.edit().selection()))
+                },
+            ),
+            (
+                Editor::ClipView,
+                |s| {
+                    s.toggle_clipview();
+                    s.clipview_paste("foot");
+                },
+                |h| {
+                    matches!(
+                        h,
+                        Hit::ClipView {
+                            hit: cliphistory::Hit::Field
+                        }
+                    )
+                },
+                |s| {
+                    s.panels
+                        .clipview
+                        .as_ref()
+                        .map(|v| (v.model.edit().text.clone(), v.model.edit().selection()))
+                },
+            ),
+            (
+                Editor::EmojiView,
+                |s| {
+                    s.toggle_emoji();
+                    s.emoji_paste("foot");
+                },
+                |h| {
+                    matches!(
+                        h,
+                        Hit::EmojiView {
+                            hit: emojipicker::Hit::Field
+                        }
+                    )
+                },
+                |s| {
+                    s.panels
+                        .emojiview
+                        .as_ref()
+                        .map(|v| (v.model.edit().text.clone(), v.model.edit().selection()))
+                },
+            ),
+        ];
+        for (editor, open, on_field, text) in panels {
+            let mut h = crate::harness::Harness::new();
+            h.output("TEST-1", 1024, 768);
+            open(&mut h.state);
+            assert_eq!(
+                text(&h.state),
+                Some(("foot".into(), 4..4)),
+                "{editor:?} opens"
+            );
+            let (x, y) = point_where(&h, on_field);
+            h.pointer_to(x, y);
+            h.button(BTN_RIGHT, true);
+            h.button(BTN_RIGHT, false);
+            assert!(
+                matches!(h.state.menus.first().map(|m| &m.kind), Some(MenuKind::Edit { editor: e }) if *e == editor),
+                "{editor:?}: a right press in the field opens its edit menu"
+            );
+            let (x, y) = point_where(
+                &h,
+                |hit| matches!(hit, Hit::Menu { row: Some(r), .. } if editmenu::command(&[*r]) == Some(Command::SelectAll)),
+            );
+            h.click(x, y);
+            assert!(
+                h.state.menus.is_empty(),
+                "{editor:?}: the pick closes the menu"
+            );
+            assert_eq!(
+                text(&h.state),
+                Some(("foot".into(), 0..4)),
+                "{editor:?}: Select All runs in the field, which stays open"
+            );
+        }
     }
 
     #[test]

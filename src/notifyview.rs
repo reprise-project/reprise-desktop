@@ -34,7 +34,7 @@ use crate::compositor::{DeskScene, SceneOwner, State};
 use crate::config::EffectsConfig;
 use crate::dialogview::DialogKey;
 use crate::glass::{Backdrop, GlassCtx, Pane, PaneShape};
-use crate::input::{BTN_LEFT, Hit, Interaction};
+use crate::input::{BTN_LEFT, BTN_RIGHT, Hit, Interaction};
 use crate::notifylog::Log;
 use crate::output::upload_scaled;
 use crate::raster::{Canvas, Rect};
@@ -1267,7 +1267,8 @@ fn chip_hit(v: &NotifyView, x: f64, y: f64) -> Option<Rect> {
 }
 
 /// A press of `button` on a balloon or the chip at layout point (`x`, `y`); true when the pointer
-/// now holds a button. Any button but the left dismisses a balloon.
+/// now holds a button. Any button but the left dismisses a balloon, except a right press on the
+/// reply field, which opens its edit menu.
 pub fn press(state: &mut State, x: f64, y: f64, button: u32) -> bool {
     let target = press_target(&mut state.notify, x, y, Instant::now());
     if hold_clocks(state) {
@@ -1282,6 +1283,11 @@ pub fn press(state: &mut State, x: f64, y: f64, button: u32) -> bool {
         return false;
     };
     reply_touched(state);
+    if button == BTN_RIGHT && hit == NotifyHit::Field {
+        field_press(state, i, &drawn, lx, true);
+        state.open_edit_menu(Some((x as i32, y as i32)));
+        return false;
+    }
     let hit = if button == BTN_LEFT {
         hit
     } else {
@@ -1316,20 +1322,30 @@ pub fn press(state: &mut State, x: f64, y: f64, button: u32) -> bool {
             paint(state);
             return true;
         }
-        NotifyHit::Field => {
-            let theme = state.config.theme.scaled(lay_scale(state));
-            if let Some(field) = state.notify.stack[i].reply.as_mut() {
-                match &drawn {
-                    Drawn::Balloon(lay) => field.click(&theme, &state.text, lay, lx),
-                    Drawn::Sheet(lay) => sheet_click(lay, &theme, &state.text, field, lx),
-                }
-            }
-            state.restart_caret();
-            paint(state);
-        }
+        NotifyHit::Field => field_press(state, i, &drawn, lx, false),
         NotifyHit::More => open_more_menu(state, id),
     }
     false
+}
+
+/// A press on balloon `i`'s reply field at canvas x `lx`: it takes the keyboard and the caret
+/// goes there, unless `for_menu` and the press is inside the selection.
+fn field_press(state: &mut State, i: usize, drawn: &Drawn, lx: i32, for_menu: bool) {
+    let theme = state.config.theme.scaled(lay_scale(state));
+    let text = &state.text;
+    if let Some(field) = state.notify.stack[i].reply.as_mut() {
+        let press = |field: &mut ReplyField| match drawn {
+            Drawn::Balloon(lay) => field.click(&theme, text, lay, lx),
+            Drawn::Sheet(lay) => sheet_click(lay, &theme, text, field, lx),
+        };
+        if for_menu {
+            field.press_for_menu(press);
+        } else {
+            press(field);
+        }
+    }
+    state.restart_caret();
+    paint(state);
 }
 
 /// The replying balloon's scale, else the newest's.
