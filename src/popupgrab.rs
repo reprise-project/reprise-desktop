@@ -17,6 +17,7 @@ use smithay::{
             MotionEvent, PointerGrab, PointerHandle, PointerInnerHandle, RelativeMotionEvent,
         },
     },
+    reexports::wayland_server::protocol::wl_surface::WlSurface,
     utils::{Logical, Point, SERIAL_COUNTER, Serial},
 };
 
@@ -131,6 +132,25 @@ pub fn dismiss(state: &mut State) -> bool {
     // Unsetting the pointer grab ends the keyboard grab with it.
     pointer.unset_grab(state, SERIAL_COUNTER.next_serial(), InputTime::now());
     true
+}
+
+/// A client destroyed popup `gone`: the keyboard leaves it now, for the popup below it or,
+/// once no grabbed popup is left, the surface they opened on (`root`). Smithay's popup
+/// keyboard grab moves it only with the next key, and any other grab holding the keyboard
+/// never does.
+pub fn popup_gone(state: &mut State, gone: &WlSurface, root: &WlSurface) {
+    let (Some(keyboard), Some(pointer)) = (state.seat.get_keyboard(), state.seat.get_pointer())
+    else {
+        return;
+    };
+    state.popups.cleanup();
+    if holding(&pointer).is_some_and(|g| g.has_ended()) {
+        pointer.unset_grab(state, SERIAL_COUNTER.next_serial(), InputTime::now());
+    }
+    if keyboard.current_focus().as_ref() == Some(gone) {
+        let to = holding(&pointer).map_or_else(|| Some(root.clone()), |g| g.current_grab());
+        keyboard.set_focus(state, to, SERIAL_COUNTER.next_serial());
+    }
 }
 
 /// The start of the press `pointer` holds: under a client popup's grab,
@@ -382,5 +402,90 @@ mod tests {
         // is still the menu's.
         assert!(joins(s(12), Some(s(7)), s(15), s(7)));
         assert!(joins(s(7), Some(s(7)), s(15), s(7)));
+    }
+
+    const KEY_ESC: u32 = 1;
+    const KEY_A: u32 = 30;
+
+    #[test]
+    fn a_menu_its_client_hides_on_escape_gives_the_keyboard_back_to_its_window() {
+        let mut h = crate::harness::Harness::new();
+        h.output("TEST-1", 1024, 768);
+        let mut c = h.connect();
+        let t = h.map_toplevel(&mut c, "test.app", 300, 200);
+        let window = c.side.shells[t.shell].surface.clone();
+        assert_eq!(c.side.keyboard_focus.as_ref(), Some(&window));
+        let menu = h.map_popup(&mut c, t, 100, 80);
+        assert_eq!(c.side.keyboard_focus.as_ref(), Some(&menu.surface));
+        h.key(KEY_ESC, true);
+        h.roundtrip(&mut c);
+        c.hide_popup(&menu);
+        h.roundtrip(&mut c);
+        assert_eq!(
+            c.side.keyboard_focus.as_ref(),
+            Some(&window),
+            "the keyboard is back on the window before the Escape comes up"
+        );
+        h.key(KEY_ESC, false);
+        h.key(KEY_A, true);
+        h.key(KEY_A, false);
+        h.roundtrip(&mut c);
+        assert_eq!(c.side.keyboard_focus.as_ref(), Some(&window));
+        assert!(c.side.keys.ends_with(&[(KEY_A, true), (KEY_A, false)]));
+    }
+
+    /// Passes every key and focus change through, as an input method's grab does.
+    struct Passthrough(smithay::input::keyboard::GrabStartData<State>);
+
+    impl smithay::input::keyboard::KeyboardGrab<State> for Passthrough {
+        fn input(
+            &mut self,
+            data: &mut State,
+            handle: &mut smithay::input::keyboard::KeyboardInnerHandle<'_, State>,
+            keycode: smithay::input::keyboard::Keycode,
+            state: smithay::backend::input::KeyState,
+            modifiers: Option<smithay::input::keyboard::ModifiersState>,
+            serial: Serial,
+            time: InputTime,
+        ) {
+            handle.input(data, keycode, state, modifiers, serial, time);
+        }
+
+        fn set_focus(
+            &mut self,
+            data: &mut State,
+            handle: &mut smithay::input::keyboard::KeyboardInnerHandle<'_, State>,
+            focus: Option<WlSurface>,
+            serial: Serial,
+        ) {
+            handle.set_focus(data, focus, serial);
+        }
+
+        fn start_data(&self) -> &smithay::input::keyboard::GrabStartData<State> {
+            &self.0
+        }
+
+        fn unset(&mut self, _: &mut State) {}
+    }
+
+    #[test]
+    fn a_menu_closed_under_another_keyboard_grab_still_gives_the_keyboard_back() {
+        let mut h = crate::harness::Harness::new();
+        h.output("TEST-1", 1024, 768);
+        let mut c = h.connect();
+        let t = h.map_toplevel(&mut c, "test.app", 300, 200);
+        let window = c.side.shells[t.shell].surface.clone();
+        let menu = h.map_popup(&mut c, t, 100, 80);
+        assert_eq!(c.side.keyboard_focus.as_ref(), Some(&menu.surface));
+        let kb = h.state.seat.get_keyboard().expect("keyboard");
+        let grab = Passthrough(smithay::input::keyboard::GrabStartData { focus: None });
+        kb.set_grab(&mut h.state, grab, SERIAL_COUNTER.next_serial());
+        c.hide_popup(&menu);
+        h.roundtrip(&mut c);
+        h.key(KEY_A, true);
+        h.key(KEY_A, false);
+        h.roundtrip(&mut c);
+        assert_eq!(c.side.keyboard_focus.as_ref(), Some(&window));
+        assert!(c.side.keys.ends_with(&[(KEY_A, true), (KEY_A, false)]));
     }
 }

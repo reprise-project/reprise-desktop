@@ -19,7 +19,7 @@ use wayland_client::{
 };
 use wayland_protocols::xdg::{
     activation::v1::client::xdg_activation_v1::XdgActivationV1,
-    shell::client::{xdg_surface, xdg_toplevel, xdg_wm_base},
+    shell::client::{xdg_popup, xdg_positioner, xdg_surface, xdg_toplevel, xdg_wm_base},
 };
 
 use crate::{
@@ -214,6 +214,40 @@ impl Harness {
         );
         Toplevel { id, shell }
     }
+
+    /// A `w`x`h` xdg popup on toplevel `t`, mapped with its first buffer, that asks for the
+    /// seat's grab under the last keyboard enter's serial, as a menu does.
+    pub fn map_popup(&mut self, c: &mut TestClient, t: Toplevel, w: i32, h: i32) -> Popup {
+        let qh = c.qh();
+        let wm = c.side.wm_base.clone().expect("xdg_wm_base");
+        let surface = (c.side.compositor.as_ref())
+            .expect("wl_compositor")
+            .create_surface(&qh, ());
+        let xdg = wm.get_xdg_surface(&surface, &qh, ());
+        let positioner = wm.create_positioner(&qh, ());
+        positioner.set_size(w, h);
+        positioner.set_anchor_rect(0, 0, 1, 1);
+        let popup = xdg.get_popup(Some(&c.side.shells[t.shell].xdg), &positioner, &qh, ());
+        positioner.destroy();
+        let seat = c.side.seat.as_ref().expect("wl_seat");
+        popup.grab(seat, c.side.enter_serial);
+        surface.commit();
+        self.roundtrip(c);
+        attach(c.side.shm.as_ref().expect("wl_shm"), &qh, &surface, w, h);
+        self.roundtrip(c);
+        Popup {
+            surface,
+            xdg,
+            popup,
+        }
+    }
+}
+
+/// A client's xdg popup.
+pub struct Popup {
+    pub surface: WlSurface,
+    pub xdg: xdg_surface::XdgSurface,
+    pub popup: xdg_popup::XdgPopup,
 }
 
 /// A client's toplevel: the window it made and its index in [`ClientSide::shells`].
@@ -319,6 +353,12 @@ impl TestClient {
         s.xdg.destroy();
         s.surface.destroy();
     }
+
+    /// Destroy popup `p`'s role objects and keep its surface, as a toolkit hiding a menu does.
+    pub fn hide_popup(&mut self, p: &Popup) {
+        p.popup.destroy();
+        p.xdg.destroy();
+    }
 }
 
 /// Attach a `w`x`h` buffer to `surface` and commit it.
@@ -360,6 +400,9 @@ pub struct ClientSide {
     keyboard: Option<wl_keyboard::WlKeyboard>,
     seat: Option<wl_seat::WlSeat>,
     data_manager: Option<wl_data_device_manager::WlDataDeviceManager>,
+    /// The surface the keyboard last entered and has not left.
+    pub keyboard_focus: Option<WlSurface>,
+    enter_serial: u32,
     pub shells: Vec<Shell>,
     /// Each key event the keyboard heard: its evdev code and whether it went down.
     pub keys: Vec<(u32, bool)>,
@@ -461,9 +504,21 @@ impl wc::Dispatch<wl_keyboard::WlKeyboard, ()> for ClientSide {
         _: &Connection,
         _: &QueueHandle<Self>,
     ) {
-        if let wl_keyboard::Event::Key { key, state, .. } = ev {
-            let down = state == wc::WEnum::Value(wl_keyboard::KeyState::Pressed);
-            st.keys.push((key, down));
+        match ev {
+            wl_keyboard::Event::Key { key, state, .. } => {
+                let down = state == wc::WEnum::Value(wl_keyboard::KeyState::Pressed);
+                st.keys.push((key, down));
+            }
+            wl_keyboard::Event::Enter {
+                serial, surface, ..
+            } => {
+                st.enter_serial = serial;
+                st.keyboard_focus = Some(surface);
+            }
+            wl_keyboard::Event::Leave { surface, .. } => {
+                st.keyboard_focus.take_if(|f| *f == surface);
+            }
+            _ => {}
         }
     }
 }
@@ -494,6 +549,8 @@ wc::delegate_noop!(ClientSide: ignore wl_shm_pool::WlShmPool);
 wc::delegate_noop!(ClientSide: ignore WlBuffer);
 wc::delegate_noop!(ClientSide: ignore wl_seat::WlSeat);
 wc::delegate_noop!(ClientSide: ignore XdgActivationV1);
+wc::delegate_noop!(ClientSide: ignore xdg_positioner::XdgPositioner);
+wc::delegate_noop!(ClientSide: ignore xdg_popup::XdgPopup);
 
 #[test]
 fn a_headless_state_maps_a_clients_toplevel_on_its_output() {

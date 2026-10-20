@@ -244,9 +244,11 @@ impl XdgShellHandler for State {
     }
 
     fn popup_destroyed(&mut self, surface: PopupSurface) {
+        let gone = surface.wl_surface().clone();
         let Ok(root) = find_popup_root_surface(&PopupKind::Xdg(surface)) else {
             return;
         };
+        crate::popupgrab::popup_gone(self, &gone, &root);
         if let Some(w) = self.window_for_surface(&root) {
             self.sync_popups(w);
             self.redraw_all();
